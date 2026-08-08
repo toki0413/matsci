@@ -145,29 +145,6 @@ class ReflectionMixin:
             logger.info("reflection sidecar: %s", sidecar_path)
             self._sidecar_path_announced = True
 
-    def load_reflection_sidecar(
-        self, session_id: str | None = None, last_n: int = 50
-    ) -> list[dict]:
-        """读取 sidecar JSONL, 返回最近 last_n 条反思结论.
-
-        给 audit / diagnostics / 用户查询用. 默认读当前 session, 最近 50 条.
-        ponytail: 一次性 read + slice. 升级: 流式 read + 按 tool_name 过滤.
-        """
-        import json
-        from pathlib import Path
-        sid = session_id or self._session_state.session_id or "default"
-        sidecar_path = Path(os.environ.get("HUGINN_CACHE_DIR") or (Path.home() / ".huginn")) / "reflections" / f"{sid}.jsonl"
-        if not sidecar_path.exists():
-            return []
-        lines = sidecar_path.read_text(encoding="utf-8").strip().split("\n")
-        out: list[dict] = []
-        for line in lines:
-            try:
-                out.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-        return out[-last_n:] if last_n > 0 else out
-
     def _sync_plan_from_store(self) -> None:
         """Sync an executing plan from PlanStore to session_state.
 

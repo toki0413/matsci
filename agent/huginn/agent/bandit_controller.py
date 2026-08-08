@@ -465,7 +465,3 @@ class EffortBandit:
         except Exception as _e:
             logger.debug("[v19] build_hint fallback: %s", _e)
             return ""
-
-    def force_save(self) -> None:
-        with self._lock:
-            self._save()

@@ -1532,6 +1532,87 @@ class LongTermMemory:
                 )
         return summary
 
+    def lint(self, auto_fix: bool = False) -> dict[str, Any]:
+        """P0-2: Scan alive memories for contradictions; optionally tag them.
+
+        A contradiction is a pair of alive memories sharing the same
+        (formula, tag) but reporting different numeric values in their
+        content (e.g. "Fe 带隙 0.0 eV" vs "Fe 带隙 2.1 eV" under
+        tag=band_gap, formula=Fe).
+
+        auto_fix=True writes a 'contradicts:<other_id>' tag to each side
+        via update() so downstream consumers can flag/suppress them. The
+        fix is idempotent: pairs already cross-tagged are not re-tagged,
+        so a second run reports auto_fixed=0.
+
+        Returns:
+            {"contradictions": [{"ids": [a, b], "formula": str, "tag": str}, ...],
+             "auto_fixed": int}
+        """
+        with self._connect() as conn:
+            alive_where, alive_params = self._where_alive()
+            rows = conn.execute(
+                f"SELECT id, content, tags, formula FROM memories AS m "
+                f"WHERE {alive_where}",
+                alive_params,
+            ).fetchall()
+
+        # Group by (formula, tag). contradicts:/crossref: tags are markers,
+        # not grouping dimensions, so they're skipped to keep grouping stable.
+        groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        for r in rows:
+            formula = r["formula"] or ""
+            if not formula:
+                continue
+            try:
+                tags_list = json.loads(r["tags"]) if r["tags"] else []
+            except (json.JSONDecodeError, TypeError):
+                tags_list = []
+            for tag in tags_list:
+                if isinstance(tag, str) and (
+                    tag.startswith("contradicts:") or tag.startswith("crossref:")
+                ):
+                    continue
+                groups.setdefault((formula, tag), []).append(
+                    {"id": r["id"], "content": r["content"], "tags": tags_list}
+                )
+
+        contradictions: list[dict[str, Any]] = []
+        pending_updates: dict[str, list[str]] = {}
+        auto_fixed = 0
+        num_re = re.compile(r"-?\d+\.?\d*")
+        for (formula, tag), entries in groups.items():
+            if len(entries) < 2:
+                continue
+            for i in range(len(entries)):
+                for j in range(i + 1, len(entries)):
+                    a, b = entries[i], entries[j]
+                    na = set(num_re.findall(a["content"] or ""))
+                    nb = set(num_re.findall(b["content"] or ""))
+                    if not na or not nb or na == nb:
+                        continue
+                    contradictions.append(
+                        {"ids": [a["id"], b["id"]], "formula": formula, "tag": tag}
+                    )
+                    if not auto_fix:
+                        continue
+                    a_tag = f"contradicts:{b['id']}"
+                    b_tag = f"contradicts:{a['id']}"
+                    a_new = pending_updates.setdefault(a["id"], list(a["tags"]))
+                    b_new = pending_updates.setdefault(b["id"], list(b["tags"]))
+                    if a_tag not in a_new:
+                        a_new.append(a_tag)
+                        auto_fixed += 1
+                    if b_tag not in b_new:
+                        b_new.append(b_tag)
+                        auto_fixed += 1
+
+        if auto_fix and pending_updates:
+            for entry_id, new_tags in pending_updates.items():
+                self.update(entry_id, tags=new_tags)
+
+        return {"contradictions": contradictions, "auto_fixed": auto_fixed}
+
     # ── maybe_consolidate: 双门槛记忆整理 (research-dream dream 心智) ───────
     # 时间门 7 天 + 累积门 50 条未归档 short tier. 7 天兜底: 时间到了累积未到
     # 也强制整理 (防低频场景永远不整理). force=True 跳过所有门槛.
@@ -1691,224 +1772,6 @@ class LongTermMemory:
         except Exception:
             logger.warning("maybe_consolidate 异常", exc_info=True)
             return False
-
-    def lint(self, limit: int = 100, auto_fix: bool = False) -> dict[str, Any]:
-        """LLM Wiki Lint: knowledge base health check.
-
-        Inspired by Karpathy's LLM Wiki concept — periodically scan
-        the knowledge base for contradictions, orphan entries, stale
-        assertions, and missing cross-references.
-
-        Args:
-            limit: max number of entries to scan.
-            auto_fix: if True, write discovered links (contradicts:/crossref:)
-                back to tags.
-
-        Returns a report dict with issues found.
-        """
-        import re as _re
-
-        report: dict[str, Any] = {
-            "total_entries": 0,
-            "contradictions": [],
-            "orphans": [],
-            "stale": [],
-            "low_confidence": [],
-            "cross_ref_candidates": [],
-            "summary": "",
-        }
-
-        with self._connect() as conn:
-            alive_where, alive_params = self._where_alive()
-            rows = conn.execute(
-                f"""SELECT * FROM memories AS m WHERE {alive_where}
-                    ORDER BY importance DESC, access_count DESC
-                    LIMIT ?""",
-                (*alive_params, limit),
-            ).fetchall()
-
-        report["total_entries"] = len(rows)
-        if not rows:
-            report["summary"] = "No entries to lint."
-            return report
-
-        # Collect entries by category for cross-reference analysis
-        entries_by_category: dict[str, list[dict]] = {}
-        all_entries = []
-        for row in rows:
-            entry = dict(row)
-            all_entries.append(entry)
-            cat = entry.get("category", "unknown")
-            entries_by_category.setdefault(cat, []).append(entry)
-
-        # 1. Find contradictions: entries in same category with
-        # conflicting numeric values (e.g., "band_gap = 1.12" vs
-        # "band_gap = 1.15" for the same material)
-        for cat, entries in entries_by_category.items():
-            if len(entries) < 2:
-                continue
-            for i, e1 in enumerate(entries):
-                for e2 in entries[i + 1:]:
-                    # Check if entries reference same material/formula
-                    f1 = (e1.get("formula") or "").lower()
-                    f2 = (e2.get("formula") or "").lower()
-                    if f1 and f2 and f1 == f2:
-                        # Same formula — check for numeric conflicts
-                        nums1 = set(
-                            _re.findall(
-                                r"(\d+\.?\d*)\s*(?:eV|eV/atom|eV/\u00c5|GPa|K|THz|\u00c5)",
-                                e1.get("content", ""),
-                            )
-                        )
-                        nums2 = set(
-                            _re.findall(
-                                r"(\d+\.?\d*)\s*(?:eV|eV/atom|eV/\u00c5|GPa|K|THz|\u00c5)",
-                                e2.get("content", ""),
-                            )
-                        )
-                        if nums1 and nums2 and nums1 != nums2:
-                            report["contradictions"].append({
-                                "formula": f1,
-                                "entry1_id": e1["id"],
-                                "entry1_nums": list(nums1)[:5],
-                                "entry2_id": e2["id"],
-                                "entry2_nums": list(nums2)[:5],
-                                "category": cat,
-                            })
-
-        # 2. Find orphans: entries never accessed (access_count = 0)
-        # and older than 7 days
-        for entry in all_entries:
-            if entry.get("access_count", 0) == 0:
-                created = entry.get("created_at", "")
-                try:
-                    age_days = (
-                        datetime.now() - datetime.fromisoformat(created)
-                    ).days
-                    if age_days > 7:
-                        report["orphans"].append({
-                            "id": entry["id"],
-                            "category": entry.get("category"),
-                            "age_days": age_days,
-                            "content_preview": (entry.get("content") or "")[:80],
-                        })
-                except Exception:
-                    logger.debug("lint failed", exc_info=True)
-
-        # 3. Find stale: long-tier entries not accessed in 30+ days
-        for entry in all_entries:
-            if entry.get("tier") == "long":
-                last_accessed = entry.get("last_accessed") or entry.get(
-                    "created_at", ""
-                )
-                try:
-                    age_days = (
-                        datetime.now() - datetime.fromisoformat(last_accessed)
-                    ).days
-                    if age_days > 30:
-                        report["stale"].append({
-                            "id": entry["id"],
-                            "category": entry.get("category"),
-                            "days_since_access": age_days,
-                            "content_preview": (entry.get("content") or "")[:80],
-                        })
-                except Exception:
-                    logger.debug("lint failed", exc_info=True)
-
-        # 4. Find low confidence distilled knowledge
-        for entry in all_entries:
-            if entry.get("category") == "distilled_knowledge":
-                imp = entry.get("importance", 0)
-                if imp < 0.3:
-                    report["low_confidence"].append({
-                        "id": entry["id"],
-                        "importance": imp,
-                        "content_preview": (entry.get("content") or "")[:80],
-                    })
-
-        # 5. Cross-reference candidates: entries mentioning the same
-        # material/formula but in different categories (e.g., a
-        # calculation result and a distilled lesson about the same
-        # material should be cross-linked)
-        formula_map: dict[str, list[str]] = {}
-        for entry in all_entries:
-            formula = (entry.get("formula") or "").lower()
-            if formula:
-                formula_map.setdefault(formula, []).append(
-                    f"{entry['category']}:{entry['id']}"
-                )
-        for formula, refs in formula_map.items():
-            if len(refs) > 1:
-                report["cross_ref_candidates"].append({
-                    "formula": formula,
-                    "entries": refs,
-                })
-
-        # Build summary
-        issues = (
-            len(report["contradictions"])
-            + len(report["orphans"])
-            + len(report["stale"])
-            + len(report["low_confidence"])
-        )
-        report["summary"] = (
-            f"Linted {report['total_entries']} entries: "
-            f"{len(report['contradictions'])} contradictions, "
-            f"{len(report['orphans'])} orphans, "
-            f"{len(report['stale'])} stale, "
-            f"{len(report['low_confidence'])} low-confidence, "
-            f"{len(report['cross_ref_candidates'])} cross-ref candidates."
-        )
-
-        # auto_fix: write discovered links back into tags so later
-        # queries can piggyback on them
-        if auto_fix:
-            import json as _json
-
-            fixed = 0
-            with self._connect() as conn:
-                # contradictions: tag both sides so each points at the other
-                for c in report["contradictions"]:
-                    for eid in (c["entry1_id"], c["entry2_id"]):
-                        row = conn.execute(
-                            "SELECT tags FROM memories WHERE id = ?", (eid,)
-                        ).fetchone()
-                        if not row:
-                            continue
-                        tags = _json.loads(row["tags"] or "[]")
-                        other = (
-                            c["entry2_id"] if eid == c["entry1_id"] else c["entry1_id"]
-                        )
-                        tag = f"contradicts:{other}"
-                        if tag not in tags:
-                            tags.append(tag)
-                            conn.execute(
-                                "UPDATE memories SET tags = ? WHERE id = ?",
-                                (_json.dumps(tags), eid),
-                            )
-                            fixed += 1
-                # cross-ref candidates: stamp the shared formula on each entry
-                for x in report["cross_ref_candidates"]:
-                    for ref in x["entries"]:
-                        cat, eid = ref.split(":", 1)
-                        row = conn.execute(
-                            "SELECT tags FROM memories WHERE id = ?", (eid,)
-                        ).fetchone()
-                        if not row:
-                            continue
-                        tags = _json.loads(row["tags"] or "[]")
-                        tag = f"crossref:{x['formula']}"
-                        if tag not in tags:
-                            tags.append(tag)
-                            conn.execute(
-                                "UPDATE memories SET tags = ? WHERE id = ?",
-                                (_json.dumps(tags), eid),
-                            )
-                            fixed += 1
-                conn.commit()
-            report["auto_fixed"] = fixed
-
-        return report
 
     def get_self_model(self) -> dict[str, dict]:
         """按 persona_id 聚合 iteration_result, 返回 {persona: {rate, success, failure, dimension, hyp_type}}.

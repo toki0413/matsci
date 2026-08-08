@@ -2400,6 +2400,22 @@ class AutoloopEngine(PlanCheckMixin, MathValidationMixin, VisualInspectMixin, Co
                     hint += f"强制重定向到 {redirect.target_family}: {redirect.reason}"
                 else:
                     hint += "建议启动新方法族探索"
+                    # 接入 BlockRegistry: 坍缩且无重定向目标 → 当前主导方法族
+                    # 标记为 incubating (缺口尚未具体化). 之前 _get_metacog_block_registry
+                    # 定义了但从不调用, 阻塞-新机制重启协议完全未接入主循环.
+                    try:
+                        _block_reg = self._get_metacog_block_registry()
+                        _dominant = self._metacog_dominant_family()
+                        if _dominant:
+                            _block_reg.block(
+                                method_family=_dominant,
+                                block_reason=(
+                                    f"搜索空间坍缩: 连通分量 {self.hypothesis_graph.component_count()} "
+                                    f"< 下限 {floor}, 且无重定向目标"
+                                ),
+                            )
+                    except Exception:
+                        logger.debug("block_registry register skipped (non-fatal)", exc_info=True)
                 if self._speculator_hint:
                     self._speculator_hint = f"{self._speculator_hint}\n{hint}"
                 else:
@@ -2425,6 +2441,23 @@ class AutoloopEngine(PlanCheckMixin, MathValidationMixin, VisualInspectMixin, Co
             return reps
         except Exception:
             return []
+
+    def _metacog_dominant_family(self) -> str:
+        """当前占主导地位的方法族名 (节点数最多的分量代表).
+
+        BlockRegistry 标记阻塞路线时用 — 坍缩场景下谁占主导就标记谁.
+        出错返回空串, 调用方按 advisory 处理.
+        """
+        try:
+            components = self.hypothesis_graph.connected_components()
+            if not components:
+                return ""
+            # 取最大分量的代表
+            largest = max(components, key=len)
+            rep = self.hypothesis_graph.component_representative(largest)
+            return rep or ""
+        except Exception:
+            return ""
 
     # P3 slim-down: _metacog_classify_family 已下沉到 HypothesisMixin (hypothesis_loop.py).
 

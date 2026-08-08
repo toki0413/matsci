@@ -75,10 +75,6 @@ class Event:
     stop_propagation: bool = False
     data: dict[str, Any] = field(default_factory=dict)
 
-    def stop(self) -> None:
-        """让事件分发跳过后续低优先级 handler。"""
-        self.stop_propagation = True
-
 
 # ── 具体事件类型 ────────────────────────────────────────────────────
 # 不为每个 EventType 都造子类, 只为高频/需要强类型的造。

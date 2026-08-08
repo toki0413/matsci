@@ -132,7 +132,8 @@ class BornStabilityChecker:
                 "error": (
                     f"Born criteria for {crystal_system} not implemented; "
                     f"cannot judge stability. "
-                    f"Implemented: cubic, hexagonal, orthorhombic, triclinic. "
+                    f"Implemented: cubic, hexagonal, tetragonal, trigonal, "
+                    f"orthorhombic, monoclinic, triclinic. "
                     f"See Mouhat & Coudert PRB 90, 224104 (2014) for full table."
                 ),
                 "crystal_system": crystal_system,
@@ -320,4 +321,112 @@ class BornStabilityChecker:
                 for name, val, th, passed in criteria
             ],
             "crystal_system": "triclinic",
+        }
+
+    @classmethod
+    def _check_tetragonal(cls, C: np.ndarray) -> dict:
+        """Born criteria for tetragonal crystals.
+
+        Ref: Mouhat & Coudert, PRB 90, 224104 (2014), Eq. (64).
+        Voigt notation (6x6): C11=C22, C13=C23, C44=C55, C16=C26=-C45 etc.
+        Simplified for standard tetragonal (class 4/mmm, 6 indep. constants):
+            C11 > 0, C33 > 0, C44 > 0, C66 > 0,
+            C11 - C12 > 0, C11 + C12 > 0,
+            (C11 + C12) * C33 > 2 * C13^2
+        """
+        C11, C12, C13, C33, C44, C66 = (
+            C[0, 0], C[0, 1], C[0, 2], C[2, 2], C[3, 3], C[5, 5],
+        )
+        criteria = [
+            ("C11 > 0", C11, 0, C11 > 0),
+            ("C33 > 0", C33, 0, C33 > 0),
+            ("C44 > 0", C44, 0, C44 > 0),
+            ("C66 > 0", C66, 0, C66 > 0),
+            ("C11 - C12 > 0", C11 - C12, 0, C11 - C12 > 0),
+            ("C11 + C12 > 0", C11 + C12, 0, C11 + C12 > 0),
+            (
+                "(C11+C12)*C33 > 2*C13^2",
+                (C11 + C12) * C33, 2 * C13**2,
+                (C11 + C12) * C33 > 2 * C13**2,
+            ),
+        ]
+        stable = all(p for _, _, _, p in criteria)
+        return {
+            "stable": stable,
+            "criteria": [
+                {"name": n, "value": float(v), "threshold": float(t), "passed": p}
+                for n, v, t, p in criteria
+            ],
+            "crystal_system": "tetragonal",
+        }
+
+    @classmethod
+    def _check_trigonal(cls, C: np.ndarray) -> dict:
+        """Born criteria for trigonal crystals (class 3m, 7 indep. constants).
+
+        Ref: Mouhat & Coudert, PRB 90, 224104 (2014), Eq. (59).
+        For trigonal with 7 independent constants (C11, C12, C13, C14, C33, C44, C66):
+            C11 > 0, C33 > 0, C44 > 0, C66 > 0,
+            C11 - C12 > 0,
+            (C11 + C12) * C33 > 2 * C13^2,
+            (C11 - C12) * (C11 + C12 + C33) + 2*C13^2 > 2*C14^2 * (C11 + C12)
+        The last condition simplifies for the standard case; we use the
+        necessary conditions plus the hexagonal-style sufficiency check.
+        """
+        C11, C12, C13, C14, C33, C44, C66 = (
+            C[0, 0], C[0, 1], C[0, 2], C[0, 3], C[2, 2], C[3, 3], C[5, 5],
+        )
+        criteria = [
+            ("C11 > 0", C11, 0, C11 > 0),
+            ("C33 > 0", C33, 0, C33 > 0),
+            ("C44 > 0", C44, 0, C44 > 0),
+            ("C66 > 0", C66, 0, C66 > 0),
+            ("C11 - C12 > 0", C11 - C12, 0, C11 - C12 > 0),
+            ("C11 + C12 > 0", C11 + C12, 0, C11 + C12 > 0),
+            (
+                "(C11+C12)*C33 > 2*C13^2",
+                (C11 + C12) * C33, 2 * C13**2,
+                (C11 + C12) * C33 > 2 * C13**2,
+            ),
+            # C14 coupling term: must be small relative to shear stiffness
+            (
+                "(C11-C12)*(C11+C12) > 2*C14^2",
+                (C11 - C12) * (C11 + C12), 2 * C14**2,
+                (C11 - C12) * (C11 + C12) > 2 * C14**2,
+            ),
+        ]
+        stable = all(p for _, _, _, p in criteria)
+        return {
+            "stable": stable,
+            "criteria": [
+                {"name": n, "value": float(v), "threshold": float(t), "passed": p}
+                for n, v, t, p in criteria
+            ],
+            "crystal_system": "trigonal",
+        }
+
+    @classmethod
+    def _check_monoclinic(cls, C: np.ndarray) -> dict:
+        """Born criteria for monoclinic crystals (13 indep. constants).
+
+        Ref: Mouhat & Coudert, PRB 90, 224104 (2014), Eq. (70).
+        For monoclinic (2/m, b-axis unique), the full necessary and sufficient
+        conditions are complex. We use the leading principal minors approach
+        (Sylvester's criterion applied to the full 6x6 stiffness matrix),
+        which is necessary and sufficient for positive definiteness.
+        """
+        criteria = []
+        for k in range(1, 7):
+            minor = np.linalg.det(C[:k, :k])
+            criteria.append((f"M{k} > 0", minor, 0, minor > 0))
+        # Also check all upper-left block determinants are positive
+        # (this is the standard Sylvester criterion for symmetric matrices)
+        stable = all(p for _, _, _, p in criteria)
+        return {
+            "stable": stable,
+            "criteria": [
+                {"name": n, "value": float(v), "threshold": float(t), "passed": p}
+                for n, v, t, p in criteria
+            ],
+            "crystal_system": "monoclinic",
         }

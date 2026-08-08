@@ -93,6 +93,8 @@ include = ["huginn*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+# --cov-fail-under is NOT set here: CI passes --cov-fail-under=60 explicitly
+# (see .github/workflows/ci.yml). Local runs use [tool.coverage.report].fail_under.
 addopts = "--cov=huginn --cov-report=term-missing"
 markers = [
     "integration: heavy tests that need full stack (skip on fast CI)",
@@ -186,9 +188,9 @@ omit = [
 ]
 
 [tool.coverage.report]
-# Coverage gate is set via pytest --cov-fail-under flag, not here.
-# This is 0 so CI (without heavy deps) doesn't fail on coverage.
-fail_under = 0
+# Coverage gate: aligns with CI's --cov-fail-under=60.
+# Local `pytest` (without explicit --cov-fail-under) uses this value.
+fail_under = 60
 show_missing = true
 skip_covered = false
 exclude_lines = [
@@ -197,6 +199,9 @@ exclude_lines = [
     "raise AssertionError",
     "raise NotImplementedError",
     "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "@abstractmethod",
+    "\\.\\.\\.",  # protocol/body-less methods
 ]
 
 [dependency-groups]

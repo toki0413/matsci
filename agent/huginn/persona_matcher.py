@@ -116,11 +116,17 @@ class PersonaMatcher:
 def match_persona_for_query(
     query: str,
     manager: PersonaManager | None = None,
-    score_threshold: float = 0.25,
+    *,
+    top_k: int = 1,
+    score_threshold: float = 0.15,
 ) -> str | None:
-    """Return the best-matching persona name, or None if no match is strong enough."""
+    """便捷封装: 返回最匹配的 persona 名称, 无匹配返回 None.
+
+    PersonaMatcher.match() 的薄包装, 给只需要 "查一下用哪个 persona"
+    的调用方用. 语义: match() 返回空列表 → None; 否则返回第一个结果的 name.
+    """
     matcher = PersonaMatcher(manager=manager)
-    results = matcher.match(query, top_k=1, score_threshold=score_threshold)
+    results = matcher.match(query, top_k=top_k, score_threshold=score_threshold)
     if not results:
         return None
     return results[0][0].name
