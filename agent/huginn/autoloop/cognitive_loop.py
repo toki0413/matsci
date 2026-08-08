@@ -3706,6 +3706,44 @@ def metacog_check_topology_collapse(
     return {"collapsed": False, "diversity_score": 1.0, "reason": None}
 
 
+def metacog_check_selection_bias(
+    observations: list | None = None,
+    hint: str | None = None,
+) -> dict:
+    """RCB / autoloop 可直接调用的选择偏差检测. 返回检测结果.
+
+    返回 {
+        "biased": bool,
+        "bias_type": str,   # closed_outcome / single_group / unbalanced_group / ""
+        "n": int,
+        "reason": str | None,
+        "hint": str,        # 命中时给 agent 的可读提示
+    }
+
+    喂一组观察记录 (每条可带 outcome / group 字段), 检测样本是否系统性缺了
+    一类 (幸存者偏差 / 隐藏子群体). 无 observations 或不足以判定时返回不命中.
+
+    ponytail: 委托 metacog.selection_bias.detect_selection_bias, 纯启发式.
+    hint 传入时 (调用方已持有独立 hint) 直接透出, 否则用 detect 给的内置 hint.
+    """
+    if not observations:
+        return {"biased": False, "bias_type": "", "n": 0,
+                "reason": None, "hint": hint or ""}
+    try:
+        from huginn.metacog.selection_bias import detect_selection_bias
+        v = detect_selection_bias(observations)
+        return {
+            "biased": v.biased,
+            "bias_type": v.bias_type,
+            "n": v.n,
+            "reason": v.hint if v.biased else None,
+            "hint": hint or v.hint,
+        }
+    except Exception as exc:
+        return {"biased": False, "bias_type": "", "n": 0,
+                "reason": f"selection bias 检测异常: {exc}", "hint": hint or ""}
+
+
 def _selfcheck_rcb_feedback() -> None:
     """RCB 顶层认知反馈函数的最小自检 — assert-based, 无框架无 fixture."""
     # darwin_ratchet_check: continue / pivot / counterexample / stop 四路
@@ -3758,6 +3796,26 @@ def _selfcheck_rcb_feedback() -> None:
         type("H", (), {"statement": "c"})(),
     ])
     assert r6["collapsed"] is False and r6["diversity_score"] == 1.0
+
+    # metacog_check_selection_bias: 命中 / 不命中 / 空 / 异常
+    r7 = metacog_check_selection_bias()
+    assert r7["biased"] is False and r7["n"] == 0
+    r8 = metacog_check_selection_bias(
+        [{"outcome": "survived"} for _ in range(5)]
+    )
+    assert r8["biased"] is True and r8["bias_type"] == "closed_outcome"
+    assert r8["hint"] and "selection bias" in r8["hint"]
+    r9 = metacog_check_selection_bias(
+        [{"outcome": "a", "group": "z"}] * 2 + [{"outcome": "b", "group": "z"}] * 2
+    )
+    assert r9["biased"] is True and r9["bias_type"] == "single_group"
+    r10 = metacog_check_selection_bias(
+        [{"outcome": "a", "group": "z1"}] * 3 + [{"outcome": "b", "group": "z2"}] * 3
+    )
+    assert r10["biased"] is False
+    # hint 透传
+    r11 = metacog_check_selection_bias([{"outcome": "x"}], hint="custom hint")
+    assert r11["hint"] == "custom hint"
     print("rcb_feedback selfcheck ok")
 
 
