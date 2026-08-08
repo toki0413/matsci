@@ -19,14 +19,18 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import os
 import sys
 import threading
+import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from huginn.utils.common import now_iso
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -195,9 +199,24 @@ class PlanStore:
             for row in data.get("plans", []):
                 plan = Plan.from_dict(row)
                 self._plans[plan.id] = plan
-        except (json.JSONDecodeError, TypeError, KeyError, OSError):
-            # corrupt file or lock failure — start fresh, don't crash
-            pass
+        except (json.JSONDecodeError, TypeError, KeyError, OSError) as exc:
+            # corrupt file or lock failure — 备份损坏文件再 start fresh.
+            # 之前直接 pass 会静默吞掉全部 plan 历史, 事后归因无证据.
+            corrupt_backup = self._path.with_name(
+                f"{self._path.name}.corrupt.{int(time.time())}"
+            )
+            try:
+                with _file_lock(self._path):
+                    os.replace(str(self._path), str(corrupt_backup))
+                logger.warning(
+                    "plan_store %s corrupt (%s); backed up to %s, starting fresh",
+                    self._path, exc, corrupt_backup,
+                )
+            except OSError:
+                logger.warning(
+                    "plan_store %s corrupt (%s); backup failed, starting fresh",
+                    self._path, exc,
+                )
 
     def _save(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
