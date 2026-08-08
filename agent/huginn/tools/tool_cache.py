@@ -339,7 +339,6 @@ def cacheable(
 
     def decorator(func: Callable) -> Callable:
         is_async = asyncio.iscoroutinefunction(func)
-        cache = ToolCache.shared()
         tname = tool_name or getattr(func, "__qualname__", "").split(".")[0]
 
         def _build_key(args: tuple, kwargs: dict) -> tuple | None:
@@ -358,6 +357,7 @@ def cacheable(
         async def async_wrapper(*args, **kwargs):
             ckey = _build_key(args, kwargs)
             if ckey is not None:
+                cache = ToolCache.shared()
                 hit = cache.get(ckey)
                 if hit is not None:
                     logger.debug("cacheable hit: %s", tname)
@@ -366,6 +366,7 @@ def cacheable(
             if ckey is not None:
                 payload = _extract(result)
                 if payload is not None:
+                    cache = ToolCache.shared()
                     cache.set(ckey, payload, ttl=ttl_seconds)
             return result
 
@@ -373,6 +374,7 @@ def cacheable(
         def sync_wrapper(*args, **kwargs):
             ckey = _build_key(args, kwargs)
             if ckey is not None:
+                cache = ToolCache.shared()
                 hit = cache.get(ckey)
                 if hit is not None:
                     logger.debug("cacheable hit: %s", tname)
@@ -381,6 +383,7 @@ def cacheable(
             if ckey is not None:
                 payload = _extract(result)
                 if payload is not None:
+                    cache = ToolCache.shared()
                     cache.set(ckey, payload, ttl=ttl_seconds)
             return result
 
