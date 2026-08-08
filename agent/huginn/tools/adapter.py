@@ -118,9 +118,28 @@ def _default_audit_logger() -> AuditLogger:
 _HEALTH_MONITOR_ON = os.environ.get("HUGINN_HEALTH_MONITOR", "0") == "1"
 
 
+def _is_heavy_tool(tool_name: str) -> bool:
+    """判断是否为重型/sim 工具. 这类工具失败代价高 (DFT 跑 24h 才发现挂了),
+    应默认受熔断保护, 不受全局 HUGINN_HEALTH_MONITOR=0 影响."""
+    try:
+        from huginn.agents.tool_call_router import HEAVY_TOOLS
+
+        if tool_name in HEAVY_TOOLS:
+            return True
+    except Exception:
+        pass
+    # 兜底: 常见 sim 工具名硬编码, 防 HEAVY_TOOLS 表未重建时漏判.
+    return tool_name in {
+        "vasp_tool", "lammps_tool", "gaussian_tool", "orca_tool",
+        "qe_tool", "cp2k_tool", "comsol_tool", "abaqus_tool",
+        "openfoam_tool", "fenics_tool", "gromacs_tool",
+    }
+
+
 def _breaker_blocked(tool_name: str) -> dict[str, Any] | None:
     """熔断器开着就返回错误 dict，没装或放行返回 None。"""
-    if not _HEALTH_MONITOR_ON:
+    # 全局开关关时, 仍对 heavy/sim 工具生效 — 这类工具连续失败代价过高.
+    if not _HEALTH_MONITOR_ON and not _is_heavy_tool(tool_name):
         return None
     try:
         from huginn.agents.circuit_breaker import CircuitBreaker
@@ -146,7 +165,7 @@ def _record_outcome(
     error: str | None = None,
 ) -> None:
     """工具执行完记一笔到熔断器 + 仪表盘，best-effort 不抛。"""
-    if not _HEALTH_MONITOR_ON:
+    if not _HEALTH_MONITOR_ON and not _is_heavy_tool(tool_name):
         return
     try:
         from huginn.agents.circuit_breaker import CircuitBreaker
@@ -524,6 +543,10 @@ class ToolAdapter:
 
             # Pass through resolution requests so the agent loop can ask the user.
             if result.metadata.get("needs_resolution"):
+                data["metadata"] = result.metadata
+            # 透传 mock 标记: sim 工具可执行文件缺失时返回 success=True 的假数据,
+            # 下游 dedupe/telemetry 需据此识别并跳过缓存. 参见 tool_dedupe._is_mock_result.
+            if result.metadata.get("mock") is True:
                 data["metadata"] = result.metadata
 
             data = _sanitize_and_compress(data)

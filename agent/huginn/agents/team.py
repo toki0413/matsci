@@ -19,11 +19,14 @@ from __future__ import annotations
 import asyncio
 import enum
 import json
+import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any
 
 from huginn.models.registry import ModelCaps, get_model_capabilities
+
+logger = logging.getLogger(__name__)
 
 
 class TeamRole(enum.StrEnum):
@@ -385,16 +388,25 @@ class ModelTeam:
                 member = self.members.get(step.role)
                 if member is None:
                     return step.id, ""
-                dep_text = "\n".join(
-                    f"{dep}: {results[dep]}"
-                    for dep in step.depends_on
-                    if dep in results
-                )
-                task = step.task
-                if dep_text:
-                    task = f"{task}\n\nContext from previous steps:\n{dep_text}"
-                output = await self._run_member(member, task, ctx, traces)
-                return step.id, output
+                try:
+                    dep_text = "\n".join(
+                        f"{dep}: {results[dep]}"
+                        for dep in step.depends_on
+                        if dep in results
+                    )
+                    task = step.task
+                    if dep_text:
+                        task = f"{task}\n\nContext from previous steps:\n{dep_text}"
+                    output = await self._run_member(member, task, ctx, traces)
+                    return step.id, output
+                except Exception as exc:
+                    # 失败隔离: 单个 member 异常不应团灭整个并行 batch.
+                    # 与 parallel_executor._run_one / swarm.run_one 对齐.
+                    logger.warning(
+                        "team run_one step=%s failed (isolated): %s",
+                        step.id, exc, exc_info=True,
+                    )
+                    return step.id, f"[ERROR] step {step.id} failed: {exc}"
 
             batch = await asyncio.gather(*(run_one(s) for s in ready))
             for step_id, output in batch:

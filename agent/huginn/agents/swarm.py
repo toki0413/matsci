@@ -233,16 +233,27 @@ class HuginnSwarm:
                 if not worker:
                     return step.id, ""
                 # Build input using outputs from dependencies.
-                dep_text = "\n".join(
-                    f"{dep}: {results[dep]}"
-                    for dep in step.depends_on
-                    if dep in results
-                )
-                task = step.task
-                if dep_text:
-                    task = f"{task}\n\nContext from previous steps:\n{dep_text}"
-                output = await self._run_agent(worker, task, ctx)
-                return step.id, output
+                try:
+                    dep_text = "\n".join(
+                        f"{dep}: {results[dep]}"
+                        for dep in step.depends_on
+                        if dep in results
+                    )
+                    task = step.task
+                    if dep_text:
+                        task = f"{task}\n\nContext from previous steps:\n{dep_text}"
+                    output = await self._run_agent(worker, task, ctx)
+                    return step.id, output
+                except Exception as exc:
+                    # 失败隔离: 单个 sub-agent 异常不应团灭整个并行 batch.
+                    # 与 parallel_executor._run_one 的 try/except 对齐. 之前
+                    # asyncio.gather 会 propagate 异常杀死整批, 导致一个
+                    # RateLimitError 让 plan 后续步骤全死.
+                    logger.warning(
+                        "swarm run_one step=%s failed (isolated): %s",
+                        step.id, exc, exc_info=True,
+                    )
+                    return step.id, f"[ERROR] step {step.id} failed: {exc}"
 
             batch_results = await asyncio.gather(*(run_one(s) for s in ready))
             for step_id, output in batch_results:

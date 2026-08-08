@@ -42,6 +42,28 @@ def _args_hash(args: Any) -> str:
     return hashlib.sha256(s.encode("utf-8")).hexdigest()[:16]
 
 
+def _is_mock_result(result: Any) -> bool:
+    """判断工具结果是否为 mock 假数据.
+
+    sim 工具 (vasp/gaussian/orca) 在可执行文件缺失时返回 success=True 但 data.status="mock"
+    的假数据. 这类结果不应被 dedupe 缓存, 否则同 step 内 LLM 重试会直接命中假数据.
+    """
+    if not isinstance(result, dict):
+        return False
+    # data 字段可能是 dict 或已展开
+    data = result.get("data")
+    if isinstance(data, dict) and data.get("status") == "mock":
+        return True
+    # 顶层 metadata 打的 mock 标记 (新版 sim 工具会带)
+    metadata = result.get("metadata")
+    if isinstance(metadata, dict) and metadata.get("mock") is True:
+        return True
+    # 顶层直接展开的情况
+    if result.get("status") == "mock":
+        return True
+    return False
+
+
 class ToolDeduper:
     """同一 step 内的工具调用去重. 命中即返回上一次结果.
 
@@ -103,6 +125,11 @@ class ToolDeduper:
         """记录一次工具调用结果. 后续同 (tool, args) lookup 会命中."""
         # 只缓存成功结果, 错误结果不缓存 (让 LLM 重试)
         if isinstance(result, dict) and result.get("error"):
+            return
+        # mock 结果不缓存: sim 工具在可执行文件缺失时返回 success=True 的假数据,
+        # 缓存它会让同 step 内重试直接返回假数据, 剥夺 LLM 修正机会. 参见
+        # vasp_tool._mock_result / gaussian_tool._mock_result / orca_tool._mock_result.
+        if _is_mock_result(result):
             return
         key = (tool_name, _args_hash(args))
         with self._lock:
