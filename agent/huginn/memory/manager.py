@@ -176,7 +176,10 @@ class MemoryManager:
     ) -> str:
         """Format recalled memories for injection into LLM prompt."""
         results = self.recall(
-            query, top_k=max_entries, material_filter=material_filter, since=since,
+            query,
+            top_k=max_entries,
+            material_filter=material_filter,
+            since=since,
         )
 
         # M: typed memory 叠加在 FTS5 之上. 按 memory_type 优先级拉结构化记录,
@@ -211,7 +214,11 @@ class MemoryManager:
                     tag_list = raw_tags
                 else:
                     tag_list = []
-                contradicts = [t for t in tag_list if isinstance(t, str) and t.startswith("contradicts:")]
+                contradicts = [
+                    t
+                    for t in tag_list
+                    if isinstance(t, str) and t.startswith("contradicts:")
+                ]
                 if contradicts:
                     ids = ", ".join(t.split(":", 1)[1] for t in contradicts[:3])
                     conflict_warn = f" [WARNING: conflicts with {ids}]"
@@ -236,9 +243,7 @@ class MemoryManager:
 
         return "\n\n".join(blocks) if blocks else ""
 
-    def _recent_tool_results_block(
-        self, limit: int = 3, max_chars: int = 200
-    ) -> str:
+    def _recent_tool_results_block(self, limit: int = 3, max_chars: int = 200) -> str:
         """格式化 session 内最近成功的 tool_calls 成 prompt 块.
 
         只取最近 ``limit`` 条 tool_call, 再过滤 success=True; result 序列化后
@@ -316,7 +321,9 @@ class MemoryManager:
             )
             if entries:
                 entry = entries[0]
-                content = entry.get("content", "") if isinstance(entry, dict) else str(entry)
+                content = (
+                    entry.get("content", "") if isinstance(entry, dict) else str(entry)
+                )
                 # try to extract l1_coordinates from tags or content
                 l1_coords = ""
                 if isinstance(entry, dict):
@@ -328,7 +335,9 @@ class MemoryManager:
                                 break
                 return {
                     "summary": content,
-                    "session_id": entry.get("source", "") if isinstance(entry, dict) else "",
+                    "session_id": (
+                        entry.get("source", "") if isinstance(entry, dict) else ""
+                    ),
                     "l1_coordinates": l1_coords,
                 }
         except Exception:
@@ -366,7 +375,9 @@ class MemoryManager:
             if not entries:
                 return None
             entry = entries[0] if isinstance(entries, list) else entries
-            content = entry.get("content", "") if isinstance(entry, dict) else str(entry)
+            content = (
+                entry.get("content", "") if isinstance(entry, dict) else str(entry)
+            )
             return json.loads(content)
         except Exception:
             logger.debug("load_session_snapshot failed", exc_info=True)
@@ -385,10 +396,7 @@ class MemoryManager:
         Lets the next session pick up where we left off — the agent can
         recall 'you were on step 2 of 3 for the GaN band structure calc.'
         """
-        content = (
-            f"Plan: {objective} | "
-            f"Step: {step_index} | Status: {status}"
-        )
+        content = f"Plan: {objective} | " f"Step: {step_index} | Status: {status}"
         if l1_coordinates:
             content += f" | Position: {l1_coordinates}"
         return self.longterm.store(
@@ -431,7 +439,11 @@ class MemoryManager:
                     return {
                         "plan_id": plan_id,
                         "objective": parts.get("plan", ""),
-                        "step_index": int(parts.get("step", "0")) if parts.get("step", "").isdigit() else 0,
+                        "step_index": (
+                            int(parts.get("step", "0"))
+                            if parts.get("step", "").isdigit()
+                            else 0
+                        ),
                         "status": parts.get("status", ""),
                         "l1_coordinates": parts.get("position", ""),
                         "content": content,
@@ -441,6 +453,23 @@ class MemoryManager:
         return None
 
     # --- Session promotion ---
+
+    def promote_tool_result(self, tool_name: str, tool_result: dict) -> None:
+        """Promote a tool result dict to long-term memory (public API).
+
+        与 _promote_tool_result(ToolCallRecord) 不同, 这个方法接收原始 dict,
+        便于外部直接晋升结果而无需构造 ToolCallRecord.
+        """
+        result_json = json.dumps(tool_result, default=str)[:500]
+        content = f"{tool_name}: {result_json}"
+        self.longterm.store(
+            content=content,
+            category="calculation",
+            tags=[tool_name, "auto_promoted"],
+            source=f"session:{self.session.session_id}",
+            importance=self.config.promotion_importance_threshold,
+            tier="mid",
+        )
 
     def _promote_tool_result(self, record: ToolCallRecord) -> None:
         """Promote a successful computational result to long-term memory."""
@@ -481,9 +510,7 @@ class MemoryManager:
         if record.result.success:
             self._verify_distilled_for_tool(record.tool_name, content)
 
-    def _verify_distilled_for_tool(
-        self, tool_name: str, result_content: str
-    ) -> None:
+    def _verify_distilled_for_tool(self, tool_name: str, result_content: str) -> None:
         """Upgrade verification_status of distilled knowledge related to a
         successful tool call.
 
@@ -627,7 +654,9 @@ class MemoryManager:
                 "session_id": self.session.session_id,
                 "tool_input": tc.input_args if isinstance(tc.input_args, dict) else {},
                 "error_message": "",
-                "software": tc.tool_name.replace("_tool", "") if tc.tool_name else "general",
+                "software": (
+                    tc.tool_name.replace("_tool", "") if tc.tool_name else "general"
+                ),
                 "calculation_type": "general",
             }
             if not success and tc.result and tc.result.error:
@@ -790,6 +819,7 @@ class MemoryManager:
         # 原子写: 主题文件被半截写会让 recall_typed 读到残缺内容.
         # ponytail: read-modify-write 本身的并发一致性需要文件锁, 不在这次修复范围.
         from huginn.utils.concurrency import atomic_write_text
+
         if not topic_file.exists():
             atomic_write_text(topic_file, header + content + "\n")
             return topic_file
@@ -797,9 +827,7 @@ class MemoryManager:
         # 跳过重复内容，避免主题文件无限膨胀
         if content in existing:
             return topic_file
-        atomic_write_text(
-            topic_file, existing.rstrip() + "\n\n" + content + "\n"
-        )
+        atomic_write_text(topic_file, existing.rstrip() + "\n\n" + content + "\n")
         return topic_file
 
     def recall_typed(
@@ -897,6 +925,7 @@ class MemoryManager:
     ) -> str:
         """写 typed memory. 透传到 typing.remember_typed."""
         from huginn.memory.typing import remember_typed as _remember_typed
+
         return _remember_typed(
             self,
             content=content,
@@ -921,6 +950,7 @@ class MemoryManager:
     ) -> str:
         """记录失败方向. 透传到 typing.record_failed_direction."""
         from huginn.memory.typing import record_failed_direction as _rfd
+
         return _rfd(
             self,
             hypothesis_text=hypothesis_text,
@@ -937,6 +967,7 @@ class MemoryManager:
     ) -> list[tuple[str, str, str]]:
         """查最近失败方向. 透传到 typing.recall_failed_directions."""
         from huginn.memory.typing import recall_failed_directions as _rfd
+
         return _rfd(self, limit=limit, persona_id=persona_id)
 
     def _update_typed_fields(
@@ -954,6 +985,7 @@ class MemoryManager:
         覆盖已存在的值.
         """
         from datetime import datetime
+
         with self.longterm._connect() as conn:
             sets: list[str] = []
             params: list[Any] = []
@@ -1001,6 +1033,7 @@ class MemoryManager:
         跟 FTS5 合并到同一 SQL JOIN.
         """
         from datetime import datetime
+
         results: list[dict] = []
         now = datetime.now().isoformat()
         with self.longterm._connect() as conn:
@@ -1054,10 +1087,7 @@ class MemoryManager:
             sql += " AND status = ?"
             params.append(status)
         # alive 过滤: 排除 expired + archived
-        sql += (
-            " AND (m.expires_at IS NULL OR m.expires_at > ?)"
-            " AND m.archived = 0"
-        )
+        sql += " AND (m.expires_at IS NULL OR m.expires_at > ?)" " AND m.archived = 0"
         params.append(datetime.now().isoformat())
         sql += " ORDER BY m.last_accessed DESC LIMIT ?"
         params.append(limit)
@@ -1129,6 +1159,7 @@ class MemoryManager:
         path=sessions/{session_id}/intuitions, hypothesis 阶段可拉回做 hint.
         """
         from huginn.memory.intuition import capture
+
         return capture(self, message, self.session.session_id)
 
     # ── Prospective memory (第 5 类: 记未来要做的事) ───────────────
@@ -1156,6 +1187,7 @@ class MemoryManager:
         list[ProspectiveIntention], 空列表表示无触发或失败.
         """
         from huginn.memory.prospective import ProspectiveMemory
+
         try:
             _pm = ProspectiveMemory(workspace=self._prospective_workspace())
             return _pm.scan_and_fire(current_state)
@@ -1170,6 +1202,7 @@ class MemoryManager:
         失败返回空串.
         """
         from huginn.memory.prospective import ProspectiveMemory, ProspectiveIntention
+
         try:
             _pm = ProspectiveMemory(workspace=self._prospective_workspace())
             if isinstance(intention, dict):
@@ -1237,6 +1270,7 @@ class MemoryManager:
         # 蒸馏成 STABLE_PRINCIPLE (avoid persona X for math concept Y).
         # flag off 回退原 episodic 蒸馏路径.
         import os as _os
+
         if _os.environ.get("HUGINN_USE_EVOLUTION_MANAGER", "1") == "1":
             try:
                 from huginn.evolution.manager import EvolutionManager
@@ -1244,9 +1278,7 @@ class MemoryManager:
                 em = EvolutionManager.shared(self)
                 em.distill()
             except Exception:
-                logger.warning(
-                    "EvolutionManager.distill failed", exc_info=True
-                )
+                logger.warning("EvolutionManager.distill failed", exc_info=True)
         return principle
 
     def recall_procedural(self, query: str, top_k: int = 3) -> list[str]:
@@ -1304,11 +1336,13 @@ def _selfcheck_promote_reasoning() -> None:
         "选 ENCUT=520 因为收敛测试显示 400 不够",
         "排除 LDA, 用 PBE",
     ]
-    mm._promote_tool_result(ToolCallRecord(
-        tool_name="vasp_tool",
-        input_args={},
-        result=ToolResult(data={"energy": -3.5, "converged": True}, success=True),
-    ))
+    mm._promote_tool_result(
+        ToolCallRecord(
+            tool_name="vasp_tool",
+            input_args={},
+            result=ToolResult(data={"energy": -3.5, "converged": True}, success=True),
+        )
+    )
     rows = ltm.retrieve(query="energy", top_k=5, semantic=False)
     assert rows, "场景 A: promote 后应能 retrieve 到"
     a = rows[0]
@@ -1320,18 +1354,20 @@ def _selfcheck_promote_reasoning() -> None:
 
     # 场景 B: 无 reasoning_trace (空 list, 走原格式)
     mm.session.reasoning_trace = []
-    mm._promote_tool_result(ToolCallRecord(
-        tool_name="lammps_tool",
-        input_args={},
-        result=ToolResult(data={"diffusivity": 1e-9}, success=True),
-    ))
+    mm._promote_tool_result(
+        ToolCallRecord(
+            tool_name="lammps_tool",
+            input_args={},
+            result=ToolResult(data={"diffusivity": 1e-9}, success=True),
+        )
+    )
     rows_b = ltm.retrieve(query="diffusivity", top_k=5, semantic=False)
     assert rows_b, "场景 B: promote 后应能 retrieve 到"
     b = rows_b[0]
     assert "[REASONING]" not in b["content"], "场景 B: 不应含 [REASONING] block"
-    assert b["content"].startswith("lammps_tool:"), (
-        f"场景 B: 应走原 tool_name: result 格式, got {b['content'][:40]!r}"
-    )
+    assert b["content"].startswith(
+        "lammps_tool:"
+    ), f"场景 B: 应走原 tool_name: result 格式, got {b['content'][:40]!r}"
     assert "has_reasoning" not in _json.loads(b["tags"]), "场景 B: 不应标 has_reasoning"
     print("B: 无 reasoning → 原格式 + 无 has_reasoning OK")
 
@@ -1343,17 +1379,21 @@ def _selfcheck_promote_reasoning() -> None:
     ltm_c = LongTermMemory(db_path=str(db_c), enable_semantic=False)
     mm_c = MemoryManager(longterm=ltm_c)
     mm_c.session.reasoning_trace = []
-    mm_c._promote_tool_result(ToolCallRecord(
-        tool_name="vasp_tool",
-        input_args={},
-        result=ToolResult(data={"energy": 1.0, "converged": True}, success=True),
-    ))
+    mm_c._promote_tool_result(
+        ToolCallRecord(
+            tool_name="vasp_tool",
+            input_args={},
+            result=ToolResult(data={"energy": 1.0, "converged": True}, success=True),
+        )
+    )
     mm_c.session.reasoning_trace = ["用 PBE 因为 LDA 低估 gap"]
-    mm_c._promote_tool_result(ToolCallRecord(
-        tool_name="vasp_tool",
-        input_args={},
-        result=ToolResult(data={"energy": 2.0, "converged": True}, success=True),
-    ))
+    mm_c._promote_tool_result(
+        ToolCallRecord(
+            tool_name="vasp_tool",
+            input_args={},
+            result=ToolResult(data={"energy": 2.0, "converged": True}, success=True),
+        )
+    )
     rows_c = ltm_c.retrieve(query="energy", top_k=5, semantic=False)
     assert len(rows_c) >= 2, f"场景 C: 应召回 >= 2 条, got {len(rows_c)}"
     top = rows_c[0]
@@ -1508,21 +1548,21 @@ if __name__ == "__main__":
     assert out, "recall_for_prompt should return non-empty string"
 
     # typed 记录都应该出现在结果里
-    assert "Failed Direction" in out, (
-        f"failed_direction should appear in recall_for_prompt, got: {out[:200]}"
-    )
-    assert "iteration_result" in out or "run_m_ir" in out, (
-        f"iteration_result should appear in recall_for_prompt, got: {out[:200]}"
-    )
+    assert (
+        "Failed Direction" in out
+    ), f"failed_direction should appear in recall_for_prompt, got: {out[:200]}"
+    assert (
+        "iteration_result" in out or "run_m_ir" in out
+    ), f"iteration_result should appear in recall_for_prompt, got: {out[:200]}"
 
     # M2: priority 排序 — failed_direction 在 iteration_result 前面
     fd_pos = out.find("Failed Direction")
     ir_pos = out.find("run_m_ir")
     if ir_pos == -1:
         ir_pos = out.find("iteration_result")
-    assert fd_pos != -1 and ir_pos != -1, (
-        f"both typed records should be in output, fd_pos={fd_pos}, ir_pos={ir_pos}"
-    )
+    assert (
+        fd_pos != -1 and ir_pos != -1
+    ), f"both typed records should be in output, fd_pos={fd_pos}, ir_pos={ir_pos}"
     assert fd_pos < ir_pos, (
         f"failed_direction (priority 0) should come before iteration_result (priority 1), "
         f"fd_pos={fd_pos}, ir_pos={ir_pos}"
@@ -1531,35 +1571,34 @@ if __name__ == "__main__":
 
     # M3: FTS5 路径保留 — 普通记录仍能召回
     out_fts = mm_m.recall_for_prompt("GaN formation energy", max_entries=5)
-    assert "GaN formation energy" in out_fts and "VASP" in out_fts, (
-        f"FTS5 path broken: legacy record missing, got: {out_fts[:200]}"
-    )
+    assert (
+        "GaN formation energy" in out_fts and "VASP" in out_fts
+    ), f"FTS5 path broken: legacy record missing, got: {out_fts[:200]}"
     print("M3: FTS5 path preserved OK")
 
     # M4: _recall_typed_for_prompt 不走 lazy-migrate (直接 SQL WHERE memory_type=?)
     # 验证方法: typed 列表里没有 NULL 行 (legacy_id 的 memory_type 是 NULL)
     typed_only = mm_m._recall_typed_for_prompt(max_entries=10)
-    assert len(typed_only) >= 2, (
-        f"expected >= 2 typed records, got {len(typed_only)}"
-    )
+    assert len(typed_only) >= 2, f"expected >= 2 typed records, got {len(typed_only)}"
     for tr in typed_only:
         mt = tr.get("memory_type")
-        assert mt is not None and mt != "", (
-            f"_recall_typed_for_prompt returned non-typed row, memory_type={mt!r}"
-        )
-        assert tr["id"] != legacy_id, (
-            "_recall_typed_for_prompt returned legacy NULL row — not strict WHERE"
-        )
+        assert (
+            mt is not None and mt != ""
+        ), f"_recall_typed_for_prompt returned non-typed row, memory_type={mt!r}"
+        assert (
+            tr["id"] != legacy_id
+        ), "_recall_typed_for_prompt returned legacy NULL row — not strict WHERE"
     # priority 排序在 _recall_typed_for_prompt 里也成立
     types_in_order = [tr["memory_type"] for tr in typed_only]
     if "failed_direction" in types_in_order and "iteration_result" in types_in_order:
-        assert types_in_order.index("failed_direction") < types_in_order.index("iteration_result"), (
-            f"_recall_typed_for_prompt priority broken: {types_in_order}"
-        )
+        assert types_in_order.index("failed_direction") < types_in_order.index(
+            "iteration_result"
+        ), f"_recall_typed_for_prompt priority broken: {types_in_order}"
     print("M4: _recall_typed_for_prompt strict WHERE + priority OK")
 
     # 清理临时 DB
     import shutil
+
     shutil.rmtree(tmpdir_m, ignore_errors=True)
     print("all self-checks passed (distill + M block)")
 
