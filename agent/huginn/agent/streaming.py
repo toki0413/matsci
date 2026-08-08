@@ -21,6 +21,7 @@ from huginn.hooks import (
     HookContext,
     POST_COMPACT,
     PRE_COMPACT,
+    SESSION_END,
     SESSION_START,
     STOP,
     USER_PROMPT_SUBMIT,
@@ -1047,6 +1048,19 @@ class StreamingMixin:
                 logger.debug(
                     "session.start event publish failed (non-fatal)", exc_info=True
                 )
+            # 插件事件: ON_AGENT_BEGIN (之前 EventType 声明了但从不 dispatch).
+            # best-effort, 拿不到 EventBus 就跳过.
+            try:
+                from huginn.api.event import Event, EventType
+                from huginn.plugins.event_bus import EventBus as _PluginBus
+                _bus = _PluginBus()
+                await _bus.dispatch(Event(
+                    type=EventType.ON_AGENT_BEGIN,
+                    plugin_name="",
+                    data={"thread_id": thread_id, "user_message": message[:200]},
+                ))
+            except Exception:
+                logger.debug("ON_AGENT_BEGIN dispatch failed (non-fatal)", exc_info=True)
 
         from huginn.cognitive_engine import TransitionSignal
         if self._turn_count == 0:
@@ -1866,6 +1880,44 @@ class StreamingMixin:
                     await self.hook_manager.trigger(STOP, stop_ctx)
                 except Exception:
                     logger.warning("STOP hook raised", exc_info=True)
+                # SESSION_END hook + session.end 事件 (best-effort).
+                # 之前 SESSION_END 常量和 session.end 事件字符串都声明了但从不
+                # 触发/发布, 双重缺失. 在每轮 finally 收尾补上, 让订阅方能收到
+                # 会话结束信号. 多轮会话每轮都会发, 消费方按 thread_id 去重即可.
+                try:
+                    _se_ctx = HookContext(
+                        tool_name="session",
+                        metadata={
+                            "thread_id": thread_id,
+                            "turn_count": self._turn_count,
+                        },
+                    )
+                    await self.hook_manager.trigger(SESSION_END, _se_ctx)
+                except Exception:
+                    logger.debug("SESSION_END hook raised (non-fatal)", exc_info=True)
+                try:
+                    from huginn.events.integration import publish_session_event_sync
+                    publish_session_event_sync(
+                        "end", thread_id=thread_id,
+                        metadata={"turn_count": self._turn_count},
+                    )
+                except Exception:
+                    logger.debug("session.end publish failed", exc_info=True)
+                # 插件事件: ON_AGENT_DONE (与 ON_AGENT_BEGIN 配对, 之前从不 dispatch).
+                try:
+                    from huginn.api.event import Event, EventType
+                    from huginn.plugins.event_bus import EventBus as _PluginBus
+                    _bus = _PluginBus()
+                    await _bus.dispatch(Event(
+                        type=EventType.ON_AGENT_DONE,
+                        plugin_name="",
+                        data={
+                            "thread_id": thread_id,
+                            "turn_count": self._turn_count,
+                        },
+                    ))
+                except Exception:
+                    logger.debug("ON_AGENT_DONE dispatch failed (non-fatal)", exc_info=True)
                 # Mode-based memory persistence
                 if self.is_research_mode():
                     try:

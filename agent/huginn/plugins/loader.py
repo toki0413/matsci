@@ -86,6 +86,37 @@ class PluginLoader:
         if self.permission_checker is None:
             self.permission_checker = PermissionChecker()
 
+    def _try_dispatch_plugin_event(
+        self, event_type: Any, plugin_name: str, data: dict | None = None,
+    ) -> None:
+        """best-effort dispatch 插件生命周期事件 (ON_PLUGIN_LOADED/UNLOADED).
+
+        同步上下文里 fire-and-forget: 有 running loop 就 ensure_future,
+        没有就用 daemon 线程跑 asyncio.run. 失败静默, 不阻断加载/卸载.
+        之前这两个 EventType 只声明不 dispatch, 插件生命周期监听器收不到.
+        """
+        try:
+            import asyncio
+            import threading
+
+            from huginn.api.event import Event
+            from huginn.plugins.event_bus import EventBus
+
+            ev = Event(type=event_type, plugin_name=plugin_name, data=data or {})
+            bus = self.event_bus if self.event_bus is not None else EventBus()
+            try:
+                asyncio.get_running_loop()
+                asyncio.ensure_future(bus.dispatch(ev))
+            except RuntimeError:
+                def _run() -> None:
+                    try:
+                        asyncio.run(bus.dispatch(ev))
+                    except Exception:
+                        pass
+                threading.Thread(target=_run, daemon=True).start()
+        except Exception:
+            logger.debug("plugin lifecycle event dispatch failed", exc_info=True)
+
     # ── 加载 ─────────────────────────────────────────────────────────
 
     def discover(self) -> list[Path]:
@@ -192,6 +223,13 @@ class PluginLoader:
         )
         logger.info("loaded plugin %s v%s (%d handlers)",
                     meta.name, meta.version, len(metas))
+        # ON_PLUGIN_LOADED: 之前 EventType 声明了但从不 dispatch, 生命周期监听器
+        # 收不到. 加载完成后 best-effort 发一次.
+        from huginn.api.event import EventType
+        self._try_dispatch_plugin_event(
+            EventType.ON_PLUGIN_LOADED, meta.name,
+            data={"version": meta.version, "handlers": len(metas)},
+        )
         return meta
 
     async def load_one_async(self, plugin_dir: str | Path) -> PluginMetadata | None:
@@ -238,6 +276,13 @@ class PluginLoader:
         )
         logger.info("loaded plugin %s v%s (%d handlers)",
                     meta.name, meta.version, len(metas))
+        # ON_PLUGIN_LOADED: 之前 EventType 声明了但从不 dispatch, 生命周期监听器
+        # 收不到. 加载完成后 best-effort 发一次.
+        from huginn.api.event import EventType
+        self._try_dispatch_plugin_event(
+            EventType.ON_PLUGIN_LOADED, meta.name,
+            data={"version": meta.version, "handlers": len(metas)},
+        )
         return meta
 
     # ── 卸载 / 热重载 ───────────────────────────────────────────────
@@ -266,6 +311,11 @@ class PluginLoader:
         mod_name = f"huginn_plugin_{plugin_name}"
         sys.modules.pop(mod_name, None)
         logger.info("unloaded plugin %s", plugin_name)
+        # ON_PLUGIN_UNLOADED: 与 ON_PLUGIN_LOADED 对称, 卸载后 best-effort 发一次.
+        from huginn.api.event import EventType
+        self._try_dispatch_plugin_event(
+            EventType.ON_PLUGIN_UNLOADED, plugin_name,
+        )
         return True
 
     def reload(self, plugin_name: str) -> PluginMetadata | None:
