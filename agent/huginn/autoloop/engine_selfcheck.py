@@ -2730,7 +2730,87 @@ def run_selfcheck() -> None:
     import shutil as _sh8
     _sh8.rmtree(_eng8.workspace, ignore_errors=True)
 
-    print("AutoloopEngine selfcheck OK (1-10 gating + G2 + C5 + C2 + C-budget + 9b/10b H2 + 11-68d + 8a-8h Step8)")
+    # ── E2-1: 通用假设流形接入 core 主循环 ────────────────────────────
+    # 让所有 benchmark (不只 RCB) 都能用后验引导 hint. 用 __new__ 绕过
+    # __init__ (懒加载, 不依赖外部资源). 验证: 观测抽取 + 流形 seed + hint 注入.
+    from huginn.agent.hint_coordinator import (
+        extract_observations as _e2_obs,
+        extract_numeric_targets as _e2_tgt,
+        _build_posterior_guided_hint as _e2_pg,
+    )
+
+    # E2-1-A: 共享观测抽取 — 白名单过滤, 空文本返回空
+    assert _e2_tgt("") == {}, "E2-1-A: 空文本 → 空 dict"
+    _tgt = _e2_tgt("rmse = 0.05 mae: 0.02 year 2026")
+    assert _tgt.get("rmse") == 0.05 and _tgt.get("mae") == 0.02, (
+        f"E2-1-A: 白名单抽取失败, got {_tgt}"
+    )
+    assert "year" not in _tgt, f"E2-1-A: 非白名单 year 不应被抽, got {_tgt}"
+    _obs = _e2_obs("accuracy = 0.9 loss: 0.1")
+    assert len(_obs) == 2, f"E2-1-A: 应抽 2 条观测, got {len(_obs)}"
+    print(f"E2-1-A 共享观测抽取 (白名单 + 去重) OK → {[o.name for o in _obs]}")
+
+    # E2-1-B: 流形懒加载 + seed + 后验 hint 端到端 (走 engine 方法)
+    eng_e2 = AutoloopEngine.__new__(AutoloopEngine)
+    eng_e2._hypo_manifold = None
+    eng_e2._hypo_obs_for_hint = []
+    _ctx_e2 = {"goal": "reproduce Si band gap", "summary": "rmse = 0.05"}
+    _m_e2 = eng_e2._ensure_hypo_manifold(_ctx_e2)
+    assert _m_e2 is not None and len(_m_e2._hyp) == 3, (
+        f"E2-1-B: 流形应 seed 3 个 hypothesis, got "
+        f"{None if _m_e2 is None else len(_m_e2._hyp)}"
+    )
+    # 二次调用走缓存, 不重复 seed
+    assert eng_e2._ensure_hypo_manifold(_ctx_e2) is _m_e2, "E2-1-B: 应缓存"
+    # 后验 hint 能构造 (有观测 + manifold)
+    _pg_e2 = _e2_pg(_m_e2, _e2_obs("rmse = 0.05 mae = 0.02"))
+    assert _pg_e2 and "posterior core hint" in _pg_e2, (
+        f"E2-1-B: 后验 hint 应非空且含 core hint, got {_pg_e2!r}"
+    )
+    print(f"E2-1-B 流形 seed + 后验 hint 端到端 OK → {len(_m_e2._hyp)} hyp")
+
+    # E2-1-C: 无观测 / 空输入 → hint 空串, 不污染 prompt
+    assert _e2_pg(_m_e2, []) == "", "E2-1-C: 无观测 → 空 hint"
+    assert _e2_pg(None, _e2_obs("rmse = 0.05")) == "", "E2-1-C: manifold None → 空 hint"
+    print("E2-1-C 空输入降级 (无观测 / manifold None → 空 hint) OK")
+
+    # E2-1-D: _build_hypothesis_prompt 注入路径 — 有观测时含 Posterior-guided 块
+    eng_e2d = AutoloopEngine.__new__(AutoloopEngine)
+    eng_e2d._hypo_manifold = None
+    eng_e2d._hypo_obs_for_hint = []
+    eng_e2d._speculator_hint = ""
+    eng_e2d._target_chains = []
+    eng_e2d._target_chains_built = True
+    eng_e2d._objective = ""
+    eng_e2d.memory = None
+    eng_e2d._last_visual_context = ""
+    eng_e2d._last_persona = None
+    eng_e2d._simple_qs_conflict = False
+    eng_e2d._pm_state = None
+    eng_e2d._last_traj_match_doc_id = None
+    # 掐掉外部依赖, 让 prompt 只走 E2-1 注入路径
+    eng_e2d._build_kb_text = lambda query: ""
+    eng_e2d._build_kg_text = lambda query: ""
+    eng_e2d._build_memory_text = lambda query, since=None: ""
+    eng_e2d._build_pm_text = lambda: ""
+    eng_e2d._build_episodic_replay_block = lambda context: ""
+    eng_e2d._build_curiosity_block = lambda: ""
+    eng_e2d._build_pmk_block = lambda context: ""
+    eng_e2d._build_metacog_block = lambda include_prospective=True: ""
+    _prompt_e2d = eng_e2d._build_hypothesis_prompt(
+        {"goal": "reproduce", "summary": "rmse = 0.05"}
+    )
+    assert "Posterior-guided" in _prompt_e2d, (
+        f"E2-1-D: 有观测应注入 Posterior-guided 块, got {_prompt_e2d[:200]!r}"
+    )
+    # 无观测 → 不注入, prompt 不崩
+    _prompt_e2d2 = eng_e2d._build_hypothesis_prompt({"goal": "reproduce"})
+    assert "Posterior-guided" not in _prompt_e2d2, (
+        "E2-1-D: 无观测不应注入 Posterior-guided"
+    )
+    print("E2-1-D _build_hypothesis_prompt 注入/降级路径 OK")
+
+    print("AutoloopEngine selfcheck OK (1-10 gating + G2 + C5 + C2 + C-budget + 9b/10b H2 + 11-68d + 8a-8h Step8 + E2-1)")
 
 
 if __name__ == "__main__":
