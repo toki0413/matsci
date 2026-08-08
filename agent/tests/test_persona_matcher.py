@@ -51,9 +51,12 @@ class TestPersonaMatcher:
             system_prompt="Tutor",
             description="Explain materials science concepts",
         )
-        assert match_persona_for_query(
-            "completely unrelated query", manager=manager, score_threshold=1.0
-        ) is None
+        assert (
+            match_persona_for_query(
+                "completely unrelated query", manager=manager, score_threshold=1.0
+            )
+            is None
+        )
 
     def test_name_match_boosts_score(self, manager):
         manager.create(
@@ -89,6 +92,9 @@ class TestRuntimePersonaSwitch:
 
     def test_set_persona_preserves_memory(self):
         agent = HuginnAgent(model=None, tools=[])
-        agent.remember("silicon band gap", category="fact")
+        # Use the underlying memory manager directly — HuginnAgent no longer
+        # exposes remember/recall proxies (removed as dead code).
+        agent.memory.remember("silicon band gap", category="fact")
         agent.set_persona(Persona(name="tutor", system_prompt="You are a tutor."))
-        assert any("silicon" in r["content"] for r in agent.recall("silicon"))
+        results = agent.memory.recall("silicon")
+        assert any("silicon" in r.get("content", "") for r in results)

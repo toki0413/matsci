@@ -120,18 +120,3 @@ class HuginnError(Exception):
             details=self.details,
             status_code=self.status_code,
         )
-
-
-class ToolNotFoundError(HuginnError):
-    code = ErrorCode.TOOL_NOT_FOUND
-    status_code = 404
-
-
-class ToolDeniedError(HuginnError):
-    code = ErrorCode.TOOL_DENIED
-    status_code = 403
-
-
-class RateLimitedError(HuginnError):
-    code = ErrorCode.RATE_LIMITED
-    status_code = 429

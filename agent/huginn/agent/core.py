@@ -17,7 +17,6 @@ from typing import Any
 from langchain_core.messages import SystemMessage
 
 from huginn.agent_config import _UNSET_SENTINEL, AgentConfig
-from huginn.self_improvement import BenchmarkSuite
 from huginn.checkpointer import create_in_memory_checkpointer
 from huginn.context_manager import (
     get_context_window,
@@ -559,100 +558,6 @@ class HuginnAgent(
                 return "google"
         return None
 
-    # ── Factory methods ────────────────────────────────────────────
-
-    @classmethod
-    def from_provider(
-        cls,
-        provider: str,
-        model: str | None = None,
-        api_key: str | None = None,
-        base_url: str | None = None,
-        **kwargs: Any,
-    ) -> HuginnAgent:
-        """Create a HuginnAgent from any supported provider."""
-        # ponytail: preserves the original import/call name mismatch —
-        # create_langchain_model is imported without underscore but called
-        # with one. Not called in tests; fixing it is a separate concern.
-        model_instance = _create_langchain_model(
-            provider=provider,
-            model_name=model,
-            api_key=api_key,
-            base_url=base_url,
-        )
-        return cls(model=model_instance, **kwargs)
-
-    @classmethod
-    def from_anthropic(
-        cls,
-        model: str = "claude-sonnet-4-6",
-        api_key: str | None = None,
-        **kwargs: Any,
-    ) -> HuginnAgent:
-        return cls.from_provider("anthropic", model=model, api_key=api_key, **kwargs)
-
-    @classmethod
-    def from_openai(
-        cls,
-        model: str = "gpt-5.4",
-        api_key: str | None = None,
-        base_url: str | None = None,
-        **kwargs: Any,
-    ) -> HuginnAgent:
-        return cls.from_provider(
-            "openai", model=model, api_key=api_key, base_url=base_url, **kwargs
-        )
-
-    @classmethod
-    def from_ollama(
-        cls,
-        model: str = "qwen2.5:14b",
-        base_url: str = "http://localhost:11434",
-        **kwargs: Any,
-    ) -> HuginnAgent:
-        return cls.from_provider("ollama", model=model, base_url=base_url, **kwargs)
-
-    @classmethod
-    def from_deepseek(
-        cls,
-        model: str = "deepseek-chat",
-        api_key: str | None = None,
-        **kwargs: Any,
-    ) -> HuginnAgent:
-        return cls.from_provider("deepseek", model=model, api_key=api_key, **kwargs)
-
-    @classmethod
-    def from_google(
-        cls,
-        model: str = "gemini-2.5-pro",
-        api_key: str | None = None,
-        **kwargs: Any,
-    ) -> HuginnAgent:
-        return cls.from_provider("google-genai", model=model, api_key=api_key, **kwargs)
-
-    @classmethod
-    def from_evo_config(
-        cls,
-        model_name: str | None = None,
-        provider: str | None = None,
-        **kwargs: Any,
-    ) -> HuginnAgent:
-        try:
-            from EvoScientist.llm.models import get_chat_model
-
-            model = get_chat_model(model=model_name, provider=provider)
-        except ImportError as err:
-            raise ImportError("EvoScientist not installed.") from err
-        return cls(model=model, **kwargs)
-
-    @classmethod
-    def from_model_router(
-        cls,
-        router: ModelRouter,
-        **kwargs: Any,
-    ) -> HuginnAgent:
-        return cls(model_router=router, **kwargs)
-
     @classmethod
     def from_config(
         cls,
@@ -1037,48 +942,6 @@ class HuginnAgent(
     def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
         self.close()
 
-    # ── Benchmark ─────────────────────────────────────────────────
-
-    async def run_benchmark(
-        self,
-        suite: BenchmarkSuite | None = None,
-        store_failures: bool = True,
-    ) -> dict[str, Any]:
-        from huginn.self_improvement import SelfImprovementLoop
-
-        suite = suite or BenchmarkSuite().add_defaults()
-        loop = SelfImprovementLoop(suite=suite, memory_manager=self.memory)
-        return await loop.evaluate(self, store_failures=store_failures)
-
-    # ── Exploration ───────────────────────────────────────────────
-
-    async def explore(
-        self,
-        objective: str,
-        max_iterations: int = 10,
-        thread_id: str = "exploration",
-    ) -> AsyncIterator[dict[str, Any]]:
-        if not self.enable_exploration:
-            raise RuntimeError("Exploration mode is disabled")
-
-        from huginn.exploration.orchestrator import ExplorationOrchestrator
-
-        orchestrator = ExplorationOrchestrator(max_parallel=3)
-
-        initial_branches = [
-            {
-                "name": "baseline",
-                "hypothesis": objective,
-            }
-        ]
-
-        async for result in orchestrator.explore_stream(
-            objective,
-            initial_branches=initial_branches,
-            max_iterations=max_iterations,
-        ):
-            yield result
-
     # ── Synchronous invocation ────────────────────────────────────
 
     def invoke(self, message: str, thread_id: str = "default") -> dict[str, Any]:
@@ -1100,64 +963,6 @@ class HuginnAgent(
         return run_async(_run())
 
     # ── Memory shortcuts ──────────────────────────────────────────
-
-    def remember(
-        self,
-        content: str,
-        category: str = "fact",
-        tags: list[str] | None = None,
-        importance: float = 0.5,
-    ) -> str:
-        return self.memory.remember(
-            content, category=category, tags=tags, importance=importance
-        )
-
-    def recall(
-        self, query: str, category: str | None = None, top_k: int = 5
-    ) -> list[dict[str, Any]]:
-        return self.memory.recall(query, category=category, top_k=top_k)
-
-    # ── Skills ────────────────────────────────────────────────────
-
-    async def execute_skill(
-        self,
-        skill_name: str,
-        params: dict[str, Any],
-        context: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        from huginn.skills.registry import SkillRegistry
-
-        skill = SkillRegistry.get(skill_name)
-        if skill is None:
-            return {"success": False, "error": f"Skill '{skill_name}' not found"}
-
-        return await self.skills.execute(skill, params, context or {})
-
-    def list_skills(self, category: str | None = None) -> list[str]:
-        from huginn.skills.registry import SkillRegistry
-
-        return SkillRegistry.list_skills(category=category)
-
-    # ── Parallel tool execution ───────────────────────────────────
-
-    async def execute_tools_parallel(
-        self, calls: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
-        from huginn.agents.parallel_executor import ParallelToolExecutor
-
-        tools_by_name = {t.name: t for t in self._effective_tools()}
-
-        async def _invoke(name: str, tool_input: dict[str, Any]) -> Any:
-            tool = tools_by_name.get(name)
-            if tool is None:
-                raise KeyError(f"tool '{name}' not registered on this agent")
-            return await tool.ainvoke(tool_input)
-
-        executor = ParallelToolExecutor(
-            invoke_fn=_invoke,
-            max_concurrency=5,
-        )
-        return await executor.execute_parallel(calls)
 
 
 # Short alias for convenience: from huginn.agent import Agent

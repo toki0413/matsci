@@ -324,36 +324,6 @@ class SessionContext:
             "user_preferences": self.user_preferences,
         }
 
-    def export_full(self) -> dict[str, Any]:
-        """Export complete session for serialization."""
-        return {
-            "session_id": self.session_id,
-            "created_at": self.created_at.isoformat(),
-            "messages": [
-                {
-                    "role": m.role,
-                    "content": (
-                        m.content
-                        if isinstance(m.content, str)
-                        else json.dumps(m.content)
-                    ),
-                    "timestamp": m.timestamp.isoformat(),
-                }
-                for m in self.messages
-            ],
-            "tool_calls": [
-                {
-                    "tool_name": t.tool_name,
-                    "input_args": t.input_args,
-                    "success": t.result.success if t.result else None,
-                    "timestamp": t.timestamp.isoformat(),
-                    "call_id": t.call_id,
-                }
-                for t in self.tool_calls
-            ],
-        }
-
-
 def _run_c1_selfcheck() -> None:
     """C1: WM sliding window + rule-based summarize selfcheck.
 

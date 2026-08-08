@@ -611,11 +611,11 @@ class SubagentTool(HuginnTool[SubagentToolInput, SubagentToolOutput]):
         task_ids = [f"{t['spec_name']}:{t['task'][:20]}" for t in args.tasks]
         try:
             # P4 Task 26.8: LLM 填的 dependencies 作为先验, provenance chain 作为后验补全.
-            # provenance registry 可能没启用 (HUGINN_PROVENANCE_ENABLED=0), 失败退化为纯 explicit_deps.
+            # provenance registry 可能没启用, 失败退化为纯 explicit_deps.
             _prov_reg = None
             try:
-                from huginn.provenance.registry import get_provenance_registry
-                _prov_reg = get_provenance_registry()
+                from huginn.provenance.registry import ProvenanceRegistry
+                _prov_reg = ProvenanceRegistry.shared()
             except Exception:
                 pass
             if _prov_reg is not None and hasattr(_prov_reg, "get_lineage"):
