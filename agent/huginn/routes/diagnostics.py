@@ -196,20 +196,36 @@ def _collect_trace(limit: int = 20) -> list[dict[str, Any]]:
 def _collect_plugin_status() -> dict[str, Any]:
     """Status of loaded plugins from the shared registry."""
     try:
+        from huginn.api.event import EventType
         from huginn.plugins.registry import get_shared_registry
 
         registry = get_shared_registry()
-        handlers = registry.list_handlers()
+        # StarHandlerRegistry 没有 list_handlers(), 用 list_plugins() 拿插件名,
+        # 再遍历所有 EventType 用 get_handlers() 收集 handler. 之前调
+        # list_handlers() 会 AttributeError 被外层 except 吞掉, 端点永远返回空.
         plugins: dict[str, Any] = {}
-        for h in handlers:
-            name = getattr(h, "plugin_name", "unknown")
-            if name not in plugins:
-                plugins[name] = {
-                    "enabled": not getattr(h, "disabled", False),
-                    "handler_count": 0,
-                    "priority": getattr(h, "priority", 0),
-                }
-            plugins[name]["handler_count"] += 1
+        for plugin_name in registry.list_plugins():
+            plugins[plugin_name] = {
+                "enabled": registry.is_enabled(plugin_name),
+                "handler_count": 0,
+                "priority": 0,
+            }
+        max_priority: dict[str, int] = {}
+        for et in EventType:
+            for h in registry.get_handlers(et):
+                name = getattr(h, "plugin_name", "unknown")
+                if name not in plugins:
+                    plugins[name] = {
+                        "enabled": True,
+                        "handler_count": 0,
+                        "priority": 0,
+                    }
+                plugins[name]["handler_count"] += 1
+                p = getattr(h, "priority", 0)
+                if p > max_priority.get(name, 0):
+                    max_priority[name] = p
+        for name, p in max_priority.items():
+            plugins[name]["priority"] = p
         return plugins
     except Exception:
         return {}
