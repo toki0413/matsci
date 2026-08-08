@@ -12,6 +12,7 @@ ponytail: 不引新依赖, 不上策略模式, 单文件单类. 14 hint 的分�
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -112,6 +113,67 @@ def _build_posterior_guided_hint(
     else:
         out = parts[0][:max_chars]
     return out
+
+
+# E2-1: 通用观测抽取 — 让假设流形对任何 benchmark 都可用 (不只 RCB).
+# 从自由文本里抓 "metric = value" 喂给 manifold 做后验/溯因. 不调 LLM.
+# 白名单过滤避免误抓年份/版本号; 失败/无文本返回空 list, 不阻塞.
+_METRIC_WHITELIST = frozenset({
+    "mae", "rmse", "mse", "r2", "r\u00b2", "r3", "accuracy",
+    "precision", "recall", "f1", "auc", "pearson", "spearman",
+    "loss", "error", "score", "bias",
+})
+_NUMERIC_PAIR_RE = re.compile(
+    r"\b([A-Za-z][A-Za-z0-9_\u00b2\u00b3]{1,15})\s*(?:=|:|of|\u2248|~|is)\s*"
+    r"([-+]?\d+\.?\d*(?:[eE][-+]?\d+)?)"
+)
+
+
+def extract_numeric_targets(text: str) -> dict[str, float]:
+    """从文本抓 'metric = value' 模式, 返回 {metric: value}.
+
+    白名单 + 数值量级过滤, 避免误抓年份/版本号. 无文本返回空 dict.
+    """
+    if not text:
+        return {}
+    targets: dict[str, float] = {}
+    for m in _NUMERIC_PAIR_RE.finditer(text):
+        name = m.group(1).lower()
+        try:
+            val = float(m.group(2))
+        except ValueError:
+            continue
+        if name not in _METRIC_WHITELIST:
+            continue
+        if abs(val) > 1e6:
+            continue
+        targets[name] = val
+    return targets
+
+
+def extract_observations(text: str) -> list:
+    """从文本解析 Observation 列表, 喂给假设流形.
+
+    sigma=0.1 — 归一化度量常见测量噪声水平, 太宽会让 BIC prior 主导
+    likelihood. ponytail: 升级路径是接 LLM-as-likelihood 给 per-obs sigma.
+    """
+    from huginn.metacog.hypothesis_manifold import Observation
+
+    obs: list = []
+    seen: set[str] = set()
+    for m in _NUMERIC_PAIR_RE.finditer(text):
+        name = m.group(1).lower()
+        try:
+            val = float(m.group(2))
+        except ValueError:
+            continue
+        if name not in _METRIC_WHITELIST or name in seen:
+            continue
+        if abs(val) > 1e6:
+            continue
+        seen.add(name)
+        obs.append(Observation(name=name, value=val, sigma=0.1))
+    return obs
 
 
 # 14 hint 五族分类 (spec §"hint 分类"). retrieval 族不在这处理, 由

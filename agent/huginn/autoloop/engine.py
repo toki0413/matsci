@@ -105,6 +105,7 @@ from huginn.coder.loop import CoderRunner
 from huginn.config import get_settings
 # C1: 共享 KB chunk 格式化函数, 跟 ContextBuilder 走同一条路径, 消除双路径漂移.
 # C4: 共享 meta_trace 加载, engine 写 jsonl 但之前不读, 现在注入 memory_text.
+from huginn.agent.hint_coordinator import extract_observations
 from huginn.context_builder import format_kb_chunks, load_meta_trace_text, should_inject_kb
 from huginn.exploration.orchestrator import ExplorationOrchestrator
 from huginn.exploration.strategies import ParetoPruningStrategy
@@ -280,6 +281,10 @@ class AutoloopEngine(PlanCheckMixin, MathValidationMixin, VisualInspectMixin, Co
 
         # P0: 传 workspace 给 HypothesisGraph, 让 refute/support 时写 FAILED.md/PROVED.md
         self.hypothesis_graph = HypothesisGraph(workspace=self.workspace)
+        # E2-1: 通用假设流形 — 懒加载, 让所有 benchmark (不只 RCB) 都能用
+        # 后验引导 hint. 存 _hypo_obs 跨 iter 保留上轮观测, hint 用上轮值.
+        self._hypo_manifold: Any = None
+        self._hypo_obs_for_hint: list = []
         # 高阶网络挂载: 把 stable_principles / evolution_rules 作为高维单纯形
         # 挂到 graph 的 _simplicials, 让知识蒸馏的约束结构进入同调可见性.
         # 失败非致命 (知识库空/损坏时图照常工作).
@@ -6564,6 +6569,46 @@ Please modify the code to address this task."""
         except Exception:
             logger.debug("PMK conflict write to episodic failed (non-fatal)", exc_info=True)
 
+    def _ensure_hypo_manifold(self, context: dict[str, Any]) -> Any:
+        """E2-1: 通用假设流形懒加载 + seed, 让 core 主循环可用.
+
+        从 context 抽数值 target 构造 3 个 generic hypothesis
+        (h_strong / h_partial / h_null), 复用 hint_coordinator 的公共抽取.
+        失败降级 None, 后续 hint 走空路径, 不阻塞主循环.
+        """
+        if self._hypo_manifold is not None:
+            return self._hypo_manifold
+        try:
+            from huginn.metacog.hypothesis_manifold import (
+                HypothesisManifold, Hypothesis,
+            )
+            from huginn.agent.hint_coordinator import extract_numeric_targets
+
+            text_pool = " ".join(
+                str(v) for v in (context or {}).values() if isinstance(v, (str, int, float))
+            )
+            targets = extract_numeric_targets(text_pool)
+            manifold = HypothesisManifold()
+            for hid, desc, scale, n in (
+                ("h_strong", "Result reproduces the target signal", 1.0, 2),
+                ("h_partial", "Result partially reproduces the signal", 0.5, 3),
+                ("h_null", "No signal / null baseline", 0.0, 1),
+            ):
+                try:
+                    manifold.add(Hypothesis(
+                        h_id=hid,
+                        description=desc,
+                        predictions={k: v * scale for k, v in targets.items()},
+                        n_params=n,
+                    ))
+                except ValueError:
+                    pass
+            self._hypo_manifold = manifold
+        except Exception:
+            logger.debug("hypo manifold init failed (non-fatal)", exc_info=True)
+            self._hypo_manifold = None
+        return self._hypo_manifold
+
     def _build_hypothesis_prompt(self, context: dict[str, Any]) -> str:
         # 投机执行 hint: 基于历史预测的下一步意图, 注入给 LLM 参考
         # 预测只是 hint, LLM 可以无视, 不强制. 截断到 500 字符防止无界增长
@@ -6615,6 +6660,25 @@ Please modify the code to address this task."""
         metacog_block = self._build_metacog_block(include_prospective=True)
         if metacog_block:
             metacog_block = f"\n{metacog_block}\n"
+        # E2-1: 通用后验引导 hint — 所有 benchmark 都能用假设流形, 不只 RCB.
+        # 观测从 context 抽, 空/无字段自动不命中; manifold 失败降级, 不阻塞.
+        # MCMC 步进是 advisory, 暂不接入 core (沿用 rcb 的触发), 见路线图 E2-1.
+        try:
+            _manifold = self._ensure_hypo_manifold(context)
+            text_pool = " ".join(
+                str(v) for v in context.values() if isinstance(v, (str, int, float))
+            )
+            _obs = extract_observations(text_pool)
+            if _manifold is not None and _obs:
+                from huginn.agent.hint_coordinator import _build_posterior_guided_hint
+                _pg = _build_posterior_guided_hint(_manifold, _obs)
+                if _pg:
+                    hint_block = (
+                        hint_block + f"\n### Posterior-guided\n{_pg}"
+                        if hint_block else f"\n### Posterior-guided\n{_pg}"
+                    )
+        except Exception:
+            logger.debug("posterior hint injection skipped (non-fatal)", exc_info=True)
         # H0: stable_principles 注入 (修 P3 断链 — 之前只进 chat agent system prompt,
         # autoloop 完全跳过 PM 层). 取 top-5 避免塞爆 prompt.
         try:
@@ -6660,7 +6724,8 @@ Please modify the code to address this task."""
         try:
             _frontier = self.hypothesis_graph.frontier_ranked(
                 top_k=3,
-                phys_gain=getattr(self.settings, "phys_steering_gain", 0.0),
+                # settings 可能未初始化 (__new__ 建的空引擎), 容错取默认 0
+                phys_gain=getattr(getattr(self, "settings", None), "phys_steering_gain", 0.0),
             )
             if _frontier:
                 _lines = []
