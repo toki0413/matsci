@@ -744,6 +744,33 @@ class ToolAdapter:
                     "ToolRespondEvent dispatch failed (non-fatal)", exc_info=True
                 )
 
+        async def _dispatch_tool_execute_event(
+            args_dict: dict[str, Any], session_id: str
+        ) -> None:
+            """分发插件系统 ON_TOOL_EXECUTE (三段式中间段, 只读打日志用).
+
+            之前只 dispatch 了 ON_TOOL_CALL (前) 和 ON_TOOL_RESPOND (后),
+            中间的 ON_TOOL_EXECUTE 声明了但从不发, 三段式实际只有两段.
+            """
+            bus = _get_plugin_event_bus()
+            if bus is None:
+                return
+            try:
+                from huginn.api.event import Event, EventType
+
+                await bus.dispatch(Event(
+                    type=EventType.ON_TOOL_EXECUTE,
+                    data={
+                        "tool_name": tool.name,
+                        "args": args_dict,
+                        "session_id": session_id,
+                    },
+                ))
+            except Exception:
+                logger.debug(
+                    "ON_TOOL_EXECUTE dispatch failed (non-fatal)", exc_info=True
+                )
+
         def _schedule_event(coro: Any) -> None:
             """从同步路径 fire-and-forget 一个 async typed Event dispatch.
 
@@ -1079,6 +1106,11 @@ class ToolAdapter:
                 return output
 
             _publish(_classify_mood(tool.name), f"Running {tool.name}…", {"tool": tool.name})
+            # ON_TOOL_EXECUTE: 三段式中间段, 工具开始执行时发一次 (只读打日志用).
+            try:
+                await _dispatch_tool_execute_event(_call_args, _call_sid)
+            except Exception:
+                logger.debug("ON_TOOL_EXECUTE dispatch skipped (non-fatal)", exc_info=True)
             # 按工具类型分级超时，防止外部 API 卡死整个 agent
             timeout = get_timeout(tool.name)
             _call_start = time.time()
@@ -1220,6 +1252,11 @@ class ToolAdapter:
                 return output
 
             _publish(_classify_mood(tool.name), f"Running {tool.name}…", {"tool": tool.name})
+            # ON_TOOL_EXECUTE: 三段式中间段 (sync 路径 fire-and-forget)
+            try:
+                _schedule_event(_dispatch_tool_execute_event(_call_args, _call_sid))
+            except Exception:
+                logger.debug("ON_TOOL_EXECUTE dispatch skipped (non-fatal)", exc_info=True)
             timeout = get_timeout(tool.name)
             _call_start = time.time()
             # Wire Prometheus tool call counter

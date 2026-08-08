@@ -567,6 +567,19 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.debug(f"[startup] HPC job monitor skipped: {exc}")
 
+    # ON_HUGINN_LOADED: 引擎启动完成后 dispatch, 之前声明了但从不发,
+    # 监听引擎就绪的插件 handler 永远收不到. best-effort, 失败不阻断启动.
+    try:
+        from huginn.api.event import Event, EventType
+        from huginn.plugins.event_bus import EventBus as _PluginBus
+        _bus = _PluginBus()
+        await _bus.dispatch(Event(
+            type=EventType.ON_HUGINN_LOADED,
+            data={"status": "ready"},
+        ))
+    except Exception:
+        logger.debug("ON_HUGINN_LOADED dispatch failed (non-fatal)", exc_info=True)
+
     yield
 
     # Shutdown: cancel background tasks first so they don't touch closing resources
