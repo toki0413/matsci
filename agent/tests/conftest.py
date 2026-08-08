@@ -30,7 +30,10 @@ os.environ.setdefault("HUGINN_RATE_LIMIT_PER_MINUTE", "0")
 _worker_id = os.environ.get("PYTEST_XDIST_WORKER", "main")
 _TEST_CACHE_DIR = str(Path(__file__).parent / ".test_cache" / _worker_id)
 Path(_TEST_CACHE_DIR).mkdir(parents=True, exist_ok=True)
-os.environ.setdefault("HUGINN_CACHE_DIR", _TEST_CACHE_DIR)
+# Force-assign (not setdefault): xdist workers inherit the master's env,
+# so setdefault would be a no-op in workers and they'd all share the
+# master's cache dir → SQLite "database is locked" at collection time.
+os.environ["HUGINN_CACHE_DIR"] = _TEST_CACHE_DIR
 
 
 @pytest.fixture(autouse=True)
