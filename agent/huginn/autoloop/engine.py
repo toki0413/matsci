@@ -1621,20 +1621,33 @@ class AutoloopEngine(PlanCheckMixin, MathValidationMixin, VisualInspectMixin, Co
         to_phase: str,
         is_hard: bool = False,
     ) -> None:
-        """推送 PhaseGate checkpoint 事件到 EventBus."""
+        """推送 PhaseGate checkpoint 事件到 EventBus.
+
+        之前传 dict 给 dispatch(event: Event) → AttributeError 被 except 吞掉,
+        事件永远到不了 handler. 现在构造 base Event + data 载荷.
+        """
         bus = self._get_event_bus()
         if bus is None:
             return
         try:
-            await bus.dispatch(
-                {
-                    "type": event_type,
+            from huginn.api.event import EventType, WorkflowStageEvent
+
+            # 必须用 WorkflowStageEvent 子类: filter.on_workflow_stage_done 的
+            # matcher (api/filter.py:251) 用 isinstance(event, WorkflowStageEvent)
+            # 判定, 发基类 Event 即使 type 正确也会被 matcher 拒掉.
+            ev = WorkflowStageEvent(
+                type=EventType.ON_WORKFLOW_STAGE_DONE,
+                plugin_name="phase_gate",
+                workflow_name="phase_gate",
+                stage_name=f"{from_phase}->{to_phase}",
+                data={
+                    "checkpoint_event": event_type,
                     "from_phase": from_phase,
                     "to_phase": to_phase,
                     "is_hard": is_hard,
-                    "timestamp": asyncio.get_event_loop().time(),
-                }
+                },
             )
+            await bus.dispatch(ev)
         except Exception:
             logger.debug("checkpoint event publish failed", exc_info=True)
 

@@ -2991,16 +2991,58 @@ Respond JSON only:
                     from types import SimpleNamespace as _NS
                     _val = cog["validation"] or {}
                     _tests_ok = _extract_tests_passed(_val)
-                    # P0.2: _validate 真实字段是 tests_passed/benchmarks/
-                    # thinking_collapse/*_error/effort_floor_deficits 等, 不是
-                    # summary/result/errors. 之前硬取 summary/result/errors 全是
-                    # 空串, 导致 PMK/drift/metrics 全在吃空数据.
-                    _se_fields = _validation_to_step_eval_fields(
-                        _val, _tests_ok, cog.get("execution_result"),
-                        step_id=len(self._evals_history),
-                    )
-                    _step_eval = _NS(**_se_fields)
-                    self._evals_history.append(_step_eval)
+
+                    _step_eval = None
+                    # ThreeCabin: HUGINN_USE_THREE_CABIN=1 时用真 StepEvaluator
+                    # 产出完整 StepEvaluation (含 tool_call_health/pmk_feedback),
+                    # 替代 SimpleNamespace 兜底. 修复 AV2 注释里的天花板:
+                    # "pmk_cycle_count/tool_call_health_avg 在 autoloop 路径不增".
+                    # run_three_cabin 内部已 append step_eval, 调用方别再 append.
+                    # 失败 fallback 到 SimpleNamespace (向后兼容).
+                    if os.environ.get("HUGINN_USE_THREE_CABIN", "0") == "1":
+                        try:
+                            from huginn.metacog.three_cabin_reflector import (
+                                run_three_cabin,
+                            )
+                            _persona_obj = None
+                            try:
+                                _persona_obj = (
+                                    self._get_persona_manager().get_persona("default")
+                                )
+                            except Exception:
+                                pass
+                            _step_eval, _hint_text = run_three_cabin(
+                                cog=cog,
+                                evals_history=self._evals_history,
+                                step_id=len(self._evals_history),
+                                workspace=Path(self.workspace),
+                                model=getattr(self, "model", None),
+                                persona=_persona_obj,
+                                kb=self._get_kb() if hasattr(self, "_get_kb") else None,
+                                memory=getattr(self, "memory", None),
+                            )
+                            if _hint_text:
+                                self._speculator_hint = (
+                                    self._speculator_hint + f"\n{_hint_text}"
+                                ).strip()
+                        except Exception:
+                            logger.debug(
+                                "ThreeCabin failed, fallback to SimpleNamespace",
+                                exc_info=True,
+                            )
+                            _step_eval = None
+
+                    if _step_eval is None:
+                        # P0.2: _validate 真实字段是 tests_passed/benchmarks/
+                        # thinking_collapse/*_error/effort_floor_deficits 等, 不是
+                        # summary/result/errors. 之前硬取 summary/result/errors 全是
+                        # 空串, 导致 PMK/drift/metrics 全在吃空数据.
+                        _se_fields = _validation_to_step_eval_fields(
+                            _val, _tests_ok, cog.get("execution_result"),
+                            step_id=len(self._evals_history),
+                        )
+                        _step_eval = _NS(**_se_fields)
+                        self._evals_history.append(_step_eval)
 
                     # AV4: detect_drift + TaskMetrics — 调共享函数
                     from huginn.autoloop.cognitive_loop import (
@@ -3089,66 +3131,128 @@ Respond JSON only:
                 except Exception:
                     logger.debug("AV2 should_pause_for_decision failed", exc_info=True)
 
-                # v10-F2: completion audit — 对齐 run() L1878-1897.
-                # goal 达标 + metacog 不阻断 → goal.status=completed + should_stop.
-                # ponytail: check_completion 在 goal 无 criteria 时返回 False, 不影响.
-                if goal is not None and not state.should_stop:
+                # v10-F2/F17 收敛: HUGINN_USE_COMPLETION_GATE=1 时用 CompletionGate
+                # 三审 (Criteria + Metacog + GoalJudge) 替代下面散装 F2+F17 顺序拼装.
+                # 默认 off 走原逻辑 (向后兼容). 对照组 BranchIncubator 已正常接入.
+                _use_gate = (
+                    os.environ.get("HUGINN_USE_COMPLETION_GATE", "0") == "1"
+                    and goal is not None
+                    and not state.should_stop
+                )
+                if _use_gate:
                     try:
-                        _val_for_goal = cog["validation"] or {}
-                        if GoalScheduler.check_completion(goal, _val_for_goal):
-                            _blk, _why = self._metacog_check_completion()
-                            if _blk:
-                                logger.info("v10 completion audit blocked: %s", _why)
-                                self._speculator_hint = (
-                                    (self._speculator_hint + f"\n[completion audit] {_why}").strip()
-                                )
-                            else:
-                                logger.info("v10 goal completed: %s", goal.objective)
-                                goal.status = "completed"
-                                if self._goal_scheduler is not None:
-                                    try:
-                                        self._goal_scheduler.complete_goal(goal.id)
-                                    except Exception:
-                                        logger.debug("complete_goal failed (non-fatal)", exc_info=True)
-                                state.should_stop = True
-                    except Exception:
-                        logger.debug("v10 F2 completion audit failed (non-fatal)", exc_info=True)
-
-                # v10-F17: GoalJudge — 对齐 run() L1899-1945.
-                # 每 3 轮或最后一轮调 GoalJudge.judge 判 goal_achieved.
-                # achieved + metacog 不阻断 → should_stop; gaps → 注入 hint.
-                # ponytail: GoalJudge(llm=None) 走规则版, LLM judge 留 exit 阶段.
-                if goal is not None and not state.should_stop:
-                    if state.iteration % 3 == 2 or state.iteration >= max_iterations - 1:
+                        from huginn.metacog.completion_gate import (
+                            CompletionGate, GateContext,
+                        )
+                        _gate = CompletionGate(
+                            auditor_factory=self._get_metacog_completion_auditor,
+                            goal_judge_llm=None,
+                            judge_every_n=3,
+                        )
+                        _families = 0
                         try:
-                            from huginn.evaluation.goal_judge import GoalJudge
-
-                            _judge = GoalJudge(llm=None)
-                            _final_text = str(
-                                (cog["validation"] or {}).get("summary")
-                                or (cog["validation"] or {}).get("result_data")
-                                or (cog.get("execution_result") or {}).get("summary", "")
+                            _families = len([
+                                f for f in self._get_metacog_method_registry().all()
+                                if f.member_agent_ids
+                            ])
+                        except Exception:
+                            pass
+                        _gctx = GateContext(
+                            iteration=state.iteration,
+                            max_iterations=max_iterations,
+                            families_explored=_families,
+                            live_components=(
+                                self.hypothesis_graph.component_count()
+                                if hasattr(self, "hypothesis_graph") else 0
+                            ),
+                            last_raw_hypothesis=getattr(self, "_last_raw_hypothesis", "") or "",
+                            objective=goal.objective,
+                        )
+                        _decision = _gate.review(goal, cog.get("validation"), _gctx)
+                        if _decision.should_stop:
+                            state.should_stop = True
+                        if _decision.should_complete_goal and goal is not None:
+                            goal.status = "completed"
+                            if self._goal_scheduler is not None:
+                                try:
+                                    self._goal_scheduler.complete_goal(goal.id)
+                                except Exception:
+                                    logger.debug("complete_goal failed (non-fatal)", exc_info=True)
+                        if _decision.status == "block" and _decision.reason:
+                            logger.info("completion gate blocked: %s", _decision.reason)
+                            self._speculator_hint = (
+                                (self._speculator_hint + f"\n[completion gate] {_decision.reason}").strip()
                             )
-                            _gj = _judge.judge(goal.objective, None, _final_text)
-                            if _gj.get("achieved"):
+                        elif _decision.status == "gaps_hint" and _decision.reason:
+                            self._speculator_hint = (
+                                (self._speculator_hint + f"\n{_decision.reason}").strip()
+                            )
+                            logger.info("completion gate gaps: %s", _decision.reason)
+                    except Exception:
+                        logger.debug("CompletionGate failed, fallback to F2+F17", exc_info=True)
+                        _use_gate = False
+
+                if not _use_gate:
+                    # v10-F2: completion audit — 对齐 run() L1878-1897.
+                    # goal 达标 + metacog 不阻断 → goal.status=completed + should_stop.
+                    # ponytail: check_completion 在 goal 无 criteria 时返回 False, 不影响.
+                    if goal is not None and not state.should_stop:
+                        try:
+                            _val_for_goal = cog["validation"] or {}
+                            if GoalScheduler.check_completion(goal, _val_for_goal):
                                 _blk, _why = self._metacog_check_completion()
                                 if _blk:
-                                    logger.info("v10 GoalJudge audit blocked: %s", _why)
+                                    logger.info("v10 completion audit blocked: %s", _why)
                                     self._speculator_hint = (
                                         (self._speculator_hint + f"\n[completion audit] {_why}").strip()
                                     )
                                 else:
-                                    logger.info("v10 GoalJudge achieved (score=%s)", _gj.get("score"))
+                                    logger.info("v10 goal completed: %s", goal.objective)
+                                    goal.status = "completed"
+                                    if self._goal_scheduler is not None:
+                                        try:
+                                            self._goal_scheduler.complete_goal(goal.id)
+                                        except Exception:
+                                            logger.debug("complete_goal failed (non-fatal)", exc_info=True)
                                     state.should_stop = True
-                            elif _gj.get("gaps"):
-                                _gap_hint = "; ".join(_gj["gaps"][:3])
-                                self._speculator_hint = (
-                                    (self._speculator_hint + "\n" + _gap_hint).strip()
-                                    if self._speculator_hint else _gap_hint
-                                )
-                                logger.info("v10 GoalJudge gaps: %s", _gap_hint)
                         except Exception:
-                            logger.debug("v10 F17 GoalJudge failed (non-fatal)", exc_info=True)
+                            logger.debug("v10 F2 completion audit failed (non-fatal)", exc_info=True)
+
+                    # v10-F17: GoalJudge — 对齐 run() L1899-1945.
+                    # 每 3 轮或最后一轮调 GoalJudge.judge 判 goal_achieved.
+                    # achieved + metacog 不阻断 → should_stop; gaps → 注入 hint.
+                    # ponytail: GoalJudge(llm=None) 走规则版, LLM judge 留 exit 阶段.
+                    if goal is not None and not state.should_stop:
+                        if state.iteration % 3 == 2 or state.iteration >= max_iterations - 1:
+                            try:
+                                from huginn.evaluation.goal_judge import GoalJudge
+
+                                _judge = GoalJudge(llm=None)
+                                _final_text = str(
+                                    (cog["validation"] or {}).get("summary")
+                                    or (cog["validation"] or {}).get("result_data")
+                                    or (cog.get("execution_result") or {}).get("summary", "")
+                                )
+                                _gj = _judge.judge(goal.objective, None, _final_text)
+                                if _gj.get("achieved"):
+                                    _blk, _why = self._metacog_check_completion()
+                                    if _blk:
+                                        logger.info("v10 GoalJudge audit blocked: %s", _why)
+                                        self._speculator_hint = (
+                                            (self._speculator_hint + f"\n[completion audit] {_why}").strip()
+                                        )
+                                    else:
+                                        logger.info("v10 GoalJudge achieved (score=%s)", _gj.get("score"))
+                                        state.should_stop = True
+                                elif _gj.get("gaps"):
+                                    _gap_hint = "; ".join(_gj["gaps"][:3])
+                                    self._speculator_hint = (
+                                        (self._speculator_hint + "\n" + _gap_hint).strip()
+                                        if self._speculator_hint else _gap_hint
+                                    )
+                                    logger.info("v10 GoalJudge gaps: %s", _gap_hint)
+                            except Exception:
+                                logger.debug("v10 F17 GoalJudge failed (non-fatal)", exc_info=True)
 
                 # v10-F4: surprise 早停 — 对齐 run() L1967-1999.
                 # 连续 3 轮低 surprise + audit 不阻断 → should_stop.

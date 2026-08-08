@@ -349,6 +349,24 @@ class SubagentDispatch:
                         except Exception:
                             logger.debug("on_state callback failed", exc_info=True)
 
+            # 子 agent 完成: 触发 SUBAGENT_STOP hook (声明式触发点, 之前只声明不 trigger)
+            try:
+                from huginn.hooks import HookContext, SUBAGENT_STOP
+
+                _sub_hook_mgr = getattr(agent, "hook_manager", None)
+                if _sub_hook_mgr is not None:
+                    _sub_ctx = HookContext(
+                        tool_name="subagent",
+                        metadata={
+                            "spec_name": spec_name,
+                            "thread_id": thread_id,
+                            "task": task,
+                        },
+                    )
+                    await _sub_hook_mgr.trigger(SUBAGENT_STOP, _sub_ctx)
+            except Exception:
+                logger.debug("SUBAGENT_STOP hook raised (non-fatal)", exc_info=True)
+
             output = self._extract_output(final_state)
             tool_calls = self._extract_tool_calls(final_state)
             tokens = self._estimate_tokens(final_state)

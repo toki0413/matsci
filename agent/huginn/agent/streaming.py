@@ -17,7 +17,14 @@ from huginn.context_manager import (
     format_context_usage,
     get_context_window,
 )
-from huginn.hooks import HookContext, PRE_COMPACT, STOP, USER_PROMPT_SUBMIT
+from huginn.hooks import (
+    HookContext,
+    POST_COMPACT,
+    PRE_COMPACT,
+    SESSION_START,
+    STOP,
+    USER_PROMPT_SUBMIT,
+)
 from huginn.interaction.interrupt import InterruptCancelled, get_interrupt_manager
 from huginn.llm_retry import (
     _get_retry_after,
@@ -629,6 +636,27 @@ class StreamingMixin:
             f"Context compacted ({before['used']}% -> {after_pct}%)",
             {"thread_id": thread_id},
         )
+        # 内部事件总线: 发布 compact.start / compact.end 字符串事件 (best-effort)
+        try:
+            from huginn.events.integration import publish_compact_event_sync
+            publish_compact_event_sync(
+                before["used"], after_pct, thread_id=thread_id,
+            )
+        except Exception:
+            logger.debug("compact event publish failed (non-fatal)", exc_info=True)
+        # 压缩完成: 触发 POST_COMPACT hook (声明式触发点, 之前只声明不 trigger)
+        try:
+            _post_ctx = HookContext(
+                tool_name="context_compact",
+                metadata={
+                    "before_pct": before["used"],
+                    "after_pct": after_pct,
+                    "thread_id": thread_id,
+                },
+            )
+            await self.hook_manager.trigger(POST_COMPACT, _post_ctx)
+        except Exception:
+            logger.warning("POST_COMPACT hook raised", exc_info=True)
         return {"before_pct": before["used"], "after_pct": after_pct}
 
     async def _trim_checkpointer_messages(
@@ -995,6 +1023,30 @@ class StreamingMixin:
 
         if self._turn_count == 0:
             self._init_session_continuity()
+            # 会话生命周期: SESSION_START hook (声明式触发点, 之前只声明不 trigger)
+            try:
+                _ss_ctx = HookContext(
+                    tool_name="session",
+                    metadata={
+                        "thread_id": thread_id,
+                        "user_message": message,
+                        "workspace": self.workspace,
+                    },
+                )
+                await self.hook_manager.trigger(SESSION_START, _ss_ctx)
+            except Exception:
+                logger.warning("SESSION_START hook raised", exc_info=True)
+            # 内部事件总线: 发布 session.start 字符串事件 (best-effort)
+            try:
+                from huginn.events.integration import publish_session_event_sync
+                publish_session_event_sync(
+                    "start", thread_id=thread_id,
+                    metadata={"user_message": message},
+                )
+            except Exception:
+                logger.debug(
+                    "session.start event publish failed (non-fatal)", exc_info=True
+                )
 
         from huginn.cognitive_engine import TransitionSignal
         if self._turn_count == 0:

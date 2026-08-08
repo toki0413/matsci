@@ -41,6 +41,30 @@ from huginn.utils.tokens import count_tokens
 
 logger = logging.getLogger(__name__)
 
+# 插件事件总线 (typed Event 分发, api/event.py 的 ToolCallEvent/ToolRespondEvent).
+# 跟 events/integration.py 的内部字符串事件总线是两套, 这里只管插件系统.
+# 懒加载共享 registry; 拿不到 bus 时返回 None, 调用方判空跳过, 不阻断 tool.
+_plugin_event_bus: Any = None
+
+
+def _get_plugin_event_bus() -> Any:
+    """懒加载插件 EventBus. 失败返回 None."""
+    global _plugin_event_bus
+    if _plugin_event_bus is not None:
+        return _plugin_event_bus
+    try:
+        from huginn.plugins.event_bus import EventBus
+
+        _plugin_event_bus = EventBus()
+    except Exception:
+        logger.debug(
+            "plugin EventBus unavailable, typed tool events skipped",
+            exc_info=True,
+        )
+        return None
+    return _plugin_event_bus
+
+
 # Map tool names to the constraint scope used for post-call validation.
 # Populated by _rebuild_constraint_scopes() from ToolProfile metadata.
 # Internal callers should prefer tool.constraint_scope directly; this dict
@@ -673,6 +697,76 @@ class ToolAdapter:
                 except RuntimeError:
                     pass
 
+        async def _dispatch_tool_call_event(
+            args_dict: dict[str, Any], session_id: str
+        ) -> None:
+            """分发插件系统 ToolCallEvent (typed). best-effort, 失败不阻断.
+
+            跟 _run_post_checks 里的 publish_tool_event_sync (内部 tool.call 字符串
+            事件) 是两套并行的事件系统, 这里补的是 api/event.py 的 typed Event.
+            """
+            bus = _get_plugin_event_bus()
+            if bus is None:
+                return
+            try:
+                from huginn.api.event import EventType, ToolCallEvent
+
+                await bus.dispatch(ToolCallEvent(
+                    type=EventType.ON_TOOL_CALL,
+                    tool_name=tool.name,
+                    args=args_dict,
+                    session_id=session_id,
+                ))
+            except Exception:
+                logger.debug(
+                    "ToolCallEvent dispatch failed (non-fatal)", exc_info=True
+                )
+
+        async def _dispatch_tool_respond_event(
+            args_dict: dict[str, Any], result: Any, success: bool
+        ) -> None:
+            """分发插件系统 ToolRespondEvent (typed). best-effort, 失败不阻断."""
+            bus = _get_plugin_event_bus()
+            if bus is None:
+                return
+            try:
+                from huginn.api.event import EventType, ToolRespondEvent
+
+                await bus.dispatch(ToolRespondEvent(
+                    type=EventType.ON_TOOL_RESPOND,
+                    tool_name=tool.name,
+                    args=args_dict,
+                    result=result,
+                    success=success,
+                ))
+            except Exception:
+                logger.debug(
+                    "ToolRespondEvent dispatch failed (non-fatal)", exc_info=True
+                )
+
+        def _schedule_event(coro: Any) -> None:
+            """从同步路径 fire-and-forget 一个 async typed Event dispatch.
+
+            有 running loop 就 ensure_future, 否则丢 main loop, 再不行关掉协程
+            避免 "coroutine was never awaited" 警告. 跟 events/integration._schedule_sync
+            同套路.
+            """
+            try:
+                asyncio.get_running_loop()
+                asyncio.ensure_future(coro)
+            except RuntimeError:
+                try:
+                    from huginn.events.integration import _main_loop
+
+                    if _main_loop is not None and _main_loop.is_running():
+                        asyncio.run_coroutine_threadsafe(coro, _main_loop)
+                    else:
+                        coro.close()
+                except Exception:
+                    logger.debug("sync typed-event schedule failed", exc_info=True)
+            except Exception:
+                logger.debug("typed-event schedule failed", exc_info=True)
+
         def _cache_key(input_data: BaseModel) -> str:
             return f"{tool.name}:{json.dumps(input_data.model_dump(), sort_keys=True, default=str)}"
 
@@ -925,6 +1019,17 @@ class ToolAdapter:
                 )
             except Exception:
                 pass
+            # 插件事件系统: 分发 typed ToolRespondEvent (有别于内部 tool.result 字符串事件)
+            try:
+                _resp_args = (
+                    input_data.model_dump()
+                    if hasattr(input_data, "model_dump") else {}
+                )
+                _schedule_event(_dispatch_tool_respond_event(
+                    _resp_args, output, result.success,
+                ))
+            except Exception:
+                logger.debug("ToolRespondEvent dispatch skipped (non-fatal)", exc_info=True)
             return output
 
         async def _arun(**kwargs: Any) -> dict[str, Any]:
@@ -936,6 +1041,20 @@ class ToolAdapter:
             early, router = _run_pre_checks(input_data, kwargs, context)
             if early is not None:
                 return early
+
+            # 插件事件系统: 分发 typed ToolCallEvent (有别于内部 tool.call 字符串事件)
+            try:
+                _call_args = (
+                    input_data.model_dump()
+                    if hasattr(input_data, "model_dump") else dict(kwargs)
+                )
+                _call_sid = (
+                    getattr(context, "thread_id", None)
+                    or getattr(context, "session_id", "") or ""
+                )
+                await _dispatch_tool_call_event(_call_args, _call_sid)
+            except Exception:
+                logger.debug("ToolCallEvent dispatch skipped (non-fatal)", exc_info=True)
 
             # Confirmation gate (async: direct await)
             if (
@@ -1033,6 +1152,20 @@ class ToolAdapter:
             early, router = _run_pre_checks(input_data, kwargs, context)
             if early is not None:
                 return early
+
+            # 插件事件系统: 分发 typed ToolCallEvent (sync 路径 fire-and-forget)
+            try:
+                _call_args = (
+                    input_data.model_dump()
+                    if hasattr(input_data, "model_dump") else dict(kwargs)
+                )
+                _call_sid = (
+                    getattr(context, "thread_id", None)
+                    or getattr(context, "session_id", "") or ""
+                )
+                _schedule_event(_dispatch_tool_call_event(_call_args, _call_sid))
+            except Exception:
+                logger.debug("ToolCallEvent dispatch skipped (non-fatal)", exc_info=True)
 
             # Confirmation gate (sync: wrap async call)
             if (

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import re
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -36,10 +37,12 @@ class Chunk:
     #   structure_info: for CIF — space_group, lattice_params, etc.
 
 
-class BaseChunker:
+class BaseChunker(ABC):
     """Base class for all chunkers."""
-    
+
+    @abstractmethod
     async def chunk(self, text: str, **kwargs) -> list[Chunk]:
+        """Split text into chunks. Subclasses must implement."""
         ...
     
     def _merge_small_chunks(
