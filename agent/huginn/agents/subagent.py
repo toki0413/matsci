@@ -349,12 +349,17 @@ class SubagentDispatch:
                         except Exception:
                             logger.debug("on_state callback failed", exc_info=True)
 
-            # 子 agent 完成: 触发 SUBAGENT_STOP hook (声明式触发点, 之前只声明不 trigger)
+            # 子 agent 完成: 触发 SUBAGENT_STOP hook.
+            # 优先用父 agent 的 hook_manager (从 context 取 "hook_manager"),
+            # 这样父 agent 能观察到子 agent 完成. 之前只取子 agent 自己的
+            # hook_manager, 父 agent 永远收不到 SUBAGENT_STOP. fallback 到
+            # 子 agent 的保持向后兼容 (调用方未传 hook_manager 时).
             try:
                 from huginn.hooks import HookContext, SUBAGENT_STOP
 
-                _sub_hook_mgr = getattr(agent, "hook_manager", None)
-                if _sub_hook_mgr is not None:
+                _parent_hook_mgr = ctx.get("hook_manager") if ctx else None
+                _hook_mgr = _parent_hook_mgr or getattr(agent, "hook_manager", None)
+                if _hook_mgr is not None:
                     _sub_ctx = HookContext(
                         tool_name="subagent",
                         metadata={
@@ -363,7 +368,7 @@ class SubagentDispatch:
                             "task": task,
                         },
                     )
-                    await _sub_hook_mgr.trigger(SUBAGENT_STOP, _sub_ctx)
+                    await _hook_mgr.trigger(SUBAGENT_STOP, _sub_ctx)
             except Exception:
                 logger.debug("SUBAGENT_STOP hook raised (non-fatal)", exc_info=True)
 
