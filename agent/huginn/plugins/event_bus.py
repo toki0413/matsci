@@ -147,16 +147,5 @@ class EventBus:
 
         logger.warning("handler %s is not callable, skipped", meta.name)
 
-    async def dispatch_simple(self, event_type: EventType, **payload: Any) -> DispatchResult:
-        """便捷构造一个 base Event 并 dispatch。
-
-        只用于没有专门子类的事件类型。复杂事件请构造子类再 dispatch。
-        """
-        event = Event(type=event_type)
-        # 把 payload 塞到 event 上 (dataclass 动态字段不支持, 用 __dict__)
-        for k, v in payload.items():
-            setattr(event, k, v)
-        return await self.dispatch(event)
-
 
 __all__ = ["EventBus", "DispatchResult"]

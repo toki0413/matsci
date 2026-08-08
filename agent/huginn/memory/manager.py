@@ -442,15 +442,6 @@ class MemoryManager:
 
     # --- Session promotion ---
 
-    def promote_tool_result(self, name: str, result: dict[str, Any]) -> None:
-        """Manually promote a tool result to long-term memory."""
-        record = ToolCallRecord(
-            tool_name=name,
-            input_args={},
-            result=ToolResult(data=result, success=True),
-        )
-        self._promote_tool_result(record)
-
     def _promote_tool_result(self, record: ToolCallRecord) -> None:
         """Promote a successful computational result to long-term memory."""
         if not record.result or not record.result.data:
@@ -731,34 +722,6 @@ class MemoryManager:
             logger.debug("LLM 调用失败, 跳过洞察提取", exc_info=True)
         return None
 
-    def log_episode(self, content: str, importance: float = 0.5) -> str:
-        """Log a concise daily episodic memory (session-level event)."""
-        return self.longterm.store(
-            content=content,
-            category="episode",
-            tags=["episodic", "daily_log"],
-            source=f"session:{self.session.session_id}",
-            importance=importance,
-            tier="short",
-        )
-
-    def add_curated_memory(
-        self,
-        content: str,
-        category: str = "insight",
-        tags: list[str] | None = None,
-        importance: float = 0.8,
-    ) -> str:
-        """Store a human- or agent-curated long-term memory to be synced to MEMORY.md."""
-        return self.longterm.store(
-            content=content,
-            category=category,
-            tags=tags or ["curated"],
-            source=f"session:{self.session.session_id}",
-            importance=importance,
-            tier="long",
-        )
-
     def maintenance(
         self,
         decay_per_day: float = 0.97,
@@ -775,64 +738,6 @@ class MemoryManager:
             cluster=cluster,
             llm_chat_fn=llm_chat_fn,
         )
-
-    def sync_memory_md(self) -> Path | None:
-        """Write curated long-tier memories to MEMORY.md in the project root."""
-        path = self.config.memory_md_path
-        if not path:
-            return None
-        path.parent.mkdir(parents=True, exist_ok=True)
-        long_entries = self.longterm.list_long_tier(limit=200)
-        lines = ["# MEMORY.md — Curated long-term memory", ""]
-        for e in long_entries:
-            tag_str = ", ".join(json.loads(e.get("tags", "[]")) or [])
-            lines.append(f"## [{e.get('category', 'insight')}] {tag_str}")
-            lines.append(f"- {e.get('content', '')}")
-            lines.append(f"- source: {e.get('source', '')}")
-            lines.append("")
-        raw = "\n".join(lines)
-        # 双重截断保护，避免 MEMORY.md 超出 entrypoint 限制
-        truncated, line_cut, byte_cut = truncate_entrypoint(raw)
-        if line_cut or byte_cut:
-            truncated = truncated.rstrip() + "\n\n<!-- truncated to fit entrypoint limits -->\n"
-        # 原子写: MEMORY.md 是 entrypoint, 半截写会让 agent 启动读到残缺上下文.
-        from huginn.utils.concurrency import atomic_write_text
-        atomic_write_text(path, truncated)
-        return path
-
-    def load_memory_md(self) -> list[dict[str, Any]]:
-        """Load curated memories from MEMORY.md if present."""
-        path = self.config.memory_md_path
-        if not path or not path.exists():
-            return []
-        entries: list[dict[str, Any]] = []
-        text = path.read_text(encoding="utf-8")
-        current: dict[str, Any] | None = None
-        for line in text.splitlines():
-            line = line.strip()
-            if line.startswith("## ["):
-                if current:
-                    entries.append(current)
-                parts = line[4:].split("]", 1)
-                category = parts[0] if parts else "insight"
-                tag_str = parts[1].strip() if len(parts) > 1 else ""
-                current = {
-                    "category": category,
-                    "tags": [t.strip() for t in tag_str.split(",") if t.strip()],
-                    "content": "",
-                    "source": "MEMORY.md",
-                }
-            elif current and line.startswith("- "):
-                body = line[2:]
-                if body.startswith("source: "):
-                    current["source"] = body[8:]
-                elif not current["content"]:
-                    current["content"] = body
-                else:
-                    current["content"] += "\n" + body
-        if current:
-            entries.append(current)
-        return entries
 
     def _extract_topics(self) -> str:
         """Simple topic extraction from messages."""
@@ -1187,9 +1092,6 @@ class MemoryManager:
 
     # --- Utility ---
 
-    def get_session_summary(self) -> dict[str, Any]:
-        return self.session.to_dict()
-
     def clear_session(self) -> None:
         old_id = self.session.session_id
         self.session = SessionContext()
@@ -1228,11 +1130,6 @@ class MemoryManager:
         """
         from huginn.memory.intuition import capture
         return capture(self, message, self.session.session_id)
-
-    def recall_intuitions(self, top_k: int = 20) -> list[dict[str, Any]]:
-        """拉回本会话的直觉信号, 给 hypothesis 阶段做 hint."""
-        from huginn.memory.intuition import recall_intuitions
-        return recall_intuitions(self, self.session.session_id, top_k=top_k)
 
     # ── Prospective memory (第 5 类: 记未来要做的事) ───────────────
     # 轻量代理到 huginn.memory.prospective.ProspectiveMemory. lazy import

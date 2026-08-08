@@ -363,6 +363,14 @@ class ProvenanceRegistry:
         self._by_path: dict[str, ProvenanceEntry] = {}
         self._by_tool: dict[str, list[ProvenanceEntry]] = {}
 
+        # HUGINN_PROVENANCE_ENABLED=0 → 纯内存模式, 不开 SQLite.
+        # 之前这个 env var 在注释里提到但从不读取, 现在正式接通.
+        _enabled = os.environ.get("HUGINN_PROVENANCE_ENABLED", "1").lower().strip()
+        if _enabled in ("0", "false", "no", "off"):
+            self._store = None
+            logger.info("ProvenanceRegistry: disabled by HUGINN_PROVENANCE_ENABLED=0")
+            return
+
         # SQLite 持久层
         cache_dir = os.environ.get("HUGINN_CACHE_DIR", "")
         if cache_dir:

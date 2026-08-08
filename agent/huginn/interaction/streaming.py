@@ -126,13 +126,6 @@ class StreamInterceptor:
             return
         self._push(StreamEvent(type="thought", data={"text": thought}))
 
-    def on_plan(self, plan: str) -> None:
-        """显式推送一段计划."""
-        plan = (plan or "").strip()
-        if not plan:
-            return
-        self._push(StreamEvent(type="plan", data={"text": plan}))
-
     def on_done(self, final_text: str | None = None) -> None:
         """流式结束. 通知 SSE 消费端关闭连接."""
         self._flush_token_buf()

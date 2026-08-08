@@ -396,8 +396,12 @@ class CognitiveLoop:
 class OutputWriter:
     """output_writer 接口 — 可选的 per-step 产物钩子.
 
-    生产路径传 None (provenance 走 _record_provenance).
-    self-check 用 MockWriter 验证 loop 语义.
+    这是一个可选的扩展点 (extension point): 生产路径不传 (output_writer=None,
+    provenance 走 _record_provenance). 需要自定义产物落盘时实现此接口并传给
+    CognitiveLoop. self-check 用 MockWriter 验证 loop 语义.
+
+    NotImplementedError 是有意的 — 强制子类实现, 不提供默认空实现
+    (空实现会静默吞掉调用方期望的落盘行为).
     """
 
     def write_step(

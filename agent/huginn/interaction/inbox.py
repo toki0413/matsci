@@ -388,18 +388,6 @@ class InboxStore:
         resolved = self._items.get(item_id)
         return (resolved.resolution if resolved else "") or ""
 
-    # -- resume reconciliation --------------------------------------------------
-    def reconcile_on_resume(self, session_id: str) -> dict:
-        """用户 resume attended 控制时, 把该 session 还 pending 的 inline 显示
-        (统一一处答) + 离开期间已答的 recap. 单一真相源: 每个 item 已有一个
-        authoritative resolution."""
-        pending = self.pending(session_id)
-        recap = [i for i in self.list(session_id=session_id, state=STATE_RESOLVED)]
-        return {
-            "pending": [asdict(i) for i in pending],
-            "recap": [asdict(i) for i in recap],
-        }
-
 
 # ── approver 路由 (适配 huginn ApprovalFn) ──────────────────────
 #

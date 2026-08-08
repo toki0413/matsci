@@ -219,16 +219,3 @@ class EventBus:
         if event_type is not None:
             events = [e for e in events if e.type == event_type]
         return events[-n:][::-1] if n < len(events) else list(reversed(events))
-
-    def clear_history(self) -> None:
-        """Drop all history. SSE queues and subscribers are untouched."""
-        self._history.clear()
-
-    def shutdown(self) -> None:
-        """Signal all SSE streams to close. Call on agent shutdown."""
-        for q in self._sse_queues:
-            try:
-                q.put_nowait(None)
-            except Exception:
-                pass
-        self._sse_queues.clear()
