@@ -29,6 +29,7 @@ import os
 import time
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
@@ -106,8 +107,8 @@ class GovernanceFacade:
         except Exception:
             logger.debug("[gov] policy engine not available")
         try:
-            from huginn.provenance.registry import get_provenance_registry
-            self._provenance = get_provenance_registry()
+            from huginn.provenance.registry import ProvenanceRegistry
+            self._provenance = ProvenanceRegistry.shared()
         except Exception:
             logger.debug("[gov] provenance not available")
         try:
@@ -331,22 +332,39 @@ class GovernanceFacade:
 
         if self._audit_logger:
             try:
-                self._audit_logger.log(audit_entry)
+                self._audit_logger.log(
+                    event_type="governance",
+                    actor=user,
+                    action=action_name,
+                    details={
+                        "audit_id": audit_id,
+                        "status": status,
+                        "risk": at.risk.value if at else "unknown",
+                        "verification_passed": verification_passed,
+                        "verification_message": verification_msg,
+                        "error": error,
+                        "context_keys": list(ctx_snapshot.keys()),
+                    },
+                )
             except Exception as e:
                 logger.debug(f"[gov] audit write failed: {e}")
 
-        # Track provenance
+        # Track provenance — 之前用了不存在的字段构造 ProvenanceEntry, 加上
+        # register() 签名也不对 (接受 file_path/produced_by 等 kwarg, 不接受
+        # entry 对象). 改用真实 register() 签名.
         if self._provenance and isinstance(result, dict):
             try:
-                from huginn.provenance.registry import ProvenanceEntry
-                entry = ProvenanceEntry(
-                    audit_id=audit_id,
-                    action=action_name,
-                    inputs=ctx_snapshot,
-                    outputs=result if isinstance(result, dict) else {"result": str(result)},
-                    timestamp=timestamp,
+                # result dict 里找文件路径; 没有就用 audit_id 占位
+                file_path = result.get("file_path") or result.get("output_path") or f"gov://{audit_id}"
+                self._provenance.register(
+                    file_path=file_path,
+                    produced_by=action_name,
+                    input_files=[v for v in ctx_snapshot.values() if isinstance(v, str)],
+                    parameters={k: v for k, v in ctx_snapshot.items()
+                                if isinstance(v, (str, int, float, bool))},
+                    key_properties=result if isinstance(result, dict) else {},
+                    snapshot_step_id=audit_id,
                 )
-                self._provenance.register(entry)
             except Exception as e:
                 logger.debug(f"[gov] provenance tracking failed: {e}")
 
@@ -409,19 +427,43 @@ class GovernanceFacade:
             logger.warning("[gov] rollback not configured — provenance/snapshot module missing")
             return False, "rollback_not_configured"
 
-        # Find the audit entry via provenance
+        # Find the provenance entry by snapshot_step_id (= audit_id when set
+        # by execute()). 之前调用了不存在的 lookup() 方法, 改用 find_by_property
+        # 按 snapshot_step_id 查. ProvenanceEntry 把 snapshot_step_id 存在
+        # key_properties 不行, 它是独立字段 — 用 find_by_path 兜底 (execute
+        # 用 gov://<audit_id> 占位路径注册).
         if self._provenance:
             try:
-                entry = self._provenance.lookup(audit_id)
-                if entry and entry.get("rollback_handler"):
-                    return entry["rollback_handler"](entry.get("context", {})), "ok"
+                entry = self._provenance.find_by_path(f"gov://{audit_id}")
+                if entry and entry.snapshot_step_id:
+                    # 有 snapshot_step_id → 走 SnapshotManager 文件回滚
+                    if self._snapshot_mgr:
+                        snap = self._snapshot_mgr._load(entry.snapshot_step_id)
+                        if snap is not None and not snap.reverted:
+                            ws = Path(snap.workspace)
+                            restored = self._snapshot_mgr.revert(
+                                entry.snapshot_step_id, ws
+                            )
+                            logger.info(
+                                "[gov] rollback %s: %d files restored",
+                                audit_id, len(restored),
+                            )
+                            return True, "ok"
+                    # 没 snapshot_mgr 或 snap 不存在 → 仅标记 provenance
+                    entry.reverted = True
+                    return True, "ok"
             except Exception as e:
                 logger.debug(f"[gov] provenance rollback failed: {e}")
 
-        # Fall back to snapshot manager
+        # Fall back to snapshot manager directly (audit_id as step_id)
         if self._snapshot_mgr:
             try:
-                return self._snapshot_mgr.revert(audit_id), "ok"
+                snap = self._snapshot_mgr._load(audit_id)
+                if snap is not None and not snap.reverted:
+                    ws = Path(snap.workspace)
+                    restored = self._snapshot_mgr.revert(audit_id, ws)
+                    if restored:
+                        return True, "ok"
             except Exception as e:
                 logger.debug(f"[gov] snapshot rollback failed: {e}")
 
@@ -441,8 +483,10 @@ class GovernanceFacade:
         if not self._audit_logger:
             return []
         try:
+            # AuditLogger.query 用 actor (不是 user), action 做子串匹配.
+            # 之前传了不存在的 user kwarg → TypeError 被 except 吞掉, 返回 [].
             return self._audit_logger.query(
-                action=action_name, user=user, since=since, limit=limit
+                action=action_name, actor=user, since=since, limit=limit
             )
         except Exception:
             return []

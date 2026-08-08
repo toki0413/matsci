@@ -603,3 +603,23 @@ class AuditLogRotator:
             key=lambda p: p.stat().st_mtime,
             reverse=True,
         )
+
+
+# ---------------------------------------------------------------------------
+# Singleton accessor
+# ---------------------------------------------------------------------------
+
+_audit_logger: AuditLogger | None = None
+
+
+def get_audit_logger() -> AuditLogger:
+    """单例 AuditLogger — governance facade 和其他需要审计的系统共用一个实例.
+
+    之前 governance.py 导入不存在的 ``get_audit_logger`` 被 except 吞掉,
+    导致治理审计落盘失效. 现在提供真实工厂, governance 能正常拿到 logger.
+    """
+    global _audit_logger
+    if _audit_logger is None:
+        signing_key = os.environ.get("HUGINN_AUDIT_SIGNING_KEY")
+        _audit_logger = AuditLogger(signing_key=signing_key)
+    return _audit_logger

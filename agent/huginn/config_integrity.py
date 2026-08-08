@@ -74,8 +74,10 @@ def check_config_integrity(
         if key not in healed:
             healed[key] = default_value
             changes.append(f"added missing key '{key}'")
-        elif fix_types and isinstance(default_value, dict) and not isinstance(
-            healed[key], dict
+        elif (
+            fix_types
+            and isinstance(default_value, dict)
+            and not isinstance(healed[key], dict)
         ):
             healed[key] = default_value
             changes.append(f"fixed type mismatch for '{key}' (expected dict)")
@@ -135,25 +137,27 @@ def migrate_config(stored: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
 
 
 def save_with_healing(
-    config_dict: dict[str, Any],
-    path: str,
+    config: dict[str, Any],
+    path: str | pathlib.Path,
     *,
-    format: str = "toml",
+    format: str = "json",
 ) -> list[str]:
-    """先自愈再原子写入.
+    """写入前先自愈, 再原子落盘.
 
-    1. 对 config_dict 跑 check_config_integrity()
-    2. 用 _atomic_write (tmp + os.replace) 落盘
+    把 check_config_integrity + _atomic_write 串起来:
+    先用默认配置作 reference 比对, 补全缺失键 / 删孤儿键 / 修类型,
+    然后原子写入. 返回 healing 阶段产生的变更列表.
 
-    Returns: 自愈过程中产生的变更列表
+    Args:
+        config: 待写入的配置字典 (会被 healing 修改后的副本覆盖)
+        path: 目标文件路径
+        format: "json" 或 "toml"
+
+    Returns:
+        变更说明列表 (空 = 配置本来就很干净)
     """
-    healed, changes = check_config_integrity(config_dict)
-
     from huginn.config import _atomic_write
 
-    _atomic_write(pathlib.Path(path), healed, format=format)
-
-    if changes:
-        logger.info("Config self-healed: %s", "; ".join(changes))
-
+    healed, changes = check_config_integrity(config)
+    _atomic_write(pathlib.Path(path), healed, format)
     return changes
