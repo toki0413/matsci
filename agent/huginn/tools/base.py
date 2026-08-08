@@ -298,7 +298,15 @@ class HuginnTool(ABC, Generic[InputT, OutputT]):
                 )
             except Exception:
                 pass
-            raise
+            # 统一失败语义: 把异常透传成 ToolResult(success=False), 而不是 raise.
+            # adapter 会把它序列化成 {"error": ...} 给 LLM, agent 读到错误可以调整
+            # 策略; 直接 raise 会让异常向上崩掉整轮会话 (CausalGame 400 曾因此报废).
+            # 这样所有 override _execute 的工具自动获得透传, 不用各自 try/except.
+            return ToolResult(
+                success=False,
+                data=None,
+                error=f"{type(exc).__name__}: {exc}",
+            )
         try:
             self._capture_provenance(args, result)
         except Exception:

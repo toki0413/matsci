@@ -2826,6 +2826,7 @@ LUCID review (mandatory after generating hypothesis):
                     from huginn.autoloop.cognitive_loop import (
                         metacog_check_completion,
                         metacog_check_topology_collapse,
+                        metacog_check_selection_bias,
                     )
                     # _report_text 在 iter 头部算, 可能空; 兜底重读文件.
                     _rep_md = _report_text or (
@@ -2853,6 +2854,19 @@ LUCID review (mandatory after generating hypothesis):
                         print(
                             f"[TaskComplete] blocked by topology collapse: "
                             f"{_topo.get('reason')}",
+                            flush=True,
+                        )
+                        _metacog_blocked = True
+                    # 选择偏差反完成审计: 样本系统性缺一类 (幸存者偏差) 时阻断.
+                    # 用本轮收集的 observations (manifold 空 / 无观测时自动不命中).
+                    _sb = metacog_check_selection_bias(
+                        observations=_iter_observations if "_iter_observations" in dir()
+                        else None,
+                    )
+                    if _sb.get("biased", False):
+                        print(
+                            f"[TaskComplete] blocked by selection bias: "
+                            f"{_sb.get('reason')}",
                             flush=True,
                         )
                         _metacog_blocked = True
