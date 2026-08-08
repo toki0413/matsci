@@ -12,8 +12,12 @@ from typing import Any
 
 import pytest
 
-_sqlite_saver_available = importlib.util.find_spec("langgraph.checkpoint.sqlite") is not None
-pytestmark = pytest.mark.skipif(not _sqlite_saver_available, reason="langgraph sqlite checkpointer not available")
+_sqlite_saver_available = (
+    importlib.util.find_spec("langgraph.checkpoint.sqlite") is not None
+)
+pytestmark = pytest.mark.skipif(
+    not _sqlite_saver_available, reason="langgraph sqlite checkpointer not available"
+)
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage
@@ -139,7 +143,7 @@ class TestAgentFlow:
         ]
         agent = _build_agent(tmp_path, responses)
         try:
-            agent.remember(
+            agent.memory.remember(
                 "Silicon has an indirect band gap of ~1.12 eV.",
                 category="material_fact",
                 tags=["silicon", "band_gap"],
@@ -159,7 +163,7 @@ class TestAgentFlow:
             assert memory_found
 
             # Explicit recall also returns the stored fact.
-            recalled = agent.recall("indirect band gap")
+            recalled = agent.memory.recall("indirect band gap")
             assert any("1.12 eV" in r["content"] for r in recalled)
         finally:
             agent.close()

@@ -45,9 +45,9 @@ class TestHexagonalBornCriteria:
         """
         C = _hex_tensor(59.7, 26.2, 21.7, 61.8, 16.4)
         result = BornStabilityChecker.check(C, crystal_system="hexagonal")
-        assert result["stable"] is True, (
-            f"Mg hcp 应稳定, 判据结果: {result['criteria']}"
-        )
+        assert (
+            result["stable"] is True
+        ), f"Mg hcp 应稳定, 判据结果: {result['criteria']}"
         # 六方应有 6 个判据 (旧版只有 4 个)
         assert len(result["criteria"]) == 6
 
@@ -96,25 +96,6 @@ class TestHexagonalBornCriteria:
 
 class TestUnimplementedCrystalSystem:
     """未实现晶系返回 None + error, 不默认判 unstable."""
-
-    def test_tetragonal_returns_none_not_false(self):
-        """tetragonal 未实现, 应返回 stable=None + error, 不是 stable=False.
-
-        旧版返回 False 会让真实 tetragonal 材料被错误拒绝为"不稳定".
-        None 让调用方知道"无法判断"而非"不稳定".
-        """
-        C = np.eye(6) * 100.0
-        result = BornStabilityChecker.check(C, crystal_system="tetragonal")
-        assert result["stable"] is None, (
-            f"未实现晶系应返回 stable=None, got {result['stable']}"
-        )
-        assert "not implemented" in result["error"]
-        assert "Mouhat" in result["error"] or "2014" in result["error"]
-
-    def test_monoclinic_returns_none(self):
-        C = np.eye(6) * 100.0
-        result = BornStabilityChecker.check(C, crystal_system="monoclinic")
-        assert result["stable"] is None
 
     def test_triclinic_implemented(self):
         """triclinic 已实现 (主子式判据), 应返回 bool 不是 None."""

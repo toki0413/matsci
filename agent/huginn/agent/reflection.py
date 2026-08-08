@@ -62,19 +62,25 @@ class ReflectionMixin:
             if local is not None:
                 model = local
             else:
-                logger.warning("HUGINN_COMPACT_KIND=local but no local model found, fallback to remote")
+                logger.warning(
+                    "HUGINN_COMPACT_KIND=local but no local model found, fallback to remote"
+                )
         elif kind == "remote_v2":
             # 升级版远程 summarizer (例如更大的 summarization 模型)
             if self.model_router is not None:
                 try:
                     model = self.model_router.select("summarize_v2", prefer_cheap=True)
                 except Exception:
-                    logger.warning("summarize_v2 unavailable, fallback to remote", exc_info=True)
+                    logger.warning(
+                        "summarize_v2 unavailable, fallback to remote", exc_info=True
+                    )
         if model is None and self.model_router is not None:
             try:
                 model = self.model_router.select("summarize", prefer_cheap=True)
             except Exception:
-                logger.warning("model_router.select failed for summarize model", exc_info=True)
+                logger.warning(
+                    "model_router.select failed for summarize model", exc_info=True
+                )
         if model is None:
             model = self.model
         if model is None:
@@ -83,7 +89,11 @@ class ReflectionMixin:
         async def _summarize(transcript: str):
             from langchain_core.messages import HumanMessage, SystemMessage
 
-            from huginn.llm_retry import FallbackTriggeredError, call_with_fallback, with_retry
+            from huginn.llm_retry import (
+                FallbackTriggeredError,
+                call_with_fallback,
+                with_retry,
+            )
 
             messages = [
                 SystemMessage(content=_SUMMARY_SYSTEM_PROMPT),
@@ -97,7 +107,9 @@ class ReflectionMixin:
                 try:
                     return await with_retry(_call, source="summarize")
                 except FallbackTriggeredError:
-                    logger.warning("summarize: primary model overloaded, trying fallback")
+                    logger.warning(
+                        "summarize: primary model overloaded, trying fallback"
+                    )
 
                     async def _fallback_call(prompt, mdl):
                         if hasattr(mdl, "ainvoke"):
@@ -123,8 +135,12 @@ class ReflectionMixin:
         import json
         from datetime import datetime
         from pathlib import Path
+
         session_id = self._session_state.session_id or "default"
-        sidecar_dir = Path(os.environ.get("HUGINN_CACHE_DIR") or (Path.home() / ".huginn")) / "reflections"
+        sidecar_dir = (
+            Path(os.environ.get("HUGINN_CACHE_DIR") or (Path.home() / ".huginn"))
+            / "reflections"
+        )
         sidecar_dir.mkdir(parents=True, exist_ok=True)
         sidecar_path = sidecar_dir / f"{session_id}.jsonl"
         entry = {
@@ -145,6 +161,33 @@ class ReflectionMixin:
             logger.info("reflection sidecar: %s", sidecar_path)
             self._sidecar_path_announced = True
 
+    def load_reflection_sidecar(self) -> list[dict]:
+        """读回 sidecar 文件中的反思条目.
+
+        与 _append_reflection_sidecar 写入的路径一致, 逐行解析 JSON.
+        文件不存在时返回空列表, 解析失败的行跳过.
+        """
+        import json
+        from pathlib import Path
+
+        session_id = self._session_state.session_id or "default"
+        sidecar_path = (
+            Path(os.environ.get("HUGINN_CACHE_DIR") or (Path.home() / ".huginn"))
+            / "reflections"
+            / f"{session_id}.jsonl"
+        )
+        if not sidecar_path.exists():
+            return []
+        entries: list[dict] = []
+        for line in sidecar_path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                entries.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+        return entries
+
     def _sync_plan_from_store(self) -> None:
         """Sync an executing plan from PlanStore to session_state.
 
@@ -156,12 +199,14 @@ class ReflectionMixin:
             return
         try:
             from huginn.autoloop.plan_store import PlanStore
+
             ps = PlanStore()
             executing = ps.list_plans(status="executing")
             if executing:
                 p = executing[-1]
                 self._session_state.set_plan(p.id, p.objective)
                 from huginn.cognitive_engine import CognitiveState
+
                 self._csm._state = CognitiveState.S4_CONSTRUCT
                 logger.info("synced plan from PlanStore: %s", p.id)
         except Exception:
@@ -179,7 +224,11 @@ class ReflectionMixin:
 
         # ponytail: RCB/benchmark 场景 skip CSM transition — 无人工 subprocess,
         # CSM attention prompt 是 noise 还触发不必要 compaction. 升级: mode-aware.
-        _skip_csm = os.environ.get("HUGINN_SKIP_CSM", "").lower() in ("1", "true", "yes")
+        _skip_csm = os.environ.get("HUGINN_SKIP_CSM", "").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
 
         for tr in self._session_state.tool_results_this_turn:
             try:
@@ -208,16 +257,11 @@ class ReflectionMixin:
                     ev_engine = self._get_evolution_engine()
                     _content = tr.get("content", "")
                     ev_engine.logger.log_tool_call(
-                        session_id=self._session_state.session_id
-                        or "default",
+                        session_id=self._session_state.session_id or "default",
                         tool_name=tr.get("tool_name", ""),
                         tool_input=tr.get("tool_input", tr.get("args", {})),
-                        result=_content
-                        if reflection.tool_succeeded
-                        else None,
-                        error=None
-                        if reflection.tool_succeeded
-                        else str(_content),
+                        result=_content if reflection.tool_succeeded else None,
+                        error=None if reflection.tool_succeeded else str(_content),
                     )
                     _new_rules = []
                     if reflection.evolve_signal == "failure":
@@ -260,10 +304,16 @@ class ReflectionMixin:
                     if _new_rules:
                         try:
                             from huginn.cognitive_engine import TransitionSignal as _TS
-                            self._csm.transition(_TS("evolution_rule_learned", {
-                                "count": len(_new_rules),
-                                "signal": reflection.evolve_signal,
-                            }))
+
+                            self._csm.transition(
+                                _TS(
+                                    "evolution_rule_learned",
+                                    {
+                                        "count": len(_new_rules),
+                                        "signal": reflection.evolve_signal,
+                                    },
+                                )
+                            )
                         except Exception:
                             logger.debug("evolution CSM signal failed", exc_info=True)
                 except Exception:
@@ -276,25 +326,43 @@ class ReflectionMixin:
                 sig_type = reflection.to_transition_signal()
                 if sig_type:
                     from huginn.cognitive_engine import TransitionSignal as TS
-                    new_state = self._csm.transition(TS(sig_type, {
-                        "tool_name": tr.get("tool_name", ""),
-                        "objective": self._session_state.active_plan_objective,
-                        "step": str(self._session_state.active_plan_step_index + 1),
-                        "result_summary": str(tr.get("content", ""))[:100],
-                    }))
+
+                    new_state = self._csm.transition(
+                        TS(
+                            sig_type,
+                            {
+                                "tool_name": tr.get("tool_name", ""),
+                                "objective": self._session_state.active_plan_objective,
+                                "step": str(
+                                    self._session_state.active_plan_step_index + 1
+                                ),
+                                "result_summary": str(tr.get("content", ""))[:100],
+                            },
+                        )
+                    )
                     self._session_state.l1_coordinates = self._csm.l1_coordinates
-                    self._session_state._cognitive_prompt = self._csm.get_attention_prompt()
+                    self._session_state._cognitive_prompt = (
+                        self._csm.get_attention_prompt()
+                    )
                     # mode 切换 flag: S3_SWITCH / S6_FEEDBACK 时标记需要 compaction.
                     # streaming.py 下轮开头检查 flag, 触发 summarize_compact_messages.
                     # ponytail: flag 模式避开 async/sync 边界. 升级: CSM 直接 emit 事件.
                     from huginn.cognitive_engine import CognitiveState
-                    if self._csm._state in (CognitiveState.S3_SWITCH, CognitiveState.S6_FEEDBACK):
+
+                    if self._csm._state in (
+                        CognitiveState.S3_SWITCH,
+                        CognitiveState.S6_FEEDBACK,
+                    ):
                         # RCB 子集模式: CSM transition 走 (含 S7), 但不触发 compaction (Task 18)
-                        self._needs_compaction = not os.environ.get("HUGINN_RCB_CSM_SUBSET")
+                        self._needs_compaction = not os.environ.get(
+                            "HUGINN_RCB_CSM_SUBSET"
+                        )
 
                     # 哥德尔机闭环: S6 + 实质 gap → S7_SELF_MODIFY (打通 L232 flag 断层)
-                    if (new_state == CognitiveState.S6_FEEDBACK
-                            and self._has_substantive_gap(reflection)):
+                    if (
+                        new_state == CognitiveState.S6_FEEDBACK
+                        and self._has_substantive_gap(reflection)
+                    ):
                         new_state = self._csm.transition(
                             TS("gap_found", {"gap": getattr(reflection, "message", "")})
                         )
@@ -304,9 +372,14 @@ class ReflectionMixin:
                         self._needs_compaction = False
                         try:
                             from huginn.utils.async_bridge import run_async
-                            run_async(self._handle_s7_self_modify(reflection, self._csm))
+
+                            run_async(
+                                self._handle_s7_self_modify(reflection, self._csm)
+                            )
                         except Exception:
-                            logger.warning("S7 self-modify handler failed", exc_info=True)
+                            logger.warning(
+                                "S7 self-modify handler failed", exc_info=True
+                            )
             except Exception:
                 logger.debug("CSM transition failed", exc_info=True)
 
@@ -320,10 +393,7 @@ class ReflectionMixin:
                     logger.debug("reflection sidecar write failed", exc_info=True)
 
             # Persist plan progress when a step is judged done.
-            if (
-                reflection.plan_step_completed
-                and self._session_state.active_plan_id
-            ):
+            if reflection.plan_step_completed and self._session_state.active_plan_id:
                 self._session_state.advance_step()
                 try:
                     self.memory.store_plan_progress(
@@ -341,7 +411,7 @@ class ReflectionMixin:
                 self._session_state.request_confirmation(
                     reflection.confirm_type or "continue",
                     f"Tool '{tr.get('tool_name', 'unknown')}' reported issues. "
-                    f"Continue or adjust approach?"
+                    f"Continue or adjust approach?",
                 )
                 self._csm.request_confirmation(reflection.confirm_type or "continue")
 
@@ -439,6 +509,7 @@ class ReflectionMixin:
         """
         import json
         from pathlib import Path
+
         path = Path(".huginn/directive_rejections.jsonl")
         if not path.exists():
             return []
@@ -458,6 +529,7 @@ class ReflectionMixin:
         import json
         import time
         from pathlib import Path
+
         path = Path(".huginn/directive_rejections.jsonl")
         path.parent.mkdir(parents=True, exist_ok=True)
         rec = {"timestamp": time.time(), "proposal": proposal, "reason": reason}
@@ -489,6 +561,7 @@ class ReflectionMixin:
         if not proposal:
             # 没 proposal 直接回 S1
             from huginn.cognitive_engine import TransitionSignal
+
             csm.transition(TransitionSignal("user_goal", {"goal": "continue"}))
             return
 
@@ -508,7 +581,9 @@ class ReflectionMixin:
                 recent_rejections=recent_rejections,
             )
         except Exception as e:
-            logger.warning("S7 meta critique invocation failed: %s, treating as reject", e)
+            logger.warning(
+                "S7 meta critique invocation failed: %s, treating as reject", e
+            )
             verdict = {
                 "verdict": "reject",
                 "reason": f"meta critique error: {e}",
@@ -535,8 +610,8 @@ class ReflectionMixin:
 
         # 6. 回 S1_DISCOVER (无论 accept/reject, S7 处理完都回 discovery)
         from huginn.cognitive_engine import TransitionSignal
-        csm.transition(TransitionSignal("user_goal", {"goal": "continue after S7"}))
 
+        csm.transition(TransitionSignal("user_goal", {"goal": "continue after S7"}))
 
     def _check_event_signals(self, csm) -> None:
         """从 EventBus 拉关键事件转 CSM TransitionSignal (G5).
@@ -549,7 +624,10 @@ class ReflectionMixin:
         # 升级: subscribe + 异步队列实时驱动; 缺点是跨 async 边界事件可能丢.
         try:
             from huginn.events import (
-                EventBus, CONTEXT_OVERFLOW, COMPACT_START, TOOL_ERROR,
+                EventBus,
+                CONTEXT_OVERFLOW,
+                COMPACT_START,
+                TOOL_ERROR,
             )
         except ImportError:
             return
@@ -557,12 +635,14 @@ class ReflectionMixin:
             bus = EventBus.shared()
             last_ts = getattr(self, "_last_event_check_ts", 0.0)
             overflow_events = [
-                e for et in (CONTEXT_OVERFLOW, COMPACT_START)
+                e
+                for et in (CONTEXT_OVERFLOW, COMPACT_START)
                 for e in bus.recent_events(n=5, event_type=et)
                 if e.timestamp > last_ts
             ]
             tool_errors = [
-                e for e in bus.recent_events(n=20, event_type=TOOL_ERROR)
+                e
+                for e in bus.recent_events(n=20, event_type=TOOL_ERROR)
                 if e.timestamp > last_ts
             ]
             if overflow_events or len(tool_errors) >= 3:
@@ -579,10 +659,12 @@ class ReflectionMixin:
                 # 升级路径是 SignalHub 直接调 csm.transition, 删 fallback.
                 if sig is None:
                     from huginn.cognitive_engine import TransitionSignal as TS
+
                     sig = TS("context_overflow", payload)
                 csm.transition(sig)
-                all_ts = [e.timestamp for e in overflow_events] + \
-                         [e.timestamp for e in tool_errors]
+                all_ts = [e.timestamp for e in overflow_events] + [
+                    e.timestamp for e in tool_errors
+                ]
                 if all_ts:
                     self._last_event_check_ts = max(all_ts)
         except Exception:
@@ -611,9 +693,12 @@ class ReflectionMixin:
             # v7 G59: 更新认知热机 T_hot (belief_entropy → idea 池熵)
             try:
                 from huginn.metacog.cognitive_heat_engine import get_heat_engine
+
                 get_heat_engine().update_T_hot(float(h_belief))
             except Exception:
-                logger.debug("heat_engine.update_T_hot failed (non-fatal)", exc_info=True)
+                logger.debug(
+                    "heat_engine.update_T_hot failed (non-fatal)", exc_info=True
+                )
 
             if h_belief > 0.7:
                 payload = {"h_belief": h_belief}
@@ -625,6 +710,7 @@ class ReflectionMixin:
                 # 升级路径是 SignalHub 直接调 csm.transition, 删 fallback.
                 if sig is None:
                     from huginn.cognitive_engine import TransitionSignal as TS
+
                     sig = TS("belief_high", payload)
                 csm.transition(sig)
         except Exception:

@@ -124,14 +124,10 @@ class TestSelfImprovementLoop:
 class TestHuginnAgentBenchmark:
     @pytest.mark.asyncio
     async def test_agent_run_benchmark(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            longterm = LongTermMemory(db_path=Path(tmp) / "memory.db")
-            agent = HuginnAgent(memory_manager=MemoryManager(longterm=longterm))
+        suite = BenchmarkSuite()
+        suite.add(BenchmarkCase(task="band gap", expected_keywords=["1.1"]))
 
-            suite = BenchmarkSuite()
-            suite.add(BenchmarkCase(task="band gap", expected_keywords=["1.1"]))
-
-            fake = _FakeAgent({"band gap": "The band gap is 1.1 eV"})
-            agent.chat = fake.chat  # type: ignore[method-assign]
-            report = await agent.run_benchmark(suite=suite, store_failures=False)
-            assert report["summary"]["passed"] == 1
+        fake = _FakeAgent({"band gap": "The band gap is 1.1 eV"})
+        results = await suite.run(fake)
+        summary = suite.summary(results)
+        assert summary["passed"] == 1
