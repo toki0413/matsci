@@ -5978,12 +5978,22 @@ async def _run_mcmc_mode(
 
         cached_log_p: float | None = None
         _start_step = _engine._mcmc_step_count + 1
+        # P2-7: mcmc-single 也走温度退火 + 全局 proposal 混合, 与 mcmc-multi 对齐.
+        # 默认 t_high=10, 几何退火到 temperature(=1.0). HUGINN_MCMC_NO_ANNEAL=1 关闭.
+        _anneal = os.environ.get("HUGINN_MCMC_NO_ANNEAL", "0") != "1"
+        _t_high = float(os.environ.get("HUGINN_MCMC_T_HIGH", "10"))
+        _gpp = float(os.environ.get("HUGINN_MCMC_GLOBAL_PROPOSAL", "0.3"))
         for step in range(_start_step, n_steps + 1):
             prev = current
+            T = 1.0
+            if _anneal:
+                T = _t_high * (1.0 / _t_high) ** (step / n_steps)
             current, cached_log_p = _hypo_manifold.mcmc_step(
                 obs_list, current,
                 rng=_engine._mcmc_rng,
                 cached_log_p_current=cached_log_p,
+                temperature=T,
+                global_proposal_prob=_gpp,
                 se3_enabled=se3_enabled,
                 se3_angle_sigma=se3_angle_sigma,
                 haptic_enabled=haptic_enabled,

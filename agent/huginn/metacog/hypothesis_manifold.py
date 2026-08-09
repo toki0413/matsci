@@ -573,6 +573,7 @@ class HypothesisManifold:
         haptic_temperature: float = 1.0,
         alignment_enabled: bool = False,
         alignment_temperature: float = 1.0,
+        global_proposal_prob: float = 0.3,
     ) -> tuple[str, float]:
         """Metropolis-Hastings 一步在 posterior 上采样.
 
@@ -664,6 +665,18 @@ class HypothesisManifold:
         if proposal is None:
             proposal = self._fisher_proposal(current_h_id, rng, temperature)
 
+        # P2-7: 全局 proposal 混合 — 以 global_proposal_prob 概率从整个 hypothesis
+        # 空间均匀提议, 覆盖上述局部 proposal (fisher/se3/haptic/alignment).
+        # 动机: 尖锐后验 (sigma 小) + 局部 proposal 会让 MCMC 从全局最优出发时
+        # proposal 永远落在后验更低处, 接受率趋近 0, 丧失探索. 全局混合提供一条
+        # "跳到远处"的通道, 配合温度退火 (高温探索 / 低温收敛) 恢复有效往返旅行.
+        # ponytail: 默认 0.3, 调用方可调; proposal==current 时接受步自然处理 (自环).
+        if global_proposal_prob > 0.0 and rng.random() < global_proposal_prob:
+            _all_h = list(self._hyp)
+            _cands = [h for h in _all_h if h != current_h_id]
+            if _cands:
+                proposal = rng.choice(_cands)
+
         # Step 2 增量: current 复用缓存, proposal 只算一次
         if cached_log_p_current is None:
             log_p_current = self._log_posterior_single(obs, current_h_id)
@@ -700,6 +713,9 @@ class HypothesisManifold:
         alignment_enabled: bool = False,
         alignment_temperature: float = 1.0,
         on_chain_checkpoint: "Callable[[int, dict], None] | None" = None,
+        anneal: bool = True,
+        t_high: float = 10.0,
+        global_proposal_prob: float = 0.3,
     ) -> dict:
         """多链并行 MCMC + Gelman-Rubin R̂ 收敛诊断.
 
@@ -741,6 +757,8 @@ class HypothesisManifold:
                 alignment_enabled=alignment_enabled,
                 alignment_temperature=alignment_temperature,
                 init_h_id=init_h, on_checkpoint=on_chain_checkpoint,
+                anneal=anneal, t_high=t_high,
+                global_proposal_prob=global_proposal_prob,
             )
 
         # return_exceptions=True: 单链崩溃返回 Exception 对象, 不影响其他链
@@ -785,8 +803,18 @@ class HypothesisManifold:
         alignment_temperature: float = 1.0,
         init_h_id: str,
         on_checkpoint: "Callable[[int, dict], None] | None" = None,
+        anneal: bool = True,
+        t_high: float = 10.0,
+        global_proposal_prob: float = 0.3,
     ) -> dict:
         """单链 MCMC 执行器. 复用 mcmc_step 的增量逻辑.
+
+        温度退火 (anneal=True): T(step) = t_high * (t_low/t_high) ** (step/n_steps),
+        t_low = 调用方 temperature. 高温阶段接受宽松 → 全局探索 (配合 mcmc_step 的
+        global_proposal_prob 跳到远处), 低温阶段收敛锁定 MAP. 这是模拟退火
+        (Simulated Annealing) 的几何降温, 解决尖锐后验下 MCMC 从最优出发锁死、
+        接受率趋近 0 的问题.
+        ponytail: anneal=False 时行为 = 原固定 temperature (向后兼容).
 
         Returns: {"samples": [...], "accept_rate": float, "final_h": str}
         """
@@ -799,15 +827,21 @@ class HypothesisManifold:
         thin = 1000
         samples: list[str] = []
 
+        _t_low = temperature if temperature > 0 else 1.0
         for step in range(1, n_steps + 1):
             prev_h = current
+            T = temperature
+            if anneal:
+                # 几何退火: step=1 → t_high, step=n_steps → t_low
+                T = t_high * (_t_low / t_high) ** (step / n_steps)
             current, cached_log_p = self.mcmc_step(
-                obs, current, rng=rng, temperature=temperature,
+                obs, current, rng=rng, temperature=T,
                 cached_log_p_current=cached_log_p,
                 se3_enabled=se3_enabled, se3_angle_sigma=se3_angle_sigma,
                 haptic_enabled=haptic_enabled, haptic_temperature=haptic_temperature,
                 alignment_enabled=alignment_enabled,
                 alignment_temperature=alignment_temperature,
+                global_proposal_prob=global_proposal_prob,
             )
             if current != prev_h:
                 accept_count += 1
