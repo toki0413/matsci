@@ -14,7 +14,6 @@ import os
 import subprocess
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 
 from .project_context import load_project_context
 

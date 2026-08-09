@@ -9,13 +9,12 @@ from __future__ import annotations
 import pytest
 
 from huginn.evaluation.matworld_bench import (
+    CATEGORIES,
     BenchResult,
     BenchTask,
-    CATEGORIES,
     MatWorldBench,
 )
 from huginn.validation.grader import BenchGrader, GraderResult
-
 
 # ── 题集完整性 ──────────────────────────────────────────────────
 

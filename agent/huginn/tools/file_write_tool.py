@@ -143,7 +143,8 @@ def _c7_self_check() -> int:
     ponytail: 临时目录跑真写. ceiling: 不验 Windows 真路径 (当前是 Windows).
       升级路径: 跨平台 CI 跑.
     """
-    import tempfile, asyncio
+    import asyncio
+    import tempfile
 
     tool = FileWriteTool()
     with tempfile.TemporaryDirectory() as td:

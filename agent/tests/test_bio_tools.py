@@ -8,9 +8,8 @@ subprocess calls to exercise all code paths.
 from __future__ import annotations
 
 import os
-import shutil
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -31,7 +30,7 @@ except ImportError:
 @pytest.mark.skipif(not _RDKIT_AVAILABLE, reason="rdkit not installed")
 class TestRDKitTool:
     async def test_smiles_to_mol(self):
-        from huginn.tools.sci.rdkit_tool import RDKitTool, RDKitInput
+        from huginn.tools.sci.rdkit_tool import RDKitInput, RDKitTool
 
         tool = RDKitTool()
         result = await tool.call(RDKitInput(action="smiles_to_mol", smiles="CCO"), CTX)
@@ -41,7 +40,7 @@ class TestRDKitTool:
         assert "formula" in result.data
 
     async def test_descriptors(self):
-        from huginn.tools.sci.rdkit_tool import RDKitTool, RDKitInput
+        from huginn.tools.sci.rdkit_tool import RDKitInput, RDKitTool
 
         tool = RDKitTool()
         result = await tool.call(
@@ -54,7 +53,7 @@ class TestRDKitTool:
         assert "lipinski_violations" in mol_data
 
     async def test_fingerprint(self):
-        from huginn.tools.sci.rdkit_tool import RDKitTool, RDKitInput
+        from huginn.tools.sci.rdkit_tool import RDKitInput, RDKitTool
 
         tool = RDKitTool()
         result = await tool.call(
@@ -67,7 +66,7 @@ class TestRDKitTool:
         assert result.data["density"] > 0
 
     async def test_similarity(self):
-        from huginn.tools.sci.rdkit_tool import RDKitTool, RDKitInput
+        from huginn.tools.sci.rdkit_tool import RDKitInput, RDKitTool
 
         tool = RDKitTool()
         result = await tool.call(
@@ -83,7 +82,7 @@ class TestRDKitTool:
         assert result.data["interpretation"] == "highly similar"
 
     async def test_similarity_different(self):
-        from huginn.tools.sci.rdkit_tool import RDKitTool, RDKitInput
+        from huginn.tools.sci.rdkit_tool import RDKitInput, RDKitTool
 
         tool = RDKitTool()
         result = await tool.call(
@@ -98,7 +97,7 @@ class TestRDKitTool:
         assert result.data["tanimoto"] < 0.3
 
     async def test_substructure_search(self):
-        from huginn.tools.sci.rdkit_tool import RDKitTool, RDKitInput
+        from huginn.tools.sci.rdkit_tool import RDKitInput, RDKitTool
 
         tool = RDKitTool()
         result = await tool.call(
@@ -114,7 +113,7 @@ class TestRDKitTool:
         assert result.data["n_total"] == 3
 
     async def test_invalid_smiles(self):
-        from huginn.tools.sci.rdkit_tool import RDKitTool, RDKitInput
+        from huginn.tools.sci.rdkit_tool import RDKitInput, RDKitTool
 
         tool = RDKitTool()
         result = await tool.call(
@@ -124,7 +123,7 @@ class TestRDKitTool:
         assert "Invalid SMILES" in result.error
 
     async def test_draw(self, tmp_path: Path):
-        from huginn.tools.sci.rdkit_tool import RDKitTool, RDKitInput
+        from huginn.tools.sci.rdkit_tool import RDKitInput, RDKitTool
 
         tool = RDKitTool()
         out = tmp_path / "mol.png"
@@ -136,7 +135,7 @@ class TestRDKitTool:
         assert result.data["image_file"] == str(out)
 
     async def test_conformers(self, tmp_path: Path):
-        from huginn.tools.sci.rdkit_tool import RDKitTool, RDKitInput
+        from huginn.tools.sci.rdkit_tool import RDKitInput, RDKitTool
 
         tool = RDKitTool()
         out = tmp_path / "confs.sdf"
@@ -150,7 +149,7 @@ class TestRDKitTool:
         assert len(result.data["rmsd_to_first"]) == 2
 
     async def test_smiles_to_sdf(self, tmp_path: Path):
-        from huginn.tools.sci.rdkit_tool import RDKitTool, RDKitInput
+        from huginn.tools.sci.rdkit_tool import RDKitInput, RDKitTool
 
         tool = RDKitTool()
         out = tmp_path / "mols.sdf"
@@ -172,7 +171,7 @@ class TestRDKitToolNoDeps:
 
     @pytest.mark.asyncio
     async def test_missing_smiles(self):
-        from huginn.tools.sci.rdkit_tool import RDKitTool, RDKitInput
+        from huginn.tools.sci.rdkit_tool import RDKitInput, RDKitTool
 
         tool = RDKitTool()
         result = await tool.call(RDKitInput(action="smiles_to_mol"), CTX)
@@ -210,7 +209,10 @@ class TestVinaTool:
         (tmp_path / "ligand.pdbqt").write_text("ATOM  1  C   LIG B  1\nEND")
 
         with patch("huginn.tools.sim.vina_tool.resolve_executable") as mock_resolve:
-            from huginn.tools.sim.executable_resolver import ResolutionRequest, ToolExecutableSpec
+            from huginn.tools.sim.executable_resolver import (
+                ResolutionRequest,
+                ToolExecutableSpec,
+            )
 
             mock_resolve.return_value = ResolutionRequest(
                 tool_name="autodock_vina",
@@ -373,8 +375,8 @@ def _warning_text(w):
 class TestBioPharmaHooks:
     @pytest.mark.asyncio
     async def test_vina_docking_hook_no_poses(self):
-        from huginn.hooks.science_hooks import vina_docking_hook
         from huginn.hooks import HookContext
+        from huginn.hooks.science_hooks import vina_docking_hook
 
         ctx = HookContext(
             tool_name="vina_tool",
@@ -387,8 +389,8 @@ class TestBioPharmaHooks:
 
     @pytest.mark.asyncio
     async def test_vina_docking_hook_positive_affinity(self):
-        from huginn.hooks.science_hooks import vina_docking_hook
         from huginn.hooks import HookContext
+        from huginn.hooks.science_hooks import vina_docking_hook
 
         ctx = HookContext(
             tool_name="vina_tool",
@@ -401,8 +403,8 @@ class TestBioPharmaHooks:
 
     @pytest.mark.asyncio
     async def test_vina_docking_hook_weak_binding(self):
-        from huginn.hooks.science_hooks import vina_docking_hook
         from huginn.hooks import HookContext
+        from huginn.hooks.science_hooks import vina_docking_hook
 
         ctx = HookContext(
             tool_name="vina_tool",
@@ -417,8 +419,8 @@ class TestBioPharmaHooks:
 
     @pytest.mark.asyncio
     async def test_vina_docking_hook_good(self):
-        from huginn.hooks.science_hooks import vina_docking_hook
         from huginn.hooks import HookContext
+        from huginn.hooks.science_hooks import vina_docking_hook
 
         ctx = HookContext(
             tool_name="vina_tool",
@@ -431,8 +433,8 @@ class TestBioPharmaHooks:
 
     @pytest.mark.asyncio
     async def test_openmm_stability_hook_nan(self):
-        from huginn.hooks.science_hooks import openmm_stability_hook
         from huginn.hooks import HookContext
+        from huginn.hooks.science_hooks import openmm_stability_hook
 
         ctx = HookContext(
             tool_name="openmm_tool",
@@ -445,8 +447,8 @@ class TestBioPharmaHooks:
 
     @pytest.mark.asyncio
     async def test_openmm_stability_hook_energy_increase(self):
-        from huginn.hooks.science_hooks import openmm_stability_hook
         from huginn.hooks import HookContext
+        from huginn.hooks.science_hooks import openmm_stability_hook
 
         ctx = HookContext(
             tool_name="openmm_tool",
@@ -464,8 +466,8 @@ class TestBioPharmaHooks:
 
     @pytest.mark.asyncio
     async def test_openmm_stability_hook_temp_drift(self):
-        from huginn.hooks.science_hooks import openmm_stability_hook
         from huginn.hooks import HookContext
+        from huginn.hooks.science_hooks import openmm_stability_hook
 
         ctx = HookContext(
             tool_name="openmm_tool",
@@ -483,8 +485,8 @@ class TestBioPharmaHooks:
 
     @pytest.mark.asyncio
     async def test_hooks_ignore_other_tools(self):
-        from huginn.hooks.science_hooks import vina_docking_hook, openmm_stability_hook
         from huginn.hooks import HookContext
+        from huginn.hooks.science_hooks import openmm_stability_hook, vina_docking_hook
 
         ctx = HookContext(
             tool_name="vasp_tool",
@@ -505,24 +507,24 @@ class TestToolRegistration:
     pytestmark = pytest.mark.skipif(_skip_ci, reason="rdkit import hangs on CI")
 
     def test_rdkit_tool_registered(self):
-        from huginn.tools.registry import ToolRegistry
         from huginn.tools import register_all_tools
+        from huginn.tools.registry import ToolRegistry
 
         register_all_tools()
         tools = ToolRegistry.list_tools()
         assert "rdkit_tool" in tools
 
     def test_vina_tool_registered(self):
-        from huginn.tools.registry import ToolRegistry
         from huginn.tools import register_all_tools
+        from huginn.tools.registry import ToolRegistry
 
         register_all_tools()
         tools = ToolRegistry.list_tools()
         assert "vina_tool" in tools
 
     def test_openmm_tool_registered(self):
-        from huginn.tools.registry import ToolRegistry
         from huginn.tools import register_all_tools
+        from huginn.tools.registry import ToolRegistry
 
         register_all_tools()
         tools = ToolRegistry.list_tools()

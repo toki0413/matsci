@@ -17,23 +17,20 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
 from huginn.autoloop.dynamic_workflow import (
     Subtask,
-    SubtaskResult,
     WorkflowOrchestrator,
     WorkflowRegistry,
-    WorkflowResult,
     WorkflowScript,
     get_shared_workflow_registry,
     set_shared_workflow_registry,
 )
 from huginn.tools.registry import ToolRegistry
 from huginn.types import ToolContext, ToolResult
-
 
 # ── fake tools ───────────────────────────────────────────────────────────────
 
@@ -222,7 +219,6 @@ class TestOrchestratorRun:
 
     def test_semaphore_caps_concurrency(self):
         """With max_concurrent=2 and 4 slow subtasks, at most 2 run at once."""
-        import time
 
         concurrent = {"current": 0, "max": 0}
 

@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from huginn.types import ToolResult
 from huginn.tools.image_analysis._utils import load_gray, otsu_numpy
+from huginn.types import ToolResult
 
 if TYPE_CHECKING:
     from huginn.tools.image_analysis.tool import ImageAnalysisInput
@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def defect_detect(args: "ImageAnalysisInput") -> ToolResult:
+def defect_detect(args: ImageAnalysisInput) -> ToolResult:
     arr = load_gray(args.image_path)
     defect_type = args.parameters.get("defect_type", "crack")
     sensitivity = float(args.parameters.get("sensitivity", 0.5))
@@ -28,6 +28,8 @@ def defect_detect(args: "ImageAnalysisInput") -> ToolResult:
             binary_opening,
             generate_binary_structure,
             grey_opening,
+        )
+        from scipy.ndimage import (
             label as nd_label,
         )
     except ImportError as exc:

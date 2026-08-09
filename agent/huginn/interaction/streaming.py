@@ -16,8 +16,9 @@ import json
 import re
 import time
 from collections import deque
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
-from typing import Any, AsyncGenerator
+from typing import Any
 
 # 抓 <thought>...</thought> 和 <plan>...</plan> 块.
 # 用非贪婪匹配 + DOTALL 让多行内容也能整体抠出来.

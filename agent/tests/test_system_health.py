@@ -8,7 +8,6 @@ when psutil is unavailable.
 from __future__ import annotations
 
 import time
-from unittest.mock import patch
 
 import pytest
 
@@ -18,7 +17,6 @@ from huginn.diagnostics.system_health import (
     SystemMetrics,
     ThresholdPolicy,
 )
-
 
 # ── Fixtures ─────────────────────────────────────────────────────────
 

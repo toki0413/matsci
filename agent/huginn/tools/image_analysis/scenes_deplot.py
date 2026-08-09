@@ -85,7 +85,7 @@ def _load_deplot():
             return _deplot_cache["processor"], _deplot_cache["model"]
 
         import torch  # noqa: F401  torch 要先 import, transformers 推理依赖它
-        from transformers import AutoProcessor, AutoModelForVision2Seq
+        from transformers import AutoModelForVision2Seq, AutoProcessor
 
         logger.info("首次加载 DePlot 模型 %s, 会慢一点", _DEPLOT_MODEL_ID)
         processor = AutoProcessor.from_pretrained(_DEPLOT_MODEL_ID)
@@ -95,7 +95,7 @@ def _load_deplot():
         return processor, model
 
 
-def deplot_chart(args: "ImageAnalysisInput") -> ToolResult:
+def deplot_chart(args: ImageAnalysisInput) -> ToolResult:
     """把图表图片转成结构化表格 (Markdown)."""
     image_path = args.image_path
 

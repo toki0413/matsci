@@ -7,16 +7,12 @@ BibTeX citation, and file writing.
 from __future__ import annotations
 
 import json
-from pathlib import Path
-
-import pytest
 
 from huginn.export.fair_metadata import (
     generate_citation,
     generate_dataset_metadata,
     write_fair_jsonld,
 )
-
 
 # ── generate_dataset_metadata ────────────────────────────────────
 

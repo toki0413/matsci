@@ -13,11 +13,15 @@ from unittest.mock import MagicMock
 import pytest
 
 from huginn.agents.factory import AgentFactory
-from huginn.agents.orchestrator import Orchestrator, OrchestratorResult, SubTask, TaskPlan
+from huginn.agents.orchestrator import (
+    Orchestrator,
+    OrchestratorResult,
+    SubTask,
+    TaskPlan,
+)
 from huginn.autoloop.plan_store import Plan, PlanStore
 from huginn.config import AgentProfileConfig, HuginnConfig, ModelConfig
 from huginn.models.registry import ModelRegistry
-
 
 # ── stub 工厂 ──────────────────────────────────────────────────────────────────
 

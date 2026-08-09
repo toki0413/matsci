@@ -11,16 +11,16 @@ import json
 import os
 import shutil
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
-from huginn.tools.abaqus_tool import AbaqusTool, AbaqusToolInput
-from huginn.tools.comsol_tool import ComsolTool, ComsolToolInput
-from huginn.tools.cp2k_tool import Cp2kTool, Cp2kToolInput
+from huginn.tools.abaqus_tool import AbaqusTool
+from huginn.tools.comsol_tool import ComsolTool
+from huginn.tools.cp2k_tool import Cp2kTool
 from huginn.tools.lammps_tool import LammpsTool, LammpsToolInput
-from huginn.tools.openfoam_tool import OpenFoamTool, OpenFoamToolInput
-from huginn.tools.qe_tool import QuantumEspressoTool, QuantumEspressoToolInput
+from huginn.tools.openfoam_tool import OpenFoamTool
+from huginn.tools.qe_tool import QuantumEspressoTool
 from huginn.tools.vasp_tool import VaspTool, VaspToolInput
 from huginn.types import ToolContext
 

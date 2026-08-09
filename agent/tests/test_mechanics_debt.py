@@ -7,7 +7,6 @@ P2 fix added tetragonal, trigonal, monoclinic (Mouhat & Coudert PRB 2014).
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 from huginn.mechanics import BornStabilityChecker
 

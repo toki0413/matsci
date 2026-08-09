@@ -50,7 +50,7 @@ class AgentModelConfig:
     """模型 / 路由 / 系统提示相关配置."""
 
     model: Any | None = None
-    model_router: "ModelRouter | None" = None
+    model_router: ModelRouter | None = None
     system_prompt: str | None = None
     begin_dialogs: list[tuple[str, str]] | None = None
     prompt_cache_control: bool | None = None
@@ -240,7 +240,7 @@ class AgentConfig:
 
     @classmethod
     def from_huginn_config(
-        cls, config: "HuginnConfig", profile_id: str = "lead"
+        cls, config: HuginnConfig, profile_id: str = "lead"
     ) -> AgentConfig:
         """从全局 HuginnConfig 派生 AgentConfig.
 
@@ -326,7 +326,7 @@ class HuginnAgentBuilder:
         self._config.model.model = model
         return self
 
-    def with_model_router(self, router: "ModelRouter") -> HuginnAgentBuilder:
+    def with_model_router(self, router: ModelRouter) -> HuginnAgentBuilder:
         self._config.model.model_router = router
         return self
 

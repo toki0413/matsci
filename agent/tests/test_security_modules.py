@@ -27,12 +27,12 @@ def test_command_filter():
 
 
 def test_restricted_python():
-    from huginn.security.restricted_python import validate_code, RestrictedPythonError
+    from huginn.security.restricted_python import RestrictedPythonError, validate_code
 
     # dangerous import should raise
     try:
         validate_code("import os; os.system('rm -rf /')")
-        assert False, "Should have raised RestrictedPythonError"
+        raise AssertionError("Should have raised RestrictedPythonError")
     except RestrictedPythonError:
         pass
 
@@ -55,7 +55,7 @@ def test_sandbox_executor():
 
 
 def test_safe_eval():
-    from huginn.security.safe_eval import safe_eval, SafeEvalError
+    from huginn.security.safe_eval import SafeEvalError, safe_eval
 
     # safe expression
     result = safe_eval("2 + 3")
@@ -64,7 +64,7 @@ def test_safe_eval():
     # dangerous expression should raise
     try:
         safe_eval("__import__('os').system('whoami')")
-        assert False, "Should have blocked dangerous eval"
+        raise AssertionError("Should have blocked dangerous eval")
     except SafeEvalError:
         pass
 

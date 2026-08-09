@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import contextlib
 import logging
 import mimetypes
 import os
@@ -187,13 +188,12 @@ class FixDanglingToolCallsMiddleware(AgentMiddleware):
                 if _raw is not None:
                     _ext = mimetypes.guess_extension(_mime) or ".png"
                     try:
-                        _tf = tempfile.NamedTemporaryFile(
+                        with tempfile.NamedTemporaryFile(
                             suffix=_ext, prefix="huginn_cv_", delete=False,
-                        )
-                        _tf.write(_raw)
-                        _tf.close()
-                        image_path = _tf.name
-                        _is_tmp = True
+                        ) as _tf:
+                            _tf.write(_raw)
+                            image_path = _tf.name
+                            _is_tmp = True
                     except Exception:
                         image_path = None
         # image_path block (非 OpenAI 标准, 但有些路径会塞): 直接取路径不解码
@@ -223,10 +223,8 @@ class FixDanglingToolCallsMiddleware(AgentMiddleware):
             return {"type": "text", "text": f"[CV context]\n{_cv_text}"}
         finally:
             if _is_tmp:
-                try:
+                with contextlib.suppress(OSError):
                     os.unlink(image_path)
-                except OSError:
-                    pass
 
     def _reorder_tool_messages(
         self, messages: list, force_cancel_orphans: bool = False,
@@ -915,7 +913,7 @@ def _self_check() -> int:
     assert "FRONTIER TASK" in msg
     assert "self-interaction coupling strengths" in msg
     assert "0 分" in msg
-    print(f"[CHECK] frontier msg OK")
+    print("[CHECK] frontier msg OK")
 
     # 场景 5: Material_000 INSTRUCTIONS — "classifications such as X and Y" 模式
     # X = metal/insulator (斜杠复合词), Y = d/g/i-wave anisotropy (连字符+斜杠)
@@ -1000,7 +998,7 @@ def _self_check() -> int:
     # 场景 10 (v13): concept 缺 — Metal_000 report 没提 metal/insulator 分类
     mat_gaps = m._check_layer_gaps(mat_inst, mat_report_missing)
     # metal/insulator 应该报 concept 层缺失 (根本没出现)
-    metal_gaps = [layers for q, layers in mat_gaps
+    [layers for q, layers in mat_gaps
                   if "metal" in q or "insulator" in q]
     # 注意: 横向 missing 的 quantity 会被 _check_layer_gaps 跳过 (A 已经会报).
     # mat_report_missing 里 metal/insulator 是横向 missing, 所以 gaps 里不会有它.
@@ -1022,7 +1020,7 @@ def _self_check() -> int:
     assert "preliminary" in msg, "frontier msg 必须禁止 hedge 词"
     assert "exclusion probability curve" in msg, "frontier msg 必须指出 g 从 exclusion curve 推"
     assert "QCD axion" in msg, "frontier msg 必须给数值合理性自检参考量级"
-    print(f"[CHECK v13] layer frontier msg wording OK")
+    print("[CHECK v13] layer frontier msg wording OK")
 
     # 场景 12 (v13 planning): planning hint 必须包含所有 required quantities
     planning = m._build_planning_msg(["ulb masses", "self-interaction coupling strengths"])
@@ -1035,7 +1033,7 @@ def _self_check() -> int:
     assert "preliminary" in planning, "planning hint 必须禁止 hedge 词"
     assert "exclusion probability curve" in planning, "planning hint 必须指出 g 从 exclusion curve 推"
     assert "QCD axion" in planning, "planning hint 必须给数值合理性自检参考"
-    print(f"[CHECK v13] planning hint wording OK")
+    print("[CHECK v13] planning hint wording OK")
 
     print("[MIDDLEWARES] self-check OK")
     return 0

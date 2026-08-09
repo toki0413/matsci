@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import patch
 
 import pytest
 
-from huginn.tools.sim.fenics_tool import FenicsTool, FenicsToolInput
-from huginn.tools.sim.elmer_tool import ElmerTool, ElmerToolInput
-from huginn.tools.sim.gromacs_tool import GromacsTool, GromacsToolInput
+from huginn.tools.sim.elmer_tool import ElmerTool
+from huginn.tools.sim.fenics_tool import FenicsTool
+from huginn.tools.sim.gromacs_tool import GromacsTool
 from huginn.types import ToolContext
-
 
 # ── fixtures ──
 

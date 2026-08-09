@@ -12,9 +12,8 @@
 from __future__ import annotations
 
 from huginn.ml.transfer_registry import (
-    DomainProfile,
     _REGISTRY,
-    _ALLOWED_SIGNATURE_NAMES,
+    DomainProfile,
     _sanitize_signature,
     _sympy_equivalent,
     register_domain,

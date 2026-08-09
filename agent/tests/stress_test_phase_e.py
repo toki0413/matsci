@@ -14,8 +14,6 @@ from __future__ import annotations
 import asyncio
 import math
 import sys
-import traceback
-from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 
@@ -25,16 +23,11 @@ sys.path.insert(0, ".")
 from huginn.autoloop.phase_gate import (
     DempsterShaferCombiner,
     MathEvidenceChecker,
-    PhaseGateHook,
-    PhaseGate,
 )
-from huginn.tools.sci.multi_fidelity_tool import MultiFidelityInput, MultiFidelityTool
+from huginn.tools.sci.multi_fidelity_tool import MultiFidelityTool
 from huginn.tools.wetlab_rpc_tool import (
-    PROTOCOLS,
     WetlabInput,
     WetlabRpcTool,
-    _parse_protocol_result,
-    _validate_protocol_params,
 )
 
 

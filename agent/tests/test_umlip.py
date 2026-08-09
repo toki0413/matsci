@@ -8,9 +8,11 @@ import types
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import pytest
-
-from huginn.tools.sci.ml_potential_tool import UMLIP_REGISTRY, MLPotentialInput, MLPotentialTool
+from huginn.tools.sci.ml_potential_tool import (
+    UMLIP_REGISTRY,
+    MLPotentialInput,
+    MLPotentialTool,
+)
 from huginn.types import ToolResult
 
 
@@ -31,7 +33,7 @@ class TestUmlipRegistry:
         }
 
     def test_registry_entries_have_required_fields(self):
-        for name, entry in UMLIP_REGISTRY.items():
+        for _name, entry in UMLIP_REGISTRY.items():
             assert "module" in entry
             assert "class" in entry
             assert "model" in entry

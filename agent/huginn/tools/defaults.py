@@ -7,8 +7,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
-from typing import Any, Callable, Awaitable
+from dataclasses import dataclass, replace
+from typing import Any
 
 
 @dataclass
@@ -68,6 +68,6 @@ def merge_metadata(
     if not overrides:
         return replace(base)
     # 只接受 ToolMetadata 已声明的字段，避免脏数据
-    valid_keys = {f for f in ToolMetadata.__dataclass_fields__}
+    valid_keys = set(ToolMetadata.__dataclass_fields__)
     clean = {k: v for k, v in overrides.items() if k in valid_keys}
     return replace(base, **clean)

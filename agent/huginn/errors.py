@@ -19,7 +19,7 @@ import enum
 from typing import Any
 
 
-class ErrorCode(str, enum.Enum):
+class ErrorCode(enum.StrEnum):
     """Stable, machine-readable error codes for API responses."""
 
     # ── Generic ────────────────────────────────────────────────────

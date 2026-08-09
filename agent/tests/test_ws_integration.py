@@ -90,7 +90,7 @@ class MockAgent:
 class _MockFactory:
     """Factory stub that always returns the harness's current agent."""
 
-    def __init__(self, harness: "WSHarness") -> None:
+    def __init__(self, harness: WSHarness) -> None:
         self._h = harness
         self.create_lead_calls: list[dict] = []
 
@@ -237,9 +237,11 @@ class TestWSConnection:
 
         monkeypatch.setattr(auth_mod, "get_user_store", lambda: _FakeUserStore())
 
-        with pytest.raises(WebSocketDisconnect):
-            with client.websocket_connect(WS_PATH):
-                pass
+        with (
+            pytest.raises(WebSocketDisconnect),
+            client.websocket_connect(WS_PATH),
+        ):
+            pass
 
     def test_ws_connect_invalid_key(self, monkeypatch):
         monkeypatch.delenv("HUGINN_DEV_MODE", raising=False)
@@ -248,11 +250,10 @@ class TestWSConnection:
 
         monkeypatch.setattr(auth_mod, "get_user_store", lambda: _FakeUserStore())
 
-        with pytest.raises(WebSocketDisconnect):
-            with client.websocket_connect(
-                WS_PATH, headers={"X-HUGINN-API-KEY": "totally-wrong"}
-            ):
-                pass
+        with pytest.raises(WebSocketDisconnect), client.websocket_connect(
+            WS_PATH, headers={"X-HUGINN-API-KEY": "totally-wrong"}
+        ):
+            pass
 
 
 # ── 2. chat message tests ───────────────────────────────────────────

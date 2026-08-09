@@ -10,15 +10,15 @@ embeddings (simplified bag-of-words + TF-IDF style).
 Usage:
     from huginn.perception.semantic_alignment import SemanticAligner
     aligner = SemanticAligner()
-    
+
     # Embed different modalities
     vec_file = aligner.embed("File modified: conservation_matrix.py")
     vec_term = aligner.embed("Error: np.clip detected in line 42")
     vec_browser = aligner.embed("Screenshot shows C-S-H crystal structure")
-    
+
     # Cross-modal similarity
     sim = aligner.similarity(vec_file, vec_term)
-    
+
     # Conflict detection
     conflicts = aligner.detect_conflicts([
         ("code", "conservation_matrix uses np.clip"),
@@ -30,8 +30,7 @@ from __future__ import annotations
 import math
 import re
 from collections import Counter
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -72,11 +71,11 @@ class SemanticAligner:
         "bug", "error", "exception", "test", "assert", "verify",
         "proof", "theorem", "lemma", "axiom", "invariant", "conservation",
         "matrix", "vector", "tensor", "eigenvalue", "eigenvector",
-        "differential", "equation", "integral", "boundary", "initial",
-        "numerical", "analytical", "approximation", "convergence", "divergence",
+        "differential", "equation", "integral", "initial",
+        "numerical", "analytical", "approximation", "divergence",
         # Actions
         "create", "modify", "delete", "read", "write", "execute", "run",
-        "build", "compile", "install", "deploy", "test", "pass", "fail",
+        "build", "compile", "install", "deploy", "pass", "fail",
     })
 
     CONTRADICTION_PATTERNS = [

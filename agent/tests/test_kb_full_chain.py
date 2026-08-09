@@ -13,13 +13,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
 from huginn.autoloop.engine import AutoloopEngine
-from huginn.types import ToolContext, ToolResult
+from huginn.types import ToolContext
 
 
 class _FakeKb:
@@ -200,7 +199,6 @@ class TestA5GapAnalysisKbCoverage:
     @pytest.mark.asyncio
     async def test_gap_marked_kb_covered_when_kb_has_content(self) -> None:
         from huginn.tools.design.gap_analysis_tool import (
-            GapAnalysisInput,
             GapAnalysisTool,
         )
 
@@ -243,7 +241,6 @@ class TestA5GapAnalysisKbCoverage:
     @pytest.mark.asyncio
     async def test_gap_not_marked_when_kb_empty(self) -> None:
         from huginn.tools.design.gap_analysis_tool import (
-            GapAnalysisInput,
             GapAnalysisTool,
         )
 

@@ -28,7 +28,7 @@ from __future__ import annotations
 import io
 import logging
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -62,7 +62,6 @@ def _probe_deepseek_ocr() -> bool:
         if not torch.cuda.is_available():
             _probed["deepseek_ocr"] = False
             return False
-        from transformers import AutoModel
         # 权重路径: 由 HUGINN_DEEPSEEK_OCR_PATH 指向本地下载目录
         import os
         path = os.environ.get("HUGINN_DEEPSEEK_OCR_PATH", "")
@@ -184,8 +183,9 @@ def _tier2_paddleocr(
     global _paddleocr_instance
     try:
         import io as _io
-        from PIL import Image
+
         import numpy as np
+        from PIL import Image
 
         # 单例: 第一次调用加载, 之后复用. 跨调用共享模型.
         if _paddleocr_instance is None:
@@ -245,8 +245,9 @@ def _tier2_paddleocr(
 
         if scene and text_blocks:
             try:
-                from huginn.tools.registry import ToolRegistry
                 import base64 as b64
+
+                from huginn.tools.registry import ToolRegistry
                 img_tool = ToolRegistry.get("image_analysis_tool")
                 if img_tool:
                     res = img_tool.call({
@@ -291,9 +292,10 @@ def _tier1_classic_ocr(
     ocr_loader 已实现完整链路, 直接复用.
     """
     try:
-        from huginn.knowledge.ocr_loader import _ocr_image
-        from PIL import Image
         import numpy as np
+        from PIL import Image
+
+        from huginn.knowledge.ocr_loader import _ocr_image
 
         img = Image.open(io.BytesIO(image_bytes))
         if img.mode not in ("RGB", "L"):
@@ -403,8 +405,7 @@ def _compare_describe_results(r1: dict[str, Any], r2: dict[str, Any]) -> dict[st
     # 3. pixel_stats mean (Tier 1 兜底路径)
     ps1 = (r1.get("pixel_stats") or {}).get("mean")
     ps2 = (r2.get("pixel_stats") or {}).get("mean")
-    if ps1 is not None and ps2 is not None:
-        if abs(ps1 - ps2) / max(abs(ps1), abs(ps2), 1.0) > 0.05:
+    if ps1 is not None and ps2 is not None and abs(ps1 - ps2) / max(abs(ps1), abs(ps2), 1.0) > 0.05:
             inconsistent = True
             notes.append(f"pixel mean: {ps1:.1f} vs {ps2:.1f}")
 
@@ -934,6 +935,7 @@ def _selfcheck() -> None:
     各 Tier 用 monkey-patch 模拟可用/不可用, 验证降级链.
     """
     import tempfile
+
     from PIL import Image
 
     # 1. 不存在的图像 → error tier

@@ -19,7 +19,7 @@ from huginn.tools.sim.transolver_tool import (
     TransolverToolInput,
     TransolverToolOutput,
 )
-from huginn.types import ToolContext, ToolResult
+from huginn.types import ToolContext
 
 
 def _ctx() -> ToolContext:

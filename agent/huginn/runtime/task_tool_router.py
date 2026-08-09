@@ -346,7 +346,7 @@ if __name__ == "__main__":
     print(f"15. 文献检索 union: {len(routed)} tools")
 
     # 额外: 所有 TOOL_CATEGORIES 的工具名都有效
-    for cat, tools in TOOL_CATEGORIES.items():
+    for _cat, tools in TOOL_CATEGORIES.items():
         assert isinstance(tools, list)
         assert all(isinstance(t, str) for t in tools)
 

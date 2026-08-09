@@ -13,8 +13,7 @@ Math:
 from __future__ import annotations
 
 import logging
-import math
-from typing import Any, Literal
+from typing import Literal
 
 import numpy as np
 from pydantic import BaseModel, Field
@@ -207,7 +206,7 @@ class InverseDesignTool(HuginnTool):
 
         history = [float(best_f)]
 
-        for gen in range(args.n_generations):
+        for _gen in range(args.n_generations):
             # Selection (tournament)
             new_pop = []
             for _ in range(args.population_size):
@@ -294,7 +293,6 @@ class InverseDesignTool(HuginnTool):
 
         # Acquisition function
         y_best = float(np.max(y))
-        beta = 1.0
 
         if args.acquisition == "ei":
             # Expected Improvement
@@ -358,11 +356,10 @@ class InverseDesignTool(HuginnTool):
         is_pareto = np.ones(n, dtype=bool)
         for i in range(n):
             for j in range(n):
-                if i != j:
+                if i != j and np.all(scores[j] >= scores[i]) and np.any(scores[j] > scores[i]):
                     # j dominates i if j is >= i in all objectives and > in at least one
-                    if np.all(scores[j] >= scores[i]) and np.any(scores[j] > scores[i]):
-                        is_pareto[i] = False
-                        break
+                    is_pareto[i] = False
+                    break
 
         pareto_idx = np.where(is_pareto)[0]
         pareto_scores = scores[pareto_idx]

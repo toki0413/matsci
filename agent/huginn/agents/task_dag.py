@@ -23,8 +23,6 @@ Dilworth 定理: 有限偏序集的最大反链大小 = 最小链覆盖数.
 """
 from __future__ import annotations
 
-from typing import Any
-
 
 class TaskDAG:
     """子任务有向无环图.
@@ -47,7 +45,7 @@ class TaskDAG:
         self.deps = list(dependencies or [])
         # 邻接表 + 入度
         self._adj: dict[str, list[str]] = {t: [] for t in self.tasks}
-        self._indegree: dict[str, int] = {t: 0 for t in self.tasks}
+        self._indegree: dict[str, int] = dict.fromkeys(self.tasks, 0)
         for u, v in self.deps:
             if u not in self._adj or v not in self._adj:
                 raise ValueError(f"dependency ({u},{v}) 引用不存在的 task")
@@ -305,7 +303,7 @@ if __name__ == "__main__":
     assert dag3.antichain_width() == 1, "线性链 antichain 应 1"
     assert dag3.critical_path() == ["A", "B", "C"], "线性链关键路径全长"
     assert dag3.parallel_layers() == [["A"], ["B"], ["C"]], "线性链每层 1 节点"
-    print(f"[ok] 线性链 A→B→C: width=1, cp=3, layers=[[A],[B],[C]]")
+    print("[ok] 线性链 A→B→C: width=1, cp=3, layers=[[A],[B],[C]]")
 
     # 8. provenance 自动推断: B 引用 A 输出但 LLM 未填 dependencies
     #    验证 LLM 完全不填 dependencies 时也能建出正确 DAG

@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -91,7 +90,6 @@ def _run_sync(coro_func, *args, **kwargs):
 
     if loop is not None:
         # 已在 event loop 中 — 用 to_thread 避免阻塞
-        import concurrent.futures
         import threading
 
         # ponytail: 新建独立 event loop 在子线程中跑，不阻塞主 loop

@@ -17,6 +17,7 @@ from __future__ import annotations
 import abc
 import asyncio
 import concurrent.futures
+import contextlib
 import enum
 import json
 import logging
@@ -83,7 +84,7 @@ class HuginnSwarm:
     def __init__(
         self,
         workers: list[SwarmAgent],
-        backend: "DistributedSwarmBackend | None" = None,
+        backend: DistributedSwarmBackend | None = None,
     ) -> None:
         self.workers = {w.role: w for w in workers}
         self.trace: list[SwarmStep] = []
@@ -468,10 +469,8 @@ class RedisBackend(DistributedSwarmBackend):
 
     def close(self) -> None:
         if self._client is not None:
-            try:
+            with contextlib.suppress(Exception):
                 self._client.close()
-            except Exception:
-                pass
             self._client = None
 
 
@@ -560,10 +559,8 @@ class PostgresBackend(DistributedSwarmBackend):
 
     def close(self) -> None:
         if self._conn is not None:
-            try:
+            with contextlib.suppress(Exception):
                 self._conn.close()
-            except Exception:
-                pass
             self._conn = None
 
 

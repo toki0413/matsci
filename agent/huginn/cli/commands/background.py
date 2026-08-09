@@ -16,9 +16,10 @@ from __future__ import annotations
 import json
 import threading
 import uuid
+from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import click
 from rich.table import Table
@@ -63,7 +64,7 @@ class BackgroundTaskManager:
     实际能否停掉取决于任务线程是否检查状态。
     """
 
-    _instance: "BackgroundTaskManager | None" = None
+    _instance: BackgroundTaskManager | None = None
     _instance_lock = threading.Lock()
 
     def __init__(
@@ -78,7 +79,7 @@ class BackgroundTaskManager:
         self._lock = threading.RLock()
 
     @classmethod
-    def get_instance(cls) -> "BackgroundTaskManager":
+    def get_instance(cls) -> BackgroundTaskManager:
         """拿全局单例, 第一次调用时创建。"""
         if cls._instance is None:
             with cls._instance_lock:

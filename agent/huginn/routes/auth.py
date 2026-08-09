@@ -21,8 +21,8 @@ from pydantic import BaseModel
 
 from huginn.security.auth import _jwt_secret, secrets_match
 from huginn.security.rbac import (
-    Role,
     _ROLE_CAPABILITIES,
+    Role,
     jwt_decode,
     jwt_encode,
 )

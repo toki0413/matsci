@@ -10,11 +10,8 @@
 
 from __future__ import annotations
 
-import re
-
-from huginn.prompts import HUGINN_SYSTEM_PROMPT
 from huginn.personas import Persona, PersonaManager
-
+from huginn.prompts import HUGINN_SYSTEM_PROMPT
 
 REQUIRED_ACTIONS = [
     "pde_classify",

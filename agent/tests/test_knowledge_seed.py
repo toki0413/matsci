@@ -1,13 +1,14 @@
 
 import pytest
+
 pytest.importorskip("chromadb", reason="chromadb not installed (pip install huginn-agent[rag])")
 
 """Tests for built-in knowledge-base seed documents."""
 
-import tempfile
-from pathlib import Path
+import tempfile  # noqa: E402
+from pathlib import Path  # noqa: E402
 
-from huginn.knowledge import KnowledgeBase, seed_knowledge_base
+from huginn.knowledge import KnowledgeBase, seed_knowledge_base  # noqa: E402
 
 # KB 初始化会下载 embedding 模型 (chromadb ONNX + sentence-transformers 兜底),
 # CI 无缓存时会挂起超时. 标 network 让 CI 用 -m "not network" 跳过.

@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -160,7 +161,7 @@ LUCID review (mandatory after generating hypothesis):
         ponytail: 重算 by_block 跟 apply_patches 内部逻辑重复, 但避免改
         apply_patches 返回签名. 升级路径: apply_patches 返回 (blocks, ids).
         """
-        from huginn.harness.prompt_patch import apply_patches, PromptPatchStore
+        from huginn.harness.prompt_patch import PromptPatchStore, apply_patches
         new_blocks = apply_patches(blocks, phase)
         # 记录原始 blocks 供 _generate_next_loop_directive 调 generate_patch 用
         # (generate_patch 需要看 block 名字 + 内容才能生成合理 patch)
@@ -443,10 +444,8 @@ LUCID review (mandatory after generating hypothesis):
 
             # persona: 用 .get (PersonaManager 真实 API), get_persona 不存在.
             persona_obj = None
-            try:
+            with contextlib.suppress(Exception):
                 persona_obj = self._get_persona_manager().get("default")
-            except Exception:
-                pass
 
             last_eval = self._evals_history[-1] if self._evals_history else None
             kb = self._get_kb()
@@ -577,10 +576,11 @@ LUCID review (mandatory after generating hypothesis):
         if self._hypo_manifold is not None:
             return self._hypo_manifold
         try:
-            from huginn.metacog.hypothesis_manifold import (
-                HypothesisManifold, Hypothesis,
-            )
             from huginn.agent.hint_coordinator import extract_numeric_targets
+            from huginn.metacog.hypothesis_manifold import (
+                Hypothesis,
+                HypothesisManifold,
+            )
 
             text_pool = " ".join(
                 str(v) for v in (context or {}).values() if isinstance(v, (str, int, float))
@@ -592,15 +592,13 @@ LUCID review (mandatory after generating hypothesis):
                 ("h_partial", "Result partially reproduces the signal", 0.5, 3),
                 ("h_null", "No signal / null baseline", 0.0, 1),
             ):
-                try:
+                with contextlib.suppress(ValueError):
                     manifold.add(Hypothesis(
                         h_id=hid,
                         description=desc,
                         predictions={k: v * scale for k, v in targets.items()},
                         n_params=n,
                     ))
-                except ValueError:
-                    pass
             self._hypo_manifold = manifold
         except Exception:
             logger.debug("hypo manifold init failed (non-fatal)", exc_info=True)
@@ -667,11 +665,53 @@ LUCID review (mandatory after generating hypothesis):
                 str(v) for v in context.values() if isinstance(v, (str, int, float))
             )
             from huginn.agent.hint_coordinator import (
-                extract_observations, _build_posterior_guided_hint,
+                _build_posterior_guided_hint,
+                extract_observations,
             )
             _obs = extract_observations(text_pool)
             if _manifold is not None and _obs:
-                _pg = _build_posterior_guided_hint(_manifold, _obs)
+                # E2-1: 在通用主循环推进 MCMC 链 (原本只在 rcb_runner 跑).
+                # 每 HUGINN_MCMC_INTERVAL 轮推进一次 mcmc_step, 首次用
+                # abductive_inference 初始化 current. 推进是 advisory only,
+                # 失败静默降级到 None (hint 走空路径, 不阻塞主循环).
+                try:
+                    _iter_n = getattr(self, "_iteration", 0)
+                    _mcmc_interval = int(
+                        os.environ.get("HUGINN_MCMC_INTERVAL", "5"))
+                    if _iter_n % _mcmc_interval == 0:
+                        _cur = getattr(self, "_mcmc_current", None)
+                        if _cur is None or _cur not in _manifold._hyp:
+                            # 初始化: 用 posterior 最高的假设 (abductive_inference)
+                            _abd = _manifold.abductive_inference(_obs)
+                            _cur = _abd.h_id if _abd else None
+                            if _cur is None:
+                                _h_ids = list(_manifold._hyp)
+                                _cur = _h_ids[0] if _h_ids else None
+                        if _cur is not None:
+                            _prev = _cur
+                            _rng = getattr(self, "_mcmc_rng", None)
+                            _next_h, _next_logp = _manifold.mcmc_step(
+                                _obs, _cur, rng=_rng,
+                                cached_log_p_current=getattr(
+                                    self, "_mcmc_cached_log_p", None),
+                                global_proposal_prob=0.3,
+                            )
+                            self._mcmc_current = _next_h
+                            self._mcmc_cached_log_p = _next_logp
+                            self._mcmc_step_count = getattr(
+                                self, "_mcmc_step_count", 0) + 1
+                            if _next_h != _prev:
+                                self._mcmc_accept_count = getattr(
+                                    self, "_mcmc_accept_count", 0) + 1
+                except Exception:
+                    logger.debug(
+                        "MCMC step advance skipped (non-fatal)", exc_info=True)
+                # MCMC 动态采样路径接入: 把采样链当前驻留的假设作为 hint 注入,
+                # 补充 abductive_inference (argmax) 的贪婪盲区. 无 MCMC 状态时
+                # 传 None, _build_posterior_guided_hint 内部跳过, 行为不变.
+                _mcmc_cur = getattr(self, "_mcmc_current", None)
+                _pg = _build_posterior_guided_hint(
+                    _manifold, _obs, mcmc_current=_mcmc_cur)
                 if _pg:
                     hint_block = (
                         hint_block + f"\n### Posterior-guided\n{_pg}"
@@ -735,7 +775,7 @@ LUCID review (mandatory after generating hypothesis):
                     _stmt = (nd.statement or "")[:100]
                     _lines.append(f"- [{nd.id}] {_stmt}")
                 frontier_block = (
-                    f"\n### Untested Hypotheses (Ising-ranked, energy-low)\n"
+                    "\n### Untested Hypotheses (Ising-ranked, energy-low)\n"
                     + "\n".join(_lines) + "\n"
                     "Consider testing one of these before generating a new hypothesis.\n"
                 )
@@ -747,9 +787,9 @@ LUCID review (mandatory after generating hypothesis):
         failed_block = ""
         proved_block = ""
         try:
-            from huginn.autoloop.hypothesis_loop import HypothesisGraph as _HG0
+            from huginn.autoloop.hypothesis_loop import HypothesisGraph
             _ws = str(self.workspace) if hasattr(self, "workspace") else None
-            _failed_txt = _HG0.load_failed(_ws)
+            _failed_txt = HypothesisGraph.load_failed(_ws)
             if _failed_txt:
                 _failed_lines = _failed_txt.strip().split("\n")[:40]
                 failed_block = (
@@ -757,7 +797,7 @@ LUCID review (mandatory after generating hypothesis):
                     + "\n".join(_failed_lines) + "\n"
                     "Do NOT re-attempt these unless the Reopen-if condition is met.\n"
                 )
-            _proved_txt = _HG0.load_proved(_ws)
+            _proved_txt = HypothesisGraph.load_proved(_ws)
             if _proved_txt:
                 _proved_lines = _proved_txt.strip().split("\n")[:40]
                 proved_block = (
@@ -814,8 +854,8 @@ LUCID review (mandatory after generating hypothesis):
                     _stmt = nodes[0].statement[:120] if nodes else ""
                     lines.append(f"  - {dim} ({len(nodes)} 个假设): {_stmt}")
                 cluster_block = (
-                    f"\n### Cluster (advisory)\n"
-                    f"当前假设按 dimension 分布:\n"
+                    "\n### Cluster (advisory)\n"
+                    "当前假设按 dimension 分布:\n"
                     + "\n".join(lines)
                     + "\n新假设应优先补未覆盖的 dimension, 避免在已饱和维度堆叠.\n"
                 )

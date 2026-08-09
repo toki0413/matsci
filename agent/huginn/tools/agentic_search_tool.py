@@ -27,7 +27,6 @@ Cost tier is "none" (not a CPU/GPU-heavy simulation) — gated by phase
 
 from __future__ import annotations
 
-import asyncio
 import ipaddress
 import logging
 import os
@@ -35,10 +34,10 @@ import re
 import socket
 import urllib.parse
 import urllib.request
-from typing import Any, Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
-from typing import Literal
 
 from huginn.phases import ResearchPhase
 from huginn.tools.base import HuginnTool

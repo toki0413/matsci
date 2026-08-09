@@ -20,12 +20,14 @@ agent 永远卡死. 没有运行中的事件循环时 (比如同步调用) 直�
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import logging
 import threading
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Optional
-import logging
+from typing import Any
+
 logger = logging.getLogger(__name__)
 
 
@@ -43,8 +45,8 @@ class ClarificationQuestion:
     default_answer: str = ""
     created_at: float = field(default_factory=time.time)
     # 回答相关
-    answer: Optional[str] = None
-    answered_at: Optional[float] = None
+    answer: str | None = None
+    answered_at: float | None = None
     # 提问时的上下文快照, 给前端展示用
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -146,10 +148,7 @@ class ClarificationManager:
         stats = self._stats.get(question_type, {})
         asked = stats.get("asked", 0)
         timed_out = stats.get("timed_out", 0)
-        if asked >= 5 and timed_out / asked > 0.7:
-            return False
-
-        return True
+        return not (asked >= 5 and timed_out / asked > 0.7)
 
     def generate_question(
         self,
@@ -196,7 +195,7 @@ class ClarificationManager:
             "science research agent. The question must be specific to the context, "
             "offer clear options when possible, and include a safe default. "
             "Reply in the same language as the summary. "
-            f"Output format: QUESTION\\nOPTIONS (comma-separated)\\nDEFAULT"
+            "Output format: QUESTION\\nOPTIONS (comma-separated)\\nDEFAULT"
         )
         user_prompt = (
             f"Phase: {phase}\n"
@@ -320,7 +319,7 @@ class ClarificationManager:
             answer = await asyncio.wait_for(fut, timeout=timeout_val)
             self._record_stats(qtype, "answered")
             return str(answer)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             q.answer = default_answer or ""
             q.answered_at = time.time()
             self._record_stats(qtype, "timed_out")
@@ -353,11 +352,9 @@ class ClarificationManager:
                 pending.remove(question_id)
         # set_result 必须在锁外调, 避免在锁里 await 唤醒的协程
         if fut is not None and not fut.done():
-            try:
+            # 已经被 wait_for 超时 set 过了, 忽略
+            with contextlib.suppress(asyncio.InvalidStateError):
                 fut.set_result(answer)
-            except asyncio.InvalidStateError:
-                # 已经被 wait_for 超时 set 过了, 忽略
-                pass
         return True
 
     def resolve_thread(self, thread_id: str, answer: str) -> bool:
@@ -432,7 +429,7 @@ def get_clarification_manager() -> ClarificationManager:
 # 不阻塞, 用户可选择回答或忽略继续. 两者互补: 一个事前提示, 一个事中追问.
 # 用户 profile: "more questioning环节" + "capturing vague intuitions".
 
-import re as _re
+import re as _re  # noqa: E402
 
 _ACTION_VERBS = _re.compile(
     r"(?:计算|模拟|分析|优化|生成|查找|搜索|对比|预测|拟合|"
@@ -508,7 +505,7 @@ def should_ask_clarification(
                     f"首次提到 {material}, 你想做什么?",
                     f"查 {material} 的结构/性质数据?",
                     f"用 {material} 跑模拟 (VASP/LAMMPS)?",
-                    f"只是记录, 不需要现在处理?",
+                    "只是记录, 不需要现在处理?",
                 ],
                 "raw": message[:120],
             }

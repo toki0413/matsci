@@ -7,6 +7,7 @@ the Web UI start a run from a conversation and poll for progress.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import uuid
 from typing import Any
@@ -45,10 +46,8 @@ def _make_done_callback(progress_task_id: str, run_key: str):
     """
 
     def _cb(t: asyncio.Task) -> None:
-        try:
+        with contextlib.suppress(Exception):
             _active_runs.pop(run_key, None)
-        except Exception:
-            pass
         tracker = get_progress_tracker()
         if t.cancelled():
             tracker.fail(progress_task_id, "autoloop cancelled")

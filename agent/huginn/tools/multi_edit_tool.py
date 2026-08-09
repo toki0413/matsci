@@ -85,7 +85,7 @@ class MultiEditTool(HuginnTool):
         # 否则 edit2 的 new_content 会基于原始内容算出, 写入时覆盖 edit1.
         from collections import OrderedDict
 
-        grouped: "OrderedDict[str, list[SingleEdit]]" = OrderedDict()
+        grouped: OrderedDict[str, list[SingleEdit]] = OrderedDict()
         for edit in input_data.edits:
             grouped.setdefault(edit.file_path, []).append(edit)
 

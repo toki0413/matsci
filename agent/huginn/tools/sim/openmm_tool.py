@@ -9,14 +9,13 @@ trajectory analysis. Falls back gracefully when openmm is not installed.
 from __future__ import annotations
 
 import logging
-import subprocess
 from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 from huginn.phases import ResearchPhase
-from huginn.security import SandboxError, SandboxExecutor
+from huginn.security import SandboxExecutor
 from huginn.tools.base import HuginnTool, ToolProfile
 from huginn.types import ToolContext, ToolResult
 
@@ -121,9 +120,9 @@ class OpenMMTool(HuginnTool):
             return ToolResult(data=None, success=False, error=f"PDB file not found: {inp.pdb_file}")
 
         try:
-            from openmm.app import ForceField, Modeller, PDBFile
             from openmm import LangevinMiddleIntegrator, Platform
-            from openmm.unit import kelvin, picoseconds, nanometers, kilojoules_per_mole
+            from openmm.app import ForceField, Modeller, PDBFile
+            from openmm.unit import kelvin, kilojoules_per_mole, nanometers, picoseconds
         except ImportError:
             return ToolResult(
                 data={"action": "energy_minimize", "status": "skipped", "pdb_file": str(pdb)},
@@ -199,9 +198,15 @@ class OpenMMTool(HuginnTool):
             return ToolResult(data=None, success=False, error=f"PDB file not found: {inp.pdb_file}")
 
         try:
-            from openmm.app import ForceField, Modeller, PDBFile, DCDReporter, StateDataReporter
             from openmm import LangevinMiddleIntegrator, MonteCarloBarostat, Platform
-            from openmm.unit import kelvin, picoseconds, nanometers, atmospheres, nanometers
+            from openmm.app import (
+                DCDReporter,
+                ForceField,
+                Modeller,
+                PDBFile,
+                StateDataReporter,
+            )
+            from openmm.unit import atmospheres, kelvin, nanometers, picoseconds
         except ImportError:
             return ToolResult(
                 data={"action": "md_run", "status": "skipped", "pdb_file": str(pdb)},
@@ -299,8 +304,7 @@ class OpenMMTool(HuginnTool):
             return ToolResult(data=None, success=False, error=f"Trajectory file not found: {inp.trajectory_file}")
 
         try:
-            from openmm.app import PDBFile, DCDFile
-            from openmm.unit import kilojoules_per_mole, nanometers
+            from openmm.app import DCDFile, PDBFile
         except ImportError:
             return ToolResult(
                 data={"action": "analyze", "status": "skipped"},
@@ -330,6 +334,7 @@ class OpenMMTool(HuginnTool):
 
     def _analyze_rmsd(self, dcd, pdb) -> ToolResult:
         import numpy as np
+        from openmm.unit import nanometers
 
         ref_pos = pdb.positions
         n_frames = dcd.getNumFramesPerFile()
@@ -377,8 +382,8 @@ class OpenMMTool(HuginnTool):
 
     def _analyze_rg(self, dcd, pdb) -> ToolResult:
         import numpy as np
+        from openmm.unit import nanometers
 
-        ref_pos = pdb.positions
         n_frames = dcd.getNumFramesPerFile()
         rgs = []
         for i in range(n_frames):
@@ -408,7 +413,7 @@ class OpenMMTool(HuginnTool):
 
     @staticmethod
     def _nonbonded_method(inp: OpenMMToolInput):
-        from openmm.app import NoCutoff, PME, CutoffNonPeriodic
+        from openmm.app import PME, CutoffNonPeriodic, NoCutoff
         if inp.solvent == "explicit":
             return PME
         if inp.solvent == "implicit":
@@ -417,7 +422,7 @@ class OpenMMTool(HuginnTool):
 
     @staticmethod
     def _constraints(inp: OpenMMToolInput):
-        from openmm.app import HBonds, AllBonds
+        from openmm.app import AllBonds, HBonds
         if inp.solvent == "vacuum":
             return AllBonds
         return HBonds
@@ -438,7 +443,7 @@ class OpenMMTool(HuginnTool):
         try:
             with open(log_path, newline="") as f:
                 reader = csv.reader(f)
-                header = next(reader, None)
+                next(reader, None)
                 for row in reader:
                     if len(row) < 2:
                         continue

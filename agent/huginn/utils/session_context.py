@@ -12,8 +12,8 @@ each other's state.
 from __future__ import annotations
 
 import contextvars
+from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Iterator
 
 # Each var defaults to a sentinel so we can tell "not set" apart from
 # legitimately falsy values like "" or "default".

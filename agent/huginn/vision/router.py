@@ -135,6 +135,7 @@ def _cv_pre_analyze(image_path: str | Path | bytes) -> str:
 
     try:
         import numpy as np
+
         from huginn.tools.image_analysis._utils import load_gray
     except ImportError:
         return "[CV pre-analysis unavailable: numpy/Pillow not installed]"
@@ -218,7 +219,7 @@ def build_cv_context(
         from huginn.vision.symbol_encoder import visual_to_symbols
         symbol_text = visual_to_symbols(image_path)
         # 只添加 _cv_pre_analyze 没有的部分（避免重复）
-        new_lines = [l for l in symbol_text.split("\n") if l and not l.startswith("[CV pre-analysis]")]
+        new_lines = [_l for _l in symbol_text.split("\n") if _l and not _l.startswith("[CV pre-analysis]")]
         if new_lines:
             parts.append("\n".join(new_lines))
     except Exception:

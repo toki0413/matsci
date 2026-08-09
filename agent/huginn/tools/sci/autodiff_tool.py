@@ -13,6 +13,7 @@ This bridges symbolic math (exact derivatives) with numerical computation
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from typing import Any, Literal
 
@@ -21,7 +22,7 @@ from pydantic import BaseModel, Field
 
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult
-import logging
+
 logger = logging.getLogger(__name__)
 
 

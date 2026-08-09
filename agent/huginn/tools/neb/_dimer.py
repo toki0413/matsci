@@ -11,8 +11,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from huginn.types import ToolContext
 from huginn.tools.neb._evaluators import eval_single
+from huginn.types import ToolContext
 
 if TYPE_CHECKING:
     from huginn.tools.neb.tool import NEBToolInput
@@ -24,7 +24,7 @@ async def dimer_rotate(
     d: float,
     atomic_numbers: list[int],
     cell: np.ndarray | None,
-    args: "NEBToolInput",
+    args: NEBToolInput,
     context: ToolContext,
     n_rot: int = 20,
 ) -> tuple[np.ndarray, float]:
@@ -78,7 +78,7 @@ async def estimate_hessian_along_mode(
     d: float,
     atomic_numbers: list[int],
     cell: np.ndarray | None,
-    args: "NEBToolInput",
+    args: NEBToolInput,
     context: ToolContext,
 ) -> tuple[list[float], np.ndarray]:
     """估计沿 tau 方向的 Hessian 本征值 (中心差分).

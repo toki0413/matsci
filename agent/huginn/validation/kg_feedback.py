@@ -29,7 +29,6 @@ def write_validation_to_kg(
     Returns the number of new KG entries created.
     """
     try:
-        from huginn.kg.graph import ProjectKnowledgeGraph
         from huginn.kg.entities import EntityType, Relation
     except ImportError:
         logger.debug("[kg_feedback] KG modules not available")

@@ -22,7 +22,7 @@ from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage, ToolMessage
 
 from huginn.server import app
-from tests.fixtures.fake_llm import FakeLLM, make_scripted_llm
+from tests.fixtures.fake_llm import make_scripted_llm
 
 # WebSocket + TestClient 首次导入 huginn.server 拉起整个 agent 栈,
 # CI runner 上慢到 300s 都跑不完 (本地 ~62s). 不是代码 bug, 是 CI runner
@@ -70,7 +70,7 @@ class MockAgent:
 
 
 class _MockFactory:
-    def __init__(self, harness: "ChatHarness") -> None:
+    def __init__(self, harness: ChatHarness) -> None:
         self._h = harness
         self.create_lead_calls: list[dict] = []
 

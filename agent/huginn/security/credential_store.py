@@ -20,6 +20,7 @@ PBKDF2 哈希.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -110,11 +111,9 @@ def _get_fernet() -> Fernet:
     # 无主密码 — 落地一个随机 Fernet key 文件, 靠文件权限兜底
     if not key_file.exists():
         key_file.write_bytes(Fernet.generate_key())
-        try:
+        # Windows 上 chmod 语义不同, 忽略即可; 文件仍在用户目录下
+        with contextlib.suppress(OSError):
             os.chmod(key_file, 0o600)
-        except OSError:
-            # Windows 上 chmod 语义不同, 忽略即可; 文件仍在用户目录下
-            pass
     return Fernet(key_file.read_bytes())
 
 
@@ -565,7 +564,7 @@ SUPPORTED_SERVICES: list[str] = [
 
 # 模块级单例锁 + 单例引用 — 与上面的 _store_lock 分开, 两套存储互不干扰
 _svc_store_lock = threading.Lock()
-_svc_store_singleton: "ServiceCredentialStore | None" = None
+_svc_store_singleton: ServiceCredentialStore | None = None
 
 
 def _service_cred_file() -> Path:
@@ -627,11 +626,9 @@ def _get_service_fernet():
     if not key_file.exists():
         new_key = Fernet.generate_key()
         key_file.write_bytes(new_key)
-        try:
+        # Windows 上 chmod 语义不同, 忽略即可; 文件仍在用户目录下
+        with contextlib.suppress(OSError):
             os.chmod(key_file, 0o600)
-        except OSError:
-            # Windows 上 chmod 语义不同, 忽略即可; 文件仍在用户目录下
-            pass
         logger.warning(
             "HUGINN_ENCRYPTION_KEY 未设置, 已自动生成主密钥并写入 %s。"
             "生产环境请通过环境变量显式提供 HUGINN_ENCRYPTION_KEY, "

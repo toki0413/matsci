@@ -14,12 +14,14 @@
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import logging
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Protocol
+from typing import Any
 
 from huginn.api.context import PluginContext
 from huginn.api.star import Star
@@ -109,10 +111,8 @@ class PluginLoader:
                 asyncio.ensure_future(bus.dispatch(ev))
             except RuntimeError:
                 def _run() -> None:
-                    try:
+                    with contextlib.suppress(Exception):
                         asyncio.run(bus.dispatch(ev))
-                    except Exception:
-                        pass
                 threading.Thread(target=_run, daemon=True).start()
         except Exception:
             logger.debug("plugin lifecycle event dispatch failed", exc_info=True)

@@ -10,7 +10,7 @@ import json
 import os
 import sqlite3
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -73,7 +73,7 @@ def _uuid_to_datetime(uuid_str: str) -> datetime | None:
     if unix_ticks <= 0:
         return None
     # 100-ns 间隔转秒
-    return datetime.fromtimestamp(unix_ticks / 1e7, tz=timezone.utc)
+    return datetime.fromtimestamp(unix_ticks / 1e7, tz=UTC)
 
 
 def _truncate(text: str, width: int) -> str:

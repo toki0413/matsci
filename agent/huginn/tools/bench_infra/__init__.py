@@ -5,11 +5,11 @@
 
 from __future__ import annotations
 
-from huginn.tools.bench_infra.plot_tool import PlotTool
-from huginn.tools.bench_infra.matrix_tool import TrainingMatrixTool
 from huginn.tools.bench_infra.c2st_tool import C2STEvaluatorTool
-from huginn.tools.bench_infra.mcmc_tool import MCMCSamplerTool
 from huginn.tools.bench_infra.kaggle_tool import KaggleSubmitTool
+from huginn.tools.bench_infra.matrix_tool import TrainingMatrixTool
+from huginn.tools.bench_infra.mcmc_tool import MCMCSamplerTool
+from huginn.tools.bench_infra.plot_tool import PlotTool
 
 __all__ = [
     "PlotTool",

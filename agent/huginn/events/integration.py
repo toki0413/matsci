@@ -171,7 +171,7 @@ async def publish_session_event(
 def _schedule_sync(coro) -> None:
     """Fire-and-forget an async publish from sync code."""
     try:
-        loop = asyncio.get_running_loop()
+        asyncio.get_running_loop()
         asyncio.ensure_future(coro)
     except RuntimeError:
         # No running loop in this thread — schedule on the main loop

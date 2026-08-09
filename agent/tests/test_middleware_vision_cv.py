@@ -11,11 +11,9 @@ import base64
 import os
 import tempfile
 
-import pytest
 from langchain_core.messages import HumanMessage
 
 from huginn.agent.middlewares import FixDanglingToolCallsMiddleware
-
 
 # deepseek-chat 在 models/registry 里是 vision=False, 触发 _strip_multimodal=True
 _VISION_FALSE_MODEL = "deepseek-chat"

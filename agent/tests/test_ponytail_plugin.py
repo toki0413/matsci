@@ -1,14 +1,11 @@
 """Tests for the ponytail behavior-constraint plugin."""
 
-import asyncio
-from unittest.mock import MagicMock
 
 import pytest
 
-from huginn.api.context import PluginContext
-from huginn.api.event import Event, EventType, LLMRequestEvent, MessageEvent
+from huginn.api.event import EventType, LLMRequestEvent, MessageEvent
 from huginn.api.star import Star
-from huginn.plugins.ponytail.main import PonytailStar, PonytailState, _audit_python_tree
+from huginn.plugins.ponytail.main import PonytailStar, _audit_python_tree
 from huginn.plugins.skill_loader import parse_skill_file
 
 

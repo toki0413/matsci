@@ -31,9 +31,7 @@ def _use_evolution_manager() -> bool:
     if os.environ.get(_DISABLE_FLAG, "0") == "1":
         return False
     # 兼容旧 flag: HUGINN_USE_EVOLUTION_MANAGER=0 显式关闭
-    if os.environ.get(_FLAG, "1") == "0":
-        return False
-    return True
+    return os.environ.get(_FLAG, "1") != "0"
 
 
 @dataclass
@@ -48,7 +46,7 @@ class Recommendation:
 class EvolutionManager:
     """统一 evolution 接口. 单例."""
 
-    _shared: "EvolutionManager | None" = None
+    _shared: EvolutionManager | None = None
 
     def __init__(self, memory_manager=None, skill_evolution=None) -> None:
         self._mm = memory_manager
@@ -60,7 +58,7 @@ class EvolutionManager:
             self._failed_store = FailedDirectionStore(memory_manager)
 
     @classmethod
-    def shared(cls, memory_manager=None) -> "EvolutionManager":
+    def shared(cls, memory_manager=None) -> EvolutionManager:
         """单例. 第一次调时传 memory_manager 初始化.
 
         后续调用不传 mm 也能拿到已初始化的实例; 若首次没传 mm, 后续调用

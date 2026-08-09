@@ -6,31 +6,31 @@ external executables (VASP, QE, LAMMPS, Lean, etc.) or heavy ML packages.
 
 from __future__ import annotations
 
-import time
 from pathlib import Path
-from typing import Any
 
-import pytest
-
-from huginn.validation.physics import PhysicsValidator, ValidationCheck
+from huginn.constraints.boundaries import BoundaryEvolution, BoundaryState
+from huginn.constraints.operators import SafetyOperator
+from huginn.constraints.reference import Constraint, ConstraintResult
+from huginn.self_improvement.core import (
+    BenchmarkCase,
+    BenchmarkSuite,
+    keyword_evaluator,
+    numeric_evaluator,
+)
 from huginn.utils.context import compact_messages, estimate_message_tokens
 from huginn.utils.tokens import (
     bytes_per_token_for_extension,
     rough_token_count,
     rough_token_count_for_text,
 )
-from huginn.self_improvement.core import (
-    BenchmarkCase,
-    BenchmarkSuite,
-    keyword_evaluator,
-    numeric_evaluator,
-    SelfImprovementLoop,
-)
-from huginn.constraints.boundaries import BoundaryEvolution, BoundaryState
-from huginn.constraints.operators import SafetyOperator, QualityOperator
-from huginn.constraints.reference import Constraint, ConstraintResult
-from huginn.workflows.stages import ComputationalStage, ValidationRule, RetryPolicy, WorkflowResult
+from huginn.validation.physics import PhysicsValidator, ValidationCheck
 from huginn.workflows.checkpoint import WorkflowCheckpoint
+from huginn.workflows.stages import (
+    ComputationalStage,
+    RetryPolicy,
+    ValidationRule,
+    WorkflowResult,
+)
 
 
 class TestPhysicsValidator:

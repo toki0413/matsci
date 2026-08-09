@@ -278,7 +278,7 @@ class PetState:
         "hunger", "happiness", "accessories",
     )
 
-    def save(self, path: "Path | None" = None) -> None:
+    def save(self, path: Path | None = None) -> None:
         """把 gamification 状态写到 JSON, best-effort 不抛."""
         import json
         target = path or _pet_state_path()
@@ -293,7 +293,7 @@ class PetState:
         except Exception:
             pass
 
-    def load(self, path: "Path | None" = None) -> None:
+    def load(self, path: Path | None = None) -> None:
         """从 JSON 恢复 gamification 状态, best-effort 不抛."""
         import json
         target = path or _pet_state_path()

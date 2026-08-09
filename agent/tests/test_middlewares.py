@@ -36,7 +36,6 @@ from huginn.agent.middlewares import (
     RateLimitMiddleware,
 )
 
-
 # ── 辅助: 轻量 request double ────────────────────────────────────
 # wrap_model_call / before_agent 接收的 request 只需要两个能力:
 #   .messages 属性可读
@@ -50,7 +49,7 @@ class _FakeRequest:
     def __init__(self, messages: list) -> None:
         self.messages = list(messages)
 
-    def override(self, **changes: Any) -> "_FakeRequest":
+    def override(self, **changes: Any) -> _FakeRequest:
         # 只支持 messages 覆盖, 其它字段 YAGNI
         return _FakeRequest(changes.get("messages", self.messages))
 
@@ -445,7 +444,7 @@ class TestPatchMessagesOrphanRepair:
         out = mw._patch_messages([ai])
         # vision=True 不补 cancelled (force=False)
         # AIMessage 没变化, _changed=False → 返回原 list
-        assert out is [ai] or len(out) == 1
+        assert out == [ai] or len(out) == 1
         assert isinstance(out[0], AIMessage)
 
     def test_vision_true_misordered_tool_messages_reordered(self):

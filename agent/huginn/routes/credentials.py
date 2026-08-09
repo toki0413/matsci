@@ -19,9 +19,8 @@
 from __future__ import annotations
 
 import asyncio
-import time
 import logging
-import traceback
+import time
 from typing import Any
 
 from fastapi import APIRouter, Depends
@@ -228,7 +227,7 @@ async def _test_ssh(store, cid: str) -> dict[str, Any]:
             "latency_ms": latency_ms,
             "error": stderr or "连接失败 (rc!=0)",
         }
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return {
             "success": False,
             "latency_ms": int((time.perf_counter() - start) * 1000),
@@ -290,7 +289,7 @@ async def _test_llm(store, cid: str) -> dict[str, Any]:
             "latency_ms": latency_ms,
             "model_response": text[:200],
         }
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return {
             "success": False,
             "latency_ms": int((time.perf_counter() - start) * 1000),
@@ -475,16 +474,16 @@ def _http_tester(url, *, build_headers=None, build_params=None, ok_status=200):
         params = build_params(api_key) if build_params else None
         timeout = aiohttp.ClientTimeout(total=_SERVICE_TEST_TIMEOUT)
         try:
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(
-                    url, headers=headers, params=params
-                ) as resp:
-                    if resp.status == ok_status:
-                        return True, None
-                    body = await resp.text()
-                    # 401/403 是 key 问题, 其它状态码也算探活失败但带原文
-                    return False, f"HTTP {resp.status}: {body[:160]}"
-        except asyncio.TimeoutError:
+            async with (
+                aiohttp.ClientSession(timeout=timeout) as session,
+                session.get(url, headers=headers, params=params) as resp,
+            ):
+                if resp.status == ok_status:
+                    return True, None
+                body = await resp.text()
+                # 401/403 是 key 问题, 其它状态码也算探活失败但带原文
+                return False, f"HTTP {resp.status}: {body[:160]}"
+        except TimeoutError:
             return False, f"请求超时 ({int(_SERVICE_TEST_TIMEOUT)}s)"
         except Exception as e:  # noqa: BLE001 - 探活要把任何异常透传给前端
             return False, f"{type(e).__name__}: {e}"

@@ -7,7 +7,6 @@ Covers Euler-Lagrange equation, functional derivative, isoperimetric
 from __future__ import annotations
 
 import pytest
-import sympy as sp
 
 from huginn.tools.symbolic_math.tool import SymbolicMathInput, SymbolicMathTool
 from huginn.types import ToolContext

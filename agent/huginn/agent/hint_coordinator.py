@@ -26,18 +26,22 @@ def _build_posterior_guided_hint(
     history_entries: list[dict] | None = None,
     *,
     max_chars: int = 1500,
+    mcmc_current: str | None = None,
 ) -> str:
-    """构造 posterior-guided hint 段: 核心 hint + 探索 hint.
+    """构造 posterior-guided hint 段: 核心 hint + 探索 hint (+ MCMC 驻留站点).
 
     核心 hint: abductive_inference 选出的 best hypothesis (description + predictions
     + posterior lift). 探索 hint: propose_next_exploration 返回的 max info gain
-    hypothesis. 两段拼一起, 优先保留核心 > 探索.
+    hypothesis. MCMC hint: mcmc_current (MCMC 采样链当前驻留的假设) — 这是 MCMC
+    的"动态采样路径", 可能停留在 argmax 之外的次优但值得关注的站点, 补充 argmax
+    的贪婪盲区. 三段拼一起, 优先保留核心 > 探索 > MCMC.
 
-    token 控制: 总 char ≤ max_chars, 超了截探索段. ponytail: 4 char ≈ 1 token,
-    用 char count 代理. 升级路径: tiktoken 精确计数.
+    token 控制: 总 char ≤ max_chars, 超了按 核心 > 探索 > MCMC 顺序截断.
+    ponytail: 4 char ≈ 1 token, 用 char count 代理. 升级路径: tiktoken 精确计数.
 
     失败降级: manifold=None / 空 hypothesis / 空 observations → 返回 "".
     history_entries 当前未用 (boost 在 coordinate() 里算), 留 signature 给后续扩展.
+    mcmc_current 不在 manifold 时 (已废弃/不存在) 静默跳过, 不报错.
     """
     if manifold is None:
         return ""
@@ -49,11 +53,13 @@ def _build_posterior_guided_hint(
         return ""
 
     parts: list[str] = []
+    best_h_id: str | None = None
 
     # 核心 hint: argmax_h P(h|O)
     try:
         best_h = manifold.abductive_inference(observations)
         if best_h is not None:
+            best_h_id = best_h.h_id
             log_post_dict = manifold.log_posterior(observations)
             log_post = log_post_dict.get(best_h.h_id, 0.0)
             log_prior = best_h.log_prior()
@@ -96,6 +102,40 @@ def _build_posterior_guided_hint(
     except Exception:
         logger.debug("posterior explore hint failed", exc_info=True)
 
+    # MCMC hint: MCMC 采样链当前驻留的假设 (动态采样路径, 补充 argmax 贪婪盲区).
+    # mcmc_current 不在 manifold 时静默跳过. 优先级最低 — 截断时最先被裁.
+    if mcmc_current:
+        try:
+            _m_h = manifold._hyp.get(mcmc_current)
+            if _m_h is not None:
+                m_lines = [
+                    "[posterior mcmc hint]",
+                    f"mcmc_current_hypothesis: {mcmc_current}",
+                    f"description: {_m_h.description}",
+                ]
+                if _m_h.predictions:
+                    _mpred = ", ".join(
+                        f"{k}={v:.4g}"
+                        for k, v in list(_m_h.predictions.items())[:5]
+                    )
+                    m_lines.append(f"predictions: {_mpred}")
+                # 若 MCMC 驻留站点就是 argmax (核心 hint), 标出来避免冗余重复.
+                if mcmc_current == best_h_id:
+                    m_lines.append("note: same as best_hypothesis (MCMC converged here)")
+                # #3: least-visited 假设 = 未探索方向, 引导生成多样性.
+                try:
+                    _lv = manifold.mcmc_least_visited(k=3)
+                    if _lv:
+                        m_lines.append(
+                            "least_visited (underexplored directions): "
+                            + ", ".join(_lv)
+                        )
+                except Exception:
+                    logger.debug("mcmc_least_visited lookup failed", exc_info=True)
+                parts.append("\n".join(m_lines))
+        except Exception:
+            logger.debug("posterior mcmc hint failed", exc_info=True)
+
     if not parts:
         return ""
 
@@ -115,7 +155,7 @@ def _build_posterior_guided_hint(
     return out
 
 
-# E2-1: 通用观测抽取 — 让假设流形对任何 benchmark 都可用 (不只 RCB).
+# E2-1: 通用观测抽取 — 让假设流形对任何 benchmark 都可用.
 # 从自由文本里抓 "metric = value" 喂给 manifold 做后验/溯因. 不调 LLM.
 # 白名单过滤避免误抓年份/版本号; 失败/无文本返回空 list, 不阻塞.
 _METRIC_WHITELIST = frozenset({
@@ -250,7 +290,7 @@ class HintCoordinator:
 
         # --- gradient 族 (必需) ---
         # iter_prompt 是 iter>0 的 "continue execution" 文本, 跟 step2_prompt
-        # 在 rcb_runner 里互斥 (iter 0 直接复用 step2_prompt). 取非空的那个.
+        # 在 benchmark runner 里互斥 (iter 0 直接复用 step2_prompt). 取非空的那个.
         _grad = iter_prompt if (iter_prompt and iter_prompt != step2_prompt) else (step2_prompt or "")
         # scan_hint deprecated: 合并进 step2_prompt (spec §deprecated)
         if scan_text:
@@ -552,7 +592,9 @@ if __name__ == "__main__":
     # === v15 Phase 2 Task 4: posterior-guided hint ===
     # 用真 HypothesisManifold 验证: hint 非空 + ≤1500 chars + 失败降级 + coordinate 注入.
     from huginn.metacog.hypothesis_manifold import (
-        HypothesisManifold, Hypothesis, Observation,
+        Hypothesis,
+        HypothesisManifold,
+        Observation,
     )
 
     _m = HypothesisManifold()

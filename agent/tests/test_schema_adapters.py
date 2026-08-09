@@ -25,7 +25,6 @@ from huginn.tools.schema_adapters import (
     to_openai_schema,
 )
 
-
 # ── mock 数据: 模拟 registry.get_all_schemas() 的输出 ───────────────
 
 

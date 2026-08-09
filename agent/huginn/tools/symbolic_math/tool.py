@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
-import sympy as sp
 from pydantic import BaseModel, Field
 
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult
-import logging
+
 logger = logging.getLogger(__name__)
 
 

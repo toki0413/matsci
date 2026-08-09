@@ -223,12 +223,11 @@ class ConfigWizardTool(HuginnTool):
                 return ValidationResult(
                     result=False, message="toggle_feature 需要 enabled 参数",
                 )
-        if args.action == "set_privacy":
-            if not args.level:
-                return ValidationResult(
-                    result=False,
-                    message="set_privacy 需要 level 参数 (off / redact / local_only)",
-                )
+        if args.action == "set_privacy" and not args.level:
+            return ValidationResult(
+                result=False,
+                message="set_privacy 需要 level 参数 (off / redact / local_only)",
+            )
         return ValidationResult(result=True)
 
     async def call(self, args: dict[str, Any], context: Any = None) -> ToolResult:
@@ -366,7 +365,7 @@ class ConfigWizardTool(HuginnTool):
         else:
             for m in cfg.models:
                 if not m.alias:
-                    issues.append({"severity": "error", "field": f"models[].alias", "message": "alias 为空"})
+                    issues.append({"severity": "error", "field": "models[].alias", "message": "alias 为空"})
                 if not m.model and m.provider not in ("default",):
                     issues.append({
                         "severity": "warn",
@@ -639,7 +638,7 @@ class ConfigWizardTool(HuginnTool):
                 "error": None,
                 "model_response": text[:200],
             }
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return {
                 "success": False,
                 "latency_ms": int((_time.perf_counter() - start) * 1000),

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -29,8 +30,6 @@ from huginn.workflows.stages import (
     ValidationRule,
     WorkflowResult,
 )
-
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -602,7 +601,9 @@ class WorkflowEngine:
         diagnose_tool = self.registry.get("diagnose_tool")
         if diagnose_tool:
             try:
-                from huginn.tools.diagnose_tool import DiagnoseInput as DiagnoseToolInput
+                from huginn.tools.diagnose_tool import (
+                    DiagnoseInput as DiagnoseToolInput,
+                )
 
                 diag_input = DiagnoseToolInput(
                     error_message=error_msg,

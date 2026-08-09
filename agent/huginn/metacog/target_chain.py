@@ -387,17 +387,17 @@ def _selfcheck() -> None:
     assert detect_drift([], window=3) == (False, "")
 
     # 3.1 detect_drift 兼容 StepEvaluation 对象 — rcb_runner 传 _evals_history
-    from types import SimpleNamespace as _NS
-    evals_obj_off = [_NS(on_track="false"), _NS(on_track="false"), _NS(on_track="false")]
+    from types import SimpleNamespace
+    evals_obj_off = [SimpleNamespace(on_track="false"), SimpleNamespace(on_track="false"), SimpleNamespace(on_track="false")]
     is_drift3, msg3 = detect_drift(evals_obj_off, window=3)
     assert is_drift3, "对象形式连续 3 步 false 应漂移"
     assert "3 步" in msg3
     # 'unsure' 不算 off-track — 避免证据不足也触发漂移告警
-    evals_unsure = [_NS(on_track="false"), _NS(on_track="unsure"), _NS(on_track="false")]
+    evals_unsure = [SimpleNamespace(on_track="false"), SimpleNamespace(on_track="unsure"), SimpleNamespace(on_track="false")]
     is_drift4, _ = detect_drift(evals_unsure, window=3)
     assert not is_drift4, "unsure 不应算 off-track"
     # 混合 dict + 对象也能吃
-    evals_mix = [{"on_track": False}, _NS(on_track="false"), _NS(on_track="false")]
+    evals_mix = [{"on_track": False}, SimpleNamespace(on_track="false"), SimpleNamespace(on_track="false")]
     is_drift5, _ = detect_drift(evals_mix, window=3)
     assert is_drift5, "dict + 对象混合应正常判定"
 

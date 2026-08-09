@@ -39,16 +39,6 @@ class TestLeanInterface:
         result = lean.run_lean_code(code)
         assert not result.success
 
-    def test_run_lean_code_snippet(self, lean):
-        code = "theorem foo : 1 + 1 = 2 := by rfl"
-        result = lean.run_lean_code(code)
-        assert result.success, f"Code snippet failed: {result.stderr}"
-
-    def test_run_lean_code_fail(self, lean):
-        code = "theorem bar : 1 + 1 = 3 := by rfl"
-        result = lean.run_lean_code(code)
-        assert not result.success
-
 
 class TestSymPyToLean:
     @pytest.fixture

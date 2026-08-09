@@ -591,7 +591,7 @@ if __name__ == "__main__":
         labels = [e["label"] for e in result["entities"]]
         assert "Caffeine" in labels
         # PVDF 或 Polyvinylidene Fluoride 之一作 canonical
-        assert any("PVDF" in l or "Polyvinylidene" in l for l in labels)
+        assert any("PVDF" in lab or "Polyvinylidene" in lab for lab in labels)
         assert "PEO" in labels
         # Caffeine 跨 doc1+doc2, 应有 2 个 doc, 2 条 properties
         caffeine = next(e for e in result["entities"] if e["label"] == "Caffeine")

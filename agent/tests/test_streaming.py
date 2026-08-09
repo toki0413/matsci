@@ -19,20 +19,25 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from langchain_core.messages import (
+    AIMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
 
 from huginn.agent.streaming import (
+    _STREAM_IDLE_TIMEOUT,
     StreamingMixin,
     _astream_with_watchdog,
     _dump_completion_records,
     _is_root_message,
     _load_root_markers,
-    _STREAM_IDLE_TIMEOUT,
     _strip_dangling_tool_calls,
     _thinking_scale_timeout,
     _thinking_stream_idle,
@@ -41,13 +46,6 @@ from huginn.utils.context import (
     _msg_role,
     compact_messages,
 )
-from langchain_core.messages import (
-    AIMessage,
-    HumanMessage,
-    SystemMessage,
-    ToolMessage,
-)
-
 
 # ── 辅助: 构造带 id 的大消息, 用于触发 compaction ─────────────────────────
 
@@ -239,7 +237,7 @@ class TestAstreamWatchdog:
                 _one_then_slow(), idle_timeout=0.3
             ):
                 seen.append(item)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pass
         assert seen == ["fast"]
 
@@ -636,10 +634,14 @@ class TestTrimCheckpointerRootMarking:
     async def test_no_droppable_returns_zero(self, monkeypatch):
         # 所有非尾部消息都是 root → 无可丢候选 → 返回 0
         monkeypatch.setenv("HUGINN_KEEP_ROOT_N", "0")
-        r0 = _big(mid="r0"); r0.additional_kwargs["is_root"] = True
-        r1 = _big_ai(mid="r1"); r1.additional_kwargs["is_root"] = True
-        r2 = _big(mid="r2"); r2.additional_kwargs["is_root"] = True
-        r3 = _big_ai(mid="r3"); r3.additional_kwargs["is_root"] = True
+        r0 = _big(mid="r0")
+        r0.additional_kwargs["is_root"] = True
+        r1 = _big_ai(mid="r1")
+        r1.additional_kwargs["is_root"] = True
+        r2 = _big(mid="r2")
+        r2.additional_kwargs["is_root"] = True
+        r3 = _big_ai(mid="r3")
+        r3.additional_kwargs["is_root"] = True
         msgs = [r0, r1, r2, r3, _big(mid="tail0"), _big_ai(mid="tail1"),
                 _big(mid="tail2"), _big_ai(mid="tail3")]
         self_obj = SimpleNamespace(context_budget_tokens=50)

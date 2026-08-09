@@ -27,7 +27,7 @@ if __name__ == "__main__":
 import json
 import logging
 import time
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -85,7 +85,7 @@ class SkillRecord:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, d: dict) -> "SkillRecord":
+    def from_dict(cls, d: dict) -> SkillRecord:
         return cls(
             skill=str(d.get("skill", "")),
             tier=str(d.get("tier", "uncertain")),
@@ -798,7 +798,7 @@ def _selfcheck() -> None:
             f"case14: cross-task capable should not be downgraded: {sm_priority.get_tier('matplotlib')}"
         print("[CHECK] case14 cross-task capable not downgraded by single failure")
 
-    print(f"OK self_model self-check passed (14 cases)")
+    print("OK self_model self-check passed (14 cases)")
 
 
 if __name__ == "__main__":

@@ -8,13 +8,17 @@ from __future__ import annotations
 
 import os
 import re
-import shutil
 from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from huginn.security import ContainerExecutor, SandboxError, SandboxExecutor, get_executor
+from huginn.security import (
+    ContainerExecutor,
+    SandboxError,
+    SandboxExecutor,
+    get_executor,
+)
 from huginn.tools.base import HuginnTool
 from huginn.types import ToolContext, ToolResult
 
@@ -58,8 +62,7 @@ def _is_heavy_bash(command: list[str]) -> tuple[bool, str]:
     # ponytail: 不用 re, 简单 substring 即可. 升级: shlex 解析精确判定.
     has_python = "python" in cmd_lower
     has_py_file = bool(re.search(r"\.py\b", cmd_str))
-    if has_python and has_py_file:
-        if any(kw in cmd_lower for kw in _PY_LONG_RUN_KEYWORDS):
+    if has_python and has_py_file and any(kw in cmd_lower for kw in _PY_LONG_RUN_KEYWORDS):
             return True, "python training/fitting task (train/fit/epoch keyword)"
 
     return False, ""

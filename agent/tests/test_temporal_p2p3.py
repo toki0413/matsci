@@ -322,6 +322,7 @@ def main():
 def _check_learn_from_rcb_run_context():
     """P2 下沉: learn_from_rcb 存 run_context, RCB runner 路径也覆盖."""
     from unittest.mock import MagicMock
+
     from huginn.autoloop.cognitive_loop import learn_from_rcb
 
     mem_mgr = MagicMock()

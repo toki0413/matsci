@@ -11,7 +11,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from huginn.hpc.client import HPCConfig, HPCClient, JobStatus, _sanitize_job_name, _validate_path_component
+from huginn.hpc.client import (
+    HPCClient,
+    HPCConfig,
+    JobStatus,
+    _sanitize_job_name,
+    _validate_path_component,
+)
 from huginn.hpc.resource_selector import ResourceSelector
 from huginn.lean.interface import LeanInterface
 from huginn.lean.sympy_to_lean import SymPyToLean
@@ -79,17 +85,21 @@ class TestLeanInterface:
         project = tmp_path / "HuginnLean"
         project.mkdir()
         (project / "lakefile.toml").write_text("name = 'HuginnLean'\n")
-        with patch("shutil.which", return_value=None):
-            with pytest.raises(RuntimeError):
-                li = LeanInterface(project)
+        with (
+            patch("shutil.which", return_value=None),
+            pytest.raises(RuntimeError),
+        ):
+            li = LeanInterface(project)
 
     def test_eval_no_lake(self, tmp_path: Path):
         project = tmp_path / "HuginnLean"
         project.mkdir()
         (project / "lakefile.toml").write_text("name = 'HuginnLean'\n")
-        with patch("shutil.which", return_value=None):
-            with pytest.raises(RuntimeError):
-                li = LeanInterface(project)
+        with (
+            patch("shutil.which", return_value=None),
+            pytest.raises(RuntimeError),
+        ):
+            li = LeanInterface(project)
 
 
 # ── SymPy to Lean Translator ──

@@ -102,7 +102,7 @@ def save_api_key(env_var: str, key: str, env_file: str = ".env") -> None:
     - 自动加引号防止特殊字符 (空格 / # 等) 把行截断
     """
     path = Path(env_file)
-    existing = _read_env_file(path)
+    _read_env_file(path)
 
     # 读原始行, 用于保留注释和顺序
     if path.exists():
@@ -174,9 +174,7 @@ def interactive_setup(console: Console | None = None) -> None:
     _render_status_table(con, check_api_keys())
 
     con.print("\n[bold]操作:[/bold]")
-    con.print("  输入 [cyan]编号[/cyan] (1-{n}) 配置对应服务".format(
-        n=len(API_KEY_SERVICES)
-    ))
+    con.print(f"  输入 [cyan]编号[/cyan] (1-{len(API_KEY_SERVICES)}) 配置对应服务")
     con.print("  输入 [cyan]a[/cyan] / [cyan]all[/cyan] 依次配置所有未填的服务")
     con.print("  输入 [cyan]q[/cyan] / [cyan]quit[/cyan] 退出\n")
 

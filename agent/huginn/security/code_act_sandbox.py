@@ -112,9 +112,8 @@ def safe_import(
             raise ImportError("import of 'atomworld' requires HUGINN_USE_ATOMWORLD=1")
         return builtins.__import__(name, globals, locals, fromlist, level)
     # Structure Cognitive Map — 同理, agent 应走 namespace 函数而非直 import
-    if name in ("cognitive_map", "structure_cognitive_map"):
-        if os.environ.get("HUGINN_USE_COGNITIVE_MAP", "0") != "1":
-            raise ImportError("import of 'cognitive_map' requires HUGINN_USE_COGNITIVE_MAP=1")
+    if name in ("cognitive_map", "structure_cognitive_map") and os.environ.get("HUGINN_USE_COGNITIVE_MAP", "0") != "1":
+        raise ImportError("import of 'cognitive_map' requires HUGINN_USE_COGNITIVE_MAP=1")
     root = name.split(".")[0]
     if root not in _ALLOWED_IMPORTS:
         raise ImportError(
@@ -211,7 +210,7 @@ if __name__ == "__main__":
 
     # 子模块按 root 判: numpy.fft 也走 numpy 白名单
     # (不实际 import, 只验证 root 判断逻辑不漏)
-    assert "numpy".split(".")[0] in _ALLOWED_IMPORTS
+    assert ["numpy"][0] in _ALLOWED_IMPORTS
 
     # 3b. opt-in 模块: flag-off 时被拦截, flag-on 时放行
     os.environ.pop("HUGINN_USE_ATOMWORLD", None)

@@ -12,21 +12,14 @@ Usage:
 
 from __future__ import annotations
 
-import asyncio
-import hashlib
-import json
 import logging
 import os
 import random
 import re
-import time
-import uuid
-from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from huginn.autoloop.budget import BudgetExhausted, TokenBudget
+from huginn.autoloop.budget import TokenBudget
 
 logger = logging.getLogger(__name__)
 
@@ -81,53 +74,38 @@ def _autoloop_streaming_enabled() -> bool:
         return True
 
 
-from huginn.api.event import EventType, WorkflowStageEvent
-from huginn.autoloop.budget import ProgressiveBudget
-from huginn.autoloop.cognitive_loop import (
-    VALID_ACTIONS, ActionDecision, LoopState, _validation_to_step_eval_fields,
-)
-from huginn.autoloop.cognitive_loop import CognitiveLoopMixin
-from huginn.autoloop.hypothesis_loop import HypothesisMixin
-from huginn.autoloop.plan_check import PlanCheckMixin
-from huginn.autoloop.math_validation import MathValidationMixin
-from huginn.autoloop.visual_inspect import VisualInspectMixin
+from huginn.autoloop.cognitive_loop import CognitiveLoopMixin  # noqa: E402
+from huginn.autoloop.engine_act import EngineActMixin  # noqa: E402
+from huginn.autoloop.engine_control import EngineControlMixin  # noqa: E402
+from huginn.autoloop.engine_observe import EngineObserveMixin  # noqa: E402
 
 # P3 slim-down: 5 个 engine_* mixin (perceive/observe/act/reflect/control) 把
 # AutoloopEngine 的方法族拆到独立模块. mixin 通过 self 访问 engine 状态,
 # 对 engine.py 模块级符号用方法内 lazy import 避免 circular.
-from huginn.autoloop.engine_perceive import EnginePerceiveMixin
-from huginn.autoloop.engine_observe import EngineObserveMixin
-from huginn.autoloop.engine_act import EngineActMixin
-from huginn.autoloop.engine_reflect import EngineReflectMixin
-from huginn.autoloop.engine_control import EngineControlMixin
-from huginn.autoloop.goal_scheduler import Goal, GoalScheduler
-from huginn.autoloop.phase_gate import (
-    PhaseGate,
+from huginn.autoloop.engine_perceive import EnginePerceiveMixin  # noqa: E402
+from huginn.autoloop.engine_reflect import EngineReflectMixin  # noqa: E402
+from huginn.autoloop.goal_scheduler import GoalScheduler  # noqa: E402
+from huginn.autoloop.hypothesis_loop import HypothesisMixin  # noqa: E402
+from huginn.autoloop.math_validation import MathValidationMixin  # noqa: E402
+from huginn.autoloop.phase_gate import (  # noqa: E402
     PhaseGateHook,
-    get_shared_phase_gate_state,
 )
-from huginn.autoloop.phase_gate import (
-    _has_external_source as _validation_has_external_source,
-)
-from huginn.bench.runner import BenchmarkRunner  # noqa: F401  # monkeypatch
-from huginn.coder.loop import CoderRunner
-from huginn.config import get_settings
+from huginn.autoloop.plan_check import PlanCheckMixin  # noqa: E402
+from huginn.autoloop.visual_inspect import VisualInspectMixin  # noqa: E402
+from huginn.bench.runner import BenchmarkRunner  # noqa: F401, E402  # monkeypatch
+from huginn.coder.loop import CoderRunner  # noqa: E402
+from huginn.config import get_settings  # noqa: E402
+
 # C1: 共享 KB chunk 格式化函数, 跟 ContextBuilder 走同一条路径, 消除双路径漂移.
 # C4: 共享 meta_trace 加载, engine 写 jsonl 但之前不读, 现在注入 memory_text.
-from huginn.agent.hint_coordinator import extract_observations
-from huginn.context_builder import format_kb_chunks, load_meta_trace_text, should_inject_kb
-from huginn.exploration.orchestrator import ExplorationOrchestrator
-from huginn.exploration.strategies import ParetoPruningStrategy
-from huginn.interaction.progress import ProgressTracker, get_progress_tracker
-from huginn.kg.builder import ProjectKnowledgeGraph
-from huginn.llm import get_model
-from huginn.memory.longterm import load_stable_principles
-from huginn.memory.manager import MemoryManager
-from huginn.metacog.signal_hub import SignalHub
-from huginn.tools.report_tool import ReportTool
-from huginn.types import ToolContext
-from huginn.workflows.engine import WorkflowEngine
-from huginn.workflows.templates import get_template, standard_dft_workflow
+from huginn.exploration.orchestrator import ExplorationOrchestrator  # noqa: E402
+from huginn.exploration.strategies import ParetoPruningStrategy  # noqa: E402
+from huginn.interaction.progress import ProgressTracker  # noqa: E402
+from huginn.kg.builder import ProjectKnowledgeGraph  # noqa: E402
+from huginn.llm import get_model  # noqa: E402
+from huginn.memory.manager import MemoryManager  # noqa: E402
+from huginn.tools.report_tool import ReportTool  # noqa: E402
+from huginn.workflows.engine import WorkflowEngine  # noqa: E402
 
 # 跨源属性冲突检测用的正则; 提到模块级避免每次调用重编译
 _PROP_RE = re.compile(
@@ -245,11 +223,6 @@ def _extract_tests_passed(validation: Any) -> bool:
 
 # === dataclass + snapshot 函数抽到 autoloop/types.py ===
 # ponytail: 单一职责拆分. 原 L178-277 抽到 autoloop/types.py.
-from huginn.autoloop.types import (
-    LoopPhase, AutoloopResult,
-    objective_hash, _snapshot_dir,
-    save_autoloop_snapshot, load_autoloop_snapshot,
-)
 
 
 
@@ -531,8 +504,10 @@ class AutoloopEngine(
         if _resume_id:
             try:
                 from huginn.runtime.engine_state import (
-                    apply_state_to_engine, load_engine_state, use_persistence,
                     _hypothesis_graph_path,
+                    apply_state_to_engine,
+                    load_engine_state,
+                    use_persistence,
                 )
                 if use_persistence():
                     state = load_engine_state(_resume_id, self.workspace)
@@ -704,6 +679,7 @@ class AutoloopEngine(
         if elastic_raw is not None:
             try:
                 import numpy as np
+
                 from huginn.mechanics import ElasticTensor
                 C = np.array(elastic_raw, dtype=float)
                 if C.shape == (6, 6):

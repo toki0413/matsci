@@ -2,11 +2,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any
+from enum import StrEnum
 
 
-class DataType(str, Enum):
+class DataType(StrEnum):
     CRYSTAL_STRUCTURE = "crystal_structure"
     MOLECULAR_DYNAMICS = "molecular_dynamics"
     DFT_RESULT = "dft_result"

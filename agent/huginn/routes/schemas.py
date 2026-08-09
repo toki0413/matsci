@@ -6,7 +6,7 @@ type, length, and format constraints instead of trusting raw dicts.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -21,18 +21,17 @@ class ChatRequest(BaseModel):
 
     content: str = Field(..., max_length=50000, description="User message text")
     thread_id: str = Field("default", max_length=128, pattern=_THREAD_ID_PATTERN)
-    thinking: Optional[str] = None
-    max_tokens: Optional[int] = Field(None, gt=0, le=100000)
-    persona: Optional[str] = Field(None, max_length=64)
+    thinking: str | None = None
+    max_tokens: int | None = Field(None, gt=0, le=100000)
+    persona: str | None = Field(None, max_length=64)
 
     @model_validator(mode="before")
     @classmethod
     def _accept_message_field(cls, values: Any) -> Any:
         # Some older clients still send "message" instead of "content".
         # Normalize it before validation so the length cap applies either way.
-        if isinstance(values, dict):
-            if "content" not in values and "message" in values:
-                values = {**values, "content": values["message"]}
+        if isinstance(values, dict) and "content" not in values and "message" in values:
+            values = {**values, "content": values["message"]}
         return values
 
 
@@ -42,25 +41,25 @@ class WSMessage(BaseModel):
     type: str = Field("user_input", max_length=64)
     content: str = Field("", max_length=50000)
     thread_id: str = Field("default", max_length=128, pattern=_THREAD_ID_PATTERN)
-    thinking: Optional[Any] = None
-    max_tokens: Optional[Any] = None
-    persona: Optional[str] = Field(None, max_length=64)
+    thinking: Any | None = None
+    max_tokens: Any | None = None
+    persona: str | None = Field(None, max_length=64)
 
     # Plan / approval / clarification flows. ws.py still reads these off the
     # raw dict via data.get(...), so declaring them here is additive — it
     # documents and validates the fields without changing existing behavior.
-    plan_id: Optional[str] = None
-    confirmed: Optional[bool] = None
-    edited_plan: Optional[Any] = None
-    question_id: Optional[str] = None
-    answer: Optional[str] = None
-    request_id: Optional[str] = None
-    approved: Optional[bool] = None
-    enabled: Optional[bool] = None
+    plan_id: str | None = None
+    confirmed: bool | None = None
+    edited_plan: Any | None = None
+    question_id: str | None = None
+    answer: str | None = None
+    request_id: str | None = None
+    approved: bool | None = None
+    enabled: bool | None = None
 
 
 class CreateThreadRequest(BaseModel):
     """Body schema for POST /threads."""
 
-    title: Optional[str] = Field(None, max_length=256)
-    metadata: Optional[dict[str, Any]] = None
+    title: str | None = Field(None, max_length=256)
+    metadata: dict[str, Any] | None = None

@@ -19,15 +19,15 @@ pytestmark = pytest.mark.skipif(
     not _sqlite_saver_available, reason="langgraph sqlite checkpointer not available"
 )
 
-from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage
-from langchain_core.outputs import ChatGeneration, ChatResult
-from langchain_core.tools import tool
+from langchain_core.language_models.chat_models import BaseChatModel  # noqa: E402
+from langchain_core.messages import AIMessage  # noqa: E402
+from langchain_core.outputs import ChatGeneration, ChatResult  # noqa: E402
+from langchain_core.tools import tool  # noqa: E402
 
-from huginn.agent import HuginnAgent
-from huginn.memory.longterm import LongTermMemory
-from huginn.memory.manager import MemoryManager
-from huginn.telemetry import get_telemetry_collector
+from huginn.agent import HuginnAgent  # noqa: E402
+from huginn.memory.longterm import LongTermMemory  # noqa: E402
+from huginn.memory.manager import MemoryManager  # noqa: E402
+from huginn.telemetry import get_telemetry_collector  # noqa: E402
 
 
 class FakeToolCallingModel(BaseChatModel):

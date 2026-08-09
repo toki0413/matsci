@@ -5,13 +5,16 @@ Python-based symbolic checks without blocking the rest of the system.
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
 
 from huginn.bourbaki_env import LeanEnvironment
 from huginn.tools.base import HuginnTool
 from huginn.types import ToolContext
+
+if TYPE_CHECKING:
+    from huginn.types import ToolResult
 
 
 class BourbakiInput(BaseModel):
@@ -29,7 +32,7 @@ class BourbakiInput(BaseModel):
     engine_params: dict[str, Any] = Field(default_factory=dict, description="Legacy: engine parameters")
     domain_b: str = Field(default="", description="Legacy: second domain for comparison")
     parameters_b: dict[str, Any] = Field(default_factory=dict, description="Legacy: second domain parameters")
-    
+
     def model_post_init(self, __context: Any) -> None:
         if not self.task and self.action:
             self.task = self.action
@@ -51,7 +54,7 @@ class BourbakiResult(BaseModel):
     fallback: bool = False
     message: str = ""
     data: dict[str, Any] = Field(default_factory=dict, description="Legacy: result data wrapper")
-    
+
     def model_post_init(self, __context: Any) -> None:
         if not self.data and self.message:
             self.data = {"result": self.message}
@@ -113,7 +116,7 @@ class BourbakiTool(HuginnTool):
     def _lean_check_conservation(self, input_data: BourbakiInput) -> BourbakiResult:
         """Run Lean 4 verification for conservation law."""
         assert self._lean is not None
-        lean_code = f'''
+        lean_code = '''
 import Huginn.Basic
 
 noncomputable section
@@ -163,7 +166,6 @@ end
 
     def _fallback_check(self, task: str, domain: str, equations: str, variables: dict[str, str]) -> BourbakiResult:
         """Python-based symbolic fallback when Lean is unavailable."""
-        import sympy
 
         if task == "dimensional_analysis":
             return self._fallback_dimensional_analysis(domain, variables)
@@ -211,8 +213,7 @@ end
 
     def _fallback_dimensional_analysis(self, domain: str, variables: Any) -> BourbakiResult:
         """Check dimensional consistency using sympy."""
-        import sympy
-        from sympy.physics.units import mass, length, time, current, temperature
+        from sympy.physics.units import current, length, mass, temperature, time
 
         # Simple dimensional table
         units = {
@@ -301,7 +302,7 @@ end
                 lhs = sympy.sympify(lhs_str)
                 rhs = sympy.sympify(rhs_str)
                 residual = sympy.simplify(lhs - rhs)
-                symbols = sorted(list(residual.free_symbols), key=str)
+                symbols = sorted(residual.free_symbols, key=str)
                 var_names = [str(s) for s in symbols]
 
                 if residual == 0:
@@ -341,7 +342,7 @@ end
                 var_names = []
         else:
             try:
-                symbols = sorted(list(sympy.sympify(eq_str).free_symbols), key=str)
+                symbols = sorted(sympy.sympify(eq_str).free_symbols, key=str)
                 var_names = [str(s) for s in symbols]
             except Exception:
                 var_names = []

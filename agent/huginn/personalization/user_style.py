@@ -213,9 +213,7 @@ class StyleLearner:
             level = "zh"
         elif zh == 0:
             level = "en"
-        elif en == 0:
-            level = "zh"
-        elif zh > en * 4:
+        elif en == 0 or zh > en * 4:
             level = "zh"
         elif en > zh * 4:
             level = "en"
@@ -307,9 +305,8 @@ class StyleLearner:
         - {dimension, value}: 手动设某维度, 覆盖学习结果
         """
         with self._lock:
-            if term and action == "avoid":
-                if term not in self._profile.avoid_terms:
-                    self._profile.avoid_terms.append(term)
+            if term and action == "avoid" and term not in self._profile.avoid_terms:
+                self._profile.avoid_terms.append(term)
             if dimension and value:
                 self._set_dimension_unlocked(dimension, value)
             self._save_unlocked()

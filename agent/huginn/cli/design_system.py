@@ -1,8 +1,6 @@
 """统一设计系统 — 基于 Rich 的组件库，保证视觉一致性。"""
 from __future__ import annotations
 
-from typing import Any
-
 from rich.console import Console
 from rich.panel import Panel
 from rich.syntax import Syntax

@@ -9,18 +9,16 @@
 
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 
 # ── 1. Thinking effort mapping ─────────────────────────────────
 
 
 def test_effort_to_prompt_thresholds():
     """_effort_to_prompt 把 0-1 连续值映射到 3 档 prompt 指令."""
-    from huginn.autoloop.engine import _effort_to_prompt, _PHASE_THINKING_EFFORT
+    from huginn.autoloop.engine import _PHASE_THINKING_EFFORT, _effort_to_prompt
 
     # 高 effort (>= 0.8) → 深度推理指令
     high = _effort_to_prompt(0.9)
@@ -49,7 +47,7 @@ def test_effort_to_prompt_thresholds():
 
 def test_phase_thinking_effort_covers_all_phases():
     """每个 autoloop phase 都有对应的 thinking effort 配置."""
-    from huginn.autoloop.engine import AUTOLOOP_PHASES, _PHASE_THINKING_EFFORT
+    from huginn.autoloop.engine import _PHASE_THINKING_EFFORT, AUTOLOOP_PHASES
 
     for phase in AUTOLOOP_PHASES:
         assert phase in _PHASE_THINKING_EFFORT, (
@@ -62,8 +60,9 @@ def test_phase_thinking_effort_covers_all_phases():
 
 def test_rsi_uses_memory_not_prompt_field():
     """RSI directive 不应该再用 _next_loop_directive 字段, 应该走 memory."""
-    from huginn.autoloop.engine import AutoloopEngine
     import inspect
+
+    from huginn.autoloop.engine import AutoloopEngine
 
     # __init__ 不应该有 _next_loop_directive 字段 (已迁到 memory)
     src_init = inspect.getsource(AutoloopEngine.__init__)
@@ -80,8 +79,9 @@ def test_rsi_uses_memory_not_prompt_field():
 
 def test_rsi_no_prompt_injection_in_main_loop():
     """主循环 run() 不应该有 directive 注入 speculator_hint 的逻辑."""
-    from huginn.autoloop.engine import AutoloopEngine
     import inspect
+
+    from huginn.autoloop.engine import AutoloopEngine
 
     src_run = inspect.getsource(AutoloopEngine.run_cognitive)
     assert "_next_loop_directive" not in src_run, (
@@ -190,9 +190,8 @@ def test_randomize_tool_order_changes_order():
 def test_all_imports_ok():
     """三个改动的 import 都能成功."""
     from huginn.autoloop.engine import (
-        _effort_to_prompt,
         _PHASE_THINKING_EFFORT,
-        AutoloopEngine,
+        _effort_to_prompt,
     )
     from huginn.bench.tool_randomization import randomize_tool_order
 

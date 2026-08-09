@@ -123,14 +123,14 @@ if __name__ == "__main__":
     seq = ["a", "b", "c", "d"]
     r = detect_cycle(seq)
     assert r is None, f"[a,b,c,d] 应 None, got {r}"
-    print(f"[ok] [a,b,c,d] → None")
+    print("[ok] [a,b,c,d] → None")
 
     # 4. 序列未结束不判: [a,b,c,d,a,b] 长度 6, cycle 长度 4 但只重复 1.5 次
     #    min_repeats=2 → 不算卡顿
     seq = ["a", "b", "c", "d", "a", "b"]
     r = detect_cycle(seq, min_repeats=2)
     assert r is None, f"重复不够应 None, got {r}"
-    print(f"[ok] [a,b,c,d,a,b] (重复<2) → None")
+    print("[ok] [a,b,c,d,a,b] (重复<2) → None")
 
     # 5. dict 元素: 相同 name+args 视为同步
     seq = [
@@ -149,7 +149,7 @@ if __name__ == "__main__":
     assert r is None, f"单步重复应被 min_cycle_len 过滤, got {r}"
     r = detect_cycle(seq, min_cycle_len=1)
     assert r == (0, 1), f"min_cycle_len=1 时应 (0,1), got {r}"
-    print(f"[ok] [a,a,a,a] min_cycle_len=2 → None, =1 → (0,1)")
+    print("[ok] [a,a,a,a] min_cycle_len=2 → None, =1 → (0,1)")
 
     # 7. is_stuck 便捷接口
     assert is_stuck(["a", "b", "a", "b"]) is True

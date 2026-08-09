@@ -15,6 +15,7 @@ import sys
 import time
 from dataclasses import dataclass
 from types import SimpleNamespace
+
 from websockets.asyncio.client import connect
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -52,7 +53,7 @@ class WSAgent:
                 while True:
                     try:
                         raw = await asyncio.wait_for(ws.recv(), timeout=RECV_TIMEOUT)
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         break
 
                     data = json.loads(raw)
@@ -104,7 +105,7 @@ async def run_benchmark(trials: int = 3):
     suite.materials_science_research_cases()
 
     print("=" * 60)
-    print(f"ClawBench Materials Science Benchmark")
+    print("ClawBench Materials Science Benchmark")
     print(f"Cases: {len(suite.cases)} | Trials: {trials}")
     print("=" * 60)
 

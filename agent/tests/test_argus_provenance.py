@@ -18,7 +18,6 @@ from huginn.memory.manager import MemoryManager
 from huginn.memory.session import SessionContext
 from huginn.rag.provenance_enhancer import enhance_rag_results
 
-
 # ── MVP 1: 消息打标 ───────────────────────────────────────────────
 
 
@@ -278,6 +277,7 @@ def test_redteam_finding_explicit_source_class_preserved():
 def test_redteam_llm_findings_auto_derive_source_class():
     """LLM 没标 source_class → 从 evidence dominant 自动填."""
     from unittest.mock import MagicMock
+
     from huginn.autoloop.red_team import RedTeamReviewer
 
     # mock LLM 返回 2 条 finding, 都没标 source_class

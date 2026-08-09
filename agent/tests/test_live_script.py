@@ -2,17 +2,12 @@
 
 from __future__ import annotations
 
-import asyncio
-
 import pytest
 
 from huginn.security.script_runner import (
-    _BLOCKED_SUBMODULES,
-    _SAFE_BUILTINS,
     ScriptResult,
     ScriptRunner,
 )
-
 
 # ---------------------------------------------------------------------------
 # ScriptRunner — direct tests

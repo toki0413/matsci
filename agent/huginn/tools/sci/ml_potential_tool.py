@@ -7,6 +7,7 @@ still start when they are not installed.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, Literal
 
@@ -15,7 +16,7 @@ from pydantic import BaseModel, Field
 
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult
-import logging
+
 logger = logging.getLogger(__name__)
 
 
@@ -312,7 +313,7 @@ class MLPotentialTool(HuginnTool):
         try:
             from ase.io import read, write
             from fairchem.core import FAIRChemCalculator  # noqa: F401
-        except ImportError as exc:
+        except ImportError:
             return ToolResult(
                 data={"backend": "grace", "status": "not_available"},
                 success=False,
@@ -363,7 +364,7 @@ class MLPotentialTool(HuginnTool):
             # 新版 fairchem 可能把 OCCalculator 挪到顶层
             try:
                 from ase.io import read, write  # noqa: F811
-                from fairchem.core import OCCalculator  # type: ignore
+                from fairchem.core import OCCalculator  # type: ignore[import-not-found]
             except ImportError:
                 return ToolResult(
                     data={"backend": "equiformer_v2_omat24", "status": "not_available"},
@@ -547,7 +548,7 @@ class MLPotentialTool(HuginnTool):
             try:
                 from fairchem.core.oc.calculator import OCCalculator
             except ImportError:
-                from fairchem.core import OCCalculator  # type: ignore
+                from fairchem.core import OCCalculator  # type: ignore[import-not-found]
 
             calc = OCCalculator(
                 model_path=args.model_path or "facebook/OMAT24",
@@ -624,7 +625,7 @@ class MLPotentialTool(HuginnTool):
             try:
                 e = float(atoms.get_potential_energy())
                 f = atoms.get_forces()
-            except Exception as exc:
+            except Exception:
                 # 单点失败就跳过, 不让整个 landscape 挂掉
                 continue
             disp = (magnitude * vec).ravel().tolist()

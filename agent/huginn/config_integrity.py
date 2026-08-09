@@ -12,6 +12,7 @@ a version field for migration tracking.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import pathlib
 from dataclasses import MISSING, fields
@@ -36,11 +37,9 @@ def _get_default_config() -> dict[str, Any]:
         if f.default is not MISSING:
             defaults[f.name] = f.default
         elif f.default_factory is not MISSING:
-            try:
-                defaults[f.name] = f.default_factory()
-            except Exception:
+            with contextlib.suppress(Exception):
                 # 工厂函数本身报错就跳过, 不影响其余字段
-                pass
+                defaults[f.name] = f.default_factory()
     defaults["config_version"] = CONFIG_VERSION
     return defaults
 

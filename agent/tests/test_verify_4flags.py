@@ -19,21 +19,15 @@ ponytail: 不调真 LLM (FakeLLM callable 按关键词路由), 不真起 Subagen
 """
 from __future__ import annotations
 
-from pathlib import Path
-from unittest.mock import MagicMock
-
 import pytest
 
-from huginn.autoloop.engine import AutoloopEngine, AutoloopResult
-from huginn.autoloop.hypothesis_loop import HypothesisGraph
-from huginn.autoloop.phase_gate import get_shared_phase_gate_state
+from huginn.autoloop.engine import AutoloopEngine
+from huginn.autoloop.types import AutoloopResult
 from huginn.memory.manager import MemoryManager
 from huginn.metacog.branch_incubator import BranchIncubator, _MockSubagentDispatch
-from tests.fixtures.fake_llm import make_callable_llm
 from tests.test_autoloop_e2e import (
-    _DummyTracker,
-    _StubBenchRunner,
     _bypass_validate_gate,
+    _DummyTracker,
     _make_stage_llm,
     _restore_gate,
     _stub_heavy_calls,
@@ -105,7 +99,7 @@ def _assert_run_completed(result: AutoloopResult, label: str):
 # ── Case 1: D flag — BranchIncubator ─────────────────────────
 
 @pytest.mark.asyncio
-async def test_flag_D_branch_incubator(tmp_path, monkeypatch):
+async def test_flag_d_branch_incubator(tmp_path, monkeypatch):
     """D flag on: _hypothesize 走 BranchIncubator N 路隔离采样路径."""
     monkeypatch.setenv("HUGINN_USE_BRANCH_INCUBATOR", "1")
     fake_llm = _make_stage_llm()
@@ -140,7 +134,7 @@ async def test_flag_D_branch_incubator(tmp_path, monkeypatch):
 # ── Case 2: B flag — ThreeCabin ──────────────────────────────
 
 @pytest.mark.asyncio
-async def test_flag_B_three_cabin(tmp_path, monkeypatch):
+async def test_flag_b_three_cabin(tmp_path, monkeypatch):
     """B flag on: reflect_fn 走 ThreeCabin 三舱反射 (真 StepEvaluation)."""
     monkeypatch.setenv("HUGINN_USE_THREE_CABIN", "1")
     fake_llm = _make_stage_llm()
@@ -163,7 +157,7 @@ async def test_flag_B_three_cabin(tmp_path, monkeypatch):
 # ── Case 3: C flag — CompletionGate ──────────────────────────
 
 @pytest.mark.asyncio
-async def test_flag_C_completion_gate(tmp_path, monkeypatch):
+async def test_flag_c_completion_gate(tmp_path, monkeypatch):
     """C flag on: reflect_fn 走 CompletionGate 三审统一入口."""
     monkeypatch.setenv("HUGINN_USE_COMPLETION_GATE", "1")
     fake_llm = _make_stage_llm()
@@ -186,7 +180,7 @@ async def test_flag_C_completion_gate(tmp_path, monkeypatch):
 # ── Case 4: A flag — CrossDomain ─────────────────────────────
 
 @pytest.mark.asyncio
-async def test_flag_A_cross_domain(tmp_path, monkeypatch):
+async def test_flag_a_cross_domain(tmp_path, monkeypatch):
     """A flag on: _conjecture_hint 优先调 cross_domain_reframe 跨域迁移."""
     monkeypatch.setenv("HUGINN_USE_CROSS_DOMAIN", "1")
     fake_llm = _make_stage_llm()

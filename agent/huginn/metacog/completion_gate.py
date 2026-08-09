@@ -17,8 +17,9 @@ flag: HUGINN_USE_COMPLETION_GATE=1 开启, 默认 off.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 

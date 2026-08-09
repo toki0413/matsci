@@ -7,12 +7,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
-import logging
+
 logger = logging.getLogger(__name__)
 
 
@@ -292,8 +293,8 @@ def _undo_via_routes_api(console: Any) -> bool:
     if base is None:
         return False
 
-    import urllib.request
     import urllib.error
+    import urllib.request
 
     try:
         # 先列所有 checkpoint, 找最后一个 (没法直接拿最后一个, 只能 list)
@@ -427,8 +428,8 @@ def _undo_via_git_stash(console: Any, workspace: Path) -> bool:
         return False
 
     console.print(
-        f"[green]✓[/green] 已 git stash 工作区改动 "
-        f"(可用 [cyan]git stash pop[/cyan] 找回)"
+        "[green]✓[/green] 已 git stash 工作区改动 "
+        "(可用 [cyan]git stash pop[/cyan] 找回)"
     )
     return True
 
@@ -949,6 +950,7 @@ def _handle_flow(command: str, agent: Any, console: Any) -> None:
     # KG layer — 显示真实统计而非硬编码
     try:
         from pathlib import Path
+
         from huginn.kg.graph import ProjectKnowledgeGraph
         kg = ProjectKnowledgeGraph(Path("."))
         kstats = kg.stats()
@@ -998,7 +1000,7 @@ def _handle_graph(command: str, agent: Any, console: Any) -> None:
 
     if sub == "stats":
         s = kg.stats()
-        console.print(f"[bold]KG Statistics[/bold]")
+        console.print("[bold]KG Statistics[/bold]")
         console.print(f"  Nodes: {s.get('nodes', 0)}")
         console.print(f"  Edges: {s.get('edges', 0)}")
         types = s.get("node_types", {})

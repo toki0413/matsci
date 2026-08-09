@@ -17,7 +17,7 @@ import logging
 import platform
 import signal
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
 
@@ -38,6 +38,8 @@ try:
     import anyio.lowlevel as _anyio_lowlevel
     from mcp.types import (
         ResourceUpdatedNotification as _ResourceUpdatedNotification,
+    )
+    from mcp.types import (
         ServerNotification as _ServerNotification,
     )
 except ImportError:  # pragma: no cover
@@ -620,10 +622,7 @@ class MCPClientManager:
 
         # HTTP 404 表示 session 不存在
         status_code = getattr(error, "status_code", None)
-        if status_code == 404:
-            return True
-
-        return False
+        return status_code == 404
 
     async def call_tool_with_retry(
         self, name: str, args: dict[str, Any], max_errors: int = 3
@@ -805,16 +804,14 @@ class MCPClientManager:
                 try:
                     await asyncio.wait_for(proc.wait(), timeout=timeout)
                     return
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     pass
 
                 # 升级到 kill
                 with contextlib.suppress(ProcessLookupError, PermissionError):
                     proc.kill()
-                try:
+                with contextlib.suppress(TimeoutError, ProcessLookupError):
                     await asyncio.wait_for(proc.wait(), timeout=timeout)
-                except (asyncio.TimeoutError, ProcessLookupError):
-                    pass
             else:
                 # Unix: SIGINT → SIGTERM → SIGKILL
                 for sig in (signal.SIGINT, signal.SIGTERM):
@@ -823,7 +820,7 @@ class MCPClientManager:
                     try:
                         await asyncio.wait_for(proc.wait(), timeout=timeout)
                         return
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         continue
                     except ProcessLookupError:
                         return
@@ -831,10 +828,8 @@ class MCPClientManager:
                 # 最终升级到 SIGKILL
                 with contextlib.suppress(ProcessLookupError, PermissionError):
                     proc.kill()
-                try:
+                with contextlib.suppress(TimeoutError, ProcessLookupError):
                     await asyncio.wait_for(proc.wait(), timeout=timeout)
-                except (asyncio.TimeoutError, ProcessLookupError):
-                    pass
         except Exception as e:
             logger.debug(f"进程清理异常: {e}")
 

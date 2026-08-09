@@ -6,10 +6,7 @@ multimodal content building, and CV context generation with a mock encoder.
 
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import MagicMock
-
-import pytest
 
 from huginn.vision.router import (
     VisionRoute,
@@ -19,7 +16,6 @@ from huginn.vision.router import (
     detect_image_in_message,
     route_vision,
 )
-
 
 # ── detect_image_in_message ──────────────────────────────────────
 

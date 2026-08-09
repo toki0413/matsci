@@ -5,8 +5,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import tempfile
-from pathlib import Path
 
 import pytest
 
@@ -325,6 +323,7 @@ class TestPhysicalPrecheck:
 
     def test_band_before_scf_blocks_without_scf(self):
         from unittest.mock import MagicMock, patch
+
         from huginn.hooks import HookManager
         from huginn.hooks.physical_precheck import register_physical_prechecks
 
@@ -381,6 +380,7 @@ class TestPhysicalPrecheck:
 
     def test_elastic_without_relax_blocks(self):
         from unittest.mock import MagicMock, patch
+
         from huginn.hooks import HookManager
         from huginn.hooks.physical_precheck import register_physical_prechecks
 
@@ -428,6 +428,7 @@ class TestPhysicalPrecheck:
 
     def test_md_timestep_reasonable_passes(self):
         from unittest.mock import MagicMock, patch
+
         from huginn.hooks import HookManager
         from huginn.hooks.physical_precheck import register_physical_prechecks
 

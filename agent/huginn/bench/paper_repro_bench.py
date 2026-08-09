@@ -9,7 +9,6 @@ evaluator 用数值容差或代码结构判分, 不依赖 LLM judge.
 from __future__ import annotations
 
 import re
-from typing import Any
 
 from .task import BenchmarkTask
 

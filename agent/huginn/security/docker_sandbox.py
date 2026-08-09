@@ -7,6 +7,8 @@ SDK 没装或者 daemon 没起来都不抛，静默退回 SandboxExecutor。
 
 from __future__ import annotations
 
+import contextlib
+import logging
 import os
 import time
 from pathlib import Path
@@ -17,8 +19,6 @@ from huginn.security.sandbox import (
     SandboxExecutor,
     SandboxResult,
 )
-
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -241,19 +241,19 @@ class DockerSandboxExecutor:
         # containers.run 的 detach=False 模式下 SDK 自己读 socket，超时也杀不掉容器。
         container: Any = None
         try:
-            run_kwargs: dict[str, Any] = dict(
-                image=self.image,
-                command=cmd,
-                volumes=volumes,
-                working_dir=self.work_dir,
-                environment=env or {},
-                network=self.network,
-                mem_limit=self.memory_limit,
-                nano_cpus=nano_cpus,
-                detach=True,
-                stdout=True,
-                stderr=True,
-            )
+            run_kwargs: dict[str, Any] = {
+                "image": self.image,
+                "command": cmd,
+                "volumes": volumes,
+                "working_dir": self.work_dir,
+                "environment": env or {},
+                "network": self.network,
+                "mem_limit": self.memory_limit,
+                "nano_cpus": nano_cpus,
+                "detach": True,
+                "stdout": True,
+                "stderr": True,
+            }
             if tmpfs:
                 run_kwargs["tmpfs"] = tmpfs
             container = self._client.containers.run(**run_kwargs)
@@ -290,11 +290,9 @@ class DockerSandboxExecutor:
                     break
                 if time.monotonic() >= deadline:
                     deadline_expired = True
-                    try:
+                    # 容器可能刚好自己退出了，忽略
+                    with contextlib.suppress(Exception):
                         container.kill()
-                    except Exception:
-                        # 容器可能刚好自己退出了，忽略
-                        pass
                     break
                 time.sleep(0.5)
         except Exception:

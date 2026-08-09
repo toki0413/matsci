@@ -33,7 +33,7 @@ class BeamSpec(BaseModel):
         default=None, gt=0, description="A, m^2. 不给则按 section_dims 算"
     )
 
-    def resolved_I(self) -> float:
+    def resolved_I(self) -> float:  # noqa: N802
         if self.second_moment is not None:
             return self.second_moment
         if self.section_type == "rectangular":
@@ -45,7 +45,7 @@ class BeamSpec(BaseModel):
             return 3.141592653589793 * d**4 / 64.0
         raise ValueError("second_moment 未给且 section_type 无法推出 I")
 
-    def resolved_A(self) -> float:
+    def resolved_A(self) -> float:  # noqa: N802
         if self.area is not None:
             return self.area
         if self.section_type == "rectangular":
@@ -64,7 +64,7 @@ class PlateSpec(BaseModel):
     thickness: float = Field(..., gt=0, description="h, m")
     density: float = Field(default=7850.0, gt=0)
 
-    def D(self) -> float:
+    def D(self) -> float:  # noqa: N802
         # 板弯曲刚度 D = E h^3 / (12 (1 - nu^2))
         return (
             self.youngs_modulus
@@ -153,7 +153,7 @@ class StructuralAnalyticalInput(BaseModel):
     unit: str = Field(default="SI")
 
     @model_validator(mode="after")
-    def _check_action_fields(self) -> "StructuralAnalyticalInput":
+    def _check_action_fields(self) -> StructuralAnalyticalInput:
         # 必填 spec
         if self.action.startswith("beam_") and self.beam is None:
             raise ValueError(f"action '{self.action}' requires 'beam' (BeamSpec)")

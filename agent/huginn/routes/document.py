@@ -249,6 +249,7 @@ def _selfcheck() -> None:
     Run with: python -c "from huginn.routes.document import _selfcheck; _selfcheck()"
     """
     from types import SimpleNamespace
+
     from huginn import server_context as sc
 
     # _try_ingest only reads sc._server_context.kb via getattr, so a

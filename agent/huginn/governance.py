@@ -28,9 +28,10 @@ import logging
 import os
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -307,9 +308,7 @@ class GovernanceFacade:
             except Exception as e:
                 logger.error(f"[gov] rollback failed: {e}")
                 status = "failed"
-        elif error is not None:
-            status = "failed"
-        elif not verification_passed:
+        elif error is not None or not verification_passed:
             status = "failed"
 
         # Check if rollback is available for manual use

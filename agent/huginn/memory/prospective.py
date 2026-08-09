@@ -196,9 +196,8 @@ class ProspectiveMemory:
                     if iid in state:
                         state[iid].status = "fired"
                         state[iid].fired_at = float(rec.get("fired_at", time.time()))
-                elif kind == "cancel":
-                    if iid in state:
-                        state[iid].status = "cancelled"
+                elif kind == "cancel" and iid in state:
+                    state[iid].status = "cancelled"
         return state
 
     def _append(self, record: dict) -> None:
@@ -312,8 +311,8 @@ class ProspectiveMemory:
 
 # ── 自检 ─────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    import tempfile
     import shutil
+    import tempfile
 
     tmp = Path(tempfile.mkdtemp(prefix="prospective_test_"))
     try:

@@ -7,8 +7,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-import pytest
-
 from huginn.tools.diagnose_tool import DiagnoseInput, DiagnoseTool
 from huginn.tools.sim.vasp_tool import VaspTool, VaspToolInput
 

@@ -14,14 +14,17 @@
 from __future__ import annotations
 
 import ast
+import importlib
+import logging
 import re
 from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
-from huginn.coder.symbol_index import Reference, Symbol, SymbolIndex
-import logging
+from huginn.coder.symbol_index import Reference, SymbolIndex
+
 logger = logging.getLogger(__name__)
 
 
@@ -983,9 +986,7 @@ class RepoMap:
             top_level: list[int] = []
             for sid in syms_in_file:
                 sym = self._symbols[sid]
-                if sym.kind == "class":
-                    top_level.append(sid)
-                elif sym.parent is None:
+                if sym.kind == "class" or sym.parent is None:
                     top_level.append(sid)
                 elif sym.kind == "method":
                     # parent 类没被选进来, 当顶层处理
@@ -1064,7 +1065,7 @@ class RepoMap:
                     )
                 else:
                     out.append(f"  {rel}:{ln}")
-                shown += 1
+                shown += 1  # noqa: SIM113
 
         # 引用了哪些其他符号 (depth=1)
         if depth >= 1:

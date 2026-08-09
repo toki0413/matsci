@@ -12,7 +12,6 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from huginn.api.context import PluginContext
 from huginn.api.event import Event

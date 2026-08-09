@@ -207,18 +207,17 @@ class PhysicsAuditor:
         # 3. Convergence suspicious: converged=True but NELM was hit.
         # We can't know exact steps from OUTCAR easily, but if NELM is
         # suspiciously high (like 200+) and converged, the SCF probably struggled.
-        if converged and nelm is not None:
-            if nelm >= 200:
-                report.findings.append(
-                    PhysicsFinding(
-                        severity="info",
-                        category="convergence_suspicious",
-                        message=f"NELM={nelm} is high — SCF may have struggled to converge",
-                        field="nelm",
-                        value=nelm,
-                        expected_range="typically 40-100 for well-behaved systems",
-                    )
+        if converged and nelm is not None and nelm >= 200:
+            report.findings.append(
+                PhysicsFinding(
+                    severity="info",
+                    category="convergence_suspicious",
+                    message=f"NELM={nelm} is high — SCF may have struggled to converge",
+                    field="nelm",
+                    value=nelm,
+                    expected_range="typically 40-100 for well-behaved systems",
                 )
+            )
 
         # 4. Not converged but action expects converged result.
         # Only flag as error for relax (ionic convergence) — scf/band/dos use
@@ -1300,7 +1299,7 @@ class PhysicsAuditor:
 
             # 1. NaN/Inf in loss (train action)
             if train_loss:
-                if any(l != l for l in train_loss):
+                if any(v != v for v in train_loss):
                     report.findings.append(
                         PhysicsFinding(
                             severity="error",
@@ -1314,7 +1313,7 @@ class PhysicsAuditor:
                             expected_range="finite numbers",
                         )
                     )
-                if any(abs(l) == float("inf") for l in train_loss):
+                if any(abs(v) == float("inf") for v in train_loss):
                     report.findings.append(
                         PhysicsFinding(
                             severity="error",
@@ -1348,7 +1347,7 @@ class PhysicsAuditor:
                         )
 
                 # 3. Gradient explosion — loss value itself blew up
-                finite_losses = [abs(l) for l in train_loss if l == l and abs(l) != float("inf")]
+                finite_losses = [abs(v) for v in train_loss if v == v and abs(v) != float("inf")]
                 if finite_losses and max(finite_losses) > 1e6:
                     report.findings.append(
                         PhysicsFinding(
@@ -1420,8 +1419,11 @@ class PhysicsAuditor:
             material_props = params.get("material_props", {})
             yield_strength = material_props.get("yield_strength", 0.0)
 
-            if max_stress is not None and yield_strength > 0:
-                if abs(max_stress) > yield_strength:
+            if (
+                max_stress is not None
+                and yield_strength > 0
+                and abs(max_stress) > yield_strength
+            ):
                     ratio = abs(max_stress) / yield_strength
                     report.findings.append(
                         PhysicsFinding(
@@ -1473,9 +1475,11 @@ class PhysicsAuditor:
 
             # 4. Fatigue life — very low cycles means LCF regime
             fatigue_life = parsed.get("fatigue_life")
-            if fatigue_life is not None:
-                # inf means infinite life, which is fine
-                if fatigue_life != float("inf") and fatigue_life < 1000:
+            if (
+                fatigue_life is not None
+                and fatigue_life != float("inf")
+                and fatigue_life < 1000
+            ):
                     report.findings.append(
                         PhysicsFinding(
                             severity="warning",

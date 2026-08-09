@@ -8,12 +8,7 @@ P1-4: Tool Retrieval — query-aware top-K tool selection
 
 from __future__ import annotations
 
-import json
-import tempfile
-from pathlib import Path
-
 import pytest
-
 
 # ── P0-1: QUALITY_CHECK event type ──────────────────────────────
 
@@ -48,6 +43,7 @@ class TestMemoryLintAutoFix:
 
     def test_lint_signature_has_auto_fix(self):
         import inspect
+
         from huginn.memory.longterm import LongTermMemory
         sig = inspect.signature(LongTermMemory.lint)
         assert "auto_fix" in sig.parameters
@@ -163,7 +159,7 @@ class TestToolRetrieval:
             ("validate_tool", "Validate calculation results"),
         ]
         tools = []
-        for i, (name, desc) in enumerate(tool_specs[:count]):
+        for _i, (name, desc) in enumerate(tool_specs[:count]):
             tool = type("MockTool", (), {"name": name, "description": desc})()
             tools.append(tool)
         return tools

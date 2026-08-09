@@ -47,7 +47,7 @@ def _validate_workspace_path(raw_path: str) -> Path:
         raise HTTPException(
             status_code=403,
             detail=f"Path '{raw_path}' is outside the workspace boundary",
-        )
+        ) from None
 
     # Prevent excessive depth
     rel = base.relative_to(workspace_resolved)

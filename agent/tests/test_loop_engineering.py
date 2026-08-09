@@ -9,18 +9,15 @@
 
 from __future__ import annotations
 
-import asyncio
-
 import pytest
 
 from huginn.hooks import HookContext
 from huginn.provenance.pipeline import (
+    _KNOWN_TOOLS,
     PIPELINE_RULES,
     PipelineStage,
-    _KNOWN_TOOLS,
     _infer_stage,
 )
-
 
 # ── 1. 孤立工具检查 ──────────────────────────────────────────────
 

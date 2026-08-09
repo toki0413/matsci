@@ -10,13 +10,13 @@ graph builder, and downstream consumers.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 import numpy as np
 
 
-class ElementType(str, Enum):
+class ElementType(StrEnum):
     """What kind of document element this is."""
 
     TEXT = "text"
@@ -29,7 +29,7 @@ class ElementType(str, Enum):
     CLAIM = "claim"              # quantitative/qualitative assertion
 
 
-class EdgeType(str, Enum):
+class EdgeType(StrEnum):
     """Typed edges in the heterogeneous document graph."""
 
     SEQ = "seq"                  # reading-order adjacency (text→text)

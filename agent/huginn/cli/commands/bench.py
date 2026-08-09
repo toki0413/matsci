@@ -40,14 +40,21 @@ def bench(ctx: CliContext, suite: str, evolve: bool, categories: str | None,
     )
 
     if suite == "research":
-        # ResearchClawBench 多 trial (11 题 × 3), 走独立脚本
-        ds.dialog(
-            title="Bench",
-            content=(
-                "[yellow]ResearchClawBench 需要多 trial, 请用独立脚本:[/yellow]\n"
-                "  python tests/test_clawbench_runner.py --trials 3"
-            ),
-        )
+        # Benchmark 多 trial 场景, 走 rcb 包提供的 entry 函数
+        try:
+            from huginn.cli.rcb import run_multi_trial
+        except ImportError:
+            run_multi_trial = None
+        if callable(run_multi_trial):
+            run_multi_trial(trials=max_tasks or 3)
+        else:
+            ds.dialog(
+                title="Bench",
+                content=(
+                    "[yellow]多 trial benchmark 需要走独立脚本:[/yellow]\n"
+                    "  python -m huginn.cli.rcb_runner --trials 3"
+                ),
+            )
         return
 
     from huginn.bench import BenchmarkRunner, get_suite_tasks

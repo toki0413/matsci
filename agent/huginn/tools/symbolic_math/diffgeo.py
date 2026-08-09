@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from .tool import SymbolicMathInput
 
 
-def _parse_metric_matrix(args: "SymbolicMathInput") -> tuple[list[sp.Expr], list[sp.Symbol]]:
+def _parse_metric_matrix(args: SymbolicMathInput) -> tuple[list[sp.Expr], list[sp.Symbol]]:
     """从 args.matrix (list[list[str]]) 解析出度规矩阵和坐标变量."""
     sym_dict = parse_symbols(args.symbols, args.assumptions)
     if not args.matrix:
@@ -41,7 +41,7 @@ def _christoffel(g: list[list[sp.Expr]], coords: list[sp.Symbol]) -> list[list[l
         for i in range(n):
             for j in range(n):
                 s = sp.Integer(0)
-                for l in range(n):
+                for l in range(n):  # noqa: E741
                     # Γ^k_{ij} = (1/2) g^{kl} (∂_i g_{jl} + ∂_j g_{il} - ∂_l g_{ij})
                     s += g_inv[k, l] * (
                         sp.diff(g[j][l], coords[i])
@@ -52,7 +52,7 @@ def _christoffel(g: list[list[sp.Expr]], coords: list[sp.Symbol]) -> list[list[l
     return Gamma
 
 
-def metric(args: "SymbolicMathInput") -> ToolResult:
+def metric(args: SymbolicMathInput) -> ToolResult:
     """从度规矩阵计算 Christoffel 记号、Ricci 张量、标量曲率.
 
     args.matrix: n×n 对称矩阵 (list[list[str]])
@@ -147,7 +147,7 @@ def metric(args: "SymbolicMathInput") -> ToolResult:
     )
 
 
-def geodesic(args: "SymbolicMathInput") -> ToolResult:
+def geodesic(args: SymbolicMathInput) -> ToolResult:
     """从度规推导测地线方程 d²x^k/ds² + Γ^k_{ij} dx^i/ds dx^j/ds = 0."""
     try:
         g, coords = _parse_metric_matrix(args)
@@ -176,7 +176,7 @@ def geodesic(args: "SymbolicMathInput") -> ToolResult:
     )
 
 
-def curvature(args: "SymbolicMathInput") -> ToolResult:
+def curvature(args: SymbolicMathInput) -> ToolResult:
     """计算曲面高斯曲率 K 和平均曲率 H.
 
     输入参数化曲面 r(u, v) = (X, Y, Z), 用 args.expression 给 'X;Y;Z',
@@ -269,7 +269,7 @@ def curvature(args: "SymbolicMathInput") -> ToolResult:
     )
 
 
-def lie_derivative(args: "SymbolicMathInput") -> ToolResult:
+def lie_derivative(args: SymbolicMathInput) -> ToolResult:
     """李导数 L_X Y = [X, Y] = X·∇Y - Y·∇X (向量场李括号).
 
     args.symbols: 坐标变量名 (e.g. ["x", "y"])
@@ -333,7 +333,7 @@ def lie_derivative(args: "SymbolicMathInput") -> ToolResult:
     )
 
 
-def connection(args: "SymbolicMathInput") -> ToolResult:
+def connection(args: SymbolicMathInput) -> ToolResult:
     """计算 Levi-Civita 联络系数 (Christoffel 第一类 + 第二类)."""
     try:
         g, coords = _parse_metric_matrix(args)
@@ -342,7 +342,7 @@ def connection(args: "SymbolicMathInput") -> ToolResult:
 
     n = len(coords)
     g_matrix = sp.Matrix(g)
-    g_inv = g_matrix.inv()
+    g_matrix.inv()
     # 第二类
     Gamma2 = _christoffel(g, coords)
     # 第一类 Γ_{kij} = g_{kl} Γ^l_{ij}
@@ -351,7 +351,7 @@ def connection(args: "SymbolicMathInput") -> ToolResult:
         for i in range(n):
             for j in range(n):
                 s = sp.Integer(0)
-                for l in range(n):
+                for l in range(n):  # noqa: E741
                     s += g[k][l] * Gamma2[l][i][j]
                 Gamma1[k][i][j] = sp.simplify(s)
 

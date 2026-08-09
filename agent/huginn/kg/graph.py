@@ -71,7 +71,8 @@ class ProjectKnowledgeGraph:
         with self._lock:
             data = nx.node_link_data(self._graph, edges="links")
             # atomic write: tmp + rename
-            import os, tempfile
+            import os
+            import tempfile
             fd, tmp = tempfile.mkstemp(dir=str(self.root), suffix=".tmp")
             try:
                 with os.fdopen(fd, "w", encoding="utf-8") as f:

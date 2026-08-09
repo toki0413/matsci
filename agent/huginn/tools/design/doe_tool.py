@@ -23,7 +23,6 @@ from pydantic import BaseModel, Field
 from huginn.tools.base import HuginnTool
 from huginn.types import ToolContext, ToolResult
 
-
 # ── 预定义正交表 ──────────────────────────────────────────────────────
 
 # L8(2^7)：8 runs × 7 columns，2 水平
@@ -594,6 +593,7 @@ class DOETool(HuginnTool):
     def _power(self, args: DOEInput) -> ToolResult:
         """a-priori 样本量计算, 包装 statsmodels power 类."""
         import math as _math
+
         from statsmodels.stats.power import (
             FTestAnovaPower,
             GofChisquarePower,

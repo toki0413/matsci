@@ -39,7 +39,8 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -268,7 +269,8 @@ _C3_ALPHA = 5.0  # 经验权重
 _C3_BETA = 1.0   # 新证据权重
 # C3: c_min 默认 0.2, 前端 Settings 可调 (HUGINN_PM_C_MIN).
 # ponytail: 模块加载时读一次 env, 运行时改 env 不生效 (需重启). 升级路径: 改成函数读.
-import os as _os_c3
+import os as _os_c3  # noqa: E402
+
 _C3_C_MIN = float(_os_c3.environ.get("HUGINN_PM_C_MIN", "0.2"))
 _C3_C_INIT = 0.5  # 初始 confidence
 
@@ -597,17 +599,17 @@ if __name__ == "__main__":
     match2 = trajectory_match(current2, history)
     assert match2 is not None and match2["history_id"] == 1, f"应 hid=1, got {match2}"
     assert match2["next_step"] == "f"
-    print(f"[ok] trajectory_match([a,b,e], history) → hid=1, next=f")
+    print("[ok] trajectory_match([a,b,e], history) → hid=1, next=f")
 
     # 9c. 当前 [x,y,z] 无匹配 → None
     match3 = trajectory_match(["x", "y", "z"], history)
     assert match3 is None, f"无匹配应 None, got {match3}"
-    print(f"[ok] trajectory_match([x,y,z], history) → None")
+    print("[ok] trajectory_match([x,y,z], history) → None")
 
     # 9d. 当前比历史长 → None (子图同构要求 current ⊆ history)
     match4 = trajectory_match(["a", "b", "c", "d", "e"], history)
     assert match4 is None, f"current 比历史长应 None, got {match4}"
-    print(f"[ok] current 比历史长 → None")
+    print("[ok] current 比历史长 → None")
 
     # === C3: PM Bayesian confidence 闭环 (用 mock KB) ===
     class _MockKB:
@@ -688,7 +690,7 @@ if __name__ == "__main__":
             break
         c_prev = c_new
     assert deleted, f"应被删除 (c 跌破 0.2), 最后 c={c_prev:.4f}"
-    print(f"[ok] C3-D multiple fails → deleted (c < c_min=0.2)")
+    print("[ok] C3-D multiple fails → deleted (c < c_min=0.2)")
 
     # case C3-E: _find_pattern_by_task_pattern 去重
     mock_kb2 = _MockKB()
@@ -700,6 +702,6 @@ if __name__ == "__main__":
     assert found, "应能找到 task_pattern=type_X"
     not_found = _find_pattern_by_task_pattern(mock_kb2, "type_Y")
     assert not_found is None, "type_Y 不存在"
-    print(f"[ok] C3-E _find_pattern_by_task_pattern dedup OK")
+    print("[ok] C3-E _find_pattern_by_task_pattern dedup OK")
 
     print("trajectory_pattern selfcheck All passed")

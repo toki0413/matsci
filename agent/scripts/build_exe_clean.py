@@ -155,7 +155,7 @@ def build():
 
     cmd = [c for c in cmd if c]
 
-    print(f"\nRunning PyInstaller with clean venv...")
+    print("\nRunning PyInstaller with clean venv...")
     print(f"Command: {' '.join(cmd[:10])} ...")
     result = subprocess.run(cmd, cwd=PROJECT_ROOT)
     if result.returncode != 0:
@@ -171,7 +171,7 @@ def build():
         print(f"\n{'='*50}")
         print(f"OK Built: {exe_path}")
         print(f"  Total size: {dir_size_mb:.1f} MB (directory)")
-        print(f"\nUsage:")
+        print("\nUsage:")
         print(f"  .\\dist\\{output_name}\\{output_name}.exe --help")
         print(f"  .\\dist\\{output_name}\\{output_name}.exe coder \"fix bug\"")
         print(f"{'='*50}")

@@ -5,9 +5,6 @@ import time
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
-
 # ── Health endpoints ──────────────────────────────────────────────
 
 
@@ -27,8 +24,9 @@ class TestHealthEndpoints:
 
     def test_health_ready_includes_error_field(self):
         """Readiness check should include error details on failure."""
-        from huginn.routes.health import health_ready
         from fastapi import Response
+
+        from huginn.routes.health import health_ready
 
         response = Response()
         result = __import__("asyncio").run(health_ready(response))
@@ -73,7 +71,7 @@ class TestUnifiedErrorResponse:
         assert ErrorCode.MAINTENANCE_MODE.value == "MAINTENANCE_MODE"
 
     def test_huginn_error_base_class(self):
-        from huginn.errors import HuginnError, ErrorCode
+        from huginn.errors import ErrorCode, HuginnError
         err = HuginnError("test error")
         response = err.to_response("req-789")
         assert response["error_code"] == ErrorCode.INTERNAL_ERROR.value
@@ -90,7 +88,6 @@ class TestMaintenanceMode:
         from huginn.middleware.maintenance import is_maintenance_mode
         with patch.dict("os.environ", {}, clear=False):
             os.environ.pop("HUGINN_MAINTENANCE", None)
-            from huginn.middleware.maintenance import _maintenance_active
             # Reset runtime toggle
             import huginn.middleware.maintenance as m
             m._maintenance_active = False
@@ -102,7 +99,10 @@ class TestMaintenanceMode:
             assert is_maintenance_mode()
 
     def test_maintenance_via_runtime_toggle(self):
-        from huginn.middleware.maintenance import set_maintenance_mode, is_maintenance_mode
+        from huginn.middleware.maintenance import (
+            is_maintenance_mode,
+            set_maintenance_mode,
+        )
         set_maintenance_mode(True)
         assert is_maintenance_mode()
         set_maintenance_mode(False)
@@ -131,9 +131,9 @@ class TestAlertWebhook:
 
     def test_webhook_called_with_correct_payload(self):
         """When webhook URL is set, should POST anomalies."""
-        from huginn.diagnostics.system_health import SystemHealthMonitor, AnomalyEvent
         import json
-        import urllib.request
+
+        from huginn.diagnostics.system_health import AnomalyEvent, SystemHealthMonitor
 
         monitor = SystemHealthMonitor()
 
@@ -156,9 +156,11 @@ class TestAlertWebhook:
             message="CPU usage 95% exceeds threshold 90%",
         )
 
-        with patch.dict("os.environ", {"HUGINN_ALERT_WEBHOOK_URL": "http://example.com/webhook"}):
-            with patch("urllib.request.urlopen", mock_urlopen):
-                monitor._fire_alert_webhook([event])
+        with (
+            patch.dict("os.environ", {"HUGINN_ALERT_WEBHOOK_URL": "http://example.com/webhook"}),
+            patch("urllib.request.urlopen", mock_urlopen),
+        ):
+            monitor._fire_alert_webhook([event])
 
         assert len(captured_requests) == 1
         assert captured_requests[0]["url"] == "http://example.com/webhook"
@@ -175,8 +177,9 @@ class TestGracefulDegradation:
 
     def test_vector_search_failure_falls_back(self):
         """When vector search crashes, search should still return FTS results."""
-        from huginn.memory.longterm import LongTermMemory
         import tempfile
+
+        from huginn.memory.longterm import LongTermMemory
 
         with tempfile.TemporaryDirectory() as tmpdir:
             mem = LongTermMemory(db_path=str(Path(tmpdir) / "test.db"))

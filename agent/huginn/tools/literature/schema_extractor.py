@@ -21,6 +21,7 @@ ponytail: 不引 few-shot pool / schema_validator / pdf_splitter 依赖. 升级�
 """
 from __future__ import annotations
 
+import contextlib
 import difflib
 import json
 import logging
@@ -29,7 +30,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from huginn.models.registry import ModelRegistry, get_model_capabilities
+from huginn.models.registry import ModelRegistry
+
 from .schema_def import SCHEMA_JSON, MaterialSchema, from_llm_output
 
 logger = logging.getLogger(__name__)
@@ -338,11 +340,8 @@ def extract_schema(
     串行执行 (lazy). 真要并行可包 ThreadPoolExecutor, 但 agent 内部一次一篇够用.
     """
     # Phase 1: anchors (用于后续 prompt 注入, 但不阻塞)
-    try:
-        anchors = extract_anchors(doc, model)
-    except Exception:
-        anchors = {"primary_materials": [], "key_properties": [],
-                   "process_keywords": [], "application_hints": []}
+    with contextlib.suppress(Exception):
+        extract_anchors(doc, model)
 
     # 6 块串行抽取. 单块失败返回 {} → from_llm_output 给默认空值, 整体仍可输出.
     material = _extract_block(doc, model, "Material", SCHEMA_JSON["Material"])
@@ -441,9 +440,7 @@ def _verify_one(original: str, full_text: str) -> bool:
             if best >= 0.7:
                 return True
     # 5. n-gram Jaccard >= 0.5
-    if _ngram_jaccard(original, full_text, n=3) >= 0.5:
-        return True
-    return False
+    return _ngram_jaccard(original, full_text, n=3) >= 0.5
 
 
 def verify_original_texts(extracted: dict, full_text: str) -> dict:

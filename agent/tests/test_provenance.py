@@ -9,17 +9,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from huginn.provenance import (
     ProvenanceLogger,
     ProvenanceRecord,
-    ProvenanceSnapshot,
     capture,
     capture_run_inputs,
     export_crate,
 )
-
 
 # ── ProvenanceRecord 基本语义 ───────────────────────────────────────────────
 

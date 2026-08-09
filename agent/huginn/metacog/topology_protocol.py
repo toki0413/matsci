@@ -177,6 +177,7 @@ def _selfcheck() -> None:
     # 1. StructureCognitiveMap (已有类, 直接满足 Protocol)
     print("[1] StructureCognitiveMap (delegation to query_neighbors)")
     import numpy as np
+
     from huginn.metacog.structure_cognitive_map import StructureCognitiveMap
     # 4 原子方形: (0,0,0) (1,0,0) (0,1,0) (1,1,0), cutoff=1.5
     m = StructureCognitiveMap.from_coords(

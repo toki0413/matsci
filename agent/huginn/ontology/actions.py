@@ -10,12 +10,13 @@ Action predictability (inspired by PNAS 2535161123):
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any, Callable
+from enum import StrEnum
+from typing import Any
 
 
-class ActionCategory(str, Enum):
+class ActionCategory(StrEnum):
     """Coarse classification of agent actions."""
     QUERY = "query"           # Read-only lookup, no side effects
     ANALYZE = "analyze"        # Computation on existing data
@@ -27,7 +28,7 @@ class ActionCategory(str, Enum):
     COMMUNICATE = "communicate"  # Send info to user or external system
 
 
-class ActionStatus(str, Enum):
+class ActionStatus(StrEnum):
     PENDING = "pending"
     APPROVED = "approved"
     EXECUTING = "executing"
@@ -37,7 +38,7 @@ class ActionStatus(str, Enum):
     DENIED = "denied"
 
 
-class RiskLevel(str, Enum):
+class RiskLevel(StrEnum):
     NONE = "none"       # query/lookup
     LOW = "low"         # analyze existing data
     MEDIUM = "medium"   # file creation, code execution

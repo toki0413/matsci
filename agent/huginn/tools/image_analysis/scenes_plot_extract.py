@@ -13,8 +13,8 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from huginn.tools.image_analysis._utils import auto_detect_colors, load_rgb, parse_color
 from huginn.types import ToolResult
-from huginn.tools.image_analysis._utils import load_rgb, parse_color, auto_detect_colors
 
 if TYPE_CHECKING:
     from huginn.tools.image_analysis.tool import ImageAnalysisInput
@@ -322,7 +322,7 @@ def _detect_curve_colors(rgb: np.ndarray, k: int = 5) -> list[np.ndarray]:
     return candidates
 
 
-def plot_extract(args: "ImageAnalysisInput") -> ToolResult:
+def plot_extract(args: ImageAnalysisInput) -> ToolResult:
     rgb = load_rgb(args.image_path)
     H, W, _ = rgb.shape
 

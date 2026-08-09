@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-import pytest
 import numpy as np
+import pytest
 
 from huginn.routes.compat import (
+    _ascii_phase,
+    _ascii_plot,
     _crystal_system,
     _guess_crystal_system,
-    _ascii_plot,
-    _ascii_phase,
 )
-
 
 # ═══════════════════════════════════════════════════════════════════
 # Crystal system helpers
@@ -116,6 +115,7 @@ class TestCompatEndpoints:
     def client(self):
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
+
         from huginn.routes.compat import router
 
         app = FastAPI()

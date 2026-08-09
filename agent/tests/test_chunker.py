@@ -22,7 +22,6 @@ from huginn.knowledge.chunker import (
     StructureChunker,
 )
 
-
 # ════════════════════════════════════════════════════════════════════
 # Chunk 数据类
 # ════════════════════════════════════════════════════════════════════
@@ -520,8 +519,8 @@ class TestMergeSmallChunks:
 
 class TestBaseChunker:
     @pytest.mark.asyncio
-    async def test_base_chunk_returns_none(self):
-        # BaseChunker.chunk 只是占位, 返回 None
+    async def test_base_chunk_raises_not_implemented(self):
+        # BaseChunker.chunk 是抽象占位, 子类必须覆写. 直接调用应 raise.
         base = BaseChunker()
-        result = await base.chunk("text")
-        assert result is None
+        with pytest.raises(NotImplementedError):
+            await base.chunk("text")
