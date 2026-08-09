@@ -170,7 +170,7 @@ class PhaseGate:
             with open(path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
         except Exception:
-            pass
+            logger.debug("phase gate telemetry write skipped", exc_info=True)
 
     def to_dict(self) -> dict[str, Any]:
         return {

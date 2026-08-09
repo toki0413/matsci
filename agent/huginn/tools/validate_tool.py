@@ -5,6 +5,7 @@ Read-only. Safe to auto-execute.
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -13,6 +14,8 @@ from huginn.constraints import ConstraintAdapter
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult
 from huginn.validation.physics import PhysicsValidator
+
+logger = logging.getLogger(__name__)
 
 # 按性质定的默认容差, 没传 tolerance 时用这个
 TOLERANCES: dict[str, float] = {
@@ -317,7 +320,7 @@ class ValidateTool(HuginnTool):
                     correction_factor = factor
                     corrected_val = computed_val * factor
             except Exception:
-                pass
+                logger.debug("correction factor lookup failed", exc_info=True)
 
         # verdict 基于修正后的值 (如果有), 否则原始计算值
         verdict_base = corrected_val if corrected_val is not None else computed_val

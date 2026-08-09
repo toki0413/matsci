@@ -564,7 +564,7 @@ def build_pmk_state(
                 if _ts_mem:
                     _mem_text = (_mem_text + " | recent: " + _ts_mem[:200]).strip()
             except Exception:
-                pass
+                logger.debug("memory recall_for_prompt skipped", exc_info=True)
         # 桥 H: M 路补 failed_directions — 让 PMK 一致性检查感知"persona 推荐
         # 的方向 vs 已知失败方向"的冲突. 顺带接通 recall_procedural 死代码
         # (procedural memory = stable_principles 关键词召回).
@@ -580,7 +580,7 @@ def build_pmk_state(
                         + " ; ".join(_f_lines)
                     ).strip()
             except Exception:
-                pass
+                logger.debug("failed_directions recall skipped", exc_info=True)
             try:
                 _attempted = getattr(last_step_eval, "attempted", "") or ""
                 _proc = mem_mgr.recall_procedural(_attempted, top_k=2)
@@ -590,7 +590,7 @@ def build_pmk_state(
                         + " ; ".join(p[:60] for p in _proc)
                     ).strip()
             except Exception:
-                pass
+                logger.debug("procedural recall skipped", exc_info=True)
         _kb_text = ""
         if kb is not None and last_step_eval is not None:
             try:
@@ -604,7 +604,7 @@ def build_pmk_state(
                         for h in _kb_hits[:top_k]
                     )[:200]
             except Exception:
-                pass
+                logger.debug("kb query skipped", exc_info=True)
         # 桥 C: evolution_rules 作为 Knowledge 路 — 让 PMK 一致性检查能看到
         # 历史教训, 不只 ChromaDB 检索. 路径对齐 context_builder.build_evolution_rules.
         try:
@@ -637,7 +637,7 @@ def build_pmk_state(
                             + _kb_text
                         ).strip(" |")
         except Exception:
-            pass
+            logger.debug("evolution_rules load skipped", exc_info=True)
         # 桥 D: stable_principles 作为 Knowledge 路 — 蒸馏出的原则直接作为 KB 立场,
         # 让 PMK 能检测 persona/memory 与长期原则的冲突. load_stable_principles 返回 list[str].
         try:
@@ -653,7 +653,7 @@ def build_pmk_state(
                         + _kb_text
                     ).strip(" |")
         except Exception:
-            pass
+            logger.debug("stable_principles load skipped", exc_info=True)
         _result: dict[str, str] = {}
         if _persona_text:
             _result["persona"] = _persona_text
@@ -1158,7 +1158,7 @@ class CognitiveLoopMixin:
                     from huginn.routes.metrics import track_belief_update
                     track_belief_update("gaussian")
                 except Exception:
-                    pass
+                    logger.debug("belief metric track skipped", exc_info=True)
             except Exception:
                 pass  # 循环 import 或其他故障 → 回退原逻辑
 
@@ -1184,7 +1184,7 @@ class CognitiveLoopMixin:
                 sp = getattr(self, "stable_principles", None)
                 n_principles = len(sp) if sp else 0
             except Exception:
-                pass
+                logger.debug("stable_principles count skipped", exc_info=True)
             sys_prompt_len = 0
             with contextlib.suppress(Exception):
                 sys_prompt_len = len(getattr(self, "system_prompt", "") or "")
@@ -1367,7 +1367,7 @@ class CognitiveLoopMixin:
                 if _node:
                     _stmt = _node.statement[:200]
             except Exception:
-                pass
+                logger.debug("hypothesis statement lookup skipped", exc_info=True)
         _hint = (
             f"Stagnation classified as evidence_against. "
             f"Current hypothesis may be wrong. Hunt for a counterexample.\n"

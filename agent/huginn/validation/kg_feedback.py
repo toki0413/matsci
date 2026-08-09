@@ -107,7 +107,7 @@ def _get_project_kg() -> Any | None:
         if kg is not None:
             return kg
     except Exception:
-        pass
+        logger.debug("project knowledge graph lookup failed", exc_info=True)
     return None
 
 

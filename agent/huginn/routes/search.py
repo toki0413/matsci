@@ -91,7 +91,7 @@ async def _search_threads(query: str, request: Request) -> list[GlobalSearchResu
 
         user_id = _current_user_id(request)
     except Exception:
-        pass
+        logger.debug("current user id lookup skipped", exc_info=True)
 
     with _state_lock:
         for thread_id, thread in _threads.items():
@@ -121,7 +121,7 @@ async def _search_threads(query: str, request: Request) -> list[GlobalSearchResu
                             match_score += 0.3
                             recent_messages.append(content)
             except Exception:
-                pass
+                logger.debug("thread message search skipped", exc_info=True)
 
             if match_score > 0:
                 if recent_messages:

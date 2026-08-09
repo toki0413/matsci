@@ -199,7 +199,7 @@ def _make_ws_approval_callback(
                         }
                     )
                 except Exception:
-                    pass
+                    logger.debug("ws approval notification send failed", exc_info=True)
 
             task = loop.create_task(_safe_send())
             _pending_tasks.add(task)
@@ -294,7 +294,7 @@ async def _stream_agent_response(
                     _ts_state.mode = getattr(agent, "mode", "chat")
                     _ts.save(thread_id)
             except Exception:
-                pass
+                logger.debug("task state record skipped", exc_info=True)
 
             if "_token" in state:
                 _token_streamed = True
@@ -456,9 +456,9 @@ async def _stream_agent_response(
                                 "reasons": decision.reasons,
                                 "requires_approval": decision.requires_approval,
                                 "predictability": decision.predictability,
-                            })
+                        })
                         except Exception:
-                            pass
+                            logger.debug("ws governance decision send failed", exc_info=True)
 
             if isinstance(last_msg, ToolMessage):
                 tid = getattr(last_msg, "tool_call_id", None)
@@ -504,7 +504,7 @@ async def _stream_agent_response(
                             findings=_finding,
                         )
                     except Exception:
-                        pass
+                        logger.debug("tool step record skipped", exc_info=True)
 
                     # Emit governance verification result
                     try:
@@ -531,7 +531,7 @@ async def _stream_agent_response(
                             "rollback_available": False,
                         })
                     except Exception:
-                        pass
+                        logger.debug("ws governance verification send failed", exc_info=True)
 
                     _progress = _extract_task_progress(
                         tool_content
@@ -1029,7 +1029,7 @@ async def _handle_user_input(
                             f"- {(c.get('text') or '')[:200]}" for c in _chunks[:3]
                         )
             except Exception:
-                pass
+                logger.debug("plan kb context query skipped", exc_info=True)
 
             plan_prompt = (
                 f"Break down the following task into a structured plan.\n\n"
@@ -1119,7 +1119,7 @@ async def _handle_user_input(
                     auto_confirm=False,
                 )
             except Exception:
-                pass
+                logger.debug("plan store create skipped", exc_info=True)
 
             await websocket.send_json({
                 "type": "plan",

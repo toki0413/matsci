@@ -17,6 +17,7 @@ to ``server_core._context``.
 from __future__ import annotations
 
 import contextlib
+import logging
 import os
 import sys
 import time
@@ -47,28 +48,32 @@ from huginn.middleware.maintenance import MaintenanceMiddleware
 from huginn.middleware.request_id import RequestIDMiddleware
 from huginn.routes import include_v1_routes
 
+logger = logging.getLogger(__name__)
+
 # Re-export route handler functions so tests and external callers can do
 # `from huginn.server import list_personas, create_persona, ...` without
 # reaching into the routes package. These are the canonical endpoint
 # callables; the FastAPI routers in huginn.routes wire them onto the app.
-from huginn.routes.agents import (  # noqa: F401
+# E402: 这些 import 必须在 logger 定义之后 (上面的 routes re-export 用 logger),
+# 所以不能放到文件顶部. 加 noqa 抑制.
+from huginn.routes.agents import (  # noqa: F401, E402
     create_persona,
     get_persona,
     list_personas,
     telemetry_spans,
     telemetry_summary,
 )
-from huginn.routes.memory import memory_maintenance  # noqa: F401
-from huginn.routes.metrics import (
+from huginn.routes.memory import memory_maintenance  # noqa: F401, E402
+from huginn.routes.metrics import (  # noqa: E402
     RATE_LIMIT_BLOCKED_TOTAL,
     http_metrics_dispatch,
 )
-from huginn.routes.threads import get_thread  # noqa: F401
-from huginn.routes.unified import (  # noqa: F401
+from huginn.routes.threads import get_thread  # noqa: F401, E402
+from huginn.routes.unified import (  # noqa: F401, E402
     unified_plot_endpoint,
     unified_solve_endpoint,
 )
-from huginn.security.auth import require_api_key
+from huginn.security.auth import require_api_key  # noqa: E402
 
 # Tool registration is deferred to lifespan startup so the server can
 # begin accepting health checks immediately. See lifespan._register_tools.
@@ -338,7 +343,7 @@ if __name__ == "__main__":
         _port_file.parent.mkdir(parents=True, exist_ok=True)
         _port_file.write_text(str(port))
     except Exception:
-        pass
+        logger.debug("failed to write backend port file", exc_info=True)
 
     uvicorn.run(app, host="127.0.0.1", port=port,
                 ws_ping_interval=300, ws_ping_timeout=300)

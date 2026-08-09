@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import datetime
 import json
+import logging
 import sys
 import time
 import uuid
@@ -19,6 +20,8 @@ from huginn.models.registry import ModelRegistry
 from huginn.tools import register_all_tools
 
 from .task import BenchmarkTask, TaskResult
+
+logger = logging.getLogger(__name__)
 
 
 def _eval_num_in_output(output: str, expected: float, tol: float) -> tuple[bool, str]:
@@ -502,7 +505,7 @@ class BenchmarkRunner:
                         importance=0.8,
                     )
             except Exception:
-                pass
+                logger.debug("benchmark run summary memory store skipped", exc_info=True)
 
         return BenchmarkReport(
             run_id=run_id,

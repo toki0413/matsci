@@ -349,7 +349,7 @@ async def pet_memory_summary() -> dict[str, Any]:
                 cat_counts[cat] = cat_counts.get(cat, 0) + 1
             top_categories = sorted(cat_counts, key=cat_counts.get, reverse=True)[:5]
         except Exception:
-            pass
+            logger.debug("memory category aggregation skipped", exc_info=True)
 
         return {
             "session_topics": recent_topics,
