@@ -314,7 +314,7 @@ def _write_imagination_log(
         with log_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
     except Exception:
-        pass
+        logger.debug("imagination log write failed", exc_info=True)
 
 
 def imagine_with_checks(

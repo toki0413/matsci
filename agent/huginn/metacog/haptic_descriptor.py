@@ -15,11 +15,14 @@ ceiling: Voigt 上界偏高, 升级路径接 VRH 平均 (mechanics.ElasticTensor
 from __future__ import annotations
 
 import contextlib
+import logging
 
 import numpy as np
 
 from huginn.metacog.haptic_property_layer import HapticPropertyLayer
 from huginn.metacog.latent_space import LatentSpace
+
+logger = logging.getLogger(__name__)
 
 
 class HapticDescriptor(LatentSpace):
@@ -66,7 +69,7 @@ class HapticDescriptor(LatentSpace):
                 vec[6] = float(moduli["bulk_modulus_voigt"])
                 vec[7] = float(moduli["shear_modulus_voigt"])
             except Exception:
-                pass
+                logger.debug("haptic voigt moduli computation skipped", exc_info=True)
 
         # [8] phonon_mean, [9] phonon_min
         if layer.phonon_freqs is not None:

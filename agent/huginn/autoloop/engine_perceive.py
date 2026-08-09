@@ -262,7 +262,7 @@ class EnginePerceiveMixin:
                 if text and isinstance(text, str):
                     parts.append(text)
             except Exception:
-                pass
+                logger.debug("memory recall_for_prompt skipped", exc_info=True)
 
         # C4: meta_trace 注入 — engine 每轮 _distill_meta_trace 写 jsonl,
         # 这里读回来让 LLM 看到上轮蒸馏的结构化历史 (attempted/found/evidence/

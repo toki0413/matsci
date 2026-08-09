@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import os
 import time
 from collections.abc import Callable
@@ -15,6 +16,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 RAVEN_NAME = "渡鸦"
 RAVEN_IMAGE_PATH = Path(__file__).parent.parent / "assets" / "raven.png"
@@ -291,7 +294,7 @@ class PetState:
             tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
             tmp.replace(target)
         except Exception:
-            pass
+            logger.debug("pet state save failed", exc_info=True)
 
     def load(self, path: Path | None = None) -> None:
         """从 JSON 恢复 gamification 状态, best-effort 不抛."""
@@ -305,7 +308,7 @@ class PetState:
                 if k in payload:
                     setattr(self, k, payload[k])
         except Exception:
-            pass
+            logger.debug("pet state load failed", exc_info=True)
 
 
 def _pet_state_path():

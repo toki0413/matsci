@@ -287,7 +287,7 @@ def _optimize(
             elif z3.is_rational_value(evaled):
                 opt_value = float(evaled.as_decimal(6).rstrip("?"))
         except Exception:
-            pass
+            logger.debug("opt value eval failed", exc_info=True)
         return {
             "optimal": True,
             "status": "sat",

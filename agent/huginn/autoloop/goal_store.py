@@ -12,6 +12,7 @@ Persistence reuses PlanStore's file lock + atomic write pattern.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 import uuid
@@ -22,6 +23,8 @@ from typing import Any
 
 from huginn.autoloop.plan_store import _file_lock
 from huginn.utils.common import now_iso
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -290,7 +293,7 @@ class GoalStore:
                     r = datetime.fromisoformat(u["resolved_at"])
                     durations.append((r - d).total_seconds() / 3600)
                 except Exception:
-                    pass
+                    logger.debug("goal duration parse skipped", exc_info=True)
         durations.sort()
         median_h = durations[len(durations) // 2] if durations else None
         open_count = total - resolved

@@ -578,7 +578,7 @@ class EngineControlMixin:
                     if _dim != "unknown" and _nodes:
                         _directions.append(f"{_dim}: {_nodes[0].statement[:80]}")
             except Exception:
-                pass
+                logger.debug("cluster directions skipped", exc_info=True)
             # 不足 3 个时补 speculator predictions (首轮自然走这条)
             while len(_directions) < 3:
                 try:
@@ -664,7 +664,7 @@ class EngineControlMixin:
             for nd in self.hypothesis_graph.supported()[:3]:
                 evidence.append(str(nd.statement)[:150])
         except Exception:
-            pass
+            logger.debug("supported evidence collect skipped", exc_info=True)
 
         artifacts: list[str] = []
         if getattr(self, "_last_execution_result", None) and isinstance(self._last_execution_result, dict):

@@ -296,7 +296,7 @@ class HuginnTool(ABC, Generic[InputT, OutputT]):
                     str(exc)[:200],
                 )
             except Exception:
-                pass
+                logger.debug("failure mode registry record failed", exc_info=True)
             # 统一失败语义: 把异常透传成 ToolResult(success=False), 而不是 raise.
             # adapter 会把它序列化成 {"error": ...} 给 LLM, agent 读到错误可以调整
             # 策略; 直接 raise 会让异常向上崩掉整轮会话 (CausalGame 400 曾因此报废).

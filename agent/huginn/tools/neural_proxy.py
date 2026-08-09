@@ -12,6 +12,7 @@ torch 可用但无 transolver 包时, 用一个轻量 MLP 替代 — 至少能�
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -32,6 +33,8 @@ try:
     _TRANSOLVER_AVAILABLE = True
 except Exception:
     _TRANSOLVER_AVAILABLE = False
+
+logger = logging.getLogger(__name__)
 
 
 class _LitePDEProxy(nn.Module if _TORCH_AVAILABLE else object):
@@ -235,7 +238,7 @@ class NeuralPDEProxy:
                           "note": "untrained MLP, output is approximate"},
                 )
             except Exception:
-                pass
+                logger.debug("lite mlp forward failed", exc_info=True)
 
         # 最终回退: 均匀场
         return ProxySolution(

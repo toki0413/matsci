@@ -1570,7 +1570,7 @@ def _reframe_analogy_map(
                 if src and tgt:
                     shared = shared_structure(src, tgt)
             except Exception:
-                pass
+                logger.debug("shared structure lookup skipped", exc_info=True)
     except Exception:
         transfer = None
         shared = []
