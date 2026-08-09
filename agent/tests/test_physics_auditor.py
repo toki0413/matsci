@@ -15,7 +15,6 @@ from huginn.execution.physics_auditor import (
     PhysicsFinding,
 )
 
-
 # ── shared test fixtures ────────────────────────────────────────────────────
 
 # A clean VASP result: negative energy per atom, modest gap, converged,
@@ -283,6 +282,6 @@ class TestToolIntegration:
     """
 
     def test_import_from_execution_package(self):
-        from huginn.execution.physics_auditor import PhysicsAuditor as PA
+        from huginn.execution.physics_auditor import PhysicsAuditor as _PhysicsAuditor
 
-        assert PA is PhysicsAuditor
+        assert _PhysicsAuditor is PhysicsAuditor

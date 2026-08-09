@@ -7,6 +7,7 @@ handful of module-level global variables.
 
 from __future__ import annotations
 
+import contextlib
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -31,7 +32,6 @@ from huginn.persistence import (
 )
 from huginn.security.audit import AuditLogger
 from huginn.skills.registry import SkillRegistry
-from huginn.tools import register_all_tools
 from huginn.tools.registry import ToolRegistry
 
 
@@ -125,10 +125,8 @@ def create_server_context(config: HuginnConfig | None = None) -> ServerContext:
 
     # 启动对话转录订阅 (best-effort, 失败不影响服务启动)
     transcript_store = TranscriptStore.shared()
-    try:
+    with contextlib.suppress(Exception):
         transcript_store.start()
-    except Exception:
-        pass
 
     return ServerContext(
         config=cfg,

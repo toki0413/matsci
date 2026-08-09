@@ -9,12 +9,12 @@
   - optim:    算法优化 (OptimBench, 对标 MLE-Bench)
 """
 
+from .atomworld_bench import AtomMotor2KSubtask
+from .baselines import BASELINES, format_baseline_table, get_baselines_for_suite
+from .llm_judge import JudgeRubric, judge_task, judge_with_regex_fallback
+from .misi_bench import MISISubtask
 from .runner import BenchmarkReport, BenchmarkRunner
 from .task import BenchmarkTask, TaskResult
-from .llm_judge import judge_task, judge_with_regex_fallback, JudgeRubric
-from .baselines import BASELINES, get_baselines_for_suite, format_baseline_table
-from .atomworld_bench import AtomMotor2KSubtask
-from .misi_bench import MISISubtask
 
 __all__ = [
     "BenchmarkRunner", "BenchmarkReport", "BenchmarkTask", "TaskResult",
@@ -106,6 +106,7 @@ def get_suite_tasks(suite: str, max_tasks: int | None = None) -> list[BenchmarkT
 def _build_physics_tasks() -> list[BenchmarkTask]:
     """MatWorldBench adapter: 转成 BenchmarkTask 列表."""
     import re
+
     from huginn.evaluation.matworld_bench import MatWorldBench
 
     tasks: list[BenchmarkTask] = []

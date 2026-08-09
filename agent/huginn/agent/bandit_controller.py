@@ -62,7 +62,7 @@ class _ItemRuntime:
 class EffortBandit:
     """单例. thread-safe. advisory only — 所有公开方法 catch Exception."""
 
-    _instance: "EffortBandit | None" = None
+    _instance: EffortBandit | None = None
     _instance_lock = threading.Lock()
 
     def __init__(self, persist_path: Path | None = None):
@@ -92,7 +92,7 @@ class EffortBandit:
         self._load()
 
     @classmethod
-    def get_instance(cls) -> "EffortBandit":
+    def get_instance(cls) -> EffortBandit:
         if cls._instance is None:
             with cls._instance_lock:
                 if cls._instance is None:
@@ -358,8 +358,8 @@ class EffortBandit:
     def _update_q(self, st: _BanditState, action: str, reward: float) -> None:
         k = st.key()
         if k not in self._Q:
-            self._Q[k] = {a: 0.0 for a in _ACTIONS}
-            self._N[k] = {a: 0 for a in _ACTIONS}
+            self._Q[k] = dict.fromkeys(_ACTIONS, 0.0)
+            self._N[k] = dict.fromkeys(_ACTIONS, 0)
         _N_sa = self._N[k][action]
         _Q_sa = self._Q[k][action]
         self._Q[k][action] = _Q_sa + (reward - _Q_sa) / (_N_sa + 1)
@@ -417,8 +417,8 @@ class EffortBandit:
         for _k, _a, _r in reversed(self._trajectory):
             _g = _r + _GAMMA * _g
             if _k not in self._Q:
-                self._Q[_k] = {ac: 0.0 for ac in _ACTIONS}
-                self._N[_k] = {ac: 0 for ac in _ACTIONS}
+                self._Q[_k] = dict.fromkeys(_ACTIONS, 0.0)
+                self._N[_k] = dict.fromkeys(_ACTIONS, 0)
             _Q_sa = self._Q[_k][_a]
             self._Q[_k][_a] = _Q_sa + _ALPHA * (_g - _Q_sa)
             self._N[_k][_a] += 1

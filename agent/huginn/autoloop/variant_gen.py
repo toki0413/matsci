@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 import uuid
 from typing import Any
 
@@ -55,7 +54,7 @@ def _perturb_kpoints(v: Any) -> Any:
 def _perturb_sigma(v: Any) -> Any:
     """sigma 0.05 → 0.02 / 0.1 (二选一)."""
     try:
-        base = float(v)
+        float(v)
     except (TypeError, ValueError):
         return v
     return 0.02 if uuid.uuid4().hex[0] < "8" else 0.1
@@ -109,7 +108,9 @@ def _perturb_script(script: WorkflowScript) -> WorkflowScript:
     for st in script.subtasks:
         if h3_on:
             try:
-                from huginn.harness.joint_optimizer import select_workflow_params_for_stage
+                from huginn.harness.joint_optimizer import (
+                    select_workflow_params_for_stage,
+                )
                 new_args = select_workflow_params_for_stage(st.tool_name, st.args)
             except Exception:
                 new_args = _perturb_args(st.args)
@@ -204,9 +205,9 @@ async def generate_variants(
 
 def _selfcheck() -> None:
     """variant_gen selfcheck: 参数扰动 + LLM fallback 路径."""
-    from huginn.autoloop.dynamic_workflow import WorkflowScript
     import huginn.autoloop.variant_gen as vg
     import huginn.harness.joint_optimizer as jo
+    from huginn.autoloop.dynamic_workflow import WorkflowScript
 
     # toggle off → 空 list. patch vg + jo 两处 (H3 接入后两模块各自有 _harness_enabled)
     orig_vg = vg._harness_enabled
@@ -220,7 +221,7 @@ def _selfcheck() -> None:
 
     # toggle on + base_script → 参数扰动 (H2 workflow_evolution on, H3 off 走原扰动)
     vg._harness_enabled = lambda key, default=False: (
-        True if key == "harness_workflow_evolution" else False
+        key == "harness_workflow_evolution"
     )
     jo._harness_enabled = lambda key, default=False: False
     base = WorkflowScript.from_dict({
@@ -255,9 +256,10 @@ def _selfcheck() -> None:
 
     # 5. H3 接入: H3 toggle on 时 _perturb_script 走 UCB 调参路径
     jo._harness_enabled = lambda key, default=False: (
-        True if key == "harness_joint_optimizer" else False
+        key == "harness_joint_optimizer"
     )
-    import os as _os, tempfile as _tf
+    import os as _os
+    import tempfile as _tf
     _tmp = _tf.mkdtemp()
     _os.environ["HUGINN_CACHE_DIR"] = _tmp
     jo.JointBandit._instance = None

@@ -21,7 +21,8 @@ import json
 import logging
 import os
 import re
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from huginn.metacog.hypothesis_manifold import (
     Hypothesis,
@@ -232,7 +233,7 @@ def _selfcheck() -> None:
     llm3b = LLMLikelihood(mock_lo, interval=1)
     llm3b.iter_n = 0
     assert llm3b.log_lik(h, o) == gaussian_val, "case3b: below -50 -> Gaussian"
-    print(f"[CHECK] case3 ok: out-of-range (both sides) -> Gaussian")
+    print("[CHECK] case3 ok: out-of-range (both sides) -> Gaussian")
 
     # Case 4: LLM 异常 → 降级到 Gaussian
     mock_err = _MockModel(error=RuntimeError("simulated timeout"))
@@ -262,7 +263,7 @@ def _selfcheck() -> None:
     llm6 = LLMLikelihood(None, interval=1)
     llm6.iter_n = 0
     assert llm6.log_lik(h, o) == gaussian_val, "case6: model=None -> Gaussian"
-    print(f"[CHECK] case6 ok: model=None -> Gaussian")
+    print("[CHECK] case6 ok: model=None -> Gaussian")
 
     # Case 7: env 兼容映射 (v14 HUGINN_DARWIN_LLM_EVAL -> v15 HUGINN_LLM_LIKELIHOOD)
     _saved_lik = os.environ.get("HUGINN_LLM_LIKELIHOOD")
@@ -293,7 +294,7 @@ def _selfcheck() -> None:
                 os.environ[k] = v
             else:
                 os.environ.pop(k, None)
-    print(f"[CHECK] case7 ok: env compat mapping + interval read")
+    print("[CHECK] case7 ok: env compat mapping + interval read")
 
     # Case 8: 注入到 HypothesisManifold 验证接口兼容 + interval gate
     mock_inj = _MockModel(response='{"log_lik": -0.1, "reason": "inject test"}')

@@ -6,7 +6,7 @@ A read-only tool for structural analysis. Safe to auto-execute.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -44,7 +44,7 @@ class StructureToolInput(BaseModel):
     )
 
     @model_validator(mode="after")
-    def _check_required_fields(self) -> "StructureToolInput":
+    def _check_required_fields(self) -> StructureToolInput:
         """batch_validate 用 files 字段, 其它 action 用 file_path.
 
         防止 LLM 漏填, 提前在 schema 层就报错, 比等到 call() 里挂掉

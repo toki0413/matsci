@@ -147,7 +147,7 @@ def tem_fft_annotate(args: ImageDesignInput) -> ToolResult:
                     color="white",
                     fontweight="bold",
                     fontsize=12,
-                    bbox=dict(facecolor="black", alpha=0.6),
+                    bbox={"facecolor": "black", "alpha": 0.6},
                 )
     else:
         axes[1].text(

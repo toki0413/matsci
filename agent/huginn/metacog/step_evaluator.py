@@ -65,23 +65,6 @@ class ToolCallHealth:
 
 
 @dataclass
-class ToolCallHealth:
-    """G69: 工具调用健康度."""
-
-    success_rate: float = 1.0  # 成功调用数 / 总调用数
-    total_calls: int = 0
-    retry_count: int = 0
-    timeout_count: int = 0
-    param_error_count: int = 0
-
-    def is_anomalous(self) -> bool:
-        """成功率 < 0.3 或有超时/参数错误 → 异常."""
-        if self.timeout_count > 0 or self.param_error_count > 0:
-            return True
-        return self.success_rate < 0.3
-
-
-@dataclass
 class MeasurementUncertainty:
     """P2: 测量不确定度 — 抓 agent 报点估计不报误差的痛点.
 
@@ -523,11 +506,11 @@ def _parse_darwin_json(text: str) -> list[dict]:
     except json.JSONDecodeError:
         m = re.search(r"\[.*\]", text, re.DOTALL)
         if not m:
-            raise ValueError("no JSON array found")
+            raise ValueError("no JSON array found") from None
         try:
             data = json.loads(m.group(0))
         except json.JSONDecodeError as e:
-            raise ValueError(f"JSON parse failed: {e}")
+            raise ValueError(f"JSON parse failed: {e}") from e
 
     if not isinstance(data, list):
         raise ValueError("response is not a JSON array")

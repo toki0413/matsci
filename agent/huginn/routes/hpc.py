@@ -12,6 +12,7 @@ remote_work_dir)。这样既支持"选已保存的集群提交", 也兼容旧前
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
 from collections import defaultdict
@@ -559,19 +560,15 @@ async def hpc_job_output_stream(websocket: WebSocket, local_id: str):
                         except RuntimeError:
                             break  # 事件循环已关
             except Exception as exc:
-                try:
+                with contextlib.suppress(RuntimeError):
                     asyncio.run_coroutine_threadsafe(
                         line_queue.put(("error", str(exc))), loop
                     )
-                except RuntimeError:
-                    pass
             finally:
                 # G33: 显式关 channel, 触发远端 tail -f 收 SIGHUP 退出
                 if chan is not None:
-                    try:
+                    with contextlib.suppress(Exception):
                         chan.close()
-                    except Exception:
-                        pass
 
         import threading
 

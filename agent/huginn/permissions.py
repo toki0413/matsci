@@ -279,12 +279,12 @@ class PermissionChecker:
             if path_mode == PermissionMode.DENY:
                 return PermissionResult(
                     mode=PermissionMode.DENY,
-                    reason=f"Path blocked by path-level rule",
+                    reason="Path blocked by path-level rule",
                 )
             if path_mode == PermissionMode.ASK:
                 return PermissionResult(
                     mode=PermissionMode.ASK,
-                    reason=f"Path requires approval by path-level rule",
+                    reason="Path requires approval by path-level rule",
                 )
             # AUTO — fall through to normal flow (no reason needed)
             return PermissionResult(mode=PermissionMode.AUTO)

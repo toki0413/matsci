@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import gzip
 import json
 import logging
@@ -118,10 +119,8 @@ class EpisodicShardWriter:
         self._close_shard()
         if not src.exists() or src.stat().st_size == 0:
             # 空文件不归档, 直接删
-            try:
+            with contextlib.suppress(FileNotFoundError):
                 src.unlink()
-            except FileNotFoundError:
-                pass
             self._cur_start = None
             self._cur_end = None
             return None
@@ -193,7 +192,7 @@ class EpisodicShardReader:
         """读一个 shard 文件 (自动区分 .jsonl / .jsonl.gz)."""
         out: list[dict] = []
         if path.name.endswith(".gz"):
-            opener = gzip.open(path, "rt", encoding="utf-8")
+            opener = gzip.open(path, "rt", encoding="utf-8")  # noqa: SIM115
         else:
             opener = path.open("r", encoding="utf-8")
         try:

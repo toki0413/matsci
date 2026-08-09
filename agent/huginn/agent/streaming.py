@@ -15,26 +15,25 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from huginn.context_manager import (
     calculate_context_usage,
     format_context_usage,
-    get_context_window,
 )
 from huginn.hooks import (
-    HookContext,
     POST_COMPACT,
     PRE_COMPACT,
     SESSION_END,
     SESSION_START,
     STOP,
     USER_PROMPT_SUBMIT,
+    HookContext,
 )
 from huginn.interaction.interrupt import InterruptCancelled, get_interrupt_manager
 from huginn.llm_retry import (
+    _exponential_backoff,
     _get_retry_after,
     _is_context_overflow,
     _is_overloaded,
     _is_rate_limit,
     _is_transient_network,
     _jitter,
-    _exponential_backoff,
 )
 from huginn.pet import PetMood, get_pet_bus
 from huginn.phases import BudgetSpec, ResearchPhase
@@ -45,8 +44,6 @@ from huginn.utils.context import (
     summarize_compact_messages,
 )
 from huginn.utils.session_context import (
-    get_thread_id,
-    get_user_message,
     set_thread_id,
     set_user_message,
 )
@@ -940,7 +937,7 @@ class StreamingMixin:
         message: str,
         thread_id: str = "default",
         image_path: str | None = None,
-        budget_override: "BudgetSpec | None" = None,
+        budget_override: BudgetSpec | None = None,
         include_history: bool | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         """Send a message to the Agent and stream responses.
@@ -999,7 +996,7 @@ class StreamingMixin:
         # OAK 启发: ConversationTree 通电 — 把每条 user/ai 消息写进树
         # phase 转移时 fork 出新分支, 让研究历史成为树而非线性序列
         try:
-            user_node = self._conversation_tree.add_message(
+            self._conversation_tree.add_message(
                 role="user", content=message,
                 metadata={"thread_id": thread_id, "trace_id": thread_id},
             )
@@ -1113,7 +1110,7 @@ class StreamingMixin:
             _ii = getattr(self, "_image_index", None)
             if _ve is None or _ii is None:
                 try:
-                    from huginn.server_core import get_visual_encoder, get_image_index
+                    from huginn.server_core import get_image_index, get_visual_encoder
 
                     _ve = _ve or get_visual_encoder()
                     _ii = _ii or get_image_index()
@@ -1528,7 +1525,7 @@ class StreamingMixin:
             turn_router = ToolCallRouter(budget=turn_budget)
             self._tool_adapter.set_router(turn_router)
             # 预算感知: 让 LLM 一开始就知道本轮预算上限与重置语义, 避免
-            # 把预算耗尽误判成"死刑"而提前交卷 (路线图 P0-3 假耗尽). 
+            # 把预算耗尽误判成"死刑"而提前交卷 (路线图 P0-3 假耗尽).
             # 放在 inputs 尾部、用固定 id 替换旧消息, 不碰缓存的 system_prompt,
             # 也不让预算消息在历史里层层累积.
             try:
@@ -1617,8 +1614,8 @@ class StreamingMixin:
                     try:
                         if use_sync_stream:
                             states = await asyncio.to_thread(
-                                lambda: list(
-                                    graph.stream(
+                                lambda g=graph: list(
+                                    g.stream(
                                         inputs, config, stream_mode="values"
                                     )
                                 )
@@ -1706,7 +1703,7 @@ class StreamingMixin:
                                 if interrupt and interrupt.get("cancelled"):
                                     raise InterruptCancelled(interrupt.get("reason", ""))
                         break
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         # A3: 流式空闲超时 — 降级到流式收集, 不重试原流式.
                         # 不用无进度的 ainvoke: 它只能猜一个固定时长, 长推理会误杀.
                         # 这里用 _astream_with_watchdog 的"空闲超时"语义做进度感知 —
@@ -1726,14 +1723,16 @@ class StreamingMixin:
                         _collect_idle = _thinking_stream_idle()
                         final_state = None
                         try:
-                            async def _collect():
+                            async def _collect(
+                                g=graph, idle_timeout=_collect_idle
+                            ):
                                 _st = None
                                 async for mode, data in _astream_with_watchdog(
-                                    graph.astream(
+                                    g.astream(
                                         inputs, config,
                                         stream_mode=["values", "messages"],
                                     ),
-                                    idle_timeout=_collect_idle,
+                                    idle_timeout=idle_timeout,
                                 ):
                                     if mode == "values":
                                         _st = data
@@ -1742,17 +1741,19 @@ class StreamingMixin:
                             final_state = await asyncio.wait_for(
                                 _collect(), timeout=_ainvoke_timeout
                             )
-                        except asyncio.TimeoutError:
+                        except TimeoutError:
                             logger.warning(
                                 "fallback stream collect timed out (idle=%ds, total=%ds)",
                                 _collect_idle, _ainvoke_timeout,
                             )
-                            raise asyncio.TimeoutError(
+                            raise TimeoutError(
                                 f"stream and fallback collect both timed out "
                                 f"(collect idle={_collect_idle}s, total={_ainvoke_timeout}s)"
-                            )
+                            ) from None
                         if final_state is None:
-                            raise RuntimeError("fallback stream collect produced no state")
+                            raise RuntimeError(
+                                "fallback stream collect produced no state"
+                            ) from None
                         self._process_stream_state(
                             final_state, turn_span, thread_id, pet, _completion_records
                         )
@@ -1867,7 +1868,11 @@ class StreamingMixin:
                     # ON_LLM_RESPONSE + ON_AFTER_MESSAGE_SENT: LLM 响应后 dispatch.
                     # 之前 LLMResponseEvent 声明了但从不实例化, on_llm_response handler 收不到.
                     try:
-                        from huginn.api.event import EventType, LLMResponseEvent, MessageEvent
+                        from huginn.api.event import (
+                            EventType,
+                            LLMResponseEvent,
+                            MessageEvent,
+                        )
                         from huginn.plugins.event_bus import EventBus as _PluginBus
                         _resp_bus = _PluginBus()
                         await _resp_bus.dispatch(LLMResponseEvent(
@@ -2069,7 +2074,6 @@ if __name__ == "__main__":
     import sys as _sys
     if "--self-check-c1" in _sys.argv:
         _sys.exit(_c1_self_check())
-    import time as _time
 
     async def _test_watchdog():
         # 1. 正常流: chunks 及时到达, watchdog 不触发
@@ -2093,7 +2097,7 @@ if __name__ == "__main__":
         try:
             async for _ in _astream_with_watchdog(_slow_stream(), idle_timeout=0.5):
                 pass
-        except asyncio.TimeoutError:
+        except TimeoutError:
             timed_out = True
         assert timed_out, "watchdog failed to raise TimeoutError on idle stream"
 
@@ -2117,7 +2121,7 @@ if __name__ == "__main__":
         try:
             async for item in _astream_with_watchdog(_one_then_slow(), idle_timeout=0.5):
                 seen.append(item)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pass
         assert seen == ["fast"], f"first chunk not yielded before timeout: {seen}"
 

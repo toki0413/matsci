@@ -14,7 +14,6 @@ without touching the network. Covers:
 from __future__ import annotations
 
 import asyncio
-import os
 from typing import Any
 
 import pytest
@@ -33,7 +32,6 @@ from huginn.tools.agentic_search_tool import (
     _synthesize,
 )
 from huginn.types import ToolContext
-
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 

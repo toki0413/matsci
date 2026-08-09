@@ -78,7 +78,7 @@ async def topology_via_tda(
             },
             success=True,
         )
-    except Exception as exc:
+    except Exception:
         # tda 调用挂了, 退到内置 basin 分析
         return basin_analysis(pes, energies)
 
@@ -142,8 +142,7 @@ def find_local_minima(grid: np.ndarray) -> list[dict]:
             for off in (-1, 1):
                 nb = list(idx)
                 nb[ax] += off
-                if 0 <= nb[ax] < grid.shape[ax]:
-                    if grid[tuple(nb)] < val:
+                if 0 <= nb[ax] < grid.shape[ax] and grid[tuple(nb)] < val:
                         is_min = False
                         break
             if not is_min:

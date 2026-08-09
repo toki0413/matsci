@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import time
@@ -50,7 +51,9 @@ class EngineControlMixin:
         """
         try:
             from huginn.runtime.engine_state import (
-                save_engine_state, save_every_steps, use_persistence,
+                save_engine_state,
+                save_every_steps,
+                use_persistence,
             )
             if not use_persistence():
                 return
@@ -426,10 +429,8 @@ class EngineControlMixin:
             getattr(self, "agent", None), "model_router", None
         )
         if router is not None:
-            try:
+            with contextlib.suppress(Exception):
                 side_model = router.select("cheap", prefer_cheap=True) or self.model
-            except Exception:
-                pass
 
         answered = 0
         for sq in pending:
@@ -644,9 +645,6 @@ class EngineControlMixin:
         ponytail: 字段从 self.* 现有状态抽, 不调 LLM. ceiling 是 LLM 蒸馏.
                   文件路径跟 stable_principles 同目录 (.huginn/), 一行一个 JSON.
         """
-        import json
-        import time
-        from pathlib import Path
 
         # 从 self.* 抽本轮关键信息 (都是上一轮 phase 写进去的)
         attempted = ""

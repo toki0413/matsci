@@ -26,7 +26,6 @@ from pydantic import BaseModel, Field
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult
 
-
 # ── LIMS-style 协议模板 ─────────────────────────────────────────
 #
 # 每个协议定义:
@@ -347,8 +346,7 @@ def _validate_protocol_params(protocol: str, params: dict[str, Any]) -> tuple[bo
             continue  # 未知参数, 不报错 (允许扩展)
         spec = schema[name]
         rng = spec.get("range")
-        if rng and isinstance(value, (int, float)):
-            if not math.isfinite(value) or value < rng[0] or value > rng[1]:
+        if rng and isinstance(value, (int, float)) and (not math.isfinite(value) or value < rng[0] or value > rng[1]):
                 errors.append(
                     f"参数 {name}={value} 超出范围 [{rng[0]}, {rng[1]}]"
                 )
@@ -362,10 +360,7 @@ def _parse_protocol_result(protocol: str, raw: dict[str, Any]) -> dict[str, Any]
     result_schema = PROTOCOLS[protocol]["result_schema"]
     parsed: dict[str, Any] = {"protocol": protocol}
     for field_name in result_schema:
-        if field_name in raw:
-            parsed[field_name] = raw[field_name]
-        else:
-            parsed[field_name] = None
+        parsed[field_name] = raw.get(field_name)
     parsed["raw"] = raw
     parsed["parsed_fields"] = list(result_schema.keys())
     return parsed
@@ -564,8 +559,7 @@ class WetlabRpcTool(HuginnTool):
             "request_type": args.request_type,
             "payload": args.payload or {},
         }
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=body) as resp:
+        async with aiohttp.ClientSession() as session, session.post(url, json=body) as resp:
                 data = await resp.json()
                 if resp.status >= 400:
                     return ToolResult(
@@ -615,26 +609,24 @@ class WetlabRpcTool(HuginnTool):
                 data=None, success=False, error="fetch_result requires request_id.",
             )
         url = f"{endpoint.rstrip('/')}/requests/{args.request_id}/result"
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as resp:
-                data = await resp.json()
-                if resp.status >= 400:
-                    return ToolResult(
-                        data=data, success=False,
-                        error=f"fetch_result HTTP {resp.status}",
-                    )
-                return ToolResult(data={"result": data}, success=True)
+        async with aiohttp.ClientSession() as session, session.get(url) as resp:
+            data = await resp.json()
+            if resp.status >= 400:
+                return ToolResult(
+                    data=data, success=False,
+                    error=f"fetch_result HTTP {resp.status}",
+                )
+            return ToolResult(data={"result": data}, success=True)
 
     async def _do_list_labs(self, endpoint: str, args: WetlabInput) -> ToolResult:
         import aiohttp
 
         url = f"{endpoint.rstrip('/')}/labs"
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as resp:
-                data = await resp.json()
-                if resp.status >= 400:
-                    return ToolResult(
-                        data=data, success=False,
-                        error=f"list_labs HTTP {resp.status}",
-                    )
-                return ToolResult(data={"labs": data}, success=True)
+        async with aiohttp.ClientSession() as session, session.get(url) as resp:
+            data = await resp.json()
+            if resp.status >= 400:
+                return ToolResult(
+                    data=data, success=False,
+                    error=f"list_labs HTTP {resp.status}",
+                )
+            return ToolResult(data={"labs": data}, success=True)

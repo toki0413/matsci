@@ -35,12 +35,13 @@ old suppress(OperationalError) approach.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import shutil
 import sqlite3
+from collections.abc import Callable, Sequence
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -215,12 +216,10 @@ class MigrationManager:
             snap["__table_count__"] = len(names)
             for name in names:
                 # FTS shadow tables / internal stuff may not support COUNT
-                try:
+                with contextlib.suppress(sqlite3.OperationalError):
                     snap[name] = int(
                         self._conn.execute(f"SELECT COUNT(*) FROM {name}").fetchone()[0]
                     )
-                except sqlite3.OperationalError:
-                    pass
         except sqlite3.OperationalError:
             pass
         return snap

@@ -6,10 +6,10 @@
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 
-class MemoryType(str, Enum):
+class MemoryType(StrEnum):
     """记忆的语义类型。
 
     继承 str 让枚举值可以直接序列化为 JSON / 文件路径片段，

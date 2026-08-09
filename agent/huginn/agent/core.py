@@ -7,10 +7,9 @@ and keeps the construction + graph-building + convenience methods.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
-from collections.abc import AsyncIterator, Callable
+from collections.abc import Callable
 from contextlib import ExitStack
 from typing import Any
 
@@ -18,11 +17,11 @@ from langchain_core.messages import SystemMessage
 
 from huginn.agent_config import _UNSET_SENTINEL, AgentConfig
 from huginn.checkpointer import create_in_memory_checkpointer
+from huginn.cognitive_engine import STATE_TO_MODEL_TASK
 from huginn.context_manager import (
     get_context_window,
     reset_context_cache,
 )
-from huginn.cognitive_engine import STATE_TO_MODEL_TASK
 from huginn.hooks import HookManager
 from huginn.models.router import ModelRouter
 from huginn.permissions import PermissionConfig
@@ -316,7 +315,7 @@ class HuginnAgent(
         if os.environ.get("HUGINN_APPROVAL_MODE") == "inbox":
             from huginn.interaction.inbox import get_inbox_store, inbox_approval_fn
             self.approval_fn = inbox_approval_fn(
-                get_inbox_store(), thread_id or "default"
+                get_inbox_store(), self.thread_id or "default"
             )
         else:
             self.approval_fn = None
@@ -794,8 +793,7 @@ class HuginnAgent(
                 _extra_hints: list[str] = []
                 try:
                     import json as _json
-                    import time as _time
-                    from pathlib import Path as _P
+                    from pathlib import Path as _P  # noqa: N814
                     _cwd = _P.cwd()
                     _rpt_path = _cwd / "report" / "report.md"
                     # 方案 E: Benchmark Mode — RCB 路径必须严格按 paper 方法实现,
@@ -959,9 +957,7 @@ class HuginnAgent(
             async for state in self.chat(message, thread_id):
                 if isinstance(state, dict) and state.get("tool_break"):
                     final_state = state.get("state", final_state)
-                elif isinstance(state, dict) and "messages" in state:
-                    final_state = state
-                elif final_state is None:
+                elif isinstance(state, dict) and "messages" in state or final_state is None:
                     final_state = state
             return final_state
 

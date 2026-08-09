@@ -12,7 +12,7 @@ from pathlib import Path
 
 
 def _selfcheck() -> int:
-    from huginn.plugins.skill_loader import generate_manifest, diff_manifest
+    from huginn.plugins.skill_loader import diff_manifest, generate_manifest
 
     with tempfile.TemporaryDirectory() as tmp:
         skill_dir = Path(tmp)

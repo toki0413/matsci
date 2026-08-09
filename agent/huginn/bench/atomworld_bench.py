@@ -13,7 +13,8 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +72,7 @@ class AtomMotor2KSubtask:
             return {"skipped": True}
 
         from atomworld import load_data
+
         from huginn.tools.atomworld_tool import evaluate, list_actions
 
         per_action: dict[str, dict[str, Any]] = {}

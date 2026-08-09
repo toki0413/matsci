@@ -17,18 +17,17 @@ import numpy as np
 from pydantic import BaseModel, Field, model_validator
 
 from huginn.tools.base import HuginnTool
-from huginn.types import ToolContext, ToolResult
-from huginn.tools.neb._io import read_structure
-from huginn.tools.neb._evaluators import eval_images, eval_single
-from huginn.tools.neb._neb_core import (
-    idpp_initial_path,
-    compute_neb_forces,
-    compute_barriers,
-    compute_path_length,
-)
 from huginn.tools.neb._dimer import dimer_rotate, estimate_hessian_along_mode
-from huginn.tools.neb._topology import topology_via_tda, basin_analysis, find_extrema
-
+from huginn.tools.neb._evaluators import eval_images, eval_single
+from huginn.tools.neb._io import read_structure
+from huginn.tools.neb._neb_core import (
+    compute_barriers,
+    compute_neb_forces,
+    compute_path_length,
+    idpp_initial_path,
+)
+from huginn.tools.neb._topology import basin_analysis, find_extrema, topology_via_tda
+from huginn.types import ToolContext, ToolResult
 
 # ---------------------------------------------------------------------------
 # 输入 / 输出 schema
@@ -132,16 +131,13 @@ class NEBToolInput(BaseModel):
     lj_sigma: float = Field(default=1.0, description="LJ σ (Å)")
 
     @model_validator(mode="after")
-    def _check_action_fields(self) -> "NEBToolInput":
+    def _check_action_fields(self) -> NEBToolInput:
         """不同 action 校验必填字段, 别等 call() 才挂."""
-        if self.action == "neb":
-            if not self.initial_structure or not self.final_structure:
+        if self.action == "neb" and (not self.initial_structure or not self.final_structure):
                 raise ValueError("neb action 需要 initial_structure 和 final_structure")
-        if self.action in ("pes_scan", "saddle_search"):
-            if not self.structure:
-                raise ValueError(f"{self.action} action 需要 structure")
-        if self.action == "pes_scan":
-            if not self.scan_coords or self.scan_range is None:
+        if self.action in ("pes_scan", "saddle_search") and not self.structure:
+            raise ValueError(f"{self.action} action 需要 structure")
+        if self.action == "pes_scan" and (not self.scan_coords or self.scan_range is None):
                 raise ValueError("pes_scan action 需要 scan_coords 和 scan_range")
         if self.action == "mep_analyze" and not self.neb_result:
             raise ValueError("mep_analyze action 需要 neb_result")
@@ -347,8 +343,7 @@ class NEBTool(HuginnTool):
         energies = np.zeros(grid_shape)
 
         # 遍历每个网格点
-        flat_idx = 0
-        for idx in np.ndindex(*grid_shape):
+        for _flat_idx, idx in enumerate(np.ndindex(*grid_shape)):
             disp = np.zeros_like(positions0)
             for d, (atom_idx, axis) in enumerate(scan_coords):
                 disp[atom_idx, axis] = mesh[d][idx]
@@ -357,7 +352,6 @@ class NEBTool(HuginnTool):
                 displaced, atomic_numbers, cell, args, context
             )
             energies[idx] = e
-            flat_idx += 1
 
         # 找极小 / 鞍点 (网格上的局部极值)
         minima, saddles = find_extrema(energies, mesh, scan_coords)
@@ -503,7 +497,7 @@ class NEBTool(HuginnTool):
             total_len = reaction_coord[-1] if reaction_coord.size else 0.0
         else:
             reaction_coord = np.linspace(0.0, 1.0, n)
-            total_len = float(1.0)
+            total_len = 1.0
 
         # 势垒
         e_init = float(e_arr[0])

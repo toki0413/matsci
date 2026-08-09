@@ -1,8 +1,11 @@
 """Model advisor — recommends LLM models based on user needs."""
 from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import Any
-from huginn.advisor.knowledge import ModelProfile, get_profiles, find_by_task
+
+from huginn.advisor.knowledge import ModelProfile, get_profiles
+
 
 @dataclass
 class Recommendation:

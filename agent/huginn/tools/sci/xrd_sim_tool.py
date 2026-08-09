@@ -98,20 +98,17 @@ class XrdSimTool(HuginnTool):
                 result=False,
                 message="parse_pattern requires file_path (CSV data file).",
             )
-        if args.action == "compare_patterns":
-            if not args.simulated_peaks or (not args.experimental_file and not args.peaks):
+        if args.action == "compare_patterns" and (not args.simulated_peaks or (not args.experimental_file and not args.peaks)):
                 return ValidationResult(
                     result=False,
                     message="compare_patterns requires simulated_peaks and (experimental_file or peaks).",
                 )
-        if args.action == "index_peaks":
-            if not args.peaks or (not args.file_path and not args.structure_str):
+        if args.action == "index_peaks" and (not args.peaks or (not args.file_path and not args.structure_str)):
                 return ValidationResult(
                     result=False,
                     message="index_peaks requires peaks and (file_path or structure_str).",
                 )
-        if args.action == "inverse_design":
-            if not args.target_peaks:
+        if args.action == "inverse_design" and not args.target_peaks:
                 return ValidationResult(
                     result=False,
                     message="inverse_design requires target_peaks (list of target 2θ peak positions).",
@@ -481,7 +478,7 @@ class XrdSimTool(HuginnTool):
             # 立方 (默认)
             allowed = self._CUBIC_HKLS
         n = min(len(targets), len(allowed))
-        inv_sq = [math.sqrt(h * h + k * k + l * l) for h, k, l in allowed[:n]]
+        inv_sq = [math.sqrt(h * h + k * k + l * l) for h, k, l in allowed[:n]]  # noqa: E741
         tgt = [float(t) for t in targets[:n]]
 
         def two_theta(a: float, s: float) -> float:
@@ -512,7 +509,7 @@ class XrdSimTool(HuginnTool):
 
         sim_peaks = []
         sse = 0.0
-        for (h, k, l), s, t in zip(allowed[:n], inv_sq, tgt):
+        for (h, k, l), s, t in zip(allowed[:n], inv_sq, tgt):  # noqa: E741
             tt = two_theta(a_opt, s)
             sse += (tt - t) ** 2
             sim_peaks.append({
@@ -554,11 +551,13 @@ class XrdSimTool(HuginnTool):
 
         a0, c0 = 4.0, 6.0  # 默认初始猜测
         if lattice_guess and len(lattice_guess) >= 2:
-            if lattice_guess[0] > 0: a0 = float(lattice_guess[0])
-            if lattice_guess[1] > 0: c0 = float(lattice_guess[1])
+            if lattice_guess[0] > 0:
+                a0 = float(lattice_guess[0])
+            if lattice_guess[1] > 0:
+                c0 = float(lattice_guess[1])
 
         def d_spacing(a: float, c: float, hkl: tuple) -> float:
-            h, k, l = hkl
+            h, k, l = hkl  # noqa: E741
             if crystal_class == "tetragonal":
                 inv_d2 = (h*h + k*k) / (a*a) + (l*l) / (c*c)
             else:  # hexagonal

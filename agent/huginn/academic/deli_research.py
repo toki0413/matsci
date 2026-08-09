@@ -913,8 +913,8 @@ class DeliAutoResearch:
 
         # 懒加载 AutoloopEngine — 不可用就跳过
         try:
-            from huginn.autoloop.engine import (
-                AutoloopEngine,
+            from huginn.autoloop.engine import AutoloopEngine
+            from huginn.autoloop.types import (
                 load_autoloop_snapshot,
                 save_autoloop_snapshot,
             )
@@ -1271,7 +1271,7 @@ class DeliAutoResearch:
 
         # 3. 查 computational_data — autoloop 跑出来的结构化结果
         # 每个 objective 的 phases_summary / goal_judgment 拍平成数值行喂给 SR+GP
-        for objective, comp_entry in state.computational_data.items():
+        for _objective, comp_entry in state.computational_data.items():
             if not isinstance(comp_entry, dict):
                 continue
             # ponytail: 直接抽数值字段, 不做语义解读; SR 自己找关系
@@ -1554,8 +1554,8 @@ class DeliAutoResearch:
         gap_text = gap_info.get("gap", "")
 
         try:
-            from huginn.ml.transfer_registry import find_transfer_domain
             from huginn.kg.extractor import extract_entities
+            from huginn.ml.transfer_registry import find_transfer_domain
         except ImportError:
             state.integrity_log.append("[transfer] transfer registry unavailable")
             return
@@ -1584,6 +1584,8 @@ class DeliAutoResearch:
         # 迁移学习执行 — GP fine-tune
         try:
             from huginn.tools.sci.gp_tool import GPTool, GPToolInput
+
+            gp_tool = GPTool()
 
             transfer_data = await self._collect_gap_data(state, gap_info)
             if not transfer_data or len(transfer_data.get("rows", [])) < 3:

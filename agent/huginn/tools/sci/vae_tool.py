@@ -88,7 +88,7 @@ def _build_vae(input_dim: int, latent_dim: int, hidden_dim: int, n_layers: int):
 def _vae_loss(recon_x, x, mu, logvar):
     """MSE reconstruction + analytical KL to N(0, I)."""
     import torch
-    import torch.nn.functional as F
+    import torch.nn.functional as F  # noqa: N812
 
     mse = F.mse_loss(recon_x, x, reduction="sum")
     kl = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
@@ -312,7 +312,7 @@ if __name__ == "__main__":
         import torch  # noqa: F401
     except ImportError:
         print("torch not available, skip demo")
-        raise SystemExit(0)
+        raise SystemExit(0) from None  # noqa: B904
 
     from sklearn.datasets import make_classification
 

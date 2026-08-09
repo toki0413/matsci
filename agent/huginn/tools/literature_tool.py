@@ -11,16 +11,20 @@
 """
 from huginn.tools.literature import (  # noqa: F401
     LiteratureInput,
-    LiteratureTool,
     LiteraturePipelineInput,
     LiteraturePipelineTool,
+    LiteratureTool,
 )
-from huginn.tools.literature.search_sources import _dedup, _norm_title, _sort_papers  # noqa: F401
 from huginn.tools.literature.crawl_web import (  # noqa: F401
     _PROVIDERS,
     _apply_ezproxy,
     _detect_provider,
     _list_sessions,
+)
+from huginn.tools.literature.search_sources import (  # noqa: F401
+    _dedup,
+    _norm_title,
+    _sort_papers,
 )
 
 __all__ = [

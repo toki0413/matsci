@@ -440,7 +440,7 @@ def _selfcheck() -> None:
     _PILImage.fromarray(white_img).save(buf, format="PNG")
     result = _analyze_particles(_decode_to_gray(buf.getvalue()))
     assert result["n"] == 0, f"white image should have 0 particles: {result['n']}"
-    print(f"10. A2 white image: 0 particles (OK)")
+    print("10. A2 white image: 0 particles (OK)")
 
     print("L10 ALL CHECKS PASSED (A2 shape/FFT/peaks OK)")
 

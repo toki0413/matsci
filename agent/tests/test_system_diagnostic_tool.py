@@ -20,7 +20,6 @@ from huginn.diagnostics.system_health import (
 )
 from huginn.tools.system_diagnostic_tool import SystemDiagnosticTool
 
-
 # ── Fixtures ─────────────────────────────────────────────────────────
 
 

@@ -7,8 +7,8 @@ or are well-formed before tool execution begins.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 from huginn.types import HandleType, ToolContext, ValidationResult
 

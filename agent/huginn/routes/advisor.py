@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter
 
-from huginn.advisor.knowledge import get_profiles, find_by_task, find_by_provider
+from huginn.advisor.knowledge import get_profiles
 from huginn.advisor.model_advisor import ModelAdvisor
 
 router = APIRouter(tags=["advisor"])

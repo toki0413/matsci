@@ -11,7 +11,6 @@ from dataclasses import fields
 
 from huginn.config import AgentProfileConfig, HuginnConfig
 
-
 # ---------------------------------------------------------------------------
 # Field presence & default
 # ---------------------------------------------------------------------------

@@ -392,7 +392,8 @@ class ToolAdapter:
             # HUGINN_STANDING_RULES=1 启用, 默认 off (向后兼容).
             if os.environ.get("HUGINN_STANDING_RULES") == "1":
                 from huginn.permissions import (
-                    extract_target_from_args, get_standing_rules_store,
+                    extract_target_from_args,
+                    get_standing_rules_store,
                 )
                 _target = extract_target_from_args(args)
                 _store = get_standing_rules_store()
@@ -425,7 +426,8 @@ class ToolAdapter:
                     # HUGINN_STANDING_RULES=1 启用, 默认 off.
                     if os.environ.get("HUGINN_STANDING_RULES") == "1":
                         from huginn.permissions import (
-                            extract_target_from_args, get_standing_rules_store,
+                            extract_target_from_args,
+                            get_standing_rules_store,
                         )
                         _target = extract_target_from_args(args)
                         get_standing_rules_store().grant(session_id, name, _target)
@@ -604,10 +606,8 @@ class ToolAdapter:
                 # ponytail: pop + setattr. 升级: ToolMessage content 改成 multimodal list.
                 b64 = data.pop("_visual_base64", None)
                 if b64 and hasattr(self, "_agent_ref") and self._agent_ref is not None:
-                    try:
-                        setattr(self._agent_ref, "_last_visual_base64", b64)
-                    except Exception:
-                        pass
+                    with contextlib.suppress(Exception):
+                        self._agent_ref._last_visual_base64 = b64
             except Exception:
                 pass  # non-fatal
 
@@ -683,9 +683,10 @@ class ToolAdapter:
         ) -> None:
             """发布 tool.blocked 事件到事件总线."""
             with contextlib.suppress(Exception):
+                import asyncio
+
                 from huginn.events.integration import _publish as _evt_publish
                 from huginn.utils.concurrency import track_task
-                import asyncio
                 try:
                     asyncio.get_running_loop()
                     track_task(_evt_publish(
@@ -923,8 +924,7 @@ class ToolAdapter:
 
             # 4. Budget
             budget = self._current_budget
-            if budget is not None:
-                if not budget.record(tool.name):
+            if budget is not None and not budget.record(tool.name):
                     _, budget_reason = budget.should_stop()
                     # P0-3: 加重置语义, 让 LLM 知道是本轮耗尽而非死刑.
                     # 之前 "预算耗尽" 让 agent 误判 game over 直接交卷.
@@ -983,6 +983,7 @@ class ToolAdapter:
             context: Any,
             router: Any,
             duration: float = 0.0,
+            kwargs: dict[str, Any] | None = None,
         ) -> dict[str, Any]:
             """Post-execution: constraints, audit, cache, publish."""
             if router is not None:
@@ -993,7 +994,7 @@ class ToolAdapter:
             deduper = self._current_deduper
             if deduper is not None and result.success:
                 try:
-                    deduper.record(tool.name, kwargs, output)
+                    deduper.record(tool.name, kwargs if kwargs is not None else input_data, output)
                 except Exception:
                     logger.debug("deduper record failed (non-fatal)", exc_info=True)
 
@@ -1135,7 +1136,7 @@ class ToolAdapter:
                             asyncio.to_thread(tool.call, payload, context),
                             timeout=timeout,
                         )
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     result = ToolResult(
                         data=None,
                         success=False,
@@ -1166,7 +1167,7 @@ class ToolAdapter:
                 span.metadata["latency_ms"] = round((time.time() - _call_start) * 1000, 1)
                 if result.error:
                     span.metadata["error"] = result.error
-            output = _run_post_checks(input_data, result, output, context, router, time.time() - _call_start)
+            output = _run_post_checks(input_data, result, output, context, router, time.time() - _call_start, kwargs)
             return output
 
         def _run(**kwargs: Any) -> dict[str, Any]:
@@ -1279,7 +1280,7 @@ class ToolAdapter:
                         )
                     else:
                         result = tool.call(payload, context)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     result = ToolResult(
                         data=None,
                         success=False,
@@ -1305,7 +1306,7 @@ class ToolAdapter:
                 span.metadata["latency_ms"] = round((time.time() - _call_start) * 1000, 1)
                 if result.error:
                     span.metadata["error"] = result.error
-            output = _run_post_checks(input_data, result, output, context, router, time.time() - _call_start)
+            output = _run_post_checks(input_data, result, output, context, router, time.time() - _call_start, kwargs)
             return output
 
         return StructuredTool.from_function(

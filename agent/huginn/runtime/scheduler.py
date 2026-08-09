@@ -33,8 +33,10 @@ runner 签名: async def runner(session_id: str, wake: Wake) -> None
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
-from typing import Awaitable, Callable, Optional
+from collections.abc import Awaitable, Callable
+from datetime import UTC
 
 from huginn.runtime.selfwake import Wake, WakeStore
 
@@ -65,7 +67,7 @@ class WakeScheduler:
         self.store = store
         self.runner = runner
         self.tick_seconds = tick_seconds
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
         self._running_sessions: set[str] = set()  # skip-on-overlap
         self._spawned: set[asyncio.Task] = set()  # 防止 GC 回收 spawned runs
 
@@ -78,18 +80,14 @@ class WakeScheduler:
         """cancel scheduler loop + 所有 spawned runs. 幂等."""
         if self._task is not None:
             self._task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._task
-            except asyncio.CancelledError:
-                pass
             self._task = None
         # spawned runs 不能比 scheduler 活更久 (一个挂起的 run 不应跑过 scheduler)
         for spawned in list(self._spawned):
             spawned.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await spawned
-            except asyncio.CancelledError:
-                pass
         self._spawned.clear()
         self._running_sessions.clear()
 
@@ -141,7 +139,7 @@ class WakeScheduler:
 if __name__ == "__main__":
     import shutil
     import tempfile as _tf
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
     from pathlib import Path
 
     async def _selfcheck():
@@ -155,7 +153,7 @@ if __name__ == "__main__":
                 runs.append((session_id, wake.id))
 
             sched = WakeScheduler(store, runner, tick_seconds=0.05)
-            past = datetime.now(timezone.utc) - timedelta(seconds=5)
+            past = datetime.now(UTC) - timedelta(seconds=5)
             w1 = store.add_timer("s1", past)
             sched.start()
             # 等 catchup tick 跑完
@@ -177,7 +175,7 @@ if __name__ == "__main__":
 
             store2 = WakeStore(ws / "wakes2.json")
             sched2 = WakeScheduler(store2, slow_runner, tick_seconds=0.05)
-            past2 = datetime.now(timezone.utc) - timedelta(seconds=5)
+            past2 = datetime.now(UTC) - timedelta(seconds=5)
             w_a = store2.add_timer("s_slow", past2)
             w_b = store2.add_timer("s_slow", past2)  # 同 session, 同时 due
             sched2.start()
@@ -207,7 +205,7 @@ if __name__ == "__main__":
 
             store3 = WakeStore(ws / "wakes3.json")
             sched3 = WakeScheduler(store3, failing_runner, tick_seconds=0.05)
-            past3 = datetime.now(timezone.utc) - timedelta(seconds=5)
+            past3 = datetime.now(UTC) - timedelta(seconds=5)
             w_fail = store3.add_timer("s_fail", past3)
             w_ok = store3.add_timer("s_ok", past3)
             sched3.start()

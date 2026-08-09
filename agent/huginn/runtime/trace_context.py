@@ -13,9 +13,8 @@ from __future__ import annotations
 
 import uuid
 from contextvars import ContextVar
-from typing import Optional
 
-_trace_id_var: ContextVar[Optional[str]] = ContextVar("huginn_trace_id", default=None)
+_trace_id_var: ContextVar[str | None] = ContextVar("huginn_trace_id", default=None)
 
 
 def new_trace_id() -> str:
@@ -28,7 +27,7 @@ def new_trace_id() -> str:
     return tid
 
 
-def get_trace_id() -> Optional[str]:
+def get_trace_id() -> str | None:
     """读当前 context 的 trace_id. 没设过返回 None."""
     return _trace_id_var.get()
 

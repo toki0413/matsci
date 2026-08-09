@@ -17,7 +17,6 @@ import csv
 from collections import Counter
 from itertools import combinations_with_replacement
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 from pydantic import BaseModel, Field
@@ -674,5 +673,5 @@ if __name__ == "__main__":
     ))
     assert vres.success, vres.error
     print("validate R2:", {k: round(v, 4) for k, v in vres.data["r2_score"].items()})
-    assert vres.data["r2_score"]["x0"] > 0.9, f"validate x0 R2 low"
+    assert vres.data["r2_score"]["x0"] > 0.9, "validate x0 R2 low"
     print("OK: validation integration tracks data")

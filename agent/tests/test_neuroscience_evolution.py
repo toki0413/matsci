@@ -9,10 +9,8 @@ Covers three changes motivated by ANCCR + "Dopamine takes a hit":
 from __future__ import annotations
 
 import json
-import time
 
 from huginn.skills.evolution import SkillEvolutionLayer, ToolBelief
-
 
 # ── 1. Time-weighted updates (ANCCR) ──────────────────────────────
 

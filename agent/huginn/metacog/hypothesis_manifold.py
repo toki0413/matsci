@@ -32,11 +32,13 @@ Honest boundaries (ponytail: named ceilings + upgrade paths):
 """
 from __future__ import annotations
 
+import contextlib
 import math
 import os
 import random
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterable
+from typing import Any
 
 # B1: SubspacePartition R 矩阵投影优化 Fisher 距离.
 # ponytail: 仍 stdlib only — 不引 numpy. 用 list-of-list 做矩阵乘法.
@@ -254,7 +256,7 @@ class HypothesisManifold:
         """注入对齐函数 (structure → haptic GP). None 或 not ready 时 proposal 退化."""
         self._alignment_fn = align_fn
 
-    def _rebuild_R(self) -> None:
+    def _rebuild_R(self) -> None:  # noqa: N802
         """重算 QR 分解的 R 矩阵 (基于当前所有 hypothesis 的 predictions).
 
         ponytail: lazy — 只在 fisher_distance 真正需要投影路径时才算.
@@ -301,8 +303,8 @@ class HypothesisManifold:
         """归一化 posterior P(h | O)."""
         log_post = self.log_posterior(obs)
         Z = _logsumexp(list(log_post.values()))
-        if Z == float("-inf"):
-            return {h_id: 0.0 for h_id in log_post}
+        if float("-inf") == Z:
+            return dict.fromkeys(log_post, 0.0)
         return {h_id: math.exp(lp - Z) for h_id, lp in log_post.items()}
 
     def abductive_inference(self, obs: Iterable[Observation]) -> Hypothesis | None:
@@ -725,7 +727,7 @@ class HypothesisManifold:
         haptic_temperature: float = 1.0,
         alignment_enabled: bool = False,
         alignment_temperature: float = 1.0,
-        on_chain_checkpoint: "Callable[[int, dict], None] | None" = None,
+        on_chain_checkpoint: Callable[[int, dict], None] | None = None,
         anneal: bool = True,
         t_high: float = 10.0,
         global_proposal_prob: float = 0.3,
@@ -805,10 +807,8 @@ class HypothesisManifold:
                     except Exception:
                         _results.append(None)  # 崩溃链降级, 不参与 R̂
                 for _ex in _executors:
-                    try:
+                    with contextlib.suppress(Exception):
                         _ex.shutdown(wait=False)
-                    except Exception:
-                        pass
 
                 _pp_chains = [r["samples"] for r in _results if r is not None]
                 _pp_rates = [r["accept_rate"] for r in _results if r is not None]
@@ -891,7 +891,7 @@ class HypothesisManifold:
         alignment_enabled: bool = False,
         alignment_temperature: float = 1.0,
         init_h_id: str,
-        on_checkpoint: "Callable[[int, dict], None] | None" = None,
+        on_checkpoint: Callable[[int, dict], None] | None = None,
         anneal: bool = True,
         t_high: float = 10.0,
         global_proposal_prob: float = 0.3,
@@ -947,10 +947,9 @@ class HypothesisManifold:
                     "accept_count": accept_count,
                 }
                 if on_checkpoint is not None:
-                    try:
+                    with contextlib.suppress(Exception):
+                        # checkpoint 失败不阻塞链
                         on_checkpoint(chain_id, ckpt)
-                    except Exception:
-                        pass  # checkpoint 失败不阻塞链
 
         accept_rate = accept_count / n_steps if n_steps > 0 else 0.0
         return {
@@ -1178,10 +1177,12 @@ class HypothesisManifold:
         """
         import asyncio
         import types as _types
+
         import numpy as _np
+
+        from huginn.mechanics import ElasticTensor
         from huginn.metacog.haptic_property_layer import HapticPropertyLayer
         from huginn.metacog.structure_cognitive_map import StructureCognitiveMap
-        from huginn.mechanics import ElasticTensor
 
         # 石墨/金刚石: 同结构 (同 coords), 弹性天差地别 → 同构不同性
         _coords = _np.array([[0.0, 0.0, 0.0], [2.5, 0.0, 0.0], [0.0, 2.5, 0.0]])
@@ -1262,14 +1263,12 @@ def _mcmc_chain_worker(
     m = HypothesisManifold()
     for row in hyp_rows:
         (hid, desc, preds, np_, prior, conf, ev) = row
-        try:
+        with contextlib.suppress(ValueError):
             m.add(Hypothesis(
                 h_id=hid, description=desc, predictions=dict(preds),
                 n_params=np_, prior_override=prior, confidence=conf,
                 evidence_strength=ev,
             ))
-        except ValueError:
-            pass
     obs = [Observation(name=n, value=v, sigma=s) for (n, v, s) in obs_rows]
     rng = random.Random(chain_id * 7919 + base_seed)
 
@@ -1431,8 +1430,9 @@ def _selfcheck() -> None:
     # SE(3) guided MCMC proposal verification
     # Scenario: two hypotheses with identical structures, SE(3) proposal should match.
     try:
-        from huginn.metacog.structure_cognitive_map import StructureCognitiveMap
         import numpy as _np
+
+        from huginn.metacog.structure_cognitive_map import StructureCognitiveMap
 
         _coords = _np.array([[0.0, 0.0, 0.0], [2.5, 0.0, 0.0], [0.0, 2.5, 0.0]])
         _lattice = _np.eye(3) * 5.0
@@ -1489,8 +1489,8 @@ def _selfcheck() -> None:
         print("  SE(3) proposal: register + match + degrade-to-fisher OK")
 
         # ── 触觉层: register_haptic + _haptic_proposal + cross_modal + anomaly ──
-        from huginn.metacog.haptic_property_layer import HapticPropertyLayer
         from huginn.mechanics import ElasticTensor
+        from huginn.metacog.haptic_property_layer import HapticPropertyLayer
 
         # 同构不同性: h_a/h_b 结构相同 (上面已注册), haptic 差异大 (石墨 vs 金刚石)
         _hap_a = HapticPropertyLayer(density=2.27)   # 石墨密度

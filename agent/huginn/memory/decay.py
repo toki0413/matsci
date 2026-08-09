@@ -57,12 +57,10 @@ class MemoryDecayPolicy:
                 entry_id = row["id"]
                 importance = row["importance"]
                 access_count = row["access_count"]
-                tier = row["tier"] if "tier" in row.keys() else "mid"
+                tier = row.get("tier", "mid")
                 # 旧库没这列时 row["last_decay_access_count"] 取不到, 默认 0
                 last_decay_count = (
-                    row["last_decay_access_count"]
-                    if "last_decay_access_count" in row.keys()
-                    else 0
+                    row.get("last_decay_access_count", 0)
                 ) or 0
                 created_at = self._parse_dt(row["created_at"]) or now
                 last_accessed = self._parse_dt(row["last_accessed"]) or created_at

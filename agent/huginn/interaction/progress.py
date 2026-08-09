@@ -17,7 +17,7 @@ import asyncio
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 
 @dataclass
@@ -29,10 +29,10 @@ class TaskProgress:
     total_steps: int
     current_step: int = 0
     status: str = "pending"  # pending | running | completed | failed | cancelled
-    eta_seconds: Optional[float] = None
+    eta_seconds: float | None = None
     started_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
-    completed_at: Optional[float] = None
+    completed_at: float | None = None
     # 阶段标签: 比如 ["scf", "relax", "band", "dos"], 给前端展示用
     stage_labels: list[str] = field(default_factory=list)
     # 当前阶段的人类可读状态, 比如 "正在跑 SCF 第 3 步"
@@ -45,7 +45,7 @@ class TaskProgress:
     metadata: dict[str, Any] = field(default_factory=dict)
     # Polar 启发: timeout 从 started_at (INIT) 开始算, 不是从执行开始.
     # None = 无限制. 引擎在 while 循环里查 is_expired 决定停不停.
-    timeout_seconds: Optional[float] = None
+    timeout_seconds: float | None = None
 
     @property
     def is_expired(self) -> bool:
@@ -153,10 +153,10 @@ class ProgressTracker:
         task_id: str,
         current_step: int | None = None,
         status: str | None = None,
-        eta: Optional[float] = None,
+        eta: float | None = None,
         current_label: str | None = None,
         metadata: dict[str, Any] | None = None,
-    ) -> Optional[TaskProgress]:
+    ) -> TaskProgress | None:
         """更新任务进度. 任务不存在返回 None."""
         with self._lock:
             task = self._tasks.get(task_id)
@@ -184,7 +184,7 @@ class ProgressTracker:
 
     def complete(
         self, task_id: str, result: Any = None
-    ) -> Optional[TaskProgress]:
+    ) -> TaskProgress | None:
         """标记任务完成."""
         with self._lock:
             task = self._tasks.get(task_id)
@@ -201,7 +201,7 @@ class ProgressTracker:
         self._emit(task)
         return task
 
-    def fail(self, task_id: str, error: str) -> Optional[TaskProgress]:
+    def fail(self, task_id: str, error: str) -> TaskProgress | None:
         """标记任务失败."""
         with self._lock:
             task = self._tasks.get(task_id)
@@ -214,7 +214,7 @@ class ProgressTracker:
         self._emit(task)
         return task
 
-    def cancel(self, task_id: str) -> Optional[TaskProgress]:
+    def cancel(self, task_id: str) -> TaskProgress | None:
         """标记任务取消 (区别于 fail: 用户主动停, 不是出错)."""
         with self._lock:
             task = self._tasks.get(task_id)
@@ -253,7 +253,7 @@ class ProgressTracker:
 
     # ── 查询 ───────────────────────────────────────────────────
 
-    def get_status(self, task_id: str) -> Optional[dict[str, Any]]:
+    def get_status(self, task_id: str) -> dict[str, Any] | None:
         """拿单个任务的状态. 不存在返回 None."""
         with self._lock:
             task = self._tasks.get(task_id)
@@ -306,7 +306,7 @@ class ProgressTracker:
             # 用 timeout 避免 signal 永远不 set (比如没人 update 时)
             try:
                 await asyncio.wait_for(self._event_signal.wait(), timeout=15.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # 超时也吐一条心跳, 保持 SSE 连接活着
                 yield f"event: heartbeat\ndata: {json.dumps({'ts': time.time()})}\n\n"
 

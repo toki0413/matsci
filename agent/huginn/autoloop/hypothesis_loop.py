@@ -11,19 +11,22 @@ R5 (W4): 把研究假设组织成图, 节点是假设, 边是 support / refute /
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import hashlib
 import json
 import logging
 import os
 import re
 import uuid
-import hashlib
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
 # P3 slim-down: engine.py helper re-import — _classify_failure (H3 batch) 调用
-from huginn.autoloop.phase_gate import _has_external_source as _validation_has_external_source
+from huginn.autoloop.phase_gate import (
+    _has_external_source as _validation_has_external_source,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +85,7 @@ class HypothesisNode:
         }
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "HypothesisNode":
+    def from_dict(cls, d: dict[str, Any]) -> HypothesisNode:
         return cls(
             id=d["id"],
             statement=d.get("statement", ""),
@@ -191,7 +194,7 @@ class HypothesisGraph:
         self._events.append({
             "event": event_type,
             "node_id": node_id,
-            "ts": datetime.now(timezone.utc).isoformat(),
+            "ts": datetime.now(UTC).isoformat(),
             **payload,
         })
 
@@ -236,7 +239,7 @@ class HypothesisGraph:
             rationale=rationale,
             testable_prediction=testable_prediction,
             parent_id=parent_id,
-            created_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            created_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
             dimension=_extract_dimension(statement),
         )
         self._nodes[node_id] = node
@@ -347,10 +350,9 @@ class HypothesisGraph:
                 # 没跑过 (无 r_phys) 视为 0, 不参与 steering.
                 _rp = n.evidence.get("r_phys")
                 if _rp is not None:
-                    try:
+                    with contextlib.suppress(TypeError, ValueError):
+                        # 脏值不参与 steering, 不崩
                         h += phys_gain * float(_rp)
-                    except (TypeError, ValueError):
-                        pass  # 脏值不参与 steering, 不崩
             H[n.id] = h
 
         # Tᵢⱼ: 同 dimension 支撑 (+0.5), 同 sibling_group 互斥 (-1.0).
@@ -569,7 +571,7 @@ class HypothesisGraph:
             return
         _errs = str(evidence.get("errors", ""))[:300]
         _modality = evidence.get("modality", "unknown")
-        _ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        _ts = datetime.now(UTC).isoformat(timespec="seconds")
         entry = (
             f"\n## [{node_id}] {_ts}\n"
             f"Statement: {statement[:200]}\n"
@@ -587,7 +589,7 @@ class HypothesisGraph:
             return
         _modality = evidence.get("modality", "unknown")
         _source = evidence.get("data_source", "unknown")
-        _ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        _ts = datetime.now(UTC).isoformat(timespec="seconds")
         entry = (
             f"\n## [{node_id}] {_ts}\n"
             f"Statement: {statement[:200]}\n"
@@ -1345,7 +1347,7 @@ class HypothesisGraph:
         }
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "HypothesisGraph":
+    def from_dict(cls, d: dict[str, Any]) -> HypothesisGraph:
         graph = cls()
         for nd in d.get("nodes", []):
             node = HypothesisNode.from_dict(nd)
@@ -1370,13 +1372,12 @@ class HypothesisGraph:
         HypothesisGraph 不是 nx.Graph, 自己的 dict 结构更紧凑且版本稳.
         ceiling: 全量 save, 不做增量 diff; 图 <10k 节点时全量够快.
         """
-        import json as _json
         from huginn.utils.common import atomic_write_json
 
         atomic_write_json(path, self.to_dict())
 
     @classmethod
-    def load(cls, path: Any) -> "HypothesisGraph | None":
+    def load(cls, path: Any) -> HypothesisGraph | None:
         """从 JSON 文件恢复图. 文件不存在 / 解析失败返 None."""
         import json as _json
         from pathlib import Path
@@ -1478,7 +1479,7 @@ def _selfcheck_phys_steering() -> None:
     low = [g.add_hypothesis(f"m{i}", parent_id=parent) for i in range(4)]
     # 低 H (无 parent) 但物理校验好
     high = [g.add_hypothesis(f"n{i}") for i in range(4)]
-    for i, nid in enumerate(low):
+    for _i, nid in enumerate(low):
         g._nodes[nid].evidence["r_phys"] = 0.1
     for i, nid in enumerate(high):
         g._nodes[nid].evidence["r_phys"] = [0.9, 0.8, 0.7, 0.6][i]
@@ -1724,7 +1725,7 @@ def _selfcheck_frontier_ranked() -> None:
     b = g.add_hypothesis("h2 composition")
     out = g.frontier_ranked(top_k=5)
     assert len(out) == 2, f"<=top_k 应回退, got {len(out)}"
-    assert set(n.id for n in out) == {a, b}
+    assert {n.id for n in out} == {a, b}
 
     # 场景 2: 假设数 > top_k, 无 parent/sibling → 按 H 排前 K
     g2 = HypothesisGraph()
@@ -1740,7 +1741,7 @@ def _selfcheck_frontier_ranked() -> None:
     # 子假设 (parent refute 过)
     child = g3.add_hypothesis("child-of-refuted", parent_id=parent)
     # 5 个独立无 parent 的假设 (H 较低)
-    others = [g3.add_hypothesis(f"other{i}") for i in range(5)]
+    [g3.add_hypothesis(f"other{i}") for i in range(5)]
     out3 = g3.frontier_ranked(top_k=2)
     assert child in [n.id for n in out3], \
         f"refute 过的 parent 的子假设应优先, got {[n.id for n in out3]}"
@@ -1825,8 +1826,8 @@ def _selfcheck_mount_knowledge() -> None:
 
 def _selfcheck_p0_durable_state() -> None:
     """P0: FAILED.md / PROVED.md 分层 durable state 文件契约."""
-    import tempfile
     import shutil
+    import tempfile
     _tmp = Path(tempfile.mkdtemp(prefix="hgin_p0_"))
     try:
         # 1. workspace 传入时, refute/support 写 FAILED.md/PROVED.md
@@ -2015,10 +2016,9 @@ class HypothesisMixin:
             # ponytail: 2 calls not 3 — main provides quality, diversity provides
             # novelty; a third call adds cost without marginal diversity gain.
             hot_model = None
-            try:
+            with contextlib.suppress(Exception):
+                # not all model wrappers support bind
                 hot_model = self.model.bind(temperature=1.0)
-            except Exception:
-                pass  # not all model wrappers support bind
             coros = [
                 self._llm_chat(prompt, persona_name=persona_name, task="reasoning")
             ]
@@ -2265,9 +2265,11 @@ class HypothesisMixin:
         # 复用底层 compute_persistent_homology, 不走 HypothesisManifold 包装 —
         # 生产图是 HypothesisGraph, 不引入第二套假设系统.
         try:
-            from huginn.metacog.simplicial_homology import compute_persistent_homology
             import math as _math
+
             import numpy as _np
+
+            from huginn.metacog.simplicial_homology import compute_persistent_homology
             feat_keys = sorted({
                 k for n in nodes
                 for k, v in n.evidence.items() if isinstance(v, (int, float))
@@ -2319,7 +2321,7 @@ class HypothesisMixin:
         return "perceive"
 
     def _classify_failure(
-        validation: dict[str, Any],
+        self: dict[str, Any],
         redteam_cats: list[str] | None = None,
     ) -> str:
         """根据 validation 证据分类失败类型, 决定走 retry/refine/pivot.
@@ -2340,12 +2342,12 @@ class HypothesisMixin:
         confounder → data_noise, alternative_explanation → hypothesis_error.
         升级: 让 LLM 对 ambiguous 失败做语义分类 (当前纯关键词+规则).
         """
-        errors = str(validation.get("errors", ""))
-        result = str(validation.get("result", ""))
+        errors = str(self.get("errors", ""))
+        result = str(self.get("result", ""))
         text = (errors + " " + result).lower()
         # AV7: effort floor 违例 → 不 refute, 下轮重试同一假设扩方法族.
         # 由 _validate 阶段 _metacog_check_completion 设的 tag.
-        if validation.get("failure_kind") == "effort_floor_retry":
+        if self.get("failure_kind") == "effort_floor_retry":
             return "tool_error"
         # 工具失败: 超时/崩溃/连接/OOM — 不是假设错, 重试即可
         tool_markers = (
@@ -2368,7 +2370,7 @@ class HypothesisMixin:
         # ARGUS: 失败 + 证据来自 external_content → 可能 prompt injection.
         # 优先级低于 tool_error (技术故障与来源无关), 高于 RedTeam/关键词.
         # ponytail: 递归扫 validation 找 source_class=external_content.
-        if _validation_has_external_source(validation):
+        if _validation_has_external_source(self):
             return "prompt_injection_suspect"
         # RedTeam high severity findings: 对抗性发现优先于关键词匹配
         # methodology_gap (方法论缺陷) / hidden_assumption (隐含前提缺失) → 改参数
@@ -2467,10 +2469,8 @@ class HypothesisMixin:
             eng = get_heat_engine()
             # 更新运动学量 (U/L/ν), 让 Re_cog 反映当前状态
             n_ideas = 0
-            try:
+            with contextlib.suppress(Exception):
                 n_ideas = len(self.hypothesis_graph.all_nodes())
-            except Exception:
-                pass
             n_principles = 0
             try:
                 # stable_principles 是 reflection mixin 的 list
@@ -2479,10 +2479,8 @@ class HypothesisMixin:
             except Exception:
                 pass
             sys_prompt_len = 0
-            try:
+            with contextlib.suppress(Exception):
                 sys_prompt_len = len(getattr(self, "system_prompt", "") or "")
-            except Exception:
-                pass
             eng.update_kinematics(n_ideas, n_principles + 1, sys_prompt_len)
             if eng.should_imaginate(getattr(self, "_iteration", 0)):
                 return True
@@ -2595,10 +2593,8 @@ class HypothesisMixin:
                 # ponytail: 0 维代理, 不真算 belief space 体积. 升级路径: 用 hypothesis
                 # graph 节点/边数变化, 或 embedding 空间 PCA 体积变化.
                 _pre_ideas = 0
-                try:
+                with contextlib.suppress(Exception):
                     _pre_ideas = len(self.hypothesis_graph.all_nodes())
-                except Exception:
-                    pass
                 result = gen.forget_then_generate(
                     source_problem=str(source_problem)[:500],
                     source_domain=str(source_domain),
@@ -2607,10 +2603,8 @@ class HypothesisMixin:
                     model=None,
                 )
                 _post_ideas = 0
-                try:
+                with contextlib.suppress(Exception):
                     _post_ideas = len(self.hypothesis_graph.all_nodes())
-                except Exception:
-                    pass
                 try:
                     from huginn.metacog.cognitive_heat_engine import get_heat_engine
                     get_heat_engine().record_work(float(_post_ideas - _pre_ideas))

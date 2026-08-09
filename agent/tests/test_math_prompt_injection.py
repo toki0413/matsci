@@ -7,8 +7,6 @@ PDE / variational / diffgeo / symreg reasoning.
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
-
 import pytest
 
 from huginn.autoloop.engine import AutoloopEngine
@@ -86,7 +84,7 @@ class TestMathPromptInjection:
         assert "numerical solvers" in prompt
 
 
-class TestE2_1McmcAdvance:
+class TestE21McmcAdvance:
     """E2-1: 通用主循环必须推进 MCMC 链 (原本只在 rcb_runner 跑).
 
     _build_hypothesis_prompt 每 HUGINN_MCMC_INTERVAL 轮推进一次 mcmc_step,

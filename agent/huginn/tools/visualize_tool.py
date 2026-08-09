@@ -186,7 +186,7 @@ class VisualizeTool(HuginnTool):
                           for i in range(len(args.bands_data))]
             elif args.action == "dos" and args.dos_data:
                 series = [{"label": k, "data": []}
-                          for k in args.dos_data.keys()]
+                          for k in args.dos_data]
             elif args.action == "phonon" and args.branches:
                 series = [{"label": f"branch_{i}", "data": []}
                           for i in range(len(args.branches))]

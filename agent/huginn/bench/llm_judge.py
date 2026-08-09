@@ -20,7 +20,6 @@ import json
 import os
 import re
 from dataclasses import dataclass
-from typing import Any
 
 from langchain_openai import ChatOpenAI
 
@@ -294,8 +293,10 @@ def _selfcheck() -> None:
         assert rubric.passed is False, "无 key 时 passed 应 False"
         print(f"7. judge_task no key + strict=True → strict={rubric.strict}, passed={rubric.passed} OK")
     finally:
-        if orig_key: os.environ["DEEPSEEK_API_KEY"] = orig_key
-        if orig_key2: os.environ["HUGINN_API_KEY"] = orig_key2
+        if orig_key:
+            os.environ["DEEPSEEK_API_KEY"] = orig_key
+        if orig_key2:
+            os.environ["HUGINN_API_KEY"] = orig_key2
 
     print("llm_judge B1 selfcheck OK")
 

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import traceback
 from typing import Any
 
 from fastapi import APIRouter
@@ -47,7 +46,7 @@ async def generate_plan(params: dict[str, Any]) -> dict[str, Any]:
                     f"{ctx}\n\n"
                     f"Request: {content}"
                 )
-        except Exception as e:
+        except Exception:
             logger.warning("planner codebase search failed", exc_info=True)
 
     try:

@@ -14,11 +14,8 @@ import asyncio
 import time
 from unittest.mock import MagicMock
 
-import pytest
-
-from huginn.interaction.clarification import ClarificationManager
 from huginn.hooks.clarify_questions_hook import ClarifyQuestionsHook
-
+from huginn.interaction.clarification import ClarificationManager
 
 # ── should_ask_contextual ──────────────────────────────────────
 

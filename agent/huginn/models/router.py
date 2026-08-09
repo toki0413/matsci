@@ -12,8 +12,9 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Literal
+from typing import Any, Literal
 
 from huginn.config import ThinkingIntensity
 from huginn.models.registry import ProviderT, create_langchain_model

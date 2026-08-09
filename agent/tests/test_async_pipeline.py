@@ -14,6 +14,7 @@ import os
 import sys
 import time
 from dataclasses import dataclass, field
+
 from websockets.asyncio.client import connect
 
 # Allow running standalone from tests/ dir
@@ -144,7 +145,7 @@ async def run_stage(track_id, stage_name, persona, prompt, thread_id):
             while time.time() < deadline:
                 try:
                     raw = await asyncio.wait_for(ws.recv(), timeout=RECV_TIMEOUT)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     idle = time.time() - last_progress
                     if idle > RECV_TIMEOUT * 3:
                         result.errors.append(f"stalled: no output for {idle:.0f}s")

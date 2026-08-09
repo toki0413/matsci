@@ -224,8 +224,11 @@ jobs:
 
       - name: Dependency vulnerability scan
         run: |
+          python -m pip install --upgrade pip
           pip install pip-audit
-          pip-audit || true
+          # Blocking gate: fail CI on known vulnerabilities.
+          # pip is upgraded above so tooling-level advisories don't trip the gate.
+          pip-audit --desc
 
   rust-check:
     runs-on: ubuntu-latest

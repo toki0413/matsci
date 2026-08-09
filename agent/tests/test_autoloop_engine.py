@@ -19,7 +19,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from huginn.autoloop.engine import AutoloopEngine, AutoloopResult, LoopPhase
+from huginn.autoloop.engine import AutoloopEngine
+from huginn.autoloop.types import AutoloopResult, LoopPhase
 
 
 @pytest.fixture

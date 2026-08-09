@@ -7,9 +7,6 @@ encoder and checks the index still stores paths but skips similarity scoring.
 
 from __future__ import annotations
 
-import numpy as np
-import pytest
-
 from huginn.perception import visual_encoder as ve_module
 from huginn.perception.image_index import ImageIndex
 from huginn.perception.visual_encoder import VisualEncoder

@@ -196,7 +196,7 @@ class RequestTimeoutMiddleware:
                 self.app(scope, receive, _tracking_send),
                 timeout=self.timeout_sec,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             if not response_started:
                 await _send_json_error(
                     send,

@@ -161,15 +161,14 @@ class DatabaseTool(HuginnTool):
         else:
             return ToolResult(data=None, success=False, error=f"Unknown query_type: {args.query_type}")
 
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as resp:
-                if resp.status != 200:
-                    text = await resp.text()
-                    return ToolResult(
-                        data=None, success=False,
-                        error=f"MP API error {resp.status}: {text[:200]}",
-                    )
-                data = await resp.json()
+        async with aiohttp.ClientSession() as session, session.get(url) as resp:
+            if resp.status != 200:
+                text = await resp.text()
+                return ToolResult(
+                    data=None, success=False,
+                    error=f"MP API error {resp.status}: {text[:200]}",
+                )
+            data = await resp.json()
 
         records = []
         for item in data.get("data", []):
@@ -241,8 +240,7 @@ class DatabaseTool(HuginnTool):
         else:
             return ToolResult(data=None, success=False, error=f"Unknown query_type: {args.query_type}")
 
-        async with aiohttp.ClientSession(headers=headers) as session:
-            async with session.get(url) as resp:
+        async with aiohttp.ClientSession(headers=headers) as session, session.get(url) as resp:
                 if resp.status != 200:
                     text = await resp.text()
                     return ToolResult(

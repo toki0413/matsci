@@ -22,8 +22,7 @@ ponytail: 不引入新依赖。用标准库 math + dict 操作实现余弦相似
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
@@ -91,7 +90,7 @@ _REGISTRY: list[DomainProfile] = [
     ),
     DomainProfile(
         name="oxide_catalyst",
-        composition=frozenset({"Ti", "O", "Ce", "O", "Fe"}),
+        composition=frozenset({"Ti", "O", "Ce", "Fe"}),
         structure_type="bulk",
         property_type="electronic",
         method="DFT-PBE",
@@ -216,6 +215,7 @@ def _sympy_equivalent(expr_a: str, expr_b: str) -> bool:
     """
     try:
         import re
+
         import sympy as sp
         from sympy.parsing.sympy_parser import parse_expr
         from sympy.unify import usympy

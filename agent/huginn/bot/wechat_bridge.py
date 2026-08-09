@@ -27,6 +27,7 @@ iLink 消息结构参考:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from dataclasses import dataclass, field
 from typing import Any
@@ -108,10 +109,8 @@ class WeChatBridge(BotBridge):
         self._running = False
         if self._poll_task is not None:
             self._poll_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._poll_task
-            except asyncio.CancelledError:
-                pass
             self._poll_task = None
         if self._client is not None:
             await self._client.aclose()

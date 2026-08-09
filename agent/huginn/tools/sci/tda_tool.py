@@ -8,6 +8,7 @@ implementation so the tool degrades gracefully when neither is installed.
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Literal
 
 import numpy as np
@@ -15,7 +16,7 @@ from pydantic import BaseModel, Field
 
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult, ValidationResult
-import logging
+
 logger = logging.getLogger(__name__)
 
 
@@ -767,7 +768,7 @@ class TDATool(HuginnTool[TDAToolInput, TDAToolOutput]):
     @staticmethod
     def _betti_from_pairs(pairs: list[dict], max_dim: int) -> dict[int, int]:
         """Betti numbers = count of infinite bars per dimension."""
-        betti: dict[int, int] = {d: 0 for d in range(max_dim + 1)}
+        betti: dict[int, int] = dict.fromkeys(range(max_dim + 1), 0)
         for p in pairs:
             if p["death"] is None:
                 betti[p["dim"]] = betti.get(p["dim"], 0) + 1
@@ -887,9 +888,9 @@ class TDATool(HuginnTool[TDAToolInput, TDAToolOutput]):
         if n <= 50:
             for (i, j, k) in triangles:
                 common = adj[i] & adj[j] & adj[k]
-                for l in common:
-                    if l > k:
-                        tetra.append((i, j, k, l))
+                for a in common:
+                    if a > k:
+                        tetra.append((i, j, k, a))
                         if len(tetra) >= tetra_budget:
                             tetra_complete = False
                             break
@@ -897,11 +898,11 @@ class TDATool(HuginnTool[TDAToolInput, TDAToolOutput]):
                     break
 
         d3_cols: list[int] = []
-        for (i, j, k, l) in tetra:
+        for (i, j, k, a) in tetra:
             f1 = tri_index.get((i, j, k))
-            f2 = tri_index.get((i, j, l))
-            f3 = tri_index.get((i, k, l))
-            f4 = tri_index.get((j, k, l))
+            f2 = tri_index.get((i, j, a))
+            f3 = tri_index.get((i, k, a))
+            f4 = tri_index.get((j, k, a))
             if f1 is None or f2 is None or f3 is None or f4 is None:
                 continue
             d3_cols.append((1 << f1) | (1 << f2) | (1 << f3) | (1 << f4))

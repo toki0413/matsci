@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-import pytest
 
+import pytest
 
 # ── UC-1: Unit Conversion ───────────────────────────────────────
 
@@ -176,7 +176,6 @@ class TestDimensionalConsistencyHook:
 class TestEventSourcing:
     def _get_registry_with_db(self, tmp_path):
         """Create a ProvenanceRegistry with a temporary SQLite DB."""
-        import os, tempfile
         # Use tmp_path for the DB to avoid Windows AV timeout
         db_path = str(tmp_path / "test_provenance.db")
         from huginn.provenance.registry import _ProvenanceStore
@@ -185,8 +184,9 @@ class TestEventSourcing:
 
     def test_get_events_since(self, tmp_path):
         store = self._get_registry_with_db(tmp_path)
-        from huginn.provenance.registry import ProvenanceEntry
         import time
+
+        from huginn.provenance.registry import ProvenanceEntry
         for i in range(5):
             store.save(ProvenanceEntry(
                 file_path=f"/out_{i}.out", produced_by="vasp_tool",
@@ -200,8 +200,9 @@ class TestEventSourcing:
 
     def test_get_events_by_tool(self, tmp_path):
         store = self._get_registry_with_db(tmp_path)
-        from huginn.provenance.registry import ProvenanceEntry
         import time
+
+        from huginn.provenance.registry import ProvenanceEntry
         store.save(ProvenanceEntry(
             file_path="/a.out", produced_by="vasp_tool", produced_at=time.time(),
         ))
@@ -217,8 +218,9 @@ class TestEventSourcing:
 
     def test_get_event_by_id(self, tmp_path):
         store = self._get_registry_with_db(tmp_path)
-        from huginn.provenance.registry import ProvenanceEntry
         import time
+
+        from huginn.provenance.registry import ProvenanceEntry
         store.save(ProvenanceEntry(
             file_path="/first.out", produced_by="vasp_tool", produced_at=time.time(),
         ))
@@ -235,8 +237,9 @@ class TestEventSourcing:
     def test_get_max_id(self, tmp_path):
         store = self._get_registry_with_db(tmp_path)
         assert store.get_max_id() == 0  # empty
-        from huginn.provenance.registry import ProvenanceEntry
         import time
+
+        from huginn.provenance.registry import ProvenanceEntry
         store.save(ProvenanceEntry(
             file_path="/x.out", produced_by="vasp_tool", produced_at=time.time(),
         ))
@@ -244,8 +247,9 @@ class TestEventSourcing:
 
     def test_get_events_since_with_offset(self, tmp_path):
         store = self._get_registry_with_db(tmp_path)
-        from huginn.provenance.registry import ProvenanceEntry
         import time
+
+        from huginn.provenance.registry import ProvenanceEntry
         for i in range(5):
             store.save(ProvenanceEntry(
                 file_path=f"/out_{i}.out", produced_by="vasp_tool",
@@ -259,12 +263,11 @@ class TestEventSourcing:
 
 class TestProvenanceRegistryEventSourcing:
     def test_get_events_memory_fallback(self):
-        from huginn.provenance.registry import ProvenanceEntry, ProvenanceRegistry
+        from huginn.provenance.registry import ProvenanceRegistry
         # Create with mocked store=None for memory-only mode
         reg = ProvenanceRegistry()
         reg._store = None
         reg._entries = []
-        import time
         reg.register("/a.out", "vasp_tool", key_properties={"band_gap": 1.0})
         reg.register("/b.out", "qe_tool", key_properties={"band_gap": 0.5})
         events = reg.get_events()
@@ -281,8 +284,9 @@ class TestProvenanceRegistryEventSourcing:
         assert reg.current_version() == 1
 
     def test_replay_to(self, tmp_path):
-        from huginn.provenance.registry import _ProvenanceStore, ProvenanceEntry
         import time
+
+        from huginn.provenance.registry import ProvenanceEntry, _ProvenanceStore
         store = _ProvenanceStore(str(tmp_path / "test.db"))
         for i in range(5):
             store.save(ProvenanceEntry(
@@ -294,8 +298,9 @@ class TestProvenanceRegistryEventSourcing:
         assert len(events) == 4
 
     def test_rollback_returns_file_paths(self, tmp_path):
-        from huginn.provenance.registry import _ProvenanceStore, ProvenanceEntry
         import time
+
+        from huginn.provenance.registry import ProvenanceEntry, _ProvenanceStore
         store = _ProvenanceStore(str(tmp_path / "test.db"))
         for i in range(5):
             store.save(ProvenanceEntry(

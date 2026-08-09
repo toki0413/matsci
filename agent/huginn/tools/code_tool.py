@@ -13,6 +13,7 @@ returned to the agent.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 import sys
@@ -32,7 +33,7 @@ from huginn.security import (
 from huginn.security.restricted_python import RestrictedPythonError, validate_code
 from huginn.tools.base import HuginnTool
 from huginn.types import ToolContext, ToolResult
-import logging
+
 logger = logging.getLogger(__name__)
 
 

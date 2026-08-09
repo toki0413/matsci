@@ -13,15 +13,14 @@ from typing import Any
 
 from fastapi import APIRouter, Request
 
-from huginn.routes.threads import _check_thread_owner
+from huginn.provenance.registry import ProvenanceRegistry
 from huginn.server_core import (
-    _threads,
     _state_lock,
+    _threads,
     get_agent,
     get_context,
     get_memory_manager,
 )
-from huginn.provenance.registry import ProvenanceRegistry
 
 router = APIRouter(tags=["search"])
 

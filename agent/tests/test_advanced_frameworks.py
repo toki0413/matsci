@@ -21,7 +21,6 @@ from huginn.tools.gp_tool import GPTool
 from huginn.tools.tda_tool import TDATool
 from huginn.types import ToolContext
 
-
 # ---------------------------------------------------------------------------
 # shared fixtures
 # ---------------------------------------------------------------------------

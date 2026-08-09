@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 
@@ -64,10 +66,11 @@ def self_check_v14_task6() -> None:
     另跑 legacy 路径确认不抛错 (env HUGINN_HINT_COORDINATOR=0 走这条).
     """
     # lazy import: 避免 self_checks 顶层依赖 rcb_runner (import 时循环依赖).
-    from huginn.cli.rcb_runner import (
-        _legacy_build_step2_prompt, _legacy_build_iter_prompt,
-    )
     from huginn.agent.hint_coordinator import HintCoordinator
+    from huginn.cli.rcb_runner import (
+        _legacy_build_iter_prompt,
+        _legacy_build_step2_prompt,
+    )
 
     _hc = HintCoordinator()
     _step2_base = (
@@ -145,10 +148,13 @@ def self_check_a3() -> None:
     ponytail 上限: 子串匹配, 不做语义. 升级路径见各函数 docstring.
     """
     import tempfile
+
     # lazy import: 避免 self_checks 顶层依赖 rcb_runner (import 时循环依赖).
     from huginn.cli.rcb_runner import (
-        _extract_exact_components, _scan_implementation_traces,
-        _parse_substitute_headers, _count_failed_attempts,
+        _count_failed_attempts,
+        _extract_exact_components,
+        _parse_substitute_headers,
+        _scan_implementation_traces,
     )
 
     # 1. _extract_exact_components
@@ -246,6 +252,7 @@ def self_check_a2() -> None:
     ponytail 上限: 子串过滤, 不做 schema 校验. 升级路径见 docstring.
     """
     import tempfile
+
     # lazy import: 避免 self_checks 顶层依赖 rcb_runner (import 时循环依赖).
     from huginn.cli.rcb_runner import _scan_real_metrics
 
@@ -347,11 +354,14 @@ def self_check_v14_task1() -> None:
     另验证 helper 函数 _infer_task_id_from_workspace / _infer_domain / _make_simplex_id.
     ponytail: 不引框架, 全用 assert. ContextBuilder 只 mock workspace, 其他传 None.
     """
-    import tempfile
     import logging as _stdlogging
+    import tempfile
+
     # lazy import: 避免 self_checks 顶层依赖 rcb_runner (import 时循环依赖).
     from huginn.cli.rcb_runner import (
-        _infer_task_id_from_workspace, _infer_domain, _make_simplex_id,
+        _infer_domain,
+        _infer_task_id_from_workspace,
+        _make_simplex_id,
     )
 
     # === helper 函数验证 ===
@@ -453,7 +463,8 @@ def self_check_v14_task2() -> None:
     ponytail: 不引框架, 全用 assert.
     """
     from huginn.metacog.step_evaluator import (
-        _compute_darwin_score, StepEvaluation,
+        StepEvaluation,
+        _compute_darwin_score,
     )
 
     # 1. dict 直传 gap_severity (测试 / Phase 2 LLM 覆盖路径)
@@ -582,8 +593,8 @@ def self_check_v14_task8() -> None:
     两个场景: (1) 修复后 pass → 1 retry; (2) 始终 fix_needed → 2 retry + rejection.
     ponytail: 从 __main__ 内联块抽出, 让 comprehensive 能直接调. 不重写, 只挪位置.
     """
-    import tempfile
     import json as _json_t8
+    import tempfile
 
     def _make_mocks(behavior: str):
         """behavior='fix_then_pass' (3rd call pass) 或 'always_fix'."""
@@ -722,10 +733,14 @@ def self_check_v15_task3() -> None:
     """
     import tempfile
     import time as _time_t3
+
     # lazy import: 避免 self_checks 顶层依赖 rcb_runner (import 时循环依赖).
     from huginn.cli.rcb_runner import (
-        _collect_observations, _init_hypothesis_manifold, _load_manifold,
-        _compute_v15_fields, _record_abduction,
+        _collect_observations,
+        _compute_v15_fields,
+        _init_hypothesis_manifold,
+        _load_manifold,
+        _record_abduction,
     )
 
     print("[v15 Task 3] running HypothesisManifold integration self-check...")
@@ -803,8 +818,8 @@ def self_check_v15_task3() -> None:
         assert trace_path.exists(), "abduction entry not written"
         lines = trace_path.read_text(encoding="utf-8").strip().split("\n")
         abd_lines = [
-            json.loads(l) for l in lines
-            if l.strip() and json.loads(l).get("role") == "abductive_inference"
+            json.loads(_l) for _l in lines
+            if _l.strip() and json.loads(_l).get("role") == "abductive_inference"
         ]
         assert len(abd_lines) == 1, f"expected 1 abduction entry, got {len(abd_lines)}"
         abd = abd_lines[0]
@@ -813,7 +828,7 @@ def self_check_v15_task3() -> None:
         assert "log_posterior" in abd, "abduction entry missing log_posterior"
         assert "fisher_info" in abd, "abduction entry missing fisher_info"
         assert abd["imagination_parent"] is None, "imagination_parent should be None"
-        print(f"[CHECK v15 Task 3] _record_abduction: abduction entry written OK")
+        print("[CHECK v15 Task 3] _record_abduction: abduction entry written OK")
 
         # 6. upgrade_entry: v14 entry 自动补 v15 字段, v14 darwin_score 保留
         from huginn.metacog.trace_topology import upgrade_entry
@@ -830,7 +845,7 @@ def self_check_v15_task3() -> None:
         assert v14_entry["fisher_info"] == 0.0
         assert v14_entry["imagination_parent"] is None
         assert v14_entry["darwin_score"] == 0.5, "v14 darwin_score must preserve"
-        print(f"[CHECK v15 Task 3] upgrade_entry: v14 entry gets v15 defaults OK")
+        print("[CHECK v15 Task 3] upgrade_entry: v14 entry gets v15 defaults OK")
 
         # 7. 失败降级: manifold=None 时 _compute_v15_fields 返回默认值
         h_id, lp, fi = _compute_v15_fields(None, obs_paper)
@@ -840,7 +855,7 @@ def self_check_v15_task3() -> None:
         h_id2, lp2, fi2 = _compute_v15_fields(manifold, [])
         assert h_id2 is None and lp2 == 0.0 and fi2 == 0.0, (
             f"empty obs should return defaults, got ({h_id2}, {lp2}, {fi2})")
-        print(f"[CHECK v15 Task 3] failure degradation: None manifold / empty obs OK")
+        print("[CHECK v15 Task 3] failure degradation: None manifold / empty obs OK")
 
     print("v15 Task 3 self-check PASSED")
 
@@ -855,10 +870,13 @@ def self_check_v15_task4() -> None:
       4. 失败降级 (manifold=None / v14 entry 无 v15 字段) 回 v14 keyword overlap
     """
     from huginn.agent.hint_coordinator import (
-        HintCoordinator, _build_posterior_guided_hint,
+        HintCoordinator,
+        _build_posterior_guided_hint,
     )
     from huginn.metacog.hypothesis_manifold import (
-        HypothesisManifold, Hypothesis, Observation,
+        Hypothesis,
+        HypothesisManifold,
+        Observation,
     )
 
     print("[v15 Task 4] running HintCoordinator posterior-guided hint self-check...")
@@ -1028,7 +1046,6 @@ def self_check_v14_comprehensive() -> None:
     ponytail: 不重写各 task 的 check, 只编排. RCBench 实测需 deepseek API + workspace,
               不在代码层 self-check 范围, 末尾 print 提示手动跑.
     """
-    import subprocess
 
     print("[v14 comprehensive] running Task 1...")
     self_check_v14_task1()
@@ -1070,7 +1087,6 @@ def self_check_v14_p234() -> None:
       实测项 (≥5min 长任务 / 跨 task 累积 / 训练池 ≥100 SFT) 需 RCBench 实跑,
       代码层 self-check 不覆盖, 末尾 print 提示手动跑.
     """
-    import subprocess
 
     checks = [
         ("Task 11 LLM darwin", [sys.executable, "-m", "huginn.metacog.step_evaluator"]),

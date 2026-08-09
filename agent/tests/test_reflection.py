@@ -8,8 +8,8 @@ No LLM, no I/O — pure logic.
 
 from __future__ import annotations
 
-from huginn.task_reflector import ReflectionResult, TaskReflector
 from huginn.session_state import CognitiveMode, UnifiedSessionState
+from huginn.task_reflector import ReflectionResult, TaskReflector
 
 
 def test_success_no_audit():

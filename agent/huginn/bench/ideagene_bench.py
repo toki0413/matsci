@@ -26,11 +26,9 @@ PES (Parent-Embedded Score) 三维:
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass
 
 from huginn.bench.task import BenchmarkTask
-
 
 # ── 材料科学方法谱系数据 ────────────────────────────────────────
 # 每个方法的"基因": 驱动机制 + 生态位 + 已知缺陷
@@ -118,9 +116,9 @@ def compute_pes(
     heredity = parent_hits / len(parent.mechanism_keywords) if parent.mechanism_keywords else 0.0
 
     # Variation: 新关键词 (不在 parent 里的)
-    all_parent_kws = set(kw.lower() for kw in parent.mechanism_keywords)
+    all_parent_kws = {kw.lower() for kw in parent.mechanism_keywords}
     if grandparent:
-        all_parent_kws |= set(kw.lower() for kw in grandparent.mechanism_keywords)
+        all_parent_kws |= {kw.lower() for kw in grandparent.mechanism_keywords}
     # 简化: 检查文本里是否有新材料科学关键词
     new_kws = ["machine learning", "neural", "surrogate", "embedding", "graph neural",
                "transfer learning", "active learning", "bayesian", "gaussian"]
@@ -258,7 +256,7 @@ def build_ideagene_tasks() -> list[BenchmarkTask]:
     tasks: list[BenchmarkTask] = []
 
     # T1 基因抽象: 每个方法一题
-    for i, gene in enumerate(DFT_LINEAGE):
+    for _i, gene in enumerate(DFT_LINEAGE):
         tasks.append(_t1_extract_mechanism(f"ideagene_t1_{gene.name.lower()}", gene))
 
     # T4 谱系验证: 相邻方法 + 跨方法
@@ -326,7 +324,7 @@ def _selfcheck():
     assert result.passed, f"T4 LDA vs GW 隔离判断应通过: {result.reason}"
 
     # PES: 高遗传答案
-    arena = next(t for t in tasks if t.id == "ideagene_arena_gga_to_next")
+    next(t for t in tasks if t.id == "ideagene_arena_gga_to_next")
     high_heredity = "在 GGA 的 gradient 修正基础上, 引入 machine learning surrogate model 来修正 density gradient 的 semilocal 误差, 解决带隙低估问题"
     pes = compute_pes(high_heredity, DFT_LINEAGE[1], DFT_LINEAGE[0])
     assert pes["heredity"] > 0.3, f"高遗传答案 heredity 应 > 0.3, got {pes['heredity']}"

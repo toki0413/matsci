@@ -8,9 +8,6 @@ directly since the tool itself runs all jobs via asyncio.gather.
 
 from __future__ import annotations
 
-from typing import Any
-from unittest.mock import MagicMock
-
 import pytest
 
 from huginn.tools.registry import ToolRegistry
@@ -19,9 +16,7 @@ from huginn.types import ToolContext, ToolResult
 from huginn.workflows.high_throughput import (
     GridSpace,
     ParameterSweep,
-    RandomSpace,
 )
-
 
 # ── mock target tool ──────────────────────────────────────────────
 

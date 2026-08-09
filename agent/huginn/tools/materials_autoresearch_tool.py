@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 import shutil
 import uuid
@@ -24,7 +25,7 @@ from pydantic import BaseModel, Field
 from huginn.tools.base import HuginnTool
 from huginn.tools.registry import ToolRegistry
 from huginn.types import ToolContext, ToolResult
-import logging
+
 logger = logging.getLogger(__name__)
 
 
@@ -210,14 +211,13 @@ class MaterialsAutoResearchTool(HuginnTool):
 
             # 2d. Ratchet: 比较 best
             is_best = False
-            if metric_value is not None:
-                if self._is_improved(
-                    metric_value, ratchet_state["best_metric"], args.ratchet_direction
-                ):
-                    ratchet_state["best_metric"] = metric_value
-                    ratchet_state["best_params"] = params
-                    ratchet_state["best_iteration"] = iteration
-                    is_best = True
+            if metric_value is not None and self._is_improved(
+                metric_value, ratchet_state["best_metric"], args.ratchet_direction
+            ):
+                ratchet_state["best_metric"] = metric_value
+                ratchet_state["best_params"] = params
+                ratchet_state["best_iteration"] = iteration
+                is_best = True
 
             # 2e. Record
             if args.record_history:
@@ -234,8 +234,7 @@ class MaterialsAutoResearchTool(HuginnTool):
                 )
 
             # 2f. Check convergence: 最近 3 轮非 None 指标的极差 < threshold
-            if args.convergence_threshold is not None:
-                if self._check_convergence(
+            if args.convergence_threshold is not None and self._check_convergence(
                     ratchet_state["history"], args.convergence_threshold
                 ):
                     converged = True
@@ -270,7 +269,7 @@ class MaterialsAutoResearchTool(HuginnTool):
         """让 LLM 看着历史 + 参数空间, 提议下一组参数."""
         from langchain_core.messages import HumanMessage, SystemMessage
 
-        model = self._get_model()
+        self._get_model()
 
         # 历史只喂最近 8 轮, 避免上下文爆
         recent = ratchet_state["history"][-8:]
@@ -501,7 +500,7 @@ class MaterialsAutoResearchTool(HuginnTool):
         try:
             from langchain_core.messages import HumanMessage, SystemMessage
 
-            model = self._get_model()
+            self._get_model()
             summary = {
                 "research_goal": args.research_goal,
                 "ratchet_metric": args.ratchet_metric,

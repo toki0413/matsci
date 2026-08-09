@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import pytest
+
 pytest.importorskip("mcp", reason="MCP SDK not installed (pip install mcp)")
 
-import base64
+import contextlib
 import json
 from pathlib import Path
 from typing import Any
@@ -13,8 +14,6 @@ from typing import Any
 from fastapi.testclient import TestClient
 
 from huginn.server import app
-from huginn.config import HuginnConfig
-
 
 client = TestClient(app)
 
@@ -68,10 +67,8 @@ class TestMCPEndpoints:
         assert "test_echo" in [s["name"] for s in manager.list_servers()]
 
         # Connect (will fail to actually spawn, but should handle gracefully)
-        try:
-            manager.connect_server("test_echo")
-        except Exception:
-            pass  # expected if the mock server can't start
+        with contextlib.suppress(Exception):
+            manager.connect_server("test_echo")  # expected if the mock server can't start
 
         # Disconnect and remove
         manager.disconnect_server("test_echo")

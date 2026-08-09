@@ -9,6 +9,7 @@ LLM 失败时直接报错, 绝不瞎编 persona 内容.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import re
@@ -165,11 +166,9 @@ class NuwaPersonaTool(HuginnTool):
         # 它直接 write_text 会覆盖文件, 但内存里的 persona 来自 _load,
         # 这里走 delete_persona 清理一下再 create 保证状态干净)
         if name in existing and args.overwrite:
-            try:
+            # 内置 persona 删不掉, 这种情况下 overwrite 无意义, 直接让 create 报错
+            with contextlib.suppress(Exception):
                 manager.delete_persona(name)
-            except Exception:
-                # 内置 persona 删不掉, 这种情况下 overwrite 无意义, 直接让 create 报错
-                pass
 
         try:
             persona = manager.create_persona(

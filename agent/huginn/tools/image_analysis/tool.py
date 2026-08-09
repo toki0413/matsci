@@ -195,7 +195,7 @@ class ImageAnalysisTool(HuginnTool):
         失败不阻塞, 返回 error 让 agent 决定是否重试.
         """
         analysis_result = input_data.parameters.get("analysis_result") or {}
-        original_action = input_data.parameters.get("original_action", "sem_analysis")
+        input_data.parameters.get("original_action", "sem_analysis")
         timeout = float(input_data.parameters.get("timeout", 30.0))
 
         # 目前只实现了 SEM 的验证代码生成, 其他 action 复用 SEM 路径

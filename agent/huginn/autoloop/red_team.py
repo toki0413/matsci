@@ -13,10 +13,11 @@ ReviewerFn 接口: __call__(from, to, evidence) -> (approved: bool, reason: str)
 
 from __future__ import annotations
 
+import logging
 from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
-import logging
+
 logger = logging.getLogger(__name__)
 
 
@@ -237,8 +238,9 @@ class RedTeamReviewer:
         out: list[RedTeamFinding] = []
         try:
             from huginn.metacog.topology_lens import (
-                classify_system, needs_downward_closure,
-                topology_permits, gluing_obstruction,
+                classify_system,
+                gluing_obstruction,
+                topology_permits,
             )
 
             # 1. 族 + 闭包检查
@@ -253,8 +255,8 @@ class RedTeamReviewer:
                     out.append(RedTeamFinding(
                         category="methodology_gap",
                         description=(
-                            f"假设需要拓扑不变量 (Betti/同调) 但证据网络用了超图 "
-                            f"(无向下闭包), 丢失同调工具. 应升级到单纯复形."
+                            "假设需要拓扑不变量 (Betti/同调) 但证据网络用了超图 "
+                            "(无向下闭包), 丢失同调工具. 应升级到单纯复形."
                         ),
                         severity="medium",
                         mitigation="转单纯复形, 或显式标注放弃同调分析",

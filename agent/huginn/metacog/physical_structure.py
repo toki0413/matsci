@@ -311,9 +311,9 @@ def validate_structure_preservation(mapping: StructureMapping) -> bool:
 # G46 sympy 验证是符号层, G58 加几何层.
 
 def compute_relative_representation(
-    embeddings: "dict[str, Any]",
+    embeddings: dict[str, Any],
     anchors: list[str],
-) -> "Any":
+) -> Any:
     """计算相对表示 — 每个实现者 vs 每个 anchor 的 cosine similarity.
 
     论文 eq.(3): r_x = (cos(e_x, e_a1), ..., cos(e_x, e_an))
@@ -343,10 +343,10 @@ def compute_relative_representation(
 
 
 def validate_relative_isomorphism(
-    source_repr: "Any",
-    target_repr: "Any",
+    source_repr: Any,
+    target_repr: Any,
     tol: float = 1e-3,
-) -> "tuple[bool, float]":
+) -> tuple[bool, float]:
     """验证两个相对表示是否同构 (论文 eq.(4)).
 
     两个潜在空间差一个角度保持变换 T, 则它们的相对表示 (cosine similarity 矩阵)
@@ -371,11 +371,11 @@ def validate_relative_isomorphism(
 
 
 def compute_and_validate_relative(
-    source_embeddings: "dict[str, Any]",
-    target_embeddings: "dict[str, Any]",
+    source_embeddings: dict[str, Any],
+    target_embeddings: dict[str, Any],
     anchors: list[str],
     tol: float = 1e-3,
-) -> "tuple[bool, float]":
+) -> tuple[bool, float]:
     """一站式: 计算 source/target 相对表示并验证同构.
 
     source_embeddings 和 target_embeddings 必须有相同的 key 集合
@@ -394,9 +394,9 @@ def compute_and_validate_relative(
 
 def enumerate_implementors(
     structure: PhysicalStructure,
-    candidate_pools: "dict[str, list[str]] | None" = None,
+    candidate_pools: dict[str, list[str]] | None = None,
     max_per_slot: int = 10,
-) -> "list[dict[str, str]]":
+) -> list[dict[str, str]]:
     """枚举非同源实现者组合 — 锁定结构关系, 允许不同实现者填充槽位.
 
     structure: 锁定结构关系的 PhysicalStructure (relation_type/relation_expr/
@@ -453,8 +453,8 @@ def enumerate_implementors(
 
 def classify_implementation_gap(
     structure: PhysicalStructure,
-    implementation: "dict[str, str]",
-    known_implementations: "list[dict[str, str]] | None" = None,
+    implementation: dict[str, str],
+    known_implementations: list[dict[str, str]] | None = None,
 ) -> str:
     """判定某结构关系在物理上是 "未被选择" 还是 "根本不可实现".
 
@@ -475,7 +475,7 @@ def classify_implementation_gap(
     # 2. impossible: 违反 constraints (sympy 数值代入)
     #    ponytail: 当前 constraints 含 Symbol, 数值代入需要 caller 提供 values.
     #    v6 只做结构检查 (实现者类型合法), 不做数值验证. 升级路径接 vasp_tool.
-    for slot, impl in implementation.items():
+    for _slot, impl in implementation.items():
         if not isinstance(impl, str) or not impl:
             return "impossible"
 
@@ -487,7 +487,6 @@ def classify_implementation_gap(
 
 def _self_check() -> int:
     """assert-based demo: 验证 PhysicalStructure + validate_structure_preservation + G58."""
-    import tempfile
 
     # 1. 5 类预定义结构都存在
     assert len(PREDEFINED_STRUCTURES) == 5
@@ -600,7 +599,7 @@ def _self_check() -> int:
         compute_relative_representation(
             source_embeddings, ["Pt", "nonexistent"],
         )
-        assert False, "should raise ValueError for missing anchor"
+        raise AssertionError("should raise ValueError for missing anchor")
     except ValueError:
         pass
 

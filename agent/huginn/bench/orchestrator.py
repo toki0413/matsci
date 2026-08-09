@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -288,7 +288,7 @@ class BenchmarkOrchestrator:
                             self._log(f"Triage: missing {len(missing)} -> minimal skeleton")
                     else:
                         current_msg = CONTINUE_MSG
-        except asyncio.TimeoutError:
+        except TimeoutError:
             final = f"[TIMEOUT after {self.timeout}s]"
         except Exception as exc:
             # C8: 捕获 crash traceback + 检测 context overflow
@@ -355,7 +355,8 @@ def _self_check() -> int:
         assert "Missing deliverables" in _triage_prompt(m)
 
         # 场景 2: 部分 (reproduce.sh + .py, 无 outputs) -> 缺 1 件
-        sub = ws / "submission"; sub.mkdir()
+        sub = ws / "submission"
+        sub.mkdir()
         (sub / "reproduce.sh").write_text("python train.py")
         (sub / "train.py").write_text("print('hi')")
         m = PAPERBENCH_DELIVERABLES.missing(ws)

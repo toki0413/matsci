@@ -6,7 +6,7 @@ import asyncio
 import io
 import sys
 import traceback
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 
@@ -199,7 +199,7 @@ class ScriptRunner:
                 execution_time_ms=elapsed,
             )
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return ScriptResult(
                 success=False,
                 error=f"Script execution timed out ({self.timeout}s)",

@@ -70,10 +70,7 @@ def _quick_suspicion_check(tool_name: str, result: Any, error: BaseException | N
         text = json.dumps(result, ensure_ascii=False, default=str).lower()
     except Exception:
         text = str(result).lower()
-    for pattern in _SUSPICION_PATTERNS:
-        if pattern in text:
-            return True
-    return False
+    return any(pattern in text for pattern in _SUSPICION_PATTERNS)
 
 
 # 判定 prompt. 加了分类边界澄清和 few-shot 示例, 让 LLM 区分

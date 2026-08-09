@@ -430,7 +430,7 @@ class QuantumEspressoTool(HuginnTool):
                     lines.insert(block_end, line_new)
                     block_end += 1
             input_path.write_text("\n".join(lines), encoding="utf-8")
-        except Exception as e:
+        except Exception:
             logger.warning("QE input autofix failed", exc_info=True)
 
     def _try_autofix(self, input_path: Path, error: str) -> dict[str, Any] | None:

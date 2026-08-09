@@ -64,7 +64,7 @@ def read_xyz_fallback(path: str) -> dict:
     )
     positions: list[list[float]] = []
     atomic_numbers: list[int] = []
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         lines = f.readlines()
     n_atoms = int(lines[0].strip())
     for line in lines[2 : 2 + n_atoms]:

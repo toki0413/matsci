@@ -22,12 +22,11 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
+from huginn.metacog import recall_audit_context
 from huginn.metacog.depth_search import (
-    MinEffortFloor,
     PrematureConvergenceDetector,
 )
 from huginn.metacog.equivalence_auditor import EquivalenceAuditor, EquivalenceVerdict
-from huginn.metacog import recall_audit_context
 
 logger = logging.getLogger(__name__)
 

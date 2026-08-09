@@ -27,13 +27,12 @@ from typing import Any
 
 from huginn.perception.doc_types import (
     DocumentElement,
-    GraphEdge,
     EdgeType,
     ElementType,
+    GraphEdge,
     InformationPackage,
 )
 from huginn.perception.document_graph import DocumentGraph
-
 
 # Edges we're willing to walk during claim BFS. Deliberately excludes SEQ
 # (reading order, not semantic), CAPTION_OF (already implied via REFERENCES
@@ -256,9 +255,8 @@ class InfoPackAssembler:
             elif el.element_type is ElementType.DATA_POINT:
                 if el.data_points:
                     pkg.data_points.extend(el.data_points)
-            elif el.element_type is ElementType.CLAIM:
-                if el.claim_data:
-                    pkg.claims.append(el.claim_data)
+            elif el.element_type is ElementType.CLAIM and el.claim_data:
+                pkg.claims.append(el.claim_data)
 
         # Record validation verdicts for claims in this package. We anchor
         # on the claim (edge source) so a verdict is reported exactly once,
@@ -372,7 +370,7 @@ class InfoPackAssembler:
             "Summarize the following information package from a materials "
             "science paper in one concise sentence (max 30 words). Focus on "
             "the claim and how it was validated.\n\n"
-            f"Claims:\n" + "\n".join(claim_lines) + "\n\n"
+            "Claims:\n" + "\n".join(claim_lines) + "\n\n"
             f"Figures: {len(package.figures)}\n"
             f"Data points: {len(package.data_points)}\n"
             f"Validation results: {len(package.validation_results)}\n"

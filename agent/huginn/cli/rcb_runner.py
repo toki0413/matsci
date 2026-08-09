@@ -16,13 +16,11 @@ import argparse
 import asyncio
 import json
 import logging
-import math
 import os
 import re
 import shutil
 import sys
 import time
-import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -160,23 +158,22 @@ if str(_AGENT_ROOT) not in sys.path:
 
 # === 认知原语: adversarial_critique + critique_decision (抽到 rcb_critique.py) ===
 # ponytail: 单一职责拆分, 减少 rcb_runner.py 行数. 原 L56-513 抽到 rcb_critique.py.
-from huginn.cli.rcb_critique import (
-    adversarial_critique, critique_decision, format_critique_for_agent,
-    Decision, CritiqueResult,
+from huginn.cli.rcb_critique import (  # noqa: E402
+    adversarial_critique,
+    format_critique_for_agent,
 )
-
 
 # === 认知原语: fork_critique_merge (FCM) — verifier 下沉到 plan 决策点 ===
-
 # === 认知原语: fork_critique_merge (FCM) 抽到 rcb_fork_merge.py ===
 # ponytail: 单一职责拆分. 原 L62-357 抽到 rcb_fork_merge.py.
-from huginn.cli.rcb_fork_merge import (
-    fork_critique_merge, anneal_fork_count,
-    _extract_sci_numbers, _collect_artifact_numbers,
-    _reproduction_gate, judge_fork_reports,
+from huginn.cli.rcb_fork_merge import (  # noqa: E402
     _FCM_PERSPECTIVES,
+    _extract_sci_numbers,
+    _reproduction_gate,
+    anneal_fork_count,
+    fork_critique_merge,
+    judge_fork_reports,
 )
-
 
 # v14 Task 2: darwin_score 真实计算 (StepEvaluator gap_severity 反向打分).
 # ponytail: top-level try-except 跟 line 599 defensive 模式一致 — step_evaluator
@@ -342,7 +339,7 @@ def _load_haptic_layers(ws, hypo_manifold) -> int:
     _n_hap = 0
     try:
         from huginn.metacog.haptic_property_layer import (
-            HapticPropertyLayer as _HPL,
+            HapticPropertyLayer as _HPL,  # noqa: N814
         )
         _h_ids = list(hypo_manifold._hyp)
         _raw = json.loads(_hap_path.read_text(encoding="utf-8"))
@@ -378,6 +375,7 @@ async def _trigger_anomaly_hypothesis(
         return []
     try:
         import types as _types
+
         from huginn.autoloop.engine import AutoloopEngine
 
         async def _stub_hypothesize(ctx):
@@ -425,22 +423,19 @@ _MODEL_VERSION = (
 # 改为发 DeprecationWarning. 后续 HintCoordinator 稳定后, 删函数 + 测试 + else 分支.
 # === 评测裁决纯函数族 (A2/A3/B4/drift) 抽到 rcb/audit.py ===
 # ponytail: 单一职责拆分 — 这些是 RCB 评测专属的合规裁决层, 与 agent 通用逻辑解耦.
-from huginn.cli.rcb.audit import (
-    _rcb_drift_check,
-    _extract_exact_components,
-    _scan_implementation_traces,
-    _parse_substitute_headers,
-    _count_failed_attempts,
-    _step2_substitution_audit,
-    _scan_real_metrics,
+import contextlib  # noqa: E402
+from datetime import UTC  # noqa: E402
+
+from huginn.cli.rcb.audit import (  # noqa: E402
     _lint_report_markers,
+    _rcb_drift_check,
     _step2_outputs_gate,
+    _step2_substitution_audit,
 )
-from huginn.cli.rcb.prompt_builders import (  # noqa: F401  re-export for backward compat
-    _legacy_build_step2_prompt, _legacy_build_iter_prompt,
+from huginn.cli.rcb.prompt_builders import (  # noqa: F401,E402  re-export for backward compat
+    _legacy_build_iter_prompt,
+    _legacy_build_step2_prompt,
 )
-
-
 
 # === v15 Phase 2 Task 3: HypothesisManifold 接入 helpers ===
 # 单文件函数, 不引新抽象. 失败一律降级到 v14 行为, 不阻塞主循环.
@@ -532,7 +527,7 @@ def _save_manifold(manifold, path: Path) -> None:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("w", encoding="utf-8") as f:
-            for h_id, h in manifold._hyp.items():
+            for _h_id, h in manifold._hyp.items():
                 f.write(json.dumps({
                     "type": "hypothesis",
                     "h_id": h.h_id,
@@ -546,7 +541,7 @@ def _save_manifold(manifold, path: Path) -> None:
 
 def _load_manifold(path: Path):
     """从 jsonl 加载 manifold. 文件不存在或损坏返回 None."""
-    from huginn.metacog.hypothesis_manifold import HypothesisManifold, Hypothesis
+    from huginn.metacog.hypothesis_manifold import Hypothesis, HypothesisManifold
     if not path.exists():
         return None
     manifold = HypothesisManifold()
@@ -565,10 +560,8 @@ def _load_manifold(path: Path):
                     predictions=obj.get("predictions", {}),
                     n_params=int(obj.get("n_params", 0)),
                 )
-                try:
-                    manifold.add(h)
-                except ValueError:
-                    pass  # duplicate h_id, 跳过
+                with contextlib.suppress(ValueError):
+                    manifold.add(h)  # duplicate h_id, 跳过
     except Exception:
         return None
     return manifold if manifold._hyp else None
@@ -619,7 +612,7 @@ def _init_hypothesis_manifold(
     升级路径: 接 LLM 从 task description + related_work 抽 3-5 个
     domain-specific hypothesis.
     """
-    from huginn.metacog.hypothesis_manifold import HypothesisManifold, Hypothesis
+    from huginn.metacog.hypothesis_manifold import Hypothesis, HypothesisManifold
 
     path = ws / ".huginn" / "hypothesis_manifold.jsonl"
 
@@ -650,14 +643,12 @@ def _init_hypothesis_manifold(
     h_null = Hypothesis(
         h_id="h_null_baseline",
         description="Null/baseline result: no signal, default metrics",
-        predictions={k: 0.0 for k in targets},
+        predictions=dict.fromkeys(targets, 0.0),
         n_params=1,
     )
     for h in (h_paper, h_partial, h_null):
-        try:
+        with contextlib.suppress(ValueError):
             manifold.add(h)
-        except ValueError:
-            pass
 
     _save_manifold(manifold, path)
     return manifold
@@ -1066,10 +1057,12 @@ async def _step2_execute(ctx: _RCBStep2Ctx) -> list:
     #   依赖 (lifecycle 在 pause block 才创建, metrics 更早).
     _run_started_at = _time.time()
     try:
+        from types import SimpleNamespace as _NS  # noqa: N814
+
         from huginn.runtime.task_metrics import (
-            TaskMetrics, load_metrics, save_metrics, update_metrics,
+            TaskMetrics,
+            load_metrics,
         )
-        from types import SimpleNamespace as _NS
         _task_metrics = load_metrics(_task_id, ws) or TaskMetrics(
             task_id=_task_id, total_steps=_max_exec_iters)
         # 跨领域: 用 suggest_domain 推断 domain_label (材料/物理/化学/医学/数学)
@@ -1299,10 +1292,8 @@ LUCID review (mandatory after generating hypothesis):
                 # 触发: iter>=2 每 3 轮一次, 或 drift fire 时强制触发.
                 # 检查 outputs/ 是否有对应 checklist item 的实验产物.
                 _drift_fire = False
-                try:
+                with contextlib.suppress(Exception):
                     _drift_fire, _ = _rcb_drift_check(_evals_history)
-                except Exception:
-                    pass
                 if (model and _compass and ws / "outputs" and
                         ((_iter_n >= 2 and _iter_n % 3 == 0) or _drift_fire)):
                     _derivation_audit = await _derivation_chain_audit(
@@ -1497,8 +1488,8 @@ LUCID review (mandatory after generating hypothesis):
                         # spec 从上一轮 best hypothesis 提取, 没有就用 checklist 兜底
                         _mi_spec = ""
                         if _hypo_manifold is not None and "_iter_best_h_id" in dir() \
-                                and _iter_best_h_id is not None:
-                            _prev_h = _hypo_manifold._hyp.get(_iter_best_h_id)
+                                and _iter_best_h_id is not None:  # noqa: F821
+                            _prev_h = _hypo_manifold._hyp.get(_iter_best_h_id)  # noqa: F821
                             if _prev_h is not None:
                                 _mi_spec = getattr(_prev_h, "statement", "") or ""
                         if not _mi_spec:
@@ -1509,7 +1500,7 @@ LUCID review (mandatory after generating hypothesis):
                                 _img_bytes, {"kind": "unknown"})
                             # 草图作为 visual primitive 注入 RAG KB (G4 auto-ingest)
                             if kb is not None:
-                                try:
+                                with contextlib.suppress(Exception):
                                     kb.add_text(
                                         f"[mental_imagery sketch] spec={_mi_spec[:80]} "
                                         f"verified={_verify_res.get('verified', False)} "
@@ -1521,8 +1512,6 @@ LUCID review (mandatory after generating hypothesis):
                                             "verified": str(_verify_res.get("verified", False)),
                                         },
                                     )
-                                except Exception:
-                                    pass
                             print(
                                 f"[Step 2] mental_imagery: verified="
                                 f"{_verify_res.get('verified', False)} "
@@ -1542,6 +1531,8 @@ LUCID review (mandatory after generating hypothesis):
             try:
                 from huginn.metacog.blind_spot_mapper import (
                     infer_blind_spots as _infer_bs,
+                )
+                from huginn.metacog.blind_spot_mapper import (
                     map_blind_spots_to_hint as _map_bs_hint,
                 )
                 _bs_list = _infer_bs(_self_model)
@@ -1786,7 +1777,9 @@ LUCID review (mandatory after generating hypothesis):
                 # v15: upgrade_entry 补 v15 默认字段 (tfm entry 不填 abduction 结果,
                 # 只保证 schema 一致, 让 Task 4 读 trace 时不用判字段存在)
                 try:
-                    from huginn.metacog.trace_topology import upgrade_entry as _upgrade_entry
+                    from huginn.metacog.trace_topology import (
+                        upgrade_entry as _upgrade_entry,
+                    )
                     _upgrade_entry(_tfm_entry)
                 except Exception:
                     pass
@@ -1871,6 +1864,8 @@ LUCID review (mandatory after generating hypothesis):
             try:
                 from huginn.metacog.imagination import (
                     detect_stagnation as _detect_stagnation,
+                )
+                from huginn.metacog.imagination import (
                     imagine_with_checks as _imagine_with_checks,
                 )
                 if _detect_stagnation(_stagnation_history, N=3):
@@ -1955,6 +1950,8 @@ LUCID review (mandatory after generating hypothesis):
             try:
                 from huginn.metacog.blind_spot_mapper import (
                     infer_blind_spots as _infer_bs,
+                )
+                from huginn.metacog.blind_spot_mapper import (
                     pick_imagination_seed as _pick_bs_seed,
                 )
                 from huginn.metacog.imagination import (
@@ -1978,11 +1975,9 @@ LUCID review (mandatory after generating hypothesis):
                         # ponytail: 乐观反馈, 新 h 进 manifold 就算 success.
                         #   天花板: 真 success 要等下轮 step_eval 验证. 升级路径:
                         #   下一轮 on_track=true 时才 feedback(success=True).
-                        try:
+                        with contextlib.suppress(Exception):
                             _self_model.feedback_from_imagination(
                                 _bs_seed.skill, success=True)
-                        except Exception:
-                            pass
                         print(
                             f"[v15] blind_spot imagination: {_bs_seed.skill} "
                             f"-> {_bs_new_h.h_id}",
@@ -2053,7 +2048,9 @@ LUCID review (mandatory after generating hypothesis):
             # v15 Phase 2 Task 3.4: upgrade_entry 补 v15 默认值 + 填本轮 abduction 结果
             # upgrade 失败不阻塞, v14 entry 仍可写; 字段缺失时 upgrade_entry 补默认.
             try:
-                from huginn.metacog.trace_topology import upgrade_entry as _upgrade_entry
+                from huginn.metacog.trace_topology import (
+                    upgrade_entry as _upgrade_entry,
+                )
                 _upgrade_entry(_entry)
                 _entry["hypothesis_id"] = _iter_best_h_id
                 _entry["log_posterior"] = _iter_log_post
@@ -2101,7 +2098,8 @@ LUCID review (mandatory after generating hypothesis):
         # 用 try 兜住 NameError.
         try:
             from huginn.metacog.step_evaluator import (
-                ToolCallHealth, evaluate_step, should_continue,
+                evaluate_step,
+                should_continue,
             )
             from huginn.metacog.target_chain import update_progress
             # ponytail: scan_text 是 Step 1.5 的纯文本输出, 不是 list[dict],
@@ -2238,7 +2236,9 @@ LUCID review (mandatory after generating hypothesis):
             }
             # v15: upgrade_entry 补 v15 默认字段 (step_eval entry 不填 abduction 结果)
             try:
-                from huginn.metacog.trace_topology import upgrade_entry as _upgrade_entry
+                from huginn.metacog.trace_topology import (
+                    upgrade_entry as _upgrade_entry,
+                )
                 _upgrade_entry(_eval_entry)
             except Exception:
                 pass
@@ -2254,7 +2254,8 @@ LUCID review (mandatory after generating hypothesis):
                 if "Reflector" in _msg or "工具调用异常" in _msg:
                     try:
                         from huginn.metacog.reflector import (
-                            reflect, format_reflector_text,
+                            format_reflector_text,
+                            reflect,
                         )
                         _actions = reflect(
                             tool_call_health=getattr(
@@ -2277,9 +2278,11 @@ LUCID review (mandatory after generating hypothesis):
         #   这里把 pause/resume 接口跑通, 默认选 A 自动 resume. 失败只 warn 不阻塞.
         try:
             from huginn.runtime.task_lifecycle import (
-                TaskLifecycle, TaskState, DecisionRequest,
-                save_task_lifecycle,
+                DecisionRequest,
+                TaskLifecycle,
+                TaskState,
                 load_task_lifecycle,
+                save_task_lifecycle,
             )
             # AV4: PMK 状态构建 + pause 判定走 cognitive_loop 共享函数.
             # _fired 在上面 ctx inject 块里定义, 正常路径一定有; 兜底 NameError
@@ -2288,7 +2291,8 @@ LUCID review (mandatory after generating hypothesis):
             except NameError:
                 _fired_local = []
             from huginn.autoloop.cognitive_loop import (
-                build_pmk_state, check_pause_decision,
+                build_pmk_state,
+                check_pause_decision,
             )
             _pmk_state = build_pmk_state(
                 persona, _last_step_eval, kb,
@@ -2310,7 +2314,7 @@ LUCID review (mandatory after generating hypothesis):
                     )
                     # 反向边 1: PMK memory+kb → persona.adaptive_layer
                     # 不覆盖原 adaptive_layer, 而是前缀拼接本轮 PMK 摘要.
-                    if "_pm" in dir() and _pm is not None and persona is not None:
+                    if "_pm" in dir() and _pm is not None and persona is not None:  # noqa: F821
                         _pmk_summary_bits = []
                         if _pmk_state.get("memory"):
                             _pmk_summary_bits.append(
@@ -2326,7 +2330,7 @@ LUCID review (mandatory after generating hypothesis):
                             )
                             # 截断防膨胀: 上限 800 字符, 老摘要自然滚出.
                             _new_adaptive = _new_adaptive[:800]
-                            _pm.update(_persona_name, adaptive_layer=_new_adaptive)
+                            _pm.update(_persona_name, adaptive_layer=_new_adaptive)  # noqa: F821
                             print(
                                 f"[PMK reverse edge] persona.adaptive_layer updated "
                                 f"(len={len(_new_adaptive)})", flush=True)
@@ -2448,7 +2452,9 @@ LUCID review (mandatory after generating hypothesis):
                     }
                     # v15: upgrade_entry 补 v15 默认字段
                     try:
-                        from huginn.metacog.trace_topology import upgrade_entry as _upgrade_entry
+                        from huginn.metacog.trace_topology import (
+                            upgrade_entry as _upgrade_entry,
+                        )
                         _upgrade_entry(_hd_entry)
                     except Exception:
                         pass
@@ -2585,7 +2591,8 @@ LUCID review (mandatory after generating hypothesis):
         #   (stagnation 早退逻辑上面已处理). 只有 action=stop 才 break.
         try:
             from huginn.autoloop.cognitive_loop import (
-                darwin_ratchet_check, classify_stall,
+                classify_stall,
+                darwin_ratchet_check,
             )
             _dr_darwin = _entry.get("darwin_score", 0.5) if "_entry" in dir() else 0.5
             _dr_ratio = _entry.get("supported_ratio", 0.0) if "_entry" in dir() else 0.0
@@ -2632,10 +2639,10 @@ LUCID review (mandatory after generating hypothesis):
                     # Step 2: 增量路径 — cached_log_p 跨步复用, 不再调 log_posterior 全量
                     # 触觉层: 只在 extreme 模式 (_mcmc_haptic_enabled=True) 传 haptic 参数,
                     # 非 extreme 不传, mcmc_step 走默认 haptic_enabled=False (行为不变).
-                    _mcmc_step_kwargs = dict(
-                        rng=_mcmc_engine._mcmc_rng,
-                        cached_log_p_current=_mcmc_cached_log_p,
-                    )
+                    _mcmc_step_kwargs = {
+                        "rng": _mcmc_engine._mcmc_rng,
+                        "cached_log_p_current": _mcmc_cached_log_p,
+                    }
                     if _mcmc_haptic_enabled:
                         _mcmc_step_kwargs["haptic_enabled"] = True
                         _mcmc_step_kwargs["haptic_temperature"] = _mcmc_haptic_temperature
@@ -2813,14 +2820,12 @@ LUCID review (mandatory after generating hypothesis):
                 )
                 # 覆盖下一轮的 _iter_prompt (否则 agent 会继续说 TASK COMPLETE)
                 # ponytail: 直接改 _iter_prompt 变量, 下一轮 for 循环用它
-                try:
+                with contextlib.suppress(NameError):
                     _iter_prompt = (
                         f"Continue execution. Iteration {_iter_n + 2}/{_max_exec_iters}.\n"
                         f"{_iter_prompt_override}\n\n"
                         f"Review the Research Trace section and Coverage Compass above."
                     )
-                except NameError:
-                    pass
                 # 不 break, 继续下一轮
                 continue
             # Task 5+10: 反完成审计 — 4 层完成度 + 拓扑坍缩. 任一阻断 → continue.
@@ -2831,8 +2836,8 @@ LUCID review (mandatory after generating hypothesis):
                 try:
                     from huginn.autoloop.cognitive_loop import (
                         metacog_check_completion,
-                        metacog_check_topology_collapse,
                         metacog_check_selection_bias,
+                        metacog_check_topology_collapse,
                     )
                     # _report_text 在 iter 头部算, 可能空; 兜底重读文件.
                     _rep_md = _report_text or (
@@ -2880,7 +2885,7 @@ LUCID review (mandatory after generating hypothesis):
                     print(f"[TaskComplete] metacog audit failed: {_e}", flush=True)
             if _metacog_blocked:
                 # 阻断时覆盖下一轮 prompt, 让 agent 补缺而非重复 TASK COMPLETE
-                try:
+                with contextlib.suppress(NameError):
                     _iter_prompt = (
                         f"Continue execution. Iteration {_iter_n + 2}/{_max_exec_iters}.\n"
                         f"Previous TASK COMPLETE blocked by metacog audit "
@@ -2888,8 +2893,6 @@ LUCID review (mandatory after generating hypothesis):
                         f"TASK COMPLETE when done.\n\n"
                         f"Review the Research Trace section and Coverage Compass above."
                     )
-                except NameError:
-                    pass
                 continue
             print("[agent signalled TASK COMPLETE, breaking]", flush=True)
             # P0-C: TASK COMPLETE 时写 final cognitive evidence snapshot.
@@ -3312,7 +3315,7 @@ def _build_retry_budget(extra_budget: int | None) -> Any:
     """
     if not extra_budget or extra_budget <= 0:
         return None
-    from huginn.phases import BudgetSpec as _BS
+    from huginn.phases import BudgetSpec as _BS  # noqa: N814
     return _BS(
         max_calls=extra_budget,
         recursion_limit=max(250, extra_budget * 5),
@@ -3362,10 +3365,8 @@ async def _step2_5_report_fallback(
                 print(f"[fallback: generated {_n_gen} figures from outputs/]", flush=True)
         _metrics_parts = []
         for _p in (ws / "outputs").glob("*.json"):
-            try:
+            with contextlib.suppress(Exception):
                 _metrics_parts.append(f"### {_p.name}\n```json\n{_p.read_text(encoding='utf-8')}\n```")
-            except Exception:
-                pass
         _metrics = "\n".join(_metrics_parts) or "None"
         _imgs = "\n".join(f"![{p.name}](images/{p.name})" for p in _imgs_dir.glob("*.png")) or "None"
         _code_dir = ws / "code"
@@ -3516,7 +3517,8 @@ def _generate_fallback_figures(ws: Path, imgs_dir: Path) -> int:
                             continue
                         _total_check += 1
                         try:
-                            float(r[_xi]); float(r[_yi])
+                            float(r[_xi])
+                            float(r[_yi])
                             _ok += 1
                         except (ValueError, TypeError):
                             pass
@@ -3573,9 +3575,7 @@ def _should_retry_execute(
         return False
     if beta_1 <= 0:
         return False
-    if gap_type not in ("numeric_recompute", "exact_component_missing"):
-        return False
-    return True
+    return gap_type in ("numeric_recompute", "exact_component_missing")
 
 
 def _derive_gap_type(object_verdict: dict) -> str:
@@ -3802,7 +3802,7 @@ async def _step3_adversarial(
 
     # Layer 2 — meta mode: 触发 CSM 进 S6_FEEDBACK → S7_SELF_MODIFY
     try:
-        from huginn.cognitive_engine import TransitionSignal, CognitiveState
+        from huginn.cognitive_engine import CognitiveState, TransitionSignal
         csm = getattr(agent, "_csm", None)
         if csm is not None and object_verdict is not None:
             verdict_flag = object_verdict.get("overall_verdict", "fix_needed")
@@ -4037,10 +4037,8 @@ async def _step3_adversarial(
                 _xretry_entries = []
                 for _xl in _xretry_lines:
                     if _xl.strip():
-                        try:
+                        with contextlib.suppress(Exception):
                             _xretry_entries.append(json.loads(_xl))
-                        except Exception:
-                            pass
                 if _xretry_entries:
                     _xretry_block = "### Cross-Retry Memory (避免重蹈覆辙)\n"
                     for _xr in _xretry_entries:
@@ -4220,9 +4218,9 @@ async def _step3_adversarial(
                     _br_holds = "true" in _br_response.lower()
             if not _br_holds:
                 print(
-                    f"[Step3] blind_reconstruct_verify FAILED "
-                    f"(verdict was pass but blind disagrees), "
-                    f"not recording final score",
+                    "[Step3] blind_reconstruct_verify FAILED "
+                    "(verdict was pass but blind disagrees), "
+                    "not recording final score",
                     flush=True,
                 )
                 return "blind_reconstruct_failed"
@@ -4335,11 +4333,11 @@ async def run(
     from huginn.agent import HuginnAgent
     from huginn.config import HuginnConfig
     from huginn.models.registry import ModelRegistry
-    from huginn.tools import register_all_tools
 
     # snapshot 默认用 ~/.huginn/snapshots, RCB subprocess 跑时该目录可能被
     # IDE/桌面端锁定 (PermissionError). 重定向到 workspace 下的独立目录.
     from huginn.snapshot import file_snapshot as _fs
+    from huginn.tools import register_all_tools
     _fs._SNAPSHOT_ROOT = rcb_cache / "snapshots"
 
     cfg = HuginnConfig.from_env()
@@ -4387,15 +4385,16 @@ async def run(
     _p5_gs = None
     if os.environ.get("HUGINN_PERSISTENT_GOAL_MODE", "0") == "1":
         try:
+            from datetime import datetime
+
             from huginn.autoloop.goal_store import get_goal_store
-            from datetime import datetime, timezone
             _timeout_s = float(os.environ.get("HUGINN_RCB_TIMEOUT", "7200"))
             _p5_gs = get_goal_store()
             _goal = _p5_gs.create_goal(f"RCB {ws.name}")
             _p5_gs.update_goal(
                 _goal.id,
                 wall_clock_budget_seconds=_timeout_s,
-                started_at=datetime.now(timezone.utc).isoformat(),
+                started_at=datetime.now(UTC).isoformat(),
             )
             _p5_goal_id = _goal.id
             print(f"[P5] persistent goal: budget={_timeout_s}s, goal_id={_p5_goal_id[:8]}", flush=True)
@@ -4531,7 +4530,7 @@ async def run(
     # 避开 TRAE 沙箱拦截 ~/.huginn/ 写入). 没设则回退 ~/.huginn/rcb_cross_task.
     _mem_mgr = None
     try:
-        from huginn.memory.manager import MemoryManager, MemoryConfig
+        from huginn.memory.manager import MemoryConfig, MemoryManager
         if os.environ.get("HUGINN_RCB_CROSS_TASK", "1") == "1":
             _mem_dir = Path(
                 os.environ.get(
@@ -4659,7 +4658,7 @@ async def run(
         # 升级路径: env var HUGINN_RCB_BLOCKED_TOOLS 可覆盖黑名单 (逗号分隔).
         # ponytail: 全量开放可能让 agent 拿到不该有的工具, 但 RCB 是无人工 subprocess,
         #   auto_approve=True 已经接管权限, 工具多了不会越权只会更可用.
-        from huginn.tools.registry import ToolRegistry as _TR
+        from huginn.tools.registry import ToolRegistry as _TR  # noqa: N814
         _RCB_STEP1_NEVER = {
             # Step 1 永远禁: 写入/执行类工具, 防 agent 在 Step 1 越权完成任务.
             # 这些工具名与 register_all_tools 里的 class name 对应 (lowercase).
@@ -4779,10 +4778,8 @@ async def run(
             # streaming.py 的 [FINALLY-REFLECT] 不跑 -> 反射链路断在第一层.
             # aclose 让 GeneratorExit 在 generator 当前 await 点抛出, finally 执行.
             if _chat_gen is not None:
-                try:
+                with contextlib.suppress(Exception):
                     await _chat_gen.aclose()
-                except Exception:
-                    pass
             # 反思闭环: chat generator 被 asyncio.wait_for 取消时, streaming.py
             # 的 finally 块不保证执行 (async generator aclose 依赖 GC). 在这里
             # 显式调 reflection, 确保 tool 失败被 evolution 记录.
@@ -4799,7 +4796,7 @@ async def run(
 
     # RCB 3-step 映射 CSM: Step1→S1_DISCOVER, Step2→S4_CONSTRUCT, Step3→S6+S7 (Task 18)
     # ponytail: transition 是 advisory — 不允许就 no-op, 不破坏现有 3-step 流程.
-    from huginn.cognitive_engine import TransitionSignal as _RCB_TS
+    from huginn.cognitive_engine import TransitionSignal as _RCB_TS  # noqa: N814
 
     def _rcb_csm_advance(signal_type: str, ctx: dict) -> None:
         """RCB step 开始时手动推 CSM 状态. advisory: 不允许就 no-op."""
@@ -4903,7 +4900,7 @@ async def run(
             )
             # 同时写到 ws/checklist.md 让 agent 能 file_read_tool 读完整版
             (ws / "checklist.md").write_text(checklist, encoding="utf-8")
-            print(f"[G29: checklist stored as stable_principle + ws/checklist.md]", flush=True)
+            print("[G29: checklist stored as stable_principle + ws/checklist.md]", flush=True)
         except Exception as e:
             print(f"[G29: checklist store skipped: {e}]", flush=True)
 
@@ -4930,7 +4927,7 @@ async def run(
         )
         _tc_entry = {
             "iteration": 0,
-            "ts": _time.time() if "_time" in dir() else __import__("time").time(),
+            "ts": _time.time() if "_time" in dir() else __import__("time").time(),  # noqa: F821
             "role": "target_chain",
             "attempted": f"build_target_chains for {len(_checklist_items)} item(s)",
             "found": f"{len(_target_chains)} chains built",
@@ -5264,10 +5261,8 @@ async def run(
                     for line in f:
                         line = line.strip()
                         if line:
-                            try:
+                            with contextlib.suppress(Exception):
                                 _trace_entries.append(json.loads(line))
-                            except Exception:
-                                pass
             _n_sft = _exporter.export_sft(_trace_entries, task_id=_trace_task_id)
             _n_dpo = _exporter.export_dpo(_trace_entries, task_id=_trace_task_id)
 
@@ -5311,13 +5306,22 @@ async def run(
     return 0
 
 
-from huginn.cli.rcb.self_checks import (  # noqa: F401  re-export for backward compat
-    self_check_v14_task4, self_check_v14_task6, self_check_a3, self_check_a2,
-    self_check_a4, self_check_v14_task1, self_check_v14_task2, self_check_v14_task3,
-    self_check_v14_task8, self_check_v15_task3, self_check_v15_task4,
-    self_check_v14_comprehensive, self_check_v14_p234, self_check_v14_all,
+from huginn.cli.rcb.self_checks import (  # noqa: F401,E402  re-export for backward compat
+    self_check_a2,
+    self_check_a3,
+    self_check_a4,
+    self_check_v14_all,
+    self_check_v14_comprehensive,
+    self_check_v14_p234,
+    self_check_v14_task1,
+    self_check_v14_task2,
+    self_check_v14_task3,
+    self_check_v14_task4,
+    self_check_v14_task6,
+    self_check_v14_task8,
+    self_check_v15_task3,
+    self_check_v15_task4,
 )
-
 
 
 async def _run_mcmc_mode(
@@ -5342,6 +5346,7 @@ async def _run_mcmc_mode(
     """
     import random as _mcmc_random
     import types as _mcmc_types
+
     from huginn.metacog.hypothesis_manifold import Observation
     from huginn.runtime.engine_state import save_engine_state
     from huginn.security.sandbox import create_sandbox
@@ -5363,10 +5368,10 @@ async def _run_mcmc_mode(
     #   (because _has_structure returns False for all hypotheses).
     if se3_enabled:
         try:
-            from huginn.runtime.engine_state import load_engine_state as _les
             from huginn.metacog.structure_cognitive_map import (
-                StructureCognitiveMap as _SCM,
+                StructureCognitiveMap as _SCM,  # noqa: N814
             )
+            from huginn.runtime.engine_state import load_engine_state as _les
             _est = _les(task_id, ws)
             _cmaps = getattr(_est, "cognitive_maps", {}) if _est else {}
             if _cmaps:
@@ -5402,7 +5407,7 @@ async def _run_mcmc_mode(
         if _hap_path.exists():
             try:
                 from huginn.metacog.haptic_property_layer import (
-                    HapticPropertyLayer as _HPL,
+                    HapticPropertyLayer as _HPL,  # noqa: N814
                 )
                 _h_ids = list(_hypo_manifold._hyp)
                 _raw = json.loads(_hap_path.read_text(encoding="utf-8"))
@@ -5438,10 +5443,10 @@ async def _run_mcmc_mode(
         _align_path = ws / ".huginn" / "alignment_dataset.json"
         if _align_path.exists():
             try:
-                from huginn.metacog.alignment_dataset import AlignmentDataset
                 from huginn.metacog.alignment import AlignmentFunction
-                from huginn.metacog.structure_descriptor import StructureDescriptor
+                from huginn.metacog.alignment_dataset import AlignmentDataset
                 from huginn.metacog.haptic_descriptor import HapticDescriptor
+                from huginn.metacog.structure_descriptor import StructureDescriptor
 
                 _alignment_dataset = AlignmentDataset.load(_align_path)
                 _n_pairs = _alignment_dataset.count("structure", "haptic")
@@ -5480,8 +5485,12 @@ async def _run_mcmc_mode(
                 print(f"[mcmc-{mode}] surprise detected on "
                       f"{len(_surprise_findings)} hypothesis(es)", flush=True)
                 # 数据回流: 把当前 (structure, haptic) 对存入 dataset
-                from huginn.metacog.structure_descriptor import StructureDescriptor as _SD
-                from huginn.metacog.haptic_descriptor import HapticDescriptor as _HD
+                from huginn.metacog.haptic_descriptor import (
+                    HapticDescriptor as _HD,  # noqa: N814
+                )
+                from huginn.metacog.structure_descriptor import (
+                    StructureDescriptor as _SD,  # noqa: N814
+                )
                 _sd, _hd = _SD(), _HD()
                 for _h_id, _score in _surprise_findings:
                     _h = _hypo_manifold._hyp.get(_h_id)
@@ -5491,13 +5500,11 @@ async def _run_mcmc_mode(
                     _layer = _hypo_manifold._haptic_layers.get(_h_id)
                     if _cmap is None or _layer is None:
                         continue
-                    try:
+                    with contextlib.suppress(Exception):
                         _alignment_dataset.add(
                             _sd.encode(_cmap), _hd.encode(_layer),
                             "structure", "haptic",
                             metadata={"h_id": _h_id, "surprise": _score})
-                    except Exception:
-                        pass
                 try:
                     _alignment_dataset.save(_align_path)
                 except Exception as _e:
@@ -5849,9 +5856,9 @@ if __name__ == "__main__":
         for k, v in _expected.items():
             got = os.environ.get(k)
             assert got == v, f"env {k}={got!r}, expected {v!r} (强制赋值失效?)"
-        print(f"[CHECK A7.1] _rcb_smoke_test defined OK")
-        print(f"[CHECK A7.2] 7 env vars force-assigned OK")
-        print(f"[CHECK A7] ALL ASSERTS PASSED")
+        print("[CHECK A7.1] _rcb_smoke_test defined OK")
+        print("[CHECK A7.2] 7 env vars force-assigned OK")
+        print("[CHECK A7] ALL ASSERTS PASSED")
         sys.exit(0)
     if "--self-check-b3" in sys.argv:
         # B3: critique 数值重算 self-check.
@@ -5911,7 +5918,7 @@ if __name__ == "__main__":
             print(f"[CHECK B4.1] total={r['total_numbers']} tagged={r['tagged']} untagged={r['untagged']}")
             print(f"[CHECK B4.2] marker_counts={r['marker_counts']}")
             print(f"[CHECK B4.3] untagged_samples={r['untagged_samples']}")
-            print(f"[CHECK B4] ALL ASSERTS PASSED")
+            print("[CHECK B4] ALL ASSERTS PASSED")
         finally:
             tmp_path.unlink(missing_ok=True)
         sys.exit(0)
@@ -5994,7 +6001,9 @@ if __name__ == "__main__":
 
         class _FakeModel:
             """前 3 次 (fork) 返回方案, 第 4 次 (critique) 返回评审 JSON."""
-            def __init__(self, critique_json): self.calls = 0; self._cj = critique_json
+            def __init__(self, critique_json):
+                self.calls = 0
+                self._cj = critique_json
             def invoke(self, msgs):
                 self.calls += 1
                 if self.calls <= 3:
@@ -6082,28 +6091,28 @@ if __name__ == "__main__":
 
         # v14 Task 7: Step3→Step2 回退触发条件
         # case 1: 触发回退 (fix_needed + β_1>0 + numeric/exact gap)
-        assert _should_retry_execute(verdict="fix_needed", beta_1=1, gap_type="numeric_recompute") == True
-        assert _should_retry_execute(verdict="fix_needed", beta_1=2, gap_type="exact_component_missing") == True
+        assert _should_retry_execute(verdict="fix_needed", beta_1=1, gap_type="numeric_recompute")
+        assert _should_retry_execute(verdict="fix_needed", beta_1=2, gap_type="exact_component_missing")
         # case 1b: verdict=fail 也触发回退 (fail + 具体 gap = 可修问题, 放弃=0分)
-        assert _should_retry_execute(verdict="fail", beta_1=1, gap_type="numeric_recompute") == True
-        assert _should_retry_execute(verdict="fail", beta_1=1, gap_type="exact_component_missing") == True
+        assert _should_retry_execute(verdict="fail", beta_1=1, gap_type="numeric_recompute")
+        assert _should_retry_execute(verdict="fail", beta_1=1, gap_type="exact_component_missing")
         # case 2: verdict=pass 不回退
-        assert _should_retry_execute(verdict="pass", beta_1=1, gap_type="numeric_recompute") == False
+        assert not _should_retry_execute(verdict="pass", beta_1=1, gap_type="numeric_recompute")
         # case 3: β_1=0 不回退 (拓扑不许可, 无循环回退路径)
-        assert _should_retry_execute(verdict="fix_needed", beta_1=0, gap_type="numeric_recompute") == False
+        assert not _should_retry_execute(verdict="fix_needed", beta_1=0, gap_type="numeric_recompute")
         # case 4: text_description 不回退 (文字补完在 Step 3 内即可, 不必重跑 execute)
-        assert _should_retry_execute(verdict="fix_needed", beta_1=1, gap_type="text_description") == False
+        assert not _should_retry_execute(verdict="fix_needed", beta_1=1, gap_type="text_description")
         # case 5: gap_type=none 不回退
-        assert _should_retry_execute(verdict="fix_needed", beta_1=1, gap_type="none") == False
+        assert not _should_retry_execute(verdict="fix_needed", beta_1=1, gap_type="none")
         # case 6: verdict=reject 也不回退 (reject 走 finalize, 不走 retry)
-        assert _should_retry_execute(verdict="reject", beta_1=1, gap_type="numeric_recompute") == False
+        assert not _should_retry_execute(verdict="reject", beta_1=1, gap_type="numeric_recompute")
         # case 7: fail + text_description 不回退 (文字问题不必重跑 execute)
-        assert _should_retry_execute(verdict="fail", beta_1=1, gap_type="text_description") == False
+        assert not _should_retry_execute(verdict="fail", beta_1=1, gap_type="text_description")
         print("[CHECK v14 Task 7] Step3→Step2 retry trigger OK (8 cases)")
 
         # v14 Task 7 SubTask 7.1: CritiqueResult.gap_type 字段 + 默认值
         # 验证 dataclass 默认 gap_type="none", 模板路径不显式传 gap_type 时也是 none
-        from huginn.cli.rcb_critique import CritiqueResult as _CR
+        from huginn.cli.rcb_critique import CritiqueResult as _CR  # noqa: N814
         _cr_default = _CR(verdict="accept")
         assert _cr_default.gap_type == "none", f"expected none, got {_cr_default.gap_type}"
         # 显式构造每种 gap_type 都能正常存取

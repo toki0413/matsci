@@ -17,6 +17,7 @@ After that, every published event lands in audit.jsonl automatically.
 
 from __future__ import annotations
 
+import contextlib
 import gzip
 import hashlib
 import json
@@ -65,11 +66,9 @@ def _gzip_file(src: Path, dst: Path) -> None:
     with open(src, "rb") as fin, gzip.open(tmp, "wb") as fout:
         shutil.copyfileobj(fin, fout)
     os.replace(tmp, dst)
-    try:
+    # 老分片已经被其他进程清掉就算了, 不阻塞
+    with contextlib.suppress(OSError):
         src.unlink()
-    except OSError:
-        # 老分片已经被其他进程清掉就算了, 不阻塞
-        pass
 
 
 @dataclass
@@ -179,11 +178,10 @@ def shard_iter_range(
 
     for p in paths:
         try:
-            opener: Any = (
-                lambda pp=p: gzip.open(pp, "rt", encoding="utf-8")
-                if pp.suffix == ".gz"
-                else open(pp, "r", encoding="utf-8")
-            )
+            def opener(pp=p):
+                return (gzip.open(pp, "rt", encoding="utf-8")
+                            if pp.suffix == ".gz"
+                            else open(pp, encoding="utf-8"))
             with opener() as f:
                 for line in f:
                     line = line.strip()
@@ -295,7 +293,7 @@ def _compute_hash(payload: dict[str, Any], prev_hash: str) -> str:
     """
     content = {k: v for k, v in payload.items() if k not in ("_hash", "_prev_hash")}
     blob = json.dumps(content, sort_keys=True, ensure_ascii=False, default=str)
-    return hashlib.sha256(f"{blob}{prev_hash}".encode("utf-8")).hexdigest()
+    return hashlib.sha256(f"{blob}{prev_hash}".encode()).hexdigest()
 
 
 class _BufferedAuditWriter:
@@ -385,7 +383,7 @@ class _BufferedAuditWriter:
             if not self._path.exists():
                 return genesis
             last_hash = genesis
-            with open(self._path, "r", encoding="utf-8") as f:
+            with open(self._path, encoding="utf-8") as f:
                 for line in f:
                     line = line.strip()
                     if not line:
@@ -558,15 +556,13 @@ def install_campaign_subscriber(bus: EventBus | None = None) -> None:
     )
 
     def _on_campaign(event: AgentEvent) -> None:
-        try:
+        with contextlib.suppress(Exception):
             logger.info(
                 "campaign event: %s iter=%s payload_keys=%s",
                 event.type,
                 event.data.get("iteration", "?"),
                 list(event.data.keys()),
             )
-        except Exception:
-            pass
 
     for evt_type in events:
         try:
@@ -580,10 +576,8 @@ def uninstall_campaign_subscriber() -> None:
     """Detach all campaign/quality subscribers."""
     global _CAMPAIGN_UNSUBSCRIBES
     for unsub in _CAMPAIGN_UNSUBSCRIBES:
-        try:
+        with contextlib.suppress(Exception):
             unsub()
-        except Exception:
-            pass
     _CAMPAIGN_UNSUBSCRIBES = []
 
 
@@ -599,7 +593,7 @@ def verify_audit_chain(path: Path | None = None) -> bool:
         return True
     prev_hash = "0" * 64
     try:
-        with open(audit_path, "r", encoding="utf-8") as f:
+        with open(audit_path, encoding="utf-8") as f:
             for lineno, line in enumerate(f, 1):
                 line = line.strip()
                 if not line:
@@ -685,7 +679,7 @@ def _selfcheck() -> None:
 
             # 归档分片可读 + 行数对 (每分片 100 条)
             with gzip.open(gz_files[0], "rt", encoding="utf-8") as f:
-                lines = [l for l in f if l.strip()]
+                lines = [_l for _l in f if _l.strip()]
             assert len(lines) == 100, (
                 f"first shard should have 100 lines, got {len(lines)}"
             )
@@ -735,7 +729,7 @@ def _selfcheck() -> None:
             # 当前分片 audit_200.jsonl
             cur_path = tmp_path / "chain_task" / "audit_200.jsonl"
             assert cur_path.exists(), f"current shard missing: {cur_path}"
-            with open(cur_path, "r", encoding="utf-8") as f:
+            with open(cur_path, encoding="utf-8") as f:
                 for line in f:
                     if line.strip():
                         all_records.append(json.loads(line))
@@ -780,7 +774,7 @@ def _selfcheck() -> None:
         writer.flush()
         writer.stop()
         assert audit_path.exists(), "default audit.jsonl should be written"
-        lines = [l for l in audit_path.read_text(encoding="utf-8").splitlines() if l.strip()]
+        lines = [_l for _l in audit_path.read_text(encoding="utf-8").splitlines() if _l.strip()]
         assert len(lines) == 5, f"expected 5 lines in default path, got {len(lines)}"
         # 没有 task_id 子目录 / archive
         assert not (tmp_path / "archive").exists(), "archive dir should not exist"

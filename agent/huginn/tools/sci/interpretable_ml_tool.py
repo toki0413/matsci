@@ -26,6 +26,7 @@ non-dependent paths work without them.
 from __future__ import annotations
 
 import csv
+import logging
 from pathlib import Path
 from typing import Any, Literal
 
@@ -36,7 +37,7 @@ from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.tools.sci.dynamics_discovery_tool import DynamicsDiscoveryTool
 from huginn.tools.sci.gp_tool import NumPyGP
 from huginn.types import ToolContext, ToolResult
-import logging
+
 logger = logging.getLogger(__name__)
 
 

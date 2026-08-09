@@ -50,7 +50,7 @@ class ToolSchedulingPolicy:
         return t.constraint_scope if t is not None else None
 
     @staticmethod
-    def phases_of(name: str) -> frozenset["ResearchPhase"] | None:
+    def phases_of(name: str) -> frozenset[ResearchPhase] | None:
         from huginn.tools.registry import ToolRegistry
 
         t = ToolRegistry.get(name)

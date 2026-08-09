@@ -206,7 +206,7 @@ class MCPToolAdapter(HuginnTool):
 
             return ToolResult(data=data, success=True)
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return ToolResult(
                 data=None,
                 success=False,

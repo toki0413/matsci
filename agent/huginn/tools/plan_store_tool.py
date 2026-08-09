@@ -100,8 +100,7 @@ class PlanStoreTool(HuginnTool):
                 return ValidationResult(result=False, message="propose 需要 objective")
             if not args.steps:
                 return ValidationResult(result=False, message="propose 需要 steps 列表")
-        if args.action in ("confirm", "reject", "get", "advance_step"):
-            if not args.plan_id:
+        if args.action in ("confirm", "reject", "get", "advance_step") and not args.plan_id:
                 return ValidationResult(
                     result=False, message=f"{args.action} 需要 plan_id"
                 )

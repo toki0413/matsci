@@ -13,7 +13,6 @@ from __future__ import annotations
 import json
 import shutil
 import tempfile
-from dataclasses import replace
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -23,13 +22,10 @@ from huginn.agents.team import _ROLE_TOOL_FILTER, TeamMember, TeamRole
 from huginn.config import HuginnConfig
 from huginn.permissions import PermissionConfig
 from huginn.runtime.checkpoint import (
-    Checkpoint,
-    _from_dict,
     load_checkpoint,
     resume_from_checkpoint,
     save_checkpoint,
 )
-
 
 # ── 1. TeamMember 权限降级 ──────────────────────────────────────────
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -98,12 +98,12 @@ def microstructure_annotate(args: ImageDesignInput) -> ToolResult:
                     "",
                     xy=(float(ann["x"]) + dx, float(ann["y"]) + dy),
                     xytext=(float(ann["x"]), float(ann["y"])),
-                    arrowprops=dict(
-                        color=c,
-                        arrowstyle="->",
-                        linewidth=2.5,
-                        alpha=alpha,
-                    ),
+                    arrowprops={
+                        "color": c,
+                        "arrowstyle": "->",
+                        "linewidth": 2.5,
+                        "alpha": alpha,
+                    },
                 )
                 if label:
                     ax.text(
@@ -160,7 +160,7 @@ def microstructure_annotate(args: ImageDesignInput) -> ToolResult:
             ha="center",
             fontweight="bold",
             fontsize=14,
-            bbox=dict(facecolor="black", alpha=0.6, edgecolor="none"),
+            bbox={"facecolor": "black", "alpha": 0.6, "edgecolor": "none"},
         )
         scale_info = {
             "length_nm": length_nm,

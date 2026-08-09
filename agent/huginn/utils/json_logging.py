@@ -13,7 +13,7 @@ import logging
 import os
 import sys
 from contextvars import ContextVar
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 # Request-scoped context.  Set by the RequestID middleware (request_id) and
@@ -56,7 +56,7 @@ _RECORD_BUILTINS = frozenset(
 
 def _format_timestamp(created: float) -> str:
     """ISO-8601 UTC with millisecond precision and a trailing ``Z``."""
-    dt = datetime.fromtimestamp(created, tz=timezone.utc)
+    dt = datetime.fromtimestamp(created, tz=UTC)
     return dt.isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 

@@ -18,7 +18,6 @@ from huginn.autoloop.conjecture import (
     get_conjecture_generator,
 )
 
-
 # ── fixtures ────────────────────────────────────────────────────────
 
 

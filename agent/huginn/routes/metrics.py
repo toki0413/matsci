@@ -11,6 +11,7 @@ the endpoint keeps working on minimal installs without the dependency.
 
 from __future__ import annotations
 
+import contextlib
 import threading
 import time
 from typing import Any
@@ -34,7 +35,7 @@ try:
 except ImportError:  # pragma: no cover - only hit when prometheus_client is absent
     _HAS_PROMETHEUS = False
 
-    _REGISTRY: list["_FallbackMetric"] = []
+    _REGISTRY: list[_FallbackMetric] = []
 
     # Same buckets prometheus_client uses by default for request durations.
     _DEFAULT_BUCKETS = (
@@ -67,17 +68,17 @@ except ImportError:  # pragma: no cover - only hit when prometheus_client is abs
         def _new_child(self) -> dict:  # pragma: no cover - overridden
             return {}
 
-        def labels(self, **kw: Any) -> "_Child":
+        def labels(self, **kw: Any) -> _Child:
             return _Child(self, self._key(kw))
 
-        def collect(self) -> "_FallbackMetric":
+        def collect(self) -> _FallbackMetric:
             # prometheus_client 兼容: 返回非 None 让测试能验证注册成功
             return self
 
     class _Child:
         """A label-bound view onto a metric."""
 
-        def __init__(self, metric: "_FallbackMetric", key: tuple) -> None:
+        def __init__(self, metric: _FallbackMetric, key: tuple) -> None:
             self._m = metric
             self._k = key
 
@@ -575,10 +576,8 @@ def get_usage_callback() -> Any:
 
 def track_tool_call(tool_name: str) -> None:
     """Increment the tool call counter."""
-    try:
+    with contextlib.suppress(Exception):
         TOOL_CALLS_TOTAL.labels(tool_name=tool_name).inc()
-    except Exception:
-        pass
 
 
 def track_llm_tps(model: str, ttft_ms: int, tps: float) -> None:
@@ -593,10 +592,8 @@ def track_llm_tps(model: str, ttft_ms: int, tps: float) -> None:
 
 def track_agent_turn(thread_id: str) -> None:
     """Increment the agent turn counter."""
-    try:
+    with contextlib.suppress(Exception):
         AGENT_TURNS_TOTAL.labels(thread_id=thread_id).inc()
-    except Exception:
-        pass
 
 
 def track_memory_rerank(strategy: str, n_candidates: int) -> None:
@@ -623,10 +620,8 @@ def track_crdt_merge(n_sources: int) -> None:
 
 def track_belief_update(btype: str) -> None:
     """P2-6: 记录 Bayesian belief update 触发 (gaussian/beta)."""
-    try:
+    with contextlib.suppress(Exception):
         BELIEF_UPDATE_TOTAL.labels(type=btype).inc()
-    except Exception:
-        pass
 
 
 def track_websocket_connection() -> None:

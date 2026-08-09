@@ -138,14 +138,13 @@ class EvolutionEngine:
                     self.rules = [EvolutionRule(**r) for r in data]
 
     def _save_rules(self) -> None:
-        with self._lock:
-            with self.rules_path.open("w", encoding="utf-8") as f:
-                json.dump(
-                    [self._rule_to_dict(r) for r in self.rules],
-                    f,
-                    ensure_ascii=False,
-                    indent=2,
-                )
+        with self._lock, self.rules_path.open("w", encoding="utf-8") as f:
+            json.dump(
+                [self._rule_to_dict(r) for r in self.rules],
+                f,
+                ensure_ascii=False,
+                indent=2,
+            )
 
     def _rule_to_dict(self, rule: EvolutionRule) -> dict[str, Any]:
         return {
@@ -168,14 +167,13 @@ class EvolutionEngine:
                 self.skills = [SkillTemplate(**s) for s in data]
 
     def _save_skills(self) -> None:
-        with self._lock:
-            with self.skills_path.open("w", encoding="utf-8") as f:
-                json.dump(
-                    [self._skill_to_dict(s) for s in self.skills],
-                    f,
-                    ensure_ascii=False,
-                    indent=2,
-                )
+        with self._lock, self.skills_path.open("w", encoding="utf-8") as f:
+            json.dump(
+                [self._skill_to_dict(s) for s in self.skills],
+                f,
+                ensure_ascii=False,
+                indent=2,
+            )
 
     def _skill_to_dict(self, skill: SkillTemplate) -> dict[str, Any]:
         return {

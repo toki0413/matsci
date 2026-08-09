@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
 import uuid
@@ -318,10 +319,10 @@ class EngineActMixin:
         import json as _json
 
         from huginn.autoloop.bandit import (
-            WorkflowBandit,
             VariantArchive,
-            compute_novelty,
+            WorkflowBandit,
             _objective_hash,
+            compute_novelty,
         )
         from huginn.autoloop.dynamic_workflow import (
             WorkflowOrchestrator,
@@ -491,10 +492,11 @@ Please modify the code to address this task."""
     ) -> dict[str, Any]:
         """Execute a workflow task, picking template by domain when possible."""
         try:
-            from huginn.workflows.templates import (
-                get_template, standard_dft_workflow,
-            )
             from huginn.types import ToolContext
+            from huginn.workflows.templates import (
+                get_template,
+                standard_dft_workflow,
+            )
 
             domain = self._classify_workflow_domain(description)
             template_name = self._DOMAIN_TEMPLATE_NAMES.get(domain, "standard_dft")
@@ -705,7 +707,9 @@ Please modify the code to address this task."""
         # Inkling 启发 — 连续旋钮, prompt 层实现, 对所有 provider 统一.
         # 无 _current_phase (非 phase 上下文调用, 如 _feynman_learn) 时不注入.
         from huginn.autoloop.engine import (
-            _PHASE_THINKING_EFFORT, _effort_to_prompt, _autoloop_streaming_enabled,
+            _PHASE_THINKING_EFFORT,
+            _autoloop_streaming_enabled,
+            _effort_to_prompt,
         )
         effort_directive = ""
         if self._current_phase:
@@ -746,14 +750,13 @@ Please modify the code to address this task."""
                         )
                 if _delta:
                     parts.append(_delta)
-                    try:
+                    with contextlib.suppress(Exception):
+                        # cb 失败不阻塞 LLM
                         await _cb({
                             "type": "autoloop_thinking",
                             "phase": self._current_phase or "decider",
                             "delta": _delta[:200],  # 截断防超大 delta
                         })
-                    except Exception:
-                        pass  # cb 失败不阻塞 LLM
             self._track_llm_usage(_usage_meta)
             return "".join(parts)
         except Exception as e:

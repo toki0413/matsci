@@ -10,6 +10,7 @@ import asyncio
 import json
 import tempfile
 from pathlib import Path
+
 from click.testing import CliRunner
 
 from huginn import visualize as evo_viz

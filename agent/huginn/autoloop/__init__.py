@@ -7,14 +7,18 @@ subsystems into a single cohesive agent.
 
 from __future__ import annotations
 
-from huginn.autoloop.engine import AutoloopEngine, AutoloopResult, LoopPhase
-from huginn.autoloop.engine import AUTOLOOP_PHASES
+from huginn.autoloop.conjecture import ConjectureGenerator, get_conjecture_generator
 from huginn.autoloop.engine import (
+    AUTOLOOP_PHASES,
+    AutoloopEngine,
+)
+from huginn.autoloop.types import (
+    AutoloopResult,
+    LoopPhase,
     load_autoloop_snapshot,
     objective_hash,
     save_autoloop_snapshot,
 )
-from huginn.autoloop.conjecture import ConjectureGenerator, get_conjecture_generator
 
 __all__ = [
     "AutoloopEngine",

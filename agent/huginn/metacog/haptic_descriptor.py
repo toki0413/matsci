@@ -14,6 +14,8 @@ ceiling: Voigt 上界偏高, 升级路径接 VRH 平均 (mechanics.ElasticTensor
 """
 from __future__ import annotations
 
+import contextlib
+
 import numpy as np
 
 from huginn.metacog.haptic_property_layer import HapticPropertyLayer
@@ -51,10 +53,8 @@ class HapticDescriptor(LatentSpace):
             if C.shape == (6, 6):
                 # 对称化防数值噪声 — Voigt 张量理应对称
                 C_sym = (C + C.T) / 2.0
-                try:
+                with contextlib.suppress(np.linalg.LinAlgError):
                     vec[0:6] = np.sort(np.linalg.eigvalsh(C_sym))
-                except np.linalg.LinAlgError:
-                    pass
             elif C.ndim == 1 and C.size >= 6:
                 # Voigt 6 向量直接取前 6 个
                 vec[0:6] = np.sort(C[:6])

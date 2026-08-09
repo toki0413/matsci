@@ -239,10 +239,10 @@ class SymbolIndex:
         class_re = re.compile(
             r"^\s*(?:export\s+)?(?:class|struct|interface)\s+(\w+)", re.M
         )
-        func_re = re.compile(
+        _GENERIC_FUNC_RE = re.compile(
             r"^\s*(?:export\s+)?(?:function|def|fn|func)\s+(\w+)\s*\(", re.M
         )
-        method_re = re.compile(r"^\s+(\w+)\s*\([^)]*\)\s*\{?\s*$", re.M)
+        _GENERIC_METHOD_RE = re.compile(r"^\s+(\w+)\s*\([^)]*\)\s*\{?\s*$", re.M)
 
         for match in class_re.finditer(source):
             line = source[: match.start()].count("\n") + 1

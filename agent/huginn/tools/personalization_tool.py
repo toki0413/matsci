@@ -15,6 +15,7 @@ tashan cognitive-profile 模式: 两层记忆 —
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 from dataclasses import asdict
@@ -144,8 +145,9 @@ class PersonalizationTool(HuginnTool[PersonalizationInput, PersonalizationOutput
         ponytail: provider/model 从 env 读, 不注入 client. 升级路径: 接受 llm 参数.
         """
         try:
-            from huginn.models.registry import create_langchain_model
             from langchain_core.messages import HumanMessage
+
+            from huginn.models.registry import create_langchain_model
         except ImportError:
             logger.warning("consolidate_profile: langchain 未安装, 跳过", exc_info=True)
             return None
@@ -401,9 +403,7 @@ def _selfcheck() -> None:
 
     tool = PersonalizationTool()
     with tempfile.TemporaryDirectory() as td:
-        from pathlib import Path as _P
-
-        db = str(_P(td) / "mem.db")
+        db = str(Path(td) / "mem.db")
         # 替换单例 + LLM, 跑完恢复
         global _memory_singleton, _memory_broken
         old_sin, old_brk = _memory_singleton, _memory_broken
@@ -440,10 +440,8 @@ def _selfcheck() -> None:
         finally:
             _memory_singleton, _memory_broken = old_sin, old_brk
             # 清理时间戳文件
-            try:
+            with contextlib.suppress(Exception):
                 tool._last_consolidation_path().unlink(missing_ok=True)
-            except Exception:
-                pass
 
 
 if __name__ == "__main__":

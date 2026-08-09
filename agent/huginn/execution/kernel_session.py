@@ -9,9 +9,10 @@ SWE-Vision 启发: 把"执行环境"当一等公民, 可查询状态 / 可重启
 
 from __future__ import annotations
 
+import contextlib
+import json
 import logging
 import os
-import json
 import subprocess
 import sys
 import tempfile
@@ -26,7 +27,6 @@ logger = logging.getLogger(__name__)
 
 # jupyter_client + ipykernel 都是可选的, 缺了走 subprocess 降级
 try:
-    import jupyter_client  # type: ignore
     import ipykernel  # type: ignore  # noqa: F401
 
     _JUPYTER_AVAILABLE = True
@@ -322,10 +322,8 @@ class KernelSession:
             except Exception:
                 logger.debug("shutdown kernel failed", exc_info=True)
         if self._state_file and os.path.exists(self._state_file):
-            try:
+            with contextlib.suppress(OSError):
                 os.remove(self._state_file)
-            except OSError:
-                pass
         self._started = False
         self._km = None
         self._kc = None

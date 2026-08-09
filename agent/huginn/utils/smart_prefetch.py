@@ -129,7 +129,7 @@ class SmartPrefetcher:
         for e in entries[-20:]:
             action = str(e.parameters.get("action", "")).lower()
             tool = (e.produced_by or "").lower()
-            fmt = (e.file_format or "").lower()
+            (e.file_format or "").lower()
             fname = Path(e.file_path).name.lower() if e.file_path else ""
 
             if "relax" in action or "relax" in tool:

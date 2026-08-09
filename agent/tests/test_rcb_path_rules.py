@@ -9,9 +9,9 @@ from __future__ import annotations
 import os
 
 from huginn.permissions import (
+    _DEFAULT_RCB_PATH_RULES,
     PermissionChecker,
     PermissionConfig,
-    _DEFAULT_RCB_PATH_RULES,
 )
 from huginn.types import PermissionMode
 

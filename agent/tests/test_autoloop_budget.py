@@ -24,7 +24,6 @@ import pytest
 from huginn.autoloop.budget import IterationBudget, ProgressiveBudget
 from huginn.autoloop.engine import AutoloopEngine
 
-
 # ── shared fixtures ──────────────────────────────────────────────────────────
 
 

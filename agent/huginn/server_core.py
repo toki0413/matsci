@@ -11,7 +11,7 @@ import logging
 import os
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -19,14 +19,13 @@ from huginn.agent import HuginnAgent
 from huginn.agents.factory import AgentFactory
 from huginn.agents.orchestrator import Orchestrator
 from huginn.autoloop.plan_store import PlanStore
-from huginn.config import HuginnConfig, get_config
+from huginn.config import get_config
 from huginn.memory.manager import MemoryConfig, MemoryManager
 from huginn.models.registry import ModelRegistry
 from huginn.permissions import PermissionMode
 from huginn.personas import PersonaManager
 from huginn.project_context import load_project_context
 from huginn.server_context import ServerContext, get_server_context
-from huginn.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -140,17 +139,17 @@ async def get_agent() -> HuginnAgent:
 
     try:
         get_context().agent = factory.create_lead()
-    except ImportError as e:
+    except ImportError:
         logger.warning("Missing dependency for configured model: {e}")
         logger.info("Falling back to mock mode (no LLM)")
         get_context().agent = HuginnAgent(model=None, memory_manager=memory_manager)
         get_context().agent.register_tools_from_registry()
-    except ValueError as e:
+    except ValueError:
         logger.warning("{e}")
         logger.info("Falling back to mock mode (no LLM)")
         get_context().agent = HuginnAgent(model=None, memory_manager=memory_manager)
         get_context().agent.register_tools_from_registry()
-    except Exception as e:
+    except Exception:
         logger.warning("Failed to initialize agent: {e}")
         logger.info("Falling back to mock mode (no LLM)")
         get_context().agent = HuginnAgent(model=None, memory_manager=memory_manager)
@@ -205,6 +204,7 @@ def _install_llm_vision_callback(agent: Any) -> None:
         hint='ocr_page' 时 prompt 侧重纯文字识别.
         """
         import base64
+
         from langchain_core.messages import HumanMessage
 
         b64 = base64.b64encode(image_bytes).decode("ascii")
@@ -499,7 +499,7 @@ def get_planner_agent() -> HuginnAgent:
         project_ctx = load_project_context(cfg.workspace)
         if project_ctx.strip():
             base_prompt = f"{base_prompt}\n\n# Project Context\n\n{project_ctx}"
-    except Exception as e:
+    except Exception:
         logger.info("[planner] project context warning: {e}")
 
     system_prompt = base_prompt + PLANNER_SUFFIX
@@ -515,7 +515,7 @@ def get_planner_agent() -> HuginnAgent:
         get_context().planner_agent = factory.create_lead(
             system_prompt_override=system_prompt
         )
-    except Exception as e:
+    except Exception:
         logger.warning("Failed to initialize planner model: {e}")
         get_context().planner_agent = HuginnAgent(
             model=None, system_prompt=system_prompt

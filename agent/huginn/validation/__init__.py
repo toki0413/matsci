@@ -9,14 +9,13 @@ validate_tool.py does `from huginn.validation.physics import PhysicsValidator`.
 """
 
 # physics also re-exports PhysicsAuditor/AuditReport/PhysicsFinding
-from huginn.validation.physics import (
+# PhysicsFinding/AuditReport/PhysicsAuditor live in execution/physics_auditor.py
+# (the canonical module); physics.py only holds PhysicsValidator/ValidationCheck.
+from huginn.execution.physics_auditor import (
     AuditReport,
     PhysicsAuditor,
     PhysicsFinding,
-    PhysicsValidator,
-    ValidationCheck,
 )
-from huginn.validation.handle_validator import HandleValidator
 from huginn.validation.dimensional import (
     DimensionalCheckResult,
     DimensionalValidator,
@@ -24,6 +23,11 @@ from huginn.validation.dimensional import (
     Unit,
     UnitRegistry,
     registry,
+)
+from huginn.validation.handle_validator import HandleValidator
+from huginn.validation.physics import (
+    PhysicsValidator,
+    ValidationCheck,
 )
 from huginn.validation.research import (
     RedTeamFinding,
@@ -35,7 +39,7 @@ from huginn.validation.research import (
 # Guard it so the rest of the package stays usable in minimal envs.
 _extra: list[str] = []
 try:
-    from huginn.validation.tool_output import (
+    from huginn.validation.tool_output import (  # noqa: F401
         ValidateTool,
         ValidateToolInput,
     )

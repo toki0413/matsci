@@ -118,7 +118,7 @@ class WorkflowBelief:
         return d
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "WorkflowBelief":
+    def from_dict(cls, d: dict[str, Any]) -> WorkflowBelief:
         return cls(
             variant_id=d["variant_id"],
             objective_hash=d["objective_hash"],
@@ -137,7 +137,7 @@ class WorkflowBelief:
 
 class WorkflowBandit:
     """Thompson sampling bandit. 冷启动随机选, 不断 _MIN_SAMPLES 门槛."""
-    _instance: "WorkflowBandit | None" = None
+    _instance: WorkflowBandit | None = None
     _lock = threading.Lock()
 
     def __init__(self) -> None:
@@ -153,7 +153,7 @@ class WorkflowBandit:
         self._load_all()
 
     @classmethod
-    def get_instance(cls) -> "WorkflowBandit":
+    def get_instance(cls) -> WorkflowBandit:
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:
@@ -260,7 +260,7 @@ class VariantArchive:
     存 .huginn/workflow_archive/<objective_hash>.json
     fitness = [r_phys, efficiency, novelty] (越大越好)
     """
-    _instance: "VariantArchive | None" = None
+    _instance: VariantArchive | None = None
     _lock = threading.Lock()
 
     def __init__(self) -> None:
@@ -274,7 +274,7 @@ class VariantArchive:
             logger.debug("workflow_archive dir create failed", exc_info=True)
 
     @classmethod
-    def get_instance(cls) -> "VariantArchive":
+    def get_instance(cls) -> VariantArchive:
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:

@@ -23,8 +23,8 @@ from __future__ import annotations
 
 import ast
 import datetime
+import logging
 import os
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -33,7 +33,7 @@ from huginn.api.context import PluginContext
 from huginn.api.event import Event, LLMRequestEvent
 from huginn.api.filter import filter
 from huginn.api.star import Star
-import logging
+
 logger = logging.getLogger(__name__)
 
 
@@ -341,27 +341,29 @@ def _audit_python_tree(tree: ast.AST, filename: str) -> list[str]:
                     )
 
         # Factory with single product
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            if "factory" in node.name.lower():
-                returns = [
-                    n for n in ast.walk(node)
-                    if isinstance(n, ast.Return) and isinstance(n.value, ast.Call)
-                ]
-                if len(returns) <= 1:
-                    findings.append(
-                        f"{filename}:{node.lineno} — '{node.name}' factory "
-                        f"creates ≤1 product (unnecessary indirection)"
-                    )
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and "factory" in node.name.lower():
+            returns = [
+                n for n in ast.walk(node)
+                if isinstance(n, ast.Return) and isinstance(n.value, ast.Call)
+            ]
+            if len(returns) <= 1:
+                findings.append(
+                    f"{filename}:{node.lineno} — '{node.name}' factory "
+                    f"creates ≤1 product (unnecessary indirection)"
+                )
 
         # Config dict for a value that never changes
         if isinstance(node, ast.Dict) and len(node.keys) <= 2:
             for key in node.keys:
-                if isinstance(key, ast.Constant) and isinstance(key.value, str):
-                    if key.value.lower() in {"timeout", "retries", "max_retries"}:
-                        findings.append(
-                            f"{filename}:{node.lineno} — config dict for "
-                            f"'{key.value}' (hardcode or use kwargs)"
-                        )
+                if (
+                    isinstance(key, ast.Constant)
+                    and isinstance(key.value, str)
+                    and key.value.lower() in {"timeout", "retries", "max_retries"}
+                ):
+                    findings.append(
+                        f"{filename}:{node.lineno} — config dict for "
+                        f"'{key.value}' (hardcode or use kwargs)"
+                    )
 
     return findings
 

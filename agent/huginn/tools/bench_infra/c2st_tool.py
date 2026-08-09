@@ -54,8 +54,8 @@ class C2STEvaluatorTool(HuginnTool):
 
         try:
             from sklearn.ensemble import RandomForestClassifier
+            from sklearn.metrics import accuracy_score, roc_auc_score
             from sklearn.model_selection import train_test_split
-            from sklearn.metrics import roc_auc_score, accuracy_score
         except ImportError as e:
             return ToolResult(
                 data=None, success=False,
@@ -78,9 +78,7 @@ class C2STEvaluatorTool(HuginnTool):
                 cur = stack.pop()
                 if isinstance(cur, list):
                     # 只收纯数值 list 或纯数值 2D list (元素全为数值 或 元素全为数值 list)
-                    if cur and all(_is_numeric(e) for e in cur):
-                        seen.append(cur)
-                    elif cur and all(
+                    if cur and all(_is_numeric(e) for e in cur) or cur and all(
                         isinstance(e, list) and e and all(_is_numeric(v) for v in e)
                         for e in cur
                     ):

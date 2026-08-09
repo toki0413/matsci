@@ -15,7 +15,6 @@ from __future__ import annotations
 import ast
 import json
 import logging
-import re
 import textwrap
 from dataclasses import dataclass
 from typing import Any
@@ -142,10 +141,7 @@ def sanity_check_judge(judge_script: str, known_answer: str) -> bool:
         ok_neg, _ = judge_fn("__definitely_wrong_answer_xyz__")
     except Exception:
         return False
-    if ok_neg is not False:
-        return False
-
-    return True
+    return ok_neg is False
 
 
 def to_benchmark_task(synth: SynthesizedTask) -> BenchmarkTask | None:

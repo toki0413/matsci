@@ -15,10 +15,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
-import numpy as np
-
 from huginn.types import ToolResult
-
 
 # NASA SP-8007 经验 knockdown 因子下界 (实际壳体有初始缺陷, 低于经典值)
 # 这里取一个偏保守的常数. 严格做法是按 (R/h, L/R) 查表, 这里简化.
@@ -74,7 +71,7 @@ def shell_buckling(args: Any) -> ToolResult:
                 bending = (n2 - 1.0 + lam2) ** 2
                 membrane = lam2 * (n2 + 1.0) ** 2 / (n2 - 1.0)
                 # 临界压力
-                p_mn = (E / (12.0 * (1.0 - nu**2))) * (h / R) ** 3 * (
+                (E / (12.0 * (1.0 - nu**2))) * (h / R) ** 3 * (
                     (n2 - 1.0) / (R * n2)
                 ) * (bending + membrane) / (n2 + lam2) ** 2
                 # 上面的公式有点绕, 换一个更标准的写法

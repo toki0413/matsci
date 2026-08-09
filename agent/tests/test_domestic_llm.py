@@ -2,16 +2,17 @@
 from __future__ import annotations
 
 import pytest
+
 pytest.importorskip("openai", reason="openai SDK not installed")
 
 """Tests for domestic / OpenAI-compatible LLM providers."""
 
-from typing import Any
+from typing import Any  # noqa: E402
 
-import pytest
+import pytest  # noqa: E402
 
-from huginn.config import HuginnConfig
-from huginn.models.registry import create_langchain_model
+from huginn.config import HuginnConfig  # noqa: E402
+from huginn.models.registry import create_langchain_model  # noqa: E402
 
 
 class _FakeChatOpenAI:

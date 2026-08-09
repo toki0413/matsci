@@ -92,10 +92,7 @@ class PermissionChecker:
         返回 True 表示全部通过, False 表示有缺 (调用方决定是跳过还是抛)。
         """
         perms = getattr(metadata, "permissions", []) or []
-        for perm in perms:
-            if not self.check(plugin_name, perm):
-                return False
-        return True
+        return all(self.check(plugin_name, perm) for perm in perms)
 
     def list_granted(self, plugin_name: str) -> list[str]:
         """列出某插件已授予的权限。调试用。"""

@@ -69,10 +69,7 @@ def meets_availability(
         return True
     if auth_state is None:
         auth_state = get_auth_state()
-    for condition in availability:
-        if auth_state.get(condition, False):
-            return True
-    return False
+    return any(auth_state.get(condition, False) for condition in availability)
 
 
 def filter_commands_by_availability(

@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -160,7 +161,7 @@ LUCID review (mandatory after generating hypothesis):
         ponytail: 重算 by_block 跟 apply_patches 内部逻辑重复, 但避免改
         apply_patches 返回签名. 升级路径: apply_patches 返回 (blocks, ids).
         """
-        from huginn.harness.prompt_patch import apply_patches, PromptPatchStore
+        from huginn.harness.prompt_patch import PromptPatchStore, apply_patches
         new_blocks = apply_patches(blocks, phase)
         # 记录原始 blocks 供 _generate_next_loop_directive 调 generate_patch 用
         # (generate_patch 需要看 block 名字 + 内容才能生成合理 patch)
@@ -443,10 +444,8 @@ LUCID review (mandatory after generating hypothesis):
 
             # persona: 用 .get (PersonaManager 真实 API), get_persona 不存在.
             persona_obj = None
-            try:
+            with contextlib.suppress(Exception):
                 persona_obj = self._get_persona_manager().get("default")
-            except Exception:
-                pass
 
             last_eval = self._evals_history[-1] if self._evals_history else None
             kb = self._get_kb()
@@ -577,10 +576,11 @@ LUCID review (mandatory after generating hypothesis):
         if self._hypo_manifold is not None:
             return self._hypo_manifold
         try:
-            from huginn.metacog.hypothesis_manifold import (
-                HypothesisManifold, Hypothesis,
-            )
             from huginn.agent.hint_coordinator import extract_numeric_targets
+            from huginn.metacog.hypothesis_manifold import (
+                Hypothesis,
+                HypothesisManifold,
+            )
 
             text_pool = " ".join(
                 str(v) for v in (context or {}).values() if isinstance(v, (str, int, float))
@@ -592,15 +592,13 @@ LUCID review (mandatory after generating hypothesis):
                 ("h_partial", "Result partially reproduces the signal", 0.5, 3),
                 ("h_null", "No signal / null baseline", 0.0, 1),
             ):
-                try:
+                with contextlib.suppress(ValueError):
                     manifold.add(Hypothesis(
                         h_id=hid,
                         description=desc,
                         predictions={k: v * scale for k, v in targets.items()},
                         n_params=n,
                     ))
-                except ValueError:
-                    pass
             self._hypo_manifold = manifold
         except Exception:
             logger.debug("hypo manifold init failed (non-fatal)", exc_info=True)
@@ -667,7 +665,8 @@ LUCID review (mandatory after generating hypothesis):
                 str(v) for v in context.values() if isinstance(v, (str, int, float))
             )
             from huginn.agent.hint_coordinator import (
-                extract_observations, _build_posterior_guided_hint,
+                _build_posterior_guided_hint,
+                extract_observations,
             )
             _obs = extract_observations(text_pool)
             if _manifold is not None and _obs:
@@ -776,7 +775,7 @@ LUCID review (mandatory after generating hypothesis):
                     _stmt = (nd.statement or "")[:100]
                     _lines.append(f"- [{nd.id}] {_stmt}")
                 frontier_block = (
-                    f"\n### Untested Hypotheses (Ising-ranked, energy-low)\n"
+                    "\n### Untested Hypotheses (Ising-ranked, energy-low)\n"
                     + "\n".join(_lines) + "\n"
                     "Consider testing one of these before generating a new hypothesis.\n"
                 )
@@ -788,9 +787,9 @@ LUCID review (mandatory after generating hypothesis):
         failed_block = ""
         proved_block = ""
         try:
-            from huginn.autoloop.hypothesis_loop import HypothesisGraph as _HG0
+            from huginn.autoloop.hypothesis_loop import HypothesisGraph
             _ws = str(self.workspace) if hasattr(self, "workspace") else None
-            _failed_txt = _HG0.load_failed(_ws)
+            _failed_txt = HypothesisGraph.load_failed(_ws)
             if _failed_txt:
                 _failed_lines = _failed_txt.strip().split("\n")[:40]
                 failed_block = (
@@ -798,7 +797,7 @@ LUCID review (mandatory after generating hypothesis):
                     + "\n".join(_failed_lines) + "\n"
                     "Do NOT re-attempt these unless the Reopen-if condition is met.\n"
                 )
-            _proved_txt = _HG0.load_proved(_ws)
+            _proved_txt = HypothesisGraph.load_proved(_ws)
             if _proved_txt:
                 _proved_lines = _proved_txt.strip().split("\n")[:40]
                 proved_block = (
@@ -855,8 +854,8 @@ LUCID review (mandatory after generating hypothesis):
                     _stmt = nodes[0].statement[:120] if nodes else ""
                     lines.append(f"  - {dim} ({len(nodes)} 个假设): {_stmt}")
                 cluster_block = (
-                    f"\n### Cluster (advisory)\n"
-                    f"当前假设按 dimension 分布:\n"
+                    "\n### Cluster (advisory)\n"
+                    "当前假设按 dimension 分布:\n"
                     + "\n".join(lines)
                     + "\n新假设应优先补未覆盖的 dimension, 避免在已饱和维度堆叠.\n"
                 )

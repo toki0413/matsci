@@ -1,10 +1,9 @@
 """Tests for LP / MILP / convex optimization in numerical_tool."""
 from __future__ import annotations
 
-import numpy as np
 import pytest
 
-from huginn.tools.numerical_tool import NumericalTool, NumericalToolInput
+from huginn.tools.numerical_tool import NumericalTool
 from huginn.types import ToolResult
 
 

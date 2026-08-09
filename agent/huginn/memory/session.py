@@ -6,13 +6,15 @@ Automatically compacts when context grows too large.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Callable
+from typing import Any
 
 from huginn.types import AgentMessage, ToolResult
 
@@ -171,16 +173,14 @@ class SessionContext:
         # 记最近一次 summarize 时间, 给前端 Memory 层级面板显示
         self.last_summarize_at = datetime.now().isoformat()
         if self.episodic_sink is not None:
-            try:
+            with contextlib.suppress(Exception):
                 self.episodic_sink(summary, {
                     "source": "wm_sliding_window",
                     "session_id": self.session_id,
                     "summarized_count": len(to_summarize),
-                })
-            except Exception:
-                pass  # EM sink 失败不阻塞 session
+                })  # EM sink 失败不阻塞 session
         # summary 作为 system message 注回, 让后续 LLM 看到压缩上下文
-        from huginn.types import AgentMessage as _AM
+        from huginn.types import AgentMessage as _AM  # noqa: N814
         summary_msg = _AM(
             role="system",
             content=f"[Compacted context summary]\n{summary}",
@@ -337,6 +337,7 @@ def _run_c1_selfcheck() -> None:
     - episodic_sink 回调被调用
     """
     import os as _os
+
     from huginn.types import AgentMessage
 
     # ── 非极限模式: summaries 应始终空, 走原 max_messages 逻辑 ──

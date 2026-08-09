@@ -31,8 +31,8 @@ def buckling(args: Any) -> ToolResult:
     material = args.material
     E = material["E"]
     nu = material["nu"]
-    rho = material.get("rho", 7850.0)
-    thickness = material.get("thickness", 1.0)
+    material.get("rho", 7850.0)
+    material.get("thickness", 1.0)
 
     lam, mu = plane_stress(E, nu)
 

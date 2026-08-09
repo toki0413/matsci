@@ -183,7 +183,7 @@ class EquivalenceAuditor:
     ) -> EquivalenceVerdict:
         """规则审计: 扫描已知陷阱模式."""
         cand_lower = candidate.lower()
-        prob_lower = problem.lower()
+        problem.lower()
         red_lower = (reduction or "").lower()
 
         for pattern in _TRAP_PATTERNS:

@@ -186,6 +186,7 @@ if __name__ == "__main__" and "--self-check" in __import__("sys").argv:
     import shutil
     import sys as _sys
     import tempfile
+
     from huginn.types import ToolContext
 
     _tmp = Path(tempfile.mkdtemp(prefix="pim_tool_selfcheck_"))
@@ -211,8 +212,8 @@ if __name__ == "__main__" and "--self-check" in __import__("sys").argv:
             iid = r1.data["intention_id"]
 
             # 2. list_pending 应该看到它
-            l = ListPendingIntentionsTool()
-            r2 = await l.call(await _in(l, {}), _ctx)
+            tool = ListPendingIntentionsTool()
+            r2 = await tool.call(await _in(tool, {}), _ctx)
             assert r2.success and r2.data["count"] == 1, r2
             assert r2.data["pending"][0]["intention_id"] == iid, r2
             assert r2.data["pending"][0]["priority"] == 7, r2
@@ -221,7 +222,7 @@ if __name__ == "__main__" and "--self-check" in __import__("sys").argv:
             c = CancelIntentionTool()
             r3 = await c.call(await _in(c, {"intention_id": iid}), _ctx)
             assert r3.success and r3.data["cancelled"], r3
-            r4 = await l.call(await _in(l, {}), _ctx)
+            r4 = await tool.call(await _in(tool, {}), _ctx)
             assert r4.data["count"] == 0, r4
 
             # 4. cancel 不存在的 id 应失败但不抛异常

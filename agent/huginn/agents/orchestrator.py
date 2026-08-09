@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import uuid
 import warnings
 from dataclasses import dataclass, field
@@ -17,7 +18,7 @@ from huginn.agents.factory import AgentFactory
 from huginn.autoloop.plan_store import Plan, PlanStep, PlanStore
 from huginn.memory.longterm import LongTermMemory
 from huginn.memory.manager import MemoryManager
-import logging
+
 logger = logging.getLogger(__name__)
 
 

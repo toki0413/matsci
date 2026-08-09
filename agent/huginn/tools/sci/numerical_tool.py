@@ -561,12 +561,12 @@ class NumericalTool(HuginnTool):
     def _milp(self, args: NumericalToolInput) -> ToolResult:
         """Solve MILP: minimize c@x with linear constraints and integer variables."""
         try:
-            from scipy.optimize import milp, LinearConstraint, Bounds
+            from scipy.optimize import Bounds, LinearConstraint, milp
         except ImportError:
             return self._milp_fallback_pulp(args)
 
         c = np.asarray(args.c_vec, dtype=float)
-        n = len(c)
+        len(c)
 
         constraints = []
         if args.A_ub is not None and args.b_ub is not None:
@@ -595,7 +595,7 @@ class NumericalTool(HuginnTool):
                 integrality=integrality,
                 bounds=bounds,
             )
-        except Exception as e:
+        except Exception:
             return self._milp_fallback_pulp(args)
 
         if res.success:
@@ -690,7 +690,7 @@ class NumericalTool(HuginnTool):
             )
 
         problem_str = args.convex_problem or ""
-        lines = [l.strip() for l in problem_str.strip().splitlines() if l.strip()]
+        lines = [line.strip() for line in problem_str.strip().splitlines() if line.strip()]
 
         if not lines:
             return ToolResult(data=None, success=False, error="Empty convex problem.")

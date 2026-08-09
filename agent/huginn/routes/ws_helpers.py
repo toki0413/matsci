@@ -8,6 +8,7 @@ hoisted to module level with explicit parameter signatures.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import uuid
@@ -272,10 +273,8 @@ async def _stream_agent_response(
                 logger.debug("WS closed mid-stream, stopping sends")
                 # actively close so the client gets a close event
                 # instead of waiting for TCP timeout
-                try:
+                with contextlib.suppress(Exception):
                     await websocket.close()
-                except Exception:
-                    pass
 
         # let tools push progress events back through the same WS
         progress_cb.set(_ws_send)
@@ -432,7 +431,6 @@ async def _stream_agent_response(
 
                         # Emit governance event for this tool call
                         try:
-                            from huginn.ontology.actions import get_action_type, ActionCategory
                             from huginn.governance import get_governance
                             gov = get_governance()
                             ctx = {"tool_name": name, "args": tc.get("args", {})}
@@ -827,22 +825,16 @@ async def _handle_user_input(
         "state of the art", "recent advances in",
         "compare.*methods", "benchmark.*approaches",
     )
-    if any(kw in _content_lower for kw in ("/research", "research mode")):
-        if hasattr(agent, "set_mode"):
-            agent.set_mode("research")
-    elif any(s in _content_lower for s in _research_signals[:6]) and len(content) > 40:
-        if hasattr(agent, "set_mode"):
-            agent.set_mode("research")
+    if (any(kw in _content_lower for kw in ("/research", "research mode")) or any(s in _content_lower for s in _research_signals[:6]) and len(content) > 40) and hasattr(agent, "set_mode"):
+        agent.set_mode("research")
 
     # ── Research mode ──
     if hasattr(agent, "is_research_mode") and agent.is_research_mode():
-        try:
+        with contextlib.suppress(ImportError):
             from huginn.research_workflow import (
                 ResearchWorkflow,
                 ResearchWorkflowConfig,
             )
-        except ImportError:
-            pass
         try:
             research_config = ResearchWorkflowConfig(
                 max_concurrent_branches=3,

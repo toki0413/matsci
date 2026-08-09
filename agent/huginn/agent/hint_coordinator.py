@@ -592,7 +592,9 @@ if __name__ == "__main__":
     # === v15 Phase 2 Task 4: posterior-guided hint ===
     # 用真 HypothesisManifold 验证: hint 非空 + ≤1500 chars + 失败降级 + coordinate 注入.
     from huginn.metacog.hypothesis_manifold import (
-        HypothesisManifold, Hypothesis, Observation,
+        Hypothesis,
+        HypothesisManifold,
+        Observation,
     )
 
     _m = HypothesisManifold()

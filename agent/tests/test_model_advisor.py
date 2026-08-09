@@ -12,7 +12,6 @@ from huginn.advisor.knowledge import (
 )
 from huginn.advisor.model_advisor import ModelAdvisor, Recommendation
 
-
 # ── ModelProfile and knowledge base ──────────────────────────────────
 
 
@@ -186,8 +185,9 @@ class TestModelAdvisor:
 
 pytest.importorskip("mcp", reason="MCP SDK not installed (pip install mcp)")
 
-from fastapi.testclient import TestClient
-from huginn.server import app
+from fastapi.testclient import TestClient  # noqa: E402
+
+from huginn.server import app  # noqa: E402
 
 _client = TestClient(app)
 

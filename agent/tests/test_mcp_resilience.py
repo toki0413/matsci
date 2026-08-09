@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -11,16 +9,15 @@ import pytest
 pytest.importorskip("mcp", reason="MCP SDK not installed (pip install mcp)")
 
 from huginn.mcp_client import (
-    MCPClientManager,
-    MCPServerConfig,
-    MCPToolInfo,
     _BACKOFF_BASE,
     _BACKOFF_FACTOR,
     _BACKOFF_MAX,
     _HEALTH_CHECK_INTERVAL,
     _MAX_RECONNECT_ATTEMPTS,
+    MCPClientManager,
+    MCPServerConfig,
+    MCPToolInfo,
 )
-
 
 # ── Helpers ──────────────────────────────────────────────────────
 

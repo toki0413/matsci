@@ -12,6 +12,7 @@ POST /eval/analyze  — cluster failures by pattern from past runs
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import time
@@ -53,8 +54,8 @@ async def eval_run(params: dict[str, Any]) -> dict[str, Any]:
       goal: str — custom objective for GoalJudge (default: benchmark summary)
     """
     from huginn.evaluation.matworld_bench import MatWorldBench
-    from huginn.validation.grader import default_registry
     from huginn.telemetry import TelemetryCollector, save_trajectory
+    from huginn.validation.grader import default_registry
 
     run_id = f"eval_{int(time.time())}_{uuid.uuid4().hex[:6]}"
     collector = TelemetryCollector()
@@ -156,10 +157,8 @@ async def eval_run(params: dict[str, Any]) -> dict[str, Any]:
         # Use verification model if available, else pass None for rule-based
         judge_llm = None
         if agent is not None and getattr(agent, "model_router", None):
-            try:
+            with contextlib.suppress(Exception):
                 judge_llm = agent.model_router.select_verification()
-            except Exception:
-                pass
 
         judge = GoalJudge(llm=judge_llm)
         final_output = f"Benchmark pass rate: {n_pass}/{n_total} ({n_pass/n_total*100:.1f}%)\n"

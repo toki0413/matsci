@@ -12,7 +12,6 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from huginn.hooks import HookContext
 from huginn.provenance.pipeline import PipelineStage

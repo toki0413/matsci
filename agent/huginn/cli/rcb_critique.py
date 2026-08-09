@@ -9,7 +9,8 @@ from __future__ import annotations
 import difflib
 import json
 import logging
-from dataclasses import dataclass, field as _dc_field
+from dataclasses import dataclass
+from dataclasses import field as _dc_field
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -219,7 +220,7 @@ def _template_critique_decision(decision: Decision, context: dict[str, Any]) -> 
             red_flags.append(f"to phase '{decision.to}' not in {_VALID_PHASES}")
         # 7-phase pipeline: 只能向前走或回 perceive, 不能跳过 execute → report
         if decision.frm in _VALID_PHASES and decision.to in _VALID_PHASES:
-            phases_order = list(_VALID_PHASES)
+            list(_VALID_PHASES)
             # report 不能跳回 execute (除非显式 force)
             if decision.frm == "report" and decision.to == "execute" and not context.get("force"):
                 red_flags.append("report → execute backtrack without force=True")

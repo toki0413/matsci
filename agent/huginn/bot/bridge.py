@@ -163,9 +163,8 @@ class BotBridge:
         is_group = info["is_group"]
 
         # 群消息: 检查白名单
-        if is_group and self.config.allowed_groups:
-            if group_id not in self.config.allowed_groups:
-                return None
+        if is_group and self.config.allowed_groups and group_id not in self.config.allowed_groups:
+            return None
 
         # 群消息: 检查是否 @了机器人 (bot_id 为空时不限制)
         if is_group and self.config.bot_id:

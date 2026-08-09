@@ -30,7 +30,7 @@ from typing import Any
 _CACHE_DIR = Path(tempfile.mkdtemp(prefix="mini_rot_huginn_"))
 os.environ["HUGINN_CACHE_DIR"] = str(_CACHE_DIR)
 
-import numpy as np
+import numpy as np  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -284,7 +284,7 @@ def _check_angle_invariance(answer: str, struct_name: str) -> bool:
     from huginn.metacog.structure_cognitive_map import StructureCognitiveMap
     m = StructureCognitiveMap.from_cif(_MOCK_CIFS[struct_name])
     # 加一个虚拟第三原子
-    inv = np.linalg.inv(m.lattice)
+    np.linalg.inv(m.lattice)
     third_cart = np.array([1.0, 0.0, 0.0]) @ m.lattice
     m2 = m.add_atom("X", third_cart)
     expected = m2.query_angle(0, 1, 2)  # Na-Cl-X
@@ -311,8 +311,9 @@ def _hard_map(struct_name: str):
     """用 from_coords 构造 hard structure, atom index 确定.
     ponytail: 不用 from_cif 避免 pymatgen atom 重排导致 index 错位.
     """
-    from huginn.metacog.structure_cognitive_map import StructureCognitiveMap
     import numpy as np
+
+    from huginn.metacog.structure_cognitive_map import StructureCognitiveMap
     lat10 = np.array([[10, 0, 0], [0, 10, 0], [0, 0, 10]], dtype=float)
     if struct_name == "CH4":
         return StructureCognitiveMap.from_coords(
@@ -443,11 +444,11 @@ _HARD_QUESTIONS = [
 
 async def _run_agent(question: str, cif_str: str) -> str:
     """用 HuginnAgent (CodeAct + DeepSeek) 跑一道题."""
-    from huginn.config import HuginnConfig
-    from huginn.models.registry import ModelRegistry
     from huginn.agent import Agent
-    from huginn.memory.manager import MemoryManager
+    from huginn.config import HuginnConfig
     from huginn.memory.longterm import LongTermMemory
+    from huginn.memory.manager import MemoryManager
+    from huginn.models.registry import ModelRegistry
 
     hcfg = HuginnConfig.from_env()
     registry = ModelRegistry.from_config(hcfg)
@@ -506,7 +507,7 @@ def _extract_answer(agent_response: str) -> str:
         if line.startswith("ANSWER:"):
             return line[len("ANSWER:"):].strip()
     # 没找到 ANSWER 标记, 取最后一行非空
-    lines = [l.strip() for l in agent_response.splitlines() if l.strip()]
+    lines = [ln.strip() for ln in agent_response.splitlines() if ln.strip()]
     return lines[-1] if lines else ""
 
 

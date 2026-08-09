@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 import asyncio
-import os
+import contextlib
 import tempfile
 import time
 from pathlib import Path
@@ -25,15 +25,14 @@ import pytest
 def _get_full_agent_source() -> str:
     """Collect source from HuginnAgent and all its mixin bases."""
     import inspect
+
     from huginn.agent import HuginnAgent
     parts = []
     for cls in HuginnAgent.__mro__:
         if cls is object:
             continue
-        try:
+        with contextlib.suppress(TypeError, OSError):
             parts.append(inspect.getsource(cls))
-        except (TypeError, OSError):
-            pass
     return "\n".join(parts)
 
 
@@ -44,8 +43,8 @@ class TestSeveritySystem:
     """验证 severity 四级系统."""
 
     def test_block_sets_blocking_severity(self):
-        from huginn.hooks.science_hooks import _block
         from huginn.hooks import HookContext
+        from huginn.hooks.science_hooks import _block
 
         ctx = HookContext(
             tool_name="vasp_tool",
@@ -59,8 +58,8 @@ class TestSeveritySystem:
         assert ctx.metadata["blocked_by_hook"] is True
 
     def test_warn_accepts_severity(self):
-        from huginn.hooks.science_hooks import _warn
         from huginn.hooks import HookContext
+        from huginn.hooks.science_hooks import _warn
 
         ctx = HookContext(
             tool_name="vasp_tool",
@@ -77,8 +76,8 @@ class TestSeveritySystem:
         assert warnings[1]["severity"] == "info"
 
     def test_warn_default_severity_is_minor(self):
-        from huginn.hooks.science_hooks import _warn
         from huginn.hooks import HookContext
+        from huginn.hooks.science_hooks import _warn
 
         ctx = HookContext(
             tool_name="vasp_tool",
@@ -96,6 +95,7 @@ class TestMaxRefines:
 
     def test_run_accepts_max_refines(self):
         import inspect
+
         from huginn.autoloop.engine import AutoloopEngine
 
         sig = inspect.signature(AutoloopEngine.run_cognitive)
@@ -127,8 +127,6 @@ class TestSyntheticContinue:
 
     def test_pending_messages_attr(self):
         """agent.py 中有 _pending_synthetic_messages 的消费逻辑."""
-        import inspect
-        from huginn.agent import HuginnAgent
 
         src = _get_full_agent_source()
         assert "_pending_synthetic_messages" in src
@@ -162,7 +160,7 @@ class TestProvenanceSQLite:
         store.close()
 
     def test_save_and_find(self):
-        from huginn.provenance.registry import _ProvenanceStore, ProvenanceEntry
+        from huginn.provenance.registry import ProvenanceEntry, _ProvenanceStore
 
         store = _ProvenanceStore(":memory:")
         entry = ProvenanceEntry(
@@ -185,7 +183,7 @@ class TestProvenanceSQLite:
         store.close()
 
     def test_find_by_tool(self):
-        from huginn.provenance.registry import _ProvenanceStore, ProvenanceEntry
+        from huginn.provenance.registry import ProvenanceEntry, _ProvenanceStore
 
         store = _ProvenanceStore(":memory:")
         for i in range(3):
@@ -199,7 +197,7 @@ class TestProvenanceSQLite:
         store.close()
 
     def test_lineage(self):
-        from huginn.provenance.registry import _ProvenanceStore, ProvenanceEntry
+        from huginn.provenance.registry import ProvenanceEntry, _ProvenanceStore
 
         store = _ProvenanceStore(":memory:")
         store.save(ProvenanceEntry(
@@ -220,7 +218,7 @@ class TestProvenanceSQLite:
         store.close()
 
     def test_cleanup_old(self):
-        from huginn.provenance.registry import _ProvenanceStore, ProvenanceEntry
+        from huginn.provenance.registry import ProvenanceEntry, _ProvenanceStore
 
         store = _ProvenanceStore(":memory:")
         old_time = time.time() - 31 * 86400
@@ -241,7 +239,7 @@ class TestProvenanceSQLite:
 
     def test_save_find_roundtrip(self):
         """验证 save → find 的完整往返, 覆盖 from_row 重建逻辑."""
-        from huginn.provenance.registry import _ProvenanceStore, ProvenanceEntry
+        from huginn.provenance.registry import ProvenanceEntry, _ProvenanceStore
 
         store = _ProvenanceStore(":memory:")
         store.save(ProvenanceEntry(
@@ -307,8 +305,11 @@ class TestFileSnapshot:
         assert s1 is s2
 
     def test_module_imports(self):
-        from huginn.snapshot.file_snapshot import FileSnapshot, FilePatch, SnapshotManager
-        from huginn.snapshot.integration import snapshot_pre_hook, snapshot_post_hook
+        from huginn.snapshot.file_snapshot import (
+            FilePatch,
+            FileSnapshot,
+        )
+        from huginn.snapshot.integration import snapshot_pre_hook
         assert FileSnapshot is not None
         assert FilePatch is not None
         assert snapshot_pre_hook is not None
@@ -348,7 +349,10 @@ class TestSubagentDispatch:
     """验证子 agent 隔离分发系统."""
 
     def test_module_imports(self):
-        from huginn.agents.subagent import SubagentDispatch, SubagentSpec, SubagentResult
+        from huginn.agents.subagent import (
+            SubagentDispatch,
+            SubagentSpec,
+        )
         assert SubagentDispatch is not None
         assert SubagentSpec is not None
 
@@ -388,7 +392,9 @@ class TestPolicyEngine:
     """验证声明式安全策略引擎."""
 
     def test_module_imports(self):
-        from huginn.security.policy_engine import PolicyEngine, PolicyRule, PolicyDecision
+        from huginn.security.policy_engine import (
+            PolicyEngine,
+        )
         assert PolicyEngine is not None
 
     def test_singleton(self):
@@ -433,8 +439,8 @@ class TestEventBus:
     """验证事件总线 + SSE."""
 
     def test_module_imports(self):
-        from huginn.events import EventBus, AgentEvent
-        from huginn.events.event_types import TOOL_CALL, TOOL_RESULT
+        from huginn.events import EventBus
+        from huginn.events.event_types import TOOL_CALL
         assert EventBus is not None
         assert TOOL_CALL == "tool.call"
 
@@ -446,7 +452,7 @@ class TestEventBus:
         assert b1 is b2
 
     async def test_publish_and_subscribe(self):
-        from huginn.events import EventBus, AgentEvent
+        from huginn.events import AgentEvent, EventBus
 
         bus = EventBus.shared()
         received = []
@@ -480,7 +486,7 @@ class TestEventBus:
 
     async def test_sse_stream_receives_event(self):
         """验证 SSE stream 能收到事件 (先消费再发布)."""
-        from huginn.events import EventBus, AgentEvent
+        from huginn.events import AgentEvent, EventBus
 
         bus = EventBus.shared()
 
@@ -518,11 +524,10 @@ class TestEventBus:
             task.cancel()
 
     async def test_audit_log(self, monkeypatch):
-        import tempfile
         d = tempfile.mkdtemp()
         monkeypatch.setenv("HUGINN_CACHE_DIR", d)
+        from huginn.events import AgentEvent, EventBus
         from huginn.events.audit_log import install_audit_subscriber
-        from huginn.events import EventBus, AgentEvent
 
         install_audit_subscriber()
         bus = EventBus.shared()
@@ -539,8 +544,8 @@ class TestEventBus:
 
     def test_integration_helpers(self):
         from huginn.events.integration import (
-            publish_tool_event_sync,
             publish_compact_event_sync,
+            publish_tool_event_sync,
         )
         # 不应该崩
         publish_tool_event_sync("vasp_tool", {"action": "relax"}, {"energy": -10}, "test")

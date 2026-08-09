@@ -13,6 +13,7 @@ ponytail: optional 依赖, 包未安装时降级 log warning 不 raise (跟 ml_p
 """
 from __future__ import annotations
 
+import contextlib
 import logging
 from dataclasses import dataclass
 from typing import Any
@@ -211,6 +212,7 @@ def _unwrap_result(result: Any):
 def _cif_to_atoms(cif: str):
     """CIF string → ase.Atoms."""
     from io import StringIO
+
     from ase.io import read as ase_read
     return ase_read(StringIO(cif), format="cif")
 
@@ -223,18 +225,17 @@ def _atoms_to_cif(atoms) -> str:
     """
     import os
     import tempfile
+
     from ase.io import write as ase_write
     fd, path = tempfile.mkstemp(suffix=".cif")
     try:
         os.close(fd)
         ase_write(path, atoms, format="cif")
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             return f.read()
     finally:
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(path)
-        except OSError:
-            pass
 
 
 def _selfcheck() -> None:

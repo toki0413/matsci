@@ -18,11 +18,11 @@ response.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 
-class ResearchPhase(str, Enum):
+class ResearchPhase(StrEnum):
     """Coarse-grained research workflow phases."""
 
     LITERATURE = "literature"
@@ -187,7 +187,7 @@ PHASE_TRANSITIONS: dict[ResearchPhase, set[ResearchPhase]] = {
         ResearchPhase.VALIDATION,  # Re-analyze
         ResearchPhase.OPEN,
     },
-    ResearchPhase.OPEN: {p for p in ResearchPhase},  # Can go anywhere from OPEN
+    ResearchPhase.OPEN: set(ResearchPhase),  # Can go anywhere from OPEN
 }
 
 

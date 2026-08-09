@@ -25,7 +25,6 @@ from typing import Any
 
 from huginn.utils.common import hash_text
 
-
 # 同工具同参数连续命中多少次算循环
 _SAME_PARAMS_THRESHOLD = 3
 

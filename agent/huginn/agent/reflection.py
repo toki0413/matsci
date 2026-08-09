@@ -303,10 +303,10 @@ class ReflectionMixin:
                     # G7: evolution 学新规则后让 CSM 重新探索 (新规则可能改路径)
                     if _new_rules:
                         try:
-                            from huginn.cognitive_engine import TransitionSignal as _TS
+                            from huginn.cognitive_engine import TransitionSignal
 
                             self._csm.transition(
-                                _TS(
+                                TransitionSignal(
                                     "evolution_rule_learned",
                                     {
                                         "count": len(_new_rules),
@@ -325,10 +325,10 @@ class ReflectionMixin:
             try:
                 sig_type = reflection.to_transition_signal()
                 if sig_type:
-                    from huginn.cognitive_engine import TransitionSignal as TS
+                    from huginn.cognitive_engine import TransitionSignal
 
                     new_state = self._csm.transition(
-                        TS(
+                        TransitionSignal(
                             sig_type,
                             {
                                 "tool_name": tr.get("tool_name", ""),
@@ -364,7 +364,7 @@ class ReflectionMixin:
                         and self._has_substantive_gap(reflection)
                     ):
                         new_state = self._csm.transition(
-                            TS("gap_found", {"gap": getattr(reflection, "message", "")})
+                            TransitionSignal("gap_found", {"gap": getattr(reflection, "message", "")})
                         )
                     # S7 状态: 调 meta critique 评估 proposal, accept→stable_principle / reject→rejection log
                     # S7 是 meta 状态, RCB 场景也不触发 compaction (与 S3/S6 不同)
@@ -624,10 +624,10 @@ class ReflectionMixin:
         # 升级: subscribe + 异步队列实时驱动; 缺点是跨 async 边界事件可能丢.
         try:
             from huginn.events import (
-                EventBus,
-                CONTEXT_OVERFLOW,
                 COMPACT_START,
+                CONTEXT_OVERFLOW,
                 TOOL_ERROR,
+                EventBus,
             )
         except ImportError:
             return
@@ -658,9 +658,9 @@ class ReflectionMixin:
                 # ponytail: 保留 v3 逻辑骨架作 fallback, 只改信号构造走 Hub;
                 # 升级路径是 SignalHub 直接调 csm.transition, 删 fallback.
                 if sig is None:
-                    from huginn.cognitive_engine import TransitionSignal as TS
+                    from huginn.cognitive_engine import TransitionSignal
 
-                    sig = TS("context_overflow", payload)
+                    sig = TransitionSignal("context_overflow", payload)
                 csm.transition(sig)
                 all_ts = [e.timestamp for e in overflow_events] + [
                     e.timestamp for e in tool_errors
@@ -709,9 +709,9 @@ class ReflectionMixin:
                 # ponytail: 保留 v3 逻辑骨架作 fallback, 只改信号构造走 Hub;
                 # 升级路径是 SignalHub 直接调 csm.transition, 删 fallback.
                 if sig is None:
-                    from huginn.cognitive_engine import TransitionSignal as TS
+                    from huginn.cognitive_engine import TransitionSignal
 
-                    sig = TS("belief_high", payload)
+                    sig = TransitionSignal("belief_high", payload)
                 csm.transition(sig)
         except Exception:
             logger.debug("belief_entropy signal check failed", exc_info=True)

@@ -14,7 +14,7 @@ import sqlite3
 import sys
 import time
 import uuid
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -1004,7 +1004,7 @@ class LongTermMemory:
                         pass
                 # Fallback to LIKE if FTS5 unavailable or query failed
                 if not fts_matched:
-                    sql += f" AND content LIKE ?"
+                    sql += " AND content LIKE ?"
                     params.append(f"%{query}%")
                     sql += f" ORDER BY {_TYPED_FIRST}, {_TIER_ORDER}, importance DESC, access_count DESC LIMIT ?"
                     params.append(fetch_k)
@@ -1516,7 +1516,8 @@ class LongTermMemory:
         ):
             try:
                 from huginn.memory.cluster import (
-                    cluster_memories, compress_clusters,
+                    cluster_memories,
+                    compress_clusters,
                 )
                 clusters = cluster_memories(self)
                 if clusters:
@@ -1647,8 +1648,9 @@ class LongTermMemory:
         ponytail: provider/model 从 env 读, 不注入 client. 升级路径: 接受 llm 参数.
         """
         try:
-            from huginn.models.registry import create_langchain_model
             from langchain_core.messages import HumanMessage
+
+            from huginn.models.registry import create_langchain_model
         except ImportError:
             logger.warning("maybe_consolidate: langchain 未安装, 跳过", exc_info=True)
             return None
@@ -1806,7 +1808,7 @@ class LongTermMemory:
             else:
                 agg[p]["failure"] += r["n"]
         # 算 rate
-        for p, v in agg.items():
+        for _p, v in agg.items():
             total = v["success"] + v["failure"]
             v["rate"] = v["success"] / total if total > 0 else 0.0
         return agg
@@ -1867,16 +1869,14 @@ def _stable_principles_lock(path: Path, exclusive: bool = True):
     # 锁文件用 .lock 后缀, 不污染数据文件
     lock_path = path.with_suffix(path.suffix + ".lock")
     lock_path.parent.mkdir(parents=True, exist_ok=True)
-    f = open(lock_path, "a+b")
+    f = open(lock_path, "a+b")  # noqa: SIM115
     try:
         if _LOCK_PLATFORM == "windows":
             # msvcrt: LK_LOCK = 阻塞式排他锁, LK_NBLCK = 非阻塞共享锁
             # ponytail: Windows msvcrt 只有 1-byte 锁, 写 1 byte 即可
-            try:
+            # 锁失败不阻断, 让调用方继续 (best-effort)
+            with suppress(OSError):
                 _msvcrt.locking(f.fileno(), _msvcrt.LK_LOCK, 1) if exclusive else _msvcrt.locking(f.fileno(), _msvcrt.LK_NBLCK, 1)
-            except OSError:
-                # 锁失败不阻断, 让调用方继续 (best-effort)
-                pass
         else:
             try:
                 lock_type = _fcntl.LOCK_EX if exclusive else _fcntl.LOCK_SH
@@ -1892,10 +1892,8 @@ def _stable_principles_lock(path: Path, exclusive: bool = True):
             except OSError:
                 pass
         else:
-            try:
+            with suppress(OSError):
                 _fcntl.flock(f.fileno(), _fcntl.LOCK_UN)
-            except OSError:
-                pass
         f.close()
 
 
@@ -1949,16 +1947,14 @@ def store_stable_principle(principle: str, source: str = "S7_self_modify") -> bo
     STABLE_PRINCIPLES_PATH.parent.mkdir(parents=True, exist_ok=True)
     record = {"principle": principle, "source": source, "timestamp": time.time()}
     line = json.dumps(record, ensure_ascii=False) + "\n"
-    with _stable_principles_lock(STABLE_PRINCIPLES_PATH, exclusive=True):
-        with STABLE_PRINCIPLES_PATH.open("a", encoding="utf-8") as f:
+    with _stable_principles_lock(STABLE_PRINCIPLES_PATH, exclusive=True), STABLE_PRINCIPLES_PATH.open("a", encoding="utf-8") as f:
             f.write(line)
     # G30: 双写到全局路径, 供下一任务继承
     if _inherit_enabled():
         try:
             _GLOBAL_PRINCIPLES_PATH.parent.mkdir(parents=True, exist_ok=True)
-            with _stable_principles_lock(_GLOBAL_PRINCIPLES_PATH, exclusive=True):
-                with _GLOBAL_PRINCIPLES_PATH.open("a", encoding="utf-8") as f:
-                    f.write(line)
+            with _stable_principles_lock(_GLOBAL_PRINCIPLES_PATH, exclusive=True), _GLOBAL_PRINCIPLES_PATH.open("a", encoding="utf-8") as f:
+                f.write(line)
         except Exception:
             # 全局路径不可写不阻断本地写入
             pass

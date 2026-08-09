@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 from dataclasses import dataclass, field
@@ -41,7 +42,8 @@ from huginn.server_context import (  # noqa: E402
 _AUTO_PATHS = frozenset({"/docs", "/openapi.json", "/redoc"})
 
 # 直接从路由模块导入，避免和实现脱节
-from huginn.routes import _ROOT_ONLY_PATHS  # noqa: E402
+# 注意: 下方第 221 行会重新定义 _ROOT_ONLY_PATHS (本地硬编码集合),
+# 因此此处导入实际被覆盖, 仅保留注释说明意图.
 
 # 动态路径参数的默认填充值
 _PARAM_DEFAULTS: dict[str, str] = {
@@ -165,10 +167,8 @@ import huginn.server as _srv  # noqa: E402
 
 # 模块级缓存 schema，后续 fixture 和测试都复用
 _RAW_SCHEMA: dict[str, Any] = {}
-try:
+with contextlib.suppress(Exception):
     _RAW_SCHEMA = _srv.app.openapi()
-except Exception:
-    pass
 
 
 def _collect_routes(schema: dict[str, Any]) -> list[RouteInfo]:

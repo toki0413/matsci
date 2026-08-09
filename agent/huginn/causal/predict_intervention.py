@@ -35,15 +35,15 @@
 from __future__ import annotations
 
 import logging
-import math
 import statistics
-from dataclasses import dataclass
 from typing import Any
 
 from pydantic import BaseModel, Field
 
 from huginn.causal.visual_scm import (
-    VisualSCM, get_template, match_template, list_templates,
+    VisualSCM,
+    get_template,
+    list_templates,
 )
 from huginn.tools.base import HuginnTool
 from huginn.types import ToolContext, ToolResult, ValidationResult
@@ -341,7 +341,7 @@ class PredictInterventionTool(HuginnTool):
 
 def _selfcheck() -> None:
     """10 项 assert 验证 predict_intervention 核心行为."""
-    from huginn.causal.visual_scm import _template_sintering, _template_diffusion
+    from huginn.causal.visual_scm import _template_diffusion, _template_sintering
 
     scm = _template_sintering()
 

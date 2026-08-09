@@ -18,9 +18,9 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
-import time
 from typing import Any
 
 import httpx
@@ -99,10 +99,8 @@ def _get_metrics() -> dict[str, float]:
             # 格式: huginn_xxx{label="val"} 123.45
             parts = line.rsplit(" ", 1)
             if len(parts) == 2:
-                try:
+                with contextlib.suppress(ValueError):
                     metrics[parts[0].split("{")[0]] = float(parts[1])
-                except ValueError:
-                    pass
     return metrics
 
 
@@ -232,10 +230,8 @@ async def test_metrics_endpoint_after_load():
     # 先打几条请求
     async with httpx.AsyncClient() as client:
         for i in range(5):
-            try:
+            with contextlib.suppress(Exception):
                 await _send_http_chat(client, f"metrics test {i}", "metrics-test")
-            except Exception:
-                pass
 
     # 然后查 metrics (metrics 是 public path,不需要 auth)
     r = httpx.get(f"{BASE_URL}/metrics", timeout=5.0)

@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import threading
 from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Iterable
 
 from huginn.api.event import Event, EventType
 from huginn.api.filter import StarHandlerMetadata

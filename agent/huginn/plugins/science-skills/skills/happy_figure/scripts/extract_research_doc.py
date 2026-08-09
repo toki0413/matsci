@@ -19,7 +19,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-
 SECTION_ALIASES = {
     "abstract": [
         "abstract",
@@ -142,8 +141,7 @@ class ExtractionResult:
 def run_command(args: list[str], timeout: int = 90) -> str:
     completed = subprocess.run(
         args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         timeout=timeout,
         check=False,
     )
@@ -272,7 +270,7 @@ def extract_docx(path: Path) -> tuple[str, str, list[str]]:
         return "", "no-text", notes
     except ImportError:
         notes.append("python-docx not installed.")
-        raise RuntimeError("could not extract DOCX text: " + "; ".join(notes))
+        raise RuntimeError("could not extract DOCX text: " + "; ".join(notes)) from None
     except Exception as exc:
         notes.append(f"python-docx failed: {summarize_exception(exc)}")
         raise RuntimeError("could not extract DOCX text: " + "; ".join(notes)) from exc
@@ -570,6 +568,6 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except RuntimeError as exc:
         print(f"Error: {exc}", file=sys.stderr)
-        raise SystemExit(1)
+        raise SystemExit(1) from exc
     except BrokenPipeError:
-        raise SystemExit(1)
+        raise SystemExit(1) from None

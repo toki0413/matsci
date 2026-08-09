@@ -7,16 +7,10 @@ Covers:
 
 from __future__ import annotations
 
-import os
-import tempfile
-from pathlib import Path
-from unittest.mock import MagicMock
-
 import pytest
 
-from huginn.types import HandleType, ToolContext, ValidationResult
+from huginn.types import HandleType, ToolContext
 from huginn.validation.handle_validator import HandleValidator
-
 
 # ── Helpers ──────────────────────────────────────────────────────────
 

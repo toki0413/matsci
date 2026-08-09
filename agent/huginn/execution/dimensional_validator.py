@@ -27,7 +27,6 @@ Usage::
 
 from __future__ import annotations
 
-import math
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -481,9 +480,7 @@ class _DimInfer:
             return result
 
         # Applied undefined function: u(x) → look up "u" in symbol_units
-        if isinstance(expr, sp.Function) or (
-            isinstance(expr, sp.core.function.Application)
-        ):
+        if isinstance(expr, (sp.Function, sp.core.function.Application)):
             func_name = type(expr).__name__ if hasattr(type(expr), "__name__") else str(expr.func)
             if func_name in self._sym:
                 return self._sym[func_name]
@@ -728,7 +725,7 @@ class DimensionalValidator:
             List of dimensionless π groups.
         """
         symbols = [v[0] for v in variables]
-        dim_names_list = list(DIM_NAMES[:6])  # M L T Θ N I
+        list(DIM_NAMES[:6])  # M L T Θ N I
         dim_matrix = []
 
         for _name, unit_str in variables:

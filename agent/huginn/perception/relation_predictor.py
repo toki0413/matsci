@@ -34,7 +34,6 @@ from huginn.perception.doc_types import (
 )
 from huginn.perception.document_graph import DocumentGraph
 
-
 # Caption number patterns. Mirrors the mention regexes in document_graph.py
 # but applied to caption text to recover (kind, number). Kept local so we
 # don't reach into the graph builder's internals.

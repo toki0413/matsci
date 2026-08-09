@@ -20,7 +20,7 @@ import asyncio
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 
 @dataclass
@@ -42,7 +42,7 @@ class InterruptEvent:
             )
 
 
-class InterruptCancelled(Exception):
+class InterruptCancelled(Exception):  # noqa: N818
     """用户点了取消. agent loop 捕获后跳出 chat 循环."""
 
 
@@ -90,7 +90,7 @@ class InterruptManager:
 
     # ── agent loop 侧 ──────────────────────────────────────────
 
-    def check_interrupt(self, thread_id: str) -> Optional[InterruptEvent]:
+    def check_interrupt(self, thread_id: str) -> InterruptEvent | None:
         """非阻塞地查一次干预. 没事件返回 None.
 
         注意: pause 不走队列, 这里只返回 cancel / modify. pause 的阻塞
@@ -108,7 +108,7 @@ class InterruptManager:
         没有运行中的事件循环时直接返回 (退化为非阻塞, 由调用方自己轮询).
         正常 FastAPI / agent loop 路径都有 loop, 这里能正确挂起.
         """
-        evt: Optional[asyncio.Event]
+        evt: asyncio.Event | None
         with self._lock:
             evt = self._paused.get(thread_id)
         if evt is None:

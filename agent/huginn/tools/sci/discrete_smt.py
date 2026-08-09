@@ -40,7 +40,6 @@
 from __future__ import annotations
 
 import logging
-import uuid
 from typing import Any, Literal
 
 import z3
@@ -89,7 +88,7 @@ def _safe_eval(expr: str, variables: dict[str, Any]) -> Any:
 
 def _build_primal_graph(
     variables: list[dict], constraints: list[str]
-) -> tuple["set[str]", "list[tuple[str, str]]"]:
+) -> tuple[set[str], list[tuple[str, str]]]:
     """从约束列表构造 primal graph (变量交互图).
 
     ponytail: 扫每个约束字符串里的变量名, 共现则连边.
@@ -134,8 +133,10 @@ def _analyze_graph_topology(
     idx = {v: i for i, v in enumerate(nodes_list)}
     row, col = [], []
     for u, v in edges:
-        row.append(idx[u]); col.append(idx[v])
-        row.append(idx[v]); col.append(idx[u])
+        row.append(idx[u])
+        col.append(idx[v])
+        row.append(idx[v])
+        col.append(idx[u])
     data = [1] * len(row)
     A = csr_matrix((data, (row, col)), shape=(n, n))
     n_comp, labels = connected_components(A, directed=False)
@@ -209,9 +210,7 @@ def _extract_model(model: Any, z3_vars: dict[str, Any]) -> dict[str, Any]:
         # z3 BoolRef / ArithRef / BitVecRef → Python 值
         if z3.is_bool(val):
             out[name] = bool(val)
-        elif z3.is_bv_value(val):
-            out[name] = val.as_long()
-        elif z3.is_int_value(val):
+        elif z3.is_bv_value(val) or z3.is_int_value(val):
             out[name] = val.as_long()
         elif z3.is_rational_value(val):
             n = val.numerator_as_long()
@@ -274,7 +273,7 @@ def _optimize(
     if direction is None:
         return {"error": f"objective must start with 'minimize' or 'maximize', got: {objective}"}
     obj_expr = _safe_eval(expr_str, z3_vars)
-    handle = opt.minimize(obj_expr) if direction == "minimize" else opt.maximize(obj_expr)
+    opt.minimize(obj_expr) if direction == "minimize" else opt.maximize(obj_expr)
     result = opt.check()
     if result == z3.sat:
         model = opt.model()
@@ -395,7 +394,7 @@ def _solve_decomposed(
         comp_constraints = []
         for c in constraints:
             present = [v["name"] for v in var_specs if v["name"] in c]
-            if present and all(var_to_contained := [var_to_comp.get(p, -1) == i for p in present]):
+            if present and all(var_to_comp.get(p, -1) == i for p in present):
                 comp_constraints.append(c)
         r = _solve_smt(comp_vars, comp_constraints, timeout_ms)
         component_results.append({
@@ -602,7 +601,7 @@ def _selfcheck() -> None:
         max_solutions=20,
     )
     assert r["n_found"] == 12, f"6. expected 12 (4*3), got {r['n_found']}"
-    assert r["truncated"] is False, f"6. should not be truncated"
+    assert r["truncated"] is False, "6. should not be truncated"
 
     # 7. verify_implication 真
     r = _verify_implication(
@@ -644,7 +643,7 @@ def _selfcheck() -> None:
     )
     assert r["n_vars"] == 4 and r["n_edges"] == 3, f"10. graph stats wrong: {r}"
     assert r["is_tree"] is True, f"10. P4 should be tree, got {r}"
-    assert r["n_components"] == 1, f"10. P4 is connected"
+    assert r["n_components"] == 1, "10. P4 is connected"
 
     # 11. analyze_sparsity 多连通分量 (孤立点也算分量)
     r = _analyze_graph_topology(

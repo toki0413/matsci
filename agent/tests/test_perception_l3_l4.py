@@ -1,9 +1,12 @@
 """Tests for multi-modal perception layers L3 and L4."""
-import pytest
 import numpy as np
+import pytest
 
-from huginn.perception.semantic_alignment import SemanticAligner, SemanticConflict
-from huginn.perception.cognitive_integration import CognitiveIntegrator, PerceptionSnapshot
+from huginn.perception.cognitive_integration import (
+    CognitiveIntegrator,
+    PerceptionSnapshot,
+)
+from huginn.perception.semantic_alignment import SemanticAligner
 
 
 class TestSemanticAligner:

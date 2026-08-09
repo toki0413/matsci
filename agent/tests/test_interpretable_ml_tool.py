@@ -14,8 +14,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from huginn.tools.sci.interpretable_ml_tool import InterpretableMLInput, InterpretableMLTool
 from huginn.tools.base import ResearchPhase
+from huginn.tools.sci.interpretable_ml_tool import (
+    InterpretableMLInput,
+    InterpretableMLTool,
+)
 from huginn.types import ToolContext
 
 
@@ -288,5 +291,5 @@ def test_closed_loop_sr_then_validate():
 
 def test_unknown_action_errors():
     # pydantic rejects invalid actions at construction time
-    with pytest.raises(Exception):
+    with pytest.raises(Exception):  # noqa: B017 — pydantic ValidationError
         InterpretableMLInput(action="bogus")  # type: ignore[arg-type]

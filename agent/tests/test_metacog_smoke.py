@@ -16,8 +16,9 @@
 
 from __future__ import annotations
 
-import pytest
+import contextlib
 
+import pytest
 
 # ── 1. alignment (sklearn) ─────────────────────────────────────
 
@@ -66,7 +67,7 @@ def test_import_block_registry():
 
 
 def test_block_registry_construct():
-    from huginn.metacog.block_registry import BlockRegistry, BlockedRoute
+    from huginn.metacog.block_registry import BlockedRoute, BlockRegistry
 
     route = BlockedRoute(
         route_id="r1", method_family="gp", block_reason="circular"
@@ -420,10 +421,8 @@ def test_mcmc_multi_chain_processpool_parallel():
             ("h_b", "Hypothesis B", 0.5, 3),
             ("h_c", "Hypothesis C", 0.0, 1),
         ):
-            try:
+            with contextlib.suppress(ValueError):
                 m.add(Hypothesis(hid, desc, predictions={"accuracy": 0.92 * scale}, n_params=n))
-            except ValueError:
-                pass
         return m
 
     async def run(parallel):

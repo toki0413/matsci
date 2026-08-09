@@ -15,9 +15,9 @@ from huginn.evaluation.grader import (
     default_registry,
 )
 from huginn.evaluation.matworld_bench import (
+    CATEGORIES,
     BenchResult,
     BenchTask,
-    CATEGORIES,
     MatWorldBench,
 )
 

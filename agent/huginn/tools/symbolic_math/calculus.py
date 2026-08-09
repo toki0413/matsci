@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from .tool import SymbolicMathInput
 
 
-def differentiate(args: "SymbolicMathInput") -> ToolResult:
+def differentiate(args: SymbolicMathInput) -> ToolResult:
     sym_dict = parse_symbols(args.symbols, args.assumptions)
     expr = safe_parse(args.expression or "", sym_dict)
     var = sym_dict.get(args.variable)
@@ -38,7 +38,7 @@ def differentiate(args: "SymbolicMathInput") -> ToolResult:
     )
 
 
-def integrate(args: "SymbolicMathInput") -> ToolResult:
+def integrate(args: SymbolicMathInput) -> ToolResult:
     sym_dict = parse_symbols(args.symbols, args.assumptions)
     expr = safe_parse(args.expression or "", sym_dict)
     var = sym_dict.get(args.variable)
@@ -61,7 +61,7 @@ def integrate(args: "SymbolicMathInput") -> ToolResult:
     )
 
 
-def simplify(args: "SymbolicMathInput") -> ToolResult:
+def simplify(args: SymbolicMathInput) -> ToolResult:
     sym_dict = parse_symbols(args.symbols, args.assumptions)
     expr = safe_parse(args.expression or "", sym_dict)
     simplified = sp.simplify(expr)
@@ -75,7 +75,7 @@ def simplify(args: "SymbolicMathInput") -> ToolResult:
     )
 
 
-def taylor(args: "SymbolicMathInput") -> ToolResult:
+def taylor(args: SymbolicMathInput) -> ToolResult:
     sym_dict = parse_symbols(args.symbols, args.assumptions)
     expr = safe_parse(args.expression or "", sym_dict)
     var = sym_dict.get(args.variable)
@@ -103,7 +103,7 @@ def taylor(args: "SymbolicMathInput") -> ToolResult:
     )
 
 
-def series(args: "SymbolicMathInput") -> ToolResult:
+def series(args: SymbolicMathInput) -> ToolResult:
     """符号级数展开."""
     sym_dict = parse_symbols(args.symbols, args.assumptions)
     expr = safe_parse(args.expression or "", sym_dict)
