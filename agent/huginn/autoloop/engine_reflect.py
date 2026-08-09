@@ -84,7 +84,7 @@ class EngineReflectMixin:
                             else comp
                         )
                 except Exception:
-                    pass
+                    logger.debug("comparative primitives extraction skipped", exc_info=True)
 
             r_phys = execution_result.get("r_phys")
             if r_phys is None:
@@ -285,7 +285,7 @@ class EngineReflectMixin:
                             }
                         )
                     except Exception:
-                        pass
+                        logger.debug("benchmark result collect skipped", exc_info=True)
             if eval_scores:
                 passed = sum(1 for e in eval_scores if e["passed"])
                 results["eval_summary"] = {
@@ -797,7 +797,7 @@ class EngineReflectMixin:
                     if _ck:
                         _existing.add(_ck)
         except Exception:
-            pass
+            logger.debug("cluster_key dedup skipped", exc_info=True)
         _synth = 0
         for _key, _v in _sm.items():
             _rate = _v.get("rate")
@@ -1971,7 +1971,7 @@ class EngineReflectMixin:
                     if deleted:
                         logger.info("KB cleanup: removed %d old documents", deleted)
             except Exception:
-                pass
+                logger.debug("kb cleanup skipped", exc_info=True)
 
         # KG 回写: 把 hypothesis 作为 experiment 实体加入知识图,
         # 让 ProjectKnowledgeGraph 随实验增长而非只读展示.
@@ -2020,7 +2020,7 @@ class EngineReflectMixin:
                         old_conf = self.kg._graph.nodes[exp_id].get("confidence", 0.5)
                         self.kg._graph.nodes[exp_id]["confidence"] = old_conf * 0.7
                 except Exception:
-                    pass
+                    logger.debug("kg confidence decay skipped", exc_info=True)
             # Hyperedge: 把 hypothesis → plan_mode → validation 结果
             # 连成 n-ary 关系. 之前 add_hyperedge 是死代码, 现在接上.
             plan_id = self.kg.add_entity(
@@ -2655,7 +2655,7 @@ class EngineReflectMixin:
                         _gs.add_sub_goal(_active.id, f"[Feynman {gap_type}] {gap_text}")
                         _gs.add_unknown(_active.id, gap_text, unknown_type=gap_type)
             except Exception:
-                pass
+                logger.debug("feynman gap subgoal skipped", exc_info=True)
 
         # 同时把 feynman note 写入 KB, 下次检索能命中
         try:
@@ -2731,7 +2731,7 @@ class EngineReflectMixin:
                             unknown_type="blind_spot",
                         )
                 except Exception:
-                    pass
+                    logger.debug("blind_spot unknown add skipped", exc_info=True)
 
         return results
 

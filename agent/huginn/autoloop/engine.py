@@ -696,7 +696,7 @@ class AutoloopEngine(
                 import numpy as np
                 phonon_arr = np.asarray(phonon, dtype=float)
             except Exception:
-                pass
+                logger.debug("phonon array parse skipped", exc_info=True)
 
         return HapticPropertyLayer(
             elastic=elastic,

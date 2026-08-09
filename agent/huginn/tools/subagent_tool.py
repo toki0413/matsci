@@ -12,6 +12,7 @@ Actions:
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import time
 from typing import Any, Literal
@@ -20,6 +21,8 @@ from pydantic import BaseModel, Field
 
 from huginn.tools.base import HuginnTool
 from huginn.types import ToolContext, ToolResult
+
+logger = logging.getLogger(__name__)
 
 
 # P1-2: CRDT 状态合并 — 多 subagent 并行结果用半格 join 合并.
@@ -178,7 +181,7 @@ def _belief_merge(
                 from huginn.routes.metrics import track_belief_update
                 track_belief_update("gaussian")
             except Exception:
-                pass
+                logger.debug("belief update metrics failed", exc_info=True)
         elif btype == "beta":
             b0 = belief_results[0]["belief"][field]
             a = float(b0.get("alpha", 1.0))
@@ -196,7 +199,7 @@ def _belief_merge(
                 from huginn.routes.metrics import track_belief_update
                 track_belief_update("beta")
             except Exception:
-                pass
+                logger.debug("belief update metrics failed", exc_info=True)
         else:
             # 未知 type, 回退 LWW
             best_val = None
@@ -242,7 +245,7 @@ def _crdt_merge(results: list[dict]) -> dict:
         from huginn.routes.metrics import track_crdt_merge
         track_crdt_merge(len(results))
     except Exception:
-        pass
+        logger.debug("crdt merge metrics failed", exc_info=True)
 
     # 收集所有字段名 (results 可能字段不一致, 全 union)
     all_keys: set[str] = set()
@@ -617,7 +620,7 @@ class SubagentTool(HuginnTool[SubagentToolInput, SubagentToolOutput]):
                 from huginn.provenance.registry import ProvenanceRegistry
                 _prov_reg = ProvenanceRegistry.shared()
             except Exception:
-                pass
+                logger.debug("provenance registry init failed", exc_info=True)
             if _prov_reg is not None and hasattr(_prov_reg, "get_lineage"):
                 _tasks_with_input = [
                     {"id": tid, "tool_input": t} for tid, t in zip(task_ids, args.tasks)

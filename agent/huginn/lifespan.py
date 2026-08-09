@@ -414,7 +414,7 @@ async def lifespan(app: FastAPI):
         from huginn.events.integration import set_main_loop
         set_main_loop(asyncio.get_running_loop())
     except Exception:
-        pass
+        logger.debug("failed to set main event loop", exc_info=True)
     # Register core tools synchronously (fast — ~35 essential tools),
     # then kick off optional tools in the background so they don't block
     # the server from accepting health checks.
@@ -540,7 +540,7 @@ async def lifespan(app: FastAPI):
                             docs = ctx.kb.list_documents() if hasattr(ctx.kb, "list_documents") else []
                             logger.debug(f"[PMK] KB has {len(docs)} docs")
                         except Exception:
-                            pass
+                            logger.debug("KB document list failed", exc_info=True)
                     # 3. Task state: log active threads
                     tracker = get_tracker()
                     if tracker._cache:

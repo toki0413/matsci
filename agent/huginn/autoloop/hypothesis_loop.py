@@ -411,7 +411,7 @@ class HypothesisGraph:
             from huginn.routes.metrics import track_memory_rerank
             track_memory_rerank("ising", n)
         except Exception:
-            pass
+            logger.debug("memory rerank metric skipped", exc_info=True)
 
         return [untested[i] for i in selected]
 
@@ -2477,7 +2477,7 @@ class HypothesisMixin:
                 sp = getattr(self, "stable_principles", None)
                 n_principles = len(sp) if sp else 0
             except Exception:
-                pass
+                logger.debug("stable_principles count skipped", exc_info=True)
             sys_prompt_len = 0
             with contextlib.suppress(Exception):
                 sys_prompt_len = len(getattr(self, "system_prompt", "") or "")
@@ -2855,7 +2855,7 @@ class HypothesisMixin:
                 if _n.status in ("supported", "refuted"):
                     _existing.append(_n.statement[:120])
         except Exception:
-            pass
+            logger.debug("existing hypothesis list skipped", exc_info=True)
         _existing_block = (
             "\n".join(f"- {s}" for s in _existing[:10]) or "(none)"
         )

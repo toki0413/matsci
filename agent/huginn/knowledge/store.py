@@ -582,7 +582,7 @@ class KnowledgeBase:
             from huginn.rag.feedback import RetrievalFeedbackTracker
             self._feedback_tracker = RetrievalFeedbackTracker()
         except Exception:
-            pass
+            logger.debug("feedback tracker init failed", exc_info=True)
 
         # BM25 索引 (lazy): 和向量检索做 RRF 混合, 提高材料术语 / 精确匹配命中率.
         # _bm25_dirty=True 表示首次查询或写入后需要从 ChromaDB 全量重建.

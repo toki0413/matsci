@@ -61,7 +61,7 @@ def _emit(event_type: str, data: dict, thread_id: str = "") -> None:
         asyncio.get_running_loop()  # 检测在 event loop 里
         track_task(_publish(event_type, data, thread_id, source="snapshot"), name="snapshot-emit")
     except Exception:
-        pass
+        logger.debug("snapshot event publish failed", exc_info=True)
 
 
 def consume_last_snapshot_step_id() -> str | None:

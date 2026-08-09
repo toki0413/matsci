@@ -145,7 +145,7 @@ class TaskReflector:
             from huginn.routes.metrics import track_belief_update
             track_belief_update("beta")
         except Exception:
-            pass
+            logger.debug("belief update metric tracking failed", exc_info=True)
 
         current_mode = getattr(session_state, "cognitive_mode", None) if session_state else None
         in_construct = bool(current_mode and current_mode.value == "construct")

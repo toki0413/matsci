@@ -151,7 +151,7 @@ def _is_heavy_tool(tool_name: str) -> bool:
         if tool_name in HEAVY_TOOLS:
             return True
     except Exception:
-        pass
+        logger.debug("heavy tool lookup failed", exc_info=True)
     # 兜底: 常见 sim 工具名硬编码, 防 HEAVY_TOOLS 表未重建时漏判.
     return tool_name in {
         "vasp_tool", "lammps_tool", "gaussian_tool", "orca_tool",
@@ -1025,7 +1025,7 @@ class ToolAdapter:
                     info_gain=_ig,
                 )
             except Exception:
-                pass
+                logger.debug("skill evolution record failed", exc_info=True)
 
             result = _check_constraints(result, context)
             output = _serialize(result)
@@ -1046,7 +1046,7 @@ class ToolAdapter:
                     error=result.error if not result.success else None,
                 )
             except Exception:
-                pass
+                logger.debug("tool event publish failed", exc_info=True)
             # 插件事件系统: 分发 typed ToolRespondEvent (有别于内部 tool.result 字符串事件)
             try:
                 _resp_args = (
@@ -1120,7 +1120,7 @@ class ToolAdapter:
                 from huginn.routes.metrics import track_tool_call
                 track_tool_call(tool.name)
             except Exception:
-                pass
+                logger.debug("tool call metrics track failed", exc_info=True)
             with get_telemetry_collector().span("tool_call", tool=tool.name) as span:
                 try:
                     if is_async:
@@ -1265,7 +1265,7 @@ class ToolAdapter:
                 from huginn.routes.metrics import track_tool_call
                 track_tool_call(tool.name)
             except Exception:
-                pass
+                logger.debug("tool call metrics track failed", exc_info=True)
             with get_telemetry_collector().span("tool_call", tool=tool.name) as span:
                 try:
                     if is_async:

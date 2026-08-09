@@ -838,7 +838,7 @@ LUCID review (mandatory after generating hypothesis):
                     f"\n### Recent Experiments (git log)\n{_r.stdout.strip()}\n"
                 )
         except Exception:
-            pass
+            logger.debug("git log block build skipped", exc_info=True)
 
         # 分量代表制: 多条独立探索路线时, 给 LLM 看各路线的代表假设,
         # 防止单分量靠节点数主导综合判断. 只在 >1 分量时注入, advisory.
@@ -878,7 +878,7 @@ LUCID review (mandatory after generating hypothesis):
                         "综合判断时不要让某条路线靠节点数主导, 注意挑战和重定向.\n"
                     )
         except Exception:
-            pass
+            logger.debug("cluster block build skipped", exc_info=True)
 
         # 按优先级拼接, 超预算自动裁剪低优先级 block
         blocks = self._apply_block_patches(
