@@ -7,6 +7,7 @@ provider/model instances are cached.
 
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import Callable
 from typing import Any
@@ -17,7 +18,7 @@ from huginn.models.registry import ModelRegistry
 from huginn.persona_emotion import EmotionTracker
 from huginn.personas import PersonaManager
 from huginn.project_context import load_project_context
-import logging
+
 logger = logging.getLogger(__name__)
 
 
@@ -43,7 +44,10 @@ class AgentFactory:
         # 没配才退回 InMemorySaver (并发长程有竞态, 见问题23)
         # 注意: persistent_checkpointer 返回 context manager, 必须持有 cm 对象
         # 否则 GC 回收 cm 会触发 __exit__ 关闭数据库连接
-        from huginn.checkpointer import persistent_checkpointer, create_in_memory_checkpointer
+        from huginn.checkpointer import (
+            create_in_memory_checkpointer,
+            persistent_checkpointer,
+        )
         if self.config.checkpointer_path:
             self._checkpointer_cm = persistent_checkpointer(self.config.checkpointer_path)
             self._shared_checkpointer = self._checkpointer_cm.__enter__()
@@ -216,7 +220,8 @@ class AgentFactory:
         # 跟 PRT Level 1 一样每次重步都打一次 deepseek-chat, 有成本.
         if os.environ.get("HUGINN_PRM_VERIFIER", "0") == "1":
             from huginn.runtime.step_verifier import (
-                StepVerifierHook, make_default_llm_chat_fn,
+                StepVerifierHook,
+                make_default_llm_chat_fn,
             )
             prm_llm = make_default_llm_chat_fn()
             if prm_llm is not None:

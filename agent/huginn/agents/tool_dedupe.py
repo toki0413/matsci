@@ -59,9 +59,7 @@ def _is_mock_result(result: Any) -> bool:
     if isinstance(metadata, dict) and metadata.get("mock") is True:
         return True
     # 顶层直接展开的情况
-    if result.get("status") == "mock":
-        return True
-    return False
+    return result.get("status") == "mock"
 
 
 class ToolDeduper:
@@ -157,7 +155,6 @@ class ToolDeduper:
 
 
 if __name__ == "__main__":
-    import copy
 
     d = ToolDeduper(max_entries=3)
 

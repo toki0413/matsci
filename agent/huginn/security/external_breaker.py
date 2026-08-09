@@ -22,8 +22,9 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Any, Generator
+from typing import Any
 
 # Services we know about up front. Pre-registering them means they show up
 # in list_all() / dashboards even before the first call, and lets us apply
@@ -181,10 +182,9 @@ class ExternalCircuitBreaker:
 
     def _refresh(self, st: _ServiceState, service: str) -> None:
         """If the cooldown has elapsed, flip open -> half_open for a trial."""
-        if st.state == "open" and st.last_failure_time is not None:
-            if time.time() - st.last_failure_time >= self._cooldown(service):
-                st.state = "half_open"
-                st.half_open_trials = 0
+        if st.state == "open" and st.last_failure_time is not None and time.time() - st.last_failure_time >= self._cooldown(service):
+            st.state = "half_open"
+            st.half_open_trials = 0
 
     # ---- public API ----
 

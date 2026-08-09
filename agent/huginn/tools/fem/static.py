@@ -10,10 +10,8 @@ from typing import Any
 import numpy as np
 from skfem import (
     Basis,
-    BilinearForm,
     ElementTriP2,
     ElementVector,
-    LinearForm,
     asm,
     condense,
     solve,
@@ -39,7 +37,7 @@ def static_linear(args: Any) -> ToolResult:
     material = args.material
     E = material["E"]
     nu = material["nu"]
-    rho = material.get("rho", 7850.0)
+    material.get("rho", 7850.0)
     thickness = material.get("thickness", 1.0)
 
     # plane_stress gives the correct 2D Lame parameters for plane stress analysis

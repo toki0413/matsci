@@ -32,7 +32,6 @@ from huginn.perception.doc_types import (
 )
 from huginn.perception.document_graph import DocumentGraph
 
-
 # ---------------------------------------------------------------------------
 # Detection patterns.
 #

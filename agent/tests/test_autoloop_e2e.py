@@ -15,12 +15,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from huginn.autoloop.engine import AutoloopEngine, AutoloopResult
+from huginn.autoloop.engine import AutoloopEngine
 from huginn.autoloop.hypothesis_loop import HypothesisGraph
 from huginn.autoloop.phase_gate import get_shared_phase_gate_state
+from huginn.autoloop.types import AutoloopResult
 from huginn.memory.manager import MemoryManager
 from tests.fixtures.fake_llm import make_callable_llm
-
 
 # ── helpers ──────────────────────────────────────────────────────────
 

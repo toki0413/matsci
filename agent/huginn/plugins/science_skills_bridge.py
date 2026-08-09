@@ -32,16 +32,14 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from huginn.tools.base import HuginnTool
-from huginn.tools.registry import ToolRegistry
-from huginn.types import ToolContext, ToolResult
-
 # 复用 skill_loader 的 frontmatter 解析和条件激活引擎
 from huginn.plugins.skill_loader import (
-    activate_conditional_skills,
     parse_skill_file,
     register_conditional_skills,
 )
+from huginn.tools.base import HuginnTool
+from huginn.tools.registry import ToolRegistry
+from huginn.types import ToolContext, ToolResult
 
 logger = logging.getLogger(__name__)
 
@@ -325,7 +323,7 @@ class ScienceSkillTool(HuginnTool):
                 None,
                 lambda: _run_subprocess(cmd, cwd, timeout),
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             if _tmp_cleanup:
                 _tmp_cleanup.cleanup()
             return ToolResult(

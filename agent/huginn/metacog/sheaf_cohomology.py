@@ -58,7 +58,6 @@ from typing import Any
 
 import numpy as np
 
-
 # 数值提取: regex 抓 "Tc=100K", "Tc = 100 K", "temperature=290" 等.
 # ponytail: 简单 regex, 不上 parser. 单位 (K, eV, ...) 暂时丢掉, 只留数值.
 # 升级路径: spaCy / LLM extract 把 "transition temperature reaches 100 kelvin"
@@ -229,9 +228,7 @@ def _values_agree(
             return True
         if abs(a - b) <= rel_tol * max(abs(a), abs(b)):
             return True
-        if abs(a - b) <= abs_tol:
-            return True
-        return False
+        return abs(a - b) <= abs_tol
     # 字符串或混合: lower 后字符串比较
     return str(a).lower() == str(b).lower()
 
@@ -358,7 +355,7 @@ def _count_restriction_failures(sheaf: Sheaf) -> int:
     return n_failures
 
 
-def compute_H1(sheaf: Sheaf) -> int:
+def compute_H1(sheaf: Sheaf) -> int:  # noqa: N802
     """Sheaf 的 Čech H^1 — Open Problem 7.2 主算法.
 
     双层 (spec §7.2 允许):
@@ -549,7 +546,7 @@ def _selfcheck() -> None:
         support_findings=[{"tc": 50.0}],
     )
     assert compute_H1(sheaf_dict_conflict) > 0, "dict-input conflict should give H^1>0"
-    print(f"\n  Bonus 3 (dict input): consistent H^1=0, conflict H^1>0 - OK")
+    print("\n  Bonus 3 (dict input): consistent H^1=0, conflict H^1>0 - OK")
 
     print("\n=== Phase 7 Open Problem 7.2 self-check PASSED ===")
     print("  Sheaf 建模: Core/Support -> open sets + stalks + restriction maps")

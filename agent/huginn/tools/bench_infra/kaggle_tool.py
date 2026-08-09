@@ -119,7 +119,7 @@ class KaggleSubmitTool(HuginnTool):
             issues.append(f"row count {n_rows} != expected {input_data.expected_n_rows}")
 
         # 回读校验缺失值
-        with open(out_path, "r", encoding="utf-8") as f:
+        with open(out_path, encoding="utf-8") as f:
             reader = csv.reader(f)
             read_header = next(reader)
             if read_header != header:

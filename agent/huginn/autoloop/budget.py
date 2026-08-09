@@ -19,7 +19,6 @@ iteration's prompt carries "mode X not allowed at tier Y, use Z instead".
 from __future__ import annotations
 
 import os
-
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -82,7 +81,7 @@ class ProgressiveBudget:
         )
 
 
-class BudgetExhausted(Exception):
+class BudgetExhausted(Exception):  # noqa: N818
     """Token/cost 预算耗尽 — agent loop 应捕获并优雅停止.
 
     硬上限 (hard_limit_tokens / hard_limit_cost) 触发; 软上限只算信号不算刹车.

@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import secrets
@@ -276,11 +277,9 @@ class _TunnelWorker:
         self._set_status("stopped")
 
         if self._listen_sock is not None:
-            try:
-                # 关 socket 唤醒 accept 阻塞
+            # 关 socket 唤醒 accept 阻塞
+            with contextlib.suppress(OSError):
                 self._listen_sock.close()
-            except OSError:
-                pass
             self._listen_sock = None
 
         if self._transport is not None:
@@ -320,7 +319,7 @@ class _TunnelWorker:
         while not self._stop_evt.is_set():
             try:
                 client, _ = self._listen_sock.accept()
-            except socket.timeout:
+            except TimeoutError:
                 continue
             except OSError:
                 break
@@ -359,10 +358,8 @@ class _TunnelWorker:
         except (paramiko.SSHException, OSError, EOFError):
             pass
         finally:
-            try:
+            with contextlib.suppress(OSError):
                 client.close()
-            except OSError:
-                pass
 
     def _socks5_handshake(self, client: socket.socket) -> tuple[str | None, int]:
         """SOCKS5 握手, 解析客户端要连的目标地址。

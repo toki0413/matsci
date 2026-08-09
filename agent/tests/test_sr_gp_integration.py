@@ -11,7 +11,10 @@ import asyncio
 
 import numpy as np
 
-from huginn.tools.sci.interpretable_ml_tool import InterpretableMLInput, InterpretableMLTool
+from huginn.tools.sci.interpretable_ml_tool import (
+    InterpretableMLInput,
+    InterpretableMLTool,
+)
 from huginn.types import ToolContext
 
 

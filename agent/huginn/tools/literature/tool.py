@@ -9,8 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
-import os
 import re
 import urllib.parse
 from typing import Any, Literal
@@ -27,27 +25,13 @@ from ._http import (
     _http_get_json,
     logger,
 )
-from .search_sources import (
-    _dedup,
-    _sort_papers,
-    _search_arxiv,
-    _search_core,
-    _search_crossref,
-    _search_datacite,
-    _search_doaj,
-    _search_europepmc,
-    _search_materials_cloud,
-    _search_materials_project,
-    _search_nomad,
-    _search_openalex,
-    _search_openaire,
-    _search_pubmed,
-    _search_s2,
-    _search_zenodo,
-    _search_cod,
-    _opencitations_references,
-    _opencitations_citations,
-    _enrich_with_crossref,
+from .crawl_web import (
+    _PROVIDERS,
+    _auth_login,
+    _auth_logout,
+    _list_sessions,
+    crawl_direct,
+    crawl_search_engine,
 )
 from .pdf_fetch import (
     _scihub_enabled,
@@ -57,20 +41,29 @@ from .pdf_fetch import (
     split_sections,
     unpaywall_pdf,
 )
-from .crawl_web import (
-    _PROVIDERS,
-    _apply_ezproxy,
-    _auth_login,
-    _auth_logout,
-    _detect_provider,
-    _list_sessions,
-    _save_session_meta,
-    _session_dir,
-    _session_meta_path,
-    crawl_direct,
-    crawl_search_engine,
+from .search_sources import (
+    _dedup,
+    _enrich_with_crossref,
+    _norm_title,
+    _opencitations_citations,
+    _opencitations_references,
+    _search_arxiv,
+    _search_cod,
+    _search_core,
+    _search_crossref,
+    _search_datacite,
+    _search_doaj,
+    _search_europepmc,
+    _search_materials_cloud,
+    _search_materials_project,
+    _search_nomad,
+    _search_openaire,
+    _search_openalex,
+    _search_pubmed,
+    _search_s2,
+    _search_zenodo,
+    _sort_papers,
 )
-
 
 # ───────────────────────── LLM prompts ─────────────────────────
 
@@ -871,7 +864,6 @@ class LiteratureTool(HuginnTool):
         if not candidates:
             return None, "", []
 
-        last_err = ""
         tried: list[dict[str, str]] = []
         pdf_bytes = b""
         used_url = ""
@@ -890,7 +882,6 @@ class LiteratureTool(HuginnTool):
             except Exception as exc:
                 err_str = str(exc)
                 tried.append({"url": cand, "status": err_str[:120]})
-                last_err = err_str
                 logger.info("fetch_pdf 候选 %s 失败: %s", cand[:60], exc)
 
         if not used_url:
@@ -1163,9 +1154,10 @@ class LiteratureTool(HuginnTool):
         # 之前是 ephemeral 的, agent 每次都要重新 BFS. 现在写一次, 后续
         # KG query 和 /graph 可视化都能看到.
         try:
-            from huginn.kg.graph import ProjectKnowledgeGraph
-            from huginn.kg.entities import EntityType, Relation
             from pathlib import Path
+
+            from huginn.kg.entities import EntityType, Relation
+            from huginn.kg.graph import ProjectKnowledgeGraph
             kg = ProjectKnowledgeGraph(Path("."))
             # pid -> node eid, 供 add_relation 用
             eid_map: dict[str, str] = {}
@@ -1533,7 +1525,7 @@ class LiteratureTool(HuginnTool):
         # 2. 选透镜
         lens_names = args.lenses if args.lenses else _DEFAULT_LENSES
         # 过滤掉不认识的透镜名, 避免传垃圾进 _LENS_PROMPTS
-        lens_names = [l for l in lens_names if l in _LENS_PROMPTS]
+        lens_names = [ln for ln in lens_names if ln in _LENS_PROMPTS]
         if not lens_names:
             return ToolResult(
                 data=None, success=False,
@@ -1575,11 +1567,11 @@ class LiteratureTool(HuginnTool):
                 logger.warning("lens %s 失败 (降级为空): %s", lens_name, exc)
                 return None
 
-        lens_results = await asyncio.gather(*[_run_lens(l) for l in lens_names])
+        lens_results = await asyncio.gather(*[_run_lens(ln) for ln in lens_names])
         # 过滤掉失败的透镜
         lenses_ok: list[dict[str, Any]] = [r for r in lens_results if r is not None]
         lenses_failed: list[str] = [
-            l for l, r in zip(lens_names, lens_results) if r is None
+            ln for ln, r in zip(lens_names, lens_results) if r is None
         ]
 
         # 6. 三重验证 (cangjie V1/V2/V3)

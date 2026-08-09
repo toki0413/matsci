@@ -12,6 +12,7 @@ use std::time::Duration;
 
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
+use pyo3::types::PyAny;
 use pyo3::types::PyDict;
 use wait_timeout::ChildExt;
 
@@ -214,7 +215,7 @@ fn run_sandboxed(
     env: Option<HashMap<String, String>>,
     timeout: Option<f64>,
     allowed_base_dirs: Option<Vec<String>>,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     let args = args.unwrap_or_default();
 
     let allowed_dirs: Vec<PathBuf> = match allowed_base_dirs {

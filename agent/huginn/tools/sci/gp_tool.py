@@ -1021,7 +1021,7 @@ def hypervolume(pareto_y: np.ndarray, ref: np.ndarray) -> float:
         order = np.argsort(pts[:, 0])
         pts = pts[order]
         hv = 0.0
-        prev_f0 = pts[0, 0]
+        pts[0, 0]
         for i in range(len(pts)):
             # 当前点的 f1 决定这一列的高度
             if i < len(pts) - 1:

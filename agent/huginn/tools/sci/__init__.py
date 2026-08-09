@@ -10,6 +10,7 @@
 通过 huginn.tools.symbolic_math_tool (shim) 仍可访问.
 """
 
+import contextlib
 import os
 
 
@@ -27,8 +28,6 @@ def get_torch_device() -> str:
 
 
 # 统计检验工具导出 — scipy/statsmodels 不可用时静默跳过, 不拖累整个 sci 包
-try:
-    from huginn.tools.sci.stat_tests_tool import StatTestsTool
-except ImportError:
-    pass
+with contextlib.suppress(ImportError):
+    from huginn.tools.sci.stat_tests_tool import StatTestsTool as StatTestsTool
 

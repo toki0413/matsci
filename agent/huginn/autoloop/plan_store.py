@@ -26,9 +26,10 @@ import threading
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
-from huginn.utils.common import now_iso
 from pathlib import Path
 from typing import Any
+
+from huginn.utils.common import now_iso
 
 logger = logging.getLogger(__name__)
 
@@ -162,10 +163,8 @@ def _file_lock(path: Path):
         except OSError:
             pass
         os.close(fd)
-        try:
+        with contextlib.suppress(OSError):
             lock_path.unlink()
-        except OSError:
-            pass
 
 
 class PlanStore:
@@ -327,7 +326,7 @@ class PlanStore:
             self._save()
             return True
 
-    def export_markdown(self, plan_id: str, path: "Path | None" = None) -> "Path":
+    def export_markdown(self, plan_id: str, path: Path | None = None) -> Path:
         """导出 plan 为 markdown 文件, 供 chat mode 引用 active step.
 
         Anthropic Context Management 2026: plan 持久化到文件, chat 上下文只引用
@@ -348,7 +347,7 @@ class PlanStore:
 
         lines = [
             f"# Plan: {plan.objective}",
-            f"",
+            "",
             f"- **ID**: `{plan.id}`",
             f"- **Status**: {plan.status}",
             f"- **Created**: {plan.created_at}",

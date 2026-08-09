@@ -42,7 +42,7 @@ async def get_data_schema(type_name: str) -> dict[str, Any]:
     try:
         dt = DataType(type_name)
     except ValueError:
-        raise HTTPException(status_code=404, detail=f"Unknown data type: {type_name}")
+        raise HTTPException(status_code=404, detail=f"Unknown data type: {type_name}") from None
 
     schema = DataDictionary.get(dt)
     if schema is None:
@@ -74,7 +74,7 @@ async def validate_data(req: ValidateRequest) -> dict[str, Any]:
     except ValueError:
         raise HTTPException(
             status_code=404, detail=f"Unknown data type: {req.type_name}"
-        )
+        ) from None
 
     errors = DataDictionary.validate(dt, req.data)
     return {

@@ -9,7 +9,6 @@ from huginn.data.dictionary import DataDictionary
 from huginn.data.types import DataField, DataSchema, DataType
 from huginn.routes.data_dict import router
 
-
 # ── Fixtures ──────────────────────────────────────────────────────
 
 

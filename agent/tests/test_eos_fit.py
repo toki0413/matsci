@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import math
 import sys
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -85,10 +84,10 @@ def _make_outcar_content(volume: float, energy: float) -> str:
     """Bare-minimum OUTCAR text that the regex parser can extract V + E from."""
     return (
         " ENCUT  =  520.0 eV\n"
-        " volume of cell :     {vol:.6f}\n"
-        "  free  energy   TOTEN  =       {en:.6f} eV\n"
+        f" volume of cell :     {volume:.6f}\n"
+        f"  free  energy   TOTEN  =       {energy:.6f} eV\n"
         "reached required accuracy - stopping structural energy minimisation\n"
-    ).format(vol=volume, en=energy)
+    )
 
 
 def _disable_accelerators(monkeypatch):

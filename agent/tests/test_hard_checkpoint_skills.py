@@ -7,7 +7,6 @@ Two features landing together:
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -15,8 +14,8 @@ from unittest.mock import MagicMock
 def test_hard_checkpoint_config_and_state(monkeypatch):
     monkeypatch.setenv("HUGINN_HARD_CHECKPOINT_PHASES", "plan:execute,validate:learn")
     from huginn.autoloop.phase_gate import (
-        _load_hard_checkpoint_config,
         PhaseGateState,
+        _load_hard_checkpoint_config,
     )
 
     cfg = _load_hard_checkpoint_config()

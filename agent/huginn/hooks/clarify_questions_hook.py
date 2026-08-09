@@ -223,9 +223,13 @@ class ClarifyQuestionsHook:
         # 6) 计算类动词 + 无具体名词(参数) → 追问参数
         #    有具体名词说明给了材料/体系, 可能也给了参数, 不追问
         #    长消息(>=30字)通常已含完整上下文, 不追问参数
-        if has_compute and not has_concrete and len(text_stripped) < 30:
-            if _QUESTION_TEMPLATES["params"] not in questions:
-                questions.append(_QUESTION_TEMPLATES["params"])
+        if (
+            has_compute
+            and not has_concrete
+            and len(text_stripped) < 30
+            and _QUESTION_TEMPLATES["params"] not in questions
+        ):
+            questions.append(_QUESTION_TEMPLATES["params"])
 
         # 7) 生成类动词 + 无输出格式 → 追问输出
         #    有具体名词说明用户已明确了对象, 输出格式可以推断, 不追问

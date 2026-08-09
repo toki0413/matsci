@@ -1,24 +1,24 @@
 """Sanity check for human-in-the-loop features."""
 from huginn.agent.code_act_loop import (
-    _assess_risk,
-    _mark_auto_approved,
-    _is_auto_approved,
-    reset_auto_approvals,
-    _compute_risk_threshold,
-    _apply_dynamic_threshold,
-    _trust_scores,
-    set_suggest_mode,
-    _is_suggest_mode,
-    _suggest_modes,
-    resume_suggest,
     _active_agents,
-    _mark_standing_rule,
+    _apply_dynamic_threshold,
+    _assess_risk,
+    _compute_risk_threshold,
+    _is_auto_approved,
     _is_standing_rule,
+    _is_suggest_mode,
+    _mark_auto_approved,
+    _mark_standing_rule,
+    _suggest_modes,
+    _trust_scores,
+    reset_auto_approvals,
     reset_standing_rules,
+    resume_suggest,
+    set_suggest_mode,
 )
-from huginn.memory.intuition import detect_intuition
-from huginn.interaction.clarification import should_ask_clarification
 from huginn.autoloop.phase_gate import PhaseGateState
+from huginn.interaction.clarification import should_ask_clarification
+from huginn.memory.intuition import detect_intuition
 
 
 class _FakeTool:
@@ -187,7 +187,7 @@ def test_conversation_tree_fork():
 
 def test_semantic_diff():
     """OAK 启发: 结构文件语义 diff."""
-    from huginn.tools.file_edit_tool import _semantic_diff, _parse_kv
+    from huginn.tools.file_edit_tool import _parse_kv, _semantic_diff
 
     # INCAR 参数 diff
     old_incar = "ENCUT = 400\nISMEAR = 0\nSIGMA = 0.05"

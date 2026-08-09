@@ -17,7 +17,6 @@ from huginn.tools.sim.mechanical_tool import (
     MechanicalToolInput,
 )
 
-
 # ── stress_analysis ──────────────────────────────────────────────
 
 def test_stress_analysis_uniaxial():

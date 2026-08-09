@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from huginn.tools.browser_tool import BrowserAction, BrowserTool, BrowserToolInput
-from huginn.types import ToolContext, ValidationResult
+from huginn.types import ToolContext
 
 
 def _ctx() -> ToolContext:

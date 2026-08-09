@@ -2,11 +2,9 @@
 
 import threading
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
-from fastapi.testclient import TestClient
-
 
 # ── Checkpoint path traversal ──────────────────────────────────────
 
@@ -52,6 +50,7 @@ class TestCheckpointPathValidation:
     def test_accepts_dot_path(self, tmp_path):
         """Dot (current dir) should resolve to workspace."""
         import os
+
         from huginn.routes.checkpoints import _validate_workspace_path
 
         # Change cwd to tmp_path so "." resolves within workspace
@@ -161,12 +160,12 @@ class TestRateLimitDefault:
 
     def test_default_rate_limit_not_zero(self):
         """Default _RATE_LIMIT should not be 0."""
-        from huginn.server import _RATE_LIMIT
 
         # In test mode it might be overridden, but the default in source
         # should be 120, not 0
-        import huginn.server as srv
         import inspect
+
+        import huginn.server as srv
 
         source = inspect.getsource(srv)
         # Check the default value in the source code
@@ -196,8 +195,9 @@ class TestDeadCodeRemoved:
 
     def test_llm_py_uses_registry_directly(self):
         """llm.py should import from models.registry, not agent.py."""
-        import huginn.llm as llm_mod
         import inspect
+
+        import huginn.llm as llm_mod
 
         source = inspect.getsource(llm_mod)
         assert "from huginn.models.registry import" in source
@@ -211,14 +211,12 @@ class TestDockerfileHealthcheck:
     """Verify Dockerfile has HEALTHCHECK directive."""
 
     def test_dockerfile_has_healthcheck(self):
-        from pathlib import Path
 
         dockerfile = Path(__file__).resolve().parent.parent / "Dockerfile"
         content = dockerfile.read_text()
         assert "HEALTHCHECK" in content.upper()
 
     def test_compose_has_healthcheck(self):
-        from pathlib import Path
 
         compose = Path(__file__).resolve().parent.parent / "docker-compose.yml"
         content = compose.read_text()

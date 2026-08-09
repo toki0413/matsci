@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from typing import Any
 
 from fastapi import FastAPI
@@ -584,39 +584,29 @@ async def lifespan(app: FastAPI):
 
     # Shutdown: cancel background tasks first so they don't touch closing resources
     if memory_maintainer:
-        try:
+        with suppress(Exception):
             memory_maintainer.stop()
-        except Exception:
-            pass
 
     if job_monitor:
-        try:
+        with suppress(Exception):
             job_monitor.stop()
-        except Exception:
-            pass
 
     if warmup_task and not warmup_task.done():
         warmup_task.cancel()
-        try:
+        with suppress(asyncio.CancelledError):
             await warmup_task
-        except asyncio.CancelledError:
-            pass
         logger.info("[shutdown] embedding warmup task cancelled")
 
     if monitor_task and not monitor_task.done():
         monitor_task.cancel()
-        try:
+        with suppress(asyncio.CancelledError):
             await monitor_task
-        except asyncio.CancelledError:
-            pass
         logger.info("[MCP] Health monitor stopped")
 
     if pmk_task and not pmk_task.done():
         pmk_task.cancel()
-        try:
+        with suppress(asyncio.CancelledError):
             await pmk_task
-        except asyncio.CancelledError:
-            pass
         logger.info("[shutdown] PMK loop cancelled")
 
     await _shutdown_mcp()

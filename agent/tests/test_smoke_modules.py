@@ -12,7 +12,7 @@ import pytest
 
 MCP_AVAILABLE = False
 try:
-    from huginn.mcp_client import MCPClientManager
+    from huginn.mcp_client import MCPClientManager  # noqa: F401 — availability probe
     MCP_AVAILABLE = True
 except ImportError:
     pass

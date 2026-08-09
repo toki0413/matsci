@@ -16,8 +16,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import sys
-import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -224,8 +222,8 @@ class TestRegistration:
 class TestCommandBuilding:
     def _make_tool(self):
         from huginn.plugins.science_skills_bridge import (
-            ScienceSkillTool,
             ScienceSkillsLoader,
+            ScienceSkillTool,
         )
 
         loader = ScienceSkillsLoader()
@@ -306,8 +304,8 @@ class TestToolExecution:
     def test_missing_uv_error(self):
         from huginn.plugins.science_skills_bridge import (
             ScienceSkillInput,
-            ScienceSkillTool,
             ScienceSkillsLoader,
+            ScienceSkillTool,
         )
         from huginn.types import ToolContext
 
@@ -325,8 +323,8 @@ class TestToolExecution:
     def test_successful_execution(self, tmp_path):
         from huginn.plugins.science_skills_bridge import (
             ScienceSkillInput,
-            ScienceSkillTool,
             ScienceSkillsLoader,
+            ScienceSkillTool,
         )
         from huginn.types import ToolContext
 
@@ -346,16 +344,15 @@ class TestToolExecution:
             "stderr": "",
         }
 
-        with patch("shutil.which", return_value="/usr/bin/uv"):
-            with patch(
-                "huginn.plugins.science_skills_bridge._run_subprocess",
-                return_value=mock_result,
-            ):
-                args = ScienceSkillInput(
-                    query="test",
-                    output_file=str(output_file),
-                )
-                result = asyncio.run(tool.call(args, ctx))
+        with patch("shutil.which", return_value="/usr/bin/uv"), patch(
+            "huginn.plugins.science_skills_bridge._run_subprocess",
+            return_value=mock_result,
+        ):
+            args = ScienceSkillInput(
+                query="test",
+                output_file=str(output_file),
+            )
+            result = asyncio.run(tool.call(args, ctx))
 
         assert result.success is True
         assert result.data["skill"] == skills[0].name
@@ -364,8 +361,8 @@ class TestToolExecution:
     def test_failed_execution(self):
         from huginn.plugins.science_skills_bridge import (
             ScienceSkillInput,
-            ScienceSkillTool,
             ScienceSkillsLoader,
+            ScienceSkillTool,
         )
         from huginn.types import ToolContext
 
@@ -380,14 +377,13 @@ class TestToolExecution:
             "stderr": "API key not found",
         }
 
-        with patch("shutil.which", return_value="/usr/bin/uv"):
-            with patch(
-                "huginn.plugins.science_skills_bridge._run_subprocess",
-                return_value=mock_result,
-            ):
-                result = asyncio.run(
-                    tool.call(ScienceSkillInput(query="test"), ctx)
-                )
+        with patch("shutil.which", return_value="/usr/bin/uv"), patch(
+            "huginn.plugins.science_skills_bridge._run_subprocess",
+            return_value=mock_result,
+        ):
+            result = asyncio.run(
+                tool.call(ScienceSkillInput(query="test"), ctx)
+            )
 
         assert result.success is False
         assert "API key not found" in result.error
@@ -395,8 +391,8 @@ class TestToolExecution:
     def test_timeout_handling(self):
         from huginn.plugins.science_skills_bridge import (
             ScienceSkillInput,
-            ScienceSkillTool,
             ScienceSkillsLoader,
+            ScienceSkillTool,
         )
         from huginn.types import ToolContext
 
@@ -411,14 +407,13 @@ class TestToolExecution:
             "stderr": "Process timed out",
         }
 
-        with patch("shutil.which", return_value="/usr/bin/uv"):
-            with patch(
-                "huginn.plugins.science_skills_bridge._run_subprocess",
-                return_value=mock_result,
-            ):
-                result = asyncio.run(
-                    tool.call(ScienceSkillInput(query="test"), ctx)
-                )
+        with patch("shutil.which", return_value="/usr/bin/uv"), patch(
+            "huginn.plugins.science_skills_bridge._run_subprocess",
+            return_value=mock_result,
+        ):
+            result = asyncio.run(
+                tool.call(ScienceSkillInput(query="test"), ctx)
+            )
 
         assert result.success is False
         assert "timed out" in result.error.lower() or "rc=-1" in result.error
@@ -427,8 +422,8 @@ class TestToolExecution:
         """When no output file exists, stdout is used as result."""
         from huginn.plugins.science_skills_bridge import (
             ScienceSkillInput,
-            ScienceSkillTool,
             ScienceSkillsLoader,
+            ScienceSkillTool,
         )
         from huginn.types import ToolContext
 
@@ -443,17 +438,16 @@ class TestToolExecution:
             "stderr": "",
         }
 
-        with patch("shutil.which", return_value="/usr/bin/uv"):
-            with patch(
-                "huginn.plugins.science_skills_bridge._run_subprocess",
-                return_value=mock_result,
-            ):
-                # Point to a non-existent output file
-                args = ScienceSkillInput(
-                    query="test",
-                    output_file=str(tmp_path / "nonexistent.json"),
-                )
-                result = asyncio.run(tool.call(args, ctx))
+        with patch("shutil.which", return_value="/usr/bin/uv"), patch(
+            "huginn.plugins.science_skills_bridge._run_subprocess",
+            return_value=mock_result,
+        ):
+            # Point to a non-existent output file
+            args = ScienceSkillInput(
+                query="test",
+                output_file=str(tmp_path / "nonexistent.json"),
+            )
+            result = asyncio.run(tool.call(args, ctx))
 
         assert result.success is True
         assert result.data["result"] == "plain text output"

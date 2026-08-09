@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import logging
+
 import click
 
 from huginn import __version__
 from huginn.cli.context import console
 from huginn.pet import get_pet_avatar
-import logging
+
 logger = logging.getLogger(__name__)
 
 

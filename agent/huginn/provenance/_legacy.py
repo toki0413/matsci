@@ -30,13 +30,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import sys
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-import logging
+
 logger = logging.getLogger(__name__)
 
 
@@ -73,7 +74,7 @@ class ProvenanceSnapshot:
         return json.dumps(self.to_dict(), indent=2, ensure_ascii=False, default=str)
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "ProvenanceSnapshot":
+    def from_dict(cls, d: dict[str, Any]) -> ProvenanceSnapshot:
         """从 dict 重建快照. 多余字段忽略, 缺字段用默认值."""
         # 只挑我们认识的字段, 别让外部塞的脏数据把构造器搞挂
         known = {
@@ -121,7 +122,8 @@ def _collect_software_versions() -> dict[str, str]:
     versions["python"] = sys.version.split()[0]
 
     import importlib
-    from importlib.metadata import PackageNotFoundError, version as _pkg_version
+    from importlib.metadata import PackageNotFoundError
+    from importlib.metadata import version as _pkg_version
 
     for pkg in _TRACKED_PACKAGES:
         try:
@@ -263,7 +265,7 @@ def capture(
         # flag 层挂了不能带挂业务, 继续走原逻辑
         pass
 
-    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    timestamp = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     software_versions = _collect_software_versions()
     input_hash = _hash_input_params(input_params)
     output_hash = _hash_output(output) if output is not None else None
@@ -371,7 +373,7 @@ class ProvenanceRecord:
         }
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "ProvenanceRecord":
+    def from_dict(cls, d: dict[str, Any]) -> ProvenanceRecord:
         known = {
             "run_id", "objective", "inputs", "outputs",
             "tool_chain", "timestamps", "dois", "tags",

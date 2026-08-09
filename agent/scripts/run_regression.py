@@ -1,4 +1,8 @@
-import subprocess, sys, time, json, os, re
+import json
+import os
+import re
+import subprocess
+import sys
 
 TEST_DIR = "tests"
 TIMEOUT = 15
@@ -24,7 +28,7 @@ for tf in test_files:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT)
         stdout = proc.stdout
         if "passed" in stdout:
-            line = [l for l in stdout.splitlines() if "passed" in l or "failed" in l or "error" in l][-1]
+            line = [ln for ln in stdout.splitlines() if "passed" in ln or "failed" in ln or "error" in ln][-1]
             results["passed"].append((tf, line.strip()))
             m_passed = re.search(r'(\d+)\s+passed', line)
             m_failed = re.search(r'(\d+)\s+failed', line)

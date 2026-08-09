@@ -104,9 +104,10 @@ class TestDeclarativeSkillExecutor:
         import asyncio
         import time
 
+        from pydantic import BaseModel
+
         from huginn.tools.base import HuginnTool, ToolResult
         from huginn.tools.registry import ToolRegistry
-        from pydantic import BaseModel
 
         # 清理残留注册, 避免上一次测试污染
         ToolRegistry.clear()

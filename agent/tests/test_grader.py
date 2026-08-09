@@ -16,7 +16,6 @@ from huginn.validation.grader import (
     default_registry,
 )
 
-
 # ── PhysicsGrader (包 PhysicsAuditor) ──────────────────────────
 
 

@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import sympy as sp
 
@@ -23,7 +23,7 @@ def _build_function(expr_str: str, sym_dict: dict[str, sp.Symbol]) -> sp.Expr:
     return safe_parse(expr_str, sym_dict)
 
 
-def classify(args: "SymbolicMathInput") -> ToolResult:
+def classify(args: SymbolicMathInput) -> ToolResult:
     """按判别式 B^2 - 4AC 给二阶线性 PDE 分类.
 
     PDE 形式: A u_xx + 2B u_xy + C u_yy + (低阶项) = 0
@@ -96,7 +96,7 @@ def classify(args: "SymbolicMathInput") -> ToolResult:
     )
 
 
-def separation(args: "SymbolicMathInput") -> ToolResult:
+def separation(args: SymbolicMathInput) -> ToolResult:
     """分离变量法: u(x,t) = X(x) T(t).
 
     target 选模式:
@@ -109,10 +109,10 @@ def separation(args: "SymbolicMathInput") -> ToolResult:
     target = (args.target or "heat").lower()
     lam = sp.Symbol("lambda", positive=True)
 
-    x = sym_dict.get("x", sp.Symbol("x"))
-    t = sym_dict.get("t", sp.Symbol("t"))
-    X = sp.Function("X")
-    T = sp.Function("T")
+    sym_dict.get("x", sp.Symbol("x"))
+    sym_dict.get("t", sp.Symbol("t"))
+    sp.Function("X")
+    sp.Function("T")
 
     ode_X_str = "X''(x) + λ X(x) = 0"
     ode_T_str: str
@@ -138,8 +138,8 @@ def separation(args: "SymbolicMathInput") -> ToolResult:
         eigenvalues = "λ_n = (n π / L)^2  (Dirichlet BC on [0, L])"
         eigenfunctions = "X_n(x) = sin(n π x / L)"
     elif target == "laplace":
-        y = sym_dict.get("y", sp.Symbol("y"))
-        Y = sp.Function("Y")
+        sym_dict.get("y", sp.Symbol("y"))
+        sp.Function("Y")
         # u_xx + u_yy = 0;  X''/X = -Y''/Y = -λ
         ode_T_str = f"Y''(y) - {lam} * Y(y) = 0"
         general_form = (
@@ -171,7 +171,7 @@ def separation(args: "SymbolicMathInput") -> ToolResult:
     )
 
 
-def characteristics(args: "SymbolicMathInput") -> ToolResult:
+def characteristics(args: SymbolicMathInput) -> ToolResult:
     """一阶 PDE 的特征线法.
 
     覆盖两类:
@@ -191,8 +191,8 @@ def characteristics(args: "SymbolicMathInput") -> ToolResult:
             c = _build_function(raw, sym_dict) if raw else sp.Symbol("c")
         except Exception as exc:
             return ToolResult(data=None, success=False, error=f"Parse error: {exc}")
-        x = sym_dict.get("x", sp.Symbol("x"))
-        t = sym_dict.get("t", sp.Symbol("t"))
+        sym_dict.get("x", sp.Symbol("x"))
+        sym_dict.get("t", sp.Symbol("t"))
         return ToolResult(
             data={
                 "pde": f"u_t + ({c}) u_x = 0",
@@ -245,7 +245,7 @@ def characteristics(args: "SymbolicMathInput") -> ToolResult:
     )
 
 
-def discretize(args: "SymbolicMathInput") -> ToolResult:
+def discretize(args: SymbolicMathInput) -> ToolResult:
     """有限差分 stencil 生成.
 
     target 选模式:

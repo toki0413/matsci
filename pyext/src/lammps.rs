@@ -340,7 +340,7 @@ fn parse_lammps_dump(
     }
 
     let frames = py
-        .allow_threads(|| parse_dump_file(traj_path))
+        .detach(|| parse_dump_file(traj_path))
         .map_err(|e| PyRuntimeError::new_err(e))?;
 
     let result = build_result_dict(

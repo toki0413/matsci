@@ -6,6 +6,8 @@ import pytest
 
 pytest.importorskip("mcp", reason="MCP SDK not installed (pip install mcp)")
 
+import contextlib
+
 from fastapi.testclient import TestClient
 
 from huginn.autoloop.plan_store import PlanStep
@@ -29,10 +31,8 @@ def _make_plan(objective: str = "test objective", n_steps: int = 2):
 def _cleanup(*plan_ids: str) -> None:
     store = get_plan_store()
     for pid in plan_ids:
-        try:
+        with contextlib.suppress(Exception):
             store.delete_plan(pid)
-        except Exception:
-            pass
 
 
 class TestListAndGet:

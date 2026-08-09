@@ -6,9 +6,7 @@ Python script that the user can run manually in a FEniCS environment.
 
 from __future__ import annotations
 
-import json
 import logging
-import shutil
 import subprocess
 import textwrap
 from pathlib import Path

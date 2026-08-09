@@ -28,10 +28,10 @@ import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from huginn.metacog.hypothesis_manifold import Hypothesis, HypothesisManifold
+from ablation_geom_vs_text import TestCase, build_test_cases
+from ablation_llm_loop import _build_geom_hint, _build_text_hint, _make_model
 
-from ablation_geom_vs_text import build_test_cases, TestCase
-from ablation_llm_loop import _make_model, _ask_llm, _build_text_hint, _build_geom_hint
+from huginn.metacog.hypothesis_manifold import HypothesisManifold
 
 
 def _build_pure_struct_hint(c: TestCase) -> str:
@@ -39,7 +39,9 @@ def _build_pure_struct_hint(c: TestCase) -> str:
 
     模拟 Hypothesis 对象直接序列化, 不经过 hint_coordinator 的文本渲染.
     """
-    m = HypothesisManifold(); m.add(c.a); m.add(c.b)
+    m = HypothesisManifold()
+    m.add(c.a)
+    m.add(c.b)
     fisher = m.fisher_distance(c.a.h_id, c.b.h_id)
     struct = {
         "hypothesis_a": {
@@ -99,9 +101,9 @@ def run_gap1_ablation(n_samples: int = 60, seed: int = 42):
     print("=" * 80)
     print(f"Gap 1 测试: 结构对象直传 vs 文本中转 (deepseek, n={len(sample)})")
     print("=" * 80)
-    print(f"A 组: 纯文本 (只 description)")
-    print(f"B 组: 自然语言+结构 (hint_coordinator 风格)")
-    print(f"C 组: 纯结构 JSON (无自然语言包装, 模拟对象直传)")
+    print("A 组: 纯文本 (只 description)")
+    print("B 组: 自然语言+结构 (hint_coordinator 风格)")
+    print("C 组: 纯结构 JSON (无自然语言包装, 模拟对象直传)")
     print()
 
     try:
@@ -121,26 +123,38 @@ def run_gap1_ablation(n_samples: int = 60, seed: int = 42):
         actual = c.human_label
         # A 组
         pred_a = _ask(model, _build_text_hint(c))
-        if pred_a is None: stats["A"]["fail"] += 1; pred_a = False
+        if pred_a is None:
+            stats["A"]["fail"] += 1
+            pred_a = False
         time.sleep(0.3)
         # B 组
         pred_b = _ask(model, _build_geom_hint(c))
-        if pred_b is None: stats["B"]["fail"] += 1; pred_b = False
+        if pred_b is None:
+            stats["B"]["fail"] += 1
+            pred_b = False
         time.sleep(0.3)
         # C 组
         pred_c = _ask(model, _build_pure_struct_hint(c))
-        if pred_c is None: stats["C"]["fail"] += 1; pred_c = False
+        if pred_c is None:
+            stats["C"]["fail"] += 1
+            pred_c = False
         time.sleep(0.3)
 
         for grp, pred in [("A",pred_a),("B",pred_b),("C",pred_c)]:
             s = stats[grp]
-            if pred == actual: s["correct"] += 1
-            if pred and actual: s["tp"] += 1
-            elif pred and not actual: s["fp"] += 1
-            elif not pred and actual: s["fn"] += 1
-            else: s["tn"] += 1
+            if pred == actual:
+                s["correct"] += 1
+            if pred and actual:
+                s["tp"] += 1
+            elif pred and not actual:
+                s["fp"] += 1
+            elif not pred and actual:
+                s["fn"] += 1
+            else:
+                s["tn"] += 1
 
-        if pred_b != pred_c: disagreements_bc += 1
+        if pred_b != pred_c:
+            disagreements_bc += 1
 
         if (i+1) % 10 == 0:
             n = i+1
@@ -156,7 +170,7 @@ def run_gap1_ablation(n_samples: int = 60, seed: int = 42):
     print("=" * 80)
     print(f"{'指标':<20} {'A(纯文本)':>14} {'B(自然+结构)':>14} {'C(纯结构JSON)':>16}")
     print("-" * 66)
-    for grp, label in [("A","纯文本"),("B","自然+结构"),("C","纯结构JSON")]:
+    for grp, _label in [("A","纯文本"),("B","自然+结构"),("C","纯结构JSON")]:
         s = stats[grp]
         s["acc"] = s["correct"]/n
         s["p"] = s["tp"]/(s["tp"]+s["fp"]) if (s["tp"]+s["fp"]) else 0
@@ -181,7 +195,8 @@ def run_gap1_ablation(n_samples: int = 60, seed: int = 42):
     # Wilson CI
     from math import sqrt
     def wilson(p, nn, z=1.96):
-        if nn == 0: return (0,0)
+        if nn == 0:
+            return (0, 0)
         denom = 1 + z*z/nn
         center = (p + z*z/(2*nn)) / denom
         spread = z * sqrt(p*(1-p)/nn + z*z/(4*nn*nn)) / denom

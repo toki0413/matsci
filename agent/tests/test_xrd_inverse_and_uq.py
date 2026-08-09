@@ -10,13 +10,12 @@ from __future__ import annotations
 import math
 import os
 import shutil
-from pathlib import Path
 
 import pytest
 
 from huginn.tools.sci.xrd_sim_tool import XrdSimTool
 from huginn.tools.sim.lammps_tool import LammpsTool, LammpsToolInput
-from huginn.tools.sim.vasp_tool import VaspTool, VaspToolInput
+from huginn.tools.sim.vasp_tool import VaspTool
 from huginn.types import ToolContext
 
 _LAMMPS_AVAILABLE = bool(
@@ -131,8 +130,8 @@ class TestVaspUqHint:
         )
         # Call _mock_result directly — call() returns needs_resolution
         # when VASP is not installed, but _mock_result still attaches hints.
-        from huginn.tools.sim.vasp_tool import VaspToolInput as _VI
-        result = tool._mock_result(_VI(action="relax", working_dir=str(tmp_path)), tmp_path)
+        from huginn.tools.sim.vasp_tool import VaspToolInput as _VaspToolInput
+        result = tool._mock_result(_VaspToolInput(action="relax", working_dir=str(tmp_path)), tmp_path)
         assert result.success
         assert result.data["status"] == "mock"
         hint = result.data["uq_hint"]

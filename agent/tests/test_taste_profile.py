@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from pathlib import Path
 
 import pytest
 
@@ -25,10 +24,8 @@ from huginn.personalization.taste_profile import (
 )
 from huginn.tools.onboarding_tool import (
     OnboardingTool,
-    OnboardingToolInput,
     set_shared_questionnaire,
 )
-
 
 # ── Fixtures ────────────────────────────────────────────────────────
 

@@ -229,7 +229,7 @@ if __name__ == "__main__":
     assert tl.startswith("timeline")
     assert "section" in tl
     # 时间线描述里不能有冒号 (会被 Mermaid 当分隔符)
-    ev_lines = [l for l in tl.splitlines() if " : " in l]
+    ev_lines = [_l for _l in tl.splitlines() if " : " in _l]
     assert ev_lines, "应至少有一条事件"
     for el in ev_lines:
         # 事件文本在最后一个 ' : ' 之后, 不应再含冒号

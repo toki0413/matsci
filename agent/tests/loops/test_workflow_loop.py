@@ -10,14 +10,12 @@ from __future__ import annotations
 import asyncio
 import time
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 
 from huginn.types import ToolContext, ToolResult
 from huginn.workflows.engine import WorkflowEngine
 from huginn.workflows.stages import ComputationalStage, RetryPolicy
-
 
 # ── mock collaborators ─────────────────────────────────────────────
 

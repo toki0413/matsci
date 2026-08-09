@@ -31,7 +31,6 @@ def clean():
 
 def build():
     """Run PyInstaller to build the single executable."""
-    entry_point = "huginn.cli:main"
     output_name = "huginn-agent"
 
     # Assets to bundle
@@ -143,7 +142,7 @@ def build():
         size_mb = exe_path.stat().st_size / (1024 * 1024)
         print(f"\n✓ Built: {exe_path}")
         print(f"  Size: {size_mb:.1f} MB")
-        print(f"\nUsage:")
+        print("\nUsage:")
         print(f"  .\\dist\\{output_name}.exe --help")
         print(f"  .\\dist\\{output_name}.exe coder \"fix bug\"")
     else:

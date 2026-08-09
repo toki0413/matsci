@@ -23,7 +23,7 @@ fn parse_outcar(py: Python, path: &str) -> PyResult<Py<PyDict>> {
     }
 
     let state = py
-        .allow_threads(|| vasp::parse_outcar_file(outcar_path))
+        .detach(|| vasp::parse_outcar_file(outcar_path))
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e))?;
 
     let result = vasp::build_outcar_dict(py, state)?;
@@ -63,7 +63,7 @@ fn compute_msd(
         )
     })?;
     // 释放 GIL: MSD 纯数值计算, 不碰 Python 对象, 持 GIL 阻塞其他 Python 线程.
-    let msd = py.allow_threads(|| {
+    let msd = py.detach(|| {
         analysis::msd_from_slice(positions_slice, n_frames, n_atoms, box_dims)
     });
 
@@ -101,7 +101,7 @@ fn compute_rdf(
         )
     })?;
     let (r_values, g, r_max) = py
-        .allow_threads(|| {
+        .detach(|| {
             analysis::rdf_from_slice(positions_slice, n_atoms, box_dims, bins, r_max)
         })
         .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("Failed to compute RDF"))?;

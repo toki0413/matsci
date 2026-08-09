@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import Any, Literal
+from typing import Literal
 
 import numpy as np
 from pydantic import BaseModel, Field
@@ -48,17 +48,17 @@ class FEPInput(BaseModel):
         default_factory=list,
         description="λ window centers"
     )
-    dU_dlambda: list[list[float]] | None = Field(
+    dU_dlambda: list[list[float]] | None = Field(  # noqa: N815
         default=None,
         description="TI: ∂U/∂λ samples per window. dU_dlambda[i] = samples at λ[i]"
     )
 
     # For FEP/BAR: energy differences
-    delta_U: list[list[float]] | None = Field(
+    delta_U: list[list[float]] | None = Field(  # noqa: N815
         default=None,
         description="FEP: ΔU = U_B − U_A samples evaluated at each λ window"
     )
-    delta_U_reverse: list[list[float]] | None = Field(
+    delta_U_reverse: list[list[float]] | None = Field(  # noqa: N815
         default=None,
         description="BAR reverse: ΔU = U_A − U_B samples from λ+1 window"
     )
@@ -231,7 +231,7 @@ class FEPTool(HuginnTool):
             return ToolResult(data=None, success=False, error="delta_U required (per-window ΔU samples)")
 
         beta = 1.0 / (KB_EV * args.temperature)
-        lambdas = np.array(args.lambda_values) if args.lambda_values else np.arange(len(args.delta_U))
+        np.array(args.lambda_values) if args.lambda_values else np.arange(len(args.delta_U))
 
         # Per-window ΔF: ΔF_i = −kT ln⟨exp(−βΔU)⟩
         window_dFs = []

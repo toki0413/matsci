@@ -6,14 +6,13 @@ import pytest
 
 from huginn.cognitive_engine import (
     ALLOWED_TRANSITIONS,
+    STATE_TO_ATTENTION,
     AttentionMode,
     CognitiveState,
     CognitiveStateMachine,
-    STATE_TO_ATTENTION,
     TransitionSignal,
     resolve_transition,
 )
-
 
 # ── helpers ──────────────────────────────────────────────────────────
 

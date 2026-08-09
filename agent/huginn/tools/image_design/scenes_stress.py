@@ -81,7 +81,7 @@ def stress_strain(args: ImageDesignInput) -> ToolResult:
             color=c,
             fontweight="bold",
             fontsize=14,
-            arrowprops=dict(color=c, arrowstyle="->", linewidth=1.5),
+            arrowprops={"color": c, "arrowstyle": "->", "linewidth": 1.5},
         )
         annotations.append({"label": lbl, "strain": ex, "stress_MPa": sx})
 

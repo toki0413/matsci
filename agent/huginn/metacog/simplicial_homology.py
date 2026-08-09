@@ -20,7 +20,7 @@ GUDHI 没装时退回 networkx 风格的 β_0 + β_1 估计, 升级路径: pip i
 from __future__ import annotations
 
 import math
-from typing import Iterable
+from collections.abc import Iterable
 
 import numpy as np
 
@@ -353,7 +353,7 @@ def _selfcheck() -> None:
         key=lambda x: float("inf") if math.isinf(x[2]) else x[2] - x[1],
         reverse=True,
     )
-    for d, b, de in persist_1d[:3]:
+    for _d, b, de in persist_1d[:3]:
         persist = "inf" if math.isinf(de) else f"{de - b:.3f}"
         ds = "inf" if math.isinf(de) else f"{de:.3f}"
         print(f"  dim=1, birth={b:.3f}, death={ds}, persistence={persist}")

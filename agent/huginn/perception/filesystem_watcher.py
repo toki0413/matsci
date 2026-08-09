@@ -12,12 +12,15 @@ Usage:
 """
 from __future__ import annotations
 
+import contextlib
+import logging
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
-import logging
+from typing import Any
+
 logger = logging.getLogger(__name__)
 
 
@@ -92,8 +95,8 @@ class FilesystemWatcher:
     # ── Watchdog backend ───────────────────────────────────────
 
     def _start_watchdog(self) -> None:
+        from watchdog.events import FileSystemEvent, FileSystemEventHandler
         from watchdog.observers import Observer
-        from watchdog.events import FileSystemEventHandler, FileSystemEvent
 
         class Handler(FileSystemEventHandler):
             def __init__(self, watcher: FilesystemWatcher) -> None:
@@ -135,10 +138,8 @@ class FilesystemWatcher:
         result: dict[str, float] = {}
         for pattern in self.patterns:
             for path in self.workspace.rglob(pattern):
-                try:
+                with contextlib.suppress(OSError):
                     result[str(path)] = path.stat().st_mtime
-                except OSError:
-                    pass
         return result
 
     def _diff(self, old: dict[str, float], new: dict[str, float]) -> None:

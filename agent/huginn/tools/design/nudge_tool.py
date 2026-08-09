@@ -207,8 +207,7 @@ class NudgeTool(HuginnTool):
                         result=False,
                         message="每个 param 必须有 name 字段",
                     )
-        if args.action in ("nudge", "list_params", "restore", "snapshot"):
-            if not args.task_id:
+        if args.action in ("nudge", "list_params", "restore", "snapshot") and not args.task_id:
                 return ValidationResult(
                     result=False,
                     message=f"{args.action} 需要 task_id",

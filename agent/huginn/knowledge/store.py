@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
+import logging
 import math
 import re
 import uuid
@@ -12,7 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from huginn.utils.cache import TimedLRUCache
-import logging
+
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
@@ -55,7 +57,7 @@ class _EmbeddingModel:
                 _EmbeddingModel._use_chroma = False
             _EmbeddingModel._initialized = True
 
-    def encode(self, texts: list[str], cache_key: str | None = None) -> "np.ndarray":
+    def encode(self, texts: list[str], cache_key: str | None = None) -> np.ndarray:
         if cache_key:
             cached = _EmbeddingModel._embedding_cache.get(cache_key)
             if cached is not None:
@@ -715,7 +717,7 @@ class KnowledgeBase:
         ids = [f"{doc_id}_{i}" for i in range(len(chunks))]
 
         metadatas = []
-        for i, (chunk, section_meta) in enumerate(sectioned):
+        for i, (_chunk, section_meta) in enumerate(sectioned):
             meta: dict[str, Any] = {"doc_id": doc_id, "filename": filename, "chunk": i, "created_at": datetime.now().isoformat()}
             meta.update(section_meta)
             meta["domain"] = primary_domain
@@ -789,7 +791,7 @@ class KnowledgeBase:
         ids = [f"{doc_id}_{i}" for i in range(len(chunks))]
 
         metadatas = []
-        for i, (chunk, section_meta) in enumerate(sectioned):
+        for i, (_chunk, section_meta) in enumerate(sectioned):
             meta: dict[str, Any] = {"doc_id": doc_id, "filename": filename, "created_at": datetime.now().isoformat()}
             meta.update(section_meta)
             meta["domain"] = primary_domain
@@ -902,7 +904,7 @@ class KnowledgeBase:
 
             # 按评分升序, 淘汰最低分的
             scored.sort(key=lambda x: x[0])
-            for score, d in scored[:excess]:
+            for _score, d in scored[:excess]:
                 if self.delete_document(d["doc_id"]):
                     deleted += 1
 
@@ -1081,10 +1083,8 @@ class KnowledgeBase:
 
         # Apply feedback-based reranking if tracker is available
         if self._feedback_tracker is not None:
-            try:
-                chunks = self._feedback_tracker.adjust_search_results(chunks)
-            except Exception:
-                pass  # reranking is best-effort
+            with contextlib.suppress(Exception):
+                chunks = self._feedback_tracker.adjust_search_results(chunks)  # reranking is best-effort
 
         # Feynman note 优先 + importance 加权 reranking
         # Generative Agents: relevance(=1-distance) × importance(hit_count)
@@ -1244,7 +1244,7 @@ def seed_knowledge_base(kb: KnowledgeBase, force: bool = False) -> dict[str, Any
             embeddings = kb.model.encode(chunks, cache_key=digest).tolist()
             ids = [f"{doc_id}_{i}" for i in range(len(chunks))]
             metadatas = []
-            for i, (chunk, section_meta) in enumerate(sectioned):
+            for i, (_chunk, section_meta) in enumerate(sectioned):
                 meta: dict[str, Any] = {
                     "doc_id": doc_id,
                     "filename": path.name,

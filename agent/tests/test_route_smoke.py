@@ -2,10 +2,6 @@
 
 from __future__ import annotations
 
-import json
-import os
-from typing import Any
-
 import pytest
 
 pytest.importorskip("mcp", reason="MCP SDK not installed (pip install mcp)")

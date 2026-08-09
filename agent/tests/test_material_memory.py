@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from huginn.memory.longterm import LongTermMemory, MATERIAL_CATEGORIES
+from huginn.memory.longterm import LongTermMemory
 from huginn.memory.manager import MemoryManager
 
 

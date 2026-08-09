@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import traceback
 from typing import Any
 
 from fastapi import APIRouter
 
-from huginn.server_core import get_agent, get_memory_manager
 from huginn.memory.types import MemoryType
+from huginn.server_core import get_agent, get_memory_manager
 
 router = APIRouter(tags=["memory"])
 
@@ -169,8 +168,9 @@ async def memory_layers() -> dict[str, Any]:
     现有 manager / longterm / kb / kg / load_stable_principles.
     ponytail: 不包 LayerAggregator 抽象, 直接调现成方法.
     """
-    from huginn.server_core import get_context
     from pathlib import Path
+
+    from huginn.server_core import get_context
 
     result: dict[str, Any] = {}
 
@@ -257,7 +257,7 @@ async def memory_layers() -> dict[str, Any]:
                 def _conf(r):
                     return _safe_float((r[1] or {}).get("confidence"), 0.0)
                 top_rows = sorted(rows, key=_conf, reverse=True)[:5]
-                for _id, meta, doc in top_rows:
+                for _id, meta, _doc in top_rows:
                     top_patterns_by_confidence.append({
                         "doc_id": str(_id),
                         "task_pattern": (meta or {}).get("task_pattern", ""),

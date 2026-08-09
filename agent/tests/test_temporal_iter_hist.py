@@ -10,7 +10,6 @@
 不引入 pytest — assert-based, `python -m tests.test_temporal_iter_hist` 可跑.
 """
 
-import os
 import sys
 import tempfile
 from pathlib import Path
@@ -23,7 +22,7 @@ if str(_AGENT_DIR) not in sys.path:
 
 def _check_loop_state_field():
     """P0: LoopState 有 iteration_history 字段, 默认空 list."""
-    from huginn.autoloop.cognitive_loop import LoopState, _MAX_ITER_HIST
+    from huginn.autoloop.cognitive_loop import _MAX_ITER_HIST, LoopState
     s = LoopState()
     assert hasattr(s, "iteration_history"), "LoopState 缺 iteration_history"
     assert s.iteration_history == [], "默认非空 list"
@@ -102,6 +101,7 @@ def _check_memory_since_filter():
 def _check_kb_since_filter():
     """P1: KB.query since 参数走 where_filter (mock collection 验证)."""
     from unittest.mock import MagicMock
+
     from huginn.knowledge.store import KnowledgeBase
 
     # mock 掉 ChromaDB 和 embedding model, 不依赖真实模型
@@ -154,7 +154,11 @@ def _check_kb_since_filter():
 
 def _check_kg_since_filter():
     """P1: KG.query + query_episode_path since 过滤 episode 节点."""
-    from huginn.kg.graph import ProjectKnowledgeGraph, NODE_TYPE_EPISODE, _filter_by_since
+    from huginn.kg.graph import (
+        NODE_TYPE_EPISODE,
+        ProjectKnowledgeGraph,
+        _filter_by_since,
+    )
 
     # _filter_by_since 单元测试 (不依赖真实图)
     result = {
@@ -181,7 +185,6 @@ def _check_kg_since_filter():
     with tempfile.TemporaryDirectory() as d:
         kg = ProjectKnowledgeGraph(Path(d))
         # 手动构造两个 episode 节点 + 一条 data_dep 边
-        import networkx as nx
         kg._graph.add_node("episode_1", type=NODE_TYPE_EPISODE, step_id=1,
                            timestamp="2020-01-01T00:00:00")
         kg._graph.add_node("episode_2", type=NODE_TYPE_EPISODE, step_id=2,

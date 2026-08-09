@@ -246,7 +246,7 @@ class ImageIndex:
         if self.store_path is None or not self.store_path.exists():
             return
         try:
-            with open(self.store_path, "r", encoding="utf-8") as fh:
+            with open(self.store_path, encoding="utf-8") as fh:
                 data = json.load(fh)
             self._entries = list(data.get("entries", []))
         except (OSError, json.JSONDecodeError):
@@ -316,7 +316,6 @@ def _text_keyword_scores(
 
 def _selfcheck() -> None:
     """QW4 selfcheck: text_query 关键字匹配 + blend (no encoder 路径)."""
-    import tempfile as _tf
 
     # 用 in-memory index + fake encoder=unavailable, 验证 text_query 路径不依赖 encoder
     idx = ImageIndex()  # store_path=None

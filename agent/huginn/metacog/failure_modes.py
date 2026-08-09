@@ -19,7 +19,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-
 Severity = Literal["block", "warn", "info"]
 Category = Literal[
     "data", "physics", "ml", "transfer", "interpretation", "methodology"
@@ -253,9 +252,7 @@ class FailureModeRegistry:
         """
         result = []
         for m in self._modes.values():
-            if m.applies_to_families is None:
-                result.append(m)
-            elif family_id and family_id in m.applies_to_families:
+            if m.applies_to_families is None or family_id and family_id in m.applies_to_families:
                 result.append(m)
         return result
 

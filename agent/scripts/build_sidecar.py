@@ -21,7 +21,6 @@ SIDECAR_DIR = PROJECT_ROOT / "desktop" / "src-tauri" / "sidecars"
 
 def build_sidecar():
     """Build a lightweight onedir package for Tauri sidecar."""
-    entry_point = "huginn.cli:main"
     output_name = "huginn-sidecar"
 
     assets_src = PROJECT_ROOT / "huginn" / "assets"
@@ -398,7 +397,7 @@ def build_sidecar():
         print("提示: 请关闭正在运行的桌面应用 / sidecar 进程后重试.")
         sys.exit(1)
 
-    print(f"\nSidecar ready for Tauri bundling!")
+    print("\nSidecar ready for Tauri bundling!")
 
 
 if __name__ == "__main__":

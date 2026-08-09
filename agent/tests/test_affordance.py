@@ -1,5 +1,4 @@
 """Tests for affordance-based planning."""
-import pytest
 
 
 class TestAffordance:
@@ -8,7 +7,7 @@ class TestAffordance:
         assert hasattr(SimulationPipeline, "affordance")
 
     def test_returns_list_of_suggestions(self):
-        from huginn.provenance.pipeline import SimulationPipeline, PipelineSuggestion
+        from huginn.provenance.pipeline import PipelineSuggestion, SimulationPipeline
         pipeline = SimulationPipeline()
         result = pipeline.affordance()
         assert isinstance(result, list)

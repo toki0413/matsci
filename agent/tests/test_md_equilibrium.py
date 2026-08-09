@@ -2,8 +2,6 @@
 
 from pathlib import Path
 
-import pytest
-
 from huginn.tools.lammps_tool import LammpsTool, LammpsToolInput
 from huginn.types import ToolContext
 

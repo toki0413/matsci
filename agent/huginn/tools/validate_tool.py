@@ -14,7 +14,6 @@ from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult
 from huginn.validation.physics import PhysicsValidator
 
-
 # 按性质定的默认容差, 没传 tolerance 时用这个
 TOLERANCES: dict[str, float] = {
     "band_gap": 0.10,          # DFT 带隙问题大, 放宽到 10%
@@ -438,6 +437,7 @@ class ValidateTool(HuginnTool):
     def _run_elastic_validation(self, result_data: dict[str, Any]) -> ToolResult:
         """弹性张量校验: Born 稳定性判据 + Voigt/Reuss/Hill 模量."""
         import numpy as np
+
         from huginn.mechanics import BornStabilityChecker, ElasticTensor
 
         raw = result_data.get("elastic_tensor") or result_data.get("C")
@@ -580,7 +580,7 @@ def _selfcheck() -> None:
         return r1, r2
 
     r1, r2 = asyncio.run(_run())
-    print(f"validate_tool correction selfcheck OK")
+    print("validate_tool correction selfcheck OK")
     print(f"  无修正: computed=0.61 → verdict={r1.data['verdict']}, rel_err={r1.data['relative_error']:.1f}%")
     print(f"  PBE修正: computed=0.61 → corrected={r2.data['corrected']['value']:.3f}, verdict={r2.data['verdict']}, rel_err={r2.data['relative_error']:.1f}%")
 

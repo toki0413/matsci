@@ -77,7 +77,7 @@ class TestHuginnSwarm:
                     "messages": [type("Msg", (), {"content": f"{self.role}:done"})()]
                 }
 
-        start = asyncio.get_event_loop().time()
+        start = asyncio.get_running_loop().time()
         swarm = HuginnSwarm(
             [
                 SwarmAgent(
@@ -97,7 +97,7 @@ class TestHuginnSwarm:
             ]
         )
         await swarm.run("task")
-        elapsed = asyncio.get_event_loop().time() - start
+        elapsed = asyncio.get_running_loop().time() - start
         # If serial, would be ~0.1s; parallel should be <0.09s.
         assert elapsed < 0.09
 

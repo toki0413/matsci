@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import Any, Literal
+from typing import Literal
 
 import numpy as np
 from pydantic import BaseModel, Field
@@ -315,10 +315,9 @@ class MotifMiningTool(HuginnTool):
                 # Check connectivity with already-mapped nodes
                 ok = True
                 for q_other in q_adj[q_id]:
-                    if q_other in mapping:
-                        if i not in neighbors[mapping[q_other]]:
-                            ok = False
-                            break
+                    if q_other in mapping and i not in neighbors[mapping[q_other]]:
+                        ok = False
+                        break
                 if ok:
                     mapping[q_id] = i
                     used.add(i)
@@ -601,7 +600,7 @@ class MotifMiningTool(HuginnTool):
         for d in degrees:
             hist[d] += 1
 
-        species_set = set(n.get("species", "") for n in nodes)
+        species_set = {n.get("species", "") for n in nodes}
 
         return {
             "n_nodes": n_nodes,

@@ -8,17 +8,13 @@ Tests that the state machine remains stable under:
 - Concurrent access (thread safety of CognitiveStateMachine)
 """
 
-import pytest
 import threading
-import time
+
 from huginn.cognitive_engine import (
-    CognitiveState,
-    AttentionMode,
-    TransitionSignal,
-    CognitiveStateMachine,
-    update_l1_coordinates,
-    resolve_transition,
     ALLOWED_TRANSITIONS,
+    CognitiveState,
+    CognitiveStateMachine,
+    TransitionSignal,
 )
 
 

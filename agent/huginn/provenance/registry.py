@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 _MEM_CACHE_LIMIT = 200
 
 
-class VersionConflict(Exception):
+class VersionConflict(Exception):  # noqa: N818
     """乐观并发冲突: 注册时版本号已变, 说明有其他写入插队."""
 
 
@@ -454,7 +454,7 @@ class ProvenanceRegistry:
 
         # 内存缓存上限, FIFO 淘汰最旧的
         if len(self._entries) > _MEM_CACHE_LIMIT:
-            old = self._entries.pop(0)
+            self._entries.pop(0)
             # 不删 by_path, 让查询仍能命中 (虽然不在 list 里)
             # ponytail: 不精确清理 by_tool list, 热路径查询不受影响
 
@@ -508,9 +508,8 @@ class ProvenanceRegistry:
         # 内存扫描
         results = []
         for e in self._entries:
-            if key in e.key_properties:
-                if value is None or e.key_properties[key] == value:
-                    results.append(e)
+            if key in e.key_properties and (value is None or e.key_properties[key] == value):
+                results.append(e)
         if results:
             return results
         # 回退 SQLite

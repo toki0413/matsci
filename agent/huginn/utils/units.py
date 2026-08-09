@@ -16,6 +16,7 @@ Usage:
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from typing import Any
 
@@ -32,18 +33,12 @@ try:
     # Common materials science unit aliases
     # pint dropped electronvolt from defaults in recent versions — define it
     # before aliasing so @alias doesn't KeyError on fresh installs.
-    try:
-        ureg.define("electronvolt = 1.602176634e-19 * J = eV")
-    except Exception:
-        pass  # already defined in this registry
-    try:
+    with contextlib.suppress(Exception):
+        ureg.define("electronvolt = 1.602176634e-19 * J = eV")  # already defined in this registry
+    with contextlib.suppress(Exception):
         ureg.define("@alias electronvolt = eV")
-    except Exception:
-        pass
-    try:
+    with contextlib.suppress(Exception):
         ureg.define("@alias angstrom = ang = Å")
-    except Exception:
-        pass
     _pint_available = True
 except ImportError:
     logger.debug("pint not available — using lightweight fallback unit registry")
@@ -205,7 +200,7 @@ class _FallbackQuantity:
         return _FallbackQuantity(self.magnitude / scalar, self.unit)
 
 
-def Q(value: float, unit: str) -> Any:
+def Q(value: float, unit: str) -> Any:  # noqa: N802
     """Create a quantity. Uses pint if available, else fallback."""
     if _pint_available:
         return ureg.Quantity(value, unit)

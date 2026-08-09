@@ -26,7 +26,7 @@ import zipfile
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +127,7 @@ class ExportShareManager:
             from huginn import server_core
 
             with server_core._state_lock:
-                for tid, meta in server_core._threads.items():
+                for _tid, meta in server_core._threads.items():
                     sessions.append(dict(meta))
         except Exception as e:
             logger.warning("无法读取会话列表: %s", e)

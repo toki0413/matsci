@@ -63,7 +63,7 @@ class OrcaToolInput(BaseModel):
     )
 
     @model_validator(mode="after")
-    def _check_action_fields(self) -> "OrcaToolInput":
+    def _check_action_fields(self) -> OrcaToolInput:
         if not self.working_dir:
             raise ValueError(f"action '{self.action}' requires 'working_dir'")
         return self
@@ -162,7 +162,9 @@ class OrcaTool(HuginnTool):
         if self.orca_executable:
             return await self._run_orca(args, work_dir, inp_file)
 
-        from huginn.tools.sim.executable_resolver import resolve_executable, ResolutionRequest
+        from huginn.tools.sim.executable_resolver import (
+            resolve_executable,
+        )
         resolution = resolve_executable("orca")
         if isinstance(resolution, str):
             self.orca_executable = resolution
@@ -393,7 +395,7 @@ class OrcaTool(HuginnTool):
                         break
 
             inp_path.write_text("\n".join(lines), encoding="utf-8")
-        except Exception as e:
+        except Exception:
             logger.warning("ORCA input autofix failed", exc_info=True)
 
     @staticmethod
@@ -463,7 +465,7 @@ class OrcaTool(HuginnTool):
         ) + content.count("GEOMETRY OPTIMIZATION CYCLE")
 
         # frequencies
-        freq_matches = re.findall(r"VIBRATIONAL FREQUENCIES.*?(?:\n.*?)*?(-?[\d.]+)\s*cm",
+        re.findall(r"VIBRATIONAL FREQUENCIES.*?(?:\n.*?)*?(-?[\d.]+)\s*cm",
                                   content, re.IGNORECASE)
         # simpler: grab lines like "  0:  0.00 cm"
         freq_lines = re.findall(r"^\s*\d+:\s+(-?[\d.]+)\s*cm", content, re.MULTILINE)

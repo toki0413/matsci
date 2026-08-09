@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from huginn.tools.image_analysis._utils import auto_detect_colors, load_rgb, parse_color
 from huginn.types import ToolResult
-from huginn.tools.image_analysis._utils import load_rgb, parse_color, auto_detect_colors
 
 if TYPE_CHECKING:
     from huginn.tools.image_analysis.tool import ImageAnalysisInput
@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def eds_mapping(args: "ImageAnalysisInput") -> ToolResult:
+def eds_mapping(args: ImageAnalysisInput) -> ToolResult:
     rgb = load_rgb(args.image_path)
     H, W, _ = rgb.shape
 
@@ -100,7 +100,8 @@ def _find_hotspots(mask: np.ndarray, top_n: int = 3) -> list[dict[str, Any]]:
     ponytail: 复用 scipy.ndimage.label, 没装就返回空. 升级: DBSCAN + 密度峰.
     """
     try:
-        from scipy.ndimage import label as nd_label, center_of_mass
+        from scipy.ndimage import center_of_mass
+        from scipy.ndimage import label as nd_label
     except ImportError:
         return []
 

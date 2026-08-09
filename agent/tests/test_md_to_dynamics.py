@@ -147,7 +147,7 @@ def test_discover_damped_harmonic_from_dump(tmp_path):
     n = 160
     t = np.arange(n, dtype=float)
     frames = []
-    for i, ti in enumerate(t):
+    for _i, ti in enumerate(t):
         ex = np.exp(-g * ti)
         x, y = ex * np.cos(w * ti), ex * np.sin(w * ti)
         vx = -g * x - w * ex * np.sin(w * ti)

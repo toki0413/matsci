@@ -158,9 +158,8 @@ class PolicyEngine:
             if not re.search(pattern, command, re.IGNORECASE):
                 return False
 
-        if "workspace" in match and workspace is not None:
-            if not self._workspace_matches(match["workspace"], workspace):
-                return False
+        if "workspace" in match and workspace is not None and not self._workspace_matches(match["workspace"], workspace):
+            return False
 
         if "env_required" in match:
             check_env = env if env is not None else os.environ
@@ -270,7 +269,7 @@ class PolicyEngine:
     def _load_yaml(path: Path) -> dict:
         import yaml
 
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             return yaml.safe_load(f) or {}
 
     @staticmethod
@@ -283,7 +282,7 @@ class PolicyEngine:
             except ModuleNotFoundError:
                 raise ImportError(
                     "TOML policy files require Python 3.11+ or the 'tomli' package"
-                )
+                ) from None
         with open(path, "rb") as f:
             return tomllib.load(f)
 

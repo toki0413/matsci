@@ -17,12 +17,10 @@ from huginn.persistence.campaign import (
     SqliteCampaignStore,
 )
 from huginn.scheduling import (
-    Admission,
     AdmissionPolicy,
     ResourceExhausted,
     ToolScheduler,
 )
-
 
 # ── Test 1: admission tiering ──────────────────────────────────────────────
 

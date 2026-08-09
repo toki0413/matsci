@@ -7,11 +7,9 @@ from __future__ import annotations
 
 import asyncio
 import gc
-import json
 import os
 import sys
 import time
-import tracemalloc
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -50,8 +48,8 @@ def get_rss_mb() -> float:
 
 async def test_memory_leak_5min() -> None:
     print("\n[A] 5-Minute Memory Leak Detection")
+    from huginn.tools.numerical_tool import NumericalTool
     from huginn.tools.symmetry_tool import SymmetryTool
-    from huginn.tools.numerical_tool import NumericalTool, NumericalToolInput
     from huginn.types import ToolContext
 
     duration = 300  # 5 minutes
@@ -118,8 +116,8 @@ async def test_memory_leak_5min() -> None:
 
 async def test_campaign_loop_stability() -> None:
     print("\n[B] Campaign Loop Stability (20 iterations)")
-    from huginn.tools.numerical_tool import NumericalTool, NumericalToolInput
-    from huginn.tools.validate_tool import ValidateTool, ValidateToolInput
+    from huginn.tools.numerical_tool import NumericalTool
+    from huginn.tools.validate_tool import ValidateTool
     from huginn.types import ToolContext
 
     tmpdir = Path(__file__).parent.parent / "tmp_campaign"
@@ -216,8 +214,8 @@ async def test_tool_chain_repetition() -> None:
 
 async def test_registry_sustained_access() -> None:
     print("\n[D] Tool Registry Sustained Access (500 reads)")
-    from huginn.tools.registry import ToolRegistry
     from huginn.tools import register_all_tools
+    from huginn.tools.registry import ToolRegistry
 
     register_all_tools()
     reg = ToolRegistry()

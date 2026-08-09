@@ -12,12 +12,8 @@
 
 from __future__ import annotations
 
-import math
 import random
 import re
-from typing import Any
-
-from .task import BenchmarkTask
 
 _RNG = random.Random(42)  # 固定种子, 保证可复现
 
@@ -106,4 +102,5 @@ PHYSICAL_CONSTANTS = [
     ("里德伯常数 R∞", 1.097e7, "m⁻¹", 0.01e7),
     ("法拉第常数 F", 96485, "C/mol", 1),
     ("摩尔气体常数 R", 8.314, "J/(mol·K)", 0.01),
-    ("斯特藩-玻尔兹曼常数 σ", 5.670e-8, "W/(m²·K⁴)", 0.01
+    ("斯特藩-玻尔兹曼常数 σ", 5.670e-8, "W/(m²·K⁴)", 0.01e-8),
+]

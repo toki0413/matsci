@@ -52,7 +52,7 @@ class FEMInput(BaseModel):
     num_modes: int = Field(default=5, ge=1, le=50)
 
     @model_validator(mode="after")
-    def _check_action_fields(self) -> "FEMInput":
+    def _check_action_fields(self) -> FEMInput:
         if self.action == "mesh_from_geometry" and not self.dims:
             raise ValueError("mesh_from_geometry requires 'dims'")
         if self.action in ("static_linear", "modal", "buckling"):

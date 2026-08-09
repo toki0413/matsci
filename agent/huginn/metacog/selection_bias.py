@@ -111,7 +111,7 @@ def detect_selection_bias(
                 ),
             )
         # 组占比极端: 最大的组占了 >= 90%, 其他组代表性不足
-        counts = {g: 0 for g in unique_groups}
+        counts = dict.fromkeys(unique_groups, 0)
         for g in unique_groups:
             counts[g] = sum(1 for x in present_groups if str(x) == g)
         top_group = max(counts, key=counts.get)

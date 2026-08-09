@@ -32,16 +32,16 @@ the rate limiter and cost tracking code paths are exercised.
 from __future__ import annotations
 
 import threading
-from typing import Any, Callable, Union
+from collections.abc import Callable
+from typing import Any
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 
-
 # Type for the callable mode: receives the formatted prompt, returns
 # either a plain string or an AIMessage.
-PromptFn = Callable[[str], Union[str, AIMessage]]
+PromptFn = Callable[[str], str | AIMessage]
 
 
 class FakeLLM(BaseChatModel):

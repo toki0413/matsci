@@ -15,14 +15,13 @@ import asyncio
 import os
 import sys
 import tempfile
-import time
 from pathlib import Path
 
 # Ensure agent dir is on path and cache dir is writable
 sys.path.insert(0, str(Path(__file__).parent.parent))
 os.environ.setdefault("HUGINN_CACHE_DIR", str(Path(__file__).parent.parent / ".test_cache"))
 
-from huginn.types import ToolContext, ToolResult
+from huginn.types import ToolContext
 
 # ── Test framework ──────────────────────────────────────────────────
 
@@ -53,7 +52,7 @@ def report(name: str, success: bool, detail: str = "", skipped: bool = False, cr
 async def test_structure_symmetry_xrd_chain() -> None:
     print("\n[1] Structure → Symmetry → XRD → Validation Chain")
     from huginn.tools.sci.symmetry_tool import SymmetryTool
-    from huginn.tools.sci.xrd_sim_tool import XrdSimTool, XrdSimToolInput
+    from huginn.tools.sci.xrd_sim_tool import XrdSimTool
 
     tmpdir = tempfile.mkdtemp()
     ctx = ToolContext(session_id="sci-test", workspace=tmpdir)
@@ -174,7 +173,10 @@ async def test_autofix_self_healing() -> None:
 
 async def test_materials_database_chain() -> None:
     print("\n[5] Materials Database Query Chain")
-    from huginn.tools.materials_database_tool import MaterialsDatabaseTool, MaterialsDatabaseInput
+    from huginn.tools.materials_database_tool import (
+        MaterialsDatabaseInput,
+        MaterialsDatabaseTool,
+    )
 
     tmpdir = tempfile.mkdtemp()
     ctx = ToolContext(session_id="sci-test", workspace=tmpdir)
@@ -198,7 +200,7 @@ async def test_materials_database_chain() -> None:
 
 async def test_math_chain() -> None:
     print("\n[6] Symbolic + Numerical Math Chain")
-    from huginn.tools.sci.numerical_tool import NumericalTool, NumericalToolInput
+    from huginn.tools.sci.numerical_tool import NumericalTool
 
     tmpdir = tempfile.mkdtemp()
     ctx = ToolContext(session_id="sci-test", workspace=tmpdir)
@@ -230,7 +232,7 @@ async def test_math_chain() -> None:
 
 async def test_bourbaki_discovery() -> None:
     print("\n[7] Bourbaki Equation Discovery (newly implemented)")
-    from huginn.tools.bourbaki_tool import BourbakiTool, BourbakiInput
+    from huginn.tools.bourbaki_tool import BourbakiInput, BourbakiTool
 
     tool = BourbakiTool()
     ctx = ToolContext(session_id="sci-test", workspace=".")

@@ -8,6 +8,7 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 import click
 from rich.console import Console
@@ -104,7 +105,8 @@ def autoloop(
     engine = None
     try:
         from huginn.runtime.checkpoint import (
-            load_checkpoint, resume_engine_from_checkpoint,
+            load_checkpoint,
+            resume_engine_from_checkpoint,
         )
         _cp = load_checkpoint(obj.workspace.name, obj.workspace)
         if _cp is not None:
@@ -234,7 +236,6 @@ async def _watch_loop(
     progressive_budget: bool = True,
 ) -> None:
     """Continuously watch workspace and trigger loops when changes detected."""
-    import time
 
     iteration = 0
     while True:

@@ -14,8 +14,8 @@ homology 没意义, 降级到 fisher_distance (Phase 1-6 工程近似继续用).
 from __future__ import annotations
 
 import math
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
 
 import numpy as np
 
@@ -23,16 +23,16 @@ import numpy as np
 # 直接跑时 metacog 包没初始化, relative import 失败, 把 metacog 目录加 sys.path
 # 用不带前缀的 import 避免触发 metacog/__init__.py (它会拉 huginn 链)
 try:
+    from .hypothesis_manifold import Hypothesis, HypothesisManifold, Observation
     from .simplicial_homology import compute_persistent_homology, is_gudhi_available
-    from .hypothesis_manifold import HypothesisManifold, Hypothesis, Observation
 except ImportError:
     import os
     import sys
     _here = os.path.dirname(os.path.abspath(__file__))
     if _here not in sys.path:
         sys.path.insert(0, _here)
+    from hypothesis_manifold import Hypothesis, HypothesisManifold, Observation
     from simplicial_homology import compute_persistent_homology, is_gudhi_available
-    from hypothesis_manifold import HypothesisManifold, Hypothesis, Observation
 
 
 # ---------- point cloud 构造 ----------
@@ -307,7 +307,7 @@ def _selfcheck() -> None:
     assert pts[1, 0] == 1.5 and pts[1, 1] == 0.0 and pts[1, 2] == 3.0
     assert pts[2, 0] == 5.0 and pts[2, 1] == 8.0 and pts[2, 2] == 9.0
     print(f"✓ Test 1 point cloud 构造: shape={pts.shape}, h_ids={h_ids}")
-    print(f"  keys sorted (x,y,z); missing 填 0 ✓")
+    print("  keys sorted (x,y,z); missing 填 0 ✓")
 
     # Test 2: edge case — 1 个 hypothesis 降级
     m1 = HypothesisManifold()
@@ -340,9 +340,9 @@ def _selfcheck() -> None:
     ]
 
     land = compute_landscape(m5, max_dim=1)
-    print(f"\nTest 4 成功判据 (5 hypothesis: 1 true + 4 decoy):")
+    print("\nTest 4 成功判据 (5 hypothesis: 1 true + 4 decoy):")
     print(f"  landscape degraded={land.degraded}, n_hypotheses={len(land.h_ids)}")
-    print(f"  per_h_death (h_id → nearest neighbor dist):")
+    print("  per_h_death (h_id → nearest neighbor dist):")
     for h_id, d in zip(land.h_ids, land.per_h_death):
         print(f"    {h_id}: {d:.3f}")
 
@@ -361,7 +361,7 @@ def _selfcheck() -> None:
     print(f"  posterior: {post}")
 
     result = correlate_persistence_with_posterior(land, m5, obs)
-    print(f"\n  CorrelationResult:")
+    print("\n  CorrelationResult:")
     print(f"    degraded: {result.degraded}")
     print(f"    persistent_ranking: {result.persistent_ranking}")
     print(f"    posterior_ranking: {result.posterior_ranking}")
@@ -377,15 +377,15 @@ def _selfcheck() -> None:
     )
 
     if result.consistent:
-        print(f"\n✓ Test 4 成功判据达成:")
+        print("\n✓ Test 4 成功判据达成:")
         print(f"  top_persistent={result.top_persistent_h} == top_posterior={result.top_posterior_h}")
         print(f"  spearman_rho={result.spearman_rho:.3f} > 0")
-        print(f"  → persistent feature 跟 posterior 高的 h 一致")
-        print(f"  → Open Problem 7.4 探索成功")
+        print("  → persistent feature 跟 posterior 高的 h 一致")
+        print("  → Open Problem 7.4 探索成功")
     else:
         print(f"\n? Test 4 部分一致 (top_persistent={result.top_persistent_h}, "
               f"top_posterior={result.top_posterior_h}, rho={result.spearman_rho:.3f})")
-        print(f"  → 记录结果, fisher_distance 近似继续可用 (spec 允许探索失败)")
+        print("  → 记录结果, fisher_distance 近似继续可用 (spec 允许探索失败)")
 
     # Test 5: 紧密 cluster (判据可能弱化, 但不应 crash)
     m_close = HypothesisManifold()
@@ -403,7 +403,7 @@ def _selfcheck() -> None:
     # Test 6: 降级时 correlate 也降级
     result_deg = correlate_persistence_with_posterior(land1, m1, [Observation("x", 1.0)])
     assert result_deg.degraded and not result_deg.consistent
-    print(f"✓ Test 6 降级传播: landscape degraded → correlate degraded, consistent=False")
+    print("✓ Test 6 降级传播: landscape degraded → correlate degraded, consistent=False")
 
     print()
     print("=== persistence_landscape self-check 完成 ===")

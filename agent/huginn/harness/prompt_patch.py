@@ -15,6 +15,7 @@ key schema 不同), 不复用 ToolBelief 避免污染 skill 进化数据.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -23,7 +24,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +80,7 @@ class PromptPatch:
         }
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "PromptPatch":
+    def from_dict(cls, d: dict[str, Any]) -> PromptPatch:
         return cls(
             id=d["id"],
             phase=d["phase"],
@@ -100,7 +101,7 @@ class PromptPatchStore:
     跨 iter 状态持久: 进程内单例 + 磁盘文件. 失败静默, 不阻塞主循环.
     跟 _get_evolution (engine.py:460) 同模式懒加载.
     """
-    _instance: "PromptPatchStore | None" = None
+    _instance: PromptPatchStore | None = None
     _lock = threading.Lock()
 
     def __init__(self) -> None:
@@ -116,7 +117,7 @@ class PromptPatchStore:
         self._load_all()
 
     @classmethod
-    def get_instance(cls) -> "PromptPatchStore":
+    def get_instance(cls) -> PromptPatchStore:
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:
@@ -153,13 +154,17 @@ class PromptPatchStore:
         body 块 replace 时检查 {context} 占位符 (失败模式 9):
         缺占位符降级 prepend, 避免丢上下文.
         """
-        if patch.block_name == "body" and patch.op == "replace":
-            if "{context}" not in patch.new_text and "{hypothesis}" not in patch.new_text:
-                logger.info(
-                    "patch %s body replace → prepend (lost context placeholder)",
-                    patch.id,
-                )
-                patch.op = "prepend"
+        if (
+            patch.block_name == "body"
+            and patch.op == "replace"
+            and "{context}" not in patch.new_text
+            and "{hypothesis}" not in patch.new_text
+        ):
+            logger.info(
+                "patch %s body replace → prepend (lost context placeholder)",
+                patch.id,
+            )
+            patch.op = "prepend"
         with self._lock:
             self._patches[patch.id] = patch
             if len(self._patches) > _PATCH_STORE_MAX:
@@ -171,10 +176,8 @@ class PromptPatchStore:
                     ),
                 )
                 self._patches.pop(worst.id, None)
-                try:
+                with contextlib.suppress(Exception):
                     (self._store_dir / f"{worst.id}.json").unlink(missing_ok=True)
-                except Exception:
-                    pass
         self._save_patch(patch)
         return True
 

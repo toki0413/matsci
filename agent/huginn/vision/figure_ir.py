@@ -144,7 +144,7 @@ def _render_scienceplots(
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
     except ImportError:
-        raise RuntimeError("matplotlib not available, install: pip install matplotlib")
+        raise RuntimeError("matplotlib not available, install: pip install matplotlib") from None
 
     try:
         import scienceplots  # noqa: F401

@@ -5,12 +5,13 @@ Tries EasyOCR first, then pytesseract, then gives up gracefully.
 
 from __future__ import annotations
 
-import io
 import contextlib
+import io
 import logging
 import os
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -105,8 +106,8 @@ def _nougat_pdf(content: bytes) -> str:
         return ""
 
     # Nougat works off a file path, so spill the bytes to a temp file first.
-    import tempfile
     import pathlib
+    import tempfile
 
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
         tmp.write(content)

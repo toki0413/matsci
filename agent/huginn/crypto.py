@@ -9,6 +9,7 @@ and optional key file storage with additional password protection.
 from __future__ import annotations
 
 import base64
+import logging
 import os
 import secrets
 import shutil
@@ -19,9 +20,9 @@ from typing import BinaryIO
 
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-import logging
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+
 logger = logging.getLogger(__name__)
 
 

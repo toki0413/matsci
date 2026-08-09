@@ -26,7 +26,6 @@ from pydantic import BaseModel, Field
 from huginn.tools.base import HuginnTool
 from huginn.types import ToolContext, ToolResult
 
-
 # 物理常数 (SI)
 _E = 1.602176634e-19       # 电子电荷 (C)
 _ME = 9.1093837015e-31     # 电子质量 (kg)
@@ -397,7 +396,7 @@ class PlasmaTool(HuginnTool):
         Te_eV = max(args.electron_temp, args.temperature)
         Ti_eV = max(args.ion_temp, args.temperature * 0.1)
         Te_J = Te_eV * _E
-        Ti_J = Ti_eV * _E
+        Ti_eV * _E
         m_i = _MP  # 默认氢离子, 可扩展
 
         # Debye 长度
@@ -559,7 +558,7 @@ class PlasmaTool(HuginnTool):
         omega_pi = np.sqrt(n_e * _E**2 / (_EPS0 * m_i))
         # 热速度
         v_te = np.sqrt(Te_J / _ME)
-        v_ti = np.sqrt(Ti_J / m_i)
+        np.sqrt(Ti_J / m_i)
         # Debye 长度和声速
         lambda_D = np.sqrt(_EPS0 * Te_J / (n_e * _E**2))
         c_s = np.sqrt(Te_J / m_i)  # T_i << T_e 极限
@@ -761,7 +760,7 @@ class PlasmaTool(HuginnTool):
           σ ∝ T^1.5, κ ∝ T^0.5 (量级估算用)
         电流密度 J = I/(πR²), E = J/σ(T_center) 自洽迭代.
         """
-        I = args.arc_current
+        I = args.arc_current  # noqa: E741
         R = args.arc_radius
         N = args.grid_size
         dx = 2.0 * R / (N - 1)
@@ -793,7 +792,7 @@ class PlasmaTool(HuginnTool):
             T_new = T.copy()
             omega = 0.3  # 松弛因子, 防发散
             for i in range(1, N - 1):
-                lap = (T[i + 1] - 2 * T[i] + T[i - 1]) / dx**2
+                (T[i + 1] - 2 * T[i] + T[i - 1]) / dx**2
                 # dT/dt = (κ*lap + src) / (rho*cp), 稳态 = 0
                 # 用松弛: T_new = T + ω * (κ*lap + src)/(κ/dx²) * dx²
                 # 简化为 T_new[i] = T[i] + ω*( (T[i+1]+T[i-1])/2 + src*dx²/(2κ) - T[i] )

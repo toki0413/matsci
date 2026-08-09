@@ -49,7 +49,7 @@ async def list_threads(request: Request, include_archived: bool = False) -> dict
     user_id = _current_user_id(request)
     with _state_lock:
         threads = sorted(
-            list(_threads.values()),
+            _threads.values(),
             key=lambda x: x.get("last_active", ""),
             reverse=True,
         )

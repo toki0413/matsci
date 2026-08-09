@@ -9,16 +9,15 @@ from __future__ import annotations
 import asyncio
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from huginn.agent import HuginnAgent
-from huginn.self_improvement import BenchmarkCase, BenchmarkSuite
 from huginn.memory.manager import MemoryManager
-from huginn.security import SandboxConfig, SandboxExecutor, SandboxResult
+from huginn.security import SandboxConfig, SandboxExecutor
+from huginn.self_improvement import BenchmarkCase, BenchmarkSuite
 from huginn.tools.base import HuginnTool
 from huginn.types import ToolContext, ToolResult
 from huginn.workflows.engine import WorkflowEngine
@@ -163,7 +162,6 @@ class TestMemoryPressure:
 
 class TestWorkflowThroughput:
     def test_simple_workflow(self, benchmark):
-        from huginn.workflows.engine import WorkflowEngine
         from huginn.tools.registry import ToolRegistry
         engine = WorkflowEngine(ToolRegistry)
         # execute is async, but we can benchmark the engine init at least

@@ -199,9 +199,7 @@ def _parse_falsifiability_response(text: str) -> bool:
     val = obj.get("falsifiable")
     if isinstance(val, bool):
         return val
-    if isinstance(val, str) and val.lower() in ("true", "yes", "1"):
-        return True
-    return False
+    return bool(isinstance(val, str) and val.lower() in ("true", "yes", "1"))
 
 
 # ---------- 公开 API ----------
@@ -640,7 +638,7 @@ def _selfcheck() -> None:
         assert last_entry["accepted"] is False
         assert last_entry["falsifiability_check"] == "failed"
         assert last_entry["interpolation_check"] == "skipped"
-        print(f"[CHECK] case5c: llm failure logged, falsifiability_check=failed")
+        print("[CHECK] case5c: llm failure logged, falsifiability_check=failed")
 
         # 5d: log_path=None -> 不写文件, 不抛异常
         new_h_nolog = imagine_with_checks(h0, "algebraic", m2, model=_SeqMock(ok_resp, falsifiability_resp), sigma=0.5, log_path=None)
@@ -701,7 +699,7 @@ def _selfcheck() -> None:
         _lines = _log_path.read_text(encoding="utf-8").strip().split("\n")
         assert len(_lines) == 1, f"case7d: log should have 1 entry, got {len(_lines)}"
         _entry = json.loads(_lines[0])
-        assert _entry["accepted"] is True, f"case7d: accepted should be True"
+        assert _entry["accepted"] is True, "case7d: accepted should be True"
         assert _entry["transform_type"] == "blind_spot_bypass"
         assert _entry["parent_h_id"] == "h_base"
         assert _entry["interpolation_check"] == "passed"
@@ -732,13 +730,13 @@ def _selfcheck() -> None:
         _lines = _log_path.read_text(encoding="utf-8").strip().split("\n")
         _last = json.loads(_lines[-1])
         assert _last["falsifiability_check"] == "failed"
-        print(f"[CHECK] case7f: unfalsifiable rejected")
+        print("[CHECK] case7f: unfalsifiable rejected")
 
         # 7g: log_path=None 不抛
         _new_h_nolog = imagine_from_blind_spot(
             _bs, _m_bs, model=_SeqMock(_ok_resp, falsifiability_resp), log_path=None)
         assert _new_h_nolog is not None, "case7g: log_path=None should still work"
-        print(f"[CHECK] case7g: log_path=None ok")
+        print("[CHECK] case7g: log_path=None ok")
 
     print("OK imagination self-check passed (7 cases)")
 

@@ -13,14 +13,11 @@ from __future__ import annotations
 import time
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from huginn.evolution.knowledge_distiller import DistilledKnowledge
 from huginn.memory.longterm import LongTermMemory
-from huginn.memory.manager import MemoryConfig, MemoryManager
 from huginn.memory.maintainer import MemoryMaintainer
+from huginn.memory.manager import MemoryManager
 from huginn.types import ToolResult
-
 
 # ── helpers ──────────────────────────────────────────────────────
 

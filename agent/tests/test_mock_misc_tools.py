@@ -11,8 +11,8 @@ from huginn.tools.materials_database_tool import (
     MaterialsDatabaseInput,
     MaterialsDatabaseTool,
 )
-from huginn.tools.ml_potential_tool import MLPotentialTool, MLPotentialInput
-from huginn.tools.packing_tool import PackingTool, PackingToolInput
+from huginn.tools.ml_potential_tool import MLPotentialInput, MLPotentialTool
+from huginn.tools.packing_tool import PackingTool
 from huginn.tools.visualize_tool import VisualizeTool, VisualizeToolInput
 from huginn.types import ToolContext, ToolResult
 
@@ -166,7 +166,7 @@ class TestVisualizeTool:
         assert report == {"tasks": []}
 
     def test_unknown_action(self, tmp_path: Path):
-        with pytest.raises(Exception):
+        with pytest.raises(Exception):  # noqa: B017 — pydantic ValidationError
             VisualizeToolInput(action="unknown", output_path="test.png")
 
     @pytest.mark.asyncio

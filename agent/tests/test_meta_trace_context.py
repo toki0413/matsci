@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import json
 import sys
-import time
 from pathlib import Path
 
 # 让 `python test_meta_trace_context.py` 也能跑 (无 pytest 时)

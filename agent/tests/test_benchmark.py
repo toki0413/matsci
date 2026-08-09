@@ -7,7 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from huginn.agent import HuginnAgent
+from huginn.memory.longterm import LongTermMemory
+from huginn.memory.manager import MemoryManager
 from huginn.self_improvement import (
     BenchmarkCase,
     BenchmarkSuite,
@@ -15,8 +16,6 @@ from huginn.self_improvement import (
     numeric_evaluator,
 )
 from huginn.self_improvement.core import SelfImprovementLoop, llm_judge_evaluator
-from huginn.memory.longterm import LongTermMemory
-from huginn.memory.manager import MemoryManager
 
 
 class _FakeAgent:

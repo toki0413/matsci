@@ -271,7 +271,7 @@ class SymmetryTool(HuginnTool):
         天花板: 只验证群公理, 不验证整个空间群结构 (如 Wyckoff 位置一致性).
         """
         try:
-            from sympy import Matrix, Rational, eye
+            from sympy import Matrix, eye
         except ImportError:
             return ToolResult(
                 data=None, success=False,
@@ -296,7 +296,7 @@ class SymmetryTool(HuginnTool):
             n = len(affines)
             identity = eye(4)
             # 1. 单位元检查
-            has_identity = any(A == identity for A in affines)
+            has_identity = any(identity == A for A in affines)
             # 2. 逆元检查 — 每个操作有逆元在集合里
             inverses_ok = True
             missing_inverse = None

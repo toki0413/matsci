@@ -270,7 +270,8 @@ class EnginePerceiveMixin:
         try:
             from huginn.autoloop.engine import _autoloop_meta_trace_inject_enabled
         except ImportError:
-            _autoloop_meta_trace_inject_enabled = lambda: False  # type: ignore
+            def _autoloop_meta_trace_inject_enabled():
+                return False  # type: ignore[return-value]
         if _autoloop_meta_trace_inject_enabled():
             try:
                 from huginn.context_builder import load_meta_trace_text
@@ -291,10 +292,16 @@ class EnginePerceiveMixin:
         供 _learn 调 update_pattern_confidence 做 ±ε 反馈 (C3 闭环).
         返回空串时不影响 prompt.
 
-        极限模式才开 (HUGINN_EXTREME_DISPATCH=1), 平常默认关闭省计算.
+        启用条件: HUGINN_EXTREME_DISPATCH=1, 或长程任务 (max_iterations >= 20).
+        与 engine_reflect 的 cycle/trajectory 检测共用同一触发语义 — 避免重复犯错
+        对任何长程任务都有价值, 不该只属于 extreme. 短程任务默认关省计算.
         """
         import os
-        if os.environ.get("HUGINN_EXTREME_DISPATCH", "0").lower() not in ("1", "true"):
+        # 长程任务 (max_iterations >= 20) 默认开 trajectory 召回,
+        # 短程任务仍需 HUGINN_EXTREME_DISPATCH=1 才开 (省计算).
+        _max_iter = getattr(self, "_max_iterations", 10)
+        _extreme = os.environ.get("HUGINN_EXTREME_DISPATCH", "0").lower() in ("1", "true")
+        if not (_extreme or _max_iter >= 20):
             return ""
         try:
             from huginn.knowledge.trajectory_pattern import trajectory_match

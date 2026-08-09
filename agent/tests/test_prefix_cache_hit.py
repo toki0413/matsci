@@ -11,11 +11,9 @@ prefix = system + begin-dialogs + history 稳定).
 
 from __future__ import annotations
 
-import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
 from huginn.utils.prompt_cache import PromptCacheBuilder
-
 
 SYSTEM_PROMPT = (
     "# Huginn System Prompt\n"

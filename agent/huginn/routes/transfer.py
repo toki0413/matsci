@@ -11,9 +11,8 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
-import os
-import shlex
 import time
 from pathlib import Path
 from typing import Any
@@ -400,11 +399,9 @@ def _ensure_remote_dir(sftp: Any, remote_dir: str) -> None:
         try:
             sftp.stat(cur)
         except FileNotFoundError:
-            try:
+            # 并发创建时可能已经被建了, 忽略
+            with contextlib.suppress(OSError):
                 sftp.mkdir(cur)
-            except OSError:
-                # 并发创建时可能已经被建了, 忽略
-                pass
 
 
 def _delete_extra_remote_files(

@@ -28,7 +28,6 @@ from typing import Any
 
 from .task import BenchmarkTask
 
-
 # ── 工具 ──────────────────────────────────────────────────────
 
 _SCINUM_RE = r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?"

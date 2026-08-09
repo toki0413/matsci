@@ -44,7 +44,7 @@ class PrivacyGuard:
     }
 
     _singleton_lock = threading.Lock()
-    _singleton: "PrivacyGuard | None" = None
+    _singleton: PrivacyGuard | None = None
 
     def __init__(self) -> None:
         self._lock = threading.RLock()
@@ -59,7 +59,7 @@ class PrivacyGuard:
         self._local_only_tags: set[str] = set()
 
     @classmethod
-    def shared(cls) -> "PrivacyGuard":
+    def shared(cls) -> PrivacyGuard:
         """进程级单例."""
         with cls._singleton_lock:
             if cls._singleton is None:
@@ -199,9 +199,7 @@ class PrivacyGuard:
             return True
         # ephemeral 级数据在 redact 模式下也建议走本地
         tier = self.classify_data(content)
-        if tier == "ephemeral" and self.get_level() != "off":
-            return True
-        return False
+        return bool(tier == "ephemeral" and self.get_level() != "off")
 
     # ── 审计日志 ────────────────────────────────────────────
 

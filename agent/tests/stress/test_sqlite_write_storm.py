@@ -17,9 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
-import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from pathlib import Path
 
 import httpx
 import pytest
@@ -46,7 +44,7 @@ _skip_no_server = pytest.mark.skipif(
 
 def test_research_log_concurrent_writes(tmp_path):
     """10 线程 × 200 次写入研究日志, 验证无 database is locked."""
-    from huginn.research_log import ResearchLog, RecordType
+    from huginn.research_log import RecordType, ResearchLog
 
     db_path = tmp_path / "storm_research.sqlite"
     log = ResearchLog(db_path=str(db_path))
@@ -62,7 +60,7 @@ def test_research_log_concurrent_writes(tmp_path):
                     RecordType.CONJECTURE,
                     f"conjecture-{tid}-{i}",
                     f"content from thread {tid} iteration {i}",
-                    tags=[f"stress", f"t{tid}"],
+                    tags=["stress", f"t{tid}"],
                 )
             except Exception as e:
                 errors.append(f"t{tid} i{i}: {e}")
@@ -85,8 +83,9 @@ def test_research_log_concurrent_writes(tmp_path):
 
 def test_anomaly_log_concurrent_writes(tmp_path):
     """5 线程 × 300 次异常日志写入."""
-    from huginn.anomaly_log import AnomalyLogStore, Anomaly
     from datetime import datetime
+
+    from huginn.anomaly_log import Anomaly, AnomalyLogStore
 
     db_path = tmp_path / "storm_anomaly.sqlite"
     store = AnomalyLogStore(db_path=str(db_path))
@@ -125,7 +124,7 @@ def test_anomaly_log_concurrent_writes(tmp_path):
 
 def test_mixed_read_write_storm(tmp_path):
     """并发读写混合: 5 写 + 5 读, 验证读写不互斥."""
-    from huginn.research_log import ResearchLog, RecordType
+    from huginn.research_log import RecordType, ResearchLog
 
     db_path = tmp_path / "storm_rw.sqlite"
     log = ResearchLog(db_path=str(db_path))

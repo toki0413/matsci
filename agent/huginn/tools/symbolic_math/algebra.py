@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from .tool import SymbolicMathInput
 
 
-def solve(args: "SymbolicMathInput") -> ToolResult:
+def solve(args: SymbolicMathInput) -> ToolResult:
     sym_dict = parse_symbols(args.symbols, args.assumptions)
     equations = []
     for eq_str in args.equations or []:
@@ -46,7 +46,7 @@ def solve(args: "SymbolicMathInput") -> ToolResult:
     )
 
 
-def eigenvalue(args: "SymbolicMathInput") -> ToolResult:
+def eigenvalue(args: SymbolicMathInput) -> ToolResult:
     sym_dict = parse_symbols(args.symbols, args.assumptions)
     if not args.matrix:
         return ToolResult(data=None, success=False, error="No matrix provided")
@@ -74,7 +74,7 @@ def eigenvalue(args: "SymbolicMathInput") -> ToolResult:
     )
 
 
-def linear_algebra(args: "SymbolicMathInput") -> ToolResult:
+def linear_algebra(args: SymbolicMathInput) -> ToolResult:
     """数值线性代数: lu_decompose / cholesky / jacobi_solve / gauss_seidel_solve
     / cg_solve / mat_vec_mul / cond_number.
     """

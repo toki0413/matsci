@@ -22,7 +22,7 @@ import os
 import shutil
 import threading
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -541,10 +541,7 @@ class AuditLogRotator:
         # Age check
         mtime = path.stat().st_mtime
         age_days = (time.time() - mtime) / 86400.0
-        if age_days >= self.max_age_days:
-            return True
-
-        return False
+        return age_days >= self.max_age_days
 
     def rotate(self) -> Path | None:
         """Rotate the current log file.
@@ -567,9 +564,8 @@ class AuditLogRotator:
         # Compress if requested
         if self.compress:
             gz_path = Path(str(archive_path) + ".gz")
-            with open(archive_path, "rb") as f_in:
-                with gzip.open(gz_path, "wb") as f_out:
-                    shutil.copyfileobj(f_in, f_out)
+            with open(archive_path, "rb") as f_in, gzip.open(gz_path, "wb") as f_out:
+                shutil.copyfileobj(f_in, f_out)
             archive_path.unlink()
             archive_path = gz_path
 

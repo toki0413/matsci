@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import importlib.util
+
 import pytest
 
 _sqlite_saver_available = importlib.util.find_spec("langgraph.checkpoint.sqlite") is not None
 
-import tempfile
-from pathlib import Path
+import tempfile  # noqa: E402
+from pathlib import Path  # noqa: E402
 
-from huginn.agent import HuginnAgent
-from huginn.checkpointer import create_checkpointer, create_in_memory_checkpointer
+from huginn.agent import HuginnAgent  # noqa: E402
+from huginn.checkpointer import (  # noqa: E402
+    create_checkpointer,
+    create_in_memory_checkpointer,
+)
 
 
 class TestCheckpointerFactory:

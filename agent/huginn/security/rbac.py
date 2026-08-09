@@ -11,19 +11,17 @@ import enum
 import hashlib
 import hmac
 import json
-import os
 import secrets
 import threading
 import time
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-
 # ---------------------------------------------------------------------------
 # Role model
 # ---------------------------------------------------------------------------
 
-class Role(str, enum.Enum):
+class Role(enum.StrEnum):
     """Built-in user roles with escalating privileges."""
 
     VIEWER = "viewer"
@@ -113,8 +111,7 @@ class User:
 # JWT helpers  (HS256 — no external dependency)
 # ---------------------------------------------------------------------------
 
-import base64
-import struct
+import base64  # noqa: E402
 
 
 def _b64url_encode(data: bytes) -> str:

@@ -12,7 +12,10 @@ import shutil
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from huginn.security.docker_sandbox import DockerSandboxExecutor
 
 
 class SandboxError(Exception):
@@ -450,7 +453,7 @@ def create_sandbox(
     prefer_docker: bool = True,
     docker_image: str = "python:3.12-slim",
     profile: str = "light",
-) -> SandboxExecutor | "DockerSandboxExecutor":  # type: ignore[name-defined]
+) -> SandboxExecutor | DockerSandboxExecutor:  # type: ignore[name-defined]
     """根据环境自动选择沙箱后端。
 
     - prefer_docker=True (默认) 且 Docker 可用 → DockerSandboxExecutor

@@ -1,0 +1,77 @@
+# LAMMPS DEM (Discrete Element Method) — Granular Packing Simulation
+# 接触模型: Hertz-Mindlin with Tsuji damping (restitution e=0.8)
+# 生成方式: lammps_tool action=dem_packing
+# 粒子数: 10, 粒径: 5.0 ± 0.0
+# 时间步 dt = 0.1 * t_R = 2.736630e-03 s  (t_R = πr·sqrt(ρ/G)/(0.1631ν+0.8766) = 2.736630e-02 s)
+
+# ── Units & Atom Style ──────────────────────────────────────────
+# si: meters/seconds/kg; real: Angstroms/fs/g (需按比例换算)
+units           si
+atom_style      sphere
+boundary        f f f
+
+# ── Simulation Box ──────────────────────────────────────────────
+region          box block 0 100.0 0 100.0 0 100.0
+create_box      1 box
+
+# ── Create Particles ────────────────────────────────────────────
+# 必须先 create_atoms 再 set diameter/density:
+# LAMMPS set 只作用于已存在原子, create_box 后无原子时 set 静默无效.
+create_atoms    1 random 10 12345 box \
+                overlap 10.0 maxtry 10000
+
+# ── Particle Properties ─────────────────────────────────────────
+# 每个粒子: position + diameter + density (LAMMPS 内部按 sphere 算 mass)
+set             type 1 diameter 10.0 density 1.0
+# 单分散粒径
+
+# ── Neighbor & Communication ───────────────────────────────────
+neighbor        10.0 bin
+neigh_modify    delay 0
+
+# ── Pair Style: Hertz-Mindlin Granular Contact ──────────────────
+# LAMMPS GRANULAR package, 官方语法 (https://docs.lammps.org/pair_granular.html):
+#   pair_coeff * * hertz/material E v gamma_n tangential mindlin_rescale G_t mu_t x_t damping tsuji gamma_n
+# 注意: tangential 关键字必须前置 (旧脚本把 normal/tangential/rolling/twisting
+# 当 pair_coeff 末尾位置参数, 是非法语法). damping_coeff 是臆造关键字,
+# 正确是 "damping tsuji gamma_n".
+pair_style      granular
+pair_coeff      * * hertz/material 1.000000e+06 0.3 7.085030e-02 \
+                tangential mindlin_rescale 3.846154e+05 0.5 1.0 \
+                damping tsuji 7.085030e-02
+
+# ── Physics: Gravity (optional) ─────────────────────────────────
+# no gravity
+
+# ── Integration: NVE + Granular Temperature ────────────────────
+fix             integrate all nve/sphere
+fix             freeze_property all setforce 0 0 0
+
+# ── Output: Thermo + Dump ──────────────────────────────────────
+thermo          1000
+thermo_style    custom step atoms ke pe etotal press
+thermo_modify   lost warn
+
+dump            particles all custom 10000 dump.particles id type x y z vx vy vz \
+                radius mass
+dump_modify     particles sort id
+
+# ── Run ─────────────────────────────────────────────────────────
+# 初始能量最小化 (消除 create_atoms overlap 残留)
+minimize        1e-6 1e-8 1000 10000
+
+# 释放 freeze, 跑 DEM. dt 取 10% Rayleigh 接触时间保证稳定.
+unfix           freeze_property
+timestep        2.736630e-03
+run             100000
+
+# ── Post: Compute Coordination Number & Packing Fraction ───────
+compute         cn all contact/atom
+compute         cn_avg all reduce ave c_cn
+variable        phi equal count(all) * 5.235988e+02 / (vol * 1.0)
+variable        mean_cn equal c_cn_avg
+
+print           "Packing fraction (phi): ${phi}"
+print           "Mean coordination number: ${mean_cn}"
+
+write_restart   restart.dem

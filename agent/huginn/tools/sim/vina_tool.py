@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 
 from huginn.security import SandboxError, SandboxExecutor
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
-from huginn.tools.sim.executable_resolver import resolve_executable, ResolutionRequest
+from huginn.tools.sim.executable_resolver import ResolutionRequest, resolve_executable
 from huginn.types import ToolContext, ToolResult
 
 logger = logging.getLogger(__name__)

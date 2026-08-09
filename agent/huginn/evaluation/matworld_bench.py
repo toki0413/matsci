@@ -12,8 +12,9 @@ or empirical estimate lands inside, but a hallucinated value won't.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 # 五个领域, 跟 BenchTask.category 对应
 CATEGORIES: tuple[str, ...] = (

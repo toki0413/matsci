@@ -13,6 +13,7 @@ import json
 import os
 import re
 import urllib.parse
+from datetime import UTC
 from pathlib import Path
 from typing import Any
 
@@ -20,11 +21,10 @@ from huginn.types import ToolContext, ToolResult
 
 from ._http import _USER_AGENT, logger
 from .pdf_fetch import (
-    _Crawl4aiUnavailable,
     _crawl4ai_fetch,
+    _Crawl4aiUnavailable,
     _playwright_fetch,
 )
-
 
 # ───────────────────────── Authenticated sessions (高校订阅源) ──────────
 # 高校师生有合法订阅 (Elsevier/IEEE/CNKI/万方等), 但这些站有 Cloudflare/
@@ -249,7 +249,7 @@ async def _auth_login(provider: str, timeout_sec: int = 300) -> dict[str, Any]:
     profile_dir.mkdir(parents=True, exist_ok=True)
 
     import time
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     async with async_playwright() as pw:
         # headless=False 让用户看到浏览器窗口操作
@@ -321,8 +321,7 @@ async def _auth_login(provider: str, timeout_sec: int = 300) -> dict[str, Any]:
                 break
 
             # 成功检测 3: 没 success_pattern 的 provider, 停在非登录页 10s 也算成功
-            if not success_pattern and time.time() - start > 10:
-                if "login" not in current_url.lower() and "signin" not in current_url.lower():
+            if (not success_pattern and time.time() - start > 10) and ("login" not in current_url.lower() and "signin" not in current_url.lower()):
                     result = "success"
                     break
 
@@ -331,7 +330,7 @@ async def _auth_login(provider: str, timeout_sec: int = 300) -> dict[str, Any]:
         # 存 meta 不管结果
         _save_session_meta(
             provider,
-            last_auth_at=datetime.now(timezone.utc).isoformat(),
+            last_auth_at=datetime.now(UTC).isoformat(),
             last_url=last_url,
             auth_result=result,
         )

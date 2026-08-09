@@ -20,7 +20,7 @@ from __future__ import annotations
 import os
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 
@@ -44,7 +44,7 @@ class ConversationNode:
     parent_id: str | None = None
     children_ids: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
-    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -66,7 +66,7 @@ class ConversationNode:
             parent_id=data.get("parent_id"),
             children_ids=data.get("children_ids", []),
             metadata=data.get("metadata", {}),
-            created_at=data.get("created_at", datetime.now(timezone.utc).isoformat()),
+            created_at=data.get("created_at", datetime.now(UTC).isoformat()),
         )
 
 
@@ -352,7 +352,7 @@ def _selfcheck() -> int:
     b1 = t.add_message("assistant", "branch-1", metadata={"findings": ["kpoints=4x4 better"]})
     # 回主干, 继续走主干
     t.set_active_leaf(a1.id)
-    a2 = t.add_message("assistant", "main-2", metadata={"findings": ["converged"]})
+    t.add_message("assistant", "main-2", metadata={"findings": ["converged"]})
 
     # 合并 branch b1 回 active leaf a2
     merged = t.merge_branch_into_active(b1.id)

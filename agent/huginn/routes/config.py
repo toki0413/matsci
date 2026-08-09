@@ -10,16 +10,17 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import logging
 import os
 import time
-import logging
-import traceback
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends
 
-from huginn.config import HuginnConfig, ModelConfig, get_config as get_cached_config
+from huginn.config import HuginnConfig, ModelConfig
+from huginn.config import get_config as get_cached_config
 from huginn.models.registry import (
     _DOMESTIC_OPENAI_COMPATIBLE,
     _PROVIDER_DEFAULTS,
@@ -423,7 +424,7 @@ async def _run_connectivity_test(model: ModelConfig) -> dict[str, Any]:
             "error": None,
             "model_response": text[:200],
         }
-    except asyncio.TimeoutError:
+    except TimeoutError:
         latency_ms = int((time.perf_counter() - start) * 1000)
         return {
             "success": False,
@@ -444,7 +445,7 @@ async def _run_connectivity_test(model: ModelConfig) -> dict[str, Any]:
 
 def _build_model_config(params: dict[str, Any]) -> ModelConfig:
     """从 dict 构造 ModelConfig, 只取已知字段, 多余的丢掉。"""
-    known = {f for f in ModelConfig.__dataclass_fields__}  # type: ignore[attr-defined]
+    known = set(ModelConfig.__dataclass_fields__)  # type: ignore[attr-defined]
     filtered = {k: v for k, v in params.items() if k in known}
     return ModelConfig(**filtered)
 
@@ -481,7 +482,6 @@ async def discover_local_models(provider: str = "ollama", base_url: str = "") ->
     """
     import ipaddress
     import json as _json
-    import socket
     import urllib.request
     from urllib.parse import urlparse
 
@@ -659,10 +659,8 @@ async def decrypt_config_endpoint(params: dict[str, Any]) -> dict[str, Any]:
         global _config_path_override
         _config_path_override = plain_path
         # 解密成功后删掉 .enc, 避免下次又走加密路径
-        try:
+        with contextlib.suppress(OSError):
             enc_path.unlink()
-        except OSError:
-            pass
     except Exception as e:
         logger.error("unexpected error", exc_info=True)
         return {"success": False, "error": str(e)}

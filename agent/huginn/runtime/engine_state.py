@@ -21,8 +21,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from huginn.utils.common import atomic_write_json
 from huginn.runtime.trace_context import get_trace_id as _get_trace_id
+from huginn.utils.common import atomic_write_json
 
 # 跟随 P12/P13/P14 的 env flag 风格, 默认开 (crash-safe resume).
 # ponytail: 不读 settings, 不加配置文件 — env var 跟现有 flag 一致.
@@ -41,9 +41,7 @@ def use_persistence() -> bool:
     """
     if _PERSISTENCE_FLAG in os.environ:
         return os.environ[_PERSISTENCE_FLAG] == "1"
-    if os.environ.get(_DISABLE_FLAG) == "1":
-        return False
-    return True
+    return os.environ.get(_DISABLE_FLAG) != "1"
 
 
 def latest_run_id(workspace: str | Path) -> str | None:
@@ -185,7 +183,7 @@ def _snapshot_engine(engine: Any, run_id: str) -> EngineState:
 
 def save_engine_state(
     engine: Any, run_id: str, workspace: str | Path
-) -> "EngineState | None":
+) -> EngineState | None:
     """原子写 EngineState + 同步 hypothesis_graph.
 
     返回保存的 EngineState, 失败 (flag off / IO 异常) 返回 None.
@@ -236,7 +234,7 @@ def save_engine_state(
 
 def load_engine_state(
     run_id: str, workspace: str | Path
-) -> "EngineState | None":
+) -> EngineState | None:
     """读 <workspace>/.huginn/engine_state/<run_id>.json 反序列化.
 
     文件不存在 / flag off / 解析失败均返回 None.
@@ -307,7 +305,7 @@ def apply_state_to_engine(state: EngineState, engine: Any) -> None:
     # _mcmc_chains 不在 _ENGINE_FIELDS 里 (跟 cognitive_maps 同范式单独处理),
     # 但它是 engine 实例属性, 需写回
     try:
-        setattr(engine, "_mcmc_chains", getattr(state, "_mcmc_chains", {}))
+        engine._mcmc_chains = getattr(state, "_mcmc_chains", {})
     except Exception:
         import logging
         logging.getLogger(__name__).debug(

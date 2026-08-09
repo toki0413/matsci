@@ -2,18 +2,19 @@
 from __future__ import annotations
 
 import pytest
+
 pytest.importorskip("anthropic", reason="anthropic SDK not installed")
 
 """Tests for model thinking/reasoning intensity configuration."""
 
-import json
-from typing import Any
+import json  # noqa: E402
+from typing import Any  # noqa: E402
 
-import pytest
+import pytest  # noqa: E402
 
-from huginn.agents.factory import AgentFactory
-from huginn.config import AgentProfileConfig, HuginnConfig, ModelConfig
-from huginn.models.registry import ModelRegistry, create_langchain_model
+from huginn.agents.factory import AgentFactory  # noqa: E402
+from huginn.config import AgentProfileConfig, HuginnConfig, ModelConfig  # noqa: E402
+from huginn.models.registry import ModelRegistry, create_langchain_model  # noqa: E402
 
 
 class _FakeChatModel:

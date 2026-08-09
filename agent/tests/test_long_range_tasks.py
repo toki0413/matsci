@@ -8,17 +8,13 @@ These tests simulate extended research workflows (20+ turns) and verify that:
 - The full S0→S1→S2→S3→S4→S5→S6→S1 cycle completes successfully
 """
 
-import pytest
-import tempfile
-import json
-from pathlib import Path
-from unittest.mock import MagicMock, patch, AsyncMock
+from unittest.mock import MagicMock
+
 from huginn.cognitive_engine import (
-    CognitiveState,
     AttentionMode,
-    TransitionSignal,
+    CognitiveState,
     CognitiveStateMachine,
-    update_l1_coordinates,
+    TransitionSignal,
 )
 
 
@@ -170,7 +166,6 @@ class TestCrossSessionContinuity:
     def test_plan_progress_restored_with_plan_id(self):
         """load_active_plan must return plan_id for session_state.set_plan()."""
         from huginn.memory.manager import MemoryManager
-        from unittest.mock import MagicMock
 
         mgr = MemoryManager.__new__(MemoryManager)
         mgr.longterm = MagicMock()

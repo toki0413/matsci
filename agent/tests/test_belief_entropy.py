@@ -6,16 +6,14 @@
 
 from __future__ import annotations
 
-import math
-
 import pytest
 
+import huginn.utils.belief_entropy as be_mod
 from huginn.utils.belief_entropy import (
     BeliefEntropy,
     BeliefEntropyConfig,
     get_belief_entropy,
 )
-import huginn.utils.belief_entropy as be_mod
 
 
 @pytest.fixture()

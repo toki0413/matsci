@@ -43,7 +43,7 @@ class TeamRole(enum.StrEnum):
 # auto_approve_all 高权限. 按 role 限定工具子集, 避免子 agent 调危险工具.
 # None = 不限 (继承 profile 配置); list = 只给这些工具.
 # ceiling: 硬编码工具名, 工具改名时需同步更新. 升级: 从 ModelCaps 推导.
-_ROLE_TOOL_FILTER: dict["TeamRole", list[str] | None] = {
+_ROLE_TOOL_FILTER: dict[TeamRole, list[str] | None] = {
     TeamRole.VISION: ["vision_describe", "image_analysis_tool", "file_read_tool"],
     TeamRole.CRITIC: ["file_read_tool", "grep", "glob", "diff_tool"],
     TeamRole.PLANNER: None,   # planner 需要全工具视野来规划
@@ -112,7 +112,7 @@ class TeamMember:
                 self._config, profile_id=self.profile_id, **overrides
             )
             # 强制降级: 子 agent 不继承主会话 auto_approve_all 高权限,
-            # 但保留 path_rules / rcb_mode 等其他权限设置.
+            # 但保留 path_rules / sandbox_mode 等其他权限设置.
             _perm = getattr(self._agent, "_permission_config", None)
             if _perm is not None:
                 self._agent._permission_config = dataclasses.replace(
@@ -157,13 +157,13 @@ class ModelTeam:
         for m in members:
             self.assign(m)
 
-    def assign(self, member: TeamMember) -> "ModelTeam":
+    def assign(self, member: TeamMember) -> ModelTeam:
         """把成员绑定到其声明的角色 (覆盖同角色的旧成员)."""
         self.members[member.role] = member
         return self
 
     @classmethod
-    def from_config(cls, config: Any) -> "ModelTeam":
+    def from_config(cls, config: Any) -> ModelTeam:
         """根据 HuginnConfig.agents 中的 profile 自动组建团队.
 
         策略:

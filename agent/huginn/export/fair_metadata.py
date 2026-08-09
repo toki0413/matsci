@@ -8,7 +8,7 @@ following DataCite and schema.org standards.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -56,9 +56,7 @@ def _extract_variables(results: Any) -> list[dict[str, Any]]:
             "@type": "PropertyValue",
             "name": label,
         }
-        if isinstance(value, (int, float)):
-            entry["value"] = value
-        elif isinstance(value, str):
+        if isinstance(value, (int, float, str)):
             entry["value"] = value
         elif isinstance(value, dict):
             # nested result dict — flatten one level
@@ -101,7 +99,7 @@ def generate_dataset_metadata(
         A dict ready to serialize as JSON-LD. The ``@context`` is
         schema.org so any JSON-LD parser can interpret it.
     """
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
 
     # ── provenance → wasGeneratedBy ──
     prov = provenance or {}
@@ -202,7 +200,7 @@ def generate_citation(metadata: dict[str, Any]) -> str:
     else:
         author = str(creator)
     year = (metadata.get("dateCreated", "")[:4]) or str(
-        datetime.now(timezone.utc).year
+        datetime.now(UTC).year
     )
     url = ""
     dist = metadata.get("distribution", [])

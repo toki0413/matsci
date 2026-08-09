@@ -17,7 +17,6 @@ from huginn.autoloop.hypothesis_loop import (
     HypothesisNode,
 )
 
-
 # ── 节点基本操作 ─────────────────────────────────────────────────────────────
 
 

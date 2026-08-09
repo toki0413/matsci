@@ -11,16 +11,17 @@ Retention: most recent 3 + one milestone every 10 steps.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
-
-from huginn.utils.common import atomic_write_json
+from typing import Any
 
 from huginn.events.audit_log import verify_audit_chain
 from huginn.runtime.trace_context import get_trace_id as _get_trace_id
+from huginn.utils.common import atomic_write_json
 
 logger = logging.getLogger(__name__)
 
@@ -178,7 +179,8 @@ def resume_engine_from_checkpoint(
     """
     from huginn.autoloop.engine import AutoloopEngine
     from huginn.runtime.engine_state import (
-        engine_state_digest, load_engine_state,
+        engine_state_digest,
+        load_engine_state,
     )
 
     resolved_run_id = run_id or checkpoint.task_id
@@ -223,10 +225,8 @@ def _prune_checkpoints(
     for cp in cps:
         if cp.step_id not in keep:
             p = _checkpoint_path(workspace, task_id, cp.step_id)
-            try:
+            with contextlib.suppress(FileNotFoundError):
                 p.unlink()
-            except FileNotFoundError:
-                pass
 
 
 def _get_audit_hash_head(workspace: Path) -> str:
@@ -235,7 +235,7 @@ def _get_audit_hash_head(workspace: Path) -> str:
     if not audit_path.exists():
         return GENESIS_HASH
     last = GENESIS_HASH
-    with open(audit_path, "r", encoding="utf-8") as f:
+    with open(audit_path, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -400,13 +400,11 @@ if __name__ == "__main__":
         print("6. tamper/head-mismatch detection OK")
 
         # cleanup audit.jsonl so the workspace is clean for any re-run
-        try:
+        with contextlib.suppress(FileNotFoundError):
             audit_path.unlink()
-        except FileNotFoundError:
-            pass
 
         # 7. P15: engine_state_digest 字段 — 默认 None, 显式赋值后 round-trip 保留
-        from huginn.runtime.engine_state import engine_state_digest, EngineState
+        from huginn.runtime.engine_state import EngineState, engine_state_digest
         cp_digest = save_checkpoint(
             task_id="t3", step_id=1, phase="execute", workspace=ws,
             context_digest="digest_xyz", memory_cursor=None,
@@ -451,7 +449,7 @@ if __name__ == "__main__":
         # - 无 engine_state 文件时返回 AutoloopEngine(workspace=ws) (无 resume_from_state)
         # - 有 engine_state 文件时返回 AutoloopEngine(workspace=ws, resume_from_state=run_id)
         import huginn.autoloop.engine as _eng_mod
-        _orig_AE = _eng_mod.AutoloopEngine
+        _orig_AE = _eng_mod.AutoloopEngine  # noqa: N816
         _calls: list[dict] = []
         class _StubAE:
             def __init__(self, **kw):
@@ -478,7 +476,7 @@ if __name__ == "__main__":
             import os as _os9
             _saved_persist = _os9.environ.get("HUGINN_USE_PERSISTENCE")
             _os9.environ["HUGINN_USE_PERSISTENCE"] = "1"
-            from huginn.runtime.engine_state import save_engine_state, EngineState
+            from huginn.runtime.engine_state import EngineState, save_engine_state
             # save_engine_state 第一个参数是 engine (有 _iteration 等属性), 不是 state.
             # ponytail: 直接用 EngineState 当 engine — _snapshot_engine 走 getattr 路径.
             save_engine_state(state, "t5", ws)

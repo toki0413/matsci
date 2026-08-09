@@ -13,26 +13,23 @@ Test coverage:
 6. Cross-session continuity restores cognitive state
 """
 
-import pytest
-import asyncio
-import tempfile
-from pathlib import Path
-from unittest.mock import MagicMock, patch, AsyncMock
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
+import contextlib
+from unittest.mock import MagicMock
+
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 
 def _get_full_agent_source():
     """Collect source from HuginnAgent and all its mixin bases."""
     import inspect
+
     from huginn.agent import HuginnAgent
     parts = []
     for cls in HuginnAgent.__mro__:
         if cls is object:
             continue
-        try:
+        with contextlib.suppress(TypeError, OSError):
             parts.append(inspect.getsource(cls))
-        except (TypeError, OSError):
-            pass
     return "\n".join(parts)
 
 
@@ -40,8 +37,6 @@ def test_cognitive_state_property_exists():
     """HuginnAgent must expose cognitive_state and l1_coordinates properties."""
     # We can't easily instantiate a full agent, but we can verify the class
     # has the properties by checking the source
-    import inspect
-    from huginn.agent import HuginnAgent
 
     source = _get_full_agent_source()
     assert "def cognitive_state" in source
@@ -52,8 +47,6 @@ def test_cognitive_state_property_exists():
 
 def test_build_compact_summary_method_exists():
     """HuginnAgent must have _build_compact_summary that prepends L1 coords."""
-    import inspect
-    from huginn.agent import HuginnAgent
 
     source = _get_full_agent_source()
     assert "_build_compact_summary" in source
@@ -62,8 +55,6 @@ def test_build_compact_summary_method_exists():
 
 def test_init_session_continuity_restores_csm():
     """_init_session_continuity must restore CSM state from snapshot."""
-    import inspect
-    from huginn.agent import HuginnAgent
 
     source = _get_full_agent_source()
     assert "_csm.start_session" in source
@@ -73,8 +64,6 @@ def test_init_session_continuity_restores_csm():
 
 def test_chat_emits_user_goal_signal():
     """chat() must emit user_goal/new_question signals to CSM."""
-    import inspect
-    from huginn.agent import HuginnAgent
 
     source = _get_full_agent_source()
     assert 'TransitionSignal("user_goal"' in source or '"user_goal"' in source
@@ -83,8 +72,6 @@ def test_chat_emits_user_goal_signal():
 
 def test_chat_syncs_cognitive_prompt():
     """chat() must sync CSM attention prompt to session_state._cognitive_prompt."""
-    import inspect
-    from huginn.agent import HuginnAgent
 
     source = _get_full_agent_source()
     assert "_cognitive_prompt" in source
@@ -93,8 +80,6 @@ def test_chat_syncs_cognitive_prompt():
 
 def test_chat_emits_reflection_transition_signals():
     """chat() must emit CSM transition signals after reflection."""
-    import inspect
-    from huginn.agent import HuginnAgent
 
     source = _get_full_agent_source()
     assert "to_transition_signal" in source
@@ -103,8 +88,6 @@ def test_chat_emits_reflection_transition_signals():
 
 def test_planstore_sync_in_chat():
     """chat() must sync PlanStore executing plans to session_state."""
-    import inspect
-    from huginn.agent import HuginnAgent
 
     source = _get_full_agent_source()
     assert "list_plans(status=\"executing\")" in source or "list_plans" in source
@@ -113,8 +96,6 @@ def test_planstore_sync_in_chat():
 
 def test_session_snapshot_includes_csm_state():
     """Session snapshot must include CSM cognitive_state and l1_coordinates."""
-    import inspect
-    from huginn.agent import HuginnAgent
 
     source = _get_full_agent_source()
     assert "cognitive_state" in source
@@ -124,6 +105,7 @@ def test_session_snapshot_includes_csm_state():
 def test_context_builder_has_cognitive_prompt_method():
     """ContextBuilder must have build_cognitive_prompt method."""
     import inspect
+
     from huginn.context_builder import ContextBuilder
 
     source = inspect.getsource(ContextBuilder)
@@ -134,6 +116,7 @@ def test_context_builder_has_cognitive_prompt_method():
 def test_context_builder_injects_cognitive_prompt():
     """build_input_messages must inject cognitive prompt and evolution rules."""
     import inspect
+
     from huginn.context_builder import ContextBuilder
 
     source = inspect.getsource(ContextBuilder)
@@ -142,8 +125,8 @@ def test_context_builder_injects_cognitive_prompt():
 
 def test_context_builder_l1_coords_without_plan():
     """build_plan_text must inject L1 coords even without active plan."""
-    from huginn.session_state import UnifiedSessionState
     from huginn.context_builder import ContextBuilder
+    from huginn.session_state import UnifiedSessionState
 
     state = UnifiedSessionState()
     state.l1_coordinates = "exploring: GaN bandgap | constructing: step 1"
@@ -166,6 +149,7 @@ def test_reflection_has_transition_signal_method():
 def test_memory_manager_load_active_plan_returns_plan_id():
     """load_active_plan must return plan_id field."""
     import inspect
+
     from huginn.memory.manager import MemoryManager
 
     source = inspect.getsource(MemoryManager)
@@ -175,6 +159,7 @@ def test_memory_manager_load_active_plan_returns_plan_id():
 def test_memory_manager_load_last_session_returns_l1():
     """load_last_session_context must return l1_coordinates field."""
     import inspect
+
     from huginn.memory.manager import MemoryManager
 
     source = inspect.getsource(MemoryManager)
@@ -195,9 +180,8 @@ def test_full_context_injection_order():
     """Verify that context messages are injected in the right order:
     system prompt → history → memory → KG → KB → emotion → plan/L1 → cognitive → evolution → user message
     """
-    from huginn.session_state import UnifiedSessionState
     from huginn.context_builder import ContextBuilder
-    from unittest.mock import MagicMock
+    from huginn.session_state import UnifiedSessionState
 
     state = UnifiedSessionState()
     state.l1_coordinates = "exploring: test"

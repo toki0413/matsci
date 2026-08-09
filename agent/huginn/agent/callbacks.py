@@ -8,7 +8,6 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from huginn.hooks import HookContext, HookManager
 from huginn.utils.session_context import get_thread_id, get_user_message
 
 logger = logging.getLogger(__name__)

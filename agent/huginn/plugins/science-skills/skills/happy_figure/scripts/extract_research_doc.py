@@ -19,7 +19,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-
 SECTION_ALIASES = {
     "abstract": [
         "abstract",
@@ -142,8 +141,7 @@ class ExtractionResult:
 def run_command(args: list[str], timeout: int = 90) -> str:
     completed = subprocess.run(
         args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         timeout=timeout,
         check=False,
     )
@@ -199,7 +197,7 @@ def extract_pdf(path: Path) -> tuple[str, str, list[str]]:
         notes.append("pdftotext not found.")
 
     try:
-        import pdfplumber  # type: ignore
+        import pdfplumber  # type: ignore[import-not-found]
 
         pages: list[str] = []
         with pdfplumber.open(str(path)) as pdf:
@@ -215,7 +213,7 @@ def extract_pdf(path: Path) -> tuple[str, str, list[str]]:
         notes.append(f"pdfplumber failed: {summarize_exception(exc)}")
 
     try:
-        from pypdf import PdfReader  # type: ignore
+        from pypdf import PdfReader  # type: ignore[import-not-found]
 
         reader = PdfReader(str(path))
         text = "\n\n".join(page.extract_text() or "" for page in reader.pages)
@@ -242,7 +240,7 @@ def extract_docx(path: Path) -> tuple[str, str, list[str]]:
         notes.append(f"pandoc failed: {summarize_exception(exc)}")
 
     try:
-        import mammoth  # type: ignore
+        import mammoth  # type: ignore[import-not-found]
 
         with path.open("rb") as fh:
             result = mammoth.extract_raw_text(fh)
@@ -255,7 +253,7 @@ def extract_docx(path: Path) -> tuple[str, str, list[str]]:
         notes.append(f"mammoth failed: {summarize_exception(exc)}")
 
     try:
-        from docx import Document  # type: ignore
+        from docx import Document  # type: ignore[import-not-found]
 
         document = Document(str(path))
         paras = [p.text for p in document.paragraphs if p.text.strip()]
@@ -272,7 +270,7 @@ def extract_docx(path: Path) -> tuple[str, str, list[str]]:
         return "", "no-text", notes
     except ImportError:
         notes.append("python-docx not installed.")
-        raise RuntimeError("could not extract DOCX text: " + "; ".join(notes))
+        raise RuntimeError("could not extract DOCX text: " + "; ".join(notes)) from None
     except Exception as exc:
         notes.append(f"python-docx failed: {summarize_exception(exc)}")
         raise RuntimeError("could not extract DOCX text: " + "; ".join(notes)) from exc
@@ -287,7 +285,7 @@ def extract_legacy_doc(path: Path) -> tuple[str, str]:
         pass
 
     try:
-        import win32com.client  # type: ignore
+        import win32com.client  # type: ignore[import-not-found]
 
         word = win32com.client.DispatchEx("Word.Application")
         word.Visible = False
@@ -570,6 +568,6 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except RuntimeError as exc:
         print(f"Error: {exc}", file=sys.stderr)
-        raise SystemExit(1)
+        raise SystemExit(1) from exc
     except BrokenPipeError:
-        raise SystemExit(1)
+        raise SystemExit(1) from None

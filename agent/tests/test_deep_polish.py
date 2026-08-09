@@ -1,12 +1,10 @@
 """Tests for deep polish — silent exceptions, plugin loading, path validation."""
 
-import asyncio
 import inspect
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-
 
 # ── No more silent except: pass in agent.py ────────────────────────
 
@@ -74,8 +72,9 @@ class TestExecutionPathValidation:
     """Verify /execute validates working_dir."""
 
     def test_validate_working_dir_rejects_outside(self):
-        from huginn.routes.execution import _validate_working_dir
         from fastapi import HTTPException
+
+        from huginn.routes.execution import _validate_working_dir
 
         with patch("huginn.routes.execution.get_context") as mock_ctx:
             mock_ctx.return_value.config.workspace = "/tmp/test-ws"

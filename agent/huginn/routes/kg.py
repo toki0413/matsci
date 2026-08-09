@@ -65,7 +65,6 @@ async def kg_graph(
     if kg is None:
         return {"available": False, "nodes": [], "edges": []}
     try:
-        import networkx as nx
         g = kg._graph
         # 截断: 按度排序只取 top-N
         if g.number_of_nodes() > max_nodes:

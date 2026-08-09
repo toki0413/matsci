@@ -654,13 +654,11 @@ class HypothesisGeneratorTool(HuginnTool):
             flags.append("energy_conservation_suspect")
 
         # 电荷守恒: 提到电荷转移但不平衡的表述
-        if "charge transfer" in text or "电荷转移" in text:
-            if not any(kw in text for kw in ["balanced", "守恒", "compensated", "平衡"]):
+        if ("charge transfer" in text or "电荷转移" in text) and not any(kw in text for kw in ["balanced", "守恒", "compensated", "平衡"]):
                 flags.append("charge_conservation_check_needed")
 
         # 质量守恒: 相变/反应但没提到产物/反应物守恒
-        if any(kw in text for kw in ["相变", "phase transition", "反应", "reaction", "decomposition"]):
-            if not any(kw in text for kw in ["守恒", "conserve", "balanced", "stoichiometric"]):
+        if any(kw in text for kw in ["相变", "phase transition", "反应", "reaction", "decomposition"]) and not any(kw in text for kw in ["守恒", "conserve", "balanced", "stoichiometric"]):
                 flags.append("mass_conservation_check_needed")
 
         return {

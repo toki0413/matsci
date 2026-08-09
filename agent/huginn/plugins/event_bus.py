@@ -21,7 +21,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from huginn.api.event import Event, EventType
+from huginn.api.event import Event
 from huginn.api.filter import StarHandlerMetadata
 from huginn.plugins.permissions import PermissionChecker
 
@@ -85,14 +85,17 @@ class EventBus:
                 break
 
             # 权限检查
-            if self.permission_checker is not None and meta.permissions:
-                if not self.permission_checker.check_handler(meta.plugin_name, meta):
-                    logger.warning(
-                        "handler %s.%s skipped: missing permission (declared %s)",
-                        meta.plugin_name, meta.name, meta.permissions,
-                    )
-                    result.skipped += 1
-                    continue
+            if (
+                self.permission_checker is not None
+                and meta.permissions
+                and not self.permission_checker.check_handler(meta.plugin_name, meta)
+            ):
+                logger.warning(
+                    "handler %s.%s skipped: missing permission (declared %s)",
+                    meta.plugin_name, meta.name, meta.permissions,
+                )
+                result.skipped += 1
+                continue
 
             try:
                 await self._invoke(meta, event, result)

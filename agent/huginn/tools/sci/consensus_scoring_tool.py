@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import Any, Literal
+from typing import Literal
 
 import numpy as np
 from pydantic import BaseModel, Field

@@ -13,12 +13,14 @@ Events are typed and structured, not just log strings.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import time
 from collections import defaultdict, deque
+from collections.abc import AsyncIterator, Callable
 from dataclasses import asdict, dataclass, field
-from typing import Any, AsyncIterator, Callable
+from typing import Any
 
 from huginn.events.event_types import ALL
 
@@ -157,10 +159,9 @@ class EventBus:
             )
             self._history.append(drop_event)
             for q in self._sse_queues:
-                try:
+                with contextlib.suppress(asyncio.QueueFull):
+                    # 通知也满了就算了, best-effort
                     q.put_nowait(drop_event)
-                except asyncio.QueueFull:
-                    pass  # 通知也满了就算了, best-effort
 
     def subscribe(self, event_type: str, callback: Callable) -> Callable:
         """Subscribe to events of a specific type (or "*" for all).
@@ -173,10 +174,8 @@ class EventBus:
         self._subscribers[event_type].append(callback)
 
         def _unsubscribe() -> None:
-            try:
+            with contextlib.suppress(ValueError):
                 self._subscribers[event_type].remove(callback)
-            except ValueError:
-                pass
 
         return _unsubscribe
 
@@ -202,10 +201,8 @@ class EventBus:
                 yield event.to_sse()
         finally:
             # Clean up so we don't leak queues when clients disconnect.
-            try:
+            with contextlib.suppress(ValueError):
                 self._sse_queues.remove(q)
-            except ValueError:
-                pass
 
     def recent_events(
         self, n: int = 50, event_type: str | None = None

@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import AsyncGenerator, Generator
 from contextlib import asynccontextmanager, contextmanager
-from typing import AsyncGenerator, Generator
 
 
 class _BreakerState:
@@ -93,8 +93,7 @@ class CircuitBreaker:
 
     def _refresh(self, st: _BreakerState) -> None:
         """冷却到期就把 open 转成 half_open，准备放试探请求。"""
-        if st.state == "open" and st.last_failure_time is not None:
-            if time.time() - st.last_failure_time >= self._cooldown:
+        if st.state == "open" and st.last_failure_time is not None and time.time() - st.last_failure_time >= self._cooldown:
                 st.state = "half_open"
                 st.half_open_trials = 0
 

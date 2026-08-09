@@ -14,8 +14,9 @@ import shutil
 import sys
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Literal
+from typing import Any, Literal
 
 from huginn.crypto import CryptoVault, EncryptedConfig, KeyManager
 
@@ -111,9 +112,7 @@ def _would_lose_auth_state(cached: HuginnConfig, fresh: HuginnConfig) -> bool:
         if m.alias in cached_keys and not m.api_key:
             return True
     # HPC 密码丢失
-    if cached.hpc_password and not fresh.hpc_password:
-        return True
-    return False
+    return bool(cached.hpc_password and not fresh.hpc_password)
 
 
 def _backup_before_save(path: pathlib.Path) -> None:
@@ -1216,7 +1215,7 @@ class HuginnConfig:
 
         try:
             if path.suffix == ".json":
-                with open(path, "r", encoding="utf-8") as f:
+                with open(path, encoding="utf-8") as f:
                     raw = json.load(f)
             else:
                 with open(path, "rb") as f:

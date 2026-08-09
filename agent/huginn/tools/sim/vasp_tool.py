@@ -88,10 +88,9 @@ class VaspToolInput(BaseModel):
     )
 
     @model_validator(mode="after")
-    def _check_action_fields(self) -> "VaspToolInput":
+    def _check_action_fields(self) -> VaspToolInput:
         """不同 action 需要不同字段, 在 schema 层兜底, 别等 call() 才挂."""
-        if self.action in _COMPUTE_ACTIONS or self.action in ("submit_async", "eos"):
-            if not self.working_dir:
+        if (self.action in _COMPUTE_ACTIONS or self.action in ("submit_async", "eos")) and not self.working_dir:
                 raise ValueError(
                     f"action '{self.action}' requires 'working_dir'"
                 )
@@ -631,7 +630,7 @@ class VaspTool(HuginnTool):
 
         try:
             await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             # 超时: 作业还在跑, 返回当前状态 (不取消 task, 让它继续)
             pass
         except Exception as exc:
@@ -721,12 +720,11 @@ class VaspTool(HuginnTool):
         if _HAS_HUGINN_EXT and action not in ("scf", "band", "dos"):
             try:
                 result = huginn_ext.parse_outcar(str(outcar_path))
-                if "error" not in result:
+                if "error" not in result and result.get("converged"):
                     # Rust parser may not recognise the "reached required
                     # accuracy" convergence marker in minimal OUTCARs,
                     # so double-check with Python if Rust says not converged.
-                    if result.get("converged"):
-                        return result
+                    return result
             except Exception:
                 logger.debug("suppressed in _parse_outcar", exc_info=True)
 
@@ -1080,5 +1078,5 @@ class VaspTool(HuginnTool):
 
             incar_path.write_text("\n".join(modified), encoding="utf-8")
 
-        except Exception as e:
+        except Exception:
             logger.warning("INCAR autofix modification failed", exc_info=True)

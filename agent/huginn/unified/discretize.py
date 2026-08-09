@@ -17,7 +17,6 @@ import numpy as np
 
 from huginn.unified.core import UnifiedProblem, VariationalPrinciple
 
-
 # ====================================================================
 # Discretization metadata — lightweight annotation
 # ====================================================================

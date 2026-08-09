@@ -31,15 +31,18 @@ from __future__ import annotations
 import logging
 import math
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 import numpy as np
 from pydantic import BaseModel, Field
 from scipy.optimize import curve_fit
 
 from huginn.causal.visual_scm import (
-    VisualSCM, get_template, list_templates,
+    VisualSCM,
+    get_template,
+    list_templates,
 )
 from huginn.tools.base import HuginnTool
 from huginn.types import ToolContext, ToolResult, ValidationResult
@@ -385,7 +388,8 @@ def extract_observations_from_images(
         list[Observation]. 提取失败的点 features 为空 dict, 仍保留 conditions.
     """
     from huginn.tools.vision_describe_tool import (
-        describe_image, describe_image_bytes,
+        describe_image,
+        describe_image_bytes,
     )
 
     observations: list[Observation] = []
@@ -596,7 +600,7 @@ def _selfcheck() -> None:
     # 9. 不存在的模板 → 抛 ValueError
     try:
         fit_scm_from_observations(obs, "nonexistent_template")
-        assert False, "应抛 ValueError"
+        raise AssertionError("应抛 ValueError")
     except ValueError:
         pass
 

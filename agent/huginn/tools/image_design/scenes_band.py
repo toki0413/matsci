@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -76,11 +76,11 @@ def band_diagram(args: ImageDesignInput) -> ToolResult:
                 "",
                 xy=(mid_k, cbm),
                 xytext=(mid_k, vbm),
-                arrowprops=dict(
-                    color="#F44336",
-                    arrowstyle="<->",
-                    linewidth=2.5,
-                ),
+                arrowprops={
+                    "color": "#F44336",
+                    "arrowstyle": "<->",
+                    "linewidth": 2.5,
+                },
             )
             ax.text(
                 mid_k + 0.02 * (kpoints.max() - kpoints.min()),

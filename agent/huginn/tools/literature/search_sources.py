@@ -7,6 +7,7 @@ arXiv / S2 / CrossRef / OpenAlex / PubMed / DOAJ / CORE 各自独立函数,
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import ipaddress
 import json
 import os
@@ -967,10 +968,8 @@ async def _search_openaire(
         if isinstance(measures, list):
             for m_entry in measures:
                 if isinstance(m_entry, dict) and m_entry.get("@id") == "citationCount":
-                    try:
+                    with contextlib.suppress(ValueError, TypeError):
                         citations = int(float(m_entry.get("@score", "0")))
-                    except (ValueError, TypeError):
-                        pass
                     break
 
         papers.append({
@@ -1258,7 +1257,7 @@ async def _search_nomad(
         code = method.get("program_name", "") or ""
 
         entry_id = entry.get("entry_id", "") or ""
-        upload_id = entry.get("upload_id", "") or ""
+        entry.get("upload_id", "") or ""
 
         title = f"{formula} ({workflow}, {code})" if formula else f"NOMAD entry {entry_id}"
 
@@ -1426,7 +1425,7 @@ async def _search_materials_project(
         logger.info("Materials Project skipped: no HUGINN_MP_API_KEY set")
         return []
 
-    q = urllib.parse.quote(query)
+    urllib.parse.quote(query)
     limit = min(max_results, 25)
     url = (
         f"https://api.materialsproject.org/materials/summary/"

@@ -90,7 +90,7 @@ class AlignmentDataset:
         Path(path).write_text(json.dumps(self._pairs), encoding="utf-8")
 
     @classmethod
-    def load(cls, path: str | Path) -> "AlignmentDataset":
+    def load(cls, path: str | Path) -> AlignmentDataset:
         """从 JSON 加载. 文件不存在/损坏会抛对应异常 — 由调用方决定降级."""
         ds = cls()
         text = Path(path).read_text(encoding="utf-8")
