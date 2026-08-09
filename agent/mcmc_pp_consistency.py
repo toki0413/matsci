@@ -1,9 +1,12 @@
 """验证 ProcessPool 与 asyncio 两条路径结果一致性 + R̂ 计算."""
 import asyncio
+import contextlib
 import os
 
 from huginn.metacog.hypothesis_manifold import (
-    HypothesisManifold, Hypothesis, Observation,
+    Hypothesis,
+    HypothesisManifold,
+    Observation,
 )
 
 
@@ -14,10 +17,8 @@ def build() -> HypothesisManifold:
         ("h_b", "Hypothesis B", 0.5, 3),
         ("h_c", "Hypothesis C", 0.0, 1),
     ):
-        try:
+        with contextlib.suppress(ValueError):
             m.add(Hypothesis(hid, desc, predictions={"accuracy": 0.92 * scale}, n_params=n))
-        except ValueError:
-            pass
     return m
 
 

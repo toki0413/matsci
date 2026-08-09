@@ -1,25 +1,25 @@
 """验证 ProcessPool 升级路径 A: 真并行多链 MCMC + gate 回退."""
 import asyncio
+import contextlib
 import os
 import time
 
 from huginn.metacog.hypothesis_manifold import (
-    HypothesisManifold, Hypothesis, Observation,
+    Hypothesis,
+    HypothesisManifold,
+    Observation,
 )
 
 
 def build() -> HypothesisManifold:
     m = HypothesisManifold()
-    obs = [Observation(name="accuracy", value=0.92, sigma=0.1)]
     for hid, desc, scale, n in (
         ("h_a", "Hypothesis A", 1.0, 2),
         ("h_b", "Hypothesis B", 0.5, 3),
         ("h_c", "Hypothesis C", 0.0, 1),
     ):
-        try:
+        with contextlib.suppress(ValueError):
             m.add(Hypothesis(hid, desc, predictions={"accuracy": 0.92 * scale}, n_params=n))
-        except ValueError:
-            pass
     return m
 
 

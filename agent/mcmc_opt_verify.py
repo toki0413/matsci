@@ -1,9 +1,12 @@
 """验证: 温度退火 + 全局 proposal 混合是否提升 MCMC 探索性 (接受率)."""
 import asyncio
+import contextlib
 import random
 
 from huginn.metacog.hypothesis_manifold import (
-    HypothesisManifold, Hypothesis, Observation,
+    Hypothesis,
+    HypothesisManifold,
+    Observation,
 )
 
 
@@ -16,12 +19,10 @@ def build() -> HypothesisManifold:
         Hypothesis(h_id="h_partial_repro", description="Partial reproduction",
                    predictions={k: v * 0.5 for k, v in targets.items()}, n_params=3),
         Hypothesis(h_id="h_null_baseline", description="Null/baseline",
-                   predictions={k: 0.0 for k in targets}, n_params=1),
+                   predictions=dict.fromkeys(targets, 0.0), n_params=1),
     ):
-        try:
+        with contextlib.suppress(ValueError):
             m.add(h)
-        except ValueError:
-            pass
     return m
 
 
