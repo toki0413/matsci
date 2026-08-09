@@ -112,7 +112,7 @@ class TeamMember:
                 self._config, profile_id=self.profile_id, **overrides
             )
             # 强制降级: 子 agent 不继承主会话 auto_approve_all 高权限,
-            # 但保留 path_rules / rcb_mode 等其他权限设置.
+            # 但保留 path_rules / sandbox_mode 等其他权限设置.
             _perm = getattr(self._agent, "_permission_config", None)
             if _perm is not None:
                 self._agent._permission_config = dataclasses.replace(

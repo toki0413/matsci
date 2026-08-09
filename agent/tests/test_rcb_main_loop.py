@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from huginn.cli.rcb_runner import (
+from huginn.cli.rcb.audit import (
     _derive_gap_type,
     _infer_beta_1_simple,
     _recompute_report_metrics,

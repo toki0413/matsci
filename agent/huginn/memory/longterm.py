@@ -1826,13 +1826,13 @@ _STABLE_PRINCIPLES_CACHE: tuple[Any, list[str]] | None = None
 # G30: 全局 stable_principles 路径 — 跨任务/跨 RCB workspace 复用.
 # RCB runner 把 HUGINN_CACHE_DIR 重定向到 ws/.huginn_cache, STABLE_PRINCIPLES_PATH
 # 是相对路径跟着 cwd 走, 每个任务独立. 全局路径固定在 ~/.huginn/, 任务间共享.
-# HUGINN_RCB_INHERIT_PRINCIPLES=True (default) 时, store 双写, load 合并读.
+# HUGINN_INHERIT_STABLE_PRINCIPLES=True (default) 时, store 双写, load 合并读.
 _GLOBAL_PRINCIPLES_PATH = Path.home() / ".huginn" / "stable_principles.jsonl"
 
 
 def _inherit_enabled() -> bool:
     """G30: 是否跨任务继承 stable_principles. 默认开."""
-    return os.environ.get("HUGINN_RCB_INHERIT_PRINCIPLES", "1") not in ("0", "false", "False")
+    return os.environ.get("HUGINN_INHERIT_STABLE_PRINCIPLES", "1") not in ("0", "false", "False")
 
 
 # === G44: multi-agent metacog — stable_principles 跨 agent 共享文件锁 ===

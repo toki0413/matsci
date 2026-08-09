@@ -129,11 +129,11 @@ DEFAULT_PERMISSION_RULES: dict[str, PermissionMode] = {
 }
 
 
-# RCBench 硬底线路径规则 -- agent 不能改任务描述/评分器/恢复状态.
+# Sandbox 硬底线路径规则 -- agent 不能改任务描述/评分器/恢复状态.
 # 参考 CodeWhale RepoLaw: Full Access 也不能越过, 只覆盖 file-write 不覆盖
 # shell 重定向 (shell 重定向由 bash_tool command_pattern 规则覆盖).
-# 规则只能收紧不能放宽, rcb_mode=True 时强制注入, env var 只能追加不能移除默认项.
-_DEFAULT_RCB_PATH_RULES: list[tuple[str, PermissionMode]] = [
+# 规则只能收紧不能放宽, sandbox_mode=True 时强制注入, env var 只能追加不能移除默认项.
+_DEFAULT_SANDBOX_PATH_RULES: list[tuple[str, PermissionMode]] = [
     ("INSTRUCTIONS.md", PermissionMode.DENY),
     ("score.py", PermissionMode.DENY),
     ("evaluation/*.py", PermissionMode.DENY),
@@ -156,9 +156,9 @@ class PermissionConfig:
     # path-level overrides: [(glob_pattern, mode), ...]
     # matched against file_path from tool args, first match wins
     path_rules: list[tuple[str, PermissionMode]] = field(default_factory=list)
-    # RCBench 模式: 强制注入 _DEFAULT_RCB_PATH_RULES 硬底线 (跟 path_rules 取并集).
-    # 非 RCBench 入口不设, path_rules 仍默认空, 行为不变.
-    rcb_mode: bool = False
+    # Sandbox 模式: 强制注入 _DEFAULT_SANDBOX_PATH_RULES 硬底线 (跟 path_rules 取并集).
+    # 非 sandbox 入口不设, path_rules 仍默认空, 行为不变.
+    sandbox_mode: bool = False
 
     def get_mode(self, tool_name: str) -> PermissionMode:
         # 先按 rules / 通配规则算出"原始"模式
@@ -222,24 +222,24 @@ class PermissionChecker:
         """Match file path from tool args against path_rules (first match wins).
 
         Looks for common path field names in args: file_path, path, working_dir.
-        rcb_mode=True 时强制注入 _DEFAULT_RCB_PATH_RULES (硬底线, 只能收紧不能放宽),
-        并读 env var HUGINN_RCB_BLOCKED_PATHS 追加用户路径 (跟默认项取并集).
+        sandbox_mode=True 时强制注入 _DEFAULT_SANDBOX_PATH_RULES (硬底线, 只能收紧不能放宽),
+        并读 env var HUGINN_SANDBOX_BLOCKED_PATHS 追加用户路径 (跟默认项取并集).
         """
         if not args:
             return None
-        if self.config.rcb_mode:
+        if self.config.sandbox_mode:
             # 默认硬底线在前, 用户 path_rules 在后 -- first match wins, 默认项优先.
-            effective_rules = list(_DEFAULT_RCB_PATH_RULES) + list(self.config.path_rules)
-            # env var HUGINN_RCB_BLOCKED_PATHS: 逗号分隔路径, 只能追加 DENY.
-            for _p in os.environ.get("HUGINN_RCB_BLOCKED_PATHS", "").split(","):
+            effective_rules = list(_DEFAULT_SANDBOX_PATH_RULES) + list(self.config.path_rules)
+            # env var HUGINN_SANDBOX_BLOCKED_PATHS: 逗号分隔路径, 只能追加 DENY.
+            for _p in os.environ.get("HUGINN_SANDBOX_BLOCKED_PATHS", "").split(","):
                 _p = _p.strip()
                 if _p:
                     effective_rules.append((_p, PermissionMode.DENY))
             # 自检: 默认项是硬底线, 不能被移除. 用户只能追加, 不能放宽.
-            _default_paths = {p for p, _ in _DEFAULT_RCB_PATH_RULES}
+            _default_paths = {p for p, _ in _DEFAULT_SANDBOX_PATH_RULES}
             _effective_paths = {p for p, _ in effective_rules}
             assert _default_paths.issubset(_effective_paths), \
-                "RCB default path rules removed -- defaults are a hard floor"
+                "Sandbox default path rules removed -- defaults are a hard floor"
         else:
             effective_rules = self.config.path_rules
         if not effective_rules:

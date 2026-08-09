@@ -27,7 +27,7 @@ Source: v5 spec `security-hardening-and-bench-activation` implementation.
 | G27 | RCB `tool_filter` 加 `symbolic_math_tool` / `lean_tool` / `validate_tool` | 数学工具实现完成度 7/10 但未注册 → 0 次调用; 注册后可被 agent 选用 |
 | G28 | `_recompute_report_metrics` 解析 MAE/R²/accuracy/loss + >10% 偏差 flag | critique 只读 text 给 LLM 判断 = 循环论证, 重算打破闭环 |
 | G29 | checklist 永驻 `system_prompt` + `STABLE_PRINCIPLES` 重载 | checklist 塞对话历史 = compaction 压缩丢, 永驻才不丢 |
-| G30 | `HUGINN_RCB_INHERIT_PRINCIPLES` + 全局 `~/.huginn/stable_principles.jsonl` | 27 次 Material_003 重跑每次从零 = S7 不闭环; 跨任务复用才闭环 |
+| G30 | `HUGINN_INHERIT_STABLE_PRINCIPLES` + 全局 `~/.huginn/stable_principles.jsonl` | 27 次 Material_003 重跑每次从零 = S7 不闭环; 跨任务复用才闭环 |
 | G31 | `_perceive` empty 时 bypass 进 hypothesize + trajectory 0 tool_calls warning | 18/18 轨迹 perceive+report 两阶段 = 装置空转, 强制进 hypothesize 才激活 |
 
 ## 3. M3 — 8 个系统性主题生效件 (G32-G39)

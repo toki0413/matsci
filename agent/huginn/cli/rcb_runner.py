@@ -61,9 +61,28 @@ os.environ["HUGINN_ALLOW_LOCAL_BASH"] = "1"
 # 在 RCB workspace cwd 下 sqlite WAL 创建失败. 强制用绝对路径.
 if not os.environ.get("HUGINN_CACHE_DIR"):
     os.environ["HUGINN_CACHE_DIR"] = str(Path.home() / ".huginn")
-# RCB 场景用 CSM 子集: 3-step 映射 S1/S4/S6+S7, 不再全 skip (Task 18, R8 减法修正).
+# Benchmark 场景用 CSM 子集: 3-step 映射 S1/S4/S6+S7, 不再全 skip (Task 18, R8 减法修正).
 # ponytail: S7 自修改仍走 (Task 2), 只跳过 compaction — 见 reflection.py L245.
-os.environ["HUGINN_RCB_CSM_SUBSET"] = "1"
+os.environ["HUGINN_CSM_SUBSET_MODE"] = "1"
+# Bandit Q-table 持久化路径: 跨 RCB task 累积 bandit 状态.
+os.environ.setdefault(
+    "HUGINN_BANDIT_Q_PATH",
+    str(Path.home() / ".huginn" / "rcb_cross_task" / "bandit_q.json"),
+)
+# Benchmark Mode hint: agent core.py 读此 env var 注入 system prompt.
+# RCB 路径必须严格按 paper 方法实现, judge 会按 paper 方法打分.
+os.environ.setdefault(
+    "HUGINN_BENCHMARK_MODE_PROMPT",
+    "BENCHMARK MODE: This is a benchmark task scored against the reference paper. "
+    "Implement the EXACT methodology from the paper (e.g., VAE+GPR, not RF+fingerprint "
+    "substitution). If compute budget prevents full implementation, implement as much "
+    "of the paper's pipeline as possible AND write a 'Negative Results' section in "
+    "report.md comparing your metrics to the paper's reported metrics (e.g., 'our "
+    "MAE 49.93K vs paper's LOOCV MAE 13K, gap explained by...'). Substituting the core "
+    "method without justification scores 0.",
+)
+# Sandbox 路径阻塞: rcb_runner 不强制阻塞额外路径, 由用户 env var 覆盖.
+os.environ.setdefault("HUGINN_SANDBOX_BLOCKED_PATHS", "")
 # RCB 场景 compaction 保留前 2 条 root (task + Step 1 checklist) — 修同伦断裂 (σ₂)
 os.environ.setdefault("HUGINN_KEEP_ROOT_N", "2")
 # F3: σ₂ 半修补全 — 位置切片保不到 Step 1 checklist prompt (在 msgs[2:4]),
@@ -3557,128 +3576,16 @@ def _generate_fallback_figures(ws: Path, imgs_dir: Path) -> int:
 
     return n_gen
 
-
-def _should_retry_execute(
-    verdict: str,
-    beta_1: int,
-    gap_type: str,
-) -> bool:
-    """Step3→Step2 回退触发判断 (v14 拓扑许可).
-
-    拓扑许可: β_1>0 (Meta-Trace 存在循环回退路径) 才允许回退.
-    gap 类型: numeric_recompute / exact_component_missing 才回退,
-              text_description 不回退 (文字补完在 Step 3 内 OVERWRITE report.md 即可).
-    verdict: fix_needed 和 fail 都允许回退 — fail + 具体 gap 说明 critique
-             找到了可修问题, 放弃重试等于 0 分, 重试至少有机会.
-    """
-    if verdict not in ("fix_needed", "fail"):
-        return False
-    if beta_1 <= 0:
-        return False
-    return gap_type in ("numeric_recompute", "exact_component_missing")
-
-
-def _derive_gap_type(object_verdict: dict) -> str:
-    """从 adversarial_critique (object mode) dict 推断 gap_type.
-
-    object mode 不直接返回 gap_type (只有 critique_decision 的 CritiqueResult 才有),
-    按 red flag 类型反推: implausible/recomputed → numeric_recompute,
-    substitution/missing → exact_component_missing, 否则 fix_needed → text_description.
-    ponytail: 规则推断是廉价代理, 升级路径是 LLM 在 object mode 也直接返回 gap_type.
-    """
-    if not object_verdict:
-        return "none"
-    if object_verdict.get("recomputed_red_flags") or object_verdict.get("implausible_metrics"):
-        return "numeric_recompute"
-    if object_verdict.get("silent_substitutions") or object_verdict.get("missing_components"):
-        return "exact_component_missing"
-    if object_verdict.get("overall_verdict") == "fix_needed":
-        return "text_description"
-    return "none"
-
-
-def _infer_beta_1_simple(ws: Path) -> int:
-    """β_1 简易推断 — 数 meta_trace.jsonl 行数.
-
-    ponytail: 真正的 β_1 计算在 v14 Task 4 (networkx cycle_basis), 未实现前用
-    'trace 已有 ≥3 条 entry 则视为存在循环路径' 的代理. 二值返回, 不假装算精确值.
-    升级路径: 接入 trace_topology.compute_betti 后替换.
-    """
-    _trace = ws / ".huginn" / "meta_trace.jsonl"
-    if not _trace.exists():
-        return 0
-    try:
-        with _trace.open(encoding="utf-8") as _f:
-            _n = sum(1 for _line in _f if _line.strip())
-    except Exception:
-        return 0
-    return 1 if _n >= 3 else 0
-
-
-def _write_directive_rejection(
-    ws: Path, gap_type: str, verdict: str, retry_count: int,
-) -> None:
-    """回退上限触发 — 写 directive_rejections.jsonl.
-
-    spec §"回退次数上限": retry 2 次仍 fix_needed 时强制 finalize 并留痕.
-    """
-    import time as _t
-    _rej_path = ws / ".huginn" / "directive_rejections.jsonl"
-    _rej_path.parent.mkdir(parents=True, exist_ok=True)
-    _entry = {
-        "ts": _t.time(),
-        "reason": "step3_retry_limit_reached",
-        "retry_count": retry_count,
-        "final_verdict": verdict,
-        "gap_type": gap_type,
-    }
-    with _rej_path.open("a", encoding="utf-8") as _f:
-        _f.write(json.dumps(_entry, ensure_ascii=False) + "\n")
-# G28: parse MAE/R2/RMSE/accuracy claims from report.md, compare to outputs/.
-# flag >10% deviation, breaks LLM critique circular reasoning.
-# ponytail: regex extract, no LLM. ceiling: semantic parse needs LLM.
-_METRIC_RE = re.compile(
-    r"\b(MAE|RMSE|R2|R²|MSE|accuracy|loss|F1|AUC|RMS)\b\s*[:=]\s*"
-    r"([+-]?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)",
-    re.IGNORECASE,
+# --- 主循环决策函数: 从 rcb/audit.py re-export (剥离 RCB 定制化解耦) ---------
+from huginn.cli.rcb.audit import (  # noqa: E402,F401
+    _METRIC_RE,
+    _derive_gap_type,
+    _infer_beta_1_simple,
+    _recompute_report_metrics,
+    _should_retry_execute,
+    _write_directive_rejection,
 )
 
-
-def _recompute_report_metrics(report_text: str, ws: Path) -> list[dict]:
-    """Compare report claimed metrics vs outputs/ actual, return >10% deviation flags."""
-    flags: list[dict] = []
-    claimed = {m.group(1).upper(): float(m.group(2))
-               for m in _METRIC_RE.finditer(report_text)}
-    if not claimed:
-        return flags
-    outputs_dir = ws / "outputs"
-    if not outputs_dir.exists():
-        return flags
-    actual: dict[str, float] = {}
-    for f in outputs_dir.rglob("*"):
-        if not f.is_file() or f.suffix not in (".txt", ".json", ".csv", ".md"):
-            continue
-        try:
-            txt = f.read_text(encoding="utf-8", errors="ignore")
-            for m in _METRIC_RE.finditer(txt):
-                k = m.group(1).upper()
-                if k not in actual:
-                    actual[k] = float(m.group(2))
-        except Exception:
-            continue
-    for k, claim_val in claimed.items():
-        if k not in actual:
-            continue
-        ref = actual[k]
-        if abs(ref) < 1e-12:
-            continue
-        dev = abs(claim_val - ref) / abs(ref)
-        if dev > 0.10:
-            flags.append({
-                "metric": k, "claimed": claim_val, "actual": ref,
-                "deviation_pct": round(dev * 100, 1),
-            })
-    return flags
 
 async def _step3_adversarial(
     ws: Path,
@@ -4648,10 +4555,10 @@ async def run(
     #   1.5 数学结构识别走 model.ainvoke 直调 LLM, 不经 agent.chat, 不需要这些工具.
     _step2_filter = set(agent.tool_filter or [])
     if extreme:
-        # RepoLaw 硬底线: extreme (RCBench) 模式强制注入 _DEFAULT_RCB_PATH_RULES,
+        # RepoLaw 硬底线: extreme (RCBench) 模式强制注入 _DEFAULT_SANDBOX_PATH_RULES,
         # agent 不能改 INSTRUCTIONS.md / score.py / rubric.json 等关键文件.
-        # 非 RCBench 入口不进这个分支, rcb_mode 保持 False, 行为不变.
-        agent._permission_config.rcb_mode = True
+        # 非 RCBench 入口不进这个分支, sandbox_mode 保持 False, 行为不变.
+        agent._permission_config.sandbox_mode = True
         # P0-A: extreme 模式全量开放注册表工具 — 之前手工枚举 14 个工具,
         # 28 个 sci/ + sim/ + design/ + causal/ 全被旁路 (注册表 145 工具仅暴露 29).
         # 根因: 白名单是"加法"思路 (一个个加), 应该是"减法" (黑名单 + 全量开放).
@@ -5847,7 +5754,7 @@ if __name__ == "__main__":
         _expected = {
             "HUGINN_RATE_LIMIT_ENABLED": "0",
             "HUGINN_ALLOW_LOCAL_BASH": "1",
-            "HUGINN_RCB_CSM_SUBSET": "1",
+            "HUGINN_CSM_SUBSET_MODE": "1",
             "HUGINN_NO_RUST_SANDBOX": "1",
             "HUGINN_COGNITIVE_LLM_DECIDER": "0",
             "HUGINN_HEALTH_MONITOR": "0",

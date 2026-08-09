@@ -353,9 +353,9 @@ class ReflectionMixin:
                         CognitiveState.S3_SWITCH,
                         CognitiveState.S6_FEEDBACK,
                     ):
-                        # RCB 子集模式: CSM transition 走 (含 S7), 但不触发 compaction (Task 18)
+                        # 子集模式: CSM transition 走 (含 S7), 但不触发 compaction (Task 18)
                         self._needs_compaction = not os.environ.get(
-                            "HUGINN_RCB_CSM_SUBSET"
+                            "HUGINN_CSM_SUBSET_MODE"
                         )
 
                     # 哥德尔机闭环: S6 + 实质 gap → S7_SELF_MODIFY (打通 L232 flag 断层)
@@ -553,7 +553,7 @@ class ReflectionMixin:
         ponytail: gap→proposal 是字段拼接, ceiling 是 LLM 生成正式 proposal;
                   meta critique 失败默认 reject (保守, 不污染 stable_principles).
         """
-        from huginn.cli.rcb_runner import adversarial_critique
+        from huginn.cli.rcb_critique import adversarial_critique
         from huginn.memory import store_stable_principle
 
         # 1. 从 reflection gap 提取 proposal

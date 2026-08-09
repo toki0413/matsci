@@ -480,3 +480,130 @@ async def _step2_outputs_gate(
         "blocker": blocker,
         "raw_log": log,
     }
+
+
+# --- 主循环决策函数 (从 rcb_runner.py 剥离) -----------------------------------
+
+def _should_retry_execute(
+    verdict: str,
+    beta_1: int,
+    gap_type: str,
+) -> bool:
+    """Step3→Step2 回退触发判断 (v14 拓扑许可).
+
+    拓扑许可: β_1>0 (Meta-Trace 存在循环回退路径) 才允许回退.
+    gap 类型: numeric_recompute / exact_component_missing 才回退,
+              text_description 不回退 (文字补完在 Step 3 内 OVERWRITE report.md 即可).
+    verdict: fix_needed 和 fail 都允许回退 — fail + 具体 gap 说明 critique
+             找到了可修问题, 放弃重试等于 0 分, 重试至少有机会.
+    """
+    if verdict not in ("fix_needed", "fail"):
+        return False
+    if beta_1 <= 0:
+        return False
+    return gap_type in ("numeric_recompute", "exact_component_missing")
+
+
+def _derive_gap_type(object_verdict: dict) -> str:
+    """从 adversarial_critique (object mode) dict 推断 gap_type.
+
+    object mode 不直接返回 gap_type (只有 critique_decision 的 CritiqueResult 才有),
+    按 red flag 类型反推: implausible/recomputed → numeric_recompute,
+    substitution/missing → exact_component_missing, 否则 fix_needed → text_description.
+    ponytail: 规则推断是廉价代理, 升级路径是 LLM 在 object mode 也直接返回 gap_type.
+    """
+    if not object_verdict:
+        return "none"
+    if object_verdict.get("recomputed_red_flags") or object_verdict.get("implausible_metrics"):
+        return "numeric_recompute"
+    if object_verdict.get("silent_substitutions") or object_verdict.get("missing_components"):
+        return "exact_component_missing"
+    if object_verdict.get("overall_verdict") == "fix_needed":
+        return "text_description"
+    return "none"
+
+
+def _infer_beta_1_simple(ws: Path) -> int:
+    """β_1 简易推断 — 数 meta_trace.jsonl 行数.
+
+    ponytail: 真正的 β_1 计算在 v14 Task 4 (networkx cycle_basis), 未实现前用
+    'trace 已有 ≥3 条 entry 则视为存在循环路径' 的代理. 二值返回, 不假装算精确值.
+    升级路径: 接入 trace_topology.compute_betti 后替换.
+    """
+    _trace = ws / ".huginn" / "meta_trace.jsonl"
+    if not _trace.exists():
+        return 0
+    try:
+        with _trace.open(encoding="utf-8") as _f:
+            _n = sum(1 for _line in _f if _line.strip())
+    except Exception:
+        return 0
+    return 1 if _n >= 3 else 0
+
+
+def _write_directive_rejection(
+    ws: Path, gap_type: str, verdict: str, retry_count: int,
+) -> None:
+    """回退上限触发 — 写 directive_rejections.jsonl.
+
+    spec §"回退次数上限": retry 2 次仍 fix_needed 时强制 finalize 并留痕.
+    """
+    import time as _t
+    _rej_path = ws / ".huginn" / "directive_rejections.jsonl"
+    _rej_path.parent.mkdir(parents=True, exist_ok=True)
+    _entry = {
+        "ts": _t.time(),
+        "reason": "step3_retry_limit_reached",
+        "retry_count": retry_count,
+        "final_verdict": verdict,
+        "gap_type": gap_type,
+    }
+    with _rej_path.open("a", encoding="utf-8") as _f:
+        _f.write(json.dumps(_entry, ensure_ascii=False) + "\n")
+
+
+# G28: parse MAE/R2/RMSE/accuracy claims from report.md, compare to outputs/.
+# flag >10% deviation, breaks LLM critique circular reasoning.
+# ponytail: regex extract, no LLM. ceiling: semantic parse needs LLM.
+_METRIC_RE = re.compile(
+    r"\b(MAE|RMSE|R2|R²|MSE|accuracy|loss|F1|AUC|RMS)\b\s*[:=]\s*"
+    r"([+-]?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)",
+    re.IGNORECASE,
+)
+
+
+def _recompute_report_metrics(report_text: str, ws: Path) -> list[dict]:
+    """Compare report claimed metrics vs outputs/ actual, return >10% deviation flags."""
+    flags: list[dict] = []
+    claimed = {m.group(1).upper(): float(m.group(2))
+               for m in _METRIC_RE.finditer(report_text)}
+    if not claimed:
+        return flags
+    outputs_dir = ws / "outputs"
+    if not outputs_dir.exists():
+        return flags
+    actual: dict[str, float] = {}
+    for f in outputs_dir.rglob("*"):
+        if not f.is_file() or f.suffix not in (".txt", ".json", ".csv", ".md"):
+            continue
+        try:
+            txt = f.read_text(encoding="utf-8", errors="ignore")
+            for m in _METRIC_RE.finditer(txt):
+                k = m.group(1).upper()
+                if k not in actual:
+                    actual[k] = float(m.group(2))
+        except Exception:
+            continue
+    for k, claim_val in claimed.items():
+        if k not in actual:
+            continue
+        ref = actual[k]
+        if abs(ref) < 1e-12:
+            continue
+        dev = abs(claim_val - ref) / abs(ref)
+        if dev > 0.10:
+            flags.append({
+                "metric": k, "claimed": claim_val, "actual": ref,
+                "deviation_pct": round(dev * 100, 1),
+            })
+    return flags

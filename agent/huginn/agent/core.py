@@ -796,23 +796,11 @@ class HuginnAgent(
                     from pathlib import Path as _P  # noqa: N814
                     _cwd = _P.cwd()
                     _rpt_path = _cwd / "report" / "report.md"
-                    # 方案 E: Benchmark Mode — RCB 路径必须严格按 paper 方法实现,
-                    # 不能用 "computational constraints" 作 VARIANT 理由. judge
-                    # 会按 paper 方法打分, RF 替代 VAE+GPR 直接 0 分. ponytail:
-                    # 只在 INSTRUCTIONS.md 存在时注入 (RCB 路径), 不影响普通 chat.
-                    if (_cwd / "INSTRUCTIONS.md").exists():
-                        _extra_hints.append(
-                            "BENCHMARK MODE: This is a benchmark task scored against the reference paper. "
-                            "Implement the EXACT methodology from the paper (e.g., VAE+GPR, not RF+fingerprint "
-                            "substitution). If compute budget prevents full implementation, implement as much "
-                            "of the paper's pipeline as possible AND write a 'Negative Results' section in "
-                            "report.md comparing your metrics to the paper's reported metrics (e.g., 'our "
-                            "MAE 49.93K vs paper's LOOCV MAE 13K, gap explained by...'). Substituting the core "
-                            "method without justification scores 0."
-                        )
-                    # P3-2: 删除 HUGINN_RCB_DEADLINE 死分支 — setter (rcb_huginn.py)
-                    # 不存在, _deadline 永远 0.0, 整段 if _deadline > 0 是死代码.
-                    # 升级路径: rcb_runner.py 入口 setdefault HUGINN_RCB_DEADLINE 后恢复.
+                    # Benchmark Mode: 通用 env var 注入, agent 不感知具体 benchmark 框架.
+                    # 调用方 (如 rcb_runner) setdefault HUGINN_BENCHMARK_MODE_PROMPT 即可.
+                    _bm_prompt = os.environ.get("HUGINN_BENCHMARK_MODE_PROMPT", "")
+                    if _bm_prompt:
+                        _extra_hints.append(_bm_prompt)
                     # 方案 C: Negative Result — 扫 outputs/*.json 找低分指标,
                     # 注入 "写 negative result 分析" hint. 不阻塞, 只提醒.
                     if not _rpt_path.exists() and (_cwd / "outputs").exists():

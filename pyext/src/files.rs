@@ -17,7 +17,7 @@ fn tail_lines(py: Python, path: &str, n: usize) -> PyResult<Py<PyList>> {
     }
 
     let lines = py
-        .allow_threads(|| read_last_lines(file_path, n))
+        .detach(|| read_last_lines(file_path, n))
         .map_err(|e| {
             pyo3::exceptions::PyRuntimeError::new_err(format!("failed to read file: {}", e))
         })?;

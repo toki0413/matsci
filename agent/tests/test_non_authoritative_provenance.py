@@ -63,14 +63,14 @@ def test_subagent_auto_approve_forced_false(monkeypatch):
 
 
 def test_subagent_preserves_other_perm_fields(monkeypatch):
-    """降级只翻 auto_approve_all, 不动 path_rules / rcb_mode."""
+    """降级只翻 auto_approve_all, 不动 path_rules / sandbox_mode."""
     cfg = HuginnConfig()
 
     class _StubAgent:
         def __init__(self, **kw):
             self._permission_config = PermissionConfig(
                 auto_approve_all=True,
-                rcb_mode=True,
+                sandbox_mode=True,
                 path_rules=[("secret.env", "deny")],
             )
 
@@ -82,7 +82,7 @@ def test_subagent_preserves_other_perm_fields(monkeypatch):
     member = _make_member(TeamRole.SCIENTIST, cfg)
     agent = member.get_agent()
     assert agent._permission_config.auto_approve_all is False
-    assert agent._permission_config.rcb_mode is True, "rcb_mode 不应被降级"
+    assert agent._permission_config.sandbox_mode is True, "sandbox_mode 不应被降级"
     assert agent._permission_config.path_rules == [("secret.env", "deny")], \
         "path_rules 不应被降级"
 
