@@ -22,20 +22,26 @@ logger = logging.getLogger(__name__)
 # KB 和 distiller 都在首次访问时才创建, 避免启动时硬依赖 chromadb 等.
 # CalculationToKnowledge 如果传了自定义实例就用自定义的, 否则回退到这里.
 
-_kb: Any = None
+_kb_cache: dict[str, Any] = {}
 _distiller: Any = None
 
 
-def _get_kb() -> Any:
-    global _kb
-    if _kb is None:
+def _get_kb(workspace: str | None = None) -> Any:
+    """按 workspace 获取 (或懒加载缓存) KnowledgeBase.
+
+    多 workspace 部署时, 不同 workspace 的 KB 实例独立缓存,
+    避免 hook 写入默认 workspace 导致数据错位.
+    """
+    ws = workspace or "."
+    if ws not in _kb_cache:
         try:
             from huginn.knowledge.store import get_knowledge_base
 
-            _kb = get_knowledge_base()
+            _kb_cache[ws] = get_knowledge_base(ws)
         except Exception:
             logger.debug("KnowledgeBase 不可用, 跳过 KB 写入", exc_info=True)
-    return _kb
+            _kb_cache[ws] = None
+    return _kb_cache[ws]
 
 
 def _get_distiller() -> Any:
@@ -92,8 +98,15 @@ def _params_summary(tool_input: dict) -> str:
         return "default"
     parts = []
     for k in (
-        "action", "encut", "kpoints", "functional", "method",
-        "basis_set", "timestep", "n_steps", "steps",
+        "action",
+        "encut",
+        "kpoints",
+        "functional",
+        "method",
+        "basis_set",
+        "timestep",
+        "n_steps",
+        "steps",
     ):
         v = tool_input.get(k)
         if v is not None:
@@ -107,8 +120,14 @@ def _key_props_summary(data: dict) -> str:
         return "no properties"
     parts = []
     for k in (
-        "energy", "total_energy", "band_gap", "converged",
-        "formula", "final_temp", "lattice_constant", "volume",
+        "energy",
+        "total_energy",
+        "band_gap",
+        "converged",
+        "formula",
+        "final_temp",
+        "lattice_constant",
+        "volume",
     ):
         v = data.get(k)
         if v is not None:
@@ -225,10 +244,10 @@ class CalculationToKnowledge:
         self._kb = kb
         self._distiller = distiller
 
-    def _get_kb(self) -> Any:
+    def _get_kb(self, workspace: str | None = None) -> Any:
         if self._kb is not None:
             return self._kb
-        return _get_kb()
+        return _get_kb(workspace)
 
     def _get_distiller(self) -> Any:
         if self._distiller is not None:
@@ -241,6 +260,7 @@ class CalculationToKnowledge:
         tool_input: dict,
         tool_output: Any,
         provenance_entry: Any = None,
+        workspace: str | None = None,
     ) -> str | None:
         """从工具调用提取关键信息, 生成知识文本, 摄入 KB.
 
@@ -253,7 +273,7 @@ class CalculationToKnowledge:
         doc_id: str | None = None
 
         # 1) KB 直接写入, 立即可检索
-        kb = self._get_kb()
+        kb = self._get_kb(workspace)
         if kb is not None:
             from datetime import datetime
 
@@ -310,6 +330,7 @@ def distill_hook_failure(
     tool_input: dict,
     block_reason: str,
     metadata: dict,
+    workspace: str | None = None,
 ) -> None:
     """把 hook block 的失败教训蒸馏成知识.
 
@@ -325,21 +346,23 @@ def distill_hook_failure(
     distiller = _get_distiller()
     if distiller is not None:
         try:
-            distiller.distill_error_lessons([
-                {
-                    "tool_name": tool_name,
-                    "error_message": block_reason,
-                    "software": software,
-                    "calculation_type": calc_type,
-                    "session_id": metadata.get("thread_id", "unknown"),
-                    "tool_input": tool_input,
-                }
-            ])
+            distiller.distill_error_lessons(
+                [
+                    {
+                        "tool_name": tool_name,
+                        "error_message": block_reason,
+                        "software": software,
+                        "calculation_type": calc_type,
+                        "session_id": metadata.get("thread_id", "unknown"),
+                        "tool_input": tool_input,
+                    }
+                ]
+            )
         except Exception:
             logger.debug("distill_error_lessons 失败 (非致命)", exc_info=True)
 
     # 2) KB 直接写入 ERROR LESSON, 立即可检索
-    kb = _get_kb()
+    kb = _get_kb(workspace)
     if kb is not None:
         suggested_fix = _extract_suggestion(block_reason)
         lesson_text = (
@@ -390,6 +413,7 @@ def ingest_sobko_chunks(
     kb: Any = None,
     limit: int | None = None,
     batch_log_every: int = 500,
+    workspace: str | None = None,
 ) -> int:
     """把 Sobko normalized/chunks.jsonl 灌进 huginn KB.
 
@@ -412,7 +436,7 @@ def ingest_sobko_chunks(
         return 0
 
     if kb is None:
-        kb = _get_kb()
+        kb = _get_kb(workspace)
     if kb is None:
         logger.warning("KnowledgeBase 不可用, 无法蒸馏 Sobko chunks")
         return 0
@@ -449,7 +473,9 @@ def ingest_sobko_chunks(
                 if result.get("chunks", 0) > 0:
                     ingested += 1
             except Exception:
-                logger.debug("Sobko chunk %s 入库失败 (非致命)", chunk_id, exc_info=True)
+                logger.debug(
+                    "Sobko chunk %s 入库失败 (非致命)", chunk_id, exc_info=True
+                )
             if batch_log_every and (i + 1) % batch_log_every == 0:
                 logger.info("Sobko 蒸馏进度: %d chunks 处理, %d 成功", i + 1, ingested)
     return ingested
@@ -475,7 +501,10 @@ async def calculation_ingest_hook(ctx: HookContext) -> HookContext | None:
             return None
 
         tool_input = ctx.args if isinstance(ctx.args, dict) else {}
-        _get_ingester().ingest_calculation(ctx.tool_name, tool_input, ctx.result)
+        workspace = str(getattr(ctx.agent, "workspace", None) or ".")
+        _get_ingester().ingest_calculation(
+            ctx.tool_name, tool_input, ctx.result, workspace=workspace
+        )
 
         # G4: 把 visual_primitives 单独 ingest 到 KB, 让视觉经验能被 RAG 召回.
         # visual_hook 给 result 塞 _visual_primitives 字段, 之前只流向 memory/KG,
@@ -483,9 +512,15 @@ async def calculation_ingest_hook(ctx: HookContext) -> HookContext | None:
         _vis = result.get("_visual_primitives") if isinstance(result, dict) else None
         if not _vis:
             _res_inner = result.get("result") if isinstance(result, dict) else None
-            _vis = _res_inner.get("_visual_primitives") if isinstance(_res_inner, dict) else None
+            _vis = (
+                _res_inner.get("_visual_primitives")
+                if isinstance(_res_inner, dict)
+                else None
+            )
         if _vis and isinstance(_vis, str) and _vis.strip():
-            ingest_visual_primitives(ctx.tool_name, _vis, tool_input)
+            ingest_visual_primitives(
+                ctx.tool_name, _vis, tool_input, workspace=workspace
+            )
     except Exception:
         logger.debug("calculation_ingest_hook 失败 (非致命)", exc_info=True)
     return None
@@ -495,6 +530,7 @@ def ingest_visual_primitives(
     tool_name: str,
     visual_primitives: str,
     tool_input: dict | None = None,
+    workspace: str | None = None,
 ) -> str | None:
     """G4: 把 visual_primitives 作为独立 KB 条目摄入, 让 RAG 能召回视觉经验.
 
@@ -507,10 +543,11 @@ def ingest_visual_primitives(
     """
     if not visual_primitives or not visual_primitives.strip():
         return None
-    kb = _get_kb()
+    kb = _get_kb(workspace)
     if kb is None:
         return None
     from datetime import datetime
+
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     # 文本加前缀让 RAG 检索时能识别这是视觉经验
     text = f"# Visual Primitives ({tool_name})\n{visual_primitives}"
@@ -540,8 +577,9 @@ async def hook_failure_hook(ctx: HookContext) -> HookContext | None:
             return None
         block_reason = ctx.metadata.get("block_reason", "unknown reason")
         tool_input = ctx.args if isinstance(ctx.args, dict) else {}
+        workspace = str(getattr(ctx.agent, "workspace", None) or ".")
         distill_hook_failure(
-            ctx.tool_name, tool_input, block_reason, ctx.metadata
+            ctx.tool_name, tool_input, block_reason, ctx.metadata, workspace=workspace
         )
     except Exception:
         logger.debug("hook_failure_hook 失败 (非致命)", exc_info=True)
@@ -556,7 +594,14 @@ if __name__ == "__main__":
     vasp_text = _build_knowledge_text(
         "vasp_tool",
         {"action": "relax", "encut": 520, "kpoints": "4 4 4"},
-        {"result": {"total_energy": -12.34, "converged": True, "band_gap": 1.5, "formula": "Si"}},
+        {
+            "result": {
+                "total_energy": -12.34,
+                "converged": True,
+                "band_gap": 1.5,
+                "formula": "Si",
+            }
+        },
     )
     assert "VASP relax calculation for Si" in vasp_text
     assert "encut=520" in vasp_text
