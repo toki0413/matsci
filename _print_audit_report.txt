@@ -1,0 +1,479 @@
+======================================================================
+huginn 核心库 print() 技术债务审计报告
+======================================================================
+扫描根目录          : /workspace/agent/huginn
+扫描 .py 文件数     : 859
+语法解析失败(正则兜底): 2
+  -> bench/generators.py, runtime/trace_context.py
+总 print( 调用数    : 1653
+
+─ 分类分布 ────────────────────────────────────────────────
+  A. selfcheck/demo          : 1121
+  B. plugins/third-party     : 8
+  C. 科学实验/可视化          : 288
+  D. 核心 lib 逻辑 (真正需修复): 236   ← 需处理
+
+======================================================================
+D 类完整列表 (236 项) — 真正需要修复的核心库 print
+======================================================================
+agent/streaming.py:1746: print(f"[FINALLY-REFLECT] tool_results_this_turn={_n_trs}", file=_sys.stderr, flush=True)
+bench/ablation_gap1.py:89: print(f"  LLM 解析失败: {e}")
+bench/ablation_llm_loop.py:99: print(f"  LLM 解析失败: {e}")
+bench/orchestrator.py:158: print(f"[{self.tag}] {msg}", flush=True)
+bourbaki_env.py:81: print("[Bourbaki] Lean 4 not detected. Attempting auto-install...")
+bourbaki_env.py:91: print(f"[Bourbaki] Unsupported platform: {system}")
+bourbaki_env.py:108: print(f"[Bourbaki] elan install failed: {result.stderr}")
+bourbaki_env.py:117: print(f"[Bourbaki] Installation error: {e}")
+bourbaki_env.py:132: print(f"[Bourbaki] elan install failed: {result.stderr}")
+bourbaki_env.py:138: print(f"[Bourbaki] Installation error: {e}")
+bourbaki_env.py:191: print(f"[Bourbaki] lake build failed: {result.stderr[:500]}")
+cli/rcb_runner.py:121: print("[HUGINN] GPU detected and verified, enabling CUDA for torch tools", flush=True)
+cli/rcb_runner.py:327: print(f"[cognitive_evidence write skipped: {_ce_e}]", flush=True)
+cli/rcb_runner.py:362: print(f"[haptic] load failed: {_e}, degrading to fisher", flush=True)
+cli/rcb_runner.py:407: print(f"[anomaly] trigger failed: {_e}", flush=True)
+cli/rcb_runner.py:604: print(
+cli/rcb_runner.py:609: print(f"[v15] LLMLikelihood injection skipped: {e}", flush=True)
+cli/rcb_runner.py:896: print("\n=== Step 2: Execution (iterative) ===\n", flush=True)
+cli/rcb_runner.py:1021: print(f"[score_history init skipped: {_she}]", flush=True)
+cli/rcb_runner.py:1037: print(f"[cumulative_audit init skipped: {_cae}]", flush=True)
+cli/rcb_runner.py:1060: print(f"[betti init skipped: {_tte}]", flush=True)
+cli/rcb_runner.py:1067: print(f"[Prospective] init warning: {_e}", flush=True)
+cli/rcb_runner.py:1098: print(f"[task_metrics init skipped: {_e}]", flush=True)
+cli/rcb_runner.py:1117: print(f"[heat_engine init skipped: {_he}]", flush=True)
+cli/rcb_runner.py:1209: print(
+cli/rcb_runner.py:1215: print(f"[v15] SelfModel init skipped: {_e}", flush=True)
+cli/rcb_runner.py:1228: print(
+cli/rcb_runner.py:1234: print(f"[v15] HypothesisManifold init skipped: {_e}", flush=True)
+cli/rcb_runner.py:1249: print(f"[v18] bandit registered {len(_budget_items)} items, "
+cli/rcb_runner.py:1254: print(f"[v18] bandit init skipped (fallback to no-bandit): {_e}", flush=True)
+cli/rcb_runner.py:1275: print(f"[P5] wall_clock budget expired at iter {_iter_n}, stopping.", flush=True)
+cli/rcb_runner.py:1322: print(
+cli/rcb_runner.py:1332: print(f"[v16] derivation: {_dm.group(1)}%", flush=True)
+cli/rcb_runner.py:1334: print(f"[v16] derivation audit skipped: {_e}", flush=True)
+cli/rcb_runner.py:1383: print(
+cli/rcb_runner.py:1390: print(
+cli/rcb_runner.py:1434: print(
+cli/rcb_runner.py:1481: print(f"[iter {_iter_n}] {_fr_msg}", flush=True)
+cli/rcb_runner.py:1495: print(f"[Step 2] imagination triggered at iter {_iter_n}", flush=True)
+cli/rcb_runner.py:1530: print(
+cli/rcb_runner.py:1538: print(f"[mental_imagery skipped: {_mie}]", flush=True)
+cli/rcb_runner.py:1540: print(f"[should_imaginate skipped: {_ie}]", flush=True)
+cli/rcb_runner.py:1556: print(
+cli/rcb_runner.py:1562: print(f"[v15] blind_spot hint skipped: {_be}", flush=True)
+cli/rcb_runner.py:1577: print(f"[prospective recall skipped: {_e}]", flush=True)
+cli/rcb_runner.py:1597: print(f"[meta_agent_text skipped: {_e}]", flush=True)
+cli/rcb_runner.py:1609: print(f"[pmk_text skipped: {_e}]", flush=True)
+cli/rcb_runner.py:1617: print(f"[ctx inject skipped: {_e}]", flush=True)
+cli/rcb_runner.py:1639: print(f"[curiosity] injected {len(_weak)} weak personas", flush=True)
+cli/rcb_runner.py:1641: print(f"[curiosity skipped: {_ce}]", flush=True)
+cli/rcb_runner.py:1653: print(f"[deliverable] missing: {_missing}", flush=True)
+cli/rcb_runner.py:1655: print(f"[deliverable check skipped: {_de}]", flush=True)
+cli/rcb_runner.py:1680: print(
+cli/rcb_runner.py:1718: print(f"[tfm snapshot {_persp} skipped: {_e}]", flush=True)
+cli/rcb_runner.py:1728: print(f"[tfm outputs snap {_persp} skipped: {_e}]", flush=True)
+cli/rcb_runner.py:1736: print(f"[tfm: winner={_winner} scores={_verdict['scores']}]", flush=True)
+cli/rcb_runner.py:1738: print(f"[tfm gate: {_verdict['gate']}]\n", flush=True)
+cli/rcb_runner.py:1765: print(f"[tfm restore main report failed: {_e}]", flush=True)
+cli/rcb_runner.py:1800: print(f"[tfm trace skipped: {_e}]", flush=True)
+cli/rcb_runner.py:1802: print(f"\n--- Step 2 iter {_iter_n + 1}/{_max_exec_iters} ---\n", flush=True)
+cli/rcb_runner.py:1859: print(f"[v15] observation/abduction skipped: {_e}", flush=True)
+cli/rcb_runner.py:1872: print(f"[P4] hypothesis cycle detected: {_stagnation_history[-6:]}", flush=True)
+cli/rcb_runner.py:1881: print(
+cli/rcb_runner.py:1939: print(
+cli/rcb_runner.py:1946: print(f"[v15] imagination skipped: {_e}", flush=True)
+cli/rcb_runner.py:1990: print(
+cli/rcb_runner.py:1996: print(f"[v15] blind_spot imagination skipped: {_e}", flush=True)
+cli/rcb_runner.py:2034: print(f"[supported_ratio skipped: {_oe}]", flush=True)
+cli/rcb_runner.py:2089: print(f"[betti write skipped: {_be}]", flush=True)
+cli/rcb_runner.py:2091: print(f"[meta_trace write skipped: {_e}]", flush=True)
+cli/rcb_runner.py:2157: print(f"[v15] self_model update skipped: {_se}", flush=True)
+cli/rcb_runner.py:2180: print(f"[prospective store skipped: {_pe}]", flush=True)
+cli/rcb_runner.py:2219: print(f"[Step 2] drift detected: {_drift_info[1]}", flush=True)
+cli/rcb_runner.py:2221: print(f"[Step 2] drift/metrics update skipped: {_de}", flush=True)
+cli/rcb_runner.py:2253: print(f"[Step 2] should_continue=False: {_msg}", flush=True)
+cli/rcb_runner.py:2274: print(
+cli/rcb_runner.py:2277: print(f"[Step 2] step evaluator warning: {_e}", flush=True)
+cli/rcb_runner.py:2334: print(
+cli/rcb_runner.py:2374: print(
+cli/rcb_runner.py:2381: print(
+cli/rcb_runner.py:2412: print(
+cli/rcb_runner.py:2416: print(
+cli/rcb_runner.py:2424: print(
+cli/rcb_runner.py:2463: print(
+cli/rcb_runner.py:2467: print(f"[Step 2] human-in-loop pause warning: {_e}", flush=True)
+cli/rcb_runner.py:2498: print(f"[Step 2] checkpoint save warning: {_e}", flush=True)
+cli/rcb_runner.py:2520: print(f"[Memory] iteration_result write skipped: {_me}", flush=True)
+cli/rcb_runner.py:2533: print(
+cli/rcb_runner.py:2552: print(
+cli/rcb_runner.py:2561: print(
+cli/rcb_runner.py:2567: print(f"[score_history push skipped: {_she}]", flush=True)
+cli/rcb_runner.py:2577: print(
+cli/rcb_runner.py:2584: print(f"[cumulative_audit skipped: {_cae}]", flush=True)
+cli/rcb_runner.py:2602: print(
+cli/rcb_runner.py:2610: print(
+cli/rcb_runner.py:2618: print(f"[Step2] darwin_ratchet_check failed: {_e}", flush=True)
+cli/rcb_runner.py:2661: print(
+cli/rcb_runner.py:2681: print(
+cli/rcb_runner.py:2687: print(f"[mcmc] skipped: {_mcmc_e}", flush=True)
+cli/rcb_runner.py:2710: print(
+cli/rcb_runner.py:2720: print(
+cli/rcb_runner.py:2726: print(f"[completion audit skipped: {_e}]", flush=True)
+cli/rcb_runner.py:2746: print(
+cli/rcb_runner.py:2750: print(f"[anomaly] detection skipped: {_e}", flush=True)
+cli/rcb_runner.py:2778: print(
+cli/rcb_runner.py:2792: print(f"[v16] final derivation audit skipped: {_e}", flush=True)
+cli/rcb_runner.py:2797: print(
+cli/rcb_runner.py:2842: print(
+cli/rcb_runner.py:2853: print(
+cli/rcb_runner.py:2860: print(f"[TaskComplete] metacog audit failed: {_e}", flush=True)
+cli/rcb_runner.py:2874: print("[agent signalled TASK COMPLETE, breaking]", flush=True)
+cli/rcb_runner.py:3751: print("\n=== Step 2.5: report.md Emergency Write ===\n", flush=True)
+cli/rcb_runner.py:3767: print("[fallback: auto-generating minimal report.md]", flush=True)
+cli/rcb_runner.py:3776: print(f"[fallback: generated {_n_gen} figures from outputs/]", flush=True)
+cli/rcb_runner.py:4127: print("\n=== Step 3: Adversarial Self-Critique ===\n", flush=True)
+cli/rcb_runner.py:4140: print(f"[adversarial_critique: reading {len(report_text)} chars of report.md]", flush=True)
+cli/rcb_runner.py:4153: print(f"[Step3] repro gate advisory: {_repro_note}", flush=True)
+cli/rcb_runner.py:4156: print(f"[Step3] repro gate skipped: {_e}", flush=True)
+cli/rcb_runner.py:4184: print(f"[Step3] A2/A3 signal inject skipped: {_e}", flush=True)
+cli/rcb_runner.py:4193: print(f"[P2: {len(_unc_issues)} uncertainty issue(s) injected to critique]", flush=True)
+cli/rcb_runner.py:4195: print(f"[P2 uncertainty check skipped: {_ue}]", flush=True)
+cli/rcb_runner.py:4205: print(f"[G28: {len(recomputed)} metric claim(s) mismatch recomputed values]", flush=True)
+cli/rcb_runner.py:4208: print(f"[G28: recompute skipped: {e}]", flush=True)
+cli/rcb_runner.py:4210: print(f"[adversarial_critique: verdict={object_verdict.get('overall_verdict', '?')}]", flush=True)
+cli/rcb_runner.py:4213: print(f"[adversarial_critique: skipped due to error: {e}]", flush=True)
+cli/rcb_runner.py:4215: print("[adversarial_critique: skipped — report.md or checklist missing]", flush=True)
+cli/rcb_runner.py:4295: print(f"[step3] stream_chat_fn failed: {_e}\n{_tb.format_exc()}", flush=True)
+cli/rcb_runner.py:4323: print(f"[step3_retry: deadline in {_remaining:.0f}s, skip retry → score",
+cli/rcb_runner.py:4334: print(f"[step3_retry: re-critique failed: {_e}]", flush=True)
+cli/rcb_runner.py:4343: print(f"[step3_retry: verdict={_retry_verdict}, gap={_retry_gap}, no retry]",
+cli/rcb_runner.py:4376: print(f"[step3_finalize] stream_chat_fn failed: {_e}", flush=True)
+cli/rcb_runner.py:4417: print(f"[step3_retry PMK/KB injection skipped: {_e}]", flush=True)
+cli/rcb_runner.py:4517: print(f"[step3_retry trace write failed: {_e}]", flush=True)
+cli/rcb_runner.py:4519: print(f"[step3_retry: attempt {_retry_count}/2, gap={_retry_gap}]", flush=True)
+cli/rcb_runner.py:4534: print(f"[step3_retry {_retry_count}] stream_chat_fn failed: {_e}", flush=True)
+cli/rcb_runner.py:4562: print(f"[step3_retry cross_retry log failed: {_e}]", flush=True)
+cli/rcb_runner.py:4573: print(f"[Step3] manifest.json generated at {_manifest_path}", flush=True)
+cli/rcb_runner.py:4575: print(f"[Step3] manifest generation failed: {_e}", flush=True)
+cli/rcb_runner.py:4603: print(f"[Step3] learn_from_rcb: {_learn_res['summary']}", flush=True)
+cli/rcb_runner.py:4605: print(f"[Step3] learn_from_rcb skipped: {_e}", flush=True)
+cli/rcb_runner.py:4636: print(
+cli/rcb_runner.py:4643: print("[Step3] blind_reconstruct_verify passed", flush=True)
+cli/rcb_runner.py:4645: print(f"[Step3] blind_reconstruct_verify skipped: {_e}", flush=True)
+cli/rcb_runner.py:4682: print(f"ERROR: {instructions} not found", file=sys.stderr)
+cli/rcb_runner.py:4740: print(f"[Resume] found checkpoint at step {_resumed.step_id}", flush=True)
+cli/rcb_runner.py:4742: print(f"[Resume] continuing from iter {_resume_from_iter}", flush=True)
+cli/rcb_runner.py:4744: print(f"[Resume] failed, starting fresh: {_e}", flush=True)
+cli/rcb_runner.py:4795: print("[EXTREME MODE] thinking=high, max_tool_calls=300, context_budget=200K, autoloop thresholds 50/50/20/15, persistent_goal=on, wall_clock=86400s", flush=True)
+cli/rcb_runner.py:4815: print(f"[P5] persistent goal: budget={_timeout_s}s, goal_id={_p5_goal_id[:8]}", flush=True)
+cli/rcb_runner.py:4817: print(f"[P5] goal creation warning: {_e}", flush=True)
+cli/rcb_runner.py:4835: print("ERROR: no model configured", file=sys.stderr)
+cli/rcb_runner.py:4840: print(f'model: {model_name}', flush=True)
+cli/rcb_runner.py:4957: print(f"[Memory] cross-task shared: {_mem_dir}", flush=True)
+cli/rcb_runner.py:4963: print(f"[Memory] init warning: {_e}", flush=True)
+cli/rcb_runner.py:4995: print(
+cli/rcb_runner.py:4999: print(f"[KG] ingest warning: {_kie}", flush=True)
+cli/rcb_runner.py:5001: print("[KG] initialized (HUGINN_USE_KNOWLEDGE_GRAPH=0, no ingest)", flush=True)
+cli/rcb_runner.py:5003: print(f"[KG] init warning: {_e}", flush=True)
+cli/rcb_runner.py:5021: print(f"[Persona] init warning: {_e}", flush=True)
+cli/rcb_runner.py:5092: print(
+cli/rcb_runner.py:5183: print(content, flush=True)
+cli/rcb_runner.py:5189: print(f"ERROR [{step_label}]: {e}\n{_tb.format_exc()}", flush=True)
+cli/rcb_runner.py:5205: print(f"[RCB-FINALLY] entering, tool_results_this_turn={_n_trs}, has_reflection={hasattr(agent, '_run_post_turn_reflection')}", file=_sys.stderr, flush=True)
+cli/rcb_runner.py:5209: print("[RCB-FINALLY] reflection done", file=_sys.stderr, flush=True)
+cli/rcb_runner.py:5211: print(f"[RCB-FINALLY] reflection error: {_re}", file=_sys.stderr, flush=True)
+cli/rcb_runner.py:5249: print("[Step 0] KB ingest done", flush=True)
+cli/rcb_runner.py:5251: print(f"[Step 0] KB ingest warning: {_e}", flush=True)
+cli/rcb_runner.py:5255: print("\n=== Step 1: Methodology Extraction ===\n", flush=True)
+cli/rcb_runner.py:5287: print("[step1] 空响应, 重试一次...", flush=True)
+cli/rcb_runner.py:5293: print("[step1] 仍为空, 强制直接输出 checklist (无 tool)...", flush=True)
+cli/rcb_runner.py:5302: print(f"\n[checklist extracted: {len(checklist)} chars]\n", flush=True)
+cli/rcb_runner.py:5320: print(f"[G29: checklist stored as stable_principle + ws/checklist.md]", flush=True)
+cli/rcb_runner.py:5322: print(f"[G29: checklist store skipped: {e}]", flush=True)
+cli/rcb_runner.py:5370: print(f"[Step 1.2] trace write skipped: {_e}", flush=True)
+cli/rcb_runner.py:5371: print(f"[Step 1.2] built {len(_target_chains)} target chains", flush=True)
+cli/rcb_runner.py:5373: print(f"[Step 1.2] target chain warning: {_e}", flush=True)
+cli/rcb_runner.py:5390: print("\n=== Step 1.5: Intuitive Gamer + math structure scan ===\n", flush=True)
+cli/rcb_runner.py:5450: print(scan_text, flush=True)
+cli/rcb_runner.py:5452: print(f"[Step 1.5 LLM call failed: {_e}]", flush=True)
+cli/rcb_runner.py:5454: print(f"\n[structure scan done: {len(scan_text)} chars]\n", flush=True)
+cli/rcb_runner.py:5486: print("[intuitive_gamer + math structure trace entry written]", flush=True)
+cli/rcb_runner.py:5488: print(f"[intuitive_gamer trace skipped: {_e}]", flush=True)
+cli/rcb_runner.py:5493: print("\n=== Step 1.7: Plan Fork-Critique-Merge ===\n", flush=True)
+cli/rcb_runner.py:5496: print(f"[fcm: winner={fcm['winner_perspective']} scores={fcm.get('scores')}]\n", flush=True)
+cli/rcb_runner.py:5497: print(fcm["winner_plan"], flush=True)
+cli/rcb_runner.py:5499: print("[fcm: all forks failed, Step 2 runs plan-free]", flush=True)
+cli/rcb_runner.py:5523: print(f"[fcm trace skipped: {_e}]", flush=True)
+cli/rcb_runner.py:5536: print(f"[v16.1 越权检测] Step 1 生成 {_violations}, 清空强制 Step 2 重做", flush=True)
+cli/rcb_runner.py:5542: print(f"[v16.1 清空失败: {_e}]", flush=True)
+cli/rcb_runner.py:5576: print(
+cli/rcb_runner.py:5582: print(
+cli/rcb_runner.py:5593: print(f"[A3 audit] write report failed: {_e}", flush=True)
+cli/rcb_runner.py:5596: print(f"[A3 audit] crashed: {_e}\n{_tb.format_exc()}", flush=True)
+cli/rcb_runner.py:5603: print(
+cli/rcb_runner.py:5609: print(
+cli/rcb_runner.py:5620: print(f"[A2 gate] write report failed: {_e}", flush=True)
+cli/rcb_runner.py:5623: print(f"[A2 gate] crashed: {_e}\n{_tb.format_exc()}", flush=True)
+cli/rcb_runner.py:5640: print(f"[step3] _step3_adversarial crashed: {_e}\n{_tb.format_exc()}",
+cli/rcb_runner.py:6822: print(f"[mcmc-{mode}] manifold init failed or <2 hypotheses",
+cli/rcb_runner.py:6851: print(f"[mcmc-{mode}] SE(3) loaded {len(_hypo_manifold._structure_maps)} "
+cli/rcb_runner.py:6854: print(f"[mcmc-{mode}] SE(3) enabled but no cognitive_maps found, "
+cli/rcb_runner.py:6857: print(f"[mcmc-{mode}] SE(3) cognitive_map load failed: {_e}, "
+cli/rcb_runner.py:6888: print(f"[mcmc-{mode}] haptic load failed: {_e}, "
+cli/rcb_runner.py:6891: print(f"[mcmc-{mode}] haptic loaded {_n_hap} layer(s) for "
+cli/rcb_runner.py:6894: print(f"[mcmc-{mode}] haptic enabled but no layers in "
+cli/rcb_runner.py:6919: print(f"[mcmc-{mode}] alignment fitted on {_n_pairs} pairs, "
+cli/rcb_runner.py:6922: print(f"[mcmc-{mode}] alignment fit returned not-ready "
+cli/rcb_runner.py:6925: print(f"[mcmc-{mode}] alignment dataset has only {_n_pairs} pairs "
+cli/rcb_runner.py:6928: print(f"[mcmc-{mode}] alignment load/fit failed: {_e}, "
+cli/rcb_runner.py:6931: print(f"[mcmc-{mode}] alignment enabled but no dataset at "
+cli/rcb_runner.py:6945: print(f"[mcmc-{mode}] surprise detected on "
+cli/rcb_runner.py:6969: print(f"[mcmc-{mode}] dataset save failed: {_e}", flush=True)
+cli/rcb_runner.py:6971: print(f"[mcmc-{mode}] surprise check failed: {_e}", flush=True)
+cli/rcb_runner.py:6990: print(f"[mcmc-{mode}] no observations in {obs_path}, cannot run MCMC",
+cli/rcb_runner.py:7011: print(f"[mcmc-single] sandbox profile=standard, "
+cli/rcb_runner.py:7024: print(f"[mcmc-single] resume from step={_engine._mcmc_step_count} "
+cli/rcb_runner.py:7064: print(f"[mcmc-single] ckpt step={step} current={current} "
+cli/rcb_runner.py:7067: print(f"[mcmc-single] ckpt failed: {_e}", flush=True)
+cli/rcb_runner.py:7070: print(f"[mcmc-single] done: total_steps={_engine._mcmc_step_count} "
+cli/rcb_runner.py:7080: print(f"[mcmc-multi] {n_chains} sandboxes (profile=standard), "
+cli/rcb_runner.py:7097: print(f"[mcmc-multi] chain {chain_id} ckpt at step "
+cli/rcb_runner.py:7100: print(f"[mcmc-multi] chain {chain_id} ckpt failed: {_e}",
+cli/rcb_runner.py:7118: print(f"[mcmc-multi] done: r_hat={_r_hat:.4f} "
+cli/rcb_runner.py:7173: print(f"[SMOKE] web_search: {_ws_msg}")
+cli/rcb_runner.py:7175: print(f"[SMOKE] web_search WARNING: {_ws_msg} (bench 可继续, 检索走降级)")
+cli/rcb_runner.py:7177: print(f"[SMOKE] web_search WARNING: health check failed {_e} (bench 可继续)")
+cli/rcb_runner.py:7180: print("=" * 60)
+cli/rcb_runner.py:7181: print("SMOKE TEST FAILED — 环境冒烟未通过, 不启动 RCB run")
+cli/rcb_runner.py:7182: print("=" * 60)
+cli/rcb_runner.py:7184: print(f"  FAIL: {f}")
+cli/rcb_runner.py:7185: print("\n修复后重试, 或用 HUGINN_SKIP_SMOKE=1 跳过 (风险自负)")
+cli/rcb_runner.py:7189: print(f"[SMOKE] OK ({elapsed:.1f}s) — RDKit/sklearn/torch 就绪")
+rag/rag_tool.py:94: print(f"[rag_tool] hierarchical retriever unavailable: {e}")
+rag/rag_tool.py:215: print(f"[rag_tool] hierarchical search failed, fallback: {e}")
+routes/metrics.py:496: print(
+routes/metrics.py:564: print(
+
+======================================================================
+各类文件分布明细
+======================================================================
+
+[A] 类 (1121 项):
+   125  autoloop/engine_selfcheck.py
+    87  cli/rcb_runner.py
+    62  bench/ablation_geom_vs_text.py
+    47  bench/ablation_gap1.py
+    44  bench/ablation_llm_loop.py
+    21  tools/persistent_terminal.py
+    18  agents/subagent.py
+    18  runtime/checkpoint.py
+    17  tools/structure_cognitive_map_tool.py
+    16  metacog/imagination.py
+    15  metacog/self_model.py
+    15  tools/subagent_tool.py
+    14  agent/hint_coordinator.py
+    14  bench/mini_rotation_baseline.py
+    13  agent/middlewares.py
+    13  harness/phase_spec.py
+    13  interaction/inbox.py
+    13  metacog/blind_spot_mapper.py
+    13  tools/sci/sklearn_tool.py
+    12  bench/runner.py
+    12  memory/longterm.py
+    12  tools/visual_hook.py
+    11  interaction/hitl_selfcheck.py
+    11  metacog/mental_imagery.py
+    11  runtime/selfwake.py
+    10  autoloop/hypothesis_loop.py
+     9  agents/task_dag.py
+     9  autoloop/goal_store.py
+     9  knowledge/trajectory_pattern.py
+     9  memory/episodic_shard.py
+     9  memory/manager.py
+     9  metacog/llm_likelihood.py
+     9  runtime/task_metrics.py
+     8  agents/swarm.py
+     8  bench/llm_judge.py
+     8  memory/session.py
+     8  metacog/cross_task_store.py
+     8  metacog/visual_hippocampus.py
+     8  runtime/cycle_detect.py
+     8  runtime/engine_state.py
+     7  agents/budget_decomp.py
+     7  autoloop/bandit.py
+     7  knowledge/auto_ingest.py
+     7  memory/_test_get_self_model.py
+     7  memory/typing.py
+     7  metacog/branch_incubator.py
+     7  tools/sci/gnn_tool.py
+     6  _sciexplorer_distill_selfcheck.py
+     6  autoloop/variant_gen.py
+     6  autoloop/visual_inspect.py
+     6  bench/misi_bench.py
+     6  bench/orchestrator.py
+     6  context_builder.py
+     6  harness/joint_optimizer.py
+     6  harness/prompt_patch.py
+     6  memory/cluster.py
+     6  metacog/haptic_descriptor.py
+     6  metacog/structure_descriptor.py
+     6  models/router.py
+     6  runtime/scheduler.py
+     6  tools/sci/dynamics_discovery_tool.py
+     5  _p4_2_selfcheck.py
+     5  agent/streaming.py
+     5  bench/adapters.py
+     5  events/audit_log.py
+     5  kg/graph.py
+     5  metacog/haptic_property_layer.py
+     5  perception/image_index.py
+     5  tools/atomworld_tool.py
+     5  tools/file_write_tool.py
+     5  tools/sci/pytorch_train_tool.py
+     5  tools/web_search_tool.py
+     4  bench/atomworld_bench.py
+     4  evolution/closed_loop_test.py
+     4  evolution/manager.py
+     4  metacog/episodic_replay.py
+     4  tools/bench_infra/c2st_tool.py
+     4  tools/bench_infra/kaggle_tool.py
+     4  tools/bench_infra/matrix_tool.py
+     4  tools/sci/transformer_tool.py
+     3  agent/code_act_selfcheck.py
+     3  evolution/failed_direction_store.py
+     3  metacog/latent_space.py
+     3  metacog/step_evaluator.py
+     3  runtime/task_tool_router.py
+     3  tools/bench_infra/mcmc_tool.py
+     3  tools/validate_tool.py
+     2  autoloop/cognitive_loop.py
+     2  metacog/cross_domain_pipeline.py
+     2  runtime/sanity_gate.py
+     2  security/policy_engine.py
+     2  tools/bench_infra/plot_tool.py
+     2  tools/image_analysis/cv_compare.py
+     2  tools/recall_context_tool.py
+     2  tools/sci/discrete_additive.py
+     2  tools/sci/discrete_group.py
+     2  tools/sci/discrete_oeis.py
+     2  tools/sci/discrete_smt.py
+     2  tools/sci/interpretable_ml_tool.py
+     2  tools/sci/pybamm_tool.py
+     2  tools/sci/vae_tool.py
+     2  tools/self_observe_tool.py
+     2  training/darwin_exporter.py
+     1  academic/standards_checker.py
+     1  agent/prompt_builder.py
+     1  agents/tool_dedupe.py
+     1  autoloop/conjecture.py
+     1  bench/evidence_manifest.py
+     1  bench/ideagene_bench.py
+     1  bench/naturebench.py
+     1  bench/optim_bench.py
+     1  bench/paper_repro_bench.py
+     1  bench/task_synthesizer.py
+     1  bot/wechat_bridge.py
+     1  causal/counterfactual_render.py
+     1  causal/llm_generate_scm.py
+     1  causal/predict_intervention.py
+     1  causal/visual_causal_chain.py
+     1  causal/visual_scm.py
+     1  cli/commands/chat.py
+     1  data/property_aliases.py
+     1  events/transcript.py
+     1  execution/physics_auditor.py
+     1  hooks/research_safety_hook.py
+     1  lean/conjecture_library.py
+     1  memory/prospective.py
+     1  metacog/block_registry.py
+     1  metacog/cognitive_heat_engine.py
+     1  metacog/completion_auditor.py
+     1  metacog/completion_gate.py
+     1  metacog/context_isolation.py
+     1  metacog/depth_search.py
+     1  metacog/equivalence_auditor.py
+     1  metacog/failure_modes.py
+     1  metacog/method_registry.py
+     1  metacog/physical_structure.py
+     1  metacog/reflector.py
+     1  metacog/signal_hub.py
+     1  metacog/target_chain.py
+     1  metacog/three_cabin_reflector.py
+     1  persistence/state_registry.py
+     1  plugins/skill_manifest_selfcheck.py
+     1  project_context.py
+     1  provenance/dag_visualizer.py
+     1  provenance/registry.py
+     1  research_budget.py
+     1  research_workflow.py
+     1  routes/document.py
+     1  runtime/context_router.py
+     1  runtime/pre_plan_grill.py
+     1  runtime/score_history.py
+     1  runtime/step_verifier.py
+     1  runtime/task_lifecycle.py
+     1  security/code_act_sandbox.py
+     1  security/cumulative_audit.py
+     1  security/docker_sandbox.py
+     1  snapshot/selfcheck.py
+     1  task_reflector.py
+     1  tools/bash_tool.py
+     1  tools/code_tool.py
+     1  tools/literature/aggregator.py
+     1  tools/literature/mineru_client.py
+     1  tools/literature/pipeline_tool.py
+     1  tools/literature/schema_def.py
+     1  tools/literature/schema_extractor.py
+     1  tools/personalization_tool.py
+     1  tools/prospective_tool.py
+     1  tools/skill_tool.py
+     1  tools/vision_describe_tool.py
+     1  training/model_tracker.py
+     1  utils/context.py
+     1  utils/conversation_tree.py
+     1  utils/migrations.py
+     1  utils/prompt_cache.py
+     1  utils/smart_prefetch.py
+
+[B] 类 (8 项):
+     5  plugins/science-skills/skills/workflow_skill_creator/references/cli_script_template.py
+     3  plugins/science-skills/skills/happy_figure/scripts/extract_research_doc.py
+
+[C] 类 (288 项):
+    71  metacog/composite_token_experiment.py
+    40  metacog/topology_protocol.py
+    37  metacog/structure_cognitive_map.py
+    34  metacog/persistence_landscape.py
+    33  metacog/category_functor.py
+    30  metacog/sheaf_cohomology.py
+    23  metacog/simplicial_homology.py
+    12  metacog/hypothesis_manifold.py
+     5  metacog/trace_topology.py
+     2  metacog/unified_complex.py
+     1  metacog/topology_lens.py
+
+[D] 类 (236 项):
+   221  cli/rcb_runner.py
+     7  bourbaki_env.py
+     2  rag/rag_tool.py
+     2  routes/metrics.py
+     1  agent/streaming.py
+     1  bench/ablation_gap1.py
+     1  bench/ablation_llm_loop.py
+     1  bench/orchestrator.py
+
+─ 说明 ────────────────────────────────────────────────────
+* print( 通过 ast 定位 (Call 节点 func.id == 'print'), 自动排除注释中的 # print(...).
+* __main__ 块与演示函数 (_selfcheck / run_selfcheck / 被 __main__ 直接调用的函数等) 经 ast 范围匹配判为 A/C 类.
+* C 类实验模块集合 (任务列出 7 个 + 同类拓扑/数学模块):
+    - metacog/category_functor.py
+    - metacog/composite_token_experiment.py
+    - metacog/hypothesis_manifold.py
+    - metacog/persistence_landscape.py
+    - metacog/sheaf_cohomology.py
+    - metacog/simplicial_homology.py
+    - metacog/structure_cognitive_map.py
+    - metacog/topology_lens.py
+    - metacog/topology_protocol.py
+    - metacog/trace_topology.py
+    - metacog/unified_complex.py
+* D 类 = 核心库业务逻辑里非 selfcheck/非实验/非第三方的 print, 视为应改用 logger 的技术债务.
