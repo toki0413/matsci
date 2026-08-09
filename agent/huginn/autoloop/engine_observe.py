@@ -671,6 +671,42 @@ LUCID review (mandatory after generating hypothesis):
             )
             _obs = extract_observations(text_pool)
             if _manifold is not None and _obs:
+                # E2-1: 在通用主循环推进 MCMC 链 (原本只在 rcb_runner 跑).
+                # 每 HUGINN_MCMC_INTERVAL 轮推进一次 mcmc_step, 首次用
+                # abductive_inference 初始化 current. 推进是 advisory only,
+                # 失败静默降级到 None (hint 走空路径, 不阻塞主循环).
+                try:
+                    _iter_n = getattr(self, "_iteration", 0)
+                    _mcmc_interval = int(
+                        os.environ.get("HUGINN_MCMC_INTERVAL", "5"))
+                    if _iter_n % _mcmc_interval == 0:
+                        _cur = getattr(self, "_mcmc_current", None)
+                        if _cur is None or _cur not in _manifold._hyp:
+                            # 初始化: 用 posterior 最高的假设 (abductive_inference)
+                            _abd = _manifold.abductive_inference(_obs)
+                            _cur = _abd.h_id if _abd else None
+                            if _cur is None:
+                                _h_ids = list(_manifold._hyp)
+                                _cur = _h_ids[0] if _h_ids else None
+                        if _cur is not None:
+                            _prev = _cur
+                            _rng = getattr(self, "_mcmc_rng", None)
+                            _next_h, _next_logp = _manifold.mcmc_step(
+                                _obs, _cur, rng=_rng,
+                                cached_log_p_current=getattr(
+                                    self, "_mcmc_cached_log_p", None),
+                                global_proposal_prob=0.3,
+                            )
+                            self._mcmc_current = _next_h
+                            self._mcmc_cached_log_p = _next_logp
+                            self._mcmc_step_count = getattr(
+                                self, "_mcmc_step_count", 0) + 1
+                            if _next_h != _prev:
+                                self._mcmc_accept_count = getattr(
+                                    self, "_mcmc_accept_count", 0) + 1
+                except Exception:
+                    logger.debug(
+                        "MCMC step advance skipped (non-fatal)", exc_info=True)
                 # MCMC 动态采样路径接入: 把采样链当前驻留的假设作为 hint 注入,
                 # 补充 abductive_inference (argmax) 的贪婪盲区. 无 MCMC 状态时
                 # 传 None, _build_posterior_guided_hint 内部跳过, 行为不变.
