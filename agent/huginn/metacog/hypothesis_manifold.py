@@ -750,6 +750,80 @@ class HypothesisManifold:
         # 种子派生: chain_id * 7919 + base_seed. 7919 是质数, 避免相邻链种子相关.
         base_seed = int(os.environ.get("HUGINN_MCMC_SEED", "42"))
 
+        # 升级路径 A (ProcessPool): 真并行 gate.
+        # asyncio.gather 对 CPU-bound 是串行; 只有未启用 se3/haptic/alignment
+        # (这些依赖不可 pickle 的对象) 且显式允许时, 才走 ProcessPool 真并行.
+        # HUGINN_MCMC_PARALLEL=0 强制回退 asyncio (回归逃生门).
+        _pp_enabled = (
+            os.environ.get("HUGINN_MCMC_PARALLEL", "1") != "0"
+            and not (se3_enabled or haptic_enabled or alignment_enabled)
+        )
+        if _pp_enabled:
+            try:
+                import concurrent.futures as _cf
+
+                # 序列化 hypothesis 到纯 pickle 数据行
+                _hyp_rows = [
+                    (
+                        h.h_id, h.description, dict(h.predictions), h.n_params,
+                        h.prior_override, h.confidence, h.evidence_strength,
+                    )
+                    for h in self._hyp.values()
+                ]
+                _obs_rows = [(o.name, o.value, o.sigma) for o in obs_list]
+                # 主进程算 init_h (abductive_inference 同步, 不需要 worker)
+                _init_h = None
+                try:
+                    _abd = self.abductive_inference(obs_list)
+                    _init_h = _abd.h_id if _abd else None
+                except Exception:
+                    _init_h = None
+
+                # n_chains 个小进程池, 每个跑 1 条链 → 真并行 n_chains 链.
+                # ponytail: 每个链独立 pool, 崩溃不影响其他链 (submit 后 get 各自结果).
+                _executors = []
+                _futures = []
+                for i in range(n_chains):
+                    _ex = _cf.ProcessPoolExecutor(max_workers=1)
+                    _executors.append(_ex)
+                    _futures.append(
+                        _ex.submit(
+                            _mcmc_chain_worker,
+                            i, base_seed, _hyp_rows, _obs_rows,
+                            n_steps_per_chain, checkpoint_interval,
+                            temperature=temperature, anneal=anneal, t_high=t_high,
+                            global_proposal_prob=global_proposal_prob,
+                            init_h_id=_init_h or "",
+                        )
+                    )
+                _results = []
+                for _f in _futures:
+                    try:
+                        _results.append(_f.result())
+                    except Exception:
+                        _results.append(None)  # 崩溃链降级, 不参与 R̂
+                for _ex in _executors:
+                    try:
+                        _ex.shutdown(wait=False)
+                    except Exception:
+                        pass
+
+                _pp_chains = [r["samples"] for r in _results if r is not None]
+                _pp_rates = [r["accept_rate"] for r in _results if r is not None]
+                _pp_rhat = (
+                    self._gelman_rubin(_pp_chains)
+                    if len(_pp_chains) >= 2 else float("nan")
+                )
+                return {
+                    "chains": _pp_chains,
+                    "r_hat": _pp_rhat,
+                    "converged": (not math.isnan(_pp_rhat)) and _pp_rhat < 1.1,
+                    "accept_rates": _pp_rates,
+                }
+            except Exception:
+                # ProcessPool 失败回退 asyncio (内存/序列化/平台问题)
+                pass
+
         async def _chain_runner(chain_id: int):
             rng = random.Random(chain_id * 7919 + base_seed)
             # current 初始化: 用 abductive_inference 给一个合理起点, 避免全从同一点开始
@@ -1151,6 +1225,95 @@ class HypothesisManifold:
         assert len(_generated) == 1, f"expected 1 hypothesis, got {len(_generated)}"
 
         print("  haptic mainloop: detect_isomorphic_anomaly + trigger OK")
+
+
+# ---------- 多进程 worker (ProcessPool 升级路径 A) ----------
+# mcmc_multi_chain 的 asyncio.gather 是协程级并行, CPU-bound 串行, wallclock
+# 无加速. 这里抽一个模块级顶层函数 (可 pickle), 供 ProcessPoolExecutor 真并行.
+# ponytail: worker 只走纯 fisher + 全局混合路径 — se3/haptic/alignment 依赖
+# _structure_maps/_haptic_layers/_alignment_fn 等可能不可 pickle 的对象, 多进程
+# 版不传, 调用方启用这些模态时回退 asyncio (见 mcmc_multi_chain 的 gate).
+
+def _mcmc_chain_worker(
+    chain_id: int,
+    base_seed: int,
+    hyp_rows: list[tuple],
+    obs_rows: list[tuple],
+    n_steps: int,
+    checkpoint_interval: int,
+    *,
+    temperature: float,
+    anneal: bool,
+    t_high: float,
+    global_proposal_prob: float,
+    init_h_id: str,
+) -> dict:
+    """单链 MCMC 的进程内执行体 (ProcessPool target).
+
+    hyp_rows: [(h_id, description, predictions, n_params, prior_override,
+                confidence, evidence_strength), ...] — 纯 pickle 数据.
+    obs_rows: [(name, value, sigma), ...].
+    重建轻量 manifold (只加 hypothesis, 无 structure/haptic/alignment →
+    proposal 退化 fisher). 每条链独立 rng, 独立当前状态.
+    返回 {"samples": [...], "accept_rate": float, "final_h": str}.
+    """
+    m = HypothesisManifold()
+    for row in hyp_rows:
+        (hid, desc, preds, np_, prior, conf, ev) = row
+        try:
+            m.add(Hypothesis(
+                h_id=hid, description=desc, predictions=dict(preds),
+                n_params=np_, prior_override=prior, confidence=conf,
+                evidence_strength=ev,
+            ))
+        except ValueError:
+            pass
+    obs = [Observation(name=n, value=v, sigma=s) for (n, v, s) in obs_rows]
+    rng = random.Random(chain_id * 7919 + base_seed)
+
+    current = init_h_id
+    if current not in m._hyp:
+        h_ids = list(m._hyp)
+        current = rng.choice(h_ids) if h_ids else current
+    cached_log_p: float | None = None
+    accept_count = 0
+    burn_in = n_steps // 2
+    thin = 1000
+    samples: list[str] = []
+
+    _t_low = temperature if temperature > 0 else 1.0
+    for step in range(1, n_steps + 1):
+        prev_h = current
+        T = temperature
+        if anneal:
+            T = t_high * (_t_low / t_high) ** (step / n_steps)
+        # 只走 fisher + 全局混合 (se3/haptic/alignment 多进程不支持, 默认关)
+        current, cached_log_p = m.mcmc_step(
+            obs, current, rng=rng, temperature=T,
+            cached_log_p_current=cached_log_p,
+            global_proposal_prob=global_proposal_prob,
+        )
+        if current != prev_h:
+            accept_count += 1
+        if step > burn_in and step % thin == 0:
+            samples.append(current)
+        # checkpoint 落盘: 每链独立文件, 主进程聚合时不需要读
+        if checkpoint_interval > 0 and step % checkpoint_interval == 0:
+            try:
+                _ckpt_path = os.environ.get(
+                    "HUGINN_MCMC_CKPT_DIR", "") + f"/mcmc_chain_{chain_id}.json"
+                if _ckpt_path.startswith("/"):
+                    import json as _json
+                    with open(_ckpt_path, "w", encoding="utf-8") as _f:
+                        _json.dump({
+                            "chain_id": chain_id, "step": step,
+                            "current": current, "accept_count": accept_count,
+                        }, _f)
+            except Exception:
+                pass  # checkpoint 失败不阻塞链
+
+    accept_rate = accept_count / n_steps if n_steps > 0 else 0.0
+    return {"samples": samples, "accept_rate": accept_rate, "final_h": current}
 
 
 # ---------- Self-check ----------
