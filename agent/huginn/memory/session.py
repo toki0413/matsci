@@ -113,15 +113,16 @@ class SessionContext:
         return self.tool_calls[-n:]
 
     def _compact_if_needed(self) -> None:
-        # C1: 极限模式 + token 超预算 → sliding window summarize, 推到 EM.
-        # 非极限模式: 走原逻辑 (keep system + recent).
-        if os.environ.get("HUGINN_EXTREME_DISPATCH", "0").lower() in ("1", "true"):
-            # 每 N 次 add 才检查一次 token, 避免每次都算
-            if self._add_count % self._summarize_check_every != 0:
-                return
-            if self._estimate_tokens() > self.token_budget:
-                self._sliding_window_compact()
-                return
+        # C1: token 超预算 → sliding window summarize, 推到 EM.
+        # 泛化: 不再只限极限模式 — 任何模式 (chat/research/plan/extreme) 只要
+        # 上下文超预算都走滑动窗口压缩, 避免长对话在非 extreme 模式下直接丢上下文.
+        # summarize 失败时 _sliding_window_compact 内部会 fallback 到 keep system + recent.
+        # 每 N 次 add 才检查一次 token, 避免每次都算.
+        if self._add_count % self._summarize_check_every != 0:
+            return
+        if self._estimate_tokens() > self.token_budget:
+            self._sliding_window_compact()
+            return
         if len(self.messages) > self.max_messages:
             # Strategy: keep first system message, then most recent
             system_msgs = [m for m in self.messages if m.role == "system"]

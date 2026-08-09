@@ -50,6 +50,18 @@ class ContextMixin:
                 "- Write findings to knowledge base\n\n"
                 f"{self.system_prompt}"
             )
+        elif self._mode == "extreme":
+            base = (
+                "EXTREME MODE: You are operating at maximum capability for a "
+                "long-horizon task. Unlock all tools and reasoning depth.\n"
+                "- Cite literature sources for claims\n"
+                "- Quantify uncertainty in results\n"
+                "- Compare results to published values\n"
+                "- Flag unexpected results as potential discoveries\n"
+                "- Write findings to knowledge base\n"
+                "- Persist intermediate results and follow the goal to completion\n\n"
+                f"{self.system_prompt}"
+            )
         else:
             base = self.system_prompt
 

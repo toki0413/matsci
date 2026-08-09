@@ -435,32 +435,37 @@ class HuginnAgent(
 
     # ── Mode management ───────────────────────────────────────────
 
+    # 长程模式: research / extreme 都是长程任务, 需要开 trajectory 召回 +
+    # cycle 检测才不重复犯错. chat/plan 是短程, 不开.
+    _LONG_HORIZON_MODES = ("research", "extreme")
+
     def set_mode(self, mode: str) -> None:
-        """切换 agent mode (chat/research/plan).
+        """切换 agent mode (chat/research/plan/extreme).
 
         内部委托 CSM S3_SWITCH 处理 (R7 减法: 合并 mode 切换和 CSM 控制).
         保留公开 API 向后兼容. CSM transition 是 advisory — 当前状态不允许转 S3
         时返回当前 state 不强制, 不破坏现有 mode 逻辑.
         """
-        if mode not in ("chat", "research", "plan"):
-            raise ValueError(f"unknown mode: {mode}. options: chat, research, plan")
+        if mode not in ("chat", "research", "plan", "extreme"):
+            raise ValueError(
+                f"unknown mode: {mode}. options: chat, research, plan, extreme"
+            )
         if mode != self._mode:
             old = self._mode
             self._mode = mode
             self._agent_graph = None
-            if mode == "research":
-                self._phase_manager.reset(ResearchPhase.LITERATURE)
-                # 极限模式联动: research 跑长程 (recursion_limit=500), 需要开
-                # trajectory 召回 + cycle 检测才不重复犯错. 保存原值便于退出恢复.
+            if mode in self._LONG_HORIZON_MODES:
+                # 长程模式联动: research/extreme 跑长程 (recursion_limit=500),
+                # 需要开 trajectory 召回 + cycle 检测才不重复犯错. 保存原值便于退出恢复.
                 import os
                 if not hasattr(self, "_extreme_dispatch_saved"):
                     self._extreme_dispatch_saved = os.environ.get(
                         "HUGINN_EXTREME_DISPATCH"
                     )
                 os.environ["HUGINN_EXTREME_DISPATCH"] = "1"
-            elif old == "research":
-                self._phase_manager.reset(ResearchPhase.OPEN)
-                # 退出 research: 恢复 HUGINN_EXTREME_DISPATCH 原值
+                self._phase_manager.reset(ResearchPhase.LITERATURE)
+            elif old in self._LONG_HORIZON_MODES:
+                # 退出长程模式: 恢复 HUGINN_EXTREME_DISPATCH 原值
                 import os
                 saved = getattr(self, "_extreme_dispatch_saved", None)
                 if saved is None:
@@ -468,6 +473,7 @@ class HuginnAgent(
                 else:
                     os.environ["HUGINN_EXTREME_DISPATCH"] = saved
                 self._extreme_dispatch_saved = None
+                self._phase_manager.reset(ResearchPhase.OPEN)
             # plan mode 联动 permission_config: 写工具强制 ASK
             # 之前 /plan slash 只改 _mode 不改 permission_config, 导致 UI 提示与实际行为不一致.
             perm_cfg = getattr(self, "_permission_config", None)
@@ -492,6 +498,9 @@ class HuginnAgent(
     def is_research_mode(self) -> bool:
         return self._mode == "research"
 
+    def is_extreme_mode(self) -> bool:
+        return self._mode == "extreme"
+
     def is_plan_mode(self) -> bool:
         # 兜底: plan execution 期间 permission_config.plan_mode 临时翻转但 _mode 不变,
         # 读 is_plan_mode() 的代码 (research_safety_hook / research_budget) 需要感知.
@@ -503,13 +512,13 @@ class HuginnAgent(
     def _effective_recursion_limit(self) -> int:
         """根据 mode 和 extreme dispatch 返回 recursion_limit.
 
-        - research mode → 500 (长程探索)
-        - extreme dispatch 开启但非 research → 400 (极限模式跑长程, 250 不够)
+        - research / extreme mode → 500 (长程探索)
+        - extreme dispatch 开启但非长程 mode → 400 (极限模式跑长程, 250 不够)
         - 普通 chat/plan → 250 (短程, 省计算)
         ponytail: 三档够用, 不上配置. 升级: 暴露到 config.py.
         """
         import os
-        if self.is_research_mode():
+        if self._mode in self._LONG_HORIZON_MODES:
             return 500
         if os.environ.get("HUGINN_EXTREME_DISPATCH", "0").lower() in ("1", "true"):
             return 400

@@ -384,3 +384,36 @@ class TestGateDoesNotBurnBudgetQuota:
         assert engine._budget_rejects.get("light", 0) == 0
         assert engine._budget_degraded is False
         engine._execute.assert_not_called()
+
+
+# ── trajectory 召回门控泛化 (extreme → 长程任务也开) ────────────────────────
+
+
+class TestBuildPmTextGate:
+    """_build_pm_text 的 trajectory 召回门控: 对齐 engine_reflect 的
+    cycle/trajectory 检测语义 — HUGINN_EXTREME_DISPATCH=1 或长程任务
+    (max_iterations >= 20) 都触发. 短程非 extreme 默认关省计算.
+    """
+
+    def test_short_task_no_extreme_returns_empty(self, engine: AutoloopEngine, monkeypatch):
+        monkeypatch.delenv("HUGINN_EXTREME_DISPATCH", raising=False)
+        engine._max_iterations = 10
+        engine._current_run_phases = ["plan", "execute"]
+        # 不设 _traj_history → 若进入 try 块会去加载 history; 门控应短路返回空串
+        assert engine._build_pm_text() == ""
+
+    def test_extreme_dispatch_enables(self, engine: AutoloopEngine, monkeypatch):
+        monkeypatch.setenv("HUGINN_EXTREME_DISPATCH", "1")
+        engine._max_iterations = 10
+        engine._current_run_phases = ["plan", "execute"]
+        # 进入 try: 无 history 会 try 加载失败 → 返回空串 (不抛异常)
+        res = engine._build_pm_text()
+        assert res == ""
+
+    def test_long_task_enables_without_extreme(self, engine: AutoloopEngine, monkeypatch):
+        monkeypatch.delenv("HUGINN_EXTREME_DISPATCH", raising=False)
+        engine._max_iterations = 20
+        engine._current_run_phases = ["plan", "execute"]
+        # 长程任务即使无 extreme 也进入 try 块 (门控放行), 无 history 返回空串
+        res = engine._build_pm_text()
+        assert res == ""
