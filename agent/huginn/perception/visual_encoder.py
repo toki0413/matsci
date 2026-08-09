@@ -59,6 +59,9 @@ class _Backend:
 
     name: str = "base"
     dim: int = 0
+    # 子类在 __init__ 里赋值为 torch/timm 模型, close() 里置 None 释放显存.
+    # 用 Any | None 标注让两种赋值都类型合法, 避免 close() 里的 type: ignore.
+    _model: Any | None = None
 
     def encode(self, pil_img: Any) -> np.ndarray:  # pragma: no cover - abstract
         raise NotImplementedError
@@ -148,7 +151,7 @@ class _IJEPABackend(_Backend):
             del self._model
         except Exception:
             logger.debug("close failed", exc_info=True)
-        self._model = None  # type: ignore[assignment]
+        self._model = None
 
 
 # ── CLIP backend (transformers) ─────────────────────────────────────
@@ -190,7 +193,7 @@ class _CLIPBackend(_Backend):
             del self._model
         except Exception:
             logger.debug("close failed", exc_info=True)
-        self._model = None  # type: ignore[assignment]
+        self._model = None
 
 
 # ── ResNet50 backend (torchvision) ──────────────────────────────────
@@ -247,7 +250,7 @@ class _ResNetBackend(_Backend):
             del self._model
         except Exception:
             logger.debug("close failed", exc_info=True)
-        self._model = None  # type: ignore[assignment]
+        self._model = None
 
 
 # ── helpers ─────────────────────────────────────────────────────────

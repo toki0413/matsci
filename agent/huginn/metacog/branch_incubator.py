@@ -501,7 +501,9 @@ def _selfcheck() -> None:
     assert "dft-direct" not in assignments2, "阻塞族不应被分配"
 
     # 3. run_round: mock dispatch, 3 个 branch 都成功
-    inc2 = BranchIncubator(dispatch=_MockSubagentDispatch())
+    # 保留本地 mock 引用, 避免访问 inc._dispatch 私有属性 (消除 type: ignore)
+    mock = _MockSubagentDispatch()
+    inc2 = BranchIncubator(dispatch=mock)
     results = asyncio.run(inc2.run_round(
         task="test task",
         agent_factory=object(),  # mock dispatch 不用真 factory
@@ -519,7 +521,6 @@ def _selfcheck() -> None:
     assert inc2._registry.total_agents() == 3
 
     # 4. mock dispatch 收到的 task 含 family 引导 + 可见族列表
-    mock = inc2._dispatch  # type: ignore
     assert len(mock.calls) == 3
     spec_name, task_content, _ = mock.calls[0]
     assert spec_name == "explore"
@@ -602,7 +603,8 @@ def _selfcheck() -> None:
     assert r2.to_dict()["parent_agent_id"] == ""
 
     # 8. depth=2 正常路径: 3 layer1 + 2×3 layer2 = 9 dispatch 调用
-    inc_tree = BranchIncubator(dispatch=_MockSubagentDispatch())
+    mock_tree = _MockSubagentDispatch()
+    inc_tree = BranchIncubator(dispatch=mock_tree)
     results_tree = asyncio.run(inc_tree.run_round(
         task="test", agent_factory=object(),
         n_branches=3, round_idx=0, total_rounds=10,
@@ -610,7 +612,6 @@ def _selfcheck() -> None:
     ))
     assert len(results_tree) == 3, f"返回长度应 = n_branches, got {len(results_tree)}"
     # layer1 全成功 → 每 parent 派 2 sub-branch → 总 dispatch = 3 + 6 = 9
-    mock_tree = inc_tree._dispatch  # type: ignore
     assert len(mock_tree.calls) == 9, (
         f"应 9 dispatch (3 layer1 + 6 layer2), got {len(mock_tree.calls)}"
     )
@@ -627,16 +628,16 @@ def _selfcheck() -> None:
 
     # 9. layer1 部分失败: dft-direct fail → layer2 只对 2 个成功 parent 派
     # 总 dispatch = 3 layer1 + 2×2 layer2 = 7
-    inc_partial = BranchIncubator(dispatch=_MockSubagentDispatch(
+    mock_partial = _MockSubagentDispatch(
         fail_families={"dft-direct"},
-    ))
+    )
+    inc_partial = BranchIncubator(dispatch=mock_partial)
     results_partial = asyncio.run(inc_partial.run_round(
         task="test", agent_factory=object(),
         n_branches=3, round_idx=0, total_rounds=10,
         depth=2, width=2,
     ))
     assert len(results_partial) == 3
-    mock_partial = inc_partial._dispatch  # type: ignore
     # layer1: 3 (dft-direct fail, ml-potential ok, symbolic-regression ok)
     # layer2: 2 sub-branch × 2 success parent = 4
     # 总 = 3 + 4 = 7
@@ -654,9 +655,10 @@ def _selfcheck() -> None:
 
     # 10. layer2 全失败 fallback layer1
     # fail_when_parent_hypothesis=True: layer1 全成功, layer2 全失败
-    inc_l2fail = BranchIncubator(dispatch=_MockSubagentDispatch(
+    mock_l2fail = _MockSubagentDispatch(
         fail_when_parent_hypothesis=True,
-    ))
+    )
+    inc_l2fail = BranchIncubator(dispatch=mock_l2fail)
     results_l2fail = asyncio.run(inc_l2fail.run_round(
         task="test", agent_factory=object(),
         n_branches=3, round_idx=0, total_rounds=10,
@@ -668,19 +670,19 @@ def _selfcheck() -> None:
     assert all(r.parent_agent_id == "" for r in results_l2fail), (
         "fallback layer1 应 parent_agent_id 空"
     )
-    mock_l2fail = inc_l2fail._dispatch  # type: ignore
     # 3 layer1 + 6 layer2 (layer2 全失败但仍 dispatch)
     assert len(mock_l2fail.calls) == 9
 
     # 11. parent_agent_id: layer1 为空, layer2 = layer1 父 agent_id
-    inc_pa = BranchIncubator(dispatch=_MockSubagentDispatch())
+    mock_pa = _MockSubagentDispatch()
+    inc_pa = BranchIncubator(dispatch=mock_pa)
     results_pa = asyncio.run(inc_pa.run_round(
         task="test", agent_factory=object(),
         n_branches=3, round_idx=0, total_rounds=10,
         depth=2, width=2,
     ))
     # 所有返回的都是 layer2 winner, parent_agent_id 非空
-    layer1_results_in_call = [c for c in inc_pa._dispatch.calls if "[Parent hypothesis:" not in c[1]]  # type: ignore
+    layer1_results_in_call = [c for c in mock_pa.calls if "[Parent hypothesis:" not in c[1]]
     # layer1 dispatch 的 context 没法直接拿 agent_id, 但 winner.parent_agent_id
     # 应是 layer1 branch 的 agent_id (格式 branch_<family>_<8hex>)
     for winner in results_pa:
@@ -694,13 +696,13 @@ def _selfcheck() -> None:
         # (这里只验证格式, 具体匹配在场景 12 验)
 
     # 12. enhanced_task 含 [Parent hypothesis: ...] 当 parent_hypothesis 非空
-    inc_ph = BranchIncubator(dispatch=_MockSubagentDispatch())
+    mock_ph = _MockSubagentDispatch()
+    inc_ph = BranchIncubator(dispatch=mock_ph)
     asyncio.run(inc_ph.run_round(
         task="test", agent_factory=object(),
         n_branches=3, round_idx=0, total_rounds=10,
         depth=2, width=2,
     ))
-    mock_ph = inc_ph._dispatch  # type: ignore
     layer1_calls_ph = [c for c in mock_ph.calls if "[Parent hypothesis:" not in c[1]]
     layer2_calls_ph = [c for c in mock_ph.calls if "[Parent hypothesis:" in c[1]]
     assert len(layer1_calls_ph) == 3, "layer1 task 不应含 [Parent hypothesis]"
@@ -717,13 +719,13 @@ def _selfcheck() -> None:
         assert "[Parent hypothesis:" not in task_content
 
     # 13. P4: wave_mode="verify" 时 enhanced_task 含 VERIFY 引导
-    inc_wv = BranchIncubator(dispatch=_MockSubagentDispatch())
+    mock_wv = _MockSubagentDispatch()
+    inc_wv = BranchIncubator(dispatch=mock_wv)
     asyncio.run(inc_wv.run_round(
         task="test hypothesis to verify", agent_factory=object(),
         n_branches=3, round_idx=0, total_rounds=10,
         wave_mode="verify",
     ))
-    mock_wv = inc_wv._dispatch  # type: ignore
     assert len(mock_wv.calls) == 3
     for spec_name, task_content, _ in mock_wv.calls:
         assert "[Wave mode: VERIFY" in task_content, \
@@ -731,12 +733,12 @@ def _selfcheck() -> None:
     print("13. P4 wave_mode=verify 注入 VERIFY 引导 OK")
 
     # 14. P4: wave_mode="push" (默认) 不含 VERIFY 引导 (向后兼容)
-    inc_wp = BranchIncubator(dispatch=_MockSubagentDispatch())
+    mock_wp = _MockSubagentDispatch()
+    inc_wp = BranchIncubator(dispatch=mock_wp)
     asyncio.run(inc_wp.run_round(
         task="test", agent_factory=object(),
         n_branches=3, round_idx=0, total_rounds=10,
     ))
-    mock_wp = inc_wp._dispatch  # type: ignore
     for spec_name, task_content, _ in mock_wp.calls:
         assert "[Wave mode: VERIFY" not in task_content, \
             "push 模式不应含 VERIFY 引导"
@@ -778,7 +780,8 @@ def _selfcheck() -> None:
     print("17. P4 model_families 不足循环复用 OK")
 
     # 18. P4: wave_mode + model_families 组合 (verify wave + model 多样性)
-    inc_combo = BranchIncubator(dispatch=_MockSubagentDispatch())
+    mock_combo = _MockSubagentDispatch()
+    inc_combo = BranchIncubator(dispatch=mock_combo)
     results_combo = asyncio.run(inc_combo.run_round(
         task="verify this", agent_factory=object(),
         n_branches=3, round_idx=0, total_rounds=10,
@@ -786,7 +789,6 @@ def _selfcheck() -> None:
         model_families=["openai", "anthropic", "deepseek"],
     ))
     # 双重检查: VERIFY 引导 + model_family 分配
-    mock_combo = inc_combo._dispatch  # type: ignore
     for spec_name, task_content, _ in mock_combo.calls:
         assert "[Wave mode: VERIFY" in task_content
     assert [r.model_family for r in results_combo] == ["openai", "anthropic", "deepseek"]

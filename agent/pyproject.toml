@@ -150,6 +150,9 @@ check_untyped_defs = true
 ignore_missing_imports = true
 incremental = true
 cache_dir = ".mypy_cache"
+# 渐进式收紧: 先发现冗余 cast 与不再需要的 type:ignore, 不强制全量注解.
+warn_redundant_casts = true
+warn_unused_ignores = true
 exclude = [
     '^tests/',
     '^build/',
