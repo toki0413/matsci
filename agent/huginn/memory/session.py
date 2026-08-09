@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import os
 import re
 import uuid
@@ -17,6 +18,8 @@ from datetime import datetime
 from typing import Any
 
 from huginn.types import AgentMessage, ToolResult
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -313,7 +316,7 @@ class SessionContext:
             if isinstance(resp, str) and resp.strip():
                 return f"[llm summary]\n{resp.strip()}"
         except Exception:
-            pass
+            logger.debug("llm window summarize failed", exc_info=True)
         return ""
 
     def to_dict(self) -> dict[str, Any]:

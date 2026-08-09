@@ -10,19 +10,33 @@ import pytest
 
 
 class TestNoSilentExceptions:
-    """Verify agent.py no longer has except Exception: pass."""
+    """Verify no silent ``except Exception: pass`` remains anywhere in huginn/.
+
+    历史上门禁只扫 ``huginn/agent/``, 导致 ``huginn/routes``、``huginn/cli``、
+    ``huginn/pet``、``huginn/knowledge`` 等目录的 silent except pass 全部漏网
+    (一次全量扫描发现 46 处). silent except pass 会吞掉磁盘满/权限错误/
+    JSON 损坏/依赖缺失, 让运维侧无法观测, 必须全量禁止.
+
+    best-effort 路径若有意不抛, 应该用 ``logger.debug(..., exc_info=True)``
+    记录, 而非完全静默 — 这样既保留 best-effort 语义, 又让运维可观测.
+    """
 
     def test_no_silent_pass_in_agent(self):
-        """No `except Exception: pass` should remain in agent package."""
+        """No `except Exception: pass` should remain in huginn package."""
         import re
-        agent_dir = Path(__file__).resolve().parent.parent / "huginn" / "agent"
+        huginn_dir = Path(__file__).resolve().parent.parent / "huginn"
         pattern = r"except Exception:\s*\n\s*pass\s*$"
         total = 0
-        for f in agent_dir.glob("*.py"):
+        offenders: list[str] = []
+        for f in sorted(huginn_dir.rglob("*.py")):
             content = f.read_text(encoding="utf-8")
-            total += len(re.findall(pattern, content, re.MULTILINE))
+            count = len(re.findall(pattern, content, re.MULTILINE))
+            if count:
+                offenders.append(f"{f.relative_to(huginn_dir)}: {count}")
+            total += count
         assert total == 0, (
-            f"Found {total} silent 'except Exception: pass' in agent/"
+            f"Found {total} silent 'except Exception: pass' in huginn/: "
+            + ", ".join(offenders)
         )
 
 

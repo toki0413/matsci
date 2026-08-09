@@ -7,6 +7,7 @@ working directories, and enforcing timeouts/output limits.
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import shutil
 import subprocess
@@ -16,6 +17,8 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from huginn.security.docker_sandbox import DockerSandboxExecutor
+
+logger = logging.getLogger(__name__)
 
 
 class SandboxError(Exception):
@@ -389,7 +392,7 @@ class SandboxExecutor:
                     import resource as _resource
                     _resource.setrlimit(_resource.RLIMIT_AS, _saved_rlimit_as)
                 except Exception:
-                    pass
+                    logger.debug("failed to restore parent rlimit", exc_info=True)
 
         # Truncate oversized output
         stdout = result.stdout or ""

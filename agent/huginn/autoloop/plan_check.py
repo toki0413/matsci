@@ -272,7 +272,7 @@ PREDICTION: <what you expect the result to look like — be specific: "energy ~ 
                     "优先选 workflow/skill 跑符号验证, 不要只选 coder."
                 )
         except Exception:
-            pass
+            logger.debug("dual coverage hint skipped", exc_info=True)
         # 连续失败 → 倾向换方向
         cf = getattr(self, "_consecutive_failures", 0)
         if cf >= 3:
@@ -330,7 +330,7 @@ PREDICTION: <what you expect the result to look like — be specific: "energy ~ 
                     "cut_vertex_dual_coverage", f"割点 {current_hyp} 需双覆盖"
                 )
         except Exception:
-            pass
+            logger.debug("dual coverage override skipped", exc_info=True)
         # 连败/surprise 强制 explore (合并条件, 共享覆盖路径)
         cf = getattr(self, "_consecutive_failures", 0)
         surprise = getattr(self, "_last_surprise", 0.0)

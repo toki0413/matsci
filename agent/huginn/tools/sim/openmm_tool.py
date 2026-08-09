@@ -457,7 +457,7 @@ class OpenMMTool(HuginnTool):
                     except (ValueError, IndexError):
                         continue
         except Exception:
-            pass
+            logger.debug("md log parse failed", exc_info=True)
 
         return {
             "steps": steps,

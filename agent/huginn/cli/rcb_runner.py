@@ -308,7 +308,7 @@ def _write_cognitive_evidence(
                         f"belief_entropy={_hk.get('belief_entropy', 0):.3f}"
                     )
             except Exception:
-                pass
+                logger.debug("heat engine evidence snapshot skipped", exc_info=True)
 
         # 5. verified_lessons (bandit)
         if bandit_controller is not None:
@@ -318,7 +318,7 @@ def _write_cognitive_evidence(
                     _n_lessons = len(_vl)
                     _lines.append(f"- verified_lessons: {_n_lessons} patterns tracked")
             except Exception:
-                pass
+                logger.debug("verified_lessons evidence snapshot skipped", exc_info=True)
 
         # 6. 完成度审计 (P1-C 填)
         if completion_audit:
@@ -374,7 +374,7 @@ def _load_haptic_layers(ws, hypo_manifold) -> int:
                 hypo_manifold.register_haptic(_h_id, _layer)
                 _n_hap += 1
             except Exception:
-                pass
+                logger.debug("haptic layer register skipped", exc_info=True)
     except Exception as _e:
         print(f"[haptic] load failed: {_e}, degrading to fisher", flush=True)
     return _n_hap
@@ -555,7 +555,7 @@ def _save_manifold(manifold, path: Path) -> None:
                     "n_params": h.n_params,
                 }, ensure_ascii=False) + "\n")
     except Exception:
-        pass
+        logger.debug("manifold state save skipped", exc_info=True)
 
 
 def _load_manifold(path: Path):
@@ -814,7 +814,7 @@ def _append_observations_log(observations, path: Path, *, iteration: int) -> Non
                     "sigma": o.sigma,
                 }, ensure_ascii=False) + "\n")
     except Exception:
-        pass
+        logger.debug("observations save skipped", exc_info=True)
 
 
 @dataclass
@@ -1093,7 +1093,7 @@ async def _step2_execute(ctx: _RCBStep2Ctx) -> list:
                 (checklist or "") + " " + (instructions or ""))
             _task_metrics.domain_label = _domain
         except Exception:
-            pass
+            logger.debug("task domain label inference skipped", exc_info=True)
         _task_state_for_metrics = _NS(created_at=_run_started_at)
         _metrics_ok = True
     except Exception as _e:
@@ -1404,7 +1404,7 @@ LUCID review (mandatory after generating hypothesis):
                             + "\n---\n".join(_kb_chunks)
                         )
                 except Exception:
-                    pass
+                    logger.debug("kb gap retrieval skipped", exc_info=True)
 
             # v14 Task 6: dispatch. HintCoordinator 接 gradient/curl/harmonic,
             # retrieval 族 (kb_chunks) 不归它管, 直接拼后面.
@@ -1801,7 +1801,7 @@ LUCID review (mandatory after generating hypothesis):
                     )
                     _upgrade_entry(_tfm_entry)
                 except Exception:
-                    pass
+                    logger.debug("tfm trace entry upgrade skipped", exc_info=True)
                 with _trace_path.open("a", encoding="utf-8") as f:
                     f.write(_json.dumps(_tfm_entry, ensure_ascii=False) + "\n")
             except Exception as _e:
@@ -1879,7 +1879,7 @@ LUCID review (mandatory after generating hypothesis):
                 if _cycle_is_stuck(_stagnation_history, min_cycle_len=2, min_repeats=2):
                     print(f"[P4] hypothesis cycle detected: {_stagnation_history[-6:]}", flush=True)
             except Exception:
-                pass
+                logger.debug("hypothesis cycle detection skipped", exc_info=True)
             try:
                 from huginn.metacog.imagination import (
                     detect_stagnation as _detect_stagnation,
@@ -1943,7 +1943,7 @@ LUCID review (mandatory after generating hypothesis):
                                     )
                                     _upgrade_entry(_img_entry)
                                 except Exception:
-                                    pass
+                                    logger.debug("imagination trace entry upgrade skipped", exc_info=True)
                                 with _trace_path.open("a", encoding="utf-8") as f:
                                     f.write(_json.dumps(_img_entry, ensure_ascii=False) + "\n")
                                 print(
@@ -2076,7 +2076,7 @@ LUCID review (mandatory after generating hypothesis):
                 _entry["fisher_info"] = _iter_fisher_info
                 # imagination_parent 留 None (Phase 4 的工作)
             except Exception:
-                pass
+                logger.debug("meta trace entry upgrade skipped", exc_info=True)
             # v26 Task 26.11: 走分片写入. _meta_trace_shard 在 _trace_path 初始化处
             # 创建, task_id 已设, 跨 shard 边界自动 gzip 归档老分片. 老路径
             # _trace_path 仍作 default_path 兜底 (task_id 没设时). 失败只 log debug,
@@ -2110,7 +2110,7 @@ LUCID review (mandatory after generating hypothesis):
                 _darwin = float(_entry.get("darwin_score", 0.5)) if "_entry" in dir() else 0.5
                 EffortBandit.get_instance().update_iter_end(_darwin)
         except Exception:
-            pass
+            logger.debug("bandit iter-end update skipped", exc_info=True)
 
         # StepEvaluator 评估 + Checkpoint 保存 (G63 + G59)
         # 失败只 warn, 不影响主循环. _entry 可能因 meta_trace try 失败而未定义,
@@ -2260,7 +2260,7 @@ LUCID review (mandatory after generating hypothesis):
                 )
                 _upgrade_entry(_eval_entry)
             except Exception:
-                pass
+                logger.debug("step_eval trace entry upgrade skipped", exc_info=True)
             with _trace_path.open("a", encoding="utf-8") as _f:
                 _f.write(_json.dumps(_eval_entry, ensure_ascii=False) + "\n")
             _cont, _msg = should_continue(_evals_history)
@@ -2476,7 +2476,7 @@ LUCID review (mandatory after generating hypothesis):
                         )
                         _upgrade_entry(_hd_entry)
                     except Exception:
-                        pass
+                        logger.debug("human_decision trace entry upgrade skipped", exc_info=True)
                     with _trace_path.open("a", encoding="utf-8") as _f:
                         _f.write(
                             _json.dumps(_hd_entry, ensure_ascii=False) + "\n")
@@ -2688,7 +2688,7 @@ LUCID review (mandatory after generating hypothesis):
                             1.0 if _mcmc_accepted else 0.0
                         )
                     except Exception:
-                        pass
+                        logger.debug("bandit mcmc acceptance update skipped", exc_info=True)
                     _mcmc_llh = _next_log_p  # mcmc_step 已返回, 不再重算
                     print(
                         f"[mcmc] iter {_iter_n}: "
@@ -3420,7 +3420,7 @@ def _generate_fallback_figures(ws: Path, imgs_dir: Path) -> int:
         plt.rcParams["font.size"] = 20
         plt.rcParams["font.weight"] = "bold"
     except Exception:
-        pass
+        logger.debug("matplotlib rcParams setup skipped", exc_info=True)
 
     n_gen = 0
     outputs_dir = ws / "outputs"
@@ -3801,7 +3801,7 @@ async def _step3_adversarial(
         _xretry_path.parent.mkdir(parents=True, exist_ok=True)
         _xretry_path.unlink(missing_ok=True)  # 清上次的, 避免跨 task 污染
     except Exception:
-        pass
+        logger.debug("cross_retry path setup skipped", exc_info=True)
     while True:
         if not report_path.exists() or not checklist:
             break
@@ -3846,7 +3846,7 @@ async def _step3_adversarial(
                 if _rp.exists():
                     _report_text = _rp.read_text(encoding="utf-8")
             except Exception:
-                pass
+                logger.debug("report.md read for finalize skipped", exc_info=True)
             _finalize_prompt = (
                 f"Retry limit reached ({_retry_count}/2). Critique still finds gap "
                 f"(type={_retry_gap}, verdict={_retry_verdict}).\n"
@@ -3881,7 +3881,7 @@ async def _step3_adversarial(
             if _inst_path.exists():
                 _inst_text = _inst_path.read_text(encoding="utf-8")[:2000]
         except Exception:
-            pass
+            logger.debug("INSTRUCTIONS.md read skipped", exc_info=True)
         # PMK 三路立场 + KB 专业召回 — 接入 Step 2 的 PMK 循环.
         # 之前 retry 是 PMK 孤岛: persona/kb 都没传进来, 现在 build_pmk_state
         # 抽 Persona/Memory/KB 三路立场, KB 再用 gap 关键词二次召回专业背景.
@@ -3933,7 +3933,7 @@ async def _step3_adversarial(
                     + "\n".join(_ckpt_files[:25]) + "\n\n"
                 )
         except Exception:
-            pass
+            logger.debug("state checkpoint scan skipped", exc_info=True)
         # Cross-retry memory — 上次 retry 的 gap + report diff 摘要.
         # retry1 改了 X 行但仍 fix_needed, retry2 知道后试不同策略.
         # ponytail: difflib 算 added/removed lines; 升级路径: LLM summarize diff.
@@ -3959,7 +3959,7 @@ async def _step3_adversarial(
                         "(e.g. if retry1 added text, retry2 should RECOMPUTE data).\n\n"
                     )
         except Exception:
-            pass
+            logger.debug("cross-retry memory read skipped", exc_info=True)
         _retry_execute_prompt = (
             f"## Task Context (fresh thread — previous history not carried)\n"
             f"### INSTRUCTIONS.md (excerpt):\n{_inst_text}\n\n"
@@ -5208,7 +5208,7 @@ async def run(
         from huginn.agent.bandit_controller import EffortBandit
         EffortBandit.get_instance().end_episode()
     except Exception:
-        pass
+        logger.debug("bandit end_episode flush skipped", exc_info=True)
 
     return 0
 
@@ -5294,7 +5294,7 @@ async def _run_mcmc_mode(
                         _hypo_manifold.register_structure(
                             _h_ids[_i], _mid, _cm)
                     except Exception:
-                        pass
+                        logger.debug("cognitive_map structure register skipped", exc_info=True)
                 print(f"[mcmc-{mode}] SE(3) loaded {len(_hypo_manifold._structure_maps)} "
                       f"cognitive_map(s) for structure-guided proposal", flush=True)
             else:
@@ -5330,7 +5330,7 @@ async def _run_mcmc_mode(
                         _hypo_manifold.register_haptic(_h_id, _layer)
                         _n_hap += 1
                     except Exception:
-                        pass
+                        logger.debug("mcmc haptic layer register skipped", exc_info=True)
             except Exception as _e:
                 print(f"[mcmc-{mode}] haptic load failed: {_e}, "
                       f"degrading to fisher", flush=True)
@@ -5434,7 +5434,7 @@ async def _run_mcmc_mode(
                     sigma=_o.get("sigma", 1.0),
                 ))
             except Exception:
-                pass
+                logger.debug("observation line parse skipped", exc_info=True)
     if not obs_list:
         print(f"[mcmc-{mode}] no observations in {obs_path}, cannot run MCMC",
               file=sys.stderr)

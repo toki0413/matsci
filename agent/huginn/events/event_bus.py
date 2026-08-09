@@ -108,7 +108,7 @@ class EventBus:
 
                 event.request_id = request_id_var.get("")
             except Exception:
-                pass
+                logger.debug("request id contextvar lookup failed", exc_info=True)
 
         # History first — even if a subscriber blows up, the event is recorded.
         self._history.append(event)

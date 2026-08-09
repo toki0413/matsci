@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import re
 import shutil
 import subprocess
@@ -18,6 +19,8 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 SECTION_ALIASES = {
     "abstract": [
@@ -282,7 +285,7 @@ def extract_legacy_doc(path: Path) -> tuple[str, str]:
         if text.strip():
             return text, "pandoc"
     except Exception:
-        pass
+        logger.debug("pandoc extraction failed", exc_info=True)
 
     try:
         import win32com.client  # type: ignore[import-not-found]

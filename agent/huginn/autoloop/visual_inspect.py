@@ -226,7 +226,7 @@ class VisualInspectMixin:
             if "_visual_hint" in enriched:
                 result["_visual_hint"] = enriched["_visual_hint"]
         except Exception:
-            pass
+            logger.debug("visual enrich skipped", exc_info=True)
 
         return result
 

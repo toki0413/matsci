@@ -246,7 +246,7 @@ class SubagentDispatch:
             )
             specs_override = get_subagent_specs_for_dispatch()
         except Exception:
-            pass
+            logger.debug("subagent phase spec override unavailable", exc_info=True)
         if specs_override is not None:
             self._specs: dict[str, SubagentSpec] = dict(specs_override)
         else:
