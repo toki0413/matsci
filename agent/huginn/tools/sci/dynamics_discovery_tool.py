@@ -249,7 +249,7 @@ class DynamicsDiscoveryTool(HuginnTool):
         简单关系都过度收缩到 1.48.
         """
         try:
-            from sklearn.linear_model import Lasso  # type: ignore
+            from sklearn.linear_model import Lasso  # type: ignore[import-untyped]
 
             # alpha 要小: Lasso 只负责 mild regularization, 真正的稀疏化
             # 由 _threshold() 按相对阈值做. 1e-4 是 sklearn 文档推荐的

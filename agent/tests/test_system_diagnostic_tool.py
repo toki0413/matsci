@@ -36,12 +36,7 @@ def tool() -> SystemDiagnosticTool:
 
 
 def _run(coro):
-    try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-    return loop.run_until_complete(coro)
+    return asyncio.run(coro)
 
 
 def _fake_metrics(cpu=50.0, mem=50.0, swap=5.0, disk_pct=50.0) -> SystemMetrics:

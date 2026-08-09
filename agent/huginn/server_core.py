@@ -37,7 +37,7 @@ try:
     _KB_AVAILABLE = True
 except Exception:
     _KB_AVAILABLE = False
-    get_knowledge_base = None  # type: ignore
+    get_knowledge_base = None  # type: ignore[assignment]
 
 try:
     from huginn.codebase import get_codebase_index  # noqa: F401
@@ -45,7 +45,7 @@ try:
     _CODEBASE_AVAILABLE = True
 except Exception:
     _CODEBASE_AVAILABLE = False
-    get_codebase_index = None  # type: ignore
+    get_codebase_index = None  # type: ignore[assignment]
 
 
 # ── module-level shared state ───────────────────────────────────────

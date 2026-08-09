@@ -606,7 +606,7 @@ class HuginnAgent(
         # 默认关 (HUGINN_TASK_TOOL_ROUTER=1 开启). 失败或返回空 → fallback 到
         # 原 self.tool_filter, 不破坏现有行为. 升级路径: LLM 版小模型打分.
         #
-        # 跟 self.tool_filter 取交集而非覆盖: caller (如 RCB runner) 显式设的
+        # 跟 self.tool_filter 取交集而非覆盖: caller (如 benchmark runner) 显式设的
         # tool_filter 是硬约束 (限制 agent 只能用 code_tool/bash_tool), 不能被
         # task router 冲掉. 交集为空 → 保留原 tool_filter (task router 误判时不破坏).
         effective_filter: set[str] | None = self.tool_filter
@@ -830,7 +830,7 @@ class HuginnAgent(
                                 "feature design, model architecture, compute budget). Honest negative "
                                 "results with root-cause analysis score better than silence."
                             )
-                    # DeliverableCoverage: RCB 路径没走 deepagents middleware 协议,
+                    # DeliverableCoverage: benchmark 路径没走 deepagents middleware 协议,
                     # 手动复用纯函数注入 frontier/planning hint.
                     _inst = _cwd / "INSTRUCTIONS.md"
                     if _inst.exists():

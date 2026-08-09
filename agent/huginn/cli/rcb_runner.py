@@ -4181,7 +4181,7 @@ async def run(
     if _restricted == "0":
         try:
             import huginn.security.restricted_python as _rp
-            _rp.validate_code = lambda code: None  # type: ignore
+            _rp.validate_code = lambda code: None  # type: ignore[method-assign]
         except ImportError:
             pass
 

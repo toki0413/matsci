@@ -93,13 +93,13 @@ async def agent_websocket(websocket: WebSocket):
     _pending_plan_contexts: dict[str, dict] = {}
 
     # ── Heartbeat ────────────────────────────────────────────────
-    last_recv: dict[str, float] = {"t": asyncio.get_event_loop().time()}
+    last_recv: dict[str, float] = {"t": asyncio.get_running_loop().time()}
     heartbeat_task: asyncio.Task | None = None
 
     async def _heartbeat():
         while True:
             await asyncio.sleep(_WS_HEARTBEAT_INTERVAL)
-            now = asyncio.get_event_loop().time()
+            now = asyncio.get_running_loop().time()
             idle = now - last_recv["t"]
             if idle > _WS_HEARTBEAT_INTERVAL:
                 try:
@@ -150,7 +150,7 @@ async def agent_websocket(websocket: WebSocket):
             if not rate_limiter.check():
                 await _send_error(websocket, "Too many messages, slow down.")
                 continue
-            last_recv["t"] = asyncio.get_event_loop().time()
+            last_recv["t"] = asyncio.get_running_loop().time()
 
             # Handle client-side pong
             try:

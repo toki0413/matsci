@@ -222,7 +222,7 @@ class ReflectionMixin:
         if not self._session_state.tool_results_this_turn:
             return
 
-        # ponytail: RCB/benchmark 场景 skip CSM transition — 无人工 subprocess,
+        # ponytail: benchmark 场景 skip CSM transition — 无人工 subprocess,
         # CSM attention prompt 是 noise 还触发不必要 compaction. 升级: mode-aware.
         _skip_csm = os.environ.get("HUGINN_SKIP_CSM", "").lower() in (
             "1",
@@ -367,7 +367,7 @@ class ReflectionMixin:
                             TransitionSignal("gap_found", {"gap": getattr(reflection, "message", "")})
                         )
                     # S7 状态: 调 meta critique 评估 proposal, accept→stable_principle / reject→rejection log
-                    # S7 是 meta 状态, RCB 场景也不触发 compaction (与 S3/S6 不同)
+                    # S7 是 meta 状态, benchmark 场景也不触发 compaction (与 S3/S6 不同)
                     if new_state == CognitiveState.S7_SELF_MODIFY:
                         self._needs_compaction = False
                         try:
@@ -553,8 +553,8 @@ class ReflectionMixin:
         ponytail: gap→proposal 是字段拼接, ceiling 是 LLM 生成正式 proposal;
                   meta critique 失败默认 reject (保守, 不污染 stable_principles).
         """
-        from huginn.cli.rcb_critique import adversarial_critique
         from huginn.memory import store_stable_principle
+        from huginn.metacog.critique import adversarial_critique
 
         # 1. 从 reflection gap 提取 proposal
         proposal = self._extract_proposal_from_gap(reflection_result)

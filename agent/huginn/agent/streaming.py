@@ -56,7 +56,7 @@ _PHASE_MARKER = re.compile(r"\[PHASE:\s*(\w+)\s*\]", re.IGNORECASE)
 
 
 # AV5: σ₂ 补丁默认值下沉 — 生产路径长对话也会丢 system checklist / winner plan.
-# 这些 marker 在普通对话里不匹配, 无副作用; RCB-style prompt 自动受益.
+# 这些 marker 在普通对话里不匹配, 无副作用; benchmark-style prompt 自动受益.
 _DEFAULT_ROOT_MARKERS = (
     "## Methodology Checklist;## Selected Execution Plan;"
     "## Report Coverage Compass;## Intuitive Gamer"
@@ -758,7 +758,7 @@ class StreamingMixin:
 
         keep_last_n = 4
         # AV5: 默认保前 2 条 root (user 初始任务 + system checklist) — σ₂ compaction
-        # 丢 Step 1 checklist 不只影响 RCB, 生产路径长对话也会丢 system prompt.
+        # 丢 Step 1 checklist 不只影响 benchmark, 生产路径长对话也会丢 system prompt.
         keep_root_n = int(os.environ.get("HUGINN_KEEP_ROOT_N", "2"))
         body_end = len(msgs) - keep_last_n
 
@@ -1547,12 +1547,12 @@ class StreamingMixin:
                 inputs["messages"] = _msgs + [_budget_msg]
             except Exception:
                 logger.debug("budget injection skipped", exc_info=True)
-            # AV5: 默认 skip — ToolLoopDetector + ThoughtLoopDetector 在长任务 (RCB 或
+            # AV5: 默认 skip — ToolLoopDetector + ThoughtLoopDetector 在长任务 (benchmark 或
             # 真实研究) 都会误判: agent 反复跑 code_tool 是正常, 写报告反复用术语
             # ("band gap"/"MAE") Jaccard > 0.85 也正常. 升级: mode-aware detector,
             # 区分 "同 tool 同输入" (真死循环) vs "同 tool 不同输入" (正常迭代).
-            # 统一走 FeatureFlags 而非直接读 env var, 避免 RCBench 路径双配置冲突.
-            # FeatureFlags 读 HUGINN_FEATURE_LOOP_DETECTOR, rcb_runner 极端模式开 / 普通模式关.
+            # 统一走 FeatureFlags 而非直接读 env var, 避免 benchmark 路径双配置冲突.
+            # FeatureFlags 读 HUGINN_FEATURE_LOOP_DETECTOR, benchmark runner 极端模式开 / 普通模式关.
             from huginn.feature_flags import FeatureFlags
             _skip_loop = not FeatureFlags.shared().is_enabled("loop_detector")
             if not _skip_loop:
@@ -1918,7 +1918,7 @@ class StreamingMixin:
             finally:
                 # 反思闭环: 即使 timeout/取消, 也要跑 reflection 让 evolution 记录失败.
                 # 之前 reflection 在 try 块内, asyncio.wait_for 取消时直接跳过 ->
-                # RCB 跑分期间 tool_calls.jsonl 记录为 0, 规则 usage_count 不增长.
+                # Benchmark 跑分期间 tool_calls.jsonl 记录为 0, 规则 usage_count 不增长.
                 import sys as _sys
                 _n_trs = len(self._session_state.tool_results_this_turn)
                 print(f"[FINALLY-REFLECT] tool_results_this_turn={_n_trs}", file=_sys.stderr, flush=True)

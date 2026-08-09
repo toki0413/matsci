@@ -41,7 +41,7 @@ class BaseChunker:
     """Base class for all chunkers."""
 
     async def chunk(self, text: str, **kwargs) -> list[Chunk]:
-        ...
+        raise NotImplementedError
 
     def _merge_small_chunks(
         self, chunks: list[Chunk], min_size: int = 100

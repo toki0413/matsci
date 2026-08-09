@@ -2093,8 +2093,11 @@ def _get_rag_search_fn(context: ToolContext | None) -> Any | None:
             # 同步包装
             def _sync_search(query: str) -> list[dict]:
                 try:
-                    loop = asyncio.get_event_loop()
-                    if loop.is_running():
+                    try:
+                        loop = asyncio.get_running_loop()
+                    except RuntimeError:
+                        loop = None
+                    if loop and loop.is_running():
                         # 在 async 上下文里, 创建 task
                         import concurrent.futures
                         with concurrent.futures.ThreadPoolExecutor() as pool:

@@ -44,7 +44,7 @@ def _env_timeout(default: int = _DEFAULT_TIMEOUT) -> int:
 # 不被 flush 出来. 升级路径: 装 pywinpty 后在 Windows 也走 PTY 路径.
 
 try:
-    import pexpect  # type: ignore
+    import pexpect  # type: ignore[import-untyped]
 
     _HAS_PEXPECT = True
 except ImportError:

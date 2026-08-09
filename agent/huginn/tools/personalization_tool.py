@@ -409,7 +409,7 @@ def _selfcheck() -> None:
         old_sin, old_brk = _memory_singleton, _memory_broken
         _memory_singleton = _MockMem(db)
         _memory_broken = False
-        tool._llm_summarize_observations = lambda prompt: "MOCK 画像: 用户偏好简洁回答"  # type: ignore
+        tool._llm_summarize_observations = lambda prompt: "MOCK 画像: 用户偏好简洁回答"  # type: ignore[method-assign]
         try:
             # 1. 空库 get_narrative_profile 返回空串
             r1 = tool.maybe_consolidate_profile(force=False)

@@ -271,7 +271,7 @@ class EnginePerceiveMixin:
             from huginn.autoloop.engine import _autoloop_meta_trace_inject_enabled
         except ImportError:
             def _autoloop_meta_trace_inject_enabled():
-                return False  # type: ignore
+                return False  # type: ignore[return-value]
         if _autoloop_meta_trace_inject_enabled():
             try:
                 from huginn.context_builder import load_meta_trace_text

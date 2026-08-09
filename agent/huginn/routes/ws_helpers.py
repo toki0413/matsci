@@ -123,7 +123,7 @@ async def send_plan_and_wait(
 ) -> dict:
     """Send a structured plan to the client and wait for confirmation."""
     plan_id = uuid.uuid4().hex[:8]
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     future = loop.create_future()
     _pending_plans[plan_id] = future
 
@@ -173,7 +173,7 @@ def _make_ws_approval_callback(
 
         if not approved:
             if pending_approvals is not None:
-                loop = asyncio.get_event_loop()
+                loop = asyncio.get_running_loop()
                 fut = loop.create_future()
                 pending_approvals[request_id] = fut
             if pending_approval_contexts is not None and last_user_context:

@@ -134,7 +134,7 @@ class ContextMixin:
 
         # STABLE_PRINCIPLES: S7 自修改回流进来的 persona 原则. 闭合
         # persona→behavior→memory→knowledge→persona 回路 (G8 加法).
-        # 不走 CSM, RCB/benchmark 场景也保留 — 这部分是 persona 一部分,
+        # 不走 CSM, benchmark 场景也保留 — 这部分是 persona 一部分,
         # memory_manager 在 bench 里是 None 不影响这里 (走文件不走 SQLite).
         try:
             from huginn.memory import load_stable_principles

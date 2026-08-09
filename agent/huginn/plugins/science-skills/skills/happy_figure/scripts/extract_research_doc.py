@@ -197,7 +197,7 @@ def extract_pdf(path: Path) -> tuple[str, str, list[str]]:
         notes.append("pdftotext not found.")
 
     try:
-        import pdfplumber  # type: ignore
+        import pdfplumber  # type: ignore[import-not-found]
 
         pages: list[str] = []
         with pdfplumber.open(str(path)) as pdf:
@@ -213,7 +213,7 @@ def extract_pdf(path: Path) -> tuple[str, str, list[str]]:
         notes.append(f"pdfplumber failed: {summarize_exception(exc)}")
 
     try:
-        from pypdf import PdfReader  # type: ignore
+        from pypdf import PdfReader  # type: ignore[import-not-found]
 
         reader = PdfReader(str(path))
         text = "\n\n".join(page.extract_text() or "" for page in reader.pages)
@@ -240,7 +240,7 @@ def extract_docx(path: Path) -> tuple[str, str, list[str]]:
         notes.append(f"pandoc failed: {summarize_exception(exc)}")
 
     try:
-        import mammoth  # type: ignore
+        import mammoth  # type: ignore[import-not-found]
 
         with path.open("rb") as fh:
             result = mammoth.extract_raw_text(fh)
@@ -253,7 +253,7 @@ def extract_docx(path: Path) -> tuple[str, str, list[str]]:
         notes.append(f"mammoth failed: {summarize_exception(exc)}")
 
     try:
-        from docx import Document  # type: ignore
+        from docx import Document  # type: ignore[import-not-found]
 
         document = Document(str(path))
         paras = [p.text for p in document.paragraphs if p.text.strip()]
@@ -285,7 +285,7 @@ def extract_legacy_doc(path: Path) -> tuple[str, str]:
         pass
 
     try:
-        import win32com.client  # type: ignore
+        import win32com.client  # type: ignore[import-not-found]
 
         word = win32com.client.DispatchEx("Word.Application")
         word.Visible = False

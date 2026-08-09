@@ -139,7 +139,7 @@ def _resolve_actions_module():
     mod = getattr(_atomworld, "actions", None)
     if mod is None:
         try:
-            import atom_world.actions as _aw  # type: ignore
+            import atom_world.actions as _aw  # type: ignore[import-not-found]
             mod = _aw
         except ImportError:
             pass

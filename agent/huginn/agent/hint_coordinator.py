@@ -155,7 +155,7 @@ def _build_posterior_guided_hint(
     return out
 
 
-# E2-1: 通用观测抽取 — 让假设流形对任何 benchmark 都可用 (不只 RCB).
+# E2-1: 通用观测抽取 — 让假设流形对任何 benchmark 都可用.
 # 从自由文本里抓 "metric = value" 喂给 manifold 做后验/溯因. 不调 LLM.
 # 白名单过滤避免误抓年份/版本号; 失败/无文本返回空 list, 不阻塞.
 _METRIC_WHITELIST = frozenset({
@@ -290,7 +290,7 @@ class HintCoordinator:
 
         # --- gradient 族 (必需) ---
         # iter_prompt 是 iter>0 的 "continue execution" 文本, 跟 step2_prompt
-        # 在 rcb_runner 里互斥 (iter 0 直接复用 step2_prompt). 取非空的那个.
+        # 在 benchmark runner 里互斥 (iter 0 直接复用 step2_prompt). 取非空的那个.
         _grad = iter_prompt if (iter_prompt and iter_prompt != step2_prompt) else (step2_prompt or "")
         # scan_hint deprecated: 合并进 step2_prompt (spec §deprecated)
         if scan_text:

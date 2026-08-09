@@ -277,7 +277,7 @@ class EngineControlMixin:
         """
         state = get_shared_phase_gate_state()
         key = (from_phase, to_phase)
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         is_hard = state.is_hard_checkpoint(from_phase, to_phase)
         # 硬门不设 deadline — 一直阻塞到用户显式 override, 不可超时偷偷放行
         deadline = loop.time() + timeout if not is_hard else float("inf")

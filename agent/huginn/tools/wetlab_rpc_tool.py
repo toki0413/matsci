@@ -579,7 +579,7 @@ class WetlabRpcTool(HuginnTool):
                 data=None, success=False, error="check_status requires request_id.",
             )
         url = f"{endpoint.rstrip('/')}/requests/{args.request_id}"
-        deadline = asyncio.get_event_loop().time() + args.poll_timeout
+        deadline = asyncio.get_running_loop().time() + args.poll_timeout
         async with aiohttp.ClientSession() as session:
             while True:
                 async with session.get(url) as resp:
@@ -594,7 +594,7 @@ class WetlabRpcTool(HuginnTool):
                         return ToolResult(
                             data={"status": status, "raw": data}, success=True,
                         )
-                if asyncio.get_event_loop().time() >= deadline:
+                if asyncio.get_running_loop().time() >= deadline:
                     return ToolResult(
                         data={"status": "timeout", "raw": data},
                         success=True,
