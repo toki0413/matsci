@@ -131,7 +131,7 @@ def _build_posterior_guided_hint(
                             + ", ".join(_lv)
                         )
                 except Exception:
-                    pass
+                    logger.debug("mcmc_least_visited lookup failed", exc_info=True)
                 parts.append("\n".join(m_lines))
         except Exception:
             logger.debug("posterior mcmc hint failed", exc_info=True)
