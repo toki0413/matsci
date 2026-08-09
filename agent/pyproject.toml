@@ -52,6 +52,7 @@ dependencies = [
     "websockets>=12.0",
     "requests>=2.32.0",
     "tenacity>=8.0",
+    "Pillow>=10.0",
 ]
 
 [project.optional-dependencies]

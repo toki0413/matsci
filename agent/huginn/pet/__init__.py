@@ -277,13 +277,19 @@ class PetState:
     # 只存 gamification 字段 (level/xp/hunger/happiness/accessories/name/personality),
     # mood/active_tasks/recent_events 是运行时态, 重启后重新计算.
     _PERSIST_KEYS = (
-        "name", "personality", "experience", "level",
-        "hunger", "happiness", "accessories",
+        "name",
+        "personality",
+        "experience",
+        "level",
+        "hunger",
+        "happiness",
+        "accessories",
     )
 
     def save(self, path: Path | None = None) -> None:
         """把 gamification 状态写到 JSON, best-effort 不抛."""
         import json
+
         target = path or _pet_state_path()
         if target is None:
             return
@@ -299,6 +305,7 @@ class PetState:
     def load(self, path: Path | None = None) -> None:
         """从 JSON 恢复 gamification 状态, best-effort 不抛."""
         import json
+
         target = path or _pet_state_path()
         if target is None or not target.exists():
             return
@@ -312,7 +319,10 @@ class PetState:
 
 
 def _pet_state_path():
-    """返回 pet 状态持久化路径, 未配置 cache dir 返回 None."""
+    """返回 pet 状态持久化路径.
+
+    优先用 HUGINN_CACHE_DIR, 否则退回 ~/.huginn/pet_state.json.
+    """
     base = os.environ.get("HUGINN_CACHE_DIR")
     if base:
         return Path(base) / "pet_state.json"
@@ -323,19 +333,8 @@ class PetEventBus:
     """Async publish/subscribe bus for pet events."""
 
     def __init__(self) -> None:
-        self._subs: list[Callable[[PetEvent], None]] = []
         self._queues: list[asyncio.Queue[PetEvent]] = []
         self._state = PetState()
-
-    def subscribe(self, callback: Callable[[PetEvent], None]) -> Callable[[], None]:
-        """Register a synchronous callback. Returns unsubscribe function."""
-        self._subs.append(callback)
-
-        def unsubscribe() -> None:
-            with contextlib.suppress(ValueError):
-                self._subs.remove(callback)
-
-        return unsubscribe
 
     async def queue(self) -> tuple[asyncio.Queue[PetEvent], Callable[[], None]]:
         """Return an async queue that receives all future events.
@@ -363,9 +362,6 @@ class PetEventBus:
             details=details or {},
         )
         self._state.update(event)
-        for cb in self._subs:
-            with contextlib.suppress(Exception):
-                cb(event)
         for q in self._queues:
             with contextlib.suppress(asyncio.QueueFull):
                 q.put_nowait(event)
@@ -404,10 +400,6 @@ class PetEventBus:
     def reset_progress(self) -> None:
         """Reset gamification progress."""
         self._state.reset_progress()
-        self._state.save()
-
-    def save_state(self) -> None:
-        """持久化当前 pet 状态到磁盘."""
         self._state.save()
 
     def load_state(self) -> None:
