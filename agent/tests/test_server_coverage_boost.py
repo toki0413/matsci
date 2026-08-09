@@ -7,7 +7,6 @@ import pytest
 pytest.importorskip("mcp", reason="MCP SDK not installed (pip install mcp)")
 
 import contextlib
-import json
 from pathlib import Path
 from typing import Any
 
@@ -18,30 +17,59 @@ from huginn.server import app
 client = TestClient(app)
 
 
+@pytest.fixture(autouse=True)
+def _dev_mode_and_isolated_config(tmp_path: Path, monkeypatch):
+    """config/encrypt 需要 admin key, 测试只验加密逻辑不验 auth → 开 dev mode 绕过.
+
+    同时把配置文件指到 tmp_path, 避免写到真实工作目录污染环境.
+    /config/encrypt 加密的是当前运行时配置 (from env), 不是请求体,
+    所以这里把 env 设成已知状态, 让断言可重复.
+    """
+    monkeypatch.setenv("HUGINN_DEV_MODE", "1")
+    monkeypatch.setenv("HUGINN_CONFIG_FILE", str(tmp_path / "huginn.toml"))
+    monkeypatch.setenv("HUGINN_PROVIDER", "openai")
+    monkeypatch.setenv("HUGINN_MODEL", "gpt-4o")
+    monkeypatch.setenv("HUGINN_API_KEY", "secret-key")
+    # encrypt 端点用 module-level _config_path_override, 直接清掉前一个测试的残留
+    import huginn.config as config_module
+    from huginn.routes import config as config_routes
+
+    monkeypatch.setattr(config_routes, "_config_path_override", None)
+    # 清掉配置缓存, 让 _load_runtime_config 重新从 env 读
+    monkeypatch.setattr(config_module, "_config_cache", None, raising=False)
+    yield
+    monkeypatch.setattr(config_routes, "_config_path_override", None)
+
+
 class TestConfigEncryptEndpoint:
     def test_config_encrypt(self, tmp_path: Path):
-        raw = {
-            "provider": "openai",
-            "model": "gpt-4o",
-            "api_key": "secret-key",
-            "password": "test-password-123",
-        }
-        response = client.post("/config/encrypt", json=raw)
+        # /config/encrypt 用 password 把当前运行时配置加密落盘.
+        # 请求体只带 password, provider/model/api_key 来自 env (见 fixture).
+        response = client.post(
+            "/config/encrypt", json={"password": "test-password-123"}
+        )
         assert response.status_code == 200
         payload = response.json()
         assert payload["success"] is True
         assert "path" in payload
-        # Verify the encrypted file was created and contains encrypted data
-        enc_path = tmp_path.parent / payload["path"]
-        if enc_path.exists():
-            content = enc_path.read_text()
-            data = json.loads(content)
-            assert data["provider"] == "openai"
-            assert data["model"] == "gpt-4o"
-            assert "api_key" in data
-            assert data["api_key"] != "secret-key"
-            assert "encrypted" in data or "__vault" in data
-        # Cleanup: remove created file if outside tmp_path
+
+        # 加密配置由 EncryptedConfig 整块加密落盘 (非 field-level mask),
+        # 文件是密文二进制, 不能直接 json.loads. 用 password 解密回读校验.
+        enc_path = Path(payload["path"])
+        assert enc_path.exists(), f"encrypted config not written: {enc_path}"
+        raw_bytes = enc_path.read_bytes()
+        # 密文不应包含明文 api_key
+        assert b"secret-key" not in raw_bytes, "api_key leaked in plaintext"
+
+        from huginn.crypto import CryptoVault, EncryptedConfig
+
+        vault = CryptoVault(master_password="test-password-123")
+        ec = EncryptedConfig(config_path=enc_path, vault=vault)
+        decrypted = ec.load()
+        assert decrypted["provider"] == "openai"
+        assert decrypted["model"] == "gpt-4o"
+        assert decrypted["api_key"] == "secret-key"
+        # Cleanup
         if enc_path.exists() and enc_path.parent != tmp_path:
             enc_path.unlink()
 

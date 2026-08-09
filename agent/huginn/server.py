@@ -46,9 +46,27 @@ from huginn.middleware.limits import (
 from huginn.middleware.maintenance import MaintenanceMiddleware
 from huginn.middleware.request_id import RequestIDMiddleware
 from huginn.routes import include_v1_routes
+
+# Re-export route handler functions so tests and external callers can do
+# `from huginn.server import list_personas, create_persona, ...` without
+# reaching into the routes package. These are the canonical endpoint
+# callables; the FastAPI routers in huginn.routes wire them onto the app.
+from huginn.routes.agents import (  # noqa: F401
+    create_persona,
+    get_persona,
+    list_personas,
+    telemetry_spans,
+    telemetry_summary,
+)
+from huginn.routes.memory import memory_maintenance  # noqa: F401
 from huginn.routes.metrics import (
     RATE_LIMIT_BLOCKED_TOTAL,
     http_metrics_dispatch,
+)
+from huginn.routes.threads import get_thread  # noqa: F401
+from huginn.routes.unified import (  # noqa: F401
+    unified_plot_endpoint,
+    unified_solve_endpoint,
 )
 from huginn.security.auth import require_api_key
 

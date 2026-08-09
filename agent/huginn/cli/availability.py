@@ -80,22 +80,27 @@ def filter_commands_by_availability(
 
     支持两种调用方式:
     1. 传 list[dict]: 每个元素是字典, 返回过滤后的 list[dict]
-    2. 传 click.Group: 直接在 group 上操作, 把不可用的命令删掉, 返回 group
+    2. 传 click.Group: 直接在 group 上操作, 把不可用的命令标记为
+       ``hidden`` (非破坏性), 返回 group
 
     第二种是 CLI 启动时的主路径, 避免在外面再写一遍遍历逻辑.
+
+    用 ``hidden`` 而非 ``commands.pop`` 的原因: pop 是破坏性突变, 会让
+    cli 单例在第一次无 auth 调用后永久丢命令, 污染同进程后续所有调用
+    (测试隔离问题). hidden 只影响 --help 展示, 命令仍可显式调用, 且
+    可逆 —— auth 状态变化后下次调用会重新计算 hidden, 命令能重新出现.
     """
     if auth_state is None:
         auth_state = get_auth_state()
 
-    # click.Group 路径: 直接改 group.commands
+    # click.Group 路径: 标记 hidden, 不删命令
     if hasattr(commands, "commands") and hasattr(commands, "list_commands"):
-        to_remove = []
         for name in commands.list_commands(None):
             avail = COMMAND_AVAILABILITY.get(name)
-            if avail is not None and not meets_availability(avail, auth_state):
-                to_remove.append(name)
-        for name in to_remove:
-            commands.commands.pop(name, None)
+            should_show = meets_availability(avail, auth_state)
+            cmd = commands.commands.get(name)
+            if cmd is not None:
+                cmd.hidden = not should_show
         return commands
 
     # list[dict] 路径: 纯函数, 返回过滤后的列表
