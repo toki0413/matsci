@@ -31,12 +31,12 @@ logger = logging.getLogger(__name__)
 PRE_TOOL_USE = "pre_tool_use"
 POST_TOOL_USE = "post_tool_use"
 # 新增事件
-SESSION_START = "session_start"            # 会话开始时触发
-SESSION_END = "session_end"                # 会话结束时触发
-STOP = "stop"                              # agent 完成一轮回复后触发
-SUBAGENT_STOP = "subagent_stop"            # 子 agent 完成时触发
-PRE_COMPACT = "pre_compact"                # 上下文压缩前触发
-POST_COMPACT = "post_compact"              # 上下文压缩后触发
+SESSION_START = "session_start"  # 会话开始时触发
+SESSION_END = "session_end"  # 会话结束时触发
+STOP = "stop"  # agent 完成一轮回复后触发
+SUBAGENT_STOP = "subagent_stop"  # 子 agent 完成时触发
+PRE_COMPACT = "pre_compact"  # 上下文压缩前触发
+POST_COMPACT = "post_compact"  # 上下文压缩后触发
 USER_PROMPT_SUBMIT = "user_prompt_submit"  # 用户提交输入后触发
 POST_TOOL_USE_FAILURE = "post_tool_use_failure"  # 工具调用失败后触发
 
@@ -98,9 +98,10 @@ class HookManager:
 
     def __init__(self) -> None:
         # event -> 回调列表, 保持注册顺序. 全部事件都预初始化, 避免 KeyError.
-        self._callbacks: dict[str, list[HookCallback]] = {
-            ev: [] for ev in ALL_EVENTS
-        }
+        self._callbacks: dict[str, list[HookCallback]] = {ev: [] for ev in ALL_EVENTS}
+        # 反向引用所属 agent, 让 hook 能查 agent 状态 (如 workspace).
+        # 由 agent 在创建 hook_manager 后注入.
+        self.agent: Any = None
 
     def register(
         self,
@@ -119,8 +120,7 @@ class HookManager:
         """
         if event not in self._callbacks:
             raise ValueError(
-                f"Unknown hook event: {event!r}. "
-                f"Supported: {', '.join(ALL_EVENTS)}"
+                f"Unknown hook event: {event!r}. " f"Supported: {', '.join(ALL_EVENTS)}"
             )
         callbacks = self._callbacks[event]
         if before is not None and after is not None:
@@ -161,6 +161,8 @@ class HookManager:
         后续回调.
         """
         callbacks = self._callbacks.get(event, [])
+        if ctx.agent is None:
+            ctx.agent = self.agent
         for cb in callbacks:
             try:
                 ret = await cb(ctx)
@@ -168,9 +170,7 @@ class HookManager:
                     ctx = ret
             except Exception:
                 # 单个钩子出错不能把整个事件链搞挂
-                logger.warning(
-                    "%s hook raised", event, exc_info=True
-                )
+                logger.warning("%s hook raised", event, exc_info=True)
         return ctx
 
     async def run_pre(
@@ -188,6 +188,7 @@ class HookManager:
         """
         callbacks = self._callbacks[PRE_TOOL_USE]
         ctx = HookContext(tool_name=tool_name, args=args)
+        ctx.agent = self.agent
         # thread_id 塞进 metadata, pre 钩子(如 DesignPlanGate)要靠它按会话隔离
         if thread_id:
             ctx.metadata["thread_id"] = thread_id
@@ -231,10 +232,15 @@ class HookManager:
         """
         callbacks = self._callbacks[POST_TOOL_USE]
         if not callbacks:
-            return HookContext(
-                tool_name=tool_name, args=args, result=result,
-                error=error, duration_ms=duration_ms,
+            ctx = HookContext(
+                tool_name=tool_name,
+                args=args,
+                result=result,
+                error=error,
+                duration_ms=duration_ms,
             )
+            ctx.agent = self.agent
+            return ctx
 
         ctx = HookContext(
             tool_name=tool_name,
@@ -243,6 +249,7 @@ class HookManager:
             error=error,
             duration_ms=duration_ms,
         )
+        ctx.agent = self.agent
         if thread_id:
             ctx.metadata["thread_id"] = thread_id
         if user_message:
@@ -265,6 +272,7 @@ class HookManager:
                 error=error,
                 duration_ms=duration_ms,
             )
+            fail_ctx.agent = self.agent
             if thread_id:
                 fail_ctx.metadata["thread_id"] = thread_id
             if user_message:
@@ -281,18 +289,19 @@ class HookManager:
 # 常见材料晶格常数标准值 (Å). 只内置几个最常碰到的, 别往里塞一堆.
 # key 是约化化学式(人类习惯写法), value 里 a/b/c 缺省表示该材料没用那个参数.
 _STANDARD_LATTICE: dict[str, dict[str, float]] = {
-    "Si":   {"a": 5.43},
+    "Si": {"a": 5.43},
     "GaAs": {"a": 5.65},
-    "Cu":   {"a": 3.61},
-    "Fe":   {"a": 2.87},
+    "Cu": {"a": 3.61},
+    "Fe": {"a": 2.87},
     "TiO2": {"a": 4.59, "c": 2.96},
-    "ZnO":  {"a": 3.25, "c": 5.21},
+    "ZnO": {"a": 3.25, "c": 5.21},
 }
 
 
 def _parse_formula(formula: str) -> dict[str, int]:
     """解析化学式 -> {元素: 原子数}. 不区分大小写错误, 只按元素符号切."""
     import re
+
     counts: dict[str, int] = {}
     for elem, num in re.findall(r"([A-Z][a-z]?)(\d*)", formula):
         if not elem:
@@ -306,6 +315,7 @@ def _canonical_key(counts: dict[str, int]) -> tuple:
     两边(标准值 / 输入)都过一遍这个函数, 顺序就不重要了.
     """
     import math
+
     vals = list(counts.values())
     if not vals:
         return ()
@@ -322,8 +332,12 @@ _STANDARD_LATTICE_LOOKUP: dict[tuple, str] = {
 
 # 材料中文名, 给 description 用
 _MATERIAL_CN = {
-    "Si": "硅", "GaAs": "砷化镓", "Cu": "铜", "Fe": "铁",
-    "TiO2": "二氧化钛", "ZnO": "氧化锌",
+    "Si": "硅",
+    "GaAs": "砷化镓",
+    "Cu": "铜",
+    "Fe": "铁",
+    "TiO2": "二氧化钛",
+    "ZnO": "氧化锌",
 }
 
 # 工具返回里出现这些词, 认定结果"不合格"
@@ -374,7 +388,9 @@ class AnomalyDetectionHook:
         args = ctx.args if isinstance(ctx.args, dict) else {}
         result = ctx.result if isinstance(ctx.result, dict) else {}
         # serialize 出来的结构: 成功 {"result": {...}}, 失败 {"error": "..."}
-        result_data = result.get("result") if isinstance(result.get("result"), dict) else {}
+        result_data = (
+            result.get("result") if isinstance(result.get("result"), dict) else {}
+        )
         result_text = self._stringify(result)
 
         def add(anomaly: Anomaly) -> None:
@@ -386,22 +402,24 @@ class AnomalyDetectionHook:
         # 1) 工具抛异常 或 返回 error 字段 -> TOOL_FAILURE
         if ctx.error is not None or result.get("error"):
             err_msg = result.get("error") or str(ctx.error)
-            add(Anomaly(
-                id="",
-                ts=datetime.now(),
-                category="TOOL_FAILURE",
-                severity="MEDIUM",
-                description=f"{tool} 调用失败: {self._truncate(err_msg, 160)}",
-                detection_method="tool_call_failed",
-                source="tool_output",
-                context_snapshot={
-                    "tool": tool,
-                    "args": self._shrink(args),
-                    "error": self._truncate(err_msg, 400),
-                    "duration_ms": ctx.duration_ms,
-                },
-                unresolved_dimensions=[f"{tool} 为什么失败？需要重试还是换参数？"],
-            ))
+            add(
+                Anomaly(
+                    id="",
+                    ts=datetime.now(),
+                    category="TOOL_FAILURE",
+                    severity="MEDIUM",
+                    description=f"{tool} 调用失败: {self._truncate(err_msg, 160)}",
+                    detection_method="tool_call_failed",
+                    source="tool_output",
+                    context_snapshot={
+                        "tool": tool,
+                        "args": self._shrink(args),
+                        "error": self._truncate(err_msg, 400),
+                        "duration_ms": ctx.duration_ms,
+                    },
+                    unresolved_dimensions=[f"{tool} 为什么失败？需要重试还是换参数？"],
+                )
+            )
             # 工具都挂了, 后面的数据校验意义不大, 直接返回
             return results
 
@@ -419,25 +437,27 @@ class AnomalyDetectionHook:
                 desc = "validate_tool 判定结果不合格"
                 if failed_msgs:
                     desc += f": {self._truncate('; '.join(str(m) for m in failed_msgs[:3]), 160)}"
-                add(Anomaly(
-                    id="",
-                    ts=datetime.now(),
-                    category="COMPUTATION_RESULT",
-                    severity="HIGH",
-                    description=desc,
-                    detection_method="validate_tool_error",
-                    source="tool_output",
-                    context_snapshot={
-                        "tool": tool,
-                        "args": self._shrink(args),
-                        "all_passed": all_passed,
-                        "failed_checks": failed_msgs[:5],
-                        "result_type": args.get("result_type"),
-                    },
-                    unresolved_dimensions=[
-                        "计算结果物理上为什么不合理？参数/模型/输入哪个环节出问题？"
-                    ],
-                ))
+                add(
+                    Anomaly(
+                        id="",
+                        ts=datetime.now(),
+                        category="COMPUTATION_RESULT",
+                        severity="HIGH",
+                        description=desc,
+                        detection_method="validate_tool_error",
+                        source="tool_output",
+                        context_snapshot={
+                            "tool": tool,
+                            "args": self._shrink(args),
+                            "all_passed": all_passed,
+                            "failed_checks": failed_msgs[:5],
+                            "result_type": args.get("result_type"),
+                        },
+                        unresolved_dimensions=[
+                            "计算结果物理上为什么不合理？参数/模型/输入哪个环节出问题？"
+                        ],
+                    )
+                )
 
         # 3) 晶格常数与标准值偏差 > 20% -> INPUT_DATA
         if tool == "structure_tool":
@@ -446,21 +466,23 @@ class AnomalyDetectionHook:
 
         # 4) 输出含冲突类关键词 -> DATA_CONFLICT
         if any(kw in result_text for kw in _CONFLICT_KEYWORDS):
-            add(Anomaly(
-                id="",
-                ts=datetime.now(),
-                category="DATA_CONFLICT",
-                severity="MEDIUM",
-                description=f"{tool} 输出疑似存在数据冲突",
-                detection_method="keyword_match",
-                source="tool_output",
-                context_snapshot={
-                    "tool": tool,
-                    "args": self._shrink(args),
-                    "snippet": self._truncate(result_text, 400),
-                },
-                unresolved_dimensions=["多源数据哪里对不上？以哪个为准？"],
-            ))
+            add(
+                Anomaly(
+                    id="",
+                    ts=datetime.now(),
+                    category="DATA_CONFLICT",
+                    severity="MEDIUM",
+                    description=f"{tool} 输出疑似存在数据冲突",
+                    detection_method="keyword_match",
+                    source="tool_output",
+                    context_snapshot={
+                        "tool": tool,
+                        "args": self._shrink(args),
+                        "snippet": self._truncate(result_text, 400),
+                    },
+                    unresolved_dimensions=["多源数据哪里对不上？以哪个为准？"],
+                )
+            )
 
         return results
 
@@ -495,33 +517,35 @@ class AnomalyDetectionHook:
                 continue
             dev = abs(val_f - std) / std
             if dev > _DEVIATION_THRESHOLD:
-                out.append(Anomaly(
-                    id="",
-                    ts=datetime.now(),
-                    category="INPUT_DATA",
-                    severity="HIGH",
-                    description=(
-                        f"{cn}({material}) 晶格常数 {param}={val_f:.3f}Å "
-                        f"与标准 {std:.2f}Å 偏差 {dev*100:.1f}%"
-                    ),
-                    detection_method="standard_value_compare",
-                    source="tool_output",
-                    context_snapshot={
-                        "tool": "structure_tool",
-                        "formula": formula,
-                        "material": material,
-                        "param": param,
-                        "value": val_f,
-                        "standard": std,
-                        "deviation": dev,
-                        "lattice_params": lattice,
-                    },
-                    unresolved_dimensions=[
-                        f"为什么 {param}={val_f:.3f}Å 而非标准 {std:.2f}Å？"
-                        "单位混淆(Å vs nm)? 文件读错? 结构本身就有问题?"
-                        " 或者是新颖结构/相——需独立计算验证"
-                    ],
-                ))
+                out.append(
+                    Anomaly(
+                        id="",
+                        ts=datetime.now(),
+                        category="INPUT_DATA",
+                        severity="HIGH",
+                        description=(
+                            f"{cn}({material}) 晶格常数 {param}={val_f:.3f}Å "
+                            f"与标准 {std:.2f}Å 偏差 {dev*100:.1f}%"
+                        ),
+                        detection_method="standard_value_compare",
+                        source="tool_output",
+                        context_snapshot={
+                            "tool": "structure_tool",
+                            "formula": formula,
+                            "material": material,
+                            "param": param,
+                            "value": val_f,
+                            "standard": std,
+                            "deviation": dev,
+                            "lattice_params": lattice,
+                        },
+                        unresolved_dimensions=[
+                            f"为什么 {param}={val_f:.3f}Å 而非标准 {std:.2f}Å？"
+                            "单位混淆(Å vs nm)? 文件读错? 结构本身就有问题?"
+                            " 或者是新颖结构/相——需独立计算验证"
+                        ],
+                    )
+                )
         return out
 
     # ---- 工具方法 ----
@@ -538,6 +562,7 @@ class AnomalyDetectionHook:
     def _stringify(obj: Any) -> str:
         try:
             import json
+
             return json.dumps(obj, ensure_ascii=False, default=str)
         except Exception:
             return str(obj)

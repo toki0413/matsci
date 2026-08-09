@@ -1,17 +1,10 @@
 """Structure-aware document chunking — AstrBot inspired.
 
-AstrBot uses a RecursiveCharacterChunker with separator priority
-(\\n\\n > \\n > 。 > ， > . > space > char) and a MarkdownChunker that
-respects heading hierarchy. This module brings the same to materials science:
-
 Chunkers:
   - RecursiveCharacterChunker: AstrBot-style recursive split with priority separators
-  - MarkdownChunker: Split by headings (##/###), preserve hierarchy in metadata
   - StructureChunker: For CIF/POSCAR files — split by data_ blocks / coordinate sections
-  - AutoChunker: Picks the right chunker based on file type/content
 
-All chunkers are async (matching AstrBot pattern) and return Chunk objects
-with text + metadata (source, heading_path, chunk_index, element_type).
+All chunkers are async and return Chunk objects with text + metadata.
 """
 
 from __future__ import annotations
@@ -24,9 +17,11 @@ from typing import Any
 
 logger = logging.getLogger("huginn.chunker")
 
+
 @dataclass
 class Chunk:
     """A single chunk of a document."""
+
     text: str
     metadata: dict[str, Any] = field(default_factory=dict)
     # Common metadata keys:
@@ -68,14 +63,14 @@ class RecursiveCharacterChunker(BaseChunker):
 
     DEFAULT_SEPARATORS = [
         "\n\n\n",  # Triple newline (major section break)
-        "\n\n",    # Double newline (paragraph break)
-        "\n",      # Single newline
-        "。",      # Chinese period
-        "．",      # Japanese period
-        ". ",      # English period + space
-        ", ",      # Comma + space
-        " ",       # Space
-        "",        # Character-level (last resort)
+        "\n\n",  # Double newline (paragraph break)
+        "\n",  # Single newline
+        "。",  # Chinese period
+        "．",  # Japanese period
+        ". ",  # English period + space
+        ", ",  # Comma + space
+        " ",  # Space
+        "",  # Character-level (last resort)
     ]
 
     def __init__(
@@ -163,76 +158,6 @@ class RecursiveCharacterChunker(BaseChunker):
         return chunks
 
 
-class MarkdownChunker(BaseChunker):
-    """Split markdown by headings, preserving hierarchy in metadata.
-
-    AstrBot's MarkdownChunker respects heading levels. This implementation
-    tracks the heading path (e.g., ["Methods", "SCF Convergence"]) as metadata.
-    """
-
-    HEADING_RE = re.compile(r'^(#{1,6})\s+(.+)$', re.MULTILINE)
-
-    def __init__(self, chunk_size: int = 800, overlap: int = 50) -> None:
-        self.chunk_size = chunk_size
-        self.overlap = overlap
-
-    async def chunk(self, text: str, **kwargs) -> list[Chunk]:
-        # Find all heading positions
-        headings = list(self.HEADING_RE.finditer(text))
-
-        if not headings:
-            # No headings, fall back to recursive character chunking
-            rc = RecursiveCharacterChunker(self.chunk_size, self.overlap)
-            return await rc.chunk(text, **kwargs)
-
-        chunks = []
-        heading_path: list[str] = []
-
-        for i, match in enumerate(headings):
-            level = len(match.group(1))
-            title = match.group(2).strip()
-
-            # Update heading path
-            while len(heading_path) >= level:
-                heading_path.pop()
-            heading_path.append(title)
-
-            # Content from this heading to the next
-            start = match.end()
-            end = headings[i + 1].start() if i + 1 < len(headings) else len(text)
-            content = text[start:end].strip()
-
-            if not content:
-                continue
-
-            # If content is too large, sub-chunk it
-            if len(content) > self.chunk_size:
-                rc = RecursiveCharacterChunker(self.chunk_size, self.overlap)
-                sub_chunks = await rc.chunk(content)
-                for _j, sc in enumerate(sub_chunks):
-                    sc.metadata.update({
-                        "heading_path": list(heading_path),
-                        "chunk_index": len(chunks),
-                        "element_type": "text",
-                        "heading_level": level,
-                        "heading_title": title,
-                    })
-                    chunks.append(sc)
-            else:
-                chunks.append(Chunk(
-                    text=content,
-                    metadata={
-                        "heading_path": list(heading_path),
-                        "chunk_index": len(chunks),
-                        "element_type": "text",
-                        "heading_level": level,
-                        "heading_title": title,
-                    },
-                ))
-
-        return self._merge_small_chunks(chunks)
-
-
 class StructureChunker(BaseChunker):
     """Chunker for crystallographic structure files (CIF, POSCAR).
 
@@ -257,50 +182,75 @@ class StructureChunker(BaseChunker):
 
         # Extract metadata
         structure_info = {}
-        for match in re.finditer(r'_symmetry_space_group_name_H-M\s+[\'"]?([^\'"\n]+)[\'"]?', text):
+        for match in re.finditer(
+            r'_symmetry_space_group_name_H-M\s+[\'"]?([^\'"\n]+)[\'"]?', text
+        ):
             structure_info["space_group"] = match.group(1).strip()
             break
-        for match in re.finditer(r'_cell_length_a\s+([\d.]+)', text):
+        for match in re.finditer(r"_cell_length_a\s+([\d.]+)", text):
             structure_info["lattice_a"] = float(match.group(1))
             break
-        for match in re.finditer(r'_cell_length_b\s+([\d.]+)', text):
+        for match in re.finditer(r"_cell_length_b\s+([\d.]+)", text):
             structure_info["lattice_b"] = float(match.group(1))
             break
-        for match in re.finditer(r'_cell_length_c\s+([\d.]+)', text):
+        for match in re.finditer(r"_cell_length_c\s+([\d.]+)", text):
             structure_info["lattice_c"] = float(match.group(1))
             break
 
         # Count atoms in atom_site loop
-        atom_count = len(re.findall(r'_atom_site_fract_x', text))
+        atom_count = len(re.findall(r"_atom_site_fract_x", text))
         if atom_count > 0:
             # Count actual atom data lines after the loop
-            loop_match = re.search(r'loop_.*?_atom_site_fract_x.*?\n(.*?)(?:\n\n|\nloop_|\Z)', text, re.DOTALL)
+            loop_match = re.search(
+                r"loop_.*?_atom_site_fract_x.*?\n(.*?)(?:\n\n|\nloop_|\Z)",
+                text,
+                re.DOTALL,
+            )
             if loop_match:
-                atom_lines = [_l for _l in loop_match.group(1).strip().splitlines() if _l.strip() and not _l.startswith('_')]
+                atom_lines = [
+                    _l
+                    for _l in loop_match.group(1).strip().splitlines()
+                    if _l.strip() and not _l.startswith("_")
+                ]
                 structure_info["atom_count"] = len(atom_lines)
 
         # Split by data_ blocks and loop_ sections
-        sections = re.split(r'(?=data_|loop_)', text)
+        sections = re.split(r"(?=data_|loop_)", text)
         sections = [s.strip() for s in sections if s.strip()]
 
         for i, section in enumerate(sections):
-            chunks.append(Chunk(
-                text=section,
-                metadata={
-                    "chunk_index": i,
-                    "element_type": "structure",
-                    "format": "cif",
-                    "structure_info": structure_info,
-                }
-            ))
+            chunks.append(
+                Chunk(
+                    text=section,
+                    metadata={
+                        "chunk_index": i,
+                        "element_type": "structure",
+                        "format": "cif",
+                        "structure_info": structure_info,
+                    },
+                )
+            )
 
-        return chunks if chunks else [Chunk(text=text, metadata={"format": "cif", "element_type": "structure"})]
+        return (
+            chunks
+            if chunks
+            else [
+                Chunk(
+                    text=text, metadata={"format": "cif", "element_type": "structure"}
+                )
+            ]
+        )
 
     def _chunk_poscar(self, text: str) -> list[Chunk]:
         """Chunk a POSCAR file by logical sections."""
         lines = text.splitlines()
         if len(lines) < 2:
-            return [Chunk(text=text, metadata={"format": "poscar", "element_type": "structure"})]
+            return [
+                Chunk(
+                    text=text,
+                    metadata={"format": "poscar", "element_type": "structure"},
+                )
+            ]
 
         structure_info = {"comment": lines[0].strip(), "scale": lines[1].strip()}
 
@@ -323,49 +273,9 @@ class StructureChunker(BaseChunker):
                     "element_type": "structure",
                     "format": "poscar",
                     "structure_info": structure_info,
-                }
+                },
             )
         ]
-        return chunks
-
-
-class AutoChunker(BaseChunker):
-    """Auto-detect file type and pick the right chunker.
-
-    Usage:
-        chunker = AutoChunker()
-        chunks = await chunker.chunk(text, filename="paper.md")
-    """
-
-    def __init__(self, chunk_size: int = 800, overlap: int = 100) -> None:
-        self.chunk_size = chunk_size
-        self.overlap = overlap
-
-    async def chunk(self, text: str, **kwargs) -> list[Chunk]:
-        filename = kwargs.get("filename", "")
-
-        # Detect by extension
-        if filename.endswith(".cif"):
-            chunker = StructureChunker()
-        elif filename.endswith(".md") or filename.endswith(".markdown"):
-            chunker = MarkdownChunker(self.chunk_size, self.overlap)
-        elif filename.endswith(".poscar") or filename.endswith(".contcar") or filename.endswith(".vasp"):
-            chunker = StructureChunker()
-        else:
-            # Detect by content
-            if text.strip().startswith("data_") and "_cell_" in text:
-                chunker = StructureChunker()
-            elif re.search(r'^#{1,6}\s+', text, re.MULTILINE):
-                chunker = MarkdownChunker(self.chunk_size, self.overlap)
-            else:
-                chunker = RecursiveCharacterChunker(self.chunk_size, self.overlap)
-
-        chunks = await chunker.chunk(text, **kwargs)
-
-        # Add source filename to metadata
-        for chunk in chunks:
-            chunk.metadata.setdefault("source", filename)
-
         return chunks
 
 
@@ -373,7 +283,5 @@ __all__ = [
     "Chunk",
     "BaseChunker",
     "RecursiveCharacterChunker",
-    "MarkdownChunker",
     "StructureChunker",
-    "AutoChunker",
 ]

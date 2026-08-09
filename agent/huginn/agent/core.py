@@ -198,7 +198,10 @@ class HuginnAgent(
         self._init_from_config(config, scheduler=scheduler, kb_enabled=kb_enabled)
 
     def _init_from_config(
-        self, config: AgentConfig, scheduler: Any = None, kb_enabled: Any = _UNSET_SENTINEL
+        self,
+        config: AgentConfig,
+        scheduler: Any = None,
+        kb_enabled: Any = _UNSET_SENTINEL,
     ) -> None:
         m = config.model
         t = config.tools
@@ -281,6 +284,7 @@ class HuginnAgent(
         if self.scheduler is None:
             try:
                 from huginn.scheduling import AdmissionPolicy, ToolScheduler
+
                 self.scheduler = ToolScheduler(policy=AdmissionPolicy.from_env())
             except Exception:
                 self.scheduler = None
@@ -314,6 +318,7 @@ class HuginnAgent(
         # 走跨会话队列 (Unattended 场景). 默认 None → yield approval_request 事件.
         if os.environ.get("HUGINN_APPROVAL_MODE") == "inbox":
             from huginn.interaction.inbox import get_inbox_store, inbox_approval_fn
+
             self.approval_fn = inbox_approval_fn(
                 get_inbox_store(), self.thread_id or "default"
             )
@@ -324,9 +329,7 @@ class HuginnAgent(
 
         self.telemetry_enabled = tel.telemetry_enabled
         self._telemetry_collector = (
-            TelemetryCollector()
-            if tel.telemetry_enabled
-            else NullTelemetryCollector()
+            TelemetryCollector() if tel.telemetry_enabled else NullTelemetryCollector()
         )
 
         self.sandbox = sec.sandbox
@@ -337,7 +340,11 @@ class HuginnAgent(
 
         max_tool_output_tokens = t.max_tool_output_tokens
         context_budget_tokens = cb.context_budget_tokens
-        if context_budget_tokens is not None and context_budget_tokens <= 0 and m.model is not None:
+        if (
+            context_budget_tokens is not None
+            and context_budget_tokens <= 0
+            and m.model is not None
+        ):
             model_name = getattr(m.model, "model_name", None) or getattr(
                 m.model, "model", ""
             )
@@ -395,9 +402,11 @@ class HuginnAgent(
             self._tool_adapter.set_summarizer(tool_summarizer)
 
         self.hook_manager = HookManager()
+        self.hook_manager.agent = self
 
         try:
             from huginn.hooks.science_hooks import register_science_hooks
+
             register_science_hooks(self.hook_manager)
         except ImportError:
             logger.debug("science_hooks not available (non-fatal)")
@@ -411,6 +420,7 @@ class HuginnAgent(
         self.style_learner = pers.style_learner
         if pers.style_learner is not None:
             from huginn.personalization import set_shared_style_learner
+
             set_shared_style_learner(pers.style_learner)
 
         self._mode: str = "chat"
@@ -457,6 +467,7 @@ class HuginnAgent(
                 # 长程模式联动: research/extreme 跑长程 (recursion_limit=500),
                 # 需要开 trajectory 召回 + cycle 检测才不重复犯错. 保存原值便于退出恢复.
                 import os
+
                 if not hasattr(self, "_extreme_dispatch_saved"):
                     self._extreme_dispatch_saved = os.environ.get(
                         "HUGINN_EXTREME_DISPATCH"
@@ -466,6 +477,7 @@ class HuginnAgent(
             elif old in self._LONG_HORIZON_MODES:
                 # 退出长程模式: 恢复 HUGINN_EXTREME_DISPATCH 原值
                 import os
+
                 saved = getattr(self, "_extreme_dispatch_saved", None)
                 if saved is None:
                     os.environ.pop("HUGINN_EXTREME_DISPATCH", None)
@@ -477,7 +489,7 @@ class HuginnAgent(
             # 之前 /plan slash 只改 _mode 不改 permission_config, 导致 UI 提示与实际行为不一致.
             perm_cfg = getattr(self, "_permission_config", None)
             if perm_cfg is not None:
-                perm_cfg.plan_mode = (mode == "plan")
+                perm_cfg.plan_mode = mode == "plan"
             logger.info("agent mode switched to '%s'", mode)
 
             # R7: mode 切换 = cognitive switch, 委托 CSM S3_SWITCH.
@@ -487,6 +499,7 @@ class HuginnAgent(
             if csm is not None:
                 try:
                     from huginn.cognitive_engine import TransitionSignal
+
                     csm.transition(TransitionSignal("user_confirmed", {"mode": mode}))
                 except Exception:
                     logger.debug("set_mode CSM delegation failed", exc_info=True)
@@ -517,6 +530,7 @@ class HuginnAgent(
         ponytail: 三档够用, 不上配置. 升级: 暴露到 config.py.
         """
         import os
+
         if self._mode in self._LONG_HORIZON_MODES:
             return 500
         if os.environ.get("HUGINN_EXTREME_DISPATCH", "0").lower() in ("1", "true"):
@@ -610,12 +624,10 @@ class HuginnAgent(
         # tool_filter 是硬约束 (限制 agent 只能用 code_tool/bash_tool), 不能被
         # task router 冲掉. 交集为空 → 保留原 tool_filter (task router 误判时不破坏).
         effective_filter: set[str] | None = self.tool_filter
-        if (
-            os.environ.get("HUGINN_TASK_TOOL_ROUTER", "0") == "1"
-            and self._current_task
-        ):
+        if os.environ.get("HUGINN_TASK_TOOL_ROUTER", "0") == "1" and self._current_task:
             try:
                 from huginn.runtime.task_tool_router import route_tools
+
                 available = ToolRegistry.list_tools()
                 routed = route_tools(self._current_task, available)
                 if routed:
@@ -699,7 +711,10 @@ class HuginnAgent(
                 if csm is not None:
                     task = STATE_TO_MODEL_TASK.get(csm.state, task)
             except Exception:
-                logger.debug("CSM state → model task mapping failed, fallback to original task", exc_info=True)
+                logger.debug(
+                    "CSM state → model task mapping failed, fallback to original task",
+                    exc_info=True,
+                )
             return self.model_router.select(task)
         if self.model is None:
             raise RuntimeError("HuginnAgent has no model or model_router configured")
@@ -741,7 +756,9 @@ class HuginnAgent(
 
             fs_root = str(self.workspace) if self.workspace else None
             fs_backend = LocalShellBackend(
-                root_dir=fs_root, virtual_mode=True, inherit_env=True,
+                root_dir=fs_root,
+                virtual_mode=True,
+                inherit_env=True,
             )
 
             self._agent_graph = create_deep_agent(
@@ -756,11 +773,13 @@ class HuginnAgent(
                     DeliverableCoverageMiddleware(),
                     RateLimitMiddleware(),
                 ],
-            ).with_config({
-                # research mode → 500; extreme dispatch 开启但非 research → 400
-                # (极限模式跑长程, 250 不够用). 普通 chat/plan 保持 250.
-                "recursion_limit": self._effective_recursion_limit(),
-            })
+            ).with_config(
+                {
+                    # research mode → 500; extreme dispatch 开启但非 research → 400
+                    # (极限模式跑长程, 250 不够用). 普通 chat/plan 保持 250.
+                    "recursion_limit": self._effective_recursion_limit(),
+                }
+            )
 
             return self._agent_graph
 
@@ -781,6 +800,7 @@ class HuginnAgent(
                 DeliverableCoverageMiddleware,
                 FixDanglingToolCallsMiddleware,
             )
+
             _fix_mw = FixDanglingToolCallsMiddleware()
             _cov_mw = DeliverableCoverageMiddleware()
 
@@ -794,6 +814,7 @@ class HuginnAgent(
                 try:
                     import json as _json
                     from pathlib import Path as _P  # noqa: N814
+
                     _cwd = _P.cwd()
                     _rpt_path = _cwd / "report" / "report.md"
                     # Benchmark Mode: 通用 env var 注入, agent 不感知具体 benchmark 框架.
@@ -812,7 +833,16 @@ class HuginnAgent(
                                     continue
                                 for _k, _v in _d.items():
                                     _kl = str(_k).lower()
-                                    if any(_t in _kl for _t in ("auc", "accuracy", "r2", "r_squared", "f1")):
+                                    if any(
+                                        _t in _kl
+                                        for _t in (
+                                            "auc",
+                                            "accuracy",
+                                            "r2",
+                                            "r_squared",
+                                            "f1",
+                                        )
+                                    ):
                                         try:
                                             _fv = float(_v)
                                             if 0 <= _fv < 0.6:
@@ -842,18 +872,27 @@ class HuginnAgent(
                                 _extra_hints.append(_hint)
                             else:
                                 _rpt_text = _rpt_path.read_text(encoding="utf-8")
-                                _missing = _cov_mw._check_coverage(_inst_text, _rpt_text)
+                                _missing = _cov_mw._check_coverage(
+                                    _inst_text, _rpt_text
+                                )
                                 _gaps = _cov_mw._check_layer_gaps(_inst_text, _rpt_text)
                                 if _missing:
-                                    _extra_hints.append(_cov_mw._build_frontier_msg(_missing))
+                                    _extra_hints.append(
+                                        _cov_mw._build_frontier_msg(_missing)
+                                    )
                                 if _gaps:
-                                    _extra_hints.append(_cov_mw._build_layer_frontier_msg(_gaps))
+                                    _extra_hints.append(
+                                        _cov_mw._build_layer_frontier_msg(_gaps)
+                                    )
                     if _extra_hints:
-                        patched = [SystemMessage(content="\n\n".join(_extra_hints))] + patched
+                        patched = [
+                            SystemMessage(content="\n\n".join(_extra_hints))
+                        ] + patched
                     # v18: bandit effort controller hint (advisory).
                     # ponytail: 失败静默, build_hint 已 catch. 不阻塞 LLM 调用.
                     try:
                         from huginn.agent.bandit_controller import EffortBandit
+
                         _bandit_hint = EffortBandit.get_instance().build_hint()
                         if _bandit_hint:
                             patched = [SystemMessage(content=_bandit_hint)] + patched
@@ -926,6 +965,7 @@ class HuginnAgent(
     def close(self) -> None:
         try:
             from huginn.privacy_guard import PrivacyGuard
+
             PrivacyGuard.shared().purge_session()
         except Exception:
             logger.warning("privacy purge failed", exc_info=True)
@@ -945,7 +985,11 @@ class HuginnAgent(
             async for state in self.chat(message, thread_id):
                 if isinstance(state, dict) and state.get("tool_break"):
                     final_state = state.get("state", final_state)
-                elif isinstance(state, dict) and "messages" in state or final_state is None:
+                elif (
+                    isinstance(state, dict)
+                    and "messages" in state
+                    or final_state is None
+                ):
                     final_state = state
             return final_state
 
@@ -953,6 +997,7 @@ class HuginnAgent(
         # 之前 try/except 顺序写反 — run_until_complete 抛 RuntimeError 后
         # asyncio.run 仍会因 running loop 抛错, 错误透传给 caller.
         from huginn.utils.async_bridge import run_async
+
         return run_async(_run())
 
     # ── Memory shortcuts ──────────────────────────────────────────
