@@ -1,8 +1,14 @@
 """Prompt builder — 三元 (mode/phase/metacog) aware prompt 构造器.
 
 v4 Task 6 (G18): 统一 persona/mode/phase/metacog/tools/safety 六段构造,
-替代 context.py 里散落的拼接逻辑. 当前为最小核心, context.py 仍维护完整 persona
-(Task 7 才做委托迁移).
+替代 context.py 里散落的拼接逻辑.
+
+迁移状态:
+- persona: persona_segment() 接受可选 system_prompt 参数, context.py 的 s7
+  委托路径已传入 self.system_prompt. env/taste/missing_backends/stable_principles
+  等会话级动态层仍由 context.py 维护 (与 agent 实例状态强耦合, 不进 prompt_builder).
+- phase: phase_segment() 已整合 phases.py 的完整 PHASE_PROMPTS (经 autoloop↔
+  ResearchPhase 双向映射), v6 G51 结构关系语义对齐补充单独维护.
 """
 
 from __future__ import annotations
@@ -12,9 +18,13 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-# ponytail: 最小核心段, 完整 persona 仍由 context.py 维护;
-# 升级路径是逐步迁移 persona 到此
-def persona_segment() -> str:
+# 迁移完成: persona_segment 接受可选 system_prompt 参数, 调用方 (context.py 的
+# s7 委托路径) 传入 runtime persona 时优先使用; 未传入则回退到内置最小 persona.
+# env/taste/missing_backends/stable_principles 等会话级动态层仍由 context.py 维护,
+# 因其与 agent 实例状态 (workspace / _cached_taste / _csm) 强耦合, 不进 prompt_builder.
+def persona_segment(system_prompt: str | None = None) -> str:
+    if system_prompt:
+        return f"## PERSONA\n{system_prompt}"
     return (
         "## PERSONA\n"
         "You are a materials-science research companion. Help the user design, "
@@ -50,35 +60,65 @@ def mode_segment(mode: str) -> str:
     return f"## MODE: {mode.upper()}\n{instr}"
 
 
-# ponytail: phase 引导为最小版, 升级路径是从 cognitive_engine.py 迁移完整 PHASE_PROMPTS
+# 迁移完成: phase_segment 整合 phases.py 的完整 PHASE_PROMPTS (经 autoloop↔
+# ResearchPhase 双向映射同时支持两种调用约定). v6 G51 结构关系语义对齐补充
+# 单独维护 (不进 phases.py, 因 phases.py 是通用层).
 # v6 G51: hypothesize / validate 加结构关系语义对齐 — 先识别物理结构, 再断言同构保持
-_PHASE_GUIDE = {
-    "perceive": "Perceive: gather observations; read the problem and existing data.",
-    "hypothesize": (
-        "Hypothesize: propose falsifiable hypotheses grounded in theory. "
+_PHASE_G51_NOTES = {
+    "hypothesis": (
         "v6 G51: before proposing, identify the physical structure "
         "(relation_type + implementor_slots) of the target problem; "
         "if a source-domain analogue exists, assert structure preservation "
         "via validate_structure_preservation."
     ),
-    "plan": "Plan: design an experiment or simulation protocol with checkpoints.",
-    "execute": "Execute: run the plan step by step, capturing raw outputs.",
-    "validate": (
-        "Validate: cross-check results against physics, references, sanity bounds. "
+    "validation": (
         "v6 G51: if the hypothesis carried a PhysicalStructure, re-assert "
         "isomorphism on the observed results; emit structure_violation signal "
         "via SignalHub when preservation breaks."
     ),
-    "learn": "Learn: extract transferable principles; write to memory/knowledge base.",
-    "report": "Report: summarize methods, results, uncertainty, and open questions.",
 }
 
 
+def _resolve_research_phase(phase: str):
+    """将 phase 字符串解析为 ResearchPhase, 兼容 autoloop 名和 ResearchPhase 值.
+
+    返回 None 表示无法识别. OPEN 可识别 (返回 ResearchPhase.OPEN), 其 PHASE_PROMPTS
+    为空串, 由调用方 phase_segment 处理为空输出.
+    """
+    from huginn.phases import AUTOLOOP_TO_PHASE, ResearchPhase
+    # 先按 autoloop 名映射 (perceive/hypothesize/plan/execute/validate/learn/report)
+    rp = AUTOLOOP_TO_PHASE.get(phase)
+    if rp is not None:
+        return rp
+    # 再按 ResearchPhase 值直接解析 (literature/hypothesis/planning/execution/.../open)
+    try:
+        return ResearchPhase(phase)
+    except (ValueError, TypeError):
+        return None
+
+
 def phase_segment(phase: str) -> str:
-    guide = _PHASE_GUIDE.get(phase)
-    if not guide:
+    """构造 phase 引导段.
+
+    迁移完成: 整合 phases.py 的完整 PHASE_PROMPTS, 并叠加 v6 G51 结构关系语义对齐补充.
+    兼容 autoloop phase 名 (perceive/...) 与 ResearchPhase 值 (literature/...).
+    未知 phase 或 OPEN 返回空串, 不抛异常.
+    """
+    rp = _resolve_research_phase(phase)
+    if rp is None:
         return ""
-    return f"## PHASE: {phase.upper()}\n{guide}"
+    from huginn.phases import PHASE_PROMPTS
+    rich = PHASE_PROMPTS.get(rp, "")
+    # G51 补充按 ResearchPhase value 查 (hypothesis/validation)
+    g51 = _PHASE_G51_NOTES.get(rp.value, "")
+    if not rich and not g51:
+        return ""
+    parts = []
+    if rich:
+        parts.append(rich)
+    if g51:
+        parts.append(g51)
+    return "\n".join(parts)
 
 
 def metacog_segment(metacog_state: str) -> str:
@@ -117,8 +157,7 @@ def tools_segment(mode: str, phase: str, metacog_state: str) -> str:
     return "## TOOLS\nTools available per current mode/phase/state."
 
 
-# ponytail: 最小核心段, 完整 persona 仍由 context.py 维护;
-# 升级路径是逐步迁移 persona 到此
+# ponytail: safety 段保持最小; 不涉及 persona/phase 迁移.
 def safety_segment() -> str:
     return (
         "## SAFETY\n"
@@ -131,13 +170,20 @@ def safety_segment() -> str:
     )
 
 
-def build_prompt(mode: str, phase: str, metacog_state: str) -> str:
+def build_prompt(
+    mode: str,
+    phase: str,
+    metacog_state: str,
+    system_prompt: str | None = None,
+) -> str:
     """构造三元 aware system prompt.
 
     任意未知 mode/phase/metacog_state 都不会抛异常 — 对应段直接跳过.
+    system_prompt 可选: 传入时 persona_segment 使用 runtime persona (迁移自
+    context.py 的 self.system_prompt); 未传入则回退到内置最小 persona (向后兼容).
     """
     segments = [
-        persona_segment(),
+        persona_segment(system_prompt),
         mode_segment(mode),
         phase_segment(phase),
         metacog_segment(metacog_state),
@@ -157,4 +203,7 @@ if __name__ == "__main__":
     # s7 应触发 self-modify 段 (即使 principles 文件不存在, try/except 兜底)
     p3 = build_prompt("research", "validate", "s7_self_modify")
     assert "SELF-MODIFY" in p3
+    # persona 迁移: 传入 system_prompt 时应替换内置最小 persona
+    p4 = build_prompt("chat", "execute", "s0_blank", system_prompt="My custom persona.")
+    assert "My custom persona." in p4
     print("OK")

@@ -211,6 +211,64 @@ def _load_root_markers() -> list[str] | None:
     return [m.strip() for m in raw.split(";") if m.strip()]
 
 
+def _is_root_message(msg: Any) -> bool:
+    """判断消息是否被显式标记为 root (永不被 compaction drop).
+
+    调用方在构建关键 early-turn 消息 (checklist prompt / FCM winner_plan 等)
+    时设置 ``msg.additional_kwargs["is_root"] = True`` (或 ``msg.metadata["is_root"]``
+    / 简写 ``root``), 该消息即可跨压缩保留, 不再依赖位置切片 (keep_root_n).
+
+    支持的标记位 (任一为真即视为 root):
+      - ``msg.additional_kwargs["is_root"]``
+      - ``msg.additional_kwargs["root"]``  (简写兼容)
+      - ``msg.metadata["is_root"]``
+
+    无标记返回 False — 由调用方回退到按位置 (前 keep_root_n 条) 判断.
+    """
+    for container in (
+        getattr(msg, "additional_kwargs", None),
+        getattr(msg, "metadata", None),
+    ):
+        if not isinstance(container, dict):
+            continue
+        if container.get("is_root") or container.get("root"):
+            return True
+    return False
+
+
+def _dump_completion_records(
+    records: list[dict[str, Any]],
+    thread_id: str,
+    turn_id: str,
+) -> Any:
+    """把 wire-level completion records 落盘为 jsonl, 供 red_team / RL 训练消费.
+
+    每条 record 是 ``_process_stream_state`` 抓的 prompt/response/tool_call/
+    tool_result 结构化快照. 一个 turn 一个文件:
+    ``<runtime_home>/completions/<thread_id>/<turn_id>.jsonl``.
+
+    ponytail: 只 dump 非空 records, 失败静默 (返回 None). 升级路径: 加 prefix_merging
+    (跨 turn 共享 prompt 前缀去重, 减少冗余存储) — 当前每 turn 独立文件, 不做合并.
+    """
+    if not records:
+        return None
+    try:
+        import json
+
+        from huginn.utils.runtime import get_runtime_home
+
+        comp_dir = get_runtime_home() / "completions" / thread_id
+        comp_dir.mkdir(parents=True, exist_ok=True)
+        comp_path = comp_dir / f"{turn_id}.jsonl"
+        with open(comp_path, "w", encoding="utf-8") as f:
+            for rec in records:
+                f.write(json.dumps(rec, ensure_ascii=False, default=str) + "\n")
+        return comp_path
+    except Exception:
+        logger.debug("completion dump failed", exc_info=True)
+        return None
+
+
 class StreamingMixin:
     """The chat() async generator and all streaming-adjacent logic."""
 
@@ -674,7 +732,8 @@ class StreamingMixin:
 
         跟 lean "参考设计不引入编译器" 一个套路: 不引新框架, 只用 langgraph
         自带机制. ponytail: keep_last_n / keep_root_n 默认值与 compact_messages
-        对齐, 升级路径是改成按消息 metadata 标记 root 而非按位置.
+        对齐. root 标记已升级为按消息 metadata (additional_kwargs/metadata 的
+        is_root) 标记, 无 metadata 标记时回退到按位置 (前 keep_root_n 条).
 
         Returns 实际删除的消息数.
         """
@@ -704,28 +763,43 @@ class StreamingMixin:
         # AV5: 默认保前 2 条 root (user 初始任务 + system checklist) — σ₂ compaction
         # 丢 Step 1 checklist 不只影响 RCB, 生产路径长对话也会丢 system prompt.
         keep_root_n = int(os.environ.get("HUGINN_KEEP_ROOT_N", "2"))
-        body_start = keep_root_n
         body_end = len(msgs) - keep_last_n
-        if body_end <= body_start:
+
+        # root 标记: 优先读消息 metadata / additional_kwargs 里的 is_root 标记
+        # (调用方在 checklist / winner_plan 等关键 early-turn 消息上设置).
+        # 没有任何 metadata 标记时, 回退到按位置 (前 keep_root_n 条) — 与历史
+        # 行为完全一致, 不破坏现有调用路径. 有 metadata 标记时, 标记位覆盖位置,
+        # root 消息可在任意位置 (不止开头) 被保护.
+        root_indices: set[int] = set()
+        for i, m in enumerate(msgs):
+            if _is_root_message(m):
+                root_indices.add(i)
+        if not root_indices:
+            # 回退: 无 metadata 标记 → 按位置保前 keep_root_n 条
+            root_indices = set(range(min(keep_root_n, len(msgs))))
+
+        # 可 drop 候选 = 尾部 keep_last_n 之外、且非 root 的消息, 从最旧开始丢
+        droppable_order = [i for i in range(body_end) if i not in root_indices]
+        if not droppable_order:
             return 0
 
-        # 算要 drop 几条才能到 budget
-        drop_count = 0
+        # 算要 drop 几条才能到 budget (从最旧开始扣 token)
+        drop_indices: list[int] = []
         acc = total
-        for i in range(body_start, body_end):
+        for i in droppable_order:
             if acc <= self.context_budget_tokens:
                 break
             acc -= per_msg_tokens[i]
-            drop_count += 1
+            drop_indices.append(i)
 
-        if drop_count == 0:
+        if not drop_indices:
             return 0
 
         # 收集要 drop 的 message IDs — system 消息不删, 没 ID 的没法删
         from langchain_core.messages import RemoveMessage, SystemMessage
 
         drop_ids: list[str] = []
-        for i in range(body_start, body_start + drop_count):
+        for i in drop_indices:
             m = msgs[i]
             if isinstance(m, SystemMessage):
                 continue
@@ -1887,20 +1961,9 @@ class StreamingMixin:
                 except Exception:
                     logger.debug("trajectory save failed", exc_info=True)
                 # wire-level completion dump: prompt/response/tool_call/tool_result
-                # 落盘 jsonl 给 red_team + 未来 RL 训练消费.
-                # ponytail: 只 dump 非空 records, 失败静默. 升级路径: 加 prefix_merging.
-                if _completion_records:
-                    try:
-                        import json
-                        from huginn.utils.runtime import get_runtime_home
-                        comp_dir = get_runtime_home() / "completions" / thread_id
-                        comp_dir.mkdir(parents=True, exist_ok=True)
-                        comp_path = comp_dir / f"{_capture_turn_id}.jsonl"
-                        with open(comp_path, "w", encoding="utf-8") as f:
-                            for rec in _completion_records:
-                                f.write(json.dumps(rec, ensure_ascii=False, default=str) + "\n")
-                    except Exception:
-                        logger.debug("completion dump failed", exc_info=True)
+                # 落盘 jsonl 给 red_team + 未来 RL 训练消费. 提取为 _dump_completion_records
+                # 便于直接测试; prefix_merging (跨 turn 前缀去重) 是升级路径, 见该函数.
+                _dump_completion_records(_completion_records, thread_id, _capture_turn_id)
                 # STOP event
                 try:
                     stop_ctx = HookContext(

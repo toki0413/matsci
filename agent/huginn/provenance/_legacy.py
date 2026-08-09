@@ -14,6 +14,18 @@ physics AI 可复现性的底线: 每次计算结果带上种子/版本/参数�
 能列出来回放.
 """
 
+# [legacy-debt] 此文件名为 _legacy 是因为它是 M4 时期原 huginn/provenance.py 整体
+# 迁入 huginn/provenance/ 包后保留的旧实现, 不是"已被替代、待删除"的 legacy.
+# 现状: huginn/provenance/__init__.py 仍从这里 re-export 全部公共 API
+# (ProvenanceSnapshot / capture / save / ProvenanceRecord / ProvenanceLogger /
+# export_crate / capture_run_inputs / list_snapshots), 是当前唯一实现, 不可删除.
+# 后续清理方向 (非本次任务范围):
+#   1. 把内容拆/迁到 provenance/snapshot.py + provenance/record.py 等非 legacy 名模块,
+#      让 __init__.py 从新模块 re-export;
+#   2. 删本文件, 同步更新 __init__.py 的 import 路径与 docstring.
+# 在做 1/2 之前, 请勿新增对 huginn.provenance._legacy 的直接 import — 走包级
+# `from huginn.provenance import ...` 即可.
+
 from __future__ import annotations
 
 import hashlib
