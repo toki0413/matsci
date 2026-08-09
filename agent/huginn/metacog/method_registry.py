@@ -17,7 +17,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import Literal
 
-
 MechanismType = Literal[
     "new_invariant",       # 新的不变量 (守恒律 / 对称性)
     "new_construction",    # 新的构造 (算法 / 数据结构)
@@ -195,7 +194,6 @@ class MethodRegistry:
 # ponytail: to_dict 用 Any 是为了不引入额外类型, 保持模块自洽
 from typing import Any  # noqa: E402
 
-
 # ── 自检 ─────────────────────────────────────────────────────────
 
 def _selfcheck() -> None:
@@ -219,8 +217,8 @@ def _selfcheck() -> None:
     assert blocked_fam is not None and blocked_fam.is_blocked
 
     # 4. exempt_from_fp_check 可手动标记
-    from huginn.metacog.method_registry import MethodFamily as _MF
-    custom_reg = MethodRegistry([_MF(id="empirical-fit", essence="经验拟合", exempt_from_fp_check=True)])
+    from huginn.metacog.method_registry import MethodFamily
+    custom_reg = MethodRegistry([MethodFamily(id="empirical-fit", essence="经验拟合", exempt_from_fp_check=True)])
     assert custom_reg.by_id("empirical-fit").exempt_from_fp_check
 
     # 5. unregister 后 pressure 下降

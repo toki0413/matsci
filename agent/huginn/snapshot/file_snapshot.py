@@ -27,9 +27,9 @@ import os
 import shutil
 import threading
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterator
 
 logger = logging.getLogger(__name__)
 
@@ -220,9 +220,9 @@ class SnapshotManager:
     测试想隔离存储时传 root=, 拿一个独立实例, 不影响单例.
     """
 
-    _instance: "SnapshotManager | None" = None
+    _instance: SnapshotManager | None = None
 
-    def __new__(cls, root: Path | None = None) -> "SnapshotManager":
+    def __new__(cls, root: Path | None = None) -> SnapshotManager:
         if root is not None:
             # 显式 root: 每次新建, 给测试用, 不碰单例.
             inst = super().__new__(cls)
@@ -466,9 +466,10 @@ class SnapshotManager:
         logger.info("snapshot revert %s: %d paths", step_id, len(restored))
         # 发布 snapshot.revert 事件
         try:
+            import asyncio
+
             from huginn.events.integration import _publish
             from huginn.utils.concurrency import track_task
-            import asyncio
             asyncio.get_running_loop()
             track_task(_publish(
                 "snapshot.revert",

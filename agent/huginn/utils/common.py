@@ -14,13 +14,13 @@ import hashlib
 import json
 import os
 import tempfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 
 def now_iso() -> str:
     """UTC ISO 8601 时间戳."""
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def hash_text(text: str, length: int = 16) -> str:

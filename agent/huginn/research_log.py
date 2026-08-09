@@ -27,13 +27,12 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
 import sqlite3
 import threading
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -50,7 +49,7 @@ VALID_STATUSES = (
 )
 
 
-class RecordType(str, Enum):
+class RecordType(StrEnum):
     """研究记录的类型.
 
     继承 str 是为了直接 json.dumps / 写库时当字符串用, 省得到处 .value.

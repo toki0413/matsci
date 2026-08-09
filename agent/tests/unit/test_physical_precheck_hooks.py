@@ -11,7 +11,6 @@ from huginn.hooks.physical_precheck import (
     md_timestep_hook,
 )
 
-
 # ── provenance stub ─────────────────────────────────────────────────
 
 

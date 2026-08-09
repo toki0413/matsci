@@ -11,7 +11,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -57,7 +56,6 @@ class ToolSearchTool(HuginnTool):
     input_schema = ToolSearchInput
 
     async def call(self, args: ToolSearchInput, context: ToolContext) -> ToolResult:
-        from huginn.tools.registry import ToolRegistry
 
         if args.action == "search":
             return self._search(args.query or "", args.limit)

@@ -28,14 +28,16 @@ budget gate.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import threading
 import time
 import uuid
 from collections import deque
-from dataclasses import dataclass, field
-from typing import Any, Callable, Coroutine
+from collections.abc import Callable, Coroutine
+from dataclasses import dataclass
+from typing import Any
 
 from huginn.persistence.campaign import (
     CampaignStoreBackend,
@@ -47,7 +49,7 @@ from huginn.tools.profile import CostTier
 logger = logging.getLogger(__name__)
 
 
-class ResourceExhausted(Exception):
+class ResourceExhausted(Exception):  # noqa: N818
     """Raised when admitting a call would exceed the configured cpu/gpu budget.
 
     Caught in ``agent.py:_invoke_with_hooks`` and surfaced to the LLM as an
@@ -297,11 +299,9 @@ class ToolScheduler:
         self._wake_drainer()
 
     def _wake_drainer(self) -> None:
-        try:
+        # No running loop — drainer not started; queue still persists to store.
+        with contextlib.suppress(RuntimeError):
             self._drainer_wake.set()
-        except RuntimeError:
-            # No running loop — drainer not started; queue still persists to store.
-            pass
 
     async def _drain(self) -> None:
         """FIFO drainer: admit queued jobs as heavy slots free."""
@@ -311,7 +311,7 @@ class ToolScheduler:
                 try:
                     # Sleep until woken or a slot might have freed.
                     await asyncio.wait_for(self._drainer_wake.wait(), timeout=1.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     continue
                 continue
             job = self._queue[0]
@@ -344,10 +344,8 @@ class ToolScheduler:
             logger.exception("queued job %s failed", job.job_id)
         finally:
             if sem is not None:
-                try:
+                with contextlib.suppress(ValueError):
                     sem.release()
-                except ValueError:
-                    pass
             self._live_tasks.pop(job.job_id, None)
             now = time.time()
             if record is not None:
@@ -383,7 +381,7 @@ class ToolScheduler:
             rec.error = "orphaned: no live task on restart"
             self.store.upsert_job(rec)
             orphaned += 1
-        for rec in self.store.list_queued_jobs():
+        for _rec in self.store.list_queued_jobs():
             # Re-enqueue without a fresh factory — the caller must re-attach the
             # factory via submit_async resume, or the job_tool re-submits. We
             # keep the record so poll_job still reflects "queued".

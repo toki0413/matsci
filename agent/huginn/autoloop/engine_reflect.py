@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import logging
@@ -26,7 +27,6 @@ from typing import Any
 
 # 反思阶段方法引用的 engine.py 模块级 import (均为叶子模块, 无 circular 风险)
 from huginn.autoloop.types import LoopPhase
-from huginn.bench.runner import BenchmarkRunner
 from huginn.types import ToolContext
 
 logger = logging.getLogger(__name__)
@@ -348,8 +348,8 @@ class EngineReflectMixin:
         if isinstance(execution_result, dict) and execution_result.get("_variant_id"):
             try:
                 from huginn.autoloop.bandit import (
-                    WorkflowBandit,
                     VariantArchive,
+                    WorkflowBandit,
                 )
                 _vid = execution_result["_variant_id"]
                 _obj_hash = execution_result.get("_objective_hash", "")
@@ -576,6 +576,7 @@ class EngineReflectMixin:
         # 1. LLM 判
         try:
             import json as _json_jdg
+
             from langchain_core.messages import HumanMessage, SystemMessage
             _sys = SystemMessage(content=(
                 "You are a semantic consistency judge. Compare two reasoning paths "
@@ -855,10 +856,8 @@ class EngineReflectMixin:
             _htype = "other"
             _mem = getattr(self, "memory", None)
             if _mem is not None and hasattr(_mem, "longterm"):
-                try:
+                with contextlib.suppress(Exception):
                     _htype = _mem.longterm._infer_hyp_type(_node.statement)
-                except Exception:
-                    pass
                 _sm = _mem.longterm.get_self_model(
                     dimension=_dim or None, hyp_type=_htype,
                 )
@@ -1191,7 +1190,6 @@ class EngineReflectMixin:
     @staticmethod
     def _find_tool_call_loops(execution_result: dict) -> list[dict[str, Any]]:
         """从 execution_result 里找重复的工具调用 (同工具 + 同参数 2+ 次)."""
-        import hashlib
 
         calls = (
             execution_result.get("tool_calls")
@@ -1290,8 +1288,8 @@ class EngineReflectMixin:
         if len(action_history) < 4:
             return None  # 太短不检
         try:
-            from huginn.runtime.cycle_detect import is_stuck, detect_cycle
             from huginn.knowledge.trajectory_pattern import trajectory_match
+            from huginn.runtime.cycle_detect import detect_cycle, is_stuck
         except ImportError:
             return None
 
@@ -1512,6 +1510,9 @@ class EngineReflectMixin:
         if self.verification_model is None:
             return None
 
+        from huginn.harness.phase_spec import get_phase_extra
+        _needs_retry_threshold = get_phase_extra("_validate", "needs_retry_threshold", 0.5)
+
         text = self._extract_text(execution_result)
         if not text or len(text.strip()) < 10:
             return None
@@ -1597,7 +1598,6 @@ class EngineReflectMixin:
     @staticmethod
     def _parse_verify_score(resp: str) -> tuple[float, str, float, str, str]:
         """Parse score, reason, evidence_score, evidence_gap, failure_mode from LLM response."""
-        import re
 
         if not resp:
             return 0.5, "empty response", 0.5, "", ""
@@ -1871,7 +1871,8 @@ class EngineReflectMixin:
         # ponytail: 不追踪 select 返回值, 从 _last_*_blocks 反推. 升级路径:
         # select_block_subset_for_phase 返回 (blocks, selected_names) 避免 重算.
         try:
-            from huginn.harness.joint_optimizer import JointBandit, _harness_enabled as _h3_on
+            from huginn.harness.joint_optimizer import JointBandit
+            from huginn.harness.joint_optimizer import _harness_enabled as _h3_on
             if _h3_on("harness_joint_optimizer"):
                 _h3_phase = "hypothesize"
                 _h3_blocks = getattr(self, "_last_hypothesis_blocks", None) or []
@@ -1897,12 +1898,10 @@ class EngineReflectMixin:
                 # 合并到本地 hypothesis_graph
                 for node_id in self._merged_graph.nodes:
                     node = self._merged_graph.nodes.get(node_id)
-                    if node and hasattr(node, "statement"):
-                        # 跳过已存在的节点
-                        if not any(
-                            existing.statement == node.statement
-                            for existing in self.hypothesis_graph.nodes.values()
-                        ):
+                    if node and hasattr(node, "statement") and not any(
+                        existing.statement == node.statement
+                        for existing in self.hypothesis_graph.nodes.values()
+                    ):
                             nid = self.hypothesis_graph.add_hypothesis(
                                 statement=node.statement,
                                 rationale=getattr(node, "rationale", ""),
@@ -2155,7 +2154,10 @@ class EngineReflectMixin:
 
         if _should_feynman:
             try:
-                await self._feynman_learn(hypothesis, plan, validation, r_phys, context)
+                await self._feynman_learn(
+                    hypothesis, plan, validation, r_phys,
+                    getattr(self, "_last_context", {}) or {},
+                )
             except Exception:
                 logger.warning(
                     "error in _learn: feynman note generation failed", exc_info=True

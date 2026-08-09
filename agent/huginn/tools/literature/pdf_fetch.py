@@ -16,16 +16,14 @@ from ._http import (
     _USER_AGENT,
     _http_get_json,
     _http_get_text,
-    _http_get_bytes,
     _timeout,
     logger,
 )
 
-
 # ───────────────────────── crawl4ai 集成 ─────────────────────────
 
 
-class _Crawl4aiUnavailable(RuntimeError):
+class _Crawl4aiUnavailable(RuntimeError):  # noqa: N818
     """crawl4ai 没装或初始化失败. 调用方走降级路径."""
 
 
@@ -52,7 +50,7 @@ async def _crawl4ai_fetch(
         if not _crawl4ai_warned:
             logger.info("crawl4ai 未安装, crawl_web 走 urllib 降级. 装: pip install crawl4ai-skill")
             _crawl4ai_warned = True
-        raise _Crawl4aiUnavailable("crawl4ai not installed")
+        raise _Crawl4aiUnavailable("crawl4ai not installed") from None
 
     # 一次性配置: headless, 禁图, UA 伪装; 有 user_data_dir 时复用 session
     browser_cfg_kwargs: dict[str, Any] = {

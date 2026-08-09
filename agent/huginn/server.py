@@ -16,6 +16,7 @@ to ``server_core._context``.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import sys
 import time
@@ -28,31 +29,46 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
+import huginn.lifespan as _lf
+
+# ── Import server_core so its symbols are available for re-export ──────
+import huginn.server_core as _sc
 from huginn import __version__
 from huginn.lifespan import _get_cors_origins, lifespan
-from huginn.middleware.limits import RequestSizeLimitMiddleware, RequestTimeoutMiddleware
+from huginn.middleware.error_normalize import (
+    ErrorNormalizeMiddleware,
+    should_enable_normalize,
+)
+from huginn.middleware.limits import (
+    RequestSizeLimitMiddleware,
+    RequestTimeoutMiddleware,
+)
+from huginn.middleware.maintenance import MaintenanceMiddleware
 from huginn.middleware.request_id import RequestIDMiddleware
-from huginn.routes import ALL_ROUTERS, include_v1_routes
-from huginn.routes.agents import (
+from huginn.routes import include_v1_routes
+
+# Re-export route handler functions so tests and external callers can do
+# `from huginn.server import list_personas, create_persona, ...` without
+# reaching into the routes package. These are the canonical endpoint
+# callables; the FastAPI routers in huginn.routes wire them onto the app.
+from huginn.routes.agents import (  # noqa: F401
     create_persona,
     get_persona,
     list_personas,
     telemetry_spans,
     telemetry_summary,
 )
-from huginn.routes.memory import memory_maintenance
+from huginn.routes.memory import memory_maintenance  # noqa: F401
 from huginn.routes.metrics import (
     RATE_LIMIT_BLOCKED_TOTAL,
     http_metrics_dispatch,
 )
-from huginn.routes.threads import get_thread
-from huginn.routes.unified import unified_plot_endpoint, unified_solve_endpoint
+from huginn.routes.threads import get_thread  # noqa: F401
+from huginn.routes.unified import (  # noqa: F401
+    unified_plot_endpoint,
+    unified_solve_endpoint,
+)
 from huginn.security.auth import require_api_key
-from huginn.tools import register_all_tools
-
-# ── Import server_core so its symbols are available for re-export ──────
-import huginn.server_core as _sc
-import huginn.lifespan as _lf
 
 # Tool registration is deferred to lifespan startup so the server can
 # begin accepting health checks immediately. See lifespan._register_tools.
@@ -199,15 +215,11 @@ app.add_middleware(RequestIDMiddleware)
 
 # Error normalization — rewrites legacy {"error": "..."} responses to the
 # unified envelope. Opt-out via HUGINN_NORMALIZE_ERRORS=0.
-from huginn.middleware.error_normalize import ErrorNormalizeMiddleware, should_enable_normalize
-
 if should_enable_normalize():
     app.add_middleware(ErrorNormalizeMiddleware)
 
 # Maintenance mode middleware — returns 503 for non-health requests
 # when HUGINN_MAINTENANCE=1 or runtime toggle is on.
-from huginn.middleware.maintenance import MaintenanceMiddleware  # noqa: E402
-
 app.add_middleware(MaintenanceMiddleware)
 
 
@@ -241,8 +253,8 @@ async def _global_exception_handler(request: Request, exc: Exception):
 # validation) return the same JSON envelope.
 @app.exception_handler(HTTPException)
 async def _http_exception_handler(request: Request, exc: HTTPException):
+
     from huginn.errors import huginn_error_response
-    import json
 
     request_id = getattr(request.state, "request_id", "unknown")
     body = huginn_error_response(
@@ -307,16 +319,15 @@ sys.modules[__name__] = _wrapper
 
 if __name__ == "__main__":
     import sys
+
     import uvicorn
 
     # Accept --port from sidecar; default to 8000
     port = 8000
     for i, arg in enumerate(sys.argv):
         if arg == "--port" and i + 1 < len(sys.argv):
-            try:
+            with contextlib.suppress(ValueError):
                 port = int(sys.argv[i + 1])
-            except ValueError:
-                pass
 
     # DeepSeek reasoner can take 60s+ per turn; default 20s ping kills
     # the WS mid-response. Bump to 5 min so long LLM calls survive.

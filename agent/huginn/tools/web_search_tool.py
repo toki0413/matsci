@@ -653,7 +653,7 @@ def _c4_self_check() -> int:
     tool = WebSearchTool()
     # 强制熔断状态
     WebSearchTool._circuit_broken = True
-    result = tool.execute({"action": "search", "query": "test"}, None)  # type: ignore
+    result = tool.execute({"action": "search", "query": "test"}, None)  # type: ignore[arg-type]
     assert result.success is False, "circuit broken should fail"
     assert result.data.get("search_unavailable") is True, \
         "circuit broken should set search_unavailable=True"

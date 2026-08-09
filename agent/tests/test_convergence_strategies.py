@@ -1,7 +1,6 @@
 """Tests for the progressive SCF convergence strategy chain."""
 
 from huginn.tools.sim.convergence_strategies import (
-    ConvergenceStrategy,
     STRATEGY_CHAIN,
     apply_strategy,
     get_next_strategy,

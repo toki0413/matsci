@@ -15,7 +15,6 @@ from typing import Any
 from huginn.memory.index import build_memory_index, get_topic_file_path
 from huginn.memory.longterm import LongTermMemory
 from huginn.memory.session import SessionContext, ToolCallRecord
-from huginn.memory.truncation import truncate_entrypoint
 from huginn.memory.types import MemoryType
 from huginn.types import AgentMessage, ToolResult
 
@@ -79,7 +78,6 @@ class MemoryManager:
         result: Any = None,
         duration_ms: float = 0.0,
     ) -> None:
-        from huginn.types import ToolResult
 
         record = ToolCallRecord(
             tool_name=tool_name,
@@ -666,8 +664,8 @@ class MemoryManager:
         if not logs:
             return 0
 
-        failure_logs = [l for l in logs if not l["success"]]
-        success_logs = [l for l in logs if l["success"]]
+        failure_logs = [_l for _l in logs if not _l["success"]]
+        success_logs = [_l for _l in logs if _l["success"]]
 
         total = 0
         total += len(distiller.distill_error_lessons(failure_logs))
@@ -832,7 +830,7 @@ class MemoryManager:
 
     def recall_typed(
         self,
-        memory_type: "MemoryType | str",
+        memory_type: MemoryType | str,
         topic: str | None = None,
         *,
         persona_id: str | None = None,
@@ -984,7 +982,6 @@ class MemoryManager:
         内部方法, 给 typing.remember_typed 用. 只 UPDATE 非 None 字段, 不
         覆盖已存在的值.
         """
-        from datetime import datetime
 
         with self.longterm._connect() as conn:
             sets: list[str] = []
@@ -1073,6 +1070,7 @@ class MemoryManager:
         """
         import json
         from datetime import datetime
+
         from huginn.memory.typing import _infer_memory_type_from_tags
 
         sql = "SELECT * FROM memories AS m WHERE memory_type = ?"
@@ -1201,7 +1199,7 @@ class MemoryManager:
         intention 是 ProspectiveIntention 或 dict. 返回 intention_id,
         失败返回空串.
         """
-        from huginn.memory.prospective import ProspectiveMemory, ProspectiveIntention
+        from huginn.memory.prospective import ProspectiveIntention, ProspectiveMemory
 
         try:
             _pm = ProspectiveMemory(workspace=self._prospective_workspace())
@@ -1324,7 +1322,6 @@ def _selfcheck_promote_reasoning() -> None:
 
     from huginn.memory.longterm import LongTermMemory
     from huginn.memory.session import ToolCallRecord
-    from huginn.types import ToolResult
 
     tmp = tempfile.mkdtemp(prefix="huginn_promote_selfcheck_")
     db = Path(tmp) / "memory.db"
@@ -1504,8 +1501,9 @@ if __name__ == "__main__":
     #   M3. FTS5 路径保留 (普通 remember 写入的内容仍能召回)
     #   M4. _recall_typed_for_prompt 不走 lazy-migrate (SQL WHERE memory_type = ?)
     import tempfile
+
     from huginn.memory.longterm import LongTermMemory
-    from huginn.memory.typing import remember_typed, MemoryType
+    from huginn.memory.typing import MemoryType, remember_typed
 
     tmpdir_m = tempfile.mkdtemp(prefix="huginn_m_selfcheck_")
     db_path_m = Path(tmpdir_m) / "memory.db"

@@ -171,8 +171,6 @@ def apply_strategy(
     """
     code = _detect_code(params)
     for key, val in strategy.param_changes.items():
-        if code == "vasp" and key.isupper():
-            params[key] = val
-        elif code == "qe" and not key.isupper():
+        if code == "vasp" and key.isupper() or code == "qe" and not key.isupper():
             params[key] = val
     return params

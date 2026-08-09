@@ -6,7 +6,7 @@ LLM 拿到 K/M 矩阵后手动拼接调用; 疲劳/断裂走解析公式.
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -75,7 +75,7 @@ class SpecialtyAnalysisInput(BaseModel):
     poissons_ratio: float = Field(default=0.3, ge=-1, lt=0.5)
 
     @model_validator(mode="after")
-    def _check_action_fields(self) -> "SpecialtyAnalysisInput":
+    def _check_action_fields(self) -> SpecialtyAnalysisInput:
         if self.action == "eigenvalue_buckling":
             if self.stiffness_matrix is None or self.geometric_stiffness is None:
                 raise ValueError(

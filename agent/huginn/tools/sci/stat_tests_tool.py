@@ -17,7 +17,6 @@ from scipy import stats
 from huginn.tools.base import HuginnTool
 from huginn.types import ToolContext, ToolResult
 
-
 # ── 输入输出 schema ──────────────────────────────────────────────────
 
 

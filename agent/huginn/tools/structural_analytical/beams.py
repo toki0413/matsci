@@ -16,7 +16,6 @@ import numpy as np
 
 from huginn.types import ToolResult
 
-
 # 不同边界条件下的 β_n L 系数 (前 5 阶), 来自 Blevin Table 4-1
 _BETA_NL: dict[str, list[float]] = {
     "simply_supported": [math.pi, 2 * math.pi, 3 * math.pi, 4 * math.pi, 5 * math.pi],
@@ -49,7 +48,7 @@ def _shear_factor(section_type: str) -> float:
 def beam_static(args: Any) -> ToolResult:
     """单跨等截面梁静态挠度. 用经典公式 + 叠加法."""
     beam = args.beam
-    E, I = beam.youngs_modulus, beam.resolved_I()
+    E, I = beam.youngs_modulus, beam.resolved_I()  # noqa: E741
     L = beam.length
     A = beam.resolved_A()
     bc = args.boundary
@@ -167,7 +166,7 @@ def beam_static(args: Any) -> ToolResult:
 def beam_modal(args: Any) -> ToolResult:
     """梁自由振动模态. ω_n = (β_n L)^2 sqrt(EI/(ρ A L^4))."""
     beam = args.beam
-    E, I = beam.youngs_modulus, beam.resolved_I()
+    E, I = beam.youngs_modulus, beam.resolved_I()  # noqa: E741
     L = beam.length
     A = beam.resolved_A()
     rho = beam.density
@@ -256,7 +255,7 @@ def beam_modal(args: Any) -> ToolResult:
 def beam_buckling(args: Any) -> ToolResult:
     """Euler 屈曲临界载荷. P_cr = π² EI / (K L)²."""
     beam = args.beam
-    E, I = beam.youngs_modulus, beam.resolved_I()
+    E, I = beam.youngs_modulus, beam.resolved_I()  # noqa: E741
     L = beam.length
     A = beam.resolved_A()
     bc = args.boundary

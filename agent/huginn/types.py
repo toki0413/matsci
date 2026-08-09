@@ -8,7 +8,7 @@ from __future__ import annotations
 import contextvars
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum
+from enum import Enum, StrEnum
 from typing import Any, Literal
 
 # Tools can push live progress events to the WS client by calling this.
@@ -32,7 +32,7 @@ class BudgetDecision(Enum):
     DENY = "deny"
 
 
-class HandleType(str, Enum):
+class HandleType(StrEnum):
     """Types of opaque handles used by tools to reference external resources."""
 
     FILE_PATH = "file_path"

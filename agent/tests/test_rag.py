@@ -1,15 +1,16 @@
 
 import pytest
+
 pytest.importorskip("chromadb", reason="chromadb not installed (pip install huginn-agent[rag])")
 
 """Tests for RAG and encrypted RAG modules."""
 
-import tempfile
-from pathlib import Path
+import tempfile  # noqa: E402
+from pathlib import Path  # noqa: E402
 
-from huginn.crypto import CryptoVault
-from huginn.rag.encrypted_rag import EncryptedRAGManager
-from huginn.rag.vector_store import EncryptedVectorStore, VectorStore
+from huginn.crypto import CryptoVault  # noqa: E402
+from huginn.rag.encrypted_rag import EncryptedRAGManager  # noqa: E402
+from huginn.rag.vector_store import EncryptedVectorStore, VectorStore  # noqa: E402
 
 
 class TestVectorStore:

@@ -151,18 +151,14 @@ class PromptGuidanceHook:
         for kw in _KEYWORDS_CN:
             if kw in text:
                 return True
-        if self._en_pattern.search(text):
-            return True
-        return False
+        return bool(self._en_pattern.search(text))
 
     def _match_skip(self, text: str) -> bool:
         """用户明确说"不用调工具"时返回 True, 跳过引导."""
         for kw in _SKIP_CN:
             if kw in text:
                 return True
-        if self._skip_en_pattern.search(text):
-            return True
-        return False
+        return bool(self._skip_en_pattern.search(text))
 
     def _recommend_tools(self, text: str) -> list[str]:
         """按 keyword 命中推断推荐工具, 最多 3 个, 按命中数排序."""

@@ -5,14 +5,12 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-
 
 # ── TodoWrite / TodoRead ───────────────────────────────────────
 
@@ -25,8 +23,7 @@ def _run(coro):
 
 def test_todo_write_replaces_list():
     """整列表替换式 — 传入 2 个 todo 覆盖空状态."""
-    from huginn.tools.todo_tool import TodoWriteTool, _TODO_STORE
-    from huginn.tools.todo_tool import TodoWriteInput
+    from huginn.tools.todo_tool import _TODO_STORE, TodoWriteInput, TodoWriteTool
 
     _TODO_STORE.clear()
     tool = TodoWriteTool()
@@ -46,8 +43,7 @@ def test_todo_write_replaces_list():
 
 def test_todo_write_empty_clears():
     """空列表清空."""
-    from huginn.tools.todo_tool import TodoWriteTool, _TODO_STORE
-    from huginn.tools.todo_tool import TodoWriteInput
+    from huginn.tools.todo_tool import _TODO_STORE, TodoWriteInput, TodoWriteTool
 
     _TODO_STORE.clear()
     _TODO_STORE["s1"] = [{"content": "x", "status": "pending"}]
@@ -62,8 +58,7 @@ def test_todo_write_empty_clears():
 
 def test_todo_read_returns_current():
     """TodoRead 读当前会话 todo."""
-    from huginn.tools.todo_tool import TodoReadTool, _TODO_STORE
-    from huginn.tools.todo_tool import TodoReadInput
+    from huginn.tools.todo_tool import _TODO_STORE, TodoReadInput, TodoReadTool
 
     _TODO_STORE.clear()
     _TODO_STORE["s2"] = [
@@ -81,8 +76,7 @@ def test_todo_read_returns_current():
 
 def test_todo_read_empty_session():
     """空会话返回空列表."""
-    from huginn.tools.todo_tool import TodoReadTool, _TODO_STORE
-    from huginn.tools.todo_tool import TodoReadInput
+    from huginn.tools.todo_tool import _TODO_STORE, TodoReadInput, TodoReadTool
 
     _TODO_STORE.clear()
     tool = TodoReadTool()
@@ -96,15 +90,22 @@ def test_todo_read_empty_session():
 
 def test_todo_session_isolation():
     """不同 session_id 互不干扰."""
-    from huginn.tools.todo_tool import TodoWriteTool, TodoReadTool, _TODO_STORE
-    from huginn.tools.todo_tool import TodoWriteInput, TodoReadInput
+    from huginn.tools.todo_tool import (
+        _TODO_STORE,
+        TodoReadInput,
+        TodoReadTool,
+        TodoWriteInput,
+        TodoWriteTool,
+    )
 
     _TODO_STORE.clear()
     write = TodoWriteTool()
     read = TodoReadTool()
 
-    ctx_a = MagicMock(); ctx_a.session_id = "a"
-    ctx_b = MagicMock(); ctx_b.session_id = "b"
+    ctx_a = MagicMock()
+    ctx_a.session_id = "a"
+    ctx_b = MagicMock()
+    ctx_b.session_id = "b"
 
     _run(write.call(TodoWriteInput(todos=[{"content": "A", "status": "pending"}]), ctx_a))
     _run(write.call(TodoWriteInput(todos=[{"content": "B", "status": "completed"}]), ctx_b))
@@ -128,7 +129,7 @@ def _make_notebook(path: Path, n_cells: int = 2):
 
 def test_notebook_edit_missing_file():
     """文件不存在 -> 报错."""
-    from huginn.tools.notebook_tool import NotebookEditTool, NotebookEditInput
+    from huginn.tools.notebook_tool import NotebookEditInput, NotebookEditTool
     tool = NotebookEditTool()
     args = NotebookEditInput(
         notebook_path="nonexistent.ipynb",
@@ -141,7 +142,7 @@ def test_notebook_edit_missing_file():
 
 def test_notebook_edit_not_ipynb():
     """非 .ipynb -> 报错."""
-    from huginn.tools.notebook_tool import NotebookEditTool, NotebookEditInput
+    from huginn.tools.notebook_tool import NotebookEditInput, NotebookEditTool
     with tempfile.NamedTemporaryFile(suffix=".py", delete=False) as f:
         f.write(b"print('hi')")
         path = f.name
@@ -160,8 +161,9 @@ def test_notebook_edit_not_ipynb():
 
 def test_notebook_edit_replace_cell():
     """replace 第 0 个 cell."""
-    from huginn.tools.notebook_tool import NotebookEditTool, NotebookEditInput
     import nbformat
+
+    from huginn.tools.notebook_tool import NotebookEditInput, NotebookEditTool
 
     with tempfile.TemporaryDirectory() as tmp:
         nb_path = Path(tmp) / "test.ipynb"
@@ -183,8 +185,9 @@ def test_notebook_edit_replace_cell():
 
 def test_notebook_edit_insert_cell():
     """insert 新 cell 到 index 1."""
-    from huginn.tools.notebook_tool import NotebookEditTool, NotebookEditInput
     import nbformat
+
+    from huginn.tools.notebook_tool import NotebookEditInput, NotebookEditTool
 
     with tempfile.TemporaryDirectory() as tmp:
         nb_path = Path(tmp) / "test.ipynb"
@@ -204,8 +207,8 @@ def test_notebook_edit_insert_cell():
 
 def test_notebook_edit_delete_cell():
     """delete 第 0 个 cell."""
-    from huginn.tools.notebook_tool import NotebookEditTool, NotebookEditInput
-    import nbformat
+
+    from huginn.tools.notebook_tool import NotebookEditInput, NotebookEditTool
 
     with tempfile.TemporaryDirectory() as tmp:
         nb_path = Path(tmp) / "test.ipynb"
@@ -222,7 +225,7 @@ def test_notebook_edit_delete_cell():
 
 def test_notebook_edit_index_out_of_range():
     """cell_index 越界 -> 报错."""
-    from huginn.tools.notebook_tool import NotebookEditTool, NotebookEditInput
+    from huginn.tools.notebook_tool import NotebookEditInput, NotebookEditTool
 
     with tempfile.TemporaryDirectory() as tmp:
         nb_path = Path(tmp) / "test.ipynb"
@@ -240,7 +243,7 @@ def test_notebook_edit_index_out_of_range():
 def test_notebook_edit_invalid_mode_validation():
     """edit_mode 非法 -> Pydantic 校验失败."""
     from huginn.tools.notebook_tool import NotebookEditInput
-    with pytest.raises(Exception):
+    with pytest.raises(Exception):  # noqa: B017 — pydantic ValidationError
         NotebookEditInput(
             notebook_path="x.ipynb",
             edit_mode="invalid", cell_index=0, source="x",

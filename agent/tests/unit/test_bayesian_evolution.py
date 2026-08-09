@@ -5,11 +5,10 @@ from __future__ import annotations
 import json
 
 from huginn.skills.evolution import (
+    _MIN_SAMPLES,
     SkillEvolutionLayer,
     ToolBelief,
-    _MIN_SAMPLES,
 )
-
 
 # ── Beta distribution update ────────────────────────────────────────
 

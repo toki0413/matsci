@@ -16,8 +16,9 @@
 
 from __future__ import annotations
 
-import pytest
+import contextlib
 
+import pytest
 
 # ── 1. alignment (sklearn) ─────────────────────────────────────
 
@@ -66,7 +67,7 @@ def test_import_block_registry():
 
 
 def test_block_registry_construct():
-    from huginn.metacog.block_registry import BlockRegistry, BlockedRoute
+    from huginn.metacog.block_registry import BlockedRoute, BlockRegistry
 
     route = BlockedRoute(
         route_id="r1", method_family="gp", block_reason="circular"
@@ -393,6 +394,57 @@ def test_hypothesis_manifold_basic():
     assert obs.name == "energy"
     man = HypothesisManifold()
     assert man is not None
+
+
+def test_mcmc_multi_chain_processpool_parallel():
+    """升级路径 A: ProcessPool 真并行多链 + gate 回退 asyncio.
+
+    验证: 默认走 ProcessPool; HUGINN_MCMC_PARALLEL=0 回退 asyncio;
+    两条路径结果一致性 + R̂ 可计算.
+    """
+    import asyncio
+    import math
+    import os
+
+    from huginn.metacog.hypothesis_manifold import (
+        Hypothesis,
+        HypothesisManifold,
+        Observation,
+    )
+
+    obs = [Observation(name="accuracy", value=0.92, sigma=0.1)]
+
+    def build():
+        m = HypothesisManifold()
+        for hid, desc, scale, n in (
+            ("h_a", "Hypothesis A", 1.0, 2),
+            ("h_b", "Hypothesis B", 0.5, 3),
+            ("h_c", "Hypothesis C", 0.0, 1),
+        ):
+            with contextlib.suppress(ValueError):
+                m.add(Hypothesis(hid, desc, predictions={"accuracy": 0.92 * scale}, n_params=n))
+        return m
+
+    async def run(parallel):
+        os.environ["HUGINN_MCMC_PARALLEL"] = parallel
+        return await build().mcmc_multi_chain(
+            obs, n_chains=4, n_steps_per_chain=20000,
+            checkpoint_interval=0, anneal=True, t_high=10.0,
+            global_proposal_prob=0.3,
+        )
+
+    pp = asyncio.run(run("1"))
+    al = asyncio.run(run("0"))
+
+    # 两条路径都应跑出 4 条链
+    assert len(pp["chains"]) == 4, f"ProcessPool chains: {len(pp['chains'])}"
+    assert len(al["chains"]) == 4, f"asyncio chains: {len(al['chains'])}"
+    # R̂ 可计算且收敛 (尖锐后验 + 全局混合 + 退火)
+    assert not math.isnan(pp["r_hat"]), f"ProcessPool r_hat nan: {pp['r_hat']}"
+    assert pp["r_hat"] < 1.1, f"ProcessPool not converged: {pp['r_hat']}"
+    # 一致性: 相同种子 + 相同逻辑, 接受率高度接近
+    for a, b in zip(sorted(pp["accept_rates"]), sorted(al["accept_rates"])):
+        assert abs(a - b) < 0.02, f"path mismatch: pp={pp['accept_rates']} asyncio={al['accept_rates']}"
 
 
 # ── 23. imagination ────────────────────────────────────────────

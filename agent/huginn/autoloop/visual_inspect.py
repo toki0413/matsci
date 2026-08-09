@@ -317,16 +317,16 @@ class VisualInspectMixin:
         ponytail: 优先用已有 image_analysis_tool (defect_detect/phase_field 场景),
         失败降级到 visual_ctx 文本特征提取. 不新建工具.
         """
-        import re
 
         features: list[str] = []
         tool_output: dict[str, Any] | None = None
         # 有图片 → 调 image_analysis_tool 做真正结构标注
         if visual_base64:
             try:
-                from huginn.tools.registry import ToolRegistry
                 import base64 as b64
                 import io as _io
+
+                from huginn.tools.registry import ToolRegistry
 
                 img_tool = ToolRegistry.get("image_analysis_tool")
                 if img_tool:
@@ -502,8 +502,10 @@ def _selfcheck() -> None:
     arr_a = np.tile(np.linspace(0, 255, 100, dtype=np.uint8), (100, 1))  # 渐变
     arr_b = np.zeros((100, 100), dtype=np.uint8)
     arr_b[50:, :] = 255  # 二值图: 上黑下白, bin[0]和bin[31]两峰
-    buf_a = _io.BytesIO(); Image.fromarray(arr_a).save(buf_a, format="PNG")
-    buf_b = _io.BytesIO(); Image.fromarray(arr_b).save(buf_b, format="PNG")
+    buf_a = _io.BytesIO()
+    Image.fromarray(arr_a).save(buf_a, format="PNG")
+    buf_b = _io.BytesIO()
+    Image.fromarray(arr_b).save(buf_b, format="PNG")
     same = _histogram_correlation(buf_a.getvalue(), buf_a.getvalue())
     diff = _histogram_correlation(buf_a.getvalue(), buf_b.getvalue())
     assert same > 0.9, f"相同图相关性应 >0.9, got {same}"

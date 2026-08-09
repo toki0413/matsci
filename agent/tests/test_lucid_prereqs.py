@@ -415,7 +415,7 @@ class TestRedteamClassification:
 
     def test_redteam_findings_reads_last_report(self):
         """_redteam_findings 从 _last_report 拿 high severity category."""
-        from huginn.autoloop.red_team import RedTeamReport, RedTeamFinding
+        from huginn.autoloop.red_team import RedTeamFinding, RedTeamReport
 
         report = RedTeamReport(
             transition=("validate", "learn"),
@@ -470,8 +470,9 @@ class TestPlanOverrideAudit:
     def test_log_plan_override_writes_history_entry(self):
         """force_explore 触发后, PhaseGateState.history 多一条 reviewer=auto_router."""
         from huginn.autoloop.phase_gate import (
-            PhaseGateState, set_shared_phase_gate_state,
+            PhaseGateState,
             get_shared_phase_gate_state,
+            set_shared_phase_gate_state,
         )
         set_shared_phase_gate_state(PhaseGateState())
         try:
@@ -493,8 +494,9 @@ class TestPlanOverrideAudit:
     def test_log_plan_override_no_duplicate_for_cut_vertex(self):
         """割点单条覆盖也写 history, 不重复."""
         from huginn.autoloop.phase_gate import (
-            PhaseGateState, set_shared_phase_gate_state,
+            PhaseGateState,
             get_shared_phase_gate_state,
+            set_shared_phase_gate_state,
         )
         set_shared_phase_gate_state(PhaseGateState())
         try:
@@ -533,8 +535,9 @@ class TestPlanOverrideAudit:
     def test_log_plan_override_combines_reasons(self):
         """连败 + surprise 同时满足 → 单条 history, reason 合并."""
         from huginn.autoloop.phase_gate import (
-            PhaseGateState, set_shared_phase_gate_state,
+            PhaseGateState,
             get_shared_phase_gate_state,
+            set_shared_phase_gate_state,
         )
         set_shared_phase_gate_state(PhaseGateState())
         try:
@@ -564,8 +567,9 @@ class TestCheckGateReviewer:
         """override 放行 → PhaseGate.history 写一条 reviewer 来自 override_meta."""
         from huginn.autoloop.engine import AutoloopEngine
         from huginn.autoloop.phase_gate import (
-            PhaseGateState, PhaseGateHook, set_shared_phase_gate_state,
-            get_shared_phase_gate_state,
+            PhaseGateHook,
+            PhaseGateState,
+            set_shared_phase_gate_state,
         )
         state = PhaseGateState()
         set_shared_phase_gate_state(state)
@@ -594,8 +598,9 @@ class TestCheckGateReviewer:
         """override 在 set 里但 override_meta 缺 → reviewer 默认 'user'."""
         from huginn.autoloop.engine import AutoloopEngine
         from huginn.autoloop.phase_gate import (
-            PhaseGateState, PhaseGateHook, set_shared_phase_gate_state,
-            get_shared_phase_gate_state,
+            PhaseGateHook,
+            PhaseGateState,
+            set_shared_phase_gate_state,
         )
         state = PhaseGateState()
         set_shared_phase_gate_state(state)

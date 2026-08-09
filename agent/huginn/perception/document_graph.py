@@ -31,7 +31,6 @@ from huginn.perception.doc_types import (
     GraphEdge,
 )
 
-
 # ---------------------------------------------------------------------------
 # Mention detection patterns.
 #
@@ -477,9 +476,7 @@ class DocumentGraph:
         """
         if el.element_type is ElementType.MENTION:
             return False
-        if el.metadata.get("_synthesized"):
-            return False
-        return True
+        return not el.metadata.get("_synthesized")
 
     @staticmethod
     def _bbox_may_be_near(a: BBox, b: BBox, threshold: float) -> bool:
@@ -493,9 +490,7 @@ class DocumentGraph:
         # center could still be inside the expanded b, we can't reject.
         if a.x2 < b.x1 - threshold or b.x2 < a.x1 - threshold:
             return False
-        if a.y2 < b.y1 - threshold or b.y2 < a.y1 - threshold:
-            return False
-        return True
+        return not (a.y2 < b.y1 - threshold or b.y2 < a.y1 - threshold)
 
     # ------------------------------------------------------------------
     # Query API
@@ -570,7 +565,7 @@ class DocumentGraph:
             mat[i, j] = e.weight
         return mat
 
-    def get_subgraph(self, element_ids: list[str]) -> "DocumentGraph":
+    def get_subgraph(self, element_ids: list[str]) -> DocumentGraph:
         """Return a new graph restricted to the given element ids.
 
         Only edges whose both endpoints survive the cut are kept; the rest

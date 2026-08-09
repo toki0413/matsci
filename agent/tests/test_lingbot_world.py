@@ -5,13 +5,7 @@ LW-2: Proactive pipeline event injection
 LW-3: Value-aware context retention
 """
 
-import asyncio
-import time
-from pathlib import Path
 from unittest.mock import MagicMock, patch
-
-import pytest
-
 
 # ── LW-2: Proactive Suggestion ─────────────────────────────────
 

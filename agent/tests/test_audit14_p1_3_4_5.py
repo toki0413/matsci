@@ -17,7 +17,6 @@ from huginn.execution.physics_auditor import PhysicsAuditor
 from huginn.tools.sim.lammps_tool import LammpsTool, LammpsToolInput
 from huginn.tools.sim.vasp_tool import VaspTool
 
-
 # ── P1-3: DEM script generator ──────────────────────────────────────────────
 
 

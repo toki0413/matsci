@@ -9,7 +9,6 @@ from __future__ import annotations
 import asyncio
 import math
 
-import numpy as np
 import pytest
 from pydantic import ValidationError
 
@@ -23,7 +22,6 @@ from huginn.tools.structural_analytical.beams import (
     beam_static,
 )
 from huginn.tools.structural_analytical.plates import (
-    plate_buckling,
     plate_modal,
     plate_static,
 )
@@ -31,7 +29,6 @@ from huginn.tools.structural_analytical.shells import shell_buckling, shell_moda
 from huginn.tools.structural_analytical.stress_concentration import (
     stress_concentration,
 )
-
 
 # ── beam ──
 

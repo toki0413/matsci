@@ -201,9 +201,7 @@ def _tool_succeeded(ctx: HookContext) -> bool:
     result = ctx.result if isinstance(ctx.result, dict) else {}
     if result.get("error"):
         return False
-    if result.get("success") is False:
-        return False
-    return True
+    return result.get("success") is not False
 
 
 async def rag_track_hook(ctx: HookContext) -> HookContext | None:

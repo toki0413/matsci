@@ -71,7 +71,7 @@ async def _run_ruff(path: Path, ruff_bin: str) -> list[str]:
         stdout, stderr = await asyncio.wait_for(
             proc.communicate(), timeout=_LINT_TIMEOUT
         )
-    except (FileNotFoundError, asyncio.TimeoutError):
+    except (TimeoutError, FileNotFoundError):
         return []
 
     output = (stdout + stderr).decode("utf-8", errors="replace")
@@ -96,7 +96,7 @@ async def _run_py_compile(path: Path) -> list[str]:
         stdout, stderr = await asyncio.wait_for(
             proc.communicate(), timeout=_LINT_TIMEOUT
         )
-    except (FileNotFoundError, asyncio.TimeoutError):
+    except (TimeoutError, FileNotFoundError):
         return []
 
     if proc.returncode == 0:

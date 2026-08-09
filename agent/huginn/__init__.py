@@ -11,7 +11,7 @@ import enum as _enum
 # ``from enum import StrEnum``) regardless of the running Python version.
 if not hasattr(_enum, "StrEnum"):  # pragma: no cover
 
-    class _StrEnumBackport(str, _enum.Enum):
+    class _StrEnumBackport(_enum.StrEnum):
         __str__ = str.__str__
 
     _enum.StrEnum = _StrEnumBackport  # type: ignore[attr-defined]

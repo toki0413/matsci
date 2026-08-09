@@ -16,13 +16,17 @@ import pytest
 from huginn.personalization import StyleLearner, set_shared_style_learner
 from huginn.skills.registry import SkillRegistry
 from huginn.tools.config_wizard_tool import ConfigWizardTool
-from huginn.tools.memory_tool import RecallInput, RecallTool, RememberInput, RememberTool
+from huginn.tools.memory_tool import (
+    RecallInput,
+    RecallTool,
+    RememberInput,
+    RememberTool,
+)
 from huginn.tools.orchestrate_tool import OrchestrateInput, OrchestrateTool
 from huginn.tools.personalization_tool import PersonalizationInput, PersonalizationTool
 from huginn.tools.scenario_tool import ScenarioTool, ScenarioToolInput
 from huginn.tools.simple_path_tool import SimplePathTool, SimplePathToolInput
 from huginn.tools.skill_tool import SkillTool, SkillToolInput
-
 
 # ── 单例重置 fixture ─────────────────────────────────────────────────
 

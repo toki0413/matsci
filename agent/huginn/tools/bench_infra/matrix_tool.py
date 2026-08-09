@@ -10,14 +10,13 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 import numpy as np
 from pydantic import BaseModel, Field
 
 from huginn.tools.base import HuginnTool
 from huginn.types import ToolContext, ToolResult
-
 
 # ── benchmark simulators ────────────────────────────────────────
 # 每个 task 返回 (prior_sample_fn, simulator_fn, param_dim, data_dim).
@@ -96,10 +95,12 @@ def _train_cell(task_name: str, method: str, n_train: int, n_epochs: int, seed: 
         xt = torch.tensor(x, dtype=torch.float32)
         thetat = torch.tensor(theta, dtype=torch.float32)
         losses = []
-        for ep in range(n_epochs):
+        for _ep in range(n_epochs):
             pred = net(xt)
             loss = nn.functional.mse_loss(pred, thetat)
-            opt.zero_grad(); loss.backward(); opt.step()
+            opt.zero_grad()
+            loss.backward()
+            opt.step()
             losses.append(float(loss))
     elif method == "nre":
         # ratio: classifier (θ, x) real vs (θ', x) fake
@@ -111,11 +112,13 @@ def _train_cell(task_name: str, method: str, n_train: int, n_epochs: int, seed: 
         labels = torch.cat([torch.ones(n_train, 1), torch.zeros(n_train, 1)])
         data = torch.cat([real, fake])
         losses = []
-        for ep in range(n_epochs):
+        for _ep in range(n_epochs):
             idx = torch.randperm(2 * n_train)
             logits = clf(data[idx])
             loss = nn.functional.binary_cross_entropy_with_logits(logits, labels[idx])
-            opt.zero_grad(); loss.backward(); opt.step()
+            opt.zero_grad()
+            loss.backward()
+            opt.step()
             losses.append(float(loss))
     else:  # nle
         net = nn.Sequential(nn.Linear(p_dim, 64), nn.ReLU(), nn.Linear(64, 64), nn.ReLU(), nn.Linear(64, x_dim))
@@ -123,10 +126,12 @@ def _train_cell(task_name: str, method: str, n_train: int, n_epochs: int, seed: 
         xt = torch.tensor(x, dtype=torch.float32)
         thetat = torch.tensor(theta, dtype=torch.float32)
         losses = []
-        for ep in range(n_epochs):
+        for _ep in range(n_epochs):
             pred = net(thetat)
             loss = nn.functional.mse_loss(pred, xt)
-            opt.zero_grad(); loss.backward(); opt.step()
+            opt.zero_grad()
+            loss.backward()
+            opt.step()
             losses.append(float(loss))
 
     return {

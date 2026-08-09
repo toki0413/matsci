@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 def client():
     """Minimal FastAPI app with just diagnostics routes."""
     from fastapi import FastAPI
+
     from huginn.routes.diagnostics import router
 
     app = FastAPI()

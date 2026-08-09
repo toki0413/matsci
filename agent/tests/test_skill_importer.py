@@ -10,7 +10,6 @@ from pathlib import Path
 
 from huginn.plugins.skill_importer import SkillImporter
 
-
 OPENCLAW_SKILL = """\
 ---
 name: oc_demo

@@ -11,20 +11,17 @@ Scenarios:
 4. Cross-domain structure-property relationship
 """
 
-import pytest
-from unittest.mock import MagicMock, patch
 from huginn.cognitive_engine import (
     CognitiveState,
-    AttentionMode,
-    TransitionSignal,
     CognitiveStateMachine,
+    TransitionSignal,
 )
 
 
 class TestDFTBandgapWorkflow:
     """Full DFT bandgap calculation workflow."""
 
-    def test_gaN_bandgap_calculation_full_cycle(self):
+    def test_gan_bandgap_calculation_full_cycle(self):
         """Simulate: user asks for GaN bandgap → explore → plan → execute → report."""
         csm = CognitiveStateMachine()
         csm.start_session()

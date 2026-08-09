@@ -15,11 +15,9 @@ import pytest
 from huginn.phases import (
     PHASE_PROMPTS,
     PHASE_TRANSITIONS,
-    PHASE_TOOLS,
     PhaseManager,
     ResearchPhase,
 )
-
 
 # ── fixtures ──────────────────────────────────────────────────
 

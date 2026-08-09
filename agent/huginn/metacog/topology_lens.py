@@ -25,9 +25,8 @@ agent 可调用的判据函数. 不是完整 SKILL, 是元认知层的结构透�
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Literal
-
 
 # ── 四族分类 ──────────────────────────────────────────────────
 
@@ -270,8 +269,8 @@ def hodge_signature(
         beta1 = 0  # 森的 β₁=0
 
     # 度分布熵
-    from collections import Counter
     import math
+    from collections import Counter
     degree = Counter()
     for a, b in edges:
         degree[a] += 1
@@ -375,7 +374,7 @@ def topology_permits(
             )
         return TopologyPermit(
             permitted=False,
-            reason=f"β₁=0, 无拓扑环, 同步模式不可能 (无论耦合强度)",
+            reason="β₁=0, 无拓扑环, 同步模式不可能 (无论耦合强度)",
             beta0=beta0, beta1=beta1,
             required_change="引入环结构 (新增反馈边) 使 β₁ > 0",
         )
@@ -390,7 +389,7 @@ def topology_permits(
             )
         return TopologyPermit(
             permitted=False,
-            reason=f"β₁=0, 无独立环, 环流不可能 (标准扩散模型已足够)",
+            reason="β₁=0, 无独立环, 环流不可能 (标准扩散模型已足够)",
             beta0=beta0, beta1=beta1,
             required_change="若物理确有环流, 需补反馈边; 否则用标准 Fick 扩散",
         )
@@ -415,7 +414,7 @@ def topology_permits(
         if beta1 == 0:
             return TopologyPermit(
                 permitted=True,
-                reason=f"β₁=0, 无拓扑障碍, 局部模型可全局粘合 (H¹≈0)",
+                reason="β₁=0, 无拓扑障碍, 局部模型可全局粘合 (H¹≈0)",
                 beta0=beta0, beta1=beta1,
             )
         return TopologyPermit(

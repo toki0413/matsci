@@ -15,7 +15,6 @@ from unittest.mock import MagicMock
 import pytest
 
 from huginn.execution.kernel_session import (
-    KernelExecResult,
     KernelSession,
     KernelSessionManager,
 )

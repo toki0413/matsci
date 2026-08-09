@@ -13,13 +13,12 @@ agent 通过这个工具:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 from huginn.autoloop.phase_gate import (
-    PhaseGate,
     PhaseGateConfig,
     PhaseGateHook,
     get_shared_phase_gate_state,
@@ -187,7 +186,7 @@ class PhaseTool(HuginnTool):
         key = (input_data.from_phase, input_data.to_phase)
         state.overrides.add(key)
         state.override_meta[key] = {
-            "ts": datetime.now(timezone.utc).isoformat(),
+            "ts": datetime.now(UTC).isoformat(),
             "actor": "user",
             "reason": "manual_override",
         }

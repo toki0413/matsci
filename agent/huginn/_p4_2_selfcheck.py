@@ -8,13 +8,11 @@
 """
 from __future__ import annotations
 
-import os
-
 
 def _test_standing_rules_basic():
     """grant + is_granted + reset."""
     from huginn.permissions import (
-        StandingRulesStore, get_standing_rules_store,
+        get_standing_rules_store,
         reset_standing_rules_store,
     )
     reset_standing_rules_store()
@@ -58,7 +56,8 @@ def _test_standing_rules_basic():
 def _test_standing_rules_list():
     """list_rules 可观测性."""
     from huginn.permissions import (
-        get_standing_rules_store, reset_standing_rules_store,
+        get_standing_rules_store,
+        reset_standing_rules_store,
     )
     reset_standing_rules_store()
     store = get_standing_rules_store()
@@ -107,7 +106,8 @@ def _test_extract_target():
 def _test_standing_rules_singleton():
     """单例模式: get_standing_rules_store 返回同一实例."""
     from huginn.permissions import (
-        get_standing_rules_store, reset_standing_rules_store,
+        get_standing_rules_store,
+        reset_standing_rules_store,
     )
     reset_standing_rules_store()
     s1 = get_standing_rules_store()

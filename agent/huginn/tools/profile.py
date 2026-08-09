@@ -8,7 +8,7 @@ dicts that had to be hand-maintained in four different files.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Literal
 
 from huginn.phases import ResearchPhase

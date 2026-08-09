@@ -3,12 +3,9 @@ VM-2 (Abaqus Explicit Dynamic), VM-3 (LAMMPS DEM packing)."""
 
 from __future__ import annotations
 
-import asyncio
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 
 # ── VM-1: Fracture Assessment Composite Skill ──────────────────
 
@@ -88,11 +85,15 @@ class TestAbaqusExplicitDynamic:
 
     def test_explicit_dynamic_validates_spec(self):
         from huginn.tools.sim.abaqus_tool import AbaqusToolInput
-        with pytest.raises(Exception):
+        with pytest.raises(Exception):  # noqa: B017 — pydantic ValidationError
             AbaqusToolInput(action="explicit_dynamic")  # missing explicit_spec
 
     def test_script_generator_produces_valid_python(self):
-        from huginn.tools.sim.abaqus_tool import AbaqusTool, AbaqusToolInput, ExplicitDynamicSpec
+        from huginn.tools.sim.abaqus_tool import (
+            AbaqusTool,
+            AbaqusToolInput,
+            ExplicitDynamicSpec,
+        )
         tool = AbaqusTool()
         spec = ExplicitDynamicSpec(
             youngs_modulus=210e9,

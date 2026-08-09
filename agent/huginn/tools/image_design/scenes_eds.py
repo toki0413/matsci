@@ -67,7 +67,7 @@ def eds_overlay(args: ImageDesignInput) -> ToolResult:
         # 三元素分别打到 R/G/B 通道
         fig, ax = plt.subplots(figsize=(10, 10))
         rgb_img = np.zeros((H, W, 3), dtype=float)
-        for i, ed in enumerate(elem_data[:3]):
+        for _i, ed in enumerate(elem_data[:3]):
             c = parse_color(ed["color"]) / 255.0
             rgb_img[:, :, 0] += ed["intensity"] * c[0]
             rgb_img[:, :, 1] += ed["intensity"] * c[1]
@@ -84,7 +84,7 @@ def eds_overlay(args: ImageDesignInput) -> ToolResult:
             fontweight="bold",
             fontsize=18,
             va="top",
-            bbox=dict(facecolor="black", alpha=0.6),
+            bbox={"facecolor": "black", "alpha": 0.6},
         )
         ax.set_axis_off()
     elif mode == "side_by_side":
@@ -121,7 +121,7 @@ def eds_overlay(args: ImageDesignInput) -> ToolResult:
                 fontweight="bold",
                 fontsize=18,
                 va="top",
-                bbox=dict(facecolor="black", alpha=0.5),
+                bbox={"facecolor": "black", "alpha": 0.5},
             )
         ax.set_axis_off()
 

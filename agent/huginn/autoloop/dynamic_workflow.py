@@ -21,6 +21,8 @@ Two entry points:
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import logging
 import threading
 import uuid
 from dataclasses import dataclass, field
@@ -29,7 +31,7 @@ from typing import Any
 from huginn.tools.registry import ToolRegistry
 from huginn.types import ToolContext
 from huginn.utils.common import now_iso
-import logging
+
 logger = logging.getLogger(__name__)
 
 
@@ -57,7 +59,7 @@ class WorkflowScript:
     max_concurrent: int = 8
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "WorkflowScript":
+    def from_dict(cls, data: dict[str, Any]) -> WorkflowScript:
         """Parse a script dict (from LLM JSON / tool args).
 
         Expected shape:
@@ -398,10 +400,8 @@ class WorkflowRegistry:
             return result
         if task is not None and not task.done():
             # 后台任务还在跑 — 等它
-            try:
+            with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(task, timeout=timeout)
-            except asyncio.TimeoutError:
-                pass
         else:
             # task 是 None (submit 时没 loop) 或者 task 已死 (loop 关了, 任务被
             # 取消但 result 还停在 pending) — 同步跑一遍补上结果

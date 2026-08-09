@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from huginn.types import ToolResult
 from huginn.tools.image_analysis._utils import load_gray, otsu_numpy
+from huginn.types import ToolResult
 
 if TYPE_CHECKING:
     from huginn.tools.image_analysis.tool import ImageAnalysisInput
@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def particle_stats(args: "ImageAnalysisInput") -> ToolResult:
+def particle_stats(args: ImageAnalysisInput) -> ToolResult:
     arr = load_gray(args.image_path)
     pixel_size = float(args.parameters.get("pixel_size_nm", 1.0))
     min_area = int(args.parameters.get("min_area_px", 10))
@@ -39,7 +39,8 @@ def particle_stats(args: "ImageAnalysisInput") -> ToolResult:
     # 连通域 + regionprops, skimage 优先, scipy 兜底
     areas: np.ndarray
     try:
-        from skimage.measure import label as sk_label, regionprops
+        from skimage.measure import label as sk_label
+        from skimage.measure import regionprops
 
         labeled = sk_label(binary)
         props = regionprops(labeled)

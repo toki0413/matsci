@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import traceback
 from pathlib import Path
 from typing import Any
 
@@ -38,7 +37,7 @@ def _validate_working_dir(raw_path: str) -> str:
         raise HTTPException(
             status_code=403,
             detail="working_dir is outside the workspace boundary",
-        )
+        ) from None
     return str(resolved)
 
 

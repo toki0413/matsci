@@ -258,7 +258,7 @@ class SecretScanner:
     def redact_pii(self, text: str) -> str:
         """Replace PII patterns with [PII_REDACTED]."""
         result = text
-        for rule_id, pattern in self._pii_patterns:
+        for _rule_id, pattern in self._pii_patterns:
             result = pattern.sub("[PII_REDACTED]", result)
         return result
 

@@ -313,16 +313,16 @@ class TestToolRegistryIntegration:
         from huginn.tools.diagnose_tool import DiagnoseTool
         from huginn.tools.diff_tool import DiffTool
         from huginn.tools.extract_tool import ExtractTool
+        from huginn.tools.fem_tool import FEMTool
         from huginn.tools.job_tool import JobTool
         from huginn.tools.lammps_tool import LammpsTool
         from huginn.tools.report_tool import ReportTool
+        from huginn.tools.specialty_analysis_tool import SpecialtyAnalysisTool
+        from huginn.tools.structural_analytical_tool import StructuralAnalyticalTool
         from huginn.tools.structure_tool import StructureTool
         from huginn.tools.symbolic_regression_tool import SymbolicRegressionTool
         from huginn.tools.validate_tool import ValidateTool
         from huginn.tools.vasp_tool import VaspTool
-        from huginn.tools.structural_analytical_tool import StructuralAnalyticalTool
-        from huginn.tools.specialty_analysis_tool import SpecialtyAnalysisTool
-        from huginn.tools.fem_tool import FEMTool
 
         tools = [
             StructureTool,

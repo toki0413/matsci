@@ -16,16 +16,15 @@ GET /diagnostics/trace    — recent telemetry spans
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 import threading
 import time
 from typing import Any
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Response
 
-from huginn.security.auth import require_admin_key
-import logging
 logger = logging.getLogger(__name__)
 
 

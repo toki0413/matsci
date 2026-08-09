@@ -14,7 +14,6 @@ from typing import Any
 
 from huginn.cognitive_engine import TransitionSignal
 
-
 # 源 → signal_type 映射. 模块级常量, 运行时可经 register() 扩展.
 _SOURCE_TO_SIGNAL_TYPE: dict[str, str] = {
     "perception_converged": "tool_success",
@@ -44,7 +43,7 @@ class SignalHub:
       reflection._run_post_turn_reflection 末尾 drain_pending 拉 emit 的信号.
     """
 
-    _instance: "SignalHub | None" = None
+    _instance: SignalHub | None = None
     _lock = threading.Lock()
 
     def __init__(self) -> None:
@@ -56,7 +55,7 @@ class SignalHub:
         self._pending_lock = threading.Lock()
 
     @classmethod
-    def shared(cls) -> "SignalHub":
+    def shared(cls) -> SignalHub:
         # ponytail: 双检锁单例. 当前 metacog 并发量低, 简单 lock 已足够.
         # 升级路径: 若 route() 热路径出现锁竞争, 改 threading.local 或无锁读.
         if cls._instance is None:

@@ -21,13 +21,13 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Protocol
 
 logger = logging.getLogger(__name__)
 
 
-class CognitiveState(str, Enum):
+class CognitiveState(StrEnum):
     """S0-S6 states from the Double Helix state machine."""
 
     S0_BLANK = "s0_blank"          # fresh session, no goal yet
@@ -40,7 +40,7 @@ class CognitiveState(str, Enum):
     S7_SELF_MODIFY = "s7_self_modify"   # 哥德尔机自修改触发点：评估要不要改策略/原则
 
 
-class AttentionMode(str, Enum):
+class AttentionMode(StrEnum):
     """Which attention strategy the agent uses."""
 
     SINGULARITY_CONDENSATION = "singularity_condensation"  # discovery: what's glowing?
@@ -114,7 +114,7 @@ class CSMListener(Protocol):
         self,
         old: CognitiveState,
         new: CognitiveState,
-        signal: "TransitionSignal",
+        signal: TransitionSignal,
     ) -> None:
         """CSM 状态转移通知. listener 自行决定是否同步本地状态.
 
@@ -229,9 +229,8 @@ def resolve_transition(
         return CognitiveState.S6_FEEDBACK
 
     # gap_found in S6 → S7 (self-modify trigger)
-    if st == "gap_found" and current == CognitiveState.S6_FEEDBACK:
-        if CognitiveState.S7_SELF_MODIFY in allowed:
-            return CognitiveState.S7_SELF_MODIFY
+    if st == "gap_found" and current == CognitiveState.S6_FEEDBACK and CognitiveState.S7_SELF_MODIFY in allowed:
+        return CognitiveState.S7_SELF_MODIFY
 
     # gap_found → feedback or discover
     if st == "gap_found":

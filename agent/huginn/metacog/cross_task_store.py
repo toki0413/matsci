@@ -14,8 +14,6 @@ import os
 import sqlite3
 import tempfile
 from pathlib import Path
-from typing import Optional
-
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS trace_entries (
@@ -102,8 +100,8 @@ class CrossTaskStore:
     def query(
         self,
         domain: str,
-        task_id: Optional[str] = None,
-        keyword: Optional[str] = None,
+        task_id: str | None = None,
+        keyword: str | None = None,
         top_k: int = 10,
     ) -> list[dict]:
         """查询历史 entry. 跨 domain 隔离: 只返回指定 domain 的 entry.

@@ -10,11 +10,13 @@ Every tool is self-contained with:
 
 from __future__ import annotations
 
+import contextlib
 import contextvars
 import hashlib
+import logging
 import sys
 from abc import ABC
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Generic, TypeVar
 
@@ -29,8 +31,6 @@ from huginn.types import (
     ToolResult,
     ValidationResult,
 )
-
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -217,7 +217,6 @@ class HuginnTool(ABC, Generic[InputT, OutputT]):
         Validates against output_schema if defined; validation failure
         is logged but doesn't block — the data still goes through.
         """
-        from huginn.types import _jsonify
 
         payload = result.to_dict()
 
@@ -307,11 +306,9 @@ class HuginnTool(ABC, Generic[InputT, OutputT]):
                 data=None,
                 error=f"{type(exc).__name__}: {exc}",
             )
-        try:
+        # provenance is best-effort: never let it sink a good result
+        with contextlib.suppress(Exception):
             self._capture_provenance(args, result)
-        except Exception:
-            # provenance is best-effort: never let it sink a good result
-            pass
         return result
 
     def _capture_provenance(self, args: Any, result: ToolResult) -> Any:
@@ -339,7 +336,7 @@ class HuginnTool(ABC, Generic[InputT, OutputT]):
         params = _serialize_tool_args(args)
         out_repr = result.to_dict() if hasattr(result, "to_dict") else str(result)
         snapshot = ProvenanceSnapshot(
-            timestamp=datetime.now(timezone.utc).isoformat(),
+            timestamp=datetime.now(UTC).isoformat(),
             tool_name=self.name,
             tool_version=getattr(self, "version", "1.0"),
             input_params=params,

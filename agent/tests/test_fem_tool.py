@@ -13,7 +13,6 @@ import pytest
 
 from huginn.tools.fem import FEMInput, FEMTool
 
-
 # ── 优雅降级 (不依赖 skfem, 单独验证) ──
 
 

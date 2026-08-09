@@ -6,6 +6,7 @@ named skills (DFT, MD, phonon, band structure, etc.) during a conversation.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import re
@@ -17,6 +18,7 @@ from pydantic import BaseModel, Field
 # register_skill() lands in SkillRegistry. Keep this import above the
 # tool class so the registry is populated before the first call.
 import huginn.skills.presets  # noqa: F401
+from huginn.memory.longterm import LongTermMemory
 from huginn.skills.base import (
     DeclarativeSkillExecutor,
     SkillDefinition,
@@ -27,7 +29,6 @@ from huginn.skills.registry import SkillRegistry
 from huginn.tools.base import HuginnTool
 from huginn.tools.registry import ToolRegistry
 from huginn.types import ToolContext, ToolResult
-from huginn.memory.longterm import LongTermMemory
 
 logger = logging.getLogger(__name__)
 
@@ -545,7 +546,7 @@ class SkillTool(HuginnTool[SkillToolInput, SkillToolOutput]):
             # 截断防止单条记忆太长, 300 字符够复盘也够 FTS 检索
             summary += f" result={str(result)[:300]}"
         content = f"skill={skill_name} {summary}"
-        try:
+        with contextlib.suppress(Exception):
             mem.store(
                 content=content,
                 category="skill_invocation",
@@ -554,8 +555,6 @@ class SkillTool(HuginnTool[SkillToolInput, SkillToolOutput]):
                 importance=0.5,
                 tier="mid",
             )
-        except Exception:
-            pass
 
     # -- helpers -----------------------------------------------------------
 

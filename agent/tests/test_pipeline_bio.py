@@ -2,16 +2,13 @@
 
 from __future__ import annotations
 
-import pytest
-
 from huginn.provenance.pipeline import (
-    PipelineRule,
-    PipelineStage,
-    PIPELINE_RULES,
-    SimulationPipeline,
-    _infer_stage,
     _KNOWN_TOOLS,
     _STAGE_ORDER,
+    PIPELINE_RULES,
+    PipelineStage,
+    SimulationPipeline,
+    _infer_stage,
 )
 
 

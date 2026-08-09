@@ -27,10 +27,10 @@ pytest.importorskip("mcp")
 # Penetration tests run in integration CI job — they need full middleware stack
 pytestmark = pytest.mark.integration
 
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
+from fastapi import FastAPI  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
 
-from huginn.server import app
+from huginn.server import app  # noqa: E402
 
 client = TestClient(app)
 
@@ -476,7 +476,7 @@ class TestRateLimiting:
 
         resp = client.get("/tools")
         assert resp.status_code == 429
-        assert "retry-after" in {k.lower() for k in resp.headers.keys()}
+        assert "retry-after" in {k.lower() for k in resp.headers}
 
     def test_health_not_rate_limited(self):
         """/health 不受速率限制 (中间件里跳过了)。"""
@@ -616,7 +616,7 @@ class TestCORS:
         )
         # CORS 中间件应该处理 preflight
         assert resp.status_code in (200, 204)
-        assert "access-control-allow-methods" in {k.lower() for k in resp.headers.keys()}
+        assert "access-control-allow-methods" in {k.lower() for k in resp.headers}
 
     def test_arbitrary_origin_not_reflected(self):
         """任意 Origin 不应该被反射到 Access-Control-Allow-Origin。"""

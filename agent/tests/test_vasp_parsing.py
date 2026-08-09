@@ -7,8 +7,6 @@ import types
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import pytest
-
 from huginn.tools.sim.vasp_tool import VaspTool
 
 

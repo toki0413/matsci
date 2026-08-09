@@ -20,13 +20,11 @@ ground truth 策略 (三重独立):
 """
 from __future__ import annotations
 
-import math
 import random
 from dataclasses import dataclass
 
 from huginn.metacog.hypothesis_manifold import Hypothesis, HypothesisManifold
 from huginn.metacog.topology_lens import hodge_signature
-
 
 # ── 文本距离 (3 种) ───────────────────────────────────────────
 
@@ -416,7 +414,10 @@ class MethodResult:
     recall: float
     f1: float
     accuracy: float
-    tp: int; fp: int; fn: int; tn: int
+    tp: int
+    fp: int
+    fn: int
+    tn: int
     f1_ci_low: float = 0.0
     f1_ci_high: float = 0.0
     per_category: dict = None
@@ -434,13 +435,17 @@ def evaluate_method(cases, distance_fn, threshold, method_name, label_key="human
         per_cat.setdefault(cat, {"tp":0,"fp":0,"fn":0,"tn":0,"n":0})
         per_cat[cat]["n"] += 1
         if predicted_diff and actual_diff:
-            tp += 1; per_cat[cat]["tp"] += 1
+            tp += 1
+            per_cat[cat]["tp"] += 1
         elif predicted_diff and not actual_diff:
-            fp += 1; per_cat[cat]["fp"] += 1
+            fp += 1
+            per_cat[cat]["fp"] += 1
         elif not predicted_diff and actual_diff:
-            fn += 1; per_cat[cat]["fn"] += 1
+            fn += 1
+            per_cat[cat]["fn"] += 1
         else:
-            tn += 1; per_cat[cat]["tn"] += 1
+            tn += 1
+            per_cat[cat]["tn"] += 1
     p = tp / (tp + fp) if (tp + fp) else 0.0
     r = tp / (tp + fn) if (tp + fn) else 0.0
     f1 = 2*p*r / (p+r) if (p+r) else 0.0
@@ -468,7 +473,9 @@ def run_ablation():
 
     # 几何距离函数 (从 case 取对象)
     def geom_fisher(c):
-        m = HypothesisManifold(); m.add(c.a); m.add(c.b)
+        m = HypothesisManifold()
+        m.add(c.a)
+        m.add(c.b)
         return m.fisher_distance(c.a.h_id, c.b.h_id)
     def geom_complexity(c):
         a, b = c.a.n_params, c.b.n_params
@@ -476,7 +483,8 @@ def run_ablation():
     def geom_fisher_complexity(c):
         return max(geom_fisher(c), geom_complexity(c))
     def geom_hodge(c):
-        na, ea = c.evidence_a; nb, eb = c.evidence_b
+        na, ea = c.evidence_a
+        nb, eb = c.evidence_b
         return hodge_distance_from_graphs(na, ea, nb, eb)
 
     # 文本距离
@@ -505,7 +513,7 @@ def run_ablation():
     # ground truth 一致性
     agree = sum(1 for c in cases if c.human_label == c.hodge_label)
     print(f"\n双重 ground truth 一致性: {agree}/{len(cases)} ({agree/len(cases):.1%})")
-    print(f"  (一致 = 高置信样本; 不一致 = 争议样本, 单独看)")
+    print("  (一致 = 高置信样本; 不一致 = 争议样本, 单独看)")
     print()
 
     # ── 用 human_label 作 ground truth 跑所有方法 ──
@@ -524,7 +532,8 @@ def run_ablation():
     ]:
         r = evaluate_method(cases, fn, thresh, name, "human_label")
         lo, hi = bootstrap_f1(cases, fn, thresh, "human_label")
-        r.f1_ci_low = lo; r.f1_ci_high = hi
+        r.f1_ci_low = lo
+        r.f1_ci_high = hi
         results.append(r)
         print(f"--- {name} ---")
         print(f"  P={r.precision:.3f}  R={r.recall:.3f}  F1={r.f1:.3f}  Acc={r.accuracy:.3f}")
@@ -539,9 +548,11 @@ def run_ablation():
         for t in text_thresholds:
             r = evaluate_method(cases, fn, t, f"{name} (文本)", "human_label")
             if best_r is None or r.f1 > best_r.f1:
-                best_r = r; best_t = t
+                best_r = r
+                best_t = t
         lo, hi = bootstrap_f1(cases, fn, best_t, "human_label")
-        best_r.f1_ci_low = lo; best_r.f1_ci_high = hi
+        best_r.f1_ci_low = lo
+        best_r.f1_ci_high = hi
         results.append(best_r)
         print(f"--- {name} (文本, best t={best_t}) ---")
         print(f"  P={best_r.precision:.3f}  R={best_r.recall:.3f}  F1={best_r.f1:.3f}  Acc={best_r.accuracy:.3f}")
@@ -637,13 +648,13 @@ def run_ablation():
     print(f"95% CI 重叠: {'是 (不能拒绝 H0: 两者相等)' if ci_overlap else '否 (差异统计显著)'}")
     print()
     if not ci_overlap and delta > 0:
-        print(f"→ 几何通信显著优于文本, 统计可信 (CI 不重叠)")
+        print("→ 几何通信显著优于文本, 统计可信 (CI 不重叠)")
     elif not ci_overlap and delta < 0:
-        print(f"→ 文本通信反超, 统计可信")
+        print("→ 文本通信反超, 统计可信")
     else:
-        print(f"→ 两者 CI 重叠, 差异可能不显著; 但看分场景 blind spot:")
-        print(f"  文本在 same_theory_diff_wording / same_structure_same_pred 有不可修 blind spot")
-        print(f"  几何 Fisher 在 same_pred_diff_structure 有可修 blind spot (加 complexity/Hodge)")
+        print("→ 两者 CI 重叠, 差异可能不显著; 但看分场景 blind spot:")
+        print("  文本在 same_theory_diff_wording / same_structure_same_pred 有不可修 blind spot")
+        print("  几何 Fisher 在 same_pred_diff_structure 有可修 blind spot (加 complexity/Hodge)")
 
     return results, cases
 

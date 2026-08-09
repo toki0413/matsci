@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from huginn.types import ToolResult
 from huginn.tools.image_analysis._utils import load_gray
+from huginn.types import ToolResult
 
 if TYPE_CHECKING:
     from huginn.tools.image_analysis.tool import ImageAnalysisInput
@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def phase_field(args: "ImageAnalysisInput") -> ToolResult:
+def phase_field(args: ImageAnalysisInput) -> ToolResult:
     arr = load_gray(args.image_path)
     n_phases = int(args.parameters.get("n_phases", 2))
     interface_width_px = args.parameters.get("interface_width_px", None)
@@ -73,7 +73,8 @@ def phase_field(args: "ImageAnalysisInput") -> ToolResult:
     # 每个相的 domain 形态学
     phase_morph: dict[str, Any] = {}
     try:
-        from scipy.ndimage import label as nd_label, center_of_mass
+        from scipy.ndimage import center_of_mass
+        from scipy.ndimage import label as nd_label
 
         for i in range(n_phases):
             mask = phase_map == i

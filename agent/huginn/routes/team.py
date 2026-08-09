@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from typing import Any
 
 from fastapi import APIRouter
@@ -122,11 +123,9 @@ async def team_v2_run(params: dict[str, Any]) -> dict[str, Any]:
     bus = get_pet_bus()
 
     def _publish(mood: PetMood, msg: str, details: dict | None = None) -> None:
-        try:
+        # pet bus 不应该影响主流程
+        with contextlib.suppress(Exception):
             bus.publish(mood=mood, message=msg, details=details or {})
-        except Exception:
-            # pet bus 不应该影响主流程
-            pass
 
     try:
         team = _build_model_team()
@@ -303,10 +302,8 @@ async def team_v2_fusion(params: dict[str, Any]) -> dict[str, Any]:
     bus = get_pet_bus()
 
     def _publish(mood: PetMood, msg: str, details: dict | None = None) -> None:
-        try:
+        with contextlib.suppress(Exception):
             bus.publish(mood=mood, message=msg, details=details or {})
-        except Exception:
-            pass
 
     try:
         from huginn.agents.team import TeamRole
@@ -314,10 +311,8 @@ async def team_v2_fusion(params: dict[str, Any]) -> dict[str, Any]:
         # 解析角色参数
         panel_roles = None
         if panel_roles_raw and isinstance(panel_roles_raw, list):
-            try:
+            with contextlib.suppress(ValueError):
                 panel_roles = [TeamRole(r) for r in panel_roles_raw]
-            except ValueError:
-                pass
 
         try:
             synthesizer_role = TeamRole(synthesizer_role_raw)

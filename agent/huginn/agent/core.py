@@ -7,10 +7,9 @@ and keeps the construction + graph-building + convenience methods.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
-from collections.abc import AsyncIterator, Callable
+from collections.abc import Callable
 from contextlib import ExitStack
 from typing import Any
 
@@ -18,11 +17,11 @@ from langchain_core.messages import SystemMessage
 
 from huginn.agent_config import _UNSET_SENTINEL, AgentConfig
 from huginn.checkpointer import create_in_memory_checkpointer
+from huginn.cognitive_engine import STATE_TO_MODEL_TASK
 from huginn.context_manager import (
     get_context_window,
     reset_context_cache,
 )
-from huginn.cognitive_engine import STATE_TO_MODEL_TASK
 from huginn.hooks import HookManager
 from huginn.models.router import ModelRouter
 from huginn.permissions import PermissionConfig
@@ -316,7 +315,7 @@ class HuginnAgent(
         if os.environ.get("HUGINN_APPROVAL_MODE") == "inbox":
             from huginn.interaction.inbox import get_inbox_store, inbox_approval_fn
             self.approval_fn = inbox_approval_fn(
-                get_inbox_store(), thread_id or "default"
+                get_inbox_store(), self.thread_id or "default"
             )
         else:
             self.approval_fn = None
@@ -435,32 +434,37 @@ class HuginnAgent(
 
     # ── Mode management ───────────────────────────────────────────
 
+    # 长程模式: research / extreme 都是长程任务, 需要开 trajectory 召回 +
+    # cycle 检测才不重复犯错. chat/plan 是短程, 不开.
+    _LONG_HORIZON_MODES = ("research", "extreme")
+
     def set_mode(self, mode: str) -> None:
-        """切换 agent mode (chat/research/plan).
+        """切换 agent mode (chat/research/plan/extreme).
 
         内部委托 CSM S3_SWITCH 处理 (R7 减法: 合并 mode 切换和 CSM 控制).
         保留公开 API 向后兼容. CSM transition 是 advisory — 当前状态不允许转 S3
         时返回当前 state 不强制, 不破坏现有 mode 逻辑.
         """
-        if mode not in ("chat", "research", "plan"):
-            raise ValueError(f"unknown mode: {mode}. options: chat, research, plan")
+        if mode not in ("chat", "research", "plan", "extreme"):
+            raise ValueError(
+                f"unknown mode: {mode}. options: chat, research, plan, extreme"
+            )
         if mode != self._mode:
             old = self._mode
             self._mode = mode
             self._agent_graph = None
-            if mode == "research":
-                self._phase_manager.reset(ResearchPhase.LITERATURE)
-                # 极限模式联动: research 跑长程 (recursion_limit=500), 需要开
-                # trajectory 召回 + cycle 检测才不重复犯错. 保存原值便于退出恢复.
+            if mode in self._LONG_HORIZON_MODES:
+                # 长程模式联动: research/extreme 跑长程 (recursion_limit=500),
+                # 需要开 trajectory 召回 + cycle 检测才不重复犯错. 保存原值便于退出恢复.
                 import os
                 if not hasattr(self, "_extreme_dispatch_saved"):
                     self._extreme_dispatch_saved = os.environ.get(
                         "HUGINN_EXTREME_DISPATCH"
                     )
                 os.environ["HUGINN_EXTREME_DISPATCH"] = "1"
-            elif old == "research":
-                self._phase_manager.reset(ResearchPhase.OPEN)
-                # 退出 research: 恢复 HUGINN_EXTREME_DISPATCH 原值
+                self._phase_manager.reset(ResearchPhase.LITERATURE)
+            elif old in self._LONG_HORIZON_MODES:
+                # 退出长程模式: 恢复 HUGINN_EXTREME_DISPATCH 原值
                 import os
                 saved = getattr(self, "_extreme_dispatch_saved", None)
                 if saved is None:
@@ -468,6 +472,7 @@ class HuginnAgent(
                 else:
                     os.environ["HUGINN_EXTREME_DISPATCH"] = saved
                 self._extreme_dispatch_saved = None
+                self._phase_manager.reset(ResearchPhase.OPEN)
             # plan mode 联动 permission_config: 写工具强制 ASK
             # 之前 /plan slash 只改 _mode 不改 permission_config, 导致 UI 提示与实际行为不一致.
             perm_cfg = getattr(self, "_permission_config", None)
@@ -492,6 +497,9 @@ class HuginnAgent(
     def is_research_mode(self) -> bool:
         return self._mode == "research"
 
+    def is_extreme_mode(self) -> bool:
+        return self._mode == "extreme"
+
     def is_plan_mode(self) -> bool:
         # 兜底: plan execution 期间 permission_config.plan_mode 临时翻转但 _mode 不变,
         # 读 is_plan_mode() 的代码 (research_safety_hook / research_budget) 需要感知.
@@ -503,13 +511,13 @@ class HuginnAgent(
     def _effective_recursion_limit(self) -> int:
         """根据 mode 和 extreme dispatch 返回 recursion_limit.
 
-        - research mode → 500 (长程探索)
-        - extreme dispatch 开启但非 research → 400 (极限模式跑长程, 250 不够)
+        - research / extreme mode → 500 (长程探索)
+        - extreme dispatch 开启但非长程 mode → 400 (极限模式跑长程, 250 不够)
         - 普通 chat/plan → 250 (短程, 省计算)
         ponytail: 三档够用, 不上配置. 升级: 暴露到 config.py.
         """
         import os
-        if self.is_research_mode():
+        if self._mode in self._LONG_HORIZON_MODES:
             return 500
         if os.environ.get("HUGINN_EXTREME_DISPATCH", "0").lower() in ("1", "true"):
             return 400
@@ -598,7 +606,7 @@ class HuginnAgent(
         # 默认关 (HUGINN_TASK_TOOL_ROUTER=1 开启). 失败或返回空 → fallback 到
         # 原 self.tool_filter, 不破坏现有行为. 升级路径: LLM 版小模型打分.
         #
-        # 跟 self.tool_filter 取交集而非覆盖: caller (如 RCB runner) 显式设的
+        # 跟 self.tool_filter 取交集而非覆盖: caller (如 benchmark runner) 显式设的
         # tool_filter 是硬约束 (限制 agent 只能用 code_tool/bash_tool), 不能被
         # task router 冲掉. 交集为空 → 保留原 tool_filter (task router 误判时不破坏).
         effective_filter: set[str] | None = self.tool_filter
@@ -785,27 +793,14 @@ class HuginnAgent(
                 _extra_hints: list[str] = []
                 try:
                     import json as _json
-                    import time as _time
-                    from pathlib import Path as _P
+                    from pathlib import Path as _P  # noqa: N814
                     _cwd = _P.cwd()
                     _rpt_path = _cwd / "report" / "report.md"
-                    # 方案 E: Benchmark Mode — RCB 路径必须严格按 paper 方法实现,
-                    # 不能用 "computational constraints" 作 VARIANT 理由. judge
-                    # 会按 paper 方法打分, RF 替代 VAE+GPR 直接 0 分. ponytail:
-                    # 只在 INSTRUCTIONS.md 存在时注入 (RCB 路径), 不影响普通 chat.
-                    if (_cwd / "INSTRUCTIONS.md").exists():
-                        _extra_hints.append(
-                            "BENCHMARK MODE: This is a benchmark task scored against the reference paper. "
-                            "Implement the EXACT methodology from the paper (e.g., VAE+GPR, not RF+fingerprint "
-                            "substitution). If compute budget prevents full implementation, implement as much "
-                            "of the paper's pipeline as possible AND write a 'Negative Results' section in "
-                            "report.md comparing your metrics to the paper's reported metrics (e.g., 'our "
-                            "MAE 49.93K vs paper's LOOCV MAE 13K, gap explained by...'). Substituting the core "
-                            "method without justification scores 0."
-                        )
-                    # P3-2: 删除 HUGINN_RCB_DEADLINE 死分支 — setter (rcb_huginn.py)
-                    # 不存在, _deadline 永远 0.0, 整段 if _deadline > 0 是死代码.
-                    # 升级路径: rcb_runner.py 入口 setdefault HUGINN_RCB_DEADLINE 后恢复.
+                    # Benchmark Mode: 通用 env var 注入, agent 不感知具体 benchmark 框架.
+                    # 调用方 (如 rcb_runner) setdefault HUGINN_BENCHMARK_MODE_PROMPT 即可.
+                    _bm_prompt = os.environ.get("HUGINN_BENCHMARK_MODE_PROMPT", "")
+                    if _bm_prompt:
+                        _extra_hints.append(_bm_prompt)
                     # 方案 C: Negative Result — 扫 outputs/*.json 找低分指标,
                     # 注入 "写 negative result 分析" hint. 不阻塞, 只提醒.
                     if not _rpt_path.exists() and (_cwd / "outputs").exists():
@@ -835,7 +830,7 @@ class HuginnAgent(
                                 "feature design, model architecture, compute budget). Honest negative "
                                 "results with root-cause analysis score better than silence."
                             )
-                    # DeliverableCoverage: RCB 路径没走 deepagents middleware 协议,
+                    # DeliverableCoverage: benchmark 路径没走 deepagents middleware 协议,
                     # 手动复用纯函数注入 frontier/planning hint.
                     _inst = _cwd / "INSTRUCTIONS.md"
                     if _inst.exists():
@@ -950,9 +945,7 @@ class HuginnAgent(
             async for state in self.chat(message, thread_id):
                 if isinstance(state, dict) and state.get("tool_break"):
                     final_state = state.get("state", final_state)
-                elif isinstance(state, dict) and "messages" in state:
-                    final_state = state
-                elif final_state is None:
+                elif isinstance(state, dict) and "messages" in state or final_state is None:
                     final_state = state
             return final_state
 

@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from .tool import SymbolicMathInput
 
 
-def dimensional_analysis(args: "SymbolicMathInput") -> ToolResult:
+def dimensional_analysis(args: SymbolicMathInput) -> ToolResult:
     """量纲分析, 走 DimensionalValidator."""
     from huginn.execution.dimensional_validator import DimensionalValidator
 
@@ -92,7 +92,7 @@ def dimensional_analysis(args: "SymbolicMathInput") -> ToolResult:
     )
 
 
-def dft(args: "SymbolicMathInput") -> ToolResult:
+def dft(args: SymbolicMathInput) -> ToolResult:
     """密度泛函理论相关计算.
 
     支持:
@@ -198,7 +198,7 @@ def dft(args: "SymbolicMathInput") -> ToolResult:
     )
 
 
-def thermodynamics(args: "SymbolicMathInput") -> ToolResult:
+def thermodynamics(args: SymbolicMathInput) -> ToolResult:
     """热力学计算.
 
     支持:
@@ -335,7 +335,7 @@ def thermodynamics(args: "SymbolicMathInput") -> ToolResult:
     )
 
 
-def probability(args: "SymbolicMathInput") -> ToolResult:
+def probability(args: SymbolicMathInput) -> ToolResult:
     """概率与高斯过程计算.
 
     支持:
@@ -478,7 +478,7 @@ def probability(args: "SymbolicMathInput") -> ToolResult:
     )
 
 
-def unified(args: "SymbolicMathInput") -> ToolResult:
+def unified(args: SymbolicMathInput) -> ToolResult:
     """桥接 huginn.unified: 推导方程 + 多尺度桥.
 
     Targets:

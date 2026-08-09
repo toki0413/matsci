@@ -20,7 +20,6 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -68,9 +67,9 @@ def recall_audit_context(category: str, query: str = "", limit: int = 20) -> lis
 # ponytail: 策略学习是 S7 闭环的自然延伸, 不需要新组件. 升级路径是
 # 让策略表走 RAG + embedding 相似度匹配, 当前精确字符串匹配够用.
 
-import json as _json
-import os as _os
-from pathlib import Path as _Path
+import json as _json  # noqa: E402
+import os as _os  # noqa: E402
+from pathlib import Path as _Path  # noqa: E402
 
 # 默认策略 — 覆盖 7 phase × 关键 metacog_state. S7 可在此基础上扩展.
 # v6 G52: 加 structure_relation_type 字段 (可选), 让策略表能按结构关系过滤 recall.
@@ -156,9 +155,12 @@ def match_recall_strategy(
     # 精确匹配 (phase, metacog_state)
     if metacog_state:
         for s in strategies:
-            if s.get("phase") == phase and s.get("metacog_state") == metacog_state:
-                # 跳过结构关系专用策略 (没传 structure_relation_type 时不该命中)
-                if not s.get("structure_relation_type"):
+            if (
+                s.get("phase") == phase
+                and s.get("metacog_state") == metacog_state
+                and not s.get("structure_relation_type")
+            ):
+                    # 跳过结构关系专用策略 (没传 structure_relation_type 时不该命中)
                     return s
     # 退到只匹配 phase
     for s in strategies:
@@ -237,41 +239,56 @@ def update_recall_strategy(
     return True
 
 
-from huginn.metacog.failure_modes import FailureMode, FailureModeRegistry, DEFAULT_REGISTRY
-from huginn.metacog.context_isolation import ContextBundle, IsolationPolicy, isolate
-from huginn.metacog.method_registry import MethodFamily, MethodRegistry
-from huginn.metacog.equivalence_auditor import EquivalenceAuditor, EquivalenceVerdict
-from huginn.metacog.block_registry import BlockedRoute, BlockRegistry, ReopenAttempt
-from huginn.metacog.depth_search import (
-    MinEffortFloor,
-    DynamicComponentFloor,
-    EffortStatus,
-    PrematureConvergenceDetector,
+from huginn.metacog.block_registry import (  # noqa: E402
+    BlockedRoute,
+    BlockRegistry,
+    ReopenAttempt,
 )
-from huginn.metacog.completion_auditor import (
-    CompletionChecklist,
+from huginn.metacog.completion_auditor import (  # noqa: E402
     CompletionAuditor,
+    CompletionChecklist,
     parse_unexplored_declaration,
 )
-from huginn.metacog.topology_lens import (
-    Family,
-    FamilyVerdict,
-    ClosureCheck,
-    HodgeSignature,
-    TopologyPermit,
-    GluingObstruction,
-    TopologyDiagnosis,
-    classify_system,
-    needs_downward_closure,
-    hodge_signature,
-    topology_permits,
-    gluing_obstruction,
-    diagnose,
+from huginn.metacog.context_isolation import (  # noqa: E402
+    ContextBundle,
+    IsolationPolicy,
+    isolate,
 )
-from huginn.metacog.signal_hub import SignalHub
-from huginn.metacog.selection_bias import (
+from huginn.metacog.depth_search import (  # noqa: E402
+    DynamicComponentFloor,
+    EffortStatus,
+    MinEffortFloor,
+    PrematureConvergenceDetector,
+)
+from huginn.metacog.equivalence_auditor import (  # noqa: E402
+    EquivalenceAuditor,
+    EquivalenceVerdict,
+)
+from huginn.metacog.failure_modes import (  # noqa: E402
+    DEFAULT_REGISTRY,
+    FailureMode,
+    FailureModeRegistry,
+)
+from huginn.metacog.method_registry import MethodFamily, MethodRegistry  # noqa: E402
+from huginn.metacog.selection_bias import (  # noqa: E402
     SelectionBiasVerdict,
     detect_selection_bias,
+)
+from huginn.metacog.signal_hub import SignalHub  # noqa: E402
+from huginn.metacog.topology_lens import (  # noqa: E402
+    ClosureCheck,
+    Family,
+    FamilyVerdict,
+    GluingObstruction,
+    HodgeSignature,
+    TopologyDiagnosis,
+    TopologyPermit,
+    classify_system,
+    diagnose,
+    gluing_obstruction,
+    hodge_signature,
+    needs_downward_closure,
+    topology_permits,
 )
 
 __all__ = [

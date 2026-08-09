@@ -19,7 +19,7 @@ from __future__ import annotations
 import threading
 import time
 from collections import deque
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 # 滚动窗口大小：只看最近这么多调用，老数据自动挤出
 _WINDOW_SIZE = 100
@@ -233,7 +233,7 @@ def _safe_circuit_state(tool_name: str) -> str:
 def _iso_utc(ts: float) -> str:
     """unix 时间戳转 ISO8601 UTC 字符串。"""
     try:
-        return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat(
+        return datetime.fromtimestamp(ts, tz=UTC).isoformat(
             timespec="seconds"
         )
     except Exception:

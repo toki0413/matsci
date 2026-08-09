@@ -60,15 +60,14 @@ class ConvergenceTestToolInput(BaseModel):
     )
 
     @model_validator(mode="after")
-    def _check_action_fields(self) -> "ConvergenceTestToolInput":
+    def _check_action_fields(self) -> ConvergenceTestToolInput:
         if self.action == "kpoint_convergence" and not self.kpoint_series:
             raise ValueError("kpoint_convergence requires 'kpoint_series'")
         if self.action == "encut_convergence" and not self.encut_series:
             raise ValueError("encut_convergence requires 'encut_series'")
         if self.action == "cutoff_analysis" and not self.convergence_data:
             raise ValueError("cutoff_analysis requires 'convergence_data'")
-        if self.action in ("kpoint_convergence", "encut_convergence"):
-            if not self.structure:
+        if self.action in ("kpoint_convergence", "encut_convergence") and not self.structure:
                 raise ValueError(
                     f"{self.action} requires 'structure' (POSCAR path or dict)"
                 )
@@ -112,8 +111,7 @@ class ConvergenceTestTool(HuginnTool):
     ) -> ValidationResult:
         if args.action == "cutoff_analysis":
             return ValidationResult(result=True)
-        if args.action in ("kpoint_convergence", "encut_convergence"):
-            if isinstance(args.structure, str) and not Path(args.structure).exists():
+        if args.action in ("kpoint_convergence", "encut_convergence") and isinstance(args.structure, str) and not Path(args.structure).exists():
                 return ValidationResult(
                     result=False,
                     message=f"Structure file not found: {args.structure}",
@@ -373,8 +371,7 @@ class ConvergenceTestTool(HuginnTool):
         for i in range(2, len(data)):
             d1 = data[i - 1].get("delta_E")
             d2 = data[i].get("delta_E")
-            if d1 is not None and d2 is not None:
-                if d1 < tolerance and d2 < tolerance:
+            if (d1 is not None and d2 is not None) and (d1 < tolerance and d2 < tolerance):
                     optimal = data[i - 1].get(param_key)
                     converged = True
                     break

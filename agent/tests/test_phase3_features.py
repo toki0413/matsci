@@ -5,14 +5,16 @@ workflow custom validation, and exploration query.
 from __future__ import annotations
 
 import pytest
-import numpy as np
 
-from huginn.tools.report_tool import ReportTool, ReportToolInput, ReportComparator
-from huginn.tools.symbolic_regression_tool import SymbolicRegressionTool, SymbolicRegressionInput
+from huginn.exploration.core import Branch, BranchStatus, Decision, ExplorationSpace
+from huginn.tools.report_tool import ReportComparator, ReportTool, ReportToolInput
+from huginn.tools.symbolic_regression_tool import (
+    SymbolicRegressionInput,
+    SymbolicRegressionTool,
+)
+from huginn.types import ToolContext
 from huginn.workflows.engine import WorkflowEngine
 from huginn.workflows.stages import ValidationRule
-from huginn.exploration.core import BranchStatus, Branch, Decision, ExplorationSpace
-from huginn.types import ToolContext
 
 
 def _ctx() -> ToolContext:

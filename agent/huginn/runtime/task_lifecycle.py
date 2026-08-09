@@ -9,12 +9,12 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import asdict, dataclass, field
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
 
-class TaskState(str, Enum):
+class TaskState(StrEnum):
     CREATED = "created"
     RUNNING = "running"
     PAUSED_WAITING_APPROVAL = "paused_waiting_approval"  # G71: 被动等待审批
@@ -128,7 +128,7 @@ class TaskLifecycle:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> "TaskLifecycle":
+    def from_dict(cls, data: dict) -> TaskLifecycle:
         """反序列化。"""
         dr_data = data.get("decision_request")
         dr = DecisionRequest(**dr_data) if dr_data else None
@@ -242,7 +242,7 @@ _RECOMMEND_WORDS = frozenset({
 })
 # 显式反对词 — 出现表示该路"反对 X"
 _OPPOSE_WORDS = frozenset({
-    "反对", "不行", "不要", "别用", "避免", "错", "不行", "不可", "拒绝",
+    "反对", "不行", "不要", "别用", "避免", "错", "不可", "拒绝",
     "oppose", "avoid", "don't", "wrong", "refuse",
 })
 
@@ -490,7 +490,8 @@ def should_pause_for_decision(
     # 详见 pre_plan_grill.should_start_grill. 触发后 Engine 切 LLM system prompt.
     if grill_state:
         from huginn.runtime.pre_plan_grill import (
-            grill_pause_options, should_start_grill,
+            grill_pause_options,
+            should_start_grill,
         )
         should_grill, grill_reason = should_start_grill(**grill_state)
         if should_grill:

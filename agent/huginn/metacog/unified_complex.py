@@ -10,7 +10,6 @@ import 时 try/except, 不强依赖 CrossTaskStore (Task 14) 或 KG 模块.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
 
 # 软依赖: import 失败不阻塞模块加载, 运行时 store/kg 通过依赖注入.
 # ponytail: 升级路径是真正注入实例后, type hint 自动从 Optional[Any] 收紧.
@@ -64,8 +63,8 @@ class UnifiedComplexView:
     def query(
         self,
         domain: str,
-        task_id: Optional[str] = None,
-        keyword: Optional[str] = None,
+        task_id: str | None = None,
+        keyword: str | None = None,
         top_k: int = 10,
     ) -> list[Vertex]:
         """统一查 KG + Meta-Trace, 返回混合 vertex list, 按 darwin 降序截 top_k.
@@ -136,7 +135,7 @@ class UnifiedComplexView:
     def query_triples(
         self,
         domain: str,
-        keyword: Optional[str] = None,
+        keyword: str | None = None,
         top_k: int = 10,
     ) -> list[dict]:
         """KG triple (s, p, o) 作为 2-simplex (triangle) 进入 complex.
@@ -216,10 +215,10 @@ class UnifiedComplexView:
 
     def _kg_query_triples(
         self,
-        keyword: Optional[str] = None,
-        subject: Optional[str] = None,
-        predicate: Optional[str] = None,
-        object: Optional[str] = None,
+        keyword: str | None = None,
+        subject: str | None = None,
+        predicate: str | None = None,
+        object: str | None = None,
         top_k: int = 10,
     ) -> list[dict]:
         """调 KG 的 query_triples 接口拿 (s, p, o) 三元组.

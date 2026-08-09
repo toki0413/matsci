@@ -8,18 +8,15 @@ If you want to skip the project-wide coverage gate, run with:
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+import huginn.llm_retry as lr
 from huginn.llm_retry import (
     CONTEXT_OVERFLOW_SHRINK,
-    FALLBACK_MODELS,
-    INITIAL_BACKOFF,
-    MAX_529_RETRIES,
     MAX_BACKOFF,
     MIN_MAX_TOKENS,
     FallbackTriggeredError,
@@ -37,8 +34,6 @@ from huginn.llm_retry import (
     persistent_retry,
     with_retry,
 )
-import huginn.llm_retry as lr
-
 
 # ── fake exceptions & helpers ────────────────────────────────────
 
@@ -65,7 +60,7 @@ class FakeAuthenticationError(Exception):
     pass
 
 
-class FakeContextOverflow(Exception):
+class FakeContextOverflowError(Exception):
     pass
 
 
@@ -318,7 +313,7 @@ class TestParseContextOverflow:
 
     def test_keyword_only_no_number(self):
         # looks like overflow but no digits to extract
-        exc = FakeContextOverflow("something broke")
+        exc = FakeContextOverflowError("something broke")
         result = parse_context_overflow(exc)
         assert result == max(MIN_MAX_TOKENS, int(4096 * CONTEXT_OVERFLOW_SHRINK))
 
@@ -480,9 +475,8 @@ class TestWithRetry:
             "huginn.security.auth.handle_401_error",
             new_callable=AsyncMock,
             return_value=False,
-        ):
-            with pytest.raises(FakeHttpError):
-                await with_retry(_always_raise(exc), max_attempts=3)
+        ), pytest.raises(FakeHttpError):
+            await with_retry(_always_raise(exc), max_attempts=3)
 
     @pytest.mark.asyncio
     async def test_non_retryable_raises_immediately(self, mock_sleep):

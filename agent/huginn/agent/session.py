@@ -90,7 +90,7 @@ class SessionMixin:
             snap = self.memory.load_session_snapshot()
             if isinstance(snap, dict):
                 mode = snap.get("mode")
-                if mode in ("chat", "research", "plan"):
+                if mode in ("chat", "research", "plan", "extreme"):
                     # 不覆盖 plan 恢复触发的 S4_CONSTRUCT, 只在 csm 还是 S0 时恢复
                     self._mode = mode
                 csm_state = snap.get("csm_state")

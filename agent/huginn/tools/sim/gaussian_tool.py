@@ -7,6 +7,7 @@ Falls back to mock mode when Gaussian is not installed.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import re
@@ -62,7 +63,7 @@ class GaussianToolInput(BaseModel):
     )
 
     @model_validator(mode="after")
-    def _check_action_fields(self) -> "GaussianToolInput":
+    def _check_action_fields(self) -> GaussianToolInput:
         if not self.working_dir:
             raise ValueError(f"action '{self.action}' requires 'working_dir'")
         return self
@@ -169,7 +170,9 @@ class GaussianTool(HuginnTool):
         if self.gaussian_executable:
             return await self._run_gaussian(args, work_dir, gjf_file)
 
-        from huginn.tools.sim.executable_resolver import resolve_executable, ResolutionRequest
+        from huginn.tools.sim.executable_resolver import (
+            resolve_executable,
+        )
         resolution = resolve_executable("gaussian")
         if isinstance(resolution, str):
             self.gaussian_executable = resolution
@@ -403,7 +406,7 @@ class GaussianTool(HuginnTool):
                         break
 
             gjf_path.write_text("\n".join(lines), encoding="utf-8")
-        except Exception as e:
+        except Exception:
             logger.warning("Gaussian input autofix failed", exc_info=True)
 
     @staticmethod
@@ -461,12 +464,10 @@ class GaussianTool(HuginnTool):
             for line in force_blocks[-1].strip().split("\n"):
                 parts = line.split()
                 if len(parts) >= 6:
-                    try:
+                    with contextlib.suppress(ValueError):
                         forces.append([
                             float(parts[-3]), float(parts[-2]), float(parts[-1])
                         ])
-                    except ValueError:
-                        pass
             result["forces"] = forces
 
         # frequencies (from freq calculations)

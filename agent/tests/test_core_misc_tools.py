@@ -10,8 +10,6 @@ from __future__ import annotations
 import sys
 from types import SimpleNamespace
 
-import pytest
-
 from huginn.tools.extract_tool import ExtractTool, ExtractToolInput
 
 

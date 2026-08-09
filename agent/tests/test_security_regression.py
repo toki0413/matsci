@@ -9,8 +9,8 @@ from fastapi.testclient import TestClient
 
 
 def _app():
-    from huginn.routes.viewer3d import router as v3d_router
     from huginn.routes.bot import router as bot_router
+    from huginn.routes.viewer3d import router as v3d_router
     app = FastAPI()
     app.include_router(v3d_router)
     app.include_router(bot_router)

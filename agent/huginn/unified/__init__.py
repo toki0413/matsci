@@ -23,7 +23,23 @@ from huginn.unified.models import (
     one_d_kohn_sham_dft,
 )
 from huginn.unified.solve import solve
-from huginn.unified.visualize import plot_solution, solve_and_plot
+
+# visualize.py imports matplotlib at module level. matplotlib is an optional
+# runtime dep — eagerly importing it here would make every `from huginn.unified
+# import solve/derive_equations/discretize` fail when matplotlib isn't
+# installed (e.g. CI matrix without plotting libs). Defer via PEP 562
+# module-level __getattr__ so the public names stay available but only trigger
+# the matplotlib import when actually used.
+_LAZY_VISUALIZE = {"plot_solution", "solve_and_plot"}
+
+
+def __getattr__(name: str):
+    if name in _LAZY_VISUALIZE:
+        from huginn.unified import visualize
+
+        return getattr(visualize, name)
+    raise AttributeError(f"module 'huginn.unified' has no attribute {name!r}")
+
 
 __all__ = [
     "DiscretizationMetadata",

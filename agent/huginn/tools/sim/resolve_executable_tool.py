@@ -49,7 +49,7 @@ class ResolveExecutableTool(HuginnTool):
     ) -> ToolResult:
         input_data = ResolveExecutableInput(**args)
 
-        from huginn.tools.sim.executable_resolver import get_resolver, ResolutionRequest
+        from huginn.tools.sim.executable_resolver import get_resolver
 
         resolver = get_resolver()
 

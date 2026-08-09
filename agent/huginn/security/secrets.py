@@ -18,7 +18,7 @@ import logging
 import os
 import time
 from abc import ABC, abstractmethod
-from typing import Any, Callable
+from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -94,8 +94,10 @@ class EnvSecretBackend(SecretBackend):
         if not self._persist_file:
             return
         # Encrypt at rest — never write secrets as plaintext JSON.
+        import os
+        import tempfile
+
         from cryptography.fernet import Fernet
-        import tempfile, os
         key_path = os.path.join(os.path.dirname(self._persist_file), ".secret_key")
         try:
             if os.path.exists(key_path):

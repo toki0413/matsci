@@ -197,6 +197,7 @@ def _selfcheck() -> None:
     """Assert-based demo: infer_blind_spots + map_blind_spot_to_hint + 失败降级."""
     import tempfile
     from pathlib import Path
+
     from huginn.metacog.self_model import SelfModel
 
     with tempfile.TemporaryDirectory() as td:
@@ -230,7 +231,7 @@ def _selfcheck() -> None:
 
         # Case 2: blind 档 → high priority
         high_bs = [b for b in bs_list if b.priority == "high"]
-        assert len(high_bs) >= 1, f"case2: no high priority"
+        assert len(high_bs) >= 1, "case2: no high priority"
         for b in high_bs:
             assert b.skill in (
                 "memory_limit", "pytorch_training", "pkg_install",
@@ -240,7 +241,7 @@ def _selfcheck() -> None:
 
         # Case 3: uncertain 档 → medium priority
         medium_bs = [b for b in bs_list if b.priority == "medium"]
-        assert len(medium_bs) >= 1, f"case3: no medium priority"
+        assert len(medium_bs) >= 1, "case3: no medium priority"
         for b in medium_bs:
             assert b.skill in (
                 "rdkit", "lammps", "vasp", "gaussian", "qe", "openmm",
@@ -250,15 +251,15 @@ def _selfcheck() -> None:
 
         # Case 4: map_blind_spot_to_hint 非空 + 含 marker + skill
         hint = map_blind_spot_to_hint(bs_list[0])
-        assert hint, f"case4: hint empty"
+        assert hint, "case4: hint empty"
         assert "[blind_spot_hint]" in hint, f"case4: missing marker:\n{hint}"
-        assert bs_list[0].skill in hint, f"case4: skill missing in hint"
+        assert bs_list[0].skill in hint, "case4: skill missing in hint"
         print(f"[CHECK] case4 hint non-empty: {hint[:80]}...")
 
         # Case 5: high priority hint 含 "高优先级"
         high_hint = map_blind_spot_to_hint(high_bs[0])
         assert "高优先级" in high_hint, f"case5: missing high marker:\n{high_hint}"
-        print(f"[CHECK] case5 high priority hint OK")
+        print("[CHECK] case5 high priority hint OK")
 
         # Case 6: workaround 在 hint 中 (memory_limit 有默认 workaround)
         bs_mem = next((b for b in bs_list if b.skill == "memory_limit"), None)
@@ -267,25 +268,25 @@ def _selfcheck() -> None:
         hint_w = map_blind_spot_to_hint(bs_mem)
         assert bs_mem.possible_workaround in hint_w, \
             f"case6: workaround missing in hint:\n{hint_w}"
-        print(f"[CHECK] case6 workaround in hint OK")
+        print("[CHECK] case6 workaround in hint OK")
 
         # Case 7: map_blind_spots_to_hint 多条合并
         combined = map_blind_spots_to_hint(bs_list, max_n=5)
-        assert combined, f"case7: combined empty"
+        assert combined, "case7: combined empty"
         assert combined.count("[blind_spot_hint]") >= 2, \
             f"case7: combined should have >=2 hints:\n{combined}"
         # high 应排在前面
         first_high_idx = combined.find("高优先级")
         first_marker_idx = combined.find("[blind_spot_hint]")
         assert first_high_idx > first_marker_idx, \
-            f"case7: high should be in first hint block"
+            "case7: high should be in first hint block"
         print(f"[CHECK] case7 combined hints OK ({combined.count('[blind_spot_hint]')} spots)")
 
         # Case 8: max_n 限制
         limited = map_blind_spots_to_hint(bs_list, max_n=1)
         assert limited.count("[blind_spot_hint]") <= 1, \
             f"case8: max_n=1 should limit to 1 hint:\n{limited}"
-        print(f"[CHECK] case8 max_n limit OK")
+        print("[CHECK] case8 max_n limit OK")
 
         # Case 9: 失败降级 — self_model=None / blind_spot=None / 空 list
         assert infer_blind_spots(None) == [], "case9: None should return []"
@@ -295,7 +296,7 @@ def _selfcheck() -> None:
         # 损坏的 blind_spot 不抛
         assert map_blind_spot_to_hint(BlindSpot(skill="", why_blind="")) == "", \
             "case9: empty skill should return ''"
-        print(f"[CHECK] case9 failure degradation OK (None/empty/bad input)")
+        print("[CHECK] case9 failure degradation OK (None/empty/bad input)")
 
         # Case 10: BlindSpot dataclass 序列化
         bs_obj = BlindSpot(
@@ -308,12 +309,12 @@ def _selfcheck() -> None:
         assert d["skill"] == "vasp"
         assert d["priority"] == "high"
         assert d["possible_workaround"] == "use QE or open-source DFT"
-        print(f"[CHECK] case10 BlindSpot dataclass OK")
+        print("[CHECK] case10 BlindSpot dataclass OK")
 
         # Case 11: pick_imagination_seed — 选 high priority 第一个
         seed = pick_imagination_seed(bs_list)
         assert seed is not None, "case11: seed should not be None with high bs"
-        assert seed.priority == "high", f"case11: seed should be high"
+        assert seed.priority == "high", "case11: seed should be high"
         # 没 high 时返回 None
         only_medium = [b for b in bs_list if b.priority == "medium"]
         seed_none = pick_imagination_seed(only_medium)
@@ -344,7 +345,7 @@ def _selfcheck() -> None:
         assert pkg_bs is not None, "case12: pkg_install not loaded from cross-task"
         assert pkg_bs.priority == "high", \
             f"case12: cross-task blind should be high: {pkg_bs.priority}"
-        print(f"[CHECK] case12 cross-task blind -> high priority OK")
+        print("[CHECK] case12 cross-task blind -> high priority OK")
 
     print("OK blind_spot_mapper self-check passed (12 cases)")
 

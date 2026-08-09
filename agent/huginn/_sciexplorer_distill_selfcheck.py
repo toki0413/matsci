@@ -13,6 +13,7 @@ from __future__ import annotations
 def _test_large_array_summary():
     """大 numpy 数组走摘要, 不走 tolist."""
     import numpy as np
+
     from huginn.types import _jsonify
 
     # 小数组照常 tolist

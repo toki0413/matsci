@@ -20,6 +20,7 @@ parser for POSCAR/XYZ in that case.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import math
@@ -279,9 +280,8 @@ def _parse_cif(text: str) -> tuple[list[dict[str, Any]], dict[str, Any] | None, 
 
 def _parse_via_pymatgen(text: str, fmt: str) -> tuple[list[dict[str, Any]], dict[str, Any] | None, str]:
     """用 pymatgen 解析结构, 不可用则抛错."""
-    from pymatgen.core import Structure  # 延迟导入
 
-    from io import StringIO
+    from pymatgen.core import Structure  # 延迟导入
     s = Structure.from_str(text, fmt=fmt if fmt != "poscar" else "poscar")
     atoms: list[dict[str, Any]] = []
     for site in s:
@@ -404,10 +404,8 @@ def _parse_xyz_trajectory(text: str) -> dict[str, Any]:
         if m:
             energy = float(m.group(1))
         else:
-            try:
+            with contextlib.suppress(ValueError):
                 energy = float(comment.strip())
-            except ValueError:
-                pass
         positions: list[list[float]] = []
         for k in range(n):
             idx = i + 2 + k
@@ -540,7 +538,7 @@ class _MockSim:
 
     def step_once(self, dt: float = 0.5) -> None:
         # 弹簧力 + 外力, k=1, 平衡位置 = 初始位置
-        for i, (p, v, m, f) in enumerate(zip(self.positions, self.velocities, self.masses, self.forces)):
+        for _i, (p, v, m, f) in enumerate(zip(self.positions, self.velocities, self.masses, self.forces)):
             ax = (-p[0] + f[0]) / m
             ay = (-p[1] + f[1]) / m
             az = (-p[2] + f[2]) / m

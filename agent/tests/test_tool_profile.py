@@ -18,7 +18,6 @@ from huginn.phases import (
 )
 from huginn.tools.registry import ToolRegistry
 
-
 # ── Frozen snapshots of pre-migration dispatch values ──────────────────
 # These capture the old hardcoded PHASE_TOOLS dict so the regression test
 # compares metadata-derived values against the historical baseline, not

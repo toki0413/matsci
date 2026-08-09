@@ -27,17 +27,16 @@ from pydantic import BaseModel, Field
 from huginn.tools.base import HuginnTool
 from huginn.types import ToolContext, ToolResult
 
+from .aggregator import aggregate, ingest_into_kg
 from .mineru_client import (
     FileSpec,
-    submit_batch,
-    wait_batch,
     download_and_extract,
     parsed_dir_for,
+    submit_batch,
+    wait_batch,
 )
-from .schema_extractor import extract_from_parsed_dir, parse_document
 from .schema_def import MaterialSchema
-from .aggregator import aggregate, ingest_into_kg
-from .tool import LiteratureTool  # 复用其 _get_model/_llm_invoke/_parse_json
+from .schema_extractor import extract_from_parsed_dir, parse_document
 
 logger = logging.getLogger(__name__)
 
@@ -360,6 +359,7 @@ if __name__ == "__main__":
     # C6 self-check: action 路由 + 降级路径 + 输入校验. 不调真实 MinerU/LLM.
     import asyncio
     from dataclasses import dataclass
+
     from huginn.types import ToolResult
 
     tool = LiteraturePipelineTool()

@@ -10,19 +10,9 @@
 # ── Python 3.10 compat ──────────────────────────────────────────────────
 # StrEnum and datetime.UTC both landed in 3.11.  huginn/routes/__init__.py
 # drags in the full server stack which uses them unconditionally.
-import datetime
-import enum
 import sys
 import types
 from pathlib import Path
-
-if sys.version_info < (3, 11):
-    if not hasattr(enum, "StrEnum"):
-        class _StrEnumShim(str, enum.Enum):
-            pass
-        enum.StrEnum = _StrEnumShim
-    if not hasattr(datetime, "UTC"):
-        datetime.UTC = datetime.timezone.utc
 
 # Stub out huginn.routes so __init__.py never runs — same trick as
 # test_hpc_job_management.py.  We only need config.py and credentials.py.
@@ -37,18 +27,18 @@ if "huginn.routes" not in sys.modules:
 
 # ── Real imports ────────────────────────────────────────────────────────
 
-import json
-import urllib.error
-from unittest.mock import MagicMock, patch
+import json  # noqa: E402
+import urllib.error  # noqa: E402
+from unittest.mock import MagicMock, patch  # noqa: E402
 
-import pytest
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
+import pytest  # noqa: E402
+from fastapi import FastAPI  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
 
-from huginn.config import HuginnConfig, ModelConfig
-from huginn.routes.config import _model_to_dict
-from huginn.routes.config import router as config_router
-from huginn.routes.credentials import router as credentials_router
+from huginn.config import HuginnConfig, ModelConfig  # noqa: E402
+from huginn.routes.config import _model_to_dict  # noqa: E402
+from huginn.routes.config import router as config_router  # noqa: E402
+from huginn.routes.credentials import router as credentials_router  # noqa: E402
 
 
 @pytest.fixture()

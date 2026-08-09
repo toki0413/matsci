@@ -43,7 +43,6 @@ ponytail: 不做 Navier-Stokes 数值积分 (太重), 只算 0 维代理量.
 from __future__ import annotations
 
 import logging
-import math
 import threading
 from dataclasses import dataclass, field
 from typing import Any
@@ -117,7 +116,7 @@ class CognitiveHeatEngine:
     # 同线程再入不会死锁. ceiling: 拆 lock-free 读副本, 但 0 维代理量不需要.
     _lock: threading.RLock = field(default_factory=threading.RLock)
 
-    def update_T_hot(self, belief_entropy: float) -> None:
+    def update_T_hot(self, belief_entropy: float) -> None:  # noqa: N802
         """belief_entropy 测后调. T_hot = belief_entropy."""
         with self._lock:
             old = self.T_hot
@@ -125,7 +124,7 @@ class CognitiveHeatEngine:
             self.cumulative_entropy_produced += max(0.0, self.T_hot - old)
             self._recompute_eta()
 
-    def update_T_cold(self, supported_ratio: float, darwin_score: float) -> None:
+    def update_T_cold(self, supported_ratio: float, darwin_score: float) -> None:  # noqa: N802
         """darwin_ratchet 算后调. T_cold = supported_ratio (paradigm 秩序代理)."""
         with self._lock:
             self.T_cold = max(0.0, min(1.0, supported_ratio))
@@ -283,7 +282,7 @@ class CognitiveHeatEngine:
             self.cumulative_work = 0.0
             self.cumulative_entropy_produced = 0.0
 
-    def _recompute_Re(self) -> None:
+    def _recompute_Re(self) -> None:  # noqa: N802
         """Re_cog = U · L / ν."""
         if self.nu > 0:
             self.Re_cog = self.U * self.L / self.nu

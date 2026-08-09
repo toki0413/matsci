@@ -41,6 +41,8 @@ def _make_agent_stub(
     stub.workspace = None  # _effective_system_prompt handles None gracefully
     # Copy the class variable so the unbound method finds it on the stub.
     stub._EXPENSIVE_TOOL_NAMES = HuginnAgent._EXPENSIVE_TOOL_NAMES
+    # SimpleNamespace 不会 fall through 到类属性, 长程模式集合需显式复制.
+    stub._LONG_HORIZON_MODES = HuginnAgent._LONG_HORIZON_MODES
 
     # Phase manager — no filtering by default (tool_filter returns None).
     stub._phase_manager = MagicMock()
@@ -49,6 +51,7 @@ def _make_agent_stub(
 
     # 绑定 mode 查询方法 (set_mode 会重置 _phase_manager, 但 is_research_mode 只读 _mode)
     stub.is_research_mode = HuginnAgent.is_research_mode.__get__(stub)
+    stub.is_extreme_mode = HuginnAgent.is_extreme_mode.__get__(stub)
     stub.is_plan_mode = HuginnAgent.is_plan_mode.__get__(stub)
     stub._permission_config = MagicMock(plan_mode=False)
 
@@ -68,8 +71,18 @@ class TestModeSwitching:
         HuginnAgent.set_mode(agent, "research")
         assert agent._mode == "research"
 
+    def test_set_mode_to_extreme(self):
+        agent = _make_agent_stub(mode="chat")
+        HuginnAgent.set_mode(agent, "extreme")
+        assert agent._mode == "extreme"
+
     def test_set_mode_to_chat(self):
         agent = _make_agent_stub(mode="research")
+        HuginnAgent.set_mode(agent, "chat")
+        assert agent._mode == "chat"
+
+    def test_set_mode_to_chat_from_extreme(self):
+        agent = _make_agent_stub(mode="extreme")
         HuginnAgent.set_mode(agent, "chat")
         assert agent._mode == "chat"
 
@@ -86,6 +99,14 @@ class TestModeSwitching:
         agent = _make_agent_stub(mode="chat")
         assert HuginnAgent.is_research_mode(agent) is False
 
+    def test_is_extreme_mode(self):
+        agent = _make_agent_stub(mode="extreme")
+        assert HuginnAgent.is_extreme_mode(agent) is True
+
+    def test_is_not_extreme_mode_in_chat(self):
+        agent = _make_agent_stub(mode="chat")
+        assert HuginnAgent.is_extreme_mode(agent) is False
+
 
 class TestExtremeDispatchLinkage:
     """research mode ↔ HUGINN_EXTREME_DISPATCH 联动 (断层修复)."""
@@ -98,6 +119,14 @@ class TestExtremeDispatchLinkage:
         assert os.environ.get("HUGINN_EXTREME_DISPATCH") == "1", \
             "research mode 应自动开启 HUGINN_EXTREME_DISPATCH"
 
+    def test_enter_extreme_enables_extreme_dispatch(self, monkeypatch):
+        monkeypatch.delenv("HUGINN_EXTREME_DISPATCH", raising=False)
+        agent = _make_agent_stub(mode="chat")
+        HuginnAgent.set_mode(agent, "extreme")
+        import os
+        assert os.environ.get("HUGINN_EXTREME_DISPATCH") == "1", \
+            "extreme mode 应自动开启 HUGINN_EXTREME_DISPATCH"
+
     def test_exit_research_restores_extreme_dispatch(self, monkeypatch):
         monkeypatch.delenv("HUGINN_EXTREME_DISPATCH", raising=False)
         agent = _make_agent_stub(mode="chat")
@@ -106,6 +135,25 @@ class TestExtremeDispatchLinkage:
         import os
         assert "HUGINN_EXTREME_DISPATCH" not in os.environ, \
             "退出 research 后应恢复 (原值未设 → 删除)"
+
+    def test_exit_extreme_restores_extreme_dispatch(self, monkeypatch):
+        monkeypatch.setenv("HUGINN_EXTREME_DISPATCH", "0")
+        agent = _make_agent_stub(mode="chat")
+        HuginnAgent.set_mode(agent, "extreme")
+        import os
+        assert os.environ["HUGINN_EXTREME_DISPATCH"] == "1"
+        HuginnAgent.set_mode(agent, "chat")
+        assert os.environ["HUGINN_EXTREME_DISPATCH"] == "0", \
+            "退出 extreme 后应恢复原值 '0'"
+
+    def test_extreme_to_research_no_double_save(self, monkeypatch):
+        # chat → extreme → research (同为长程, saved 不重写)
+        monkeypatch.delenv("HUGINN_EXTREME_DISPATCH", raising=False)
+        agent = _make_agent_stub(mode="chat")
+        HuginnAgent.set_mode(agent, "extreme")
+        saved1 = agent._extreme_dispatch_saved
+        HuginnAgent.set_mode(agent, "research")
+        assert agent._extreme_dispatch_saved is saved1
 
     def test_exit_research_restores_preexisting_value(self, monkeypatch):
         monkeypatch.setenv("HUGINN_EXTREME_DISPATCH", "0")
@@ -129,7 +177,7 @@ class TestExtremeDispatchLinkage:
 
 
 class TestRecursionLimit:
-    """_effective_recursion_limit 三档: chat/plan=250, extreme=400, research=500."""
+    """_effective_recursion_limit: chat/plan=250, extreme-dispatch=400, long-horizon=500."""
 
     def test_chat_mode_default_250(self, monkeypatch):
         monkeypatch.delenv("HUGINN_EXTREME_DISPATCH", raising=False)
@@ -142,10 +190,15 @@ class TestRecursionLimit:
         assert HuginnAgent._effective_recursion_limit(agent) == 250
 
     def test_research_mode_500(self, monkeypatch):
-        # set_mode("research") 会自动设 extreme=1, 但 research 优先级更高
+        # set_mode("research") 会自动设 extreme=1, 但长程模式优先级更高
         monkeypatch.delenv("HUGINN_EXTREME_DISPATCH", raising=False)
         agent = _make_agent_stub(mode="chat")
         HuginnAgent.set_mode(agent, "research")
+        assert HuginnAgent._effective_recursion_limit(agent) == 500
+
+    def test_extreme_mode_500(self, monkeypatch):
+        monkeypatch.delenv("HUGINN_EXTREME_DISPATCH", raising=False)
+        agent = _make_agent_stub(mode="extreme")
         assert HuginnAgent._effective_recursion_limit(agent) == 500
 
     def test_extreme_dispatch_chat_400(self, monkeypatch):
@@ -187,6 +240,17 @@ class TestSystemPrompt:
         agent = _make_agent_stub(mode="research")
         prompt = HuginnAgent._effective_system_prompt(agent)
         assert "uncertainty" in prompt.lower()
+
+    def test_extreme_mode_prompt_contains_extreme_mode(self):
+        agent = _make_agent_stub(mode="extreme", system_prompt="Base prompt here.")
+        prompt = HuginnAgent._effective_system_prompt(agent)
+        assert "EXTREME MODE" in prompt
+        assert "Base prompt here." in prompt
+
+    def test_chat_mode_prompt_has_no_extreme_prefix(self):
+        agent = _make_agent_stub(mode="chat", system_prompt="Base prompt here.")
+        prompt = HuginnAgent._effective_system_prompt(agent)
+        assert "EXTREME MODE" not in prompt
 
 
 # ── Tool filtering ───────────────────────────────────────────────
@@ -238,3 +302,14 @@ class TestToolFiltering:
         agent = _make_agent_stub(mode="research", tools=tools)
         effective = HuginnAgent._effective_tools(agent)
         assert len(effective) == len(tools)
+
+    def test_extreme_mode_includes_all_tools(self):
+        tools = self._make_tools()
+        agent = _make_agent_stub(mode="extreme", tools=tools)
+        effective = HuginnAgent._effective_tools(agent)
+        names = {t.name for t in effective}
+        assert "vasp_tool" in names
+        assert "lammps_tool" in names
+        assert "cp2k_tool" in names
+        assert "transolver_tool" in names
+        assert len(names) == len(tools)

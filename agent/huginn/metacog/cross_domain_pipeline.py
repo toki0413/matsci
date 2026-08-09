@@ -110,7 +110,9 @@ def cross_domain_reframe(
     # Step 2: 找结构同构预训练域
     try:
         from huginn.ml.transfer_registry import (
-            find_transfer_domain, shared_structure, _REGISTRY,
+            _REGISTRY,
+            find_transfer_domain,
+            shared_structure,
         )
     except Exception:
         logger.debug("transfer_registry import failed", exc_info=True)

@@ -9,6 +9,7 @@ output, session 内的 Python/Jupyter 进程不被枪毙, 变量、模型权重�
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -43,7 +44,7 @@ def _env_timeout(default: int = _DEFAULT_TIMEOUT) -> int:
 # 不被 flush 出来. 升级路径: 装 pywinpty 后在 Windows 也走 PTY 路径.
 
 try:
-    import pexpect  # type: ignore
+    import pexpect  # type: ignore[import-untyped]
 
     _HAS_PEXPECT = True
 except ImportError:
@@ -114,19 +115,15 @@ class _SubprocessHandle:
     def kill(self) -> None:
         try:
             if self.proc.stdin and not self.proc.stdin.closed:
-                try:
+                with contextlib.suppress(Exception):
                     self.proc.stdin.close()
-                except Exception:
-                    pass
             self.proc.terminate()
             try:
                 self.proc.wait(timeout=3)
             except subprocess.TimeoutExpired:
                 self.proc.kill()
-                try:
+                with contextlib.suppress(subprocess.TimeoutExpired):
                     self.proc.wait(timeout=2)
-                except subprocess.TimeoutExpired:
-                    pass
         except Exception as e:
             logger.warning("_SubprocessHandle.kill error: %s", e)
 

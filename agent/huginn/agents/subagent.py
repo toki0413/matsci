@@ -355,7 +355,7 @@ class SubagentDispatch:
             # hook_manager, 父 agent 永远收不到 SUBAGENT_STOP. fallback 到
             # 子 agent 的保持向后兼容 (调用方未传 hook_manager 时).
             try:
-                from huginn.hooks import HookContext, SUBAGENT_STOP
+                from huginn.hooks import SUBAGENT_STOP, HookContext
 
                 _parent_hook_mgr = ctx.get("hook_manager") if ctx else None
                 _hook_mgr = _parent_hook_mgr or getattr(agent, "hook_manager", None)
@@ -762,7 +762,7 @@ if __name__ == "__main__":
         f"_depth=0 不该触发 depth guard: {result.error}"
     assert "agent_factory" in (result.error or ""), \
         f"_depth=0 应走到 factory 检查: {result.error}"
-    print(f"[ok] G1 _depth=0 放行 depth guard, 走到 factory 检查")
+    print("[ok] G1 _depth=0 放行 depth guard, 走到 factory 检查")
 
     # case C: contextvar 默认 0
     assert _current_depth.get() == 0, "contextvar 默认应为 0"

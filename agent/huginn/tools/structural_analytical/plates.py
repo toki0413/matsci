@@ -23,7 +23,6 @@ def plate_static(args: Any) -> ToolResult:
     D = plate.D()
     nu = plate.poissons_ratio
     h = plate.thickness
-    rho = plate.density
 
     if args.plate_shape == "rectangular":
         a = float(args.plate_dims["a"])

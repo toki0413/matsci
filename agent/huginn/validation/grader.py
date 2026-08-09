@@ -10,8 +10,9 @@ registry 统一跑 evaluate_all 拿回同构的 GraderResult 列表.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 from huginn.execution.physics_auditor import AuditReport, PhysicsAuditor
 from huginn.validation.dimensional import DimensionalCheckResult, DimensionalValidator
@@ -379,7 +380,6 @@ class ValidityJudge:
 
         prompt = self._build_prompt(agent_code, conv_log, output_summary)
         try:
-            import json
             # langchain ChatModel.ainvoke 返回 AIMessage, content 是 str
             resp = self._model.invoke(prompt)
             content = resp.content if hasattr(resp, "content") else str(resp)

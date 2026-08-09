@@ -17,10 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import gc
-import json
 import os
-import time
-from typing import Any
 
 import httpx
 import pytest
@@ -51,10 +48,10 @@ _skip_no_server = pytest.mark.skipif(
 @pytest.mark.asyncio
 async def test_50_turn_conversation_no_leak(tmp_path):
     """50 轮连续 chat, 验证内存不持续增长."""
-    from tests.fixtures.fake_llm import make_callable_llm
     from huginn.agent import HuginnAgent
-    from huginn.memory.manager import MemoryManager
     from huginn.memory.longterm import LongTermMemory
+    from huginn.memory.manager import MemoryManager
+    from tests.fixtures.fake_llm import make_callable_llm
 
     # FakeLLM: 每轮返回一个包含轮次号的响应
     llm = make_callable_llm(lambda p: f"response turn {p[:20]}", name="long-run-llm")
@@ -90,10 +87,10 @@ async def test_50_turn_conversation_no_leak(tmp_path):
 @pytest.mark.asyncio
 async def test_context_compression_triggers(tmp_path):
     """发送足够多消息触发上下文压缩, 验证不丢失关键信息."""
-    from tests.fixtures.fake_llm import make_callable_llm
     from huginn.agent import HuginnAgent
-    from huginn.memory.manager import MemoryManager
     from huginn.memory.longterm import LongTermMemory
+    from huginn.memory.manager import MemoryManager
+    from tests.fixtures.fake_llm import make_callable_llm
 
     # 每条消息 2KB, 20 条就够触发压缩 (默认 budget ~8K tokens)
     big_msg = "x" * 2000
@@ -118,10 +115,10 @@ async def test_context_compression_triggers(tmp_path):
 @pytest.mark.asyncio
 async def test_concurrent_long_sessions(tmp_path):
     """3 个并发长会话, 各 20 轮, 验证互不干扰."""
-    from tests.fixtures.fake_llm import make_callable_llm
     from huginn.agent import HuginnAgent
-    from huginn.memory.manager import MemoryManager
     from huginn.memory.longterm import LongTermMemory
+    from huginn.memory.manager import MemoryManager
+    from tests.fixtures.fake_llm import make_callable_llm
 
     llm = make_callable_llm(
         lambda p: f"response for {p[:30]}",
@@ -137,7 +134,7 @@ async def test_concurrent_long_sessions(tmp_path):
     async def session(tid: str, rounds: int):
         responses = []
         for i in range(rounds):
-            async for state in agent.chat(f"msg-{tid}-{i}", thread_id=tid):
+            async for _state in agent.chat(f"msg-{tid}-{i}", thread_id=tid):
                 pass
             responses.append("ok")
         return tid, responses

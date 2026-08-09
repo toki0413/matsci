@@ -156,8 +156,8 @@ def evolve_conjectures(
     n_variants: int = 5,
     max_gen: int = 10,
     model: Any = None,
-    library: "ConjectureLibrary | None" = None,
-    fitness_fn: "Any | None" = None,
+    library: ConjectureLibrary | None = None,
+    fitness_fn: Any | None = None,
 ) -> list[Conjecture]:
     """进化环 — Conjecture Machines 风格.
 
@@ -248,10 +248,10 @@ def default_three_dim_fitness(
 
 
 def fill_sorry_gaps(
-    library: "ConjectureLibrary",
+    library: ConjectureLibrary,
     model: Any = None,
     max_fill: int = 5,
-) -> "list[tuple[str, str, bool]]":
+) -> list[tuple[str, str, bool]]:
     """G48: 填充 sorry gaps — sorry 位作为变异目标而非淘汰.
 
     遍历 library 里的 placeholder gaps, 用 LLM 尝试填充. 填充成功 → mark_filled;
@@ -286,12 +286,12 @@ def fill_sorry_gaps(
                 )
             except Exception:
                 logger.debug("LLM fill_sorry failed for %s", conj_id, exc_info=True)
-                success, filled_proof, counterexample = (
+                success, _filled_proof, counterexample = (
                     False, "", "LLM unavailable",
                 )
 
         if success:
-            library.mark_filled(conj_id, filled_by=f"fill_sorry_gaps")
+            library.mark_filled(conj_id, filled_by="fill_sorry_gaps")
             results.append((conj_id, "filled", True))
             filled_count += 1
         elif counterexample:
@@ -312,7 +312,7 @@ def fill_sorry_gaps(
 
 def _template_fill_sorry(
     statement: str, sympy_expr: str, proof_script: str,
-) -> "tuple[bool, str, str]":
+) -> tuple[bool, str, str]:
     """模板填充 sorry — 测试用. 尝试用 sympy 直接验证 sympy_expr.
 
     成功返回 (True, filled_proof, "").
@@ -353,14 +353,15 @@ def _template_fill_sorry(
 
 def _llm_fill_sorry(
     statement: str, sympy_expr: str, proof_script: str, model: Any,
-) -> "tuple[bool, str, str]":
+) -> tuple[bool, str, str]:
     """LLM 填充 sorry — 给 LLM 看 sorry proof, 让它补完.
 
     成功返回 (True, filled_proof, "").
     失败返回 (False, "", counterexample_or_reason).
     """
-    from langchain_core.messages import HumanMessage, SystemMessage
     import asyncio
+
+    from langchain_core.messages import HumanMessage, SystemMessage
 
     messages = [
         SystemMessage(content=(
@@ -426,8 +427,9 @@ def _generate_variants(
         return _template_variants(seed, n, generation, parents)
 
     try:
-        from langchain_core.messages import HumanMessage, SystemMessage
         import asyncio
+
+        from langchain_core.messages import HumanMessage, SystemMessage
 
         messages = [
             SystemMessage(content=(
@@ -632,8 +634,9 @@ def classify_sorry(conj: Conjecture, model: Any = None) -> str:
 
 def _llm_classify_sorry(conj: Conjecture, model: Any) -> str:
     """LLM 分类 sorry. 失败抛异常让上层降级."""
-    from langchain_core.messages import HumanMessage, SystemMessage
     import asyncio
+
+    from langchain_core.messages import HumanMessage, SystemMessage
 
     messages = [
         SystemMessage(content=_SORRY_CLASSIFICATION_PROMPT),
@@ -813,20 +816,19 @@ class ConjectureLibrary:
         classification 由 classify_sorry 给出 (novel_variant / unexplored /
         unreachable / known_limit), 不传则稍后由 mark_impossible 补.
         """
-        with self._lock:
-            with self._connect() as conn:
-                try:
-                    conn.execute(
-                        "INSERT INTO conjecture_gaps "
-                        "(conj_id, statement, sympy_expr, proof_script, "
-                        "status, classification) "
-                        "VALUES (?, ?, ?, ?, 'placeholder', ?)",
-                        (conj.id, conj.statement, conj.sympy_expr,
-                         conj.proof_script, classification),
-                    )
-                    conn.commit()
-                except sqlite3.IntegrityError:
-                    return False
+        with self._lock, self._connect() as conn:
+            try:
+                conn.execute(
+                    "INSERT INTO conjecture_gaps "
+                    "(conj_id, statement, sympy_expr, proof_script, "
+                    "status, classification) "
+                    "VALUES (?, ?, ?, ?, 'placeholder', ?)",
+                    (conj.id, conj.statement, conj.sympy_expr,
+                     conj.proof_script, classification),
+                )
+                conn.commit()
+            except sqlite3.IntegrityError:
+                return False
         return True
 
     def get_research_gaps(self, status: str | None = None) -> list[dict[str, Any]]:
@@ -854,33 +856,31 @@ class ConjectureLibrary:
 
     def mark_filled(self, conj_id: str, filled_by: str) -> bool:
         """sorry 位被后续证明填充. filled_by 是填充命题 id. True=更新成功."""
-        with self._lock:
-            with self._connect() as conn:
-                cur = conn.execute(
-                    "UPDATE conjecture_gaps SET status='filled', "
-                    "filled_by=?, updated_at=datetime('now') "
-                    "WHERE conj_id=? AND status='placeholder'",
-                    (filled_by, conj_id),
-                )
-                conn.commit()
-                return cur.rowcount > 0
+        with self._lock, self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE conjecture_gaps SET status='filled', "
+                "filled_by=?, updated_at=datetime('now') "
+                "WHERE conj_id=? AND status='placeholder'",
+                (filled_by, conj_id),
+            )
+            conn.commit()
+            return cur.rowcount > 0
 
     def mark_impossible(
         self, conj_id: str, counterexample: str | None = None,
         classification: str | None = None,
     ) -> bool:
         """判定 sorry 位不可实现. counterexample 是反例说明. True=更新成功."""
-        with self._lock:
-            with self._connect() as conn:
-                cur = conn.execute(
-                    "UPDATE conjecture_gaps SET status='impossible', "
-                    "counterexample=?, classification=?, "
-                    "updated_at=datetime('now') "
-                    "WHERE conj_id=? AND status='placeholder'",
-                    (counterexample, classification, conj_id),
-                )
-                conn.commit()
-                return cur.rowcount > 0
+        with self._lock, self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE conjecture_gaps SET status='impossible', "
+                "counterexample=?, classification=?, "
+                "updated_at=datetime('now') "
+                "WHERE conj_id=? AND status='placeholder'",
+                (counterexample, classification, conj_id),
+            )
+            conn.commit()
+            return cur.rowcount > 0
 
 
 # ── self-check ────────────────────────────────────────────────────
@@ -976,7 +976,7 @@ def _self_check() -> int:
         assert lib.jsonl_path.exists()
         # JSONL 行数 == count
         with open(lib.jsonl_path, encoding="utf-8") as f:
-            lines = [l for l in f if l.strip()]
+            lines = [_l for _l in f if _l.strip()]
         assert len(lines) == len(passed)
 
     # 11. evolve + library 联动 — 通过的进 library

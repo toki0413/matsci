@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import Any, Literal
+from typing import Literal
 
 import numpy as np
 from pydantic import BaseModel, Field
@@ -252,7 +252,7 @@ class EnhancedSamplingTool(HuginnTool):
         hists_T = hists.T  # (bin_count, n_windows)
         sum_term = (n_per_window * exp_negbV).sum(axis=1)  # Σᵢ Nᵢ·exp(−βVᵢ)
 
-        for iteration in range(max_iter):
+        for iteration in range(max_iter):  # noqa: B007  # 循环后用到 iteration 的最终值
             F_old = F.copy()
             numerator = (hists_T * exp_negbV).sum(axis=1)  # Σᵢ hᵢ·exp(−βVᵢ)
             denominator = np.exp(-beta * F_old) * sum_term  # Σᵢ Nᵢ·exp(−βVᵢ)·exp(−βF)

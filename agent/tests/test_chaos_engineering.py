@@ -15,14 +15,12 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import sqlite3
 import threading
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -33,10 +31,9 @@ pytest.importorskip("mcp")
 # with the integration suite. Run in integration CI job.
 pytestmark = pytest.mark.integration
 
-from fastapi.testclient import TestClient
-from langchain_core.messages import AIMessage
+from fastapi.testclient import TestClient  # noqa: E402
 
-from huginn.server import app
+from huginn.server import app  # noqa: E402
 
 client = TestClient(app)
 
@@ -71,7 +68,7 @@ class _MockModel:
 
     async def ainvoke(self, prompt: str, **kw: Any):
         class _R:
-            content = plan_text
+            content = self.plan_text
         return _R()
 
 
@@ -206,7 +203,7 @@ class TestBackendServiceFailure:
             try:
                 await asyncio.wait_for(_slow_task(), timeout=0.5)
                 return "completed"
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 return "timeout"
 
         result = asyncio.run(_run_with_timeout())
@@ -257,7 +254,7 @@ class TestWebSocketResilience:
             # 100 次高频 ping 必然触发限流, 测试目的是验证不 crash
             # 不是验证无限制吞吐
             types_seen = set()
-            for i in range(100):
+            for _i in range(100):
                 ws.send_json({"type": "ping"})
                 msg = ws.receive_json()
                 types_seen.add(msg["type"])
@@ -427,8 +424,8 @@ class TestNetworkTimeout:
         async def _main():
             try:
                 await asyncio.wait_for(_slow(), timeout=0.1)
-                assert False, "应该超时"
-            except asyncio.TimeoutError:
+                raise AssertionError("应该超时")
+            except TimeoutError:
                 pass
 
         asyncio.run(_main())
@@ -484,7 +481,6 @@ class TestResourceExhaustion:
 
     def test_too_many_open_fds_handled(self, monkeypatch):
         """模拟打开过多文件描述符, 验证错误处理。"""
-        import os
         # mock open() 抛 OSError (EMFILE)
         _real_open = open
 
@@ -520,7 +516,6 @@ class TestConcurrencyConflict:
 
     def test_concurrent_checkpoint_accept_reject_consistency(self, monkeypatch, tmp_path):
         """同一 checkpoint 被并发 accept 和 reject, 只应有一个成功。"""
-        import huginn.routes.checkpoints as cp_mod
         from huginn.server_core import _checkpoints, _state_lock
 
         # 先创建一个 checkpoint

@@ -286,7 +286,7 @@ def _eval_clarify_regex() -> tuple[bool, str]:
 def _eval_phase_adapter() -> tuple[bool, str]:
     """Phase adapter maps autoloop ↔ ResearchPhase correctly."""
     try:
-        from huginn.phases import autoloop_to_phase, phase_to_autoloop, ResearchPhase
+        from huginn.phases import ResearchPhase, autoloop_to_phase, phase_to_autoloop
         assert autoloop_to_phase("perceive") == ResearchPhase.LITERATURE
         assert autoloop_to_phase("hypothesize") == ResearchPhase.HYPOTHESIS
         assert autoloop_to_phase("plan") == ResearchPhase.PLANNING
@@ -808,21 +808,23 @@ def _selfcheck() -> None:
         assert inconsistent is False, "不同输出应 inconsistent"
         print("2b. re-ask different output + no key → inconsistent OK")
     finally:
-        if orig_key: os.environ["DEEPSEEK_API_KEY"] = orig_key
-        if orig_key2: os.environ["HUGINN_API_KEY"] = orig_key2
+        if orig_key:
+            os.environ["DEEPSEEK_API_KEY"] = orig_key
+        if orig_key2:
+            os.environ["HUGINN_API_KEY"] = orig_key2
 
     # B3.1: visual_capability_tag 分组统计
-    from .task import TaskResult as TR
+    from .task import TaskResult
     mock_results = [
-        TR(task_id="t1", category="vis", passed=True, reason="", output="",
+        TaskResult(task_id="t1", category="vis", passed=True, reason="", output="",
            visual_capability_tag="count"),
-        TR(task_id="t2", category="vis", passed=False, reason="", output="",
+        TaskResult(task_id="t2", category="vis", passed=False, reason="", output="",
            visual_capability_tag="count"),
-        TR(task_id="t3", category="vis", passed=False, reason="", output="",
+        TaskResult(task_id="t3", category="vis", passed=False, reason="", output="",
            visual_capability_tag="hallu", unreliable=True),
-        TR(task_id="t4", category="vis", passed=True, reason="", output="",
+        TaskResult(task_id="t4", category="vis", passed=True, reason="", output="",
            visual_capability_tag="depth"),
-        TR(task_id="t5", category="math", passed=True, reason="", output="",
+        TaskResult(task_id="t5", category="math", passed=True, reason="", output="",
            visual_capability_tag="none"),  # none 不进 summary
     ]
     summary = runner._summarize_by_visual_tag(mock_results)
@@ -834,7 +836,7 @@ def _selfcheck() -> None:
     print(f"3. visual tag 分组统计: {summary} OK")
 
     # B3.2: 全 none tag → 空 summary
-    all_none = [TR(task_id="t1", category="math", passed=True, reason="", output="")]
+    all_none = [TaskResult(task_id="t1", category="math", passed=True, reason="", output="")]
     empty_summary = runner._summarize_by_visual_tag(all_none)
     assert empty_summary == {}, f"全 none 应空 summary: {empty_summary}"
     print("4. all none tag → empty summary OK")
@@ -848,7 +850,6 @@ def _selfcheck_b1() -> int:
     ponytail: 不调真 agent, 只验启发式判断 + retry prompt 构造逻辑.
       ceiling: 没验 retry 真路径 (需真 agent + API key).
     """
-    import sys
     # 1. _is_numeric_task 对数值 task 返回 True
     num_task = BenchmarkTask(
         id="num-test",

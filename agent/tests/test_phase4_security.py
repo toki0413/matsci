@@ -4,13 +4,11 @@ from __future__ import annotations
 
 import json
 import os
-import tempfile
 import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 
 # =========================================================================
 #  RBAC tests  (rbac.py)
@@ -261,7 +259,6 @@ class TestUserStore:
         assert store.get_user_by_username("grace") is None
 
     def test_list_users(self, tmp_path):
-        from huginn.security.rbac import Role
         store = self._make_store(tmp_path)
         store.create_user("hank")
         store.create_user("iris")

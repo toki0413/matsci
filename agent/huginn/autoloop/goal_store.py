@@ -16,6 +16,7 @@ import os
 import threading
 import uuid
 from dataclasses import asdict, dataclass, field
+from datetime import UTC
 from pathlib import Path
 from typing import Any
 
@@ -354,12 +355,12 @@ class GoalStore:
                 return False
             if goal.wall_clock_budget_seconds <= 0 or not goal.started_at:
                 return False
-            from datetime import datetime, timezone
+            from datetime import datetime
             try:
                 start = datetime.fromisoformat(goal.started_at)
                 if start.tzinfo is None:
-                    start = start.replace(tzinfo=timezone.utc)
-                elapsed = (datetime.now(timezone.utc) - start).total_seconds()
+                    start = start.replace(tzinfo=UTC)
+                elapsed = (datetime.now(UTC) - start).total_seconds()
                 return elapsed >= goal.wall_clock_budget_seconds
             except Exception:
                 return False
@@ -420,7 +421,7 @@ if __name__ == "__main__":
 
     # P5: wall_clock_budget_seconds + wall_clock_expired
     import time as _time5
-    from datetime import datetime, timezone as _tz5
+    from datetime import datetime
     with tempfile.TemporaryDirectory() as tmp5:
         s5 = GoalStore(Path(tmp5) / "p5_goals.json")
         # P5a: 无 budget → wall_clock_expired 返 False (无限制)
@@ -440,7 +441,7 @@ if __name__ == "__main__":
         s5.update_goal(
             g5c.id,
             wall_clock_budget_seconds=1.0,
-            started_at=datetime.now(_tz5.utc).isoformat(),
+            started_at=datetime.now(UTC).isoformat(),
         )
         assert s5.wall_clock_expired(g5c.id) is False, "刚开始不应 expired"
         _time5.sleep(1.1)

@@ -1,0 +1,45 @@
+# cargo-deny 配置: Rust 依赖漏洞治理
+#
+# GTK/glib/atk 链来自 tray-icon → libappindicator (Linux 平台独有).
+# libappindicator 0.9.0 是 crates.io 上唯一版本, 绑定 gtk-rs 0.18.x.
+# tray-icon 0.24.2 也只有 gtk feature, 无 ksni 替代.
+# 上游无可用修复版本 — 这些告警是平台生态限制, 非项目代码问题.
+
+[advisories]
+# 需要忽略的告警 (有正当理由, 上游无修复版本)
+ignore = [
+    # glib-macros: use-after-free in std::mem::replace
+    # 影响版本: glib < 0.20.0 | 修复版本: glib 0.20.0+
+    # 豁免理由: 漏洞在 proc macro 展开代码中, 非运行时路径;
+    #           libappindicator 0.9.0 硬依赖 glib 0.18.x, 无法升级;
+    #           桌面应用主要面向 Windows/macOS, Linux tray 是次要平台.
+    # 升级路径: 等 libappindicator 发布支持 gtk 0.19+ 的新版本后移除此豁免.
+    "RUSTSEC-2024-0430",
+
+    # gtk-rs 0.18: unmaintained
+    # 豁免理由: gtk-rs 项目已迁移到新发布模型, 0.18.x 不再维护但功能正常;
+    #           这是信息性告警, 非安全漏洞;
+    #           libappindicator 0.9.0 硬依赖 gtk 0.18.x.
+    # 升级路径: 同上, 等 libappindicator 升级.
+    "RUSTSEC-2024-0411",
+
+    # proc-macro-error: unmaintained
+    # 豁免理由: glib-macros 0.18.x 依赖此 crate, 上游已标记 unmaintained;
+    #           信息性告警, 非安全漏洞; 无运行时风险.
+    # 升级路径: glib 0.20+ 不再依赖 proc-macro-error.
+    "RUSTSEC-2024-0370",
+]
+
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-DFS-2016",
+    "Zlib",
+    "CC0-1.0",
+    " MPL-2.0",
+]

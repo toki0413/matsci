@@ -28,7 +28,6 @@ from huginn.security.rate_limiter import RateLimitConfig, TokenRateLimiter
 from huginn.utils.session_context import get_thread_id
 from tests.fixtures.fake_llm import make_callable_llm
 
-
 # ── shared helpers ───────────────────────────────────────────
 
 

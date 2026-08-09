@@ -195,7 +195,8 @@ def cognitive_map_se3_act(
     ponytail: 只读投影, 不写 _MAPS. 升级: 加 inplace 选项, 把旋转后结果注册新 map.
     """
     import numpy as np
-    from scipy.spatial.transform import Rotation as _R
+    from scipy.spatial.transform import Rotation
+
     from huginn.metacog.composite_token_experiment import CompositeToken, se3_act
 
     m = _get_map(map_id)
@@ -204,7 +205,7 @@ def cognitive_map_se3_act(
         text=token_dict["text"],
         coords=token_dict["coords"],
     )
-    rot = _R.from_euler(order, euler_angles, degrees=degrees)
+    rot = Rotation.from_euler(order, euler_angles, degrees=degrees)
     trans = np.asarray(translation, dtype=float)
     rotated = se3_act(rot, trans, ct)
     return {

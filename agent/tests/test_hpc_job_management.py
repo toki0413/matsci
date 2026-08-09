@@ -20,21 +20,9 @@ from __future__ import annotations
 # it drags in the full server stack (agents, persona, etc.) which has
 # even more 3.11-isms.  Instead we register a lightweight stub package
 # and let Python import hpc.py directly from it.
-import datetime
-import enum
 import sys
 import types
 from pathlib import Path
-
-if sys.version_info < (3, 11):
-    if not hasattr(enum, "StrEnum"):
-
-        class _StrEnumShim(str, enum.Enum):
-            pass
-
-        enum.StrEnum = _StrEnumShim
-    if not hasattr(datetime, "UTC"):
-        datetime.UTC = datetime.timezone.utc
 
 # Stub out huginn.routes so __init__.py never runs.  We only need hpc.py.
 # We also have to set it as an attribute on the huginn package itself —
@@ -51,14 +39,16 @@ if "huginn.routes" not in sys.modules:
 
 # ── Real imports ────────────────────────────────────────────────────────
 
-import time
-from unittest.mock import MagicMock, patch
+import time  # noqa: E402
+from unittest.mock import MagicMock, patch  # noqa: E402
 
-import pytest
+import pytest  # noqa: E402
 
-from huginn.execution.remote_job_store import RemoteJobRecord, RemoteJobStore
-from huginn.hpc.client import HPCConfig, JobStatus
-
+from huginn.execution.remote_job_store import (  # noqa: E402
+    RemoteJobRecord,
+    RemoteJobStore,
+)
+from huginn.hpc.client import HPCConfig, JobStatus  # noqa: E402
 
 # ── Test app setup ──────────────────────────────────────────────────────
 #
@@ -69,6 +59,7 @@ from huginn.hpc.client import HPCConfig, JobStatus
 def hpc_app():
     """Minimal FastAPI app exposing only the hpc router."""
     from fastapi import FastAPI
+
     from huginn.routes.hpc import router
 
     app = FastAPI()
@@ -91,15 +82,15 @@ def workspace(tmp_path, monkeypatch):
 
 def _make_record(**overrides):
     """Quick helper to build a RemoteJobRecord with sane defaults."""
-    defaults = dict(
-        local_id="job-1",
-        scheduler_id="12345",
-        command=["python", "train.py"],
-        cwd="/scratch/job-1",
-        credential_id="cred-abc",
-        status="PENDING",
-        submitted_at=time.time(),
-    )
+    defaults = {
+        "local_id": "job-1",
+        "scheduler_id": "12345",
+        "command": ["python", "train.py"],
+        "cwd": "/scratch/job-1",
+        "credential_id": "cred-abc",
+        "status": "PENDING",
+        "submitted_at": time.time(),
+    }
     defaults.update(overrides)
     return RemoteJobRecord(**defaults)
 

@@ -7,8 +7,9 @@
 """
 from __future__ import annotations
 
-import numpy as np
 from pathlib import Path
+
+import numpy as np
 
 from huginn.memory.episodic_shard import EpisodicShardReader
 from huginn.metacog.encounter_space import EncounterSpace

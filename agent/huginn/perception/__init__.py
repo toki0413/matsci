@@ -14,13 +14,13 @@ Usage:
     p = PerceptionLayer(workspace=".")
     p.start()
     snapshot = p.get_snapshot()
-    
+
     # L3: semantic alignment
     conflicts = p.aligner.detect_conflicts([
         ("code", "conservation_matrix uses np.clip"),
         ("doc", "docstring claims NO band-aids"),
     ])
-    
+
     # L4: cognitive integration
     state = p.integrate(snapshot)
     if state.suggests_action():
@@ -34,29 +34,31 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from huginn.perception.filesystem_watcher import FilesystemWatcher, FileEvent
-from huginn.perception.terminal_capture import TerminalCapture, TerminalStatus
-from huginn.perception.webbridge_monitor import WebBridgeMonitor, BrowserSnapshot
-from huginn.perception.simulator_log_tailer import SimulatorLogTailer, SimulationUpdate
-from huginn.perception.semantic_alignment import SemanticAligner, SemanticConflict
-from huginn.perception.cognitive_integration import CognitiveIntegrator, PerceptionSnapshot
+from huginn.perception.cognitive_integration import (
+    CognitiveIntegrator,
+)
+from huginn.perception.cross_validator import CrossModalAdapter  # noqa: F401
+from huginn.perception.data_extractor import FigureDataExtractor  # noqa: F401
 
 # DocGraph pipeline modules (M1-M7)
-from huginn.perception.doc_types import (
+from huginn.perception.doc_types import (  # noqa: F401
     BBox,
     DocumentElement,
-    ElementType,
     EdgeType,
+    ElementType,
     GraphEdge,
     InformationPackage,
 )
-from huginn.perception.document_graph import DocumentGraph
-from huginn.perception.pdf_parser import PDFElementExtractor
-from huginn.perception.relation_predictor import RelationPredictor
-from huginn.perception.cross_validator import CrossModalAdapter
-from huginn.perception.info_pack import InfoPackAssembler
-from huginn.perception.data_extractor import FigureDataExtractor
-from huginn.perception.rag_bridge import RAGBridge
+from huginn.perception.document_graph import DocumentGraph  # noqa: F401
+from huginn.perception.filesystem_watcher import FileEvent, FilesystemWatcher
+from huginn.perception.info_pack import InfoPackAssembler  # noqa: F401
+from huginn.perception.pdf_parser import PDFElementExtractor  # noqa: F401
+from huginn.perception.rag_bridge import RAGBridge  # noqa: F401
+from huginn.perception.relation_predictor import RelationPredictor  # noqa: F401
+from huginn.perception.semantic_alignment import SemanticAligner, SemanticConflict
+from huginn.perception.simulator_log_tailer import SimulationUpdate, SimulatorLogTailer
+from huginn.perception.terminal_capture import TerminalCapture, TerminalStatus
+from huginn.perception.webbridge_monitor import BrowserSnapshot, WebBridgeMonitor
 
 
 @dataclass
@@ -68,14 +70,14 @@ class PerceptionSnapshot:
     terminal_status: TerminalStatus | None = None
     browser_tabs: list[BrowserSnapshot] = field(default_factory=list)
     simulation_updates: list[SimulationUpdate] = field(default_factory=list)
-    
+
     def has_activity(self) -> bool:
         return bool(
             self.file_events or
             self.simulation_updates or
             (self.terminal_status and self.terminal_status.error_detected)
         )
-    
+
     def to_context(self) -> dict[str, Any]:
         """Convert to Autoloop context format."""
         return {
@@ -90,7 +92,7 @@ class PerceptionSnapshot:
             "terminal_active": self.terminal_status.is_running if self.terminal_status else False,
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(self.timestamp)),
         }
-    
+
     def _extract_errors(self) -> list[str]:
         errors = []
         if self.terminal_status and self.terminal_status.error_detected:

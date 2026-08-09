@@ -10,17 +10,16 @@ from __future__ import annotations
 import json
 import re
 import shlex
-import sys
 import subprocess
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 # datetime.UTC was added in Python 3.11; use timezone.utc for 3.10 compat
-UTC = timezone.utc
+UTC = UTC
 
 
 @dataclass

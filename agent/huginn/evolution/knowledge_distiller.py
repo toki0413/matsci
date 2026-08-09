@@ -397,8 +397,8 @@ class KnowledgeDistiller:
                 continue
 
             # 抽 primitives 里的关键词频率
-            from collections import Counter
             import re
+            from collections import Counter
             word_freq: Counter = Counter()
             for e in entries:
                 prim = e.get("primitives", "") or ""

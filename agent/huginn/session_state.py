@@ -17,13 +17,13 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-class CognitiveMode(str, Enum):
+class CognitiveMode(StrEnum):
     """Which chain of the double helix we're on.
 
     DISCOVER: Ramanujan chain — scan structure manifold, generate hypotheses,
@@ -40,7 +40,7 @@ class CognitiveMode(str, Enum):
     CONSTRUCT = "construct"
 
 
-class SessionPhase(str, Enum):
+class SessionPhase(StrEnum):
     """Where we are in the loop engineering cycle.
 
     EXPLORE: user just arrived, we're figuring out what they want
@@ -202,7 +202,7 @@ class UnifiedSessionState:
         }
 
     @classmethod
-    def from_snapshot(cls, snap: dict[str, Any]) -> "UnifiedSessionState":
+    def from_snapshot(cls, snap: dict[str, Any]) -> UnifiedSessionState:
         """Restore from a snapshot (for cross-session continuity)."""
         state = cls()
         state.session_id = snap.get("session_id", "")

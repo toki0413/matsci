@@ -62,7 +62,7 @@ class _ItemRuntime:
 class EffortBandit:
     """单例. thread-safe. advisory only — 所有公开方法 catch Exception."""
 
-    _instance: "EffortBandit | None" = None
+    _instance: EffortBandit | None = None
     _instance_lock = threading.Lock()
 
     def __init__(self, persist_path: Path | None = None):
@@ -79,6 +79,11 @@ class EffortBandit:
         self._items_names: list[str] = []
         self._items_labels: list[str] = []  # [EXACT]/[VARIANT]/... per item
         self._last_darwin_score = 0.5
+        # MCMC 接受率信号 — exploration/exploitation 指示器.
+        # 高接受率 = MCMC 仍在 posterior 上探索 (尚未收敛); 低接受率 = 已收敛到
+        # 局部最优, 应利用当前假设. advisory only, 不改变 UCB1 决策, 只进 hint.
+        self._mcmc_accept_rate: float | None = None
+        self._mcmc_accept_n = 0
         # MDP 升级: episode 轨迹缓冲 + 起点 darwin (终点奖励的参照).
         # HUGINN_BANDIT_MDP=0 时回退旧单步增量更新, 零行为变化 (回归逃生门).
         self._mdp_enabled = os.environ.get("HUGINN_BANDIT_MDP", "1") != "0"
@@ -87,7 +92,7 @@ class EffortBandit:
         self._load()
 
     @classmethod
-    def get_instance(cls) -> "EffortBandit":
+    def get_instance(cls) -> EffortBandit:
         if cls._instance is None:
             with cls._instance_lock:
                 if cls._instance is None:
@@ -109,7 +114,7 @@ class EffortBandit:
             # __file__ 在 staticmethod 里走 module globals, 不会是 caller 的 globals.
             import huginn.agent.bandit_controller as _self_mod
             _root = Path(_self_mod.__file__).resolve().parents[3]
-            _cand = _root / "ResearchClawBench" / "workspaces" / "_cross_task" / "bandit_q.json"
+            _cand = _root / ".huginn" / "bandit_q.json"
             _cand.parent.mkdir(parents=True, exist_ok=True)
             return _cand
         except Exception as _e:
@@ -267,6 +272,24 @@ class EffortBandit:
                 best_a = a
         return best_a
 
+    def update_mcmc_acceptance(self, accept_rate: float) -> None:
+        """记录 MCMC 接受率作为探索/利用信号.
+
+        advisory only — 不改变 UCB1 决策, 只进 build_hint 供 agent 参考.
+        接受率指数滑动平均 (n 越大越平滑), 失败静默.
+        """
+        try:
+            with self._lock:
+                self._mcmc_accept_n += 1
+                _n = self._mcmc_accept_n
+                if self._mcmc_accept_rate is None:
+                    self._mcmc_accept_rate = accept_rate
+                else:
+                    # 滑动平均: avg ← avg + (x - avg)/n
+                    self._mcmc_accept_rate += (accept_rate - self._mcmc_accept_rate) / _n
+        except Exception as _e:
+            logger.debug("[v19] update_mcmc_acceptance fallback: %s", _e)
+
     def record_tool_call(self) -> None:
         try:
             with self._lock:
@@ -335,8 +358,8 @@ class EffortBandit:
     def _update_q(self, st: _BanditState, action: str, reward: float) -> None:
         k = st.key()
         if k not in self._Q:
-            self._Q[k] = {a: 0.0 for a in _ACTIONS}
-            self._N[k] = {a: 0 for a in _ACTIONS}
+            self._Q[k] = dict.fromkeys(_ACTIONS, 0.0)
+            self._N[k] = dict.fromkeys(_ACTIONS, 0)
         _N_sa = self._N[k][action]
         _Q_sa = self._Q[k][action]
         self._Q[k][action] = _Q_sa + (reward - _Q_sa) / (_N_sa + 1)
@@ -394,8 +417,8 @@ class EffortBandit:
         for _k, _a, _r in reversed(self._trajectory):
             _g = _r + _GAMMA * _g
             if _k not in self._Q:
-                self._Q[_k] = {ac: 0.0 for ac in _ACTIONS}
-                self._N[_k] = {ac: 0 for ac in _ACTIONS}
+                self._Q[_k] = dict.fromkeys(_ACTIONS, 0.0)
+                self._N[_k] = dict.fromkeys(_ACTIONS, 0)
             _Q_sa = self._Q[_k][_a]
             self._Q[_k][_a] = _Q_sa + _ALPHA * (_g - _Q_sa)
             self._N[_k][_a] += 1
@@ -427,7 +450,24 @@ class EffortBandit:
                 if self._runtime is None or self._items_count == 0:
                     return ""
                 _advice = self._policy_locked(self._runtime.last_progress_pct)
-                if _advice == "continue":
+                if _advice != "continue":
+                    # 有明确 bandit advice (switch/requery) 时, 优先返回它.
+                    pass
+                elif self._mcmc_accept_rate is not None:
+                    # MCMC 探索/利用信号 (advisory): 高接受率=仍在探索, 低接受率=已收敛.
+                    # 收敛 + progress 停滞 → 提示可能是局部最优, 考虑换个假设方向.
+                    _mcmc_line = (
+                        "still exploring hypothesis space (MCMC accept high)"
+                        if self._mcmc_accept_rate >= 0.1
+                        else "MCMC converged (accept low) — if progress stalled, "
+                             "consider exploring a different hypothesis direction"
+                    )
+                    return (
+                        f"\n\n## MCMC Exploration Signal (advisory)\n"
+                        f"MCMC accept rate ≈ {self._mcmc_accept_rate:.3f}: {_mcmc_line}\n"
+                        f"You can ignore this and continue if your current direction is working.\n"
+                    )
+                else:
                     return ""
                 rt = self._runtime
                 _prog = rt.last_progress_pct

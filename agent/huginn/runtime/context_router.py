@@ -202,7 +202,7 @@ def route_context_segments(
         weights = dict(_PHASE_WEIGHTS[phase_lower])
     else:
         # 未知 phase → 全 1.0 (fallback 到现状, 不改变行为)
-        weights = {seg: 1.0 for seg in CONTEXT_SEGMENTS}
+        weights = dict.fromkeys(CONTEXT_SEGMENTS, 1.0)
 
     # 2. task 关键词增强
     msg_lower = (task_message or "").lower()
