@@ -8,7 +8,10 @@ Source: 用户要求 vision LLM 之前 CV 一样做图像评分, 工作流必须
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def cv_image_similarity(target_path: Path, generated_path: Path) -> dict:
@@ -44,7 +47,7 @@ def cv_image_similarity(target_path: Path, generated_path: Path) -> dict:
                 s = _ssim(tg_gray, gg_gray, data_range=255)
                 scores["ssim"] = max(0.0, float(s))
             except Exception:
-                pass
+                logger.debug("ssim compare failed", exc_info=True)
 
         # 2. HSV histogram correlation — 配色一致性
         try:
@@ -59,7 +62,7 @@ def cv_image_similarity(target_path: Path, generated_path: Path) -> dict:
                 corr_sum += float(cv2.compareHist(h_t_, h_g_, cv2.HISTCMP_CORREL))
             scores["histogram"] = max(0.0, corr_sum / 3.0)
         except Exception:
-            pass
+            logger.debug("histogram compare failed", exc_info=True)
 
         # 3. HOG cosine — 梯度方向直方图, 抓形状/纹理
         try:
@@ -73,7 +76,7 @@ def cv_image_similarity(target_path: Path, generated_path: Path) -> dict:
                 cos = float(np.dot(h_t_, h_g_) / (np.linalg.norm(h_t_) * np.linalg.norm(h_g_) + 1e-9))
                 scores["hog"] = max(0.0, cos)
         except Exception:
-            pass
+            logger.debug("hog compare failed", exc_info=True)
 
         # 4. ORB keypoint match ratio — 关键点匹配
         try:
@@ -86,7 +89,7 @@ def cv_image_similarity(target_path: Path, generated_path: Path) -> dict:
                 ratio = len(matches) / max(len(kp1), len(kp2))
                 scores["orb"] = min(1.0, ratio)
         except Exception:
-            pass
+            logger.debug("orb compare failed", exc_info=True)
 
         if not scores:
             return {"score": None, "details": "all CV operators failed"}

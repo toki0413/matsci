@@ -477,7 +477,7 @@ class SnapshotManager:
                 source="snapshot_manager",
             ), name="snapshot-revert-emit")
         except Exception:
-            pass
+            logger.debug("snapshot revert event publish failed", exc_info=True)
         return restored
 
     def unrevert(self, step_id: str, workspace: Path) -> list[str]:

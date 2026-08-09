@@ -647,7 +647,7 @@ class LongTermMemory:
                 from huginn.routes.metrics import track_memory_rerank
                 track_memory_rerank("none", len(candidates))
             except Exception:
-                pass
+                logger.debug("memory rerank metric tracking failed", exc_info=True)
             return candidates[:top_k]
         try:
             texts = [query] + [str(c.get("content", "")) for c in candidates]
@@ -707,7 +707,7 @@ class LongTermMemory:
             from huginn.routes.metrics import track_memory_rerank
             track_memory_rerank("ising", len(candidates))
         except Exception:
-            pass
+            logger.debug("memory rerank metric tracking failed", exc_info=True)
         return [candidates[i] for i in selected]
 
     # ── P2-5: HiLS 分层稀疏 attention ─────────────────────────────────
@@ -761,7 +761,7 @@ class LongTermMemory:
                 from huginn.routes.metrics import track_memory_rerank
                 track_memory_rerank("none", len(candidates))
             except Exception:
-                pass
+                logger.debug("memory rerank metric tracking failed", exc_info=True)
             return candidates[:top_k]
         try:
             texts = [query] + [str(c.get("content", "")) for c in candidates]
@@ -772,14 +772,14 @@ class LongTermMemory:
                 from huginn.routes.metrics import track_memory_rerank
                 track_memory_rerank("none", len(candidates))
             except Exception:
-                pass
+                logger.debug("memory rerank metric tracking failed", exc_info=True)
             return candidates[:top_k]
         if not embs or len(embs) != len(texts):
             try:
                 from huginn.routes.metrics import track_memory_rerank
                 track_memory_rerank("none", len(candidates))
             except Exception:
-                pass
+                logger.debug("memory rerank metric tracking failed", exc_info=True)
             return candidates[:top_k]
 
         import math
@@ -804,7 +804,7 @@ class LongTermMemory:
                 from huginn.routes.metrics import track_memory_rerank
                 track_memory_rerank("none", n)
             except Exception:
-                pass
+                logger.debug("memory rerank metric tracking failed", exc_info=True)
             return candidates[:top_k]
         alpha = [s / total for s in scores]
 
@@ -815,7 +815,7 @@ class LongTermMemory:
                 from huginn.routes.metrics import track_memory_rerank
                 track_memory_rerank("hils_full", n)
             except Exception:
-                pass
+                logger.debug("memory rerank metric tracking failed", exc_info=True)
             return [candidates[i] for i in ranked[:top_k]]
 
         # N >= K: 分层稀疏 (v2)
@@ -832,7 +832,7 @@ class LongTermMemory:
                 from huginn.routes.metrics import track_memory_rerank
                 track_memory_rerank("hils_full", n)
             except Exception:
-                pass
+                logger.debug("memory rerank metric tracking failed", exc_info=True)
             return [candidates[i] for i in ranked[:top_k]]
         lm_alpha = [s / lm_total for s in lm_scores]
         top_lm_idx = sorted(range(len(landmarks)), key=lambda i: -lm_alpha[i])[:top_h]
@@ -867,7 +867,7 @@ class LongTermMemory:
             from huginn.routes.metrics import track_memory_rerank
             track_memory_rerank("hils_sparse", n)
         except Exception:
-            pass
+            logger.debug("memory rerank metric tracking failed", exc_info=True)
         return [candidates[i] for i in ranked[:top_k]]
 
     def _kmeans_landmarks(

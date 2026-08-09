@@ -549,7 +549,7 @@ def _extract_compact_attachments(messages: list[Any]) -> str:
                     lines.append(f"### {_label}")
                     lines.extend(f"  {_l}" for _l in _lines5)
     except Exception:
-        pass
+        logger.debug("context enrichment file read failed", exc_info=True)
 
     return "\n".join(lines) if len(lines) > 1 else ""
 

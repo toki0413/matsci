@@ -228,7 +228,7 @@ async def eval_history(limit: int = 20) -> dict[str, Any]:
             except Exception:
                 continue
     except Exception:
-        pass
+        logger.debug("eval history list skipped", exc_info=True)
     return {"runs": runs, "count": len(runs)}
 
 
@@ -264,7 +264,7 @@ async def eval_analyze(params: dict[str, Any]) -> dict[str, Any]:
             except Exception:
                 continue
     except Exception:
-        pass
+        logger.debug("eval runs glob skipped", exc_info=True)
 
     if not runs:
         return {"success": True, "analysis": {"message": "no past eval runs found"}}
@@ -353,7 +353,7 @@ def _parse_agent_output(text: str) -> dict[str, Any]:
         try:
             return json.loads(json_match.group(1))
         except Exception:
-            pass
+            logger.debug("fenced json parse skipped", exc_info=True)
 
     # Try bare JSON
     json_match = re.search(r"\{[^{}]*\}", text)
@@ -361,7 +361,7 @@ def _parse_agent_output(text: str) -> dict[str, Any]:
         try:
             return json.loads(json_match.group(0))
         except Exception:
-            pass
+            logger.debug("bare json parse skipped", exc_info=True)
 
     # Try key: value patterns (e.g., "band_gap_eV: 1.12")
     result: dict[str, Any] = {}

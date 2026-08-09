@@ -9,7 +9,10 @@ import 时 try/except, 不强依赖 CrossTaskStore (Task 14) 或 KG 模块.
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
 
 # 软依赖: import 失败不阻塞模块加载, 运行时 store/kg 通过依赖注入.
 # ponytail: 升级路径是真正注入实例后, type hint 自动从 Optional[Any] 收紧.
@@ -195,7 +198,7 @@ class UnifiedComplexView:
                 if isinstance(result, list):
                     return result
             except Exception:
-                pass
+                logger.debug("kg query_entities failed", exc_info=True)
         # 老 ProjectKnowledgeGraph 接口 fallback
         if hasattr(kg, "query"):
             try:
@@ -210,7 +213,7 @@ class UnifiedComplexView:
                         for n in nodes
                     ]
             except Exception:
-                pass
+                logger.debug("kg query fallback failed", exc_info=True)
         return []
 
     def _kg_query_triples(

@@ -210,7 +210,7 @@ def _verify_homomorphism(
             if not H.contains(im):
                 return {"is_homomorphism": False, "reason": f"φ(g)={im} 不在 H 里"}
         except Exception:
-            pass
+            logger.debug("subgroup containment check failed", exc_info=True)
     return {"is_homomorphism": True, "note": "弱验证: 阶保持 + 像在 H"}
 
 

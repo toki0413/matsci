@@ -905,7 +905,7 @@ class DeliAutoResearch:
                     if g.get("needs_computation") and g.get("objective")
                 ]
         except Exception:
-            pass
+            logger.debug("compute gap classification skipped", exc_info=True)
 
         if not comp_gaps:
             state.integrity_log.append("[compute] no computational gaps identified")
@@ -965,7 +965,7 @@ class DeliAutoResearch:
                                 encoding="utf-8"
                             )[:3000]
                     except Exception:
-                        pass
+                        logger.debug("compute report excerpt read skipped", exc_info=True)
                 state.computational_data[objective] = comp_entry
                 state.gaps_filled.append(gap.get("gap", objective))
                 state.integrity_log.append(
@@ -1013,7 +1013,7 @@ class DeliAutoResearch:
                                 encoding="utf-8"
                             )[:3000]
                     except Exception:
-                        pass
+                        logger.debug("compute report excerpt read skipped", exc_info=True)
 
                 # 跑完存快照, 下次同一 objective 直接复用, 不再重跑 autoloop
                 save_autoloop_snapshot(result, ws_path)
@@ -1240,7 +1240,7 @@ class DeliAutoResearch:
                         if len(row) >= 2:
                             data_rows.append(row)
         except Exception:
-            pass
+            logger.debug("provenance data collection skipped", exc_info=True)
 
         # 2. 查 RAG — 论文/知识库中的数据点
         try:
@@ -1267,7 +1267,7 @@ class DeliAutoResearch:
                             {"_raw_text": content[:200], "_nums": nums[:10]}
                         )
         except Exception:
-            pass
+            logger.debug("rag data collection skipped", exc_info=True)
 
         # 3. 查 computational_data — autoloop 跑出来的结构化结果
         # 每个 objective 的 phases_summary / goal_judgment 拍平成数值行喂给 SR+GP

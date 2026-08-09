@@ -12,6 +12,7 @@ the endpoint keeps working on minimal installs without the dependency.
 from __future__ import annotations
 
 import contextlib
+import logging
 import threading
 import time
 from typing import Any
@@ -207,6 +208,9 @@ except ImportError:  # pragma: no cover - only hit when prometheus_client is abs
         return ("\n".join(lines) + "\n").encode("utf-8")
 
     CONTENT_TYPE_LATEST = "text/plain; version=0.0.4; charset=utf-8"
+
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -587,7 +591,7 @@ def track_llm_tps(model: str, ttft_ms: int, tps: float) -> None:
         if ttft_ms > 0:
             LLM_TTFT_SECONDS.labels(model=model).observe(ttft_ms / 1000.0)
     except Exception:
-        pass
+        logger.debug("llm tps metric observe skipped", exc_info=True)
 
 
 def track_agent_turn(thread_id: str) -> None:
@@ -606,7 +610,7 @@ def track_memory_rerank(strategy: str, n_candidates: int) -> None:
         MEMORY_RERANK_TOTAL.labels(strategy=strategy).inc()
         MEMORY_RERANK_CANDIDATES.observe(n_candidates)
     except Exception:
-        pass
+        logger.debug("memory rerank metric observe skipped", exc_info=True)
 
 
 def track_crdt_merge(n_sources: int) -> None:
@@ -615,7 +619,7 @@ def track_crdt_merge(n_sources: int) -> None:
         CRDT_MERGE_TOTAL.inc()
         CRDT_MERGE_SOURCES.observe(n_sources)
     except Exception:
-        pass
+        logger.debug("crdt merge metric observe skipped", exc_info=True)
 
 
 def track_belief_update(btype: str) -> None:

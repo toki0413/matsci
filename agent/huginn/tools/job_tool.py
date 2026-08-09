@@ -5,6 +5,7 @@ Supports both local mock mode and remote HPC submission via SSH.
 
 from __future__ import annotations
 
+import logging
 import os
 import shlex
 import time
@@ -18,6 +19,8 @@ from huginn.hpc.client import HPCConfig
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import HandleType, ToolContext, ToolResult, ValidationResult
 from huginn.validation.handle_validator import HandleValidator
+
+logger = logging.getLogger(__name__)
 
 
 class JobToolInput(BaseModel):
@@ -287,7 +290,7 @@ class JobTool(HuginnTool):
                     )
                     store.add_or_update(record)
                 except Exception:
-                    pass
+                    logger.debug("job record persist failed", exc_info=True)
 
                 output = JobToolOutput(
                     job_id=job_id,
