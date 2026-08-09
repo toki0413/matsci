@@ -10,28 +10,49 @@ rcb_runner.py 仍为入口 (env setup + 主循环 run/_step2_execute/_step3_adve
 向后兼容: `from huginn.cli.rcb_runner import X` 仍可用 (rcb_runner re-export 本包).
 本包两个子模块顶层均不依赖 rcb_runner, 可被任意顺序 import, 无循环依赖.
 """
+
+from huginn.cli.rcb.audit import (
+    _count_failed_attempts,
+    _extract_exact_components,
+    _lint_report_markers,
+    _parse_substitute_headers,
+    _rcb_drift_check,
+    _scan_implementation_traces,
+    _scan_real_metrics,
+    _step2_outputs_gate,
+    _step2_substitution_audit,
+)
 from huginn.cli.rcb.prompt_builders import (
-    _legacy_build_step2_prompt,
     _legacy_build_iter_prompt,
+    _legacy_build_step2_prompt,
 )
 from huginn.cli.rcb.self_checks import (
-    self_check_v14_task4,
-    self_check_v14_task6,
-    self_check_a3,
     self_check_a2,
+    self_check_a3,
     self_check_a4,
+    self_check_v14_all,
+    self_check_v14_comprehensive,
+    self_check_v14_p234,
     self_check_v14_task1,
     self_check_v14_task2,
     self_check_v14_task3,
+    self_check_v14_task4,
+    self_check_v14_task6,
     self_check_v14_task8,
     self_check_v15_task3,
     self_check_v15_task4,
-    self_check_v14_comprehensive,
-    self_check_v14_p234,
-    self_check_v14_all,
 )
 
 __all__ = [
+    "_rcb_drift_check",
+    "_extract_exact_components",
+    "_scan_implementation_traces",
+    "_parse_substitute_headers",
+    "_count_failed_attempts",
+    "_step2_substitution_audit",
+    "_scan_real_metrics",
+    "_lint_report_markers",
+    "_step2_outputs_gate",
     "_legacy_build_step2_prompt",
     "_legacy_build_iter_prompt",
     "self_check_v14_task4",
