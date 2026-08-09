@@ -2,9 +2,7 @@
 
 覆盖点:
   * RecursiveCharacterChunker — 优先级分隔符切分、overlap 行为、小文本单块、递归回退到字符级
-  * MarkdownChunker — 按标题切分、heading_path 元数据、大段子切分、无标题回退
   * StructureChunker — CIF 检测、POSCAR 检测、元数据提取 (空间群/晶格)、未知格式回退
-  * AutoChunker — 按扩展名和内容选择正确 chunker
   * Chunk dataclass — 元数据字段
   * _merge_small_chunks — 小块合并
 """
@@ -14,10 +12,8 @@ from __future__ import annotations
 import pytest
 
 from huginn.knowledge.chunker import (
-    AutoChunker,
     BaseChunker,
     Chunk,
-    MarkdownChunker,
     RecursiveCharacterChunker,
     StructureChunker,
 )
@@ -157,112 +153,6 @@ class TestRecursiveCharacterChunker:
 
 
 # ════════════════════════════════════════════════════════════════════
-# MarkdownChunker
-# ════════════════════════════════════════════════════════════════════
-
-
-class TestMarkdownChunker:
-    @pytest.mark.asyncio
-    async def test_splits_by_headings(self):
-        # 每段内容 > 100 字符, 避免 _merge_small_chunks 把它们合并
-        text = (
-            "# Title\n\n"
-            + "Intro text content here. " * 5 + "\n\n"
-            + "## Methods\n\n"
-            + "Method details described here. " * 5 + "\n\n"
-            + "### SCF\n\n"
-            + "SCF convergence info detailed. " * 5
-        )
-        chunker = MarkdownChunker(chunk_size=800, overlap=50)
-        chunks = await chunker.chunk(text)
-
-        assert len(chunks) == 3
-        # 每块对应一个标题
-        assert chunks[0].metadata["heading_title"] == "Title"
-        assert chunks[1].metadata["heading_title"] == "Methods"
-        assert chunks[2].metadata["heading_title"] == "SCF"
-        assert all(c.metadata["element_type"] == "text" for c in chunks)
-
-    @pytest.mark.asyncio
-    async def test_heading_path_metadata(self):
-        # heading_path 应反映标题层级, 每段内容 > 100 字符避免合并
-        text = (
-            "# Title\n\n"
-            + "Intro text content here. " * 5 + "\n\n"
-            + "## Methods\n\n"
-            + "Method details described here. " * 5 + "\n\n"
-            + "### SCF\n\n"
-            + "SCF convergence info detailed. " * 5
-        )
-        chunker = MarkdownChunker(chunk_size=800, overlap=50)
-        chunks = await chunker.chunk(text)
-
-        assert chunks[0].metadata["heading_path"] == ["Title"]
-        assert chunks[1].metadata["heading_path"] == ["Title", "Methods"]
-        assert chunks[2].metadata["heading_path"] == ["Title", "Methods", "SCF"]
-        # heading_level 与 # 数量一致
-        assert chunks[0].metadata["heading_level"] == 1
-        assert chunks[1].metadata["heading_level"] == 2
-        assert chunks[2].metadata["heading_level"] == 3
-
-    @pytest.mark.asyncio
-    async def test_heading_path_pops_on_level_up(self):
-        # 从 ### 回到 ## 时, heading_path 应弹出深层标题; 每段 > 100 字符避免合并
-        text = (
-            "## A\n\n"
-            + "content a section text here. " * 5 + "\n\n"
-            + "### B\n\n"
-            + "content b section text here. " * 5 + "\n\n"
-            + "## C\n\n"
-            + "content c section text here. " * 5
-        )
-        chunker = MarkdownChunker(chunk_size=800, overlap=50)
-        chunks = await chunker.chunk(text)
-
-        assert chunks[0].metadata["heading_path"] == ["A"]
-        assert chunks[1].metadata["heading_path"] == ["A", "B"]
-        # 回到 level 2 后, "B" 被弹出, "C" 接在 "A" 后
-        assert chunks[2].metadata["heading_path"] == ["A", "C"]
-
-    @pytest.mark.asyncio
-    async def test_large_section_sub_chunked(self):
-        # 单个标题下内容过大时, 应子切分且共享 heading_path
-        big_body = "Sentence about SCF. " * 200
-        text = f"# Big Section\n\n{big_body}"
-        chunker = MarkdownChunker(chunk_size=200, overlap=20)
-        chunks = await chunker.chunk(text)
-
-        assert len(chunks) > 1
-        # 所有子块都继承同一 heading_path / heading_title
-        assert all(c.metadata["heading_path"] == ["Big Section"] for c in chunks)
-        assert all(c.metadata["heading_title"] == "Big Section" for c in chunks)
-        assert all(c.metadata["heading_level"] == 1 for c in chunks)
-
-    @pytest.mark.asyncio
-    async def test_no_headings_falls_back_to_recursive(self):
-        # 无标题时回退到 RecursiveCharacterChunker, 不带 heading_path
-        text = "Plain text without headings. " * 50
-        chunker = MarkdownChunker(chunk_size=200, overlap=20)
-        chunks = await chunker.chunk(text)
-
-        assert len(chunks) >= 1
-        # 回退路径不会写 heading_path
-        assert all("heading_path" not in c.metadata for c in chunks)
-
-    @pytest.mark.asyncio
-    async def test_empty_heading_content_skipped(self):
-        # 紧邻的两个标题, 中间无内容应跳过空块
-        text = "# A\n\n## B\n\nreal content here."
-        chunker = MarkdownChunker(chunk_size=800, overlap=50)
-        chunks = await chunker.chunk(text)
-
-        # A 无内容被跳过, 只剩 B 的内容
-        assert len(chunks) == 1
-        assert chunks[0].text == "real content here."
-        assert chunks[0].metadata["heading_path"] == ["A", "B"]
-
-
-# ════════════════════════════════════════════════════════════════════
 # StructureChunker
 # ════════════════════════════════════════════════════════════════════
 
@@ -378,85 +268,6 @@ class TestStructureChunker:
         chunker = StructureChunker()
         chunks = await chunker.chunk("Direct\n")
         assert chunks[0].metadata["format"] == "poscar"
-
-
-# ════════════════════════════════════════════════════════════════════
-# AutoChunker
-# ════════════════════════════════════════════════════════════════════
-
-
-class TestAutoChunker:
-    @pytest.mark.asyncio
-    async def test_cif_by_filename(self):
-        cif = "data_Si\n_cell_length_a 5.0\n"
-        auto = AutoChunker()
-        chunks = await auto.chunk(cif, filename="structure.cif")
-
-        assert chunks[0].metadata["format"] == "cif"
-        assert chunks[0].metadata["source"] == "structure.cif"
-
-    @pytest.mark.asyncio
-    async def test_markdown_by_filename(self):
-        md = "# Title\n\nContent here.\n"
-        auto = AutoChunker()
-        chunks = await auto.chunk(md, filename="paper.md")
-
-        assert chunks[0].metadata["source"] == "paper.md"
-        assert "heading_path" in chunks[0].metadata
-
-    @pytest.mark.asyncio
-    async def test_poscar_by_filename(self):
-        poscar = (
-            "comment\n1.0\n5.0 0.0 0.0\n0.0 6.0 0.0\n0.0 0.0 7.0\n"
-            "Si\n2\nDirect\n0.0 0.0 0.0\n"
-        )
-        auto = AutoChunker()
-        chunks = await auto.chunk(poscar, filename="struct.poscar")
-
-        assert chunks[0].metadata["format"] == "poscar"
-        assert chunks[0].metadata["source"] == "struct.poscar"
-
-    @pytest.mark.asyncio
-    async def test_vasp_extension_routed_to_structure(self):
-        poscar = (
-            "comment\n1.0\n5.0 0.0 0.0\n0.0 6.0 0.0\n0.0 0.0 7.0\n"
-            "Si\n1\nDirect\n0.0 0.0 0.0\n"
-        )
-        auto = AutoChunker()
-        chunks = await auto.chunk(poscar, filename="out.vasp")
-        assert chunks[0].metadata["format"] == "poscar"
-
-    @pytest.mark.asyncio
-    async def test_plain_text_by_filename(self):
-        auto = AutoChunker()
-        chunks = await auto.chunk("Just plain text.", filename="notes.txt")
-        assert chunks[0].metadata["source"] == "notes.txt"
-        # 纯文本走递归切分, 不带 format
-        assert "format" not in chunks[0].metadata
-
-    @pytest.mark.asyncio
-    async def test_cif_by_content_detection(self):
-        # 不给扩展名, 靠内容识别 CIF
-        cif = "data_Si\n_cell_length_a 5.0\n"
-        auto = AutoChunker()
-        chunks = await auto.chunk(cif, filename="")
-        assert chunks[0].metadata["format"] == "cif"
-
-    @pytest.mark.asyncio
-    async def test_markdown_by_content_detection(self):
-        # 不给扩展名, 靠内容识别 markdown
-        md = "# Title\n\nContent.\n"
-        auto = AutoChunker()
-        chunks = await auto.chunk(md, filename="")
-        assert "heading_path" in chunks[0].metadata
-
-    @pytest.mark.asyncio
-    async def test_plain_text_by_content_detection(self):
-        # 无特征内容走递归切分
-        auto = AutoChunker()
-        chunks = await auto.chunk("Some unstructured text.", filename="")
-        assert len(chunks) >= 1
-        assert "format" not in chunks[0].metadata
 
 
 # ════════════════════════════════════════════════════════════════════
