@@ -1406,6 +1406,12 @@ LUCID review (mandatory after generating hypothesis):
                             manifold=_hypo_manifold,
                             observations=_iter_observations,
                             history_entries=_trace_history,
+                            mcmc_current=(
+                                _mcmc_engine._mcmc_current
+                                if "_mcmc_engine" in dir()
+                                and _mcmc_engine is not None
+                                else None
+                            ),
                         )
                     except Exception as _pe:
                         print(
@@ -2634,6 +2640,16 @@ LUCID review (mandatory after generating hypothesis):
                         _mcmc_engine._mcmc_accept_count += 1
                     _mcmc_engine._mcmc_step_count += 1
                     _mcmc_engine._iteration = _iter_n
+                    # #2 打通: MCMC 接受率注入 bandit 作为探索/利用信号.
+                    # 每 _mcmc_interval 步只跑一次 step, 接受率是单步 0/1;
+                    # bandit 内部做滑动平均平滑. 失败静默, 不阻塞 MCMC.
+                    try:
+                        from huginn.agent.bandit_controller import EffortBandit
+                        EffortBandit.get_instance().update_mcmc_acceptance(
+                            1.0 if _mcmc_accepted else 0.0
+                        )
+                    except Exception:
+                        pass
                     _mcmc_llh = _next_log_p  # mcmc_step 已返回, 不再重算
                     print(
                         f"[mcmc] iter {_iter_n}: "

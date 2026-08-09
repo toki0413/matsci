@@ -199,6 +199,11 @@ class HypothesisManifold:
         self._haptic_layers: dict[str, Any] = {}
         # 对齐函数: structure → haptic 的 GP 映射. None / not ready 时 proposal 退化.
         self._alignment_fn: Any = None
+        # #3 打通: MCMC 访问计数 — 每次 mcmc_step 落在某个 h 时累计.
+        # 访问分布反映"posterior 空间哪些点被充分探索 / 哪些被冷落".
+        # hint_coordinator 读它, 把 least-visited 假设作为未探索方向提示,
+        # 指导 _hypothesize 向稀疏区域生成新假设 (探索多样性).
+        self._mcmc_visit_counts: dict[str, int] = {}
 
     @staticmethod
     def _gaussian_log_likelihood(h: Hypothesis, o: Observation) -> float:
@@ -687,7 +692,15 @@ class HypothesisManifold:
         log_ratio = (log_p_proposal - log_p_current) / temperature
         # 接受概率 min(1, exp(log_ratio))
         if math.log(rng.random()) < log_ratio:
+            # #3: 记录访问分布 — 落在 proposal 上 (接受).
+            self._mcmc_visit_counts[proposal] = (
+                self._mcmc_visit_counts.get(proposal, 0) + 1
+            )
             return proposal, log_p_proposal
+        # 拒绝 → 驻留 current, 也计一次访问 (体现"被探索").
+        self._mcmc_visit_counts[current_h_id] = (
+            self._mcmc_visit_counts.get(current_h_id, 0) + 1
+        )
         return current_h_id, log_p_current
 
     # ── Step 3: 多链并行 + Gelman-Rubin 收敛诊断 ──────────────────
@@ -930,6 +943,23 @@ class HypothesisManifold:
         var_hat = ((n - 1) * W + B) / n if n > 0 else W
         r_hat = math.sqrt(var_hat / W) if W > 0 else 1.0
         return r_hat
+
+    def mcmc_least_visited(self, k: int = 3) -> list[str]:
+        """返回 MCMC 访问次数最少的 k 个 hypothesis (未探索方向).
+
+        #3 打通: 访问分布稀疏 = posterior 空间这些区域还没被充分探索.
+        hint_coordinator 读它, 把 least-visited 作为"值得生成新假设的方向"提示,
+        指导 _hypothesize 多样性, 避免只沿 argmax 单点收窄.
+        无访问记录时返回空 list (调用方静默跳过).
+        """
+        if not self._hyp:
+            return []
+        # 没被访问过的 h (count=0) 也算 least-visited, 优先列出.
+        counts = self._mcmc_visit_counts
+        all_h = list(self._hyp)
+        # 按访问次数升序, 未访问的排在前面.
+        ranked = sorted(all_h, key=lambda h: counts.get(h, 0))
+        return ranked[:k]
 
     # ── Step 5/6: 跨模态验证 + 同构不同性检测 ──────────────────
     # 盲人摸到物体后, 视觉 (结构 RMSD) 和触觉 (haptic_distance) 互相验证.

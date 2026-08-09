@@ -671,7 +671,12 @@ LUCID review (mandatory after generating hypothesis):
             )
             _obs = extract_observations(text_pool)
             if _manifold is not None and _obs:
-                _pg = _build_posterior_guided_hint(_manifold, _obs)
+                # MCMC 动态采样路径接入: 把采样链当前驻留的假设作为 hint 注入,
+                # 补充 abductive_inference (argmax) 的贪婪盲区. 无 MCMC 状态时
+                # 传 None, _build_posterior_guided_hint 内部跳过, 行为不变.
+                _mcmc_cur = getattr(self, "_mcmc_current", None)
+                _pg = _build_posterior_guided_hint(
+                    _manifold, _obs, mcmc_current=_mcmc_cur)
                 if _pg:
                     hint_block = (
                         hint_block + f"\n### Posterior-guided\n{_pg}"
