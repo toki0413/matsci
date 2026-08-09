@@ -500,10 +500,13 @@ class RedTeamReviewer:
     ) -> list[RedTeamFinding]:
         """用指定 critic model 跑 LLM 审查 (不修改 self._critic_model, 线程安全).
 
-        根因修复: 之前 _multi_critic_review 用 self._critic_model = critic 临时
-        传参, 多协程并行会互相覆盖. 现在直接给 _llm_findings 传 model 参数,
-        消除共享状态. 同步 invoke 下不真并行所以暂时安全, 但未来加 to_thread
-        会暴露 — 现在就修掉.
+        根因修复 (已完成): 旧版 _multi_critic_review 用 self._critic_model = critic
+        临时赋值传参, 多协程/多线程并行会互相覆盖该实例属性. 现已改为直接给
+        _llm_findings 传 model=critic 参数, 消除共享状态 — self._critic_model 仅
+        在 __init__ 中赋值, 本方法及 _llm_findings 在 model 显式传入时都不再读它.
+        旧写法在同步 invoke 下不真并行所以暂时安全, 但 asyncio.to_thread 并行化
+        会暴露竞态; 现已修掉, 并行化时只需把 _run_one_critic 里的同步调用换成
+        await asyncio.to_thread(self._llm_findings_with, ...) 即可, 无需再处理竞态.
         """
         return self._llm_findings(from_phase, to_phase, evidence, model=critic)
 

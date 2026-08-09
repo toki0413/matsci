@@ -9,6 +9,7 @@ import asyncio
 import contextlib
 import json
 import uuid
+import warnings
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -152,6 +153,15 @@ class Orchestrator:
 
     async def _plan_legacy(self, objective: str) -> TaskPlan:
         """Legacy in-memory plan path (no persistence)."""
+        # [legacy-debt] plan_store=None 的 legacy 双路径回退, 仅产出 in-memory TaskPlan
+        # 不持久化、不支持 human-in-the-loop review. 后续版本将移除此分支, 强制要求
+        # 调用方传入 plan_store. 见 Orchestrator.plan docstring.
+        warnings.warn(
+            "Orchestrator._plan_legacy (plan_store=None 的 in-memory TaskPlan 回退路径) "
+            "已废弃, 后续版本将移除; 请构造 Orchestrator 时传入 plan_store=PlanStore(...).",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         profiles = self._format_profiles()
         lead = self.factory.create_lead(thread_id=f"plan-legacy:{uuid.uuid4().hex[:8]}")
         prompt = (
