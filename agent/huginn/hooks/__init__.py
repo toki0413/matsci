@@ -20,7 +20,10 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from huginn.events.audit_log import AnomalyLogStore
 
 logger = logging.getLogger(__name__)
 

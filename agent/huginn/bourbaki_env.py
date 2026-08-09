@@ -18,12 +18,9 @@ import os
 import platform
 import shutil
 import subprocess
-import sys
 import urllib.request
-import zipfile
 from pathlib import Path
 from typing import Any
-
 
 LEAN_INSTALL_DIR = Path(__file__).parent.parent / "lean"
 ELAN_URL = "https://raw.githubusercontent.com/leanprover/elan/master/elan-init.ps1"

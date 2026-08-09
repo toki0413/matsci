@@ -23,6 +23,7 @@ from __future__ import annotations
 import base64
 import io
 import logging
+import re as _re
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -74,7 +75,7 @@ def should_visualize(tool_name: str, output: dict[str, Any]) -> bool:
 
 # F1: 匹配 "key: value" / "key = value" / "key value" 形式的数值行.
 # 抓 MAE: 0.05 / RMSE=0.12 / R2 0.89 / loss 1.23e-4 等. 不抓纯叙述数字.
-import re as _re
+
 _NUMERIC_LINE_RE = _re.compile(
     r"[\w\-]{1,30}\s*[:=]?\s*(-?\d+\.?\d*(?:[eE][+-]?\d+)?)",
     _re.ASCII,
@@ -688,8 +689,7 @@ def _comparative_2d_primitives(bl_result: dict[str, Any], cr_result: dict[str, A
                 continue
         bl_iface = bl_meas.get("interface_pixel_fraction") if isinstance(bl_meas, dict) else None
         cr_iface = cr_meas.get("interface_pixel_fraction") if isinstance(cr_meas, dict) else None
-        if isinstance(bl_iface, (int, float)) and isinstance(cr_iface, (int, float)):
-            if abs(float(cr_iface) - float(bl_iface)) > 1e-4:
+        if isinstance(bl_iface, (int, float)) and isinstance(cr_iface, (int, float)) and abs(float(cr_iface) - float(bl_iface)) > 1e-4:
                 parts.append(
                     f"  interface: {float(bl_iface) * 100:.2f}% → "
                     f"{float(cr_iface) * 100:.2f}% "
@@ -805,7 +805,7 @@ def _estimate_data_confidence(output: dict[str, Any]) -> dict[str, Any]:
     if isinstance(elements, dict) and elements:
         total_cov = 0.0
         n_elems = 0
-        for elem, stats in elements.items():
+        for _elem, stats in elements.items():
             if isinstance(stats, dict):
                 cov = float(stats.get("coverage_fraction", 0))
                 total_cov += cov
@@ -827,7 +827,7 @@ def _estimate_data_confidence(output: dict[str, Any]) -> dict[str, Any]:
         morphology = measurements.get("morphology") if isinstance(measurements, dict) else None
         if isinstance(morphology, dict):
             n_total_doms = 0
-            for phase, morph in morphology.items():
+            for _phase, morph in morphology.items():
                 if isinstance(morph, dict):
                     n_total_doms += int(morph.get("n_domains", 0))
                     if morph.get("top_domain_centroids_px"):
@@ -877,8 +877,8 @@ def extract_box_primitives(
         primitives 文本. 无连通域时返回空字符串.
     """
     try:
-        from PIL import Image
         import numpy as np
+        from PIL import Image
         from scipy import ndimage
     except ImportError:
         return ""
@@ -978,7 +978,7 @@ _POINT3D_RE = _re.compile(
 
 
 def extract_point3d_primitives(
-    coords: "list[list[float]] | Any",
+    coords: list[list[float]] | Any,
     labels: list[str] | None = None,
     species: list[str] | None = None,
     normalize_to: int = 999,
@@ -1067,6 +1067,7 @@ def parse_point3d_primitive(text: str) -> list[dict[str, Any]]:
 def _selfcheck() -> None:
     """M6 selfcheck: <box> 原语 + parse + extract (真图 + 解析回环)."""
     import io as _io
+
     from PIL import Image
 
     # 1. parse_box_primitive: 标准 <box> 原语解析
@@ -1108,7 +1109,7 @@ def _selfcheck() -> None:
     buf = _io.BytesIO()
     img.save(buf, format="PNG")
     out = extract_box_primitives(buf.getvalue(), threshold=128, max_boxes=10)
-    assert out, f"expected non-empty output, got empty"
+    assert out, "expected non-empty output, got empty"
     assert "[boxes]" in out, f"missing [boxes] tag: {out}"
     assert "n_regions=" in out, f"missing n_regions: {out}"
     assert "<box>" in out, f"missing <box> tag: {out}"

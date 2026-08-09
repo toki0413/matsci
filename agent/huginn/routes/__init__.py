@@ -13,6 +13,7 @@ from fastapi import APIRouter, FastAPI
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
+from huginn.routes.admin import router as admin_router
 from huginn.routes.advisor import router as advisor_router
 from huginn.routes.agents import router as agents_router
 from huginn.routes.auth import router as auth_router
@@ -24,52 +25,54 @@ from huginn.routes.codebase import router as codebase_router
 from huginn.routes.coder import router as coder_router
 from huginn.routes.compat import router as compat_router
 from huginn.routes.config import router as config_router
+from huginn.routes.credentials import router as credentials_router
+from huginn.routes.data_dict import router as data_dict_router
 from huginn.routes.diagnostics import router as diagnostics_router
+from huginn.routes.document import router as document_router
 from huginn.routes.eval import router as eval_router
-from huginn.routes.events import router as events_router
 from huginn.routes.event_stream import router as event_stream_router
+from huginn.routes.events import router as events_router
 from huginn.routes.execution import router as execution_router
+from huginn.routes.export_share import router as export_share_router
 from huginn.routes.health import router as health_router
 from huginn.routes.hpc import router as hpc_router
-from huginn.routes.credentials import router as credentials_router
 from huginn.routes.interaction import router as interaction_router
-from huginn.routes.knowledge import router as knowledge_router
+
+# 有状态 ipykernel 会话
+from huginn.routes.kernel import router as kernel_router
 from huginn.routes.kg import router as kg_router
-from huginn.routes.metrics import router as metrics_router
-from huginn.routes.provenance import router as provenance_router
+from huginn.routes.knowledge import router as knowledge_router
+from huginn.routes.live_script import router as live_script_router
 from huginn.routes.mcp import router as mcp_router
 from huginn.routes.memory import router as memory_router
+from huginn.routes.metrics import router as metrics_router
+from huginn.routes.parameters import router as parameters_router
 from huginn.routes.pet import router as pet_router
 from huginn.routes.planner import router as planner_router
 from huginn.routes.project import router as project_router
+from huginn.routes.provenance import router as provenance_router
 from huginn.routes.research_project import router as research_project_router
+from huginn.routes.search import router as search_router
+from huginn.routes.side import router as side_router
 from huginn.routes.skills import router as skills_router
 from huginn.routes.system import router as system_router
 from huginn.routes.team import router as team_router
+from huginn.routes.terminal import router as terminal_router
 from huginn.routes.threads import router as threads_router
 from huginn.routes.tools import router as tools_router
-from huginn.routes.unified import router as unified_router
-from huginn.routes.users import router as users_router
-from huginn.routes.workflows import router as workflows_router
-from huginn.routes.data_dict import router as data_dict_router
-from huginn.routes.document import router as document_router
-from huginn.routes.ws import router as ws_router
-from huginn.routes.live_script import router as live_script_router
-from huginn.routes.parameters import router as parameters_router
-from huginn.routes.side import router as side_router
-from huginn.routes.admin import router as admin_router
-from huginn.routes.visual import router as visual_router
-from huginn.routes.export_share import router as export_share_router
+from huginn.routes.transfer import router as transfer_router
+
 # 远程计算增强: 隧道 / 文件传输 / 远程终端 (仿 MobaXterm)
 from huginn.routes.tunnels import router as tunnels_router
-from huginn.routes.transfer import router as transfer_router
-from huginn.routes.terminal import router as terminal_router
-from huginn.routes.search import router as search_router
+from huginn.routes.unified import router as unified_router
+from huginn.routes.users import router as users_router
+
 # 实时 3D 分子查看器: REST (load/trajectory/elements) + WebSocket (/ws/viewer3d)
 from huginn.routes.viewer3d import router as viewer3d_router
 from huginn.routes.viewer3d import ws_router as viewer3d_ws_router
-# 有状态 ipykernel 会话
-from huginn.routes.kernel import router as kernel_router
+from huginn.routes.visual import router as visual_router
+from huginn.routes.workflows import router as workflows_router
+from huginn.routes.ws import router as ws_router
 
 ALL_ROUTERS = [
     advisor_router,

@@ -5,6 +5,7 @@ Supports both plaintext and encrypted storage modes.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, Literal
 
@@ -14,7 +15,7 @@ from huginn.rag.vector_store import EncryptedVectorStore, VectorStore
 from huginn.security.prompt_security import wrap_rag_chunks
 from huginn.tools.base import HuginnTool, ToolProfile
 from huginn.types import ToolContext, ToolResult
-import logging
+
 logger = logging.getLogger(__name__)
 
 

@@ -13,10 +13,12 @@
 
 from __future__ import annotations
 
-import os
-from dataclasses import dataclass, field
-from typing import Any, Callable, Literal
 import logging
+import os
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from typing import Any, Literal
+
 logger = logging.getLogger(__name__)
 
 

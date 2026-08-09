@@ -118,7 +118,7 @@ def context_source(workspace: str | Path) -> Literal[".huginn.md", "AGENTS.md", 
 
 if __name__ == "__main__":
     # self-check: root 检测 + 收集逻辑
-    import tempfile, os
+    import tempfile
     with tempfile.TemporaryDirectory() as td:
         root = Path(td) / "proj"
         sub = root / "pkg" / "sub"

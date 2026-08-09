@@ -8,7 +8,6 @@
 
 from __future__ import annotations
 
-import math
 from typing import Any
 
 from huginn.types import ToolResult

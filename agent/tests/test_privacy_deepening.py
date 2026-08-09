@@ -2,16 +2,11 @@
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
 from unittest.mock import MagicMock
-
-import pytest
 
 from huginn.crypto import EncryptedDatabase
 from huginn.privacy.scanner import SecretScanner
 from huginn.security.audit import AuditLogger
-
 
 # Build a key that matches the anthropic-api-key pattern:
 # sk-ant-api03-<93 chars>AA

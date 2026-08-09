@@ -20,11 +20,11 @@ ponytail: 复用 SQLite memories 表扩列, 不新建表. 单文件, 不引入�
 from __future__ import annotations
 
 import os
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 
-class MemoryType(str, Enum):
+class MemoryType(StrEnum):
     """扩展到 10 值. 继承 str 让枚举值直接 JSON/SQL 友好."""
 
     # 现有 5 (跟 types.py 保持值一致, 旧文件存储路径不破)
@@ -89,9 +89,8 @@ def _infer_memory_type_from_tags(
         elif pred == "source_prefix":
             if source and source.startswith(matcher):
                 return mtype
-        elif pred == "category_eq":
-            if category == matcher:
-                return mtype
+        elif pred == "category_eq" and category == matcher:
+            return mtype
     return None
 
 
@@ -247,7 +246,6 @@ def recall_failed_directions(
 # 风格一致 — 真 DB 跑 migration v2, 真 store/retrieve, 只 mock LLM 层.
 
 def _selfcheck() -> None:
-    import sqlite3
     import sys
     import tempfile
     from pathlib import Path
@@ -366,7 +364,7 @@ def _selfcheck() -> None:
     )
     assert legacy_autoloop_id
     # 第一次查 iteration_result — strict 返空, 触发 lazy migrate
-    iter_rows_1 = recall_typed(
+    recall_typed(
         mm2,
         memory_type=MemoryType.ITERATION_RESULT.value,
         persona_id="reviewer",  # 但 legacy 行没 persona_id 列, 这个过滤会失败

@@ -6,6 +6,7 @@ Thin dispatcher — all heavy logic lives in ws_helpers.py.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 
@@ -92,13 +93,13 @@ async def agent_websocket(websocket: WebSocket):
     _pending_plan_contexts: dict[str, dict] = {}
 
     # ── Heartbeat ────────────────────────────────────────────────
-    last_recv: dict[str, float] = {"t": asyncio.get_event_loop().time()}
+    last_recv: dict[str, float] = {"t": asyncio.get_running_loop().time()}
     heartbeat_task: asyncio.Task | None = None
 
     async def _heartbeat():
         while True:
             await asyncio.sleep(_WS_HEARTBEAT_INTERVAL)
-            now = asyncio.get_event_loop().time()
+            now = asyncio.get_running_loop().time()
             idle = now - last_recv["t"]
             if idle > _WS_HEARTBEAT_INTERVAL:
                 try:
@@ -149,7 +150,7 @@ async def agent_websocket(websocket: WebSocket):
             if not rate_limiter.check():
                 await _send_error(websocket, "Too many messages, slow down.")
                 continue
-            last_recv["t"] = asyncio.get_event_loop().time()
+            last_recv["t"] = asyncio.get_running_loop().time()
 
             # Handle client-side pong
             try:
@@ -241,7 +242,9 @@ async def agent_websocket(websocket: WebSocket):
                     # HRI #4: SUGGEST mode toggle — 所有 code_act 代码先展示给用户编辑
                     enabled = bool(data.get("enabled", True))
                     tid = data.get("thread_id", msg.thread_id or "default")
-                    from huginn.agent.code_act_loop import set_suggest_mode as _set_suggest
+                    from huginn.agent.code_act_loop import (
+                        set_suggest_mode as _set_suggest,
+                    )
                     _set_suggest(f"code_act:{tid}", enabled)
                     await websocket.send_json(
                         {
@@ -279,8 +282,6 @@ async def agent_websocket(websocket: WebSocket):
         for _t in (heartbeat_task, pet_task):
             if _t and not _t.done():
                 _t.cancel()
-                try:
+                with contextlib.suppress(asyncio.CancelledError):
                     await _t
-                except asyncio.CancelledError:
-                    pass
         get_tracker().release(identity)

@@ -8,13 +8,12 @@ from __future__ import annotations
 
 import pytest
 
+from huginn.validation.grader import LiteratureGrader, default_registry
 from huginn.validation.innovation_signal import (
     DeviationLevel,
     InnovationSignal,
     InnovationSignalDetector,
 )
-from huginn.validation.grader import LiteratureGrader, default_registry
-
 
 # ── InnovationSignalDetector ──────────────────────────────────
 

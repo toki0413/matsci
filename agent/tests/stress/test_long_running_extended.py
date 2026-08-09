@@ -16,7 +16,6 @@ import os
 import sys
 import tracemalloc
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -25,11 +24,10 @@ os.environ.setdefault("HUGINN_RATE_LIMIT_ENABLED", "false")
 AGENT_DIR = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(AGENT_DIR))
 
-from tests.fixtures.fake_llm import make_callable_llm
-from huginn.agent import HuginnAgent
-from huginn.memory.manager import MemoryManager
-from huginn.memory.longterm import LongTermMemory
-
+from huginn.agent import HuginnAgent  # noqa: E402
+from huginn.memory.longterm import LongTermMemory  # noqa: E402
+from huginn.memory.manager import MemoryManager  # noqa: E402
+from tests.fixtures.fake_llm import make_callable_llm  # noqa: E402
 
 # ── 100 轮内存稳定性 ───────────────────────────────────────────────
 
@@ -98,7 +96,7 @@ async def test_5_concurrent_sessions_30_turns(tmp_path):
 
     for tid, count in results:
         assert count > 0, f"{tid}: no responses"
-    print(f"  5 sessions x 30 turns: all completed")
+    print("  5 sessions x 30 turns: all completed")
 
 
 # ── 检查点恢复 ─────────────────────────────────────────────────────
@@ -160,7 +158,7 @@ async def test_context_compression_preserves_keywords(tmp_path):
 
     # Send messages with specific keywords
     keywords = ["SiO2", "band gap 5.2eV", "space group P1", "lattice a=4.2"]
-    for i, kw in enumerate(keywords):
+    for _i, kw in enumerate(keywords):
         async for _ in agent.chat(f"Tell me about {kw}", thread_id="compress-keywords"):
             pass
 

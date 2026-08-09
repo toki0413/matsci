@@ -171,7 +171,7 @@ class TestCallCapture:
         monkeypatch.setattr(
             FeatureFlags,
             "is_enabled",
-            lambda self, feature: False if feature == "provenance" else True,
+            lambda self, feature: feature != "provenance",
         )
         collector: list = []
         set_provenance_collector(collector)

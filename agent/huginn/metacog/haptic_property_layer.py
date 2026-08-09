@@ -87,7 +87,7 @@ class HapticPropertyLayer:
         }
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "HapticPropertyLayer":
+    def from_dict(cls, d: dict[str, Any]) -> HapticPropertyLayer:
         """反序列化. elastic list → ElasticTensor, phonon list → ndarray."""
         elastic = None
         if d.get("elastic") is not None:
@@ -108,7 +108,7 @@ class HapticPropertyLayer:
 
     # ── 距离 ────────────────────────────────────────────────
 
-    def haptic_distance(self, other: "HapticPropertyLayer") -> float:
+    def haptic_distance(self, other: HapticPropertyLayer) -> float:
         """加权 L2 距离, 各子模态相对范数归一化后加权.
 
         缺失子模态跳过 + 权重重新归一化. 都缺失返回 0.0.
@@ -246,7 +246,7 @@ def _selfcheck() -> None:
     assert abs(d_full - (1.0 / 3.0)) < 1e-9, f"uniform relative diff: {d_full}"
 
     print("✓ haptic_property_layer self-check passed")
-    print(f"  empty distance = 0.0")
+    print("  empty distance = 0.0")
     print(f"  density-only distance = {d_only:.4f}")
     print(f"  full-layer uniform distance = {d_full:.4f}")
     print(f"  round-trip elastic C shape = {rt.elastic.C.shape}")

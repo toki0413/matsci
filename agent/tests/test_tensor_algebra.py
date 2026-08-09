@@ -323,8 +323,8 @@ class TestTensorCalculusCrossGoal:
 
     @pytest.fixture
     def lean_tool(self):
-        from pathlib import Path
         import shutil
+        from pathlib import Path
 
         if not shutil.which("lake"):
             pytest.skip("lake executable not found")

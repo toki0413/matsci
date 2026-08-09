@@ -10,6 +10,7 @@ LLM 在执行过程中遇到不确定的情况 (参数缺失 / 多路径选择 /
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -20,7 +21,7 @@ from huginn.interaction.clarification import (
 )
 from huginn.tools.base import HuginnTool
 from huginn.types import ToolContext, ToolResult
-import logging
+
 logger = logging.getLogger(__name__)
 
 

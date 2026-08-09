@@ -1,18 +1,17 @@
 """Tests for the cognitive engine — S0-S6 state machine + dual-mode attention."""
 
-import pytest
 from huginn.cognitive_engine import (
-    CognitiveState,
+    ALLOWED_TRANSITIONS,
+    CONSTRUCTION_STATES,
+    DISCOVERY_STATES,
     AttentionMode,
-    TransitionSignal,
+    CognitiveState,
     CognitiveStateMachine,
-    resolve_transition,
+    TransitionSignal,
     get_attention_prompt,
     get_tool_preference,
+    resolve_transition,
     update_l1_coordinates,
-    ALLOWED_TRANSITIONS,
-    DISCOVERY_STATES,
-    CONSTRUCTION_STATES,
 )
 
 

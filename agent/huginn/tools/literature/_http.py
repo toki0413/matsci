@@ -16,7 +16,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -63,7 +63,7 @@ def _build_opener() -> urllib.request.OpenerDirector:
         or os.environ.get("HTTP_PROXY")
         or os.environ.get("http_proxy")
         or os.environ.get("ALL_PROXY")
-        or os.environ.get("all_proxy")
+        or os.environ.get("all_proxy")  # noqa: SIM112  # 大小写都试, 保持兼容
     )
     if proxy:
         handlers = [urllib.request.ProxyHandler({
@@ -135,8 +135,8 @@ def _parse_retry_after(headers: Any) -> float | None:
         if dt is None:
             return None
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return max(0.0, (dt - datetime.now(timezone.utc)).total_seconds())
+            dt = dt.replace(tzinfo=UTC)
+        return max(0.0, (dt - datetime.now(UTC)).total_seconds())
     except (TypeError, ValueError):
         return None
 

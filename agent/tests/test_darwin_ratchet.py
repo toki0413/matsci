@@ -8,8 +8,12 @@
 """
 from __future__ import annotations
 
-from huginn.autoloop.hypothesis_loop import HypothesisEdge, HypothesisNode, HypothesisGraph
 from huginn.autoloop.engine import AutoloopEngine
+from huginn.autoloop.hypothesis_loop import (
+    HypothesisEdge,
+    HypothesisGraph,
+    HypothesisNode,
+)
 
 
 def _make_engine():

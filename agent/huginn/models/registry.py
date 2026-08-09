@@ -6,13 +6,14 @@ Inspired by OpenClaw's `provider/model` refs and Hermes' multi-model profiles.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 from dataclasses import dataclass, replace
 from typing import Any, Literal
 
 from huginn.config import HuginnConfig, ModelConfig, ThinkingIntensity
-import logging
+
 logger = logging.getLogger(__name__)
 
 
@@ -418,7 +419,7 @@ def get_model_capabilities(model_name: str) -> ModelCaps:
         caps = MODEL_CAPABILITIES[name]
     else:
         lower = name.lower()
-        for key, caps in MODEL_CAPABILITIES.items():
+        for key, _caps in MODEL_CAPABILITIES.items():
             if lower.startswith(key.lower()):
                 break
         else:

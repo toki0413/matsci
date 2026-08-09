@@ -10,10 +10,7 @@ import pytest
 
 pytest.importorskip("matplotlib")
 
-import json
-import tempfile
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 import sympy as sp
@@ -33,7 +30,6 @@ from huginn.execution.orchestrator import (
 )
 from huginn.execution.remote_job_store import RemoteJobRecord, RemoteJobStore
 from huginn.unified.bridge import (
-    BRIDGE_REGISTRY,
     cauchy_born_elasticity,
     dft_potential_to_md,
     get_bridge,
@@ -60,7 +56,6 @@ from huginn.unified.models import (
 )
 from huginn.unified.solve import solve
 from huginn.unified.visualize import plot_solution, solve_and_plot
-
 
 # ------------------------------------------------------------------
 # execution/dimensional_validator
@@ -267,7 +262,7 @@ class TestUnitRegistry:
 
     def test_all_registered_units_have_dimensions(self):
         """Every registered unit should have a valid dimension vector."""
-        for name, u in registry.all_units().items():
+        for _name, u in registry.all_units().items():
             assert len(u.dimensions) == 7
 
     def test_register_custom_unit(self):
@@ -814,8 +809,8 @@ class TestWorkflowEngine:
         assert engine.budget_policy is None
 
     def test_engine_with_budget(self):
-        from huginn.workflows.engine import WorkflowEngine
         from huginn.types import BudgetPolicy
+        from huginn.workflows.engine import WorkflowEngine
 
         engine = WorkflowEngine(tool_registry={}, budget_policy=BudgetPolicy())
         assert engine.budget_policy is not None

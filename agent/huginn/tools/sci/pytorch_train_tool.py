@@ -35,7 +35,6 @@ except ImportError:  # pragma: no cover - exercised only on torch-less envs
 
 from huginn.tools.sci import get_torch_device
 
-
 _ACTIVATIONS: dict[str, Any] = {
     "relu": lambda: nn.ReLU(),
     "tanh": lambda: nn.Tanh(),
@@ -145,9 +144,9 @@ class PyTorchTrainTool(HuginnTool):
         hidden_dims: list[int],
         n_classes: int,
         activation: str,
-    ) -> "nn.Module":
+    ) -> nn.Module:
         act_fn = _ACTIVATIONS.get(activation, _ACTIVATIONS["relu"])
-        layers: list["nn.Module"] = []
+        layers: list[nn.Module] = []
         prev = input_dim
         for h in hidden_dims:
             layers.append(nn.Linear(prev, h))
@@ -163,14 +162,14 @@ class PyTorchTrainTool(HuginnTool):
         conv_channels: list[int],
         kernel_size: int,
         n_classes: int,
-    ) -> "nn.Module":
+    ) -> nn.Module:
         # ponytail: simple VGG-style stack — Conv/ReLU/MaxPool × len(conv_channels),
         # then a single FC head. No BatchNorm/Dropout; agent can swap a custom
         # module in if it needs regularization. Ceiling: degrades on deep nets
         # (>4 conv) where BN starts to matter; upgrade path = expose a full
         # layer-spec list.
         pad = kernel_size // 2
-        layers: list["nn.Module"] = []
+        layers: list[nn.Module] = []
         prev_c = in_channels
         spatial = image_size
         for c in conv_channels:
@@ -189,13 +188,13 @@ class PyTorchTrainTool(HuginnTool):
     # ── train / eval core ─────────────────────────────────────────
 
     @staticmethod
-    def _make_loader(X: "torch.Tensor", y: "torch.Tensor", batch_size: int,
-                     shuffle: bool) -> "DataLoader":
+    def _make_loader(X: torch.Tensor, y: torch.Tensor, batch_size: int,
+                     shuffle: bool) -> DataLoader:
         ds = TensorDataset(X, y)
         return DataLoader(ds, batch_size=batch_size, shuffle=shuffle)
 
     @staticmethod
-    def _train_loop(model: "nn.Module", loader: "DataLoader",
+    def _train_loop(model: nn.Module, loader: DataLoader,
                     epochs: int, lr: float, device: str = "cpu") -> list[float]:
         # ponytail: no early stopping — agent inspects train_curve and
         # decides whether to retrain with fewer epochs. Adding patience
@@ -219,7 +218,7 @@ class PyTorchTrainTool(HuginnTool):
         return curve
 
     @staticmethod
-    def _eval_loop(model: "nn.Module", loader: "DataLoader",
+    def _eval_loop(model: nn.Module, loader: DataLoader,
                    device: str = "cpu") -> dict[str, Any]:
         model.eval()
         criterion = nn.CrossEntropyLoss()
@@ -242,14 +241,14 @@ class PyTorchTrainTool(HuginnTool):
         }
 
     @staticmethod
-    def _state_to_lists(model: "nn.Module") -> dict[str, list]:
+    def _state_to_lists(model: nn.Module) -> dict[str, list]:
         return {
             k: v.detach().cpu().numpy().tolist()
             for k, v in model.state_dict().items()
         }
 
     @staticmethod
-    def _load_state(model: "nn.Module", weights: dict[str, list]) -> None:
+    def _load_state(model: nn.Module, weights: dict[str, list]) -> None:
         state = model.state_dict()
         loaded = {
             k: torch.tensor(v, dtype=state[k].dtype) if k in state else torch.tensor(v)
@@ -257,7 +256,7 @@ class PyTorchTrainTool(HuginnTool):
         }
         model.load_state_dict(loaded, strict=True)
 
-    def _resolve_weights(self, model: "nn.Module",
+    def _resolve_weights(self, model: nn.Module,
                          args: PyTorchTrainToolInput) -> ToolResult | None:
         if args.weights_path:
             state = torch.load(args.weights_path, map_location="cpu")
@@ -272,7 +271,7 @@ class PyTorchTrainTool(HuginnTool):
             error="evaluate requires weights or weights_path",
         )
 
-    def _finalize_weights(self, model: "nn.Module",
+    def _finalize_weights(self, model: nn.Module,
                           args: PyTorchTrainToolInput) -> dict[str, Any]:
         if args.save_path:
             path = Path(args.save_path)

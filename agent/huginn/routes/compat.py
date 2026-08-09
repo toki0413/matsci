@@ -153,7 +153,6 @@ def _guess_crystal_system(norms: np.ndarray, angles: list[float]) -> str:
 
     equal_ab = abs(a - b) < tol
     equal_bc = abs(b - c) < tol
-    equal_ac = abs(a - c) < tol
     all_equal = equal_ab and equal_bc
     all_90 = all(abs(ang - 90.0) < angle_tol for ang in angles)
 
@@ -266,7 +265,7 @@ async def analyze_tda(params: dict[str, Any]) -> dict[str, Any]:
     """Topological Data Analysis — persistence diagram computation."""
     data = params.get("data")  # point cloud: list of [x, y, z, ...]
     max_dimension = params.get("max_dimension", 1)
-    n_bins = params.get("n_bins", 50)
+    params.get("n_bins", 50)
 
     if data is None:
         return {"error": "data (point cloud) is required"}
@@ -524,7 +523,7 @@ def _ascii_plot(x: np.ndarray, y: np.ndarray, label: str, width: int = 60, heigh
 
     # Downsample to width
     indices = np.linspace(0, len(x) - 1, width, dtype=int)
-    x_s = x[indices]
+    x[indices]
     y_s = y[indices]
 
     grid = [[" " for _ in range(width)] for _ in range(height)]

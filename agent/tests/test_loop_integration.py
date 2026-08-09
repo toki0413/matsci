@@ -11,20 +11,17 @@ Each test targets one specific broken chain from the audit:
 8. Persona responds to cognitive mode (via _cognitive_prompt field)
 """
 
-import pytest
-from unittest.mock import MagicMock, patch
-from pathlib import Path
-import tempfile
 import json
-
+import tempfile
+from pathlib import Path
+from unittest.mock import MagicMock
 
 # ── Chain 1: CognitiveMode drives behavior ────────────────────────────
 
 def test_cognitive_prompt_injected_into_context():
     """The cognitive mode prompt must actually reach the LLM message list."""
-    from huginn.session_state import UnifiedSessionState
-    from huginn.context_builder import ContextBuilder
     from huginn.cognitive_engine import CognitiveStateMachine
+    from huginn.session_state import UnifiedSessionState
 
     csm = CognitiveStateMachine()
     csm.start_session()
@@ -43,7 +40,11 @@ def test_cognitive_prompt_injected_into_context():
 
 def test_cognitive_prompt_changes_after_mode_switch():
     """When CSM transitions to construction, the prompt must change."""
-    from huginn.cognitive_engine import CognitiveStateMachine, TransitionSignal, CognitiveState
+    from huginn.cognitive_engine import (
+        CognitiveState,
+        CognitiveStateMachine,
+        TransitionSignal,
+    )
 
     csm = CognitiveStateMachine()
     csm.start_session()
@@ -85,7 +86,11 @@ def test_reflection_to_transition_signal():
 
 def test_csm_consumes_reflection_signal():
     """The CSM must transition based on reflection signals."""
-    from huginn.cognitive_engine import CognitiveStateMachine, TransitionSignal, CognitiveState
+    from huginn.cognitive_engine import (
+        CognitiveState,
+        CognitiveStateMachine,
+        TransitionSignal,
+    )
 
     csm = CognitiveStateMachine()
     csm.start_session()
@@ -137,7 +142,8 @@ def test_session_state_pending_confirmation():
 def test_planstore_sync_detects_executing_plan():
     """When PlanStore has an executing plan, agent should be able to sync it."""
     import tempfile
-    from huginn.autoloop.plan_store import PlanStore, PlanStep
+
+    from huginn.autoloop.plan_store import PlanStep, PlanStore
 
     with tempfile.TemporaryDirectory() as tmpdir:
         ps = PlanStore(path=Path(tmpdir) / "plans.json")
@@ -159,7 +165,6 @@ def test_planstore_sync_detects_executing_plan():
 def test_load_active_plan_returns_plan_id():
     """load_active_plan must return plan_id so we can restore it."""
     from huginn.memory.manager import MemoryManager
-    from unittest.mock import MagicMock
 
     mgr = MemoryManager.__new__(MemoryManager)
     mgr.longterm = MagicMock()
@@ -184,8 +189,8 @@ def test_load_active_plan_returns_plan_id():
 def test_evolution_rules_injected_when_available():
     """ContextBuilder must inject evolution rules when they exist."""
     import os
+
     from huginn.context_builder import ContextBuilder
-    from unittest.mock import MagicMock
 
     with tempfile.TemporaryDirectory() as tmpdir:
         os.environ["HUGINN_CACHE_DIR"] = tmpdir
@@ -220,6 +225,7 @@ def test_evolution_rules_injected_when_available():
 def test_evolution_rules_empty_when_no_file():
     """When no rules file exists, return empty string."""
     import os
+
     from huginn.context_builder import ContextBuilder
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -236,9 +242,8 @@ def test_evolution_rules_empty_when_no_file():
 
 def test_l1_coordinates_injected_into_plan_text():
     """build_plan_text must inject L1 coordinates even without active plan."""
-    from huginn.session_state import UnifiedSessionState
     from huginn.context_builder import ContextBuilder
-    from unittest.mock import MagicMock
+    from huginn.session_state import UnifiedSessionState
 
     state = UnifiedSessionState()
     state.l1_coordinates = "exploring: GaN bandgap | constructing: step 1"

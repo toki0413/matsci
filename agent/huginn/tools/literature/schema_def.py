@@ -14,12 +14,12 @@ from_llm_output 用 Schema.json key 反查 dataclass 字段, 单点映射.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
-from enum import Enum
+from dataclasses import asdict, dataclass, field
+from enum import StrEnum
 from typing import Any
 
 
-class PropertyCategory(str, Enum):
+class PropertyCategory(StrEnum):
     """11 类性能一级类别. 继承 str 让枚举值直接 JSON 友好."""
 
     PHYSICAL = "PHYSICAL"

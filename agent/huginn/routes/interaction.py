@@ -13,9 +13,8 @@ SSE 选型: 项目已有 WS, 但 SSE 更简单 (单向推送 + 自动重连), �
 from __future__ import annotations
 
 import asyncio
-import json
+import contextlib
 import logging
-import traceback
 from typing import Any
 
 from fastapi import APIRouter
@@ -30,9 +29,9 @@ from huginn.interaction.interrupt import (
 )
 from huginn.interaction.progress import get_progress_tracker
 from huginn.interaction.streaming import StreamInterceptor
+from huginn.permissions import READ_ONLY_TOOLS, PermissionMode
 from huginn.routes.schemas import ChatRequest
 from huginn.server_core import get_agent_factory
-from huginn.permissions import READ_ONLY_TOOLS, PermissionMode
 
 router = APIRouter(tags=["interaction"])
 
@@ -67,7 +66,7 @@ async def chat_stream(agent_id: str, params: dict[str, Any]) -> StreamingRespons
 
     message = req.content
     thread_id = req.thread_id
-    timeout = float(params.get("timeout", 300))
+    float(params.get("timeout", 300))
 
     interceptor = StreamInterceptor(thread_id=thread_id)
     interrupt_mgr = get_interrupt_manager()
@@ -151,10 +150,8 @@ async def chat_stream(agent_id: str, params: dict[str, Any]) -> StreamingRespons
             # SSE 客户端断开时把后台任务也取消, 避免 agent 白跑
             if not task.done():
                 task.cancel()
-                try:
+                with contextlib.suppress(asyncio.CancelledError, Exception):
                     await task
-                except (asyncio.CancelledError, Exception):
-                    pass
 
     return StreamingResponse(
         _sse(),
@@ -263,6 +260,7 @@ async def list_inbox(
 ) -> dict[str, Any]:
     """列出 Inbox items. ?session_id=&state=pending 过滤."""
     from dataclasses import asdict
+
     from huginn.interaction.inbox import get_inbox_store
     store = get_inbox_store()
     items = store.list(session_id=session_id, state=state)

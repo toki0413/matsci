@@ -416,14 +416,16 @@ class TestContainerExecutor:
     def test_timeout(self):
         from huginn.security.container_executor import ContainerExecutor
 
-        with patch("shutil.which", return_value="/fake/docker"):
-            with patch("subprocess.run") as mock_run:
-                mock_run.side_effect = subprocess.TimeoutExpired(
-                    cmd=["docker"], timeout=1
-                )
-                ce = ContainerExecutor("docker", "test-image")
-                import sys
-                result = ce.run([sys.executable, "-c", "pass"], timeout=0.5)
+        with (
+            patch("shutil.which", return_value="/fake/docker"),
+            patch("subprocess.run") as mock_run,
+        ):
+            mock_run.side_effect = subprocess.TimeoutExpired(
+                cmd=["docker"], timeout=1
+            )
+            ce = ContainerExecutor("docker", "test-image")
+            import sys
+            result = ce.run([sys.executable, "-c", "pass"], timeout=0.5)
         assert result.success is False
         assert result.returncode == -1
 

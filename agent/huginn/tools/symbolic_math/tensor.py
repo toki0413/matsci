@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from .tool import SymbolicMathInput
 
 
-def tensor_ops(args: "SymbolicMathInput") -> ToolResult:
+def tensor_ops(args: SymbolicMathInput) -> ToolResult:
     """连续介质力学常见张量操作."""
     sym_dict = parse_symbols(args.symbols, args.assumptions)
 
@@ -54,7 +54,7 @@ def tensor_ops(args: "SymbolicMathInput") -> ToolResult:
     return ToolResult(data=results, success=True)
 
 
-def tensor_calculus(args: "SymbolicMathInput") -> ToolResult:
+def tensor_calculus(args: SymbolicMathInput) -> ToolResult:
     """连续介质力学张量微积分操作."""
     # einstein_sum 子动作走独立分支，不需要 voigt 向量
     if (args.sub_action or "").lower() == "einstein_sum":
@@ -221,7 +221,7 @@ def tensor_calculus(args: "SymbolicMathInput") -> ToolResult:
     )
 
 
-def einstein_sum(args: "SymbolicMathInput") -> ToolResult:
+def einstein_sum(args: SymbolicMathInput) -> ToolResult:
     """按 Einstein 求和约定对带指标的张量表达式求和并化简."""
     from sympy.tensor.indexed import IndexedBase
 

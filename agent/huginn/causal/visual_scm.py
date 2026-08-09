@@ -36,9 +36,9 @@ from __future__ import annotations
 
 import math
 import random
-from dataclasses import dataclass, field
-from typing import Any, Callable, Literal
-
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any, Literal
 
 # ── 表征 ─────────────────────────────────────────────────────
 
@@ -90,7 +90,7 @@ class VisualSCM:
 
     def topological_order(self) -> list[str]:
         """拓扑序 (Kahn 算法). 干预预测按此顺序算每个节点."""
-        in_deg: dict[str, int] = {n: 0 for n in self.nodes}
+        in_deg: dict[str, int] = dict.fromkeys(self.nodes, 0)
         for e in self.edges:
             in_deg[e.effect] = in_deg.get(e.effect, 0) + 1
         queue = [n for n, d in in_deg.items() if d == 0]
@@ -135,7 +135,7 @@ def _ostwald_growth(t: float, K: float, n: float = 3.0) -> float:
     return K * max(t, 0.0)
 
 
-def _fick_D(T: float, D0: float, Ea: float, R: float = 8.314e-3) -> float:
+def _fick_D(T: float, D0: float, Ea: float, R: float = 8.314e-3) -> float:  # noqa: N802
     """Fick 扩散系数: D = D0 * exp(-Ea/(R*T))."""
     return D0 * math.exp(-Ea / (R * max(T, 1.0)))
 
@@ -281,7 +281,7 @@ def _template_diffusion() -> VisualSCM:
     ]
     Ea, D0 = 150.0, 1e-4
 
-    def f_D(p: dict[str, float], u: float) -> float:
+    def f_D(p: dict[str, float], u: float) -> float:  # noqa: N802
         T, c = p.get("T", 800), p.get("c", 1.0)
         D_base = _fick_D(T, D0, Ea)
         # 浓度修正: 高浓度互作用降低 D (理想溶液偏离)
@@ -390,7 +390,7 @@ def match_template(domain: str = "", conditions: list[str] | None = None,
     conditions = conditions or []
     features = features or []
     all_vars = set(conditions + features)
-    for name, factory in _TEMPLATES.items():
+    for _name, factory in _TEMPLATES.items():
         scm = factory()
         if domain and domain.lower() not in scm.domain.lower():
             continue
@@ -459,7 +459,7 @@ def _selfcheck() -> None:
 
     # 10. 噪声 sampler 可调
     for scm in [scm_sint, scm_ostw, scm_diff, scm_phtr]:
-        for node, sampler in scm.noise.items():
+        for _node, sampler in scm.noise.items():
             val = sampler()
             assert isinstance(val, (int, float))
 

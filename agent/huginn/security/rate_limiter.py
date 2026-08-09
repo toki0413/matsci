@@ -36,7 +36,7 @@ __all__ = [
 ]
 
 
-class RateLimitExceeded(Exception):
+class RateLimitExceeded(Exception):  # noqa: N818
     """限流触发时抛出, 上层捕获后可以决定降级或中断.
 
     reason 属性标明是哪道闸门挡的:

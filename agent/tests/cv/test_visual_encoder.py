@@ -9,7 +9,6 @@ that the encoder degrades to "no backend" instead of raising.
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 from huginn.perception import visual_encoder as ve_module
 from huginn.perception.visual_encoder import (

@@ -37,13 +37,7 @@ def _is_legacy_error(body: dict[str, Any]) -> bool:
         return False  # already unified
     if "error" in body and isinstance(body["error"], str):
         return True
-    if (
-        body.get("success") is False
-        and "error" in body
-        and isinstance(body["error"], str)
-    ):
-        return True
-    return False
+    return bool(body.get("success") is False and "error" in body and isinstance(body["error"], str))
 
 
 def _normalize_error_body(

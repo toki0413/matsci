@@ -14,8 +14,8 @@ from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from pathlib import Path
 
-from huginn.utils.common import atomic_write_json
 from huginn.runtime.trace_context import get_trace_id as _get_trace_id
+from huginn.utils.common import atomic_write_json
 
 
 @dataclass
@@ -71,10 +71,9 @@ def update_metrics(
     pmk_cycles = task_metrics.pmk_cycle_count + (1 if pmk_feedback.strip() else 0)
 
     health_avg = task_metrics.tool_call_health_avg
-    if tool_health is not None and hasattr(tool_health, "is_anomalous"):
-        if tool_health.is_anomalous():
-            # ponytail: 简单指数衰减 *0.9, 不做 EWMA. 升级路径: alpha 可调的加权平均.
-            health_avg = max(0.0, health_avg * 0.9)
+    if tool_health is not None and hasattr(tool_health, "is_anomalous") and tool_health.is_anomalous():
+        # ponytail: 简单指数衰减 *0.9, 不做 EWMA. 升级路径: alpha 可调的加权平均.
+        health_avg = max(0.0, health_avg * 0.9)
 
     progress = task_metrics.progress
     if target_chain_progress is not None:

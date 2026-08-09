@@ -12,10 +12,9 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
+import sys
 from pathlib import Path
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -23,7 +22,7 @@ import pytest
 os.environ.setdefault("HUGINN_RATE_LIMIT_ENABLED", "false")
 
 AGENT_DIR = Path(__file__).resolve().parent.parent.parent
-import sys
+
 sys.path.insert(0, str(AGENT_DIR))
 
 
@@ -100,7 +99,7 @@ class TestPhaseStateMachineE2E:
         tools = pm.tool_filter()
         # Either None (no restriction) or a set
         if tools is not None:
-            assert isinstance(tools, set) or isinstance(tools, (list, tuple))
+            assert isinstance(tools, (set, list, tuple))
 
         # OPEN phase should return None (all tools)
         pm_open = PhaseManager(initial=ResearchPhase.OPEN)
@@ -217,21 +216,23 @@ class TestLLMRetryInResearch:
     @pytest.mark.asyncio
     async def test_fallback_on_overload(self):
         """529 过载应触发 FallbackTriggeredError."""
-        from huginn.llm_retry import with_retry, FallbackTriggeredError
+        from huginn.llm_retry import FallbackTriggeredError, with_retry
 
         async def coro():
             exc = Exception("Overloaded")
             exc.status_code = 529
             raise exc
 
-        with patch("huginn.llm_retry._sleep_with_log", new_callable=AsyncMock):
-            with pytest.raises(FallbackTriggeredError):
-                await with_retry(lambda: coro(), source="test")
+        with (
+            patch("huginn.llm_retry._sleep_with_log", new_callable=AsyncMock),
+            pytest.raises(FallbackTriggeredError),
+        ):
+            await with_retry(lambda: coro(), source="test")
 
     @pytest.mark.asyncio
     async def test_call_with_fallback_to_cheaper_model(self):
         """主模型过载后应降级到更便宜的模型."""
-        from huginn.llm_retry import call_with_fallback, FallbackTriggeredError
+        from huginn.llm_retry import FallbackTriggeredError, call_with_fallback
 
         call_log = []
 
@@ -317,10 +318,10 @@ class TestBeliefEntropyLongRun:
     @pytest.mark.asyncio
     async def test_belief_entropy_stays_bounded(self, tmp_path):
         """50 轮对话后 Belief Entropy 应在 [0, 1] 范围内."""
-        from tests.fixtures.fake_llm import make_callable_llm
         from huginn.agent import HuginnAgent
-        from huginn.memory.manager import MemoryManager
         from huginn.memory.longterm import LongTermMemory
+        from huginn.memory.manager import MemoryManager
+        from tests.fixtures.fake_llm import make_callable_llm
 
         llm = make_callable_llm(lambda p: "ok", name="entropy-llm")
         memory = MemoryManager(longterm=LongTermMemory(str(tmp_path / "memory.db")))
@@ -362,10 +363,10 @@ class TestToolChainIntegration:
     @pytest.mark.asyncio
     async def test_structure_to_symmetry_chain(self, tmp_path):
         """structure → symmetry → descriptor 链式调用."""
-        from tests.fixtures.fake_llm import make_callable_llm
         from huginn.agent import HuginnAgent
-        from huginn.memory.manager import MemoryManager
         from huginn.memory.longterm import LongTermMemory
+        from huginn.memory.manager import MemoryManager
+        from tests.fixtures.fake_llm import make_callable_llm
 
         llm = make_callable_llm(lambda p: "ok", name="chain-llm")
         memory = MemoryManager(longterm=LongTermMemory(str(tmp_path / "memory.db")))

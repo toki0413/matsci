@@ -20,10 +20,11 @@ import asyncio
 import json
 import logging
 from collections import Counter
+from collections.abc import Awaitable, Callable
 from contextlib import contextmanager
 from datetime import datetime
 from types import SimpleNamespace
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 import numpy as np
 
@@ -218,7 +219,7 @@ def compress_clusters(
 
         cluster_tag = f"cluster_summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         try:
-            new_id = ltm.store(
+            ltm.store(
                 content=result["summary"],
                 category=result["category"],
                 tags=result["tags"] + [cluster_tag],

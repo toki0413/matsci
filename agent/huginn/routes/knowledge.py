@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import json
-import tempfile
 import logging
-import traceback
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -95,8 +93,8 @@ async def ingest_url(req: UrlIngestRequest) -> dict[str, Any]:
         return {"success": False, "error": "URL must start with http:// or https://"}
 
     try:
-        import urllib.request
         import re
+        import urllib.request
 
         req_obj = urllib.request.Request(url, headers={"User-Agent": "Huginn/1.0"})
         with urllib.request.urlopen(req_obj, timeout=30) as resp:
@@ -155,13 +153,13 @@ async def get_knowledge_image(path: str) -> Any:
     try:
         target = Path(path).resolve()
     except (OSError, ValueError):
-        raise HTTPException(status_code=400, detail="invalid path")
+        raise HTTPException(status_code=400, detail="invalid path") from None
 
     # 路径穿越防护: 解析后必须在 base 之下
     try:
         target.relative_to(base)
     except ValueError:
-        raise HTTPException(status_code=403, detail="path outside compressed_pages")
+        raise HTTPException(status_code=403, detail="path outside compressed_pages") from None
 
     if not target.is_file():
         raise HTTPException(status_code=404, detail="image not found")

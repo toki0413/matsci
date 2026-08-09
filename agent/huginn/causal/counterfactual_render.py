@@ -38,10 +38,11 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from huginn.causal.visual_scm import VisualSCM, get_template, list_templates
 from huginn.causal.visual_causal_chain import (
-    fit_scm_from_observations, Observation,
+    Observation,
+    fit_scm_from_observations,
 )
+from huginn.causal.visual_scm import VisualSCM, get_template, list_templates
 from huginn.tools.base import HuginnTool
 from huginn.types import ToolContext, ToolResult, ValidationResult
 
@@ -369,10 +370,11 @@ def _selfcheck() -> None:
     import random as _rng
     _rng.seed(42)
 
-    from huginn.causal.visual_scm import (
-        _template_diffusion, _template_sintering, _template_ostwald_ripening,
-    )
     from huginn.causal.predict_intervention import _simulate_once
+    from huginn.causal.visual_scm import (
+        _template_diffusion,
+        _template_sintering,
+    )
 
     # 1. diffusion 反事实: factual T=800, do(T=1000) → D 升几个数量级
     scm_d = _template_diffusion()

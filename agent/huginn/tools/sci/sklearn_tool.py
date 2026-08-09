@@ -24,7 +24,6 @@ from pydantic import BaseModel, Field
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult
 
-
 # Flat model registries — caller passes "random_forest" and we resolve to the
 # sklearn class without a chain of if/elif. Keys are lowercased so the LLM's
 # "RandomForest" / "random forest" / "random_forest" all hit the same entry.
@@ -191,7 +190,7 @@ def _load_x_only(args: SklearnInput) -> tuple[np.ndarray, list[str]]:
 
 def _resolve_estimator(action: str, model_type: str, args: SklearnInput):
     """Lazily import the sklearn class and instantiate with model_params."""
-    from sklearn.cluster import AgglomerativeClustering, DBSCAN, KMeans
+    from sklearn.cluster import DBSCAN, AgglomerativeClustering, KMeans
     from sklearn.ensemble import (
         GradientBoostingClassifier,
         GradientBoostingRegressor,

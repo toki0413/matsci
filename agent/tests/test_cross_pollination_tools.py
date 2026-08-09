@@ -6,8 +6,8 @@ mathematical correctness, not just API shape.
 
 from __future__ import annotations
 
-import asyncio
 import math
+
 import numpy as np
 import pytest
 
@@ -21,7 +21,7 @@ CTX = ToolContext(session_id="test", workspace=".")
 class TestFEPTool:
     @pytest.mark.asyncio
     async def test_lambda_schedule_uniform(self):
-        from huginn.tools.sci.fep_tool import FEPTool, FEPInput
+        from huginn.tools.sci.fep_tool import FEPInput, FEPTool
 
         tool = FEPTool()
         result = await tool._execute(
@@ -34,7 +34,7 @@ class TestFEPTool:
 
     @pytest.mark.asyncio
     async def test_lambda_schedule_nonlinear(self):
-        from huginn.tools.sci.fep_tool import FEPTool, FEPInput
+        from huginn.tools.sci.fep_tool import FEPInput, FEPTool
 
         tool = FEPTool()
         result = await tool._execute(
@@ -49,7 +49,7 @@ class TestFEPTool:
     @pytest.mark.asyncio
     async def test_ti_linear_gradient(self):
         """If dU/dlambda = const, ΔF should equal that constant."""
-        from huginn.tools.sci.fep_tool import FEPTool, FEPInput
+        from huginn.tools.sci.fep_tool import FEPInput, FEPTool
 
         # dU/dlambda = 0.5 everywhere → ΔF = 0.5 eV
         lambdas = np.linspace(0, 1, 11).tolist()
@@ -73,7 +73,7 @@ class TestFEPTool:
     @pytest.mark.asyncio
     async def test_jarzynski_second_law(self):
         """⟨W⟩ ≥ ΔF (second law of thermodynamics)."""
-        from huginn.tools.sci.fep_tool import FEPTool, FEPInput
+        from huginn.tools.sci.fep_tool import FEPInput, FEPTool
 
         # Work values with mean > 0
         rng = np.random.default_rng(42)
@@ -94,7 +94,7 @@ class TestFEPTool:
 
     @pytest.mark.asyncio
     async def test_fep_zwanzig(self):
-        from huginn.tools.sci.fep_tool import FEPTool, FEPInput
+        from huginn.tools.sci.fep_tool import FEPInput, FEPTool
 
         # Simple: ΔU = 0.1 eV consistently → ΔF ≈ 0.1
         delta_U = [[0.1] * 100 for _ in range(5)]
@@ -110,7 +110,7 @@ class TestFEPTool:
 
     @pytest.mark.asyncio
     async def test_bar(self):
-        from huginn.tools.sci.fep_tool import FEPTool, FEPInput
+        from huginn.tools.sci.fep_tool import FEPInput, FEPTool
 
         # Symmetric case: forward = reverse → ΔF ≈ 0
         rng = np.random.default_rng(42)
@@ -132,7 +132,7 @@ class TestFEPTool:
 
     @pytest.mark.asyncio
     async def test_drug_design_units(self):
-        from huginn.tools.sci.fep_tool import FEPTool, FEPInput
+        from huginn.tools.sci.fep_tool import FEPInput, FEPTool
 
         lambdas = np.linspace(0, 1, 5).tolist()
         dU_dlambda = [[0.1] * 50 for _ in range(5)]
@@ -818,8 +818,8 @@ class TestConsensusScoringTool:
 
 class TestCrossPollinationRegistration:
     def test_all_tools_registered(self):
-        from huginn.tools.registry import ToolRegistry
         from huginn.tools import register_all_tools
+        from huginn.tools.registry import ToolRegistry
 
         register_all_tools()
         tools = ToolRegistry.list_tools()

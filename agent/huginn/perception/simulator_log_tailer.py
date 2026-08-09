@@ -11,12 +11,13 @@ Usage:
 """
 from __future__ import annotations
 
+import contextlib
 import re
 import threading
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator
 
 
 @dataclass
@@ -70,7 +71,7 @@ class SimulatorLogTailer:
         path = str(Path(path).resolve())
         sim_type = simulator_type or self._detect_type(path)
         try:
-            f = open(path, "r", encoding="utf-8", errors="replace")
+            f = open(path, encoding="utf-8", errors="replace")  # noqa: SIM115
             f.seek(0, 2)  # Seek to end
         except Exception:
             return
@@ -103,10 +104,8 @@ class SimulatorLogTailer:
         # 关闭所有 watch 的文件句柄, 否则 fd 泄漏到进程退出
         with self._lock:
             for info in self._watches.values():
-                try:
+                with contextlib.suppress(Exception):
                     info["file"].close()
-                except Exception:
-                    pass
             self._watches.clear()
 
     def updates(self) -> Iterator[SimulationUpdate]:
@@ -175,10 +174,8 @@ class SimulatorLogTailer:
             if m:
                 iteration = int(float(m.group(1)))
                 if len(m.groups()) > 1:
-                    try:
+                    with contextlib.suppress(ValueError):
                         energy = float(m.group(2))
-                    except ValueError:
-                        pass
 
         if patterns.get("step"):
             m = patterns["step"].search(line)

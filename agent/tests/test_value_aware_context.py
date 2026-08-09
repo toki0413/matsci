@@ -2,8 +2,6 @@
 
 import asyncio
 
-import pytest
-
 
 class TestMessageValueScore:
     """Verify _message_value_score correctly ranks messages."""

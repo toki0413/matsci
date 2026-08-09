@@ -18,7 +18,6 @@ import math
 import os
 import threading
 import time
-import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -83,7 +82,7 @@ class JointBelief:
         return d
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "JointBelief":
+    def from_dict(cls, d: dict[str, Any]) -> JointBelief:
         return cls(
             config_id=d["config_id"],
             phase=d.get("phase", ""),
@@ -103,7 +102,7 @@ class JointBandit:
 
     ponytail: 不做笛卡尔积全搜索, UCB + 随机探索够用.
     """
-    _instance: "JointBandit | None" = None
+    _instance: JointBandit | None = None
     _lock = threading.Lock()
 
     def __init__(self) -> None:
@@ -119,7 +118,7 @@ class JointBandit:
         self._load_all()
 
     @classmethod
-    def get_instance(cls) -> "JointBandit":
+    def get_instance(cls) -> JointBandit:
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:
@@ -182,7 +181,7 @@ class JointBandit:
             for name in non_core:
                 # 找包含此 block 的最佳 config
                 best_ucb = 0.0
-                for (p, cid), b in self._beliefs.items():
+                for (p, _cid), b in self._beliefs.items():
                     if p != phase:
                         continue
                     # 简化: 用 config_id 的信念代理 block 信念

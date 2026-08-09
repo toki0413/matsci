@@ -22,7 +22,6 @@ from huginn.tools.file_read_tool import FileReadTool
 from huginn.tools.file_write_tool import FileWriteTool
 from huginn.tools.git_tool import GitTool
 
-
 # git 不在就跳过 git 那一组测试
 _HAS_GIT = shutil.which("git") is not None
 _skip_no_git = pytest.mark.skipif(not _HAS_GIT, reason="git binary not on PATH")
@@ -290,7 +289,7 @@ async def test_write_new_file(tmp_path):
     )
     assert result.success is True
     assert result.data["existed"] is False
-    assert result.data["bytes_written"] == len("content here\n".encode("utf-8"))
+    assert result.data["bytes_written"] == len(b"content here\n")
     assert (tmp_path / "fresh.txt").read_text(encoding="utf-8") == "content here\n"
 
 

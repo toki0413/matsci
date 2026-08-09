@@ -15,12 +15,10 @@ import json
 from unittest.mock import AsyncMock, MagicMock
 
 import numpy as np
-import pytest
 
 from huginn.tools.characterization_tool import CharacterizationTool
-from huginn.tools.literature.tool import LiteratureTool, LiteratureInput
+from huginn.tools.literature.tool import LiteratureInput, LiteratureTool
 from huginn.types import ToolContext
-
 
 # ── Test 1: XRD peak detect returns auto_indexing_hint ───────────────
 

@@ -180,7 +180,7 @@ class AbaqusToolInput(BaseModel):
     explicit_spec: ExplicitDynamicSpec | None = None
 
     @model_validator(mode="after")
-    def _check_action_fields(self) -> "AbaqusToolInput":
+    def _check_action_fields(self) -> AbaqusToolInput:
         """新 action 需要对应 spec, 在 schema 层兜底."""
         spec_map = {
             "static_general": "static_spec",
@@ -707,18 +707,17 @@ job.waitForCompletion()
         # ponytail: 用特征长度 1mm 估, 真实值取决于网格, Abaqus 会自己算
         c_wave = (E / rho) ** 0.5
         dt_est = 1e-3 / c_wave  # 1mm 特征长度
-        dt_scaled = dt_est / (mass_scale ** 0.5)
+        dt_est / (mass_scale ** 0.5)
 
         # 材料模型代码
         mat_lines = [
-            "model.materials['Material-1'].Elastic(table=((%r, %r), ))" % (E, nu),
+            f"model.materials['Material-1'].Elastic(table=(({E!r}, {nu!r}), ))",
         ]
         if mat_model == "plastic" and s.plastic_params:
             ys = s.plastic_params.get("yield_stress", 250e6)
             hm = s.plastic_params.get("hardening_modulus", 5e9)
             mat_lines.append(
-                "model.materials['Material-1'].Plastic(table=((%r, 0.0), (%r, 0.01), ))"
-                % (ys, ys + hm * 0.01)
+                f"model.materials['Material-1'].Plastic(table=(({ys!r}, 0.0), ({ys + hm * 0.01!r}, 0.01), ))"
             )
         elif mat_model == "johnson_cook" and s.plastic_params:
             p = s.plastic_params

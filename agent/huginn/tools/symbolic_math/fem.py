@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from .tool import SymbolicMathInput
 
 
-def constitutive(args: "SymbolicMathInput") -> ToolResult:
+def constitutive(args: SymbolicMathInput) -> ToolResult:
     """从自由能推导本构关系."""
     sym_dict = parse_symbols(args.symbols, args.assumptions)
     psi = safe_parse(args.free_energy or "", sym_dict)
@@ -65,7 +65,7 @@ def constitutive(args: "SymbolicMathInput") -> ToolResult:
     return ToolResult(data=results, success=True)
 
 
-def weak_form(args: "SymbolicMathInput") -> ToolResult:
+def weak_form(args: SymbolicMathInput) -> ToolResult:
     """用 Green 恒等式推导或验证 FEM 弱形式.
 
     支持:

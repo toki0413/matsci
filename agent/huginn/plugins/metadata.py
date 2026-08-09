@@ -60,7 +60,7 @@ class PluginMetadata:
     raw: dict[str, Any] = field(default_factory=dict, repr=False)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "PluginMetadata":
+    def from_dict(cls, data: dict[str, Any]) -> PluginMetadata:
         """从已解析的 dict 构造。字段缺失走默认值。"""
         return cls(
             name=data.get("name", ""),
@@ -80,7 +80,7 @@ class PluginMetadata:
         )
 
     @classmethod
-    def from_yaml(cls, path: str | Path) -> "PluginMetadata":
+    def from_yaml(cls, path: str | Path) -> PluginMetadata:
         """从 metadata.yaml 文件加载。
 
         path 应指向插件目录下的 metadata.yaml。
@@ -120,10 +120,7 @@ class PluginMetadata:
         支持通配: 声明 "tool_call:*" 可命中 "tool_call:vasp_tool"。
         声明 "tool_call:vasp_tool" 不命中 "tool_call:lammps_tool"。
         """
-        for declared in self.permissions:
-            if _perm_match(declared, perm):
-                return True
-        return False
+        return any(_perm_match(declared, perm) for declared in self.permissions)
 
 
 def _ver_tuple(v: str) -> tuple[int, ...]:

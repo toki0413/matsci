@@ -5,11 +5,9 @@
 
 from __future__ import annotations
 
-import json
 import shutil
 import tempfile
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
@@ -20,7 +18,6 @@ from huginn.provenance.registry import (
     _ProvenanceStore,
 )
 from huginn.snapshot.file_snapshot import SnapshotManager
-
 
 # ── fixtures ──────────────────────────────────────────────────
 
@@ -359,14 +356,14 @@ class TestRevertToVersion:
 
 class TestConsumeSnapshotStepId:
     def test_returns_none_when_empty(self):
-        from huginn.snapshot.integration import consume_last_snapshot_step_id
         import huginn.snapshot.integration as integ
+        from huginn.snapshot.integration import consume_last_snapshot_step_id
         integ._last_step_id = None
         assert consume_last_snapshot_step_id() is None
 
     def test_returns_and_clears(self):
-        from huginn.snapshot.integration import consume_last_snapshot_step_id
         import huginn.snapshot.integration as integ
+        from huginn.snapshot.integration import consume_last_snapshot_step_id
         integ._last_step_id = "test_step_123"
         assert consume_last_snapshot_step_id() == "test_step_123"
         assert consume_last_snapshot_step_id() is None

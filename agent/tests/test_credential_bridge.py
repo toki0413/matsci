@@ -19,7 +19,6 @@ from huginn.config import HuginnConfig, ModelConfig
 from huginn.models.registry import ModelRegistry
 from huginn.security.credential_store import CRED_KIND_LLM, CredentialStore
 
-
 # ── helpers ────────────────────────────────────────────────────────────
 
 def _make_store(tmp_path) -> CredentialStore:

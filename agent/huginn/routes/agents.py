@@ -7,7 +7,7 @@ import logging
 import os
 from typing import Any
 
-from fastapi import APIRouter, WebSocket
+from fastapi import APIRouter
 from pydantic import ValidationError
 
 from huginn.config import get_config
@@ -71,7 +71,7 @@ async def chat_with_agent(agent_id: str, params: dict[str, Any]) -> dict[str, An
         req = ChatRequest.model_validate(params)
     except ValidationError as exc:
         from fastapi import HTTPException
-        raise HTTPException(status_code=422, detail=exc.errors())
+        raise HTTPException(status_code=422, detail=exc.errors()) from exc
 
     user_message = req.content
     thread_id = req.thread_id

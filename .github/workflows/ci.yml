@@ -7,6 +7,28 @@ on:
     branches: [master, main]
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install ruff
+        run: |
+          python -m pip install --upgrade pip
+          pip install "ruff>=0.4.0"
+
+      - name: Run ruff check (gating)
+        working-directory: agent
+        run: |
+          # Blocking gate: CI lint 必须全绿.
+          ruff check .
+
   python-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -224,8 +246,11 @@ jobs:
 
       - name: Dependency vulnerability scan
         run: |
+          python -m pip install --upgrade pip
           pip install pip-audit
-          pip-audit || true
+          # Blocking gate: fail CI on known vulnerabilities.
+          # pip is upgraded above so tooling-level advisories don't trip the gate.
+          pip-audit --desc
 
   rust-check:
     runs-on: ubuntu-latest

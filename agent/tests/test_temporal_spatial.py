@@ -67,7 +67,7 @@ def _check_van_hove_compute():
     print("[ok] S1 _compute_van_hove (top-K=32 稀疏采样)")
 
 
-def _check_F_q_t_compute():
+def _check_f_q_t_compute():
     """S1: _compute_F_q_t 算中间散射函数, 默认 3 个 q 值."""
     from huginn.tools.sim.lammps_tool import LammpsTool
     tool = LammpsTool.__new__(LammpsTool)
@@ -94,8 +94,8 @@ def _check_F_q_t_compute():
 
 def _check_lammps_registers_spatio_temporal():
     """S1: lammps_tool 把 van_hove + F_q_t 注册到 _physical_timeseries, spatial=True."""
-    from huginn.tools.sim.lammps_tool import LammpsTool
     from huginn.autoloop.engine import AutoloopEngine
+    from huginn.tools.sim.lammps_tool import LammpsTool
 
     tool = LammpsTool.__new__(LammpsTool)
     frames = _make_test_frames(n_frames=4, n_atoms=50)
@@ -219,6 +219,7 @@ def _check_hist_correlation():
 def _check_describe_image_sequence():
     """S3: describe_image_sequence 多图序列 + 帧间一致性."""
     from PIL import Image
+
     from huginn.tools.vision_describe_tool import describe_image_sequence
 
     # 构造两张相似图 + 一张差异大图
@@ -278,7 +279,7 @@ def _check_vision_describe_input_image_paths():
 
 def main():
     _check_van_hove_compute()
-    _check_F_q_t_compute()
+    _check_f_q_t_compute()
     _check_lammps_registers_spatio_temporal()
     _check_format_timeseries_spatial()
     _check_hist_correlation()

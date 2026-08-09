@@ -19,7 +19,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from huginn.agents.subagent import SubagentDispatch, SubagentResult
@@ -316,10 +316,10 @@ class BranchIncubator:
         # P4: wave_mode="verify" 时改引导为验证 (而非生成), 避免"自己生成自己验证"
         if wave_mode == "verify":
             enhanced_task += (
-                f"[Wave mode: VERIFY — do NOT generate new hypotheses. "
-                f"Instead, critically evaluate the hypotheses above. "
-                f"Look for counterexamples, logical gaps, or unsupported claims. "
-                f"Report whether each holds or fails, with evidence.]\n"
+                "[Wave mode: VERIFY — do NOT generate new hypotheses. "
+                "Instead, critically evaluate the hypotheses above. "
+                "Look for counterexamples, logical gaps, or unsupported claims. "
+                "Report whether each holds or fails, with evidence.]\n"
             )
         enhanced_task += (
             f"[Visible method families for self-categorization: "
@@ -682,7 +682,7 @@ def _selfcheck() -> None:
         depth=2, width=2,
     ))
     # 所有返回的都是 layer2 winner, parent_agent_id 非空
-    layer1_results_in_call = [c for c in mock_pa.calls if "[Parent hypothesis:" not in c[1]]
+    [c for c in mock_pa.calls if "[Parent hypothesis:" not in c[1]]
     # layer1 dispatch 的 context 没法直接拿 agent_id, 但 winner.parent_agent_id
     # 应是 layer1 branch 的 agent_id (格式 branch_<family>_<8hex>)
     for winner in results_pa:
@@ -708,14 +708,14 @@ def _selfcheck() -> None:
     assert len(layer1_calls_ph) == 3, "layer1 task 不应含 [Parent hypothesis]"
     assert len(layer2_calls_ph) == 6, "应有 6 个 layer2 task 含 [Parent hypothesis]"
     # layer2 task 含 family + essence + Parent hypothesis + Visible
-    for spec_name, task_content, _ in layer2_calls_ph:
+    for _spec_name, task_content, _ in layer2_calls_ph:
         assert spec_name == "explore"
         assert "[Method family assigned:" in task_content
         assert "[Family essence:" in task_content
         assert "[Parent hypothesis:" in task_content
         assert "Visible method families" in task_content
     # layer1 task 不含 [Parent hypothesis]
-    for spec_name, task_content, _ in layer1_calls_ph:
+    for _spec_name, task_content, _ in layer1_calls_ph:
         assert "[Parent hypothesis:" not in task_content
 
     # 13. P4: wave_mode="verify" 时 enhanced_task 含 VERIFY 引导
@@ -727,7 +727,7 @@ def _selfcheck() -> None:
         wave_mode="verify",
     ))
     assert len(mock_wv.calls) == 3
-    for spec_name, task_content, _ in mock_wv.calls:
+    for _spec_name, task_content, _ in mock_wv.calls:
         assert "[Wave mode: VERIFY" in task_content, \
             "verify 模式 enhanced_task 应含 VERIFY 引导"
     print("13. P4 wave_mode=verify 注入 VERIFY 引导 OK")
@@ -739,7 +739,7 @@ def _selfcheck() -> None:
         task="test", agent_factory=object(),
         n_branches=3, round_idx=0, total_rounds=10,
     ))
-    for spec_name, task_content, _ in mock_wp.calls:
+    for _spec_name, task_content, _ in mock_wp.calls:
         assert "[Wave mode: VERIFY" not in task_content, \
             "push 模式不应含 VERIFY 引导"
     print("14. P4 wave_mode=push (默认) 不含 VERIFY 引导 OK")
@@ -789,7 +789,7 @@ def _selfcheck() -> None:
         model_families=["openai", "anthropic", "deepseek"],
     ))
     # 双重检查: VERIFY 引导 + model_family 分配
-    for spec_name, task_content, _ in mock_combo.calls:
+    for _spec_name, task_content, _ in mock_combo.calls:
         assert "[Wave mode: VERIFY" in task_content
     assert [r.model_family for r in results_combo] == ["openai", "anthropic", "deepseek"]
     print("18. P4 wave_mode=verify + model_families 组合 OK")

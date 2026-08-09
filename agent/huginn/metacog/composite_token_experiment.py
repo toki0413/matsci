@@ -33,7 +33,7 @@ from typing import Any
 import numpy as np
 
 try:
-    from scipy.spatial.transform import Rotation as _R
+    from scipy.spatial.transform import Rotation
     _HAS_SCIPY = True
 except ImportError:
     _HAS_SCIPY = False
@@ -125,9 +125,9 @@ def _selfcheck() -> None:
         text="peak at <point>[500,800]</point>, min at <point>[100,200]</point>",
         coords=np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]),
     )
-    g1_rot = _R.from_euler("z", 30, degrees=True)
+    g1_rot = Rotation.from_euler("z", 30, degrees=True)
     g1_trans = np.array([1.0, 0.0, 0.0])
-    g2_rot = _R.from_euler("z", 45, degrees=True)
+    g2_rot = Rotation.from_euler("z", 45, degrees=True)
     g2_trans = np.array([0.0, 1.0, 0.0])
 
     # (g1·g2) 合成: scipy g1*g2 = 先 g2 后 g1; 平移 = R1·t2 + t1
@@ -159,7 +159,7 @@ def _selfcheck() -> None:
         text="min at <point>[100,200]</point>",
         coords=np.array([[0.0, 1.0, 0.0]]),
     )
-    g_rot = _R.from_euler("z", 90, degrees=True)
+    g_rot = Rotation.from_euler("z", 90, degrees=True)
     g_trans = np.array([0.5, 0.5, 0.0])
 
     lhs = se3_act(g_rot, g_trans, concat(a, b))
@@ -179,7 +179,7 @@ def _selfcheck() -> None:
     # e▷t == t
     print("[3] 单位元: e▷t == t")
     print("    含义: 恒等变换不改变 token")
-    e_rot = _R.identity()
+    e_rot = Rotation.identity()
     e_trans = np.zeros(3)
     result = se3_act(e_rot, e_trans, t)
     text_match = result.text == t.text
@@ -201,7 +201,7 @@ def _selfcheck() -> None:
             [0.0, 2.0, 0.0],  # 原子 3 (y 方向)
         ]),
     )
-    rot_90 = _R.from_euler("z", 90, degrees=True)
+    rot_90 = Rotation.from_euler("z", 90, degrees=True)
     trans_0 = np.zeros(3)
     rotated = se3_act(rot_90, trans_0, token)
 
@@ -219,7 +219,7 @@ def _selfcheck() -> None:
     # 原点不变
     assert np.allclose(rotated.coords[0], [0.0, 0.0, 0.0]), "原点应不变"
     assert "<point>[0,0]</point>" in rotated.text, "原点 <point> 应不变"
-    print(f"    PASS: <point> 坐标和 3D 坐标同步旋转, 原点不变")
+    print("    PASS: <point> 坐标和 3D 坐标同步旋转, 原点不变")
     print()
 
     # ── 扩展: <point3d> 真 3D SE(3) 群作用 ────────────────────
@@ -238,7 +238,7 @@ def _selfcheck() -> None:
         ]),
     )
     # 绕 x 轴 90°: y→z, z→-y
-    rot_x90 = _R.from_euler("x", 90, degrees=True)
+    rot_x90 = Rotation.from_euler("x", 90, degrees=True)
     trans_0 = np.zeros(3)
     rotated_3d = se3_act(rot_x90, trans_0, token_3d)
 
@@ -265,7 +265,7 @@ def _selfcheck() -> None:
     #   [0,0,2] (z 轴) → [0,-2,0]
     assert np.allclose(rotated_3d.coords[2], [0.0, -2.0, 0.0], atol=1e-6), \
         f"coords [0,0,2] 绕 x 90° 应为 [0,-2,0], 实际: {rotated_3d.coords[2]}"
-    print(f"    PASS: <point3d> 3D 坐标和 3D coords 同步旋转, z 维度保留")
+    print("    PASS: <point3d> 3D 坐标和 3D coords 同步旋转, z 维度保留")
     print()
 
     # ── 扩展: <point3d> 群作用 compatibility ───────────────────
@@ -275,9 +275,9 @@ def _selfcheck() -> None:
         text="<point3d>[500,300,100]</point3d>(C)",
         coords=np.array([[1.0, 2.0, 3.0]]),
     )
-    g1_rot = _R.from_euler("y", 30, degrees=True)
+    g1_rot = Rotation.from_euler("y", 30, degrees=True)
     g1_trans = np.array([1.0, 0.0, 0.0])
-    g2_rot = _R.from_euler("z", 45, degrees=True)
+    g2_rot = Rotation.from_euler("z", 45, degrees=True)
     g2_trans = np.array([0.0, 1.0, 0.0])
 
     g12_rot = g1_rot * g2_rot
@@ -289,7 +289,7 @@ def _selfcheck() -> None:
     text_match = lhs.text == rhs.text
     coords_match = np.allclose(lhs.coords, rhs.coords, atol=1e-6)
     assert text_match, f"text mismatch:\n  LHS={lhs.text}\n  RHS={rhs.text}"
-    assert coords_match, f"coords mismatch"
+    assert coords_match, "coords mismatch"
     print(f"    text:   {'PASS' if text_match else 'FAIL'}")
     print(f"    coords: {'PASS' if coords_match else 'FAIL'}")
     print()

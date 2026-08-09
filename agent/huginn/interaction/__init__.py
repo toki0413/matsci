@@ -4,10 +4,10 @@
 SSE 或 HTTP 路由把 agent 内部状态透给前端。
 """
 
-from huginn.interaction.streaming import StreamInterceptor
-from huginn.interaction.interrupt import InterruptEvent, InterruptManager
 from huginn.interaction.clarification import ClarificationManager
+from huginn.interaction.interrupt import InterruptEvent, InterruptManager
 from huginn.interaction.progress import ProgressTracker
+from huginn.interaction.streaming import StreamInterceptor
 
 __all__ = [
     "StreamInterceptor",

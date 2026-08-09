@@ -41,7 +41,6 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
-
 # ── 数据结构 ────────────────────────────────────────────────────────────
 
 
@@ -811,7 +810,7 @@ def _selfcheck() -> None:
     assert functor_llm.target == "phonon"
     assert functor_llm.object_map["crystal"] == "lattice"
     assert functor_llm.morphism_map["crystal→spin"] == "lattice→atom"
-    print(f"\nPASS Test 2: LLM propose functor (mock) — altermagnetism → phonon")
+    print("\nPASS Test 2: LLM propose functor (mock) — altermagnetism → phonon")
     print(f"  object_map: {functor_llm.object_map}")
     print(f"  morphism_map keys: {list(functor_llm.morphism_map.keys())}")
 

@@ -11,14 +11,13 @@ from types import SimpleNamespace
 
 import pytest
 
+import huginn.security.rate_limiter as rl_mod
 from huginn.security.rate_limiter import (
     RateLimitConfig,
     TokenRateLimiter,
     _extract_usage,
     get_rate_limiter,
 )
-import huginn.security.rate_limiter as rl_mod
-
 
 # ── check_allowed ──────────────────────────────────────────
 

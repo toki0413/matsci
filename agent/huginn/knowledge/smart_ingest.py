@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import io
 import logging
 import os
@@ -87,10 +88,9 @@ class SmartIngester:
         支持 zip, tar.gz, tar.bz2, tar. 7z/rar 在有对应工具时也支持.
         这是 loop-of-loops: archive → files → each file is its own ingest loop.
         """
+        import tarfile
         import tempfile
         import zipfile
-        import tarfile
-        import shutil
 
         results: list[dict[str, Any]] = []
         total_files = 0
@@ -281,19 +281,18 @@ class SmartIngester:
 
         # 落临时文件给工具读 (image_analysis_tool 要 image_path)
         suffix = Path(filename).suffix or ".png"
-        tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+        tmp = None
         try:
-            tmp.write(content)
-            tmp.close()
-            return await self._dispatch_cv_actions(tmp.name, filename)
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+                tmp.write(content)
+                return await self._dispatch_cv_actions(tmp.name, filename)
         except Exception as exc:
             logger.debug("CV 分析失败 (非致命): %s", exc)
             return None
         finally:
-            try:
-                os.unlink(tmp.name)
-            except OSError:
-                pass
+            with contextlib.suppress(OSError):
+                if tmp is not None:
+                    os.unlink(tmp.name)
 
     async def _dispatch_cv_actions(
         self, image_path: str, original_name: str
@@ -421,10 +420,8 @@ class SmartIngester:
                 images_analyzed = await self._extract_and_ingest_pdf_images(doc)
         finally:
             if doc is not None:
-                try:
+                with contextlib.suppress(Exception):
                     doc.close()
-                except Exception:
-                    pass
 
         full_text = "\n\n".join(p for p in text_parts if p and p.strip())
         info = self.kb.add_text(
@@ -472,7 +469,7 @@ class SmartIngester:
 
         results: list[dict[str, Any]] = []
         try:
-            import fitz
+            import fitz  # noqa: F401
         except ImportError:
             return results
 
@@ -500,8 +497,9 @@ class SmartIngester:
                 img_path.write_bytes(img_bytes)
 
                 # LLM 解读生成 structured markdown
-                from PIL import Image
                 import io as _io
+
+                from PIL import Image
                 pil_img = Image.open(_io.BytesIO(img_bytes))
                 decoded = _llm_ocr_image(pil_img, hint="compress_page")
                 if not decoded:
@@ -534,9 +532,7 @@ class SmartIngester:
             return True
         # 文字密度低 (版式密集, fitz 抠不全)
         stripped = text.strip()
-        if 0 < len(stripped) < 100:
-            return True
-        return False
+        return 0 < len(stripped) < 100
 
     async def _extract_and_ingest_pdf_images(self, doc: Any) -> int:
         """把 PDF 内嵌图片抠出来逐个 ingest_image, 返回处理数量."""
@@ -650,7 +646,7 @@ class SmartIngester:
                 }
 
         summary = [
-            f"- 文件类型: CSV",
+            "- 文件类型: CSV",
             f"- 行数 (不含表头): {len(data_rows)}",
             f"- 列数: {len(columns)}",
             f"- 列名: {', '.join(columns)}",
@@ -799,7 +795,6 @@ def build_smart_ingester(kb: Any | None) -> SmartIngester | None:
         logger.debug("image_analysis_tool 不可用, smart ingest 只走 OCR")
 
     try:
-        from huginn.models.registry import get_model_capabilities
 
         # ponytail: 这里拿不到具体 model_name, 保守认为 vision 不可用,
         # 让 SmartIngester 只依赖 image_analysis_tool. 升级路径: 传入当前 model.

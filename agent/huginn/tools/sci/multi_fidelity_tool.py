@@ -18,7 +18,7 @@ actions:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Literal
 
 import numpy as np
@@ -30,7 +30,6 @@ from huginn.tools.gp_tool import NumPyGP
 from huginn.tools.neural_proxy import NeuralPDEProxy
 from huginn.tools.profile import ToolProfile
 from huginn.types import ToolContext, ToolResult
-
 
 # ── data structures ──────────────────────────────────────────────────────────
 

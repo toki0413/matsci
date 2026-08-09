@@ -23,8 +23,9 @@ import os
 import sqlite3
 import threading
 from collections import OrderedDict
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 
 class StateRegistry:

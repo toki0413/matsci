@@ -35,7 +35,6 @@ from huginn.tools.symbolic_math.tool import SymbolicMathInput, SymbolicMathTool
 from huginn.tools.wetlab_rpc_tool import PROTOCOLS, WetlabInput, WetlabRpcTool
 from huginn.types import ToolContext
 
-
 # ── shared helpers ───────────────────────────────────────────────────────────
 
 

@@ -18,7 +18,6 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 from huginn.utils.prompt_cache import PromptCacheBuilder
 
-
 SYSTEM_PROMPT = (
     "# Huginn System Prompt\n"
     "You are a computational materials science assistant.\n"

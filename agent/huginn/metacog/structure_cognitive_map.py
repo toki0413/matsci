@@ -47,7 +47,7 @@ except ImportError:
     _HAS_PMG = False
 
 try:
-    from scipy.spatial.transform import Rotation as _R
+    from scipy.spatial.transform import Rotation
     _HAS_SCIPY = True
 except ImportError:
     _HAS_SCIPY = False
@@ -108,7 +108,7 @@ class StructureCognitiveMap:
     # ── 构造 ──────────────────────────────────────────────
 
     @classmethod
-    def from_cif(cls, cif_str: str, cutoff: float = _DEFAULT_CUTOFF) -> "StructureCognitiveMap":
+    def from_cif(cls, cif_str: str, cutoff: float = _DEFAULT_CUTOFF) -> StructureCognitiveMap:
         """从 CIF 构建. 用 pymatgen.Structure 解析, 考虑 PBC."""
         if not _HAS_PMG:
             raise RuntimeError("pymatgen not installed, pip install pymatgen")
@@ -122,12 +122,12 @@ class StructureCognitiveMap:
                    metadata={"source": "cif", "num_sites": len(species)})
 
     @classmethod
-    def from_molecule(cls, sdf_str: str, cutoff: float = _DEFAULT_CUTOFF) -> "StructureCognitiveMap":
+    def from_molecule(cls, sdf_str: str, cutoff: float = _DEFAULT_CUTOFF) -> StructureCognitiveMap:
         """从 SDF/Mol block 构建. 用 rdkit 解析. 不考虑 PBC."""
         try:
             from rdkit import Chem
         except ImportError:
-            raise RuntimeError("rdkit not installed, pip install rdkit")
+            raise RuntimeError("rdkit not installed, pip install rdkit") from None
         mol = Chem.MolFromMolBlock(sdf_str, removeHs=False)
         if mol is None:
             raise ValueError("rdkit MolFromMolBlock returned None")
@@ -143,7 +143,7 @@ class StructureCognitiveMap:
     @classmethod
     def from_coords(cls, species: list[str], coords: np.ndarray,
                     lattice: np.ndarray | None = None,
-                    cutoff: float = _DEFAULT_CUTOFF) -> "StructureCognitiveMap":
+                    cutoff: float = _DEFAULT_CUTOFF) -> StructureCognitiveMap:
         """直接从 coords 构造. lattice=None 表示 molecule."""
         coords = np.asarray(coords, dtype=float)
         if coords.shape != (len(species), 3):
@@ -155,7 +155,7 @@ class StructureCognitiveMap:
     @classmethod
     def from_image(cls, image_bytes: bytes, pixel_size_nm: float = 0.1,
                    fft_threshold: float | None = None,
-                   cutoff: float = _DEFAULT_CUTOFF) -> "StructureCognitiveMap":
+                   cutoff: float = _DEFAULT_CUTOFF) -> StructureCognitiveMap:
         """M7: 从 TEM 图像构建认知图: 调 tem_lattice 拿 FFT → d-spacings → 构造 minimal cell.
 
         流程:
@@ -188,8 +188,8 @@ class StructureCognitiveMap:
             tmp.write(image_bytes)
             tmp_path = tmp.name
         try:
-            from huginn.tools.image_analysis.tool import ImageAnalysisInput
             from huginn.tools.image_analysis.scenes_tem import tem_lattice
+            from huginn.tools.image_analysis.tool import ImageAnalysisInput
 
             params: dict[str, Any] = {"pixel_size_nm": pixel_size_nm}
             if fft_threshold is not None:
@@ -245,7 +245,8 @@ class StructureCognitiveMap:
 
     def query_distance(self, i: int, j: int) -> float:
         """原子 i-j 距离 (Å). crystal 考虑 PBC, molecule 直接欧氏."""
-        self._check_index(i); self._check_index(j)
+        self._check_index(i)
+        self._check_index(j)
         if self.lattice is not None:
             d = _min_image_distance(self.coords[i], self.coords[j], self.lattice)
         else:
@@ -254,7 +255,9 @@ class StructureCognitiveMap:
 
     def query_angle(self, i: int, j: int, k: int) -> float:
         """i-j-k 角度 (度), j 是顶点."""
-        self._check_index(i); self._check_index(j); self._check_index(k)
+        self._check_index(i)
+        self._check_index(j)
+        self._check_index(k)
         v1 = self.coords[i] - self.coords[j]
         v2 = self.coords[k] - self.coords[j]
         # ponytail: PBC 不考虑 (角点局部, 邻居一般同 cell)
@@ -339,7 +342,7 @@ class StructureCognitiveMap:
 
     # ── SE(3) operations (return new map, immutable) ──────
 
-    def rotate(self, axis, angle: float, origin=None, degrees: bool = True) -> "StructureCognitiveMap":
+    def rotate(self, axis, angle: float, origin=None, degrees: bool = True) -> StructureCognitiveMap:
         """返回旋转后的新 StructureCognitiveMap."""
         rot = _make_rotation(axis, angle, degrees)
         if origin is None:
@@ -349,12 +352,12 @@ class StructureCognitiveMap:
         new_coords = rot.apply(self.coords - origin) + origin
         return self._clone_with(coords=new_coords)
 
-    def translate(self, vector) -> "StructureCognitiveMap":
+    def translate(self, vector) -> StructureCognitiveMap:
         """返回平移后的新 map."""
         vec = np.asarray(vector, dtype=float)
         return self._clone_with(coords=self.coords + vec)
 
-    def supercell(self, scale) -> "StructureCognitiveMap":
+    def supercell(self, scale) -> StructureCognitiveMap:
         """返回 supercell 后的新 map. scale 是 int 或 (a, b, c).
 
         ponytail: lattice=None (molecule) 时不允许, 因为没有 PBC.
@@ -380,7 +383,7 @@ class StructureCognitiveMap:
                                      metadata={**self.metadata, "op": "supercell", "scale": (sa, sb, sc)},
                                      haptic=self.haptic)
 
-    def remove_atom(self, index: int) -> "StructureCognitiveMap":
+    def remove_atom(self, index: int) -> StructureCognitiveMap:
         """返回移除指定原子后的新 map."""
         self._check_index(index)
         mask = np.ones(len(self.species), dtype=bool)
@@ -398,7 +401,7 @@ class StructureCognitiveMap:
                                      lattice=self.lattice.copy() if self.lattice is not None else None,
                                      adjacency=adj, metadata={**self.metadata, "op": "remove_atom"})
 
-    def add_atom(self, species: str, coord) -> "StructureCognitiveMap":
+    def add_atom(self, species: str, coord) -> StructureCognitiveMap:
         """返回添加原子后的新 map."""
         coord = np.asarray(coord, dtype=float).reshape(3)
         new_species = self.species + [species]
@@ -419,9 +422,10 @@ class StructureCognitiveMap:
                                      lattice=self.lattice.copy() if self.lattice is not None else None,
                                      adjacency=adj, metadata={**self.metadata, "op": "add_atom"})
 
-    def swap_atoms(self, i: int, j: int) -> "StructureCognitiveMap":
+    def swap_atoms(self, i: int, j: int) -> StructureCognitiveMap:
         """返回交换 i/j 原子种类后的新 map. coords 不变, species 交换."""
-        self._check_index(i); self._check_index(j)
+        self._check_index(i)
+        self._check_index(j)
         new_species = list(self.species)
         new_species[i], new_species[j] = new_species[j], new_species[i]
         return StructureCognitiveMap(species=new_species, coords=self.coords.copy(),
@@ -431,7 +435,7 @@ class StructureCognitiveMap:
 
     # ── 9 个新 ops (补全 AtomWorld 15 actions) ─────────────
 
-    def move_atom(self, index: int, vector) -> "StructureCognitiveMap":
+    def move_atom(self, index: int, vector) -> StructureCognitiveMap:
         """单原子平移. 跟 translate (整体平移) 不同."""
         self._check_index(index)
         vec = np.asarray(vector, dtype=float)
@@ -440,7 +444,7 @@ class StructureCognitiveMap:
         adj = _build_adjacency_cart(new_coords, self.lattice, _DEFAULT_CUTOFF)
         return self._clone_with(coords=new_coords, adjacency=adj, metadata={**self.metadata, "op": "move_atom"})
 
-    def move_selected(self, indices: list[int], vector) -> "StructureCognitiveMap":
+    def move_selected(self, indices: list[int], vector) -> StructureCognitiveMap:
         """子集平移."""
         for i in indices:
             self._check_index(i)
@@ -450,14 +454,15 @@ class StructureCognitiveMap:
         adj = _build_adjacency_cart(new_coords, self.lattice, _DEFAULT_CUTOFF)
         return self._clone_with(coords=new_coords, adjacency=adj, metadata={**self.metadata, "op": "move_selected"})
 
-    def move_towards(self, i: int, j: int, fraction: float = 0.5) -> "StructureCognitiveMap":
+    def move_towards(self, i: int, j: int, fraction: float = 0.5) -> StructureCognitiveMap:
         """原子 i 朝 j 方向移动 fraction 比例 (0=不动, 1=到 j 位置)."""
-        self._check_index(i); self._check_index(j)
+        self._check_index(i)
+        self._check_index(j)
         vec = (self.coords[j] - self.coords[i]) * float(fraction)
         return self.move_atom(i, vec)
 
     def move_around(self, i: int, center, axis, angle: float,
-                    degrees: bool = True) -> "StructureCognitiveMap":
+                    degrees: bool = True) -> StructureCognitiveMap:
         """原子 i 绕 center 旋转. center 可以是 index 或 3-vector."""
         self._check_index(i)
         if isinstance(center, int):
@@ -471,14 +476,14 @@ class StructureCognitiveMap:
         adj = _build_adjacency_cart(new_coords, self.lattice, _DEFAULT_CUTOFF)
         return self._clone_with(coords=new_coords, adjacency=adj, metadata={**self.metadata, "op": "move_around"})
 
-    def change_atom(self, index: int, new_species: str) -> "StructureCognitiveMap":
+    def change_atom(self, index: int, new_species: str) -> StructureCognitiveMap:
         """改原子种类 (不改坐标). 单步 API, 不用 swap+remove+add 组合."""
         self._check_index(index)
         new_sp = list(self.species)
         new_sp[index] = new_species
         return self._clone_with(species=new_sp, metadata={**self.metadata, "op": "change_atom"})
 
-    def scale(self, factor: float) -> "StructureCognitiveMap":
+    def scale(self, factor: float) -> StructureCognitiveMap:
         """整体缩放 (coords + lattice). MiSI T3 zooming 需要."""
         f = float(factor)
         new_coords = self.coords * f
@@ -487,13 +492,14 @@ class StructureCognitiveMap:
         return self._clone_with(coords=new_coords, lattice=new_lattice, adjacency=adj,
                                 metadata={**self.metadata, "op": "scale", "factor": f})
 
-    def insert_between(self, i: int, j: int, species: str) -> "StructureCognitiveMap":
+    def insert_between(self, i: int, j: int, species: str) -> StructureCognitiveMap:
         """在 i-j 中点插入新原子."""
-        self._check_index(i); self._check_index(j)
+        self._check_index(i)
+        self._check_index(j)
         midpoint = (self.coords[i] + self.coords[j]) / 2.0
         return self.add_atom(species, midpoint)
 
-    def delete_below(self, i: int, cutoff: float | None = None) -> "StructureCognitiveMap":
+    def delete_below(self, i: int, cutoff: float | None = None) -> StructureCognitiveMap:
         """删除 i 的近邻 (保留 i). cutoff=None 用 _DEFAULT_CUTOFF."""
         self._check_index(i)
         c = cutoff if cutoff is not None else _DEFAULT_CUTOFF
@@ -516,7 +522,7 @@ class StructureCognitiveMap:
                                      lattice=self.lattice.copy() if self.lattice is not None else None,
                                      adjacency=adj, metadata={**self.metadata, "op": "delete_below"})
 
-    def delete_around_atom(self, i: int, cutoff: float | None = None) -> "StructureCognitiveMap":
+    def delete_around_atom(self, i: int, cutoff: float | None = None) -> StructureCognitiveMap:
         """删除 i 的配位壳层 (保留 i). 跟 delete_below 同义, AtomWorld 语义."""
         return self.delete_below(i, cutoff)
 
@@ -561,7 +567,7 @@ class StructureCognitiveMap:
             for i in range(len(self.species)):
                 try:
                     info = cnn.get_cn_dict(s, i)
-                    for j, count in info.items():
+                    for j, _count in info.items():
                         if j > i:
                             d = self.query_distance(i, j)
                             bonds.append(Bond(i=i, j=int(j), length=d,
@@ -685,7 +691,7 @@ class StructureCognitiveMap:
                 continue
             # 找 acceptor
             for j in range(len(self.species)):
-                if j == i or j == donor:
+                if j in (i, donor):
                     continue
                 if self.species[j] not in h_acceptors:
                     continue
@@ -698,7 +704,7 @@ class StructureCognitiveMap:
 
     # ── 泛化深化: 变换链 + 配位多面体 + 键类型分组 ────────
 
-    def compose(self, *ops) -> "StructureCognitiveMap":
+    def compose(self, *ops) -> StructureCognitiveMap:
         """串联多个变换. ops 是 callable: map -> map.
 
         用法:
@@ -734,9 +740,9 @@ class StructureCognitiveMap:
         atomic_write_json(Path(path), self.to_engine_state_dict())
 
     @classmethod
-    def load(cls, path: str | Path) -> "StructureCognitiveMap":
+    def load(cls, path: str | Path) -> StructureCognitiveMap:
         """从 JSON 重建."""
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             d = json.load(f)
         return cls.from_engine_state_dict(d)
 
@@ -751,7 +757,7 @@ class StructureCognitiveMap:
         }
 
     @classmethod
-    def from_engine_state_dict(cls, d: dict[str, Any]) -> "StructureCognitiveMap":
+    def from_engine_state_dict(cls, d: dict[str, Any]) -> StructureCognitiveMap:
         """从 dict 重建."""
         coords = np.asarray(d["coords"], dtype=float)
         lat = np.asarray(d["lattice"], dtype=float) if d.get("lattice") is not None else None
@@ -761,7 +767,7 @@ class StructureCognitiveMap:
 
     # ── internals ──────────────────────────────────────────
 
-    def _clone_with(self, **changes) -> "StructureCognitiveMap":
+    def _clone_with(self, **changes) -> StructureCognitiveMap:
         """复制 + 修改字段. 用 dataclasses.replace.
 
         haptic 字段不在 changes 里时, replace 自动从 self 拷贝 — 所以
@@ -770,7 +776,7 @@ class StructureCognitiveMap:
         from dataclasses import replace
         return replace(self, **changes)
 
-    def with_haptic(self, layer) -> "StructureCognitiveMap":
+    def with_haptic(self, layer) -> StructureCognitiveMap:
         """返回带触觉层的新实例 (immutable). 原 map 不变.
 
         触觉是材料的内在属性, 跟几何 (coords/lattice) 解耦 — 这就是
@@ -905,7 +911,7 @@ class StructureCognitiveMap:
             third = n_eig // 3
             low = eigenvalues_sorted[:third]  # gradient
             high = eigenvalues_sorted[-third:]  # curl
-            mid = eigenvalues_sorted[third:-third] if third < n_eig - third else np.array([])
+            eigenvalues_sorted[third:-third] if third < n_eig - third else np.array([])
 
             total_energy = float(np.sum(eigenvalues_sorted ** 2)) + 1e-12
             grad_frac = float(np.sum(low ** 2)) / total_energy
@@ -933,7 +939,7 @@ class StructureCognitiveMap:
 
 # ── module-level helpers ─────────────────────────────────────
 
-def _make_rotation(axis, angle: float, degrees: bool = True) -> "_R":
+def _make_rotation(axis, angle: float, degrees: bool = True) -> Rotation:
     """统一构造 scipy Rotation. axis 是 'x'/'y'/'z' 或 3-vector, 自动归一化."""
     if not _HAS_SCIPY:
         raise RuntimeError("scipy not installed, pip install scipy")
@@ -946,7 +952,7 @@ def _make_rotation(axis, angle: float, degrees: bool = True) -> "_R":
     if norm < 1e-12:
         raise ValueError("axis cannot be zero vector")
     # from_rotvec 第一个参数是 axis*angle (即旋转向量), degrees 控制角度单位
-    return _R.from_rotvec(axis_arr / norm * float(angle), degrees=degrees)
+    return Rotation.from_rotvec(axis_arr / norm * float(angle), degrees=degrees)
 
 
 def _build_adjacency_cart(coords: np.ndarray, lattice: np.ndarray | None,
@@ -1114,6 +1120,7 @@ Cl1 Cl 0.5 0.5 0.5
     print("13. M7 from_image (TEM FFT → lattice → map)...")
     # 构造一个合成 lattice 图像: 用 numpy 生成正弦光栅模拟晶格条纹
     import io as _io
+
     from PIL import Image as _PILImage
     # 200x200 灰度图, 正弦光栅周期=20px, 模拟 d-spacing
     _size = 200
@@ -1180,7 +1187,7 @@ Cl1 Cl 0.5 0.5 0.5
     try:
         from huginn.metacog.composite_token_experiment import CompositeToken, se3_act
         ct = CompositeToken(token["text"], token["coords"])
-        rot_z90 = _R.from_euler("z", 90, degrees=True)
+        rot_z90 = Rotation.from_euler("z", 90, degrees=True)
         rotated = se3_act(rot_z90, np.zeros(3), ct)
         # coords [2,0,0] (O, x 轴) → [0,2,0] (y 轴)
         assert np.allclose(rotated.coords[1], [0.0, 2.0, 0.0], atol=1e-6), \

@@ -21,7 +21,6 @@ import logging
 from typing import Any
 
 from huginn.perception.doc_types import InformationPackage
-from huginn.perception.document_graph import DocumentGraph
 
 logger = logging.getLogger(__name__)
 

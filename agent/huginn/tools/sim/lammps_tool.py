@@ -157,7 +157,7 @@ class LammpsToolInput(BaseModel):
     )
 
     @model_validator(mode="after")
-    def _check_action_fields(self) -> "LammpsToolInput":
+    def _check_action_fields(self) -> LammpsToolInput:
         """不同 action 需要不同字段, schema 层兜底."""
         if self.action == "submit_async":
             if not self.compute_action:
@@ -353,7 +353,9 @@ class LammpsTool(HuginnTool):
             )
 
         if not self.lammps_executable:
-            from huginn.tools.sim.executable_resolver import resolve_executable, ResolutionRequest
+            from huginn.tools.sim.executable_resolver import (
+                resolve_executable,
+            )
 
             resolution = resolve_executable("lammps")
             if isinstance(resolution, str):
@@ -745,7 +747,7 @@ class LammpsTool(HuginnTool):
 
         try:
             await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             # 超时: 作业还在跑, 返回当前状态 (不取消 task, 让它继续)
             pass
         except Exception as exc:
@@ -975,8 +977,7 @@ class LammpsTool(HuginnTool):
         if abs(temp_drift) >= 0.01:
             reasons.append(f"temperature drift {temp_drift:.4f} K/step is too high")
 
-        if target_pressure is not None and avg_press is not None:
-            if abs(avg_press - target_pressure) > max(abs(target_pressure) * 0.1, 100.0):
+        if target_pressure is not None and avg_press is not None and abs(avg_press - target_pressure) > max(abs(target_pressure) * 0.1, 100.0):
                 reasons.append(
                     f"avg pressure {avg_press:.1f} bar is far from target {target_pressure:.1f} bar"
                 )
@@ -1529,7 +1530,7 @@ class LammpsTool(HuginnTool):
             if r_max is None:
                 r_max = min(lx, ly, lz) / 2
 
-            dr = r_max / bins
+            r_max / bins
             box_vec = np.array([lx, ly, lz])
 
             # Compute pairwise distances with minimum image convention.
@@ -1720,7 +1721,7 @@ class LammpsTool(HuginnTool):
         except Exception:
             return None
 
-    def _compute_F_q_t(
+    def _compute_F_q_t(  # noqa: N802
         self, frames: list[dict], q_values: list[float] | None = None,
     ) -> list[dict] | None:
         """中间散射函数 F(q, t) — G(r,t) 的空间傅立叶变换.

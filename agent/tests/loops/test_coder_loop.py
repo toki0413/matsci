@@ -8,12 +8,10 @@ FakeLLM so we verify the loop control flow, not the LLM itself.
 
 from __future__ import annotations
 
-import pytest
 from langchain_core.messages import AIMessage
 
 from huginn.coder.loop import CoderRunner
 from tests.fixtures.fake_llm import FakeLLM, make_scripted_llm
-
 
 # ── helpers ────────────────────────────────────────────────────────
 

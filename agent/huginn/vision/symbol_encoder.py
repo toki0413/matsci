@@ -43,7 +43,8 @@ def extract_chart_data(image_path: str | Path) -> dict[str, Any]:
     精确提取需要 OCR + 曲线追踪，那是重工具，这里只做快速预提取。
     """
     try:
-        import numpy as np
+        import numpy as np  # noqa: F401
+
         from huginn.tools.image_analysis._utils import load_gray
     except ImportError:
         return {"error": "numpy/Pillow not available"}
@@ -292,7 +293,7 @@ def visual_to_symbols(image_path: str | Path) -> str:
         if chart_data.get("analysis_type") == "XRD":
             d_spacings = chart_data.get("estimated_d_spacing_A", [])
             two_thetas = chart_data.get("estimated_2theta_deg", [])
-            peaks = chart_data.get("peak_positions_px", [])
+            chart_data.get("peak_positions_px", [])
             for i, (t, d) in enumerate(zip(two_thetas, d_spacings)):
                 intensity = 1.0 - i * 0.15  # 递减估计
                 parts.append(f"  peak_{i+1}: 2θ={t}°, d={d}Å, I≈{intensity:.2f}")

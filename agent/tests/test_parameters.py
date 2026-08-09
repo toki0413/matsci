@@ -8,9 +8,7 @@ from huginn.tools.parameters import (
     Parameter,
     ParameterRegistry,
     ParamType,
-    _register_defaults,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

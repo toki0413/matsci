@@ -19,8 +19,8 @@ import numpy as np
 
 # torch / transolver 都是可选依赖, 缺了就降级
 try:
-    import torch  # type: ignore
-    import torch.nn as nn  # type: ignore
+    import torch  # type: ignore[import-untyped]
+    import torch.nn as nn  # type: ignore[import-untyped]
 
     _TORCH_AVAILABLE = True
 except Exception:  # pragma: no cover - 环境相关
@@ -49,7 +49,7 @@ class _LitePDEProxy(nn.Module if _TORCH_AVAILABLE else object):
             nn.Linear(hidden, output_dim),
         )
 
-    def forward(self, x):  # type: ignore
+    def forward(self, x):  # type: ignore[misc]
         if not _TORCH_AVAILABLE:
             return None
         return self.net(x)

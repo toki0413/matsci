@@ -17,14 +17,16 @@ Safety:
 
 from __future__ import annotations
 
+import contextlib
 import io
 import json
 import logging
 import os
 import re
 import time
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import datetime
-from typing import Any, AsyncIterator, Awaitable, Callable
+from typing import Any
 
 from huginn.security.code_act_sandbox import (
     _BLOCKED_TOOLS,
@@ -386,10 +388,8 @@ def _build_namespace(
 
     # Optional scientific stack — only if the user has them installed.
     for mod_name in ("math", "statistics", "numpy", "pandas", "sympy"):
-        try:
+        with contextlib.suppress(ImportError):
             namespace[mod_name] = __import__(mod_name)
-        except ImportError:
-            pass
 
     # AtomWorld benchmark — opt-in via HUGINN_USE_ATOMWORLD=1 (mirrors
     # BranchIncubator gating). atomworld_tool already no-ops when the
@@ -630,7 +630,7 @@ async def run_code_act_turn(
                 suggest_skip = True
 
             # ── Trust + Budget adaptive threshold ──
-            trust = _get_trust(session_id)
+            _get_trust(session_id)
             budget = _get_budget(session_id)
             # budget 不足 + 信任度不低 → 自动升级 (避免确认疲劳)
             budget_escalated = (
@@ -704,13 +704,14 @@ async def run_code_act_turn(
                         "HUGINN_APPROVAL_MODE", ""
                     ) != "disable":
                         try:
+                            # 用 code 的 hash 做 tool_call_id (CodeAct 没有原生
+                            # tool_call_id), 让同 code 重试时复用 inbox item
+                            import hashlib as _hl
+
                             from huginn.interaction.inbox import (
                                 get_inbox_store,
                                 inbox_approval_fn,
                             )
-                            # 用 code 的 hash 做 tool_call_id (CodeAct 没有原生
-                            # tool_call_id), 让同 code 重试时复用 inbox item
-                            import hashlib as _hl
                             tc_id = f"codeact_{_hl.sha256(code.encode()).hexdigest()[:16]}"
                             inbox_fn = inbox_approval_fn(
                                 get_inbox_store(),
@@ -785,7 +786,9 @@ async def run_code_act_turn(
                 # P4-6: exec 用 wrapper 加 tracemalloc 内存峰值监控
                 # 超阈值抛 MemoryError 而不是让进程 OOM 被杀. 阈值从 env 读, 默认 2GB.
                 # ponytail: tracemalloc 有 ~10% overhead, 但比 OOM 安全.
-                from huginn.security.code_act_sandbox import exec_with_mem_cap as _exec_cap
+                from huginn.security.code_act_sandbox import (
+                    exec_with_mem_cap as _exec_cap,
+                )
                 _mem_cap_bytes = int(os.environ.get("HUGINN_CODEACT_MEM_CAP", "2147483648"))
 
                 _exec_cap(code, namespace, _mem_cap_bytes)

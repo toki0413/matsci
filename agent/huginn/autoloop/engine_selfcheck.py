@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import UTC
 from pathlib import Path
 from typing import Any
 
@@ -28,16 +29,18 @@ def run_selfcheck() -> None:
     ponytail: 用 __new__ 绕过 __init__, 只测无副作用的方法.
     """
     # 延迟 import 避免 circular import
-    from huginn.autoloop.engine import AutoloopEngine, _extract_tests_passed
-    from huginn.autoloop.cognitive_loop import (
-        LoopState, ActionDecision, _validation_to_step_eval_fields,
-    )
-    import asyncio
     import os as _os
     import os as _os2
     import tempfile as _tf
-    from pathlib import Path as _P
-    from types import SimpleNamespace as _NS
+    from pathlib import Path as _P  # noqa: N814
+    from types import SimpleNamespace as _NS  # noqa: N814
+
+    from huginn.autoloop.cognitive_loop import (
+        ActionDecision,
+        LoopState,
+        _validation_to_step_eval_fields,
+    )
+    from huginn.autoloop.engine import AutoloopEngine, _extract_tests_passed
 
     eng = AutoloopEngine.__new__(AutoloopEngine)
     eng._use_llm_decider = True
@@ -178,10 +181,15 @@ def run_selfcheck() -> None:
     print("7. ThreeCabin gating (flag + StepEvaluation 类型) OK")
 
     # 8. CompletionGate gating
+    from dataclasses import dataclass as _dc
+    from dataclasses import field as _field
+
     from huginn.metacog.completion_gate import (
-        CompletionGate as _CG, GateContext as _GC,
+        CompletionGate as _CG,  # noqa: N814
     )
-    from dataclasses import dataclass as _dc, field as _field
+    from huginn.metacog.completion_gate import (
+        GateContext as _GC,  # noqa: N814
+    )
 
     @_dc
     class _G:
@@ -206,11 +214,15 @@ def run_selfcheck() -> None:
 
     # 9. 3 flag 叠加
     import tempfile as _tf3
-    from huginn.metacog.three_cabin_reflector import run_three_cabin as _rtc3
+
+    from huginn.metacog.branch_incubator import BranchIncubator as _BI3  # noqa: N814
     from huginn.metacog.completion_gate import (
-        CompletionGate as _CG3, GateContext as _GC3,
+        CompletionGate as _CG3,  # noqa: N814
     )
-    from huginn.metacog.branch_incubator import BranchIncubator as _BI3
+    from huginn.metacog.completion_gate import (
+        GateContext as _GC3,  # noqa: N814
+    )
+    from huginn.metacog.three_cabin_reflector import run_three_cabin as _rtc3
 
     _bi = _BI3()
     _cg = _CG3()
@@ -340,9 +352,10 @@ def run_selfcheck() -> None:
 
     # ── C5: persona_use KG 召回 ─────────────────────────────────────────
     # 用 __new__ 绕过 __init__, 手动建一个最小 KG 测 persona_use 召回路径
-    from pathlib import Path as _P5
     import tempfile as _tf5
-    from huginn.kg.graph import ProjectKnowledgeGraph as _PKG
+    from pathlib import Path as _P5  # noqa: N814
+
+    from huginn.kg.graph import ProjectKnowledgeGraph as _PKG  # noqa: N814
 
     with _tf5.TemporaryDirectory() as _td5:
         kg5 = _PKG(_P5(_td5))
@@ -703,7 +716,7 @@ def run_selfcheck() -> None:
     assert len(_calls) == 2, f"C1: cross-ref top_k=2 → 2 calls, got {len(_calls)}"
     # 截断验证 — chunk 0 文本 > 800 chars 应被截断
     _c1_lines = _c1_out.split("\n")
-    _first_chunk_line = next(l for l in _c1_lines if l.startswith("[1]"))
+    _first_chunk_line = next(line for line in _c1_lines if line.startswith("[1]"))
     assert len(_first_chunk_line) <= 810, f"C1: truncation to 800+ellipsis, got {len(_first_chunk_line)}"
     print("15. C1 format_kb_chunks (image_ref + cross-ref top_k + 截断) OK")
 
@@ -714,13 +727,13 @@ def run_selfcheck() -> None:
     print("16. C1b engine._build_kb_text 存在 (调共享 format_kb_chunks) OK")
 
     # C3: working_memory 死字段已删 — SessionContext 无此属性
-    from huginn.memory.session import SessionContext as _SC
+    from huginn.memory.session import SessionContext as _SC  # noqa: N814
     _sc = _SC()
     assert not hasattr(_sc, "working_memory"), "C3: working_memory should be deleted"
     assert not hasattr(_sc, "set_working_memory"), "C3: set_working_memory deleted"
     assert not hasattr(_sc, "get_working_memory"), "C3: get_working_memory deleted"
     # manager.set_context/get_context 也应已删
-    from huginn.memory.manager import MemoryManager as _MM
+    from huginn.memory.manager import MemoryManager as _MM  # noqa: N814
     assert not hasattr(_MM, "set_context"), "C3: MemoryManager.set_context deleted"
     assert not hasattr(_MM, "get_context"), "C3: MemoryManager.get_context deleted"
     # to_dict 不含 working_memory_keys
@@ -736,7 +749,6 @@ def run_selfcheck() -> None:
     eng_c4._objective = ""
     # toggle off (默认) — 即使有 meta_trace 文件也不应注入
     import tempfile
-    import os
     with tempfile.TemporaryDirectory() as _td:
         eng_c4.workspace = Path(_td)
         eng_c4.memory = None  # 无 memory → _build_memory_text 应返回空串
@@ -900,10 +912,12 @@ def run_selfcheck() -> None:
     assert _fail_rate < eng_w._validate_window_fail_threshold, (
         "fail rate 0.2 < 0.8 应允许继续 (局部失败, 整体进展)"
     )
-    if eng_w._consecutive_failures >= eng_w._max_consecutive_failures:
-        if len(eng_w._validate_window) >= eng_w._validate_window_size:
-            if _fail_rate < eng_w._validate_window_fail_threshold:
-                eng_w._consecutive_failures = 0
+    if (
+        eng_w._consecutive_failures >= eng_w._max_consecutive_failures
+        and len(eng_w._validate_window) >= eng_w._validate_window_size
+        and _fail_rate < eng_w._validate_window_fail_threshold
+    ):
+        eng_w._consecutive_failures = 0
     assert eng_w._consecutive_failures == 0, (
         "consecutive 触顶但 fail rate 低 → 应清计数不停"
     )
@@ -916,8 +930,9 @@ def run_selfcheck() -> None:
 
     # 24. 700 万步场景: 跨 run 失败模式持久化闭环
     import tempfile
-    from huginn.memory.manager import MemoryManager
+
     from huginn.memory.longterm import LongTermMemory
+    from huginn.memory.manager import MemoryManager
     with tempfile.TemporaryDirectory() as _td_fp:
         # 用临时 db 路径, 避免 ~/.huginn/memory.db 旧数据干扰
         _db_path = Path(_td_fp) / "test_mem.db"
@@ -958,6 +973,7 @@ def run_selfcheck() -> None:
 
     # 26. P0-1 streaming toggle: env HUGINN_AUTOLOOP_STREAMING=0 强制关
     import os as _os_mod
+
     from huginn.autoloop.engine import _autoloop_streaming_enabled
     _prev_env = _os_mod.environ.get("HUGINN_AUTOLOOP_STREAMING")
     try:
@@ -1080,6 +1096,7 @@ def run_selfcheck() -> None:
 
     # 53. P2-6 belief: _darwin_belief_mu/sigma2 后验更新 + σ² 收敛 early stop
     import os as _os
+
     from huginn.tools.subagent_tool import _gaussian_update
     _saved_belief_darwin = _os.environ.get("HUGINN_BELIEF_DARWIN")
     _os.environ["HUGINN_BELIEF_DARWIN"] = "1"
@@ -1137,7 +1154,7 @@ def run_selfcheck() -> None:
     # 55. H2: frontier_ranked 注入 _build_hypothesis_prompt
     # 验证假设图有 untested 节点时, prompt 含 "Untested Hypotheses" 块.
     # ponytail: monkeypatch 外部数据获取方法, 只验证 frontier 注入路径.
-    from huginn.autoloop.hypothesis_loop import HypothesisGraph as _HG55
+    from huginn.autoloop.hypothesis_loop import HypothesisGraph as _HG55  # noqa: N814
     eng_s.hypothesis_graph = _HG55()
     eng_s.hypothesis_graph.add_hypothesis("test-hypothesis-1")
     eng_s.hypothesis_graph.add_hypothesis("test-hypothesis-2")
@@ -1170,9 +1187,10 @@ def run_selfcheck() -> None:
     # - holds 一致 → hypothesis_graph.support + PROVED.md
     # - holds 不一致 → hypothesis_graph.refute + FAILED.md
     # - toggle off → 不调 (向后兼容)
-    import tempfile as _tf56, shutil as _sh56, json as _json56
-    import huginn.autoloop.engine as _eng_mod56
-    from huginn.agents.subagent import SubagentResult as _SR56
+    import shutil as _sh56
+    import tempfile as _tf56
+
+    from huginn.agents.subagent import SubagentResult as _SR56  # noqa: N814
     _tmp56 = Path(_tf56.mkdtemp(prefix="hgin_p1_"))
     try:
         eng_s.workspace = str(_tmp56)
@@ -1246,8 +1264,11 @@ def run_selfcheck() -> None:
     # 57. P2: stagnation 分类 → counterexample hunt (chaoxu 启发)
     # 验证 _classify_stall 归因 + _trigger_counterexample_hunt 副作用 +
     # _darwin_ratchet_check 按 _classify_stall 返回值分流 (pivot/counterexample/stop)
-    import tempfile as _tf57, shutil as _sh57, os as _os57
-    from huginn.autoloop.hypothesis_loop import HypothesisGraph as _HG57
+    import os as _os57
+    import shutil as _sh57
+    import tempfile as _tf57
+
+    from huginn.autoloop.hypothesis_loop import HypothesisGraph as _HG57  # noqa: N814
     _tmp57 = Path(_tf57.mkdtemp(prefix="hgin_p2_"))
     try:
         # 恢复 _should_imaginate 到真实类方法 (55 块曾 monkey-patch 成 lambda: False)
@@ -1360,10 +1381,13 @@ def run_selfcheck() -> None:
     # - toggle off (默认): stagnation stop 正常触发 _should_stop=True (57c3 已覆盖)
     # - toggle on + wall_clock 未耗尽: stagnation stop 不触发, 重置 stagnation 继续
     # - toggle on + wall_clock 耗尽: stagnation stop 正常触发
-    import tempfile as _tf58, shutil as _sh58, os as _os58
-    from datetime import datetime, timezone as _tz58
-    from huginn.autoloop.hypothesis_loop import HypothesisGraph as _HG58
-    from huginn.autoloop.goal_store import GoalStore as _GS58
+    import os as _os58
+    import shutil as _sh58
+    import tempfile as _tf58
+    from datetime import datetime
+
+    from huginn.autoloop.goal_store import GoalStore as _GS58  # noqa: N814
+    from huginn.autoloop.hypothesis_loop import HypothesisGraph as _HG58  # noqa: N814
     _tmp58 = Path(_tf58.mkdtemp(prefix="hgin_p5_"))
     try:
         # 恢复 _should_imaginate + _classify_stall 到真实类方法 (57 块曾 monkey-patch)
@@ -1418,7 +1442,7 @@ def run_selfcheck() -> None:
             _store58.update_goal(
                 _g58.id,
                 wall_clock_budget_seconds=3600.0,  # 1 小时, 肯定没超
-                started_at=datetime.now(_tz58.utc).isoformat(),
+                started_at=datetime.now(UTC).isoformat(),
             )
             _gs_mod58.get_goal_store = lambda: _store58
             try:
@@ -1491,7 +1515,7 @@ def run_selfcheck() -> None:
     # 空 context → fallback 到 JSON (总比空 query 好)
     _q59c = _eng59._extract_search_query({})
     assert len(_q59c) > 0, "empty context should produce non-empty fallback query"
-    print(f"59c. _extract_search_query empty → fallback JSON OK")
+    print("59c. _extract_search_query empty → fallback JSON OK")
 
     # 有 error_patterns
     _ctx59d = {"goal": "debug convergence", "error_patterns": ["SCF not converged: max_iter=100"]}
@@ -1503,10 +1527,12 @@ def run_selfcheck() -> None:
     # 60. Task 2: 盲重建 derivation 三档交叉验证 (strong/weak/refute/legacy)
     # 复用 56 的 mock SubagentDispatch 模式 + 给 eng_s.memory 灌 stub reasoning_trace
     # + monkey-patch _judge_derivation_consistency 控制一致性 verdict.
-    import tempfile as _tf60, shutil as _sh60, os as _os60
-    import huginn.autoloop.engine as _eng_mod60
-    from huginn.agents.subagent import SubagentResult as _SR60
-    from huginn.autoloop.hypothesis_loop import HypothesisGraph as _HG60
+    import os as _os60
+    import shutil as _sh60
+    import tempfile as _tf60
+
+    from huginn.agents.subagent import SubagentResult as _SR60  # noqa: N814
+    from huginn.autoloop.hypothesis_loop import HypothesisGraph as _HG60  # noqa: N814
     _tmp60 = Path(_tf60.mkdtemp(prefix="hgin_t2_"))
     try:
         eng_s.workspace = str(_tmp60)
@@ -1645,9 +1671,12 @@ def run_selfcheck() -> None:
     # 61. Task 3: 失败推理反推 (failure trace inversion) — toggle on/off
     # 复用 60 的 mock SubagentDispatch 模式, 但走 _learn 的失败分支,
     # 捕获 record_failed_direction 的 reason 参数验证反推 trace 是否替换原 error 串.
-    import tempfile as _tf61, shutil as _sh61, os as _os61
-    from huginn.agents.subagent import SubagentResult as _SR61
-    from huginn.autoloop.hypothesis_loop import HypothesisGraph as _HG61
+    import os as _os61
+    import shutil as _sh61
+    import tempfile as _tf61
+
+    from huginn.agents.subagent import SubagentResult as _SR61  # noqa: N814
+    from huginn.autoloop.hypothesis_loop import HypothesisGraph as _HG61  # noqa: N814
     _tmp61 = Path(_tf61.mkdtemp(prefix="hgin_t3_"))
     try:
         # 给 eng_s 配齐 _learn 跑通所需的最小 stub. _learn 触碰多个子系统
@@ -1895,8 +1924,11 @@ def run_selfcheck() -> None:
     # 4 场景: A ≥3 条触发 / B retrieve 注入模板 / C <3 条降级 / D 已有 skill 不重复
     # 直接调 _abstract_skill_if_ready 验证行为, 不走 _learn (避免再 stub 一堆子系统).
     # mock SubagentDispatch + memory.longterm stub 控制 cluster 输入和 skill 查询.
-    import tempfile as _tf63, shutil as _sh63, os as _os63
-    from huginn.agents.subagent import SubagentResult as _SR63
+    import os as _os63
+    import shutil as _sh63
+    import tempfile as _tf63
+
+    from huginn.agents.subagent import SubagentResult as _SR63  # noqa: N814
     _tmp63 = Path(_tf63.mkdtemp(prefix="hgin_p0t1_"))
     try:
         eng_s.workspace = str(_tmp63)
@@ -1979,9 +2011,9 @@ def run_selfcheck() -> None:
 
         # ── 63b: retrieve 命中 skill → context_builder 注入 [SKILL LIBRARY] block ──
         # 用 ContextBuilder + 真 longterm (tmp db) 插 1 条 skill, 验 build_memory_text.
-        from huginn.memory.longterm import LongTermMemory as _LTM63
-        from huginn.memory.manager import MemoryManager as _MM63
-        from huginn.context_builder import ContextBuilder as _CB63
+        from huginn.context_builder import ContextBuilder as _CB63  # noqa: N814
+        from huginn.memory.longterm import LongTermMemory as _LTM63  # noqa: N814
+        from huginn.memory.manager import MemoryManager as _MM63  # noqa: N814
         _lt63 = _LTM63(db_path=str(_tmp63 / "skill.db"))
         _skill_obj_b = {
             "function_name": "converge_kmesh",
@@ -2110,10 +2142,13 @@ def run_selfcheck() -> None:
     # 5 场景: A 高价值高预算 / B 低价值低预算 / C self_model 调整 / D 预算耗尽停止 / E toggle off 降级
     # 复用 60 的 mock SubagentDispatch + tmp dir 模式, 直接调 _evaluate_informativeness
     # + _compute_verification_budget + _blind_reconstruct_verify 验行为.
-    import tempfile as _tf64, shutil as _sh64, os as _os64
-    from huginn.autoloop.hypothesis_loop import HypothesisGraph as _HG64
-    from huginn.agents.subagent import SubagentResult as _SR64
+    import os as _os64
+    import shutil as _sh64
+    import tempfile as _tf64
+
     from huginn.agents import subagent as _sub_mod64
+    from huginn.agents.subagent import SubagentResult as _SR64  # noqa: N814
+    from huginn.autoloop.hypothesis_loop import HypothesisGraph as _HG64  # noqa: N814
     _orig_dispatch_cls64 = _sub_mod64.SubagentDispatch
     _tmp64 = Path(_tf64.mkdtemp(prefix="hgin_p0t3_"))
     try:
@@ -2442,7 +2477,7 @@ def run_selfcheck() -> None:
     _os7.environ.pop("HUGINN_SELF_GOAL_SYNTHESIS", None)
 
     import huginn.autoloop.goal_store as _gs_mod7
-    from huginn.autoloop.goal_store import GoalStore as _GS7
+    from huginn.autoloop.goal_store import GoalStore as _GS7  # noqa: N814
     _tmpdir7 = _tf7.mkdtemp(prefix="t7_gs_")
     _store7 = _GS7(__import__("pathlib").Path(_tmpdir7) / "t7.json")
     _orig_get_gs7 = _gs_mod7.get_goal_store
@@ -2631,9 +2666,10 @@ def run_selfcheck() -> None:
     # ── Step 8: latent space 对齐数据收集 ──────────────────────────
     # 验 _extract_haptic_layer / _collect_alignment_pair / _save_alignment_dataset
     # 用 __new__ 绕过 __init__, 跟前面 _make_selfcheck_engine 同范式.
-    import numpy as _np8
     import tempfile as _tf8
-    from pathlib import Path as _P8
+    from pathlib import Path as _P8  # noqa: N814
+
+    import numpy as _np8
 
     _eng8 = AutoloopEngine.__new__(AutoloopEngine)
     _eng8._iteration = 0
@@ -2682,7 +2718,9 @@ def run_selfcheck() -> None:
     print("8e. _save_alignment_dataset None -> no-op OK")
 
     # 8f: 有 cognitive map + 力学结果 -> 真收集
-    from huginn.metacog.structure_cognitive_map import StructureCognitiveMap as _SCM8
+    from huginn.metacog.structure_cognitive_map import (
+        StructureCognitiveMap as _SCM8,  # noqa: N814
+    )
     from huginn.tools import structure_cognitive_map_tool as _cm8
     _m8 = _SCM8.from_coords(
         species=["Na", "Cl"],
@@ -2712,7 +2750,7 @@ def run_selfcheck() -> None:
     _eng8._save_alignment_dataset()
     _path8 = _eng8.workspace / ".huginn" / "alignment_dataset.json"
     assert _path8.exists(), "8g: 文件应已写"
-    from huginn.metacog.alignment_dataset import AlignmentDataset as _AD8
+    from huginn.metacog.alignment_dataset import AlignmentDataset as _AD8  # noqa: N814
     _ds8 = _AD8.load(_path8)
     assert _ds8.count() == 2, f"8g: load 后应有 2 对, got {_ds8.count()}"
     _X8, _Y8 = _ds8.get_pairs("structure", "haptic")
@@ -2734,9 +2772,13 @@ def run_selfcheck() -> None:
     # 让所有 benchmark (不只 RCB) 都能用后验引导 hint. 用 __new__ 绕过
     # __init__ (懒加载, 不依赖外部资源). 验证: 观测抽取 + 流形 seed + hint 注入.
     from huginn.agent.hint_coordinator import (
-        extract_observations as _e2_obs,
-        extract_numeric_targets as _e2_tgt,
         _build_posterior_guided_hint as _e2_pg,
+    )
+    from huginn.agent.hint_coordinator import (
+        extract_numeric_targets as _e2_tgt,
+    )
+    from huginn.agent.hint_coordinator import (
+        extract_observations as _e2_obs,
     )
 
     # E2-1-A: 共享观测抽取 — 白名单过滤, 空文本返回空

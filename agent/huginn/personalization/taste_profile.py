@@ -10,30 +10,29 @@ from __future__ import annotations
 import json
 import os
 from collections import Counter
-from dataclasses import asdict, dataclass, field
-from enum import Enum
+from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
-
 
 # ── 维度枚举 ──────────────────────────────────────────────────────
 
 
-class ThinkingMode(str, Enum):
+class ThinkingMode(StrEnum):
     ANALYTICAL = "analytical"
     INTUITIVE = "intuitive"
     VISUAL = "visual"
     SYSTEMS = "systems"
 
 
-class Imagination(str, Enum):
+class Imagination(StrEnum):
     CONSERVATIVE = "conservative"
     BALANCED = "balanced"
     SPECULATIVE = "speculative"
     VISIONARY = "visionary"
 
 
-class ResearchStyle(str, Enum):
+class ResearchStyle(StrEnum):
     THEORETICAL = "theoretical"
     EMPIRICAL = "empirical"
     ENGINEERING = "engineering"

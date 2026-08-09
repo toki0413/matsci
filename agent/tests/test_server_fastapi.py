@@ -7,12 +7,14 @@ not reached by the direct async function tests in test_server_endpoints.py.
 from __future__ import annotations
 
 import os
-from pathlib import Path
 
 import pytest
 
 from huginn.config import HuginnConfig
-from huginn.server_context import ServerContext, create_server_context, set_server_context
+from huginn.server_context import (
+    create_server_context,
+    set_server_context,
+)
 
 
 async def _noop():

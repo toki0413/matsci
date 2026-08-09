@@ -381,7 +381,7 @@ def _parse_traceback_text(text: str) -> dict[str, Any]:
     else:
         # 兜底：如果用户只给了消息没给类型，整体当作 message
         # 取最后一行非空内容
-        non_empty = [l.strip() for l in text.splitlines() if l.strip()]
+        non_empty = [line.strip() for line in text.splitlines() if line.strip()]
         if non_empty:
             error_message = non_empty[-1]
 
@@ -516,8 +516,7 @@ def _scan_code_snippet(code: str, error_type: str | None) -> list[dict[str, Any]
 
     for node in ast.walk(tree):
         # NameError 嫌疑：用了名字但没在当前片段里赋值
-        if error_type == "NameError" and isinstance(node, ast.Name):
-            if isinstance(node.ctx, ast.Load):
+        if error_type == "NameError" and isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
                 # 粗略判断：片段里有没有这个名字的赋值
                 assigned = {
                     n.id
@@ -547,8 +546,7 @@ def _scan_code_snippet(code: str, error_type: str | None) -> list[dict[str, Any]
                 )
 
         # ZeroDivisionError 嫌疑：除以字面量 0
-        if error_type == "ZeroDivisionError" and isinstance(node, ast.BinOp):
-            if isinstance(node.op, (ast.Div, ast.FloorDiv, ast.Mod)):
+        if error_type == "ZeroDivisionError" and isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Div, ast.FloorDiv, ast.Mod)):
                 right = node.right
                 if isinstance(right, ast.Constant) and right.value == 0:
                     suspicious.append(
@@ -559,8 +557,7 @@ def _scan_code_snippet(code: str, error_type: str | None) -> list[dict[str, Any]
                     )
 
         # IndexError 嫌疑：对常量空列表取下标
-        if error_type == "IndexError" and isinstance(node, ast.Subscript):
-            if isinstance(node.value, ast.List) and len(node.value.elts) == 0:
+        if error_type == "IndexError" and isinstance(node, ast.Subscript) and isinstance(node.value, ast.List) and len(node.value.elts) == 0:
                 suspicious.append(
                     {
                         "line": getattr(node, "lineno", 0),

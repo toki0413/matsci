@@ -10,7 +10,6 @@ from huginn.autoloop.hypothesis_loop import (
     HypothesisNode,
 )
 
-
 # ── add_hypothesis ──────────────────────────────────────────────────
 
 

@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from typing import Any
 
@@ -176,10 +177,8 @@ async def terminal_websocket(websocket: WebSocket):
         )
         for t in pending:
             t.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError, Exception):
                 await t
-            except (asyncio.CancelledError, Exception):
-                pass
     except WebSocketDisconnect:
         pass
     except Exception as exc:
@@ -244,10 +243,8 @@ def _open_shell(cfg: Any, cols: int, rows: int, command: str):
 
 def _safe_resize(channel: Any, cols: int, rows: int) -> None:
     """安全地改终端尺寸, channel 不在就忽略。"""
-    try:
+    with contextlib.suppress(OSError, EOFError):
         channel.resize_pty(width=cols, height=rows)
-    except (OSError, EOFError):
-        pass
 
 
 def _send_signal(channel: Any, name: str) -> None:
@@ -261,10 +258,8 @@ def _send_signal(channel: Any, name: str) -> None:
     }
     payload = signal_map.get(name.upper())
     if payload:
-        try:
+        with contextlib.suppress(OSError, EOFError):
             channel.sendall(payload)
-        except (OSError, EOFError):
-            pass
 
 
 async def _drain_output(websocket: WebSocket, queue: asyncio.Queue) -> None:

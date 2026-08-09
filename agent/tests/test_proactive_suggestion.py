@@ -5,10 +5,7 @@ when the pipeline reports ready suggestions.
 """
 
 import asyncio
-from types import MethodType
 from unittest.mock import patch
-
-import pytest
 
 from huginn.agent import HuginnAgent
 from huginn.provenance.pipeline import PipelineStage, PipelineSuggestion
@@ -47,7 +44,7 @@ class _FakeAgent:
 
 def test_method_exists_and_callable():
     assert hasattr(HuginnAgent, "_maybe_inject_proactive_suggestion")
-    assert callable(getattr(HuginnAgent, "_maybe_inject_proactive_suggestion"))
+    assert callable(HuginnAgent._maybe_inject_proactive_suggestion)
 
 
 def test_empty_pipeline_no_crash():

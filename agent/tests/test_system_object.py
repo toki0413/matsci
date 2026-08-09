@@ -1,8 +1,6 @@
 """Tests for the HuginnSystem object — consolidated runtime state."""
 from __future__ import annotations
 
-import pytest
-
 from huginn.system import HuginnSystem, get_system, set_system
 
 

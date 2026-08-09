@@ -147,7 +147,7 @@ class PhaseRegistry:
     ponytail: 不做拓扑排序检查 (BUILTIN_SPECS 试点无 phase 间依赖),
     升级路径: 7 phase 全接入后加 topo sort (spec H4 安全边界第 5 条).
     """
-    _instance: "PhaseRegistry | None" = None
+    _instance: PhaseRegistry | None = None
     _lock = threading.Lock()
 
     def __init__(self) -> None:
@@ -160,7 +160,7 @@ class PhaseRegistry:
         self._load_overrides()
 
     @classmethod
-    def get_instance(cls) -> "PhaseRegistry":
+    def get_instance(cls) -> PhaseRegistry:
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:
@@ -297,7 +297,7 @@ def get_subagent_specs_for_dispatch() -> dict[str, Any] | None:
         from huginn.agents.subagent import SubagentDispatch
         return {
             name: reg.get_subagent_spec(name)
-            for name in SubagentDispatch.BUILTIN_SPECS.keys()
+            for name in SubagentDispatch.BUILTIN_SPECS
         }
     except Exception:
         logger.debug("get_subagent_specs_for_dispatch fail", exc_info=True)
@@ -361,9 +361,8 @@ def _selfcheck() -> None:
     import shutil
     import tempfile
 
-    from huginn.agents.subagent import SubagentDispatch
-
     import huginn.harness.phase_spec as ps
+    from huginn.agents.subagent import SubagentDispatch
 
     # 1. toggle off: SubagentDispatch 用 class attr baseline
     d = SubagentDispatch()

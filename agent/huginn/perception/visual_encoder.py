@@ -15,13 +15,15 @@ skips it for similarity search).
 from __future__ import annotations
 
 import io
+import logging
 import os
 import threading
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 import numpy as np
-import logging
+
 logger = logging.getLogger(__name__)
 
 
@@ -85,8 +87,8 @@ class _IJEPABackend(_Backend):
     name = "ijepa"
 
     def __init__(self) -> None:
-        import torch  # noqa: F401
         import timm
+        import torch  # noqa: F401
 
         ckpt_path = os.environ.get("IJEPA_CHECKPOINT", "").strip()
         if not ckpt_path or not os.path.isfile(ckpt_path):

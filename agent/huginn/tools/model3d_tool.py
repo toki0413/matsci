@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import math
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -24,7 +24,7 @@ import numpy as np
 from pydantic import BaseModel, Field, model_validator
 
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
-from huginn.types import ToolContext, ToolResult, ValidationResult
+from huginn.types import ToolContext, ToolResult
 
 logger = logging.getLogger(__name__)
 
@@ -466,7 +466,7 @@ class Model3DInput(BaseModel):
     )
 
     @model_validator(mode="after")
-    def _check_required_fields(self) -> "Model3DInput":
+    def _check_required_fields(self) -> Model3DInput:
         """Validate that the right fields are present for the chosen action."""
         a = self.action
 
@@ -758,7 +758,7 @@ class Model3DTool(HuginnTool):
             "num_frames": len(frame_files),
             "fps": args.fps,
             "frames": frame_files,
-            "created": datetime.now(timezone.utc).isoformat(),
+            "created": datetime.now(UTC).isoformat(),
         }
         meta_path = str(out_dir / "animation_meta.json")
         Path(meta_path).write_text(

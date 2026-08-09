@@ -173,13 +173,10 @@ class ParallelToolExecutor:
         值里出现 "{0.xxx}" / "${0}" 占位符, 就算有依赖.
         """
         if isinstance(obj, dict):
-            for key in obj.keys():
+            for key in obj:
                 if isinstance(key, str) and _DEPENDS_KEY.match(key):
                     return True
-            for value in obj.values():
-                if cls._has_dependency_marker(value):
-                    return True
-            return False
+            return any(cls._has_dependency_marker(value) for value in obj.values())
         if isinstance(obj, list):
             return any(cls._has_dependency_marker(v) for v in obj)
         if isinstance(obj, str):

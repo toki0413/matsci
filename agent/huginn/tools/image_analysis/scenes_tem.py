@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from huginn.types import ToolResult
 from huginn.tools.image_analysis._utils import load_gray
+from huginn.types import ToolResult
 
 if TYPE_CHECKING:
     from huginn.tools.image_analysis.tool import ImageAnalysisInput
@@ -33,7 +33,7 @@ _D_SPACING_TABLE: dict[str, float] = {
 }
 
 
-def tem_lattice(args: "ImageAnalysisInput") -> ToolResult:
+def tem_lattice(args: ImageAnalysisInput) -> ToolResult:
     arr = load_gray(args.image_path)
     pixel_size = float(args.parameters.get("pixel_size_nm", 1.0))
     fft_threshold = args.parameters.get("fft_threshold", None)

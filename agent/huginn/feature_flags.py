@@ -63,7 +63,7 @@ class FeatureFlags:
     }
 
     _singleton_lock = threading.Lock()
-    _singleton: "FeatureFlags | None" = None
+    _singleton: FeatureFlags | None = None
 
     def __init__(self) -> None:
         self._lock = threading.RLock()
@@ -75,7 +75,7 @@ class FeatureFlags:
         self._load_env_overrides()
 
     @classmethod
-    def shared(cls) -> "FeatureFlags":
+    def shared(cls) -> FeatureFlags:
         """进程级单例. 首次调用读一次环境变量, 之后复用."""
         with cls._singleton_lock:
             if cls._singleton is None:

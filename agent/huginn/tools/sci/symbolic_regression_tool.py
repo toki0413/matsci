@@ -613,7 +613,7 @@ class SymbolicRegressionTool(HuginnTool):
             try:
                 y = np.asarray(safe_math_eval(model_expr, local), dtype=np.float64).ravel()
             except Exception as e:
-                raise RuntimeError(f"Model eval failed: {e}")
+                raise RuntimeError(f"Model eval failed: {e}") from e
             return y
 
         try:
@@ -637,8 +637,8 @@ class SymbolicRegressionTool(HuginnTool):
                     "features": features,
                     "n_samples": N,
                     "variance": var_y,
-                    "first_order": {f: 0.0 for f in features},
-                    "total": {f: 0.0 for f in features},
+                    "first_order": dict.fromkeys(features, 0.0),
+                    "total": dict.fromkeys(features, 0.0),
                     "note": "Near-zero variance; model may be constant.",
                 },
                 success=True,

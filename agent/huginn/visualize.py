@@ -535,7 +535,7 @@ def plot_phonon_dispersion(
     apply_arial_style()
     fig, ax = plt.subplots(figsize=(8, 6))
 
-    for i, branch in enumerate(branches):
+    for _i, branch in enumerate(branches):
         qpoints = branch.get("qpoints", [])
         freqs = branch.get("frequencies", [])
         if qpoints and freqs:
@@ -614,7 +614,7 @@ def plot_structure_3d(
     # 去重 legend
     handles, labels = ax.get_legend_handles_labels()
     if handles:
-        unique = [(h, l) for i, (h, l) in enumerate(zip(handles, labels)) if l not in labels[:i]]
+        unique = [(h, lb) for i, (h, lb) in enumerate(zip(handles, labels)) if lb not in labels[:i]]
         ax.legend([u[0] for u in unique], [u[1] for u in unique])
 
     fig.tight_layout()

@@ -73,7 +73,7 @@ async def _run_pytest(ws: Path) -> str:
         stdout, _ = await asyncio.wait_for(
             proc.communicate(), timeout=_TEST_TIMEOUT
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         # 超时就杀掉, 别让 pytest 一直挂着
         proc.kill()
         await proc.wait()

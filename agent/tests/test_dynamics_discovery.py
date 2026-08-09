@@ -9,7 +9,6 @@ from __future__ import annotations
 import asyncio
 
 import numpy as np
-import pytest
 from scipy.integrate import solve_ivp
 
 from huginn.tools.sci.dynamics_discovery_tool import (

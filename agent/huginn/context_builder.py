@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from langchain_core.messages import BaseMessage
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -290,9 +290,7 @@ def should_inject_kb(query: str) -> bool:
         return False
     if q.startswith(_KB_STOPWORDS_PREFIX):
         return False
-    if (" " not in q) and ("/" in q or "\\" in q) and q.count(".") >= 1:
-        return False
-    return True
+    return not (" " not in q and ("/" in q or "\\" in q) and q.count(".") >= 1)
 
 
 class ContextBuilder:
@@ -788,9 +786,9 @@ class ContextBuilder:
         benefits from the lesson.
         """
         try:
-            from pathlib import Path
-            import os
             import json
+            import os
+            from pathlib import Path
 
             # 对齐 EvolutionEngine 写入路径 (logger.persist_dir / evolution_rules.json).
             # logger.py: Path(HUGINN_CACHE_DIR or ~/.huginn) / "logs".
@@ -1095,8 +1093,8 @@ class ContextBuilder:
         if _router_enabled:
             try:
                 from huginn.runtime.context_router import (
-                    route_context_segments, should_skip_segment,
                     log_routing_decision,
+                    route_context_segments,
                 )
                 _phase = ""
                 if session_state is not None:

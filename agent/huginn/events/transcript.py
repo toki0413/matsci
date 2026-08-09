@@ -25,7 +25,6 @@ import json
 import logging
 import os
 import threading
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -141,9 +140,8 @@ class TranscriptStore:
             "data": event.data,
         }
         line = json.dumps(entry, default=str, ensure_ascii=False)
-        with self._lock:
-            with open(path, "a", encoding="utf-8") as f:
-                f.write(line + "\n")
+        with self._lock, open(path, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
 
     # ------------------------------------------------------------------ read
 
@@ -158,17 +156,16 @@ class TranscriptStore:
         if not path.exists():
             return []
         entries: list[dict[str, Any]] = []
-        with self._lock:
-            with open(path, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        entries.append(json.loads(line))
-                    except json.JSONDecodeError:
-                        # 损坏行跳过, 不带挂整个转录
-                        logger.debug("skip corrupted line in %s", path)
+        with self._lock, open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entries.append(json.loads(line))
+                except json.JSONDecodeError:
+                    # 损坏行跳过, 不带挂整个转录
+                    logger.debug("skip corrupted line in %s", path)
         return entries
 
     def list_threads(self) -> list[str]:

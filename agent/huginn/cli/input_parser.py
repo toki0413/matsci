@@ -15,6 +15,8 @@ from urllib.request import Request, urlopen
 
 # 网页抓取的字符上限, 太长会把上下文撑爆
 _URL_MAX_CHARS = 5000
+# 网页抓取的字节上限 (UTF-8 多字节字符按 4 字节/字符估算)
+_URL_MAX_BYTES = _URL_MAX_CHARS * 4
 # 单文件大小上限 (1MB), 超过就只取前 1MB, 避免读超大文件卡死
 _FILE_MAX_BYTES = 1_000_000
 # HTTP 抓取超时 (秒)
@@ -63,7 +65,7 @@ def _is_safe_url(url: str) -> bool:
             return False
         # Resolve and check IP
         addr_info = socket.getaddrinfo(hostname, None)
-        for family, _, _, _, sockaddr in addr_info:
+        for _family, _, _, _, sockaddr in addr_info:
             ip = ipaddress.ip_address(sockaddr[0])
             if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
                 return False

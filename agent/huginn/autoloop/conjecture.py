@@ -39,7 +39,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -305,8 +305,8 @@ class ConjectureGenerator:
         result = None
         if model is not None and self._is_real_model(model):
             try:
-                from huginn.metacog.imagination import imagine
                 from huginn.metacog.hypothesis_manifold import Hypothesis
+                from huginn.metacog.imagination import imagine
                 _seed_desc = (transfer_result.get("transferred_pattern")
                               or transfer_result.get("abstract_pattern") or "")
                 if _seed_desc:
@@ -414,7 +414,7 @@ class ConjectureGenerator:
                 "conjecture_id": conjecture.get("log_id"),
             },
             "method": pattern.get("method", "template"),
-            "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "timestamp": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         }
 
     def forget_then_generate(
@@ -619,7 +619,7 @@ class ConjectureGenerator:
         self, pattern: dict[str, Any], target_domain: str, model: Any
     ) -> dict[str, Any]:
         """调 LLM 做跨域迁移."""
-        from langchain_core.messages import HumanMessage, SystemMessage
+        from langchain_core.messages import HumanMessage
 
         # 查源-目标域共享的数学结构, 作为提示增强.
         # 把 LLM 的隐式类比 (依赖训练时见过的同构对) 变成显式提示.
@@ -1072,7 +1072,7 @@ def extract_physical_structure(
     source_domain: str,
     model: Any = None,
     domain_context: str | None = None,
-) -> "tuple[Any, dict[str, Any]]":
+) -> tuple[Any, dict[str, Any]]:
     """G49: 从已知问题抽取 PhysicalStructure (替代纯文字 extract_pattern).
 
     返回 (physical_structure, pattern_dict).
@@ -1120,11 +1120,11 @@ def extract_physical_structure(
 
 
 def transfer_with_structure(
-    physical_structure: "Any",
+    physical_structure: Any,
     pattern: dict[str, Any],
     target_domain: str,
     model: Any = None,
-) -> "tuple[Any, dict[str, Any]]":
+) -> tuple[Any, dict[str, Any]]:
     """G49: 把 PhysicalStructure 迁移到目标领域 — 锁定结构关系, 允许不同实现者.
 
     返回 (target_physical_structure, transfer_result_dict).
@@ -1153,13 +1153,13 @@ def transfer_with_structure(
 
 
 def generate_conjecture_with_structure(
-    source_physical: "Any",
-    target_physical: "Any",
+    source_physical: Any,
+    target_physical: Any,
     transfer_result: dict[str, Any],
     model: Any = None,
     prompt_level: int = 1,
     known_solutions: list[str] | None = None,
-) -> "tuple[bool, dict[str, Any]]":
+) -> tuple[bool, dict[str, Any]]:
     """G49: 生成猜想并断言同构保持 (validate_structure_preservation).
 
     返回 (is_isomorphic, conjecture_result_dict).
@@ -1170,7 +1170,10 @@ def generate_conjecture_with_structure(
     没真替换), 必然 trivial mapping. 升级路径是 transfer_with_structure 真做
     实现者替换, 这里才能真验证同构.
     """
-    from huginn.metacog.physical_structure import StructureMapping, validate_structure_preservation
+    from huginn.metacog.physical_structure import (
+        StructureMapping,
+        validate_structure_preservation,
+    )
     gen = ConjectureGenerator()
     conjecture = gen.generate_conjecture(
         transfer_result, model=model,

@@ -29,7 +29,6 @@ except ImportError:  # pragma: no cover - depends on env
 
 from huginn.tools.sci import get_torch_device
 
-
 # ponytail: 10M param ceiling — RCB-scale sequence tasks fit here; for real
 # LLM-scale work the agent dispatches to HPC, this wrapper is not the tool.
 _MAX_PARAMS = 10_000_000
@@ -60,7 +59,7 @@ class TransformerToolInput(BaseModel):
     predict_len: int = Field(default=8, gt=0)
 
 
-def _count_params(model: "nn.Module") -> int:
+def _count_params(model: nn.Module) -> int:
     return sum(p.numel() for p in model.parameters())
 
 
@@ -104,7 +103,7 @@ if _TORCH_AVAILABLE:
                 if p.dim() > 1:
                     nn.init.xavier_uniform_(p)
 
-        def forward(self, tokens: "torch.Tensor") -> "torch.Tensor":
+        def forward(self, tokens: torch.Tensor) -> torch.Tensor:
             B, T = tokens.shape
             pos = torch.arange(T, device=tokens.device).unsqueeze(0).expand(B, T)
             x = self.tok_embed(tokens) + self.pos_embed(pos)
@@ -302,7 +301,7 @@ class TransformerTool(HuginnTool):
         # Rebuild tensors from the flattened state_dict using the model's own
         # current shapes — they're authoritative for this model spec.
         shapes = {k: list(v.shape) for k, v in model.state_dict().items()}
-        sd: dict[str, "torch.Tensor"] = {}
+        sd: dict[str, torch.Tensor] = {}
         for k, flat in inp.state_dict.items():
             t = torch.tensor(flat, dtype=torch.float32)
             sd[k] = t.reshape(shapes[k]) if k in shapes else t

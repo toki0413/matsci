@@ -10,7 +10,6 @@
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 from huginn.tools.sci.gp_tool import (
     GPTool,

@@ -118,7 +118,7 @@ class MechanicalToolInput(BaseModel):
     )
 
     @model_validator(mode="after")
-    def _check_required_fields(self) -> "MechanicalToolInput":
+    def _check_required_fields(self) -> MechanicalToolInput:
         """Validate that the action has the fields it needs."""
         if self.action == "stress_analysis":
             missing = []
@@ -268,7 +268,6 @@ class MechanicalTool(HuginnTool):
 
     def _stress_analysis(self, args: MechanicalToolInput) -> ToolResult:
         """Simple geometry stress: uniaxial, biaxial, bending, torsion."""
-        import numpy as np
 
         E = args.material_props["E"]
         nu = args.material_props.get("nu", 0.3)
@@ -549,14 +548,14 @@ class MechanicalTool(HuginnTool):
             "sigma_a sigma_m S_e S_ut S_y", positive=True
         )
         if criterion == "goodman":
-            n_sym = 1.0 / (sa_s / Se_s + sm_s / Sut_s)
+            1.0 / (sa_s / Se_s + sm_s / Sut_s)
             formula_str = "n = 1 / (σ_a/S_e + σ_m/S_ut)"
         elif criterion == "soderberg":
             Sy = fp.get("S_y", 0.6 * S_ut)
-            n_sym = 1.0 / (sa_s / Se_s + sm_s / Sy_s)
+            1.0 / (sa_s / Se_s + sm_s / Sy_s)
             formula_str = "n = 1 / (σ_a/S_e + σ_m/S_y)"
         else:  # asme_elliptical
-            n_sym = 1.0 / sp.sqrt((sa_s / Se_s) ** 2 + (sm_s / Sut_s) ** 2)
+            1.0 / sp.sqrt((sa_s / Se_s) ** 2 + (sm_s / Sut_s) ** 2)
             formula_str = "n = 1 / √((σ_a/S_e)² + (σ_m/S_ut)²)"
 
         # Numerical safety factor

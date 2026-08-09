@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+
 pytest.importorskip("langchain_ollama", reason="langchain-ollama not installed")
 
 import tempfile

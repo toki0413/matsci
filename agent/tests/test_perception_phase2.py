@@ -15,8 +15,14 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
+from huginn.perception.cross_validator import (
+    _CLAIM_PREFILTER_RE,
+    _METRIC_KEYWORDS,
+    _NUMERIC_RE,
+    _QUALITATIVE_RE,
+    CrossModalAdapter,
+)
+from huginn.perception.data_extractor import FigureDataExtractor
 from huginn.perception.doc_types import (
     BBox,
     DocumentElement,
@@ -26,18 +32,9 @@ from huginn.perception.doc_types import (
     InformationPackage,
 )
 from huginn.perception.document_graph import DocumentGraph
-from huginn.perception.cross_validator import (
-    CrossModalAdapter,
-    _CLAIM_PREFILTER_RE,
-    _NUMERIC_RE,
-    _QUALITATIVE_RE,
-    _METRIC_KEYWORDS,
-)
-from huginn.perception.data_extractor import FigureDataExtractor
+from huginn.perception.info_pack import InfoPackAssembler
 from huginn.perception.rag_bridge import RAGBridge
 from huginn.perception.relation_predictor import RelationPredictor
-from huginn.perception.info_pack import InfoPackAssembler
-
 
 # ── helpers ────────────────────────────────────────────────────────
 

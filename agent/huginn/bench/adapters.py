@@ -19,7 +19,6 @@ from __future__ import annotations
 import os
 import random
 import re
-from typing import Any
 
 # 国内镜像加速
 os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
@@ -214,7 +213,7 @@ GPQA_SCIENCE_KEYWORDS = (
 def _eval_letter_multi(answer: str, n_options: int):
     """多选项字母匹配 (支持 A-J, 用于 MMLU-Pro 10 选项等)."""
     answer_upper = answer.upper().strip()
-    letters = "ABCDEFGHIJ"[:n_options]
+    "ABCDEFGHIJ"[:n_options]
 
     def evaluate(output: str) -> tuple[bool, str, float]:
         m = re.search(

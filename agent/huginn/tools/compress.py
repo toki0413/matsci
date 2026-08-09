@@ -13,7 +13,9 @@ pure head/tail truncation would discard.
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
 
 from huginn.utils.tokens import count_tokens, rough_token_count_for_text
 

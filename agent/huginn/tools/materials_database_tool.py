@@ -13,6 +13,7 @@ import json
 import os
 import re
 from dataclasses import dataclass, field
+from datetime import UTC
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlencode
@@ -123,7 +124,7 @@ def _retrieval_contract(args: MaterialsDatabaseInput, endpoint: str = "") -> dic
     identifiers / constraints / expected_fields / exhaustive_vs_targeted,
     让查询结果离开工具后仍可复现.
     """
-    from datetime import datetime, timezone
+    from datetime import datetime
     return {
         "action": args.action,
         "query": args.query,
@@ -132,7 +133,7 @@ def _retrieval_contract(args: MaterialsDatabaseInput, endpoint: str = "") -> dic
         "mp_ids": args.mp_ids,
         "formulas": args.formulas,
         "endpoint": endpoint,
-        "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "timestamp": datetime.now(UTC).isoformat(timespec="seconds"),
     }
 
 
@@ -294,7 +295,6 @@ class MaterialsDatabaseTool(HuginnTool):
                 error="batch_query requires mp_ids or formulas (non-empty)",
             )
 
-        import asyncio
 
         sem = asyncio.Semaphore(_BATCH_CONCURRENCY)
 
@@ -632,8 +632,7 @@ class MaterialsDatabaseTool(HuginnTool):
 
         try:
             timeout = aiohttp.ClientTimeout(total=30)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(url) as resp:
+            async with aiohttp.ClientSession(timeout=timeout) as session, session.get(url) as resp:
                     if resp.status != 200:
                         text = await resp.text()
                         return ToolResult(
@@ -645,7 +644,7 @@ class MaterialsDatabaseTool(HuginnTool):
                         raw = await resp.json(content_type=None)
                     except Exception:
                         raw = await resp.text()
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return ToolResult(
                 data=None, success=False, error="AFLOW request timed out (30s)"
             )
@@ -746,8 +745,7 @@ class MaterialsDatabaseTool(HuginnTool):
 
         try:
             timeout = aiohttp.ClientTimeout(total=30)
-            async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
-                async with session.post(base, json=body) as resp:
+            async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session, session.post(base, json=body) as resp:
                     if resp.status != 200:
                         text = await resp.text()
                         return ToolResult(
@@ -755,7 +753,7 @@ class MaterialsDatabaseTool(HuginnTool):
                             error=f"NOMAD API error {resp.status}: {text[:200]}",
                         )
                     raw = await resp.json()
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return ToolResult(
                 data=None, success=False, error="NOMAD request timed out (30s)"
             )

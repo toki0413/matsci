@@ -14,7 +14,8 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +113,7 @@ class MISISubtask:
                 except Exception:
                     ds = load_dataset(_MISI_DATASET, split="test")
                     if "task" in ds.column_names:
-                        ds = ds.filter(lambda r: r["task"] == task_id)
+                        ds = ds.filter(lambda r, t=task_id: r["task"] == t)
             except Exception as e:
                 logger.warning("load_dataset %s failed: %s", task_id, e)
                 continue
@@ -151,7 +152,7 @@ class MISISubtask:
         }
         # B3: 按 PerceptionBench 分类做分组统计, 跟 BenchmarkRunner.visual_failure_summary 对齐
         visual_failure_summary: dict[str, dict[str, int]] = {}
-        for task_id, stats in per_task.items():
+        for _task_id, stats in per_task.items():
             tag = stats.get("visual_capability_tag", "none")
             if tag == "none":
                 continue

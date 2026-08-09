@@ -17,7 +17,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-
 AgentRole = Literal[
     "root",           # 根 agent / 元认知层
     "exploration",    # 探索 agent (默认隔离)

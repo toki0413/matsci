@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -212,15 +212,14 @@ class TaskReflector:
             result.message = self._build_success_message(tool_name, tool_result)
 
         # 4. Check plan advancement
-        if session_state and session_state.active_plan_id:
+        if session_state and session_state.active_plan_id and success and not result.has_physics_errors:
             # If the tool succeeded and we're executing a plan,
             # consider this step potentially complete
-            if success and not result.has_physics_errors:
-                result.plan_step_completed = True
-                # Check if this was the last step
-                # (the caller will verify and update the plan)
-                result.should_evolve = True
-                result.evolve_signal = "success"
+            result.plan_step_completed = True
+            # Check if this was the last step
+            # (the caller will verify and update the plan)
+            result.should_evolve = True
+            result.evolve_signal = "success"
 
         # 5. Cognitive mode assessment — P2-6 belief-driven
         # 单次失败不再立即切; 走滑动窗口 Beta 共轭.

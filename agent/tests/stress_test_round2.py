@@ -8,11 +8,9 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import statistics
 import sys
 import time
 import urllib.request
-from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -124,8 +122,8 @@ async def ws_stability_test() -> dict:
 
 def tool_registry_concurrency() -> dict:
     """Test tool registry thread-safety under concurrent access."""
-    from huginn.tools.registry import ToolRegistry
     from huginn.tools import register_all_tools
+    from huginn.tools.registry import ToolRegistry
 
     register_all_tools()
     reg = ToolRegistry()
@@ -136,7 +134,7 @@ def tool_registry_concurrency() -> dict:
 
     def worker(tid: int) -> None:
         try:
-            for i in range(n_iterations):
+            for _i in range(n_iterations):
                 tools = reg.list_tools()
                 schemas = reg.get_all_schemas()
                 _ = len(tools)

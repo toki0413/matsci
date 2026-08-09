@@ -29,9 +29,8 @@ import json
 import threading
 import uuid
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Optional
 
 KIND_TIMER = "timer"
 KIND_COMPLETION = "completion"
@@ -43,7 +42,7 @@ STATE_FIRED = "fired"
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 @dataclass
@@ -52,9 +51,9 @@ class Wake:
     session_id: str
     kind: str
     state: str = STATE_PENDING
-    fire_at: Optional[str] = None  # ISO, timer wakes 用
-    job_id: Optional[str] = None  # completion wakes 用
-    event_key: Optional[str] = None  # event wakes 用
+    fire_at: str | None = None  # ISO, timer wakes 用
+    job_id: str | None = None  # completion wakes 用
+    event_key: str | None = None  # event wakes 用
     note: str = ""
     created_at: str = field(default_factory=lambda: _now().isoformat())
 
@@ -65,7 +64,7 @@ class WakeStore:
     JSON 文件持久化让重启后仍能读回 pending wakes, run-once-catch-up 时触发.
     """
 
-    def __init__(self, path: Optional[str | Path] = None) -> None:
+    def __init__(self, path: str | Path | None = None) -> None:
         self.path = Path(path) if path else None
         self._lock = threading.Lock()
         self._wakes: dict[str, Wake] = {}
@@ -120,7 +119,7 @@ class WakeStore:
             self._save()
         return w
 
-    def due(self, now: Optional[datetime] = None) -> list[Wake]:
+    def due(self, now: datetime | None = None) -> list[Wake]:
         """Timer wakes 已到 fire_at, 或 completion/event wakes 标记为 due."""
         now = now or _now()
         out = []
@@ -131,9 +130,7 @@ class WakeStore:
                 w.kind == KIND_TIMER
                 and w.fire_at
                 and datetime.fromisoformat(w.fire_at) <= now
-            ):
-                out.append(w)
-            elif w.kind in (KIND_COMPLETION, KIND_EVENT) and w.state == STATE_DUE:
+            ) or w.kind in (KIND_COMPLETION, KIND_EVENT) and w.state == STATE_DUE:
                 out.append(w)
         return out
 
@@ -167,7 +164,7 @@ class WakeStore:
                 w.state = STATE_FIRED
                 self._save()
 
-    def pending(self, session_id: Optional[str] = None) -> list[Wake]:
+    def pending(self, session_id: str | None = None) -> list[Wake]:
         return [
             w
             for w in self._wakes.values()
@@ -175,7 +172,7 @@ class WakeStore:
             and (session_id is None or w.session_id == session_id)
         ]
 
-    def get(self, wake_id: str) -> Optional[Wake]:
+    def get(self, wake_id: str) -> Wake | None:
         return self._wakes.get(wake_id)
 
 
@@ -200,7 +197,7 @@ def selfwake_tools(store: WakeStore, session_id: str) -> list:
         """Suspend and wake this session at an ISO-8601 timestamp."""
         when = datetime.fromisoformat(when_iso)
         if when.tzinfo is None:
-            when = when.replace(tzinfo=timezone.utc)
+            when = when.replace(tzinfo=UTC)
         w = store.add_timer(session_id, when, note=note)
         return {"ok": True, "wake_id": w.id, "fire_at": w.fire_at}
 
@@ -219,7 +216,7 @@ def selfwake_tools(store: WakeStore, session_id: str) -> list:
 
 
 # ── 进程级单例 + 路径解析 ──────────────────────────────────────
-_singleton: Optional[WakeStore] = None
+_singleton: WakeStore | None = None
 _singleton_lock = threading.Lock()
 
 
@@ -235,7 +232,7 @@ def _default_wake_path() -> Path:
     return base / "wakes.json"
 
 
-def get_wake_store(path: Optional[str | Path] = None) -> WakeStore:
+def get_wake_store(path: str | Path | None = None) -> WakeStore:
     """进程级 WakeStore 单例."""
     global _singleton
     if _singleton is None:

@@ -31,14 +31,14 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import threading
 import time
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Optional
+from typing import Any
 
 KIND_APPROVAL = "approval"
 KIND_QUESTION = "question"
@@ -58,10 +58,10 @@ VIS_INBOX = "inbox"
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
-def args_preview(arguments: Optional[dict], *, limit: int = 240) -> str:
+def args_preview(arguments: dict | None, *, limit: int = 240) -> str:
     """tool call 参数的单行摘要, 给 approval card 用 (显示 path/content 而非只 tool 名)."""
     parts: list[str] = []
     for k, v in (arguments or {}).items():
@@ -82,16 +82,16 @@ class InboxItem:
     title: str
     body: str = ""
     state: str = STATE_PENDING
-    resolution: Optional[str] = (
+    resolution: str | None = (
         None  # approval: "allow"/"deny"/"always"; question: answer text
     )
     inbox: str = "default"  # named inbox / delivery binding
     created_at: str = field(default_factory=_now)
-    resolved_at: Optional[str] = None
+    resolved_at: str | None = None
     visibility: str = VIS_INBOX  # inline (attended) vs inbox (unattended)
     # 这个 prompt 阻塞的 tool_call (durable resume: 持久化后 restart 可重建挂起,
     # 继续那个 turn). 让 item 按 (session_id, tool_call_id) 幂等.
-    tool_call_id: Optional[str] = None
+    tool_call_id: str | None = None
     # Question 元数据: 可选 quick-reply choices + free-text 逃生口 (致敬
     # Claude Code 的 AskUserQuestion 结构化-but-总可回答 shape).
     options: list[str] = field(default_factory=list)
@@ -114,7 +114,7 @@ class InboxStore:
     asyncio.Event, 让 agent loop 挂起等响应, 任意 surface 调 resolve 唤醒.
     """
 
-    def __init__(self, path: Optional[str | Path] = None) -> None:
+    def __init__(self, path: str | Path | None = None) -> None:
         self.path = Path(path) if path else None
         self._lock = threading.Lock()
         self._items: dict[str, InboxItem] = {}
@@ -152,11 +152,11 @@ class InboxStore:
         body: str = "",
         inbox: str = "default",
         visibility: str = VIS_INBOX,
-        data: Optional[dict[str, Any]] = None,
+        data: dict[str, Any] | None = None,
         options=None,
         allow_text: bool = True,
         multi: bool = False,
-        tool_call_id: Optional[str] = None,
+        tool_call_id: str | None = None,
     ) -> InboxItem:
         # 按 (session_id, tool_call_id) 幂等: durable resume 重提同 prompt 时
         # 复用已存在 (可能已 resolved) 的 item, 不重提.
@@ -183,7 +183,7 @@ class InboxStore:
             self._save()
         return item
 
-    def for_tool_call(self, session_id: str, tool_call_id: str) -> Optional[InboxItem]:
+    def for_tool_call(self, session_id: str, tool_call_id: str) -> InboxItem | None:
         for i in self._items.values():
             if i.session_id == session_id and i.tool_call_id == tool_call_id:
                 return i
@@ -197,8 +197,8 @@ class InboxStore:
         body: str = "",
         inbox: str = "default",
         visibility: str = VIS_INBOX,
-        data: Optional[dict[str, Any]] = None,
-        tool_call_id: Optional[str] = None,
+        data: dict[str, Any] | None = None,
+        tool_call_id: str | None = None,
     ) -> InboxItem:
         # data 携带 automation-run context 给 standing scoped approvals:
         # {task_id, task_title, standing_target?} — UI 卡片 "Allow every time" 的门控
@@ -221,10 +221,10 @@ class InboxStore:
         body: str = "",
         inbox: str = "default",
         visibility: str = VIS_INBOX,
-        options: Optional[list[str]] = None,
+        options: list[str] | None = None,
         allow_text: bool = True,
         multi: bool = False,
-        tool_call_id: Optional[str] = None,
+        tool_call_id: str | None = None,
     ) -> InboxItem:
         return self.add(
             session_id,
@@ -247,8 +247,8 @@ class InboxStore:
         body: str = "",
         inbox: str = "default",
         visibility: str = VIS_INBOX,
-        data: Optional[dict[str, Any]] = None,
-        tool_call_id: Optional[str] = None,
+        data: dict[str, Any] | None = None,
+        tool_call_id: str | None = None,
     ) -> InboxItem:
         return self.add(
             session_id,
@@ -269,8 +269,8 @@ class InboxStore:
         body: str = "",
         inbox: str = "default",
         visibility: str = VIS_INBOX,
-        data: Optional[dict[str, Any]] = None,
-        tool_call_id: Optional[str] = None,
+        data: dict[str, Any] | None = None,
+        tool_call_id: str | None = None,
     ) -> InboxItem:
         return self.add(
             session_id,
@@ -297,16 +297,16 @@ class InboxStore:
         )
 
     # -- queries ----------------------------------------------------------------
-    def get(self, item_id: str) -> Optional[InboxItem]:
+    def get(self, item_id: str) -> InboxItem | None:
         return self._items.get(item_id)
 
     def list(
         self,
         *,
-        session_id: Optional[str] = None,
-        state: Optional[str] = None,
-        inbox: Optional[str] = None,
-        visibility: Optional[str] = None,
+        session_id: str | None = None,
+        state: str | None = None,
+        inbox: str | None = None,
+        visibility: str | None = None,
     ) -> list[InboxItem]:
         out = list(self._items.values())
         if session_id is not None:
@@ -319,7 +319,7 @@ class InboxStore:
             out = [i for i in out if i.visibility == visibility]
         return sorted(out, key=lambda i: i.created_at)
 
-    def pending(self, session_id: Optional[str] = None) -> list[InboxItem]:
+    def pending(self, session_id: str | None = None) -> list[InboxItem]:
         return self.list(session_id=session_id, state=STATE_PENDING)
 
     # -- the state machine ------------------------------------------------------
@@ -350,7 +350,7 @@ class InboxStore:
                 closed += 1
         return closed
 
-    def expire_pending(self, session_id: "str | None" = None) -> int:
+    def expire_pending(self, session_id: str | None = None) -> int:
         """TTL 到期的 pending item 置 expired, 释放挂起的 waiter.
 
         返回过期条数. 超时判断: time.time() - created_at_ts > ttl_seconds.
@@ -400,7 +400,7 @@ class InboxStore:
 #
 # ponytail: 不引入 ApprovalOutcome enum, 直接用字符串 tuple 跟现有 code_act_loop
 # 兼容. 升级路径: 加 InboxApproval dataclass 携带更多上下文 (task_id/standing).
-ApprovalFn = Callable[[str, str, str], Awaitable[tuple[str, Optional[str]]]]
+ApprovalFn = Callable[[str, str, str], Awaitable[tuple[str, str | None]]]
 
 
 def inbox_approval_fn(
@@ -408,7 +408,7 @@ def inbox_approval_fn(
     session_id: str,
     *,
     inbox: str = "default",
-    tool_call_id: Optional[str] = None,
+    tool_call_id: str | None = None,
 ) -> ApprovalFn:
     """造一个 ApprovalFn, 把 permission request 路由到 Inbox 并挂起到 resolved.
 
@@ -416,7 +416,7 @@ def inbox_approval_fn(
     请求变成 Inbox item, 任意 surface 答复后 resolve, agent 继续.
     """
 
-    async def approve(code: str, risk: str, reason: str) -> tuple[str, Optional[str]]:
+    async def approve(code: str, risk: str, reason: str) -> tuple[str, str | None]:
         title = f"Run code (risk={risk})?"
         body = reason or args_preview({"code": code})
         item = store.add_approval(
@@ -440,7 +440,7 @@ def inbox_approval_fn(
 
 
 # ── 进程级单例 + 路径解析 ──────────────────────────────────────
-_singleton: Optional[InboxStore] = None
+_singleton: InboxStore | None = None
 _singleton_lock = threading.Lock()
 
 
@@ -456,7 +456,7 @@ def _default_inbox_path() -> Path:
     return base / "inbox.json"
 
 
-def get_inbox_store(path: Optional[str | Path] = None) -> InboxStore:
+def get_inbox_store(path: str | Path | None = None) -> InboxStore:
     """拿进程级 InboxStore 单例. 第一次调时初始化 + load 持久化文件.
 
     多 worker 部署时每个 worker 各自一份 (JSON 文件共享但 _waiters 不跨进程).
@@ -479,9 +479,9 @@ def reset_inbox_store() -> None:
 
 
 if __name__ == "__main__":
+    import asyncio as _asyncio
     import shutil
     import tempfile as _tf
-    import asyncio as _asyncio
 
     ws = Path(_tf.mkdtemp(prefix="huginn_inbox_test_"))
     try:
@@ -613,8 +613,7 @@ if __name__ == "__main__":
 
         # 11. P2-5 自动 fallback 集成: CodeAct approval 无 resume_event 时
         # 自动转 inbox (验证 inbox_approval_fn 在 code_act_loop 的集成契约)
-        from huginn.agent.code_act_loop import _assess_risk, _mark_standing_rule
-        from huginn.interaction.inbox import inbox_approval_fn, KIND_APPROVAL
+        from huginn.interaction.inbox import KIND_APPROVAL, inbox_approval_fn
 
         async def _autofallback_test():
             # 模拟 CodeAct 场景: agent 无 _approval_resume event (unattended)

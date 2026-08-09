@@ -19,14 +19,13 @@ import os
 import random
 import sys
 import time
-from typing import Any
 
 # ponytail: 加 agent 目录到 path, 跟其他 bench 脚本一致
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from huginn.metacog.hypothesis_manifold import Hypothesis, HypothesisManifold
+from ablation_geom_vs_text import TestCase, build_test_cases
 
-from ablation_geom_vs_text import build_test_cases, TestCase
+from huginn.metacog.hypothesis_manifold import HypothesisManifold
 
 
 def _make_model():
@@ -55,7 +54,9 @@ def _build_text_hint(c: TestCase) -> str:
 
 def _build_geom_hint(c: TestCase) -> str:
     """B 组: 文字 + 几何结构信息."""
-    m = HypothesisManifold(); m.add(c.a); m.add(c.b)
+    m = HypothesisManifold()
+    m.add(c.a)
+    m.add(c.b)
     fisher = m.fisher_distance(c.a.h_id, c.b.h_id)
     complexity_diff = abs(c.a.n_params - c.b.n_params)
     return (
@@ -113,9 +114,9 @@ def run_llm_ablation(n_samples: int = 40, seed: int = 42):
     print("=" * 76)
     print(f"LLM-in-the-loop 真测试 (deepseek-chat, n={len(sample)})")
     print("=" * 76)
-    print(f"A 组: 文本 hint (只看 description)")
-    print(f"B 组: 几何 hint (description + predictions + fisher + complexity)")
-    print(f"Ground truth: human_label (跟 hint 内容独立)")
+    print("A 组: 文本 hint (只看 description)")
+    print("B 组: 几何 hint (description + predictions + fisher + complexity)")
+    print("Ground truth: human_label (跟 hint 内容独立)")
     print()
 
     try:
@@ -127,7 +128,8 @@ def run_llm_ablation(n_samples: int = 40, seed: int = 42):
         print(f"deepseek 连接失败: {e}")
         return None
 
-    a_correct = 0; b_correct = 0
+    a_correct = 0
+    b_correct = 0
     a_tp = a_fp = a_fn = a_tn = 0
     b_tp = b_fp = b_fn = b_tn = 0
     a_fail = b_fail = 0
@@ -153,19 +155,30 @@ def run_llm_ablation(n_samples: int = 40, seed: int = 42):
         actual = c.human_label
 
         # 统计
-        if pred_a == actual: a_correct += 1
-        if pred_b == actual: b_correct += 1
-        if pred_a != pred_b: disagreements += 1
+        if pred_a == actual:
+            a_correct += 1
+        if pred_b == actual:
+            b_correct += 1
+        if pred_a != pred_b:
+            disagreements += 1
 
         # confusion
-        if pred_a and actual: a_tp += 1
-        elif pred_a and not actual: a_fp += 1
-        elif not pred_a and actual: a_fn += 1
-        else: a_tn += 1
-        if pred_b and actual: b_tp += 1
-        elif pred_b and not actual: b_fp += 1
-        elif not pred_b and actual: b_fn += 1
-        else: b_tn += 1
+        if pred_a and actual:
+            a_tp += 1
+        elif pred_a and not actual:
+            a_fp += 1
+        elif not pred_a and actual:
+            a_fn += 1
+        else:
+            a_tn += 1
+        if pred_b and actual:
+            b_tp += 1
+        elif pred_b and not actual:
+            b_fp += 1
+        elif not pred_b and actual:
+            b_fn += 1
+        else:
+            b_tn += 1
 
         if (i+1) % 10 == 0:
             print(f"  进度: {i+1}/{len(sample)}  A_acc={a_correct/(i+1):.3f}  B_acc={b_correct/(i+1):.3f}")
@@ -197,15 +210,14 @@ def run_llm_ablation(n_samples: int = 40, seed: int = 42):
     print(f"{'F1':<25} {a_f1:>15.3f} {b_f1:>15.3f} {b_f1-a_f1:>+10.3f}")
     print()
     print(f"A/B 判断不一致的样本: {disagreements}/{n} ({disagreements/n:.1%})")
-    print(f"  (不一致样本 = 几何 hint 改变 LLM 判断的地方, 是几何通信的净影响)")
+    print("  (不一致样本 = 几何 hint 改变 LLM 判断的地方, 是几何通信的净影响)")
 
     # bootstrap F1 CI
     print()
     print("--- bootstrap F1 95% CI (n_boot=500) ---")
-    f1_a = []; f1_b = []
     rnd2 = random.Random(seed)
     for _ in range(500):
-        s = [rnd2.choice(sample) for _ in range(n)]
+        [rnd2.choice(sample) for _ in range(n)]
         # 重算需要存原始预测, 这里用 sample 的 confusion 矩阵近似
         # ponytail: 严格 bootstrap 需要存每个样本的预测, 这里简化用 aggregate
         # 升级路径: 存 per-sample 预测做完整 bootstrap
@@ -213,7 +225,8 @@ def run_llm_ablation(n_samples: int = 40, seed: int = 42):
     # 简化: 用 Wilson 区间
     from math import sqrt
     def wilson(p, n, z=1.96):
-        if n == 0: return (0, 0)
+        if n == 0:
+            return (0, 0)
         denom = 1 + z*z/n
         center = (p + z*z/(2*n)) / denom
         spread = z * sqrt(p*(1-p)/n + z*z/(4*n*n)) / denom

@@ -48,7 +48,7 @@ def _find_secret_in_metadata(metadata: dict[str, Any]) -> str | None:
     return None
 
 
-def _validate_skill(skill: "SkillDefinition") -> None:
+def _validate_skill(skill: SkillDefinition) -> None:
     """注册前静态校验. 失败抛 SkillValidationError.
 
     只做 stdlib 能做的: 必填字段非空 + metadata secret 扫描.

@@ -29,11 +29,15 @@ import ast
 import logging
 import math
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 from huginn.causal.visual_scm import (
-    VisualSCM, Variable, Edge, _noise_normal,
+    Edge,
+    Variable,
+    VisualSCM,
+    _noise_normal,
 )
 
 logger = logging.getLogger(__name__)
@@ -159,7 +163,7 @@ class GenerateSCMResult:
 
 async def generate_scm_via_llm(
     question: str,
-    llm_chat: Callable[[str], "Any"],
+    llm_chat: Callable[[str], Any],
     kb_context: str = "",
 ) -> GenerateSCMResult:
     """LLM 生成 SCM draft.
@@ -363,14 +367,14 @@ def _selfcheck() -> None:
     # 2. _safe_eval_expr 阻止非白名单 (e.g. __import__)
     try:
         _safe_eval_expr("__import__('os').system('echo hack')", {})
-        assert False, "应拒绝 __import__"
+        raise AssertionError("应拒绝 __import__")
     except (ValueError, NameError, SyntaxError):
         pass
 
     # 3. _safe_eval_expr 阻止赋值语句
     try:
         _safe_eval_expr("x = 1", {})
-        assert False, "应拒绝赋值"
+        raise AssertionError("应拒绝赋值")
     except SyntaxError:
         pass
 

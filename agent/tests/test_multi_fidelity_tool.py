@@ -17,13 +17,9 @@ import pytest
 
 from huginn.phases import ResearchPhase
 from huginn.tools.multi_fidelity_tool import (
-    FidelitySource,
-    MultiFidelityInput,
-    MultiFidelitySurrogate,
     MultiFidelityTool,
 )
 from huginn.tools.registry import ToolRegistry
-from huginn.types import ToolContext, ToolResult
 
 
 @pytest.fixture(autouse=True)
@@ -252,7 +248,7 @@ class TestPropagate:
         assert result.success is False
         assert "未拟合" in result.error
 
-    def test_propagate_missing_X_new(self):
+    def test_propagate_missing_x_new(self):
         tool = MultiFidelityTool()
         _call(tool, {
             "action": "register_source",

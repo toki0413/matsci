@@ -17,7 +17,6 @@ import csv
 from collections import Counter
 from itertools import combinations_with_replacement
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 from pydantic import BaseModel, Field
@@ -250,7 +249,7 @@ class DynamicsDiscoveryTool(HuginnTool):
         简单关系都过度收缩到 1.48.
         """
         try:
-            from sklearn.linear_model import Lasso  # type: ignore
+            from sklearn.linear_model import Lasso  # type: ignore[import-untyped]
 
             # alpha 要小: Lasso 只负责 mild regularization, 真正的稀疏化
             # 由 _threshold() 按相对阈值做. 1e-4 是 sklearn 文档推荐的
@@ -674,5 +673,5 @@ if __name__ == "__main__":
     ))
     assert vres.success, vres.error
     print("validate R2:", {k: round(v, 4) for k, v in vres.data["r2_score"].items()})
-    assert vres.data["r2_score"]["x0"] > 0.9, f"validate x0 R2 low"
+    assert vres.data["r2_score"]["x0"] > 0.9, "validate x0 R2 low"
     print("OK: validation integration tracks data")

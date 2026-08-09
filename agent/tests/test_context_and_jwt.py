@@ -1,12 +1,7 @@
 """Tests for ContextBuilder extraction and JWT revocation."""
 
-import asyncio
 import time
-from pathlib import Path
 from unittest.mock import MagicMock, patch
-
-import pytest
-
 
 # ── ContextBuilder ────────────────────────────────────────────────
 
@@ -126,9 +121,9 @@ class TestAgentDelegatesToContextBuilder:
 
     def test_agent_has_ctx_builder(self):
         """Agent should have _ctx_builder after init."""
-        from tests.fixtures.fake_llm import make_callable_llm
         from huginn.agent import HuginnAgent
         from huginn.memory.manager import MemoryManager
+        from tests.fixtures.fake_llm import make_callable_llm
 
         llm = make_callable_llm(lambda p: "ok", name="ctx-test-llm")
         memory = MemoryManager()
@@ -139,9 +134,9 @@ class TestAgentDelegatesToContextBuilder:
 
     def test_build_memory_delegates(self):
         """_build_memory_text should delegate to ContextBuilder."""
-        from tests.fixtures.fake_llm import make_callable_llm
         from huginn.agent import HuginnAgent
         from huginn.memory.manager import MemoryManager
+        from tests.fixtures.fake_llm import make_callable_llm
 
         llm = make_callable_llm(lambda p: "ok", name="delegate-test-llm")
         memory = MemoryManager()
@@ -153,9 +148,9 @@ class TestAgentDelegatesToContextBuilder:
 
     def test_build_kg_text_delegates(self):
         """_build_kg_text should delegate to ContextBuilder."""
-        from tests.fixtures.fake_llm import make_callable_llm
         from huginn.agent import HuginnAgent
         from huginn.memory.manager import MemoryManager
+        from tests.fixtures.fake_llm import make_callable_llm
 
         llm = make_callable_llm(lambda p: "ok", name="kg-test-llm")
         memory = MemoryManager()

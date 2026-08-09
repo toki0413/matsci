@@ -12,6 +12,7 @@ are auto-approved.
 from __future__ import annotations
 
 import json
+import logging
 import shutil
 import subprocess
 from pathlib import Path
@@ -23,7 +24,7 @@ from huginn.permissions import PermissionChecker, PermissionConfig
 from huginn.tools.base import HuginnTool
 from huginn.tools.profile import ToolProfile
 from huginn.types import PermissionMode, ToolContext, ToolResult
-import logging
+
 logger = logging.getLogger(__name__)
 
 

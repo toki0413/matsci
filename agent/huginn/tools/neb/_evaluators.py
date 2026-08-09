@@ -12,8 +12,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from huginn.types import ToolContext, ToolResult
-from huginn.tools.neb._io import write_xyz, write_poscar
+from huginn.tools.neb._io import write_poscar, write_xyz
+from huginn.types import ToolContext
 
 if TYPE_CHECKING:
     from huginn.tools.neb.tool import NEBToolInput
@@ -23,7 +23,7 @@ async def eval_images(
     images: list[np.ndarray],
     atomic_numbers: list[int],
     cell: np.ndarray | None,
-    args: "NEBToolInput",
+    args: NEBToolInput,
     context: ToolContext,
 ) -> tuple[list[float], list[np.ndarray]]:
     """批量评估每个 image 的能量和力."""
@@ -42,7 +42,7 @@ async def eval_single(
     positions: np.ndarray,
     atomic_numbers: list[int],
     cell: np.ndarray | None,
-    args: "NEBToolInput",
+    args: NEBToolInput,
     context: ToolContext,
 ) -> tuple[float, np.ndarray]:
     """单点能量 + 力评估, 按能量评估后端路由."""
@@ -105,7 +105,7 @@ async def eval_via_ml_potential(
     positions: np.ndarray,
     atomic_numbers: list[int],
     cell: np.ndarray | None,
-    args: "NEBToolInput",
+    args: NEBToolInput,
     context: ToolContext,
 ) -> tuple[float, np.ndarray]:
     """写临时结构文件, 调 ml_potential_tool.predict 算能量 + 力."""
@@ -152,7 +152,7 @@ async def eval_via_vasp(
     positions: np.ndarray,
     atomic_numbers: list[int],
     cell: np.ndarray | None,
-    args: "NEBToolInput",
+    args: NEBToolInput,
     context: ToolContext,
 ) -> tuple[float, np.ndarray]:
     """调 vasp_tool.scf 做单点能.

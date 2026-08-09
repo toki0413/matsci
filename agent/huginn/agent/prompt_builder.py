@@ -42,6 +42,11 @@ _MODE_INSTRUCTIONS = {
         "uncertainty, compare results to published values, flag unexpected "
         "results as potential discoveries, write findings to the knowledge base."
     ),
+    "extreme": (
+        "Extreme mode. Long-horizon task at maximum capability: unlock all "
+        "tools, persist intermediate results, follow the goal to completion, "
+        "cite literature, quantify uncertainty, and flag potential discoveries."
+    ),
     "code": (
         "Code-act mode. Solve tasks by writing and executing code in the "
         "sandbox; verify each step before reporting."

@@ -9,8 +9,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import numpy as np
-
 from huginn.metacog.encounter_space import EncounterSpace
 from huginn.metacog.episodic_index import EpisodicIndexStore
 

@@ -13,9 +13,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 def test_metrics_tracking():
     """Verify Prometheus metrics are properly wired."""
     from huginn.routes.metrics import (
-        track_llm_usage, track_tool_call, track_agent_turn,
-        LLM_TOKENS_TOTAL, LLM_COST_USD,
-        PROMPT_CACHE_HITS_TOTAL, PROMPT_CACHE_MISSES_TOTAL,
+        track_agent_turn,
+        track_llm_usage,
+        track_tool_call,
     )
 
     # Track a fake LLM call

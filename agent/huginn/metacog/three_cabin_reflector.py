@@ -69,10 +69,11 @@ def run_three_cabin(
     reflector_hint_text 非空时, 调用方注入到 _speculator_hint.
     """
     try:
+        from huginn.metacog.reflector import format_reflector_text, reflect
         from huginn.metacog.step_evaluator import (
-            evaluate_step, should_continue,
+            evaluate_step,
+            should_continue,
         )
-        from huginn.metacog.reflector import reflect, format_reflector_text
     except Exception:
         logger.debug("three_cabin imports failed", exc_info=True)
         return (None, "")

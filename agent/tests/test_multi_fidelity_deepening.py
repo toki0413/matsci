@@ -13,7 +13,6 @@ import numpy as np
 import pytest
 
 from huginn.tools.sci.multi_fidelity_tool import (
-    MultiFidelityInput,
     MultiFidelityTool,
 )
 

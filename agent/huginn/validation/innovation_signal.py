@@ -17,9 +17,9 @@ If yes to all three -> INNOVATION_SIGNAL, not error.
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Sequence
 
 
 class DeviationLevel(Enum):
@@ -159,9 +159,7 @@ class InnovationSignalDetector:
         # Properties where exactly zero is physically meaningless
         _NONZERO_PROPS = {"energy", "lattice_constant", "lattice_a",
                           "lattice_b", "lattice_c", "volume", "bulk_modulus"}
-        if name.lower() in _NONZERO_PROPS and abs(value) < 1e-15:
-            return False
-        return True
+        return not (name.lower() in _NONZERO_PROPS and abs(value) < 1e-15)
 
     @staticmethod
     def _explanations(

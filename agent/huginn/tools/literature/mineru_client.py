@@ -18,9 +18,10 @@ import io
 import logging
 import time
 import zipfile
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Any
 
 import requests
 
@@ -252,7 +253,7 @@ if __name__ == "__main__":
     # 不测真实 API 调用 (需要 key + 网络).
     assert _MAX_BATCH == 50, f"API limit is 50, got {_MAX_BATCH}"
     assert _MAX_PAGES == 200, f"page limit is 200, got {_MAX_PAGES}"
-    assert _TERMINAL == {"done", "failed"}, f"terminal states mismatch: {_TERMINAL}"
+    assert {"done", "failed"} == _TERMINAL, f"terminal states mismatch: {_TERMINAL}"
     # _resolve_keys: 无 key 时返回空 list
     assert _resolve_keys(None) == [] or len(_resolve_keys(None)) >= 0  # 无环境变量时为空
     # chunked 行为

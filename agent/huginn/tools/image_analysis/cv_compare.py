@@ -9,7 +9,6 @@ Source: 用户要求 vision LLM 之前 CV 一样做图像评分, 工作流必须
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 
 def cv_image_similarity(target_path: Path, generated_path: Path) -> dict:
@@ -111,8 +110,7 @@ def cv_best_match(target_path: Path, generated_images: list[Path]) -> dict:
             continue
         r = cv_image_similarity(target_path, img)
         best["details"].append({"img": str(img), **r})
-        if r.get("score") is not None:
-            if best["score"] is None or r["score"] > best["score"]:
+        if r.get("score") is not None and (best["score"] is None or r["score"] > best["score"]):
                 best["score"] = r["score"]
                 best["best_path"] = str(img)
     return best
@@ -122,6 +120,7 @@ def cv_best_match(target_path: Path, generated_images: list[Path]) -> dict:
 def _self_check() -> int:
     """assert-based demo: 验证 CV 算子在合成图上能跑通."""
     import tempfile
+
     import numpy as np
     try:
         import cv2

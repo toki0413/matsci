@@ -13,7 +13,6 @@ from pydantic import ValidationError
 
 from huginn.tools.clarification_tool import ClarificationInput, ClarificationTool
 
-
 # ── Fake manager ─────────────────────────────────────────────────────
 
 

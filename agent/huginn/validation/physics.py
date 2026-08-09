@@ -314,8 +314,3 @@ class PhysicsValidator:
 
 
 # Re-export execution/physics_auditor.py 的审计器, 统一从 validation 包导入
-from huginn.execution.physics_auditor import (  # noqa: E402
-    AuditReport,
-    PhysicsAuditor,
-    PhysicsFinding,
-)

@@ -15,7 +15,7 @@ Usage:
     cog = CognitiveIntegrator()
     snapshot = PerceptionSnapshot(...)  # from L1-L2-L3
     state = cog.integrate(snapshot)
-    
+
     # Query state
     if state.suggests_action():
         print(state.proposed_hypothesis)
@@ -53,31 +53,31 @@ class PerceptionSnapshot:
     """Integrated cognitive state from multi-modal perception."""
     timestamp: float
     workspace: str
-    
+
     # Raw summaries
     file_summary: str = ""
     terminal_summary: str = ""
     browser_summary: str = ""
     simulation_summary: str = ""
-    
+
     # Inferred state
     active_task: str | None = None
     errors_present: bool = False
     warnings_present: bool = False
     simulation_running: bool = False
     simulation_converged: bool | None = None
-    
+
     # Conflicts
     conflicts: list[SemanticConflict] = field(default_factory=list)
-    
+
     # Hypothesis
     proposed_hypothesis: str = ""
     confidence: float = 0.0
-    
+
     # Recommendations
     recommended_tools: list[str] = field(default_factory=list)
     recommended_actions: list[str] = field(default_factory=list)
-    
+
     def suggests_action(self) -> bool:
         """Whether the current state suggests taking an action."""
         meaningful_actions = [a for a in self.recommended_actions if a != "wait_for_activity"]

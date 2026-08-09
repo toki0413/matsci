@@ -33,7 +33,7 @@ def _substitute_partials(expr_str: str, u_name: str, x_names: list[str]) -> str:
     return out
 
 
-def euler_lagrange(args: "SymbolicMathInput") -> ToolResult:
+def euler_lagrange(args: SymbolicMathInput) -> ToolResult:
     """Euler-Lagrange 方程: 给定 L(u, u', x) 推导 ∂L/∂u - d/dx(∂L/∂u') = 0.
 
     expression 给 L, symbols 必须含 u (场) 和 x (自变量).
@@ -113,7 +113,7 @@ def euler_lagrange(args: "SymbolicMathInput") -> ToolResult:
 
         dL_du = sp.diff(L, u_func)
         el_sum = dL_du
-        for xn, xs in zip(x_names, x_syms):
+        for _xn, xs in zip(x_names, x_syms):
             du_i = sp.Derivative(u_func, xs)
             dL_du_i = sp.diff(L, du_i)
             term = sp.diff(dL_du_i, xs)
@@ -137,7 +137,7 @@ def euler_lagrange(args: "SymbolicMathInput") -> ToolResult:
     )
 
 
-def functional_derivative(args: "SymbolicMathInput") -> ToolResult:
+def functional_derivative(args: SymbolicMathInput) -> ToolResult:
     """泛函导数 δF/δu.
 
     F[u] = ∫ L(u, u', x) dx  →  δF/δu = ∂L/∂u - d/dx(∂L/∂u')
@@ -158,7 +158,7 @@ def functional_derivative(args: "SymbolicMathInput") -> ToolResult:
     return ToolResult(data=data, success=True)
 
 
-def isoperimetric(args: "SymbolicMathInput") -> ToolResult:
+def isoperimetric(args: SymbolicMathInput) -> ToolResult:
     """等周问题: 在约束 ∫ G dx = const 下极值化 ∫ F dx.
 
     用 Lagrange 乘子 λ 构造增广泛函 ∫ (F - λ G) dx, 然后对增广 L 解 EL 方程.
@@ -220,7 +220,7 @@ def isoperimetric(args: "SymbolicMathInput") -> ToolResult:
     )
 
 
-def noether(args: "SymbolicMathInput") -> ToolResult:
+def noether(args: SymbolicMathInput) -> ToolResult:
     """Noether 定理: 连续对称性 → 守恒流.
 
     若 L 在变换 u → u + ε η(x) 下不变 (δL = 0), 则

@@ -66,10 +66,10 @@ class ToolCallBudget:
             if self._per_tool[tool_name] > self.max_per_tool:
                 return False
             # walltime 超了也算超预算
-            if self.max_walltime_sec is not None:
-                if (time.time() - self._start_time) > self.max_walltime_sec:
-                    return False
-            return True
+            return not (
+                self.max_walltime_sec is not None
+                and (time.time() - self._start_time) > self.max_walltime_sec
+            )
 
     def should_stop(self) -> tuple[bool, str]:
         """返回 (是否该停, 原因)。"""

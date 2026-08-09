@@ -18,7 +18,6 @@ from huginn.tools.specialty_analysis.fatigue import (
 from huginn.tools.specialty_analysis.fracture import fracture_lefm
 from huginn.tools.specialty_analysis.modal import modal_lanczos
 
-
 # ── eigenvalue_buckling ──
 
 

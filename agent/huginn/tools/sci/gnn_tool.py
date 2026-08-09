@@ -60,7 +60,7 @@ class GNNToolInput(BaseModel):
 def _build_gcn(in_dim: int, hidden_dim: int, num_classes: int, num_layers: int, dropout: float):
     """Build a vanilla stacked-GCNConv classifier. Imports torch lazily."""
     import torch.nn as nn
-    import torch.nn.functional as F
+    import torch.nn.functional as F  # noqa: N812
     from torch_geometric.nn import GCNConv
 
     class GCN(nn.Module):
@@ -248,7 +248,7 @@ class GNNTool(HuginnTool):
         self, args, edge_index, feats, labels, mask, n_classes
     ) -> ToolResult:
         import torch
-        import torch.nn.functional as F
+        import torch.nn.functional as F  # noqa: N812
 
         if args.seed is not None:
             torch.manual_seed(args.seed)
@@ -517,7 +517,7 @@ if __name__ == "__main__":
         import networkx as nx  # noqa: F401
     except ImportError:
         print("networkx not available, skip demo")
-        raise SystemExit(0)
+        raise SystemExit(0) from None  # noqa: B904
 
     # need at least one stack: PyG or (scipy + sklearn)
     has_pyg = GNNTool._pyg_available()

@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
+from unittest.mock import AsyncMock, MagicMock
 
 from huginn.tools.database_tool import (
     DatabaseTool,
@@ -130,7 +128,7 @@ class TestAflowQuery:
         fake_session = MagicMock()
         fake_session.__aenter__ = AsyncMock(return_value=fake_session)
         fake_session.__aexit__ = AsyncMock(return_value=None)
-        fake_session.get = MagicMock(side_effect=asyncio.TimeoutError())
+        fake_session.get = MagicMock(side_effect=TimeoutError())
 
         fake_aiohttp = MagicMock()
         fake_aiohttp.ClientTimeout = MagicMock()

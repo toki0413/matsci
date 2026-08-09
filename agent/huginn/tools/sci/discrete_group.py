@@ -225,10 +225,12 @@ def _group_action_orbits(group: Any, n_points: int) -> dict[str, Any]:
     gens = list(group.generators)
     rows, cols = [], []
     for i in range(n_points):
-        rows.append(i); cols.append(i)
+        rows.append(i)
+        cols.append(i)
         for g in gens:
             j = g(i) if g(i) < n_points else i
-            rows.append(i); cols.append(j)
+            rows.append(i)
+            cols.append(j)
     data = [1] * len(rows)
     A = csr_matrix((data, (rows, cols)), shape=(n_points, n_points))
     n_orbits, labels = connected_components(A, directed=False)
@@ -263,10 +265,13 @@ def _finite_field_op(
         if operation == "invert":
             return {"result": pow(elements[0], p - 2, p)}
         return {"error": f"unknown op: {operation}"}
-    from sympy.polys.galoistools import (
-        gf_mul, gf_add, gf_rem, gf_irreducible_p,
-    )
     from sympy.polys.domains import ZZ
+    from sympy.polys.galoistools import (
+        gf_add,
+        gf_irreducible_p,
+        gf_mul,
+        gf_rem,
+    )
 
     def find_irreducible(p: int, k: int) -> list[int]:
         # 从 c=1 开始, 跳过 c=0 (会生成 x^k 退化多项式)
@@ -356,11 +361,9 @@ class DiscreteGroupTool(HuginnTool):
         self, args: dict[str, Any], context: ToolContext | None = None
     ) -> ValidationResult:
         args_obj = args if isinstance(args, DiscreteGroupInput) else DiscreteGroupInput(**args)
-        if args_obj.action in ("cyclic", "dihedral", "symmetric", "alternating"):
-            if not args_obj.n or args_obj.n < 1:
+        if args_obj.action in ("cyclic", "dihedral", "symmetric", "alternating") and (not args_obj.n or args_obj.n < 1):
                 return ValidationResult(result=False, message=f"{args_obj.action} 需要 n >= 1")
-        if args_obj.action == "finite_field":
-            if not args_obj.p or args_obj.p < 2:
+        if args_obj.action == "finite_field" and (not args_obj.p or args_obj.p < 2):
                 return ValidationResult(result=False, message="finite_field 需要 p >= 2")
         return ValidationResult(result=True)
 
@@ -441,13 +444,13 @@ def _selfcheck() -> None:
     g = _cyclic_group(6)
     a = _analyze_group(g)
     assert a["order"] == 6, f"1. C_6 order 6, got {a['order']}"
-    assert a["is_abelian"] is True, f"1. C_6 abelian"
+    assert a["is_abelian"] is True, "1. C_6 abelian"
 
     # 2. S_4 阶 24, 非 Abel
     g = _symmetric_group(4)
     a = _analyze_group(g)
     assert a["order"] == 24, f"2. S_4 order 24, got {a['order']}"
-    assert a["is_abelian"] is False, f"2. S_4 not abelian"
+    assert a["is_abelian"] is False, "2. S_4 not abelian"
 
     # 3. D_4 阶 8, 中心阶 2
     g = _dihedral_group(4)

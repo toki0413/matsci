@@ -26,22 +26,24 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
 import time
 import uuid
-from datetime import datetime
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Awaitable
+from typing import Any
 
 from huginn.api.event import EventType
 from huginn.autoloop.budget import ProgressiveBudget
 from huginn.autoloop.goal_scheduler import GoalScheduler
 from huginn.autoloop.goal_store import Goal
 from huginn.autoloop.phase_gate import get_shared_phase_gate_state
-from huginn.autoloop.types import LoopPhase, AutoloopResult
+from huginn.autoloop.types import AutoloopResult, LoopPhase
 
 logger = logging.getLogger(__name__)
 
@@ -65,9 +67,7 @@ def _extract_tests_passed(validation: Any) -> bool:
         return True
     if isinstance(validation, str):
         low = validation.lower()
-        if "fail" in low:
-            return False
-        return True
+        return "fail" not in low
     # None 或其它: 没有明确失败信号, 放行
     return True
 
@@ -480,17 +480,25 @@ def update_drift_and_metrics(
 
     try:
         from huginn.runtime.task_metrics import (
-            TaskMetrics as _TM, load_metrics as _lm,
-            update_metrics as _um, save_metrics as _sm,
+            TaskMetrics,
+        )
+        from huginn.runtime.task_metrics import (
+            load_metrics as _lm,
+        )
+        from huginn.runtime.task_metrics import (
+            save_metrics as _sm,
+        )
+        from huginn.runtime.task_metrics import (
+            update_metrics as _um,
         )
         if task_metrics is None:
             import time
-            task_metrics = _lm(run_id, workspace) or _TM(
+            task_metrics = _lm(run_id, workspace) or TaskMetrics(
                 task_id=run_id, total_steps=max_iterations * 6,
             )
             if task_state is None:
-                from types import SimpleNamespace as _NS
-                task_state = _NS(created_at=time.time())
+                from types import SimpleNamespace
+                task_state = SimpleNamespace(created_at=time.time())
         # target_chain_progress 透传 — update_metrics 接受 None (autoloop 路径).
         task_metrics = _um(
             task_metrics, step_eval,
@@ -845,8 +853,11 @@ class CognitiveLoopMixin:
         try:
             from huginn.interaction.inbox import get_inbox_store
             from huginn.runtime.task_lifecycle import (
-                DecisionRequest, TaskLifecycle, TaskState,
-                save_task_lifecycle, load_task_lifecycle,
+                DecisionRequest,
+                TaskLifecycle,
+                TaskState,
+                load_task_lifecycle,
+                save_task_lifecycle,
             )
         except ImportError:
             logger.debug("P4-1 inbox/task_lifecycle import failed, fallback to hint")
@@ -1175,10 +1186,8 @@ class CognitiveLoopMixin:
             except Exception:
                 pass
             sys_prompt_len = 0
-            try:
+            with contextlib.suppress(Exception):
                 sys_prompt_len = len(getattr(self, "system_prompt", "") or "")
-            except Exception:
-                pass
             eng.update_kinematics(n_ideas, n_principles + 1, sys_prompt_len)
 
             health = eng.health_check()
@@ -1562,7 +1571,7 @@ class CognitiveLoopMixin:
         # 只在有失败数据时存 — 全 pass 的 run 存了也没参考价值.
         if not by_type and not vwin:
             return
-        wsize = getattr(self, "_validate_window_size", 100)
+        getattr(self, "_validate_window_size", 100)
         fail_rate = 1.0 - (sum(vwin) / len(vwin)) if vwin else 0.0
         snapshot = {
             "run_id": run_id,
@@ -2264,8 +2273,8 @@ Respond JSON only:
         # runner 调 self.run_cognitive() 继续长跑循环 (wake 触发的 resume).
         if getattr(self, "_auto_wake_enabled", False) and self._wake_scheduler is None:
             try:
-                from huginn.runtime.selfwake import get_wake_store
                 from huginn.runtime.scheduler import WakeScheduler
+                from huginn.runtime.selfwake import get_wake_store
                 store = get_wake_store()
                 if store.pending():
                     async def _wake_runner(session_id: str, wake) -> None:
@@ -2289,7 +2298,10 @@ Respond JSON only:
                 logger.debug("auto wake scheduler spawn failed", exc_info=True)
 
         from huginn.autoloop.cognitive_loop import (
-            CognitiveLoop, LoopState, ActionDecision, ReflectionResult,
+            ActionDecision,
+            CognitiveLoop,
+            LoopState,
+            ReflectionResult,
         )
 
         self._max_refines = max_refines
@@ -2306,8 +2318,8 @@ Respond JSON only:
         )
         self._run_id = run_id
         self._parent_run_id = None
-        from huginn.interaction.progress import get_progress_tracker
         from huginn.autoloop.engine import AUTOLOOP_PHASES
+        from huginn.interaction.progress import get_progress_tracker
         tracker = get_progress_tracker()
         total_steps = max_iterations * 6 + 1
         progress_task_id = f"autoloop:{run_id}"
@@ -2856,16 +2868,14 @@ Respond JSON only:
                     ).strip()
 
             # gate 检查 — 把 evidence 传给 _check_gate
-            if action == "plan" and cog["plan"] and not redirect:
-                if not self._check_gate(
+            if action == "plan" and cog["plan"] and not redirect and not self._check_gate(
                     "plan", "execute",
                     {"mode": cog["plan"].get("mode"),
                      "description": cog["plan"].get("description")},
                 ):
                     redirect = True
                     advice = "gate plan→execute blocked"
-            if action == "execute" and cog["plan"] and not redirect:
-                if not self._check_gate(
+            if action == "execute" and cog["plan"] and not redirect and not self._check_gate(
                     "execute", "validate",
                     {"mode": cog["plan"].get("mode")},
                 ):
@@ -3004,7 +3014,7 @@ Respond JSON only:
             #   heat_engine 抽到 update_heat_engine_after_step 共享 (对齐 rcb_runner AV8).
             if action == "validate" and cog.get("validation") is not None:
                 try:
-                    from types import SimpleNamespace as _NS
+                    from types import SimpleNamespace
                     _val = cog["validation"] or {}
                     _tests_ok = _extract_tests_passed(_val)
 
@@ -3021,12 +3031,10 @@ Respond JSON only:
                                 run_three_cabin,
                             )
                             _persona_obj = None
-                            try:
+                            with contextlib.suppress(Exception):
                                 _persona_obj = (
                                     self._get_persona_manager().get_persona("default")
                                 )
-                            except Exception:
-                                pass
                             _step_eval, _hint_text = run_three_cabin(
                                 cog=cog,
                                 evals_history=self._evals_history,
@@ -3057,7 +3065,7 @@ Respond JSON only:
                             _val, _tests_ok, cog.get("execution_result"),
                             step_id=len(self._evals_history),
                         )
-                        _step_eval = _NS(**_se_fields)
+                        _step_eval = SimpleNamespace(**_se_fields)
                         self._evals_history.append(_step_eval)
 
                     # AV4: detect_drift + TaskMetrics — 调共享函数
@@ -3092,13 +3100,12 @@ Respond JSON only:
                 # pause 退化为 hint 注入. 升级路径: 接 routes SSE 决策流.
                 try:
                     from huginn.autoloop.cognitive_loop import (
-                        build_pmk_state, check_pause_decision,
+                        build_pmk_state,
+                        check_pause_decision,
                     )
                     _persona_obj = None
-                    try:
+                    with contextlib.suppress(Exception):
                         _persona_obj = self._get_persona_manager().get_persona("default")
-                    except Exception:
-                        pass
                     _pmk_state = build_pmk_state(
                         _persona_obj, _step_eval,
                         self._get_kb() if hasattr(self, "_get_kb") else None,
@@ -3158,7 +3165,8 @@ Respond JSON only:
                 if _use_gate:
                     try:
                         from huginn.metacog.completion_gate import (
-                            CompletionGate, GateContext,
+                            CompletionGate,
+                            GateContext,
                         )
                         _gate = CompletionGate(
                             auditor_factory=self._get_metacog_completion_auditor,
@@ -3166,13 +3174,11 @@ Respond JSON only:
                             judge_every_n=3,
                         )
                         _families = 0
-                        try:
+                        with contextlib.suppress(Exception):
                             _families = len([
                                 f for f in self._get_metacog_method_registry().all()
                                 if f.member_agent_ids
                             ])
-                        except Exception:
-                            pass
                         _gctx = GateContext(
                             iteration=state.iteration,
                             max_iterations=max_iterations,
@@ -3238,8 +3244,14 @@ Respond JSON only:
                     # 每 3 轮或最后一轮调 GoalJudge.judge 判 goal_achieved.
                     # achieved + metacog 不阻断 → should_stop; gaps → 注入 hint.
                     # ponytail: GoalJudge(llm=None) 走规则版, LLM judge 留 exit 阶段.
-                    if goal is not None and not state.should_stop:
-                        if state.iteration % 3 == 2 or state.iteration >= max_iterations - 1:
+                    if (
+                        goal is not None
+                        and not state.should_stop
+                        and (
+                            state.iteration % 3 == 2
+                            or state.iteration >= max_iterations - 1
+                        )
+                    ):
                             try:
                                 from huginn.evaluation.goal_judge import GoalJudge
 

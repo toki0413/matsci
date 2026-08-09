@@ -6,6 +6,7 @@ StyleLearner 实例通过共享单例在 agent / route / tool 之间流转,
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from huginn.personalization.taste_profile import (
@@ -17,7 +18,7 @@ from huginn.personalization.taste_profile import (
     load_profile,
 )
 from huginn.personalization.user_style import StyleLearner, UserStyleProfile
-import logging
+
 logger = logging.getLogger(__name__)
 
 

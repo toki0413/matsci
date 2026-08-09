@@ -12,10 +12,13 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from huginn.cognitive_engine import FEEDBACK_PROMPT, STATE_PROMPTS, CognitiveState
-from huginn.utils.belief_entropy import BeliefEntropy, BeliefEntropyConfig, get_belief_entropy
-from huginn.utils.context import compact_messages, _replace_tool_content
-
+from huginn.cognitive_engine import FEEDBACK_PROMPT
+from huginn.utils.belief_entropy import (
+    BeliefEntropy,
+    BeliefEntropyConfig,
+    get_belief_entropy,
+)
+from huginn.utils.context import _replace_tool_content, compact_messages
 
 # ── #1: set_mode 同步 permission_config ──────────────────────────
 
@@ -171,9 +174,10 @@ def test_feedback_prompt_has_adversarial_stance():
 
 def test_red_team_prompt_has_adversarial_stance():
     """red_team system prompt 应包含反向激励."""
-    from huginn.autoloop.red_team import RedTeamReviewer
     # 检查源码里包含反向激励文案
     import inspect
+
+    from huginn.autoloop.red_team import RedTeamReviewer
     src = inspect.getsource(RedTeamReviewer._llm_findings)
     assert "反向激励" in src
     assert "假设证据有错" in src

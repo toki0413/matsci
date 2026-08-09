@@ -18,6 +18,7 @@ from rich.panel import Panel
 from huginn.cli.context import CliContext
 from huginn.tools import register_all_tools
 from huginn.tools.registry import ToolRegistry
+
 logger = logging.getLogger(__name__)
 
 

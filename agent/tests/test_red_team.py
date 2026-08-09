@@ -17,8 +17,6 @@ from unittest.mock import MagicMock
 import pytest
 
 from huginn.autoloop.phase_gate import (
-    PhaseGate,
-    PhaseGateConfig,
     PhaseGateHook,
     get_shared_phase_gate_state,
 )
@@ -27,7 +25,6 @@ from huginn.autoloop.red_team import (
     RedTeamReport,
     RedTeamReviewer,
 )
-
 
 # ── dataclass tests ──────────────────────────────────────────────────────────
 

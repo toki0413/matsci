@@ -26,7 +26,7 @@ def _registry_or_503() -> ProvenanceRegistry:
         raise HTTPException(
             status_code=503,
             detail=f"provenance registry unavailable: {exc}",
-        )
+        ) from exc
 
 
 @router.get("")

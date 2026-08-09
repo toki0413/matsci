@@ -4,13 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import json
-import traceback
 from typing import Any
 
 from fastapi import APIRouter
 
 from huginn.server_core import (
-    _EDIT_TOOLS,
     _server_allows_tool,
     get_agent_factory,
     get_context,
@@ -31,7 +29,6 @@ async def list_tools() -> list[dict[str, Any]]:
 @router.post("/tools/{tool_name}")
 async def call_tool(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
     """Call a tool directly via HTTP."""
-    from huginn.types import ToolContext
 
     tool = ToolRegistry.get(tool_name)
     if not tool:
@@ -67,7 +64,6 @@ async def call_tool(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
         agent_factory=get_agent_factory(),
         audit_logger=get_context().audit_logger,
     )
-    import asyncio
     if asyncio.iscoroutinefunction(tool.call):
         result = await tool.call(input_data.model_dump(), context)
     else:

@@ -79,7 +79,7 @@ def _print_step(
     if error:
         console.print(f"[cyan]│[/cyan]  [red]error: {error}[/red]")
 
-    console.print(f"[cyan]└─[/cyan]")
+    console.print("[cyan]└─[/cyan]")
 
 
 @click.command()

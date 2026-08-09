@@ -1,7 +1,7 @@
 """Tests for the NumericalAnalysis error-bound framework in Lean 4."""
 
-from pathlib import Path
 import shutil
+from pathlib import Path
 
 import pytest
 
