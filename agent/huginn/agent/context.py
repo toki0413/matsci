@@ -136,7 +136,8 @@ class ContextMixin:
 
         # ponytail: prompt_builder 当前只对 S7 自修改态有独特价值 (metacog_segment);
         # 其他状态走原 base 路径, 保留 "RESEARCH MODE" / system_prompt 行为.
-        # 升级路径: 迁完 persona/tools 段到 prompt_builder 后, 所有状态都委托.
+        # persona 迁移完成: 将 self.system_prompt 传入 prompt_builder, 使其 persona_segment
+        # 使用 runtime persona 而非内置最小 persona.
         _csm = getattr(self, "_csm", None)
         _metacog = getattr(getattr(_csm, "state", None), "value", None) or "s0_blank"
         if _metacog == "s7_self_modify":
@@ -146,7 +147,7 @@ class ContextMixin:
                 _mode = getattr(self, "_mode", "chat")
                 _pm = getattr(self, "_phase_manager", None)
                 _phase = getattr(getattr(_pm, "phase", None), "value", None) or "execute"
-                built = _build_prompt(_mode, _phase, _metacog)
+                built = _build_prompt(_mode, _phase, _metacog, self.system_prompt)
                 if built and len(built) > len(base) * 0.5:
                     return built
             except Exception:

@@ -510,6 +510,7 @@ class HuginnConfig:
     ) -> None:
         """Apply CLI flag overrides to this config instance in-place."""
         if provider:
+            # CLI 传入的是未约束的 str, 字段是 Literal; mypy 无法通过运行时校验收窄, 保留 ignore
             self.provider = provider  # type: ignore[assignment]
         if model:
             self.model = model
@@ -518,6 +519,7 @@ class HuginnConfig:
         if ollama_url:
             self.ollama_host = ollama_url
         if thinking:
+            # 同 provider: str → ThinkingIntensity Literal 收窄, mypy 无法静态验证
             self.thinking = thinking  # type: ignore[assignment]
 
     def build_agent_kwargs(self, profile_id: str = "lead") -> dict[str, Any]:
@@ -670,6 +672,7 @@ class HuginnConfig:
             models = [
                 ModelConfig(
                     alias="default",
+                    # provider 来自 env/CLI 的 str, 字段是 Literal; 运行时无法静态收窄
                     provider=provider,  # type: ignore[arg-type]
                     model=os.environ.get("HUGINN_MODEL"),
                     api_key=api_key,
@@ -713,6 +716,7 @@ class HuginnConfig:
                 k.strip() for k in os.environ.get("MINERU_API_KEYS", "").split(",")
                 if k.strip()
             ],
+            # 以下两处 Literal 字段从 env str 读取, mypy 无法静态收窄 str → Literal
             execution_backend=os.environ.get("HUGINN_EXECUTION_BACKEND", "local").lower(),  # type: ignore[arg-type]
             container_runtime=os.environ.get("HUGINN_CONTAINER_RUNTIME", "none").lower(),  # type: ignore[arg-type]
             container_image=os.environ.get("HUGINN_CONTAINER_IMAGE") or None,
@@ -814,7 +818,7 @@ class HuginnConfig:
             thinking=thinking,
             max_tokens=max_tokens,
             pet_name=os.environ.get("HUGINN_PET_NAME", "渡鸦").strip() or "渡鸦",
-            pet_personality=os.environ.get("HUGINN_PET_PERSONALITY", "cheerful").strip().lower() or "cheerful",  # type: ignore[arg-type]
+            pet_personality=os.environ.get("HUGINN_PET_PERSONALITY", "cheerful").strip().lower() or "cheerful",  # type: ignore[arg-type]  # env str → Literal 收窄
             extreme_dispatch=os.environ.get("HUGINN_EXTREME_DISPATCH", "0").lower()
             in ("1", "true"),
             wm_summarize=os.environ.get("HUGINN_WM_SUMMARIZE", "rule").strip().lower()
@@ -832,6 +836,7 @@ class HuginnConfig:
         if not raw:
             return None
         if raw in ("low", "medium", "high"):
+            # 已运行时校验 raw ∈ Literal 值域, 但 mypy 无法通过 in 检查将 str 收窄为 Literal
             return raw  # type: ignore[return-value]
         try:
             data = json.loads(raw)
