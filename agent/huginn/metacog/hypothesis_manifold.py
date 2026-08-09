@@ -754,6 +754,8 @@ class HypothesisManifold:
         # asyncio.gather 对 CPU-bound 是串行; 只有未启用 se3/haptic/alignment
         # (这些依赖不可 pickle 的对象) 且显式允许时, 才走 ProcessPool 真并行.
         # HUGINN_MCMC_PARALLEL=0 强制回退 asyncio (回归逃生门).
+        # ponytail: 升级路径 B (Ray) — 触发条件: 有第二台机要加进来 / 需要
+        # actor 状态驻留 / 跨机自动容错. 当前单机 ProcessPool 已覆盖, 不加.
         _pp_enabled = (
             os.environ.get("HUGINN_MCMC_PARALLEL", "1") != "0"
             and not (se3_enabled or haptic_enabled or alignment_enabled)
