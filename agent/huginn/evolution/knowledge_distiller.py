@@ -169,7 +169,7 @@ class KnowledgeDistiller:
             # Generate lesson text
             lesson = self._generate_error_lesson(tool, error, software, calc_type)
             if lesson:
-                kid = f"err_{tool}_{hashlib.md5(error.encode()).hexdigest()[:8]}"
+                kid = f"err_{tool}_{hashlib.md5(error.encode(), usedforsecurity=False).hexdigest()[:8]}"
                 if any(k.knowledge_id == kid for k in self.knowledge_base):
                     continue
                 # 语义去重: 不同 error message 可能生成相同 lesson
@@ -217,7 +217,7 @@ class KnowledgeDistiller:
 
             if common_params:
                 content = f"Successful {calc_type} calculation with {software} uses these parameters: {json.dumps(common_params, ensure_ascii=False)}"
-                kid = f"succ_{key}_{hashlib.md5(content.encode()).hexdigest()[:8]}"
+                kid = f"succ_{key}_{hashlib.md5(content.encode(), usedforsecurity=False).hexdigest()[:8]}"
                 if any(k.knowledge_id == kid for k in self.knowledge_base):
                     continue
 
@@ -294,7 +294,7 @@ class KnowledgeDistiller:
             # Extract factual statements
             facts = self._extract_facts(user_msg, agent_resp)
             for fact in facts:
-                kid = f"fact_{hashlib.md5(fact.encode()).hexdigest()[:8]}"
+                kid = f"fact_{hashlib.md5(fact.encode(), usedforsecurity=False).hexdigest()[:8]}"
                 if any(k.knowledge_id == kid for k in self.knowledge_base):
                     continue
 
@@ -344,7 +344,7 @@ class KnowledgeDistiller:
             content_parts.append("## Knowledge Gaps\n" + "\n".join(f"- {g}" for g in gaps))
         content = "\n\n".join(content_parts)
 
-        kid = f"feynman_{iteration}_{hashlib.md5(content.encode()).hexdigest()[:8]}"
+        kid = f"feynman_{iteration}_{hashlib.md5(content.encode(), usedforsecurity=False).hexdigest()[:8]}"
         dk = DistilledKnowledge(
             knowledge_id=kid,
             content=content,
@@ -432,7 +432,7 @@ class KnowledgeDistiller:
                 content_parts.append(f"\nExample {i+1}:\n{prim}")
             content = "\n".join(content_parts)
 
-            kid = f"visual_lesson_{tool}_{hashlib.md5(content.encode()).hexdigest()[:8]}"
+            kid = f"visual_lesson_{tool}_{hashlib.md5(content.encode(), usedforsecurity=False).hexdigest()[:8]}"
             if any(k.knowledge_id == kid for k in self.knowledge_base):
                 continue
 

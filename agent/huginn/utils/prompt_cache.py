@@ -78,7 +78,7 @@ class PromptCacheBuilder:
         entire prefix. A persona switch or prompt rebuild counts as a miss.
         """
         raw = f"{self.system_prompt}\x00{self.begin_dialogs}"
-        key = hashlib.md5(raw.encode("utf-8")).hexdigest()
+        key = hashlib.md5(raw.encode("utf-8"), usedforsecurity=False).hexdigest()
         if key == self._last_prefix_key:
             self.cache_hits += 1
             self._inc_metric("hit")

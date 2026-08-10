@@ -44,7 +44,7 @@ def _harness_enabled(key: str, default: bool = False) -> bool:
 
 
 def _objective_hash(objective: str) -> str:
-    return hashlib.md5(objective.encode("utf-8")).hexdigest()[:12]
+    return hashlib.md5(objective.encode("utf-8"), usedforsecurity=False).hexdigest()[:12]
 
 
 @dataclass

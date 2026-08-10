@@ -14,7 +14,7 @@
 | 测试套件 | ✅ 通过 | 322 文件全部通过或合理跳过, 0 预存代码 bug |
 | 依赖安全 | ✅ 通过 | 329 依赖扫描, 漏洞已修复或评估为不受影响 |
 | 性能基准 | ✅ 通过 | 7 项基准全部通过, 无退化 |
-| 安全审计 | ✅ 通过 | 0 Critical/High, 3 Medium(可接受) |
+| 安全审计 | ✅ 通过 | SAST 修复前 29 HIGH → 修复后 0 HIGH; 6 个 PoC 动态验证全过 |
 | 版本就绪 | ✅ 完成 | 0.1.0 Alpha → 0.2.0 Beta |
 
 **结论**: 可进入预发布 (Beta) 阶段。
@@ -116,19 +116,42 @@
 
 ### 5.1 审计范围
 
-OWASP Top 10 的 7 大类风险, 覆盖 30+ 文件。
+两层审计:
+1. **静态扫描 (SAST)**: bandit 全量扫描 `huginn/` (4400+ 规则匹配)
+2. **动态渗透测试**: 针对发现的漏洞编写 PoC 验证修复有效性 ([tests/pentest_archive_safety.py](file:///workspace/agent/tests/pentest_archive_safety.py))
 
-### 5.2 审计结果
+OWASP Top 10 覆盖 7 大类风险, 30+ 文件。
 
-| 级别 | 数量 | 说明 |
-|------|------|------|
-| Critical | 0 | — |
-| High | 0 | — |
-| Medium | 3 | pickle 回退, numerical_tool eval, code_tool self_check |
-| Low | 4 | discrete_smt eval, CORS 默认源等 |
-| Info | 3 | exec 在沙箱内, repr 转义正确等 |
+### 5.2 审计结果 (SAST)
 
-### 5.3 已确认的安全防护
+| 级别 | 修复前 | 修复后 | 说明 |
+|------|--------|--------|------|
+| Critical | 0 | 0 | — |
+| High | 29 | **0** | 9 B202 路径遍历 + 17 B324 弱哈希 + 2 B507 Paramiko + 1 B602 shell=True |
+| Medium | 94 | 94 | 多为 try/except/continue, subprocess 等设计性模式 |
+| Low | 4292 | 4292 | B101 assert (测试代码), 各种通用模式 |
+
+### 5.3 High 漏洞修复明细
+
+| 漏洞 | 文件 | 修复方式 |
+|------|------|---------|
+| **B202 tarfile/zip 路径遍历** (9处) | smart_ingest.py, export_share.py, crypto.py, remote_executor.py | 抽取公共 [huginn/utils/archive_safety.py](file:///workspace/agent/huginn/utils/archive_safety.py), 实现 `safe_archive_extract`: 3.12+ 用官方 `data_filter`, 老版本手动校验 `..`/绝对路径/符号链接; 同时限制单成员 1GB, 总解压 10GB 防炸弹 |
+| **B324 弱哈希 (md5/sha1)** (17处) | autoloop/, evolution/, knowledge/, runtime/, utils/, cli/rcb_runner.py | 14 处缓存键用途加 `usedforsecurity=False`; 1 处 routes/bot.py 是企业微信 API 协议规定 SHA1, `# nosec B324` 标记 |
+| **B507 Paramiko AutoAddPolicy** (2处) | hpc/client.py, routes/terminal.py | 已有 `strict_host_key_checking` 配置开关, 默认走 RejectPolicy; `AutoAddPolicy` 仅在用户显式关闭时降级使用, `# nosec B507` 标记 |
+| **B602 shell=True** (1处) | tools/persistent_terminal.py | 终端工具设计本质就是执行 shell 命令, `# nosec B602` 标记 |
+
+### 5.4 动态渗透测试 PoC (6 个全通过)
+
+| PoC | 攻击类型 | 验证结果 |
+|-----|---------|---------|
+| test_zip_slip_blocked | zip-slip (`../../evil.txt`) | ✅ 拦截 |
+| test_tar_slip_blocked | tar-slip (`../../evil_tar.txt`, `/tmp/...`) | ✅ 拦截 |
+| test_symlink_escape_blocked | 符号链接指向 /etc/passwd | ✅ 拦截 |
+| test_zip_bomb_size_capped | 高压缩比 zip bomb | ✅ 大小限制生效 |
+| test_smart_ingest_zip_slip_end_to_end | SmartIngester 端到端 | ✅ 拦截 |
+| test_export_share_import_zip_slip | ExportShareManager.import_all 端到端 | ✅ 拦截 |
+
+### 5.5 已确认的安全防护
 
 | 防护项 | 实现位置 | 评估 |
 |--------|----------|------|
@@ -138,18 +161,23 @@ OWASP Top 10 的 7 大类风险, 覆盖 30+ 文件。
 | JWT 签名+撤销 | security/auth.py, rbac.py | ✅ 良好 |
 | 配置脱敏 | config.py (to_dict mask_key) | ✅ 良好 |
 | SSRF 防护 | web_search_tool.py (_is_ssrf_blocked) | ✅ 良好 |
+| **归档路径遍历防护** | huginn/utils/archive_safety.py | ✅ **新增** |
 | 路径遍历防护 | file_write_tool.py (commonpath) | ✅ 良好 |
 | safe_eval AST 白名单 | security/safe_eval.py | ✅ 优秀 |
 | CORS 配置 | server.py (通配源禁用凭证) | ✅ 良好 |
 | .gitignore 排除敏感文件 | .gitignore | ✅ 良好 |
 
-### 5.4 待改进项 (Medium, 可接受)
+### 5.6 待改进项 (Medium, 可接受)
 
 1. **numerical_tool.py 的 eval()** — 建议迁移到 `security/safe_eval.py`
 2. **kernel_session.py pickle 回退** — 建议设定迁移截止日期后删除
 3. **code_tool.py self_check** — 建议对 check_code 调用 `validate_code`
 
 > 这些问题影响面有限 (沙箱内执行或本地工具), 不阻塞 Beta 发布。
+
+### 5.7 诚实声明
+
+之前版本的本报告曾写 "0 Critical/High", 那是因为只做了**人工代码审查**, 漏掉了**自动化 SAST 扫描**。补充 bandit 全量扫描后实际发现 29 个 HIGH, 现已全部修复或合理标记 nosec。同时为修复点编写了 6 个 PoC 动态验证。**这是发布前必须做的, 之前遗漏是工作失误。**
 
 ---
 
@@ -167,7 +195,8 @@ OWASP Top 10 的 7 大类风险, 覆盖 30+ 文件。
 - [x] 测试套件全量回归通过 (322 文件, 0 预存 bug)
 - [x] 依赖漏洞扫描完成 (329 依赖, 漏洞已处理)
 - [x] 性能基准测试通过 (7 项基准)
-- [x] 安全渗透测试审计完成 (0 Critical/High)
+- [x] SAST 静态扫描完成 (bandit, 29 HIGH → 0 HIGH)
+- [x] 动态渗透测试完成 (6 PoC: zip/tar slip, symlink, zip bomb, 端到端)
 - [x] 版本号升级 (0.1.0 → 0.2.0 Beta)
 - [x] DEPLOYMENT.md 部署文档完整
 - [x] SECURITY.md 安全策略完整
@@ -195,3 +224,6 @@ OWASP Top 10 的 7 大类风险, 覆盖 30+ 文件。
 | [pip_audit_report.json](file:///workspace/agent/pip_audit_report.json) | 依赖漏洞扫描报告 |
 | [run_benchmark_simple.py](file:///workspace/agent/run_benchmark_simple.py) | 性能基准脚本 |
 | [benchmark_simple.json](file:///workspace/agent/benchmark_simple.json) | 性能基准结果 |
+| [huginn/utils/archive_safety.py](file:///workspace/agent/huginn/utils/archive_safety.py) | 公共安全归档解压工具 |
+| [tests/pentest_archive_safety.py](file:///workspace/agent/tests/pentest_archive_safety.py) | 动态渗透测试 PoC |
+| [bandit_final3.json](file:///workspace/agent/bandit_final3.json) | SAST 最终扫描结果 |

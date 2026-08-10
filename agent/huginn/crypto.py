@@ -265,16 +265,16 @@ class CryptoVault:
 
     def decrypt_directory(self, src_path: str | Path, dst_dir: str | Path) -> None:
         """Decrypt a tar archive to a directory."""
+        from huginn.utils.archive_safety import safe_archive_extract
+
         dst = Path(dst_dir)
         dst.mkdir(parents=True, exist_ok=True)
 
         with tempfile.NamedTemporaryFile(suffix=".tar", delete=False) as tmp:
             self.decrypt_file(src_path, tmp.name)
             with tarfile.open(tmp.name, "r") as tar:
-                if hasattr(tarfile, "data_filter"):
-                    tar.extractall(path=dst, filter=tarfile.data_filter)
-                else:
-                    tar.extractall(path=dst)
+                # safe_archive_extract 会在 3.12+ 用 data_filter, 否则走手动路径检查.
+                safe_archive_extract(tar, dst)
 
         os.unlink(tmp.name)
 
