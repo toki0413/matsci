@@ -27,10 +27,6 @@ class FeatureFlags:
     """统一 opt-out 开关层. 默认全开, 用户可关."""
 
     # 所有可关的功能, 默认全 True (privacy_* 三个除外, 互斥)
-    # P3-2: 删除 9 个 is_enabled() 从未被调用的废开关 (least_effort_path,
-    # data_postprocess_rule, tool_cache, parallel_executor, scenario_tool,
-    # benchmark, uq_propagate, circuit_breaker, health_dashboard) — 对应
-    # feature 全部已硬接线或模块未接入, flag 设了等于没设.
     _DEFAULTS: dict[str, bool] = {
         "speculator": True,            # 投机执行 (意图预测+工具预热)
         "provenance": True,            # 计算快照
