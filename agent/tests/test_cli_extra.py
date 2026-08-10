@@ -477,6 +477,10 @@ class TestRefactorCli:
 
 
 class TestSchedulerCli:
+    @pytest.mark.skipif(
+        __import__("importlib.util").util.find_spec("croniter") is None,
+        reason="croniter not installed",
+    )
     def test_scheduler_delete_and_run_now(self, tmp_path: Path):
         runner = CliRunner()
         result = runner.invoke(
