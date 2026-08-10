@@ -144,8 +144,10 @@ python -m huginn.server
 ### Production Mode
 
 ```bash
-export HUGINN_API_KEY="secure-random-key-64-chars"
-export HUGINN_ADMIN_API_KEY="admin-secure-random-key"
+# ⚠️ 生产环境必须使用强随机密钥, 不要用示例值!
+# 生成方法: python -c "import secrets; print(secrets.token_urlsafe(48))"
+export HUGINN_API_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(48))')"
+export HUGINN_ADMIN_API_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(48))')"
 python -m huginn.server --host 0.0.0.0 --port 8000
 ```
 
