@@ -36,6 +36,13 @@ class FeatureFlags:
         "loop_detector": True,         # 循环检测
         "system_health_monitor": True,  # 系统资源监控 (CPU/内存/磁盘)
         "system_health_auto_fix": False,  # 监控发现异常后自动熔断 (默认关, 只报告)
+        # v23 Round 9: 两个 router 之前是 raw env var (HUGINN_CONTEXT_ROUTER /
+        # HUGINN_TASK_TOOL_ROUTER), 极端模式 setdefault "1". 现纳入 FeatureFlags
+        # 统一接管, 默认关 (普通模式不开), 极端模式通过 FeatureFlags.enable() 开.
+        # 注意: 模块代码仍读 env var, FeatureFlags 这里只是登记, 不直接控制.
+        # 升级路径: 模块代码改为读 FeatureFlags 后, 删除 env var setdefault.
+        "context_router": False,       # P3 信息路径多样性稀疏化 (context_builder)
+        "task_tool_router": False,     # task keyword → tool category 动态路由
         # 隐私三档, 互斥. PrivacyGuard.set_level 负责保证同时只一个 True.
         # privacy_off 仅由 set_level 维护互斥, 外部设置无效.
         "privacy_off": True,           # 不脱敏 (默认)
@@ -53,6 +60,8 @@ class FeatureFlags:
         "loop_detector": "对话循环检测",
         "system_health_monitor": "系统资源监控 (CPU/内存/磁盘)",
         "system_health_auto_fix": "监控异常后自动熔断工具 (默认关)",
+        "context_router": "P3 信息路径多样性稀疏化 (context_builder, 默认关)",
+        "task_tool_router": "task keyword → tool category 动态路由 (默认关)",
         "privacy_off": "隐私级别: off (不脱敏, 默认. 仅由 set_level 维护互斥, 外部设置无效)",
         "privacy_redact": "隐私级别: redact (脱敏后发云端)",
         "privacy_local_only": "隐私级别: local_only (完全本地)",
