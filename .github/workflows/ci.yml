@@ -68,8 +68,10 @@ jobs:
         run: |
           # github runner 只有 7G RAM, 4708 个测试串行跑会在 65% 处 OOM.
           # 加 6G swap (用 /swapfile-ci 避开系统默认 /swapfile 冲突).
-          # --forked 隔离每个测试防内存累积; 8 个 TestClient/HuginnAgent
-          # 测试因 fork+线程不兼容单独走 http-tests job (无 --forked).
+          # 不用 --forked: pytest-forked 对多线程进程 (TestClient/ASGI/
+          # concurrent) fork 会导致死锁, 10 个 worker crash. xdist -n 2
+          # 本身就是独立子进程, 提供足够的内存隔离. 8 个 TestClient/
+          # HuginnAgent 测试单独走 http-tests job (串行, 无 --forked).
           if [ ! -f /swapfile-ci ]; then
             sudo fallocate -l 6G /swapfile-ci
             sudo chmod 600 /swapfile-ci
@@ -98,7 +100,7 @@ jobs:
         run: |
           cd agent
           python -m pytest -v -rA --tb=line -p no:cov -o addopts="" \
-            --timeout=60 --timeout-method=thread --forked \
+            --timeout=60 --timeout-method=thread \
             -n 2 -m "not network" \
             --ignore=tests/test_api_contract.py \
             --ignore=tests/test_security_penetration.py \
