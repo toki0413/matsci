@@ -166,6 +166,19 @@ class TestMemoryGrowth:
 class TestLargeFileUpload:
     """大文件上传."""
 
+    @pytest.fixture(autouse=True)
+    def _stub_embedding(self, monkeypatch):
+        """Stub the embedding model so upload-perf tests don't hang on real
+        sentence-transformers inference (60s+ on CI CPU for 1MB of text)."""
+        import numpy as np
+
+        from huginn.knowledge.store import _EmbeddingModel
+
+        def _fake_encode(self, texts, cache_key=None):
+            return np.zeros((len(texts), 384), dtype=np.float32)
+
+        monkeypatch.setattr(_EmbeddingModel, "encode", _fake_encode)
+
     def test_upload_1mb_file(self, app_client, admin_token):
         """1MB 文件上传不超时."""
         content = b"x" * (1024 * 1024)
