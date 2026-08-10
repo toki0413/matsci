@@ -255,6 +255,30 @@ jobs:
           # pip is upgraded above so tooling-level advisories don't trip the gate.
           pip-audit --desc
 
+      - name: SAST scan with bandit
+        run: |
+          pip install bandit
+          cd agent
+          # HIGH severity 必须为 0, MEDIUM 仅警告
+          bandit -r huginn/ -ll || exit 1
+          # tests/ 目录单独扫, 允许 B101 (assert)
+          bandit -r tests/ -ll -s B101 || exit 1
+
+      - name: Run archive security PoC tests
+        run: |
+          cd agent
+          python -m pytest tests/pentest_archive_safety.py -v --no-cov
+
+      - name: Run API security PoC tests
+        run: |
+          cd agent
+          python -m pytest tests/pentest_api_security.py -v --no-cov
+
+      - name: Run API fuzz tests
+        run: |
+          cd agent
+          python -m pytest tests/fuzz_api.py -v --no-cov
+
   rust-check:
     runs-on: ubuntu-latest
     steps:
