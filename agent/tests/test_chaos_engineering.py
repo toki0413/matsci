@@ -358,6 +358,9 @@ class TestFileSystemFailure:
 
     def test_write_readonly_file_handled(self, tmp_path):
         """写入只读文件, 应返回错误而非 crash。"""
+        # root 用户可绕过文件权限 (DAC), PermissionError 不会触发
+        if os.geteuid() == 0:
+            pytest.skip("root bypasses file permissions (DAC)")
         ro_file = tmp_path / "readonly.txt"
         ro_file.write_text("original")
         ro_file.chmod(0o444)  # 只读

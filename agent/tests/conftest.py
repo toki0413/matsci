@@ -7,6 +7,18 @@ from pathlib import Path
 
 import pytest
 
+# 脚本式测试文件: 用 `python -m tests.test_xxx` 运行, 不含 test_* 函数,
+# pytest 收集会得到 0 项并 exit 5. 在这里统一忽略, 避免被误判为失败.
+collect_ignore_glob = [
+    "test_async_pipeline.py",
+    "test_clawbench_runner.py",
+    "test_next_step_advisor.py",
+    "test_temporal_iter_hist.py",
+    "test_temporal_p2p3.py",
+    "test_temporal_pmk.py",
+    "test_temporal_spatial.py",
+]
+
 # Tests run on the local machine without a container runtime by default.
 os.environ.setdefault("HUGINN_ALLOW_LOCAL_BASH", "1")
 os.environ.setdefault("HUGINN_ALLOW_UNRESTRICTED_READ", "1")
