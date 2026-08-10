@@ -44,9 +44,9 @@ from typing import Any
 # ponytail: 仍 stdlib only — 不引 numpy. 用 list-of-list 做矩阵乘法.
 # 升级路径: n > 200 时换 numpy QR 分解 (矩阵运算 O(k²n) 会变贵).
 # 数值保证: k >= n 时 R 是 n×n 正交矩阵, 投影距离与原 O(n) 遍历误差 < 1e-9.
+# 当前 huginn 场景 n 通常 2-3, 投影分支不可达; 留作 n 增大时的 future hook.
 
 # 子空间目标维度: n > _SUBSPACE_K 时启用 R 矩阵投影降维.
-# ponytail: 200 是经验阈值, 大多数 huginn 场景 n < 10, 不会触发.
 _SUBSPACE_K = 200
 
 
@@ -223,8 +223,7 @@ class HypothesisManifold:
             raise ValueError(f"duplicate h_id: {h.h_id}")
         self._hyp[h.h_id] = h
         # B1: 新 key 加入后标记 R 矩阵需要重算 (lazy).
-        # ponytail: 之前每次 add 都全量 QR, O(m·n²) 无收益开销 —
-        # 实际 n=2~3 远低于 _SUBSPACE_K=200, 投影路径永不触发.
+        # 当前 n 远低于 _SUBSPACE_K, 投影路径不可达, R 保持 None.
         new_keys = [k for k in h.predictions if k not in self._keys]
         if new_keys:
             self._keys.extend(new_keys)
@@ -348,7 +347,7 @@ class HypothesisManifold:
 
         # B1: 当 _R 可用且子空间维度 k < n 时走投影路径, 否则走原 O(n) 遍历.
         # 数值保证: k >= n 时 ||R^T d|| == ||d|| (R 列正交), 投影路径与遍历路径等价.
-        # ponytail: 当前 huginn 场景 n 通常 2-3, 不会触发降维. 留 R 矩阵作为
+        # 当前 huginn 场景 n 通常 2-3, 不会触发降维. 留 R 矩阵作为
         # n 增大时的 future hook — 升级路径: n > 200 时启用投影 + 增量 QR.
         # P1-3: _rebuild_R 改 lazy — 只在真正需要投影路径 (n > _SUBSPACE_K) 时才算.
         if self._keys and len(self._keys) > _SUBSPACE_K:

@@ -966,7 +966,9 @@ class HuginnAgent(
         try:
             from huginn.privacy_guard import PrivacyGuard
 
-            PrivacyGuard.shared().purge_session()
+            purged = PrivacyGuard.shared().purge_session()
+            if purged:
+                logger.info("purged %d ephemeral privacy entries", len(purged))
         except Exception:
             logger.warning("privacy purge failed", exc_info=True)
         self._exit_stack.close()
