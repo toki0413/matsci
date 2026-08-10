@@ -175,13 +175,6 @@ class StateRegistry:
             self._cache.move_to_end(nk)
             return value
 
-    def list_keys(self, namespace: str) -> list[str]:
-        """列出某个 namespace 下所有的 key (DB + 已注册)."""
-        with self._lock:
-            db_keys = self._db_list_keys(namespace)
-            reg_keys = {k for ns, k in self._fields if ns == namespace}
-            return sorted(set(db_keys) | reg_keys)
-
     # ------------------------------------------------------------------ DB ops
 
     def _db_get(self, nk: tuple[str, str]) -> Any | None:
@@ -222,16 +215,6 @@ class StateRegistry:
                 "DELETE FROM state_kv WHERE namespace=? AND key=?", nk
             )
             conn.commit()
-        finally:
-            conn.close()
-
-    def _db_list_keys(self, namespace: str) -> list[str]:
-        conn = sqlite3.connect(str(self._db_path))
-        try:
-            rows = conn.execute(
-                "SELECT key FROM state_kv WHERE namespace=?", (namespace,)
-            ).fetchall()
-            return [r[0] for r in rows]
         finally:
             conn.close()
 
@@ -276,14 +259,7 @@ if __name__ == "__main__":
         except KeyError:
             pass
 
-        # 7. list_keys
-        reg2.register("test", "flag", lambda: True)
-        reg2.set("test", "flag", False)
-        keys = reg2.list_keys("test")
-        assert "counter" in keys
-        assert "flag" in keys
-
-        # 8. LRU evict (cache 满了不崩)
+        # 7. LRU evict (cache 满了不崩)
         reg3 = StateRegistry(db_path=Path(td) / "lru.sqlite")
         reg3._cache_max = 3
         for i in range(10):

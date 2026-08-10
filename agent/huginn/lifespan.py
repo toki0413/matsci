@@ -148,6 +148,125 @@ async def _init_mcp_tools():
     await _load_star_plugins()
 
 
+def _make_plugin_context_factory():
+    """创建注入真实依赖的 context_factory.
+
+    之前 PluginLoader 用 default_context_factory, 只填 plugin_name,
+    llm_client / tool_registry / storage / event_bus 全是 None.
+    插件调 Star.llm / Star.storage 必然 RuntimeError.
+    这里从 ServerContext 拿真实组件注入.
+    """
+    from huginn.api.context import PluginContext
+    from huginn.plugins.event_bus import EventBus
+    from huginn.tools.registry import ToolRegistry
+
+    bus = EventBus()
+
+    class _LLMAdapter:
+        """适配 ModelRegistry 到 LLMClient 协议 (chat + stream)."""
+
+        def __init__(self) -> None:
+            from huginn.config import get_config
+            from huginn.models.registry import ModelRegistry
+
+            self._registry = ModelRegistry.from_config(get_config())
+            self._default_alias: str | None = None
+            for ref in self._registry.list():
+                if ref.enabled:
+                    self._default_alias = ref.alias
+                    break
+
+        def _resolve(self, model: str | None):
+            alias = model or self._default_alias
+            if alias is None:
+                raise RuntimeError("no enabled LLM model configured for plugins")
+            return self._registry.get(alias)
+
+        @staticmethod
+        def _to_lc(messages: list[dict], system: str):
+            from langchain_core.messages import (
+                AIMessage,
+                HumanMessage,
+                SystemMessage,
+            )
+
+            msgs = []
+            if system:
+                msgs.append(SystemMessage(content=system))
+            for m in messages:
+                role = m.get("role", "user")
+                content = m.get("content", "")
+                if role == "system":
+                    msgs.append(SystemMessage(content=content))
+                elif role == "assistant":
+                    msgs.append(AIMessage(content=content))
+                else:
+                    msgs.append(HumanMessage(content=content))
+            return msgs
+
+        async def chat(
+            self,
+            messages: list[dict],
+            *,
+            system: str = "",
+            model: str | None = None,
+            **kwargs: Any,
+        ) -> str:
+            llm = self._resolve(model)
+            resp = await llm.ainvoke(self._to_lc(messages, system))
+            return getattr(resp, "content", str(resp))
+
+        def stream(
+            self,
+            messages: list[dict],
+            *,
+            system: str = "",
+            model: str | None = None,
+            **kwargs: Any,
+        ):
+            return self._stream(self._resolve(model), messages, system)
+
+        async def _stream(self, llm, messages, system):
+            async for chunk in llm.astream(self._to_lc(messages, system)):
+                text = getattr(chunk, "content", None)
+                if text:
+                    yield text
+
+    class _DictStorage:
+        """简单的内存 KV 存储, 满足 Storage 协议.
+
+        ponytail: dict 够用. 升级路径: 文件持久化.
+        """
+
+        def __init__(self) -> None:
+            self._d: dict[str, Any] = {}
+
+        def get(self, key: str, default: Any = None) -> Any:
+            return self._d.get(key, default)
+
+        def set(self, key: str, value: Any) -> None:
+            self._d[key] = value
+
+        def delete(self, key: str) -> bool:
+            return self._d.pop(key, None) is not None
+
+        def keys(self) -> list[str]:
+            return list(self._d)
+
+    _llm = _LLMAdapter()
+
+    def factory(meta):
+        return PluginContext(
+            llm_client=_llm,
+            tool_registry=ToolRegistry,
+            storage=_DictStorage(),
+            event_bus=bus,
+            plugin_name=meta.name,
+        )
+
+    return factory, bus
+
+
 async def _load_star_plugins() -> None:
     """Discover and load Star plugins from the plugins directory.
 
@@ -164,7 +283,12 @@ async def _load_star_plugins() -> None:
         base = Path(__file__).resolve().parent  # huginn/
         plugins_dir = base / "plugins"
 
-        loader = PluginLoader(plugins_dir=str(plugins_dir))
+        context_factory, event_bus = _make_plugin_context_factory()
+        loader = PluginLoader(
+            plugins_dir=str(plugins_dir),
+            context_factory=context_factory,
+            event_bus=event_bus,
+        )
         get_context().plugin_loader = loader
 
         discovered = loader.discover()

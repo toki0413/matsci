@@ -259,6 +259,8 @@ class PrivacyGuard:
         with self._lock:
             self._redact_count += 1
             self._type_counts[ctype] += 1
+            # 跟踪本次会话的脱敏条目, purge_session 时清除
+            self._ephemeral_keys.add(f"redact:{ctype}:{self._redact_count}")
 
         # 如果被标记为 local_only, 记审计并原样返回 (不应到达云端)
         if self.is_tagged_local(content):
