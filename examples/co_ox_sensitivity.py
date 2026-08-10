@@ -370,9 +370,9 @@ X_upper = np.percentile(X_curves, 97.5, axis=0)
 ax3.fill_between(T_smooth - 273.15, X_lower * 100, X_upper * 100,
                  color='steelblue', alpha=0.25, label='95% CI (MC)')
 ax3.plot(T_smooth - 273.15, X_smooth_mean * 100, 'b-', linewidth=2.5,
-         label=f'Fitted (mean)')
+         label='Fitted (mean)')
 ax3.plot(T_smooth - 273.15, X_smooth_true * 100, 'r--', linewidth=2,
-         label=f'True parameters')
+         label='True parameters')
 ax3.plot(T_C, X * 100, 'o', color='darkorange', markersize=10, zorder=5,
          label='Data')
 # Highlight the noisy points
@@ -399,19 +399,19 @@ print("SUMMARY")
 print("=" * 70)
 print(f"tau (space time) = {tau:.4f} s")
 print()
-print(f"Task 1 — Noise Sensitivity (5% on 400°C, 450°C):")
+print("Task 1 — Noise Sensitivity (5% on 400°C, 450°C):")
 print(f"  Ea     = {mean_Ea:.1f} ± {std_Ea:.1f} J/mol")
 print(f"  K_CO0  = {mean_KCO0:.6f} ± {std_KCO0:.6f}")
 print(f"  K_O2_0 = {mean_KO20:.6f} ± {std_KO20:.6f}")
 print()
-print(f"Task 2 — Data Point Requirement:")
+print("Task 2 — Data Point Requirement:")
 for N, std_val in zip(Ns, Ea_std_vs_N):
     print(f"  N={N}: Ea std = {std_val:.1f} J/mol")
 print()
-print(f"Task 3 — Optimal Temperature Placement:")
+print("Task 3 — Optimal Temperature Placement:")
 print(f"  Best 3 extra T: {np.sort(best_temps - 273.15)} °C")
 print(f"  Expected Ea std: {best_std_Ea:.1f} J/mol (baseline: {std_Ea_base:.1f})")
 print()
-print(f"Task 4 — Correlation Matrix:")
+print("Task 4 — Correlation Matrix:")
 for i, name in enumerate(param_names):
     print(f"  {name}: {corr[i]}")

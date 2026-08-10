@@ -6,10 +6,15 @@ import sys
 
 import pytest
 
-os.environ.pop("HUGINN_DEV_MODE", None)
-os.environ["HUGINN_API_KEY"] = "cors-key-0123456789abcdef"
-os.environ["HUGINN_JWT_SECRET"] = "cors-jwt-secret"
-os.environ["HUGINN_RATE_LIMIT_PER_MINUTE"] = "0"
+
+@pytest.fixture(autouse=True)
+def _isolated_auth_env(monkeypatch):
+    """Isolate auth env so we don't pollute other modules in the same worker."""
+    monkeypatch.delenv("HUGINN_DEV_MODE", raising=False)
+    monkeypatch.setenv("HUGINN_API_KEY", "cors-key-0123456789abcdef")
+    monkeypatch.setenv("HUGINN_JWT_SECRET", "cors-jwt-secret")
+    monkeypatch.setenv("HUGINN_RATE_LIMIT_PER_MINUTE", "0")
+    yield
 
 
 async def _noop():

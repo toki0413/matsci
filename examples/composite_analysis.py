@@ -31,7 +31,7 @@ print('='*70)
 print('\n--- 1. Shear-Lag Model (Kelly-Tyson) ---')
 print(f'  Graphene strength: {sigma_g/1e9:.0f} GPa')
 print(f'  Graphene thickness: {t_g*1e9:.3f} nm')
-print(f'  Critical length l_c = sigma_f * t / tau')
+print('  Critical length l_c = sigma_f * t / tau')
 print(f'    Poor (tau=5 MPa):   l_c = {l_c_poor*1e9:.1f} nm')
 print(f'    Good (tau=40 MPa):  l_c = {l_c_good*1e9:.1f} nm')
 print(f'    Covalent (80 MPa):  l_c = {l_c_excellent*1e9:.1f} nm')
@@ -82,7 +82,7 @@ print('\n--- 4. Toughening ---')
 G_pullout_1pct = 0.01 * sigma_g * l_c_good / 12
 print(f'  Pull-out energy at 1 vol% (good interface): {G_pullout_1pct/1e3:.1f} kJ/m^3')
 print(f'  Crack deflection tortuosity ~ L/t = {L_g/t_g:.0f}')
-print(f'  Fracture toughness increase: 2-5x at <1 wt%')
+print('  Fracture toughness increase: 2-5x at <1 wt%')
 
 # Figure
 fig, axes = plt.subplots(2, 3, figsize=(18, 11))

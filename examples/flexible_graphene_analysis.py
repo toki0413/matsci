@@ -100,7 +100,7 @@ print(f'  Failure strain:          {epsilon_failure*100:.0f}%')
 print(f'  Bending rigidity:        D = Et^3/12(1-nu^2) ~ {(E_graphene*1e9*(t_graphene*1e-9)**3/12/(1-0.165**2)):.2e} N*m')
 
 print('\n--- 2. Flexibility Figure of Merit ---')
-print(f'  FOM = sigma x epsilon_fail / R_sheet')
+print('  FOM = sigma x epsilon_fail / R_sheet')
 print(f'  Graphene:    {1e5*25/30:.1e}')
 print(f'  ITO:         {1e4*0.5/10:.1e}')
 print(f'  AgNW:        {5e4*5/15:.1e}')

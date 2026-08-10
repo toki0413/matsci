@@ -170,7 +170,7 @@ def bench_large_json():
     start = time.monotonic()
     for _ in range(N):
         raw = json_mod.dumps(large_dict)
-        parsed = json_mod.loads(raw)
+        json_mod.loads(raw)
     elapsed = time.monotonic() - start
     record("large_json_10k_5", elapsed, N, unit="serializations/s")
 

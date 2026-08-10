@@ -9,8 +9,8 @@ import numpy as np
 a = 5.65325  # GaAs lattice constant (A)
 
 # Bulk GaAs reference (PBC primitive cell)
-from pyscf.pbc import gto as pbc_gto
-from pyscf.pbc import dft as pbc_dft
+from pyscf.pbc import gto as pbc_gto  # noqa: E402
+from pyscf.pbc import dft as pbc_dft  # noqa: E402
 
 cell = pbc_gto.Cell()
 cell.a = np.array([[0, a/2, a/2], [a/2, 0, a/2], [a/2, a/2, 0]])
@@ -27,11 +27,15 @@ e_GaAs = mf.e_tot
 
 # Elemental references
 mol_Ga = gto.M(atom="Ga 0 0 0", basis="gth-szv", pseudo="gth-pbe", verbose=0, spin=1)
-e_Ga = dft.RKS(mol_Ga); e_Ga.xc='PBE'; e_Ga.kernel()
+e_Ga = dft.RKS(mol_Ga)
+e_Ga.xc = 'PBE'
+e_Ga.kernel()
 e_Ga_atom = e_Ga.e_tot
 
 mol_As = gto.M(atom="As 0 0 0", basis="gth-szv", pseudo="gth-pbe", verbose=0, spin=3)
-e_As = dft.RKS(mol_As); e_As.xc='PBE'; e_As.kernel()
+e_As = dft.RKS(mol_As)
+e_As.xc = 'PBE'
+e_As.kernel()
 e_As_atom = e_As.e_tot
 
 # Chemical potentials
@@ -96,7 +100,7 @@ print(f"  E(perfect Ga5As4) = {e_perf:.6f} Ha")
 # spin=0: N_alpha=36, N_beta=36 (closed shell)
 # spin=2: N_alpha=37, N_beta=35 (2 unpaired)
 # The 3 holes from V_Ga can pair up to give S=1
-print(f"  V_Ga: 72 total e- with GTH-SZV, setting spin=2")
+print("  V_Ga: 72 total e- with GTH-SZV, setting spin=2")
 mol_vga = gto.M(atom=vga_atoms, basis="gth-szv", pseudo="gth-pbe",
                 spin=2, charge=0, verbose=0)
 mf_vga = dft.UKS(mol_vga)
@@ -178,10 +182,10 @@ for name, d in data.items():
           f"{d['E_f_raw']:8.2f} eV {d['E_f_corr']:8.2f} eV {err:8.3f} eV")
 
 print("\nKey observations:")
-print(f"  1x1x1: E_f is ~1.2 eV too high due to severe elastic + electronic interactions")
-print(f"  2x2x2: E_f is ~0.2 eV too high; acceptable for screening but not quantitative")
-print(f"  3x3x3: E_f is within ~0.06 eV of convergence; quantitative accuracy")
-print(f"  4x4x4: E_f is essentially converged; rarely needed for neutral defects")
+print("  1x1x1: E_f is ~1.2 eV too high due to severe elastic + electronic interactions")
+print("  2x2x2: E_f is ~0.2 eV too high; acceptable for screening but not quantitative")
+print("  3x3x3: E_f is within ~0.06 eV of convergence; quantitative accuracy")
+print("  4x4x4: E_f is essentially converged; rarely needed for neutral defects")
 
 # ============================================================
 # FNV Correction Scheme (detailed)
@@ -233,8 +237,8 @@ for name, d in data.items():
     
     for q in [-3, -2, -1, 0]:
         if q == 0:
-            print(f"  q=0 (neutral): No electrostatic correction")
-            print(f"    Elastic correction: ~0.02 eV (estimated)")
+            print("  q=0 (neutral): No electrostatic correction")
+            print("    Elastic correction: ~0.02 eV (estimated)")
         else:
             # Madelung correction
             E_mad = q**2 * alpha_M / (2 * epsilon * L) * 27.2114  # eV

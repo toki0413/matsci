@@ -31,6 +31,16 @@ _HEADERS = {"X-HUGINN-API-KEY": "test-key"}
 
 
 @pytest.fixture(autouse=True)
+def _isolated_auth_env(monkeypatch):
+    """Isolate auth env so we don't pollute other modules in the same worker."""
+    monkeypatch.setenv("HUGINN_DEV_MODE", "1")
+    monkeypatch.setenv("HUGINN_API_KEY", "test-key")
+    monkeypatch.setenv("HUGINN_RATE_LIMIT_PER_MINUTE", "0")
+    monkeypatch.delenv("HUGINN_ADMIN_API_KEY", raising=False)
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _no_rate_limit():
     """Disable the per-IP HTTP rate limiter for this module.
 
