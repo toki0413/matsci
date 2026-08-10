@@ -97,15 +97,18 @@ class SessionMixin:
                 if isinstance(csm_state, str) and csm_state:
                     from huginn.cognitive_engine import CognitiveState
                     try:
-                        target = CognitiveState(csm_state)
+                        # 验证 csm_state 合法; 不合法走 except 跳过
+                        CognitiveState(csm_state)
                         # plan 恢复已经设了 S4_CONSTRUCT, 别覆盖; 否则恢复 csm
                         if self._csm._state == CognitiveState.S0_BLANK:
-                            self._csm._state = target
+                            l1 = snap.get("l1_coordinates", "")
+                            self._csm.restore_from_snapshot({
+                                "state": csm_state,
+                                "l1_coordinates": l1,
+                                "history": [],
+                            })
                     except ValueError:
                         pass
-                l1 = snap.get("l1_coordinates", "")
-                if l1 and not self._csm.l1_coordinates:
-                    self._csm.l1_coordinates = l1
                 phase = snap.get("research_phase")
                 if phase:
                     try:

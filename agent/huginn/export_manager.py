@@ -60,10 +60,6 @@ class ExportManager:
             record_count=len(records),
         )
 
-    def list_sources(self) -> list[str]:
-        """Return available export sources."""
-        return ["audit", "remote_jobs", "knowledge", "checkpoints"]
-
     def _collect(self, source: str, **kwargs: Any) -> list[dict[str, Any]]:
         if source == "audit":
             return self._collect_audit(**kwargs)
