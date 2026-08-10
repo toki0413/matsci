@@ -160,17 +160,18 @@ jobs:
     # under --forked (fork + threads deadlock). Run serially (-n 0) without
     # --forked; each TestClient instantiates the full Huginn app (~2-3GB).
     #
-    # Split into two groups (a/b): a single process running all 15 module-
-    # scoped TestClient files accumulates ~9-10GB RSS and OOMs at file 13
-    # (observed MemoryError in test_questions.py). Each group resets the
-    # process so RSS never exceeds ~5GB. 4G swap covers the peak.
+    # Three groups: test_questions.py is a heavy integration script (registers
+    # all tools, runs code_tool/sympy/Monte-Carlo UQ/HuginnAgent) that alone
+    # consumes ~4-5GB. Running it after other TestClient files causes OOM
+    # (MemoryError at test_code_tool_bandgap). Isolating it in group c gives
+    # it the full 7GB+swap budget. Groups a/b hold the remaining 14 files.
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
-        test-group: [a, b]
+        test-group: [a, b, c]
     steps:
       - uses: actions/checkout@v7
 
@@ -218,7 +219,7 @@ jobs:
         run: |
           cd agent
           if [ "${{ matrix.test-group }}" = "a" ]; then
-            # Group A — 8 files (lighter: CORS/version/upload/i18n/kg/ws)
+            # Group A — 8 lighter files (CORS/version/upload/i18n/kg/ws)
             FILES="tests/test_api_version_compat.py \
               tests/test_cors_security_headers.py \
               tests/test_performance_load.py \
@@ -227,15 +228,17 @@ jobs:
               tests/test_i18n_encoding.py \
               tests/test_kg.py \
               tests/test_websocket_long.py"
-          else
-            # Group B — 7 files (heavier: full server/chaos/data/questions/session/rate)
+          elif [ "${{ matrix.test-group }}" = "b" ]; then
+            # Group B — 6 TestClient files (server/chaos/error/data/session/rate)
             FILES="tests/test_server_fastapi.py \
               tests/test_chaos_fault_injection.py \
               tests/test_error_boundaries.py \
               tests/test_data_consistency.py \
-              tests/test_questions.py \
               tests/test_session_timeout.py \
               tests/test_rate_limiting.py"
+          else
+            # Group C — test_questions.py alone (heavy: code_tool/sympy/UQ/agent)
+            FILES="tests/test_questions.py"
           fi
           python -m pytest -v -rA --tb=short -p no:cov -o addopts="" \
             --timeout=60 --timeout-method=thread \
