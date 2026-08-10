@@ -1,4 +1,4 @@
-"""统一事件总线 — 5 套事件系统的单一入口.
+"""统一事件总线 — 4 套事件系统的单一入口.
 
 之前 huginn 有 5 套独立事件系统互不互通:
   1. HookManager  (hooks/__init__.py, 10 个字符串常量)
@@ -6,6 +6,9 @@
   3. 插件 EventBus (plugins/event_bus.py, 17 个 EventType enum)
   4. PetBus       (pet/__init__.py, PetMood 枚举)
   5. CSMListener  (cognitive_engine.py, Protocol, 声明了但零注册)
+
+v23 Round 9: CSMListener 已删除 (零注册死代码), CSM 状态转移通过
+UnifiedBus 的 'cognitive.csm.transition' 事件发布. 现剩 4 套系统.
 
 streaming.py 主循环里 30+ 处显式三发/四发到不同总线, 维护成本高且容易遗漏.
 
@@ -330,7 +333,7 @@ class UnifiedBus:
         signal: str = "",
         thread_id: str = "",
     ) -> None:
-        """CSM 状态转移 — 发布到内部 EventBus (替代 CSMListener)."""
+        """CSM 状态转移 — 发布到内部 EventBus (v23: CSMListener 已删除)."""
         self._publish_internal_sync(
             "cognitive.csm.transition",
             {"old_state": old_state, "new_state": new_state, "signal": signal},

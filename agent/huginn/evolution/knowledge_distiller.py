@@ -34,7 +34,7 @@ class DistilledKnowledge:
     category: str = "general"  # For routing in hierarchical RAG
     tags: list[str] = field(default_factory=list)
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
-    usage_count: int = 0
+    usage_count: int = 0  # v23: 实际语义是 "被确认有效的次数" (confirmed_count), 仅在 verify 时 +1. 不重命名以保持序列化兼容 (已落盘 JSON 有 usage_count 字段).
     verification_status: str = "unverified"  # "unverified", "confirmed", "rejected"
 
     def to_dict(self) -> dict[str, Any]:
