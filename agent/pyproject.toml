@@ -29,6 +29,10 @@ dependencies = [
     "langchain-core>=1.5.2",
     "langchain-openai>=1.4.1",
     "langgraph>=1.2.10",
+    # langgraph 1.x 把 sqlite checkpointer 拆成独立包. checkpointer.py 直接 import
+    # langgraph.checkpoint.sqlite, 缺这个包生产环境会 ModuleNotFoundError, 进程重启后
+    # 所有对话状态丢失. 列为生产必需依赖.
+    "langgraph-checkpoint-sqlite>=2.0.0",
     "deepagents>=0.5.0",
     "click>=8.3.3",
     "rich>=13.0",

@@ -1143,7 +1143,7 @@ class StreamingMixin:
 
         pet = get_pet_bus()
         # 统一事件总线: pet mood → PetBus + 内部EventBus
-        _ubus.publish_pet_mood(PetMood.THINKING, "Thinking...", {"thread_id": thread_id})
+        await _ubus.publish_pet_mood(PetMood.THINKING, "Thinking...", {"thread_id": thread_id})
 
         from huginn.telemetry import set_telemetry_collector
         set_telemetry_collector(self._telemetry_collector)
@@ -1809,7 +1809,7 @@ class StreamingMixin:
                                 phase_target.value,
                             )
             except Exception as exc:
-                _ubus.publish_pet_mood(PetMood.ERROR, f"Error: {exc}", {"thread_id": thread_id})
+                await _ubus.publish_pet_mood(PetMood.ERROR, f"Error: {exc}", {"thread_id": thread_id})
                 raise
             finally:
                 # 反思闭环: 即使 timeout/取消, 也要跑 reflection 让 evolution 记录失败.
@@ -1900,7 +1900,7 @@ class StreamingMixin:
                     )
                 except Exception:
                     logger.debug("session snapshot save failed", exc_info=True)
-                _ubus.publish_pet_mood(PetMood.IDLE, "Ready", {"thread_id": thread_id})
+                await _ubus.publish_pet_mood(PetMood.IDLE, "Ready", {"thread_id": thread_id})
                 self._turn_count += 1
                 if (
                     self.memory_decay_enabled
