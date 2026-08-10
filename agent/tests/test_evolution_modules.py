@@ -12,9 +12,7 @@ end-to-end.
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -27,9 +25,7 @@ from huginn.evolution.knowledge_distiller import (
     KnowledgeDistiller,
 )
 from huginn.evolution.logger import (
-    ConversationRecord,
     ExecutionLogger,
-    ToolCallRecord,
     _generalize_error,
 )
 from huginn.evolution.manager import (
@@ -37,7 +33,6 @@ from huginn.evolution.manager import (
     Recommendation,
     _use_evolution_manager,
 )
-
 
 # ── helpers / fixtures ───────────────────────────────────────────────────
 
@@ -322,7 +317,6 @@ class TestFailedDirectionStoreQuery:
 
     def test_query_recall_typed_raises_falls_back_to_triples(self, mm, monkeypatch):
         """recall_typed raises → query falls back to recall_failed_directions."""
-        from huginn.memory.typing import recall_typed as _orig
 
         def _boom(*a, **kw):
             raise RuntimeError("typed recall broken")
