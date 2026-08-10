@@ -29,7 +29,6 @@ from huginn.metacog.step_evaluator import (
     compute_tool_call_health,
 )
 
-
 # ───────────────────────── reflector ─────────────────────────
 
 
@@ -963,7 +962,7 @@ class TestFormatTargetChainText:
         assert "done" in text
         assert "missing" in text
 
-    def test_done_chain_shows_DONE(self) -> None:
+    def test_done_chain_shows_done_marker(self) -> None:
         chain = tc.TargetChain(
             target_id="t1", target="t", required_results=["a"],
             required_methods=[], required_data=[], verification="v",
