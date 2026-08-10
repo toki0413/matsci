@@ -204,7 +204,7 @@ class _FakeBackend(_Backend):
         import hashlib
 
         arr = np.asarray(pil_img.convert("RGB"), dtype=np.uint8)
-        seed = int(hashlib.md5(arr.tobytes()).hexdigest()[:8], 16)
+        seed = int(hashlib.md5(arr.tobytes(), usedforsecurity=False).hexdigest()[:8], 16)
         rng = np.random.default_rng(seed)
         vec = rng.standard_normal(self.dim).astype(np.float32)
         norm = float(np.linalg.norm(vec))

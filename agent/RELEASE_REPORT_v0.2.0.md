@@ -179,6 +179,33 @@ OWASP Top 10 覆盖 7 大类风险, 30+ 文件。
 
 之前版本的本报告曾写 "0 Critical/High", 那是因为只做了**人工代码审查**, 漏掉了**自动化 SAST 扫描**。补充 bandit 全量扫描后实际发现 29 个 HIGH, 现已全部修复或合理标记 nosec。同时为修复点编写了 6 个 PoC 动态验证。**这是发布前必须做的, 之前遗漏是工作失误。**
 
+### 5.8 第二轮补充审计 (用户追问 "还遗漏了什么")
+
+第一轮只扫了 `huginn/`, 第二轮扩大到 `tests/` + 部署配置 + CI + 依赖复扫, 发现并修复:
+
+| 遗漏项 | 状态 | 处理 |
+|--------|------|------|
+| `tests/cv/conftest.py:207` B324 MD5 | ✅ 修复 | 加 `usedforsecurity=False` |
+| `docker-compose.yml` 弱默认值 | ✅ 修复 | postgres/redis 端口绑定 127.0.0.1; redis 加 requirepass; HUGINN_API_KEY 改为必填 (`:?` 语法); 加 RATE_LIMIT 默认 60 |
+| CI 没跑 SAST | ✅ 修复 | [ci.yml](file:///workspace/agent/.github/workflows/ci.yml) 加 bandit 步骤 (HIGH=0 才通过) + 渗透 PoC 测试步骤 |
+| SECURITY.md 版本过期 | ✅ 修复 | 0.1.x → 0.2.x |
+| 缺 `.env.example` | ✅ 新建 | [.env.example](file:///workspace/agent/.env.example) 列出所有环境变量及安全建议 |
+| chromadb 1.5.9 PYSEC-2026-311 | ⚠️ 评估为不受影响 | Huginn 全程用 `PersistentClient` (嵌入式, 不暴露 HTTP API), 没用 `trust_remote_code=true`; 漏洞只影响 server 模式部署 |
+| `kernel_session.py` pickle.load | ⚠️ Medium, 已记录 | 仅用于加载旧格式状态文件, 注释已标明风险; 计划下个大版本删除 |
+| 测试文件里的假密钥 | ✅ 评估为安全 | `test_credential_store.py` 等里的 `sk-super-secret`、`s3cretpass` 都是测试 fixture, 不是真实凭证 |
+
+### 5.9 仍未覆盖的审计盲区 (诚实列出)
+
+以下项目**本次验收未做**, 不能声称已覆盖:
+
+1. **动态渗透测试只覆盖归档解压** — SQL 注入、SSRF、命令注入、JWT 伪造、认证绕过等攻击向量没写 PoC。已有的防护是静态代码审查确认的, 没动态验证
+2. **git 历史泄露扫描** — 没用 `trufflehog`/`gitleaks` 扫描 git 历史中可能泄露的密钥
+3. **供应链安全** — 只做了直接依赖的 pip-audit, 没扫传递依赖 (依赖的依赖)
+4. **容器镜像扫描** — 没用 `trivy`/`grype` 扫描 Docker 镜像里的 OS 包漏洞
+5. **模糊测试 (fuzzing)** — API 端点没做 fuzzing 测试
+6. **权限模型边界测试** — RBAC 的越权场景没动态验证
+7. **真实 HPC 环境验证** — Paramiko/Slurm 相关代码只在 mock 环境测过
+
 ---
 
 ## 六、版本变更

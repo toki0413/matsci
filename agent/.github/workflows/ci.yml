@@ -51,6 +51,17 @@ jobs:
           uv pip install pip-audit
           pip-audit --desc || true
 
+      - name: SAST scan with bandit
+        run: |
+          uv pip install bandit
+          # HIGH severity 必须为 0, MEDIUM 仅警告
+          bandit -r huginn/ -ll || exit 1
+          # tests/ 目录单独扫, 允许 B101 (assert)
+          bandit -r tests/ -ll -s B101 || exit 1
+
+      - name: Run archive security PoC tests
+        run: python -m pytest tests/pentest_archive_safety.py -v --no-cov
+
       - name: Test with pytest and coverage
         run: python -m pytest tests -q --cov=huginn --cov-report=xml --cov-fail-under=60
 
