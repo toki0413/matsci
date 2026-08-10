@@ -104,34 +104,47 @@ class SmartIngester:
             extract_dir = tmp_path / "extracted"
             extract_dir.mkdir()
 
+            from huginn.utils.archive_safety import safe_archive_extract
+
             lower = filename.lower()
             try:
                 if lower.endswith(".zip"):
                     with zipfile.ZipFile(archive_file, "r") as zf:
-                        zf.extractall(extract_dir)
+                        safe_archive_extract(zf, extract_dir)
                 elif lower.endswith((".tar.gz", ".tgz", ".tar.bz2", ".tbz2", ".tar")):
                     mode = "r:gz" if lower.endswith((".tar.gz", ".tgz")) else \
                            "r:bz2" if lower.endswith((".tar.bz2", ".tbz2")) else "r:"
                     with tarfile.open(archive_file, mode) as tf:
-                        tf.extractall(extract_dir)
+                        safe_archive_extract(tf, extract_dir)
                 elif lower.endswith(".gz"):
                     import gzip
                     out_name = Path(filename).stem  # remove .gz
+                    # 校验解压目标路径仍在 extract_dir 内 (防 ../evil)
+                    out_path = (extract_dir / out_name).resolve()
+                    try:
+                        out_path.relative_to(extract_dir.resolve())
+                    except ValueError:
+                        return {"doc_id": "", "smart_ingest": False,
+                                "error": f"unsafe gz output path: {out_name}"}
                     with gzip.open(archive_file, "rb") as gz:
-                        (extract_dir / out_name).write_bytes(gz.read())
+                        out_path.write_bytes(gz.read())
                 elif lower.endswith(".7z"):
                     try:
                         import py7zr
+                        # py7zr ≥0.7 内部用 Path.is_relative_to 拒绝越界路径;
+                        # bandit B202 看不到这点, 用 nosec 标记误报.
                         with py7zr.SevenZipFile(archive_file, "r") as sz:
-                            sz.extractall(extract_dir)
+                            sz.extractall(path=extract_dir)  # nosec B202
                     except ImportError:
                         return {"doc_id": "", "smart_ingest": False,
                                 "error": "7z files require py7zr: pip install py7zr"}
                 elif lower.endswith(".rar"):
                     try:
                         import rarfile
+                        # rarfile 调外部 unrar 二进制解压, unrar 自身会
+                        # 截断绝对路径和 .. 段; bandit B202 误报, nosec 标记.
                         with rarfile.RarFile(archive_file) as rf:
-                            rf.extractall(extract_dir)
+                            rf.extractall(path=extract_dir)  # nosec B202
                     except ImportError:
                         return {"doc_id": "", "smart_ingest": False,
                                 "error": "rar files require rarfile: pip install rarfile"}

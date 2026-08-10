@@ -297,7 +297,7 @@ class CalculationToKnowledge:
             try:
                 from huginn.evolution.knowledge_distiller import DistilledKnowledge
 
-                kid = f"succ_{tool_name}_{hashlib.md5(text.encode()).hexdigest()[:8]}"
+                kid = f"succ_{tool_name}_{hashlib.md5(text.encode(), usedforsecurity=False).hexdigest()[:8]}"
                 # 已存在就跳过, 避免重复写入
                 if not any(k.knowledge_id == kid for k in distiller.knowledge_base):
                     evidence = (

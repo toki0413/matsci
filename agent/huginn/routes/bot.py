@@ -265,7 +265,7 @@ def _verify_wecom_signature(
 ) -> bool:
     if not token:
         return False
-    computed = hashlib.sha1(
+    computed = hashlib.sha1(  # nosec B324 — 企业微信回调签名协议规定用 SHA1
         "".join(sorted([token, timestamp, nonce])).encode()
     ).hexdigest()
     return computed == signature

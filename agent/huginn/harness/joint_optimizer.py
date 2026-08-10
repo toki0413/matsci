@@ -153,7 +153,8 @@ class JointBandit:
         block_str = ",".join(sorted(block_subset))
         param_str = json.dumps(workflow_params, sort_keys=True, default=str)
         return hashlib.md5(
-            (block_str + "|" + param_str).encode("utf-8")
+            (block_str + "|" + param_str).encode("utf-8"),
+            usedforsecurity=False,
         ).hexdigest()[:12]
 
     def select_block_subset(
