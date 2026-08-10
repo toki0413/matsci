@@ -25,6 +25,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from huginn.utils.runtime import get_runtime_home
+
 logger = logging.getLogger(__name__)
 
 _IRI_CAP = 2.0
@@ -141,9 +143,7 @@ class WorkflowBandit:
     _lock = threading.Lock()
 
     def __init__(self) -> None:
-        cache_dir = Path(
-            os.environ.get("HUGINN_CACHE_DIR", Path.home() / ".huginn")
-        )
+        cache_dir = get_runtime_home()
         self._store_dir = cache_dir / "workflow_beliefs"
         try:
             self._store_dir.mkdir(parents=True, exist_ok=True)
@@ -264,9 +264,7 @@ class VariantArchive:
     _lock = threading.Lock()
 
     def __init__(self) -> None:
-        cache_dir = Path(
-            os.environ.get("HUGINN_CACHE_DIR", Path.home() / ".huginn")
-        )
+        cache_dir = get_runtime_home()
         self._store_dir = cache_dir / "workflow_archive"
         try:
             self._store_dir.mkdir(parents=True, exist_ok=True)

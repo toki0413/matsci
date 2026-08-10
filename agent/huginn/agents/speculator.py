@@ -22,6 +22,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from huginn.utils.runtime import get_runtime_home
+
 logger = logging.getLogger(__name__)
 
 
@@ -30,7 +32,7 @@ def _default_history_path() -> Path:
     override = os.environ.get("HUGINN_SPECULATOR_HISTORY")
     if override:
         return Path(override).expanduser()
-    return Path.home() / ".huginn" / "speculator_history.json"
+    return get_runtime_home() / "speculator_history.json"
 
 
 @dataclass

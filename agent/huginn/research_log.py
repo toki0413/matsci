@@ -197,7 +197,7 @@ class ResearchLog:
             base = os.environ.get("HUGINN_CACHE_DIR")
             if base:
                 return Path(base) / "research_log.sqlite"
-            return Path.home() / ".huginn" / "research_log.sqlite"
+            return get_runtime_home() / "research_log.sqlite"
 
     # ------------------------------------------------------------------
     # 写入

@@ -11,10 +11,11 @@ cross-validation. 不自动触发 fine-tune, 只做数据池累积 + 触发建�
 from __future__ import annotations
 
 import json
-import os
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
+
+from huginn.utils.runtime import get_runtime_home
 
 
 class ModelVersionTracker:
@@ -31,7 +32,7 @@ class ModelVersionTracker:
 
     def __init__(self, cache_dir: Path | None = None):
         if cache_dir is None:
-            cache_dir = Path(os.environ.get("HUGINN_CACHE_DIR") or (Path.home() / ".huginn"))
+            cache_dir = get_runtime_home()
         self.cache_dir = Path(cache_dir)
         self.training_pool_dir = self.cache_dir / "training_pool"
 

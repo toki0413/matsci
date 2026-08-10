@@ -23,6 +23,8 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
+from huginn.utils.runtime import get_runtime_home
+
 logger = logging.getLogger(__name__)
 
 
@@ -448,7 +450,7 @@ class EncryptedConfig:
         self, config_path: str | Path | None = None, vault: CryptoVault | None = None
     ):
         self.config_path = (
-            Path(config_path) if config_path else Path.home() / ".huginn" / "config.enc"
+            Path(config_path) if config_path else get_runtime_home() / "config.enc"
         )
         self.vault = vault or CryptoVault()
 

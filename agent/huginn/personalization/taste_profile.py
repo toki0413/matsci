@@ -15,6 +15,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from huginn.utils.runtime import get_runtime_home
+
 # ── 维度枚举 ──────────────────────────────────────────────────────
 
 
@@ -369,7 +371,7 @@ def _default_profile_path() -> Path:
     if cache_dir:
         p = Path(cache_dir) / "taste_profile.json"
     else:
-        p = Path.home() / ".huginn" / "taste_profile.json"
+        p = get_runtime_home() / "taste_profile.json"
     p.parent.mkdir(parents=True, exist_ok=True)
     return p
 

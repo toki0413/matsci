@@ -27,6 +27,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from huginn.utils.runtime import get_runtime_home
+
 
 class StateRegistry:
     """字段级状态注册表, 进程内 LRU + SQLite 持久化.
@@ -75,7 +77,7 @@ class StateRegistry:
             p.parent.mkdir(parents=True, exist_ok=True)
             return p
         # 跟 checkpointer 同目录, 不散落
-        default = Path.home() / ".huginn" / "state_registry.sqlite"
+        default = get_runtime_home() / "state_registry.sqlite"
         default.parent.mkdir(parents=True, exist_ok=True)
         return default
 

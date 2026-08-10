@@ -31,12 +31,14 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from huginn.utils.runtime import get_runtime_home
+
 logger = logging.getLogger(__name__)
 
 # ── 存储位置 ─────────────────────────────────────────────────────
 
 # 优先读 HUGINN_CACHE_DIR, 否则回退 ~/.huginn (TRAE 沙箱拦截 ~/.huginn 时用 env 重定向)
-_SNAPSHOT_ROOT = Path(os.environ.get("HUGINN_CACHE_DIR") or (Path.home() / ".huginn")) / "snapshots"
+_SNAPSHOT_ROOT = get_runtime_home() / "snapshots"
 # 日志文件路径跟着实例 root 走 (见 _log_file), 不用模块常量 ——
 # 这样非单例实例 (测试用独立 root) 也能正确隔离存储.
 
