@@ -17,11 +17,7 @@ from huginn.context_manager import (
     format_context_usage,
 )
 from huginn.hooks import (
-    POST_COMPACT,
     PRE_COMPACT,
-    SESSION_END,
-    SESSION_START,
-    STOP,
     USER_PROMPT_SUBMIT,
     HookContext,
 )
@@ -692,27 +688,10 @@ class StreamingMixin:
             f"Context compacted ({before['used']}% -> {after_pct}%)",
             {"thread_id": thread_id},
         )
-        # 内部事件总线: 发布 compact.start / compact.end 字符串事件 (best-effort)
-        try:
-            from huginn.events.integration import publish_compact_event_sync
-            publish_compact_event_sync(
-                before["used"], after_pct, thread_id=thread_id,
-            )
-        except Exception:
-            logger.debug("compact event publish failed (non-fatal)", exc_info=True)
-        # 压缩完成: 触发 POST_COMPACT hook (声明式触发点, 之前只声明不 trigger)
-        try:
-            _post_ctx = HookContext(
-                tool_name="context_compact",
-                metadata={
-                    "before_pct": before["used"],
-                    "after_pct": after_pct,
-                    "thread_id": thread_id,
-                },
-            )
-            await self.hook_manager.trigger(POST_COMPACT, _post_ctx)
-        except Exception:
-            logger.warning("POST_COMPACT hook raised", exc_info=True)
+        # 统一事件总线: compact → 内部EventBus + PRE/POST_COMPACT hook
+        from huginn.events.unified_bus import get_unified_bus
+        _ubus = get_unified_bus(self)
+        await _ubus.publish_compact(before["used"], after_pct, thread_id)
         return {"before_pct": before["used"], "after_pct": after_pct}
 
     async def _trim_checkpointer_messages(
@@ -1042,45 +1021,13 @@ class StreamingMixin:
             }
             # 不 return — yield 完继续走 agent loop, 用户可以选择回答或忽略
 
+        # 统一事件总线: 桥接 HookManager + 内部EventBus + 插件EventBus + PetBus
+        from huginn.events.unified_bus import get_unified_bus
+        _ubus = get_unified_bus(self)
+
         if self._turn_count == 0:
             self._init_session_continuity()
-            # 会话生命周期: SESSION_START hook (声明式触发点, 之前只声明不 trigger)
-            try:
-                _ss_ctx = HookContext(
-                    tool_name="session",
-                    metadata={
-                        "thread_id": thread_id,
-                        "user_message": message,
-                        "workspace": self.workspace,
-                    },
-                )
-                await self.hook_manager.trigger(SESSION_START, _ss_ctx)
-            except Exception:
-                logger.warning("SESSION_START hook raised", exc_info=True)
-            # 内部事件总线: 发布 session.start 字符串事件 (best-effort)
-            try:
-                from huginn.events.integration import publish_session_event_sync
-                publish_session_event_sync(
-                    "start", thread_id=thread_id,
-                    metadata={"user_message": message},
-                )
-            except Exception:
-                logger.debug(
-                    "session.start event publish failed (non-fatal)", exc_info=True
-                )
-            # 插件事件: ON_AGENT_BEGIN (之前 EventType 声明了但从不 dispatch).
-            # best-effort, 拿不到 EventBus 就跳过.
-            try:
-                from huginn.api.event import Event, EventType
-                from huginn.plugins.event_bus import EventBus as _PluginBus
-                _bus = _PluginBus()
-                await _bus.dispatch(Event(
-                    type=EventType.ON_AGENT_BEGIN,
-                    plugin_name="",
-                    data={"thread_id": thread_id, "user_message": message[:200]},
-                ))
-            except Exception:
-                logger.debug("ON_AGENT_BEGIN dispatch failed (non-fatal)", exc_info=True)
+            await _ubus.publish_session_start(thread_id, message)
 
         from huginn.cognitive_engine import TransitionSignal
         if self._turn_count == 0:
@@ -1195,7 +1142,8 @@ class StreamingMixin:
         self._conversation_tree.add_message("user", message)
 
         pet = get_pet_bus()
-        pet.publish(PetMood.THINKING, "Thinking...", {"thread_id": thread_id})
+        # 统一事件总线: pet mood → PetBus + 内部EventBus
+        _ubus.publish_pet_mood(PetMood.THINKING, "Thinking...", {"thread_id": thread_id})
 
         from huginn.telemetry import set_telemetry_collector
         set_telemetry_collector(self._telemetry_collector)
@@ -1229,20 +1177,10 @@ class StreamingMixin:
         ) as turn_span:
             graph = self.build_graph()
 
-            # ON_MESSAGE_RECEIVED: 用户消息到达时 dispatch, 之前 MessageEvent 声明了
-            # 但从不实例化, command/command_group 装饰器注册的 handler 永远收不到.
-            try:
-                from huginn.api.event import Event, EventType, MessageEvent
-                from huginn.plugins.event_bus import EventBus as _PluginBus
-                _msg_bus = _PluginBus()
-                await _msg_bus.dispatch(MessageEvent(
-                    type=EventType.ON_MESSAGE_RECEIVED,
-                    text=message[:2000],
-                    session_id=thread_id,
-                    data={"thread_id": thread_id},
-                ))
-            except Exception:
-                logger.debug("ON_MESSAGE_RECEIVED dispatch failed (non-fatal)", exc_info=True)
+            # 统一事件总线: ON_MESSAGE_RECEIVED
+            from huginn.events.unified_bus import get_unified_bus
+            _ubus = get_unified_bus(self)
+            await _ubus.publish_message_received(thread_id, message[:2000])
 
             prompt_ctx = HookContext(
                 tool_name="user_prompt",
@@ -1582,31 +1520,9 @@ class StreamingMixin:
                 except Exception:
                     logger.debug("checkpointer state fetch skipped", exc_info=True)
 
-            # ON_LLM_REQUEST + ON_BEFORE_MESSAGE_SENT: LLM 调用前 dispatch.
-            # LLMRequestEvent / 这两个消息事件之前声明了但从不实例化, handler 收不到.
-            try:
-                from huginn.api.event import EventType, LLMRequestEvent, MessageEvent
-                from huginn.plugins.event_bus import EventBus as _PluginBus
-                _llm_bus = _PluginBus()
-                _sys_prompt = ""
-                for m in messages:
-                    if isinstance(m, SystemMessage):
-                        _sys_prompt = m.content if isinstance(m.content, str) else str(m.content)
-                        break
-                await _llm_bus.dispatch(LLMRequestEvent(
-                    type=EventType.ON_LLM_REQUEST,
-                    system_prompt=_sys_prompt[:500],
-                    messages=[{"role": "user", "text": message[:500]}],
-                    model=getattr(self, "model_name", ""),
-                    data={"thread_id": thread_id},
-                ))
-                await _llm_bus.dispatch(MessageEvent(
-                    type=EventType.ON_BEFORE_MESSAGE_SENT,
-                    session_id=thread_id,
-                    data={"thread_id": thread_id, "phase": "pre_stream"},
-                ))
-            except Exception:
-                logger.debug("ON_LLM_REQUEST/ON_BEFORE_MESSAGE_SENT dispatch failed (non-fatal)", exc_info=True)
+            # 统一事件总线: ON_LLM_REQUEST + ON_BEFORE_MESSAGE_SENT
+            await _ubus.publish_llm_request(thread_id, len(messages))
+            await _ubus.publish_before_message_sent(thread_id, len(messages))
 
             try:
                 attempt = 0
@@ -1865,29 +1781,9 @@ class StreamingMixin:
                         yield {"_auto_continue": True}
 
                     ai_content = self._extract_last_ai_content(final_state)
-                    # ON_LLM_RESPONSE + ON_AFTER_MESSAGE_SENT: LLM 响应后 dispatch.
-                    # 之前 LLMResponseEvent 声明了但从不实例化, on_llm_response handler 收不到.
-                    try:
-                        from huginn.api.event import (
-                            EventType,
-                            LLMResponseEvent,
-                            MessageEvent,
-                        )
-                        from huginn.plugins.event_bus import EventBus as _PluginBus
-                        _resp_bus = _PluginBus()
-                        await _resp_bus.dispatch(LLMResponseEvent(
-                            type=EventType.ON_LLM_RESPONSE,
-                            reply=ai_content[:2000],
-                            data={"thread_id": thread_id},
-                        ))
-                        await _resp_bus.dispatch(MessageEvent(
-                            type=EventType.ON_AFTER_MESSAGE_SENT,
-                            text=ai_content[:2000],
-                            session_id=thread_id,
-                            data={"thread_id": thread_id, "phase": "post_stream"},
-                        ))
-                    except Exception:
-                        logger.debug("ON_LLM_RESPONSE/ON_AFTER_MESSAGE_SENT dispatch failed (non-fatal)", exc_info=True)
+                    # 统一事件总线: ON_LLM_RESPONSE + ON_AFTER_MESSAGE_SENT
+                    await _ubus.publish_llm_response(thread_id, ai_content[:2000])
+                    await _ubus.publish_after_message_sent(thread_id, ai_content[:2000])
                     if ai_content:
                         # OAK 启发: ai 消息写进 ConversationTree
                         try:
@@ -1913,7 +1809,7 @@ class StreamingMixin:
                                 phase_target.value,
                             )
             except Exception as exc:
-                pet.publish(PetMood.ERROR, f"Error: {exc}", {"thread_id": thread_id})
+                _ubus.publish_pet_mood(PetMood.ERROR, f"Error: {exc}", {"thread_id": thread_id})
                 raise
             finally:
                 # 反思闭环: 即使 timeout/取消, 也要跑 reflection 让 evolution 记录失败.
@@ -1970,55 +1866,11 @@ class StreamingMixin:
                 # 便于直接测试; prefix_merging (跨 turn 前缀去重) 是升级路径, 见该函数.
                 _dump_completion_records(_completion_records, thread_id, _capture_turn_id)
                 # STOP event
-                try:
-                    stop_ctx = HookContext(
-                        tool_name="agent_turn",
-                        metadata={
-                            "thread_id": thread_id,
-                            "workspace": self.workspace,
-                        },
-                    )
-                    await self.hook_manager.trigger(STOP, stop_ctx)
-                except Exception:
-                    logger.warning("STOP hook raised", exc_info=True)
-                # SESSION_END hook + session.end 事件 (best-effort).
-                # 之前 SESSION_END 常量和 session.end 事件字符串都声明了但从不
-                # 触发/发布, 双重缺失. 在每轮 finally 收尾补上, 让订阅方能收到
-                # 会话结束信号. 多轮会话每轮都会发, 消费方按 thread_id 去重即可.
-                try:
-                    _se_ctx = HookContext(
-                        tool_name="session",
-                        metadata={
-                            "thread_id": thread_id,
-                            "turn_count": self._turn_count,
-                        },
-                    )
-                    await self.hook_manager.trigger(SESSION_END, _se_ctx)
-                except Exception:
-                    logger.debug("SESSION_END hook raised (non-fatal)", exc_info=True)
-                try:
-                    from huginn.events.integration import publish_session_event_sync
-                    publish_session_event_sync(
-                        "end", thread_id=thread_id,
-                        metadata={"turn_count": self._turn_count},
-                    )
-                except Exception:
-                    logger.debug("session.end publish failed", exc_info=True)
-                # 插件事件: ON_AGENT_DONE (与 ON_AGENT_BEGIN 配对, 之前从不 dispatch).
-                try:
-                    from huginn.api.event import Event, EventType
-                    from huginn.plugins.event_bus import EventBus as _PluginBus
-                    _bus = _PluginBus()
-                    await _bus.dispatch(Event(
-                        type=EventType.ON_AGENT_DONE,
-                        plugin_name="",
-                        data={
-                            "thread_id": thread_id,
-                            "turn_count": self._turn_count,
-                        },
-                    ))
-                except Exception:
-                    logger.debug("ON_AGENT_DONE dispatch failed (non-fatal)", exc_info=True)
+                # 统一事件总线: 一次调用桥接 STOP hook + SESSION_END hook + 内部EventBus + 插件EventBus
+                from huginn.events.unified_bus import get_unified_bus
+                _ubus = get_unified_bus(self)
+                await _ubus.publish_stop(thread_id, self.workspace)
+                await _ubus.publish_session_end(thread_id, self._turn_count)
                 # Mode-based memory persistence
                 if self.is_research_mode():
                     try:
@@ -2048,7 +1900,7 @@ class StreamingMixin:
                     )
                 except Exception:
                     logger.debug("session snapshot save failed", exc_info=True)
-                pet.publish(PetMood.IDLE, "Ready", {"thread_id": thread_id})
+                _ubus.publish_pet_mood(PetMood.IDLE, "Ready", {"thread_id": thread_id})
                 self._turn_count += 1
                 if (
                     self.memory_decay_enabled

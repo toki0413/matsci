@@ -15,10 +15,10 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from huginn.tools.descriptor_tool import DescriptorInput, DescriptorTool
-from huginn.tools.evidence_fusion_tool import EvidenceFusionTool
 from huginn.tools.gp_tool import GPTool
-from huginn.tools.tda_tool import TDATool
+from huginn.tools.sci.descriptor_tool import DescriptorInput, DescriptorTool
+from huginn.tools.sci.evidence_fusion_tool import EvidenceFusionTool
+from huginn.tools.sci.tda_tool import TDATool
 from huginn.types import ToolContext
 
 # ---------------------------------------------------------------------------

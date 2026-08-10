@@ -26,6 +26,8 @@ propose 一个 functor F: source → target, 验证 functor 保 structure
 ponytail: 单文件, stdlib + 现有 LLM client. 不引 category theory 库
 (`functors` / `category-theory` 等都是研究工具, 跟工程实现是两条路).
 手写图遍历 + path equality check.
+
+# 架构状态: 研究探索层 — 未接入主循环, 保留作为 future hook. 如需启用, 在 huginn/events/unified_bus.py 订阅 cognitive.* 事件并接入.
 """
 from __future__ import annotations
 

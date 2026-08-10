@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from huginn.tools.descriptor_tool import DescriptorTool
+from huginn.tools.sci.descriptor_tool import DescriptorTool
 from huginn.types import ToolContext
 
 

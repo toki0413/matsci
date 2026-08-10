@@ -8,7 +8,7 @@ import pytest
 
 from huginn.exploration.core import Branch, BranchStatus, Decision, ExplorationSpace
 from huginn.tools.report_tool import ReportComparator, ReportTool, ReportToolInput
-from huginn.tools.symbolic_regression_tool import (
+from huginn.tools.sci.symbolic_regression_tool import (
     SymbolicRegressionInput,
     SymbolicRegressionTool,
 )

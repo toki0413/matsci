@@ -15,12 +15,12 @@ from unittest.mock import patch
 
 import pytest
 
-from huginn.tools.abaqus_tool import AbaqusTool
-from huginn.tools.comsol_tool import ComsolTool
-from huginn.tools.cp2k_tool import Cp2kTool
-from huginn.tools.lammps_tool import LammpsTool, LammpsToolInput
-from huginn.tools.openfoam_tool import OpenFoamTool
-from huginn.tools.qe_tool import QuantumEspressoTool
+from huginn.tools.sim.abaqus_tool import AbaqusTool
+from huginn.tools.sim.comsol_tool import ComsolTool
+from huginn.tools.sim.cp2k_tool import Cp2kTool
+from huginn.tools.sim.lammps_tool import LammpsTool, LammpsToolInput
+from huginn.tools.sim.openfoam_tool import OpenFoamTool
+from huginn.tools.sim.qe_tool import QuantumEspressoTool
 from huginn.tools.vasp_tool import VaspTool, VaspToolInput
 from huginn.types import ToolContext
 

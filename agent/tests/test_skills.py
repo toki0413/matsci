@@ -182,7 +182,7 @@ class TestUQGPSkills:
     def _ensure_tools():
         from huginn.tools.gp_tool import GPTool
         from huginn.tools.registry import ToolRegistry
-        from huginn.tools.uq_tool import UQTool
+        from huginn.tools.sci.uq_tool import UQTool
 
         if "uq_tool" not in ToolRegistry.list_tools():
             ToolRegistry.register(UQTool())

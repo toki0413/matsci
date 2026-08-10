@@ -11,12 +11,12 @@ from pathlib import Path
 
 import pytest
 
-from huginn.tools.descriptor_tool import DescriptorTool
 from huginn.tools.numerical_tool import NumericalTool
+from huginn.tools.sci.descriptor_tool import DescriptorTool
+from huginn.tools.sci.symmetry_tool import SymmetryTool
+from huginn.tools.sci.xrd_sim_tool import XrdSimTool
 from huginn.tools.structure_tool import StructureTool, StructureToolInput
-from huginn.tools.symmetry_tool import SymmetryTool
 from huginn.tools.validate_tool import ValidateTool
-from huginn.tools.xrd_sim_tool import XrdSimTool
 from huginn.types import ToolContext
 
 SI_POSCAR = str(Path(__file__).parent.parent / "Si_diamond" / "POSCAR")

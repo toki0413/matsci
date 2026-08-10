@@ -16,6 +16,8 @@ persistence diagram — 后者是 networkx 结构上无法给出的不变量.
 
 研究探索层 (Open Problem 7.1): 不改 trace_topology.py, 不阻塞 Phase 1-6.
 GUDHI 没装时退回 networkx 风格的 β_0 + β_1 估计, 升级路径: pip install gudhi.
+
+# 架构状态: 研究探索层 — 未接入主循环, 保留作为 future hook. 如需启用, 在 huginn/events/unified_bus.py 订阅 cognitive.* 事件并接入.
 """
 from __future__ import annotations
 

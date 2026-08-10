@@ -202,6 +202,25 @@ class ExplorationOrchestrator:
             knowledge_graph_json=space.export_knowledge_graph("json"),
         )
 
+    async def run(
+        self,
+        objective: str,
+        initial_branches: list[dict[str, Any]] | None = None,
+        **kwargs: Any,
+    ) -> ExplorationResult:
+        """OrchestratorProtocol 门面 — 转发到 explore().
+
+        v23 P2-2: 满足 huginn.orchestration.OrchestratorProtocol 契约,
+        让上层 (DecisionArbiter / UnifiedBus / 诊断端点) 能用统一接口调用.
+
+        initial_branches 默认空列表 — 上层若只关心 "跑一轮 exploration" 可直接
+        await orch.run("objective"), 由 explore() 处理空 branches 的退化情况.
+        若需指定初始分支, 显式传 initial_branches=[...].
+        """
+        return await self.explore(
+            objective, initial_branches or [], **kwargs
+        )
+
     async def explore_stream(
         self,
         objective: str,
