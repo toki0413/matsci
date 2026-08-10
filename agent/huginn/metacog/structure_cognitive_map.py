@@ -23,6 +23,8 @@ Bourbaki 三结构视角 (B 文档化):
   拓扑   (邻域):         query_neighbors / adjacency 定义邻域.
                          neighborhood 方法 (A 拓扑 Protocol) 适配 SupportsNeighborhood.
                          升级路径: Hodge decomposition (gradient/curl/harmonic 三分量).
+
+# 架构状态: 研究探索层 — 未接入主循环, 保留作为 future hook. 如需启用, 在 huginn/events/unified_bus.py 订阅 cognitive.* 事件并接入.
 """
 from __future__ import annotations
 

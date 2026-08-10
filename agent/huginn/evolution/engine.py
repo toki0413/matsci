@@ -31,16 +31,22 @@ _CONFIDENCE_FLOOR = 0.3
 def _recompute_confidence(rule: EvolutionRule) -> float:
     """根据应用效果重算 confidence, 而非只看失败次数.
 
-    之前 confidence = min(0.5 + count*0.1, 0.95) 只随失败次数涨,
+    之前 confidence = min(0.5 + count*0.1, 0.95) 只随失败模式出现次数涨,
     一条被 LLM 永远忽略的规则失败够多次也能到 0.95, 永不淘汰.
 
     新策略 (效果反馈):
-      - 基线随失败次数涨 (保留原行为, 避免回归)
+      - 基线随 usage_count (应用次数) 涨, 而非失败次数 — 反映 "规则被实际用过"
       - usage_count > 0 且 success_count == 0: 规则被注入但从未真正帮上忙 → 降权
       - usage_count > 0 且 success_count > 0: 规则真的有效 → 加权
       - 结果夹在 [0.1, 0.98] 之间, 仍受 _CONFIDENCE_FLOOR 约束 (prune 时踢)
+
+    v23 Round 8 校正: 注释之前说 "基线随失败次数涨 (保留原行为)", 但实现
+    用的是 usage_count. 现修正注释匹配实现 — usage_count 是更合理的信号
+    (反映规则被实际应用, 而非只是失败模式出现).
     """
-    base = 0.5 + getattr(rule, "usage_count", 0) * 0.05
+    # EvolutionRule 是 dataclass, usage_count 是必填字段 (默认 0), 直接访问即可.
+    # 之前用 getattr(rule, "usage_count", 0) 是过度防御, 会掩盖字段缺失的 bug.
+    base = 0.5 + rule.usage_count * 0.05
     if rule.usage_count > 0:
         if rule.success_count == 0:
             # 被注入过但从未验证有效 — 降到基线以下, 让 prune 有机会淘汰
@@ -61,9 +67,16 @@ class EvolutionRule:
     trigger: str  # Condition that activates this rule
     action: str  # What to do when triggered
     source: str  # How was this rule learned: "failure_analysis", "success_extraction", "user_feedback"
+    # confidence: 创建时必须显式指定 (0.0 默认低于 _CONFIDENCE_FLOOR=0.3, 会被 prune 踢).
+    # 各 source 的初始 confidence:
+    #   - failure_analysis (heuristic_fix): min(0.5 + count*0.1, 0.95) — 失败模式越频繁越高
+    #   - stable_principle: 0.9 — 长期蒸馏, 高置信
+    #   - success_analysis (prompt_patch): 1.0 - success_rate — 工具越差 patch 越重要
+    #   - reward_analysis (reward_patch): 1.0 - avg_reward — 同上
+    # 后续由 _recompute_confidence 根据 usage_count/success_count 重算.
     confidence: float = 0.0  # 0-1, how reliable is this rule
-    usage_count: int = 0
-    success_count: int = 0
+    usage_count: int = 0  # 被实际应用 (apply_heuristic_fix) 的次数
+    success_count: int = 0  # 应用后 mark_fix_success(succeeded=True) 的次数
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     tags: list[str] = field(default_factory=list)
 

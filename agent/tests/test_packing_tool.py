@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from huginn.tools.packing_tool import PackingTool, PackingToolInput
+from huginn.tools.sim.packing_tool import PackingTool, PackingToolInput
 
 
 def test_packing_tool_molecules(tmp_path: Path) -> None:

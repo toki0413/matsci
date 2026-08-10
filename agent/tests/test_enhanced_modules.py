@@ -16,13 +16,13 @@ import numpy as np
 import pytest
 
 from huginn.telemetry import TelemetryCollector, TelemetrySpan
-from huginn.tools.autodiff_tool import AutoDiffInput, AutoDiffTool
-from huginn.tools.descriptor_tool import DescriptorTool
 from huginn.tools.gp_tool import GPTool
 from huginn.tools.numerical_tool import NumericalTool
-from huginn.tools.symmetry_tool import SymmetryTool
-from huginn.tools.unit_tool import UnitTool
-from huginn.tools.uq_tool import UQTool
+from huginn.tools.sci.autodiff_tool import AutoDiffInput, AutoDiffTool
+from huginn.tools.sci.descriptor_tool import DescriptorTool
+from huginn.tools.sci.symmetry_tool import SymmetryTool
+from huginn.tools.sci.unit_tool import UnitTool
+from huginn.tools.sci.uq_tool import UQTool
 from huginn.types import ToolContext
 from huginn.utils.context import compact_messages, summarize_compact_messages
 from huginn.utils.tokens import count_message_tokens, count_tokens

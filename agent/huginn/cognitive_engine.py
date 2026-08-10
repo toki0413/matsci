@@ -85,11 +85,10 @@ CONSTRUCTION_STATES = {
 
 
 # v6 R22: CSM 为 canonical 状态机, 其他 phase 枚举 (ResearchPhase / SessionPhase /
-# autoloop AUTOLOOP_PHASES) 通过 CSMListener observer 模式同步.
-# ponytail: 不删旧 phase 枚举 (向后兼容); 升级路径是各 phase manager 注册为 listener,
-# transition() 末尾广播, 各 listener 自行映射.
+# autoloop AUTOLOOP_PHASES) 通过 UnifiedBus 的 cognitive.csm.transition 事件同步.
+# 兼容: CSMListener Protocol 保留 (零注册但不删), 新代码应订阅 UnifiedBus.
 # 映射表: CSM 状态 → autoloop phase 字符串 (perceive/hypothesize/plan/execute/validate/learn/report)
-# 用于 listener 实现 on_csm_transition 时做状态映射. 不强制 1:1 — S3/S6/S7 是元状态.
+# 用于订阅者做状态映射. 不强制 1:1 — S3/S6/S7 是元状态.
 STATE_TO_PHASE: dict[CognitiveState, str] = {
     CognitiveState.S0_BLANK: "perceive",
     CognitiveState.S1_DISCOVER: "hypothesize",
@@ -100,6 +99,11 @@ STATE_TO_PHASE: dict[CognitiveState, str] = {
     CognitiveState.S6_FEEDBACK: "validate",
     CognitiveState.S7_SELF_MODIFY: "learn",
 }
+
+
+def get_phase_for_state(state: CognitiveState) -> str:
+    """CSM 状态 → autoloop phase 字符串的便捷查询."""
+    return STATE_TO_PHASE.get(state, "perceive")
 
 
 class CSMListener(Protocol):
@@ -452,7 +456,21 @@ class CognitiveStateMachine:
 
         listener 需实现 on_csm_transition(old, new, signal) 方法.
         ponytail: 鸭子类型, 不强校验 Protocol — 调用时 try/except 兜底.
+
+        .. deprecated:: v23
+            全仓零注册 — 已被 UnifiedBus (cognitive.csm.transition 事件) 替代.
+            _notify_listeners 仍兼容旧路径但永远空转 (listeners 列表始终空).
+            新代码应订阅 UnifiedBus, 不要调本方法. 下个版本删除 Protocol + 方法.
         """
+        import warnings
+
+        warnings.warn(
+            "CSMListener.register_listener is deprecated and unused across the "
+            "codebase. Subscribe to UnifiedBus 'cognitive.csm.transition' instead. "
+            "Will be removed in next version.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self._listeners.append(listener)
 
     def _notify_listeners(
@@ -461,7 +479,25 @@ class CognitiveStateMachine:
         new: CognitiveState,
         signal: TransitionSignal,
     ) -> None:
-        """广播转移给所有 listener. 单个 listener 抛异常不影响其他."""
+        """广播转移给所有 listener + UnifiedBus. 单个 listener 抛异常不影响其他."""
+        # 1. UnifiedBus 发布 (新路径 — 替代 CSMListener)
+        try:
+            from huginn.events.unified_bus import UnifiedBus
+            ubus = UnifiedBus()
+            ubus._publish_internal_sync(
+                "cognitive.csm.transition",
+                {
+                    "old_state": old.value if hasattr(old, "value") else str(old),
+                    "new_state": new.value if hasattr(new, "value") else str(new),
+                    "signal": signal.signal_type,
+                    "phase": STATE_TO_PHASE.get(new, ""),
+                },
+                source="csm",
+            )
+        except Exception:
+            logger.debug("UnifiedBus csm.transition publish failed (non-fatal)", exc_info=True)
+
+        # 2. 兼容: 旧 CSMListener 协议 (保留但不推荐新代码使用)
         for listener in self._listeners:
             try:
                 listener.on_csm_transition(old, new, signal)
@@ -618,4 +654,5 @@ __all__ = [
     # v6 R22: CSM observer 协议 + 状态映射
     "CSMListener",
     "STATE_TO_PHASE",
+    "get_phase_for_state",
 ]

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from huginn.tools.abaqus_tool import AbaqusTool, AbaqusToolInput
+from huginn.tools.sim.abaqus_tool import AbaqusTool, AbaqusToolInput
 
 
 @pytest.fixture(autouse=True)

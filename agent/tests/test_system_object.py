@@ -8,10 +8,18 @@ class TestHuginnSystemCreation:
     """Tests for creating HuginnSystem instances."""
 
     def test_default_creation(self):
+        """v23 状态树合并后, HuginnSystem 继承 ServerContext 默认值.
+
+        config / agent 等可选组件仍默认 None; 但 tool_registry /
+        skill_registry / permission_config / audit_logger 等基础设施
+        默认会实例化 (与 ServerContext 一致), 不再是 None.
+        """
         sys = HuginnSystem()
         assert sys.config is None
-        assert sys.tool_registry is None
         assert sys.agent is None
+        # 基础设施默认实例化 (v23 unification 后跟 ServerContext 对齐)
+        assert sys.tool_registry is not None
+        assert sys.skill_registry is not None
 
     def test_creation_with_config(self):
         sys = HuginnSystem(config={"provider": "ollama"})
@@ -61,13 +69,22 @@ class TestHuginnSystemProperties:
         sys = HuginnSystem()
         assert sys.get_component("nonexistent_component") is None
 
-    def test_list_components_all_none(self):
+    def test_list_components_defaults(self):
+        """v23 unification: 空 HuginnSystem 的组件状态混合 (None + 默认实例).
+
+        config / agent / orchestrator 等可选组件为 None (False);
+        tool_registry / skill_registry 等基础设施默认实例化 (True).
+        """
         sys = HuginnSystem()
         components = sys.list_components()
         assert isinstance(components, dict)
-        assert all(v is False for v in components.values())
-        assert "config" in components
-        assert "agent" in components
+        # 可选组件默认 None
+        assert components["config"] is False
+        assert components["agent"] is False
+        assert components["orchestrator"] is False
+        # 基础设施默认实例化 (v23 跟 ServerContext 对齐)
+        assert components["tool_registry"] is True
+        assert components["skill_registry"] is True
 
     def test_list_components_partial(self):
         sys = HuginnSystem(config="cfg", tool_registry="tr")
@@ -172,3 +189,59 @@ class TestFromServerContext:
         assert all(v is True for v in components.values())
         assert sys.permission_config == "perm"
         assert sys.plan_store == "ps"
+
+
+class TestStateTreeUnification:
+    """v23 状态树合并 — HuginnSystem 是 ServerContext 的子类."""
+
+    def test_huginn_system_is_server_context_subclass(self):
+        from huginn.server_context import ServerContext
+
+        assert issubclass(HuginnSystem, ServerContext)
+
+    def test_huginn_system_inherits_active_threads(self):
+        sys = HuginnSystem()
+        assert hasattr(sys, "active_threads")
+        assert sys.active_threads == {}
+
+    def test_huginn_system_inherits_edit_tools(self):
+        sys = HuginnSystem()
+        assert hasattr(sys, "edit_tools")
+        assert sys.edit_tools == set()
+
+    def test_huginn_system_inherits_is_configured(self):
+        sys = HuginnSystem()
+        assert sys.is_configured is False
+        sys.config = "x"
+        assert sys.is_configured is True
+
+    def test_huginn_system_inherits_get_component(self):
+        sys = HuginnSystem(config="cfg")
+        assert sys.get_component("config") == "cfg"
+        assert sys.get_component("nonexistent") is None
+
+    def test_set_system_accepts_server_context(self):
+        """set_system 接受 ServerContext 实例 (自动转型为 HuginnSystem)."""
+        import huginn.system as mod
+        from huginn.server_context import ServerContext
+
+        mod._system = None
+        ctx = ServerContext(config="from_ctx")
+        set_system(ctx)
+        sys = get_system()
+        assert isinstance(sys, HuginnSystem)
+        assert sys.config == "from_ctx"
+        mod._system = None
+
+    def test_huginn_system_has_encrypted_rag_field(self):
+        """v23 unification: encrypted_rag 字段从 ServerContext 继承."""
+        sys = HuginnSystem()
+        assert hasattr(sys, "encrypted_rag")
+        assert sys.encrypted_rag is None
+
+    def test_huginn_system_has_state_registry_field(self):
+        """v23 unification: state_registry 字段从 ServerContext 继承."""
+        sys = HuginnSystem()
+        assert hasattr(sys, "state_registry")
+        # 默认实例化 (StateRegistry.shared())
+        assert sys.state_registry is not None

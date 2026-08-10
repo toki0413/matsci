@@ -41,6 +41,8 @@ non-constant sheaf (e.g. local system with monodromy) 的真 Čech H^1.
 ponytail: 单文件, numpy + stdlib, 不引 GUDHI cohomology (Phase 7.1 装的
 GUDHI 是 simplex tree, 跟 sheaf cohomology 是两条路). 手写 coboundary
 matrix + SVD rank.
+
+# 架构状态: 研究探索层 — 未接入主循环, 保留作为 future hook. 如需启用, 在 huginn/events/unified_bus.py 订阅 cognitive.* 事件并接入.
 """
 from __future__ import annotations
 

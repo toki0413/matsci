@@ -16,10 +16,10 @@ import numpy as np
 import pytest
 
 from huginn.phases import ResearchPhase
-from huginn.tools.multi_fidelity_tool import (
+from huginn.tools.registry import ToolRegistry
+from huginn.tools.sci.multi_fidelity_tool import (
     MultiFidelityTool,
 )
-from huginn.tools.registry import ToolRegistry
 
 
 @pytest.fixture(autouse=True)
