@@ -387,9 +387,11 @@ async def memory_lint(params: dict[str, Any] | None = None) -> dict[str, Any]:
     try:
         agent = await get_agent()
         p = params or {}
+        # LongTermMemory.lint() 接受 auto_fix 参数, 不接受 limit.
+        # 之前误传 limit= 导致 TypeError. limit 在 SQL 层已有限制.
         report = await asyncio.to_thread(
             agent.memory.longterm.lint,
-            limit=p.get("limit", 100),
+            auto_fix=p.get("auto_fix", False),
         )
         return {"success": True, "report": report}
     except Exception as e:
