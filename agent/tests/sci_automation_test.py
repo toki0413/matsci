@@ -113,10 +113,10 @@ async def test_vasp_mock_workflow() -> None:
 
 async def test_lammps_mock_workflow() -> None:
     print("\n[3] LAMMPS Mock-Mode Workflow")
-    from huginn.tools.sim.lammps_tool import LammpsTool, LammpsToolInput
-
     # LAMMPS 没有 mock 模式, 需要真实可执行文件. 未安装时跳过.
     import shutil
+
+    from huginn.tools.sim.lammps_tool import LammpsTool, LammpsToolInput
     if not shutil.which("lmp") and not os.environ.get("LAMMPS_EXECUTABLE"):
         report("LAMMPS run (mock)", False, "LAMMPS executable not installed", skipped=True)
         return

@@ -4,20 +4,23 @@
 """
 from __future__ import annotations
 
-import asyncio
 import os
 import sys
 import time
-from typing import Any
 
 import pytest
 
-os.environ.pop("HUGINN_DEV_MODE", None)
-os.environ["HUGINN_API_KEY"] = "perf-key-0123456789abcdef"
-os.environ["HUGINN_JWT_SECRET"] = "perf-jwt-secret"
-os.environ["HUGINN_RATE_LIMIT_PER_MINUTE"] = "0"
-os.environ["HUGINN_ALLOW_LOCAL_BASH"] = "1"
-os.environ["HUGINN_USE_DOCKER"] = "0"
+
+@pytest.fixture(autouse=True)
+def _isolated_auth_env(monkeypatch):
+    """Isolate auth env so we don't pollute other modules in the same worker."""
+    monkeypatch.delenv("HUGINN_DEV_MODE", raising=False)
+    monkeypatch.setenv("HUGINN_API_KEY", "perf-key-0123456789abcdef")
+    monkeypatch.setenv("HUGINN_JWT_SECRET", "perf-jwt-secret")
+    monkeypatch.setenv("HUGINN_RATE_LIMIT_PER_MINUTE", "0")
+    monkeypatch.setenv("HUGINN_ALLOW_LOCAL_BASH", "1")
+    monkeypatch.setenv("HUGINN_USE_DOCKER", "0")
+    yield
 
 
 async def _noop():

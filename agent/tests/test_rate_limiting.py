@@ -8,13 +8,17 @@ from __future__ import annotations
 
 import os
 import sys
-import time
 
 import pytest
 
-os.environ.pop("HUGINN_DEV_MODE", None)
-os.environ["HUGINN_API_KEY"] = "rate-key-0123456789abcdef"
-os.environ["HUGINN_JWT_SECRET"] = "rate-jwt-secret"
+
+@pytest.fixture(autouse=True)
+def _isolated_auth_env(monkeypatch):
+    """Isolate auth env so we don't pollute other modules in the same worker."""
+    monkeypatch.delenv("HUGINN_DEV_MODE", raising=False)
+    monkeypatch.setenv("HUGINN_API_KEY", "rate-key-0123456789abcdef")
+    monkeypatch.setenv("HUGINN_JWT_SECRET", "rate-jwt-secret")
+    yield
 
 
 async def _noop():

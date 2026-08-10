@@ -51,7 +51,6 @@ def check_workflow_templates() -> bool:
 
     # Import templates module (which auto-registers)
     try:
-        from huginn.workflows import templates
         from huginn.workflows.templates import WORKFLOW_TEMPLATES as _TEMPLATES
     except Exception as e:
         print(f"  [WARN] Could not import templates: {e}")

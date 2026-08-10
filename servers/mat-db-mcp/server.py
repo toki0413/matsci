@@ -197,7 +197,7 @@ async def _query_materials_project(args: dict) -> list[TextContent]:
         try:
             result = await _fetch_mp_real(api_key, formula, mp_id, props)
             return [TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))]
-        except Exception as e:
+        except Exception:
             pass  # Fall back to mock
 
     # Mock fallback

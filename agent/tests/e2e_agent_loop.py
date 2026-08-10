@@ -36,7 +36,6 @@ from huginn.memory.longterm import LongTermMemory  # noqa: E402
 from huginn.memory.manager import MemoryManager  # noqa: E402
 from tests.fixtures.fake_llm import FakeLLM  # noqa: E402
 
-
 # ──────────────────────────────────────────────────────────────────────────
 # 测试工具
 # ──────────────────────────────────────────────────────────────────────────

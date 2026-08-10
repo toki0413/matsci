@@ -1,17 +1,21 @@
 """会话超时/清理测试 — session 过期、JWT 过期、revocation list prune."""
 from __future__ import annotations
 
-import asyncio
 import os
 import sys
 import time
 
 import pytest
 
-os.environ.pop("HUGINN_DEV_MODE", None)
-os.environ["HUGINN_API_KEY"] = "sess-key-0123456789abcdef"
-os.environ["HUGINN_JWT_SECRET"] = "sess-jwt-secret"
-os.environ["HUGINN_RATE_LIMIT_PER_MINUTE"] = "0"
+
+@pytest.fixture(autouse=True)
+def _isolated_auth_env(monkeypatch):
+    """Isolate auth env so we don't pollute other modules in the same worker."""
+    monkeypatch.delenv("HUGINN_DEV_MODE", raising=False)
+    monkeypatch.setenv("HUGINN_API_KEY", "sess-key-0123456789abcdef")
+    monkeypatch.setenv("HUGINN_JWT_SECRET", "sess-jwt-secret")
+    monkeypatch.setenv("HUGINN_RATE_LIMIT_PER_MINUTE", "0")
+    yield
 
 
 async def _noop():
@@ -54,7 +58,6 @@ class TestJWTExpiry:
     def test_expired_jwt_rejected(self, app_client):
         """过期的 JWT 被拒绝."""
         from huginn.security.auth import create_token, get_user_store
-        from huginn.security.rbac import Role, User
         store = get_user_store()
         # 创建一个已过期的 token (expires_in=-1, 即 1 秒前过期)
         token = create_token(store._users["sess-user"], expires_in=-1)
@@ -81,9 +84,9 @@ class TestTokenRevocation:
 
     def test_revoke_token_blocks_access(self, app_client, admin_token):
         """吊销后 token 被拒绝."""
-        from huginn.security.rbac import TokenRevocationList, jwt_decode
         # 解析 token 的 jti
         from huginn.security.auth import _jwt_secret
+        from huginn.security.rbac import TokenRevocationList, jwt_decode
         claims = jwt_decode(admin_token, _jwt_secret())
         jti = claims.get("jti")
         assert jti, "no jti in token"

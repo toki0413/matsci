@@ -103,7 +103,7 @@ def main():
 
     try:
         from huginn.workflows.templates import list_templates, get_template
-        templates = list_templates()
+        list_templates()
         qc_templates = ["wavefunction_analysis", "reactivity_prediction", "weak_interaction", "excited_state", "charge_analysis"]
         missing = [t for t in qc_templates if not get_template(t)]
         if missing:
@@ -116,23 +116,21 @@ def main():
         all_ok = False
 
     try:
-        from huginn.tools.diagnose_tool import DiagnoseTool
-        print(f"  [OK] diagnose_tool importable")
+        print("  [OK] diagnose_tool importable")
     except Exception as e:
         print(f"  [FAIL] diagnose_tool import: {e}")
         all_ok = False
 
     try:
-        from huginn.rag.router_retriever import HierarchicalRetriever
-        print(f"  [OK] router_retriever importable")
+        print("  [OK] router_retriever importable")
     except Exception as e:
         print(f"  [FAIL] router_retriever import: {e}")
         all_ok = False
 
     try:
         from huginn.workflows.engine import RetryPolicy
-        rp = RetryPolicy(auto_diagnose=True, apply_auto_fix=True)
-        print(f"  [OK] Self-healing RetryPolicy configurable")
+        RetryPolicy(auto_diagnose=True, apply_auto_fix=True)
+        print("  [OK] Self-healing RetryPolicy configurable")
     except Exception as e:
         print(f"  [FAIL] Self-healing RetryPolicy: {e}")
         all_ok = False
@@ -149,7 +147,7 @@ def main():
         n_relations = len(kg.get("relations", []))
         print(f"  [OK] Entities: {n_entities}, Relations: {n_relations}")
         if n_entities < 10 or n_relations < 50:
-            print(f"  [WARN] Knowledge graph seems small")
+            print("  [WARN] Knowledge graph seems small")
     else:
         all_ok = False
 
@@ -192,7 +190,7 @@ def main():
         print(f"  [OK] Training examples: {count}")
         print(f"       Categories: {categories}")
         if count < 100:
-            print(f"  [WARN] Training data seems small")
+            print("  [WARN] Training data seems small")
     else:
         all_ok = False
 

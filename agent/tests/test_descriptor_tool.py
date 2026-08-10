@@ -49,8 +49,8 @@ async def test_soap_missing_deps(tool, context, tmp_path):
     # 本测试验证 "SOAP 依赖缺失时返回 helpful error".
     # 如果 dscribe/ase 已安装, SOAP 会正常执行, 测试不适用, 跳过.
     try:
-        import dscribe.descriptors  # noqa: F401
         import ase.io  # noqa: F401
+        import dscribe.descriptors  # noqa: F401
         pytest.skip("dscribe/ase 已安装, 'missing deps' 测试不适用")
     except ImportError:
         pass  # 依赖未安装, 继续测试

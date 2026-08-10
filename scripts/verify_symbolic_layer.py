@@ -67,7 +67,7 @@ async def check_symbolic_math_tool() -> bool:
         ), None)
         assert result.success
         assert "free_energy" in result.data
-        print(f"  [PASS] constitutive: derived stress from Neo-Hookean energy")
+        print("  [PASS] constitutive: derived stress from Neo-Hookean energy")
 
         # Test eigenvalue
         result = await tool.call(SymbolicMathInput(
@@ -126,7 +126,7 @@ def check_dimensional_validator() -> bool:
             equation_name="nonsense",
         )
         assert result.consistent is False
-        print(f"  [PASS] inconsistent equation detected")
+        print("  [PASS] inconsistent equation detected")
 
         # Test Buckingham π
         pi_groups = validator.buckingham_pi(
