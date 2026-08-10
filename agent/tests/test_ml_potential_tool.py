@@ -30,6 +30,22 @@ class TestMLPotentialTool:
     def test_missing_dependency_returns_helpful_error(
         self, tmp_path: Path, backend: str
     ):
+        # 本测试验证 "backend 未安装时返回 helpful error".
+        # 如果 backend 已安装 (如 [all] 依赖装了 chgnet), 测试不适用, 跳过.
+        # 之前不跳过 → chgnet 已安装 → 尝试解析 CIF → CIF 格式不对 →
+        # 返回 "Unexpected CIF file entry" 而非 "chgnet not installed" → 断言失败.
+        backend_modules = {
+            "mace": "mace",
+            "chgnet": "chgnet",
+            "nep": "pynep",
+        }
+        mod_name = backend_modules.get(backend, backend)
+        try:
+            __import__(mod_name)
+            pytest.skip(f"{backend} 已安装, 'missing dependency' 测试不适用")
+        except ImportError:
+            pass  # backend 未安装, 继续测试
+
         tool = MLPotentialTool()
         structure = tmp_path / "Si.cif"
         structure.write_text(
