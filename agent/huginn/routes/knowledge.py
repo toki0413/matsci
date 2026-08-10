@@ -92,12 +92,27 @@ async def ingest_url(req: UrlIngestRequest) -> dict[str, Any]:
     if not url.startswith(("http://", "https://")):
         return {"success": False, "error": "URL must start with http:// or https://"}
 
+    # SSRF 防护: 复用 web_search_tool 的 _is_ssrf_blocked, 拒绝内网/loopback.
+    # 之前这里直接 urlopen, 可被诱导请求 169.254.169.254 等元数据端点.
+    from huginn.tools.web_search_tool import _is_ssrf_blocked
+
+    blocked, reason = _is_ssrf_blocked(url)
+    if blocked:
+        return {"success": False, "error": f"URL blocked by SSRF protection: {reason}"}
+
     try:
         import re
         import urllib.request
 
         req_obj = urllib.request.Request(url, headers={"User-Agent": "Huginn/1.0"})
-        with urllib.request.urlopen(req_obj, timeout=30) as resp:
+        # 关闭重定向跟随: 30x 到内网是已知 SSRF 绕过手段.
+        # urllib 的 HTTPRedirectHandler 默认跟随, 这里装一个 no-op 替代.
+        class _NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):
+                raise urllib.error.HTTPError(newurl, code, msg, headers, fp)
+
+        opener = urllib.request.build_opener(_NoRedirect)
+        with opener.open(req_obj, timeout=30) as resp:
             raw = resp.read(5 * 1024 * 1024)  # 5 MB cap
             charset = resp.headers.get_content_charset() or "utf-8"
             html = raw.decode(charset, errors="replace")
