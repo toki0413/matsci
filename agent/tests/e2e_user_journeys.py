@@ -16,13 +16,14 @@ from __future__ import annotations
 
 import os
 import sys
-import tempfile
-from pathlib import Path
 
 import pytest
 
-# 关闭 dev mode, 让鉴权链路真正生效 (dev mode 会绕过所有 auth)
-os.environ.pop("HUGINN_DEV_MODE", None)
+
+@pytest.fixture(autouse=True)
+def _strict_no_dev_mode(monkeypatch):
+    """隔离环境变量: 确保 dev mode 关闭, 且不污染同 worker 的其他测试."""
+    monkeypatch.delenv("HUGINN_DEV_MODE", raising=False)
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -108,7 +109,6 @@ def app_client(isolated_workspace):
 def admin_token(app_client):
     """签发一个 admin JWT."""
     from huginn.security.auth import create_token, get_user_store
-    from huginn.security.rbac import Role
 
     store = get_user_store()
     user = store._users["admin-user"]

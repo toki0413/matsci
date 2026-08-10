@@ -22,12 +22,14 @@ from __future__ import annotations
 import json
 import os
 import sys
-from typing import Any
 
 import pytest
 
-# 关闭 dev mode, 让鉴权链路真正生效
-os.environ.pop("HUGINN_DEV_MODE", None)
+
+@pytest.fixture(autouse=True)
+def _strict_no_dev_mode(monkeypatch):
+    """隔离环境变量: 确保 dev mode 关闭, 且不污染同 worker 的其他测试."""
+    monkeypatch.delenv("HUGINN_DEV_MODE", raising=False)
 
 
 async def _noop():

@@ -138,7 +138,7 @@ def main():
     store.ingest(documents, metadatas=metadatas, ids=ids)
 
     print(f"Done! Total documents in store: {store.count()}")
-    print(f"\nYou can now use rag_tool with source_filter='sobko' to search this knowledge base.")
+    print("\nYou can now use rag_tool with source_filter='sobko' to search this knowledge base.")
 
     # Print sample queries
     print("\nSample queries to test:")

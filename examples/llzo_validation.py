@@ -38,7 +38,7 @@ print(f"σ_exp(700K) = {sigma_exp_700:.4f} S/cm")
 # Haven比
 H_R = sigma_exp_700 / sigma_S_cm
 print(f"\nH_R = {H_R:.3f}")
-print(f"H_R 文献范围: 0.3-0.6")
+print("H_R 文献范围: 0.3-0.6")
 print(f"一致性: {'✓' if 0.2 <= H_R <= 0.8 else '✗'}")
 
 # ===== 用正确单位验证所有温度 =====
@@ -68,7 +68,8 @@ print("\n--- 室温性能预测 ---")
 n = len(T_list)
 inv_T = [1.0/T for T in T_list]
 ln_D = [math.log(d) for d in D_cm2s]
-sx = sum(inv_T); sy = sum(ln_D)
+sx = sum(inv_T)
+sy = sum(ln_D)
 sxy = sum(inv_T[i]*ln_D[i] for i in range(n))
 sxx = sum(t*t for t in inv_T)
 slope = (n*sxy - sx*sy) / (n*sxx - sx*sx)
@@ -84,7 +85,7 @@ sigma_300K = sigma_300K_SI / 100
 print(f"Ea(AIMD) = {Ea_AIMD:.3f} eV")
 print(f"D(300K) = {D_300K:.3e} cm^2/s")
 print(f"σ(300K) = {sigma_300K:.3e} S/cm (Nernst-Einstein)")
-print(f"σ(300K) = 5.0e-4 S/cm (实验值)")
+print("σ(300K) = 5.0e-4 S/cm (实验值)")
 print(f"偏差: {abs(sigma_300K-5e-4)/5e-4*100:.0f}%")
 
 # ===== 电化学窗口 =====
@@ -139,7 +140,7 @@ for cat, sc in scores.items():
 
 avg = sum(scores.values()) / len(scores)
 print(f"\n  {'综合评分':<24} {avg:.1f}/10")
-print(f"\n  LLZO 是综合性能最均衡的固态电解质之一，")
-print(f"  核心优势在于宽电化学窗口和高机械强度，")
-print(f"  主要瓶颈是 Li 金属界面工程和枝晶抑制。")
+print("\n  LLZO 是综合性能最均衡的固态电解质之一，")
+print("  核心优势在于宽电化学窗口和高机械强度，")
+print("  主要瓶颈是 Li 金属界面工程和枝晶抑制。")
 print("=" * 70)

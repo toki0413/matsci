@@ -69,6 +69,17 @@ from huginn.execution.remote_job_store import (  # noqa: E402
 )
 from huginn.hpc.client import HPCConfig, JobStatus  # noqa: E402
 
+
+@pytest.fixture(autouse=True)
+def _isolated_auth_env(monkeypatch):
+    """Isolate auth env so we don't pollute other modules in the same worker."""
+    monkeypatch.setenv("HUGINN_DEV_MODE", "1")
+    monkeypatch.setenv("HUGINN_API_KEY", "test-key-0123456789abcdef")
+    monkeypatch.setenv("HUGINN_RATE_LIMIT_PER_MINUTE", "0")
+    monkeypatch.delenv("HUGINN_ADMIN_API_KEY", raising=False)
+    yield
+
+
 # ── Test app setup ──────────────────────────────────────────────────────
 #
 # The stub package above lets us import hpc.py in isolation.  We build a

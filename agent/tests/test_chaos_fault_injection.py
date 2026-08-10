@@ -7,15 +7,19 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
-from typing import Any
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import pytest
 
-os.environ.pop("HUGINN_DEV_MODE", None)
-os.environ["HUGINN_API_KEY"] = "chaos-key-0123456789abcdef"
-os.environ["HUGINN_JWT_SECRET"] = "chaos-jwt-secret"
-os.environ["HUGINN_RATE_LIMIT_PER_MINUTE"] = "0"
+
+@pytest.fixture(autouse=True)
+def _isolated_auth_env(monkeypatch):
+    """Isolate auth env so we don't pollute other modules in the same worker."""
+    monkeypatch.delenv("HUGINN_DEV_MODE", raising=False)
+    monkeypatch.setenv("HUGINN_API_KEY", "chaos-key-0123456789abcdef")
+    monkeypatch.setenv("HUGINN_JWT_SECRET", "chaos-jwt-secret")
+    monkeypatch.setenv("HUGINN_RATE_LIMIT_PER_MINUTE", "0")
+    yield
 
 
 async def _noop():
@@ -57,7 +61,6 @@ class TestLLMTimeout:
 
     def test_llm_timeout_returns_error_not_hang(self, app_client, admin_token):
         """LLM 超时时 chat 端点返回 error, 不 hang."""
-        from huginn.agent.core import HuginnAgent
 
         original_get_agent = None
         try:

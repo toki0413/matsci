@@ -30,7 +30,7 @@ print(f"  Atoms: {mol.natm} (1 Ni + 6 O)")
 print(f"  Electrons: {mol.nelectron}")
 print(f"  Spin (2S): {mol.spin} -> S = {mol.spin/2}")
 print(f"  Ni-O distance: {r:.4f} A")
-print(f"  Basis: def2-TZVP")
+print("  Basis: def2-TZVP")
 
 U_ev = 5.3
 U_ha = U_ev / 27.2114

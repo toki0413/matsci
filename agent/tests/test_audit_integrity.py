@@ -6,10 +6,15 @@ import sys
 
 import pytest
 
-os.environ.pop("HUGINN_DEV_MODE", None)
-os.environ["HUGINN_API_KEY"] = "audit-key-0123456789abcdef"
-os.environ["HUGINN_JWT_SECRET"] = "audit-jwt-secret"
-os.environ["HUGINN_RATE_LIMIT_PER_MINUTE"] = "0"
+
+@pytest.fixture(autouse=True)
+def _isolated_auth_env(monkeypatch):
+    """Isolate auth env so we don't pollute other modules in the same worker."""
+    monkeypatch.delenv("HUGINN_DEV_MODE", raising=False)
+    monkeypatch.setenv("HUGINN_API_KEY", "audit-key-0123456789abcdef")
+    monkeypatch.setenv("HUGINN_JWT_SECRET", "audit-jwt-secret")
+    monkeypatch.setenv("HUGINN_RATE_LIMIT_PER_MINUTE", "0")
+    yield
 
 
 async def _noop():
@@ -118,7 +123,7 @@ class TestAuditLogTamperDetection:
             if has_hash:
                 print(f"\n[AUDIT] hash chain detected in {len(entries)} entries")
             else:
-                print(f"\n[AUDIT] no hash chain (entries use plain logging)")
+                print("\n[AUDIT] no hash chain (entries use plain logging)")
 
     def test_audit_log_verify_integrity(self, app_client, admin_token):
         """审计日志完整性可验证 (如果有 verify 方法)."""

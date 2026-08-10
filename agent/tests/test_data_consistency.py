@@ -1,24 +1,21 @@
 """数据一致性测试 — 并发写隔离、checkpoint 往返、export-import 无损、audit 哈希链."""
 from __future__ import annotations
 
-import asyncio
-import hashlib
-import io
-import json
 import os
 import sys
-import tempfile
-import zipfile
-from pathlib import Path
-from typing import Any
 
 import pytest
 
-os.environ.pop("HUGINN_DEV_MODE", None)
-os.environ["HUGINN_API_KEY"] = "consistency-key-0123456789abcdef"
-os.environ["HUGINN_JWT_SECRET"] = "consistency-jwt-secret"
-os.environ["HUGINN_RATE_LIMIT_PER_MINUTE"] = "0"
-os.environ["HUGINN_ALLOW_LOCAL_BASH"] = "1"
+
+@pytest.fixture(autouse=True)
+def _isolated_auth_env(monkeypatch):
+    """Isolate auth env so we don't pollute other modules in the same worker."""
+    monkeypatch.delenv("HUGINN_DEV_MODE", raising=False)
+    monkeypatch.setenv("HUGINN_API_KEY", "consistency-key-0123456789abcdef")
+    monkeypatch.setenv("HUGINN_JWT_SECRET", "consistency-jwt-secret")
+    monkeypatch.setenv("HUGINN_RATE_LIMIT_PER_MINUTE", "0")
+    monkeypatch.setenv("HUGINN_ALLOW_LOCAL_BASH", "1")
+    yield
 
 
 async def _noop():
@@ -29,6 +26,8 @@ async def _noop():
 def app_client(tmp_path_factory):
     ws = tmp_path_factory.mktemp("consistency_ws")
     os.environ["HUGINN_WORKSPACE"] = str(ws)
+    # 隔离 cache 目录, 避免共享 memory.db 累积导致 export 超限 / 状态串扰
+    os.environ["HUGINN_CACHE_DIR"] = str(tmp_path_factory.mktemp("consistency_cache"))
     import huginn.server as sm
     sm._init_mcp_tools = _noop
     sm._shutdown_mcp = _noop
