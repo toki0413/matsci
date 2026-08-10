@@ -158,14 +158,19 @@ jobs:
   http-tests:
     # TestClient/HuginnAgent tests with module-scoped fixtures that crash
     # under --forked (fork + threads deadlock). Run serially (-n 0) without
-    # --forked; each TestClient instantiates the full Huginn app (~2-3GB),
-    # so 2 xdist workers OOM the 7GB runner. Swap + serial prevents OOM.
+    # --forked; each TestClient instantiates the full Huginn app (~2-3GB).
+    #
+    # Split into two groups (a/b): a single process running all 15 module-
+    # scoped TestClient files accumulates ~9-10GB RSS and OOMs at file 13
+    # (observed MemoryError in test_questions.py). Each group resets the
+    # process so RSS never exceeds ~5GB. 4G swap covers the peak.
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
+        test-group: [a, b]
     steps:
       - uses: actions/checkout@v7
 
@@ -212,36 +217,43 @@ jobs:
           NUMEXPR_NUM_THREADS: "1"
         run: |
           cd agent
+          if [ "${{ matrix.test-group }}" = "a" ]; then
+            # Group A — 8 files (lighter: CORS/version/upload/i18n/kg/ws)
+            FILES="tests/test_api_version_compat.py \
+              tests/test_cors_security_headers.py \
+              tests/test_performance_load.py \
+              tests/test_audit_integrity.py \
+              tests/test_upload_security.py \
+              tests/test_i18n_encoding.py \
+              tests/test_kg.py \
+              tests/test_websocket_long.py"
+          else
+            # Group B — 7 files (heavier: full server/chaos/data/questions/session/rate)
+            FILES="tests/test_server_fastapi.py \
+              tests/test_chaos_fault_injection.py \
+              tests/test_error_boundaries.py \
+              tests/test_data_consistency.py \
+              tests/test_questions.py \
+              tests/test_session_timeout.py \
+              tests/test_rate_limiting.py"
+          fi
           python -m pytest -v -rA --tb=short -p no:cov -o addopts="" \
             --timeout=60 --timeout-method=thread \
             -n 0 -m "not network" \
-            tests/test_api_version_compat.py \
-            tests/test_cors_security_headers.py \
-            tests/test_performance_load.py \
-            tests/test_audit_integrity.py \
-            tests/test_upload_security.py \
-            tests/test_i18n_encoding.py \
-            tests/test_kg.py \
-            tests/test_websocket_long.py \
-            tests/test_server_fastapi.py \
-            tests/test_chaos_fault_injection.py \
-            tests/test_error_boundaries.py \
-            tests/test_data_consistency.py \
-            tests/test_questions.py \
-            tests/test_session_timeout.py \
-            tests/test_rate_limiting.py \
-            --maxfail=50 2>&1 | tee pytest_http_output.txt
+            $FILES \
+            --maxfail=50 2>&1 | tee pytest_http_${{ matrix.test-group }}_output.txt
           exit ${PIPESTATUS[0]}
 
       - name: Expose failures to step summary
         if: failure()
         working-directory: ${{ github.workspace }}
         run: |
-          if [ -f agent/pytest_http_output.txt ]; then
+          OUT="agent/pytest_http_${{ matrix.test-group }}_output.txt"
+          if [ -f "$OUT" ]; then
             {
-              echo '## http test failures (last 150 lines)'
+              echo "## http test failures (group ${{ matrix.test-group }}, last 150 lines)"
               echo '```'
-              tail -150 agent/pytest_http_output.txt
+              tail -150 "$OUT"
               echo '```'
             } >> $GITHUB_STEP_SUMMARY
           fi
@@ -250,8 +262,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: pytest-http-${{ matrix.python-version }}
-          path: agent/pytest_http_output.txt
+          name: pytest-http-${{ matrix.test-group }}-${{ matrix.python-version }}
+          path: agent/pytest_http_${{ matrix.test-group }}_output.txt
           retention-days: 7
 
   integration-tests:
