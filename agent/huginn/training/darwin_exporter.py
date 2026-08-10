@@ -11,9 +11,10 @@ ponytail: 导出格式简单 JSON Lines, 不写 arrow/parquet. 升级路径: HF 
 from __future__ import annotations
 
 import json
-import os
 import time
 from pathlib import Path
+
+from huginn.utils.runtime import get_runtime_home
 
 
 class DarwinRewardExporter:
@@ -29,7 +30,7 @@ class DarwinRewardExporter:
 
     def __init__(self, output_dir: Path | None = None):
         if output_dir is None:
-            cache_dir = Path(os.environ.get("HUGINN_CACHE_DIR") or (Path.home() / ".huginn"))
+            cache_dir = get_runtime_home()
             output_dir = cache_dir / "training_pool"
         self.output_dir = Path(output_dir)
         self.sft_dir = self.output_dir / "sft"

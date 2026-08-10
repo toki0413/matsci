@@ -19,6 +19,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from huginn.utils.runtime import get_runtime_home
+
 logger = logging.getLogger(__name__)
 
 
@@ -55,7 +57,7 @@ class KnowledgeDistiller:
         kb: Any = None,
     ):
         self.output_dir = (
-            Path(output_dir) if output_dir else Path.home() / ".huginn" / "distilled"
+            Path(output_dir) if output_dir else get_runtime_home() / "distilled"
         )
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.sobkso_db_path = Path(sobkso_db_path) if sobkso_db_path else None
@@ -484,7 +486,7 @@ class KnowledgeDistiller:
             # Try to find Sobko chunks
             candidates = [
                 os.environ.get("HUGINN_KB_CHUNKS_PATH", ""),
-                os.path.join(os.environ.get("HUGINN_CACHE_DIR", ".huginn"), "kb_chunks.jsonl"),
+                str(get_runtime_home() / "kb_chunks.jsonl"),
             ]
             candidates = [c for c in candidates if c]  # filter empty
             for c in candidates:

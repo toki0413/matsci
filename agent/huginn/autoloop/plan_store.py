@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from huginn.utils.common import now_iso
+from huginn.utils.runtime import get_runtime_home
 
 logger = logging.getLogger(__name__)
 
@@ -338,7 +339,7 @@ class PlanStore:
         if plan is None:
             raise KeyError(f"plan not found: {plan_id}")
         if path is None:
-            cache = _Path.home() / ".huginn" / "plans_md"
+            cache = get_runtime_home() / "plans_md"
             cache.mkdir(parents=True, exist_ok=True)
             path = cache / f"{plan_id}.md"
         else:

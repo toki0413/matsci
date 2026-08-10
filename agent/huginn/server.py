@@ -47,6 +47,7 @@ from huginn.middleware.limits import (
 from huginn.middleware.maintenance import MaintenanceMiddleware
 from huginn.middleware.request_id import RequestIDMiddleware
 from huginn.routes import include_v1_routes
+from huginn.utils.runtime import get_runtime_home
 
 logger = logging.getLogger(__name__)
 
@@ -338,8 +339,7 @@ if __name__ == "__main__":
     # the WS mid-response. Bump to 5 min so long LLM calls survive.
     # Write port to file so external frontends can discover it.
     try:
-        from pathlib import Path
-        _port_file = Path(os.environ.get("HUGINN_CACHE_DIR", Path.home() / ".huginn")) / "backend_port"
+        _port_file = get_runtime_home() / "backend_port"
         _port_file.parent.mkdir(parents=True, exist_ok=True)
         _port_file.write_text(str(port))
     except Exception:

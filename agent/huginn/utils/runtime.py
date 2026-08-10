@@ -12,7 +12,11 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-__all__ = ["get_runtime_home", "ensure_runtime_dirs", "RUNTIME_LAYOUT"]
+__all__ = ["get_runtime_home", "ensure_runtime_dirs", "RUNTIME_LAYOUT", "HUGINN_DIR_NAME"]
+
+#: Workspace-local hidden directory name for project data (meta_trace, personas, kg).
+#: Centralized so renames only touch one place.
+HUGINN_DIR_NAME = ".huginn"
 
 
 # 运行时目录结构: key=子目录名, value=用途说明
@@ -43,7 +47,7 @@ def get_runtime_home() -> Path:
     base = os.environ.get("HUGINN_CACHE_DIR", "").strip()
     if base:
         return Path(base)
-    return Path.home() / ".huginn"
+    return Path.home() / HUGINN_DIR_NAME
 
 
 def ensure_runtime_dirs() -> Path:

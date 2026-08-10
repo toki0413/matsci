@@ -14,6 +14,7 @@ from typing import Any
 
 from huginn.crypto import CryptoVault, EncryptedDatabase, KeyManager
 from huginn.rag.vector_store import EncryptedVectorStore, VectorStore
+from huginn.utils.runtime import get_runtime_home
 
 
 class EncryptedRAGManager:
@@ -163,7 +164,7 @@ class EncryptedRAGManager:
 
     def _get_db_file(self) -> Path:
         """Infer the ChromaDB SQLite file path."""
-        base = Path(self._persist_dir or Path.home() / ".huginn" / "rag")
+        base = Path(self._persist_dir or get_runtime_home() / "rag")
         # ChromaDB creates a sqlite3 file in a subdir
         db_path = base / "chroma.sqlite3"
         return db_path
@@ -206,7 +207,7 @@ class EncryptedRAGManager:
         if not self.is_unlocked:
             raise RuntimeError("Vault must be unlocked to create backup.")
 
-        persist = Path(self._persist_dir or Path.home() / ".huginn" / "rag")
+        persist = Path(self._persist_dir or get_runtime_home() / "rag")
         backup_path = (
             Path(backup_dir)
             / f"rag_backup_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.enc"
@@ -223,7 +224,7 @@ class EncryptedRAGManager:
         if not self.is_unlocked:
             raise RuntimeError("Vault must be unlocked to restore backup.")
 
-        persist = Path(self._persist_dir or Path.home() / ".huginn" / "rag")
+        persist = Path(self._persist_dir or get_runtime_home() / "rag")
         if persist.exists():
             # Move existing to temp for safety
             temp_backup = persist.with_suffix(f".bak_{time.time()}")

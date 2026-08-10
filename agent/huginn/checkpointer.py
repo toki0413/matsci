@@ -13,6 +13,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from huginn.utils.runtime import get_runtime_home
+
 if TYPE_CHECKING:
     from huginn.persistence import CheckpointerBackend
 
@@ -31,7 +33,7 @@ def persistent_checkpointer(
     if path is None:
         path = os.environ.get("HUGINN_CHECKPOINTER_PATH")
     if path is None:
-        default = Path.home() / ".huginn" / "checkpoints.sqlite"
+        default = get_runtime_home() / "checkpoints.sqlite"
         default.parent.mkdir(parents=True, exist_ok=True)
         path = default
 
@@ -62,7 +64,7 @@ def create_checkpointer(
     if path is None:
         path = os.environ.get("HUGINN_CHECKPOINTER_PATH")
     if path is None:
-        default = Path.home() / ".huginn" / "checkpoints.sqlite"
+        default = get_runtime_home() / "checkpoints.sqlite"
         default.parent.mkdir(parents=True, exist_ok=True)
         path = default
 

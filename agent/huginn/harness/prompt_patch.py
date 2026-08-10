@@ -23,8 +23,9 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
+
+from huginn.utils.runtime import get_runtime_home
 
 logger = logging.getLogger(__name__)
 
@@ -105,9 +106,7 @@ class PromptPatchStore:
     _lock = threading.Lock()
 
     def __init__(self) -> None:
-        cache_dir = Path(
-            os.environ.get("HUGINN_CACHE_DIR", Path.home() / ".huginn")
-        )
+        cache_dir = get_runtime_home()
         self._store_dir = cache_dir / "prompt_patches"
         try:
             self._store_dir.mkdir(parents=True, exist_ok=True)
