@@ -17,6 +17,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from huginn.utils.runtime import get_runtime_home
+
 logger = logging.getLogger(__name__)
 
 RAVEN_NAME = "渡鸦"
@@ -326,7 +328,7 @@ def _pet_state_path():
     base = os.environ.get("HUGINN_CACHE_DIR")
     if base:
         return Path(base) / "pet_state.json"
-    return Path.home() / ".huginn" / "pet_state.json"
+    return get_runtime_home() / "pet_state.json"
 
 
 class PetEventBus:

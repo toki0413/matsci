@@ -10,10 +10,11 @@ Postgres + 连接池.
 from __future__ import annotations
 
 import json
-import os
 import sqlite3
 import tempfile
 from pathlib import Path
+
+from huginn.utils.runtime import get_runtime_home
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS trace_entries (
@@ -50,7 +51,7 @@ class CrossTaskStore:
 
     def __init__(self, db_path: Path | None = None):
         if db_path is None:
-            cache_dir = Path(os.environ.get("HUGINN_CACHE_DIR") or (Path.home() / ".huginn"))
+            cache_dir = get_runtime_home()
             db_path = cache_dir / "cross_task_complex.db"
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)

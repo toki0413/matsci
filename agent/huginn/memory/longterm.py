@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from huginn.rag.vector_store import VectorStore
+from huginn.utils.runtime import get_runtime_home
 
 logger = logging.getLogger(__name__)
 
@@ -196,7 +197,7 @@ class LongTermMemory:
         self.db_path = (
             Path(db_path)
             if db_path
-            else Path(os.environ.get("HUGINN_CACHE_DIR", Path.home() / ".huginn")) / "memory.db"
+            else get_runtime_home() / "memory.db"
         )
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._vector_store = vector_store
@@ -1827,7 +1828,7 @@ _STABLE_PRINCIPLES_CACHE: tuple[Any, list[str]] | None = None
 # RCB runner 把 HUGINN_CACHE_DIR 重定向到 ws/.huginn_cache, STABLE_PRINCIPLES_PATH
 # 是相对路径跟着 cwd 走, 每个任务独立. 全局路径固定在 ~/.huginn/, 任务间共享.
 # HUGINN_INHERIT_STABLE_PRINCIPLES=True (default) 时, store 双写, load 合并读.
-_GLOBAL_PRINCIPLES_PATH = Path.home() / ".huginn" / "stable_principles.jsonl"
+_GLOBAL_PRINCIPLES_PATH = get_runtime_home() / "stable_principles.jsonl"
 
 
 def _inherit_enabled() -> bool:

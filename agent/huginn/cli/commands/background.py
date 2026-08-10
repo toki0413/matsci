@@ -26,10 +26,11 @@ from rich.table import Table
 
 from huginn.cli.context import CliContext
 from huginn.utils.common import now_iso
+from huginn.utils.runtime import get_runtime_home
 
 # 状态文件默认放 ~/.huginn/, 跟 sessions 的 sqlite 一个目录
-_DEFAULT_STATE_FILE = Path.home() / ".huginn" / "background_tasks.json"
-_DEFAULT_RESULTS_DIR = Path.home() / ".huginn" / "bg_results"
+_DEFAULT_STATE_FILE = get_runtime_home() / "background_tasks.json"
+_DEFAULT_RESULTS_DIR = get_runtime_home() / "bg_results"
 
 # 线程池大小 4 够用了, 多了反而抢资源
 _MAX_WORKERS = 4

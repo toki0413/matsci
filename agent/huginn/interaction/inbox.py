@@ -450,7 +450,7 @@ def _default_inbox_path() -> Path:
         from huginn.utils.runtime import get_runtime_home
         base = get_runtime_home()
     except Exception:
-        base = Path.home() / ".huginn"
+        base = get_runtime_home()
     base = Path(base)
     base.mkdir(parents=True, exist_ok=True)
     return base / "inbox.json"

@@ -26,6 +26,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from huginn.utils.runtime import get_runtime_home
+
 logger = logging.getLogger(__name__)
 
 
@@ -103,7 +105,7 @@ class CorrectionTable:
             if cache_dir:
                 path = Path(cache_dir) / "corrections.json"
             else:
-                path = Path.home() / ".huginn" / "corrections.json"
+                path = get_runtime_home() / "corrections.json"
             cls._instance = cls(persist_path=path)
         return cls._instance
 

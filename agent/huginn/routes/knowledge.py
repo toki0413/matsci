@@ -163,7 +163,7 @@ async def get_knowledge_image(path: str) -> Any:
         from huginn.utils.runtime import get_runtime_home
         base = (get_runtime_home() / "compressed_pages").resolve()
     except Exception:
-        base = (Path.home() / ".huginn" / "compressed_pages").resolve()
+        base = (get_runtime_home() / "compressed_pages").resolve()
 
     try:
         target = Path(path).resolve()

@@ -13,18 +13,19 @@ import logging
 import threading
 import uuid
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter
 from pydantic import BaseModel
+
+from huginn.utils.runtime import get_runtime_home
 
 router = APIRouter(prefix="/projects", tags=["research_projects"])
 
 logger = logging.getLogger(__name__)
 
 _lock = threading.Lock()
-_store_path = Path.home() / ".huginn" / "research_projects.json"
+_store_path = get_runtime_home() / "research_projects.json"
 
 # mtime-based cache: avoids reading + json.loads on every request
 _cached_data: dict[str, dict[str, Any]] | None = None

@@ -17,6 +17,8 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from huginn.utils.runtime import get_runtime_home
+
 logger = logging.getLogger("huginn.task_state")
 
 
@@ -97,7 +99,7 @@ class TaskStateTracker:
     def __init__(self, cache_dir: str | None = None):
         base = cache_dir or os.environ.get(
             "HUGINN_CACHE_DIR",
-            os.path.join(os.path.expanduser("~"), ".huginn"),
+            str(get_runtime_home()),
         )
         self.state_dir = Path(base) / "task_state"
         self.state_dir.mkdir(parents=True, exist_ok=True)

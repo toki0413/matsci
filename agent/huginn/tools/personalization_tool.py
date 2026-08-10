@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 from huginn.personalization import get_shared_style_learner
 from huginn.tools.base import HuginnTool
 from huginn.types import ToolResult
+from huginn.utils.runtime import get_runtime_home
 
 logger = logging.getLogger(__name__)
 
@@ -120,7 +121,7 @@ class PersonalizationTool(HuginnTool[PersonalizationInput, PersonalizationOutput
     _CONSOLIDATE_FALLBACK_DAYS = 14
 
     def _last_consolidation_path(self) -> Path:
-        return Path.home() / ".huginn" / ".last_profile_consolidation"
+        return get_runtime_home() / ".last_profile_consolidation"
 
     def _read_last_consolidation(self) -> datetime | None:
         p = self._last_consolidation_path()

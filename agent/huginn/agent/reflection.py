@@ -6,6 +6,8 @@ import logging
 import os
 from typing import Any
 
+from huginn.utils.runtime import get_runtime_home
+
 logger = logging.getLogger(__name__)
 
 # v4 G17 续: 信号统一走 SignalHub, import 失败不阻断 v3 逻辑
@@ -134,11 +136,10 @@ class ReflectionMixin:
         """
         import json
         from datetime import datetime
-        from pathlib import Path
 
         session_id = self._session_state.session_id or "default"
         sidecar_dir = (
-            Path(os.environ.get("HUGINN_CACHE_DIR") or (Path.home() / ".huginn"))
+            get_runtime_home()
             / "reflections"
         )
         sidecar_dir.mkdir(parents=True, exist_ok=True)
@@ -168,11 +169,10 @@ class ReflectionMixin:
         文件不存在时返回空列表, 解析失败的行跳过.
         """
         import json
-        from pathlib import Path
 
         session_id = self._session_state.session_id or "default"
         sidecar_path = (
-            Path(os.environ.get("HUGINN_CACHE_DIR") or (Path.home() / ".huginn"))
+            get_runtime_home()
             / "reflections"
             / f"{session_id}.jsonl"
         )
