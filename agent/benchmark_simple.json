@@ -1,0 +1,57 @@
+{
+  "tests": [
+    {
+      "name": "tool_serial_50",
+      "elapsed_s": 0.054188,
+      "ops": 50,
+      "rate": 922.71,
+      "unit": "ops/s"
+    },
+    {
+      "name": "tool_parallel_50",
+      "elapsed_s": 0.001856,
+      "ops": 50,
+      "rate": 26935.79,
+      "unit": "ops/s"
+    },
+    {
+      "name": "sandbox_exec_10",
+      "elapsed_s": 0.5214,
+      "ops": 10,
+      "rate": 19.18,
+      "unit": "ops/s"
+    },
+    {
+      "name": "audit_log_100",
+      "elapsed_s": 0.103406,
+      "ops": 100,
+      "rate": 967.06,
+      "unit": "ops/s"
+    },
+    {
+      "name": "api_key_match_10k",
+      "elapsed_s": 0.000951,
+      "ops": 10000,
+      "rate": 10519295.55,
+      "unit": "compares/s"
+    },
+    {
+      "name": "workflow_init_20",
+      "elapsed_s": 3.7e-05,
+      "ops": 20,
+      "rate": 535159.97,
+      "unit": "ops/s"
+    },
+    {
+      "name": "large_json_10k_5",
+      "elapsed_s": 0.164754,
+      "ops": 5,
+      "rate": 30.35,
+      "unit": "serializations/s"
+    }
+  ],
+  "env": {
+    "python": "3.14.4 (main, Apr 17 2026, 10:42:51) [GCC 13.3.0]",
+    "pid": 88432
+  }
+}
