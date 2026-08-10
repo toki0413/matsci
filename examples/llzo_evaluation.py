@@ -57,7 +57,8 @@ D_list = [1.32e-6, 1.05e-5, 3.17e-5, 6.38e-5]
 n = len(T_list)
 inv_T = [1.0/T for T in T_list]
 ln_D = [math.log(d) for d in D_list]
-sx = sum(inv_T); sy = sum(ln_D)
+sx = sum(inv_T)
+sy = sum(ln_D)
 sxy = sum(inv_T[i]*ln_D[i] for i in range(n))
 sxx = sum(t*t for t in inv_T)
 slope = (n*sxy - sx*sy) / (n*sxx - sx*sx)

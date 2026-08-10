@@ -4,9 +4,7 @@ Li7La3Zr2O12, a = 12.97 Angstrom
 
 Using from_spacegroup with correct O position for 48e
 """
-import numpy as np
-from pymatgen.symmetry.groups import SpaceGroup
-from pymatgen.core import Structure, Lattice, Element
+from pymatgen.core import Lattice
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 from pymatgen.io.vasp import Poscar
 from collections import Counter
@@ -56,7 +54,7 @@ lattice = Lattice.cubic(a)
 # O:  96h (fully occupied)
 
 # Let me rebuild with O at 96h
-from pymatgen.core.structure import Structure as PmgStructure
+from pymatgen.core.structure import Structure as PmgStructure  # noqa: E402
 
 species = ["La", "Zr", "Li", "Li", "O"]
 frac_coords = [

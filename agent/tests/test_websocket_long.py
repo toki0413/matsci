@@ -1,19 +1,22 @@
 """WebSocket 长连接测试 — 心跳、断线重连、多客户端、连接数上限."""
 from __future__ import annotations
 
-import asyncio
+import contextlib
 import json
 import os
 import sys
-import time
-from typing import Any
 
 import pytest
 
-os.environ.pop("HUGINN_DEV_MODE", None)
-os.environ["HUGINN_API_KEY"] = "ws-key-0123456789abcdef"
-os.environ["HUGINN_JWT_SECRET"] = "ws-jwt-secret"
-os.environ["HUGINN_RATE_LIMIT_PER_MINUTE"] = "0"
+
+@pytest.fixture(autouse=True)
+def _isolated_auth_env(monkeypatch):
+    """Isolate auth env so we don't pollute other modules in the same worker."""
+    monkeypatch.delenv("HUGINN_DEV_MODE", raising=False)
+    monkeypatch.setenv("HUGINN_API_KEY", "ws-key-0123456789abcdef")
+    monkeypatch.setenv("HUGINN_JWT_SECRET", "ws-jwt-secret")
+    monkeypatch.setenv("HUGINN_RATE_LIMIT_PER_MINUTE", "0")
+    yield
 
 
 async def _noop():
@@ -68,11 +71,9 @@ class TestWSHandshakeAndProtocol:
             with app_client.websocket_connect("/ws/agent") as ws:
                 # 如果连上了, 发条消息看是否被踢
                 ws.send_text(json.dumps({"type": "message", "content": "test"}))
-                try:
+                with contextlib.suppress(Exception):
                     msg = ws.receive_text(timeout=3)
                     # 如果收到 error 消息, 说明鉴权拒绝
-                except Exception:
-                    pass  # 断开也可接受
         except Exception as e:
             # 连接被拒绝是正确行为
             assert "500" not in str(e), f"WS no-token crashed: {e}"
@@ -82,11 +83,9 @@ class TestWSHandshakeAndProtocol:
         try:
             with app_client.websocket_connect("/ws/agent", headers=_bearer(admin_token)) as ws:
                 ws.send_text(json.dumps({"type": "ping"}))
-                try:
+                with contextlib.suppress(Exception):
                     msg = ws.receive_text(timeout=5)
                     # 期望 pong 或忽略
-                except Exception:
-                    pass
         except Exception as e:
             assert "500" not in str(e)
 
@@ -95,10 +94,8 @@ class TestWSHandshakeAndProtocol:
         try:
             with app_client.websocket_connect("/ws/agent", headers=_bearer(admin_token)) as ws:
                 ws.send_text(json.dumps({"type": "completely_unknown_type_xyz", "data": {}}))
-                try:
+                with contextlib.suppress(Exception):
                     msg = ws.receive_text(timeout=5)
-                except Exception:
-                    pass
         except Exception as e:
             assert "500" not in str(e)
 
@@ -110,7 +107,7 @@ class TestWSMultipleClients:
         """5 个并发 WS 连接, 互不干扰."""
         connections = []
         try:
-            for i in range(5):
+            for _i in range(5):
                 ws = app_client.websocket_connect("/ws/agent", headers=_bearer(admin_token))
                 ws.__enter__()
                 connections.append(ws)
@@ -120,17 +117,13 @@ class TestWSMultipleClients:
 
             # 各发一条消息
             for i, ws in enumerate(connections):
-                try:
+                with contextlib.suppress(Exception):
                     ws.send_text(json.dumps({"type": "message", "content": f"client-{i}", "thread_id": f"thread-{i}"}))
                     ws.receive_text(timeout=3)
-                except Exception:
-                    pass
         finally:
             for ws in connections:
-                try:
+                with contextlib.suppress(Exception):
                     ws.__exit__(None, None, None)
-                except Exception:
-                    pass
 
 
 class TestWSErrorHandling:
@@ -141,10 +134,8 @@ class TestWSErrorHandling:
         try:
             with app_client.websocket_connect("/ws/agent", headers=_bearer(admin_token)) as ws:
                 ws.send_bytes(b"\x00\x01\x02\x03")
-                try:
+                with contextlib.suppress(Exception):
                     ws.receive_text(timeout=3)
-                except Exception:
-                    pass
         except Exception as e:
             assert "500" not in str(e)
 
@@ -154,10 +145,8 @@ class TestWSErrorHandling:
             with app_client.websocket_connect("/ws/agent", headers=_bearer(admin_token)) as ws:
                 big = json.dumps({"type": "message", "content": "x" * 1000000, "thread_id": "big"})
                 ws.send_text(big)
-                try:
+                with contextlib.suppress(Exception):
                     ws.receive_text(timeout=5)
-                except Exception:
-                    pass
         except Exception as e:
             assert "500" not in str(e)
 
@@ -166,10 +155,8 @@ class TestWSErrorHandling:
         try:
             with app_client.websocket_connect("/ws/agent", headers=_bearer(admin_token)) as ws:
                 ws.send_text('{"type": "message", "content": "truncate')
-                try:
+                with contextlib.suppress(Exception):
                     ws.receive_text(timeout=3)
-                except Exception:
-                    pass
         except Exception as e:
             assert "500" not in str(e)
 

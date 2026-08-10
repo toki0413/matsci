@@ -15,7 +15,6 @@ bandit B202 / CVE-2007-4559 系列问题的统一修复点.
 from __future__ import annotations
 
 import logging
-import os
 import sys
 import tarfile
 import zipfile

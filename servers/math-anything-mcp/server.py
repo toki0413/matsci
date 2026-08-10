@@ -253,7 +253,6 @@ async def _math_diff(args: dict) -> list[TextContent]:
     b_str = str(args.get("b", ""))
     mode = args.get("mode", "numeric")
     rtol = args.get("rtol", 1e-5)
-    variables = args.get("variables", {})
 
     result: dict[str, Any] = {"mode": mode}
 

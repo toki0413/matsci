@@ -197,8 +197,8 @@ def test_import_from_config_endpoint(client, monkeypatch, tmp_path):
             # 真实实现会扫 cfg.models, 这里只验证接口契约: 原样回 mapping
             return mapping
 
-    import huginn.security.credential_store as cs_mod
     import huginn.routes.credentials as cred_mod
+    import huginn.security.credential_store as cs_mod
 
     monkeypatch.setattr(cs_mod, "get_credential_store", lambda: FakeStore())
     monkeypatch.setattr(cred_mod, "get_credential_store", lambda: FakeStore())
@@ -237,9 +237,9 @@ def test_link_model_endpoint(client, monkeypatch, tmp_path):
     # 凭据存在: get_record 返回非 None 即可
     fake_store = MagicMock()
     fake_store.get_record.return_value = MagicMock(name="cred-record")
-    import huginn.security.credential_store as cs_mod
-    import huginn.routes.credentials as cred_mod
     import huginn.routes.config as config_mod
+    import huginn.routes.credentials as cred_mod
+    import huginn.security.credential_store as cs_mod
 
     monkeypatch.setattr(cs_mod, "get_credential_store", lambda: fake_store)
     monkeypatch.setattr(cred_mod, "get_credential_store", lambda: fake_store)

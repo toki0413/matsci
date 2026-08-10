@@ -11,18 +11,19 @@
 """
 from __future__ import annotations
 
-import os
 import sys
-from base64 import urlsafe_b64encode
-from json import dumps
 
 import pytest
 
-# 确保 dev mode 关闭
-os.environ.pop("HUGINN_DEV_MODE", None)
+
+@pytest.fixture(autouse=True)
+def _strict_no_dev_mode(monkeypatch):
+    """隔离环境变量: 确保 dev mode 关闭, 且不污染同 worker 的其他测试."""
+    monkeypatch.delenv("HUGINN_DEV_MODE", raising=False)
 
 try:
-    from hypothesis import given, settings, strategies as st, HealthCheck
+    from hypothesis import HealthCheck, given, settings
+    from hypothesis import strategies as st
     HYPOTHESIS_AVAILABLE = True
 except ImportError:
     HYPOTHESIS_AVAILABLE = False
@@ -54,8 +55,9 @@ def app_client(tmp_path, monkeypatch):
     )
 
     try:
-        from huginn.server import app
         from fastapi.testclient import TestClient
+
+        from huginn.server import app
         client = TestClient(app)
     except Exception as e:
         pytest.skip(f"无法启动 app: {e}")
