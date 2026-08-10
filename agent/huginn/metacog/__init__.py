@@ -68,8 +68,9 @@ def recall_audit_context(category: str, query: str = "", limit: int = 20) -> lis
 # 让策略表走 RAG + embedding 相似度匹配, 当前精确字符串匹配够用.
 
 import json as _json  # noqa: E402
-import os as _os  # noqa: E402
 from pathlib import Path as _Path  # noqa: E402
+
+from huginn.utils.runtime import get_runtime_home  # noqa: E402
 
 # 默认策略 — 覆盖 7 phase × 关键 metacog_state. S7 可在此基础上扩展.
 # v6 G52: 加 structure_relation_type 字段 (可选), 让策略表能按结构关系过滤 recall.
@@ -98,8 +99,7 @@ def _strategy_file(workspace: str | _Path | None = None) -> _Path:
     if workspace is not None:
         base = _Path(workspace)
     else:
-        cache = _os.environ.get("HUGINN_CACHE_DIR")
-        base = _Path(cache) if cache else _Path.home() / ".huginn"
+        base = get_runtime_home()
     base.mkdir(parents=True, exist_ok=True)
     return base / "recall_strategy.jsonl"
 

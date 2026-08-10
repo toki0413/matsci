@@ -44,6 +44,7 @@ from huginn.autoloop.goal_scheduler import GoalScheduler
 from huginn.autoloop.goal_store import Goal
 from huginn.autoloop.phase_gate import get_shared_phase_gate_state
 from huginn.autoloop.types import AutoloopResult, LoopPhase
+from huginn.utils.runtime import get_runtime_home
 
 logger = logging.getLogger(__name__)
 
@@ -608,7 +609,7 @@ def build_pmk_state(
         # 桥 C: evolution_rules 作为 Knowledge 路 — 让 PMK 一致性检查能看到
         # 历史教训, 不只 ChromaDB 检索. 路径对齐 context_builder.build_evolution_rules.
         try:
-            _base = os.environ.get("HUGINN_CACHE_DIR") or str(Path.home() / ".huginn")
+            _base = str(get_runtime_home())
             _rules_path = Path(_base) / "logs" / "evolution_rules.json"
             if _rules_path.exists():
                 with _rules_path.open("r", encoding="utf-8") as _rf:

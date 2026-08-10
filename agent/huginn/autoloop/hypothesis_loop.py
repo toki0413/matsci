@@ -27,6 +27,7 @@ from typing import Any, Literal
 from huginn.autoloop.phase_gate import (
     _has_external_source as _validation_has_external_source,
 )
+from huginn.utils.runtime import get_runtime_home
 
 logger = logging.getLogger(__name__)
 
@@ -1098,7 +1099,7 @@ class HypothesisGraph:
                 principles = []
         if rules is None:
             try:
-                _base = os.environ.get("HUGINN_CACHE_DIR") or str(Path.home() / ".huginn")
+                _base = str(get_runtime_home())
                 _rp = Path(_base) / "logs" / "evolution_rules.json"
                 if _rp.exists():
                     with _rp.open("r", encoding="utf-8") as _rf:

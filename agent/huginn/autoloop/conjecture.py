@@ -40,8 +40,9 @@ import json
 import logging
 import threading
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
+
+from huginn.utils.runtime import get_runtime_home
 
 logger = logging.getLogger(__name__)
 
@@ -1042,7 +1043,7 @@ def get_kg() -> Any:
                 try:
                     from huginn.kg.graph import ProjectKnowledgeGraph
 
-                    _kg_singleton = ProjectKnowledgeGraph(Path.home() / ".huginn")
+                    _kg_singleton = ProjectKnowledgeGraph(get_runtime_home())
                 except Exception:
                     logger.debug("KG singleton init failed", exc_info=True)
                     return None

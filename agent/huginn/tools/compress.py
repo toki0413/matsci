@@ -17,6 +17,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from huginn.utils.runtime import get_runtime_home
 from huginn.utils.tokens import count_tokens, rough_token_count_for_text
 
 logger = logging.getLogger(__name__)
@@ -233,7 +234,7 @@ def _offload_dir() -> Path:
     from pathlib import Path
 
     base = os.environ.get("HUGINN_CACHE_DIR")
-    d = Path(base) / "tool_artifacts" if base else Path.home() / ".huginn" / "tool_artifacts"
+    d = Path(base) / "tool_artifacts" if base else get_runtime_home() / "tool_artifacts"
     d.mkdir(parents=True, exist_ok=True)
     return d
 

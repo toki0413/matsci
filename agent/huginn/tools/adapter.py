@@ -37,6 +37,7 @@ from huginn.types import (
     ToolResult,
 )
 from huginn.utils.cache import TimedLRUCache
+from huginn.utils.runtime import get_runtime_home
 from huginn.utils.tokens import count_tokens
 
 logger = logging.getLogger(__name__)
@@ -131,7 +132,7 @@ def _default_audit_logger() -> AuditLogger:
     from pathlib import Path
 
     base = os.environ.get("HUGINN_CACHE_DIR")
-    log_path = Path(base) / "audit.jsonl" if base else Path.home() / ".huginn" / "audit.jsonl"
+    log_path = Path(base) / "audit.jsonl" if base else get_runtime_home() / "audit.jsonl"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     return AuditLogger(log_path)
 

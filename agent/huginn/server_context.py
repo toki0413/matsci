@@ -33,11 +33,12 @@ from huginn.persistence import (
 from huginn.security.audit import AuditLogger
 from huginn.skills.registry import SkillRegistry
 from huginn.tools.registry import ToolRegistry
+from huginn.utils.runtime import get_runtime_home
 
 
 def _default_audit_logger() -> AuditLogger:
     base = os.environ.get("HUGINN_CACHE_DIR")
-    log_path = Path(base) / "audit.jsonl" if base else Path.home() / ".huginn" / "audit.jsonl"
+    log_path = Path(base) / "audit.jsonl" if base else get_runtime_home() / "audit.jsonl"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     return AuditLogger(log_path)
 

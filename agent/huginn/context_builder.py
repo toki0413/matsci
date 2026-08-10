@@ -28,6 +28,8 @@ from collections import Counter
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from huginn.utils.runtime import get_runtime_home
+
 if TYPE_CHECKING:
     pass
 
@@ -787,13 +789,12 @@ class ContextBuilder:
         """
         try:
             import json
-            import os
             from pathlib import Path
 
             # 对齐 EvolutionEngine 写入路径 (logger.persist_dir / evolution_rules.json).
             # logger.py: Path(HUGINN_CACHE_DIR or ~/.huginn) / "logs".
             # 之前读 .huginn/ (相对CWD) 永远 miss 写侧的 ~/.huginn/logs/.
-            base = os.environ.get("HUGINN_CACHE_DIR") or str(Path.home() / ".huginn")
+            base = str(get_runtime_home())
             rules_path = Path(base) / "logs" / "evolution_rules.json"
             if not rules_path.exists():
                 return ""

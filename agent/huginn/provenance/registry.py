@@ -25,6 +25,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from huginn.utils.runtime import get_runtime_home
+
 logger = logging.getLogger(__name__)
 
 # 内存缓存上限, SQLite 不限
@@ -376,7 +378,7 @@ class ProvenanceRegistry:
         if cache_dir:
             db_path = str(Path(cache_dir) / "provenance.db")
         else:
-            db_path = str(Path.home() / ".huginn" / "provenance.db")
+            db_path = str(get_runtime_home() / "provenance.db")
         self._store: _ProvenanceStore | None = None
         try:
             self._store = _ProvenanceStore(db_path)

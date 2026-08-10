@@ -19,8 +19,9 @@ import os
 import threading
 import time
 from dataclasses import asdict, dataclass, field
-from pathlib import Path
 from typing import Any
+
+from huginn.utils.runtime import get_runtime_home
 
 logger = logging.getLogger(__name__)
 
@@ -106,9 +107,7 @@ class JointBandit:
     _lock = threading.Lock()
 
     def __init__(self) -> None:
-        cache_dir = Path(
-            os.environ.get("HUGINN_CACHE_DIR", Path.home() / ".huginn")
-        )
+        cache_dir = get_runtime_home()
         self._store_dir = cache_dir / "joint_beliefs"
         try:
             self._store_dir.mkdir(parents=True, exist_ok=True)

@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from huginn.utils.archive_safety import safe_archive_extract
+from huginn.utils.runtime import get_runtime_home
 
 logger = logging.getLogger(__name__)
 
@@ -199,7 +200,7 @@ class ExportShareManager:
         cache_dir = os.environ.get("HUGINN_CACHE_DIR")
         candidates = [
             Path(cache_dir) / "memory.db" if cache_dir else None,
-            Path.home() / ".huginn" / "memory.db",
+            get_runtime_home() / "memory.db",
             self.workspace / ".huginn" / "memory.db",
         ]
         for c in candidates:
