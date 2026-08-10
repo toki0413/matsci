@@ -56,14 +56,16 @@ jobs:
           pip install langchain-openai langgraph-checkpoint-sqlite
           # Lightweight optional deps — keeps test coverage up on CI
           pip install psutil pulp cvxpy scikit-fem anthropic langchain-ollama
-          pip install pytest-timeout pytest-forked
+          pip install pytest-timeout
 
       - name: Add swap to prevent OOM
         run: |
-          # github runner 只有 7G RAM, 4708 个测试串行跑会在 65% 处 OOM.
-          # 加 6G swap (用 /swapfile-ci 避开系统默认 /swapfile 冲突).
+          # github runner 只有 7G RAM. --forked 曾用来隔离每个测试防内存累积,
+          # 但 fork 进程继承了 starlette TestClient 的线程状态, 导致 TestClient
+          # 测试 worker 一致崩溃 (5% 处 8 个 worker 全 crash). 改用 12G swap
+          # + -n 2 替代 --forked 的内存隔离.
           if [ ! -f /swapfile-ci ]; then
-            sudo fallocate -l 6G /swapfile-ci
+            sudo fallocate -l 12G /swapfile-ci
             sudo chmod 600 /swapfile-ci
             sudo mkswap /swapfile-ci
             sudo swapon /swapfile-ci
@@ -90,7 +92,7 @@ jobs:
         run: |
           cd agent
           python -m pytest -v -rA --tb=line -p no:cov -o addopts="" \
-            --timeout=60 --timeout-method=thread --forked \
+            --timeout=60 --timeout-method=thread \
             -n 2 -m "not network" \
             --ignore=tests/test_api_contract.py \
             --ignore=tests/test_security_penetration.py \
