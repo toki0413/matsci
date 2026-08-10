@@ -25,6 +25,24 @@ if "huginn.routes" not in sys.modules:
     sys.modules["huginn.routes"] = _stub
     huginn.routes = _stub
 
+    # Stub 不含 include_v1_routes, 会导致同会话中依赖 huginn.server 的测试
+    # ImportError. 提供懒加载: 被调用时替换 stub 为真实模块并委托.
+    def _lazy_include_v1_routes(app, *, keep_root_compat=True):
+        import importlib
+
+        sys.modules.pop("huginn.routes", None)
+        try:
+            real_mod = importlib.import_module("huginn.routes")
+            sys.modules["huginn.routes"] = real_mod
+            huginn.routes = real_mod
+            return real_mod.include_v1_routes(app, keep_root_compat=keep_root_compat)
+        except Exception:
+            sys.modules["huginn.routes"] = _stub
+            huginn.routes = _stub
+            raise
+
+    _stub.include_v1_routes = _lazy_include_v1_routes
+
 # ── Real imports ────────────────────────────────────────────────────────
 
 import json  # noqa: E402
@@ -180,11 +198,10 @@ def test_import_from_config_endpoint(client, monkeypatch, tmp_path):
             return mapping
 
     import huginn.security.credential_store as cs_mod
+    import huginn.routes.credentials as cred_mod
 
     monkeypatch.setattr(cs_mod, "get_credential_store", lambda: FakeStore())
-    monkeypatch.setattr(
-        "huginn.routes.credentials.get_credential_store", lambda: FakeStore()
-    )
+    monkeypatch.setattr(cred_mod, "get_credential_store", lambda: FakeStore())
 
     # 指向一个不存在的文件, 走 from_env() 分支, 不依赖磁盘上的 huginn.toml
     monkeypatch.setenv("HUGINN_CONFIG_FILE", str(tmp_path / "no-such-file.toml"))
@@ -221,18 +238,17 @@ def test_link_model_endpoint(client, monkeypatch, tmp_path):
     fake_store = MagicMock()
     fake_store.get_record.return_value = MagicMock(name="cred-record")
     import huginn.security.credential_store as cs_mod
+    import huginn.routes.credentials as cred_mod
+    import huginn.routes.config as config_mod
 
     monkeypatch.setattr(cs_mod, "get_credential_store", lambda: fake_store)
-    monkeypatch.setattr(
-        "huginn.routes.credentials.get_credential_store", lambda: fake_store
-    )
+    monkeypatch.setattr(cred_mod, "get_credential_store", lambda: fake_store)
 
     # 拦截 _persist_config: 避免真落盘的副作用 (重置 agent factory / pet 等),
     # 顺便把传进去的 cfg 截下来好断言
     captured: dict = {}
     monkeypatch.setattr(
-        "huginn.routes.config._persist_config",
-        lambda c: captured.__setitem__("cfg", c),
+        config_mod, "_persist_config", lambda c: captured.__setitem__("cfg", c)
     )
 
     r = client.post("/credentials/cid-1/link-model/gpt4o")
