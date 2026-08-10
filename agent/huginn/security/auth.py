@@ -233,6 +233,7 @@ def require_api_key(
                     request.state.auth = ctx
                 except Exception as exc:
                     logger.debug("Could not attach auth context: %s", exc)
+                _enforce_write_capability(conn)
                 return bearer
         except (ValueError, KeyError):
             pass  # fall through to API key check
@@ -267,6 +268,7 @@ def require_api_key(
             request.state.auth = ctx
         except Exception as exc:
             logger.debug("Could not attach auth context: %s", exc)
+        _enforce_write_capability(conn)
         return provided
 
     # Legacy shared API key
@@ -277,6 +279,38 @@ def require_api_key(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid or missing API key",
     )
+
+
+def _enforce_write_capability(conn: Any) -> None:
+    """对写操作 (POST/PUT/PATCH/DELETE) 强制 capability 检查.
+
+    之前 30+ 路由只有 require_api_key (验身份) 没有 require_capability (验权限),
+    VIEWER 角色 (只有 read/query/health) 拿到 JWT 后能调写操作改数据.
+    在 require_api_key 成功认证后立即调用此函数, 集中管控.
+    可通过 HUGINN_ENFORCE_WRITE_CAPABILITY=0 关闭 (默认开).
+    """
+    if os.environ.get("HUGINN_ENFORCE_WRITE_CAPABILITY", "1").lower() not in ("1", "true", "yes"):
+        return
+    # 只对 Request 检查, WebSocket 跳过 (WS 有自己的鉴权流程)
+    method = getattr(conn, "method", None)
+    if method is None or method.upper() in ("GET", "HEAD", "OPTIONS"):
+        return
+    path = getattr(getattr(conn, "url", None), "path", "") or ""
+    norm = path[4:] if path.startswith("/v1/") else path
+    # 公开路径豁免
+    if any(norm.startswith(p) for p in ("/auth/", "/health", "/metrics", "/diagnostics", "/ready")):
+        return
+    ctx = getattr(getattr(conn, "state", None), "auth", None)
+    if ctx is None:
+        return  # 共享 API key, 无 user, 放行 (兼容)
+    user = getattr(ctx, "user", None)
+    if user is None:
+        return
+    if not user.can("write"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Role '{user.role.value}' lacks 'write' capability for {method} {path}",
+        )
 
 
 def require_admin_key(
@@ -297,6 +331,16 @@ def require_admin_key(
     if bearer:
         try:
             claims = _decode_token(bearer)
+            # 吊销检查 (logout 后 token 在 exp 前仍有效的绕过点):
+            # 之前只查 role==ADMIN, 不查 TokenRevocationList, 已 logout 的
+            # admin token 在 exp 前仍可访问 admin 端点. 必须和 require_api_key
+            # 一样查 jti.
+            jti = claims.get("jti")
+            if jti and TokenRevocationList.shared().is_revoked(jti):
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Token has been revoked",
+                )
             if claims.get("role") == Role.ADMIN.value:
                 return bearer
         except (ValueError, KeyError):
@@ -356,6 +400,19 @@ def require_capability(capability: str) -> Callable[..., Any]:
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="User account is deactivated",
                 )
+            # 纵深防御: 即使 require_api_key 已查过吊销, 这里再查一次 jti,
+            # 防止有路由单独挂 require_capability 而不挂 require_api_key.
+            if ctx.token:
+                try:
+                    claims = _decode_token(ctx.token)
+                    jti = claims.get("jti")
+                    if jti and TokenRevocationList.shared().is_revoked(jti):
+                        raise HTTPException(
+                            status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail="Token has been revoked",
+                        )
+                except (ValueError, KeyError):
+                    pass
             if not ctx.user.can(capability):
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
