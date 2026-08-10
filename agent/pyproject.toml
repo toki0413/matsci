@@ -45,6 +45,10 @@ dependencies = [
     "python-dotenv>=1.0",
     "cryptography>=43.0",
     "pyyaml>=6.0",
+    # config.py 用 toml.dumps/loads 读写 TOML 配置. Python 3.11+ 内置 tomllib
+    # 只能读不能写, config.py 的 save_config 需要 dumps → 必须装 toml 包.
+    # 之前未声明, 生产环境调 /credentials/import_from_config 会 ImportError.
+    "toml>=0.10.2",
     # mcp 2.0 是 major 跳跃 (API 重构), 暂锁 1.x, 单独评估后再升.
     "mcp>=1.28.1,<2.0",
     # server
