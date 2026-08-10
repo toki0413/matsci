@@ -148,9 +148,11 @@ jobs:
 
   http-tests:
     # TestClient/HuginnAgent tests that crash under --forked (fork + threads).
-    # Run without --forked; test count is small (~94) so no OOM risk.
+    # Run serially (-n 0) without --forked; each TestClient instantiates the
+    # full Huginn app (~2-3GB), so 2 xdist workers OOM the 7GB runner.
+    # Swap + serial execution prevents OOM kills.
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -175,7 +177,20 @@ jobs:
           pip install psutil pulp cvxpy scikit-fem anthropic langchain-ollama
           pip install pytest-timeout
 
-      - name: Run http/agent tests (no --forked)
+      - name: Add swap to prevent OOM
+        run: |
+          if [ ! -f /swapfile-ci ]; then
+            sudo fallocate -l 4G /swapfile-ci
+            sudo chmod 600 /swapfile-ci
+            sudo mkswap /swapfile-ci
+            sudo swapon /swapfile-ci
+            echo "swap added:"
+            swapon --show
+          else
+            echo "/swapfile-ci already exists"
+          fi
+
+      - name: Run http/agent tests (serial, no --forked)
         env:
           HUGINN_RATE_LIMIT_ENABLED: "false"
           HUGINN_RATE_LIMIT_PER_MINUTE: "0"
@@ -188,7 +203,18 @@ jobs:
           NUMEXPR_NUM_THREADS: "1"
         run: |
           cd agent
-          python -m pytest -v -rA --tb=short -p no:cov -o addopts=""             --timeout=60 --timeout-method=thread             -n 2 -m "not network"             tests/test_api_version_compat.py             tests/test_cors_security_headers.py             tests/test_performance_load.py             tests/test_audit_integrity.py             tests/test_upload_security.py             tests/test_i18n_encoding.py             tests/test_kg.py             tests/test_websocket_long.py             --maxfail=50 2>&1 | tee pytest_http_output.txt
+          python -m pytest -v -rA --tb=short -p no:cov -o addopts="" \
+            --timeout=60 --timeout-method=thread \
+            -n 0 -m "not network" \
+            tests/test_api_version_compat.py \
+            tests/test_cors_security_headers.py \
+            tests/test_performance_load.py \
+            tests/test_audit_integrity.py \
+            tests/test_upload_security.py \
+            tests/test_i18n_encoding.py \
+            tests/test_kg.py \
+            tests/test_websocket_long.py \
+            --maxfail=50 2>&1 | tee pytest_http_output.txt
           exit ${PIPESTATUS[0]}
 
       - name: Expose failures to step summary
