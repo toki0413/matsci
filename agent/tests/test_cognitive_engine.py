@@ -352,3 +352,98 @@ class TestCognitiveStateMachine:
         # Can't go from S0 to construct directly
         csm.transition(TransitionSignal("plan_complete"))
         assert csm.state == CognitiveState.S0_BLANK  # unchanged
+
+
+class TestCSMListenerRemoved:
+    """v23 Round 9: CSMListener Protocol 已删除 (零注册死代码).
+
+    验证: Protocol 类、register_listener 方法、_listeners 字段都不再存在.
+    CSM 状态转移通过 UnifiedBus 发布, 不再走旧 listener 协议.
+    """
+
+    def test_csm_listener_not_exported(self):
+        """CSMListener 不再从 cognitive_engine 导出."""
+        import huginn.cognitive_engine as mod
+
+        assert not hasattr(mod, "CSMListener")
+        assert "CSMListener" not in getattr(mod, "__all__", [])
+
+    def test_register_listener_method_removed(self):
+        """register_listener 方法已删除."""
+        csm = CognitiveStateMachine()
+        assert not hasattr(csm, "register_listener")
+
+    def test_listeners_field_removed(self):
+        """_listeners 字段已删除 (不再有旧广播循环的载体)."""
+        csm = CognitiveStateMachine()
+        assert not hasattr(csm, "_listeners")
+
+    def test_protocol_import_not_needed(self):
+        """cognitive_engine 不再 import Protocol (CSMListener 是唯一用例)."""
+        import inspect
+
+        from huginn import cognitive_engine as mod
+
+        src = inspect.getsource(mod)
+        # 模块级不应有 "from typing import ... Protocol"
+        # (注释里提到 Protocol 可以, 但 import 语句不应有)
+        import_lines = [
+            line for line in src.splitlines()
+            if line.strip().startswith("from typing") or line.strip().startswith("import typing")
+        ]
+        for line in import_lines:
+            assert "Protocol" not in line, f"不应再 import Protocol: {line}"
+
+
+class TestCSMTransitionPublishesToUnifiedBus:
+    """v23: CSM transition 通过 UnifiedBus 发布 (替代 CSMListener)."""
+
+    def test_transition_calls_notify_listeners(self):
+        """transition() 内部调 _notify_listeners, 后者发布到 UnifiedBus."""
+        csm = CognitiveStateMachine()
+        csm.start_session()
+        # mock _notify_listeners 验证被调用
+        called: list[tuple] = []
+        original = csm._notify_listeners
+
+        def mock_notify(old, new, signal):
+            called.append((old, new, signal.signal_type))
+
+        csm._notify_listeners = mock_notify
+        try:
+            csm.transition(TransitionSignal("user_goal"))
+        finally:
+            csm._notify_listeners = original
+        assert len(called) == 1
+        old, new, sig = called[0]
+        assert old == CognitiveState.S0_BLANK
+        assert new == CognitiveState.S1_DISCOVER
+        assert sig == "user_goal"
+
+    def test_notify_listeners_publishes_to_unified_bus(self, monkeypatch):
+        """_notify_listeners 调 UnifiedBus._publish_internal_sync 发布事件.
+
+        v23: CSMListener 删除后, 这是 CSM 状态转移的唯一外部通知路径.
+        mock UnifiedBus._publish_internal_sync 捕获调用, 验证事件类型和 payload.
+        """
+        from huginn.events import unified_bus as ubus_mod
+
+        csm = CognitiveStateMachine()
+        received: list[tuple] = []
+
+        def mock_publish(self, event_type, data, thread_id="", source=""):
+            received.append((event_type, data, thread_id, source))
+
+        monkeypatch.setattr(ubus_mod.UnifiedBus, "_publish_internal_sync", mock_publish)
+        # 触发一次 transition (S0 → S1)
+        csm.start_session()
+        csm.transition(TransitionSignal("user_goal"))
+        # UnifiedBus._publish_internal_sync 应被调用
+        assert len(received) >= 1
+        event_type, data, _tid, source = received[-1]
+        assert event_type == "cognitive.csm.transition"
+        assert data["old_state"] == "s0_blank"
+        assert data["new_state"] == "s1_discover"
+        assert data["signal"] == "user_goal"
+        assert data["phase"] == "hypothesize"  # STATE_TO_PHASE[S1_DISCOVER]
+        assert source == "csm"

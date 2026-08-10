@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any, Protocol
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +86,6 @@ CONSTRUCTION_STATES = {
 
 # v6 R22: CSM 为 canonical 状态机, 其他 phase 枚举 (ResearchPhase / SessionPhase /
 # autoloop AUTOLOOP_PHASES) 通过 UnifiedBus 的 cognitive.csm.transition 事件同步.
-# 兼容: CSMListener Protocol 保留 (零注册但不删), 新代码应订阅 UnifiedBus.
 # 映射表: CSM 状态 → autoloop phase 字符串 (perceive/hypothesize/plan/execute/validate/learn/report)
 # 用于订阅者做状态映射. 不强制 1:1 — S3/S6/S7 是元状态.
 STATE_TO_PHASE: dict[CognitiveState, str] = {
@@ -106,26 +105,12 @@ def get_phase_for_state(state: CognitiveState) -> str:
     return STATE_TO_PHASE.get(state, "perceive")
 
 
-class CSMListener(Protocol):
-    """v6 R22: CSM 状态转移观察者协议.
-
-    任何想跟 CSM 同步的 phase manager / session state 实现此协议即可.
-    CognitiveStateMachine.transition() 末尾会调 on_csm_transition.
-    ponytail: Protocol 不强制继承, 鸭子类型即可 — 老代码不破.
-    """
-
-    def on_csm_transition(
-        self,
-        old: CognitiveState,
-        new: CognitiveState,
-        signal: TransitionSignal,
-    ) -> None:
-        """CSM 状态转移通知. listener 自行决定是否同步本地状态.
-
-        实现不应抛异常 — CognitiveStateMachine 会 catch 并记 debug 日志,
-        避免一个 listener 失败影响其他 listener 和主流程.
-        """
-        ...
+# v23 Round 9: CSMListener Protocol 已删除.
+# 之前全仓零注册 (grep register_listener 无调用方), 已被 UnifiedBus
+# (cognitive.csm.transition 事件) 完全替代. 删除 Protocol + register_listener
+# 方法 + _listeners 字段 + 旧广播循环, 保留 UnifiedBus 发布路径.
+# 历史背景: v6 R22 引入 CSMListener 作为过渡方案, v23 引入 UnifiedBus 后
+# Protocol 成为死代码 (零注册, 永远空转).
 
 
 # ── Transition signals ────────────────────────────────────────────────
@@ -448,30 +433,6 @@ class CognitiveStateMachine:
         # Track whether we've had a confirmation gate this cycle
         self._awaiting_confirmation: bool = False
         self._confirmation_type: str = ""
-        # v6 R22: CSMListener 列表 — transition() 末尾广播
-        self._listeners: list[CSMListener] = []
-
-    def register_listener(self, listener: CSMListener) -> None:
-        """v6 R22: 注册 CSM 状态转移观察者.
-
-        listener 需实现 on_csm_transition(old, new, signal) 方法.
-        ponytail: 鸭子类型, 不强校验 Protocol — 调用时 try/except 兜底.
-
-        .. deprecated:: v23
-            全仓零注册 — 已被 UnifiedBus (cognitive.csm.transition 事件) 替代.
-            _notify_listeners 仍兼容旧路径但永远空转 (listeners 列表始终空).
-            新代码应订阅 UnifiedBus, 不要调本方法. 下个版本删除 Protocol + 方法.
-        """
-        import warnings
-
-        warnings.warn(
-            "CSMListener.register_listener is deprecated and unused across the "
-            "codebase. Subscribe to UnifiedBus 'cognitive.csm.transition' instead. "
-            "Will be removed in next version.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        self._listeners.append(listener)
 
     def _notify_listeners(
         self,
@@ -479,8 +440,11 @@ class CognitiveStateMachine:
         new: CognitiveState,
         signal: TransitionSignal,
     ) -> None:
-        """广播转移给所有 listener + UnifiedBus. 单个 listener 抛异常不影响其他."""
-        # 1. UnifiedBus 发布 (新路径 — 替代 CSMListener)
+        """广播状态转移到 UnifiedBus.
+
+        v23 Round 9: 旧 CSMListener Protocol 已删除 (零注册死代码).
+        所有订阅者应通过 UnifiedBus 监听 'cognitive.csm.transition' 事件.
+        """
         try:
             from huginn.events.unified_bus import UnifiedBus
             ubus = UnifiedBus()
@@ -496,17 +460,6 @@ class CognitiveStateMachine:
             )
         except Exception:
             logger.debug("UnifiedBus csm.transition publish failed (non-fatal)", exc_info=True)
-
-        # 2. 兼容: 旧 CSMListener 协议 (保留但不推荐新代码使用)
-        for listener in self._listeners:
-            try:
-                listener.on_csm_transition(old, new, signal)
-            except Exception:
-                logger.debug(
-                    "CSMListener %s.on_csm_transition failed (non-fatal)",
-                    type(listener).__name__,
-                    exc_info=True,
-                )
 
     @property
     def state(self) -> CognitiveState:
@@ -651,8 +604,7 @@ __all__ = [
     "ALLOWED_TRANSITIONS",
     "DISCOVERY_STATES",
     "CONSTRUCTION_STATES",
-    # v6 R22: CSM observer 协议 + 状态映射
-    "CSMListener",
+    # v6 R22: CSM 状态映射 (CSMListener Protocol 已删除, 走 UnifiedBus)
     "STATE_TO_PHASE",
     "get_phase_for_state",
 ]
