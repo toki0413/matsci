@@ -28,6 +28,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from huginn.utils.archive_safety import safe_archive_extract
+
 logger = logging.getLogger(__name__)
 
 # 归档格式版本，后续升级结构时可以据此做兼容处理
@@ -519,12 +521,12 @@ class ExportShareManager:
             elif ext in (".zip",):
                 with tempfile.TemporaryDirectory() as tmp:
                     with zipfile.ZipFile(str(src), "r") as zf:
-                        zf.extractall(tmp)
+                        safe_archive_extract(zf, tmp)
                     self._import_from_dir(Path(tmp), merge, result)
             elif ext in (".gz",) or src.name.endswith(".tar.gz"):
                 with tempfile.TemporaryDirectory() as tmp:
                     with tarfile.open(str(src), "r:gz") as tf:
-                        tf.extractall(tmp)
+                        safe_archive_extract(tf, tmp)
                     self._import_from_dir(Path(tmp), merge, result)
             else:
                 # 尝试根据文件头判断
@@ -533,7 +535,7 @@ class ExportShareManager:
                 if magic[:2] == b"PK":
                     with tempfile.TemporaryDirectory() as tmp:
                         with zipfile.ZipFile(str(src), "r") as zf:
-                            zf.extractall(tmp)
+                            safe_archive_extract(zf, tmp)
                         self._import_from_dir(Path(tmp), merge, result)
                 else:
                     result["errors"].append(f"无法识别的归档格式: {src.name}")

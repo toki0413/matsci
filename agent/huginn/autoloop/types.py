@@ -60,7 +60,7 @@ def objective_hash(objective: str) -> str:
     only differ by whitespace/casing they hash differently; that's fine, we'd
     rather over-store than silently reuse the wrong run.
     """
-    return hashlib.md5(objective.encode("utf-8")).hexdigest()[:8]
+    return hashlib.md5(objective.encode("utf-8"), usedforsecurity=False).hexdigest()[:8]
 
 
 def _snapshot_dir(workspace: str | Path) -> Path:

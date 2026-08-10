@@ -70,7 +70,7 @@ class _SubprocessHandle:
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             cwd=cwd,
-            shell=shell,
+            shell=shell,  # nosec B602 - 工具设计本质就是执行 shell 命令
             bufsize=-1,
         )
         self._buf: list[str] = []

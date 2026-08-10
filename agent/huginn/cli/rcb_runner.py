@@ -2502,14 +2502,15 @@ LUCID review (mandatory after generating hypothesis):
             _darwin_cp = float(_entry.get("darwin_score", 0.5)) if "_entry" in dir() else 0.5
             _sup_ratio_cp = float(_entry.get("supported_ratio", 0.0)) if "_entry" in dir() else 0.0
             _es_digest = _hashlib.md5(
-                f"{_darwin_cp:.6f}|{_sup_ratio_cp:.6f}".encode()
+                f"{_darwin_cp:.6f}|{_sup_ratio_cp:.6f}".encode(),
+                usedforsecurity=False,
             ).hexdigest()
             save_checkpoint(
                 task_id=_task_id,
                 step_id=_iter_n + 1,
                 phase="execute",
                 workspace=ws,
-                context_digest=_hashlib.md5((_ai_text or "").encode()).hexdigest(),
+                context_digest=_hashlib.md5((_ai_text or "").encode(), usedforsecurity=False).hexdigest(),
                 memory_cursor=None,
                 target_chain_progress=_tc_progress,
                 prospective_queue=_pending,
@@ -2544,7 +2545,7 @@ LUCID review (mandatory after generating hypothesis):
         # C7: 删 stagnation early-stop — 与 P5 "跑满 timeout" 矛盾, 是早交卷根因.
         #   升温 + imagination/pivot 分流负责重热, wall_clock 守卫唯一控制退出.
         _curr_hash = (
-            _hashlib.md5(_report_text.encode()).hexdigest()
+            _hashlib.md5(_report_text.encode(), usedforsecurity=False).hexdigest()
             if _report_text else None
         )
         if _curr_hash == _prev_report_hash and _curr_hash is not None:

@@ -212,7 +212,7 @@ def _open_shell(cfg: Any, cols: int, rows: int, command: str):
         client.set_missing_host_key_policy(paramiko.RejectPolicy())
         client.load_system_host_keys()
     else:
-        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())  # nosec B507
 
     connect_kwargs = {
         "hostname": cfg.host,

@@ -417,11 +417,12 @@ class RemoteExecutor:
         try:
             self._client.download_file(remote_archive, str(local_archive))
             with tarfile.open(local_archive, "r:gz") as tar:
-                # filter= was added in 3.12; fall back on older runtimes.
-                try:
-                    tar.extractall(path=local_dir, filter="fully_trusted")
-                except TypeError:
-                    tar.extractall(path=local_dir)
+                # 不能用 fully_trusted — 即使 remote 是可信 HPC, 也可能
+                # 因为目录被攻破或传输被中间人改包而写入恶意 tar 成员.
+                # safe_archive_extract 会用 data_filter (3.12+) 或手动路径检查,
+                # 拒绝 .. 和绝对路径.
+                from huginn.utils.archive_safety import safe_archive_extract
+                safe_archive_extract(tar, local_dir)
         finally:
             local_archive.unlink(missing_ok=True)
 
