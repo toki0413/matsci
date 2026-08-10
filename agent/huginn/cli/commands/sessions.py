@@ -18,6 +18,7 @@ import click
 from rich.table import Table
 
 from huginn.cli.context import CliContext
+from huginn.utils.runtime import get_runtime_home
 
 # UUID v1 epoch (1582-10-15) 到 Unix epoch (1970-01-01) 的偏移, 单位 100-ns
 _UUID_EPOCH_OFFSET = 0x01B21DD213814000
@@ -31,7 +32,7 @@ def _get_db_path() -> Path:
     env_path = os.environ.get("HUGINN_CHECKPOINTER_PATH")
     if env_path:
         return Path(env_path).expanduser()
-    return Path.home() / ".huginn" / "checkpoints.sqlite"
+    return get_runtime_home() / "checkpoints.sqlite"
 
 
 def _uuid_time_ticks(uuid_str: str) -> int | None:

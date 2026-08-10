@@ -35,6 +35,7 @@ from cryptography.fernet import Fernet, InvalidToken
 
 from huginn.crypto import KeyManager
 from huginn.utils.common import now_iso
+from huginn.utils.runtime import get_runtime_home
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +78,7 @@ def _cred_dir() -> Path:
     cache = os.environ.get("HUGINN_CACHE_DIR")
     if cache:
         return Path(cache)
-    return Path.home() / ".huginn"
+    return get_runtime_home()
 
 
 def _get_fernet() -> Fernet:
@@ -576,7 +577,7 @@ def _service_cred_file() -> Path:
     cache = os.environ.get("HUGINN_CACHE_DIR")
     if cache:
         return Path(cache) / "credentials.enc.json"
-    return Path.home() / ".huginn" / "credentials.enc.json"
+    return get_runtime_home() / "credentials.enc.json"
 
 
 def _master_key_file() -> Path:
@@ -586,7 +587,7 @@ def _master_key_file() -> Path:
     应改用环境变量显式提供, 这个文件只是兜底。
     """
     cache = os.environ.get("HUGINN_CACHE_DIR")
-    base = Path(cache) if cache else (Path.home() / ".huginn")
+    base = Path(cache) if cache else get_runtime_home()
     return base / "master.key"
 
 

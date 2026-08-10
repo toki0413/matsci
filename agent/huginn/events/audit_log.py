@@ -222,7 +222,7 @@ def _resolve_audit_path() -> Path:
         from huginn.utils.runtime import get_runtime_home
         base = get_runtime_home()
     except Exception:
-        base = Path.home() / ".huginn"
+        base = get_runtime_home()
     events_dir = base / "events"
     events_dir.mkdir(parents=True, exist_ok=True)
     return events_dir / "audit.jsonl"

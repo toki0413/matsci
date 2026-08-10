@@ -40,6 +40,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from huginn.utils.runtime import get_runtime_home
+
 logger = logging.getLogger(__name__)
 
 # Parameters worth tracking per tool call
@@ -196,7 +198,7 @@ class SkillEvolutionLayer:
             if cache_dir:
                 path = Path(cache_dir) / "skill_beliefs.json"
             else:
-                path = Path.home() / ".huginn" / "skill_beliefs.json"
+                path = get_runtime_home() / "skill_beliefs.json"
             cls._instance = cls(persist_path=path)
         return cls._instance
 

@@ -19,6 +19,7 @@ from huginn.security.rbac import (
     generate_api_key,
     hash_api_key,
 )
+from huginn.utils.runtime import get_runtime_home
 
 
 class UserStore:
@@ -26,7 +27,7 @@ class UserStore:
 
     def __init__(self, store_path: str | Path | None = None) -> None:
         if store_path is None:
-            store_path = Path.home() / ".huginn" / "users.json"
+            store_path = get_runtime_home() / "users.json"
         self.store_path = Path(store_path)
         self._lock = threading.Lock()
         self._users: dict[str, User] = {}          # user_id → User

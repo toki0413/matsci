@@ -15,6 +15,7 @@ from typing import Any
 
 from huginn.knowledge.store import EMBED_MODEL
 from huginn.utils.cache import TimedLRUCache
+from huginn.utils.runtime import get_runtime_home
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +55,7 @@ class VectorStore:
         self._checked = False
 
     def _default_persist_dir(self) -> str:
-        base = Path.home() / ".huginn" / "rag"
+        base = get_runtime_home() / "rag"
         base.mkdir(parents=True, exist_ok=True)
         return str(base)
 

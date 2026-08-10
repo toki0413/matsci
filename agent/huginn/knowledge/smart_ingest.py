@@ -491,7 +491,7 @@ class SmartIngester:
             from huginn.utils.runtime import get_runtime_home
             out_dir = get_runtime_home() / "compressed_pages"
         except Exception:
-            out_dir = Path.home() / ".huginn" / "compressed_pages"
+            out_dir = get_runtime_home() / "compressed_pages"
         safe_name = Path(filename).stem.replace(" ", "_")[:40] or "doc"
         out_dir.mkdir(parents=True, exist_ok=True)
 

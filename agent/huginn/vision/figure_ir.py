@@ -106,7 +106,7 @@ def _resolve_output_path(output_path: str | Path | None, ext: str) -> Path:
             from huginn.utils.runtime import get_runtime_home
             fig_dir = get_runtime_home() / "figures"
         except Exception:
-            fig_dir = Path.home() / ".huginn" / "figures"
+            fig_dir = get_runtime_home() / "figures"
         fig_dir.mkdir(parents=True, exist_ok=True)
         from datetime import datetime
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")

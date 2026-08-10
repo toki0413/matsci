@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from huginn.types import ToolContext, ToolResult
+from huginn.utils.runtime import get_runtime_home
 
 from ._http import _USER_AGENT, logger
 from .pdf_fetch import (
@@ -112,7 +113,7 @@ _PROVIDERS: dict[str, dict[str, Any]] = {
 
 def _session_base() -> Path:
     """session 存储根目录: ~/.huginn/sessions/"""
-    return Path.home() / ".huginn" / "sessions"
+    return get_runtime_home() / "sessions"
 
 
 def _session_dir(provider: str) -> Path:

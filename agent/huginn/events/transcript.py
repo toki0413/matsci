@@ -36,6 +36,7 @@ from huginn.events.event_types import (
     TOOL_ERROR,
     TOOL_RESULT,
 )
+from huginn.utils.runtime import get_runtime_home
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +91,7 @@ class TranscriptStore:
             p.mkdir(parents=True, exist_ok=True)
             return p
         # 跟 audit log 同目录, 集中管理
-        default = Path.home() / ".huginn" / "transcripts"
+        default = get_runtime_home() / "transcripts"
         default.mkdir(parents=True, exist_ok=True)
         return default
 

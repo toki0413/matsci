@@ -15,9 +15,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from huginn.utils.runtime import get_runtime_home
+
 logger = logging.getLogger(__name__)
 
-_CACHE_FILE = Path.home() / ".huginn" / "executables.json"
+_CACHE_FILE = get_runtime_home() / "executables.json"
 
 
 @dataclass(frozen=True)

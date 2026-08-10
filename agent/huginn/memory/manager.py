@@ -17,6 +17,7 @@ from huginn.memory.longterm import LongTermMemory
 from huginn.memory.session import SessionContext, ToolCallRecord
 from huginn.memory.types import MemoryType
 from huginn.types import AgentMessage, ToolResult
+from huginn.utils.runtime import get_runtime_home
 
 logger = logging.getLogger(__name__)
 
@@ -799,7 +800,7 @@ class MemoryManager:
         elif self.config.memory_md_path:
             path = self.config.memory_md_path.parent / "memory"
         else:
-            path = Path.home() / ".huginn" / "memory"
+            path = get_runtime_home() / "memory"
         path.mkdir(parents=True, exist_ok=True)
         return path
 

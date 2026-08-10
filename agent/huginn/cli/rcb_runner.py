@@ -25,6 +25,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from huginn.utils.runtime import get_runtime_home
+
 # onnxruntime C++ 层 EP Error 走 fd 2 (cerr), env var + set_default_logger_severity
 # 都拦不住 (run_task.py 用 stderr=STDOUT 合并到 _agent_output.jsonl, 472 行/96s 淹死
 # agent 实际输出). 直接 dup2 把 fd 2 重定向到 devnull, 所有继承的子进程也跟着静音.
@@ -35,7 +37,7 @@ from typing import Any
 # Traceback 导致 Step 2 崩溃无法定位. onnxruntime 刷屏仍进文件不淹 agent stdout.
 # 升级路径: 确认崩溃点后, 若 onnxruntime 已不再刷屏, 可回 devnull.
 try:
-    _stderr_log = Path.home() / ".huginn" / "rcb_stderr.log"
+    _stderr_log = get_runtime_home() / "rcb_stderr.log"
     _stderr_log.parent.mkdir(parents=True, exist_ok=True)
     _stderr_fd = os.open(str(_stderr_log), os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
     os.dup2(_stderr_fd, 2)
@@ -60,14 +62,14 @@ os.environ["HUGINN_ALLOW_LOCAL_BASH"] = "1"
 # HUGINN_CACHE_DIR 可能被设成空串, 导致 LongTermMemory 用相对路径 memory.db,
 # 在 RCB workspace cwd 下 sqlite WAL 创建失败. 强制用绝对路径.
 if not os.environ.get("HUGINN_CACHE_DIR"):
-    os.environ["HUGINN_CACHE_DIR"] = str(Path.home() / ".huginn")
+    os.environ["HUGINN_CACHE_DIR"] = str(get_runtime_home())
 # Benchmark 场景用 CSM 子集: 3-step 映射 S1/S4/S6+S7, 不再全 skip (Task 18, R8 减法修正).
 # ponytail: S7 自修改仍走 (Task 2), 只跳过 compaction — 见 reflection.py L245.
 os.environ["HUGINN_CSM_SUBSET_MODE"] = "1"
 # Bandit Q-table 持久化路径: 跨 RCB task 累积 bandit 状态.
 os.environ.setdefault(
     "HUGINN_BANDIT_Q_PATH",
-    str(Path.home() / ".huginn" / "rcb_cross_task" / "bandit_q.json"),
+    str(get_runtime_home() / "rcb_cross_task" / "bandit_q.json"),
 )
 # Benchmark Mode hint: agent core.py 读此 env var 注入 system prompt.
 # RCB 路径必须严格按 paper 方法实现, judge 会按 paper 方法打分.
@@ -1195,7 +1197,7 @@ LUCID review (mandatory after generating hypothesis):
             _sm_cross_dir = Path(
                 os.environ.get(
                     "HUGINN_RCB_CROSS_TASK_DIR",
-                    str(Path.home() / ".huginn" / "rcb_cross_task"),
+                    str(get_runtime_home() / "rcb_cross_task"),
                 )
             )
             _sm_cross_dir.mkdir(parents=True, exist_ok=True)
@@ -4453,7 +4455,7 @@ async def run(
             _mem_dir = Path(
                 os.environ.get(
                     "HUGINN_RCB_CROSS_TASK_DIR",
-                    str(Path.home() / ".huginn" / "rcb_cross_task"),
+                    str(get_runtime_home() / "rcb_cross_task"),
                 )
             )
             _mem_dir.mkdir(parents=True, exist_ok=True)

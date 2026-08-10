@@ -23,12 +23,14 @@ from typing import Any
 
 from fastapi import APIRouter
 
+from huginn.utils.runtime import get_runtime_home
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["eval"])
 
 # Where eval results live on disk
-_EVAL_DIR = Path.home() / ".huginn" / "eval"
+_EVAL_DIR = get_runtime_home() / "eval"
 
 
 def _eval_dir() -> Path:

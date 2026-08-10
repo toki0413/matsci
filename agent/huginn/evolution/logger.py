@@ -4,12 +4,13 @@ for later evolutionary analysis."""
 from __future__ import annotations
 
 import json
-import os
 import re
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+from huginn.utils.runtime import get_runtime_home
 
 # 把错误消息里的具体路径/数字/标识符抽象成占位符, 让同类错误归到同一模式.
 # 之前用 error[:80] 做键, 每个文件路径 = 独立规则, 49 条规则全部 usage_count=0.
@@ -76,7 +77,7 @@ class ExecutionLogger:
     def __init__(self, persist_dir: str | None = None):
         self.persist_dir = (
             Path(persist_dir) if persist_dir
-            else Path(os.environ.get("HUGINN_CACHE_DIR") or (Path.home() / ".huginn")) / "logs"
+            else get_runtime_home() / "logs"
         )
         self.persist_dir.mkdir(parents=True, exist_ok=True)
         self._tool_calls: list[ToolCallRecord] = []

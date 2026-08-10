@@ -25,6 +25,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from huginn.utils.runtime import get_runtime_home
+
 logger = logging.getLogger(__name__)
 
 
@@ -152,7 +154,7 @@ class PhaseRegistry:
 
     def __init__(self) -> None:
         cache_dir = Path(
-            os.environ.get("HUGINN_CACHE_DIR", Path.home() / ".huginn")
+            str(get_runtime_home())
         )
         self._reg_path = cache_dir / "phase_registry.json"
         self._overrides: dict[str, dict[str, Any]] = {}

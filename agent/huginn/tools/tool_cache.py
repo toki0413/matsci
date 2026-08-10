@@ -22,6 +22,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from huginn.utils.runtime import get_runtime_home
+
 logger = logging.getLogger(__name__)
 
 # 超过这个大小的返回值不缓存，避免把 SQLite 撑爆或内存占用失控
@@ -51,7 +53,7 @@ def _default_cache_dir() -> Path:
     override = os.environ.get("HUGINN_CACHE_DIR")
     if override:
         return Path(override).expanduser()
-    return Path.home() / ".huginn" / "cache"
+    return get_runtime_home() / "cache"
 
 
 class ToolCache:

@@ -7,6 +7,8 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
+from huginn.utils.runtime import get_runtime_home
+
 
 class CheckpointerBackend(ABC):
     """Abstract backend for LangGraph conversation checkpoints."""
@@ -52,6 +54,6 @@ class SQLiteCheckpointerBackend(CheckpointerBackend):
         env_path = os.environ.get("HUGINN_CHECKPOINTER_PATH")
         if env_path:
             return Path(env_path).expanduser()
-        default = Path.home() / ".huginn" / "checkpoints.sqlite"
+        default = get_runtime_home() / "checkpoints.sqlite"
         default.parent.mkdir(parents=True, exist_ok=True)
         return default

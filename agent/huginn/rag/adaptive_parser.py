@@ -23,10 +23,11 @@ from typing import Any
 from urllib.parse import urlparse
 
 from huginn.utils.common import hash_text
+from huginn.utils.runtime import get_runtime_home
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_DB = os.path.expanduser("~/.huginn/element_fingerprints.db")
+_DEFAULT_DB = str(get_runtime_home() / "element_fingerprints.db")
 _lock = threading.Lock()
 
 
