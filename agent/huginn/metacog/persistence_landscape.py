@@ -10,6 +10,8 @@ feature 跟 posterior 高的 hypothesis 对不对得上 — 期望 true hypothes
 研究探索层, 允许失败: hypothesis <3 / prediction 维度 <2 / GUDHI 没装时 persistent
 homology 没意义, 降级到 fisher_distance (Phase 1-6 工程近似继续用). 不改 Phase 1-6
 任何模块, 只复用 Phase 7.1 的 compute_persistent_homology.
+
+# 架构状态: 研究探索层 — 未接入主循环, 保留作为 future hook. 如需启用, 在 huginn/events/unified_bus.py 订阅 cognitive.* 事件并接入.
 """
 from __future__ import annotations
 

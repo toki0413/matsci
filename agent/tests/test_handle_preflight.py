@@ -265,7 +265,7 @@ class TestJobToolValidateInput:
 class TestLammpsToolValidateInput:
     @pytest.mark.asyncio
     async def test_analyze_trajectory_missing_file(self):
-        from huginn.tools.lammps_tool import LammpsTool, LammpsToolInput
+        from huginn.tools.sim.lammps_tool import LammpsTool, LammpsToolInput
 
         tool = LammpsTool()
         args = LammpsToolInput(
@@ -278,7 +278,7 @@ class TestLammpsToolValidateInput:
 
     @pytest.mark.asyncio
     async def test_analyze_trajectory_no_file_specified(self):
-        from huginn.tools.lammps_tool import LammpsTool, LammpsToolInput
+        from huginn.tools.sim.lammps_tool import LammpsTool, LammpsToolInput
 
         tool = LammpsTool()
         args = LammpsToolInput(action="analyze_trajectory")
@@ -288,7 +288,7 @@ class TestLammpsToolValidateInput:
 
     @pytest.mark.asyncio
     async def test_missing_structure_file(self):
-        from huginn.tools.lammps_tool import LammpsTool, LammpsToolInput
+        from huginn.tools.sim.lammps_tool import LammpsTool, LammpsToolInput
 
         tool = LammpsTool()
         args = LammpsToolInput(
@@ -302,7 +302,7 @@ class TestLammpsToolValidateInput:
 
     @pytest.mark.asyncio
     async def test_missing_potential_file(self):
-        from huginn.tools.lammps_tool import LammpsTool, LammpsToolInput
+        from huginn.tools.sim.lammps_tool import LammpsTool, LammpsToolInput
 
         tool = LammpsTool()
         args = LammpsToolInput(
@@ -316,7 +316,7 @@ class TestLammpsToolValidateInput:
 
     @pytest.mark.asyncio
     async def test_valid_run_inline_script(self, tmp_path):
-        from huginn.tools.lammps_tool import LammpsTool, LammpsToolInput
+        from huginn.tools.sim.lammps_tool import LammpsTool, LammpsToolInput
 
         struct = tmp_path / "struct.data"
         struct.write_text("LAMMPS data file")
@@ -332,7 +332,7 @@ class TestLammpsToolValidateInput:
 
     @pytest.mark.asyncio
     async def test_analyze_trajectory_valid(self, tmp_path):
-        from huginn.tools.lammps_tool import LammpsTool, LammpsToolInput
+        from huginn.tools.sim.lammps_tool import LammpsTool, LammpsToolInput
 
         traj = tmp_path / "traj.lammpstrj"
         traj.write_text("ITEM: TIMESTEP\n0\nITEM: NUMBER OF ATOMS\n1\n")

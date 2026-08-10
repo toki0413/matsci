@@ -19,6 +19,13 @@
 
 若三性质都成立, SE(3) 是 aut(M×V) 的子群, 半直积有意义.
 三结构 (代数 concat / 代数 SE(3) / 拓扑 坐标邻域) 兼容叠加.
+
+# 架构状态 (v23 Round 8 校正):
+#   - 已接入 CodeAct 沙箱 — structure_cognitive_map_tool.cognitive_map_se3_act
+#     暴露 se3_act() 给 agent, 让 SE(3) 群作用同时穿过文本 <point3d> 和 3D 坐标.
+#     HUGINN_USE_COGNITIVE_MAP=1 (extreme 模式默认开) 时生效.
+#   - 未接入 event bus — huginn/events/unified_bus.py 暂未订阅 cognitive.* 事件,
+#     若需让 CSM 状态转移触发 SE(3) 操作, 在 UnifiedBus 加订阅即可.
 """
 # Wired into CodeAct via cognitive_map_se3_act (HUGINN_USE_COGNITIVE_MAP=1).
 # structure_cognitive_map_tool.cognitive_map_se3_act exposes se3_act() to the

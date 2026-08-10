@@ -10,6 +10,8 @@
 - dft-direct, ml-potential, symbolic-regression, gaussian-process,
   calphad-thermo, phase-field,
   bourbaki-structure (advisory), extreme-argument, computational-check
+
+# 架构状态: 研究探索层 — 未接入主循环, 保留作为 future hook. 如需启用, 在 huginn/events/unified_bus.py 订阅 cognitive.* 事件并接入.
 """
 
 from __future__ import annotations

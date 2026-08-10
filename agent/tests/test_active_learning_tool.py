@@ -8,7 +8,7 @@ import csv
 import numpy as np
 import pytest
 
-from huginn.tools.active_learning_tool import ActiveLearningTool
+from huginn.tools.sci.active_learning_tool import ActiveLearningTool
 from huginn.types import ToolContext
 
 

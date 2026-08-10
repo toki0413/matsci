@@ -1137,8 +1137,9 @@ class LammpsTool(HuginnTool):
         # handles xu/yu/zu, ix/iy/iz, and wrapped-only incremental unwrap
         # correctly. Rust RDF is single-frame MIC (correct) but we lose that
         # perf here for simplicity.
-        # TODO: re-enable Rust fast path once it detects xu/yu/zu columns and
-        # skips MIC clamping on unwrapped coordinates.
+        # PERF: Rust fast path 暂禁用 — 启用条件: Rust 端检测 xu/yu/zu 列后
+        # 跳过 MIC clamping (pyext/src/analysis.rs:14-15). 当前 python fallback
+        # 正确但慢. 这是有意识的性能债, 不是临时绕过.
         return self._parse_trajectory_python(traj_path)
 
     def _parse_trajectory_python(self, traj_path: str | Path) -> dict[str, Any]:

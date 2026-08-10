@@ -21,6 +21,8 @@ Protocol 用 runtime_checkable, duck typing 不强求继承. 各类只需加一�
   - perception: ImageIndex 实现 neighborhood (delegation to search)
   - metacog: hippocampus + box 通过 adapter 函数封装
   - env flag HUGINN_USE_TOPOLOGY=1 控制 selfcheck, 默认 off
+
+# 架构状态: 研究探索层 — 未接入主循环, 保留作为 future hook. 如需启用, 在 huginn/events/unified_bus.py 订阅 cognitive.* 事件并接入.
 """
 from __future__ import annotations
 

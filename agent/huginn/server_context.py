@@ -48,9 +48,16 @@ def _default_memory_backend() -> MemoryBackend:
 
 @dataclass
 class ServerContext:
-    """Container for all server-wide Huginn state."""
+    """Container for all server-wide Huginn state.
 
-    config: HuginnConfig
+    v23 状态树合并: ServerContext 是唯一的状态树根节点. HuginnSystem 已
+    折叠为 ServerContext 的子类 (deprecated alias), 不再独立维护字段.
+    active_threads / edit_tools 从 server_core 模块全局提升为字段.
+    """
+
+    # config 设默认 None, 让 ServerContext() 可无参构造 (匹配 HuginnSystem 旧契约).
+    # 生产路径 create_server_context() 总是显式传 cfg, 不会留 None.
+    config: HuginnConfig | None = None
     tool_registry: type[ToolRegistry] = field(default=ToolRegistry)
     skill_registry: type[SkillRegistry] = field(default=SkillRegistry)
     permission_config: PermissionConfig = field(default_factory=PermissionConfig)
@@ -80,6 +87,50 @@ class ServerContext:
     # 加密 RAG 管理器 (可选): encryption_enabled=True 时由 lifespan 初始化,
     # 提供文档级 + DB 级加密. 与 kb (ChromaDB 明文) 独立存储.
     encrypted_rag: Any | None = None
+    # v23: 从 server_core._threads / _EDIT_TOOLS 提升为字段, 统一状态树.
+    # 生产路径仍由 server_core.get_system_snapshot() 在快照时填入.
+    active_threads: dict[str, Any] = field(default_factory=dict)
+    edit_tools: set[str] = field(default_factory=set)
+
+    # ── 诊断 / 运维接口 (从 HuginnSystem 移植, 避免重复实现) ───────
+
+    @property
+    def is_configured(self) -> bool:
+        """Check if the system has minimum required configuration."""
+        return self.config is not None
+
+    def get_component(self, name: str) -> Any:
+        """Get a system component by name, returning None if not set."""
+        return getattr(self, name, None)
+
+    def list_components(self) -> dict[str, bool]:
+        """List all components and whether they are initialized.
+
+        Returns a dict of {field_name: bool_is_set}. Includes the canonical
+        set of long-lived components (state_registry / transcript_store /
+        tool_deduper 等基础设施不在此列 — 它们总是初始化的).
+        """
+        components: dict[str, bool] = {}
+        for attr in [
+            "config",
+            "tool_registry",
+            "skill_registry",
+            "audit_logger",
+            "memory_backend",
+            "checkpointer_backend",
+            "remote_job_backend",
+            "agent_factory",
+            "orchestrator",
+            "memory_manager",
+            "kb",
+            "codebase",
+            "agent",
+            "planner_agent",
+            "mcp_manager",
+            "plan_store",
+        ]:
+            components[attr] = getattr(self, attr, None) is not None
+        return components
 
 
 def create_server_context(config: HuginnConfig | None = None) -> ServerContext:

@@ -750,8 +750,8 @@ class ToolAdapter:
         ) -> None:
             """分发插件系统 ON_TOOL_EXECUTE (三段式中间段, 只读打日志用).
 
-            之前只 dispatch 了 ON_TOOL_CALL (前) 和 ON_TOOL_RESPOND (后),
-            中间的 ON_TOOL_EXECUTE 声明了但从不发, 三段式实际只有两段.
+            v23 Round 8: 已实际 dispatch — 三段式 (ON_TOOL_CALL → ON_TOOL_EXECUTE
+            → ON_TOOL_RESPOND) 完整闭环, 中间段监听器可收到.
             """
             bus = _get_plugin_event_bus()
             if bus is None:

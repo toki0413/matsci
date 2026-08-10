@@ -23,7 +23,7 @@ from huginn.memory.session import SessionContext
 from huginn.skills.presets import HT_SCREENING, STANDARD_DFT, SYMBOLIC_VERIFY
 from huginn.skills.registry import SkillRegistry
 from huginn.tools.report_tool import ReportTool, ReportToolInput
-from huginn.tools.symbolic_regression_tool import (
+from huginn.tools.sci.symbolic_regression_tool import (
     SymbolicRegressionInput,
     SymbolicRegressionTool,
 )
@@ -315,12 +315,12 @@ class TestToolRegistryIntegration:
         from huginn.tools.extract_tool import ExtractTool
         from huginn.tools.fem_tool import FEMTool
         from huginn.tools.job_tool import JobTool
-        from huginn.tools.lammps_tool import LammpsTool
         from huginn.tools.report_tool import ReportTool
+        from huginn.tools.sci.symbolic_regression_tool import SymbolicRegressionTool
+        from huginn.tools.sim.lammps_tool import LammpsTool
         from huginn.tools.specialty_analysis_tool import SpecialtyAnalysisTool
         from huginn.tools.structural_analytical_tool import StructuralAnalyticalTool
         from huginn.tools.structure_tool import StructureTool
-        from huginn.tools.symbolic_regression_tool import SymbolicRegressionTool
         from huginn.tools.validate_tool import ValidateTool
         from huginn.tools.vasp_tool import VaspTool
 

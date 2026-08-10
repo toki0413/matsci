@@ -3154,6 +3154,121 @@ Respond JSON only:
                 except Exception:
                     logger.debug("AV2 should_pause_for_decision failed", exc_info=True)
 
+                # v23 Unified Decision: HUGINN_USE_UNIFIED_DECISION=1 时走
+                # UnifiedEvaluator + DecisionArbiter 单一决策出口. 收集 GoalJudge /
+                # Step 评估信号 → UnifiedEvaluator 聚合 → DecisionArbiter 仲裁 →
+                # 唯一 Decision (stop/continue/switch_tool/requery). 默认 off,
+                # 走原 _use_gate + F2/F17/F4/F3 散装逻辑 (向后兼容).
+                # 落地承诺: DecisionArbiter / UnifiedEvaluator 不再是孤立模块.
+                _use_unified_decision = (
+                    os.environ.get("HUGINN_USE_UNIFIED_DECISION", "0") == "1"
+                    and goal is not None
+                    and not state.should_stop
+                )
+                if _use_unified_decision:
+                    try:
+                        from huginn.evaluation.unified_evaluator import (
+                            UnifiedEvaluator,
+                        )
+                        from huginn.metacog.decision_arbiter import (
+                            DecisionArbiter,
+                        )
+
+                        _final_text = str(
+                            (cog["validation"] or {}).get("summary")
+                            or (cog["validation"] or {}).get("result_data")
+                            or (cog.get("execution_result") or {}).get("summary", "")
+                        )
+                        _eval_ctx: dict = {
+                            "goal_judge": {
+                                "objective": goal.objective,
+                                "trajectory": None,
+                                "final_output": _final_text,
+                            },
+                        }
+                        # validation 里若带 on_track 信号, 也喂给 Step 分支.
+                        _val = cog.get("validation") or {}
+                        if isinstance(_val, dict) and "on_track" in _val:
+                            _eval_ctx["step"] = _val
+
+                        _unified = UnifiedEvaluator().evaluate(_eval_ctx)
+
+                        _bandit = None
+                        try:
+                            from huginn.agent.bandit_controller import (
+                                EffortBandit,
+                            )
+
+                            _bandit = EffortBandit.get_instance()
+                        except Exception:
+                            logger.debug("bandit unavailable for arbiter", exc_info=True)
+
+                        _arbiter = DecisionArbiter()
+                        _dctx = _arbiter.build_context(
+                            csm_state=getattr(self, "_current_phase", "") or "",
+                            bandit=_bandit,
+                            gate_decision=None,
+                            iteration=state.iteration,
+                            max_iterations=max_iterations,
+                            turns_count=getattr(self, "_turn_count", 0),
+                            tool_calls_count=getattr(self, "_tool_calls_count", 0),
+                        )
+                        # UnifiedEvaluator 替代 CompletionGate 信号: achieved→pass,
+                        # 否则 gaps_hint. gate_should_stop 仅在 achieved 时 True.
+                        _dctx.gate_status = (
+                            "pass" if _unified.achieved else "gaps_hint"
+                        )
+                        _dctx.gate_should_stop = _unified.achieved
+                        _dctx.gate_reason = (
+                            "; ".join(_unified.gaps[:3])
+                            if _unified.gaps
+                            else f"score={_unified.score:.2f}"
+                        )
+
+                        _decision = _arbiter.evaluate(_dctx)
+
+                        if _decision.action == "stop":
+                            state.should_stop = True
+                            if _unified.achieved:
+                                goal.status = "completed"
+                                if self._goal_scheduler is not None:
+                                    try:
+                                        self._goal_scheduler.complete_goal(goal.id)
+                                    except Exception:
+                                        logger.debug(
+                                            "complete_goal failed (non-fatal)",
+                                            exc_info=True,
+                                        )
+                            logger.info(
+                                "unified decision: stop (%s, score=%.2f)",
+                                _decision.reason,
+                                _unified.score,
+                            )
+                        elif _decision.action == "switch_tool":
+                            self._speculator_hint = (
+                                self._speculator_hint
+                                + f"\n[unified] switch_tool: {_decision.reason}"
+                            ).strip()
+                        elif _decision.action == "requery":
+                            self._speculator_hint = (
+                                self._speculator_hint
+                                + f"\n[unified] requery: {_decision.reason}"
+                            ).strip()
+                        elif _unified.gaps:
+                            _gap_hint = "; ".join(_unified.gaps[:3])
+                            self._speculator_hint = (
+                                self._speculator_hint + "\n" + _gap_hint
+                                if self._speculator_hint
+                                else _gap_hint
+                            )
+                            logger.info("unified eval gaps: %s", _gap_hint)
+                    except Exception:
+                        logger.debug(
+                            "Unified decision failed, fallback to F2/F17/F4",
+                            exc_info=True,
+                        )
+                        _use_unified_decision = False
+
                 # v10-F2/F17 收敛: HUGINN_USE_COMPLETION_GATE=1 时用 CompletionGate
                 # 三审 (Criteria + Metacog + GoalJudge) 替代下面散装 F2+F17 顺序拼装.
                 # 默认 off 走原逻辑 (向后兼容). 对照组 BranchIncubator 已正常接入.
@@ -3161,6 +3276,7 @@ Respond JSON only:
                     os.environ.get("HUGINN_USE_COMPLETION_GATE", "0") == "1"
                     and goal is not None
                     and not state.should_stop
+                    and not _use_unified_decision  # 统一决策已运行, 跳过 CompletionGate 避免双重判定
                 )
                 if _use_gate:
                     try:
@@ -3214,7 +3330,7 @@ Respond JSON only:
                         logger.debug("CompletionGate failed, fallback to F2+F17", exc_info=True)
                         _use_gate = False
 
-                if not _use_gate:
+                if not _use_gate and not _use_unified_decision:
                     # v10-F2: completion audit — 对齐 run() L1878-1897.
                     # goal 达标 + metacog 不阻断 → goal.status=completed + should_stop.
                     # ponytail: check_completion 在 goal 无 criteria 时返回 False, 不影响.

@@ -4282,6 +4282,16 @@ async def run(
         # P3-2: 删除 HUGINN_RCB_SWARM setdefault — dispatch_parallel 实际只走
         # asyncio.gather, 从不查这个 flag. HUGINN_SWARM_DISTRIBUTED 保留 (跨进程队列).
         os.environ.setdefault("HUGINN_SWARM_DISTRIBUTED", "0")
+        # P2-2 / Round 8: 兑现"完整实现但全仓无开启路径"的两个 router.
+        # CONTEXT_ROUTER: P3 信息路径多样性稀疏化 (Nature Physics 2023),
+        #   零 LLM 成本纯规则, 接入 context_builder.build() 主流程.
+        # TASK_TOOL_ROUTER: task keyword → tool category 动态路由 (11 cat +
+        #   中英双语), 接入 agent/core.py + streaming.py 两处.
+        # 两者都已在主流程 if flag == "1" 处接入, 但全仓无 setdefault, 永远走 fallback.
+        # extreme 模式本就是"全部能力打开", 在此开启兑现设计承诺.
+        # 升级路径: 稳定后下沉到 FeatureFlags 统一接管, 不再用 env var.
+        os.environ.setdefault("HUGINN_CONTEXT_ROUTER", "1")
+        os.environ.setdefault("HUGINN_TASK_TOOL_ROUTER", "1")
         cfg = HuginnConfig.from_env()  # 重读 env 拿 thinking
         print("[EXTREME MODE] thinking=high, max_tool_calls=300, context_budget=200K, autoloop thresholds 50/50/20/15, persistent_goal=on, wall_clock=86400s", flush=True)
 

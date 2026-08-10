@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from huginn.tools.lammps_tool import _HAS_HUGINN_EXT, LammpsTool
+from huginn.tools.sim.lammps_tool import _HAS_HUGINN_EXT, LammpsTool
 
 TRJ_PATH = Path(__file__).parent.parent / "lammps_traj_test" / "traj.lammpstrj"
 

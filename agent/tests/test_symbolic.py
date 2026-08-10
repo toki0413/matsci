@@ -5,7 +5,7 @@ import asyncio
 import numpy as np
 import pytest
 
-from huginn.tools.autodiff_tool import AutoDiffInput, AutoDiffTool
+from huginn.tools.sci.autodiff_tool import AutoDiffInput, AutoDiffTool
 from huginn.tools.symbolic_math_tool import SymbolicMathInput, SymbolicMathTool
 from huginn.types import ToolContext
 

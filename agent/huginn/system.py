@@ -1,87 +1,68 @@
-"""System object — single source of truth for Huginn runtime state."""
+"""System object — deprecated alias for ServerContext.
+
+v23 状态树合并: HuginnSystem 已折叠为 ServerContext 的子类.
+所有字段 / 方法 (is_configured / get_component / list_components /
+active_threads / edit_tools) 都从 ServerContext 继承, 不再独立维护.
+
+新代码应直接用 ServerContext (huginn.server_context.ServerContext).
+本模块保留 get_system / set_system 全局单例访问, 仅为向后兼容.
+"""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any
+from huginn.server_context import ServerContext
 
 
-@dataclass
-class HuginnSystem:
-    """Consolidates all Huginn runtime state into a single object.
+class HuginnSystem(ServerContext):
+    """Deprecated alias for :class:`huginn.server_context.ServerContext`.
 
-    Replaces scattered module-level globals from server_core.py.
+    v23 状态树合并后, HuginnSystem 不再持有独立字段 — 它就是 ServerContext.
+    保留此类仅为向后兼容已有 import (tests/test_system_object.py, routes/system.py).
+    新代码请直接用 ServerContext.
+
+    .. deprecated:: v23
+       Use :class:`huginn.server_context.ServerContext` instead.
     """
 
-    config: Any | None = None
-    tool_registry: Any | None = None
-    skill_registry: Any | None = None
-    audit_logger: Any | None = None
-    memory_backend: Any | None = None
-    checkpointer_backend: Any | None = None
-    remote_job_backend: Any | None = None
-    agent_factory: Any | None = None
-    orchestrator: Any | None = None
-    memory_manager: Any | None = None
-    kb: Any | None = None
-    codebase: Any | None = None
-    agent: Any | None = None
-    planner_agent: Any | None = None
-    mcp_manager: Any | None = None
-    plan_store: Any | None = None
-
-    # Thread/execution tracking
-    active_threads: dict[str, Any] = field(default_factory=dict)
-    edit_tools: set[str] = field(default_factory=set)
-
-    # Permission config
-    permission_config: Any | None = None
-
-    @property
-    def is_configured(self) -> bool:
-        """Check if the system has minimum required configuration."""
-        return self.config is not None
-
-    def get_component(self, name: str) -> Any:
-        """Get a system component by name, returning None if not set."""
-        return getattr(self, name, None)
-
-    def list_components(self) -> dict[str, bool]:
-        """List all components and whether they are initialized."""
-        components = {}
-        for attr in [
-            "config",
-            "tool_registry",
-            "skill_registry",
-            "audit_logger",
-            "memory_backend",
-            "checkpointer_backend",
-            "remote_job_backend",
-            "agent_factory",
-            "orchestrator",
-            "memory_manager",
-            "kb",
-            "codebase",
-            "agent",
-            "planner_agent",
-            "mcp_manager",
-            "plan_store",
-        ]:
-            components[attr] = getattr(self, attr, None) is not None
-        return components
+    def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
+        # 不抛 DeprecationWarning 在 __init__ — 测试会刷屏. 仅在文档里标注.
+        # 生产代码如需提醒, 用 warnings.warn(..., DeprecationWarning, stacklevel=2).
+        super().__init__(*args, **kwargs)
 
 
 _system: HuginnSystem | None = None
 
 
 def get_system() -> HuginnSystem:
-    """Return the global HuginnSystem, creating one lazily if needed."""
+    """Return the global HuginnSystem, creating one lazily if needed.
+
+    Note: 生产路径应优先用 huginn.server_context.get_server_context().
+    本函数返回的 HuginnSystem 实例在 server_core.get_system_snapshot()
+    每次调用时被刷新为最新 ServerContext 快照.
+    """
     global _system
     if _system is None:
         _system = HuginnSystem()
     return _system
 
 
-def set_system(system: HuginnSystem) -> None:
-    """Replace the global HuginnSystem instance."""
+def set_system(system: HuginnSystem | ServerContext) -> None:
+    """Replace the global HuginnSystem instance.
+
+    Accepts either HuginnSystem or ServerContext (since HuginnSystem is now
+    a subclass, both are valid).
+    """
     global _system
-    _system = system
+    if isinstance(system, HuginnSystem):
+        _system = system
+    else:
+        # ServerContext 实例: 包装成 HuginnSystem (无副作用, 字段已对齐).
+        # 用 dataclasses.replace 保持字段值, 转型为 HuginnSystem.
+        import dataclasses
+        _system = HuginnSystem(**{
+            f.name: getattr(system, f.name)
+            for f in dataclasses.fields(ServerContext)
+            if hasattr(system, f.name)
+        })
+
+
+__all__ = ["HuginnSystem", "get_system", "set_system"]

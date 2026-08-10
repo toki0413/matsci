@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from huginn.tools.symbolic_regression_tool import (
+from huginn.tools.sci.symbolic_regression_tool import (
     SymbolicRegressionInput,
     SymbolicRegressionTool,
 )
