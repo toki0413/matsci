@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [master, main]
 
+# Cancel superseded runs when a new push lands on the same branch.
+# Prevents stale python-tests jobs from hogging runner slots.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lint:
     runs-on: ubuntu-latest
