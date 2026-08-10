@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from huginn.tools.uq_tool import UQTool, UQToolInput
+from huginn.tools.sci.uq_tool import UQTool, UQToolInput
 
 
 def test_uq_tool_monte_carlo() -> None:

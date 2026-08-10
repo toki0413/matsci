@@ -217,7 +217,8 @@ class PluginLoader:
                     asyncio.run(coro)
         except Exception as e:
             logger.exception("on_load of %s failed: %s", meta.name, e)
-            # ON_PLUGIN_ERROR: 插件加载失败时 dispatch, 之前声明了但从不发.
+            # ON_PLUGIN_ERROR: 插件加载失败时 dispatch (best-effort).
+            # v23 Round 8: 已实际 dispatch, 生命周期监听器可收到.
             from huginn.api.event import EventType
             self._try_dispatch_plugin_event(
                 EventType.ON_PLUGIN_ERROR, meta.name,
@@ -229,8 +230,8 @@ class PluginLoader:
         )
         logger.info("loaded plugin %s v%s (%d handlers)",
                     meta.name, meta.version, len(metas))
-        # ON_PLUGIN_LOADED: 之前 EventType 声明了但从不 dispatch, 生命周期监听器
-        # 收不到. 加载完成后 best-effort 发一次.
+        # ON_PLUGIN_LOADED: 加载完成后 best-effort dispatch 一次.
+        # v23 Round 8: 已实际 dispatch, 生命周期监听器可收到.
         from huginn.api.event import EventType
         self._try_dispatch_plugin_event(
             EventType.ON_PLUGIN_LOADED, meta.name,
@@ -282,8 +283,8 @@ class PluginLoader:
         )
         logger.info("loaded plugin %s v%s (%d handlers)",
                     meta.name, meta.version, len(metas))
-        # ON_PLUGIN_LOADED: 之前 EventType 声明了但从不 dispatch, 生命周期监听器
-        # 收不到. 加载完成后 best-effort 发一次.
+        # ON_PLUGIN_LOADED: 加载完成后 best-effort dispatch 一次.
+        # v23 Round 8: 已实际 dispatch, 生命周期监听器可收到.
         from huginn.api.event import EventType
         self._try_dispatch_plugin_event(
             EventType.ON_PLUGIN_LOADED, meta.name,

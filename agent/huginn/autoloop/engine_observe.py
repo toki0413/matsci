@@ -1160,8 +1160,9 @@ Hypothesis:""",
                 else:
                     hint += "建议启动新方法族探索"
                     # 接入 BlockRegistry: 坍缩且无重定向目标 → 当前主导方法族
-                    # 标记为 incubating (缺口尚未具体化). 之前 _get_metacog_block_registry
-                    # 定义了但从不调用, 阻塞-新机制重启协议完全未接入主循环.
+                    # 标记为 incubating (缺口尚未具体化).
+                    # v23 Round 8: 已实际调用 _get_metacog_block_registry(),
+                    # 阻塞-新机制重启协议已接入主循环.
                     try:
                         _block_reg = self._get_metacog_block_registry()
                         _dominant = self._metacog_dominant_family()

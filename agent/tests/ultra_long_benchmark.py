@@ -49,7 +49,7 @@ def get_rss_mb() -> float:
 async def test_memory_leak_5min() -> None:
     print("\n[A] 5-Minute Memory Leak Detection")
     from huginn.tools.numerical_tool import NumericalTool
-    from huginn.tools.symmetry_tool import SymmetryTool
+    from huginn.tools.sci.symmetry_tool import SymmetryTool
     from huginn.types import ToolContext
 
     duration = 300  # 5 minutes
@@ -170,7 +170,7 @@ async def test_campaign_loop_stability() -> None:
 
 async def test_tool_chain_repetition() -> None:
     print("\n[C] Tool Chain Repetition (100 iterations)")
-    from huginn.tools.symmetry_tool import SymmetryTool
+    from huginn.tools.sci.symmetry_tool import SymmetryTool
     from huginn.types import ToolContext
 
     tmpdir = Path(__file__).parent.parent / "tmp_chain"
@@ -288,7 +288,7 @@ async def test_memory_sustained() -> None:
 
 async def _quick_leak_test() -> None:
     """2-minute quick memory leak check."""
-    from huginn.tools.symmetry_tool import SymmetryTool
+    from huginn.tools.sci.symmetry_tool import SymmetryTool
     from huginn.types import ToolContext
 
     duration = 120

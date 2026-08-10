@@ -582,11 +582,12 @@ def _server_allows_tool(tool_name: str, input_data: Any) -> tuple[bool, str | No
 def get_system_snapshot() -> dict[str, Any]:
     """用 HuginnSystem 封装当前 ServerContext 的状态快照。
 
-    HuginnSystem 设计为 ServerContext 的统一替代容器，这里把它作为
-    只读快照暴露给 /system/components 等运维端点，避免每加一个诊断
-    端点都要直接翻 ServerContext 的字段。同时同步到全局单例，让其他
-    模块可以通过 huginn.system.get_system() 拿到最新状态。
+    v23 状态树合并: HuginnSystem 已是 ServerContext 子类, 不再手动拷 17 个字段.
+    直接用 dataclasses.fields 把 ServerContext 全字段平移到 HuginnSystem,
+    再覆盖 active_threads / edit_tools (这两个来自 server_core 模块全局).
     """
+    import dataclasses
+
     from huginn.system import HuginnSystem, set_system
 
     ctx = get_context()
@@ -595,27 +596,15 @@ def get_system_snapshot() -> dict[str, Any]:
     with _state_lock:
         threads_snapshot = dict(_threads)
 
-    system = HuginnSystem(
-        config=ctx.config,
-        tool_registry=ctx.tool_registry,
-        skill_registry=ctx.skill_registry,
-        audit_logger=ctx.audit_logger,
-        memory_backend=ctx.memory_backend,
-        checkpointer_backend=ctx.checkpointer_backend,
-        remote_job_backend=ctx.remote_job_backend,
-        agent_factory=ctx.agent_factory,
-        orchestrator=ctx.orchestrator,
-        memory_manager=ctx.memory_manager,
-        kb=ctx.kb,
-        codebase=ctx.codebase,
-        agent=ctx.agent,
-        planner_agent=ctx.planner_agent,
-        mcp_manager=ctx.mcp_manager,
-        plan_store=ctx.plan_store,
-        permission_config=ctx.permission_config,
-        active_threads=threads_snapshot,
-        edit_tools=set(_EDIT_TOOLS),
-    )
+    # v23: 平移所有 ServerContext 字段, 只覆盖 active_threads / edit_tools.
+    # 不再逐字段列举 — 加新字段时自动跟上, 不会再出现"快照漏字段"问题.
+    field_values = {
+        f.name: getattr(ctx, f.name)
+        for f in dataclasses.fields(ctx)
+    }
+    field_values["active_threads"] = threads_snapshot
+    field_values["edit_tools"] = set(_EDIT_TOOLS)
+    system = HuginnSystem(**field_values)
     # 同步到全局单例，其他模块可用 get_system() 读取
     set_system(system)
 

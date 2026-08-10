@@ -383,3 +383,77 @@ class TestInternalGenerators:
         merged = engine._parse_fix_action("increase memory", {"ENCUT": 400})
         # 纯文本 action 直接当 description
         assert merged == {"description": "increase memory"}
+
+
+class TestRecomputeConfidence:
+    """v23 Round 8: _recompute_confidence 修正 — 注释与实现一致 + 直接访问字段.
+
+    之前: 注释说"基线随失败次数涨", 实现用 usage_count; getattr 过度防御.
+    现在: 注释匹配实现 (usage_count), 直接访问 dataclass 字段.
+    """
+
+    def test_new_rule_zero_usage(self):
+        """新规则 (usage=0, success=0): base=0.5, 无降权/加权."""
+        from huginn.evolution.engine import _recompute_confidence
+
+        rule = EvolutionRule(
+            rule_id="r1", rule_type="heuristic_fix",
+            trigger="t", action="a", source="failure_analysis",
+        )
+        assert _recompute_confidence(rule) == 0.5
+
+    def test_applied_but_never_succeeded(self):
+        """被应用但从未成功 (usage>0, success=0): base * 0.5 降权."""
+        from huginn.evolution.engine import _recompute_confidence
+
+        rule = EvolutionRule(
+            rule_id="r2", rule_type="heuristic_fix",
+            trigger="t", action="a", source="failure_analysis",
+            usage_count=10, success_count=0,
+        )
+        # base = 0.5 + 10*0.05 = 1.0; 降权 *0.5 = 0.5
+        assert _recompute_confidence(rule) == 0.5
+
+    def test_applied_and_succeeded(self):
+        """被应用且成功 (usage>0, success>0): base + success_rate*0.3 加权."""
+        from huginn.evolution.engine import _recompute_confidence
+
+        rule = EvolutionRule(
+            rule_id="r3", rule_type="heuristic_fix",
+            trigger="t", action="a", source="failure_analysis",
+            usage_count=10, success_count=5,
+        )
+        # base = 0.5 + 10*0.05 = 1.0; success_rate=0.5; +0.5*0.3=0.15 → 1.15 clamped to 0.98
+        assert _recompute_confidence(rule) == 0.98
+
+    def test_clamped_to_min(self):
+        """confidence 下限 0.1 — 极端低 usage 也不会低于 0.1."""
+        from huginn.evolution.engine import _recompute_confidence
+
+        rule = EvolutionRule(
+            rule_id="r4", rule_type="heuristic_fix",
+            trigger="t", action="a", source="failure_analysis",
+            usage_count=1, success_count=0,
+        )
+        # base = 0.5 + 0.05 = 0.55; 降权 *0.5 = 0.275 — 高于 0.1
+        assert _recompute_confidence(rule) == 0.275
+
+    def test_direct_field_access_no_getattr(self):
+        """v23 Round 8: 不再用 getattr(rule, 'usage_count', 0) 过度防御.
+
+        EvolutionRule 是 dataclass, usage_count 是必填字段. 直接访问.
+        若字段缺失会 AttributeError 而非静默返回 0.
+        """
+        import inspect
+
+        from huginn.evolution import engine as eng_mod
+
+        src = inspect.getsource(eng_mod._recompute_confidence)
+        # 去掉注释和 docstring 行, 只检查实际代码
+        code_lines = [
+            line for line in src.splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        ]
+        code_only = "\n".join(code_lines)
+        assert "getattr(rule" not in code_only, "不应再用 getattr 过度防御"
+        assert "rule.usage_count" in code_only, "应直接访问 dataclass 字段"
