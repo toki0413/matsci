@@ -47,7 +47,12 @@ _skip_no_server = pytest.mark.skipif(
 
 @pytest.mark.asyncio
 async def test_50_turn_conversation_no_leak(tmp_path):
-    """50 轮连续 chat, 验证内存不持续增长."""
+    """50 轮连续 chat, 验证内存不持续增长.
+
+    预热: 先跑 1 轮 chat 触发所有 lazy import (tiktoken/lark/pydantic/chromadb
+    等在首次 chat 时才加载), 再启动 tracemalloc. 否则 ~130MB 的一次性导入开销
+    会被计入"内存增长", 导致测试永远失败, 且与真正的泄漏无关.
+    """
     from huginn.agent import HuginnAgent
     from huginn.memory.longterm import LongTermMemory
     from huginn.memory.manager import MemoryManager
@@ -62,7 +67,12 @@ async def test_50_turn_conversation_no_leak(tmp_path):
         checkpointer_path=str(tmp_path / "checkpoint.sqlite"),
     )
 
-    # 记录初始内存
+    # 预热: 1 轮 chat 触发所有 lazy import, 不计入测量
+    async for _ in agent.chat("warmup", thread_id="long-run-warmup"):
+        pass
+    gc.collect()
+
+    # 预热后再启动 tracemalloc — 只测量 50 轮的增量, 不含一次性导入开销
     import tracemalloc
     tracemalloc.start()
     snapshot_before = tracemalloc.take_snapshot()
