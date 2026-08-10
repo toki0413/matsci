@@ -68,10 +68,10 @@ jobs:
         run: |
           # github runner 只有 7G RAM, 4708 个测试串行跑会在 65% 处 OOM.
           # 加 6G swap (用 /swapfile-ci 避开系统默认 /swapfile 冲突).
-          # 不用 --forked: pytest-forked 对多线程进程 (TestClient/ASGI/
-          # concurrent) fork 会导致死锁, 10 个 worker crash. xdist -n 2
-          # 本身就是独立子进程, 提供足够的内存隔离. 8 个 TestClient/
-          # HuginnAgent 测试单独走 http-tests job (串行, 无 --forked).
+          # --forked 隔离每个测试防内存累积 (无 --forked 时 4708 测试会
+          # 因内存累积+swap I/O 超过 90min 超时). 13 个 module-scoped
+          # TestClient/HuginnAgent 测试因 fork+线程不兼容单独走 http-tests
+          # job (串行, 无 --forked).
           if [ ! -f /swapfile-ci ]; then
             sudo fallocate -l 6G /swapfile-ci
             sudo chmod 600 /swapfile-ci
@@ -100,7 +100,7 @@ jobs:
         run: |
           cd agent
           python -m pytest -v -rA --tb=line -p no:cov -o addopts="" \
-            --timeout=60 --timeout-method=thread \
+            --timeout=60 --timeout-method=thread --forked \
             -n 2 -m "not network" \
             --ignore=tests/test_api_contract.py \
             --ignore=tests/test_security_penetration.py \
@@ -119,6 +119,11 @@ jobs:
             --ignore=tests/test_i18n_encoding.py \
             --ignore=tests/test_kg.py \
             --ignore=tests/test_websocket_long.py \
+            --ignore=tests/test_server_fastapi.py \
+            --ignore=tests/test_chaos_fault_injection.py \
+            --ignore=tests/test_error_boundaries.py \
+            --ignore=tests/test_data_consistency.py \
+            --ignore=tests/test_questions.py \
             --maxfail=50 2>&1 | tee pytest_output.txt
           exit ${PIPESTATUS[0]}
 
@@ -149,10 +154,10 @@ jobs:
           retention-days: 7
 
   http-tests:
-    # TestClient/HuginnAgent tests that crash under --forked (fork + threads).
-    # Run serially (-n 0) without --forked; each TestClient instantiates the
-    # full Huginn app (~2-3GB), so 2 xdist workers OOM the 7GB runner.
-    # Swap + serial execution prevents OOM kills.
+    # TestClient/HuginnAgent tests with module-scoped fixtures that crash
+    # under --forked (fork + threads deadlock). Run serially (-n 0) without
+    # --forked; each TestClient instantiates the full Huginn app (~2-3GB),
+    # so 2 xdist workers OOM the 7GB runner. Swap + serial prevents OOM.
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
@@ -216,6 +221,11 @@ jobs:
             tests/test_i18n_encoding.py \
             tests/test_kg.py \
             tests/test_websocket_long.py \
+            tests/test_server_fastapi.py \
+            tests/test_chaos_fault_injection.py \
+            tests/test_error_boundaries.py \
+            tests/test_data_consistency.py \
+            tests/test_questions.py \
             --maxfail=50 2>&1 | tee pytest_http_output.txt
           exit ${PIPESTATUS[0]}
 
