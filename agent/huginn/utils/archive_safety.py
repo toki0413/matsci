@@ -133,13 +133,15 @@ def safe_extract_zip(
     if members is None:
         members = zf.infolist()
 
-    # 3.12+ zipfile 也支持 filter 参数.
+    # 3.12+ zipfile.extractall 支持 filter 参数, 与 tarfile.data_filter
+    # 等效: 拒绝绝对路径、.. 段.  必须显式传 filter="data", 否则
+    # 3.12 默认 filter=None (不防护), 导致 zip-slip 漏洞.
     if sys.version_info >= (3, 12):
         try:
-            zf.extractall(path=extract_dir, members=members)  # type: ignore[call-arg]
+            zf.extractall(path=extract_dir, members=members, filter="data")  # type: ignore[call-arg]  # nosec B202
             return len(members)
         except Exception as exc:
-            logger.warning("zip extractall 失败, 退回逐成员提取: %s", exc)
+            logger.warning("zip extractall (data filter) 失败, 退回逐成员提取: %s", exc)
 
     total = 0
     extracted = 0
