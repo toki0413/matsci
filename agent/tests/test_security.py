@@ -30,9 +30,16 @@ _skip_ci_py313_spawn = (
 )
 
 
-def _skip_if_oom(exc: OSError) -> None:
-    """Skip the test when the OS cannot allocate memory for subprocess spawn."""
-    if exc.errno == errno.ENOMEM:
+def _skip_if_oom(exc: BaseException) -> None:
+    """Skip the test when the OS cannot allocate memory.
+
+    Handles both ``OSError(ENOMEM)`` (subprocess spawn failure) and the
+    plain ``MemoryError`` raised by the Python runtime when allocation fails
+    in tight-memory CI environments (6GB RAM sandbox).
+    """
+    if isinstance(exc, MemoryError):
+        pytest.skip("MemoryError: cannot allocate memory (OOM)")
+    if isinstance(exc, OSError) and exc.errno == errno.ENOMEM:
         pytest.skip("Cannot allocate memory for subprocess (OOM)")
 
 # ---------------------------------------------------------------------------

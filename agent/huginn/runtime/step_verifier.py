@@ -75,7 +75,7 @@ def _step_signature(tool_name: str, args: Any, result: Any) -> str:
         )
     except Exception:
         return f"{tool_name}:{id(args)}:{id(result)}"
-    return hashlib.md5(payload.encode("utf-8")).hexdigest()
+    return hashlib.md5(payload.encode("utf-8"), usedforsecurity=False).hexdigest()
 
 
 # === 评分结果 ===

@@ -161,7 +161,9 @@ class HPCClient:
             self._ssh.set_missing_host_key_policy(paramiko.RejectPolicy())
             self._load_known_hosts()
         else:
-            self._ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            # strict_host_key_checking=False 时降级到 AutoAddPolicy,
+            # 方便首次连接开发环境. 默认走 RejectPolicy, 见上方分支.
+            self._ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())  # nosec B507
 
         connect_kwargs = {
             "hostname": self.config.host,
