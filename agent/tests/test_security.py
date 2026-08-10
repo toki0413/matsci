@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import json
 import os
 import subprocess
@@ -20,12 +21,19 @@ from huginn.security import (
     safe_eval,
 )
 
-# spawn sys.executable 子进程的测试在 CI Python 3.13 上 OOM (--forked 双重内存压力).
-# 3.11/3.12 内存足够仍跑, 3.13 跳过避免环境性 failure.
+# spawn sys.executable 子进程的测试在内存受限时会 OOM (posix_spawn ENOMEM).
+# CI workflow 从未设置 HUGINN_CI, 所以旧逻辑 (HUGINN_CI + py3.13) 不生效.
+# 改为在测试体内捕获 OSError(ENOMEM) 并 skip, 鲁棒于任何内存受限环境.
 _skip_ci_py313_spawn = (
     os.environ.get("HUGINN_CI", "").lower() in ("1", "true", "yes")
     and sys.version_info >= (3, 13)
 )
+
+
+def _skip_if_oom(exc: OSError) -> None:
+    """Skip the test when the OS cannot allocate memory for subprocess spawn."""
+    if exc.errno == errno.ENOMEM:
+        pytest.skip("Cannot allocate memory for subprocess (OOM)")
 
 # ---------------------------------------------------------------------------
 # SandboxExecutor
@@ -69,9 +77,13 @@ class TestSandboxExecutor:
         cfg = SandboxConfig(max_timeout=5.0, allowed_executables={"python", "python3"})
         sandbox = SandboxExecutor(cfg)
         # Command that sleeps longer than allowed
-        result = sandbox.run(
-            [sys.executable, "-c", "import time; time.sleep(10)"], timeout=2.0
-        )
+        try:
+            result = sandbox.run(
+                [sys.executable, "-c", "import time; time.sleep(10)"], timeout=2.0
+            )
+        except OSError as exc:
+            _skip_if_oom(exc)
+            raise
         assert result.success is False
         assert result.returncode == -1  # timeout marker
 
@@ -83,7 +95,11 @@ class TestSandboxExecutor:
         import sys
         cfg = SandboxConfig(allowed_executables={"python", "python3"})
         sandbox = SandboxExecutor(cfg)
-        result = sandbox.run([sys.executable, "-c", "print('hello sandbox')"])
+        try:
+            result = sandbox.run([sys.executable, "-c", "print('hello sandbox')"])
+        except OSError as exc:
+            _skip_if_oom(exc)
+            raise
         assert result.success is True
         assert result.returncode == 0
         assert "hello sandbox" in result.stdout

@@ -37,6 +37,25 @@ if "huginn.routes" not in sys.modules:
     sys.modules["huginn.routes"] = _stub
     huginn.routes = _stub
 
+    # Stub 不含 include_v1_routes, 会导致同会话中依赖 huginn.server 的测试
+    # (如 test_interaction) ImportError. 提供懒加载: 被调用时替换 stub 为真实
+    # huginn.routes 模块并委托调用.
+    def _lazy_include_v1_routes(app, *, keep_root_compat=True):
+        import importlib
+
+        sys.modules.pop("huginn.routes", None)
+        try:
+            real_mod = importlib.import_module("huginn.routes")
+            sys.modules["huginn.routes"] = real_mod
+            huginn.routes = real_mod
+            return real_mod.include_v1_routes(app, keep_root_compat=keep_root_compat)
+        except Exception:
+            sys.modules["huginn.routes"] = _stub
+            huginn.routes = _stub
+            raise
+
+    _stub.include_v1_routes = _lazy_include_v1_routes
+
 # ── Real imports ────────────────────────────────────────────────────────
 
 import time  # noqa: E402
