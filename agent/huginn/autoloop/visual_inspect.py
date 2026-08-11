@@ -42,6 +42,42 @@ def _histogram_correlation(img_bytes1: bytes, img_bytes2: bytes) -> float:
 class VisualInspectMixin:
     """visual_inspect 方法族. 通过 self 访问 engine 状态."""
 
+    def _attach_gate_note(self, action_result: dict[str, Any]) -> None:
+        """批次 D: 对 zoom 结果附加渲染门禁判定留痕.
+
+        consistency_check 发现的低置信度区域, 若整图存在可重渲染修复的几何
+        问题 (blank/clipped), 用 visualize_qa 生成机读 directive 供精修循环
+        消费. 需要整图 base64 (visual_base64 存的是原图), 写入临时 PNG 再
+        QA — qa_figure 只接受文件路径. ponytail: 失败只跳过, 不阻塞 zoom.
+        """
+        try:
+            import base64 as b64
+            import tempfile
+            from pathlib import Path
+
+            from huginn.tools.visualize_qa import qa_directive, qa_figure
+
+            full_b64 = getattr(self, "_visual_base64", "") or getattr(
+                self, "_last_visual_base64", ""
+            )
+            if not full_b64:
+                return
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+                f.write(b64.b64decode(full_b64))
+                tmp = Path(f.name)
+            try:
+                qa = qa_figure(tmp)
+            finally:
+                tmp.unlink(missing_ok=True)
+            if qa.get("verdict") in ("fail", "fix_needed"):
+                action_result["gate"] = {
+                    "verdict": qa.get("verdict"),
+                    "flags": qa.get("flags", []),
+                    "directive": qa_directive(qa),
+                }
+        except Exception:
+            logger.debug("visual_inspect: gate note failed", exc_info=True)
+
     async def _execute_visual_inspect(
         self, description: str, context: dict[str, Any],
         consistency_check: bool = False,
@@ -139,6 +175,10 @@ class VisualInspectMixin:
                             if corr < 0.8:
                                 action_result["low_confidence"] = True
                                 action_result["note"] += f" (low consistency: {corr:.2f})"
+                            # 批次 D: 低置信度区域附加渲染门禁判定留痕 — 若原图可
+                            # 由 visualize_qa 诊断 (如 clipped/blank), 生成机读修正
+                            # 指令供精修循环消费. 失败不阻塞, 只尝试附加.
+                            self._attach_gate_note(action_result)
 
                         # 可选: 调 image_analysis_tool 做真正区域分析
                         try:
