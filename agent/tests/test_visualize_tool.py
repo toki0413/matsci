@@ -13,11 +13,11 @@ from huginn.tools.visualize_tool import VisualizeTool
 
 
 @pytest.fixture(autouse=True)
-def _clear_registry():
-    ToolRegistry.clear()
-    ToolRegistry.register(VisualizeTool())
+def _isolate_registry():
+    """隔离 ToolRegistry: 测试自用工具不影响全局注册表."""
+    before = ToolRegistry.snapshot()
     yield
-    ToolRegistry.clear()
+    ToolRegistry.restore(before)
 
 
 class TestVisualizeTool:

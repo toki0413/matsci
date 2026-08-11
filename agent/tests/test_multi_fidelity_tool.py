@@ -23,10 +23,10 @@ from huginn.tools.sci.multi_fidelity_tool import (
 
 
 @pytest.fixture(autouse=True)
-def _clean_registry():
-    ToolRegistry.clear()
+def _isolate_registry():
+    before = ToolRegistry.snapshot()
     yield
-    ToolRegistry.clear()
+    ToolRegistry.restore(before)
 
 
 def _call(tool, args, ctx=None):

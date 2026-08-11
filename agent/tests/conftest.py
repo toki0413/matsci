@@ -114,6 +114,78 @@ def _clear_config_cache_between_tests(monkeypatch):
     clear_config_cache()
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _canonical_tool_registry():
+    """Populate the canonical ToolRegistry once at session start.
+
+    Many tests read the full tool set (``heavy_tool_names()``,
+    ``ToolRegistry._tools``) and several modules call ``register_all_tools()``
+    when the registry is empty. Establishing the canonical registry exactly
+    once here gives the ``_restore_tool_registry`` guard a stable baseline: a
+    test that clears the registry is then detected as a *removal*, not confused
+    with a legitimate first-time population.
+
+    Best-effort import keeps lightweight/weightless runs (e.g. the TestClient
+    hygiene guard) from being blocked when the full stack isn't installed.
+    """
+    try:
+        from huginn.tools import register_all_tools
+        from huginn.tools.registry import ToolRegistry
+    except ModuleNotFoundError:
+        yield
+        return
+
+    if not ToolRegistry.list_tools():
+        register_all_tools()
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _restore_tool_registry(_canonical_tool_registry):
+    """Guard: the global ToolRegistry must be bit-identical after each test.
+
+    Tests routinely call ``ToolRegistry.clear()`` (or register/unregister their
+    own tools) and either forget to restore, or restore to an empty registry,
+    leaving the process-global tool table wiped or polluted for the next test.
+    Anything that reads the full tool set (e.g. ``heavy_tool_names()`` in
+    simple_path_tool) then intermittently fails depending on test order — the
+    "fixed-then-broken" pattern.
+
+    This autouse fixture snapshots the registry before each test and fails the
+    test if the registry changed afterwards, so a leaking mutation gets an
+    immediate red instead of silently corrupting its neighbors.
+
+    Failing is the right call (not just a warning): a test that mutates global
+    state must restore it via ``ToolRegistry.restore(ToolRegistry.snapshot())``
+    or a save/restore around its own sub-registry. The error message names the
+    leaked tools so the fix is obvious.
+
+    Like the config-cache fixture, import is best-effort so the weightless
+    hygiene guard (which runs in a bare env) isn't blocked.
+    """
+    try:
+        from huginn.tools.registry import ToolRegistry
+    except ModuleNotFoundError:
+        yield
+        return
+
+    before = ToolRegistry.snapshot()
+    yield
+    after = ToolRegistry.snapshot()
+
+    if before.keys() != after.keys():
+        added = sorted(set(after) - set(before))
+        removed = sorted(set(before) - set(after))
+        # 先恢复快照, 阻断对后续测试的级联污染(否则清空的注册表会让下一
+        # 个测试也误报/失败), 再用红名点名泄漏者, 让修复一目了然.
+        ToolRegistry.restore(before)
+        raise AssertionError(
+            "test leaked changes to the global ToolRegistry (must restore "
+            "via `ToolRegistry.restore(ToolRegistry.snapshot())`): "
+            f"added={added}, removed={removed}"
+        )
+
+
 @pytest.hookimpl(trylast=True)
 def pytest_configure(config):
     """Register custom markers for industry-grade test categorization."""
