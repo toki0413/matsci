@@ -196,6 +196,43 @@ def _cv_pre_analyze(image_path: str | Path | bytes) -> str:
         return f"[CV pre-analysis failed: {exc}]"
 
 
+def _cv_qa_diagnostic(image_path: str | Path | bytes) -> str:
+    """批次 E: 对图表 PNG 跑确定性 QA, 给视觉 LLM 附加机读诊断文本.
+
+    BOTH 场景视觉 LLM 已能看原图, 这里附加的是它"看不见"的确定性质检
+    (blank/clipped/aspect/cluttered + 修正指令), 帮它在做语义级解读/校验时
+    判断"这张图是否值得解读、哪里需要重渲染". best-effort: 非图片/读取失败
+    返回空串, 不阻塞主链路.
+    """
+    if isinstance(image_path, (bytes, bytearray)):
+        return ""
+    p = Path(image_path)
+    if not p.is_file() or p.suffix.lower() not in _IMAGE_EXTS:
+        return ""
+    try:
+        from huginn.tools.visualize_qa import qa_directive, qa_figure
+
+        qa = qa_figure(p)
+        verdict = qa.get("verdict")
+        if not verdict or verdict == "pass":
+            return ""
+        flags = qa.get("flags", [])
+        directive = qa_directive(qa)
+        parts = [f"[CV QA] verdict={verdict}"]
+        if flags:
+            parts.append(f"  flags={', '.join(flags)}")
+        if directive:
+            parts.append(f"  directive={directive}")
+        parts.append(
+            "  若该图需要语义解读, 请优先解读; 若为可重渲染修正问题, "
+            "建议触发重渲染后再解读."
+        )
+        return "\n".join(parts)
+    except Exception:
+        logger.debug("cv qa diagnostic failed, non-fatal", exc_info=True)
+    return ""
+
+
 _MICROSCOPY_ACTIONS = {
     "SEM_image": "sem_analysis",
     "TEM_image": "tem_lattice",
@@ -377,4 +414,10 @@ class VisionRouter:
         """
         content = self.build_content(message, image_path)
         cv_hints = _cv_pre_analyze(image_path)
+        # 批次 E: BOTH 场景给视觉 LLM 附加确定性 QA 诊断 — 视觉 LLM 既能看原图
+        # 做语义级判断, 又能参考确定性质检 (blank/clipped/aspect/cluttered + 机读
+        # directive) 聚焦"这张图是否值得语义解读、哪里需要修正". 失败降级不阻塞.
+        qa_hint = _cv_qa_diagnostic(image_path)
+        if qa_hint:
+            cv_hints = f"{cv_hints}\n{qa_hint}" if cv_hints else qa_hint
         return content, cv_hints
