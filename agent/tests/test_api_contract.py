@@ -610,3 +610,57 @@ class TestOpenAPIConsistency:
                 checked += 1
         # 至少应该有一些需要 body 的 POST 端点
         assert checked > 0, "没有找到声明 required body 的 POST 端点"
+
+
+# ── 8. 前端契约 (feature flags) ───────────────────────────────────────
+#
+# 前后端契约的唯一真源是库内 agent/openapi.json (由 `huginn-agent openapi`
+# 导出), 前端用 `npm run gen:api` 从它生成 TS 类型. 这里断言:
+#   - 库内 openapi.json 已包含 /config/features 的具体 schema (而非 unknown)
+#   - FeatureFlagOut 的字段与前端 HarnessPanel 依赖完全一致
+# 一旦有人改了后端字段却忘了重导 openapi.json, 这三条会立刻失败.
+
+
+class TestFeatureFlagsContract:
+    """/config/features 契约: 库内 openapi.json 必须包含可生成的前端类型."""
+
+    def _committed_schema(self) -> dict[str, Any]:
+        import json
+        from pathlib import Path
+
+        path = Path(__file__).resolve().parents[1].joinpath("openapi.json")
+        assert path.exists(), f"缺少库内契约文件: {path}"
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def test_committed_openapi_has_feature_flag_schemas(self):
+        """库内 openapi.json 应包含四个前端依赖的 schema 定义."""
+        schemas = self._committed_schema().get("components", {}).get("schemas", {})
+        for name in (
+            "FeatureFlagOut",
+            "FeatureFlagsListOut",
+            "FeatureFlagToggleIn",
+            "FeatureFlagToggleOut",
+        ):
+            assert name in schemas, f"库内 openapi.json 缺少 schema: {name}"
+
+    def test_feature_flag_out_fields_match_frontend(self):
+        """FeatureFlagOut 字段必须与前端 HarnessPanel 依赖完全一致."""
+        schemas = self._committed_schema().get("components", {}).get("schemas", {})
+        props = schemas["FeatureFlagOut"]["properties"]
+        assert set(props) == {"name", "enabled", "description", "default"}, (
+            f"FeatureFlagOut 字段漂移: {sorted(props)}"
+        )
+
+    def test_config_features_get_response_is_typed(self, openapi_schema):
+        """运行时 schema 中 /config/features GET 响应应引用 FeatureFlagsListOut."""
+        get_info = openapi_schema["paths"]["/config/features"]["get"]
+        resp = get_info["responses"]["200"]["content"]["application/json"]
+        ref = resp.get("schema", {}).get("$ref", "")
+        assert ref.endswith("FeatureFlagsListOut"), f"未引用具体 schema: {ref}"
+
+    def test_config_features_post_response_is_typed(self, openapi_schema):
+        """运行时 schema 中 /config/features/{feature} POST 响应应引用 FeatureFlagToggleOut."""
+        post_info = openapi_schema["paths"]["/config/features/{feature}"]["post"]
+        resp = post_info["responses"]["200"]["content"]["application/json"]
+        ref = resp.get("schema", {}).get("$ref", "")
+        assert ref.endswith("FeatureFlagToggleOut"), f"未引用具体 schema: {ref}"

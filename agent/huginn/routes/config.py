@@ -17,7 +17,8 @@ import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 
 from huginn.config import HuginnConfig, ModelConfig
 from huginn.config import get_config as get_cached_config
@@ -672,66 +673,102 @@ async def decrypt_config_endpoint(params: dict[str, Any]) -> dict[str, Any]:
 # ── /config/features ────────────────────────────────────────────
 
 
-@router.get("/config/features", dependencies=[Depends(require_admin_key)])
-async def list_feature_flags() -> dict[str, Any]:
+class FeatureFlagOut(BaseModel):
+    """单个 feature flag 的对外契约.
+
+    这是前后端约定的唯一真源: 前端据此渲染开关, CI 用 OpenAPI schema
+    生成 TS 类型, 任何字段增减都必须同步到这里, 否则契约测试会拦下.
+    """
+
+    name: str
+    enabled: bool
+    description: str
+    default: bool
+
+
+class FeatureFlagsListOut(BaseModel):
+    """/config/features GET 响应. 前端只依赖 features[].{name,enabled,description,default}."""
+
+    features: list[FeatureFlagOut]
+    count: int
+
+
+class FeatureFlagToggleIn(BaseModel):
+    """/config/features/{feature} POST 请求体."""
+
+    enabled: bool
+    persist: bool = False
+
+
+class FeatureFlagToggleOut(BaseModel):
+    """/config/features/{feature} POST 响应."""
+
+    success: bool
+    feature: str
+    enabled: bool
+    requested: bool
+    applied: bool
+    persisted: bool
+    persist_error: str | None = None
+
+
+@router.get(
+    "/config/features",
+    dependencies=[Depends(require_admin_key)],
+    response_model=FeatureFlagsListOut,
+)
+async def list_feature_flags() -> FeatureFlagsListOut:
     """列出所有 feature flag 的当前状态 (名称/是否开启/描述/默认值)."""
     from huginn.feature_flags import FeatureFlags
 
     flags = FeatureFlags.shared().list_flags()
-    return {"features": flags, "count": len(flags)}
+    return FeatureFlagsListOut(features=flags, count=len(flags))
 
 
-@router.post("/config/features/{feature}", dependencies=[Depends(require_admin_key)])
-async def toggle_feature_flag(feature: str, params: dict[str, Any]) -> dict[str, Any]:
-    """运行时开关某个 feature flag. body: {"enabled": bool, "persist": bool}.
+@router.post(
+    "/config/features/{feature}",
+    dependencies=[Depends(require_admin_key)],
+    response_model=FeatureFlagToggleOut,
+)
+async def toggle_feature_flag(
+    feature: str, params: FeatureFlagToggleIn
+) -> FeatureFlagToggleOut:
+    """运行时开关某个 feature flag.
 
-    persist 默认 false, 改动只在内存. 设 true 会把当前所有运行时覆盖写回配置文件.
+    body: {"enabled": bool, "persist": bool}. persist 默认 false, 改动只在内存;
+    设 true 会把当前所有运行时覆盖写回配置文件.
     """
     from huginn.feature_flags import FeatureFlags
 
-    if "enabled" not in params:
-        return {"success": False, "error": "body 需要 enabled 字段"}
-    enabled = bool(params["enabled"])
-    persist = bool(params.get("persist", False))
-
     ff = FeatureFlags.shared()
-    # 未知 feature 直接报错, 别让前端以为开关成功了
+    # 未知 feature 直接 404, 别让前端以为开关成功了
     known = {f["name"] for f in ff.list_flags()}
     if feature not in known:
-        return {
-            "success": False,
-            "error": f"未知 feature: {feature}. 可用: {sorted(known)}",
-        }
+        raise HTTPException(status_code=404, detail=f"未知 feature: {feature}")
 
-    ff.toggle(feature, enabled)
+    ff.toggle(feature, params.enabled)
     new_state = ff.is_enabled(feature)
 
     persisted = False
-    if persist:
+    persist_error: str | None = None
+    if params.persist:
         try:
             cfg = get_cached_config()
             cfg_path = os.environ.get("HUGINN_CONFIG_FILE") or "huginn.toml"
             ff.persist_to_config(cfg, cfg_path)
             persisted = True
         except Exception as exc:
-            return {
-                "success": True,
-                "feature": feature,
-                "enabled": new_state,
-                "requested": enabled,
-                "applied": new_state == enabled,
-                "persisted": False,
-                "persist_error": str(exc),
-            }
+            persist_error = str(exc)
 
-    return {
-        "success": True,
-        "feature": feature,
-        "enabled": new_state,
-        "requested": enabled,
-        "applied": new_state == enabled,
-        "persisted": persisted,
-    }
+    return FeatureFlagToggleOut(
+        success=True,
+        feature=feature,
+        enabled=new_state,
+        requested=params.enabled,
+        applied=new_state == params.enabled,
+        persisted=persisted,
+        persist_error=persist_error,
+    )
 
 
 # ── /config/health ──────────────────────────────────────────────

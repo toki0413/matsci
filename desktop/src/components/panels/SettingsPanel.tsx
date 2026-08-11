@@ -14,6 +14,9 @@ import type { SettingsTab } from "../settings-shared";
 import { PROVIDERS } from "../../lib/constants";
 import { api } from "../../lib/api";
 import type { ModelConfig, AgentProfile, AppConfig } from "../../types/domain";
+// 后端契约统一走 openapi-typescript 从 openapi.json 生成 (见 HarnessPanel),
+// 不手写接口类型, 避免和 schema 漂移. 重新生成: `npm run gen:api`.
+import type { components } from "../../types/api";
 
 // Lazy-load heavy sub-panels so their chunks stay out of the initial bundle.
 const CredentialsPanel = lazy(() => import("../CredentialsPanel"));
@@ -337,12 +340,12 @@ function BotPanel({ t }: { t: (k: string) => string }) {
 
 // ── HarnessPanel: 调优开关 (H5 显著性门 / H6 分布外留出) ──────────────
 // 对接后端 /config/features (GET) 与 /config/features/{name} (POST).
-interface HarnessFlag {
-  name: string;
-  enabled: boolean;
-  description: string;
-  default: boolean;
-}
+// 类型统一走 openapi-typescript 从 openapi.json 生成 (见文件顶部 import),
+// 不再手写, 避免和后端 schema 漂移. 重新生成: `npm run gen:api`.
+
+type HarnessFlag = components["schemas"]["FeatureFlagOut"];
+type FeatureFlagsList = components["schemas"]["FeatureFlagsListOut"];
+type FeatureFlagToggle = components["schemas"]["FeatureFlagToggleOut"];
 
 function HarnessPanel({ t }: { t: (k: string) => string }) {
   const MIN_SAMPLE = 5; // 与后端 significance_gate._MIN_SAMPLES_DEFAULT 对齐
@@ -356,7 +359,7 @@ function HarnessPanel({ t }: { t: (k: string) => string }) {
     setLoading(true);
     setErr("");
     try {
-      const data = await api.get<{ features?: HarnessFlag[] }>("/config/features");
+      const data = await api.get<FeatureFlagsList>("/config/features");
       const all = data.features || [];
       // 只展示这两个官方 harness 调优开关 (H5 显著性门 / H6 分布外留出)
       const HARNESS_FLAGS = new Set(["harness_significance_gate", "harness_ood_holdout"]);
@@ -374,7 +377,7 @@ function HarnessPanel({ t }: { t: (k: string) => string }) {
     setBusy(name);
     setMsg("");
     try {
-      const r = await api.post<{ enabled: boolean; persisted?: boolean; persist_error?: string }>(
+      const r = await api.post<FeatureFlagToggle>(
         `/config/features/${name}`,
         { enabled, persist: true }
       );

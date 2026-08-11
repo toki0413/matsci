@@ -401,6 +401,59 @@ jobs:
           npm ci
           npm run build
 
+  contract-gate:
+    # 前后端契约强制 (一劳永逸解决前后端不匹配):
+    #   1. 后端: 用运行时重导 openapi.json, 与库内契约 diff, 有漂移即失败.
+    #   2. 前端: 用 `npm run gen:api` 从契约重生成 TS 类型, 与库内 diff.
+    #   3. 前端: tsc + vite 构建通过, 证明生成类型真的被消费且类型安全.
+    # 任何一端改了接口却没同步契约/类型, 这个 gate 都会拦下.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install agent
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e "./agent[dev]"
+          pip install chromadb scikit-learn scipy sympy matplotlib sentence-transformers pymupdf
+          pip install pymatgen ase paramiko pypdf pint spglib
+          pip install toml croniter fastapi uvicorn nbformat
+          pip install langchain-openai langgraph-checkpoint-sqlite
+          pip install psutil pulp cvxpy scikit-fem anthropic langchain-ollama
+
+      - name: Verify backend OpenAPI schema does not drift
+        run: |
+          cd agent
+          huginn-agent openapi -o openapi.json
+          git diff --exit-code -- openapi.json
+          echo "openapi.json is in sync with runtime"
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Verify frontend generated types do not drift
+        run: |
+          cd desktop
+          npm ci
+          npm run gen:api
+          git diff --exit-code -- src/types/api.ts
+          echo "src/types/api.ts is in sync with openapi.json"
+
+      - name: Type-check and build frontend against generated types
+        run: |
+          cd desktop
+          npm run build
+
   security-check:
     runs-on: ubuntu-latest
     steps:

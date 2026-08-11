@@ -23,6 +23,7 @@ from huginn.cli.commands import (
     kg,
     memory_maintenance,
     model_list,
+    openapi,
     persona,
     plot,
     refactor,
@@ -66,6 +67,8 @@ def register_commands(cli: click.Group) -> None:
     cli.add_command(encrypt_config.encrypt_config)
     cli.add_command(export.export_data)
     cli.add_command(kg.build_kg)
+    # 导出运行时 OpenAPI schema (前端契约唯一真源)
+    cli.add_command(openapi.openapi_export)
     # 回放 agent 决策轨迹
     cli.add_command(replay.replay)
     # API key 配置入口
