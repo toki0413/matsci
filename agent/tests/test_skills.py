@@ -1,6 +1,10 @@
 """Tests for skills modules."""
 
+from __future__ import annotations
+
 import asyncio
+
+import pytest
 
 from huginn.skills.base import (
     DeclarativeSkillExecutor,
@@ -10,6 +14,16 @@ from huginn.skills.base import (
 )
 from huginn.skills.presets import STANDARD_DFT, SYMBOLIC_REGRESSION, SYMBOLIC_VERIFY
 from huginn.skills.registry import SkillRegistry
+
+
+@pytest.fixture(autouse=True)
+def _isolate_registry():
+    """隔离 ToolRegistry: 测试内注册/清空不影响全局注册表."""
+    from huginn.tools.registry import ToolRegistry
+
+    before = ToolRegistry.snapshot()
+    yield
+    ToolRegistry.restore(before)
 
 
 class TestSkillRegistry:
@@ -173,8 +187,6 @@ class TestDeclarativeSkillExecutor:
         # 两个 step 启动时间差应 < delay (基本同时启动)
         if "a" in start_times and "b" in start_times:
             assert abs(start_times["a"] - start_times["b"]) < 0.1
-
-        ToolRegistry.clear()
 
 
 class TestUQGPSkills:
@@ -387,7 +399,6 @@ class TestNewSkills:
 
         assert result["success"] is True
         assert output_path.exists()
-        ToolRegistry.clear()
 
     def test_topological_geometry_skill_runs(self, tmp_path):
         from huginn.config import HuginnConfig
@@ -415,7 +426,6 @@ class TestNewSkills:
 
         assert result["success"] is True
         assert output_path.exists()
-        ToolRegistry.clear()
 
     def test_synthesis_planning_skill_runs(self, tmp_path):
         import csv
@@ -470,4 +480,3 @@ class TestNewSkills:
 
         assert result["success"] is True
         assert output_path.exists()
-        ToolRegistry.clear()

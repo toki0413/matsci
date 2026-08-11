@@ -279,7 +279,7 @@ class TestBuildExecutor:
 
 class TestRegisterAllToolsRemote:
     def test_register_all_tools_with_remote_config_passes_executor(self) -> None:
-        ToolRegistry.clear()
+        before = ToolRegistry.snapshot()
         cfg = HuginnConfig(
             execution_backend="remote",
             hpc_host="hpc.example.com",
@@ -292,4 +292,4 @@ class TestRegisterAllToolsRemote:
         vasp = ToolRegistry.get("vasp_tool")
         assert isinstance(vasp, VaspTool)
         assert isinstance(vasp.sandbox, RemoteExecutor)
-        ToolRegistry.clear()
+        ToolRegistry.restore(before)

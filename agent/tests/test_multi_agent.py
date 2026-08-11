@@ -17,12 +17,18 @@ from huginn.tools.registry import ToolRegistry
 
 @pytest.fixture(autouse=True)
 def _ensure_memory_tools_registered():
-    """其他测试会 ToolRegistry.clear() 但不恢复, 模块级注册不可靠,
-    所以每次跑前都补一次注册."""
+    """确保 memory 工具可用, 且不污染全局注册表.
+
+    测试从 ToolRegistry 取工具, 需要这几个工具已注册; 但注册会改动全局
+    注册表, 所以用 snapshot/restore 隔离, 让护栏(_restore_tool_registry)
+    全程保持 bit-identical.
+    """
+    before = ToolRegistry.snapshot()
     for cls in (RememberTool, RecallTool, OrchestrateTool):
         if ToolRegistry.get(cls.name) is None:
             ToolRegistry.register(cls())
     yield
+    ToolRegistry.restore(before)
 
 
 def test_model_registry_list_and_default():
