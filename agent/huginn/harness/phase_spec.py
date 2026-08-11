@@ -27,21 +27,9 @@ from typing import Any
 
 from huginn.utils.runtime import get_runtime_home
 
+from ._enabled import _harness_enabled
+
 logger = logging.getLogger(__name__)
-
-
-def _harness_enabled(key: str, default: bool = False) -> bool:
-    """读 cfg.feature_flags.<key>, mtime 自动 reload. 默认 off.
-
-    跟 prompt_patch._harness_enabled 同实现, 不抽公共 util (两个文件各自独立).
-    """
-    try:
-        from huginn.config import get_config
-        cfg = get_config()
-        ff = getattr(cfg, "feature_flags", None) or {}
-        return bool(ff.get(key, default))
-    except Exception:
-        return default
 
 
 @dataclass

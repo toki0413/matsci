@@ -42,17 +42,6 @@ _DEFAULT_TOLERANCE = 0.1
 _DEFAULT_MIN_PER_SPLIT = 3
 
 
-def _harness_enabled(key: str, default: bool = False) -> bool:
-    try:
-        from huginn.config import get_config
-
-        cfg = get_config()
-        ff = getattr(cfg, "feature_flags", None) or {}
-        return bool(ff.get(key, default))
-    except Exception:
-        return default
-
-
 def _is_holdout(task_id: str, train_ratio: float = _DEFAULT_TRAIN_RATIO) -> bool:
     """确定性分桶: task_id 的 hash < (1-train_ratio)*65536 → holdout.
 
