@@ -348,14 +348,20 @@ class SandboxExecutor:
         # Task 1.2: POSIX 软沙箱补 RLIMIT_AS 内存上限 (按 profile, 跚 Docker 档位对齐).
         # Windows 跳过 (resource 模块不支持 RLIMIT_AS). save/restore 父进程 limit,
         # 避免污染 agent 自身内存上限. ponytail: try/except 包裹, 失败不阻塞.
-        _saved_rlimit_as = None
+        #
+        # 关键: 只降 soft limit, 不动 hard limit. 非 root 用户一旦降低 hard limit
+        # 就无法再升高 (POSIX 规范), 导致 setrlimit 恢复失败, RLIMIT_AS 永久卡在
+        # 2GB, 后续 pytest 进程因虚拟内存不足触发 MemoryError 并挂起 (Python 3.13
+        # 在 CI 上实测卡死 42 分钟直到 job timeout).
+        _saved_rlimit_soft = None
         if os.name != "nt":
             try:
                 import resource as _resource
                 _mem = _profile_mem_bytes(self.profile)
                 if _mem and _mem > 0:
-                    _saved_rlimit_as = _resource.getrlimit(_resource.RLIMIT_AS)
-                    _resource.setrlimit(_resource.RLIMIT_AS, (_mem, _mem))
+                    _cur_soft, _cur_hard = _resource.getrlimit(_resource.RLIMIT_AS)
+                    _saved_rlimit_soft = _cur_soft
+                    _resource.setrlimit(_resource.RLIMIT_AS, (_mem, _cur_hard))
             except Exception:
                 import logging
                 logging.getLogger(__name__).debug(
@@ -386,11 +392,13 @@ class SandboxExecutor:
                 dry_run=False,
             )
         finally:
-            # 恢复父进程 limit, 避免子进程内存上限反过来卡死 agent 自身.
-            if _saved_rlimit_as is not None:
+            # 恢复父进程 soft limit, 避免子进程内存上限反过来卡死 agent 自身.
+            # 只恢复 soft limit — hard limit 从未被降低, 无需恢复.
+            if _saved_rlimit_soft is not None:
                 try:
                     import resource as _resource
-                    _resource.setrlimit(_resource.RLIMIT_AS, _saved_rlimit_as)
+                    _cur_soft, _cur_hard = _resource.getrlimit(_resource.RLIMIT_AS)
+                    _resource.setrlimit(_resource.RLIMIT_AS, (_saved_rlimit_soft, _cur_hard))
                 except Exception:
                     logger.debug("failed to restore parent rlimit", exc_info=True)
 
