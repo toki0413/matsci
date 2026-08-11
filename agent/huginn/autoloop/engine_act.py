@@ -174,11 +174,12 @@ class EngineActMixin:
             result = await self._execute_skill(plan, context)
         elif mode == "visual_inspect":
             # Path C: interactive visual inspection using existing visual tools
-            # A3: plan/context 里带 consistency_check=True 时开启 re-ask 一致性检查
-            consistency = bool(
-                context.get("consistency_check")
-                or "consistency_check" in plan.lower()
-                or "re-ask" in plan.lower()
+            # A3 + 批次 D: consistency_check 默认开启 (闭环), 除非显式关闭.
+            # 精修闭环要求每次 zoom 都做 re-ask 稳定性自检, 不再依赖 agent 记得声明.
+            consistency = not (
+                context.get("consistency_check") is False
+                or "no consistency" in plan.lower()
+                or "consistency_check=false" in plan.lower()
             )
             result = await self._execute_visual_inspect(
                 description, context, consistency_check=consistency
