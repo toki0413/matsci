@@ -62,22 +62,21 @@ def test_all_negative_diffs_fail():
 
 
 def test_wilcoxon_mixed_diffs():
-    """混合差值 → Wilcoxon 检验, 7正1负应该通过.
-
-    关键: 负差值的绝对值必须最小 (秩=1), 否则 n=8 时 W- 过大,
-    p > 0.05 不显著. 之前用 (0.9, 0.5) → diff=-0.4, |diff| 最大,
-    秩=8, W-=8, p=0.1016 >= 0.05, 测试失败.
-    """
+    """混合差值 → Wilcoxon 检验, 15正1负应该通过."""
     gate = SignificanceGate.get_instance()
+    # 15 正差值 + 1 负差值, n=16 足够大, p-value 远低于 0.05
     pairs = [
         (0.3, 0.6), (0.4, 0.7), (0.5, 0.8), (0.2, 0.5),
-        (0.3, 0.6), (0.4, 0.7), (0.5, 0.8), (0.5, 0.48),
+        (0.3, 0.6), (0.4, 0.7), (0.5, 0.8), (0.2, 0.5),
+        (0.3, 0.6), (0.4, 0.7), (0.5, 0.8), (0.2, 0.5),
+        (0.3, 0.6), (0.4, 0.7), (0.5, 0.8),
+        (0.9, 0.5),  # 1 个离群负差值
     ]
     for i, (b, c) in enumerate(pairs):
         gate.record_pair("cfg_d", b, c, f"t{i}")
     d = gate.gate_decision("cfg_d")
     assert d.p_value is not None
-    assert d.passed, f"7-positive-1-negative should pass: {d}"
+    assert d.passed, f"15-positive-1-negative should pass: {d}"
 
 
 def test_wilcoxon_noisy_diffs_fail():

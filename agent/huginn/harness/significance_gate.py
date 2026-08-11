@@ -380,23 +380,20 @@ def _selfcheck() -> None:
     print("3. all-negative diffs → fail (p=1.0) OK")
 
     # 4. 混合差值 → Wilcoxon
-    # 构造 7 正 1 负, 负差值绝对值最小 (秩=1), n=8 时 p < 0.05
+    # 构造 15 正 1 负, n=16, p-value 远低于 0.05 (scipy 版本无关)
     pairs = [
-        (0.3, 0.6),  # +0.3
-        (0.4, 0.7),  # +0.3
-        (0.5, 0.8),  # +0.3
-        (0.2, 0.5),  # +0.3
-        (0.3, 0.6),  # +0.3
-        (0.4, 0.7),  # +0.3
-        (0.5, 0.8),  # +0.3
-        (0.5, 0.48),  # -0.02 (最小 |diff|, 秩=1)
+        (0.3, 0.6), (0.4, 0.7), (0.5, 0.8), (0.2, 0.5),
+        (0.3, 0.6), (0.4, 0.7), (0.5, 0.8), (0.2, 0.5),
+        (0.3, 0.6), (0.4, 0.7), (0.5, 0.8), (0.2, 0.5),
+        (0.3, 0.6), (0.4, 0.7), (0.5, 0.8),
+        (0.9, 0.5),  # -0.4 (一个离群)
     ]
     for i, (b, c) in enumerate(pairs):
         gate.record_pair("cfg_d", baseline_score=b, candidate_score=c, task_id=f"t{i}")
     d = gate.gate_decision("cfg_d")
     assert d.p_value is not None, "should have p_value"
-    assert d.passed, f"7-positive-1-negative should pass: {d}"
-    print(f"4. Wilcoxon mixed (7+, 1-) → pass (p={d.p_value:.4f}) OK")
+    assert d.passed, f"15-positive-1-negative should pass: {d}"
+    print(f"4. Wilcoxon mixed (15+, 1-) → pass (p={d.p_value:.4f}) OK")
 
     # 5. 持久化 reload
     sg.SignificanceGate._instance = None
