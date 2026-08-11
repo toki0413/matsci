@@ -116,9 +116,12 @@ class TestBourbakiTool:
     async def test_tool_registered(self, tool):
         from huginn.tools.registry import ToolRegistry
 
-        # Manually register for this test; unregister by its real name so the
-        # global registry is left untouched (the _restore_tool_registry guard
-        # fails any test that leaks a registration).
-        ToolRegistry.register(tool)
-        assert "bourbaki_tool" in ToolRegistry.list_tools()
-        ToolRegistry.unregister("bourbaki_tool")
+        # register 会覆盖 canonical 的 bourbaki_tool, 直接 unregister 会把它
+        # 从全局 registry 删掉, 触发 _restore_tool_registry guard 的 removed
+        # 泄漏. 用 snapshot/restore 包裹, 测试结束恢复 canonical 状态.
+        snapshot = ToolRegistry.snapshot()
+        try:
+            ToolRegistry.register(tool)
+            assert "bourbaki_tool" in ToolRegistry.list_tools()
+        finally:
+            ToolRegistry.restore(snapshot)
