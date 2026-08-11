@@ -39,13 +39,18 @@ class _MockCalcTool:
 
 @pytest.fixture
 def registered_tool(monkeypatch):
-    """Register a mock tool in ToolRegistry and clean up after."""
+    """Register a mock tool in ToolRegistry and clean up after.
+
+    Uses the public snapshot/restore API (instead of poking the private
+    ``_tools`` dict directly) so the ``_restore_tool_registry`` hygiene guard
+    in conftest sees a bit-identical registry and the ``_schemas_cache`` is
+    invalidated on restore.
+    """
     tool = _MockCalcTool()
-    # save/restore the class-level dict so other tests aren't affected
-    original = dict(ToolRegistry._tools)
+    before = ToolRegistry.snapshot()
     ToolRegistry.register(tool)
     yield tool
-    ToolRegistry._tools = original
+    ToolRegistry.restore(before)
 
 
 def _ctx() -> ToolContext:
