@@ -27,6 +27,7 @@ from typing import Any, Literal
 from huginn.autoloop.phase_gate import (
     _has_external_source as _validation_has_external_source,
 )
+from huginn.utils.common import now_iso
 from huginn.utils.runtime import HUGINN_DIR_NAME, get_runtime_home
 
 logger = logging.getLogger(__name__)
@@ -195,7 +196,7 @@ class HypothesisGraph:
         self._events.append({
             "event": event_type,
             "node_id": node_id,
-            "ts": datetime.now(UTC).isoformat(),
+            "ts": now_iso(),
             **payload,
         })
 

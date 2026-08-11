@@ -411,7 +411,6 @@ _MODEL_VERSION = (
 # === 评测裁决纯函数族 (A2/A3/B4/drift) 抽到 rcb/audit.py ===
 # ponytail: 单一职责拆分 — 这些是 RCB 评测专属的合规裁决层, 与 agent 通用逻辑解耦.
 import contextlib  # noqa: E402
-from datetime import UTC  # noqa: E402
 
 from huginn.cli.rcb.audit import (  # noqa: E402
     _lint_report_markers,
@@ -420,9 +419,9 @@ from huginn.cli.rcb.audit import (  # noqa: E402
     _step2_substitution_audit,
 )
 from huginn.cli.rcb.prompt_builders import (  # noqa: F401,E402  re-export for backward compat
-    _legacy_build_iter_prompt,
     _legacy_build_step2_prompt,
 )
+from huginn.utils.common import now_iso  # noqa: E402
 
 # === v15 Phase 2 Task 3: HypothesisManifold 接入 helpers ===
 # 单文件函数, 不引新抽象. 失败一律降级到 v14 行为, 不阻塞主循环.
@@ -4017,8 +4016,6 @@ async def run(
     _p5_gs = None
     if os.environ.get("HUGINN_PERSISTENT_GOAL_MODE", "0") == "1":
         try:
-            from datetime import datetime
-
             from huginn.autoloop.goal_store import get_goal_store
             _timeout_s = float(os.environ.get("HUGINN_RCB_TIMEOUT", "7200"))
             _p5_gs = get_goal_store()
@@ -4026,7 +4023,7 @@ async def run(
             _p5_gs.update_goal(
                 _goal.id,
                 wall_clock_budget_seconds=_timeout_s,
-                started_at=datetime.now(UTC).isoformat(),
+                started_at=now_iso(),
             )
             _p5_goal_id = _goal.id
             print(f"[P5] persistent goal: budget={_timeout_s}s, goal_id={_p5_goal_id[:8]}", flush=True)

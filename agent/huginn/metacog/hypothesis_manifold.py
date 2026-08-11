@@ -826,7 +826,7 @@ class HypothesisManifold:
                 }
             except Exception:
                 # ProcessPool 失败回退 asyncio (内存/序列化/平台问题)
-                pass
+                logger.debug("ProcessPool sampling failed, falling back to asyncio", exc_info=True)
 
         async def _chain_runner(chain_id: int):
             rng = random.Random(chain_id * 7919 + base_seed)

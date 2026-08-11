@@ -10,10 +10,10 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import UTC
 from pathlib import Path
 from typing import Any
 
+from huginn.utils.common import now_iso
 from huginn.utils.runtime import HUGINN_DIR_NAME
 
 
@@ -1386,7 +1386,6 @@ def run_selfcheck() -> None:
     import os as _os58
     import shutil as _sh58
     import tempfile as _tf58
-    from datetime import datetime
 
     from huginn.autoloop.goal_store import GoalStore as _GS58  # noqa: N814
     from huginn.autoloop.hypothesis_loop import HypothesisGraph as _HG58  # noqa: N814
@@ -1444,7 +1443,7 @@ def run_selfcheck() -> None:
             _store58.update_goal(
                 _g58.id,
                 wall_clock_budget_seconds=3600.0,  # 1 小时, 肯定没超
-                started_at=datetime.now(UTC).isoformat(),
+                started_at=now_iso(),
             )
             _gs_mod58.get_goal_store = lambda: _store58
             try:

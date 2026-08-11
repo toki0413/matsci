@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from huginn.runtime.trace_context import get_trace_id as _get_trace_id
+from huginn.utils.common import hash_text
 
 logger = logging.getLogger(__name__)
 
@@ -225,9 +226,9 @@ class AuditLogger:
 
     @staticmethod
     def _hash_data(data: str | bytes) -> str:
-        if isinstance(data, str):
-            data = data.encode("utf-8")
-        return hashlib.sha256(data).hexdigest()[:16]
+        if isinstance(data, bytes):
+            data = data.decode("utf-8")
+        return hash_text(data)
 
     # -- verification ---------------------------------------------------
 

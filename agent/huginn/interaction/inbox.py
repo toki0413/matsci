@@ -36,9 +36,10 @@ import time
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from huginn.utils.common import now_iso
 
 KIND_APPROVAL = "approval"
 KIND_QUESTION = "question"
@@ -58,7 +59,7 @@ VIS_INBOX = "inbox"
 
 
 def _now() -> str:
-    return datetime.now(UTC).isoformat()
+    return now_iso()
 
 
 def args_preview(arguments: dict | None, *, limit: int = 240) -> str:

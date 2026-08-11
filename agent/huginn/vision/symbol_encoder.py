@@ -405,27 +405,3 @@ def _format_symbols_text(chart_data: dict[str, Any]) -> str:
         )
 
     return "\n".join(parts)
-
-
-def visual_to_symbols(image_path: str | Path) -> str:
-    """将图像转换为文本LLM最擅长的结构化符号格式。
-
-    这是 _cv_pre_analyze 的增强版 — 不仅给统计摘要，
-    还提取精确数值、数学关系和逻辑结构。
-
-    输出格式:
-      [VISUAL→SYMBOLS] type=XRD_pattern
-        peak_1: 2θ=28.3°, d=3.15Å, I=1.00
-        peak_2: 2θ=40.5°, d=2.23Å, I=0.72
-        peak_3: 2θ=50.4°, d=1.81Å, I=0.45
-        linear_fit: I = -0.85*x + 1.12 (R²=0.93)
-        → [SUGGESTION] Compare d-spacings with ICDD card database
-    """
-    from huginn.vision.router import _cv_pre_analyze
-
-    parts: list[str] = []
-    cv_hints = _cv_pre_analyze(image_path)
-    if cv_hints:
-        parts.append(cv_hints)
-    parts.append(_format_symbols_text(extract_chart_data(image_path)))
-    return "\n".join(parts)

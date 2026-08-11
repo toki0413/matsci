@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from huginn.utils.cache import TimedLRUCache
+from huginn.utils.common import chunk_text
 
 logger = logging.getLogger(__name__)
 
@@ -83,21 +84,6 @@ class _EmbeddingModel:
         if cache_key:
             _EmbeddingModel._embedding_cache.set(cache_key, result)
         return result
-
-
-def _chunk_text(
-    text: str, size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP
-) -> list[str]:
-    """Simple sliding-window chunking by character."""
-    chunks = []
-    start = 0
-    while start < len(text):
-        end = min(start + size, len(text))
-        chunks.append(text[start:end])
-        if end == len(text):
-            break
-        start = end - overlap
-    return chunks
 
 
 # ── BM25 关键词检索 (与向量检索做 RRF 混合) ──────────────────────────
@@ -412,7 +398,7 @@ def _section_aware_chunk(
     # 纯文本 / 代码 / 配置文件: 固定长度分块 (原有行为)
     return [
         (c, {"section": "", "chunk_type": "fixed"})
-        for c in _chunk_text(text)
+        for c in chunk_text(text, size=CHUNK_SIZE, overlap=CHUNK_OVERLAP)
     ]
 
 
@@ -426,7 +412,7 @@ def _chunk_markdown_sections(
         # 没有标题结构, 退回固定长度
         return [
             (c, {"section": "", "chunk_type": "fixed"})
-            for c in _chunk_text(text)
+            for c in chunk_text(text, size=CHUNK_SIZE, overlap=CHUNK_OVERLAP)
         ]
 
     chunks: list[tuple[str, dict[str, Any]]] = []
@@ -458,7 +444,7 @@ def _chunk_markdown_sections(
         section_str = " > ".join(section_path)
 
         if len(content) > CHUNK_SIZE:
-            for sub in _chunk_text(content):
+            for sub in chunk_text(content, size=CHUNK_SIZE, overlap=CHUNK_OVERLAP):
                 chunks.append((sub, {
                     "section": section_str,
                     "chunk_type": "section",
@@ -473,7 +459,7 @@ def _chunk_markdown_sections(
 
     if not chunks:
         return [(c, {"section": "", "chunk_type": "fixed"})
-                for c in _chunk_text(text)]
+                for c in chunk_text(text, size=CHUNK_SIZE, overlap=CHUNK_OVERLAP)]
     return chunks
 
 
@@ -486,7 +472,7 @@ def _chunk_pdf_sections(
     if not matches:
         return [
             (c, {"section": "", "chunk_type": "fixed"})
-            for c in _chunk_text(text)
+            for c in chunk_text(text, size=CHUNK_SIZE, overlap=CHUNK_OVERLAP)
         ]
 
     chunks: list[tuple[str, dict[str, Any]]] = []
@@ -507,7 +493,7 @@ def _chunk_pdf_sections(
             continue
 
         if len(content) > CHUNK_SIZE:
-            for sub in _chunk_text(content):
+            for sub in chunk_text(content, size=CHUNK_SIZE, overlap=CHUNK_OVERLAP):
                 chunks.append((sub, {
                     "section": title,
                     "chunk_type": "section",
@@ -520,7 +506,7 @@ def _chunk_pdf_sections(
 
     if not chunks:
         return [(c, {"section": "", "chunk_type": "fixed"})
-                for c in _chunk_text(text)]
+                for c in chunk_text(text, size=CHUNK_SIZE, overlap=CHUNK_OVERLAP)]
     return chunks
 
 

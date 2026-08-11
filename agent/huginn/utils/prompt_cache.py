@@ -13,10 +13,13 @@ To maximize cache hits we must keep the beginning of every request stable:
 from __future__ import annotations
 
 import hashlib
+import logging
 import sys
 from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+
+logger = logging.getLogger(__name__)
 
 
 class PromptCacheBuilder:
@@ -106,7 +109,7 @@ class PromptCacheBuilder:
                 PROMPT_CACHE_MISSES_TOTAL.inc()
         except Exception:
             # metrics lib missing — instance counters still work
-            pass
+            logger.debug("metrics unavailable, instance counters still work", exc_info=True)
 
     def _cache_control_kwargs(self) -> dict[str, Any]:
         # Kimi/Moonshot 走 OpenAI 协议, Anthropic-style cache_control 会被静默忽略.
