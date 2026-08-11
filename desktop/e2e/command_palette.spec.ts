@@ -3,7 +3,7 @@ import type { Page } from '@playwright/test';
 
 // The palette's search box is the single element with this placeholder, so it
 // doubles as a stable "palette is open" probe.
-const paletteSearch = (page: Page) => page.getByPlaceholder('Search tools...');
+const paletteSearch = (page: Page) => page.getByPlaceholder('Search tools…');
 
 // Open the palette via the sidebar "More Tools" button. Ctrl+K is exercised in
 // its own test; the rest use this reliable entry point.
@@ -53,11 +53,13 @@ test.describe('command palette', () => {
   test('empty search shows all tools', async ({ page }) => {
     await page.goto('/');
     await openPalette(page);
-    // The search box is empty on open, so one tool from each group is visible.
-    // exact:true keeps "Memory" from also matching the header's "Save to memory"
-    // button, which is always in the DOM behind the palette.
-    for (const label of ['Team', 'Periodic Table', 'Files', 'Memory']) {
-      await expect(page.getByRole('button', { name: label, exact: true })).toBeVisible();
+    // The search box is empty on open, so one tool from each sidebar group is
+    // visible. The palette renders the sidebar groups (core/workspace/system),
+    // so pick a representative tab from each. Query within the palette dialog
+    // to avoid matching the sidebar's own nav buttons (e.g. "Settings").
+    const palette = page.getByLabel('Command palette');
+    for (const label of ['Team', 'Files', 'Settings']) {
+      await expect(palette.getByRole('button', { name: label, exact: true })).toBeVisible();
     }
     // And the no-match message is not rendered.
     await expect(page.getByText('No tools match')).toHaveCount(0);

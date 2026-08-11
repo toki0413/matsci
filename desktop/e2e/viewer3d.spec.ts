@@ -19,11 +19,11 @@ test.describe('3D viewer', () => {
     expect(body.elements[0].symbol).toBe('H');
   });
 
-  test('can navigate to the 3D structure panel', async ({ page }) => {
+  test('can navigate to a secondary panel from the sidebar', async ({ page }) => {
     await page.goto('/');
-    // Sidebar entry whose label is "Structure" (icon + text tab).
-    await page.getByRole('tab', { name: 'Structure', exact: true }).click();
-    // Empty-state copy from StructureViewer -- confirms the panel mounted.
-    await expect(page.getByText('No structure loaded')).toBeVisible({ timeout: 10_000 });
+    // The app no longer has a "Structure" tab; navigate to a real secondary
+    // view instead. Sidebar nav exposes Tools as a button (not role=tab).
+    await page.getByRole('button', { name: 'Tools', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Available Tools' })).toBeVisible({ timeout: 10_000 });
   });
 });

@@ -1,11 +1,12 @@
 provider = "deepseek"
 model = "deepseek-reasoner"
-api_key = ""  # P0-9: 从 DEEPSEEK_API_KEY 环境变量读, 不再明文硬编码
+api_key = ""
 base_url = "https://api.deepseek.com"
 team_mode_enabled = false
 max_concurrent_subagents = 3
 plan_auto_confirm = false
 ollama_host = "http://localhost:11434"
+mineru_api_keys = []
 execution_backend = "local"
 hpc_scheduler = "local"
 hpc_port = 22
@@ -45,15 +46,19 @@ memory_decay_prune_threshold = 0.15
 tool_compression_max_tokens = 8000
 pet_name = "Huginn"
 pet_personality = "cheerful"
+pet_accessories = []
 config_version = 1
-# R_phys 推理时 steering 强度 λ (0=关闭, >0=物理奖励作为正交 steering 方向注入 frontier 排序)
-phys_steering_gain = 0.0
-
+extreme_dispatch = false
+wm_summarize = "rule"
+wm_token_budget = 8192
+em_recall_top_k = 5
+pm_c_min = 0.2
+wm_summarize_every_n = 5
 [[models]]
 alias = "default"
 provider = "deepseek"
 model = "deepseek-reasoner"
-api_key = ""  # P0-9: 从 DEEPSEEK_API_KEY 环境变量读
+api_key = ""
 base_url = "https://api.deepseek.com"
 temperature = 0.7
 enabled = true
@@ -70,4 +75,4 @@ max_steps = 10
 [hpc_queue_map]
 
 [feature_flags]
-
+harness_significance_gate = false

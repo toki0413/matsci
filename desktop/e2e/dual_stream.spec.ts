@@ -121,12 +121,13 @@ test.describe('text + reasoning dual-stream rendering', () => {
     await expect(page.getByText('TEXT-A')).toBeVisible({ timeout: 10_000 });
     await expect(page.getByText('TEXT-B')).toBeVisible({ timeout: 10_000 });
 
-    // Reasoning lives behind the "thought process" disclosure; expand it.
+    // Reasoning lives behind the "thought process" disclosure. After the
+    // 'done' frame the details collapses, so assert on DOM text content
+    // (visibility-independent) rather than waiting for it to be open.
     const reasoning = page.locator('details').filter({ hasText: 'thought process' });
-    await reasoning.locator('summary').click();
-    await expect(reasoning.getByText('REASON-A')).toBeVisible({ timeout: 10_000 });
-    await expect(reasoning.getByText('REASON-B')).toBeVisible({ timeout: 10_000 });
+    await expect(reasoning).toContainText('REASON-A');
+    await expect(reasoning).toContainText('REASON-B');
     // Text never leaked into the reasoning block.
-    await expect(reasoning.getByText('TEXT-A')).toHaveCount(0);
+    await expect(reasoning).not.toContainText('TEXT-A');
   });
 });

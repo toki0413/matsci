@@ -42,21 +42,22 @@ test.describe('accessibility — main views', () => {
     expect(critical, `${critical.length} critical a11y violations`).toHaveLength(0);
   });
 
-  test('structure panel — axe scan reports violations', async ({ page }) => {
+  test('tools panel — axe scan reports violations', async ({ page }) => {
     await page.goto('/');
     // networkidle never fires with an active WebSocket — use 'load' instead.
     await page.waitForLoadState('load');
 
-    const tab = page.getByRole('tab', { name: 'Structure', exact: true });
-    await tab.click();
-    await expect(page.getByText('No structure loaded')).toBeVisible({ timeout: 10_000 });
+    // The app no longer has a "Structure" tab; scan a real secondary view
+    // instead. Sidebar nav exposes Tools as a button (not role=tab).
+    await page.getByRole('button', { name: 'Tools', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Available Tools' })).toBeVisible({ timeout: 10_000 });
 
     const results = await new AxeBuilder({ page })
       .withTags(['wcag2a', 'wcag2aa'])
       .analyze();
 
     if (results.violations.length > 0) {
-      console.log(`\n[a11y] Structure panel: ${results.violations.length} violations:`);
+      console.log(`\n[a11y] Tools panel: ${results.violations.length} violations:`);
       for (const v of results.violations) {
         const impact = v.impact || 'unknown';
         console.log(`  [${impact}] ${v.id}: ${v.description}`);
@@ -78,13 +79,23 @@ test.describe('accessibility — keyboard navigation', () => {
     await page.goto('/');
     await page.waitForLoadState('networkidle');
 
-    for (let i = 0; i < 15; i++) {
+    // The sidebar has many focusable controls before the chat input, so a
+    // fixed 15-tab budget was too tight and flaky. Tab through the document
+    // (capped) and pass as soon as a textarea is focused. If we loop all the
+    // way back to the first element, stop and report the last focused node.
+    const first = await page.evaluate(() => {
+      const el = document.activeElement;
+      return el instanceof HTMLElement ? `${el.tagName}.${el.className}` : '';
+    });
+    for (let i = 0; i < 50; i++) {
       await page.keyboard.press('Tab');
       const focused = await page.evaluate(() => {
         const el = document.activeElement;
-        return el ? el.tagName + '.' + el.className : '';
+        if (el instanceof HTMLTextAreaElement) return 'TEXTAREA';
+        return el ? `${el.tagName}.${el.className}` : '';
       });
-      if (focused.startsWith('TEXTAREA')) return;
+      if (focused === 'TEXTAREA') return;
+      if (focused && focused === first) break; // wrapped around without finding it
     }
     const focused = await page.evaluate(() => {
       const el = document.activeElement;

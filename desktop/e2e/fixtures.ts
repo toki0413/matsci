@@ -23,18 +23,29 @@ export const TEST_MESSAGE = {
 /**
  * Probe the backend once. Specs call this in beforeAll and skip the tests
  * that genuinely need a live backend, instead of hard-failing the run.
+ *
+ * A single 3s probe is too fragile: the backend takes ~50s to boot (MCP init)
+ * even though /health/live responds early, and under parallel load the event
+ * loop can be saturated. So retry a few times with backoff before giving up --
+ * "genuinely down" still skips fast, but a merely-slow live backend is not
+ * mistaken for a dead one (which would silently skip the contract tests).
  */
-export async function backendReachable(timeoutMs = 3000): Promise<boolean> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-  try {
-    const res = await fetch(`${BACKEND_URL}/health/live`, { signal: ctrl.signal });
-    return res.ok;
-  } catch {
-    return false;
-  } finally {
-    clearTimeout(timer);
+export async function backendReachable(timeoutMs = 10_000, attempts = 6): Promise<boolean> {
+  for (let i = 0; i < attempts; i++) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const res = await fetch(`${BACKEND_URL}/health/live`, { signal: ctrl.signal });
+      if (res.ok) return true;
+      console.error(`[backendReachable] attempt ${i + 1}: status ${res.status}`);
+    } catch (e) {
+      console.error(`[backendReachable] attempt ${i + 1}: ${(e as Error).name}: ${(e as Error).message}`);
+    } finally {
+      clearTimeout(timer);
+    }
+    await new Promise((r) => setTimeout(r, 1000));
   }
+  return false;
 }
 
 // Override the page fixture so the "Welcome to Huginn" onboarding guide is
