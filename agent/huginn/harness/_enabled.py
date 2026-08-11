@@ -15,7 +15,10 @@ cfg.feature_flags.<key>. 这里收拢成单一 helper, 让开启方式统一:
 """
 from __future__ import annotations
 
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 def _harness_enabled(key: str, default: bool = False) -> bool:
@@ -28,7 +31,7 @@ def _harness_enabled(key: str, default: bool = False) -> bool:
         if key in ff:
             return bool(ff[key])
     except Exception:
-        pass
+        logger.debug("read config feature_flags failed, falling back", exc_info=True)
     # 环境变量 / FeatureFlags 运行时覆盖 (huginn.toml 未显式设时生效)
     try:
         from huginn.feature_flags import FeatureFlags
