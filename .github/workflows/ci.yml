@@ -124,6 +124,8 @@ jobs:
             --ignore=tests/test_session_timeout.py \
             --ignore=tests/test_rate_limiting.py \
             --ignore=tests/test_e2e_agent_flow.py \
+            --ignore=tests/e2e_extended.py \
+            --ignore=tests/e2e_user_journeys.py \
             --maxfail=50 2>&1 | tee pytest_output.txt
           exit ${PIPESTATUS[0]}
 
@@ -163,13 +165,16 @@ jobs:
     # consumes ~4-5GB. Running it after other TestClient files causes OOM
     # (MemoryError at test_code_tool_bandgap). Isolating it in group c gives
     # it the full 7GB+swap budget. Groups a/b hold the remaining 14 files.
+    # Group d isolates e2e_user_journeys.py + e2e_extended.py — both start a
+    # module-scoped TestClient that leaks anyio portal threads, hanging xdist
+    # workers under -n 2 even without --forked.
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
-        test-group: [a, b, c]
+        test-group: [a, b, c, d]
     steps:
       - uses: actions/checkout@v7
 
@@ -235,9 +240,16 @@ jobs:
               tests/test_session_timeout.py \
               tests/test_rate_limiting.py \
               tests/test_e2e_agent_flow.py"
-          else
+          elif [ "${{ matrix.test-group }}" = "c" ]; then
             # Group C — test_questions.py alone (heavy: code_tool/sympy/UQ/agent)
             FILES="tests/test_questions.py"
+          else
+            # Group D — e2e_user_journeys.py + e2e_extended.py
+            # Both start a module-scoped TestClient (full FastAPI app) that
+            # leaks anyio portal threads under --forked; without --forked
+            # they hang xdist workers. Run serially here.
+            FILES="tests/e2e_user_journeys.py \
+              tests/e2e_extended.py"
           fi
           python -m pytest -v -rA --tb=short -p no:cov -o addopts="" \
             --timeout=60 --timeout-method=thread \
