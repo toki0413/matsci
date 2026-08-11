@@ -61,8 +61,18 @@ def app_client(tmp_path, monkeypatch):
     except Exception as e:
         pytest.skip(f"无法启动 app: {e}")
 
-    with TestClient(app) as client:
-        yield client, admin_token
+    # TestClient 启动时 lifespan 连接 MCP servers 并把工具注册进全局
+    # ToolRegistry, 退出时不卸载, conftest 的 _restore_tool_registry guard
+    # 会误报 leak (added=MCP 工具). 用 snapshot/restore 包裹, 结束时恢复.
+    from huginn.tools.registry import ToolRegistry
+
+    _before_tools = ToolRegistry.snapshot()
+    try:
+        with TestClient(app) as client:
+            yield client, admin_token
+    finally:
+        ToolRegistry.restore(_before_tools)
+
     store._users.pop("fuzz-admin", None)
 
 
