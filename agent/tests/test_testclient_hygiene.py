@@ -41,7 +41,9 @@ def test_only_context_managed_testclient():
             path.read_text(encoding="utf-8", errors="replace").splitlines(), 1
         ):
             if _UNCLOSED.match(line):
-                offenders.append(f"{path.relative_to(_TESTS_DIR)}:{lineno}: {line.strip()}")
+                offenders.append(
+                    f"{path.relative_to(_TESTS_DIR)}:{lineno}:" f" {line.strip()}"
+                )
 
     assert not offenders, (
         "TestClient must be used as a context manager (`with TestClient(...) as c:`)\n"
