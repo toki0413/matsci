@@ -21,6 +21,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from huginn.utils.runtime import HUGINN_DIR_NAME
+
 # 内置 slash 命令名, 自定义命令不能跟这些重名
 BUILTIN_COMMANDS: frozenset[str] = frozenset(
     {
@@ -39,7 +41,7 @@ BUILTIN_COMMANDS: frozenset[str] = frozenset(
 
 def _default_commands_dir(workspace: str | Path = ".") -> Path:
     """返回 workspace 下默认的自定义命令目录。"""
-    return Path(workspace) / ".huginn" / "commands"
+    return Path(workspace) / HUGINN_DIR_NAME / "commands"
 
 
 def load_custom_commands(commands_dir: Path | None = None) -> dict[str, str]:

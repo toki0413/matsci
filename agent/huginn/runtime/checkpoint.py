@@ -22,6 +22,7 @@ from typing import Any
 from huginn.events.audit_log import verify_audit_chain
 from huginn.runtime.trace_context import get_trace_id as _get_trace_id
 from huginn.utils.common import atomic_write_json
+from huginn.utils.runtime import HUGINN_DIR_NAME
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +51,7 @@ class Checkpoint:
 
 
 def _checkpoint_dir(workspace: Path, task_id: str) -> Path:
-    return Path(workspace).resolve() / ".huginn" / "checkpoints" / task_id
+    return Path(workspace).resolve() / HUGINN_DIR_NAME / "checkpoints" / task_id
 
 
 def _checkpoint_path(workspace: Path, task_id: str, step_id: int) -> Path:

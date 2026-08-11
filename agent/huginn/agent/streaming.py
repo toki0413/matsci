@@ -39,6 +39,7 @@ from huginn.utils.context import (
     estimate_message_tokens,
     summarize_compact_messages,
 )
+from huginn.utils.runtime import HUGINN_DIR_NAME
 from huginn.utils.session_context import (
     set_thread_id,
     set_user_message,
@@ -1848,7 +1849,7 @@ class StreamingMixin:
                 # Auto-save trajectory
                 try:
                     from huginn.telemetry import save_trajectory
-                    traj_dir = self.workspace / ".huginn" / "trajectories"
+                    traj_dir = self.workspace / HUGINN_DIR_NAME / "trajectories"
                     traj_path = traj_dir / f"{thread_id}_{int(time.time())}.json"
                     save_trajectory(
                         self._telemetry_collector,

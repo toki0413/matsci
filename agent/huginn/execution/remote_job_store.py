@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from huginn.utils.runtime import HUGINN_DIR_NAME
+
 logger = logging.getLogger(__name__)
 
 
@@ -119,7 +121,7 @@ class RemoteJobStore:
             self.path = Path(path).expanduser().resolve()
         else:
             self.path = (
-                Path(workspace).expanduser().resolve() / ".huginn" / "remote_jobs.json"
+                Path(workspace).expanduser().resolve() / HUGINN_DIR_NAME / "remote_jobs.json"
             )
         self.max_records = max_records
         self._lock = threading.Lock()

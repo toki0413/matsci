@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from huginn.rag.vector_store import VectorStore
-from huginn.utils.runtime import get_runtime_home
+from huginn.utils.runtime import HUGINN_DIR_NAME, get_runtime_home
 
 logger = logging.getLogger(__name__)
 
@@ -1819,7 +1819,7 @@ class LongTermMemory:
 # G8 加法: knowledge→persona 回路. S7 accepted 提案写进来, 下一轮 build_system_prompt
 # 的 STABLE_PRINCIPLES 段会读它. 不走 SQLite 是因为这部分属于 persona 而非记忆,
 # RCB/benchmark 也要保留 (memory_manager 在 bench 里是 None).
-STABLE_PRINCIPLES_PATH = Path(".huginn/stable_principles.jsonl")
+STABLE_PRINCIPLES_PATH = Path(HUGINN_DIR_NAME, "stable_principles.jsonl")
 
 # mtime 缓存: load_stable_principles 用, store 时置 None 失效
 _STABLE_PRINCIPLES_CACHE: tuple[Any, list[str]] | None = None

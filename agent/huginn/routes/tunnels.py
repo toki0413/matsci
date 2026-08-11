@@ -30,6 +30,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, field_validator
 
 from huginn.security.auth import require_admin_key
+from huginn.utils.runtime import HUGINN_DIR_NAME
 
 router = APIRouter(tags=["tunnels"], dependencies=[Depends(require_admin_key)])
 
@@ -540,7 +541,7 @@ class TunnelManager:
             self.path = Path(path).expanduser().resolve()
         else:
             self.path = (
-                Path(workspace).expanduser().resolve() / ".huginn" / "tunnels.json"
+                Path(workspace).expanduser().resolve() / HUGINN_DIR_NAME / "tunnels.json"
             )
         self._records: dict[str, TunnelRecord] = {}
         self._workers: dict[str, _TunnelWorker] = {}

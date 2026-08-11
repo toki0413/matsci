@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+from huginn.utils.runtime import HUGINN_DIR_NAME
+
 Severity = Literal["block", "warn", "info"]
 Category = Literal[
     "data", "physics", "ml", "transfer", "interpretation", "methodology"
@@ -166,7 +168,7 @@ _DEFAULT_MODES: list[FailureMode] = [
 ]
 
 
-_OBS_LOG_PATH = Path(".huginn/failure_mode_obs.jsonl")
+_OBS_LOG_PATH = Path(HUGINN_DIR_NAME, "failure_mode_obs.jsonl")
 
 
 class FailureModeRegistry:

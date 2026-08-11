@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from huginn.utils.runtime import get_runtime_home
+from huginn.utils.runtime import HUGINN_DIR_NAME, get_runtime_home
 
 # onnxruntime C++ 层 EP Error 走 fd 2 (cerr), env var + set_default_logger_severity
 # 都拦不住 (run_task.py 用 stderr=STDOUT 合并到 _agent_output.jsonl, 472 行/96s 淹死
@@ -354,7 +354,7 @@ def _load_haptic_layers(ws, hypo_manifold) -> int:
     """
     if hypo_manifold is None:
         return 0
-    _hap_path = ws / ".huginn" / "haptic_layers.json"
+    _hap_path = ws / HUGINN_DIR_NAME / "haptic_layers.json"
     if not _hap_path.exists():
         return 0
     _n_hap = 0
@@ -635,7 +635,7 @@ def _init_hypothesis_manifold(
     """
     from huginn.metacog.hypothesis_manifold import Hypothesis, HypothesisManifold
 
-    path = ws / ".huginn" / "hypothesis_manifold.jsonl"
+    path = ws / HUGINN_DIR_NAME / "hypothesis_manifold.jsonl"
 
     # 优先加载已有 manifold (跨轮 resume)
     loaded = _load_manifold(path)
@@ -986,7 +986,7 @@ async def _step2_execute(ctx: _RCBStep2Ctx) -> list:
     import hashlib as _hashlib
     import json as _json
     import time as _time
-    _trace_path = ws / ".huginn" / "meta_trace.jsonl"
+    _trace_path = ws / HUGINN_DIR_NAME / "meta_trace.jsonl"
     _trace_path.parent.mkdir(parents=True, exist_ok=True)
     # v26 Task 26.11: meta_trace 也走分片. RCB 跑 700 万 call 时单 jsonl 撑爆磁盘,
     # 每 N iter (HUGINN_TRACE_SHARD_INTERVAL, 默认 100) 切一个文件, 老分片 gzip 到
@@ -1060,7 +1060,7 @@ async def _step2_execute(ctx: _RCBStep2Ctx) -> list:
         from huginn.metacog.trace_topology import compute_betti as _compute_betti
     except Exception as _tte:
         print(f"[betti init skipped: {_tte}]", flush=True)
-    _betti_path = ws / ".huginn" / "meta_trace_betti.jsonl"
+    _betti_path = ws / HUGINN_DIR_NAME / "meta_trace_betti.jsonl"
     _prospective_mem = None
     try:
         from huginn.memory.prospective import ProspectiveMemory
@@ -1139,8 +1139,8 @@ LUCID review (mandatory after generating hypothesis):
     # 失败降级到 None, 后续 _compute_v15_fields / _record_abduction 走空路径,
     # 不阻塞主循环. _last_abduction_result 给 Task 4 HintCoordinator 读.
     _hypo_manifold = None
-    _hypo_manifold_path = ws / ".huginn" / "hypothesis_manifold.jsonl"
-    _hypo_obs_path = ws / ".huginn" / "observations.jsonl"
+    _hypo_manifold_path = ws / HUGINN_DIR_NAME / "hypothesis_manifold.jsonl"
+    _hypo_obs_path = ws / HUGINN_DIR_NAME / "observations.jsonl"
     _last_abduction_result: dict | None = None
     # v15 Task 4: 上一轮 observations, 给 _build_posterior_guided_hint 用.
     # iter 0 时为空 (还没跑过), iter 1+ 持有上一轮的 observations.
@@ -1184,13 +1184,13 @@ LUCID review (mandatory after generating hypothesis):
     _prev_completion_hint = ""  # 跨 iter 传递审计 gap 提示
     # v15 Phase 4 Task 8: stagnation 检测 — best h_id 连续 N 轮不变触发 imagination
     _stagnation_history: list[str] = []
-    _imagination_log_path = ws / ".huginn" / "imagination_log.jsonl"
+    _imagination_log_path = ws / HUGINN_DIR_NAME / "imagination_log.jsonl"
 
     # v15 Phase 5 Task 10: SelfModel 接入 — agent 对自己能力的 internal model.
     # 失败降级到 None, 后续 update / hint 注入 / imagine_from_blind_spot 都跳过.
     # 跨 task 路径跟 mem_mgr 同款 env var 约定, 避开沙箱拦截.
     _self_model = None
-    _self_model_path = ws / ".huginn" / "self_model.json"
+    _self_model_path = ws / HUGINN_DIR_NAME / "self_model.json"
     _self_model_cross_path: Path | None = None
     try:
         if os.environ.get("HUGINN_RCB_CROSS_TASK", "1") == "1":
@@ -1203,7 +1203,7 @@ LUCID review (mandatory after generating hypothesis):
             _sm_cross_dir.mkdir(parents=True, exist_ok=True)
             _self_model_cross_path = _sm_cross_dir / "self_model_cross_task.json"
         else:
-            _self_model_cross_path = ws / ".huginn" / "self_model_cross_task.json"
+            _self_model_cross_path = ws / HUGINN_DIR_NAME / "self_model_cross_task.json"
         from huginn.metacog.self_model import SelfModel
         _self_model = SelfModel(
             task_local_path=_self_model_path,
@@ -3654,8 +3654,8 @@ async def _step3_adversarial(
             # ponytail: 纯文本拼接, 不改 adversarial_critique 签名. critic 是 LLM,
             # 看到 "BLOCKER: outputs/ 无真实 metrics" 自然会降权 Results claim.
             try:
-                _audit_path = ws / ".huginn" / "step2_audit.json"
-                _gate_path = ws / ".huginn" / "step2_outputs_gate.json"
+                _audit_path = ws / HUGINN_DIR_NAME / "step2_audit.json"
+                _gate_path = ws / HUGINN_DIR_NAME / "step2_outputs_gate.json"
                 if _audit_path.exists():
                     _a = json.loads(_audit_path.read_text(encoding="utf-8"))
                     _unresolved = _a.get("unresolved", [])
@@ -3799,7 +3799,7 @@ async def _step3_adversarial(
     # 写 cross_retry.jsonl, retry2 prompt 注入 "retry1 试了 X 方案仍 fix_needed".
     # ponytail: report diff 用 difflib 算 added/removed lines, 不上 LLM summarize.
     # 升级路径: LLM summarize retry attempt (捕获 diff 没体现的语义变化).
-    _xretry_path = ws / ".huginn" / "cross_retry.jsonl"
+    _xretry_path = ws / HUGINN_DIR_NAME / "cross_retry.jsonl"
     try:
         _xretry_path.parent.mkdir(parents=True, exist_ok=True)
         _xretry_path.unlink(missing_ok=True)  # 清上次的, 避免跨 task 污染
@@ -3985,7 +3985,7 @@ async def _step3_adversarial(
         # 写 trace entry 标记回退事件 (cochain_type="curl", role="step3_retry")
         try:
             import time as _t_s3
-            _trace_path_s3 = ws / ".huginn" / "meta_trace.jsonl"
+            _trace_path_s3 = ws / HUGINN_DIR_NAME / "meta_trace.jsonl"
             _trace_path_s3.parent.mkdir(parents=True, exist_ok=True)
             _retry_entry = {
                 "iteration": -1,
@@ -4461,7 +4461,7 @@ async def run(
             _mem_dir.mkdir(parents=True, exist_ok=True)
             print(f"[Memory] cross-task shared: {_mem_dir}", flush=True)
         else:
-            _mem_dir = ws / ".huginn" / "memory"
+            _mem_dir = ws / HUGINN_DIR_NAME / "memory"
         _mem_cfg = MemoryConfig(memory_dir=_mem_dir)
         _mem_mgr = MemoryManager(config=_mem_cfg, llm=model)
     except Exception as _e:
@@ -4473,7 +4473,7 @@ async def run(
     _kg = None
     try:
         from huginn.kg.graph import ProjectKnowledgeGraph
-        _kg = ProjectKnowledgeGraph(ws / ".huginn")
+        _kg = ProjectKnowledgeGraph(ws / HUGINN_DIR_NAME)
         # P0-B: KG 初始化后摄入 workspace 关键资源作为 entity.
         # 之前 KG 只 init 不 ingest, 图里没节点, 后续 _kg.query 全返空.
         # ponytail: 只加 file entity + mentions, 不做 LLM 抽取 (那是 KB 的活).
@@ -4865,7 +4865,7 @@ async def run(
             "model_version": _MODEL_VERSION,
         }
         try:
-            _tc_trace = ws / ".huginn" / "meta_trace.jsonl"
+            _tc_trace = ws / HUGINN_DIR_NAME / "meta_trace.jsonl"
             _tc_trace.parent.mkdir(parents=True, exist_ok=True)
             with _tc_trace.open("a", encoding="utf-8") as _f:
                 _f.write(json.dumps(_tc_entry, ensure_ascii=False, default=str) + "\n")
@@ -4982,7 +4982,7 @@ async def run(
             "task_id": _trace_task_id,
             "model_version": _MODEL_VERSION,
         }
-        _ig_trace_path = ws / ".huginn" / "meta_trace.jsonl"
+        _ig_trace_path = ws / HUGINN_DIR_NAME / "meta_trace.jsonl"
         _ig_trace_path.parent.mkdir(parents=True, exist_ok=True)
         with _ig_trace_path.open("a", encoding="utf-8") as f:
             f.write(_ig_json.dumps(_ig_entry, ensure_ascii=False) + "\n")
@@ -5088,7 +5088,7 @@ async def run(
             )
         # 落盘供 Step 3 / 评分器引用
         try:
-            (ws / ".huginn" / "step2_audit.json").write_text(
+            (ws / HUGINN_DIR_NAME / "step2_audit.json").write_text(
                 json.dumps(_audit, ensure_ascii=False, indent=2, default=str),
                 encoding="utf-8",
             )
@@ -5115,7 +5115,7 @@ async def run(
                 flush=True,
             )
         try:
-            (ws / ".huginn" / "step2_outputs_gate.json").write_text(
+            (ws / HUGINN_DIR_NAME / "step2_outputs_gate.json").write_text(
                 json.dumps(_outputs_gate, ensure_ascii=False, indent=2, default=str),
                 encoding="utf-8",
             )
@@ -5153,7 +5153,7 @@ async def run(
     try:
         from huginn.metacog.cross_task_store import CrossTaskStore
         _store = CrossTaskStore()
-        _trace_path = ws / ".huginn" / "meta_trace.jsonl"
+        _trace_path = ws / HUGINN_DIR_NAME / "meta_trace.jsonl"
         if _trace_path.exists():
             with _trace_path.open(encoding="utf-8") as f:
                 for line in f:
@@ -5175,7 +5175,7 @@ async def run(
             from huginn.training.darwin_exporter import DarwinRewardExporter
             _exporter = DarwinRewardExporter()
             _trace_entries: list = []
-            _trace_path = ws / ".huginn" / "meta_trace.jsonl"
+            _trace_path = ws / HUGINN_DIR_NAME / "meta_trace.jsonl"
             if _trace_path.exists():
                 with _trace_path.open(encoding="utf-8") as f:
                     for line in f:
@@ -5322,7 +5322,7 @@ async def _run_mcmc_mode(
     #   _haptic_proposal 对所有 h_id 返回 None, 安全退化到 fisher.
     #   升级路径: VASP static / ML potential / Materials MP 查询结果写进这个文件.
     if haptic_enabled:
-        _hap_path = ws / ".huginn" / "haptic_layers.json"
+        _hap_path = ws / HUGINN_DIR_NAME / "haptic_layers.json"
         _n_hap = 0
         if _hap_path.exists():
             try:
@@ -5360,7 +5360,7 @@ async def _run_mcmc_mode(
     #   alignment_enabled=True 时 _alignment_proposal 全返 None, 安全退化 fisher.
     _alignment_dataset = None
     if alignment_enabled:
-        _align_path = ws / ".huginn" / "alignment_dataset.json"
+        _align_path = ws / HUGINN_DIR_NAME / "alignment_dataset.json"
         if _align_path.exists():
             try:
                 from huginn.metacog.alignment import AlignmentFunction
@@ -5433,7 +5433,7 @@ async def _run_mcmc_mode(
             print(f"[mcmc-{mode}] surprise check failed: {_e}", flush=True)
 
     # 读 observations — 主循环 _iter_observations 跨轮累积, 这里从盘上恢复
-    obs_path = ws / ".huginn" / "observations.jsonl"
+    obs_path = ws / HUGINN_DIR_NAME / "observations.jsonl"
     obs_list: list = []
     if obs_path.exists():
         for _line in obs_path.read_text(encoding="utf-8").splitlines():

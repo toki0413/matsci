@@ -20,6 +20,7 @@ from collections import Counter
 from typing import Any
 
 from huginn.memory.longterm import load_stable_principles
+from huginn.utils.runtime import HUGINN_DIR_NAME
 
 logger = logging.getLogger(__name__)
 
@@ -1013,7 +1014,7 @@ PREDICTION: {plan.get('expected_prediction', 'N/A')}
         ponytail: JSON 文件, 不上 DB; 只在 _prepare_run 调一次.
         ceiling: 文件可能被外部篡改, 解析失败静默回退.
         """
-        path = self.workspace / ".huginn" / "plan_check_patterns.json"
+        path = self.workspace / HUGINN_DIR_NAME / "plan_check_patterns.json"
         if not path.exists():
             return
         try:
@@ -1035,7 +1036,7 @@ PREDICTION: {plan.get('expected_prediction', 'N/A')}
 
         ponytail: 同步写, 量小 (<=50 条); 跟 skill_evolver 历史持久化同款.
         """
-        path = self.workspace / ".huginn" / "plan_check_patterns.json"
+        path = self.workspace / HUGINN_DIR_NAME / "plan_check_patterns.json"
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             import json
