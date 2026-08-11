@@ -132,6 +132,7 @@ jobs:
             --ignore=tests/test_server_coverage_boost.py \
             --ignore=tests/test_interaction.py \
             --ignore=tests/test_performance_regression.py \
+            --ignore=tests/test_model_advisor.py \
             --maxfail=50 2>&1 | tee pytest_output.txt
           exit ${PIPESTATUS[0]}
 
@@ -260,7 +261,7 @@ jobs:
             FILES="tests/e2e_user_journeys.py \
               tests/e2e_extended.py"
           else
-            # Group E — 6 files with module-level `client = TestClient(app)`
+            # Group E — 7 files with module-level `client = TestClient(app)`
             # at import time. Same anyio portal thread leak as group D;
             # running them under -n 2 hangs xdist workers. Run serially.
             FILES="tests/test_route_smoke.py \
@@ -268,7 +269,8 @@ jobs:
               tests/test_team_v2_plans.py \
               tests/test_server_coverage_boost.py \
               tests/test_interaction.py \
-              tests/test_performance_regression.py"
+              tests/test_performance_regression.py \
+              tests/test_model_advisor.py"
           fi
           python -m pytest -v -rA --tb=short -p no:cov -o addopts="" \
             --timeout=60 --timeout-method=thread \
