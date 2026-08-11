@@ -30,6 +30,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from huginn.utils.runtime import get_runtime_home
+
 logger = logging.getLogger(__name__)
 
 
@@ -102,11 +104,7 @@ def _resolve_output_path(output_path: str | Path | None, ext: str) -> Path:
     if output_path is not None:
         p = Path(output_path)
     else:
-        try:
-            from huginn.utils.runtime import get_runtime_home
-            fig_dir = get_runtime_home() / "figures"
-        except Exception:
-            fig_dir = get_runtime_home() / "figures"
+        fig_dir = get_runtime_home() / "figures"
         fig_dir.mkdir(parents=True, exist_ok=True)
         from datetime import datetime
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")

@@ -32,6 +32,8 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from huginn.utils.runtime import get_runtime_home
+
 KIND_TIMER = "timer"
 KIND_COMPLETION = "completion"
 KIND_EVENT = "event"  # connector/webhook 事件触发 (Phase 3)
@@ -222,11 +224,7 @@ _singleton_lock = threading.Lock()
 
 def _default_wake_path() -> Path:
     """默认 wakes.json 路径: HUGINN_CACHE_DIR 或 ~/.huginn 下."""
-    try:
-        from huginn.utils.runtime import get_runtime_home
-        base = get_runtime_home()
-    except Exception:
-        base = get_runtime_home()
+    base = get_runtime_home()
     base = Path(base)
     base.mkdir(parents=True, exist_ok=True)
     return base / "wakes.json"

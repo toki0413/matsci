@@ -40,6 +40,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from huginn.utils.runtime import get_runtime_home
+
 KIND_APPROVAL = "approval"
 KIND_QUESTION = "question"
 KIND_NOTIFICATION = "notification"
@@ -446,11 +448,7 @@ _singleton_lock = threading.Lock()
 
 def _default_inbox_path() -> Path:
     """默认 inbox.json 路径: HUGINN_CACHE_DIR 或 ~/.huginn 下."""
-    try:
-        from huginn.utils.runtime import get_runtime_home
-        base = get_runtime_home()
-    except Exception:
-        base = get_runtime_home()
+    base = get_runtime_home()
     base = Path(base)
     base.mkdir(parents=True, exist_ok=True)
     return base / "inbox.json"

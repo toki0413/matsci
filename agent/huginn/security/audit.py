@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from huginn.runtime.trace_context import get_trace_id as _get_trace_id
+from huginn.utils.runtime import get_runtime_home
 
 
 @dataclass
@@ -62,11 +63,7 @@ class AuditLogger:
     ) -> None:
         if log_path is None:
             # 落在 runtime home 下, 不散落在 CWD
-            try:
-                from huginn.utils.runtime import get_runtime_home
-                log_path = get_runtime_home() / "huginn_audit.jsonl"
-            except Exception:
-                log_path = Path("huginn_audit.jsonl")
+            log_path = get_runtime_home() / "huginn_audit.jsonl"
         self.log_path = Path(log_path)
         self._lock = threading.Lock()
         self._last_hash = ""

@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 from huginn.security.auth import require_api_key
 from huginn.server_core import get_context
+from huginn.utils.runtime import get_runtime_home
 
 router = APIRouter(tags=["knowledge"], dependencies=[Depends(require_api_key)])
 
@@ -159,11 +160,7 @@ async def get_knowledge_image(path: str) -> Any:
     塞进 agent prompt 文本, 前端拿不到. 现在前端按 image_url 直接 fetch.
     """
     # ponytail: 仅 compressed_pages/ 下的图能服务, 不开放任意路径读取
-    try:
-        from huginn.utils.runtime import get_runtime_home
-        base = (get_runtime_home() / "compressed_pages").resolve()
-    except Exception:
-        base = (get_runtime_home() / "compressed_pages").resolve()
+    base = (get_runtime_home() / "compressed_pages").resolve()
 
     try:
         target = Path(path).resolve()

@@ -75,9 +75,6 @@ def _cred_dir() -> Path:
     优先 HUGINN_CACHE_DIR (与项目其它模块的隔离约定一致, 测试也靠它
     把写入重定向到临时目录), 否则退回 ~/.huginn。
     """
-    cache = os.environ.get("HUGINN_CACHE_DIR")
-    if cache:
-        return Path(cache)
     return get_runtime_home()
 
 
@@ -574,9 +571,6 @@ def _service_cred_file() -> Path:
     优先 HUGINN_CACHE_DIR (与项目其它模块的隔离约定一致, 测试靠它把写入
     重定向到临时目录), 否则退回 ~/.huginn/credentials.enc.json。
     """
-    cache = os.environ.get("HUGINN_CACHE_DIR")
-    if cache:
-        return Path(cache) / "credentials.enc.json"
     return get_runtime_home() / "credentials.enc.json"
 
 
@@ -586,9 +580,7 @@ def _master_key_file() -> Path:
     HUGINN_ENCRYPTION_KEY 未设时自动生成的 Fernet key 落到这里。生产环境
     应改用环境变量显式提供, 这个文件只是兜底。
     """
-    cache = os.environ.get("HUGINN_CACHE_DIR")
-    base = Path(cache) if cache else get_runtime_home()
-    return base / "master.key"
+    return get_runtime_home() / "master.key"
 
 
 def _get_service_fernet():

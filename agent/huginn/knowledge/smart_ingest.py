@@ -19,6 +19,8 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from huginn.utils.runtime import get_runtime_home
+
 logger = logging.getLogger(__name__)
 
 # 扩展名分类, 用小写匹配
@@ -487,11 +489,7 @@ class SmartIngester:
             return results
 
         # 压缩页存图目录 — 跟 runtime home 一致, 不依赖 SmartIngester 的 workspace 属性
-        try:
-            from huginn.utils.runtime import get_runtime_home
-            out_dir = get_runtime_home() / "compressed_pages"
-        except Exception:
-            out_dir = get_runtime_home() / "compressed_pages"
+        out_dir = get_runtime_home() / "compressed_pages"
         safe_name = Path(filename).stem.replace(" ", "_")[:40] or "doc"
         out_dir.mkdir(parents=True, exist_ok=True)
 

@@ -33,6 +33,7 @@ from typing import Any
 
 from huginn.events.event_bus import AgentEvent, EventBus
 from huginn.events.event_types import ALL
+from huginn.utils.runtime import get_runtime_home
 
 logger = logging.getLogger(__name__)
 
@@ -220,11 +221,7 @@ def _resolve_audit_path() -> Path:
     to ~/.huginn directly. Never raises — worst case we write to the
     home directory.
     """
-    try:
-        from huginn.utils.runtime import get_runtime_home
-        base = get_runtime_home()
-    except Exception:
-        base = get_runtime_home()
+    base = get_runtime_home()
     events_dir = base / "events"
     events_dir.mkdir(parents=True, exist_ok=True)
     return events_dir / "audit.jsonl"

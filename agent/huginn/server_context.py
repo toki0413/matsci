@@ -8,7 +8,6 @@ handful of module-level global variables.
 from __future__ import annotations
 
 import contextlib
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -37,8 +36,7 @@ from huginn.utils.runtime import get_runtime_home
 
 
 def _default_audit_logger() -> AuditLogger:
-    base = os.environ.get("HUGINN_CACHE_DIR")
-    log_path = Path(base) / "audit.jsonl" if base else get_runtime_home() / "audit.jsonl"
+    log_path = get_runtime_home() / "audit.jsonl"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     return AuditLogger(log_path)
 
