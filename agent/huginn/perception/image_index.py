@@ -15,7 +15,6 @@ similarity search (their embedding is stored as ``None``).
 from __future__ import annotations
 
 import json
-import os
 import time
 from pathlib import Path
 from typing import Any
@@ -23,6 +22,7 @@ from typing import Any
 import numpy as np
 
 from huginn.perception.visual_encoder import VisualEncoder, get_encoder
+from huginn.utils.common import atomic_write_json
 
 
 class ImageIndex:
@@ -236,11 +236,7 @@ class ImageIndex:
         """Write the index to ``store_path`` as JSON. No-op if unset."""
         if self.store_path is None:
             return
-        self.store_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.store_path.with_suffix(self.store_path.suffix + ".tmp")
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump({"entries": self._entries, "version": 1}, fh)
-        os.replace(tmp, self.store_path)
+        atomic_write_json(self.store_path, {"entries": self._entries, "version": 1})
 
     def _load(self) -> None:
         if self.store_path is None or not self.store_path.exists():

@@ -35,10 +35,13 @@ use AND logic -- every condition present in ``match`` must pass.
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 _VALID_ACTIONS = frozenset({"allow", "deny", "ask"})
 
@@ -198,7 +201,10 @@ class PolicyEngine:
                 self.load_policy_file(str(default_path))
                 return
             except Exception:
-                pass  # fall through to hardcoded fallback
+                logger.debug(
+                    "default_policy.yaml load failed; using hardcoded fallback",
+                    exc_info=True,
+                )
 
         self._load_hardcoded_fallback()
 

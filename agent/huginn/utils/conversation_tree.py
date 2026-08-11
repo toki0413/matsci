@@ -20,8 +20,10 @@ from __future__ import annotations
 import os
 import uuid
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
+
+from huginn.utils.common import now_iso
 
 
 # P1-2 CRDT 升级 ConversationTree 分支合并: research mode 进入 hypothesis/planning
@@ -44,7 +46,7 @@ class ConversationNode:
     parent_id: str | None = None
     children_ids: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
-    created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    created_at: str = field(default_factory=lambda: now_iso())
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -66,7 +68,7 @@ class ConversationNode:
             parent_id=data.get("parent_id"),
             children_ids=data.get("children_ids", []),
             metadata=data.get("metadata", {}),
-            created_at=data.get("created_at", datetime.now(UTC).isoformat()),
+            created_at=data.get("created_at", now_iso()),
         )
 
 

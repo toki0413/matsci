@@ -38,6 +38,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from huginn.utils.common import hash_text
 from huginn.utils.runtime import HUGINN_DIR_NAME
 
 logger = logging.getLogger(__name__)
@@ -162,16 +163,11 @@ def _collect_software_versions() -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 
-def _short_sha256(text: str) -> str:
-    """sha256 前 12 位, 用来识别输入/输出."""
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
-
-
 def _hash_input_params(params: dict[str, Any]) -> str:
     """对输入参数做 hash. 用 sort_keys 保证顺序稳定."""
     # default=str 兜底非 JSON 对象 (Path / 数据类等), 不让 dumps 挂
     serialized = json.dumps(params, sort_keys=True, default=str)
-    return _short_sha256(serialized)
+    return hash_text(serialized, length=12)
 
 
 def _hash_output(output: Any) -> str:
@@ -181,7 +177,7 @@ def _hash_output(output: Any) -> str:
     except (TypeError, ValueError):
         # 连 default=str 都救不了 (比如带循环引用), 直接转字符串
         serialized = str(output)
-    return _short_sha256(serialized)
+    return hash_text(serialized, length=12)
 
 
 # ---------------------------------------------------------------------------

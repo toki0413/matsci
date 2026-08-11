@@ -42,17 +42,6 @@ _MIN_SAMPLES_DEFAULT = 5
 _ALPHA_DEFAULT = 0.05
 
 
-def _harness_enabled(key: str, default: bool = False) -> bool:
-    try:
-        from huginn.config import get_config
-
-        cfg = get_config()
-        ff = getattr(cfg, "feature_flags", None) or {}
-        return bool(ff.get(key, default))
-    except Exception:
-        return default
-
-
 @dataclass
 class ScorePair:
     """一对配对观测: 同一任务上 baseline 和 candidate 的得分."""

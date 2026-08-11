@@ -16,7 +16,6 @@ from __future__ import annotations
 import json
 import logging
 import math
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -25,6 +24,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from huginn.core_types import ToolContext, ToolResult
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
+from huginn.utils.common import now_iso
 
 logger = logging.getLogger(__name__)
 
@@ -758,7 +758,7 @@ class Model3DTool(HuginnTool):
             "num_frames": len(frame_files),
             "fps": args.fps,
             "frames": frame_files,
-            "created": datetime.now(UTC).isoformat(),
+            "created": now_iso(),
         }
         meta_path = str(out_dir / "animation_meta.json")
         Path(meta_path).write_text(

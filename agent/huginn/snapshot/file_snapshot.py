@@ -31,6 +31,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from huginn.utils.common import hash_text
 from huginn.utils.runtime import get_runtime_home
 
 logger = logging.getLogger(__name__)
@@ -88,7 +89,7 @@ def _safe_backup_name(rel_path: str) -> str:
     用 sha256 短摘要, 避免斜杠 / 特殊字符 / 平台差异.
     是确定性的, 所以恢复时不用存 manifest 反查, 直接按 rel 重算即可.
     """
-    return hashlib.sha256(rel_path.encode("utf-8")).hexdigest()[:16]
+    return hash_text(rel_path, length=16)
 
 
 def _preview(content: bytes) -> str:
@@ -140,7 +141,7 @@ def _read_json(path: Path, default: object) -> object:
 def _make_step_id(tool_name: str) -> str:
     """tool_name + 高分辨率时间 + 随机盐, 哈希成 16 位短 id. 单调唯一."""
     raw = f"{tool_name}:{time.time_ns()}:{os.urandom(4).hex()}"
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+    return hash_text(raw, length=16)
 
 
 def _match_any(name_lower: str, patterns_lower: tuple[str, ...]) -> bool:

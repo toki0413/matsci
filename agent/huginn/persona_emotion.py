@@ -20,6 +20,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
+from huginn.utils.common import now_iso
 from huginn.utils.runtime import HUGINN_DIR_NAME
 
 # datetime.UTC was added in Python 3.11; use timezone.utc for 3.10 compat
@@ -76,7 +77,7 @@ class EmotionState:
     fatigue: float = 0.0  # 0 energised, 1 exhausted
     loneliness: float = 0.0  # 0 connected, 1 lonely
     interest: float = 0.5  # 0 bored, 1 curious
-    timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    timestamp: str = field(default_factory=lambda: now_iso())
     events: list[EmotionEvent] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -102,7 +103,7 @@ class EmotionState:
             fatigue=_clamp(data.get("fatigue", 0.0), 0.0, 1.0),
             loneliness=_clamp(data.get("loneliness", 0.0), 0.0, 1.0),
             interest=_clamp(data.get("interest", 0.5), 0.0, 1.0),
-            timestamp=data.get("timestamp", datetime.now(UTC).isoformat()),
+            timestamp=data.get("timestamp", now_iso()),
             events=[EmotionEvent.from_dict(e) for e in data.get("events", [])],
         )
 
@@ -278,7 +279,7 @@ class EmotionTracker:
         self._decay()
         deltas = deltas or {}
         event = EmotionEvent(
-            timestamp=datetime.now(UTC).isoformat(),
+            timestamp=now_iso(),
             source=source,
             type=event_type,
             deltas=deltas,
@@ -294,7 +295,7 @@ class EmotionTracker:
                 low, high = (-1.0, 1.0) if key in {"valence", "arousal"} else (0.0, 1.0)
                 setattr(self._state, key, _clamp(current + delta, low, high))
 
-        self._state.timestamp = datetime.now(UTC).isoformat()
+        self._state.timestamp = now_iso()
         self.save()
         return self._state
 
