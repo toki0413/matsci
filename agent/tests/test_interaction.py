@@ -14,15 +14,22 @@ from __future__ import annotations
 
 import json
 
-from fastapi.testclient import TestClient
-
-from huginn.server import app
-
-# One shared client covers both HTTP and WS — TestClient supports both,
-# and reusing it avoids spinning up a second lifespan.
-client = TestClient(app)
+import pytest
 
 WS_PATH = "/v1/ws/agent"
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _bind_test_client(app_client):
+    """Bind module-global `client` to the shared, properly-closed app_client.
+
+    Replaces the old module-level ``client = TestClient(app)`` which leaked an
+    anyio portal thread and never shut down the app lifespan (OOM + hang).
+    """
+    global client
+    client = app_client
+    yield
+    client = None
 
 
 class TestHealthEndpoints:

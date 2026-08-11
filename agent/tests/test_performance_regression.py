@@ -66,7 +66,18 @@ pytestmark = pytest.mark.skipif(
 # ponytail: benchmark marker 没在 pyproject.toml 注册, 会有一条 harmless warning.
 # 要消掉的话在 [tool.pytest.ini_options] 加 markers = ["benchmark: 性能基准测试"]
 
-client = TestClient(app)
+
+@pytest.fixture(scope="module", autouse=True)
+def _bind_test_client(app_client):
+    """Bind module-global `client` to the shared, properly-closed app_client.
+
+    Replaces the old module-level ``client = TestClient(app)`` which leaked an
+    anyio portal thread and never shut down the app lifespan (OOM + hang).
+    """
+    global client
+    client = app_client
+    yield
+    client = None
 
 _HEADERS = {"X-HUGINN-API-KEY": "test-key"}
 WS_PATH = "/ws/agent"
@@ -532,9 +543,9 @@ class TestConcurrencyThroughput:
         def _connect():
             try:
                 # 每个线程用独立的 TestClient, 避免共享 portal 的线程安全问题
-                c = TestClient(app)
-                with c.websocket_connect(WS_PATH, headers=_HEADERS):
-                    pass
+                with TestClient(app) as c:
+                    with c.websocket_connect(WS_PATH, headers=_HEADERS):
+                        pass
             except Exception as e:
                 errors.append(str(e))
 
