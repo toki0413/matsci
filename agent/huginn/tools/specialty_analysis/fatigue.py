@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from huginn.types import ToolResult
+from huginn.core_types import ToolResult
 
 
 def fatigue_sn(args: Any) -> ToolResult:

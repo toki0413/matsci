@@ -25,9 +25,9 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from huginn.core_types import ToolResult
 from huginn.personalization import get_shared_style_learner
 from huginn.tools.base import HuginnTool
-from huginn.types import ToolResult
 from huginn.utils.runtime import get_runtime_home
 
 logger = logging.getLogger(__name__)

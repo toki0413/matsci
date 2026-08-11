@@ -18,7 +18,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from huginn.autoloop.engine import AutoloopEngine
-from huginn.types import ToolContext
+from huginn.core_types import ToolContext
 
 
 class _FakeKb:

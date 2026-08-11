@@ -12,8 +12,8 @@ from typing import Any
 import click
 
 from huginn.cli.context import CliContext
+from huginn.core_types import ToolContext
 from huginn.tools.registry import ToolRegistry
-from huginn.types import ToolContext
 from huginn.workflows.checkpoint import WorkflowCheckpoint
 from huginn.workflows.engine import WorkflowEngine
 from huginn.workflows.templates import get_template

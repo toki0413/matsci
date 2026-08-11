@@ -29,7 +29,7 @@ class MathValidationMixin:
         工具懒加载, 任一缺失/报错只记 *_error, 不阻断其余子项与主 validate 流程.
         engine 没有自己的 tool_registry, 这里直接构造工具实例 (它们都是无状态轻量构造).
         """
-        from huginn.types import ToolContext
+        from huginn.core_types import ToolContext
 
         out: dict[str, Any] = {}
         if not isinstance(execution_result, dict):
@@ -246,7 +246,7 @@ class MathValidationMixin:
                 "symmetry": cons.get("method", ""),
             }
 
-        from huginn.types import ToolContext
+        from huginn.core_types import ToolContext
 
         tool_ctx = ToolContext(
             session_id=f"mathevid_{uuid.uuid4().hex[:8]}",

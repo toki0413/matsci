@@ -16,8 +16,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from huginn.core_types import ToolContext, ToolResult, ValidationResult
 from huginn.tools.base import HuginnTool
-from huginn.types import ToolContext, ToolResult, ValidationResult
 
 logger = logging.getLogger(__name__)
 

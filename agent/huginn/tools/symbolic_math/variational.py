@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 
 import sympy as sp
 
-from huginn.types import ToolResult
+from huginn.core_types import ToolResult
 
 from ._parsers import parse_symbols, safe_parse
 

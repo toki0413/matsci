@@ -43,8 +43,8 @@ from huginn.causal.visual_causal_chain import (
     fit_scm_from_observations,
 )
 from huginn.causal.visual_scm import VisualSCM, get_template, list_templates
+from huginn.core_types import ToolContext, ToolResult, ValidationResult
 from huginn.tools.base import HuginnTool
-from huginn.types import ToolContext, ToolResult, ValidationResult
 
 logger = logging.getLogger(__name__)
 
@@ -547,7 +547,7 @@ def _selfcheck() -> None:
     tool2 = CounterfactualRenderTool()
     loop2 = asyncio.new_event_loop()
     try:
-        from huginn.types import ToolContext
+        from huginn.core_types import ToolContext
         ctx = ToolContext(session_id="selfcheck", workspace=".")
         # 用 diffusion 模板, evidence 用模型生成保证可达
         base_sim_t = _simulate_once(_template_diffusion(), intervention={}, base_conditions={"T": 800})

@@ -94,8 +94,8 @@ class TestLeanToolAutoVerify:
     def lean_tool(self):
         if not _lake_available():
             pytest.skip("lake executable or HuginnLean project not found")
+        from huginn.core_types import ToolContext
         from huginn.tools.lean_tool import LeanTool, LeanToolInput
-        from huginn.types import ToolContext
 
         tool = LeanTool()
         return tool, LeanToolInput, ToolContext(session_id="test", workspace=".")

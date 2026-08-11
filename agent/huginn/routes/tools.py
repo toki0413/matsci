@@ -8,6 +8,7 @@ from typing import Any
 
 from fastapi import APIRouter
 
+from huginn.core_types import ToolContext
 from huginn.server_core import (
     _server_allows_tool,
     get_agent_factory,
@@ -15,7 +16,6 @@ from huginn.server_core import (
     get_memory_manager,
 )
 from huginn.tools.registry import ToolRegistry
-from huginn.types import ToolContext
 
 router = APIRouter(tags=["tools"])
 

@@ -32,8 +32,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from huginn.core_types import ToolContext, ToolResult, progress_cb
 from huginn.tools.base import HuginnTool
-from huginn.types import ToolContext, ToolResult, progress_cb
 
 logger = logging.getLogger(__name__)
 

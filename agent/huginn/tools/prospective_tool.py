@@ -12,13 +12,13 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from huginn.core_types import ToolResult
 from huginn.memory.prospective import (
     ProspectiveIntention,
     ProspectiveMemory,
     _new_intention_id,
 )
 from huginn.tools.base import HuginnTool
-from huginn.types import ToolResult
 
 
 def _pm_from_context(context: Any) -> ProspectiveMemory | None:
@@ -187,7 +187,7 @@ if __name__ == "__main__" and "--self-check" in __import__("sys").argv:
     import sys as _sys
     import tempfile
 
-    from huginn.types import ToolContext
+    from huginn.core_types import ToolContext
 
     _tmp = Path(tempfile.mkdtemp(prefix="pim_tool_selfcheck_"))
     try:

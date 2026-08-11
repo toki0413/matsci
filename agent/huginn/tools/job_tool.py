@@ -15,9 +15,9 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from huginn.core_types import HandleType, ToolContext, ToolResult, ValidationResult
 from huginn.hpc.client import HPCConfig
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
-from huginn.types import HandleType, ToolContext, ToolResult, ValidationResult
 from huginn.validation.handle_validator import HandleValidator
 
 logger = logging.getLogger(__name__)

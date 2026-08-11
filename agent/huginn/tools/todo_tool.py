@@ -12,8 +12,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from huginn.core_types import ToolResult
 from huginn.tools.base import HuginnTool
-from huginn.types import ToolResult
 
 # 进程级单例: {session_id: [todo_dict, ...]}
 # 跨工具调用共享, 但不跨进程. session_id 为空时用一个固定桶.

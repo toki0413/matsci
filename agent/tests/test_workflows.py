@@ -2,7 +2,7 @@
 
 import asyncio
 
-from huginn.types import ToolContext
+from huginn.core_types import ToolContext
 from huginn.workflows.engine import ComputationalStage, ValidationRule, WorkflowEngine
 from huginn.workflows.templates import (
     get_template,
@@ -79,14 +79,14 @@ class _DummyTool:
 
     async def call(self, tool_input, context):
         self.calls += 1
-        from huginn.types import ToolResult
+        from huginn.core_types import ToolResult
 
         return ToolResult(data={"value": tool_input.get("x", 0)}, success=True)
 
 
 class TestWorkflowCheckpoint:
     def test_checkpoint_save_and_load(self, tmp_path):
-        from huginn.types import ToolResult
+        from huginn.core_types import ToolResult
         from huginn.workflows.checkpoint import WorkflowCheckpoint
 
         stage = ComputationalStage(
@@ -135,8 +135,8 @@ class TestWorkflowCheckpoint:
         ToolRegistry.clear()
 
     def test_resume_skips_completed_stage(self, tmp_path):
+        from huginn.core_types import ToolResult
         from huginn.tools.registry import ToolRegistry
-        from huginn.types import ToolResult
         from huginn.workflows.checkpoint import WorkflowCheckpoint
 
         ToolRegistry.clear()
@@ -175,8 +175,8 @@ class TestWorkflowCheckpoint:
 
 class TestWorkflowBudget:
     def test_budget_denies_expensive_stage(self, tmp_path):
+        from huginn.core_types import BudgetPolicy
         from huginn.tools.registry import ToolRegistry
-        from huginn.types import BudgetPolicy
 
         ToolRegistry.clear()
         dummy = _DummyTool()
@@ -203,8 +203,8 @@ class TestWorkflowBudget:
         ToolRegistry.clear()
 
     def test_budget_allows_cheap_stage(self, tmp_path):
+        from huginn.core_types import BudgetPolicy
         from huginn.tools.registry import ToolRegistry
-        from huginn.types import BudgetPolicy
 
         ToolRegistry.clear()
         dummy = _DummyTool()

@@ -14,7 +14,7 @@ from typing import Any
 
 import numpy as np
 
-from huginn.types import ToolResult
+from huginn.core_types import ToolResult
 
 # 不同边界条件下的 β_n L 系数 (前 5 阶), 来自 Blevin Table 4-1
 _BETA_NL: dict[str, list[float]] = {

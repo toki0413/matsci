@@ -8,10 +8,10 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from huginn.core_types import ToolContext
 from huginn.security.auth import require_api_key, require_capability
 from huginn.server_core import get_agent_factory, get_context, get_memory_manager
 from huginn.tools.registry import ToolRegistry
-from huginn.types import ToolContext
 
 logger = logging.getLogger(__name__)
 

@@ -809,7 +809,7 @@ class TestWorkflowEngine:
         assert engine.budget_policy is None
 
     def test_engine_with_budget(self):
-        from huginn.types import BudgetPolicy
+        from huginn.core_types import BudgetPolicy
         from huginn.workflows.engine import WorkflowEngine
 
         engine = WorkflowEngine(tool_registry={}, budget_policy=BudgetPolicy())

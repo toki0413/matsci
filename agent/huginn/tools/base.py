@@ -22,15 +22,15 @@ from typing import Any, Generic, TypeVar
 
 from pydantic import BaseModel
 
-from huginn.phases import ResearchPhase
-from huginn.tools.profile import CostTier, ToolProfile
-from huginn.types import (
+from huginn.core_types import (
     PermissionMode,
     PermissionResult,
     ToolContext,
     ToolResult,
     ValidationResult,
 )
+from huginn.phases import ResearchPhase
+from huginn.tools.profile import CostTier, ToolProfile
 
 logger = logging.getLogger(__name__)
 

@@ -15,8 +15,8 @@ from typing import Any
 import numpy as np
 from pydantic import BaseModel, Field
 
+from huginn.core_types import ToolContext, ToolResult
 from huginn.tools.base import HuginnTool
-from huginn.types import ToolContext, ToolResult
 
 # ── benchmark simulators ────────────────────────────────────────
 # 每个 task 返回 (prior_sample_fn, simulator_fn, param_dim, data_dim).

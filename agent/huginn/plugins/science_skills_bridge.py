@@ -32,6 +32,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from huginn.core_types import ToolContext, ToolResult
+
 # 复用 skill_loader 的 frontmatter 解析和条件激活引擎
 from huginn.plugins.skill_loader import (
     parse_skill_file,
@@ -39,7 +41,6 @@ from huginn.plugins.skill_loader import (
 )
 from huginn.tools.base import HuginnTool
 from huginn.tools.registry import ToolRegistry
-from huginn.types import ToolContext, ToolResult
 
 logger = logging.getLogger(__name__)
 

@@ -8,8 +8,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from huginn.core_types import ToolContext
 from huginn.tools.browser_tool import BrowserAction, BrowserTool, BrowserToolInput
-from huginn.types import ToolContext
 
 
 def _ctx() -> ToolContext:

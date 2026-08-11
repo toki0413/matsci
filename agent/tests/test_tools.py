@@ -2,12 +2,12 @@
 
 import asyncio
 
+from huginn.core_types import ToolContext
 from huginn.tools.adapter import ToolAdapter
 from huginn.tools.diagnose_tool import DiagnoseTool
 from huginn.tools.registry import ToolRegistry
 from huginn.tools.structure_tool import StructureTool
 from huginn.tools.validate_tool import ValidateTool
-from huginn.types import ToolContext
 
 
 class TestToolRegistry:

@@ -11,7 +11,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from huginn.types import ToolResult
+from huginn.core_types import ToolResult
 
 # 常见裂纹构型的几何因子 Y (无限大体或标准试件)
 _GEOMETRY_FACTORS: dict[str, float] = {

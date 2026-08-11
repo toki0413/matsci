@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from huginn.core_types import ToolContext
 from huginn.tools.sci.xrd_sim_tool import XrdSimTool
-from huginn.types import ToolContext
 
 SI_POSCAR = str(Path(__file__).parent.parent / "Si_diamond" / "POSCAR")
 

@@ -83,7 +83,7 @@ def build_sidecar():
         "huginn.llm",
         "huginn.server",
         "huginn.server_context",
-        "huginn.types",
+        "huginn.core_types",
         # CLI
         "huginn.cli.main",
         "huginn.cli.context",

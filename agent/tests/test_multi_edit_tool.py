@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
+from huginn.core_types import ToolContext
 from huginn.permissions import PermissionConfig
 from huginn.tools.multi_edit_tool import MultiEditTool
-from huginn.types import ToolContext
 
 
 @pytest.fixture

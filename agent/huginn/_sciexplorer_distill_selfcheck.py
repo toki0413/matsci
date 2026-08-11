@@ -14,7 +14,7 @@ def _test_large_array_summary():
     """大 numpy 数组走摘要, 不走 tolist."""
     import numpy as np
 
-    from huginn.types import _jsonify
+    from huginn.core_types import _jsonify
 
     # 小数组照常 tolist
     small = np.array([1, 2, 3])
@@ -32,7 +32,7 @@ def _test_large_array_summary():
 
 def _test_large_list_summary():
     """长 list 也截断."""
-    from huginn.types import _jsonify
+    from huginn.core_types import _jsonify
 
     short = [1, 2, 3]
     assert _jsonify(short) == [1, 2, 3]

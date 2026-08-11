@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from huginn.core_types import ToolContext, ToolResult
 from huginn.tools.materials_database_tool import (
     MaterialsDatabaseInput,
     MaterialsDatabaseTool,
@@ -14,7 +15,6 @@ from huginn.tools.materials_database_tool import (
 from huginn.tools.sci.ml_potential_tool import MLPotentialInput, MLPotentialTool
 from huginn.tools.sim.packing_tool import PackingTool
 from huginn.tools.visualize_tool import VisualizeTool, VisualizeToolInput
-from huginn.types import ToolContext, ToolResult
 
 CTX = ToolContext(session_id="test", workspace=".")
 

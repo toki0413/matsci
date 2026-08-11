@@ -8,7 +8,7 @@ import json
 import click
 
 from huginn.cli.context import CliContext
-from huginn.types import ToolContext
+from huginn.core_types import ToolContext
 
 
 @click.command()

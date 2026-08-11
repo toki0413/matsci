@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from huginn.core_types import ToolContext
 from huginn.tools.sci.ml_potential_tool import MLPotentialTool
-from huginn.types import ToolContext
 
 
 class TestMLPotentialTool:

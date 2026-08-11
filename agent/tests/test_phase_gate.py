@@ -27,9 +27,9 @@ from huginn.autoloop.phase_gate import (
     get_shared_phase_gate_state,
     set_shared_phase_gate_state,
 )
+from huginn.core_types import ToolContext
 from huginn.permissions import PermissionConfig
 from huginn.tools.phase_tool import PhaseTool
-from huginn.types import ToolContext
 
 _skip_ci_run_cognitive = os.environ.get("HUGINN_CI", "").lower() in ("1", "true", "yes")
 

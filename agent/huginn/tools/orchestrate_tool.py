@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from huginn.core_types import ToolResult
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
-from huginn.types import ToolResult
 
 
 class OrchestrateInput(BaseModel):

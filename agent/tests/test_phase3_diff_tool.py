@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from huginn.core_types import ToolContext
 from huginn.tools.diff_tool import DiffTool, DiffToolInput, _deep_diff
-from huginn.types import ToolContext
 
 
 def _ctx() -> ToolContext:

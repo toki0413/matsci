@@ -10,8 +10,8 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from huginn import metacog
+from huginn.core_types import ToolContext, ToolResult
 from huginn.tools.base import HuginnTool
-from huginn.types import ToolContext, ToolResult
 
 
 def recall_context(category: str, query: str = "", top_k: int = 3) -> dict:

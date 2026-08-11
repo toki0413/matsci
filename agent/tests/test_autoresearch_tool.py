@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from huginn.core_types import ToolContext
 from huginn.plugins.autoresearch import AutoresearchInput, AutoresearchTool
-from huginn.types import ToolContext
 
 # test_propose_edit_uses_llm 走 asyncio.to_thread(model.invoke, ...).
 # pytest-timeout 的 signal 方法无法中断线程, 若 monkeypatch 未完全隔离

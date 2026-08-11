@@ -2669,11 +2669,11 @@ class HypothesisMixin:
         # A3: 先查 KB 拿已知公式形式, symreg 失败时 KB 候选仍能注入
         kb_forms = self._query_kb_known_forms(data)
         try:
+            from huginn.core_types import ToolContext
             from huginn.tools.sci.symbolic_regression_tool import (
                 SymbolicRegressionInput,
                 SymbolicRegressionTool,
             )
-            from huginn.types import ToolContext
 
             target = data.get("target_column") or data.get("target") or "y"
             if target not in data:

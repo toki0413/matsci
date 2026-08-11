@@ -14,8 +14,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from huginn.core_types import ToolContext, ToolResult
 from huginn.tools.base import HuginnTool
-from huginn.types import ToolContext, ToolResult
 
 # C7: 大产物分块写入阈值 — 超过此值用分块 write 避免 OOM.
 # ponytail: 1MB 够大覆盖 99% 源码, 够小避免一次性 write 撑爆内存.

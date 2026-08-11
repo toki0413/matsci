@@ -23,8 +23,8 @@ from typing import Any, Literal
 import numpy as np
 from pydantic import BaseModel, Field
 
+from huginn.core_types import ToolContext, ToolResult
 from huginn.tools.base import HuginnTool
-from huginn.types import ToolContext, ToolResult
 
 # 物理常数 (SI)
 _E = 1.602176634e-19       # 电子电荷 (C)

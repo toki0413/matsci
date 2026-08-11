@@ -26,13 +26,13 @@ if str(_AGENT_ROOT) not in sys.path:
 
 from PIL import Image  # noqa: E402  (import after the sys.path tweak)
 
+from huginn.core_types import ToolContext  # noqa: E402
 from huginn.perception.visual_encoder import (  # noqa: E402
     VisualEncoder,
     _Backend,
     reset_encoder,
 )
 from huginn.tools.image_analysis.tool import ImageAnalysisTool  # noqa: E402
-from huginn.types import ToolContext  # noqa: E402
 
 # Small images keep the suite fast; 128 px is plenty for the stats we check.
 _IMG_SIZE = 128

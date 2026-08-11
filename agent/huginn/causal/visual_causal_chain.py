@@ -44,8 +44,8 @@ from huginn.causal.visual_scm import (
     get_template,
     list_templates,
 )
+from huginn.core_types import ToolContext, ToolResult, ValidationResult
 from huginn.tools.base import HuginnTool
-from huginn.types import ToolContext, ToolResult, ValidationResult
 
 logger = logging.getLogger(__name__)
 
@@ -694,7 +694,7 @@ def _selfcheck() -> None:
     tool2 = FitSCMFromObservationsTool()
     loop2 = asyncio.new_event_loop()
     try:
-        from huginn.types import ToolContext
+        from huginn.core_types import ToolContext
         ctx = ToolContext(session_id="selfcheck", workspace=".")
         r = loop2.run_until_complete(tool2.call(
             {"template_name": "diffusion",

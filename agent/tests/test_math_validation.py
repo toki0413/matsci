@@ -16,7 +16,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from huginn.autoloop.engine import AutoloopEngine
-from huginn.types import ToolResult
+from huginn.core_types import ToolResult
 
 
 @pytest.fixture

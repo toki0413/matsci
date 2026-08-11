@@ -10,7 +10,7 @@ import re
 from collections.abc import Callable
 from pathlib import Path
 
-from huginn.types import HandleType, ToolContext, ValidationResult
+from huginn.core_types import HandleType, ToolContext, ValidationResult
 
 
 class HandleValidator:
