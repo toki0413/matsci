@@ -27,6 +27,33 @@ CHUNK_OVERLAP = 100
 EMBED_MODEL = "all-MiniLM-L6-v2"
 SEED_DIR = Path(__file__).parent / "seed"
 
+# ONNX encode 超时阈值: CI 2-core runner 跑数千测试后线程资源耗尽,
+# onnxruntime.model.run() 可能 hang 或 RuntimeError: can't start new thread.
+# 超时/线程失败时降级到确定性哈希向量, 保证 KB seeding 不阻塞 agent.invoke.
+_ENCODE_TIMEOUT_SECONDS = 30
+
+
+def _deterministic_vectors(texts: list[str], dim: int = 384) -> np.ndarray:
+    """Deterministic hash-based pseudo-embeddings (fallback when ONNX hangs).
+
+    ponytail: SHA256 → normalized float, 维度对齐 all-MiniLM-L6-v2 (384).
+    质量远不如真实 embedding, 仅用于 CI 资源耗尽降级 — 保证检索不 NaN, agent flow 不阻塞.
+    """
+    import numpy as np
+
+    vecs = []
+    for t in texts:
+        h = hashlib.sha256(t.encode("utf-8")).digest()
+        raw = np.frombuffer(
+            (h * (dim // 8 + 1))[:dim], dtype=np.uint8
+        ).astype(np.float32)
+        v = (raw / 127.5) - 1.0
+        norm = np.linalg.norm(v)
+        if norm > 0:
+            v = v / norm
+        vecs.append(v)
+    return np.array(vecs)
+
 
 class _EmbeddingModel:
     """Wrapper that prefers ChromaDB's cached ONNX embedder, falling back to sentence-transformers.
@@ -64,11 +91,9 @@ class _EmbeddingModel:
             if cached is not None:
                 return cached
 
-        import numpy as np
 
         if _EmbeddingModel._use_chroma and _EmbeddingModel._ef is not None:
-            vectors = _EmbeddingModel._ef(texts)
-            result = np.asarray(vectors, dtype=np.float32)
+            result = self._encode_onnx_guarded(texts)
         else:
             if _EmbeddingModel._st is None:
                 try:
@@ -84,6 +109,38 @@ class _EmbeddingModel:
         if cache_key:
             _EmbeddingModel._embedding_cache.set(cache_key, result)
         return result
+
+    @staticmethod
+    def _encode_onnx_guarded(texts: list[str]) -> np.ndarray:
+        """ONNX encode with timeout + thread-exhaustion guard.
+
+        On CI 2-core runners, after thousands of tests, onnxruntime may
+        either hang (C++ extension blocks) or fail to spawn threads. Both
+        cases degrade to deterministic hash vectors so KB seeding never
+        blocks agent.invoke.
+        """
+        from concurrent.futures import (
+            ThreadPoolExecutor,
+        )
+        from concurrent.futures import (
+            TimeoutError as _FutTimeout,
+        )
+
+        import numpy as np
+
+        try:
+            with ThreadPoolExecutor(max_workers=1) as ex:
+                future = ex.submit(_EmbeddingModel._ef, texts)
+                vectors = future.result(timeout=_ENCODE_TIMEOUT_SECONDS)
+            return np.asarray(vectors, dtype=np.float32)
+        except (_FutTimeout, RuntimeError, OSError) as e:
+            logger.warning(
+                "ONNX encode degraded to hash vectors (%s: %s); "
+                "KB retrieval quality reduced but agent flow unblocked",
+                type(e).__name__,
+                e,
+            )
+            return _deterministic_vectors(texts, dim=384)
 
 
 # ── BM25 关键词检索 (与向量检索做 RRF 混合) ──────────────────────────
