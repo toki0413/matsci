@@ -347,42 +347,6 @@ def _write_cognitive_evidence(
         print(f"[cognitive_evidence write skipped: {_ce_e}]", flush=True)
 
 
-def _load_haptic_layers(ws, hypo_manifold) -> int:
-    """读 ws/.huginn/haptic_layers.json, register 到 hypo_manifold.
-
-    复用 run_mcmc_single 的加载逻辑. hypo_manifold 为 None 或文件不存在时
-    返回 0, 不报错 — haptic_enabled 路径下 _haptic_proposal 全返 None, 安全退化 fisher.
-    """
-    if hypo_manifold is None:
-        return 0
-    _hap_path = ws / HUGINN_DIR_NAME / "haptic_layers.json"
-    if not _hap_path.exists():
-        return 0
-    _n_hap = 0
-    try:
-        from huginn.metacog.haptic_property_layer import (
-            HapticPropertyLayer as _HPL,  # noqa: N814
-        )
-        _h_ids = list(hypo_manifold._hyp)
-        _raw = json.loads(_hap_path.read_text(encoding="utf-8"))
-        # key 可以是 h_id 或结构 id, 优先 h_id 匹配, 否则按 index 回退
-        for _i, _h_id in enumerate(_h_ids):
-            _d = _raw.get(_h_id)
-            if _d is None and _i < len(_raw):
-                _d = list(_raw.values())[_i]
-            if _d is None:
-                continue
-            try:
-                _layer = _HPL.from_dict(_d)
-                hypo_manifold.register_haptic(_h_id, _layer)
-                _n_hap += 1
-            except Exception:
-                logger.debug("haptic layer register skipped", exc_info=True)
-    except Exception as _e:
-        print(f"[haptic] load failed: {_e}, degrading to fisher", flush=True)
-    return _n_hap
-
-
 async def _trigger_anomaly_hypothesis(
     anomaly_pairs: list[tuple[str, str]], model,
 ) -> list[str]:
@@ -590,31 +554,6 @@ def _load_manifold(path: Path):
         logger.debug("best-effort op failed", exc_info=True)
         return None
     return manifold if manifold._hyp else None
-
-
-def _maybe_inject_llm_likelihood(manifold, model: Any, task_ctx: str) -> None:
-    """v15 Phase 3: env 启用时把 LLMLikelihood 注入 manifold, 否则保留 Gaussian."""
-    if manifold is None or model is None:
-        return
-    try:
-        from huginn.metacog.llm_likelihood import (
-            LLMLikelihood,
-            get_llm_likelihood_interval,
-            is_llm_likelihood_enabled,
-        )
-        if not is_llm_likelihood_enabled():
-            return
-        interval = get_llm_likelihood_interval()
-        llm_lik = LLMLikelihood(model, task_ctx=task_ctx, interval=interval)
-        manifold._log_lik = llm_lik.log_lik
-        # handle 挂在 manifold 上, rcb_runner 主循环每轮 set iter_n
-        manifold._llm_likelihood = llm_lik
-        print(
-            f"[v15] LLMLikelihood injected: interval={interval}, task_ctx={len(task_ctx)} chars",
-            flush=True,
-        )
-    except Exception as e:
-        print(f"[v15] LLMLikelihood injection skipped: {e}", flush=True)
 
 
 def _init_hypothesis_manifold(

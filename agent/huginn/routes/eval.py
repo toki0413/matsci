@@ -12,6 +12,7 @@ POST /eval/analyze  — cluster failures by pattern from past runs
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import logging
@@ -32,6 +33,10 @@ router = APIRouter(tags=["eval"])
 
 # Where eval results live on disk
 _EVAL_DIR = get_runtime_home() / "eval"
+
+# Per-task timeout for agent.astream — a single hung LLM call must not stall
+# the whole benchmark run. 120s is generous for a one-shot prompt.
+_AGENT_STREAM_TIMEOUT = 120
 
 
 def _eval_dir() -> Path:
@@ -93,19 +98,29 @@ async def eval_run(params: dict[str, Any]) -> dict[str, Any]:
             with collector.span("eval_task", task_id=task.id, category=task.category):
                 if agent is not None:
                     try:
-                        # Use the agent's astream to get a response
+                        # Use the agent's astream to get a response.
+                        # Per-task timeout prevents a single hung LLM call
+                        # from stalling the entire benchmark run.
                         response_text = ""
-                        async for chunk in agent.astream(
-                            task.prompt, thread_id=f"eval_{run_id}"
-                        ):
-                            if isinstance(chunk, dict):
-                                response_text += chunk.get("content", "") or ""
-                            elif isinstance(chunk, str):
-                                response_text += chunk
+                        async with asyncio.timeout(_AGENT_STREAM_TIMEOUT):
+                            async for chunk in agent.astream(
+                                task.prompt, thread_id=f"eval_{run_id}"
+                            ):
+                                if isinstance(chunk, dict):
+                                    response_text += chunk.get("content", "") or ""
+                                elif isinstance(chunk, str):
+                                    response_text += chunk
 
                         # Try to parse structured output from the response
                         agent_output = _parse_agent_output(response_text)
                         agent_output["_raw_response"] = response_text[:500]
+                    except TimeoutError:
+                        agent_output = {
+                            "__timeout__": f"agent did not respond within {_AGENT_STREAM_TIMEOUT}s"
+                        }
+                        logger.warning(
+                            "eval task %s timed out after %ss", task.id, _AGENT_STREAM_TIMEOUT
+                        )
                     except Exception as exc:
                         agent_output = {"__error__": str(exc)}
                         logger.warning("eval task %s failed: %s", task.id, exc)
@@ -350,7 +365,7 @@ def _parse_agent_output(text: str) -> dict[str, Any]:
 
     Looks for JSON blocks or key=value patterns in the response.
     """
-    # Try to find a JSON block
+    # Try to find a fenced JSON block first
     json_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
     if json_match:
         try:
@@ -358,13 +373,17 @@ def _parse_agent_output(text: str) -> dict[str, Any]:
         except Exception:
             logger.debug("fenced json parse skipped", exc_info=True)
 
-    # Try bare JSON
-    json_match = re.search(r"\{[^{}]*\}", text)
-    if json_match:
-        try:
-            return json.loads(json_match.group(0))
-        except Exception:
-            logger.debug("bare json parse skipped", exc_info=True)
+    # Try to extract bare JSON using raw_decode, which handles nested braces
+    # (the old \{[^{}]*\} regex only matched flat objects with no nesting).
+    decoder = json.JSONDecoder()
+    for i, ch in enumerate(text):
+        if ch == "{":
+            try:
+                obj, _end = decoder.raw_decode(text[i:])
+                if isinstance(obj, dict):
+                    return obj
+            except json.JSONDecodeError:
+                continue
 
     # Try key: value patterns (e.g., "band_gap_eV: 1.12")
     result: dict[str, Any] = {}
