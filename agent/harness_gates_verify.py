@@ -49,8 +49,8 @@ from huginn.config import clear_config_cache  # noqa: E402
 
 clear_config_cache()
 
-import huginn.harness.significance_gate as sg  # noqa: E402
 import huginn.harness.ood_holdout as ood  # noqa: E402
+import huginn.harness.significance_gate as sg  # noqa: E402
 
 _PASS = 0
 _FAIL = 0
