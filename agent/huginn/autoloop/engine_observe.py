@@ -141,7 +141,7 @@ LUCID review (mandatory after generating hypothesis):
                 try:
                     return int(env_val)
                 except ValueError:
-                    pass
+                    logger.debug("best-effort op failed", exc_info=True)
             if phase in self._PROMPT_BUDGET_BY_PHASE:
                 return self._PROMPT_BUDGET_BY_PHASE[phase]
         return self._PROMPT_BUDGET
@@ -268,6 +268,7 @@ LUCID review (mandatory after generating hypothesis):
         try:
             persona = self._get_persona_manager().get(persona_name)
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return ""
         # 优先用 permanent_core, 没设就退回 system_prompt (老 persona)
         core = persona.permanent_core or persona.system_prompt or ""
@@ -295,6 +296,7 @@ LUCID review (mandatory after generating hypothesis):
         try:
             _sm = _mem.longterm.get_self_model()
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return ""
         if not _sm:
             return ""
@@ -337,6 +339,7 @@ LUCID review (mandatory after generating hypothesis):
                 similarity_threshold=0.6,
             )
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return ""
         if _pred.get("prediction_type") != "analogy":
             return ""
@@ -868,6 +871,7 @@ LUCID review (mandatory after generating hypothesis):
                         try:
                             stmt = self.hypothesis_graph.get(rid).statement
                         except Exception:
+                            logger.debug("best-effort op failed", exc_info=True)
                             stmt = ""
                         lines.append(f"  - {rid}: {stmt[:120]}")
                     cluster_block = (
@@ -1217,6 +1221,7 @@ Hypothesis:""",
             rep = self.hypothesis_graph.component_representative(largest)
             return rep or ""
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return ""
 
     @staticmethod

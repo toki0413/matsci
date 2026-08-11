@@ -1029,6 +1029,7 @@ class Model3DTool(HuginnTool):
                 "bounds": mesh.bounds.tolist(),
             }
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return {}
 
     def _mesh_result(

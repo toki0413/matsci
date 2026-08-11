@@ -48,6 +48,7 @@ class FixDanglingToolCallsMiddleware(AgentMiddleware):
             # vision=True → 保留; vision=False → 剥离; 未知名 → fail-closed 剥离
             return not caps.vision
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return True
 
     def _patch_messages(self, messages: list) -> list:
@@ -184,6 +185,7 @@ class FixDanglingToolCallsMiddleware(AgentMiddleware):
                 try:
                     _raw = base64.b64decode(_b64)
                 except Exception:
+                    logger.debug("best-effort op failed", exc_info=True)
                     _raw = None
                 if _raw is not None:
                     _ext = mimetypes.guess_extension(_mime) or ".png"
@@ -195,6 +197,7 @@ class FixDanglingToolCallsMiddleware(AgentMiddleware):
                             image_path = _tf.name
                             _is_tmp = True
                     except Exception:
+                        logger.debug("best-effort op failed", exc_info=True)
                         image_path = None
         # image_path block (非 OpenAI 标准, 但有些路径会塞): 直接取路径不解码
         if image_path is None:

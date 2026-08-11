@@ -342,6 +342,7 @@ class GaussianTool(HuginnTool):
             self._apply_route_overrides(gjf_file, route_fixes)
             return {"fixes": route_fixes, "reasoning": reasoning}
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return None
 
     # ── .gjf route section handling ────────────────────────────────

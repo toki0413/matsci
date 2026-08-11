@@ -63,6 +63,7 @@ class SSHConnectionPool:
             if transport is None or not transport.is_active():
                 return False
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return False
         return True
 

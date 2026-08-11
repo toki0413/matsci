@@ -585,7 +585,7 @@ def _parse_json_array(text: str) -> list[dict[str, Any]]:
         if isinstance(result, list):
             return result
     except (json.JSONDecodeError, TypeError):
-        pass
+        logger.debug("best-effort op failed", exc_info=True)
     return []
 
 
@@ -702,7 +702,7 @@ def _parse_json_object(text: str) -> dict[str, Any]:
         if isinstance(result, dict):
             return result
     except (json.JSONDecodeError, TypeError):
-        pass
+        logger.debug("best-effort op failed", exc_info=True)
     return {}
 
 
@@ -780,6 +780,7 @@ class ConjectureLibrary:
                     )
                     conn.commit()
                 except sqlite3.IntegrityError:
+                    logger.debug("best-effort op failed", exc_info=True)
                     return False
 
             # JSONL 追加 (仅新增时)
@@ -830,6 +831,7 @@ class ConjectureLibrary:
                 )
                 conn.commit()
             except sqlite3.IntegrityError:
+                logger.debug("best-effort op failed", exc_info=True)
                 return False
         return True
 

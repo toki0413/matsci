@@ -124,7 +124,7 @@ class ToolCallRouter:
                 return True, ""
         except Exception:
             # flag 层挂了不能带挂业务, 继续走原逻辑
-            pass
+            logger.debug("best-effort op failed", exc_info=True)
 
         # 轻量工具一律放行, 不拦
         if tool_name in LIGHT_TOOLS:

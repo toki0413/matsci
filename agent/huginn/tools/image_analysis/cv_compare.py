@@ -27,6 +27,7 @@ def cv_image_similarity(target_path: Path, generated_path: Path) -> dict:
     try:
         from skimage.metrics import structural_similarity as _ssim
     except ImportError:
+        logger.debug("best-effort op failed", exc_info=True)
         _ssim = None
 
     try:

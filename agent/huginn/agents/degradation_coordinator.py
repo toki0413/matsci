@@ -86,6 +86,7 @@ def _run_sync(coro_func, *args, **kwargs):
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
+        logger.debug("best-effort op failed", exc_info=True)
         loop = None
 
     if loop is not None:

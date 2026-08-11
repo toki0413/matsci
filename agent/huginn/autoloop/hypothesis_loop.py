@@ -666,7 +666,7 @@ class HypothesisGraph:
                     if _backup and _backup != main_statement:
                         backup_statements.append(_backup)
                 except Exception:
-                    pass  # not all model wrappers support bind
+                    logger.debug("best-effort op failed", exc_info=True)  # not all model wrappers support bind
         else:
             main_statement = self._template_pivot(
                 failed_node.statement, failed_statements,
@@ -698,7 +698,7 @@ class HypothesisGraph:
                         "candidate_role": "backup",
                     }
             except Exception:
-                pass  # backup 失败不阻塞主候选
+                logger.debug("best-effort op failed", exc_info=True)  # backup 失败不阻塞主候选
 
         # 交叉授粉延迟: pivot 跨分量需两端分量都成熟.
         # new_id 是 singleton, _is_cross_component_edge 排除单节点 → 正常 pivot 不受影响.
@@ -791,6 +791,7 @@ class HypothesisGraph:
             stmt = text.strip().split("\n")[0].strip()
             stmt = stmt.lstrip("- *•").strip().strip('"\'')
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return None
 
         if not stmt or stmt == a.statement or stmt == b.statement:
@@ -2059,6 +2060,7 @@ class HypothesisMixin:
                     return self._last_hypothesis
             return None
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return None
 
     def _record_backup_candidates(self, raw: str, selected: str) -> None:
@@ -2652,6 +2654,7 @@ class HypothesisMixin:
                 f"(Template-based analogy — verify conditions before adopting.)"
             )
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return ""
 
     async def _symreg_hint(self, context: dict[str, Any]) -> str:
@@ -2745,6 +2748,7 @@ class HypothesisMixin:
                 + "\n### End KB candidate forms"
             )
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return ""
 
     def _pick_hypothesis_persona(self, context: dict[str, Any]) -> str:
@@ -2806,6 +2810,7 @@ class HypothesisMixin:
                             try:
                                 persona_scores.setdefault(_p, []).append(float(_r))
                             except (TypeError, ValueError):
+                                logger.debug("best-effort op failed", exc_info=True)
                                 continue
                 if persona_scores:
                     _avg_scores = {

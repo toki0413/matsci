@@ -449,7 +449,7 @@ def on_turn_start(user_msg: str, cache: Any | None = None) -> dict:
             }
     except Exception:
         # flag 层挂了不能带挂业务, 继续走原逻辑
-        pass
+        logger.debug("best-effort op failed", exc_info=True)
 
     speculator = IntentSpeculator.shared()
     try:

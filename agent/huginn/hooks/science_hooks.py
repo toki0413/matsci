@@ -300,6 +300,7 @@ async def mechanical_property_hook(ctx: HookContext) -> HookContext | None:
         try:
             diag = float(row[i])
         except (TypeError, ValueError, IndexError):
+            logger.debug("best-effort op failed", exc_info=True)
             continue
         if diag <= 0:
             return _block(

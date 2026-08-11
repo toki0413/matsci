@@ -301,7 +301,7 @@ class ModelRouter:
                 model = create_langchain_model(provider="ollama", model_name="qwen2.5:7b")
                 router.register("default", model, tags={"default"})
             except Exception:
-                pass  # ollama 也没装就只能让 select() 报 RuntimeError
+                logger.debug("best-effort op failed", exc_info=True)  # ollama 也没装就只能让 select() 报 RuntimeError
         return router
 
 

@@ -294,18 +294,21 @@ class BrowserTool(HuginnTool):
                         await self._page.fill(user_sel, username, timeout=3000)
                         break
                     except Exception:
+                        logger.debug("best-effort op failed", exc_info=True)
                         continue
                 for pass_sel in ['input[name="password"]', 'input[type="password"]', '#password']:
                     try:
                         await self._page.fill(pass_sel, password, timeout=3000)
                         break
                     except Exception:
+                        logger.debug("best-effort op failed", exc_info=True)
                         continue
                 for submit_sel in ['button[type="submit"]', 'input[type="submit"]', 'button:has-text("Login")', 'button:has-text("Sign in")']:
                     try:
                         await self._page.click(submit_sel, timeout=3000)
                         break
                     except Exception:
+                        logger.debug("best-effort op failed", exc_info=True)
                         continue
                 await asyncio.sleep(1)
                 title = await self._page.title()
@@ -397,6 +400,7 @@ class BrowserTool(HuginnTool):
                         el.send_keys(username)
                         break
                     except Exception:
+                        logger.debug("best-effort op failed", exc_info=True)
                         continue
                 for pass_sel in ['input[name="password"]', 'input[type="password"]', '#password']:
                     try:
@@ -405,12 +409,14 @@ class BrowserTool(HuginnTool):
                         el.send_keys(password)
                         break
                     except Exception:
+                        logger.debug("best-effort op failed", exc_info=True)
                         continue
                 for submit_sel in ['button[type="submit"]', 'input[type="submit"]']:
                     try:
                         driver.find_element(By.CSS_SELECTOR, submit_sel).click()
                         break
                     except Exception:
+                        logger.debug("best-effort op failed", exc_info=True)
                         continue
                 await asyncio.sleep(1)
                 return ToolResult(data={"status": "login_attempted", "url": args.url, "title": driver.title, "mode": "remote_selenium"}, success=True)

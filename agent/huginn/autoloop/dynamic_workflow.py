@@ -364,7 +364,7 @@ class WorkflowRegistry:
             with self._lock:
                 self._tasks[script.id] = task
         except RuntimeError:
-            pass
+            logger.debug("best-effort op failed", exc_info=True)
         return result
 
     async def _run_and_update(self, workflow_id: str) -> WorkflowResult:

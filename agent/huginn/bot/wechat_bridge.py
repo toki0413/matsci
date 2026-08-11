@@ -142,6 +142,7 @@ class WeChatBridge(BotBridge):
                     if event is not None:
                         await self.handle_message(event)
             except asyncio.CancelledError:
+                logger.debug("best-effort op failed", exc_info=True)
                 break
             except Exception:
                 logger.error("iLink 轮询异常", exc_info=True)

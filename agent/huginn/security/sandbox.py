@@ -262,6 +262,7 @@ class SandboxExecutor:
                     allowed = True
                     break
                 except ValueError:
+                    logger.debug("best-effort op failed", exc_info=True)
                     continue
             if not allowed:
                 raise SandboxError(

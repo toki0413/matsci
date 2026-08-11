@@ -27,6 +27,8 @@ from typing import Any
 
 from huginn.utils.runtime import HUGINN_DIR_NAME, get_runtime_home
 
+logger = logging.getLogger(__name__)
+
 # onnxruntime C++ 层 EP Error 走 fd 2 (cerr), env var + set_default_logger_severity
 # 都拦不住 (run_task.py 用 stderr=STDOUT 合并到 _agent_output.jsonl, 472 行/96s 淹死
 # agent 实际输出). 直接 dup2 把 fd 2 重定向到 devnull, 所有继承的子进程也跟着静音.
@@ -43,9 +45,7 @@ try:
     os.dup2(_stderr_fd, 2)
     os.close(_stderr_fd)
 except OSError:
-    pass
-
-logger = logging.getLogger(__name__)
+    logger.debug("best-effort op failed", exc_info=True)
 
 # 全局 agent 引用: asyncio.wait_for 取消 run() 时, rcb_huginn.py 入口能拿到
 # agent 实例再调一次 reflection, 确保 evolution 记录最后的 tool 失败.
@@ -129,6 +129,7 @@ def _detect_gpu_safe() -> bool:
         del x, y, z
         return True
     except Exception:
+        logger.debug("best-effort op failed", exc_info=True)
         return False
 
 
@@ -169,7 +170,7 @@ try:
 
     _ort_patch.InferenceSession.__init__ = _cpu_only_init
 except (ImportError, AttributeError):
-    pass
+    logger.debug("best-effort op failed", exc_info=True)
 
 # subprocess (cwd=workspace) 找不到 huginn 模块, 手动加 agent/ 到 path.
 # __file__ = agent/huginn/cli/rcb_runner.py, parents[2] = agent/
@@ -411,6 +412,7 @@ async def _trigger_anomaly_hypothesis(
                 else:
                     return None
             except Exception:
+                logger.debug("best-effort op failed", exc_info=True)
                 return None
             _txt = _resp if isinstance(_resp, str) else str(
                 getattr(_resp, "content", _resp))
@@ -531,6 +533,7 @@ def _extract_numeric_targets(text: str) -> dict[str, float]:
         try:
             val = float(m.group(2))
         except ValueError:
+            logger.debug("best-effort op failed", exc_info=True)
             continue
         if name not in _METRIC_WHITELIST:
             continue
@@ -584,6 +587,7 @@ def _load_manifold(path: Path):
                 with contextlib.suppress(ValueError):
                     manifold.add(h)  # duplicate h_id, 跳过
     except Exception:
+        logger.debug("best-effort op failed", exc_info=True)
         return None
     return manifold if manifold._hyp else None
 
@@ -699,6 +703,7 @@ def _collect_observations(
         try:
             val = float(m.group(2))
         except ValueError:
+            logger.debug("best-effort op failed", exc_info=True)
             continue
         if name not in _METRIC_WHITELIST:
             continue
@@ -794,7 +799,7 @@ def _record_abduction(
         with open(trace_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(abd_entry, ensure_ascii=False) + "\n")
     except Exception:
-        pass  # 不阻塞主循环
+        logger.debug("best-effort op failed", exc_info=True)  # 不阻塞主循环
 
 
 def _append_observations_log(observations, path: Path, *, iteration: int) -> None:
@@ -1910,7 +1915,7 @@ LUCID review (mandatory after generating hypothesis):
                                     _hypo_manifold.add(_new_h)
                                     _save_manifold(_hypo_manifold, _hypo_manifold_path)
                                 except ValueError:
-                                    pass  # duplicate h_id, 跳过
+                                    logger.debug("best-effort op failed", exc_info=True)  # duplicate h_id, 跳过
                                 # v15 Phase 4 Task 9.2: harmonic trace entry
                                 _img_entry = {
                                     "iteration": _iter_n + 1,
@@ -1990,7 +1995,7 @@ LUCID review (mandatory after generating hypothesis):
                             _hypo_manifold.add(_bs_new_h)
                             _save_manifold(_hypo_manifold, _hypo_manifold_path)
                         except ValueError:
-                            pass  # duplicate h_id, 跳过
+                            logger.debug("best-effort op failed", exc_info=True)  # duplicate h_id, 跳过
                         # v15 Phase 5 Task 12.3: imagination 成功 → feedback 升级
                         # uncertain → capable (绕过盲点 = 实际能做).
                         # ponytail: 乐观反馈, 新 h 进 manifold 就算 success.
@@ -2134,6 +2139,7 @@ LUCID review (mandatory after generating hypothesis):
                 from huginn.events.audit_log import _resolve_audit_path as _rap
                 _audit_path = _rap()
             except Exception:
+                logger.debug("best-effort op failed", exc_info=True)
                 _audit_path = None
             # ponytail: prev_step_id 用上一轮的 iteration; 首轮 None, 不写 dep edge.
             _prev_sid = _iter_n if _iter_n > 0 else None
@@ -3070,6 +3076,7 @@ def _report_coverage_compass(ws: Path, checklist: str) -> str:
     try:
         report_text = report_path.read_text(encoding="utf-8", errors="ignore").lower()
     except Exception:
+        logger.debug("best-effort op failed", exc_info=True)
         return ""
     # 从 checklist 提取 keyword — 抓 [EXACT] 标记的组件名 + 数字指标
     keywords = set()
@@ -3148,10 +3155,12 @@ async def _llm_coverage_audit(
         if cache_key in _LLM_COVERAGE_CACHE:
             return _LLM_COVERAGE_CACHE[cache_key]
     except Exception:
+        logger.debug("best-effort op failed", exc_info=True)
         cache_key = None
     try:
         report_text = report_path.read_text(encoding="utf-8", errors="ignore")
     except Exception:
+        logger.debug("best-effort op failed", exc_info=True)
         return ""
     if len(report_text) > 8000:
         report_text = report_text[:8000] + "\n... (truncated)"
@@ -3241,6 +3250,7 @@ async def _derivation_chain_audit(
         if cache_key in _DERIVATION_AUDIT_CACHE:
             return _DERIVATION_AUDIT_CACHE[cache_key]
     except Exception:
+        logger.debug("best-effort op failed", exc_info=True)
         cache_key = None
 
     # outputs/ 文件清单 (名字+大小), 优先 .json/.npz/.csv 实验产物
@@ -3259,6 +3269,7 @@ async def _derivation_chain_audit(
     try:
         report_text = report_path.read_text(encoding="utf-8", errors="ignore")
     except Exception:
+        logger.debug("best-effort op failed", exc_info=True)
         return ""
     if len(report_text) > 6000:
         report_text = report_text[:6000] + "\n... (truncated)"
@@ -3416,6 +3427,7 @@ def _generate_fallback_figures(ws: Path, imgs_dir: Path) -> int:
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
     except ImportError:
+        logger.debug("best-effort op failed", exc_info=True)
         return 0
     # 字体统一 Arial 20pt+ 加粗 (用户规则)
     try:
@@ -3455,6 +3467,7 @@ def _generate_fallback_figures(ws: Path, imgs_dir: Path) -> int:
             if n_gen >= 4:
                 return n_gen
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             continue
 
     # .npy → histogram (1D) / scatter (2D) / bar chart (0-dim dict)
@@ -3513,9 +3526,10 @@ def _generate_fallback_figures(ws: Path, imgs_dir: Path) -> int:
                 if n_gen >= 4:
                     return n_gen
             except Exception:
+                logger.debug("best-effort op failed", exc_info=True)
                 continue
     except ImportError:
-        pass
+        logger.debug("best-effort op failed", exc_info=True)
 
     # .csv → line plot (找第一对都是数值的列, 跳过 SMILES 等文本列)
     for cp in outputs_dir.glob("*.csv"):
@@ -3543,7 +3557,7 @@ def _generate_fallback_figures(ws: Path, imgs_dir: Path) -> int:
                             float(r[_yi])
                             _ok += 1
                         except (ValueError, TypeError):
-                            pass
+                            logger.debug("best-effort op failed", exc_info=True)
                     if _total_check > 0 and _ok == _total_check:
                         _x_idx, _y_idx = _xi, _yi
                         break
@@ -3559,6 +3573,7 @@ def _generate_fallback_figures(ws: Path, imgs_dir: Path) -> int:
                     xs.append(float(r[_x_idx]))
                     ys.append(float(r[_y_idx]))
                 except (ValueError, TypeError):
+                    logger.debug("best-effort op failed", exc_info=True)
                     continue
             if len(xs) < 2:
                 continue
@@ -3575,6 +3590,7 @@ def _generate_fallback_figures(ws: Path, imgs_dir: Path) -> int:
             if n_gen >= 4:
                 return n_gen
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             continue
 
     return n_gen
@@ -3820,7 +3836,7 @@ async def _step3_adversarial(
                           flush=True)
                     break
             except (ValueError, TypeError):
-                pass
+                logger.debug("best-effort op failed", exc_info=True)
         try:
             _retry_report = report_path.read_text(encoding="utf-8")
             _retry_verdict_dict = await adversarial_critique(
@@ -4186,7 +4202,7 @@ async def run(
             import huginn.security.restricted_python as _rp
             _rp.validate_code = lambda code: None  # type: ignore[method-assign]
         except ImportError:
-            pass
+            logger.debug("best-effort op failed", exc_info=True)
 
     # ML 缓存路径重定向到 workspace, 避免 TRAE 沙箱拦截 ~/.cache 写入.
     # torch.save('xxx.pt') 在 C:\tmp\ 会被沙箱拦, 重定向 TORCH_HOME 解决.
@@ -4211,7 +4227,7 @@ async def run(
         import onnxruntime as _ort_init
         _ort_init.set_default_logger_severity(3)  # 3=Error, 4=Fatal
     except (ImportError, Exception):
-        pass
+        logger.debug("best-effort op failed", exc_info=True)
     sys.modules.setdefault("paddle", None)
     sys.modules.setdefault("paddlepaddle", None)
 
@@ -4328,6 +4344,7 @@ async def run(
         try:
             return _p5_gs.wall_clock_expired(_p5_goal_id)
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return False
 
     registry = ModelRegistry.from_config(cfg)
@@ -4663,7 +4680,7 @@ async def run(
                     if _p.exists():
                         _image_path = str(_p)
             except Exception:
-                pass  # 视觉接入是增强, 失败不阻塞文本路径
+                logger.debug("best-effort op failed", exc_info=True)  # 视觉接入是增强, 失败不阻塞文本路径
             _chat_gen = agent.chat(
                 msg, thread_id=tid or thread_id, image_path=_image_path,
                 include_history=not fresh_history,
@@ -5199,6 +5216,7 @@ async def run(
                 try:
                     _task_score = float(_rcb_score_env)
                 except ValueError:
+                    logger.debug("best-effort op failed", exc_info=True)
                     _task_score = None
             if _task_score is None and _step3_final_verdict == "fix_needed":
                 _task_score = 15.0  # 代理值: fix_needed 视为 <20
@@ -5494,6 +5512,7 @@ async def _run_mcmc_mode(
                 _abd = _hypo_manifold.abductive_inference(obs_list)
                 current = _abd.h_id if _abd else None
             except Exception:
+                logger.debug("best-effort op failed", exc_info=True)
                 current = None
             if current is None:
                 current = _mcmc_random.Random(42).choice(list(_hypo_manifold._hyp))

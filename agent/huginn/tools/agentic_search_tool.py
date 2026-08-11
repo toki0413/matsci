@@ -192,9 +192,11 @@ def _is_safe_url(url: str) -> bool:
             if ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local or ip_obj.is_reserved:
                 return False
         except (socket.gaierror, ValueError):
+            logger.debug("best-effort op failed", exc_info=True)
             return False
         return True
     except Exception:
+        logger.debug("best-effort op failed", exc_info=True)
         return False
 
 

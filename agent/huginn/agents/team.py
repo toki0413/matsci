@@ -209,6 +209,7 @@ class ModelTeam:
             try:
                 role = TeamRole(p.id)
             except ValueError:
+                logger.debug("best-effort op failed", exc_info=True)
                 continue
             model_name = _resolve_model_name(config, p.model_alias)
             caps = get_model_capabilities(model_name) if model_name else ModelCaps()
@@ -445,6 +446,7 @@ class ModelTeam:
                     )
                 )
             except Exception:
+                logger.debug("best-effort op failed", exc_info=True)
                 continue
         return steps
 

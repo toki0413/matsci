@@ -203,7 +203,7 @@ def _compute_darwin_score(step_eval: Any) -> float:
             try:
                 return _clamp01(1.0 - float(gs))
             except (TypeError, ValueError):
-                pass  # 坏值降级到 on_track 派生
+                logger.debug("best-effort op failed", exc_info=True)  # 坏值降级到 on_track 派生
         on_track = step_eval.get("on_track", "unsure")
     else:
         on_track = getattr(step_eval, "on_track", "unsure")
@@ -431,6 +431,7 @@ def _llm_evaluate(
             asyncio.get_running_loop()
             has_loop = True
         except RuntimeError:
+            logger.debug("best-effort op failed", exc_info=True)
             has_loop = False
 
         if hasattr(model, "ainvoke") and not has_loop:
@@ -566,6 +567,7 @@ async def _llm_evaluate_darwin(
             try:
                 current_iter = int(last.get("iteration", 0) or 0)
             except (TypeError, ValueError):
+                logger.debug("best-effort op failed", exc_info=True)
                 current_iter = 0
 
         interval = int(os.environ.get("HUGINN_DARWIN_LLM_INTERVAL", "5"))
@@ -659,6 +661,7 @@ def compute_tool_call_health(
                 try:
                     rec = json.loads(line)
                 except json.JSONDecodeError:
+                    logger.debug("best-effort op failed", exc_info=True)
                     continue
                 # schema 没有 step_id 就全收; 有了就按 step_id 过滤
                 rec_step = rec.get("step_id")
@@ -669,7 +672,7 @@ def compute_tool_call_health(
                         if int(rec_step) != step_id:
                             continue
                     except (TypeError, ValueError):
-                        pass
+                        logger.debug("best-effort op failed", exc_info=True)
                 etype = rec.get("type", "")
                 if etype not in ("tool.call", "tool.result", "tool.error"):
                     continue

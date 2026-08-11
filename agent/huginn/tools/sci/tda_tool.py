@@ -217,11 +217,11 @@ class TDATool(HuginnTool[TDAToolInput, TDAToolOutput]):
                 pairs = tmp
                 backend = "ripser"
             except ImportError:
-                pass
+                logger.debug("best-effort op failed", exc_info=True)
             except Exception:
                 # Numerical edge cases (empty input, degenerate distances) —
                 # let the next backend have a go.
-                pass
+                logger.debug("best-effort op failed", exc_info=True)
 
         # 2) gudhi — full-featured, slower but reliable
         if pairs is None:
@@ -249,7 +249,7 @@ class TDATool(HuginnTool[TDAToolInput, TDAToolOutput]):
                 ]
                 backend = "gudhi"
             except ImportError:
-                pass
+                logger.debug("best-effort op failed", exc_info=True)
             except Exception:
                 logger.debug("persistence diagram failed", exc_info=True)
 

@@ -344,6 +344,7 @@ class WorkflowEngine:
                         1, (parts[1] * parts[2] * parts[3]) if len(parts) >= 4 else 1
                     )
                 except Exception:
+                    logger.debug("best-effort op failed", exc_info=True)
                     n_kpts = 1
             walltime_hours *= max(1.0, encut / 520.0) * max(1.0, n_kpts / 8.0)
         elif "lammps" in tool_lower:
@@ -533,7 +534,7 @@ class WorkflowEngine:
                     tool_input["__persona_prompt"] = persona.system_prompt
             except Exception:
                 # persona 找不到不要把 stage 整个挂掉, 跟现有诊断钩子的容错一致
-                pass
+                logger.debug("best-effort op failed", exc_info=True)
 
         # emotion_state: dict 转 EmotionState, 生成情绪片段注入.
         # 不走持久化, 只用临时 tracker 复用 context_prompt 的逻辑.
@@ -577,6 +578,7 @@ class WorkflowEngine:
             tracker._state = state
             return tracker.context_prompt()
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return ""
 
     async def _diagnose_and_fix(
@@ -826,6 +828,7 @@ class WorkflowEngine:
                         return bool(fn(data, threshold=rule.threshold))
                     return bool(fn(data))
                 except Exception:
+                    logger.debug("best-effort op failed", exc_info=True)
                     return False
             # Unknown validator — fail closed for safety
             return False
@@ -845,4 +848,5 @@ class WorkflowEngine:
             mod = importlib.import_module(module_path)
             return getattr(mod, fn_name, None)
         except (ImportError, AttributeError):
+            logger.debug("best-effort op failed", exc_info=True)
             return None

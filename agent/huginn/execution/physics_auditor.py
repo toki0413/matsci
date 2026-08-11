@@ -517,7 +517,7 @@ class PhysicsAuditor:
                             )
                         )
                 except (ValueError, TypeError):
-                    pass
+                    logger.debug("best-effort op failed", exc_info=True)
 
             if charge is not None:
                 try:
@@ -534,7 +534,7 @@ class PhysicsAuditor:
                             )
                         )
                 except (ValueError, TypeError):
-                    pass
+                    logger.debug("best-effort op failed", exc_info=True)
         except Exception:
             logger.debug("gaussian audit failed", exc_info=True)
 
@@ -1000,7 +1000,7 @@ class PhysicsAuditor:
                         val = line.split("max:")[-1].strip().split()[0]
                         courant_maxes.append(float(val))
                     except (ValueError, IndexError):
-                        pass
+                        logger.debug("best-effort op failed", exc_info=True)
             if courant_maxes:
                 max_co = max(courant_maxes)
                 if max_co > 1.0:
@@ -1055,6 +1055,7 @@ class PhysicsAuditor:
                 try:
                     fv = float(val)
                 except (ValueError, TypeError):
+                    logger.debug("best-effort op failed", exc_info=True)
                     continue
                 if fv > 0.1:
                     report.findings.append(
@@ -1509,7 +1510,7 @@ class PhysicsAuditor:
             try:
                 return int(params["n_atoms"])
             except (ValueError, TypeError):
-                pass
+                logger.debug("best-effort op failed", exc_info=True)
         # From structure string — XYZ format has atom count on the first line
         struct = params.get("structure") or params.get("poscar")
         if isinstance(struct, str):
@@ -1518,14 +1519,14 @@ class PhysicsAuditor:
                 try:
                     return int(lines[0].strip())
                 except ValueError:
-                    pass
+                    logger.debug("best-effort op failed", exc_info=True)
             # POSCAR: line 7 (index 6) holds per-element counts
             if len(lines) > 6:
                 counts = lines[6].strip().split()
                 try:
                     return sum(int(x) for x in counts)
                 except ValueError:
-                    pass
+                    logger.debug("best-effort op failed", exc_info=True)
         return 0
 
 

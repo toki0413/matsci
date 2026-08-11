@@ -48,6 +48,7 @@ class EngineActMixin:
             )
             plan = self._parse_plan(response)
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return None
 
         # H4: GRILL 退出检查 — LLM 输出 plan 时若含 "shared understanding" 确认标记
@@ -409,6 +410,7 @@ class EngineActMixin:
             existing = archive.list_variants(obj_hash)
             novelty = compute_novelty(chosen.to_dict(), existing)
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             novelty = 0.0
 
         efficiency = result.n_completed / max(1, result.n_total)

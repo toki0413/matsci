@@ -43,6 +43,7 @@ try:
     from sklearn.metrics.pairwise import cosine_similarity as _sklearn_cosine
     _SKLEARN_OK = True
 except ImportError:  # pragma: no cover
+    logger.debug("best-effort op failed", exc_info=True)
     _SKLEARN_OK = False
 
 
@@ -105,7 +106,7 @@ def _compute_semantic_overlap(text_a: str, text_b: str) -> float:
         except ValueError:
             # TfidfVectorizer 在空 vocab (全 stop word / 全 1-char) 时抛 ValueError,
             # 走 stdlib 兜底.
-            pass
+            logger.debug("best-effort op failed", exc_info=True)
         except Exception:
             logger.debug("sklearn tfidf cosine failed, fallback to stdlib", exc_info=True)
 
@@ -202,6 +203,7 @@ def load_meta_trace_text(workspace: str | Path, last_n: int = 5) -> str:
         with trace_path.open("r", encoding="utf-8") as f:
             lines = f.readlines()
     except OSError:
+        logger.debug("best-effort op failed", exc_info=True)
         return ""
     if not lines:
         return ""
@@ -216,6 +218,7 @@ def load_meta_trace_text(workspace: str | Path, last_n: int = 5) -> str:
         try:
             e = json.loads(line)
         except json.JSONDecodeError:
+            logger.debug("best-effort op failed", exc_info=True)
             continue
         # 旧 entry 缺 simplicial complex 字段, 补默认值不阻塞读取.
         if not {"simplex_id", "cochain_type", "domain", "task_id"}.issubset(e.keys()):
@@ -363,6 +366,7 @@ class ContextBuilder:
                 from huginn.utils.session_context import get_user_message
                 query = get_user_message() or "materials science computation"
             except Exception:
+                logger.debug("best-effort op failed", exc_info=True)
                 query = "materials science computation"
         parts: list[str] = []
         try:
@@ -416,6 +420,7 @@ class ContextBuilder:
                 "### End Project Knowledge Context"
             )
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return ""
 
     def build_episode_history_text(
@@ -523,6 +528,7 @@ class ContextBuilder:
                 "### End Domain Knowledge Context"
             )
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return ""
 
     # ── Emotion ────────────────────────────────────────────────────
@@ -676,6 +682,7 @@ class ContextBuilder:
             lines.append("### End Persistent Goal")
             return "\n".join(lines)
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return ""
 
     def build_session_continuity(self, session_state=None) -> str:
@@ -754,6 +761,7 @@ class ContextBuilder:
             mtime = trace_path.stat().st_mtime
             size = trace_path.stat().st_size
         except OSError:
+            logger.debug("best-effort op failed", exc_info=True)
             return ""
 
         # mtime + size 双重缓存键 — mtime 秒级粒度, 加 size 防同秒多次写漏读
@@ -830,6 +838,7 @@ class ContextBuilder:
             self._evolution_rules_cache = "\n".join(lines)
             return self._evolution_rules_cache
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return ""
 
     # ── Prospective / target chain / step eval ─────────────────────
@@ -1018,7 +1027,7 @@ class ContextBuilder:
             inconsistent, reason = _check_pmk_consistency(pmk_state)
             consistency_label = "INCONSISTENT" if inconsistent else "consistent"
         except Exception:
-            pass  # import 失败或检查异常, 标 consistent 不阻塞
+            logger.debug("best-effort op failed", exc_info=True)  # import 失败或检查异常, 标 consistent 不阻塞
 
         lines = [
             "## PMK 循环状态",

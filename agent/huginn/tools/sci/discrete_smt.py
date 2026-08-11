@@ -150,6 +150,7 @@ def _analyze_graph_topology(
         try:
             tw_upper, _ = nx.algorithms.approximation.treewidth_min_degree(G)
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             tw_upper = None
 
     return {

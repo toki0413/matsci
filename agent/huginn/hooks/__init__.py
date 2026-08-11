@@ -512,6 +512,7 @@ class AnomalyDetectionHook:
             try:
                 val_f = float(val)
             except (TypeError, ValueError):
+                logger.debug("best-effort op failed", exc_info=True)
                 continue
             if std <= 0:
                 continue

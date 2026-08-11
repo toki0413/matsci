@@ -228,6 +228,7 @@ async def eval_history(limit: int = 20) -> dict[str, Any]:
                     "avg_grader_score": data.get("avg_grader_score", 0.0),
                 })
             except Exception:
+                logger.debug("best-effort op failed", exc_info=True)
                 continue
     except Exception:
         logger.debug("eval history list skipped", exc_info=True)
@@ -264,6 +265,7 @@ async def eval_analyze(params: dict[str, Any]) -> dict[str, Any]:
                 data = json.loads(p.read_text(encoding="utf-8"))
                 runs.append(data)
             except Exception:
+                logger.debug("best-effort op failed", exc_info=True)
                 continue
     except Exception:
         logger.debug("eval runs glob skipped", exc_info=True)

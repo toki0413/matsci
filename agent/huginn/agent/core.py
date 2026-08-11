@@ -848,7 +848,7 @@ class HuginnAgent(
                                             if 0 <= _fv < 0.6:
                                                 _weak_metrics.append(f"{_k}={_fv:.3f}")
                                         except (TypeError, ValueError):
-                                            pass
+                                            logger.debug("best-effort op failed", exc_info=True)
                             except Exception:
                                 logger.debug("weak-metric scan failed", exc_info=True)
                         if _weak_metrics:

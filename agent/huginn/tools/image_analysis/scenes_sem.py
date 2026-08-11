@@ -74,7 +74,7 @@ def sem_analysis(args: ImageAnalysisInput) -> ToolResult:
             grad = np.sqrt(gx ** 2 + gy ** 2)
             edge_density = float((grad > grad.mean() + 2 * grad.std()).mean())
         except ImportError:
-            pass
+            logger.debug("best-effort op failed", exc_info=True)
 
     # 直方图 (32 bins)
     hist, _ = np.histogram(arr, bins=32, range=(0, 255))

@@ -155,6 +155,7 @@ class ScienceSkillsLoader:
                 # 支持 paths/allowed_tools/model/effort 等扩展字段
                 parsed = parse_skill_file(skill_md)
             except OSError:
+                logger.debug("best-effort op failed", exc_info=True)
                 continue
             except Exception as exc:
                 logger.warning("解析 SKILL.md 失败 %s: %s", skill_md, exc)

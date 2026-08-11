@@ -158,7 +158,7 @@ async def agent_websocket(websocket: WebSocket):
                 if data.get("type") == "pong":
                     continue
             except (json.JSONDecodeError, TypeError):
-                pass
+                logger.debug("best-effort op failed", exc_info=True)
 
             try:
                 data = json.loads(message)
@@ -275,7 +275,7 @@ async def agent_websocket(websocket: WebSocket):
                 await _send_error(websocket, f"Handler error: {dispatch_exc}")
 
     except WebSocketDisconnect:
-        pass
+        logger.debug("best-effort op failed", exc_info=True)
     except Exception as e:
         logger.error("WebSocket error: %s", e, exc_info=True)
     finally:

@@ -417,6 +417,7 @@ class MaterialsAutoResearchTool(HuginnTool):
             try:
                 content = outcar.read_text(encoding="utf-8", errors="ignore")
             except Exception:
+                logger.debug("best-effort op failed", exc_info=True)
                 content = ""
             if parsed_key == "energy":
                 m = self._TOTEN_RE.findall(content)
@@ -580,7 +581,7 @@ class MaterialsAutoResearchTool(HuginnTool):
         try:
             return json.loads(text)
         except json.JSONDecodeError:
-            pass
+            logger.debug("best-effort op failed", exc_info=True)
         # 兜底: 找第一个 { 到最后一个 }
         start = text.find("{")
         end = text.rfind("}")
@@ -588,7 +589,7 @@ class MaterialsAutoResearchTool(HuginnTool):
             try:
                 return json.loads(text[start : end + 1])
             except json.JSONDecodeError:
-                pass
+                logger.debug("best-effort op failed", exc_info=True)
         return {}
 
     def _write_incar(self, path: Path, params: dict[str, Any]) -> None:

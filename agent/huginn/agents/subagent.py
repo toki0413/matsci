@@ -479,6 +479,7 @@ class SubagentDispatch:
         try:
             from huginn.utils.tokens import count_tokens
         except ImportError:
+            logger.debug("best-effort op failed", exc_info=True)
             return 0
         total = 0
         for msg in state.get("messages", []):

@@ -95,6 +95,7 @@ def sanity_check_judge(judge_script: str, known_answer: str) -> bool:
     try:
         tree = ast.parse(judge_script)
     except SyntaxError:
+        logger.debug("best-effort op failed", exc_info=True)
         return False
 
     for node in ast.walk(tree):
@@ -123,6 +124,7 @@ def sanity_check_judge(judge_script: str, known_answer: str) -> bool:
     try:
         exec(compile(tree, "<judge>", "exec"), safe_globals)
     except Exception:
+        logger.debug("best-effort op failed", exc_info=True)
         return False
     judge_fn = safe_globals.get("judge")
     if not callable(judge_fn):
@@ -132,6 +134,7 @@ def sanity_check_judge(judge_script: str, known_answer: str) -> bool:
     try:
         ok_pos, _ = judge_fn(known_answer)
     except Exception:
+        logger.debug("best-effort op failed", exc_info=True)
         return False
     if ok_pos is not True:
         return False
@@ -140,6 +143,7 @@ def sanity_check_judge(judge_script: str, known_answer: str) -> bool:
     try:
         ok_neg, _ = judge_fn("__definitely_wrong_answer_xyz__")
     except Exception:
+        logger.debug("best-effort op failed", exc_info=True)
         return False
     return ok_neg is False
 
@@ -159,6 +163,7 @@ def to_benchmark_task(synth: SynthesizedTask) -> BenchmarkTask | None:
         exec(compile(synth.judge_script, "<judge>", "exec"), safe_globals)
         judge_fn = safe_globals["judge"]
     except Exception:
+        logger.debug("best-effort op failed", exc_info=True)
         return None
 
     def evaluate(output: str) -> tuple[bool, str]:
@@ -343,7 +348,7 @@ def _parse_json(text: str) -> dict[str, Any]:
         if isinstance(result, dict):
             return result
     except (json.JSONDecodeError, TypeError):
-        pass
+        logger.debug("best-effort op failed", exc_info=True)
     return {}
 
 
