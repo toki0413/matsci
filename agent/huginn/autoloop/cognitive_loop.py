@@ -1065,7 +1065,7 @@ class CognitiveLoopMixin:
                 if _attempt < 2:
                     _time.sleep(1 * (_attempt + 1))
         except Exception:
-            pass  # no git repo or git unavailable — not our problem
+            logger.debug("best-effort op failed", exc_info=True)  # no git repo or git unavailable — not our problem
 
     def _darwin_ratchet_check(self) -> None:
         """Darwin ratchet: 算假设质量分, 只保留改进, 连续低增益 → early stop.
@@ -1161,7 +1161,7 @@ class CognitiveLoopMixin:
                 except Exception:
                     logger.debug("belief metric track skipped", exc_info=True)
             except Exception:
-                pass  # 循环 import 或其他故障 → 回退原逻辑
+                logger.debug("best-effort op failed", exc_info=True)  # 循环 import 或其他故障 → 回退原逻辑
 
         # v6 G54: 把 darwin 分数 / supported_ratio 暴露给 _plan / _validate
         # ponytail: evidence_strength 用 supported_ratio 做代理, 已在算分时拿到,
@@ -1607,6 +1607,7 @@ class CognitiveLoopMixin:
                 top_k=1,
             )
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return ""
         if not results:
             return ""
@@ -1617,6 +1618,7 @@ class CognitiveLoopMixin:
         try:
             snap = json.loads(content)
         except (ValueError, TypeError):
+            logger.debug("best-effort op failed", exc_info=True)
             return ""
         by_type = snap.get("by_type", {}) or {}
         if not by_type:
@@ -1694,6 +1696,7 @@ class CognitiveLoopMixin:
                 top_k=1,
             )
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return ""
         if not results:
             return ""
@@ -1704,6 +1707,7 @@ class CognitiveLoopMixin:
         try:
             snap = json.loads(content)
         except (ValueError, TypeError):
+            logger.debug("best-effort op failed", exc_info=True)
             return ""
         parts = [
             f"hypothesis: {(snap.get('hypothesis') or '')[:120]}",
@@ -1844,6 +1848,7 @@ class CognitiveLoopMixin:
         try:
             data = json.loads(raw[start:end + 1])
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return None
         action = str(data.get("action", "")).strip().lower()
         if action not in VALID_ACTIONS:
@@ -2086,6 +2091,7 @@ Respond JSON only:
                     objective[:100],
                 )
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             trajectory_path = None
 
         # goal judgment
@@ -2112,6 +2118,7 @@ Respond JSON only:
             self._provenance_logger.log(provenance_record)
             provenance_path = str(self._provenance_logger.path)
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             provenance_path = None
 
         # FAIR metadata
@@ -2909,6 +2916,7 @@ Respond JSON only:
                         from huginn.autoloop.engine import AutoloopEngine
                         ftype = AutoloopEngine._classify_failure(validation, _redteam)
                     except Exception:
+                        logger.debug("best-effort op failed", exc_info=True)
                         ftype = "hypothesis_error"
                     by_type = getattr(self, "_consecutive_failures_by_type", {}) or {}
                     by_type[ftype] = by_type.get(ftype, 0) + 1
@@ -3713,6 +3721,7 @@ def metacog_check_completion(
             # 0 节点 → 0; 否则 [0,1] 标准化, 越多分量越健康
             topo = (n_comp / n_nodes) if n_nodes > 0 else 0.0
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             topo = 0.5  # 不阻断, advisory
     else:
         topo = 1.0  # 没 graph, 默认不阻断
@@ -3734,6 +3743,7 @@ def metacog_check_completion(
         else:
             repro = 0.0
     except Exception:
+        logger.debug("best-effort op failed", exc_info=True)
         repro = 0.5
     if repro < 0.5:
         reasons.append(f"repro_evidence={repro:.2f} < 0.5")
@@ -3749,6 +3759,7 @@ def metacog_check_completion(
         # 10+ 引用 → 1.0
         strength = min(1.0, cite_hits / 10.0)
     except Exception:
+        logger.debug("best-effort op failed", exc_info=True)
         strength = 0.5
     if strength < 0.5:
         reasons.append(f"evidence_strength={strength:.2f} < 0.5")

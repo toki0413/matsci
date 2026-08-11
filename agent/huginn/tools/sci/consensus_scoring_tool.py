@@ -210,6 +210,7 @@ class ConsensusScoringTool(HuginnTool):
             from scipy.stats import beta as beta_dist
             has_scipy = True
         except ImportError:
+            logger.debug("best-effort op failed", exc_info=True)
             has_scipy = False
             beta_dist = None
 

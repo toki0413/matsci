@@ -1009,7 +1009,7 @@ boundaryField
                             val = float(part.split("=")[-1].strip())
                             result["final_residuals"][var_part] = val
                         except (ValueError, IndexError):
-                            pass
+                            logger.debug("best-effort op failed", exc_info=True)
 
         result["converged"] = "End" in content or "Finalising parallel run" in content
         return result

@@ -417,6 +417,7 @@ class EngineReflectMixin:
         try:
             _node = self.hypothesis_graph._nodes.get(_hyp_id)
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return
         if _node is None or _node.status != "untested":
             return
@@ -622,6 +623,7 @@ class EngineReflectMixin:
             _jac = len(_tok_a & _tok_b) / len(_tok_a | _tok_b)
             return _jac > 0.3
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return None
 
 
@@ -780,6 +782,7 @@ class EngineReflectMixin:
         try:
             _sm = _mem.longterm.get_self_model()
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return
         if not _sm:
             return
@@ -787,6 +790,7 @@ class EngineReflectMixin:
             from huginn.autoloop.goal_store import get_goal_store
             _gs = get_goal_store()
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return
         _existing: set[str] = set()
         try:
@@ -844,6 +848,7 @@ class EngineReflectMixin:
         try:
             _node = self.hypothesis_graph._nodes.get(hypothesis_id)
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return
         if _node is None:
             return
@@ -1051,6 +1056,7 @@ class EngineReflectMixin:
             from huginn.tools.literature import LiteratureInput, LiteratureTool
             from huginn.validation.innovation_signal import InnovationSignalDetector
         except ImportError:
+            logger.debug("best-effort op failed", exc_info=True)
             return {}
 
         tool = LiteratureTool()
@@ -1083,6 +1089,7 @@ class EngineReflectMixin:
                 signal = detector.detect(prop_key, agent_value, lit_values)
                 comparison[prop_key] = signal
             except Exception:
+                logger.debug("best-effort op failed", exc_info=True)
                 continue
 
         # 知识注入层: multi_review 产 high_confidence_claims, 平铺到 comparison
@@ -1130,6 +1137,7 @@ class EngineReflectMixin:
                     parts.append(f"{k}={v}")
             return " ".join(parts)[:400]
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return ""
 
 
@@ -1248,6 +1256,7 @@ class EngineReflectMixin:
             try:
                 data = json.loads(f.read_text(encoding="utf-8"))
             except Exception:
+                logger.debug("best-effort op failed", exc_info=True)
                 continue
             spans = data.get("spans") or []
             actions = [
@@ -1292,6 +1301,7 @@ class EngineReflectMixin:
             from huginn.knowledge.trajectory_pattern import trajectory_match
             from huginn.runtime.cycle_detect import detect_cycle, is_stuck
         except ImportError:
+            logger.debug("best-effort op failed", exc_info=True)
             return None
 
         # M3: 周期检测 (在当前 run 内)
@@ -2507,6 +2517,7 @@ class EngineReflectMixin:
             )
             report_narrative = (report_narrative or "").strip()
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             report_narrative = ""
 
         report_path = (

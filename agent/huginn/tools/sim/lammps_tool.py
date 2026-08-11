@@ -23,15 +23,16 @@ from huginn.security import SandboxExecutor
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.validation.handle_validator import HandleValidator
 
+logger = logging.getLogger(__name__)
+
 try:
     import huginn_ext
 
     _HAS_HUGINN_EXT = True
 except ImportError:
+    logger.debug("best-effort op failed", exc_info=True)
     huginn_ext = None
     _HAS_HUGINN_EXT = False
-
-logger = logging.getLogger(__name__)
 
 # submit_async 实际可以跑的 LAMMPS 计算类型
 _LAMMPS_COMPUTE_ACTIONS = ("run", "minimize", "equilibrate")
@@ -749,7 +750,7 @@ class LammpsTool(HuginnTool):
             await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
         except TimeoutError:
             # 超时: 作业还在跑, 返回当前状态 (不取消 task, 让它继续)
-            pass
+            logger.debug("best-effort op failed", exc_info=True)
         except Exception as exc:
             # task 本身挂了 (不是超时), 把错误记下来
             job["status"] = "failed"
@@ -1103,6 +1104,7 @@ class LammpsTool(HuginnTool):
             input_path.write_text(new_script, encoding="utf-8")
             return {"fixes": changed, "reasoning": reasoning}
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return None
 
     def _is_float(self, s: str) -> bool:
@@ -1110,6 +1112,7 @@ class LammpsTool(HuginnTool):
             float(s)
             return True
         except ValueError:
+            logger.debug("best-effort op failed", exc_info=True)
             return False
 
     def _to_float_or_str(self, s: str):
@@ -1302,6 +1305,7 @@ class LammpsTool(HuginnTool):
                         peak_idx = max(range(len(g)), key=lambda k: g[k])
                         peak_data.append((fr.get("timestep", fi), r[peak_idx]))
                     except (ValueError, TypeError):
+                        logger.debug("best-effort op failed", exc_info=True)
                         continue
                 if peak_data:
                     _ts.append({
@@ -1559,6 +1563,7 @@ class LammpsTool(HuginnTool):
             r_values = ((r_edges[:-1] + r_edges[1:]) / 2).tolist()
             return {"r": r_values, "g": g.tolist(), "bins": bins, "r_max": r_max}
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return None
 
     def _compute_vacf(self, frames: list[dict]) -> list[dict] | None:
@@ -1611,6 +1616,7 @@ class LammpsTool(HuginnTool):
 
             return vacf_data
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return None
 
     def _green_kubo_diffusion(self, vacf_data: list[dict]) -> float | None:
@@ -1646,6 +1652,7 @@ class LammpsTool(HuginnTool):
             d_gk = integral / 3.0
             return float(d_gk)
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return None
 
     # ------------------------------------------------------------------ van Hove
@@ -1720,6 +1727,7 @@ class LammpsTool(HuginnTool):
                 })
             return out
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return None
 
     def _compute_F_q_t(  # noqa: N802
@@ -1790,6 +1798,7 @@ class LammpsTool(HuginnTool):
                 out.append(f_entry)
             return out
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return None
 
     # ------------------------------------------------------------------ DEM

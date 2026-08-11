@@ -456,6 +456,7 @@ def _safe_int(val: Any) -> int:
     try:
         return int(val)
     except (TypeError, ValueError):
+        logger.debug("best-effort op failed", exc_info=True)
         return 0
 
 

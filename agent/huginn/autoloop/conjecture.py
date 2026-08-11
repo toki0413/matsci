@@ -853,7 +853,7 @@ Output ONLY a JSON object with keys: transferred_pattern, domain_mapping (object
             if isinstance(result, dict):
                 return result
         except (json.JSONDecodeError, TypeError):
-            pass
+            logger.debug("best-effort op failed", exc_info=True)
         return {}
 
     def _log_research(
@@ -984,6 +984,7 @@ def _lookup_domain(domain: str) -> dict[str, str]:
             top_k=3,
         )
     except Exception:
+        logger.debug("best-effort op failed", exc_info=True)
         return {}
     if not results:
         return {}

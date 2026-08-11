@@ -20,12 +20,14 @@ try:  # Task 14 的 CrossTaskStore, 可能尚未实现
     from huginn.metacog.cross_task_store import CrossTaskStore  # noqa: F401
     _HAS_CROSS_TASK_STORE = True
 except Exception:
+    logger.debug("best-effort op failed", exc_info=True)
     _HAS_CROSS_TASK_STORE = False
 
 try:  # 项目已有 KG
     from huginn.kg.graph import ProjectKnowledgeGraph  # noqa: F401
     _HAS_KG = True
 except Exception:
+    logger.debug("best-effort op failed", exc_info=True)
     _HAS_KG = False
 
 

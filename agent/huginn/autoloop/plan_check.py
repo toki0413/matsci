@@ -198,7 +198,7 @@ class PlanCheckMixin:
                         + "\n"
                     )
         except Exception:
-            pass  # pipeline 是 advisory, 失败不阻塞
+            logger.debug("best-effort op failed", exc_info=True)  # pipeline 是 advisory, 失败不阻塞
 
         blocks = self._apply_block_patches(
             [
@@ -916,6 +916,7 @@ PREDICTION: <what you expect the result to look like — be specific: "energy ~ 
                     )
             except Exception:
                 # 解析失败静默跳过 — 量纲库不全不该阻塞 plan_check
+                logger.debug("best-effort op failed", exc_info=True)
                 continue
         return warnings
 

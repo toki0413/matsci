@@ -317,7 +317,7 @@ class CitationVerifier:
             if isinstance(data, list):
                 return data
         except json.JSONDecodeError:
-            pass
+            logger.debug("best-effort op failed", exc_info=True)
         # 找 [ ... ]
         start = text.find("[")
         end = text.rfind("]")
@@ -325,7 +325,7 @@ class CitationVerifier:
             try:
                 return json.loads(text[start : end + 1])
             except json.JSONDecodeError:
-                pass
+                logger.debug("best-effort op failed", exc_info=True)
         return []
 
 
@@ -1160,6 +1160,7 @@ class DeliAutoResearch:
                 ps._math_category = cat  # type: ignore[attr-defined]
                 mapped.append(ps)
             except Exception:
+                logger.debug("best-effort op failed", exc_info=True)
                 continue
         state.physical_structures = mapped
         if mapped:
@@ -2096,6 +2097,7 @@ def _get_rag_search_fn(context: ToolContext | None) -> Any | None:
                     try:
                         loop = asyncio.get_running_loop()
                     except RuntimeError:
+                        logger.debug("best-effort op failed", exc_info=True)
                         loop = None
                     if loop and loop.is_running():
                         # 在 async 上下文里, 创建 task
@@ -2393,7 +2395,7 @@ def _safe_json_load(text: str, default: Any) -> Any:
     try:
         return json.loads(text)
     except json.JSONDecodeError:
-        pass
+        logger.debug("best-effort op failed", exc_info=True)
     # 找 { ... } 或 [ ... ]
     for start_char, end_char in [("{", "}"), ("[", "]")]:
         start = text.find(start_char)
@@ -2402,5 +2404,6 @@ def _safe_json_load(text: str, default: Any) -> Any:
             try:
                 return json.loads(text[start : end + 1])
             except json.JSONDecodeError:
+                logger.debug("best-effort op failed", exc_info=True)
                 continue
     return default

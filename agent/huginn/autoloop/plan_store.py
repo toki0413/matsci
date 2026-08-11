@@ -162,7 +162,7 @@ def _file_lock(path: Path):
 
                 fcntl.flock(fd, fcntl.LOCK_UN)
         except OSError:
-            pass
+            logger.debug("best-effort op failed", exc_info=True)
         os.close(fd)
         with contextlib.suppress(OSError):
             lock_path.unlink()

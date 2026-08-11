@@ -26,6 +26,7 @@ try:
     import plotdigitizer as _pd  # noqa: F401
     _PLOTDIGITIZER_AVAILABLE = True
 except ImportError:
+    logger.debug("best-effort op failed", exc_info=True)
     _PLOTDIGITIZER_AVAILABLE = False
 
 # 匹配刻度数字: 整数 / 小数 / 科学计数法 (1e-5, -2.3E+4)
@@ -37,6 +38,7 @@ def _is_finite_number(s: str) -> bool:
     try:
         v = float(s)
     except (ValueError, TypeError):
+        logger.debug("best-effort op failed", exc_info=True)
         return False
     return bool(np.isfinite(v))
 

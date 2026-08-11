@@ -205,7 +205,7 @@ def _make_ws_approval_callback(
             _pending_tasks.add(task)
             task.add_done_callback(_pending_tasks.discard)
         except RuntimeError:
-            pass
+            logger.debug("best-effort op failed", exc_info=True)
 
         if is_dangerous:
             logger.warning(
@@ -788,7 +788,7 @@ async def _handle_user_input(
         _team = _build_model_team()
         agent._team_ref = _team
     except Exception:
-        pass  # No team config or team module — fine, just no vision delegation
+        logger.debug("best-effort op failed", exc_info=True)  # No team config or team module — fine, just no vision delegation
 
     # Team mode trigger — keyword OR config flag
     use_team = False

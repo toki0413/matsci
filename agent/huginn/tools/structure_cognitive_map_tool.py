@@ -29,6 +29,7 @@ def is_available() -> bool:
         import scipy  # noqa: F401
         return True
     except ImportError:
+        logger.debug("best-effort op failed", exc_info=True)
         return False
 
 

@@ -1139,7 +1139,7 @@ class KnowledgeBase:
                     if isinstance(tags, list):
                         all_tags.update(tags)
                 except (json.JSONDecodeError, TypeError):
-                    pass
+                    logger.debug("best-effort op failed", exc_info=True)
             elif isinstance(raw_tags, list):
                 all_tags.update(raw_tags)
 
@@ -1176,7 +1176,7 @@ class KnowledgeBase:
                     if isinstance(t, list):
                         chunk_tags.update(t)
                 except (json.JSONDecodeError, TypeError):
-                    pass
+                    logger.debug("best-effort op failed", exc_info=True)
             elif isinstance(raw_tags, list):
                 chunk_tags.update(raw_tags)
             # 有交集就算命中

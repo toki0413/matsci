@@ -50,6 +50,7 @@ def _get_memory() -> Any:
 
             _memory_singleton = LongTermMemory()
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             _memory_broken = True
             return None
     return _memory_singleton
@@ -130,6 +131,7 @@ class PersonalizationTool(HuginnTool[PersonalizationInput, PersonalizationOutput
         try:
             return datetime.fromisoformat(p.read_text(encoding="utf-8").strip())
         except (ValueError, OSError):
+            logger.debug("best-effort op failed", exc_info=True)
             return None
 
     def _write_last_consolidation(self) -> None:

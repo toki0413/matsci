@@ -32,6 +32,7 @@ try:
 
     _PSUTIL_OK = True
 except ImportError:
+    logger.debug("best-effort op failed", exc_info=True)
     psutil = None  # type: ignore[assignment]
     _PSUTIL_OK = False
 
@@ -290,6 +291,7 @@ class SystemHealthMonitor:
                 try:
                     usage = psutil.disk_usage(part.mountpoint)
                 except (PermissionError, OSError):
+                    logger.debug("best-effort op failed", exc_info=True)
                     continue
                 disk[part.mountpoint] = {
                     "percent": usage.percent,
@@ -306,7 +308,7 @@ class SystemHealthMonitor:
             load = os.getloadavg()
             load_avg = (load[0], load[1], load[2])
         except (AttributeError, OSError):
-            pass
+            logger.debug("best-effort op failed", exc_info=True)
 
         return SystemMetrics(
             timestamp=time.time(),
@@ -345,6 +347,7 @@ class SystemHealthMonitor:
                 cpu_list.append(entry)
                 mem_list.append(entry)
             except (psutil.NoSuchProcess, psutil.AccessDenied):
+                logger.debug("best-effort op failed", exc_info=True)
                 continue
         cpu_list.sort(key=lambda x: x["cpu_percent"], reverse=True)
         mem_list.sort(key=lambda x: x["memory_percent"], reverse=True)

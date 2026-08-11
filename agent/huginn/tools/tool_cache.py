@@ -351,6 +351,7 @@ def cacheable(
                 else:
                     inner = _default_key(args, kwargs)
             except Exception:
+                logger.debug("best-effort op failed", exc_info=True)
                 return None
             if inner is None:
                 return None

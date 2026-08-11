@@ -243,6 +243,7 @@ class VaultSecretBackend(SecretBackend):
                 return True
             return False
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return False
 
     def exists(self, name: str) -> bool:
@@ -286,8 +287,10 @@ class AWSSecretsManagerBackend(SecretBackend):
             response = client.get_secret_value(SecretId=self._full_name(name))
             return response.get("SecretString")
         except client.exceptions.ResourceNotFoundException:
+            logger.debug("best-effort op failed", exc_info=True)
             return None
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return None
 
     def set(self, name: str, value: str) -> None:
@@ -313,6 +316,7 @@ class AWSSecretsManagerBackend(SecretBackend):
             )
             return True
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return False
 
     def list_keys(self, prefix: str = "") -> list[str]:

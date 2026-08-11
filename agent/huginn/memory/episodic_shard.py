@@ -58,6 +58,7 @@ def _parse_shard_name(name: str) -> tuple[int, int] | None:
     try:
         return int(parts[0]), int(parts[1])
     except ValueError:
+        logger.debug("best-effort op failed", exc_info=True)
         return None
 
 
@@ -207,6 +208,7 @@ class EpisodicShardReader:
                         out.append(json.loads(line))
                     except json.JSONDecodeError:
                         # 损坏行跳过, 不让一行坏数据干废整个 reader
+                        logger.debug("best-effort op failed", exc_info=True)
                         continue
         except OSError as e:
             logger.warning("episodic shard read fail %s: %s", path, e)

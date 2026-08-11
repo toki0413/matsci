@@ -276,6 +276,7 @@ class ContextMixin:
                 try:
                     name = t.name
                 except Exception:
+                    logger.debug("best-effort op failed", exc_info=True)
                     continue
                 if isinstance(name, str) and name:
                     names.add(name)

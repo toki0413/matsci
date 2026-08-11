@@ -157,6 +157,7 @@ def _check_disk_freshness(path: pathlib.Path | None) -> bool:
     try:
         mtime = path.stat().st_mtime
     except OSError:
+        logger.debug("best-effort op failed", exc_info=True)
         return False
 
     return mtime > _config_cache_mtime
@@ -575,6 +576,7 @@ class HuginnConfig:
                     )
                 except Exception:
                     # Skip models that cannot be initialized (missing keys, etc.)
+                    logger.debug("best-effort op failed", exc_info=True)
                     continue
         else:
             # Legacy single-model path
@@ -853,6 +855,7 @@ class HuginnConfig:
         try:
             return int(raw)
         except ValueError:
+            logger.debug("best-effort op failed", exc_info=True)
             return None
 
     @staticmethod

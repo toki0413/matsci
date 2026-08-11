@@ -236,7 +236,7 @@ def require_api_key(
                 _enforce_write_capability(conn)
                 return bearer
         except (ValueError, KeyError):
-            pass  # fall through to API key check
+            logger.debug("best-effort op failed", exc_info=True)  # fall through to API key check
 
     # --- fall back to API key ---------------------------------------------
     configured = _configured_api_key()
@@ -344,7 +344,7 @@ def require_admin_key(
             if claims.get("role") == Role.ADMIN.value:
                 return bearer
         except (ValueError, KeyError):
-            pass
+            logger.debug("best-effort op failed", exc_info=True)
 
     configured = _configured_admin_key()
     if configured is None:
@@ -412,7 +412,7 @@ def require_capability(capability: str) -> Callable[..., Any]:
                             detail="Token has been revoked",
                         )
                 except (ValueError, KeyError):
-                    pass
+                    logger.debug("best-effort op failed", exc_info=True)
             if not ctx.user.can(capability):
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,

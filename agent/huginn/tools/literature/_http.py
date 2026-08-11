@@ -31,6 +31,7 @@ def _timeout() -> float:
         v = float(raw)
         return v if v > 0 else 20.0
     except (TypeError, ValueError):
+        logger.debug("best-effort op failed", exc_info=True)
         return 20.0
 
 
@@ -86,6 +87,7 @@ def _qps() -> float:
         v = float(raw)
         return v if v > 0 else 5.0
     except (TypeError, ValueError):
+        logger.debug("best-effort op failed", exc_info=True)
         return 5.0
 
 
@@ -128,7 +130,7 @@ def _parse_retry_after(headers: Any) -> float | None:
     try:
         return max(0.0, float(val))
     except (TypeError, ValueError):
-        pass
+        logger.debug("best-effort op failed", exc_info=True)
     # HTTP-date (RFC 7231), 比如 "Wed, 21 Oct 2015 07:28:00 GMT"
     try:
         dt = email.utils.parsedate_to_datetime(val)
@@ -138,6 +140,7 @@ def _parse_retry_after(headers: Any) -> float | None:
             dt = dt.replace(tzinfo=UTC)
         return max(0.0, (dt - datetime.now(UTC)).total_seconds())
     except (TypeError, ValueError):
+        logger.debug("best-effort op failed", exc_info=True)
         return None
 
 
@@ -200,6 +203,7 @@ def _fetch_sync(url: str, timeout: float, accept: str) -> tuple[int, Any, bytes]
         try:
             body = exc.read()
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             body = b""
         return exc.code, exc.headers, _maybe_gunzip(body, exc.headers)
 

@@ -667,6 +667,7 @@ class ScenarioTool(HuginnTool):
                 try:
                     data = json.loads(text[start : end + 1])
                 except json.JSONDecodeError:
+                    logger.debug("best-effort op failed", exc_info=True)
                     data = None
 
         if not isinstance(data, dict):
@@ -680,6 +681,7 @@ class ScenarioTool(HuginnTool):
         try:
             conf = float(data.get("confidence", 0.0))
         except (TypeError, ValueError):
+            logger.debug("best-effort op failed", exc_info=True)
             conf = 0.0
         # 钳到 [0, 1]
         if conf < 0.0:

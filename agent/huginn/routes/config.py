@@ -118,7 +118,7 @@ def _model_to_dict(m: ModelConfig) -> dict[str, Any]:
             has_cred_key = bool(cred and cred.get("api_key"))
         except Exception:
             # 凭据 store 没初始化 / 记录不存在 — 当作没 key, 不影响主流程
-            pass
+            logger.debug("best-effort op failed", exc_info=True)
     return {
         "alias": m.alias,
         "provider": m.provider,
@@ -508,6 +508,7 @@ async def discover_local_models(provider: str = "ollama", base_url: str = "") ->
         ip = ipaddress.ip_address(hostname)
         is_loopback_ip = ip.is_loopback or ip.is_link_local or ip.is_private
     except ValueError:
+        logger.debug("best-effort op failed", exc_info=True)
         is_loopback_ip = False
     if not (is_loopback_name or is_loopback_ip):
         return {

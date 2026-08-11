@@ -183,6 +183,7 @@ async def elastic_without_relax_hook(ctx: HookContext) -> HookContext | None:
                 if str(params.get("action", "")).lower() in ("relax", "optimization", "opt"):
                     return None  # Found prior relaxation
     except Exception:
+        logger.debug("best-effort op failed", exc_info=True)
         return None
 
     return _warn_and_block(
@@ -212,6 +213,7 @@ async def md_timestep_hook(ctx: HookContext) -> HookContext | None:
     try:
         dt_val = float(dt)
     except (TypeError, ValueError):
+        logger.debug("best-effort op failed", exc_info=True)
         return None
 
     # 5 fs is the hard ceiling for classical all-atom; ab initio is ~1-2 fs
@@ -250,6 +252,7 @@ async def low_encut_hook(ctx: HookContext) -> HookContext | None:
     try:
         encut_val = float(encut)
     except (TypeError, ValueError):
+        logger.debug("best-effort op failed", exc_info=True)
         return None
 
     # Below 300 eV is generally too low for production calculations
@@ -294,6 +297,7 @@ async def md_without_minimize_hook(ctx: HookContext) -> HookContext | None:
                 ):
                     return None  # Found prior minimization
     except Exception:
+        logger.debug("best-effort op failed", exc_info=True)
         return None
 
     return _warn_and_block(

@@ -262,6 +262,7 @@ class NuwaPersonaTool(HuginnTool):
                 try:
                     data = json.loads(text[start : end + 1])
                 except json.JSONDecodeError:
+                    logger.debug("best-effort op failed", exc_info=True)
                     return None
             else:
                 return None

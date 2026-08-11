@@ -78,6 +78,7 @@ def _hash_file(path: Path) -> str | None:
                 h.update(chunk)
         return h.hexdigest()
     except OSError:
+        logger.debug("best-effort op failed", exc_info=True)
         return None
 
 
@@ -105,6 +106,7 @@ def _preview_file(path: Path) -> str:
         with path.open("rb") as f:
             return _preview(f.read(_PREVIEW_LEN * 4))
     except OSError:
+        logger.debug("best-effort op failed", exc_info=True)
         return ""
 
 
@@ -114,6 +116,7 @@ def _read_backup_preview(files_dir: Path, rel: str) -> str:
         with (files_dir / bname).open("rb") as f:
             return _preview(f.read(_PREVIEW_LEN * 4))
     except OSError:
+        logger.debug("best-effort op failed", exc_info=True)
         return ""
 
 
@@ -302,6 +305,7 @@ class SnapshotManager:
             try:
                 size = fpath.stat().st_size
             except OSError:
+                logger.debug("best-effort op failed", exc_info=True)
                 size = 0
             if size > _MAX_BACKUP_BYTES:
                 continue
@@ -460,7 +464,7 @@ class SnapshotManager:
                     target.unlink()
                     restored.append(p.file_path)
                 except FileNotFoundError:
-                    pass
+                    logger.debug("best-effort op failed", exc_info=True)
                 except OSError as exc:
                     logger.warning("revert delete %s failed: %s", p.file_path, exc)
 
@@ -518,7 +522,7 @@ class SnapshotManager:
                     target.unlink()
                     restored.append(rel)
                 except FileNotFoundError:
-                    pass
+                    logger.debug("best-effort op failed", exc_info=True)
                 except OSError as exc:
                     logger.warning("unrevert delete %s failed: %s", rel, exc)
 
@@ -573,6 +577,7 @@ class SnapshotManager:
                     if isinstance(rec, dict):
                         out.append(rec)
                 except json.JSONDecodeError:
+                    logger.debug("best-effort op failed", exc_info=True)
                     continue
         return out
 

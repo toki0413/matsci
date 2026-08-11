@@ -508,6 +508,7 @@ class PhaseGateHook:
             state = get_shared_phase_gate_state()
             return state.needs_human_checkpoint(from_phase, to_phase)
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return False
 
     def evaluate(
@@ -583,7 +584,7 @@ class PhaseGateHook:
                     )
             except Exception:
                 # math_checker 挂了不阻断, 降级放行
-                pass
+                logger.debug("best-effort op failed", exc_info=True)
 
         # 物理 oracle 否决: simulator tool 把 PhysicsAuditor 结果填进 evidence
         # ["physics_audit"] (dict 含 has_errors bool). 有 error 直接 rejected,

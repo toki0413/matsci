@@ -122,6 +122,7 @@ def list_checkpoints(task_id: str, workspace: Path) -> list[Checkpoint]:
         try:
             out.append(_from_dict(json.loads(p.read_text(encoding="utf-8"))))
         except (json.JSONDecodeError, KeyError, TypeError):
+            logger.debug("best-effort op failed", exc_info=True)
             continue
     out.sort(key=lambda c: c.step_id)
     return out
@@ -244,6 +245,7 @@ def _get_audit_hash_head(workspace: Path) -> str:
             try:
                 rec = json.loads(line)
             except json.JSONDecodeError:
+                logger.debug("best-effort op failed", exc_info=True)
                 continue
             h = rec.get("_hash")
             if h:
@@ -397,7 +399,7 @@ if __name__ == "__main__":
             resume_from_checkpoint(loaded, ws)
             raise AssertionError("expected RuntimeError on head mismatch")
         except RuntimeError:
-            pass
+            logger.debug("best-effort op failed", exc_info=True)
         print("6. tamper/head-mismatch detection OK")
 
         # cleanup audit.jsonl so the workspace is clean for any re-run

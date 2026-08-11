@@ -427,6 +427,7 @@ class ClarificationTool(HuginnTool[ClarificationInput, ClarificationOutput]):
                     },
                 )
             except Exception:
+                logger.debug("best-effort op failed", exc_info=True)
                 break
 
             # 用户答案不在 options 里 -> 走 default_answer 对应的边, 再不行取第一个

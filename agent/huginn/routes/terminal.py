@@ -155,7 +155,7 @@ async def terminal_websocket(websocket: WebSocket):
                 output_queue.put(("closed", exit_code)), loop
             )
         except (OSError, EOFError):
-            pass
+            logger.debug("best-effort op failed", exc_info=True)
         except Exception as exc:
             asyncio.run_coroutine_threadsafe(
                 output_queue.put(("error", str(exc))), loop
@@ -180,7 +180,7 @@ async def terminal_websocket(websocket: WebSocket):
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await t
     except WebSocketDisconnect:
-        pass
+        logger.debug("best-effort op failed", exc_info=True)
     except Exception as exc:
         logger.error("终端会话异常: %s", exc, exc_info=True)
     finally:

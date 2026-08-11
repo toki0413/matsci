@@ -239,6 +239,7 @@ class SimplePathTool(HuginnTool):
                 try:
                     data = json.loads(text[start : end + 1])
                 except json.JSONDecodeError:
+                    logger.debug("best-effort op failed", exc_info=True)
                     data = None
 
         if not isinstance(data, dict):

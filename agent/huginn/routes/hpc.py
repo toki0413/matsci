@@ -558,6 +558,7 @@ async def hpc_job_output_stream(websocket: WebSocket, local_id: str):
                                 line_queue.put(("line", raw_line)), loop
                             )
                         except RuntimeError:
+                            logger.debug("best-effort op failed", exc_info=True)
                             break  # 事件循环已关
             except Exception as exc:
                 with contextlib.suppress(RuntimeError):
@@ -606,9 +607,10 @@ async def hpc_job_output_stream(websocket: WebSocket, local_id: str):
                     except Exception:
                         logger.debug("轮询作业状态失败", exc_info=True)
             except WebSocketDisconnect:
+                logger.debug("best-effort op failed", exc_info=True)
                 break
     except WebSocketDisconnect:
-        pass
+        logger.debug("best-effort op failed", exc_info=True)
     except Exception as exc:
         logger.error("作业输出流异常: %s", exc, exc_info=True)
         try:

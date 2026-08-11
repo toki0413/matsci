@@ -334,6 +334,7 @@ class AutoDiffTool(HuginnTool):
                     }
                     break
                 except Exception:
+                    logger.debug("best-effort op failed", exc_info=True)
                     continue
 
         if result is None:
@@ -488,6 +489,7 @@ class AutoDiffTool(HuginnTool):
             jax_grad(jnp.array(x0))  # smoke-test tracing
             return lambda x: np.asarray(jax_grad(jnp.array(x)))
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return None
 
     @staticmethod

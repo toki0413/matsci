@@ -48,6 +48,7 @@ def _build_posterior_guided_hint(
     try:
         hyp_count = len(manifold._hyp)
     except Exception:
+        logger.debug("best-effort op failed", exc_info=True)
         return ""
     if hyp_count == 0 or not observations:
         return ""
@@ -182,6 +183,7 @@ def extract_numeric_targets(text: str) -> dict[str, float]:
         try:
             val = float(m.group(2))
         except ValueError:
+            logger.debug("best-effort op failed", exc_info=True)
             continue
         if name not in _METRIC_WHITELIST:
             continue
@@ -206,6 +208,7 @@ def extract_observations(text: str) -> list:
         try:
             val = float(m.group(2))
         except ValueError:
+            logger.debug("best-effort op failed", exc_info=True)
             continue
         if name not in _METRIC_WHITELIST or name in seen:
             continue

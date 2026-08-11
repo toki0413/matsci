@@ -51,6 +51,7 @@ def _get_bus():
         from huginn.events.event_bus import EventBus
         return EventBus.shared()
     except Exception:
+        logger.debug("best-effort op failed", exc_info=True)
         return None
 
 
