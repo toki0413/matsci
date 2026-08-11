@@ -4,6 +4,7 @@ dev:
 	./scripts/run_dev.sh
 
 test:
+	python -m pytest tests/test_testclient_hygiene.py -q -o addopts=""
 	./scripts/run_tests.sh
 
 lint:
