@@ -2,6 +2,8 @@
 
 import asyncio
 
+import pytest
+
 from huginn.core_types import ToolContext
 from huginn.tools.adapter import ToolAdapter
 from huginn.tools.diagnose_tool import DiagnoseTool
@@ -10,14 +12,19 @@ from huginn.tools.structure_tool import StructureTool
 from huginn.tools.validate_tool import ValidateTool
 
 
+@pytest.fixture(autouse=True)
+def _isolate_registry():
+    before = ToolRegistry.snapshot()
+    yield
+    ToolRegistry.restore(before)
+
+
 class TestToolRegistry:
     def test_register_and_list(self):
-        ToolRegistry.clear()
         ToolRegistry.register(StructureTool())
         assert "structure_tool" in ToolRegistry.list_tools()
 
     def test_get_schema(self):
-        ToolRegistry.clear()
         ToolRegistry.register(StructureTool())
         schemas = ToolRegistry.get_all_schemas()
         assert len(schemas) == 1

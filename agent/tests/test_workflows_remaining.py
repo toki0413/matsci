@@ -55,10 +55,10 @@ class _FailingTool:
 
 
 @pytest.fixture(autouse=True)
-def _clear_registry():
-    ToolRegistry.clear()
+def _isolate_registry():
+    before = ToolRegistry.snapshot()
     yield
-    ToolRegistry.clear()
+    ToolRegistry.restore(before)
 
 
 class TestRetryPolicy:
