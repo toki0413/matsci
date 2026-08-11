@@ -90,8 +90,17 @@ def _clear_config_cache_between_tests(monkeypatch):
     Prevents one test's config (with models/api_key) from leaking into the
     next via _would_lose_auth_state, which compares against the cache.
     Also resets the encrypt/decrypt runtime override so tests are isolated.
+
+    Import is best-effort: weightless/static tests (e.g. the TestClient
+    hygiene guard) run before the full huginn stack is available in a bare
+    env, so a missing dependency must silently skip, not block the run.
     """
-    from huginn.config import clear_config_cache
+    try:
+        from huginn.config import clear_config_cache
+    except ModuleNotFoundError:
+        # huginn.config unavailable (lightweight env) → no cache to clear.
+        yield
+        return
 
     monkeypatch.delenv("HUGINN_CONFIG_FILE", raising=False)
     # Only reset if the module is already loaded — avoids pulling the
