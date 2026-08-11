@@ -524,18 +524,33 @@ class MemoryManager:
                 category="distilled_knowledge",
                 top_k=5,
             )
+            # 懒加载 distiller 一次, 供 verify_knowledge 用 (best-effort).
+            try:
+                from huginn.evolution.knowledge_distiller import KnowledgeDistiller
+
+                distiller = KnowledgeDistiller()
+            except Exception:
+                distiller = None
             for entry in entries:
                 # Check if this distilled knowledge mentions the tool
                 entry_content = (entry.get("content") or "").lower()
                 if tool_name.lower() not in entry_content:
                     continue
                 # Upgrade: touch the entry to rejuvenate TTL and
-                # increment access_count. The actual verification_status
-                # upgrade is handled by KnowledgeDistiller.verify_knowledge()
-                # when the distiller is available.
+                # increment access_count.
                 entry_id = entry.get("id")
                 if entry_id:
                     self.longterm.touch(entry_id)
+                # 真正升级 verification_status: 出厂时 source 是
+                # "distiller:{knowledge_id}" (_run_distillation 写入), 解析出
+                # knowledge_id 后调 KnowledgeDistiller.verify_knowledge 把这条
+                # 蒸馏知识标记为 confirmed, 使其达到 auto_ingest_to_kb 的准入门槛。
+                if distiller is not None:
+                    src = entry.get("source") or ""
+                    if src.startswith("distiller:"):
+                        kid = src[len("distiller:"):]
+                        if kid:
+                            distiller.verify_knowledge(kid, "confirmed")
         except Exception:
             # Verification loop failure should never block tool promotion
             logger.debug("best-effort op failed", exc_info=True)
