@@ -44,7 +44,7 @@ from huginn.autoloop.goal_scheduler import GoalScheduler
 from huginn.autoloop.goal_store import Goal
 from huginn.autoloop.phase_gate import get_shared_phase_gate_state
 from huginn.autoloop.types import AutoloopResult, LoopPhase
-from huginn.utils.runtime import get_runtime_home
+from huginn.utils.runtime import HUGINN_DIR_NAME, get_runtime_home
 
 logger = logging.getLogger(__name__)
 
@@ -1477,7 +1477,7 @@ class CognitiveLoopMixin:
         from huginn.provenance import ProvenanceLogger, ProvenanceRecord
 
         provenance_logger = ProvenanceLogger(
-            self.workspace / ".huginn" / "provenance.jsonl"
+            self.workspace / HUGINN_DIR_NAME / "provenance.jsonl"
         )
         provenance_record = ProvenanceRecord(
             run_id=run_id,
@@ -2060,7 +2060,7 @@ Respond JSON only:
         try:
             from huginn.telemetry import load_trajectory, save_trajectory
 
-            traj_dir = self.workspace / ".huginn" / "trajectories"
+            traj_dir = self.workspace / HUGINN_DIR_NAME / "trajectories"
             trajectory_path = traj_dir / f"{run_id}.json"
             save_trajectory(
                 run_collector,

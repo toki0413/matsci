@@ -31,6 +31,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from huginn.utils.runtime import HUGINN_DIR_NAME
+
 logger = logging.getLogger(__name__)
 
 # 三档分类
@@ -561,7 +563,7 @@ def _selfcheck() -> None:
 
         # Case 1: 成功调用 → capable
         sm = SelfModel(
-            task_local_path=td_path / "ws1" / ".huginn" / "self_model.json",
+            task_local_path=td_path / "ws1" / HUGINN_DIR_NAME / "self_model.json",
             cross_task_path=td_path / "cross1" / "self_model_cross_task.json",
             model=None,
         )
@@ -601,7 +603,7 @@ def _selfcheck() -> None:
 
         # Case 5: LLM 分类 — pytorch_training → blind
         sm_llm = SelfModel(
-            task_local_path=td_path / "ws2" / ".huginn" / "sm.json",
+            task_local_path=td_path / "ws2" / HUGINN_DIR_NAME / "sm.json",
             cross_task_path=td_path / "cross2" / "sm.json",
             model=_SeqMock(
                 '{"tier": "blind", "reason": "needs GPU", '
@@ -618,7 +620,7 @@ def _selfcheck() -> None:
 
         # Case 6: LLM 失败降级到 keyword (lammps → uncertain)
         sm_err = SelfModel(
-            task_local_path=td_path / "ws3" / ".huginn" / "sm.json",
+            task_local_path=td_path / "ws3" / HUGINN_DIR_NAME / "sm.json",
             cross_task_path=td_path / "cross3" / "sm.json",
             model=_ErrMock(RuntimeError("llm down")),
         )
@@ -633,7 +635,7 @@ def _selfcheck() -> None:
         # Case 7: 跨 task 累积 — cross-task 文件持久化 + 加载合并
         # case1-4 的 sm 已 save 到 cross1/, 新 SelfModel 加载应继承 capable/blind
         sm2 = SelfModel(
-            task_local_path=td_path / "ws_new" / ".huginn" / "sm.json",
+            task_local_path=td_path / "ws_new" / HUGINN_DIR_NAME / "sm.json",
             cross_task_path=td_path / "cross1" / "self_model_cross_task.json",
             model=None,
         )
@@ -649,7 +651,7 @@ def _selfcheck() -> None:
 
         # Case 8: imagination feedback — uncertain → capable (success)
         sm_fb = SelfModel(
-            task_local_path=td_path / "ws4" / ".huginn" / "sm.json",
+            task_local_path=td_path / "ws4" / HUGINN_DIR_NAME / "sm.json",
             cross_task_path=td_path / "cross4" / "sm.json",
             model=None,
         )
@@ -665,7 +667,7 @@ def _selfcheck() -> None:
 
         # Case 9: imagination feedback — uncertain → blind (failure)
         sm_fb2 = SelfModel(
-            task_local_path=td_path / "ws5" / ".huginn" / "sm.json",
+            task_local_path=td_path / "ws5" / HUGINN_DIR_NAME / "sm.json",
             cross_task_path=td_path / "cross5" / "sm.json",
             model=None,
         )
@@ -680,7 +682,7 @@ def _selfcheck() -> None:
 
         # Case 10: 多条 step_result (list) — 一次性更新多个 skill
         sm_list = SelfModel(
-            task_local_path=td_path / "ws6" / ".huginn" / "sm.json",
+            task_local_path=td_path / "ws6" / HUGINN_DIR_NAME / "sm.json",
             cross_task_path=td_path / "cross6" / "sm.json",
             model=None,
         )
@@ -741,7 +743,7 @@ def _selfcheck() -> None:
 
         # Case 12: 失败降级 — None / 空 / 非法输入都不阻塞
         sm_safe = SelfModel(
-            task_local_path=td_path / "ws7" / ".huginn" / "sm.json",
+            task_local_path=td_path / "ws7" / HUGINN_DIR_NAME / "sm.json",
             cross_task_path=td_path / "cross7" / "sm.json",
             model=None,
         )
@@ -760,7 +762,7 @@ def _selfcheck() -> None:
 
         # Case 13: 连续成功 N 次升级 — uncertain → capable
         sm_promote = SelfModel(
-            task_local_path=td_path / "ws8" / ".huginn" / "sm.json",
+            task_local_path=td_path / "ws8" / HUGINN_DIR_NAME / "sm.json",
             cross_task_path=td_path / "cross8" / "sm.json",
             model=None,
         )
@@ -782,7 +784,7 @@ def _selfcheck() -> None:
         # Case 14: 跨 task 优先级 — cross-task blind 不被 task-local uncertain 覆盖
         # 已有 cross1 (matplotlib capable, exec_timeout blind, pkg_install blind)
         sm_priority = SelfModel(
-            task_local_path=td_path / "ws_priority" / ".huginn" / "sm.json",
+            task_local_path=td_path / "ws_priority" / HUGINN_DIR_NAME / "sm.json",
             cross_task_path=td_path / "cross1" / "self_model_cross_task.json",
             model=None,
         )

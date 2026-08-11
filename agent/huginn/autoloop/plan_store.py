@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from huginn.utils.common import now_iso
-from huginn.utils.runtime import get_runtime_home
+from huginn.utils.runtime import HUGINN_DIR_NAME, get_runtime_home
 
 logger = logging.getLogger(__name__)
 
@@ -186,7 +186,7 @@ class PlanStore:
         base = os.environ.get("HUGINN_CACHE_DIR")
         if base:
             return Path(base) / "plans.json"
-        return Path(".huginn") / "plans.json"
+        return Path(HUGINN_DIR_NAME) / "plans.json"
 
     # ── persistence ───────────────────────────────────────────────
 

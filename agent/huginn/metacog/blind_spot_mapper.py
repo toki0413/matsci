@@ -29,6 +29,8 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+from huginn.utils.runtime import HUGINN_DIR_NAME
+
 logger = logging.getLogger(__name__)
 
 
@@ -203,7 +205,7 @@ def _selfcheck() -> None:
     with tempfile.TemporaryDirectory() as td:
         td_path = Path(td)
         sm = SelfModel(
-            task_local_path=td_path / "ws" / ".huginn" / "sm.json",
+            task_local_path=td_path / "ws" / HUGINN_DIR_NAME / "sm.json",
             cross_task_path=td_path / "cross" / "sm.json",
             model=None,
         )

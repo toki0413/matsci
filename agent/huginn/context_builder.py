@@ -28,7 +28,7 @@ from collections import Counter
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from huginn.utils.runtime import get_runtime_home
+from huginn.utils.runtime import HUGINN_DIR_NAME, get_runtime_home
 
 if TYPE_CHECKING:
     pass
@@ -195,7 +195,7 @@ def load_meta_trace_text(workspace: str | Path, last_n: int = 5) -> str:
     ponytail: 每字段截 200 字符, 总量约 2K tokens. 不做 schema 校验, 旧 entry
       补默认值. 升级路径: pydantic model + version tag + 按 darwin_score top-K.
     """
-    trace_path = Path(workspace) / ".huginn" / "meta_trace.jsonl"
+    trace_path = Path(workspace) / HUGINN_DIR_NAME / "meta_trace.jsonl"
     if not trace_path.exists():
         return ""
     try:
@@ -401,7 +401,7 @@ class ContextBuilder:
             from huginn.kg.graph import ProjectKnowledgeGraph
 
             if self._kg is None:
-                self._kg = ProjectKnowledgeGraph(Path(self.workspace) / ".huginn")
+                self._kg = ProjectKnowledgeGraph(Path(self.workspace) / HUGINN_DIR_NAME)
             result = self._kg.query(query, depth=self.kg_depth, top_k=self.kg_top_k)
             nodes = {n["id"] for n in result.get("nodes", [])}
             if not nodes:
@@ -746,7 +746,7 @@ class ContextBuilder:
         ponytail: mtime cache, 文件没变直接返回上次结果. 单次最多 last_n 条,
         每字段截 200 字符, 总量上限约 2K tokens. 升级: 流式 read + role 过滤.
         """
-        trace_path = Path(self.workspace) / ".huginn" / "meta_trace.jsonl"
+        trace_path = Path(self.workspace) / HUGINN_DIR_NAME / "meta_trace.jsonl"
         if not trace_path.exists():
             return ""
 
@@ -774,7 +774,7 @@ class ContextBuilder:
     def meta_trace_available(self) -> bool:
         """快速检查 trace 文件是否存在 — streaming.py 用它决定 compaction 强度."""
         from pathlib import Path
-        return (Path(self.workspace) / ".huginn" / "meta_trace.jsonl").exists()
+        return (Path(self.workspace) / HUGINN_DIR_NAME / "meta_trace.jsonl").exists()
 
     _evolution_rules_cache: str | None = None
     _evolution_rules_mtime: float = 0.0

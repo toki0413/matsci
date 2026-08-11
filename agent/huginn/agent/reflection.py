@@ -6,7 +6,7 @@ import logging
 import os
 from typing import Any
 
-from huginn.utils.runtime import get_runtime_home
+from huginn.utils.runtime import HUGINN_DIR_NAME, get_runtime_home
 
 logger = logging.getLogger(__name__)
 
@@ -510,7 +510,7 @@ class ReflectionMixin:
         import json
         from pathlib import Path
 
-        path = Path(".huginn/directive_rejections.jsonl")
+        path = Path(HUGINN_DIR_NAME, "directive_rejections.jsonl")
         if not path.exists():
             return []
         proposals: list[str] = []
@@ -530,7 +530,7 @@ class ReflectionMixin:
         import time
         from pathlib import Path
 
-        path = Path(".huginn/directive_rejections.jsonl")
+        path = Path(HUGINN_DIR_NAME, "directive_rejections.jsonl")
         path.parent.mkdir(parents=True, exist_ok=True)
         rec = {"timestamp": time.time(), "proposal": proposal, "reason": reason}
         with path.open("a", encoding="utf-8") as f:

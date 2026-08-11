@@ -14,11 +14,11 @@ from pydantic import BaseModel, Field
 
 from huginn.tools.base import HuginnTool
 from huginn.types import ToolContext, ToolResult
-from huginn.utils.runtime import get_runtime_home
+from huginn.utils.runtime import HUGINN_DIR_NAME, get_runtime_home
 
 # ponytail: 写死两个路径. trajectories 在 workspace(.huginn/trajectories),
 # reflections 在 ~/.huginn/reflections. 升级: 从 config/session_state 注入路径.
-TRAJECTORIES_DIR = Path(".huginn") / "trajectories"
+TRAJECTORIES_DIR = Path(HUGINN_DIR_NAME) / "trajectories"
 REFLECTIONS_DIR = get_runtime_home() / "reflections"
 
 

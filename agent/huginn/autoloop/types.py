@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from huginn.utils.runtime import HUGINN_DIR_NAME
+
 logger = logging.getLogger(__name__)
 
 
@@ -64,7 +66,7 @@ def objective_hash(objective: str) -> str:
 
 
 def _snapshot_dir(workspace: str | Path) -> Path:
-    return Path(workspace) / ".huginn" / "autoloop_results"
+    return Path(workspace) / HUGINN_DIR_NAME / "autoloop_results"
 
 
 def save_autoloop_snapshot(
