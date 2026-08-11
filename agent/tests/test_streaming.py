@@ -825,3 +825,37 @@ class TestProcessStreamStateRecords:
             self, state, MagicMock(), "thread1", MagicMock(), None
         )
         self.memory.add_message.assert_called_once()
+
+
+class TestReasoningCapturedToTrace:
+    """护栏: 真实 COT (reasoning_content) 必须落进 session.reasoning_trace.
+
+    防止将来某天把 reasoning_content 只转发给前端就完事, 而下游蒸馏
+    (knowledge_distiller / evolution)_read 到空的 reasoning_trace。
+    """
+
+    def test_reasoning_content_persisted_to_memory(self):
+        # AIMessage 带 reasoning_content → _process_stream_state 必须调
+        # memory.add_reasoning, 让 COT 资产化进 reasoning_trace。
+        self = _make_streaming_self()
+        ai = AIMessage(content="final answer", id="ai_r1")
+        ai.additional_kwargs["reasoning_content"] = (
+            "先用 PBE 试探, 因为 LDA 低估带隙, 再对比 GGA."
+        )
+        state = {"messages": [ai]}
+        StreamingMixin._process_stream_state(
+            self, state, MagicMock(), "thread1", MagicMock(), None
+        )
+        self.memory.add_reasoning.assert_called_once()
+        self.memory.add_reasoning.assert_called_with(
+            "先用 PBE 试探, 因为 LDA 低估带隙, 再对比 GGA."
+        )
+
+    def test_no_reasoning_skips_add_reasoning(self):
+        # 无 reasoning_content (如 OpenAI/Anthropic) → 不调 add_reasoning, 不误写.
+        self = _make_streaming_self()
+        state = {"messages": [AIMessage(content="plain answer", id="ai_r2")]}
+        StreamingMixin._process_stream_state(
+            self, state, MagicMock(), "thread1", MagicMock(), None
+        )
+        self.memory.add_reasoning.assert_not_called()
