@@ -133,6 +133,7 @@ jobs:
             --ignore=tests/test_interaction.py \
             --ignore=tests/test_performance_regression.py \
             --ignore=tests/test_model_advisor.py \
+            --ignore=tests/benchmark/test_performance.py \
             --maxfail=50 2>&1 | tee pytest_output.txt
           exit ${PIPESTATUS[0]}
 
@@ -264,13 +265,19 @@ jobs:
             # Group E — 7 files with module-level `client = TestClient(app)`
             # at import time. Same anyio portal thread leak as group D;
             # running them under -n 2 hangs xdist workers. Run serially.
+            # Also includes tests/benchmark/test_performance.py: its
+            # TestSandboxTimeout::test_sandbox_timeout_result leaks threads
+            # (subprocess.run timeout join thread) until xdist worker hits
+            # `RuntimeError: can't start new thread` after ~5000 tests,
+            # crashing the worker. Serial -n 0 keeps thread count bounded.
             FILES="tests/test_route_smoke.py \
               tests/test_ws_integration.py \
               tests/test_team_v2_plans.py \
               tests/test_server_coverage_boost.py \
               tests/test_interaction.py \
               tests/test_performance_regression.py \
-              tests/test_model_advisor.py"
+              tests/test_model_advisor.py \
+              tests/benchmark/test_performance.py"
           fi
           python -m pytest -v -rA --tb=short -p no:cov -o addopts="" \
             --timeout=60 --timeout-method=thread \
