@@ -184,6 +184,33 @@ def extract_chart_data(image_path: str | Path) -> dict[str, Any]:
             result["estimated_band_gap_eV"] = [round(e, 2) for e in gap_energies]
             result["note"] = "Band gap estimated from low-density rows in band structure image."
 
+    # 2c. 密集数据曲线: 复用 plots 场景的颜色匹配, 逐列取 y 均值还原成密集点
+    #     比稀疏峰位置更接近真实曲线. 物理范围用已标定 (或 fallback 假设) 轴.
+    if peaks:
+        try:
+            from huginn.tools.image_analysis.scenes_plot_extract import (
+                _extract_single_curve,
+            )
+            # 取最亮峰所在像素的颜色作为曲线目标色
+            max_peak = max(peaks, key=lambda p: float(col_max[p]))
+            row = int(np.argmax(arr[:, max_peak]))
+            target = rgb[row, max_peak]
+            if result.get("analysis_type") == "XRD":
+                x_min, x_max, y_min, y_max = 10.0, 90.0, 0.0, 100.0
+            elif result.get("analysis_type") == "band_structure":
+                x_min, x_max, y_min, y_max = 0.0, 1.0, -10.0, 10.0
+            else:
+                x_min, x_max, y_min, y_max = 0.0, 1.0, 0.0, 1.0
+            dense = _extract_single_curve(
+                rgb, target, 40.0, x_left, y_top, x_right, y_bottom,
+                x_min, x_max, y_min, y_max, "linear", "linear",
+            )
+            if dense:
+                result["data_curve"] = dense
+                result["n_data_points"] = len(dense)
+        except Exception:
+            logger.debug("dense curve extraction failed, non-fatal", exc_info=True)
+
     # 6. 数学关系拟合 — 对提取的数据点尝试线性拟合
     if peaks and len(peaks) >= 3:
         intensities = [float(col_max[p]) for p in peaks]
@@ -261,9 +288,16 @@ def _format_symbols_structured(chart_data: dict[str, Any]) -> dict[str, Any]:
         "estimated_band_gap_eV",
         "linear_fit",
         "axis_calibration",
+        "n_data_points",
     ):
         if key in chart_data:
             result[key] = chart_data[key]
+
+    # 密集曲线: 全量太大, 只透传降采样后的样本 (最多 60 点) 供 agent 参考
+    if chart_data.get("data_curve"):
+        curve = chart_data["data_curve"]
+        step = max(1, len(curve) // 60)
+        result["data_curve_sample"] = curve[::step][:60]
 
     # self_check: Nullmax 启发 — 让红队/PhaseGate 能判断视觉估算可信度
     result["self_check"] = {
@@ -360,6 +394,15 @@ def _format_symbols_text(chart_data: dict[str, Any]) -> str:
     n_peaks = chart_data.get("n_peaks", 0)
     if n_peaks > 0:
         parts.append(f"  n_peaks_detected: {n_peaks}")
+
+    if chart_data.get("data_curve"):
+        curve = chart_data["data_curve"]
+        xs = [p[0] for p in curve]
+        ys = [p[1] for p in curve]
+        parts.append(
+            f"  data_curve: {len(curve)} 点, "
+            f"x∈[{min(xs):.4g},{max(xs):.4g}], y∈[{min(ys):.4g},{max(ys):.4g}]"
+        )
 
     return "\n".join(parts)
 

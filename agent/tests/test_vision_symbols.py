@@ -133,6 +133,64 @@ def test_format_functions_share_structured_fields(tmp_path, monkeypatch):
     assert structured["axis_calibration"] in text  # fallback 标记在文本里也有
 
 
+def test_extract_chart_data_has_dense_curve(tmp_path, monkeypatch):
+    """峰值提取之外, 应产出密集 data_curve (复用颜色匹配), 而非只有稀疏峰."""
+    # 强制 OCR 失败, 走 fallback 路径, 仍应产出曲线
+    monkeypatch.setattr(
+        "huginn.tools.image_analysis.scenes_plot_extract._auto_detect_axes",
+        lambda *a, **k: None,
+    )
+    img = tmp_path / "xrd_dense.png"
+    _make_xrd_png(img, peak_cols=(40, 90, 140))
+    data = extract_chart_data(img)
+    assert "data_curve" in data
+    assert data["n_data_points"] == len(data["data_curve"])
+    assert data["n_data_points"] > 0
+    # 曲线点应落在 fallback 的 x 范围附近
+    xs = [pt[0] for pt in data["data_curve"]]
+    assert all(0 <= x <= 100 for x in xs)
+
+
+def test_structured_has_downsampled_curve(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "huginn.tools.image_analysis.scenes_plot_extract._auto_detect_axes",
+        lambda *a, **k: None,
+    )
+    img = tmp_path / "xrd_sample.png"
+    _make_xrd_png(img, peak_cols=(40, 90, 140))
+    structured = visual_to_symbols_structured(img)
+    assert "data_curve_sample" in structured
+    assert len(structured["data_curve_sample"]) <= 60
+
+
+def test_microscopy_quant_summary_injects_sem(tmp_path):
+    """SEM 类型图应触发 sem_analysis, 注入一行定量摘要."""
+    import numpy as np
+
+    # 合成一张有衬度差异的 SEM 图
+    from PIL import Image
+
+    from huginn.vision.router import _microscopy_quant_summary
+    arr = np.full((64, 64), 120, dtype=np.uint8)
+    arr[20:40, 20:40] = 40  # 暗区(颗粒)
+    img = tmp_path / "sample_sem.png"
+    Image.fromarray(arr, mode="L").save(str(img))
+
+    out = _microscopy_quant_summary(img, "SEM_image")
+    assert out.startswith("[sem_analysis 定量]")
+    assert "SEM" in out or "暗区" in out
+
+
+def test_microscopy_quant_summary_skips_non_microscopy(tmp_path):
+    from PIL import Image
+
+    from huginn.vision.router import _microscopy_quant_summary
+    arr = np.zeros((32, 32), dtype=np.uint8)
+    img = tmp_path / "xrd_only.png"
+    Image.fromarray(arr, mode="L").save(str(img))
+    assert _microscopy_quant_summary(img, "XRD_pattern") == ""
+
+
 # ── figure_ir ──────────────────────────────────────────────────
 
 

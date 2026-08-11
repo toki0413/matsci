@@ -196,6 +196,47 @@ def _cv_pre_analyze(image_path: str | Path | bytes) -> str:
         return f"[CV pre-analysis failed: {exc}]"
 
 
+_MICROSCOPY_ACTIONS = {
+    "SEM_image": "sem_analysis",
+    "TEM_image": "tem_lattice",
+    "EDS_map": "eds_mapping",
+}
+
+
+def _microscopy_quant_summary(image_path: str | Path | bytes, image_type: str) -> str:
+    """对 SEM/TEM/EDS 显微图调对应 action, 把 measurement 压成一行文本摘要.
+
+    best-effort: 非显微图 / 调用失败时返回空串, 不阻塞主链路.
+    """
+    action = _MICROSCOPY_ACTIONS.get(image_type)
+    if action is None or isinstance(image_path, (bytes, bytearray)):
+        return ""
+    p = Path(image_path)
+    if not p.is_file():
+        return ""
+
+    try:
+        from huginn.tools.image_analysis.tool import ImageAnalysisInput
+        scene_name = action
+        if scene_name == "sem_analysis":
+            from huginn.tools.image_analysis.scenes_sem import sem_analysis as scene
+        elif scene_name == "tem_lattice":
+            from huginn.tools.image_analysis.scenes_tem import tem_lattice as scene
+        else:
+            from huginn.tools.image_analysis.scenes_eds import eds_mapping as scene
+        inp = ImageAnalysisInput(image_path=str(p), action=scene_name, parameters={})
+        res = scene(inp)
+        if res.success and res.data:
+            summary = res.data.get("summary")
+            if summary:
+                return f"[{scene_name} 定量] {summary}"
+            import json as _json
+            return f"[{scene_name} 定量] {_json.dumps(res.data, ensure_ascii=False, default=str)[:400]}"
+    except Exception:
+        logger.debug("microscopy quant summary failed, non-fatal", exc_info=True)
+    return ""
+
+
 def build_cv_context(
     image_path: str | Path | bytes,
     visual_encoder: Any | None = None,
@@ -244,6 +285,11 @@ def build_cv_context(
                     "[VISUAL→SYMBOLS structured]\n"
                     + _json.dumps(structured, ensure_ascii=False, default=str)
                 )
+            # 显微图定量: SEM/TEM/EDS 调对应 action, 把 measurement 压成一行摘要
+            _img_type = chart_data.get("image_type", "")
+            _quant = _microscopy_quant_summary(image_path, _img_type)
+            if _quant:
+                parts.append(_quant)
     except Exception:
         logger.debug("visual_to_symbols failed, graceful degradation", exc_info=True)
 
