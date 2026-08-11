@@ -13,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from huginn.types import ToolResult
+from huginn.core_types import ToolResult
 from huginn.utils.runtime import HUGINN_DIR_NAME
 from huginn.workflows.stages import ComputationalStage, RetryPolicy, ValidationRule
 

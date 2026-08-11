@@ -12,8 +12,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from huginn.core_types import ToolContext
 from huginn.tools.neb._io import write_poscar, write_xyz
-from huginn.types import ToolContext
 
 if TYPE_CHECKING:
     from huginn.tools.neb.tool import NEBToolInput

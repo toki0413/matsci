@@ -11,7 +11,7 @@ import math
 import numpy as np
 import pytest
 
-from huginn.types import ToolContext
+from huginn.core_types import ToolContext
 
 CTX = ToolContext(session_id="test", workspace=".")
 

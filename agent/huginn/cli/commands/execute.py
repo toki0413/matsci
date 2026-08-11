@@ -9,9 +9,9 @@ from pathlib import Path
 import click
 
 from huginn.cli.context import CliContext
+from huginn.core_types import ToolContext
 from huginn.security.audit import AuditLogger
 from huginn.tools.registry import ToolRegistry
-from huginn.types import ToolContext
 
 
 @click.command()

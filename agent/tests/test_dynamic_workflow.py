@@ -29,8 +29,8 @@ from huginn.autoloop.dynamic_workflow import (
     get_shared_workflow_registry,
     set_shared_workflow_registry,
 )
+from huginn.core_types import ToolContext, ToolResult
 from huginn.tools.registry import ToolRegistry
-from huginn.types import ToolContext, ToolResult
 
 # ── fake tools ───────────────────────────────────────────────────────────────
 

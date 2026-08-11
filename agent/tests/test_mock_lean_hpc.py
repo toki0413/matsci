@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from huginn.core_types import ToolContext
 from huginn.hpc.client import (
     HPCClient,
     HPCConfig,
@@ -22,7 +23,6 @@ from huginn.hpc.resource_selector import ResourceSelector
 from huginn.lean.interface import LeanInterface
 from huginn.lean.sympy_to_lean import SymPyToLean
 from huginn.tools.lean_tool import LeanTool, LeanToolInput
-from huginn.types import ToolContext
 
 CTX = ToolContext(session_id="test", workspace=".")
 

@@ -12,7 +12,7 @@ from typing import Any
 import numpy as np
 from scipy.linalg import eigh
 
-from huginn.types import ToolResult
+from huginn.core_types import ToolResult
 
 
 def eigenvalue_buckling(args: Any) -> ToolResult:

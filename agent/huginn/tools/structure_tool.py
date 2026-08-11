@@ -10,10 +10,10 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from huginn.core_types import HandleType, ToolContext, ToolResult, ValidationResult
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.tools.local_structure_db import LocalStructureDB
 from huginn.tools.tool_cache import cacheable
-from huginn.types import HandleType, ToolContext, ToolResult, ValidationResult
 from huginn.validation.handle_validator import HandleValidator
 
 

@@ -14,9 +14,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent / "agent"))
 
 from huginn.config import HuginnConfig
+from huginn.core_types import ToolContext
 from huginn.tools import register_all_tools
 from huginn.tools.registry import ToolRegistry
-from huginn.types import ToolContext
 
 
 def header(title: str) -> None:

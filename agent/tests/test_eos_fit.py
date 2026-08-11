@@ -15,10 +15,10 @@ import sys
 import numpy as np
 import pytest
 
+from huginn.core_types import ToolContext
 from huginn.tools.numerical_tool import NumericalTool
 from huginn.tools.sci.numerical_tool import NumericalTool as NumericalToolSci
 from huginn.tools.sim.vasp_tool import VaspTool, VaspToolInput
-from huginn.types import ToolContext
 
 CTX = ToolContext(session_id="test", workspace=".")
 

@@ -10,8 +10,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from huginn.core_types import ToolContext, ToolResult
 from huginn.tools.base import HuginnTool, ToolProfile
-from huginn.types import ToolContext, ToolResult
 
 
 class SpecialtyAnalysisInput(BaseModel):

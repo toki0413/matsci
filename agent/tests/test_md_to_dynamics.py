@@ -14,11 +14,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from huginn.core_types import ToolContext
 from huginn.tools.sci.dynamics_discovery_tool import (
     DynamicsDiscoveryInput,
     DynamicsDiscoveryTool,
 )
-from huginn.types import ToolContext
 
 _COLS = ["id", "type", "x", "y", "z", "vx", "vy", "vz"]
 

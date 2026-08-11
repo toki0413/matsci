@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from huginn.types import HandleType, ToolContext
+from huginn.core_types import HandleType, ToolContext
 from huginn.validation.handle_validator import HandleValidator
 
 # ── Helpers ──────────────────────────────────────────────────────────

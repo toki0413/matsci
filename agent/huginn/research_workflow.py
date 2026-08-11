@@ -18,6 +18,7 @@ from huginn.academic.deli_research import (
     ResearchStage,
     ResearchState,
 )
+from huginn.core_types import progress_cb
 from huginn.personas import BUILT_IN_PERSONAS, Persona
 from huginn.phases import (
     PHASE_STAGE_MAP,
@@ -25,7 +26,6 @@ from huginn.phases import (
     stage_to_phase,
 )
 from huginn.prompts import MATH_DEPTH_GUIDE
-from huginn.types import progress_cb
 
 logger = logging.getLogger(__name__)
 

@@ -16,6 +16,7 @@ import pytest
 # Ensure the agent package is importable
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from huginn.core_types import ToolContext
 from huginn.crypto import CryptoVault
 from huginn.memory.longterm import LongTermMemory
 from huginn.memory.manager import MemoryManager
@@ -27,7 +28,6 @@ from huginn.tools.sci.symbolic_regression_tool import (
     SymbolicRegressionInput,
     SymbolicRegressionTool,
 )
-from huginn.types import ToolContext
 
 
 @pytest.fixture
@@ -357,7 +357,7 @@ class TestToolRegistryIntegration:
 
     def test_tool_result_schema(self):
         """ToolResult can hold success and failure states."""
-        from huginn.types import ToolResult
+        from huginn.core_types import ToolResult
 
         success = ToolResult(data={"value": 42}, success=True)
         assert success.success

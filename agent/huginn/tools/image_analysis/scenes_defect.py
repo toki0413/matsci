@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from huginn.core_types import ToolResult
 from huginn.tools.image_analysis._utils import load_gray, otsu_numpy
-from huginn.types import ToolResult
 
 if TYPE_CHECKING:
     from huginn.tools.image_analysis.tool import ImageAnalysisInput

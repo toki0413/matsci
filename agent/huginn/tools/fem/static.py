@@ -18,7 +18,7 @@ from skfem import (
 )
 from skfem.models.elasticity import linear_elasticity, plane_stress
 
-from huginn.types import ToolResult
+from huginn.core_types import ToolResult
 
 
 def static_linear(args: Any) -> ToolResult:

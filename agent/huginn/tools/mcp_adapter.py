@@ -13,9 +13,9 @@ from typing import Any
 
 from pydantic import BaseModel, create_model
 
+from huginn.core_types import ToolContext, ToolResult
 from huginn.mcp_client import MCPClientManager
 from huginn.tools.base import HuginnTool
-from huginn.types import ToolContext, ToolResult
 
 logger = logging.getLogger(__name__)
 

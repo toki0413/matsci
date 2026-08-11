@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from huginn.types import ToolContext, ToolResult
+from huginn.core_types import ToolContext, ToolResult
 
 if TYPE_CHECKING:
     pass

@@ -17,6 +17,7 @@ from pathlib import Path
 from fastapi import WebSocket
 from langchain_core.messages import AIMessage, ToolMessage
 
+from huginn.core_types import progress_cb
 from huginn.routes.schemas import WSMessage
 from huginn.server_core import (
     _EDIT_TOOLS,
@@ -24,7 +25,6 @@ from huginn.server_core import (
     _snapshot_directory,
     _state_lock,
 )
-from huginn.types import progress_cb
 
 logger = logging.getLogger(__name__)
 

@@ -11,11 +11,11 @@ import asyncio
 import numpy as np
 from scipy.integrate import solve_ivp
 
+from huginn.core_types import ToolContext
 from huginn.tools.sci.dynamics_discovery_tool import (
     DynamicsDiscoveryInput,
     DynamicsDiscoveryTool,
 )
-from huginn.types import ToolContext
 
 
 def _damped_oscillator(n: int = 600, noise: float = 0.0, seed: int = 0):

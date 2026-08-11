@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from huginn.core_types import BudgetDecision, BudgetPolicy, ToolContext, ToolResult
 from huginn.tools.registry import ToolRegistry
-from huginn.types import BudgetDecision, BudgetPolicy, ToolContext, ToolResult
 from huginn.workflows.checkpoint import WorkflowCheckpoint
 from huginn.workflows.engine import WorkflowEngine
 from huginn.workflows.stages import ComputationalStage, RetryPolicy, ValidationRule

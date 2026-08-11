@@ -373,7 +373,7 @@ class IntentSpeculator:
             return None
 
         try:
-            from huginn.types import ToolContext
+            from huginn.core_types import ToolContext
 
             ctx = ToolContext(
                 session_id=f"prefetch_{tool_name}",

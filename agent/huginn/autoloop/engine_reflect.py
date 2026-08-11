@@ -27,7 +27,7 @@ from typing import Any
 
 # 反思阶段方法引用的 engine.py 模块级 import (均为叶子模块, 无 circular 风险)
 from huginn.autoloop.types import LoopPhase
-from huginn.types import ToolContext
+from huginn.core_types import ToolContext
 from huginn.utils.runtime import HUGINN_DIR_NAME
 
 logger = logging.getLogger(__name__)

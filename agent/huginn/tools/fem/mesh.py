@@ -10,7 +10,7 @@ from typing import Any
 import numpy as np
 from skfem import MeshTri
 
-from huginn.types import ToolResult
+from huginn.core_types import ToolResult
 
 
 def mesh_from_geometry(args: Any) -> ToolResult:
