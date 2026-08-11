@@ -14,7 +14,6 @@ from huginn.config import HuginnConfig
 from huginn.execution.remote_executor import RemoteExecutor, build_executor
 from huginn.hpc.client import HPCConfig, JobStatus
 from huginn.security.sandbox import SandboxExecutor, SandboxResult
-from huginn.tools import register_all_tools
 from huginn.tools.registry import ToolRegistry
 
 
@@ -279,17 +278,28 @@ class TestBuildExecutor:
 
 class TestRegisterAllToolsRemote:
     def test_register_all_tools_with_remote_config_passes_executor(self) -> None:
-        ToolRegistry.clear()
+        # canonical registry 已被 session fixture 填满, register_all_tools()
+        # 会因 `if ToolRegistry.list_tools(): return` 短路, config 的 remote
+        # executor 不会重新应用. 为验证 executor wiring, 用 remote config
+        # 直接重建 vasp_tool (避免全量重注册触发 rdkit 等重依赖导入).
+        from huginn.execution.remote_executor import RemoteExecutor, build_executor
+        from huginn.tools import _do_register, _make_tool_kwargs
+        from huginn.tools.vasp_tool import VaspTool
+
+        before = ToolRegistry.snapshot()
         cfg = HuginnConfig(
             execution_backend="remote",
             hpc_host="hpc.example.com",
             hpc_username="user",
         )
-        register_all_tools(config=cfg)
-
-        from huginn.tools.vasp_tool import VaspTool
+        executor = build_executor(cfg)
+        assert isinstance(executor, RemoteExecutor)
+        _do_register(
+            [("huginn.tools.vasp_tool", "VaspTool")],
+            _make_tool_kwargs(cfg, executor),
+        )
 
         vasp = ToolRegistry.get("vasp_tool")
         assert isinstance(vasp, VaspTool)
         assert isinstance(vasp.sandbox, RemoteExecutor)
-        ToolRegistry.clear()
+        ToolRegistry.restore(before)

@@ -48,6 +48,41 @@ Path(_TEST_CACHE_DIR).mkdir(parents=True, exist_ok=True)
 os.environ["HUGINN_CACHE_DIR"] = _TEST_CACHE_DIR
 
 
+@pytest.fixture(scope="session")
+def shared_huginn_app():
+    """The single shared Huginn FastAPI app (module singleton).
+
+    Building the app (lifespan startup) allocates ~2-3GB and loads every
+    tool/model/DB. Session scope ensures it is constructed at most once per
+    xdist worker, so the TestClient-heavy files no longer each spin up their
+    own full app — the root cause of the memory accumulation that forced the
+    old http-tests a/b/c/d/e split.
+    """
+    from huginn.server import app
+
+    return app
+
+
+@pytest.fixture(scope="module")
+def app_client(shared_huginn_app):
+    """A TestClient over the shared app, properly closed at module end.
+
+    This is the one-and-for-all fix for the module-level ``client =
+    TestClient(app)`` antipattern that plagued the suite: a client created at
+    import time was never closed, so its anyio portal thread leaked forever
+    (freezing xdist workers) and the lifespan never shut down (memory kept
+    accumulating across modules until OOM).
+
+    Module scope runs the lifespan once per module and tears it down on exit:
+     - ``with TestClient(...)`` closes the transport → no portal thread leak.
+     - lifespan shutdown frees the app's ~2-3GB between modules.
+    """
+    from fastapi.testclient import TestClient
+
+    with TestClient(shared_huginn_app) as client:
+        yield client
+
+
 @pytest.fixture(autouse=True)
 def _clear_config_cache_between_tests(monkeypatch):
     """Clear config cache + config-path overrides before and after each test.
@@ -55,8 +90,17 @@ def _clear_config_cache_between_tests(monkeypatch):
     Prevents one test's config (with models/api_key) from leaking into the
     next via _would_lose_auth_state, which compares against the cache.
     Also resets the encrypt/decrypt runtime override so tests are isolated.
+
+    Import is best-effort: weightless/static tests (e.g. the TestClient
+    hygiene guard) run before the full huginn stack is available in a bare
+    env, so a missing dependency must silently skip, not block the run.
     """
-    from huginn.config import clear_config_cache
+    try:
+        from huginn.config import clear_config_cache
+    except ModuleNotFoundError:
+        # huginn.config unavailable (lightweight env) → no cache to clear.
+        yield
+        return
 
     monkeypatch.delenv("HUGINN_CONFIG_FILE", raising=False)
     # Only reset if the module is already loaded — avoids pulling the
@@ -68,6 +112,78 @@ def _clear_config_cache_between_tests(monkeypatch):
     clear_config_cache()
     yield
     clear_config_cache()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _canonical_tool_registry():
+    """Populate the canonical ToolRegistry once at session start.
+
+    Many tests read the full tool set (``heavy_tool_names()``,
+    ``ToolRegistry._tools``) and several modules call ``register_all_tools()``
+    when the registry is empty. Establishing the canonical registry exactly
+    once here gives the ``_restore_tool_registry`` guard a stable baseline: a
+    test that clears the registry is then detected as a *removal*, not confused
+    with a legitimate first-time population.
+
+    Best-effort import keeps lightweight/weightless runs (e.g. the TestClient
+    hygiene guard) from being blocked when the full stack isn't installed.
+    """
+    try:
+        from huginn.tools import register_all_tools
+        from huginn.tools.registry import ToolRegistry
+    except ModuleNotFoundError:
+        yield
+        return
+
+    if not ToolRegistry.list_tools():
+        register_all_tools()
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _restore_tool_registry(_canonical_tool_registry):
+    """Guard: the global ToolRegistry must be bit-identical after each test.
+
+    Tests routinely call ``ToolRegistry.clear()`` (or register/unregister their
+    own tools) and either forget to restore, or restore to an empty registry,
+    leaving the process-global tool table wiped or polluted for the next test.
+    Anything that reads the full tool set (e.g. ``heavy_tool_names()`` in
+    simple_path_tool) then intermittently fails depending on test order — the
+    "fixed-then-broken" pattern.
+
+    This autouse fixture snapshots the registry before each test and fails the
+    test if the registry changed afterwards, so a leaking mutation gets an
+    immediate red instead of silently corrupting its neighbors.
+
+    Failing is the right call (not just a warning): a test that mutates global
+    state must restore it via ``ToolRegistry.restore(ToolRegistry.snapshot())``
+    or a save/restore around its own sub-registry. The error message names the
+    leaked tools so the fix is obvious.
+
+    Like the config-cache fixture, import is best-effort so the weightless
+    hygiene guard (which runs in a bare env) isn't blocked.
+    """
+    try:
+        from huginn.tools.registry import ToolRegistry
+    except ModuleNotFoundError:
+        yield
+        return
+
+    before = ToolRegistry.snapshot()
+    yield
+    after = ToolRegistry.snapshot()
+
+    if before.keys() != after.keys():
+        added = sorted(set(after) - set(before))
+        removed = sorted(set(before) - set(after))
+        # 先恢复快照, 阻断对后续测试的级联污染(否则清空的注册表会让下一
+        # 个测试也误报/失败), 再用红名点名泄漏者, 让修复一目了然.
+        ToolRegistry.restore(before)
+        raise AssertionError(
+            "test leaked changes to the global ToolRegistry (must restore "
+            "via `ToolRegistry.restore(ToolRegistry.snapshot())`): "
+            f"added={added}, removed={removed}"
+        )
 
 
 @pytest.hookimpl(trylast=True)

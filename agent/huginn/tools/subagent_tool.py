@@ -11,7 +11,6 @@ Actions:
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import os
 import time
@@ -21,6 +20,7 @@ from pydantic import BaseModel, Field
 
 from huginn.core_types import ToolContext, ToolResult
 from huginn.tools.base import HuginnTool
+from huginn.utils.common import hash_text
 
 logger = logging.getLogger(__name__)
 
@@ -218,8 +218,7 @@ def _belief_merge(
 
 def _content_hash(s: Any) -> str:
     """Stable hash for dedupe — G-Set 需要. 用 sha8 短摘要足够."""
-    raw = str(s).encode("utf-8", errors="ignore")
-    return hashlib.sha256(raw).hexdigest()[:8]
+    return hash_text(str(s), length=8)
 
 
 def _crdt_merge(results: list[dict]) -> dict:

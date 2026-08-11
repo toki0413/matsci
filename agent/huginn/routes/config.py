@@ -11,11 +11,15 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import ipaddress
+import json
 import logging
 import os
 import time
+import urllib.request
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -257,7 +261,6 @@ def _apply_legacy_params_to_env(params: dict[str, Any]) -> None:
         "pm_c_min": "HUGINN_PM_C_MIN",
         "wm_summarize_every_n": "HUGINN_WM_SUMMARIZE_EVERY_N",
     }
-    import json as _json
 
     for key, env_name in mapping.items():
         if key not in params:
@@ -269,15 +272,15 @@ def _apply_legacy_params_to_env(params: dict[str, Any]) -> None:
         if isinstance(val, bool):
             os.environ[env_name] = "true" if val else "false"
         elif isinstance(val, (dict, list)):
-            os.environ[env_name] = _json.dumps(val)
+            os.environ[env_name] = json.dumps(val)
         else:
             os.environ[env_name] = str(val)
 
     # models / agents 是 list, 单独走 JSON 序列化
     if "models" in params and params["models"] is not None:
-        os.environ["HUGINN_MODELS"] = _json.dumps(params["models"])
+        os.environ["HUGINN_MODELS"] = json.dumps(params["models"])
     if "agents" in params and params["agents"] is not None:
-        os.environ["HUGINN_AGENTS"] = _json.dumps(params["agents"])
+        os.environ["HUGINN_AGENTS"] = json.dumps(params["agents"])
 
 
 # ── /config/models ──────────────────────────────────────────────
@@ -481,11 +484,6 @@ async def discover_local_models(provider: str = "ollama", base_url: str = "") ->
 
     只允许访问 loopback 地址, 防止 SSRF。
     """
-    import ipaddress
-    import json as _json
-    import urllib.request
-    from urllib.parse import urlparse
-
     # 各 provider 的默认本地地址, 没传 base_url 时兜底
     defaults = {
         "ollama": "http://localhost:11434",
@@ -527,7 +525,7 @@ async def discover_local_models(provider: str = "ollama", base_url: str = "") ->
 
         req = urllib.request.Request(api_url, headers={"Accept": "application/json"})
         with urllib.request.urlopen(req, timeout=5) as resp:
-            data = _json.loads(resp.read().decode())
+            data = json.loads(resp.read().decode())
 
         if provider == "ollama":
             models = [m.get("name", "") for m in data.get("models", []) if m.get("name")]
@@ -804,19 +802,18 @@ async def list_harness_gates() -> HarnessGatesOut:
     观察到对应 gate 的 enabled 同步翻转, 证明开关真实作用到了门控行为.
     """
     from huginn.feature_flags import FeatureFlags
-    from huginn.harness.ood_holdout import _harness_enabled as _ood_enabled
-    from huginn.harness.significance_gate import _harness_enabled as _sig_enabled
+    from huginn.harness._enabled import _harness_enabled
 
     defaults = FeatureFlags._DEFAULTS
     gates = [
         HarnessGateOut(
             name="harness_significance_gate",
-            enabled=_sig_enabled("harness_significance_gate"),
+            enabled=_harness_enabled("harness_significance_gate"),
             default=bool(defaults.get("harness_significance_gate", False)),
         ),
         HarnessGateOut(
             name="harness_ood_holdout",
-            enabled=_ood_enabled("harness_ood_holdout"),
+            enabled=_harness_enabled("harness_ood_holdout"),
             default=bool(defaults.get("harness_ood_holdout", False)),
         ),
     ]

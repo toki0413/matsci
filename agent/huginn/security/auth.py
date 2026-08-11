@@ -19,6 +19,7 @@ import asyncio
 import hmac
 import logging
 import os
+import secrets
 import threading
 import time
 from collections.abc import Awaitable, Callable
@@ -132,8 +133,6 @@ def create_token(
     Includes a unique ``jti`` (JWT ID) claim so the token can be
     individually revoked via :class:`TokenRevocationList`.
     """
-    import secrets as _secrets
-
     secret = _jwt_secret()
     if secret is None:
         raise RuntimeError("No JWT secret configured (set HUGINN_JWT_SECRET or HUGINN_API_KEY)")
@@ -141,7 +140,7 @@ def create_token(
         "sub": user.user_id,
         "username": user.username,
         "role": user.role.value,
-        "jti": _secrets.token_urlsafe(16),  # unique ID for revocation
+        "jti": secrets.token_urlsafe(16),  # unique ID for revocation
     }
     return jwt_encode(payload, secret, expires_in=expires_in)
 

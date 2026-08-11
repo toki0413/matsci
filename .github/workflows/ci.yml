@@ -7,10 +7,13 @@ on:
     branches: [master, main]
 
 # Cancel superseded runs when a new push lands on the same branch.
-# Prevents stale python-tests jobs from hogging runner slots.
+# Prevents stale test jobs from hogging runner slots.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   lint:
@@ -35,9 +38,13 @@ jobs:
           # Blocking gate: CI lint 必须全绿.
           ruff check .
 
-  python-tests:
+  test:
+    # 单一测试 job：pytest 自动发现整个 tests/ 目录，无手工 ignore 列表、
+    # 无 ABCDE 分组。之前的分组/ignore 是为了绕开 TestClient 线程泄漏和
+    # OOM；现在夹具全部用上下文管理器关闭 portal 线程（并有
+    # tests/test_testclient_hygiene.py 护栏），根因已修，无需再手工维护分组。
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -60,15 +67,12 @@ jobs:
           pip install pymatgen ase paramiko pypdf pint spglib
           pip install toml croniter fastapi uvicorn nbformat
           pip install langchain-openai langgraph-checkpoint-sqlite
-          # Lightweight optional deps — keeps test coverage up on CI
           pip install psutil pulp cvxpy scikit-fem anthropic langchain-ollama
           pip install pytest-timeout
 
       - name: Add swap to prevent OOM
         run: |
-          # github runner 只有 7G RAM, 4708 个测试串行跑会在 65% 处 OOM.
-          # 加 6G swap (用 /swapfile-ci 避开系统默认 /swapfile 冲突).
-          # TestClient/HuginnAgent 测试因内存重单独走 http-tests job.
+          # runner 只有 7G RAM，全量测试串行跑会 OOM。加 6G swap 兜底。
           if [ ! -f /swapfile-ci ]; then
             sudo fallocate -l 6G /swapfile-ci
             sudo chmod 600 /swapfile-ci
@@ -80,7 +84,14 @@ jobs:
             echo "/swapfile-ci already exists"
           fi
 
-      - name: Run tests
+      # First gate: TestClient-leak guard. Weightless (pathlib/re only), so it
+      # fails fast before the heavy suite runs. Anyone who reintroduces
+      # `client = TestClient(app)` without `with` gets an immediate red.
+      - name: TestClient hygiene guard
+        working-directory: agent
+        run: python -m pytest tests/test_testclient_hygiene.py -q -o addopts=""
+
+      - name: Run full test suite
         env:
           HUGINN_RATE_LIMIT_ENABLED: "false"
           HUGINN_RATE_LIMIT_PER_MINUTE: "0"
@@ -88,52 +99,21 @@ jobs:
           TRANSFORMERS_OFFLINE: "1"
           HUGINN_CI: "1"
           # sklearn 的 GP 拟合底层走 scipy.linalg / OpenBLAS. 新版 numpy 在
-          # GitHub runner 上偶发原生崩溃 (3.12/3.13 稳定复现, 3.11 正常),
-          # 锁成单线程是这类 OpenBLAS 崩溃的通用解法, 顺带降低内存占用.
+          # GitHub runner 上偶发原生崩溃，锁成单线程是通用解法，顺带降内存。
           OPENBLAS_NUM_THREADS: "1"
           OMP_NUM_THREADS: "1"
           MKL_NUM_THREADS: "1"
           NUMEXPR_NUM_THREADS: "1"
         run: |
           cd agent
-          python -m pytest -v -rA --tb=line -p no:cov -o addopts="" \
+          # -n 0 (串行, 不 fork): 全 app 测试(TestClient)在 xdist fork 下会
+          # 因 fork+threads 崩溃/OOM, 之前的手工分组正是为此。串行从根上
+          # 规避, 不再需要维护分组。stress/ 与 benchmark/ 是重型长跑套件,
+          # 留给专门触发, 不进默认 push。
+          python -m pytest tests -v -rA --tb=line -p no:cov -o addopts="" \
             --timeout=60 --timeout-method=thread \
-            -n 2 -m "not network" \
-            --ignore=tests/test_api_contract.py \
-            --ignore=tests/test_security_penetration.py \
-            --ignore=tests/test_chaos_engineering.py \
-            --ignore=tests/test_database_aflow_nomad.py \
-            --ignore=tests/test_materials_database_tool.py \
-            --ignore=tests/test_mock_misc_tools.py \
-            --ignore=tests/stress \
-            --ignore=tests/loops \
-            --ignore=tests/sci_automation_test.py \
-            --ignore=tests/test_api_version_compat.py \
-            --ignore=tests/test_cors_security_headers.py \
-            --ignore=tests/test_performance_load.py \
-            --ignore=tests/test_audit_integrity.py \
-            --ignore=tests/test_upload_security.py \
-            --ignore=tests/test_i18n_encoding.py \
-            --ignore=tests/test_kg.py \
-            --ignore=tests/test_websocket_long.py \
-            --ignore=tests/test_server_fastapi.py \
-            --ignore=tests/test_chaos_fault_injection.py \
-            --ignore=tests/test_error_boundaries.py \
-            --ignore=tests/test_data_consistency.py \
-            --ignore=tests/test_questions.py \
-            --ignore=tests/test_session_timeout.py \
-            --ignore=tests/test_rate_limiting.py \
-            --ignore=tests/test_e2e_agent_flow.py \
-            --ignore=tests/e2e_extended.py \
-            --ignore=tests/e2e_user_journeys.py \
-            --ignore=tests/test_route_smoke.py \
-            --ignore=tests/test_ws_integration.py \
-            --ignore=tests/test_team_v2_plans.py \
-            --ignore=tests/test_server_coverage_boost.py \
-            --ignore=tests/test_interaction.py \
-            --ignore=tests/test_performance_regression.py \
-            --ignore=tests/test_model_advisor.py \
-            --ignore=tests/benchmark/test_performance.py \
+            -n 0 -m "not network" \
+            --ignore=tests/stress --ignore=tests/benchmark \
             --maxfail=50 2>&1 | tee pytest_output.txt
           exit ${PIPESTATUS[0]}
 
@@ -161,226 +141,6 @@ jobs:
         with:
           name: pytest-output-${{ matrix.python-version }}
           path: agent/pytest_output.txt
-          retention-days: 7
-
-  http-tests:
-    # TestClient/HuginnAgent tests with module-scoped fixtures that crash
-    # under --forked (fork + threads deadlock). Run serially (-n 0) without
-    # --forked; each TestClient instantiates the full Huginn app (~2-3GB).
-    #
-    # Three groups: test_questions.py is a heavy integration script (registers
-    # all tools, runs code_tool/sympy/Monte-Carlo UQ/HuginnAgent) that alone
-    # consumes ~4-5GB. Running it after other TestClient files causes OOM
-    # (MemoryError at test_code_tool_bandgap). Isolating it in group c gives
-    # it the full 7GB+swap budget. Groups a/b hold the remaining 14 files.
-    # Group d isolates e2e_user_journeys.py + e2e_extended.py — both start a
-    # module-scoped TestClient that leaks anyio portal threads, hanging xdist
-    # workers under -n 2 even without --forked.
-    # Group e holds 6 more files with module-level `client = TestClient(app)`
-    # at import time (test_route_smoke/test_ws_integration/test_team_v2_plans/
-    # test_server_coverage_boost/test_interaction/test_performance_regression).
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11", "3.12", "3.13"]
-        test-group: [a, b, c, d, e]
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v7
-        with:
-          python-version: ${{ matrix.python-version }}
-          cache: pip
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e "./agent[dev]"
-          pip install chromadb scikit-learn scipy sympy matplotlib sentence-transformers pymupdf
-          pip install pymatgen ase paramiko pypdf pint spglib
-          pip install toml croniter fastapi uvicorn nbformat
-          pip install langchain-openai langgraph-checkpoint-sqlite
-          pip install psutil pulp cvxpy scikit-fem anthropic langchain-ollama
-          pip install pytest-timeout
-
-      - name: Add swap to prevent OOM
-        run: |
-          if [ ! -f /swapfile-ci ]; then
-            sudo fallocate -l 4G /swapfile-ci
-            sudo chmod 600 /swapfile-ci
-            sudo mkswap /swapfile-ci
-            sudo swapon /swapfile-ci
-            echo "swap added:"
-            swapon --show
-          else
-            echo "/swapfile-ci already exists"
-          fi
-
-      - name: Run http/agent tests (serial, no --forked)
-        env:
-          HUGINN_RATE_LIMIT_ENABLED: "false"
-          HUGINN_RATE_LIMIT_PER_MINUTE: "0"
-          HF_HUB_OFFLINE: "1"
-          TRANSFORMERS_OFFLINE: "1"
-          HUGINN_CI: "1"
-          OPENBLAS_NUM_THREADS: "1"
-          OMP_NUM_THREADS: "1"
-          MKL_NUM_THREADS: "1"
-          NUMEXPR_NUM_THREADS: "1"
-        run: |
-          cd agent
-          if [ "${{ matrix.test-group }}" = "a" ]; then
-            # Group A — 8 lighter files (CORS/version/upload/i18n/kg/ws)
-            FILES="tests/test_api_version_compat.py \
-              tests/test_cors_security_headers.py \
-              tests/test_performance_load.py \
-              tests/test_audit_integrity.py \
-              tests/test_upload_security.py \
-              tests/test_i18n_encoding.py \
-              tests/test_kg.py \
-              tests/test_websocket_long.py"
-          elif [ "${{ matrix.test-group }}" = "b" ]; then
-            # Group B — 7 TestClient/Agent files (server/chaos/error/data/session/rate/e2e)
-            FILES="tests/test_server_fastapi.py \
-              tests/test_chaos_fault_injection.py \
-              tests/test_error_boundaries.py \
-              tests/test_data_consistency.py \
-              tests/test_session_timeout.py \
-              tests/test_rate_limiting.py \
-              tests/test_e2e_agent_flow.py"
-          elif [ "${{ matrix.test-group }}" = "c" ]; then
-            # Group C — test_questions.py alone (heavy: code_tool/sympy/UQ/agent)
-            FILES="tests/test_questions.py"
-          elif [ "${{ matrix.test-group }}" = "d" ]; then
-            # Group D — e2e_user_journeys.py + e2e_extended.py
-            # Both start a module-scoped TestClient (full FastAPI app) that
-            # leaks anyio portal threads under --forked; without --forked
-            # they hang xdist workers. Run serially here.
-            FILES="tests/e2e_user_journeys.py \
-              tests/e2e_extended.py"
-          else
-            # Group E — 7 files with module-level `client = TestClient(app)`
-            # at import time. Same anyio portal thread leak as group D;
-            # running them under -n 2 hangs xdist workers. Run serially.
-            # Also includes tests/benchmark/test_performance.py: its
-            # TestSandboxTimeout::test_sandbox_timeout_result leaks threads
-            # (subprocess.run timeout join thread) until xdist worker hits
-            # `RuntimeError: can't start new thread` after ~5000 tests,
-            # crashing the worker. Serial -n 0 keeps thread count bounded.
-            FILES="tests/test_route_smoke.py \
-              tests/test_ws_integration.py \
-              tests/test_team_v2_plans.py \
-              tests/test_server_coverage_boost.py \
-              tests/test_interaction.py \
-              tests/test_performance_regression.py \
-              tests/test_model_advisor.py \
-              tests/benchmark/test_performance.py"
-          fi
-          python -m pytest -v -rA --tb=short -p no:cov -o addopts="" \
-            --timeout=60 --timeout-method=thread \
-            -n 0 -m "not network" \
-            $FILES \
-            --maxfail=50 2>&1 | tee pytest_http_${{ matrix.test-group }}_output.txt
-          exit ${PIPESTATUS[0]}
-
-      - name: Expose failures to step summary
-        if: failure()
-        working-directory: ${{ github.workspace }}
-        run: |
-          OUT="agent/pytest_http_${{ matrix.test-group }}_output.txt"
-          if [ -f "$OUT" ]; then
-            {
-              echo "## http test failures (group ${{ matrix.test-group }}, last 150 lines)"
-              echo '```'
-              tail -150 "$OUT"
-              echo '```'
-            } >> $GITHUB_STEP_SUMMARY
-          fi
-
-      - name: Upload http test output
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: pytest-http-${{ matrix.test-group }}-${{ matrix.python-version }}
-          path: agent/pytest_http_${{ matrix.test-group }}_output.txt
-          retention-days: 7
-
-  integration-tests:
-    runs-on: ubuntu-latest
-    timeout-minutes: ${{ matrix.job-timeout }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - test-file: tests/test_api_contract.py
-            label: api-contract
-            job-timeout: 30
-            test-timeout: 60
-          - test-file: tests/test_security_penetration.py
-            label: security-penetration
-            job-timeout: 20
-            test-timeout: 120
-          - test-file: tests/test_chaos_engineering.py
-            label: chaos-engineering
-            job-timeout: 20
-            test-timeout: 120
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Set up Python
-        uses: actions/setup-python@v7
-        with:
-          python-version: "3.11"
-          cache: pip
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e "./agent[dev]"
-          pip install chromadb scikit-learn scipy sympy matplotlib sentence-transformers pymupdf
-          pip install pymatgen ase paramiko pypdf pint spglib
-          pip install toml croniter fastapi uvicorn nbformat
-          pip install langchain-openai langgraph-checkpoint-sqlite
-          pip install psutil pulp cvxpy scikit-fem anthropic langchain-ollama
-          pip install pytest-timeout
-
-      - name: Run integration tests
-        env:
-          HUGINN_RATE_LIMIT_ENABLED: "false"
-          HUGINN_RATE_LIMIT_PER_MINUTE: "0"
-          HF_HUB_OFFLINE: "1"
-          TRANSFORMERS_OFFLINE: "1"
-          HUGINN_CI: "1"
-        run: |
-          cd agent
-          pytest ${{ matrix.test-file }} -v --no-cov -m "integration and not network" --tb=short --timeout=${{ matrix.test-timeout }} 2>&1 | tee pytest_integration_output.txt
-          exit ${PIPESTATUS[0]}
-
-      - name: Expose integration failures to step summary
-        if: failure()
-        working-directory: ${{ github.workspace }}
-        run: |
-          if [ -f agent/pytest_integration_output.txt ]; then
-            {
-              echo '## integration test failures (last 150 lines)'
-              echo '```'
-              tail -150 agent/pytest_integration_output.txt
-              echo '```'
-            } >> $GITHUB_STEP_SUMMARY
-            grep -E '^(FAILED|ERROR|_ test)' agent/pytest_integration_output.txt | head -20 | while IFS= read -r line; do
-              echo "::error file=integration::${line}"
-            done
-          fi
-
-      - name: Upload integration test output
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: pytest-integration-${{ matrix.label }}
-          path: agent/pytest_integration_output.txt
           retention-days: 7
 
   frontend-build:
@@ -542,7 +302,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install pip-audit
           # Blocking gate: fail CI on known vulnerabilities.
-          # pip is upgraded above so tooling-level advisories don't trip the gate.
           pip-audit --desc
 
       - name: Install test dependencies

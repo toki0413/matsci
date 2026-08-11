@@ -23,20 +23,12 @@ from typing import Any
 
 from huginn.utils.runtime import get_runtime_home
 
+from ._enabled import _harness_enabled
+
 logger = logging.getLogger(__name__)
 
 # 核心 block 不能被关掉 (避免 prompt 崩坏)
 _CORE_BLOCKS = frozenset({"body", "fail", "exec", "context", "hypothesis", "principles"})
-
-
-def _harness_enabled(key: str, default: bool = False) -> bool:
-    try:
-        from huginn.config import get_config
-        cfg = get_config()
-        ff = getattr(cfg, "feature_flags", None) or {}
-        return bool(ff.get(key, default))
-    except Exception:
-        return default
 
 
 @dataclass

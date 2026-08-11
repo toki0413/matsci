@@ -10,11 +10,18 @@ import contextlib
 from pathlib import Path
 from typing import Any
 
-from fastapi.testclient import TestClient
 
-from huginn.server import app
+@pytest.fixture(scope="module", autouse=True)
+def _bind_test_client(app_client):
+    """Bind module-global `client` to the shared, properly-closed app_client.
 
-client = TestClient(app)
+    Replaces the old module-level ``client = TestClient(app)`` which leaked an
+    anyio portal thread and never shut down the app lifespan (OOM + hang).
+    """
+    global client
+    client = app_client
+    yield
+    client = None
 
 
 @pytest.fixture(autouse=True)

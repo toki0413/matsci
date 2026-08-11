@@ -22,6 +22,7 @@ module only walks the graph -- no predictions, no I/O.
 
 from __future__ import annotations
 
+import logging
 from collections import defaultdict, deque
 from typing import Any
 
@@ -33,6 +34,8 @@ from huginn.perception.doc_types import (
     InformationPackage,
 )
 from huginn.perception.document_graph import DocumentGraph
+
+logger = logging.getLogger(__name__)
 
 # Edges we're willing to walk during claim BFS. Deliberately excludes SEQ
 # (reading order, not semantic), CAPTION_OF (already implied via REFERENCES
@@ -350,7 +353,7 @@ class InfoPackAssembler:
         except Exception:
             # Swallow LLM errors and fall through to the rule-based path --
             # better a mediocre summary than a crashed pipeline.
-            pass
+            logger.debug("LLM summary failed, falling back to rule-based", exc_info=True)
         return self._rule_summary(package)
 
     def _build_llm_prompt(self, package: InformationPackage) -> str:

@@ -2,6 +2,8 @@
 
 import asyncio
 
+import pytest
+
 from huginn.core_types import ToolContext
 from huginn.workflows.engine import ComputationalStage, ValidationRule, WorkflowEngine
 from huginn.workflows.templates import (
@@ -9,6 +11,16 @@ from huginn.workflows.templates import (
     list_templates,
     symbolic_verify_workflow,
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_registry():
+    """隔离 ToolRegistry: 测试自用 dummy 工具不影响全局注册表."""
+    from huginn.tools.registry import ToolRegistry
+
+    before = ToolRegistry.snapshot()
+    yield
+    ToolRegistry.restore(before)
 
 
 class TestWorkflowEngine:
@@ -112,7 +124,6 @@ class TestWorkflowCheckpoint:
     def test_execute_writes_checkpoint(self, tmp_path):
         from huginn.tools.registry import ToolRegistry
 
-        ToolRegistry.clear()
         dummy = _DummyTool()
         ToolRegistry.register(dummy)
 
@@ -132,14 +143,11 @@ class TestWorkflowCheckpoint:
         loaded = WorkflowCheckpoint.load(cp_path)
         assert loaded.stages[0].status == "completed"
 
-        ToolRegistry.clear()
-
     def test_resume_skips_completed_stage(self, tmp_path):
         from huginn.core_types import ToolResult
         from huginn.tools.registry import ToolRegistry
         from huginn.workflows.checkpoint import WorkflowCheckpoint
 
-        ToolRegistry.clear()
         dummy = _DummyTool()
         ToolRegistry.register(dummy)
 
@@ -170,15 +178,12 @@ class TestWorkflowCheckpoint:
         assert result.success is True
         assert dummy.calls == 0  # s1 was already completed in checkpoint
 
-        ToolRegistry.clear()
-
 
 class TestWorkflowBudget:
     def test_budget_denies_expensive_stage(self, tmp_path):
         from huginn.core_types import BudgetPolicy
         from huginn.tools.registry import ToolRegistry
 
-        ToolRegistry.clear()
         dummy = _DummyTool()
         ToolRegistry.register(dummy)
 
@@ -200,13 +205,10 @@ class TestWorkflowBudget:
         assert "Budget denied" in (result.stages["big"].result.error or "")
         assert dummy.calls == 0
 
-        ToolRegistry.clear()
-
     def test_budget_allows_cheap_stage(self, tmp_path):
         from huginn.core_types import BudgetPolicy
         from huginn.tools.registry import ToolRegistry
 
-        ToolRegistry.clear()
         dummy = _DummyTool()
         ToolRegistry.register(dummy)
 
@@ -222,5 +224,3 @@ class TestWorkflowBudget:
 
         assert result.success is True
         assert dummy.calls == 1
-
-        ToolRegistry.clear()

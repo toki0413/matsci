@@ -42,29 +42,6 @@ _DEFAULT_TOLERANCE = 0.1
 _DEFAULT_MIN_PER_SPLIT = 3
 
 
-def _harness_enabled(key: str, default: bool = False) -> bool:
-    """读 cfg.feature_flags.<key>, fallback 到 FeatureFlags 统一层.
-
-    优先级: 配置文件 > 环境变量 / 运行时 API > default.
-    """
-    try:
-        from huginn.config import get_config
-
-        cfg = get_config()
-        ff = getattr(cfg, "feature_flags", None) or {}
-        if key in ff:
-            return bool(ff[key])
-    except Exception:
-        # best-effort: 配置读不到就回退到 FeatureFlags 层, 但记录以便排查
-        logger.debug("feature_flags 读取失败, 回退到 FeatureFlags 统一层", exc_info=True)
-    try:
-        from huginn.feature_flags import FeatureFlags
-
-        return FeatureFlags.shared().is_enabled(key)
-    except Exception:
-        return default
-
-
 def _is_holdout(task_id: str, train_ratio: float = _DEFAULT_TRAIN_RATIO) -> bool:
     """确定性分桶: task_id 的 hash < (1-train_ratio)*65536 → holdout.
 

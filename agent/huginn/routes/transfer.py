@@ -12,7 +12,9 @@
 from __future__ import annotations
 
 import contextlib
+import fnmatch
 import logging
+import stat as _stat
 import time
 from pathlib import Path
 from typing import Any
@@ -249,8 +251,6 @@ async def transfer_sync(req: SyncRequest) -> dict[str, Any]:
     if err or cfg is None:
         return {"success": False, "error": err or "无法解析 HPC 配置"}
 
-    import fnmatch
-
     uploaded: list[dict[str, Any]] = []
     skipped = 0
     deleted = 0
@@ -366,16 +366,12 @@ def _expand_remote_path(sftp: Any, path: str) -> str:
 
 def _is_dir_attr(attr: Any) -> bool:
     """判断 SFTP 目录条目是不是目录。"""
-    import stat as _stat
-
     mode = attr.st_mode or 0
     return _stat.S_ISDIR(mode)
 
 
 def _mode_to_str(mode: int) -> str:
     """把 stat mode 转成 rwxr-xr-x 字符串, 前端展示用。"""
-    import stat as _stat
-
     if mode == 0:
         return "---------"
     parts = []
@@ -411,8 +407,6 @@ def _delete_extra_remote_files(
 
     只删文件不删目录, 避免误删整个目录结构。
     """
-    import stat as _stat
-
     deleted = 0
     try:
         for entry in sftp.listdir_attr(remote_root):

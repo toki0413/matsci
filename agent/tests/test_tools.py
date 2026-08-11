@@ -2,6 +2,8 @@
 
 import asyncio
 
+import pytest
+
 from huginn.core_types import ToolContext
 from huginn.tools.adapter import ToolAdapter
 from huginn.tools.diagnose_tool import DiagnoseTool
@@ -10,18 +12,27 @@ from huginn.tools.structure_tool import StructureTool
 from huginn.tools.validate_tool import ValidateTool
 
 
+@pytest.fixture(autouse=True)
+def _isolate_registry():
+    before = ToolRegistry.snapshot()
+    yield
+    ToolRegistry.restore(before)
+
+
 class TestToolRegistry:
     def test_register_and_list(self):
-        ToolRegistry.clear()
         ToolRegistry.register(StructureTool())
         assert "structure_tool" in ToolRegistry.list_tools()
 
     def test_get_schema(self):
-        ToolRegistry.clear()
+        # Registry is pre-populated by the session-level canonical baseline in
+        # conftest, so assert on the newly registered tool's presence rather
+        # than a total count of 1 (which only held when the registry was empty).
         ToolRegistry.register(StructureTool())
         schemas = ToolRegistry.get_all_schemas()
-        assert len(schemas) == 1
-        assert schemas[0]["function"]["name"] == "structure_tool"
+        by_name = {s["function"]["name"]: s for s in schemas}
+        assert "structure_tool" in by_name
+        assert by_name["structure_tool"]["function"]["name"] == "structure_tool"
 
 
 class TestStructureTool:

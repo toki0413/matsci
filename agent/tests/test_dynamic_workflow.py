@@ -56,18 +56,17 @@ class _FakeTool:
 
 def _register_fakes(*tools: _FakeTool) -> None:
     """Clear ToolRegistry and register the given fakes."""
-    ToolRegistry.clear()
     for t in tools:
         ToolRegistry.register(t)
 
 
 @pytest.fixture(autouse=True)
-def _clean_registry():
+def _isolate_registry():
     """Reset ToolRegistry + shared workflow registry before and after each test."""
-    ToolRegistry.clear()
+    before = ToolRegistry.snapshot()
     set_shared_workflow_registry(None)
     yield
-    ToolRegistry.clear()
+    ToolRegistry.restore(before)
     set_shared_workflow_registry(None)
 
 

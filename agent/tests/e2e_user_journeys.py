@@ -98,8 +98,10 @@ def app_client(isolated_workspace):
 
     from fastapi.testclient import TestClient
 
-    client = TestClient(server_module.app)
-    yield client
+    # with 块确保 module 结束自动关闭 client: 触发 lifespan shutdown,
+    # 释放 ~2-3GB 内存并关闭 anyio portal, 根治线程泄漏导致的 worker 卡死.
+    with TestClient(server_module.app) as client:
+        yield client
 
     server_module._init_mcp_tools = original_init
     server_module._shutdown_mcp = original_shutdown

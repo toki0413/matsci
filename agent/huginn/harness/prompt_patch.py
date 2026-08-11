@@ -27,21 +27,12 @@ from typing import Any
 
 from huginn.utils.runtime import get_runtime_home
 
+from ._enabled import _harness_enabled
+
 logger = logging.getLogger(__name__)
 
 # LRU 上限, 跟 spec 一致. ponytail: 不做 per-phase quota, 全局 LRU 够用.
 _PATCH_STORE_MAX = 20
-
-
-def _harness_enabled(key: str, default: bool = False) -> bool:
-    """读 cfg.feature_flags.<key>, mtime 自动 reload. 默认 off."""
-    try:
-        from huginn.config import get_config
-        cfg = get_config()
-        ff = getattr(cfg, "feature_flags", None) or {}
-        return bool(ff.get(key, default))
-    except Exception:
-        return default
 
 
 @dataclass

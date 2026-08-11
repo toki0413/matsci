@@ -43,6 +43,14 @@ class FeatureFlags:
         # 升级路径: 模块代码改为读 FeatureFlags 后, 删除 env var setdefault.
         "context_router": False,       # P3 信息路径多样性稀疏化 (context_builder)
         "task_tool_router": False,     # task keyword → tool category 动态路由
+        # harness 实验性栅栏 (默认 off, 显式开启才生效). 见 huginn/harness/_enabled.py.
+        # 开启方式: huginn.toml [feature_flags] 字段, 或环境变量 HUGINN_FEATURE_<NAME>=true.
+        "harness_workflow_evolution": False,  # H2: variant bandit 演化回路
+        "harness_ood_holdout": False,         # H6: OOD 留出验证 (防背题补丁)
+        "harness_significance_gate": False,   # H5: 结果显著性门 (统计检验)
+        "harness_joint_optimizer": False,     # 联合优化 (phase/block/params 协同)
+        "harness_phase_evolve": False,        # 阶段规范演化
+        "harness_prompt_patch": False,        # 提示补丁 (跨域提示增强)
         # 隐私三档, 互斥. PrivacyGuard.set_level 负责保证同时只一个 True.
         # privacy_off 仅由 set_level 维护互斥, 外部设置无效.
         "privacy_off": True,           # 不脱敏 (默认)
@@ -67,6 +75,12 @@ class FeatureFlags:
         "system_health_auto_fix": "监控异常后自动熔断工具 (默认关)",
         "context_router": "P3 信息路径多样性稀疏化 (context_builder, 默认关)",
         "task_tool_router": "task keyword → tool category 动态路由 (默认关)",
+        "harness_workflow_evolution": "H2 variant bandit 演化回路 (实验性, 默认关)",
+        "harness_ood_holdout": "H6 OOD 留出验证, 防背题补丁 (实验性, 默认关)",
+        "harness_significance_gate": "H5 结果显著性门, 统计检验 (实验性, 默认关)",
+        "harness_joint_optimizer": "联合优化 phase/block/params (实验性, 默认关)",
+        "harness_phase_evolve": "阶段规范演化 (实验性, 默认关)",
+        "harness_prompt_patch": "提示补丁, 跨域提示增强 (实验性, 默认关)",
         "privacy_off": "隐私级别: off (不脱敏, 默认. 仅由 set_level 维护互斥, 外部设置无效)",
         "privacy_redact": "隐私级别: redact (脱敏后发云端)",
         "privacy_local_only": "隐私级别: local_only (完全本地)",

@@ -27,6 +27,9 @@ from pathlib import Path
 from typing import Any
 
 from huginn.runtime.trace_context import get_trace_id as _get_trace_id
+from huginn.utils.common import hash_text
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -93,7 +96,11 @@ class AuditLogger:
                     if line:
                         last_hash = hashlib.sha256(line.encode("utf-8")).hexdigest()[:32]
         except OSError:
-            pass
+            logger.warning(
+                "audit log %s exists but could not be read; hash chain will restart",
+                self.log_path,
+                exc_info=True,
+            )
         self._last_hash = last_hash
 
     def _now(self) -> str:
@@ -114,7 +121,7 @@ class AuditLogger:
             scanner = SecretScanner()
         except Exception as exc:
             # 扫描器不可用时必须警告 — 不能静默放过未脱敏数据
-            logging.getLogger(__name__).warning(
+            logger.warning(
                 "SecretScanner unavailable (%s), details NOT redacted", exc,
             )
             return details
@@ -219,9 +226,9 @@ class AuditLogger:
 
     @staticmethod
     def _hash_data(data: str | bytes) -> str:
-        if isinstance(data, str):
-            data = data.encode("utf-8")
-        return hashlib.sha256(data).hexdigest()[:16]
+        if isinstance(data, bytes):
+            data = data.decode("utf-8")
+        return hash_text(data)
 
     # -- verification ---------------------------------------------------
 

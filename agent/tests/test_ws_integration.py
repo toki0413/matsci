@@ -15,14 +15,22 @@ from unittest.mock import MagicMock
 
 import pytest
 from fastapi import WebSocketDisconnect
-from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage, ToolMessage
 
-from huginn.server import app
-
-client = TestClient(app)
-
 WS_PATH = "/v1/ws/agent"
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _bind_test_client(app_client):
+    """Bind module-global `client` to the shared, properly-closed app_client.
+
+    Replaces the old module-level ``client = TestClient(app)`` which leaked an
+    anyio portal thread and never shut down the app lifespan (OOM + hang).
+    """
+    global client
+    client = app_client
+    yield
+    client = None
 
 
 # ── fake collaborators ──────────────────────────────────────────────
