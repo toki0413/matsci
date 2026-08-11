@@ -126,6 +126,12 @@ jobs:
             --ignore=tests/test_e2e_agent_flow.py \
             --ignore=tests/e2e_extended.py \
             --ignore=tests/e2e_user_journeys.py \
+            --ignore=tests/test_route_smoke.py \
+            --ignore=tests/test_ws_integration.py \
+            --ignore=tests/test_team_v2_plans.py \
+            --ignore=tests/test_server_coverage_boost.py \
+            --ignore=tests/test_interaction.py \
+            --ignore=tests/test_performance_regression.py \
             --maxfail=50 2>&1 | tee pytest_output.txt
           exit ${PIPESTATUS[0]}
 
@@ -168,13 +174,16 @@ jobs:
     # Group d isolates e2e_user_journeys.py + e2e_extended.py — both start a
     # module-scoped TestClient that leaks anyio portal threads, hanging xdist
     # workers under -n 2 even without --forked.
+    # Group e holds 6 more files with module-level `client = TestClient(app)`
+    # at import time (test_route_smoke/test_ws_integration/test_team_v2_plans/
+    # test_server_coverage_boost/test_interaction/test_performance_regression).
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
-        test-group: [a, b, c, d]
+        test-group: [a, b, c, d, e]
     steps:
       - uses: actions/checkout@v7
 
@@ -243,13 +252,23 @@ jobs:
           elif [ "${{ matrix.test-group }}" = "c" ]; then
             # Group C — test_questions.py alone (heavy: code_tool/sympy/UQ/agent)
             FILES="tests/test_questions.py"
-          else
+          elif [ "${{ matrix.test-group }}" = "d" ]; then
             # Group D — e2e_user_journeys.py + e2e_extended.py
             # Both start a module-scoped TestClient (full FastAPI app) that
             # leaks anyio portal threads under --forked; without --forked
             # they hang xdist workers. Run serially here.
             FILES="tests/e2e_user_journeys.py \
               tests/e2e_extended.py"
+          else
+            # Group E — 6 files with module-level `client = TestClient(app)`
+            # at import time. Same anyio portal thread leak as group D;
+            # running them under -n 2 hangs xdist workers. Run serially.
+            FILES="tests/test_route_smoke.py \
+              tests/test_ws_integration.py \
+              tests/test_team_v2_plans.py \
+              tests/test_server_coverage_boost.py \
+              tests/test_interaction.py \
+              tests/test_performance_regression.py"
           fi
           python -m pytest -v -rA --tb=short -p no:cov -o addopts="" \
             --timeout=60 --timeout-method=thread \
