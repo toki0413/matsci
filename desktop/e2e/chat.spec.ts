@@ -62,7 +62,7 @@ test.describe('chat flow', () => {
   test('can type in the message input', async ({ page }) => {
     test.skip(!backendUp, 'backend not running');
     await page.goto('/');
-    await expect(page.getByText('Backend online')).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText('Connected', { exact: true })).toBeVisible({ timeout: 20_000 });
     const input = chatInput(page);
     await expect(input).toBeEnabled();
     await input.fill('ping from e2e');
@@ -72,7 +72,7 @@ test.describe('chat flow', () => {
   test('send message and see it in the conversation', async ({ page }) => {
     test.skip(!backendUp, 'backend not running');
     await page.goto('/');
-    await expect(page.getByText('Backend online')).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText('Connected', { exact: true })).toBeVisible({ timeout: 20_000 });
 
     const marker = `E2E-MARK-${Date.now()}`;
     const input = chatInput(page);

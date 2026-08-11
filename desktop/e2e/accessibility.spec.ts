@@ -8,7 +8,7 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 
-const GUIDE_KEY = 'huginn:guide:v1';
+const GUIDE_KEY = 'muninn:guide:v2';
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript((key) => {

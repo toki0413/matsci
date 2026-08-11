@@ -42,7 +42,7 @@ export async function backendReachable(timeoutMs = 3000): Promise<boolean> {
 // and would otherwise block the chat send button / sidebar clicks. Setting
 // the localStorage flag via addInitScript runs before the app's first paint,
 // so the modal never mounts.
-const GUIDE_KEY = 'huginn:guide:v1';
+const GUIDE_KEY = 'muninn:guide:v2';
 
 export const test = base.extend({
   page: async ({ page }, use) => {
