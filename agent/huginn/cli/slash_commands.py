@@ -96,7 +96,7 @@ def _print_help(console: Any) -> None:
                 console.print(f"  [cyan]/{name}[/cyan]")
     except Exception:
         # 加载失败不影响 help
-        pass
+        logger.debug("best-effort op failed", exc_info=True)
 
 
 def _handle_compact(command: str, agent: Any, console: Any) -> None:
@@ -307,6 +307,7 @@ def _undo_via_routes_api(console: Any) -> bool:
         ) as resp:
             data = json.loads(resp.read().decode("utf-8"))
     except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError, OSError):
+        logger.debug("best-effort op failed", exc_info=True)
         return False
 
     # 如果 server 返回了 checkpoint 列表, 拿最后一个 reject
@@ -402,6 +403,7 @@ def _undo_via_git_stash(console: Any, workspace: Path) -> bool:
             timeout=5.0,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
+        logger.debug("best-effort op failed", exc_info=True)
         return False
 
     if result.returncode != 0:
@@ -521,6 +523,7 @@ def _snapshot_directory_for_cli(base):
             )
         except (UnicodeDecodeError, OSError):
             # 二进制文件跳过
+            logger.debug("best-effort op failed", exc_info=True)
             continue
     return snapshot
 
@@ -752,6 +755,7 @@ def _try_custom_command(
     try:
         from huginn.cli.custom_commands import resolve_custom_command
     except Exception:
+        logger.debug("best-effort op failed", exc_info=True)
         return None
 
     workspace = _get_workspace(ctx)

@@ -260,6 +260,7 @@ def _guess_chart_type(p: Path, arr: Any) -> str:
             return "likely_microscopy_smooth"
         return "unknown"
     except Exception:
+        logger.debug("best-effort op failed", exc_info=True)
         return "unknown"
 
 

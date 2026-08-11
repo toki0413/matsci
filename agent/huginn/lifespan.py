@@ -452,6 +452,7 @@ async def _mcp_health_monitor(manager: Any) -> None:
         try:
             await asyncio.sleep(_HEALTH_CHECK_INTERVAL)
         except asyncio.CancelledError:
+            logger.debug("best-effort op failed", exc_info=True)
             return
 
         for name in list(manager._configs.keys()):
@@ -478,6 +479,7 @@ async def _mcp_health_monitor(manager: Any) -> None:
             try:
                 await asyncio.sleep(delay)
             except asyncio.CancelledError:
+                logger.debug("best-effort op failed", exc_info=True)
                 return
 
             success = await manager.reconnect(name)
@@ -670,6 +672,7 @@ async def lifespan(app: FastAPI):
                     if tracker._cache:
                         logger.debug(f"[PMK] tracking {len(tracker._cache)} threads")
                 except _aio.CancelledError:
+                    logger.debug("best-effort op failed", exc_info=True)
                     break
                 except Exception as e:
                     logger.debug(f"[PMK] loop error: {e}")

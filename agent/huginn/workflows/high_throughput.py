@@ -247,6 +247,7 @@ class ParameterSweep:
             }
             return bool(safe_eval(self.early_termination, context))
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return False
 
     def aggregate_results(self, job_results: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:

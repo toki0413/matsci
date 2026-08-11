@@ -795,7 +795,7 @@ def register_tool_output(
             from huginn.snapshot.integration import consume_last_snapshot_step_id
             snap_step_id = consume_last_snapshot_step_id()
         except ImportError:
-            pass
+            logger.debug("best-effort op failed", exc_info=True)
 
         # 从 tool_input 提取输入文件
         input_files: list[str] = []

@@ -190,6 +190,7 @@ def shard_iter_range(
                     try:
                         rec = json.loads(line)
                     except json.JSONDecodeError:
+                        logger.debug("best-effort op failed", exc_info=True)
                         continue
                     it = (rec.get("data") or {}).get("iteration")
                     if it is None:
@@ -199,6 +200,7 @@ def shard_iter_range(
                     try:
                         it = int(it)
                     except (TypeError, ValueError):
+                        logger.debug("best-effort op failed", exc_info=True)
                         continue
                     if start_iter <= it <= end_iter:
                         records.append(rec)
@@ -394,6 +396,7 @@ class _BufferedAuditWriter:
                         if h:
                             last_hash = h
                     except json.JSONDecodeError:
+                        logger.debug("best-effort op failed", exc_info=True)
                         continue
             return last_hash
         except Exception:
@@ -428,6 +431,7 @@ class _BufferedAuditWriter:
             try:
                 iter_n = int(iter_n) if iter_n is not None else None
             except (TypeError, ValueError):
+                logger.debug("best-effort op failed", exc_info=True)
                 iter_n = None
             target = self._maybe_rotate_shard(iter_n)
             record = dict(ev)

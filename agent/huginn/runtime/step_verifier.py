@@ -205,6 +205,7 @@ class StepVerifierHook:
             try:
                 prev_ctx = self._prev_context_fn()[:500]
             except Exception:
+                logger.debug("best-effort op failed", exc_info=True)
                 prev_ctx = ""
 
         prompt = self._build_prompt(ctx, prev_ctx)
@@ -254,10 +255,12 @@ class StepVerifierHook:
         try:
             data = json.loads(resp[start:end + 1])
         except json.JSONDecodeError:
+            logger.debug("best-effort op failed", exc_info=True)
             return None
         try:
             score = float(data.get("score", 1.0))
         except (TypeError, ValueError):
+            logger.debug("best-effort op failed", exc_info=True)
             return None
         # 钳位 [0, 1]
         score = max(0.0, min(1.0, score))

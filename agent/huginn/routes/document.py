@@ -74,6 +74,7 @@ def _try_ingest(record: dict[str, Any]) -> tuple[int, bool]:
         from huginn.server_context import _server_context
         kb = getattr(_server_context, "kb", None)
     except Exception:
+        logger.debug("best-effort op failed", exc_info=True)
         kb = None
     if kb is None:
         return 0, False

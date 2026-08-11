@@ -558,6 +558,7 @@ class SmartIngester:
                     try:
                         pix = doc.extract_image(xref)
                     except Exception:
+                        logger.debug("best-effort op failed", exc_info=True)
                         continue
                     img_bytes = pix.get("image")
                     if not img_bytes:
@@ -649,6 +650,7 @@ class SmartIngester:
                     try:
                         values.append(float(row[col_idx]))
                     except (ValueError, TypeError):
+                        logger.debug("best-effort op failed", exc_info=True)
                         continue
             if values:
                 stats[col_name] = {
@@ -697,6 +699,7 @@ class SmartIngester:
                     if isinstance(obj, dict):
                         records.append(obj)
                 except json.JSONDecodeError:
+                    logger.debug("best-effort op failed", exc_info=True)
                     continue
             rows = len(records)
             if records:
@@ -757,7 +760,7 @@ class SmartIngester:
                 float(val)
                 seen_num += 1
             except ValueError:
-                pass
+                logger.debug("best-effort op failed", exc_info=True)
         if seen_total == 0:
             return "empty"
         return "number" if seen_num / seen_total > 0.8 else "string"
@@ -813,6 +816,7 @@ def build_smart_ingester(kb: Any | None) -> SmartIngester | None:
         # 让 SmartIngester 只依赖 image_analysis_tool. 升级路径: 传入当前 model.
         vision_available = False
     except Exception:
+        logger.debug("best-effort op failed", exc_info=True)
         vision_available = False
 
     return SmartIngester(

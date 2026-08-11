@@ -158,6 +158,7 @@ def _parse_first_json(text: str) -> dict | None:
                 try:
                     return json.loads(text[start:i + 1])
                 except json.JSONDecodeError:
+                    logger.debug("best-effort op failed", exc_info=True)
                     return None
     return None
 
@@ -176,11 +177,13 @@ def _parse_transform_response(text: str) -> Hypothesis | None:
     try:
         preds_clean = {str(k): float(v) for k, v in preds.items()}
     except (TypeError, ValueError):
+        logger.debug("best-effort op failed", exc_info=True)
         return None
     n_params = obj.get("new_n_params", 1)
     try:
         n_params = max(1, int(n_params))
     except (TypeError, ValueError):
+        logger.debug("best-effort op failed", exc_info=True)
         n_params = 1
     # h_id 用毫秒时间戳, 同迭代内冲突概率极低
     return Hypothesis(

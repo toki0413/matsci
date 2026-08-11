@@ -166,6 +166,7 @@ def _extract_sci_numbers(text: str, min_exp: int = 3) -> list[float]:
             if abs(int(exp)) >= min_exp:
                 out.append(float(coef) * 10.0 ** int(exp))
         except OverflowError:
+            logger.debug("best-effort op failed", exc_info=True)
             continue
     for coef, exp in _SCI_SUP.findall(text):
         try:
@@ -173,6 +174,7 @@ def _extract_sci_numbers(text: str, min_exp: int = 3) -> list[float]:
             if abs(e) >= min_exp:
                 out.append(float(coef) * 10.0 ** e)
         except OverflowError:
+            logger.debug("best-effort op failed", exc_info=True)
             continue
     return out
 
@@ -185,6 +187,7 @@ def _collect_artifact_numbers(d: Path | None, cap: int = 200_000) -> list[float]
     try:
         import numpy as np
     except Exception:
+        logger.debug("best-effort op failed", exc_info=True)
         np = None
     for p in sorted(d.rglob("*")):
         if len(nums) >= cap or not p.is_file():
@@ -214,8 +217,10 @@ def _collect_artifact_numbers(d: Path | None, cap: int = 200_000) -> list[float]
                     try:
                         nums.append(float(m.group(0)))
                     except (ValueError, OverflowError):
+                        logger.debug("best-effort op failed", exc_info=True)
                         continue
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             continue
     return [x for x in nums if math.isfinite(x)]
 

@@ -24,12 +24,15 @@ from typing import Any
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+logger = logging.getLogger(__name__)
+
 # SSE transport lives in mcp.client.sse; older releases may not ship it, so
 # import defensively and fall back to None — connect() raises a clear error
 # if someone actually asks for SSE on a build that lacks it.
 try:
     from mcp.client.sse import sse_client as _sse_client
 except ImportError:  # pragma: no cover - depends on installed mcp version
+    logger.debug("best-effort op failed", exc_info=True)
     _sse_client = None
 
 # Notification types used to fan out resource-update events to subscribers.
@@ -46,8 +49,6 @@ except ImportError:  # pragma: no cover
     _anyio_lowlevel = None
     _ResourceUpdatedNotification = None
     _ServerNotification = None
-
-logger = logging.getLogger(__name__)
 
 # Reconnection defaults
 _BACKOFF_BASE: float = 1.0       # initial delay in seconds
@@ -397,6 +398,7 @@ class MCPClientManager:
                 result = await session.read_resource(uri)
                 return result.contents[0].text if result.contents else ""
             except Exception:
+                logger.debug("best-effort op failed", exc_info=True)
                 continue
         raise ValueError(f"Resource '{uri}' not found on any connected server")
 
@@ -550,6 +552,7 @@ class MCPClientManager:
             self._last_health_check[name] = time.monotonic()
             return True
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return False
 
     async def reconnect(self, name: str) -> bool:
@@ -805,7 +808,7 @@ class MCPClientManager:
                     await asyncio.wait_for(proc.wait(), timeout=timeout)
                     return
                 except TimeoutError:
-                    pass
+                    logger.debug("best-effort op failed", exc_info=True)
 
                 # 升级到 kill
                 with contextlib.suppress(ProcessLookupError, PermissionError):
@@ -821,8 +824,10 @@ class MCPClientManager:
                         await asyncio.wait_for(proc.wait(), timeout=timeout)
                         return
                     except TimeoutError:
+                        logger.debug("best-effort op failed", exc_info=True)
                         continue
                     except ProcessLookupError:
+                        logger.debug("best-effort op failed", exc_info=True)
                         return
 
                 # 最终升级到 SIGKILL

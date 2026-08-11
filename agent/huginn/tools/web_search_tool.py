@@ -47,6 +47,7 @@ def _search_timeout() -> float:
         v = float(raw)
         return v if v > 0 else 15.0
     except (TypeError, ValueError):
+        logger.debug("best-effort op failed", exc_info=True)
         return 15.0
 
 
@@ -221,6 +222,7 @@ class WebSearchTool(HuginnTool):
         try:
             max_results = int(args.get("max_results", 5) or 5)
         except (TypeError, ValueError):
+            logger.debug("best-effort op failed", exc_info=True)
             max_results = 5
 
         # 1) Tavily（有 API key 才走这条）
@@ -275,6 +277,7 @@ class WebSearchTool(HuginnTool):
         try:
             from tavily import TavilyClient
         except ImportError:
+            logger.debug("best-effort op failed", exc_info=True)
             return None
 
         try:
@@ -314,6 +317,7 @@ class WebSearchTool(HuginnTool):
         try:
             import xml.etree.ElementTree as ET
         except ImportError:
+            logger.debug("best-effort op failed", exc_info=True)
             return None
 
         try:
@@ -373,6 +377,7 @@ class WebSearchTool(HuginnTool):
             try:
                 from duckduckgo_search import DDGS
             except ImportError:
+                logger.debug("best-effort op failed", exc_info=True)
                 return None
 
         try:

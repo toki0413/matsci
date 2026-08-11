@@ -48,6 +48,7 @@ try:
 
     _HAS_PEXPECT = True
 except ImportError:
+    logger.debug("best-effort op failed", exc_info=True)
     _HAS_PEXPECT = False
 
 _USE_PEXPECT = (sys.platform != "win32") and _HAS_PEXPECT
@@ -92,7 +93,7 @@ class _SubprocessHandle:
                     self._buf.append(chunk.decode("utf-8", errors="replace"))
         except (OSError, ValueError):
             # pipe 已关
-            pass
+            logger.debug("best-effort op failed", exc_info=True)
 
     def write(self, data: str) -> None:
         if self.proc.stdin is None or self.proc.stdin.closed:
@@ -143,6 +144,7 @@ class _PexpectHandle:
         try:
             return self.proc.read_nonblocking(size=4096, timeout=timeout)
         except (pexpect.TIMEOUT, pexpect.EOF):
+            logger.debug("best-effort op failed", exc_info=True)
             return ""
 
     def kill(self) -> None:
@@ -301,6 +303,7 @@ def _extract_finding(output: str) -> dict | str | None:
             return obj
     except json.JSONDecodeError:
         # JSON 还没写完, 等下一轮 poll
+        logger.debug("best-effort op failed", exc_info=True)
         return None
     return None
 

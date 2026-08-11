@@ -153,7 +153,7 @@ class StyleLearner:
                 return
         except Exception:
             # flag 层挂了不能带挂业务, 继续走原逻辑
-            pass
+            logger.debug("best-effort op failed", exc_info=True)
 
         if not user_message:
             return
@@ -350,7 +350,7 @@ class StyleLearner:
                 return ""
         except Exception:
             # flag 层挂了不能带挂业务, 继续走原逻辑
-            pass
+            logger.debug("best-effort op failed", exc_info=True)
 
         with self._lock:
             p = copy.deepcopy(self._profile)

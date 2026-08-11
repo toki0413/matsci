@@ -109,6 +109,7 @@ def _extract_metric_pairs(stdout: str) -> list[tuple[str, float]]:
         try:
             val = float(m.group("val"))
         except ValueError:
+            logger.debug("best-effort op failed", exc_info=True)
             continue
         if key.lower() in _NON_METRIC_KEYS:
             continue
@@ -250,6 +251,7 @@ def extract_visual_primitives(tool_name: str, output: dict[str, Any]) -> str:
                 try:
                     nums = [float(v) for v in band if isinstance(v, (int, float))]
                 except (ValueError, TypeError):
+                    logger.debug("best-effort op failed", exc_info=True)
                     continue
                 if not nums:
                     continue
@@ -265,6 +267,7 @@ def extract_visual_primitives(tool_name: str, output: dict[str, Any]) -> str:
         try:
             nums = [float(v) for v in data if isinstance(v, (int, float))]
         except (ValueError, TypeError):
+            logger.debug("best-effort op failed", exc_info=True)
             continue
         if not nums:
             continue
@@ -334,7 +337,7 @@ def extract_visual_primitives(tool_name: str, output: dict[str, Any]) -> str:
                 bot_parts.append(f"{k}=<point>[{yi}]</point>={float(v):.3f}")
             lines.append(f"[scores] top3: {', '.join(top_parts)}; bottom: {', '.join(bot_parts)}")
         except (ValueError, TypeError):
-            pass
+            logger.debug("best-effort op failed", exc_info=True)
 
     # 2D 数据 primitives: EDS mapping / phase_field / 2D 矩阵
     # 之前只处理 1D (bands/dos/energies), 2D 数据(相场/元素分布)没有坐标化 primitives,
@@ -409,6 +412,7 @@ def _extract_2d_primitives(result: dict[str, Any]) -> list[str]:
                         f"(area={area}px²)"
                     )
             except (ValueError, TypeError, IndexError):
+                logger.debug("best-effort op failed", exc_info=True)
                 continue
         if parts:
             out.append(f"[EDS_mapping] {len(elements)} elements:\n" + "\n".join(parts))
@@ -434,6 +438,7 @@ def _extract_2d_primitives(result: dict[str, Any]) -> list[str]:
                 y = int(float(frac) * 999)
                 parts.append(f"{phase}=<point>[{y}]</point>={float(frac) * 100:.1f}%")
             except (ValueError, TypeError):
+                logger.debug("best-effort op failed", exc_info=True)
                 continue
         if parts:
             out.append(f"[phase_field] volume_fractions: {', '.join(parts)}")
@@ -464,6 +469,7 @@ def _extract_2d_primitives(result: dict[str, Any]) -> list[str]:
                                 f"    {phase} top{ci+1}=<point>[{nx},{ny}]</point>"
                             )
                         except (ValueError, TypeError, IndexError):
+                            logger.debug("best-effort op failed", exc_info=True)
                             continue
             if morph_parts:
                 out.append("  morphology: " + "; ".join(morph_parts))
@@ -570,6 +576,7 @@ def extract_comparative_primitives(
             bl_nums = [float(v) for v in bl_data if isinstance(v, (int, float))]
             cr_nums = [float(v) for v in cr_data if isinstance(v, (int, float))]
         except (ValueError, TypeError):
+            logger.debug("best-effort op failed", exc_info=True)
             continue
         if not bl_nums or not cr_nums:
             continue
@@ -660,6 +667,7 @@ def _comparative_2d_primitives(bl_result: dict[str, Any], cr_result: dict[str, A
                         f"(Δ={(cr_cov - bl_cov) * 100:+.2f}%)"
                     )
             except (ValueError, TypeError, IndexError):
+                logger.debug("best-effort op failed", exc_info=True)
                 continue
         # baseline 有但本轮消失 / 本轮新增的元素
         only_bl = set(bl_els) - set(cr_els)
@@ -686,6 +694,7 @@ def _comparative_2d_primitives(bl_result: dict[str, Any], cr_result: dict[str, A
                         f"(Δ={(cf - bf) * 100:+.2f}%)"
                     )
             except (ValueError, TypeError):
+                logger.debug("best-effort op failed", exc_info=True)
                 continue
         bl_iface = bl_meas.get("interface_pixel_fraction") if isinstance(bl_meas, dict) else None
         cr_iface = cr_meas.get("interface_pixel_fraction") if isinstance(cr_meas, dict) else None
@@ -771,6 +780,7 @@ def _estimate_data_confidence(output: dict[str, Any]) -> dict[str, Any]:
         try:
             nums = [float(v) for v in data if isinstance(v, (int, float))]
         except (ValueError, TypeError):
+            logger.debug("best-effort op failed", exc_info=True)
             continue
         if not nums:
             continue
@@ -881,6 +891,7 @@ def extract_box_primitives(
         from PIL import Image
         from scipy import ndimage
     except ImportError:
+        logger.debug("best-effort op failed", exc_info=True)
         return ""
 
     try:
@@ -1005,10 +1016,12 @@ def extract_point3d_primitives(
     try:
         import numpy as _np
     except ImportError:
+        logger.debug("best-effort op failed", exc_info=True)
         return ""
     try:
         arr = _np.asarray(coords, dtype=float)
     except (TypeError, ValueError):
+        logger.debug("best-effort op failed", exc_info=True)
         return ""
     if arr.size == 0 or arr.ndim != 2 or arr.shape[1] != 3:
         return ""

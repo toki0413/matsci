@@ -169,6 +169,7 @@ def recall(
         try:
             entry = json.loads(line)
         except (json.JSONDecodeError, TypeError):
+            logger.debug("best-effort op failed", exc_info=True)
             continue
         primitives = entry.get("primitives", "")
         ts = float(entry.get("ts", 0.0))

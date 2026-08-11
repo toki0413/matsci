@@ -167,6 +167,7 @@ class TransolverTool(HuginnTool):
                     self._model_cls = cls
                     return cls
             except Exception:
+                logger.debug("best-effort op failed", exc_info=True)
                 continue
         return None
 

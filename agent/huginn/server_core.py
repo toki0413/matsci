@@ -37,6 +37,7 @@ try:
 
     _KB_AVAILABLE = True
 except Exception:
+    logger.debug("best-effort op failed", exc_info=True)
     _KB_AVAILABLE = False
     get_knowledge_base = None  # type: ignore[assignment]
 
@@ -45,6 +46,7 @@ try:
 
     _CODEBASE_AVAILABLE = True
 except Exception:
+    logger.debug("best-effort op failed", exc_info=True)
     _CODEBASE_AVAILABLE = False
     get_codebase_index = None  # type: ignore[assignment]
 
@@ -108,6 +110,7 @@ def _check_ollama_available_sync(base_url: str, timeout: float = 2.0) -> bool:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.status == 200
     except Exception:
+        logger.debug("best-effort op failed", exc_info=True)
         return False
 
 
@@ -194,6 +197,7 @@ def _install_llm_vision_callback(agent: Any) -> None:
             logger.debug("model %s 不支持 vision, 跳过 LLM-as-OCR 注入", model_name)
             return
     except Exception:
+        logger.debug("best-effort op failed", exc_info=True)
         return  # 拿不到 caps 就不注入, 不影响原 OCR 链
 
     from huginn.knowledge.ocr_loader import set_llm_vision_callback
@@ -255,6 +259,7 @@ def get_memory_manager() -> MemoryManager:
         longterm = LongTermMemory(vector_store=vector_store, enable_semantic=True)
     except Exception:
         # chromadb not installed or VectorStore init failed — FTS5 only
+        logger.debug("best-effort op failed", exc_info=True)
         longterm = None
 
     get_context().memory_manager = MemoryManager(
@@ -546,6 +551,7 @@ def _snapshot_directory(base: Path) -> dict[str, str]:
                 "utf-8", errors="ignore"
             )
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             continue
     return snapshot
 

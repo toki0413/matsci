@@ -66,6 +66,7 @@ def phase_field(args: ImageAnalysisInput) -> ToolResult:
                 contrast_range / max(grad_mean, 1e-6)
             )
         except ImportError:
+            logger.debug("best-effort op failed", exc_info=True)
             interface_width_px = 1.0
     else:
         interface_width_px = float(interface_width_px)

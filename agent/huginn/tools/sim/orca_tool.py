@@ -334,6 +334,7 @@ class OrcaTool(HuginnTool):
             self._apply_input_overrides(inp_file, applicable)
             return {"fixes": applicable, "reasoning": reasoning}
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return None
 
     # ── .inp handling ──────────────────────────────────────────────

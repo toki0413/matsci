@@ -165,6 +165,7 @@ class CallbackMixin:
             try:
                 cost = t.estimate_cost(input_data)
             except Exception:
+                logger.debug("best-effort op failed", exc_info=True)
                 cost = None
             return cost_tier, cost
         except Exception:

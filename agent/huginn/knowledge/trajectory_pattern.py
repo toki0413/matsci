@@ -145,6 +145,7 @@ def _parse_pattern_response(resp: str) -> dict | None:
     try:
         data = json.loads(resp[start:end + 1])
     except json.JSONDecodeError:
+        logger.debug("best-effort op failed", exc_info=True)
         return None
     if not isinstance(data, dict):
         return None
@@ -218,6 +219,7 @@ async def extract_and_store_pattern(
             from huginn.knowledge.auto_ingest import _get_kb
             kb = _get_kb()
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             kb = None
     if kb is None:
         logger.debug("trajectory pattern: KB unavailable, skip")
@@ -289,6 +291,7 @@ def _find_pattern_by_task_pattern(kb: Any, task_pattern: str) -> str | None:
             include=["metadatas"],
         )
     except Exception:
+        logger.debug("best-effort op failed", exc_info=True)
         return None
     metadatas = data.get("metadatas") or []
     for meta in metadatas:
@@ -319,6 +322,7 @@ def update_pattern_confidence(
             include=["metadatas"],
         )
     except Exception:
+        logger.debug("best-effort op failed", exc_info=True)
         return None
     ids = data.get("ids") or []
     metadatas = data.get("metadatas") or []

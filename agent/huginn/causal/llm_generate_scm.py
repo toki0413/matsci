@@ -104,6 +104,7 @@ def _build_equation_closure(
         except Exception:
             # ponytail: 表达式失败返 0, 不阻塞 SCM 整体跑. predict_intervention
             # 的 delta 会反映这个节点没贡献. 升级路径: 让 LLM 重新生成方程.
+            logger.debug("best-effort op failed", exc_info=True)
             return 0.0
     return equation
 
@@ -369,14 +370,14 @@ def _selfcheck() -> None:
         _safe_eval_expr("__import__('os').system('echo hack')", {})
         raise AssertionError("应拒绝 __import__")
     except (ValueError, NameError, SyntaxError):
-        pass
+        logger.debug("best-effort op failed", exc_info=True)
 
     # 3. _safe_eval_expr 阻止赋值语句
     try:
         _safe_eval_expr("x = 1", {})
         raise AssertionError("应拒绝赋值")
     except SyntaxError:
-        pass
+        logger.debug("best-effort op failed", exc_info=True)
 
     # 4. _build_equation_closure 返可调函数
     eq = _build_equation_closure("A0 * exp(-Ea / (R * T))", ["T"])

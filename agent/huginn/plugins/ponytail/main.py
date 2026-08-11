@@ -153,7 +153,7 @@ class PonytailStar(Star):
                 })
         except Exception:
             # Storage might not be injected in test mode — fine
-            pass
+            logger.debug("best-effort op failed", exc_info=True)
         self.logger.info("ponytail loaded (mode=%s)", self._state.mode)
 
     async def on_unload(self) -> None:
@@ -249,6 +249,7 @@ class PonytailStar(Star):
                 issues = _audit_python_tree(tree, str(f))
                 findings.extend(issues)
             except Exception:
+                logger.debug("best-effort op failed", exc_info=True)
                 continue
 
         if not findings:
@@ -280,6 +281,7 @@ class PonytailStar(Star):
                 issues = _audit_python_tree(tree, str(f.relative_to(workspace)))
                 all_findings.extend(issues)
             except Exception:
+                logger.debug("best-effort op failed", exc_info=True)
                 continue
 
         if not all_findings:

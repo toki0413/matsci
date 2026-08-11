@@ -85,6 +85,7 @@ def get_taste_directive() -> str:
         profile = load_profile()
     except Exception:
         # 读取失败不拖垮 agent, 当作没填过
+        logger.debug("best-effort op failed", exc_info=True)
         return ""
     if profile is None:
         return ""

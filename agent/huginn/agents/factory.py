@@ -93,6 +93,7 @@ class AgentFactory:
         try:
             return ToolScheduler(store=store, policy=AdmissionPolicy.from_env())
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return None
 
     def _campaign_db_path(self) -> str:

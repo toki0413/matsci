@@ -203,6 +203,7 @@ def _verify_homomorphism(
         try:
             ord_im = im.order()
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             ord_im = 0
         if ord_im and ord_g % ord_im != 0:
             return {"is_homomorphism": False, "reason": f"阶不保持: |g|={ord_g}, |φ(g)|={ord_im}"}
@@ -286,6 +287,7 @@ def _finite_field_op(
                 if gf_irreducible_p(poly, p, ZZ):
                     return poly
             except Exception:
+                logger.debug("best-effort op failed", exc_info=True)
                 continue
         return None
 

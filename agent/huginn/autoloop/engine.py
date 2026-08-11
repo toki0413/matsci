@@ -32,6 +32,7 @@ def _harness_workflow_evolution_enabled() -> bool:
         ff = getattr(cfg, "feature_flags", None) or {}
         return bool(ff.get("harness_workflow_evolution", False))
     except Exception:
+        logger.debug("best-effort op failed", exc_info=True)
         return False
 
 
@@ -51,6 +52,7 @@ def _autoloop_meta_trace_inject_enabled() -> bool:
         ff = getattr(cfg, "feature_flags", None) or {}
         return bool(ff.get("autoloop_meta_trace_inject", False))
     except Exception:
+        logger.debug("best-effort op failed", exc_info=True)
         return False
 
 
@@ -71,6 +73,7 @@ def _autoloop_streaming_enabled() -> bool:
         # 默认 True, 显式 False 才关
         return ff.get("autoloop_streaming", True)
     except Exception:
+        logger.debug("best-effort op failed", exc_info=True)
         return True
 
 
@@ -501,6 +504,7 @@ class AutoloopEngine(
                 from huginn.runtime.engine_state import latest_run_id
                 _resume_id = latest_run_id(self.workspace)
             except Exception:
+                logger.debug("best-effort op failed", exc_info=True)
                 _resume_id = None
         if _resume_id:
             try:
@@ -638,6 +642,7 @@ class AutoloopEngine(
                 return None
             return list(_cm._MAPS.values())[-1]
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return None
 
 

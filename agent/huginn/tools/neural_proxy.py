@@ -18,6 +18,8 @@ from typing import Any
 
 import numpy as np
 
+logger = logging.getLogger(__name__)
+
 # torch / transolver 都是可选依赖, 缺了就降级
 try:
     import torch  # type: ignore[import-untyped]
@@ -25,6 +27,7 @@ try:
 
     _TORCH_AVAILABLE = True
 except Exception:  # pragma: no cover - 环境相关
+    logger.debug("best-effort op failed", exc_info=True)
     _TORCH_AVAILABLE = False
 
 try:
@@ -32,9 +35,8 @@ try:
 
     _TRANSOLVER_AVAILABLE = True
 except Exception:
+    logger.debug("best-effort op failed", exc_info=True)
     _TRANSOLVER_AVAILABLE = False
-
-logger = logging.getLogger(__name__)
 
 
 class _LitePDEProxy(nn.Module if _TORCH_AVAILABLE else object):
@@ -166,6 +168,7 @@ class NeuralPDEProxy:
         try:
             n_nodes = int(np.asarray(nodes).shape[0])
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             n_nodes = 0
 
         if not self._loaded or (self._model is None and self._lite_proxy is None):
@@ -191,6 +194,7 @@ class NeuralPDEProxy:
                 try:
                     bc_val = float(np.mean(vals))
                 except Exception:
+                    logger.debug("best-effort op failed", exc_info=True)
                     bc_val = 0.0
 
         # 用已加载模型或 lite MLP 做 forward
@@ -209,7 +213,7 @@ class NeuralPDEProxy:
                     meta={"n_nodes": n_nodes, "model": "transolver"},
                 )
             except Exception:
-                pass  # forward 失败, 回退到 lite MLP
+                logger.debug("best-effort op failed", exc_info=True)  # forward 失败, 回退到 lite MLP
 
         # Lite MLP forward: 把 (node_coords, bc_val) 喂给 MLP
         if self._lite_proxy is not None and _TORCH_AVAILABLE:

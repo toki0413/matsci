@@ -142,6 +142,7 @@ class DockerSandboxExecutor:
             self._client.ping()
             return True
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return False
 
     def fallback_reason(self) -> str | None:
@@ -317,6 +318,7 @@ class DockerSandboxExecutor:
             stdout_bytes = container.logs(stdout=True, stderr=False) or b""
             stderr_bytes = container.logs(stdout=False, stderr=True) or b""
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             stdout_bytes = b""
             stderr_bytes = b""
 

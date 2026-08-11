@@ -297,7 +297,7 @@ async def transfer_sync(req: SyncRequest) -> dict[str, Any]:
                         ):
                             need_upload = False
                     except FileNotFoundError:
-                        pass  # 远端没有, 必须传
+                        logger.debug("best-effort op failed", exc_info=True)  # 远端没有, 必须传
 
                     if not need_upload:
                         skipped += 1
@@ -425,7 +425,7 @@ def _delete_extra_remote_files(
                     sftp.remove(remote_path)
                     deleted += 1
                 except OSError:
-                    pass
+                    logger.debug("best-effort op failed", exc_info=True)
     except Exception as exc:
         logger.debug("清理远端多余文件失败: %s", exc)
     return deleted

@@ -350,7 +350,7 @@ class PrivacyGuard:
                     n_atoms = sum(counts)
                     formula = f"M{n_atoms}"
             except (ValueError, IndexError):
-                pass
+                logger.debug("best-effort op failed", exc_info=True)
 
         # CIF: 抓 _chemical_formula_sum 和 _symmetry_space_group_name
         m = re.search(
@@ -462,7 +462,7 @@ class PrivacyGuard:
                 vals = [float(e) for e in energies]
                 e_min, e_max = min(vals), max(vals)
             except ValueError:
-                pass
+                logger.debug("best-effort op failed", exc_info=True)
 
         # 温度 (K)
         temps = re.findall(r"T\s*=?\s*(-?\d+\.\d+)\s*K", content)
@@ -471,7 +471,7 @@ class PrivacyGuard:
                 vals = [float(t) for t in temps]
                 t_min, t_max = min(vals), max(vals)
             except ValueError:
-                pass
+                logger.debug("best-effort op failed", exc_info=True)
 
         e_str = (
             f"({e_min}, {e_max}) eV" if e_min is not None else "?"

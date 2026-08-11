@@ -217,6 +217,7 @@ class _ResNetBackend(_Backend):
                 weights = getattr(models.ResNet50_Weights, w)
                 break
             except AttributeError:
+                logger.debug("best-effort op failed", exc_info=True)
                 continue
         if weights is None:
             raise RuntimeError("no ResNet50 weights available")
@@ -264,6 +265,7 @@ def _torch_cuda_available() -> bool:
 
         return bool(torch.cuda.is_available())
     except Exception:
+        logger.debug("best-effort op failed", exc_info=True)
         return False
 
 
@@ -284,6 +286,7 @@ def _try_modelscope_download(hf_model_name: str) -> str | None:
     try:
         from modelscope import snapshot_download
     except ImportError:
+        logger.debug("best-effort op failed", exc_info=True)
         return None
 
     _MS_MAP: dict[str, str] = {
@@ -459,6 +462,7 @@ def get_encoder() -> VisualEncoder | None:
                 try:
                     _ENCODER = VisualEncoder()
                 except Exception:  # noqa: BLE001 - never let importers crash
+                    logger.debug("best-effort op failed", exc_info=True)
                     _ENCODER = None
     return _ENCODER
 

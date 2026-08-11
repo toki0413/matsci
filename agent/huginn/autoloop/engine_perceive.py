@@ -57,6 +57,7 @@ class EnginePerceiveMixin:
                 self._perception = PerceptionLayer(self.workspace)
                 self._perception.start()
             except Exception:
+                logger.debug("best-effort op failed", exc_info=True)
                 return None
         return self._perception
 
@@ -77,6 +78,7 @@ class EnginePerceiveMixin:
 
                 self._kb = get_knowledge_base(str(self.workspace))
             except Exception:
+                logger.debug("best-effort op failed", exc_info=True)
                 return None
         return self._kb
 
@@ -152,6 +154,7 @@ class EnginePerceiveMixin:
                 "### End Domain Knowledge Context"
             )
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return ""
 
     def _build_kg_text(self, query: str) -> str:
@@ -201,6 +204,7 @@ class EnginePerceiveMixin:
                 f"{gap_block}"
             )
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return ""
 
     def _detect_kg_gaps(self, kg: Any, nodes: list[dict]) -> list[str]:
@@ -313,6 +317,7 @@ class EnginePerceiveMixin:
                     history = self._load_trajectory_action_history(limit=20)
                     self._traj_history = history
                 except Exception:
+                    logger.debug("best-effort op failed", exc_info=True)
                     return ""
             if len(current) < 2 or not history:
                 return ""
