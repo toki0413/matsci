@@ -58,12 +58,11 @@ def app_client(tmp_path, monkeypatch):
         from fastapi.testclient import TestClient
 
         from huginn.server import app
-        client = TestClient(app)
     except Exception as e:
         pytest.skip(f"无法启动 app: {e}")
 
-    yield client, admin_token
-
+    with TestClient(app) as client:
+        yield client, admin_token
     store._users.pop("fuzz-admin", None)
 
 
