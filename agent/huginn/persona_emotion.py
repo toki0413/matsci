@@ -20,6 +20,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
+from huginn.utils.runtime import HUGINN_DIR_NAME
+
 # datetime.UTC was added in Python 3.11; use timezone.utc for 3.10 compat
 UTC = UTC
 
@@ -232,7 +234,7 @@ class EmotionTracker:
         self._state = self._load()
 
     def _emotion_path(self) -> Path:
-        path = self.workspace / ".huginn" / "emotion" / f"{self.persona_name}.json"
+        path = self.workspace / HUGINN_DIR_NAME / "emotion" / f"{self.persona_name}.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         return path
 

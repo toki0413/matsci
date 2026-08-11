@@ -13,6 +13,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from huginn.utils.runtime import HUGINN_DIR_NAME
+
 
 class TaskState(StrEnum):
     CREATED = "created"
@@ -146,7 +148,7 @@ class TaskLifecycle:
 def save_task_lifecycle(lifecycle: TaskLifecycle, workspace: Path) -> Path:
     """落盘到 .huginn/task_lifecycle.json，原子写（tmp + rename），返回路径。"""
     ws = Path(workspace).resolve()
-    huginn_dir = ws / ".huginn"
+    huginn_dir = ws / HUGINN_DIR_NAME
     huginn_dir.mkdir(parents=True, exist_ok=True)
     target = huginn_dir / "task_lifecycle.json"
     tmp = huginn_dir / "task_lifecycle.json.tmp"
@@ -161,7 +163,7 @@ def save_task_lifecycle(lifecycle: TaskLifecycle, workspace: Path) -> Path:
 def load_task_lifecycle(task_id: str, workspace: Path) -> TaskLifecycle | None:
     """从 .huginn/task_lifecycle.json 加载。文件不存在或 task_id 不匹配返回 None。"""
     ws = Path(workspace).resolve()
-    target = ws / ".huginn" / "task_lifecycle.json"
+    target = ws / HUGINN_DIR_NAME / "task_lifecycle.json"
     if not target.exists():
         return None
     data = json.loads(target.read_text(encoding="utf-8"))
@@ -679,8 +681,8 @@ if __name__ == "__main__":
         # 不存在的 workspace 返回 None
         assert load_task_lifecycle("t4", ws / "no_such_dir") is None
         # 原子写：目标文件存在，tmp 文件已被 replace 掉
-        assert (ws / ".huginn" / "task_lifecycle.json").exists()
-        assert not (ws / ".huginn" / "task_lifecycle.json.tmp").exists()
+        assert (ws / HUGINN_DIR_NAME / "task_lifecycle.json").exists()
+        assert not (ws / HUGINN_DIR_NAME / "task_lifecycle.json.tmp").exists()
 
     # 7. should_pause_for_decision 四种触发条件
     @dataclass

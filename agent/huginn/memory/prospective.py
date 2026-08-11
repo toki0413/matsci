@@ -22,6 +22,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from huginn.utils.runtime import HUGINN_DIR_NAME
+
 logger = logging.getLogger(__name__)
 
 
@@ -157,7 +159,7 @@ class ProspectiveMemory:
 
     def __init__(self, workspace: Path):
         self.workspace = Path(workspace)
-        self.path = self.workspace / ".huginn" / "prospective.jsonl"
+        self.path = self.workspace / HUGINN_DIR_NAME / "prospective.jsonl"
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
     # ── 内部: 重放 jsonl 得到当前状态 ──

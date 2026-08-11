@@ -28,6 +28,7 @@ from typing import Any
 # 反思阶段方法引用的 engine.py 模块级 import (均为叶子模块, 无 circular 风险)
 from huginn.autoloop.types import LoopPhase
 from huginn.types import ToolContext
+from huginn.utils.runtime import HUGINN_DIR_NAME
 
 logger = logging.getLogger(__name__)
 
@@ -1228,7 +1229,7 @@ class EngineReflectMixin:
 
         ponytail: 只读最近 limit 个文件, 不做全量索引. 升级路径: KB 索引 + 元数据过滤.
         """
-        traj_dir = self.workspace / ".huginn" / "trajectories"
+        traj_dir = self.workspace / HUGINN_DIR_NAME / "trajectories"
         if not traj_dir.exists():
             self._traj_run_ids = []
             return []

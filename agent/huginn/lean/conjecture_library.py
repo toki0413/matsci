@@ -24,6 +24,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from huginn.utils.runtime import HUGINN_DIR_NAME
+
 logger = logging.getLogger(__name__)
 
 # 替代 lean 的 "sorry" / "admit" — proof script 含这些词说明证没写完.
@@ -714,7 +716,7 @@ class ConjectureLibrary:
     """
 
     def __init__(self, workspace: str | Path = "."):
-        ws = Path(workspace).resolve() / ".huginn"
+        ws = Path(workspace).resolve() / HUGINN_DIR_NAME
         ws.mkdir(parents=True, exist_ok=True)
         self.db_path = ws / "conjecture_library.db"
         self.jsonl_path = ws / "conjecture_library.jsonl"

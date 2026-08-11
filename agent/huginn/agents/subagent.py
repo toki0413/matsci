@@ -24,6 +24,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from huginn.utils.runtime import HUGINN_DIR_NAME
+
 logger = logging.getLogger(__name__)
 
 # 超过这个字符数才触发 LLM 摘要, 短输出直接原样返回省一次 API 调用
@@ -632,7 +634,7 @@ def _write_support_rejection(
     if not workspace:
         return None
     ws = Path(workspace)
-    rejection_path = ws / ".huginn" / "support_rejections.jsonl"
+    rejection_path = ws / HUGINN_DIR_NAME / "support_rejections.jsonl"
     rejection_path.parent.mkdir(parents=True, exist_ok=True)
     snippet = core_context[:500] if isinstance(core_context, str) else str(core_context)[:500]
     with rejection_path.open("a", encoding="utf-8") as f:

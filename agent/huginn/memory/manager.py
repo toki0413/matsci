@@ -17,7 +17,7 @@ from huginn.memory.longterm import LongTermMemory
 from huginn.memory.session import SessionContext, ToolCallRecord
 from huginn.memory.types import MemoryType
 from huginn.types import AgentMessage, ToolResult
-from huginn.utils.runtime import get_runtime_home
+from huginn.utils.runtime import HUGINN_DIR_NAME, get_runtime_home
 
 logger = logging.getLogger(__name__)
 
@@ -1175,7 +1175,7 @@ class MemoryManager:
         路径是 MemoryConfig 直接存 workspace 字段.
         """
         mem_dir = self._get_memory_dir()
-        if mem_dir.parent.name == ".huginn":
+        if mem_dir.parent.name == HUGINN_DIR_NAME:
             return mem_dir.parent.parent
         return mem_dir.parent
 
