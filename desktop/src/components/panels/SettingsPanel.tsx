@@ -358,8 +358,9 @@ function HarnessPanel({ t }: { t: (k: string) => string }) {
     try {
       const data = await api.get<{ features?: HarnessFlag[] }>("/config/features");
       const all = data.features || [];
-      // 只展示 harness_* 调优开关
-      setFlags(all.filter((f) => f.name.startsWith("harness_")));
+      // 只展示这两个官方 harness 调优开关 (H5 显著性门 / H6 分布外留出)
+      const HARNESS_FLAGS = new Set(["harness_significance_gate", "harness_ood_holdout"]);
+      setFlags(all.filter((f) => HARNESS_FLAGS.has(f.name)));
     } catch (e: any) {
       setErr(e.message || t('settings.requestFailed'));
     } finally {
