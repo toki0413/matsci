@@ -175,7 +175,7 @@ class SkillEvolutionLayer:
 
     Usage:
         layer = SkillEvolutionLayer.shared()
-        layer.update_from_directory(workspace / ".huginn" / "trajectories")
+        layer.update_from_directory(workspace / HUGINN_DIR_NAME / "trajectories")
         ctx = layer.get_skill_context()  # inject into agent prompt
     """
 

@@ -38,6 +38,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from huginn.utils.runtime import HUGINN_DIR_NAME
+
 logger = logging.getLogger(__name__)
 
 
@@ -324,7 +326,7 @@ def list_snapshots(dir: str | Path) -> list[Path]:
 def default_snapshot_dir(workspace: str | Path | None = None) -> Path:
     """返回默认快照目录. workspace 不传就用 cwd."""
     base = Path(workspace) if workspace else Path.cwd()
-    return base / ".huginn" / "provenance"
+    return base / HUGINN_DIR_NAME / "provenance"
 
 
 # ---------------------------------------------------------------------------
@@ -421,7 +423,7 @@ class ProvenanceLogger:
         base = os.environ.get("HUGINN_CACHE_DIR")
         if base:
             return Path(base) / "provenance.jsonl"
-        return Path(".huginn") / "provenance.jsonl"
+        return Path(HUGINN_DIR_NAME) / "provenance.jsonl"
 
     @property
     def path(self) -> Path:

@@ -20,6 +20,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from huginn.utils.runtime import HUGINN_DIR_NAME
+
 logger = logging.getLogger(__name__)
 
 _ACTIONS = ("continue", "switch", "requery")
@@ -114,7 +116,7 @@ class EffortBandit:
             # __file__ 在 staticmethod 里走 module globals, 不会是 caller 的 globals.
             import huginn.agent.bandit_controller as _self_mod
             _root = Path(_self_mod.__file__).resolve().parents[3]
-            _cand = _root / ".huginn" / "bandit_q.json"
+            _cand = _root / HUGINN_DIR_NAME / "bandit_q.json"
             _cand.parent.mkdir(parents=True, exist_ok=True)
             return _cand
         except Exception as _e:

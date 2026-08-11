@@ -22,17 +22,19 @@ import shutil
 import time
 from pathlib import Path
 
+from huginn.utils.runtime import HUGINN_DIR_NAME
+
 logger = logging.getLogger(__name__)
 
 _DEFAULT_INTERVAL = 100
 
 
 def _episodic_dir(workspace: Path, task_id: str) -> Path:
-    return Path(workspace).resolve() / ".huginn" / "memory" / "episodic" / task_id
+    return Path(workspace).resolve() / HUGINN_DIR_NAME / "memory" / "episodic" / task_id
 
 
 def _archive_dir(workspace: Path, task_id: str) -> Path:
-    return Path(workspace).resolve() / ".huginn" / "memory" / "archive" / task_id
+    return Path(workspace).resolve() / HUGINN_DIR_NAME / "memory" / "archive" / task_id
 
 
 def _parse_shard_name(name: str) -> tuple[int, int] | None:

@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.types import ToolContext, ToolResult
+from huginn.utils.runtime import HUGINN_DIR_NAME
 
 logger = logging.getLogger(__name__)
 
@@ -135,9 +136,9 @@ class TransolverTool(HuginnTool):
         if args.checkpoint_dir:
             d = Path(args.checkpoint_dir)
         elif self._workspace:
-            d = Path(self._workspace) / ".huginn" / "models" / "transolver"
+            d = Path(self._workspace) / HUGINN_DIR_NAME / "models" / "transolver"
         else:
-            d = Path.cwd() / ".huginn" / "models" / "transolver"
+            d = Path.cwd() / HUGINN_DIR_NAME / "models" / "transolver"
         d.mkdir(parents=True, exist_ok=True)
         return d
 

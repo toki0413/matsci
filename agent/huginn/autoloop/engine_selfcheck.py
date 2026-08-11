@@ -14,6 +14,8 @@ from datetime import UTC
 from pathlib import Path
 from typing import Any
 
+from huginn.utils.runtime import HUGINN_DIR_NAME
+
 
 def run_selfcheck() -> None:
     """AutoloopEngine selfcheck — 验证 LLM decider + 4 flag gating.
@@ -331,7 +333,7 @@ def run_selfcheck() -> None:
         # case F: 加载历史 trajectory (有 json 文件 → 抽 spans phase)
         with _tf.TemporaryDirectory() as _td_f:
             eng5.workspace = _P(_td_f)
-            _traj_dir = _P(_td_f) / ".huginn" / "trajectories"
+            _traj_dir = _P(_td_f) / HUGINN_DIR_NAME / "trajectories"
             _traj_dir.mkdir(parents=True)
             (_traj_dir / "run1.json").write_text(
                 '{"spans": [{"phase": "observe"}, {"phase": "hypothesize"}, '
@@ -755,7 +757,7 @@ def run_selfcheck() -> None:
         _out_off = eng_c4._build_memory_text("test query")
         assert _out_off == "", f"C4: toggle off → empty, got {_out_off!r}"
         # 造一个 meta_trace.jsonl, toggle off 仍不应注入
-        _huginn_dir = Path(_td) / ".huginn"
+        _huginn_dir = Path(_td) / HUGINN_DIR_NAME
         _huginn_dir.mkdir(parents=True, exist_ok=True)
         _trace = _huginn_dir / "meta_trace.jsonl"
         _trace.write_text(
@@ -771,7 +773,7 @@ def run_selfcheck() -> None:
     #  改为直接测 load_meta_trace_text 函数本身 + 审查 _build_memory_text 的 toggle 分支)
     from huginn.context_builder import load_meta_trace_text
     with tempfile.TemporaryDirectory() as _td2:
-        _huginn_dir2 = Path(_td2) / ".huginn"
+        _huginn_dir2 = Path(_td2) / HUGINN_DIR_NAME
         _huginn_dir2.mkdir(parents=True, exist_ok=True)
         _trace2 = _huginn_dir2 / "meta_trace.jsonl"
         _trace2.write_text(
@@ -799,9 +801,9 @@ def run_selfcheck() -> None:
         _eng_mod._autoloop_meta_trace_inject_enabled = lambda: True
         with tempfile.TemporaryDirectory() as _td4:
             eng_c4.workspace = Path(_td4)
-            _hd4 = Path(_td4) / ".huginn"
+            _hd4 = Path(_td4) / HUGINN_DIR_NAME
             _hd4.mkdir(parents=True, exist_ok=True)
-            (Path(_td4) / ".huginn" / "meta_trace.jsonl").write_text(
+            (Path(_td4) / HUGINN_DIR_NAME / "meta_trace.jsonl").write_text(
                 '{"iteration":2,"attempted":"test","found":"ok","darwin_score":0.5}\n',
                 encoding="utf-8",
             )
@@ -2713,7 +2715,7 @@ def run_selfcheck() -> None:
 
     # 8e: _save_alignment_dataset 在 dataset=None 时 no-op (不创建文件)
     _eng8._save_alignment_dataset()
-    assert not (_eng8.workspace / ".huginn" / "alignment_dataset.json").exists(), \
+    assert not (_eng8.workspace / HUGINN_DIR_NAME / "alignment_dataset.json").exists(), \
         "8e: dataset=None 时不该写文件"
     print("8e. _save_alignment_dataset None -> no-op OK")
 
@@ -2748,7 +2750,7 @@ def run_selfcheck() -> None:
 
     # 8g: save -> load round-trip (跟 _maybe_save_engine_state 同路径)
     _eng8._save_alignment_dataset()
-    _path8 = _eng8.workspace / ".huginn" / "alignment_dataset.json"
+    _path8 = _eng8.workspace / HUGINN_DIR_NAME / "alignment_dataset.json"
     assert _path8.exists(), "8g: 文件应已写"
     from huginn.metacog.alignment_dataset import AlignmentDataset as _AD8  # noqa: N814
     _ds8 = _AD8.load(_path8)

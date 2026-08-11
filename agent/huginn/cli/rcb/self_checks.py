@@ -19,6 +19,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from huginn.utils.runtime import HUGINN_DIR_NAME
+
 
 def self_check_v14_task4() -> None:
     """v14 Task 4 self-check: Betti 数计算 (β_0 / β_1).
@@ -187,8 +189,8 @@ def self_check_a3() -> None:
         (ws / "report" / "report.md").write_text(
             "# Report\nWe used C2ST classifier with MLP.\n", encoding="utf-8")
         # .huginn/ 内 trace 不算产物
-        (ws / ".huginn").mkdir()
-        (ws / ".huginn" / "trace.json").write_text(
+        (ws / HUGINN_DIR_NAME).mkdir()
+        (ws / HUGINN_DIR_NAME / "trace.json").write_text(
             '{"attempted": "Prior N(0, I) over latent"}', encoding="utf-8")
         traces = _scan_implementation_traces(
             ws, ["GVAE encoder", "C2ST classifier", "Prior N(0, I) over latent",
@@ -215,7 +217,7 @@ def self_check_a3() -> None:
 
         # 4. _count_failed_attempts
         # 写 trace 文件
-        trace_path = ws / ".huginn" / "meta_trace.jsonl"
+        trace_path = ws / HUGINN_DIR_NAME / "meta_trace.jsonl"
         trace_path.write_text(
             '{"on_track": "false", "attempted": "GVAE encoder training failed"}\n'
             '{"on_track": "false", "attempted": "GVAE encoder second attempt"}\n'
@@ -407,7 +409,7 @@ def self_check_v14_task1() -> None:
 
     with tempfile.TemporaryDirectory() as td:
         td_path = Path(td)
-        trace_path = td_path / ".huginn" / "meta_trace.jsonl"
+        trace_path = td_path / HUGINN_DIR_NAME / "meta_trace.jsonl"
         trace_path.parent.mkdir(parents=True, exist_ok=True)
         with trace_path.open("w", encoding="utf-8") as f:
             for e in (legacy_e1, legacy_e2, new_e1, new_e2):
@@ -633,8 +635,8 @@ def self_check_v14_task8() -> None:
         _ws = Path(td)
         (_ws / "report").mkdir(parents=True)
         (_ws / "report" / "report.md").write_text("# stub report\n", encoding="utf-8")
-        (_ws / ".huginn").mkdir(parents=True)
-        _trace = _ws / ".huginn" / "meta_trace.jsonl"
+        (_ws / HUGINN_DIR_NAME).mkdir(parents=True)
+        _trace = _ws / HUGINN_DIR_NAME / "meta_trace.jsonl"
         for _i in range(3):
             with _trace.open("a", encoding="utf-8") as _f:
                 _f.write(_json_t8.dumps({
@@ -678,7 +680,7 @@ def self_check_v14_task8() -> None:
         assert len(_curl1) == 1, \
             f"scenario 1: expected 1 curl entry, got {len(_curl1)}"
 
-        _rej1 = _ws1 / ".huginn" / "directive_rejections.jsonl"
+        _rej1 = _ws1 / HUGINN_DIR_NAME / "directive_rejections.jsonl"
         assert not _rej1.exists(), "scenario 1: should NOT write rejection"
 
     # === 场景 2: 始终 fix_needed → 2 retry + 1 finalize + rejection ===
@@ -710,7 +712,7 @@ def self_check_v14_task8() -> None:
         assert len(_curl2) == 2, \
             f"scenario 2: expected 2 curl entries, got {len(_curl2)}"
 
-        _rej2 = _ws2 / ".huginn" / "directive_rejections.jsonl"
+        _rej2 = _ws2 / HUGINN_DIR_NAME / "directive_rejections.jsonl"
         assert _rej2.exists(), "scenario 2: directive_rejections.jsonl not written"
         _rej_lines2 = _rej2.read_text(encoding="utf-8").strip().split("\n")
         _last_rej = _json_t8.loads(_rej_lines2[-1])
@@ -775,7 +777,7 @@ def self_check_v15_task3() -> None:
         assert "h_partial_repro" in h_ids, f"missing h_partial_repro: {h_ids}"
         assert "h_null_baseline" in h_ids, f"missing h_null_baseline: {h_ids}"
         # 持久化文件存在
-        path = ws / ".huginn" / "hypothesis_manifold.jsonl"
+        path = ws / HUGINN_DIR_NAME / "hypothesis_manifold.jsonl"
         assert path.exists(), f"manifold file not persisted: {path}"
         print(
             f"[CHECK v15 Task 3] _init_hypothesis_manifold: "
@@ -805,7 +807,7 @@ def self_check_v15_task3() -> None:
             f"log_post={log_post:.3f} fisher_info={fisher_info:.3f} OK")
 
         # 5. _record_abduction: 写 abduction entry 到 trace
-        trace_path = ws / ".huginn" / "meta_trace.jsonl"
+        trace_path = ws / HUGINN_DIR_NAME / "meta_trace.jsonl"
         trace_path.parent.mkdir(parents=True, exist_ok=True)
         _record_abduction(
             manifold,

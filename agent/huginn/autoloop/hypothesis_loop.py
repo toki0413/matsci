@@ -27,7 +27,7 @@ from typing import Any, Literal
 from huginn.autoloop.phase_gate import (
     _has_external_source as _validation_has_external_source,
 )
-from huginn.utils.runtime import get_runtime_home
+from huginn.utils.runtime import HUGINN_DIR_NAME, get_runtime_home
 
 logger = logging.getLogger(__name__)
 
@@ -561,7 +561,7 @@ class HypothesisGraph:
     def _durable_path(self, name: str) -> Path | None:
         if self._workspace is None:
             return None
-        d = self._workspace / ".huginn"
+        d = self._workspace / HUGINN_DIR_NAME
         d.mkdir(parents=True, exist_ok=True)
         return d / name
 
@@ -603,13 +603,13 @@ class HypothesisGraph:
     @staticmethod
     def load_failed(workspace: str | os.PathLike | None = None) -> str:
         """读 FAILED.md 全文. workspace None 时读 cwd."""
-        p = Path(workspace or ".") / ".huginn" / "FAILED.md"
+        p = Path(workspace or ".") / HUGINN_DIR_NAME / "FAILED.md"
         return p.read_text(encoding="utf-8") if p.exists() else ""
 
     @staticmethod
     def load_proved(workspace: str | os.PathLike | None = None) -> str:
         """读 PROVED.md 全文."""
-        p = Path(workspace or ".") / ".huginn" / "PROVED.md"
+        p = Path(workspace or ".") / HUGINN_DIR_NAME / "PROVED.md"
         return p.read_text(encoding="utf-8") if p.exists() else ""
 
     # ── 失败驱动的假设修正 ───────────────────────────────────────────

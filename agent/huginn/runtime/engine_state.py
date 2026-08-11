@@ -23,6 +23,7 @@ from typing import Any
 
 from huginn.runtime.trace_context import get_trace_id as _get_trace_id
 from huginn.utils.common import atomic_write_json
+from huginn.utils.runtime import HUGINN_DIR_NAME
 
 # 跟随 P12/P13/P14 的 env flag 风格, 默认开 (crash-safe resume).
 # ponytail: 不读 settings, 不加配置文件 — env var 跟现有 flag 一致.
@@ -153,7 +154,7 @@ class EngineState:
 
 
 def _engine_state_dir(workspace: str | Path) -> Path:
-    return Path(workspace).resolve() / ".huginn" / "engine_state"
+    return Path(workspace).resolve() / HUGINN_DIR_NAME / "engine_state"
 
 
 def _engine_state_path(workspace: str | Path, run_id: str) -> Path:
@@ -161,7 +162,7 @@ def _engine_state_path(workspace: str | Path, run_id: str) -> Path:
 
 
 def _hypothesis_graph_path(workspace: str | Path, run_id: str) -> Path:
-    return Path(workspace).resolve() / ".huginn" / f"hypothesis_graph_{run_id}.json"
+    return Path(workspace).resolve() / HUGINN_DIR_NAME / f"hypothesis_graph_{run_id}.json"
 
 
 def _snapshot_engine(engine: Any, run_id: str) -> EngineState:
