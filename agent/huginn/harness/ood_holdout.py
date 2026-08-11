@@ -55,7 +55,8 @@ def _harness_enabled(key: str, default: bool = False) -> bool:
         if key in ff:
             return bool(ff[key])
     except Exception:
-        pass
+        # best-effort: 配置读不到就回退到 FeatureFlags 层, 但记录以便排查
+        logger.debug("feature_flags 读取失败, 回退到 FeatureFlags 统一层", exc_info=True)
     try:
         from huginn.feature_flags import FeatureFlags
 
