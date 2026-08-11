@@ -23,6 +23,7 @@ from typing import Any
 
 from huginn.autoloop.plan_store import _file_lock
 from huginn.utils.common import now_iso
+from huginn.utils.runtime import HUGINN_DIR_NAME
 
 logger = logging.getLogger(__name__)
 
@@ -123,7 +124,7 @@ class GoalStore:
         base = os.environ.get("HUGINN_CACHE_DIR")
         if base:
             return Path(base) / "goals.json"
-        return Path(".huginn") / "goals.json"
+        return Path(HUGINN_DIR_NAME) / "goals.json"
 
     def _load(self) -> None:
         if not self._path.exists():

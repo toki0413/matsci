@@ -16,6 +16,7 @@ from huginn.kg import (
     build_from_seeds,
 )
 from huginn.kg.query import GraphQuery
+from huginn.utils.runtime import HUGINN_DIR_NAME
 
 
 @click.group(name="kg")
@@ -36,7 +37,7 @@ def build_kg(
     from_seeds: bool,
 ) -> None:
     """Build or update the project knowledge graph."""
-    kg_root = ctx.workspace / ".huginn"
+    kg_root = ctx.workspace / HUGINN_DIR_NAME
     kg = ProjectKnowledgeGraph(kg_root)
 
     total = {
@@ -89,7 +90,7 @@ def build_kg(
 @click.pass_obj
 def kg_query(ctx: CliContext, seed: str, depth: int, top_k: int) -> None:
     """Query the knowledge graph for a given seed."""
-    kg_root = ctx.workspace / ".huginn"
+    kg_root = ctx.workspace / HUGINN_DIR_NAME
     if not (kg_root / ProjectKnowledgeGraph.FILENAME).exists():
         ctx.console.print(
             "[yellow]No knowledge graph found. Run `huginn build-kg` first.[/yellow]"
@@ -105,7 +106,7 @@ def kg_query(ctx: CliContext, seed: str, depth: int, top_k: int) -> None:
 @click.pass_obj
 def kg_stats(ctx: CliContext) -> None:
     """Show knowledge graph statistics."""
-    kg_root = ctx.workspace / ".huginn"
+    kg_root = ctx.workspace / HUGINN_DIR_NAME
     if not (kg_root / ProjectKnowledgeGraph.FILENAME).exists():
         ctx.console.print(
             "[yellow]No knowledge graph found. Run `huginn build-kg` first.[/yellow]"
@@ -130,7 +131,7 @@ def kg_stats(ctx: CliContext) -> None:
 @click.pass_obj
 def kg_export(ctx: CliContext, fmt: str, output: str | None) -> None:
     """Export the knowledge graph as JSON or GML."""
-    kg_root = ctx.workspace / ".huginn"
+    kg_root = ctx.workspace / HUGINN_DIR_NAME
     if not (kg_root / ProjectKnowledgeGraph.FILENAME).exists():
         ctx.console.print(
             "[yellow]No knowledge graph found. Run `huginn build-kg` first.[/yellow]"

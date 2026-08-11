@@ -10,6 +10,7 @@ from fastapi import APIRouter
 
 from huginn.memory.types import MemoryType
 from huginn.server_core import get_agent, get_memory_manager
+from huginn.utils.runtime import HUGINN_DIR_NAME
 
 router = APIRouter(tags=["memory"])
 
@@ -271,7 +272,7 @@ async def memory_layers() -> dict[str, Any]:
         try:
             from huginn.kg.graph import ProjectKnowledgeGraph
             workspace = Path(getattr(ctx, "workspace", ".") or ".")
-            kg = ProjectKnowledgeGraph(workspace / ".huginn")
+            kg = ProjectKnowledgeGraph(workspace / HUGINN_DIR_NAME)
             kg_stats = kg.stats()
         except Exception:
             pass  # KG 文件不存在或损坏不阻塞

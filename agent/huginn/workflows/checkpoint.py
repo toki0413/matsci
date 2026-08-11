@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from huginn.types import ToolResult
+from huginn.utils.runtime import HUGINN_DIR_NAME
 from huginn.workflows.stages import ComputationalStage, RetryPolicy, ValidationRule
 
 
@@ -133,4 +134,4 @@ class WorkflowCheckpoint:
     @classmethod
     def default_path(cls, workspace: str | Path, run_id: str) -> Path:
         """Return the default checkpoint path for a run."""
-        return Path(workspace) / ".huginn" / "workflows" / f"{run_id}.json"
+        return Path(workspace) / HUGINN_DIR_NAME / "workflows" / f"{run_id}.json"

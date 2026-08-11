@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from huginn.utils.runtime import HUGINN_DIR_NAME
+
 
 @dataclass
 class JobRecord:
@@ -182,7 +184,7 @@ class SqliteCampaignStore(CampaignStoreBackend):
         base = os.environ.get("HUGINN_CACHE_DIR")
         if base:
             return Path(base) / "campaigns.sqlite"
-        return Path(".huginn") / "campaigns.sqlite"
+        return Path(HUGINN_DIR_NAME) / "campaigns.sqlite"
 
     def _connect(self) -> sqlite3.Connection:
         if self._conn is not None:

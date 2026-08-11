@@ -12,6 +12,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
+from huginn.utils.runtime import HUGINN_DIR_NAME
 from huginn.utils.tokens import count_message_tokens, count_tokens
 
 logger = logging.getLogger(__name__)
@@ -541,7 +542,7 @@ def _extract_compact_attachments(messages: list[Any]) -> str:
         from pathlib import Path as _P5  # noqa: N814
         for _name, _label in (("FAILED.md", "Dead Routes (do NOT re-attempt)"),
                               ("PROVED.md", "Verified Results (build on these)")):
-            _p5 = _P5(".huginn") / _name
+            _p5 = _P5(HUGINN_DIR_NAME) / _name
             if _p5.exists():
                 _txt5 = _p5.read_text(encoding="utf-8").strip()
                 if _txt5:

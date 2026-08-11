@@ -16,6 +16,7 @@ from pathlib import Path
 
 from huginn.runtime.trace_context import get_trace_id as _get_trace_id
 from huginn.utils.common import atomic_write_json
+from huginn.utils.runtime import HUGINN_DIR_NAME
 
 
 @dataclass
@@ -42,7 +43,7 @@ class TaskMetrics:
 
 
 def _metrics_path(workspace: Path) -> Path:
-    return Path(workspace).resolve() / ".huginn" / "task_metrics.json"
+    return Path(workspace).resolve() / HUGINN_DIR_NAME / "task_metrics.json"
 
 
 def update_metrics(
@@ -209,7 +210,7 @@ if __name__ == "__main__":
 
         # 7. save → load 往返一致
         path = save_metrics(m6b, ws)
-        assert path == ws / ".huginn" / "task_metrics.json"
+        assert path == ws / HUGINN_DIR_NAME / "task_metrics.json"
         assert path.exists()
         loaded = load_metrics("t1", ws)
         assert loaded is not None
@@ -223,7 +224,7 @@ if __name__ == "__main__":
         assert loaded.estimated_remaining == m6b.estimated_remaining
         assert loaded.updated_at == m6b.updated_at
         # 原子写: tmp 不残留
-        assert not (ws / ".huginn" / "task_metrics.json.tmp").exists()
+        assert not (ws / HUGINN_DIR_NAME / "task_metrics.json.tmp").exists()
         print("7. save → load 往返 OK")
 
         # 8. load: 文件不存在 / task_id 不匹配都返回 None

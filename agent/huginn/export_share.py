@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from huginn.utils.archive_safety import safe_archive_extract
-from huginn.utils.runtime import get_runtime_home
+from huginn.utils.runtime import HUGINN_DIR_NAME, get_runtime_home
 
 logger = logging.getLogger(__name__)
 
@@ -107,7 +107,7 @@ class ExportShareManager:
         try:
             from huginn.kg.graph import ProjectKnowledgeGraph
 
-            return ProjectKnowledgeGraph(self.workspace / ".huginn")
+            return ProjectKnowledgeGraph(self.workspace / HUGINN_DIR_NAME)
         except Exception as e:
             logger.warning("无法初始化知识图谱: %s", e)
             return None
@@ -169,7 +169,7 @@ class ExportShareManager:
             stats.memory_md_exists = True
 
         # 4) 主题记忆目录（如果存在）
-        memory_dir = self.workspace / ".huginn" / "memory"
+        memory_dir = self.workspace / HUGINN_DIR_NAME / "memory"
         if memory_dir.is_dir():
             dest = target_dir / "memory_topics"
             self._copy_tree(memory_dir, dest)
@@ -201,7 +201,7 @@ class ExportShareManager:
         candidates = [
             Path(cache_dir) / "memory.db" if cache_dir else None,
             get_runtime_home() / "memory.db",
-            self.workspace / ".huginn" / "memory.db",
+            self.workspace / HUGINN_DIR_NAME / "memory.db",
         ]
         for c in candidates:
             if c and c.exists():
@@ -274,7 +274,7 @@ class ExportShareManager:
 
         if kg is None:
             # 直接拷贝文件
-            kg_file = self.workspace / ".huginn" / "project_kg.json"
+            kg_file = self.workspace / HUGINN_DIR_NAME / "project_kg.json"
             if kg_file.exists():
                 shutil.copy2(str(kg_file), str(target_dir / "project_kg.json"))
                 try:
@@ -632,7 +632,7 @@ class ExportShareManager:
         # 恢复主题记忆目录
         topics_src = mem_dir / "memory_topics"
         if topics_src.is_dir():
-            topics_dst = self.workspace / ".huginn" / "memory"
+            topics_dst = self.workspace / HUGINN_DIR_NAME / "memory"
             try:
                 if not merge and topics_dst.is_dir():
                     shutil.rmtree(str(topics_dst))
@@ -750,7 +750,7 @@ class ExportShareManager:
 
         if not merge:
             # 直接覆盖文件
-            dst = self.workspace / ".huginn" / "project_kg.json"
+            dst = self.workspace / HUGINN_DIR_NAME / "project_kg.json"
             dst.parent.mkdir(parents=True, exist_ok=True)
             dst.write_text(
                 json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
@@ -761,7 +761,7 @@ class ExportShareManager:
             kg = self._get_kg()
             if kg is None:
                 # 退而求其次，直接写文件
-                dst = self.workspace / ".huginn" / "project_kg.json"
+                dst = self.workspace / HUGINN_DIR_NAME / "project_kg.json"
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 dst.write_text(
                     json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
@@ -935,7 +935,7 @@ class ExportShareManager:
                 except Exception as e:
                     result["errors"].append(f"图谱合并失败: {e}")
             else:
-                dst = self.workspace / ".huginn" / "project_kg.json"
+                dst = self.workspace / HUGINN_DIR_NAME / "project_kg.json"
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 dst.write_text(
                     json.dumps(graph_data, indent=2, ensure_ascii=False), encoding="utf-8"
@@ -1071,7 +1071,7 @@ class ExportShareManager:
         }
 
         # 知识图谱
-        kg_file = self.workspace / ".huginn" / "project_kg.json"
+        kg_file = self.workspace / HUGINN_DIR_NAME / "project_kg.json"
         kg = self._get_kg()
         status["graph"] = {
             "available": kg is not None or kg_file.exists(),

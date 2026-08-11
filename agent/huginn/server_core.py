@@ -26,6 +26,7 @@ from huginn.permissions import PermissionMode
 from huginn.personas import PersonaManager
 from huginn.project_context import load_project_context
 from huginn.server_context import ServerContext, get_server_context
+from huginn.utils.runtime import HUGINN_DIR_NAME
 
 logger = logging.getLogger(__name__)
 
@@ -336,7 +337,7 @@ def get_image_index():
             workspace = get_context().config.workspace or "."
         except Exception:
             logger.debug("读取 workspace 失败, 用默认 '.'", exc_info=True)
-        store_path = Path(workspace) / ".huginn" / "visual_index.json"
+        store_path = Path(workspace) / HUGINN_DIR_NAME / "visual_index.json"
         _image_index = ImageIndex(store_path=store_path)
     return _image_index
 

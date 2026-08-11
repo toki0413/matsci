@@ -29,6 +29,7 @@ from typing import Any
 from huginn.api.event import EventType, WorkflowStageEvent
 from huginn.autoloop.budget import BudgetExhausted
 from huginn.autoloop.phase_gate import PhaseGate, get_shared_phase_gate_state
+from huginn.utils.runtime import HUGINN_DIR_NAME
 
 logger = logging.getLogger(__name__)
 
@@ -693,7 +694,7 @@ class EngineControlMixin:
         # 写到 workspace 的 .huginn/meta_trace.jsonl (不存在就建)
         # ponytail: 不走 memory_manager, 直接写文件. 跟 directive_rejections 同模式.
         ws = getattr(self, "workspace_root", None) or Path.cwd()
-        trace_path = Path(ws) / ".huginn" / "meta_trace.jsonl"
+        trace_path = Path(ws) / HUGINN_DIR_NAME / "meta_trace.jsonl"
         try:
             trace_path.parent.mkdir(parents=True, exist_ok=True)
             with trace_path.open("a", encoding="utf-8") as f:

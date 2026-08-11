@@ -13,6 +13,8 @@ import json
 import re
 from pathlib import Path
 
+from huginn.utils.runtime import HUGINN_DIR_NAME
+
 
 def _rcb_drift_check(evals_history: list) -> tuple[bool, str]:
     """v16: RCB 专用 drift 检查 — window=2, unsure 也算 drift 信号.
@@ -139,7 +141,7 @@ def _count_failed_attempts(ws: Path, evals_history: list, component: str) -> int
         except Exception:
             continue
     # (b) on-disk trace — resume/跨进程场景 evals_history 未必含全部历史
-    trace_path = ws / ".huginn" / "meta_trace.jsonl"
+    trace_path = ws / HUGINN_DIR_NAME / "meta_trace.jsonl"
     if trace_path.exists():
         try:
             with trace_path.open(encoding="utf-8", errors="ignore") as f:
@@ -530,7 +532,7 @@ def _infer_beta_1_simple(ws: Path) -> int:
     'trace 已有 ≥3 条 entry 则视为存在循环路径' 的代理. 二值返回, 不假装算精确值.
     升级路径: 接入 trace_topology.compute_betti 后替换.
     """
-    _trace = ws / ".huginn" / "meta_trace.jsonl"
+    _trace = ws / HUGINN_DIR_NAME / "meta_trace.jsonl"
     if not _trace.exists():
         return 0
     try:
@@ -549,7 +551,7 @@ def _write_directive_rejection(
     spec §"回退次数上限": retry 2 次仍 fix_needed 时强制 finalize 并留痕.
     """
     import time as _t
-    _rej_path = ws / ".huginn" / "directive_rejections.jsonl"
+    _rej_path = ws / HUGINN_DIR_NAME / "directive_rejections.jsonl"
     _rej_path.parent.mkdir(parents=True, exist_ok=True)
     _entry = {
         "ts": _t.time(),

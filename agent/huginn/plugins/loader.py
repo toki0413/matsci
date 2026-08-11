@@ -27,13 +27,14 @@ from huginn.api.context import PluginContext
 from huginn.api.star import Star
 from huginn.plugins.metadata import HUGINN_API_VERSION, PluginMetadata
 from huginn.plugins.permissions import PermissionChecker
+from huginn.utils.runtime import HUGINN_DIR_NAME
 
 logger = logging.getLogger("huginn.plugin_loader")
 
 
 # 默认插件目录: 项目根的 .huginn/plugins (相对 cwd)
 # 也可以走 ~/.huginn/plugins 全局, 这里先取项目本地
-DEFAULT_PLUGINS_DIR = ".huginn/plugins"
+DEFAULT_PLUGINS_DIR = f"{HUGINN_DIR_NAME}/plugins"
 
 
 @dataclass

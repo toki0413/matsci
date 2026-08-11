@@ -23,6 +23,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from huginn.utils.runtime import HUGINN_DIR_NAME
+
 logger = logging.getLogger(__name__)
 
 
@@ -78,7 +80,7 @@ def run_three_cabin(
         logger.debug("three_cabin imports failed", exc_info=True)
         return (None, "")
 
-    audit_log_path = workspace / ".huginn" / "audit.jsonl"
+    audit_log_path = workspace / HUGINN_DIR_NAME / "audit.jsonl"
 
     # 舱 1: Step
     try:

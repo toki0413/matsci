@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from huginn.prompts import HUGINN_SYSTEM_PROMPT, MATH_DEPTH_GUIDE
+from huginn.utils.runtime import HUGINN_DIR_NAME
 
 logger = logging.getLogger(__name__)
 
@@ -184,13 +185,13 @@ Do not redesign the plan or skip steps. If a step fails, report the error clearl
 def _default_personas_path(workspace: str | Path | None = None) -> Path:
     """Default file for user-defined personas."""
     base = Path(workspace) if workspace else Path.cwd()
-    return base / ".huginn" / "personas.json"
+    return base / HUGINN_DIR_NAME / "personas.json"
 
 
 def _default_skill_dirs(workspace: str | Path | None = None) -> list[Path]:
     """Default directories to scan for Nuwa-style persona skills."""
     base = Path(workspace) if workspace else Path.cwd()
-    return [base / ".huginn" / "personas"]
+    return [base / HUGINN_DIR_NAME / "personas"]
 
 
 class PersonaManager:
@@ -410,7 +411,7 @@ class PersonaManager:
         """用户 persona 文件存放目录 (.huginn/personas/)."""
         if self._skill_dirs:
             return self._skill_dirs[0]
-        return self._workspace / ".huginn" / "personas"
+        return self._workspace / HUGINN_DIR_NAME / "personas"
 
     @staticmethod
     def _templates_path() -> Path:

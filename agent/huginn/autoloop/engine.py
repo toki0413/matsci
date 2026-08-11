@@ -105,6 +105,7 @@ from huginn.kg.builder import ProjectKnowledgeGraph  # noqa: E402
 from huginn.llm import get_model  # noqa: E402
 from huginn.memory.manager import MemoryManager  # noqa: E402
 from huginn.tools.report_tool import ReportTool  # noqa: E402
+from huginn.utils.runtime import HUGINN_DIR_NAME  # noqa: E402
 from huginn.workflows.engine import WorkflowEngine  # noqa: E402
 
 # 跨源属性冲突检测用的正则; 提到模块级避免每次调用重编译
@@ -574,7 +575,7 @@ class AutoloopEngine(
 
     def _alignment_dataset_path(self) -> Path:
         """Step 8: AlignmentDataset 落盘路径 — <workspace>/.huginn/alignment_dataset.json."""
-        return self.workspace / ".huginn" / "alignment_dataset.json"
+        return self.workspace / HUGINN_DIR_NAME / "alignment_dataset.json"
 
 
 
