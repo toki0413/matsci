@@ -15,6 +15,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import re
 import time
 import uuid
 from datetime import datetime
@@ -349,8 +350,6 @@ def _parse_agent_output(text: str) -> dict[str, Any]:
 
     Looks for JSON blocks or key=value patterns in the response.
     """
-    import re
-
     # Try to find a JSON block
     json_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
     if json_match:

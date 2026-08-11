@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import builtins
 import os
+import tracemalloc
 from typing import Any
 
 # 不注入 CodeAct 沙箱的工具集.
@@ -149,14 +150,13 @@ def exec_with_mem_cap(code: str, namespace: dict, mem_cap_bytes: int) -> None:
         exec(compile(code, "<code_act>", "exec"), namespace)
         return
 
-    import tracemalloc as _tm
-    _tm_was = _tm.is_tracing()
+    _tm_was = tracemalloc.is_tracing()
     if not _tm_was:
-        _tm.start()
+        tracemalloc.start()
     try:
-        _mem_before = _tm.get_traced_memory()[0]
+        _mem_before = tracemalloc.get_traced_memory()[0]
         exec(compile(code, "<code_act>", "exec"), namespace)
-        _current, _peak = _tm.get_traced_memory()
+        _current, _peak = tracemalloc.get_traced_memory()
         _delta = _peak - _mem_before
         if _delta > mem_cap_bytes:
             raise MemoryError(
@@ -166,7 +166,7 @@ def exec_with_mem_cap(code: str, namespace: dict, mem_cap_bytes: int) -> None:
             )
     finally:
         if not _tm_was:
-            _tm.stop()
+            tracemalloc.stop()
 
 
 if __name__ == "__main__":

@@ -16,6 +16,7 @@ runs inference.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -71,8 +72,6 @@ async def visual_encode(
         }
 
     # torch inference is blocking — push it off the event loop.
-    import asyncio
-
     vec = await asyncio.to_thread(encoder.encode_image, content)
     if vec is None:
         return {"success": False, "error": "encoding failed for this image"}
@@ -158,8 +157,6 @@ async def visual_index_stats() -> dict[str, Any]:
     them in a thread with a 5s timeout keeps this diagnostic endpoint
     from stalling the event loop for minutes.
     """
-    import asyncio
-
     def _gather() -> dict[str, Any]:
         index = get_image_index()
         stats = index.stats()

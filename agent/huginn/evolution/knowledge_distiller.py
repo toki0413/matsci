@@ -13,6 +13,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
@@ -140,7 +141,6 @@ class KnowledgeDistiller:
         ponytail: word-level Jaccard, ok for <500 entries;
         switch to embedding similarity if knowledge_base grows past 5K.
         """
-        import re
         # 去标点再分词, 否则 "convergence:" 和 "convergence" 算不同词
         words_new = set(re.sub(r'[^\w\s]', '', content.lower()).split())
         if not words_new or len(words_new) < 4:
@@ -337,8 +337,6 @@ class KnowledgeDistiller:
         explanation 是 agent 用通俗语言写的解释, gaps 是解释不出来的部分.
         feynman_note 在 KB 检索时获得优先级 (基础概念 > 细节技巧).
         """
-        import hashlib
-
         content_parts = [f"# Feynman Note (iter {iteration})"]
         if hypothesis:
             content_parts.append(f"## Hypothesis\n{hypothesis[:200]}")

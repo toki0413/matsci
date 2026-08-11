@@ -36,6 +36,7 @@ old suppress(OperationalError) approach.
 from __future__ import annotations
 
 import contextlib
+import importlib
 import logging
 import shutil
 import sqlite3
@@ -319,8 +320,6 @@ def run_all_migrations() -> dict[str, int]:
     can be overridden by checkpointer_path in the agent factory; if so, the
     factory still runs its own migration on init, so we just skip it here.
     """
-    import importlib
-
     from huginn.utils.runtime import get_runtime_home
 
     home = get_runtime_home()
