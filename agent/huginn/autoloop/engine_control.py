@@ -118,6 +118,7 @@ class EngineControlMixin:
 
             self._event_bus = EventBus()
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return None
         return self._event_bus
 
@@ -466,6 +467,7 @@ class EngineControlMixin:
 
             self._clarification_mgr = get_clarification_manager()
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return None
         return self._clarification_mgr
 
@@ -479,6 +481,7 @@ class EngineControlMixin:
 
             self._plan_store = PlanStore()
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return None
         return self._plan_store
 
@@ -589,6 +592,7 @@ class EngineControlMixin:
                     else:
                         break
                 except Exception:
+                    logger.debug("best-effort op failed", exc_info=True)
                     break
 
             ctx = {

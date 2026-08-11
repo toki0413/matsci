@@ -93,6 +93,7 @@ class AdmissionPolicy:
             try:
                 return float(raw)
             except ValueError:
+                logger.debug("best-effort op failed", exc_info=True)
                 return None
 
         return cls(
@@ -287,6 +288,7 @@ class ToolScheduler:
             # No running loop — drainer started lazily on first submit_async
             # within a loop. Skip silently; tests that don't run the drainer
             # can still exercise acquire/release + queue state.
+            logger.debug("best-effort op failed", exc_info=True)
             return
         self._drainer = loop.create_task(self._drain())
 
@@ -312,6 +314,7 @@ class ToolScheduler:
                     # Sleep until woken or a slot might have freed.
                     await asyncio.wait_for(self._drainer_wake.wait(), timeout=1.0)
                 except TimeoutError:
+                    logger.debug("best-effort op failed", exc_info=True)
                     continue
                 continue
             job = self._queue[0]

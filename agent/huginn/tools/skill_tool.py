@@ -49,6 +49,7 @@ def _get_memory() -> LongTermMemory | None:
         try:
             _memory_singleton = LongTermMemory()
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             _memory_broken = True
             return None
     return _memory_singleton
@@ -518,6 +519,7 @@ class SkillTool(HuginnTool[SkillToolInput, SkillToolOutput]):
                 top_k=3,
             )
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return None
         if not rows:
             return None
@@ -621,14 +623,14 @@ if __name__ == "__main__":
         _build_skill_definition({"steps": [{"tool": "x"}]})
         raise AssertionError("应抛 ValueError")
     except ValueError:
-        pass
+        logger.debug("best-effort op failed", exc_info=True)
 
     # 4. _build_skill_definition 空 steps 抛 ValueError
     try:
         _build_skill_definition({"name": "empty"})
         raise AssertionError("应抛 ValueError")
     except ValueError:
-        pass
+        logger.debug("best-effort op failed", exc_info=True)
 
     # 5. _heuristic_distill_trace 从 trace 抽 tool_calls
     trace = [

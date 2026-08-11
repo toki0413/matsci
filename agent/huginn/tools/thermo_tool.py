@@ -37,6 +37,7 @@ def _thermo_available() -> bool:
 
             _THERMO_AVAILABLE = True
         except ImportError:
+            logger.debug("best-effort op failed", exc_info=True)
             _THERMO_AVAILABLE = False
     return _THERMO_AVAILABLE
 

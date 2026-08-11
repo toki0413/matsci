@@ -212,6 +212,7 @@ class _TunnelWorker:
                         pkey = kls.from_private_key_file(cred["key_path"])
                         break
                     except Exception:
+                        logger.debug("best-effort op failed", exc_info=True)
                         continue
                 else:
                     raise RuntimeError(f"无法加载密钥文件: {cred['key_path']}")
@@ -321,8 +322,10 @@ class _TunnelWorker:
             try:
                 client, _ = self._listen_sock.accept()
             except TimeoutError:
+                logger.debug("best-effort op failed", exc_info=True)
                 continue
             except OSError:
+                logger.debug("best-effort op failed", exc_info=True)
                 break
 
             # 每个连接单独起线程, 避免一个慢连接拖死整个隧道
@@ -357,7 +360,7 @@ class _TunnelWorker:
             self.manager._bump_stat(self.record.tunnel_id, "connections", 1)
             self._pump(client, chan)
         except (paramiko.SSHException, OSError, EOFError):
-            pass
+            logger.debug("best-effort op failed", exc_info=True)
         finally:
             with contextlib.suppress(OSError):
                 client.close()
@@ -458,6 +461,7 @@ class _TunnelWorker:
             try:
                 r, _, _ = select.select([sock, chan], [], [], 1.0)
             except (OSError, ValueError):
+                logger.debug("best-effort op failed", exc_info=True)
                 break
             if not r:
                 continue
@@ -466,12 +470,14 @@ class _TunnelWorker:
                 try:
                     data = sock.recv(65536)
                 except (BlockingIOError, OSError):
+                    logger.debug("best-effort op failed", exc_info=True)
                     data = b""
                 if not data:
                     break
                 try:
                     chan.sendall(data)
                 except (OSError, EOFError):
+                    logger.debug("best-effort op failed", exc_info=True)
                     break
                 self.manager._bump_stat(
                     self.record.tunnel_id, "bytes_in", len(data)
@@ -481,12 +487,14 @@ class _TunnelWorker:
                 try:
                     data = chan.recv(65536)
                 except (OSError, EOFError):
+                    logger.debug("best-effort op failed", exc_info=True)
                     break
                 if not data:
                     break
                 try:
                     sock.sendall(data)
                 except (BlockingIOError, OSError):
+                    logger.debug("best-effort op failed", exc_info=True)
                     break
                 self.manager._bump_stat(
                     self.record.tunnel_id, "bytes_out", len(data)

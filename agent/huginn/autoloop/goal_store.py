@@ -367,6 +367,7 @@ class GoalStore:
                 elapsed = (datetime.now(UTC) - start).total_seconds()
                 return elapsed >= goal.wall_clock_budget_seconds
             except Exception:
+                logger.debug("best-effort op failed", exc_info=True)
                 return False
 
     def clear(self, goal_id: str) -> None:

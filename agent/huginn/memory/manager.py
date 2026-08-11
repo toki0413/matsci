@@ -283,6 +283,7 @@ class MemoryManager:
             try:
                 skill = json.loads(r.get("content", "{}"))
             except (ValueError, TypeError):
+                logger.debug("best-effort op failed", exc_info=True)
                 continue
             fn = skill.get("function_name", "")
             if not fn:
@@ -537,7 +538,7 @@ class MemoryManager:
                     self.longterm.touch(entry_id)
         except Exception:
             # Verification loop failure should never block tool promotion
-            pass
+            logger.debug("best-effort op failed", exc_info=True)
 
     def _score_importance(self, record: ToolCallRecord) -> float:
         """Heuristic importance score for a tool result (0.0 - 1.0).
@@ -641,6 +642,7 @@ class MemoryManager:
 
             distiller = KnowledgeDistiller()
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return 0
 
         # Convert session tool calls to the flat log format the distiller wants

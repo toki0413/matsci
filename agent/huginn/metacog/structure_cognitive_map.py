@@ -46,12 +46,14 @@ try:
     from pymatgen.core import Structure as _PmgStructure
     _HAS_PMG = True
 except ImportError:
+    logger.debug("best-effort op failed", exc_info=True)
     _HAS_PMG = False
 
 try:
     from scipy.spatial.transform import Rotation
     _HAS_SCIPY = True
 except ImportError:
+    logger.debug("best-effort op failed", exc_info=True)
     _HAS_SCIPY = False
 
 
@@ -576,6 +578,7 @@ class StructureCognitiveMap:
                                                bond_type=self.classify_bond(i, int(j)),
                                                source="crystalnn"))
                 except Exception:
+                    logger.debug("best-effort op failed", exc_info=True)
                     continue
             return bonds
         except Exception as e:
@@ -599,6 +602,7 @@ class StructureCognitiveMap:
                                                bond_type=self.classify_bond(i, j),
                                                source="voronoi"))
                 except Exception:
+                    logger.debug("best-effort op failed", exc_info=True)
                     continue
             return bonds
         except Exception as e:

@@ -601,7 +601,7 @@ def _self_check() -> int:
         )
         raise AssertionError("should raise ValueError for missing anchor")
     except ValueError:
-        pass
+        logger.debug("best-effort op failed", exc_info=True)
 
     # 11. 形状不一致 → (False, inf)
     is_iso3, dist3 = validate_relative_isomorphism(

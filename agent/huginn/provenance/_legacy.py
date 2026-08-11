@@ -131,6 +131,7 @@ def _collect_software_versions() -> dict[str, str]:
         try:
             mod = importlib.import_module(pkg)
         except ImportError:
+            logger.debug("best-effort op failed", exc_info=True)
             continue
 
         # 三级回退: __version__ 属性 -> version 模块/属性 -> importlib.metadata
@@ -147,6 +148,7 @@ def _collect_software_versions() -> dict[str, str]:
             try:
                 ver = _pkg_version(pkg)
             except PackageNotFoundError:
+                logger.debug("best-effort op failed", exc_info=True)
                 continue  # 装了能 import 但没元数据, 算了跳过
 
         if ver:
@@ -203,6 +205,7 @@ def _get_workspace() -> str:
         return str(Path.cwd())
     except Exception:
         # 极端情况 (cwd 被删了之类), 别让 provenance 挂
+        logger.debug("best-effort op failed", exc_info=True)
         return ""
 
 
@@ -217,6 +220,7 @@ def _get_tool_version(tool_name: str) -> str:
 
         huginn_ver = getattr(huginn, "__version__", "unknown")
     except Exception:
+        logger.debug("best-effort op failed", exc_info=True)
         huginn_ver = "unknown"
 
     # 工具自己定义 __version__ 的情况不多, 但留个口子
@@ -265,7 +269,7 @@ def capture(
             )
     except Exception:
         # flag 层挂了不能带挂业务, 继续走原逻辑
-        pass
+        logger.debug("best-effort op failed", exc_info=True)
 
     timestamp = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     software_versions = _collect_software_versions()
@@ -448,6 +452,7 @@ class ProvenanceLogger:
             try:
                 records.append(ProvenanceRecord.from_dict(json.loads(line)))
             except (json.JSONDecodeError, TypeError, KeyError):
+                logger.debug("best-effort op failed", exc_info=True)
                 continue
         return records
 

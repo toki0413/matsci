@@ -187,6 +187,7 @@ class HuginnTool(ABC, Generic[InputT, OutputT]):
                     break
             except OSError:
                 # unreadable / weird encoding -> try the next candidate
+                logger.debug("best-effort op failed", exc_info=True)
                 continue
 
         cache[cache_key] = content
@@ -325,7 +326,7 @@ class HuginnTool(ABC, Generic[InputT, OutputT]):
                 return None
         except Exception:
             # flag layer down — keep capturing, provenance is opt-out not opt-in
-            pass
+            logger.debug("best-effort op failed", exc_info=True)
 
         collector = get_provenance_collector()
         if collector is None:

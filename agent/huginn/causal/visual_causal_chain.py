@@ -364,6 +364,7 @@ def _extract_numerical_feature(text: str, feature_name: str) -> float | None:
                 try:
                     return float(m.group(1))
                 except ValueError:
+                    logger.debug("best-effort op failed", exc_info=True)
                     continue
     return None
 
@@ -602,7 +603,7 @@ def _selfcheck() -> None:
         fit_scm_from_observations(obs, "nonexistent_template")
         raise AssertionError("应抛 ValueError")
     except ValueError:
-        pass
+        logger.debug("best-effort op failed", exc_info=True)
 
     # 10. 拟合 diffusion 数据点
     obs_d: list[Observation] = []

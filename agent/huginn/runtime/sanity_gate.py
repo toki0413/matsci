@@ -151,6 +151,7 @@ def check_sanity(workspace: Path | str) -> dict[str, Any]:
             raw = jf.read_text(encoding="utf-8", errors="ignore")
             data = json.loads(raw)
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             continue
 
         # placeholder 文本检查 (扫原始 JSON 字符串)

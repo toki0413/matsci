@@ -221,7 +221,7 @@ class MigrationManager:
                         self._conn.execute(f"SELECT COUNT(*) FROM {name}").fetchone()[0]
                     )
         except sqlite3.OperationalError:
-            pass
+            logger.debug("best-effort op failed", exc_info=True)
         return snap
 
     def _check_integrity(self, before: dict, version: int) -> None:
@@ -260,6 +260,7 @@ class MigrationManager:
         try:
             from huginn import __version__ as app_version
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             app_version = "unknown"
         now = datetime.now().isoformat()
         self._conn.executemany(

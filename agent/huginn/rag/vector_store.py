@@ -131,6 +131,7 @@ class VectorStore:
             VectorStore._embed_cache.set(cache_key, result)
             return result
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return None
 
     def _keyword_search(
@@ -198,12 +199,14 @@ class VectorStore:
         try:
             from huginn_ext import top_k  # type: ignore[import-not-found]
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return None
         if not embeddings:
             return None
         try:
             return top_k(query_embedding, embeddings, top_k)
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return None
 
     def _matches_filter(

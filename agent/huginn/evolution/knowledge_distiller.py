@@ -105,6 +105,7 @@ class KnowledgeDistiller:
                 # 没有 workspace 上下文时用默认 cache 路径 (~/.huginn)
                 self._kb = get_knowledge_base()
             except Exception:
+                logger.debug("best-effort op failed", exc_info=True)
                 return  # 无 KB 环境时静默跳过 (e.g. 离线 distill 命令)
         new_entries = [
             k for k in self.knowledge_base
@@ -540,6 +541,7 @@ class KnowledgeDistiller:
 
                 kb = get_knowledge_base()
             except Exception:
+                logger.debug("best-effort op failed", exc_info=True)
                 return 0
         if kb is None:
             return 0

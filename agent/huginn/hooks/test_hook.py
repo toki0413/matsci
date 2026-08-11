@@ -35,6 +35,7 @@ async def test_stop_hook(ctx: HookContext) -> HookContext | None:
     try:
         import pytest  # noqa: F401
     except ImportError:
+        logger.debug("best-effort op failed", exc_info=True)
         return None
 
     try:
@@ -53,6 +54,7 @@ def _has_pytest_config(ws: Path) -> bool:
     try:
         return any((ws / name).is_file() for name in _PYTEST_MARKERS)
     except Exception:
+        logger.debug("best-effort op failed", exc_info=True)
         return False
 
 
@@ -67,6 +69,7 @@ async def _run_pytest(ws: Path) -> str:
             stderr=asyncio.subprocess.STDOUT,
         )
     except (FileNotFoundError, OSError):
+        logger.debug("best-effort op failed", exc_info=True)
         return ""
 
     try:

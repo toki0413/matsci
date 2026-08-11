@@ -102,6 +102,7 @@ async def _astream_with_watchdog(
         try:
             item = await asyncio.wait_for(aiter.__anext__(), timeout=idle_timeout)
         except StopAsyncIteration:
+            logger.debug("best-effort op failed", exc_info=True)
             return
         yield item
 
@@ -286,6 +287,7 @@ class StreamingMixin:
         try:
             target = ResearchPhase(phase)
         except ValueError:
+            logger.debug("best-effort op failed", exc_info=True)
             return False
         if not self._phase_manager.transition(target):
             return False
@@ -338,6 +340,7 @@ class StreamingMixin:
         try:
             return ResearchPhase[phase_name]
         except KeyError:
+            logger.debug("best-effort op failed", exc_info=True)
             return None
 
     @staticmethod
@@ -517,6 +520,7 @@ class StreamingMixin:
         try:
             mgr = get_interrupt_manager()
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return None
         await mgr.wait_if_paused(thread_id)
         evt = mgr.check_interrupt(thread_id)
@@ -646,6 +650,7 @@ class StreamingMixin:
             )
             after_pct = after["used"]
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             after_pct = 0
 
         # Belief Entropy adaptive: adjust next-round params
@@ -1450,6 +1455,7 @@ class StreamingMixin:
                 from langgraph.checkpoint.sqlite import SqliteSaver
                 use_sync_stream = isinstance(self.checkpointer, SqliteSaver)
             except Exception:
+                logger.debug("best-effort op failed", exc_info=True)
                 use_sync_stream = False
 
             from huginn.agents.loop_detector import LoopDetector
@@ -1951,6 +1957,7 @@ if __name__ == "__main__":
             async for _ in _astream_with_watchdog(_slow_stream(), idle_timeout=0.5):
                 pass
         except TimeoutError:
+            logger.debug("best-effort op failed", exc_info=True)
             timed_out = True
         assert timed_out, "watchdog failed to raise TimeoutError on idle stream"
 
@@ -1975,7 +1982,7 @@ if __name__ == "__main__":
             async for item in _astream_with_watchdog(_one_then_slow(), idle_timeout=0.5):
                 seen.append(item)
         except TimeoutError:
-            pass
+            logger.debug("best-effort op failed", exc_info=True)
         assert seen == ["fast"], f"first chunk not yielded before timeout: {seen}"
 
     asyncio.run(_test_watchdog())

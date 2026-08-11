@@ -435,6 +435,7 @@ class ValidateTool(HuginnTool):
             }
         except Exception:
             # 兜底失败不报错, 让上层走 no_reference
+            logger.debug("best-effort op failed", exc_info=True)
             return None
 
     def _run_elastic_validation(self, result_data: dict[str, Any]) -> ToolResult:

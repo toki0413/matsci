@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 try:
     from huginn.metacog.signal_hub import SignalHub
 except ImportError:
+    logger.debug("best-effort op failed", exc_info=True)
     SignalHub = None  # type: ignore[assignment]
 
 # Prompt for the conversation summarizer — preserves research context.
@@ -185,6 +186,7 @@ class ReflectionMixin:
             try:
                 entries.append(json.loads(line))
             except json.JSONDecodeError:
+                logger.debug("best-effort op failed", exc_info=True)
                 continue
         return entries
 
@@ -521,6 +523,7 @@ class ReflectionMixin:
                 rec = json.loads(line)
                 proposals.append(rec.get("proposal", ""))
             except json.JSONDecodeError:
+                logger.debug("best-effort op failed", exc_info=True)
                 continue
         return proposals[-limit:]
 
@@ -630,6 +633,7 @@ class ReflectionMixin:
                 EventBus,
             )
         except ImportError:
+            logger.debug("best-effort op failed", exc_info=True)
             return
         try:
             bus = EventBus.shared()
@@ -682,6 +686,7 @@ class ReflectionMixin:
         try:
             from huginn.utils.belief_entropy import get_belief_entropy
         except ImportError:
+            logger.debug("best-effort op failed", exc_info=True)
             return
         try:
             be = get_belief_entropy()

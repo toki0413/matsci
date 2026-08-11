@@ -35,6 +35,7 @@ def _histogram_correlation(img_bytes1: bytes, img_bytes2: bytes) -> float:
         corr = float(np.corrcoef(h1, h2)[0, 1])
         return corr if not np.isnan(corr) else 0.0
     except Exception:
+        logger.debug("best-effort op failed", exc_info=True)
         return 0.0
 
 

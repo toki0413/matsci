@@ -455,6 +455,7 @@ class OpenMMTool(HuginnTool):
                         if len(row) > 4:
                             vols.append(float(row[4]))
                     except (ValueError, IndexError):
+                        logger.debug("best-effort op failed", exc_info=True)
                         continue
         except Exception:
             logger.debug("md log parse failed", exc_info=True)

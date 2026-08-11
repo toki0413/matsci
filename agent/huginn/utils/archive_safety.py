@@ -47,6 +47,7 @@ def _is_safe_member(member_name: str, extract_dir: Path) -> bool:
     try:
         target.relative_to(extract_dir.resolve())
     except ValueError:
+        logger.debug("best-effort op failed", exc_info=True)
         return False
     return True
 

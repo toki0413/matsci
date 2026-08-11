@@ -243,6 +243,7 @@ def _check_distance_invariance(answer: str, struct_name: str) -> bool:
     try:
         predicted = float(answer.strip().split()[0])
     except (ValueError, IndexError):
+        logger.debug("best-effort op failed", exc_info=True)
         return False
     from huginn.metacog.structure_cognitive_map import StructureCognitiveMap
     m = StructureCognitiveMap.from_cif(_MOCK_CIFS[struct_name])
@@ -258,6 +259,7 @@ def _check_rotated_coords(answer: str, struct_name: str, axis: str,
         if len(nums) != 3:
             return False
     except ValueError:
+        logger.debug("best-effort op failed", exc_info=True)
         return False
     from huginn.metacog.structure_cognitive_map import StructureCognitiveMap
     m = StructureCognitiveMap.from_cif(_MOCK_CIFS[struct_name])
@@ -279,6 +281,7 @@ def _check_angle_invariance(answer: str, struct_name: str) -> bool:
     try:
         predicted = float(answer.strip().split()[0])
     except (ValueError, IndexError):
+        logger.debug("best-effort op failed", exc_info=True)
         return False
     # 原始角度 (Na-Cl-ThirdAtom at (1,0,0) frac)
     from huginn.metacog.structure_cognitive_map import StructureCognitiveMap
@@ -296,6 +299,7 @@ def _check_supercell_distance(answer: str, struct_name: str) -> bool:
     try:
         predicted = float(answer.strip().split()[0])
     except (ValueError, IndexError):
+        logger.debug("best-effort op failed", exc_info=True)
         return False
     from huginn.metacog.structure_cognitive_map import StructureCognitiveMap
     m = StructureCognitiveMap.from_cif(_MOCK_CIFS[struct_name])
@@ -357,6 +361,7 @@ def _check_rotated_cart_coords(answer: str, struct_name: str, atom_idx: int,
         if len(nums) != 3:
             return False
     except ValueError:
+        logger.debug("best-effort op failed", exc_info=True)
         return False
     m = _hard_map(struct_name)
     expected = m.query_after_rotation([atom_idx], axis=axis, angle=angle, degrees=True)[0]
@@ -370,6 +375,7 @@ def _check_multistep_distance(answer: str, struct_name: str, axis: str,
     try:
         predicted = float(answer.strip().split()[0])
     except (ValueError, IndexError):
+        logger.debug("best-effort op failed", exc_info=True)
         return False
     m = _hard_map(struct_name)
     m_rot = m.rotate(axis=axis, angle=angle, degrees=True)

@@ -71,6 +71,7 @@ def _entry_has_reasoning(row: dict) -> bool:
         try:
             tag_list = json.loads(tags)
         except (ValueError, TypeError):
+            logger.debug("best-effort op failed", exc_info=True)
             return False
     elif isinstance(tags, list):
         tag_list = tags
@@ -1002,7 +1003,7 @@ class LongTermMemory:
                         rows = conn.execute(fts_sql, tuple(fts_params)).fetchall()
                         fts_matched = True
                     except sqlite3.OperationalError:
-                        pass
+                        logger.debug("best-effort op failed", exc_info=True)
                 # Fallback to LIKE if FTS5 unavailable or query failed
                 if not fts_matched:
                     sql += " AND content LIKE ?"
@@ -1458,6 +1459,7 @@ class LongTermMemory:
                 )
                 count += 1
             except Exception:
+                logger.debug("best-effort op failed", exc_info=True)
                 continue
         return count
 
@@ -1633,6 +1635,7 @@ class LongTermMemory:
         try:
             return datetime.fromisoformat(p.read_text(encoding="utf-8").strip())
         except (ValueError, OSError):
+            logger.debug("best-effort op failed", exc_info=True)
             return None
 
     def _write_last_consolidation(self) -> None:
@@ -1854,6 +1857,7 @@ try:
         import fcntl as _fcntl
         _LOCK_PLATFORM = "posix"
 except ImportError:
+    logger.debug("best-effort op failed", exc_info=True)
     _LOCK_PLATFORM = "none"
 
 
@@ -1883,7 +1887,7 @@ def _stable_principles_lock(path: Path, exclusive: bool = True):
                 lock_type = _fcntl.LOCK_EX if exclusive else _fcntl.LOCK_SH
                 _fcntl.flock(f.fileno(), lock_type)
             except OSError:
-                pass
+                logger.debug("best-effort op failed", exc_info=True)
         yield
     finally:
         if _LOCK_PLATFORM == "windows":
@@ -1891,7 +1895,7 @@ def _stable_principles_lock(path: Path, exclusive: bool = True):
                 f.seek(0)
                 _msvcrt.locking(f.fileno(), _msvcrt.LK_UNLCK, 1)
             except OSError:
-                pass
+                logger.debug("best-effort op failed", exc_info=True)
         else:
             with suppress(OSError):
                 _fcntl.flock(f.fileno(), _fcntl.LOCK_UN)
@@ -1958,7 +1962,7 @@ def store_stable_principle(principle: str, source: str = "S7_self_modify") -> bo
                 f.write(line)
         except Exception:
             # 全局路径不可写不阻断本地写入
-            pass
+            logger.debug("best-effort op failed", exc_info=True)
     return True
 
 
@@ -1984,7 +1988,7 @@ def load_stable_principles() -> list[str]:
             if cached_sig == current_sig:
                 return cached_val
     except OSError:
-        pass  # stat 失败走原路径重读
+        logger.debug("best-effort op failed", exc_info=True)  # stat 失败走原路径重读
 
     seen: set[str] = set()
     principles: list[str] = []
@@ -2000,6 +2004,7 @@ def load_stable_principles() -> list[str]:
                 p = json.loads(line)["principle"]
             except (json.JSONDecodeError, KeyError):
                 # 损坏行直接跳过, 别让一条坏数据把整个 persona 干废
+                logger.debug("best-effort op failed", exc_info=True)
                 continue
             if p not in seen:
                 seen.add(p)
@@ -2022,6 +2027,7 @@ def cleanup_stable_principles() -> int:
         try:
             p = json.loads(line)["principle"]
         except (json.JSONDecodeError, KeyError):
+            logger.debug("best-effort op failed", exc_info=True)
             continue
         if _validate_principle(p, seen):
             kept.append(line)

@@ -610,7 +610,7 @@ class ToolAdapter:
                     with contextlib.suppress(Exception):
                         self._agent_ref._last_visual_base64 = b64
             except Exception:
-                pass  # non-fatal
+                logger.debug("best-effort op failed", exc_info=True)  # non-fatal
 
             return data
 
@@ -653,7 +653,7 @@ class ToolAdapter:
                 )
             except Exception:
                 # Audit failures must not break tool execution.
-                pass
+                logger.debug("best-effort op failed", exc_info=True)
 
         def _publish(
             mood: PetMood, message: str, details: dict[str, Any] | None = None
@@ -697,7 +697,7 @@ class ToolAdapter:
                         source="tool_adapter",
                     ), name="tool-blocked-emit")
                 except RuntimeError:
-                    pass
+                    logger.debug("best-effort op failed", exc_info=True)
 
         async def _dispatch_tool_call_event(
             args_dict: dict[str, Any], session_id: str
@@ -1010,7 +1010,7 @@ class ToolAdapter:
                         tool_output=output,
                     )
                 except ImportError:
-                    pass
+                    logger.debug("best-effort op failed", exc_info=True)
                 except Exception:
                     logger.debug("provenance register failed (non-fatal)", exc_info=True)
 

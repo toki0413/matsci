@@ -452,6 +452,7 @@ def ingest_sobko_chunks(
             try:
                 chunk = _json.loads(line)
             except _json.JSONDecodeError:
+                logger.debug("best-effort op failed", exc_info=True)
                 continue
             # Sobko chunk 字段: chunk_id / source_id / text / section / page ...
             text = chunk.get("text") or chunk.get("content") or ""

@@ -53,6 +53,7 @@ def _load() -> dict[str, dict[str, Any]]:
         _cached_mtime = mtime
         return _cached_data
     except (json.JSONDecodeError, OSError):
+        logger.debug("best-effort op failed", exc_info=True)
         return {}
 
 

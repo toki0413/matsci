@@ -108,7 +108,7 @@ class SessionMixin:
                                 "history": [],
                             })
                     except ValueError:
-                        pass
+                        logger.debug("best-effort op failed", exc_info=True)
                 phase = snap.get("research_phase")
                 if phase:
                     try:
@@ -116,7 +116,7 @@ class SessionMixin:
                         # plan 恢复路径没动 _phase_manager, 这里恢复
                         self._phase_manager.reset(ResearchPhase(phase))
                     except (ValueError, KeyError):
-                        pass
+                        logger.debug("best-effort op failed", exc_info=True)
                 turns = snap.get("turns_count")
                 if isinstance(turns, int) and turns > 0:
                     self._turn_count = turns

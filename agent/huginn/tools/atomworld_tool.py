@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 try:
     import atomworld as _atomworld
 except ImportError:
+    logger.debug("best-effort op failed", exc_info=True)
     _atomworld = None
 
 
@@ -142,7 +143,7 @@ def _resolve_actions_module():
             import atom_world.actions as _aw  # type: ignore[import-not-found]
             mod = _aw
         except ImportError:
-            pass
+            logger.debug("best-effort op failed", exc_info=True)
     return mod
 
 
@@ -182,6 +183,7 @@ def _dispatch_apply(input_cif: str, action_name: str, params: dict) -> str:
     try:
         instance = cls(**params)
     except TypeError:
+        logger.debug("best-effort op failed", exc_info=True)
         instance = None
 
     if instance is not None:

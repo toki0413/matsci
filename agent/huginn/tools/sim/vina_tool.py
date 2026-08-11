@@ -210,7 +210,7 @@ class VinaTool(HuginnTool):
         try:
             return self._prepare_with_meeko(inp, out, work_dir)
         except FileNotFoundError:
-            pass
+            logger.debug("best-effort op failed", exc_info=True)
 
         # Fall back to obabel
         try:
@@ -287,6 +287,7 @@ class VinaTool(HuginnTool):
                 writer.close()
                 return sdf_out
             except ImportError:
+                logger.debug("best-effort op failed", exc_info=True)
                 return None
         return None
 
@@ -308,7 +309,7 @@ class VinaTool(HuginnTool):
             import vina  # noqa: F401
             return "__python__"
         except ImportError:
-            pass
+            logger.debug("best-effort op failed", exc_info=True)
         return resolve_executable("autodock_vina")
 
     @staticmethod
