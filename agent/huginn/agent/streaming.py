@@ -397,6 +397,17 @@ class StreamingMixin:
         for msg in new_msgs:
             if isinstance(msg, AIMessage):
                 self.memory.add_message("assistant", msg.content)
+                # COT 资产化: 把模型暴露的 reasoning_content (如 DeepSeek) 落进
+                # session.reasoning_trace, 供下游蒸馏 (knowledge_distiller /
+                # evolution) 消费。无需去重: 每条 AIMessage 经 offset 只处理一次,
+                # 且 reasoning 是整段累积在 final message 上的。
+                _reasoning = (
+                    msg.additional_kwargs.get("reasoning_content", "")
+                    if getattr(msg, "additional_kwargs", None)
+                    else ""
+                )
+                if _reasoning:
+                    self.memory.add_reasoning(_reasoning)
                 # Thought loop detection
                 if hasattr(self, "_thought_detector") and self._thought_detector:
                     content = msg.content if isinstance(msg.content, str) else str(msg.content)
