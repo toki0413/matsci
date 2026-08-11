@@ -331,7 +331,7 @@ class TestXSS:
             "<img src=x onerror=alert(1)>",
             "<svg onload=alert(1)>",
             "javascript:alert(1)",
-            "\"><script>alert(document.cookie)</script>",
+            '"><script>alert(document.cookie)</script>',
         ],
     )
     def test_xss_not_reflected_unescaped(self, payload: str):
@@ -505,6 +505,9 @@ class TestInputValidation:
 
         创建一个带小 limit 的最小 app 来验证中间件行为。
         """
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
         from huginn.middleware.limits import RequestSizeLimitMiddleware
 
         mini_app = FastAPI()
@@ -596,7 +599,7 @@ class TestInputValidation:
         """畸形 JSON 不应该 crash。"""
         resp = client.post(
             "/memory/search",
-            content='{invalid json,,,}',
+            content="{invalid json,,,}",
             headers={"Content-Type": "application/json"},
         )
         assert resp.status_code in (400, 422)

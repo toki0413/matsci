@@ -79,6 +79,7 @@ def _bind_test_client(app_client):
     yield
     client = None
 
+
 _HEADERS = {"X-HUGINN-API-KEY": "test-key"}
 WS_PATH = "/ws/agent"
 
@@ -261,9 +262,7 @@ def ws_mock(tmp_path, monkeypatch):
         team_mode_enabled=False,
         max_concurrent_subagents=2,
     )
-    ctx = SimpleNamespace(
-        config=SimpleNamespace(workspace=str(tmp_path)), kb=None
-    )
+    ctx = SimpleNamespace(config=SimpleNamespace(workspace=str(tmp_path)), kb=None)
 
     async def _get_agent():
         return agent
@@ -301,9 +300,9 @@ class TestAPILatency:
 
         def _hit():
             r = client.get(endpoint, headers=_HEADERS)
-            assert r.status_code == 200, (
-                f"{endpoint} returned {r.status_code}: {r.text[:200]}"
-            )
+            assert (
+                r.status_code == 200
+            ), f"{endpoint} returned {r.status_code}: {r.text[:200]}"
 
         stats = _measure_latency_ms(_hit, iterations=30)
         _print_latency_report(f"GET {endpoint}", stats)
@@ -543,9 +542,11 @@ class TestConcurrencyThroughput:
         def _connect():
             try:
                 # 每个线程用独立的 TestClient, 避免共享 portal 的线程安全问题
-                with TestClient(app) as c:
-                    with c.websocket_connect(WS_PATH, headers=_HEADERS):
-                        pass
+                with (
+                    TestClient(app) as c,
+                    c.websocket_connect(WS_PATH, headers=_HEADERS),
+                ):
+                    pass
             except Exception as e:
                 errors.append(str(e))
 
