@@ -1183,7 +1183,7 @@ class LiteratureTool(HuginnTool):
                     kg.add_relation(src, Relation.CITES, dst, source="citation_graph")
             kg.save()
         except Exception:
-            pass  # best-effort, 不影响引文图返回
+            logger.debug("citation graph kg.save() failed, best-effort", exc_info=True)
 
         return ToolResult(
             data={

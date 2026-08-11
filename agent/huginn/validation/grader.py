@@ -9,6 +9,7 @@ registry 统一跑 evaluate_all 拿回同构的 GraderResult 列表.
 """
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -22,6 +23,8 @@ from huginn.validation.innovation_signal import (
     InnovationSignalDetector,
 )
 from huginn.validation.research import RedTeamReviewer
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -394,7 +397,7 @@ class ValidityJudge:
                     message=reason,
                 )
         except Exception:
-            pass  # LLM 挂了走规则
+            logger.debug("LLM grader failed, falling back to rules", exc_info=True)
 
         return self._rule_fallback(agent_code)
 

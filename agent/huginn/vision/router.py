@@ -15,6 +15,7 @@ measurements and CV tools never got semantic context.
 from __future__ import annotations
 
 import base64
+import logging
 import mimetypes
 import re
 from enum import Enum
@@ -22,6 +23,8 @@ from pathlib import Path
 from typing import Any
 
 from huginn.models.registry import get_model_capabilities
+
+logger = logging.getLogger(__name__)
 
 # Image extensions we recognise as user-supplied image paths.
 _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".tif"}
@@ -223,7 +226,7 @@ def build_cv_context(
         if new_lines:
             parts.append("\n".join(new_lines))
     except Exception:
-        pass  # ponytail: graceful degradation, symbol extraction is enhancement not critical
+        logger.debug("visual_to_symbols failed, graceful degradation", exc_info=True)
 
     # ── Visual→Symbols 结构化版: 让 agent 能精确引用字段做推理 ──
     # 之前 visual_to_symbols 返回文本, 结构化字段 (estimated_band_gap_eV 等) 埋在文本里.
@@ -238,7 +241,7 @@ def build_cv_context(
                 + _json.dumps(structured, ensure_ascii=False, default=str)
             )
     except Exception:
-        pass  # non-fatal
+        logger.debug("visual_to_symbols_structured failed, non-fatal", exc_info=True)
 
     # ── visual memory: similar-image search ──
     if visual_encoder is not None and image_index is not None:

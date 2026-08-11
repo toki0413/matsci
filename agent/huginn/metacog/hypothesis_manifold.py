@@ -33,12 +33,15 @@ Honest boundaries (ponytail: named ceilings + upgrade paths):
 from __future__ import annotations
 
 import contextlib
+import logging
 import math
 import os
 import random
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 # B1: SubspacePartition R 矩阵投影优化 Fisher 距离.
 # ponytail: 仍 stdlib only — 不引 numpy. 用 list-of-list 做矩阵乘法.
@@ -1310,7 +1313,7 @@ def _mcmc_chain_worker(
                             "current": current, "accept_count": accept_count,
                         }, _f)
             except Exception:
-                pass  # checkpoint 失败不阻塞链
+                logger.debug("MCMC checkpoint save failed, chain continues", exc_info=True)
 
     accept_rate = accept_count / n_steps if n_steps > 0 else 0.0
     return {"samples": samples, "accept_rate": accept_rate, "final_h": current}
