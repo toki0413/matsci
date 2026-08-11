@@ -5,6 +5,7 @@ Python-based symbolic checks without blocking the rest of the system.
 """
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
@@ -15,6 +16,8 @@ from huginn.tools.base import HuginnTool
 
 if TYPE_CHECKING:
     from huginn.core_types import ToolResult
+
+logger = logging.getLogger(__name__)
 
 
 class BourbakiInput(BaseModel):
@@ -400,7 +403,7 @@ end
                     )
             except Exception:
                 # sympify 失败 → 走启发式
-                pass
+                logger.debug("sympify failed, falling back to heuristic", exc_info=True)
 
         # 启发式: 子串匹配散度项 + 时间导数项
         # 时间导数匹配 ∂/∂t, ∂ρ/∂t, d/dt, dρ/dt — 变量可能夹在中间

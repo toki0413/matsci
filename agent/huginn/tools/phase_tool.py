@@ -13,7 +13,6 @@ agent 通过这个工具:
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -28,6 +27,7 @@ from huginn.permissions import PermissionConfig
 from huginn.phases import ResearchPhase
 from huginn.tools.base import HuginnTool
 from huginn.tools.profile import ToolProfile
+from huginn.utils.common import now_iso
 
 
 class PhaseToolInput(BaseModel):
@@ -186,7 +186,7 @@ class PhaseTool(HuginnTool):
         key = (input_data.from_phase, input_data.to_phase)
         state.overrides.add(key)
         state.override_meta[key] = {
-            "ts": datetime.now(UTC).isoformat(),
+            "ts": now_iso(),
             "actor": "user",
             "reason": "manual_override",
         }

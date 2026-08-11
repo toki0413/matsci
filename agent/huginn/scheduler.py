@@ -18,6 +18,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from huginn.utils.common import now_iso
+
 # datetime.UTC was added in Python 3.11; use timezone.utc for 3.10 compat
 UTC = UTC
 
@@ -30,7 +32,7 @@ class ScheduledJob:
     cron: str
     command: str
     enabled: bool = True
-    created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    created_at: str = field(default_factory=lambda: now_iso())
     last_run: str | None = None
     run_count: int = 0
 
@@ -115,7 +117,7 @@ class ScheduleManager:
         due = self.due_jobs(now)
         results: list[dict[str, Any]] = []
         jobs = {j.id: j for j in self._load()}
-        timestamp = datetime.now(UTC).isoformat()
+        timestamp = now_iso()
 
         for job in due:
             start = time.time()

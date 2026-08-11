@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import sqlite3
 from contextlib import asynccontextmanager, suppress
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI
@@ -68,8 +70,6 @@ async def _init_mcp_tools():
     Failures are fully contained — this function never raises.
     """
     try:
-        from pathlib import Path
-
         from huginn.mcp_client import MCPClientManager, MCPServerConfig
         from huginn.tools.mcp_adapter import register_mcp_tools
 
@@ -276,8 +276,6 @@ async def _load_star_plugins() -> None:
     starting.
     """
     try:
-        from pathlib import Path
-
         from huginn.plugins.loader import PluginLoader
 
         base = Path(__file__).resolve().parent  # huginn/
@@ -388,9 +386,6 @@ async def _close_sqlite_stores() -> None:
 
 async def _wal_checkpoint_all() -> None:
     """Run ``PRAGMA wal_checkpoint(TRUNCATE)`` on all known SQLite DBs."""
-    import sqlite3
-    from pathlib import Path
-
     db_paths: list[Path] = []
 
     # Long-term memory
@@ -568,8 +563,6 @@ async def lifespan(app: FastAPI):
         try:
             cfg = get_config()
             if cfg.encryption_enabled and (cfg.encryption_password or cfg.encryption_key_file):
-                from pathlib import Path
-
                 from huginn.rag.encrypted_rag import EncryptedRAGManager
 
                 persist_dir = str(Path(cfg.workspace) / ".huginn_encrypted_rag")

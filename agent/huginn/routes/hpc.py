@@ -14,8 +14,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
+import shlex
+import threading
 import time
+import uuid
 from collections import defaultdict
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
@@ -165,12 +170,6 @@ async def hpc_submit(params: dict[str, Any]) -> dict[str, Any]:
             )
 
         # Persist to the job store so we can list/cancel/refresh later
-        import os
-        import shlex
-        import time
-        import uuid
-        from pathlib import Path
-
         from huginn.execution.remote_job_store import RemoteJobRecord, RemoteJobStore
 
         workspace = Path(os.environ.get("HUGINN_WORKSPACE", "."))
@@ -314,9 +313,6 @@ async def hpc_job_dependencies(local_id: str) -> dict[str, Any]:
 
 def _get_store():
     """Build a RemoteJobStore rooted at HUGINN_WORKSPACE."""
-    import os
-    from pathlib import Path
-
     from huginn.execution.remote_job_store import RemoteJobStore
 
     workspace = Path(os.environ.get("HUGINN_WORKSPACE", "."))
@@ -354,8 +350,6 @@ async def hpc_refresh_job(
     local_id: str, params: dict[str, Any] | None = None
 ) -> dict[str, Any]:
     """Poll the scheduler for the latest status of a tracked job."""
-    import time
-
     store = _get_store()
     record = store.get(local_id)
     if record is None:
@@ -389,9 +383,6 @@ async def hpc_cancel_job(
     local_id: str, params: dict[str, Any] | None = None
 ) -> dict[str, Any]:
     """Cancel a tracked job on the remote scheduler."""
-    import shlex
-    import time
-
     store = _get_store()
     record = store.get(local_id)
     if record is None:
@@ -513,8 +504,6 @@ async def hpc_job_output_stream(websocket: WebSocket, local_id: str):
 
         def _tail_thread():
             """在线程里连 SSH, tail -f 输出文件, 每行塞进队列。"""
-            import shlex
-
             # G33: 之前 exec_command 的 channel 不显式 close, 三重泄漏:
             #   1) 本地 channel 对象不释放
             #   2) 远端 tail -f 进程不退出 (靠 channel close 发 SIGHUP)
@@ -530,8 +519,7 @@ async def hpc_job_output_stream(websocket: WebSocket, local_id: str):
                     if "EXISTS" not in stdout:
                         # 文件还没生成, 轮询等
                         for _ in range(60):
-                            import time as _t
-                            _t.sleep(2)
+                            time.sleep(2)
                             stdout, _, _ = client._exec(
                                 ["test", "-f", output_file, "&&", "echo", "EXISTS"]
                             )
@@ -570,8 +558,6 @@ async def hpc_job_output_stream(websocket: WebSocket, local_id: str):
                 if chan is not None:
                     with contextlib.suppress(Exception):
                         chan.close()
-
-        import threading
 
         tail_thread = threading.Thread(target=_tail_thread, daemon=True)
         tail_thread.start()

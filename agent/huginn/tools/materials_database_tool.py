@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import re
 from dataclasses import dataclass, field
@@ -24,6 +25,8 @@ from huginn.core_types import ToolContext, ToolResult
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.tools.local_structure_db import LocalStructureDB
 from huginn.tools.tool_cache import EXTERNAL_API_TTL, cacheable
+
+logger = logging.getLogger(__name__)
 
 
 def _formula_to_elements(formula: str) -> list[str]:
@@ -937,7 +940,7 @@ class MaterialsDatabaseTool(HuginnTool):
                     mp_material_id = items[0].get("material_id")
         except Exception:
             # MP 查不到不影响预测, 只是少了 hull 参考
-            pass
+            logger.debug("MP lookup failed, proceeding without hull reference", exc_info=True)
 
         # 4. 判断稳定性 + 置信度
         stability = "unknown (no MP reference)"

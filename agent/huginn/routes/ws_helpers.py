@@ -11,6 +11,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import re
 import uuid
 from pathlib import Path
 
@@ -49,8 +50,6 @@ def _extract_task_progress(content: str) -> dict | None:
     Returns a dict suitable for sending as ``task_progress`` WS message,
     or None if no progress info is detected.
     """
-    import re
-
     text = content.lower()
 
     job_match = re.search(r"job[_ ]?(?:id)?[:\s]+(\d+)", text)

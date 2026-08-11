@@ -29,7 +29,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from huginn.utils.common import now_iso
+from huginn.utils.common import atomic_write_json, now_iso
 from huginn.utils.runtime import HUGINN_DIR_NAME, get_runtime_home
 
 logger = logging.getLogger(__name__)
@@ -219,21 +219,9 @@ class PlanStore:
                 )
 
     def _save(self) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
         data = {"plans": [p.to_dict() for p in self._plans.values()]}
-        payload = json.dumps(data, ensure_ascii=False, indent=2)
-        # write to temp, fsync, then atomic rename — prevents half-written files
         with _file_lock(self._path):
-            tmp = self._path.with_name(f".{self._path.name}.{os.getpid()}.tmp")
-            try:
-                with open(tmp, "w", encoding="utf-8") as f:
-                    f.write(payload)
-                    f.flush()
-                    os.fsync(f.fileno())
-                os.replace(str(tmp), str(self._path))
-            except OSError:
-                tmp.unlink(missing_ok=True)
-                raise
+            atomic_write_json(self._path, data, indent=2)
 
     # ── CRUD ──────────────────────────────────────────────────────
 

@@ -144,6 +144,7 @@ class ConvergenceTestTool(HuginnTool):
         poscar_src = self._prepare_poscar(args.structure, work_dir)
 
         convergence_data: list[dict[str, Any]] = []
+        mock_used = False
         for kmesh in args.kpoint_series:
             run_dir = work_dir / f"kp_{kmesh}"
             run_dir.mkdir(parents=True, exist_ok=True)
@@ -151,7 +152,8 @@ class ConvergenceTestTool(HuginnTool):
             self._write_incar(run_dir, args.base_incar)
             self._write_kpoints(run_dir, kmesh)
 
-            energy = await self._run_scf(run_dir, context)
+            energy, is_mock = await self._run_scf(run_dir, context)
+            mock_used = mock_used or is_mock
             delta_e = self._compute_delta(convergence_data, energy, args.n_atoms)
             convergence_data.append({
                 "kmesh": kmesh,
@@ -163,7 +165,7 @@ class ConvergenceTestTool(HuginnTool):
                 break
 
         return self._build_convergence_result(
-            convergence_data, "kmesh", args.tolerance
+            convergence_data, "kmesh", args.tolerance, mock_used
         )
 
     # ── ENCUT convergence ──────────────────────────────────────────
@@ -175,6 +177,7 @@ class ConvergenceTestTool(HuginnTool):
         poscar_src = self._prepare_poscar(args.structure, work_dir)
 
         convergence_data: list[dict[str, Any]] = []
+        mock_used = False
         for encut in args.encut_series:
             run_dir = work_dir / f"encut_{encut}"
             run_dir.mkdir(parents=True, exist_ok=True)
@@ -186,7 +189,8 @@ class ConvergenceTestTool(HuginnTool):
             kmesh = args.kpoint_series[0] if args.kpoint_series else 4
             self._write_kpoints(run_dir, kmesh)
 
-            energy = await self._run_scf(run_dir, context)
+            energy, is_mock = await self._run_scf(run_dir, context)
+            mock_used = mock_used or is_mock
             delta_e = self._compute_delta(convergence_data, energy, args.n_atoms)
             convergence_data.append({
                 "encut": encut,
@@ -198,7 +202,7 @@ class ConvergenceTestTool(HuginnTool):
                 break
 
         return self._build_convergence_result(
-            convergence_data, "encut", args.tolerance
+            convergence_data, "encut", args.tolerance, mock_used
         )
 
     # ── cutoff analysis (no VASP needed) ───────────────────────────
@@ -321,8 +325,15 @@ class ConvergenceTestTool(HuginnTool):
         )
         (run_dir / "KPOINTS").write_text(text, encoding="utf-8")
 
-    async def _run_scf(self, run_dir: Path, context: ToolContext) -> float:
-        """Run a single SCF via VaspTool and return the energy."""
+    async def _run_scf(
+        self, run_dir: Path, context: ToolContext
+    ) -> tuple[float, bool]:
+        """Run a single SCF via VaspTool and return (energy, is_mock).
+
+        is_mock=True means VASP was not installed and the energy came from
+        VaspTool's mock mode.  Callers MUST propagate this flag so downstream
+        results are clearly marked as non-physical.
+        """
         from huginn.tools.vasp_tool import VaspTool, VaspToolInput
 
         tool = VaspTool()
@@ -332,13 +343,17 @@ class ConvergenceTestTool(HuginnTool):
         if result.success and result.data:
             energy = result.data.get("energy")
             if energy is not None:
-                return float(energy)
-        # ponytail: if VASP isn't installed, mock mode returns a random energy.
-        # Real convergence tests need a real VASP binary; this keeps the
-        # tool callable in demo/CI environments without crashing.
+                is_mock = (
+                    result.data.get("status") == "mock"
+                    or result.data.get("metadata", {}).get("mock") is True
+                )
+                return float(energy), is_mock
+        # VASP not installed and VaspTool didn't even return a usable result.
+        # Return a clearly-marked mock energy so the tool stays callable in
+        # demo/CI environments, but callers MUST flag the result as mock.
         import random
 
-        return -100.0 + random.uniform(-1.0, 1.0)
+        return -100.0 + random.uniform(-1.0, 1.0), True
 
     @staticmethod
     def _compute_delta(
@@ -363,7 +378,8 @@ class ConvergenceTestTool(HuginnTool):
 
     @staticmethod
     def _build_convergence_result(
-        data: list[dict[str, Any]], param_key: str, tolerance: float
+        data: list[dict[str, Any]], param_key: str, tolerance: float,
+        mock_used: bool = False,
     ) -> ToolResult:
         # find optimal: first entry where 2 consecutive deltas are below tol
         optimal = data[-1].get(param_key)
@@ -376,12 +392,18 @@ class ConvergenceTestTool(HuginnTool):
                     converged = True
                     break
 
+        result_data = {
+            "convergence_data": data,
+            "converged": converged,
+            f"optimal_{param_key}": optimal,
+            "tolerance": tolerance,
+        }
+        if mock_used:
+            result_data["status"] = "mock"
+            result_data["mock"] = True
+            result_data["mock_reason"] = "vasp_executable_not_found"
+
         return ToolResult(
-            data={
-                "convergence_data": data,
-                "converged": converged,
-                f"optimal_{param_key}": optimal,
-                "tolerance": tolerance,
-            },
+            data=result_data,
             success=True,
         )
