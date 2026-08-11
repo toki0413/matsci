@@ -69,7 +69,12 @@ class VisualInspectMixin:
 
         # 获取上一轮的视觉基元和 base64 图片
         visual_ctx = getattr(self, "_last_visual_context", "")
-        visual_base64 = getattr(self, "_visual_base64", "")
+        # _visual_base64 是 selfcheck 路径设的; 生产路径由 ToolAdapter 把工具
+        # 产出的图表 base64 存到 _last_visual_base64, 这里 fallback 读取.
+        visual_base64 = (
+            getattr(self, "_visual_base64", "")
+            or getattr(self, "_last_visual_base64", "")
+        )
 
         if not visual_ctx and not visual_base64:
             return {
@@ -218,6 +223,10 @@ class VisualInspectMixin:
                 new_primitives.append(f"[{action['action']}] {action['note']}")
         result["visual_summary"] = "\n".join(new_primitives)
         result["success"] = True
+
+        # 消费完毕: 清除 ToolAdapter 存储的工具图表 base64, 避免下轮复用陈旧图
+        if hasattr(self, "_last_visual_base64"):
+            self._last_visual_base64 = None
 
         # 用 enrich_with_visual 给这次检查也生成视觉基元
         try:

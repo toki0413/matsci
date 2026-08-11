@@ -14,12 +14,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
 from huginn.utils.runtime import HUGINN_DIR_NAME
+
+logger = logging.getLogger(__name__)
 
 Severity = Literal["block", "warn", "info"]
 Category = Literal[
@@ -239,7 +242,7 @@ class FailureModeRegistry:
             )
         except Exception:
             # SignalHub / TransitionSignal 链路出问题不阻断
-            pass
+            logger.debug("SignalHub emit failed", exc_info=True)
 
     def all(self) -> list[FailureMode]:
         return list(self._modes.values())

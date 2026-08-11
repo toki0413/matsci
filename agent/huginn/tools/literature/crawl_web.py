@@ -13,11 +13,11 @@ import json
 import os
 import re
 import urllib.parse
-from datetime import UTC
 from pathlib import Path
 from typing import Any
 
 from huginn.core_types import ToolContext, ToolResult
+from huginn.utils.common import now_iso
 from huginn.utils.runtime import get_runtime_home
 
 from ._http import _USER_AGENT, logger
@@ -250,7 +250,6 @@ async def _auth_login(provider: str, timeout_sec: int = 300) -> dict[str, Any]:
     profile_dir.mkdir(parents=True, exist_ok=True)
 
     import time
-    from datetime import datetime
 
     async with async_playwright() as pw:
         # headless=False 让用户看到浏览器窗口操作
@@ -331,7 +330,7 @@ async def _auth_login(provider: str, timeout_sec: int = 300) -> dict[str, Any]:
         # 存 meta 不管结果
         _save_session_meta(
             provider,
-            last_auth_at=datetime.now(UTC).isoformat(),
+            last_auth_at=now_iso(),
             last_url=last_url,
             auth_result=result,
         )

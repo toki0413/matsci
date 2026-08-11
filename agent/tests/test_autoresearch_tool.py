@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from huginn.core_types import ToolContext
+from huginn.core_types import ToolContext, ToolResult
 from huginn.plugins.autoresearch import AutoresearchInput, AutoresearchTool
 
 # test_propose_edit_uses_llm 走 asyncio.to_thread(model.invoke, ...).
@@ -269,3 +269,87 @@ async def test_status_skip_git(
     assert result.success
     assert result.data["git"] is False
     assert result.data["train_py_exists"] is True
+
+
+@pytest.mark.asyncio
+async def test_prepare_runs_prepare_py(
+    tool: AutoresearchTool,
+    ctx: ToolContext,
+    tmp_path: Path,
+    fake_run_command_factory,
+    monkeypatch,
+) -> None:
+    """prepare: 运行 workspace 的 prepare.py, 返回输出."""
+    ws = tmp_path / "ar"
+    _make_workspace(ws)
+    (ws / "prepare.py").write_text("print('prepare me')\n", encoding="utf-8")
+    async def _fake(tool_self, args, cwd, timeout, capture_output=True, env=None):
+        if "prepare.py" in args:
+            return {"command": args, "returncode": 0, "stdout": "data prepared", "stderr": ""}
+        return {"command": args, "returncode": 0, "stdout": "", "stderr": ""}
+    monkeypatch.setattr(AutoresearchTool, "_run_command", _fake)
+    result = await tool.call(
+        AutoresearchInput(action="prepare", workspace=str(ws), skip_git=True), ctx
+    )
+    assert result.success
+    assert "data prepared" in result.data["stdout"]
+
+
+@pytest.mark.asyncio
+async def test_prepare_missing_prepare_py(
+    tool: AutoresearchTool, ctx: ToolContext, tmp_path: Path
+) -> None:
+    """prepare: prepare.py 缺失时应报错而非崩溃."""
+    ws = tmp_path / "ar"
+    _make_workspace(ws)
+    result = await tool.call(
+        AutoresearchInput(action="prepare", workspace=str(ws), skip_git=True), ctx
+    )
+    assert not result.success
+    assert "prepare.py not found" in (result.error or "")
+
+
+@pytest.mark.asyncio
+async def test_loop_runs_max_iterations(
+    tool: AutoresearchTool,
+    ctx: ToolContext,
+    tmp_path: Path,
+    fake_run_command_factory,
+    monkeypatch,
+) -> None:
+    """loop: 按 max_iterations 迭代 step, 汇总每次结果."""
+    ws = tmp_path / "ar"
+    _make_workspace(ws)
+    # Seed a baseline so step decides keep/discard deterministically.
+    (ws / "results.tsv").write_text(
+        "commit\tval_bpb\tmemory_gb\tstatus\tdescription\n"
+        "baseline\t1.000000\t44.0\tkeep\tbaseline\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        AutoresearchTool, "_run_command", fake_run_command_factory(train_val_bpb=0.950)
+    )
+    # Loop's step doesn't pass train_py, so patch propose_edit to return a canned edit.
+    async def _fake_propose(tool_self, args):
+        return ToolResult(
+            data={
+                "train_py": "# loop edit\nprint('loop')\n",
+                "description": "loop edit",
+                "hypothesis": "loop",
+            },
+            success=True,
+        )
+    monkeypatch.setattr(AutoresearchTool, "_propose_edit", _fake_propose)
+
+    result = await tool.call(
+        AutoresearchInput(
+            action="loop",
+            workspace=str(ws),
+            max_iterations=3,
+            skip_git=True,
+        ),
+        ctx,
+    )
+    assert result.success
+    assert result.data["workspace"] == str(ws)
+    assert len(result.data["iterations"]) == 3

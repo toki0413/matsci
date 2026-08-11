@@ -11,11 +11,15 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import ipaddress
+import json
 import logging
 import os
 import time
+import urllib.request
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends
 
@@ -256,7 +260,6 @@ def _apply_legacy_params_to_env(params: dict[str, Any]) -> None:
         "pm_c_min": "HUGINN_PM_C_MIN",
         "wm_summarize_every_n": "HUGINN_WM_SUMMARIZE_EVERY_N",
     }
-    import json as _json
 
     for key, env_name in mapping.items():
         if key not in params:
@@ -268,15 +271,15 @@ def _apply_legacy_params_to_env(params: dict[str, Any]) -> None:
         if isinstance(val, bool):
             os.environ[env_name] = "true" if val else "false"
         elif isinstance(val, (dict, list)):
-            os.environ[env_name] = _json.dumps(val)
+            os.environ[env_name] = json.dumps(val)
         else:
             os.environ[env_name] = str(val)
 
     # models / agents 是 list, 单独走 JSON 序列化
     if "models" in params and params["models"] is not None:
-        os.environ["HUGINN_MODELS"] = _json.dumps(params["models"])
+        os.environ["HUGINN_MODELS"] = json.dumps(params["models"])
     if "agents" in params and params["agents"] is not None:
-        os.environ["HUGINN_AGENTS"] = _json.dumps(params["agents"])
+        os.environ["HUGINN_AGENTS"] = json.dumps(params["agents"])
 
 
 # ── /config/models ──────────────────────────────────────────────
@@ -480,11 +483,6 @@ async def discover_local_models(provider: str = "ollama", base_url: str = "") ->
 
     只允许访问 loopback 地址, 防止 SSRF。
     """
-    import ipaddress
-    import json as _json
-    import urllib.request
-    from urllib.parse import urlparse
-
     # 各 provider 的默认本地地址, 没传 base_url 时兜底
     defaults = {
         "ollama": "http://localhost:11434",
@@ -526,7 +524,7 @@ async def discover_local_models(provider: str = "ollama", base_url: str = "") ->
 
         req = urllib.request.Request(api_url, headers={"Accept": "application/json"})
         with urllib.request.urlopen(req, timeout=5) as resp:
-            data = _json.loads(resp.read().decode())
+            data = json.loads(resp.read().decode())
 
         if provider == "ollama":
             models = [m.get("name", "") for m in data.get("models", []) if m.get("name")]

@@ -10,6 +10,7 @@ from typing import Any
 import networkx as nx
 
 from huginn.kg.entities import node_id, normalize_props
+from huginn.utils.common import atomic_write_json
 
 # Episodic memory node + dependency edge types (Graphiti-style DAG).
 # Reuses the existing `type`/`relation` attrs so stats/mermaid just work.
@@ -70,17 +71,7 @@ class ProjectKnowledgeGraph:
         """Persist graph as JSON node-link data. Thread-safe via RLock."""
         with self._lock:
             data = nx.node_link_data(self._graph, edges="links")
-            # atomic write: tmp + rename
-            import os
-            import tempfile
-            fd, tmp = tempfile.mkstemp(dir=str(self.root), suffix=".tmp")
-            try:
-                with os.fdopen(fd, "w", encoding="utf-8") as f:
-                    f.write(json.dumps(data, indent=2, ensure_ascii=False))
-                os.replace(tmp, str(self.path))
-            except OSError:
-                os.unlink(tmp) if os.path.exists(tmp) else None
-                raise
+            atomic_write_json(self.path, data, indent=2)
 
     def add_entity(
         self,

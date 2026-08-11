@@ -761,15 +761,17 @@ class HuginnAgent(
                 inherit_env=True,
             )
 
+            _agent_model = self.select_model("agent")
+            _agent_model_name = getattr(_agent_model, "model_name", "")
             self._agent_graph = create_deep_agent(
                 name="HuginnAgent",
-                model=self.select_model("agent"),
+                model=_agent_model,
                 tools=self._effective_tools(query=get_user_message()),
                 system_prompt=system_message,
                 checkpointer=self.checkpointer,
                 backend=fs_backend,
                 middleware=[
-                    FixDanglingToolCallsMiddleware(),
+                    FixDanglingToolCallsMiddleware(model_name=_agent_model_name),
                     DeliverableCoverageMiddleware(),
                     RateLimitMiddleware(),
                 ],
@@ -801,7 +803,9 @@ class HuginnAgent(
                 FixDanglingToolCallsMiddleware,
             )
 
-            _fix_mw = FixDanglingToolCallsMiddleware()
+            _fix_mw = FixDanglingToolCallsMiddleware(
+                model_name=getattr(self.select_model("agent"), "model_name", "")
+            )
             _cov_mw = DeliverableCoverageMiddleware()
 
             def _pre_model_hook(state):

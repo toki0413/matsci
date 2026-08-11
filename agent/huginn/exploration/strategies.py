@@ -260,10 +260,15 @@ class BayesianExplorationStrategy(ExplorationStrategy):
                         obj_val = val if direction == "maximize" else -val
                         break
             if obj_val is not None:
-                # Dummy parameter vector from decision path length + random seed
+                # Heuristic feature vector for GP surrogate (not real physical
+                # parameters). Uses decision path depth + mean decision confidence
+                # as proxy features. Fixed 2D for GP input compatibility.
+                # ponytail: 2D 喂 GP. 升级: 从 decisions 提取真实连续参数.
                 params = [
-                    len(branch.decisions),
-                    hash(branch.hypothesis) % 1000 / 1000.0,
+                    float(len(branch.decisions)),
+                    float(np.mean([d.confidence for d in branch.decisions]))
+                    if branch.decisions
+                    else 0.5,
                 ]
                 self._evaluated_params.append(params)
                 self._evaluated_objectives.append(obj_val)

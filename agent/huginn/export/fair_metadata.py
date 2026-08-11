@@ -12,6 +12,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from huginn.utils.common import now_iso
+
 # Default license for agent-generated datasets. CC-BY-4.0 is the most
 # permissive standard license that still requires attribution, which is
 # what most funders expect for open research data.
@@ -99,7 +101,7 @@ def generate_dataset_metadata(
         A dict ready to serialize as JSON-LD. The ``@context`` is
         schema.org so any JSON-LD parser can interpret it.
     """
-    now = datetime.now(UTC).isoformat()
+    now = now_iso()
 
     # ── provenance → wasGeneratedBy ──
     prov = provenance or {}

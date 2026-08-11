@@ -6,8 +6,6 @@ encryption at rest. Uses keyword fallback if embedding model is not cached.
 
 from __future__ import annotations
 
-import datetime
-import hashlib
 import json
 import logging
 from pathlib import Path
@@ -15,6 +13,7 @@ from typing import Any
 
 from huginn.knowledge.store import EMBED_MODEL
 from huginn.utils.cache import TimedLRUCache
+from huginn.utils.common import hash_text, now_iso
 from huginn.utils.runtime import get_runtime_home
 
 logger = logging.getLogger(__name__)
@@ -120,9 +119,7 @@ class VectorStore:
         if ef is None:
             return None
         # 增量缓存: 先查命中, 命中的直接用缓存向量, 没命中的才调 embedding
-        cache_key = hashlib.sha256(
-            "|".join(texts).encode("utf-8")
-        ).hexdigest()
+        cache_key = hash_text("|".join(texts), length=64)
         cached = VectorStore._embed_cache.get(cache_key)
         if cached is not None:
             return cached
@@ -159,7 +156,7 @@ class VectorStore:
 
         if ids is None:
             ids = [
-                hashlib.sha256(f"{doc}:{i}".encode()).hexdigest()[:16]
+                hash_text(f"{doc}:{i}", length=16)
                 for i, doc in enumerate(documents)
             ]
 
@@ -170,7 +167,7 @@ class VectorStore:
             meta.setdefault("source", "unknown")
             meta.setdefault(
                 "ingested_at",
-                str(datetime.datetime.now().isoformat()),
+                now_iso(),
             )
 
         # Compute embeddings if not provided
@@ -548,7 +545,7 @@ class EncryptedVectorStore:
             return []
 
         if ids is None:
-            ids = [hashlib.sha256(doc.encode()).hexdigest()[:16] for doc in documents]
+            ids = [hash_text(doc, length=16) for doc in documents]
         if metadatas is None:
             metadatas = [{} for _ in documents]
 

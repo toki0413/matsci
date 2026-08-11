@@ -1,7 +1,12 @@
-"""7 路学术搜索 + 去重 / 规范化.
+"""15+ 路学术搜索 + 去重 / 规范化.
 
-arXiv / S2 / CrossRef / OpenAlex / PubMed / DOAJ / CORE 各自独立函数,
-失败返回空列表不阻塞其他源. 去重以 DOI 优先, 无 DOI 走标题归一化.
+通用/综合源: arXiv / Semantic Scholar / CrossRef / OpenAlex / DOAJ / CORE /
+Zenodo / OpenAIRE / DataCite.
+生命科学源: PubMed (NCBI E-utilities) / Europe PMC / DOAJ (OA 生物医学).
+材料-晶体-计算数据源: COD / Materials Cloud / NOMAD / Materials Project.
+引文网络: OpenCitations COCI (references + citations, 用 CrossRef 补元数据).
+
+各源独立函数, 失败返回空列表不阻塞其他源. 去重以 DOI 优先, 无 DOI 走标题归一化.
 """
 
 from __future__ import annotations

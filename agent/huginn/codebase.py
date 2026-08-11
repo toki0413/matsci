@@ -12,6 +12,7 @@ from typing import Any
 
 # 统一 embedding model 常量, 避免散落定义漂移. 见 knowledge.store.EMBED_MODEL.
 from huginn.knowledge.store import EMBED_MODEL
+from huginn.utils.common import chunk_text
 
 CHUNK_SIZE = 800
 CHUNK_OVERLAP = 100
@@ -60,20 +61,6 @@ CODE_EXTENSIONS = {
     ".java",
     ".kt",
 }
-
-
-def _chunk_text(
-    text: str, size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP
-) -> list[str]:
-    chunks = []
-    start = 0
-    while start < len(text):
-        end = min(start + size, len(text))
-        chunks.append(text[start:end])
-        if end == len(text):
-            break
-        start = end - overlap
-    return chunks
 
 
 def _should_index(path: Path) -> bool:
@@ -144,7 +131,7 @@ class CodebaseIndex:
                 text = path.read_text(encoding="utf-8", errors="ignore")
                 if not text.strip():
                     continue
-                chunks = _chunk_text(text)
+                chunks = chunk_text(text, size=CHUNK_SIZE, overlap=CHUNK_OVERLAP)
                 if not chunks:
                     continue
                 embeddings = self.model.encode(chunks).tolist()
