@@ -8,13 +8,21 @@ pytest.importorskip("mcp", reason="MCP SDK not installed (pip install mcp)")
 
 import contextlib
 
-from fastapi.testclient import TestClient
-
 from huginn.autoloop.plan_store import PlanStep
-from huginn.server import app
 from huginn.server_core import get_plan_store
 
-client = TestClient(app)
+
+@pytest.fixture(scope="module", autouse=True)
+def _bind_test_client(app_client):
+    """Bind module-global `client` to the shared, properly-closed app_client.
+
+    Replaces the old module-level ``client = TestClient(app)`` which leaked an
+    anyio portal thread and never shut down the app lifespan (OOM + hang).
+    """
+    global client
+    client = app_client
+    yield
+    client = None
 
 
 def _make_plan(objective: str = "test objective", n_steps: int = 2):
