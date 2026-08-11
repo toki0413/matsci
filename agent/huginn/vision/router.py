@@ -217,31 +217,35 @@ def build_cv_context(
     if cv_hints:
         parts.append(cv_hints)
 
-    # ── Visual→Symbols: structured data extraction (new) ──
+    # ── Visual→Symbols: 单次提取, 文本 + 结构化复用同一份 chart_data ──
+    # 之前 visual_to_symbols 和 visual_to_symbols_structured 各自跑一遍
+    # extract_chart_data, 同一张图被算两次. 这里抽出来跑一次, 两个格式共用.
     try:
-        from huginn.vision.symbol_encoder import visual_to_symbols
-        symbol_text = visual_to_symbols(image_path)
-        # 只添加 _cv_pre_analyze 没有的部分（避免重复）
-        new_lines = [_l for _l in symbol_text.split("\n") if _l and not _l.startswith("[CV pre-analysis]")]
-        if new_lines:
-            parts.append("\n".join(new_lines))
+        from huginn.vision.symbol_encoder import (
+            _format_symbols_structured,
+            _format_symbols_text,
+            extract_chart_data,
+        )
+        chart_data = extract_chart_data(image_path)
+        if "error" not in chart_data:
+            # 文本部分 (去掉 _cv_pre_analyze 已输出的重复行)
+            symbol_text = _format_symbols_text(chart_data)
+            new_lines = [
+                _l for _l in symbol_text.split("\n")
+                if _l and not _l.startswith("[CV pre-analysis]")
+            ]
+            if new_lines:
+                parts.append("\n".join(new_lines))
+            # 结构化部分: agent 能精确引用字段 + 读 self_check 判断可信度
+            structured = _format_symbols_structured(chart_data)
+            if structured and "error" not in structured:
+                import json as _json
+                parts.append(
+                    "[VISUAL→SYMBOLS structured]\n"
+                    + _json.dumps(structured, ensure_ascii=False, default=str)
+                )
     except Exception:
         logger.debug("visual_to_symbols failed, graceful degradation", exc_info=True)
-
-    # ── Visual→Symbols 结构化版: 让 agent 能精确引用字段做推理 ──
-    # 之前 visual_to_symbols 返回文本, 结构化字段 (estimated_band_gap_eV 等) 埋在文本里.
-    # 加结构化 JSON, agent 能精确引用字段 + 读 self_check 判断可信度 (Nullmax 启发).
-    try:
-        from huginn.vision.symbol_encoder import visual_to_symbols_structured
-        structured = visual_to_symbols_structured(image_path)
-        if structured and "error" not in structured:
-            import json as _json
-            parts.append(
-                "[VISUAL→SYMBOLS structured]\n"
-                + _json.dumps(structured, ensure_ascii=False, default=str)
-            )
-    except Exception:
-        logger.debug("visual_to_symbols_structured failed, non-fatal", exc_info=True)
 
     # ── visual memory: similar-image search ──
     if visual_encoder is not None and image_index is not None:
