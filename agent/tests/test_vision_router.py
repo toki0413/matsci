@@ -158,3 +158,43 @@ class TestVisionRouter:
         assert isinstance(hints, str)
         # CV pre-analysis should mention image stats or skip gracefully
         assert "CV pre-analysis" in hints or "skipped" in hints
+
+
+# ── 批次 E: BOTH 场景确定性 QA 诊断附加 ─────────────────────────
+
+
+class TestCoordinateQaDiagnostic:
+    """批次 E: coordinate() 在 BOTH 场景给视觉 LLM 附加确定性 QA 诊断."""
+
+    def _blank_png(self, tmp_path, name="blank.png"):
+        """生成一张纯白 PNG — 会被 check_blank 判定为 blank."""
+        import numpy as np
+        from PIL import Image
+
+        arr = np.full((60, 60, 3), 255, dtype="uint8")
+        p = tmp_path / name
+        Image.fromarray(arr).save(p)
+        return p
+
+    def test_blank_image_attaches_qa_verdict(self, tmp_path):
+        img = self._blank_png(tmp_path)
+        router = VisionRouter()
+        content, hints = router.coordinate("describe this", img)
+        assert isinstance(hints, str)
+        assert "[CV QA] verdict=fail" in hints
+        assert "blank" in hints
+
+    def test_non_image_bytes_no_qa(self):
+        # bytes 输入跑不了确定性 QA, 应返回空且不崩溃
+        raw = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+        router = VisionRouter()
+        content, hints = router.coordinate("describe", raw)
+        assert isinstance(hints, str)
+        assert "[CV QA]" not in hints
+
+    def test_missing_file_degrades_gracefully(self, tmp_path):
+        # 不存在文件 → coordinate 正常返回, 不抛异常
+        router = VisionRouter()
+        content, hints = router.coordinate("describe", tmp_path / "nonexistent.png")
+        assert isinstance(content, list)
+        assert isinstance(hints, str)
