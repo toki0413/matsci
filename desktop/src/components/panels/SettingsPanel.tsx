@@ -5,7 +5,7 @@
  * agents / privacy / pet / security / credentials / jobs / export / bot tabs,
  * plus the save button and backend start/stop card.
  */
-import { useState, lazy, Suspense } from "react";
+import { useState, lazy, Suspense, useEffect, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { ChevronDown, Zap, Check, X, Loader2, Eye, EyeOff, Save } from "lucide-react";
@@ -331,6 +331,116 @@ function BotPanel({ t }: { t: (k: string) => string }) {
           {t('settings.bot.hint')} <code className="mx-1 rounded bg-bg-tertiary px-1">{t('settings.bot.hintUrl')}</code> {t('settings.bot.hintTail')}
         </p>
       </div>
+    </div>
+  );
+}
+
+// ── HarnessPanel: 调优开关 (H5 显著性门 / H6 分布外留出) ──────────────
+// 对接后端 /config/features (GET) 与 /config/features/{name} (POST).
+interface HarnessFlag {
+  name: string;
+  enabled: boolean;
+  description: string;
+  default: boolean;
+}
+
+function HarnessPanel({ t }: { t: (k: string) => string }) {
+  const MIN_SAMPLE = 5; // 与后端 significance_gate._MIN_SAMPLES_DEFAULT 对齐
+  const [flags, setFlags] = useState<HarnessFlag[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState<string | null>(null);
+  const [msg, setMsg] = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setErr("");
+    try {
+      const data = await api.get<{ features?: HarnessFlag[] }>("/config/features");
+      const all = data.features || [];
+      // 只展示 harness_* 调优开关
+      setFlags(all.filter((f) => f.name.startsWith("harness_")));
+    } catch (e: any) {
+      setErr(e.message || t('settings.requestFailed'));
+    } finally {
+      setLoading(false);
+    }
+  }, [t]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const toggle = async (name: string, enabled: boolean) => {
+    setBusy(name);
+    setMsg("");
+    try {
+      const r = await api.post<{ enabled: boolean; persisted?: boolean; persist_error?: string }>(
+        `/config/features/${name}`,
+        { enabled, persist: true }
+      );
+      // persist 失败时 warning, 但运行时开关已生效(不阻断)
+      if (r.persisted) setMsg(`${name} → ${r.enabled ? "ON" : "OFF"} (已持久化)`);
+      else if (r.persist_error) setMsg(`${name} → ${r.enabled ? "ON" : "OFF"} (未持久化: ${r.persist_error})`);
+      else setMsg(`${name} → ${r.enabled ? "ON" : "OFF"}`);
+      await load();
+    } catch (e: any) {
+      setMsg(`切换失败: ${e.message}`);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div className="max-w-2xl space-y-5">
+      <p className="text-sm text-text-secondary">
+        Harness 调优门控开关 (默认关闭, 需显式开启). 用于防止演化塌缩成保守修补、
+        以及拒绝"背题补丁". 开启会增加验证所需的配对样本 (H5 ≥ {MIN_SAMPLE} 个) 并
+        划出 holdout 集 (H6), 有额外成本, 请按需开启.
+      </p>
+
+      {loading ? (
+        <div className="flex items-center gap-2 text-sm text-text-muted">
+          <Loader2 size={14} className="animate-spin" /> {t('common.loading')}
+        </div>
+      ) : err ? (
+        <div className="rounded-lg border border-error/30 bg-error/5 p-3 text-sm text-error">
+          {err}
+          <button onClick={load} className="btn-secondary ml-2 px-2 py-0.5 text-xs">重试</button>
+        </div>
+      ) : flags.length === 0 ? (
+        <p className="text-sm text-text-muted">未发现 harness 调优开关.</p>
+      ) : (
+        flags.map((f) => (
+          <div key={f.name} className="rounded-lg border border-border bg-bg-tertiary p-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-xs font-semibold text-text-primary">{f.name}</span>
+                  <span className="text-[10px] text-text-muted">默认 {f.default ? "on" : "off"}</span>
+                </div>
+                <p className="mt-1 text-xs text-text-secondary leading-relaxed">{f.description}</p>
+              </div>
+              <label className="relative inline-flex flex-shrink-0 cursor-pointer items-center">
+                <input
+                  type="checkbox"
+                  className="peer sr-only"
+                  checked={f.enabled}
+                  disabled={busy === f.name}
+                  onChange={(e) => toggle(f.name, e.target.checked)}
+                />
+                <span className="h-6 w-11 rounded-full bg-bg-secondary transition-colors peer-checked:bg-accent peer-focus-visible:ring-2 peer-focus-visible:ring-accent/50 peer-disabled:opacity-50" />
+                <span className="absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform peer-checked:translate-x-5" />
+              </label>
+            </div>
+            {busy === f.name && (
+              <p className="mt-2 flex items-center gap-1 text-xs text-text-muted">
+                <Loader2 size={12} className="animate-spin" /> 应用中…
+              </p>
+            )}
+          </div>
+        ))
+      )}
+
+      {msg && <p className="text-xs text-success">{msg}</p>}
     </div>
   );
 }
@@ -1368,6 +1478,14 @@ export function SettingsPanel(props: SettingsPanelProps) {
                 极限模式开启后, 状态栏会显示 EXTREME 标记 (规划中).
                 PM 的 pattern confidence 闭环: c∈[0,1], 成功 +ε, 失败 -ε, c&lt;阈值 删除.
               </p>
+            </div>
+
+            {/* Harness 调优门控 (*) */}
+            <div className="mt-6 border-t border-border pt-5">
+              <h3 className="text-sm font-semibold text-text-primary">Harness 调优门控</h3>
+              <div className="mt-3">
+                <HarnessPanel t={t} />
+              </div>
             </div>
           </div>
         )}
