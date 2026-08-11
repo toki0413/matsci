@@ -380,7 +380,7 @@ def _selfcheck() -> None:
     print("3. all-negative diffs → fail (p=1.0) OK")
 
     # 4. 混合差值 → Wilcoxon
-    # 构造 7 正 1 负, 应该通过 (n=8, p < 0.05)
+    # 构造 7 正 1 负, 负差值绝对值最小 (秩=1), n=8 时 p < 0.05
     pairs = [
         (0.3, 0.6),  # +0.3
         (0.4, 0.7),  # +0.3
@@ -389,7 +389,7 @@ def _selfcheck() -> None:
         (0.3, 0.6),  # +0.3
         (0.4, 0.7),  # +0.3
         (0.5, 0.8),  # +0.3
-        (0.9, 0.5),  # -0.4 (一个离群)
+        (0.5, 0.48),  # -0.02 (最小 |diff|, 秩=1)
     ]
     for i, (b, c) in enumerate(pairs):
         gate.record_pair("cfg_d", baseline_score=b, candidate_score=c, task_id=f"t{i}")
