@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from huginn.autoloop.plan_store import _file_lock
-from huginn.utils.common import now_iso
+from huginn.utils.common import atomic_write_json, now_iso
 from huginn.utils.runtime import HUGINN_DIR_NAME
 
 logger = logging.getLogger(__name__)
@@ -143,20 +143,9 @@ class GoalStore:
             )
 
     def _save(self) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
         data = {"goals": [g.to_dict() for g in self._goals.values()]}
-        payload = json.dumps(data, ensure_ascii=False, indent=2)
         with _file_lock(self._path):
-            tmp = self._path.with_name(f".{self._path.name}.{os.getpid()}.tmp")
-            try:
-                with open(tmp, "w", encoding="utf-8") as f:
-                    f.write(payload)
-                    f.flush()
-                    os.fsync(f.fileno())
-                os.replace(str(tmp), str(self._path))
-            except OSError:
-                tmp.unlink(missing_ok=True)
-                raise
+            atomic_write_json(self._path, data, indent=2)
 
     # ── CRUD ──────────────────────────────────────────────────────
 
@@ -426,7 +415,6 @@ if __name__ == "__main__":
 
     # P5: wall_clock_budget_seconds + wall_clock_expired
     import time as _time5
-    from datetime import datetime
     with tempfile.TemporaryDirectory() as tmp5:
         s5 = GoalStore(Path(tmp5) / "p5_goals.json")
         # P5a: 无 budget → wall_clock_expired 返 False (无限制)
@@ -446,7 +434,7 @@ if __name__ == "__main__":
         s5.update_goal(
             g5c.id,
             wall_clock_budget_seconds=1.0,
-            started_at=datetime.now(UTC).isoformat(),
+            started_at=now_iso(),
         )
         assert s5.wall_clock_expired(g5c.id) is False, "刚开始不应 expired"
         _time5.sleep(1.1)

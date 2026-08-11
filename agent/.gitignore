@@ -172,6 +172,25 @@ tmp/
 temp/
 *.tmp
 
+# Static-analysis / audit / benchmark artifacts (generated, not source)
+bandit_*.json
+bandit_*.txt
+mcmc_opt_verify.py
+mcmc_pp_*.py
+pip_audit_report.json
+ruff_report.json
+benchmark_results.json
+benchmark_simple.json
+openapi.json
+run_benchmark_*.py
+run_tests_isolated.sh
+test_failed.txt
+test_results.jsonl
+test_skipped_env.txt
+demo_comprehensive.py
+conversation_history/
+lammps_dem_lammps_out/
+
 # Keep the small baseline LAMMPS trajectory fixture under version control:
 # test_lammps_ext.py (python + rust parser tests) needs this stable shared
 # file; it is not generated per-test. Un-ignore the dir first so git looks

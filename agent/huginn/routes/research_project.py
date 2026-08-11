@@ -12,12 +12,12 @@ import json
 import logging
 import threading
 import uuid
-from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter
 from pydantic import BaseModel
 
+from huginn.utils.common import now_iso
 from huginn.utils.runtime import get_runtime_home
 
 router = APIRouter(prefix="/projects", tags=["research_projects"])
@@ -69,7 +69,7 @@ def _save(data: dict[str, dict[str, Any]]) -> None:
 
 
 def _now() -> str:
-    return datetime.now(UTC).isoformat()
+    return now_iso()
 
 
 class CreateProject(BaseModel):

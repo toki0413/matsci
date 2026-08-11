@@ -8,6 +8,7 @@ failures in long-term memory so the agent can learn over time.
 from __future__ import annotations
 
 import json
+import re
 import time
 import uuid
 from collections.abc import Callable
@@ -36,8 +37,6 @@ def numeric_evaluator(response: str, case: BenchmarkCase) -> tuple[bool, float]:
 
     Tolerance defaults to 1% relative or absolute, whichever is larger.
     """
-    import re
-
     expected = case.expected_value
     if expected is None:
         return keyword_evaluator(response, case)

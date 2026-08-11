@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import threading
 from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -160,8 +161,6 @@ async def terminal_websocket(websocket: WebSocket):
             asyncio.run_coroutine_threadsafe(
                 output_queue.put(("error", str(exc))), loop
             )
-
-    import threading
 
     reader_thread = threading.Thread(target=_read_output, daemon=True)
     reader_thread.start()

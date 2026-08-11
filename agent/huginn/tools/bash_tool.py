@@ -6,6 +6,7 @@ Always requires approval.
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from pathlib import Path
@@ -21,6 +22,8 @@ from huginn.security import (
     get_executor,
 )
 from huginn.tools.base import HuginnTool
+
+logger = logging.getLogger(__name__)
 
 
 class BashToolInput(BaseModel):
@@ -218,7 +221,7 @@ class BashTool(HuginnTool):
                 )
             except Exception:
                 # Rust extension not available; proceed to the configured backend.
-                pass
+                logger.debug("Rust extension unavailable, proceeding to configured backend", exc_info=True)
 
         try:
             executor = get_executor()

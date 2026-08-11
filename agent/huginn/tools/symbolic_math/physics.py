@@ -486,7 +486,10 @@ def unified(args: SymbolicMathInput) -> ToolResult:
       - derive: 从命名模型推导控制方程.
       - bridge: 跑多尺度桥 (dft-to-md 或 cauchy-born).
     """
-    from huginn.unified import derive_equations, discretize, solve, solve_and_plot
+    # 注意: 不要在此导入 solve_and_plot —— 它经 huginn.unified.__getattr__
+    # 惰性加载, 会触发 matplotlib 导入. 仅在 target == "solve_and_plot" 分支内
+    # 再按需导入, 保证无 matplotlib 环境下其他 target 可正常使用.
+    from huginn.unified import derive_equations, discretize, solve
     from huginn.unified.bridge import (
         ConstitutiveModel,
         cauchy_born_elasticity,
@@ -773,6 +776,8 @@ def unified(args: SymbolicMathInput) -> ToolResult:
         n = args.order if args.order >= 1 else 10
         output_path = args.output_path or "unified_solution.png"
         try:
+            from huginn.unified import solve_and_plot  # 惰性: 触发 matplotlib
+
             sol = solve_and_plot(
                 problem, method=method, n=n, output_path=output_path
             )

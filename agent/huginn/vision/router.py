@@ -15,6 +15,7 @@ measurements and CV tools never got semantic context.
 from __future__ import annotations
 
 import base64
+import logging
 import mimetypes
 import re
 from enum import Enum
@@ -22,6 +23,8 @@ from pathlib import Path
 from typing import Any
 
 from huginn.models.registry import get_model_capabilities
+
+logger = logging.getLogger(__name__)
 
 # Image extensions we recognise as user-supplied image paths.
 _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".tif"}
@@ -193,6 +196,47 @@ def _cv_pre_analyze(image_path: str | Path | bytes) -> str:
         return f"[CV pre-analysis failed: {exc}]"
 
 
+_MICROSCOPY_ACTIONS = {
+    "SEM_image": "sem_analysis",
+    "TEM_image": "tem_lattice",
+    "EDS_map": "eds_mapping",
+}
+
+
+def _microscopy_quant_summary(image_path: str | Path | bytes, image_type: str) -> str:
+    """对 SEM/TEM/EDS 显微图调对应 action, 把 measurement 压成一行文本摘要.
+
+    best-effort: 非显微图 / 调用失败时返回空串, 不阻塞主链路.
+    """
+    action = _MICROSCOPY_ACTIONS.get(image_type)
+    if action is None or isinstance(image_path, (bytes, bytearray)):
+        return ""
+    p = Path(image_path)
+    if not p.is_file():
+        return ""
+
+    try:
+        from huginn.tools.image_analysis.tool import ImageAnalysisInput
+        scene_name = action
+        if scene_name == "sem_analysis":
+            from huginn.tools.image_analysis.scenes_sem import sem_analysis as scene
+        elif scene_name == "tem_lattice":
+            from huginn.tools.image_analysis.scenes_tem import tem_lattice as scene
+        else:
+            from huginn.tools.image_analysis.scenes_eds import eds_mapping as scene
+        inp = ImageAnalysisInput(image_path=str(p), action=scene_name, parameters={})
+        res = scene(inp)
+        if res.success and res.data:
+            summary = res.data.get("summary")
+            if summary:
+                return f"[{scene_name} 定量] {summary}"
+            import json as _json
+            return f"[{scene_name} 定量] {_json.dumps(res.data, ensure_ascii=False, default=str)[:400]}"
+    except Exception:
+        logger.debug("microscopy quant summary failed, non-fatal", exc_info=True)
+    return ""
+
+
 def build_cv_context(
     image_path: str | Path | bytes,
     visual_encoder: Any | None = None,
@@ -214,31 +258,40 @@ def build_cv_context(
     if cv_hints:
         parts.append(cv_hints)
 
-    # ── Visual→Symbols: structured data extraction (new) ──
+    # ── Visual→Symbols: 单次提取, 文本 + 结构化复用同一份 chart_data ──
+    # 之前 visual_to_symbols 和 visual_to_symbols_structured 各自跑一遍
+    # extract_chart_data, 同一张图被算两次. 这里抽出来跑一次, 两个格式共用.
     try:
-        from huginn.vision.symbol_encoder import visual_to_symbols
-        symbol_text = visual_to_symbols(image_path)
-        # 只添加 _cv_pre_analyze 没有的部分（避免重复）
-        new_lines = [_l for _l in symbol_text.split("\n") if _l and not _l.startswith("[CV pre-analysis]")]
-        if new_lines:
-            parts.append("\n".join(new_lines))
+        from huginn.vision.symbol_encoder import (
+            _format_symbols_structured,
+            _format_symbols_text,
+            extract_chart_data,
+        )
+        chart_data = extract_chart_data(image_path)
+        if "error" not in chart_data:
+            # 文本部分 (去掉 _cv_pre_analyze 已输出的重复行)
+            symbol_text = _format_symbols_text(chart_data)
+            new_lines = [
+                _l for _l in symbol_text.split("\n")
+                if _l and not _l.startswith("[CV pre-analysis]")
+            ]
+            if new_lines:
+                parts.append("\n".join(new_lines))
+            # 结构化部分: agent 能精确引用字段 + 读 self_check 判断可信度
+            structured = _format_symbols_structured(chart_data)
+            if structured and "error" not in structured:
+                import json as _json
+                parts.append(
+                    "[VISUAL→SYMBOLS structured]\n"
+                    + _json.dumps(structured, ensure_ascii=False, default=str)
+                )
+            # 显微图定量: SEM/TEM/EDS 调对应 action, 把 measurement 压成一行摘要
+            _img_type = chart_data.get("image_type", "")
+            _quant = _microscopy_quant_summary(image_path, _img_type)
+            if _quant:
+                parts.append(_quant)
     except Exception:
-        pass  # ponytail: graceful degradation, symbol extraction is enhancement not critical
-
-    # ── Visual→Symbols 结构化版: 让 agent 能精确引用字段做推理 ──
-    # 之前 visual_to_symbols 返回文本, 结构化字段 (estimated_band_gap_eV 等) 埋在文本里.
-    # 加结构化 JSON, agent 能精确引用字段 + 读 self_check 判断可信度 (Nullmax 启发).
-    try:
-        from huginn.vision.symbol_encoder import visual_to_symbols_structured
-        structured = visual_to_symbols_structured(image_path)
-        if structured and "error" not in structured:
-            import json as _json
-            parts.append(
-                "[VISUAL→SYMBOLS structured]\n"
-                + _json.dumps(structured, ensure_ascii=False, default=str)
-            )
-    except Exception:
-        pass  # non-fatal
+        logger.debug("visual_to_symbols failed, graceful degradation", exc_info=True)
 
     # ── visual memory: similar-image search ──
     if visual_encoder is not None and image_index is not None:

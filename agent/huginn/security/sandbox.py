@@ -6,7 +6,6 @@ working directories, and enforcing timeouts/output limits.
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import os
 import shutil
@@ -14,6 +13,8 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from huginn.utils.common import hash_text
 
 if TYPE_CHECKING:
     from huginn.security.docker_sandbox import DockerSandboxExecutor
@@ -433,9 +434,9 @@ class SandboxExecutor:
     @staticmethod
     def hash_data(data: str | bytes) -> str:
         """Return SHA-256 hex digest of data."""
-        if isinstance(data, str):
-            data = data.encode("utf-8")
-        return hashlib.sha256(data).hexdigest()[:16]
+        if isinstance(data, bytes):
+            data = data.decode("utf-8")
+        return hash_text(data)
 
 
 def _profile_mem_bytes(profile: str) -> int | None:

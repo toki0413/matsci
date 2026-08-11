@@ -69,7 +69,7 @@ def self_check_v14_task6() -> None:
     """
     # lazy import: 避免 self_checks 顶层依赖 rcb_runner (import 时循环依赖).
     from huginn.agent.hint_coordinator import HintCoordinator
-    from huginn.cli.rcb_runner import (
+    from huginn.cli.rcb.prompt_builders import (
         _legacy_build_iter_prompt,
         _legacy_build_step2_prompt,
     )

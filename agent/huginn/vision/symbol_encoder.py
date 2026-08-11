@@ -36,16 +36,19 @@ logger = logging.getLogger(__name__)
 def extract_chart_data(image_path: str | Path) -> dict[str, Any]:
     """从科学图表中提取数据点。
 
-    检测: 坐标轴 → 轴标签 → 数据曲线 → 离散数据点
-    输出: {"x_label": ..., "y_label": ..., "data_points": [(x1,y1), ...], "fit": {...}}
+    检测: 坐标轴 → 数据曲线 → 离散数据点 → (可选) 轴标定 → 物理量映射
+    输出: {"x_label": ..., "y_label": ..., "data_points": [...], "fit": {...}}
 
-    ponytail: 用 numpy 峰检测 + 列扫描。不完美但对 DFT/XRD 图谱够用。
-    精确提取需要 OCR + 曲线追踪，那是重工具，这里只做快速预提取。
+    轴标定优先复用 plots 场景的 OCR (`_auto_detect_axes`), 拿到真实轴范围后
+    用 `_pixel_to_data` 把像素映射成物理量 (2θ / 能量), 不再硬编码 10-90°。
+    OCR 不可用 (无 tesseract) 或失败时, 回退到默认假设, 并在输出的
+    ``axis_calibration`` 字段 (以及 self_check 里) 明确标记为 fallback,
+    避免把粗估值当成精确测量值。
     """
     try:
-        import numpy as np  # noqa: F401
+        import numpy as np
 
-        from huginn.tools.image_analysis._utils import load_gray
+        from huginn.tools.image_analysis._utils import load_rgb
     except ImportError:
         return {"error": "numpy/Pillow not available"}
 
@@ -54,10 +57,12 @@ def extract_chart_data(image_path: str | Path) -> dict[str, Any]:
         return {"error": f"file not found: {image_path}"}
 
     try:
-        arr = load_gray(str(p))
+        rgb = load_rgb(str(p))
     except Exception as e:
         return {"error": str(e)}
 
+    # 灰度视图 (轴/峰检测用灰度较稳)
+    arr = rgb.mean(axis=2)
     h, w = arr.shape
     result: dict[str, Any] = {
         "image_size": f"{w}x{h}",
@@ -65,24 +70,19 @@ def extract_chart_data(image_path: str | Path) -> dict[str, Any]:
     }
 
     # 1. 检测坐标轴 — 图像边缘的连续暗线
-    # 左边缘 (y 轴) 和 下边缘 (x 轴)
     left_strip = arr[:, :max(3, w // 20)]
     bottom_strip = arr[-max(3, h // 20):, :]
-
     y_axis_dark = float(left_strip.mean())
     x_axis_dark = float(bottom_strip.mean())
     bg_level = float(arr.mean())
-
     result["axis_detected"] = bool(y_axis_dark < bg_level - 10 or x_axis_dark < bg_level - 10)
 
     # 2. 峰检测 — 对图像列求和找峰位置
-    # 暗色背景上亮色曲线: 每列的亮度峰值
     col_max = arr.max(axis=0).astype(float)
     threshold = col_max.mean() + 2 * col_max.std()
-
     peak_cols = [i for i in range(w) if col_max[i] > threshold]
+    peaks: list[int] = []
     if peak_cols:
-        # 聚合连续的峰
         groups: list[list[int]] = []
         current: list[int] = [peak_cols[0]]
         for c in peak_cols[1:]:
@@ -92,23 +92,61 @@ def extract_chart_data(image_path: str | Path) -> dict[str, Any]:
                 groups.append(current)
                 current = [c]
         groups.append(current)
-
         peaks = [int(sum(g) / len(g)) for g in groups]
-        result["peak_positions_px"] = peaks
-        result["n_peaks"] = len(peaks)
-    else:
-        result["n_peaks"] = 0
+    result["peak_positions_px"] = peaks
+    result["n_peaks"] = len(peaks)
 
-    # 3. 如果是 XRD 图谱，计算 d-spacing 估算
+    # 2b. 真实峰强度 (归一化) — 直接取自图像亮度, 不再编造递减假数据
+    if peaks:
+        intens = np.array([float(col_max[p]) for p in peaks])
+        imax = float(intens.max()) if intens.size else 1.0
+        result["peak_intensities"] = [
+            round(float(v / imax), 3) if imax > 0 else 0.0 for v in intens
+        ]
+
+    # 3. 轴标定: 复用 plots 场景的 OCR, 仅在疑似图表时尝试 (降延迟)
     name_hint = p.stem.lower()
-    if "xrd" in name_hint or "diffraction" in name_hint:
+    calibrated: tuple[float, float, float, float] | None = None
+    looks_like_chart = bool(
+        peaks
+        or "xrd" in name_hint or "diffraction" in name_hint
+        or "band" in name_hint or "dos" in name_hint
+    )
+    if looks_like_chart:
+        try:
+            from huginn.tools.image_analysis.scenes_plot_extract import (
+                _auto_detect_axes,
+            )
+            _rng = _auto_detect_axes(rgb, None)
+            if _rng is not None:
+                calibrated = _rng
+        except Exception:
+            logger.debug("axis calibration (OCR) failed", exc_info=True)
+
+    x_left, x_right = int(w * 0.10), int(w * 0.95)
+    y_top, y_bottom = int(h * 0.10), int(h * 0.90)
+
+    # 4. XRD: 2θ → d-spacing (Bragg, Cu Kα)
+    if "xrd" in name_hint or "diffraction" in name_hint or calibrated:
         result["analysis_type"] = "XRD"
-        if peak_cols:
-            # 估算 2θ 位置 (假设图像覆盖 10-90°)
-            estimated_2theta = [10 + (px / w) * 80 for px in result.get("peak_positions_px", [])]
+        if peaks:
+            if calibrated:
+                from huginn.tools.image_analysis.scenes_plot_extract import (
+                    _pixel_to_data,
+                )
+                x_min, x_max, y_min, y_max = calibrated
+                mid_y = float(y_top + (y_bottom - y_top) / 2)
+                estimated_2theta = [
+                    _pixel_to_data(px, mid_y, x_left, y_top, x_right, y_bottom,
+                                   x_min, x_max, y_min, y_max, "linear", "linear")[0]
+                    for px in peaks
+                ]
+                result["axis_calibration"] = "ocr"
+            else:
+                estimated_2theta = [10 + (px / w) * 80 for px in peaks]
+                result["axis_calibration"] = "fallback_assumed_2theta_10_90"
             result["estimated_2theta_deg"] = [round(t, 1) for t in estimated_2theta]
 
-            # Bragg 定律: d = λ / (2 sin θ), Cu Kα λ=1.5406 Å
             import math
             d_spacings = []
             for t in estimated_2theta:
@@ -119,32 +157,66 @@ def extract_chart_data(image_path: str | Path) -> dict[str, Any]:
             result["estimated_d_spacing_A"] = d_spacings
             result["wavelength"] = "Cu Kα 1.5406 Å"
 
-    # 4. 如果是能带图，估算带隙
-    if "band" in name_hint or "dos" in name_hint:
+    # 5. 能带/dos: 用低密度行估算带隙
+    if "band" in name_hint or "dos" in name_hint or calibrated:
         result["analysis_type"] = "band_structure"
-        # 能带图的特征: y 轴附近有水平密集线 (能级)
         row_density = (arr < arr.mean() - 20).sum(axis=1)
-        # 找能量间隙 (行密度极低的区域)
         gaps = []
         for i in range(1, h - 1):
             if row_density[i] < 2 and row_density[i - 1] > 5 and row_density[i + 1] > 5:
                 gaps.append(i)
         if gaps:
-            # 假设 y 轴范围 -10 到 10 eV
-            gap_energies = [round(-10 + (g / h) * 20, 2) for g in gaps]
-            result["estimated_band_gap_eV"] = gap_energies
+            if calibrated:
+                from huginn.tools.image_analysis.scenes_plot_extract import (
+                    _pixel_to_data,
+                )
+                x_min, x_max, y_min, y_max = calibrated
+                mid_x = float(x_left + (x_right - x_left) / 2)
+                gap_energies = [
+                    _pixel_to_data(mid_x, g, x_left, y_top, x_right, y_bottom,
+                                   x_min, x_max, y_min, y_max, "linear", "linear")[1]
+                    for g in gaps
+                ]
+                result["axis_calibration"] = "ocr"
+            else:
+                gap_energies = [-10 + (g / h) * 20 for g in gaps]
+                result["axis_calibration"] = "fallback_assumed_energy_-10_10"
+            result["estimated_band_gap_eV"] = [round(e, 2) for e in gap_energies]
             result["note"] = "Band gap estimated from low-density rows in band structure image."
 
-    # 5. 数学关系拟合 — 对提取的数据点尝试幂律/线性拟合
-    if result.get("peak_positions_px") and len(result["peak_positions_px"]) >= 3:
-        peaks = result["peak_positions_px"]
+    # 2c. 密集数据曲线: 复用 plots 场景的颜色匹配, 逐列取 y 均值还原成密集点
+    #     比稀疏峰位置更接近真实曲线. 物理范围用已标定 (或 fallback 假设) 轴.
+    if peaks:
+        try:
+            from huginn.tools.image_analysis.scenes_plot_extract import (
+                _extract_single_curve,
+            )
+            # 取最亮峰所在像素的颜色作为曲线目标色
+            max_peak = max(peaks, key=lambda p: float(col_max[p]))
+            row = int(np.argmax(arr[:, max_peak]))
+            target = rgb[row, max_peak]
+            if result.get("analysis_type") == "XRD":
+                x_min, x_max, y_min, y_max = 10.0, 90.0, 0.0, 100.0
+            elif result.get("analysis_type") == "band_structure":
+                x_min, x_max, y_min, y_max = 0.0, 1.0, -10.0, 10.0
+            else:
+                x_min, x_max, y_min, y_max = 0.0, 1.0, 0.0, 1.0
+            dense = _extract_single_curve(
+                rgb, target, 40.0, x_left, y_top, x_right, y_bottom,
+                x_min, x_max, y_min, y_max, "linear", "linear",
+            )
+            if dense:
+                result["data_curve"] = dense
+                result["n_data_points"] = len(dense)
+        except Exception:
+            logger.debug("dense curve extraction failed, non-fatal", exc_info=True)
+
+    # 6. 数学关系拟合 — 对提取的数据点尝试线性拟合
+    if peaks and len(peaks) >= 3:
         intensities = [float(col_max[p]) for p in peaks]
-        # 归一化
         max_i = max(intensities) if intensities else 1.0
         norm_i = [i / max_i for i in intensities]
         positions = [float(p) / w for p in peaks]  # 归一化到 0-1
-
-        # 线性拟合: I = a*x + b
         n = len(positions)
         if n >= 2:
             sx = sum(positions)
@@ -181,17 +253,20 @@ def _estimate_confidence(chart_data: dict[str, Any]) -> float:
         score += max(fit["R2"], 0.0) * 0.3  # 拟合好 → 数据质量高
     if chart_data.get("peak_positions_px"):
         score += 0.2  # 有精确峰位置
-    return round(min(score, 1.0), 2)
+    cal = chart_data.get("axis_calibration")
+    if cal == "ocr":
+        score += 0.1  # 真实轴标定 → 物理量映射可信
+    elif cal and cal.startswith("fallback"):
+        score -= 0.15  # 默认假设范围 → 数值是粗估
+    return round(min(max(score, 0.0), 1.0), 2)
 
 
-def visual_to_symbols_structured(image_path: str | Path) -> dict[str, Any]:
+def _format_symbols_structured(chart_data: dict[str, Any]) -> dict[str, Any]:
     """结构化版本: 返回 dict 而非格式化字符串.
 
     agent 能精确引用 estimated_band_gap_eV / peak_positions_px 等字段做推理,
     不用从文本里解析. 同时带 confidence + self_check (Nullmax 启发).
-    ponytail: 复用 extract_chart_data + 加 confidence. 升级: 完整 schema + 版本化.
     """
-    chart_data = extract_chart_data(image_path)
     if "error" in chart_data:
         return {"error": chart_data["error"], "confidence": 0.0}
 
@@ -205,16 +280,24 @@ def visual_to_symbols_structured(image_path: str | Path) -> dict[str, Any]:
     }
 
     # 结构化字段直接透传, agent 能精确引用
-    if "peak_positions_px" in chart_data:
-        result["peak_positions_px"] = chart_data["peak_positions_px"]
-    if "estimated_2theta_deg" in chart_data:
-        result["estimated_2theta_deg"] = chart_data["estimated_2theta_deg"]
-    if "estimated_d_spacing_A" in chart_data:
-        result["estimated_d_spacing_A"] = chart_data["estimated_d_spacing_A"]
-    if "estimated_band_gap_eV" in chart_data:
-        result["estimated_band_gap_eV"] = chart_data["estimated_band_gap_eV"]
-    if "linear_fit" in chart_data:
-        result["linear_fit"] = chart_data["linear_fit"]
+    for key in (
+        "peak_positions_px",
+        "peak_intensities",
+        "estimated_2theta_deg",
+        "estimated_d_spacing_A",
+        "estimated_band_gap_eV",
+        "linear_fit",
+        "axis_calibration",
+        "n_data_points",
+    ):
+        if key in chart_data:
+            result[key] = chart_data[key]
+
+    # 密集曲线: 全量太大, 只透传降采样后的样本 (最多 60 点) 供 agent 参考
+    if chart_data.get("data_curve"):
+        curve = chart_data["data_curve"]
+        step = max(1, len(curve) // 60)
+        result["data_curve_sample"] = curve[::step][:60]
 
     # self_check: Nullmax 启发 — 让红队/PhaseGate 能判断视觉估算可信度
     result["self_check"] = {
@@ -227,8 +310,21 @@ def visual_to_symbols_structured(image_path: str | Path) -> dict[str, Any]:
         result["self_check"]["caveats"].append("no_axis: 未检测到坐标轴, 可能不是标准图表")
     if result.get("n_peaks", 0) == 0:
         result["self_check"]["caveats"].append("no_peaks: 未检测到峰, 数据提取可能失败")
+    cal = chart_data.get("axis_calibration")
+    if cal and cal.startswith("fallback"):
+        result["self_check"]["caveats"].append(
+            f"axis_calibration: 轴范围来自默认假设 ({cal}), 数值为粗估而非精确测量"
+        )
 
     return result
+
+
+def visual_to_symbols_structured(image_path: str | Path) -> dict[str, Any]:
+    """结构化版本: 返回 dict 而非格式化字符串 (抽出的一次提取结果).
+
+    由 _format_symbols_structured 承接, 供 build_cv_context 单次提取后复用.
+    """
+    return _format_symbols_structured(extract_chart_data(image_path))
 
 
 def _guess_chart_type(p: Path, arr: Any) -> str:
@@ -264,60 +360,48 @@ def _guess_chart_type(p: Path, arr: Any) -> str:
         return "unknown"
 
 
-def visual_to_symbols(image_path: str | Path) -> str:
-    """将图像转换为文本LLM最擅长的结构化符号格式。
+def _format_symbols_text(chart_data: dict[str, Any]) -> str:
+    """把 chart_data 格式化成文本LLM易读的结构化符号串 (不含 CV 统计)."""
+    if "error" in chart_data:
+        return f"[VISUAL→SYMBOLS] extraction failed: {chart_data.get('error', '?')}"
 
-    这是 _cv_pre_analyze 的增强版 — 不仅给统计摘要，
-    还提取精确数值、数学关系和逻辑结构。
+    parts: list[str] = [f"[VISUAL→SYMBOLS] type={chart_data.get('image_type', 'unknown')}"]
 
-    输出格式:
-      [VISUAL→SYMBOLS] type=XRD_pattern
-        peak_1: 2θ=28.3°, d=3.15Å, I=1.00
-        peak_2: 2θ=40.5°, d=2.23Å, I=0.72
-        peak_3: 2θ=50.4°, d=1.81Å, I=0.45
-        linear_fit: I = -0.85*x + 1.12 (R²=0.93)
-        → [SUGGESTION] Compare d-spacings with ICDD card database
-    """
-    # 先跑基础 CV 统计 (已有)
-    from huginn.vision.router import _cv_pre_analyze
+    if chart_data.get("analysis_type") == "XRD":
+        d_spacings = chart_data.get("estimated_d_spacing_A", [])
+        two_thetas = chart_data.get("estimated_2theta_deg", [])
+        intens = chart_data.get("peak_intensities", [])
+        for i, (t, d) in enumerate(zip(two_thetas, d_spacings)):
+            intensity = intens[i] if i < len(intens) else 0.0
+            parts.append(f"  peak_{i+1}: 2θ={t}°, d={d}Å, I≈{intensity:.2f}")
+        if d_spacings:
+            parts.append("  → [SUGGESTION] Compare d-spacings with ICDD card database")
+            parts.append("  → [SUGGESTION] Identify crystal phase from peak positions")
+    elif chart_data.get("analysis_type") == "band_structure":
+        gaps = chart_data.get("estimated_band_gap_eV", [])
+        if gaps:
+            parts.append(f"  estimated_band_gaps: {gaps} eV")
+            parts.append("  → [SUGGESTION] Verify with explicit DFT calculation")
 
-    parts: list[str] = []
-    cv_hints = _cv_pre_analyze(image_path)
-    if cv_hints:
-        parts.append(cv_hints)
+    if "linear_fit" in chart_data:
+        fit = chart_data["linear_fit"]
+        parts.append(f"  linear_fit: y = {fit['a']}*x + {fit['b']} (R²={fit['R2']})")
 
-    # 再跑图表数据提取 (新)
-    chart_data = extract_chart_data(image_path)
-    if "error" not in chart_data:
-        parts.append(f"[VISUAL→SYMBOLS] type={chart_data.get('image_type', 'unknown')}")
+    cal = chart_data.get("axis_calibration")
+    if cal and cal.startswith("fallback"):
+        parts.append(f"  ⚠ axis_calibration=fallback (数值为粗估): {cal}")
 
-        if chart_data.get("analysis_type") == "XRD":
-            d_spacings = chart_data.get("estimated_d_spacing_A", [])
-            two_thetas = chart_data.get("estimated_2theta_deg", [])
-            chart_data.get("peak_positions_px", [])
-            for i, (t, d) in enumerate(zip(two_thetas, d_spacings)):
-                intensity = 1.0 - i * 0.15  # 递减估计
-                parts.append(f"  peak_{i+1}: 2θ={t}°, d={d}Å, I≈{intensity:.2f}")
-            if d_spacings:
-                parts.append("  → [SUGGESTION] Compare d-spacings with ICDD card database")
-                parts.append("  → [SUGGESTION] Identify crystal phase from peak positions")
+    n_peaks = chart_data.get("n_peaks", 0)
+    if n_peaks > 0:
+        parts.append(f"  n_peaks_detected: {n_peaks}")
 
-        elif chart_data.get("analysis_type") == "band_structure":
-            gaps = chart_data.get("estimated_band_gap_eV", [])
-            if gaps:
-                parts.append(f"  estimated_band_gaps: {gaps} eV")
-                parts.append("  → [SUGGESTION] Verify with explicit DFT calculation")
-
-        if "linear_fit" in chart_data:
-            fit = chart_data["linear_fit"]
-            parts.append(
-                f"  linear_fit: y = {fit['a']}*x + {fit['b']} (R²={fit['R2']})"
-            )
-
-        n_peaks = chart_data.get("n_peaks", 0)
-        if n_peaks > 0:
-            parts.append(f"  n_peaks_detected: {n_peaks}")
-    else:
-        parts.append(f"[VISUAL→SYMBOLS] extraction failed: {chart_data.get('error', '?')}")
+    if chart_data.get("data_curve"):
+        curve = chart_data["data_curve"]
+        xs = [p[0] for p in curve]
+        ys = [p[1] for p in curve]
+        parts.append(
+            f"  data_curve: {len(curve)} 点, "
+            f"x∈[{min(xs):.4g},{max(xs):.4g}], y∈[{min(ys):.4g},{max(ys):.4g}]"
+        )
 
     return "\n".join(parts)

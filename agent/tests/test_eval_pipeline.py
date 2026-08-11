@@ -127,6 +127,55 @@ def test_parse_agent_output():
     print("[PASS] _parse_agent_output — JSON + key:value extraction works")
 
 
+def test_parse_agent_output_nested_json():
+    """Verify _parse_agent_output handles nested JSON via raw_decode.
+
+    The old regex ``\\{[^{}]*\\}`` could only match flat objects.
+    Nested structures (e.g. results with sub-dicts) must be parsed
+    by the raw_decode fallback.
+    """
+    from huginn.routes.eval import _parse_agent_output
+
+    # Bare (non-fenced) nested JSON
+    text = 'The result is {"band_gap_eV": 1.12, "metadata": {"source": "vasp", "kpoints": [4, 4, 4]}} done.'
+    result = _parse_agent_output(text)
+    assert result.get("band_gap_eV") == 1.12, f"nested JSON top-level key failed: {result}"
+    assert result["metadata"]["source"] == "vasp", f"nested JSON sub-dict failed: {result}"
+    assert result["metadata"]["kpoints"] == [4, 4, 4], f"nested JSON list failed: {result}"
+
+    # Fenced nested JSON still works
+    text2 = '```json\n{"a": 1, "b": {"c": 2, "d": {"e": 3}}}\n```'
+    result2 = _parse_agent_output(text2)
+    assert result2["a"] == 1
+    assert result2["b"]["c"] == 2
+    assert result2["b"]["d"]["e"] == 3
+
+    print("[PASS] _parse_agent_output — nested JSON via raw_decode works")
+
+
+def test_parse_agent_output_edge_cases():
+    """Verify _parse_agent_output handles empty/garbage input gracefully."""
+    from huginn.routes.eval import _parse_agent_output
+
+    # Empty string — should return empty dict, not crash
+    result = _parse_agent_output("")
+    assert isinstance(result, dict), f"empty string should return dict, got {type(result)}"
+
+    # No JSON at all — falls through to key:value regex
+    result = _parse_agent_output("Just plain text with no structure.")
+    assert isinstance(result, dict)
+
+    # Malformed JSON — should not crash, falls through to key:value
+    result = _parse_agent_output('{"broken": json without closing')
+    assert isinstance(result, dict)
+
+    # Text with braces that aren't valid JSON
+    result = _parse_agent_output("Use {curly braces} for emphasis {sometimes}")
+    assert isinstance(result, dict)
+
+    print("[PASS] _parse_agent_output — edge cases handled gracefully")
+
+
 if __name__ == "__main__":
     test_metrics_tracking()
     test_eval_endpoint_imports()
@@ -134,4 +183,6 @@ if __name__ == "__main__":
     test_bench_standalone()
     test_grader_registry()
     test_parse_agent_output()
+    test_parse_agent_output_nested_json()
+    test_parse_agent_output_edge_cases()
     print("\nAll self-checks passed.")

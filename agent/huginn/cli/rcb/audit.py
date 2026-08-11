@@ -10,10 +10,13 @@ rcb_runner 通过 `from huginn.cli.rcb.audit import ...` 引用, 并 re-export �
 from __future__ import annotations
 
 import json
+import logging
 import re
 from pathlib import Path
 
 from huginn.utils.runtime import HUGINN_DIR_NAME
+
+logger = logging.getLogger(__name__)
 
 
 def _rcb_drift_check(evals_history: list) -> tuple[bool, str]:
@@ -159,7 +162,7 @@ def _count_failed_attempts(ws: Path, evals_history: list, component: str) -> int
                     ):
                         n += 1
         except OSError:
-            pass
+            logger.debug("meta_trace read failed in _count_failed_attempts", exc_info=True)
     return n
 
 

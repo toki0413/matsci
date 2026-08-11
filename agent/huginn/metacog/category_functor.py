@@ -40,8 +40,11 @@ if __name__ == "__main__":
         _sys.path.insert(0, _agent_root)
 
 import json
+import logging
 from dataclasses import dataclass, field
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 # ── 数据结构 ────────────────────────────────────────────────────────────
 
@@ -327,7 +330,7 @@ def propose_functor(
             return _llm_propose(source_cat, target_cat, model)
         except Exception:
             # LLM 失败 -> 降级到已知 functor 表
-            pass
+            logger.debug("LLM functor proposal failed, degrading to known table", exc_info=True)
 
     # 已知 functor 降级路径
     key = (source_cat.name, target_cat.name)

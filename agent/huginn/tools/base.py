@@ -16,7 +16,6 @@ import hashlib
 import logging
 import sys
 from abc import ABC
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Generic, TypeVar
 
@@ -31,6 +30,7 @@ from huginn.core_types import (
 )
 from huginn.phases import ResearchPhase
 from huginn.tools.profile import CostTier, ToolProfile
+from huginn.utils.common import now_iso
 
 logger = logging.getLogger(__name__)
 
@@ -337,7 +337,7 @@ class HuginnTool(ABC, Generic[InputT, OutputT]):
         params = _serialize_tool_args(args)
         out_repr = result.to_dict() if hasattr(result, "to_dict") else str(result)
         snapshot = ProvenanceSnapshot(
-            timestamp=datetime.now(UTC).isoformat(),
+            timestamp=now_iso(),
             tool_name=self.name,
             tool_version=getattr(self, "version", "1.0"),
             input_params=params,

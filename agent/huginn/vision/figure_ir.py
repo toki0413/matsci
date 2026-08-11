@@ -102,13 +102,11 @@ def _resolve_output_path(output_path: str | Path | None, ext: str) -> Path:
     if output_path is not None:
         p = Path(output_path)
     else:
-        try:
-            from huginn.utils.runtime import get_runtime_home
-            fig_dir = get_runtime_home() / "figures"
-        except Exception:
-            fig_dir = get_runtime_home() / "figures"
-        fig_dir.mkdir(parents=True, exist_ok=True)
         from datetime import datetime
+
+        from huginn.utils.runtime import get_runtime_home
+        fig_dir = get_runtime_home() / "figures"
+        fig_dir.mkdir(parents=True, exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         p = fig_dir / f"figure_{ts}.{ext}"
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -146,12 +144,16 @@ def _render_scienceplots(
     except ImportError:
         raise RuntimeError("matplotlib not available, install: pip install matplotlib") from None
 
+    scienceplots_available = True
     try:
         import scienceplots  # noqa: F401
     except ImportError:
+        scienceplots_available = False
         logger.debug("SciencePlots not available, using default matplotlib style")
 
-    styles = _apply_style(ir.get("style", "science"))
+    # SciencePlots 不可用时, science/ieee/nature 这些专属 style 不存在,
+    # 直接用 matplotlib 内置默认样式, 避免 plt.style.context 抛 OSError.
+    styles = _apply_style(ir.get("style", "science")) if scienceplots_available else ["default"]
     figsize = kwargs.get("figsize", (6, 4))
     dpi = kwargs.get("dpi", 150)
 
