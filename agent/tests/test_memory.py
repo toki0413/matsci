@@ -97,3 +97,51 @@ class TestMemoryManager:
             )
             prompt = mgr.recall_for_prompt("band gap")
             assert "Si band gap" in prompt
+
+    # ── 护栏: 蒸馏知识的 verification 闭环 ────────────────────────
+    # 成功工具调用后, _verify_distilled_for_tool 必须真的把对应蒸馏知识
+    # (source="distiller:{kid}") 升级为 confirmed, 否则它永远卡在 unverified,
+    # 达不到 auto_ingest_to_kb 的准入门槛, 蒸馏→KB 一环形同虚设。
+
+    def test_verify_distilled_promotes_to_confirmed(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        mgr = MemoryManager(longterm=MagicMock())
+        mgr.longterm.retrieve.return_value = [
+            {
+                "id": "e1",
+                "content": "vasp_tool convergence rule",
+                "source": "distiller:kid_vasp",
+            }
+        ]
+        # mock KnowledgeDistiller 类, 让方法内局部 import 拿到假的实例
+        import huginn.evolution.knowledge_distiller as kd_mod
+
+        mock_cls = MagicMock()
+        mock_dist = mock_cls.return_value
+        monkeypatch.setattr(kd_mod, "KnowledgeDistiller", mock_cls)
+
+        mgr._verify_distilled_for_tool("vasp_tool", "...")
+
+        # 蒸馏条目被 touch + verify_knowledge 升级为 confirmed
+        mgr.longterm.touch.assert_called_once_with("e1")
+        mock_dist.verify_knowledge.assert_called_once_with("kid_vasp", "confirmed")
+
+    def test_verify_distilled_skips_non_distilled_source(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        mgr = MemoryManager(longterm=MagicMock())
+        # source 不是 "distiller:" 前缀 (如普通 fact) → 不升级, 只 touch
+        mgr.longterm.retrieve.return_value = [
+            {"id": "e2", "content": "vasp_tool rule", "source": "session:s1"}
+        ]
+        import huginn.evolution.knowledge_distiller as kd_mod
+
+        mock_cls = MagicMock()
+        mock_dist = mock_cls.return_value
+        monkeypatch.setattr(kd_mod, "KnowledgeDistiller", mock_cls)
+
+        mgr._verify_distilled_for_tool("vasp_tool", "...")
+
+        mgr.longterm.touch.assert_called_once_with("e2")
+        mock_dist.verify_knowledge.assert_not_called()
