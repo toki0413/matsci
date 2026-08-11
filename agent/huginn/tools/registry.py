@@ -146,6 +146,26 @@ class ToolRegistry:
         cls._tools.clear()
         cls._schemas_cache = None
 
+    @classmethod
+    def snapshot(cls) -> dict[str, HuginnTool]:
+        """Return a deep-copy snapshot of the currently registered tools.
+
+        Tests that mutate the registry (register/unregister/clear) capture a
+        snapshot before doing so and restore it afterwards, so the global
+        registry is left exactly as it was — see the ``_restore_tool_registry``
+        hygiene guard in conftest.py, which fails any test that leaks a change.
+        """
+        with cls._lock:
+            return dict(cls._tools)
+
+    @classmethod
+    def restore(cls, snapshot: dict[str, HuginnTool]) -> None:
+        """Restore the registry to a previously captured snapshot."""
+        with cls._lock:
+            cls._tools.clear()
+            cls._tools.update(snapshot)
+            cls._schemas_cache = None
+
 
 def register_tool(tool: HuginnTool) -> HuginnTool:
     """Decorator-style registration."""

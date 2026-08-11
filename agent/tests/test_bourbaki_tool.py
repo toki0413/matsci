@@ -116,7 +116,9 @@ class TestBourbakiTool:
     async def test_tool_registered(self, tool):
         from huginn.tools.registry import ToolRegistry
 
-        # Manually register for this test
+        # Manually register for this test; unregister by its real name so the
+        # global registry is left untouched (the _restore_tool_registry guard
+        # fails any test that leaks a registration).
         ToolRegistry.register(tool)
-        assert "bourbaki" in ToolRegistry.list_tools() or "bourbaki_tool" in ToolRegistry.list_tools()
-        ToolRegistry.unregister("bourbaki")
+        assert "bourbaki_tool" in ToolRegistry.list_tools()
+        ToolRegistry.unregister("bourbaki_tool")
