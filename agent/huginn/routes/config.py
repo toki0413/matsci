@@ -771,6 +771,58 @@ async def toggle_feature_flag(
     )
 
 
+class HarnessGateOut(BaseModel):
+    """单个调优门控在演化流程中的*实际生效状态*.
+
+    反映 /config/features 上的开关切换是否真实传导到门控行为: 读的是
+    harness 模块的 _harness_enabled (门控读取开关的最终函数), 而不是
+    FeatureFlags 的 is_enabled. 二者在配置文件未覆盖时等价, 但这里才是
+    门控真正会用的值, 是端到端契约验证的最终确认点.
+    """
+
+    name: str
+    enabled: bool
+    default: bool
+
+
+class HarnessGatesOut(BaseModel):
+    """/config/harness/gates 响应. 列出 H5/H6 门控的生效状态."""
+
+    gates: list[HarnessGateOut]
+    count: int
+
+
+@router.get(
+    "/config/harness/gates",
+    dependencies=[Depends(require_admin_key)],
+    response_model=HarnessGatesOut,
+)
+async def list_harness_gates() -> HarnessGatesOut:
+    """列出两个调优门控 (H5 显著性门 / H6 分布外留出) 的实际生效状态.
+
+    用于端到端验证: 前端/API 切换 /config/features 里的开关后, 这里应
+    观察到对应 gate 的 enabled 同步翻转, 证明开关真实作用到了门控行为.
+    """
+    from huginn.feature_flags import FeatureFlags
+    from huginn.harness.ood_holdout import _harness_enabled as _ood_enabled
+    from huginn.harness.significance_gate import _harness_enabled as _sig_enabled
+
+    defaults = FeatureFlags._DEFAULTS
+    gates = [
+        HarnessGateOut(
+            name="harness_significance_gate",
+            enabled=_sig_enabled("harness_significance_gate"),
+            default=bool(defaults.get("harness_significance_gate", False)),
+        ),
+        HarnessGateOut(
+            name="harness_ood_holdout",
+            enabled=_ood_enabled("harness_ood_holdout"),
+            default=bool(defaults.get("harness_ood_holdout", False)),
+        ),
+    ]
+    return HarnessGatesOut(gates=gates, count=len(gates))
+
+
 # ── /config/health ──────────────────────────────────────────────
 
 

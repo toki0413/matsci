@@ -1150,6 +1150,33 @@
         }
       }
     },
+    "/v1/config/harness/gates": {
+      "get": {
+        "tags": [
+          "config"
+        ],
+        "summary": "List Harness Gates",
+        "description": "列出两个调优门控 (H5 显著性门 / H6 分布外留出) 的实际生效状态.\n\n用于端到端验证: 前端/API 切换 /config/features 里的开关后, 这里应\n观察到对应 gate 的 enabled 同步翻转, 证明开关真实作用到了门控行为.",
+        "operationId": "list_harness_gates_v1_config_harness_gates_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HarnessGatesOut"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
     "/v1/config/health": {
       "get": {
         "tags": [
@@ -14955,6 +14982,33 @@
         }
       }
     },
+    "/config/harness/gates": {
+      "get": {
+        "tags": [
+          "config"
+        ],
+        "summary": "List Harness Gates",
+        "description": "列出两个调优门控 (H5 显著性门 / H6 分布外留出) 的实际生效状态.\n\n用于端到端验证: 前端/API 切换 /config/features 里的开关后, 这里应\n观察到对应 gate 的 enabled 同步翻转, 证明开关真实作用到了门控行为.",
+        "operationId": "list_harness_gates_config_harness_gates_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HarnessGatesOut"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
     "/config/health": {
       "get": {
         "tags": [
@@ -28157,6 +28211,52 @@
         },
         "type": "object",
         "title": "HTTPValidationError"
+      },
+      "HarnessGateOut": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "default": {
+            "type": "boolean",
+            "title": "Default"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "enabled",
+          "default"
+        ],
+        "title": "HarnessGateOut",
+        "description": "单个调优门控在演化流程中的*实际生效状态*.\n\n反映 /config/features 上的开关切换是否真实传导到门控行为: 读的是\nharness 模块的 _harness_enabled (门控读取开关的最终函数), 而不是\nFeatureFlags 的 is_enabled. 二者在配置文件未覆盖时等价, 但这里才是\n门控真正会用的值, 是端到端契约验证的最终确认点."
+      },
+      "HarnessGatesOut": {
+        "properties": {
+          "gates": {
+            "items": {
+              "$ref": "#/components/schemas/HarnessGateOut"
+            },
+            "type": "array",
+            "title": "Gates"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "gates",
+          "count"
+        ],
+        "title": "HarnessGatesOut",
+        "description": "/config/harness/gates 响应. 列出 H5/H6 门控的生效状态."
       },
       "KnowledgeQuery": {
         "properties": {

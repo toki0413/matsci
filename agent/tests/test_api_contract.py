@@ -664,3 +664,39 @@ class TestFeatureFlagsContract:
         resp = post_info["responses"]["200"]["content"]["application/json"]
         ref = resp.get("schema", {}).get("$ref", "")
         assert ref.endswith("FeatureFlagToggleOut"), f"未引用具体 schema: {ref}"
+
+
+class TestHarnessGatesContract:
+    """/config/harness/gates 契约: 后端门控生效状态的只读诊断端点.
+
+    该端点是"开关 → 门控行为"的端到端确认点, 前端 e2e 切开关后据此断言
+    H5/H6 门控真实翻转. 字段必须与 e2e 断言依赖一致, 否则契约测试会拦下.
+    """
+
+    def _committed_schema(self) -> dict[str, Any]:
+        import json
+        from pathlib import Path
+
+        path = Path(__file__).resolve().parents[1].joinpath("openapi.json")
+        assert path.exists(), f"缺少库内契约文件: {path}"
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def test_route_exists_in_committed_schema(self):
+        """库内 openapi.json 应声明 /config/harness/gates GET."""
+        paths = self._committed_schema().get("paths", {})
+        assert "/config/harness/gates" in paths, "openapi.json 缺 /config/harness/gates 路由"
+
+    def test_route_response_is_typed(self, openapi_schema):
+        """运行时 schema 中 GET /config/harness/gates 响应应引用 HarnessGatesOut."""
+        get_info = openapi_schema["paths"]["/config/harness/gates"]["get"]
+        resp = get_info["responses"]["200"]["content"]["application/json"]
+        ref = resp.get("schema", {}).get("$ref", "")
+        assert ref.endswith("HarnessGatesOut"), f"未引用具体 schema: {ref}"
+
+    def test_gate_out_fields(self):
+        """HarnessGateOut 字段必须与前端 e2e 断言依赖完全一致."""
+        schemas = self._committed_schema().get("components", {}).get("schemas", {})
+        props = schemas["HarnessGateOut"]["properties"]
+        assert set(props) == {"name", "enabled", "default"}, (
+            f"HarnessGateOut 字段漂移: {sorted(props)}"
+        )

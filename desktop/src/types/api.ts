@@ -591,6 +591,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/config/harness/gates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Harness Gates
+         * @description 列出两个调优门控 (H5 显著性门 / H6 分布外留出) 的实际生效状态.
+         *
+         *     用于端到端验证: 前端/API 切换 /config/features 里的开关后, 这里应
+         *     观察到对应 gate 的 enabled 同步翻转, 证明开关真实作用到了门控行为.
+         */
+        get: operations["list_harness_gates_v1_config_harness_gates_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/config/health": {
         parameters: {
             query?: never;
@@ -6788,6 +6811,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/config/harness/gates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Harness Gates
+         * @description 列出两个调优门控 (H5 显著性门 / H6 分布外留出) 的实际生效状态.
+         *
+         *     用于端到端验证: 前端/API 切换 /config/features 里的开关后, 这里应
+         *     观察到对应 gate 的 enabled 同步翻转, 证明开关真实作用到了门控行为.
+         */
+        get: operations["list_harness_gates_config_harness_gates_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/config/health": {
         parameters: {
             query?: never;
@@ -12657,6 +12703,33 @@ export interface components {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
+        /**
+         * HarnessGateOut
+         * @description 单个调优门控在演化流程中的*实际生效状态*.
+         *
+         *     反映 /config/features 上的开关切换是否真实传导到门控行为: 读的是
+         *     harness 模块的 _harness_enabled (门控读取开关的最终函数), 而不是
+         *     FeatureFlags 的 is_enabled. 二者在配置文件未覆盖时等价, 但这里才是
+         *     门控真正会用的值, 是端到端契约验证的最终确认点.
+         */
+        HarnessGateOut: {
+            /** Name */
+            name: string;
+            /** Enabled */
+            enabled: boolean;
+            /** Default */
+            default: boolean;
+        };
+        /**
+         * HarnessGatesOut
+         * @description /config/harness/gates 响应. 列出 H5/H6 门控的生效状态.
+         */
+        HarnessGatesOut: {
+            /** Gates */
+            gates: components["schemas"]["HarnessGateOut"][];
+            /** Count */
+            count: number;
+        };
         /** KnowledgeQuery */
         KnowledgeQuery: {
             /**
@@ -13803,6 +13876,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_harness_gates_v1_config_harness_gates_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HarnessGatesOut"];
                 };
             };
         };
@@ -23995,6 +24088,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_harness_gates_config_harness_gates_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HarnessGatesOut"];
                 };
             };
         };
