@@ -12,8 +12,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from huginn.core_types import ToolContext, ToolResult, ValidationResult
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
-from huginn.types import ToolContext, ToolResult, ValidationResult
 
 # Sources rarely sum to exactly 1.0; give them a little slack.
 _MASS_EPS = 1e-9

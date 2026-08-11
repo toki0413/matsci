@@ -14,7 +14,7 @@ from typing import Any
 
 import numpy as np
 
-from huginn.types import ToolResult
+from huginn.core_types import ToolResult
 
 
 def plate_static(args: Any) -> ToolResult:

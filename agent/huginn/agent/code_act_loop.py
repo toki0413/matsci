@@ -28,13 +28,13 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import datetime
 from typing import Any
 
+from huginn.core_types import ToolContext
 from huginn.security.code_act_sandbox import (
     _BLOCKED_TOOLS,
     make_safe_builtins,
 )
 from huginn.security.restricted_python import RestrictedPythonError, validate_code
 from huginn.tools.registry import ToolRegistry
-from huginn.types import ToolContext
 from huginn.utils.async_bridge import run_async
 
 logger = logging.getLogger(__name__)

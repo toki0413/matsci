@@ -20,10 +20,10 @@ from urllib.parse import urlencode
 
 from pydantic import BaseModel, Field
 
+from huginn.core_types import ToolContext, ToolResult
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.tools.local_structure_db import LocalStructureDB
 from huginn.tools.tool_cache import EXTERNAL_API_TTL, cacheable
-from huginn.types import ToolContext, ToolResult
 
 
 def _formula_to_elements(formula: str) -> list[str]:

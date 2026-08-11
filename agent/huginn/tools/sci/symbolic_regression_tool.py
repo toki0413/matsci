@@ -18,9 +18,9 @@ from typing import Any
 import numpy as np
 from pydantic import BaseModel, Field
 
+from huginn.core_types import ToolContext, ToolResult
 from huginn.security import SafeEvalError, safe_math_eval
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
-from huginn.types import ToolContext, ToolResult
 
 
 class SymbolicRegressionInput(BaseModel):

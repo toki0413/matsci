@@ -14,12 +14,12 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from huginn.core_types import ToolContext
 from huginn.tools.sim.transolver_tool import (
     TransolverTool,
     TransolverToolInput,
     TransolverToolOutput,
 )
-from huginn.types import ToolContext
 
 
 def _ctx() -> ToolContext:

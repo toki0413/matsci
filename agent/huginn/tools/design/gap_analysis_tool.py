@@ -12,8 +12,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from huginn.core_types import ToolContext, ToolResult
 from huginn.tools.base import HuginnTool
-from huginn.types import ToolContext, ToolResult
 
 # ── 情感关键词，用来扫 results 文本判断结论倾向 ──────────────────
 _POSITIVE_WORDS = {

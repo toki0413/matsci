@@ -14,9 +14,9 @@ import typing
 
 import pytest
 
+from huginn.core_types import ToolContext
 from huginn.tools import thermo_tool as thermo_mod
 from huginn.tools.thermo_tool import ThermoTool, ThermoToolInput
-from huginn.types import ToolContext
 
 CTX = ToolContext(session_id="test", workspace=".")
 

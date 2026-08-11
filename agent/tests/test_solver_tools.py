@@ -6,10 +6,10 @@ from unittest.mock import patch
 
 import pytest
 
+from huginn.core_types import ToolContext
 from huginn.tools.sim.elmer_tool import ElmerTool
 from huginn.tools.sim.fenics_tool import FenicsTool
 from huginn.tools.sim.gromacs_tool import GromacsTool
-from huginn.types import ToolContext
 
 # ── fixtures ──
 

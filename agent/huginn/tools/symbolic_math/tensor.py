@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 import sympy as sp
 
-from huginn.types import ToolResult
+from huginn.core_types import ToolResult
 
 from ._parsers import parse_einstein_token, parse_symbols, safe_parse
 

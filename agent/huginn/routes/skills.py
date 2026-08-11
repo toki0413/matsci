@@ -10,11 +10,11 @@ from typing import Any
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
+from huginn.core_types import ToolContext
 from huginn.server_core import get_agent_factory, get_memory_manager
 from huginn.skills.base import DeclarativeSkillExecutor
 from huginn.skills.registry import SkillRegistry
 from huginn.tools.registry import ToolRegistry
-from huginn.types import ToolContext
 
 logger = logging.getLogger(__name__)
 

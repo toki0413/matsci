@@ -28,8 +28,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from huginn.core_types import ToolContext
 from huginn.tools.registry import ToolRegistry
-from huginn.types import ToolContext
 from huginn.utils.common import now_iso
 
 logger = logging.getLogger(__name__)

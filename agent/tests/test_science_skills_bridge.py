@@ -313,12 +313,12 @@ class TestCommandBuilding:
 
 class TestToolExecution:
     def test_missing_uv_error(self):
+        from huginn.core_types import ToolContext
         from huginn.plugins.science_skills_bridge import (
             ScienceSkillInput,
             ScienceSkillsLoader,
             ScienceSkillTool,
         )
-        from huginn.types import ToolContext
 
         loader = ScienceSkillsLoader()
         skills = loader.discover()
@@ -332,12 +332,12 @@ class TestToolExecution:
         assert "uv" in result.error.lower()
 
     def test_successful_execution(self, tmp_path):
+        from huginn.core_types import ToolContext
         from huginn.plugins.science_skills_bridge import (
             ScienceSkillInput,
             ScienceSkillsLoader,
             ScienceSkillTool,
         )
-        from huginn.types import ToolContext
 
         loader = ScienceSkillsLoader()
         skills = loader.discover()
@@ -370,12 +370,12 @@ class TestToolExecution:
         assert result.data["result"] == output_data
 
     def test_failed_execution(self):
+        from huginn.core_types import ToolContext
         from huginn.plugins.science_skills_bridge import (
             ScienceSkillInput,
             ScienceSkillsLoader,
             ScienceSkillTool,
         )
-        from huginn.types import ToolContext
 
         loader = ScienceSkillsLoader()
         skills = loader.discover()
@@ -400,12 +400,12 @@ class TestToolExecution:
         assert "API key not found" in result.error
 
     def test_timeout_handling(self):
+        from huginn.core_types import ToolContext
         from huginn.plugins.science_skills_bridge import (
             ScienceSkillInput,
             ScienceSkillsLoader,
             ScienceSkillTool,
         )
-        from huginn.types import ToolContext
 
         loader = ScienceSkillsLoader()
         skills = loader.discover()
@@ -431,12 +431,12 @@ class TestToolExecution:
 
     def test_stdout_fallback_no_output_file(self, tmp_path):
         """When no output file exists, stdout is used as result."""
+        from huginn.core_types import ToolContext
         from huginn.plugins.science_skills_bridge import (
             ScienceSkillInput,
             ScienceSkillsLoader,
             ScienceSkillTool,
         )
-        from huginn.types import ToolContext
 
         loader = ScienceSkillsLoader()
         skills = loader.discover()
@@ -470,8 +470,8 @@ class TestToolExecution:
 
 class TestPermissionWildcard:
     def test_science_tools_auto_approved(self):
+        from huginn.core_types import PermissionMode
         from huginn.permissions import PermissionConfig
-        from huginn.types import PermissionMode
 
         config = PermissionConfig()
         assert config.get_mode("science_pubchem_database") == PermissionMode.AUTO
@@ -479,8 +479,8 @@ class TestPermissionWildcard:
         assert config.get_mode("science_any_new_skill") == PermissionMode.AUTO
 
     def test_non_science_tools_unaffected(self):
+        from huginn.core_types import PermissionMode
         from huginn.permissions import PermissionConfig
-        from huginn.types import PermissionMode
 
         config = PermissionConfig()
         # Existing tools should still work

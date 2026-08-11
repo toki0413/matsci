@@ -15,8 +15,8 @@ from typing import Any, Literal
 import numpy as np
 from pydantic import BaseModel, Field
 
+from huginn.core_types import ToolContext, ToolResult
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
-from huginn.types import ToolContext, ToolResult
 
 # ponytail: import torch lazily so the module loads even without torch.
 # The registry can still import this file; is_available() gates real use.

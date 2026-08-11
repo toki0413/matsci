@@ -12,7 +12,7 @@ from ._mpl_utils import load_rgb, save_figure, setup_matplotlib
 if TYPE_CHECKING:
     from .tool import ImageDesignInput
 
-from huginn.types import ToolResult
+from huginn.core_types import ToolResult
 
 logger = logging.getLogger(__name__)
 

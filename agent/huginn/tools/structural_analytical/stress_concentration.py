@@ -13,7 +13,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from huginn.types import ToolResult
+from huginn.core_types import ToolResult
 
 
 def stress_concentration(args: Any) -> ToolResult:

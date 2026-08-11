@@ -15,8 +15,8 @@ from click.testing import CliRunner
 
 from huginn import visualize as evo_viz
 from huginn.cli import cli
+from huginn.core_types import ToolContext
 from huginn.tools.symbolic_math_tool import SymbolicMathInput, SymbolicMathTool
-from huginn.types import ToolContext
 from huginn.unified.models import heat_equation_fem
 from huginn.unified.visualize import plot_solution, solve_and_plot
 

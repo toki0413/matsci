@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import pytest
 
+from huginn.core_types import ToolResult
 from huginn.tools.numerical_tool import NumericalTool
-from huginn.types import ToolResult
 
 
 def _run(tool: NumericalTool, args: dict) -> ToolResult:

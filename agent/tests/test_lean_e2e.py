@@ -10,10 +10,10 @@ from pathlib import Path
 
 import pytest
 
+from huginn.core_types import ToolContext
 from huginn.lean.interface import LeanInterface
 from huginn.tools.lean_tool import LeanTool, LeanToolInput
 from huginn.tools.symbolic_math_tool import SymbolicMathInput, SymbolicMathTool
-from huginn.types import ToolContext
 
 LEAN_PROJECT = Path(__file__).parent.parent / "lean" / "HuginnLean"
 CTX = ToolContext(session_id="e2e", workspace=".")

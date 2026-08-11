@@ -15,11 +15,11 @@ from unittest.mock import patch
 import pytest
 
 from huginn.agent import HuginnAgent
+from huginn.core_types import ToolContext, ToolResult
 from huginn.memory.manager import MemoryManager
 from huginn.security import SandboxConfig, SandboxExecutor
 from huginn.self_improvement import BenchmarkCase, BenchmarkSuite
 from huginn.tools.base import HuginnTool
-from huginn.types import ToolContext, ToolResult
 from huginn.workflows.engine import WorkflowEngine
 
 CTX = ToolContext(session_id="benchmark", workspace=".")

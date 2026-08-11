@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from huginn.types import ToolContext, ToolResult
+from huginn.core_types import ToolContext, ToolResult
 from huginn.workflows.engine import WorkflowEngine
 from huginn.workflows.stages import ComputationalStage, RetryPolicy
 

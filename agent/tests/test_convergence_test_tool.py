@@ -3,11 +3,11 @@
 import pytest
 from pydantic import ValidationError
 
+from huginn.core_types import ToolContext
 from huginn.tools.sim.convergence_test_tool import (
     ConvergenceTestTool,
     ConvergenceTestToolInput,
 )
-from huginn.types import ToolContext
 
 CTX = ToolContext(session_id="test", workspace=".")
 

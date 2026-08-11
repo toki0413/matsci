@@ -30,10 +30,10 @@ from hypothesis import assume, given, settings
 from hypothesis import strategies as st
 
 from huginn.autoloop.phase_gate import DempsterShaferCombiner
+from huginn.core_types import ToolContext
 from huginn.tools.sci.multi_fidelity_tool import MultiFidelityTool
 from huginn.tools.symbolic_math.tool import SymbolicMathInput, SymbolicMathTool
 from huginn.tools.wetlab_rpc_tool import PROTOCOLS, WetlabInput, WetlabRpcTool
-from huginn.types import ToolContext
 
 # ── shared helpers ───────────────────────────────────────────────────────────
 

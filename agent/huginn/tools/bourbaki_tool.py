@@ -10,11 +10,11 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, Field
 
 from huginn.bourbaki_env import LeanEnvironment
+from huginn.core_types import ToolContext
 from huginn.tools.base import HuginnTool
-from huginn.types import ToolContext
 
 if TYPE_CHECKING:
-    from huginn.types import ToolResult
+    from huginn.core_types import ToolResult
 
 
 class BourbakiInput(BaseModel):
@@ -106,7 +106,7 @@ class BourbakiTool(HuginnTool):
             result = self._fallback_check(task, domain, equations, input_data.variables)
 
         # Convert BourbakiResult → ToolResult so the adapter can handle it
-        from huginn.types import ToolResult
+        from huginn.core_types import ToolResult
         return ToolResult(
             data=result.model_dump(),
             success=result.success,

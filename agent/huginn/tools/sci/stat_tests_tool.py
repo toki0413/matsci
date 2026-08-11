@@ -14,8 +14,8 @@ import numpy as np
 from pydantic import BaseModel, Field
 from scipy import stats
 
+from huginn.core_types import ToolContext, ToolResult
 from huginn.tools.base import HuginnTool
-from huginn.types import ToolContext, ToolResult
 
 # ── 输入输出 schema ──────────────────────────────────────────────────
 

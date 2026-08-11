@@ -11,11 +11,11 @@ import asyncio
 
 import numpy as np
 
+from huginn.core_types import ToolContext
 from huginn.tools.sci.interpretable_ml_tool import (
     InterpretableMLInput,
     InterpretableMLTool,
 )
-from huginn.types import ToolContext
 
 
 def _ctx() -> ToolContext:

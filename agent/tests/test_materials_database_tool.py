@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from huginn.core_types import ToolContext
 from huginn.tools.materials_database_tool import MaterialsDatabaseTool
-from huginn.types import ToolContext
 
 
 class _FakeSession:

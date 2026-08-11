@@ -8,8 +8,8 @@ pytest.importorskip("matplotlib")
 
 import asyncio
 
+from huginn.core_types import ToolContext
 from huginn.tools.symbolic_math_tool import SymbolicMathInput, SymbolicMathTool
-from huginn.types import ToolContext
 from huginn.unified import discretize
 from huginn.unified.models import heat_equation_fem
 

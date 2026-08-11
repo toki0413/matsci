@@ -42,8 +42,8 @@ def record(name: str, elapsed: float, ops: int, unit: str = "ops/s", extra: dict
 
 def bench_tool_serial():
     """串行工具调用吞吐."""
+    from huginn.core_types import ToolContext, ToolResult
     from huginn.tools.base import HuginnTool
-    from huginn.types import ToolContext, ToolResult
 
     class EchoTool(HuginnTool):
         name = "echo"
@@ -70,8 +70,8 @@ def bench_tool_serial():
 
 def bench_tool_parallel():
     """并行工具调用吞吐."""
+    from huginn.core_types import ToolContext, ToolResult
     from huginn.tools.base import HuginnTool
-    from huginn.types import ToolContext, ToolResult
 
     class EchoTool(HuginnTool):
         name = "echo"

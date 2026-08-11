@@ -17,9 +17,9 @@ from typing import Any, Literal
 import numpy as np
 from pydantic import BaseModel, Field
 
+from huginn.core_types import ToolContext, ToolResult
 from huginn.phases import ResearchPhase
 from huginn.tools.base import HuginnTool, ToolProfile
-from huginn.types import ToolContext, ToolResult
 
 # ponytail: lazy import — the module loads even without pybamm installed,
 # is_available() gates real use so the registry never crashes on import.

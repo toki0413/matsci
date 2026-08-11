@@ -16,9 +16,9 @@ from typing import Any, Literal
 import numpy as np
 from pydantic import BaseModel, Field, model_validator
 
+from huginn.core_types import ToolContext, ToolResult
 from huginn.security.sandbox import SandboxConfig, SandboxExecutor
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
-from huginn.types import ToolContext, ToolResult
 
 _ELEMENT_COLORS: dict[str, str] = {
     "H": "#FFFFFF",

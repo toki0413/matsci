@@ -12,11 +12,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from huginn.core_types import AgentMessage, ToolResult
 from huginn.memory.index import build_memory_index, get_topic_file_path
 from huginn.memory.longterm import LongTermMemory
 from huginn.memory.session import SessionContext, ToolCallRecord
 from huginn.memory.types import MemoryType
-from huginn.types import AgentMessage, ToolResult
 from huginn.utils.runtime import HUGINN_DIR_NAME, get_runtime_home
 
 logger = logging.getLogger(__name__)

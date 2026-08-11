@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 import sympy as sp
 
-from huginn.types import ToolResult
+from huginn.core_types import ToolResult
 
 if TYPE_CHECKING:
     from .tool import SymbolicMathInput

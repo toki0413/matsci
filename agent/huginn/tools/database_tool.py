@@ -13,6 +13,7 @@ from urllib.parse import urlencode
 
 from pydantic import BaseModel, Field
 
+from huginn.core_types import ToolContext, ToolResult
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.tools.materials_database_tool import (
     MaterialsDatabaseInput,
@@ -20,7 +21,6 @@ from huginn.tools.materials_database_tool import (
     MaterialsDatabaseTool,
     _formula_to_elements,
 )
-from huginn.types import ToolContext, ToolResult
 
 # re-export so `from huginn.tools.database_tool import MaterialsDatabaseTool` works
 __all__ = [

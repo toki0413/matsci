@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import pytest
 
+from huginn.core_types import ToolContext
 from huginn.tools.symbolic_math.tool import SymbolicMathInput, SymbolicMathTool
-from huginn.types import ToolContext
 
 
 @pytest.fixture

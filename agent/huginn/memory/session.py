@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from huginn.types import AgentMessage, ToolResult
+from huginn.core_types import AgentMessage, ToolResult
 
 logger = logging.getLogger(__name__)
 
@@ -183,7 +183,7 @@ class SessionContext:
                     "summarized_count": len(to_summarize),
                 })  # EM sink 失败不阻塞 session
         # summary 作为 system message 注回, 让后续 LLM 看到压缩上下文
-        from huginn.types import AgentMessage as _AM  # noqa: N814
+        from huginn.core_types import AgentMessage as _AM  # noqa: N814
         summary_msg = _AM(
             role="system",
             content=f"[Compacted context summary]\n{summary}",
@@ -341,7 +341,7 @@ def _run_c1_selfcheck() -> None:
     """
     import os as _os
 
-    from huginn.types import AgentMessage
+    from huginn.core_types import AgentMessage
 
     # ── 非极限模式: summaries 应始终空, 走原 max_messages 逻辑 ──
     _os.environ.pop("HUGINN_EXTREME_DISPATCH", None)
