@@ -7,6 +7,7 @@ registered tool inside skills and agent workflows.
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any, Literal
 
@@ -14,6 +15,8 @@ from pydantic import BaseModel, Field
 
 from huginn.core_types import ToolContext, ToolResult
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
+
+logger = logging.getLogger(__name__)
 
 
 class VisualizeToolInput(BaseModel):
@@ -104,8 +107,16 @@ class VisualizeTool(HuginnTool):
             # figure_ir 接入: 生成结构化元数据让 agent 精确引用图表结构
             # ponytail: 只给 materials actions (数值数据明确), report-based 留 v8
             ir_meta = self._build_figure_ir(args)
+            gate = self._run_gate(
+                path, expected=self._figure_ir_numeric(ir_meta)
+            )
             return ToolResult(
-                data={"output_path": str(path), "exists": path.exists(), "figure_ir": ir_meta},
+                data={
+                    "output_path": str(path),
+                    "exists": path.exists(),
+                    "figure_ir": ir_meta,
+                    "visual_gate": gate,
+                },
                 success=path.exists(),
             )
 
@@ -149,10 +160,62 @@ class VisualizeTool(HuginnTool):
         # v8: figure_ir 接 report-based 路径 — 从 report dict 提取通用字段生成 IR
         # 不同 action 的 report 结构异构, 但都有 scores/metrics/timeline 类字段
         ir_meta = self._build_report_figure_ir(args.action, report)
+        gate = self._run_gate(path, expected=self._figure_ir_numeric(ir_meta))
         return ToolResult(
-            data={"output_path": str(path), "exists": path.exists(), "figure_ir": ir_meta},
+            data={
+                "output_path": str(path),
+                "exists": path.exists(),
+                "figure_ir": ir_meta,
+                "visual_gate": gate,
+            },
             success=path.exists(),
         )
+
+    def _run_gate(
+        self, path: Path, expected: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """批次 C 后半: 图生成后自动跑渲染门禁 (QA + 一致性 + 判定).
+
+        ponytail: 门禁失败不阻塞主路径 — 图已生成, 只把 gate decision 附加到
+        返回数据, 让 agent/精修循环按 action 决定是否重渲染. 期望值缺失时
+        consistency 跳过 (只跑确定性 QA), 避免无依据误报.
+        """
+        try:
+            from huginn.tools.visualize_gate import run_figure_gate
+
+            return run_figure_gate(
+                path,
+                expected=expected,
+                index=None,
+                render_fn=None,
+            )
+        except Exception as exc:
+            logger.debug("visualize_tool: render gate failed", exc_info=True)
+            return {"action": "error", "error": f"gate failed: {exc}"}
+
+    @staticmethod
+    def _figure_ir_numeric(ir_meta: dict[str, Any]) -> dict[str, Any]:
+        """从 figure_ir 结构化元数据提取数值快照, 供一致性校验.
+
+        ir_to_structured 的 series 是 [{label, data: [...]}], 这里摊平成
+        {label: [floats]} (或 {label: float} 当单点), 兼容 check_figure_vs_expected.
+        """
+        out: dict[str, Any] = {}
+        series = ir_meta.get("series") if isinstance(ir_meta, dict) else None
+        if not isinstance(series, list):
+            return out
+        for s in series:
+            if not isinstance(s, dict):
+                continue
+            label = s.get("label")
+            data = s.get("data")
+            if not label or not isinstance(data, list) or not data:
+                continue
+            nums = [float(x) for x in data if isinstance(x, (int, float))]
+            if not nums:
+                continue
+            out[str(label)] = nums[0] if len(nums) == 1 else nums
+        return out
 
     def _load_report(self, args: VisualizeToolInput) -> dict[str, Any]:
         if args.report_data is not None:
