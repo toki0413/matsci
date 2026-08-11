@@ -27,12 +27,18 @@ pytest.importorskip("mcp")
 # Penetration tests run in integration CI job — they need full middleware stack
 pytestmark = pytest.mark.integration
 
-from fastapi import FastAPI  # noqa: E402
-from fastapi.testclient import TestClient  # noqa: E402
 
-from huginn.server import app  # noqa: E402
+@pytest.fixture(scope="module", autouse=True)
+def _bind_test_client(app_client):
+    """Bind module-global `client` to the shared, properly-closed app_client.
 
-client = TestClient(app)
+    Replaces the old module-level ``client = TestClient(app)`` which leaked an
+    anyio portal thread and never shut down the app lifespan (OOM + hang).
+    """
+    global client
+    client = app_client
+    yield
+    client = None
 
 
 # ─── 公共 fixture ────────────────────────────────────────────────────
@@ -511,11 +517,11 @@ class TestInputValidation:
         # 原始 app 的中间件 list 里找 RequestSizeLimitMiddleware, 设小 limit
         mini_app.add_middleware(RequestSizeLimitMiddleware, max_bytes=1024)  # 1KB limit
 
-        c = TestClient(mini_app)
-        # 2KB payload 应该被 413 拒绝
-        big_data = {"data": "x" * 2048}
-        resp = c.post("/echo", json=big_data)
-        assert resp.status_code == 413
+        with TestClient(mini_app) as c:
+            # 2KB payload 应该被 413 拒绝
+            big_data = {"data": "x" * 2048}
+            resp = c.post("/echo", json=big_data)
+            assert resp.status_code == 413
 
     def test_long_string_no_crash(self):
         """超长字符串 (>10000 chars) 不应该 crash。"""

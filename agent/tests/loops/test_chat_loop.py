@@ -18,10 +18,8 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
-from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage, ToolMessage
 
-from huginn.server import app
 from tests.fixtures.fake_llm import make_scripted_llm
 
 # WebSocket + TestClient 首次导入 huginn.server 拉起整个 agent 栈,
@@ -30,8 +28,22 @@ from tests.fixtures.fake_llm import make_scripted_llm
 _skip_ci = os.environ.get("HUGINN_CI", "").lower() in ("1", "true", "yes")
 pytestmark = pytest.mark.skipif(_skip_ci, reason="WebSocket tests too slow on CI runner")
 
-client = TestClient(app)
 WS_PATH = "/v1/ws/agent"
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _bind_test_client(app_client):
+    """Bind module-global `client` to the shared, properly-closed app_client.
+
+    Replaces the old module-level ``client = TestClient(app)`` which leaked an
+    anyio portal thread and never shut down the app lifespan (OOM + hang).
+    Only requested when the module is actually collected+run (skipped on CI),
+    so the heavy full app is never built for a skipped module.
+    """
+    global client
+    client = app_client
+    yield
+    client = None
 
 
 # ── mock collaborators (trimmed from test_ws_integration) ──────────
