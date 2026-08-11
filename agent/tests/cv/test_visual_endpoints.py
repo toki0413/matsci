@@ -73,36 +73,34 @@ def visual_app(monkeypatch, tmp_path, fake_encoder):
 
 def test_get_elements(visual_app):
     app, _ = visual_app
-    client = TestClient(app)
-
-    r = client.get("/viewer3d/elements")
-    assert r.status_code == 200
-    body = r.json()
-    assert isinstance(body["elements"], list) and len(body["elements"]) > 0
-    first = body["elements"][0]
-    assert {"symbol", "color", "covalent_radius"} <= set(first)
-    assert "default_color" in body
-    assert "default_radius" in body
-    assert "bond_tolerance" in body
+    with TestClient(app) as client:
+        r = client.get("/viewer3d/elements")
+        assert r.status_code == 200
+        body = r.json()
+        assert isinstance(body["elements"], list) and len(body["elements"]) > 0
+        first = body["elements"][0]
+        assert {"symbol", "color", "covalent_radius"} <= set(first)
+        assert "default_color" in body
+        assert "default_radius" in body
+        assert "bond_tolerance" in body
 
 
 def test_visual_encode(visual_app, generate_synthetic_sem_image):
     app, _ = visual_app
-    client = TestClient(app)
+    with TestClient(app) as client:
+        with open(generate_synthetic_sem_image, "rb") as fh:
+            r = client.post(
+                "/visual/encode",
+                files={"file": ("sem.png", fh, "image/png")},
+            )
 
-    with open(generate_synthetic_sem_image, "rb") as fh:
-        r = client.post(
-            "/visual/encode",
-            files={"file": ("sem.png", fh, "image/png")},
-        )
-
-    assert r.status_code == 200
-    body = r.json()
-    assert body["success"] is True
-    assert body["backend"] == "fake"
-    assert body["dim"] == 16
-    assert isinstance(body["vector"], list)
-    assert len(body["vector"]) == 16
+        assert r.status_code == 200
+        body = r.json()
+        assert body["success"] is True
+        assert body["backend"] == "fake"
+        assert body["dim"] == 16
+        assert isinstance(body["vector"], list)
+        assert len(body["vector"]) == 16
 
 
 def test_visual_search(
@@ -115,18 +113,18 @@ def test_visual_search(
     idx.add_image(generate_synthetic_sem_image, metadata={"name": "sem"})
     idx.add_image(generate_synthetic_tem_image, metadata={"name": "tem"})
 
-    client = TestClient(app)
-    with open(generate_synthetic_sem_image, "rb") as fh:
-        r = client.post(
-            "/visual/search",
-            files={"file": ("sem.png", fh, "image/png")},
-            data={"top_k": "5"},
-        )
+    with TestClient(app) as client:
+        with open(generate_synthetic_sem_image, "rb") as fh:
+            r = client.post(
+                "/visual/search",
+                files={"file": ("sem.png", fh, "image/png")},
+                data={"top_k": "5"},
+            )
 
-    assert r.status_code == 200
-    body = r.json()
-    assert body["success"] is True
-    assert body["count"] >= 1
-    top = body["results"][0]
-    assert top["path"] == generate_synthetic_sem_image
-    assert top["similarity"] > 0.99
+        assert r.status_code == 200
+        body = r.json()
+        assert body["success"] is True
+        assert body["count"] >= 1
+        top = body["results"][0]
+        assert top["path"] == generate_synthetic_sem_image
+        assert top["similarity"] > 0.99

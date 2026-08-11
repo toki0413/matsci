@@ -48,6 +48,41 @@ Path(_TEST_CACHE_DIR).mkdir(parents=True, exist_ok=True)
 os.environ["HUGINN_CACHE_DIR"] = _TEST_CACHE_DIR
 
 
+@pytest.fixture(scope="session")
+def shared_huginn_app():
+    """The single shared Huginn FastAPI app (module singleton).
+
+    Building the app (lifespan startup) allocates ~2-3GB and loads every
+    tool/model/DB. Session scope ensures it is constructed at most once per
+    xdist worker, so the TestClient-heavy files no longer each spin up their
+    own full app — the root cause of the memory accumulation that forced the
+    old http-tests a/b/c/d/e split.
+    """
+    from huginn.server import app
+
+    return app
+
+
+@pytest.fixture(scope="module")
+def app_client(shared_huginn_app):
+    """A TestClient over the shared app, properly closed at module end.
+
+    This is the one-and-for-all fix for the module-level ``client =
+    TestClient(app)`` antipattern that plagued the suite: a client created at
+    import time was never closed, so its anyio portal thread leaked forever
+    (freezing xdist workers) and the lifespan never shut down (memory kept
+    accumulating across modules until OOM).
+
+    Module scope runs the lifespan once per module and tears it down on exit:
+     - ``with TestClient(...)`` closes the transport → no portal thread leak.
+     - lifespan shutdown frees the app's ~2-3GB between modules.
+    """
+    from fastapi.testclient import TestClient
+
+    with TestClient(shared_huginn_app) as client:
+        yield client
+
+
 @pytest.fixture(autouse=True)
 def _clear_config_cache_between_tests(monkeypatch):
     """Clear config cache + config-path overrides before and after each test.

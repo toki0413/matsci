@@ -31,11 +31,18 @@ pytest.importorskip("mcp")
 # with the integration suite. Run in integration CI job.
 pytestmark = pytest.mark.integration
 
-from fastapi.testclient import TestClient  # noqa: E402
 
-from huginn.server import app  # noqa: E402
+@pytest.fixture(scope="module", autouse=True)
+def _bind_test_client(app_client):
+    """Bind module-global `client` to the shared, properly-closed app_client.
 
-client = TestClient(app)
+    Replaces the old module-level ``client = TestClient(app)`` which leaked an
+    anyio portal thread and never shut down the app lifespan (OOM + hang).
+    """
+    global client
+    client = app_client
+    yield
+    client = None
 
 # WS 路由挂在 /v1 前缀下 (include_v1_routes), 但 root compat 也保留了 /ws/agent
 WS_PATH = "/ws/agent"

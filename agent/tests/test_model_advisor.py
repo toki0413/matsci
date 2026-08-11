@@ -196,11 +196,18 @@ class TestModelAdvisor:
 
 pytest.importorskip("mcp", reason="MCP SDK not installed (pip install mcp)")
 
-from fastapi.testclient import TestClient  # noqa: E402
 
-from huginn.server import app  # noqa: E402
+@pytest.fixture(scope="module", autouse=True)
+def _bind_test_client(app_client):
+    """Bind module-global `_client` to the shared, properly-closed app_client.
 
-_client = TestClient(app)
+    Replaces the old module-level ``_client = TestClient(app)`` which leaked
+    an anyio portal thread and never shut down the app lifespan (OOM + hang).
+    """
+    global _client
+    _client = app_client
+    yield
+    _client = None
 
 
 class TestAdvisorRoutes:
