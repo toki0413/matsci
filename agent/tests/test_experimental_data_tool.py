@@ -5,8 +5,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from huginn.core_types import ToolContext
 from huginn.tools.experimental_data_tool import ExperimentalDataTool
-from huginn.types import ToolContext
 
 
 @pytest.fixture

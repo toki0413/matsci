@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from huginn.core_types import ToolContext
 from huginn.tools.database_tool import DatabaseTool, DatabaseToolInput
-from huginn.types import ToolContext
 
 
 def _ctx() -> ToolContext:

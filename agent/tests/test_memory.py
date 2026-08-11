@@ -3,10 +3,10 @@
 import tempfile
 from pathlib import Path
 
+from huginn.core_types import AgentMessage, ToolResult
 from huginn.memory.longterm import LongTermMemory
 from huginn.memory.manager import MemoryConfig, MemoryManager
 from huginn.memory.session import SessionContext, ToolCallRecord
-from huginn.types import AgentMessage, ToolResult
 
 
 class TestSessionContext:

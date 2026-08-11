@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal
 
-from huginn.types import ToolResult
+from huginn.core_types import ToolResult
 
 
 @dataclass

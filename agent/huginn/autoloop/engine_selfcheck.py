@@ -994,7 +994,7 @@ def run_selfcheck() -> None:
     print("26. P0-1 streaming toggle (env HUGINN_AUTOLOOP_STREAMING=0/1) OK")
 
     # 27. P0-1 _llm_chat: progress_cb + astream 路径 + fallback
-    from huginn.types import progress_cb as _pc_cb
+    from huginn.core_types import progress_cb as _pc_cb
 
     class _FakeChunk:
         def __init__(self, content: str) -> None:
@@ -1048,7 +1048,7 @@ def run_selfcheck() -> None:
 
     # 28. P0-2 progress_cb → _emit_campaign 桥 (run_cognitive 入口设)
     # 验证: 桥接到 progress_cb 后, subagent_event / autoloop_thinking 能流到 campaign SSE
-    from huginn.types import progress_cb as _pc_cb2
+    from huginn.core_types import progress_cb as _pc_cb2
     _emitted: list[tuple[str, dict]] = []
     eng_b = AutoloopEngine.__new__(AutoloopEngine)
     eng_b._progress_task_id = "test_task_b"

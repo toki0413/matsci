@@ -7,9 +7,9 @@ import json
 
 import pytest
 
+from huginn.core_types import ToolContext
 from huginn.tools.registry import ToolRegistry
 from huginn.tools.visualize_tool import VisualizeTool
-from huginn.types import ToolContext
 
 
 @pytest.fixture(autouse=True)

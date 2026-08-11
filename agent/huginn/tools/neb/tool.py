@@ -16,6 +16,7 @@ from typing import Any, Literal
 import numpy as np
 from pydantic import BaseModel, Field, model_validator
 
+from huginn.core_types import ToolContext, ToolResult
 from huginn.tools.base import HuginnTool
 from huginn.tools.neb._dimer import dimer_rotate, estimate_hessian_along_mode
 from huginn.tools.neb._evaluators import eval_images, eval_single
@@ -27,7 +28,6 @@ from huginn.tools.neb._neb_core import (
     idpp_initial_path,
 )
 from huginn.tools.neb._topology import basin_analysis, find_extrema, topology_via_tda
-from huginn.types import ToolContext, ToolResult
 
 # ---------------------------------------------------------------------------
 # 输入 / 输出 schema

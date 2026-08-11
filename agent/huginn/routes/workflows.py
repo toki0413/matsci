@@ -6,9 +6,9 @@ from typing import Any
 
 from fastapi import APIRouter
 
+from huginn.core_types import ToolContext
 from huginn.server_core import get_agent_factory, get_memory_manager
 from huginn.tools.registry import ToolRegistry
-from huginn.types import ToolContext
 from huginn.workflows.engine import WorkflowEngine
 from huginn.workflows.templates import get_template
 

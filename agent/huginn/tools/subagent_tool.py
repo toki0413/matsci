@@ -19,8 +19,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from huginn.core_types import ToolContext, ToolResult
 from huginn.tools.base import HuginnTool
-from huginn.types import ToolContext, ToolResult
 
 logger = logging.getLogger(__name__)
 
@@ -473,7 +473,7 @@ class SubagentTool(HuginnTool[SubagentToolInput, SubagentToolOutput]):
         _depth = _current_depth.get()
 
         # forward subagent intermediate states to the WS via progress_cb
-        from huginn.types import progress_cb
+        from huginn.core_types import progress_cb
 
         async def _on_state(state: dict) -> None:
             cb = progress_cb.get()

@@ -12,13 +12,13 @@ import asyncio
 
 import pytest
 
+from huginn.core_types import ToolResult
 from huginn.provenance import ProvenanceSnapshot
 from huginn.tools.base import (
     HuginnTool,
     get_provenance_collector,
     set_provenance_collector,
 )
-from huginn.types import ToolResult
 
 
 # A minimal tool that opts into the new _execute override point, so it inherits

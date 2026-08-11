@@ -2340,7 +2340,7 @@ Respond JSON only:
         # 这里 set 一个桥: subagent_event / autoloop_thinking 等事件 → campaign SSE.
         # 外层已 set (WS 路径嵌入 autoloop) 则不覆盖. ponytail: 复用 contextvar, 不新开通道.
         # 不显式 reset — run_cognitive 通常被 asyncio.create_task 包, contextvar 跟 task 同生命周期.
-        from huginn.types import progress_cb as _progress_cb
+        from huginn.core_types import progress_cb as _progress_cb
         if _progress_cb.get(None) is None:
             _autoloop_engine = self
 

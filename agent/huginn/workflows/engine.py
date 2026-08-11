@@ -14,15 +14,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from huginn.interaction.progress import ProgressTracker, get_progress_tracker
-from huginn.queue import InMemoryTaskBackend, TaskBackend
-from huginn.types import (
+from huginn.core_types import (
     BudgetDecision,
     BudgetPolicy,
     CostEstimate,
     ToolContext,
     ToolResult,
 )
+from huginn.interaction.progress import ProgressTracker, get_progress_tracker
+from huginn.queue import InMemoryTaskBackend, TaskBackend
 from huginn.workflows.checkpoint import WorkflowCheckpoint
 from huginn.workflows.stages import (
     ComputationalStage,

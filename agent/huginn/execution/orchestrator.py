@@ -319,7 +319,7 @@ class ExecutionOrchestrator:
         """
         # HuginnTool 分支: 有 .call 方法 (async) + .input_schema
         if hasattr(tool, "call") and hasattr(tool, "input_schema"):
-            from huginn.types import ToolContext
+            from huginn.core_types import ToolContext
 
             schema = tool.input_schema
             kwargs = dict(params)

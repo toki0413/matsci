@@ -23,11 +23,11 @@ from huginn.autoloop.phase_gate import (
     PhaseGateHook,
     get_shared_phase_gate_state,
 )
+from huginn.core_types import ToolContext, ToolResult
 from huginn.permissions import PermissionConfig
 from huginn.phases import ResearchPhase
 from huginn.tools.base import HuginnTool
 from huginn.tools.profile import ToolProfile
-from huginn.types import ToolContext, ToolResult
 
 
 class PhaseToolInput(BaseModel):

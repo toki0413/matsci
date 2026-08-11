@@ -22,6 +22,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from huginn.core_types import ToolContext, ToolResult
 from huginn.privacy import redact_secrets
 from huginn.security import (
     ContainerExecutor,
@@ -32,7 +33,6 @@ from huginn.security import (
 )
 from huginn.security.restricted_python import RestrictedPythonError, validate_code
 from huginn.tools.base import HuginnTool
-from huginn.types import ToolContext, ToolResult
 
 logger = logging.getLogger(__name__)
 

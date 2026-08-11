@@ -18,7 +18,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from huginn.types import PermissionMode, PermissionResult
+from huginn.core_types import PermissionMode, PermissionResult
 
 # 危险命令模式 — 统一使用 command_filter 的 _BLOCKED_PATTERNS 作为 single source of truth.
 # permissions.py 补充 git 相关模式 (command_filter 不覆盖 git).

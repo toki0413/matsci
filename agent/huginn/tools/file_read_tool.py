@@ -12,8 +12,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from huginn.core_types import ToolContext, ToolResult
 from huginn.tools.base import HuginnTool
-from huginn.types import ToolContext, ToolResult
 from huginn.utils.tokens import rough_token_count_for_text
 
 DEFAULT_MAX_SIZE_BYTES = 256 * 1024

@@ -203,8 +203,8 @@ class TestLammpsDEMPacking:
 
     @pytest.mark.asyncio
     async def test_dem_packing_handles_no_executable(self):
+        from huginn.core_types import ToolContext
         from huginn.tools.sim.lammps_tool import LammpsTool, LammpsToolInput
-        from huginn.types import ToolContext
 
         tool = LammpsTool()
         tool.lammps_executable = None

@@ -10,8 +10,8 @@ import os
 import numpy as np
 import pytest
 
+from huginn.core_types import ToolContext
 from huginn.tools.characterization_tool import CharacterizationTool
-from huginn.types import ToolContext
 
 # CI 上 scipy 可能安装了但 scipy.signal 不可用 (版本不兼容/安装不完整).
 # importorskip 只检查 `import scipy`, 不检查子模块, 改用 CI 跳过.

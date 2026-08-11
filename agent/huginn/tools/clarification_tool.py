@@ -15,12 +15,12 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from huginn.core_types import ToolContext, ToolResult
 from huginn.interaction.clarification import (
     ClarificationManager,
     get_clarification_manager,
 )
 from huginn.tools.base import HuginnTool
-from huginn.types import ToolContext, ToolResult
 
 logger = logging.getLogger(__name__)
 

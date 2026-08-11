@@ -12,8 +12,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from huginn.core_types import ToolContext, ToolResult
 from huginn.tools.base import HuginnTool
-from huginn.types import ToolContext, ToolResult
 from huginn.utils.runtime import HUGINN_DIR_NAME, get_runtime_home
 
 # ponytail: 写死两个路径. trajectories 在 workspace(.huginn/trajectories),

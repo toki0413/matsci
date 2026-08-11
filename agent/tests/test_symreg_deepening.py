@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import pytest
 
+from huginn.core_types import ToolContext
 from huginn.tools.sci.symbolic_regression_tool import (
     SymbolicRegressionInput,
     SymbolicRegressionTool,
 )
-from huginn.types import ToolContext
 
 
 @pytest.fixture

@@ -24,8 +24,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from huginn.core_types import ToolContext, ToolResult
 from huginn.tools.base import HuginnTool
-from huginn.types import ToolContext, ToolResult
 
 from .aggregator import aggregate, ingest_into_kg
 from .mineru_client import (
@@ -360,7 +360,7 @@ if __name__ == "__main__":
     import asyncio
     from dataclasses import dataclass
 
-    from huginn.types import ToolResult
+    from huginn.core_types import ToolResult
 
     tool = LiteraturePipelineTool()
     assert tool.name == "literature_pipeline_tool"

@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 # register_skill() lands in SkillRegistry. Keep this import above the
 # tool class so the registry is populated before the first call.
 import huginn.skills.presets  # noqa: F401
+from huginn.core_types import ToolContext, ToolResult
 from huginn.memory.longterm import LongTermMemory
 from huginn.skills.base import (
     DeclarativeSkillExecutor,
@@ -28,7 +29,6 @@ from huginn.skills.base import (
 from huginn.skills.registry import SkillRegistry
 from huginn.tools.base import HuginnTool
 from huginn.tools.registry import ToolRegistry
-from huginn.types import ToolContext, ToolResult
 
 logger = logging.getLogger(__name__)
 

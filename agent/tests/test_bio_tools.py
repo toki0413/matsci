@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 import pytest
 
-from huginn.types import ToolContext
+from huginn.core_types import ToolContext
 
 CTX = ToolContext(session_id="test", workspace=".")
 

@@ -13,8 +13,8 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from huginn.core_types import ToolResult
 from huginn.tools.image_analysis._utils import auto_detect_colors, load_rgb, parse_color
-from huginn.types import ToolResult
 
 if TYPE_CHECKING:
     from huginn.tools.image_analysis.tool import ImageAnalysisInput

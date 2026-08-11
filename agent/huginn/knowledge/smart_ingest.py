@@ -367,7 +367,7 @@ class SmartIngester:
 
     def _make_tool_context(self) -> Any:
         """建一个最小 ToolContext 给 image_analysis_tool 用."""
-        from huginn.types import ToolContext
+        from huginn.core_types import ToolContext
 
         return ToolContext(
             session_id="smart_ingest",

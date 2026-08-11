@@ -8,8 +8,8 @@ import csv
 import numpy as np
 import pytest
 
+from huginn.core_types import ToolContext
 from huginn.tools.sci.active_learning_tool import ActiveLearningTool
-from huginn.types import ToolContext
 
 
 @pytest.fixture

@@ -11,8 +11,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from huginn.core_types import ToolContext, ToolResult, ValidationResult
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
-from huginn.types import ToolContext, ToolResult, ValidationResult
 
 # 点群 → Laue 类映射，get_laue() 被移除后用它来还原符号
 _POINT_GROUP_TO_LAUE: dict[str, str] = {

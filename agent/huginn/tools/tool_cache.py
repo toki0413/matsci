@@ -440,7 +440,7 @@ def _restore(cached: dict[str, Any], func: Callable) -> Any:
     """从缓存 dict 还原成工具原始返回类型。"""
     kind = cached.get("__type__")
     if kind == "ToolResult":
-        from huginn.types import ToolResult
+        from huginn.core_types import ToolResult
 
         return ToolResult(
             data=cached.get("data"),

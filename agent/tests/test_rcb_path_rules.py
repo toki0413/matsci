@@ -8,12 +8,12 @@ from __future__ import annotations
 
 import os
 
+from huginn.core_types import PermissionMode
 from huginn.permissions import (
     _DEFAULT_SANDBOX_PATH_RULES,
     PermissionChecker,
     PermissionConfig,
 )
-from huginn.types import PermissionMode
 
 
 def test_default_rules_nonempty():

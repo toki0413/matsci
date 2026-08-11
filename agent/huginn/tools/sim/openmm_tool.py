@@ -14,10 +14,10 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from huginn.core_types import ToolContext, ToolResult
 from huginn.phases import ResearchPhase
 from huginn.security import SandboxExecutor
 from huginn.tools.base import HuginnTool, ToolProfile
-from huginn.types import ToolContext, ToolResult
 
 logger = logging.getLogger(__name__)
 

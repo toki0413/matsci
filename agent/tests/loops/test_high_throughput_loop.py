@@ -10,9 +10,9 @@ from __future__ import annotations
 
 import pytest
 
+from huginn.core_types import ToolContext, ToolResult
 from huginn.tools.registry import ToolRegistry
 from huginn.tools.sci.high_throughput_tool import HighThroughputTool
-from huginn.types import ToolContext, ToolResult
 from huginn.workflows.high_throughput import (
     GridSpace,
     ParameterSweep,

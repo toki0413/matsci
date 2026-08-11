@@ -17,7 +17,7 @@ from datetime import UTC
 from pathlib import Path
 from typing import Any
 
-from huginn.types import ToolContext, ToolResult
+from huginn.core_types import ToolContext, ToolResult
 from huginn.utils.runtime import get_runtime_home
 
 from ._http import _USER_AGENT, logger

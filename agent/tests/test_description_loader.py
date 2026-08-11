@@ -24,7 +24,7 @@ class _NoDescTool(HuginnTool):
     name = "vasp_tool"  # has a sibling descriptions/vasp_tool.md
 
     async def _execute(self, args, context):  # noqa: ANN001
-        from huginn.types import ToolResult
+        from huginn.core_types import ToolResult
 
         return ToolResult(data=None, success=True)
 
@@ -34,7 +34,7 @@ class _ExplicitTool(HuginnTool):
     description = "my own text"
 
     async def _execute(self, args, context):  # noqa: ANN001
-        from huginn.types import ToolResult
+        from huginn.core_types import ToolResult
 
         return ToolResult(data=None, success=True)
 
@@ -44,7 +44,7 @@ class _PlaceholderTool(HuginnTool):
     description = "TODO"
 
     async def _execute(self, args, context):  # noqa: ANN001
-        from huginn.types import ToolResult
+        from huginn.core_types import ToolResult
 
         return ToolResult(data=None, success=True)
 
@@ -53,7 +53,7 @@ class _MissingMdTool(HuginnTool):
     name = "no_such_tool_anywhere"
 
     async def _execute(self, args, context):  # noqa: ANN001
-        from huginn.types import ToolResult
+        from huginn.core_types import ToolResult
 
         return ToolResult(data=None, success=True)
 

@@ -12,8 +12,8 @@ from rich.console import Console
 from rich.panel import Panel
 
 from huginn.cli.context import CliContext
+from huginn.core_types import ToolContext
 from huginn.plugins.autoresearch import AutoresearchInput, AutoresearchTool
-from huginn.types import ToolContext
 
 
 @click.group(name="autoresearch")

@@ -2,8 +2,8 @@
 
 from pathlib import Path
 
+from huginn.core_types import ToolContext
 from huginn.tools.sim.lammps_tool import LammpsTool, LammpsToolInput
-from huginn.types import ToolContext
 
 CTX = ToolContext(session_id="test", workspace=".")
 
