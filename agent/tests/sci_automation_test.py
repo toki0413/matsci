@@ -51,6 +51,16 @@ def report(name: str, success: bool, detail: str = "", skipped: bool = False, cr
 
 async def test_structure_symmetry_xrd_chain() -> None:
     print("\n[1] Structure → Symmetry → XRD → Validation Chain")
+    # pymatgen is an optional dependency — skip the whole chain gracefully
+    # when it's not installed instead of failing with a critical assertion.
+    try:
+        import pymatgen  # noqa: F401
+    except ImportError:
+        report("symmetry analyze", True, "pymatgen not installed — skipping", skipped=True)
+        report("XRD simulate", True, "pymatgen not installed — skipping", skipped=True)
+        report("primitive cell extraction", True, "pymatgen not installed — skipping", skipped=True)
+        return
+
     from huginn.tools.sci.symmetry_tool import SymmetryTool
     from huginn.tools.sci.xrd_sim_tool import XrdSimTool
 
