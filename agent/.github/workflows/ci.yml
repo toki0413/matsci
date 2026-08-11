@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    env:
+      HUGINN_CI: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install project and dev dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      # First gate: the TestClient-leak guard. Weightless (pathlib/re only),
+      # so it fails fast before the heavy suite runs. Anyone who reintroduces
+      # `client = TestClient(app)` without `with` gets an immediate red.
+      - name: TestClient hygiene guard
+        run: python -m pytest tests/test_testclient_hygiene.py -q -o addopts=""
+
+      - name: Run full test suite with coverage
+        run: |
+          python -m pytest tests -q \
+            --cov=huginn --cov-report=term-missing --cov-fail-under=60 -n auto
