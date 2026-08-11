@@ -269,7 +269,7 @@ class EngineActMixin:
             WorkflowOrchestrator,
             WorkflowScript,
         )
-        from huginn.types import ToolContext
+        from huginn.core_types import ToolContext
 
         raw_script = plan.get("script") or {}
         if isinstance(raw_script, str):
@@ -329,7 +329,7 @@ class EngineActMixin:
             WorkflowScript,
         )
         from huginn.autoloop.variant_gen import generate_variants
-        from huginn.types import ToolContext
+        from huginn.core_types import ToolContext
 
         raw_script = plan.get("script") or {}
         if isinstance(raw_script, str):
@@ -492,7 +492,7 @@ Please modify the code to address this task."""
     ) -> dict[str, Any]:
         """Execute a workflow task, picking template by domain when possible."""
         try:
-            from huginn.types import ToolContext
+            from huginn.core_types import ToolContext
             from huginn.workflows.templates import (
                 get_template,
                 standard_dft_workflow,
@@ -721,7 +721,7 @@ Please modify the code to address this task."""
         # P0-1: 流式化 — astream 替代 ainvoke, 增量 chunk 通过 progress_cb 推 WS.
         # 700 万步场景: decider 思考过程实时可见, 不再黑盒. fail 回退 ainvoke.
         # ponytail: 只在 progress_cb 存在时流式, 否则 ainvoke (兼容无 WS 场景).
-        from huginn.types import progress_cb as _progress_cb
+        from huginn.core_types import progress_cb as _progress_cb
 
         _cb = _progress_cb.get(None)
         if _cb is None or not hasattr(llm, "astream") or not _autoloop_streaming_enabled():

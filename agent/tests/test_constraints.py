@@ -12,8 +12,8 @@ from huginn.constraints import (
     SafetyOperator,
 )
 from huginn.constraints.boundaries import BoundaryEvolution, BoundaryState
+from huginn.core_types import ToolContext
 from huginn.tools.validate_tool import ValidateTool
-from huginn.types import ToolContext
 
 
 class TestReferenceDomain:

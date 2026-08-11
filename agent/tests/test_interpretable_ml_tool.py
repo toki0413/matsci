@@ -14,12 +14,12 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from huginn.core_types import ToolContext
 from huginn.tools.base import ResearchPhase
 from huginn.tools.sci.interpretable_ml_tool import (
     InterpretableMLInput,
     InterpretableMLTool,
 )
-from huginn.types import ToolContext
 
 
 def _ctx() -> ToolContext:

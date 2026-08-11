@@ -83,7 +83,7 @@ class TestConfigureCli:
 
 class TestDiagnoseCli:
     def test_diagnose_vasp_error(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-        from huginn.types import ToolResult
+        from huginn.core_types import ToolResult
 
         async def fake_call(self, inp, ctx):
             return ToolResult(
@@ -726,7 +726,7 @@ class TestWorkflowCli:
 
 class TestAutoresearchCli:
     def test_autoresearch_status(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-        from huginn.types import ToolResult
+        from huginn.core_types import ToolResult
 
         async def fake_call(self, inp, ctx):
             return ToolResult(success=True, data={"status": "clean"})

@@ -7,9 +7,9 @@ from typing import Literal
 import numpy as np
 from pydantic import BaseModel, Field
 
+from huginn.core_types import ToolContext, ToolResult
 from huginn.evaluation.core import evaluate, sensitivity_random_weights
 from huginn.tools.base import HuginnTool
-from huginn.types import ToolContext, ToolResult
 
 
 class EvaluationToolInput(BaseModel):

@@ -51,7 +51,7 @@ def _try_fallback(
             return None
 
         # 构造 ToolContext — 复用主调用的 context，没有就建一个最小的
-        from huginn.types import ToolContext
+        from huginn.core_types import ToolContext
 
         if isinstance(context, ToolContext):
             ctx = context

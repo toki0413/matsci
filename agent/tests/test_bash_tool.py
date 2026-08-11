@@ -7,8 +7,8 @@ import sys
 
 import pytest
 
+from huginn.core_types import ToolContext
 from huginn.tools.bash_tool import BashTool
-from huginn.types import ToolContext
 
 # CI sandbox executor 误解析 workspace="." 为重复绝对路径
 # (/home/runner/.../agent/home/runner/.../agent). 本地 sandbox 无此问题.

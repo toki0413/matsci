@@ -14,9 +14,9 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from huginn.core_types import PermissionMode, ToolContext, ToolResult
 from huginn.permissions import PermissionChecker, PermissionConfig
 from huginn.tools.base import HuginnTool
-from huginn.types import PermissionMode, ToolContext, ToolResult
 
 
 class FileEditToolInput(BaseModel):

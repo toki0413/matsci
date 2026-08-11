@@ -53,7 +53,7 @@ def tool():
 @pytest.fixture
 def ctx(tmp_path):
     """ToolContext for tool.call(). 名字用 ctx 不是 context (避 pytest 保留名)."""
-    from huginn.types import ToolContext
+    from huginn.core_types import ToolContext
 
     return ToolContext(session_id="test", workspace=str(tmp_path))
 

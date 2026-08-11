@@ -16,9 +16,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+from huginn.core_types import ToolContext
 from huginn.tools.lean_tool import LeanTool, LeanToolInput
 from huginn.tools.symbolic_math_tool import SymbolicMathInput, SymbolicMathTool
-from huginn.types import ToolContext
 
 
 def _ctx() -> ToolContext:

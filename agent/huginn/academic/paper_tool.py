@@ -23,8 +23,8 @@ from huginn.academic.journal_db import (
     search_journals,
 )
 from huginn.academic.standards_checker import StandardsChecker
+from huginn.core_types import ToolContext, ToolResult
 from huginn.tools.base import HuginnTool
-from huginn.types import ToolContext, ToolResult
 
 
 class PaperToolInput(BaseModel):

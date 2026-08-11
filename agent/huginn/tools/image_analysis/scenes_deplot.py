@@ -11,7 +11,7 @@ import logging
 import threading
 from typing import TYPE_CHECKING
 
-from huginn.types import ToolResult
+from huginn.core_types import ToolResult
 
 if TYPE_CHECKING:
     from huginn.tools.image_analysis.tool import ImageAnalysisInput

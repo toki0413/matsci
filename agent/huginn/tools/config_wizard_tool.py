@@ -21,6 +21,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from huginn.config import HuginnConfig, ModelConfig
+from huginn.core_types import ToolResult, ValidationResult
 from huginn.models.registry import (
     _DOMESTIC_OPENAI_COMPATIBLE,
     _PROVIDER_DEFAULTS,
@@ -29,7 +30,6 @@ from huginn.models.registry import (
     resolve_provider_key,
 )
 from huginn.tools.base import HuginnTool
-from huginn.types import ToolResult, ValidationResult
 
 # Provider 特点说明, 给 LLM 做推荐时参考
 _PROVIDER_NOTES: dict[str, str] = {

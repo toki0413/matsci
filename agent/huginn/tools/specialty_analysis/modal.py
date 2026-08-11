@@ -13,7 +13,7 @@ import numpy as np
 from scipy.linalg import eigh
 from scipy.sparse.linalg import eigsh
 
-from huginn.types import ToolResult
+from huginn.core_types import ToolResult
 
 
 def modal_lanczos(args: Any) -> ToolResult:

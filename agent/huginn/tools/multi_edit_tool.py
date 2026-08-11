@@ -14,11 +14,11 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from huginn.core_types import PermissionMode, ToolContext, ToolResult
 from huginn.permissions import PermissionChecker, PermissionConfig
 from huginn.tools.base import HuginnTool
 from huginn.tools.file_edit_tool import _content_hash, _make_diff
 from huginn.tools.profile import ToolProfile
-from huginn.types import PermissionMode, ToolContext, ToolResult
 
 
 class SingleEdit(BaseModel):

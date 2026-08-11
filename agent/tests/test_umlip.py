@@ -8,12 +8,12 @@ import types
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from huginn.core_types import ToolResult
 from huginn.tools.sci.ml_potential_tool import (
     UMLIP_REGISTRY,
     MLPotentialInput,
     MLPotentialTool,
 )
-from huginn.types import ToolResult
 
 
 def _make_structure(tmp_path: Path) -> Path:

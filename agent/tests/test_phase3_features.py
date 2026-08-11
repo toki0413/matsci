@@ -6,13 +6,13 @@ from __future__ import annotations
 
 import pytest
 
+from huginn.core_types import ToolContext
 from huginn.exploration.core import Branch, BranchStatus, Decision, ExplorationSpace
 from huginn.tools.report_tool import ReportComparator, ReportTool, ReportToolInput
 from huginn.tools.sci.symbolic_regression_tool import (
     SymbolicRegressionInput,
     SymbolicRegressionTool,
 )
-from huginn.types import ToolContext
 from huginn.workflows.engine import WorkflowEngine
 from huginn.workflows.stages import ValidationRule
 

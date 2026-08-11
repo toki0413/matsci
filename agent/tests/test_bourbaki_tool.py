@@ -16,8 +16,8 @@ _bourbaki_path = str(Path(__file__).parent.parent.parent / "math-anything" / "ma
 if Path(_bourbaki_path).exists() and _bourbaki_path not in sys.path:
     sys.path.insert(0, _bourbaki_path)
 
+from huginn.core_types import ToolContext  # noqa: E402
 from huginn.tools.bourbaki_tool import BourbakiInput, BourbakiTool  # noqa: E402
-from huginn.types import ToolContext  # noqa: E402
 
 CTX = ToolContext(session_id="test", workspace=".")
 

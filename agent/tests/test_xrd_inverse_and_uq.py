@@ -13,10 +13,10 @@ import shutil
 
 import pytest
 
+from huginn.core_types import ToolContext
 from huginn.tools.sci.xrd_sim_tool import XrdSimTool
 from huginn.tools.sim.lammps_tool import LammpsTool, LammpsToolInput
 from huginn.tools.sim.vasp_tool import VaspTool
-from huginn.types import ToolContext
 
 _LAMMPS_AVAILABLE = bool(
     os.environ.get("LAMMPS_EXECUTABLE")

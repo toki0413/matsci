@@ -16,9 +16,9 @@ from typing import Any, Literal
 import numpy as np
 from pydantic import BaseModel, Field
 
+from huginn.core_types import ToolContext, ToolResult, ValidationResult
 from huginn.security.math_eval import safe_math_eval
 from huginn.tools.base import HuginnTool, ToolProfile
-from huginn.types import ToolContext, ToolResult, ValidationResult
 
 
 class NumericalToolInput(BaseModel):

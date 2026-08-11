@@ -13,8 +13,8 @@ import numpy as np
 import pytest
 from pydantic import ValidationError
 
+from huginn.core_types import ToolContext
 from huginn.tools.thermo_tool import ThermoTool, ThermoToolInput
-from huginn.types import ToolContext
 
 # 跟 _md_thermo 里保持一致的物理常数, 用来算期望值
 KB = 8.617333e-5  # eV/K

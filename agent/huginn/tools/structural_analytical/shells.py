@@ -15,7 +15,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from huginn.types import ToolResult
+from huginn.core_types import ToolResult
 
 # NASA SP-8007 经验 knockdown 因子下界 (实际壳体有初始缺陷, 低于经典值)
 # 这里取一个偏保守的常数. 严格做法是按 (R/h, L/R) 查表, 这里简化.

@@ -19,6 +19,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
+from huginn.core_types import ToolContext
 from huginn.permissions import PermissionConfig
 from huginn.tools.agentic_search_tool import (
     AgenticSearchInput,
@@ -31,7 +32,6 @@ from huginn.tools.agentic_search_tool import (
     _sentences,
     _synthesize,
 )
-from huginn.types import ToolContext
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -412,7 +412,7 @@ class TestDefaultBackends:
         from huginn.tools import web_search_tool as wst_mod
 
         async def _fake_call(self, args, ctx):
-            from huginn.types import ToolResult
+            from huginn.core_types import ToolResult
             return ToolResult(
                 data={"results": [{"url": "x", "title": "y", "snippet": "z"}]},
                 success=True,

@@ -21,8 +21,8 @@ from typing import Any, Literal
 import numpy as np
 from pydantic import BaseModel, Field
 
+from huginn.core_types import ToolContext, ToolResult
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
-from huginn.types import ToolContext, ToolResult
 
 # Flat model registries — caller passes "random_forest" and we resolve to the
 # sklearn class without a chain of if/elif. Keys are lowercased so the LLM's

@@ -21,10 +21,10 @@ from huginn.autoloop.dynamic_workflow import (
     WorkflowScript,
     get_shared_workflow_registry,
 )
+from huginn.core_types import ToolContext, ToolResult
 from huginn.phases import ResearchPhase
 from huginn.tools.base import HuginnTool
 from huginn.tools.profile import ToolProfile
-from huginn.types import ToolContext, ToolResult
 
 
 class WorkflowToolInput(BaseModel):

@@ -7,10 +7,10 @@ from unittest.mock import patch
 
 import pytest
 
+from huginn.core_types import ToolContext
 from huginn.tools.hypothesis_generator_tool import (
     HypothesisGeneratorTool,
 )
-from huginn.types import ToolContext
 
 
 def _ctx(workspace: Path) -> ToolContext:

@@ -23,8 +23,8 @@ from typing import Any, Literal
 import numpy as np
 from pydantic import BaseModel, Field, model_validator
 
+from huginn.core_types import ToolContext, ToolResult
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
-from huginn.types import ToolContext, ToolResult
 
 logger = logging.getLogger(__name__)
 

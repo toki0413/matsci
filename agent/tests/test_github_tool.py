@@ -8,9 +8,9 @@ from unittest.mock import patch
 
 import pytest
 
+from huginn.core_types import ToolContext
 from huginn.permissions import PermissionConfig
 from huginn.tools.github_tool import GithubTool, _build_gh_cmd
-from huginn.types import ToolContext
 
 
 @pytest.fixture

@@ -21,10 +21,10 @@ from typing import Literal
 import numpy as np
 from pydantic import BaseModel, Field
 
+from huginn.core_types import ToolContext, ToolResult
 from huginn.phases import ResearchPhase
 from huginn.tools.base import HuginnTool
 from huginn.tools.profile import ToolProfile
-from huginn.types import ToolContext, ToolResult
 
 logger = logging.getLogger(__name__)
 

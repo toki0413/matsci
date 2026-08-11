@@ -5,10 +5,10 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 from huginn.constraints import BoundaryState
+from huginn.core_types import ToolContext, ToolResult
 from huginn.permissions import PermissionConfig
 from huginn.tools.adapter import ToolAdapter
 from huginn.tools.base import HuginnTool, ToolProfile
-from huginn.types import ToolContext, ToolResult
 
 
 class _FakeDftInput(BaseModel):

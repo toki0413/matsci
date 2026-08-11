@@ -13,7 +13,7 @@ from scipy.sparse.linalg import eigsh
 from skfem import Basis, ElementTriP2, ElementVector, asm
 from skfem.models.elasticity import linear_elasticity, plane_stress
 
-from huginn.types import ToolResult
+from huginn.core_types import ToolResult
 
 
 def buckling(args: Any) -> ToolResult:

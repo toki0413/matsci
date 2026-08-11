@@ -152,7 +152,7 @@ class DeclarativeSkillExecutor(SkillExecutor):
         params: dict[str, Any],
         context: dict[str, Any],
     ) -> dict[str, Any]:
-        from huginn.types import ToolContext
+        from huginn.core_types import ToolContext
 
         results = {"skill": skill.name, "steps": [], "success": True}
         working_context = {**context, **params}

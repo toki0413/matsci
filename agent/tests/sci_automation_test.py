@@ -21,7 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 os.environ.setdefault("HUGINN_CACHE_DIR", str(Path(__file__).parent.parent / ".test_cache"))
 
-from huginn.types import ToolContext
+from huginn.core_types import ToolContext
 
 # ── Test framework ──────────────────────────────────────────────────
 
