@@ -99,6 +99,7 @@ def _resolve_research_phase(phase: str):
     try:
         return ResearchPhase(phase)
     except (ValueError, TypeError):
+        logger.debug("best-effort op failed", exc_info=True)
         return None
 
 

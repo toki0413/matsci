@@ -173,6 +173,7 @@ class HuginnSwarm:
                     )
                 )
             except Exception:
+                logger.debug("best-effort op failed", exc_info=True)
                 continue
         return steps
 

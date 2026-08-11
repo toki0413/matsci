@@ -31,6 +31,7 @@ try:
 
     _JUPYTER_AVAILABLE = True
 except Exception:
+    logger.debug("best-effort op failed", exc_info=True)
     _JUPYTER_AVAILABLE = False
 
 

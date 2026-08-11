@@ -308,6 +308,7 @@ class InterpretableMLTool(HuginnTool):
             import gpytorch
             import torch
         except ImportError:
+            logger.debug("best-effort op failed", exc_info=True)
             return None
 
         class _ExactGP(gpytorch.models.ExactGP):
@@ -653,6 +654,7 @@ class InterpretableMLTool(HuginnTool):
             try:
                 e = int(exp)
             except Exception:
+                logger.debug("best-effort op failed", exc_info=True)
                 e = 1
             return {k: v * e for k, v in base_dim.items()}
         if isinstance(term, sympy.Mul):

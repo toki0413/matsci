@@ -131,6 +131,7 @@ def _collect_tool_health() -> dict[str, Any]:
             all_health[name] = dash.get_health(name)
         return all_health
     except Exception:
+        logger.debug("best-effort op failed", exc_info=True)
         return {}
 
 
@@ -151,6 +152,7 @@ def _collect_circuit_states() -> dict[str, Any]:
                 }
         return states
     except Exception:
+        logger.debug("best-effort op failed", exc_info=True)
         return {}
 
 
@@ -227,6 +229,7 @@ def _collect_plugin_status() -> dict[str, Any]:
             plugins[name]["priority"] = p
         return plugins
     except Exception:
+        logger.debug("best-effort op failed", exc_info=True)
         return {}
 
 

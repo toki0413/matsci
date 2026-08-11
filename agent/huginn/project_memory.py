@@ -33,6 +33,7 @@ def load_agents_md(workspace: str | Path) -> str | None:
     try:
         raw = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
+        logger.debug("best-effort op failed", exc_info=True)
         return None
     if len(raw.encode("utf-8")) > _MAX_AGENTS_MD_BYTES:
         # 截到字节边界附近, 留个尾巴提示被截断了

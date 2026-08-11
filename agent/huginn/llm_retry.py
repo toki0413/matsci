@@ -81,6 +81,7 @@ def _get_status_code(exc: BaseException) -> int | None:
     try:
         return int(code) if code is not None else None
     except (TypeError, ValueError):
+        logger.debug("best-effort op failed", exc_info=True)
         return None
 
 
@@ -107,6 +108,7 @@ def _get_retry_after(exc: BaseException) -> float | None:
     try:
         return float(raw)
     except (TypeError, ValueError):
+        logger.debug("best-effort op failed", exc_info=True)
         return None
 
 
@@ -353,6 +355,7 @@ async def with_retry(
                         str(getattr(exc, "response", "") or "")
                     )
                 except Exception:
+                    logger.debug("best-effort op failed", exc_info=True)
                     refreshed = False
                 if refreshed and attempt < max_attempts:
                     logger.info(

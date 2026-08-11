@@ -81,6 +81,7 @@ class MISISubtask:
             import rdkit  # noqa: F401
             return True
         except ImportError:
+            logger.debug("best-effort op failed", exc_info=True)
             return False
 
     def run(
@@ -221,6 +222,7 @@ def _selfcheck() -> None:
             import rdkit  # noqa: F401
             packages_ok = True
         except ImportError:
+            logger.debug("best-effort op failed", exc_info=True)
             packages_ok = False
 
         if not packages_ok:

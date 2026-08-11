@@ -264,6 +264,7 @@ def _parse_cif(text: str) -> tuple[list[dict[str, Any]], dict[str, Any] | None, 
                 try:
                     fx, fy, fz = float(parts[-3]), float(parts[-2]), float(parts[-1])
                 except ValueError:
+                    logger.debug("best-effort op failed", exc_info=True)
                     continue
                 pos = [fx, fy, fz]  # 分数坐标
                 if cell:
@@ -396,6 +397,7 @@ def _parse_xyz_trajectory(text: str) -> dict[str, Any]:
         try:
             n = int(lines[i].strip())
         except (ValueError, IndexError):
+            logger.debug("best-effort op failed", exc_info=True)
             break
         comment = lines[i + 1] if i + 1 < len(lines) else ""
         # 注释行里找 energy=... 或直接是浮点数

@@ -51,6 +51,7 @@ def get_llm_likelihood_interval() -> int:
     try:
         return max(1, int(os.environ.get("HUGINN_LLM_LIKELIHOOD_INTERVAL", "5")))
     except (TypeError, ValueError):
+        logger.debug("best-effort op failed", exc_info=True)
         return 5
 
 

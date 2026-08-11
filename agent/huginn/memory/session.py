@@ -88,7 +88,7 @@ class SessionContext:
                 self._summarize_check_every = cfg.wm_summarize_every_n
         except Exception:
             # 循环 import / config 未就绪 — 保持 env var 默认值.
-            pass
+            logger.debug("best-effort op failed", exc_info=True)
 
     def add_message(
         self, message: AgentMessage | str, content: str | None = None

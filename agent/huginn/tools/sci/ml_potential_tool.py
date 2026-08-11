@@ -627,6 +627,7 @@ class MLPotentialTool(HuginnTool):
                 f = atoms.get_forces()
             except Exception:
                 # 单点失败就跳过, 不让整个 landscape 挂掉
+                logger.debug("best-effort op failed", exc_info=True)
                 continue
             disp = (magnitude * vec).ravel().tolist()
             samples.append(

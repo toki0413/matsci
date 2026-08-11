@@ -311,6 +311,7 @@ class ReviewCommitteeTool(HuginnTool):
         try:
             score = int(match.group(1))
         except (ValueError, IndexError):
+            logger.debug("best-effort op failed", exc_info=True)
             return None
         # 钳到 1-10
         if score < 1:
@@ -390,6 +391,7 @@ class ReviewCommitteeTool(HuginnTool):
                 try:
                     data = json.loads(text[start : end + 1])
                 except json.JSONDecodeError:
+                    logger.debug("best-effort op failed", exc_info=True)
                     return None
             else:
                 return None

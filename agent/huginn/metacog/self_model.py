@@ -423,6 +423,7 @@ def _parse_first_json(text: str) -> dict | None:
                 try:
                     return json.loads(text[start:i + 1])
                 except json.JSONDecodeError:
+                    logger.debug("best-effort op failed", exc_info=True)
                     return None
     return None
 
@@ -457,6 +458,7 @@ def extract_step_result_from_audit(
                 try:
                     rec = json.loads(line)
                 except json.JSONDecodeError:
+                    logger.debug("best-effort op failed", exc_info=True)
                     continue
                 # schema 没有 step_id 就全收; 有了就按 step_id 过滤
                 rec_step = rec.get("step_id") or rec.get("iteration")
@@ -465,7 +467,7 @@ def extract_step_result_from_audit(
                         if int(rec_step) != step_id:
                             continue
                     except (TypeError, ValueError):
-                        pass
+                        logger.debug("best-effort op failed", exc_info=True)
                 etype = rec.get("type", "")
                 if etype not in ("tool.call", "tool.result", "tool.error"):
                     continue
@@ -480,6 +482,7 @@ def extract_step_result_from_audit(
                 try:
                     ts_f = float(ts) if ts else 0.0
                 except (TypeError, ValueError):
+                    logger.debug("best-effort op failed", exc_info=True)
                     ts_f = 0.0
                 if etype == "tool.call":
                     sig = f"{tool_name}:{str(data.get('input', ''))[:64]}"

@@ -61,6 +61,7 @@ def _check_time_trigger(payload: dict, current_state: dict) -> bool:
     try:
         when = datetime.fromisoformat(when_str)
     except (ValueError, TypeError):
+        logger.debug("best-effort op failed", exc_info=True)
         return False
     return datetime.now() >= when
 
@@ -110,6 +111,7 @@ def _check_condition_trigger(payload: dict, current_state: dict) -> bool:
     try:
         tree = ast.parse(expr, mode="eval")
     except SyntaxError:
+        logger.debug("best-effort op failed", exc_info=True)
         return False
     body = tree.body
     if not isinstance(body, ast.Compare):
@@ -133,6 +135,7 @@ def _check_condition_trigger(payload: dict, current_state: dict) -> bool:
     try:
         return _SAFE_CMP_OPS[op_type](var_val, cmp_val)
     except TypeError:
+        logger.debug("best-effort op failed", exc_info=True)
         return False
 
 
@@ -177,6 +180,7 @@ class ProspectiveMemory:
                     rec = json.loads(line)
                 except json.JSONDecodeError:
                     # 损坏行跳过, 不让一行坏数据把整个 store 干废
+                    logger.debug("best-effort op failed", exc_info=True)
                     continue
                 kind = rec.get("kind")
                 iid = rec.get("intention_id")

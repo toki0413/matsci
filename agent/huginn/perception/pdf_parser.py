@@ -301,6 +301,7 @@ class PDFElementExtractor:
             try:
                 page_h = self._doc[page_idx].rect.height
             except Exception:
+                logger.debug("best-effort op failed", exc_info=True)
                 page_h = 0.0
 
         elements: list[DocumentElement] = []
@@ -418,6 +419,7 @@ class PDFElementExtractor:
             try:
                 bx = tuple(raw_bbox) if raw_bbox is not None else None
             except Exception:
+                logger.debug("best-effort op failed", exc_info=True)
                 bx = None
             if bx and len(bx) >= 4:
                 bbox = BBox(bx[0], bx[1], bx[2], bx[3])

@@ -156,6 +156,7 @@ def retrieve_fingerprint(
             ).fetchone()
             return dict(row) if row else None
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return None
         finally:
             conn.close()
@@ -233,6 +234,7 @@ def extract_domain(url: str) -> str:
         parsed = urlparse(url)
         return parsed.netloc.lower()
     except Exception:
+        logger.debug("best-effort op failed", exc_info=True)
         return ""
 
 

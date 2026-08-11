@@ -244,6 +244,7 @@ class AnomalyLLMHook:
         try:
             data = json.loads(text)
         except json.JSONDecodeError:
+            logger.debug("best-effort op failed", exc_info=True)
             return None
         if not isinstance(data, dict):
             return None

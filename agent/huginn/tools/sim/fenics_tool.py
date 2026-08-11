@@ -51,8 +51,10 @@ def _fenics_available(sandbox: SandboxExecutor) -> bool:
         )
         return result.returncode == 0
     except SandboxError:
+        logger.debug("best-effort op failed", exc_info=True)
         return False
     except Exception:
+        logger.debug("best-effort op failed", exc_info=True)
         return False
 
 
@@ -305,7 +307,7 @@ class FenicsTool(HuginnTool):
                             diffs.append(val)
                             parsed = True
                         except ValueError:
-                            pass
+                            logger.debug("best-effort op failed", exc_info=True)
                     elif parts and parts[0] == "error":
                         diffs.append(float("nan"))
                         parsed = True

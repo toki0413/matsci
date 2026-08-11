@@ -271,6 +271,7 @@ class HypothesisGeneratorTool(HuginnTool):
             # 1 hit -> 0.73, 2 hits -> 0.47, 3 hits -> 0.2
             return 1.0 - 0.27 * n
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return 0.5
 
     def _score_feasibility(self, hypothesis: dict[str, Any]) -> float:
@@ -315,6 +316,7 @@ class HypothesisGeneratorTool(HuginnTool):
                 return 0.5
             return 0.2
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return 0.5
 
     async def _score_kb_relevance(
@@ -334,6 +336,7 @@ class HypothesisGeneratorTool(HuginnTool):
             chunks = kb.query(statement, top_k=3)
             return min(len(chunks) / 3.0, 1.0)
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return 0.5
 
     async def _search_literature(
@@ -628,6 +631,7 @@ class HypothesisGeneratorTool(HuginnTool):
                 try:
                     return json.loads(text[start : end + 1])
                 except json.JSONDecodeError:
+                    logger.debug("best-effort op failed", exc_info=True)
                     return None
             return None
 

@@ -21,15 +21,16 @@ from huginn.security import SandboxExecutor
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.validation.handle_validator import HandleValidator
 
+logger = logging.getLogger(__name__)
+
 try:
     import huginn_ext
 
     _HAS_HUGINN_EXT = True
 except ImportError:
+    logger.debug("best-effort op failed", exc_info=True)
     huginn_ext = None
     _HAS_HUGINN_EXT = False
-
-logger = logging.getLogger(__name__)
 
 # submit_async 实际可以跑的计算类型
 _COMPUTE_ACTIONS = ("relax", "scf", "band", "dos", "md", "phonon")
@@ -488,6 +489,7 @@ class VaspTool(HuginnTool):
             self._modify_incar(incar, fixed)
             return {"fixes": fixed, "reasoning": reasoning}
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return None
 
     # ------------------------------------------------------------------ async job API
@@ -632,7 +634,7 @@ class VaspTool(HuginnTool):
             await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
         except TimeoutError:
             # 超时: 作业还在跑, 返回当前状态 (不取消 task, 让它继续)
-            pass
+            logger.debug("best-effort op failed", exc_info=True)
         except Exception as exc:
             # task 本身挂了 (不是超时), 把错误记下来
             job["status"] = "failed"
@@ -957,6 +959,7 @@ class VaspTool(HuginnTool):
             float(s)
             return True
         except ValueError:
+            logger.debug("best-effort op failed", exc_info=True)
             return False
 
     def _mock_result(self, args: VaspToolInput, work_dir: Path) -> ToolResult:

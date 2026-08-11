@@ -49,6 +49,7 @@ def _is_numeric_task(task: BenchmarkTask) -> bool:
         src = inspect.getsource(task.evaluator)
         return "_eval_num" in src or "_num_close" in src
     except (TypeError, OSError):
+        logger.debug("best-effort op failed", exc_info=True)
         return False
 
 
@@ -632,7 +633,7 @@ class BenchmarkRunner:
                             result.passed = False
                 except (TimeoutError, Exception) as _b1_exc:
                     # B1 retry 失败不阻塞, 保留原 result
-                    pass
+                    logger.debug("best-effort op failed", exc_info=True)
 
         # LLM judge: regex 评分低时触发二次评审 (对标 PaperBench SimpleJudge)
         if task.prompt and task.reference is not None:

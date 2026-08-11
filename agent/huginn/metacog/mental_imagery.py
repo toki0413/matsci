@@ -132,6 +132,7 @@ def sketch(spec: str) -> bytes:
         return buf.getvalue()
     except ImportError:
         # PIL 不可用时返回空 bytes (verify 会处理)
+        logger.debug("best-effort op failed", exc_info=True)
         return b""
 
 
@@ -147,6 +148,7 @@ def _decode_to_gray(image_bytes: bytes) -> np.ndarray | None:
             img = img.convert("L")
         return np.asarray(img)
     except Exception:
+        logger.debug("best-effort op failed", exc_info=True)
         return None
 
 

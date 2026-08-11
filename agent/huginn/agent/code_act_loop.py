@@ -476,6 +476,7 @@ def _audit_code(agent: Any, code: str, error: str | None) -> None:
             ctx = getattr(agent, "_session_state", None)
             audit_logger = getattr(ctx, "audit_logger", None)
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return
     if audit_logger is None:
         return

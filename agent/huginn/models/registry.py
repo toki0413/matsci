@@ -160,6 +160,7 @@ def _llm_request_timeout() -> float:
         v = float(raw)
         return v if v > 0 else 120.0
     except (TypeError, ValueError):
+        logger.debug("best-effort op failed", exc_info=True)
         return 120.0
 
 
@@ -669,6 +670,7 @@ def _get_usage_cb() -> Any:
         from huginn.routes.metrics import get_usage_callback
         return get_usage_callback()
     except Exception:
+        logger.debug("best-effort op failed", exc_info=True)
         return None
 
 

@@ -504,7 +504,7 @@ def track_llm_usage(model: str, stats: dict[str, Any]) -> None:
                 flush=True,
             )
     except Exception:
-        pass  # metrics are best-effort, never break the agent
+        logger.debug("best-effort op failed", exc_info=True)  # metrics are best-effort, never break the agent
 
 
 # ── UsageCallback ─────────────────────────────────────────────────────
@@ -527,6 +527,7 @@ def get_usage_callback() -> Any:
         from langchain_core.callbacks import BaseCallbackHandler
         from langchain_core.outputs import LLMResult
     except ImportError:
+        logger.debug("best-effort op failed", exc_info=True)
         return None  # langchain 没装, 跳过
 
     class UsageCallback(BaseCallbackHandler):
@@ -572,7 +573,7 @@ def get_usage_callback() -> Any:
                             )
                         track_llm_usage(str(model), stats)
             except Exception:
-                pass  # best-effort, 不阻塞 agent
+                logger.debug("best-effort op failed", exc_info=True)  # best-effort, 不阻塞 agent
 
     _USAGE_CALLBACK_SINGLETON = UsageCallback()
     return _USAGE_CALLBACK_SINGLETON

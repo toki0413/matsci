@@ -266,7 +266,7 @@ async def memory_layers() -> dict[str, Any]:
                         "objective": (meta or {}).get("objective", ""),
                     })
             except Exception:
-                pass  # KB collection 查询失败不阻塞, recent_patterns 留空
+                logger.debug("best-effort op failed", exc_info=True)  # KB collection 查询失败不阻塞, recent_patterns 留空
         # KG 临时实例化
         kg_stats: dict[str, Any] = {"nodes": 0, "edges": 0, "node_types": {}}
         try:
@@ -275,7 +275,7 @@ async def memory_layers() -> dict[str, Any]:
             kg = ProjectKnowledgeGraph(workspace / HUGINN_DIR_NAME)
             kg_stats = kg.stats()
         except Exception:
-            pass  # KG 文件不存在或损坏不阻塞
+            logger.debug("best-effort op failed", exc_info=True)  # KG 文件不存在或损坏不阻塞
         result["sm"] = {
             "kb_chunks": kb_chunks,
             "kg_nodes": kg_stats.get("nodes", 0),

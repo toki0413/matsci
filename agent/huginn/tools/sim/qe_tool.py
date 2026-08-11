@@ -374,6 +374,7 @@ class QuantumEspressoTool(HuginnTool):
             content = output_path.read_text(encoding="utf-8", errors="ignore")
             return content[-tail:]
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return ""
 
     def _read_input_params(self, input_path: Path) -> dict[str, Any]:
@@ -394,7 +395,7 @@ class QuantumEspressoTool(HuginnTool):
                     num = float(v)
                     v = int(num) if num == int(num) else num  # type: ignore[assignment]
                 except ValueError:
-                    pass
+                    logger.debug("best-effort op failed", exc_info=True)
                 params[k] = v
         except Exception:
             logger.debug("read input params failed", exc_info=True)
@@ -449,6 +450,7 @@ class QuantumEspressoTool(HuginnTool):
             self._apply_input_fixes(input_path, fixed)
             return {"fixes": fixed, "reasoning": reasoning}
         except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
             return None
 
     def _parse_output_file(self, output_path: Path) -> dict[str, Any]:
