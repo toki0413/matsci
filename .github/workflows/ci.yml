@@ -106,9 +106,14 @@ jobs:
           NUMEXPR_NUM_THREADS: "1"
         run: |
           cd agent
+          # -n 0 (串行, 不 fork): 全 app 测试(TestClient)在 xdist fork 下会
+          # 因 fork+threads 崩溃/OOM, 之前的手工分组正是为此。串行从根上
+          # 规避, 不再需要维护分组。stress/ 与 benchmark/ 是重型长跑套件,
+          # 留给专门触发, 不进默认 push。
           python -m pytest tests -v -rA --tb=line -p no:cov -o addopts="" \
             --timeout=60 --timeout-method=thread \
-            -n 2 -m "not network" \
+            -n 0 -m "not network" \
+            --ignore=tests/stress --ignore=tests/benchmark \
             --maxfail=50 2>&1 | tee pytest_output.txt
           exit ${PIPESTATUS[0]}
 
