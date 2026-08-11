@@ -48,6 +48,11 @@ class FeatureFlags:
         "privacy_off": True,           # 不脱敏 (默认)
         "privacy_redact": False,       # 脱敏后发云端
         "privacy_local_only": False,   # 完全本地, 不发云端
+        # harness 调优开关: 默认 off, 需显式开启 (成本明确, 见 harness/__init__.py)
+        # 登记到这里让用户能通过 HUGINN_FEATURE_<NAME>=true 环境变量
+        # 或 FeatureFlags.enable() 一键开, 不必改 toml.
+        "harness_significance_gate": False,  # H5 显著性检验门 (防噪声回归)
+        "harness_ood_holdout": False,        # H6 分布外留出验证 (防背题补丁)
     }
 
     # 给 list_flags 用的功能描述
@@ -65,6 +70,8 @@ class FeatureFlags:
         "privacy_off": "隐私级别: off (不脱敏, 默认. 仅由 set_level 维护互斥, 外部设置无效)",
         "privacy_redact": "隐私级别: redact (脱敏后发云端)",
         "privacy_local_only": "隐私级别: local_only (完全本地)",
+        "harness_significance_gate": "H5 显著性检验门: Wilcoxon 检验候选配置增益是否显著 (默认 off)",
+        "harness_ood_holdout": "H6 分布外留出验证: 防 backdoor patch 只在训练任务上有效 (默认 off)",
     }
 
     _singleton_lock = threading.Lock()

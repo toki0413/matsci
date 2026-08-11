@@ -43,12 +43,23 @@ _ALPHA_DEFAULT = 0.05
 
 
 def _harness_enabled(key: str, default: bool = False) -> bool:
+    """读 cfg.feature_flags.<key>, fallback 到 FeatureFlags 统一层.
+
+    优先级: 配置文件 > 环境变量 / 运行时 API > default.
+    """
     try:
         from huginn.config import get_config
 
         cfg = get_config()
         ff = getattr(cfg, "feature_flags", None) or {}
-        return bool(ff.get(key, default))
+        if key in ff:
+            return bool(ff[key])
+    except Exception:
+        pass
+    try:
+        from huginn.feature_flags import FeatureFlags
+
+        return FeatureFlags.shared().is_enabled(key)
     except Exception:
         return default
 
