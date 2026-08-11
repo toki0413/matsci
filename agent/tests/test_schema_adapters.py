@@ -362,10 +362,14 @@ class _MockTool:
 
 
 @pytest.fixture
-def mock_registry(monkeypatch):
+def mock_registry():
     """用 mock 工具替换 ToolRegistry 的类级状态, 测试后自动恢复。
 
     放三个工具: 两个 active, 一个 active=False (验证过滤)。
+
+    用 ToolRegistry.snapshot()/restore() 而非 monkeypatch.setattr 覆盖 _tools:
+    conftest 的 _restore_tool_registry hygiene guard 会在 monkeypatch 恢复前
+    比对 registry, 直接 patch _tools 会导致 added/removed 泄漏误报.
     """
     from huginn.tools.registry import ToolRegistry
 
@@ -398,9 +402,13 @@ def mock_registry(monkeypatch):
             active=False,
         ),
     }
-    monkeypatch.setattr(ToolRegistry, "_tools", tools)
-    monkeypatch.setattr(ToolRegistry, "_schemas_cache", None)
-    return ToolRegistry
+    before = ToolRegistry.snapshot()
+    try:
+        ToolRegistry._tools = tools
+        ToolRegistry._schemas_cache = None
+        yield ToolRegistry
+    finally:
+        ToolRegistry.restore(before)
 
 
 def test_get_schemas_for_provider_openai(mock_registry):
