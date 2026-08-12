@@ -138,3 +138,8 @@ token（如 `wanzh`）都会让 CI 变红。机器相关路径必须改为 env �
       `AKIAIOSFODNN7EXAMPLE`、模板化 OpenSSH 私钥、`wrong-key-12345`）——按值豁免
       意味着往那些文件塞真实 key 仍会被拦下。注：`secrets` allowlist 在本版 gitleaks
       有解析问题，改用 `regexes`。
+- [x] **MCP `.mcp.json` 消费门禁**：lifespan 启动时消费仓库根 `.mcp.json` 的
+      `mcpServers`（IDE/桌面共用那份标准配置），把外部 server（如 `flint-chart`，
+      `npx -y flint-chart-mcp`）拉起并注册进 agent 工具池，而不只是 IDE 能连。
+      best-effort：文件缺失/非法 JSON/单条配置非法都跳过，不阻塞启动。
+      `tests/test_arch_mcp_json.py` 在 CI 固话该行为。

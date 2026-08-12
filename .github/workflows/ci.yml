@@ -122,6 +122,10 @@ jobs:
         working-directory: agent
         run: python -m pytest tests/test_arch_skill_pool_bridge.py -q -o addopts=""
 
+      - name: MCP .mcp.json consumption guard
+        working-directory: agent
+        run: python -m pytest tests/test_arch_mcp_json.py -q -o addopts=""
+
       - name: Run full test suite
         env:
           HUGINN_RATE_LIMIT_ENABLED: "false"

@@ -46,6 +46,46 @@ async def _connect_mcp_server(
     return False
 
 
+def _load_mcp_json_servers(base: Path) -> list[tuple[str, Any]]:
+    """从仓库根的 `.mcp.json` 读取 `mcpServers`（标准 MCP 配置文件格式）。
+
+    让 huginn 真正消费 IDE/桌面共用那份 `.mcp.json` —— 例如 `flint-chart`
+    （`npx -y flint-chart-mcp`）这类外部 MCP server 也会被拉起并注册工具，
+    而不只是 IDE 能连。best-effort：文件缺失/解析失败/单条配置非法都直接跳过，
+    绝不阻塞启动。条目格式见 huginn.mcp_client.MCPServerConfig。
+    """
+    from huginn.mcp_client import MCPServerConfig
+
+    mcp_json = base / ".mcp.json"
+    if not mcp_json.is_file():
+        return []
+    try:
+        import json
+
+        data = json.loads(mcp_json.read_text(encoding="utf-8"))
+        servers = data.get("mcpServers", {}) or {}
+    except Exception as e:
+        logger.info(f"[MCP] Could not parse .mcp.json, skipping: {e}")
+        return []
+
+    out: list[tuple[str, Any]] = []
+    for name, cfg in servers.items():
+        if not isinstance(cfg, dict):
+            continue
+        out.append((
+            name,
+            MCPServerConfig(
+                name=name,
+                command=cfg.get("command", "python"),
+                args=list(cfg.get("args", []) or []),
+                env=dict(cfg.get("env") or {}),
+                transport=cfg.get("transport", "stdio"),
+                url=cfg.get("url"),
+            ),
+        ))
+    return out
+
+
 async def _bg_register_optional_tools():
     """Register optional tools in the background after startup.
 
@@ -89,6 +129,11 @@ async def _init_mcp_tools():
             servers.append(
                 ("math-anything", MCPServerConfig(name="math-anything", command="python", args=[str(math_path)]))
             )
+
+        # 消费仓库根 .mcp.json 里的 mcpServers（标准 MCP 配置，IDE/桌面共用）。
+        # 例如 flint-chart（npx -y flint-chart-mcp）会被拉起并注册工具，真正进入
+        # agent 的工具池，而不只是 IDE 能连。best-effort，连不上只是告警不阻塞。
+        servers.extend(_load_mcp_json_servers(base))
 
         # ToolUniverse (curated: only materials-science tools pass the whitelist
         # in mcp_adapter.MATERIAL_SCIENCE_TOOL_WHITELIST). Off by default — user
