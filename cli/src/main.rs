@@ -1,4 +1,5 @@
 mod config;
+mod http;
 mod python;
 
 use anyhow::{Context, Result};
@@ -511,7 +512,13 @@ fn cmd_version() -> Result<()> {
 
 /// List all available tools, querying the Python backend for metadata.
 fn cmd_tools() -> Result<()> {
-    let tools = python::list_tools()?;
+    // ADR-0001: 优先连正在运行的后端拿工具清单，不再 spawn 子进程直接 import
+    // 业务模块。后端起起来了就走 HTTP；没起来(Python 路径)作为离线兜底。
+    let tools = if http::backend_available() {
+        http::list_tools_via_http()?
+    } else {
+        python::list_tools()?
+    };
 
     println!(
         "{} {}",
