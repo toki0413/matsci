@@ -40,6 +40,7 @@
   - 事件/WS：`/events/stream`（SSE）、`/ws/agent`（WebSocket 实时对话）
   - 其他：`/data/dictionary*`、`/data/validate`、`/bench/run`、`/evolve/run`、`/autoloop/start|status`、`/live/execute`、`/live/capabilities`、`/system/components`、`/advisor/models|recommend|compare`、`/users/*`、`/projects/*`、`/maintenance`、`/firewall/status`、`/sandbox/execute`、`/analyze/symmetry|spectral|dynamics|tda|sindy`、`/viz/dos|phase|persistence|sindy`、`/project-context`
 - COT 捕获契约（`huginn/agent/streaming.py`）：AIMessage 上的 `reasoning_content`（如 DeepSeek）必须经 `memory.add_reasoning(...)` 写入 `session.reasoning_trace`，供下游蒸馏消费。
+- 共享状态后端契约（`huginn/server_core.py` + `huginn/persistence/state_store.py`）：`_threads`/`_checkpoints` 为 `MutableMapping`，默认进程内内存 dict（`HUGINN_STATE_BACKEND` 未设置）；设置 `HUGINN_STATE_BACKEND=sqlite` 时切换为 `SqliteStore`（SQLite WAL + busy_timeout，持久化到 `<runtime_home>/state.sqlite`）。`SqliteStore` 实现 MutableMapping 并缓存解码值，保持 `_threads[tid]["label"]=x` 等原地修改语义与 dict 等价；检查点值 `(Path, dict)` 经 `encode_checkpoint`/`decode_checkpoint` 编解码。
 - 知识验证闭环（`huginn/evolution/knowledge_distiller.py` + `huginn/memory/manager.py`）：蒸馏知识 `verification_status ∈ {unverified, confirmed, rejected}`；`verify_knowledge(knowledge_id, status)` 将成功使用过的知识升级为 confirmed；`auto_ingest_to_kb` 仅吸收 `confirmed` 条目。`MemoryManager._verify_distilled_for_tool` 解析 `source="distiller:{id}"` 并调用 `verify_knowledge`。
 
 ## convention
