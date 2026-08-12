@@ -538,6 +538,9 @@ class SkillTool(HuginnTool[SkillToolInput, SkillToolOutput]):
         error: str | None = None,
     ) -> None:
         """落一条 skill_invocation 记忆. 任何异常都吞掉, 不阻断 skill 调用."""
+        # 同步更新 SkillRegistry 里的复用/成败统计 (元演化数据输入).
+        with contextlib.suppress(Exception):
+            SkillRegistry.record_invocation(skill_name, success)
         mem = _get_memory()
         if mem is None:
             return

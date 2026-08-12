@@ -26,6 +26,7 @@ def _cond(output_key: str, field: str = "converged") -> str:
 def _make_band_structure_analysis() -> SkillDefinition:
     return SkillDefinition(
         name="band_structure_analysis",
+        parent="standard_dft",
         description="Complete band structure + DOS workflow: relax -> SCF -> band -> DOS",
         category="computation",
         parameters=[
@@ -114,6 +115,7 @@ def _make_band_structure_analysis() -> SkillDefinition:
 def _make_mechanical_properties() -> SkillDefinition:
     return SkillDefinition(
         name="mechanical_properties",
+        parent="standard_dft",
         description="Elastic constants and polycrystalline moduli: relax -> elastic tensor -> bulk/shear/Young",
         category="computation",
         parameters=[
@@ -358,6 +360,7 @@ def _make_molecule_screening() -> SkillDefinition:
 def _make_phonon_analysis() -> SkillDefinition:
     return SkillDefinition(
         name="phonon_analysis",
+        parent="standard_dft",
         description="Phonon + thermal properties: relax -> DFPT force constants -> thermal analysis",
         category="computation",
         parameters=[
