@@ -295,6 +295,18 @@ def build_cv_context(
     if cv_hints:
         parts.append(cv_hints)
 
+    # ── 内置 Qwen-MM-Plugins: 动态分辨率 + 模态路由 ──
+    # 把"该不该降采样 / 该用哪个 image_analysis action"的机读提示注入文本通道,
+    # 让 agent 知道如何最高效地分析这张图. best-effort, 失败不影响主链路.
+    try:
+        from huginn.vision.mm_plugins import modality_routing_hint
+
+        _mm_hint = modality_routing_hint(image_path)
+        if _mm_hint:
+            parts.append(_mm_hint)
+    except Exception:
+        logger.debug("mm_plugins hint failed, non-fatal", exc_info=True)
+
     # ── Visual→Symbols: 单次提取, 文本 + 结构化复用同一份 chart_data ──
     # 之前 visual_to_symbols 和 visual_to_symbols_structured 各自跑一遍
     # extract_chart_data, 同一张图被算两次. 这里抽出来跑一次, 两个格式共用.
@@ -414,6 +426,16 @@ class VisionRouter:
         """
         content = self.build_content(message, image_path)
         cv_hints = _cv_pre_analyze(image_path)
+        # 内置 Qwen-MM-Plugins: 给视觉 LLM 附加模态路由建议 (该调哪个 action).
+        # 视觉 LLM 已能看原图, 这里给的是"该用哪个工具做定量/结构化分析"的提示.
+        try:
+            from huginn.vision.mm_plugins import modality_routing_hint
+
+            _mm_hint = modality_routing_hint(image_path)
+            if _mm_hint:
+                cv_hints = f"{cv_hints}\n{_mm_hint}" if cv_hints else _mm_hint
+        except Exception:
+            logger.debug("mm_plugins coordinate hint failed, non-fatal", exc_info=True)
         # 批次 E: BOTH 场景给视觉 LLM 附加确定性 QA 诊断 — 视觉 LLM 既能看原图
         # 做语义级判断, 又能参考确定性质检 (blank/clipped/aspect/cluttered + 机读
         # directive) 聚焦"这张图是否值得语义解读、哪里需要修正". 失败降级不阻塞.

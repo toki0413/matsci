@@ -1107,9 +1107,17 @@ class StreamingMixin:
                             if message:
                                 vision_task += f"\n用户附加说明: {message}"
                             _vision_traces: list = []
+                            # 把 image_path 注入 ctx, 由 team._run_member 透传给
+                            # VISION member 的 agent.chat(image_path=...), 让多模态
+                            # 模型真正收到图像而非只有文本路径.
+                            _deleg_ctx: dict[str, Any] = {
+                                "original_task": message or "",
+                            }
+                            if image_path is not None:
+                                _deleg_ctx["image_path"] = image_path
                             _vision_delegated = await _team._delegate(
                                 TeamRole.VISION, vision_task,
-                                {"original_task": message or ""},
+                                _deleg_ctx,
                                 _vision_traces,
                             )
                             # Inject vision description as context for the

@@ -346,9 +346,15 @@ class ModelTeam:
         start = time.time()
         agent = member.get_agent()
         final_output = ""
-        async for state in agent.chat(
-            task, thread_id=ctx.get("thread_id", f"team-{member.role.value}")
-        ):
+        # VISION member 需要把真实图像透传给 agent.chat(), 否则多模态模型
+        # 只能看到文本拼的"图片路径", 无法真正看图. ctx 里由调用方注入
+        # image_path / image_bytes, 这里原样透传 (None 时走纯文本旧路径).
+        chat_kwargs: dict[str, Any] = {
+            "thread_id": ctx.get("thread_id", f"team-{member.role.value}")
+        }
+        if ctx.get("image_path") is not None:
+            chat_kwargs["image_path"] = ctx["image_path"]
+        async for state in agent.chat(task, **chat_kwargs):
             messages = state.get("messages", [])
             for msg in messages:
                 content = getattr(msg, "content", None)
