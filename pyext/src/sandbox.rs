@@ -189,6 +189,31 @@ fn read_pipe<R: Read + Send + 'static>(pipe: R) -> thread::JoinHandle<IoResult<V
     })
 }
 
+/// Decode a child's exit status into `(returncode, signal)`.
+///
+/// A process killed by a signal (e.g. SIGSEGV from a crashing native lib like
+/// RDKit/sklearn) has no exit code, so `ExitStatus.code()` is None. Previously
+/// this collapsed to a bare -1 with empty stderr, which the agent surfaced as
+/// an opaque "Unknown error". We capture the signal number so callers can
+/// report *why* the child died. Returncode is negative for signal deaths.
+fn decode_exit_status(status: &std::process::ExitStatus) -> (i32, Option<i32>) {
+    match status.code() {
+        Some(code) => (code, None),
+        None => {
+            #[cfg(unix)]
+            {
+                use std::os::unix::process::ExitStatusExt;
+                let sig = status.signal();
+                (-sig.unwrap_or(-1), sig)
+            }
+            #[cfg(not(unix))]
+            {
+                (-1, None)
+            }
+        }
+    }
+}
+
 /// Run a subprocess inside the lightweight sandbox.
 ///
 /// Parameters
@@ -278,12 +303,13 @@ fn run_sandboxed(
         .map_err(|e| PyRuntimeError::new_err(format!("Failed to wait for process: {e}")))?;
 
     let timed_out = status.is_none();
-    let returncode = if let Some(s) = status {
-        s.code().unwrap_or(-1)
+
+    let (returncode, signal) = if let Some(s) = status {
+        decode_exit_status(&s)
     } else {
         let _ = child.kill();
         let _ = child.wait();
-        -1
+        (-1, None)
     };
 
     let stdout = stdout_handle
@@ -299,6 +325,7 @@ fn run_sandboxed(
     dict.set_item("command", format!("{} {}", exe.display(), args.join(" ")))?;
     dict.set_item("returncode", returncode)?;
     dict.set_item("timed_out", timed_out)?;
+    dict.set_item("signal", signal)?;
     dict.set_item("success", !timed_out && returncode == 0)?;
     dict.set_item("stdout", String::from_utf8_lossy(&stdout).into_owned())?;
     dict.set_item("stderr", String::from_utf8_lossy(&stderr).into_owned())?;
@@ -308,6 +335,8 @@ fn run_sandboxed(
             format!("Command timed out after {effective_timeout}s")
         } else if returncode == 0 {
             "Command succeeded.".to_string()
+        } else if let Some(sig) = signal {
+            format!("Command process was killed by signal {sig}")
         } else {
             format!("Command failed with exit code {returncode}")
         },
@@ -320,5 +349,45 @@ pub fn register_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new(parent.py(), "sandbox")?;
     m.add_function(wrap_pyfunction!(run_sandboxed, &m)?)?;
     parent.add_submodule(&m)?;
+    // add_submodule only attaches the module as an attribute of the parent;
+    // it does not register it in sys.modules, so `from huginn_ext.sandbox
+    // import run_sandboxed` would raise ModuleNotFoundError. Register it
+    // explicitly so the canonical import path works.
+    let sys = parent.py().import("sys")?;
+    let modules = sys.getattr("modules")?;
+    modules.set_item("huginn_ext.sandbox", &m)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::decode_exit_status;
+    use std::process::{Command, Stdio};
+
+    #[test]
+    fn normal_exit_yields_code_and_no_signal() {
+        let status = Command::new("sh")
+            .arg("-c")
+            .arg("exit 42")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .expect("spawn");
+        assert_eq!(decode_exit_status(&status), (42, None));
+    }
+
+    #[test]
+    fn signal_death_reports_signal_and_negative_code() {
+        // `kill -TERM $$` raises SIGTERM(15) in the child; it has no exit code.
+        let status = Command::new("sh")
+            .arg("-c")
+            .arg("kill -TERM $$")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .expect("spawn");
+        let (code, sig) = decode_exit_status(&status);
+        assert_eq!(sig, Some(15));
+        assert_eq!(code, -15);
+    }
 }

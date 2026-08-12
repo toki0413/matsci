@@ -45,3 +45,47 @@ jobs:
         with:
           files: dist/*
           generate_release_notes: true
+
+  # Rust 扩展 (huginn-ext / pyext) 与 Python 包发布链路此前脱钩: agent 的
+  # release 从不构建 pyext, 导致已声明的 Rust 快路径运行期不可达。此 job 让
+  # huginn-ext wheel 随 agent 一起发布到 GitHub Release, 供 `huginn-agent[rust]`
+  # (或手动) 安装。
+  build-rust-ext:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install maturin
+        run: python -m pip install "maturin>=1.0,<2.0"
+
+      - name: Rust tests
+        working-directory: pyext
+        run: cargo test --release
+
+      - name: Build extension wheel
+        working-directory: pyext
+        run: python -m maturin build --release --out dist
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-dist-${{ matrix.python-version }}
+          path: dist/
+
+      - name: Attach to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
