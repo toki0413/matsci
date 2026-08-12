@@ -29,33 +29,36 @@ spec:       polish-reports/industrialization-gap-analysis.md  #P0-1
 
 ### P0-2 共享状态后端化
 
-- [ ] T2: 引入 `ThreadStore`（SQLite 持久化的 MutableMapping）替换内存 `_threads`
+- [x] T2: 引入 `ThreadStore`（SQLite 持久化的 MutableMapping）替换内存 `_threads`
 ```
 goal:       会话元数据可跨进程/重启持久，多 worker 一致，消除"请求漂移丢会话"
-files:      huginn/persistence/thread_store.py, huginn/server_core.py, 相关测试
-acceptance: ThreadStore 实现 MutableMapping 且基于 SQLite（WAL）；get_or_create_thread/
-             touch_thread/列列举经 store；进程重启后既有会话仍在；threads 路由测试全绿
+files:      huginn/persistence/state_store.py, huginn/server_core.py, tests/test_state_store.py
+acceptance: SqliteStore("huginn_threads") 实现 MutableMapping 且基于 SQLite（WAL）；
+             get_or_create_thread/touch_thread/列列举经 store；重启后既有会话仍在；
+             threads 路由测试全绿（MutableMapping 保持原地修改语义）
 spec:       polish-reports/industrialization-gap-analysis.md  #P0-2
 ```
 
-- [ ] T3: 引入 `CheckpointStore`（SQLite 持久化的 MutableMapping）替换内存 `_checkpoints`
+- [x] T3: 引入 `CheckpointStore`（SQLite 持久化的 MutableMapping）替换内存 `_checkpoints`
 ```
 goal:       检查点快照可跨进程/重启持久，多 worker 一致
-files:      huginn/persistence/checkpoint_store.py, huginn/server_core.py,
+files:      huginn/persistence/state_store.py, huginn/server_core.py,
             huginn/routes/checkpoints.py, huginn/routes/ws_helpers.py,
-            huginn/cli/slash_commands.py, 相关测试
-acceptance: CheckpointStore 实现 MutableMapping 且基于 SQLite（WAL）；cp 增删改查/回滚
-            经 store；重启后检查点可恢复；checkpoints/undo 相关测试全绿
+            huginn/cli/slash_commands.py, tests/test_state_store.py
+acceptance: SqliteStore("huginn_checkpoints", encode=encode_checkpoint) 实现
+             MutableMapping 且基于 SQLite（WAL）；cp 增删改查/回滚经 store；
+             重启后检查点可恢复（encode/decode 往返）；checkpoints/undo 相关测试全绿
 spec:       polish-reports/industrialization-gap-analysis.md  #P0-2
 ```
 
-- [ ] T4: 状态后端开关 `HUGINN_STATE_BACKEND=memory|sqlite` + 多进程一致性验证
+- [x] T4: 状态后端开关 `HUGINN_STATE_BACKEND=memory|sqlite` + 多进程一致性验证
 ```
 goal:       默认 memory 保持单进程行为不变；显式 sqlite 时多 worker 共享同一库一致
-files:      huginn/config.py, huginn/server.py, DEPLOYMENT.md,
+files:      huginn/server_core.py, DEPLOYMENT.md, tests/test_state_store.py,
             tests/test_multiprocess_state.py
 acceptance: 开关切换后线程/检查点行为等价；多 worker 并发写同一 sqlite 无
-             "database is locked"（WAL + busy_timeout）；自动化测试覆盖两种后端
+             "database is locked"（WAL + busy_timeout）；tests/test_multiprocess_
+             state.py 自动化覆盖两种后端（memory 默认 dict + sqlite SqliteStore）
 spec:       polish-reports/industrialization-gap-analysis.md  #P0-2
 ```
 
@@ -64,9 +67,12 @@ spec:       polish-reports/industrialization-gap-analysis.md  #P0-2
 - [ ] T5: 持久化冒烟 + 文档更新
 ```
 goal:       P0 两项落地后，单机多 worker 状态一致可复现，文档如实
-files:      CHANGELOG.md, DEPLOYMENT.md, docs/tech-spec.md（若事实变化）
+files:      DEPLOYMENT.md, docs/tech-spec.md（若事实变化）
 acceptance: 一处线程/检查点跨"重启 + 多 worker"的端到端冒烟通过；tech-spec
-              contract/convention 与代码一致
+             contract/convention 与代码一致
+status:     文档已更新（DEPLOYMENT.md 多 worker 状态共享 + tech-spec.md 状态
+             后端契约）。端到端冒烟需完整依赖栈（langchain/langgraph），本沙箱
+             未安装，留待 CI 全栈 job 执行。仓库无 CHANGELOG.md，未新建。
 spec:       polish-reports/industrialization-gap-analysis.md  #结论
 ```
 
