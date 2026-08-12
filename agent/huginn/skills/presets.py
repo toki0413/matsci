@@ -87,6 +87,7 @@ STANDARD_DFT = register_skill(
 AIMD_WORKFLOW = register_skill(
     SkillDefinition(
         name="aimd_workflow",
+        parent="standard_dft",
         description="Ab-initio MD: relaxation → thermalization → production run",
         category="computation",
         parameters=[
@@ -141,6 +142,7 @@ AIMD_WORKFLOW = register_skill(
 DEFECT_CALCULATION = register_skill(
     SkillDefinition(
         name="defect_calculation",
+        parent="standard_dft",
         description="Point defect workflow: perfect → defect → formation energy",
         category="computation",
         parameters=[
@@ -199,6 +201,7 @@ DEFECT_CALCULATION = register_skill(
 SURFACE_CALCULATION = register_skill(
     SkillDefinition(
         name="surface_calculation",
+        parent="standard_dft",
         description="Surface slab workflow: bulk → cleave → relax → adsorption",
         category="computation",
         parameters=[
@@ -310,11 +313,86 @@ LAMMPS_MELT_QUENCH = register_skill(
     )
 )
 
+# --- Cross-scale (MD-DFT) Skills ---
+
+MD_DFT_CROSS_VALIDATION = register_skill(
+    SkillDefinition(
+        name="md_dft_cross_validation",
+        description=(
+            "Cross-scale consistency check between classical MD (LAMMPS) and DFT (VASP): "
+            "compare lattice / elastic / cohesive properties to validate force-field "
+            "transferability. Fills the β_1 hole where MD and electronic-structure "
+            "worlds never share a single workflow."
+        ),
+        category="computation",
+        parameters=[
+            SkillParameter(
+                "structure_file", "str", "Unit cell structure (POSCAR/cif)", required=True
+            ),
+            SkillParameter(
+                "md_potential", "str", "Classical interatomic potential file", required=True
+            ),
+            SkillParameter(
+                "property",
+                "str",
+                "lattice | elastic | cohesive",
+                default="lattice",
+            ),
+        ],
+        steps=[
+            SkillStep(
+                name="normalize_structure",
+                tool="structure_tool",
+                input_mapping={
+                    "action": "'normalize'",
+                    "structure_file": "$structure_file",
+                },
+                output_key="ref_structure",
+            ),
+            SkillStep(
+                name="md_property",
+                tool="lammps_tool",
+                input_mapping={
+                    "action": "'compute_property'",
+                    "structure_file": "$ref_structure.normalized",
+                    "potential": "$md_potential",
+                    "property": "$property",
+                },
+                output_key="md_result",
+            ),
+            SkillStep(
+                name="dft_property",
+                tool="vasp_tool",
+                input_mapping={
+                    "action": "'compute_property'",
+                    "structure_file": "$ref_structure.normalized",
+                    "property": "$property",
+                },
+                output_key="dft_result",
+            ),
+            SkillStep(
+                name="compare",
+                tool="validate_tool",
+                input_mapping={
+                    "check_type": "'cross_scale'",
+                    "md": "$md_result",
+                    "dft": "$dft_result",
+                    "property": "$property",
+                },
+                output_key="validation",
+            ),
+        ],
+        required_tools=["structure_tool", "lammps_tool", "vasp_tool", "validate_tool"],
+        tags=["md", "dft", "cross_scale", "validation", "force_field"],
+    )
+)
+
 # --- Analysis Skills ---
 
 BAND_GAP_ANALYSIS = register_skill(
     SkillDefinition(
         name="band_gap_analysis",
+        parent="standard_dft",
         description="Extract and validate band gap from DFT calculations",
         category="analysis",
         parameters=[
@@ -351,6 +429,7 @@ BAND_GAP_ANALYSIS = register_skill(
 ELASTIC_CONSTANTS = register_skill(
     SkillDefinition(
         name="elastic_constants",
+        parent="standard_dft",
         description="Calculate elastic tensor and mechanical stability",
         category="analysis",
         parameters=[
@@ -388,6 +467,7 @@ ELASTIC_CONSTANTS = register_skill(
 PHONON_CALCULATION = register_skill(
     SkillDefinition(
         name="phonon_calculation",
+        parent="standard_dft",
         description="Phonon dispersion and density of states",
         category="computation",
         parameters=[
@@ -576,6 +656,7 @@ SYMBOLIC_REGRESSION = register_skill(
 SYMBOLIC_VERIFY = register_skill(
     SkillDefinition(
         name="symbolic_verify",
+        parent="verification",
         description="Symbolic derivation followed by Lean 4 formal verification",
         category="verification",
         parameters=[
@@ -652,6 +733,7 @@ SYMBOLIC_VERIFY = register_skill(
 TENSOR_VERIFY = register_skill(
     SkillDefinition(
         name="tensor_verify",
+        parent="verification",
         description="Tensor calculus derivation followed by Lean 4 formal verification",
         category="verification",
         parameters=[
@@ -710,6 +792,7 @@ TENSOR_VERIFY = register_skill(
 FEM_VERIFY = register_skill(
     SkillDefinition(
         name="fem_verify",
+        parent="verification",
         description="FEM weak-form derivation and element matrix assembly with Lean 4 formal verification",
         category="verification",
         parameters=[
@@ -764,6 +847,7 @@ FEM_VERIFY = register_skill(
 LA_VERIFY = register_skill(
     SkillDefinition(
         name="la_verify",
+        parent="verification",
         description="Linear algebra computation followed by Lean 4 formal verification",
         category="verification",
         parameters=[
@@ -820,6 +904,7 @@ LA_VERIFY = register_skill(
 DFT_VERIFY = register_skill(
     SkillDefinition(
         name="dft_verify",
+        parent="verification",
         description="DFT computation followed by Lean 4 formal verification",
         category="verification",
         parameters=[
@@ -867,6 +952,7 @@ DFT_VERIFY = register_skill(
 THERMO_VERIFY = register_skill(
     SkillDefinition(
         name="thermo_verify",
+        parent="verification",
         description="Thermodynamics computation followed by Lean 4 formal verification",
         category="verification",
         parameters=[
@@ -920,6 +1006,7 @@ THERMO_VERIFY = register_skill(
 PROBABILITY_VERIFY = register_skill(
     SkillDefinition(
         name="probability_verify",
+        parent="verification",
         description="Probability and Gaussian process computation followed by Lean 4 formal verification",
         category="verification",
         parameters=[
@@ -1217,6 +1304,7 @@ HPC_REMOTE_RUN = register_skill(
 CONVERGENCE_TEST = register_skill(
     SkillDefinition(
         name="convergence_test",
+        parent="standard_dft",
         description="Systematic ENCUT and k-point convergence for DFT total energies",
         category="computation",
         parameters=[
@@ -1287,6 +1375,7 @@ CONVERGENCE_TEST = register_skill(
 BATTERY_IONIC_CONDUCTIVITY = register_skill(
     SkillDefinition(
         name="battery_ionic_conductivity",
+        parent="standard_dft",
         description="Estimate Li/Na ionic conductivity from AIMD trajectories",
         category="computation",
         parameters=[
@@ -1357,6 +1446,7 @@ BATTERY_IONIC_CONDUCTIVITY = register_skill(
 CATALYSIS_SCREENING = register_skill(
     SkillDefinition(
         name="catalysis_screening",
+        parent="standard_dft",
         description="Screen adsorption energies on surface slabs for catalysis",
         category="computation",
         parameters=[
@@ -1550,6 +1640,7 @@ XRD_STRUCTURE_SOLUTION = register_skill(
 PHONON_SPECTROSCOPY_WORKFLOW = register_skill(
     SkillDefinition(
         name="phonon_spectroscopy_workflow",
+        parent="standard_dft",
         description="Compute phonons and compare IR/Raman spectra with experiment",
         category="computation",
         parameters=[
@@ -1655,6 +1746,7 @@ CALPHAD_PHASE_DIAGRAM = register_skill(
 DEFECT_FORMATION_ENERGY = register_skill(
     SkillDefinition(
         name="defect_formation_energy",
+        parent="standard_dft",
         description="Calculate point-defect formation energies and transition levels",
         category="computation",
         parameters=[
