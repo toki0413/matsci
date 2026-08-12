@@ -5,21 +5,25 @@
 
 ## 背景事实（不重复 spec）
 
-- `huginn_ext` Rust 扩展源码**不在本仓库**（无 `.rs`/`maturin` 配置），仅 `from huginn_ext.sandbox import run_sandboxed` 动态导入。P0-1 务实方案：移除/禁用快路径，统一走 Python，彻底消除静默崩溃隐患。
+- `huginn_ext` Rust 扩展源码在 `/workspace/pyext`（cargo workspace `/workspace/Cargo.toml` 成员，maturin 构建为 `huginn_ext` 模块）。但 `agent/pyproject.toml` 不声明其依赖，CI `release.yml` 从不构建/发布它 → 发布链路与 Rust 扩展**脱钩**，运行期默认不可达（`bash_tool.py` 用 try/except 动态导入，默认无编译产物）。因此"静默崩溃"难以在默认环境复现。P0-1 方向：复现→修根因→接入构建/发布链路→验证后默认启用。
 - `langgraph-checkpoint-sqlite>=2.0.0` 已是生产依赖；`huginn/persistence/checkpointer.py` 已有 `SQLiteCheckpointerBackend` 抽象，可复用为共享状态底座。
 - `_threads`/`_checkpoints` 被约 10 个模块直接以 dict 方式访问（`routes/threads.py`、`routes/checkpoints.py`、`routes/search.py`、`routes/ws_helpers.py`、`export_share.py`、`cli/slash_commands.py`、`server.py` `_DELEGATED_SC`、`ws.py`）。迁移须保持存取接口不变，故引入 `MutableMapping` 风格 store。
 
 ## 任务
 
-### P0-1 移除 Rust 沙箱快路径
+### P0-1 Rust 沙箱确定性：复现修复 + 接入发布链路
 
-- [ ] T1: 移除 Rust 沙箱快路径，命令执行确定性走 Python
+- [ ] T1: 复现 Rust sandbox 静默崩溃，修根因，接入构建/发布链路
 ```
-goal:       消除 Rust sandbox 静默崩溃（RDKit+sklearn GPR 空 stderr）这条生产正确性隐患
-files:      huginn/tools/bash_tool.py, huginn/tools/code_tool.py, ROADMAP.md, 相关测试
-acceptance: bash_tool/code_tool 不再动态 import huginn_ext.sandbox；设置与未设置
-             HUGINN_USE_RUST_SANDBOX 时行为一致；RDKit+sklearn GPR 回归路径通过；
-             grep 确认无运行期 huginn_ext 引用
+goal:       消除 RDKit+sklearn GPR 下 Rust sandbox 静默崩溃（空 stderr），使
+             huginn_ext 可复现、可修复、随发布产物交付
+files:      pyext/src/sandbox.rs, huginn/tools/bash_tool.py, huginn/tools/code_tool.py,
+            agent/pyproject.toml, .github/workflows/release.yml, ROADMAP.md, 相关测试
+acceptance: 本地 cargo build/maturin 构建 huginn_ext 成功后，在 RDKit+sklearn GPR
+             场景复现出崩溃并给出根因；修复后该场景返回可读错误或正常结果；
+             CI 增加 pyext 构建与单元测试 job；发布产物（wheel/sdist）包含
+             huginn_ext 或作为独立 wheel 发布；验证通过前保持 HUGINN_USE_RUST_SANDBOX
+             默认关闭
 spec:       polish-reports/industrialization-gap-analysis.md  #P0-1
 ```
 

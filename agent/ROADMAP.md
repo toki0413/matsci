@@ -112,19 +112,26 @@
   - `huginn/tools/sim/convergence_strategies.py` (参考, 已有 VASP/QE 双格式识别)
 
 ### 2. Rust fast path 重启用
-- **状态**: 进行中 (默认关闭)
+- **状态**: 进行中 (默认关闭; sandbox 崩溃报告 + import 已修复)
 - **优先级**: P0
-- **现状**: Rust sandbox runner 在 RDKit+sklearn GPR 等场景静默崩溃,
-  返回空 stderr 导致 "Unknown error" (audit 08: 8 个出分单元 62.5% 有
-  工具层直接背书)。当前显式 `HUGINN_USE_RUST_SANDBOX=1` 才启用。
-  VASP OUTCAR parser 的 Rust 加速器在 scf/band/dos 场景的 converged
-  字段不可信, 仅 relax/md/phonon 用 Rust。
-- **升级方向**: 定位 Rust sandbox 静默崩溃根因 (疑似 RDKit/sklearn native
-  依赖冲突), 修复后默认启用; Rust parser 的 converged 字段补 action-aware
+- **现状**: Rust sandbox runner 在 RDKit+sklearn GPR 等场景静默崩溃, 返回空 stderr
+  导致 "Unknown error" (audit 08: 8 个出分单元 62.5% 有工具层直接背书)。当前显式
+  `HUGINN_USE_RUST_SANDBOX=1` 才启用。VASP OUTCAR parser 的 Rust 加速器在
+  scf/band/dos 场景的 converged 字段不可信, 仅 relax/md/phonon 用 Rust。
+  已修复 (pyext/src/sandbox.rs): ① 子进程被 signal 杀死时不再丢 signal 号
+  (code().unwrap_or(-1) 改 signal 捕获), 崩溃命令返回 rc=-11 + message=
+  "killed by signal 11" 而非空 stderr + 无意义 -1; ② 子模块注册进 sys.modules,
+  `from huginn_ext.sandbox import run_sandboxed` 不再 ModuleNotFoundError。
+  发布链路已接入 (release.yml build-rust-ext job + pyproject [rust] extra)。
+- **升级方向**: RDKit+sklearn GPR 的 native 冲突本身是环境/依赖问题, sandbox 现已
+  如实报告 signal; 接入发布链路后, 在验证环境安装 RDKit+sklearn 复现确认不再
+  "Unknown error" 后, 再评估默认启用。Rust parser 的 converged 字段补 action-aware
   校验后覆盖 scf/band/dos。
 - **相关文件**:
-  - `huginn/tools/bash_tool.py` (line 176-218)
+  - `pyext/src/sandbox.rs`
+  - `huginn/tools/bash_tool.py` (line 176-224)
   - `huginn/tools/sim/vasp_tool.py` (line 705, 718-720)
+  - `.github/workflows/release.yml` (build-rust-ext)
 
 ---
 
