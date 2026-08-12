@@ -16,16 +16,23 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from collections import Counter, defaultdict
 
-sys.path.insert(0, "/workspace/agent")
+# 让脚本可随处运行 (本地 / CI): agent 目录 = 脚本所在仓库根下的 agent/.
+# 不再硬编码 /workspace, 否则 CI runner 上必挂.
+_AGENT_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "agent")
+)
+if _AGENT_DIR not in sys.path:
+    sys.path.insert(0, _AGENT_DIR)
 
-import networkx as nx
+import networkx as nx  # noqa: E402  (agent 目录需先行注入 sys.path)
 
-from huginn.metacog.simplicial_homology import compute_exact_betti
-from huginn.metacog.trace_topology import _sem_overlap
-from huginn.skills.registry import SkillRegistry
+from huginn.metacog.simplicial_homology import compute_exact_betti  # noqa: E402
+from huginn.metacog.trace_topology import _sem_overlap  # noqa: E402
+from huginn.skills.registry import SkillRegistry  # noqa: E402
 
 
 def build_tool_graph(skills):
