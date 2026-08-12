@@ -215,27 +215,48 @@ async fn get_agent_status(state: tauri::State<'_, AppState>) -> Result<serde_jso
     }
 }
 
+/// Resolve the runtime home the same way the backend does (huginn.utils.runtime).
+/// Priority: $HUGINN_CACHE_DIR, else ~/.huginn (HOME / USERPROFILE).
+fn runtime_home() -> std::path::PathBuf {
+    if let Some(dir) = std::env::var_os("HUGINN_CACHE_DIR") {
+        let p = std::path::PathBuf::from(dir);
+        if !p.as_os_str().is_empty() {
+            return p;
+        }
+    }
+    let mut home = std::path::PathBuf::from(
+        std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .unwrap_or_default(),
+    );
+    home.push(".huginn");
+    home
+}
+
+/// Read the port the backend actually bound to, from the `backend_port` file
+/// the backend writes on startup (huginn/server.py __main__).
+///
+/// ADR-0001: the backend is the single source of truth for the bound port.
+/// The frontend must NOT guess a port (the old 8000-default made the port-file
+/// read below dead code, so externally-started backends were never discovered).
+fn read_backend_port_file() -> Option<u16> {
+    let port_file = runtime_home().join("backend_port");
+    let text = std::fs::read_to_string(&port_file).ok()?;
+    text.trim().parse::<u16>().ok()
+}
+
 #[tauri::command]
 fn get_backend_port(state: tauri::State<'_, AppState>) -> u16 {
+    // 1. Single source of truth: the port file the backend wrote.
+    if let Some(p) = read_backend_port_file() {
+        return p;
+    }
+    // 2. The port this app allocated when it spawned the backend itself.
     let port = state.backend_port.load(std::sync::atomic::Ordering::Relaxed);
     if port > 0 {
         return port;
     }
-    // Fallback: read port file written by externally-started backend
-    if let Some(home) = std::env::var_os("HUGINN_CACHE_DIR")
-        .or_else(|| std::env::var_os("USERPROFILE").map(|h| {
-            let mut p = std::path::PathBuf::from(h);
-            p.push(".huginn");
-            p.into_os_string()
-        }))
-    {
-        let port_file = std::path::Path::new(&home).join("backend_port");
-        if let Ok(text) = std::fs::read_to_string(&port_file) {
-            if let Ok(p) = text.trim().parse::<u16>() {
-                return p;
-            }
-        }
-    }
+    // 3. Last resort — a port we know the backend historically bound to.
     8000
 }
 
@@ -253,7 +274,12 @@ async fn start_backend(
     }
 
     // If a backend is already running externally, don't start another one.
-    // Probe the default port first — if something is there, use it.
+    // ADR-0001: honor the port the external backend wrote to backend_port,
+    // then fall back to probing the once-default port.
+    if let Some(p) = read_backend_port_file() {
+        state.backend_port.store(p, std::sync::atomic::Ordering::Relaxed);
+        return Ok("already running externally".to_string());
+    }
     if std::net::TcpStream::connect("127.0.0.1:8000").is_ok() {
         state.backend_port.store(8000, std::sync::atomic::Ordering::Relaxed);
         return Ok("already running externally".to_string());

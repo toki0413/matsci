@@ -119,6 +119,42 @@ def _api_key_set() -> bool:
     return bool(_configured_api_key())
 
 
+def _dev_mode_enabled() -> bool:
+    """True when HUGINN_DEV_MODE=1/true/yes is set.
+
+    Dev mode is a *hardening seam only*: it lets a locally-spawned backend
+    (desktop app) run without a token dance. It must NEVER silently disable
+    auth for traffic that isn't genuinely from the same machine — otherwise a
+    server bound to a non-loopback interface would expose every auth-gated
+    endpoint by accident. Callers must use ``_dev_mode_exempt(conn)``, not this
+    flag directly, so the loopback guard is always applied.
+    """
+    return os.environ.get("HUGINN_DEV_MODE", "").lower() in ("1", "true", "yes")
+
+
+def _client_ip(request: Request | WebSocket) -> str:
+    host = getattr(getattr(request, "client", None), "host", "") or ""
+    return host or "127.0.0.1"
+
+
+def _is_loopback(request: Request | WebSocket) -> bool:
+    ip = _client_ip(request)
+    # "testclient" is Starlette's TestClient pseudo-host — loopback-equivalent.
+    # It never appears in production network traffic, so it's safe to
+    # treat as same-machine for test suites that run in dev mode.
+    return ip in ("127.0.0.1", "::1", "localhost", "testclient")
+
+
+def _dev_mode_exempt(request: Request | WebSocket) -> bool:
+    """Dev mode only exempts loopback (same-machine) requests.
+
+    Guards every dev-mode bypass in this module: even with HUGINN_DEV_MODE=1,
+    a request that isn't from 127.0.0.1/::1 still has to authenticate. This
+    closes the "dev mode accidentally exposed on 0.0.0.0" hole.
+    """
+    return _dev_mode_enabled() and _is_loopback(request)
+
+
 # ---------------------------------------------------------------------------
 # JWT helpers for route handlers
 # ---------------------------------------------------------------------------
@@ -205,10 +241,10 @@ def require_api_key(
     if _public_path(conn):
         return ""
 
-    # Dev mode bypass: when explicitly enabled, skip all auth checks.
+    # Dev mode bypass: only same-machine (loopback) requests are exempt.
     # This is used by the desktop app to allow unauthenticated local access
     # even after the user configures an API key for the LLM provider.
-    if os.environ.get("HUGINN_DEV_MODE", "").lower() in ("1", "true", "yes"):
+    if _dev_mode_exempt(conn):
         return ""
 
     # --- try JWT first ---------------------------------------------------
@@ -241,9 +277,10 @@ def require_api_key(
     configured = _configured_api_key()
     if configured is None:
         # Development mode: auth is not enforced, but only when explicitly
-        # enabled via HUGINN_DEV_MODE=1. This prevents accidental exposure
-        # in production environments where no API key was configured.
-        if os.environ.get("HUGINN_DEV_MODE", "").lower() in ("1", "true", "yes"):
+        # enabled via HUGINN_DEV_MODE=1 AND the request is from the same
+        # machine. This prevents accidental exposure in production
+        # environments where no API key was configured.
+        if _dev_mode_exempt(conn):
             return ""
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -321,8 +358,8 @@ def require_admin_key(
     In dev mode (no admin and no regular API key configured) auth is not
     enforced.
     """
-    # Dev mode bypass: skip all auth checks when explicitly enabled.
-    if os.environ.get("HUGINN_DEV_MODE", "").lower() in ("1", "true", "yes"):
+    # Dev mode bypass: only same-machine (loopback) requests are exempt.
+    if _dev_mode_exempt(request):
         return ""
 
     # Check JWT admin role first
@@ -350,8 +387,9 @@ def require_admin_key(
         configured = _configured_api_key()
 
     if configured is None:
-        # Dev mode: only allow without auth when explicitly enabled
-        if os.environ.get("HUGINN_DEV_MODE", "").lower() in ("1", "true", "yes"):
+        # Dev mode: only allow without auth when explicitly enabled AND
+        # the request is from the same machine.
+        if _dev_mode_exempt(request):
             return ""
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -383,11 +421,12 @@ def require_capability(capability: str) -> Callable[..., Any]:
         if _public_path(request):
             return ""
 
-        # Dev mode bypass — keep consistent with require_api_key (line 210).
+        # Dev mode bypass — keep consistent with require_api_key (line 244).
         # Without this, setting HUGINN_API_KEY (e.g. in tests or desktop app)
         # makes _jwt_secret() non-None, so the implicit bypass below never fires
         # and dev-mode requests get 403 before FastAPI can return 422.
-        if os.environ.get("HUGINN_DEV_MODE", "").lower() in ("1", "true", "yes"):
+        # Loopback-guarded: only same-machine requests are exempt.
+        if _dev_mode_exempt(request):
             return ""
 
         ctx: RequestContext | None = getattr(request.state, "auth", None)

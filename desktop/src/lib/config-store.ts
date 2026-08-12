@@ -46,7 +46,10 @@ function recomputeWsUrl() {
 }
 
 export async function syncBackendUrl(): Promise<void> {
-  // In Tauri, read the sidecar port. In browser/dev, skip — invoke hangs.
+  // ADR-0001: the backend is the single source of truth for the bound port.
+  // Wherever we can ask it (Tauri command reads the backend_port file the
+  // backend wrote), use that first — never guess. Port-probing is only a
+  // browser/dev fallback when no local backend file is reachable.
   if ("__TAURI_INTERNALS__" in window) {
     try {
       const { invoke } = await import("@tauri-apps/api/core");
