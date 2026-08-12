@@ -134,6 +134,51 @@ class SkillRegistry:
                 results.append(skill)
         return results
 
+    # ---- 技能树查询 (parent/children 层级) ----
+    @classmethod
+    def children(cls, name: str) -> list[str]:
+        """返回 skill 的直接子技能名 (parent == name)."""
+        return sorted(
+            s.name for s in cls._skills.values() if s.parent == name
+        )
+
+    @classmethod
+    def descendants(cls, name: str) -> list[str]:
+        """返回 skill 的全部后代技能名 (BFS, 含跨层)."""
+        out: list[str] = []
+        stack = [name]
+        while stack:
+            cur = stack.pop()
+            kids = cls.children(cur)
+            for k in kids:
+                out.append(k)
+                stack.append(k)
+        return out
+
+    @classmethod
+    def subtree(cls, name: str) -> list[SkillDefinition]:
+        """返回以 skill 为根的整棵子树 (根 + 全部后代)."""
+        root = cls.get(name)
+        if root is None:
+            return []
+        return [root] + [
+            cls._skills[d] for d in cls.descendants(name) if d in cls._skills
+        ]
+
+    @classmethod
+    def tree(cls) -> dict[str, list[str]]:
+        """返回整个技能树的父子映射 {parent: [children]}.
+
+        顶层技能 (parent is None) 用 key None 列出.
+        """
+        mapping: dict[str, list[str]] = {}
+        for s in cls._skills.values():
+            key = s.parent or ""
+            mapping.setdefault(key, []).append(s.name)
+        for k in mapping:
+            mapping[k].sort()
+        return mapping
+
     @classmethod
     def clear(cls) -> None:
         cls._skills.clear()

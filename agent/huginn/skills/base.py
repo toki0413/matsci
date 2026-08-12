@@ -96,6 +96,10 @@ class SkillDefinition:
     stage: str | None = None
     # 功能分类: search / design / predict / validate, 可选
     function: str | None = None
+    # 父技能名 (技能树层级). 派生技能用 parent 指向其基元/父技能,
+    # 例如 DFT 系列指向 "standard_dft", verification 家族指向 "verification".
+    # None 表示顶层技能. 用于 SkillRegistry 的树查询 (children/subtree/tree).
+    parent: str | None = None
 
     def to_prompt(self) -> str:
         """Generate a natural language description for the LLM."""
@@ -110,6 +114,8 @@ class SkillDefinition:
             lines.append(f"Stage: {self.stage}")
         if self.function:
             lines.append(f"Function: {self.function}")
+        if self.parent:
+            lines.append(f"Parent: {self.parent}")
         lines.append("Parameters:")
         for p in self.parameters:
             req = "(required)" if p.required else f"(default: {p.default})"
