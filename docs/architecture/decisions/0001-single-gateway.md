@@ -85,4 +85,8 @@ huginn 的业务能力（agent 循环、工具、技能、记忆、知识蒸馏�
       `useWorkspace` 改走后端 `/v1/fs/*`，并移除 Tauri 的 `get_cwd/read_dir/read_file/write_file`
       命令行（Tauri 只保留进程管理与终端职责）。测试 `tests/test_fs_gateway.py`。
 - [ ] **CLI 瘦身为 HTTP 客户端**：`huginn serve` 起后端，其余子命令连 HTTP/WS。
+      - 已新增 `cli/src/http.rs`（`ureq` 阻塞客户端），复用 `backend_port` 文件发现端口；
+        `huginn tools` 优先走后端 `/v1/tools`，后端起不来才回退 Python spawn。
+      - 待迁移：chat / explore / coder / bench / evolve / execute / workflow /
+        diagnose / hpc / encrypt-config（委托清单已冻结防新增）。
 - [ ] **桌面免鉴权旁路移除**：Tauri 不再强制 `HUGINN_DEV_MODE=1`，桌面走 API key。
