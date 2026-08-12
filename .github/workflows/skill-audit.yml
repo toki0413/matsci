@@ -15,6 +15,14 @@ on:
       - 'agent/huginn/skills/**'
       - 'agent/huginn/metacog/trace_topology.py'
       - 'agent/huginn/metacog/simplicial_homology.py'
+  # PR 阶段也检查技能库变更, 让技能树/冗余/洞的退化在合并前就被发现.
+  pull_request:
+    branches: [master, main]
+    paths:
+      - 'scripts/skill_audit.py'
+      - 'agent/huginn/skills/**'
+      - 'agent/huginn/metacog/trace_topology.py'
+      - 'agent/huginn/metacog/simplicial_homology.py'
 
 permissions:
   contents: read
