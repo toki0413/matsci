@@ -91,6 +91,12 @@ jobs:
         working-directory: agent
         run: python -m pytest tests/test_testclient_hygiene.py -q -o addopts=""
 
+      # ADR-0001 单网关门禁：外部消费者 (scripts/examples/servers/...) 不得直接
+      # import huginn.* 业务模块。weightless (AST/pathlib)，先于重型套件快速 fail。
+      - name: Architecture single-gateway guard
+        working-directory: agent
+        run: python -m pytest tests/test_arch_single_gateway.py -q -o addopts=""
+
       - name: Run full test suite
         env:
           HUGINN_RATE_LIMIT_ENABLED: "false"

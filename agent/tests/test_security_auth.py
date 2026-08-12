@@ -9,9 +9,9 @@ from huginn.security.auth import require_admin_key, require_api_key, secrets_mat
 
 
 def _make_request(
-    path: str = "/tools", headers: dict[str, str] | None = None
+    path: str = "/tools", headers: dict[str, str] | None = None, client: str | None = None
 ) -> Request:
-    scope = {
+    scope: dict = {
         "type": "http",
         "method": "GET",
         "path": path,
@@ -20,6 +20,8 @@ def _make_request(
             for k, v in (headers or {}).items()
         ],
     }
+    if client:
+        scope["client"] = (client, 12345)
     return Request(scope)
 
 
@@ -46,6 +48,25 @@ class TestRequireApiKey:
         req = _make_request("/tools")
         assert require_api_key(req, None) == ""
 
+    def test_dev_mode_does_not_exempt_non_loopback(self, monkeypatch):
+        """ADR-0001 加固: dev mode 只豁免本机(loopback)请求, 其余仍须鉴权.
+
+        防止 HUGINN_DEV_MODE=1 的服务绑定到非 loopback 接口时把所有
+        auth-gated 端点意外暴露.
+        """
+        monkeypatch.delenv("HUGINN_API_KEY", raising=False)
+        monkeypatch.setenv("HUGINN_DEV_MODE", "1")
+        req = _make_request("/tools", client="203.0.113.10")
+        with pytest.raises(HTTPException) as exc:
+            require_api_key(req, None)
+        assert exc.value.status_code == 401
+
+    def test_dev_mode_loopback_exempt_ipv6(self, monkeypatch):
+        monkeypatch.delenv("HUGINN_API_KEY", raising=False)
+        monkeypatch.setenv("HUGINN_DEV_MODE", "1")
+        req = _make_request("/tools", client="::1")
+        assert require_api_key(req, None) == ""
+
     def test_valid_key(self, monkeypatch):
         monkeypatch.delenv("HUGINN_DEV_MODE", raising=False)
         monkeypatch.setenv("HUGINN_API_KEY", "secret")
@@ -68,6 +89,15 @@ class TestRequireAdminKey:
         monkeypatch.setenv("HUGINN_DEV_MODE", "1")
         req = _make_request("/config")
         assert require_admin_key(req, None) == ""
+
+    def test_dev_mode_does_not_exempt_non_loopback(self, monkeypatch):
+        monkeypatch.delenv("HUGINN_API_KEY", raising=False)
+        monkeypatch.delenv("HUGINN_ADMIN_API_KEY", raising=False)
+        monkeypatch.setenv("HUGINN_DEV_MODE", "1")
+        req = _make_request("/config", client="203.0.113.10")
+        with pytest.raises(HTTPException) as exc:
+            require_admin_key(req, None)
+        assert exc.value.status_code == 401
 
     def test_admin_key_required(self, monkeypatch):
         monkeypatch.delenv("HUGINN_DEV_MODE", raising=False)
