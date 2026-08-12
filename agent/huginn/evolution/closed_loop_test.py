@@ -258,6 +258,72 @@ def test_kwargs_generalization() -> None:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_meta_skill_rules_feedback() -> None:
+    """元技能规则反哺: record_invocation 统计 → promote / flag_failure / untested.
+
+    复用高+成功率高 → promote; 调用够多但成功率低 → flag_failure;
+    从未被调 → untested (信息性, 不删). 并用 record_invocation 走真数据路径.
+    """
+    from huginn.skills.base import SkillDefinition, SkillStep
+    from huginn.skills.registry import SkillRegistry
+
+    def _mk(name: str) -> None:
+        skill = SkillDefinition(
+            name=name,
+            description="meta test skill",
+            category="distilled",
+            steps=[SkillStep(name="s1", tool="read_file", input_mapping={},
+                             output_key="o", on_failure="skip")],
+            required_tools=["read_file"],
+            tags=["test"],
+            metadata={"evolution": {"usage_count": 0, "success_count": 0}},
+        )
+        SkillRegistry.register(skill)
+
+    # 用 record_invocation 的真实现累积统计 (闭环数据输入)
+    _mk("meta_promote_candidate")
+    for _ in range(5):
+        SkillRegistry.record_invocation("meta_promote_candidate", True)
+
+    _mk("meta_flag_failure_candidate")
+    SkillRegistry.record_invocation("meta_flag_failure_candidate", True)
+    for _ in range(2):
+        SkillRegistry.record_invocation("meta_flag_failure_candidate", False)
+
+    _mk("meta_untested_candidate")  # 从未 record_invocation → usage=0
+
+    try:
+        logger, tmp = _fresh_logger()
+        engine = EvolutionEngine(logger=logger)
+        report = engine.evaluate_meta_skill_rules()
+
+        promote_names = {r["name"] for r in report["promote_to_primitive"]}
+        flag_names = {r["name"] for r in report["flag_high_failure"]}
+        assert "meta_promote_candidate" in promote_names, (
+            f"5 次调用全成功应 promote, got promote={promote_names}"
+        )
+        assert "meta_flag_failure_candidate" in flag_names, (
+            f"3 次调用 2 失败应 flag_failure, got flag={flag_names}"
+        )
+        assert "meta_untested_candidate" in report["untested"]
+
+        # 状态已回流到 metadata (非破坏性标记)
+        assert (
+            SkillRegistry.get("meta_promote_candidate")
+            .metadata["evolution"]["meta_status"]
+            == "promote"
+        )
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+        for name in (
+            "meta_promote_candidate",
+            "meta_flag_failure_candidate",
+            "meta_untested_candidate",
+        ):
+            if name in SkillRegistry._skills:
+                del SkillRegistry._skills[name]
+
+
 def main() -> int:
     tests = [
         ("failure -> rule -> application", test_failure_to_rule_to_application),
@@ -266,6 +332,7 @@ def main() -> int:
         ("principle quality gate", test_principle_quality_gate),
         ("usage_count persistence", test_usage_count_persistence),
         ("kwargs generalization", test_kwargs_generalization),
+        ("meta skill rules feedback", test_meta_skill_rules_feedback),
     ]
     passed = 0
     for name, fn in tests:

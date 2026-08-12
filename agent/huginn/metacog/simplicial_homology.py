@@ -88,7 +88,15 @@ def _betti_fallback(simplices: Iterable[tuple], max_dim: int) -> dict[int, int]:
     ponytail: 只算 β_0 (并查集) + β_1 (cycle_basis), 维度 ≥2 直接给 0.
     升级路径: pip install gudhi 走真正 SimplexTree. 这个 fallback 跟
     trace_topology.compute_betti 等价, 留着只是让模块没 GUDHI 也能 import.
+
+    语义一致性: simplex (v0, v1, v2) 表示 2-simplex [v0,v1,v2], 它隐含
+    边界 {v0,v1},{v1,v2},{v0,v2} — 向下闭包. 早期实现只收集 len==2 的
+    simplex 当边, 会把 3+ 维 simplex 的边界丢掉, 导致 β_1 失真 (伪环/
+    漏填). 这里对每个 simplex 展开其全部 2 元素子集, 与 GUDHI 的
+    SimplexTree 语义对齐.
     """
+    from itertools import combinations
+
     try:
         import networkx as nx
         _nx = True
@@ -96,13 +104,14 @@ def _betti_fallback(simplices: Iterable[tuple], max_dim: int) -> dict[int, int]:
         _nx = False
 
     vertices: set = set()
-    edges: list[tuple] = []
+    edges: set = set()
     for s in simplices:
         if len(s) == 0:
             continue
         vertices.update(s)
-        if len(s) == 2:
-            edges.append(tuple(s))
+        # 向下闭包: 每个 simplex 的所有 2-面都是边
+        for a, b in combinations(s, 2):
+            edges.add(tuple(sorted((a, b))))
 
     if _nx:
         G = nx.Graph()

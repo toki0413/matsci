@@ -12,6 +12,7 @@ on:
     branches: [master, main]
     paths:
       - 'scripts/skill_audit.py'
+      - 'scripts/skill_audit_baseline.json'
       - 'agent/huginn/skills/**'
       - 'agent/huginn/metacog/trace_topology.py'
       - 'agent/huginn/metacog/simplicial_homology.py'
@@ -20,6 +21,7 @@ on:
     branches: [master, main]
     paths:
       - 'scripts/skill_audit.py'
+      - 'scripts/skill_audit_baseline.json'
       - 'agent/huginn/skills/**'
       - 'agent/huginn/metacog/trace_topology.py'
       - 'agent/huginn/metacog/simplicial_homology.py'
@@ -46,11 +48,15 @@ jobs:
           pip install -e "./agent[dev]"
           pip install networkx numpy scipy
 
-      - name: Run skill library audit
+      - name: Run skill library audit (gate)
         id: audit
         working-directory: ${{ github.workspace }}
         run: |
-          python scripts/skill_audit.py --json --tree 2>&1 | tee skill_audit_output.txt
+          # pipefail 保证 python 门禁退出码 (β₁ 回归 / 新增可疑孤立) 不会被 tee 吞掉
+          set -euo pipefail
+          python scripts/skill_audit.py --json --tree \
+            --fail-on-hole --baseline scripts/skill_audit_baseline.json \
+            2>&1 | tee skill_audit_output.txt
           # 把 JSON 摘要单独抽出供后续步骤消费
           python - << 'PY'
           import json, re

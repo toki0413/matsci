@@ -1,0 +1,10 @@
+{
+  "skills": 56,
+  "tools": 38,
+  "betti": {
+    "0": 18,
+    "1": 14,
+    "2": 0
+  },
+  "suspicious_isolated": []
+}
