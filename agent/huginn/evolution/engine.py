@@ -13,6 +13,7 @@ We evolve these COMPONENTS, not the LLM weights.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import threading
 import time
@@ -23,6 +24,8 @@ from typing import TYPE_CHECKING, Any
 
 from .logger import ExecutionLogger
 
+logger = logging.getLogger(__name__)
+
 if TYPE_CHECKING:
     from huginn.skills.base import SkillDefinition
 
@@ -30,6 +33,14 @@ if TYPE_CHECKING:
 # evicted to keep the rule set manageable and evaluation fast.
 MAX_RULES = 100
 _CONFIDENCE_FLOOR = 0.3
+
+# ── 元技能规则阈值 (HiSME: 从技能有效性与复用性反馈学习"如何维护技能") ──
+# record_invocation 把运行时 usage/success 写进 metadata['evolution'],
+# evaluate_meta_skill_rules 读回并施加这些规则, 反哺技能库维护决策.
+_META_PROMOTE_USAGE = 5      # 复用 ≥5 次才谈"值得提升为基元"
+_META_PROMOTE_SUCCESS = 0.8  # 且成功率 ≥80%
+_META_FLAG_FAILURE_USAGE = 3  # 至少 3 次调用才有资格判"高失败"
+_META_FLAG_FAILURE_RATE = 0.5  # 成功率 <50% → 标注待排查/合并
 
 
 def _snake_case(name: str) -> str:
@@ -425,6 +436,65 @@ class EvolutionEngine:
             except Exception:
                 continue
         return registered
+
+    def evaluate_meta_skill_rules(self) -> dict[str, Any]:
+        """基于 record_invocation 统计施加元技能规则, 反哺技能库维护.
+
+        反哺闭环: SkillTool 执行时 record_invocation 把 usage/success 写进
+        metadata['evolution'] (数据输入), 这里读回并产出维护决策 (规则输出):
+          - promote:     复用高 + 成功率高 → 值得提升为基元 (可复用底材)
+          - flag_failure: 调用够多但成功率低 → 需排查/合并
+          - untested:    从未被调用 → 信息性标注 (record_invocation 刚上线,
+                         零复用是默认态, 不据此淘汰, 只计数)
+        决策写 sidecar (meta_skill_rules.json) 供观测, 并在每个技能 metadata
+        打非破坏性 meta_status 标记. 返回结构化 dict. 不自动删/改技能定义.
+        """
+        from huginn.skills.registry import SkillRegistry
+
+        promote: list[dict[str, Any]] = []
+        flag_failure: list[dict[str, Any]] = []
+        untested: list[str] = []
+        for s in SkillRegistry.get_all_definitions():
+            meta = getattr(s, "metadata", None) or {}
+            ev = meta.get("evolution") or {}
+            usage = int(ev.get("usage_count", 0))
+            success = int(ev.get("success_count", 0))
+            rate = (success / usage) if usage else 0.0
+            name = s.name
+            rec = {
+                "name": name,
+                "usage": usage,
+                "success_rate": round(rate, 3),
+                "parent": getattr(s, "parent", None),
+            }
+            status = None
+            if usage >= _META_PROMOTE_USAGE and rate >= _META_PROMOTE_SUCCESS:
+                promote.append(rec)
+                status = "promote"
+            elif usage >= _META_FLAG_FAILURE_USAGE and rate < _META_FLAG_FAILURE_RATE:
+                flag_failure.append(rec)
+                status = "flag_failure"
+            elif usage == 0:
+                untested.append(name)
+                status = "untested"
+            if status and isinstance(meta, dict):
+                evol = meta.setdefault("evolution", {})
+                evol["meta_status"] = status
+
+        report = {
+            "timestamp": datetime.now().isoformat(),
+            "promote_to_primitive": promote,
+            "flag_high_failure": flag_failure,
+            "untested": untested,
+            "total_skills": len(SkillRegistry.get_all_definitions()),
+        }
+        try:
+            report_path = self.logger.persist_dir / "meta_skill_rules.json"
+            with report_path.open("w", encoding="utf-8") as f:
+                json.dump(report, f, ensure_ascii=False, indent=2)
+        except Exception:
+            logger.warning("meta_skill_rules sidecar write failed", exc_info=True)
+        return report
 
     def evolve_prompt_patches(self) -> list[EvolutionRule]:
         """Generate system prompt patches based on execution patterns."""
