@@ -3,7 +3,7 @@ import type { Page } from '@playwright/test';
 
 // The palette's search box is the single element with this placeholder, so it
 // doubles as a stable "palette is open" probe.
-const paletteSearch = (page: Page) => page.getByPlaceholder('Search tools...');
+const paletteSearch = (page: Page) => page.getByPlaceholder('Search tools…');
 
 // Open the palette via the sidebar "More Tools" button. Ctrl+K is exercised in
 // its own test; the rest use this reliable entry point.
