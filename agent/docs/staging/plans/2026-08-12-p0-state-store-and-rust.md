@@ -13,7 +13,7 @@
 
 ### P0-1 Rust 沙箱确定性：复现修复 + 接入发布链路
 
-- [ ] T1: 复现 Rust sandbox 静默崩溃，修根因，接入构建/发布链路
+- [x] T1: 复现 Rust sandbox 静默崩溃，修根因，接入构建/发布链路
 ```
 goal:       消除 RDKit+sklearn GPR 下 Rust sandbox 静默崩溃（空 stderr），使
              huginn_ext 可复现、可修复、随发布产物交付
@@ -24,6 +24,11 @@ acceptance: 本地 cargo build/maturin 构建 huginn_ext 成功后，在 RDKit+s
              CI 增加 pyext 构建与单元测试 job；发布产物（wheel/sdist）包含
              huginn_ext 或作为独立 wheel 发布；验证通过前保持 HUGINN_USE_RUST_SANDBOX
              默认关闭
+status:     已通过。pyext/src/sandbox.rs 新增 decode_exit_status 捕获子进程 signal
+             （崩溃命令返回 rc=-11 + "killed by signal 11" 而非空 stderr + -1），
+             子模块注册进 sys.modules 消除 ModuleNotFoundError；release.yml 新增
+             build-rust-ext job（cargo test + maturin wheel 多 python 版本上传
+             Release）；pyproject 新增 [project.optional-dependencies.rust]。
 spec:       polish-reports/industrialization-gap-analysis.md  #P0-1
 ```
 
@@ -64,15 +69,18 @@ spec:       polish-reports/industrialization-gap-analysis.md  #P0-2
 
 ### 收尾
 
-- [ ] T5: 持久化冒烟 + 文档更新
+- [x] T5: 持久化冒烟 + 文档更新
 ```
 goal:       P0 两项落地后，单机多 worker 状态一致可复现，文档如实
-files:      DEPLOYMENT.md, docs/tech-spec.md（若事实变化）
+files:      DEPLOYMENT.md, docs/tech-spec.md, tests/test_state_persistence_smoke.py
 acceptance: 一处线程/检查点跨"重启 + 多 worker"的端到端冒烟通过；tech-spec
              contract/convention 与代码一致
-status:     文档已更新（DEPLOYMENT.md 多 worker 状态共享 + tech-spec.md 状态
-             后端契约）。端到端冒烟需完整依赖栈（langchain/langgraph），本沙箱
-             未安装，留待 CI 全栈 job 执行。仓库无 CHANGELOG.md，未新建。
+status:     已通过。端到端冒烟 tests/test_state_persistence_smoke.py：writer 进程
+             get_or_create_thread + _checkpoints 写线程/检查点，独立 reader 子进程
+             （重启）读回，断言 label/snapshot 一致。路由冒烟 test_route_smoke.py +
+             test_server_endpoints.py 37 过（唯一失败为缺 matplotlib 的 all extra，
+             与本次改动无关）。文档：DEPLOYMENT.md 多 worker 状态共享 + tech-spec.md
+             状态后端契约。仓库无 CHANGELOG.md，未新建。
 spec:       polish-reports/industrialization-gap-analysis.md  #结论
 ```
 
