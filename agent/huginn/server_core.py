@@ -55,13 +55,42 @@ except Exception:
 
 _context: ServerContext | None = None
 
-_checkpoints: dict[str, tuple[Path, dict[str, str]]] = {}
-
-_threads: dict[str, dict[str, Any]] = {}
+# Conversation thread metadata and checkpoint snapshots. These are plain
+# in-memory dicts by default (single-process behaviour). With
+# HUGINN_STATE_BACKEND=sqlite they become SQLite-backed mutable mappings so
+# sessions/checkpoints survive restarts and are shared across uvicorn workers
+# (see huginn/persistence/state_store.py).
+_checkpoints: MutableMapping[str, tuple[Path, dict[str, str]]] = {}
+_threads: MutableMapping[str, dict[str, Any]] = {}
 
 # Protects _checkpoints and _threads against concurrent access from
 # multiple async handlers or thread-pool workers.
 _state_lock = threading.RLock()
+
+
+def _make_state_store(kind: str) -> MutableMapping[str, Any]:
+    """Return the thread/checkpoint store for the configured backend.
+
+    ``memory`` (default) keeps the existing in-process dict behaviour. ``sqlite``
+    persists to ``<runtime_home>/state.sqlite`` (WAL) so multiple workers on the
+    same host share sessions and checkpoints.
+    """
+    backend = os.environ.get("HUGINN_STATE_BACKEND", "").lower().strip()
+    if backend not in ("sqlite", "1", "true", "yes"):
+        return {}
+    from huginn.persistence.state_store import (
+        SqliteStore,
+        decode_checkpoint,
+        encode_checkpoint,
+    )
+
+    if kind == "threads":
+        return SqliteStore("huginn_threads")
+    return SqliteStore("huginn_checkpoints", encode=encode_checkpoint, decode=decode_checkpoint)
+
+
+_checkpoints = _make_state_store("checkpoints")  # type: ignore[assignment]
+_threads = _make_state_store("threads")  # type: ignore[assignment]
 
 _EDIT_TOOLS: set[str] = {"file_write_tool", "file_edit_tool"}
 
