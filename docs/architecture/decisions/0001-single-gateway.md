@@ -64,12 +64,22 @@ huginn 的业务能力（agent 循环、工具、技能、记忆、知识蒸馏�
 由 `tests/test_arch_single_gateway.py` 在 CI（ci.yml test job 的 fast-fail 阶段）
 强制执行。任何新增的"外部直连业务模块"或"CLI 子进程委托"都会让 CI 变红。
 
+机器无关性由 `tests/test_arch_no_hardcoded_paths.py` 在同一 fast-fail 阶段强制：
+git 跟踪的代码文件里出现 Windows 用户绝对路径（`C:\Users\...`）或黑名单机器
+token（如 `wanzh`）都会让 CI 变红。机器相关路径必须改为 env 变量展开
+（如 `workspace = "env:HUGINN_WORKSPACE"`）。
+
 ## 落地进展（2026-08-12）
 
 制度层已到位；实现层按此推进，每完成一项更新本清单：
 
 - [x] **导入门禁**：`tests/test_arch_single_gateway.py` 冻结外部直连清单并阻断新增，
       已接入 CI fast-fail。
+- [x] **机器无关门禁**：`tests/test_arch_no_hardcoded_paths.py` 扫描 git 跟踪的代码
+      文件，拦截 Windows 用户绝对路径（`C:\Users\...`）与黑名单机器 token（`wanzh`），
+      已接入 CI fast-fail。配套把 `huginn.toml` 的 workspace 改为 `env:HUGINN_WORKSPACE`
+      展开（`config.from_dict` 支持 `env:` 前缀），并 gitignore 掉
+      `pyext/.cargo/config.toml`（含机器专用 Python 库绝对路径）。
 - [x] **CLI 委托冻结**：同一门禁新增 `CLI_DELEGATED_SUBCOMMANDS` 冻结清单，扫描
       `cli/src/main.rs` 的 `delegate_to_python(...)`，只许缩、不许涨 —— 新子命令
       必须改成 HTTP/WS 客户端，禁止新增 `python -m huginn.cli` 子进程旁路。
