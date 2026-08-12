@@ -1,13 +1,13 @@
 /**
  * useWorkspace — Manages file explorer, code editor, and terminal state.
  *
- * Encapsulates Tauri IPC for directory browsing, file editing, and
- * terminal output streaming via Tauri events.
+ * ADR-0001 文件 I/O 归口后端：目录浏览 / 文件读写统一走后端 /v1/fs/*，
+ * 不再通过 Tauri IPC 直接做本地文件 I/O。终端输出仍走 Tauri 事件流。
  */
 import { useState, useRef, useEffect, useCallback } from 'react';
 import type { ReactNode } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { api } from '../lib/api';
 import type { FileEntry } from '../types/domain';
 
 export function useWorkspace() {
@@ -24,8 +24,10 @@ export function useWorkspace() {
 
   const loadDir = useCallback(async (path: string) => {
     try {
-      const entries = (await invoke('read_dir', { path })) as FileEntry[];
-      setDirCache((prev) => ({ ...prev, [path]: entries }));
+      const res = await api.get<{ entries: FileEntry[] }>('/v1/fs/list', {
+        params: new URLSearchParams({ path }),
+      });
+      setDirCache((prev) => ({ ...prev, [path]: res.entries }));
     } catch (e: any) {
       console.error('[files] read_dir failed:', e);
     }
@@ -46,9 +48,11 @@ export function useWorkspace() {
 
   const openFile = async (path: string) => {
     try {
-      const content = (await invoke('read_file', { path })) as string;
+      const res = await api.get<{ content: string }>('/v1/fs/read', {
+        params: new URLSearchParams({ path }),
+      });
       setSelectedFile(path);
-      setEditorContent(content);
+      setEditorContent(res.content);
       setEditorDirty(false);
       setEditorMsg('');
     } catch (e: any) {
@@ -59,7 +63,7 @@ export function useWorkspace() {
   const saveFile = async () => {
     if (!selectedFile) return;
     try {
-      await invoke('write_file', { path: selectedFile, content: editorContent });
+      await api.put('/v1/fs/write', { path: selectedFile, content: editorContent });
       setEditorDirty(false);
       setEditorMsg('Saved.');
       setTimeout(() => setEditorMsg(''), 2000);
@@ -70,13 +74,12 @@ export function useWorkspace() {
 
   // Load initial CWD and directory listing
   useEffect(() => {
-    if (!("__TAURI_INTERNALS__" in window)) return;
     (async () => {
       try {
-        const path = (await invoke('get_cwd')) as string;
-        setCwd(path);
-        await loadDir(path);
-        setExpandedDirs((prev) => new Set(prev).add(path));
+        const res = await api.get<{ path: string }>('/v1/fs/cwd');
+        setCwd(res.path);
+        await loadDir(res.path);
+        setExpandedDirs((prev) => new Set(prev).add(res.path));
       } catch (e) {
         console.error('[files] get_cwd failed:', e);
       }
