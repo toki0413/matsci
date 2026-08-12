@@ -157,6 +157,17 @@ python -m huginn.server --host 0.0.0.0 --port 8000
 uvicorn huginn.server:app --host 0.0.0.0 --port 8000 --workers 4
 ```
 
+> **多 worker 状态共享**: 会话线程 / 检查点快照默认是进程内内存态
+> (`HUGINN_STATE_BACKEND` 未设置), 多个 uvicorn worker 之间**不共享**。
+> 要单机多 worker 共享会话并跨重启持久化, 设置 SQLite 后端:
+>
+> ```bash
+> export HUGINN_STATE_BACKEND=sqlite   # 持久化到 <runtime_home>/state.sqlite (WAL)
+> ```
+>
+> 取值: `memory`(默认, 单进程行为) 或 `sqlite`(WAL + busy_timeout, 多 worker 共享)。
+> 跨实例 HA / Redis 后端列在 P1, 见 `ROADMAP.md`。
+
 ---
 
 ## Reverse Proxy
