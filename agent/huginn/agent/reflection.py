@@ -505,6 +505,23 @@ class ReflectionMixin:
             except Exception:
                 logger.debug("meta skill rules evaluation failed", exc_info=True)
 
+            # 元蒸馏反哺: 同节拍跑一次, 让蒸馏知识库的复用/置信统计回流成
+            # 维护决策 (promote/flag_low_value/untested + 各 source_type 质量).
+            # 与技能层 evaluate_meta_skill_rules 同构, 是知识层的"meta"层.
+            try:
+                from huginn.evolution.knowledge_distiller import KnowledgeDistiller
+                _kdl = KnowledgeDistiller()
+                _krep = _kdl.evaluate_meta_knowledge_rules()
+                if _krep.get("promote_to_stable") or _krep.get("flag_low_value"):
+                    logger.info(
+                        "meta knowledge rules: promote=%d flag=%d untested=%d",
+                        len(_krep.get("promote_to_stable", [])),
+                        len(_krep.get("flag_low_value", [])),
+                        len(_krep.get("untested", [])),
+                    )
+            except Exception:
+                logger.debug("meta knowledge rules evaluation failed", exc_info=True)
+
         self._session_state.clear_turn_results()
 
     # ── S7 self-modification helpers ────────────────────────────────────
