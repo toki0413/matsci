@@ -24,6 +24,15 @@ from huginn.utils.runtime import get_runtime_home
 
 logger = logging.getLogger(__name__)
 
+# ── 元蒸馏规则阈值 (HiSME: 从知识复用/有效性反馈学习"如何维护知识") ──
+# MemoryManager._verify_distilled_for_tool → verify_knowledge 把"被检索并成功使用"
+# 的知识升为 confirmed (usage_count+1, confidence+0.1). evaluate_meta_knowledge_rules
+# 读回这些统计并施加维护决策, 反哺蒸馏知识库.
+_META_KNOWLEDGE_PROMOTE_USAGE = 3       # confirmed/复用 ≥3 次才谈 promote
+_META_KNOWLEDGE_PROMOTE_CONFIDENCE = 0.8  # 且 confidence ≥0.8 → 提升为稳定原则候选
+_META_KNOWLEDGE_FLAG_USAGE = 2          # ≥2 次调用才有资格判"低价值"
+_META_KNOWLEDGE_FLAG_CONFIDENCE = 0.4   # confidence <0.4 → flag_low_value
+
 
 @dataclass
 class DistilledKnowledge:
@@ -39,6 +48,7 @@ class DistilledKnowledge:
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     usage_count: int = 0  # v23: 实际语义是 "被确认有效的次数" (confirmed_count), 仅在 verify 时 +1. 不重命名以保持序列化兼容 (已落盘 JSON 有 usage_count 字段).
     verification_status: str = "unverified"  # "unverified", "confirmed", "rejected"
+    meta_status: str = ""  # 元蒸馏评估标记: "" | "promote" | "flag_low_value" | "untested"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -592,6 +602,95 @@ class KnowledgeDistiller:
                 self._save()
                 return True
         return False
+
+    def evaluate_meta_knowledge_rules(self) -> dict[str, Any]:
+        """聚合评估蒸馏知识库, 施加元蒸馏规则, 反哺维护决策.
+
+        逐条自纠环 (verify_knowledge) 已在, 这里补的是跨全部条目的聚合层 —
+        对应技能层的 evaluate_meta_skill_rules:
+          - promote:      confirmed/复用多 + confidence 高 → 提升为稳定原则候选
+          - flag_low_value: rejected, 或调用够多但 confidence 低 → 待合并/降权
+          - untested:     从未被复用 → 信息性 (记录溯源, 不据此删)
+        另输出每类 source_type 的蒸馏质量 (数量/confirmed/rejected/复用率/均置信),
+        让"蒸馏本身是否有效"有据可查 (meta-over-distiller).
+
+        决策写 sidecar (meta_knowledge_rules.json) 供观测, 并在每条知识打
+        非破坏性 meta_status 标记. 返回结构化 dict. 不自动删/改知识内容.
+        """
+        promote: list[dict[str, Any]] = []
+        flag_low_value: list[dict[str, Any]] = []
+        untested: list[str] = []
+        by_source: dict[str, dict[str, Any]] = {}
+
+        for k in self.knowledge_base:
+            usage = k.usage_count
+            conf = k.confidence
+            status = k.verification_status
+            rec = {
+                "knowledge_id": k.knowledge_id,
+                "source_type": k.source_type,
+                "usage_count": usage,
+                "confidence": round(conf, 3),
+                "verification_status": status,
+            }
+
+            src = by_source.setdefault(
+                k.source_type,
+                {"count": 0, "confirmed": 0, "rejected": 0, "reuse": 0,
+                 "confidence_sum": 0.0},
+            )
+            src["count"] += 1
+            src["confidence_sum"] += conf
+            src["reuse"] += usage
+            if status == "confirmed":
+                src["confirmed"] += 1
+            elif status == "rejected":
+                src["rejected"] += 1
+
+            mstatus = None
+            if status == "rejected" or (
+                usage >= _META_KNOWLEDGE_FLAG_USAGE
+                and conf < _META_KNOWLEDGE_FLAG_CONFIDENCE
+            ):
+                flag_low_value.append(rec)
+                mstatus = "flag_low_value"
+            elif (
+                usage >= _META_KNOWLEDGE_PROMOTE_USAGE
+                and conf >= _META_KNOWLEDGE_PROMOTE_CONFIDENCE
+            ):
+                promote.append(rec)
+                mstatus = "promote"
+            elif usage == 0 and status == "unverified":
+                untested.append(k.knowledge_id)
+                mstatus = "untested"
+            if mstatus:
+                k.meta_status = mstatus
+
+        for _s, agg in by_source.items():
+            agg["avg_confidence"] = round(
+                agg["confidence_sum"] / agg["count"], 3
+            ) if agg["count"] else 0.0
+            agg["reuse_rate"] = round(
+                agg["reuse"] / agg["count"], 3
+            ) if agg["count"] else 0.0
+            agg.pop("confidence_sum", None)
+
+        report = {
+            "timestamp": datetime.now().isoformat(),
+            "promote_to_stable": promote,
+            "flag_low_value": flag_low_value,
+            "untested": untested,
+            "distillation_quality_by_source": by_source,
+            "total_knowledge": len(self.knowledge_base),
+        }
+        try:
+            report_path = self.output_dir / "meta_knowledge_rules.json"
+            with report_path.open("w", encoding="utf-8") as f:
+                json.dump(report, f, ensure_ascii=False, indent=2)
+        except Exception:
+            logger.warning("meta_knowledge_rules sidecar write failed", exc_info=True)
+        self._save()
+        return report
 
     def _generate_error_lesson(
         self, tool: str, error: str, software: str, calc_type: str

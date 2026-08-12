@@ -1498,6 +1498,57 @@ class TestVerifyKnowledge:
         assert kd.verify_knowledge("does_not_exist") is False
 
 
+class TestMetaKnowledgeRules:
+    """元蒸馏反哺: evaluate_meta_knowledge_rules 读 usage/confidence/status → 维护决策."""
+
+    def test_promote_flag_untested(self, tmp_path):
+        kd = KnowledgeDistiller(output_dir=str(tmp_path / "d"))
+        # 高复用 + 高置信 → promote
+        kd.knowledge_base.append(
+            DistilledKnowledge(
+                knowledge_id="promote_me", content="a", source_type="error_lesson",
+                source_evidence=[], confidence=0.9, usage_count=5,
+                verification_status="confirmed",
+            )
+        )
+        # rejected → flag_low_value
+        kd.knowledge_base.append(
+            DistilledKnowledge(
+                knowledge_id="rejected_me", content="b", source_type="error_lesson",
+                source_evidence=[], confidence=0.3, usage_count=3,
+                verification_status="rejected",
+            )
+        )
+        # 零复用 + unverified → untested
+        kd.knowledge_base.append(
+            DistilledKnowledge(
+                knowledge_id="untested_me", content="c", source_type="domain_fact",
+                source_evidence=[], confidence=0.5,
+            )
+        )
+
+        report = kd.evaluate_meta_knowledge_rules()
+
+        promote_ids = {r["knowledge_id"] for r in report["promote_to_stable"]}
+        flag_ids = {r["knowledge_id"] for r in report["flag_low_value"]}
+        assert "promote_me" in promote_ids, f"高复用高置信应 promote, got {promote_ids}"
+        assert "rejected_me" in flag_ids, f"rejected 应 flag, got {flag_ids}"
+        assert "untested_me" in report["untested"]
+
+        # meta_status 已回流 (非破坏性标记)
+        assert kd.knowledge_base[0].meta_status == "promote"
+        assert kd.knowledge_base[1].meta_status == "flag_low_value"
+
+        # 每类 source_type 的蒸馏质量已聚合
+        q = report["distillation_quality_by_source"]
+        assert q["error_lesson"]["count"] == 2
+        assert q["error_lesson"]["reuse_rate"] == pytest.approx(4.0)
+        assert q["domain_fact"]["count"] == 1
+
+        # sidecar 已写
+        assert (tmp_path / "d" / "meta_knowledge_rules.json").exists()
+
+
 class TestAutoIngestToKB:
     def test_auto_ingest_with_explicit_kb(self, tmp_path):
         kd = KnowledgeDistiller(output_dir=str(tmp_path / "d"))
