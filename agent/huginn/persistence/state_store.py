@@ -14,9 +14,9 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
-from collections.abc import Iterator, MutableMapping
+from collections.abc import Callable, Iterator, MutableMapping
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from huginn.utils.runtime import get_runtime_home
 
