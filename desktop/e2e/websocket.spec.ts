@@ -21,16 +21,16 @@ test.describe('websocket connection', () => {
   test('WS connects on page load', async ({ page }) => {
     test.skip(!backendUp, 'backend not running');
     await page.goto('/');
-    // The sidebar dot flips to "Backend online" once the agent WS handshakes.
-    await expect(page.getByText('Backend online')).toBeVisible({ timeout: 20_000 });
+    // Header connection button flips to "Online" once the agent WS handshakes.
+    await expect(page.getByRole('button', { name: 'Online', exact: true })).toBeVisible({ timeout: 20_000 });
   });
 
   test('offline indicator shows when the WS cannot connect', async ({ page }) => {
     await blockWebSocket(page);
     await page.goto('/');
     // App starts with isConnected=false and the failed WS keeps it that way,
-    // so the red dot + "Backend offline" label should be visible right away.
-    await expect(page.getByText('Backend offline')).toBeVisible({ timeout: 10_000 });
+    // so the header connection button reads "Offline" right away.
+    await expect(page.getByRole('button', { name: 'Offline', exact: true })).toBeVisible({ timeout: 10_000 });
   });
 
   test('heartbeat ping keeps the connection alive', async ({ page }) => {
@@ -45,7 +45,7 @@ test.describe('websocket connection', () => {
     });
 
     await page.goto('/');
-    await expect(page.getByText('Backend online')).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByRole('button', { name: 'Online', exact: true })).toBeVisible({ timeout: 20_000 });
 
     // ws-client fires a {type:"ping"} every 30s. The first one proves the
     // heartbeat is wired up and travelling over the open socket.
