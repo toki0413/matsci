@@ -302,6 +302,15 @@ class ReflectionMixin:
                             )
                     elif reflection.evolve_signal == "success":
                         _new_rules = ev_engine.evolve_from_successes()
+                        # G7b: 把 evolution 自动提取的技能模板同步进主技能库,
+                        # 弥合 SkillTemplate 池与 SkillRegistry 两个技能池.
+                        try:
+                            ev_engine.sync_to_registry()
+                        except Exception:
+                            logger.debug(
+                                "sync evolved skills to registry failed",
+                                exc_info=True,
+                            )
                     # G7: evolution 学新规则后让 CSM 重新探索 (新规则可能改路径)
                     if _new_rules:
                         try:

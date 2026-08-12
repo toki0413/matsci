@@ -13,19 +13,34 @@ We evolve these COMPONENTS, not the LLM weights.
 from __future__ import annotations
 
 import json
+import re
 import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .logger import ExecutionLogger
+
+if TYPE_CHECKING:
+    from huginn.skills.base import SkillDefinition
 
 # Hard cap on learned rules. Beyond this the lowest-confidence ones get
 # evicted to keep the rule set manageable and evaluation fast.
 MAX_RULES = 100
 _CONFIDENCE_FLOOR = 0.3
+
+
+def _snake_case(name: str) -> str:
+    """把任意名转成 snake_case 技能标识.
+
+    自动提取的模板名形如 "Relax Workflow (VASP)", 而 SkillRegistry 用 name
+    作 key 且 SkillTool 按 name 查找, 统一成 snake_case 才是合法标识.
+    退化: 抽不到字母数字时返回 'evolved_skill'."""
+    s = re.sub(r"[^a-zA-Z0-9]+", " ", name).strip().lower()
+    s = re.sub(r"\s+", "_", s)
+    return s or "evolved_skill"
 
 
 def _recompute_confidence(rule: EvolutionRule) -> float:
@@ -96,6 +111,58 @@ class SkillTemplate:
     usage_count: int = 0
     success_count: int = 0
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
+
+    def to_skill_definition(self) -> SkillDefinition:
+        """把 SkillTemplate 转成 SkillRegistry 可注册的 SkillDefinition.
+
+        弥合两个技能池: evolution 自动提取的 SkillTemplate (evolved_skills.json)
+        → 声明式 SkillRegistry. usage_count/success_count/extraction_confidence
+        塞进 metadata['evolution'], 供运行时复用统计与"提升基元/淘汰"元规则取用.
+        """
+        from huginn.skills.base import SkillDefinition, SkillStep
+
+        steps = [
+            SkillStep(
+                name=step.get("name") or f"step_{i}",
+                tool=step["tool"],
+                input_mapping={},
+                output_key=f"step_{i}_out",
+                on_failure="skip",
+            )
+            for i, step in enumerate(self.workflow_steps)
+            if isinstance(step, dict) and step.get("tool")
+        ]
+        # workflow_steps 里只有 tool 名, 没有 input_mapping 值; 若一条 step 都
+        # 抽不出来, 就用 required_tools 兜底保底可注册.
+        if not steps:
+            steps = [
+                SkillStep(
+                    name=f"step_{i}",
+                    tool=tool,
+                    input_mapping={},
+                    output_key=f"step_{i}_out",
+                    on_failure="skip",
+                )
+                for i, tool in enumerate(self.required_tools)
+            ]
+        return SkillDefinition(
+            name=_snake_case(self.name),
+            description=self.description,
+            category="distilled",
+            steps=steps,
+            required_tools=list(self.required_tools),
+            tags=list(self.trigger_keywords) + ["evolved"],
+            metadata={
+                "evolution": {
+                    "skill_id": self.skill_id,
+                    "source_session": self.source_session,
+                    "extraction_confidence": self.extraction_confidence,
+                    "usage_count": self.usage_count,
+                    "success_count": self.success_count,
+                    "created_at": self.created_at,
+                }
+            },
+        )
 
 
 class EvolutionEngine:
@@ -332,6 +399,32 @@ class EvolutionEngine:
         if new_skills:
             self._save_skills()
         return new_skills
+
+    def sync_to_registry(self) -> list[SkillDefinition]:
+        """把本地 SkillTemplate 池同步进 SkillRegistry, 弥合两个技能池.
+
+        evolution 自动提取的模板 (self.skills) 默认只落在 evolved_skills.json,
+        与声明式 SkillRegistry (presets) 是两套并行系统. 本方法把每个模板转成
+        SkillDefinition 注册进 SkillRegistry, 使自动演化的能力进入主技能库 —
+        能被 SkillTool 执行、被 /skills 列出、被技能树查询.
+
+        已存在同名技能的跳过 (不覆盖 presets). 返回本次新注册的 SkillDefinition.
+        """
+        from huginn.skills.registry import SkillRegistry
+
+        registered: list[SkillDefinition] = []
+        for tpl in self.skills:
+            try:
+                skill = tpl.to_skill_definition()
+            except Exception:
+                continue
+            if SkillRegistry.get(skill.name):
+                continue
+            try:
+                registered.append(SkillRegistry.register(skill))
+            except Exception:
+                continue
+        return registered
 
     def evolve_prompt_patches(self) -> list[EvolutionRule]:
         """Generate system prompt patches based on execution patterns."""
