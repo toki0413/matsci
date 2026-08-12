@@ -5,16 +5,8 @@
 // When all violations are fixed, tighten the threshold to also fail on
 // serious violations.
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import AxeBuilder from '@axe-core/playwright';
-
-const GUIDE_KEY = 'huginn:guide:v1';
-
-test.beforeEach(async ({ page }) => {
-  await page.addInitScript((key) => {
-    try { localStorage.setItem(key, '1'); } catch { /* ignore */ }
-  }, GUIDE_KEY);
-});
 
 test.describe('accessibility — main views', () => {
   test('chat view — axe scan reports violations', async ({ page }) => {
@@ -47,8 +39,10 @@ test.describe('accessibility — main views', () => {
     // networkidle never fires with an active WebSocket — use 'load' instead.
     await page.waitForLoadState('load');
 
-    const tab = page.getByRole('tab', { name: 'Structure', exact: true });
+    const tab = page.getByRole('button', { name: 'More Tools' });
     await tab.click();
+    await page.getByPlaceholder('Search tools…').fill('Structure');
+    await page.getByRole('button', { name: 'Structure', exact: true }).click();
     await expect(page.getByText('No structure loaded')).toBeVisible({ timeout: 10_000 });
 
     const results = await new AxeBuilder({ page })
@@ -78,7 +72,12 @@ test.describe('accessibility — keyboard navigation', () => {
     await page.goto('/');
     await page.waitForLoadState('networkidle');
 
-    for (let i = 0; i < 15; i++) {
+    // The chat textarea is disabled while the WS handshake is pending, and a
+    // disabled control is skipped by Tab. Wait for it to be enabled first so
+    // the tab-order check exercises the real focus chain.
+    await expect(page.locator('textarea.flex-1')).toBeEnabled({ timeout: 30_000 });
+
+    for (let i = 0; i < 50; i++) {
       await page.keyboard.press('Tab');
       const focused = await page.evaluate(() => {
         const el = document.activeElement;
