@@ -9,6 +9,7 @@ _extract_text_visual_features / _compare_visual_data).
 
 from __future__ import annotations
 
+import contextlib
 import io
 import logging
 import re
@@ -41,6 +42,70 @@ def _histogram_correlation(img_bytes1: bytes, img_bytes2: bytes) -> float:
 
 class VisualInspectMixin:
     """visual_inspect 方法族. 通过 self 访问 engine 状态."""
+
+    async def _call_image_analysis_tool(
+        self,
+        image_bytes: bytes,
+        action: str,
+        parameters: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        """把给定的图片字节送去 image_analysis_tool 做真实结构分析.
+
+        这是视觉验证闭环的桥接入口: zoom 裁剪出的区域 / annotate 的整图
+        都会落成临时文件, 用正确的 args 结构 {image_path, action, parameters}
+        调 HuginnTool.call (async, 需 ToolContext). 失败静默返回 None,
+         不让主循环被视觉分析带挂. 参照 smart_ingest._call_image_tool.
+        """
+        try:
+            from huginn.core_types import ToolContext
+            from huginn.tools.registry import ToolRegistry
+
+            img_tool = ToolRegistry.get("image_analysis_tool")
+            if img_tool is None:
+                logger.debug("image_analysis_tool not registered, skip cv analysis")
+                return None
+            import os
+            import tempfile
+
+            tmp = None
+            try:
+                fd, tmp = tempfile.mkstemp(suffix=".png")
+                with os.fdopen(fd, "wb") as f:
+                    f.write(image_bytes)
+                args = {
+                    "image_path": tmp,
+                    "action": action,
+                    "parameters": parameters or {},
+                }
+                ctx = ToolContext(session_id="visual_inspect", workspace=tempfile.gettempdir())
+                result = await img_tool.call(args, ctx)
+                if result is None:
+                    return None
+                if not getattr(result, "success", False):
+                    logger.debug("image_analysis_tool %s returned not success", action)
+                    return None
+                data = getattr(result, "data", None)
+                return data if isinstance(data, dict) else None
+            finally:
+                with contextlib.suppress(OSError):
+                    if tmp is not None:
+                        os.unlink(tmp)
+        except Exception as exc:
+            logger.debug("image_analysis_tool call failed (non-fatal): %s", exc)
+            return None
+
+    def _pick_image_action(self, description: str) -> str:
+        """根据描述选 image_analysis_tool 的场景 action.
+
+        含 defect/缺陷 → defect_detect; 含 phase/相 → phase_field;
+        否则默认 sem_analysis.
+        """
+        desc_lower = (description or "").lower()
+        if "defect" in desc_lower or "缺陷" in description:
+            return "defect_detect"
+        if "phase" in desc_lower or "相" in description:
+            return "phase_field"
+        return "sem_analysis"
 
     async def _execute_visual_inspect(
         self, description: str, context: dict[str, Any],
@@ -140,16 +205,19 @@ class VisualInspectMixin:
                                 action_result["low_confidence"] = True
                                 action_result["note"] += f" (low consistency: {corr:.2f})"
 
-                        # 可选: 调 image_analysis_tool 做真正区域分析
-                        try:
-                            from huginn.tools.registry import ToolRegistry
-
-                            img_tool = ToolRegistry.get("image_analysis_tool")
-                            if img_tool:
-                                # 工具调用留给生产路径, selfcheck 不依赖
-                                pass
-                        except Exception:
-                            logger.debug("image_analysis_tool not available", exc_info=True)
+                        # 真正区域分析: crop 区域送 image_analysis_tool.
+                        # 视觉验证闭环: zoom 不只是裁剪, 裁剪后的区域要结构化标注
+                        # (defect/phase/sem), 结果写回 action_result.
+                        region_analysis = await self._call_image_analysis_tool(
+                            crop1_bytes,
+                            self._pick_image_action(description),
+                            {"region": [px1, py1, px2, py2]},
+                        )
+                        if region_analysis:
+                            action_result["region_analysis"] = region_analysis
+                            note = region_analysis.get("note") or region_analysis.get("summary")
+                            if note:
+                                action_result["note"] += f" | region: {str(note)[:120]}"
                     except ImportError:
                         action_result["note"] += " (PIL not available, coordinates only)"
                     except Exception as e:
@@ -179,7 +247,7 @@ class VisualInspectMixin:
         # 动作 3: annotate — 标注结构特征
         # v8 补全: 有图片时调 image_analysis_tool 做真正结构标注, 无图片用文本特征
         elif "annotate" in desc_lower:
-            annotation = self._annotate_visual_features(description, visual_base64, visual_ctx)
+            annotation = await self._annotate_visual_features(description, visual_base64, visual_ctx)
             result["actions"].append(
                 {
                     "action": "annotate",
@@ -316,7 +384,7 @@ class VisualInspectMixin:
                 break
         return best
 
-    def _annotate_visual_features(
+    async def _annotate_visual_features(
         self, description: str, visual_base64: str, visual_ctx: str
     ) -> dict[str, Any]:
         """v8: 标注结构特征. 有图片调 image_analysis_tool, 无图片用文本特征.
@@ -336,35 +404,22 @@ class VisualInspectMixin:
                 import base64 as b64
                 import io as _io
 
-                from huginn.tools.registry import ToolRegistry
+                from PIL import Image
 
-                img_tool = ToolRegistry.get("image_analysis_tool")
-                if img_tool:
-                    from PIL import Image
-                    img_data = b64.b64decode(visual_base64)
-                    img = Image.open(_io.BytesIO(img_data))
-                    buf = _io.BytesIO()
-                    img.save(buf, format="PNG")
-                    img_b64 = b64.b64encode(buf.getvalue()).decode()
-                    # 根据描述选场景: 含 "defect" → defect_detect, 含 "phase" → phase_field
-                    desc_lower = description.lower()
-                    if "defect" in desc_lower or "缺陷" in description:
-                        scene = "defect_detect"
-                    elif "phase" in desc_lower or "相" in description:
-                        scene = "phase_field"
-                    else:
-                        scene = "sem_analysis"  # 默认 SEM 分析
-                    # 调工具 (同步 call, 不是 async)
-                    res = img_tool.call({
-                        "image_base64": img_b64,
-                        "scene": scene,
-                        "task_description": description,
-                    })
-                    if res and getattr(res, "success", False):
-                        tool_output = res.data if hasattr(res, "data") else res
-                        features.append(f"{scene}: tool analysis done")
-                    else:
-                        features.append(f"{scene}: tool returned no result")
+                img_data = b64.b64decode(visual_base64)
+                img = Image.open(_io.BytesIO(img_data))
+                buf = _io.BytesIO()
+                img.save(buf, format="PNG")
+                scene = self._pick_image_action(description)
+                # 视觉验证闭环: 整图送 image_analysis_tool 做结构化标注.
+                res = await self._call_image_analysis_tool(
+                    buf.getvalue(), scene, {"task_description": description}
+                )
+                if res:
+                    tool_output = res
+                    features.append(f"{scene}: tool analysis done")
+                else:
+                    features.append(f"{scene}: tool returned no result")
             except Exception as e:
                 features.append(f"tool_annotation_failed: {e}")
         # 文本特征提取 (B2 增强: 段落结构 + 趋势 + 异常聚类)
