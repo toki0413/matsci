@@ -89,10 +89,20 @@ huginn 的业务能力（agent 循环、工具、技能、记忆、知识蒸馏�
         文件发现端口；采用「后端可达 → HTTP；后端未起 → Python spawn 兜底」策略。
       - **已迁移（HTTP 优先）**：`tools` → GET `/v1/tools`；`diagnose` → POST `/v1/diagnose`；
         `bench` → POST `/v1/bench/run`；`evolve` → POST `/v1/evolve/run`；
-        `workflow` → POST `/v1/workflows/execute`（KEY=VALUE 参数解析）。
+        `workflow` → POST `/v1/workflows/execute`（KEY=VALUE 参数解析）；
+        `hpc` → POST `/v1/hpc/test|submit|status`；`execute` → POST `/v1/execute`
+        （stages 支持文件路径或内联 JSON，解析后交给后端）；`explore` → POST `/v1/explore`；
+        `coder` → POST `/v1/coder`（有 task 时走 HTTP，无 task 需交互输入则走本地）；
+        `encrypt-config` → POST `/v1/config/encrypt`（加密后端活跃配置）。
         端到端验证：`huginn tools` 列出 130 工具、`huginn diagnose` 返回诊断 JSON、
-        `huginn workflow` 正确执行模板。
-      - **待迁移**：chat / explore / coder / execute / hpc / encrypt-config。
+        `huginn workflow` 正确执行模板、`huginn explore/execute/coder` 返回结构化 JSON、
+        `huginn encrypt-config` 加密后端配置。
+      - **交互式 SSE/WS**：`chat` → POST `/v1/agents/lead/chat/stream`（SSE 流式），
+        CLI 内实现 REPL：读 stdin → 逐事件打印 token / 工具调用 / 思考 → 命中
+        `done`/`error` 结束；后端不可达时回退 Python spawn。
+        端到端验证：SSE 端点返回标准 `event:`/`data:` 事件，CLI 正确解析并打印。
+      - **待迁移**：无（chat / explore / coder / execute / hpc / encrypt-config 均已迁移；
+        仅剩交互式 chat 的 WS 双向增强与桌面鉴权旁路未做）。
       - 注：已迁移命令仍保留 Python spawn 兜底，故仍留在 `CLI_DELEGATED_SUBCOMMANDS`
         冻结清单；待彻底取消兜底后再从清单移除。
 - [ ] **桌面免鉴权旁路移除**：Tauri 不再强制 `HUGINN_DEV_MODE=1`，桌面走 API key。
