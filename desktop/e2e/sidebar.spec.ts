@@ -70,7 +70,7 @@ test.describe('minimal sidebar', () => {
     await page.goto('/');
     // Open the palette and pick a non-primary tool (Team).
     await page.getByRole('button', { name: 'More Tools' }).click();
-    await page.getByPlaceholder('Search tools...').fill('Team');
+    await page.getByPlaceholder('Search tools…').fill('Team');
     await page.getByRole('button', { name: 'Team' }).click();
 
     // The sidebar badge shows the active tool label plus a back-to-chat button.

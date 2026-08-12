@@ -65,7 +65,7 @@ import {
   MessageCircle, Bird, Briefcase, HelpCircle,
   ChevronDown, Sparkles,
   Search, Grid, Sun, Moon, Plus, Trash2, Globe,
-  Maximize2, GitBranch, Brain, Cpu,
+  Maximize2, GitBranch, Brain, Cpu, Atom, Box,
 } from 'lucide-react';
 
 const IS_PET_MODE = window.location.search.includes("pet=1");
@@ -740,6 +740,14 @@ export default function App() {
       tabs: [
         { id: "threads" as const, label: t('tab.threads'), icon: <MessageCircle size={16} aria-hidden="true" /> },
         { id: "settings" as const, label: t('tab.settings'), icon: <Settings size={16} aria-hidden="true" /> },
+      ],
+    },
+    {
+      key: "science",
+      label: t('nav.science') || 'Science',
+      tabs: [
+        { id: "periodic" as const, label: t('tab.periodic'), icon: <Atom size={16} aria-hidden="true" /> },
+        { id: "structure" as const, label: t('tab.structure'), icon: <Box size={16} aria-hidden="true" /> },
       ],
     },
   ];
