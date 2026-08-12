@@ -42,7 +42,9 @@ export async function backendReachable(timeoutMs = 3000): Promise<boolean> {
 // and would otherwise block the chat send button / sidebar clicks. Setting
 // the localStorage flag via addInitScript runs before the app's first paint,
 // so the modal never mounts.
-const GUIDE_KEY = 'huginn:guide:v1';
+// Must match the app's key in useChatAndConnection.ts: GUIDE_KEY = "muninn:guide:v2".
+// A mismatch lets the onboarding modal mount and block pointer events.
+const GUIDE_KEY = 'muninn:guide:v2';
 
 export const test = base.extend({
   page: async ({ page }, use) => {
