@@ -13,6 +13,7 @@ Checks:
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -21,7 +22,12 @@ AGENT_ROOT = Path(__file__).resolve().parent.parent / "agent"
 sys.path.insert(0, str(AGENT_ROOT))
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SOBKO_ROOT = Path("C:/Users/wanzh/Sobko_MCP_project")
+# SOBKO 外部项目根目录: 不再硬编码机器路径, 从环境变量读取, 缺省 None。
+SOBKO_ROOT = (
+    Path(os.environ["SOBKO_ROOT"])
+    if os.environ.get("SOBKO_ROOT")
+    else None
+)
 
 
 def check_prompts() -> bool:
@@ -153,6 +159,9 @@ def check_skills() -> bool:
 def check_knowledge_graph() -> bool:
     """Check knowledge graph includes FEA/CFD entities."""
     print("\n[6] Checking knowledge graph for FEA/CFD entities...")
+    if SOBKO_ROOT is None:
+        print("  [SKIP] SOBKO_ROOT 未设置 (env), 跳过知识图谱检查")
+        return True
     kg_path = SOBKO_ROOT / "advanced_optimization" / "knowledge_graph.json"
     if not kg_path.exists():
         print(f"  [WARN] Knowledge graph not found at {kg_path}")

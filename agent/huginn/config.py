@@ -1043,6 +1043,14 @@ class HuginnConfig:
 
         known = {f.name for f in cls.__dataclass_fields__.values()}
         filtered = {k: v for k, v in kwargs.items() if k in known}
+
+        # workspace 支持 env: 前缀展开（与 _resolve_credential 的 env: 机制一致）。
+        # 这样提交的 huginn.toml 里可以写 workspace = "env:HUGINN_WORKSPACE"，
+        # 避免把某台机器的绝对路径硬编码进配置。
+        ws = filtered.get("workspace")
+        if isinstance(ws, str) and ws.startswith("env:"):
+            filtered["workspace"] = os.environ.get(ws[4:], ".")
+
         return cls(**filtered)
 
     @property
