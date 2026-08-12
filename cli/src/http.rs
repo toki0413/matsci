@@ -7,6 +7,7 @@
 
 use anyhow::{Context, Result};
 use serde_json::Value;
+use std::io::BufRead;
 use std::path::PathBuf;
 
 /// 与后端 huginn.utils.runtime 一致的运行时目录。
@@ -138,4 +139,228 @@ pub fn workflow_via_http(template: &str, args: &[String]) -> Result<Value> {
     }
     let payload = serde_json::json!({ "template": template, "args": arg_map });
     post_json("/v1/workflows/execute", payload, 600)
+}
+
+// ── HPC ──────────────────────────────────────────────────────────
+// HPC 端点接受内联 host/username/key_path 等参数，与 CLI 的 hpc test/submit/status
+// 子命令一一对应。端点挂了 require_admin_key；本地 dev mode(loopback) 下豁免。
+
+fn _hpc_payload(
+    host: &str,
+    username: &str,
+    scheduler: &str,
+    key_path: Option<&str>,
+    port: Option<i64>,
+) -> serde_json::Map<String, Value> {
+    let mut p = serde_json::Map::new();
+    p.insert("host".into(), Value::String(host.to_string()));
+    p.insert("username".into(), Value::String(username.to_string()));
+    p.insert("scheduler".into(), Value::String(scheduler.to_string()));
+    if let Some(k) = key_path {
+        p.insert("key_path".into(), Value::String(k.to_string()));
+    }
+    if let Some(port) = port {
+        p.insert("port".into(), Value::Number(port.into()));
+    }
+    p
+}
+
+/// 测试 HPC SSH 连接 → POST /hpc/test。
+pub fn hpc_test_via_http(
+    host: &str,
+    username: &str,
+    scheduler: &str,
+    key_path: Option<&str>,
+    port: i64,
+) -> Result<Value> {
+    let p = _hpc_payload(host, username, scheduler, key_path, Some(port));
+    post_json("/v1/hpc/test", Value::Object(p), 30)
+}
+
+/// 提交 HPC 作业 → POST /hpc/submit。
+#[allow(clippy::too_many_arguments)]
+pub fn hpc_submit_via_http(
+    host: &str,
+    username: &str,
+    command: &str,
+    job_name: &str,
+    walltime: &str,
+    nodes: i64,
+    ntasks_per_node: i64,
+    queue: Option<&str>,
+    scheduler: &str,
+    key_path: Option<&str>,
+    remote_work_dir: &str,
+) -> Result<Value> {
+    let mut p = _hpc_payload(host, username, scheduler, key_path, None);
+    p.insert("command".into(), Value::String(command.to_string()));
+    p.insert("job_name".into(), Value::String(job_name.to_string()));
+    p.insert("walltime".into(), Value::String(walltime.to_string()));
+    p.insert("nodes".into(), Value::Number(nodes.into()));
+    p.insert("ntasks_per_node".into(), Value::Number(ntasks_per_node.into()));
+    p.insert("remote_work_dir".into(), Value::String(remote_work_dir.to_string()));
+    if let Some(q) = queue {
+        p.insert("queue".into(), Value::String(q.to_string()));
+    }
+    post_json("/v1/hpc/submit", Value::Object(p), 60)
+}
+
+/// 查询 HPC 作业状态 → POST /hpc/status。
+pub fn hpc_status_via_http(
+    host: &str,
+    username: &str,
+    job_id: &str,
+    scheduler: &str,
+    key_path: Option<&str>,
+) -> Result<Value> {
+    let mut p = _hpc_payload(host, username, scheduler, key_path, None);
+    p.insert("job_id".into(), Value::String(job_id.to_string()));
+    post_json("/v1/hpc/status", Value::Object(p), 30)
+}
+
+// ── execute / explore / coder / encrypt-config ──────────────────
+// 这几个端点跟 CLI 子命令一一对应，后端在跑就直接 POST，不再 spawn。
+
+/// 运行 workflow 阶段 → POST /execute。`stages` 是解析好的 stage 数组。
+pub fn execute_via_http(stages: Value, working_dir: &str, name: &str) -> Result<Value> {
+    let payload = serde_json::json!({
+        "stages": stages,
+        "working_dir": working_dir,
+        "name": name,
+    });
+    post_json("/v1/execute", payload, 600)
+}
+
+/// 运行设计空间探索 → POST /explore。
+pub fn explore_via_http(
+    objective: &str,
+    strategy: &str,
+    max_branches: i64,
+    max_iterations: i64,
+) -> Result<Value> {
+    let payload = serde_json::json!({
+        "objective": objective,
+        "strategy": strategy,
+        "max_branches": max_branches,
+        "max_iterations": max_iterations,
+    });
+    post_json("/v1/explore", payload, 600)
+}
+
+/// 运行自主编码会话 → POST /coder。
+pub fn coder_via_http(
+    task: &str,
+    auto_approve: bool,
+    max_iterations: Option<i64>,
+) -> Result<Value> {
+    let mut payload = serde_json::Map::new();
+    payload.insert("task".into(), Value::String(task.to_string()));
+    payload.insert("auto_approve".into(), Value::Bool(auto_approve));
+    if let Some(it) = max_iterations {
+        payload.insert("max_iterations".into(), Value::Number(it.into()));
+    }
+    post_json("/v1/coder", Value::Object(payload), 600)
+}
+
+/// 启用配置加密 → POST /config/encrypt。加密的是后端的活跃配置。
+pub fn encrypt_config_via_http(password: &str) -> Result<Value> {
+    let payload = serde_json::json!({ "password": password });
+    post_json("/v1/config/encrypt", payload, 30)
+}
+
+// ── 交互式 chat: SSE 流式 ──────────────────────────────────────
+// 连 /agents/lead/chat/stream，逐事件打印 token / 工具调用 / 思考，
+// 命中 done 就结束。默认打 lead agent（与后端其它入口一致）。
+
+/// 发一条消息走 SSE 流式 chat，把事件实时打印到终端。
+fn chat_stream_via_http(message: &str, thread_id: &str) -> Result<()> {
+    let url = format!("{}/v1/agents/lead/chat/stream", base_url());
+    let payload = serde_json::json!({ "message": message, "thread_id": thread_id });
+    let resp = ureq::post(&url)
+        .timeout(std::time::Duration::from_secs(300))
+        .send_json(payload)
+        .with_context(|| format!("连接后端失败: {url}"))?;
+
+    let mut reader = std::io::BufReader::new(resp.into_reader());
+    let mut line = String::new();
+    let mut event_type = String::new();
+    loop {
+        line.clear();
+        let n = reader
+            .read_line(&mut line)
+            .with_context(|| format!("读取 SSE 流失败: {url}"))?;
+        if n == 0 {
+            break;
+        }
+        let trimmed = line.trim();
+        if let Some(et) = trimmed.strip_prefix("event:") {
+            event_type = et.trim().to_string();
+        } else if let Some(d) = trimmed.strip_prefix("data:") {
+            let data: Value = serde_json::from_str(d.trim()).unwrap_or(Value::Null);
+            let etype = data["type"].as_str().unwrap_or(&event_type);
+            match etype {
+                "token" => {
+                    if let Some(t) = data["text"].as_str() {
+                        print!("{t}");
+                        use std::io::Write;
+                        let _ = std::io::stdout().flush();
+                    }
+                }
+                "thought" => {
+                    if let Some(t) = data["text"].as_str() {
+                        eprintln!("[thinking] {t}");
+                    }
+                }
+                "plan" => {
+                    if let Some(t) = data["text"].as_str() {
+                        eprintln!("[plan] {t}");
+                    }
+                }
+                "tool_start" => {
+                    if let Some(t) = data["tool"].as_str() {
+                        eprintln!("→ {t}");
+                    }
+                }
+                "tool_end" => {
+                    if let Some(t) = data["tool"].as_str() {
+                        eprintln!("✓ {t}");
+                    }
+                }
+                "done" => {
+                    println!();
+                    return Ok(());
+                }
+                "error" => {
+                    let msg = data["message"].as_str().unwrap_or("unknown error");
+                    anyhow::bail!("后端 chat 错误: {msg}");
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(())
+}
+
+/// 交互式 chat REPL：读 stdin → SSE 流式 → 打印回复。
+pub fn chat_repl() -> Result<()> {
+    use std::io::Write;
+    let stdin = std::io::stdin();
+    let thread_id = "default";
+    loop {
+        print!("You: ");
+        std::io::stdout().flush()?;
+        let mut line = String::new();
+        let n = stdin.read_line(&mut line)?;
+        if n == 0 {
+            return Ok(()); // EOF
+        }
+        let input = line.trim().to_string();
+        if input.is_empty() {
+            continue;
+        }
+        if matches!(input.as_str(), "exit" | "quit" | "q") {
+            return Ok(());
+        }
+        chat_stream_via_http(&input, thread_id)?;
+    }
 }

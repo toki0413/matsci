@@ -184,7 +184,7 @@ enum Commands {
     /// Execute workflow stages via the execution orchestrator
     Execute {
         stages: String,
-        #[arg(short, long, default_value = ".")]
+        #[arg(long, default_value = ".")]
         working_dir: String,
         #[arg(short, long, default_value = "execute")]
         name: String,
@@ -248,6 +248,11 @@ fn run() -> Result<()> {
         Commands::Configure { path } => cmd_configure(&path),
         Commands::Tools => cmd_tools(),
         Commands::Chat => {
+            // ADR-0001: 后端在跑就走 SSE 流式 chat，否则回退 Python spawn。
+            if http::backend_available() {
+                http::chat_repl()?;
+                return Ok(());
+            }
             let globals = collect_global_args(&cli, &workspace);
             delegate_to_python(&workspace, "chat", &globals, &[])
         }
@@ -257,6 +262,17 @@ fn run() -> Result<()> {
             max_branches,
             max_iterations,
         } => {
+            // ADR-0001: 后端在跑就走 /explore，否则回退 Python spawn。
+            if http::backend_available() {
+                let res = http::explore_via_http(
+                    objective,
+                    strategy,
+                    max_branches,
+                    max_iterations,
+                )?;
+                println!("{}", serde_json::to_string_pretty(&res)?);
+                return Ok(());
+            }
             let globals = collect_global_args(&cli, &workspace);
             delegate_to_python(
                 &workspace,
@@ -292,6 +308,15 @@ fn run() -> Result<()> {
             auto_approve,
             max_iterations,
         } => {
+            // ADR-0001: 后端在跑且有 task 就走 /coder，否则回退 Python spawn
+            // (无 task 时 CLI 需要交互输入，走本地交互路径)。
+            if http::backend_available() {
+                if let Some(t) = task {
+                    let res = http::coder_via_http(t, auto_approve, max_iterations)?;
+                    println!("{}", serde_json::to_string_pretty(&res)?);
+                    return Ok(());
+                }
+            }
             let globals = collect_global_args(&cli, &workspace);
             let mut extra: Vec<String> = Vec::new();
             if auto_approve {
@@ -351,6 +376,20 @@ fn run() -> Result<()> {
             ref working_dir,
             ref name,
         } => {
+            // ADR-0001: 后端在跑就走 /execute，否则回退 Python spawn。
+            if http::backend_available() {
+                // stages 是文件路径或内联 JSON，解析成数组交给后端。
+                let raw = if let Ok(text) = std::fs::read_to_string(Path::new(stages)) {
+                    text
+                } else {
+                    stages.clone()
+                };
+                let stages_value: serde_json::Value =
+                    serde_json::from_str(&raw).context("解析 stages JSON 失败")?;
+                let res = http::execute_via_http(stages_value, working_dir, name)?;
+                println!("{}", serde_json::to_string_pretty(&res)?);
+                return Ok(());
+            }
             let globals = collect_global_args(&cli, &workspace);
             delegate_to_python(
                 &workspace,
@@ -411,6 +450,56 @@ fn run() -> Result<()> {
             delegate_to_python(&workspace, "diagnose", &globals, &extra)
         }
         Commands::Hpc { ref command } => {
+            // ADR-0001: 后端在跑就走 /hpc/*，否则回退 Python spawn。
+            if http::backend_available() {
+                let res = match command {
+                    HpcCommands::Test {
+                        ref host,
+                        ref username,
+                        ref scheduler,
+                        ref key_path,
+                        port,
+                    } => http::hpc_test_via_http(
+                        host, username, scheduler, key_path.as_deref(), *port,
+                    )?,
+                    HpcCommands::Submit {
+                        ref host,
+                        ref username,
+                        ref command,
+                        ref job_name,
+                        ref walltime,
+                        nodes,
+                        ntasks_per_node,
+                        ref queue,
+                        ref scheduler,
+                        ref key_path,
+                        ref remote_work_dir,
+                    } => http::hpc_submit_via_http(
+                        host,
+                        username,
+                        command,
+                        job_name,
+                        walltime,
+                        *nodes,
+                        *ntasks_per_node,
+                        queue.as_deref(),
+                        scheduler,
+                        key_path.as_deref(),
+                        remote_work_dir,
+                    )?,
+                    HpcCommands::Status {
+                        ref host,
+                        ref username,
+                        ref job_id,
+                        ref scheduler,
+                        ref key_path,
+                    } => http::hpc_status_via_http(
+                        host, username, job_id, scheduler, key_path.as_deref(),
+                    )?,
+                };
+                println!("{}", serde_json::to_string_pretty(&res)?);
+                return Ok(());
+            }
             let globals = collect_global_args(&cli, &workspace);
             let mut extra: Vec<String> = Vec::new();
             match command {
@@ -507,6 +596,19 @@ fn run() -> Result<()> {
             delegate_to_python(&workspace, "hpc", &globals, &extra)
         }
         Commands::EncryptConfig { ref path } => {
+            // ADR-0001: 后端在跑就走 /config/encrypt（加密后端活跃配置），
+            // 否则回退 Python spawn 加密本地文件。
+            if http::backend_available() {
+                let password: String = dialoguer::Password::with_theme(
+                    &ColorfulTheme::default(),
+                )
+                .with_prompt("Encryption password")
+                .interact()
+                .context("Failed to read password")?;
+                let res = http::encrypt_config_via_http(&password)?;
+                println!("{}", serde_json::to_string_pretty(&res)?);
+                return Ok(());
+            }
             let globals = collect_global_args(&cli, &workspace);
             let extra = vec![path
                 .clone()
