@@ -9,13 +9,15 @@ An intelligent, LLM-driven agent system for computational materials science. Aut
 - **Symbolic Regression**: Discover analytical formulas from data via PSE/PSRN (Nature Computational Science)
 - **Intelligent RAG**: Document retrieval with ChromaDB embeddings, keyword fallback, and encrypted storage
 - **Exploration Engine**: Autonomous multi-objective optimization with LLM-driven branch generation
-- **Memory System**: Three-tier memory (session, long-term SQLite+FTS5, auto-promotion)
-- **Skills Framework**: 12 declarative material science workflows
+- **Memory System**: Three-tier memory (session, long-term SQLite+FTS5, auto-promotion) + knowledge distillation
+- **Skills Framework**: Declarative material science workflows
 - **MCP Integration**: Connect to Materials Project, NIST databases, and mathematical analysis tools
 - **Report Generation**: Auto-generate Markdown/LaTeX/HTML reports from simulation results
-- **Security**: AES-128 encryption at rest with per-item salt and memory-only keys
+- **Security**: AES-128 encryption at rest with per-item salt and memory-only keys; fail-closed tool metadata
 - **Desktop App**: Tauri v2 + React 18 frontend (work in progress)
 - **Coder Mode**: Autonomous code editing with read/write/edit, shell, git, and code execution tools
+- **Multi-Agent**: Orchestrator, sub-agents, swarm/team collaboration
+- **Causal & Autoloop**: Causal graph modeling, autonomous exploration loop, self-evolution
 
 ## Quick Start
 
@@ -70,55 +72,58 @@ Coder tools: `file_read_tool`, `file_write_tool`, `file_edit_tool`,
 
 ## Architecture
 
-See [docs/architecture.md](docs/architecture.md) for detailed system design.
+See [docs/tech-spec.md](docs/tech-spec.md) (current factual record) and
+[docs/architecture.md](docs/architecture.md) for detailed system design.
 
 ```
-┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│   CLI/API   │     │ Desktop App │     │   MCPs      │
-└──────┬──────┘     └──────┬──────┘     └──────┬──────┘
-       │                   │                    │
-       └───────────────────┼────────────────────┘
-                           │
-                    ┌──────▼──────┐
-                    │ HuginnAgent │
-                    └──────┬──────┘
-                           │
-       ┌──────────┬────────┼────────┬──────────┐
-       ▼          ▼        ▼        ▼          ▼
-   ┌───────┐  ┌───────┐ ┌──────┐ ┌──────┐  ┌───────┐
-   │Memory │  │Skills │ │ Tools│ │RAG   │  │Explore│
-   └───────┘  └───────┘ └──────┘ └──────┘  └───────┘
+┌────────────┐   ┌────────────┐   ┌────────────┐
+│ CLI (click)│   │ API Server │   │ Desktop App│
+│ huginn.cli │   │ FastAPI +  │   │ Tauri+React│
+└─────┬──────┘   │   WS/SSE   │   └─────┬──────┘
+      │          └─────┬──────┘         │
+      └────────────────┼────────────────┘
+                       ▼
+              ┌─────────────────┐
+              │  Agent 层       │
+              │ agent/ agents/  │  orchestrator, subagent, swarm,
+              │                 │  speculator, loop_detector ...
+              └────────┬────────┘
+                       │
+    ┌─────────┬────────┼────────┬──────────┬──────────┐
+    ▼         ▼        ▼        ▼          ▼          ▼
+  memory   evolution  tools   knowledge    kg       causality
+ (3-tier)  (distill) (~178)  Cloud(KB)   graph      (SCM)
 ```
+
+Real entry points: `huginn-agent` CLI (console script → `huginn.cli:main`) and
+`python -m huginn.server` (FastAPI + WebSocket). All shared state lives in
+`huginn/server_core.py`, lifecycle in `huginn/lifespan.py`, routes in
+`huginn/routes/`.
 
 ## Tools
 
-| Tool | Description |
-|------|-------------|
-| `vasp_tool` | DFT calculations (relaxation, static, DOS, band structure) |
-| `lammps_tool` | MD simulations (melt-quench, NPT/NVT, RDF) |
-| `symbolic_regression_tool` | Formula discovery via PSE/PSRN |
-| `rag_manager` | Document retrieval and Q&A |
-| `report_tool` | Auto-generate computational reports |
-| `hpc_tool` | Slurm job submission and monitoring |
-| `database_tool` | SQLite database operations |
-| `diff_tool` | File diff and comparison |
-| `mcp_client` | External MCP server tools (Materials Project, math analysis) |
-| `openfoam_tool` | CFD case setup, meshing, solving, and log parsing |
-| `comsol_tool` | COMSOL Multiphysics model execution and result export |
-| `abaqus_tool` | ABAQUS FEA execution via Python scripting or MCP |
-| `packing_tool` | Particle/molecule packing with XYZ/PDB/LAMMPS output |
-| `qe_tool` | Quantum ESPRESSO DFT input generation and execution |
-| `cp2k_tool` | CP2K input generation and execution |
-| `code_tool` | Generic Python execution for analysis and scripting |
-| `file_read_tool` | Read project files (read-only) |
-| `file_write_tool` | Create or overwrite project files |
-| `file_edit_tool` | Make precise string replacements |
-| `bash_tool` | Execute shell commands |
-| `git_tool` | Inspect git status, diff, and history |
+~178 built-in tools are registered through `huginn/tools/__init__.py`
+(`_CORE_MODULES` ~35 lightweight + `_OPTIONAL_MODULES` heavy simulation/science).
+Representative tools by category:
+
+| Category | Tools |
+|----------|-------|
+| Coder / file | `bash_tool`, `code_tool`, `file_read/write/edit_tool`, `multi_edit_tool`, `glob_tool`, `grep_tool`, `git_tool`, `github_tool`, `diff_tool`, `eval_tool`, `validate_tool`, `diagnose_tool` |
+| Sci / DFT | `vasp_tool`, `qe_tool`, `cp2k_tool`, `gaussian_tool`, `orca_tool`, `structure_tool`, `symmetry_tool`, `xrd_sim_tool` |
+| Simulation | `lammps_tool`, `gromacs_tool`, `openmm_tool`, `openfoam_tool`, `comsol_tool`, `abaqus_tool`, `fenics_tool`, `elmer_tool`, `packing_tool`, `fep_tool`, `enhanced_sampling_tool` |
+| Symbolic / math | `symbolic_regression_tool`, `symbolic_math_tool`, `discrete_smt/group/oeis/additive_tool`, `numerical_tool`, `unit_tool`, `autodiff_tool`, `lean_tool`, `bourbaki_tool`, `tensor_algebra` |
+| Data / retrieval | `database_tool`, `report_tool`, `extract_tool`, `tool_search_tool`, `agentic_search_tool`, `web_search_tool`, `literature_tool`, `materials_database_tool`, `experimental_data_tool` |
+| Memory / meta | `remember_tool`, `recall_tool`, `recall_context_tool`, `self_observe_tool`, `todo_tool`, `notebook_tool`, `scheduler_tool`, `plan_store_tool`, `prospective_tool` |
+| Multi-agent | `subagent_tool`, `orchestrate_tool`, `review_committee_tool`, `skills_tool`, `workflow_tool` |
+| Vision / ML | `visualize_tool`, `vision_describe_tool`, `image_analysis_tool`, `image_design_tool`, `model3d_tool`, `ml_potential_tool`, `active_learning_tool`, `interpretable_ml_tool`, `gnn_tool`, `vae_tool`, `transformer_tool` |
+
+Full authoritative list of registered tool classes lives in
+`huginn/tools/__init__.py::_CORE_MODULES` / `_OPTIONAL_MODULES`.
 
 ## Skills
 
-12 preset skills in `huginn/skills/presets.py`:
+Declarative workflows under `huginn/skills/` (e.g. `band_structure.md`,
+`structure_relaxation.md`, `wavefunction_analysis.md`) plus `presets.py`:
 
 1. `standard_dft` — Standard DFT relaxation + static
 2. `aimd` — Ab initio molecular dynamics
@@ -135,18 +140,25 @@ See [docs/architecture.md](docs/architecture.md) for detailed system design.
 
 ## Memory System
 
-The agent automatically remembers important computational results:
+Three-tier memory (`huginn/memory/`):
 
-- **Session memory**: Current conversation context (auto-compacted at >100 messages)
-- **Long-term memory**: SQLite + FTS5 full-text search with importance scoring
-- **Auto-promotion**: Successful tool results are automatically saved to long-term memory
+- **Session memory**: Current conversation context; model `reasoning_content`
+  (COT) is persisted to `session.reasoning_trace` via `add_reasoning` for
+  downstream distillation.
+- **Long-term memory**: SQLite + FTS5 full-text search with importance scoring.
+- **Auto-promotion / distillation**: Successful tool results auto-save to
+  long-term memory; `huginn/evolution/knowledge_distiller.py` distills
+  execution logs into knowledge whose `verification_status` is promoted to
+  `confirmed` on verified successful use, then auto-ingests into the KB.
 
 ## Security
 
-- **EncryptedVectorStore**: Document text encrypted with AES-128-CBC + HMAC-SHA256
-- **CryptoVault**: PBKDF2 key derivation with per-item random salt
-- **Memory-only keys**: Decryption keys never written to disk
-- **EncryptedDatabase**: Transparent SQLite file encryption
+- Unified error envelope (`huginn_error_response` with `request_id`); every
+  API endpoint guarded by `require_api_key`.
+- AES-128-CBC + HMAC-SHA256 encryption at rest with per-item salt; decryption
+  keys are memory-only and never written to disk.
+- Fail-closed tool metadata (`is_read_only` / `is_destructive` /
+  `requires_confirmation`).
 
 ## Development
 
@@ -154,31 +166,32 @@ The agent automatically remembers important computational results:
 
 ```
 agent/
-├── huginn/           # Core package
-│   ├── agent.py            # Main agent
-│   ├── crypto.py           # Encryption utilities
-│   ├── database.py         # Database layer
-│   ├── hpc.py              # HPC integration
-│   ├── memory/             # Memory system
-│   ├── skills/             # Skills framework
-│   ├── tools/              # Tool implementations
-│   ├── rag/                # RAG system
-│   ├── mcp_integration/    # MCP client
-│   └── exploration/        # Exploration engine
-├── servers/                # MCP servers
-│   ├── mat-db-mcp/         # Materials database MCP
-│   └── math-anything-mcp/  # Math analysis MCP
-├── desktop/                # Tauri desktop app
-├── tests/                  # Test suite
-└── docs/                   # Documentation
+├── huginn/                 # Core package
+│   ├── cli/                # click CLI (main.py + commands/)
+│   ├── server.py           # FastAPI + WebSocket entry
+│   ├── server_core.py      # shared app state
+│   ├── lifespan.py         # startup/shutdown lifecycle
+│   ├── routes/             # HTTP/WS route handlers (v1 + root compat)
+│   ├── agent/  agents/     # agent loop, orchestrator, subagent, swarm
+│   ├── tools/              # ~178 tool implementations + registry
+│   ├── memory/             # session / long-term / manager
+│   ├── evolution/          # knowledge distiller + evolution manager
+│   ├── knowledge/  kg/     # knowledge base, auto-ingest, knowledge graph
+│   ├── causal/  autoloop/  # causal modeling, autonomous exploration loop
+│   ├── metacog/  runtime/  # meta-cognition, task lifecycle
+│   ├── api/                # API layer (context/event/filter)
+│   └── security/           # auth, middleware
+├── tests/                  # pytest suite (conftest with isolation guards)
+└── docs/                   # tech-spec.md (current), architecture.md
 ```
 
 ### Adding a New Tool
 
 1. Create a class inheriting from `HuginnTool` in `huginn/tools/`
 2. Define `name`, `description`, and `input_schema` (Pydantic model)
-3. Implement `call()` method returning `ToolResult`
-4. Register in `server.py` and `cli.py`
+3. Implement `_execute()`; `call()` returns `ToolResult`
+4. Add the `(module, ClassName)` tuple to `_CORE_MODULES` or `_OPTIONAL_MODULES`
+   in `huginn/tools/__init__.py`
 5. Add tests in `tests/`
 
 ### Adding a New Skill
