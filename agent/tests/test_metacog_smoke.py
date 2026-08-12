@@ -658,6 +658,25 @@ def test_simplicial_homology_gudhi_flag():
     assert isinstance(is_gudhi_available(), bool)
 
 
+def test_simplicial_homology_fallback_downward_closure():
+    """无 GUDHI 时 fallback 必须对 simplex 做向下闭包 (展开 2-面).
+
+    回归: 早期 fallback 只收集 len==2 的 simplex 当边, 3+ 维 simplex 的
+    边界被丢弃, 导致 β_1 失真 (伪环/漏填). 这里验证 3-simplex 的三条边
+    都被计入, β_0 连通性正确.
+    """
+    from huginn.metacog.simplicial_homology import compute_exact_betti
+
+    # 单个 3-simplex (0,1,2): 向下闭包应含边 {0,1},{1,2},{0,2}.
+    # networkx cycle_basis 会把三角形边界算作 β_1=1 (工程近似局限),
+    # 但 β_0 必须 =1 (三点连通), 且修复前 (只收 2-simplex) 这里会是 0.
+    b = compute_exact_betti([(0, 1, 2)], max_dim=1)
+    assert b[0] == 1, f"3-simplex 边界应连通 β_0=1, got {b}"
+    # 两个 disjoint 3-simplex → β_0=2 (边界各自连通, 互不相连)
+    b2 = compute_exact_betti([(0, 1, 2), (3, 4, 5)], max_dim=1)
+    assert b2[0] == 2, f"两个 disjoint 3-simplex β_0 应=2, got {b2}"
+
+
 # ── 36. step_evaluator ─────────────────────────────────────────
 
 

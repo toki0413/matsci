@@ -82,7 +82,11 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="huginn 技能库盘点诊断")
     ap.add_argument("--tree", action="store_true", help="打印技能树")
     ap.add_argument("--fail-on-hole", action="store_true",
-                    help="β_1>0 时以退出码 1 结束 (CI 门禁)")
+                    help="门禁: 配合 --baseline 时, 若 β₁ 超基线 / 出现新可疑孤立 → 退出码 1")
+    ap.add_argument("--baseline", metavar="PATH", default=None,
+                    help="基线 JSON 路径. 与 --fail-on-hole 一起做回归门禁.")
+    ap.add_argument("--write-baseline", metavar="PATH", default=None,
+                    help="把本次指标写入 PATH 作为新基线 (维护者扩库后更新基线用)")
     ap.add_argument("--json", action="store_true",
                     help="输出机器可读 JSON 摘要到 stdout 末尾")
     args = ap.parse_args(argv)
@@ -130,9 +134,21 @@ def main(argv: list[str] | None = None) -> int:
     print("\n[共享工具图拓扑]")
     print(f"  弱连通分量数 β_0 = {len(comps)}  (技能被共享工具聚成 {len(comps)} 簇)")
     isolated = [n for n, d in G.degree() if d == 0]
+    # 主流工具 = 被 ≥2 个技能共享的工具. 孤立技能若只用"非主流"独特工具,
+    # 属于异质域 (有意孤立, 正常); 若用了主流工具却不共享, 才是可疑孤立
+    # (大概率是缺"共享工具封装"抽象, 应补基元技能而非放权重叠).
+    shared_tools = {t for t, ss in tool2skill.items() if len(ss) >= 2}
+    suspicious_isolated = sorted(
+        n for n in isolated if any(t in shared_tools for t in tool_of[n])
+    )
     print(f"  孤立技能 (不与其他技能共享工具): {len(isolated)}")
     for n in sorted(isolated):
-        print(f"    - {n}  (tools={sorted(tool_of[n])})")
+        tools = sorted(tool_of[n])
+        main = [t for t in tools if t in shared_tools]
+        kind = (
+            "可疑孤立(用主流工具却不共享)" if main else "异质域孤立(独特工具, 正常)"
+        )
+        print(f"    - {n}  {kind}\n        tools={tools}")
     if comps:
         sizes = sorted((len(c) for c in comps), reverse=True)
         print(f"  最大簇规模: {sizes[:8]}")
@@ -183,6 +199,7 @@ def main(argv: list[str] | None = None) -> int:
             "categories": dict(cat),
             "betti": {str(k): v for k, v in betti.items()},
             "isolated_skills": sorted(isolated),
+            "suspicious_isolated": suspicious_isolated,
             "top_hub_tools": sorted(
                 ((t, len(ss)) for t, ss in tool2skill.items()),
                 key=lambda kv: -kv[1],
@@ -190,9 +207,51 @@ def main(argv: list[str] | None = None) -> int:
         }
         print("\n[JSON]\n" + json.dumps(summary, ensure_ascii=False))
 
-    if args.fail_on_hole and betti.get(1, 0) > 0:
-        print("\n[CI] 检测到 β_1>0 工具组合洞 → 退出码 1")
-        return 1
+    if args.write_baseline:
+        with open(args.write_baseline, "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "skills": len(skills),
+                    "tools": len(all_tools),
+                    "betti": {str(k): v for k, v in betti.items()},
+                    "suspicious_isolated": suspicious_isolated,
+                },
+                f,
+                ensure_ascii=False,
+                indent=2,
+            )
+        print(f"\n[基线已写入] {args.write_baseline}")
+
+    # ── 门禁: 基于基线的回归检测 (真实 CI 门禁) ──
+    if args.fail_on_hole and args.baseline:
+        try:
+            with open(args.baseline, encoding="utf-8") as f:
+                base = json.load(f)
+        except FileNotFoundError:
+            print(f"\n[CI] 基线文件缺失: {args.baseline} → 退出码 1")
+            return 1
+        base_b1 = int(base.get("betti", {}).get("1", 0))
+        cur_b1 = int(betti.get(1, 0))
+        base_susp = set(base.get("suspicious_isolated", []))
+        new_susp = sorted(
+            s for s in suspicious_isolated if s not in base_susp
+        )
+        problems = []
+        if cur_b1 > base_b1:
+            problems.append(f"β₁ 回归: {base_b1} → {cur_b1} (新增工具组合洞)")
+        if new_susp:
+            problems.append(f"新增可疑孤立技能: {new_susp}")
+        if problems:
+            print("\n[CI] 技能库回归 → 退出码 1")
+            for p in problems:
+                print(f"  - {p}")
+            return 1
+        print("\n[CI] 技能库无回归, 门禁通过")
+    elif args.fail_on_hole:
+        # 兼容旧用法: 无基线时按绝对 β₁>0 判定 (仅在真正要求 0 洞的库上有意义)
+        if betti.get(1, 0) > 0:
+            print("\n[CI] 检测到 β₁>0 工具组合洞 → 退出码 1")
+            return 1
     return 0
 
 

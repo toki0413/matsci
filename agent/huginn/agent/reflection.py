@@ -484,6 +484,27 @@ class ReflectionMixin:
             except Exception:
                 logger.debug("session snapshot save failed", exc_info=True)
 
+        # 元技能规则反哺: 每 N 次反思跑一次, 让 record_invocation 的
+        # usage/success 统计回流成技能库维护决策 (promote/flag_failure/untested).
+        # 节流避免每个 tool result 都重写 sidecar. 失败静默, 不破坏 turn.
+        _ticks = getattr(self, "_meta_rule_ticks", 0) + 1
+        self._meta_rule_ticks = _ticks
+        if _ticks % 10 == 0:
+            try:
+                ev_engine = self._get_evolution_engine()
+                _report = ev_engine.evaluate_meta_skill_rules()
+                if _report.get("promote_to_primitive") or _report.get(
+                    "flag_high_failure"
+                ):
+                    logger.info(
+                        "meta skill rules: promote=%d flag_failure=%d untested=%d",
+                        len(_report.get("promote_to_primitive", [])),
+                        len(_report.get("flag_high_failure", [])),
+                        len(_report.get("untested", [])),
+                    )
+            except Exception:
+                logger.debug("meta skill rules evaluation failed", exc_info=True)
+
         self._session_state.clear_turn_results()
 
     # ── S7 self-modification helpers ────────────────────────────────────
