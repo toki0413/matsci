@@ -11,6 +11,7 @@ import logging
 import os
 import threading
 import time
+from collections.abc import MutableMapping
 from datetime import datetime
 from pathlib import Path
 from typing import Any
