@@ -80,6 +80,10 @@ token（如 `wanzh`）都会让 CI 变红。机器相关路径必须改为 env �
       已接入 CI fast-fail。配套把 `huginn.toml` 的 workspace 改为 `env:HUGINN_WORKSPACE`
       展开（`config.from_dict` 支持 `env:` 前缀），并 gitignore 掉
       `pyext/.cargo/config.toml`（含机器专用 Python 库绝对路径）。
+- [x] **端点契约门禁**：`tests/test_arch_endpoint_contract.py` 从 huginn.server 的
+      OpenAPI schema 提取 `/v1` 端点模板，与 CLI（`cli/src/http.rs`）引用的 `/v1` 路径
+      双向校验 —— 后端路由改名/删除后，CLI 若仍引用旧路径会静默 404，本门禁在 CI
+      fast-fail 阶段立即拦截，强制 CLI 与后端端点契约保持一致。
 - [x] **CLI 委托冻结**：同一门禁新增 `CLI_DELEGATED_SUBCOMMANDS` 冻结清单，扫描
       `cli/src/main.rs` 的 `delegate_to_python(...)`，只许缩、不许涨 —— 新子命令
       必须改成 HTTP/WS 客户端，禁止新增 `python -m huginn.cli` 子进程旁路。
@@ -116,3 +120,21 @@ token（如 `wanzh`）都会让 CI 变红。机器相关路径必须改为 env �
       - 注：已迁移命令仍保留 Python spawn 兜底，故仍留在 `CLI_DELEGATED_SUBCOMMANDS`
         冻结清单；待彻底取消兜底后再从清单移除。
 - [ ] **桌面免鉴权旁路移除**：Tauri 不再强制 `HUGINN_DEV_MODE=1`，桌面走 API key。
+
+### 制度化闭环拓展（P2）
+
+除"单网关"这条架构主线外，给 agent 补了供应链与密钥两道制度化闭环，均由
+`ci.yml` 的 `deps-and-secrets` job 强制执行：
+
+- [x] **依赖 lock 漂移门禁**：`agent/requirements.lock` 由 `uv pip compile` 生成
+      （`--python-version 3.12 --no-strip-markers`，仅锁核心运行依赖；ML 互斥组
+      ml-mace/ml-fairchem 因 e3nn 版本冲突刻意不纳入全量 lock）。CI 把 pyproject
+      重编译到临时文件，按钉版行（`grep -v '^#'`，忽略 header/注释）与已提交 lock
+      比对，不一致即红 —— pyproject 依赖变更后必须同步重生成 lock，保证生产依赖
+      可复现、供应链可审计。交互式 `uv pip compile` 无 `--check`，故用「重编译→diff」。
+- [x] **密钥扫描门禁**：gitleaks（`gitleaks detect`，`--redact`）扫全 git 历史，
+      真实凭据直接 fail CI。`.gitleaks.toml` 用 `[extend] useDefault` 继承内置规则，
+      并按"具体占位假值"豁免 `agent/tests/` 测试夹具里的假 key（AWS 官方示例
+      `AKIAIOSFODNN7EXAMPLE`、模板化 OpenSSH 私钥、`wrong-key-12345`）——按值豁免
+      意味着往那些文件塞真实 key 仍会被拦下。注：`secrets` allowlist 在本版 gitleaks
+      有解析问题，改用 `regexes`。
