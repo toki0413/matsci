@@ -49,7 +49,7 @@ export function authHeaders(): Record<string, string> {
   return headers;
 }
 
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+async function request<T>(path: string, options: RequestInit & { params?: URLSearchParams } = {}): Promise<T> {
   const isFormData = options.body instanceof FormData;
 
   const headers: Record<string, string> = { ...authHeaders() };
@@ -63,7 +63,14 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     headers["Content-Type"] = "application/json";
   }
 
-  const resp = await fetchWithRetry(`${getApiBase()}${path}`, { ...options, headers });
+  // Support { params: URLSearchParams } — append to the path as a query string.
+  let url = `${getApiBase()}${path}`;
+  const { params, ...restInit } = options;
+  if (params && params.toString()) {
+    url += (url.includes("?") ? "&" : "?") + params.toString();
+  }
+
+  const resp = await fetchWithRetry(url, { ...restInit, headers });
 
   if (!resp.ok) {
     let detail = `API error: ${resp.status}`;
@@ -85,32 +92,34 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return (await resp.text().catch(() => "")) as unknown as T;
 }
 
+type ApiOptions = RequestInit & { params?: URLSearchParams };
+
 export const api = {
-  get: <T = unknown>(path: string, options?: RequestInit) =>
+  get: <T = unknown>(path: string, options?: ApiOptions) =>
     request<T>(path, { method: "GET", ...options }),
 
-  post: <T = unknown>(path: string, body?: unknown, options?: RequestInit) =>
+  post: <T = unknown>(path: string, body?: unknown, options?: ApiOptions) =>
     request<T>(path, {
       method: "POST",
       body: body === undefined ? undefined : JSON.stringify(body),
       ...options,
     }),
 
-  put: <T = unknown>(path: string, body?: unknown, options?: RequestInit) =>
+  put: <T = unknown>(path: string, body?: unknown, options?: ApiOptions) =>
     request<T>(path, {
       method: "PUT",
       body: body === undefined ? undefined : JSON.stringify(body),
       ...options,
     }),
 
-  patch: <T = unknown>(path: string, body?: unknown, options?: RequestInit) =>
+  patch: <T = unknown>(path: string, body?: unknown, options?: ApiOptions) =>
     request<T>(path, {
       method: "PATCH",
       body: body === undefined ? undefined : JSON.stringify(body),
       ...options,
     }),
 
-  del: <T = unknown>(path: string, options?: RequestInit) =>
+  del: <T = unknown>(path: string, options?: ApiOptions) =>
     request<T>(path, { method: "DELETE", ...options }),
 
   /** Blob downloads (exports, generated files). */

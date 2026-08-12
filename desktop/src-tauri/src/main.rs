@@ -2,7 +2,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::io::{Read, Write};
-use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::Mutex;
 
@@ -45,13 +44,6 @@ fn find_free_port() -> u16 {
     std::net::TcpListener::bind("127.0.0.1:0")
         .map(|listener| listener.local_addr().map(|a| a.port()).unwrap_or(8000))
         .unwrap_or(8000)
-}
-
-#[derive(Serialize)]
-struct FileEntry {
-    name: String,
-    path: String,
-    is_dir: bool,
 }
 
 fn main() {
@@ -136,10 +128,6 @@ fn main() {
             get_backend_port,
             start_backend,
             stop_backend,
-            get_cwd,
-            read_dir,
-            read_file,
-            write_file,
             write_terminal,
             stop_terminal
         ])
@@ -447,98 +435,6 @@ async fn stop_backend(state: tauri::State<'_, AppState>) -> Result<String, Strin
     } else {
         Ok("not running".to_string())
     }
-}
-
-#[tauri::command]
-fn get_cwd() -> Result<String, String> {
-    std::env::current_dir()
-        .map(|p| p.to_string_lossy().to_string())
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-fn read_dir(path: &str) -> Result<Vec<FileEntry>, String> {
-    let base = PathBuf::from(path);
-    let mut entries = Vec::new();
-    for entry in std::fs::read_dir(&base).map_err(|e| e.to_string())? {
-        let entry = entry.map_err(|e| e.to_string())?;
-        let name = entry.file_name().to_string_lossy().to_string();
-        let path = entry.path().to_string_lossy().to_string();
-        let is_dir = entry.file_type().map_err(|e| e.to_string())?.is_dir();
-        entries.push(FileEntry { name, path, is_dir });
-    }
-    entries.sort_by(|a, b| match (a.is_dir, b.is_dir) {
-        (true, false) => std::cmp::Ordering::Less,
-        (false, true) => std::cmp::Ordering::Greater,
-        _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-    });
-    Ok(entries)
-}
-
-#[tauri::command]
-fn read_file(path: &str) -> Result<String, String> {
-    let canonical = std::fs::canonicalize(path).map_err(|e| e.to_string())?;
-    if !is_path_safe(&canonical) {
-        return Err("Access denied: path is outside allowed directories".to_string());
-    }
-    std::fs::read_to_string(&canonical).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-fn write_file(path: &str, content: &str) -> Result<(), String> {
-    let canonical = std::fs::canonicalize(path).map_err(|e| e.to_string())?;
-    if !is_path_safe(&canonical) {
-        return Err("Access denied: path is outside allowed directories".to_string());
-    }
-    std::fs::write(&canonical, content).map_err(|e| e.to_string())
-}
-
-/// Reject access to sensitive system locations. Desktop app is single-user,
-/// so we allow user-writable areas (home, temp) but block system dirs,
-/// credentials, and other users' profiles.
-fn is_path_safe(path: &std::path::Path) -> bool {
-    use std::path::PathBuf;
-
-    let home = std::env::var_os("USERPROFILE")
-        .or_else(|| std::env::var_os("HOME"))
-        .map(PathBuf::from);
-    let Some(home) = home else {
-        // Can't determine home — allow nothing sensitive
-        return !is_in_system_sensitive(path);
-    };
-
-    // Block other users' profiles
-    let profiles_root = home.parent().map(|p| p.to_path_buf());
-    if let Some(profiles) = &profiles_root {
-        if path.starts_with(profiles) && !path.starts_with(&home) {
-            return false;
-        }
-    }
-
-    !is_in_system_sensitive(path)
-}
-
-fn is_in_system_sensitive(path: &std::path::Path) -> bool {
-    const BLOCKED: &[&str] = &[
-        "Windows\\System32",
-        "Windows\\SysWOW64",
-        "ProgramData",
-        "$Recycle.Bin",
-        "Boot",
-        "etc\\ssh",
-        ".ssh",
-        ".gnupg",
-        "AppData\\Roaming\\Microsoft\\Credentials",
-        "AppData\\Roaming\\Microsoft\\Crypto",
-        "AppData\\Local\\Microsoft\\Credential Manager",
-    ];
-    let lossy = path.to_string_lossy().to_lowercase();
-    for b in BLOCKED {
-        if lossy.contains(&b.to_lowercase()) {
-            return true;
-        }
-    }
-    false
 }
 
 fn spawn_terminal(app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> Result<(), String> {
