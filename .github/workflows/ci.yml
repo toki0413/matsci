@@ -97,6 +97,12 @@ jobs:
         working-directory: agent
         run: python -m pytest tests/test_arch_single_gateway.py -q -o addopts=""
 
+      # 机器无关门禁：禁止 git 跟踪的代码文件里出现 Windows 用户目录绝对路径
+      # 或黑名单机器 token。weightless (git ls-files + regex)。
+      - name: No-hardcoded-machine-paths guard
+        working-directory: agent
+        run: python -m pytest tests/test_arch_no_hardcoded_paths.py -q -o addopts=""
+
       - name: Run full test suite
         env:
           HUGINN_RATE_LIMIT_ENABLED: "false"
