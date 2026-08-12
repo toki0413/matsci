@@ -1,0 +1,83 @@
+# 技能库健康巡检: 把 scripts/skill_audit.py 固化为定时诊断.
+# 用图论/拓扑(β_0 弱连通分量, β_1 simplicial homology 洞)跟踪技能库的
+# 冗余、孤立、hub 工具与技能树结构, 防止技能库无序膨胀.
+name: Skill Library Audit
+
+on:
+  schedule:
+    # 每周一 02:00 UTC (周一上午北京 10:00)
+    - cron: '0 2 * * 1'
+  workflow_dispatch: {}
+  push:
+    branches: [master, main]
+    paths:
+      - 'scripts/skill_audit.py'
+      - 'agent/huginn/skills/**'
+      - 'agent/huginn/metacog/trace_topology.py'
+      - 'agent/huginn/metacog/simplicial_homology.py'
+
+permissions:
+  contents: read
+
+jobs:
+  skill-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e "./agent[dev]"
+          pip install networkx numpy scipy
+
+      - name: Run skill library audit
+        id: audit
+        working-directory: ${{ github.workspace }}
+        run: |
+          python scripts/skill_audit.py --json --tree 2>&1 | tee skill_audit_output.txt
+          # 把 JSON 摘要单独抽出供后续步骤消费
+          python - << 'PY'
+          import json, re
+          text = open("skill_audit_output.txt", encoding="utf-8").read()
+          m = re.search(r"\[JSON\]\n(\{.*\})", text, re.S)
+          if not m:
+              raise SystemExit("no [JSON] block found in audit output")
+          data = json.loads(m.group(1))
+          with open("skill_audit.json", "w", encoding="utf-8") as f:
+              json.dump(data, f, ensure_ascii=False, indent=2)
+          print(f"summary: skills={data['skills']} tools={data['tools']} betti={data['betti']} "
+                f"isolated={len(data['isolated_skills'])}")
+          PY
+
+      - name: Summarize to step summary
+        if: always()
+        working-directory: ${{ github.workspace }}
+        run: |
+          if [ -f skill_audit.json ]; then
+            {
+              echo '## 技能库健康巡检'
+              echo '```json'
+              cat skill_audit.json
+              echo '```'
+            } >> $GITHUB_STEP_SUMMARY
+          else
+            echo "::error::skill_audit.json not produced (audit failed to run)"
+          fi
+
+      - name: Upload audit report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: skill-audit-report
+          path: |
+            ${{ github.workspace }}/skill_audit.json
+            ${{ github.workspace }}/skill_audit_output.txt
+          retention-days: 30
