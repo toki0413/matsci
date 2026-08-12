@@ -85,6 +85,58 @@ def test_success_to_skill_to_retrieval() -> None:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_evolved_skill_sync_to_registry() -> None:
+    """弥合两个技能池: 自动提取的 SkillTemplate 应能同步进 SkillRegistry.
+
+    成功三次 -> evolve_from_successes 产出模板 -> sync_to_registry 注册进
+    主技能库 (带 evolution 元数据, 幂等), 且 record_invocation 更新复用统计.
+    """
+    from huginn.skills.registry import SkillRegistry
+
+    logger, tmp = _fresh_logger()
+    try:
+        tool_input = {"file_path": "/tmp/test.cif"}
+        for _ in range(3):
+            logger.log_tool_call(
+                session_id="s1",
+                tool_name="read_file",
+                tool_input=tool_input,
+                result={"status": "ok", "structure": "parsed"},
+                software="VASP",
+                calculation_type="relax",
+            )
+
+        engine = EvolutionEngine(logger=logger)
+        new_skills = engine.evolve_from_successes()
+        assert len(new_skills) == 1
+
+        synced = engine.sync_to_registry()
+        assert len(synced) == 1, f"应同步 1 个技能, got {len(synced)}"
+        name = synced[0].name
+        assert SkillRegistry.get(name) is not None, "应注册进 SkillRegistry"
+
+        # 元数据带演化统计
+        ev = SkillRegistry.get(name).metadata.get("evolution", {})
+        assert ev.get("skill_id"), "应带 skill_id"
+        assert "extraction_confidence" in ev
+
+        # 幂等: 再同步一次不新增
+        assert len(engine.sync_to_registry()) == 0
+
+        # record_invocation 更新复用/成败统计
+        SkillRegistry.record_invocation(name, True)
+        SkillRegistry.record_invocation(name, False)
+        ev2 = SkillRegistry.get(name).metadata["evolution"]
+        assert ev2["usage_count"] == 2, f"usage_count 应=2, got {ev2['usage_count']}"
+        assert ev2["success_count"] == 1
+
+        # 清理, 只移除本次新增技能, 不污染全局 registry 的 presets
+        if name in SkillRegistry._skills:
+            del SkillRegistry._skills[name]
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_pattern_generalization() -> None:
     """两个不同文件路径的同类错误应归到同一条规则, 而非各生成一条."""
     from huginn.evolution.logger import _generalize_error
