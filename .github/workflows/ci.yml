@@ -103,6 +103,25 @@ jobs:
         working-directory: agent
         run: python -m pytest tests/test_arch_no_hardcoded_paths.py -q -o addopts=""
 
+      # 端点契约门禁：CLI (cli/src/http.rs) 引用的每个 /v1 端点必须存在于后端
+      # OpenAPI schema（方法与路径都要对上）。后端路由改名/删除后，CLI 若仍引用
+      # 旧路径会静默 404，本门禁在 CI 里快速拦截。导入 app 生成 schema (~5s)。
+      - name: Endpoint contract guard
+        working-directory: agent
+        run: python -m pytest tests/test_arch_endpoint_contract.py -q -o addopts=""
+
+      # 配置 schema 迁移门禁：config_version 递增必须配套迁移函数，且与
+      # HuginnConfig.config_version 一致。weightless，先于重型套件快速 fail。
+      - name: Config migration guard
+        working-directory: agent
+        run: python -m pytest tests/test_arch_config_migration.py -q -o addopts=""
+
+      # 技能池弥合门禁：evolution SkillTemplate ⇄ 声明式 SkillRegistry 的同步契约
+      # （转换可注册、不覆盖 presets、统计 round-trip 供元技能闭环）。
+      - name: Skill pool bridge guard
+        working-directory: agent
+        run: python -m pytest tests/test_arch_skill_pool_bridge.py -q -o addopts=""
+
       - name: Run full test suite
         env:
           HUGINN_RATE_LIMIT_ENABLED: "false"
@@ -233,6 +252,52 @@ jobs:
         run: |
           cd agent
           python -m pytest tests/fuzz_api.py -v --no-cov
+
+  deps-and-secrets:
+    # 制度化闭环 P2：依赖 lock（uv）+ 密钥扫描（gitleaks）。
+    # 1) 依赖锁漂移门禁：pyproject.toml 变更后必须同步重生成 requirements.lock，
+    #    保证生产依赖可复现、供应链可审计。这里把 pyproject 重编译到临时文件，
+    #    按钉版行（忽略 header/注释）与已提交 lock 比对，不一致即红。
+    # 2) 密钥扫描门禁：gitleaks 扫全 git 历史，真实 key 直接 fail CI。
+    #    测试夹具里的占位假密钥由 .gitleaks.toml 按"具体假值"豁免。
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # gitleaks detect 需要完整 git 历史（含提交作者/信息），不能浅克隆。
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Dependency lock drift guard
+        working-directory: agent
+        run: |
+          # 与生成 requirements.lock 时完全相同的参数，才能得到可复现 resolution。
+          # -o 写到 /tmp，避免就地覆盖已提交的 lock。
+          uv pip compile pyproject.toml -o /tmp/requirements.lock \
+            --python-version 3.12 --no-strip-markers
+          # 只比 钉版行 (pkg==version)，忽略 header/注释（含 -o 路径），
+          # 避免 cosmetic 差异造成误报。
+          if ! diff -u <(grep -v '^#' requirements.lock) \
+                       <(grep -v '^#' /tmp/requirements.lock); then
+            echo "::error::requirements.lock 与 pyproject.toml 不一致。请在 agent/ 下运行: uv pip compile pyproject.toml -o requirements.lock --python-version 3.12 --no-strip-markers"
+            exit 1
+          fi
+
+      - name: Install gitleaks
+        run: |
+          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.18.4/gitleaks_8.18.4_linux_x64.tar.gz \
+            -o /tmp/gitleaks.tar.gz
+          tar -xzf /tmp/gitleaks.tar.gz -C /usr/local/bin gitleaks
+          gitleaks version
+
+      - name: Secret scan with gitleaks
+        run: |
+          # --redact: 泄漏的 key 打码后再进日志，避免二次泄露。
+          gitleaks detect --source . --config .gitleaks.toml --no-banner --redact
 
   rust-check:
     runs-on: ubuntu-latest

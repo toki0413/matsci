@@ -1,0 +1,21 @@
+# gitleaks 密钥扫描配置。
+#
+# 用 [extend] useDefault 继承 gitleaks 内置规则集，仅在此追加 allowlist。
+# allowlist 只按"具体占位假值"豁免 `agent/tests/` 里的测试夹具 —— 这些文件
+# 故意用明文假密钥测越权/隐私逻辑（AWS 官方示例 key、模板化私钥、wrong-key），
+# 不是真实凭据。按值正则豁免意味着：若有人往这些文件塞真实 key，仍会被拦下。
+[extend]
+useDefault = true
+
+[allowlist]
+description = "agent/tests 测试夹具中的占位假密钥（AWS 官方示例 / 模板私钥 / wrong-key，非真实凭据）"
+regexes = [
+  # pentest_api_security.py 里故意用错 key 测越权
+  "wrong-key-12345",
+  # test_privacy.py 里 AWS 官方示例 access key 占位符
+  "AKIAIOSFODNN7EXAMPLE",
+  # test_privacy.py 里模板化的 OpenSSH 私钥占位符。源码里 `\n` 是字面"反斜杠+n"，
+  # 故 TOML 需写 \\\\n 才能让 regex 匹配字面反斜杠 (而非换行符)；`{body}` 是普通
+  # 花括号 (非量词)，无需转义。
+  "-----BEGIN OPENSSH PRIVATE KEY-----\\\\n{body}\\\\n-----END OPENSSH PRIVATE KEY----",
+]
