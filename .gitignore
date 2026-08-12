@@ -77,6 +77,9 @@ pyext/target/
 pyext/dist/
 cli/target/
 
+# pyext 本地编译链接配置 (含机器专用 Python 库绝对路径, 不进 VCS)
+pyext/.cargo/config.toml
+
 # Audit / runtime logs
 huginn_audit.jsonl
 *.log
