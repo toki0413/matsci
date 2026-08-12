@@ -219,7 +219,7 @@ async def _fetch_mp_real(api_key: str, formula: str, mp_id: str, props: list[str
             if mp_id:
                 doc = mpr.materials.summary.get_data_by_id(mp_id)
             elif formula:
-                docs = mpr.materials.summary.search(formula=formula, limit=1)
+                docs = mpr.materials.summary.search(formula=formula)
                 doc = docs[0] if docs else None
             else:
                 return {"error": "No formula or mp_id provided"}
