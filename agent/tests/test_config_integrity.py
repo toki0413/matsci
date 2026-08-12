@@ -179,7 +179,7 @@ class TestCheckAndHeal:
         changes = HuginnConfig.check_and_heal(path)
 
         assert len(changes) > 0
-        assert any("config_version" in c for c in changes)
+        assert any("migrated config from v0 to v1" in c for c in changes)
         data = json.loads(path.read_text(encoding="utf-8"))
         assert data["config_version"] == CONFIG_VERSION
         assert data["provider"] == "openai"

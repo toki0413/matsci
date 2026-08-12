@@ -16,12 +16,34 @@ import contextlib
 import logging
 import pathlib
 from dataclasses import MISSING, fields
-from typing import Any
+from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
-# 当前配置 schema 版本
+# 当前配置 schema 版本。
+# 门禁 (tests/test_arch_config_migration.py) 强制：MIGRATIONS 必须恰好覆盖
+# 0..CONFIG_VERSION-1 每一个源版本，且与 HuginnConfig.config_version 一致。
 CONFIG_VERSION = 1
+
+
+def _migrate_v0_to_v1(stored: dict[str, Any]) -> dict[str, Any]:
+    """v0 → v1：引入 config_version 字段。旧配置无版本号，语义上视为 v0。"""
+    data = dict(stored)
+    data.setdefault("config_version", 1)
+    return data
+
+
+# 迁移引擎：每个条目 key = 源版本，value = 把该版本配置升到 (key+1) 的迁移函数。
+#
+# 新增配置 schema 变更时的标准动作（缺一不可，否则 CI 变红）：
+#   1. 把 CONFIG_VERSION 递增；
+#   2. 写一个 migrate_vX_to_vY(stored) 函数并注册进 MIGRATIONS；
+#   3. 在 tests/test_config_integrity.py 补一个从旧版本升级的迁移测试。
+#
+# 禁止"只改字段不升版本"——那会让旧配置静默丢失新字段语义。
+MIGRATIONS: dict[int, Callable[[dict[str, Any]], dict[str, Any]]] = {
+    0: _migrate_v0_to_v1,
+}
 
 
 def _get_default_config() -> dict[str, Any]:
@@ -113,6 +135,8 @@ def check_config_integrity(
 def migrate_config(stored: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     """把旧版本配置迁移到当前版本.
 
+    按 MIGRATIONS 注册表，把 config_version 从当前值一路升到 CONFIG_VERSION。
+
     Args:
         stored: 从磁盘加载的配置字典
 
@@ -120,16 +144,23 @@ def migrate_config(stored: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
         (migrated_config, list_of_migration_notes)
     """
     notes: list[str] = []
-    version = stored.get("config_version", 0)
+    migrated = dict(stored)
+    version = int(migrated.get("config_version", 0))
 
-    if version < 1:
-        # v0 → v1: 引入 config_version 字段, 确保新增字段存在
-        notes.append("migrated config from v0 to v1 (added config_version field)")
-
-    # 未来迁移: if version < 2: ...
+    # 逐级迁移：0 → 1 → ... → CONFIG_VERSION
+    while version < CONFIG_VERSION:
+        fn = MIGRATIONS.get(version)
+        if fn is None:
+            # 缺迁移函数：保持原样并记录，不硬崩（由门禁在 CI 拦截缺注册）。
+            notes.append(f"no migration registered for v{version}->v{version+1}")
+            break
+        migrated = fn(migrated)
+        version += 1
+        migrated["config_version"] = version
+        notes.append(f"migrated config from v{version - 1} to v{version}")
 
     # 迁移完跑一遍完整性校验, 补全缺失键 / 清理孤儿键
-    healed, integrity_changes = check_config_integrity(stored)
+    healed, integrity_changes = check_config_integrity(migrated)
     notes.extend(integrity_changes)
 
     return healed, notes
