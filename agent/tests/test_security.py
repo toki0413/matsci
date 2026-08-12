@@ -261,6 +261,20 @@ class TestConfigKeyResolution:
         cfg = HuginnConfig.from_dict(d)
         assert cfg.provider == "ollama"
 
+    def test_from_dict_workspace_env_expansion(self, monkeypatch):
+        monkeypatch.setenv("HUGINN_WORKSPACE", "/custom/ws")
+        cfg = HuginnConfig.from_dict({"workspace": "env:HUGINN_WORKSPACE"})
+        assert cfg.workspace == "/custom/ws"
+
+    def test_from_dict_workspace_env_missing_falls_back(self, monkeypatch):
+        monkeypatch.delenv("HUGINN_WORKSPACE", raising=False)
+        cfg = HuginnConfig.from_dict({"workspace": "env:HUGINN_WORKSPACE"})
+        assert cfg.workspace == "."
+
+    def test_from_dict_workspace_plain_passthrough(self):
+        cfg = HuginnConfig.from_dict({"workspace": "/plain/path"})
+        assert cfg.workspace == "/plain/path"
+
 
 # ---------------------------------------------------------------------------
 # HPC client input sanitization
