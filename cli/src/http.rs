@@ -6,6 +6,7 @@
 //! 与 desktop 侧 `get_backend_port` 逻辑保持一致。
 
 use anyhow::{Context, Result};
+use serde_json::Value;
 use std::path::PathBuf;
 
 /// 与后端 huginn.utils.runtime 一致的运行时目录。
@@ -72,4 +73,69 @@ pub fn list_tools_via_http() -> Result<Vec<(String, String, bool)>> {
     }
     result.sort_by(|a, b| a.0.cmp(&b.0));
     Ok(result)
+}
+
+/// 通用 POST JSON 到后端 `/v1...` 端点，返回响应 JSON。
+fn post_json(path: &str, payload: Value, timeout_secs: u64) -> Result<Value> {
+    let url = format!("{}{}", base_url(), path);
+    let body = ureq::post(&url)
+        .timeout(std::time::Duration::from_secs(timeout_secs))
+        .send_json(payload)
+        .with_context(|| format!("连接后端失败: {url}"))?
+        .into_string()
+        .with_context(|| format!("读取后端 {path} 响应失败"))?;
+    serde_json::from_str(&body).with_context(|| format!("后端 {path} 返回的不是 JSON: {body}"))
+}
+
+/// 诊断计算错误 → POST /execution/diagnose。
+pub fn diagnose_via_http(
+    error_message: &str,
+    software: Option<&str>,
+    calculation_type: Option<&str>,
+    context: Option<&str>,
+) -> Result<Value> {
+    let mut payload = serde_json::Map::new();
+    payload.insert("error_message".into(), Value::String(error_message.to_string()));
+    if let Some(s) = software {
+        payload.insert("software".into(), Value::String(s.to_string()));
+    }
+    if let Some(t) = calculation_type {
+        payload.insert("calculation_type".into(), Value::String(t.to_string()));
+    }
+    if let Some(c) = context {
+        payload.insert("context".into(), Value::String(c.to_string()));
+    }
+    post_json("/v1/diagnose", Value::Object(payload), 60)
+}
+
+/// 运行 benchmark → POST /bench/run。
+pub fn bench_via_http(evolve: bool, categories: Option<&str>) -> Result<Value> {
+    let mut payload = serde_json::Map::new();
+    payload.insert("evolve".into(), Value::Bool(evolve));
+    if let Some(c) = categories {
+        payload.insert("categories".into(), Value::String(c.to_string()));
+    }
+    post_json("/v1/bench/run", Value::Object(payload), 600)
+}
+
+/// 运行自演化 → POST /evolve/run。
+pub fn evolve_via_http(logs_dir: Option<&str>) -> Result<Value> {
+    let mut payload = serde_json::Map::new();
+    if let Some(d) = logs_dir {
+        payload.insert("logs_dir".into(), Value::String(d.to_string()));
+    }
+    post_json("/v1/evolve/run", Value::Object(payload), 600)
+}
+
+/// 运行 workflow 模板 → POST /workflows/execute。
+pub fn workflow_via_http(template: &str, args: &[String]) -> Result<Value> {
+    // CLI 的 workflow 传 KEY=VALUE 参数，组装成 dict。
+    let mut arg_map = serde_json::Map::new();
+    for kv in args {
+        if let Some((k, v)) = kv.split_once('=') {
+            arg_map.insert(k.trim().to_string(), Value::String(v.trim().to_string()));
+        }
+    }
+    let payload = serde_json::json!({ "template": template, "args": arg_map });
+    post_json("/v1/workflows/execute", payload, 600)
 }
