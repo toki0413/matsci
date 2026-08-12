@@ -380,12 +380,20 @@ async fn start_backend(
     eprintln!("[start_backend] Python: {}", python_exe);
 
     // Point PYTHONPATH at the agent source so huginn.server is importable.
-    // The workspace structure is: matsci-agent/agent/huginn/...
-    let agent_src = std::path::PathBuf::from(&local_app)
-        .join("..")
-        .join("Desktop")
-        .join("matsci-agent")
-        .join("agent");
+    // Prefer an explicit env override, then fall back to the legacy
+    // Desktop/matsci-agent convention (dev-only), then PYTHONPATH.
+    let agent_src = std::env::var("HUGINN_AGENT_SRC")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .map(std::path::PathBuf::from)
+        .filter(|p| p.exists())
+        .unwrap_or_else(|| {
+            std::path::PathBuf::from(&local_app)
+                .join("..")
+                .join("Desktop")
+                .join("matsci-agent")
+                .join("agent")
+        });
     let pythonpath = if agent_src.exists() {
         agent_src.to_string_lossy().to_string()
     } else {
