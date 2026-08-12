@@ -126,6 +126,18 @@ jobs:
         working-directory: agent
         run: python -m pytest tests/test_arch_mcp_json.py -q -o addopts=""
 
+      - name: MCP single-gateway guard
+        working-directory: agent
+        run: python -m pytest tests/test_arch_mcp_governance.py -q -o addopts=""
+
+      - name: Plugin admission guard
+        working-directory: agent
+        run: python -m pytest tests/test_arch_plugin_governance.py -q -o addopts=""
+
+      - name: Mat-DB real MP dependency guard
+        working-directory: agent
+        run: python -m pytest tests/test_arch_matdb_dep.py -q -o addopts=""
+
       - name: Run full test suite
         env:
           HUGINN_RATE_LIMIT_ENABLED: "false"

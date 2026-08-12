@@ -232,7 +232,7 @@ async def _fetch_mp_real(api_key: str, formula: str, mp_id: str, props: list[str
                 result["band_gap"] = doc.band_gap
             if "energy_per_atom" in props or not props:
                 result["energy_per_atom"] = doc.energy_per_atom
-            if "bulk_modulus" in props or not props and doc.bulk_modulus:
+            if "bulk_modulus" in props or (not props and doc.bulk_modulus):
                 result["bulk_modulus"] = doc.bulk_modulus.get("vrh", None)
             return result
     except ImportError:
