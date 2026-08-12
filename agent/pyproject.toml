@@ -90,6 +90,9 @@ benchmark = [
 # Flint MCP server (交互式 web 图表副通道): npx -y flint-chart-mcp, 配置见项目根 .mcp.json.
 rag = ["chromadb>=0.4", "sentence-transformers>=2.5", "pymupdf>=1.23", "pypdf>=6.14.2", "easyocr>=1.7", "pytesseract>=0.3"]
 tooluniverse = ["tooluniverse"]
+# 材料数据库真实查询 (mat-db MCP): 无 MP_API_KEY 时 server 回退 mock 数据.
+# mp-api 体积较大默认不装, 按需 pip install -e .[db] 后设 MP_API_KEY 即接真实 Materials Project.
+db = ["mp-api>=0.12"]
 # Rust 性能扩展 (huginn-ext, 源码在仓库根 /pyext)。Rust 沙箱快路径默认关闭
 # (HUGINN_USE_RUST_SANDBOX=1 才启用), 按需安装。huginn-ext 尚未发布到公开 PyPI
 # 前, 从 GitHub Release 资产安装对应 python 版本 wheel 即可。

@@ -143,3 +143,16 @@ token（如 `wanzh`）都会让 CI 变红。机器相关路径必须改为 env �
       `npx -y flint-chart-mcp`）拉起并注册进 agent 工具池，而不只是 IDE 能连。
       best-effort：文件缺失/非法 JSON/单条配置非法都跳过，不阻塞启动。
       `tests/test_arch_mcp_json.py` 在 CI 固话该行为。
+- [x] **MCP 单入口门禁**：`tests/test_arch_mcp_governance.py` 扫描 `agent/huginn/**`
+      源码，任何非白名单文件出现 MCP client 接线 token（`MCPServerConfig(`、
+      `register_mcp_tools(`、`stdio_client(`、`sse_client(`）即 fail。MCP 接线只允许
+      出现在 `mcp_client.py` / `routes/mcp.py` / `lifespan.py` / `mcp_adapter.py` /
+      `cli/context.py` —— 业务模块接 MCP 必须走 `/v1/mcp/*` API 或 lifespan 统一接线，
+      防再回多入口老问题。
+- [x] **插件准入门禁**：`tests/test_arch_plugin_governance.py` 校验 `huginn/plugins/`
+      下每个 Star 插件（metadata.yaml 合法、name==目录、版本兼容 `HUGINN_API_VERSION`、
+      main.py 存在），并强制插件集合 == 冻结的 `SANCTIONED_PLUGINS` 清单。新增插件必须
+      显式准入评审，防插件生态无序膨胀。
+- [x] **Mat-DB 真实 MP 依赖门禁**：`tests/test_arch_matdb_dep.py` 保证 mat-db 真实查询
+      路径读 `MP_API_KEY`、pyproject 在可选依赖组 `db` 声明 `mp-api`（真实路径可装），
+      并回归保护 bulk_modulus 提取的括号优先级。无 key 时 server 仍回退 mock。
