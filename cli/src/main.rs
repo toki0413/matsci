@@ -203,7 +203,7 @@ enum Commands {
         software: Option<String>,
         #[arg(short = 't', long)]
         calculation_type: Option<String>,
-        #[arg(short, long)]
+        #[arg(long)]
         context: Option<String>,
     },
 
@@ -311,6 +311,13 @@ fn run() -> Result<()> {
             ref categories,
             ref output,
         } => {
+            // ADR-0001: 后端在跑就走 /bench/run，否则回退 Python spawn。
+            if http::backend_available() {
+                let cats = categories.as_ref().map(|c| c.join(","));
+                let res = http::bench_via_http(evolve, cats.as_deref())?;
+                println!("{}", serde_json::to_string_pretty(&res)?);
+                return Ok(());
+            }
             let globals = collect_global_args(&cli, &workspace);
             let mut extra: Vec<String> = Vec::new();
             if evolve {
@@ -325,6 +332,12 @@ fn run() -> Result<()> {
             delegate_to_python(&workspace, "bench", &globals, &extra)
         }
         Commands::Evolve { ref logs_dir } => {
+            // ADR-0001: 后端在跑就走 /evolve/run，否则回退 Python spawn。
+            if http::backend_available() {
+                let res = http::evolve_via_http(logs_dir.as_deref())?;
+                println!("{}", serde_json::to_string_pretty(&res)?);
+                return Ok(());
+            }
             let globals = collect_global_args(&cli, &workspace);
             let mut extra: Vec<String> = Vec::new();
             if let Some(dir) = logs_dir {
@@ -353,6 +366,12 @@ fn run() -> Result<()> {
             )
         }
         Commands::Workflow { ref template, ref args } => {
+            // ADR-0001: 后端在跑就走 /workflows/execute，否则回退 Python spawn。
+            if http::backend_available() {
+                let res = http::workflow_via_http(template, args)?;
+                println!("{}", serde_json::to_string_pretty(&res)?);
+                return Ok(());
+            }
             let globals = collect_global_args(&cli, &workspace);
             let mut extra = vec![template.clone()];
             extra.extend(args.iter().cloned());
@@ -364,6 +383,17 @@ fn run() -> Result<()> {
             ref calculation_type,
             ref context,
         } => {
+            // ADR-0001: 后端在跑就走 /execution/diagnose，否则回退 Python spawn。
+            if http::backend_available() {
+                let res = http::diagnose_via_http(
+                    error_message,
+                    software.as_deref(),
+                    calculation_type.as_deref(),
+                    context.as_deref(),
+                )?;
+                println!("{}", serde_json::to_string_pretty(&res)?);
+                return Ok(());
+            }
             let globals = collect_global_args(&cli, &workspace);
             let mut extra = vec![error_message.clone()];
             if let Some(s) = software {
