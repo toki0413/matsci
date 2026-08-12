@@ -34,6 +34,7 @@ from huginn.routes.event_stream import router as event_stream_router
 from huginn.routes.events import router as events_router
 from huginn.routes.execution import router as execution_router
 from huginn.routes.export_share import router as export_share_router
+from huginn.routes.fs import router as fs_router
 from huginn.routes.health import router as health_router
 from huginn.routes.hpc import router as hpc_router
 from huginn.routes.interaction import router as interaction_router
@@ -126,6 +127,8 @@ ALL_ROUTERS = [
     visual_router,
     # 文档理解: PDF 解析 / DocGraph / 信息包
     document_router,
+    # 本地文件系统读写 (ADR-0001 文件 I/O 归口后端): cwd / list / read / write
+    fs_router,
     # Prometheus /metrics 抓取端点
     metrics_router,
     # 计算溯源: 文件产出关系 / 谱系追溯 / 全文搜索
