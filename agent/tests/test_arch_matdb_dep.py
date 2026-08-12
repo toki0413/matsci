@@ -33,6 +33,16 @@ def test_mp_api_declared_as_optional_dependency():
     assert any("mp-api" in item for item in extra["db"]), "db 组必须含 mp-api"
 
 
+def test_matdb_search_does_not_pass_limit_kwarg():
+    """mp-api 新版 search() 不接收 limit(那是 _search 的 kwarg), 传了会抛错被吞成 mock。
+
+    回归保护: formula 分支必须用 `search(formula=formula)` + 取首条, 不能带 limit=。
+    """
+    src = MATDB_SERVER.read_text(encoding="utf-8")
+    assert "search(formula=formula)" in src, "formula 分支必须用 search(formula=formula)"
+    assert "search(formula=formula, limit=" not in src, "search() 禁止传 limit kwarg"
+
+
 def test_matdb_bulk_modulus_precedence_is_safe():
     src = MATDB_SERVER.read_text(encoding="utf-8")
     # 抽到 bulk_modulus 提取行，确认布尔条件已加括号避免 and/or 优先级歧义
