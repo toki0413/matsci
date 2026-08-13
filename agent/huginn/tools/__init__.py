@@ -289,6 +289,85 @@ def validate_tool_specs() -> list[str]:
     return resolved
 
 
+def _collect_top_level_imports(path: str) -> set[str]:
+    """Return the set of top-level packages a module imports (directly).
+
+    Walks the module's top-level statements (including ``try/except`` blocks)
+    but does not descend into function/class bodies. This captures "optional"
+    imports like ``try: import torch`` that are wrapped so the module still
+    imports when the dep is missing — exactly the silent-degradation case.
+    """
+    import ast
+    import tokenize
+
+    with tokenize.open(path) as f:
+        tree = ast.parse(f.read(), filename=path)
+    deps: set[str] = set()
+
+    def _walk(node: ast.AST) -> None:
+        # Never descend into function/class bodies — only module-level imports.
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            return
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                deps.add(alias.name.split(".")[0])
+        elif isinstance(node, ast.ImportFrom):
+            if node.level == 0 and node.module:
+                deps.add(node.module.split(".")[0])
+        for child in ast.iter_child_nodes(node):
+            _walk(child)
+
+    _walk(tree)
+    return deps
+
+
+def probe_tool_dependencies(tool_lists: list[tuple[str, str]] | None = None) -> dict[str, list[str]]:
+    """Detect optional tools whose third-party deps are missing at runtime.
+
+    Some optional tools import heavy libs (``torch``, ``pymatgen``, ``rdkit``,
+    ...) at module top-level but wrap them in ``try/except`` so the module
+    still *imports* when the lib is absent — the tool registers with a name
+    but has no real capability. This helper statically scans each tool
+    module's module-level imports and reports which third-party deps are
+    missing, so operators get an explicit warning instead of a silent no-op.
+
+    Returns a mapping of ``{module_name: [missing_dep, ...]}`` for affected
+    modules (empty dict when everything is satisfied).
+    """
+    import importlib.util
+
+    tool_lists = tool_lists if tool_lists is not None else _OPTIONAL_MODULES
+    stdlib = sys.stdlib_module_names
+    report: dict[str, list[str]] = {}
+
+    for module_name, _class_name in tool_lists:
+        try:
+            mod = importlib.import_module(module_name)
+        except ImportError:
+            # Module itself cannot be imported (a hard dep is missing) — that
+            # case is already surfaced by _do_register / validate_tool_specs.
+            continue
+        path = getattr(mod, "__file__", None)
+        if not path:
+            continue
+        deps = _collect_top_level_imports(path)
+        if not deps:
+            continue
+        missing: list[str] = []
+        for dep in sorted(deps):
+            if dep.startswith("huginn") or dep in stdlib:
+                continue
+            if importlib.util.find_spec(dep) is None:
+                missing.append(dep)
+        if missing:
+            report[module_name] = missing
+            logger.warning(
+                "Tool %s registered but its deps are missing — capability degraded: %s",
+                module_name, ", ".join(missing),
+            )
+    return report
+
+
 def register_core_tools(config: Any | None = None) -> list[str]:
     """Register only the core tools (fast, ~35 tools, no heavy deps).
 
@@ -340,6 +419,14 @@ def register_optional_tools(config: Any | None = None) -> list[str]:
         logger.warning(f"Science-skills bridge registration failed: {exc}")
 
     _rebuild_dispatch_tables()
+
+    # Static probe of optional tools' third-party deps — warn loudly when a
+    # tool registers with a name but its backing libraries are absent, so
+    # capability degradation isn't silent.
+    try:
+        probe_tool_dependencies(pending)
+    except Exception as exc:
+        logger.warning(f"Tool dependency probe failed: {exc}")
 
     # Start system health monitor if enabled
     try:
