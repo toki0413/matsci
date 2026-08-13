@@ -9,6 +9,7 @@ at all.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, Literal
 
@@ -20,6 +21,8 @@ from huginn.tools.base import HuginnTool
 from huginn.tools.file_edit_tool import _content_hash, _make_diff
 from huginn.tools.profile import ToolProfile
 
+logger = logging.getLogger(__name__)
+
 
 class SingleEdit(BaseModel):
     """One replacement to apply inside a single file."""
@@ -27,6 +30,17 @@ class SingleEdit(BaseModel):
     file_path: str = Field(..., description="Path to the file to edit (relative to working_dir or absolute).")
     old_string: str = Field(..., description="Exact text to replace; must occur exactly once in the file.")
     new_string: str = Field(..., description="Replacement text.")
+    expected_hash: str | None = Field(
+        default=None,
+        description="Expected SHA-256 (first 16 hex chars) of this file's current content, "
+        "from a prior snapshot_hash. If provided and the on-disk content differs, the "
+        "whole atomic batch is refused (unless hash_policy='warn').",
+    )
+    hash_policy: Literal["strict", "warn", "off"] = Field(
+        default="strict",
+        description="strict: refuse the batch when expected_hash mismatches; "
+        "warn: log the mismatch but continue; off: skip hash check.",
+    )
 
 
 class MultiEditToolInput(BaseModel):
@@ -131,6 +145,24 @@ class MultiEditTool(HuginnTool):
                 )
 
             original = content
+            # Hashline: 同一文件的所有 edits 共享一次内容校验. 取该文件首个携带
+            # expected_hash 的 edit 做判据; strict 不匹配即整批拒绝 (保持原子语义).
+            for sedit in edits:
+                if sedit.expected_hash and sedit.hash_policy != "off":
+                    current_hash = _content_hash(content)
+                    if current_hash != sedit.expected_hash:
+                        msg = (
+                            f"File changed since snapshot (expected {sedit.expected_hash}, "
+                            f"got {current_hash}): {path}. Refusing atomic batch."
+                        )
+                        if sedit.hash_policy == "strict":
+                            return ToolResult(
+                                data={"current_hash": current_hash},
+                                success=False,
+                                error=msg,
+                            )
+                        logger.warning(msg)
+                    break  # 只按首个带 hash 的 edit 校验一次
             # 链式应用: 每个 edit 在当前 content 上找 old_string, 必须唯一
             for edit in edits:
                 occ = content.count(edit.old_string)

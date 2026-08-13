@@ -44,6 +44,7 @@ EVENT_COGNITIVE_MODE_CHANGE = "cognitive_mode_change"
 EVENT_COMPACTION = "compaction"
 EVENT_BRANCH_SUMMARY = "branch_summary"
 EVENT_RESET_BOUNDARY = "reset_boundary"
+EVENT_FILE_HASH_MISMATCH = "file_hash_mismatch"
 EVENT_CUSTOM = "custom"
 
 SESSION_EVENT_KINDS: frozenset[str] = frozenset({
@@ -57,6 +58,7 @@ SESSION_EVENT_KINDS: frozenset[str] = frozenset({
     EVENT_COMPACTION,
     EVENT_BRANCH_SUMMARY,
     EVENT_RESET_BOUNDARY,
+    EVENT_FILE_HASH_MISMATCH,
     EVENT_CUSTOM,
 })
 
