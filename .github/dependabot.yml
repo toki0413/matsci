@@ -10,11 +10,28 @@ updates:
     # 安全更新自动合并, 减少人工负担
     # ponytail: 升级路径是加 automerged_updates 配置 (需 GitHub 商业版)
     # 当前靠 CI 绿灯后人工 merge
-    # chromadb 无 fix 版本 (GHSA-f4j7-r4q5-qw2c / PYSEC-2026-311): 预认证代码
-    # 注入仅影响 HTTP API + trust_remote_code=true; huginn 全程用嵌入式
-    # PersistentClient (不暴露 HTTP), 不受影响. 受控忽略以消除重复告警.
+    # 以下依赖在当前约束下"无 fix 版本", 受控忽略以免 Dependabot 反复开 security PR:
+    #
+    # 1. chromadb (GHSA-f4j7-r4q5-qw2c / PYSEC-2026-311): 预认证代码注入,
+    #    仅影响 HTTP API + trust_remote_code=true; huginn 全程用嵌入式
+    #    PersistentClient (不暴露 HTTP), 不受影响. 上游最新版 1.5.9 仍受影响
+    #    (last_affected), 无 fix 版本.
+    #
+    # 2. torch (GHSA-vgrw-7cvw-pwgx / GHSA-qfhq-4f3w-5fph / PYSEC-2025-193/194/195
+    #    /203/204/206 / PYSEC-2026-139/2286): 仅 ml-fairchem 可选组经
+    #    fairchem-core 2.x 硬约束 torch~=2.8.0 引入. 降级 fairchem-core 到 1.3.0
+    #    (宽松 torch>=2.4) 会破坏 OCCalculator API (代码里 import
+    #    fairchem.core...OCCalculator), 故无法升级. 其他组 (mace/all) 用无漏洞的
+    #    torch 2.13.0.
+    #
+    # 3. setuptools (PYSEC-2026-3447 / GHSA-h35f-9h28-mq5c): 被 fairchem-core 2.x
+    #    硬约束 setuptools<81.0.0 锁死在 80.10.2, 无法升级到 fix 版本 83.0.0.
     ignore:
       - dependency-name: "chromadb"
+        versions: ["*"]
+      - dependency-name: "torch"
+        versions: ["*"]
+      - dependency-name: "setuptools"
         versions: ["*"]
     commit-message:
       prefix: "chore(deps)"
