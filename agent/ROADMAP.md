@@ -199,8 +199,8 @@
 ### Rust 桥接 (5 模块)
 - `huginn/tools/file_read_tool.py` → **70%** (`tests/test_file_read_tool_ext.py` → 7): Rust `tail_lines` fast path(命中/start 计算/import 缺失回退/Rust 异常回退) + call() 端到端
 - `huginn/rag/vector_store.py` → **36%** (`tests/test_vector_store_rust_ext.py` + `tests/test_vector_store_search_ext.py` → 4+7): Rust `top_k` 桥接(import 缺失/空 embeddings/成功/异常降级) + `search()` 集成(原生 query 成功/截断 top_k/HNSW 失败降级 Rust fallback/带 metadata filter/unsets 栈空返回 []/无 embedding 关键字搜索/空集合)
-- `huginn/routes/health.py` → **28%** (`tests/test_health_rust_ext.py` → 2): `/health/rust` 可用枚举 functions / 不可用返回 error
-- `huginn/tools/bash_tool.py` → **48%** (`tests/test_bash_rust_sandbox_ext.py` → 7): Rust `run_sandboxed` 成功/失败(有/无 stderr)/异常回退/import 缺失回退/默认关闭不触发 + command+args 拆分与 allowed_base_dirs 传递
+- `huginn/routes/health.py` → **100%** (`tests/test_health_rust_ext.py` + `tests/test_health_integration_ext.py` → 2+25): `/health/rust` 可用/不可用 + `_is_configured` 各判定(ollama provider/models ollama/内置 key/env key/禁用无 key/resolved key/default 无 key)、`/health/ready` 三路检查(sqlite ok/异常、llm 配置/未配置/异常、mcp 未配置/无 server/全连/断连/异常 + 503 汇聚)、legacy `/health`(configured/unconfigured/model_pool/mcp_servers)、`/health/guidance`(key 检测/ollama 可用与否/recommendation 三态/已配置无建议)
+- `huginn/tools/bash_tool.py` → **92%** (`tests/test_bash_rust_sandbox_ext.py` + `tests/test_bash_tool_integration_ext.py` → 7+43): Rust `run_sandboxed` 成功/失败(有/无 stderr)/异常回退/import 缺失回退/默认关闭不触发 + command+args 拆分与 allowed_base_dirs 传递 + 空命令分支、ContainerExecutor 路径(成功/失败)、SandboxExecutor 路径(成功/失败/SandboxError/异常)、`get_executor` 抛 SandboxError、重活识别 `_is_heavy_bash`(jupyter/notebook/python+train|fit|epoch 等/非重活)、`_suggest_fix` 全错误模式、`_extract_progress`(空/过滤/截断)、重活 dispatch(persistent terminal 成功/start 失败降级、support subagent 成功/Čech H¹ rejection 路径/无 agent_factory 降级/subagent 异常降级、protocol 关闭直跑)
 - `huginn/tools/sim/vasp_tool.py` → **33%** (`tests/test_vasp_rust_ext.py` → 6): Rust `parse_outcar` relax 命中/error/converged=False/异常回退 + scf 不信任 Rust 落 Python + `_HAS_HUGINN_EXT=False` 走 Python
 - 注: `lammps_tool.py` 的 Rust fast-path 是**有意的性能债** (parse_trajectory 恒走 Python, 见源码 1136-1145 注释), 非实际桥接点, 不测。
 
