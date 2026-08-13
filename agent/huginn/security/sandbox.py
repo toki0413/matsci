@@ -319,6 +319,26 @@ class SandboxExecutor:
         # Drop scheduler-only hints so they do not reach subprocess.run.
         run_kwargs = {k: v for k, v in kwargs.items() if k not in self._REMOTE_KWARGS}
 
+        # T-BCSE-07: Landlock confinement (Linux). When work dirs are scoped, confine
+        # the child so it can only read/write inside allowed_work_dirs + a small ro
+        # set; everything else is denied by the kernel. Graceful degradation: if the
+        # kernel has no Landlock, preexec_fn is None and we keep the soft sandbox.
+        if (
+            os.name == "posix"
+            and cfg.strict_work_dir
+            and cfg.allowed_work_dirs
+            and "preexec_fn" not in run_kwargs
+        ):
+            try:
+                from huginn.security.landlock import make_preexec_fn
+                rw_dirs = [str(p) for p in cfg.allowed_work_dirs]
+                ro_paths = [str(valid_cwd)] if valid_cwd else []
+                preexec = make_preexec_fn(ro_paths, rw_dirs, required=False)
+                if preexec is not None:
+                    run_kwargs["preexec_fn"] = preexec
+            except Exception:
+                logger.debug("landlock confinement skipped (non-fatal)", exc_info=True)
+
         # Windows coreutils fallback: _resolve_executable 返回原 cmd[0] (e.g. "ls")
         # 但 shutil.which 找不到 → 这里用 cmd /c 把整条命令包起来, 让 cmd.exe
         # 走内置命令 (dir/copy/type/...). 白名单已含 cmd.exe 间接调用, 不开新口子.
