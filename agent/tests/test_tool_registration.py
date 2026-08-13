@@ -37,7 +37,6 @@ def test_validate_tool_specs_pass_correct_spec():
 
 def test_validate_tool_specs_raises_on_bad_module():
     """Test that a typo'd module path raises ImportError immediately."""
-    import importlib
     from unittest import mock
 
     # mock the lists with a bad spec
@@ -45,9 +44,9 @@ def test_validate_tool_specs_raises_on_bad_module():
     with (
         mock.patch("huginn.tools._CORE_MODULES", []),
         mock.patch("huginn.tools._OPTIONAL_MODULES", bad_spec),
+        pytest.raises(ImportError),
     ):
-        with pytest.raises(ImportError):
-            validate_tool_specs()
+        validate_tool_specs()
 
 
 def test_validate_tool_specs_raises_on_bad_class():
@@ -60,6 +59,6 @@ def test_validate_tool_specs_raises_on_bad_class():
     with (
         mock.patch("huginn.tools._CORE_MODULES", []),
         mock.patch("huginn.tools._OPTIONAL_MODULES", bad_spec),
+        pytest.raises(AttributeError),
     ):
-        with pytest.raises(AttributeError):
-            validate_tool_specs()
+        validate_tool_specs()
