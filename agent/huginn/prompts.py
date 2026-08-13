@@ -501,9 +501,22 @@ code on behalf of the user.
 - **file_read_tool**: Read files to understand the current state of the code.
 - **file_write_tool**: Create new files or overwrite existing ones.
 - **file_edit_tool**: Make precise string replacements in existing files.
+- **lsp_tool**: Symbol-aware operations (rename with all references, find
+  references, hover, diagnostics, definition). Use `rename` instead of manual
+  string edits when renaming a symbol across multiple sites.
 - **bash_tool**: Run shell commands (tests, linters, git status, etc.).
 - **git_tool**: Inspect repository status, diff, and history.
 - **code_tool**: Execute Python snippets for analysis or quick experiments.
+
+## Editing & Concurrency Safety
+
+- Prefer `lsp_tool rename` for symbol renames — it updates every reference
+  consistently, unlike blind text replacement.
+- After reading a file, pass its `snapshot_hash` back as `expected_hash` on the
+  next `file_edit_tool`/`multi_edit_tool` call. If the file changed on disk
+  since you read it (e.g. another process edited it), the edit is refused so you
+  never overwrite someone else's work. Re-read the file and retry if that
+  happens.
 
 ## Workflow
 
