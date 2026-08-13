@@ -255,6 +255,14 @@
   - 门控任何异常都 fail-open 返回 True, 门控崩溃绝不阻断进化。
   - 接入点: `evolve_from_failures` / `evolve_from_successes` / `evolve_prompt_patches` / `evolve_from_rewards` 的规则/技能添加点, 以及 `sync_to_registry` 技能注册点。`tests/test_evolution_engine.py` 通过。
 
+#### 架构修复 (2026-08) — orchestrator 无效工具注册告警噪音
+- **状态**: 已完成
+- **优先级**: P2 (日志可观测性)
+- **修复 10 — `register_tool` 在 ToolRegistry 类模式下是 no-op 却反复告警**: `ExecutionOrchestrator` 默认接全局 `ToolRegistry` 类 (classmethod `.get`), 此时 `register_tool(name, fn)` 只对 dict 模式有意义, 对类模式是 no-op。但 [`routes/execution.py`](agent/huginn/routes/execution.py) 与 [`cli/commands/execute.py`](agent/huginn/cli/commands/execute.py) 仍循环调用它对每个工具注册 → 每个都打 `register_tool ignored: tool_registry is type, not a dict` warning, 日志刷屏且误导调用方以为出错。
+  - `huginn/execution/orchestrator.py::register_tool`: 对非 dict registry 的 warning 降级为 debug 日志 (类模式有自己的 `.register`, 属正常路径非错误)。
+  - 删除 `routes/execution.py` / `cli/commands/execute.py` 中冗余的 `orch.register_tool(tool_name, ...)` 循环及未使用的 `_wrap_tool` 函数、`ToolContext`/`AuditLogger`/`ToolRegistry` 导入。`run()` 内部用 `ToolRegistry.get()` 取工具, 由 `_invoke_tool` 桥接。
+  - 验证: ruff 通过, `tests/test_execution_orchestrator.py` + `tests/test_execution_backend.py` 16 用例全绿。
+
 #### 新功能 (2026-08) — externalThinking: deep_think 外部草稿纸
 - **状态**: 已完成
 - **优先级**: P2 (能力增强, 默认关)
