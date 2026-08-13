@@ -26,6 +26,62 @@
 
 ---
 
+## 0.5 数学结构对比与 Huginn 融合
+
+> 依据：dsh `packages/session/session-projection/src/index.ts` 与
+> Oh-my-pi `docs/session.md`（Tree and Leaf Semantics / buildSessionContext）。
+
+### 0.5.1 数学结构对比表
+
+| 维度 | **dsh (DeepSeek Harness)** | **Oh-my-pi** |
+|---|---|---|
+| 数学骨架 | **catamorphism（纯函数 fold）**：`ProjectionDefinition{init/apply/view/stateVersion}` | **持久化不可变树（path copying）**：append-only 事件树 + `leafId` 指针 |
+| 事件组织 | 线性事件流 `E`，`apply: S×E→S` 一路折叠 | 事件带 `id`+`parentId` 构成有根树，`leafId` 是当前活点 |
+| 状态来源 | `state = fold(init, events)`，多读模型各投影一份 | 沿 `leaf_id` 走 `parentId` 回溯到根，得到 root→leaf 路径再折叠 |
+| 分支 | 依赖图重放 / 一致读切面 | `branch(entryId)` 只移叶指针，历史不删、O(1) 共享前缀 |
+| 读模型 | `view: S→K`（投影态射），schema 校验 | `buildSessionContext` 沿路径重放产出模型上下文 |
+| 缓存/检查点 | watermark cell `(observedSeq)` + 持久化 `(ver,seq,val)` 断点续算 | compaction 快照 + `reset_boundary` 前缀截断 |
+| 变化检测 | `apply` 返回同一引用 = 不变，`Object.is` 判等 → 增量分发 | 追加式天然触发尾部差分 |
+| 强调 | 纯函数、可增量续算、版本化契约（`stateVersion`） | 不可变树、分支回溯、日志即真相 |
+
+**共同点**：都是事件溯源——状态是事件流上的函数而非可变快照，皆满足可重放与
+引用透明。差异在 dsh 把 fold 抽象成显式多实例投影单元（近 CQRS read model），
+oh-my-pi 把事件组织成可分支的版本树。
+
+### 0.5.2 Huginn 融合方案（事件层 + 读模型层分层嫁接）
+
+融合原则：**事件层取 oh-my-pi 的树结构，读模型层取 dsh 的投影，两者解耦。**
+
+**① 事件层 = oh-my-pi 的树 + 叶指针** — `huginn/events/session_log.py`
+- `SessionEventLog` 复刻 oh-my-pi：`parent_id` 链、`branch(seq)` 移动叶指针且历史
+  不删、`reset_leaf()` 开新根、`events_on_path()` 沿 `parent_id` 回溯到根
+  （循环有界）、追加式 JSONL 可重放。
+- `seq` 单调递增作为增量同步游标 → 喂给前端 `read_after(seq)`。
+
+**② 读模型层 = dsh 的投影** — `huginn/events/projection.py`
+- `ProjectionDefinition{init/apply/view/stateVersion}` 签名直接对齐 dsh；
+  `ProjectionEngine` 实现 watermark cell + `weakref.WeakKeyDictionary` 弱引用缓存
+  （session 失引用即回收，等同 dsh 的 WeakMap cell）。
+- 变化检测复用 dsh 的**引用相等**判据：`changed = next_state is not cell.state`，
+  只对真正变化分发（`RuntimeStateProjection.apply` 显式返回同引用 = 不变）。
+- `stateVersion` 变更时整格重建（`build`/`drive`），防止跨版本状态漂移。
+
+**③ 融合的关键衔接**
+- 事件源以 oh-my-pi 的树为据，投影以 dsh 的 fold 为读：
+  `ProjectionEngine.drive(log, event)` 从 `log.events_on_path()` 取当前分支事件，
+  `build(log, key)` 惰性折叠整条路径——树提供"哪个分支"，投影提供"怎么算"。
+- 三个投影对应三消费端：
+  - `RuntimeStateProjection`（`runtime`）→ 喂 LangGraph 运行时状态
+  - `MessagePathProjection`（`messages`）→ 喂 LLM 上下文（compaction 保留为 marker）
+  - `UiProjection`（`ui`）→ 喂前端增量引擎（`UiBlock` 带 `seq`/`rev`/`frozen`，
+    对应增量 `after=<seq>` 游标 + 冻结块复用）
+
+**一句话总结**：*用 oh-my-pi 的树做"会话的真相来源"（可分支、可重放、可回溯），
+用 dsh 的投影做"真相之上的多读模型"（纯函数、增量续算、版本化契约）——事件层
+保一致性，投影层保多样性。*
+
+---
+
 ## 1. 事件溯源补强
 
 **目标**：把会话状态从"可变快照"改为"事件日志 + 投影"，可完整重放/分支/
