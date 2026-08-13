@@ -182,6 +182,12 @@ export interface AppConfig {
   encrypt_config: boolean;
   encryption_password: string;
   encryption_key_file: string;
+  // 材料数据库真实 API key (后端 HuginnConfig.mp_api_key)
+  mp_api_key: string;
+  // MinerU 文献解析 API keys (逗号分隔, 后端 MINERU_API_KEYS)
+  mineru_api_keys: string;
+  // 企微机器人 token (后端 HUGINN_WECOM_TOKEN)
+  wecom_token: string;
   // 极限模式 + 分层 memory (Settings Advanced tab)
   extreme_dispatch: boolean;
   wm_summarize: "rule" | "ngram" | "llm" | "hybrid";

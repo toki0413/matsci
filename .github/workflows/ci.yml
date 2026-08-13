@@ -138,6 +138,14 @@ jobs:
         working-directory: agent
         run: python -m pytest tests/test_arch_matdb_dep.py -q -o addopts=""
 
+      - name: MP API key flow guard
+        working-directory: agent
+        run: python -m pytest tests/test_arch_mp_key_flow.py -q -o addopts=""
+
+      - name: Credential gateway guard
+        working-directory: agent
+        run: python -m pytest tests/test_arch_credential_gateway.py -q -o addopts=""
+
       - name: Run full test suite
         env:
           HUGINN_RATE_LIMIT_ENABLED: "false"
