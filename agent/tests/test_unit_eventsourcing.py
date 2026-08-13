@@ -541,3 +541,59 @@ class TestUiProjection:
         after = [b for b in blocks if b["seq"] > cursor]
         assert len(after) == 2
         assert [b["kind"] for b in after] == [BLOCK_TEXT, BLOCK_COMPACTION]
+
+
+# ── T-BCSE closed loop: session_writer → SessionEventLog → UiProjection ──
+
+
+class TestSessionWriter:
+    def test_write_then_projection_roundtrip(self, monkeypatch, tmp_path):
+        # Point the session log at a temp dir so tests never touch ~/.huginn.
+        import huginn.events.session_log as sl_mod
+        from huginn.events import session_writer
+        from huginn.events.projection import ProjectionEngine, UiProjection
+
+        def _sessions_dir():
+            d = tmp_path / "session_logs"
+            d.mkdir(parents=True, exist_ok=True)
+            return d
+        monkeypatch.setattr(sl_mod, "_resolve_sessions_dir", _sessions_dir)
+        # clear the module cache so each test starts fresh
+        session_writer._logs.clear()
+
+        tid = "t-write"
+        session_writer.record_user_message(tid, "hi")
+        session_writer.record_tool_call(tid, "c1", "run_dft", {"n": 1})
+        session_writer.record_tool_result(tid, "c1", '{"energy": -4.5}')
+        session_writer.record_assistant_message(tid, "done")
+        session_writer.record_compaction(tid, "compacted early")
+
+        # Read back through the same path the /events endpoint uses.
+        from huginn.events.session_log import SessionEventLog
+        log = SessionEventLog.open(tid)
+        engine = ProjectionEngine()
+        engine.register(UiProjection())
+        blocks = engine.build(log, "ui")
+        # user + assistant messages + compaction divider = 3 blocks (tool events
+        # are metadata, not rendered as UI blocks)
+        assert len(blocks) == 3
+        assert blocks[0]["text"].startswith("**user:**")
+        assert blocks[1]["kind"] == "text"  # assistant
+        assert blocks[2]["kind"] == "compaction"
+        assert blocks[2]["text"] == "compacted early"
+        # seq strictly increasing
+        assert [b["seq"] for b in blocks] == sorted(b["seq"] for b in blocks)
+
+        # incremental cursor reflects total written events
+        assert log.seq == 5
+
+    def test_records_are_guarded(self, monkeypatch, tmp_path):
+        from huginn.events import session_writer
+        # A broken writer must not raise — the agent loop calls it unguarded
+        # at call sites, so this is the safety net.
+        def boom(*args, **kwargs):
+            raise RuntimeError("disk full")
+        session_writer._logs["t-x"] = None  # force lazy-open path
+        monkeypatch.setattr(session_writer, "SessionEventLog", None)  # break it
+        # append_session_event should swallow the error
+        session_writer.append_session_event("t-x", "message", {"role": "user", "content": "x"})
