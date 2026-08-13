@@ -301,8 +301,8 @@ def extract_visual_primitives(tool_name: str, output: dict[str, Any]) -> str:
         if std_v > 0:
             for i, v in enumerate(nums):
                 if abs(v - mean_v) > 2 * std_v:
-                    ax, ay = _normalize_coord(i, n, v, nums)
-                    anomalies.append(f"<point>[{ax},{ay}]</point>={v:.4f}")
+                    xy = _normalize_coord(i, n, v, nums)
+                    anomalies.append(f"<point>[{xy}]</point>={v:.4f}")
         anomalies_str = ", ".join(anomalies[:5]) if anomalies else "none"
 
         lines.append(
