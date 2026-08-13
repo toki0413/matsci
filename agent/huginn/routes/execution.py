@@ -11,7 +11,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from huginn.core_types import ToolContext
 from huginn.security.auth import require_api_key, require_capability
 from huginn.server_core import get_agent_factory, get_context, get_memory_manager
-from huginn.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -50,31 +49,10 @@ async def execute_stages(params: dict[str, Any]) -> dict[str, Any]:
     working_dir = _validate_working_dir(params.get("working_dir", "."))
     name = params.get("name", "execute")
 
-    def _wrap_tool(tool):
-        async def _run(action: str = "", **tool_params):
-            if tool.input_schema:
-                input_data = tool.input_schema(action=action, **tool_params)
-            else:
-                input_data = {"action": action, **tool_params}
-            context = ToolContext(
-                session_id="http",
-                workspace=working_dir,
-                memory_manager=get_memory_manager(),
-                agent_factory=get_agent_factory(),
-                audit_logger=get_context().audit_logger,
-            )
-            result = await tool.call(input_data, context)
-            if not result.success:
-                raise RuntimeError(result.error or f"{tool.name} failed")
-            return result.data
-
-        return _run
-
     orch = ExecutionOrchestrator(working_dir=working_dir)
-    for tool_name in ToolRegistry.list_tools():
-        tool = ToolRegistry.get(tool_name)
-        if tool:
-            orch.register_tool(tool_name, _wrap_tool(tool))
+    # 注: 不调用 orch.register_tool() — orchestrator 默认接全局 ToolRegistry
+    # 类, register_tool 仅对 dict 模式有效, 这里逐个注册纯属无效且每个都打
+    # warning。run() 内部用 ToolRegistry.get() 取工具, 由 _invoke_tool 桥接。
 
     try:
         record = await orch.run(stages, workflow_name=name)
