@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import inspect
 import json
 import logging
@@ -16,6 +17,7 @@ import os
 import time
 import typing
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any, get_origin
 
 from langchain_core.tools import StructuredTool
@@ -90,6 +92,7 @@ def _rebuild_constraint_scopes() -> None:
     _TOOL_CONSTRAINT_SCOPES.clear()
     _TOOL_CONSTRAINT_SCOPES.update(new)
 
+
 ApprovalCallback = Callable[[str, str], bool]
 """Callback signature: (tool_name, reason) -> approved."""
 
@@ -132,7 +135,9 @@ def _default_audit_logger() -> AuditLogger:
     from pathlib import Path
 
     base = os.environ.get("HUGINN_CACHE_DIR")
-    log_path = Path(base) / "audit.jsonl" if base else get_runtime_home() / "audit.jsonl"
+    log_path = (
+        Path(base) / "audit.jsonl" if base else get_runtime_home() / "audit.jsonl"
+    )
     log_path.parent.mkdir(parents=True, exist_ok=True)
     return AuditLogger(log_path)
 
@@ -155,9 +160,17 @@ def _is_heavy_tool(tool_name: str) -> bool:
         logger.debug("heavy tool lookup failed", exc_info=True)
     # 兜底: 常见 sim 工具名硬编码, 防 HEAVY_TOOLS 表未重建时漏判.
     return tool_name in {
-        "vasp_tool", "lammps_tool", "gaussian_tool", "orca_tool",
-        "qe_tool", "cp2k_tool", "comsol_tool", "abaqus_tool",
-        "openfoam_tool", "fenics_tool", "gromacs_tool",
+        "vasp_tool",
+        "lammps_tool",
+        "gaussian_tool",
+        "orca_tool",
+        "qe_tool",
+        "cp2k_tool",
+        "comsol_tool",
+        "abaqus_tool",
+        "openfoam_tool",
+        "fenics_tool",
+        "gromacs_tool",
     }
 
 
@@ -216,11 +229,115 @@ def _record_cache_hit(tool_name: str) -> None:
     try:
         from huginn.agents.health_dashboard import HealthDashboard
 
-        HealthDashboard.shared().record_call(
-            tool_name, True, 0.0, cache_hit=True
-        )
+        HealthDashboard.shared().record_call(tool_name, True, 0.0, cache_hit=True)
     except Exception:
         logger.debug("suppressed in _record_cache_hit", exc_info=True)
+
+
+# ── Hashline 自动闭环 ─────────────────────────────────────────────────────
+# P0-2 wiring: 让"防并发覆盖"成为系统保证而非 LLM 自觉。
+# 缓存"agent 上次看到的文件内容 hash"，编辑前自动注入 expected_hash。
+# 若磁盘内容在上次 read/edit 后被外部进程改动，编辑被严格拒绝，避免覆盖他人工作。
+#
+# 缓存键是解析后的绝对路径。跨进程/session 共享一个简单 dict 即可——hash 校验
+# 是"保守优先"：未命中缓存时不注入（行为与旧版一致），命中时注入使校验生效。
+_HASHLINE_CACHE: dict[str, str] = {}
+_HASHLINE_TOOLS: frozenset[str] = frozenset(
+    {
+        "file_read_tool",
+        "file_write_tool",
+        "file_edit_tool",
+        "multi_edit_tool",
+        "lsp_tool",
+    }
+)
+
+
+def _hashline_abs_path(file_path: str, working_dir: str | None) -> str | None:
+    """Resolve a tool's file_path to an absolute path (or None on failure)."""
+    try:
+        p = Path(file_path) if file_path else None
+        if p is None:
+            return None
+        if not p.is_absolute():
+            base = Path(working_dir) if working_dir else Path.cwd()
+            p = base / p
+        return str(p.resolve())
+    except Exception:
+        return None
+
+
+def _hashline_hash(path: str) -> str | None:
+    """Compute the same short hash file_edit_tool uses (_content_hash)."""
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+    except Exception:
+        return None
+
+
+def _maybe_inject_hashline(tool_name: str, kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Auto-inject expected_hash from the session-level file-hash cache.
+
+    Only injects when the caller did not already provide expected_hash and the
+    cache has a recorded hash for the target file. No cache hit → no injection
+    → behavior identical to pre-wiring (backward compatible).
+    """
+    if tool_name not in _HASHLINE_TOOLS:
+        return kwargs
+
+    kw = dict(kwargs)
+    wd = kw.get("working_dir")
+
+    if tool_name == "file_edit_tool":
+        if kw.get("expected_hash") is None:
+            ap = _hashline_abs_path(kw.get("file_path", ""), wd)
+            if ap and ap in _HASHLINE_CACHE:
+                kw["expected_hash"] = _HASHLINE_CACHE[ap]
+        return kw
+
+    if tool_name == "multi_edit_tool":
+        edits = kw.get("edits")
+        if isinstance(edits, list) and edits:
+            new_edits = []
+            for e in edits:
+                ed = e if isinstance(e, dict) else dict(e)
+                if ed.get("expected_hash") is None:
+                    ap = _hashline_abs_path(ed.get("file_path", ""), wd)
+                    if ap and ap in _HASHLINE_CACHE:
+                        ed["expected_hash"] = _HASHLINE_CACHE[ap]
+                new_edits.append(ed)
+            kw["edits"] = new_edits
+        return kw
+
+    return kw
+
+
+def _update_hashline_cache(tool_name: str, input_data: Any, context: Any) -> None:
+    """After a successful read/write/edit, record the file's current hash.
+
+    This is the version the agent now "sees"; a later external modification
+    will diverge from it and be caught by the injected expected_hash.
+    """
+    if tool_name not in _HASHLINE_TOOLS or not input_data:
+        return
+    wd = getattr(input_data, "working_dir", None) or getattr(context, "workspace", None)
+    files: list[str] = []
+    if tool_name == "multi_edit_tool":
+        edits = getattr(input_data, "edits", None)
+        if edits:
+            files = [e.file_path for e in edits if getattr(e, "file_path", None)]
+    else:
+        fp = getattr(input_data, "file_path", None)
+        if fp:
+            files = [fp]
+    for f in files:
+        ap = _hashline_abs_path(f, wd)
+        if ap is None:
+            continue
+        h = _hashline_hash(ap)
+        if h is not None:
+            _HASHLINE_CACHE[ap] = h
 
 
 class ToolAdapter:
@@ -322,7 +439,9 @@ class ToolAdapter:
             )
         if compression_max_tokens is None:
             compression_max_tokens = int(
-                os.environ.get("HUGINN_TOOL_COMPRESSION_MAX_TOKENS", str(max_tool_output_tokens))
+                os.environ.get(
+                    "HUGINN_TOOL_COMPRESSION_MAX_TOKENS", str(max_tool_output_tokens)
+                )
             )
 
         def _check_permission(
@@ -353,6 +472,7 @@ class ToolAdapter:
             # This is the last-resort guard against catastrophic commands.
             args = input_data.model_dump() if hasattr(input_data, "model_dump") else {}
             from huginn.permissions import PermissionChecker
+
             checker = PermissionChecker(permission_config)
             is_dangerous, matched = checker._check_dangerous(name, args)
             if is_dangerous:
@@ -369,6 +489,7 @@ class ToolAdapter:
             # Second layer: command_filter for broader pattern coverage
             if name == "bash_tool":
                 from huginn.security.command_filter import check_command_safety
+
                 cmd = args.get("command", [])
                 safety = check_command_safety(cmd)
                 if not safety.is_safe:
@@ -396,6 +517,7 @@ class ToolAdapter:
                     extract_target_from_args,
                     get_standing_rules_store,
                 )
+
                 _target = extract_target_from_args(args)
                 _store = get_standing_rules_store()
                 if _store.is_granted(session_id, name, _target):
@@ -430,6 +552,7 @@ class ToolAdapter:
                             extract_target_from_args,
                             get_standing_rules_store,
                         )
+
                         _target = extract_target_from_args(args)
                         get_standing_rules_store().grant(session_id, name, _target)
                     return True, None
@@ -454,19 +577,20 @@ class ToolAdapter:
                     wt = cost.get("walltime_hours", 0)
                     cpu = cost.get("cpu_hours", 0)
                     if wt > 0.5 or cpu > 2:
-                        return f"工具 {tool.name} 预计耗时 {wt:.1f}h ({cpu:.1f} CPU核时)"
+                        return (
+                            f"工具 {tool.name} 预计耗时 {wt:.1f}h ({cpu:.1f} CPU核时)"
+                        )
             except Exception:
                 logger.debug("suppressed in _needs_confirmation", exc_info=True)
             return None
 
-        async def _ask_confirmation(
-            context: ToolContext, question: str
-        ) -> bool:
+        async def _ask_confirmation(context: ToolContext, question: str) -> bool:
             """通过 ClarificationManager 问用户, 返回是否确认."""
             try:
                 from huginn.interaction.clarification import (
                     get_clarification_manager,
                 )
+
                 mgr = get_clarification_manager()
                 tid = getattr(context, "session_id", None) or "default"
                 answer = await mgr.ask(
@@ -558,7 +682,10 @@ class ToolAdapter:
                 # P0-7: 静默失败检测 — success=False 且无 stderr/stdout/error_detail
                 # = 工具静默崩溃 (Rust sandbox 典型模式). 之前只返回 "Unknown error"
                 # 让 agent 耗死重试. 加可操作提示让 agent 换路径.
-                if not data.get("error_detail") and data.get("error") == "Unknown error":
+                if (
+                    not data.get("error_detail")
+                    and data.get("error") == "Unknown error"
+                ):
                     data["error"] = (
                         "Unknown error (silent failure — no stderr/stdout captured). "
                         "This is likely a sandbox/process crash, not a code bug. "
@@ -585,7 +712,8 @@ class ToolAdapter:
                 serialized = json.dumps(data, default=str, ensure_ascii=False)
                 if count_tokens(serialized) > 20000:
                     preview, artifact_path = offload_tool_output(
-                        serialized, tool.name,
+                        serialized,
+                        tool.name,
                     )
                     data = {
                         "_offloaded": True,
@@ -599,6 +727,7 @@ class ToolAdapter:
             # Auto-render numerical results as chart for VLM analysis
             try:
                 from huginn.tools.visual_hook import enrich_with_visual
+
                 data = enrich_with_visual(tool.name, data)
                 # _visual_base64 是给多模态 LLM 看的, 但 chat 模式下 ToolMessage
                 # 会把它序列化成字符串污染上下文 (base64 很长). 这里 pop 出来
@@ -662,15 +791,32 @@ class ToolAdapter:
                 get_pet_bus().publish(mood, message, details)
 
         # Tool-name → fine-grained pet mood classification.
-        _CODING_TOOLS = frozenset({
-            "code_tool", "python_tool", "bash_tool", "terminal_tool",
-            "notebook_tool", "run_code", "execute",
-        })
-        _REVIEWING_TOOLS = frozenset({
-            "file_read_tool", "search_tool", "grep_tool", "list_tool",
-            "read_file", "web_search_tool", "web_fetch_tool",
-            "lean_tool", "proof_check", "review", "summarize",
-        })
+        _CODING_TOOLS = frozenset(
+            {
+                "code_tool",
+                "python_tool",
+                "bash_tool",
+                "terminal_tool",
+                "notebook_tool",
+                "run_code",
+                "execute",
+            }
+        )
+        _REVIEWING_TOOLS = frozenset(
+            {
+                "file_read_tool",
+                "search_tool",
+                "grep_tool",
+                "list_tool",
+                "read_file",
+                "web_search_tool",
+                "web_fetch_tool",
+                "lean_tool",
+                "proof_check",
+                "review",
+                "summarize",
+            }
+        )
 
         def _classify_mood(tool_name: str) -> PetMood:
             if tool_name in _CODING_TOOLS:
@@ -688,14 +834,18 @@ class ToolAdapter:
 
                 from huginn.events.integration import _publish as _evt_publish
                 from huginn.utils.concurrency import track_task
+
                 try:
                     asyncio.get_running_loop()
-                    track_task(_evt_publish(
-                        "tool.blocked",
-                        {"tool": tool_name, "reason": reason},
-                        thread_id=getattr(context, "thread_id", ""),
-                        source="tool_adapter",
-                    ), name="tool-blocked-emit")
+                    track_task(
+                        _evt_publish(
+                            "tool.blocked",
+                            {"tool": tool_name, "reason": reason},
+                            thread_id=getattr(context, "thread_id", ""),
+                            source="tool_adapter",
+                        ),
+                        name="tool-blocked-emit",
+                    )
                 except RuntimeError:
                     logger.debug("best-effort op failed", exc_info=True)
 
@@ -713,16 +863,16 @@ class ToolAdapter:
             try:
                 from huginn.api.event import EventType, ToolCallEvent
 
-                await bus.dispatch(ToolCallEvent(
-                    type=EventType.ON_TOOL_CALL,
-                    tool_name=tool.name,
-                    args=args_dict,
-                    session_id=session_id,
-                ))
-            except Exception:
-                logger.debug(
-                    "ToolCallEvent dispatch failed (non-fatal)", exc_info=True
+                await bus.dispatch(
+                    ToolCallEvent(
+                        type=EventType.ON_TOOL_CALL,
+                        tool_name=tool.name,
+                        args=args_dict,
+                        session_id=session_id,
+                    )
                 )
+            except Exception:
+                logger.debug("ToolCallEvent dispatch failed (non-fatal)", exc_info=True)
 
         async def _dispatch_tool_respond_event(
             args_dict: dict[str, Any], result: Any, success: bool
@@ -734,13 +884,15 @@ class ToolAdapter:
             try:
                 from huginn.api.event import EventType, ToolRespondEvent
 
-                await bus.dispatch(ToolRespondEvent(
-                    type=EventType.ON_TOOL_RESPOND,
-                    tool_name=tool.name,
-                    args=args_dict,
-                    result=result,
-                    success=success,
-                ))
+                await bus.dispatch(
+                    ToolRespondEvent(
+                        type=EventType.ON_TOOL_RESPOND,
+                        tool_name=tool.name,
+                        args=args_dict,
+                        result=result,
+                        success=success,
+                    )
+                )
             except Exception:
                 logger.debug(
                     "ToolRespondEvent dispatch failed (non-fatal)", exc_info=True
@@ -760,14 +912,16 @@ class ToolAdapter:
             try:
                 from huginn.api.event import Event, EventType
 
-                await bus.dispatch(Event(
-                    type=EventType.ON_TOOL_EXECUTE,
-                    data={
-                        "tool_name": tool.name,
-                        "args": args_dict,
-                        "session_id": session_id,
-                    },
-                ))
+                await bus.dispatch(
+                    Event(
+                        type=EventType.ON_TOOL_EXECUTE,
+                        data={
+                            "tool_name": tool.name,
+                            "args": args_dict,
+                            "session_id": session_id,
+                        },
+                    )
+                )
             except Exception:
                 logger.debug(
                     "ON_TOOL_EXECUTE dispatch failed (non-fatal)", exc_info=True
@@ -822,7 +976,11 @@ class ToolAdapter:
             this is a no-op (the regular ``compress_tool_output`` path already
             handled truncation).
             """
-            summarizer = self._summarizer if self._summarizer is not None else ToolAdapter._summarizer
+            summarizer = (
+                self._summarizer
+                if self._summarizer is not None
+                else ToolAdapter._summarizer
+            )
             if summarizer is None:
                 return obj
             if isinstance(obj, str):
@@ -835,7 +993,9 @@ class ToolAdapter:
                         summarizer=summarizer,
                     )
                 except Exception as exc:
-                    logger.debug("smart_compress_text failed for %s: %s", tool.name, exc)
+                    logger.debug(
+                        "smart_compress_text failed for %s: %s", tool.name, exc
+                    )
                     return obj
             if isinstance(obj, dict):
                 return {k: await _smart_compress_output(v) for k, v in obj.items()}
@@ -849,7 +1009,11 @@ class ToolAdapter:
             Short-circuits when no summarizer is configured so we don't spin up
             an event loop for nothing.
             """
-            summarizer = self._summarizer if self._summarizer is not None else ToolAdapter._summarizer
+            summarizer = (
+                self._summarizer
+                if self._summarizer is not None
+                else ToolAdapter._summarizer
+            )
             if summarizer is None:
                 return obj
             try:
@@ -864,7 +1028,9 @@ class ToolAdapter:
                 finally:
                     loop.close()
             except Exception as exc:
-                logger.debug("smart_compress sync wrapper failed for %s: %s", tool.name, exc)
+                logger.debug(
+                    "smart_compress sync wrapper failed for %s: %s", tool.name, exc
+                )
                 return obj
 
         # ── Shared pre-execution checks ──────────────────────────
@@ -886,7 +1052,11 @@ class ToolAdapter:
             ``router`` is the ToolCallRouter (may be None).
             """
             # 1. Permission
-            _sid = getattr(context, "session_id", None) or "default" if context else "default"
+            _sid = (
+                getattr(context, "session_id", None) or "default"
+                if context
+                else "default"
+            )
             approved, reason = _check_permission(input_data, session_id=_sid)
             if not approved:
                 output = {"error": reason or f"Tool '{tool.name}' was denied"}
@@ -910,7 +1080,9 @@ class ToolAdapter:
                 cached_dedup = deduper.lookup(tool.name, kwargs)
                 if cached_dedup is not None:
                     _audit(input_data, cached_dedup, approved=True, reason="dedupe_hit")
-                    _publish(PetMood.SUCCESS, f"{tool.name} (deduped)", {"tool": tool.name})
+                    _publish(
+                        PetMood.SUCCESS, f"{tool.name} (deduped)", {"tool": tool.name}
+                    )
                     return cached_dedup, None
 
             # 3. Router (lightweight-path decision)
@@ -920,26 +1092,34 @@ class ToolAdapter:
                 if not allowed:
                     output = {"error": router_reason, "_router_blocked": True}
                     _audit(input_data, output, approved=False, reason="router_blocked")
-                    _publish(PetMood.ERROR, f"{tool.name} blocked by router", {"reason": router_reason})
+                    _publish(
+                        PetMood.ERROR,
+                        f"{tool.name} blocked by router",
+                        {"reason": router_reason},
+                    )
                     return output, router
 
             # 4. Budget
             budget = self._current_budget
             if budget is not None and not budget.record(tool.name):
-                    _, budget_reason = budget.should_stop()
-                    # P0-3: 加重置语义, 让 LLM 知道是本轮耗尽而非死刑.
-                    # 之前 "预算耗尽" 让 agent 误判 game over 直接交卷.
-                    output = {
-                        "error": (
-                            f"工具调用预算耗尽: {budget_reason}. "
-                            f"本轮预算已尽, 下轮重置. 请换工具或收尾, "
-                            f"不要放弃当前任务."
-                        ),
-                        "_budget_exceeded": True,
-                    }
-                    _audit(input_data, output, approved=True, reason="budget_exceeded")
-                    _publish(PetMood.ERROR, f"{tool.name} blocked by budget", {"reason": budget_reason})
-                    return output, router
+                _, budget_reason = budget.should_stop()
+                # P0-3: 加重置语义, 让 LLM 知道是本轮耗尽而非死刑.
+                # 之前 "预算耗尽" 让 agent 误判 game over 直接交卷.
+                output = {
+                    "error": (
+                        f"工具调用预算耗尽: {budget_reason}. "
+                        f"本轮预算已尽, 下轮重置. 请换工具或收尾, "
+                        f"不要放弃当前任务."
+                    ),
+                    "_budget_exceeded": True,
+                }
+                _audit(input_data, output, approved=True, reason="budget_exceeded")
+                _publish(
+                    PetMood.ERROR,
+                    f"{tool.name} blocked by budget",
+                    {"reason": budget_reason},
+                )
+                return output, router
 
             # 5. Loop detection
             loop_detector = self._current_loop_detector
@@ -949,7 +1129,11 @@ class ToolAdapter:
                     _, loop_reason = loop_detector.should_break()
                     output = {"error": loop_reason, "_loop_detected": True}
                     _audit(input_data, output, approved=False, reason="loop_detected")
-                    _publish(PetMood.ERROR, f"{tool.name} blocked by loop detector", {"reason": loop_reason})
+                    _publish(
+                        PetMood.ERROR,
+                        f"{tool.name} blocked by loop detector",
+                        {"reason": loop_reason},
+                    )
                     _publish_blocked(tool.name, input_data, loop_reason, context)
                     return output, router
 
@@ -960,18 +1144,29 @@ class ToolAdapter:
                 from huginn.agents.degradation_coordinator import try_with_degradation
 
                 degraded = try_with_degradation(tool.name, input_data, context)
-                if not degraded.get("_degradation_exhausted") and not degraded.get("_no_degradation_chain"):
+                if not degraded.get("_degradation_exhausted") and not degraded.get(
+                    "_no_degradation_chain"
+                ):
                     # 降级成功 — 标记并返回替代结果
-                    _audit(input_data, degraded, approved=True,
-                           reason=f"degraded:{degraded.get('_degraded_to','?')}")
-                    _publish(PetMood.NEUTRAL,
-                             f"{tool.name} degraded → {degraded.get('_degraded_to','?')}",
-                             {"quality_tier": degraded.get("_quality_tier","")})
+                    _audit(
+                        input_data,
+                        degraded,
+                        approved=True,
+                        reason=f"degraded:{degraded.get('_degraded_to', '?')}",
+                    )
+                    _publish(
+                        PetMood.NEUTRAL,
+                        f"{tool.name} degraded → {degraded.get('_degraded_to', '?')}",
+                        {"quality_tier": degraded.get("_quality_tier", "")},
+                    )
                     return degraded, router
                 # 降级链耗尽或无降级链 — 返回结构化错误
                 _audit(input_data, degraded, approved=False, reason="circuit_open")
-                _publish(PetMood.ERROR, f"{tool.name} circuit open, all fallbacks exhausted",
-                         {"tried": degraded.get("tried", [])})
+                _publish(
+                    PetMood.ERROR,
+                    f"{tool.name} circuit open, all fallbacks exhausted",
+                    {"tried": degraded.get("tried", [])},
+                )
                 _publish_blocked(tool.name, input_data, "circuit_open", context)
                 return degraded, router
 
@@ -995,7 +1190,9 @@ class ToolAdapter:
             deduper = self._current_deduper
             if deduper is not None and result.success:
                 try:
-                    deduper.record(tool.name, kwargs if kwargs is not None else input_data, output)
+                    deduper.record(
+                        tool.name, kwargs if kwargs is not None else input_data, output
+                    )
                 except Exception:
                     logger.debug("deduper record failed (non-fatal)", exc_info=True)
 
@@ -1006,21 +1203,28 @@ class ToolAdapter:
 
                     register_tool_output(
                         tool_name=tool.name,
-                        tool_input=input_data.model_dump() if hasattr(input_data, "model_dump") else {},
+                        tool_input=input_data.model_dump()
+                        if hasattr(input_data, "model_dump")
+                        else {},
                         tool_output=output,
                     )
                 except ImportError:
                     logger.debug("best-effort op failed", exc_info=True)
                 except Exception:
-                    logger.debug("provenance register failed (non-fatal)", exc_info=True)
+                    logger.debug(
+                        "provenance register failed (non-fatal)", exc_info=True
+                    )
 
             # 贝叶斯技能进化: 多维反馈信号 (success + duration + info_gain)
             try:
                 from huginn.skills.evolution import SkillEvolutionLayer
+
                 _ig = len(output) if isinstance(output, dict) else 0
                 SkillEvolutionLayer.shared().record_tool_call(
                     tool.name,
-                    input_data.model_dump() if hasattr(input_data, "model_dump") else {},
+                    input_data.model_dump()
+                    if hasattr(input_data, "model_dump")
+                    else {},
                     result.success,
                     duration=duration,
                     info_gain=_ig,
@@ -1035,15 +1239,24 @@ class ToolAdapter:
                 _publish(PetMood.SUCCESS, f"{tool.name} done", {"tool": tool.name})
                 _set_cached(input_data, output)
             else:
-                _publish(PetMood.ERROR, f"{tool.name} failed", {"tool": tool.name, "error": result.error})
+                _publish(
+                    PetMood.ERROR,
+                    f"{tool.name} failed",
+                    {"tool": tool.name, "error": result.error},
+                )
             # 事件总线: 发布 tool.result / tool.error
             try:
                 from huginn.events.integration import publish_tool_event_sync
+
                 publish_tool_event_sync(
                     tool.name,
-                    input_data.model_dump() if hasattr(input_data, "model_dump") else {},
+                    input_data.model_dump()
+                    if hasattr(input_data, "model_dump")
+                    else {},
                     output,
-                    thread_id=context.thread_id if hasattr(context, "thread_id") else "",
+                    thread_id=context.thread_id
+                    if hasattr(context, "thread_id")
+                    else "",
                     error=result.error if not result.success else None,
                 )
             except Exception:
@@ -1051,18 +1264,25 @@ class ToolAdapter:
             # 插件事件系统: 分发 typed ToolRespondEvent (有别于内部 tool.result 字符串事件)
             try:
                 _resp_args = (
-                    input_data.model_dump()
-                    if hasattr(input_data, "model_dump") else {}
+                    input_data.model_dump() if hasattr(input_data, "model_dump") else {}
                 )
-                _schedule_event(_dispatch_tool_respond_event(
-                    _resp_args, output, result.success,
-                ))
+                _schedule_event(
+                    _dispatch_tool_respond_event(
+                        _resp_args,
+                        output,
+                        result.success,
+                    )
+                )
             except Exception:
-                logger.debug("ToolRespondEvent dispatch skipped (non-fatal)", exc_info=True)
+                logger.debug(
+                    "ToolRespondEvent dispatch skipped (non-fatal)", exc_info=True
+                )
             return output
 
         async def _arun(**kwargs: Any) -> dict[str, Any]:
             """Async execution wrapper."""
+            # Hashline 自动闭环: 编辑前注入 expected_hash (来自缓存的上次所见版本)
+            kwargs = _maybe_inject_hashline(tool.name, kwargs)
             payload, context = _build_inputs(**kwargs)
             input_data = tool.input_schema(**kwargs)
 
@@ -1075,15 +1295,19 @@ class ToolAdapter:
             try:
                 _call_args = (
                     input_data.model_dump()
-                    if hasattr(input_data, "model_dump") else dict(kwargs)
+                    if hasattr(input_data, "model_dump")
+                    else dict(kwargs)
                 )
                 _call_sid = (
                     getattr(context, "thread_id", None)
-                    or getattr(context, "session_id", "") or ""
+                    or getattr(context, "session_id", "")
+                    or ""
                 )
                 await _dispatch_tool_call_event(_call_args, _call_sid)
             except Exception:
-                logger.debug("ToolCallEvent dispatch skipped (non-fatal)", exc_info=True)
+                logger.debug(
+                    "ToolCallEvent dispatch skipped (non-fatal)", exc_info=True
+                )
 
             # Confirmation gate (async: direct await)
             if (
@@ -1095,30 +1319,48 @@ class ToolAdapter:
                 if confirm_q:
                     confirmed = await _ask_confirmation(context, confirm_q)
                     if not confirmed:
-                        output = {"error": f"用户取消了 {tool.name} 调用", "_user_cancelled": True}
-                        _audit(input_data, output, approved=False, reason="user_cancelled")
-                        _publish(PetMood.ERROR, f"{tool.name} cancelled by user", {"reason": confirm_q})
+                        output = {
+                            "error": f"用户取消了 {tool.name} 调用",
+                            "_user_cancelled": True,
+                        }
+                        _audit(
+                            input_data, output, approved=False, reason="user_cancelled"
+                        )
+                        _publish(
+                            PetMood.ERROR,
+                            f"{tool.name} cancelled by user",
+                            {"reason": confirm_q},
+                        )
                         return output
 
             validation = await tool.validate_input(input_data, context)
             if not validation.result:
                 output = {"error": f"Input validation failed: {validation.message}"}
                 _audit(input_data, output, approved=True, reason=validation.message)
-                _publish(PetMood.ERROR, f"{tool.name} input invalid", {"reason": validation.message})
+                _publish(
+                    PetMood.ERROR,
+                    f"{tool.name} input invalid",
+                    {"reason": validation.message},
+                )
                 return output
 
-            _publish(_classify_mood(tool.name), f"Running {tool.name}…", {"tool": tool.name})
+            _publish(
+                _classify_mood(tool.name), f"Running {tool.name}…", {"tool": tool.name}
+            )
             # ON_TOOL_EXECUTE: 三段式中间段, 工具开始执行时发一次 (只读打日志用).
             try:
                 await _dispatch_tool_execute_event(_call_args, _call_sid)
             except Exception:
-                logger.debug("ON_TOOL_EXECUTE dispatch skipped (non-fatal)", exc_info=True)
+                logger.debug(
+                    "ON_TOOL_EXECUTE dispatch skipped (non-fatal)", exc_info=True
+                )
             # 按工具类型分级超时，防止外部 API 卡死整个 agent
             timeout = get_timeout(tool.name)
             _call_start = time.time()
             # Wire Prometheus tool call counter
             try:
                 from huginn.routes.metrics import track_tool_call
+
                 track_tool_call(tool.name)
             except Exception:
                 logger.debug("tool call metrics track failed", exc_info=True)
@@ -1158,6 +1400,9 @@ class ToolAdapter:
                 )
                 # Post-execution: constraints, audit, cache, publish
                 result = _check_constraints(result, context)
+                # Hashline 自动闭环: 成功读写后记录该文件当前 hash (agent 所见版本)
+                if result.success:
+                    _update_hashline_cache(tool.name, input_data, context)
                 output = _serialize(result)
                 # LLM-based smart compression for very large text payloads.
                 # Runs only when a summarizer has been registered.
@@ -1165,10 +1410,20 @@ class ToolAdapter:
                 span.metadata["success"] = result.success
                 span.metadata["args"] = _truncate_for_trajectory(payload)
                 span.metadata["result"] = _truncate_for_trajectory(output)
-                span.metadata["latency_ms"] = round((time.time() - _call_start) * 1000, 1)
+                span.metadata["latency_ms"] = round(
+                    (time.time() - _call_start) * 1000, 1
+                )
                 if result.error:
                     span.metadata["error"] = result.error
-            output = _run_post_checks(input_data, result, output, context, router, time.time() - _call_start, kwargs)
+            output = _run_post_checks(
+                input_data,
+                result,
+                output,
+                context,
+                router,
+                time.time() - _call_start,
+                kwargs,
+            )
             return output
 
         def _run(**kwargs: Any) -> dict[str, Any]:
@@ -1179,6 +1434,8 @@ class ToolAdapter:
             async-specific calls (confirmation, validation, compression)
             are handled differently here.
             """
+            # Hashline 自动闭环: 编辑前注入 expected_hash (同 async 路径)
+            kwargs = _maybe_inject_hashline(tool.name, kwargs)
             payload, context = _build_inputs(**kwargs)
             input_data = tool.input_schema(**kwargs)
 
@@ -1191,15 +1448,19 @@ class ToolAdapter:
             try:
                 _call_args = (
                     input_data.model_dump()
-                    if hasattr(input_data, "model_dump") else dict(kwargs)
+                    if hasattr(input_data, "model_dump")
+                    else dict(kwargs)
                 )
                 _call_sid = (
                     getattr(context, "thread_id", None)
-                    or getattr(context, "session_id", "") or ""
+                    or getattr(context, "session_id", "")
+                    or ""
                 )
                 _schedule_event(_dispatch_tool_call_event(_call_args, _call_sid))
             except Exception:
-                logger.debug("ToolCallEvent dispatch skipped (non-fatal)", exc_info=True)
+                logger.debug(
+                    "ToolCallEvent dispatch skipped (non-fatal)", exc_info=True
+                )
 
             # Confirmation gate (sync: wrap async call)
             if (
@@ -1226,12 +1487,23 @@ class ToolAdapter:
                     except Exception:
                         # ClarificationManager unavailable — fail closed for safety
                         # ponytail: 与 async path (L399) 保持一致, fail-closed
-                        logger.warning("ClarificationManager unavailable (sync), failing closed")
+                        logger.warning(
+                            "ClarificationManager unavailable (sync), failing closed"
+                        )
                         confirmed = False
                     if not confirmed:
-                        output = {"error": f"用户取消了 {tool.name} 调用", "_user_cancelled": True}
-                        _audit(input_data, output, approved=False, reason="user_cancelled")
-                        _publish(PetMood.ERROR, f"{tool.name} cancelled by user", {"reason": confirm_q})
+                        output = {
+                            "error": f"用户取消了 {tool.name} 调用",
+                            "_user_cancelled": True,
+                        }
+                        _audit(
+                            input_data, output, approved=False, reason="user_cancelled"
+                        )
+                        _publish(
+                            PetMood.ERROR,
+                            f"{tool.name} cancelled by user",
+                            {"reason": confirm_q},
+                        )
                         return output
 
             # Input validation (sync: handle coroutine result)
@@ -1250,20 +1522,29 @@ class ToolAdapter:
             if not validation.result:
                 output = {"error": f"Input validation failed: {validation.message}"}
                 _audit(input_data, output, approved=True, reason=validation.message)
-                _publish(PetMood.ERROR, f"{tool.name} input invalid", {"reason": validation.message})
+                _publish(
+                    PetMood.ERROR,
+                    f"{tool.name} input invalid",
+                    {"reason": validation.message},
+                )
                 return output
 
-            _publish(_classify_mood(tool.name), f"Running {tool.name}…", {"tool": tool.name})
+            _publish(
+                _classify_mood(tool.name), f"Running {tool.name}…", {"tool": tool.name}
+            )
             # ON_TOOL_EXECUTE: 三段式中间段 (sync 路径 fire-and-forget)
             try:
                 _schedule_event(_dispatch_tool_execute_event(_call_args, _call_sid))
             except Exception:
-                logger.debug("ON_TOOL_EXECUTE dispatch skipped (non-fatal)", exc_info=True)
+                logger.debug(
+                    "ON_TOOL_EXECUTE dispatch skipped (non-fatal)", exc_info=True
+                )
             timeout = get_timeout(tool.name)
             _call_start = time.time()
             # Wire Prometheus tool call counter
             try:
                 from huginn.routes.metrics import track_tool_call
+
                 track_tool_call(tool.name)
             except Exception:
                 logger.debug("tool call metrics track failed", exc_info=True)
@@ -1274,6 +1555,7 @@ class ToolAdapter:
                         # 之前 loop.run_until_complete 在 running loop 下
                         # 必抛 "already running", 让 sync caller 拿不到结果.
                         from huginn.utils.async_bridge import run_async
+
                         result = run_async(
                             asyncio.wait_for(
                                 tool.call(payload, context), timeout=timeout
@@ -1299,15 +1581,28 @@ class ToolAdapter:
                     result.error if not result.success else None,
                 )
                 result = _check_constraints(result, context)
+                # Hashline 自动闭环: 成功读写后记录该文件当前 hash (同 async 路径)
+                if result.success:
+                    _update_hashline_cache(tool.name, input_data, context)
                 output = _serialize(result)
                 output = _sync_smart_compress(output)
                 span.metadata["success"] = result.success
                 span.metadata["args"] = _truncate_for_trajectory(payload)
                 span.metadata["result"] = _truncate_for_trajectory(output)
-                span.metadata["latency_ms"] = round((time.time() - _call_start) * 1000, 1)
+                span.metadata["latency_ms"] = round(
+                    (time.time() - _call_start) * 1000, 1
+                )
                 if result.error:
                     span.metadata["error"] = result.error
-            output = _run_post_checks(input_data, result, output, context, router, time.time() - _call_start, kwargs)
+            output = _run_post_checks(
+                input_data,
+                result,
+                output,
+                context,
+                router,
+                time.time() - _call_start,
+                kwargs,
+            )
             return output
 
         return StructuredTool.from_function(

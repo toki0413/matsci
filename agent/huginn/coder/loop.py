@@ -77,6 +77,7 @@ class CoderRunner:
         from huginn.tools.file_read_tool import FileReadTool
         from huginn.tools.file_write_tool import FileWriteTool
         from huginn.tools.git_tool import GitTool
+        from huginn.tools.lsp_tool import LspTool
 
         originals = [
             FileReadTool(),
@@ -85,6 +86,7 @@ class CoderRunner:
             BashTool(),
             GitTool(),
             CodeTool(),
+            LspTool(),
         ]
         return [
             ToolAdapter().adapt(
