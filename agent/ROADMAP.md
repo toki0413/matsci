@@ -204,6 +204,11 @@
 - `huginn/tools/sim/vasp_tool.py` → **33%** (`tests/test_vasp_rust_ext.py` → 6): Rust `parse_outcar` relax 命中/error/converged=False/异常回退 + scf 不信任 Rust 落 Python + `_HAS_HUGINN_EXT=False` 走 Python
 - 注: `lammps_tool.py` 的 Rust fast-path 是**有意的性能债** (parse_trajectory 恒走 Python, 见源码 1136-1145 注释), 非实际桥接点, 不测。
 
+### 可视化 (需 `pip install matplotlib`, 无头跑用 `MPLBACKEND=Agg`)
+- `huginn/tools/visualize_gate.py` → **91%**, `visualize_qa.py` → **93%**, `visualize_tool.py` → **71%%** (已有 tests/test_visualize_tool.py 等, matplotlib 装好后 62 用例全绿)
+- `huginn/tools/visualize_check.py` → **97%** (`tests/test_visualize_check_ext.py` → 25): 图↔数据一致性校验全分支 — extract_figure_numeric(标量/列表/error/非 dict/异常)、check_figure_vs_expected(标量/列表匹配/漂移/长度不匹配/近零跳过)、check_figure_duplicate(无 index/搜索失败/空/排除自身/超阈值)、consistency_verdict(pass/fix/fail/error)
+- `huginn/autoloop/visual_inspect.py` → **32%**, `huginn/tools/visual_hook.py` → **6%** (待攻)
+
 ### 方法论
 - 本项目 conftest 接 pytest-cov, `python -m coverage run` 与其冲突会 "No data collected"; 用 coverage Python API (`coverage.Coverage().start()` + `pytest.main()`) 包裹采集。
 - free-threaded/3.14 下 coverage 行追踪会破坏 pytest traceback 格式化 (linecache 被污染) → 复用 3.12 环境测覆盖率; 无完整依赖栈时逐模块跑避免 INTERNALERROR 中断收集。
