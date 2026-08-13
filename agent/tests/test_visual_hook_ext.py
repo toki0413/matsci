@@ -138,6 +138,13 @@ def test_render_import_matplotlib_missing(monkeypatch):
     assert vh.render_tool_output("band_structure", {"result": {"bands": [[1, 2]]}}) is None
 
 
+def test_render_base64_too_large_returns_none(monkeypatch):
+    # 图编码超过 _MAX_IMAGE_BYTES → 返回 None (防上下文膨胀)
+    monkeypatch.setattr(vh, "_MAX_IMAGE_BYTES", 10)
+    out = {"result": {"bands": [[0.0, 0.1, 0.2]]}}
+    assert vh.render_tool_output("band_structure", out) is None
+
+
 # ── extract_visual_primitives ─────────────────────────────────────────────
 
 
@@ -209,6 +216,18 @@ def test_extract_primitives_scores_bad_values():
     out = {"result": {"scores": {"a": "x", "b": "y"}}}
     text = vh.extract_visual_primitives("benchmark", out)
     assert "[scores]" not in text
+
+
+def test_extract_primitives_nested_band_no_numeric():
+    # 嵌套 band 内无非数值 → nums 空 → continue
+    out = {"result": {"bands": [["a", "b"]]}}
+    assert vh.extract_visual_primitives("band_structure", out) == ""
+
+
+def test_extract_primitives_flat_no_numeric():
+    # 扁平 list 内无非数值 → nums 空 → continue
+    out = {"result": {"dos": ["x", "y"]}}
+    assert vh.extract_visual_primitives("dos", out) == ""
 
 
 # ── _extract_2d_primitives ────────────────────────────────────────────────
@@ -539,3 +558,204 @@ def test_parse_point3d_empty():
 
 def test_selfcheck_runs():
     vh._selfcheck()
+
+
+# ── 覆盖率 93%→更高 补测 ─────────────────────────────────────────────────
+
+
+def test_extract_2d_elements_non_dict():
+    # elements 值非 dict → 跳过该元素
+    result = {"elements": {"Fe": "not-a-dict", "O": {"centroid_px": [0, 0], "coverage_fraction": 0.1}}}
+    lines = vh._extract_2d_primitives(result)
+    assert any("O:" in l for l in lines)
+
+
+def test_extract_2d_hotspot_non_dict():
+    # hotspots 列表里混入非 dict 元素 → 跳过
+    result = {
+        "elements": {"Fe": {"centroid_px": [10, 10], "coverage_fraction": 0.3,
+                            "hotspots": [5, {"centroid_px": [20, 20], "area_px2": 9}]}},
+        "image_shape": [100, 100],
+    }
+    lines = vh._extract_2d_primitives(result)
+    assert any("hotspot" in l for l in lines)
+
+
+def test_extract_2d_centroid_exception():
+    # centroid_px 非数值 → except 分支跳过该元素
+    result = {"elements": {"Fe": {"centroid_px": "bad", "coverage_fraction": 0.3}}}
+    lines = vh._extract_2d_primitives(result)
+    assert "Fe:" not in "\n".join(lines)
+
+
+def test_extract_2d_vol_frac_exception():
+    # volume_fractions 值无法转 float → except
+    result = {"volume_fractions": {"a": "bad", "b": 0.5}}
+    lines = vh._extract_2d_primitives(result)
+    assert any("b=<point>" in l for l in lines)
+
+
+def test_extract_2d_morphology_non_dict():
+    # morphology 值非 dict → 跳过该相
+    result = {"volume_fractions": {"a": 0.5}, "morphology": {"a": "not-dict"}}
+    lines = vh._extract_2d_primitives(result)
+    assert not any("domains=" in l for l in lines)
+
+
+def test_extract_2d_morphology_centroid_exception():
+    # top_domain_centroids 非数值 → except
+    result = {
+        "volume_fractions": {"a": 0.5},
+        "image_shape": [100, 100],
+        "morphology": {"a": {"n_domains": 1, "top_domain_centroids_px": [["x", "y"]]}},
+    }
+    lines = vh._extract_2d_primitives(result)
+    assert any("domains=1" in l for l in lines)
+
+
+def test_extract_comparative_non_numeric():
+    # bl/cr data 全非数值 → nums 空 → continue, 无输出
+    bl = {"result": {"dos": ["a", "b"]}}
+    cr = {"result": {"dos": ["c", "d"]}}
+    assert vh.extract_comparative_primitives(bl, cr) == ""
+
+
+def test_extract_comparative_2d_element_non_dict():
+    # 元素 stats 非 dict → 跳过
+    bl = {"result": {"elements": {"Fe": "x"}, "image_shape": [10, 10]}}
+    cr = {"result": {"elements": {"Fe": "y"}, "image_shape": [10, 10]}}
+    assert not any("centroid_shift" in l for l in vh.extract_comparative_primitives(bl, cr).split("\n"))
+
+
+def test_extract_comparative_2d_centroid_exception():
+    # centroid_px 非数值 → except
+    bl = {"result": {"elements": {"Fe": {"centroid_px": "x"}}, "image_shape": [10, 10]}}
+    cr = {"result": {"elements": {"Fe": {"centroid_px": "y"}}, "image_shape": [10, 10]}}
+    assert not any("centroid_shift" in l for l in vh.extract_comparative_primitives(bl, cr).split("\n"))
+
+
+def test_extract_comparative_2d_pf_exception():
+    # phase 值无法转 float → except
+    bl = {"result": {"volume_fractions": {"a": "bad"}}}
+    cr = {"result": {"volume_fractions": {"a": 0.5}}}
+    assert not any("a:" in l for l in vh.extract_comparative_primitives(bl, cr).split("\n"))
+
+
+def test_confidence_all_non_numeric():
+    # data 全非数值 → nums 空 → continue (786 分支)
+    out = {"result": {"dos": ["x", "y"]}}
+    sc = vh._estimate_data_confidence(out)
+    assert "confidence" in sc
+
+
+def test_confidence_few_points_mid():
+    # n in [5,19] → few_points caveat (799-800)
+    out = {"result": {"dos": [float(i) for i in range(10)]}}
+    sc = vh._estimate_data_confidence(out)
+    assert any("few_points_dos" in c for c in sc["caveats"])
+
+
+def test_confidence_high_anomaly():
+    # 离群点 >10% → high_anomaly caveat (810)
+    out = {"result": {"dos": [-100.0, 100.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]}}
+    sc = vh._estimate_data_confidence(out)
+    assert any("high_anomaly_rate" in c for c in sc["caveats"])
+
+
+def test_confidence_no_elements_eds():
+    # elements 存在但值全非 dict → n_elems=0 → no_elements caveat (832)
+    out = {"result": {"elements": {"Fe": "x", "O": "y"}}}
+    sc = vh._estimate_data_confidence(out)
+    assert any("no_elements_eds" in c for c in sc["caveats"])
+
+
+def test_box_rgb_image_converts():
+    # RGB 图 → convert("L") 分支 (900)
+    img = Image.new("RGB", (100, 100), (255, 0, 0))
+    for x in range(10, 20):
+        for y in range(10, 20):
+            img.putpixel((x, y), (0, 0, 0))
+    buf = _io.BytesIO()
+    img.save(buf, format="PNG")
+    out = vh.extract_box_primitives(buf.getvalue(), threshold=128)
+    assert "[boxes]" in out
+
+
+def test_box_max_boxes_break():
+    # 超过 max_boxes 个连通域 → break (931)
+    img = Image.new("L", (200, 200), 255)
+    for i in range(6):
+        cx = 10 + i * 30
+        for x in range(cx, cx + 10):
+            for y in range(10, 20):
+                img.putpixel((x, y), 0)
+    buf = _io.BytesIO()
+    img.save(buf, format="PNG")
+    out = vh.extract_box_primitives(buf.getvalue(), threshold=128, max_boxes=2)
+    boxes = vh.parse_box_primitive(out)
+    assert len(boxes) <= 3  # 1 overall + up to max_boxes regions
+
+
+def test_box_invalid_bytes_exception():
+    # 非图片字节 → 整体 except → 返回空 (949-951)
+    assert vh.extract_box_primitives(b"not an image at all") == ""
+
+
+def test_point3d_asarray_error():
+    # 不规则嵌套 → np.asarray(dtype=float) 抛 ValueError → 返回空 (1018-1020)
+    assert vh.extract_point3d_primitives([[1, 2], [3]]) == ""
+
+
+def test_derivative_short_direct():
+    # 直接调用 n<5 → 提前返回 (508)
+    assert vh._extract_derivative_primitives([1.0, 2.0, 3.0], "dos") == []
+
+
+def test_box_image_zero_dim(monkeypatch):
+    # img 解码后 shape 为 (0, w) → h==0 → 返回空 (904)
+    import numpy as _np
+    monkeypatch.setattr(_np, "asarray", lambda img: _np.zeros((0, 10)))
+    img = Image.new("L", (100, 100), 255)
+    buf = _io.BytesIO()
+    img.save(buf, format="PNG")
+    assert vh.extract_box_primitives(buf.getvalue(), threshold=128) == ""
+
+
+def test_box_find_objects_none_slice(monkeypatch):
+    # find_objects 返回的 tuple 含 None → sl is None → continue (915)
+    import scipy.ndimage as ndimage
+    real = ndimage.find_objects
+
+    def _fake(labeled):
+        return (None, real(labeled)[0])
+
+    monkeypatch.setattr(ndimage, "find_objects", _fake)
+    img = Image.new("L", (100, 100), 255)
+    for x in range(10, 20):
+        for y in range(10, 20):
+            img.putpixel((x, y), 0)
+    buf = _io.BytesIO()
+    img.save(buf, format="PNG")
+    out = vh.extract_box_primitives(buf.getvalue(), threshold=128)
+    assert "[boxes]" in out
+
+
+def test_point3d_import_numpy_missing(monkeypatch):
+    # import numpy 抛 ImportError → 返回空 (1018-1020)
+    import builtins
+    real_import = builtins.__import__
+
+    def fake_import(name, *a, **k):
+        if name == "numpy":
+            raise ImportError("no numpy")
+        return real_import(name, *a, **k)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    assert vh.extract_point3d_primitives([[0.0, 0.0, 0.0]]) == ""
+
+
+def test_point3d_empty_label_else():
+    # species 提供空字符串 label → else 分支, 无 (label) 后缀 (1050)
+    out = vh.extract_point3d_primitives([[0.0, 0.0, 0.0]], species=[""])
+    assert "<point3d>[0,0,0]</point3d>" in out
+    assert "(atom0)" not in out
