@@ -30,6 +30,7 @@ _CORE_MODULES = [
     ("huginn.tools.code_tool", "CodeTool"),
     ("huginn.tools.file_edit_tool", "FileEditTool"),
     ("huginn.tools.multi_edit_tool", "MultiEditTool"),
+    ("huginn.tools.lsp_tool", "LspTool"),
     ("huginn.tools.file_read_tool", "FileReadTool"),
     ("huginn.tools.file_write_tool", "FileWriteTool"),
     ("huginn.tools.glob_tool", "GlobTool"),
