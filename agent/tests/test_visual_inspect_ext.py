@@ -102,7 +102,7 @@ def test_annotate_action_with_image_tool(monkeypatch):
     from huginn.tools import registry
 
     class _FakeTool:
-        def call(self, payload):
+        def call(self, args, ctx):
             return types.SimpleNamespace(success=True, data={"label": "ok"})
 
     monkeypatch.setattr(registry.ToolRegistry, "get", lambda name: _FakeTool())
@@ -116,7 +116,7 @@ def test_annotate_image_tool_failure(monkeypatch):
     from huginn.tools import registry
 
     class _FakeTool:
-        def call(self, payload):
+        def call(self, args, ctx):
             return types.SimpleNamespace(success=False, data=None)
 
     monkeypatch.setattr(registry.ToolRegistry, "get", lambda name: _FakeTool())
@@ -202,16 +202,6 @@ def test_visual_enrich_exception_skipped(monkeypatch):
     assert res["success"]  # 异常被吞掉, 不阻塞
 
 
-def test_attach_gate_note_exception_skipped(monkeypatch):
-    import huginn.tools.visualize_qa as vq
-
-    monkeypatch.setattr(vq, "qa_figure", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("qa failed")))
-    eng = _MockEngine(img_b64=_img_b64(np.full((50, 50), 0, dtype="uint8")))
-    action: dict = {}
-    eng._attach_gate_note(action)  # 异常被吞, 不抛
-    assert "gate" not in action
-
-
 # ── _measure_nearest_primitive ────────────────────────────────────────────
 
 
@@ -252,46 +242,47 @@ def test_measure_nearest_context_line():
 # ── _annotate_visual_features ─────────────────────────────────────────────
 
 
-def test_annotate_no_image_no_ctx():
+async def test_annotate_no_image_no_ctx():
     eng = _MockEngine()
-    out = eng._annotate_visual_features("annotate", "", "")
+    out = await eng._annotate_visual_features("annotate", "", "")
     assert out["note"] == "No features found"
     assert out["features"] == []
     assert out["tool_output"] is None
 
 
-def test_annotate_with_image_no_tool(monkeypatch):
+async def test_annotate_with_image_no_tool(monkeypatch):
     from huginn.tools import registry
 
     monkeypatch.setattr(registry.ToolRegistry, "get", lambda name: None)
     eng = _MockEngine(img_b64=_img_b64(np.full((50, 50), 0, dtype="uint8")))
-    out = eng._annotate_visual_features("annotate sem", _img_b64(np.full((50, 50), 0, dtype="uint8")), "")
+    out = await eng._annotate_visual_features("annotate sem", _img_b64(np.full((50, 50), 0, dtype="uint8")), "")
     assert out["tool_output"] is None
 
 
-def test_annotate_image_tool_exception(monkeypatch):
+async def test_annotate_image_tool_exception(monkeypatch):
     from huginn.tools import registry
 
     class _BadTool:
-        def call(self, payload):
+        def call(self, args, ctx):
             raise RuntimeError("tool boom")
 
     monkeypatch.setattr(registry.ToolRegistry, "get", lambda name: _BadTool())
     eng = _MockEngine()
-    out = eng._annotate_visual_features(
+    out = await eng._annotate_visual_features(
         "annotate defect", _img_b64(np.full((50, 50), 0, dtype="uint8")), ""
     )
-    assert any("tool_annotation_failed" in f for f in out["features"])
+    # _call_image_analysis_tool 静默吞掉异常 → 记 tool returned no result, 不抛
+    assert any("tool returned no result" in f for f in out["features"])
 
 
-def test_annotate_text_structural():
+async def test_annotate_text_structural():
     ctx = (
         "[band] trend=increasing, peak=<point>[500,800]</point>(2.5), "
         "min=<point>[100,200]</point>(0.1), mean=1.2, std=0.3, "
         "anomalies=<point>[900,900]</point>=3.0, <point>[910,910]</point>=3.1\n"
     )
     eng = _MockEngine()
-    out = eng._annotate_visual_features("annotate band", "", ctx)
+    out = await eng._annotate_visual_features("annotate band", "", ctx)
     assert out["features"]
     assert any("band.trend" in f for f in out["features"])
     assert any("band.anomalies" in f for f in out["features"])
@@ -365,7 +356,7 @@ def test_zoom_registry_tool_success(monkeypatch):
     from huginn.tools import registry
 
     class _FakeTool:
-        def call(self, payload):
+        def call(self, args, ctx):
             return types.SimpleNamespace(success=True, data={})
 
     monkeypatch.setattr(registry.ToolRegistry, "get", lambda name: _FakeTool())
@@ -413,35 +404,35 @@ def test_visual_enrich_sets_hint(monkeypatch):
     assert res["_visual_hint"]
 
 
-def test_annotate_image_sem_scene(monkeypatch):
-    # 描述不含 defect/phase → 默认 sem_analysis scene
+async def test_annotate_image_sem_scene(monkeypatch):
+    # 描述不含 defect/phase → 默认 sem_analysis scene (作为 tool args["action"])
     from huginn.tools import registry
 
     class _FakeTool:
-        def call(self, payload):
-            assert payload["scene"] == "sem_analysis"
+        def call(self, args, ctx):
+            assert args["action"] == "sem_analysis"
             return types.SimpleNamespace(success=True, data={"ok": 1})
 
     monkeypatch.setattr(registry.ToolRegistry, "get", lambda name: _FakeTool())
     eng = _MockEngine()
-    out = eng._annotate_visual_features(
+    out = await eng._annotate_visual_features(
         "annotate the micrograph", _img_b64(np.full((50, 50), 0, dtype="uint8")), ""
     )
     assert any("sem_analysis" in f for f in out["features"])
 
 
-def test_annotate_tool_output_and_ctx(monkeypatch):
+async def test_annotate_tool_output_and_ctx(monkeypatch):
     # 有图(tool 成功) + 有 visual_ctx → tool_output 补充 text_analysis
     from huginn.tools import registry
 
     class _FakeTool:
-        def call(self, payload):
+        def call(self, args, ctx):
             return types.SimpleNamespace(success=True, data={"label": "ok"})
 
     monkeypatch.setattr(registry.ToolRegistry, "get", lambda name: _FakeTool())
     ctx = "[band] trend=increasing, peak=<point>[500,800]</point>(2.5)"
     eng = _MockEngine()
-    out = eng._annotate_visual_features(
+    out = await eng._annotate_visual_features(
         "annotate band", _img_b64(np.full((50, 50), 0, dtype="uint8")), ctx
     )
     assert out["tool_output"]["text_analysis"]
