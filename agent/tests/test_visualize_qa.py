@@ -114,6 +114,44 @@ def test_cluttered_high_edge_density() -> None:
     assert m["inner_edge_density"] > 0.25
 
 
+def test_cluttered_too_small_image() -> None:
+    # h<8 或 w<8 → 直接返回 None + note
+    flag, m = check_cluttered(np.zeros((5, 200), dtype=float))
+    assert flag is None
+    assert m["note"] == "too small"
+    assert m["inner_edge_density"] == 0.0
+
+
+def test_cluttered_numpy_gradient_fallback(monkeypatch) -> None:
+    # scipy.sobel 缺失/抛错 → numpy.gradient 兜底梯度
+    import scipy.ndimage
+
+    def _boom(*a, **k):
+        raise ImportError("no scipy")
+
+    monkeypatch.setattr(scipy.ndimage, "sobel", _boom)
+    rng = np.random.default_rng(0)
+    noisy = (rng.random((200, 200)) > 0.5).astype(float) * 255.0
+    flag, m = check_cluttered(noisy)
+    assert flag == "cluttered"
+    assert m["inner_edge_density"] > 0.25
+
+
+def test_qa_check_exception_does_not_block(monkeypatch, tmp_path: Path) -> None:
+    # 某个检查抛异常 → 记录 metrics 错误并 continue, 不阻断整体
+    import huginn.tools.visualize_qa as vq
+
+    def _boom(gray):
+        raise RuntimeError("aspect boom")
+
+    _boom.__name__ = "check_aspect"
+    monkeypatch.setattr(vq, "check_aspect", _boom)
+    p = _save(_figure_like(), tmp_path / "ok.png")
+    r = qa_figure(p)
+    assert r["metrics"]["check_aspect"]["error"] == "aspect boom"
+    assert r["verdict"] == VERDICT_PASS  # 其余检查通过, 整体仍 pass
+
+
 def test_missing_file_error(tmp_path: Path) -> None:
     r = qa_figure(tmp_path / "nope.png")
     assert r["verdict"] == VERDICT_ERROR
