@@ -110,8 +110,10 @@ class ExecutionOrchestrator:
         if isinstance(self.tool_registry, dict):
             self.tool_registry[name] = fn
         else:
-            logger.warning(
-                "register_tool ignored: tool_registry is %s, not a dict",
+            # ToolRegistry 类模式有自己的 .register, register_tool 是 no-op,
+            # 不需要 warning — 打 warning 会让调用方误以为出错了。debug 记录.
+            logger.debug(
+                "register_tool no-op: tool_registry is %s, not a dict",
                 type(self.tool_registry).__name__,
             )
 
