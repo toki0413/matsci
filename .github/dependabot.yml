@@ -10,6 +10,12 @@ updates:
     # 安全更新自动合并, 减少人工负担
     # ponytail: 升级路径是加 automerged_updates 配置 (需 GitHub 商业版)
     # 当前靠 CI 绿灯后人工 merge
+    # chromadb 无 fix 版本 (GHSA-f4j7-r4q5-qw2c / PYSEC-2026-311): 预认证代码
+    # 注入仅影响 HTTP API + trust_remote_code=true; huginn 全程用嵌入式
+    # PersistentClient (不暴露 HTTP), 不受影响. 受控忽略以消除重复告警.
+    ignore:
+      - dependency-name: "chromadb"
+        versions: ["*"]
     commit-message:
       prefix: "chore(deps)"
       include: "scope"
