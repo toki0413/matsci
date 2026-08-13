@@ -243,7 +243,7 @@
   - `rcb_utils.py` (纯工具, 无依赖) → `rcb_cognition.py` / `rcb_audit.py` (依赖 utils) → `rcb_step2.py` / `rcb_step3.py` / `rcb_mcmc.py` (依赖前两者) → `rcb_runner.py` (聚合)。依赖层级单向, 无循环 import。
   - 39 个 RCB 相关测试全部通过。
 - **修复 6 — 真死代码删除**: 全库 AST+引用扫描确认 `huginn/autoloop/engine_selfcheck.py` (2860 行) 为唯一真死代码 — 全库无任何 `import` 消费, 仅 `engine.py` 注释提及 (其 `_extract_tests_passed` 已由 `cognitive_loop.py` 下沉并 re-export)。已删除, autoloop 50 测试通过。
-- **修复 7 — optional 工具"有名无实"依赖探测**: 大量 optional 工具在模块顶层 `try: import torch/pymatgen/rdkit...` 包裹, 缺依赖时模块仍能 import、工具照常注册, 但能力静默退化。新增 `probe_tool_dependencies()`: 静态扫描每个 optional 工具模块的模块级 import, 过滤 hugging 内部 + stdlib, 用 `importlib.util.find_spec` 判定第三方依赖缺失并 `logger.warning` 显式告警。在 `register_optional_tools()` 末尾接入, 运维可即时看到能力降级清单。
+- **修复 7 — optional 工具"有名无实"依赖探测**: 大量 optional 工具在模块顶层/函数体内 `try: import torch/pymatgen/rdkit...` 包裹, 缺依赖时模块仍能 import、工具照常注册, 但能力静默退化。新增 `probe_tool_dependencies()`: 静态扫描每个 optional 工具模块的 import, 过滤 hugging 内部 + stdlib, 用 `importlib.util.find_spec` 判定第三方依赖缺失并 `logger.warning` 显式告警。在 `register_optional_tools()` 末尾接入, 运维可即时看到能力降级清单。**评测发现两处覆盖短板并已修复**: ① 原只扫模块级 import, 漏掉函数体内懒导入 (sklearn/rdkit 各工具); ② 不穿透 shim (如 `tools/rdkit_tool.py` → `sci/rdkit_tool.py`), 导致 rdkit/pymatgen/openmm 等漏报。现 `_collect_top_level_imports` 遍历函数/类体 import, 且仅对"纯 shim"(顶层无逻辑)跟随其 re-export 目标; 对普通模块不跟随 `huginn.*` 门面 (避免 `huginn.llm` 的可选依赖污染到引用它的工具)。修复后探测从仅 5 个缺失模块提升到 33 个真实缺失 (pymatgen/rdkit/openmm/sklearn/vasp/vina 等全捕获)。
 
 ### 方法论
 - 本项目 conftest 接 pytest-cov, `python -m coverage run` 与其冲突会 "No data collected"; 用 coverage Python API (`coverage.Coverage().start()` + `pytest.main()`) 包裹采集。
