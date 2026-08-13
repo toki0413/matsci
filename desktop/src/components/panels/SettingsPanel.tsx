@@ -547,6 +547,24 @@ export function SettingsPanel(props: SettingsPanelProps) {
                   填写后 mat-db 用真实 Materials Project 数据; 留空则回退 mock。保存后自动重连生效。
                 </p>
               </ConfigField>
+              <ConfigField label="MinerU API Keys" full>
+                <ApiKeyInput
+                  value={config.mineru_api_keys}
+                  onChange={(v) => { setConfig((prev) => ({ ...prev, mineru_api_keys: v })); setConfigDirty(true); }}
+                  placeholder="k1,k2,k3 (逗号分隔, 多 key 轮询, 可选)"
+                />
+                <p className="mt-1 text-xs text-text-muted">
+                  文献/PDF 解析用 VLM 服务; 留空则回退 PyMuPDF+OCR。
+                </p>
+              </ConfigField>
+              <ConfigField label="WeCom 机器人 Token" full>
+                <ApiKeyInput
+                  value={config.wecom_token}
+                  onChange={(v) => { setConfig((prev) => ({ ...prev, wecom_token: v })); setConfigDirty(true); }}
+                  placeholder="HUGINN_WECOM_TOKEN (可选)"
+                />
+                <p className="mt-1 text-xs text-text-muted">企微机器人鉴权 token, 用于企微通知。</p>
+              </ConfigField>
               {/* Quick test: hit the provider with a 1-token request */}
               <div className="md:col-span-2 flex items-center gap-2">
                 <ProviderTestButton
