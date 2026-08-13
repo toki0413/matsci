@@ -289,35 +289,75 @@ def validate_tool_specs() -> list[str]:
     return resolved
 
 
-def _collect_top_level_imports(path: str) -> set[str]:
-    """Return the set of top-level packages a module imports (directly).
+def _collect_top_level_imports(path: str, _depth: int = 0) -> set[str]:
+    """Collect the set of third-party packages a module depends on.
 
-    Walks the module's top-level statements (including ``try/except`` blocks)
-    but does not descend into function/class bodies. This captures "optional"
-    imports like ``try: import torch`` that are wrapped so the module still
-    imports when the dep is missing — exactly the silent-degradation case.
+    Covers (a) module-level imports and (b) imports inside function/class
+    bodies — the common ``try: import torch`` lazy pattern. Additionally, if
+    the module is a *pure shim* (only re-export statements, e.g.
+    ``huginn/tools/rdkit_tool.py`` forwarding to ``sci/rdkit_tool.py``), it is
+    followed to its real implementation so the shim's heavy dependencies are
+    surfaced instead of silently skipped.
+
+    Non-shim modules (which contain logic) are NOT followed into their
+    ``huginn.*`` imports — otherwise a tool importing a broad facade like
+    ``huginn.llm`` would inherit that facade's unrelated lazy dependencies.
+
+    Returns raw top-level names (stdlib / huginn / third-party); the caller
+    filters out stdlib and huginn-internal.
     """
     import ast
+    import importlib.util
     import tokenize
+
+    if _depth > 4:  # guard against pathological shim chains
+        return set()
 
     with tokenize.open(path) as f:
         tree = ast.parse(f.read(), filename=path)
-    deps: set[str] = set()
 
-    def _walk(node: ast.AST) -> None:
-        # Never descend into function/class bodies — only module-level imports.
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            return
+    deps: set[str] = set()
+    internal_targets: list[str] = []
+    has_logic = False
+
+    def _collect(node: ast.AST) -> None:
         if isinstance(node, ast.Import):
             for alias in node.names:
-                deps.add(alias.name.split(".")[0])
+                top = alias.name.split(".")[0]
+                if top.startswith("huginn"):
+                    internal_targets.append(alias.name)
+                else:
+                    deps.add(top)
         elif isinstance(node, ast.ImportFrom):
             if node.level == 0 and node.module:
-                deps.add(node.module.split(".")[0])
-        for child in ast.iter_child_nodes(node):
-            _walk(child)
+                top = node.module.split(".")[0]
+                if top.startswith("huginn"):
+                    internal_targets.append(node.module)
+                else:
+                    deps.add(top)
 
-    _walk(tree)
+    def _walk_body(node: ast.AST) -> None:
+        """Collect imports nested inside a function/class body (lazy deps)."""
+        for child in ast.iter_child_nodes(node):
+            _collect(child)
+            _walk_body(child)
+
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            has_logic = True
+            _walk_body(node)
+        else:
+            _collect(node)
+
+    # Only follow re-export targets for pure shims (no logic). This surfaces a
+    # shim's real deps without letting a tool inherit a broad facade's params.
+    if not has_logic:
+        for target in internal_targets:
+            spec = importlib.util.find_spec(target)
+            if spec is None or not spec.origin or spec.origin.endswith("__init__.py"):
+                continue
+            deps |= _collect_top_level_imports(spec.origin, _depth + 1)
+
     return deps
 
 
