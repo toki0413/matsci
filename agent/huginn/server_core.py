@@ -278,7 +278,6 @@ def get_memory_manager() -> MemoryManager:
 
     # Try to wire up semantic search via VectorStore + chromadb.
     # Falls back to FTS5-only long-term memory if chromadb is missing.
-    vector_store = None
     longterm = None
     try:
         from huginn.rag.vector_store import VectorStore
@@ -292,8 +291,11 @@ def get_memory_manager() -> MemoryManager:
         logger.debug("best-effort op failed", exc_info=True)
         longterm = None
 
-    get_context().memory_manager = MemoryManager(
-        config=MemoryConfig(memory_md_path=memory_md),
+    # 共享构造路径: 消除 server / CLI / RCB 各自手写 MemoryManager 装配的重复.
+    from huginn.memory.factory import build_memory_manager
+
+    get_context().memory_manager = build_memory_manager(
+        memory_md_path=memory_md,
         longterm=longterm,
     )
     return get_context().memory_manager

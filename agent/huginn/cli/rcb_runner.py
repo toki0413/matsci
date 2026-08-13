@@ -516,7 +516,7 @@ async def run(
     # 避开 TRAE 沙箱拦截 ~/.huginn/ 写入). 没设则回退 ~/.huginn/rcb_cross_task.
     _mem_mgr = None
     try:
-        from huginn.memory.manager import MemoryConfig, MemoryManager
+        from huginn.memory.factory import build_memory_manager
         if os.environ.get("HUGINN_RCB_CROSS_TASK", "1") == "1":
             _mem_dir = Path(
                 os.environ.get(
@@ -528,8 +528,8 @@ async def run(
             print(f"[Memory] cross-task shared: {_mem_dir}", flush=True)
         else:
             _mem_dir = ws / HUGINN_DIR_NAME / "memory"
-        _mem_cfg = MemoryConfig(memory_dir=_mem_dir)
-        _mem_mgr = MemoryManager(config=_mem_cfg, llm=model)
+        # 共享构造路径: 与 server 用同一 build_memory_manager, 消除重复装配.
+        _mem_mgr = build_memory_manager(memory_dir=_mem_dir, llm=model)
     except Exception as _e:
         print(f"[Memory] init warning: {_e}", flush=True)
 
