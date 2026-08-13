@@ -510,6 +510,16 @@ async def orchestrate(params: dict[str, Any]) -> dict[str, Any]:
                 "max_concurrent", factory.config.max_concurrent_subagents
             ),
         )
+        # Enforce the unified orchestrator contract at the main-link boundary.
+        # If Orchestrator ever stops exposing an async run() method, this raises
+        # immediately instead of failing deep inside route/dispatch code.
+        from huginn.orchestration import OrchestratorProtocol
+
+        if not isinstance(orch, OrchestratorProtocol):
+            raise TypeError(
+                f"Orchestrator {type(orch).__name__} does not satisfy "
+                "OrchestratorProtocol (missing async run)"
+            )
         result = await orch.run(params.get("objective", ""))
         return {
             "success": result.success,
