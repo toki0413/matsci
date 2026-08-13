@@ -10,8 +10,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from huginn.lifespan import _load_mcp_json_servers
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -19,7 +17,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 def test_loads_repo_root_mcp_json_into_configs():
     servers = _load_mcp_json_servers(REPO_ROOT)
-    by_name = {name: cfg for name, cfg in servers}
+    by_name = dict(servers)
 
     # 根 .mcp.json 至少声明了 flint-chart（npx -y flint-chart-mcp）
     assert "flint-chart" in by_name

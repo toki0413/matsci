@@ -43,7 +43,7 @@ def test_migrations_cover_every_version_gap():
 def test_config_version_matches_dataclass_default():
     """R2：config_integrity.CONFIG_VERSION 与 HuginnConfig.config_version 一致。"""
     dataclass_default = HuginnConfig.__dataclass_fields__["config_version"].default
-    assert CONFIG_VERSION == dataclass_default, (
+    assert dataclass_default == CONFIG_VERSION, (
         f"huginn/config_integrity.py::CONFIG_VERSION={CONFIG_VERSION} "
         f"与 HuginnConfig.config_version 默认值={dataclass_default} 不一致。"
         "两处版本号必须同步（同一 schema 的别名）。"

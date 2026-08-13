@@ -10,7 +10,6 @@ from __future__ import annotations
 import io as _io
 
 import numpy as np
-import pytest
 from PIL import Image
 
 from huginn.tools import visual_hook as vh

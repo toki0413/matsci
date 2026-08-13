@@ -343,18 +343,24 @@ jobs:
         uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+          # 固定 uv 版本，保证 lock 漂移守卫可复现。requirements.lock 由 0.11.7 生成，
+          # 不固定会随最新版解析结果漂移而误报。(setup-uv@v5 的输入参数名是 version)
+          version: "0.11.7"
 
       - name: Dependency lock drift guard
         working-directory: agent
         run: |
-          # 与生成 requirements.lock 时完全相同的参数，才能得到可复现 resolution。
-          # -o 写到 /tmp，避免就地覆盖已提交的 lock。
+          # 用已提交 requirements.lock 作为 constraint 重新编译：uv 把已提交的钉版
+          # 当版本约束，只按 pyproject 声明求解。这样上游传递依赖发布新版本（如
+          # langchain-anthropic 1.5.5→1.5.6）不会触发漂移误报——只有 pyproject.toml
+          # 真正变更、已提交 lock 无法满足时才会 diff → 红。这是确定性的守卫，
+          # 不再依赖实时 PyPI index 的重解析结果。 -o 写到 /tmp，避免就地覆盖。
           uv pip compile pyproject.toml -o /tmp/requirements.lock \
-            --python-version 3.12 --no-strip-markers
-          # 只比 钉版行 (pkg==version)，忽略 header/注释（含 -o 路径），
+            --python-version 3.12 --no-strip-markers --constraint requirements.lock
+          # 只比 钉版行 (pkg==version)，忽略所有注释行（含 -c 约束注解与 header），
           # 避免 cosmetic 差异造成误报。
-          if ! diff -u <(grep -v '^#' requirements.lock) \
-                       <(grep -v '^#' /tmp/requirements.lock); then
+          if ! diff -u <(grep -vE '^\s*#' requirements.lock) \
+                       <(grep -vE '^\s*#' /tmp/requirements.lock); then
             echo "::error::requirements.lock 与 pyproject.toml 不一致。请在 agent/ 下运行: uv pip compile pyproject.toml -o requirements.lock --python-version 3.12 --no-strip-markers"
             exit 1
           fi
@@ -531,7 +537,17 @@ jobs:
             echo "::error::cargo audit 执行失败 (RustSec 网络或 advisory 解析错误)"
             exit 1
           }
-          python3 -c 'import json; d=json.load(open("/tmp/cargo_audit.json")); lst=d.get("vulnerabilities",{}).get("list",[]); n=len(lst); \
-            [print(f"::error::cargo audit: {v[\"advisory\"][\"id\"]} {v[\"advisory\"][\"title\"]}") for v in lst]; \
-            raise SystemExit(1) if n>0 else None' || exit 1
+          # 用 heredoc 传给 python3 -c, 避免单引号 + 反斜杠行继续符的转义地狱
+          # (旧版把 f-string 里的 \" 和 \ 塞进 -c '...' 会触发
+          # SyntaxError: unexpected character after line continuation character).
+          python3 - << 'PY' || exit 1
+          import json
+          d = json.load(open("/tmp/cargo_audit.json"))
+          lst = d.get("vulnerabilities", {}).get("list", [])
+          n = len(lst)
+          for v in lst:
+              print(f"::error::cargo audit: {v['advisory']['id']} {v['advisory']['title']}")
+          if n > 0:
+              raise SystemExit(1)
+          PY
           echo "cargo audit: no known vulnerabilities"

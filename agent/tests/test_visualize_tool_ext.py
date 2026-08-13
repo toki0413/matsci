@@ -28,7 +28,6 @@ from pathlib import Path
 
 import pytest
 
-from huginn.core_types import ToolResult
 from huginn.tools.visualize_tool import VisualizeTool, VisualizeToolInput
 
 

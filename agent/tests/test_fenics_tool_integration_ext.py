@@ -11,9 +11,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
-import textwrap
 import types
-from pathlib import Path
 
 import pytest
 
@@ -267,7 +265,6 @@ def test_mesh_info_sandbox_blocked(tmp_path):
 
 
 def test_mesh_info_timeout(tmp_path):
-    from huginn.tools.sim import fenics_tool as ft
 
     f = tmp_path / "mesh.xml"
     f.write_text("x", encoding="utf-8")
@@ -366,7 +363,6 @@ def test_convergence_check_unparsed(monkeypatch, tmp_path):
 
 
 def test_convergence_check_timeout(tmp_path):
-    from huginn.tools.sim import fenics_tool as ft
 
     class _Sb:
         def run(self, cmd, **kw):
@@ -395,7 +391,7 @@ def test_convergence_check_exception(tmp_path):
     assert res.data["differences"][0] != res.data["differences"][0]  # NaN
 
 
-def test_convergence_check_audit_exception_swallowed(tmp_path):
+def test_convergence_check_audit_exception_swallowed(monkeypatch, tmp_path):
     mod = types.ModuleType("huginn.execution.physics_auditor")
 
     class _Auditor:
@@ -403,7 +399,9 @@ def test_convergence_check_audit_exception_swallowed(tmp_path):
             raise RuntimeError("audit boom")
 
     mod.PhysicsAuditor = _Auditor
-    sys.modules["huginn.execution.physics_auditor"] = mod
+    # 用 monkeypatch.setitem 而非直接赋值 sys.modules, 测试结束后自动恢复,
+    # 避免污染全局 sys.modules 导致 test_physics_auditor 导入到错误的 _Auditor.
+    monkeypatch.setitem(sys.modules, "huginn.execution.physics_auditor", mod)
     tool = _tool()
     tool.sandbox = _sb(returncode=0, stdout="diff 0.001\n")
     res = tool._convergence_check(

@@ -20,7 +20,6 @@ from huginn.tools.report_tool import (
     ReportToolInput,
 )
 
-
 # ── ReportGenerator ──────────────────────────────────────────────────────────
 
 class TestReportGenerator:

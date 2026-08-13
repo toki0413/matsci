@@ -49,6 +49,8 @@ ALLOWED_HARDCODED_MATCHES: dict[str, str] = {
     "agent/huginn/tools/sim/lammps_tool.py": "LAMMPS 查找通配 glob (C:\\\\Users\\\\*)，非具体机器路径",
     # 测试数据：验证编码/转义处理，非真实路径。
     "agent/tests/test_i18n_encoding.py": "测试数据 (C:\\\\Users\\\\test)，非真实路径",
+    # 本守卫自身的 test_gate_self_test 用字面量验证 R1/R2 正则，非真实路径。
+    "agent/tests/test_arch_no_hardcoded_paths.py": "网关自检数据 (C:\\\\Users\\\\wanzh)，非真实路径",
 }
 
 

@@ -8,10 +8,8 @@ mat-db server 无 MP_API_KEY 时会回退 mock；真实路径要走 mp-api 包�
 
 from __future__ import annotations
 
-import re
-from pathlib import Path
-
 import tomllib
+from pathlib import Path
 
 AGENT_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = AGENT_ROOT.parent
