@@ -52,7 +52,7 @@ def test_mcp_wiring_is_single_gateway():
     assert not violations, (
         "MCP server 连接必须走单入口（mcp_client / routes/mcp.py / lifespan / "
         "mcp_adapter / cli.context），业务模块禁止直接 spawn MCP client。"
-        f"\n违规:\n" + "\n".join(violations)
+        "\n违规:\n" + "\n".join(violations)
     )
 
 

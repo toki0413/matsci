@@ -8,25 +8,31 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from huginn import server
 
-client = TestClient(server.app)
+
+@pytest.fixture(scope="module")
+def client():
+    """Context-managed TestClient over server.app (TestClient hygiene guard 合规)."""
+    with TestClient(server.app) as c:
+        yield c
 
 
 def _enable_restricted(monkeypatch):
     monkeypatch.delenv("HUGINN_ALLOW_UNRESTRICTED_READ", raising=False)
 
 
-def test_fs_cwd():
+def test_fs_cwd(client):
     r = client.get("/v1/fs/cwd")
     assert r.status_code == 200
     body = r.json()
     assert body["path"] == os.getcwd()
 
 
-def test_fs_list_roundtrip(tmp_path: Path):
+def test_fs_list_roundtrip(client, tmp_path: Path):
     d = tmp_path / "sub"
     d.mkdir()
     (tmp_path / "a.txt").write_text("hello", encoding="utf-8")
@@ -42,7 +48,7 @@ def test_fs_list_roundtrip(tmp_path: Path):
     assert dirs + files == names
 
 
-def test_fs_read_write(tmp_path: Path):
+def test_fs_read_write(client, tmp_path: Path):
     target = tmp_path / "notes.txt"
     r = client.put("/v1/fs/write", json={"path": str(target), "content": "line1\nline2"})
     assert r.status_code == 200
