@@ -3,6 +3,32 @@
 > 来源: 服务启动日志 `/tmp/huginn_server.log` + `importlib.util.find_spec` 实测。
 > 环境: `/root/.pyenv/versions/3.12.13` (Python 3.12)。
 
+## 修复结果 (2026-08-13 已执行)
+
+已执行 **方案 A(核心 all 组) + C(MCP 修复)**, 依赖告警从 33 个降到 9 个:
+
+| 项 | 修复前 | 修复后 |
+|---|---|---|
+| 工具依赖告警 | 33 个 | 9 个 (仅三类三方/重型) |
+| MCP 子进程连接 | 0 (mat-db/math-anything 全部失败) | 10 工具 (mat-db 5 + math-anything 5) |
+| KB / Codebase | 不可用 (缺 chromadb) | 可用 (chromadb 已装, 首次需下载 embedding 模型) |
+| system_health | 禁用 (缺 psutil) | 可用 |
+
+**剩余 9 个告警 (需额外安装, 非核心):**
+- `rdkit` (packing/vina/rdkit_tool) — benchmark extra 或 `pip install rdkit`
+- `vina` (vina_tool) — 分子对接, 需本地安装
+- `matminer` (descriptor) — `pip install matminer`
+- `thermo` (thermo_tool) — `pip install thermo`
+- `gpytorch` (interpretable_ml) — `pip install gpytorch`
+- `fairchem/mace/pynep` (ml_potential) — ML 势能互斥组, 按需装 ml-mace/ml-fairchem
+- `paddleocr` (vision_describe) — `pip install paddleocr`
+- `playwright/selenium` (browser) — Web 自动化
+- `model` (symbolic_regression) — 内部 stub, 无实际依赖
+
+**环境限制 (非代码缺陷):**
+- flint-chart MCP: npm 外网超时 (沙箱无 npm registry 访问)
+- KB embedding 模型 (79MB): 首次下载慢 (沙箱网络), 不阻塞主流程
+
 ## 一、工具能力降级告警 (33 个 optional 工具)
 
 `huginn/tools` 注册时 `probe_tool_dependencies()` 探测到顶层第三方依赖缺失,
