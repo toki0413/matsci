@@ -280,19 +280,27 @@ class UiBlock:
     ``frozen`` marks a block that is final and must not re-render; a streaming
     tail block flips ``frozen`` from ``False`` to ``True`` exactly once when
     its message completes. ``rev`` increments on each mutation so the frontend
-    can diff cheaply.
+    can diff cheaply. ``seq`` is the source event seq that produced this block
+    (the incremental ``after=<seq>`` cursor for the events endpoint).
     """
 
-    __slots__ = ("kind", "text", "frozen", "rev")
+    __slots__ = ("kind", "text", "frozen", "rev", "seq")
 
-    def __init__(self, kind: BlockKind, text: str = "", frozen: bool = False, rev: int = 0) -> None:
+    def __init__(self, kind: BlockKind, text: str = "", frozen: bool = False, rev: int = 0, seq: int = 0) -> None:
         self.kind = kind
         self.text = text
         self.frozen = frozen
         self.rev = rev
+        self.seq = seq
 
     def to_dict(self) -> dict[str, Any]:
-        return {"kind": self.kind, "text": self.text, "frozen": self.frozen, "rev": self.rev}
+        return {
+            "kind": self.kind,
+            "text": self.text,
+            "frozen": self.frozen,
+            "rev": self.rev,
+            "seq": self.seq,
+        }
 
 
 class UiProjection(ProjectionDefinition):
@@ -319,13 +327,13 @@ class UiProjection(ProjectionDefinition):
             role = event.payload.get("role")
             content = event.payload.get("content", "")
             text = f"**{role}:** {content}" if role else str(content)
-            block = UiBlock(BLOCK_TEXT, text, frozen=True, rev=1)
+            block = UiBlock(BLOCK_TEXT, text, frozen=True, rev=1, seq=event.seq)
             return [*state, block]
         elif event.kind == "compaction":
-            block = UiBlock(BLOCK_COMPACTION, event.payload.get("summary", ""), frozen=True, rev=1)
+            block = UiBlock(BLOCK_COMPACTION, event.payload.get("summary", ""), frozen=True, rev=1, seq=event.seq)
             return [*state, block]
         elif event.kind == "branch_summary":
-            block = UiBlock(BLOCK_TOOL, event.payload.get("summary", ""), frozen=True, rev=1)
+            block = UiBlock(BLOCK_TOOL, event.payload.get("summary", ""), frozen=True, rev=1, seq=event.seq)
             return [*state, block]
         return state  # metadata events don't affect the UI
 
