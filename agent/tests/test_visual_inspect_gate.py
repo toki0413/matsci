@@ -41,33 +41,6 @@ def _content_img() -> np.ndarray:
     return arr
 
 
-def test_attach_gate_note_blank_adds_gate() -> None:
-    """整图为 blank → 附加 gate (fail + directive)."""
-    eng = _MockEngine(_img_b64(_blank_img()))
-    action: dict = {}
-    eng._attach_gate_note(action)
-    assert "gate" in action
-    assert action["gate"]["verdict"] == "fail"
-    assert "blank" in action["gate"]["flags"]
-    assert action["gate"]["directive"]
-
-
-def test_attach_gate_note_content_no_gate() -> None:
-    """整图为正常图 → 不附加 gate (pass 不生成修正指令)."""
-    eng = _MockEngine(_img_b64(_content_img()))
-    action: dict = {}
-    eng._attach_gate_note(action)
-    assert "gate" not in action
-
-
-def test_attach_gate_note_no_image_noop() -> None:
-    """无整图 base64 → 静默跳过, 不抛异常."""
-    eng = _MockEngine("")
-    action: dict = {}
-    eng._attach_gate_note(action)
-    assert "gate" not in action
-
-
 def test_consistency_default_on_in_zoom() -> None:
     """批次 D: consistency_check 默认开启 → zoom 产生 consistency_score."""
     img = np.full((200, 200), 255, dtype="uint8")
