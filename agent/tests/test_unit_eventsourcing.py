@@ -314,3 +314,211 @@ class TestProvenanceRegistryEventSourcing:
         assert len(paths) == 3
         # Newest first
         assert paths[0] == "/out_4.out"
+
+
+# ── T-BCSE-01: SessionEventLog (append-only event source of truth) ──
+
+
+class TestSessionEventLog:
+    def _log(self, tmp_path, name="s1"):
+        from huginn.events.session_log import SessionEventLog
+        return SessionEventLog(name, tmp_path / f"{name}.jsonl", load=False)
+
+    def test_append_chains_and_advances_leaf(self, tmp_path):
+        from huginn.events.session_log import EVENT_MESSAGE
+        log = self._log(tmp_path)
+        e1 = log.append(EVENT_MESSAGE, {"role": "user", "content": "hi"})
+        e2 = log.append(EVENT_MESSAGE, {"role": "assistant", "content": "ok"})
+        assert e1.parent_id is None
+        assert e2.parent_id == e1.id
+        assert log.leaf_id == e2.id
+        assert log.seq == 2
+        assert len(log) == 2
+
+    def test_events_on_path_root_to_leaf(self, tmp_path):
+        from huginn.events.session_log import EVENT_MESSAGE
+        log = self._log(tmp_path)
+        ids = [
+            log.append(EVENT_MESSAGE, {"content": i}).id for i in range(3)
+        ]
+        assert [ev.id for ev in log.events_on_path()] == ids
+
+    def test_branch_moves_leaf_without_deleting(self, tmp_path):
+        from huginn.events.session_log import EVENT_MESSAGE
+        log = self._log(tmp_path)
+        e1 = log.append(EVENT_MESSAGE, {"content": "a"})
+        e2 = log.append(EVENT_MESSAGE, {"content": "b"})
+        log.branch(e1.seq)
+        assert len(log) == 2  # history intact
+        e3 = log.append(EVENT_MESSAGE, {"content": "c"})
+        assert e3.parent_id == e1.id
+        assert [ev.id for ev in log.events_on_path()] == [e1.id, e3.id]
+
+    def test_read_after_global_incremental(self, tmp_path):
+        from huginn.events.session_log import EVENT_MESSAGE
+        log = self._log(tmp_path)
+        e1 = log.append(EVENT_MESSAGE, {"content": "a"})
+        log.append(EVENT_MESSAGE, {"content": "b"})
+        log.append(EVENT_MESSAGE, {"content": "c"})
+        after = log.read_after(e1.seq)
+        assert len(after) == 2
+
+    def test_persist_and_reopen(self, tmp_path):
+        from huginn.events.session_log import EVENT_MESSAGE, SessionEventLog
+        log = self._log(tmp_path, "persistent")
+        log.append(EVENT_MESSAGE, {"role": "user", "content": "hello"})
+        log.append(EVENT_MESSAGE, {"role": "assistant", "content": "world"})
+        loaded = SessionEventLog.open("persistent", tmp_path / "persistent.jsonl")
+        assert loaded.seq == 2
+        path = loaded.events_on_path()
+        assert path[-1].payload["content"] == "world"
+
+    def test_unknown_kind_rejected(self, tmp_path):
+        import pytest
+        log = self._log(tmp_path)
+        with pytest.raises(ValueError):
+            log.append("nope", {})
+
+    def test_reset_leaf_creates_new_root(self, tmp_path):
+        from huginn.events.session_log import EVENT_MESSAGE
+        log = self._log(tmp_path)
+        e1 = log.append(EVENT_MESSAGE, {"content": "a"})
+        log.reset_leaf()
+        e2 = log.append(EVENT_MESSAGE, {"content": "b"})
+        assert e2.parent_id is None
+        assert [ev.id for ev in log.events_on_path()] == [e2.id]
+
+
+# ── T-BCSE-02: ProjectionEngine (pure-function projections over the log) ──
+
+
+class TestProjectionEngine:
+    def _engine_and_log(self, tmp_path):
+        from huginn.events.projection import (
+            MessagePathProjection,
+            ProjectionEngine,
+            RuntimeStateProjection,
+        )
+        from huginn.events.session_log import SessionEventLog
+        log = SessionEventLog("s1", tmp_path / "s1.jsonl", load=False)
+        engine = ProjectionEngine()
+        engine.register(RuntimeStateProjection())
+        engine.register(MessagePathProjection())
+        return engine, log
+
+    def test_drive_updates_projections(self, tmp_path):
+        from huginn.events.projection import MessagePathProjection
+        from huginn.events.session_log import EVENT_MESSAGE
+        engine, log = self._engine_and_log(tmp_path)
+        log.append(EVENT_MESSAGE, {"role": "user", "content": "hi"})
+        log.append(EVENT_MESSAGE, {"role": "assistant", "content": "ok"})
+        log.append("cognitive_mode_change", {"cognitive_mode": "construct"})
+        for ev in log:
+            engine.drive(log, ev)
+        runtime = engine.build(log, "runtime")
+        assert runtime["cognitive_mode"] == "construct"
+        assert runtime["turns_count"] == 1
+        msgs = engine.build(log, MessagePathProjection.key)
+        assert len(msgs) == 2
+
+    def test_cold_rebuild_equals_driven(self, tmp_path):
+        from huginn.events.projection import ProjectionEngine, RuntimeStateProjection
+        from huginn.events.session_log import EVENT_MESSAGE
+        engine, log = self._engine_and_log(tmp_path)
+        log.append(EVENT_MESSAGE, {"role": "user", "content": "hi"})
+        log.append("cognitive_mode_change", {"cognitive_mode": "construct"})
+        for ev in log:
+            engine.drive(log, ev)
+        cold = ProjectionEngine()
+        cold.register(RuntimeStateProjection())
+        assert cold.build(log, "runtime") == engine.build(log, "runtime")
+
+    def test_listener_fires_only_on_change(self, tmp_path):
+        from huginn.events.session_log import EVENT_MESSAGE
+        engine, log = self._engine_and_log(tmp_path)
+        log.append(EVENT_MESSAGE, {"role": "user", "content": "hi"})
+        for ev in log:
+            engine.drive(log, ev)
+        calls = []
+        engine.subscribe(log, "runtime", lambda l, k, v, seq: calls.append(v["cognitive_mode"]))
+        log.append("cognitive_mode_change", {"cognitive_mode": "construct"})  # change from default
+        engine.drive(log, log.get(log.leaf_id))
+        log.append("cognitive_mode_change", {"cognitive_mode": "construct"})  # same value
+        engine.drive(log, log.get(log.leaf_id))
+        assert calls == ["construct"]
+
+    def test_compaction_kept_as_marker(self, tmp_path):
+        from huginn.events.projection import MessagePathProjection
+        from huginn.events.session_log import EVENT_COMPACTION, EVENT_MESSAGE
+        engine, log = self._engine_and_log(tmp_path)
+        log.append(EVENT_MESSAGE, {"role": "user", "content": "a"})
+        log.append(EVENT_COMPACTION, {"summary": "earlier"})
+        for ev in log:
+            engine.drive(log, ev)
+        msgs = engine.build(log, MessagePathProjection.key)
+        assert msgs[-1]["role"] == "compaction"
+        assert msgs[-1]["summary"] == "earlier"
+
+    def test_state_version_bump_rebuilds(self, tmp_path):
+        from huginn.events.projection import RuntimeStateProjection
+        from huginn.events.session_log import EVENT_MESSAGE
+        engine, log = self._engine_and_log(tmp_path)
+        log.append(EVENT_MESSAGE, {"role": "user", "content": "hi"})
+        for ev in log:
+            engine.drive(log, ev)
+        RuntimeStateProjection.stateVersion = 2
+        try:
+            engine.build(log, "runtime")
+            assert engine._cells_for(log)["runtime"].version == 2
+        finally:
+            RuntimeStateProjection.stateVersion = 1
+
+
+# ── T-BCSE-04: UiProjection (block structure for incremental frontend) ──
+
+
+class TestUiProjection:
+    def _build(self, tmp_path, *events):
+        from huginn.events.projection import (
+            ProjectionEngine,
+            UiProjection,
+        )
+        from huginn.events.session_log import SessionEventLog
+        log = SessionEventLog("s1", tmp_path / "s1.jsonl", load=False)
+        engine = ProjectionEngine()
+        engine.register(UiProjection())
+        for ev in events:
+            log.append(ev[0], ev[1])
+        for ev in log:
+            engine.drive(log, ev)
+        return engine.build(log, "ui")
+
+    def test_emits_frozen_blocks_and_dividers(self, tmp_path):
+        from huginn.events.projection import (
+            BLOCK_COMPACTION,
+            BLOCK_TEXT,
+            BLOCK_TOOL,
+        )
+        from huginn.events.session_log import (
+            EVENT_BRANCH_SUMMARY,
+            EVENT_COMPACTION,
+            EVENT_MESSAGE,
+        )
+        blocks = self._build(
+            tmp_path,
+            (EVENT_MESSAGE, {"role": "user", "content": "hi"}),
+            (EVENT_COMPACTION, {"summary": "compacted"}),
+            (EVENT_BRANCH_SUMMARY, {"summary": "abandoned"}),
+        )
+        assert [b["kind"] for b in blocks] == [BLOCK_TEXT, BLOCK_COMPACTION, BLOCK_TOOL]
+        assert all(b["frozen"] for b in blocks)
+        assert blocks[0]["text"].startswith("**user:**")
+
+    def test_metadata_events_do_not_affect_ui(self, tmp_path):
+        from huginn.events.session_log import EVENT_MESSAGE
+        blocks = self._build(
+            tmp_path,
+            (EVENT_MESSAGE, {"role": "user", "content": "hi"}),
+            ("cognitive_mode_change", {"cognitive_mode": "construct"}),
+        )
+        assert len(blocks) == 1
