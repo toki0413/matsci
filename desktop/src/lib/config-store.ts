@@ -127,6 +127,7 @@ function defaultConfig(): AppConfig {
     encrypt_config: false,
     encryption_password: "",
     encryption_key_file: "",
+    mp_api_key: "",
     // 极限模式 + 分层 memory 默认值 (跟后端 spec 对齐)
     extreme_dispatch: false,
     wm_summarize: "rule",
