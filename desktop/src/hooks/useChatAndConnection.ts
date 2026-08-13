@@ -18,6 +18,7 @@ import { formatTime } from "../lib/constants";
 import { ReconnectingWebSocket } from "../lib/ws-client";
 import { getAuthToken, getApiBase } from "../lib/api-client";
 import { api } from "../lib/api";
+import { useIncrementalMessages } from "./useIncrementalMessages";
 import {
   API_BASE, WS_URL, syncBackendUrl, PERSONAS_FALLBACK, wsUrlVersion,
 } from "../lib/config-store";
@@ -123,6 +124,36 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
   // stale closure captures in switchThread/createThread.
   const messagesRef = useRef<Message[]>([WELCOME_MSG()]);
   useEffect(() => { messagesRef.current = messages; }, [messages]);
+
+  // ── Incremental block model (T-BCSE-05/06) ────────────────────
+  // Additive: exposes the block-model fetch + compaction-divider recovery
+  // without touching the streaming/optimistic path. All calls are guarded so
+  // a failure silently falls back to existing behavior.
+  const incremental = useIncrementalMessages();
+
+  // Hydrate compaction dividers from the persisted event log for a thread.
+  // The LangGraph `/messages` recovery has no compaction concept; `/events`
+  // does. This merges `isCompacted` divider messages (rendered by ChatPanel)
+  // into the restored history. Guarded — on any error we keep what we have.
+  const hydrateCompactionDividers = useCallback(async (threadId: string) => {
+    try {
+      const blocks = await incremental.fetchThreadBlocks(threadId);
+      const dividers = incremental.compactionBlocks(blocks);
+      if (dividers.length === 0) return;
+      setMessages((prev) => [
+        ...prev,
+        ...dividers.map(() => ({
+          role: "assistant",
+          content: "",
+          timestamp: new Date().toISOString(),
+          isCompacted: true,
+        })),
+      ]);
+    } catch {
+      // backend offline or no event log — keep existing messages
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [incremental]);
   // Tracks which thread we last sent a user_input to, so WS messages
   // without an explicit thread_id can still be routed correctly.
   const pendingThreadIdRef = useRef<string>("desktop");
@@ -1200,6 +1231,10 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
               }));
               setMessages(restored);
               setMessagesByThread((prev) => ({ ...prev, [tid]: restored }));
+              // T-BCSE-06: merge compaction dividers from the persisted event
+              // log (guarded; /events may be empty until the agent loop writes
+              // session events).
+              hydrateCompactionDividers(tid);
             }
           })
           .catch(() => { /* backend offline — keep welcome */ });
@@ -1590,6 +1625,8 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
     personaList, personaEmotion, pendingClarifications,
     // Threads
     threads, activeThread,
+    // Incremental block model (T-BCSE-05/06)
+    incremental, hydrateCompactionDividers,
     // Guide
     showGuide, closeGuide,
     // Setters
