@@ -228,6 +228,13 @@
 - **修复 1 — 工具注册"魔法字符串"死引用**: `_OPTIONAL_MODULES` 用全限定字符串 `("huginn.<mod>", "Cls")` 注册工具, 拼错路径会被 `_do_register` 的 `except ImportError` **静默跳过**, 工具永久消失无告警。新增 `huginn/tools/__init__.py::validate_tool_specs()`: 逐条 importlib 解析所有 spec, huginn 内部路径错误立即 raise, 第三方缺依赖正常 skip。**一次性暴露并修复 21 个死引用** (lammps/comsol/qe/cp2k/openfoam/packing/abaqus/plasma/symbolic_regression/autodiff/unit/symmetry/tda/uq/evidence_fusion/high_throughput/multi_fidelity/xrd_sim/gap_analysis/doe/debugger/nudge/generative_design 均移到 `sim/`/`sci/`/`design/` 子包)。新增 `tests/test_tool_registration.py` (3 用例)。
 - **修复 2 — 无消费者的协议层**: `huginn/orchestration/OrchestratorProtocol` 定义统一 orchestrator 契约, 但生产无 import, 契约无运行时强制力。在 `huginn/routes/agents.py` `/orchestrate` 入口加 `isinstance(orch, OrchestratorProtocol)` 断言, 让契约进入主链路, 未来 orchestrator 违约立即报错。
 - **修复 3 — 自进化逻辑重复**: `huginn/self_improvement/` 的 `SelfImprovementLoop` 与生产的 `huginn/bench.runner.BenchmarkRunner` + `huginn/evolution.engine.EvolutionEngine` 并存且无生产消费者。在 `self_improvement/__init__.py` 标注"参考/测试实现, 生产走 bench+evolution", 避免误当主链路。
+- **修复 4 — WebSocket 消息分发长链 → 注册表映射**: `huginn/routes/ws.py` 原用 15 个 `if/elif` 分支分发消息, 部分 handler 同时依赖 `msg` (WSMessage) 和 `data` (原始 dict), schema 定义与使用双通道不一致。重构为:
+  - 新增 `_MESSAGE_HANDLERS: dict[str, Callable]` 注册表, 每个消息类型一行映射。
+  - 统一 handler 签名为 `(websocket, msg: WSMessage, ctx: WSCtx)`, 所有参数从 `msg` 读取, 消除 `data.get(...)` 原始 dict 依赖。
+  - 新增 `WSCtx` dataclass 打包连接级状态（approval/plan/auto_approve 等）, 避免每个 handler 各自传 5-6 个参数。
+  - 新增 `action`/`edited_code`/`config` 字段到 `WSMessage` schema, 保证 handler 需要的字段都经过 pydantic 校验。
+  - 将 `clarification_response`/`set_auto_approve`/`set_suggest_mode`/`suggest_response`/`ping` 5 个内联 handler 移到 `ws_helpers.py` 统一管理。
+  - 17 个 WS 集成测试全部通过 (0 failures)。
 
 ### 方法论
 - 本项目 conftest 接 pytest-cov, `python -m coverage run` 与其冲突会 "No data collected"; 用 coverage Python API (`coverage.Coverage().start()` + `pytest.main()`) 包裹采集。
