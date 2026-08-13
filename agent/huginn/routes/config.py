@@ -201,6 +201,8 @@ _ALLOWED_LEGACY_KEYS = frozenset({
     "max_tool_output_tokens", "context_budget_tokens", "pet_accessories",
     # 材料数据库真实 API key (后端 HuginnConfig.mp_api_key)
     "mp_api_key",
+    # OQMD 材料数据库 key (from_env 读 OQMD_API_KEY)
+    "oqmd_api_key",
     # MinerU 文献解析 keys (逗号分隔) + 企微机器人 token
     "mineru_api_keys", "wecom_token",
     # 极限模式 + 分层 memory (前端 Settings "Advanced" tab)
@@ -274,6 +276,8 @@ def _apply_legacy_params_to_env(params: dict[str, Any]) -> None:
         "encryption_key_file": "HUGINN_ENCRYPTION_KEY_FILE",
         # 材料数据库 (正好 HuginnConfig.from_env 也读 MP_API_KEY)
         "mp_api_key": "MP_API_KEY",
+        # OQMD (from_env 读 OQMD_API_KEY)
+        "oqmd_api_key": "OQMD_API_KEY",
         # MinerU 文献解析 (from_env 读逗号拆分) + 企微机器人 token (bot.py 调用时读 env)
         "mineru_api_keys": "MINERU_API_KEYS",
         "wecom_token": "HUGINN_WECOM_TOKEN",
