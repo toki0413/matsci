@@ -242,6 +242,21 @@ def apply_patches(
     ]
     if not good:
         return blocks
+    # 门控接入: 默认 advisory (只评分不拦), 绝不因门控排除候选而拖累 agent.
+    # 显式开启 strict gate (harness_adoption_gate) 才跳过 RED 的自动采纳.
+    # 无论哪种模式, store 都保留数据, 门控只影响"是否自动用", 永不删除.
+    try:
+        from huginn.harness.adoption_gate import AdoptionGate
+
+        if AdoptionGate.get_instance().enabled():
+            good = [
+                p for p in good
+                if AdoptionGate.get_instance().should_adopt(p.id)
+            ]
+    except Exception:
+        logger.debug("adoption_gate filter in apply_patches failed", exc_info=True)
+    if not good:
+        return blocks
     by_block: dict[str, PromptPatch] = {}
     for p in good:
         cur = by_block.get(p.block_name)

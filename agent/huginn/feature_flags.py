@@ -48,6 +48,7 @@ class FeatureFlags:
         "harness_workflow_evolution": False,  # H2: variant bandit 演化回路
         "harness_ood_holdout": False,         # H6: OOD 留出验证 (防背题补丁)
         "harness_significance_gate": False,   # H5: 结果显著性门 (统计检验)
+        "harness_adoption_gate": False,       # 严格 gate 模式: RED 不自动采纳 (默认 advisory, 只评分不拦)
         "harness_joint_optimizer": False,     # 联合优化 (phase/block/params 协同)
         "harness_phase_evolve": False,        # 阶段规范演化
         "harness_prompt_patch": False,        # 提示补丁 (跨域提示增强)
@@ -73,6 +74,7 @@ class FeatureFlags:
         "harness_workflow_evolution": "H2 variant bandit 演化回路 (实验性, 默认关)",
         "harness_ood_holdout": "H6 OOD 留出验证, 防背题补丁 (实验性, 默认关)",
         "harness_significance_gate": "H5 结果显著性门, 统计检验 (实验性, 默认关)",
+        "harness_adoption_gate": "严格 gate 模式: RED 不自动采纳 (实验性, 默认 advisory 只评分不拦)",
         "harness_joint_optimizer": "联合优化 phase/block/params (实验性, 默认关)",
         "harness_phase_evolve": "阶段规范演化 (实验性, 默认关)",
         "harness_prompt_patch": "提示补丁, 跨域提示增强 (实验性, 默认关)",

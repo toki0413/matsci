@@ -40,6 +40,7 @@ class JointBelief:
     """
     config_id: str  # block_subset_id + workflow_params_id 的组合 id
     phase: str
+    problem_domain: str = ""  # 分格存档维度: 一个"问题域"一格, 防激进方案被饥饿
     successes: int = 0
     failures: int = 0
     last_updated: float = 0.0
@@ -79,6 +80,7 @@ class JointBelief:
         return cls(
             config_id=d["config_id"],
             phase=d.get("phase", ""),
+            problem_domain=d.get("problem_domain", ""),
             successes=d.get("successes", 0),
             failures=d.get("failures", 0),
             last_updated=d.get("last_updated", 0.0),
@@ -130,7 +132,7 @@ class JointBandit:
 
     def _save(self, b: JointBelief) -> None:
         try:
-            f = self._store_dir / f"{b.phase}_{b.config_id}.json"
+            f = self._store_dir / f"{b.phase}__{b.problem_domain}__{b.config_id}.json"
             f.write_text(
                 json.dumps(b.to_dict(), ensure_ascii=False, indent=2),
                 encoding="utf-8",
@@ -138,13 +140,23 @@ class JointBandit:
         except Exception:
             logger.debug("joint belief save fail: %s", b.config_id, exc_info=True)
 
-    def _make_config_id(self, block_subset: list[str], workflow_params: dict[str, Any]) -> str:
-        """组合 id = block_subset hash + workflow_params hash."""
+    def _make_config_id(
+        self,
+        block_subset: list[str],
+        workflow_params: dict[str, Any],
+        problem_domain: str = "",
+    ) -> str:
+        """组合 id = problem_domain + block_subset hash + workflow_params hash.
+
+        分格存档: 不同 problem_domain 的相同 block/params 组合会得到不同
+        config_id, 从而在信念表里分格存储 — 结构不同的好方案各有独立存档,
+        不会被单一 UCB 的"偏好已验证组合"饥饿.
+        """
         import hashlib
         block_str = ",".join(sorted(block_subset))
         param_str = json.dumps(workflow_params, sort_keys=True, default=str)
         return hashlib.md5(
-            (block_str + "|" + param_str).encode("utf-8"),
+            (problem_domain + "|" + block_str + "|" + param_str).encode("utf-8"),
             usedforsecurity=False,
         ).hexdigest()[:12]
 
@@ -152,10 +164,13 @@ class JointBandit:
         self,
         phase: str,
         full_blocks: list[tuple[str, str]],
+        problem_domain: str = "",
     ) -> list[str]:
         """按 UCB 选 block 子集. 保留核心 block + 按信念选其他.
 
-        返回选中的 block 名列表. toggle off 时返回全部 block 名.
+        problem_domain: 可选分格参数. 传入时只在对应 domain 桶内比较 UCB,
+        避免跨 domain 的全局 UCB 把某个格子里未充分探索的激进方案饿死.
+        不传则保持原行为 ("" 桶). toggle off 时返回全部 block 名.
         """
         if not _harness_enabled("harness_joint_optimizer"):
             return [name for name, _ in full_blocks]
@@ -166,15 +181,19 @@ class JointBandit:
             return core
         with self._lock:
             n_total = sum(
-                b.total for (p, _), b in self._beliefs.items() if p == phase
+                b.total
+                for (p, _), b in self._beliefs.items()
+                if p == phase and b.problem_domain == problem_domain
             )
-            # 每个非核心 block: 看 "包含此 block" 的组合 UCB
+            # 每个非核心 block: 看 "包含此 block" 的组合 UCB (限定在 domain 桶内)
             scored: list[tuple[str, float]] = []
             for name in non_core:
                 # 找包含此 block 的最佳 config
                 best_ucb = 0.0
                 for (p, _cid), b in self._beliefs.items():
                     if p != phase:
+                        continue
+                    if b.problem_domain != problem_domain:
                         continue
                     # 简化: 用 config_id 的信念代理 block 信念
                     u = b.ucb(n_total)
@@ -227,14 +246,20 @@ class JointBandit:
         block_subset: list[str],
         workflow_params: dict[str, Any],
         success: bool,
+        problem_domain: str = "",
     ) -> None:
-        """记录 (block_subset, workflow_params) 组合的 outcome."""
-        config_id = self._make_config_id(block_subset, workflow_params)
+        """记录 (problem_domain, block_subset, workflow_params) 组合的 outcome.
+
+        problem_domain: 分格存档维度. 不传则用 "" (向后兼容现有调用).
+        """
+        config_id = self._make_config_id(block_subset, workflow_params, problem_domain)
         key = (phase, config_id)
         with self._lock:
             b = self._beliefs.get(key)
             if b is None:
-                b = JointBelief(config_id=config_id, phase=phase)
+                b = JointBelief(
+                    config_id=config_id, phase=phase, problem_domain=problem_domain
+                )
                 self._beliefs[key] = b
             b.update(success)
         self._save(b)
