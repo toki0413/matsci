@@ -49,7 +49,7 @@ def _install_auditor(monkeypatch, has_errors=False, findings=None):
 
     class _Auditor:
         def audit(self, *a, **k):
-            return _Audit(has_errors, [f for f in (findings or [])])
+            return _Audit(has_errors, list(findings or []))
 
     auditor_mod.PhysicsAuditor = _Auditor
     monkeypatch.setitem(sys.modules, "huginn.execution.physics_auditor", auditor_mod)

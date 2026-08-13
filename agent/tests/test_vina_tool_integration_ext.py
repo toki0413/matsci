@@ -464,7 +464,6 @@ def test_prepare_meeko_missing_fallback_obabel(tmp_path, monkeypatch):
 
 
 def test_prepare_both_missing(tmp_path, monkeypatch):
-    from huginn.core_types import ToolResult
 
     def _m(self, i, o, w):
         raise FileNotFoundError("no meeko")

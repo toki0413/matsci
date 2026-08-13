@@ -127,8 +127,9 @@ async def _init_mcp_tools():
             try:
                 from huginn.config import get_config
                 mp_key = get_config().mp_api_key
-            except Exception:
-                pass
+            except Exception as e:
+                # best-effort: 读不到 MP_API_KEY 就不注入, 但不静默吞掉——留日志可观测.
+                logger.debug(f"[MCP] could not read MP_API_KEY for mat-db: {e}", exc_info=True)
             if mp_key:
                 mat_db_env["MP_API_KEY"] = mp_key
             servers.append(

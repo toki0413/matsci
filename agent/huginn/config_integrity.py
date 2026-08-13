@@ -15,8 +15,9 @@ from __future__ import annotations
 import contextlib
 import logging
 import pathlib
+from collections.abc import Callable
 from dataclasses import MISSING, fields
-from typing import Any, Callable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 

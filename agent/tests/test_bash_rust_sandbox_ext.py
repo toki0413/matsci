@@ -16,7 +16,6 @@ from huginn.core_types import ToolContext
 from huginn.security import SandboxError
 from huginn.tools import bash_tool as bt
 
-
 # ── 注入 fake huginn_ext.sandbox ─────────────────────────────────────────
 
 def _install_rust_sandbox(monkeypatch, run_sandboxed=None, raise_import=False):

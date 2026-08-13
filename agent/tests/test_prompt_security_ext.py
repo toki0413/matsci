@@ -10,7 +10,6 @@ from huginn.security.prompt_security import (
     wrap_rag_chunks,
 )
 
-
 # ── untrusted_context_message ────────────────────────────────────────────
 
 def test_empty_content_returns_as_is():
