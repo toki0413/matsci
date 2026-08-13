@@ -1,6 +1,7 @@
 """Memory and knowledge management package."""
 
 from huginn.memory.episodic_shard import EpisodicShardReader, EpisodicShardWriter
+from huginn.memory.factory import build_memory_manager
 from huginn.memory.index import build_memory_index, get_topic_file_path
 from huginn.memory.longterm import (
     LongTermMemory,
@@ -24,6 +25,7 @@ __all__ = [
     "MemoryEntry",
     "MemoryManager",
     "MemoryConfig",
+    "build_memory_manager",
     "MemoryType",
     "TYPE_PROMPTS",
     "truncate_entrypoint",
