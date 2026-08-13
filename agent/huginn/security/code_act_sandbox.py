@@ -112,9 +112,13 @@ def safe_import(
         if os.environ.get("HUGINN_USE_ATOMWORLD", "0") != "1":
             raise ImportError("import of 'atomworld' requires HUGINN_USE_ATOMWORLD=1")
         return builtins.__import__(name, globals, locals, fromlist, level)
-    # Structure Cognitive Map — 同理, agent 应走 namespace 函数而非直 import
-    if name in ("cognitive_map", "structure_cognitive_map") and os.environ.get("HUGINN_USE_COGNITIVE_MAP", "0") != "1":
-        raise ImportError("import of 'cognitive_map' requires HUGINN_USE_COGNITIVE_MAP=1")
+    # Structure Cognitive Map — 同理, agent 应走 namespace 函数而非直 import.
+    # flag-on 时直接返回 (跳过白名单, 因为 cognitive_map 不在 _ALLOWED_IMPORTS),
+    # 与 atomworld 分支保持同一结构.
+    if name in ("cognitive_map", "structure_cognitive_map"):
+        if os.environ.get("HUGINN_USE_COGNITIVE_MAP", "0") != "1":
+            raise ImportError("import of 'cognitive_map' requires HUGINN_USE_COGNITIVE_MAP=1")
+        return builtins.__import__(name, globals, locals, fromlist, level)
     root = name.split(".")[0]
     if root not in _ALLOWED_IMPORTS:
         raise ImportError(
