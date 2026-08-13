@@ -34,6 +34,7 @@ class FeatureFlags:
         "clarification": True,         # 主动提问
         "personalization": True,       # 学习用户通信风格
         "loop_detector": True,         # 循环检测
+        "external_thinking": False,    # deep_think 外部草稿纸 (默认关, 显式开启才注入系统提示)
         "system_health_monitor": True,  # 系统资源监控 (CPU/内存/磁盘)
         "system_health_auto_fix": False,  # 监控发现异常后自动熔断 (默认关, 只报告)
         # v23 Round 9: 两个 router 之前是 raw env var (HUGINN_CONTEXT_ROUTER /
@@ -67,6 +68,7 @@ class FeatureFlags:
         "clarification": "agent 主动向用户提问",
         "personalization": "学习用户通信风格",
         "loop_detector": "对话循环检测",
+        "external_thinking": "外部草稿纸: 注入 deep_think 指令, 让模型动手前先写分析 (默认关)",
         "system_health_monitor": "系统资源监控 (CPU/内存/磁盘)",
         "system_health_auto_fix": "监控异常后自动熔断工具 (默认关)",
         "context_router": "P3 信息路径多样性稀疏化 (context_builder, 默认关)",
