@@ -45,9 +45,9 @@ class WSMessage(BaseModel):
     max_tokens: Any | None = None
     persona: str | None = Field(None, max_length=64)
 
-    # Plan / approval / clarification flows. ws.py still reads these off the
-    # raw dict via data.get(...), so declaring them here is additive — it
-    # documents and validates the fields without changing existing behavior.
+    # Plan / approval / clarification / suggest flows. ws.py reads these off
+    # the validated WSMessage instead of the raw dict, so every field a
+    # handler consumes must be declared here to stay in sync.
     plan_id: str | None = None
     confirmed: bool | None = None
     edited_plan: Any | None = None
@@ -56,6 +56,9 @@ class WSMessage(BaseModel):
     request_id: str | None = None
     approved: bool | None = None
     enabled: bool | None = None
+    action: str | None = None
+    edited_code: str | None = None
+    config: dict[str, Any] | None = Field(None, description="explore_start config")
 
 
 class CreateThreadRequest(BaseModel):

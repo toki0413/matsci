@@ -9,6 +9,7 @@ import asyncio
 import contextlib
 import json
 import logging
+from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
@@ -16,9 +17,15 @@ from pydantic import ValidationError
 from huginn.config import get_config
 from huginn.routes.schemas import WSMessage
 from huginn.routes.ws_helpers import (
+    WSCtx,
     _handle_approval_response,
+    _handle_clarification_response,
     _handle_explore_start,
+    _handle_ping,
     _handle_plan_confirm,
+    _handle_set_auto_approve,
+    _handle_set_suggest_mode,
+    _handle_suggest_response,
     _handle_user_input,
     _make_ws_approval_callback,
     _pending_plans,
@@ -53,6 +60,22 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["ws"])
+
+# Message-type → handler registry. Every handler shares the signature
+# ``(websocket, msg: WSMessage, ctx: WSCtx)``, so adding a new message type
+# is a one-line mapping instead of a new elif branch. Handlers read their
+# arguments off the validated ``WSMessage`` (msg), never the raw dict.
+_MESSAGE_HANDLERS: dict[str, Any] = {
+    "user_input": _handle_user_input,
+    "explore_start": _handle_explore_start,
+    "approval_response": _handle_approval_response,
+    "plan_confirm": _handle_plan_confirm,
+    "clarification_response": _handle_clarification_response,
+    "set_auto_approve": _handle_set_auto_approve,
+    "set_suggest_mode": _handle_set_suggest_mode,
+    "suggest_response": _handle_suggest_response,
+    "ping": _handle_ping,
+}
 
 _WS_HEARTBEAT_INTERVAL = 30.0
 
@@ -176,99 +199,31 @@ async def agent_websocket(websocket: WebSocket):
                 continue
 
             msg_type = msg.type
-            content = msg.content
-            thread_id = msg.thread_id
+
+            # Look up handler from the registry (one-line per message type)
+            # instead of a long if/elif chain. Every handler receives the
+            # same (websocket, msg, ctx) signature.
+            handler = _MESSAGE_HANDLERS.get(msg_type)
+            if handler is None:
+                await _send_error(
+                    websocket, f"Unknown message type: {msg_type}"
+                )
+                continue
+
+            ctx = WSCtx(
+                ws_approval=_ws_approval,
+                session_auto_approve=session_auto_approve,
+                last_user_context=_last_user_context,
+                pending_approvals=_pending_approvals,
+                pending_approval_contexts=_pending_approval_contexts,
+                pending_plan_contexts=_pending_plan_contexts,
+                user_id=identity,
+            )
 
             # Wrap handlers so errors always reach the client instead of
             # silently killing the connection and hanging on receive_json.
             try:
-                if msg_type == "user_input":
-                    await _handle_user_input(
-                        websocket,
-                        msg,
-                        data,
-                        ws_approval=_ws_approval,
-                        session_auto_approve=session_auto_approve,
-                        last_user_context=_last_user_context,
-                        pending_plan_contexts=_pending_plan_contexts,
-                        user_id=identity,
-                    )
-
-                elif msg_type == "explore_start":
-                    await _handle_explore_start(websocket, content, data)
-
-                elif msg_type == "approval_response":
-                    await _handle_approval_response(
-                        websocket,
-                        data,
-                        pending_approvals=_pending_approvals,
-                        pending_approval_contexts=_pending_approval_contexts,
-                        session_auto_approve=session_auto_approve,
-                    )
-
-                elif msg_type == "plan_confirm":
-                    await _handle_plan_confirm(
-                        websocket,
-                        data,
-                        pending_plan_contexts=_pending_plan_contexts,
-                        last_user_context=_last_user_context,
-                    )
-
-                elif msg_type == "clarification_response":
-                    question_id = data.get("question_id")
-                    answer = data.get("answer", "")
-                    thread_id = data.get("thread_id", "default")
-                    from huginn.interaction.clarification import (
-                        get_clarification_manager,
-                    )
-                    mgr = get_clarification_manager()
-                    if question_id:
-                        mgr.resolve(question_id, answer)
-                    else:
-                        mgr.resolve_thread(thread_id, answer)
-
-                elif msg_type == "set_auto_approve":
-                    enabled = bool(data.get("enabled", True))
-                    session_auto_approve["enabled"] = enabled
-                    await websocket.send_json(
-                        {
-                            "type": "auto_approve_set",
-                            "enabled": enabled,
-                            "scope": "session",
-                        }
-                    )
-
-                elif msg_type == "set_suggest_mode":
-                    # HRI #4: SUGGEST mode toggle — 所有 code_act 代码先展示给用户编辑
-                    enabled = bool(data.get("enabled", True))
-                    tid = data.get("thread_id", msg.thread_id or "default")
-                    from huginn.agent.code_act_loop import (
-                        set_suggest_mode as _set_suggest,
-                    )
-                    _set_suggest(f"code_act:{tid}", enabled)
-                    await websocket.send_json(
-                        {
-                            "type": "suggest_mode_set",
-                            "enabled": enabled,
-                            "scope": "session",
-                        }
-                    )
-
-                elif msg_type == "suggest_response":
-                    # HRI #4: 用户对 suggest_code 的响应 (approve/edit/deny + 可选 edited_code)
-                    tid = data.get("thread_id", msg.thread_id or "default")
-                    action = str(data.get("action", "approve"))
-                    edited_code = str(data.get("edited_code", ""))
-                    from huginn.agent.code_act_loop import resume_suggest
-                    ok = resume_suggest(f"code_act:{tid}", action, edited_code)
-                    if not ok:
-                        await _send_error(
-                            websocket,
-                            "No active SUGGEST approval for this thread.",
-                        )
-
-                elif msg_type == "ping":
-                    await websocket.send_json({"type": "pong"})
+                await handler(websocket, msg, ctx)
 
             except Exception as dispatch_exc:
                 logger.error("dispatch error: %s", dispatch_exc, exc_info=True)

@@ -13,7 +13,9 @@ import json
 import logging
 import re
 import uuid
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from fastapi import WebSocket
 from langchain_core.messages import AIMessage, ToolMessage
@@ -34,6 +36,26 @@ _pending_tasks: set[asyncio.Task] = set()
 
 # Pending plan confirmations: plan_id -> Future (used by send_plan_and_wait).
 _pending_plans: dict[str, asyncio.Future] = {}
+
+
+@dataclass
+class WSCtx:
+    """Per-connection state bundled so every message handler shares one signature.
+
+    All handlers receive ``(websocket, msg, ctx)``. Fields that a handler
+    does not need are simply ignored — this removes the schema-vs-dict dual
+    channel that previously let handlers read ``data.get(...)`` off the raw
+    message and drift out of sync with ``WSMessage``.
+    """
+
+    ws_approval: Any = None
+    session_auto_approve: dict = field(default_factory=dict)
+    last_user_context: dict = field(default_factory=dict)
+    pending_approvals: dict = field(default_factory=dict)
+    pending_approval_contexts: dict = field(default_factory=dict)
+    pending_plan_contexts: dict = field(default_factory=dict)
+    user_id: str | None = None
+    _extra: dict[str, Any] = field(default_factory=dict)
 
 
 # ── Small utilities ──────────────────────────────────────────────
@@ -684,13 +706,7 @@ async def _stream_agent_response(
 async def _handle_user_input(
     websocket: WebSocket,
     msg: WSMessage,
-    data: dict,
-    *,
-    ws_approval,
-    session_auto_approve: dict,
-    last_user_context: dict,
-    pending_plan_contexts: dict,
-    user_id: str | None = None,
+    ctx: WSCtx,
 ) -> None:
     """Handle a user_input message: create agent, route, stream response.
 
@@ -704,6 +720,11 @@ async def _handle_user_input(
         get_context,
         get_or_create_thread,
     )
+
+    ws_approval = ctx.ws_approval
+    last_user_context = ctx.last_user_context
+    pending_plan_contexts = ctx.pending_plan_contexts
+    user_id = ctx.user_id
 
     try:
         cfg_chat = get_config()
@@ -1208,12 +1229,15 @@ async def _handle_user_input(
 
 async def _handle_explore_start(
     websocket: WebSocket,
-    content: str,
-    data: dict,
+    msg: WSMessage,
+    ctx: WSCtx,
 ) -> None:
     """Handle explore_start: run the exploration orchestrator."""
     # Late import so monkeypatch on huginn.routes.ws takes effect
     from huginn.routes.ws import get_context
+
+    content = msg.content
+    config = msg.config or {}
 
     await websocket.send_json(
         {
@@ -1231,7 +1255,7 @@ async def _handle_explore_start(
             max_parallel=cfg.max_parallel_branches,
         )
 
-        config = data.get("config", {})
+        config = msg.config or {}
         initial_branches = config.get(
             "initial_branches",
             [
@@ -1292,49 +1316,49 @@ async def _handle_explore_start(
 
 async def _handle_approval_response(
     websocket: WebSocket,
-    data: dict,
-    *,
-    pending_approvals: dict,
-    pending_approval_contexts: dict,
-    session_auto_approve: dict,
+    msg: WSMessage,
+    ctx: WSCtx,
 ) -> None:
     """Handle approval_response: resolve future, re-queue if approved."""
-    request_id = data.get("request_id")
-    approved = data.get("approved", False)
+    request_id = msg.request_id
+    approved = msg.approved if msg.approved is not None else False
+    pending_approvals = ctx.pending_approvals
     future = pending_approvals.pop(request_id, None)
     if future is not None and not future.done():
         future.set_result(approved)
 
-    ctx = pending_approval_contexts.pop(request_id, None)
-    if approved and ctx:
+    ctx_ap = ctx.pending_approval_contexts.pop(request_id, None)
+    if approved and ctx_ap:
         # ponytail: re-runs the full turn, not just the denied tool —
         # acceptable since the user explicitly approved.
-        session_auto_approve["enabled"] = True
+        if ctx.session_auto_approve is not None:
+            ctx.session_auto_approve["enabled"] = True
         await _stream_agent_response(
             websocket,
-            ctx["agent"],
-            ctx["content"],
-            ctx["thread_id"],
-            ctx["cfg_chat"],
+            ctx_ap["agent"],
+            ctx_ap["content"],
+            ctx_ap["thread_id"],
+            ctx_ap["cfg_chat"],
             auto_checkpoint=True,
             handle_clarification=True,
             error_log="approval re-queue error",
             error_label="Approval re-queue failed",
         )
-        session_auto_approve["enabled"] = False
+        if ctx.session_auto_approve is not None:
+            ctx.session_auto_approve["enabled"] = False
 
 
 async def _handle_plan_confirm(
     websocket: WebSocket,
-    data: dict,
-    *,
-    pending_plan_contexts: dict,
-    last_user_context: dict,
+    msg: WSMessage,
+    ctx: WSCtx,
 ) -> None:
     """Handle plan_confirm: execute or cancel a previously generated plan."""
-    plan_id = data.get("plan_id")
-    confirmed = data.get("confirmed", False)
-    edited_plan = data.get("edited_plan")
+    plan_id = msg.plan_id
+    confirmed = msg.confirmed if msg.confirmed is not None else False
+    edited_plan = msg.edited_plan
+    pending_plan_contexts = ctx.pending_plan_contexts
+    last_user_context = ctx.last_user_context
 
     ctx_plan = pending_plan_contexts.pop(plan_id, None)
     if ctx_plan is None:
@@ -1426,3 +1450,81 @@ async def _handle_plan_confirm(
             )
         except Exception:
             logger.debug("plan.exec_complete emit failed", exc_info=True)
+
+
+async def _handle_clarification_response(
+    websocket: WebSocket,
+    msg: WSMessage,
+    ctx: WSCtx,
+) -> None:
+    """Resolve a pending clarification question (by id or thread)."""
+    from huginn.interaction.clarification import get_clarification_manager
+
+    mgr = get_clarification_manager()
+    if msg.question_id:
+        mgr.resolve(msg.question_id, msg.answer)
+    else:
+        mgr.resolve_thread(msg.thread_id, msg.answer)
+
+
+async def _handle_set_auto_approve(
+    websocket: WebSocket,
+    msg: WSMessage,
+    ctx: WSCtx,
+) -> None:
+    """Toggle per-session auto-approve for tool permission checks."""
+    enabled = bool(msg.enabled if msg.enabled is not None else True)
+    if ctx.session_auto_approve is not None:
+        ctx.session_auto_approve["enabled"] = enabled
+    await websocket.send_json(
+        {
+            "type": "auto_approve_set",
+            "enabled": enabled,
+            "scope": "session",
+        }
+    )
+
+
+async def _handle_set_suggest_mode(
+    websocket: WebSocket,
+    msg: WSMessage,
+    ctx: WSCtx,
+) -> None:
+    """HRI #4: SUGGEST mode toggle — 所有 code_act 代码先展示给用户编辑."""
+    enabled = bool(msg.enabled if msg.enabled is not None else True)
+    tid = msg.thread_id or "default"
+    from huginn.agent.code_act_loop import set_suggest_mode as _set_suggest
+
+    _set_suggest(f"code_act:{tid}", enabled)
+    await websocket.send_json(
+        {
+            "type": "suggest_mode_set",
+            "enabled": enabled,
+            "scope": "session",
+        }
+    )
+
+
+async def _handle_suggest_response(
+    websocket: WebSocket,
+    msg: WSMessage,
+    ctx: WSCtx,
+) -> None:
+    """HRI #4: 用户对 suggest_code 的响应 (approve/edit/deny + 可选 edited_code)."""
+    tid = msg.thread_id or "default"
+    action = str(msg.action or "approve")
+    edited_code = str(msg.edited_code or "")
+    from huginn.agent.code_act_loop import resume_suggest
+
+    ok = resume_suggest(f"code_act:{tid}", action, edited_code)
+    if not ok:
+        await _send_error(websocket, "No active SUGGEST approval for this thread.")
+
+
+async def _handle_ping(
+    websocket: WebSocket,
+    msg: WSMessage,
+    ctx: WSCtx,
+) -> None:
+    """Reply to a client ping."""
+    await websocket.send_json({"type": "pong"})
