@@ -241,8 +241,50 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install pip-audit
-          # Blocking gate: fail CI on known vulnerabilities.
+          # Blocking gate 1: 扫当前环境已安装的包 (agent[dev] 主依赖).
           pip-audit --desc
+          # Blocking gate 2: 基于 requirements.lock 严格审计, 覆盖可选依赖组
+          # (chromadb/paramiko/pymatgen/fairchem 等) 的传递依赖. 这些不在
+          # agent[dev] 里, --desc 扫不到, 是 Dependabot 告警的主要来源.
+          # 用 uv 全量解析 (含 all 可选组) 到临时 lock, 再逐一审计.
+          # 注意: ml-mace 与 ml-fairchem 因 e3nn 版本互斥, 分开解析审计.
+          pip install uv
+          cd agent
+          uv pip compile pyproject.toml --extra all --extra rag --extra db \
+            --python-version 3.12 -o /tmp/gate-all.lock
+          uv pip compile pyproject.toml --extra all --extra ml-fairchem \
+            --python-version 3.12 -o /tmp/gate-fairchem.lock
+          uv pip compile pyproject.toml --extra all --extra ml-mace \
+            --python-version 3.12 -o /tmp/gate-mace.lock
+          # 已知"无 fix 可用"的漏洞放行 (详见 dependabot.yml ignore 注释):
+          #   - chromadb  PYSEC-2026-311 / GHSA-f4j7-r4q5-qw2c: 预认证代码注入,
+          #     仅影响 HTTP API + trust_remote_code=true; huginn 全程嵌入式
+          #     PersistentClient, 不受影响. 上游无 fix 版本.
+          #   - setuptools PYSEC-2026-3447 / GHSA-h35f-9h28-mq5c: MANIFEST.in
+          #     NFC/NFD 绕过, 仅打包 sdist 时触发; 仅 fairchem 可选组经
+          #     fairchem-core 硬约束 setuptools<81.0.0 被锁死在 80.10.2, 无法升级.
+          #   - torch PYSEC-2025-193/203/204/206, PYSEC-2026-139/2286:
+          #     仅 fairchem 可选组经 fairchem-core 硬约束 torch~=2.8.0 引入;
+          #     其他组 (mace/all) 用无漏洞的 torch 2.13.0. 上游锁死无法升级.
+          # 其余任何漏洞都会让 CI 变红, 强制升级修复.
+          # 注意: 不能把三个组的钉版行合并审计 —— 不同组可能锁定同一包的不同
+          # 版本 (如 fsspec), pip-audit 内部用 pip 解析会报 ResolutionImpossible.
+          # 因此对每个组单独 --ignore-vuln 审计.
+          for lock in /tmp/gate-all.lock /tmp/gate-fairchem.lock /tmp/gate-mace.lock; do
+            pip-audit -r "$lock" --vulnerability-service osv \
+              --ignore-vuln PYSEC-2026-311 --ignore-vuln GHSA-f4j7-r4q5-qw2c \
+              --ignore-vuln PYSEC-2026-3447 --ignore-vuln GHSA-h35f-9h28-mq5c \
+              --ignore-vuln PYSEC-2025-193 --ignore-vuln PYSEC-2025-194 \
+              --ignore-vuln PYSEC-2025-195 --ignore-vuln PYSEC-2025-203 \
+              --ignore-vuln PYSEC-2025-204 --ignore-vuln PYSEC-2025-206 \
+              --ignore-vuln PYSEC-2026-139 --ignore-vuln PYSEC-2026-2286 \
+              || { echo "::error::optional-dependency vulnerability(s) in $lock. 可修复漏洞必须升级约束版本; 新增无 fix 漏洞需先在 dependabot.yml 显式 ignore 并记录理由"; exit 1; }
+          done
+
+      - name: npm dependency vulnerability scan
+        run: |
+          cd desktop
+          npm audit --audit-level=high || { echo "::error::npm dependency vulnerability(s) found. 运行 npm audit fix 修复, 或升级受影响包"; exit 1; }
 
       - name: Install test dependencies
         run: |
@@ -463,3 +505,27 @@ jobs:
       - name: Cargo test
         working-directory: desktop/src-tauri
         run: cargo test --workspace
+
+      - name: Cargo dependency vulnerability scan
+        # Blocking gate: 用临时生成的 Cargo.lock 审计 workspace 全部 cargo 依赖.
+        # Cargo.lock 被 gitignore (应用项目, 依赖图谱不提交), 但依赖漏洞仍需门禁.
+        # RustSec 数据库扫到漏洞即红, 强制升级或记录豁免.
+        run: |
+          # $GITHUB_WORKSPACE 才是 runner 上的仓库根 (本地沙箱是 /workspace,
+          # 但不能硬编码, 否则到 GitHub runner 上会 cd 到不存在的路径).
+          cd "$GITHUB_WORKSPACE"
+          cargo generate-lockfile
+          # 用 cargo install 安装 cargo-audit (RustSec 不发布预编译二进制, 只有源码).
+          # 安装失败必须红 (|| exit 1), 否则 audit 不存在时下面会静默放行, 门禁失效.
+          cargo install cargo-audit --locked --quiet 2>&1 | tail -3 || {
+            echo "::error::cargo-audit 安装失败, 无法执行 Rust 依赖漏洞审计"
+            exit 1
+          }
+          cargo audit --json > /tmp/cargo_audit.json || {
+            echo "::error::cargo audit 执行失败 (RustSec 网络或 advisory 解析错误)"
+            exit 1
+          }
+          python3 -c 'import json; d=json.load(open("/tmp/cargo_audit.json")); lst=d.get("vulnerabilities",{}).get("list",[]); n=len(lst); \
+            [print(f"::error::cargo audit: {v[\"advisory\"][\"id\"]} {v[\"advisory\"][\"title\"]}") for v in lst]; \
+            raise SystemExit(1) if n>0 else None' || exit 1
+          echo "cargo audit: no known vulnerabilities"
