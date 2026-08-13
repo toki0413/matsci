@@ -30,6 +30,26 @@ from huginn.events.event_types import (
     TOOL_ERROR,
     TOOL_RESULT,
 )
+from huginn.events.projection import (
+    MessagePathProjection,
+    ProjectionDefinition,
+    ProjectionEngine,
+    RuntimeStateProjection,
+    UiBlock,
+    UiProjection,
+)
+
+# T-BCSE-01/02/04: session event-sourcing core (append-only log + projections).
+# See huginn/events/session_log.py and huginn/events/projection.py.
+from huginn.events.session_log import (
+    EVENT_BRANCH_SUMMARY,
+    EVENT_COMPACTION,
+    EVENT_CUSTOM,
+    EVENT_MESSAGE,
+    EVENT_RESET_BOUNDARY,
+    SessionEvent,
+    SessionEventLog,
+)
 from huginn.events.transcript import TranscriptStore
 
 __all__ = [
@@ -55,4 +75,18 @@ __all__ = [
     "SESSION_START",
     "SESSION_END",
     "STEP_RETRY",
+    # Session event-sourcing core (T-BCSE-01/02/04)
+    "SessionEvent",
+    "SessionEventLog",
+    "EVENT_MESSAGE",
+    "EVENT_COMPACTION",
+    "EVENT_BRANCH_SUMMARY",
+    "EVENT_RESET_BOUNDARY",
+    "EVENT_CUSTOM",
+    "ProjectionDefinition",
+    "ProjectionEngine",
+    "RuntimeStateProjection",
+    "MessagePathProjection",
+    "UiBlock",
+    "UiProjection",
 ]
