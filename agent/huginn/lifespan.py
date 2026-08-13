@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 import sqlite3
+import sys
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Any
@@ -134,14 +135,17 @@ async def _init_mcp_tools():
                 mat_db_env["MP_API_KEY"] = mp_key
             servers.append(
                 ("mat-db", MCPServerConfig(
-                    name="mat-db", command="python", args=[str(mat_db_path)], env=mat_db_env,
+                    # command 用 sys.executable (服务进程自身解释器): 保证 MCP
+                    # 子进程能 import mcp (与后端同环境)。用 "python" 会解析到
+                    # PATH 里的系统解释器, 常缺 mcp 导致子进程 ModuleNotFoundError。
+                    name="mat-db", command=sys.executable, args=[str(mat_db_path)], env=mat_db_env,
                 ))
             )
 
         math_path = base / "servers" / "math-anything-mcp" / "server.py"
         if math_path.exists():
             servers.append(
-                ("math-anything", MCPServerConfig(name="math-anything", command="python", args=[str(math_path)]))
+                ("math-anything", MCPServerConfig(name="math-anything", command=sys.executable, args=[str(math_path)]))
             )
 
         # 消费仓库根 .mcp.json 里的 mcpServers（标准 MCP 配置，IDE/桌面共用）。
