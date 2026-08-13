@@ -541,13 +541,13 @@ jobs:
           # (旧版把 f-string 里的 \" 和 \ 塞进 -c '...' 会触发
           # SyntaxError: unexpected character after line continuation character).
           python3 - << 'PY' || exit 1
-import json
-d = json.load(open("/tmp/cargo_audit.json"))
-lst = d.get("vulnerabilities", {}).get("list", [])
-n = len(lst)
-for v in lst:
-    print(f"::error::cargo audit: {v['advisory']['id']} {v['advisory']['title']}")
-if n > 0:
-    raise SystemExit(1)
-PY
+          import json
+          d = json.load(open("/tmp/cargo_audit.json"))
+          lst = d.get("vulnerabilities", {}).get("list", [])
+          n = len(lst)
+          for v in lst:
+              print(f"::error::cargo audit: {v['advisory']['id']} {v['advisory']['title']}")
+          if n > 0:
+              raise SystemExit(1)
+          PY
           echo "cargo audit: no known vulnerabilities"
