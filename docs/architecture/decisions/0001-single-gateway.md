@@ -156,3 +156,29 @@ token（如 `wanzh`）都会让 CI 变红。机器相关路径必须改为 env �
 - [x] **Mat-DB 真实 MP 依赖门禁**：`tests/test_arch_matdb_dep.py` 保证 mat-db 真实查询
       路径读 `MP_API_KEY`、pyproject 在可选依赖组 `db` 声明 `mp-api`（真实路径可装），
       并回归保护 bulk_modulus 提取的括号优先级。无 key 时 server 仍回退 mock。
+- [x] **MP API key 前端配置链路**：设置面板新增 "Materials Project API Key" 输入，
+      保存走 `/config` → `HuginnConfig.mp_api_key` → lifespan spawn mat-db MCP 时注入
+      `MP_API_KEY` env；改 key 后 `/config` 调 `mcp_manager.set_server_env` + `reconnect`
+      立即生效，无需重启后端。`tests/test_arch_mp_key_flow.py` 固话 env 映射、from_env、
+      set_server_env 三段链路。
+- [x] **MinerU / 企微同样前端化**：设置面板新增 "MinerU API Keys"（逗号分隔多 key 轮询）
+      与 "WeCom 机器人 Token"，保存走 `/config` → env（`MINERU_API_KEYS` /
+      `HUGINN_WECOM_TOKEN`）。MinerU 由 `HuginnConfig.from_env()` 读回用于文献解析工具；
+      WeCom 由 bot 路由调用时读 env。二者均为调用时读取，无需重连即生效。
+
+### 凭据分类与归口（2026-08-12）
+
+凭据按"谁能配置"分两类，由 `tests/test_arch_credential_gateway.py` 在 fast-fail 强制：
+
+- **用户服务凭据（允许经 `/config` 前端配置）**：LLM provider `api_key`、`mp_api_key`、
+  `mineru_api_keys`、`wecom_token`、`encryption_password`。它们必须显式登记在
+  `_apply_legacy_params_to_env` 映射里，且 `to_dict(mask_key=True)` 必须脱敏。
+- **operator 级密钥（只许 env/密钥管理器配，严禁经 `/config` 前端写入）**：
+  `HUGINN_ADMIN_API_KEY`、`HUGINN_JWT_SECRET`、`HUGINN_AUDIT_SIGNING_KEY`、
+  `HUGINN_ENCRYPTION_KEY`（raw Fernet 主密钥，区别于 `encryption_password`）、
+  `HUGINN_VAULT_*`、`AWS_*`。门禁断言这些 env 名不出现在 `/config` 映射的 value 里。
+
+规则：**新增用户服务凭据要么走 `/v1/credentials` 加密凭据库，要么显式加入 `/config`
+网关映射并同步脱敏**；**新增 operator 密钥一律不进前端**。
+注意：desktop 场景下 LLM `api_key` 与后端 `HUGINN_API_KEY` 共用同一 env（见
+`routes/auth.py`），属有意设计——桌面同时用该 key 兼作后端鉴权，不在此列。
