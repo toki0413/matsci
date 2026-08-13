@@ -537,7 +537,17 @@ jobs:
             echo "::error::cargo audit 执行失败 (RustSec 网络或 advisory 解析错误)"
             exit 1
           }
-          python3 -c 'import json; d=json.load(open("/tmp/cargo_audit.json")); lst=d.get("vulnerabilities",{}).get("list",[]); n=len(lst); \
-            [print(f"::error::cargo audit: {v[\"advisory\"][\"id\"]} {v[\"advisory\"][\"title\"]}") for v in lst]; \
-            raise SystemExit(1) if n>0 else None' || exit 1
+          # 用 heredoc 传给 python3 -c, 避免单引号 + 反斜杠行继续符的转义地狱
+          # (旧版把 f-string 里的 \" 和 \ 塞进 -c '...' 会触发
+          # SyntaxError: unexpected character after line continuation character).
+          python3 - << 'PY' || exit 1
+import json
+d = json.load(open("/tmp/cargo_audit.json"))
+lst = d.get("vulnerabilities", {}).get("list", [])
+n = len(lst)
+for v in lst:
+    print(f"::error::cargo audit: {v['advisory']['id']} {v['advisory']['title']}")
+if n > 0:
+    raise SystemExit(1)
+PY
           echo "cargo audit: no known vulnerabilities"
