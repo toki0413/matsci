@@ -174,11 +174,28 @@ async def test_call_read_exception(monkeypatch, tmp_path):
     from pathlib import Path
 
     p = _write(tmp_path / "f.txt", "x\n")
+    real_exists = Path.exists
+    real_is_file = Path.is_file
+    real_stat = Path.stat
 
-    def boom(self):
-        raise OSError("io error")
+    # 只对目标文件拦截 stat, 其余路径（含 pytest 内部 pathlib 调用）走真实实现,
+    # 避免全局 monkeypatch Path.stat 破坏 pytest 自身（Python 3.12+ 的
+    # exists()/is_file() 会带 follow_symlinks 关键字调 stat）.
+    def fake_exists(self, *args, **kwargs):
+        return True if self == p else real_exists(self, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "stat", boom)
+    def fake_is_file(self, *args, **kwargs):
+        return True if self == p else real_is_file(self, *args, **kwargs)
+
+    def selective_stat(self, *args, **kwargs):
+        if self == p:
+            raise OSError("io error")
+        return real_stat(self, *args, **kwargs)
+
+    # exists/is_file 对目标文件返回 True, 让执行推进到 try 块内的 stat().
+    monkeypatch.setattr(Path, "exists", fake_exists)
+    monkeypatch.setattr(Path, "is_file", fake_is_file)
+    monkeypatch.setattr(Path, "stat", selective_stat)
     res = await _call({"file_path": str(p)})
     assert res.success is False
     assert "Failed to read file" in res.error

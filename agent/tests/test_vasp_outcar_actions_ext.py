@@ -13,7 +13,6 @@ import pytest
 
 from huginn.tools.sim import vasp_tool as vt
 
-
 pytestmark = pytest.mark.anyio
 
 

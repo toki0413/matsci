@@ -35,21 +35,21 @@ from huginn.skills.registry import SkillRegistry
 
 def _make_template(**overrides) -> SkillTemplate:
     """构造一个带完整统计的确定性 SkillTemplate."""
-    base = dict(
-        skill_id="test_skill_1",
-        name="Dft Relax High-Reward Workflow (VASP)",
-        description="auto-extracted dft relax workflow using vasp",
-        trigger_keywords=["dft", "relax", "vasp"],
-        workflow_steps=[
+    base = {
+        "skill_id": "test_skill_1",
+        "name": "Dft Relax High-Reward Workflow (VASP)",
+        "description": "auto-extracted dft relax workflow using vasp",
+        "trigger_keywords": ["dft", "relax", "vasp"],
+        "workflow_steps": [
             {"tool": "vasp_tool", "name": "run_relax"},
             {"tool": "result_parser", "name": "parse"},
         ],
-        required_tools=["vasp_tool", "result_parser"],
-        source_session="sess_test",
-        extraction_confidence=0.85,
-        usage_count=7,
-        success_count=6,
-    )
+        "required_tools": ["vasp_tool", "result_parser"],
+        "source_session": "sess_test",
+        "extraction_confidence": 0.85,
+        "usage_count": 7,
+        "success_count": 6,
+    }
     base.update(overrides)
     return SkillTemplate(**base)
 

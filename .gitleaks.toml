@@ -18,4 +18,9 @@ regexes = [
   # 故 TOML 需写 \\\\n 才能让 regex 匹配字面反斜杠 (而非换行符)；`{body}` 是普通
   # 花括号 (非量词)，无需转义。
   "-----BEGIN OPENSSH PRIVATE KEY-----\\\\n{body}\\\\n-----END OPENSSH PRIVATE KEY----",
+  # 历史残留（文件已删除，仅存在于 git 历史）：_test_patched_model_tools.py 里
+  # 的 DeepSeek 示例假 key，非真实凭据。
+  "REDACTED_DEEPSEEK_KEY_B",
+  # 历史残留（uv.lock 已被 drop）：lock 文件里 64 位 hex 占位 token，非真实凭据。
+  "eaaaef47c2406277181d2086484c317bf7fc433e2d5d03ff94f56b0dcec87471",
 ]

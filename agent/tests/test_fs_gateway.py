@@ -8,25 +8,30 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from fastapi.testclient import TestClient
+import pytest
 
-from huginn import server
 
-client = TestClient(server.app)
+@pytest.fixture(scope="module")
+def client(app_client):
+    """Alias 到 conftest 的 context-managed app_client (TestClient hygiene guard 合规).
+
+    server 由 conftest.shared_huginn_app 提供, 与 server.app 同一实例.
+    """
+    return app_client
 
 
 def _enable_restricted(monkeypatch):
     monkeypatch.delenv("HUGINN_ALLOW_UNRESTRICTED_READ", raising=False)
 
 
-def test_fs_cwd():
+def test_fs_cwd(client):
     r = client.get("/v1/fs/cwd")
     assert r.status_code == 200
     body = r.json()
     assert body["path"] == os.getcwd()
 
 
-def test_fs_list_roundtrip(tmp_path: Path):
+def test_fs_list_roundtrip(client, tmp_path: Path):
     d = tmp_path / "sub"
     d.mkdir()
     (tmp_path / "a.txt").write_text("hello", encoding="utf-8")
@@ -42,7 +47,7 @@ def test_fs_list_roundtrip(tmp_path: Path):
     assert dirs + files == names
 
 
-def test_fs_read_write(tmp_path: Path):
+def test_fs_read_write(client, tmp_path: Path):
     target = tmp_path / "notes.txt"
     r = client.put("/v1/fs/write", json={"path": str(target), "content": "line1\nline2"})
     assert r.status_code == 200
@@ -51,14 +56,14 @@ def test_fs_read_write(tmp_path: Path):
     assert r.json()["content"] == "line1\nline2"
 
 
-def test_fs_write_creates_parent(tmp_path: Path):
+def test_fs_write_creates_parent(client, tmp_path: Path):
     target = tmp_path / "nested" / "deep" / "f.txt"
     r = client.put("/v1/fs/write", json={"path": str(target), "content": "x"})
     assert r.status_code == 200
     assert target.exists()
 
 
-def test_fs_blocks_sensitive_paths(monkeypatch, tmp_path: Path):
+def test_fs_blocks_sensitive_paths(client, monkeypatch, tmp_path: Path):
     """敏感路径（如 .ssh）在受限模式下被 403 拦截。"""
     _enable_restricted(monkeypatch)
     r = client.get("/v1/fs/list", params={"path": str(tmp_path / ".ssh")})
@@ -66,7 +71,7 @@ def test_fs_blocks_sensitive_paths(monkeypatch, tmp_path: Path):
     assert r.status_code == 403
 
 
-def test_fs_blocks_other_profile(monkeypatch, tmp_path: Path):
+def test_fs_blocks_other_profile(client, monkeypatch, tmp_path: Path):
     """其他用户 profile（home 的父目录下、非当前 home）被拦截。"""
     _enable_restricted(monkeypatch)
     home = os.path.expanduser("~")
@@ -75,6 +80,6 @@ def test_fs_blocks_other_profile(monkeypatch, tmp_path: Path):
     assert r.status_code == 403
 
 
-def test_fs_read_missing_returns_400(tmp_path: Path):
+def test_fs_read_missing_returns_400(client, tmp_path: Path):
     r = client.get("/v1/fs/read", params={"path": str(tmp_path / "nope.txt")})
     assert r.status_code == 400

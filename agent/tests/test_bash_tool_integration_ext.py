@@ -12,7 +12,6 @@ Rust sandbox 路径已在 test_bash_rust_sandbox_ext.py 覆盖, 此处不重复.
 
 from __future__ import annotations
 
-import re
 import types
 
 import pytest
@@ -20,7 +19,6 @@ import pytest
 from huginn.core_types import ToolContext
 from huginn.security import SandboxError
 from huginn.tools import bash_tool as bt
-
 
 # ── ToolContext ─────────────────────────────────────────────────────
 

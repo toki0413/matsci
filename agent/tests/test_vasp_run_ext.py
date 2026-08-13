@@ -8,12 +8,10 @@
 from __future__ import annotations
 
 import types
-from pathlib import Path
 
 import pytest
 
 from huginn.tools.sim import vasp_tool as vt
-
 
 pytestmark = pytest.mark.anyio
 

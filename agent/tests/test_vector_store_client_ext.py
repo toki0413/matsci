@@ -11,8 +11,7 @@ import types
 
 import pytest
 
-from huginn.rag.vector_store import VectorStore, EncryptedVectorStore
-
+from huginn.rag.vector_store import EncryptedVectorStore, VectorStore
 
 # ── 注入 fake chromadb ───────────────────────────────────────────────────
 

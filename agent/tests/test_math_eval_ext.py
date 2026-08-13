@@ -7,7 +7,6 @@ import pytest
 from huginn.security.math_eval import safe_math_eval
 from huginn.security.safe_eval import SafeEvalError
 
-
 # ── 算术 / 常量 ──────────────────────────────────────────────────────────
 
 def test_integer_arith():

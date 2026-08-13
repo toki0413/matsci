@@ -15,9 +15,8 @@ from types import SimpleNamespace
 import pytest
 from fastapi import Response
 
-import huginn.routes.health as H
-from huginn.config import HuginnConfig, ModelConfig
-
+import huginn.routes.health as H  # noqa: N812
+from huginn.config import HuginnConfig
 
 # ── helpers ────────────────────────────────────────────────────────
 
