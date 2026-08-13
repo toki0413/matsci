@@ -1879,6 +1879,8 @@ class EngineReflectMixin:
         # H3: 记录 (block_subset, workflow_params) 组合的 outcome 给 JointBandit.
         # block_subset 从 _last_hypothesis_blocks / _last_plan_blocks 拿 block 名;
         # workflow_params 留空 dict (reasoning-only 没 workflow stage 参数).
+        # 分格存档: problem_domain 用本轮 hypothesis 摘要, 不同假设分格存储,
+        # 避免单一 UCB 偏好已验证组合而饿死结构不同的激进方案.
         # ponytail: 不追踪 select 返回值, 从 _last_*_blocks 反推. 升级路径:
         # select_block_subset_for_phase 返回 (blocks, selected_names) 避免 重算.
         try:
@@ -1898,6 +1900,7 @@ class EngineReflectMixin:
                     )
                     JointBandit.get_instance().record_joint_outcome(
                         _h3_phase, _h3_subset, {}, _h3_success,
+                        problem_domain=str(hypothesis)[:64],
                     )
         except Exception:
             logger.debug("H3 joint record failed", exc_info=True)
