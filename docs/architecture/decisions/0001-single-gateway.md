@@ -156,3 +156,8 @@ token（如 `wanzh`）都会让 CI 变红。机器相关路径必须改为 env �
 - [x] **Mat-DB 真实 MP 依赖门禁**：`tests/test_arch_matdb_dep.py` 保证 mat-db 真实查询
       路径读 `MP_API_KEY`、pyproject 在可选依赖组 `db` 声明 `mp-api`（真实路径可装），
       并回归保护 bulk_modulus 提取的括号优先级。无 key 时 server 仍回退 mock。
+- [x] **MP API key 前端配置链路**：设置面板新增 "Materials Project API Key" 输入，
+      保存走 `/config` → `HuginnConfig.mp_api_key` → lifespan spawn mat-db MCP 时注入
+      `MP_API_KEY` env；改 key 后 `/config` 调 `mcp_manager.set_server_env` + `reconnect`
+      立即生效，无需重启后端。`tests/test_arch_mp_key_flow.py` 固话 env 映射、from_env、
+      set_server_env 三段链路。

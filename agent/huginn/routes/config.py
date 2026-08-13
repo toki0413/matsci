@@ -199,6 +199,8 @@ _ALLOWED_LEGACY_KEYS = frozenset({
     "encrypt_config", "encryption_password", "encryption_key_file",
     "privacy_redact_secrets", "privacy_block_on_secrets", "local_only_mode",
     "max_tool_output_tokens", "context_budget_tokens", "pet_accessories",
+    # 材料数据库真实 API key (后端 HuginnConfig.mp_api_key)
+    "mp_api_key",
     # 极限模式 + 分层 memory (前端 Settings "Advanced" tab)
     "extreme_dispatch", "wm_summarize", "wm_token_budget",
     "em_recall_top_k", "pm_c_min", "wm_summarize_every_n",
@@ -228,10 +230,26 @@ async def update_config_endpoint(params: dict[str, Any]) -> dict[str, Any]:
         logger.error("unexpected error", exc_info=True)
         return {"success": False, "error": f"持久化失败: {e}"}
 
+    # 改了 MP_API_KEY 就重连 mat-db MCP, 新 key 立即生效, 无需重启后端。
+    if "mp_api_key" in params:
+        await _reconnect_matdb_with_key(params.get("mp_api_key"))
+
     return {
         "success": True,
         "config": cfg.to_dict(mask_key=True),
     }
+
+
+async def _reconnect_matdb_with_key(mp_api_key: Any) -> None:
+    """把 MP_API_KEY 刷进已注册的 mat-db MCP 并重连 (best-effort)。"""
+    try:
+        from huginn.mcp_client import mcp_manager
+
+        key = (mp_api_key or "").strip()
+        mcp_manager.set_server_env("mat-db", {"MP_API_KEY": key})
+        await mcp_manager.reconnect("mat-db")
+    except Exception as e:
+        logger.warning(f"mat-db MCP 重连失败(不影响配置保存): {e}")
 
 
 def _apply_legacy_params_to_env(params: dict[str, Any]) -> None:
@@ -252,6 +270,8 @@ def _apply_legacy_params_to_env(params: dict[str, Any]) -> None:
         "encrypt_config": "HUGINN_ENCRYPT_CONFIG",
         "encryption_password": "HUGINN_ENCRYPTION_PASSWORD",
         "encryption_key_file": "HUGINN_ENCRYPTION_KEY_FILE",
+        # 材料数据库 (正好 HuginnConfig.from_env 也读 MP_API_KEY)
+        "mp_api_key": "MP_API_KEY",
         # 极限模式 + 分层 memory
         "extreme_dispatch": "HUGINN_EXTREME_DISPATCH",
         "wm_summarize": "HUGINN_WM_SUMMARIZE",
