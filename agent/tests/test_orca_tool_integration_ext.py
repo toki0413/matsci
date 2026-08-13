@@ -17,11 +17,9 @@ from pathlib import Path
 
 import pytest
 
-from huginn.security import SandboxExecutor
 from huginn.tools.sim.orca_tool import (
     OrcaTool,
     OrcaToolInput,
-    _ORCA_KEYWORD_MAP,
 )
 
 pytestmark = pytest.mark.anyio

@@ -11,9 +11,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
-import textwrap
 import types
-from pathlib import Path
 
 import pytest
 
@@ -267,7 +265,6 @@ def test_mesh_info_sandbox_blocked(tmp_path):
 
 
 def test_mesh_info_timeout(tmp_path):
-    from huginn.tools.sim import fenics_tool as ft
 
     f = tmp_path / "mesh.xml"
     f.write_text("x", encoding="utf-8")
@@ -366,7 +363,6 @@ def test_convergence_check_unparsed(monkeypatch, tmp_path):
 
 
 def test_convergence_check_timeout(tmp_path):
-    from huginn.tools.sim import fenics_tool as ft
 
     class _Sb:
         def run(self, cmd, **kw):

@@ -10,16 +10,14 @@ from __future__ import annotations
 
 import sys
 import types
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from huginn.core_types import HandleType, ToolContext, ValidationResult
+from huginn.core_types import ToolContext
 from huginn.tools.structure_tool import (
     StructureTool,
     StructureToolInput,
-    StructureToolOutput,
     _file_mtime,
     _local_to_output,
 )
@@ -347,7 +345,6 @@ def _fake_pymatgen(**overrides):
         sys.modules["pymatgen.symmetry.analyzer"].SpacegroupAnalyzer = BadAnalyzer
     elif overrides.get("analyzer_import_error"):
         # SpacegroupAnalyzer import 失败 → 走 get_space_group_info fallback
-        import builtins
 
         if "pymatgen.symmetry" in sys.modules:
             del sys.modules["pymatgen.symmetry"]
