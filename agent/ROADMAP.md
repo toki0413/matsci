@@ -198,7 +198,7 @@
 
 ### Rust 桥接 (5 模块)
 - `huginn/tools/file_read_tool.py` → **70%** (`tests/test_file_read_tool_ext.py` → 7): Rust `tail_lines` fast path(命中/start 计算/import 缺失回退/Rust 异常回退) + call() 端到端
-- `huginn/rag/vector_store.py` → **21%** (`tests/test_vector_store_rust_ext.py` → 4): Rust `top_k` 桥接 import 缺失/空 embeddings/成功/异常降级
+- `huginn/rag/vector_store.py` → **36%** (`tests/test_vector_store_rust_ext.py` + `tests/test_vector_store_search_ext.py` → 4+7): Rust `top_k` 桥接(import 缺失/空 embeddings/成功/异常降级) + `search()` 集成(原生 query 成功/截断 top_k/HNSW 失败降级 Rust fallback/带 metadata filter/unsets 栈空返回 []/无 embedding 关键字搜索/空集合)
 - `huginn/routes/health.py` → **28%** (`tests/test_health_rust_ext.py` → 2): `/health/rust` 可用枚举 functions / 不可用返回 error
 - `huginn/tools/bash_tool.py` → **48%** (`tests/test_bash_rust_sandbox_ext.py` → 7): Rust `run_sandboxed` 成功/失败(有/无 stderr)/异常回退/import 缺失回退/默认关闭不触发 + command+args 拆分与 allowed_base_dirs 传递
 - `huginn/tools/sim/vasp_tool.py` → **33%** (`tests/test_vasp_rust_ext.py` → 6): Rust `parse_outcar` relax 命中/error/converged=False/异常回退 + scf 不信任 Rust 落 Python + `_HAS_HUGINN_EXT=False` 走 Python
