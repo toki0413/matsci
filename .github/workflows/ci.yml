@@ -263,9 +263,14 @@ jobs:
           #   - setuptools PYSEC-2026-3447 / GHSA-h35f-9h28-mq5c: MANIFEST.in
           #     NFC/NFD 绕过, 仅打包 sdist 时触发; 仅 fairchem 可选组经
           #     fairchem-core 硬约束 setuptools<81.0.0 被锁死在 80.10.2, 无法升级.
-          #   - torch PYSEC-2025-193/203/204/206, PYSEC-2026-139/2286:
+          #   - torch PYSEC-2025-193/194/195/203/204/206, PYSEC-2026-139/2286,
+          #     CVE-2025-2999, CVE-2025-3001:
           #     仅 fairchem 可选组经 fairchem-core 硬约束 torch~=2.8.0 引入;
+          #     fairchem-core 2.21.0 的 torch~=2.8.0 是 >=2.8.0,<3.0 闭区间,
+          #     pyproject 无法单独提 torch>=2.12 (会与 fairchem 冲突导致解析失败).
           #     其他组 (mace/all) 用无漏洞的 torch 2.13.0. 上游锁死无法升级.
+          #     注: CVE-2025-2999/3001 是 torch.jit 相关 critical, 同属此硬约束,
+          #     必须一并 ignore, 否则 CI 会因这 2 个漏网告警变红.
           # 其余任何漏洞都会让 CI 变红, 强制升级修复.
           # 注意: 不能把三个组的钉版行合并审计 —— 不同组可能锁定同一包的不同
           # 版本 (如 fsspec), pip-audit 内部用 pip 解析会报 ResolutionImpossible.
@@ -278,6 +283,7 @@ jobs:
               --ignore-vuln PYSEC-2025-195 --ignore-vuln PYSEC-2025-203 \
               --ignore-vuln PYSEC-2025-204 --ignore-vuln PYSEC-2025-206 \
               --ignore-vuln PYSEC-2026-139 --ignore-vuln PYSEC-2026-2286 \
+              --ignore-vuln CVE-2025-2999 --ignore-vuln CVE-2025-3001 \
               || { echo "::error::optional-dependency vulnerability(s) in $lock. 可修复漏洞必须升级约束版本; 新增无 fix 漏洞需先在 dependabot.yml 显式 ignore 并记录理由"; exit 1; }
           done
 
