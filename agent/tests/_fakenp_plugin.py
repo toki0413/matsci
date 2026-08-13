@@ -94,6 +94,10 @@ def sum(x, axis=None):
     return _bsum(x) if axis is None else None
 
 
+def isscalar(x):
+    return not isinstance(x, (list, ndarray, tuple))
+
+
 def _build():
     mod = types.ModuleType("numpy")
     mod.ndarray = ndarray
@@ -102,6 +106,8 @@ def _build():
     mod.mean = mean
     mod.max = max
     mod.sum = sum
+    mod.isscalar = isscalar
+    mod.bool_ = bool
     return mod
 
 
