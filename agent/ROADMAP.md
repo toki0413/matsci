@@ -255,6 +255,17 @@
   - 门控任何异常都 fail-open 返回 True, 门控崩溃绝不阻断进化。
   - 接入点: `evolve_from_failures` / `evolve_from_successes` / `evolve_prompt_patches` / `evolve_from_rewards` 的规则/技能添加点, 以及 `sync_to_registry` 技能注册点。`tests/test_evolution_engine.py` 通过。
 
+#### 新功能 (2026-08) — externalThinking: deep_think 外部草稿纸
+- **状态**: 已完成
+- **优先级**: P2 (能力增强, 默认关)
+- **动机**: 厂商隐藏原生链式推理后, 模型"愿意"暴露的 `reasoning_content` 并非总有。oh-my-pi 的 `externalThinking` 思路: 提供一个普通工具, 让模型在动手前把分析写进工具参数, 因工具参数经 API 返回, 开发者可直接读取保存。落地为 Huginn 内可一键开启的正式功能。
+- **实现**:
+  - 新增核心工具 `huginn/tools/deep_think_tool.py::DeepThinkTool` (输入 `analysis: str`, `read_only=True`), 注册进 `_CORE_MODULES`。执行时经 `context.memory_manager.add_reasoning()` 写入 `session.reasoning_trace` — 与 [streaming.py](agent/huginn/agent/streaming.py) 的 `reasoning_content` 捕获**共用同一蒸馏/进化通道**。`memory_manager=None` 时 fail-open (成功占位, 不阻塞)。
+  - 新增 `external_thinking` feature flag (默认 False, 三层覆盖: config / `HUGINN_FEATURE_EXTERNAL_THINKING` env / 运行时)。
+  - 开启时在 `huginn/agent/context.py::_effective_system_prompt()` 注入指令: 要求模型在回答/改代码/调其他工具前先 `deep_think` 写分析。关闭时不注入, 默认行为不变。
+  - **补充通道策略** (非 oh-my-pi 的强制替换): 不对接"强制关原生推理" (`forceReasoningOff`), 因 Huginn 对接 provider 多样。`deep_think` 拿显式草稿, `reasoning_content` 拿原生推理, 两路都汇入同一条 `reasoning_trace`。
+- **测试**: `tests/test_deep_think_tool.py` (6 用例) — 注册/read_only、落 trace、fail-open、空分析拒绝、flag 开关注入/不注入。全绿。
+
 ### 方法论
 - 本项目 conftest 接 pytest-cov, `python -m coverage run` 与其冲突会 "No data collected"; 用 coverage Python API (`coverage.Coverage().start()` + `pytest.main()`) 包裹采集。
 - free-threaded/3.14 下 coverage 行追踪会破坏 pytest traceback 格式化 (linecache 被污染) → 复用 3.12 环境测覆盖率; 无完整依赖栈时逐模块跑避免 INTERNALERROR 中断收集。
