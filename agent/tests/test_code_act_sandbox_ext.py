@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import builtins
+import contextlib
 
 import pytest
 
@@ -165,8 +166,6 @@ def test_exec_with_mem_cap_already_tracing(monkeypatch):
 def test_exec_with_mem_cap_compile_error_restores_tracing():
     import tracemalloc
 
-    try:
+    with contextlib.suppress(Exception):
         cas.exec_with_mem_cap("this is not valid $$$", {}, 1 << 30)
-    except Exception:
-        pass
     assert tracemalloc.is_tracing() is False

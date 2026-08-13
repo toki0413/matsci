@@ -1,9 +1,9 @@
-import sys
 import runpy
+import sys
+
 import coverage
 import pytest
 
-import types
 _np = runpy.run_path("tests/_fakenp_plugin.py")
 sys.modules["numpy"] = _np["_build"]()
 

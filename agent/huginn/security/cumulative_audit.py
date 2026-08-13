@@ -65,14 +65,18 @@ class CumulativeAuditor:
         extensions: dict[str, int] = {}
 
         for p in sorted(outputs_dir.rglob("*")):
-            if not p.is_file():
-                continue
-            rel = str(p.relative_to(outputs_dir)).replace("\\", "/")
-            files.append(rel)
             try:
+                # Python 3.12+ 的 Path.is_file() 内部调用 stat() 且不捕获 OSError,
+                # 权限/并发删除导致 stat 失败时会直接抛异常. 这里把 is_file 与
+                # stat 一起包进 try, OSError 时按"文件但大小 0"处理, 避免审计计数
+                # 因竞态丢文件或整次 snapshot 崩掉.
+                if not p.is_file():
+                    continue
                 size = p.stat().st_size
             except OSError:
                 size = 0
+            rel = str(p.relative_to(outputs_dir)).replace("\\", "/")
+            files.append(rel)
             total_bytes += size
             ext = p.suffix.lower()
             extensions[ext] = extensions.get(ext, 0) + 1

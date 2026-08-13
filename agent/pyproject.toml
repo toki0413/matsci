@@ -153,6 +153,10 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["E741", "F841", "N806", "B905"]
+"tests/_fakenp_plugin.py" = ["N801"]  # 模拟 numpy ndarray 类名, 刻意小写
+"tests/test_openmm_tool_integration_ext.py" = ["N802", "B017", "E402"]  # 模拟 OpenMM API 驼峰桩 + 测试 blind except
+"tests/test_vina_tool_integration_ext.py" = ["N802"]  # 模拟 Vina RDKit API 驼峰桩
+"_cov_structure.py" = ["E402"]  # 覆盖率钩子在导入后注册, 需保持
 "huginn/evaluation/core.py" = ["N803", "N806"]
 "huginn/unified/*.py" = ["N806"]
 "huginn/tensor_algebra.py" = ["N806"]

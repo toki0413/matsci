@@ -1,9 +1,9 @@
 """Pytest plugin: inject a minimal fake numpy so coverage works in free-threaded
 CPython (real numpy C-extension cannot load under coverage tracing)."""
+import builtins
 import math
 import sys
 import types
-import builtins
 
 _bsum = builtins.sum
 _bmax = builtins.max

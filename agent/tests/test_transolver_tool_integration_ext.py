@@ -10,9 +10,9 @@ tensor 失败/save 失败/成功/审计异常吞掉)、estimate_cost 全分支.
 
 from __future__ import annotations
 
+import asyncio
 import sys
 import types
-import asyncio
 from pathlib import Path
 
 import pytest

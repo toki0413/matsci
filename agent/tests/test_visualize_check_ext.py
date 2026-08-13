@@ -10,28 +10,31 @@ import pytest
 
 from huginn.tools import visualize_check as vc
 
-
 # ── extract_figure_numeric ───────────────────────────────────────────────
 
 def test_extract_numeric_scalars_and_lists():
-    ex = lambda p: {"peak": 12.5, "intensity": 3, "list": [1.0, 2.5], "ok": True}
+    def ex(p):
+        return {"peak": 12.5, "intensity": 3, "list": [1.0, 2.5], "ok": True}
     out = vc.extract_figure_numeric("x.png", extractor=ex)
     assert out == {"peak": 12.5, "intensity": 3.0, "list": [1.0, 2.5]}
 
 
 def test_extract_skips_non_numeric_and_bool():
-    ex = lambda p: {"peak": 1.0, "label": "text", "flag": True, "mixed": [1, "a"]}
+    def ex(p):
+        return {"peak": 1.0, "label": "text", "flag": True, "mixed": [1, "a"]}
     out = vc.extract_figure_numeric("x.png", extractor=ex)
     assert out == {"peak": 1.0}  # mixed 含字符串 → 整个键丢弃
 
 
 def test_extract_returns_empty_on_error_key():
-    ex = lambda p: {"error": "unparseable"}
+    def ex(p):
+        return {"error": "unparseable"}
     assert vc.extract_figure_numeric("x.png", extractor=ex) == {}
 
 
 def test_extract_returns_empty_on_non_dict():
-    ex = lambda p: ["not", "a", "dict"]
+    def ex(p):
+        return ["not", "a", "dict"]
     assert vc.extract_figure_numeric("x.png", extractor=ex) == {}
 
 

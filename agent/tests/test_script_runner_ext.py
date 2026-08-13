@@ -6,7 +6,7 @@ import asyncio
 
 import pytest
 
-from huginn.security.script_runner import ScriptRunner, ScriptResult, _ALLOWED_IMPORTS
+from huginn.security.script_runner import ScriptResult, ScriptRunner
 
 
 def _run(script, variables=None, timeout=30.0):

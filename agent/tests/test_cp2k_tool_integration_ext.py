@@ -8,9 +8,8 @@ from __future__ import annotations
 
 import sys
 import types
-from pathlib import Path
 
-from huginn.tools.sim.cp2k_tool import Cp2kTool, Cp2kToolInput
+from huginn.tools.sim.cp2k_tool import Cp2kTool
 
 
 def _tool(**kw):
@@ -141,7 +140,7 @@ def _install_auditor(monkeypatch, has_errors=False, findings=None):
 
     class _Auditor:
         def audit(self, *a, **k):
-            return _Audit(has_errors, [f for f in (findings or [])])
+            return _Audit(has_errors, list(findings or []))
 
     auditor_mod.PhysicsAuditor = _Auditor
     monkeypatch.setitem(sys.modules, "huginn.execution.physics_auditor", auditor_mod)
