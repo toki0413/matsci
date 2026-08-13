@@ -182,6 +182,8 @@ export interface AppConfig {
   encrypt_config: boolean;
   encryption_password: string;
   encryption_key_file: string;
+  // 材料数据库真实 API key (后端 HuginnConfig.mp_api_key)
+  mp_api_key: string;
   // 极限模式 + 分层 memory (Settings Advanced tab)
   extreme_dispatch: boolean;
   wm_summarize: "rule" | "ngram" | "llm" | "hybrid";
