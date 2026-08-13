@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import difflib
 import hashlib
+import logging
 from pathlib import Path
 from typing import Any, Literal
 
@@ -17,6 +18,8 @@ from pydantic import BaseModel, Field
 from huginn.core_types import PermissionMode, ToolContext, ToolResult
 from huginn.permissions import PermissionChecker, PermissionConfig
 from huginn.tools.base import HuginnTool
+
+logger = logging.getLogger(__name__)
 
 
 class FileEditToolInput(BaseModel):
@@ -28,6 +31,18 @@ class FileEditToolInput(BaseModel):
     dry_run: bool = Field(
         default=False,
         description="If True, return a diff preview without modifying the file.",
+    )
+    expected_hash: str | None = Field(
+        default=None,
+        description="Expected SHA-256 (first 16 hex chars) of the current file content, "
+        "as returned by a prior read/edit snapshot_hash. If provided and the on-disk "
+        "content differs, the edit is refused (hash_policy='strict') to avoid overwriting "
+        "a concurrent modification.",
+    )
+    hash_policy: Literal["strict", "warn", "off"] = Field(
+        default="strict",
+        description="strict: refuse the edit when expected_hash mismatches; "
+        "warn: log the mismatch but continue; off: skip hash check entirely.",
     )
 
 
@@ -167,6 +182,22 @@ class FileEditTool(HuginnTool):
 
         try:
             content = path.read_text(encoding="utf-8")
+            # Hashline: 写入前校验内容 hash, 防止覆盖并发修改/外部编辑.
+            # expected_hash 来自上次 read/edit 的 snapshot_hash; strict 不匹配即拒绝.
+            if input_data.expected_hash and input_data.hash_policy != "off":
+                current_hash = _content_hash(content)
+                if current_hash != input_data.expected_hash:
+                    msg = (
+                        f"File changed since snapshot (expected {input_data.expected_hash}, "
+                        f"got {current_hash}). Refusing to overwrite concurrent modification."
+                    )
+                    if input_data.hash_policy == "strict":
+                        return ToolResult(
+                            data={"current_hash": current_hash},
+                            success=False,
+                            error=msg,
+                        )
+                    logger.warning(msg)
             if content.count(input_data.old_string) != 1:
                 return ToolResult(
                     data=None,
