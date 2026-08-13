@@ -537,6 +537,16 @@ export function SettingsPanel(props: SettingsPanelProps) {
                   className="input"
                 />
               </ConfigField>
+              <ConfigField label="Materials Project API Key" full>
+                <ApiKeyInput
+                  value={config.mp_api_key}
+                  onChange={(v) => { setConfig((prev) => ({ ...prev, mp_api_key: v })); setConfigDirty(true); }}
+                  placeholder="MP_API_KEY (可选)"
+                />
+                <p className="mt-1 text-xs text-text-muted">
+                  填写后 mat-db 用真实 Materials Project 数据; 留空则回退 mock。保存后自动重连生效。
+                </p>
+              </ConfigField>
               {/* Quick test: hit the provider with a 1-token request */}
               <div className="md:col-span-2 flex items-center gap-2">
                 <ProviderTestButton

@@ -148,6 +148,23 @@ class MCPClientManager:
         """Remove a registered server configuration."""
         self._registry.pop(name, None)
 
+    def set_server_env(self, name: str, updates: dict[str, str]) -> None:
+        """Override a server's env (merge), e.g. rotate an API key at runtime.
+
+        Also updates the stored connect config so a later ``reconnect`` spawns
+        the server with the new env. Missing server is a no-op.
+        """
+        stored = self._configs.get(name)
+        if stored is not None:
+            merged = dict(stored.env or {})
+            merged.update(updates)
+            stored.env = merged
+        reg = self._registry.get(name)
+        if isinstance(reg, dict):
+            merged = dict(reg.get("env") or {})
+            merged.update(updates)
+            reg["env"] = merged
+
     def connect_server(self, name: str) -> None:
         """Connect to a registered server by name (sync wrapper)."""
         cfg = self._registry.get(name)

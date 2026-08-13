@@ -120,8 +120,21 @@ async def _init_mcp_tools():
 
         mat_db_path = base / "servers" / "mat-db-mcp" / "server.py"
         if mat_db_path.exists():
+            # 透传父进程 env, 并把用户配置的 MP_API_KEY 注入 mat-db MCP 子进程,
+            # 这样无需重启后端也能用真实 Materials Project (改 key 走 /config 重连)。
+            mat_db_env = {**os.environ}
+            mp_key = None
+            try:
+                from huginn.config import get_config
+                mp_key = get_config().mp_api_key
+            except Exception:
+                pass
+            if mp_key:
+                mat_db_env["MP_API_KEY"] = mp_key
             servers.append(
-                ("mat-db", MCPServerConfig(name="mat-db", command="python", args=[str(mat_db_path)]))
+                ("mat-db", MCPServerConfig(
+                    name="mat-db", command="python", args=[str(mat_db_path)], env=mat_db_env,
+                ))
             )
 
         math_path = base / "servers" / "math-anything-mcp" / "server.py"
