@@ -18,6 +18,7 @@ __all__ = [
     "register_all_tools",
     "register_core_tools",
     "register_optional_tools",
+    "validate_tool_specs",
 ]
 
 
@@ -82,19 +83,19 @@ _CORE_MODULES = [
 # Optional tools — heavy imports (numpy/scipy/simulation), safe to defer
 _OPTIONAL_MODULES = [
     ("huginn.tools.vasp_tool", "VaspTool"),
-    ("huginn.tools.lammps_tool", "LammpsTool"),
-    ("huginn.tools.comsol_tool", "ComsolTool"),
-    ("huginn.tools.qe_tool", "QuantumEspressoTool"),
-    ("huginn.tools.cp2k_tool", "Cp2kTool"),
+    ("huginn.tools.sim.lammps_tool", "LammpsTool"),
+    ("huginn.tools.sim.comsol_tool", "ComsolTool"),
+    ("huginn.tools.sim.qe_tool", "QuantumEspressoTool"),
+    ("huginn.tools.sim.cp2k_tool", "Cp2kTool"),
     ("huginn.tools.gaussian_tool", "GaussianTool"),
     ("huginn.tools.orca_tool", "OrcaTool"),
-    ("huginn.tools.openfoam_tool", "OpenFoamTool"),
-    ("huginn.tools.packing_tool", "PackingTool"),
-    ("huginn.tools.abaqus_tool", "AbaqusTool"),
+    ("huginn.tools.sim.openfoam_tool", "OpenFoamTool"),
+    ("huginn.tools.sim.packing_tool", "PackingTool"),
+    ("huginn.tools.sim.abaqus_tool", "AbaqusTool"),
     ("huginn.tools.fenics_tool", "FenicsTool"),
     ("huginn.tools.elmer_tool", "ElmerTool"),
     ("huginn.tools.gromacs_tool", "GromacsTool"),
-    ("huginn.tools.plasma_tool", "PlasmaTool"),
+    ("huginn.tools.sim.plasma_tool", "PlasmaTool"),
     ("huginn.tools.neb_tool", "NEBTool"),
     ("huginn.tools.structural_analytical.tool", "StructuralAnalyticalTool"),
     ("huginn.tools.specialty_analysis.tool", "SpecialtyAnalysisTool"),
@@ -105,7 +106,7 @@ _OPTIONAL_MODULES = [
     ("huginn.tools.sim.resolve_executable_tool", "ResolveExecutableTool"),
     ("huginn.tools.vina_tool", "VinaTool"),
     ("huginn.tools.openmm_tool", "OpenMMTool"),
-    ("huginn.tools.symbolic_regression_tool", "SymbolicRegressionTool"),
+    ("huginn.tools.sci.symbolic_regression_tool", "SymbolicRegressionTool"),
     ("huginn.tools.symbolic_math_tool", "SymbolicMathTool"),
     ("huginn.tools.discrete_smt_tool", "DiscreteSMTTool"),
     ("huginn.tools.discrete_group_tool", "DiscreteGroupTool"),
@@ -116,12 +117,12 @@ _OPTIONAL_MODULES = [
     ("huginn.tools.sci.sklearn_tool", "SklearnTool"),
     ("huginn.tools.sci.transformer_tool", "TransformerTool"),
     ("huginn.tools.sci.vae_tool", "VAETool"),
-    ("huginn.tools.autodiff_tool", "AutoDiffTool"),
+    ("huginn.tools.sci.autodiff_tool", "AutoDiffTool"),
     ("huginn.tools.numerical_tool", "NumericalTool"),
-    ("huginn.tools.unit_tool", "UnitTool"),
-    ("huginn.tools.symmetry_tool", "SymmetryTool"),
-    ("huginn.tools.tda_tool", "TDATool"),
-    ("huginn.tools.uq_tool", "UQTool"),
+    ("huginn.tools.sci.unit_tool", "UnitTool"),
+    ("huginn.tools.sci.symmetry_tool", "SymmetryTool"),
+    ("huginn.tools.sci.tda_tool", "TDATool"),
+    ("huginn.tools.sci.uq_tool", "UQTool"),
     ("huginn.tools.gp_tool", "GPTool"),
     ("huginn.tools.sci.pytorch_train_tool", "PyTorchTrainTool"),
     ("huginn.tools.sci.gnn_tool", "GNNTool"),
@@ -135,19 +136,19 @@ _OPTIONAL_MODULES = [
     ("huginn.tools.inverse_design_tool", "InverseDesignTool"),
     ("huginn.tools.motif_mining_tool", "MotifMiningTool"),
     ("huginn.tools.consensus_scoring_tool", "ConsensusScoringTool"),
-    ("huginn.tools.evidence_fusion_tool", "EvidenceFusionTool"),
+    ("huginn.tools.sci.evidence_fusion_tool", "EvidenceFusionTool"),
     ("huginn.tools.sci.active_learning_tool", "ActiveLearningTool"),
     ("huginn.tools.sci.ml_potential_tool", "MLPotentialTool"),
-    ("huginn.tools.high_throughput_tool", "HighThroughputTool"),
-    ("huginn.tools.multi_fidelity_tool", "MultiFidelityTool"),
-    ("huginn.tools.xrd_sim_tool", "XrdSimTool"),
-    ("huginn.tools.gap_analysis_tool", "GapAnalysisTool"),
-    ("huginn.tools.doe_tool", "DOETool"),
-    ("huginn.tools.debugger_tool", "DebuggerTool"),
+    ("huginn.tools.sci.high_throughput_tool", "HighThroughputTool"),
+    ("huginn.tools.sci.multi_fidelity_tool", "MultiFidelityTool"),
+    ("huginn.tools.sci.xrd_sim_tool", "XrdSimTool"),
+    ("huginn.tools.design.gap_analysis_tool", "GapAnalysisTool"),
+    ("huginn.tools.design.doe_tool", "DOETool"),
+    ("huginn.tools.design.debugger_tool", "DebuggerTool"),
     ("huginn.tools.design_plan_tool", "DesignPlanTool"),
-    ("huginn.tools.nudge_tool", "NudgeTool"),
+    ("huginn.tools.design.nudge_tool", "NudgeTool"),
     ("huginn.tools.design_atom_tool", "DesignAtomTool"),
-    ("huginn.tools.generative_design_tool", "GenerativeDesignTool"),
+    ("huginn.tools.design.generative_design_tool", "GenerativeDesignTool"),
     ("huginn.tools.plan_store_tool", "PlanStoreTool"),
     ("huginn.tools.image_analysis_tool", "ImageAnalysisTool"),
     ("huginn.tools.image_design_tool", "ImageDesignTool"),
@@ -248,6 +249,44 @@ def _rebuild_dispatch_tables() -> None:
     _rebuild_phase_tools()
     _rebuild_router_tables()
     _rebuild_constraint_scopes()
+
+
+def validate_tool_specs() -> list[str]:
+    """Validate every (module, class) spec in the builtin tool lists.
+
+    Each entry is a fully-qualified string ``"huginn.<module>.<path>", "ClassName"``.
+    A typo'd module path or class name here fails silently at registration time
+    (the tool simply never appears), which is a classic source of "missing tool"
+    bugs. This helper resolves every spec eagerly and surfaces structural errors:
+
+    - A spec whose module path or class name is broken **inside huginn** raises
+      ``ImportError`` / ``AttributeError`` immediately (a real bug — the tool
+      would silently vanish at runtime).
+    - A spec that only fails because an optional third-party dependency
+      (e.g. ``rdkit``) is absent is reported as skipped, matching the lenient
+      behaviour of ``_do_register``.
+
+    Returns the list of resolved class names.
+    """
+    import importlib
+
+    resolved: list[str] = []
+    for module_name, class_name in [*_CORE_MODULES, *_OPTIONAL_MODULES]:
+        try:
+            mod = importlib.import_module(module_name)
+        except ImportError as exc:
+            # A huginn-internal module that cannot be imported is a spec bug.
+            # A missing third-party dependency is a normal "skip" case.
+            if module_name.startswith("huginn."):
+                raise
+            logger.warning(
+                "validate_tool_specs: skipping %s.%s (missing dep: %s)",
+                module_name, class_name, exc.name or exc,
+            )
+            continue
+        cls = getattr(mod, class_name)
+        resolved.append(f"{module_name}.{class_name}:{cls.__name__}")
+    return resolved
 
 
 def register_core_tools(config: Any | None = None) -> list[str]:
