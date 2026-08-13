@@ -19,6 +19,7 @@ from huginn.routes.config import _apply_legacy_params_to_env
 USER_SERVICE_CREDENTIALS = {
     "api_key",           # LLM provider key (desktop 里同时兼作后端 HUGINN_API_KEY)
     "mp_api_key",        # Materials Project
+    "oqmd_api_key",      # OQMD 材料数据库
     "mineru_api_keys",   # MinerU 文献解析
     "wecom_token",       # 企微机器人
     "encryption_password",  # 配置加密口令
@@ -71,18 +72,20 @@ def test_user_service_credentials_registered_in_mapping():
 def test_config_roundtrip_masks_credentials():
     import os as _os
     saved = {k: _os.environ.get(k) for k in (
-        "MP_API_KEY", "MINERU_API_KEYS", "HUGINN_WECOM_TOKEN", "HUGINN_ENCRYPTION_PASSWORD",
+        "MP_API_KEY", "OQMD_API_KEY", "MINERU_API_KEYS", "HUGINN_WECOM_TOKEN",
+        "HUGINN_ENCRYPTION_PASSWORD",
     )}
     try:
         _apply_legacy_params_to_env({
             "mp_api_key": "mp-secret-abc",
+            "oqmd_api_key": "oqmd-secret",
             "mineru_api_keys": "mineru-secret",
             "wecom_token": "wecom-secret",
             "encryption_password": "enc-pass",
         })
         cfg = HuginnConfig.from_env()
         d = cfg.to_dict(mask_key=True)
-        for secret in ("mp-secret-abc", "mineru-secret", "wecom-secret", "enc-pass"):
+        for secret in ("mp-secret-abc", "oqmd-secret", "mineru-secret", "wecom-secret", "enc-pass"):
             assert secret not in str(d), f"凭据 {secret!r} 在 to_dict(mask_key=True) 中泄露明文"
     finally:
         for k, v in saved.items():
