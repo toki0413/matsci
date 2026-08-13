@@ -17,7 +17,6 @@ from huginn.security.rate_limiter import (
     get_rate_limiter,
 )
 
-
 # ── disabled ─────────────────────────────────────────────────────────────
 
 def test_disabled_always_allows():
@@ -162,7 +161,7 @@ def test_warning_only_once_per_dimension():
 def test_rate_limit_exceeded_reason():
     e = RateLimitExceeded("msg", reason="cost_limit")
     assert e.reason == "cost_limit"
-    assert "msg" == str(e)
+    assert str(e) == "msg"
 
 
 def test_rate_limit_exceeded_default_reason():

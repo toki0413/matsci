@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import base64 as b64
 import io as _io
-import sys
 import types
 
 import numpy as np
