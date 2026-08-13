@@ -295,6 +295,24 @@ class EvolutionEngine:
             self.rules.sort(key=lambda r: r.confidence, reverse=True)
             del self.rules[MAX_RULES:]
 
+    def _adoption_allowed(self, config_id: str) -> bool:
+        """软门控: 该进化候选 (rule/skill) 是否允许进入活动池.
+
+        把 harness 的 significance/OOD/adoption 门控接进 reward/failure 采纳路径:
+          - advisory (默认): 门控只评分/记录 H5/H6 配对, 永远采纳 (adopt=True),
+            最坏情况只是"少自动采纳一次", 绝不排除候选, 保护 agent 能力;
+          - strict (harness_adoption_gate=1): 仅 GREEN 采纳, 黄/红不入活动池
+            (数据仍留在 gate store, 不删除, 可手动复活).
+        门控本身任何异常都 fail-open (返回 True), 门控崩溃绝不阻断进化.
+        """
+        try:
+            from huginn.harness.adoption_gate import AdoptionGate
+
+            return AdoptionGate.get_instance().should_adopt(config_id)
+        except Exception:
+            logger.debug("adoption gate failed open", exc_info=True)
+            return True
+
     # ------------------------------------------------------------------
     # Core Evolution Cycles
     # ------------------------------------------------------------------
@@ -325,6 +343,9 @@ class EvolutionEngine:
                     confidence=min(0.5 + pat["count"] * 0.1, 0.95),
                     tags=["auto_generated", tool],
                 )
+                # 软门控: 黄/红 (strict) 不入活动池, advisory 记录决策后仍采纳.
+                if not self._adoption_allowed(rule.rule_id):
+                    continue
                 self.rules.append(rule)
                 new_rules.append(rule)
 
@@ -354,6 +375,8 @@ class EvolutionEngine:
                 confidence=0.9,
                 tags=["stable_principle", "auto_promoted"],
             )
+            if not self._adoption_allowed(rule.rule_id):
+                continue
             self.rules.append(rule)
             new_rules.append(rule)
 
@@ -404,6 +427,8 @@ class EvolutionEngine:
                 source_session=records[0].session_id,
                 extraction_confidence=min(0.4 + len(records) * 0.05, 0.9),
             )
+            if not self._adoption_allowed(skill.skill_id):
+                continue
             self.skills.append(skill)
             new_skills.append(skill)
 
@@ -430,6 +455,9 @@ class EvolutionEngine:
             except Exception:
                 continue
             if SkillRegistry.get(skill.name):
+                continue
+            # 软门控: 黄/红 (strict) 不同步进主技能库 (数据仍在池里, 不删除).
+            if not self._adoption_allowed(f"skill:{tpl.skill_id}"):
                 continue
             try:
                 registered.append(SkillRegistry.register(skill))
@@ -516,6 +544,8 @@ class EvolutionEngine:
                         confidence=1.0 - rate,
                         tags=["prompt", tool],
                     )
+                    if not self._adoption_allowed(rule.rule_id):
+                        continue
                     self.rules.append(rule)
                     new_rules.append(rule)
 
@@ -578,6 +608,8 @@ class EvolutionEngine:
                 source_session=records[0].session_id,
                 extraction_confidence=min(0.5 + avg_reward * 0.4, 0.95),
             )
+            if not self._adoption_allowed(skill.skill_id):
+                continue
             self.skills.append(skill)
             new_skills.append(skill)
 
@@ -603,6 +635,8 @@ class EvolutionEngine:
                     confidence=1.0 - avg_r,
                     tags=["reward", tool],
                 )
+                if not self._adoption_allowed(rule.rule_id):
+                    continue
                 self.rules.append(rule)
                 new_rules.append(rule)
 
