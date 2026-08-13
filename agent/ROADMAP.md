@@ -196,10 +196,13 @@
 - `huginn/security/math_eval.py` → **89%** (`tests/test_math_eval_ext.py` → 26): 算术/比较/布尔/条件/容器/下标、`np.<func>` 白名单、未定义名拦截、非白名单调用/属性/导入/推导式拒绝、SyntaxError 包装
 - `huginn/security/rate_limiter.py` → **97%** (`tests/test_rate_limiter_ext.py` → 28): 单轮/秒级/总成本三道闸门、disabled 放行、per-session 隔离、窗口剪枝、record_usage 记账、reset_turn/reset_all、预警、usage 提取辅助、单例/env
 
-### Rust 桥接 (3 模块)
+### Rust 桥接 (5 模块)
 - `huginn/tools/file_read_tool.py` → **70%** (`tests/test_file_read_tool_ext.py` → 7): Rust `tail_lines` fast path(命中/start 计算/import 缺失回退/Rust 异常回退) + call() 端到端
 - `huginn/rag/vector_store.py` → **21%** (`tests/test_vector_store_rust_ext.py` → 4): Rust `top_k` 桥接 import 缺失/空 embeddings/成功/异常降级
 - `huginn/routes/health.py` → **28%** (`tests/test_health_rust_ext.py` → 2): `/health/rust` 可用枚举 functions / 不可用返回 error
+- `huginn/tools/bash_tool.py` → **48%** (`tests/test_bash_rust_sandbox_ext.py` → 7): Rust `run_sandboxed` 成功/失败(有/无 stderr)/异常回退/import 缺失回退/默认关闭不触发 + command+args 拆分与 allowed_base_dirs 传递
+- `huginn/tools/sim/vasp_tool.py` → **33%** (`tests/test_vasp_rust_ext.py` → 6): Rust `parse_outcar` relax 命中/error/converged=False/异常回退 + scf 不信任 Rust 落 Python + `_HAS_HUGINN_EXT=False` 走 Python
+- 注: `lammps_tool.py` 的 Rust fast-path 是**有意的性能债** (parse_trajectory 恒走 Python, 见源码 1136-1145 注释), 非实际桥接点, 不测。
 
 ### 方法论
 - 本项目 conftest 接 pytest-cov, `python -m coverage run` 与其冲突会 "No data collected"; 用 coverage Python API (`coverage.Coverage().start()` + `pytest.main()`) 包裹采集。
