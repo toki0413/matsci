@@ -72,6 +72,25 @@ class ContextMixin:
             "Available phases: LITERATURE, HYPOTHESIS, PLANNING, "
             "EXECUTION, VALIDATION, REPORTING."
         )
+        # externalThinking: 开启时要求模型在动手前先用 deep_think 工具写分析.
+        # 分析落进 session.reasoning_trace, 供蒸馏/进化闭环消费. 默认关, 不改变
+        # 默认行为. fail-open: flag 层异常不注入, 保证系统提示构建永不崩.
+        try:
+            from huginn.feature_flags import FeatureFlags
+
+            if FeatureFlags.shared().is_enabled("external_thinking"):
+                base += (
+                    "\n\n## External Thinking\n"
+                    "Before you answer, modify code, or call other tools, "
+                    "first call the `deep_think` tool and write your "
+                    "step-by-step analysis and reasoning into its `analysis` "
+                    "argument. This is an external scratchpad — your analysis "
+                    "is recorded and returned to the developer, but is not "
+                    "echoed as part of your visible answer. Then complete the "
+                    "task using that analysis."
+                )
+        except Exception:
+            logger.debug("external_thinking injection skipped", exc_info=True)
         # Inject cached system context (date + git status) and project
         # context (.huginn.md / AGENTS.md). Computed once per session
         # to avoid repeated git calls.
