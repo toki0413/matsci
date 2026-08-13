@@ -350,14 +350,17 @@ jobs:
       - name: Dependency lock drift guard
         working-directory: agent
         run: |
-          # 与生成 requirements.lock 时完全相同的参数，才能得到可复现 resolution。
-          # -o 写到 /tmp，避免就地覆盖已提交的 lock。
+          # 用已提交 requirements.lock 作为 constraint 重新编译：uv 把已提交的钉版
+          # 当版本约束，只按 pyproject 声明求解。这样上游传递依赖发布新版本（如
+          # langchain-anthropic 1.5.5→1.5.6）不会触发漂移误报——只有 pyproject.toml
+          # 真正变更、已提交 lock 无法满足时才会 diff → 红。这是确定性的守卫，
+          # 不再依赖实时 PyPI index 的重解析结果。 -o 写到 /tmp，避免就地覆盖。
           uv pip compile pyproject.toml -o /tmp/requirements.lock \
-            --python-version 3.12 --no-strip-markers
-          # 只比 钉版行 (pkg==version)，忽略 header/注释（含 -o 路径），
+            --python-version 3.12 --no-strip-markers --constraint requirements.lock
+          # 只比 钉版行 (pkg==version)，忽略所有注释行（含 -c 约束注解与 header），
           # 避免 cosmetic 差异造成误报。
-          if ! diff -u <(grep -v '^#' requirements.lock) \
-                       <(grep -v '^#' /tmp/requirements.lock); then
+          if ! diff -u <(grep -vE '^\s*#' requirements.lock) \
+                       <(grep -vE '^\s*#' /tmp/requirements.lock); then
             echo "::error::requirements.lock 与 pyproject.toml 不一致。请在 agent/ 下运行: uv pip compile pyproject.toml -o requirements.lock --python-version 3.12 --no-strip-markers"
             exit 1
           fi
