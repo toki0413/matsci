@@ -184,6 +184,8 @@ export interface AppConfig {
   encryption_key_file: string;
   // 材料数据库真实 API key (后端 HuginnConfig.mp_api_key)
   mp_api_key: string;
+  // OQMD 材料数据库 key (后端 HuginnConfig.oqmd_api_key)
+  oqmd_api_key: string;
   // MinerU 文献解析 API keys (逗号分隔, 后端 MINERU_API_KEYS)
   mineru_api_keys: string;
   // 企微机器人 token (后端 HUGINN_WECOM_TOKEN)
