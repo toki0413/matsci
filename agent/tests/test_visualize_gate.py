@@ -47,6 +47,12 @@ def test_gap_data_beats_quality() -> None:
     )
 
 
+def test_gap_unknown_flag_falls_back_none() -> None:
+    # 有 flag 但均不匹配任何已知类别 → 落到兜底 "none"
+    assert derive_figure_gap_type([], ["some_other_flag"]) == "none"
+    assert derive_figure_gap_type(["cache_buster"], []) == "none"
+
+
 # --- should_retry_render ----------------------------------------------------
 
 def test_retry_pass_never() -> None:
@@ -132,6 +138,35 @@ def test_decision_error() -> None:
     )
     assert d["action"] == "error"
     assert "error" in d["directive"]
+
+
+def test_decision_error_both_unknown_directive() -> None:
+    # 两个都无 error 字段 → directive 落 "unknown"
+    d = render_gate_decision(
+        {"verdict": "error", "flags": []},
+        {"verdict": "error", "flags": []},
+        0,
+    )
+    assert d["action"] == "error"
+    assert d["directive"].endswith("unknown")
+
+
+def test_directive_qa_error_fallback(monkeypatch) -> None:
+    # qa_directive 抛异常 → _directive 回退到 flags 拼接
+    import huginn.tools.visualize_qa as vq
+
+    def _boom(result):
+        raise RuntimeError("qa directive boom")
+
+    monkeypatch.setattr(vq, "qa_directive", _boom)
+    d = render_gate_decision(
+        {"verdict": "fix_needed", "flags": ["cluttered"]},
+        {"verdict": "pass", "flags": []},
+        0,
+        max_attempts=2,
+    )
+    assert d["action"] == "retry"
+    assert "qa cluttered" in d["directive"]
 
 
 # --- run_figure_gate (批次 C 后半: 完整精修闭环) ---------------------------
@@ -243,4 +278,20 @@ def test_run_gate_error_short_circuit(tmp_path: Path) -> None:
     d = run_figure_gate(p, expected=None, index=None, render_fn=render_fn)
     assert d["action"] == "error"
     assert calls == []
+    assert d["image_path"] == str(p)
+
+
+def test_run_gate_render_fn_raises(tmp_path: Path) -> None:
+    # 首张 blank (fail, 可重渲染), render_fn 抛异常 → except break → 转 degrade
+    p = tmp_path / "bad.png"
+    _write_png(p, _blank())
+
+    def render_fn(directive: str) -> str:
+        raise RuntimeError("render backend down")
+
+    d = run_figure_gate(
+        p, expected=None, index=None, render_fn=render_fn, max_attempts=2
+    )
+    assert d["action"] == "degrade"
+    assert d["verdict"] == "fail"
     assert d["image_path"] == str(p)
