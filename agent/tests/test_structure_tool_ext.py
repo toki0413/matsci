@@ -294,8 +294,12 @@ class TestBatchValidate:
 
 # ── _call_cached ─────────────────────────────────────────────────────────────
 
-def _fake_pymatgen(**overrides):
-    """构造一个 fake pymatgen 模块, 用于覆盖主路径 import 成功分支."""
+def _fake_pymatgen(monkeypatch, **overrides):
+    """构造一个 fake pymatgen 模块, 用于覆盖主路径 import 成功分支.
+
+    所有 sys.modules 注入都经由 monkeypatch.setitem, 测试结束后自动恢复,
+    避免污染全局导入状态 (否则会泄漏到其他测试文件的真实 pymatgen 导入).
+    """
     class FakeLattice:
         a = b = c = 5.4
         alpha = beta = gamma = 90.0
@@ -313,9 +317,10 @@ def _fake_pymatgen(**overrides):
         def from_file(path):
             return FakeStructure()
 
-    sys.modules["pymatgen"] = types.ModuleType("pymatgen")
-    sys.modules["pymatgen.core"] = types.ModuleType("pymatgen.core")
-    sys.modules["pymatgen.core"].Structure = overrides.get("Structure", FakeStructure)
+    monkeypatch.setitem(sys.modules, "pymatgen", types.ModuleType("pymatgen"))
+    core_mod = types.ModuleType("pymatgen.core")
+    core_mod.Structure = overrides.get("Structure", FakeStructure)
+    monkeypatch.setitem(sys.modules, "pymatgen.core", core_mod)
 
     if overrides.get("analyzer_success"):
         class FakeAnalyzer:
@@ -326,42 +331,61 @@ def _fake_pymatgen(**overrides):
                 return "Fd-3m"
 
         sga_mod = types.ModuleType("pymatgen.symmetry")
-        sys.modules["pymatgen.symmetry"] = sga_mod
-        sys.modules["pymatgen.symmetry.analyzer"] = types.ModuleType(
-            "pymatgen.symmetry.analyzer"
-        )
-        sys.modules["pymatgen.symmetry.analyzer"].SpacegroupAnalyzer = FakeAnalyzer
+        monkeypatch.setitem(sys.modules, "pymatgen.symmetry", sga_mod)
+        analyzer_mod = types.ModuleType("pymatgen.symmetry.analyzer")
+        analyzer_mod.SpacegroupAnalyzer = FakeAnalyzer
+        monkeypatch.setitem(sys.modules, "pymatgen.symmetry.analyzer", analyzer_mod)
     elif overrides.get("analyzer_error"):
         sga_mod = types.ModuleType("pymatgen.symmetry")
-        sys.modules["pymatgen.symmetry"] = sga_mod
-        sys.modules["pymatgen.symmetry.analyzer"] = types.ModuleType(
-            "pymatgen.symmetry.analyzer"
-        )
+        monkeypatch.setitem(sys.modules, "pymatgen.symmetry", sga_mod)
+        analyzer_mod = types.ModuleType("pymatgen.symmetry.analyzer")
 
         class BadAnalyzer:
             def __init__(self, structure):
                 raise RuntimeError("analyzer failed")
 
-        sys.modules["pymatgen.symmetry.analyzer"].SpacegroupAnalyzer = BadAnalyzer
+        analyzer_mod.SpacegroupAnalyzer = BadAnalyzer
+        monkeypatch.setitem(sys.modules, "pymatgen.symmetry.analyzer", analyzer_mod)
     elif overrides.get("analyzer_import_error"):
         # SpacegroupAnalyzer import 失败 → 走 get_space_group_info fallback
-
-        if "pymatgen.symmetry" in sys.modules:
-            del sys.modules["pymatgen.symmetry"]
-        sys.modules["pymatgen.symmetry"] = types.ModuleType("pymatgen.symmetry")
-        # 让 analyzer 子模块 import 抛 ImportError
-        sys.modules["pymatgen.symmetry.analyzer"] = None  # placeholder removed below
+        sga_mod = types.ModuleType("pymatgen.symmetry")
+        monkeypatch.setitem(sys.modules, "pymatgen.symmetry", sga_mod)
+        # 让 analyzer 子模块 import 抛 ImportError (key 存在但值为 None)
+        monkeypatch.setitem(sys.modules, "pymatgen.symmetry.analyzer", None)
 
 
 class TestCallCached:
-    def _unload_pymatgen(self):
+    def _unload_pymatgen(self, monkeypatch):
+        # 把所有 pymatgen 条目替换成空 ModuleType (无 Structure/子模块属性),
+        # 强制 `from pymatgen.core import Structure` 抛 ImportError——即使
+        # pymatgen 已安装 (CI test job 会 pip install pymatgen), 空模块也会让
+        # import 从 sys.modules 拿到无 Structure 的模块而失败, 稳定覆盖
+        # fallback 分支. 显式占位核心子模块, 因为若 pymatgen 尚未被导入,
+        # sys.modules 里根本没有这些 key, 只遍历已存在条目会漏, import 时
+        # 会从磁盘重新加载真实 pymatgen. monkeypatch.setitem 保证测试结束后
+        # 恢复, 不泄漏全局导入状态.
+        blank = types.ModuleType("pymatgen")
+        keys = [
+            "pymatgen",
+            "pymatgen.core",
+            "pymatgen.symmetry",
+            "pymatgen.symmetry.analyzer",
+            "pymatgen.core.composition",
+            "pymatgen.core.periodic_table",
+            "pymatgen.core.lattice",
+            "pymatgen.core.sites",
+            "pymatgen.core.structure",
+        ]
+        for k in keys:
+            monkeypatch.setitem(sys.modules, k, blank)
+        # 顺带清掉已加载的其他 pymatgen.* 子模块
         for k in list(sys.modules):
-            if k == "pymatgen" or k.startswith("pymatgen."):
-                del sys.modules[k]
+            if (k == "pymatgen" or k.startswith("pymatgen.")) and k not in keys:
+                monkeypatch.setitem(sys.modules, k, blank)
 
     @pytest.mark.asyncio
-    async def test_file_not_found(self, tmp_path):
-        self._unload_pymatgen()
+    async def test_file_not_found(self, tmp_path, monkeypatch):
+        self._unload_pymatgen(monkeypatch)
         tool = StructureTool()
         result = await tool._call_cached(
             StructureToolInput(action="read", file_path=str(tmp_path / "nope")),
@@ -371,9 +395,9 @@ class TestCallCached:
         assert "File not found" in result.error
 
     @pytest.mark.asyncio
-    async def test_pymatgen_success_with_analyzer(self, tmp_path):
-        self._unload_pymatgen()
-        _fake_pymatgen(analyzer_success=True)
+    async def test_pymatgen_success_with_analyzer(self, tmp_path, monkeypatch):
+        self._unload_pymatgen(monkeypatch)
+        _fake_pymatgen(monkeypatch, analyzer_success=True)
         tool = StructureTool()
         f = tmp_path / "POSCAR"
         f.write_text("Si8\n1.0\n5.4 0 0\n0 5.4 0\n0 0 5.4\nSi\n8\n0 0 0\n")
@@ -386,9 +410,9 @@ class TestCallCached:
         assert result.data["num_atoms"] == 8
 
     @pytest.mark.asyncio
-    async def test_pymatgen_analyzer_error_fallback(self, tmp_path):
-        self._unload_pymatgen()
-        _fake_pymatgen(analyzer_error=True)
+    async def test_pymatgen_analyzer_error_fallback(self, tmp_path, monkeypatch):
+        self._unload_pymatgen(monkeypatch)
+        _fake_pymatgen(monkeypatch, analyzer_error=True)
         tool = StructureTool()
         f = tmp_path / "POSCAR"
         f.write_text("Si8\n1.0\n5.4 0 0\n0 5.4 0\n0 0 5.4\nSi\n8\n0 0 0\n")
@@ -400,9 +424,9 @@ class TestCallCached:
         assert result.data["spacegroup"] is None
 
     @pytest.mark.asyncio
-    async def test_pymatgen_analyzer_error_uses_sg_info(self, tmp_path):
+    async def test_pymatgen_analyzer_error_uses_sg_info(self, tmp_path, monkeypatch):
         # analyzer 抛异常, 但 structure 有 get_space_group_info → fallback 用它
-        self._unload_pymatgen()
+        self._unload_pymatgen(monkeypatch)
 
         class FakeLattice:
             a = b = c = 5.4
@@ -424,7 +448,7 @@ class TestCallCached:
             def from_file(path):
                 return FakeStructureWithSG()
 
-        _fake_pymatgen(analyzer_error=True, Structure=FakeStructureWithSG)
+        _fake_pymatgen(monkeypatch, analyzer_error=True, Structure=FakeStructureWithSG)
         tool = StructureTool()
         f = tmp_path / "POSCAR"
         f.write_text("Si\n1.0\n5.4 0 0\n0 5.4 0\n0 0 5.4\n8\n0 0 0\n")
@@ -435,8 +459,8 @@ class TestCallCached:
         assert result.data["spacegroup"] == "Fm-3m"
 
     @pytest.mark.asyncio
-    async def test_pymatgen_import_error_basic_info(self, tmp_path):
-        self._unload_pymatgen()
+    async def test_pymatgen_import_error_basic_info(self, tmp_path, monkeypatch):
+        self._unload_pymatgen(monkeypatch)
         tool = StructureTool()
         # 基本的 POSCAR: 第 6 行 (idx 5) 是原子数, 好让 fallback 解析出 8
         f = tmp_path / "POSCAR"
@@ -449,8 +473,8 @@ class TestCallCached:
         assert result.data["num_atoms"] == 8
 
     @pytest.mark.asyncio
-    async def test_import_error_invalid_num_atoms(self, tmp_path):
-        self._unload_pymatgen()
+    async def test_import_error_invalid_num_atoms(self, tmp_path, monkeypatch):
+        self._unload_pymatgen(monkeypatch)
         tool = StructureTool()
         f = tmp_path / "POSCAR"
         f.write_text("Si8\n1.0\n5.4 0 0\n0 5.4 0\n0 0 5.4\nSi\nnotanumber\n0 0 0\n")
@@ -461,8 +485,8 @@ class TestCallCached:
         assert result.data["num_atoms"] is None  # ValueError 被吞
 
     @pytest.mark.asyncio
-    async def test_fallback_not_poscar(self, tmp_path):
-        self._unload_pymatgen()
+    async def test_fallback_not_poscar(self, tmp_path, monkeypatch):
+        self._unload_pymatgen(monkeypatch)
         tool = StructureTool()
         f = tmp_path / "data.xyz"
         f.write_text("3\ncomment\nH 0 0 0\n")
@@ -473,13 +497,11 @@ class TestCallCached:
         assert result.data["num_atoms"] is None  # 非 POSCAR 不解析
 
     @pytest.mark.asyncio
-    async def test_parse_exception_wrapped(self, tmp_path):
-        self._unload_pymatgen()
+    async def test_parse_exception_wrapped(self, tmp_path, monkeypatch):
+        self._unload_pymatgen(monkeypatch)
         tool = StructureTool()
         f = tmp_path / "POSCAR"
         f.write_text("x")
-        with patch.dict(sys.modules, {"pymatgen.core": None}) as _:
-            pass
         # 让 Structure.from_file 抛异常 → 走 except 包装
         core_mod = types.ModuleType("pymatgen.core")
         class Boom:
@@ -487,8 +509,8 @@ class TestCallCached:
             def from_file(path):
                 raise ValueError("bad file")
         core_mod.Structure = Boom
-        sys.modules["pymatgen"] = types.ModuleType("pymatgen")
-        sys.modules["pymatgen.core"] = core_mod
+        monkeypatch.setitem(sys.modules, "pymatgen", types.ModuleType("pymatgen"))
+        monkeypatch.setitem(sys.modules, "pymatgen.core", core_mod)
         result = await tool._call_cached(
             StructureToolInput(action="read", file_path=str(f)), _ctx(str(tmp_path))
         )
