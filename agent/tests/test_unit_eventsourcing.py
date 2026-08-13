@@ -522,3 +522,22 @@ class TestUiProjection:
             ("cognitive_mode_change", {"cognitive_mode": "construct"}),
         )
         assert len(blocks) == 1
+
+    def test_blocks_carry_source_seq_for_incremental(self, tmp_path):
+        from huginn.events.projection import BLOCK_COMPACTION, BLOCK_TEXT
+        from huginn.events.session_log import EVENT_COMPACTION, EVENT_MESSAGE
+        blocks = self._build(
+            tmp_path,
+            (EVENT_MESSAGE, {"role": "user", "content": "a"}),
+            (EVENT_MESSAGE, {"role": "assistant", "content": "b"}),
+            (EVENT_COMPACTION, {"summary": "c"}),
+        )
+        # seq strictly increasing, in source order
+        seqs = [b["seq"] for b in blocks]
+        assert seqs == sorted(seqs)
+        assert len(set(seqs)) == 3
+        # incremental: only blocks after cursor
+        cursor = seqs[0]
+        after = [b for b in blocks if b["seq"] > cursor]
+        assert len(after) == 2
+        assert [b["kind"] for b in after] == [BLOCK_TEXT, BLOCK_COMPACTION]

@@ -147,6 +147,47 @@ async def get_thread_messages(thread_id: str, request: Request) -> dict[str, Any
     return {"messages": messages, "thread_id": thread_id}
 
 
+@router.get("/threads/{thread_id}/events")
+async def get_thread_events(
+    thread_id: str,
+    request: Request,
+    after: int = -1,
+) -> dict[str, Any]:
+    """Return the incremental UI block model for a thread (T-BCSE-06).
+
+    Serves the ``UiProjection`` read-model from the session event log. The
+    frontend can poll ``?after=<last_seq>`` to get only blocks newer than that
+    cursor — the incremental-sync primitive for the block-level renderer.
+
+    Response: ``{ thread_id, blocks: [...], next_seq, leaf_id }``. ``blocks``
+    are ``UiBlock`` dicts ``{kind, text, frozen, rev, seq}``; compaction and
+    branch summaries arrive as their own ``frozen`` divider blocks so history
+    is never dropped.
+    """
+    err = _check_thread_owner(thread_id, request)
+    if err:
+        return err
+    try:
+        from huginn.events.projection import ProjectionEngine, UiProjection
+        from huginn.events.session_log import SessionEventLog
+
+        log = SessionEventLog.open(thread_id, load=True)
+        engine = ProjectionEngine()
+        engine.register(UiProjection())
+        blocks = engine.build(log, "ui")
+        if after >= 0:
+            blocks = [b for b in blocks if b["seq"] > after]
+        return {
+            "thread_id": thread_id,
+            "blocks": blocks,
+            "next_seq": log.seq,
+            "leaf_id": log.leaf_id,
+        }
+    except Exception:
+        logger.debug("failed to serve session events for %s", thread_id, exc_info=True)
+        return {"thread_id": thread_id, "blocks": [], "next_seq": 0, "leaf_id": None}
+
+
 @router.get("/threads/{thread_id}/state")
 async def get_thread_state(thread_id: str, request: Request) -> dict[str, Any]:
     """返回 thread 的任务状态 (goal/mode/iteration/key_findings).
