@@ -9,6 +9,22 @@ import pytest
 from huginn.security import code_act_sandbox as cas
 
 
+def _patch_import(monkeypatch, targets: set[str]) -> None:
+    """只对 targets 里的模块返回 'sentinel', 其余走真实 __import__.
+
+    直接 monkeypatch builtins.__import__ 全覆盖会同时破坏 pytest 内部
+    (linecache/os 等导入拿到字符串 'sentinel' 导致 os.stat 崩溃), 所以必须委托.
+    """
+    real = builtins.__import__
+
+    def fake(name, *a, **k):
+        if name in targets:
+            return "sentinel"
+        return real(name, *a, **k)
+
+    monkeypatch.setattr(builtins, "__import__", fake)
+
+
 # ── filter_tools_for_code_act ────────────────────────────────────────────
 
 def test_filter_by_name_list():
@@ -50,7 +66,7 @@ def test_safe_builtins_keeps_len_print():
 # ── safe_import ──────────────────────────────────────────────────────────
 
 def test_safe_import_allows_whitelist(monkeypatch):
-    monkeypatch.setattr(builtins, "__import__", lambda *a, **k: "sentinel")
+    _patch_import(monkeypatch, {"math"})
     assert cas.safe_import("math") == "sentinel"
 
 
@@ -72,13 +88,13 @@ def test_safe_import_atomworld_flag_off(monkeypatch):
 
 def test_safe_import_atomworld_flag_on(monkeypatch):
     monkeypatch.setenv("HUGINN_USE_ATOMWORLD", "1")
-    monkeypatch.setattr(builtins, "__import__", lambda *a, **k: "sentinel")
+    _patch_import(monkeypatch, {"atomworld"})
     assert cas.safe_import("atomworld") == "sentinel"
 
 
 def test_safe_import_cognitive_map_allowed(monkeypatch):
     monkeypatch.setenv("HUGINN_USE_COGNITIVE_MAP", "1")
-    monkeypatch.setattr(builtins, "__import__", lambda *a, **k: "sentinel")
+    _patch_import(monkeypatch, {"cognitive_map", "structure_cognitive_map"})
     for name in ("cognitive_map", "structure_cognitive_map"):
         assert cas.safe_import(name) == "sentinel"
 
