@@ -341,6 +341,13 @@ async def _stream_agent_response(
                     "before_pct": c.get("before_pct", 0),
                     "after_pct": c.get("after_pct", 0),
                 })
+                # Event-source the compaction so the block model can render a
+                # `── compacted ──` divider in recovered history (T-BCSE-06).
+                try:
+                    from huginn.events.session_writer import record_compaction
+                    record_compaction(thread_id, c.get("summary", ""))
+                except Exception:
+                    logger.debug("session compaction record skipped", exc_info=True)
                 continue
 
             if state.get("_auto_continue"):
@@ -449,6 +456,12 @@ async def _stream_agent_response(
                                 "args": tc.get("args", {}),
                             }
                         )
+                        # Event-source the tool call (T-BCSE closed loop).
+                        try:
+                            from huginn.events.session_writer import record_tool_call
+                            record_tool_call(thread_id, tid, name, tc.get("args", {}))
+                        except Exception:
+                            logger.debug("session tool_call record skipped", exc_info=True)
 
                         # Emit governance event for this tool call
                         try:
@@ -504,6 +517,12 @@ async def _stream_agent_response(
                             "warnings": _warnings,
                         })
                     await _ws_send(tool_result_msg)
+                    # Event-source the tool result (T-BCSE closed loop).
+                    try:
+                        from huginn.events.session_writer import record_tool_result
+                        record_tool_result(thread_id, tid, tool_content)
+                    except Exception:
+                        logger.debug("session tool_result record skipped", exc_info=True)
 
                     # Record step in task state tracker
                     try:
@@ -689,6 +708,14 @@ async def _stream_agent_response(
                 "text": fallback,
             })
 
+        if full_response:
+            # Event-source the completed assistant turn (T-BCSE closed loop).
+            try:
+                from huginn.events.session_writer import record_assistant_message
+                record_assistant_message(thread_id, full_response)
+            except Exception:
+                logger.debug("session assistant-message record skipped", exc_info=True)
+
         await _ws_send({"type": "done"})
 
     except Exception as e:
@@ -776,6 +803,14 @@ async def _handle_user_input(
     thread_id = msg.thread_id
 
     get_or_create_thread(thread_id, user_id=user_id)
+
+    # Event-source the user turn (T-BCSE: closed loop). Guarded — a write
+    # failure must not block the conversation.
+    try:
+        from huginn.events.session_writer import record_user_message
+        record_user_message(thread_id, content)
+    except Exception:
+        logger.debug("session user-message record skipped", exc_info=True)
 
     # @agent routing
     if content.startswith("@"):
