@@ -343,6 +343,9 @@ jobs:
         uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+          # 固定 uv 版本，保证 lock 漂移守卫可复现。requirements.lock 由 0.11.7 生成，
+          # 不固定会随最新版解析结果漂移而误报。
+          uv-version: "0.11.7"
 
       - name: Dependency lock drift guard
         working-directory: agent
