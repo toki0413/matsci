@@ -184,6 +184,29 @@
 
 ---
 
+## 测试覆盖率进度 (D4 攻 Rust 桥接 / 集成路径)
+
+> 注: 环境自动同步曾把未提交的 `*_ext.py` 测试清空, 已重建并提交。今后改动需及时 commit 防同步重置。
+
+### security 包 (6 模块, 121 用例全绿)
+- `huginn/security/cumulative_audit.py` → **100%** (`tests/test_cumulative_audit_ext.py` → 15): 空/缺失目录快照、递归 rglob、文件计数字节、blocked 扩展名优先拦截、repro 任务专用上限、OSError stat 降级、audit_step 历史记录、history 浅拷贝
+- `huginn/security/prompt_security.py` → **100%** (`tests/test_prompt_security_ext.py` → 12): 空内容直返、有/无 source 标记、`wrap_rag_chunks` 原地改写 + `_raw_document` 保留、非字符串/空/missing document 不动
+- `huginn/security/code_act_sandbox.py` → **100%** (`tests/test_code_act_sandbox_ext.py` → 11): 工具过滤(名 list/二元组/全拦/空)、安全 builtins(移 exec/eval/compile/open/globals/locals)、safe_import 白名单/子模块 root/三 opt-in 模块 env flag、check_degrade 边界、exec_with_mem_cap(0 不监控/超阈值/恢复 tracing)
+- `huginn/security/script_runner.py` → **96%** (`tests/test_script_runner_ext.py` → 16): 安全 globals + math、白名单 import 放行/拒绝、blocked 子模块、变量注入、stdout 截断、timeout、语法/运行错误
+- `huginn/security/math_eval.py` → **89%** (`tests/test_math_eval_ext.py` → 26): 算术/比较/布尔/条件/容器/下标、`np.<func>` 白名单、未定义名拦截、非白名单调用/属性/导入/推导式拒绝、SyntaxError 包装
+- `huginn/security/rate_limiter.py` → **97%** (`tests/test_rate_limiter_ext.py` → 28): 单轮/秒级/总成本三道闸门、disabled 放行、per-session 隔离、窗口剪枝、record_usage 记账、reset_turn/reset_all、预警、usage 提取辅助、单例/env
+
+### Rust 桥接 (3 模块)
+- `huginn/tools/file_read_tool.py` → **70%** (`tests/test_file_read_tool_ext.py` → 7): Rust `tail_lines` fast path(命中/start 计算/import 缺失回退/Rust 异常回退) + call() 端到端
+- `huginn/rag/vector_store.py` → **21%** (`tests/test_vector_store_rust_ext.py` → 4): Rust `top_k` 桥接 import 缺失/空 embeddings/成功/异常降级
+- `huginn/routes/health.py` → **28%** (`tests/test_health_rust_ext.py` → 2): `/health/rust` 可用枚举 functions / 不可用返回 error
+
+### 方法论
+- 本项目 conftest 接 pytest-cov, `python -m coverage run` 与其冲突会 "No data collected"; 用 coverage Python API (`coverage.Coverage().start()` + `pytest.main()`) 包裹采集。
+- free-threaded/3.14 下 coverage 行追踪会破坏 pytest traceback 格式化 (linecache 被污染) → 复用 3.12 环境测覆盖率; 无完整依赖栈时逐模块跑避免 INTERNALERROR 中断收集。
+
+---
+
 ## 维护说明
 
 - 新增"升级路径"注释时, 在对应模块段补一行, 标注状态/优先级/文件:line。
