@@ -261,6 +261,21 @@
 
 ---
 
+## E2E 现状核查 (2026-08, 生产就绪度)
+
+### 沙箱覆盖 E2E 套件 — 全绿
+- **结果**: 57 通过 / 1 跳过 / 0 失败 (约 25s 构建 + 串行跑)。
+- **套件** (`tests/`, 均用 TestClient + FakeLLM, 无需真实 LLM/HPC):
+  - `e2e_user_journeys.py` (27): 认证生命周期 / 知识库 / Memory / 工作流 / RBAC / 沙箱 / 健康检查。
+  - `e2e_agent_loop.py` (7): FakeLLM agent loop — 单轮/多轮/容错/Memory/Telemetry。
+  - `pentest_api_security.py` (12): SSRF / JWT / RBAC / SQL 注入 / 命令注入。
+  - `pentest_archive_safety.py` (5+1 skip): zip/tar slip / symlink / archive bomb。
+  - `fuzz_api.py` (6): 畸形输入不崩溃。
+- **依赖**: fuzz 的 `given` 与 agent_loop 的 `@pytest.mark.asyncio` 需要 `hypothesis` + `pytest-asyncio`, 二者已由 `pyproject.toml` 的 `dev` extra 覆盖 (第 67 行), CI 用 `pip install -e "./agent[dev]"` 天然具备。**requirements.lock 是运行时 lock, 按设计不含 dev 依赖**; 不要手工往 lock 加 pytest 系, 否则 `deps-and-secrets` 的 lock-drift 门禁会红。本地单跑 fuzz 前需 `pip install -e "./agent[dev]"` 或单独补装这两包。
+- **结论**: 沙箱可覆盖范围证明**工程底盘稳定** (认证/RBAC/注入防护/归档安全/agent loop 均跑通)。真实 LLM / HPC / 仿真软件 / 多用户并发只能在部署侧验证 (见 `tests/e2e_deployment_checklist.md`)。
+
+---
+
 ## 维护说明
 
 - 新增"升级路径"注释时, 在对应模块段补一行, 标注状态/优先级/文件:line。
