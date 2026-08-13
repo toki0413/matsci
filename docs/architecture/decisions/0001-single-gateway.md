@@ -161,10 +161,11 @@ token（如 `wanzh`）都会让 CI 变红。机器相关路径必须改为 env �
       `MP_API_KEY` env；改 key 后 `/config` 调 `mcp_manager.set_server_env` + `reconnect`
       立即生效，无需重启后端。`tests/test_arch_mp_key_flow.py` 固话 env 映射、from_env、
       set_server_env 三段链路。
-- [x] **MinerU / 企微同样前端化**：设置面板新增 "MinerU API Keys"（逗号分隔多 key 轮询）
-      与 "WeCom 机器人 Token"，保存走 `/config` → env（`MINERU_API_KEYS` /
-      `HUGINN_WECOM_TOKEN`）。MinerU 由 `HuginnConfig.from_env()` 读回用于文献解析工具；
-      WeCom 由 bot 路由调用时读 env。二者均为调用时读取，无需重连即生效。
+- [x] **MinerU / 企微 / OQMD 同样前端化**：设置面板新增 "MinerU API Keys"（逗号分隔
+      多 key 轮询）、"WeCom 机器人 Token"、"OQMD API Key"，保存走 `/config` → env
+      （`MINERU_API_KEYS` / `HUGINN_WECOM_TOKEN` / `OQMD_API_KEY`）。MinerU 由
+      `HuginnConfig.from_env()` 读回用于文献解析工具；WeCom 由 bot 路由、OQMD 由
+      materials_database_tool 调用时读 env。三者均为调用时读取，无需重连即生效。
 
 ### 凭据分类与归口（2026-08-12）
 
