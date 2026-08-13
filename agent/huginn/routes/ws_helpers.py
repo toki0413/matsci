@@ -899,6 +899,7 @@ async def _handle_user_input(
             await websocket.send_json(
                 {"type": "text_delta", "text": "🔬 Research mode activated.\n\n"}
             )
+            _research_output = ""  # final deliverable (draft) for event-sourcing
             async for result in workflow.run(content, thread_id=thread_id):
                 evt_type = result.get("type")
                 if evt_type == "status":
@@ -934,6 +935,7 @@ async def _handle_user_input(
                     # 最终草稿作为文本发送
                     draft = result.get("content", "")
                     if draft:
+                        _research_output = draft
                         await websocket.send_json({
                             "type": "text_delta",
                             "text": f"\n{'='*40}\n📝 Draft:\n{'='*40}\n{draft}\n",
@@ -943,6 +945,12 @@ async def _handle_user_input(
                         "type": "text_delta",
                         "text": f"❌ Error: {result.get('message', '')}\n",
                     })
+            # Event-source the research result (T-BCSE closed loop).
+            try:
+                from huginn.events.session_writer import record_assistant_message
+                record_assistant_message(thread_id, _research_output or "Research complete.")
+            except Exception:
+                logger.debug("session research record skipped", exc_info=True)
             await websocket.send_json({"type": "done"})
             return
         except Exception as e:
@@ -972,6 +980,12 @@ async def _handle_user_input(
                 "type": "text_delta",
                 "text": f"\n{summary}\n",
             })
+            # Event-source the team result (T-BCSE closed loop).
+            try:
+                from huginn.events.session_writer import record_assistant_message
+                record_assistant_message(thread_id, summary)
+            except Exception:
+                logger.debug("session team record skipped", exc_info=True)
             await websocket.send_json({"type": "done"})
             return
         except Exception as e:
@@ -1056,6 +1070,12 @@ async def _handle_user_input(
                 "type": "text_delta",
                 "text": "\n## 综合答案\n" + result.get("final_answer", "") + "\n",
             })
+            # Event-source the fusion result (T-BCSE closed loop).
+            try:
+                from huginn.events.session_writer import record_assistant_message
+                record_assistant_message(thread_id, result.get("final_answer", ""))
+            except Exception:
+                logger.debug("session fusion record skipped", exc_info=True)
 
             await websocket.send_json({"type": "done"})
             return
