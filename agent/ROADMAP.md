@@ -236,6 +236,15 @@
   - 将 `clarification_response`/`set_auto_approve`/`set_suggest_mode`/`suggest_response`/`ping` 5 个内联 handler 移到 `ws_helpers.py` 统一管理。
   - 17 个 WS 集成测试全部通过 (0 failures)。
 
+#### 架构修复 (2026-08, 继承核查) — rcb_runner 拆分 / 死代码 / 依赖探测
+- **状态**: 已完成
+- **优先级**: P1 (主链路复杂度 / 可观测性)
+- **修复 5 — `rcb_runner.py` God File 拆分**: 5700 行聚合入口 (跑分遗留物) 拆为 7 个模块, 保持聚合入口 `run()`/`main()` 向后兼容:
+  - `rcb_utils.py` (纯工具, 无依赖) → `rcb_cognition.py` / `rcb_audit.py` (依赖 utils) → `rcb_step2.py` / `rcb_step3.py` / `rcb_mcmc.py` (依赖前两者) → `rcb_runner.py` (聚合)。依赖层级单向, 无循环 import。
+  - 39 个 RCB 相关测试全部通过。
+- **修复 6 — 真死代码删除**: 全库 AST+引用扫描确认 `huginn/autoloop/engine_selfcheck.py` (2860 行) 为唯一真死代码 — 全库无任何 `import` 消费, 仅 `engine.py` 注释提及 (其 `_extract_tests_passed` 已由 `cognitive_loop.py` 下沉并 re-export)。已删除, autoloop 50 测试通过。
+- **修复 7 — optional 工具"有名无实"依赖探测**: 大量 optional 工具在模块顶层 `try: import torch/pymatgen/rdkit...` 包裹, 缺依赖时模块仍能 import、工具照常注册, 但能力静默退化。新增 `probe_tool_dependencies()`: 静态扫描每个 optional 工具模块的模块级 import, 过滤 hugging 内部 + stdlib, 用 `importlib.util.find_spec` 判定第三方依赖缺失并 `logger.warning` 显式告警。在 `register_optional_tools()` 末尾接入, 运维可即时看到能力降级清单。
+
 ### 方法论
 - 本项目 conftest 接 pytest-cov, `python -m coverage run` 与其冲突会 "No data collected"; 用 coverage Python API (`coverage.Coverage().start()` + `pytest.main()`) 包裹采集。
 - free-threaded/3.14 下 coverage 行追踪会破坏 pytest traceback 格式化 (linecache 被污染) → 复用 3.12 环境测覆盖率; 无完整依赖栈时逐模块跑避免 INTERNALERROR 中断收集。
