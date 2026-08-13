@@ -17,8 +17,8 @@ from pathlib import Path
 
 import pytest
 
-from huginn.tools.sim import lammps_tool as lt
 from huginn.tools.sim import executable_resolver as er
+from huginn.tools.sim import lammps_tool as lt
 
 TRJ_PATH = Path(__file__).parent.parent / "lammps_traj_test" / "traj.lammpstrj"
 
@@ -473,7 +473,7 @@ def _make_auditor(monkeypatch, has_errors=False, findings=None):
 
     class _Auditor:
         def audit(self, *a, **k):
-            return _Audit(has_errors, [f for f in (findings or [])])
+            return _Audit(has_errors, list(findings or []))
 
     auditor_mod.PhysicsAuditor = _Auditor
     monkeypatch.setitem(sys.modules, "huginn.execution.physics_auditor", auditor_mod)

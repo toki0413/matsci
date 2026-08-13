@@ -13,8 +13,8 @@ import json
 import pytest
 
 from huginn.rag.vector_store import (
-    VectorStore,
     EncryptedVectorStore,
+    VectorStore,
 )
 
 

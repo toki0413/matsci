@@ -14,8 +14,8 @@ import time
 
 import pytest
 
-from huginn.tools.sim import vasp_tool as vt
 from huginn.tools.sim import executable_resolver as er
+from huginn.tools.sim import vasp_tool as vt
 
 # anyio 只作用于 async 测试, 同步测试不受影响
 pytestmark = pytest.mark.anyio
