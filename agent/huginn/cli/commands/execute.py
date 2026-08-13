@@ -9,9 +9,6 @@ from pathlib import Path
 import click
 
 from huginn.cli.context import CliContext
-from huginn.core_types import ToolContext
-from huginn.security.audit import AuditLogger
-from huginn.tools.registry import ToolRegistry
 
 
 @click.command()
@@ -30,29 +27,10 @@ def execute(ctx: CliContext, stages: str, working_dir: str, name: str) -> None:
     raw = stage_path.read_text(encoding="utf-8") if stage_path.exists() else stages
     stage_list = json.loads(raw)
 
-    def _wrap_tool(tool):
-        async def _run(action: str = "", **params):
-            if tool.input_schema:
-                input_data = tool.input_schema(action=action, **params)
-            else:
-                input_data = {"action": action, **params}
-            context = ToolContext(
-                session_id="execute",
-                workspace=working_dir,
-                audit_logger=AuditLogger(Path(working_dir) / "huginn_audit.jsonl"),
-            )
-            result = await tool.call(input_data, context)
-            if not result.success:
-                raise RuntimeError(result.error or f"{tool.name} failed")
-            return result.data
-
-        return _run
-
     orch = ExecutionOrchestrator(working_dir=working_dir)
-    for tool_name in ToolRegistry.list_tools():
-        tool = ToolRegistry.get(tool_name)
-        if tool:
-            orch.register_tool(tool_name, _wrap_tool(tool))
+    # 注: 不调用 orch.register_tool() — orchestrator 默认接全局 ToolRegistry
+    # 类, register_tool 仅对 dict 模式有效, 这里逐个注册纯属无效且每个都打
+    # warning。run() 内部用 ToolRegistry.get() 取工具, 由 _invoke_tool 桥接。
 
     record = asyncio.run(orch.run(stage_list, workflow_name=name))
     ctx.console.print(
