@@ -222,6 +222,13 @@
 ### 核心工具
 - `huginn/tools/structure_tool.py` → **100%** (`tests/test_structure_tool_ext.py` → 30): `is_read_only`、input model_validator(batch_validate 缺 files/其它 action 缺 file_path/合法)、`_file_mtime`(存在/缺失)、`_local_to_output`(全字段/缺 formula·num_sites 回退)、`validate_input`(batch_validate 放行/文件不存在命中本地库·不在库 404/文件存在/坏 reference 404/好 reference 放行)、`call`(本地库命中/文件路径转发 _call_cached/batch_validate 单独分派)、`_handle_batch_validate`(空 files early return·文件去重保序·混合 valid/invalid·单文件异常吞掉)、`_call_cached`(文件不存在/pymatgen 主路径+SpacegroupAnalyzer 成功/analyzer 异常且无 get_space_group_info→None/analyzer 异常但有 get_space_group_info→fallback/ImportError 基本解析·POSCAR 原子数·原子数非法·非 POSCAR 不解析/解析异常包装); 注: 空 files early return 用 `model_construct` 直击, 生产路径被 model_validator 守护。
 
+#### 架构修复 (2026-08, brooks-lint 审计) — 工具注册死引用与契约接入
+- **状态**: 已完成
+- **优先级**: P0 (silent failure)
+- **修复 1 — 工具注册"魔法字符串"死引用**: `_OPTIONAL_MODULES` 用全限定字符串 `("huginn.<mod>", "Cls")` 注册工具, 拼错路径会被 `_do_register` 的 `except ImportError` **静默跳过**, 工具永久消失无告警。新增 `huginn/tools/__init__.py::validate_tool_specs()`: 逐条 importlib 解析所有 spec, huginn 内部路径错误立即 raise, 第三方缺依赖正常 skip。**一次性暴露并修复 21 个死引用** (lammps/comsol/qe/cp2k/openfoam/packing/abaqus/plasma/symbolic_regression/autodiff/unit/symmetry/tda/uq/evidence_fusion/high_throughput/multi_fidelity/xrd_sim/gap_analysis/doe/debugger/nudge/generative_design 均移到 `sim/`/`sci/`/`design/` 子包)。新增 `tests/test_tool_registration.py` (3 用例)。
+- **修复 2 — 无消费者的协议层**: `huginn/orchestration/OrchestratorProtocol` 定义统一 orchestrator 契约, 但生产无 import, 契约无运行时强制力。在 `huginn/routes/agents.py` `/orchestrate` 入口加 `isinstance(orch, OrchestratorProtocol)` 断言, 让契约进入主链路, 未来 orchestrator 违约立即报错。
+- **修复 3 — 自进化逻辑重复**: `huginn/self_improvement/` 的 `SelfImprovementLoop` 与生产的 `huginn/bench.runner.BenchmarkRunner` + `huginn/evolution.engine.EvolutionEngine` 并存且无生产消费者。在 `self_improvement/__init__.py` 标注"参考/测试实现, 生产走 bench+evolution", 避免误当主链路。
+
 ### 方法论
 - 本项目 conftest 接 pytest-cov, `python -m coverage run` 与其冲突会 "No data collected"; 用 coverage Python API (`coverage.Coverage().start()` + `pytest.main()`) 包裹采集。
 - free-threaded/3.14 下 coverage 行追踪会破坏 pytest traceback 格式化 (linecache 被污染) → 复用 3.12 环境测覆盖率; 无完整依赖栈时逐模块跑避免 INTERNALERROR 中断收集。
