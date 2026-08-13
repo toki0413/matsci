@@ -60,6 +60,7 @@ _CORE_MODULES = [
     ("huginn.tools.prospective_tool", "ListPendingIntentionsTool"),
     ("huginn.tools.prospective_tool", "CancelIntentionTool"),
     ("huginn.tools.self_observe_tool", "SelfObserveTool"),
+    ("huginn.tools.deep_think_tool", "DeepThinkTool"),
     ("huginn.tools.recall_context_tool", "RecallContextTool"),
     ("huginn.tools.todo_tool", "TodoWriteTool"),
     ("huginn.tools.todo_tool", "TodoReadTool"),
