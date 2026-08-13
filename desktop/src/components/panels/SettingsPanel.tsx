@@ -547,6 +547,16 @@ export function SettingsPanel(props: SettingsPanelProps) {
                   填写后 mat-db 用真实 Materials Project 数据; 留空则回退 mock。保存后自动重连生效。
                 </p>
               </ConfigField>
+              <ConfigField label="OQMD API Key" full>
+                <ApiKeyInput
+                  value={config.oqmd_api_key}
+                  onChange={(v) => { setConfig((prev) => ({ ...prev, oqmd_api_key: v })); setConfigDirty(true); }}
+                  placeholder="OQMD_API_KEY (可选)"
+                />
+                <p className="mt-1 text-xs text-text-muted">
+                  OQMD 材料数据库; 留空则回退 mock。
+                </p>
+              </ConfigField>
               <ConfigField label="MinerU API Keys" full>
                 <ApiKeyInput
                   value={config.mineru_api_keys}
