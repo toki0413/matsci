@@ -245,6 +245,16 @@
 - **修复 6 — 真死代码删除**: 全库 AST+引用扫描确认 `huginn/autoloop/engine_selfcheck.py` (2860 行) 为唯一真死代码 — 全库无任何 `import` 消费, 仅 `engine.py` 注释提及 (其 `_extract_tests_passed` 已由 `cognitive_loop.py` 下沉并 re-export)。已删除, autoloop 50 测试通过。
 - **修复 7 — optional 工具"有名无实"依赖探测**: 大量 optional 工具在模块顶层/函数体内 `try: import torch/pymatgen/rdkit...` 包裹, 缺依赖时模块仍能 import、工具照常注册, 但能力静默退化。新增 `probe_tool_dependencies()`: 静态扫描每个 optional 工具模块的 import, 过滤 hugging 内部 + stdlib, 用 `importlib.util.find_spec` 判定第三方依赖缺失并 `logger.warning` 显式告警。在 `register_optional_tools()` 末尾接入, 运维可即时看到能力降级清单。**评测发现两处覆盖短板并已修复**: ① 原只扫模块级 import, 漏掉函数体内懒导入 (sklearn/rdkit 各工具); ② 不穿透 shim (如 `tools/rdkit_tool.py` → `sci/rdkit_tool.py`), 导致 rdkit/pymatgen/openmm 等漏报。现 `_collect_top_level_imports` 遍历函数/类体 import, 且仅对"纯 shim"(顶层无逻辑)跟随其 re-export 目标; 对普通模块不跟随 `huginn.*` 门面 (避免 `huginn.llm` 的可选依赖污染到引用它的工具)。修复后探测从仅 5 个缺失模块提升到 33 个真实缺失 (pymatgen/rdkit/openmm/sklearn/vasp/vina 等全捕获)。
 
+#### 架构修复 (2026-08, 继承核查) — 多入口收口 + 进化门控接入主链路
+- **状态**: 已完成
+- **优先级**: P1 (主链路复杂度 / 进化质量)
+- **修复 8 — 多入口 MemoryManager 初始化重复 → 共享 factory**: FastAPI server / RCB harness / CLI 各自手写 MemoryManager 装配, 改一个能力要同步多处。新增 `huginn/memory/factory.py::build_memory_manager()` 作为唯一构造入口: 传 `memory_dir`(RCB 主题记忆)或 `memory_md_path`(server MEMORY.md)+ 可选 `longterm`/`llm`, 内部统一 `MemoryConfig` 装配; 任何单点失败保留空 longterm/llm 不抛 (memory 是增强, 不阻塞主流程)。`server_core.get_memory_manager()` 与 `rcb_runner.py` 均改为调用该 helper, 消除重复装配。新增 `memory/factory.py` (独立单测), 相关 memory/rcb 测试通过。
+- **修复 9 — significance/OOD/adoption 门控接入进化采纳路径**: 此前 harness 门控 (significance Wilcoxon + OOD holdout + adoption 三级) 只服务评测, 未接入 `EvolutionEngine` 的自进化采纳路径 — 失败/奖励派生的规则与技能可绕过显著性与 OOD 检查直接进活动池, 存在过拟合与噪声吸收风险。新增 `EvolutionEngine._adoption_allowed()` 软门控 (fail-open):
+  - **advisory (默认)**: 门控只评分/记录 `H5/H6` 配对决策, 永远采纳 — 保护 agent 能力, 最坏只是"少自动采纳一次"。
+  - **strict (`harness_adoption_gate=1`)**: 仅 GREEN 采纳, 黄/红不入活动池; 数据保留在 gate store 不删除, 可手动复活。
+  - 门控任何异常都 fail-open 返回 True, 门控崩溃绝不阻断进化。
+  - 接入点: `evolve_from_failures` / `evolve_from_successes` / `evolve_prompt_patches` / `evolve_from_rewards` 的规则/技能添加点, 以及 `sync_to_registry` 技能注册点。`tests/test_evolution_engine.py` 通过。
+
 ### 方法论
 - 本项目 conftest 接 pytest-cov, `python -m coverage run` 与其冲突会 "No data collected"; 用 coverage Python API (`coverage.Coverage().start()` + `pytest.main()`) 包裹采集。
 - free-threaded/3.14 下 coverage 行追踪会破坏 pytest traceback 格式化 (linecache 被污染) → 复用 3.12 环境测覆盖率; 无完整依赖栈时逐模块跑避免 INTERNALERROR 中断收集。
