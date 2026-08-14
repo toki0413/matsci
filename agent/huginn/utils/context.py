@@ -284,6 +284,8 @@ async def summarize_compact_messages(
     keep_last_n: int = 4,
     summarizer: Callable[[str], Any] | None = None,
     existing_summary: str = "",
+    *,
+    max_messages: int | None = None,
 ) -> tuple[list[Any], str]:
     """Compact messages via LLM summarization, preserving research context.
 
@@ -306,12 +308,20 @@ async def summarize_compact_messages(
             the LLM's summary text. If None, falls back to drop-oldest.
         existing_summary: Summary from a previous compaction round, to
             accumulate context.
+        max_messages: 渐进式压缩阈值. 当消息条数超过该值且当前仍在 token
+            预算内时, 也触发压缩 (把旧消息折叠成摘要), 让长程任务把上下文
+            渐进维护在安全水位, 而不是等逼近模型窗口才一次性压缩.
+            None = 不按条数触发 (仅按 token 预算).
     """
     if budget_tokens <= 0:
         return messages, existing_summary
 
     current_tokens = estimate_message_tokens(messages)
-    if current_tokens <= budget_tokens:
+    # token 超预算 → 压缩. 否则若消息条数超阈值 → 也压缩 (渐进维护).
+    # 两者都满足(未超预算且条数未超) → 原样返回.
+    if current_tokens <= budget_tokens and (
+        max_messages is None or len(messages) <= max_messages
+    ):
         return messages, existing_summary
 
     # Determine how many messages to summarize vs keep.
