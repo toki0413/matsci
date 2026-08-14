@@ -19,10 +19,9 @@ RestartSec=5
 StartLimitIntervalSec=60
 StartLimitBurst=5
 
-# 本地开发免鉴权; 生产环境请设置 HUGINN_API_KEY 并移除本行
-Environment=HUGINN_DEV_MODE=1
-# 可选覆盖文件 (API key / 生产配置), 不存在时静默跳过
-EnvironmentFile=-/etc/huginn/huginn.env
+# 生产鉴权: 从 /etc/huginn/huginn.env 读取 HUGINN_API_KEY + HUGINN_JWT_SECRET.
+# 不再使用 HUGINN_DEV_MODE (会豁免本机鉴权). 缺失时 auth 依赖会拒绝所有非公开请求.
+EnvironmentFile=/etc/huginn/huginn.env
 
 # HPC 配置固化在 /workspace/agent/huginn.toml (hpc_scheduler 等字段),
 # 无需额外环境变量; 部署到真实集群时编辑该文件即可.

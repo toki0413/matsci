@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import os
 import shlex
 import tarfile
 import tempfile
@@ -463,8 +464,25 @@ def build_executor(config: Any) -> Any:
     """
     from huginn.security import ContainerExecutor, SandboxExecutor
 
+    # Populate the soft-sandbox's allowed_work_dirs from the configured
+    # workspace so path scoping is actually enforced. Without this the
+    # executor logs "path scoping inactive" and cwd checks are no-ops.
+    def _local_sandbox() -> SandboxExecutor:
+        from huginn.security.sandbox import SandboxConfig as SecuritySandboxConfig
+
+        work_dirs: set[Path] = set()
+        ws = (getattr(config, "workspace", None) or ".").strip()
+        if ws:
+            try:
+                work_dirs = {Path(os.path.expandvars(ws)).expanduser().resolve()}
+            except Exception:  # noqa: BLE001 — never block on workspace resolution
+                work_dirs = {Path.cwd()}
+        return SandboxExecutor(
+            SecuritySandboxConfig(allowed_work_dirs=work_dirs)
+        )
+
     if getattr(config, "execution_backend", "local") != "remote":
-        base = SandboxExecutor()
+        base = _local_sandbox()
         runtime = getattr(config, "container_runtime", "none") or "none"
         image = getattr(config, "container_image", None)
         if runtime != "none" and image:
