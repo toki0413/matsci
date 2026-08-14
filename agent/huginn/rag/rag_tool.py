@@ -242,6 +242,7 @@ class RAGTool(HuginnTool):
                     return ToolResult(
                         data=None, success=False, error=f"File not found: {path}"
                     )
+                info = None
                 try:
                     info = kb.add_document(path.name, path.read_bytes())
                     return ToolResult(
@@ -253,10 +254,15 @@ class RAGTool(HuginnTool):
                         success=True,
                     )
                 except Exception as e:
+                    # RevertibleEffect (Cordis 时间可组合性): add_document 抛异常后,
+                    # 撤销本次写入 — 删除该 doc 的所有 chunk, 不留半成品.
+                    if info and info.get("doc_id"):
+                        kb.delete_document(info["doc_id"])
                     return ToolResult(
                         data=None, success=False, error=f"Ingest failed: {e}"
                     )
             elif args.document:
+                info = None
                 try:
                     info = kb.add_document(
                         "manual.txt", args.document.encode("utf-8")
@@ -269,6 +275,9 @@ class RAGTool(HuginnTool):
                         success=True,
                     )
                 except Exception as e:
+                    # RevertibleEffect: 失败撤销本次写入, 不留半成品.
+                    if info and info.get("doc_id"):
+                        kb.delete_document(info["doc_id"])
                     return ToolResult(
                         data=None, success=False, error=f"Ingest failed: {e}"
                     )
@@ -285,6 +294,7 @@ class RAGTool(HuginnTool):
                     data=None, success=False, error=f"File not found: {path}"
                 )
 
+            ids: list[str] = []
             try:
                 ids = self.store.ingest_file(str(path))
                 return ToolResult(
@@ -296,9 +306,13 @@ class RAGTool(HuginnTool):
                     success=True,
                 )
             except Exception as e:
+                # RevertibleEffect: ingest_file 抛异常后, 删除本次写入的 chunk.
+                for doc_id in ids:
+                    self.store.delete(doc_id)
                 return ToolResult(data=None, success=False, error=f"Ingest failed: {e}")
 
         elif args.document:
+            ids = []
             try:
                 ids = self.store.ingest(
                     [args.document], metadatas=[{"source": "manual"}]
@@ -308,6 +322,9 @@ class RAGTool(HuginnTool):
                     success=True,
                 )
             except Exception as e:
+                # RevertibleEffect: 失败删除本次写入的 chunk.
+                for doc_id in ids:
+                    self.store.delete(doc_id)
                 return ToolResult(data=None, success=False, error=f"Ingest failed: {e}")
 
         return ToolResult(
