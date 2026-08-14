@@ -25,7 +25,7 @@
 |---|---|---|
 | [architecture.md](architecture.md) | active | 系统架构总览（技术架构） |
 | [tech-spec.md](tech-spec.md) | active | 技术规格（已合并下述 8 个已废弃 spec） |
-| [harness_evolution_spec.md](harness_evolution_spec.md) | active | harness 演进规范（部分完成，规划中） |
+| [harness_evolution_spec.md](harness_evolution_spec.md) | active | harness 演进规范（H0-H4 落地，H5-b tool dispatch 已落地，H5-a 大部分落地） |
 | [reward_design.md](reward_design.md) | staging | 奖励设计（未实现理论稿） |
 | [SPEC_openworker_adoption](../huginn/SPEC_openworker_adoption.md) | active | OpenWorker 采纳规范 |
 | [SPEC_visual_kb_loop](../huginn/metacog/SPEC_visual_kb_loop.md) | active | 视觉知识库闭环规范 |
