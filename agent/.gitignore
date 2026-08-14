@@ -192,8 +192,14 @@ conversation_history/
 lammps_dem_lammps_out/
 
 # Keep the small baseline LAMMPS trajectory fixture under version control:
-# test_lammps_ext.py (python + rust parser tests) needs this stable shared
+# test_lammps.py (python + rust parser tests) needs this stable shared
 # file; it is not generated per-test. Un-ignore the dir first so git looks
 # inside it, then the specific file (parent dir must be un-ignored first).
 !lammps_traj_test/
 !lammps_traj_test/traj.lammpstrj
+
+# Generated / stray artifacts (not source)
+case.sif
+_cov_t.py
+_cov_structure.py
+fenics_solve.py
