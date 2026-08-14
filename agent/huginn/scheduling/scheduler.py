@@ -44,6 +44,11 @@ from huginn.persistence.campaign import (
     JobRecord,
     NullCampaignStore,
 )
+from huginn.scheduling.hpc_queues import (
+    HpcQueueLayer,
+    ReconcileReport,
+    reconcile_layers,
+)
 from huginn.tools.profile import CostTier
 
 logger = logging.getLogger(__name__)
@@ -76,6 +81,12 @@ class AdmissionPolicy:
     max_concurrent_light: int = 8
     cpu_hour_budget: float | None = None
     gpu_hour_budget: float | None = None
+    # "cumulative" (default): budget is a session cap — charged on acquire and
+    #   never released. Good for a bounded short run.
+    # "current": budget expresses concurrent occupancy — released back on
+    #   release(). Required for long-running (month/year) campaigns where a
+    #   monotonic cumulative counter would hit the cap within hours.
+    budget_mode: str = "cumulative"
 
     @classmethod
     def from_env(cls) -> AdmissionPolicy:
@@ -101,6 +112,7 @@ class AdmissionPolicy:
             max_concurrent_light=_env_int("HUGINN_MAX_LIGHT_CONCURRENT", 8),
             cpu_hour_budget=_env_float("HUGINN_CPU_HOUR_BUDGET"),
             gpu_hour_budget=_env_float("HUGINN_GPU_HOUR_BUDGET"),
+            budget_mode=os.environ.get("HUGINN_BUDGET_MODE", "cumulative"),
         )
 
 
@@ -152,14 +164,21 @@ class ToolScheduler:
         self,
         store: CampaignStoreBackend | None = None,
         policy: AdmissionPolicy | None = None,
+        hpc_layer: HpcQueueLayer | None = None,
     ) -> None:
         self.store: CampaignStoreBackend = store if store is not None else NullCampaignStore()
         self.policy: AdmissionPolicy = policy if policy is not None else AdmissionPolicy.from_env()
+        # P1: optional HPC queue layer. When set, long-running async jobs
+        # additionally arbitrate remote admission before running.
+        self.hpc_layer = hpc_layer
         self._heavy_sem = asyncio.Semaphore(self.policy.max_concurrent_heavy)
         self._light_sem = asyncio.Semaphore(self.policy.max_concurrent_light)
         self._budget_lock = threading.Lock()
         self._cpu_hours_used = 0.0
         self._gpu_hours_used = 0.0
+        # Records which active jobs have been charged to the budget (for
+        # cross-layer reconciliation of the budget layer).
+        self._charged_active: set[str] = set()
         # async-job path
         self._queue: deque[_QueuedJob] = deque()
         self._live_tasks: dict[str, asyncio.Task] = {}
@@ -197,6 +216,10 @@ class ToolScheduler:
     def release(self, admission: Admission) -> None:
         """Release the slot held by an ``Admission``. Safe to call once."""
         if not admission.held_semaphore:
+            # In "current" mode, still release the charged budget even when the
+            # call held no tier semaphore (e.g. a none-tier tool that charged the
+            # report budget).
+            self._release_budget(admission)
             return
         sem = self._sem_for(admission.cost_tier)
         if sem is None:
@@ -207,6 +230,21 @@ class ToolScheduler:
             # Over-release guard: semaphore already at initial value. Shouldn't
             # happen with paired acquire/release, but don't crash the agent.
             logger.warning("semaphore over-release for %s", admission.tool_name)
+        # Free the charged budget only after the tier slot is released, so
+        # "current" occupancy accurately reflects in-flight work.
+        self._release_budget(admission)
+
+    def _release_budget(self, admission: Admission) -> None:
+        """Release charged budget back when policy is in "current" mode."""
+        if self.policy.budget_mode != "current":
+            return
+        with self._budget_lock:
+            self._cpu_hours_used = max(
+                0.0, self._cpu_hours_used - admission.requested_cpu_hours
+            )
+            self._gpu_hours_used = max(
+                0.0, self._gpu_hours_used - admission.requested_gpu_hours
+            )
 
     def _sem_for(self, cost_tier: CostTier) -> asyncio.Semaphore | None:
         if cost_tier == "heavy":
@@ -340,12 +378,26 @@ class ToolScheduler:
         record = self.store.get_job(job.job_id)
         error: str | None = None
         result: Any = None
+        hpc_held = False
         try:
+            # P1: acquire a remote admission slot before running when an HPC
+            # layer is wired. Blocks (backpressure) while the cluster is full.
+            if self.hpc_layer is not None and self.hpc_layer.enabled:
+                await self.hpc_layer.acquire_slot(job.job_id)
+                hpc_held = True
+            # Track this long job against the budget for cross-layer
+            # reconciliation (current-mode occupancy).
+            if self.policy.budget_mode == "current":
+                self._charged_active.add(job.job_id)
             result = await job.factory()
         except Exception as exc:  # noqa: BLE001 — persist whatever failed
             error = repr(exc)
             logger.exception("queued job %s failed", job.job_id)
         finally:
+            if self.policy.budget_mode == "current":
+                self._charged_active.discard(job.job_id)
+            if hpc_held:
+                self.hpc_layer.release_slot(job.job_id)  # type: ignore[union-attr]
             if sem is not None:
                 with contextlib.suppress(ValueError):
                     sem.release()
@@ -390,6 +442,22 @@ class ToolScheduler:
             # keep the record so poll_job still reflects "queued".
             requeued += 1
         return {"orphaned": orphaned, "requeued": requeued}
+
+    def reconcile(self) -> ReconcileReport:
+        """Cross-layer reconciliation: local vs HPC vs budget state.
+
+        Detects Čech H¹-style consistency obstructions between the scheduler's
+        three layers — local job state, the HPC queue layer, and the budget
+        occupancy — so a job that is "running" locally but absent on the cluster
+        (or charged to budget but not active) is surfaced instead of drifting.
+        """
+        local: dict[str, str] = {}
+        for status in ("queued", "running"):
+            for rec in self.store.list_jobs_by_status(status):
+                local[rec.job_id] = rec.status
+        hpc = self.hpc_layer.snapshot() if self.hpc_layer is not None else {}
+        charged = set(self._charged_active)
+        return reconcile_layers(local, hpc, charged)
 
     def snapshot(self) -> SchedulerStatus:
         heavy_in_flight = self.policy.max_concurrent_heavy - self._heavy_sem._value  # type: ignore[attr-defined]
