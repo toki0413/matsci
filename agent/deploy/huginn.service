@@ -1,0 +1,32 @@
+[Unit]
+Description=Huginn AI Agent Server (FastAPI + WebSocket)
+Documentation=https://github.com/toki0413/matsci
+# 等待网络就绪后再启动, 确保 MCP server / 外部服务可达
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 运行工作目录 — huginn.toml 从该目录加载, 即为"固化"的生效配置
+WorkingDirectory=/workspace/agent
+# 使用项目自带 Python 解释器 (含 mcp 依赖), 避免子进程用错系统 python
+ExecStart=/root/.pyenv/versions/3.12.13/bin/python -m huginn.server --port 8000
+
+# 崩溃自动重启
+Restart=always
+RestartSec=5
+# 防止瞬间崩溃造成无限重启风暴
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+# 本地开发免鉴权; 生产环境请设置 HUGINN_API_KEY 并移除本行
+Environment=HUGINN_DEV_MODE=1
+# 可选覆盖文件 (API key / 生产配置), 不存在时静默跳过
+EnvironmentFile=-/etc/huginn/huginn.env
+
+# HPC 配置固化在 /workspace/agent/huginn.toml (hpc_scheduler 等字段),
+# 无需额外环境变量; 部署到真实集群时编辑该文件即可.
+
+[Install]
+# 多用户目标 — 开机自启
+WantedBy=multi-user.target
