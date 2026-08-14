@@ -41,6 +41,7 @@ OP_REMOVE_FILE = "remove_file"
 OP_SPAWN = "spawn"
 OP_REGISTER = "register"
 OP_COMPENSATE = "compensate"  # 出站写操作的补偿逆 (t1): 携带可序列化的补偿字典
+OP_ACTION = "physical_action"  # 物理动作逆 (物理世界实例化): 逆 = 执行 inverse 动作序列
 
 
 class RevertibleContext:
@@ -259,6 +260,35 @@ class RevertibleContext:
             )
         return value
 
+    # ── 物理世界实例化 (世界模型 / VLA) ────────────────────────────
+    def track_world_action(
+        self,
+        state_before: dict[str, Any],
+        action: dict[str, Any],
+        inverse: dict[str, Any],
+    ) -> None:
+        """注册一个**物理动作逆** (物理世界实例化).
+
+        由世界模型 (WorldModel.infer_inverse) 根据动作和之前状态自动推断逆动作,
+        经此方法登记为可序列化的数据驱动逆, 纳入 journal/崩溃重放.
+
+        ``action`` 与 ``inverse`` 字典格式由具体的 ActionExecutor 约定,
+        核心层只做登记和 LIFO 回放, 不做语义解释.
+
+        示例:
+            action   = {"type": "move", "target": [0, 0, 0]}
+            inverse  = {"type": "move", "target": [1, 2, 3]}
+            ctx.track_world_action(state_before, action, inverse)
+        """
+        self.track_op(
+            {
+                "type": OP_ACTION,
+                "state_before": state_before,
+                "action": action,
+                "inverse": inverse,
+            },
+        )
+
     def compensate(self, kind: str, payload: dict[str, Any]) -> None:
         """注册一个**出站写操作的补偿逆** (t1).
 
@@ -354,6 +384,8 @@ def _apply_inverse(
                 store[op["key"]] = op["prev"]
         elif op_type == OP_COMPENSATE:
             _run_compensation(op.get("kind"), op.get("payload") or {})
+        elif op_type == OP_ACTION:
+            _run_physical_inverse(op.get("inverse"))
         else:
             logger.warning("revertible: unknown inverse op type %r", op_type)
     except Exception:
@@ -390,6 +422,33 @@ def _run_compensation(kind: str | None, payload: dict[str, Any]) -> None:
         fn(payload)
     except Exception:
         logger.warning("revertible: compensation %r failed", kind, exc_info=True)
+
+
+# ── 物理执行器注册 (物理世界实例化的逆执行) ──────────────────────
+# 与补偿器 (register_compensator) 同构: 撤销一个物理动作 = 执行其 inverse 动作.
+# 签名: ``fn(inverse: dict) -> None``. 进程内 revert_all 与崩溃后 journal 重放共用.
+_PHYSICAL_EXECUTOR: Callable[[dict[str, Any]], None] | None = None
+
+
+def register_physical_executor(fn: Callable[[dict[str, Any]], None] | None) -> None:
+    """注册物理动作执行器 (用于执行逆动作). 重复注册覆盖."""
+    global _PHYSICAL_EXECUTOR
+    _PHYSICAL_EXECUTOR = fn
+
+
+def _run_physical_inverse(inverse: dict[str, Any] | None) -> None:
+    if not inverse:
+        return
+    fn = _PHYSICAL_EXECUTOR
+    if fn is None:
+        logger.warning(
+            "revertible: no physical executor registered, cannot revert action",
+        )
+        return
+    try:
+        fn(inverse)
+    except Exception:
+        logger.warning("revertible: physical inverse failed", exc_info=True)
 
 
 # ── journal 读取 / 崩溃后重放 ─────────────────────────────────────
