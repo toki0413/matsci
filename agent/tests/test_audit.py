@@ -1,10 +1,27 @@
-"""审计日志完整性测试 — 记录关键操作、哈希链验证、防篡改检测."""
+"""Audit 日志测试 — 归并原 test_audit_integrity.py / test_audit_verify.py 两个文件.
+
+覆盖审计日志两层:
+  1. 服务端审计记录 + 防篡改 (server 集成: 关键操作记录、哈希链、完整性校验)
+  2. AuditLogger 哈希链校验 (单位级: 合法链 / 空日志 / 篡改检测)
+"""
+
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import sys
+import tempfile
+from pathlib import Path
 
 import pytest
+
+from huginn.security.audit import AuditLogger
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 1. 服务端审计日志 — 记录关键操作、哈希链验证、防篡改检测
+# ═══════════════════════════════════════════════════════════════════════════
 
 
 @pytest.fixture(autouse=True)
@@ -145,6 +162,46 @@ class TestAuditLogTamperDetection:
             assert result is True or result is None
         else:
             print("\n[AUDIT] no verify method (hash chain verification not implemented)")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 2. AuditLogger 哈希链校验 — 单位级
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestAuditVerifyChain:
+    def test_empty_log(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            logger = AuditLogger(Path(tmp) / "audit.jsonl")
+            assert logger.verify_chain() == []
+
+    def test_valid_chain(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            log_path = Path(tmp) / "audit.jsonl"
+            logger = AuditLogger(log_path)
+            logger.log("tool_call", "agent", "test_tool", input_data="in")
+            logger.log("tool_call", "agent", "test_tool2", input_data="in2")
+            assert logger.verify_chain() == []
+
+    def test_detects_tampering(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            log_path = Path(tmp) / "audit.jsonl"
+            logger = AuditLogger(log_path)
+            logger.log("tool_call", "agent", "test_tool", input_data="in")
+            logger.log("tool_call", "agent", "test_tool2", input_data="in2")
+
+            lines = log_path.read_text(encoding="utf-8").strip().split("\n")
+            record = json.loads(lines[0])
+            record["actor"] = "attacker"
+            lines[0] = json.dumps(record)
+            log_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+            mismatches = logger.verify_chain()
+            assert len(mismatches) == 1
+            line_no, expected, actual = mismatches[0]
+            assert line_no == 2
+            assert actual == json.loads(lines[1]).get("prev_hash", "")
+            assert expected == hashlib.sha256(lines[0].encode("utf-8")).hexdigest()[:32]
 
 
 if __name__ == "__main__":

@@ -14,8 +14,8 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-os.environ.setdefault("HUGINN_CACHE_DIR", str(Path(__file__).parent.parent / ".test_cache"))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+os.environ.setdefault("HUGINN_CACHE_DIR", str(Path(__file__).parent.parent.parent / ".test_cache"))
 
 BASE = "http://localhost:8000"
 N_CONCURRENT = 50
