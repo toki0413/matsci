@@ -323,3 +323,75 @@ async def switch_branch(thread_id: str, params: dict[str, Any], request: Request
     if result.get("success"):
         touch_thread(thread_id)
     return {"thread_id": thread_id, **result}
+
+
+@router.post("/threads/{thread_id}/event-branch")
+async def event_branch(
+    thread_id: str,
+    params: dict[str, Any],
+    request: Request,
+) -> dict[str, Any]:
+    """事件级分支/回溯 (H2): 移动 SessionEventLog 的叶指针到 ``seq``.
+
+    与 ``switch-branch`` (走内存 ConversationTree) 互补: 这里直接在事件日志
+    上做 O(1) 叶指针移动 — 历史事件永不删, 后续 append 从新叶继续, 形成
+    可回放/可合并的事件分支. 支持 ``seq`` (整数事件序号) 或事件 ``id``.
+
+    Response: ``{ thread_id, leaf_id, next_seq, seq }``.
+    """
+    err = _check_thread_owner(thread_id, request)
+    if err:
+        return err
+    target = params.get("seq") or params.get("event_id")
+    if target is None:
+        return {"success": False, "error": "seq (int) or event_id (str) is required"}
+    try:
+        from huginn.events.session_log import SessionEventLog
+
+        log = SessionEventLog.open(thread_id, load=True)
+        leaf_id = log.branch(target)
+        return {
+            "thread_id": thread_id,
+            "success": True,
+            "leaf_id": leaf_id,
+            "next_seq": log.seq,
+            "seq": target,
+        }
+    except KeyError as exc:
+        return {"success": False, "error": str(exc)}
+    except Exception:
+        logger.debug("event-branch failed for %s", thread_id, exc_info=True)
+        return {"success": False, "error": "event branch failed"}
+
+
+@router.get("/threads/{thread_id}/event-path")
+async def event_path(thread_id: str, request: Request) -> dict[str, Any]:
+    """事件级读取 (H2): 返回当前叶指针的事件路径 (root→leaf).
+
+    路径上的 ``seq`` 序列可直接用于 ``event-branch`` 回溯/建分支.
+    """
+    err = _check_thread_owner(thread_id, request)
+    if err:
+        return err
+    try:
+        from huginn.events.session_log import SessionEventLog
+
+        log = SessionEventLog.open(thread_id, load=True)
+        path = log.events_on_path()
+        return {
+            "thread_id": thread_id,
+            "leaf_id": log.leaf_id,
+            "next_seq": log.seq,
+            "path": [
+                {
+                    "seq": ev.seq,
+                    "kind": ev.kind,
+                    "id": ev.id,
+                    "parent_id": ev.parent_id,
+                }
+                for ev in path
+            ],
+        }
+    except Exception:
+        logger.debug("event-path failed for %s", thread_id, exc_info=True)
+        return {"thread_id": thread_id, "leaf_id": None, "path": []}

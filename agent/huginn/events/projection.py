@@ -25,7 +25,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TypeVar
 
-from huginn.events.session_log import SessionEvent, SessionEventLog
+from huginn.events.session_log import (
+    EVENT_AUTOLOOP_PHASE,
+    SessionEvent,
+    SessionEventLog,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -206,6 +210,7 @@ class RuntimeStateProjection(ProjectionDefinition):
     def __init__(self) -> None:
         self._default: dict[str, Any] = {
             "cognitive_mode": "discover",
+            "csm_state": "s0_blank",  # H1: 精确 S0-S7 状态 (反向重建 CSM 用)
             "phase": "explore",
             "l1_coordinates": "",
             "active_plan_id": None,
@@ -222,9 +227,17 @@ class RuntimeStateProjection(ProjectionDefinition):
         # Return the *same* state object when nothing changed, so the engine's
         # identity-based change detection stays meaningful (no spurious fires).
         if event.kind == "cognitive_mode_change":
-            v = event.payload.get("cognitive_mode")
+            payload = event.payload or {}
+            updates: dict[str, Any] = {}
+            v = payload.get("cognitive_mode")
             if v is not None and v != state["cognitive_mode"]:
-                return {**state, "cognitive_mode": v}
+                updates["cognitive_mode"] = v
+            # H1 反向: csm_state 精确状态也随事件沉淀, 供重建 CSM 到同一 S 状态
+            cs = payload.get("csm_state")
+            if cs is not None and cs != state["csm_state"]:
+                updates["csm_state"] = cs
+            if updates:
+                return {**state, **updates}
         elif event.kind == "phase_change":
             v = event.payload.get("phase")
             if v is not None and v != state["phase"]:
@@ -234,6 +247,53 @@ class RuntimeStateProjection(ProjectionDefinition):
                 return {**state, "model": event.payload.get("model")}
         elif event.kind == "message" and event.payload.get("role") == "user":
             return {**state, "turns_count": state["turns_count"] + 1}
+        return state
+
+    def view(self, state: dict[str, Any]) -> dict[str, Any]:
+        return dict(state)
+
+
+class AutoloopStateProjection(ProjectionDefinition):
+    """Replays the autoloop engine's runtime position from phase events.
+
+    The autoloop engine is a 7-phase loop (perceive→…→report) whose "current
+    phase" used to live in a mutable attribute. H3 makes each phase transition
+    an event and derives ``{phase, status, iteration}`` from the log — so the
+    engine's position is replayable / resumable, not just a mutable snapshot.
+
+    ``apply`` returns the *same* dict when nothing changed so the engine's
+    identity-based change detection stays meaningful.
+    """
+
+    key = "autoloop"
+    stateVersion = 1  # noqa: N815
+
+    def init(self) -> dict[str, Any]:
+        return {
+            "phase": "",
+            "status": "",
+            "iteration": 0,
+            "phase_seq": -1,  # seq of the last phase event (replay cursor)
+        }
+
+    def apply(self, state: dict[str, Any], event: SessionEvent) -> dict[str, Any]:
+        if event.kind != EVENT_AUTOLOOP_PHASE:
+            return state
+        payload = event.payload or {}
+        updates: dict[str, Any] = {}
+        v = payload.get("phase")
+        if v is not None and v != state["phase"]:
+            updates["phase"] = v
+        s = payload.get("status")
+        if s is not None and s != state["status"]:
+            updates["status"] = s
+        it = payload.get("iteration")
+        if it is not None and it != state["iteration"]:
+            updates["iteration"] = it
+        if event.seq != state["phase_seq"]:
+            updates["phase_seq"] = event.seq
+        if updates:
+            return {**state, **updates}
         return state
 
     def view(self, state: dict[str, Any]) -> dict[str, Any]:

@@ -425,7 +425,10 @@ class CognitiveStateMachine:
         prompt = csm.get_attention_prompt()
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        session_log: Any | None = None,
+    ) -> None:
         self._state: CognitiveState = CognitiveState.S0_BLANK
         self._history: list[tuple[CognitiveState, str]] = []
         # L1 coordinates accumulate across the session
@@ -433,6 +436,62 @@ class CognitiveStateMachine:
         # Track whether we've had a confirmation gate this cycle
         self._awaiting_confirmation: bool = False
         self._confirmation_type: str = ""
+        # H1: 可选绑定的会话事件日志. 状态迁移时把认知跃迁 append 进去,
+        # 使"状态机状态"成为"事件日志"的投影 (反向可用 RuntimeStateProjection
+        # 重放重建 CSM). None 时不落事件 — 与旧行为完全一致 (向后兼容).
+        self._session_log: Any = None
+        if session_log is not None:
+            self.attach_session_log(session_log)
+
+    def attach_session_log(self, session_log: Any) -> None:
+        """绑定会话事件日志 (SessionEventLog), 迁移时自动落事件.
+
+        best-effort: 绑定失败/写入失败都只记日志, 绝不拖垮状态机.
+        """
+        self._session_log = session_log
+
+    def _append_transition_event(
+        self,
+        old: CognitiveState,
+        new: CognitiveState,
+        signal: TransitionSignal,
+        context: dict[str, Any] | None,
+    ) -> None:
+        """把一次认知状态跃迁 append 进事件日志 (H1 正向闭环).
+
+        payload 携带完整快照: csm_state (精确 S 状态) + cognitive_mode +
+        phase + 触发信号, 使反向投影能精确重建 CSM 到该状态.
+        """
+        log = self._session_log
+        if log is None:
+            return
+        try:
+            from huginn.events.session_log import EVENT_COGNITIVE_MODE_CHANGE
+
+            mode = (
+                "construct" if new in CONSTRUCTION_STATES
+                else "discover" if new in DISCOVERY_STATES
+                else "discover"
+            )
+            phase = STATE_TO_PHASE.get(new, "")
+            log.append(
+                EVENT_COGNITIVE_MODE_CHANGE,
+                {
+                    "cognitive_mode": mode,
+                    "phase": phase,
+                    "csm_state": new.value,
+                    "signal": signal.signal_type,
+                    "old_state": old.value,
+                    # 非过渡信号也可能带 L1 坐标 (tool_success 等), 一并沉淀
+                    "l1_coordinates": self._l1_coordinates,
+                    **({"context": context} if context else {}),
+                },
+            )
+        except Exception:
+            logger.debug(
+                "csm: append transition event failed (non-fatal)",
+                exc_info=True,
+            )
 
     def _notify_listeners(
         self,
@@ -532,6 +591,9 @@ class CognitiveStateMachine:
                 context or signal.data,
             )
 
+            # H1 正向: 把这次跃迁 append 进事件日志 (若已绑定)
+            self._append_transition_event(old, next_state, signal, context)
+
             # Manage confirmation gate state
             if next_state == CognitiveState.S3_SWITCH:
                 self._awaiting_confirmation = False  # user already confirmed to get here
@@ -590,6 +652,53 @@ class CognitiveStateMachine:
             self._history = [(self._state, "restored")]
         except (ValueError, TypeError):
             self.start_session()
+
+    def restore_from_event_log(
+        self,
+        session_log: Any | None = None,
+    ) -> bool:
+        """H1 反向: 从会话事件日志重放, 把 CSM 重建到投影出的最新状态.
+
+        用 ProjectionEngine + RuntimeStateProjection 折叠事件路径, 取出
+        ``csm_state`` (S0-S7 精确状态) 与 L1 坐标, 恢复到本 CSM 实例.
+
+        - 绑定/日志为空 → 保持现状, 返回 False (不破坏已有状态)
+        - 事件缺失 ``csm_state`` (旧事件) → 从 ``cognitive_mode`` 推导到
+          discovery/construction 的代表状态, 尽力而为
+        """
+        log = session_log or self._session_log
+        if log is None:
+            return False
+        try:
+            from huginn.events.projection import ProjectionEngine, RuntimeStateProjection
+            from huginn.events.session_log import SessionEventLog
+
+            if not isinstance(log, SessionEventLog):
+                log = SessionEventLog.open(str(log), load=True)
+
+            engine = ProjectionEngine()
+            engine.register(RuntimeStateProjection())
+            runtime = engine.build(log, "runtime")
+            cs = runtime.get("csm_state")
+            if cs is None or cs == "s0_blank":
+                # 旧事件无 csm_state: 用 cognitive_mode 推导代表状态
+                mode = runtime.get("cognitive_mode", "discover")
+                cs = (
+                    CognitiveState.S4_CONSTRUCT.value
+                    if mode == "construct"
+                    else CognitiveState.S1_DISCOVER.value
+                )
+            self._state = CognitiveState(cs)
+            self._l1_coordinates = runtime.get("l1_coordinates", self._l1_coordinates)
+            self._history = [(self._state, "restored_from_event_log")]
+            self._awaiting_confirmation = False
+            return True
+        except Exception:
+            logger.debug(
+                "csm: restore_from_event_log failed (non-fatal)",
+                exc_info=True,
+            )
+            return False
 
 
 __all__ = [
