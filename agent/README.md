@@ -18,6 +18,12 @@ An intelligent, LLM-driven agent system for computational materials science. Aut
 - **Coder Mode**: Autonomous code editing with read/write/edit, shell, git, and code execution tools
 - **Multi-Agent**: Orchestrator, sub-agents, swarm/team collaboration
 - **Causal & Autoloop**: Causal graph modeling, autonomous exploration loop, self-evolution
+- **Physical-world access**: Experiment protocol orchestration via `PhysicalWorkspace`
+  (time-reversible + spatially-composable + perception-confirmed), see `huginn/security/`
+- **Unified explainability**: `explain()` facade in `huginn/explainability.py` assembles
+  audit/provenance/event observations into an end-to-end explanation timeline
+- **Unified gating**: `CoEffectRegistry` drives activation and aggregates decisions for all
+  gates, see `huginn/security/gate.py`
 
 ## Quick Start
 
@@ -25,7 +31,7 @@ An intelligent, LLM-driven agent system for computational materials science. Aut
 
 ```bash
 # Clone the repository
-cd matsci-agent/agent
+cd agent
 
 # Install dependencies
 pip install -e .
@@ -40,10 +46,16 @@ python -m huginn.cli "Calculate the band gap of Si"
 # API server
 python -m huginn.server
 
-# MCP servers (in separate terminals)
-python servers/mat-db-mcp/server.py
-python servers/math-anything-mcp/server.py
+# MCP servers: configured in the repo-root .mcp.json, registered internally at
+# startup (huginn/lifespan.py) via huginn/tools/mcp_adapter.py — no manual
+# `python servers/...` launch needed.
 ```
+
+`huginn` exposes many subcommands via `huginn/cli/commands/`, e.g. `chat`,
+`coder`, `serve`, `workflow`, `autoloop`, `swarm`, `hpc`, `explore`,
+`scheduler`, `bench`, `diagnose`, `kg`, `sessions`, `scheduler`, `replay`,
+`refactor`, `skills`, `tools`, plus `version`/`configure`. Run `huginn --help`
+for the full list.
 
 ### Run Tests
 
@@ -92,7 +104,7 @@ See [docs/tech-spec.md](docs/tech-spec.md) (current factual record) and
     ┌─────────┬────────┼────────┬──────────┬──────────┐
     ▼         ▼        ▼        ▼          ▼          ▼
   memory   evolution  tools   knowledge    kg       causality
- (3-tier)  (distill) (~178)  Cloud(KB)   graph      (SCM)
+ (3-tier)  (distill) (150+)  Cloud(KB)   graph      (SCM)
 ```
 
 Real entry points: `huginn-agent` CLI (console script → `huginn.cli:main`) and
@@ -102,8 +114,8 @@ Real entry points: `huginn-agent` CLI (console script → `huginn.cli:main`) and
 
 ## Tools
 
-~178 built-in tools are registered through `huginn/tools/__init__.py`
-(`_CORE_MODULES` ~35 lightweight + `_OPTIONAL_MODULES` heavy simulation/science).
+150+ built-in tools are registered through `huginn/tools/__init__.py`
+(`_CORE_MODULES` ~50 lightweight + `_OPTIONAL_MODULES` heavy simulation/science).
 Representative tools by category:
 
 | Category | Tools |
@@ -173,7 +185,7 @@ agent/
 │   ├── lifespan.py         # startup/shutdown lifecycle
 │   ├── routes/             # HTTP/WS route handlers (v1 + root compat)
 │   ├── agent/  agents/     # agent loop, orchestrator, subagent, swarm
-│   ├── tools/              # ~178 tool implementations + registry
+│   ├── tools/              # 150+ tool implementations + registry
 │   ├── memory/             # session / long-term / manager
 │   ├── evolution/          # knowledge distiller + evolution manager
 │   ├── knowledge/  kg/     # knowledge base, auto-ingest, knowledge graph
