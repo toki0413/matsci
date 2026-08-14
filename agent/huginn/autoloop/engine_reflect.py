@@ -958,7 +958,7 @@ class EngineReflectMixin:
     async def _run_benchmark(self) -> dict[str, Any]:
         """Run BenchmarkRunner, return results dict."""
         try:
-            from huginn.validation.benchmarks import BenchmarkRunner
+            from huginn.bench.runner import BenchmarkRunner
 
             runner = BenchmarkRunner()
             report = await asyncio.to_thread(runner.run, categories=["math", "coding"])
