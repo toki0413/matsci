@@ -45,6 +45,10 @@ logger = logging.getLogger(__name__)
 
 _VALID_ACTIONS = frozenset({"allow", "deny", "ask"})
 
+# T-BCSE-08: 审批优先级 — deny > ask > allow. 数字越大越严格, 取所有匹配
+# 规则中的最高优先级, 保证 "先 allow 后 deny" 无法绕过 (deny 永远压过 allow).
+_ACTION_PRIORITY: dict[str, int] = {"allow": 1, "ask": 2, "deny": 3}
+
 
 @dataclass
 class PolicyRule:
@@ -95,11 +99,27 @@ class PolicyEngine:
         workspace: str | None = None,
         env: dict | None = None,
     ) -> PolicyDecision:
-        """Evaluate a command against the policy rules. First match wins."""
+        """Evaluate a command against the policy rules.
+
+        T-BCSE-08: 不再 first-match-wins。收集**所有**匹配规则, 按
+        ``deny > ask > allow`` 优先级取最严格动作 — 即使 ``allow`` 规则排在
+        ``deny`` 之前, deny 也压过 allow, 杜绝 "先 allow 后 deny" 绕过。
+        无匹配时回退 ``defaults.unmatched`` (默认 fail-closed ``ask``).
+        """
         exe = _normalize_executable(executable)
+        matched: list[PolicyRule] = []
         for rule in self._rules:
             if self._rule_matches(rule, exe, command, workspace, env):
-                return PolicyDecision(rule.action, rule.name, rule.reason)
+                matched.append(rule)
+        if matched:
+            # 取最高优先级 (最严格) 的动作; deny 永远压过 allow/ask.
+            best = matched[0]
+            best_pri = _ACTION_PRIORITY.get(best.action, 0)
+            for rule in matched[1:]:
+                pri = _ACTION_PRIORITY.get(rule.action, 0)
+                if pri > best_pri:  # 严格大于才替换 → 同优先级保留首个, 稳定
+                    best, best_pri = rule, pri
+            return PolicyDecision(best.action, best.name, best.reason)
         return PolicyDecision(
             self._default_action,
             None,

@@ -431,6 +431,56 @@ class TestPolicyEngine:
         p = Path(__file__).parent.parent / "huginn" / "security" / "default_policy.yaml"
         assert p.exists()
 
+    # ── T-BCSE-08: deny > ask > allow 优先级 ─────────────────────
+    def test_deny_beats_allow_regardless_of_order(self):
+        """allow 规则排在 deny 之前时, deny 仍压过 allow (防绕过)."""
+        from huginn.security.policy_engine import (
+            PolicyDecision,
+            PolicyEngine,
+            PolicyRule,
+        )
+
+        engine = PolicyEngine()
+        engine._default_action = "ask"
+        engine._rules = [
+            # allow 在前, deny 在后 — 旧 first-match 会让 allow 赢 (漏洞)
+            PolicyRule("allow_tool", {"executable": ["toolx"]}, "allow", "allow it"),
+            PolicyRule(
+                "deny_dangerous", {"command_pattern": "toolx --drop"}, "deny", "block"
+            ),
+        ]
+        d: PolicyDecision = engine.evaluate("toolx", "toolx --drop db")
+        assert d.action == "deny", f"deny 必须压过 allow, got {d.action}"
+        assert d.matched_rule == "deny_dangerous"
+
+    def test_deny_beats_ask_beats_allow(self):
+        from huginn.security.policy_engine import (
+            PolicyEngine,
+            PolicyRule,
+        )
+
+        engine = PolicyEngine()
+        engine._rules = [
+            PolicyRule("allow", {"executable": ["x"]}, "allow", ""),
+            PolicyRule("ask", {"command_pattern": "x --unsafe"}, "ask", ""),
+            PolicyRule("deny", {"command_pattern": "x --unsafe --drop"}, "deny", ""),
+        ]
+        # 同时命中 allow+ask → ask
+        assert engine.evaluate("x", "x --unsafe --mild").action == "ask"
+        # 同时命中 allow+ask+deny → deny
+        assert engine.evaluate("x", "x --unsafe --drop").action == "deny"
+        # 只命中 allow → allow
+        assert engine.evaluate("x", "x --plain").action == "allow"
+
+    def test_default_fail_closed(self):
+        """无规则匹配时回退 default (默认 ask = fail-closed)."""
+        from huginn.security.policy_engine import PolicyEngine
+
+        engine = PolicyEngine()
+        engine._rules = []
+        engine._default_action = "ask"
+        assert engine.evaluate("unknown_cmd", "unknown_cmd --do").action == "ask"
+
 
 # ── P3-2: 事件总线 ──────────────────────────────────────────────
 
