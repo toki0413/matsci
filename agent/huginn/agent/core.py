@@ -277,6 +277,17 @@ class HuginnAgent(
         from huginn.cognitive_engine import CognitiveStateMachine
 
         self._csm = CognitiveStateMachine()
+        # H1: 把会话事件日志绑定到认知状态机 — 每次认知跃迁 append 事件,
+        # 使状态机状态成为事件日志的投影 (可重放/可恢复/可分支).
+        try:
+            from huginn.events.session_log import SessionEventLog
+            self._csm.attach_session_log(
+                SessionEventLog.open(self.thread_id, load=True)
+            )
+        except Exception:
+            logger.debug(
+                "best-effort op failed", exc_info=True
+            )  # 无事件日志不阻塞 agent
 
         self.tool_filter = set(t.tool_filter) if t.tool_filter else None
         self.agent_factory = core.agent_factory

@@ -31,6 +31,7 @@ from huginn.events.event_types import (
     TOOL_RESULT,
 )
 from huginn.events.projection import (
+    AutoloopStateProjection,
     MessagePathProjection,
     ProjectionDefinition,
     ProjectionEngine,
@@ -42,6 +43,7 @@ from huginn.events.projection import (
 # T-BCSE-01/02/04: session event-sourcing core (append-only log + projections).
 # See huginn/events/session_log.py and huginn/events/projection.py.
 from huginn.events.session_log import (
+    EVENT_AUTOLOOP_PHASE,
     EVENT_BRANCH_SUMMARY,
     EVENT_COMPACTION,
     EVENT_CUSTOM,
@@ -83,10 +85,12 @@ __all__ = [
     "EVENT_BRANCH_SUMMARY",
     "EVENT_RESET_BOUNDARY",
     "EVENT_CUSTOM",
+    "EVENT_AUTOLOOP_PHASE",
     "ProjectionDefinition",
     "ProjectionEngine",
     "RuntimeStateProjection",
     "MessagePathProjection",
+    "AutoloopStateProjection",
     "UiBlock",
     "UiProjection",
 ]

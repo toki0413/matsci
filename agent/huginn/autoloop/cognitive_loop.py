@@ -984,6 +984,12 @@ class CognitiveLoopMixin:
         # 记下当前 phase, 让 _llm_chat 能注入 phase-aware thinking effort 指令.
         # ponytail: 隐式状态, 但 run() 是 single-threaded async, 无竞态.
         self._current_phase = name
+        # H3: phase 切换写进事件日志 (best-effort). 事件日志是 source of truth,
+        # 读模型经 AutoloopStateProjection 派生 — 可重放/可恢复.
+        try:
+            self._record_autoloop_phase(name, "running", getattr(self, "_iteration", 0))
+        except Exception:
+            logger.debug("autoloop phase event record failed (non-fatal)", exc_info=True)
         # C2: 追踪本 run 的 phase 序列, 供 trajectory_match 召回用.
         if not hasattr(self, "_current_run_phases"):
             self._current_run_phases = []
@@ -1024,6 +1030,15 @@ class CognitiveLoopMixin:
                 name,
                 duration_sec=phase.end_time - (phase.start_time or 0),
                 error=phase.error,
+            )
+        # H3: phase 完成状态写回事件日志 (best-effort), 投影可读到 finished 状态.
+        try:
+            self._record_autoloop_phase(
+                name, phase.status, getattr(self, "_iteration", 0)
+            )
+        except Exception:
+            logger.debug(
+                "autoloop phase status event record failed (non-fatal)", exc_info=True,
             )
         return phase
 
