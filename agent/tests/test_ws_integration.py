@@ -535,3 +535,34 @@ class TestWSToolCall:
         assert tr["content"] == "4"
         assert _first(msgs, "text_delta")["text"] == "The answer is 4."
         assert msgs[-1]["type"] == "done"
+
+
+# ── 8. typed side-channel events ────────────────────────────────────
+
+
+class TestWSTypedSidechannel:
+    def test_ws_typed_sidechannel_events_forwarded(self, harness):
+        """Typed side-channel events (mode_banner/trust_update/budget_*)
+        yielded by the agent loop must be forwarded, not dropped."""
+        harness.states(
+            [
+                {"type": "mode_banner", "exec_mode": "tool_call", "user_mode": "chat", "flags": []},
+                {"type": "trust_update", "trust": 0.8, "action": "approve", "risk": "low"},
+                {"type": "budget_update", "remaining": 42},
+                {"type": "budget_escalation", "remaining": 10, "risk": "high", "original_risk": "medium"},
+                {"type": "risk_threshold", "threshold": 0.5, "risk": "adjusted"},
+                {"type": "suggest_code", "code": "print(1)", "risk": "medium", "reason": "test", "turn": 1},
+                {"messages": [AIMessage(content="done")]},
+            ]
+        )
+        with client.websocket_connect(WS_PATH) as ws:
+            ws.send_json(
+                {"type": "user_input", "content": "emit events", "thread_id": "chat-events"}
+            )
+            msgs = _drain(ws, max_msgs=64)
+        types = [m["type"] for m in msgs]
+        for t in ("mode_banner", "trust_update", "budget_update", "budget_escalation", "risk_threshold", "suggest_code"):
+            assert t in types, f"事件 {t} 未转发到前端: {types}"
+        assert _first(msgs, "budget_escalation")["remaining"] == 10
+        assert _first(msgs, "suggest_code")["code"] == "print(1)"
+        assert msgs[-1]["type"] == "done"

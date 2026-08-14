@@ -105,13 +105,6 @@ export type WSMessage =
   | { type: "exploration_result"; data?: ExplorationResult }
   | { type: "auto_checkpoint"; id: string; base: string; files: number }
   | {
-      type: "agent_status";
-      task_id?: string;
-      agent_id?: string;
-      status?: string;
-      output?: string;
-    }
-  | {
       type: "side_question_pending";
       question_id?: string;
       question?: string;
@@ -170,15 +163,6 @@ export type WSMessage =
       trace_id?: string;
       parent_trace_id?: string;
     }
-  | {
-      type: "state_transition";
-      from_phase: string;
-      to_phase: string;
-      reason: string;
-      iteration: number;
-      trace_id?: string;
-      parent_trace_id?: string;
-    }
   | { type: "done" }
   | { type: "error"; error: string }
   | {
@@ -188,23 +172,6 @@ export type WSMessage =
       level: number;
       hunger: number;
       happiness: number;
-    }
-  | {
-      // 随机森林启发的多 engine 并行探索结果
-      type: "forest_result";
-      objective: string;
-      n_trees: number;
-      combined: { pass: number; fail: number; uncertain: number };
-      diversity: number;
-      consensus: string;
-      passed: boolean;
-      trees: Array<{
-        tree_id: string;
-        hypothesis_count: number;
-        supported: number;
-        refuted: number;
-        ds_mass: { pass: number; fail: number; uncertain: number };
-      }>;
     };
 
 /**
