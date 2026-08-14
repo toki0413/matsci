@@ -196,6 +196,9 @@ class CodeTool(HuginnTool):
                 data=None, success=False, error=f"Execution blocked: {exc}"
             )
 
+        # RevertibleEffect (Cordis 时间可组合性): 失败的工具执行不留副作用.
+        # 非容器路径用 run_revertible 登记"删除本次新建文件"的逆, 失败时回滚.
+        dispose_rollback = None
         if isinstance(executor, ContainerExecutor):
             result = executor.run(
                 ["python", script_path.name],
@@ -220,9 +223,10 @@ class CodeTool(HuginnTool):
                 or sys.executable
                 or "python"
             )
-            result = self.sandbox.run(
+            result, dispose_rollback = self.sandbox.run_revertible(
                 [python_exe, str(script_path)],
                 cwd=work_dir,
+                poll_dir=work_dir,
                 config=cfg,
                 capture_output=True,
                 text=True,
@@ -251,6 +255,16 @@ class CodeTool(HuginnTool):
                 ".data",
             ):
                 output_paths[path.name] = str(path)
+
+        # RevertibleEffect (Cordis 时间可组合性): 执行失败 → 回滚本次新建文件,
+        # 沙箱恢复到执行前状态 (但不删 _code_tool_script.py, 保留给 agent 调试).
+        # 成功则保留产物, 由 agent 用 file 工具取用.
+        if not result.success and dispose_rollback is not None:
+            dispose_rollback()
+            # 回滚后, 指向已删文件的 output 引用要清掉, 避免 agent 拿失效路径.
+            output_paths = {
+                k: v for k, v in output_paths.items() if Path(v).exists()
+            }
 
         parsed_result = self._parse_result_marker(result.stdout)
 
