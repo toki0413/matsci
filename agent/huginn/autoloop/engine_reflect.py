@@ -394,6 +394,22 @@ class EngineReflectMixin:
                 await self._blind_reconstruct_verify(execution_result, results)
             except Exception:
                 logger.debug("P1 blind reconstruct failed", exc_info=True)
+
+        # Epistemic gate (IOED 兜底): 强断言 + 证据缺失 → 暴露知识缺口.
+        # 纯启发式, 零 LLM 成本; 只报告不改 tests_passed, 永不抛异常.
+        # 与 prompts.py Epistemic Honesty 指令配合, 模型失灵时兜底暴露缺口.
+        try:
+            from huginn.validation.epistemic import detect_epistemic_gap
+
+            _gap = detect_epistemic_gap(execution_result, results)
+            if _gap:
+                results["epistemic_gap"] = _gap
+                logger.warning(
+                    "epistemic_gap: %s", _gap.get("advice", "")[:120]
+                )
+        except Exception:
+            logger.debug("epistemic gate check failed (non-fatal)", exc_info=True)
+
         return results
 
 

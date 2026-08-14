@@ -1381,6 +1381,7 @@ class StreamingMixin:
                             keep_last_n=max(1, 4 // _trace_kln_divisor),
                             summarizer=summarizer,
                             existing_summary=self._build_compact_summary(),
+                            max_messages=getattr(self, "_context_max_messages", None),
                         )
                     )
                 else:
@@ -1422,6 +1423,7 @@ class StreamingMixin:
                             keep_last_n=adaptive_kln,
                             summarizer=summarizer,
                             existing_summary=self._build_compact_summary(),
+                            max_messages=getattr(self, "_context_max_messages", None),
                         )
                     )
                 else:

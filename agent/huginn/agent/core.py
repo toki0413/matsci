@@ -363,6 +363,12 @@ class HuginnAgent(
                 context_budget_tokens = get_context_window(str(model_name))
         self.max_tool_output_tokens = max_tool_output_tokens
         self.context_budget_tokens = context_budget_tokens
+        # C1b: 渐进式压缩阈值 — 消息条数超此值即触发压缩(即便未超 token 预算),
+        # 让长程任务把上下文渐进维护在安全水位, 而非等逼近模型窗口才压缩.
+        # env 可调; 默认 60 条. 0 = 关闭按条数触发.
+        self._context_max_messages = int(
+            os.environ.get("HUGINN_CONTEXT_MAX_MESSAGES", "60")
+        )
         self._model_context_window = (
             get_context_window(
                 str(
