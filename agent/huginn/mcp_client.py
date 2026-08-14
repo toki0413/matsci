@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
 import platform
 import signal
 import time
@@ -265,7 +266,12 @@ class MCPClientManager:
                     params = StdioServerParameters(
                         command=config.command,
                         args=config.args,
-                        env=config.env,
+                        # 继承完整父进程 env (再叠加 config.env 覆盖)。mcp SDK 的
+                        # stdio_client 默认只用白名单 env (HOME/PATH/...), 不含
+                        # HTTP(S)_PROXY 等代理变量。外部 npm npx server (如
+                        # flint-chart-mcp) 缺代理会在握手阶段一直 hang → initialize
+                        # 超时。合并 os.environ 后这类 server 才能正常握手。
+                        env={**os.environ, **(config.env or {})},
                     )
                     client = stdio_client(params)
 
