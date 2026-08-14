@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import time
 from dataclasses import dataclass, field
@@ -637,6 +638,43 @@ _config: BotConfig = BotConfig()
 def get_config() -> BotConfig:
     """获取当前 bot 配置 (可能被 REST API 修改过)."""
     return _config
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    """读取布尔环境变量."""
+    val = os.environ.get(name, "")
+    if val == "":
+        return default
+    return val.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _env_list(name: str) -> list[str]:
+    """读取逗号分隔的环境变量列表."""
+    val = os.environ.get(name, "").strip()
+    if not val:
+        return []
+    return [x.strip() for x in val.split(",") if x.strip()]
+
+
+def bootstrap_qq_from_env() -> None:
+    """从环境变量引导 QQ (OneBot v11) 桥接配置, 一键连通.
+
+    设置 BOT_QQ_API_URL (OneBot HTTP API 地址) 即视为启用;
+    各字段留空时走 huginn.env 里的注释占位, api_url 必填.
+    """
+    global _config
+    api_url = os.environ.get("BOT_QQ_API_URL", "").strip()
+    if not api_url:
+        return
+    _config = BotConfig(
+        enabled=_env_bool("BOT_QQ_ENABLED", True),
+        platform="qq",
+        bot_id=os.environ.get("BOT_QQ_BOT_ID", "").strip(),
+        api_url=api_url,
+        admin_users=_env_list("BOT_QQ_ADMIN_USERS"),
+        allowed_groups=_env_list("BOT_QQ_ALLOWED_GROUPS"),
+    )
+    logger.info("QQ (OneBot) 配置已从环境变量引导 (api_url=%s)", api_url)
 
 
 def set_config(cfg: BotConfig) -> None:
