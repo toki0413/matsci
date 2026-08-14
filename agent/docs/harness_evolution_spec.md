@@ -1,5 +1,7 @@
 # Agentic Engineering 升级 Spec — 拆剩余 hardcode 骨架 + harness 可演化
 
+> 状态：active（部分完成，规划中）— H0-H4 均已落地（H1 prompt_patch 已落地、H2 workflow search 已落地、H3 joint_optimizer 已落地、H4 phase/BUILTIN_SPECS 已落地）；H5（unified LLM client / unified tool dispatch）为规划中候选项。
+
 > 治当前 huginn 工作流的"行为体骨架天花板" + "自我改进机制断链": CognitiveLoop 只在 autoloop 路径落地 (rcb_runner 没接), 7 个自我改进机制只有 3 个真闭环, phase 方法体 / prompt block body / subagent spec / VALID_ACTIONS 仍是 hardcode 字面量, agent 不能改自己的行为.
 > 数学动机: harness engineering (Weng 2026) 的核心论点 — "代码是通用语言, harness 应成为优化目标". CognitiveLoop 拆了控制流, 本 spec 拆行为体 + 修断链, 让 harness 真正可演化.
 > 跟现有 [layered_memory_spec.md](file:///c:/Users/wanzh/Desktop/matsci-agent/agent/docs/layered_memory_spec.md) 共生 — 4 层 memory 是基础设施, 本 spec 在其上建 harness 演化层.
