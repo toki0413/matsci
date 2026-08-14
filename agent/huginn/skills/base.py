@@ -157,8 +157,14 @@ class DeclarativeSkillExecutor(SkillExecutor):
         skill: SkillDefinition,
         params: dict[str, Any],
         context: dict[str, Any],
+        workspace: str | None = None,
     ) -> dict[str, Any]:
         from huginn.core_types import ToolContext
+
+        # RevertibleEffect (Cordis 时间可组合性): 透传真实 workspace, 让技能
+        # 内每步工具都写到调用方指定的目录, 由 skill_tool 层做整体快照回滚.
+        # 默认 "." 保持向后兼容 (旧调用方不传就退回老行为).
+        _ws = workspace or "."
 
         results = {"skill": skill.name, "steps": [], "success": True}
         working_context = {**context, **params}
@@ -190,7 +196,7 @@ class DeclarativeSkillExecutor(SkillExecutor):
             # ── Parallel batch: 同组 step 用 asyncio.gather 并行 ────
             if len(unit) > 1:
                 batch_results = await self._run_parallel_batch(
-                    list(unit), working_context, ToolContext
+                    list(unit), working_context, ToolContext, workspace=_ws
                 )
                 results["steps"].extend(batch_results)
                 # 任一 abort 失败则终止; 否则继续 (失败 step 的 output 不写入 context)
@@ -260,7 +266,7 @@ class DeclarativeSkillExecutor(SkillExecutor):
                     # Construct pydantic input
                     input_model = tool.input_schema
                     parsed = input_model(**tool_input)
-                    tool_ctx = ToolContext(session_id="skill", workspace=".")
+                    tool_ctx = ToolContext(session_id="skill", workspace=_ws)
                     payload = parsed.model_dump() if _wants_dict(tool) else parsed
                     if inspect.iscoroutinefunction(tool.call):
                         output = await tool.call(payload, tool_ctx)
@@ -336,6 +342,7 @@ class DeclarativeSkillExecutor(SkillExecutor):
         steps: list[SkillStep],
         working_context: dict[str, Any],
         ToolContext: type,
+        workspace: str | None = None,
     ) -> list[dict[str, Any]]:
         """并行执行同 parallel_group 的 step, 结果一起 commit 到 working_context.
 
@@ -381,7 +388,7 @@ class DeclarativeSkillExecutor(SkillExecutor):
             try:
                 input_model = tool.input_schema
                 parsed = input_model(**tool_input)
-                tool_ctx = ToolContext(session_id="skill", workspace=".")
+                tool_ctx = ToolContext(session_id="skill", workspace=workspace or ".")
                 payload = parsed.model_dump() if _wants_dict(tool) else parsed
                 if inspect.iscoroutinefunction(tool.call):
                     output = await tool.call(payload, tool_ctx)
