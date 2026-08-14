@@ -24,19 +24,13 @@
 | 文档 | 状态 | 用途 |
 |---|---|---|
 | [architecture.md](architecture.md) | active | 系统架构总览（技术架构） |
-| [tech-spec.md](tech-spec.md) | active | 技术规格 |
-| [enhanced_modules.md](enhanced_modules.md) | active | 增强模块说明 |
-| [reward_design.md](reward_design.md) | active | 奖励设计 |
-| [harness_evolution_spec.md](harness_evolution_spec.md) | active | harness 演进规范 |
-| [hils_active_inference_p2_spec.md](hils_active_inference_p2_spec.md) | active | HILS 主动推断 P2 规范 |
-| [async_dispatch_spec.md](async_dispatch_spec.md) | active | 异步分发规范 |
-| [memory_dispatch_integration_spec.md](memory_dispatch_integration_spec.md) | active | 记忆分发集成规范 |
-| [layered_memory_spec.md](layered_memory_spec.md) | active | 分层记忆规范 |
-| [lsp_hashline_spec.md](lsp_hashline_spec.md) | active | LSP/hashline 规范 |
-| [reinforcement_event_sourcing_sandbox_incremental_ui.md](reinforcement_event_sourcing_sandbox_incremental_ui.md) | active | 强化事件溯源 + 增量 UI 规范 |
-| [ising_crdt_p1_spec.md](ising_crdt_p1_spec.md) | active | Ising CRDT P1 规范 |
+| [tech-spec.md](tech-spec.md) | active | 技术规格（已合并下述 8 个已废弃 spec） |
+| [harness_evolution_spec.md](harness_evolution_spec.md) | active | harness 演进规范（部分完成，规划中） |
+| [reward_design.md](reward_design.md) | staging | 奖励设计（未实现理论稿） |
 | [SPEC_openworker_adoption](../huginn/SPEC_openworker_adoption.md) | active | OpenWorker 采纳规范 |
 | [SPEC_visual_kb_loop](../huginn/metacog/SPEC_visual_kb_loop.md) | active | 视觉知识库闭环规范 |
+
+已合并入 [tech-spec.md](tech-spec.md)，不再单独列出的 spec：`async_dispatch_spec`、`layered_memory_spec`、`lsp_hashline_spec`、`memory_dispatch_integration_spec`、`enhanced_modules`、`reinforcement_event_sourcing_sandbox_incremental_ui`、`ising_crdt_p1_spec`、`hils_active_inference_p2_spec`。
 
 ## 3. 草稿 / 待评审（staging）
 
@@ -51,7 +45,6 @@
 
 | 文档 | 状态 | 说明 |
 |---|---|---|
-| [dependency-audit-2026-08-13.md](dependency-audit-2026-08-13.md) | report | 依赖审计快照（2026-08-13） |
 | [RELEASE_REPORT_v0.2.0.md](../RELEASE_REPORT_v0.2.0.md) | report | v0.2.0 发布报告 |
 | [polish-reports/loop-polish-report.md](../polish-reports/loop-polish-report.md) | report | 循环打磨报告 |
 | [polish-reports/industrialization-gap-analysis.md](../polish-reports/industrialization-gap-analysis.md) | report | 工业化缺口分析 |
