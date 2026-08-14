@@ -91,9 +91,65 @@ class AgentFactory:
         except Exception:
             store = NullCampaignStore()
         try:
-            return ToolScheduler(store=store, policy=AdmissionPolicy.from_env())
+            return ToolScheduler(
+                store=store,
+                policy=AdmissionPolicy.from_env(),
+                hpc_layer=self._build_hpc_layer(),
+            )
         except Exception:
             logger.debug("best-effort op failed", exc_info=True)
+            return None
+
+    def _build_hpc_layer(self) -> Any:
+        """Build an HPC queue layer from configured HPC settings, or None.
+
+        Only enabled when ``hpc_scheduler`` is remote (slurm/pbs) and a host +
+        username are set. Building the client is cheap — connection is lazy
+        (HPCClient connects on first submit), so an unreachable cluster merely
+        disables remote admission rather than blocking startup.
+        """
+        cfg = self.config
+        if cfg.hpc_scheduler == "local" or not cfg.hpc_host or not cfg.hpc_username:
+            return None
+        try:
+            from huginn.hpc.client import HPCClient, HPCConfig
+            from huginn.scheduling import AdmissionPolicy, HpcQueueConfig, HpcQueueLayer
+
+            hpc_config = HPCConfig(
+                host=cfg.hpc_host,
+                username=cfg.hpc_username,
+                scheduler=cfg.hpc_scheduler,  # slurm / pbs
+                key_path=cfg.hpc_key_path,
+                password=cfg.hpc_password,
+                port=cfg.hpc_port,
+                remote_work_dir=cfg.remote_work_dir,
+                default_queue=cfg.hpc_default_queue,
+                gpu_queue=cfg.hpc_gpu_queue,
+                queue_map=cfg.hpc_queue_map,
+                default_walltime=cfg.hpc_default_walltime,
+                default_nodes=cfg.hpc_default_nodes,
+                default_ntasks_per_node=cfg.hpc_default_ntasks_per_node,
+                default_gpus_per_node=cfg.hpc_default_gpus_per_node,
+                max_retries=cfg.hpc_max_retries,
+                retry_backoff=cfg.hpc_retry_backoff,
+                strict_host_key_checking=cfg.hpc_strict_host_key_checking,
+            )
+            layer = HpcQueueLayer(
+                HpcQueueConfig(
+                    name=cfg.hpc_default_queue or cfg.hpc_host,
+                    max_concurrent=AdmissionPolicy.from_env().max_concurrent_heavy,
+                    queue=cfg.hpc_default_queue,
+                    walltime=cfg.hpc_default_walltime,
+                    nodes=cfg.hpc_default_nodes,
+                    ntasks_per_node=cfg.hpc_default_ntasks_per_node,
+                    gpus_per_node=cfg.hpc_default_gpus_per_node,
+                ),
+                client=HPCClient(hpc_config),
+            )
+            logger.info("[scheduler] HPC queue layer enabled: %s", layer.config.name)
+            return layer
+        except Exception as e:  # noqa: BLE001 — never block startup on HPC config
+            logger.warning("[scheduler] HPC queue layer disabled: %s", e)
             return None
 
     def _campaign_db_path(self) -> str:
