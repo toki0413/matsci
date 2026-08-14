@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-PROJECT_ROOT = Path(__file__).parent.parent.resolve()
+PROJECT_ROOT = Path(__file__).parent.parent.parent.resolve()
 FRONTEND_DIR = PROJECT_ROOT.parent / "desktop" / "dist"
 HUGINN_EXE = PROJECT_ROOT / "dist" / "huginn-agent" / "huginn-agent.exe"
 WEBBRIDGE_URL = "http://127.0.0.1:10086/command"

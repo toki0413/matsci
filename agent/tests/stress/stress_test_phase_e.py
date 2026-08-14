@@ -14,11 +14,12 @@ from __future__ import annotations
 import asyncio
 import math
 import sys
+from pathlib import Path
 
 import numpy as np
 
 # 确保能 import
-sys.path.insert(0, ".")
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from huginn.autoloop.phase_gate import (
     DempsterShaferCombiner,

@@ -18,8 +18,8 @@ import tempfile
 from pathlib import Path
 
 # Ensure agent dir is on path and cache dir is writable
-sys.path.insert(0, str(Path(__file__).parent.parent))
-os.environ.setdefault("HUGINN_CACHE_DIR", str(Path(__file__).parent.parent / ".test_cache"))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+os.environ.setdefault("HUGINN_CACHE_DIR", str(Path(__file__).parent.parent.parent / ".test_cache"))
 
 from huginn.core_types import ToolContext
 
@@ -68,7 +68,7 @@ async def test_structure_symmetry_xrd_chain() -> None:
     ctx = ToolContext(session_id="sci-test", workspace=tmpdir)
 
     # Use the committed Si_diamond POSCAR test fixture
-    fixture = Path(__file__).parent.parent / "Si_diamond" / "POSCAR"
+    fixture = Path(__file__).parent.parent.parent / "Si_diamond" / "POSCAR"
     si_poscar = Path(tmpdir) / "Si_diamond.vasp"
     si_poscar.write_text(fixture.read_text())
     report("load Si diamond POSCAR", True, f"fixture={fixture.name}")
@@ -106,7 +106,7 @@ async def test_vasp_mock_workflow() -> None:
     ctx = ToolContext(session_id="sci-test", workspace=str(tmpdir))
 
     # Create a minimal working_dir with POSCAR for mock SCF
-    fixture = Path(__file__).parent.parent / "Si_diamond" / "POSCAR"
+    fixture = Path(__file__).parent.parent.parent / "Si_diamond" / "POSCAR"
     (tmpdir / "POSCAR").write_text(fixture.read_text())
 
     tool = VaspTool()

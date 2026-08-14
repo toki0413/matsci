@@ -8,7 +8,7 @@
     export HUGINN_HPC_HOST=login.cluster.example.com
     export HUGINN_HPC_USER=your_user
     export HUGINN_HPC_KEY_FILE=~/.ssh/id_ed25519
-    python -m tests.verify_hpc_environment
+    python -m tests.hpc.verify_hpc_environment
 
 每项检查输出 PASS/FAIL/MANUAL, 全部 PASS 才能上线.
 """

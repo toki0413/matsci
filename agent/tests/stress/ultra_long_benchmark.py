@@ -12,8 +12,8 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-os.environ.setdefault("HUGINN_CACHE_DIR", str(Path(__file__).parent.parent / ".test_cache"))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+os.environ.setdefault("HUGINN_CACHE_DIR", str(Path(__file__).parent.parent.parent / ".test_cache"))
 
 PASSED = 0
 FAILED = 0
@@ -54,11 +54,11 @@ async def test_memory_leak_5min() -> None:
 
     duration = 300  # 5 minutes
     interval = 5    # check every 5 seconds
-    tmpdir = Path(__file__).parent.parent / "tmp_leak_test"
+    tmpdir = Path(__file__).parent.parent.parent / "tmp_leak_test"
     tmpdir.mkdir(exist_ok=True)
     ctx = ToolContext(session_id="leak-test", workspace=str(tmpdir))
 
-    fixture = Path(__file__).parent.parent / "Si_diamond" / "POSCAR"
+    fixture = Path(__file__).parent.parent.parent / "Si_diamond" / "POSCAR"
     poscar_content = fixture.read_text()
 
     sym_tool = SymmetryTool()
@@ -120,7 +120,7 @@ async def test_campaign_loop_stability() -> None:
     from huginn.tools.numerical_tool import NumericalTool
     from huginn.tools.validate_tool import ValidateTool
 
-    tmpdir = Path(__file__).parent.parent / "tmp_campaign"
+    tmpdir = Path(__file__).parent.parent.parent / "tmp_campaign"
     tmpdir.mkdir(exist_ok=True)
     ctx = ToolContext(session_id="campaign-test", workspace=str(tmpdir))
 
@@ -173,11 +173,11 @@ async def test_tool_chain_repetition() -> None:
     from huginn.core_types import ToolContext
     from huginn.tools.sci.symmetry_tool import SymmetryTool
 
-    tmpdir = Path(__file__).parent.parent / "tmp_chain"
+    tmpdir = Path(__file__).parent.parent.parent / "tmp_chain"
     tmpdir.mkdir(exist_ok=True)
     ctx = ToolContext(session_id="chain-test", workspace=str(tmpdir))
 
-    fixture = Path(__file__).parent.parent / "Si_diamond" / "POSCAR"
+    fixture = Path(__file__).parent.parent.parent / "Si_diamond" / "POSCAR"
     poscar_content = fixture.read_text()
 
     sym_tool = SymmetryTool()
@@ -292,12 +292,12 @@ async def _quick_leak_test() -> None:
     from huginn.tools.sci.symmetry_tool import SymmetryTool
 
     duration = 120
-    tmpdir = Path(__file__).parent.parent / "tmp_leak"
+    tmpdir = Path(__file__).parent.parent.parent / "tmp_leak"
     tmpdir.mkdir(exist_ok=True)
     ctx = ToolContext(session_id="leak-q", workspace=str(tmpdir))
 
     # Use committed POSCAR fixture instead of StructureTool.create
-    fixture = Path(__file__).parent.parent / "Si_diamond" / "POSCAR"
+    fixture = Path(__file__).parent.parent.parent / "Si_diamond" / "POSCAR"
     poscar_content = fixture.read_text()
 
     sm = SymmetryTool()
