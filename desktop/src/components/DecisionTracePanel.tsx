@@ -2,7 +2,7 @@
  * Decision trace panel — visualizes agent's decision-making process.
  *
  * Shows three layers:
- * 1. State machine: phase transitions with iteration count
+ * 1. State machine: current phase in the research flow
  * 2. Action chain: each tool call with governance status (allowed/risk/verified)
  * 3. Predictability graph: local contributions decomposed per action
  *
@@ -33,16 +33,8 @@ interface GovernanceEntry {
   rollback_available?: boolean;
 }
 
-interface StateTransition {
-  from_phase: string;
-  to_phase: string;
-  reason: string;
-  iteration: number;
-}
-
 interface Props {
   governanceEvents: GovernanceEntry[];
-  stateTransitions: StateTransition[];
   currentPhase: string;
   activeTraceId?: string;
 }
@@ -76,7 +68,7 @@ const RISK_BG: Record<string, string> = {
 
 const PHASE_FLOW = ["literature", "hypothesis", "planning", "execution", "validation", "reporting"];
 
-export default function DecisionTracePanel({ governanceEvents, stateTransitions, currentPhase, activeTraceId }: Props) {
+export default function DecisionTracePanel({ governanceEvents, currentPhase, activeTraceId }: Props) {
   const [tab, setTab] = useState<"actions" | "state" | "predictability">("actions");
   const [expanded, setExpanded] = useState<string | null>(null);
 
@@ -158,10 +150,7 @@ export default function DecisionTracePanel({ governanceEvents, stateTransitions,
           />
         )}
         {tab === "state" && (
-          <StateMachineView
-            transitions={stateTransitions}
-            currentPhase={currentPhase}
-          />
+          <StateMachineView currentPhase={currentPhase} />
         )}
         {tab === "predictability" && (
           <PredictabilityView events={governanceEvents} />
@@ -293,10 +282,8 @@ function ActionChain({
 // ── State machine view ────────────────────────────────────────
 
 function StateMachineView({
-  transitions,
   currentPhase,
 }: {
-  transitions: StateTransition[];
   currentPhase: string;
 }) {
   const currentIdx = PHASE_FLOW.indexOf(currentPhase);
@@ -304,7 +291,7 @@ function StateMachineView({
   return (
     <div className="px-4 py-2">
       {/* Phase flow diagram */}
-      <div className="flex items-center gap-1 mb-3">
+      <div className="flex items-center gap-1">
         {PHASE_FLOW.map((phase, i) => {
           const isCurrent = phase === currentPhase;
           const isDone = currentIdx >= 0 && i < currentIdx;
@@ -332,28 +319,6 @@ function StateMachineView({
           );
         })}
       </div>
-
-      {/* Transition history */}
-      {transitions.length > 0 && (
-        <div className="space-y-0.5">
-          {transitions.slice(-15).map((t, i) => (
-            <div key={i} className="flex items-center gap-2 text-[10px] text-text-muted">
-              <span className="font-mono text-text-muted/60">
-                iter {t.iteration}
-              </span>
-              <span className="text-text-secondary">{t.from_phase}</span>
-              <span className="text-accent">→</span>
-              <span className="text-text-secondary">{t.to_phase}</span>
-              <span className="text-text-muted/60 truncate">{t.reason}</span>
-            </div>
-          ))}
-        </div>
-      )}
-      {transitions.length === 0 && (
-        <div className="text-[10px] text-text-muted italic">
-          No state transitions recorded yet.
-        </div>
-      )}
     </div>
   );
 }
