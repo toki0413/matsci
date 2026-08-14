@@ -217,3 +217,107 @@ class TestNoSummarizerFallback:
         )
 
         assert len(compacted) == len(messages)
+
+
+class TestProgressiveMaxMessages:
+    """C1b: max_messages 渐进式压缩 — 消息条数超阈值即便未超 token 预算也压缩.
+
+    长程任务的核心诉求: 上下文渐进维护在安全水位, 而非等逼近模型窗口才一次性压缩.
+    """
+
+    def test_under_budget_but_over_max_messages_compacts(self):
+        """未超 token 预算, 但消息条数超 max_messages → 触发压缩 (渐进式)."""
+        from huginn.utils.context import summarize_compact_messages
+
+        # 低价值 debug 消息 (不命中科学关键词), 远低于 token 预算;
+        # max_messages=2 强制触发压缩, 旧消息折叠成摘要.
+        pad = "x" * 300
+        messages = [
+            {"role": "user", "content": f"debug: loading model. {pad}"},
+            {"role": "assistant", "content": f"debug: step 1 done. {pad}"},
+            {"role": "user", "content": f"debug: step 2 start. {pad}"},
+            {"role": "assistant", "content": f"debug: step 2 done. {pad}"},
+        ]
+
+        captured = []
+
+        async def fake_summarizer(transcript):
+            captured.append(transcript)
+            return "summary of conversation"
+
+        compacted, _ = asyncio.run(
+            summarize_compact_messages(
+                messages,
+                budget_tokens=100000,  # 远高于实际消耗 → 未超预算
+                keep_last_n=2,
+                summarizer=fake_summarizer,
+                max_messages=2,
+            )
+        )
+
+        # 未超预算但条数超阈值 → 仍应压缩 (summarizer 被调用)
+        assert captured, "max_messages 超阈值应触发压缩"
+        # 压缩后应含摘要消息, 且不新增条数 (旧消息折叠成摘要替代)
+        assert len(compacted) <= len(messages), "压缩后条数不应增加"
+        assert any(
+            m.get("content", "").startswith("## Conversation summary")
+            if isinstance(m, dict)
+            else "Conversation summary" in str(getattr(m, "content", ""))
+            for m in compacted
+        ), "压缩后应含摘要消息"
+
+    def test_under_budget_and_under_max_messages_unchanged(self):
+        """未超预算且条数未超 max_messages → 原样返回, 不调用 summarizer."""
+        from huginn.utils.context import summarize_compact_messages
+
+        messages = [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "hello"},
+        ]
+
+        captured = []
+
+        async def fake_summarizer(transcript):
+            captured.append(transcript)
+            return "summary"
+
+        compacted, _ = asyncio.run(
+            summarize_compact_messages(
+                messages,
+                budget_tokens=100000,
+                keep_last_n=2,
+                summarizer=fake_summarizer,
+                max_messages=10,
+            )
+        )
+
+        assert not captured, "未超阈值不应触发压缩"
+        assert len(compacted) == len(messages)
+
+    def test_max_messages_none_keeps_budget_only_behavior(self):
+        """max_messages=None (默认) → 保持原有仅按 token 预算触发语义."""
+        from huginn.utils.context import summarize_compact_messages
+
+        messages = [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "hello"},
+        ]
+
+        captured = []
+
+        async def fake_summarizer(transcript):
+            captured.append(transcript)
+            return "summary"
+
+        compacted, _ = asyncio.run(
+            summarize_compact_messages(
+                messages,
+                budget_tokens=100000,  # 未超预算
+                keep_last_n=2,
+                summarizer=fake_summarizer,
+                max_messages=None,  # 默认语义
+            )
+        )
+
+        assert not captured, "默认语义下未超预算不应压缩"
+        assert len(compacted) == len(messages)
