@@ -60,10 +60,17 @@ class MockExecutor:
 class PhysicalWorkspace:
     """一个可组合的物理实验工作台 (时间可逆 + 空间依赖 + 感知确认)."""
 
-    def __init__(self, world_model: WorldModel, executor: ActionExecutor) -> None:
+    def __init__(
+        self,
+        world_model: WorldModel,
+        executor: ActionExecutor,
+        revertible: RevertibleContext | None = None,
+    ) -> None:
         self.world_model = world_model
         self.executor = executor
-        self.revertible = RevertibleContext()
+        # 复用外部逆上下文 (如 agent 的 ToolContext.revertible) 时, 物理逆进入
+        # 统一的 agent 逆栈, 上层整体回滚会一并撤销实验副作用; 否则自建一个.
+        self.revertible = revertible if revertible is not None else RevertibleContext()
         self.registry = CoEffectRegistry()
         # 当前物理状态给世界模型推断逆用.
         self.state: dict[str, Any] = dict(getattr(executor, "state", {}))
