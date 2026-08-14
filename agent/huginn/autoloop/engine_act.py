@@ -297,7 +297,7 @@ class EngineActMixin:
             workspace=str(self.workspace),
             config=self.settings,
         )
-        result = await orch.run(script, ctx)
+        result = await orch.run(script, ctx, phase="_execute")
         return {
             "mode": "dynamic_workflow",
             "success": result.success,
@@ -390,7 +390,7 @@ class EngineActMixin:
             config=self.settings,
         )
         try:
-            result = await orch.run(chosen, ctx)
+            result = await orch.run(chosen, ctx, phase="_execute")
         except Exception as exc:
             logger.debug("H2 bandit variant run failed: %s", exc, exc_info=True)
             return {

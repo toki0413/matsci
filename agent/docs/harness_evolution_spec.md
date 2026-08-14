@@ -470,14 +470,16 @@ H 之间独立, 不互相阻塞 (除 H3 依赖 H1+H2, H4 试点 BUILTIN_SPECS �
 - commit + push
 - 更新本 spec 的 H 状态
 
-## 升级路径 (H5 候选, 不在本 spec 范围)
+## 升级路径 (H5 候选)
 
-第三轮调研发现的两个隐藏天花板, H1-H4 不修, 留作 H5 候选:
+第三轮调研发现的两个隐藏天花板:
 
-1. **H5-a unified LLM client** (P8): 让 H3 联合优化能加 model 维度. 改 `_llm_chat` 覆盖 subagent._summarize 和 hot_model 双路, 加 `select_model(alias_or_constraint)` 接口让 LLM 自己输出 "用 alias X 跑这次". 工程量大, 风险高.
-2. **H5-b unified tool dispatch** (P9): 让 H4 tool_whitelist 真正强制. 新建 `dispatch_tool(name, args, ctx)` 入口, 改 engine.py 9+ 处直接 `tool.call()` 调用. 工程量中, 风险中.
+1. **H5-a unified LLM client** (P8): 让 H3 联合优化能加 model 维度. 改 `_llm_chat` 覆盖 subagent._summarize 和 hot_model 双路, 加 `select_model(alias_or_constraint)` 接口让 LLM 自己输出 "用 alias X 跑这次. 工程量大, 风险高.
+   - **状态: 大部分已落地** — `HuginnAgent.select_model(task)` (agent/core.py) + `engine._llm_chat(task=...)` model_router 多档路由均已实现; hot_model 双路已并行走 `_llm_chat(task="reasoning")`. 仅 `subagent._summarize` 仍用 `model_registry.default_alias()` 未走 task 路由 (影响小).
+2. **H5-b unified tool dispatch** (P9): 让 H4 tool_whitelist 真正强制. 新建 `dispatch_tool(name, args, ctx, phase)` 入口, 改 engine 直接 `tool.call()` 调用.
+   - **状态: 已落地** (H5-b) — 新增 `huginn/harness/tool_dispatch.py`: `dispatch_tool` 从 ToolRegistry 取工具 + 按 phase 的 `tool_whitelist` (PhaseRegistry) 校验, 未命中短路返回. 已接入 `dynamic_workflow` 的 `_run_subtask` (orchestrator.run(phase="_execute") 透传), 白名单强制在该路径生效. autoloop 其余内部工具调用 (literature/validation 等) 属内部服务, 非 agent 工具调用, 不强制.
 
-只有当 H3 跑通后需要 model 维度, 或 H4 跑通后 tool_whitelist advisory 不够用时, 才启动 H5.
+H5-a 的 subagent._summarize 若需统一走 task 路由, 或 H4 需对其他 phase 方法体的直接 `tool.call()` 强制时, 再接入 dispatch_tool.
 
 ## 数学动机补充 (不做证明, 只标结构)
 
