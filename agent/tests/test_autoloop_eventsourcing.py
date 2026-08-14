@@ -146,3 +146,68 @@ def test_engine_runtime_state_fallback_without_log(engine: AutoloopEngine) -> No
     assert state["phase"] == "validate"
     assert state["iteration"] == 5
     assert state["phase_seq"] == -1
+
+
+# ── H3 UI/进度通道: 投影 → ProgressTracker ──────────────────────────
+class _RecordingTracker:
+    """Record tracker.update calls for assertions."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def update(self, task_id: str, **kw) -> None:
+        self.calls.append({"task_id": task_id, **kw})
+
+    def start_task(self, *a, **kw) -> None: ...
+    def complete(self, *a, **kw) -> None: ...
+    def fail(self, *a, **kw) -> None: ...
+
+
+def test_publish_progress_pushes_projection_to_tracker(engine: AutoloopEngine) -> None:
+    engine._record_autoloop_phase("perceive", "running", 0)
+    engine._record_autoloop_phase("hypothesize", "completed", 2)
+    engine._progress_task_id = "autoloop:abc"
+    tracker = _RecordingTracker()
+    engine.progress_tracker = tracker
+
+    engine._publish_progress()
+
+    assert len(tracker.calls) == 1
+    call = tracker.calls[0]
+    assert call["task_id"] == "autoloop:abc"
+    # current_label 来自投影读模型
+    assert call["current_label"] == "hypothesize (completed)"
+    meta = call["metadata"]
+    assert meta["phase"] == "hypothesize"
+    assert meta["phase_status"] == "completed"
+    assert meta["iteration"] == 2
+    assert meta["source"] == "event_projection"
+    # phase_seq 携带最新 phase 事件 seq (0-based)
+    assert meta["phase_seq"] == 1
+
+
+def test_publish_progress_noop_without_task_id(engine: AutoloopEngine) -> None:
+    engine._record_autoloop_phase("perceive", "running", 0)
+    tracker = _RecordingTracker()
+    engine.progress_tracker = tracker
+    # 未设置 _progress_task_id → 不推送, 也不抛错
+    engine._progress_task_id = None
+    engine._publish_progress()
+    assert tracker.calls == []
+
+
+def test_publish_progress_falls_back_to_memory_state(engine: AutoloopEngine) -> None:
+    # 无事件日志时, 投影回退内存属性, 进度通道仍能推送
+    engine._current_phase = "validate"
+    engine._iteration = 3
+    engine._progress_task_id = "autoloop:def"
+    tracker = _RecordingTracker()
+    engine.progress_tracker = tracker
+
+    engine._publish_progress()
+
+    assert len(tracker.calls) == 1
+    meta = tracker.calls[0]["metadata"]
+    assert meta["phase"] == "validate"
+    assert meta["iteration"] == 3
+    assert meta["phase_seq"] == -1
