@@ -214,3 +214,66 @@ def test_bash_tool_failure_rolls_back_new_files(
     )
     assert not res.success
     assert not (tmp_path / "created.txt").exists(), "命令失败应回滚新建文件"
+
+
+# ── 技能生态集成 (技能多步组合失败 → 原子回滚) ─────────────────
+def test_skill_execution_failure_rolls_back_new_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """技能是原子事务: 多步组合整体失败 (abort) → 回滚本次技能新建的文件.
+
+    验证 skill_tool 的 workspace 透传 + 快照回滚: 第一步成功产物文件,
+    第二步失败, 整体失败后第一步的产物也被回滚 (时间可组合).
+    """
+    monkeypatch.setenv("HUGINN_ALLOW_LOCAL_BASH", "1")
+    monkeypatch.setenv(
+        "PATH", str(Path(sys.executable).parent) + os.pathsep + os.environ.get("PATH", "")
+    )
+    from huginn.skills.base import DeclarativeSkillExecutor, SkillDefinition, SkillStep
+    from huginn.skills.registry import SkillRegistry
+    from huginn.tools.skill_tool import SkillTool, SkillToolInput
+    from huginn.tools.registry import ToolRegistry
+    from huginn.core_types import ToolContext
+
+    # 技能: step1 用 code_tool 建文件, step2 必失败 (abort).
+    skill = SkillDefinition(
+        name="test_atomic_skill",
+        description="atomic rollback test",
+        category="test",
+        parameters=[],
+        steps=[
+            SkillStep(
+                name="make_file",
+                tool="code_tool",
+                input_mapping={
+                    "code": (
+                        "import numpy as np\n"
+                        "np.save('step1_out.npy', [1])\n"
+                        "'ok'\n"
+                    ),
+                    "working_dir": "$workspace",
+                    "timeout": "30",
+                },
+                output_key="step1",
+                on_failure="abort",
+            ),
+            SkillStep(
+                name="fail_step",
+                tool="code_tool",
+                input_mapping={
+                    "code": "raise RuntimeError('boom')\n",
+                    "working_dir": "$workspace",
+                    "timeout": "30",
+                },
+                output_key="step2",
+                on_failure="abort",
+            ),
+        ],
+    )
+    tool = SkillTool(DeclarativeSkillExecutor(ToolRegistry))
+    SkillRegistry.register(skill)
+    ctx = ToolContext(session_id="test", workspace=str(tmp_path))
+    inp = SkillToolInput(action="execute", skill_name=skill.name, parameters={})
+    res = asyncio.run(tool.call(inp, ctx))
+    assert not res.success
+    assert not (tmp_path / "step1_out.npy").exists(), "技能整体失败应回滚第一步产物"

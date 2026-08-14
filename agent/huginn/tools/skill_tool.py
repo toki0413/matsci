@@ -10,6 +10,7 @@ import contextlib
 import json
 import logging
 import re
+from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -393,6 +394,10 @@ class SkillTool(HuginnTool[SkillToolInput, SkillToolOutput]):
             exec_context["thread_id"] = args.thread_id
         if context.session_id:
             exec_context["session_id"] = context.session_id
+        # RevertibleEffect: 把 workspace 注入上下文, 让技能 step 可用
+        # input_mapping 里的 $workspace 引用真实目录 (配合原子回滚快照).
+        if getattr(context, "workspace", None):
+            exec_context["workspace"] = context.workspace
 
         # 调 skill 前先 recall 历史, 塞到 exec_context 给 executor 当 hint.
         # ponytail: memory recall/remember 用 try/except 包失败静默;
@@ -401,9 +406,26 @@ class SkillTool(HuginnTool[SkillToolInput, SkillToolOutput]):
         if history_hint:
             exec_context["_skill_history_hint"] = history_hint
 
+        # RevertibleEffect (Cordis 时间可组合性): 技能是多步组合, 整体失败时
+        # 视为一个原子事务 — 回滚本次技能执行在 workspace 新建的文件副作用.
+        # 成功则保留产物 (含各步工具自己的产物). 与 code_tool/bash_tool 的
+        # 单步回滚互补: 那些回滚的是"单工具失败", 这里是"整技能失败".
+        from huginn.security.revertible import RevertibleContext
+
+        exec_ws = getattr(context, "workspace", None) or "."
+        snap_dir = Path(exec_ws)
+        rev = RevertibleContext()
+        before = (
+            {p for p in snap_dir.iterdir() if p.is_file()}
+            if snap_dir.is_dir() else set()
+        )
+
         try:
-            result = await self._executor.execute(skill, args.parameters, exec_context)
+            result = await self._executor.execute(
+                skill, args.parameters, exec_context, workspace=exec_ws
+            )
         except Exception as exc:
+            self._rollback_skill_new_files(rev, snap_dir, before)
             self._record_skill_invocation(args.skill_name, success=False, error=str(exc))
             out = SkillToolOutput(
                 success=False,
@@ -414,6 +436,9 @@ class SkillTool(HuginnTool[SkillToolInput, SkillToolOutput]):
             return ToolResult(data=out.model_dump(), success=False, error=str(exc))
 
         success = bool(result.get("success", False))
+        # 整体失败 → 回滚本次技能新建的文件; 成功保留.
+        if not success:
+            self._rollback_skill_new_files(rev, snap_dir, before)
         self._record_skill_invocation(args.skill_name, success=success, result=result)
 
         out = SkillToolOutput(
@@ -505,6 +530,32 @@ class SkillTool(HuginnTool[SkillToolInput, SkillToolOutput]):
         return ToolResult(data=out.model_dump(), success=True)
 
     # -- memory helpers ----------------------------------------------------
+
+    @staticmethod
+    def _rollback_skill_new_files(
+        rev: RevertibleContext, snap_dir: Path, before: set[Path]
+    ) -> None:
+        """删除技能执行期间在 ``snap_dir`` 新建的文件 (原子事务回滚).
+
+        用 RevertibleContext 登记"删除本次新增文件"的逆并执行 — 与沙箱
+        run_revertible 同构, 保证时间可组合 (失败不留副作用). 只删新建的
+        文件, 不影响执行前已存在的文件.
+        """
+        after = (
+            {p for p in snap_dir.iterdir() if p.is_file()}
+            if snap_dir.is_dir() else set()
+        )
+        new_files = after - before
+        if not new_files:
+            return
+        dispose = rev.composite(
+            *[
+                (lambda fp: (lambda: fp.unlink(missing_ok=True)))(fp)
+                for fp in new_files
+            ]
+        )
+        rev.track(dispose)
+        rev.revert_all()
 
     def _recall_skill_history(self, skill_name: str) -> str | None:
         """从长期记忆拉该 skill 的历史调用记录, 拼成提示串.
