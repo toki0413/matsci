@@ -237,11 +237,15 @@ class WorkflowOrchestrator:
         self,
         script: WorkflowScript,
         context: ToolContext | None = None,
+        *,
+        phase: str | None = None,
     ) -> WorkflowResult:
         """Execute all subtasks concurrently, return aggregated result.
 
         context: ToolContext passed to each tool.call(). If None, a minimal
         context is built from the script id.
+        phase: H5-b — 可选 phase 名, 用于 tool_whitelist 强制 (见
+        huginn/harness/tool_dispatch.py). None 表示不限制.
         """
         result = WorkflowResult(
             id=script.id,
@@ -266,7 +270,7 @@ class WorkflowOrchestrator:
         )
 
         tasks = [
-            asyncio.create_task(self._run_subtask(st, result, sem, ctx))
+            asyncio.create_task(self._run_subtask(st, result, sem, ctx, phase))
             for st in script.subtasks
         ]
         try:
@@ -291,21 +295,32 @@ class WorkflowOrchestrator:
         result: WorkflowResult,
         sem: asyncio.Semaphore,
         ctx: ToolContext,
+        phase: str | None = None,
     ) -> None:
-        """Run one subtask under the semaphore, update result in place."""
+        """Run one subtask under the semaphore, update result in place.
+
+        H5-b: 经 dispatch_tool 分派, 支持 phase 级 tool_whitelist 强制.
+        """
         sr = result.subtask_results[subtask.id]
         async with sem:
             sr.status = "running"
             sr.started_at = now_iso()
-            tool = self._registry.get(subtask.tool_name)
-            if tool is None:
-                sr.status = "failed"
-                sr.error = f"tool '{subtask.tool_name}' not registered"
-                sr.completed_at = now_iso()
-                return
             try:
-                tool_result = await tool.call(subtask.args, ctx)
+                from huginn.harness.tool_dispatch import dispatch_tool
+                tool_result = await dispatch_tool(
+                    subtask.tool_name,
+                    subtask.args,
+                    ctx,
+                    phase=phase,
+                    registry=self._registry,
+                )
                 sr.output = tool_result
+                # 白名单拦截 / 工具不存在 → 标记失败, 不崩溃整个 workflow
+                if not getattr(tool_result, "success", True):
+                    sr.status = "failed"
+                    sr.error = getattr(tool_result, "error", None) or "dispatch failed"
+                    sr.completed_at = now_iso()
+                    return
                 sr.status = "completed"
             except Exception as exc:
                 sr.status = "failed"
