@@ -10,6 +10,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -161,3 +164,53 @@ def test_sandbox_run_revertible_keeps_preexisting(tmp_path: Path) -> None:
     dispose()
     assert pre.exists(), "既有文件不应被 dispose 删除"
     assert not (tmp_path / "new.txt").exists()
+
+
+# ── 工具执行路径集成 (code_tool / bash_tool 失败自动回滚) ─────────
+def test_code_tool_failure_rolls_back_new_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """code_tool 执行失败 → 本次新建的文件自动回滚 (时间可组合).
+
+    open()/pathlib 被 restricted_python 拦截, 用 numpy.save 创建文件 (允许),
+    然后 raise 让脚本失败. 回滚后 partial.npy 应被删除.
+    """
+    monkeypatch.setenv("HUGINN_ALLOW_LOCAL_BASH", "1")
+    # 让子进程解析到当前解释器 (.venv, 带 numpy), 否则 code_tool 用全局
+    # python 缺 numpy 而无法执行到创建文件那一步.
+    monkeypatch.setenv(
+        "PATH", str(Path(sys.executable).parent) + os.pathsep + os.environ.get("PATH", "")
+    )
+    from huginn.tools.code_tool import CodeTool
+
+    tool = CodeTool()
+    code = (
+        "import numpy as np\n"
+        "np.save('partial.npy', [1, 2, 3])\n"
+        "raise ValueError('boom')\n"
+    )
+    res = tool.call({"code": code, "working_dir": str(tmp_path), "timeout": 30})
+    assert not res.success
+    assert not (tmp_path / "partial.npy").exists(), "失败应回滚新建文件"
+
+
+def test_bash_tool_failure_rolls_back_new_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """bash_tool 命令失败 → 本次在 work_dir 新建的文件自动回滚."""
+    monkeypatch.setenv("HUGINN_ALLOW_LOCAL_BASH", "1")
+    from huginn.tools.bash_tool import BashTool
+
+    tool = BashTool()
+    cmd = [
+        sys.executable,
+        "-c",
+        "open('created.txt', 'w').write('x'); import sys; sys.exit(3)",
+    ]
+    res = asyncio.run(
+        tool.call(
+            {"command": cmd, "working_dir": str(tmp_path), "timeout": 30}
+        )
+    )
+    assert not res.success
+    assert not (tmp_path / "created.txt").exists(), "命令失败应回滚新建文件"

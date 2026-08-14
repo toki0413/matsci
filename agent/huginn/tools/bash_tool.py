@@ -262,13 +262,18 @@ class BashTool(HuginnTool):
         # SandboxExecutor path — uses executable whitelist + work-dir validation.
         if isinstance(executor, SandboxExecutor):
             try:
-                result = executor.run(
+                # RevertibleEffect (Cordis 时间可组合性): run_revertible 登记
+                # "删除本次在 work_dir 新建文件"的逆, 命令失败时回滚, 沙箱恢复原状.
+                result, _dispose = executor.run_revertible(
                     input_data.command,
                     cwd=work_dir,
+                    poll_dir=work_dir,
                     timeout=input_data.timeout,
                     capture_output=input_data.capture_output,
                     text=True,
                 )
+                if result.returncode != 0:
+                    _dispose()
                 # 失败时把 stderr 拼进 error, 否则 adapter 只看到 "Unknown error",
                 # agent 无法 debug (Material_000 卡死的根因).
                 _err = None
