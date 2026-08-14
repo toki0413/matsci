@@ -10,6 +10,7 @@ import logging
 import os
 import shutil
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -135,6 +136,12 @@ class SandboxExecutor:
         profile: str = "light",
     ) -> None:
         self.config = config or SandboxConfig()
+        # T-BCSE-14: RevertibleEffect — 沙箱级可逆效应上下文 (Cordis 论文).
+        # 每个经沙箱的副作用 (建文件/写 env/起进程/注册依赖) 都经它累积逆,
+        # exit 时可整体回滚到沙箱建立前的状态. 见 huginn/security/revertible.py.
+        from huginn.security.revertible import RevertibleContext
+
+        self.revertible = RevertibleContext()
         # Task 1.2: 软沙箱按 profile 限内存 (POSIX RLIMIT_AS), 跚 Docker 档位对齐.
         # light=2g/standard=8g/heavy=16g, 复用 docker_sandbox._PROFILES 的 mem 字段.
         self.profile = profile
@@ -471,6 +478,63 @@ class SandboxExecutor:
         if isinstance(data, bytes):
             data = data.decode("utf-8")
         return hash_text(data)
+
+    # ── RevertibleEffect (T-BCSE-14) ──────────────────────────────
+    # 时间可组合: 沙箱副作用都携带逆, 由 self.revertible 累积, 可整体回滚.
+    # 详见 huginn/security/revertible.py (Cordis 论文的 revertible effects).
+
+    def transaction(self) -> Any:
+        """事务边界: ``with sb.transaction():`` 块内异常自动回滚, 正常退出保留.
+
+        用于把一组沙箱副作用包成原子单元 — 失败时沙箱状态恢复到块前.
+        """
+        return self.revertible.transaction()
+
+    def create_file(self, path: str | Path, content: bytes | str | None = None) -> Path:
+        """在沙箱内创建文件并登记逆 (移除时若原不存在则删除/原存在则恢复)."""
+        return self.revertible.create_file(path, content)
+
+    def create_dir(self, path: str | Path) -> Path:
+        """在沙箱内创建目录并登记逆 (原本不存在且空时删除)."""
+        return self.revertible.create_dir(path)
+
+    def set_env(self, key: str, value: str, env: dict[str, str]) -> str | None:
+        """设置进程环境变量并登记逆 (恢复旧值)."""
+        return self.revertible.set_env(key, value, env)
+
+    def run_revertible(
+        self,
+        cmd: list[str],
+        cwd: str | Path | None = None,
+        poll_dir: str | Path | None = None,
+        **kwargs: Any,
+    ) -> tuple[SandboxResult, Callable[[], None]]:
+        """执行命令并返回 ``(result, dispose)``.
+
+        与 ``run`` 相同, 但额外登记一个逆: 记录 ``poll_dir`` (默认取 ``cwd``)
+        在执行前后新增的文件, ``dispose`` 把它们删除. 让调用方能在命令失败或
+        放弃结果时把沙箱文件系统恢复原状 (时间可组合).
+        """
+        snap_dir = Path(poll_dir or cwd or Path.cwd())
+        before = {
+            p for p in snap_dir.iterdir() if p.is_file()
+        } if snap_dir.is_dir() else set()
+
+        result = self.run(cmd, cwd=cwd, **kwargs)
+
+        after = {
+            p for p in snap_dir.iterdir() if p.is_file()
+        } if snap_dir.is_dir() else set()
+        new_files = after - before
+
+        def dispose() -> None:
+            for p in new_files:
+                try:
+                    p.unlink(missing_ok=True)
+                except OSError:
+                    logger.debug("revertible: failed to remove %s", p, exc_info=True)
+
+        return result, dispose
 
 
 def _profile_mem_bytes(profile: str) -> int | None:
