@@ -49,6 +49,7 @@ from huginn.events.session_log import (
     EVENT_CUSTOM,
     EVENT_MESSAGE,
     EVENT_RESET_BOUNDARY,
+    CompactionEntry,
     SessionEvent,
     SessionEventLog,
 )
@@ -80,6 +81,7 @@ __all__ = [
     # Session event-sourcing core (T-BCSE-01/02/04)
     "SessionEvent",
     "SessionEventLog",
+    "CompactionEntry",
     "EVENT_MESSAGE",
     "EVENT_COMPACTION",
     "EVENT_BRANCH_SUMMARY",

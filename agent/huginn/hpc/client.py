@@ -43,12 +43,35 @@ def _validate_path_component(path: str) -> None:
 # $() enable command substitution; semicolons chain commands.
 _COMMAND_FORBIDDEN = ("\n", "\r", "\0", "`", "$(", "${")
 
+# T-BCSE-13: 常见提权 / 容器逃逸 pattern — 一律拒绝.
+#   --privileged / --cap-add / --security-opt / --device / -v(挂载) / --mount
+#   是 docker 逃逸; sudo / su / pkexec / runuser 是提权; setuid/setreuid 改 RUID.
+_PRIVILEGE_PATTERNS: tuple[str, ...] = (
+    "--privileged",
+    "--cap-add",
+    "--security-opt",
+    "--device=",
+    "--mount",
+    "--user root",
+    "--user=root",
+    "-u root",
+    "sudo",
+    "pkexec",
+    "runuser",
+    "su -",
+    "setuid",
+    "setreuid",
+    "seteuid",
+    "chmod 4777",
+)
+
 
 def _validate_command(command: str) -> None:
     """Reject commands containing shell-injection vectors.
 
     Allows normal program calls with arguments and redirection (>, <, >>)
     but blocks newline injection, command substitution, and chaining.
+    Also rejects privilege-escalation / container-escape patterns (T-BCSE-13).
     """
     if not command or not command.strip():
         raise ValueError("HPC command must not be empty")
@@ -62,6 +85,13 @@ def _validate_command(command: str) -> None:
     # Block semicolon chaining — use separate job steps instead
     if ";" in command:
         raise ValueError("HPC command must not contain ';' (use separate steps)")
+    # T-BCSE-13: 提权 / 容器逃逸 pattern 拦截 (deny 优先, 不依赖 shell 注入检测)
+    low = command.lower()
+    for pat in _PRIVILEGE_PATTERNS:
+        if pat in low:
+            raise ValueError(
+                f"HPC command contains forbidden privilege pattern {pat!r}"
+            )
 
 
 def _validate_module_name(module: str) -> None:
