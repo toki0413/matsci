@@ -277,3 +277,196 @@ def test_skill_execution_failure_rolls_back_new_files(
     res = asyncio.run(tool.call(inp, ctx))
     assert not res.success
     assert not (tmp_path / "step1_out.npy").exists(), "技能整体失败应回滚第一步产物"
+
+
+# ── 新增: journal 持久化 + 崩溃后重放 (t2) ───────────────────────
+def test_journal_persists_and_recovers(tmp_path: Path) -> None:
+    """数据驱动逆落盘 journal, 崩溃后 recover_from 重放恢复文件系统副作用."""
+    from huginn.security.revertible import recover_from
+
+    journal = tmp_path / "journal.json"
+    ctx = RevertibleContext(journal_path=journal)
+    p = tmp_path / "created.txt"
+    ctx.create_file(p, "data")
+    assert journal.exists(), "track_op 后 journal 应落盘"
+
+    # 模拟进程崩溃: 逆未执行, 但 journal 已记录. 新进程重放.
+    assert p.exists()
+    applied = recover_from(journal)
+    assert applied >= 1
+    assert not p.exists(), "崩溃后重放应删除未完成恢复的新建文件"
+    assert not journal.exists(), "重放后 journal 应清除"
+
+
+def test_journal_recover_restores_overwritten_file(tmp_path: Path) -> None:
+    """覆盖已有文件的逆, journal 重放应恢复原内容 (base64 存原值)."""
+    from huginn.security.revertible import recover_from
+
+    p = tmp_path / "keep.txt"
+    p.write_bytes(b"original")
+    journal = tmp_path / "j.json"
+    ctx = RevertibleContext(journal_path=journal)
+    ctx.create_file(p, b"overwritten")
+
+    applied = recover_from(journal)
+    assert applied >= 1
+    assert p.read_bytes() == b"original"
+
+
+def test_register_non_jsonable_falls_back_to_closure(tmp_path: Path) -> None:
+    """不可序列化的 co-effect 逆退化为闭包, 进程内仍精确恢复."""
+    class _Opaque:
+        pass
+
+    store: dict[str, object] = {"k": _Opaque()}
+    ctx = RevertibleContext(journal_path=tmp_path / "j.json")
+    ctx.register("k", "new", store)
+    ctx.revert_all()
+    assert isinstance(store["k"], _Opaque), "应恢复原不可序列化对象"
+
+
+# ── 新增: 出站补偿逆 (t1) ────────────────────────────────────────
+def test_git_tool_registers_compensation(tmp_path: Path) -> None:
+    """git_tool 写操作成功后, 把补偿逆登记进调用方的 RevertibleContext."""
+    import subprocess
+
+    from huginn.core_types import ToolContext
+    from huginn.tools.git_tool import GitTool
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    for cmd in [
+        ["git", "init", "-q"],
+        ["git", "config", "user.email", "t@t"],
+        ["git", "config", "user.name", "t"],
+    ]:
+        subprocess.run(cmd, cwd=repo, check=True, capture_output=True)
+    (repo / "f.txt").write_text("v1")
+    subprocess.run(["git", "add", "f.txt"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-qm", "init"], cwd=repo, check=True, capture_output=True)
+
+    rv = RevertibleContext()
+    ctx = ToolContext(session_id="s", workspace=str(repo), revertible=rv)
+    tool = GitTool()
+    (repo / "f.txt").write_text("v2")
+    subprocess.run(["git", "add", "f.txt"], cwd=repo, check=True, capture_output=True)
+    res = asyncio.run(tool.call({"action": "commit", "message": "change", "working_dir": str(repo)}, ctx))
+    assert res.success
+    kinds = [op["kind"] for op in rv.effects()]
+    assert "git_commit" in kinds, f"应登记 git_commit 补偿, got {kinds}"
+
+    # 回滚: reset --soft 撤销 commit, 但保留工作区改动 (v2)
+    rv.revert_all()
+    head_msg = subprocess.run(
+        ["git", "log", "-1", "--format=%s"], cwd=repo, capture_output=True, text=True
+    ).stdout.strip()
+    assert head_msg == "init", f"commit 应被撤销, got {head_msg}"
+
+
+def test_git_compensator_runs_on_recover(tmp_path: Path) -> None:
+    """出站补偿逆 (git_commit) 经 journal 重放也能执行 (崩溃后恢复)."""
+    import subprocess
+
+    from huginn.security.revertible import recover_from
+    from huginn.tools.git_tool import _compensate_commit
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    for cmd in [
+        ["git", "init", "-q"],
+        ["git", "config", "user.email", "t@t"],
+        ["git", "config", "user.name", "t"],
+    ]:
+        subprocess.run(cmd, cwd=repo, check=True, capture_output=True)
+    (repo / "f.txt").write_text("v1")
+    subprocess.run(["git", "add", "f.txt"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-qm", "init"], cwd=repo, check=True, capture_output=True)
+    prev = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True).stdout.strip()
+
+    # 模拟: 一次 commit 写操作 + 崩溃 (逆没执行), journal 记录, 崩溃后重放.
+    journal = tmp_path / "j.json"
+    ctx = RevertibleContext(journal_path=journal)
+    (repo / "f.txt").write_text("v2")
+    subprocess.run(["git", "commit", "-qam", "change"], cwd=repo, check=True, capture_output=True)
+    ctx.compensate("git_commit", {"work_dir": str(repo), "prev_hash": prev})
+
+    applied = recover_from(journal)
+    assert applied >= 1
+    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True).stdout.strip()
+    assert head == prev, "崩溃后重放应撤销 commit"
+
+
+# ── 新增: 空间可组合性 CoEffectRegistry (t3) ─────────────────────
+def test_coeffect_declare_and_activate() -> None:
+    from huginn.security.coeffect import ACTIVATE, CoEffectRegistry, NEUTRAL
+
+    reg = CoEffectRegistry()
+    events: list[tuple[str, str]] = []
+    reg.declare("consumer", requires={"db"}, on_change=lambda k, a: events.append((k, a)))
+    reg.declare("producer", provides={"db"})
+
+    assert reg.is_available("db"), "producer 声明后 db 应可用"
+    reg.set_available("db", True)
+    assert ("db", ACTIVATE) in events, "依赖满足时 consumer 应被激活"
+    assert all(a != NEUTRAL for _, a in events)
+
+
+def test_coeffect_deactivate_on_provider_removal() -> None:
+    from huginn.security.coeffect import DEACTIVATE, CoEffectRegistry
+
+    reg = CoEffectRegistry()
+    events: list[tuple[str, str]] = []
+    reg.declare("consumer", requires={"db"}, on_change=lambda k, a: events.append((k, a)))
+    reg.declare("producer", provides={"db"})
+
+    reg.unbind("producer")
+    assert not reg.is_available("db"), "provider 移除后 db 应不可用"
+    assert ("db", DEACTIVATE) in events, "依赖消失时 consumer 应被停用"
+
+
+def test_coeffect_neutral_no_notify() -> None:
+    from huginn.security.coeffect import CoEffectRegistry
+
+    reg = CoEffectRegistry()
+    notify_count = 0
+
+    def on_change(k: str, a: str) -> None:
+        nonlocal notify_count
+        notify_count += 1
+
+    reg.declare("unrelated", requires={"other"}, on_change=on_change)
+    reg.set_available("db", True)  # 与 unrelated 无关
+    assert notify_count == 0, "无关组件应保持中立, 不通知"
+
+
+def test_coeffect_cascade_multi_hop() -> None:
+    from huginn.security.coeffect import DEACTIVATE, CoEffectRegistry
+
+    reg = CoEffectRegistry()
+    events: list[tuple[str, str]] = []
+    reg.declare("b", provides={"middle"}, requires={"root"}, on_change=lambda k, a: events.append((k, a)))
+    reg.declare("leaf", requires={"middle"}, on_change=lambda k, a: events.append((k, a)))
+    reg.declare("root", provides={"root"})
+
+    reg.unbind("root")
+    assert not reg.is_available("middle"), "root 移除 → middle 产物下线"
+    assert ("middle", DEACTIVATE) in events, "级联: leaf 应因 middle 下线被停用"
+
+
+# ── 新增: 软删除物理清理 purge_archived (t5) ────────────────────
+def test_purge_archived_physically_removes(tmp_path: Path) -> None:
+    from huginn.memory.longterm import LongTermMemory
+
+    db = LongTermMemory(db_path=tmp_path / "m.db")
+    db.store("要清理的归档记忆", category="test")
+    # 找一个 alive 条目 id
+    rows = db.retrieve("要清理的归档记忆", top_k=1)
+    assert rows
+    mid = rows[0]["id"]
+    db.update_archived(mid, archived=True)
+    assert db.retrieve("要清理的归档记忆", top_k=1) == [], "archived 条目不应被检索到"
+
+    # 刚归档的不应被立即清理 (未到 TTL)
+    assert db.purge_archived(ttl_days=30) == 0
+    # 用 ttl=0 强制清理
+    assert db.purge_archived(ttl_days=0) >= 1
