@@ -172,6 +172,7 @@ _OPTIONAL_MODULES = [
     ("huginn.tools.experimental_data_tool", "ExperimentalDataTool"),
     ("huginn.tools.thermo_tool", "ThermoTool"),
     ("huginn.tools.wetlab_rpc_tool", "WetlabRpcTool"),
+    ("huginn.tools.experiment_protocol_tool", "ExperimentProtocolTool"),
     # bench_infra — 预置 benchmark 工具, 治 ζ_* (agent 不再从零写训练循环/画图/C2ST/MCMC/CSV)
     ("huginn.tools.bench_infra.plot_tool", "PlotTool"),
     ("huginn.tools.bench_infra.matrix_tool", "TrainingMatrixTool"),

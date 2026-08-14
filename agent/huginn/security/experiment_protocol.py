@@ -47,12 +47,17 @@ def build_pipette_workflow(
     world_model: NaiveWorldModel | None = None,
     *,
     mixer_available: bool = True,
+    revertible: Any | None = None,
 ) -> PhysicalWorkspace:
     """接线一个"移液—混合—分装"工作台: 声明依赖链 + 感知确认器.
 
     ``mixer_available=False`` 模拟混合器缺失 → mix/aliquot 自动停用.
+    ``revertible`` 可传入外部逆上下文 (如 ToolContext.revertible), 让物理逆
+    进入 agent 统一逆栈; 否则工作台自建.
     """
-    wa = PhysicalWorkspace(world_model or NaiveWorldModel(), executor)
+    wa = PhysicalWorkspace(
+        world_model or NaiveWorldModel(), executor, revertible=revertible
+    )
 
     # 资源后端 (无 requires, 后端就绪即激活).
     wa.declare("reagent_backend", provides=(K_REAGENT,))
