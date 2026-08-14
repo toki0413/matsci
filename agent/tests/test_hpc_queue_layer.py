@@ -7,6 +7,9 @@ Covers:
 - ``ToolScheduler`` integration: injecting an HPC layer makes async jobs
   arbitrate a remote slot; ``reconcile()`` surfaces obstructions.
 - P0 budget "current" mode: released back on release().
+- P2 harmonic-component detector (``stalled_jobs`` / ``touch``).
+- P3 explicit shared-resource contention (``resource_contention``).
+- ``AgentFactory._build_hpc_layer`` wiring (disabled when local-only).
 
 Follows the same asyncio.run pattern as ``test_tool_scheduler.py``.
 """
@@ -240,3 +243,118 @@ def test_budget_cumulative_mode_does_not_release():
         assert scheduler.snapshot().cpu_hours_used == 6.0
 
     asyncio.run(run())
+
+
+# ── P3: explicit shared-resource contention ────────────────────────────────
+
+
+def test_resource_contention_detection():
+    client = _FakeClient()
+    # 3 concurrent jobs → need ≥3 slots so none blocks on the semaphore.
+    layer = HpcQueueLayer(
+        HpcQueueConfig(name="cluster", max_concurrent=3), client=client
+    )
+
+    async def run() -> None:
+        await layer.acquire_slot("j1", shared_resources=["/scratch/a", "feat_license"])
+        await layer.acquire_slot("j2", shared_resources=["/scratch/a"])
+        await layer.acquire_slot("j3", shared_resources=["/scratch/b"])
+
+        contention = layer.resource_contention()
+        # /scratch/a is shared by j1+j2; /scratch/b and the license are not.
+        assert contention == {"/scratch/a": ["j1", "j2"]}
+
+        # Releasing j1 removes its claim → no more contention on /scratch/a.
+        layer.release_slot("j1")
+        assert layer.resource_contention() == {}
+
+    asyncio.run(run())
+
+
+def test_resource_contention_empty_when_no_layer():
+    scheduler = ToolScheduler(
+        store=NullCampaignStore(),
+        policy=AdmissionPolicy(max_concurrent_heavy=2),
+    )
+    assert scheduler.resource_contention() == {}
+
+
+# ── P2: harmonic-component detector (stalled jobs) ─────────────────────────
+
+
+def test_stalled_jobs_detects_idle_resident():
+    scheduler = ToolScheduler(
+        store=NullCampaignStore(),
+        policy=AdmissionPolicy(max_concurrent_heavy=2),
+    )
+    # Simulate a live job admitted with an initial heartbeat.
+    scheduler._heartbeats["j_busy"] = 0.0  # noqa: SLF001 — direct state for test
+    scheduler.touch("j_busy")  # refreshed → not stalled
+    scheduler._heartbeats["j_stuck"] = 0.0  # noqa: SLF001 — never refreshed
+
+    stalled = scheduler.stalled_jobs(timeout=1.0)
+    assert "j_stuck" in stalled
+    assert "j_busy" not in stalled
+
+
+def test_async_job_cleans_up_heartbeat():
+    layer = HpcQueueLayer(HpcQueueConfig(name="cluster"), client=_FakeClient())
+    scheduler = ToolScheduler(
+        store=NullCampaignStore(),
+        policy=AdmissionPolicy(max_concurrent_heavy=2),
+        hpc_layer=layer,
+    )
+
+    async def run() -> None:
+        scheduler.start()
+        try:
+            done = asyncio.Event()
+
+            async def job() -> str:
+                done.set()
+                return "ok"
+
+            jid = await scheduler.submit_async("vasp_tool", "heavy", None, job)
+            await asyncio.wait_for(done.wait(), timeout=1.0)
+            await asyncio.sleep(0.1)
+            # After finish, heartbeat is removed and no slot is held.
+            assert jid not in scheduler._heartbeats  # noqa: SLF001
+            assert not scheduler.stalled_jobs(timeout=0.0)
+        finally:
+            scheduler.stop()
+
+    asyncio.run(run())
+
+
+# ── AgentFactory HPC wiring ────────────────────────────────────────────────
+
+
+def test_factory_build_hpc_layer_disabled_when_local():
+    from huginn.agents.factory import AgentFactory
+    from huginn.config import HuginnConfig
+
+    cfg = HuginnConfig(provider="ollama", model="qwen2.5:14b", workspace="/tmp/ws")
+    # Default hpc_scheduler="local" → no HPC layer.
+    obj = object.__new__(AgentFactory)
+    obj.config = cfg
+    assert obj._build_hpc_layer() is None
+
+
+def test_factory_build_hpc_layer_enabled_when_remote():
+    from huginn.agents.factory import AgentFactory
+    from huginn.config import HuginnConfig
+
+    cfg = HuginnConfig(
+        provider="ollama",
+        model="qwen2.5:14b",
+        workspace="/tmp/ws",
+        hpc_scheduler="slurm",
+        hpc_host="login.cluster",
+        hpc_username="researcher",
+    )
+    obj = object.__new__(AgentFactory)
+    obj.config = cfg
+    layer = obj._build_hpc_layer()
+    assert layer is not None
+    assert layer.enabled is True
+    assert layer.config.name == "login.cluster"
