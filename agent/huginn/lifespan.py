@@ -592,6 +592,17 @@ async def lifespan(app: FastAPI):
         await asyncio.to_thread(run_all_migrations)
     except Exception as e:
         logger.warning(f"[migrations] startup sweep failed: {e}")
+    # Bootstrap QQ / WeChat bot bridge configs from env (one-click connect).
+    # 设了 BOT_QQ_API_URL / BOT_WECHAT_API_URL 才生效, 否则保持默认 disabled.
+    try:
+        from huginn.bot.bridge import bootstrap_qq_from_env
+        from huginn.bot.wechat_bridge import bootstrap_wechat_from_env
+
+        bootstrap_qq_from_env()
+        bootstrap_wechat_from_env()
+        logger.info("[startup] bot bridge configs bootstrapped from env")
+    except Exception as e:
+        logger.warning(f"[startup] bot bridge bootstrap failed: {e}")
     # Store the main event loop so sync code (tool adapter running in
     # a thread) can schedule event publishes back on the main loop
     try:
