@@ -49,6 +49,12 @@ config_version = 1
 # R_phys 推理时 steering 强度 λ (0=关闭, >0=物理奖励作为正交 steering 方向注入 frontier 排序)
 phys_steering_gain = 0.0
 
+# ── 模型池 (multi-LLM) ──────────────────────────────────────────────
+# 一键连通: 在 huginn.env 里填好对应 *_API_KEY 后, 把该条的 enabled 改 true
+# 即可启用; api_key 留空会自动从环境变量读取 (registry.resolve_provider_key).
+# 默认全部 enabled=false, 避免注册成"幽灵模型"在调用时才失败.
+# 当前启用的默认模型是 deepseek (alias=default, lead agent 指向它).
+
 [[models]]
 alias = "default"
 provider = "deepseek"
@@ -57,6 +63,123 @@ api_key = ""  # P0-9: 从 DEEPSEEK_API_KEY 环境变量读
 base_url = "https://api.deepseek.com"
 temperature = 0.7
 enabled = true
+
+# ── 海外网关 ────────────────────────────────────────────────────────
+[[models]]
+alias = "anthropic"
+provider = "anthropic"
+model = "claude-3-5-sonnet-20241022"
+api_key = ""  # 留空自动读 ANTHROPIC_API_KEY
+enabled = false
+
+[[models]]
+alias = "openai"
+provider = "openai"
+model = "gpt-4o"
+api_key = ""  # 留空自动读 OPENAI_API_KEY
+enabled = false
+
+[[models]]
+alias = "google"
+provider = "google-genai"
+model = "gemini-2.5-pro"
+api_key = ""  # 留空自动读 GOOGLE_API_KEY
+enabled = false
+
+[[models]]
+alias = "openrouter"
+provider = "openrouter"
+model = "anthropic/claude-sonnet-4"
+api_key = ""  # 留空自动读 OPENROUTER_API_KEY
+enabled = false
+
+[[models]]
+alias = "nvidia"
+provider = "nvidia"
+model = "meta/llama-3.1-405b-instruct"
+api_key = ""  # 留空自动读 NVIDIA_API_KEY
+enabled = false
+
+# ── 国产 OpenAI-compatible 网关 ─────────────────────────────────────
+[[models]]
+alias = "siliconflow"
+provider = "siliconflow"
+model = "deepseek-ai/DeepSeek-V3"
+api_key = ""  # 留空自动读 SILICONFLOW_API_KEY
+base_url = "https://api.siliconflow.cn/v1"
+enabled = false
+
+[[models]]
+alias = "moonshot"
+provider = "moonshot"
+model = "kimi-k2.6"
+api_key = ""  # 留空自动读 MOONSHOT_API_KEY
+base_url = "https://api.moonshot.cn/v1"
+enabled = false
+
+[[models]]
+alias = "zhipu"
+provider = "zhipu"
+model = "glm-4-flash"
+api_key = ""  # 留空自动读 ZHIPU_API_KEY
+base_url = "https://open.bigmodel.cn/api/paas/v4/"
+enabled = false
+
+[[models]]
+alias = "baichuan"
+provider = "baichuan"
+model = "Baichuan4"
+api_key = ""  # 留空自动读 BAICHUAN_API_KEY
+base_url = "https://api.baichuan-ai.com/v1"
+enabled = false
+
+[[models]]
+alias = "dashscope"
+provider = "dashscope"
+model = "qwen3.5-plus"
+api_key = ""  # 留空自动读 DASHSCOPE_API_KEY
+base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+enabled = false
+
+[[models]]
+alias = "qianfan"
+provider = "qianfan"
+model = "ernie-4.0-turbo-8k"
+api_key = ""  # 留空自动读 QIANFAN_API_KEY
+base_url = "https://qianfan.baidubce.com/v2"
+enabled = false
+
+[[models]]
+alias = "doubao"
+provider = "doubao"
+model = "doubao-pro-32k"
+api_key = ""  # 留空自动读 DOUBAO_API_KEY
+base_url = "https://ark.cn-beijing.volces.com/api/v3"
+enabled = false
+
+[[models]]
+alias = "hunyuan"
+provider = "hunyuan"
+model = "hunyuan-turbo"
+api_key = ""  # 留空自动读 HUNYUAN_API_KEY
+base_url = "https://api.hunyuan.tencentcloudapi.com/v1"
+enabled = false
+
+[[models]]
+alias = "minimax"
+provider = "minimax"
+model = "MiniMax-M2.7"
+api_key = ""  # 留空自动读 MINIMAX_API_KEY
+base_url = "https://api.minimaxi.com/v1"
+enabled = false
+
+# ── 本地/免 key 网关 ────────────────────────────────────────────────
+[[models]]
+alias = "ollama"
+provider = "ollama"
+model = "qwen2.5:14b"
+api_key = "not-needed"  # ollama 本地免 key
+enabled = false
 
 [[agents]]
 id = "lead"
@@ -68,6 +191,23 @@ enabled = true
 max_steps = 10
 
 [hpc_queue_map]
+
+# ── IM 网关 (QQ / WeChat) ─────────────────────────────────────────
+# 一键连通: 优先用 huginn.env 里的 BOT_QQ_API_URL / BOT_WECHAT_API_URL
+# 引导 (启动时自动设 enabled=true). 这里仅作文档化模板, 也可直接改后重启.
+[bot.qq]
+enabled = false            # 填了 BOT_QQ_API_URL 后启动时自动置 true
+platform = "qq"            # OneBot v11
+api_url = ""               # e.g. http://127.0.0.1:5700 (go-cqhttp/Lagrange/NapCat)
+bot_id = ""                # 机器人 QQ 号
+admin_users = []# 管理员 QQ
+allowed_groups = []# 群白名单, 空 = 不限
+
+[bot.wechat]
+enabled = false            # 填了 BOT_WECHAT_API_URL 后启动时自动置 true
+api_url = ""               # e.g. http://localhost:9011 (iLink daemon)
+bot_id = ""
+admin_users = []
 
 [feature_flags]
 

@@ -302,8 +302,9 @@ function BotPanel({ t }: { t: (k: string) => string }) {
         </div>
         <button
           onClick={async () => {
+            const platform = (document.getElementById("bot-platform") as HTMLSelectElement)?.value || "qq";
             const cfg: any = {
-              platform: (document.getElementById("bot-platform") as HTMLSelectElement)?.value || "qq",
+              platform,
               bot_id: (document.getElementById("bot-id") as HTMLInputElement)?.value || "",
               api_url: (document.getElementById("bot-api-url") as HTMLInputElement)?.value || "",
               http_port: parseInt((document.getElementById("bot-http-port") as HTMLInputElement)?.value || "8080"),
@@ -314,7 +315,9 @@ function BotPanel({ t }: { t: (k: string) => string }) {
               cfg.allowed_groups = groups.split(",").map((s: string) => s.trim()).filter(Boolean);
             }
             try {
-              await api.put("/bot/config", cfg);
+              // 微信走独立的 /bot/wechat/config (iLink 桥接), QQ 走 /bot/config (OneBot v11)
+              const path = platform === "wechat" ? "/bot/wechat/config" : "/bot/config";
+              await api.put(path, cfg);
               alert("配置已保存");
             } catch (e: any) {
               alert(`保存失败: ${e.message}`);
@@ -360,6 +363,9 @@ export interface SettingsPanelProps {
   toggleModelExpanded: (i: number) => void;
   toggleAgentExpanded: (i: number) => void;
   switchPersona: (personaName: string) => Promise<void>;
+  activeModel: string;
+  activeModelSavedMsg: string;
+  switchActiveModel: (alias: string) => Promise<void>;
 
   // From App.tsx / useChatAndConnection
   startBackend: () => void;
@@ -380,6 +386,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
     saveConfig, updateModel, addModel, removeModel,
     updateAgent, addAgent, removeAgent,
     toggleModelExpanded, toggleAgentExpanded, switchPersona,
+    activeModel, activeModelSavedMsg, switchActiveModel,
    startBackend, isConnected, personaList, personaEmotion,
   } = props;
 
@@ -611,6 +618,38 @@ export function SettingsPanel(props: SettingsPanelProps) {
               <p className="text-sm text-text-secondary">Configure multiple provider/model entries.</p>
               <button onClick={addModel} className="btn-secondary px-3 py-1.5 text-xs">+ Add Model</button>
             </div>
+
+            {/* Active model — runtime provider switch */}
+            <div className="rounded-lg border border-border bg-bg-tertiary p-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <label className="block text-xs font-medium text-text-secondary">Active model (runtime switch)</label>
+                  <p className="mt-0.5 text-xs text-text-muted">
+                    Sets the model the lead agent uses. Only enabled models can be selected.
+                  </p>
+                  {activeModelSavedMsg && (
+                    <p className="mt-1 text-xs text-accent">{activeModelSavedMsg}</p>
+                  )}
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <select
+                    className="input text-xs"
+                    value={activeModel}
+                    onChange={(e) => switchActiveModel(e.target.value)}
+                    disabled={config.models.filter((m) => m.enabled).length === 0}
+                  >
+                    <option value="">— select —</option>
+                    {config.models.filter((m) => m.enabled).map((m) => (
+                      <option key={m.alias} value={m.alias}>{m.alias} ({m.provider})</option>
+                    ))}
+                  </select>
+                  {activeModel && (
+                    <span className="text-[10px] text-text-muted">current: {activeModel}</span>
+                  )}
+                </div>
+              </div>
+            </div>
+
             {config.models.length === 0 && (
               <p className="text-sm text-text-muted">{t('settings.modelsEmpty')}</p>
             )}
