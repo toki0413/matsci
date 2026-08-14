@@ -79,6 +79,10 @@ class HpcQueueLayer:
         self._slots: dict[str, str] = {}
         # local_job_id -> remote cluster job id
         self._remote: dict[str, str] = {}
+        # P3: local_job_id -> set of shared resource names (queue, scratch path,
+        #   license server, …). Two jobs sharing a resource are a hyperedge on
+        #   that resource — an explicit representation of contention.
+        self._resources: dict[str, set[str]] = {}
 
     # ── enablement ────────────────────────────────────────────────────────
 
@@ -89,11 +93,15 @@ class HpcQueueLayer:
 
     # ── admission ─────────────────────────────────────────────────────────
 
-    async def acquire_slot(self, job_id: str) -> bool:
+    async def acquire_slot(
+        self, job_id: str, shared_resources: list[str] | None = None
+    ) -> bool:
         """Reserve a remote admission slot for ``job_id``.
 
         Returns ``False`` when the layer is disabled (local-only mode). Blocks
         (natural backpressure) until a slot frees when the cluster is saturated.
+        ``shared_resources`` records which shared resources the job contends for
+        (see ``resource_contention``).
         """
         if not self.enabled:
             return False
@@ -101,6 +109,8 @@ class HpcQueueLayer:
             self._sem = asyncio.Semaphore(self.config.max_concurrent)
         await self._sem.acquire()
         self._slots[job_id] = "reserved"
+        if shared_resources:
+            self._resources[job_id] = set(shared_resources)
         return True
 
     def release_slot(self, job_id: str) -> None:
@@ -109,6 +119,7 @@ class HpcQueueLayer:
             return
         self._slots.pop(job_id, None)
         self._remote.pop(job_id, None)
+        self._resources.pop(job_id, None)
         try:
             self._sem.release()
         except ValueError:
@@ -139,6 +150,20 @@ class HpcQueueLayer:
     def snapshot(self) -> dict[str, str]:
         """Snapshot of all tracked local-job → HPC-state mappings."""
         return dict(self._slots)
+
+    def resource_contention(self) -> dict[str, list[str]]:
+        """Explicit shared-resource contention (P3 hyperedges).
+
+        Returns ``resource -> [job_id, …]`` for every shared resource that more
+        than one tracked job currently contends for. This surfaces the
+        higher-order competition that a flat capacity check cannot see — e.g.
+        two jobs sharing the same scratch disk or license server.
+        """
+        buckets: dict[str, list[str]] = {}
+        for job_id, resources in self._resources.items():
+            for res in resources:
+                buckets.setdefault(res, []).append(job_id)
+        return {res: jobs for res, jobs in buckets.items() if len(jobs) > 1}
 
     def submit(self, job_id: str, script: str, job_name: str) -> str:
         """Submit ``script`` to the cluster. Returns the remote job id.

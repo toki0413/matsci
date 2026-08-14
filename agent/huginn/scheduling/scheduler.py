@@ -179,6 +179,10 @@ class ToolScheduler:
         # Records which active jobs have been charged to the budget (for
         # cross-layer reconciliation of the budget layer).
         self._charged_active: set[str] = set()
+        # P2: last-progress heartbeat per live job. A job that holds a slot but
+        # stops updating this is a "harmonic" resident — occupying resources
+        # without making progress (invisible to a plain capacity check).
+        self._heartbeats: dict[str, float] = {}
         # async-job path
         self._queue: deque[_QueuedJob] = deque()
         self._live_tasks: dict[str, asyncio.Task] = {}
@@ -389,6 +393,9 @@ class ToolScheduler:
             # reconciliation (current-mode occupancy).
             if self.policy.budget_mode == "current":
                 self._charged_active.add(job.job_id)
+            # P2: initial heartbeat — the job is admitted and now expected to
+            # make progress (or call touch() periodically).
+            self._heartbeats[job.job_id] = time.time()
             result = await job.factory()
         except Exception as exc:  # noqa: BLE001 — persist whatever failed
             error = repr(exc)
@@ -396,6 +403,7 @@ class ToolScheduler:
         finally:
             if self.policy.budget_mode == "current":
                 self._charged_active.discard(job.job_id)
+            self._heartbeats.pop(job.job_id, None)
             if hpc_held:
                 self.hpc_layer.release_slot(job.job_id)  # type: ignore[union-attr]
             if sem is not None:
@@ -443,6 +451,34 @@ class ToolScheduler:
             requeued += 1
         return {"orphaned": orphaned, "requeued": requeued}
 
+    def touch(self, job_id: str) -> None:
+        """Mark ``job_id`` as making progress (P2 heartbeat).
+
+        Long-running job coroutines should call this periodically; the
+        harmonic-component detector (``stalled_jobs``) flags any live job whose
+        heartbeat goes stale while it still holds a slot.
+        """
+        self._heartbeats[job_id] = time.time()
+
+    def stall_timeout(self, job_id: str) -> float | None:
+        """Seconds since ``job_id`` last made progress, or None if not tracked."""
+        last = self._heartbeats.get(job_id)
+        return None if last is None else time.time() - last
+
+    def stalled_jobs(self, timeout: float = 900.0) -> list[str]:
+        """Harmonic-component detector: live jobs holding a slot but idle.
+
+        Returns ``job_id`` of tracked jobs whose heartbeat is older than
+        ``timeout`` seconds. These are the "invisible" residents — a capacity
+        check alone cannot see them, but they tie up a heavy/HPC slot.
+        """
+        now = time.time()
+        return [
+            job_id
+            for job_id, last in list(self._heartbeats.items())
+            if now - last > timeout
+        ]
+
     def reconcile(self) -> ReconcileReport:
         """Cross-layer reconciliation: local vs HPC vs budget state.
 
@@ -458,6 +494,12 @@ class ToolScheduler:
         hpc = self.hpc_layer.snapshot() if self.hpc_layer is not None else {}
         charged = set(self._charged_active)
         return reconcile_layers(local, hpc, charged)
+
+    def resource_contention(self) -> dict[str, list[str]]:
+        """Explicit shared-resource contention (P3). Delegates to the HPC layer."""
+        if self.hpc_layer is None or not self.hpc_layer.enabled:
+            return {}
+        return self.hpc_layer.resource_contention()
 
     def snapshot(self) -> SchedulerStatus:
         heavy_in_flight = self.policy.max_concurrent_heavy - self._heavy_sem._value  # type: ignore[attr-defined]
