@@ -5,6 +5,7 @@ import contextlib
 import logging
 import os
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -57,6 +58,7 @@ except Exception:  # pragma: no cover
         return 0.5
 
 
+@dataclass
 class _RCBStep2Ctx:
     """Step 2 执行循环的上下文 — 核心对象 + Step 1 产物 + 闭包."""
     ws: Path
