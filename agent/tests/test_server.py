@@ -1,14 +1,30 @@
-"""Tests for server coverage boost (config endpoints and MCP)."""
+"""Tests for server internals (unit level).
+
+Merged from:
+  - test_server.py          : config/encrypt endpoint + MCP manager logic
+  - test_server_context.py  : server-scoped ServerContext
+  - test_server_endpoints.py: direct async endpoint functions in huginn.server
+
+The HTTP routing layer (TestClient against the real app) lives separately in
+test_server_fastapi.py.
+"""
 
 from __future__ import annotations
 
-import pytest
-
-pytest.importorskip("mcp", reason="MCP SDK not installed (pip install mcp)")
-
+import asyncio
+import base64
 import contextlib
+import tempfile
 from pathlib import Path
 from typing import Any
+
+import pytest
+
+from huginn.server_context import (
+    ServerContext,
+    create_server_context,
+    set_server_context,
+)
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -48,6 +64,137 @@ def _dev_mode_and_isolated_config(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(config_routes, "_config_path_override", None)
 
 
+# ── server-scoped context (from test_server_context.py) ──────────────────────
+
+
+class TestServerContext:
+    def test_create_server_context(self):
+        ctx = create_server_context()
+        assert isinstance(ctx, ServerContext)
+        assert ctx.agent_factory is not None
+        assert ctx.memory_manager is not None
+        assert ctx.orchestrator is not None
+
+    def test_set_server_context(self):
+        ctx = create_server_context()
+        set_server_context(ctx)
+        from huginn.server_context import get_server_context
+
+        assert get_server_context() is ctx
+
+
+# ── direct async endpoint functions (from test_server_endpoints.py) ──────────
+
+
+@pytest.fixture
+def personas_path(tmp_path):
+    return tmp_path / "personas.json"
+
+
+class TestPersonaEndpoints:
+    async def _call(self, func, *args, **kwargs):
+        return await func(*args, **kwargs)
+
+    def test_list_personas(self, personas_path, monkeypatch):
+        import huginn.personas as personas_module
+        from huginn.server import list_personas
+
+        monkeypatch.setattr(
+            personas_module, "_default_personas_path", lambda _=None: personas_path
+        )
+        result = asyncio.run(self._call(list_personas))
+        assert "default" in [p["name"] for p in result["personas"]]
+        assert result["default"] == "default"
+
+    def test_create_and_get_persona(self, personas_path, monkeypatch):
+        import huginn.personas as personas_module
+        from huginn.server import create_persona, get_persona
+
+        monkeypatch.setattr(
+            personas_module, "_default_personas_path", lambda _=None: personas_path
+        )
+        created = asyncio.run(
+            self._call(
+                create_persona,
+                {
+                    "name": "api_bot",
+                    "system_prompt": "You are API bot.",
+                    "begin_dialogs": [{"role": "user", "content": "Hi"}],
+                },
+            )
+        )
+        assert created["success"] is True
+
+        result = asyncio.run(self._call(get_persona, "api_bot"))
+        assert result["success"] is True
+        assert result["system_prompt"] == "You are API bot."
+
+
+class TestUnifiedEndpoints:
+    def test_unified_solve_endpoint(self):
+        from huginn.server import unified_solve_endpoint
+
+        result = asyncio.run(
+            unified_solve_endpoint(
+                {"model": "heat_equation_fem", "method": "fem", "n": 6}
+            )
+        )
+        assert result["success"] is True
+        assert result["method"] == "fem"
+        assert result["n_dof"] == 7
+        assert result["residual"] < 1e-10
+
+    def test_unified_plot_endpoint(self):
+        from huginn.server import unified_plot_endpoint
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "plot.png"
+            result = asyncio.run(
+                unified_plot_endpoint(
+                    {
+                        "model": "linear_elasticity_fem",
+                        "method": "fem",
+                        "n": 5,
+                        "output_path": str(output_path),
+                    }
+                )
+            )
+            assert result["success"] is True
+            assert result["plot_path"] == str(output_path)
+            assert base64.b64decode(result["plot_base64"])[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+class TestNewAgentEndpoints:
+    def test_telemetry_summary_endpoint(self):
+        from huginn.server import telemetry_summary
+
+        result = asyncio.run(telemetry_summary())
+        assert "summary" in result
+        assert "total_spans" in result["summary"]
+
+    def test_telemetry_spans_endpoint(self):
+        from huginn.server import telemetry_spans
+
+        result = asyncio.run(telemetry_spans())
+        assert "spans" in result
+
+    def test_memory_maintenance_endpoint(self):
+        from huginn.server import memory_maintenance
+
+        result = asyncio.run(memory_maintenance({}))
+        assert result.get("success") is True
+        assert "summary" in result
+
+    def test_get_thread_endpoint(self):
+        from huginn.server import get_thread
+
+        result = asyncio.run(get_thread("unknown", None))
+        assert result["exists"] is False
+
+
+# ── config/encrypt endpoint (from test_server.py) ────────────────────────────
+
+
 class TestConfigEncryptEndpoint:
     def test_config_encrypt(self, tmp_path: Path):
         # /config/encrypt 用 password 把当前运行时配置加密落盘.
@@ -81,8 +228,12 @@ class TestConfigEncryptEndpoint:
             enc_path.unlink()
 
 
+# ── MCP manager logic (from test_server.py) ──────────────────────────────────
+
+
 class TestMCPEndpoints:
     def test_mcp_servers_connect_disconnect(self, tmp_path: Path, monkeypatch: Any):
+        pytest.importorskip("mcp", reason="MCP SDK not installed (pip install mcp)")
         import huginn.mcp_client as mcp_client_module
 
         # Use a fresh manager to avoid state leakage from other tests
