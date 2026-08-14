@@ -143,7 +143,7 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
       setMessages((prev) => [
         ...prev,
         ...dividers.map(() => ({
-          role: "assistant",
+          role: "assistant" as const,
           content: "",
           timestamp: new Date().toISOString(),
           isCompacted: true,
