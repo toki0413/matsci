@@ -493,6 +493,47 @@ class TestRestrictedPython:
         with pytest.raises(RestrictedPythonError, match="Syntax error"):
             validate_code("if x ==")  # incomplete syntax
 
+    # ── T-BCSE-12: 逃逸加固 ─────────────────────────────────────
+    def test_forbidden_gc_import(self):
+        from huginn.security import RestrictedPythonError, validate_code
+
+        with pytest.raises(RestrictedPythonError, match="Forbidden import: gc"):
+            validate_code("import gc\ngc.get_objects()")
+
+    def test_forbidden_getattribute(self):
+        from huginn.security import RestrictedPythonError, validate_code
+
+        with pytest.raises(RestrictedPythonError, match="Forbidden attribute access"):
+            validate_code("object.__getattribute__(x, '__dict__')")
+
+    def test_forbidden_globals_locals(self):
+        from huginn.security import RestrictedPythonError, validate_code
+
+        with pytest.raises(RestrictedPythonError, match="Forbidden builtin call: globals"):
+            validate_code("g = globals()")
+        with pytest.raises(RestrictedPythonError, match="Forbidden builtin call: locals"):
+            validate_code("l = locals()")
+
+    def test_forbidden_type_object(self):
+        from huginn.security import RestrictedPythonError, validate_code
+
+        with pytest.raises(RestrictedPythonError, match="Forbidden builtin call: type"):
+            validate_code("type(x).__subclasses__()")
+        with pytest.raises(RestrictedPythonError, match="Forbidden builtin call: object"):
+            validate_code("object()")
+
+    def test_forbidden_bases_chain(self):
+        from huginn.security import RestrictedPythonError, validate_code
+
+        with pytest.raises(RestrictedPythonError, match="Forbidden attribute access"):
+            validate_code("().__class__.__bases__")
+
+    def test_getattr_string_bypass_blocked(self):
+        from huginn.security import RestrictedPythonError, validate_code
+
+        with pytest.raises(RestrictedPythonError, match="Forbidden getattr access"):
+            validate_code("getattr(x, '__class__')")
+
 
 # ---------------------------------------------------------------------------
 # ContainerExecutor
