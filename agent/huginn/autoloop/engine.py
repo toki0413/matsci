@@ -489,6 +489,12 @@ class AutoloopEngine(
         # 当前 phase 名 — _run_phase_async 写, _llm_chat 读, 用于 phase-aware thinking effort.
         # ponytail: 隐式状态, 但只在 single-threaded async run() 里用, 无竞态.
         self._current_phase: str = ""
+        # H3: autoloop 事件溯源 — 每次 phase 切换 append autoloop_phase_change 事件
+        # 到 workspace 级事件日志 (<workspace>/.huginn/events/autoloop.jsonl).
+        # read_runtime_state() 从事件投影读 (可重放/可恢复), 而非只看可变属性.
+        # ponytail: best-effort — 日志打不开时静默降级回内存属性, 不阻塞主循环.
+        self._event_log: Any = None
+        self._event_log_failed: bool = False
         # P0 Task 4: 自我效能统计周期更新计数器. _learn 末尾自增, 每 10 次触发
         # _compute_self_model + 缓存写入. toggle HUGINN_SELF_MODEL 默认 off,
         # off 时不触发 (向后兼容). ponytail: 复用 longterm typed memory 存储.
@@ -518,6 +524,22 @@ class AutoloopEngine(
                     state = load_engine_state(_resume_id, self.workspace)
                     if state is not None:
                         apply_state_to_engine(state, self)
+                        # H3: 事件投影优先 — 若 workspace 有 autoloop 事件日志,
+                        # 用投影恢复当前 phase (而非只信任可变快照的 phase 字段).
+                        # best-effort: 投影读失败时沿用快照值, 不阻塞.
+                        try:
+                            projected = self.read_runtime_state()
+                            if projected.get("phase"):
+                                self._current_phase = projected["phase"]
+                                logger.info(
+                                    "restored autoloop phase from event projection: %s",
+                                    projected["phase"],
+                                )
+                        except Exception:
+                            logger.debug(
+                                "autoloop event projection restore failed (non-fatal)",
+                                exc_info=True,
+                            )
                         # hypothesis_graph 单独恢复 (refuted 状态跨 session 必须保留)
                         try:
                             loaded_graph = self.hypothesis_graph.load(
@@ -575,6 +597,87 @@ class AutoloopEngine(
         # ponytail: 全进程一份, JSON 落盘. ceiling: 多进程不共享, 升级路径接 SQLite.
         self._alignment_dataset: Any = None
 
+
+    # ── H3: autoloop 事件溯源 ──────────────────────────────────────
+    # phase 切换写进 workspace 级事件日志, read_runtime_state() 从投影读,
+    # 替代"只看可变快照". 全部 best-effort: 日志不可用时静默回退内存属性.
+
+    def _event_log_path(self) -> Path:
+        """autoloop 事件日志落盘路径 — <workspace>/.huginn/events/autoloop.jsonl."""
+        return self.workspace / HUGINN_DIR_NAME / "events" / "autoloop.jsonl"
+
+    def _get_event_log(self):
+        """懒加载 workspace 级 SessionEventLog; 失败返回 None (不重试)."""
+        if self._event_log is not None:
+            return self._event_log
+        if self._event_log_failed:
+            return None
+        try:
+            from huginn.events.session_log import SessionEventLog
+
+            path = self._event_log_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            self._event_log = SessionEventLog(
+                session_id=f"autoloop:{self.workspace.name or 'ws'}",
+                path=path,
+                load=True,
+            )
+        except Exception:
+            logger.debug("autoloop event log open failed (non-fatal)", exc_info=True)
+            self._event_log_failed = True
+        return self._event_log
+
+    def _record_autoloop_phase(self, phase: str, status: str, iteration: int) -> None:
+        """Append an ``autoloop_phase_change`` event (best-effort, non-fatal)."""
+        log = self._get_event_log()
+        if log is None:
+            return
+        try:
+            from huginn.events.session_log import EVENT_AUTOLOOP_PHASE
+
+            log.append(
+                EVENT_AUTOLOOP_PHASE,
+                {
+                    "phase": phase,
+                    "status": status,
+                    "iteration": int(iteration),
+                },
+            )
+        except Exception:
+            logger.debug(
+                "autoloop phase event append failed (non-fatal)", exc_info=True,
+            )
+
+    def read_runtime_state(self) -> dict[str, Any]:
+        """H3: 从事件投影读引擎运行时状态 (phase/status/iteration).
+
+        事件日志存在时, 用 ``AutoloopStateProjection`` 折叠事件路径得到读模型 —
+        可重放/可恢复, 与日志强一致. 日志缺失或为空时回退到内存属性
+        (``_current_phase`` / ``_iteration``), 保持向后兼容.
+        """
+        log = self._get_event_log()
+        if log is not None:
+            try:
+                from huginn.events.projection import (
+                    AutoloopStateProjection,
+                    ProjectionEngine,
+                )
+
+                engine = ProjectionEngine()
+                engine.register(AutoloopStateProjection())
+                state = engine.build(log, "autoloop")
+                if state.get("phase") or state.get("status"):
+                    return state
+            except Exception:
+                logger.debug(
+                    "autoloop runtime state read failed (non-fatal)", exc_info=True,
+                )
+        return {
+            "phase": getattr(self, "_current_phase", "") or "",
+            "status": "running",
+            "iteration": getattr(self, "_iteration", 0) or 0,
+            "phase_seq": -1,
+        }
 
 
     def _alignment_dataset_path(self) -> Path:

@@ -83,6 +83,20 @@ class SessionMixin:
         except Exception:
             logger.debug("active plan load failed", exc_info=True)
 
+        # H2: 事件级恢复优先 — 若会话有事件日志且含 csm_state, 用事件投影重建
+        # 状态机 (替代快照), 保证"重放即恢复"且状态与事件日志强一致.
+        try:
+            from huginn.events.session_log import SessionEventLog
+
+            log = SessionEventLog.open(self.thread_id, load=True)
+            if len(log) > 0 and self._csm.restore_from_event_log(log):
+                logger.info(
+                    "restored CSM from event log: %s",
+                    self._csm.state.value,
+                )
+        except Exception:
+            logger.debug("event-log csm restore failed", exc_info=True)
+
         # 结构化 snapshot 恢复: 上面只恢复 summary / plan, 这里补 _mode / _csm / _phase /
         # turns_count. 之前 session resume 这几个字段全丢, agent 默默回 chat mode + S0 + OPEN.
         # ponytail: 只读最新一条, 不覆盖已恢复的 plan. 升级: 按 session_id 精确读 + 版本化.
