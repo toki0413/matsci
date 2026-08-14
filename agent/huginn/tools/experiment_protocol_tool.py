@@ -82,8 +82,12 @@ class ExperimentProtocolTool(HuginnTool):
         return {sid: wa.is_active(sid) for sid in _STEP_IDS}
 
     async def call(
-        self, args: ExperimentProtocolInput, context: ToolContext
+        self, args: ExperimentProtocolInput | dict, context: ToolContext
     ) -> ToolResult:
+        # 兼容 dict 与模型两种输入: 统一分派入口 dispatch_tool / HTTP call_tool
+        # 传 dict (工具内部 schema 校验), 直接工具调用传模型. 见 file_read_tool 同款约定.
+        if not isinstance(args, ExperimentProtocolInput):
+            args = ExperimentProtocolInput.model_validate(args)
         try:
             wa, executor, rv = self._build_workspace(args, context)
 
