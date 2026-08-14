@@ -168,10 +168,33 @@ def test_turn_limit_gate():
 
 
 def test_second_limit_gate():
+    # 秒级闸门按"最近 1s 实际消耗"判定. 窗口内已实际消费 120 > 上限 100,
+    # 下一个请求会被拦.
     l = TokenRateLimiter(RateLimitConfig(max_tokens_per_second=100))
-    ok, reason = l.check_allowed("m", 101)
+    l.record_usage("m", 120, 0)
+    ok, reason = l.check_allowed("m", 1)
     assert ok is False
-    assert "秒级 token 超限" in reason
+    assert "秒级" in reason
+
+
+def test_second_limit_does_not_block_large_single_request():
+    # 回归 (长程研究 / extreme): 上下文大, 单次请求输入 9000 > 秒级默认 5000,
+    # 但窗口近 1s 实际消耗为 0 —— 这是"一个大的慢请求", 不是"每秒失控速率",
+    # 必须放行. 之前把 est 加进秒级判定, 导致长程任务几分钟内被误拦.
+    l = TokenRateLimiter(RateLimitConfig(max_tokens_per_second=5000))
+    ok, reason = l.check_allowed("m", 9000)
+    assert ok is True
+    assert reason == ""
+
+
+def test_second_limit_still_catches_fast_burst():
+    # 秒级闸门仍要拦住"快速循环": 窗口内连续完成多个请求, 实际消耗超过上限.
+    l = TokenRateLimiter(RateLimitConfig(max_tokens_per_second=100))
+    l.record_usage("m", 60, 0)
+    l.record_usage("m", 60, 0)  # 窗口内累计 120 > 100
+    ok, reason = l.check_allowed("m", 1)
+    assert ok is False
+    assert "秒级" in reason
 
 
 def test_cost_limit_gate():

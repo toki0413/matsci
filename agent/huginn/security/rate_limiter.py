@@ -182,10 +182,15 @@ class TokenRateLimiter:
                 )
 
             # 闸门 2: 秒级速率 (per-session)
-            if sec_tokens + est > self.config.max_tokens_per_second:
+            # 只按最近 1s 的"实际消耗"判定, 不把单次请求的输入规模 (est) 算进
+            # 每秒速率. 长程研究 / extreme 任务上下文会累积到 1k-100k token,
+            # 单次请求输入大是常态, 但那是跨秒慢速消耗, 不是"每秒失控速率".
+            # 真正的失控循环由窗口内多个快速完成的请求累积体现 —— 所以这里
+            # 只看 sec_tokens (窗口实际消耗), est 只用于单轮闸门 1 的预算判断.
+            if sec_tokens > self.config.max_tokens_per_second:
                 return False, (
-                    f"秒级 token 超限: 近 1s 已用 {sec_tokens} + 预估 "
-                    f"{est} > 上限 {self.config.max_tokens_per_second} "
+                    f"秒级 token 超限: 近 1s 实际消耗 {sec_tokens:.0f} "
+                    f"> 上限 {self.config.max_tokens_per_second} "
                     f"(model={model_name}, thread={thread_id})"
                 )
 
@@ -205,7 +210,7 @@ class TokenRateLimiter:
             )
             self._maybe_warn(
                 s, "second",
-                (sec_tokens + est) / self.config.max_tokens_per_second,
+                sec_tokens / self.config.max_tokens_per_second,
                 f"秒级 token ({model_name})",
             )
             if self.config.max_total_cost_usd > 0:
