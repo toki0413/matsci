@@ -170,6 +170,7 @@ def run_figure_gate(
     max_attempts: int = 2,
     extractor: Any | None = None,
     render_fn: Any | None = None,
+    revertible: Any | None = None,
 ) -> dict[str, Any]:
     """完整精修闭环 (批次 C 后半): 生成图后自动跑 QA + 一致性 + 门禁.
 
@@ -182,6 +183,8 @@ def run_figure_gate(
     - index: ImageIndex, 供重复图检测 (可 None).
     - render_fn: (directive: str) -> str | None. 返回新图路径或 None (无法重渲染).
       仅当 decision.action == "retry" 且未超上限时调用.
+    - revertible: T-BCSE-14 时间可组合 — 可选 RevertibleContext. 传入时, 精修
+      循环产生的**中间重渲染产物**登记文件逆, 使最终图确定后中间废弃图可逆清理.
     - 返回最终 decision + 附加 "image_path" (重渲染后指向最终图).
 
     ponytail: 重渲染失败 (render_fn 返回 None / 图未变) 直接 break, 不无限循环.
@@ -189,6 +192,31 @@ def run_figure_gate(
     """
     from huginn.tools.visualize_check import consistency_verdict
     from huginn.tools.visualize_qa import qa_figure
+
+    # T-BCSE-14 空间可组合: 门禁依赖 QA + 一致性, 链不完整时自动降级,
+    # 不再跑无依据的门禁判定 (声明即保证, 见 huginn/security/visual_chain.py).
+    try:
+        from huginn.security.visual_chain import gate_available
+
+        if not gate_available():
+            return {
+                "action": "degrade",
+                "verdict": "fail",
+                "gap_type": "none",
+                "directive": "visual gate chain unavailable (QA/consistency backend missing)",
+                "flags": [],
+                "attempt": attempt,
+                "max_attempts": max_attempts,
+                "image_path": str(image_path),
+            }
+    except Exception:
+        logger.debug("visualize_gate: space-composition check failed", exc_info=True)
+
+    def _track_intermediate(path: str | Path) -> None:
+        # 重渲染产生的中间产物登记逆: 整体回滚时删除, 避免残留废弃图.
+        if revertible is not None:
+            p = Path(path)
+            revertible.track(lambda: p.unlink(missing_ok=True))
 
     def _check(path: str | Path) -> tuple[dict[str, Any], dict[str, Any] | None]:
         qa = qa_figure(path)
@@ -210,6 +238,7 @@ def run_figure_gate(
             break
         if not new_path or Path(new_path) == current:
             break  # 未产生新图 → 停止, 避免死循环
+        _track_intermediate(current)  # 旧图将被新图取代, 登记为可逆中间产物
         current = Path(new_path)
         qa, cons = _check(current)
         decision = render_gate_decision(

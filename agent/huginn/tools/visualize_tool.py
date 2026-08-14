@@ -108,8 +108,9 @@ class VisualizeTool(HuginnTool):
             # ponytail: 只给 materials actions (数值数据明确), report-based 留 v8
             ir_meta = self._build_figure_ir(args)
             gate = self._run_gate(
-                path, expected=self._figure_ir_numeric(ir_meta)
+                path, expected=self._figure_ir_numeric(ir_meta), context=context
             )
+            self._track_figure_artifact(context, path)
             return ToolResult(
                 data={
                     "output_path": str(path),
@@ -160,7 +161,8 @@ class VisualizeTool(HuginnTool):
         # v8: figure_ir 接 report-based 路径 — 从 report dict 提取通用字段生成 IR
         # 不同 action 的 report 结构异构, 但都有 scores/metrics/timeline 类字段
         ir_meta = self._build_report_figure_ir(args.action, report)
-        gate = self._run_gate(path, expected=self._figure_ir_numeric(ir_meta))
+        gate = self._run_gate(path, expected=self._figure_ir_numeric(ir_meta), context=context)
+        self._track_figure_artifact(context, path)
         return ToolResult(
             data={
                 "output_path": str(path),
@@ -171,23 +173,42 @@ class VisualizeTool(HuginnTool):
             success=path.exists(),
         )
 
+    @staticmethod
+    def _track_figure_artifact(context: ToolContext, path: Path) -> None:
+        """T-BCSE-14 时间可组合: 生成图登记文件逆, workflow 回滚时删除产物图.
+
+        出站产物 (PNG/SVG) 与普通文件副作用同等待遇 — 组件/工作流整体回滚时
+        一并清理, 避免视觉流程失败后残留半成品图. 无 revertible 上下文时跳过.
+        """
+        rv = getattr(context, "revertible", None)
+        if rv is None or not path.exists():
+            return
+        rv.track(
+            # 图是本阶段新建产物: 逆 = 删除该文件 (LIFO 回滚时执行).
+            lambda: path.unlink(missing_ok=True)
+        )
+
     def _run_gate(
-        self, path: Path, expected: dict[str, Any] | None = None
+        self, path: Path, expected: dict[str, Any] | None = None,
+        context: ToolContext | None = None,
     ) -> dict[str, Any]:
         """批次 C 后半: 图生成后自动跑渲染门禁 (QA + 一致性 + 判定).
 
         ponytail: 门禁失败不阻塞主路径 — 图已生成, 只把 gate decision 附加到
         返回数据, 让 agent/精修循环按 action 决定是否重渲染. 期望值缺失时
         consistency 跳过 (只跑确定性 QA), 避免无依据误报.
+        传入 revertible 时, 精修循环的中间重渲染产物登记文件逆 (时间可组合).
         """
         try:
             from huginn.tools.visualize_gate import run_figure_gate
 
+            rv = getattr(context, "revertible", None) if context is not None else None
             return run_figure_gate(
                 path,
                 expected=expected,
                 index=None,
                 render_fn=None,
+                revertible=rv,
             )
         except Exception as exc:
             logger.debug("visualize_tool: render gate failed", exc_info=True)
