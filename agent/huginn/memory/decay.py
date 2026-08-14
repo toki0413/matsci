@@ -49,7 +49,7 @@ class MemoryDecayPolicy:
         with memory._connect() as conn:
             rows = conn.execute(
                 "SELECT id, importance, access_count, created_at, last_accessed, tier, "
-                "last_decay_access_count FROM memories"
+                "last_decay_access_count FROM memories WHERE archived = 0"
             ).fetchall()
 
             promoted = 0
@@ -109,7 +109,12 @@ class MemoryDecayPolicy:
                     and age_days >= self.min_age_days
                     and age_days <= self.max_age_days
                 ):
-                    conn.execute("DELETE FROM memories WHERE id = ?", (entry_id,))
+                    # RevertibleEffect (Cordis 时间可组合性): decay 改为软删除 —
+                    # archived=1 标记而非物理 DELETE, _where_alive 自动过滤,
+                    # 误删可经 update_archived(id, False) 恢复. 不留不可逆副作用.
+                    conn.execute(
+                        "UPDATE memories SET archived = 1 WHERE id = ?", (entry_id,)
+                    )
                     pruned += 1
 
             conn.commit()
@@ -155,6 +160,7 @@ class MemoryDeduplicator:
         with memory._connect() as conn:
             rows = conn.execute("""
                 SELECT id, content, importance, last_accessed FROM memories
+                WHERE archived = 0
                 ORDER BY importance DESC, last_accessed DESC
                 """).fetchall()
 
@@ -163,7 +169,12 @@ class MemoryDeduplicator:
                     row["content"] if self.case_sensitive else row["content"].lower()
                 )
                 if normalized in seen:
-                    conn.execute("DELETE FROM memories WHERE id = ?", (row["id"],))
+                    # RevertibleEffect (Cordis 时间可组合性): dedup 软删除 —
+                    # 保留被去重项的记录, archived=1 标记, 可经
+                    # update_archived(id, False) 恢复误去重的记忆.
+                    conn.execute(
+                        "UPDATE memories SET archived = 1 WHERE id = ?", (row["id"],)
+                    )
                     removed += 1
                 else:
                     seen[normalized] = row["id"]
