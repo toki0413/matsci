@@ -8,7 +8,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import Any, Literal
+
+# T-BCSE-09: 工具级沙箱后端绑定.
+#   "host"      -> Landlock/seccomp 进程级隔离 (SandboxExecutor)
+#   "container" -> 容器隔离 (ContainerExecutor)
+#   "paranoid"  -> 强制容器 (require_digest + no_new_privileges + drop caps +
+#                  network_none); 缺容器时**拒绝**而非静默回退
+#   "any"       -> 默认: 按环境自动选
+SandboxHint = Literal["host", "container", "paranoid", "any"]
 
 
 @dataclass
@@ -28,6 +36,9 @@ class ToolMetadata:
     is_concurrency_safe: bool = False
     requires_confirmation: bool = True
     category: str = "general"
+    # T-BCSE-09: 工具级沙箱后端绑定. 默认 "any" (按环境自动选).
+    # 破坏性工具应显式声明 "paranoid" (强制容器, 缺容器拒绝). 见 build_executor.
+    sandbox_hint: SandboxHint = "any"
 
 
 def build_tool(definition: dict) -> dict:
