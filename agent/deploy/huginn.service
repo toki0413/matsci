@@ -23,8 +23,21 @@ StartLimitBurst=5
 # 不再使用 HUGINN_DEV_MODE (会豁免本机鉴权). 缺失时 auth 依赖会拒绝所有非公开请求.
 EnvironmentFile=/etc/huginn/huginn.env
 
-# HPC 配置固化在 /workspace/agent/huginn.toml (hpc_scheduler 等字段),
-# 无需额外环境变量; 部署到真实集群时编辑该文件即可.
+# ── 路径沙箱工作区 ──
+# HUGINN_WORKSPACE 定义 agent 可读写的作用域 (来自 huginn.env, 默认 /data/huginn).
+# 路径沙箱 allowed_work_dirs 由此推出, 越权路径会被 SandboxError 拦截.
+# 如迁移数据目录, 改 huginn.env 里的 HUGINN_WORKSPACE 即可, 无需动本文件.
+
+# ── HPC 集群 ──
+# 真实 Slurm/PBS 配置固化在 huginn.env 的 HPC_* 段 (经下方 EnvironmentFile 注入).
+# 但 HUGINN_CONFIG_FILE(=huginn.toml) 为 file-first, 其 hpc_* 字段优先于 HPC_* 环境变量.
+# 因此接真实集群时, 应改 huginn.toml 的:
+#   execution_backend = "remote" / hpc_scheduler = "slurm" | "pbs"
+#   hpc_host / hpc_username / hpc_key_path 或 hpc_password
+#   hpc_default_queue / hpc_gpu_queue / hpc_queue_map
+# 认证走 paramiko SSH. 私钥优先: 放 /root/.ssh/ (chmod 600), HPC_KEY_PATH 指向它;
+#   无私钥则用 HPC_PASSWORD. HPC_STRICT_HOST_KEY_CHECKING=true 时 known_hosts 须有主机指纹.
+# 连接惰性, 集群不可达仅禁用远程准入, 不阻塞服务启动.
 
 [Install]
 # 多用户目标 — 开机自启
