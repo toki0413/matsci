@@ -990,6 +990,11 @@ class CognitiveLoopMixin:
             self._record_autoloop_phase(name, "running", getattr(self, "_iteration", 0))
         except Exception:
             logger.debug("autoloop phase event record failed (non-fatal)", exc_info=True)
+        # H3: 把投影读模型推到 UI 进度通道 (current_label + phase_seq).
+        try:
+            self._publish_progress()
+        except Exception:
+            logger.debug("autoloop progress publish failed (non-fatal)", exc_info=True)
         # C2: 追踪本 run 的 phase 序列, 供 trajectory_match 召回用.
         if not hasattr(self, "_current_run_phases"):
             self._current_run_phases = []
@@ -1039,6 +1044,13 @@ class CognitiveLoopMixin:
         except Exception:
             logger.debug(
                 "autoloop phase status event record failed (non-fatal)", exc_info=True,
+            )
+        # H3: 完成状态也推到 UI 进度通道.
+        try:
+            self._publish_progress()
+        except Exception:
+            logger.debug(
+                "autoloop progress publish (complete) failed (non-fatal)", exc_info=True,
             )
         return phase
 

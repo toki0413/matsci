@@ -679,6 +679,44 @@ class AutoloopEngine(
             "phase_seq": -1,
         }
 
+    def _publish_progress(self) -> None:
+        """H3: 把投影读模型 (phase/status/iteration) 推到 ProgressTracker.
+
+        UI 进度通道 (/tasks + /tasks/stream SSE) 现在消费的是事件投影派生值,
+        而非纯可变快照 — 与事件日志强一致, 且携带 ``phase_seq`` 供前端与
+        事件流 ``after=<seq>`` 游标对齐. best-effort: tracker 不可用静默跳过.
+        """
+        state = self.read_runtime_state()
+        phase = state.get("phase") or ""
+        status = state.get("status") or ""
+        tracker = getattr(self, "progress_tracker", None)
+        if tracker is None:
+            try:
+                from huginn.interaction.progress import get_progress_tracker
+
+                tracker = get_progress_tracker()
+            except Exception:
+                tracker = None
+        task_id = getattr(self, "_progress_task_id", None)
+        if tracker is None or not task_id:
+            return
+        try:
+            tracker.update(
+                task_id,
+                current_label=f"{phase} ({status})" if phase else status or "…",
+                metadata={
+                    "phase": phase,
+                    "phase_status": status,
+                    "iteration": state.get("iteration", 0),
+                    "phase_seq": state.get("phase_seq", -1),
+                    "source": "event_projection",
+                },
+            )
+        except Exception:
+            logger.debug(
+                "autoloop progress publish failed (non-fatal)", exc_info=True,
+            )
+
 
     def _alignment_dataset_path(self) -> Path:
         """Step 8: AlignmentDataset 落盘路径 — <workspace>/.huginn/alignment_dataset.json."""
