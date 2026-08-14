@@ -15,8 +15,61 @@ from pydantic import BaseModel, Field
 
 from huginn.core_types import PermissionMode, ToolContext, ToolResult
 from huginn.permissions import PermissionChecker, PermissionConfig
+from huginn.security.revertible import register_compensator
 from huginn.tools.base import HuginnTool
 from huginn.tools.profile import ToolProfile
+
+
+def _git(work_dir: str, *args: str) -> str:
+    """Run a git command in work_dir, return stripped stdout (or '' on failure)."""
+    try:
+        r = subprocess.run(
+            ["git", *args],
+            cwd=work_dir,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30.0,
+        )
+        return (r.stdout or "").strip() if r.returncode == 0 else ""
+    except Exception:
+        return ""
+
+
+# ── 出站写操作的补偿逆 (RevertibleEffect / Cordis 时间可组合性) ────
+# git 写操作成功后, git_tool 把补偿逆登记进 RevertibleContext; 上层回滚时
+# 按注册的补偿器执行 (commit→reset --soft, checkout→回原引用, add→reset).
+def _register_git_compensators() -> None:
+    register_compensator("git_commit", _compensate_commit)
+    register_compensator("git_checkout", _compensate_checkout)
+    register_compensator("git_add", _compensate_add)
+
+
+def _compensate_commit(payload: dict[str, Any]) -> None:
+    """撤销一次 commit: reset --soft 回退 HEAD, 保留工作区改动."""
+    work_dir = payload.get("work_dir")
+    prev_hash = payload.get("prev_hash")
+    if work_dir and prev_hash:
+        _git(work_dir, "reset", "--soft", str(prev_hash))
+
+
+def _compensate_checkout(payload: dict[str, Any]) -> None:
+    """回到切换前的分支/引用 (branch_create/checkout 的逆)."""
+    work_dir = payload.get("work_dir")
+    prev_ref = payload.get("prev_ref")
+    if work_dir and prev_ref:
+        _git(work_dir, "checkout", str(prev_ref))
+
+
+def _compensate_add(payload: dict[str, Any]) -> None:
+    """撤销 git add 的暂存, 保留文件改动."""
+    work_dir = payload.get("work_dir")
+    if work_dir:
+        _git(work_dir, "reset")
+
+
+_register_git_compensators()
 
 
 class GitToolInput(BaseModel):
@@ -98,6 +151,15 @@ class GitTool(HuginnTool):
                     error=perm_result.reason or f"Git {input_data.action} denied by permission policy.",
                 )
 
+        # ── 写动作执行前捕获前状态 (供补偿逆撤销) ──
+        prev_hash: str | None = None
+        prev_ref: str | None = None
+        if input_data.action in ("commit", "add", "branch_create", "checkout"):
+            prev_hash = _git(str(work_dir), "rev-parse", "HEAD") or None
+            prev_ref = _git(str(work_dir), "rev-parse", "--abbrev-ref", "HEAD")
+            if prev_ref == "HEAD":
+                prev_ref = prev_hash  # detached HEAD → 回到该 commit
+
         # ── 执行 ──
         try:
             result = subprocess.run(
@@ -117,6 +179,18 @@ class GitTool(HuginnTool):
             # tool failure. Write actions propagate the exit code as success.
             is_read = input_data.action in _READ_ACTIONS
             success = True if is_read else result.returncode == 0
+
+            # RevertibleEffect (Cordis): 写操作成功后, 把补偿逆登记进
+            # 调用方的 RevertibleContext, 上层 workflow/沙箱统一回滚.
+            if success and not is_read and context is not None and context.revertible is not None:
+                rv = context.revertible
+                if input_data.action == "commit":
+                    rv.compensate("git_commit", {"work_dir": str(work_dir), "prev_hash": prev_hash})
+                elif input_data.action in ("branch_create", "checkout"):
+                    rv.compensate("git_checkout", {"work_dir": str(work_dir), "prev_ref": prev_ref})
+                elif input_data.action == "add":
+                    rv.compensate("git_add", {"work_dir": str(work_dir)})
+
             return ToolResult(
                 data={
                     "action": input_data.action,
