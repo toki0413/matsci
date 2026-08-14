@@ -91,6 +91,28 @@ class SessionEvent:
         )
 
 
+@dataclass
+class CompactionEntry:
+    """T-BCSE-10: 一次 compaction 的边界标记 (对齐 Oh-my-pi ``CompactionEntry``).
+
+    ``boundary_seq`` 是 compaction 事件自身的 seq; ``first_kept_seq`` 是
+    compaction 之后第一条保留给 LLM 的事件 seq (默认 boundary_seq + 1).
+    ``summary`` 是压缩摘要 — ``build_state`` 只把 boundary 之后的消息送 LLM,
+    但**全历史仍保留在日志里** (可导出/可重放).
+    """
+
+    boundary_seq: int
+    summary: str
+    first_kept_seq: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "boundary_seq": self.boundary_seq,
+            "summary": self.summary,
+            "first_kept_seq": self.first_kept_seq,
+        }
+
+
 def _resolve_sessions_dir() -> Path:
     """Session log directory: ``<runtime-home>/events/session_logs``.
 
@@ -270,10 +292,109 @@ class SessionEventLog:
         path.reverse()
         return path
 
-    def build_state(self, leaf_id: str | None = None) -> list[SessionEvent]:
-        """Convenience alias for ``events_on_path`` — the event path is the
-        raw material any projection consumes."""
-        return self.events_on_path(leaf_id)
+    def build_state(
+        self,
+        leaf_id: str | None = None,
+        *,
+        boundary: bool = True,
+    ) -> list[SessionEvent]:
+        """T-BCSE-10: 返回给 LLM 消费的事件路径 (默认只含最后 compaction 之后).
+
+        boundary=True 时, 只返回路径上**最后一个 compaction 事件之后**的事件 —
+        LLM 不用看被压缩掉的历史, 但全历史仍留在日志里 (read_after / 导出可见,
+        前端也可渲染 ``── compacted ──`` 分隔). boundary=False 时返回完整路径
+        (等价旧 ``events_on_path`` 语义).
+        """
+        path = self.events_on_path(leaf_id)
+        if not boundary:
+            return path
+        last_compaction: SessionEvent | None = None
+        for ev in path:
+            if ev.kind == EVENT_COMPACTION:
+                last_compaction = ev
+        if last_compaction is None:
+            return path
+        first_kept = (last_compaction.payload or {}).get(
+            "first_kept_seq", last_compaction.seq + 1
+        )
+        return [ev for ev in path if ev.seq >= first_kept]
+
+    def compaction_entries(
+        self, leaf_id: str | None = None
+    ) -> list[CompactionEntry]:
+        """T-BCSE-10: 当前路径上的 compaction 边界清单 (按 seq 升序)."""
+        path = self.events_on_path(leaf_id)
+        path_ids = {ev.id for ev in path}
+        entries: list[CompactionEntry] = []
+        for ev in self._events:
+            if ev.kind == EVENT_COMPACTION and ev.id in path_ids:
+                payload = ev.payload or {}
+                entries.append(
+                    CompactionEntry(
+                        boundary_seq=ev.seq,
+                        summary=payload.get("summary", ""),
+                        first_kept_seq=payload.get("first_kept_seq", ev.seq + 1),
+                    )
+                )
+        return entries
+
+    # ── T-BCSE-11: 分支 / 回滚 / 快照 ────────────────────────────
+    def branch_with_summary(self, target_seq: int | str, summary: str) -> str:
+        """移动叶指针到 ``target_seq`` 并追加一条 ``branch_summary`` 事件.
+
+        Oh-my-pi ``branch_with_summary`` 语义: 在分支点标记摘要, 让前端/后续
+        replay 能区分"这是被放弃的路径". 历史不删. 返回新 leaf id.
+        """
+        leaf = self.branch(target_seq)
+        self.append(EVENT_BRANCH_SUMMARY, {"summary": summary})
+        # 返回追加 branch_summary 后的最终叶指针 (调用方应基于它继续 append)
+        return self._leaf_id or leaf
+
+    def rollback_to(self, seq: int) -> str:
+        """T-BCSE-11: 事件级回滚 — 移动叶指针到 ``seq``.
+
+        与 ``branch`` 同构: 历史事件永不删, 后续 append 从新叶继续, 形成可
+        重放的"假想时间线". 结合 ``snapshot`` 物化 + ``read_after(snapshot_seq)``
+        可实现"从快照 + 重放增量"的快速回滚重建.
+        """
+        return self.branch(seq)
+
+    def snapshot(self, leaf_id: str | None = None) -> dict[str, Any]:
+        """T-BCSE-11: 物化当前投影为不透明快照 (快速恢复起点).
+
+        快照含当前叶指针事件路径 + 全量事件引用, 供 ``restore_from_snapshot``
+        秒级恢复 (无需从头重放). 快照是性能缓存, 事件日志仍是 source of truth.
+        """
+        path = self.events_on_path(leaf_id)
+        return {
+            "session_id": self.session_id,
+            "leaf_id": self._leaf_id,
+            "next_seq": self._seq,
+            "events": [ev.to_dict() for ev in path],
+        }
+
+    def restore_from_snapshot(self, snap: dict[str, Any]) -> None:
+        """T-BCSE-11: 从快照恢复日志到精确状态 (叶指针 + 事件序列).
+
+        快照是快速起点; 若快照后还有增量事件 (``snap["next_seq"]`` 之后),
+        调用方应再 ``read_after`` 重放补齐. 这里只恢复快照内的路径.
+        """
+        raw_events = snap.get("events") or []
+        self._events = []
+        self._by_id = {}
+        self._seq = int(snap.get("next_seq", len(raw_events)))
+        for raw in raw_events:
+            ev = SessionEvent.from_dict(raw)
+            self._events.append(ev)
+            self._by_id[ev.id] = ev
+        # 恢复叶指针: 快照 leaf_id 在事件里则用它, 否则取最后一条
+        leaf = snap.get("leaf_id")
+        if leaf in self._by_id:
+            self._leaf_id = leaf
+        elif self._events:
+            self._leaf_id = self._events[-1].id
+        else:
+            self._leaf_id = None
 
     # ── lifecycle ──────────────────────────────────────────────────
     @classmethod

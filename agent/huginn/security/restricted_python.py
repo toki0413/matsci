@@ -43,6 +43,7 @@ FORBIDDEN_MODULES: set[str] = {
     "pickle",
     "marshal",
     "shelve",
+    "gc",
 }
 
 # Built-in functions that must not be called
@@ -56,6 +57,17 @@ FORBIDDEN_BUILTINS: set[str] = {
     "exit",
     "quit",
     "help",
+    # T-BCSE-12: 动态作用域/反射逃逸 — globals()/locals()/vars() 能拿到
+    # __builtins__ 表, type()/object() 能走到 __subclasses__ 链, 全禁.
+    "globals",
+    "locals",
+    "vars",
+    "dir",
+    "type",
+    "object",
+    "memoryview",
+    "setattr",
+    "delattr",
 }
 
 # Dangerous dunder attributes
@@ -72,6 +84,9 @@ FORBIDDEN_ATTRIBUTES: set[str] = {
     "__dict__",
     "__import__",
     "__builtins__",
+    "__getattribute__",  # T-BCSE-12: object.__getattribute__ 反射链
+    "__qualname__",
+    "__module__",
 }
 
 
