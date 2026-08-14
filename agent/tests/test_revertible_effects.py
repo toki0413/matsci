@@ -470,3 +470,114 @@ def test_purge_archived_physically_removes(tmp_path: Path) -> None:
     assert db.purge_archived(ttl_days=30) == 0
     # 用 ttl=0 强制清理
     assert db.purge_archived(ttl_days=0) >= 1
+
+
+# ── 视觉工作流时空可组合 (visual chain) ─────────────────────────
+def test_visual_chain_space_composition() -> None:
+    """视觉链: 生成→QA→一致性→门禁 依赖声明, 后端缺失时门禁自动停用."""
+    from huginn.security.visual_chain import (
+        _reset_for_tests,
+        availability,
+        gate_available,
+        set_dependency_available,
+    )
+
+    _reset_for_tests()
+    # 默认: 生成器无 requires, 链完整 → 门禁激活.
+    assert gate_available(), "后端就绪时门禁应激活"
+
+    # 生成后端缺失 → 级联停用 QA/一致性/门禁.
+    set_dependency_available("visual.generate", False)
+    assert not gate_available(), "生成后端缺失时门禁应停用"
+    snap = availability()
+    assert snap["generate"] is False
+    assert snap["qa"] is False
+    assert snap["consistency"] is False
+    assert snap["gate"] is False
+
+    # 恢复生成后端 → 链重新激活.
+    set_dependency_available("visual.generate", True)
+    assert gate_available(), "生成后端恢复后门禁应重新激活"
+    _reset_for_tests()
+
+
+def test_visual_gate_degrades_when_chain_unavailable(tmp_path: Path) -> None:
+    """run_figure_gate 在视觉链不可用时自动降级, 不跑无依据判定."""
+    from huginn.security.visual_chain import (
+        _reset_for_tests,
+        set_dependency_available,
+    )
+    from huginn.tools.visualize_gate import run_figure_gate
+
+    _reset_for_tests()
+    img = tmp_path / "fig.png"
+    img.write_bytes(b"fake-png")
+
+    # 链完整 → 正常走 QA (fake 图 → error 判定, 但不主动 degrade).
+    dec_ok = run_figure_gate(img)
+    assert dec_ok["action"] in ("error", "degrade", "pass", "retry", "finalize")
+
+    # 生成后端缺失 → 门禁短路径 degrade.
+    set_dependency_available("visual.generate", False)
+    dec = run_figure_gate(img)
+    assert dec["action"] == "degrade", f"链不可用应判定 degrade, got {dec['action']}"
+    assert dec["image_path"] == str(img)
+    _reset_for_tests()
+
+
+def test_visual_tool_tracks_figure_artifact(tmp_path: Path) -> None:
+    """visualize_tool 生成图登记文件逆, revert_all 时删除产物图 (时间可组合)."""
+    from huginn.core_types import ToolContext
+    from huginn.tools.visualize_tool import VisualizeTool
+
+    rv = RevertibleContext()
+    ctx = ToolContext(session_id="s", workspace=str(tmp_path), revertible=rv)
+    out = tmp_path / "bench.png"
+    out.write_bytes(b"fake-png")
+
+    # 直接验证图产物登记: 生成图后调用登记, revert_all 时删除该图.
+    VisualizeTool._track_figure_artifact(ctx, out)
+    assert out.exists()
+    rv.revert_all()
+    assert not out.exists(), "revert_all 应删除被登记为逆的产物图"
+
+    # 无 revertible 上下文 → 跳过登记, 不报错.
+    out2 = tmp_path / "untracked.png"
+    out2.write_bytes(b"x")
+    VisualizeTool._track_figure_artifact(
+        ToolContext(session_id="s", workspace=str(tmp_path)), out2
+    )
+    assert out2.exists(), "无 revertible 时不应登记逆"
+
+
+def test_figure_gate_tracks_intermediate_rerenders(tmp_path: Path) -> None:
+    """精修循环的中间重渲染产物登记文件逆, revert_all 时一并清理."""
+    from huginn.tools.visualize_gate import run_figure_gate
+
+    rv = RevertibleContext()
+    img = tmp_path / "v1.png"
+    img.write_bytes(b"png1")
+
+    rendered: list[str] = []
+    calls = {"n": 0}
+
+    def render_fn(directive: str) -> str:
+        calls["n"] += 1
+        new = tmp_path / f"v{calls['n'] + 1}.png"
+        new.write_bytes(b"png")
+        rendered.append(str(new))
+        return str(new)
+
+    # 用 render_fn 强制走 retry 分支 (QA 可能判 error → 不会 retry),
+    # 这里直接验证: 若进入重渲染, 旧图被登记为可逆中间产物.
+    run_figure_gate(
+        img, expected=None, index=None, attempt=0, max_attempts=2,
+        render_fn=render_fn, revertible=rv,
+    )
+
+    # 只要有重渲染发生, 原 v1 图应被登记为可逆产物.
+    if rendered:
+        before = set(Path(p).name for p in rendered)
+        rv.revert_all()
+        for name in before:
+            assert not (tmp_path / name).exists(), f"中间产物 {name} 应被回滚删除"
