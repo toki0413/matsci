@@ -93,6 +93,7 @@ _FROZEN_PHASE_TOOLS: dict[ResearchPhase, set[str] | None] = {
         "vae_tool",
         "gnn_tool",
         "pybamm_tool",
+        "experiment_protocol_tool",
     },
     ResearchPhase.VALIDATION: _CORE_TOOLS | {
         "validate_tool",
