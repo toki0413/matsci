@@ -29,6 +29,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -219,6 +220,36 @@ _wechat_config: WeChatConfig = WeChatConfig()
 
 def get_wechat_config() -> WeChatConfig:
     return _wechat_config
+
+
+def bootstrap_wechat_from_env() -> None:
+    """从环境变量引导 WeChat (iLink Bot API) 桥接配置, 一键连通.
+
+    设置 BOT_WECHAT_API_URL (iLink daemon 地址) 即视为启用;
+    admin_users 用逗号分隔.
+    """
+    global _wechat_config
+    api_url = os.environ.get("BOT_WECHAT_API_URL", "").strip()
+    if not api_url:
+        return
+
+    def _enabled() -> bool:
+        val = os.environ.get("BOT_WECHAT_ENABLED", "").strip()
+        if val == "":
+            return True
+        return val.lower() in ("1", "true", "yes", "on")
+
+    def _list(name: str) -> list[str]:
+        val = os.environ.get(name, "").strip()
+        return [x.strip() for x in val.split(",") if x.strip()] if val else []
+
+    _wechat_config = WeChatConfig(
+        enabled=_enabled(),
+        api_url=api_url,
+        bot_id=os.environ.get("BOT_WECHAT_BOT_ID", "").strip(),
+        admin_users=_list("BOT_WECHAT_ADMIN_USERS"),
+    )
+    logger.info("WeChat (iLink) 配置已从环境变量引导 (api_url=%s)", api_url)
 
 
 def set_wechat_config(cfg: WeChatConfig) -> None:

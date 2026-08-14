@@ -22,6 +22,9 @@ export function useConfig() {
   const [configSavedMsg, setConfigSavedMsg] = useState<string>("");
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("general");
   const [llmCredOptions, setLlmCredOptions] = useState<Array<{ id: string; name: string; provider?: string }>>([]);
+  // 当前生效模型 (lead agent 绑定的 alias)。由 /config/active-model 读写。
+  const [activeModel, setActiveModel] = useState<string>("");
+  const [activeModelSavedMsg, setActiveModelSavedMsg] = useState<string>("");
 
   // Collapse state for Settings model/agent cards
   const [expandedModels, setExpandedModels] = useState<Set<number>>(new Set());
@@ -158,6 +161,31 @@ export function useConfig() {
     setConfigDirty(true);
   };
 
+  // ── Active model (runtime provider switch) ────────────────────
+  const loadActiveModel = useCallback(async () => {
+    try {
+      const data = await api.get<{ active_alias?: string }>("/config/active-model");
+      if (data.active_alias) setActiveModel(data.active_alias);
+    } catch (e) {
+      // backend offline — keep previous value
+    }
+  }, []);
+
+  const switchActiveModel = useCallback(async (alias: string) => {
+    try {
+      const resp = await api.post<{ success?: boolean; error?: string }>("/config/active-model", { alias });
+      if (resp.success) {
+        setActiveModel(alias);
+        setActiveModelSavedMsg(`已切换到 ${alias}`);
+      } else {
+        setActiveModelSavedMsg(resp.error || "切换失败");
+      }
+    } catch (e: any) {
+      setActiveModelSavedMsg(`切换失败: ${e.message}`);
+    }
+    setTimeout(() => setActiveModelSavedMsg(""), 4000);
+  }, []);
+
   // ── Persona switch ─────────────────────────────────────────
   const switchPersona = async (personaName: string) => {
     try {
@@ -172,10 +200,11 @@ export function useConfig() {
     }
   };
 
-  // ── Lazy-load LLM credentials when Models tab opens ────────
+  // ── Lazy-load LLM credentials + active model when Models tab opens ──
   useEffect(() => {
     if (settingsTab !== "models") return;
     let alive = true;
+    loadActiveModel();
     api
       .get<{ credentials?: any[] }>("/credentials?kind=llm")
       .then((data) => {
@@ -195,12 +224,12 @@ export function useConfig() {
 
   return {
     config, configDirty, configSavedMsg, settingsTab, llmCredOptions,
-    expandedModels, expandedAgents,
+    expandedModels, expandedAgents, activeModel, activeModelSavedMsg,
     setConfig, setConfigDirty, setConfigSavedMsg, setSettingsTab,
     pushConfig, saveConfig,
     ensureDefaultModel, updateModel, addModel, removeModel,
     ensureDefaultAgents, updateAgent, addAgent, removeAgent,
     toggleModelExpanded, toggleAgentExpanded,
-    switchPersona,
+    switchPersona, switchActiveModel, loadActiveModel,
   };
 }

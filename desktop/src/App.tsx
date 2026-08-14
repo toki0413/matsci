@@ -195,6 +195,7 @@ export default function App() {
     updateAgent, addAgent, removeAgent,
     toggleModelExpanded, toggleAgentExpanded,
     switchPersona,
+    activeModel, activeModelSavedMsg, switchActiveModel,
   } = useConfig();
 
   const {
@@ -1687,6 +1688,9 @@ export default function App() {
               isConnected={isConnected}
               personaList={personaList}
               personaEmotion={personaEmotion}
+              activeModel={activeModel}
+              activeModelSavedMsg={activeModelSavedMsg}
+              switchActiveModel={switchActiveModel}
             />
           </div>
 
