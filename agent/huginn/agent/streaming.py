@@ -1585,6 +1585,13 @@ class StreamingMixin:
                                     logger.warning(
                                         "Terminating chat due to persistent thought loop"
                                     )
+                                    _synth = await self._synthesize_closing_answer(
+                                        final_state
+                                    )
+                                    if _synth and isinstance(final_state, dict):
+                                        final_state["messages"] = (
+                                            final_state.get("messages", []) + _synth
+                                        )
                                     yield {
                                         "thought_loop_terminated": True,
                                         "state": final_state,
@@ -1639,6 +1646,22 @@ class StreamingMixin:
                                 states_yielded += 1
                                 final_state = state
                                 yield state
+                                if getattr(self, "_thought_loop_terminated", False):
+                                    logger.warning(
+                                        "Terminating chat due to persistent thought loop"
+                                    )
+                                    _synth = await self._synthesize_closing_answer(
+                                        final_state
+                                    )
+                                    if _synth and isinstance(final_state, dict):
+                                        final_state["messages"] = (
+                                            final_state.get("messages", []) + _synth
+                                        )
+                                    yield {
+                                        "thought_loop_terminated": True,
+                                        "state": final_state,
+                                    }
+                                    break
                                 if self._break_flag:
                                     self._break_flag = False
                                     yield {"tool_break": True, "state": final_state}
@@ -1946,6 +1969,72 @@ class StreamingMixin:
                         )
                     except Exception as exc:
                         logger.warning("Memory maintenance failed: %s", exc, exc_info=True)
+
+
+    async def _synthesize_closing_answer(
+        self, final_state: Any
+    ) -> list[Any]:
+        """若本轮结束却没有可用的助手文本答案 (循环终止 / 模型空响应 /
+        纯工具轮), 用模型把已有对话合成一段收尾概要, 保证用户总能拿到有用回应.
+
+        返回需要追加到 messages 的消息列表; 无需兜底时返回 [].
+        纯防御式: 任何失败都静默降级为不追加, 不阻塞 turn.
+        """
+        try:
+            msgs = (
+                final_state.get("messages", [])
+                if isinstance(final_state, dict)
+                else (final_state or [])
+            )
+            # 已有非空助手文本 → 无需兜底
+            for m in reversed(msgs):
+                if isinstance(m, AIMessage) and m.content and str(m.content).strip():
+                    return []
+
+            model = self.select_model("agent")
+            if model is None or not hasattr(model, "ainvoke"):
+                return []
+
+            transcript: list[str] = []
+            for m in msgs:
+                role = getattr(m, "type", "unknown")
+                content = getattr(m, "content", "")
+                if isinstance(content, list):
+                    content = "".join(
+                        b.get("text", "") for b in content if isinstance(b, dict)
+                    )
+                if role in ("human", "user", "assistant") and content:
+                    transcript.append(f"{role}: {str(content)[:800]}")
+            if not transcript:
+                return []
+
+            from langchain_core.messages import HumanMessage, SystemMessage
+
+            prompt = (
+                "The conversation below ended without a clear final answer. "
+                "Write a concise closing summary (2-5 sentences): what was done, "
+                "and the key conclusions or open questions. If information is "
+                "insufficient, say so honestly rather than guessing.\n\n"
+                + "\n".join(transcript[-12:])
+            )
+            resp = await model.ainvoke(
+                [
+                    SystemMessage(
+                        content="You are a concise, honest research summarizer."
+                    ),
+                    HumanMessage(content=prompt),
+                ]
+            )
+            text = resp.content
+            if isinstance(text, list):
+                text = "".join(
+                    b.get("text", "") for b in text if isinstance(b, dict)
+                )
+            if text and str(text).strip():
+                return [AIMessage(content=str(text).strip())]
+        except Exception:
+            logger.debug("closing-answer synthesis skipped", exc_info=True)
+        return []
 
 
 # A3.4 self-check: watchdog 超时 + 正常透传 + thinking block 保护.
