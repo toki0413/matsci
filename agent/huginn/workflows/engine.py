@@ -405,6 +405,20 @@ class WorkflowEngine:
                     error=f"Invalid input for '{stage.tool}': {e}",
                 )
 
+        # RevertibleEffect (Cordis 时间可组合性): stage 是编排的原子单元 —
+        # 失败时回滚本次 stage 在 workspace 新建的文件副作用 (与技能层同构).
+        # 成功则保留产物. code_tool/bash_tool 回滚的是单工具失败, 这里是整
+        # stage 失败 (含 validation 失败). 与 checkpoint 快照互补.
+        from huginn.security.revertible import RevertibleContext
+
+        exec_ws = getattr(context, "workspace", None) or "."
+        snap_dir = Path(exec_ws)
+        rev = RevertibleContext()
+        before = (
+            {p for p in snap_dir.iterdir() if p.is_file()}
+            if snap_dir.is_dir() else set()
+        )
+
         # Validate and execute
         result = await tool.call(tool_input, context)
 
@@ -416,6 +430,23 @@ class WorkflowEngine:
             if not valid:
                 result.success = False
                 result.error = f"Validation failed: {stage.validation.check}"
+
+        # 失败 → 回滚本次 stage 新建的文件 (时间可组合, 不留失败副作用).
+        if not result.success:
+            after = (
+                {p for p in snap_dir.iterdir() if p.is_file()}
+                if snap_dir.is_dir() else set()
+            )
+            new_files = after - before
+            if new_files:
+                dispose = rev.composite(
+                    *[
+                        (lambda fp: (lambda: fp.unlink(missing_ok=True)))(fp)
+                        for fp in new_files
+                    ]
+                )
+                rev.track(dispose)
+                rev.revert_all()
 
         return result
 

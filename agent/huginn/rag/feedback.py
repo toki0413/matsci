@@ -71,13 +71,40 @@ class RetrievalFeedbackTracker:
         self._total_feedbacks += 1
 
         delta = _SUCCESS_DELTA if success else -_FAILURE_DELTA
+        # RevertibleEffect (Cordis 时间可组合性): 记录每个 doc 调整前的置信度
+        # 作为逆, 供 undo_outcome() 精确撤销这次反馈 (纯数值, 天然可逆).
+        undo: dict[str, float] = {}
         for doc_id in entry["result_ids"]:
             cur = self._doc_confidence.get(doc_id, _DEFAULT_CONFIDENCE)
+            undo[doc_id] = cur
             if success:
                 cur = min(_SUCCESS_CAP, cur + delta)
             else:
                 cur = max(_FAILURE_FLOOR, cur + delta)
             self._doc_confidence[doc_id] = cur
+        entry["_undo"] = undo
+
+    def undo_outcome(self, tool_call_id: str) -> bool:
+        """撤销一次置信度反馈 (RevertibleEffect 的逆操作).
+
+        纯数值操作: 把该次搜索涉及的每个 doc 调回调整前的置信度, 并回退
+        反馈计数. 没有对应反馈 / 已撤销返回 False (幂等).
+        """
+        entry = self._results.get(tool_call_id)
+        if entry is None or entry["outcome"] is None:
+            return False
+        undo = entry.get("_undo")
+        if undo:
+            for doc_id, prev in undo.items():
+                self._doc_confidence[doc_id] = prev
+            # 调回默认值的 doc 直接清掉, 避免统计里残留
+            for doc_id in list(undo):
+                if self._doc_confidence.get(doc_id) == _DEFAULT_CONFIDENCE:
+                    self._doc_confidence.pop(doc_id, None)
+        self._total_feedbacks = max(0, self._total_feedbacks - 1)
+        entry["outcome"] = None
+        entry.pop("_undo", None)
+        return True
 
     def get_confidence(self, doc_id: str) -> float:
         """返回某个文档的置信度, 没记录过就是默认值."""
