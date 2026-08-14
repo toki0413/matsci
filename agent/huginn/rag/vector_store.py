@@ -184,8 +184,18 @@ class VectorStore:
         if embeddings:
             kwargs["embeddings"] = embeddings
 
-        collection.add(**kwargs)
-        return ids
+        try:
+            collection.add(**kwargs)
+            return ids
+        except Exception as e:
+            # RevertibleEffect (Cordis 时间可组合性): collection 级事务 —
+            # 批量写入半途失败时, 删除本次写入的 ids, 不留半成品 chunks.
+            logger.warning("vector_store ingest failed, rolling back %d ids", len(ids))
+            try:
+                collection.delete(ids=ids)
+            except Exception:
+                logger.warning("vector_store ingest rollback delete failed", exc_info=True)
+            raise e
 
     def _rust_top_k(
         self,
