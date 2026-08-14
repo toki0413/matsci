@@ -331,9 +331,23 @@ class SandboxExecutor:
         ):
             try:
                 from huginn.security.landlock import make_preexec_fn
+                # ro 集合含 (a) 工作目录 (只读读/执行) + (b) 白名单可执行文件自身
+                # 所在目录, 否则隔离后子进程读不到二进制本身而无法 exec (正确性缺陷).
+                # rw 全量放行 allowed_work_dirs.
                 rw_dirs = [str(p) for p in cfg.allowed_work_dirs]
-                ro_paths = [str(valid_cwd)] if valid_cwd else []
-                preexec = make_preexec_fn(ro_paths, rw_dirs, required=False)
+                ro_dirs = [str(valid_cwd)] if valid_cwd else []
+                try:
+                    exe_abs = self._resolve_executable(cmd)
+                    exe_dir = str(Path(exe_abs).resolve().parent)
+                    if exe_dir not in ro_dirs:
+                        ro_dirs.append(exe_dir)
+                except Exception:
+                    logger.debug(
+                        "landlock: exe dir resolution failed, confining cwd only",
+                        exc_info=True,
+                    )
+                ro_dirs = [d for d in ro_dirs if d]
+                preexec = make_preexec_fn(ro_dirs, rw_dirs, required=False)
                 if preexec is not None:
                     run_kwargs["preexec_fn"] = preexec
             except Exception:

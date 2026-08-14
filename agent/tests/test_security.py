@@ -122,6 +122,110 @@ class TestSandboxExecutor:
         with pytest.raises(SandboxError, match="outside allowed roots"):
             sandbox.run([sys.executable, "-c", "pass"], cwd="/etc")
 
+    # ── T-BCSE-07: Landlock → SandboxExecutor 集成 ─────────────────
+    def test_landlock_preexec_passed_when_available(self, monkeypatch):
+        """Landlock 可用 → subprocess.run 收到 preexec_fn (强制隔离)."""
+        import sys
+        cfg = SandboxConfig(
+            strict_work_dir=True,
+            allowed_work_dirs={Path("/tmp")},
+            allowed_executables={"python", "python3"},
+        )
+        sandbox = SandboxExecutor(cfg)
+
+        captured: dict = {}
+
+        def fake_make_preexec_fn(ro, rw, *, required=False):
+            captured["ro"] = ro
+            captured["rw"] = rw
+            return lambda: None  # 模拟 Landlock 可用
+
+        monkeypatch.setattr(
+            "huginn.security.landlock.make_preexec_fn", fake_make_preexec_fn
+        )
+
+        def fake_subprocess_run(*args, **kwargs):
+            captured["preexec_fn"] = kwargs.get("preexec_fn")
+            return subprocess.CompletedProcess(args[0], 0, stdout="ok", stderr="")
+
+        monkeypatch.setattr(
+            "huginn.security.sandbox.subprocess.run", fake_subprocess_run
+        )
+
+        sandbox.run(
+            [sys.executable, "-c", "print('x')"],
+            cwd="/tmp",
+        )
+        # preexec_fn 被注入 subprocess.run
+        assert captured.get("preexec_fn") is not None and callable(
+            captured["preexec_fn"]
+        )
+        # rw = allowed_work_dirs; ro 含 cwd + 可执行文件自身目录
+        assert "/tmp" in captured["rw"]
+        assert "/tmp" in captured["ro"]
+        exe_dir = str(Path(sys.executable).resolve().parent)
+        assert exe_dir in captured["ro"], "可执行文件目录必须在 ro 集合, 否则无法 exec"
+
+    def test_landlock_preexec_skipped_when_unavailable(self, monkeypatch):
+        """Landlock 不可用 → 不注入 preexec_fn (降级回软沙箱)."""
+        import sys
+        cfg = SandboxConfig(
+            strict_work_dir=True,
+            allowed_work_dirs={Path("/tmp")},
+            allowed_executables={"python", "python3"},
+        )
+        sandbox = SandboxExecutor(cfg)
+
+        monkeypatch.setattr(
+            "huginn.security.landlock.make_preexec_fn",
+            lambda ro, rw, *, required=False: None,
+        )
+        calls: list[dict] = []
+
+        def fake_subprocess_run(*args, **kwargs):
+            calls.append(kwargs)
+            return subprocess.CompletedProcess(args[0], 0, stdout="ok", stderr="")
+
+        monkeypatch.setattr(
+            "huginn.security.sandbox.subprocess.run", fake_subprocess_run
+        )
+        sandbox.run([sys.executable, "-c", "print('x')"], cwd="/tmp")
+        assert calls
+        assert "preexec_fn" not in calls[0], "不可用时不应注入 preexec_fn"
+
+    def test_landlock_skipped_when_explicit_preexec(self, monkeypatch):
+        """调用方已传 preexec_fn → 不覆盖 (尊重显式注入)."""
+        import sys
+        cfg = SandboxConfig(
+            strict_work_dir=True,
+            allowed_work_dirs={Path("/tmp")},
+            allowed_executables={"python", "python3"},
+        )
+        sandbox = SandboxExecutor(cfg)
+        sentinel = lambda: None  # noqa: E731
+        monkeypatch.setattr(
+            "huginn.security.landlock.make_preexec_fn",
+            lambda ro, rw, *, required=False: (  # 不应被调用
+                self._fail  # type: ignore[attr-defined]
+            ),
+        )
+        calls: list[dict] = []
+
+        def fake_subprocess_run(*args, **kwargs):
+            calls.append(kwargs)
+            return subprocess.CompletedProcess(args[0], 0, stdout="ok", stderr="")
+
+        monkeypatch.setattr(
+            "huginn.security.sandbox.subprocess.run", fake_subprocess_run
+        )
+        sandbox.run(
+            [sys.executable, "-c", "print('x')"],
+            cwd="/tmp",
+            preexec_fn=sentinel,
+        )
+        assert calls
+        assert calls[0]["preexec_fn"] is sentinel
+
     def test_hash_data(self):
         h1 = SandboxExecutor.hash_data("test")
         h2 = SandboxExecutor.hash_data("test")
