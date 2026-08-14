@@ -232,9 +232,8 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
   // 每轮 darwin_ratchet 后推一次: Re_cog / η_cog / status / warnings.
   const [heatEngineHealth, setHeatEngineHealth] = useState<HeatEngineHealth | null>(null);
 
-  // ── Decision trace: governance events + state transitions ──
+  // ── Decision trace: governance events ────────────────────────
   const [governanceEvents, setGovernanceEvents] = useState<any[]>([]);
-  const [stateTransitions, setStateTransitions] = useState<any[]>([]);
 
   // ── Context window usage (from context_compacted WS) ─────────
   const [contextPct, setContextPct] = useState<number>(0);
@@ -259,9 +258,6 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
 
   // ── Pet state (pushed via pet_update WS messages) ────────────
   const [petState, setPetState] = useState<PetStatusState | null>(null);
-
-  // ── Forest result (随机森林多 engine 并行探索的 DS 合成结果) ──
-  const [forestResult, setForestResult] = useState<any>(null);
 
   // ── Thread state ─────────────────────────────────────────────
   const [threads, setThreads] = useState<Thread[]>([
@@ -759,30 +755,6 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
       case "auto_checkpoint":
         onAutoCheckpoint({ id: data.id, base: data.base, files: data.files });
         break;
-      case "agent_status":
-        setMessages((prev) => {
-          const updated = [...prev];
-          const key = `agent:${data.task_id}`;
-          const idx = updated.findIndex((m) => m.role === "tool" && m.tool_call_id === key);
-          const text = data.output
-            ? `**${data.agent_id}** ${data.status}: ${data.output.slice(0, 200)}`
-            : `**${data.agent_id}** ${data.status}…`;
-          const entry: Message = {
-            role: "tool",
-            content: text,
-            timestamp: formatTime(),
-            tool_call_id: key,
-            tool_name: data.agent_id,
-            tool_status: data.status === "done" ? "done" : "running",
-          };
-          if (idx !== -1) {
-            updated[idx] = entry;
-          } else {
-            updated.push(entry);
-          }
-          return updated;
-        });
-        break;
       case "exploration_result":
         if (data.data) {
           onExplorationResult(data.data);
@@ -1159,13 +1131,6 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
         break;
       case "governance":
         setGovernanceEvents((prev) => [...prev, data].slice(-50));
-        break;
-      case "state_transition":
-        setStateTransitions((prev) => [...prev, data].slice(-30));
-        if (data.to_phase) setAutoloopPhase(data.to_phase);
-        break;
-      case "forest_result":
-        setForestResult(data);
         break;
     }
   };
@@ -1663,10 +1628,8 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
     soundEnabled, setSoundEnabled,
     // Pet state
     petState,
-    // Forest result (随机森林 DS 合成)
-    forestResult,
     // Decision trace
-    governanceEvents, stateTransitions,
+    governanceEvents,
     // Agent mode banner
     agentMode,
     // OAK: trace_id 贯穿

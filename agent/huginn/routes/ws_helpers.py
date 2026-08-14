@@ -317,6 +317,16 @@ async def _stream_agent_response(
             except Exception:
                 logger.debug("task state record skipped", exc_info=True)
 
+            # Typed side-channel events yielded by the agent loop (e.g.
+            # mode_banner / trust_update / budget_update / budget_escalation /
+            # suggest_code / risk_threshold). These are emitted as
+            # {"type": ...} dicts with no _token/_reasoning/messages, so the
+            # branches below would drop them. Forward them verbatim so the
+            # frontend's HRI trust/budget/suggest UI actually receives data.
+            if isinstance(state, dict) and "type" in state:
+                await _ws_send(dict(state))
+                continue
+
             if "_token" in state:
                 _token_streamed = True
                 text = state["_token"]
