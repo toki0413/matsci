@@ -1420,6 +1420,26 @@ class LongTermMemory:
             self._rebuild_fts_index()
         return deleted
 
+    def purge_archived(self, ttl_days: int = 30) -> int:
+        """物理清理已归档 (archived=1) 的记忆.
+
+        RevertibleEffect (Cordis 时间可组合性) 的补偿: decay/dedup/cluster 用
+        软删除 (archived=1) 保证可恢复, 但数据只增不减. 超过 TTL 的归档条目
+        在此**物理删除**并重建 FTS —— 恢复窗口过后才真正释放空间, 与可逆性
+        平衡 (保留期可回滚, 到期即回收).
+        """
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "DELETE FROM memories WHERE archived = 1 "
+                "AND julianday('now') - julianday(COALESCE(last_accessed, created_at)) > ?",
+                (ttl_days,),
+            )
+            conn.commit()
+            purged = cursor.rowcount
+        if purged > 0:
+            self._rebuild_fts_index()
+        return purged
+
     def export(self, path: str | Path) -> None:
         """Export all memories to JSON."""
         with self._connect() as conn:

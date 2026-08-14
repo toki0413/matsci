@@ -16,7 +16,10 @@
 
 from __future__ import annotations
 
+import base64
+import json
 import logging
+import os
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -28,6 +31,18 @@ logger = logging.getLogger(__name__)
 Disposer = Callable[[], None]
 
 
+# ── 数据驱动逆 (journal 能力的基础) ───────────────────────────────
+# 每个可逆操作被记录为可序列化的 op 描述 (而非仅闭包), 这样逆可落盘,
+# 进程崩溃后能按 journal 重放 (把时间可组合性从运行时提升到跨崩溃).
+OP_SET_ENV = "set_env"
+OP_CREATE_FILE = "create_file"
+OP_CREATE_DIR = "create_dir"
+OP_REMOVE_FILE = "remove_file"
+OP_SPAWN = "spawn"
+OP_REGISTER = "register"
+OP_COMPENSATE = "compensate"  # 出站写操作的补偿逆 (t1): 携带可序列化的补偿字典
+
+
 class RevertibleContext:
     """跟踪逆的运行时上下文 (Γ∞ 类比).
 
@@ -35,14 +50,61 @@ class RevertibleContext:
     按后进先出顺序逐个执行, 把上下文恢复到本 context 建立时的状态.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, journal_path: str | Path | None = None) -> None:
         self._disposers: list[Disposer] = []
+        self._ops: list[dict[str, Any]] = []
+        self._journal_path = (
+            Path(journal_path) if journal_path is not None else None
+        )
 
     # ── 核心 ─────────────────────────────────────────────────────
     def track(self, dispose: Disposer | None) -> None:
-        """手动注册一个逆. ``None`` 表示无副作用, 忽略."""
+        """手动注册一个逆. ``None`` 表示无副作用, 忽略.
+
+        注意: 闭包逆无法落盘 journal (不可序列化). 需要跨崩溃恢复的
+        副作用请用 :meth:`track_op` 的数据驱动形式.
+        """
         if dispose is not None:
             self._disposers.append(dispose)
+
+    def track_op(
+        self,
+        op: dict[str, Any] | None,
+        *,
+        env: dict[str, str] | None = None,
+        store: dict[str, Any] | None = None,
+    ) -> None:
+        """注册一个**数据驱动**逆 (可序列化, 落盘 journal).
+
+        同时生成一个绑定 ``env``/``store`` 的可执行闭包压栈 — 进程内
+        ``revert_all`` 用它精确恢复; ``_ops`` 里的数据描述供崩溃后重放.
+        """
+        if op is None:
+            return
+        self._ops.append(op)
+        self._disposers.append(
+            lambda: _apply_inverse(op, env=env, store=store)
+        )
+        if self._journal_path is not None:
+            self._flush_journal()
+
+    def effects(self) -> list[dict[str, Any]]:
+        """已累积的数据驱动逆 (journal 帧)."""
+        return list(self._ops)
+
+    def _flush_journal(self) -> None:
+        """把当前 ops 序列化到 journal 文件 (追加式重写, 供崩溃后重放)."""
+        try:
+            self._journal_path.parent.mkdir(parents=True, exist_ok=True)
+            self._journal_path.write_text(
+                json.dumps(self._ops, ensure_ascii=False, default=_json_default),
+                encoding="utf-8",
+            )
+        except Exception:
+            logger.warning(
+                "revertible: journal flush failed to %s", self._journal_path,
+                exc_info=True,
+            )
 
     @property
     def depth(self) -> int:
@@ -97,14 +159,10 @@ class RevertibleContext:
         """设置环境变量, 返回旧值. 逆: 恢复旧值 (不存在则删除)."""
         prev = env.get(key)
         env[key] = value
-
-        def dispose() -> None:
-            if prev is None:
-                env.pop(key, None)
-            else:
-                env[key] = prev
-
-        self.track(dispose)
+        self.track_op(
+            {"type": OP_SET_ENV, "key": key, "prev": prev, "absent": prev is None},
+            env=env,
+        )
         return prev
 
     def create_file(
@@ -125,13 +183,14 @@ class RevertibleContext:
         else:
             path.write_text(content, encoding=encoding or "utf-8")
 
-        def dispose() -> None:
-            if existed:
-                path.write_bytes(prev or b"")
-            else:
-                path.unlink(missing_ok=True)
-
-        self.track(dispose)
+        self.track_op(
+            {
+                "type": OP_CREATE_FILE,
+                "path": str(path),
+                "existed": existed,
+                "prev_b64": base64.b64encode(prev).decode() if prev is not None else None,
+            },
+        )
         return path
 
     def create_dir(self, path: str | Path) -> Path:
@@ -140,15 +199,9 @@ class RevertibleContext:
         existed = path.exists()
         path.mkdir(parents=True, exist_ok=True)
 
-        def dispose() -> None:
-            if not existed:
-                try:
-                    path.rmdir()
-                except OSError:
-                    # 目录非空 (被本效应之外的内容占用) — 不删, 记录即可.
-                    logger.debug("revertible: dir not empty, skip rmdir %s", path)
-
-        self.track(dispose)
+        self.track_op(
+            {"type": OP_CREATE_DIR, "path": str(path), "existed": existed},
+        )
         return path
 
     def remove_file(self, path: str | Path) -> Path:
@@ -157,20 +210,18 @@ class RevertibleContext:
         data = path.read_bytes() if path.exists() else None
         path.unlink(missing_ok=True)
 
-        def dispose() -> None:
-            if data is not None:
-                path.write_bytes(data)
-
-        self.track(dispose)
+        self.track_op(
+            {
+                "type": OP_REMOVE_FILE,
+                "path": str(path),
+                "data_b64": base64.b64encode(data).decode() if data is not None else None,
+            },
+        )
         return path
 
     def spawn(self, proc: Any) -> Any:
         """登记一个后台进程. 逆: 若仍在运行则终止."""
-        def dispose() -> None:
-            if proc.poll() is None:
-                proc.kill()
-
-        self.track(dispose)
+        self.track_op({"type": OP_SPAWN, "pid": proc.pid})
         return proc
 
     def register(
@@ -185,16 +236,38 @@ class RevertibleContext:
         卸载组件时自动撤销注册.
         """
         prev = store.get(key)
+        absent = key not in store
         store[key] = value
-
-        def dispose() -> None:
-            if prev is None:
-                store.pop(key, None)
-            else:
-                store[key] = prev
-
-        self.track(dispose)
+        if _json_safe(prev):
+            self.track_op(
+                {
+                    "type": OP_REGISTER,
+                    "key": key,
+                    "prev": prev,
+                    "absent": absent,
+                },
+                store=store,
+            )
+        else:
+            # prev 不可序列化 — 无法 journal, 退化为闭包逆 (进程内仍精确恢复).
+            self.track(
+                lambda: (
+                    store.pop(key, None)
+                    if absent
+                    else store.update({key: prev})
+                )
+            )
         return value
+
+    def compensate(self, kind: str, payload: dict[str, Any]) -> None:
+        """注册一个**出站写操作的补偿逆** (t1).
+
+        ``kind`` 是补偿类型 (如 ``git_commit`` / ``git_checkout``), ``payload``
+        携带撤销所需的可序列化状态 (如原 commit hash / 原分支). 进程内按
+        :meth:`revertible.api` 的注册补偿器执行, 崩溃后经 journal 重放
+        (跨崩溃恢复出站副作用).
+        """
+        self.track_op({"type": OP_COMPENSATE, "kind": kind, "payload": payload})
 
     # ── 复合逆 (扭结算子 / twisted composition) ───────────────────
     @staticmethod
@@ -214,3 +287,133 @@ class RevertibleContext:
                         logger.warning("revertible composite dispose failed", exc_info=True)
 
         return dispose
+
+
+# ── 模块级辅助: journal 序列化 + 逆执行器 ─────────────────────────
+
+def _json_safe(value: Any) -> bool:
+    """能否被 JSON 序列化 (决定该逆能否落盘 journal)."""
+    try:
+        json.dumps(value)
+        return True
+    except (TypeError, ValueError):
+        return False
+
+
+def _json_default(value: Any) -> Any:
+    """JSON 兜底: 类型名作为占位 (审计可见, 但不保留值)."""
+    return {"__repr__": repr(value)}
+
+
+def _apply_inverse(
+    op: dict[str, Any],
+    *,
+    env: dict[str, str] | None = None,
+    store: dict[str, Any] | None = None,
+) -> None:
+    """执行一个数据驱动逆. 进程内由闭包调用 (带 env/store 引用);
+    崩溃后经 :func:`recover_from` 重放 (env/store 缺省, 只恢复可持久副作用).
+    """
+    op_type = op.get("type")
+    try:
+        if op_type == OP_SET_ENV:
+            if env is None:
+                return  # 进程已消失, env 无法重建 — 跳过
+            key = op["key"]
+            if op.get("absent"):
+                env.pop(key, None)
+            else:
+                env[key] = op["prev"]
+        elif op_type == OP_CREATE_FILE:
+            p = Path(op["path"])
+            if op.get("existed"):
+                prev = base64.b64decode(op["prev_b64"]) if op.get("prev_b64") else b""
+                p.write_bytes(prev)
+            else:
+                p.unlink(missing_ok=True)
+        elif op_type == OP_CREATE_DIR:
+            p = Path(op["path"])
+            if not op.get("existed"):
+                try:
+                    p.rmdir()
+                except OSError:
+                    logger.debug("revertible: dir not empty, skip rmdir %s", p)
+        elif op_type == OP_REMOVE_FILE:
+            p = Path(op["path"])
+            data = base64.b64decode(op["data_b64"]) if op.get("data_b64") else None
+            if data is not None:
+                p.write_bytes(data)
+        elif op_type == OP_SPAWN:
+            _kill_pid(op["pid"])
+        elif op_type == OP_REGISTER:
+            if store is None:
+                return  # 进程内 store 已消失 — 跳过
+            if op.get("absent"):
+                store.pop(op["key"], None)
+            else:
+                store[op["key"]] = op["prev"]
+        elif op_type == OP_COMPENSATE:
+            _run_compensation(op.get("kind"), op.get("payload") or {})
+        else:
+            logger.warning("revertible: unknown inverse op type %r", op_type)
+    except Exception:
+        logger.warning("revertible: inverse failed for op %s", op_type, exc_info=True)
+
+
+def _kill_pid(pid: int) -> None:
+    """终止进程 (尽力而为, 跨崩溃重放用)."""
+    try:
+        os.kill(pid, 9)  # SIGKILL
+    except (ProcessLookupError, PermissionError, OSError):
+        pass  # 进程已退出或无权 — 视为已完成
+
+
+# ── 补偿器注册 (出站写操作的逆) ───────────────────────────────────
+# 每种出站写操作注册一个 kind → 补偿函数, 供进程内 revert_all 与崩溃后
+# journal 重放共用. 补偿函数签名: ``fn(payload: dict) -> None``.
+_COMPENSATORS: dict[str, Callable[[dict[str, Any]], None]] = {}
+
+
+def register_compensator(kind: str, fn: Callable[[dict[str, Any]], None]) -> None:
+    """注册一个出站写操作的补偿器 (t1). 重复 kind 覆盖."""
+    _COMPENSATORS[kind] = fn
+
+
+def _run_compensation(kind: str | None, payload: dict[str, Any]) -> None:
+    if not kind:
+        return
+    fn = _COMPENSATORS.get(kind)
+    if fn is None:
+        logger.warning("revertible: no compensator registered for kind %r", kind)
+        return
+    try:
+        fn(payload)
+    except Exception:
+        logger.warning("revertible: compensation %r failed", kind, exc_info=True)
+
+
+# ── journal 读取 / 崩溃后重放 ─────────────────────────────────────
+def recover_from(journal_path: str | Path) -> int:
+    """从 journal 文件重放所有逆 (崩溃后调用).
+
+    LIFO 顺序恢复 (与运行时一致). 只恢复可持久副作用 (文件系统/spawn/
+    已注册的出站补偿); env/register 等进程内状态随崩溃天然消失, 跳过.
+    返回成功执行的逆数量.
+    """
+    path = Path(journal_path)
+    if not path.exists():
+        return 0
+    try:
+        ops = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        logger.warning("revertible: journal corrupted, cannot recover %s", path)
+        return 0
+    applied = 0
+    for op in reversed(ops):
+        _apply_inverse(op)
+        applied += 1
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
+    return applied
