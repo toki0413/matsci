@@ -379,8 +379,21 @@ class SubagentDispatch:
             tokens = self._estimate_tokens(final_state)
 
             if spec.summarize_result and len(output) > _SUMMARIZE_THRESHOLD:
+                # H5-a: 走 task 路由选总结模型, 与 engine._llm_chat(task="summarize")
+                # 行为一致. 子 agent 无 model_router / select_model 失败时回退到
+                # factory 的 default_alias — 保持向后兼容.
+                summarize_model = None
+                try:
+                    if hasattr(agent, "select_model"):
+                        summarize_model = agent.select_model("summarize")
+                except Exception:
+                    logger.debug(
+                        "select summarize model failed, fallback to default",
+                        exc_info=True,
+                    )
                 summary = await self._summarize(
                     factory, output, task, summary_format=spec.summary_format,
+                    model=summarize_model,
                 )
             else:
                 summary = output
@@ -489,7 +502,8 @@ class SubagentDispatch:
 
     @staticmethod
     async def _summarize(
-        factory: Any, output: str, task: str, *, summary_format: str = "free",
+        factory: Any, output: str, task: str, *,
+        summary_format: str = "free", model: Any = None,
     ) -> str:
         """用 LLM 压缩子 agent 输出, 拿不到模型就截断兜底.
 
@@ -497,16 +511,19 @@ class SubagentDispatch:
         - "free": 散文摘要 <500 词 (默认, explore/coder/analyst 用)
         - "json": 结构化 JSON {findings, evidence, limitations, artifacts}
                   (support spec 用, Oxelra Core+Support 模式)
+        model: 可选, 已按 task 路由选好的模型 (H5-a). 为 None 时回退到
+               factory 的 default_alias 解析 — 保持向后兼容.
         ponytail: json 模式不校验 schema, LLM 自律输出. 升级路径 pydantic + retry.
         """
-        try:
-            alias = factory.model_registry.default_alias()
-            if not alias:
+        if model is None:
+            try:
+                alias = factory.model_registry.default_alias()
+                if not alias:
+                    return output[:_SUMMARIZE_THRESHOLD] + "..."
+                model = factory.model_registry.resolve(alias)
+            except Exception:
+                logger.debug("resolve model for summarize failed", exc_info=True)
                 return output[:_SUMMARIZE_THRESHOLD] + "..."
-            model = factory.model_registry.resolve(alias)
-        except Exception:
-            logger.debug("resolve model for summarize failed", exc_info=True)
-            return output[:_SUMMARIZE_THRESHOLD] + "..."
 
         if summary_format == "json":
             system_content = (
