@@ -157,6 +157,9 @@ async def run(
     from huginn.models.registry import ModelRegistry
 
     os.environ.setdefault("HUGINN_THINKING", thinking)
+    # benchmark 场景 (无人工 subprocess): 与 rcb_runner 对齐, 走 CSM 子集模式 —
+    # CSM transition 依旧执行 (含 S3/S6), 但不触发不必要的 context compaction.
+    os.environ.setdefault("HUGINN_CSM_SUBSET_MODE", "1")
     cfg = HuginnConfig.from_env()
     registry = ModelRegistry.from_config(cfg)
     alias = registry.default_alias()
