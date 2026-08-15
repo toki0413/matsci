@@ -187,7 +187,17 @@ def build_prompt(
     任意未知 mode/phase/metacog_state 都不会抛异常 — 对应段直接跳过.
     system_prompt 可选: 传入时 persona_segment 使用 runtime persona (迁移自
     context.py 的 self.system_prompt); 未传入则回退到内置最小 persona (向后兼容).
+
+    "Everything is a Plugin" (形态 B): 六段已注册为段插件, 这里从注册表按
+    priority 组装。若注册表为空 (import 异常等极端情况), 回退到硬编码拼接,
+    保证行为不变。
     """
+    from huginn.plugins.prompt_segments import assemble_prompt_segments
+
+    assembled = assemble_prompt_segments(mode, phase, metacog_state, system_prompt)
+    if assembled:
+        return assembled
+    # 回退: 注册表空时保持旧硬编码行为 (向后兼容).
     segments = [
         persona_segment(system_prompt),
         mode_segment(mode),
@@ -197,6 +207,76 @@ def build_prompt(
         safety_segment(),
     ]
     return "\n\n".join(s for s in segments if s)
+
+
+# ── "Everything is a Plugin" 形态 B: 内置六段注册为段插件 ──────────────
+# 统一段签名 (mode, phase, metacog_state, system_prompt) -> str, 与
+# plugins/prompt_segments.PromptSegmentFn 一致。注册发生在模块 import 时,
+# 供 build_prompt 从注册表组装; 段内部逻辑不变, 仅加薄适配层。
+
+def _persona_plugin(mode, phase, metacog_state, system_prompt):
+    return persona_segment(system_prompt)
+
+
+def _mode_plugin(mode, phase, metacog_state, system_prompt):
+    return mode_segment(mode)
+
+
+def _phase_plugin(mode, phase, metacog_state, system_prompt):
+    return phase_segment(phase)
+
+
+def _metacog_plugin(mode, phase, metacog_state, system_prompt):
+    return metacog_segment(metacog_state)
+
+
+def _tools_plugin(mode, phase, metacog_state, system_prompt):
+    return tools_segment(mode, phase, metacog_state)
+
+
+def _safety_plugin(mode, phase, metacog_state, system_prompt):
+    return safety_segment()
+
+
+def _thinking_plugin(mode, phase, metacog_state, system_prompt):
+    """External Thinking 段 — 迁移自 context.py 的 feature-flag 注入.
+
+    flag 开启时要求模型在动手前先用 deep_think 工具写分析。默认关, 不改变
+    默认行为。fail-open: flag 层异常不输出, 保证 prompt 构建永不崩。
+    """
+    try:
+        from huginn.feature_flags import FeatureFlags
+
+        if not FeatureFlags.shared().is_enabled("external_thinking"):
+            return ""
+    except Exception:
+        return ""
+    return (
+        "## External Thinking\n"
+        "Before you answer, modify code, or call other tools, "
+        "first call the `deep_think` tool and write your "
+        "step-by-step analysis and reasoning into its `analysis` "
+        "argument. This is an external scratchpad — your analysis "
+        "is recorded and returned to the developer, but is not "
+        "echoed as part of your visible answer. Then complete the "
+        "task using that analysis."
+    )
+
+
+def _register_builtin_segments() -> None:
+    from huginn.plugins.prompt_segments import register_prompt_segment
+
+    register_prompt_segment("persona", _persona_plugin)
+    register_prompt_segment("mode", _mode_plugin)
+    register_prompt_segment("phase", _phase_plugin)
+    register_prompt_segment("metacog", _metacog_plugin)
+    register_prompt_segment("tools", _tools_plugin)
+    # thinking 段: priority 100, 位于 tools(50) 与 safety(200) 之间.
+    register_prompt_segment("thinking", _thinking_plugin)
+    register_prompt_segment("safety", _safety_plugin)
+
+
+_register_builtin_segments()
 
 
 if __name__ == "__main__":

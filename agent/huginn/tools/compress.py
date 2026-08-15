@@ -17,6 +17,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from huginn.plugins.strategy import StrategyRegistry
 from huginn.utils.runtime import get_runtime_home
 from huginn.utils.tokens import count_tokens, rough_token_count_for_text
 
@@ -144,13 +145,46 @@ def compress_tool_output(
     data: Any,
     max_output_tokens: int | None = None,
     keep_keys: set[str] | None = None,
+    tool_name: str | None = None,
 ) -> Any:
-    """Convenience entry point used by ToolAdapter."""
+    """Convenience entry point used by ToolAdapter.
+
+    ``tool_name`` 可选: 传入时先查工具级 keep_keys 策略注册表 (形态 B),
+    命中则用该工具的差异化 keep_keys, 否则 fallback 到全局 keep_keys.
+    这样不同工具 (DFT / MD / 日志) 可以保留各自的关键字段, 而不被
+    全局一组的 keep_keys 一刀切.
+    """
+    if tool_name and keep_keys is None:
+        tool_keys = _KEEP_KEYS_REGISTRY.resolve(tool_name)
+        if tool_keys is not None:
+            keep_keys = tool_keys
     compressor = ToolOutputCompressor(
         max_output_tokens=max_output_tokens or 8000,
         keep_keys=keep_keys,
     )
     return compressor.compress(data)
+
+
+# 工具级 keep_keys 策略注册表 (形态 B: 轻量策略选择).
+# 第三方 / 内部工具可注册自己的差异化 keep_keys, 覆盖全局默认.
+# key 支持精确工具名, 也支持前缀 (如 "vasp." 覆盖 vasp_run/vasp_parse).
+_KEEP_KEYS_REGISTRY: StrategyRegistry[set[str]] = StrategyRegistry(
+    fallback=ToolOutputCompressor().keep_keys
+)
+
+
+def register_tool_keep_keys(
+    tool_name: str,
+    keep_keys: set[str],
+    priority: int = 0,
+) -> None:
+    """为指定工具注册差异化 keep_keys 策略。
+
+    ``tool_name`` 支持精确名或前缀 (以 '.' 结尾). 用法::
+
+        register_tool_keep_keys("vasp.", {"energy", "band_gap", "converged"})
+    """
+    _KEEP_KEYS_REGISTRY.register(tool_name, frozenset(keep_keys), priority=priority)
 
 
 async def smart_compress_text(
