@@ -1,6 +1,6 @@
 # Everything is a Plugin — 段插件化设计
 
-> 状态: 设计稿(未实施)
+> 状态: prompt 段已用形态 B (同步注册表) 落地; 其余子系统评估中
 > 范围: prompt 段插件化 + 两形态插件框架 + 其他子系统适配评估
 > 关联: `prompt_builder.py`, `context.py`, `plugins/`, `core_types.py`, 记忆整理, compaction
 
@@ -32,81 +32,108 @@
 
 ---
 
-## 3. 形态 A: 事件钩子 — prompt 段插件化
+| 形态 | 机制 | 适用场景 | 例子 |
+|---|---|---|---|
+| **形态 A: 事件钩子** | `@filter.on_xxx(priority=N)` 注册 async handler, 可改事件对象, 可 `event.stop()` 阻断 | 有生命周期、需要顺序 + 阻断、粒度到单次发生时 | 工具调用拦截、on_tool_respond |
+| **形态 B: 策略注册表** | `dict[str, Callable]` + priority, 选一个策略执行, 无副作用事件流 | 性能敏感、纯策略选择、无嵌套副作用 | prompt 段、compaction policy、tool result 压缩、记忆整理、沙箱选择 |
+
+**选择判据:**
+1. 有生命周期钩子(发生在某时刻、可被阻断) → 形态 A
+2. 只是"这条数据怎么处理"的多种策略选择 → 形态 B
+3. 性能敏感路径(如 O(n) 压缩) → 形态 B 优先, 避免事件分发开销
+
+> **决策记录 (prompt 段):** 原设计把 prompt 段归形态 A (事件钩子)。最终落地选定
+> **形态 B (同步注册表)**。原因: `build_prompt()` 是主路径**同步**调用, 形态 A 的
+> async handler 会把同步链改成异步分发, 引入协程/事件循环复杂度与风险; 而六段只是
+> "不同段按顺序拼一段文本"的纯策略选择, 无阻断需求 (`stop()` 语义对 prompt 段无真实
+> 价值)。故用 `StrategyRegistry` (plugins/strategy.py) + `PromptSegmentFn`
+> (plugins/prompt_segments.py) 落地, register O(1)、assemble O(N) 纯拼接、零异步。
+
+---
+
+## 3. prompt 段插件化 (形态 B: 同步注册表, 已落地)
 
 ### 3.1 接口契约
 
 ```python
-class PromptSegmentPlugin(Star):
-    """Prompt 段插件的基类。
-    子类定义 handler, 用 @filter.on_llm_request(priority=N) 装饰。
-    handler 签名: async def handler(self, event: LLMRequestEvent) -> None
-    """
+# plugins/prompt_segments.py
+PromptSegmentFn = Callable[[str, str, str, str | None], str]
+#                       (mode, phase, metacog_state, system_prompt) -> str  (空串 = 跳过)
+
+register_prompt_segment(name, fn, priority=None)   # 注册/覆盖段
+render_prompt_segment(name, mode, phase, metacog, sp)   # 单段渲染 (context.py 用)
+assemble_prompt_segments(mode, phase, metacog, sp)      # 按 priority 升序拼全部
 ```
 
-handler 只做 `event.system_prompt += "\n\n## SEGMENT_NAME\n{content}"`, 不问不改其他 handler 已追加内容。段间通过 priority 隐式排序, 不做显式依赖声明。
+handler 只返回自己那段的文本, 不问不改其他段。段间通过 priority 隐式排序, 不做显式
+依赖声明。同名注册覆盖内置段 (priority 高者 / 同 priority 后注册者生效)。
 
-### 3.2 priority 顺序约定(数字越小越先执行)
+### 3.2 priority 顺序约定(数字越小越先拼)
 
 | Priority | 段 | 内容 |
 |---|---|---|
-| 0–99 | 框架保留基础段 | persona, mode, phase, safety |
-| 100–199 | 框架保留动态段 | metacog, tools, thinking |
-| 200–299 | 插件段 | 合规声明, 领域安全规则 |
-| 300+ | 保留 | 未来扩展 |
+| 10 | persona | runtime persona / 内置最小 persona |
+| 20 | mode | `_MODE_INSTRUCTIONS` |
+| 30 | phase | `PHASE_PROMPTS` + G51 notes |
+| 40 | metacog | S7 时注入 self-modify 指令 |
+| 50 | tools | 占位串 (升级路径: 按 mode/phase 过滤) |
+| 100 | thinking | external_thinking feature-flag 注入 (默认关) |
+| 200 | safety | 固定输出, 最后 |
 
-### 3.3 阻断语义
+### 3.3 阻断语义(形态 B 不提供)
 
-复用 `event.stop()`。高优先级 handler 可阻断后续低优先级 handler 追加。例如: safety 段判定请求违规时可 stop, 阻止模型看见其他段。
+形态 B 无 `stop()`。prompt 段无真实阻断需求 — 若未来需要"某段违规则整个 system_prompt
+不产出", 应升级回形态 A 或用前置校验。当前不引入该复杂度。
 
 ### 3.4 现有六段 → 插件映射
 
 | 当前段 | 来源 | 成为插件 | Priority |
 |---|---|---|---|
-| PERSONA | `prompt_builder.py` | `PersonaPlugin`, 读 runtime persona | 10 |
-| MODE | `prompt_builder.py` | `ModePlugin`, 读 mode 查 `_MODE_INSTRUCTIONS` | 20 |
-| PHASE | `prompt_builder.py` | `PhasePlugin`, 读 phase 查 `PHASE_PROMPTS` + G51 notes | 30 |
-| METACOG | `prompt_builder.py` | `MetacogPlugin`, S7 时注入 | 40 |
-| TOOLS | `prompt_builder.py`(占位串) | `ToolsPlugin`, 真正按 mode/phase 过滤 | 50 |
-| [PHASE] 转移 | `context.py` 尾部 | `PhaseTransitionPlugin` | 60 |
-| External Thinking | `context.py` feature flag | `ThinkingPlugin`, 按 metacog/phase 判断 | 70 |
-| SAFETY | `prompt_builder.py` | `SafetyPlugin`, 固定输出 | 90 |
+| PERSONA | `prompt_builder.py` | `_persona_plugin` | 10 |
+| MODE | `prompt_builder.py` | `_mode_plugin` | 20 |
+| PHASE | `prompt_builder.py` | `_phase_plugin` | 30 |
+| METACOG | `prompt_builder.py` | `_metacog_plugin` | 40 |
+| TOOLS | `prompt_builder.py`(占位串) | `_tools_plugin` | 50 |
+| External Thinking | `context.py` feature flag | `_thinking_plugin` | 100 |
+| SAFETY | `prompt_builder.py` | `_safety_plugin` | 200 |
+
+注册发生在 `prompt_builder` 模块 import 时 (`_register_builtin_segments()`)。
+`context.py` 主路径不再硬编码 external_thinking, 改为 `render_prompt_segment("thinking", ...)`
+(详见 §3.5), 并在调用点先 import `prompt_builder` 确保段已注册。
 
 ### 3.5 External Thinking 迁移
 
-现状: feature flag(默认关), 在 `context.py` 尾部条件拼接"先调 deep_think 再动手"指令。
+现状: feature flag(默认关), 原在 `context.py` 尾部条件拼接"先调 deep_think 再动手"指令。
 
-插件化后:
+插件化后 (已落地):
 
 ```python
-async def handler(self, event):
+def _thinking_plugin(mode, phase, metacog_state, system_prompt):
+    # 默认关, 零开销; flag 层异常 fail-open 返回空串
     if not FeatureFlags.shared().is_enabled("external_thinking"):
-        return  # 默认关, 零开销
-    # 或升级: S7 自修改态 / hypothesis|validate phase → 自动开
-    segment = self._build_thinking_segment(event)
-    if segment:
-        event.system_prompt += "\n\n" + segment
+        return ""
+    return "## External Thinking\nBefore you answer, modify code, or call other tools, ..."
 ```
 
-好处: 不再散落在 context.py 做条件注入; 元认知状态可在 handler 里读; 第三方可替换内置注入策略。
+`context.py` 主路径改为调用 `render_prompt_segment("thinking", ...)`, 行为与旧硬编码
+一致 (flag 开 → 注入, 关/异常 → 不注入), 但逻辑单一来源、可被第三方替换。
 
-### 3.6 迁移路径
+### 3.6 迁移路径 (已完成)
 
 ```
 Phase 0: 不动 — 硬编码, 零改动
-Phase 1: 注册 — 建六个 PromptSegmentPlugin, 内容与现有六段相同, 注册但不切换,
-         引入 _PLUGIN_PROMPT_ENABLED flag(默认关), 用 diff 测试保证内容一致
-Phase 2: 切换 — flag 默认开, build_prompt() 改为 dispatch on_llm_request + 取
-         event.system_prompt, 保留硬编码作 fallback
-Phase 3: 插件化 — ThinkingPlugin 迁出 context.py, 公开基类文档
+Phase 1: 注册 — 建六个 PromptSegmentPlugin, 内容与现有六段相同, 用 diff 测试
+         (tests/test_prompt_segments.py) 保证内容一致
+Phase 2: 切换 — build_prompt() 改为 assemble_prompt_segments(), 保留硬编码作 fallback
+Phase 3: 插件化 — external_thinking 从 context.py 迁为 _thinking_plugin
 ```
 
 ### 3.7 不改的事
 
 - `HUGINN_SYSTEM_PROMPT` 仍是 persona 段核心内容
-- `build_prompt()` 签名不变, 内部改 dispatch
+- `build_prompt()` 签名不变, 内部改走注册表
 - feature flag 机制不变, external_thinking 关闭行为不变
-- 现有测试不修改(Phase 1 的 diff 测试是新增)
+- 既有测试不修改(Phase 1 的 diff 测试是新增)
 
 ---
 

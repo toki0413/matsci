@@ -73,22 +73,20 @@ class ContextMixin:
             "EXECUTION, VALIDATION, REPORTING."
         )
         # externalThinking: 开启时要求模型在动手前先用 deep_think 工具写分析.
-        # 分析落进 session.reasoning_trace, 供蒸馏/进化闭环消费. 默认关, 不改变
-        # 默认行为. fail-open: flag 层异常不注入, 保证系统提示构建永不崩.
+        # 逻辑已迁为 "thinking" 段插件 (prompt_builder 注册), 这里只渲染该段,
+        # 保持同一段逻辑单一来源、可被插件替换。默认关, 不改变默认行为;
+        # fail-open: flag 层异常不注入, 保证系统提示构建永不崩.
         try:
-            from huginn.feature_flags import FeatureFlags
+            # 确保内置段已注册 (persona/mode/.../thinking 注册在 prompt_builder import 时).
+            import huginn.agent.prompt_builder as _pb  # noqa: F401
+            from huginn.plugins.prompt_segments import render_prompt_segment
 
-            if FeatureFlags.shared().is_enabled("external_thinking"):
-                base += (
-                    "\n\n## External Thinking\n"
-                    "Before you answer, modify code, or call other tools, "
-                    "first call the `deep_think` tool and write your "
-                    "step-by-step analysis and reasoning into its `analysis` "
-                    "argument. This is an external scratchpad — your analysis "
-                    "is recorded and returned to the developer, but is not "
-                    "echoed as part of your visible answer. Then complete the "
-                    "task using that analysis."
-                )
+            _thinking = render_prompt_segment(
+                "thinking", getattr(self, "_mode", "chat"), "execute",
+                "s0_blank", self.system_prompt,
+            )
+            if _thinking:
+                base += "\n\n" + _thinking
         except Exception:
             logger.debug("external_thinking injection skipped", exc_info=True)
         # Inject cached system context (date + git status) and project
