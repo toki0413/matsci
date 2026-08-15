@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 from huginn.utils.cache import TimedLRUCache
 from huginn.utils.common import chunk_text
+from huginn.utils.jieba_utils import get_jieba
 
 logger = logging.getLogger(__name__)
 
@@ -178,20 +179,7 @@ class _EmbeddingModel:
 
 _BM25_TOKEN_RE = re.compile(r'[A-Za-z0-9_]+|[\u4e00-\u9fff]')
 
-# jieba 懒加载缓存: None=未尝试, False=不可用, 否则为 jieba 模块
-_JIEBA: Any | None = None
-
-
-def _get_jieba() -> Any | None:
-    """懒加载 jieba. 首次尝试后缓存结果, 避免每次 _tokenize 都 import."""
-    global _JIEBA
-    if _JIEBA is None:
-        try:
-            import jieba
-            _JIEBA = jieba
-        except Exception:
-            _JIEBA = False
-    return _JIEBA if _JIEBA else None
+# BM25 中文分词依赖 jieba. 懒加载逻辑收敛到 huginn/utils/jieba_utils.get_jieba.
 
 
 def _tokenize(text: str) -> list[str]:
@@ -203,7 +191,7 @@ def _tokenize(text: str) -> list[str]:
     if not text:
         return []
     text = text.lower()
-    jieba = _get_jieba()
+    jieba = get_jieba()
     if jieba is not None:
         # jieba 会把 ASCII 词也切成片段, 这里取 jieba 结果 + 保留数字/字母词
         tokens = []

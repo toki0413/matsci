@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from huginn.explainability import Explainer, ExplainStep
+from huginn.explainability import Explainer
 
 
 class FakeAudit:
@@ -127,6 +127,30 @@ def test_integration_with_real_audit_and_provenance(tmp_path: Path) -> None:
     ))
 
     exp = Explainer(audit=audit, provenance=store).explain("vasp")
+    assert any(s.kind == "audit" for s in exp.steps)
+    assert any(s.kind == "artifact" for s in exp.steps)
+    assert exp.key_findings.get("energy") == -10.5
+
+
+def test_agent_explain_wiring(monkeypatch) -> None:
+    """HuginnAgent.explain() 应把 audit + provenance 拼进统一解释."""
+    from huginn.agent import HuginnAgent
+
+    audit = FakeAudit([{
+        "timestamp": 5.0, "actor": "agent", "action": "vasp_relaxation",
+        "details": {"tool": "vasp_tool"},
+    }])
+    prov = FakeProvenance([
+        {"file_path": "OUTCAR", "produced_by": "vasp_tool", "produced_at": 6.0,
+         "input_files": ["POSCAR"], "key_properties": {"energy": -10.5}},
+    ])
+
+    # 避免触到真实单例 registry, 用 fake provenance 顶替 shared()
+    from huginn.provenance import registry as prov_reg
+    monkeypatch.setattr(prov_reg.ProvenanceRegistry, "shared", staticmethod(lambda: prov))
+
+    agent = HuginnAgent(model=object(), tools=[], audit=audit)
+    exp = agent.explain("vasp")
     assert any(s.kind == "audit" for s in exp.steps)
     assert any(s.kind == "artifact" for s in exp.steps)
     assert exp.key_findings.get("energy") == -10.5

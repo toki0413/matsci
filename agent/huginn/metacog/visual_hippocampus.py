@@ -38,6 +38,8 @@ import re
 import time
 from typing import Any
 
+from huginn.utils.jieba_utils import get_jieba
+
 logger = logging.getLogger(__name__)
 
 _HIPPOCAMPUS_FLAG = "HUGINN_USE_HIPPOCAMPUS"
@@ -98,21 +100,8 @@ def record(
 # ── recall ─────────────────────────────────────────────────────────────────
 
 
-# jieba 懒加载缓存: None=未尝试, False=不可用, 否则为 jieba 模块.
 # 中文视觉记忆检索依赖中文分词, 复用 RAG 升级引入的 jieba.
-_JIEBA: Any | None = None
-
-
-def _get_jieba() -> Any | None:
-    """懒加载 jieba. 首次尝试后缓存结果, 避免每次 _tokenize 都 import."""
-    global _JIEBA
-    if _JIEBA is None:
-        try:
-            import jieba
-            _JIEBA = jieba
-        except Exception:
-            _JIEBA = False
-    return _JIEBA if _JIEBA else None
+# 懒加载逻辑收敛到 huginn/utils/jieba_utils.get_jieba.
 
 
 def _tokenize(text: str) -> list[str]:
@@ -124,7 +113,7 @@ def _tokenize(text: str) -> list[str]:
     if not text:
         return []
     text_l = text.lower()
-    jieba = _get_jieba()
+    jieba = get_jieba()
     if jieba is not None:
         tokens = []
         seen = set()
