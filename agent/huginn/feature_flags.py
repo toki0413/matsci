@@ -53,11 +53,60 @@ class FeatureFlags:
         "harness_joint_optimizer": False,     # 联合优化 (phase/block/params 协同)
         "harness_phase_evolve": False,        # 阶段规范演化
         "harness_prompt_patch": False,        # 提示补丁 (跨域提示增强)
+        # ---- v24 契约收敛 Round 1: 登记散落的裸 bool env (HUGINN_* = 0/1) ----
+        # 这些变量之前在各模块 os.environ.get 裸读, 无统一 schema. 现纳入
+        # FeatureFlags 统一登记: 默认值与裸读默认一致, 既可通过
+        # HUGINN_FEATURE_<NAME> 关/开, 也通过 _ENV_ALIASES 兼容旧变量名.
+        # "module-read" 标记: 模块代码仍读旧变量, FeatureFlags 只登记不做控制;
+        # 迁移 read 点后即改为 FeatureFlags 生效 (见 _ENV_ALIASES 注释).
+        "json_logs": True,               # JSON 结构化日志 (HUGINN_JSON_LOGS)
+        "prompt_cache_control": True,    # prompt-cache control 注入 (HUGINN_PROMPT_CACHE_CONTROL)
+        "telemetry": True,               # 遥测采集 (HUGINN_TELEMETRY_ENABLED)
+        "bandit_mdp": True,              # bandit MDP 决策 (HUGINN_BANDIT_MDP)
+        "belief_update": True,           # 信念更新管线 (HUGINN_BELIEF_UPDATE)
+        "belief_darwin": True,           # 信念 Darwin 演化 (HUGINN_BELIEF_DARWIN)
+        "belief_mode_switch": True,      # 信念模式切换 (HUGINN_BELIEF_MODE_SWITCH)
+        "memory_typing": True,           # 记忆类型标注 (HUGINN_USE_MEMORY_TYPING)
+        "crdt_merge": True,              # CRDT 合并 (HUGINN_CRDT_MERGE)
+        "crdt_branch_merge": True,       # CRDT 分支合并 (HUGINN_CRDT_BRANCH_MERGE)
+        "ising_rerank": True,            # Ising 重排 (HUGINN_ISING_RERANK)
+        "hils_attention": True,          # HILS 注意力 (HUGINN_HILS_ATTENTION)
+        "ising_frontier": True,          # Ising 前沿 (HUGINN_ISING_FRONTIER)
+        "fts_auto_rebuild": True,        # 全文检索自动重建 (HUGINN_FTS_AUTO_REBUILD)
+        "privacy_redact_secrets": True,  # 检测到密钥时脱敏 (HUGINN_PRIVACY_REDACT_SECRETS)
+        "extreme_dispatch": False,       # 极端模式分发 (HUGINN_EXTREME_DISPATCH)
+        "three_cabin": False,            # 三舱模型 (HUGINN_USE_THREE_CABIN)
+        "use_cognitive_map": False,      # 认知地图 (HUGINN_USE_COGNITIVE_MAP)
+        "use_atomworld": False,          # AtomWorld 环境 (HUGINN_USE_ATOMWORLD)
+        "persistent_terminal": False,    # 持久化终端 (HUGINN_PERSISTENT_TERMINAL)
+        "world_model": False,            # 世界模型 (HUGINN_WORLD_MODEL)
+        "curiosity_hint": False,         # 好奇心提示 (HUGINN_CURIOSITY_HINT)
+        "privacy_block_on_secrets": False,  # 检测到密钥时阻断 (HUGINN_PRIVACY_BLOCK_ON_SECRETS)
         # 隐私三档, 互斥. PrivacyGuard.set_level 负责保证同时只一个 True.
         # privacy_off 仅由 set_level 维护互斥, 外部设置无效.
         "privacy_off": True,           # 不脱敏 (默认)
         "privacy_redact": False,       # 脱敏后发云端
         "privacy_local_only": False,   # 完全本地, 不发云端
+    }
+
+    # 旧裸读 env 变量名 → flag 名. 迁移 read 点后仍保留旧变量兼容:
+    # 用户设 HUGINN_USE_THREE_CABIN=1 与设 HUGINN_FEATURE_THREE_CABIN=true 等价.
+    # 迁移完对应 read 点后, 该别名可保留 (向后兼容已有 shell/.env 配置).
+    _ENV_ALIASES: dict[str, str] = {
+        "HUGINN_JSON_LOGS": "json_logs",
+        "HUGINN_PROMPT_CACHE_CONTROL": "prompt_cache_control",
+        "HUGINN_TELEMETRY_ENABLED": "telemetry",
+        "HUGINN_BANDIT_MDP": "bandit_mdp",
+        "HUGINN_USE_MEMORY_TYPING": "memory_typing",
+        "HUGINN_CRDT_BRANCH_MERGE": "crdt_branch_merge",
+        "HUGINN_USE_THREE_CABIN": "three_cabin",
+        "HUGINN_USE_COGNITIVE_MAP": "use_cognitive_map",
+        "HUGINN_USE_ATOMWORLD": "use_atomworld",
+        "HUGINN_PERSISTENT_TERMINAL": "persistent_terminal",
+        "HUGINN_WORLD_MODEL": "world_model",
+        "HUGINN_CURIOSITY_HINT": "curiosity_hint",
+        "HUGINN_PRIVACY_REDACT_SECRETS": "privacy_redact_secrets",
+        "HUGINN_PRIVACY_BLOCK_ON_SECRETS": "privacy_block_on_secrets",
     }
 
     # 给 list_flags 用的功能描述
@@ -80,6 +129,29 @@ class FeatureFlags:
         "harness_joint_optimizer": "联合优化 phase/block/params (实验性, 默认关)",
         "harness_phase_evolve": "阶段规范演化 (实验性, 默认关)",
         "harness_prompt_patch": "提示补丁, 跨域提示增强 (实验性, 默认关)",
+        "json_logs": "JSON 结构化日志 (HUGINN_JSON_LOGS)",
+        "prompt_cache_control": "prompt-cache control 注入 (HUGINN_PROMPT_CACHE_CONTROL)",
+        "telemetry": "遥测采集 (HUGINN_TELEMETRY_ENABLED)",
+        "bandit_mdp": "bandit MDP 决策 (HUGINN_BANDIT_MDP)",
+        "belief_update": "信念更新管线 (HUGINN_BELIEF_UPDATE)",
+        "belief_darwin": "信念 Darwin 演化 (HUGINN_BELIEF_DARWIN)",
+        "belief_mode_switch": "信念模式切换 (HUGINN_BELIEF_MODE_SWITCH)",
+        "memory_typing": "记忆类型标注 (HUGINN_USE_MEMORY_TYPING)",
+        "crdt_merge": "CRDT 合并 (HUGINN_CRDT_MERGE)",
+        "crdt_branch_merge": "CRDT 分支合并 (HUGINN_CRDT_BRANCH_MERGE)",
+        "ising_rerank": "Ising 重排 (HUGINN_ISING_RERANK)",
+        "hils_attention": "HILS 注意力 (HUGINN_HILS_ATTENTION)",
+        "ising_frontier": "Ising 前沿 (HUGINN_ISING_FRONTIER)",
+        "fts_auto_rebuild": "全文检索自动重建 (HUGINN_FTS_AUTO_REBUILD)",
+        "privacy_redact_secrets": "检测到密钥时脱敏 (HUGINN_PRIVACY_REDACT_SECRETS)",
+        "extreme_dispatch": "极端模式分发 (HUGINN_EXTREME_DISPATCH)",
+        "three_cabin": "三舱模型 (HUGINN_USE_THREE_CABIN)",
+        "use_cognitive_map": "认知地图 (HUGINN_USE_COGNITIVE_MAP)",
+        "use_atomworld": "AtomWorld 环境 (HUGINN_USE_ATOMWORLD)",
+        "persistent_terminal": "持久化终端 (HUGINN_PERSISTENT_TERMINAL)",
+        "world_model": "世界模型 (HUGINN_WORLD_MODEL)",
+        "curiosity_hint": "好奇心提示 (HUGINN_CURIOSITY_HINT)",
+        "privacy_block_on_secrets": "检测到密钥时阻断 (HUGINN_PRIVACY_BLOCK_ON_SECRETS)",
         "privacy_off": "隐私级别: off (不脱敏, 默认. 仅由 set_level 维护互斥, 外部设置无效)",
         "privacy_redact": "隐私级别: redact (脱敏后发云端)",
         "privacy_local_only": "隐私级别: local_only (完全本地)",
@@ -222,21 +294,28 @@ class FeatureFlags:
             return self._config_overrides[feature]
         return self._DEFAULTS.get(feature, True)
 
+    @staticmethod
+    def _parse_env_value(raw: str) -> bool:
+        """把环境变量值解析成布尔. true/1/yes/on → True, 其余含无法识别的
+        非空值保守当关 (False). 空串由调用方跳过, 不产生覆盖."""
+        s = raw.strip().lower()
+        if s in ("true", "1", "yes", "on"):
+            return True
+        return False
+
     def _load_env_overrides(self) -> None:
         """读 HUGINN_FEATURE_<NAME> 环境变量. 大写名.
 
         false/0/no/off → 关, true/1/yes/on → 开, 其他非空值保守当关.
+        同时兼容旧裸读变量名 (见 _ENV_ALIASES): 迁移 read 点后旧变量仍生效,
+        已有 shell/.env 配置不因迁移而失效.
         """
         for name in self._DEFAULTS:
             env_name = f"HUGINN_FEATURE_{name.upper()}"
             raw = os.environ.get(env_name)
-            if raw is None:
-                continue
-            s = raw.strip().lower()
-            if s in ("false", "0", "no", "off"):
-                self._env_overrides[name] = False
-            elif s in ("true", "1", "yes", "on"):
-                self._env_overrides[name] = True
-            elif s:
-                # 无法识别的非空值, 保守关掉
-                self._env_overrides[name] = False
+            if raw is not None and raw.strip():
+                self._env_overrides[name] = self._parse_env_value(raw)
+        for alias, name in self._ENV_ALIASES.items():
+            raw = os.environ.get(alias)
+            if raw is not None and raw.strip():
+                self._env_overrides[name] = self._parse_env_value(raw)

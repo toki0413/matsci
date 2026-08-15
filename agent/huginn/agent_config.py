@@ -19,6 +19,8 @@ if TYPE_CHECKING:
     from huginn.config import HuginnConfig
     from huginn.models.router import ModelRouter
 
+from huginn.feature_flags import FeatureFlags
+
 
 def _env_bool(name: str, default: bool) -> bool:
     """读取布尔型环境变量, 默认值用 ``default``.
@@ -153,7 +155,7 @@ class AgentTelemetryConfig:
     def from_env(cls) -> AgentTelemetryConfig:
         return cls(
             telemetry_enabled=(
-                os.environ.get("HUGINN_TELEMETRY_ENABLED", "1").lower() != "false"
+                FeatureFlags.shared().is_enabled("telemetry")
             ),
         )
 
