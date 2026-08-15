@@ -89,9 +89,39 @@ def _collect_all_names(material: dict | None) -> set[str]:
     return names
 
 
+# jieba 懒加载缓存: None=未尝试, False=不可用, 否则为 jieba 模块.
+# 材料名聚合 (Pass 3 模糊 Jaccard) 依赖中文分词, 复用 RAG 升级引入的 jieba.
+_JIEBA: Any | None = None
+
+
+def _get_jieba() -> Any | None:
+    """懒加载 jieba. 首次尝试后缓存结果, 避免每次 _tokenize 都 import."""
+    global _JIEBA
+    if _JIEBA is None:
+        try:
+            import jieba
+            _JIEBA = jieba
+        except Exception:
+            _JIEBA = False
+    return _JIEBA if _JIEBA else None
+
+
 def _tokenize(s: str) -> set[str]:
-    """简单分词: 按非字母数字分割, 小写."""
-    return {t for t in re.split(r"[^a-z0-9]+", (s or "").lower()) if t}
+    """分词: 原 ASCII token 集不变, 额外补 jieba 切出的中文词.
+
+    原逻辑 `[^a-z0-9]+` 会把中文当成分隔符丢弃, 导致 "氮化镓 GaN" 只剩
+    {"gan"}, 纯中文材料名无法聚合. 这里保留英文 token 集 (不破坏既有英文
+    聚合行为), 再叠加 jieba 切出的含 CJK 词, 让中文材料名也能参与 Jaccard.
+    """
+    text = s or ""
+    tokens = {t for t in re.split(r"[^a-z0-9]+", text.lower()) if t}
+    jieba = _get_jieba()
+    if jieba is not None:
+        for t in jieba.cut(text):
+            t = t.strip().lower()
+            if t and not t.isspace() and any("\u4e00" <= c <= "\u9fff" for c in t):
+                tokens.add(t)
+    return tokens
 
 
 def _jaccard(a: set[str], b: set[str]) -> float:
