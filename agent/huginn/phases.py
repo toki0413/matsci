@@ -113,6 +113,7 @@ _CORE_TOOLS: set[str] = {
     "remember",
     "recall",
     "bash_tool",
+    "code_tool",
     "git_tool",
     "unit_tool",
     "numerical_tool",
