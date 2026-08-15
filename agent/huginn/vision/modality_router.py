@@ -1,11 +1,11 @@
-"""内置 Qwen-MM-Plugins —— 多模态插件化能力.
+"""自研多模态模态路由模块 —— 动态分辨率 + 模态识别 + 工具建议.
 
-借鉴 Qwen-MM-Plugins 的 "动态分辨率 + 模态路由 + 多工具集成" 思路,
-把多模态能力打包成可移植、可组合的模块, 供 vision router 主链路调用:
+本模块为 huginn 自研实现, 不属于阿里 QwenLM 的 Qwen-MM-Plugins 官方插件,
+也未包含其 Skill / MCP Server 架构。仅借鉴其 "动态分辨率" 这一通用概念:
 
   1. 动态分辨率预处理 (dynamic resolution)
      大图等比缩放到目标 patch 尺寸, 小图保留原分辨率 (细文字/缩略图鲁棒性).
-     对应 Qwen-VL 的 patch-based 视觉编码思路: 超出最大 patch 数时降采样,
+     思路与 Qwen-VL 的 patch-based 视觉编码类似: 超出最大 patch 数时降采样,
      否则保留细节.
 
   2. 模态识别与路由 (modality routing)
@@ -31,7 +31,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # ── 动态分辨率常量 ─────────────────────────────────────────────────
-# Qwen-VL 以 28x28 的 patch 为视觉 token, 默认 cap 在 ~1MP 附近.
+# 以 patch 数为视觉 token 上限的通用约定: 默认 cap 在 ~1MP 附近.
 # 超出 max_pixel_cap 的图等比降采样到 cap, 少于此的图保留原尺寸 (保细节).
 DEFAULT_MAX_PIXEL_CAP = 1_200_000  # ≈ 1.2MP
 DEFAULT_MAX_SIDE = 2048           # 最长边硬上限, 防止极端宽高比
@@ -112,10 +112,10 @@ def dynamic_resolution_hint(
             w, h = im.size
         nw, nh = recommend_resolution(w, h, max_pixel_cap=max_pixel_cap)
         if (nw, nh) == (w, h):
-            return f"[MM-Plugins] resolution {w}x{h}=ok (no resize)"
+            return f"[MM-Router] resolution {w}x{h}=ok (no resize)"
         ratio = (nw * nh) / (w * h)
         return (
-            f"[MM-Plugins] resolution {w}x{h}->{nw}x{nh} "
+            f"[MM-Router] resolution {w}x{h}->{nw}x{nh} "
             f"(resize to {ratio:.0%}, keep fine text under {max_pixel_cap}px)"
         )
     except Exception:
@@ -272,7 +272,7 @@ def modality_routing_hint(
     if p is not None and not p.is_file():
         return None
 
-    lines: list[str] = ["[MM-Plugins]"]
+    lines: list[str] = ["[MM-Router]"]
     res = dynamic_resolution_hint(image_path, max_pixel_cap)
     if res:
         lines.append(res)
