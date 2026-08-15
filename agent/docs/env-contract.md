@@ -142,7 +142,7 @@
 | `HUGINN_MCMC_CHECKPOINT_INTERVAL` | 10000 | cli/rcb_runner.py:1322, cli/rcb_step2.py:408 | — | external |
 | `HUGINN_MCMC_CKPT_DIR` | '' | metacog/hypothesis_manifold.py:1306 | — | external |
 | `HUGINN_MCMC_GLOBAL_PROPOSAL` | 0.3 | cli/rcb_mcmc.py:278 | — | external |
-| `HUGINN_MCMC_HAPTIC` | 0 | cli/rcb_runner.py:1337, cli/rcb_step2.py:412 | — | external |
+| `HUGINN_MCMC_HAPTIC` | 1 | cli/rcb_runner.py:1337, cli/rcb_step2.py:412 | — | external |
 | `HUGINN_MCMC_HAPTIC_TEMPERATURE` | 1.0 | cli/rcb_runner.py:1342, cli/rcb_step2.py:415 | — | external |
 | `HUGINN_MCMC_INTERVAL` | 5 | autoloop/engine_observe.py:718, cli/rcb_step2.py:407 | — | external |
 | `HUGINN_MCMC_MODE` | '' | cli/rcb_runner.py:1307 | — | external |
