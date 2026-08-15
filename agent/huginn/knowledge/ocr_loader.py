@@ -32,6 +32,15 @@ def set_llm_vision_callback(fn: Callable[[bytes, str], str] | None) -> None:
     _LLM_VISION_CALLBACK = fn
 
 
+def llm_vision_available() -> bool:
+    """是否已注入多模态 LLM 解码 callback (即 LLM-as-OCR 可用).
+
+    server_core 启动时若 agent 模型支持 vision 会注入 callback. 未注入时
+    LLM-as-OCR 不可用, 调用方应跳过整页视觉压缩, 避免白渲染/白存图.
+    """
+    return _LLM_VISION_CALLBACK is not None
+
+
 def _llm_ocr_image(image: Any, hint: str = "") -> str:
     """把 PIL Image 喂给多模态 LLM 解读, 返回结构化 markdown.
 
