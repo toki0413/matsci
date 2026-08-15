@@ -2304,6 +2304,47 @@ class HypothesisMixin:
                 "metacog: sheaf H¹=%s (多源证据存在全局不一致), betti=%s, topo=%s",
                 result["h1"], result["betti"], result["topo_verdict"],
             )
+        # A 路径: 把假设图的超图联合命题 (mount_knowledge + dual_coverage 注册的
+        # _simplicials) 同步回 ProjectKnowledgeGraph 成 hyperedge. 让 KB 检索能命中
+        # "成分∧工艺→性能"这类 n-ary 联合命题, 而非单点. advisory, 失败静默.
+        self._sync_simplicials_to_kg()
+
+    def _sync_simplicials_to_kg(self) -> None:
+        """把假设图 _simplicials 的 n-ary 联合命题写回 self.kg 成 hyperedge.
+
+        高阶网络视角: _simplicials 里每个 frozenset 是一个"整体支撑关系"的
+        显式记录 (知识约束 + 它约束的假设节点). 用 add_hyperedge 的 clique+
+        元节点方式把它落进知识图谱, 让后续 _build_kg_text 检索能命中联合命题.
+
+        advisory: 无 kg / kg 不支持 / 无 super-edge 均静默降级, 不阻塞主循环.
+        """
+        try:
+            kg = getattr(self, "kg", None)
+            if kg is None or not hasattr(kg, "add_hyperedge"):
+                return
+            nodes_by_id = {n.id: n for n in self.hypothesis_graph.all_nodes()}
+            for simplex in list(getattr(self.hypothesis_graph, "_simplicials", set()))[:32]:
+                # 只同步"纯假设节点"的联合 (≥2 个假设节点), 知识约束 id
+                # (sp:*/er:*) 是内建节点, 不写回 KG 避免污染.
+                hyp_ids = [nid for nid in simplex
+                           if nid in nodes_by_id and not str(nid).startswith(("sp:", "er:"))]
+                if len(hyp_ids) < 2:
+                    continue
+                labels = []
+                for nid in hyp_ids:
+                    stmt = (nodes_by_id[nid].statement or "")[:60]
+                    if stmt:
+                        labels.append(stmt)
+                if len(labels) < 2:
+                    continue
+                kg.add_hyperedge(
+                    labels,
+                    relation="joint_proposition",
+                    source="hypothesis_simplicial",
+                    confidence=0.4,  # 联合命题置信度保守, 不压真实证据边
+                )
+        except Exception:
+            logger.debug("sync simplicials to kg failed (non-fatal)", exc_info=True)
 
     def _choose_recovery_phase(self, failure_type: str, validation: dict[str, Any]) -> str:
         """v7 phase 解耦: 根据失败类型选下一轮起点 phase.
