@@ -884,6 +884,52 @@ LUCID review (mandatory after generating hypothesis):
         except Exception:
             logger.debug("cluster block build skipped", exc_info=True)
 
+        # 拓扑洞察注入 (B/C 路径): 把最近一次同调/拓扑审计 (_metacog_topology_audit
+        # 算出的 sheaf H¹ / simplicial Betti / Hodge verdict / persistence) 回灌 prompt.
+        # 之前 _metacog_last_topology 只算不用 — 现在让 agent 看到"这个假设涉及自洽
+        # 反馈环 (β₁>0)"或"多源证据全局不一致 (H¹≠0)", 从而生成更深的假设.
+        # advisory: 信号不阻断, 只作为结构化提示. 空/未审计时返空串.
+        topo_block = ""
+        try:
+            _topo = getattr(self, "_metacog_last_topology", None)
+            if _topo:
+                _lines = []
+                _h1 = _topo.get("h1")
+                _betti = _topo.get("betti")
+                _verdict = _topo.get("topo_verdict")
+                _persist = _topo.get("persistence") or {}
+                if _h1 is not None:
+                    _h1_note = (
+                        "多源证据存在全局不一致 (gluing obstruction). "
+                        "新假设应优先解释或消解这个不一致, 而非回避."
+                        if _h1
+                        else "多源证据全局一致 (无 gluing obstruction)."
+                    )
+                    _lines.append(f"- Sheaf H¹={_h1}: {_h1_note}")
+                if _betti:
+                    _beta0, _beta1 = _betti
+                    if _beta1:
+                        _lines.append(
+                            f"- Simplicial Betti β₁={_beta1}: 假设图存在自洽反馈环 (拓扑回路). "
+                            "考虑它是否代表一个可复现的自洽机制而非噪声."
+                        )
+                    _lines.append(f"- Simplicial Betti β₀={_beta0}: 假设空间连通分量数 (探索路线数).")
+                if _verdict:
+                    _lines.append(f"- Hodge topology verdict: {_verdict}")
+                if _persist.get("n_persistent_clusters") and _topo.get("h1") is not None:
+                    _lines.append(
+                        f"- Persistence: {_persist.get('n_persistent_clusters')} 个多尺度存活 cluster "
+                        "(假设空间是否分裂)."
+                    )
+                if _lines:
+                    topo_block = (
+                        "\n### Topology Insights (advisory, from last audit)\n"
+                        + "\n".join(_lines[:6])
+                        + "\nConsider these structural signals when generating hypotheses.\n"
+                    )
+        except Exception:
+            logger.debug("topology insight injection skipped (non-fatal)", exc_info=True)
+
         # 按优先级拼接, 超预算自动裁剪低优先级 block
         blocks = self._apply_block_patches(
             [
@@ -932,6 +978,7 @@ Hypothesis:""",
                 ("pm", pm_block),
                 ("metacog", metacog_block),
                 ("cluster", cluster_block),
+                ("topo", topo_block),
                 ("skill", self._build_skill_context_block()),
                 ("hint", hint_block),
             ],

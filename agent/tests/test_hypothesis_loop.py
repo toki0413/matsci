@@ -540,3 +540,170 @@ class TestEventLog:
 
     def test_empty_graph_events(self):
         assert HypothesisGraph().events() == []
+
+
+# ── 超图同步 / 拓扑信号接入 (A + B/C 路径) ──────────────────────────────────
+
+
+class TestSimplicialSyncToKg:
+    """A 路径: _simplicials 超图联合命题写回 ProjectKnowledgeGraph 成 hyperedge."""
+
+    def _make_dummy(self, hypo_graph, kg):
+        from huginn.autoloop.hypothesis_loop import HypothesisMixin
+
+        dummy = object.__new__(HypothesisMixin)
+        dummy.hypothesis_graph = hypo_graph
+        dummy.kg = kg
+        return dummy
+
+    def test_sync_writes_hyperedge_for_joint_proposition(self):
+        g = HypothesisGraph()
+        h1 = g.add_hypothesis("如果掺杂增加, 带隙减小")
+        h2 = g.add_hypothesis("高温下带隙减小的趋势减弱")
+        # 手动注册一个 2-单纯形 (联合命题)
+        g._simplicials.add(frozenset({h1, h2}))
+
+        class _SpyKg:
+            def __init__(self):
+                self.calls = []
+
+            def add_hyperedge(self, node_ids, relation, **attrs):
+                self.calls.append((node_ids, relation, attrs))
+
+        kg = _SpyKg()
+        dummy = self._make_dummy(g, kg)
+        dummy._sync_simplicials_to_kg()
+
+        assert len(kg.calls) == 1
+        labels, relation, attrs = kg.calls[0]
+        assert relation == "joint_proposition"
+        assert len(labels) == 2
+        assert attrs["source"] == "hypothesis_simplicial"
+        assert attrs["confidence"] == 0.4
+
+    def test_sync_skips_knowledge_constraint_ids(self):
+        g = HypothesisGraph()
+        h1 = g.add_hypothesis("如果掺杂增加, 带隙减小")
+        h2 = g.add_hypothesis("高温下带隙减小")
+        # 知识约束 id (sp:*/er:*) 不应写回 KG 污染
+        g._simplicials.add(frozenset({"sp:abc123", h1}))
+        g._simplicials.add(frozenset({"er:def456", h2}))
+
+        class _SpyKg:
+            def __init__(self):
+                self.calls = []
+
+            def add_hyperedge(self, node_ids, relation, **attrs):
+                self.calls.append((node_ids, relation, attrs))
+
+        kg = _SpyKg()
+        dummy = self._make_dummy(g, kg)
+        dummy._sync_simplicials_to_kg()
+
+        # 两个 simplex 都只含 1 个假设节点 → 都被跳过
+        assert kg.calls == []
+
+    def test_sync_advisory_no_kg(self):
+        """无 kg 时静默降级, 不抛异常."""
+        from huginn.autoloop.hypothesis_loop import HypothesisMixin
+
+        g = HypothesisGraph()
+        h1 = g.add_hypothesis("A")
+        h2 = g.add_hypothesis("B")
+        g._simplicials.add(frozenset({h1, h2}))
+        dummy = object.__new__(HypothesisMixin)
+        dummy.hypothesis_graph = g
+        dummy.kg = None
+        # 不应抛异常
+        dummy._sync_simplicials_to_kg()
+
+    def test_sync_skips_singleton_or_empty_statements(self):
+        g = HypothesisGraph()
+        h1 = g.add_hypothesis("如果掺杂增加, 带隙减小")
+        g._simplicials.add(frozenset({h1}))  # 单节点, 不成联合
+
+        class _SpyKg:
+            def __init__(self):
+                self.calls = []
+
+            def add_hyperedge(self, node_ids, relation, **attrs):
+                self.calls.append((node_ids, relation, attrs))
+
+        kg = _SpyKg()
+        dummy = self._make_dummy(g, kg)
+        dummy._sync_simplicials_to_kg()
+        assert kg.calls == []
+
+
+class TestTopologyPromptInjection:
+    """B/C 路径: _metacog_last_topology 信号回灌到 _build_hypothesis_prompt."""
+
+    def test_topology_block_appears_when_signals_present(self):
+        from huginn.autoloop.engine_observe import EngineObserveMixin
+
+        obj = object.__new__(EngineObserveMixin)
+        obj._metacog_last_topology = {
+            "h1": 0,
+            "betti": (1, 1),
+            "topo_verdict": "equivalent",
+            "persistence": {"n_persistent_clusters": 2},
+        }
+        # 只测 topo_block 构建逻辑相关的属性, 其余 mock
+        import unittest.mock as _m
+        obj._apply_block_patches = lambda blocks, phase: blocks
+        obj._trim_to_budget = lambda blocks, phase: "".join(b for _, b in blocks)
+
+        # 构建 prompt 需要的方法用 MagicMock 返回空
+        for meth in (
+            "_build_episodic_replay_block", "_build_pmk_block",
+            "_build_curiosity_block", "_build_kb_text", "_build_kg_text",
+            "_build_memory_text", "_build_pm_text", "_build_metacog_block",
+            "_build_skill_context_block", "_should_imaginate",
+            "_metacog_component_representatives",
+        ):
+            setattr(obj, meth, _m.MagicMock(return_value=""))
+        obj._IMAGINATION_PROMPT_BLOCK = ""
+        obj._MATH_DEPTH_PROMPT_BLOCK = ""
+        obj._speculator_hint = ""
+        obj._last_execution_result = None
+        obj._last_failure_mode = ""
+        obj.workspace = None
+        obj.hypothesis_graph = _m.MagicMock()
+        obj.hypothesis_graph.cluster_by_dimension.return_value = {}
+        obj.hypothesis_graph.frontier_ranked.return_value = []
+        obj._extract_search_query = lambda context: ""
+
+        prompt = obj._build_hypothesis_prompt({})
+        assert "### Topology Insights" in prompt
+        assert "β₁=1" in prompt
+        assert "H¹=0" in prompt
+
+    def test_topology_block_empty_when_no_audit(self):
+        from huginn.autoloop.engine_observe import EngineObserveMixin
+
+        obj = object.__new__(EngineObserveMixin)
+        obj._metacog_last_topology = None
+        import unittest.mock as _m
+        obj._apply_block_patches = lambda blocks, phase: blocks
+        obj._trim_to_budget = lambda blocks, phase: "".join(b for _, b in blocks)
+        for meth in (
+            "_build_episodic_replay_block", "_build_pmk_block",
+            "_build_curiosity_block", "_build_kb_text", "_build_kg_text",
+            "_build_memory_text", "_build_pm_text", "_build_metacog_block",
+            "_build_skill_context_block", "_should_imaginate",
+            "_metacog_component_representatives",
+        ):
+            setattr(obj, meth, _m.MagicMock(return_value=""))
+        obj._IMAGINATION_PROMPT_BLOCK = ""
+        obj._MATH_DEPTH_PROMPT_BLOCK = ""
+        obj._speculator_hint = ""
+        obj._last_execution_result = None
+        obj._last_failure_mode = ""
+        obj.workspace = None
+        obj.hypothesis_graph = _m.MagicMock()
+        obj.hypothesis_graph.cluster_by_dimension.return_value = {}
+        obj.hypothesis_graph.frontier_ranked.return_value = []
+        obj._extract_search_query = lambda context: ""
+
+        prompt = obj._build_hypothesis_prompt({})
+        assert "### Topology Insights" not in prompt
