@@ -749,11 +749,19 @@ class ToolAdapter:
                 s = obj
                 if os.environ.get("HUGINN_PRIVACY_REDACT_SECRETS", "1") != "0":
                     s = redact_secrets(s)
-                return compress_tool_output(s, max_output_tokens=compression_max_tokens)
+                return compress_tool_output(
+                    s,
+                    max_output_tokens=compression_max_tokens,
+                    tool_name=tool.name,
+                )
 
             # Everything else: apply structured compression (numeric summaries,
             # list head/tail, long-text truncation).
-            return compress_tool_output(obj, max_output_tokens=compression_max_tokens)
+            return compress_tool_output(
+                obj,
+                max_output_tokens=compression_max_tokens,
+                tool_name=tool.name,
+            )
 
         def _audit(
             input_data: BaseModel,
