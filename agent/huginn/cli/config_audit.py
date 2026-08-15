@@ -97,10 +97,11 @@ def build_inventory(root: Path | None = None) -> dict[str, dict]:
     inventory: dict[str, dict] = {}
     for name in sorted(ops):
         o = ops[name]
-        # read 默认值取"最常见"的 (多数调用点的一致默认, 便于人读)
+        # read 默认值取"最常见"的 (多数调用点的一致默认, 便于人读).
+        # 并列时按值字典序稳定取大, 避免 set() 哈希顺序导致渲染不确定.
         defaults = [r["default"] for r in o["read"] if r["default"]]
         most_common_default = (
-            max(set(defaults), key=defaults.count) if defaults else ""
+            max(defaults, key=lambda d: (defaults.count(d), d)) if defaults else ""
         )
         writes = len(o["setdefault"]) + len(o["set"]) + len(o["pop"])
         inventory[name] = {
@@ -280,7 +281,36 @@ def build_plugins_contract(root: Path | None = None) -> dict[str, list[dict]]:
         "compaction_policies": sorted(compaction, key=lambda r: (r["priority"] if r["priority"] is not None else 0, r["name"])),
         "memory_policies": sorted(memory, key=lambda r: (r["priority"] if r["priority"] is not None else 0, r["name"])),
         "event_hooks": sorted(hooks, key=lambda r: (r["name"], r["loc"])),
+        "defaults": _policy_defaults(),
     }
+
+
+def _policy_defaults() -> dict:
+    """运行时读取 compaction / 记忆整理策略的**内置默认** (轻量导入).
+
+    静态扫描抓不到注册调用 (第三方策略在运行时注册), 但内置默认值是模块级
+    常量, 运行时读取后契约诚实反映"无第三方接入时的生效策略".
+    """
+    out: dict = {}
+    try:
+        from huginn.plugins.compaction_policy import (
+            _DEFAULT_NEVER_TRIM_BLOCK_TYPES,
+            _DEFAULT_PROTECTED_ROLES,
+        )
+        from huginn.plugins.memory_maintenance_policy import _DEFAULT as _mem_default
+
+        out["compaction"] = {
+            "protected_roles": sorted(_DEFAULT_PROTECTED_ROLES),
+            "never_trim_block_types": sorted(_DEFAULT_NEVER_TRIM_BLOCK_TYPES),
+        }
+        out["memory"] = {
+            "decay_per_day": _mem_default.decay_per_day,
+            "prune_threshold": _mem_default.prune_threshold,
+            "deduplicate": _mem_default.deduplicate,
+        }
+    except Exception as e:  # noqa: BLE001 - 依赖缺失时降级
+        out["error"] = str(e)
+    return out
 
 
 def _fmt_section(title: str, rows: list[dict], headers: tuple[str, ...], keys: tuple[str, ...]) -> list[str]:
@@ -339,6 +369,26 @@ def render_plugins_markdown(contract: dict[str, list[dict]]) -> str:
         ("事件", "handler", "注册位置"),
         ("name", "handler", "loc"),
     )
+    # 内置默认策略 (无第三方接入时的生效值). 字段名短:
+    d = contract.get("defaults", {})
+    if isinstance(d, dict) and "error" not in d:
+        comp = d.get("compaction", {})
+        mem = d.get("memory", {})
+        lines.append("### 内置默认策略值 (无第三方接入时生效)")
+        lines.append("")
+        lines.append(
+            f"- **Compaction**: protected_roles="
+            f"`{', '.join(comp.get('protected_roles', []))}`; "
+            f"never_trim_block_types=`{', '.join(comp.get('never_trim_block_types', []))}`"
+        )
+        lines.append(
+            f"- **记忆整理**: decay_per_day=`{mem.get('decay_per_day')}`, "
+            f"prune_threshold=`{mem.get('prune_threshold')}`, deduplicate=`{mem.get('deduplicate')}`"
+        )
+        lines.append("")
+    elif isinstance(d, dict) and "error" in d:
+        lines.append("> 注: 内置默认策略值读取失败 (依赖缺失): " + str(d["error"]))
+        lines.append("")
     return "\n".join(lines)
 
 
@@ -351,25 +401,35 @@ def render_plugins_markdown(contract: dict[str, list[dict]]) -> str:
 # read_only/cost_tier). 是 agent 能力面的可解释性基线.
 
 def build_tools_contract() -> list[dict]:
-    """实例化核心工具并向 ToolRegistry 登记, 快照其声明元数据."""
+    """实例化核心工具并向 ToolRegistry 登记, 快照其声明元数据.
+
+    契约描述的是"agent 核心能力基线", 只应反映核心工具集 (register_core_tools),
+    不应受进程内已有注册 (如测试 fixture 预注册的全部工具) 影响. 因此先在
+    隔离的临时注册表上登记, 结束后恢复现场, 保证输出与运行环境无关、可再生成.
+    """
     from huginn.tools import register_core_tools
     from huginn.tools.registry import ToolRegistry
 
-    register_core_tools(None)
-    rows: list[dict] = []
-    for name in sorted(ToolRegistry._tools):
-        t = ToolRegistry._tools[name]
-        rows.append(
-            {
-                "name": name,
-                "category": t.category,
-                "destructive": t.destructive,
-                "read_only": t.read_only,
-                "cost_tier": t.cost_tier,
-                "description": (t.description or "").strip().replace("\n", " ")[:80],
-            }
-        )
-    return rows
+    ambient = ToolRegistry.snapshot()
+    try:
+        ToolRegistry.clear()
+        register_core_tools(None)
+        rows: list[dict] = []
+        for name in sorted(ToolRegistry._tools):
+            t = ToolRegistry._tools[name]
+            rows.append(
+                {
+                    "name": name,
+                    "category": t.category,
+                    "destructive": t.destructive,
+                    "read_only": t.read_only,
+                    "cost_tier": t.cost_tier,
+                    "description": (t.description or "").strip().replace("\n", " ")[:80],
+                }
+            )
+        return rows
+    finally:
+        ToolRegistry.restore(ambient)
 
 
 def render_tools_markdown(rows: list[dict]) -> str:
@@ -546,6 +606,217 @@ def render_routes_markdown(contract: dict) -> str:
     return "\n".join(lines)
 
 
+# ---------------------------------------------------------------------------
+# 错误语义契约 (errors-contract.md)
+# ---------------------------------------------------------------------------
+# ToolResult.error_kind 的分类契约. 回答"工具失败如何分类 / 谁在哪里做映射".
+# 枚举来自 core_types.py::ErrorKind; 分类点 = 代码里产出 ErrorKind.<MEMBER> 的位置.
+
+_ERROR_KIND_REF = re.compile(r'ErrorKind\.([A-Z][A-Z0-9_]+)')
+_ERROR_KIND_DOC = re.compile(r'^\s*([A-Z][A-Z0-9_]+)\s*=\s*"[A-Za-z_]+"\s*#\s*(.+)$')
+
+
+def build_errors_contract(root: Path | None = None) -> dict:
+    """构建错误语义契约: ErrorKind 枚举 + 各分类点."""
+    root = root or _ROOT
+    # 枚举语义: 从 core_types.py 的 ErrorKind 类内注释行提取 (name → 说明), 避免硬编码漂移.
+    docs: dict[str, str] = {}
+    doc_fn = root / "core_types.py"
+    if doc_fn.exists():
+        try:
+            clines = doc_fn.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            clines = []
+        in_class = False
+        for ln in clines:
+            if "class ErrorKind" in ln:
+                in_class = True
+                continue
+            if in_class and ln.strip() and not ln.startswith((" ", "\t")) and "=" not in ln:
+                break
+            if not in_class:
+                continue
+            m = _ERROR_KIND_DOC.match(ln)
+            if m:
+                docs[m.group(1)] = m.group(2).strip()
+
+    # 分类点: ErrorKind.<MEMBER> 引用位置
+    refs: dict[str, list[str]] = defaultdict(list)
+    for py in root.rglob("*.py"):
+        if "__pycache__" in str(py) or py.resolve() == _SELF:
+            continue
+        try:
+            text = py.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for m in _ERROR_KIND_REF.finditer(text):
+            refs[m.group(1)].append(f"{py.relative_to(root)}:{text[: m.start()].count(chr(10)) + 1}")
+
+    members: list[dict] = []
+    for name, doc in docs.items():
+        locs = sorted(set(refs.get(name, [])))
+        members.append(
+            {
+                "name": name,
+                "doc": doc,
+                "points": ", ".join(locs[:3]) + (f" +{len(locs)-3} 处" if len(locs) > 3 else ""),
+            }
+        )
+    return {"members": members}
+
+
+def render_errors_markdown(contract: dict) -> str:
+    lines: list[str] = []
+    lines.append("# 错误语义契约 (ErrorKind)")
+    lines.append("")
+    lines.append(
+        "自动生成: `python -m huginn.cli.config_audit --errors --out docs/errors-contract.md`."
+    )
+    lines.append(
+        "登记 `ToolResult.error_kind` 的分类语义 (core_types.py::ErrorKind)。下游 "
+        "(debugging / trace / auto-retry) 据此区分失败类别; 默认 `NONE` 保持既有调用方"
+        "行为不变。`points` 是产出该分类的静态扫描位置。映射入口: "
+        "`tools/bash_tool.py::_result_error_kind` (returncode==0→NONE, timed_out→TIMEOUT, "
+        "blocked→DENIED, 其余→FATAL)。"
+    )
+    lines.append("")
+    lines += _fmt_section(
+        "ErrorKind 类别",
+        contract["members"],
+        ("类别", "语义", "产出点"),
+        ("name", "doc", "points"),
+    )
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Mode/Phase 契约 (modes-contract.md)
+# ---------------------------------------------------------------------------
+# prompt 面的 mode 系统契约: 五种 mode (MODE_INSTRUCTIONS) + 七个 phase
+# (PHASE_PROMPTS + PHASE_BUDGETS) + v6 G51 结构关系补充. 回答"agent 有哪些
+# mode / 每个 phase 的预算与提示头 / 结构对齐补充落在哪".
+
+_MODE_INSTR_OPEN = re.compile(r"_MODE_INSTRUCTIONS\s*=\s*\{")
+_MODE_KEY = re.compile(r'^\s*"([a-z_]+)"\s*:\s*\(')
+_G51_KEY = re.compile(r'^\s*"([a-z_]+)"\s*:\s*\(')
+
+
+def _parse_mode_instructions(root: Path) -> list[tuple[str, str]]:
+    """从 prompt_builder.py 源码解析 _MODE_INSTRUCTIONS 的 (mode, 首行说明)."""
+    fn = root / "agent" / "prompt_builder.py"
+    try:
+        lines = fn.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+    rows: list[tuple[str, str]] = []
+    in_block = False
+    cur: str | None = None
+    for ln in lines:
+        if _MODE_INSTR_OPEN.search(ln):
+            in_block = True
+            continue
+        if not in_block:
+            continue
+        m = _MODE_KEY.match(ln)
+        if m:
+            cur = m.group(1)
+            continue
+        if cur and ln.strip().startswith('"'):
+            rows.append((cur, ln.strip().strip('"').strip()))
+            cur = None
+            continue
+        if ln.strip() == "}":
+            break
+    return rows
+
+
+def build_modes_contract(root: Path | None = None) -> dict:
+    """构建 mode/phase 契约."""
+    root = root or _ROOT
+    modes = [{"name": n, "summary": s} for n, s in _parse_mode_instructions(root)]
+
+    # phases / budgets 来自 phases.py (纯 stdlib, 轻量导入安全).
+    phases: list[dict] = []
+    overlapping = False
+    try:
+        from huginn.phases import PHASE_BUDGETS, PHASE_PROMPTS, ResearchPhase
+
+        for ph in ResearchPhase:
+            budget = PHASE_BUDGETS.get(ph)
+            prompt = PHASE_PROMPTS.get(ph, "")
+            first_line = ""
+            if prompt:
+                for ln in prompt.splitlines():
+                    if ln.strip():
+                        first_line = ln.strip()
+                        break
+            phases.append(
+                {
+                    "name": ph.value,
+                    "short": ph.name,
+                    "budget": budget.max_calls if budget else None,
+                    "head": first_line,
+                }
+            )
+    except Exception:
+        overlapping = True
+
+    # G51 补充键 (从 prompt_builder 源码)
+    g51: list[str] = []
+    fn = root / "agent" / "prompt_builder.py"
+    try:
+        lines = fn.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        lines = []
+    in_g51 = False
+    for ln in lines:
+        if "_PHASE_G51_NOTES" in ln and "=" in ln:
+            in_g51 = True
+            continue
+        if in_g51:
+            m = _G51_KEY.match(ln)
+            if m:
+                g51.append(m.group(1))
+            elif ln.strip() == "}":
+                break
+    return {"modes": modes, "phases": phases, "g51": g51, "import_failed": overlapping}
+
+
+def render_modes_markdown(contract: dict) -> str:
+    lines: list[str] = []
+    lines.append("# Mode/Phase 契约 (prompt 面)")
+    lines.append("")
+    lines.append(
+        "自动生成: `python -m huginn.cli.config_audit --modes --out docs/modes-contract.md`."
+    )
+    lines.append(
+        "登记 prompt 面的 mode 系统: **mode** (MODE_INSTRUCTIONS, agent 顶层行为) 与 "
+        "**phase** (PHASE_PROMPTS + PHASE_BUDGETS, 研究流程阶段)。`budget` 是该 phase 的 "
+        "工具调用预算 (max_calls); `head` 是 phase 提示头首行; `g51` 是 v6 结构关系语义"
+        "对齐补充所覆盖的 phase。"
+    )
+    lines.append("")
+    lines += _fmt_section(
+        "Mode",
+        contract["modes"],
+        ("mode", "行为说明"),
+        ("name", "summary"),
+    )
+    lines += _fmt_section(
+        "Phase",
+        contract["phases"],
+        ("phase", "枚举名", "预算", "提示头首行"),
+        ("name", "short", "budget", "head"),
+    )
+    lines.append("")
+    lines.append("G51 结构关系补充覆盖 phase: " + (", ".join(f"`{g}`" for g in contract["g51"]) or "—"))
+    lines.append("")
+    if contract.get("import_failed"):
+        lines.append("> 注: phases.py 导入失败, phase 表为空 (依赖缺失)。")
+        lines.append("")
+    return "\n".join(lines)
+
+
 def build_flags_contract(root: Path | None = None) -> list[dict]:
     """构建 feature-flags 契约: 每个 flag 的默认值/描述/旧 env 别名/消费点."""
     root = root or _ROOT
@@ -616,6 +887,22 @@ def render_flags_markdown(rows: list[dict]) -> str:
     return "\n".join(lines)
 
 
+# 契约模式注册表: flag 名 → (builder, renderer, 默认输出文件名).
+# 供 main() 分派, 也供契约漂移测试 (tests/test_config_contracts.py) 复用,
+# 保证"文档与代码一致"的校验对象就是实际分派逻辑本身.
+CONTRACT_MODES: dict[str, tuple[object, object, str]] = {
+    "plugins": (build_plugins_contract, render_plugins_markdown, "plugins-contract.md"),
+    "tools": (build_tools_contract, render_tools_markdown, "tools-contract.md"),
+    "events": (build_events_contract, render_events_markdown, "events-contract.md"),
+    "routes": (build_routes_contract, render_routes_markdown, "routes-contract.md"),
+    "errors": (build_errors_contract, render_errors_markdown, "errors-contract.md"),
+    "modes": (build_modes_contract, render_modes_markdown, "modes-contract.md"),
+    "flags": (build_flags_contract, render_flags_markdown, "feature-flags-contract.md"),
+}
+# env 契约为默认模式 (无 --xxx 时), 单独登记供漂移测试统一遍历.
+ENV_CONTRACT_NAME = "env-contract.md"
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--json", action="store_true", help="输出 JSON inventory")
@@ -645,6 +932,16 @@ def main(argv: list[str] | None = None) -> int:
         help="输出路由契约 (ModelRouter task→tag) 而非 env 契约",
     )
     parser.add_argument(
+        "--errors",
+        action="store_true",
+        help="输出错误语义契约 (ErrorKind 分类面) 而非 env 契约",
+    )
+    parser.add_argument(
+        "--modes",
+        action="store_true",
+        help="输出 Mode/Phase 契约 (prompt 面) 而非 env 契约",
+    )
+    parser.add_argument(
         "--out",
         type=str,
         default="",
@@ -653,13 +950,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     # 契约模式分派: 每个 --xxx 对应一个 (builder, renderer, 文件名).
-    modes = {
-        "plugins": (build_plugins_contract, render_plugins_markdown, "plugins-contract.md"),
-        "tools": (build_tools_contract, render_tools_markdown, "tools-contract.md"),
-        "events": (build_events_contract, render_events_markdown, "events-contract.md"),
-        "routes": (build_routes_contract, render_routes_markdown, "routes-contract.md"),
-        "flags": (build_flags_contract, render_flags_markdown, "feature-flags-contract.md"),
-    }
+    modes = CONTRACT_MODES
     for flag, (builder, renderer, default_name) in modes.items():
         if getattr(args, flag, False):
             data = builder()
