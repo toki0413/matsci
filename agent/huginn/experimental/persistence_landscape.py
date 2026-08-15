@@ -21,20 +21,16 @@ from dataclasses import dataclass
 
 import numpy as np
 
-# ponytail: 兼容 python 文件 直接跑 + from metacog.persistence_landscape import 两种模式
-# 直接跑时 metacog 包没初始化, relative import 失败, 把 metacog 目录加 sys.path
-# 用不带前缀的 import 避免触发 metacog/__init__.py (它会拉 huginn 链)
-try:
-    from .hypothesis_manifold import Hypothesis, HypothesisManifold, Observation
-    from .simplicial_homology import compute_persistent_homology, is_gudhi_available
-except ImportError:
-    import os
-    import sys
-    _here = os.path.dirname(os.path.abspath(__file__))
-    if _here not in sys.path:
-        sys.path.insert(0, _here)
-    from hypothesis_manifold import Hypothesis, HypothesisManifold, Observation
-    from simplicial_homology import compute_persistent_homology, is_gudhi_available
+# 依赖的 HypothesisManifold / simplicial_homology 留在 metacog 包, 这里用绝对导入.
+from huginn.metacog.hypothesis_manifold import (  # noqa: E402
+    Hypothesis,
+    HypothesisManifold,
+    Observation,
+)
+from huginn.metacog.simplicial_homology import (  # noqa: E402
+    compute_persistent_homology,
+    is_gudhi_available,
+)
 
 
 # ---------- point cloud 构造 ----------

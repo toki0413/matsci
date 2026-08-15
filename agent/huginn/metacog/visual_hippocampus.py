@@ -26,7 +26,7 @@ Bourbaki 三结构视角 (B 文档化):
                          LRU 截断 = monoid 商 (quotient by capacity).
   序     (timestamp):   entry.ts 是全序. recall 按 score (含 decay) 排序.
   拓扑   (tf-idf 邻域):  recall 的 text_match 定义"相似度邻域".
-                         HippocampusView (topology_protocol) 适配.
+                         HippocampusView (huginn/experimental/topology_protocol) 适配.
 """
 from __future__ import annotations
 
