@@ -73,6 +73,52 @@ def _flatten_replay_content(content: Any) -> str:
     return "\n".join(p for p in parts if p)
 
 
+# jieba 懒加载缓存: None=未尝试, False=不可用, 否则为 jieba 模块.
+# 中文语义重叠 (supported_ratio 核心算子) 依赖中文分词, 复用 RAG 升级引入的 jieba.
+_JIEBA: Any | None = None
+
+
+def _get_jieba() -> Any | None:
+    """懒加载 jieba. 首次尝试后缓存结果, 避免每次 _compute_semantic_overlap 都 import."""
+    global _JIEBA
+    if _JIEBA is None:
+        try:
+            import jieba
+            _JIEBA = jieba
+        except Exception:
+            _JIEBA = False
+    return _JIEBA if _JIEBA else None
+
+
+def _semantic_tokenize(text: str) -> list[str]:
+    """语义重叠用分词: 优先 jieba 中文分词, 否则 ASCII 词组.
+
+    jieba 可用时 "高熵合金" 拆成 ["高熵合金"] (或 ["高熵","合金"]), 材料术语
+    精确命中率远高于按字切. 融合 ASCII 词 (jieba 会把英文词也切成片段, 这里
+    额外保留字母数字长 token 作兜底). 无 jieba 时回退原 \\b\\w\\w+\\b 规则.
+    """
+    if not text:
+        return []
+    text_l = text.lower()
+    jieba = _get_jieba()
+    if jieba is not None:
+        tokens = []
+        seen = set()
+        for tok in jieba.cut(text_l):
+            if not tok or tok.isspace():
+                continue
+            if tok not in seen:
+                seen.add(tok)
+                tokens.append(tok)
+        # 兜底: 保留纯字母数字词组 (jieba 可能漏切的英文/数字 token)
+        for tok in re.findall(r"\b\w\w+\b", text_l):
+            if tok not in seen:
+                seen.add(tok)
+                tokens.append(tok)
+        return tokens
+    return re.findall(r"\b\w\w+\b", text_l)
+
+
 def _compute_semantic_overlap(text_a: str, text_b: str) -> float:
     """TF-IDF + cosine similarity between two free-form texts.
 
@@ -99,7 +145,10 @@ def _compute_semantic_overlap(text_a: str, text_b: str) -> float:
 
     if _SKLEARN_OK:
         try:
-            vec = TfidfVectorizer()
+            # 自定义 tokenizer 让 TF-IDF 也吃到 jieba 中文分词 (英文词由
+            # _semantic_tokenize 兜底保留). lowercase=False 因为 _semantic_tokenize
+            # 内部已 lower.
+            vec = TfidfVectorizer(tokenizer=_semantic_tokenize, lowercase=False)
             X = vec.fit_transform([a, b])
             # 矩阵只有 2 行, [0,1] 是 a vs b 的 cosine.
             return float(_sklearn_cosine(X)[0, 1])
@@ -111,9 +160,9 @@ def _compute_semantic_overlap(text_a: str, text_b: str) -> float:
             logger.debug("sklearn tfidf cosine failed, fallback to stdlib", exc_info=True)
 
     # stdlib fallback: Counter (TF, 无 IDF) + math.sqrt 算 cosine.
-    # token_pattern 跟 sklearn 默认一致: 2+ char word token.
-    ta = re.findall(r"\b\w\w+\b", a.lower())
-    tb = re.findall(r"\b\w\w+\b", b.lower())
+    # 用 jieba 分词 (中文语义词元), 无 jieba 时回退 ASCII 2+ char 词.
+    ta = _semantic_tokenize(a)
+    tb = _semantic_tokenize(b)
     if not ta or not tb:
         return 0.0
     ca = Counter(ta)

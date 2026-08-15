@@ -34,6 +34,7 @@ import json
 import logging
 import math
 import os
+import re
 import time
 from typing import Any
 
@@ -97,11 +98,51 @@ def record(
 # ── recall ─────────────────────────────────────────────────────────────────
 
 
+# jieba 懒加载缓存: None=未尝试, False=不可用, 否则为 jieba 模块.
+# 中文视觉记忆检索依赖中文分词, 复用 RAG 升级引入的 jieba.
+_JIEBA: Any | None = None
+
+
+def _get_jieba() -> Any | None:
+    """懒加载 jieba. 首次尝试后缓存结果, 避免每次 _tokenize 都 import."""
+    global _JIEBA
+    if _JIEBA is None:
+        try:
+            import jieba
+            _JIEBA = jieba
+        except Exception:
+            _JIEBA = False
+    return _JIEBA if _JIEBA else None
+
+
 def _tokenize(text: str) -> list[str]:
-    """简单分词: 小写 + 非字母数字切分. ponytail: 不上 jieba/spacy."""
+    """分词: 优先 jieba 中文分词, 否则 ASCII 字母数字 token.
+
+    jieba 可用时 "高熵合金" 拆成 ["高熵合金"] (或 ["高熵","合金"]), 材料术语
+    精确命中率远高于按字切. 无 jieba 时回退原 isalnum 累积逻辑.
+    """
+    if not text:
+        return []
+    text_l = text.lower()
+    jieba = _get_jieba()
+    if jieba is not None:
+        tokens = []
+        seen = set()
+        for tok in jieba.cut(text_l):
+            if not tok or tok.isspace():
+                continue
+            if tok not in seen:
+                seen.add(tok)
+                tokens.append(tok)
+        # 兜底: 保留纯字母数字 token (jieba 可能漏切的英文/数字)
+        for tok in re.findall(r"[a-z0-9]+", text_l):
+            if tok not in seen:
+                seen.add(tok)
+                tokens.append(tok)
+        return tokens
     out: list[str] = []
     cur = []
-    for ch in text.lower():
+    for ch in text_l:
         if ch.isalnum():
             cur.append(ch)
         else:
