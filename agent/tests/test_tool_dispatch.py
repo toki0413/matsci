@@ -167,3 +167,88 @@ def test_workflow_orchestrator_blocks_via_phase(tmp_path):
     sr = result.subtask_results["s1"]
     assert sr.status == "failed"
     assert "not allowed" in (sr.error or "")
+
+
+# ── H5-c 首轮锚定晋升 (promotion) ─────────────────────────────────
+
+def _fake_logger(session_ids: list[str]):
+    """构造带指定 session 工具记录的假 ExecutionLogger."""
+
+    class _Fake:
+        def __init__(self):
+            self._tool_calls = [
+                type("_R", (), {"session_id": sid})() for sid in session_ids
+            ]
+
+    return _Fake()
+
+
+def test_has_durable_tool_call_no_session(monkeypatch):
+    from huginn.harness import promotion as prom
+
+    monkeypatch.setattr(prom, "_logger", lambda: _fake_logger([]))
+    # 无会话上下文 → 恒 True (不启用首轮锚定)
+    assert prom.has_durable_tool_call(None) is True
+    assert prom.has_durable_tool_call("") is True
+
+
+def test_has_durable_tool_call_matches_persisted(monkeypatch):
+    from huginn.harness import promotion as prom
+
+    monkeypatch.setattr(prom, "_logger", lambda: _fake_logger(["sid-x"]))
+    assert prom.has_durable_tool_call("sid-x") is True
+    assert prom.has_durable_tool_call("sid-new") is False
+
+
+def test_effective_whitelist_no_whitelist(monkeypatch):
+    from huginn.harness import promotion as prom
+
+    monkeypatch.setattr(prom, "_logger", lambda: _fake_logger([]))
+    assert prom.effective_tool_whitelist("_validate", "sid", None) is None
+    assert prom.effective_tool_whitelist("_validate", "sid", []) == []
+
+
+def test_effective_whitelist_promoted_returns_full(monkeypatch):
+    from huginn.harness import promotion as prom
+
+    monkeypatch.setattr(prom, "_logger", lambda: _fake_logger(["sid-x"]))
+    wl = ["bash_tool", "vasp_tool"]
+    assert prom.effective_tool_whitelist("_validate", "sid-x", wl) == wl
+
+
+def test_effective_whitelist_bootstrap_folds_to_core(monkeypatch):
+    from huginn.harness import promotion as prom
+
+    monkeypatch.setattr(prom, "_logger", lambda: _fake_logger([]))
+    wl = ["bash_tool", "vasp_tool"]
+    # 未晋升 → 折叠到核心工具 (file_read/bash), 非核心 vasp 被挡
+    assert prom.effective_tool_whitelist("_validate", "sid-new", wl) == ["bash_tool"]
+
+
+def test_is_tool_allowed_bootstrap_gates_noncore(tmp_path, monkeypatch):
+    from huginn.harness import promotion as prom
+
+    monkeypatch.setattr(prom, "_logger", lambda: _fake_logger([]))
+    _with_validate_whitelist("bash_tool", "vasp_tool")
+    # 未晋升: 非核心工具被折叠阻挡
+    assert td.is_tool_allowed("vasp_tool", "_validate", session_id="sid-new") is False
+    # 核心工具放行
+    assert td.is_tool_allowed("bash_tool", "_validate", session_id="sid-new") is True
+    # 已晋升: 完整白名单
+    monkeypatch.setattr(prom, "_logger", lambda: _fake_logger(["sid-new"]))
+    assert td.is_tool_allowed("vasp_tool", "_validate", session_id="sid-new") is True
+
+
+def test_dispatch_derives_session_id_from_ctx_bootstrap(tmp_path, monkeypatch):
+    """dispatch_tool 未显式传 session_id 时, 从 ctx.session_id 取 → 晋升门控生效."""
+    from huginn.harness import promotion as prom
+
+    monkeypatch.setattr(prom, "_logger", lambda: _fake_logger([]))
+    _register_core()
+    _with_validate_whitelist("bash_tool", "vasp_tool")
+    # ctx.session_id="test-dispatch" 无持久记录 → 未晋升; vasp_tool 非核心 → blocked
+    res = asyncio.run(
+        td.dispatch_tool("vasp_tool", {}, _ctx(tmp_path), phase="_validate")
+    )
+    assert res.success is False
+    assert "not allowed" in res.error
