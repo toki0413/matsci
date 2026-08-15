@@ -769,13 +769,16 @@ class MemoryManager:
 
     def maintenance(
         self,
-        decay_per_day: float = 0.97,
-        prune_threshold: float = 0.15,
-        deduplicate: bool = True,
+        decay_per_day: float | None = None,
+        prune_threshold: float | None = None,
+        deduplicate: bool | None = None,
         cluster: bool = False,
         llm_chat_fn: Any = None,
     ) -> dict[str, int]:
-        """Run long-term memory maintenance (decay, prune, dedupe, expire, optional cluster)."""
+        """Run long-term memory maintenance (decay, prune, dedupe, expire, optional cluster).
+
+        阈值未显式传入时由 plugins.memory_maintenance_policy 策略注册表提供.
+        """
         return self.longterm.maintenance(
             decay_per_day=decay_per_day,
             prune_threshold=prune_threshold,
