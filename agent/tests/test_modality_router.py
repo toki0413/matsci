@@ -1,10 +1,10 @@
-"""Tests for the built-in Qwen-MM-Plugins module (dynamic resolution + modality routing)."""
+"""Tests for the built-in modality_router module (dynamic resolution + modality routing)."""
 
 from __future__ import annotations
 
 import numpy as np
 
-from huginn.vision.mm_plugins import (
+from huginn.vision.modality_router import (
     detect_modality,
     dynamic_resolution_hint,
     modality_routing_hint,
@@ -108,18 +108,18 @@ class TestHints:
         p = self._blank_png(tmp_path, name="bandgap_plot.png")
         hint = modality_routing_hint(p)
         assert hint is not None
-        assert "[MM-Plugins]" in hint
+        assert "[MM-Router]" in hint
         assert "plot_extract" in hint
 
     def test_modality_routing_hint_missing_none(self, tmp_path):
         assert modality_routing_hint(tmp_path / "nope.png") is None
 
 
-# ── router 集成: build_cv_context 注入 MM-Plugins hint ─────────────
+# ── router 集成: build_cv_context 注入 modality_router hint ─────────
 
 
 class TestRouterIntegration:
-    def test_build_cv_context_includes_mm_plugins(self, tmp_path):
+    def test_build_cv_context_includes_modality_router(self, tmp_path):
         from PIL import Image
 
         from huginn.vision.router import build_cv_context
@@ -128,10 +128,10 @@ class TestRouterIntegration:
         p = tmp_path / "sem_sample.png"
         Image.fromarray(arr).save(p)
         ctx = build_cv_context(str(p))
-        assert "[MM-Plugins]" in ctx
+        assert "[MM-Router]" in ctx
         assert "sem_analysis" in ctx
 
-    def test_coordinate_includes_mm_plugins(self, tmp_path):
+    def test_coordinate_includes_modality_router(self, tmp_path):
         from PIL import Image
 
         from huginn.vision.router import VisionRouter
@@ -142,5 +142,5 @@ class TestRouterIntegration:
         router = VisionRouter()
         content, hints = router.coordinate("describe", str(p))
         assert isinstance(content, list)
-        assert "[MM-Plugins]" in hints
+        assert "[MM-Router]" in hints
         assert "eds_mapping" in hints
