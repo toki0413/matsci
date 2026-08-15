@@ -24,7 +24,7 @@ Bourbaki 三结构视角 (B 文档化):
   代数 II (SE(3) 群作用): lattice 模板用 2D 正弦光栅, 可被 SE(2) 旋转作用.
                          sketch 不直接施加 SE(3), 但输出图像兼容 SE(3) (FFT 旋转不变).
   拓扑   (连通域邻域):  verify 用 extract_box_primitives (M6) 检查连通域.
-                         BoxPrimitivesView (topology_protocol) 适配 sketch 输出.
+                         BoxPrimitivesView (huginn/experimental/topology_protocol) 适配 sketch 输出.
 
 # 架构状态: 研究探索层 — 未接入主循环, 保留作为 future hook. 如需启用, 在 huginn/events/unified_bus.py 订阅 cognitive.* 事件并接入.
 """

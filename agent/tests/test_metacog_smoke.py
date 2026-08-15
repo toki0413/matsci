@@ -534,11 +534,11 @@ def test_method_registry_basic():
 
 
 def test_import_persistence_landscape():
-    import huginn.metacog.persistence_landscape  # noqa: F401
+    import huginn.experimental.persistence_landscape  # noqa: F401
 
 
 def test_persistence_landscape_gudhi_flag():
-    from huginn.metacog.persistence_landscape import is_gudhi_available
+    from huginn.experimental.persistence_landscape import is_gudhi_available
 
     # gudhi 是可选拓扑计算后端, 缺失时返回 False, 不抛
     assert isinstance(is_gudhi_available(), bool)
@@ -799,12 +799,12 @@ def test_topology_lens_basic():
 
 
 def test_import_topology_protocol():
-    import huginn.metacog.topology_protocol  # noqa: F401
+    import huginn.experimental.topology_protocol  # noqa: F401
 
 
 def test_topology_protocol_public_api():
     # Protocol 类 + 入口函数都能从模块拿到
-    from huginn.metacog import topology_protocol as tp
+    from huginn.experimental import topology_protocol as tp
 
     assert hasattr(tp, "use_topology")
     assert hasattr(tp, "neighborhood_of")
