@@ -700,14 +700,14 @@ class StreamingMixin:
         )
         turn_span.metadata["compact_before_pct"] = before["used"]
         turn_span.metadata["compact_after_pct"] = after_pct
-        get_pet_bus().publish(
+        # 统一事件总线: compact → 内部EventBus + POST_COMPACT hook + PetBus
+        from huginn.events.unified_bus import get_unified_bus
+        _ubus = get_unified_bus(self)
+        await _ubus.publish_pet_mood(
             PetMood.SUCCESS,
             f"Context compacted ({before['used']}% -> {after_pct}%)",
             {"thread_id": thread_id},
         )
-        # 统一事件总线: compact → 内部EventBus + PRE/POST_COMPACT hook
-        from huginn.events.unified_bus import get_unified_bus
-        _ubus = get_unified_bus(self)
         await _ubus.publish_compact(before["used"], after_pct, thread_id)
         return {"before_pct": before["used"], "after_pct": after_pct}
 
@@ -1441,7 +1441,7 @@ class StreamingMixin:
                     + count_tokens(self._get_tool_description_text())
                 )
                 if estimated > self.context_budget_tokens:
-                    get_pet_bus().publish(
+                    await _ubus.publish_pet_mood(
                         PetMood.ERROR,
                         f"Context budget warning: ~{estimated} tokens",
                         {"budget": self.context_budget_tokens},
