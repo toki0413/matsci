@@ -13,6 +13,7 @@ from __future__ import annotations
 import math
 import re
 from collections import Counter
+from typing import Any
 
 # 优先复用 context_builder._compute_semantic_overlap (Task 3 实现).
 # Task 3 未完成时用本地 TF-IDF cosine 兜底 — 不阻塞 Task 4 self-check.
@@ -26,11 +27,45 @@ except Exception:
         return _local_tfidf_cosine(a, b)
 
 
+# jieba 懒加载缓存: None=未尝试, False=不可用, 否则为 jieba 模块.
+# 中文拓扑证据语义重叠依赖中文分词, 复用 RAG 升级引入的 jieba.
+_JIEBA: Any | None = None
+
+
+def _get_jieba() -> Any | None:
+    """懒加载 jieba. 首次尝试后缓存结果, 避免每次 _tokenize 都 import."""
+    global _JIEBA
+    if _JIEBA is None:
+        try:
+            import jieba
+            _JIEBA = jieba
+        except Exception:
+            _JIEBA = False
+    return _JIEBA if _JIEBA else None
+
+
 def _tokenize(text: str) -> list[str]:
-    """简单分词: 小写 + 提取字母数字 token. 不引外部依赖."""
+    """分词: 优先 jieba 中文分词, 否则 ASCII 字母数字 token. 不引外部硬依赖."""
     if not text:
         return []
-    return re.findall(r"[a-z0-9]+", text.lower())
+    text_l = text.lower()
+    jieba = _get_jieba()
+    if jieba is not None:
+        tokens = []
+        seen = set()
+        for tok in jieba.cut(text_l):
+            if not tok or tok.isspace():
+                continue
+            if tok not in seen:
+                seen.add(tok)
+                tokens.append(tok)
+        # 兜底: 保留纯字母数字 token (jieba 可能漏切的英文/数字)
+        for tok in re.findall(r"[a-z0-9]+", text_l):
+            if tok not in seen:
+                seen.add(tok)
+                tokens.append(tok)
+        return tokens
+    return re.findall(r"[a-z0-9]+", text_l)
 
 
 def _local_tfidf_cosine(a: str, b: str) -> float:
