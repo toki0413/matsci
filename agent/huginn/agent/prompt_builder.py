@@ -255,11 +255,18 @@ def _thinking_plugin(mode, phase, metacog_state, system_prompt):
         "## External Thinking\n"
         "Before you answer, modify code, or call other tools, "
         "first call the `deep_think` tool and write your "
-        "step-by-step analysis and reasoning into its `analysis` "
-        "argument. This is an external scratchpad — your analysis "
-        "is recorded and returned to the developer, but is not "
-        "echoed as part of your visible answer. Then complete the "
-        "task using that analysis."
+        "step-by-step analysis into its `analysis` argument. "
+        "This is an external scratchpad — your analysis is recorded "
+        "and returned to the developer, but is not echoed as part of "
+        "your visible answer.\n"
+        "Deepen it with the structured protocol when applicable: "
+        "`phase` = think | plan | pre_action | reflect (stage your "
+        "reasoning), and fill `hypothesis` (the claim), `evidence` "
+        "(derivation), and `estimate` (a quantitative prediction, "
+        "with units/range) so the prediction can be verified after "
+        "execution and distilled as reusable knowledge. A verified "
+        "pre_action estimate is the strongest signal you can leave. "
+        "Then complete the task using that analysis."
     )
 
 

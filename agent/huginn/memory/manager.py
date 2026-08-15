@@ -104,6 +104,10 @@ class MemoryManager:
     def add_reasoning(self, text: str) -> None:
         self.session.add_reasoning(text)
 
+    def add_reasoning_record(self, record: Any) -> None:
+        """追加结构化推理记录 (external thinking 深化侧信道)."""
+        self.session.add_reasoning_record(record)
+
     # --- Long-term memory operations ---
 
     def remember(
@@ -473,6 +477,19 @@ class MemoryManager:
 
     def _promote_tool_result(self, record: ToolCallRecord) -> None:
         """Promote a successful computational result to long-term memory."""
+        # ── 推理自校验 (external thinking 深化) ──────────────────────────
+        # 无论成功失败都回填最近一条未回映的 pre_action/plan 预判 (成功 confirmed
+        # / 失败 refuted), 蒸馏仅限成功且带 estimate. 放在 data 检查前 — 失败的
+        # 工具调用 (data=None) 也要回填 refuted.
+        try:
+            self._self_verify_and_distill_reasoning(
+                success=bool(record.result and record.result.success),
+                result_sample="",
+                tool_name=record.tool_name,
+            )
+        except Exception:
+            logger.debug("reasoning self-verify/distill failed", exc_info=True)
+
         if not record.result or not record.result.data:
             return
         result_json = json.dumps(record.result.data, default=str)[:500]
@@ -509,6 +526,46 @@ class MemoryManager:
         # "confirmed" — the knowledge was validated by real use.
         if record.result.success:
             self._verify_distilled_for_tool(record.tool_name, content)
+
+    def _self_verify_and_distill_reasoning(
+        self,
+        success: bool,
+        result_sample: str,
+        tool_name: str,
+    ) -> None:
+        """自校验闭环: 用执行结果回填推理记录 outcome, 并蒸馏高分记录.
+
+        只作用于"最近一条未回映的 pre_action/plan 记录" — 即刚被这次工具调用
+        兑现的预判。成功后标 confirmed, 失败标 refuted; 蒸馏仅限 confirmed 且
+        带量化预估 (estimate) 的记录, 存成可复用知识而非粗拼接.
+        """
+        from huginn.memory.reasoning import ReasoningOutcome
+
+        pending = self.session.last_pending_reasoning()
+        if pending is None:
+            return
+
+        outcome = (
+            ReasoningOutcome.CONFIRMED if success else ReasoningOutcome.REFUTED
+        )
+        self.session.mark_reasoning_outcome(pending, outcome, verified_by=tool_name)
+
+        # 蒸馏: 只蒸馏 confirmed 且有 estimate 的高分记录.
+        if success and pending.is_distillable:
+            content = (
+                f"[PATTERN] {pending.claim}\n"
+                f"[EVIDENCE] {pending.evidence}\n"
+                f"[ESTIMATE] {pending.estimate}\n"
+                f"[UNCERTAINTY] {pending.uncertainty}"
+            ).strip()
+            self.longterm.store(
+                content=content,
+                category="distilled_reasoning",
+                tags=["distilled_reasoning", f"phase:{pending.phase.value}"],
+                source=f"session:{self.session.session_id}/tool:{tool_name}",
+                importance=self.config.promotion_importance_threshold,
+                tier="mid",
+            )
 
     def _verify_distilled_for_tool(self, tool_name: str, result_content: str) -> None:
         """Upgrade verification_status of distilled knowledge related to a
