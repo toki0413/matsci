@@ -478,9 +478,13 @@ class SmartIngester:
         压缩. LLM 解码生成 structured 字段 (公式/表格/图注), 让检索时既能看图又能读结构.
         ponytail: 只处理识别为压缩页的, 不全页处理. 升级: 所有页都走视觉压缩.
         """
-        from huginn.knowledge.ocr_loader import _llm_ocr_image
+        from huginn.knowledge.ocr_loader import _llm_ocr_image, llm_vision_available
 
         results: list[dict[str, Any]] = []
+        # 双重门控: 构造时显式关闭 或 运行时无多模态 LLM → 跳过整页视觉压缩.
+        # 旧逻辑无条件跑, _llm_ocr_image 拿不到 callback 返回空串, 白渲染/白存图.
+        if not self.vision_available or not llm_vision_available():
+            return results
         try:
             import fitz  # noqa: F401
         except ImportError:
@@ -802,7 +806,6 @@ def build_smart_ingester(kb: Any | None) -> SmartIngester | None:
         return None
 
     image_tool = None
-    vision_available = False
     try:
         from huginn.tools.registry import ToolRegistry
 
@@ -810,11 +813,12 @@ def build_smart_ingester(kb: Any | None) -> SmartIngester | None:
     except Exception:
         logger.debug("image_analysis_tool 不可用, smart ingest 只走 OCR")
 
+    # vision_available 反映 LLM-as-OCR callback 是否已注入 (server_core 会在
+    # agent 模型支持 vision 时注入). 不再硬编码 False — 否则视觉压缩页永远跳过.
     try:
+        from huginn.knowledge.ocr_loader import llm_vision_available
 
-        # ponytail: 这里拿不到具体 model_name, 保守认为 vision 不可用,
-        # 让 SmartIngester 只依赖 image_analysis_tool. 升级路径: 传入当前 model.
-        vision_available = False
+        vision_available = llm_vision_available()
     except Exception:
         logger.debug("best-effort op failed", exc_info=True)
         vision_available = False
