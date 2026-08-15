@@ -32,3 +32,8 @@
 | 事件 | handler | 注册位置 |
 |---|---|---|
 | on_llm_request | inject_rules | plugins/ponytail/main.py:175 |
+
+### 内置默认策略值 (无第三方接入时生效)
+
+- **Compaction**: protected_roles=`system`; never_trim_block_types=`redacted_thinking, thinking`
+- **记忆整理**: decay_per_day=`0.97`, prune_threshold=`0.15`, deduplicate=`True`
