@@ -43,6 +43,11 @@ class SessionContext:
     messages: list[AgentMessage] = field(default_factory=list)
     tool_calls: list[ToolCallRecord] = field(default_factory=list)
     reasoning_trace: list[str] = field(default_factory=list)
+    # 结构化推理侧信道 (Everything is a Plugin / external thinking 深化):
+    # 与扁平 reasoning_trace 并存 — 原生 reasoning_content 与旧 deep_think 仍写
+    # 字符串通道, 结构化记录走这里, 供自校验/蒸馏/追溯消费.
+    reasoning_records: list[Any] = field(default_factory=list)
+    max_reasoning_records: int = 200
     user_preferences: dict[str, Any] = field(default_factory=dict)
 
     # Context compaction settings
@@ -110,6 +115,31 @@ class SessionContext:
         if len(self.reasoning_trace) > self.max_reasoning_lines:
             # Summarize oldest entries
             self.reasoning_trace = self.reasoning_trace[-self.max_reasoning_lines :]
+
+    # ── 结构化推理侧信道 (external thinking 深化) ────────────────────────
+    def add_reasoning_record(self, record: Any) -> None:
+        """追加一条结构化推理记录 (带 cap 截断)."""
+        self.reasoning_records.append(record)
+        if len(self.reasoning_records) > self.max_reasoning_records:
+            self.reasoning_records = self.reasoning_records[-self.max_reasoning_records :]
+
+    def last_pending_reasoning(self) -> Any | None:
+        """返回最近一条未回映的 pre_action/plan 记录 (自校验从它开始回填)."""
+        for r in reversed(self.reasoning_records):
+            try:
+                if r.is_pending and r.phase in ("pre_action", "plan"):
+                    return r
+            except Exception:
+                continue
+        return None
+
+    def mark_reasoning_outcome(self, record: Any, outcome: Any, verified_by: str = "") -> None:
+        """回填一条推理记录的执行结果 (自校验闭环)."""
+        try:
+            record.outcome = outcome
+            record.verified_by = verified_by
+        except Exception:
+            logger.debug("mark_reasoning_outcome failed", exc_info=True)
 
     def get_recent_messages(self, n: int = 10) -> list[AgentMessage]:
         return self.messages[-n:]

@@ -20,6 +20,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from huginn.core_types import ToolContext, ToolResult
+from huginn.memory.reasoning import ReasoningPhase, ReasoningRecord
 from huginn.tools.base import HuginnTool
 
 logger = logging.getLogger(__name__)
@@ -32,6 +33,36 @@ class DeepThinkToolInput(BaseModel):
             "The step-by-step analysis / reasoning you worked through before "
             "answering, modifying code, or calling other tools."
         ),
+    )
+    # 结构化推理协议 (可选增强, 不填则 fallback 到 analysis 全文):
+    # 让推理可被自校验/蒸馏/阶段化追溯消费. 模型可只填 analysis, 字段全可选.
+    phase: str = Field(
+        default="think",
+        description=(
+            "Reasoning stage: 'think' (hypothesis/claim), 'plan' (action plan), "
+            "'pre_action' (quantitative prediction before acting), "
+            "'reflect' (post-execution review)."
+        ),
+    )
+    hypothesis: str = Field(
+        default="",
+        description="The core claim / hypothesis you are asserting.",
+    )
+    evidence: str = Field(
+        default="",
+        description="The evidence / derivation supporting the claim.",
+    )
+    estimate: str = Field(
+        default="",
+        description="A quantitative prediction (with units/range) to check later.",
+    )
+    uncertainty: str = Field(
+        default="",
+        description="Known uncertainties and boundary conditions of the claim.",
+    )
+    plan: str = Field(
+        default="",
+        description="The next concrete action(s) your reasoning leads to.",
     )
 
 
@@ -64,18 +95,33 @@ class DeepThinkTool(HuginnTool):
                 error="deep_think requires a non-empty 'analysis'",
             )
 
-        # Best-effort: record into the shared reasoning_trace channel so the
-        # distillation / evolution loop can consume it. Fail-open when there is
-        # no memory manager (e.g. some bench harnesses) — never block the loop.
+        # 1) 扁平通道 (旧, 向后兼容) — 原生 reasoning_content 也走这里.
         try:
             if context.memory_manager is not None:
                 context.memory_manager.add_reasoning(analysis)
-            else:
-                logger.debug(
-                    "deep_think called without memory_manager; analysis not recorded"
-                )
         except Exception:
-            logger.warning("deep_think failed to record reasoning", exc_info=True)
+            logger.warning("deep_think failed to record reasoning_trace", exc_info=True)
+
+        # 2) 结构化侧信道 (external thinking 深化) — 模型可选填结构化字段,
+        #    不填时以 analysis 全文作为 claim.
+        try:
+            phase = (
+                ReasoningPhase(args.phase)
+                if args.phase in ReasoningPhase._value2member_map_
+                else ReasoningPhase.THINK
+            )
+            record = ReasoningRecord(
+                claim=args.hypothesis or analysis,
+                phase=phase,
+                evidence=args.evidence,
+                estimate=args.estimate,
+                uncertainty=args.uncertainty,
+                plan=args.plan,
+            )
+            if context.memory_manager is not None:
+                context.memory_manager.add_reasoning_record(record)
+        except Exception:
+            logger.warning("deep_think failed to record structured reasoning", exc_info=True)
 
         return ToolResult(
             data={"recorded": True, "chars": len(analysis)},
