@@ -16,6 +16,8 @@ from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import Any
 
+from huginn.feature_flags import FeatureFlags
+
 # Request-scoped context.  Set by the RequestID middleware (request_id) and
 # by agent turn handlers (thread_id).  Defaults to empty string so logs are
 # always emitted even when no request is active.
@@ -117,7 +119,7 @@ def setup_json_logging(level: str | int | None = None) -> bool:
     if _CONFIGURED:
         return True
 
-    if os.environ.get("HUGINN_JSON_LOGS", "1") == "0":
+    if not FeatureFlags.shared().is_enabled("json_logs"):
         return False
 
     if level is None:
