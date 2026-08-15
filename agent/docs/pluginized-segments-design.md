@@ -1,6 +1,6 @@
 # Everything is a Plugin — 段插件化设计
 
-> 状态: prompt 段已用形态 B (同步注册表) 落地; 其余子系统评估中
+> 状态: prompt 段 + tool result 压缩 + compaction 策略均已用形态 B 落地; 其余子系统评估中
 > 范围: prompt 段插件化 + 两形态插件框架 + 其他子系统适配评估
 > 关联: `prompt_builder.py`, `context.py`, `plugins/`, `core_types.py`, 记忆整理, compaction
 
@@ -148,15 +148,22 @@ Phase 3: 插件化 — external_thinking 从 context.py 迁为 _thinking_plugin
 
 插件化价值: 把"不同类型工具输出怎么处理"抽象成 `ToolResultCompressor` 插件, 按 tool_name 匹配。现在 `keep_keys` 是全局一组, 无法按工具差异化(DFT 保留 energy/band_gap, MD 数组摘要, 日志头尾截断)。正好补上现有代码标注的"按工具类型差异化 TTL/keep_keys"缺口。
 
-### 4.2 Compaction — 中适配(策略注册表, 克制)
+### 4.2 Compaction — 已落地 (策略注册表)
 
 现状(`context.py`, `session.py`, `compress.py`):
 - 已有策略分歧: drop-oldest vs LLM summarize, 选择已参数化
 - 但保护规则散落: `tool_result_ttl`, `keep_keys`, `_THINKING_BLOCK_TYPES`, `root_content_markers`, `_PROTECTED_ROLES` 分布在各模块
 
-插件化价值: 把"哪些消息受保护 / 哪些 key 保留 / 哪些块永不裁剪"抽象成 `CompactionPolicy` 插件。现在新增一种保护要改核心。
+插件化落地 (已做): 新建 `plugins/compaction_policy.py`, 声明式 `CompactionPolicy`
+(protected_roles / never_trim_block_types / root_content_markers), 注册表聚合并集。
+`compact_messages` 与 `summarize_compact_messages` 改从注册表取保护集, 不再硬编码
+`_PROTECTED_ROLES` / `_THINKING_BLOCK_TYPES`。新增一种保护 → 注册一个策略, 不改核心。
 
-**警醒**: compaction 是性能敏感路径(`test_compact_messages_linear_performance` 要求 O(n)), 事件总线分发有开销。**不该**把每次压缩变成事件流, 应做成**可插拔的策略注册表**(Select a policy, not dispatch events)。
+**性能**: compaction 是 O(n) 路径, 用同步注册表 (形态 B) 而非事件总线。聚合是
+O(P) (P = 策略数, 个位), 相对 O(n) 可忽略; 不做事件分发、无 async 模型切换。
+
+**警醒**: 事件总线分发有开销, 不该把每次压缩变成事件流 — 用可插拔策略注册表
+(Select a policy, not dispatch events)。
 
 ### 4.3 记忆整理(memory maintainer) — 高适配
 
@@ -174,9 +181,9 @@ Phase 3: 插件化 — external_thinking 从 context.py 迁为 _thinking_plugin
 
 | 优先级 | 系统 | 形态 | 说明 |
 |---|---|---|---|
-| 1 | Prompt 段 | 事件钩子 | 已设计, 先做 |
-| 2 | Tool Result 压缩 | 策略注册表 | 回报最高, 补 keep_keys 全局化缺口 |
-| 3 | Compaction 策略 | 策略注册表 | 收敛散落保护规则 |
+| 1 | Prompt 段 | 形态 B | ✅ 已落地 |
+| 2 | Tool Result 压缩 | 策略注册表 | ✅ 已落地 |
+| 3 | Compaction 策略 | 策略注册表 | ✅ 已落地 |
 | 4 | 记忆整理 | 策略注册表 | 策略多, 收益相对低, 后置 |
 
 ---
