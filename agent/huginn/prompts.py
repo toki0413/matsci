@@ -116,6 +116,12 @@ treating frames independently:
   consistency; flag low inter-frame consistency as real change, not image noise.
 - Cross-validate visual and simulated channels when both exist (e.g. in-situ XRD
   peak shift ≈ F(q,t) decay).
+- Judge the governing length/time scale before choosing a method; when a property
+  is scale-sensitive, use cross-scale bridges and consistency checks (DFT ↔ MD ↔
+  continuum) rather than assuming one descriptor works at every scale.
+- Track how structure evolves over time/space with topological tools (persistent
+  homology / TDA): changes in connected components, holes, or cavities are phase
+  or regime transitions, not noise.
 
 ## 5. Domain Knowledge — condensed anchors (retrieve deeper detail on demand)
 These are terse anchors; the full treatment lives in the knowledge base.
