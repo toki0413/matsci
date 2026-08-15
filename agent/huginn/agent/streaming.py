@@ -1774,26 +1774,21 @@ class StreamingMixin:
                             exc,
                         )
                         # 对齐 Kimi Code stepRetryService 的 turn.step.retrying:
-                        # 把重试信号发到 EventBus, 让 SSE / audit / 监控可见.
+                        # 统一走 unified_bus.publish_step_retry, 让 retry 信号
+                        # 对 SSE / audit / transcript 可见.
                         # ponytail: best-effort, publish 失败不影响主流程.
                         try:
-                            from huginn.events.event_bus import AgentEvent, EventBus
-                            from huginn.events.event_types import STEP_RETRY
+                            from huginn.events.unified_bus import get_unified_bus
 
-                            await EventBus.shared().publish(AgentEvent(
-                                type=STEP_RETRY,
-                                timestamp=time.time(),
-                                data={
-                                    "attempt": attempt + 1,
-                                    "max_attempts": max_retries,
-                                    "error_type": type(exc).__name__,
-                                    "error_message": str(exc)[:200],
-                                    "wait_ms": int(wait * 1000),
-                                    "states_yielded": states_yielded,
-                                },
+                            await get_unified_bus(self).publish_step_retry(
                                 thread_id=thread_id,
-                                source="agent.streaming",
-                            ))
+                                attempt=attempt + 1,
+                                max_attempts=max_retries,
+                                error_type=type(exc).__name__,
+                                error_message=str(exc)[:200],
+                                wait_ms=int(wait * 1000),
+                                states_yielded=states_yielded,
+                            )
                         except Exception:
                             logger.debug(
                                 "step retry event publish failed", exc_info=True

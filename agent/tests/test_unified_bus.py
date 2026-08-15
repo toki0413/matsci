@@ -220,6 +220,50 @@ async def test_publish_compact_triggers_post_compact_hook():
     hook_manager.trigger.assert_awaited_once()
 
 
+# ── publish_step_retry ─────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_publish_step_retry_does_not_raise():
+    """没有下游组件时 best-effort, 不抛."""
+    bus = UnifiedBus(None)
+    await bus.publish_step_retry(
+        thread_id="t1",
+        attempt=2,
+        max_attempts=5,
+        error_type="RuntimeError",
+        error_message="boom",
+        wait_ms=1000,
+        states_yielded=0,
+    )
+
+
+@pytest.mark.asyncio
+async def test_publish_step_retry_publishes_internal_event(monkeypatch):
+    """走内部 EventBus 发 STEP_RETRY (统一入口, 替代直发)."""
+    bus = UnifiedBus(None)
+    captured = {}
+
+    def fake_publish_internal(event_type, data, thread_id="", source=""):
+        captured["event_type"] = event_type
+        captured["source"] = source
+        captured["attempt"] = data["attempt"]
+        captured["max_attempts"] = data["max_attempts"]
+
+    monkeypatch.setattr(bus, "_publish_internal_sync", fake_publish_internal)
+    await bus.publish_step_retry(
+        thread_id="t1",
+        attempt=2,
+        max_attempts=5,
+        error_type="RuntimeError",
+        wait_ms=1000,
+    )
+    assert captured["event_type"] == "agent.step.retrying"
+    assert captured["source"] == "agent.streaming"
+    assert captured["attempt"] == 2
+    assert captured["max_attempts"] == 5
+
+
 # ── 模块导出 ──────────────────────────────────────────────────────
 
 
