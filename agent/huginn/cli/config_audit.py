@@ -342,6 +342,210 @@ def render_plugins_markdown(contract: dict[str, list[dict]]) -> str:
     return "\n".join(lines)
 
 
+# ---------------------------------------------------------------------------
+# 工具契约 (tools-contract.md)
+# ---------------------------------------------------------------------------
+# 运行时枚举核心工具注册表的注册面. 与插件契约互补: 插件契约讲"可插拔扩展点",
+# 工具契约讲"agent 实际可调的服务". 用 register_core_tools(None) 枚举 (安全、快,
+# 无重型依赖), 字段来自 HuginnTool 声明 (name/description/category/destructive/
+# read_only/cost_tier). 是 agent 能力面的可解释性基线.
+
+def build_tools_contract() -> list[dict]:
+    """实例化核心工具并向 ToolRegistry 登记, 快照其声明元数据."""
+    from huginn.tools import register_core_tools
+    from huginn.tools.registry import ToolRegistry
+
+    register_core_tools(None)
+    rows: list[dict] = []
+    for name in sorted(ToolRegistry._tools):
+        t = ToolRegistry._tools[name]
+        rows.append(
+            {
+                "name": name,
+                "category": t.category,
+                "destructive": t.destructive,
+                "read_only": t.read_only,
+                "cost_tier": t.cost_tier,
+                "description": (t.description or "").strip().replace("\n", " ")[:80],
+            }
+        )
+    return rows
+
+
+def render_tools_markdown(rows: list[dict]) -> str:
+    lines: list[str] = []
+    lines.append("# 工具契约 (ToolRegistry)")
+    lines.append("")
+    lines.append(
+        "自动生成: `python -m huginn.cli.config_audit --tools --out docs/tools-contract.md`."
+    )
+    lines.append(
+        "运行时枚举核心工具注册表 (register_core_tools). 字段来自 HuginnTool 声明: "
+        "`category` (core/search/meta/sim/sci/design/cv/materials/misc), `destructive` / "
+        "`read_only` 是权限系统判定依据, `cost_tier` 来自 ToolProfile. "
+        "未含启动时后台注册的可选工具 (见 lifespan 的 register_optional_tools)."
+    )
+    lines.append("")
+    lines.append("| 工具 | 分类 | 危险 | 只读 | cost | 描述 |")
+    lines.append("|---|---|---|---|---|---|")
+    for r in rows:
+        lines.append(
+            f"| `{r['name']}` | {r['category']} | {r['destructive']} | "
+            f"{r['read_only']} | {r['cost_tier']} | {r['description']} |"
+        )
+    lines.append("")
+    lines.append(f"共 {len(rows)} 个核心工具。")
+    lines.append("")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# 事件契约 (events-contract.md)
+# ---------------------------------------------------------------------------
+# 插件事件面的契约. 两层:
+#   - EventType 枚举 (plugins/api/event.py): 插件可监听的事件全集
+#   - UnifiedBus.publish_* 方法: 语义化的事件发射契约 (统一入口, 扇出到 4 套系统)
+# 派发点 = 代码里引用 EventType.<MEMBER> 的位置, 提示每个事件在哪被发出.
+
+_EVENT_REF = re.compile(r'EventType\.([A-Z][A-Z0-9_]+)')
+_EVENT_PUBLISH = re.compile(r'async\s+def\s+(publish_[a-z_]+)\(')
+
+
+def _event_groups() -> dict[str, str]:
+    """从 event.py 源码注释提取 EventType 成员 → 分组 的映射."""
+    groups: dict[str, str] = {}
+    try:
+        text = (Path(__file__).resolve().parents[1] / "api" / "event.py").read_text(
+            encoding="utf-8", errors="replace"
+        )
+    except OSError:
+        return groups
+    current = ""
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#") and not stripped.startswith("# "):
+            continue
+        if stripped.startswith("# "):
+            current = stripped[2:].strip()
+        m = re.match(r'^\s*([A-Z][A-Z0-9_]+)\s*=\s*auto\(\)', stripped)
+        if m:
+            groups[m.group(1)] = current
+    return groups
+
+
+def build_events_contract(root: Path | None = None) -> dict:
+    """构建事件契约: EventType 成员 + 派发点 + UnifiedBus publish 接口."""
+    root = root or _ROOT
+    from huginn.api.event import EventType
+
+    groups = _event_groups()
+    refs: dict[str, list[str]] = defaultdict(list)
+    for py in root.rglob("*.py"):
+        if "__pycache__" in str(py) or py.resolve() == _SELF:
+            continue
+        try:
+            text = py.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for m in _EVENT_REF.finditer(text):
+            refs[m.group(1)].append(f"{py.relative_to(root)}:{text[: m.start()].count(chr(10)) + 1}")
+
+    members: list[dict] = []
+    for m in EventType:
+        name = m.name
+        locs = sorted(set(refs.get(name, [])))
+        members.append(
+            {
+                "name": name,
+                "group": groups.get(name, ""),
+                "dispatch": ", ".join(locs[:3]) + (f" +{len(locs)-3} 处" if len(locs) > 3 else ""),
+            }
+        )
+
+    # UnifiedBus publish 方法
+    ub_path = root / "events" / "unified_bus.py"
+    publishes: list[str] = []
+    if ub_path.exists():
+        try:
+            publishes = _EVENT_PUBLISH.findall(
+                ub_path.read_text(encoding="utf-8", errors="replace")
+            )
+        except OSError:
+            pass
+
+    return {"members": members, "publishes": sorted(set(publishes))}
+
+
+def render_events_markdown(contract: dict) -> str:
+    lines: list[str] = []
+    lines.append("# 事件契约 (插件事件面)")
+    lines.append("")
+    lines.append(
+        "自动生成: `python -m huginn.cli.config_audit --events --out docs/events-contract.md`."
+    )
+    lines.append(
+        "**EventType** 是插件可监听的事件全集 (plugins/api/event.py); `dispatch` 是代码里"
+        "引用该事件的位置, 提示它在哪里被发出 (静态扫描, 取前 3 处)。**UnifiedBus 发射接口**"
+        "是语义化统一入口, 每次 publish 扇出到 HookManager / 内部 EventBus / 插件 EventBus / "
+        "PetBus 各子系统。"
+    )
+    lines.append("")
+    lines += _fmt_section(
+        "EventType 成员",
+        contract["members"],
+        ("事件", "分组", "派发点"),
+        ("name", "group", "dispatch"),
+    )
+    pub_lines = ["### UnifiedBus 发射接口 (语义化)", ""]
+    for p in contract["publishes"]:
+        pub_lines.append(f"- `{p}()`")
+    if not contract["publishes"]:
+        pub_lines.append("- —")
+    pub_lines.append("")
+    lines += pub_lines
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# 路由契约 (routes-contract.md)
+# ---------------------------------------------------------------------------
+# 模型路由面的契约: ModelRouter 的 task→tag 偏好映射 + 可选 task 全集 +
+# HUGINN_MODEL_* 的 from_env 装配约定. 回答"某个 task 会优先落到哪些模型".
+
+def build_routes_contract() -> dict:
+    """读取 ModelRouter 的 task→tag 映射与 task 全集."""
+    from huginn.models.router import ModelRouter, TaskT
+
+    tasks = list(getattr(TaskT, "__args__", ()))
+    return {
+        "task_tags": dict(ModelRouter._TASK_TAGS),
+        "tasks": tasks,
+    }
+
+
+def render_routes_markdown(contract: dict) -> str:
+    lines: list[str] = []
+    lines.append("# 模型路由契约 (ModelRouter)")
+    lines.append("")
+    lines.append(
+        "自动生成: `python -m huginn.cli.config_audit --routes --out docs/routes-contract.md`."
+    )
+    lines.append(
+        "登记 ModelRouter 的 task → 偏好 tag 映射 (`_TASK_TAGS`)。`select(task)` 按列表"
+        "顺序找第一个有匹配模型的 tag; 无匹配回落默认。任务也可经 `HUGINN_MODEL_<TASK>` "
+        "环境变量装配 (见 models/router.py::from_env)。"
+    )
+    lines.append("")
+    lines.append("| task | 偏好 tag (按序) |")
+    lines.append("|---|---|")
+    for task, tags in contract["task_tags"].items():
+        lines.append(f"| `{task}` | {', '.join(tags)} |")
+    lines.append("")
+    lines.append(f"可选 task 全集 ({len(contract['tasks'])}): " + ", ".join(f"`{t}`" for t in contract["tasks"]))
+    lines.append("")
+    return "\n".join(lines)
+
+
 def build_flags_contract(root: Path | None = None) -> list[dict]:
     """构建 feature-flags 契约: 每个 flag 的默认值/描述/旧 env 别名/消费点."""
     root = root or _ROOT
@@ -426,6 +630,21 @@ def main(argv: list[str] | None = None) -> int:
         help="输出插件契约 (Everything is a Plugin 注册面) 而非 env 契约",
     )
     parser.add_argument(
+        "--tools",
+        action="store_true",
+        help="输出工具契约 (ToolRegistry 运行时枚举) 而非 env 契约",
+    )
+    parser.add_argument(
+        "--events",
+        action="store_true",
+        help="输出事件契约 (EventType + UnifiedBus 发射面) 而非 env 契约",
+    )
+    parser.add_argument(
+        "--routes",
+        action="store_true",
+        help="输出路由契约 (ModelRouter task→tag) 而非 env 契约",
+    )
+    parser.add_argument(
         "--out",
         type=str,
         default="",
@@ -433,38 +652,30 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    if args.plugins:
-        contract = build_plugins_contract()
-        if args.json:
-            json.dump(contract, sys.stdout, ensure_ascii=False, indent=2)
-            print()
+    # 契约模式分派: 每个 --xxx 对应一个 (builder, renderer, 文件名).
+    modes = {
+        "plugins": (build_plugins_contract, render_plugins_markdown, "plugins-contract.md"),
+        "tools": (build_tools_contract, render_tools_markdown, "tools-contract.md"),
+        "events": (build_events_contract, render_events_markdown, "events-contract.md"),
+        "routes": (build_routes_contract, render_routes_markdown, "routes-contract.md"),
+        "flags": (build_flags_contract, render_flags_markdown, "feature-flags-contract.md"),
+    }
+    for flag, (builder, renderer, default_name) in modes.items():
+        if getattr(args, flag, False):
+            data = builder()
+            if args.json:
+                json.dump(data, sys.stdout, ensure_ascii=False, indent=2)
+                print()
+                return 0
+            md = renderer(data)
+            if args.out:
+                out_path = Path(args.out)
+                out_path.parent.mkdir(parents=True, exist_ok=True)
+                out_path.write_text(md, encoding="utf-8")
+                print(f"wrote {flag} contract -> {out_path}")
+            else:
+                print(md)
             return 0
-        md = render_plugins_markdown(contract)
-        if args.out:
-            out_path = Path(args.out)
-            out_path.parent.mkdir(parents=True, exist_ok=True)
-            out_path.write_text(md, encoding="utf-8")
-            counts = {k: len(v) for k, v in contract.items()}
-            print(f"wrote plugin contract {counts} -> {out_path}")
-        else:
-            print(md)
-        return 0
-
-    if args.flags:
-        rows = build_flags_contract()
-        if args.json:
-            json.dump(rows, sys.stdout, ensure_ascii=False, indent=2)
-            print()
-            return 0
-        md = render_flags_markdown(rows)
-        if args.out:
-            out_path = Path(args.out)
-            out_path.parent.mkdir(parents=True, exist_ok=True)
-            out_path.write_text(md, encoding="utf-8")
-            print(f"wrote {len(rows)} feature-flag contracts -> {out_path}")
-        else:
-            print(md)
-        return 0
 
     inventory = build_inventory()
     if args.json:
