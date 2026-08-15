@@ -92,9 +92,12 @@ class PlanCheckMixin:
         hyp_blob = (
             hypothesis.lower() + json.dumps(context, ensure_ascii=False).lower()[:500]
         )
+        # P21/dsh: 相关任务链 → 降级引导 (math_block 不注入).
+        related_chain = self._is_related_chain(context.get("changed_files", []))
         math_block = (
             self._MATH_DEPTH_PROMPT_BLOCK
-            if any(s in hyp_blob for s in _get_math_signals())
+            if not related_chain
+            and any(s in hyp_blob for s in _get_math_signals())
             else ""
         )
 

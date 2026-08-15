@@ -146,6 +146,30 @@ LUCID review (mandatory after generating hypothesis):
                 return self._PROMPT_BUDGET_BY_PHASE[phase]
         return self._PROMPT_BUDGET
 
+    @staticmethod
+    def _files_jaccard(a: list[str], b: list[str]) -> float:
+        """文件集 Jaccard 相似度. 任一为空 → 0.0 (无重叠信号)."""
+        if not a or not b:
+            return 0.0
+        sa, sb = set(a), set(b)
+        union = sa | sb
+        if not union:
+            return 0.0
+        return len(sa & sb) / len(union)
+
+    def _is_related_chain(self, current_files: list[str], threshold: float = 0.3) -> bool:
+        """当前任务是否延续上一轮相同文件面 (相关任务链)?
+
+        P21/dsh-router-standard: 相关任务链 (同文件演化: 写→修→扩→修) 中
+        深引导是负资产 (46% < baseline 63%) — 引导把模型推向"分类"而非"读
+        已有代码". 这里用文件集 Jaccard 判断: 上一轮执行触碰的文件面与当前
+        重叠度高 → 相关链 → 降级引导. 无上一轮状态时恒 False (不门控).
+        """
+        prev = getattr(self, "_last_execution_files", None)
+        if not prev:
+            return False
+        return self._files_jaccard(prev, current_files) >= threshold
+
     def _apply_block_patches(
         self,
         blocks: list[tuple[str, str]],
@@ -162,6 +186,14 @@ LUCID review (mandatory after generating hypothesis):
         apply_patches 返回签名. 升级路径: apply_patches 返回 (blocks, ids).
         """
         from huginn.harness.prompt_patch import PromptPatchStore, apply_patches
+        # P21/dsh: 相关任务链中 prompt 引导为负资产 — 降级不应用 patch.
+        # _build_hypothesis_prompt 顶部已算好 self._related_chain.
+        if getattr(self, "_related_chain", False):
+            if phase == "hypothesize":
+                self._last_hypothesis_blocks = blocks
+            elif phase == "plan":
+                self._last_plan_blocks = blocks
+            return blocks
         new_blocks = apply_patches(blocks, phase)
         # 记录原始 blocks 供 _generate_next_loop_directive 调 generate_patch 用
         # (generate_patch 需要看 block 名字 + 内容才能生成合理 patch)
@@ -609,6 +641,9 @@ LUCID review (mandatory after generating hypothesis):
         return self._hypo_manifold
 
     def _build_hypothesis_prompt(self, context: dict[str, Any]) -> str:
+        # P21/dsh: 相关任务链 → 降级引导 (patch 不应用 + math_block 不注入).
+        # 由 _apply_block_patches 和下方 math_block 共同消费.
+        self._related_chain = self._is_related_chain(context.get("changed_files", []))
         # 投机执行 hint: 基于历史预测的下一步意图, 注入给 LLM 参考
         # 预测只是 hint, LLM 可以无视, 不强制. 截断到 500 字符防止无界增长
         # — _speculator_hint 有 5 处 append, 不截断 20 轮后可能数 KB.
@@ -748,7 +783,8 @@ LUCID review (mandatory after generating hypothesis):
         from huginn.autoloop.engine import _MATH_SIGNALS
         math_block = (
             self._MATH_DEPTH_PROMPT_BLOCK
-            if any(s in ctx_blob for s in _MATH_SIGNALS)
+            if not getattr(self, "_related_chain", False)
+            and any(s in ctx_blob for s in _MATH_SIGNALS)
             else ""
         )
         # MatterChat 启发: 把上轮 execution 结果摘要注入 hypothesis prompt,
