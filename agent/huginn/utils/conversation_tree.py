@@ -17,12 +17,12 @@ Usage:
 
 from __future__ import annotations
 
-import os
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from huginn.feature_flags import FeatureFlags
 from huginn.utils.common import now_iso
 
 
@@ -32,8 +32,9 @@ from huginn.utils.common import now_iso
 # ponytail: 复用 subagent_tool._crdt_merge, 不重复实现半格.
 # ceiling: 只合 metadata 字段, content (消息文本) 仍走 LLM 摘要 (v2).
 def _crdt_branch_merge_enabled() -> bool:
-    """toggle: env HUGINN_CRDT_BRANCH_MERGE (默认 on). off 时不合并分支."""
-    return os.environ.get("HUGINN_CRDT_BRANCH_MERGE", "1") != "0"
+    """toggle: FeatureFlags crdt_branch_merge (旧 env HUGINN_CRDT_BRANCH_MERGE, 默认 on).
+    off 时不合并分支."""
+    return FeatureFlags.shared().is_enabled("crdt_branch_merge")
 
 
 @dataclass
