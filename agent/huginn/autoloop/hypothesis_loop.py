@@ -2337,11 +2337,16 @@ class HypothesisMixin:
                         labels.append(stmt)
                 if len(labels) < 2:
                     continue
+                # 传真实节点 id (hyp_ids) 而非 statement 文本: add_hyperedge 内部
+                # 用 node_ids 做成员连接 (if nid in self._graph), 传文本会导致
+                # 超边无法连成 clique, 读回也查不到. 可读内容放 label 属性,
+                # 让 _build_kg_text 读回时显示联合命题而非晦涩的 he_ 哈希 id.
                 kg.add_hyperedge(
-                    labels,
+                    hyp_ids,
                     relation="joint_proposition",
                     source="hypothesis_simplicial",
                     confidence=0.4,  # 联合命题置信度保守, 不压真实证据边
+                    label="joint proposition: " + " ∧ ".join(labels),
                 )
         except Exception:
             logger.debug("sync simplicials to kg failed (non-fatal)", exc_info=True)
