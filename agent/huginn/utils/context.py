@@ -26,18 +26,25 @@ _PROTECTED_ROLES = {"system"}
 _THINKING_BLOCK_TYPES = {"thinking", "redacted_thinking"}
 
 
-def _has_thinking_blocks(msg: Any) -> bool:
+def _has_thinking_blocks(msg: Any, block_types: set[str] | frozenset[str] | None = None) -> bool:
     """检查消息 content 是否含 thinking / redacted_thinking 块.
 
     Anthropic extended thinking 响应的 AIMessage.content 是 list[dict],
     每个块带 type 字段. 含 thinking 块的消息带 signature, 裁剪后丢 signature
     → 后续回合 400 invalid_request_error.
+
+    block_types 可注入 (默认取 compaction 策略注册表聚合结果), 让第三方扩展
+    "哪些块永不裁剪" 不需要改核心.
     """
+    if block_types is None:
+        from huginn.plugins.compaction_policy import never_trim_block_types
+
+        block_types = never_trim_block_types()
     content = getattr(msg, "content", None) if not isinstance(msg, dict) else msg.get("content")
     if not isinstance(content, list):
         return False
     for block in content:
-        if isinstance(block, dict) and block.get("type") in _THINKING_BLOCK_TYPES:
+        if isinstance(block, dict) and block.get("type") in block_types:
             return True
     return False
 
@@ -109,21 +116,30 @@ def compact_messages(
     # 分离 root messages — 这部分永不被 drop, 也不被 tool clearing 影响
     # F3: 双路标 root — 位置 (keep_root_n) ∪ 内容 marker (root_content_markers)
     # A3.3: 含 thinking/redacted_thinking 块的 AIMessage 也进 root — 丢 signature 会 400.
+    # 内容 marker 与"永不裁剪 block type"均可由 compaction 策略插件扩展 (并集).
+    from huginn.plugins.compaction_policy import (
+        never_trim_block_types,
+        root_content_markers as policy_root_markers,
+    )
+
+    policy_markers = tuple(root_content_markers or ())
+    all_markers = policy_markers + policy_root_markers()
+    never_trim = never_trim_block_types()
     root_indices: set[int] = set()
     if keep_root_n > 0 and len(messages) > keep_root_n:
         root_indices.update(range(min(keep_root_n, len(messages))))
-    if root_content_markers:
+    if all_markers:
         for i, m in enumerate(messages):
             if i in root_indices:
                 continue
             content = _msg_content(m)
-            if any(marker in content for marker in root_content_markers):
+            if any(marker in content for marker in all_markers):
                 root_indices.add(i)
     # A3.3: thinking block 保护 — 扫一遍剩余消息, 含 thinking 块的也进 root.
     for i, m in enumerate(messages):
         if i in root_indices:
             continue
-        if _has_thinking_blocks(m):
+        if _has_thinking_blocks(m, never_trim):
             root_indices.add(i)
 
     if root_indices:
@@ -351,8 +367,12 @@ async def summarize_compact_messages(
 
     # Filter out protected (system) messages from the summarize zone —
     # they're managed separately by the prompt cache builder.
-    to_summarize = [m for m in summarize_zone if _msg_role(m) not in _PROTECTED_ROLES]
-    protected = [m for m in summarize_zone if _msg_role(m) in _PROTECTED_ROLES]
+    # 受保护 role 可由 compaction 策略插件扩展 (并集), 不必改核心.
+    from huginn.plugins.compaction_policy import protected_roles
+
+    protected_roles_set = protected_roles()
+    to_summarize = [m for m in summarize_zone if _msg_role(m) not in protected_roles_set]
+    protected = [m for m in summarize_zone if _msg_role(m) in protected_roles_set]
 
     if not to_summarize or summarizer is None:
         # No summarizer or nothing to summarize — fall back to drop-oldest
