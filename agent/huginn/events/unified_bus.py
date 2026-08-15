@@ -364,6 +364,37 @@ class UnifiedBus:
         )
         await self._trigger_hook(POST_COMPACT, post_ctx)
 
+    async def publish_step_retry(
+        self,
+        thread_id: str,
+        attempt: int,
+        max_attempts: int,
+        error_type: str = "",
+        error_message: str = "",
+        wait_ms: int = 0,
+        states_yielded: int = 0,
+    ) -> None:
+        """Agent 一步重试 — 发布到内部 EventBus (STEP_RETRY).
+
+        统一入口, 替代 streaming.py 里直发 ``EventBus.shared().publish(STEP_RETRY)``,
+        让 retry 信号与其它事件走同一 publish 通道, 对 SSE / audit / transcript 可见.
+        """
+        from huginn.events.event_types import STEP_RETRY
+
+        self._publish_internal_sync(
+            STEP_RETRY,
+            {
+                "attempt": attempt,
+                "max_attempts": max_attempts,
+                "error_type": error_type,
+                "error_message": error_message[:200],
+                "wait_ms": wait_ms,
+                "states_yielded": states_yielded,
+            },
+            thread_id=thread_id,
+            source="agent.streaming",
+        )
+
 
 # ── 模块级便捷函数 ──────────────────────────────────────────────
 
