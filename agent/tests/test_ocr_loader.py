@@ -124,3 +124,63 @@ class TestVectorStoreOcrIntegration:
         vs = VectorStore(persist_dir=str(tmp_path / "rag"))
         text = vs._parse_file(pdf_path)
         assert "pdf ocr fallback" in text
+
+
+class TestLlmVisionCallback:
+    """新增: LLM-as-OCR 可用性查询 (HUGINN 视觉压缩门控)."""
+
+    def test_llm_vision_available_offers_guard(self, monkeypatch: Any) -> None:
+        monkeypatch.setattr(ocr_loader, "_LLM_VISION_CALLBACK", None, raising=False)
+        assert ocr_loader.llm_vision_available() is False
+
+    def test_llm_vision_available_true_after_set(self, monkeypatch: Any) -> None:
+        monkeypatch.setattr(
+            ocr_loader, "_LLM_VISION_CALLBACK", lambda b, h: "", raising=False
+        )
+        assert ocr_loader.llm_vision_available() is True
+
+
+class TestEmbeddingAndTokenize:
+    """新增: embedding 维度动态推导 + BM25 jieba 分词 (知识库升级)."""
+
+    def test_embed_model_env_override(self, monkeypatch: Any) -> None:
+        monkeypatch.setenv("HUGINN_EMBED_MODEL", "custom-model")
+        import importlib
+
+        import huginn.knowledge.store as store
+
+        reloaded = importlib.reload(store)
+        assert reloaded.EMBED_MODEL == "custom-model"
+        monkeypatch.delenv("HUGINN_EMBED_MODEL")
+        importlib.reload(store)
+
+    def test_deterministic_vectors_dim_dynamic(self) -> None:
+        import numpy as np
+
+        from huginn.knowledge.store import _deterministic_vectors
+
+        vecs = _deterministic_vectors(["材料科学", "催化"], dim=384)
+        assert vecs.shape == (2, 384)
+        # 归一化后范数为 1
+        norms = np.linalg.norm(vecs, axis=1)
+        assert np.allclose(norms, 1.0, atol=1e-3)
+
+    def test_tokenize_uses_jieba_when_available(self, monkeypatch: Any) -> None:
+        import huginn.knowledge.store as store
+
+        # 强制走 jieba 路径
+        monkeypatch.setattr(store, "_JIEBA", None, raising=False)
+        if store._get_jieba() is None:
+            pytest.skip("jieba not installed")
+        tokens = store._tokenize("高熵合金 的 fatigue")
+        # jieba 应切出 "合金" 而非按字拆成 "合","金"
+        assert "合金" in tokens or "高熵合金" in tokens
+
+    def test_tokenize_fallback_without_jieba(self, monkeypatch: Any) -> None:
+        import huginn.knowledge.store as store
+
+        monkeypatch.setattr(store, "_get_jieba", lambda: None)
+        tokens = store._tokenize("高熵合金 fatigued")
+        assert "fatigued" in tokens
+        # 中文按字切 (无 jieba 时)
+        assert "合" in tokens and "金" in tokens

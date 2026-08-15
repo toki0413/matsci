@@ -7,6 +7,7 @@ import hashlib
 import json
 import logging
 import math
+import os
 import re
 import uuid
 from datetime import datetime
@@ -24,7 +25,14 @@ if TYPE_CHECKING:
 
 CHUNK_SIZE = 800
 CHUNK_OVERLAP = 100
-EMBED_MODEL = "all-MiniLM-L6-v2"
+
+# 默认 embedding 模型: all-MiniLM-L6-v2 (384 维, 体积小速度快).
+# 可用环境变量 HUGINN_EMBED_MODEL 覆盖 (如 BGE-M3 / bge-m3: 1024 维, 中文/多语言更强).
+# 注意: 切换模型维度后需重建 ChromaDB collection (旧向量维度不兼容).
+EMBED_MODEL = os.environ.get("HUGINN_EMBED_MODEL", "all-MiniLM-L6-v2")
+
+# MiniLM 默认维度. 切换模型后由 _resolve_embedding_dim 动态推导, 供确定性降级向量对齐.
+_EMBED_DIM_DEFAULT = 384
 SEED_DIR = Path(__file__).parent / "seed"
 
 # ONNX encode 超时阈值: CI 2-core runner 跑数千测试后线程资源耗尽,
@@ -33,12 +41,32 @@ SEED_DIR = Path(__file__).parent / "seed"
 _ENCODE_TIMEOUT_SECONDS = 30
 
 
-def _deterministic_vectors(texts: list[str], dim: int = 384) -> np.ndarray:
+def _resolve_embedding_dim(fallback: int = _EMBED_DIM_DEFAULT) -> int:
+    """推导当前 embedding 模型的输出维度.
+
+    MiniLM 默认 384; 若 EMBED_MODEL 被覆盖 (如 BGE-M3 1024), 从 sentence-transformers
+    模型配置读取真实维度, 供确定性降级向量对齐 — 否则降级向量维度与 collection 不兼容.
+    失败时回退 fallback (MiniLM 384), 不抛异常.
+    """
+    try:
+        from sentence_transformers import SentenceTransformer
+        model = SentenceTransformer(EMBED_MODEL)
+        dim = int(getattr(model, "get_sentence_embedding_dimension", lambda: 0)() or 0)
+        if dim > 0:
+            return dim
+    except Exception:
+        logger.debug("embedding dim resolution failed, fallback %d", fallback, exc_info=True)
+    return fallback
+
+
+def _deterministic_vectors(texts: list[str], dim: int | None = None) -> np.ndarray:
     """Deterministic hash-based pseudo-embeddings (fallback when ONNX hangs).
 
-    ponytail: SHA256 → normalized float, 维度对齐 all-MiniLM-L6-v2 (384).
+    ponytail: SHA256 → normalized float, 维度对齐当前 embedding 模型 (默认 384).
     质量远不如真实 embedding, 仅用于 CI 资源耗尽降级 — 保证检索不 NaN, agent flow 不阻塞.
     """
+    if dim is None:
+        dim = _resolve_embedding_dim()
     import numpy as np
 
     vecs = []
@@ -140,26 +168,51 @@ class _EmbeddingModel:
                 type(e).__name__,
                 e,
             )
-            return _deterministic_vectors(texts, dim=384)
+            return _deterministic_vectors(texts, dim=_resolve_embedding_dim())
 
 
 # ── BM25 关键词检索 (与向量检索做 RRF 混合) ──────────────────────────
 # ponytail: 不引入 rank_bm25 依赖, 手写倒排索引. k1=1.5/b=0.75 是 Robertson-
 # Sparck Jones 经验值. 单进程内存索引, KB < 100K chunks 性能可接受.
-# 升级路径: KB 超 100K chunks 时换 SQLite FTS5 或 Jieba 分词 (中文术语更准).
+# 中文分词: 有 jieba 用 jieba (材料术语更准), 否则按字切 + 同时保留 ASCII 词.
 
 _BM25_TOKEN_RE = re.compile(r'[A-Za-z0-9_]+|[\u4e00-\u9fff]')
 
+# jieba 懒加载缓存: None=未尝试, False=不可用, 否则为 jieba 模块
+_JIEBA: Any | None = None
+
+
+def _get_jieba() -> Any | None:
+    """懒加载 jieba. 首次尝试后缓存结果, 避免每次 _tokenize 都 import."""
+    global _JIEBA
+    if _JIEBA is None:
+        try:
+            import jieba
+            _JIEBA = jieba
+        except Exception:
+            _JIEBA = False
+    return _JIEBA if _JIEBA else None
+
 
 def _tokenize(text: str) -> list[str]:
-    """BM25 分词: ASCII 字母数字序列 + CJK 单字.
+    """BM25 分词: 优先 jieba 中文分词, 否则 ASCII 词 + CJK 单字.
 
-    ponytail: 没有 Jieba, 中文按字切. "高熵合金" 拆成 ["高","熵","合","金"],
-    BM25 靠 tf 权重让多字命中的 doc 排名靠前. 不完美但零依赖.
+    jieba 可用时 "高熵合金" 拆成 ["高熵合金"] (或 ["高熵","合金"]), 材料术语
+    精确命中率远高于按字切 ["高","熵","合","金"]. 无 jieba 时回退原逻辑.
     """
     if not text:
         return []
-    return _BM25_TOKEN_RE.findall(text.lower())
+    text = text.lower()
+    jieba = _get_jieba()
+    if jieba is not None:
+        # jieba 会把 ASCII 词也切成片段, 这里取 jieba 结果 + 保留数字/字母词
+        tokens = []
+        for tok in jieba.cut(text):
+            if not tok or tok.isspace():
+                continue
+            tokens.append(tok)
+        return tokens
+    return _BM25_TOKEN_RE.findall(text)
 
 
 class _BM25Index:
