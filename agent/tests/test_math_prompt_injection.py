@@ -113,3 +113,54 @@ class TestE21McmcAdvance:
         engine._iteration = 5
         engine._build_hypothesis_prompt({"goal": "no numeric target here"})
         assert engine._mcmc_step_count == 0
+
+
+class TestRelatedChainGating:
+    """P21/dsh: 相关任务链 (高文件面重叠) 中深引导为负资产 → 降级引导.
+
+    覆盖:
+      - _files_jaccard / _is_related_chain 判定
+      - _build_hypothesis_prompt 在相关链时去掉 math_block
+      - _build_plan_prompt 在相关链时去掉 math_block
+      - _apply_block_patches 在相关链时不应用 prompt patch
+    """
+
+    def test_files_jaccard(self, engine):
+        assert engine._files_jaccard(["a.py", "b.py"], ["b.py", "c.py"]) == pytest.approx(1 / 3)
+        assert engine._files_jaccard(["a.py"], ["b.py"]) == 0.0
+        assert engine._files_jaccard([], ["a.py"]) == 0.0
+        assert engine._files_jaccard(["a.py"], []) == 0.0
+
+    def test_is_related_chain_no_prev_state(self, engine):
+        # 无 _last_execution_files → 恒 False (不门控)
+        assert engine._is_related_chain(["a.py"]) is False
+
+    def test_is_related_chain_high_overlap(self, engine):
+        engine._last_execution_files = ["a.py", "b.py"]
+        assert engine._is_related_chain(["a.py", "b.py", "c.py"], threshold=0.5) is True
+        assert engine._is_related_chain(["c.py", "d.py"], threshold=0.5) is False
+
+    def test_hypothesis_prompt_gates_math_block_on_related_chain(self, engine):
+        engine._last_execution_files = ["a.py", "b.py"]
+        # 相关链 (高重叠) → math_block 不注入
+        prompt = engine._build_hypothesis_prompt(
+            context={"objective": "GaN band gap", "changed_files": ["a.py", "b.py"]}
+        )
+        assert "Math depth guidance" not in prompt
+
+    def test_plan_prompt_gates_math_block_on_related_chain(self, engine):
+        engine._last_execution_files = ["a.py", "b.py"]
+        prompt = engine._build_plan_prompt(
+            hypothesis="derive heat equation for thermal",
+            context={"objective": "thermal", "changed_files": ["a.py", "b.py"]},
+        )
+        assert "Math depth guidance" not in prompt
+
+    def test_apply_block_patches_skips_on_related_chain(self, engine):
+        engine._last_execution_files = ["a.py", "b.py"]
+        engine._related_chain = True
+        blocks = [("body", "some hypothesis block")]
+        # 相关链 → 不应用 patch, 原样返回
+        out = engine._apply_block_patches(blocks, "hypothesize")
+        assert out is blocks
+        assert engine._last_hypothesis_blocks is blocks

@@ -56,11 +56,23 @@ def _phase_whitelist(phase: str | None) -> list[str] | None:
         return None
 
 
-def is_tool_allowed(name: str, phase: str | None = None) -> bool:
-    """判断工具在指定 phase 下是否被允许. 无白名单时恒为 True."""
+def is_tool_allowed(
+    name: str, phase: str | None = None, session_id: str | None = None
+) -> bool:
+    """判断工具在指定 phase 下是否被允许. 无白名单时恒为 True.
+
+    session_id 提供时, 晋升前白名单折叠到核心工具 (H5-c 首轮锚定).
+    """
     whitelist = _phase_whitelist(phase)
     if not whitelist:
         return True
+    if session_id is not None:
+        from huginn.harness.promotion import effective_tool_whitelist
+
+        eff = effective_tool_whitelist(phase, session_id, whitelist)
+        if not eff:
+            return True
+        return name in eff
     return name in whitelist
 
 
@@ -71,6 +83,7 @@ async def dispatch_tool(
     *,
     phase: str | None = None,
     registry: Any = None,
+    session_id: str | None = None,
 ) -> Any:
     """统一分派: 从 registry 取工具 + 按 phase 白名单校验 + 调用.
 
@@ -80,6 +93,8 @@ async def dispatch_tool(
         ctx: ToolContext.
         phase: 可选的 phase 名, 用于白名单校验. None 或 phase 无白名单则不限制.
         registry: 可选注册表, 默认 ToolRegistry.
+        session_id: 可选会话 id. 提供时晋升前白名单折叠到核心工具 (H5-c).
+            未显式传则从 ctx.session_id 取 (动态工作流自动获得晋升门控).
 
     Returns:
         ToolResult (或等价对象). 工具不存在时返回含 not_found 的失败结果;
@@ -95,7 +110,9 @@ async def dispatch_tool(
             error=f"Tool '{name}' not registered",
         )
 
-    if not is_tool_allowed(name, phase):
+    if session_id is None:
+        session_id = getattr(ctx, "session_id", None)
+    if not is_tool_allowed(name, phase, session_id=session_id):
         from huginn.core_types import ToolResult
         return ToolResult(
             data=None,

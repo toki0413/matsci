@@ -199,6 +199,9 @@ class EngineActMixin:
                 result if isinstance(result, dict) else {"value": str(result)[:500]}
             ),
         }
+        # P21/dsh: 记录本轮触碰的文件面, 供 _is_related_chain 判断相关任务链
+        # (高重叠 → 下轮降级引导). context 无 changed_files 时记空, 不触发门控.
+        self._last_execution_files = context.get("changed_files", [])
         return result
 
     def _record_provenance(
