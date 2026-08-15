@@ -476,6 +476,7 @@ H 之间独立, 不互相阻塞 (除 H3 依赖 H1+H2, H4 试点 BUILTIN_SPECS �
 
 1. **H5-a unified LLM client** (P8): 让 H3 联合优化能加 model 维度. 改 `_llm_chat` 覆盖 subagent._summarize 和 hot_model 双路, 加 `select_model(alias_or_constraint)` 接口让 LLM 自己输出 "用 alias X 跑这次. 工程量大, 风险高.
    - **状态: 已落地** — `HuginnAgent.select_model(task)` (agent/core.py) + `engine._llm_chat(task=...)` model_router 多档路由均已实现; hot_model 双路已并行走 `_llm_chat(task="reasoning")`; `subagent._summarize` 已改为通过子 agent 的 `select_model("summarize")` 走 task 路由选总结模型 (失败回退 factory default_alias), LLM 调用完全统一.
+   - **补充落地 (autoloop 侧)** — 之前 `_llm_chat` 的 task 路由依赖 `self.model_router`, 但 autoloop engine 走 `get_model()` 单模型路径, 从不挂 router, 导致路由是死代码 (`getattr(self,"model_router",None)` 恒 None). 现已在 `AutoloopEngine.__init__` 从 `get_config().build_agent_kwargs()` 挂 `model_router` (单模型配置时为 None, 行为不变), 并新增 `engine.select_model(task)` 统一入口 (router.select 失败/缺 router 时回退 self.model). `verification_model` 默认值改走 `select_model("verification")`, 让 Moonshine 三槽的验证子服务 (语义一致性 judge / novelty 评估 / trajectory pattern 抽取) 在未显式注入时也能吃到 verification 路由, 而非恒用 self.model.
 2. **H5-b unified tool dispatch** (P9): 让 H4 tool_whitelist 真正强制. 新建 `dispatch_tool(name, args, ctx, phase)` 入口, 改 engine 直接 `tool.call()` 调用.
    - **状态: 已落地** (H5-b) — 新增 `huginn/harness/tool_dispatch.py`: `dispatch_tool` 从 ToolRegistry 取工具 + 按 phase 的 `tool_whitelist` (PhaseRegistry) 校验, 未命中短路返回. 已接入 `dynamic_workflow` 的 `_run_subtask` (orchestrator.run(phase="_execute") 透传), 白名单强制在该路径生效. autoloop 其余内部工具调用 (literature/validation 等) 属内部服务, 非 agent 工具调用, 不强制.
 
