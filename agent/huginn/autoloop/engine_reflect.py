@@ -610,7 +610,7 @@ class EngineReflectMixin:
                 f"## Reasoning path B (original)\n{orig_reasoning[:1500]}\n\n"
                 "Are A and B semantically consistent? Output ONLY the JSON."
             ))
-            _model = getattr(self, "verification_model", None) or self.model
+            _model = self.verification_model
             _resp = await _model.ainvoke([_sys, _human])
             _text = getattr(_resp, "content", str(_resp))
             _text = _text.strip()

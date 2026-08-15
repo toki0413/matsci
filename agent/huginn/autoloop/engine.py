@@ -268,9 +268,27 @@ class AutoloopEngine(
         # lazy init, 第一次 _hypothesize_via_branch_incubator 才构造
         self._branch_incubator: Any = None
         self.model = get_model(self.settings)
+        # H5-a: 从 config 的 ModelManager 挂 model_router, 让 _llm_chat 的
+        # task 路由真正生效 (之前 getattr(self,"model_router",None) 恒 None,
+        # "reasoning/summarize/verification" 分类路由全是死代码).
+        # 单模型配置时 build_agent_kwargs 返回 model_router=None, 行为不变.
+        self.model_router = None
+        try:
+            from huginn.config import get_config
+
+            _cfg = get_config()
+            _r = _cfg.build_agent_kwargs().get("model_router")
+            if _r is not None:
+                self.model_router = _r
+        except Exception:
+            logger.debug("model_router build skipped (non-fatal)", exc_info=True)
         # Moonshine 三槽: verification 用独立 LLM 验证假设, 避免确认偏差.
-        # 默认 None 时退回 self.model, 保持向后兼容.
-        self.verification_model = verification_model or self.model
+        # 显式注入的 verification_model 优先; 未注入时默认走 select_model
+        # ("verification" 路由会选注册的独立验证模型, 无则退回 self.model),
+        # 保持单模型下行为与改动前一致.
+        self.verification_model = verification_model or self.select_model(
+            "verification"
+        )
         # 共享 MemoryManager: 由 agent/CLI 传入, 避免引擎私有实例和 agent 的
         # memory 隔离. 默认 None 时 new 一个, 保持向后兼容.
         self.memory = memory_manager or MemoryManager()
@@ -597,6 +615,27 @@ class AutoloopEngine(
         # ponytail: 全进程一份, JSON 落盘. ceiling: 多进程不共享, 升级路径接 SQLite.
         self._alignment_dataset: Any = None
 
+
+    # ── H5-a: 模型选择 ────────────────────────────────────────────
+    # 统一模型选择入口. 多模型配置 (config.models 非空) 时走 model_router
+    # 按 task 分流 (verification→独立模型 / summarize→便宜模型);
+    # 单模型时 router 为 None, 回退 self.model, 行为与改动前一致.
+    # 供 4 个 mixin (act/reflect/hypothesis/cognitive) 共享, 避免各写一份
+    # "select_model or self.model" 的 fallback.
+
+    def select_model(self, task: str = "agent") -> Any:
+        router = getattr(self, "model_router", None)
+        if router is not None:
+            try:
+                _m = router.select(task)
+                if _m is not None:
+                    return _m
+            except Exception:
+                logger.debug(
+                    f"model_router.select({task!r}) failed — using fallback",
+                    exc_info=True,
+                )
+        return self.model
 
     # ── H3: autoloop 事件溯源 ──────────────────────────────────────
     # phase 切换写进 workspace 级事件日志, read_runtime_state() 从投影读,
