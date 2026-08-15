@@ -90,7 +90,7 @@ benchmark = [
 # 科研图表 skill: AI 绘图 prompt 编译器 (论文/图注 -> Nano Banana/Qwen Image/GPT Image prompt).
 # 克隆到 huginn/plugins/science-skills/skills/happy_figure/ 即生效, 无 Python 依赖.
 # Flint MCP server (交互式 web 图表副通道): npx -y flint-chart-mcp, 配置见项目根 .mcp.json.
-rag = ["chromadb>=0.4", "sentence-transformers>=2.5", "pymupdf>=1.23", "pypdf>=6.14.2", "easyocr>=1.7", "pytesseract>=0.3"]
+rag = ["chromadb>=0.4", "sentence-transformers>=2.5", "pymupdf>=1.23", "pypdf>=6.14.2", "easyocr>=1.7", "pytesseract>=0.3", "jieba>=0.42"]
 tooluniverse = ["tooluniverse"]
 # 材料数据库真实查询 (mat-db MCP): 无 MP_API_KEY 时 server 回退 mock 数据.
 # mp-api 体积较大默认不装, 按需 pip install -e .[db] 后设 MP_API_KEY 即接真实 Materials Project.
