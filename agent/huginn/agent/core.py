@@ -751,6 +751,35 @@ class HuginnAgent(
             logger.debug("pick main fallback model failed", exc_info=True)
         return None
 
+    # ── Explainability ───────────────────────────────────────────
+
+    def explain(
+        self,
+        goal: str | None = None,
+        *,
+        actor: str | None = None,
+        tool: str | None = None,
+        limit: int = 200,
+    ) -> Any:
+        """统一解释入口: 把 audit + provenance 观测拼成端到端解释.
+
+        可解释性 facade (huginn.explainability.Explainer) 的便捷封装.
+        默认用本 agent 的 audit logger + ProvenanceRegistry.shared() 作为
+        provider, 无需调用方手动装配. 返回 Explanation (含 timeline /
+        artifacts / edges / key_findings).
+        """
+        from huginn.explainability import Explainer
+        from huginn.provenance.registry import ProvenanceRegistry
+
+        provenance = None
+        try:
+            provenance = ProvenanceRegistry.shared()
+        except Exception:
+            logger.debug("ProvenanceRegistry.shared() unavailable", exc_info=True)
+        return Explainer(audit=getattr(self, "audit", None), provenance=provenance).explain(
+            goal=goal, actor=actor, tool=tool, limit=limit
+        )
+
     # ── Graph building ────────────────────────────────────────────
 
     def build_graph(self) -> Any:
