@@ -22,7 +22,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from huginn.core_types import ToolContext, ToolResult
+from huginn.core_types import ErrorKind, ToolContext, ToolResult
 from huginn.privacy import redact_secrets
 from huginn.security import (
     ContainerExecutor,
@@ -148,7 +148,10 @@ class CodeTool(HuginnTool):
                 )
             return self._execute(input_data, work_dir, context=context)
         except Exception as e:
-            return ToolResult(data=None, success=False, error=f"Code tool failed: {e}")
+            return ToolResult(
+                data=None, success=False, error=f"Code tool failed: {e}",
+                error_kind=ErrorKind.FATAL,
+            )
 
     def _generate(self, args: CodeToolInput) -> ToolResult:
         """Return the code without executing it (for review/modification)."""
@@ -193,7 +196,8 @@ class CodeTool(HuginnTool):
             executor = get_executor()
         except SandboxError as exc:
             return ToolResult(
-                data=None, success=False, error=f"Execution blocked: {exc}"
+                data=None, success=False, error=f"Execution blocked: {exc}",
+                error_kind=ErrorKind.DENIED,
             )
 
         # RevertibleEffect (Cordis 时间可组合性): 失败的工具执行不留副作用.
@@ -278,6 +282,9 @@ class CodeTool(HuginnTool):
         from huginn.tools.bash_tool import _extract_progress
         progress = _extract_progress(result.stdout)
 
+        # 复用 bash_tool 的结果分类 (本身也是重活/进度 helper 的宿主)
+        from huginn.tools.bash_tool import _result_error_kind
+
         tool_result = ToolResult(
             data={
                 "returncode": result.returncode,
@@ -294,6 +301,7 @@ class CodeTool(HuginnTool):
                 ),
             },
             success=result.success,
+            error_kind=_result_error_kind(result),
         )
 
         # 主代码成功后跑 self_check (assert-based rubric 对照)
