@@ -34,9 +34,14 @@ async def _connect_mcp_server(
     manager: Any,
     name: str,
     config: Any,
-    timeout: float = 10.0,
+    timeout: float = 60.0,
 ) -> bool:
-    """Connect to a single MCP server with timeout and full error containment."""
+    """Connect to a single MCP server with timeout and full error containment.
+
+    默认 60s: 本地 stdio 子进程冷启动要 import mcp.server 才能应答握手,
+    慢文件系统/冷 pyc 下这一步可能 15-25s, 旧 10s 超时会在 initialize 中途
+    被取消, 进而触发 anyio 的 cancel-scope 竞态并使 server 启动踩坑。
+    """
     try:
         await asyncio.wait_for(manager.connect(config), timeout=timeout)
         return True
@@ -167,17 +172,13 @@ async def _init_mcp_tools():
                 ))
             )
 
-        # Connect to all MCP servers in parallel instead of one-by-one.
-        # The old code did create_task + immediate await, which is serial.
-        connect_tasks = [
-            asyncio.create_task(_connect_mcp_server(get_context().mcp_manager, name, cfg))
-            for name, cfg in servers
-        ]
-        if connect_tasks:
-            results = await asyncio.gather(*connect_tasks, return_exceptions=True)
-            for name, result in zip([n for n, _ in servers], results):
-                if isinstance(result, Exception):
-                    logger.warning("[MCP] Failed to connect to '%s': %s", name, result)
+        # Connect to MCP servers sequentially. 并行连接在慢文件系统下会互相
+        # 争抢 IO (每个子进程冷导入 mcp.server 都要 15-25s), 放大延迟到超时;
+        # 而超时取消进行中的握手会触发 anyio 的 cancel-scope 竞态 (见 mcp_client
+        # stdio_client). 逐个连接 + 每连接独立超时最稳, 且 _connect_mcp_server
+        # 内部已 try/except 全量兜底, 不会因单个失败阻塞后续.
+        for name, cfg in servers:
+            await _connect_mcp_server(get_context().mcp_manager, name, cfg)
 
         # ToolUniverse 单独走白名单 (只注册 7 个材料相关工具, 过滤 350+ 生物医学工具).
         # 不能先做一次无过滤的 generic 注册 —— 那会把 343 个非白名单 tooluniverse 工具
@@ -624,7 +625,14 @@ async def lifespan(app: FastAPI):
         track_task(_bg_register_optional_tools(), name="bg-register-optional-tools")
     except Exception as e:
         logger.warning(f"[startup] tool registration failed: {e}")
-    await _init_mcp_tools()
+    # MCP 连接在后台进行, 不阻塞服务就绪: 本地 stdio 子进程冷导入要 15-25s,
+    # 逐个连接 5 个 server 可能再花近 1 分钟, 前台 await 会让健康检查迟迟不
+    # 就绪. 后台完成后 MCP 工具会注册进 ToolRegistry, 可随后续请求使用.
+    try:
+        from huginn.utils.concurrency import track_task
+        track_task(_init_mcp_tools(), name="init-mcp-tools")
+    except Exception as e:
+        logger.warning(f"[startup] MCP init task spawn failed: {e}")
     if _KB_AVAILABLE and get_context().kb is None:
         try:
             cfg = get_config()

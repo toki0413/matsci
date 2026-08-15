@@ -13,6 +13,11 @@
         "qwen-mm-plugins-core"
       ],
       "env": {}
+    },
+    "vision-pixel": {
+      "command": "/root/.pyenv/versions/3.14.7/bin/python",
+      "args": ["/workspace/servers/vision-pixel-mcp/server.py"],
+      "env": {}
     }
   }
 }
