@@ -125,6 +125,7 @@ class SandboxResult:
     dry_run: bool
     blocked: bool = False
     block_reason: str | None = None
+    timed_out: bool = False  # True 当命令因超时被终止 (returncode 仍为 -1)
 
 
 class SandboxExecutor:
@@ -433,6 +434,7 @@ class SandboxExecutor:
                 stderr=e.stderr or "",
                 command=cmd,
                 dry_run=False,
+                timed_out=True,
             )
         finally:
             # 恢复父进程 soft limit, 避免子进程内存上限反过来卡死 agent 自身.

@@ -14,7 +14,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from huginn.core_types import ToolContext, ToolResult
+from huginn.core_types import ErrorKind, ToolContext, ToolResult
 from huginn.security import (
     ContainerExecutor,
     SandboxError,
@@ -133,6 +133,22 @@ def _extract_progress(stdout: str, max_lines: int = 50) -> list[str]:
             if len(progress) >= max_lines:
                 break
     return progress
+
+
+def _result_error_kind(result) -> ErrorKind:
+    """从 SandboxExecutor/ContainerExecutor 结果推断失败分类.
+
+    成功判据统一用 returncode==0, 与 bash/code_tool 原有逻辑一致, 从而兼容
+    真实 SandboxResult (带 success+returncode) 与测试 mock (SimpleNamespace
+    只有 returncode). timed_out/blocked 用 getattr 兜底, 避免 mock 缺字段.
+    """
+    if getattr(result, "returncode", None) == 0:
+        return ErrorKind.NONE
+    if getattr(result, "timed_out", False):
+        return ErrorKind.TIMEOUT
+    if getattr(result, "blocked", False):
+        return ErrorKind.DENIED
+    return ErrorKind.FATAL
 
 
 class BashTool(HuginnTool):
@@ -257,6 +273,7 @@ class BashTool(HuginnTool):
                 },
                 success=result.success,
                 error=_err,
+                error_kind=_result_error_kind(result),
             )
 
         # SandboxExecutor path — uses executable whitelist + work-dir validation.
@@ -297,16 +314,19 @@ class BashTool(HuginnTool):
                     },
                     success=result.returncode == 0,
                     error=_err,
+                    error_kind=_result_error_kind(result),
                 )
             except SandboxError as e:
                 return ToolResult(
                     data=None, success=False,
                     error=f"Sandbox blocked command: {e}",
+                    error_kind=ErrorKind.DENIED,
                 )
             except Exception as e:
                 return ToolResult(
                     data=None, success=False,
                     error=f"Sandbox execution failed: {e}",
+                    error_kind=ErrorKind.FATAL,
                 )
 
 
