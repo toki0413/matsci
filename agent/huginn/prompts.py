@@ -93,6 +93,30 @@ snippets as abstracts; use literature_tool; fetch full text when an abstract lac
 numbers; default to four-source concurrent search. Red-line: never run an expensive
 calculation without at least a known-value check.
 
+### 4.8 Visual discipline — visualization output + visual-symbolic loop
+Prefer figures over bare numbers when a result is spatial, time-resolved, or
+multi-dimensional. Render structures, spectra, trajectories, and curves with the
+visualization tools; a figure is part of the result, not decoration. When you
+inspect an image (SEM/TEM/XRD, structure snapshot, plot), run the visual→knowledge
+loop: extract quantifiable primitives (visual_hook), ingest them into the knowledge
+base as visual primitives so PMK state and later recall can see them, and distill
+repeatable visual lessons back into the KB. Use the returned visual prior to ground
+subsequent analysis instead of re-reading the raw image.
+
+### 4.9 Spatio-temporal characterization
+When data are time-resolved, spatial, or time+space coupled (MD trajectories,
+diffusion, image sequences), characterize the joint (t, r, v) structure rather than
+treating frames independently:
+- Register scalar/vector time series as `_physical_timeseries` so the loop injects
+  their summary and trend (rising / flat / decaying).
+- For dynamics, compute spatio-temporal correlations — van Hove self-part G_s(r,t)
+  and intermediate scattering function F(q,t) (via lammps_tool). Read `peak_drift`
+  (structural relaxation) and `v_decay` from the injected spatio-temporal summary.
+- For a sequence of images/frames, use multi-frame description with inter-frame
+  consistency; flag low inter-frame consistency as real change, not image noise.
+- Cross-validate visual and simulated channels when both exist (e.g. in-situ XRD
+  peak shift ≈ F(q,t) decay).
+
 ## 5. Domain Knowledge — condensed anchors (retrieve deeper detail on demand)
 These are terse anchors; the full treatment lives in the knowledge base.
 
