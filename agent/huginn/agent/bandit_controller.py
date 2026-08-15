@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from huginn.feature_flags import FeatureFlags
 from huginn.utils.runtime import HUGINN_DIR_NAME
 
 logger = logging.getLogger(__name__)
@@ -87,8 +88,9 @@ class EffortBandit:
         self._mcmc_accept_rate: float | None = None
         self._mcmc_accept_n = 0
         # MDP 升级: episode 轨迹缓冲 + 起点 darwin (终点奖励的参照).
-        # HUGINN_BANDIT_MDP=0 时回退旧单步增量更新, 零行为变化 (回归逃生门).
-        self._mdp_enabled = os.environ.get("HUGINN_BANDIT_MDP", "1") != "0"
+        # FeatureFlags bandit_mdp (旧 env HUGINN_BANDIT_MDP) =0 时回退旧单步增量
+        # 更新, 零行为变化 (回归逃生门).
+        self._mdp_enabled = FeatureFlags.shared().is_enabled("bandit_mdp")
         self._trajectory: list[tuple[str, str, float]] = []
         self._episode_start_darwin = 0.5
         self._load()

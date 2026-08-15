@@ -24,6 +24,9 @@
 | 文档 | 状态 | 用途 |
 |---|---|---|
 | [architecture.md](architecture.md) | active | 系统架构总览（技术架构） |
+| [env-contract.md](env-contract.md) | active | 环境变量契约（265 个 HUGINN_*，可自动再生成） |
+| [feature-flags-contract.md](feature-flags-contract.md) | active | 功能开关契约（44 个 FeatureFlags，可自动再生成） |
+| [plugins-contract.md](plugins-contract.md) | active | 插件契约（Everything is a Plugin 注册面，可自动再生成） |
 | [tech-spec.md](tech-spec.md) | active | 技术规格（已合并下述 8 个已废弃 spec） |
 | [harness_evolution_spec.md](harness_evolution_spec.md) | active | harness 演进规范（H0-H4 落地，H5-a/H5-b 已落地） |
 | [reward_design.md](reward_design.md) | staging | 奖励设计（未实现理论稿） |

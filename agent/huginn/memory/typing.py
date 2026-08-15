@@ -19,9 +19,10 @@ ponytail: 复用 SQLite memories 表扩列, 不新建表. 单文件, 不引入�
 """
 from __future__ import annotations
 
-import os
 from enum import StrEnum
 from typing import Any
+
+from huginn.feature_flags import FeatureFlags
 
 
 class MemoryType(StrEnum):
@@ -42,13 +43,13 @@ class MemoryType(StrEnum):
 
 
 def _use_typing() -> bool:
-    """env flag HUGINN_USE_MEMORY_TYPING 控制 engine 是否调 typed API.
+    """FeatureFlags memory_typing 控制 engine 是否调 typed API (旧 env HUGINN_USE_MEMORY_TYPING).
 
     C4 后默认 ON — typed memory 是分层 memory 的基础, 平常该用.
     显式设 =0 可关 (回退到 grep/正则 fallback 路径).
     schema migration v2 无条件跑, 旧 DB 升级不需要额外操作.
     """
-    return os.environ.get("HUGINN_USE_MEMORY_TYPING", "1") in ("1", "true", "True")
+    return FeatureFlags.shared().is_enabled("memory_typing")
 
 
 # tags/source/category → memory_type 反推规则 (lazy migrate 用)
