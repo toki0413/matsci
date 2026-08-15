@@ -1,6 +1,6 @@
 # Everything is a Plugin — 段插件化设计
 
-> 状态: prompt 段 + tool result 压缩 + compaction 策略均已用形态 B 落地; 其余子系统评估中
+> 状态: prompt 段 + tool result 压缩 + compaction + 记忆整理策略均已用形态 B 落地
 > 范围: prompt 段插件化 + 两形态插件框架 + 其他子系统适配评估
 > 关联: `prompt_builder.py`, `context.py`, `plugins/`, `core_types.py`, 记忆整理, compaction
 
@@ -165,9 +165,14 @@ O(P) (P = 策略数, 个位), 相对 O(n) 可忽略; 不做事件分发、无 as
 **警醒**: 事件总线分发有开销, 不该把每次压缩变成事件流 — 用可插拔策略注册表
 (Select a policy, not dispatch events)。
 
-### 4.3 记忆整理(memory maintainer) — 高适配
+### 4.3 记忆整理(memory maintainer) — 已落地 (策略注册表)
 
-策略分歧点极多: decay / prune / dedupe / cluster / compress, 各有阈值。第三方加"按重要性排序的淘汰策略"现在得改核心。适合策略注册表。
+策略分歧点: decay / prune / dedupe, 各有阈值。已用 `plugins/memory_maintenance_policy.py`
+落地: `MemoryMaintenancePolicy` (decay_per_day / prune_threshold / deduplicate) 注册进
+策略注册表, `resolve_memory_policy()` 取最高 priority 的单一生效策略 (非 union — 整组
+阈值是单策略选择)。`longterm.maintenance()` / `manager.maintenance()` 对未显式传入的
+旋钮取策略值, 显式传参优先; `MemoryMaintainer` 守护线程不再硬编码阈值。第三方换一套
+淘汰策略 → 注册一个策略, 不改核心。
 
 ### 4.4 工具调度 / 错误恢复 / 沙箱选择 — 已有事件, 不必全量插件化
 
@@ -184,7 +189,7 @@ O(P) (P = 策略数, 个位), 相对 O(n) 可忽略; 不做事件分发、无 as
 | 1 | Prompt 段 | 形态 B | ✅ 已落地 |
 | 2 | Tool Result 压缩 | 策略注册表 | ✅ 已落地 |
 | 3 | Compaction 策略 | 策略注册表 | ✅ 已落地 |
-| 4 | 记忆整理 | 策略注册表 | 策略多, 收益相对低, 后置 |
+| 4 | 记忆整理 | 策略注册表 | ✅ 已落地 |
 
 ---
 

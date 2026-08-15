@@ -1514,9 +1514,9 @@ class LongTermMemory:
 
     def maintenance(
         self,
-        decay_per_day: float = 0.97,
-        prune_threshold: float = 0.15,
-        deduplicate: bool = True,
+        decay_per_day: float | None = None,
+        prune_threshold: float | None = None,
+        deduplicate: bool | None = None,
         cluster: bool = False,
         llm_chat_fn: Any = None,
     ) -> dict[str, int]:
@@ -1525,7 +1525,21 @@ class LongTermMemory:
         P5: cluster=True + HUGINN_MEMORY_CLUSTER=1 时, dedupe 后跑 semantic cluster +
         LLM summarize. cluster step 失败不 abort maintenance, 只记日志.
         llm_chat_fn 为 None 时跳过 cluster (即使 cluster=True, 没 LLM 没法 summarize).
+
+        decay_per_day / prune_threshold / deduplicate 未显式传入时, 取记忆整理策略
+        注册表 (plugins.memory_maintenance_policy) 的生效策略值; 显式传参优先.
         """
+        # 未显式传参 → 由策略注册表提供阈值 (形态 B). 显式传参优先.
+        from huginn.plugins.memory_maintenance_policy import resolve_memory_policy
+
+        policy = resolve_memory_policy()
+        if decay_per_day is None:
+            decay_per_day = policy.decay_per_day
+        if prune_threshold is None:
+            prune_threshold = policy.prune_threshold
+        if deduplicate is None:
+            deduplicate = policy.deduplicate
+
         summary = self.apply_decay_policy(
             decay_per_day=decay_per_day, prune_threshold=prune_threshold
         )
