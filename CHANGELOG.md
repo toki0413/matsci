@@ -7,10 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-15
+
 ### Added
 - 5xx retry with 1s backoff in desktop API client for remote backend deployment
 - Version bump script (`scripts/bump_version.ps1`) to sync version across all config files
 - Tag-driven stable release workflow (`.github/workflows/release.yml`)
+- 视觉像素 MCP server (`vision-pixel`): 移植 dsh-vision-router 的像素闭环能力 (裁剪/主色/像素对比/抠图/SVG 矢量化/看图摘要), 纯 PIL/numpy 实现无 Node 依赖
+- 接入 5 个插件: dsh-vision-router 视觉工具、dsh-auto-blame、ModLens、OpenPencil、Argo
+- MCP 连接健壮性: 超时提到 60s 并在后台初始化, 逐个连接避免 anyio cancel-scope 竞态
 
 ### Changed
 - Desktop CI builds remain as prerelease (`desktop-ci-N` tag)
