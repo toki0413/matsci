@@ -53,9 +53,10 @@ class TestPromptsMathDepthBlock:
         assert "symbolic" in HUGINN_SYSTEM_PROMPT.lower()
 
     def test_phase_gate_forecast_present(self):
-        # The validate->learn flow is mentioned in the system prompt
+        # The system prompt has Physical Validation and Epistemic Honesty
+        # as core principles (phase gates are code-enforced, not prompt-based)
         assert "validate" in HUGINN_SYSTEM_PROMPT.lower()
-        assert "learn" in HUGINN_SYSTEM_PROMPT.lower()
+        assert "physical validation" in HUGINN_SYSTEM_PROMPT.lower()
 
 
 class TestDefaultPersonaInheritsMathBlock:
