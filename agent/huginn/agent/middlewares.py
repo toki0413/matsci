@@ -15,6 +15,7 @@ from typing import Any
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 
+from huginn.utils.jieba_utils import get_jieba
 from huginn.utils.session_context import get_thread_id
 
 logger = logging.getLogger(__name__)
@@ -391,21 +392,8 @@ class RateLimitMiddleware(AgentMiddleware):
         return await handler(request)
 
 
-# jieba 懒加载缓存 (DeliverableCoverageMiddleware 共享): None=未尝试,
-# False=不可用, 否则为 jieba 模块. _extract_keywords 中文覆盖依赖它.
-_JIEBA: Any | None = None
-
-
-def _get_jieba() -> Any | None:
-    """懒加载 jieba. 首次尝试后缓存结果, 避免每次 _extract_keywords 都 import."""
-    global _JIEBA
-    if _JIEBA is None:
-        try:
-            import jieba
-            _JIEBA = jieba
-        except Exception:
-            _JIEBA = False
-    return _JIEBA if _JIEBA else None
+# _extract_keywords 中文覆盖依赖 jieba 分词. 懒加载逻辑收敛到
+# huginn/utils/jieba_utils.get_jieba, 避免各模块重复实现.
 
 
 class DeliverableCoverageMiddleware(AgentMiddleware):
@@ -565,7 +553,7 @@ class DeliverableCoverageMiddleware(AgentMiddleware):
             # 注意: phrase 含中文时 jieba 可能仍能切出词, 但 words 已被
             # 原拆分清空, 这里保持原行为 (返回 [phrase]) 以防误匹配.
             return [phrase]
-        jieba = _get_jieba()
+        jieba = get_jieba()
         cn_words: list[str] = []
         if jieba is not None and any("\u4e00" <= c <= "\u9fff" for c in phrase):
             for w in jieba.cut(phrase):

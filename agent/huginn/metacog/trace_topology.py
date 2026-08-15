@@ -13,7 +13,8 @@ from __future__ import annotations
 import math
 import re
 from collections import Counter
-from typing import Any
+
+from huginn.utils.jieba_utils import get_jieba
 
 # 优先复用 context_builder._compute_semantic_overlap (Task 3 实现).
 # Task 3 未完成时用本地 TF-IDF cosine 兜底 — 不阻塞 Task 4 self-check.
@@ -27,21 +28,8 @@ except Exception:
         return _local_tfidf_cosine(a, b)
 
 
-# jieba 懒加载缓存: None=未尝试, False=不可用, 否则为 jieba 模块.
 # 中文拓扑证据语义重叠依赖中文分词, 复用 RAG 升级引入的 jieba.
-_JIEBA: Any | None = None
-
-
-def _get_jieba() -> Any | None:
-    """懒加载 jieba. 首次尝试后缓存结果, 避免每次 _tokenize 都 import."""
-    global _JIEBA
-    if _JIEBA is None:
-        try:
-            import jieba
-            _JIEBA = jieba
-        except Exception:
-            _JIEBA = False
-    return _JIEBA if _JIEBA else None
+# 懒加载逻辑收敛到 huginn/utils/jieba_utils.get_jieba.
 
 
 def _tokenize(text: str) -> list[str]:
@@ -49,7 +37,7 @@ def _tokenize(text: str) -> list[str]:
     if not text:
         return []
     text_l = text.lower()
-    jieba = _get_jieba()
+    jieba = get_jieba()
     if jieba is not None:
         tokens = []
         seen = set()
