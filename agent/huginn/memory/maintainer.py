@@ -71,13 +71,14 @@ class MemoryMaintainer:
                 logger.warning("memory maintenance error: %s", e)
 
     def _run_maintenance(self) -> None:
-        """Run one maintenance cycle."""
+        """Run one maintenance cycle.
+
+        阈值 (decay_per_day / prune_threshold / deduplicate) 由
+        plugins.memory_maintenance_policy 策略注册表提供, 不在守护线程里硬编码.
+        """
         if self._mm is None:
             return
         result = self._mm.maintenance(
-            decay_per_day=0.97,
-            prune_threshold=0.15,
-            deduplicate=True,
             cluster=self._cluster,
             llm_chat_fn=self._llm_chat_fn,
         )
