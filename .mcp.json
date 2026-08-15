@@ -4,6 +4,15 @@
       "command": "npx",
       "args": ["-y", "flint-chart-mcp"],
       "env": {}
+    },
+    "qwen-mm-plugins-core": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "qwen-mm-plugins[core] @ git+https://github.com/QwenLM/Qwen-MM-Plugins.git@qwen-mm-plugins-core-v1.0.2",
+        "qwen-mm-plugins-core"
+      ],
+      "env": {}
     }
   }
 }
