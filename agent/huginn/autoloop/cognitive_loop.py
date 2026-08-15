@@ -595,9 +595,14 @@ def build_pmk_state(
         _kb_text = ""
         if kb is not None and last_step_eval is not None:
             try:
-                _kb_hits = kb.query(
-                    getattr(last_step_eval, "attempted", "") or "",
-                    top_k=top_k, since=since,
+                _kb_query = getattr(last_step_eval, "attempted", "") or ""
+                # 桥 RAG: 优先走去重的检索 (query_with_dedup), 吃到 RAG 升级后的
+                # BM25 中文分词 + 近似去重, 跟 _build_kb_text 同一检索路径.
+                # 无该方法时回退旧 query, 不破坏既有调用方.
+                _kb_hits = (
+                    kb.query_with_dedup(_kb_query, top_k=top_k, since=since)
+                    if hasattr(kb, "query_with_dedup")
+                    else kb.query(_kb_query, top_k=top_k, since=since)
                 )
                 if _kb_hits:
                     _kb_text = " ".join(
