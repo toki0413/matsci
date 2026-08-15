@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.2.0] - 2026-08-15
+## [1.2.0] - 2026-08-15
 
 ### Added
 - 5xx retry with 1s backoff in desktop API client for remote backend deployment
