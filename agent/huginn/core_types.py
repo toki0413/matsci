@@ -41,6 +41,22 @@ class HandleType(StrEnum):
     FORMULA = "formula"
 
 
+class ErrorKind(StrEnum):
+    """Structured classification of tool execution failures.
+
+    Lets downstream (debugging, trace, auto-retry) distinguish failure classes
+    that are flattened to a plain string on ``ToolResult.error`` today. Default
+    ``NONE`` keeps existing callers behaviour-identical.
+    """
+
+    NONE = "none"  # 正常或模型可见的业务失败
+    TIMEOUT = "timeout"  # 沙箱/命令超时
+    DENIED = "denied"  # 沙箱策略拒绝 (SandboxError / result.blocked)
+    SIGNAL = "signal"  # 被信号终止
+    TRANSIENT = "transient"  # 瞬时错误, 可安全重试
+    FATAL = "fatal"  # 不可重试
+
+
 @dataclass
 class PermissionResult:
     mode: PermissionMode
@@ -58,6 +74,7 @@ class ToolResult:
     data: Any
     success: bool = True
     error: str | None = None
+    error_kind: ErrorKind = ErrorKind.NONE
     new_messages: list[dict] = field(default_factory=list)
     side_effects: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -68,6 +85,7 @@ class ToolResult:
             "data": _jsonify(self.data),
             "success": self.success,
             "error": self.error,
+            "error_kind": self.error_kind.value,
             "side_effects": list(self.side_effects),
         }
         if self.metadata:
