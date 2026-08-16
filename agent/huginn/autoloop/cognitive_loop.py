@@ -370,8 +370,14 @@ class OutputWriter:
 # detect_drift / TaskMetrics / should_pause_for_decision, 代码独立. 这里抽共享
 # 函数, 让两边调同一份, 避免 AV2/AV6/AV7/AV8 类型的偏移再发生.
 # ponytail: 只抽无状态纯函数, 不引入 CognitiveLoop 子类, 不绑定 LLM.
-# 拆出处: huginn/autoloop/cognitive_guard.py (段 2). 对外契约为空 — 这里再导出,
-# 让 ``from huginn.autoloop.cognitive_loop import build_pmk_state`` 仍可用.
+# 拆出处: huginn/autoloop/cognitive_guard.py (段 2). 这里再导出, 让
+# ``from huginn.autoloop.cognitive_loop import build_pmk_state`` 等仍可用.
+# 定义在 cognitive_guard.py, 此处仅 re-export, 保持旧 import 契约兼容.
+from huginn.autoloop.cognitive_guard import (  # noqa: F401,E402  (晚于类定义也无碍)
+    build_pmk_state,
+    check_pause_decision,
+    update_heat_engine_after_step,
+)
 
 
 class CognitiveLoopMixin:
