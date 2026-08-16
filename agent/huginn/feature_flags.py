@@ -79,7 +79,7 @@ class FeatureFlags:
         "use_cognitive_map": False,      # 认知地图 (HUGINN_USE_COGNITIVE_MAP)
         "use_atomworld": False,          # AtomWorld 环境 (HUGINN_USE_ATOMWORLD)
         "persistent_terminal": False,    # 持久化终端 (HUGINN_PERSISTENT_TERMINAL)
-        "world_model": False,            # 世界模型 (HUGINN_WORLD_MODEL)
+        "world_model": True,             # 世界模型 (HUGINN_WORLD_MODEL)
         "curiosity_hint": False,         # 好奇心提示 (HUGINN_CURIOSITY_HINT)
         "privacy_block_on_secrets": False,  # 检测到密钥时阻断 (HUGINN_PRIVACY_BLOCK_ON_SECRETS)
         # P1#1 (v25): 假设维度/方法族/失败类型 关键词匹配 → LLM 语义判定.
