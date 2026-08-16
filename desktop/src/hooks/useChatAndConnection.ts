@@ -22,7 +22,7 @@ import { useIncrementalMessages } from "./useIncrementalMessages";
 import {
   API_BASE, WS_URL, syncBackendUrl, PERSONAS_FALLBACK, wsUrlVersion,
 } from "../lib/config-store";
-import { isWSMessage, type WSMessage } from "../types/ws";
+import { isWSMessage, type WSMessage, type DecisionPointPayload, type CostNarrativePayload } from "../types/ws";
 import type { AppConfig, PersonaSeed, PersonaEmotionResponse, HeatEngineHealth, ThinkingIntensity } from "../types/domain";
 import type { PetStatusState } from "../components/PetStatusWidget";
 import i18n from "../i18n";
@@ -202,6 +202,12 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
   const [pendingSuggestCode, setPendingSuggestCode] = useState<{
     code: string; risk: string; reason: string; turn: number;
   } | null>(null);
+
+  // ── Cost & pruning participation (docs/cost-participation-contract.md) ──
+  // 决策点: agent 主动召回用户裁决 (prune/hibernate/degrade/pause/resume).
+  const [pendingDecisionPoint, setPendingDecisionPoint] = useState<DecisionPointPayload | null>(null);
+  // 成本叙事: 数字 + 意图 + 预测, 供 MetricsBar 成本叙事增强.
+  const [costNarrative, setCostNarrative] = useState<CostNarrativePayload | null>(null);
 
   // ── Dynamic risk threshold (HRI: trust-adaptive risk classification) ──
   const [riskThreshold, setRiskThreshold] = useState<number>(0.5);
@@ -887,6 +893,16 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
         setRiskThreshold(data.threshold);
         break;
       }
+      case "decision_point": {
+        setPendingDecisionPoint(data.data as DecisionPointPayload);
+        // 决策点需要用户立刻注意, 即使窗口在前台也弹通知
+        notify("Huginn 需要决策", `Agent 在 ${(data.data as DecisionPointPayload).kind} 关口需要你选择`, true);
+        break;
+      }
+      case "cost_narrative": {
+        setCostNarrative(data.data as CostNarrativePayload);
+        break;
+      }
       case "side_question_pending": {
         // Backend sends a single question, not an array
         const q = data.question;
@@ -1511,6 +1527,22 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
     setPendingSuggestCode(null);
   };
 
+  // Cost & pruning participation: 用户对决策点的裁决 (approve / edited / deny)
+  const respondToDecisionPoint = (option: string) => {
+    const dp = pendingDecisionPoint;
+    const decision = option === "abandon" ? "denied" : "approved";
+    if (dp && wsClientRef.current) {
+      wsClientRef.current.send(JSON.stringify({
+        type: "decision_response",
+        decision_point_id: dp.id,
+        decision,
+        option,
+        thread_id: activeThreadRef.current,
+      }));
+    }
+    setPendingDecisionPoint(null);
+  };
+
   // ── Autoloop SSE subscription ────────────────────────────────
   // Backend emits named events (snapshot/update/campaign), not unnamed messages.
   // The old es.onmessage handler never fired — autoloop progress was dead.
@@ -1645,5 +1677,9 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
     respondToSuggestCode,
     // Dynamic risk threshold
     riskThreshold,
+    // Cost & pruning participation
+    pendingDecisionPoint,
+    costNarrative,
+    respondToDecisionPoint,
   };
 }
