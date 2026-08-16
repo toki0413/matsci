@@ -47,9 +47,16 @@
 
 ### 两个失败（均与本 session 改动无关，独立复现）
 1. **`test_100_turn_memory_stable`** — `Memory grew 104.0MB in 100 turns, assert 104.02 < 100`
-   类别: 稳定性/内存增长（FIX，潜在慢泄漏）。
+   类别: checkpointer 状态累积（FIX，见下方根因分析）。
 2. **`test_all_contract_docs_are_not_drifted`** — `env-contract.md, feature-flags-contract.md` 契约漂移
-   类别: 文档与代码漂移，需 `python -m huginn.cli.config_audit --<mode> --out docs/<name>.md` 重新生成（FIX）。
+   类别: 文档与代码漂移。**已修复**：`config_audit` 重新生成两份文档后测试通过（3 passed）。
+
+#### 内存失败根因分析（tracemalloc 归因 + 进程内增量测量）
+增长主力不是业务记忆泄漏，而是 **langgraph checkpointer (SqliteSaver)** 状态累积：
+- 磁盘证据：100 轮后 `checkpoint.sqlite` ≈ **163–170MB**，而 `longterm.db` 仅 **118KB**（记忆库几乎不增长）→ 增长集中在 checkpointer 持久化。
+- 进程内增量：1 turn=69.4MB（一次性懒加载基线：importlib+tiktoken+首次 serde），随轮次≈**0.8MB/turn 线性累积**。
+- 根因链条：[streaming.py](huginn/agent/streaming.py) `_maybe_auto_compact` 在 `if not any(usage.values()): return None` 因 fake LLM **无 token usage** 而永远短路 → `RemoveMessage` 真修剪（G34）从不触发 → checkpointer 内消息历史无界累积。
+- 真实风险提示：当生产 LLM 不返回 token usage（或错误吞掉 usage），compaction 门控失效，checkpointer 同样会线性膨胀。建议修复方向：① 对"连续 N 轮无 usage"实现降级修剪（不依赖 token 百分比），或 ② 为 checkpointer 增加无条件最大消息数/年龄上限兜底。
 
 ### blind_spot_mapper 接线功能验证
 `TestBlindSpotBlockWiring` 4 条定向测试全部通过（5.22s）：确认失败注入盲点块 / 弱簇不注入 / 无 memory 静默下降级 / block 序位于 topo 之后。
