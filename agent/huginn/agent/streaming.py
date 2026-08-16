@@ -231,6 +231,45 @@ def _is_root_message(msg: Any) -> bool:
     return False
 
 
+def _compute_common_prefix(a: list[dict[str, Any]], b: list[dict[str, Any]]) -> int:
+    """返回两个 record 列表的公共前缀长度 (相同 type+content 连续计数).
+
+    P2 prefix_merging: 跨 turn 共享前缀去重. 用 ((type, content) 序列) 判相等,
+    ts / tool_call_id 等噪声字段忽略, 避免同一轮重复工具序列被误判为 0.
+    """
+    n = 0
+    for x, y in zip(a, b):
+        if x.get("type") != y.get("type"):
+            break
+        if x.get("content") != y.get("content"):
+            break
+        n += 1
+    return n
+
+
+def _read_completion_records(path: Path) -> list[dict[str, Any]]:
+    """整读一个 completion jsonl 文件为 record 列表. 失败/不存在返回 []."""
+    import json
+
+    try:
+        if not path.exists():
+            return []
+        out = []
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    out.append(json.loads(line))
+                except json.JSONDecodeError:
+                    logger.debug("skip bad completion line in %s", path)
+        return out
+    except Exception:
+        logger.debug("read completion records failed", exc_info=True)
+        return []
+
+
 def _dump_completion_records(
     records: list[dict[str, Any]],
     thread_id: str,
@@ -238,12 +277,14 @@ def _dump_completion_records(
 ) -> Any:
     """把 wire-level completion records 落盘为 jsonl, 供 red_team / RL 训练消费.
 
-    每条 record 是 ``_process_stream_state`` 抓的 prompt/response/tool_call/
-    tool_result 结构化快照. 一个 turn 一个文件:
+    每条 record 是 ``_process_stream_state`` 抓的 assistant/tool_call/tool_result
+    结构化快照. 一个 turn 一个文件:
     ``<runtime_home>/completions/<thread_id>/<turn_id>.jsonl``.
 
-    ponytail: 只 dump 非空 records, 失败静默 (返回 None). 升级路径: 加 prefix_merging
-    (跨 turn 共享 prompt 前缀去重, 减少冗余存储) — 当前每 turn 独立文件, 不做合并.
+    P2 prefix_merging: 同一 thread 连续 turn 若存在公共前缀 (如重复的工具调用/
+    重放序列), 只写一条 prefix_ref 引用前一文件 + 后缀增量, 减少冗余存储.
+    Consumers 读侧据 prefix_ref 重建完整序列 (见 _reconstruct_completion_records).
+    无公共前缀时写全量, 行为不变. 失败静默 (返回 None).
     """
     if not records:
         return None
@@ -255,13 +296,68 @@ def _dump_completion_records(
         comp_dir = get_runtime_home() / "completions" / thread_id
         comp_dir.mkdir(parents=True, exist_ok=True)
         comp_path = comp_dir / f"{turn_id}.jsonl"
-        with open(comp_path, "w", encoding="utf-8") as f:
+
+        # P2: 找同 thread 最新的前一 turn 文件, 算公共前缀.
+        prefix_ref = None
+        prev_path = _latest_completion_path(comp_dir, exclude=f"{turn_id}.jsonl")
+        if prev_path is not None:
+            prev_recs = _read_completion_records(prev_path)
+            if prev_recs:
+                common = _compute_common_prefix(prev_recs, records)
+                # 阈值 2: 至少共享 2 条才值得去重 (1 条引用开销不划算).
+                if common >= 2:
+                    prefix_ref = {
+                        "type": "prefix_ref",
+                        "prev_file": prev_path.name,
+                        "prefix_len": common,
+                    }
+
+        lines: list[str] = []
+        if prefix_ref is not None:
+            lines.append(json.dumps(prefix_ref, ensure_ascii=False))
+            # 只写后缀增量 records[common:], 前缀从 prev_file 重建.
+            for rec in records[prefix_ref["prefix_len"]:]:
+                lines.append(json.dumps(rec, ensure_ascii=False, default=str))
+        else:
             for rec in records:
-                f.write(json.dumps(rec, ensure_ascii=False, default=str) + "\n")
+                lines.append(json.dumps(rec, ensure_ascii=False, default=str))
+        with open(comp_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
         return comp_path
     except Exception:
         logger.debug("completion dump failed", exc_info=True)
         return None
+
+
+def _latest_completion_path(comp_dir: Path, exclude: str = "") -> Path | None:
+    """返回 comp_dir 下按文件名倒序的最新 jsonl (排除 exclude). 无则 None."""
+    try:
+        cands = [
+            p for p in comp_dir.glob("*.jsonl") if p.name != exclude
+        ]
+        if not cands:
+            return None
+        return max(cands, key=lambda p: p.name)
+    except OSError:
+        logger.debug("latest completion path failed", exc_info=True)
+        return None
+
+
+def _reconstruct_completion_records(path: Path) -> list[dict[str, Any]]:
+    """整读一个 completion jsonl, 按 prefix_ref 重建完整 record 序列.
+
+    P2 prefix_merging 读侧: 首行是 prefix_ref 时, 递归读 prev_file 的完整序列,
+    取前 prefix_len 条 + 当前文件后缀增量. 供 red_team / RL 消费端使用.
+    """
+    recs = _read_completion_records(path)
+    if not recs:
+        return recs
+    if recs[0].get("type") == "prefix_ref":
+        prefix_len = int(recs[0].get("prefix_len", 0))
+        prev_path = path.with_name(str(recs[0].get("prev_file", "")))
+        prev_recs = _reconstruct_completion_records(prev_path)
+        return list(prev_recs[:prefix_len]) + recs[1:]
+    return recs
 
 
 class StreamingMixin:

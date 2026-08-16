@@ -680,12 +680,42 @@ class ContextBuilder:
 
         if session_state and getattr(session_state, "active_plan_id", None):
             parts.append("### Current Plan")
-            parts.append(f"Objective: {session_state.active_plan_objective}")
-            parts.append(f"Step: {session_state.active_plan_step_index + 1}")
+            # P2#4: chat 上下文只引用 active step + 剩余 pending step (PlanStore
+            # 动态裁剪), 不引用完整 plan — 已完成步骤折成计数, 降低 token 占用.
+            # 取不到 store / 无 active step 时回退到原有的 objective+step 简述.
+            hint = self._build_plan_context_hint(session_state)
+            if hint:
+                parts.append(hint)
+            else:
+                parts.append(f"Objective: {session_state.active_plan_objective}")
+                parts.append(f"Step: {session_state.active_plan_step_index + 1}")
             parts.append(f"Cognitive mode: {session_state.cognitive_mode.value}")
             parts.append("### End Current Plan")
 
         return "\n".join(parts) if parts else ""
+
+    @staticmethod
+    def _build_plan_context_hint(session_state) -> str:
+        """从 PlanStore 取 active plan 的裁剪上下文 (best-effort, 失败回退空串)."""
+        plan_id = getattr(session_state, "active_plan_id", None)
+        if not plan_id:
+            return ""
+        try:
+            from huginn.autoloop.plan_store import PlanStore
+
+            ps = PlanStore()
+            plan = ps.get_plan(plan_id)
+            if plan is None:
+                return ""
+            # 定位当前 active step id (按 step_index 对齐 plan.steps 顺序).
+            step_index = getattr(session_state, "active_plan_step_index", 0)
+            active_step_id = None
+            if 0 <= step_index < len(plan.steps):
+                active_step_id = plan.steps[step_index].id
+            return ps.build_context_hint(plan_id, active_step_id)
+        except Exception:
+            logger.debug("plan context hint failed", exc_info=True)
+            return ""
 
     def build_subgoal_text(self, session_state=None) -> str:
         """Inject active sub-goal constraints from /subgoal command."""
