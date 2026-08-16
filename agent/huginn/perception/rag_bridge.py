@@ -34,10 +34,14 @@ class RAGBridge:
         n = bridge.ingest(packages, document_id="doc_abc")
     """
 
-    def __init__(self, kb: Any | None = None) -> None:
+    def __init__(self, kb: Any | None = None, auditor: Any | None = None) -> None:
         # The KB can be a KnowledgeBase, a VectorStore, or anything that
         # exposes add_document(text, metadata). When None, ingest is a no-op.
         self.kb = kb
+        # Optional ClaimAuditor for contested-claim tagging (stage 4).
+        # When provided, package claims are checked against contested/recheck
+        # conclusions and flagged in metadata + text.
+        self.auditor = auditor
 
     def ingest(
         self,
@@ -59,6 +63,14 @@ class RAGBridge:
             if not text.strip():
                 continue
             metadata = self._package_metadata(pkg, document_id, filename)
+            # Stage 4: 包内命中存疑结论时, 文本前置 [CONTESTED] 标注, 让检索
+            # 结果自带"存疑"信号 (不仅是 metadata 里的 n_contested).
+            if metadata.get("contested_claims"):
+                text = (
+                    "[CONTESTED] 本包部分结论在 claim 层标记为存疑: "
+                    + "; ".join(metadata["contested_claims"][:3])
+                    + "\n" + text
+                )
             try:
                 self._add_document(text, metadata)
                 count += 1
@@ -130,6 +142,11 @@ class RAGBridge:
         # Collect the set of pages this package touches.
         pages = sorted({el.page for el in pkg.elements if el.page is not None})
 
+        # Stage 4: contested-claim tagging — check package claim texts against
+        # the claim layer's contested/recheck conclusions. Best-effort: auditor
+        # missing → empty list, never blocks ingest.
+        contested_claims = self._match_contested_claims(pkg)
+
         return {
             "source": "docgraph",
             "document_id": document_id,
@@ -142,8 +159,40 @@ class RAGBridge:
             "n_supported": n_supported,
             "n_contradicted": n_contradicted,
             "n_inconclusive": n_inconclusive,
+            "n_contested": len(contested_claims),
+            "contested_claims": contested_claims,
             "pages": pages,
         }
+
+    def _match_contested_claims(self, pkg: InformationPackage) -> list[str]:
+        """包内 claim 是否命中 claim 层的 contested/recheck 结论 (best-effort).
+
+        命中列表用于 metadata 标签 + ingest 文本标注, 让后续检索能感知
+        "这些包内结论存疑". 无 auditor / 无 claim / 无命中 → [].
+        """
+        if self.auditor is None:
+            return []
+        try:
+            flagged = {
+                e.conclusion
+                for e in self.auditor.hypergraph._edges
+                if e.status in ("contested", "recheck")
+            }
+        except Exception:
+            return []
+        if not flagged:
+            return []
+        hits: list[str] = []
+        for claim in pkg.claims:
+            text = str(claim.get("conclusion") or "") or str(claim.get("metric") or "")
+            if not text:
+                continue
+            # 命中判据: 存疑结论文本包含 claim 的 metric/conclusion 片段
+            for fc in flagged:
+                if text and text in fc:
+                    hits.append(fc)
+                    break
+        return hits
 
     def _add_document(self, text: str, metadata: dict[str, Any]) -> None:
         """Dispatch to whichever KB interface we were given."""

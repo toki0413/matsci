@@ -555,6 +555,7 @@ class KnowledgeDistiller:
             return 0
 
         ingested = 0
+        claim_registered = 0
         for dk in self.knowledge_base:
             # Only ingest high-quality knowledge
             if dk.verification_status == "rejected":
@@ -580,7 +581,43 @@ class KnowledgeDistiller:
             except Exception as e:
                 logger.debug("auto_ingest_to_kb chunk failed: %s", e)
                 continue
+
+            # claim 层登记 (best-effort): confirmed/高置信的领域事实提升为可
+            # 被挑战/传播的结论节点. 复用 ClaimAuditor. 失败不阻塞 RAG ingest.
+            if dk.source_type == "domain_fact" and dk.confidence >= 0.7:
+                if self._register_fact_as_claim(dk, kb):
+                    claim_registered += 1
         return ingested
+
+    def _register_fact_as_claim(self, dk: DistilledKnowledge, kb: Any) -> bool:
+        """把一条高置信领域事实登记进 claim 层 (best-effort).
+
+        复用 ClaimAuditor.register_claim: 结论=事实文本, premise=其溯源证据
+        (source_evidence), 状态来自 verification_status (confirmed→accepted,
+        否则维持默认). 返回是否登记成功; 失败返回 False 不 raise.
+        """
+        try:
+            from huginn.kg.claim_audit import ClaimAuditor
+        except Exception as exc:
+            logger.debug("claim layer unavailable: %s", exc)
+            return False
+        root = getattr(kb, "root", None)
+        if root is None:
+            return False
+        try:
+            auditor = ClaimAuditor(root)
+            auditor.register_claim(
+                dk.content.strip(),
+                premises=[e for e in (dk.source_evidence or []) if e.strip()],
+                mode="AND",
+                evidence_strength=dk.confidence,
+                source=f"distilled:{dk.source_type}",
+                status="accepted",
+            )
+            return True
+        except Exception as exc:
+            logger.debug("claim registration failed: %s", exc)
+            return False
 
     def verify_knowledge(
         self, knowledge_id: str, status: str = "confirmed"

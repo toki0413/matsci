@@ -527,12 +527,61 @@ class ContextBuilder:
 
     # ── Domain knowledge base ──────────────────────────────────────
 
+    def _contested_kb_note(self, query: str) -> str:
+        """查 claim 层, 返回与 query 相关的存疑结论提醒 (best-effort).
+
+        为空字符串 = 无争议结论或 claim 层不可用. 只对 status 为
+        contested/recheck 的结论给提醒, accepted 不打扰 (避免噪音).
+        轻量匹配: query 的 jieba token 命中超图结论文本. 规模 <10K 边可接受.
+        """
+        try:
+            from huginn.kg.claim_audit import ClaimAuditor
+        except Exception:
+            return ""
+        try:
+            auditor = ClaimAuditor(self.workspace)
+        except Exception:
+            return ""
+        try:
+            from huginn.utils.jieba_utils import get_jieba
+            jieba = get_jieba()
+        except Exception:
+            jieba = None
+        q_tokens = (
+            {t for t in jieba.cut(query) if t and not t.isspace()}
+            if jieba is not None
+            else set(query.lower().split())
+        )
+        if not q_tokens:
+            return ""
+        flagged: list[tuple[str, str]] = []
+        for e in auditor.hypergraph._edges:
+            if e.status not in ("contested", "recheck"):
+                continue
+            text = (e.conclusion or "").lower()
+            if any(tok.lower() in text for tok in q_tokens):
+                flagged.append((e.conclusion, e.status))
+        if not flagged:
+            return ""
+        lines = [
+            "### Knowledge Audit Note",
+            "以下相关结论当前存疑 (contested/recheck), 引用时请注明证据强度与来源, "
+            "勿作为定论:",
+        ]
+        for claim, st in flagged[:5]:
+            lines.append(f"- [{st}] {claim}")
+        return "\n".join(lines)
+
     def build_kb_text(self, query: str) -> str:
         """Query the domain knowledge base (vector retrieval).
 
         Also performs cross-reference: when KB chunks are found, their
         text is used as a secondary query to recall related memories,
         creating a memory↔KB cross-reference loop.
+
+        When the claim layer marks related conclusions as contested/recheck,
+        a Knowledge Audit Note is appended so the agent doesn't present
+        challenged knowledge as settled fact.
         """
         if not self.kb_enabled:
             return ""
@@ -557,11 +606,15 @@ class ContextBuilder:
             )
             if not body:
                 return ""
+            # G-contested: claim 层存疑结论提醒 (best-effort, 失败为空串不阻塞).
+            audit_note = self._contested_kb_note(query)
+            note_block = f"\n{audit_note}" if audit_note else ""
             return (
                 "### Domain Knowledge Context\n"
                 "The following first-principles reference chunks may ground your answer. "
                 "Cite the source numbers when relevant.\n"
                 f"{body}\n"
+                f"{note_block}\n"
                 "### End Domain Knowledge Context"
             )
         except Exception:
