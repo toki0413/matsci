@@ -245,25 +245,17 @@ class EngineReflectMixin:
             if grader_list:
                 avg_score = sum(gr.score for gr in grader_list) / len(grader_list)
                 results["grader_reward"] = round(avg_score, 4)
-                try:
-                    from huginn.events.integration import _publish
-                    from huginn.utils.concurrency import track_task
+                from huginn.events.unified_bus import publish_event
 
-                    asyncio.get_running_loop()
-                    track_task(
-                        _publish(
-                            "quality.check",
-                            {
-                                "iteration": self._iteration,
-                                "graders": results["grader_scores"],
-                                "reward": results.get("grader_reward", 0),
-                            },
-                            source="autoloop",
-                        ),
-                        name="quality-check-emit",
-                    )
-                except Exception:
-                    logger.debug("quality.check emit failed", exc_info=True)
+                publish_event(
+                    "quality.check",
+                    {
+                        "iteration": self._iteration,
+                        "graders": results["grader_scores"],
+                        "reward": results.get("grader_reward", 0),
+                    },
+                    source="autoloop",
+                )
         except Exception as e:
             results["grader_error"] = str(e)
 
