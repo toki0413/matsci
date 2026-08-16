@@ -75,12 +75,21 @@
 |---|---|---|
 | [快速上手分步指南](../../docs/quickstart.md) | active | 根级安装/配置/验证/聊天分步指南 |
 | [威胁模型](../../docs/threat_model.md) | active | 攻击面 / STRIDE / 信任边界 / 事件响应 |
+| [ToolUniverse 集成](../../docs/tooluniverse-integration.md) | active | 工具生态集成方案 |
 | [ADR-0001 单网关](../../docs/architecture/decisions/0001-single-gateway.md) | active | 架构决策记录：唯一业务网关原则 |
 | [agent 包 README](../README.md) | active | agent 子包特性与开发 |
 | [根 README](../../README.md) | active | 全项目总览、两条控制轴、文档导航 |
 | [desktop README](../../desktop/README.md) | active | 桌面应用（Tauri v2 + React）开发/构建 |
+| [Rust CLI README](../../cli/README.md) | active | `huginn` 二进制前端：子命令 / 单网关 / 构建 |
+| [Sidecar README](../../sidecar/README.md) | active | `huginn-sidecar` 进程管理与事件总线 |
+| [MCP 服务器 README](../../servers/README.md) | active | 3 个 MCP 服务器总览（mat-db / math-anything / vision-pixel） |
+| [plan.md](../plan.md) | active | 根级开发计划 |
 | [CODE_WIKI.md](../../CODE_WIKI.md) | active | 代码库百科 |
 | [CHANGELOG.md](../../CHANGELOG.md) | active | 变更日志 |
+| [RELEASE_REPORT_v0.2.0.md](../RELEASE_REPORT_v0.2.0.md) | report | 历史发布报告（v0.2.0，当前版本已更新） |
+
+> 组件目录（`cli/`、`sidecar/`、`servers/`、`desktop/`）各自带 README；
+> 本索引统一登记，避免散落不可发现。
 
 > 根 README 同时是"文档导航"的另一个入口，与本索引互为补充（本索引更细粒度）。
 
