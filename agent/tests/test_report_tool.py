@@ -137,6 +137,42 @@ class TestReportGenerator:
         )
         assert "Eg" in out
         assert "calculated = 1.1" in out
+        # 无 doi/url → 裸来源名
+        assert "(exp)" in out
+
+    def test_render_literature_evidence_chain(self):
+        """证据链增强: DOI 可点击链接 + 标题/年份 + 一致性标注."""
+        gen = ReportGenerator(style="full", fmt="markdown")
+        out = gen._render_literature(
+            {"comparisons": [
+                {
+                    "property": "band_gap",
+                    "calculated": 0.65,
+                    "reference": 1.12,
+                    "source": "Li et al. (2020)",
+                    "doi": "10.1234/abc123",
+                    "year": 2020,
+                    "title": "Band structure of LLZO",
+                    "consistency": "consistent within 0.5 eV",
+                },
+                {
+                    "property": "elastic_modulus",
+                    "calculated": 150,
+                    "reference": 120,
+                    "source": "MD database",
+                    "url": "https://materials.example.org/entry/1",
+                    "deviation": "+25%",
+                },
+            ]}
+        )
+        # DOI 链接
+        assert "[Li et al. (2020)](https://doi.org/10.1234/abc123)" in out
+        # 标题/年份附加
+        assert "Band structure of LLZO; 2020" in out
+        assert "consistent within 0.5 eV" in out
+        # URL 链接 + 偏差标注
+        assert "[MD database](https://materials.example.org/entry/1)" in out
+        assert "deviation = +25%" in out
 
     def test_render_resources(self):
         gen = ReportGenerator(style="full", fmt="markdown")
