@@ -164,3 +164,89 @@ class TestRelatedChainGating:
         out = engine._apply_block_patches(blocks, "hypothesize")
         assert out is blocks
         assert engine._last_hypothesis_blocks is blocks
+
+
+class TestBlindSpotBlockWiring:
+    """audit: blind_spot_mapper 接入 autoloop 主循环 — advisory block.
+
+    覆盖:
+      - 有确认失败 (rate==0, n>=3) 的 self-model → 注入 "### Blind Spots" block
+      - 弱簇 (<0.4 但非 rate==0) → 不注入 (与 [CURIOSITY] 分工, 不重复)
+      - 无 memory / 无 self-model → 静默空块, 不报错
+      - block 出现在优先级列表, 位于 topo 之后
+    """
+
+    def _engine_with_memory(self, sm):
+        eng = AutoloopEngine.__new__(AutoloopEngine)
+        eng._speculator_hint = None
+        eng._kb = None
+        eng.workspace = "."
+        eng._iteration = 0
+        eng._hypo_manifold = None
+        eng._mcmc_current = None
+        eng._mcmc_rng = None
+        eng._mcmc_rng_state = None
+        eng._mcmc_cached_log_p = None
+        eng._mcmc_step_count = 0
+        eng._mcmc_accept_count = 0
+        eng._mcmc_chains = {}
+        eng._build_kb_text = lambda query: ""  # type: ignore[method-assign]
+
+        class _Longterm:
+            def get_self_model(self):
+                return sm
+
+        class _Mem:
+            longterm = _Longterm()
+
+        eng.memory = _Mem()
+        return eng
+
+    def test_confirmed_failure_injects_blind_spot_block(self):
+        sm = {
+            "crystal/vasp": {
+                "rate": 0.0, "success": 0, "failure": 5,
+                "dimension": "crystal", "hyp_type": "vasp",
+            }
+        }
+        eng = self._engine_with_memory(sm)
+        prompt = eng._build_hypothesis_prompt(context={"objective": "band gap"})
+        assert "### Blind Spots" in prompt
+        assert "盲点" in prompt
+
+    def test_weak_only_no_confirmed_failure_no_block(self):
+        # rate=0.3 (<0.4 弱簇, 但非确认失败) → 不注入 (与 [CURIOSITY] 分工)
+        sm = {
+            "crystal/vasp": {
+                "rate": 0.3, "success": 1, "failure": 2,
+                "dimension": "crystal", "hyp_type": "vasp",
+            }
+        }
+        eng = self._engine_with_memory(sm)
+        prompt = eng._build_hypothesis_prompt(context={"objective": "band gap"})
+        assert "### Blind Spots" not in prompt
+
+    def test_no_memory_no_block(self):
+        eng = AutoloopEngine.__new__(AutoloopEngine)
+        eng._speculator_hint = None
+        eng._kb = None
+        eng.workspace = "."
+        eng._iteration = 0
+        eng._hypo_manifold = None
+        eng._mcmc_current = None
+        eng._mcmc_rng = None
+        eng._mcmc_rng_state = None
+        eng._mcmc_cached_log_p = None
+        eng._mcmc_step_count = 0
+        eng._mcmc_accept_count = 0
+        eng._mcmc_chains = {}
+        eng._build_kb_text = lambda query: ""  # type: ignore[method-assign]
+        prompt = eng._build_hypothesis_prompt(context={"objective": "band gap"})
+        assert "### Blind Spots" not in prompt
+
+    def test_block_in_priority_list_after_topo(self):
+        eng = self._engine_with_memory({})
+        eng._build_hypothesis_prompt(context={"objective": "band gap"})
+        names = [n for n, _ in eng._last_hypothesis_blocks]
+        assert "blind_spot" in names
+        assert names.index("blind_spot") > names.index("topo")
