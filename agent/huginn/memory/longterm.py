@@ -1338,6 +1338,36 @@ class LongTermMemory:
             rows = conn.execute(sql, tuple(params)).fetchall()
             return [dict(r) for r in rows]
 
+    def list_by_source(
+        self,
+        source: str,
+        category: str | None = None,
+        limit: int = 50,
+        alive_only: bool = True,
+        user_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Precise read by exact source match, newest first.
+
+        P2 session 持久化升级: 之前 session snapshot 只按 category 读"任意最新一条",
+        多 session 并存时无法精确恢复指定 session. 这里按 source 精确匹配
+        (保存时 source=f"session:{sid}"), 返回该 session 的所有快照按最后访问倒序,
+        供调用方按 session_id 精确读 + 版本化 (同一 session 多代快照都在).
+        """
+        alive_where, alive_params = self._where_alive()
+        with self._connect() as conn:
+            sql = f"SELECT * FROM memories AS m WHERE source = ? AND {alive_where}"
+            params: list[Any] = [source, *alive_params]
+            if category is not None:
+                sql += " AND category = ?"
+                params.append(category)
+            if user_id is not None:
+                sql += " AND m.user_id = ?"
+                params.append(user_id)
+            sql += " ORDER BY last_accessed DESC LIMIT ?"
+            params.append(limit)
+            rows = conn.execute(sql, tuple(params)).fetchall()
+            return [dict(r) for r in rows]
+
     def list_all(
         self,
         limit: int = 200,

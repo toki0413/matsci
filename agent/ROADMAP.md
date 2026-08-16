@@ -15,12 +15,16 @@
 ## autoloop/
 
 ### 1. 关键词匹配 → LLM 语义判定
-- **状态**: 计划中
+- **状态**: 已落地 (v25, flag `hypothesis_llm_semantic` 默认关, 优雅降级)
 - **优先级**: P1
 - **现状**: 假设维度 (dimension) 抽取、phase 语义分类、失败模式分类均用
   中英文关键词表 + 字符串 `in` 匹配, 非语义判定。
 - **升级方向**: 接 LLM 判定 dimension / phase / 失败语义分类 (v8+)。
+- **落地**: `huginn/autoloop/hypothesis_semantic.py` — 三处分类器 (classify_dimension /
+  classify_family / classify_failure) 接 LLM 语义判定, 无 LLM / flag 关 / 异常 /
+  标签非法时降级回关键词匹配 (行为向后兼容). 引擎 init 注入 model provider.
 - **相关文件**:
+  - `huginn/autoloop/hypothesis_semantic.py` (新增)
   - `huginn/autoloop/hypothesis_loop.py` (line 63, 126, 143, 281, 2046, 2108, 2341)
 - **注意**: 与 `_metacog_classify_family` (engine.py) 同范式, 不引入 embedding。
 
@@ -43,12 +47,18 @@
   - `huginn/autoloop/hypothesis_loop.py` (line 181, 556)
 
 ### 4. plan 持久化到文件 (Context Management 2026)
-- **状态**: 计划中
+- **状态**: 已完成
 - **优先级**: P2
 - **现状**: plan JSON 持久化语义固定, 展示层裁剪不改持久化。
 - **升级方向**: plan 持久化到文件, chat 上下文只引用; 按 step 状态动态裁剪。
+- **落地**: `_render(plan, active_step_id)` 动态裁剪 — 已完成步骤折成一行计数,
+  高亮 active step (▶), 只列剩余 pending step; `export_markdown` 落盘到
+  `$HUGINN_CACHE_DIR/plans_md/<plan_id>.md`, `build_context_hint` 返回不落盘的
+  裁剪引用. `context_builder.build_plan_text` 接 `self._build_plan_context_hint`
+  在 chat 上下文只引用 active step + 后续 pending step, 降低 token 占用.
 - **相关文件**:
   - `huginn/autoloop/plan_store.py` (line 333, 335)
+  - `huginn/context_builder.py` (build_plan_text / _build_plan_context_hint)
 
 ### 5. SSIM 视觉检查升级
 - **状态**: 计划中
@@ -80,21 +90,33 @@
   - `huginn/agent/streaming.py` (line 560-561, 615, 727-738)
 
 ### 3. prefix_merging 跨 turn 前缀去重
-- **状态**: 计划中
+- **状态**: 已完成
 - **优先级**: P2
 - **现状**: completion records 落盘 jsonl 给 red_team + RL 训练消费,
   跨 turn 前缀重复未去重。
 - **升级方向**: 加 prefix_merging (跨 turn 前缀去重)。
+- **落地**: `_dump_completion_records` 写盘前找同 thread 最新前一 turn 文件,
+  `_compute_common_prefix` (按 type+content, 忽略 ts/噪声) 算公共前缀,
+  前缀 >=2 时只写 `prefix_ref` (prev_file + prefix_len) + 后缀增量; 消费端用
+  `_reconstruct_completion_records` 递归重建完整序列。测试 `tests/test_streaming.py
+  ::TestPrefixMerging`.
 - **相关文件**:
   - `huginn/agent/streaming.py` (line 250, 1965)
 
 ### 4. session 持久化升级
-- **状态**: 计划中
+- **状态**: 已完成
 - **优先级**: P2
 - **现状**: snapshot 只读最新一条, 走 `memory.save_session_snapshot` + JSON。
 - **升级方向**: 按 `session_id` 精确读 + 版本化; 增量 diff + 独立 store。
+- **落地**: `longterm.list_by_source(source="session:{sid}")` 精确读指定 session 的
+  快照 (不再"任意最新一条"); `save_session_snapshot` 写 `version` 字段自动递增
+  (基于已有最大版本 +1); `load_session_snapshot(session_id)` 非空时精确读该
+  session 最新一代, 为空回退任意最新 (向后兼容); `session._init_session_continuity`
+  改为按本 session_id 精确恢复。测试 `tests/test_session_snapshot_versioning.py`.
 - **相关文件**:
   - `huginn/agent/session.py` (line 88, 131)
+  - `huginn/memory/manager.py` (save/load_session_snapshot)
+  - `huginn/memory/longterm.py` (list_by_source)
 
 ---
 
@@ -112,7 +134,7 @@
   - `huginn/tools/sim/convergence_strategies.py` (参考, 已有 VASP/QE 双格式识别)
 
 ### 2. Rust fast path 重启用
-- **状态**: 进行中 (默认关闭; sandbox 崩溃报告 + import 已修复)
+- **状态**: 进行中 (默认关闭; 环境验证: 本沙箱未构建 huginn_ext, Python 回退路径全绿)
 - **优先级**: P0
 - **现状**: Rust sandbox runner 在 RDKit+sklearn GPR 等场景静默崩溃, 返回空 stderr
   导致 "Unknown error" (audit 08: 8 个出分单元 62.5% 有工具层直接背书)。当前显式
@@ -123,6 +145,9 @@
   "killed by signal 11" 而非空 stderr + 无意义 -1; ② 子模块注册进 sys.modules,
   `from huginn_ext.sandbox import run_sandboxed` 不再 ModuleNotFoundError。
   发布链路已接入 (release.yml build-rust-ext job + pyproject [rust] extra)。
+  **环境验证 (2026-08)**: 本沙箱 `import huginn_ext` 失败 (扩展未构建属预期),
+  `HUGINN_USE_RUST_SANDBOX` 未设 → 走 Python 回退; `tests/test_bash_rust_sandbox.py`
+  7 passed / 1 skipped (skip 即 Rust 路径, 因无扩展), 回退路径无回归。
 - **升级方向**: RDKit+sklearn GPR 的 native 冲突本身是环境/依赖问题, sandbox 现已
   如实报告 signal; 接入发布链路后, 在验证环境安装 RDKit+sklearn 复现确认不再
   "Unknown error" 后, 再评估默认启用。Rust parser 的 converged 字段补 action-aware
@@ -147,11 +172,14 @@
   - `huginn/knowledge/store.py` (line 101-122, 585-622, 1049-1062)
 
 ### 2. BM25 按 domain 分片
-- **状态**: 计划中
+- **状态**: 已落地 (P2#2)
 - **优先级**: P2
 - **现状**: BM25 索引未按 domain 分片, 有 domain 过滤时跳过 (退回纯向量),
   丢失材料术语精确匹配能力。
 - **升级方向**: BM25 按 domain 分片后, 有 domain 时也能混合检索。
+- **落地**: `_BM25Index.add` 记录每片 domain, `search(..., domain=)` 按 domain
+  分片过滤; `_ensure_bm25_index` 拉 metadatas 取 domain; `query()` 有 domain
+  时也走 RRF 混合 (不再退回纯向量).
 - **相关文件**:
   - `huginn/knowledge/store.py` (line 1050-1051)
 
