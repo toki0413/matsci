@@ -356,10 +356,13 @@ LUCID review (mandatory after generating hypothesis):
 
         把 hypothesis 当 query, 调 longterm.predict_via_analogy 检索相似
         历史实验, 注入 [WORLD MODEL] block 给 plan prompt. LLM 参考历史
-        结果做 plan, 不是硬约束. toggle HUGINN_WORLD_MODEL 默认 off.
+        结果做 plan, 不是硬约束.
         ceiling: 无外推能力, 仅返回历史最相似实验. 升级: P2 surrogate.
+        开关统一走 FeatureFlags (默认 on), 兼容旧 env HUGINN_WORLD_MODEL.
         """
-        if os.environ.get("HUGINN_WORLD_MODEL", "0") != "1":
+        from huginn.feature_flags import FeatureFlags
+
+        if not FeatureFlags.shared().is_enabled("world_model"):
             return ""
         _mem = getattr(self, "memory", None)
         if _mem is None or not hasattr(_mem, "longterm"):
@@ -387,6 +390,99 @@ LUCID review (mandatory after generating hypothesis):
             "\n[WORLD MODEL] 历史相似实验结果 (懒路预测, 仅供参考, 无外推):\n"
             + "\n".join(_lines) + "\n"
         )
+
+    def _build_metacog_imagery_block(self, context: dict[str, Any]) -> str:
+        """metacog 视觉/时空 sketch→verify 闭环 — 把"想象结构"喂回 hypothesis prompt.
+
+        autoloop 元认知层之前对 metacog 视觉/时空组件 (mental_imagery 的
+        sketch→verify) 零接线: 想象力模式只注入静态文本引导. 这里在想象力
+        触发时真正跑一次空间结构想象并做可验证性校验:
+
+          - 从 context 提取结构 spec (lattice / particles / spectrum), 兜底
+            用晶格模板; 再把 sketch 出的图像跑 verify, 得到一组可校验量.
+          - verify 通过 → 回灌给 LLM 当"想象的空间结构基准" (advisory);
+          - sketch 出图失败 (PIL 缺失等) 静默降级为空块, 不阻塞主循环.
+
+        纯 numpy/PIL 实现, 无 model 依赖, 确定性可测. ceiling: 3 种固定
+        sketch 模板, 非任意描述生成. 升级路径: 接 text-to-image / 域仿真器.
+        """
+        try:
+            from huginn.metacog import mental_imagery
+        except Exception:
+            logger.debug("metacog mental_imagery unavailable, skip imagery block", exc_info=True)
+            return ""
+
+        spec = self._pick_imagery_spec(context)
+        if not spec:
+            return ""
+        try:
+            out = mental_imagery.mental_imagery_loop(spec)
+        except Exception:
+            logger.debug("mental_imagery_loop failed (non-fatal)", exc_info=True)
+            return ""
+        # 没出图 (PIL 缺失) → sketch_image_bytes 空, 无法给视觉基准, 降级.
+        if not out.get("sketch_image_bytes"):
+            return ""
+        _verify = out.get("verify") or {}
+        _v = {k: self._imagery_value(v) for k, v in _verify.items() if not k.startswith("error")}
+        _v_lines = "".join(
+            f"    {k}: {val}\n" for k, val in _v.items() if val is not None
+        )
+        if not _v_lines:
+            return ""
+        _verified = bool(_verify.get("verified"))
+        _status = "passed, sketch is internally consistent" if _verified else "returned a sketch (verify advisory)"
+        return (
+            "\n### Spatiotemporal Sketch (mental_imagery)\n"
+            "A synthetic spatial structure was imagined and verified "
+            "(numpy synthesis, advisory — not from the real environment):\n"
+            f"  spec: {out.get('spec', '')}\n"
+            f"  verify: {_status}\n"
+            f"{_v_lines}"
+        )
+
+    @staticmethod
+    def _imagery_value(v: Any) -> Any:
+        """把 verify 结果里的 numpy 标量转成可序列化值, 列表/字典截断防 prompt 膨胀."""
+        if v is None:
+            return None
+        try:
+            _t = type(v).__module__
+            if _t == "numpy" or "numpy" in str(_t):
+                import numpy as np
+                if isinstance(v, np.generic):
+                    return v.item()
+                if isinstance(v, np.ndarray):
+                    _lst = v.tolist()
+                    return _lst[:5] if len(_lst) > 5 else _lst
+            elif isinstance(v, list):
+                return v[:5]
+            elif not isinstance(v, (str, int, float, bool)):
+                return str(v)[:80]
+            return v
+        except Exception:
+            return str(v)[:80]
+
+    def _pick_imagery_spec(self, context: dict[str, Any]) -> str:
+        """从 context 挑一个 mental_imagery 认识的 spec.
+
+        命中任意关键字就返回对应模板; 都没有时用晶格模板兜底. 返回空串表示
+        context 空 (无任何可想象的输入), 上层跳过.
+        """
+        if not context:
+            return ""
+        text = " ".join(str(v) for v in context.values() if isinstance(v, str)).lower()
+        _m = re.search(r"(\d+\.?\d*)\s*(?:angstrom|å|a\b)", text)
+        _lattice_a = _m.group(1) if _m else None
+        if _lattice_a:
+            return f"lattice {_lattice_a}Å cubic"
+        if "spectrum" in text or "spectra" in text or "peak" in text:
+            return "spectrum 3"
+        if "particle" in text:
+            return "particles 10"
+        if "lattice" in text or "crystal" in text or "structure" in text:
+            return "lattice 4Å cubic"
+        return "lattice 4Å cubic"
 
     def _build_skill_context_block(self) -> str:
         """SkillEvolutionLayer 信念注入 — 接通 get_skill_context 死代码.
@@ -852,6 +948,13 @@ LUCID review (mandatory after generating hypothesis):
         imagination_block = ""
         if self._should_imaginate():
             imagination_block = self._IMAGINATION_PROMPT_BLOCK
+            # metacog 视觉/时空 sketch→verify 闭环: 不再只注入静态 prompt 文本,
+            # 而是真正调用 mental_imagery 跑一次"空间结构想象"并校验其可验证性,
+            # 把视觉化结果 (晶格/粒子/光谱) 喂回 prompt. 纯 numpy 实现, 无 model
+            # 依赖, 确定性可测; 任何失败静默降级为空块, 不阻塞主循环.
+            _imagery = self._build_metacog_imagery_block(context)
+            if _imagery:
+                imagination_block = imagination_block + _imagery
         # Failure mode feedback (Dream Layer): 上轮 validate 描述的"如何崩溃"
         # 注入 hypothesis prompt, 让 agent 从崩溃模式中找新发现.
         # _last_failure_mode 在 _validate 里写入, 空字符串表示无上轮或未解析出.
