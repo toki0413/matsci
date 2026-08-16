@@ -836,26 +836,16 @@ class ToolAdapter:
         def _publish_blocked(
             tool_name: str, input_data: Any, reason: str, context: Any
         ) -> None:
-            """发布 tool.blocked 事件到事件总线."""
+            """发布 tool.blocked 事件到事件总线 (统一走 UnifiedBus)."""
             with contextlib.suppress(Exception):
-                import asyncio
+                from huginn.events.unified_bus import publish_event
 
-                from huginn.events.integration import _publish as _evt_publish
-                from huginn.utils.concurrency import track_task
-
-                try:
-                    asyncio.get_running_loop()
-                    track_task(
-                        _evt_publish(
-                            "tool.blocked",
-                            {"tool": tool_name, "reason": reason},
-                            thread_id=getattr(context, "thread_id", ""),
-                            source="tool_adapter",
-                        ),
-                        name="tool-blocked-emit",
-                    )
-                except RuntimeError:
-                    logger.debug("best-effort op failed", exc_info=True)
+                publish_event(
+                    "tool.blocked",
+                    {"tool": tool_name, "reason": reason},
+                    thread_id=getattr(context, "thread_id", ""),
+                    source="tool_adapter",
+                )
 
         async def _dispatch_tool_call_event(
             args_dict: dict[str, Any], session_id: str

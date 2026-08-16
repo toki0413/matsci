@@ -1314,13 +1314,9 @@ class CognitiveLoopMixin:
         根本到不了前端.
         """
         try:
-            from huginn.events.integration import _publish
-            from huginn.utils.concurrency import track_task
+            from huginn.events.unified_bus import publish_event
 
-            asyncio.get_running_loop()  # 检测在 event loop 里
-            track_task(
-                _publish(event_type, data, source="autoloop"), name="campaign-emit"
-            )
+            publish_event(event_type, data, source="autoloop")
         except Exception:
             logger.debug("campaign EventBus emit failed", exc_info=True)
         # SSE 推送到 /tasks/stream 的 'campaign' event, 前端结构化消费
