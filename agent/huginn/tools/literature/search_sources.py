@@ -118,6 +118,68 @@ def _sort_papers(papers: list[dict[str, Any]]) -> list[dict[str, Any]]:
     )
 
 
+# 查询重排停用词 (轻量, 覆盖最常见的连接词/疑问词, 避免它们刷命中)
+_QUERY_STOP: set[str] = {
+    "the", "a", "an", "is", "are", "was", "were", "be", "been", "of", "in",
+    "on", "for", "to", "and", "or", "not", "with", "by", "how", "what",
+    "when", "why", "which", "that", "this", "from", "as", "at", "it",
+    "our", "we", "use", "using", "study", "studies", "based", "using",
+    "的", "了", "是", "在", "和", "与", "及", "或", "请", "如何", "什么",
+    "为什么", "怎么", "哪些", "哪个",
+}
+
+
+def _query_keywords(query: str) -> list[str]:
+    """从 query 抽重排关键词. 英文按词 (len>=2, 去停用), 中文按单字 (每字有意义)."""
+    kws: list[str] = []
+    seen: set[str] = set()
+    for t in re.findall(r"[A-Za-z][A-Za-z\-]{1,}", query.lower()):
+        if t not in _QUERY_STOP and t not in seen:
+            seen.add(t)
+            kws.append(t)
+    for t in re.findall(r"[\u4e00-\u9fff]", query):
+        if t not in _QUERY_STOP and t not in seen:
+            seen.add(t)
+            kws.append(t)
+    return kws
+
+
+def _rerank(query: str, papers: list[dict[str, Any]], top_n: int | None = None) -> list[dict[str, Any]]:
+    """按 query 相关度 + citation 重排多路合并后的结果 (P0-2).
+
+    原 ``_sort_papers`` 只按 citation 排 — 高引但只沾边 B 的论文会压过
+    真正命中 A 的论文. 这里叠加相关度打分:
+
+    - 关键词命中: title 命中 ×2, abstract 命中 ×1 (标题是强信号).
+    - citation 取 log 压缩 (log1p), 避免高引绑架; 相关度为主序.
+    - 没抽到关键词 (query 全是停用词) 时退回 citation 排序.
+
+    论文 dict 上加 ``relevance`` 字段, 调用方可看到打分依据.
+    """
+    kws = _query_keywords(query)
+    if not kws:
+        return _sort_papers(papers)
+
+    import math
+
+    def score(p: dict[str, Any]) -> float:
+        title = (p.get("title") or "").lower()
+        abstract = (p.get("abstract") or "").lower()
+        hits = 2 * sum(1 for k in kws if k in title) + sum(1 for k in kws if k in abstract)
+        if hits == 0:
+            return 0.0
+        return hits + math.log1p(p.get("citations") or 0) * 0.5
+
+    for p in papers:
+        p["relevance"] = round(score(p), 4)
+    ranked = sorted(
+        papers,
+        key=lambda p: (p["relevance"], bool(p.get("abstract")), p.get("citations") or 0),
+        reverse=True,
+    )
+    return ranked[:top_n] if top_n else ranked
+
+
 # ───────────────────────── arXiv ─────────────────────────
 
 
