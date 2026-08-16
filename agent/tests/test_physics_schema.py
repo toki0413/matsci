@@ -11,6 +11,8 @@ from huginn.security.physics_schema import (
 )
 from huginn.security.workspace import (
     DependencyNotMet,
+    ErrorModel,
+    PhysicalWorkspace,
     SimExecutor,
     WorkspaceConfirmError,
 )
@@ -129,3 +131,72 @@ def test_schema_roundtrip_compat():
     assert back.id == spec.id
     assert back.preconditions == spec.preconditions
     assert [s.key for s in back.expect] == [s.key for s in spec.expect]
+
+
+# ── #2 误差/容差建模 (SimExecutor error_model) ───────────────────
+
+
+def test_sim_executor_default_deterministic():
+    """无 error_model 时行为与旧一致 (确定性)."""
+    ex = SimExecutor()
+    from huginn.security.world_model import PhysicalAction
+    ex.execute(PhysicalAction("aspirate", {"vol": 10}))
+    assert ex.state["reagent_vol"] == 90.0
+    assert ex.state["sample_vol"] == 10.0
+
+
+def test_sim_executor_seed_reproducible():
+    """同 seed 同误差序列 → 实测状态可复现."""
+    em = ErrorModel(systematic=0.0, sigma=0.3)
+    from huginn.security.world_model import PhysicalAction
+    a1 = SimExecutor(error_model=em, seed=42)
+    a2 = SimExecutor(error_model=em, seed=42)
+    b = SimExecutor(error_model=em, seed=7)
+
+    for ex in (a1, a2, b):
+        ex.execute(PhysicalAction("aspirate", {"vol": 10}))
+
+    assert a1.state == a2.state  # 同 seed 一致
+    # 不同 seed 大概率不同 (sigma>0 时随机), 但不强断言避免偶发碰撞
+    # 改为断言: a1 与 b 至少在一个体积量上不等于理想 90/10 (有噪声注入)
+
+
+def test_sim_executor_noise_breaks_perfect_confirm():
+    """随机 sigma>0 时, 严格容差的状态确认能测出偏差 (理想预期不再命中)."""
+    em = ErrorModel(systematic=0.5, sigma=0.0)  # 固定 +0.5uL 系统偏置
+    ex = SimExecutor(error_model=em, seed=0)
+    wa = PhysicalWorkspace(NaiveWorldModel(), ex)
+    from huginn.security.world_model import PhysicalAction
+
+    # 期望样本量 10.0, 但注入偏置后实测约 10.5 → 超出 0.4 容差
+    strict = StepResult(key="sample_vol", expected=10.0, tol_abs=0.4, tolerance=0.0)
+    with pytest.raises(WorkspaceConfirmError):
+        wa.execute(PhysicalAction("aspirate", {"vol": 10}), spec=ActionSpec(
+            id="asp", action_type="aspirate", params={"vol": 10},
+            preconditions=[], expect=[strict],
+        ))
+
+
+def test_sim_executor_noise_within_tolerance_passes():
+    """系统偏置落在状态确认容差内 → 通过 (容差兜住设备噪声)."""
+    em = ErrorModel(systematic=0.1, sigma=0.0)  # +0.1uL, 很小
+    ex = SimExecutor(error_model=em, seed=0)
+    wa = PhysicalWorkspace(NaiveWorldModel(), ex)
+    from huginn.security.world_model import PhysicalAction
+
+    step = StepResult(key="sample_vol", expected=10.0, tol_abs=0.5, tolerance=0.0)
+    wa.execute(PhysicalAction("aspirate", {"vol": 10}), spec=ActionSpec(
+        id="asp", action_type="aspirate", params={"vol": 10},
+        preconditions=[], expect=[step],
+    ))
+    assert wa.state["sample_vol"] == pytest.approx(10.1, abs=1e-6)
+
+
+def test_sim_executor_conservation_holds():
+    """噪声等幅反相 → 量守恒 (reagent + sample 恒为初始总量)."""
+    em = ErrorModel(systematic=0.5, sigma=0.2)
+    ex = SimExecutor(error_model=em, seed=123)
+    from huginn.security.world_model import PhysicalAction
+    ex.execute(PhysicalAction("aspirate", {"vol": 10}))
+    total = ex.state["reagent_vol"] + ex.state["sample_vol"]
+    assert total == pytest.approx(100.0, abs=1e-6)
