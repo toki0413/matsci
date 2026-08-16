@@ -1732,6 +1732,13 @@ class LiteratureTool(HuginnTool):
             for lo in lenses_ok
         }
 
+        # 8. 结论审计 (best-effort): 高/中置信 claims 登记进 claim 层.
+        # 复用 ClaimAuditor.ingest_findings — 触发 sheaf 冲突检测 + KG/超图
+        # 登记 + 状态回写. 失败降级为 {"registered": 0}, 不阻塞 multi_review.
+        claim_audit_result = self._audit_verified_claims(
+            verified_claims, papers, workspace=getattr(context, "workspace", "") or ""
+        )
+
         return ToolResult(
             data={
                 "action": "multi_review",
@@ -1747,6 +1754,7 @@ class LiteratureTool(HuginnTool):
                 "n_claims_total": len(verified_claims),
                 "n_claims_high": len(high_conf_claims),
                 "verification_enabled": args.verify_claims,
+                "claim_audit": claim_audit_result,
                 "papers": [
                     {"idx": i + 1, "title": p.get("title", ""),
                      "doi": p.get("doi"), "year": p.get("year")}
@@ -1788,6 +1796,66 @@ class LiteratureTool(HuginnTool):
         v3 = coverage < 0.5
 
         return (v1, v2, v3)
+
+    def _audit_verified_claims(
+        self,
+        verified_claims: list[dict[str, Any]],
+        papers: list[dict[str, Any]],
+        workspace: str = "",
+    ) -> dict[str, Any]:
+        """把 multi_review 的高/中置信结论登记进 claim 层 (best-effort).
+
+        复用 ClaimAuditor.ingest_findings: 每条 verified claim 带 premise
+        (论文引用) + evidence_strength (final_confidence 映射) + 来源 (论文
+        DOI/标题). 只登记 final_confidence in {high, medium}, low 丢弃 (避免
+        污染知识层). 失败 (缺依赖/workspace 无效) 返回 {"registered": 0,
+        "error": ...}, 不 raise — multi_review 主结果不受影响.
+        """
+        try:
+            from huginn.kg.claim_audit import ClaimAuditor
+        except Exception as exc:
+            return {"registered": 0, "error": f"claim_audit_unavailable: {exc}"}
+
+        if not workspace:
+            return {"registered": 0, "error": "no_workspace"}
+
+        conf_map = {"high": 0.9, "medium": 0.7, "low": 0.4}
+        findings: list[dict[str, Any]] = []
+        for vc in verified_claims:
+            conf = vc.get("final_confidence", "medium")
+            if conf not in ("high", "medium"):
+                continue
+            claim = (vc.get("claim") or "").strip()
+            if not claim:
+                continue
+            # paper_idx 是 1-based (lens prompt 约定), 映射回论文 DOI/标题
+            literature_ids: list[str] = []
+            for i in vc.get("paper_idx") or []:
+                if not isinstance(i, int) or not (1 <= i <= len(papers)):
+                    continue
+                p = papers[i - 1]
+                literature_ids.append(
+                    p.get("doi") or p.get("title") or f"paper_{i}"
+                )
+            findings.append({
+                "claim": claim,
+                "premises": literature_ids,
+                "mode": "AND",  # "论文支持结论"是合取证据
+                "evidence_strength": conf_map.get(conf, 0.7),
+                "literature_id": literature_ids[0] if literature_ids else "",
+                "source": "literature_multi_review",
+            })
+
+        if not findings:
+            return {"registered": 0, "n_findings": 0}
+
+        try:
+            auditor = ClaimAuditor(workspace)
+            return auditor.ingest_findings(
+                findings, source_prefix="lit_review"
+            )
+        except Exception as exc:
+            return {"registered": 0, "error": f"audit_failed: {exc}"}
 
     @staticmethod
     def _build_paper_block(papers: list[dict[str, Any]]) -> str:
