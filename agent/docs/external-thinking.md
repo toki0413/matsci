@@ -1,5 +1,6 @@
 # Spec: externalThinking → deep_think 外部草稿纸工具
 
+> 状态：**已实现并落地**（由 `staging/specs/2026-08-13-external-thinking.md` 提升）。
 > 背景：厂商隐藏原生推理（chain-of-thought）后，模型"愿意"暴露的
 > `reasoning_content` 并非总有。oh-my-pi 的 `externalThinking` + `think` 工具
 > 思路：提供一个普通工具，让模型在动手前把分析写进工具参数，经 API 返回给
@@ -18,9 +19,11 @@
   [feature_flags.py](file:///workspace/agent/huginn/feature_flags.py#L30) 的 `_DEFAULTS` /
   `_DESCRIPTIONS`。开启方式复用现有三层：config `feature_flags` / 环境变量
   `HUGINN_FEATURE_EXTERNAL_THINKING=true` / 运行时 `FeatureFlags.enable()`。
-- **prompt injection**: 开启时在 [context.py](file:///workspace/agent/huginn/agent/context.py#L36)
-  `_effective_system_prompt()` 末尾追加一段指令：要求模型在回答问题/改代码/调其他工具前，
-  先调用 `deep_think` 把分析过程写进工具。关闭时不注入（保持默认行为不变）。
+- **prompt injection**: 开启时由 [prompt_builder.py](file:///workspace/agent/huginn/agent/prompt_builder.py#L241) 的
+  `_thinking_plugin`（"thinking" 段插件）注入一段指令（经 [context.py](file:///workspace/agent/huginn/agent/context.py#L75)
+  渲染进系统提示）：要求模型在回答问题/改代码/调其他工具前，先调用 `deep_think`
+  把分析写进工具。关闭时不注入（保持默认行为不变）。fail-open：flag 层异常返回空串，
+  prompt 构建永不崩。
 - **failure mode**: `external_thinking` 开启但 `memory_manager` 为 None（如某些 bench 场景）
   时，工具仍返回成功占位但不记录（fail-open，不阻塞主流程）。工具注册缺依赖不可能
   （纯 stdlib/pydantic，无第三方依赖）。
