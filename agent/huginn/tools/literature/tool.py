@@ -18,6 +18,9 @@ from pydantic import BaseModel, Field
 from huginn.core_types import ToolContext, ToolResult
 from huginn.tools.base import HuginnTool
 
+# ───────────────────────── search 增强 (P0-1 / P1-4) ─────────────────────────
+from huginn.utils.cache import TimedLRUCache
+
 from ._http import (
     _DISABLED_HINT,
     _disabled,
@@ -47,6 +50,7 @@ from .search_sources import (
     _norm_title,
     _opencitations_citations,
     _opencitations_references,
+    _rerank,
     _search_arxiv,
     _search_cod,
     _search_core,
@@ -62,13 +66,7 @@ from .search_sources import (
     _search_pubmed,
     _search_s2,
     _search_zenodo,
-    _rerank,
-    _sort_papers,
 )
-
-# ───────────────────────── search 增强 (P0-1 / P1-4) ─────────────────────────
-
-from huginn.utils.cache import TimedLRUCache
 
 # P1-4: 检索结果 TTL 缓存 — 同一 query 命中直接返回, 不再重打 15 路 API.
 # 有界 + 带 TTL, 避免重复限流也避免无限增长 (与 checkpointer 容量封顶同一纪律).
@@ -126,7 +124,7 @@ async def _expand_query(model: Any, query: str, max_n: int = 3) -> list[str]:
     return out
 
 
-def _search_cache_key(args: "LiteratureInput", subqueries: tuple[str, ...]) -> tuple:
+def _search_cache_key(args: LiteratureInput, subqueries: tuple[str, ...]) -> tuple:
     """检索缓存 key: 覆盖 query/源/年份/条数 + 是否扩展 + 子查询列表.
 
     不含 args.action — summarize/ingest/benchmark 内部的隐式 search 与显式
