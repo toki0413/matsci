@@ -31,8 +31,16 @@
   写入与 `query()` 过滤，P12 typed 与 legacy 两条路径均支持，随 `strategy:`
   /`math_concept:` 同一 content+tag 模式存储。selfcheck 与 `tests/test_evolution_modules.py`
   （118 passed）覆盖。域模型侧 `diagnose_tool` 未改（其为 skill 侧检索工具，硬塞规则归因脆弱）。
-- 待推进：`evolve` 消费 `gap_type` —— 当 `environment_gap` 命中时产出对域模型/仿真假设的修订，
-  而非仅产出新策略。
+- **认知更新通道已落地（2026-08-16）**：`EvolutionManager` 消费 `gap_type`——
+  - `record_outcome(..., gap_type=...)` 透传归因（上游 agent 推理经 `validation["gap_type"]`
+    显式判定，不做脆弱规则推断）；
+  - `distill()` 对同 (persona, math_concept) 连续 3 次 `environment_gap` 写
+    `stable_principle`（`status="environment_gap"`，内容 "revise world model / domain
+    assumption ..."），即"修订域模型"而非仅换策略；
+  - `Recommendation.revisit_world_model` 单独暴露环境缺口方向，供 hypothesis loop 修订认知。
+  - 生产调用点 [engine_reflect.py](../huginn/autoloop/engine_reflect.py) 已接线
+    `validation["gap_type"]`。selfcheck 4 场景 + `test_evolution_modules.py` 新测试通过。
+- 待推进：hypothesis loop 显式消费 `revisit_world_model`（当前接口已暴露，回环消费留待后续）。
 
 ---
 
