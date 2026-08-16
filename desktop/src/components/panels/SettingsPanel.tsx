@@ -1344,6 +1344,97 @@ export function SettingsPanel(props: SettingsPanelProps) {
                 </p>
               </ConfigField>
 
+              {/* 权限/成本细粒度 */}
+              <div className="md:col-span-2 mt-2 rounded border border-border bg-bg-tertiary/40 p-3">
+                <p className="text-xs font-medium text-text-secondary">权限 / 成本细粒度</p>
+                <p className="mt-1 text-[10px] text-text-muted">
+                  五档风险 (none/low/medium/high/critical) 在 PermissionChecker 多阶段判定,
+                  以下开关对应 PermissionConfig 细粒度维度. 安全层 (危险命令 / 沙箱硬底线)
+                  即使全量自动放行也保留.
+                </p>
+                <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <ConfigField label="成本预算 (CPU 小时 / 0=不限制)">
+                    <input
+                      type="number"
+                      min={0}
+                      step={1}
+                      value={config.perm_cost_budget_hours}
+                      onChange={(e) => {
+                        const v = parseFloat(e.target.value || "0");
+                        const next = { ...config, perm_cost_budget_hours: isNaN(v) ? 0 : v };
+                        setConfig(next);
+                        setConfigDirty(true);
+                      }}
+                      className="input"
+                    />
+                  </ConfigField>
+                  <ConfigField label="信任自适应">
+                    <label className="flex cursor-pointer items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={config.perm_trust_adaptive}
+                        onChange={(e) => {
+                          setConfig({ ...config, perm_trust_adaptive: e.target.checked });
+                          setConfigDirty(true);
+                        }}
+                        className="h-4 w-4 rounded border-border bg-bg-tertiary text-accent"
+                      />
+                      <span className="text-sm text-text-primary">
+                        {config.perm_trust_adaptive ? "开 (高信任放行 medium, 低信任强制 ASK)" : "关"}
+                      </span>
+                    </label>
+                  </ConfigField>
+                  <ConfigField label="全量自动放行 (CI/自动化)">
+                    <label className="flex cursor-pointer items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={config.perm_auto_approve_all}
+                        onChange={(e) => {
+                          setConfig({ ...config, perm_auto_approve_all: e.target.checked });
+                          setConfigDirty(true);
+                        }}
+                        className="h-4 w-4 rounded border-border bg-bg-tertiary text-accent"
+                      />
+                      <span className="text-sm text-text-primary">
+                        {config.perm_auto_approve_all ? "开 (跳过确认)" : "关"}
+                      </span>
+                    </label>
+                  </ConfigField>
+                  <ConfigField label="只读模式 (plan)">
+                    <label className="flex cursor-pointer items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={config.perm_plan_mode}
+                        onChange={(e) => {
+                          setConfig({ ...config, perm_plan_mode: e.target.checked });
+                          setConfigDirty(true);
+                        }}
+                        className="h-4 w-4 rounded border-border bg-bg-tertiary text-accent"
+                      />
+                      <span className="text-sm text-text-primary">
+                        {config.perm_plan_mode ? "开 (所有写工具强制 ASK)" : "关"}
+                      </span>
+                    </label>
+                  </ConfigField>
+                  <ConfigField label="沙箱模式">
+                    <label className="flex cursor-pointer items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={config.perm_sandbox_mode}
+                        onChange={(e) => {
+                          setConfig({ ...config, perm_sandbox_mode: e.target.checked });
+                          setConfigDirty(true);
+                        }}
+                        className="h-4 w-4 rounded border-border bg-bg-tertiary text-accent"
+                      />
+                      <span className="text-sm text-text-primary">
+                        {config.perm_sandbox_mode ? "开 (注入硬底线路径规则)" : "关"}
+                      </span>
+                    </label>
+                  </ConfigField>
+                </div>
+              </div>
+
               {/* 极限模式总开关 */}
               <ConfigField label="极限模式总开关" full>
                 <label className="flex cursor-pointer items-center gap-2">
