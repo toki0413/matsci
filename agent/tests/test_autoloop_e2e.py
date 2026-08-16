@@ -187,6 +187,11 @@ def _make_engine(tmp_path, fake_llm, monkeypatch):
     engine.progress_tracker = _DummyTracker()
     # v10: 关 LLM decider, 走规则版 (FakeLLM 响应按规则版顺序设计)
     engine._use_llm_decider = False
+    # 中性化 config 派生的 model_router: 全量套件里较早的测试可能把全局
+    # config 缓存喂成"已注册 real provider"的 router, 导致 _llm_chat(task=
+    # "planning") 路由到真实模型而非本测试注入的 FakeLLM, _plan 返 None
+    # → "缺 execute". 本测试意图是 FakeLLM 驱动所有阶段, 必须关掉路由.
+    engine.model_router = None
 
     # _perceive is NOT an LLM stage — it scans the filesystem via
     # PerceptionLayer.  In an empty tmp_path it returns None and the loop

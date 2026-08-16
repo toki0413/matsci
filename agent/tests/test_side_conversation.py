@@ -72,6 +72,11 @@ def engine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AutoloopEngine:
     monkeypatch.setattr("huginn.autoloop.conjecture.get_kg", lambda *a, **kw: None)
     eng = AutoloopEngine(workspace=tmp_path)
     eng.progress_tracker = _DummyTracker()
+    # 中性化 config 派生的 model_router: 全量套件里全局 config 缓存可能被
+    # 喂成含 real provider 的 router, 导致 _drain_side_questions 里
+    # router.select("cheap") 选中真实模型而非本测试注入的 MagicMock,
+    # ainvoke 不返回 canned answer → 答 0 个. 关掉路由保证用 self.model.
+    eng.model_router = None
     return eng
 
 
