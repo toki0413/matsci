@@ -30,43 +30,13 @@ from huginn.security.world_model import (
     apply_forward,
     check_constraints,
 )
-from huginn.security.physics_schema import ActionSpec, StepResult
+from huginn.security.physics_schema import (
+    ActionSpec,
+    StepResult,
+    matches_state,
+)
 
 logger = logging.getLogger(__name__)
-
-
-def _step_allowed(step: "StepResult") -> float:
-    """单个 StepResult 允许的最大偏差 (相对/绝对取大)."""
-    rel = abs(step.expected) * step.tolerance
-    return max(step.tol_abs, rel)
-
-
-def _matches_state(expected: dict[str, Any] | "list[StepResult]", actual: dict[str, Any], tolerance: float = 1e-9) -> bool:
-    """状态对比: 断言列表或期望 dict 是否与实测状态匹配.
-
-    - ``StepResult`` 列表: 每个字段用其自身相对/绝对容差 (声明式断言).
-    - dict: 每个键用统一 ``tolerance`` 绝对容差 (旧契约).
-    """
-    if isinstance(expected, list):  # StepResult 断言列表
-        for step in expected:
-            got = actual.get(step.key)
-            if got is None:
-                return False
-            dev = abs(float(got) - step.expected)
-            if dev > _step_allowed(step):
-                return False
-        return True
-    for k, want in expected.items():
-        got = actual.get(k)
-        if got is None:
-            return False
-        try:
-            if abs(float(got) - float(want)) > tolerance:
-                return False
-        except (TypeError, ValueError):
-            if got != want:
-                return False
-    return True
 
 
 class WorkspaceConfirmError(Exception):
@@ -283,12 +253,12 @@ class PhysicalWorkspace:
         self.state = dict(self.executor.observe())
 
         if spec is not None and spec.expect:
-            if not _matches_state(spec.expect, self.state):
+            if not matches_state(spec.expect, self.state):
                 raise WorkspaceConfirmError(
                     f"感知确认失败: 状态偏离预期 (规格 {spec.id}, 动作 {action.type})"
                 )
         elif expected is not None:
-            if not _matches_state(expected, self.state, tolerance):
+            if not matches_state(expected, self.state, tolerance):
                 raise WorkspaceConfirmError(
                     f"感知确认失败: 状态偏离预期 (动作 {action.type})"
                 )
