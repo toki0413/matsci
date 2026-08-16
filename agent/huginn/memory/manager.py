@@ -356,9 +356,24 @@ class MemoryManager:
         之前 session resume 只恢复消息历史, _mode / _csm / _phase_manager / _session_state
         全部丢, 用户感觉 agent "失忆" (mode 回 chat, plan 状态丢失).
         ponytail: 复用 longterm.store, category='session_snapshot', JSON 序列化.
+        P2 升级: 按 session_id 精确读 + 版本化 — 快照带 version 字段, 同一 session
+        多代快照并存, 读侧按 source 精确取最新一代, 不再依赖"任意最新一条".
         升级: 独立 sqlite store + 增量 diff, 避免每 N turn 全量存.
         """
         sid = snapshot.get("session_id", "") or "default"
+        # 版本化: 基于该 session 已有快照最大版本 +1. 无历史则从 1 开始.
+        prev = self.longterm.list_by_source(
+            source=f"session:{sid}", category="session_snapshot", limit=1
+        )
+        version = 1
+        if prev:
+            try:
+                prev_json = json.loads(prev[0].get("content") or "{}")
+                version = int(prev_json.get("version", 0)) + 1
+            except (ValueError, TypeError, json.JSONDecodeError):
+                version = 1
+        snapshot = dict(snapshot)
+        snapshot["version"] = version
         return self.longterm.store(
             content=json.dumps(snapshot, ensure_ascii=False, default=str),
             category="session_snapshot",
@@ -369,13 +384,24 @@ class MemoryManager:
         )
 
     def load_session_snapshot(self, session_id: str = "") -> dict[str, Any] | None:
-        """读最近一条 session_snapshot. session_id 为空则读任意最新一条."""
+        """读 session 快照.
+
+        P2 升级: session_id 非空时按 source 精确读该 session 的最新一代 (版本化);
+        session_id 为空时回退读 category 下任意最新一条 (向后兼容).
+        """
         try:
-            entries = self.longterm.retrieve(
-                query="session snapshot",
-                category="session_snapshot",
-                top_k=1,
-            )
+            if session_id:
+                entries = self.longterm.list_by_source(
+                    source=f"session:{session_id}",
+                    category="session_snapshot",
+                    limit=1,
+                )
+            else:
+                entries = self.longterm.retrieve(
+                    query="session snapshot",
+                    category="session_snapshot",
+                    top_k=1,
+                )
             if not entries:
                 return None
             entry = entries[0] if isinstance(entries, list) else entries
