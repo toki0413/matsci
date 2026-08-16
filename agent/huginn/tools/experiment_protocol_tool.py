@@ -39,8 +39,14 @@ class ExperimentProtocolInput(BaseModel):
         default=True,
         description="混合器是否可用; False 模拟后端缺失 → mix/aliquot 自动停用",
     )
-    executor_backend: Literal["mock"] = Field(
-        default="mock", description="物理执行器后端 (当前仅 mock)"
+    executor_backend: Literal[
+        "mock", "sim"
+    ] = Field(
+        default="sim",
+        description=(
+            "物理执行器后端: mock=内存日志 (无状态), "
+            "sim=状态转移仿真 (确定性规则, 感知确认可校验量变化)"
+        ),
     )
 
 
@@ -64,10 +70,13 @@ class ExperimentProtocolTool(HuginnTool):
 
     def _build_workspace(self, args: ExperimentProtocolInput, context: ToolContext) -> Any:
         from huginn.security.experiment_protocol import build_pipette_workflow
-        from huginn.security.workspace import MockExecutor
+        from huginn.security.workspace import MockExecutor, SimExecutor
         from huginn.security.world_model import NaiveWorldModel
 
-        executor = MockExecutor()
+        if args.executor_backend == "sim":
+            executor = SimExecutor()
+        else:
+            executor = MockExecutor()
         rv = getattr(context, "revertible", None)
         wa = build_pipette_workflow(
             executor,
@@ -111,8 +120,10 @@ class ExperimentProtocolTool(HuginnTool):
                 success=True,
                 data={
                     "protocol": args.protocol,
+                    "executor_backend": args.executor_backend,
                     "executed_steps": executed,
                     "degraded_steps": degraded,
+                    "final_state": executor.observe() if args.executor_backend == "sim" else None,
                     "inverse_count": wa.revertible.depth,
                     "revertible_shared_with_agent": rv is not None,
                 },
