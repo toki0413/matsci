@@ -1,6 +1,8 @@
 # 成本-剪枝参与感契约 (Cost & Pruning Participation)
 
-> 状态: **staging**（设计稿，待评审后定稿移入 active）
+> 状态: **active**（已实现并落地，由 staging 提升。后端 `branch_policy.py`、事件总线
+> `publish_decision_point`/`publish_cost_narrative`、前端 MetricsBar 成本叙事 + 决策点
+> 处理、测试 `tests/test_cost_participation.py` 均已就位）
 > 定位: 人机协作参与感的设计契约。登记两类机制——**决策点对话**（agent 主动召回用户决策，主动参与）与**成本叙事面板**（用户被动感知，读懂 agent 在干嘛、为什么、花在哪、值不值）。
 > 上游: [cost_ledger.py](../huginn/cost_ledger.py) / [value_budget.py](../huginn/value_budget.py) / [budget_pause.py](../huginn/budget_pause.py) / [permissions.py](../huginn/permissions.py)。本契约定义"如何把这些后端机制转化为用户可感知、可参与的东西"。
 
@@ -127,9 +129,9 @@ agent 在以下关口**主动发起**决策点（而非自动执行）：
 - 所有决策点/降档/休眠/续投记录进 `CostLedger`（挂 `label`/`phase`），可回溯"为什么当时砍了/留了这条线"。
 - 每条决策点 `id` 唯一、`status` 可查，前端可针对单条请求撤销。
 
-## 7. 待办（评审通过后）
+## 7. 落地核查（均已实现）
 
-- [ ] 新增 `huginn/branch_policy.py`（BranchScore / BranchState / DecisionPointRegistry 骨架）。
-- [ ] 新增成本叙事事件类型，接入统一事件总线（events-contract）。
-- [ ] 前端：MetricsBar 成本叙事增强 + 决策点卡片。
-- [ ] 单元测试：决策点裁决语义、默认动作、可撤销、UI 渲染 payload。
+- [x] 新增 `huginn/branch_policy.py`（BranchScore / BranchState / DecisionPointRegistry 骨架）。
+- [x] 新增成本叙事事件类型，接入统一事件总线（events-contract）。
+- [x] 前端：MetricsBar 成本叙事增强 + 决策点卡片。
+- [x] 单元测试：决策点裁决语义、默认动作、可撤销、UI 渲染 payload。
