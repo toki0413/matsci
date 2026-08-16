@@ -3,11 +3,14 @@
 Thank you for your interest in Huginn! This document outlines how to set up a
 development environment, run tests, and submit changes.
 
+> 提交前请先了解文档导航 [docs/INDEX.md](docs/INDEX.md) 与架构
+> [docs/architecture.md](docs/architecture.md)。
+
 ## Development Setup
 
 ```bash
 git clone <repo-url>
-cd matsci-agent/agent
+cd agent
 python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev,all]"
@@ -38,7 +41,11 @@ All CI checks must pass before merging.
 
 1. Fork the repository and create a feature branch.
 2. Make focused, well-tested changes.
-3. Update documentation if public behavior changes.
+3. Update documentation if public behavior changes:
+   - 若改动 env / flags / tools / routes / errors 等契约面，用
+     `python -m huginn.cli.config_audit --<domain> --out docs/<domain>-contract.md`
+     重新生成对应契约文档；
+   - 新增/废弃文档，记得在 `docs/INDEX.md` 登记或标注状态。
 4. Ensure the full test suite passes.
 5. Open a PR with a clear description and link any related issues.
 
