@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from huginn.agent import HuginnAgent
-from huginn.models.router import ModelRouter
+from huginn.models.router import ModelRouter, classify_band
 
 
 class _FakeModel:
@@ -52,6 +52,46 @@ class TestModelRouter:
         # No OPENAI_API_KEY, so registration should be skipped.
         router = ModelRouter.from_env()
         assert "cheap" not in router.list_models()
+
+
+class TestBandRouting:
+    """双吸引子 band 路由: 外部路由器量化到稳定带 (spec/react), 避开 mixed."""
+
+    def test_classify_band_quantizes_stable_bands_only(self):
+        # mixed 永不作为输出 — 相变陷阱应被避让.
+        assert classify_band("science") == "spec"
+        assert classify_band("reasoning") == "spec"
+        assert classify_band("summarize") == "react"
+        assert classify_band("planning") == "react"
+        assert classify_band(None, signals="hypothesize") == "spec"
+        assert classify_band("execute") == "react"
+
+    def test_select_band_prefers_stable_band_model(self):
+        r = ModelRouter()
+        r.register("spec_a", _FakeModel("spec_a"), tags={"agent"}, bands={"spec"})
+        r.register("react_b", _FakeModel("react_b"), tags={"agent"}, bands={"react"})
+        assert r.select_band("spec").name == "spec_a"
+        assert r.select_band("react").name == "react_b"
+        assert r.list_bands() == {"spec": ["spec_a"], "react": ["react_b"]}
+
+    def test_select_band_no_cross_band_fallback(self):
+        # 只有 spec 带模型时, react 应落到通用模型, 不回退到 spec (相变区).
+        r = ModelRouter()
+        r.register("spec_a", _FakeModel("spec_a"), bands={"spec"})
+        r.register("generic", _FakeModel("generic"))
+        assert r.select_band("react").name == "generic"
+
+    def test_select_band_mixed_is_trap_not_target(self):
+        # mixed 是相变陷阱, 不能作为路由目标 — 应走通用回退而非报错.
+        r = ModelRouter()
+        r.register("generic", _FakeModel("generic"))
+        assert r.select_band("mixed").name == "generic"
+        assert r.select_band(None).name == "generic"
+
+    def test_register_drops_mixed_band(self):
+        r = ModelRouter()
+        entry = r.register("m", _FakeModel("m"), bands={"spec", "mixed"})
+        assert entry.bands == {"spec"}
 
 
 class TestHuginnAgentRouter:
