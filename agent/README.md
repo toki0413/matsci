@@ -1,6 +1,9 @@
-# Huginn
+# Huginn (agent package `huginn-agent`)
 
 An intelligent, LLM-driven agent system for computational materials science. Automates DFT calculations, molecular dynamics simulations, symbolic regression discovery, document retrieval, and autonomous exploration of material design spaces.
+
+> 本 README 是 `agent/` 子包文档。**全项目文档导航见 [docs/INDEX.md](docs/INDEX.md)**，
+> 根级项目总览见 [../README.md](../README.md)。
 
 ## Features
 
@@ -24,6 +27,19 @@ An intelligent, LLM-driven agent system for computational materials science. Aut
   audit/provenance/event observations into an end-to-end explanation timeline
 - **Unified gating**: `CoEffectRegistry` drives activation and aggregates decisions for all
   gates, see `huginn/security/gate.py`
+
+## Key Concepts
+
+两条正交控制轴（互不干扰，可独立设置）：
+
+| 概念 | 控制什么 | 取值 | 环境变量 |
+|---|---|---|---|
+| **极简模式 ModelTier** | 认知编排开销（phase / plan / 纪律 / compaction / 外部思考） | `full` / `balanced` / `minimal` | `HUGINN_MODEL_TIER` |
+| **思考强度 ThinkingIntensity** | 模型推理深度（provider reasoning budget） | `low` / `medium` / `high` / `max` | `HUGINN_THINKING` |
+
+- 极简模式越"minimal"，越信任模型、跳过 phase/plan 门控；安全层始终保留。
+- 思考强度映射到各 provider 的推理预算（如 Anthropic: 4096 / 16000 / 32000 / 64000）。
+- 契约自动生成：`python -m huginn.cli.config_audit --<domain> --out docs/<domain>-contract.md`。
 
 ## Quick Start
 
@@ -112,6 +128,11 @@ Real entry points: `huginn-agent` CLI (console script → `huginn.cli:main`) and
 `huginn/server_core.py`, lifecycle in `huginn/lifespan.py`, routes in
 `huginn/routes/`.
 
+> **单网关（Single Gateway）**：`huginn.server` 是唯一业务网关，外部消费者
+> （CLI / 桌面 / 脚本）一律作为 HTTP/WS API 客户端，不直接 `import huginn.*`
+> 业务模块。由 `tests/test_arch_single_gateway.py` 在 CI 强制。详见
+> [../docs/architecture/decisions/0001-single-gateway.md](../docs/architecture/decisions/0001-single-gateway.md)。
+
 ## Tools
 
 150+ built-in tools are registered through `huginn/tools/__init__.py`
@@ -194,7 +215,7 @@ agent/
 │   ├── api/                # API layer (context/event/filter)
 │   └── security/           # auth, middleware
 ├── tests/                  # pytest suite (conftest with isolation guards)
-└── docs/                   # tech-spec.md (current), architecture.md
+└── docs/                   # INDEX.md (导航), tech-spec.md (现状), architecture.md + 契约文档
 ```
 
 ### Adding a New Tool
