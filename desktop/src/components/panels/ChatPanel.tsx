@@ -11,7 +11,7 @@ import { SaveToMemoryButton } from '../SaveToMemoryButton';
 import { PipelineProgressCard } from '../PipelineProgressCard';
 import MessageContent from '../MessageContent';
 import type { Message } from '../../hooks/useChatAndConnection';
-import type { HeatEngineHealth } from '../../types/domain';
+import type { HeatEngineHealth, ThinkingIntensity } from '../../types/domain';
 import type { ReconnectingWebSocket } from '../../lib/ws-client';
 
 const INLINE_COMMANDS = [
@@ -193,8 +193,8 @@ interface ChatPanelProps {
   respondToApproval: (requestId: string, approved: boolean) => void;
   autoApprove: boolean;
   toggleAutoApprove: (enabled: boolean) => void;
-  thinkingIntensity: "low" | "medium" | "high";
-  setThinkingIntensity: (v: "low" | "medium" | "high") => void;
+  thinkingIntensity: ThinkingIntensity;
+  setThinkingIntensity: (v: ThinkingIntensity) => void;
   pendingMessages: string[];
   stopGeneration: () => void;
   pauseGeneration: () => void;
@@ -1883,7 +1883,7 @@ status: ${heatEngineHealth.status}${heatEngineHealth.warnings.length ? '\nwarnin
           {/* Thinking intensity — always visible */}
           <div className="flex items-center gap-1">
             <span className="text-xs text-text-muted">🧠</span>
-            {(["low", "medium", "high"] as const).map((level) => (
+            {(["low", "medium", "high", "max"] as const).map((level) => (
               <button
                 key={level}
                 onClick={() => setThinkingIntensity(level)}
@@ -1925,7 +1925,7 @@ status: ${heatEngineHealth.status}${heatEngineHealth.warnings.length ? '\nwarnin
               <div className="mt-3 border-t border-border pt-3">
                 <div className="mb-1.5 text-xs text-text-muted">🧠 Thinking intensity</div>
                 <div className="flex gap-1">
-                  {(["low", "medium", "high"] as const).map((level) => (
+                  {(["low", "medium", "high", "max"] as const).map((level) => (
                     <button
                       key={level}
                       onClick={() => setThinkingIntensity(level)}
@@ -1933,7 +1933,7 @@ status: ${heatEngineHealth.status}${heatEngineHealth.warnings.length ? '\nwarnin
                         thinkingIntensity === level ? "bg-accent/20 text-accent font-medium" : "text-text-muted hover:text-text-secondary"
                       }`}
                     >
-                      {level}
+                      {level.toUpperCase()}
                     </button>
                   ))}
                 </div>
