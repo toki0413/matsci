@@ -1,6 +1,15 @@
 # Huginn (agent package `huginn-agent`)
 
-An intelligent, LLM-driven agent system for computational materials science. Automates DFT calculations, molecular dynamics simulations, symbolic regression discovery, document retrieval, and autonomous exploration of material design spaces.
+An LLM-driven agent system for **general scientific research**. It started in
+computational materials science and has since generalized into a multi-domain
+research automation agent: DFT / molecular dynamics / CFD-FEA simulation,
+symbolic regression, causal analysis (TDA/SINDy), document retrieval, autonomous
+design-space exploration, and multi-agent research collaboration — all with Lean 4
+formal verification of the underlying math.
+
+> 定位演进：**并非"材料科学专用"**。材料/仿真只是能力集之一；整系统重心是
+> 通用科研自动化（研究项目、多智能体 team、知识蒸馏、因果/结构分析、MCP 生态、
+> 远程/HPC 调度）。材料域能力见下方 Features 的 Simulation 条目。
 
 > 本 README 是 `agent/` 子包文档。**全项目文档导航见 [docs/INDEX.md](docs/INDEX.md)**，
 > 根级项目总览见 [../README.md](../README.md)。
