@@ -92,6 +92,11 @@ class MaterialsAutoResearchInput(BaseModel):
         ),
     )
     record_history: bool = Field(default=True, description="是否记录迭代历史")
+    literature_context: bool = Field(
+        default=True,
+        description="循环开始前是否用 literature_tool 检索研究目标相关文献, 把已知实验/计算值注入提案与报告. "
+                    "离线/未配置时自动降级为不检索, 不阻塞循环.",
+    )
     work_dir: str | None = Field(
         default=None,
         description="工作根目录, 留空则用 context.workspace 下的 materials_autoresearch/",
@@ -172,6 +177,12 @@ class MaterialsAutoResearchTool(HuginnTool):
             args.ratchet_metric, {"vasp_action": "relax", "parsed_key": "energy"}
         )
 
+        # 文献背景: 用 literature_tool 检索研究目标相关的已知实验/计算值
+        lit_findings: list[dict[str, Any]] = []
+        lit_note = ""
+        if args.literature_context:
+            lit_findings, lit_note = await self._gather_literature(args, context)
+
         ratchet_state: dict[str, Any] = {
             "best_metric": None,
             "best_params": None,
@@ -188,7 +199,9 @@ class MaterialsAutoResearchTool(HuginnTool):
 
             # 2a. Propose: LLM 提议下一组参数
             try:
-                proposal = await self._propose_params(args, ratchet_state, iteration)
+                proposal = await self._propose_params(
+                    args, ratchet_state, iteration, lit_findings
+                )
             except Exception as exc:
                 self._record(ratchet_state, iteration, None, None, False, f"propose 失败: {exc}", iter_dir)
                 continue
@@ -241,7 +254,9 @@ class MaterialsAutoResearchTool(HuginnTool):
                     break
 
         # 3. Report
-        report = await self._generate_report(args, ratchet_state, converged)
+        report = await self._generate_report(
+            args, ratchet_state, converged, lit_findings, lit_note
+        )
 
         return ToolResult(
             data={
@@ -254,6 +269,11 @@ class MaterialsAutoResearchTool(HuginnTool):
                 "history": ratchet_state["history"],
                 "report": report,
                 "base_dir": str(base_dir),
+                "literature": {
+                    "enabled": args.literature_context,
+                    "note": lit_note,
+                    "findings": lit_findings,
+                },
             },
             success=True,
         )
@@ -265,6 +285,7 @@ class MaterialsAutoResearchTool(HuginnTool):
         args: MaterialsAutoResearchInput,
         ratchet_state: dict[str, Any],
         iteration: int,
+        lit_findings: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """让 LLM 看着历史 + 参数空间, 提议下一组参数."""
         from langchain_core.messages import HumanMessage, SystemMessage
@@ -285,10 +306,22 @@ class MaterialsAutoResearchTool(HuginnTool):
             else "(未指定参数空间, 请根据研究目标自行推荐合理的 VASP 参数)"
         )
 
+        lit_block = (
+            json.dumps(
+                [{"title": f.get("title", ""), "abstract": f.get("abstract", "")[:400],
+                  "year": f.get("year"), "doi": f.get("doi", ""), "source": f.get("source", "")}
+                 for f in (lit_findings or [])],
+                ensure_ascii=False, indent=2,
+            )
+            if lit_findings
+            else "(未检索到文献, 请依据材料物理直觉提案)"
+        )
+
         system = (
             "你是计算材料科学专家. 你的任务是基于迭代历史和研究目标, 提议下一组计算参数. "
             "只能从给定的参数空间里选值 (如果提供了); 如果某参数没在空间里, 可以推荐一个合理值. "
-            "输出必须是严格的 JSON, 不要加 markdown 代码块标记, 格式如下:\n"
+            "文献背景里可能包含该体系已知的实验/计算值 (例如带隙、形成能), 提案时应参考这些值, "
+            "让计算设置与已知物理一致. 输出必须是严格的 JSON, 不要加 markdown 代码块标记, 格式如下:\n"
             '{"params": {"encut": 500, "kpoints": "6 6 6", "ismear": 0, ...}, '
             '"rationale": "一句话解释为什么这么选"}'
         )
@@ -298,6 +331,7 @@ class MaterialsAutoResearchTool(HuginnTool):
             f"ratchet 指标: {args.ratchet_metric} ({args.ratchet_direction})\n"
             f"workflow 模板: {args.workflow_template}\n"
             f"当前迭代: 第 {iteration} 轮\n\n"
+            f"文献背景 (已知值, 仅供参考):\n{lit_block}\n\n"
             f"参数空间:\n{ps_block}\n\n"
             f"迭代历史 (最近 8 轮):\n{history_block}\n\n"
             "请提议下一组参数. 如果历史里有 best, 优先在 best 附近做小调整; "
@@ -489,6 +523,73 @@ class MaterialsAutoResearchTool(HuginnTool):
             }
         )
 
+    # ------------------------------------------------------------------ literature
+
+    async def _gather_literature(
+        self, args: MaterialsAutoResearchInput, context: ToolContext
+    ) -> tuple[list[dict[str, Any]], str]:
+        """用 literature_tool 检索研究目标相关的文献, 返回 (findings, note).
+
+        literature_tool 不可用/离线/失败时安静降级为空, 不阻塞 ratchet 循环.
+        """
+        tool = ToolRegistry.get("literature_tool")
+        if tool is None:
+            return [], "literature_tool 未注册, 跳过文献背景"
+        try:
+            from huginn.tools.literature.tool import LiteratureInput
+
+            query = self._literature_query(args)
+            lit_input = LiteratureInput(
+                action="search",
+                query=query,
+                max_results=5,
+                expand_query=True,
+                sources=["arxiv", "s2", "crossref", "openalex"],
+            )
+            ctx = self._make_ctx(context, getattr(context, "workspace", None) or ".")
+            result = await tool.call(lit_input, ctx)
+        except Exception as exc:
+            logger.debug("literature background skipped: %s", exc)
+            return [], f"文献检索失败, 已跳过: {exc}"
+
+        if not result.success:
+            return [], f"文献检索未成功: {result.error}"
+
+        data = result.data or {}
+        papers = data.get("papers") or data.get("results") or []
+        findings = [
+            {
+                "title": p.get("title", ""),
+                "abstract": (p.get("abstract") or "")[:600],
+                "year": p.get("year"),
+                "doi": p.get("doi", ""),
+                "source": p.get("source", ""),
+            }
+            for p in papers
+            if isinstance(p, dict) and p.get("title")
+        ]
+        return findings, f"检索到 {len(findings)} 篇相关文献"
+
+    @staticmethod
+    def _literature_query(args: MaterialsAutoResearchInput) -> str:
+        """从研究目标 + ratchet 指标构造文献检索 query.
+
+        目标是 'minimize formation energy of Li7La3Zr2O12', 指标 formation_energy,
+        就检索 'Li7La3Zr2O12 formation energy'. 目标已含指标词时不再重复追加.
+        """
+        goal = args.research_goal
+        # 去掉开头动作词 (minimize/maximize/optimize 等)
+        for w in ("minimize ", "maximize ", "optimize ", "reduce ", "increase "):
+            if goal.lower().startswith(w):
+                goal = goal[len(w):]
+                break
+        goal = goal.strip()
+        metric = args.ratchet_metric.replace("_", " ")
+        # 指标关键词已在目标里 (如 "maximize conductivity of Li3PS4"), 不重复拼
+        if any(m in goal.lower() for m in metric.split()):
+            return goal
+        return f"{goal} {metric}".strip()
+
     # ------------------------------------------------------------------ report
 
     async def _generate_report(
@@ -496,6 +597,8 @@ class MaterialsAutoResearchTool(HuginnTool):
         args: MaterialsAutoResearchInput,
         ratchet_state: dict[str, Any],
         converged: bool,
+        lit_findings: list[dict[str, Any]] | None = None,
+        lit_note: str = "",
     ) -> str:
         """调一次 LLM 把迭代历史总结成报告."""
         try:
@@ -512,11 +615,20 @@ class MaterialsAutoResearchTool(HuginnTool):
                 "converged": converged,
                 "total_iterations": len(ratchet_state["history"]),
                 "history": ratchet_state["history"],
+                "literature_background": {
+                    "note": lit_note,
+                    "findings": [
+                        {"title": f.get("title", ""), "abstract": f.get("abstract", "")[:300],
+                         "year": f.get("year"), "doi": f.get("doi", "")}
+                        for f in (lit_findings or [])
+                    ],
+                },
             }
             system = (
                 "你是材料计算专家. 根据迭代历史写一份简洁的中文报告, 包含: "
-                "1) 最佳参数和对应指标; 2) 收敛分析 (是否收敛, 指标随迭代的变化趋势); "
-                "3) 推荐的下一步 (基于结果给 2-3 条具体建议). "
+                "1) 关键发现 (最佳参数和对应指标); 2) 收敛分析 (是否收敛, 指标随迭代的变化趋势); "
+                "3) 文献对照 (把计算得到的最佳指标与文献已知值对比, 标注一致/偏差及可能原因); "
+                "4) 推荐的下一步 (基于结果和文献缺口给 2-3 条具体建议). "
                 "直接输出 Markdown, 不要加代码块."
             )
             prompt = json.dumps(summary, ensure_ascii=False, indent=2)
@@ -526,6 +638,12 @@ class MaterialsAutoResearchTool(HuginnTool):
             return content
         except Exception as exc:
             # LLM 挂了也不能让整个 loop 白跑, 给个最小报告兜底
+            lit_block = ""
+            if lit_findings:
+                lit_block = "\n\n文献背景:\n" + "\n".join(
+                    f"- {f.get('title', '')} ({f.get('year', '')}) [{f.get('source', '')}]"
+                    for f in lit_findings[:5]
+                )
             return (
                 f"# Materials AutoResearch Report\n\n"
                 f"研究目标: {args.research_goal}\n"
@@ -534,7 +652,8 @@ class MaterialsAutoResearchTool(HuginnTool):
                 f"最佳参数: {ratchet_state['best_params']}\n"
                 f"最佳轮次: {ratchet_state['best_iteration']}\n"
                 f"是否收敛: {converged}\n"
-                f"总迭代数: {len(ratchet_state['history'])}\n\n"
+                f"总迭代数: {len(ratchet_state['history'])}\n"
+                f"{lit_block}\n\n"
                 f"(LLM 报告生成失败: {exc})"
             )
 

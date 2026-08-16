@@ -218,12 +218,42 @@ class ReportGenerator:
         lines = ["## Literature Comparison", ""]
         comparisons = literature.get("comparisons", [])
         for comp in comparisons:
-            lines.append(
+            source = comp.get("source", "N/A")
+            # 可点击来源: 优先 DOI 链接, 其次直接 URL, 都没有就裸来源名
+            doi = comp.get("doi", "")
+            url = comp.get("url", "")
+            if doi:
+                source_link = f"[{source}](https://doi.org/{doi})"
+            elif url:
+                source_link = f"[{source}]({url})"
+            else:
+                source_link = source
+
+            # 附带标题/年份, 提升可追溯性
+            title = comp.get("title", "")
+            year = comp.get("year", "")
+            ref_parts = []
+            if title:
+                ref_parts.append(title)
+            if year:
+                ref_parts.append(str(year))
+            if ref_parts:
+                source_link = f"{source_link} — {'; '.join(ref_parts)}"
+
+            line = (
                 f"- {comp.get('property', 'N/A')}: "
                 f"calculated = {comp.get('calculated', 'N/A')}, "
                 f"reference = {comp.get('reference', 'N/A')} "
-                f"({comp.get('source', 'N/A')})"
+                f"({source_link})"
             )
+
+            # 一致性/偏差标注
+            consistency = comp.get("consistency", "") or comp.get("agreement", "")
+            if consistency:
+                line += f" — {consistency}"
+            elif comp.get("deviation") is not None:
+                line += f" — deviation = {comp.get('deviation')}"
+            lines.append(line)
         lines.append("")
         return "\n".join(lines)
 
