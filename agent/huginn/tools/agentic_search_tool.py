@@ -114,16 +114,75 @@ def _score_passage(passage: str, keywords: set[str]) -> int:
     return sum(1 for kw in keywords if kw.lower() in low)
 
 
+def _cosine(a: list[float], b: list[float]) -> float:
+    """向量余弦相似度. 空/维度不符返回 0."""
+    import math
+
+    if not a or not b or len(a) != len(b):
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a)) or 1.0
+    nb = math.sqrt(sum(y * y for y in b)) or 1.0
+    return dot / (na * nb)
+
+
+def _lazy_embed_fn() -> Callable[[list[str]], list[list[float]]] | None:
+    """复用 RAG 的 embedding 模型 (chroma DefaultEF ONNX), 未缓存则 None.
+
+    语义打分是可选增强 (P1-6): embedding 模型没下载时安静降级为关键词打分,
+    不阻塞抓取/抽取流程. 与 ``VectorStore._compute_embeddings`` 同一事实来源.
+    """
+    try:
+        from huginn.rag.vector_store import _embedding_model_cached
+
+        if not _embedding_model_cached():
+            return None
+        from chromadb.utils.embedding_functions import DefaultEF
+
+        ef = DefaultEF()
+        _ = ef(["probe"])  # 触发加载, 失败会抛异常
+
+        def embed(texts: list[str]) -> list[list[float]]:
+            return ef(texts)
+
+        return embed
+    except Exception:
+        logger.debug("semantic embed unavailable, keyword scoring only", exc_info=True)
+        return None
+
+
 def _extract_relevant(
-    text: str, question: str, max_passages: int = 3, min_score: int = 1
+    text: str,
+    question: str,
+    max_passages: int = 3,
+    min_score: int = 1,
+    embed: Callable[[list[str]], list[list[float]]] | None = None,
 ) -> list[str]:
-    """从正文里抽跟问题最相关的几句. 没有相关内容就返回空."""
+    """从正文里抽跟问题最相关的几句. 没有相关内容就返回空.
+
+    ``embed`` 非 None 时叠加 embedding 语义相似度 (余弦 ×3) 与关键词命中 —
+    能召回到"换了说法但同义"的句子. embedding 失败自动降级纯关键词.
+    """
     kws = _keywords(question)
+    sentences = _sentences(text)
     if not kws:
         # 关键词抽空了 (问题全是停用词), 退化为前几句
-        return _sentences(text)[:max_passages]
+        return sentences[:max_passages]
+    if embed is not None:
+        try:
+            qemb = embed([question])[0]
+            sembs = embed(sentences)
+            scored = [
+                (s, _score_passage(s, kws) + _cosine(qemb, se) * 3.0)
+                for s, se in zip(sentences, sembs)
+            ]
+            relevant = [(s, sc) for s, sc in scored if sc >= max(min_score, 0.5)]
+            relevant.sort(key=lambda x: x[1], reverse=True)
+            return [s for s, _ in relevant[:max_passages]]
+        except Exception:
+            logger.debug("semantic passage scoring failed, fallback to keyword", exc_info=True)
     scored = [
-        (s, _score_passage(s, kws)) for s in _sentences(text)
+        (s, _score_passage(s, kws)) for s in sentences
     ]
     relevant = [(s, sc) for s, sc in scored if sc >= min_score]
     relevant.sort(key=lambda x: x[1], reverse=True)
@@ -213,6 +272,11 @@ class AgenticSearchInput(BaseModel):
     max_content_chars: int = Field(
         default=4000, ge=500, le=20000, description="Max chars to extract per page."
     )
+    use_llm: bool = Field(
+        default=False,
+        description="True=用 LLM 做回答综合与下一跳查询派生 (失败自动降级为启发式). "
+                    "False=纯启发式 (确定性/可复现, 测试友好).",
+    )
 
 
 class AgenticSearchTool(HuginnTool):
@@ -236,10 +300,16 @@ class AgenticSearchTool(HuginnTool):
         self,
         searcher: Callable[[str, int], Awaitable[list[dict[str, Any]]]] | None = None,
         fetcher: Callable[[str, int], Awaitable[str | None]] | None = None,
+        synthesizer: Callable[..., Awaitable[str]] | None = None,
+        followup_deriver: Callable[..., Awaitable[list[str]]] | None = None,
     ) -> None:
-        # 注入点: 测试塞 mock, 默认走 web_search_tool + urllib
+        # 注入点: 测试塞 mock, 默认走 web_search_tool + urllib + 启发式综合/派生
         self._searcher = searcher
         self._fetcher = fetcher
+        self._synthesizer = synthesizer
+        self._followup_deriver = followup_deriver
+        # P1-6: 懒加载语义 embedding (模型未缓存则 None, 安静降级关键词打分)
+        self._embed = None
 
     # ── defaults: real network backends ───────────────────────────────
 
@@ -278,6 +348,110 @@ class AgenticSearchTool(HuginnTool):
         fn = self._fetcher if self._fetcher is not None else self._default_fetch
         return await fn(url, max_chars)
 
+    # ── P1-5: LLM 综合 + LLM 派生下一跳 (use_llm=True 启用, 失败降级启发式) ──
+
+    def _get_model(self, context: ToolContext | None) -> Any:
+        from huginn.llm import get_model
+
+        config = getattr(context, "config", None)
+        return get_model(config=config, temperature=0.2, max_tokens=2000)
+
+    async def _llm_invoke(self, model: Any, system_prompt: str, user_prompt: str) -> str:
+        from langchain_core.messages import HumanMessage, SystemMessage
+
+        messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
+        if hasattr(model, "ainvoke"):
+            response = await model.ainvoke(messages)
+        else:
+            response = await asyncio.to_thread(model.invoke, messages)
+        content = response.content if hasattr(response, "content") else str(response)
+        if not isinstance(content, str):
+            content = json.dumps(content, ensure_ascii=False)
+        return content
+
+    async def _llm_synthesize(
+        self, findings: list[dict[str, Any]], question: str, context: ToolContext | None
+    ) -> str:
+        """LLM 结构化综合: 关键发现 / 矛盾点 / 证据链+引用. 失败降级纯拼接."""
+        if not findings:
+            return _synthesize(findings, question)
+        evidence = "\n\n".join(
+            f"[{i}] ({f.get('title', '')}) {f.get('url', '')}\n"
+            + "\n".join(f"- {p}" for p in f.get("passages", []))
+            for i, f in enumerate(findings, 1)
+        )
+        try:
+            model = self._get_model(context)
+        except Exception as exc:
+            logger.debug("llm synthesize skipped (no model): %s", exc)
+            return _synthesize(findings, question)
+        try:
+            sys_p = (
+                "你是研究综合助手. 基于多来源证据写一段结构化回答, 输出 Markdown:"
+                "\n## 关键发现\n- ... [源编号]\n## 矛盾点 / 证据缺口\n- ... [源编号]"
+                "\n## 结论\n- ...\n引用只允许用证据里的 [编号], 不要编造来源."
+            )
+            user_p = f"研究问题: {question}\n\n证据列表:\n{evidence}"
+            content = await self._llm_invoke(model, sys_p, user_p)
+            return (content or "").strip() or _synthesize(findings, question)
+        except Exception as exc:
+            logger.debug("llm synthesize failed, fallback to concatenation: %s", exc)
+            return _synthesize(findings, question)
+
+    async def _llm_derive_followups(
+        self, findings: list[dict[str, Any]], question: str, max_n: int,
+        context: ToolContext | None,
+    ) -> list[str]:
+        """LLM 决定下一跳查什么. 失败/空结果降级回关键词派生."""
+        if not findings:
+            return _derive_followups(findings, question, max_n)
+        titles = "\n".join(
+            f"- {f.get('title', '')}: {' '.join(f.get('passages', []))[:200]}"
+            for f in findings
+        )
+        try:
+            model = self._get_model(context)
+        except Exception as exc:
+            logger.debug("llm followups skipped (no model): %s", exc)
+            return _derive_followups(findings, question, max_n)
+        try:
+            sys_p = (
+                f"你是检索规划助手. 基于已有发现, 给出最多 {max_n} 个下一跳搜索查询, "
+                "补足未知/矛盾点, 别重复已覆盖的内容.\n"
+                f'只输出 JSON: {{"queries": ["q1", "q2"]}}'
+            )
+            user_p = f"原问题: {question}\n\n已有发现:\n{titles}"
+            content = await self._llm_invoke(model, sys_p, user_p)
+            parsed = _parse_json_text(content)
+            queries = [q for q in (parsed.get("queries", []) if parsed else []) if isinstance(q, str) and q.strip()]
+            if queries:
+                return queries[:max_n]
+        except Exception as exc:
+            logger.debug("llm followups failed, fallback to keyword: %s", exc)
+        return _derive_followups(findings, question, max_n)
+
+    async def _synthesize_answer(
+        self, findings: list[dict[str, Any]], question: str,
+        inp: AgenticSearchInput, context: ToolContext | None,
+    ) -> str:
+        """回答综合: 注入的 synthesizer > use_llm 的 LLM 综合 > 启发式拼接."""
+        if self._synthesizer is not None:
+            return await self._synthesizer(findings, question, context)
+        if inp.use_llm:
+            return await self._llm_synthesize(findings, question, context)
+        return _synthesize(findings, question)
+
+    async def _derive_next_queries(
+        self, findings: list[dict[str, Any]], question: str, max_n: int,
+        inp: AgenticSearchInput, context: ToolContext | None,
+    ) -> list[str]:
+        """下一跳查询派生: 注入的 followup_deriver > use_llm 的 LLM 派生 > 关键词派生."""
+        if self._followup_deriver is not None:
+            return await self._followup_deriver(findings, question, max_n, context)
+        if inp.use_llm:
+            return await self._llm_derive_followups(findings, question, max_n, context)
+        return _derive_followups(findings, question, max_n)
+
     # ── entry ──────────────────────────────────────────────────────────
 
     async def call(
@@ -294,8 +468,8 @@ class AgenticSearchTool(HuginnTool):
             )
         try:
             if input_data.action == "quick":
-                return await self._quick(input_data)
-            return await self._research(input_data)
+                return await self._quick(input_data, context)
+            return await self._research(input_data, context)
         except Exception as exc:
             return ToolResult(
                 data={"question": input_data.question, "findings": [], "answer": ""},
@@ -305,7 +479,9 @@ class AgenticSearchTool(HuginnTool):
 
     # ── actions ────────────────────────────────────────────────────────
 
-    async def _quick(self, inp: AgenticSearchInput) -> ToolResult:
+    async def _quick(
+        self, inp: AgenticSearchInput, context: ToolContext | None = None
+    ) -> ToolResult:
         results = await self._search(inp.question, inp.max_results_per_hop)
         findings = [
             {
@@ -316,7 +492,7 @@ class AgenticSearchTool(HuginnTool):
             }
             for r in results
         ]
-        answer = _synthesize(findings, inp.question)
+        answer = await self._synthesize_answer(findings, inp.question, inp, context)
         return ToolResult(
             data={
                 "action": "quick",
@@ -328,10 +504,15 @@ class AgenticSearchTool(HuginnTool):
             success=True,
         )
 
-    async def _research(self, inp: AgenticSearchInput) -> ToolResult:
+    async def _research(
+        self, inp: AgenticSearchInput, context: ToolContext | None = None
+    ) -> ToolResult:
         findings: list[dict[str, Any]] = []
         visited: set[str] = set()
         queries: list[str] = [inp.question]
+        # P1-6: 懒加载语义 embedding (模型未缓存则为 None)
+        if self._embed is None:
+            self._embed = _lazy_embed_fn()
 
         for hop in range(inp.max_hops):
             new_findings: list[dict[str, Any]] = []
@@ -344,7 +525,7 @@ class AgenticSearchTool(HuginnTool):
                     visited.add(url)
                     content = await self._fetch(url, inp.max_content_chars)
                     passages = (
-                        _extract_relevant(content, inp.question)
+                        _extract_relevant(content, inp.question, embed=self._embed)
                         if content else
                         ([r.get("snippet", "")] if r.get("snippet") else [])
                     )
@@ -358,11 +539,13 @@ class AgenticSearchTool(HuginnTool):
                     })
             findings.extend(new_findings)
             # 下一跳查询: 从本轮发现派生. 没有新查询就停, 不硬撑 max_hops.
-            queries = _derive_followups(new_findings, inp.question, inp.max_results_per_hop)
+            queries = await self._derive_next_queries(
+                new_findings, inp.question, inp.max_results_per_hop, inp, context
+            )
             if not queries:
                 break
 
-        answer = _synthesize(findings, inp.question)
+        answer = await self._synthesize_answer(findings, inp.question, inp, context)
         return ToolResult(
             data={
                 "action": "research",
@@ -374,6 +557,31 @@ class AgenticSearchTool(HuginnTool):
             },
             success=True,
         )
+
+
+def _parse_json_text(text: str) -> dict[str, Any] | None:
+    """容错 JSON 解析 (容忍 ```json 代码块 / 首尾花括号外噪声)."""
+    import json
+
+    text = text.strip()
+    if text.startswith("```"):
+        import re as _re
+
+        text = _re.sub(r"^```[a-zA-Z]*\n?", "", text)
+        text = _re.sub(r"\n?```\s*$", "", text)
+    try:
+        return json.loads(text)
+    except Exception:
+        import re as _re
+
+        start = text.find("{")
+        end = text.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            try:
+                return json.loads(text[start: end + 1])
+            except Exception:
+                return None
+        return None
 
 
 __all__ = ["AgenticSearchTool", "AgenticSearchInput"]
