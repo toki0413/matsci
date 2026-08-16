@@ -116,3 +116,38 @@ def run_pipette_protocol(wa: PhysicalWorkspace, *, aliquot: bool = True, sim: bo
                 PhysicalAction("aliquot", {"n": 3}),
                 confirm_key=K_ALIQUOTS, preflight=sim,
             )
+
+
+def run_action_spec(
+    wa: PhysicalWorkspace,
+    spec_list: list["ActionSpec"] | None = None,
+    *,
+    sim: bool = True,
+) -> None:
+    """声明式协议执行器 — 加载 ActionSpec 列表并逐一执行 (规格驱动).
+
+    与 :func:`run_pipette_protocol` 的硬编码顺序等价, 但把流程从"手写 if/链"
+    提升为"数据驱动": 每个步骤的前置依赖 (preconditions) 与后置断言 (expect)
+    都来自规格本身.
+
+    - 前置依赖不满足的步骤被**跳过** (degrade, 与硬编码 ``is_active`` 语义一致),
+      整个协议继续跑完能跑的部分, 不崩溃.
+    - ``expect`` 驱动状态级感知确认 (每字段相对/绝对容差), 替代旧版仅看执行日志
+      的 verifier.
+    - ``sim=True`` 额外启用执行前预演 (约束校验 + 前向预测).
+
+    ``spec_list`` 缺省使用 :data:`PIPETTING_SPEC` (等价移液-混合-分装协议).
+    """
+    from huginn.security.physics_schema import PIPETTING_SPEC as _DEFAULT_SPEC
+
+    specs = spec_list if spec_list is not None else _DEFAULT_SPEC
+    with wa.transaction():
+        for spec in specs:
+            # 前置依赖不满足 → 跳过该步, 不执行 (空间 degrade).
+            if not all(wa.is_available(d) for d in spec.preconditions):
+                continue
+            wa.execute(
+                PhysicalAction(spec.action_type, spec.to_action_params()),
+                spec=spec,
+                preflight=sim,
+            )
