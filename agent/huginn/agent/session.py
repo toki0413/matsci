@@ -101,7 +101,10 @@ class SessionMixin:
         # turns_count. 之前 session resume 这几个字段全丢, agent 默默回 chat mode + S0 + OPEN.
         # ponytail: 只读最新一条, 不覆盖已恢复的 plan. 升级: 按 session_id 精确读 + 版本化.
         try:
-            snap = self.memory.load_session_snapshot()
+            # P2 升级: 按本 session_id 精确读最新一代快照 (版本化), 不再读"任意最新一条".
+            snap = self.memory.load_session_snapshot(
+                session_id=self._session_state.session_id
+            )
             if isinstance(snap, dict):
                 mode = snap.get("mode")
                 if mode in ("chat", "research", "plan", "extreme"):

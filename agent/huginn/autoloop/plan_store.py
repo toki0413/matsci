@@ -315,12 +315,16 @@ class PlanStore:
             self._save()
             return True
 
-    def export_markdown(self, plan_id: str, path: Path | None = None) -> Path:
+    def export_markdown(
+        self, plan_id: str, path: Path | None = None,
+        active_step_id: str | None = None,
+    ) -> Path:
         """导出 plan 为 markdown 文件, 供 chat mode 引用 active step.
 
         Anthropic Context Management 2026: plan 持久化到文件, chat 上下文只引用
         当前 active step, 不引用完整 plan. 降低 token 占用 + mode 间隔离.
-        ponytail: 纯展示层, 不改 JSON 持久化语义. 升级: 按 step 状态动态裁剪.
+        P2#4: 传入 active_step_id 时按 step 状态动态裁剪 — 已完成步骤折成一行
+        计数, 高亮 active step, 只列剩余 pending step. 展示层裁剪, 不改 JSON 持久化.
         """
         from pathlib import Path as _Path
         plan = self.get_plan(plan_id)
@@ -334,6 +338,25 @@ class PlanStore:
             path = _Path(path)
             path.parent.mkdir(parents=True, exist_ok=True)
 
+        path.write_text(self._render(plan, active_step_id), encoding="utf-8")
+        return path
+
+    def build_context_hint(
+        self, plan_id: str, active_step_id: str | None = None,
+    ) -> str:
+        """返回裁剪后的 plan 上下文引用 (不落盘), 供 chat context 注入.
+
+        P2#4: chat 上下文只引用 active step + 剩余 pending step, 不引用完整
+        plan (已完成步骤折成计数), 降低 token 占用. 无 active_step_id 时等同
+        完整导出. 未知 plan 返回空串 (不抛 — 上下文注入是 best-effort).
+        """
+        plan = self.get_plan(plan_id)
+        if plan is None:
+            return ""
+        return self._render(plan, active_step_id)
+
+    def _render(self, plan: "Plan", active_step_id: str | None = None) -> str:
+        """渲染 plan 为 markdown. active_step_id 非空时按 step 状态动态裁剪."""
         lines = [
             f"# Plan: {plan.objective}",
             "",
@@ -352,16 +375,46 @@ class PlanStore:
         lines.append("")
         lines.append("| # | Step | Tool | Status | Result |")
         lines.append("|---|------|------|--------|--------|")
-        for i, step in enumerate(plan.steps, 1):
-            result = ""
-            if step.result:
-                result = str(step.result)[:80].replace("|", "\\|").replace("\n", " ")
-            lines.append(
-                f"| {i} | {step.description} | {step.tool or '-'} | {step.status} | {result} |"
-            )
+
+        # P2#4 动态裁剪: 有 active_step_id 时, 把 active 之前的已完成步骤折成一行.
+        # 否则原样全量列出 (向后兼容).
+        if active_step_id is not None:
+            done_above = 0
+            active_idx = None
+            for i, step in enumerate(plan.steps, 1):
+                if step.id == active_step_id:
+                    active_idx = i
+                    break
+                if step.status in ("done", "error", "skipped"):
+                    done_above += 1
+            if active_idx is not None and done_above > 0:
+                lines.append(
+                    f"| — | _{done_above} prior step(s) completed (collapsed)_ | — | done | — |"
+                )
+            # 只列 active 及其后的步骤
+            for i, step in enumerate(plan.steps, 1):
+                if active_idx is not None and i < active_idx:
+                    continue
+                self._append_step_row(lines, i, step, active=(step.id == active_step_id))
+        else:
+            for i, step in enumerate(plan.steps, 1):
+                self._append_step_row(lines, i, step)
+
         lines.append("")
-        path.write_text("\n".join(lines), encoding="utf-8")
-        return path
+        return "\n".join(lines)
+
+    @staticmethod
+    def _append_step_row(lines: list[str], i: int, step: "PlanStep",
+                         active: bool = False) -> None:
+        """追加一行 step 表格行. active 时加 ▶ 前缀高亮."""
+        marker = "▶ " if active else ""
+        result = ""
+        if step.result:
+            result = str(step.result)[:80].replace("|", "\\|").replace("\n", " ")
+        lines.append(
+            f"| {i} | {marker}{step.description} | {step.tool or '-'} "
+            f"| {step.status} | {result} |"
+        )
 
 
 __all__ = ["Plan", "PlanStep", "PlanStore"]

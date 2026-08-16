@@ -35,9 +35,11 @@ from huginn.agent.streaming import (
     _STREAM_IDLE_TIMEOUT,
     StreamingMixin,
     _astream_with_watchdog,
+    _compute_common_prefix,
     _dump_completion_records,
     _is_root_message,
     _load_root_markers,
+    _reconstruct_completion_records,
     _strip_dangling_tool_calls,
     _thinking_scale_timeout,
     _thinking_stream_idle,
@@ -712,6 +714,74 @@ class TestDumpCompletionRecords:
             [{"type": "assistant", "content": "x", "ts": 1.0}], "t", "turn"
         )
         assert result is None
+
+
+# _compute_common_prefix / _reconstruct_completion_records — P2 prefix_merging
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestPrefixMerging:
+    def test_common_prefix_counts_type_and_content(self):
+        a = [
+            {"type": "assistant", "content": "a"},
+            {"type": "tool", "content": "r"},
+            {"type": "assistant", "content": "b"},
+        ]
+        b = [
+            {"type": "assistant", "content": "a"},
+            {"type": "tool", "content": "r"},
+            {"type": "assistant", "content": "DIFF"},
+        ]
+        assert _compute_common_prefix(a, b) == 2
+
+    def test_common_prefix_ignores_ts_noise(self):
+        a = [{"type": "assistant", "content": "a", "ts": 1.0}]
+        b = [{"type": "assistant", "content": "a", "ts": 9.9}]
+        assert _compute_common_prefix(a, b) == 1
+
+    def test_common_prefix_zero_when_no_overlap(self):
+        assert _compute_common_prefix([{"type": "assistant", "content": "a"}],
+                                      [{"type": "tool", "content": "r"}]) == 0
+
+    def test_dump_dedups_prefix_and_reconstruct(self, monkeypatch, tmp_path):
+        # 同一 thread 连续两个 turn, 后者共享前者前 2 条 → 写 prefix_ref + 增量
+        monkeypatch.setenv("HUGINN_CACHE_DIR", str(tmp_path))
+        turn1 = [
+            {"type": "assistant", "content": "a", "ts": 1.0},
+            {"type": "tool", "content": "r", "ts": 2.0},
+            {"type": "assistant", "content": "b", "ts": 3.0},
+        ]
+        turn2 = [
+            {"type": "assistant", "content": "a", "ts": 4.0},
+            {"type": "tool", "content": "r", "ts": 5.0},
+            {"type": "assistant", "content": "c", "ts": 6.0},
+        ]
+        p1 = _dump_completion_records(turn1, "t", "turn1")
+        p2 = _dump_completion_records(turn2, "t", "turn2")
+        assert p1 is not None and p2 is not None
+        # turn2 首行是 prefix_ref
+        lines = p2.read_text(encoding="utf-8").strip().split("\n")
+        first = json.loads(lines[0])
+        assert first["type"] == "prefix_ref"
+        assert first["prev_file"] == "turn1.jsonl"
+        assert first["prefix_len"] == 2
+        # 增量只有 1 条 (后缀 c)
+        assert len(lines) == 2
+        assert json.loads(lines[1])["content"] == "c"
+        # 读侧重建 = 完整序列 (type+content; 前缀 ts 复用 prev_file 原值, 属预期)
+        from huginn.agent.streaming import _reconstruct_completion_records
+        rebuilt = _reconstruct_completion_records(p2)
+        assert [r["type"] for r in rebuilt] == ["assistant", "tool", "assistant"]
+        assert [r["content"] for r in rebuilt] == ["a", "r", "c"]
+
+    def test_no_dedup_below_threshold(self, monkeypatch, tmp_path):
+        # 公共前缀 < 2 → 不写 prefix_ref, 全量落盘
+        monkeypatch.setenv("HUGINN_CACHE_DIR", str(tmp_path))
+        recs = [{"type": "assistant", "content": "x", "ts": 1.0}]
+        _dump_completion_records(recs, "t", "turn1")
+        p2 = _dump_completion_records(recs, "t", "turn2")
+        lines = p2.read_text(encoding="utf-8").strip().split("\n")
+        assert json.loads(lines[0])["type"] != "prefix_ref"
 
 
 # ═══════════════════════════════════════════════════════════════════════════
