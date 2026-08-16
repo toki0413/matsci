@@ -46,6 +46,7 @@
 
 | 文档 | 状态 | 说明 |
 |---|---|---|
+| [cost-participation-contract.md](cost-participation-contract.md) | staging | 成本-剪枝参与感契约（决策点对话 + 成本叙事，待评审） |
 | [staging/plans/2026-08-12-p0-state-store-and-rust.md](staging/plans/2026-08-12-p0-state-store-and-rust.md) | staging | P0 状态存储 + Rust 计划 |
 | [staging/specs/2026-08-13-external-thinking.md](staging/specs/2026-08-13-external-thinking.md) | staging | 外部思考规范 |
 
