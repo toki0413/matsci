@@ -384,6 +384,20 @@ ENV_REGISTRY: dict[str, dict[str, Any]] = {
         "description": "Auto-approve tool execution without human confirmation.",
         "consumer": "huginn.tools.adapter",
     },
+    "HUGINN_PERM_COST_BUDGET_HOURS": {
+        "category": EnvCategory.AGENT,
+        "type": "float",
+        "default": None,
+        "description": "Permission cost budget (CPU hours). Tools exceeding it escalate to ASK.",
+        "consumer": "huginn.permissions.PermissionConfig.cost_budget_hours",
+    },
+    "HUGINN_PERM_TRUST_ADAPTIVE": {
+        "category": EnvCategory.AGENT,
+        "type": "bool",
+        "default": False,
+        "description": "Enable trust-adaptive permission: low trust forces ASK, high trust auto-approves medium risk.",
+        "consumer": "huginn.permissions.PermissionConfig.trust_adaptive",
+    },
     "HUGINN_MAX_TOOL_OUTPUT_TOKENS": {
         "category": EnvCategory.AGENT,
         "type": "int",
