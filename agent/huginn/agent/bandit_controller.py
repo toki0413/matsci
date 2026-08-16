@@ -41,6 +41,30 @@ def _bucket(value: float, edges: list[float]) -> int:
     return len(edges)
 
 
+# tile coding (P1#3): 多 tiling 泛化, 缓解 4 维稀疏 state space.
+# item_idx 离散不 tiling; 对 time/calls/progress 三个分桶做 coarse tiling + 偏移,
+# 让未访问的精确状态也能从同 coarse tile 的邻居继承经验.
+# tiling 0 = 精确状态 (现有行为); 其余 tiling 用 /2 粗化 + 不同偏移错开 coarse 边界,
+# 多个粗化 tiling 让不同维度组合都能共享邻居经验.
+_TILE_OFFSETS: tuple[tuple[int, int, int], ...] = (
+    (0, 0, 0), (1, 1, 1), (0, 1, 1), (1, 0, 1),
+)
+
+
+def _tile_keys(item_idx: int, time_bucket: int, calls_bucket: int,
+               progress_bucket: int) -> list[str]:
+    """返回该状态所属的多个 tiling key (精确 + 粗化)."""
+    keys = [f"{item_idx}|{time_bucket}|{calls_bucket}|{progress_bucket}"]
+    for _ot, _oc, _op in _TILE_OFFSETS:
+        if _ot == _oc == _op == 0:
+            continue
+        keys.append(
+            f"{item_idx}|{(time_bucket + _ot) // 2}"
+            f"|{(calls_bucket + _oc) // 2}|{(progress_bucket + _op) // 2}"
+        )
+    return keys
+
+
 @dataclass(frozen=True)
 class _BanditState:
     item_idx: int
@@ -230,18 +254,32 @@ class EffortBandit:
         if _prog >= 100.0:
             return "continue"
         st = self._build_state(rt, _prog)
-        k = st.key()
-        if k not in self._Q:
-            return self._prior_from_lessons(rt.item_idx)
-        N_s = sum(self._N[k].values())
-        if N_s == 0:
+        # tile coding: 聚合状态所属所有 tiling 的 Q/N 做 UCB — 未访问的精确状态
+        # 也能从同 coarse tile 的邻居继承经验 (缓解稀疏), 有经验的精确状态仍主导.
+        _tiles = _tile_keys(st.item_idx, st.time_bucket, st.calls_bucket,
+                            st.progress_bucket)
+        _N_tot = 0
+        _n: dict[str, int] = {a: 0 for a in _ACTIONS}
+        _q_sum: dict[str, float] = {a: 0.0 for a in _ACTIONS}
+        for _k in _tiles:
+            _qk = self._Q.get(_k)
+            _nk = self._N.get(_k)
+            if _qk is None or _nk is None:
+                continue
+            for _a in _ACTIONS:
+                _c = _nk.get(_a, 0)
+                _n[_a] += _c
+                _N_tot += _c
+                _q_sum[_a] += _qk.get(_a, 0.0) * _c
+        if _N_tot == 0:
             return self._prior_from_lessons(rt.item_idx)
         best_a, best_ucb = "continue", -float("inf")
         for a in _ACTIONS:
-            N_sa = self._N[k].get(a, 0)
-            if N_sa == 0:
-                return a
-            _ucb = self._Q[k][a] + _C * math.sqrt(math.log(N_s) / N_sa)
+            _N_sa = _n[a]
+            if _N_sa == 0:
+                continue
+            _q_ref = _q_sum[a] / _N_sa
+            _ucb = _q_ref + _C * math.sqrt(math.log(_N_tot) / _N_sa)
             if _ucb > best_ucb:
                 best_ucb, best_a = _ucb, a
         if best_a == rt.last_advice and rt.same_advice_streak >= 3:
@@ -340,10 +378,8 @@ class EffortBandit:
                     # MDP: slow reward 合并进当前步轨迹, 不直接改 Q.
                     self._record_step(st, _a, _reward_slow)
                 else:
-                    k = st.key()
-                    if k in self._Q and _a in self._Q[k]:
-                        _N_sa = self._N[k][_a]
-                        self._Q[k][_a] += _reward_slow / max(_N_sa, 1)
+                    # tile coding: slow reward 更新状态所属的所有 tiling.
+                    self._bump_tiles(st, _a, _reward_slow)
                 # DeLM: 同步更新 verified_lessons (cross-task shared context).
                 # ponytail: incremental mean, 不存原始 reward 序列, JSON 够小.
                 _pattern = (self._items_labels[rt.item_idx]
@@ -359,18 +395,29 @@ class EffortBandit:
         except Exception as _e:
             logger.debug("[v19] update_iter_end fallback: %s", _e)
 
-    def _update_q(self, st: _BanditState, action: str, reward: float) -> None:
-        k = st.key()
-        if k not in self._Q:
-            self._Q[k] = dict.fromkeys(_ACTIONS, 0.0)
-            self._N[k] = dict.fromkeys(_ACTIONS, 0)
-        _N_sa = self._N[k][action]
-        _Q_sa = self._Q[k][action]
-        self._Q[k][action] = _Q_sa + (reward - _Q_sa) / (_N_sa + 1)
-        self._N[k][action] = _N_sa + 1
+    def _bump_tiles(self, st: _BanditState, action: str, delta: float,
+                   alpha: float | None = None) -> None:
+        """tile coding 更新: 对状态所属的所有 tiling key 做 Q 更新.
+
+        alpha=None 用增量均值学习率 1/(N+1) (与 _update_q 语义一致);
+        传 alpha 则用固定学习率 (如 _flush_trajectory 的 MC alpha=1.0).
+        coarse key 与精确 key 同存 _Q/_N, 持久化无需改 schema.
+        """
+        for k in _tile_keys(st.item_idx, st.time_bucket, st.calls_bucket,
+                            st.progress_bucket):
+            if k not in self._Q:
+                self._Q[k] = dict.fromkeys(_ACTIONS, 0.0)
+                self._N[k] = dict.fromkeys(_ACTIONS, 0)
+            _N_sa = self._N[k][action]
+            _lr = alpha if alpha is not None else 1.0 / (_N_sa + 1)
+            self._Q[k][action] = self._Q[k][action] + _lr * (delta - self._Q[k][action])
+            self._N[k][action] = _N_sa + 1
         self._update_count += 1
         if self._update_count % _PERSIST_FLUSH_EVERY == 0:
             self._save()
+
+    def _update_q(self, st: _BanditState, action: str, reward: float) -> None:
+        self._bump_tiles(st, action, reward)
 
     # ── MDP 升级: episode 轨迹 + MC 信用分配 ──────────────────────────
     # 从 contextual bandit (单步即时更新) 升级为 episode 级 Monte Carlo:
@@ -386,11 +433,11 @@ class EffortBandit:
         """
         k = st.key()
         if self._trajectory and \
-                self._trajectory[-1][0] == k and self._trajectory[-1][1] == action:
-            _sk, _a, _r = self._trajectory[-1]
-            self._trajectory[-1] = (_sk, _a, _r + reward)
+                self._trajectory[-1][0].key() == k and self._trajectory[-1][1] == action:
+            _prev_st, _a, _r = self._trajectory[-1]
+            self._trajectory[-1] = (_prev_st, _a, _r + reward)
         else:
-            self._trajectory.append((k, action, reward))
+            self._trajectory.append((st, action, reward))
 
     def _current_terminal_reward(self) -> float:
         """episode 终点奖励: item 完成 +1, 否则按 darwin 相对起点增量.
@@ -418,18 +465,11 @@ class EffortBandit:
         if not self._trajectory:
             return
         _g = terminal_reward
-        for _k, _a, _r in reversed(self._trajectory):
+        for _st, _a, _r in reversed(self._trajectory):
             _g = _r + _GAMMA * _g
-            if _k not in self._Q:
-                self._Q[_k] = dict.fromkeys(_ACTIONS, 0.0)
-                self._N[_k] = dict.fromkeys(_ACTIONS, 0)
-            _Q_sa = self._Q[_k][_a]
-            self._Q[_k][_a] = _Q_sa + _ALPHA * (_g - _Q_sa)
-            self._N[_k][_a] += 1
-            self._update_count += 1
+            # tile coding: MC return 沿轨迹回传到每一步所属的所有 tiling (alpha=_ALPHA=1.0).
+            self._bump_tiles(_st, _a, _g, alpha=_ALPHA)
         self._trajectory = []
-        if self._update_count % _PERSIST_FLUSH_EVERY == 0:
-            self._save()
 
     def end_episode(self) -> None:
         """显式结束当前 episode, flush 轨迹 (run 结束 / 无后续 item 时调用).

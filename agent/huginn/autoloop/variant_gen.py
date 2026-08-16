@@ -19,8 +19,11 @@ from huginn.autoloop.dynamic_workflow import WorkflowScript
 
 logger = logging.getLogger(__name__)
 
-# 参数扰动规则. key = 参数名, value = (扰动函数, 适用工具集或 None)
-# ponytail: 硬编码 VASP 常见参数, 升级路径: 从 ToolRegistry schema 动态读.
+# 参数扰动规则. key = 参数名, value = 扰动函数.
+# 段升级 (P1#4): 从"硬编码 VASP 常见参数"改为可扩展注册表 — 仿真器/第三方可通过
+# register_tool_perturb_rules 登记自己的参数字典, variant_gen 按 tool_name 动态解析
+# (工具级规则 → 全局命名规则 → 数值回退), 跨仿真器复用, 不再把某个仿真器的参数名
+# 写死在 variant_gen 里.
 
 def _perturb_encut(v: Any) -> Any:
     """encut ±50 eV, 钳到 [200, 2000]."""
@@ -73,7 +76,7 @@ def _perturb_numeric(v: Any) -> Any:
 
 
 # 参数名 → 扰动函数. 不在表里的数值参数走 _perturb_numeric.
-_PERTURB_RULES = {
+_PERTURB_RULES: dict[str, Any] = {
     "encut": _perturb_encut,
     "ENCUT": _perturb_encut,
     "kpoints": _perturb_kpoints,
@@ -85,12 +88,44 @@ _PERTURB_RULES = {
     "EDIFF": lambda v: _perturb_numeric(v),
 }
 
+# 工具级参数扰动规则 (schema 驱动): tool_name → {参数名: 扰动函数}.
+# 仿真器模块在三方注册时往这里登记, variant_gen 不写死任一仿真器的参数枚举.
+_TOOL_RULES: dict[str, dict[str, Any]] = {}
 
-def _perturb_args(args: dict[str, Any]) -> dict[str, Any]:
-    """对 args dict 做参数扰动. 返回新 dict, 原地不动."""
+
+def register_perturb_rule(parameter: str, rule: Any) -> None:
+    """注册 (或覆盖) 一个全局命名参数扰动规则.
+
+    供仿真器/第三方登记跨工具复用的参数名 (如 ecutwfc/ecutrho 等 QE 参数),
+    避免只靠 variant_gen 内部枚举.
+    """
+    _PERTURB_RULES[parameter] = rule
+
+
+def register_tool_perturb_rules(tool: str, rules: dict[str, Any]) -> None:
+    """按工具登记参数扰动规则 (schema 驱动入口).
+
+    tool: 工具名 (对应 subtask.tool_name), rules: {参数名: 扰动函数}.
+    同名参数已存在时以工具级优先覆盖 (局部优先于全局).
+    """
+    _TOOL_RULES.setdefault(tool, {}).update(rules)
+
+
+def _rule_for(tool: str | None, parameter: str) -> Any | None:
+    """按优先级解析单参数扰动规则: 工具级 → 全局命名 → None (走数值回退)."""
+    if tool and parameter in _TOOL_RULES.get(tool, {}):
+        return _TOOL_RULES[tool][parameter]
+    return _PERTURB_RULES.get(parameter)
+
+
+def _perturb_args(args: dict[str, Any], tool: str | None = None) -> dict[str, Any]:
+    """对 args dict 做参数扰动. 返回新 dict, 原地不动.
+
+    tool: 可选, 传入 subtask 工具名以启用 schema 驱动 (工具级规则优先).
+    """
     out: dict[str, Any] = {}
     for k, v in args.items():
-        fn = _PERTURB_RULES.get(k)
+        fn = _rule_for(tool, k)
         if fn is not None:
             out[k] = fn(v)
         elif isinstance(v, (int, float)) and not isinstance(v, bool):
@@ -113,9 +148,9 @@ def _perturb_script(script: WorkflowScript) -> WorkflowScript:
                 )
                 new_args = select_workflow_params_for_stage(st.tool_name, st.args)
             except Exception:
-                new_args = _perturb_args(st.args)
+                new_args = _perturb_args(st.args, st.tool_name)
         else:
-            new_args = _perturb_args(st.args)
+            new_args = _perturb_args(st.args, st.tool_name)
         new_subtasks.append({
             "id": st.id,
             "tool": st.tool_name,
