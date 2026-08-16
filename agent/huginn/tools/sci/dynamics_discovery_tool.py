@@ -14,6 +14,7 @@ stochastic nonlinear dynamics from noisy data" (Chaos 2024): 先把含噪
 from __future__ import annotations
 
 import csv
+import logging
 from collections import Counter
 from itertools import combinations_with_replacement
 from pathlib import Path
@@ -23,12 +24,15 @@ from pydantic import BaseModel, Field
 
 from huginn.core_types import ToolContext, ToolResult
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
+from huginn.validation.identifiability import identifiability_ceiling
+
+logger = logging.getLogger(__name__)
 
 
 class DynamicsDiscoveryInput(BaseModel):
     action: str = Field(
         default="discover",
-        description="discover | validate | load_lammps_dump",
+        description="discover | validate | identifiability | load_lammps_dump",
     )
     # 数据来源: 二选一
     data_file: str | None = Field(
@@ -366,6 +370,8 @@ class DynamicsDiscoveryTool(HuginnTool):
             return self._discover(args)
         if args.action == "validate":
             return self._validate(args)
+        if args.action == "identifiability":
+            return self._identifiability(args)
         if args.action == "load_lammps_dump":
             return self._load_lammps_dump(args)
         return ToolResult(
@@ -393,6 +399,14 @@ class DynamicsDiscoveryTool(HuginnTool):
         except Exception as e:
             return ToolResult(data=None, success=False, error=f"discovery failed: {e}")
 
+        # 预飞辨识度天花板: 同一个候选库 Theta 的 λ_min(M), 告诉 agent 这个
+        # 吸引子几何上允不允许独特恢复. R² 高 ≠ 唯一; λ_min≈0 时拟合不可辨识.
+        try:
+            ceiling = identifiability_ceiling(Theta)
+        except Exception as e:
+            ceiling = None
+            logger.debug("identifiability ceiling failed (non-fatal): %s", e)
+
         # 拟合质量: 每个状态变量一个 R² (基于残差 dXdt - Theta@Xi)
         r2: dict[str, float] = {}
         residuals: dict[str, list[float]] = {}
@@ -418,8 +432,84 @@ class DynamicsDiscoveryTool(HuginnTool):
                 "n_samples": int(X.shape[0]),
                 "dt": float(np.mean(np.diff(t))),
                 "library_size": len(terms),
+                "identifiability": {
+                    "lambda_min": ceiling.lambda_min,
+                    "lambda_min_rel": ceiling.lambda_min_rel,
+                    "level": ceiling.level,
+                    "coverage_ratio": ceiling.coverage_ratio,
+                    "note": ceiling.note,
+                } if ceiling else None,
             },
             success=True,
+        )
+
+    def _identifiability(self, args: DynamicsDiscoveryInput) -> ToolResult:
+        """预飞辨识度检查: 不跑任何回归, 只算吸引子几何的辨识天花板.
+
+        源自 Gallo et al. (arXiv:2607.18490): 一个数字 λ_min(M) 在运行系统发现
+        之前就决定了能不能独特恢复. λ_min≈0 → 几何不可辨识, 拟合唯一性无保证.
+        这个 action 让 agent 先探明"这条轨迹允许恢复什么", 再决定要不要跑 SINDy /
+        进化符号回归, 或先补更广覆盖(非线性格点/更多初值)的轨迹.
+        """
+        try:
+            t, X, col_names = self._load_series(args)
+        except Exception as e:
+            return ToolResult(data=None, success=False, error=f"data loading failed: {e}")
+        if X.shape[0] < 3:
+            return ToolResult(
+                data=None, success=False,
+                error=f"need >=3 samples for a ceiling estimate, got {X.shape[0]}",
+            )
+        try:
+            terms, Theta = self._build_library(
+                X, args.max_order, args.include_trig, args.include_exp
+            )
+            ceiling = identifiability_ceiling(Theta)
+        except Exception as e:
+            return ToolResult(data=None, success=False, error=f"identifiability failed: {e}")
+        return ToolResult(
+            data={
+                "lambda_min": ceiling.lambda_min,
+                "lambda_max": ceiling.lambda_max,
+                "lambda_min_rel": ceiling.lambda_min_rel,
+                "level": ceiling.level,
+                "coverage_ratio": ceiling.coverage_ratio,
+                "library_size": ceiling.n_terms,
+                "n_samples": ceiling.n_samples,
+                "note": ceiling.note,
+                "variables": col_names,
+                "recommended_action": self._ident_action(ceiling.level),
+            },
+            success=True,
+            metadata={
+                "preflight": True,
+                "no_regression_run": True,
+                # 辨识度天花板为"几何必要条件", 非算法成功率保证 — 诚实边界.
+                "honest_boundary": (
+                    "Lambda_min is a geometric ceiling: recovery is impossible below"
+                    " it, but possible above it is not guaranteed."
+                ),
+            },
+        )
+
+    @staticmethod
+    def _ident_action(level: str) -> str:
+        if level == "adequate":
+            return (
+                "Coverage is sufficient for discovery — run dynamics_discovery_tool "
+                "(action=discover) to fit a sparse governing equation."
+            )
+        if level == "limited":
+            return (
+                "Coverage is partial. Treat any discovered equation as provisional; "
+                "verify with out-of-sample data or acquire a more nonlinear/diverse "
+                "regime before trusting uniqueness."
+            )
+        return (
+            "Attractor coverage is deficient — a discovered equation from this "
+            "trajectory is geometrically non-unique. Prefer collecting data from a "
+            "regime that covers more of function space (e.g. chaotic or multi-initial "
+            "condition trajectories) before symbolic regression."
         )
 
     def _validate(self, args: DynamicsDiscoveryInput) -> ToolResult:
