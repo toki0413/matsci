@@ -612,6 +612,9 @@ export default function App() {
     pendingSuggestCode,
     toggleSuggestMode,
     respondToSuggestCode,
+    pendingDecisionPoint,
+    costNarrative,
+    respondToDecisionPoint,
     riskThreshold,
     heatEngineHealth,
   } = useChatAndConnection({
@@ -1286,7 +1289,7 @@ export default function App() {
         </header>
 
         {/* Real-time metrics bar */}
-        <MetricsBar />
+        <MetricsBar costNarrative={costNarrative} />
 
         {/* Autoloop progress bar */}
         {autoloopPhase && (
@@ -1344,6 +1347,8 @@ export default function App() {
               pendingSuggestCode={pendingSuggestCode}
               toggleSuggestMode={toggleSuggestMode}
               respondToSuggestCode={respondToSuggestCode}
+              pendingDecisionPoint={pendingDecisionPoint}
+              respondToDecisionPoint={respondToDecisionPoint}
               riskThreshold={riskThreshold}
               heatEngineHealth={heatEngineHealth}
               chatSearchOpen={chatSearchOpen}

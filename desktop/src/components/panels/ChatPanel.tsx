@@ -12,6 +12,7 @@ import { PipelineProgressCard } from '../PipelineProgressCard';
 import MessageContent from '../MessageContent';
 import type { Message } from '../../hooks/useChatAndConnection';
 import type { HeatEngineHealth, ThinkingIntensity } from '../../types/domain';
+import type { DecisionPointPayload } from '../../types/ws';
 import type { ReconnectingWebSocket } from '../../lib/ws-client';
 
 const INLINE_COMMANDS = [
@@ -161,6 +162,107 @@ function SuggestCodeEditor({
   );
 }
 
+// HRI: DECISION POINT — agent 在 prune/hibernate/degrade/pause/resume 关口召回用户裁决
+function DecisionPointCard({
+  dp,
+  onRespond,
+}: {
+  dp: DecisionPointPayload;
+  onRespond: (option: string) => void;
+}) {
+  const kindLabel: Record<string, string> = {
+    prune: "✂️ Prune",
+    hibernate: "😴 Hibernate",
+    degrade: "📉 Degrade",
+    pause: "⏸ Pause",
+    resume: "▶️ Resume",
+  };
+  const n = dp.narrative || {};
+  const j = dp.agent_judgment || {};
+  const alreadyDecided = dp.status !== "pending" && dp.response;
+
+  return (
+    <div className="mb-3 rounded-xl border-2 border-accent bg-accent/5 p-3">
+      <div className="mb-1.5 flex items-center gap-2">
+        <span className="text-sm font-bold text-accent">
+          {kindLabel[dp.kind] || `🔀 ${dp.kind}`}
+        </span>
+        {dp.branch_id && (
+          <span className="rounded bg-accent/10 px-1.5 py-0.5 font-mono text-[10px] text-accent">
+            {dp.branch_id}
+          </span>
+        )}
+        <span className="ml-auto text-[10px] text-text-muted">
+          {alreadyDecided
+            ? `裁决: ${dp.response?.option}`
+            : "等待你的判断"}
+        </span>
+      </div>
+
+      {/* narrative: 数字 + 意图 */}
+      {n.phase && (
+        <p className="mb-1 text-xs text-text-secondary">
+          <span className="font-semibold text-text-primary">阶段</span> {n.phase}
+          {n.cost_usd != null && (
+            <span className="ml-2">
+              <span className="font-semibold text-text-primary">已花</span> ${n.cost_usd.toFixed(2)}
+            </span>
+          )}
+          {n.predicted_cost_to_converge_usd != null && (
+            <span className="ml-2">
+              <span className="font-semibold text-text-primary">预计收敛</span> ${n.predicted_cost_to_converge_usd.toFixed(2)}
+            </span>
+          )}
+        </p>
+      )}
+
+      {/* agent 判断: UCB 评分 + 理由 */}
+      {(j.recommendation || j.reason) && (
+        <div className="mb-2 rounded-lg border border-border bg-bg-tertiary/50 p-2 text-xs">
+          <div className="mb-1 flex flex-wrap items-center gap-2">
+            <span
+              className={`rounded px-1.5 py-0.5 font-mono text-[10px] ${
+                j.recommendation === "explore"
+                  ? "bg-green-500/15 text-green-400"
+                  : j.recommendation === "hibernate"
+                  ? "bg-yellow-500/15 text-yellow-400"
+                  : "bg-red-500/15 text-red-400"
+              }`}
+            >
+              {j.recommendation || "—"}
+            </span>
+            {j.mean_value != null && <span>mean {j.mean_value.toFixed(2)}</span>}
+            {j.uncertainty != null && <span>σ {j.uncertainty.toFixed(2)}</span>}
+            {j.ucb != null && <span>ucb {j.ucb.toFixed(2)}</span>}
+          </div>
+          {j.reason && <p className="text-text-secondary">{j.reason}</p>}
+        </div>
+      )}
+
+      {/* 可选项按钮 */}
+      {!alreadyDecided && dp.options && dp.options.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          {dp.options.map((opt) => (
+            <button
+              key={opt.id}
+              onClick={() => onRespond(opt.id)}
+              className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
+                opt.risk === "high"
+                  ? "border-error/40 text-error hover:bg-error/10"
+                  : opt.risk === "medium"
+                  ? "border-yellow-500/40 text-yellow-500 hover:bg-yellow-500/10"
+                  : "border-accent/40 text-accent hover:bg-accent/10"
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface ChatPanelProps {
   messages: Message[];
   chatSearchOpen: boolean;
@@ -228,6 +330,8 @@ interface ChatPanelProps {
   } | null;
   toggleSuggestMode?: (enabled: boolean) => void;
   respondToSuggestCode?: (action: "approve" | "edit" | "deny", editedCode?: string) => void;
+  pendingDecisionPoint?: DecisionPointPayload | null;
+  respondToDecisionPoint?: (option: string) => void;
   riskThreshold?: number;
   // v7 G59: 认知热机健康 (从 SSE /tasks/stream 'campaign' 推送)
   heatEngineHealth?: HeatEngineHealth | null;
@@ -257,6 +361,8 @@ export function ChatPanel(props: ChatPanelProps) {
     pendingSuggestCode,
     toggleSuggestMode,
     respondToSuggestCode,
+    pendingDecisionPoint,
+    respondToDecisionPoint,
     riskThreshold,
     heatEngineHealth,
     onOpenFiles,
@@ -1764,6 +1870,14 @@ status: ${heatEngineHealth.status}${heatEngineHealth.warnings.length ? '\nwarnin
             risk={pendingSuggestCode.risk}
             reason={pendingSuggestCode.reason}
             onRespond={respondToSuggestCode}
+          />
+        )}
+
+        {/* HRI: DECISION POINT — agent 在成本关口召回用户裁决 */}
+        {pendingDecisionPoint && respondToDecisionPoint && (
+          <DecisionPointCard
+            dp={pendingDecisionPoint}
+            onRespond={respondToDecisionPoint}
           />
         )}
 
