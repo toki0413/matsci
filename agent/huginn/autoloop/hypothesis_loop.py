@@ -23,6 +23,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
+from huginn.autoloop.hypothesis_events import HypothesisEventStore
+
 # P3 slim-down: engine.py helper re-import — _classify_failure (H3 batch) 调用
 from huginn.autoloop.phase_gate import (
     _has_external_source as _validation_has_external_source,
@@ -128,32 +130,14 @@ class HypothesisGraphError(Exception):
     """图操作错误: 节点不存在 / 重复 / 非法状态转移."""
 
 
-# v11: 假设维度关键词表 — 中英文命中, 非语义. ponytail: 升级路径接 LLM 判定.
-# 不新建 DimensionDetector 组件, 只在 add_hypothesis 时命中.
-_DIMENSION_KEYWORDS: dict[str, tuple[str, ...]] = {
-    "composition": ("ca/si", "ca_si", "al2o3", "掺杂", "doping", "alloy",
-                    "composition", "ratio", "化学计量", "stoichiometry"),
-    "temperature": ("温度", "temperature", "thermal", "退火", "annealing",
-                    "t-dependent", "phase transition", "相变"),
-    "defect": ("缺陷", "defect", "vacancy", "空位", "dislocation",
-               "位错", "interface", "界面", "itz"),
-    "structure": ("结构", "structure", "crystal", "晶体", "lattice",
-                  "晶格", "symmetry", "对称", "phase", "相"),
-    "transport": ("输运", "diffusion", "扩散", "conductivity",
-                  "电导", "mobility", "迁移率", "percolation"),
-}
+# v11: 假设维度关键词表 — 中英文命中, 非语义. P1#1: 已迁到 hypothesis_semantic.py,
+# 由 LLM 语义判定 (默认关) 覆盖, _extract_dimension 仅作向后兼容薄封装.
+from huginn.autoloop.hypothesis_semantic import classify_dimension as _classify_dimension  # noqa: E402
 
 
 def _extract_dimension(statement: str) -> str:
-    """从假设陈述抽 dimension, 命中第一个返回. ponytail: 字符串 in 匹配, 非 embedding."""
-    if not statement:
-        return ""
-    low = statement.lower()
-    for dim, keywords in _DIMENSION_KEYWORDS.items():
-        for kw in keywords:
-            if kw in low:
-                return dim
-    return ""
+    """从假设陈述抽 dimension. P1#1: 接 LLM 语义判定; 无 LLM/关 flag 时回退关键词命中."""
+    return _classify_dimension(statement)
 
 
 # ── graph ────────────────────────────────────────────────────────────────────
@@ -183,11 +167,15 @@ class HypothesisGraph:
         # dual_covered 命中时自动注册. 满足 downward closure: 任意 1-子集 (节点本身) 也在图里.
         # ponytail: 用 frozenset 模拟, 不引入新依赖. 升级: SimplicialComplex (gudhi/TopoNetX) 当 >2-ary 关系变常见.
         self._simplicials: set[frozenset[str]] = set()
-        # ponytail: in-memory event log, 不持久化. 升级: 写入 session event log
-        # (Anthropic Managed Agents: Session as event log, 可 resume/replay/debug)
+        # ponytail: in-memory event log 为主, 段升级 P1#3: 有 workspace 时同写
+        # SQLite+FTS5 (hypothesis_events.py), 支持跨进程 resume/replay/搜索.
         # P0: workspace 路径用于写 FAILED.md / PROVED.md durable state 文件.
         # None 时不写文件 (向后兼容, 测试场景).
         self._workspace: Path | None = Path(workspace) if workspace else None
+        self._store = HypothesisEventStore(self._workspace)
+        # resume: 有持久化事件时载入, 让 events() 反映历史 run (append-only).
+        if self._store is not None:
+            self._events = self._store.load() or []
 
     def _record_event(self, event_type: str, node_id: str | None = None,
                       **payload: Any) -> None:
@@ -199,6 +187,9 @@ class HypothesisGraph:
             "ts": now_iso(),
             **payload,
         })
+        # 段升级 P1#3: 持久化到 SQLite (best-effort, store 为 None 时 no-op).
+        if self._store is not None:
+            self._store.append(self._events[-1])
 
     def _log_research(self, record_type: str, title: str, content: str,
                       parent_id: str | None = None, status: str = "proposed",
@@ -427,6 +418,25 @@ class HypothesisGraph:
         """返回事件日志副本 (append-only, 调用方不应修改).
         用于回放/调试: 重放事件可重建图状态."""
         return list(self._events)
+
+    def search_events(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
+        """FTS5 全文搜索历史事件 (段升级 P1#3, 需 workspace 持久化).
+
+        无 workspace / 持久化不可用时降级为对内存事件做子串匹配, 保证返回非空.
+        """
+        if self._store is not None:
+            hits = self._store.search(query, limit=limit)
+            if hits:
+                return hits
+        # 降级: 内存事件子串搜索 (不分 ts 前缀, 匹配任意字段).
+        q = query.lower()
+        out = []
+        for ev in self._events:
+            if q in json.dumps(ev, ensure_ascii=False).lower():
+                out.append(ev)
+            if len(out) >= limit:
+                break
+        return out
 
     # ── 状态转移 ─────────────────────────────────────────────────────
 
@@ -2107,32 +2117,12 @@ class HypothesisMixin:
 
         用于 method_registry 收敛度监控 + block_registry 查阻塞路线.
         分类不准不致命 — 只影响监控, 不影响假设本身.
+        P1#1: 接 LLM 语义判定 (hypothesis_semantic.classify_family, 默认关),
+        无 LLM/关 flag 时回退关键词规则, 行为不变.
         """
-        text = (hypothesis or "").lower()
-        # ponytail: 关键词表, 不上 embedding. 升级路径: LLM 分类.
-        rules = [
-            (
-                "ml-potential",
-                [
-                    "mlp",
-                    "ml potential",
-                    "machine learning potential",
-                    "neural potential",
-                ],
-            ),
-            ("symbolic-regression", ["symbolic", "symreg", "siprend", "解析式"]),
-            ("gaussian-process", ["gp ", "gaussian process", "gpr", "核函数"]),
-            ("calphad-thermo", ["calphad", "相图", "phase diagram", "thermodynamic"]),
-            ("phase-field", ["phase field", "相场"]),
-            ("bourbaki-structure", ["bourbaki", "格论", "lattice theory", "拓扑"]),
-            ("extreme-argument", ["反例", "counterexample", "extreme", "极值"]),
-            ("computational-check", ["benchmark", "计算验证", "computational check"]),
-            ("dft-direct", ["dft", "第一性原理", "ab initio", "vasp", "qe", "cp2k"]),
-        ]
-        for family, keywords in rules:
-            if any(kw in text for kw in keywords):
-                return family
-        return "dft-direct"  # 默认族
+        from huginn.autoloop.hypothesis_semantic import classify_family
+
+        return classify_family(hypothesis)
 
     def _metacog_audit_hypothesis(
         self, hypothesis: str, context: dict[str, Any]
@@ -2461,8 +2451,12 @@ class HypothesisMixin:
         )
         if any(m in text for m in noise_markers):
             return "data_noise"
-        # 默认: 假设错 (结果与预期相反, 或无明确错误但测试失败)
-        return "hypothesis_error"
+        # 默认: 假设错 (结果与预期相反, 或无明确错误但测试失败).
+        # P1#1: 无明确关键词命中的 ambiguous 失败 → 让 LLM 做语义判定 (优雅降级,
+        # 无 LLM/关 flag 时仍回退 hypothesis_error, 行为向后兼容).
+        from huginn.autoloop.hypothesis_semantic import classify_failure as _semantic_failure
+
+        return _semantic_failure(text)
 
     def _redteam_findings(self) -> list[str]:
         """拿最近一次 RedTeam 审查的 high severity findings category.

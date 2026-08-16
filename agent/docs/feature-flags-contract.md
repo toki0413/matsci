@@ -5,7 +5,7 @@
 
 | 开关 | 默认 | 描述 | 旧 env 别名 | 消费点 |
 |---|---|---|---|---|
-| `bandit_mdp` | True | bandit MDP 决策 (HUGINN_BANDIT_MDP) | HUGINN_BANDIT_MDP | agent/bandit_controller.py:93 |
+| `bandit_mdp` | True | bandit MDP 决策 (HUGINN_BANDIT_MDP) | HUGINN_BANDIT_MDP | agent/bandit_controller.py:117 |
 | `belief_darwin` | True | 信念 Darwin 演化 (HUGINN_BELIEF_DARWIN) | — | — |
 | `belief_mode_switch` | True | 信念模式切换 (HUGINN_BELIEF_MODE_SWITCH) | — | — |
 | `belief_update` | True | 信念更新管线 (HUGINN_BELIEF_UPDATE) | — | — |
@@ -25,6 +25,7 @@
 | `harness_significance_gate` | False | H5 结果显著性门, 统计检验 (实验性, 默认关) | — | — |
 | `harness_workflow_evolution` | False | H2 variant bandit 演化回路 (实验性, 默认关) | — | — |
 | `hils_attention` | True | HILS 注意力 (HUGINN_HILS_ATTENTION) | — | — |
+| `hypothesis_llm_semantic` | False | 假设维度/方法族/失败类型 LLM 语义判定 (P1#1, 默认关, 优雅降级) | — | — |
 | `ising_frontier` | True | Ising 前沿 (HUGINN_ISING_FRONTIER) | — | — |
 | `ising_rerank` | True | Ising 重排 (HUGINN_ISING_RERANK) | — | — |
 | `json_logs` | True | JSON 结构化日志 (HUGINN_JSON_LOGS) | HUGINN_JSON_LOGS | utils/json_logging.py:122 |
@@ -50,4 +51,4 @@
 | `use_cognitive_map` | False | 认知地图 (HUGINN_USE_COGNITIVE_MAP) | HUGINN_USE_COGNITIVE_MAP | — |
 | `world_model` | False | 世界模型 (HUGINN_WORLD_MODEL) | HUGINN_WORLD_MODEL | — |
 
-共 44 个功能开关。
+共 45 个功能开关。

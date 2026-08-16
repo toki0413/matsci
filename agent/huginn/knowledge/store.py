@@ -211,6 +211,8 @@ class _BM25Index:
         self._b = b
         # chunk_id → tokens (保留顺序, 用于 rebuild)
         self._docs: list[tuple[str, list[str]]] = []
+        # P2#2: chunk_id → domain (与 _docs 平行), 供 domain 分片过滤.
+        self._doc_domains: list[str] = []
         # 倒排索引: token → [(doc_idx, tf)]; df: token → 文档频次; doc_len 每篇长度
         self._postings: dict[str, list[tuple[int, int]]] = {}
         self._df: dict[str, int] = {}
@@ -218,8 +220,10 @@ class _BM25Index:
         self._avgdl: float = 0.0
         self._built: bool = False
 
-    def add(self, chunk_id: str, text: str) -> None:
+    def add(self, chunk_id: str, text: str, domain: str = "") -> None:
         self._docs.append((chunk_id, _tokenize(text)))
+        # P2#2: 记录每片 domain, 供 search 做 domain 分片过滤 (有 domain 时也混合).
+        self._doc_domains.append(domain or "")
         # 增量加入后, 索引视为失效, 下次 search 前 rebuild
         self._built = False
 
@@ -241,8 +245,14 @@ class _BM25Index:
         self._avgdl = (sum(doc_len) / len(doc_len)) if doc_len else 0.0
         self._built = True
 
-    def search(self, query: str, top_k: int = 10) -> list[tuple[str, float]]:
-        """返回 [(chunk_id, score), ...] 按分数降序. 没命中返回 []."""
+    def search(self, query: str, top_k: int = 10,
+               domain: str | None = None) -> list[tuple[str, float]]:
+        """返回 [(chunk_id, score), ...] 按分数降序. 没命中返回 [].
+
+        P2#2 domain 分片: domain 非 None 时只对同 domain 的 chunk 计分 (跳过
+        他域), 让有 domain 过滤时也能做关键词混合检索. IDF/N/avgdl 仍用全量
+        索引 (近似), ponytail 可接受 — 只影响绝对分数, 不影响同域内相对排序.
+        """
         if not self._built:
             self._build()
         if not self._docs or not query.strip():
@@ -264,6 +274,8 @@ class _BM25Index:
             # IDF (Robertson-Sparck Jones), +1 防 0/负
             idf = math.log((N - df + 0.5) / (df + 0.5) + 1.0)
             for doc_idx, tf in self._postings.get(t, []):
+                if domain is not None and self._doc_domains[doc_idx] != domain:
+                    continue
                 dl = self._doc_len[doc_idx]
                 denom = self._k1 * (1 - self._b + self._b * dl / (self._avgdl or 1.0)) + tf
                 scores[doc_idx] = scores.get(doc_idx, 0.0) + idf * (self._k1 + 1) * tf / denom * qf
@@ -696,10 +708,17 @@ class KnowledgeBase:
         if self._bm25 is not None and not self._bm25_dirty:
             return
         try:
-            data = self.collection.get(include=["documents"])
+            # P2#2: 拉 metadatas 取每片 domain, 供 BM25 domain 分片过滤.
+            data = self.collection.get(include=["documents", "metadatas"])
             idx = _BM25Index()
-            for cid, doc in zip(data.get("ids") or [], data.get("documents") or []):
-                idx.add(cid, doc or "")
+            metas = data.get("metadatas") or []
+            for i, cid in enumerate(data.get("ids") or []):
+                docs = data.get("documents") or []
+                doc = docs[i] if i < len(docs) else ""
+                dom = ""
+                if i < len(metas) and isinstance(metas[i], dict):
+                    dom = str(metas[i].get("domain", "") or "")
+                idx.add(cid, doc or "", dom)
             idx._build()
             self._bm25 = idx
             self._bm25_dirty = False
@@ -1133,17 +1152,16 @@ class KnowledgeBase:
             )
 
         # BM25 混合检索: RRF 融合向量 + 关键词检索, 提高材料术语 / 精确匹配命中率.
-        # ponytail: BM25 索引未按 domain 分片, 有 domain 过滤时跳过 (退回纯向量).
-        # 升级路径: BM25 按 domain 分片后, 有 domain 时也能混合检索.
-        if domain is None:
-            self._ensure_bm25_index()
-            if self._bm25 is not None and self._bm25._docs:
-                try:
-                    bm25_hits = self._bm25.search(text, top_k=top_k * 2)
-                    if bm25_hits:
-                        chunks = self._rrf_fuse(chunks, bm25_hits, top_k)
-                except Exception:
-                    logger.debug("BM25 hybrid retrieval failed", exc_info=True)
+        # P2#2: BM25 按 domain 分片 — 有 domain 过滤时也走混合 (只对同域共片计分),
+        # 不再退回纯向量, 保留材料术语精确匹配能力.
+        self._ensure_bm25_index()
+        if self._bm25 is not None and self._bm25._docs:
+            try:
+                bm25_hits = self._bm25.search(text, top_k=top_k * 2, domain=domain)
+                if bm25_hits:
+                    chunks = self._rrf_fuse(chunks, bm25_hits, top_k)
+            except Exception:
+                logger.debug("BM25 hybrid retrieval failed", exc_info=True)
 
         # 融合后或 BM25 未命中: 截断回 top_k, 保持下游递归激活 / reranking 行为不变
         chunks = chunks[:top_k]

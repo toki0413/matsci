@@ -268,6 +268,14 @@ class AutoloopEngine(
         # lazy init, 第一次 _hypothesize_via_branch_incubator 才构造
         self._branch_incubator: Any = None
         self.model = get_model(self.settings)
+        # P1#1: 注入 LLM model provider, 供 hypothesis_semantic 语义判定 (维度/方法族/
+        # 失败类型) 延迟取用. flag 默认关, 无副作用; 开启后无 model 时优雅降级.
+        try:
+            from huginn.autoloop.hypothesis_semantic import set_model_provider
+
+            set_model_provider(lambda: self.model)
+        except Exception:
+            logger.debug("hypothesis_semantic model provider inject skipped", exc_info=True)
         # H5-a: 从 config 的 ModelManager 挂 model_router, 让 _llm_chat 的
         # task 路由真正生效 (之前 getattr(self,"model_router",None) 恒 None,
         # "reasoning/summarize/verification" 分类路由全是死代码).
