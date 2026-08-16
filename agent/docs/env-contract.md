@@ -36,7 +36,7 @@
 | `HUGINN_BUDGET_MODE` | cumulative | scheduling/scheduler.py:115 | — | external |
 | `HUGINN_CACHE_DIR` | str(get_runtime_home( | autoloop/goal_store.py:124, autoloop/plan_store.py:186, cli/rcb_runner.py:60, +19 处 | agents/task_dag.py:312, autoloop/bandit.py:424, autoloop/variant_gen.py:299, +9 处, autoloop/variant_gen.py:310 | code-set |
 | `HUGINN_CHECKPOINTER_MAX_MESSAGES` | 120 | agent/streaming.py:831 | — | external |
-| `HUGINN_CHECKPOINTER_PATH` | '' | agent_config.py:111, bench/orchestrator.py:172, checkpointer.py:34, +4 处 | bench/orchestrator.py:451, bench/orchestrator.py:475, bench/orchestrator.py:490, bench/orchestrator.py:501 | code-set |
+| `HUGINN_CHECKPOINTER_PATH` | '' | agent_config.py:111, bench/orchestrator.py:172, checkpointer.py:90, +4 处 | bench/orchestrator.py:451, bench/orchestrator.py:475, bench/orchestrator.py:490, bench/orchestrator.py:501 | code-set |
 | `HUGINN_CI` | '' | tools/sci/gp_tool.py:675 | — | external |
 | `HUGINN_CODEACT_MEM_CAP` | 2147483648 | agent/code_act_loop.py:793 | — | external |
 | `HUGINN_CODER_DONE_MARKER` | [DONE] | config.py:1285 | — | external |
