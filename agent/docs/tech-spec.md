@@ -7,7 +7,7 @@
 - 语言/运行时：Python `>=3.11,<4.0`（CI 覆盖 3.11/3.12/3.13）。
 - Web 服务：FastAPI + uvicorn、sse-starlette、websockets、python-multipart、httpx、requests。
 - Agent 框架：langchain `>=1.3`、langchain-core、langchain-openai、langgraph `>=1.2`、langgraph-checkpoint-sqlite（生产必需，见 `pyproject.toml` 注释）、deepagents。
-- 前端/桌面：Tauri v2 + React 18（WIP），包名 `huginn-agent` v0.2.0，MIT。
+- 前端/桌面：Tauri v2 + React 18（WIP），包名 `huginn-agent` v1.3.0，MIT。
 - 数值/符号/数据：numpy、scipy、sympy、z3-solver、networkx、Pillow。
 - 存储：SQLite + FTS5、ChromaDB（可选 extra `rag`/`all`）、toml（读写 TOML 配置）。
 - 加密：cryptography（AES-128-CBC + HMAC-SHA256，PBKDF2）。
