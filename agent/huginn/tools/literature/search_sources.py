@@ -123,8 +123,7 @@ _QUERY_STOP: set[str] = {
     "the", "a", "an", "is", "are", "was", "were", "be", "been", "of", "in",
     "on", "for", "to", "and", "or", "not", "with", "by", "how", "what",
     "when", "why", "which", "that", "this", "from", "as", "at", "it",
-    "our", "we", "use", "using", "study", "studies", "based", "using",
-    "的", "了", "是", "在", "和", "与", "及", "或", "请", "如何", "什么",
+    "our", "we", "use", "using", "study", "studies", "based", "的", "了", "是", "在", "和", "与", "及", "或", "请", "如何", "什么",
     "为什么", "怎么", "哪些", "哪个",
 }
 

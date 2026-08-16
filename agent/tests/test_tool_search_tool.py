@@ -11,12 +11,12 @@ import pytest
 from huginn.tools.tool_search_tool import (
     _RESULT_CACHE,
     _TOOL_VEC_CACHE,
+    ToolSearchInput,
+    ToolSearchTool,
     _cosine,
     _expand_query_tokens,
     _keyword_score,
     _query_tokens,
-    ToolSearchInput,
-    ToolSearchTool,
 )
 
 

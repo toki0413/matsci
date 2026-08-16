@@ -20,7 +20,6 @@ from huginn.core_types import ToolContext
 from huginn.permissions import PermissionConfig
 from huginn.tools.literature.search_sources import _rerank, _sort_papers
 from huginn.tools.literature.tool import (
-    _SEARCH_CACHE,
     _expand_query,
     _search_cache_key,
 )
