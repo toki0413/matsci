@@ -26,6 +26,23 @@ class PermissionMode(Enum):
     PLAN = "plan"  # 只读模式, 所有写工具强制 ASK
 
 
+class RiskLevel(StrEnum):
+    """风险的细粒度等级 — 与 PermissionMode(二元决策) 互补.
+
+    五档 (对齐 ontology.actions.RiskLevel 的粒度, 便于两处语义一致):
+    NONE: 纯只读/查询, 无副作用, 直接放行
+    LOW: 本地只读分析或可逆变更, 默认放行
+    MEDIUM: 外部 IO/网络 或 改状态但非破坏, 默认需确认 (可被信任阈值放行)
+    HIGH: 破坏性/危险, 必须确认 (即使 auto_approve_all 也拦)
+    CRITICAL: 不可逆破坏 / 系统级 / 极高成本, 强制拦截或最高级确认
+    """
+    NONE = "none"
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
+
+
 class BudgetDecision(Enum):
     ALLOW = "allow"
     WARN = "warn"
@@ -61,6 +78,11 @@ class ErrorKind(StrEnum):
 class PermissionResult:
     mode: PermissionMode
     reason: str | None = None
+    # 细粒度新增: 风险等级 / 成本估算 / 命中的判定维度 (可观测).
+    # 向后兼容: mode + reason 保持原语义, 消费方只读这两个字段不受影响.
+    risk_level: RiskLevel = RiskLevel.LOW
+    cost_hours: float | None = None
+    matched_rules: list[str] = field(default_factory=list)
 
 
 @dataclass

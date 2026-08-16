@@ -7,7 +7,7 @@
 
 | 类别 | 语义 | 产出点 |
 |---|---|---|
-| NONE | 正常或模型可见的业务失败 | core_types.py:77, tools/bash_tool.py:146 |
+| NONE | 正常或模型可见的业务失败 | core_types.py:99, tools/bash_tool.py:146 |
 | TIMEOUT | 沙箱/命令超时 | tools/bash_tool.py:148 |
 | DENIED | 沙箱策略拒绝 (SandboxError / result.blocked) | tools/bash_tool.py:150, tools/bash_tool.py:323, tools/code_tool.py:200 |
 | SIGNAL | 被信号终止 |  |
