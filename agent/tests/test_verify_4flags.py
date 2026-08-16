@@ -53,6 +53,10 @@ def _make_engine_with_flags(
     )
     engine.progress_tracker = _DummyTracker()
     engine._use_llm_decider = False
+    # 中性化 config 派生的 model_router (同 test_autoloop_e2e): 避免全量
+    # 套件里全局 config 缓存被喂成含 real provider 的 router, 导致 _llm_chat
+    # 路由到真实模型而非 FakeLLM, _plan 返 None → "缺 execute".
+    engine.model_router = None
     engine._perceive = lambda: {
         "changed_files": ["diffusion_analysis.py"],
         "git_diff": "+def calc_diffusion(ca_si_ratio): ...",
