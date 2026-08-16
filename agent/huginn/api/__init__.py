@@ -81,4 +81,4 @@ __all__ = [
     "HandlerT",
 ]
 
-__version__ = "0.1.0"
+__version__ = "1.3.0"

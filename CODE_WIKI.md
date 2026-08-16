@@ -751,6 +751,11 @@ cd ../../cli
 
 ### 7.7 CLI 命令一览
 
+> **命令名说明**：Python 后端安装后，console script 为 **`huginn-agent`**
+> （`huginn-agent chat` / `huginn-agent configure` …）。下面的 `huginn chat`
+> 等写法在文档中泛指同一组 Python CLI 子命令；若你已构建 Rust CLI（`cli/`），
+> 其二进制名则是 `huginn`（如 `./target/release/huginn tools`）。二者子命令一致。
+
 | 命令 | 用途 |
 |------|------|
 | `huginn chat` | 交互式聊天 |
