@@ -62,6 +62,17 @@ class TestCreateLangchainModelThinking:
         assert model.kwargs["thinking"] == {"type": "enabled", "budget_tokens": 32000}
         assert model.kwargs["max_tokens"] == 50000
 
+    def test_anthropic_max_intensity(self, monkeypatch: pytest.MonkeyPatch):
+        _patch_anthropic(monkeypatch)
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        model = create_langchain_model(
+            provider="anthropic",
+            model_name="claude-sonnet-4",
+            thinking="max",
+        )
+        assert model.kwargs["thinking"] == {"type": "enabled", "budget_tokens": 64000}
+        assert model.kwargs["max_tokens"] == 68096
+
     def test_anthropic_dict_passthrough(self, monkeypatch: pytest.MonkeyPatch):
         _patch_anthropic(monkeypatch)
         monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
@@ -86,6 +97,18 @@ class TestCreateLangchainModelThinking:
             thinking="medium",
         )
         assert model.kwargs["reasoning_effort"] == "medium"
+
+    def test_openai_max_reasoning_effort(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        _patch_openai(monkeypatch)
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+        model = create_langchain_model(
+            provider="openai",
+            model_name="o3-mini",
+            thinking="max",
+        )
+        assert model.kwargs["reasoning_effort"] == "max"
 
     def test_openai_no_reasoning_effort_for_regular_model(
         self, monkeypatch: pytest.MonkeyPatch
@@ -138,6 +161,15 @@ class TestConfigParsing:
         cfg = HuginnConfig.from_env()
         assert cfg.thinking == "low"
         assert cfg.models[0].thinking == "low"
+
+    def test_global_thinking_max(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("HUGINN_PROVIDER", "openai")
+        monkeypatch.setenv("HUGINN_MODEL", "o1")
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+        monkeypatch.setenv("HUGINN_THINKING", "max")
+        cfg = HuginnConfig.from_env()
+        assert cfg.thinking == "max"
+        assert cfg.models[0].thinking == "max"
 
     def test_global_thinking_dict_fallback(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setenv("HUGINN_PROVIDER", "anthropic")

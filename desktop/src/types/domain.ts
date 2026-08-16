@@ -143,11 +143,18 @@ export interface ModelConfig {
   temperature: number;
   enabled: boolean;
   credential_id?: string | null;
-  // reasoning intensity: null = off, "low"/"medium"/"high" = on
+  // reasoning intensity: null = off, "low"/"medium"/"high"/"max" = on
   thinking?: string | null;
   // max output tokens; null = provider default
   max_tokens?: number | null;
 }
+
+/**
+ * 思考强度 (与"极简模式/模型档位"是两条正交轴).
+ * 极简模式决定认知编排开销; 思考强度决定模型推理深度 (provider reasoning budget).
+ * MAX 为最高档, 只对支持方生效, 提供端按 provider 映射或忽略.
+ */
+export type ThinkingIntensity = "low" | "medium" | "high" | "max";
 
 export interface AgentProfile {
   id: string;
