@@ -101,7 +101,7 @@
 ## 4. Incident Response Playbook
 
 ### 4.1 Suspicious Tool Call Detected
-1. Enable `--dry-run` mode: `huginn chat --dry-run`
+1. Enable `--dry-run` mode: `huginn-agent chat --dry-run`
 2. Review `huginn_audit.jsonl` for the chain of events leading to the call.
 3. Check the hash chain integrity: `audit.verify_chain()`
 4. If the agent is running, disconnect from MCP servers and revoke API keys.
