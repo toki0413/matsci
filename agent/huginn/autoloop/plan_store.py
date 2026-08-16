@@ -355,7 +355,7 @@ class PlanStore:
             return ""
         return self._render(plan, active_step_id)
 
-    def _render(self, plan: "Plan", active_step_id: str | None = None) -> str:
+    def _render(self, plan: Plan, active_step_id: str | None = None) -> str:
         """渲染 plan 为 markdown. active_step_id 非空时按 step 状态动态裁剪."""
         lines = [
             f"# Plan: {plan.objective}",
@@ -404,7 +404,7 @@ class PlanStore:
         return "\n".join(lines)
 
     @staticmethod
-    def _append_step_row(lines: list[str], i: int, step: "PlanStep",
+    def _append_step_row(lines: list[str], i: int, step: PlanStep,
                          active: bool = False) -> None:
         """追加一行 step 表格行. active 时加 ▶ 前缀高亮."""
         marker = "▶ " if active else ""

@@ -11,9 +11,12 @@ import json
 import logging
 import re
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, Field
+
+if TYPE_CHECKING:
+    from huginn.security.revertible import RevertibleContext
 
 # Importing presets has a side effect: every SkillDefinition passed to
 # register_skill() lands in SkillRegistry. Keep this import above the
@@ -549,10 +552,7 @@ class SkillTool(HuginnTool[SkillToolInput, SkillToolOutput]):
         if not new_files:
             return
         dispose = rev.composite(
-            *[
-                (lambda fp: (lambda: fp.unlink(missing_ok=True)))(fp)
-                for fp in new_files
-            ]
+            *[lambda fp=fp: fp.unlink(missing_ok=True) for fp in new_files]
         )
         rev.track(dispose)
         rev.revert_all()

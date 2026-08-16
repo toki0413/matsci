@@ -9,7 +9,7 @@
 以及 StandingRulesStore 的 (tool, target) 常驻授权.
 """
 
-from huginn.core_types import PermissionMode, PermissionResult, RiskLevel
+from huginn.core_types import PermissionMode, RiskLevel
 from huginn.permissions import (
     PermissionChecker,
     PermissionConfig,

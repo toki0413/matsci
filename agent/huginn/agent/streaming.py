@@ -8,6 +8,7 @@ import os
 import re
 import time
 from collections.abc import AsyncIterator
+from pathlib import Path
 from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
@@ -255,7 +256,7 @@ def _read_completion_records(path: Path) -> list[dict[str, Any]]:
         if not path.exists():
             return []
         out = []
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line:

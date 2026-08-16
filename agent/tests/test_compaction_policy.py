@@ -13,7 +13,7 @@ from huginn.plugins.compaction_policy import (
     root_content_markers,
     unregister_compaction_policy,
 )
-from huginn.utils.context import compact_messages, _msg_content
+from huginn.utils.context import _msg_content, compact_messages
 
 
 @pytest.fixture(autouse=True)

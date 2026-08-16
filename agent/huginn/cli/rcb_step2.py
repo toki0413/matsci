@@ -12,18 +12,11 @@ from typing import Any
 from huginn.cli.rcb.audit import _rcb_drift_check
 from huginn.cli.rcb.prompt_builders import _legacy_build_step2_prompt
 from huginn.cli.rcb_audit import (
-    _ChecklistItem,
     _checklist_item_parser,
     _derivation_chain_audit,
     _llm_coverage_audit,
     _rcb_effort_floor,
     _report_coverage_compass,
-    _time_slot_index,
-)
-from huginn.cli.rcb_fork_merge import (
-    _FCM_PERSPECTIVES,
-    anneal_fork_count,
-    judge_fork_reports,
 )
 from huginn.cli.rcb_cognition import (
     _append_observations_log,
@@ -34,14 +27,19 @@ from huginn.cli.rcb_cognition import (
     _trigger_anomaly_hypothesis,
     _write_cognitive_evidence,
 )
+from huginn.cli.rcb_fork_merge import (
+    _FCM_PERSPECTIVES,
+    anneal_fork_count,
+    judge_fork_reports,
+)
 from huginn.cli.rcb_utils import (
+    _MODEL_VERSION,
+    _cross_task_store,
     _detect_file_rewrite_stagnation,
     _infer_domain,
     _infer_task_id_from_workspace,
     _make_simplex_id,
-    _MODEL_VERSION,
     _save_manifold,
-    _cross_task_store,
 )
 from huginn.utils.runtime import HUGINN_DIR_NAME, get_runtime_home
 

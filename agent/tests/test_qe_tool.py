@@ -1,9 +1,8 @@
 """Tests for the Quantum ESPRESSO tool."""
 
-from pathlib import Path
-
 import sys
 import types
+from pathlib import Path
 
 import pytest
 

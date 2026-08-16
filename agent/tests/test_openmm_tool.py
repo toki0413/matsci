@@ -16,6 +16,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from pydantic import ValidationError
 
 from huginn.tools.sim.openmm_tool import OpenMMTool, OpenMMToolInput
 
@@ -234,7 +235,7 @@ def test_is_destructive():
 
 def test_call_unknown_action():
     # pydantic Literal 约束 action, 非法值应在解析时被拒绝
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         _tool().call({"action": "bogus"})
 
 
