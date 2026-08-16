@@ -4,6 +4,7 @@
  */
 import { useState, useEffect } from "react";
 import { api } from "../lib/api";
+import type { CostNarrativePayload } from "../types/ws";
 
 interface MetricsState {
   tokens: number;
@@ -56,7 +57,7 @@ function formatTokens(n: number): string {
   return String(n);
 }
 
-export function MetricsBar() {
+export function MetricsBar({ costNarrative }: { costNarrative?: CostNarrativePayload | null }) {
   const [metrics, setMetrics] = useState<MetricsState>({
     tokens: 0,
     activeConnections: 0,
@@ -128,6 +129,23 @@ export function MetricsBar() {
         <span className="flex items-center gap-1" title="Accumulated LLM cost (USD)">
           <span>💸</span>
           <span>${metrics.costUsd < 0.01 ? metrics.costUsd.toFixed(4) : metrics.costUsd.toFixed(2)}</span>
+        </span>
+      )}
+      {costNarrative && (
+        <span
+          className="flex items-center gap-1 border-l border-border pl-4"
+          title={costNarrative.intent || "Cost narrative"}
+        >
+          <span>🎯</span>
+          <span>
+            {costNarrative.phase ? `${costNarrative.phase}: ` : ""}
+            {costNarrative.intent || "cost narrative"}
+          </span>
+          {costNarrative.roi != null && (
+            <span className="rounded bg-accent/10 px-1 py-0.5 font-mono text-[10px] text-accent">
+              ROI {costNarrative.roi.toFixed(2)}
+            </span>
+          )}
         </span>
       )}
       {metrics.tps != null && (
