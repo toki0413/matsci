@@ -49,6 +49,6 @@
 | `tool_call_router` | True | 重型工具 sanity check 路由 | — | agents/tool_call_router.py:123 |
 | `use_atomworld` | False | AtomWorld 环境 (HUGINN_USE_ATOMWORLD) | HUGINN_USE_ATOMWORLD | — |
 | `use_cognitive_map` | False | 认知地图 (HUGINN_USE_COGNITIVE_MAP) | HUGINN_USE_COGNITIVE_MAP | — |
-| `world_model` | False | 世界模型 (HUGINN_WORLD_MODEL) | HUGINN_WORLD_MODEL | — |
+| `world_model` | True | 世界模型 (HUGINN_WORLD_MODEL) | HUGINN_WORLD_MODEL | autoloop/engine_observe.py:365 |
 
 共 45 个功能开关。
