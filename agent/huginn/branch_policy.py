@@ -149,7 +149,7 @@ class Branch:
         if revive_conditions:
             self.revive_conditions = list(revive_conditions)
 
-    def revive(self, *, reason: str = "") -> "Branch":
+    def revive(self, *, reason: str = "") -> Branch:
         """复活一条休眠分支 (带回 active). 可逆性的关键."""
         self.state = BranchState.ACTIVE
         if reason:

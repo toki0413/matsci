@@ -17,11 +17,13 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from huginn.autoloop.engine import AutoloopEngine
+from huginn.autoloop.types import AutoloopResult
 from huginn.harness.phase_spec import PhaseRegistry
 
 
@@ -176,9 +178,17 @@ class TestMainLoopExecuteDispatch:
         assert summary["status"] == "completed"
 
     def test_whitelist_allows_whitelisted_in_loop(
-        self, engine: AutoloopEngine, tmp_path: Path
+        self, engine: AutoloopEngine, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
-        """白名单内的工具不被拦截, 照常执行."""
+        """白名单内的工具不被拦截, 照常执行.
+
+        本用例验证的是白名单逻辑本身 (H5-b), 与 H5-c 首轮锚定晋升正交.
+        因此把会话模拟为已晋升 (has_durable_tool_call → True), 避免首轮锚定
+        把白名单折叠到核心工具而误伤 experiment_protocol_tool.
+        """
+        monkeypatch.setattr(
+            "huginn.harness.promotion.has_durable_tool_call", lambda sid: True
+        )
         readme = tmp_path / "readme.txt"
         readme.write_text("hello e2e")
         _set_execute_whitelist("experiment_protocol_tool", "file_read_tool")
@@ -243,10 +253,9 @@ class TestLoopDispatchEntryContract:
 
     def test_dispatch_tool_returns_tool_result_shape(self, tmp_path: Path):
         """主循环经 dispatch_tool 分派新工具, 返回的类型与字段契约稳定."""
+        import huginn.tools as _tools
         from huginn.core_types import ToolContext, ToolResult
         from huginn.harness import tool_dispatch as td
-
-        import huginn.tools as _tools
         _tools.register_core_tools()
 
         ctx = ToolContext(session_id="e2e", workspace=str(tmp_path), config=None)
@@ -278,7 +287,6 @@ class TestFullCognitiveLoop:
 
     def _drive(self, engine: AutoloopEngine, monkeypatch: pytest.MonkeyPatch) -> AutoloopResult:
         """用真实循环驱动 run_cognitive, 仅 mock LLM 阶段与阻塞 helper."""
-        from unittest.mock import AsyncMock
 
         dync_script = _dynw_script(
             [
@@ -316,7 +324,6 @@ class TestFullCognitiveLoop:
         engine._wait_if_checkpoint_pending = AsyncMock(return_value=None)  # type: ignore[assignment]
         engine._drain_side_questions = AsyncMock(return_value=0)  # type: ignore[assignment]
 
-        from huginn.autoloop.types import AutoloopResult
 
         return asyncio.run(engine.run_cognitive(objective="e2e full loop", max_iterations=6))
 
@@ -355,7 +362,6 @@ class TestFullCognitiveLoop:
                 ("blocked", "file_read_tool", {"file_path": str(engine.workspace)}),
             ]
         )
-        from unittest.mock import AsyncMock
 
         monkeypatch.setenv("HUGINN_COGNITIVE_LLM_DECIDER", "0")
         engine._perceive = lambda: {"changed_files": [], "timestamp": "t"}  # type: ignore[assignment]

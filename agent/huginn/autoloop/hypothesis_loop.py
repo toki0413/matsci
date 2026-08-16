@@ -132,7 +132,9 @@ class HypothesisGraphError(Exception):
 
 # v11: 假设维度关键词表 — 中英文命中, 非语义. P1#1: 已迁到 hypothesis_semantic.py,
 # 由 LLM 语义判定 (默认关) 覆盖, _extract_dimension 仅作向后兼容薄封装.
-from huginn.autoloop.hypothesis_semantic import classify_dimension as _classify_dimension  # noqa: E402
+from huginn.autoloop.hypothesis_semantic import (  # noqa: E402
+    classify_dimension as _classify_dimension,
+)
 
 
 def _extract_dimension(statement: str) -> str:
@@ -2454,7 +2456,9 @@ class HypothesisMixin:
         # 默认: 假设错 (结果与预期相反, 或无明确错误但测试失败).
         # P1#1: 无明确关键词命中的 ambiguous 失败 → 让 LLM 做语义判定 (优雅降级,
         # 无 LLM/关 flag 时仍回退 hypothesis_error, 行为向后兼容).
-        from huginn.autoloop.hypothesis_semantic import classify_failure as _semantic_failure
+        from huginn.autoloop.hypothesis_semantic import (
+            classify_failure as _semantic_failure,
+        )
 
         return _semantic_failure(text)
 

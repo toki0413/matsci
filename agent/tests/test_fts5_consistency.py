@@ -99,8 +99,8 @@ class TestFts5IndexConsistency:
         assert _match_count(mem, "expired") == 0
 
     def test_dedup_keeps_fts_in_sync(self):
-        """MemoryDeduplicator 用 per-row DELETE 绕过 FTS5 'delete',
-        G35 修复后应触发 _rebuild_fts_index 保持同步."""
+        """MemoryDeduplicator 软删除 (archived=1) 后应触发 _rebuild_fts_index
+        保持 FTS5 与 memories 表同步 (G35)."""
         from huginn.memory.decay import MemoryDeduplicator
 
         mem = LongTermMemory(_fresh_db())
@@ -108,12 +108,18 @@ class TestFts5IndexConsistency:
         mem.store("duplicate content xyz", category="fact", importance=0.6)
 
         removed = MemoryDeduplicator().run(mem)
-        assert removed >= 1
-        # 重复被删, 只留一份; FTS5 应只命中一次的内容对应一条主表记录
-        # (MATCH 命中数 == 主表剩余记录数, 不多不少)
+        assert removed == 1
+        # 软删除: 重复项被 archived=1 标记, 仅保留一条活跃记录 (可恢复)
         with mem._connect() as conn:
-            main_count = conn.execute(
+            active_count = conn.execute(
+                "SELECT count(*) FROM memories "
+                "WHERE content LIKE '%duplicate content xyz%' AND archived = 0"
+            ).fetchone()[0]
+        assert active_count == 1
+        # 重建后 FTS 与 memories 表同步: MATCH 命中数 == 主表(含归档)记录数
+        with mem._connect() as conn:
+            total = conn.execute(
                 "SELECT count(*) FROM memories WHERE content LIKE '%duplicate content xyz%'"
             ).fetchone()[0]
-        assert main_count == 1
-        assert _match_count(mem, "duplicate") == main_count
+        assert total == 2
+        assert _match_count(mem, "duplicate") == total

@@ -155,6 +155,8 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["E741", "F841", "N806", "B905"]
+"tests/test_openmm_tool.py" = ["N802"]  # 模拟 openmm 外部 API (getPlatformByName 等), 必须保 camelCase
+"tests/test_vina_tool.py" = ["N802"]   # 模拟 autodock vina API (EmbedMolecule 等), 必须保 camelCase
 "tests/_fakenp_plugin.py" = ["N801"]  # 模拟 numpy ndarray 类名, 刻意小写
 "huginn/evaluation/core.py" = ["N803", "N806"]
 "huginn/unified/*.py" = ["N806"]

@@ -6,6 +6,7 @@ Supports SLURM (sbatch) and PBS (qsub) schedulers.
 from __future__ import annotations
 
 import contextlib
+import logging
 import re
 import shlex
 import socket
@@ -13,6 +14,8 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
+
+logger = logging.getLogger(__name__)
 
 
 def _sanitize_job_name(name: str) -> str:

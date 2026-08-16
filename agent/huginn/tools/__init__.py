@@ -331,13 +331,12 @@ def _collect_top_level_imports(path: str, _depth: int = 0) -> set[str]:
                     internal_targets.append(alias.name)
                 else:
                     deps.add(top)
-        elif isinstance(node, ast.ImportFrom):
-            if node.level == 0 and node.module:
-                top = node.module.split(".")[0]
-                if top.startswith("huginn"):
-                    internal_targets.append(node.module)
-                else:
-                    deps.add(top)
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            top = node.module.split(".")[0]
+            if top.startswith("huginn"):
+                internal_targets.append(node.module)
+            else:
+                deps.add(top)
 
     def _walk_body(node: ast.AST) -> None:
         """Collect imports nested inside a function/class body (lazy deps)."""

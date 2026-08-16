@@ -769,7 +769,6 @@ class TestPrefixMerging:
         assert len(lines) == 2
         assert json.loads(lines[1])["content"] == "c"
         # 读侧重建 = 完整序列 (type+content; 前缀 ts 复用 prev_file 原值, 属预期)
-        from huginn.agent.streaming import _reconstruct_completion_records
         rebuilt = _reconstruct_completion_records(p2)
         assert [r["type"] for r in rebuilt] == ["assistant", "tool", "assistant"]
         assert [r["content"] for r in rebuilt] == ["a", "r", "c"]

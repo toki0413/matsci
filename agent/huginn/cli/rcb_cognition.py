@@ -9,13 +9,13 @@ from pathlib import Path
 from typing import Any
 
 from huginn.cli.rcb_utils import (
-    _infer_domain,
-    _load_manifold,
-    _make_simplex_id,
     _METRIC_WHITELIST,
     _MODEL_VERSION,
     _NUMERIC_PAIR_RE,
     _extract_numeric_targets,
+    _infer_domain,
+    _load_manifold,
+    _make_simplex_id,
     _save_manifold,
 )
 from huginn.utils.runtime import HUGINN_DIR_NAME

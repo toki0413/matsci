@@ -17,12 +17,11 @@ from huginn.cli.rcb.audit import (
     _write_directive_rejection,
 )
 from huginn.cli.rcb_critique import adversarial_critique, format_critique_for_agent
-from huginn.cli.rcb_fork_merge import _reproduction_gate
 from huginn.cli.rcb_utils import (
+    _MODEL_VERSION,
     _infer_domain,
     _infer_task_id_from_workspace,
     _make_simplex_id,
-    _MODEL_VERSION,
 )
 from huginn.utils.runtime import HUGINN_DIR_NAME
 

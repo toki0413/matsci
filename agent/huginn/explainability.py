@@ -172,7 +172,7 @@ def _to_ts(t: Any) -> float:
         return float(t)
     if isinstance(t, str):
         try:
-            from datetime import datetime, timezone
+            from datetime import datetime
 
             return datetime.fromisoformat(t.replace("Z", "+00:00")).timestamp()
         except ValueError:

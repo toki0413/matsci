@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import base64
+import contextlib
 import json
 import logging
 import os
@@ -394,10 +395,8 @@ def _apply_inverse(
 
 def _kill_pid(pid: int) -> None:
     """终止进程 (尽力而为, 跨崩溃重放用)."""
-    try:
-        os.kill(pid, 9)  # SIGKILL
-    except (ProcessLookupError, PermissionError, OSError):
-        pass  # 进程已退出或无权 — 视为已完成
+    with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
+        os.kill(pid, 9)  # SIGKILL; 进程已退出或无权 — 视为已完成
 
 
 # ── 补偿器注册 (出站写操作的逆) ───────────────────────────────────
@@ -471,8 +470,6 @@ def recover_from(journal_path: str | Path) -> int:
     for op in reversed(ops):
         _apply_inverse(op)
         applied += 1
-    try:
+    with contextlib.suppress(OSError):
         path.unlink(missing_ok=True)
-    except OSError:
-        pass
     return applied

@@ -18,10 +18,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 
 
-class ReasoningPhase(str, Enum):
+class ReasoningPhase(StrEnum):
     """推理阶段 — think→plan→pre_action→reflect 编排.
 
     Attributes:
@@ -37,7 +37,7 @@ class ReasoningPhase(str, Enum):
     REFLECT = "reflect"
 
 
-class ReasoningOutcome(str, Enum):
+class ReasoningOutcome(StrEnum):
     """回映结果 (自校验闭环填充)."""
 
     PENDING = "pending"

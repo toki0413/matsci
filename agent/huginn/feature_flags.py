@@ -304,9 +304,7 @@ class FeatureFlags:
         """把环境变量值解析成布尔. true/1/yes/on → True, 其余含无法识别的
         非空值保守当关 (False). 空串由调用方跳过, 不产生覆盖."""
         s = raw.strip().lower()
-        if s in ("true", "1", "yes", "on"):
-            return True
-        return False
+        return s in ("true", "1", "yes", "on")
 
     def _load_env_overrides(self) -> None:
         """读 HUGINN_FEATURE_<NAME> 环境变量. 大写名.
