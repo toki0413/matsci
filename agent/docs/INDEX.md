@@ -33,6 +33,7 @@
 | [errors-contract.md](errors-contract.md) | active | 错误语义契约（ErrorKind 分类面，可自动再生成） |
 | [modes-contract.md](modes-contract.md) | active | Mode/Phase 契约（prompt 面，可自动再生成） |
 | [model-tier-contract.md](model-tier-contract.md) | active | 模型档位契约（ModelTier 极简模式聚合面，可自动再生成） |
+| [permission-contract.md](permission-contract.md) | active | 权限契约（PermissionMode + RiskLevel 五档 + PermissionConfig 细粒度面，可自动再生成） |
 | [tech-spec.md](tech-spec.md) | active | 技术规格（已合并下述 8 个已废弃 spec） |
 | [harness_evolution_spec.md](harness_evolution_spec.md) | active | harness 演进规范（H0-H4 落地，H5-a/H5-b 已落地） |
 | [reward_design.md](reward_design.md) | staging | 奖励设计（未实现理论稿） |

@@ -138,6 +138,12 @@ function defaultConfig(): AppConfig {
     em_recall_top_k: 5,
     pm_c_min: 0.2,
     wm_summarize_every_n: 5,
+    // 权限/成本细粒度默认值 (跟后端 PermissionConfig 对齐)
+    perm_cost_budget_hours: 0,   // 0=不限制
+    perm_trust_adaptive: false,
+    perm_auto_approve_all: false,
+    perm_plan_mode: false,
+    perm_sandbox_mode: false,
   };
 }
 
