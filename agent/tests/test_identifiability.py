@@ -28,7 +28,6 @@ from huginn.validation.identifiability import (
     trajectory_coverage,
 )
 
-
 # ── 轨迹生成器 ─────────────────────────────────────────────────────────────
 
 def _make_traj(x0: np.ndarray, x1: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
