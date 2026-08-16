@@ -51,6 +51,7 @@ from huginn.autoloop.cognitive_checks import (
     metacog_check_selection_bias,
     metacog_check_topology_collapse,
 )
+from huginn.autoloop.cognitive_persist import load_run_context, persist_run_context
 from huginn.autoloop.goal_scheduler import GoalScheduler
 from huginn.autoloop.goal_store import Goal
 from huginn.autoloop.phase_gate import get_shared_phase_gate_state
@@ -1227,72 +1228,32 @@ class CognitiveLoopMixin:
              "advice": (h.get("advice") or "")[:100]}
             for h in _recent if h.get("val_status") == "failed"
         ]
-        snapshot = {
-            "run_id": run_id,
-            "objective": (objective or "")[:200],
-            "hypothesis": _hyp,
-            "plan_mode": _plan_mode,
-            "outcome": "completed" if _tests_ok else "inconclusive",
-            "iterations": state.iteration,
-            "recent_steps": [
+        # 段 3: run_context schema 收敛 — 与 learn_from_rcb (RCB 收尾) 共用同一 writer.
+        persist_run_context(
+            self.memory,
+            run_id=run_id,
+            objective=objective,
+            hypothesis=_hyp,
+            plan_mode=_plan_mode,
+            outcome="completed" if _tests_ok else "inconclusive",
+            iterations=state.iteration,
+            recent_steps=[
                 {"iter": h.get("iter"), "action": h.get("action"),
                  "val": h.get("val_status")}
                 for h in _recent
             ],
-            "inconclusive": _inconclusive,
-        }
-        try:
-            content = json.dumps(snapshot, ensure_ascii=False)
-            self.memory.remember(
-                content=content,
-                category="run_context",
-                tags=["run_context", run_id],
-                importance=0.5,
-                tier="mid",
-            )
-        except Exception:
-            logger.debug("run_context store failed (non-fatal)", exc_info=True)
+            inconclusive=_inconclusive,
+            source="cognitive_loop",
+        )
 
     def _load_prev_run_context(self) -> str:
         """P2: 加载上 run 的探索摘要, 返回人类可读文本供 decider prompt 注入.
 
         返回空串表示无历史或加载失败. ponytail: 只取最近 1 条, 不做聚合.
+        段 3: reader 收敛到 cognitive_persist.load_run_context, 与 persist_run_context
+        共用同一 schema, 避免读侧漂移.
         """
-        try:
-            results = self.memory.recall(
-                query="",
-                category="run_context",
-                top_k=1,
-            )
-        except Exception:
-            logger.debug("best-effort op failed", exc_info=True)
-            return ""
-        if not results:
-            return ""
-        entry = results[0] if isinstance(results, list) else results
-        content = entry.get("content", "") if isinstance(entry, dict) else str(entry)
-        if not content:
-            return ""
-        try:
-            snap = json.loads(content)
-        except (ValueError, TypeError):
-            logger.debug("best-effort op failed", exc_info=True)
-            return ""
-        parts = [
-            f"hypothesis: {(snap.get('hypothesis') or '')[:120]}",
-            f"plan: {snap.get('plan_mode', 'none')}",
-            f"outcome: {snap.get('outcome', 'unknown')}",
-            f"iters: {snap.get('iterations', '?')}",
-        ]
-        _incon = snap.get("inconclusive") or []
-        if _incon:
-            parts.append(
-                "inconclusive: " + "; ".join(
-                    f"iter{i.get('iter')}:{(i.get('advice') or '')[:50]}"
-                    for i in _incon[:2]
-                )
-            )
-        return " | ".join(parts)
+        return load_run_context(self.memory)
 
     @staticmethod
     def _extract_timeseries(result: Any) -> list[dict]:
@@ -3438,35 +3399,23 @@ def learn_from_rcb(
         f"cross_task={result['cross_task_written']}"
     )
 
-    # P2 下沉: run_context 持久化 — 跟 _persist_run_context 同 schema,
-    # 让 RCB runner 和 cognitive loop 两条路径都存探索摘要, 下 run 都能加载.
-    # ponytail: 复用已有 mem_mgr, 同 category="run_context". 参数从已有签名来.
-    if mem_mgr is not None:
-        try:
-            _rc_snapshot = {
-                "run_id": run_id or "unknown",
-                "objective": hypothesis[:200],
-                "hypothesis": hypothesis[:300],
-                "plan_mode": "rcb",
-                "outcome": "completed" if tests_passed else "inconclusive",
-                "iterations": 0,
-                "recent_steps": [],
-                "inconclusive": [] if tests_passed else [
-                    {"iter": 0, "action": "rcb_finalize",
-                     "advice": f"darwin={darwin:.2f}, status={status}"}
-                ],
-                "source": "learn_from_rcb",
-            }
-            _rc_content = json.dumps(_rc_snapshot, ensure_ascii=False)
-            mem_mgr.remember(
-                content=_rc_content,
-                category="run_context",
-                tags=["run_context", run_id or "unknown"],
-                importance=0.5,
-                tier="mid",
-            )
-        except Exception:
-            logger.debug("learn_from_rcb run_context store failed (non-fatal)", exc_info=True)
+    # P2 下沉: run_context 持久化 — 段 3 收敛到 cognitive_persist.persist_run_context,
+    # 与 autoloop _persist_run_context 共用同一 schema (writer 单一来源, 防漂移).
+    persist_run_context(
+        mem_mgr,
+        run_id=run_id or "unknown",
+        objective=hypothesis,
+        hypothesis=hypothesis,
+        plan_mode="rcb",
+        outcome="completed" if tests_passed else "inconclusive",
+        iterations=0,
+        recent_steps=[],
+        inconclusive=[] if tests_passed else [
+            {"iter": 0, "action": "rcb_finalize",
+             "advice": f"darwin={darwin:.2f}, status={status}"}
+        ],
+        source="learn_from_rcb",
+    )
 
     return result
 
