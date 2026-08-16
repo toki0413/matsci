@@ -957,6 +957,130 @@ def render_model_tier_markdown(contract: dict) -> str:
     return "\n".join(lines)
 
 
+def build_permission_contract(root: Path | None = None) -> dict:
+    """构建权限契约: 权限模式 / 五档风险 / 细粒度配置维度 / 默认工具规则 / 沙箱硬底线."""
+    root = root or _ROOT
+    from huginn.core_types import PermissionMode, RiskLevel
+    from huginn.permissions import (
+        DEFAULT_PERMISSION_RULES,
+        DANGEROUS_PATTERNS,
+        _DEFAULT_SANDBOX_PATH_RULES,
+    )
+
+    modes = [
+        {
+            "mode": m.value,
+            "semantics": {
+                PermissionMode.AUTO: "只读/安全工具直接放行",
+                PermissionMode.ASK: "潜在昂贵/破坏工具需确认",
+                PermissionMode.DENY: "显式拦截, 不可执行",
+                PermissionMode.PLAN: "只读模式, 所有写工具强制 ASK",
+            }.get(m, ""),
+        }
+        for m in PermissionMode
+    ]
+
+    risks = [
+        {
+            "level": r.value,
+            "semantics": {
+                "none": "纯只读/查询, 直接放行",
+                "low": "本地只读/可逆变更, 默认放行",
+                "medium": "外部 IO/网络/非破坏状态变更, 默认需确认",
+                "high": "破坏性/危险, 必须确认",
+                "critical": "不可逆/系统级/极高成本, 强制拦截或最高级确认",
+            }.get(r.value, ""),
+        }
+        for r in RiskLevel
+    ]
+
+    # PermissionConfig 的细粒度声明维度 (dataclass 字段, 排除默认派生的 rules).
+    cfg_fields = [
+        "auto_approve_all",
+        "plan_mode",
+        "path_rules",
+        "sandbox_mode",
+        "cost_budget_hours",
+        "trust_adaptive",
+    ]
+
+    rules = [
+        {"tool": name, "mode": mode.value}
+        for name, mode in sorted(DEFAULT_PERMISSION_RULES.items())
+    ]
+
+    return {
+        "modes": modes,
+        "risks": risks,
+        "cfg_fields": cfg_fields,
+        "rules": rules,
+        "dangerous_patterns": DANGEROUS_PATTERNS,
+        "sandbox_floor": [
+            {"path": p, "mode": m.value} for p, m in _DEFAULT_SANDBOX_PATH_RULES
+        ],
+    }
+
+
+def render_permission_markdown(contract: dict) -> str:
+    lines: list[str] = []
+    lines.append("# 权限契约 (Permission)")
+    lines.append("")
+    lines.append(
+        "自动生成: `python -m huginn.cli.config_audit --permission --out docs/permission-contract.md`."
+    )
+    lines.append(
+        "登记权限面: **PermissionMode** (二元决策) 与 **RiskLevel** (五档风险, 与 "
+        "`ontology/actions.RiskLevel` 同粒度) 互补。`PermissionConfig` 提供细粒度判定维度: "
+        "多阶段叠加 (危险命令 → 路径规则 → 工具基础规则 → 成本分级 → 信任自适应), "
+        "每命中一个维度记入 `matched_rules` 供可观测。安全层 (危险命令 / 沙箱硬底线 / "
+        "成本预算) 即使 `auto_approve_all` 也保留。"
+    )
+    lines.append("")
+    lines += _fmt_section(
+        "PermissionMode (二元决策)",
+        contract["modes"],
+        ("模式", "语义"),
+        ("mode", "semantics"),
+    )
+    lines += _fmt_section(
+        "RiskLevel (五档风险)",
+        contract["risks"],
+        ("等级", "语义"),
+        ("level", "semantics"),
+    )
+    lines += _fmt_section(
+        "PermissionConfig 细粒度维度",
+        [{"f": f} for f in contract["cfg_fields"]],
+        ("配置字段",),
+        ("f",),
+    )
+    lines.append("### 工具默认规则")
+    lines.append("")
+    lines.append("| 工具 | 模式 |")
+    lines.append("|---|---|")
+    for r in contract["rules"]:
+        lines.append(f"| `{r['tool']}` | `{r['mode']}` |")
+    lines.append("")
+    lines.append("危险命令模式 (" + str(len(contract["dangerous_patterns"])) + " 条):")
+    lines.append("")
+    for p in contract["dangerous_patterns"]:
+        lines.append(f"  - `{p}`")
+    lines.append("")
+    lines.append("沙箱硬底线路径 (只能收紧不能放宽):")
+    lines.append("")
+    lines.append("| 路径 | 模式 |")
+    lines.append("|---|---|")
+    for p in contract["sandbox_floor"]:
+        lines.append(f"| `{p['path']}` | `{p['mode']}` |")
+    lines.append("")
+    lines.append(
+        "运行时配置: `PermissionConfig` 字段由前端设置面板 / `HUGINN_PERM_*` 环境变量注入; "
+        "`path_rules` 支持 \\(tool, glob, mode\\) 工具×路径矩阵。"
+    )
+    lines.append("")
+    return "\n".join(lines)
+
+
 # 契约模式注册表: flag 名 → (builder, renderer, 默认输出文件名).
 # 供 main() 分派, 也供契约漂移测试 (tests/test_config_contracts.py) 复用,
 # 保证"文档与代码一致"的校验对象就是实际分派逻辑本身.
@@ -972,6 +1096,11 @@ CONTRACT_MODES: dict[str, tuple[object, object, str]] = {
         build_model_tier_contract,
         render_model_tier_markdown,
         "model-tier-contract.md",
+    ),
+    "permission": (
+        build_permission_contract,
+        render_permission_markdown,
+        "permission-contract.md",
     ),
 }
 # env 契约为默认模式 (无 --xxx 时), 单独登记供漂移测试统一遍历.
@@ -1020,6 +1149,11 @@ def main(argv: list[str] | None = None) -> int:
         "--model-tier",
         action="store_true",
         help="输出模型档位契约 (ModelTier 极简模式聚合面) 而非 env 契约",
+    )
+    parser.add_argument(
+        "--permission",
+        action="store_true",
+        help="输出权限契约 (PermissionMode + RiskLevel 五档 + PermissionConfig 细粒度面)",
     )
     parser.add_argument(
         "--out",

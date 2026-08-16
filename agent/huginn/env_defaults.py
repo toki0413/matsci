@@ -398,6 +398,35 @@ ENV_REGISTRY: dict[str, dict[str, Any]] = {
         "description": "Enable trust-adaptive permission: low trust forces ASK, high trust auto-approves medium risk.",
         "consumer": "huginn.permissions.PermissionConfig.trust_adaptive",
     },
+    # ── 统一成本账本换算率 (CostLedger) ──
+    "HUGINN_COST_USD_PER_1K_TOKENS": {
+        "category": EnvCategory.AGENT,
+        "type": "float",
+        "default": 0.0,
+        "description": "CostLedger: USD per 1k LLM tokens (0=unpriced, usd stays 0).",
+        "consumer": "huginn.cost_ledger.CostLedger.usd_per_1k_tokens",
+    },
+    "HUGINN_COST_USD_PER_CPU_HOUR": {
+        "category": EnvCategory.AGENT,
+        "type": "float",
+        "default": 0.0,
+        "description": "CostLedger: USD per CPU hour (0=unpriced).",
+        "consumer": "huginn.cost_ledger.CostLedger.usd_per_cpu_hour",
+    },
+    "HUGINN_COST_USD_PER_GPU_HOUR": {
+        "category": EnvCategory.AGENT,
+        "type": "float",
+        "default": 0.0,
+        "description": "CostLedger: USD per GPU hour (0=unpriced).",
+        "consumer": "huginn.cost_ledger.CostLedger.usd_per_gpu_hour",
+    },
+    "HUGINN_COST_USD_PER_CALL": {
+        "category": EnvCategory.AGENT,
+        "type": "float",
+        "default": 0.0,
+        "description": "CostLedger: USD per tool call (0=unpriced).",
+        "consumer": "huginn.cost_ledger.CostLedger.usd_per_call",
+    },
     "HUGINN_MAX_TOOL_OUTPUT_TOKENS": {
         "category": EnvCategory.AGENT,
         "type": "int",

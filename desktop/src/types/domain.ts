@@ -204,6 +204,17 @@ export interface AppConfig {
   em_recall_top_k: number;
   pm_c_min: number;
   wm_summarize_every_n: number;
+  // 权限/成本细粒度 (Settings Advanced tab) — 对应后端 PermissionConfig 细粒度维度.
+  // 成本预算 (CPU 小时): 0=不限制; 非 0 时超预算工具自动升 ASK.
+  perm_cost_budget_hours: number;
+  // 信任自适应: 高信任放行 medium 风险, 低信任强制 ASK.
+  perm_trust_adaptive: boolean;
+  // 全量自动放行 (CI/自动化): 危险命令 / 沙箱硬底线 / 成本预算仍保留.
+  perm_auto_approve_all: boolean;
+  // 只读模式: 所有写工具强制 ASK.
+  perm_plan_mode: boolean;
+  // 沙箱模式: 强制注入硬底线路径规则 (只能收紧不能放宽).
+  perm_sandbox_mode: boolean;
 }
 
 export interface PersonaSeed {
