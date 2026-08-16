@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- H6 双吸引子 band 路由: `ModelRouter` 增加 persona 稳定带 (spec/react) 维度, `classify_band` 把任务/阶段外部量化到稳定带 (避开 mixed 相变陷阱), `select_band` 选带稳定模型 (spec↔react 不互通, 通用模型承接), `ModelConfig.bands` 支持配置标注稳定带
+
 ## [1.3.0] - 2026-08-16
 
 ### Added
