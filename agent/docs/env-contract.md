@@ -5,7 +5,7 @@
 
 | 变量 | 默认值 | 读取点 | 设置点 | 推断状态 |
 |---|---|---|---|---|
-| `HUGINN_ACTION_HIST_MAX` | 1000 | autoloop/cognitive_loop.py:65 | — | external |
+| `HUGINN_ACTION_HIST_MAX` | 1000 | autoloop/cognitive_loop.py:66 | — | external |
 | `HUGINN_ADMIN_API_KEY` | '' | security/auth.py:115 | — | external |
 | `HUGINN_AGENTS` | '' | config.py:876 | routes/config.py:311 | code-set |
 | `HUGINN_AINVOKE_TIMEOUT` | str(_thinking_scale_timeout( | agent/streaming.py:1686 | — | external |
@@ -17,13 +17,13 @@
 | `HUGINN_APPROVAL_MODE` | '' | agent/code_act_loop.py:704, agent/core.py:330 | — | external |
 | `HUGINN_ATOMWORLD_DATA_DIR` | ./atomworld_data | bench/atomworld_bench.py:23 | — | external |
 | `HUGINN_AUDIT_SIGNING_KEY` | '' | security/audit.py:626 | — | external |
-| `HUGINN_AUTOLOOP_HUMAN_PAUSE` | 0 | autoloop/cognitive_loop.py:3006, autoloop/engine_reflect.py:2890 | — | external |
+| `HUGINN_AUTOLOOP_HUMAN_PAUSE` | 0 | autoloop/cognitive_loop.py:2670, autoloop/engine_reflect.py:2890 | — | external |
 | `HUGINN_AUTOLOOP_STREAMING` | 1 | autoloop/engine.py:67 | — | external |
 | `HUGINN_AUTO_APPROVE` | '' | config.py:750, server_core.py:612, tools/adapter.py:562, +2 处 | — | external |
 | `HUGINN_AUTO_WAKE` | 1 | autoloop/engine.py:597 | — | external |
 | `HUGINN_BANDIT_Q_PATH` | '' | agent/bandit_controller.py:112 | cli/rcb_runner.py:70 | code-set |
 | `HUGINN_BASE_URL` | '' | config.py:680, config.py:703 | — | external |
-| `HUGINN_BELIEF_DARWIN` | 1 | autoloop/cognitive_loop.py:1021, autoloop/cognitive_loop.py:1130 | — | external |
+| `HUGINN_BELIEF_DARWIN` | 1 | autoloop/cognitive_loop.py:725, autoloop/cognitive_loop.py:834 | — | external |
 | `HUGINN_BELIEF_ENTROPY_FACT_CHECK` | 0 | utils/belief_entropy.py:455 | — | external |
 | `HUGINN_BELIEF_ENTROPY_HIGH` | 0.7 | utils/belief_entropy.py:461 | — | external |
 | `HUGINN_BELIEF_ENTROPY_LOW` | 0.3 | utils/belief_entropy.py:458 | — | external |
@@ -65,7 +65,7 @@
 | `HUGINN_CURIOSITY_HINT` | 0 | autoloop/engine_observe.py:323, cli/rcb_step2.py:869 | — | external |
 | `HUGINN_DARWIN_LLM_EVAL` | 0 | metacog/llm_likelihood.py:46, metacog/llm_likelihood.py:271, metacog/step_evaluator.py:557, +1 处 | metacog/llm_likelihood.py:274, metacog/llm_likelihood.py:277, metacog/step_evaluator.py:1045, +3 处, metacog/step_evaluator.py:1107 | code-set |
 | `HUGINN_DARWIN_LLM_INTERVAL` | 5 | metacog/step_evaluator.py:573, metacog/step_evaluator.py:1042 | metacog/step_evaluator.py:1046, metacog/step_evaluator.py:1077, metacog/step_evaluator.py:1109, metacog/step_evaluator.py:1111 | code-set |
-| `HUGINN_DARWIN_STAGNATION_LIMIT` | 5 | autoloop/cognitive_loop.py:1071 | cli/rcb_runner.py:346 | code-set |
+| `HUGINN_DARWIN_STAGNATION_LIMIT` | 5 | autoloop/cognitive_loop.py:775 | cli/rcb_runner.py:346 | code-set |
 | `HUGINN_DEEPSEEK_OCR_PATH` | '' | tools/vision_describe_tool.py:67 | — | external |
 | `HUGINN_DEV_MODE` | '' | middleware/error_normalize.py:145, middleware/ws_governance.py:123, routes/agents.py:83, +1 处 | — | external |
 | `HUGINN_DISABLE_WEB_SEARCH` | '' | tools/agentic_search_tool.py:287, tools/literature/_http.py:40, tools/web_search_tool.py:56 | tools/web_search_tool.py:650, tools/web_search_tool.py:655 | code-set |
@@ -108,7 +108,7 @@
 | `HUGINN_INHERIT_STABLE_PRINCIPLES` | 1 | memory/longterm.py:1873 | — | external |
 | `HUGINN_ISING_FRONTIER` | 1 | autoloop/hypothesis_loop.py:47, autoloop/hypothesis_loop.py:1722 | autoloop/hypothesis_loop.py:1723, autoloop/hypothesis_loop.py:1769, autoloop/hypothesis_loop.py:1778, autoloop/hypothesis_loop.py:1776 | code-set |
 | `HUGINN_ISING_RERANK` | 1 | memory/longterm.py:620 | memory/longterm.py:2147, memory/longterm.py:2149 | code-set |
-| `HUGINN_ITER_HIST_MAX` | 50 | autoloop/cognitive_loop.py:67 | — | external |
+| `HUGINN_ITER_HIST_MAX` | 50 | autoloop/cognitive_loop.py:68 | — | external |
 | `HUGINN_JWT_SECRET` | '' | security/auth.py:80 | — | external |
 | `HUGINN_KB_CHUNKS_PATH` | '' | evolution/knowledge_distiller.py:497 | — | external |
 | `HUGINN_KEEP_ROOT_N` | 2 | agent/streaming.py:758, agent/streaming.py:1393, agent/streaming.py:1435 | cli/rcb_runner.py:89 | code-set |
@@ -122,8 +122,8 @@
 | `HUGINN_LLM_REQUEST_TIMEOUT` | 120 | models/registry.py:158 | — | external |
 | `HUGINN_LOCAL_ONLY` | 0 | config.py:768, models/registry.py:1173 | — | external |
 | `HUGINN_LOG_LEVEL` | INFO | utils/json_logging.py:126 | — | external |
-| `HUGINN_LOOP_LIGHT_ON_TRACK` | 1 | autoloop/cognitive_loop.py:2726 | — | external |
-| `HUGINN_LOOP_ROLLBACK` | 1 | autoloop/cognitive_loop.py:2112 | — | external |
+| `HUGINN_LOOP_LIGHT_ON_TRACK` | 1 | autoloop/cognitive_loop.py:2390 | — | external |
+| `HUGINN_LOOP_ROLLBACK` | 1 | autoloop/cognitive_loop.py:1776 | — | external |
 | `HUGINN_MAINTENANCE` | '' | middleware/maintenance.py:40 | — | external |
 | `HUGINN_MAX_BODY_SIZE_MB` | _DEFAULT_MAX_BODY_MB | middleware/limits.py:87 | — | external |
 | `HUGINN_MAX_BRANCHES` | 5 | config.py:755 | — | external |
@@ -165,13 +165,13 @@
 | `HUGINN_NO_RUST_SANDBOX` | '' | — | cli/rcb_runner.py:98 | code-set |
 | `HUGINN_OAUTH_TOKEN` | '' | cli/availability.py:52 | — | external |
 | `HUGINN_OCR_ENGINE` | auto | knowledge/ocr_loader.py:146, knowledge/ocr_loader.py:190, knowledge/ocr_loader.py:238 | — | external |
-| `HUGINN_PERSISTENT_GOAL_MODE` | 0 | autoloop/cognitive_loop.py:1097, autoloop/engine_reflect.py:906, cli/rcb_runner.py:373 | cli/rcb_runner.py:350 | code-set |
+| `HUGINN_PERSISTENT_GOAL_MODE` | 0 | autoloop/cognitive_loop.py:801, autoloop/engine_reflect.py:906, cli/rcb_runner.py:373 | cli/rcb_runner.py:350 | code-set |
 | `HUGINN_PERSISTENT_TERMINAL` | 0 | tools/persistent_terminal.py:280, tools/persistent_terminal.py:536 | tools/persistent_terminal.py:538, tools/persistent_terminal.py:547, tools/persistent_terminal.py:559, tools/persistent_terminal.py:557 | code-set |
 | `HUGINN_PERSISTENT_TERMINAL_TIMEOUT` | '' | tools/persistent_terminal.py:30 | — | external |
 | `HUGINN_PERSONA` | default | config.py:694, config.py:756 | cli/commands/persona.py:131, routes/agents.py:462 | code-set |
 | `HUGINN_PERSONA_AUTO_ROUTE` | true | config.py:757 | — | external |
 | `HUGINN_PERSONA_AUTO_ROUTE_THRESHOLD` | 0.3 | config.py:762 | — | external |
-| `HUGINN_PER_HYP_BUDGET` | 0 | autoloop/cognitive_loop.py:1211, autoloop/cognitive_loop.py:2496, autoloop/engine_reflect.py:436 | — | external |
+| `HUGINN_PER_HYP_BUDGET` | 0 | autoloop/cognitive_loop.py:915, autoloop/cognitive_loop.py:2160, autoloop/engine_reflect.py:436 | — | external |
 | `HUGINN_PET_NAME` | 渡鸦 | config.py:821 | — | external |
 | `HUGINN_PET_PERSONALITY` | cheerful | config.py:822 | — | external |
 | `HUGINN_PLAN_AUTO_CONFIRM` | 0 | config.py:710 | — | external |
@@ -242,12 +242,12 @@
 | `HUGINN_TOOL_TIMEOUT` | '' | tools/timeouts.py:113 | — | external |
 | `HUGINN_TORCH_DEVICE` | cpu | cli/rcb_runner.py:270, tools/sci/__init__.py:27 | — | external |
 | `HUGINN_TRACE_SHARD_INTERVAL` | str(_DEFAULT_SHARD_INTERVAL | cli/rcb_step2.py:240, events/audit_log.py:54 | events/audit_log.py:652, events/audit_log.py:708, events/audit_log.py:703, events/audit_log.py:762 | code-set |
-| `HUGINN_TRAJECTORY_PATTERN` | 0 | autoloop/cognitive_loop.py:2028 | — | external |
+| `HUGINN_TRAJECTORY_PATTERN` | 0 | autoloop/cognitive_loop.py:1692 | — | external |
 | `HUGINN_TRANSCRIPT_DIR` | '' | events/transcript.py:88 | — | external |
 | `HUGINN_UNPAYWALL_EMAIL` | user@example.com | tools/literature/pdf_fetch.py:309, tools/literature/search_sources.py:347 | — | external |
 | `HUGINN_USE_ATOMWORLD` | 0 | agent/code_act_loop.py:343, agent/code_act_loop.py:397, bench/atomworld_bench.py:53, +2 处 | bench/atomworld_bench.py:154, bench/atomworld_bench.py:162, bench/atomworld_bench.py:173, +1 处, security/code_act_sandbox.py:220, security/code_act_sandbox.py:234 | code-set |
 | `HUGINN_USE_COGNITIVE_MAP` | 0 | agent/code_act_loop.py:354, agent/code_act_loop.py:416, bench/mini_rotation_baseline.py:522, +2 处 | cli/rcb_runner.py:325, security/code_act_sandbox.py:236 | code-set |
-| `HUGINN_USE_COMPLETION_GATE` | 0 | autoloop/cognitive_loop.py:3151 | — | external |
+| `HUGINN_USE_COMPLETION_GATE` | 0 | autoloop/cognitive_loop.py:2815 | — | external |
 | `HUGINN_USE_CROSS_DOMAIN` | 0 | autoloop/hypothesis_loop.py:2604 | — | external |
 | `HUGINN_USE_DOCKER` | '' | security/sandbox.py:589 | — | external |
 | `HUGINN_USE_EVOLUTION_MANAGER` | 1 | autoloop/engine_reflect.py:2146, autoloop/engine_reflect.py:2259, memory/manager.py:1350 | — | external |
@@ -255,8 +255,8 @@
 | `HUGINN_USE_MENTAL_IMAGERY` | 0 | cli/rcb_step2.py:738 | cli/rcb_runner.py:332 | code-set |
 | `HUGINN_USE_MISI` | 0 | bench/misi_bench.py:77, bench/misi_bench.py:208 | bench/misi_bench.py:211, bench/misi_bench.py:219, bench/misi_bench.py:262 | code-set |
 | `HUGINN_USE_RUST_SANDBOX` | '' | tools/bash_tool.py:202 | — | external |
-| `HUGINN_USE_THREE_CABIN` | 0 | autoloop/cognitive_loop.py:2903 | — | external |
-| `HUGINN_USE_UNIFIED_DECISION` | 0 | autoloop/cognitive_loop.py:3039 | — | external |
+| `HUGINN_USE_THREE_CABIN` | 0 | autoloop/cognitive_loop.py:2567 | — | external |
+| `HUGINN_USE_UNIFIED_DECISION` | 0 | autoloop/cognitive_loop.py:2703 | — | external |
 | `HUGINN_VALIDATE_FAIL_THRESHOLD` | 0.8 | autoloop/engine.py:357 | — | external |
 | `HUGINN_VALIDATE_WINDOW` | 100 | autoloop/engine.py:355 | — | external |
 | `HUGINN_VAULT_ADDR` | '' | security/secrets.py:166 | — | external |
