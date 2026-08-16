@@ -69,13 +69,21 @@
     `no_regression_run=True`,不跑任何回归, 只返回天花板 + `recommended_action`
     （deficient 建议先补更广覆盖轨迹，再跑符号回归）。附诚实边界说明。
   - 失败静默降级（`ceiling=None`），不阻塞主流程。
-- **测试（2026-08-16）**：`tests/test_identifiability.py`（9 passed）——
+- **概率校准拟合分 NLL/BIC 已落地（2026-08-16）**：`discover` 结果新增 `fit_metrics`
+  块 —— 高斯独立加性噪声假设下的负对数似然 `NLL=(N/2)log(2πσ²)+N/2`（σ² 用残差 MLE）、
+  `BIC=2·NLL+k·log(N)`（对非零项数 k 做稀疏惩罚）、`noise_std`、`active_terms`。
+  回应论文"不同方法/噪声尺度不可比（SINDy 线性 vs 进化超线性）"的关切：
+  R² 高不等于模型好，比较模型应看 BIC 而非单看 R²。`_fit_metrics` 代实现，
+  失败不影响主流程。
+- **测试（2026-08-16）**：`tests/test_identifiability.py`（9 passed）+ 
+  `test_dynamics_discovery.py` 新增 NLL/BIC 用例（共 34 passed among discovery suite）——
   - 矩矩阵数值正确性；
   - 恒定轨迹 → `deficient`（λ_min_rel < 1e-6，覆盖比 ≈ 1/6）；
   - **Lorenz 混沌投影 λ_min_rel 显著高于恒定情形**（验证"混沌铺开吸引子抬高 λ_min"），
     且覆盖度更高；
   - `discover` 输出带 identifiability 块；
-  - 预飞 action 不跑回归、带 recommended_action + honest_boundary。
+  - 预飞 action 不跑回归、带 recommended_action + honest_boundary；
+  - NLL/noise_std 随数据噪声单调上升；active_terms 正确统计非零项。
 
 ---
 
@@ -98,7 +106,8 @@
 
 - **阈值是启发式**：`deficient=1e-6 / limited=1e-3` 是数量级分离的经验定值，未经
   SINDy/PySR benchmark 标定。并列为 `level_thresholds` 参数，可随域调节。
-- **未建模噪声的算法依赖差异**（SINDy 线性 vs 进化超线性）——论文第二部分，未实现。
-- **未实现"何时加混沌不再改善"判据**——从方程读条件，需方程级输入，当前工具只吃
+- **未建模"何时加混沌不再改善"判据**——从方程读条件，需方程级输入，当前工具只吃
   轨迹数据。
 - **仅覆盖多项式+sin/cos/exp 库**，与 `dynamics_discovery_tool` 一致；不覆盖任意符号库。
+- **NLL 假设高斯 i.i.d. 噪声**——对重尾/异方差噪声不成立；未建模论文的"进化解超线性
+  噪声演化"（已落地的是 SINDy 原点的高斯 NLL/BIC，非进化解判别通道的完整建模）。
