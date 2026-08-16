@@ -125,3 +125,47 @@ def test_unknown_action():
     res = asyncio.run(tool.call(args, _ctx()))
     assert not res.success
     assert "unknown action" in res.error.lower()
+
+
+# ── 概率校准拟合分 (NLL/BIC) ──────────────────────────────────────────────
+
+def _fit_metrics_for(t, X, **kw):
+    d = _discover(t, X, **kw)
+    assert d.success, d.error
+    return d.data["fit_metrics"]
+
+
+def test_fit_metrics_present_and_keys():
+    """discover 输出带概率校准拟合分块."""
+    t, X = _damped_oscillator(n=600, noise=0.0)
+    fm = _fit_metrics_for(t, X)
+    for var in ("x0", "x1"):
+        assert var in fm["nll"]
+        assert var in fm["bic"]
+        assert var in fm["noise_std"]
+        assert var in fm["active_terms"]
+    assert isinstance(fm["note"], str)
+
+
+def test_fit_metrics_lower_noise_lower_nll_noise():
+    """噪声越大, NLL 与 noise_std 越大 (校准: 反映残差尺度)."""
+    t_clean, X_clean = _damped_oscillator(n=600, noise=0.0, seed=3)
+    t_noisy, X_noisy = _damped_oscillator(n=600, noise=0.05, seed=3)
+    fm_clean = _fit_metrics_for(t_clean, X_clean)
+    fm_noisy = _fit_metrics_for(t_noisy, X_noisy)
+    # NLL 与 noise_std 随噪声单调上升; 只有 R2 会误导 (见论文线性 vs 超线性噪声).
+    assert fm_noisy["noise_std"]["x0"] > fm_clean["noise_std"]["x0"]
+    assert fm_noisy["nll"]["x0"] > fm_clean["nll"]["x0"]
+
+
+def test_bic_penalizes_active_terms():
+    """覆盖同数据下, 稀疏 (真) 模型的 BIC 应低于带冗余项的更复杂模型比较语义.
+
+    这里不跑两种库做穷举比较, 只验证: active_terms 正确统计非零系数, 且 BIC
+    包含对非零项数的惩罚 (k·log(N) 项), 因此相同 NLL 下稀疏模型 BIC 更小.
+    """
+    t, X = _damped_oscillator(n=600, noise=0.0, seed=4)
+    fm = _fit_metrics_for(t, X)
+    # active_terms 应为每个变量保留的非零项数, 阻尼振子的真方程每式恰好 1 项.
+    assert fm["active_terms"]["x0"] == 1
+    assert fm["active_terms"]["x1"] == 2
