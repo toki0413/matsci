@@ -18,33 +18,36 @@ if str(_AGENT_DIR) not in sys.path:
 
 
 def _check_pmk_since_kb():
-    """结合1: build_pmk_state 传 since 时, kb.query 收到 since 参数."""
-    from huginn.autoloop.cognitive_loop import build_pmk_state
+    """结合1: build_pmk_state 传 since 时, kb 检索收到 since 参数.
+
+    代码走 query_with_dedup 优先 (桥 RAG), 无该方法时回退 kb.query.
+    """
+    from huginn.autoloop.cognitive_guard import build_pmk_state
 
     kb = MagicMock()
-    kb.query.return_value = [{"content": "kb hit"}]
+    kb.query_with_dedup.return_value = [{"content": "kb hit"}]
     step_eval = MagicMock()
     step_eval.attempted = "Fe diffusion"
     step_eval.pmk_feedback = "memory: some mem"
 
-    # 不传 since — kb.query 不应有 since
+    # 不传 since — query_with_dedup 不应有 since
     build_pmk_state(None, step_eval, kb)
-    _args = kb.query.call_args
+    _args = kb.query_with_dedup.call_args
     assert _args.kwargs.get("since") is None, \
-        f"无 since 时 kb.query 不应传 since, 实际 {_args.kwargs}"
+        f"无 since 时检索不应传 since, 实际 {_args.kwargs}"
 
-    # 传 since — kb.query 应收到
+    # 传 since — query_with_dedup 应收到
     build_pmk_state(None, step_eval, kb, since="2025-01-01T00:00:00")
-    _args2 = kb.query.call_args
+    _args2 = kb.query_with_dedup.call_args
     assert _args2.kwargs.get("since") == "2025-01-01T00:00:00", \
-        f"有 since 时 kb.query 应传 since, 实际 {_args2.kwargs}"
+        f"有 since 时检索应传 since, 实际 {_args2.kwargs}"
 
-    print("[ok] 结合1: build_pmk_state → kb.query(since=...)")
+    print("[ok] 结合1: build_pmk_state → kb query(since=...)")
 
 
 def _check_pmk_since_memory():
     """结合1: build_pmk_state 传 mem_mgr + since 时, recall_for_prompt 收到 since."""
-    from huginn.autoloop.cognitive_loop import build_pmk_state
+    from huginn.autoloop.cognitive_guard import build_pmk_state
 
     mem_mgr = MagicMock()
     mem_mgr.recall_for_prompt.return_value = "recent mem text"
@@ -70,7 +73,7 @@ def _check_pmk_since_memory():
 
 def _check_pmk_timeseries_route():
     """结合3: build_pmk_state 传 timeseries_ctx 时, 结果含 timeseries 第四路."""
-    from huginn.autoloop.cognitive_loop import build_pmk_state
+    from huginn.autoloop.cognitive_guard import build_pmk_state
 
     step_eval = MagicMock()
     step_eval.attempted = "Fe"
@@ -125,7 +128,7 @@ def _check_pmk_consistency_timeseries():
 
 def _check_pause_iteration_history():
     """结合2: check_pause_decision 传 iteration_history, 重复 redirect 升级 reason."""
-    from huginn.autoloop.cognitive_loop import check_pause_decision
+    from huginn.autoloop.cognitive_guard import check_pause_decision
 
     # mock should_pause_for_decision 返回 pause=True
     from huginn.runtime import task_lifecycle as _tl
