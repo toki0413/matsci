@@ -57,6 +57,56 @@ class MockExecutor:
         return dict(self.state)
 
 
+class SimExecutor(MockExecutor):
+    """状态转移仿真执行器 — 算法可微的物理后端占位 (真实 VLA/仿真器可替换).
+
+    目前以确定性规则近似 VLA 执行结果: 每个动作按 ``_EFFECTS`` 更新内部状态,
+    ``observe()`` 读回当前状态供感知确认. ``fail_on`` 与 ``MockExecutor`` 同语义.
+    这是"真实仿真后端"的接缝: 把 ``_EFFECTS`` / ``_apply`` 换成对接 LAMMPS /
+    ASE / 真实 VLA 控制器即可, 对外 ``execute``/``observe`` 契约不变.
+
+    示例状态:
+      - aspire:   reagent_vol 减少, sample_vol 增加
+      - dispense: sample_vol 减少, tube_vol 增加
+      - mix:      mixed=True
+      - aliquot:  aliquot_count 增加
+    """
+
+    _EFFECTS: dict[str, tuple[str, str, str]] = {
+        # type -> (dec_key, inc_key, vol_param)
+        "aspirate": ("reagent_vol", "sample_vol", "vol"),
+        "dispense": ("sample_vol", "tube_vol", "vol"),
+        "mix": ("", "mixed", ""),
+        "aliquot": ("", "aliquot_count", ""),
+    }
+
+    def __init__(self, fail_on: set[str] | None = None, *, initial: dict[str, Any] | None = None) -> None:
+        super().__init__(fail_on=fail_on)
+        self.state = dict(initial or {"reagent_vol": 100.0, "sample_vol": 0.0, "tube_vol": 0.0})
+        self.state.setdefault("mixed", False)
+        self.state.setdefault("aliquot_count", 0)
+
+    def execute(self, action: PhysicalAction) -> None:
+        if action.type in self.fail_on:
+            raise RuntimeError(f"sim executor: action {action.type} failed")
+        self._apply(action)
+        self.log.append(action)
+
+    def _apply(self, action: PhysicalAction) -> None:
+        effect = self._EFFECTS.get(action.type)
+        dec_key, inc_key, vol_param = effect if effect else ("", "", "vol")
+        if dec_key:
+            v = float(action.params.get(vol_param, 0) or 0)
+            self.state[dec_key] = max(0.0, float(self.state.get(dec_key, 0.0)) - v)
+        if inc_key == "mixed":
+            self.state["mixed"] = True
+        elif inc_key == "aliquot_count":
+            self.state["aliquot_count"] = int(self.state.get("aliquot_count", 0)) + 1
+        elif inc_key:
+            v = float(action.params.get(vol_param, 0) or 0)
+            self.state[inc_key] = float(self.state.get(inc_key, 0.0)) + v
+
+
 class PhysicalWorkspace:
     """一个可组合的物理实验工作台 (时间可逆 + 空间依赖 + 感知确认)."""
 
