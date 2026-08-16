@@ -15,13 +15,16 @@
 from __future__ import annotations
 
 import logging
+import random
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 from huginn.security.coeffect import CoEffectRegistry
 from huginn.security.revertible import RevertibleContext, register_physical_executor
 from huginn.security.world_model import (
     ConstraintViolation,
+    FORWARD_EFFECTS,
     PhysicalAction,
     WorldModel,
     apply_forward,
@@ -106,19 +109,52 @@ class MockExecutor:
         return dict(self.state)
 
 
+@dataclass
+class ErrorModel:
+    """硬件执行误差模型 — 施加在体积相关量的实测值上.
+
+    真实移液站有系统偏置 (accuracy) + 随机误差 (precision). 有误差时仿真执行器
+    的实测状态偏离 world_model 的理想预测, 让状态级感知确认 (``spec.expect`` /
+    ``expected``) 在纯软件下就能处理设备噪声:
+
+    - ``systematic``: 系统偏置, 绝对体积单位 (uL), 每次固定叠加.
+    - ``sigma``: 随机误差标准差, 绝对体积单位 (uL), 服从高斯.
+
+    仅对 ``aspirate`` / ``dispense`` 这类带体积参数的动作注入; 不影响
+    ``mix`` / ``aliquot`` 等离散量.
+    """
+
+    systematic: float = 0.0
+    sigma: float = 0.0
+
+
 class SimExecutor(MockExecutor):
     """状态转移仿真执行器 — 算法可微的物理后端占位 (真实 VLA/仿真器可替换).
 
     前向转移规则与 ``world_model.apply_forward`` 共用同一事实来源
     (``FORWARD_EFFECTS``), 保证"世界模型预演"与"实际仿真结果"一致 —
     感知确认才能对比预期 vs 实际. ``fail_on`` 与 ``MockExecutor`` 同语义.
+
+    ``error_model``: 可注入的硬件误差 (系统偏置 + 随机 sigma, 均以绝对体积单位
+    施加在体积相关量上). 有误差时执行结果与 world_model 的理想预测存在偏差,
+    让状态级感知确认在纯软件下就能处理真实设备噪声. ``seed`` 保证同 seed 同
+    误差序列 (测试可复现). ``error_model=None`` 时行为与旧完全一致 (确定性).
     """
 
-    def __init__(self, fail_on: set[str] | None = None, *, initial: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        fail_on: set[str] | None = None,
+        *,
+        initial: dict[str, Any] | None = None,
+        error_model: "ErrorModel | None" = None,
+        seed: int | None = None,
+    ) -> None:
         super().__init__(fail_on=fail_on)
         self.state = dict(initial or {"reagent_vol": 100.0, "sample_vol": 0.0, "tube_vol": 0.0})
         self.state.setdefault("mixed", False)
         self.state.setdefault("aliquot_count", 0)
+        self.error_model = error_model
+        self._rng = random.Random(seed)
 
     def execute(self, action: PhysicalAction) -> None:
         if action.type in self.fail_on:
@@ -128,6 +164,15 @@ class SimExecutor(MockExecutor):
 
     def _apply(self, action: PhysicalAction) -> None:
         self.state = apply_forward(self.state, action)
+        # 体积相关动作注入硬件噪声: 目标增量 +noise, 源减量 -noise (等幅反相,
+        # 保持量守恒 − 移错体积而非凭空增减). 物理上 = 一次移液量的测量误差.
+        if self.error_model is not None and "vol" in action.params:
+            dec_key, inc_key, _ = FORWARD_EFFECTS.get(action.type, ("", "", ""))
+            noise = self.error_model.systematic + self._rng.gauss(0.0, self.error_model.sigma)
+            if inc_key and isinstance(self.state.get(inc_key), (int, float)):
+                self.state[inc_key] = float(self.state.get(inc_key, 0.0)) + noise
+            if dec_key and isinstance(self.state.get(dec_key), (int, float)):
+                self.state[dec_key] = float(self.state.get(dec_key, 0.0)) - noise
 
 
 class PhysicalWorkspace:
