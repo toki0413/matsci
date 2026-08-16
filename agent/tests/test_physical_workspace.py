@@ -21,9 +21,14 @@ from huginn.security.experiment_protocol import (
 from huginn.security.workspace import (
     MockExecutor,
     PhysicalWorkspace,
+    SimExecutor,
     WorkspaceConfirmError,
 )
-from huginn.security.world_model import NaiveWorldModel, PhysicalAction
+from huginn.security.world_model import (
+    ConstraintViolation,
+    NaiveWorldModel,
+    PhysicalAction,
+)
 
 
 # ── 空间可组合: 依赖链激活 / 停用 ────────────────────────────────
@@ -128,3 +133,59 @@ def test_irreversible_action_executes_without_inverse() -> None:
     wa.execute(PhysicalAction("stir", {}))  # 朴素模型认为 stir 不可逆
     assert wa.revertible.depth == 0, "不可逆动作不登记逆"
     assert [a.type for a in ex.log] == ["stir"]
+
+
+# ── 前向预测 (world model predict) ──────────────────────────────
+def test_world_model_predict_forward_state() -> None:
+    """predict 用前向规则推后状态 (与 SimExecutor 一致)."""
+    wm = NaiveWorldModel()
+    s0 = {"reagent_vol": 100.0, "sample_vol": 0.0, "tube_vol": 0.0, "mixed": False, "aliquot_count": 0}
+    s1 = wm.predict(s0, PhysicalAction("aspirate", {"vol": 10}))
+    assert s1["reagent_vol"] == 90.0
+    assert s1["sample_vol"] == 10.0
+    # predict 应不修改入参.
+    assert s0["reagent_vol"] == 100.0 and s0["sample_vol"] == 0.0
+
+
+def test_world_model_predict_matches_sim_executor() -> None:
+    """world model 预演结果 == SimExecutor 实际执行结果 (单一事实来源)."""
+    wm = NaiveWorldModel()
+    ex = SimExecutor(initial={"reagent_vol": 100.0, "sample_vol": 0.0, "tube_vol": 0.0})
+    action = PhysicalAction("dispense", {"vol": 10})
+    # 先 asp 让 sample 有货 (与协议流程一致), 再对比 dispense.
+    ex.execute(PhysicalAction("aspirate", {"vol": 10}))
+    predicted = wm.predict(ex.observe(), action)
+    ex.execute(action)
+    assert predicted == ex.observe()
+
+
+# ── 物理约束校验 (preflight) ────────────────────────────────────
+def test_preflight_rejects_over_aspiration() -> None:
+    """源量不足 → preflight 抛 ConstraintViolation, 不执行."""
+    ex = SimExecutor()
+    wa = PhysicalWorkspace(NaiveWorldModel(), ex)
+    with pytest.raises(ConstraintViolation, match="aspirate"):
+        wa.preflight(PhysicalAction("aspirate", {"vol": 999}))
+
+
+def test_execute_preflight_blocks_before_effect() -> None:
+    """preflight=True 时约束违规在 execute 前被阻止 (不产生副作用/逆)."""
+    ex = SimExecutor()
+    wa = PhysicalWorkspace(NaiveWorldModel(), ex)
+    with pytest.raises(ConstraintViolation, match="dispense"):
+        wa.execute(
+            PhysicalAction("dispense", {"vol": 999}), preflight=True
+        )
+    assert ex.log == [], "约束违规不应执行动作"
+    assert wa.revertible.depth == 0
+
+
+def test_execute_state_confirm_rejects_mismatch() -> None:
+    """expected 状态与实测偏离 → WorkspaceConfirmError (状态级感知确认)."""
+    ex = SimExecutor()
+    wa = PhysicalWorkspace(NaiveWorldModel(), ex)
+    with pytest.raises(WorkspaceConfirmError, match="状态偏离"):
+        wa.execute(
+            PhysicalAction("aspirate", {"vol": 10}),
+            expected={"reagent_vol": 999.0, "sample_vol": 99.0},
+        )

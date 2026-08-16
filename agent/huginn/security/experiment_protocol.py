@@ -89,17 +89,30 @@ def build_pipette_workflow(
     return wa
 
 
-def run_pipette_protocol(wa: PhysicalWorkspace, *, aliquot: bool = True) -> None:
+def run_pipette_protocol(wa: PhysicalWorkspace, *, aliquot: bool = True, sim: bool = False) -> None:
     """在一个事务里执行完整协议 (失败即整体回滚).
 
     只执行当前激活的步骤 (依赖缺失的步骤被空间链自动停用).
+    ``sim=True`` 时启用执行前预演 (约束校验 + 世界模型前向预测对比实测状态).
     """
     with wa.transaction():
         if wa.is_active(C_ASPIRATE):
-            wa.execute(PhysicalAction("aspirate", {"vol": 10}), confirm_key=K_ASPIRATED)
+            wa.execute(
+                PhysicalAction("aspirate", {"vol": 10}),
+                confirm_key=K_ASPIRATED, preflight=sim,
+            )
         if wa.is_active(C_DISPENSE):
-            wa.execute(PhysicalAction("dispense", {"vol": 10}), confirm_key=K_FILLED)
+            wa.execute(
+                PhysicalAction("dispense", {"vol": 10}),
+                confirm_key=K_FILLED, preflight=sim,
+            )
         if wa.is_active(C_MIX):
-            wa.execute(PhysicalAction("mix", {"mode": "vortex"}), confirm_key=K_MIXED)
+            wa.execute(
+                PhysicalAction("mix", {"mode": "vortex"}),
+                confirm_key=K_MIXED, preflight=sim,
+            )
         if aliquot and wa.is_active(C_ALIQUOT):
-            wa.execute(PhysicalAction("aliquot", {"n": 3}), confirm_key=K_ALIQUOTS)
+            wa.execute(
+                PhysicalAction("aliquot", {"n": 3}),
+                confirm_key=K_ALIQUOTS, preflight=sim,
+            )
