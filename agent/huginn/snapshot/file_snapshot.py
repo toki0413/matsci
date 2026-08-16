@@ -473,16 +473,13 @@ class SnapshotManager:
         logger.info("snapshot revert %s: %d paths", step_id, len(restored))
         # 发布 snapshot.revert 事件
         try:
-            import asyncio
+            from huginn.events.unified_bus import publish_event
 
-            from huginn.events.integration import _publish
-            from huginn.utils.concurrency import track_task
-            asyncio.get_running_loop()
-            track_task(_publish(
+            publish_event(
                 "snapshot.revert",
                 {"step_id": step_id, "paths": restored},
                 source="snapshot_manager",
-            ), name="snapshot-revert-emit")
+            )
         except Exception:
             logger.debug("snapshot revert event publish failed", exc_info=True)
         return restored

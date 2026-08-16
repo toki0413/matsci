@@ -26,9 +26,16 @@ def _render_env() -> str:
 
 
 def test_all_contract_docs_are_not_drifted():
-    """每个契约模式重建渲染 == 提交的文档, 防文档漂移."""
+    """每个契约模式重建渲染 == 提交的文档, 防文档漂移.
+
+    tools-contract 例外: 它枚举 register_core_tools 的运行时结果, 依赖当前环境已安装
+    的可选依赖 (pymatgen/ase/HPC client 等), 缺依赖的工具会被跳过. 因此它天然随环境
+    漂移, 无法用"逐字符相等"断言 — 只做确定性与登记检查 (见下两个测试).
+    """
     cases = {ca.ENV_CONTRACT_NAME: _render_env}
     for flag, (_b, _r, docname) in ca.CONTRACT_MODES.items():
+        if flag == "tools":
+            continue
         cases[docname] = lambda f=flag: _render_flag(f)
 
     failures = []
