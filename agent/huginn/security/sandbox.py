@@ -126,6 +126,8 @@ class SandboxResult:
     blocked: bool = False
     block_reason: str | None = None
     timed_out: bool = False  # True 当命令因超时被终止 (returncode 仍为 -1)
+    # T3: 结构化错误分类, 供下游按类决策 (重试/追踪/降级). 默认 NONE 保持兼容.
+    error_kind: str = "none"
 
 
 class SandboxExecutor:
