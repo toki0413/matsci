@@ -453,3 +453,184 @@ class TestDefaultBackends:
         tool = AgenticSearchTool()
         text = asyncio.run(tool._default_fetch("http://example.com", 1000))
         assert text is None
+
+
+# ── P1-5: LLM 综合 / LLM 派生下一跳 (use_llm=True) ─────────────────────────
+
+
+class _FakeLLMModel:
+    """同步/异步都能用, 返回预设 content 的最小模型假体."""
+
+    def __init__(self, content: str):
+        self._content = content
+
+    async def ainvoke(self, messages):
+        return type("R", (), {"content": self._content})()
+
+    async def invoke(self, messages):
+        return await self.ainvoke(messages)
+
+
+def _findings() -> list[dict[str, Any]]:
+    return [
+        {
+            "url": "http://example.com/a",
+            "title": "Paper A",
+            "passages": ["silicon band gap is 1.12 eV"],
+            "hop": 0,
+        },
+        {
+            "url": "http://example.com/b",
+            "title": "Paper B",
+            "passages": ["temperature lowers the band gap"],
+            "hop": 1,
+        },
+    ]
+
+
+class TestLLMSynthesize:
+    def test_llm_synthesize_uses_model_output(self, monkeypatch):
+        tool = AgenticSearchTool()
+        monkeypatch.setattr(
+            tool, "_get_model",
+            lambda ctx: _FakeLLMModel("## 关键发现\n- silicon gap 1.12 eV [1]"),
+        )
+        out = asyncio.run(tool._llm_synthesize(_findings(), "band gap of silicon", _ctx()))
+        assert "## 关键发现" in out
+        assert "[1]" in out
+
+    def test_llm_synthesize_empty_findings_no_llm(self, monkeypatch):
+        called = []
+
+        def _get_model(ctx):
+            called.append(True)
+            return _FakeLLMModel("should not be reached")
+
+        tool = AgenticSearchTool()
+        monkeypatch.setattr(tool, "_get_model", _get_model)
+        out = asyncio.run(tool._llm_synthesize([], "q", _ctx()))
+        assert "No relevant findings" in out
+        assert called == []
+
+    def test_llm_synthesize_fallback_on_exception(self, monkeypatch):
+        def _boom(ctx):
+            raise RuntimeError("no model")
+
+        tool = AgenticSearchTool()
+        monkeypatch.setattr(tool, "_get_model", _boom)
+        out = asyncio.run(tool._llm_synthesize(_findings(), "q", _ctx()))
+        # 降级回纯拼接
+        assert "Agentic research on: q" in out
+        assert "Paper A" in out
+
+
+class TestLLMFollowups:
+    def test_llm_derive_followups_parses_json(self, monkeypatch):
+        tool = AgenticSearchTool()
+        monkeypatch.setattr(
+            tool, "_get_model",
+            lambda ctx: _FakeLLMModel('{"queries": ["temperature dependence", "varshni equation"]}'),
+        )
+        out = asyncio.run(tool._llm_derive_followups(_findings(), "band gap", 2, _ctx()))
+        assert out == ["temperature dependence", "varshni equation"]
+
+    def test_llm_derive_followups_tolerates_code_block(self, monkeypatch):
+        tool = AgenticSearchTool()
+        monkeypatch.setattr(
+            tool, "_get_model",
+            lambda ctx: _FakeLLMModel('```json\n{"queries": ["varshni"]}\n```'),
+        )
+        out = asyncio.run(tool._llm_derive_followups(_findings(), "band gap", 3, _ctx()))
+        assert "varshni" in out
+
+    def test_llm_derive_followups_fallback_on_bad_json(self, monkeypatch):
+        tool = AgenticSearchTool()
+        # 返回不可解析内容 -> 降级回关键词派生 (确定性, 非空)
+        monkeypatch.setattr(
+            tool, "_get_model", lambda ctx: _FakeLLMModel("not json at all"),
+        )
+        out = asyncio.run(tool._llm_derive_followups(_findings(), "band gap", 3, _ctx()))
+        assert isinstance(out, list)
+
+    def test_use_llm_gates_synthesis_path(self, monkeypatch):
+        """use_llm=False (默认) 时 research 走纯启发式, 不触发 LLM."""
+        from huginn.tools import agentic_search_tool as ast_mod
+
+        calls: list[str] = []
+
+        def _record_synth(findings, question, ctx):
+            calls.append("synth")
+            return "heuristic answer"
+
+        async def _record_derive(findings, question, max_n, ctx):
+            calls.append("derive")
+            return []
+
+        tool = AgenticSearchTool(
+            searcher=_make_searcher({
+                "q": [{"url": "u1", "title": "band gap paper", "snippet": "s"}],
+            }),
+            fetcher=_make_fetcher({"u1": "band gap content here."}),
+            synthesizer=_record_synth,
+            followup_deriver=_record_derive,
+        )
+        # 注入的 synthesizer 是同步函数, 包一层 async 适配 await
+        async def _await_synth(findings, question, ctx):
+            return _record_synth(findings, question, ctx)
+
+        monkeypatch.setattr(tool, "_synthesizer", _await_synth)
+        result = asyncio.run(tool.call({"question": "q", "max_hops": 1}, _ctx()))
+        assert result.success
+        # 注入的 synthesizer / deriver 优先于 LLM, 且不额外调用 LLM
+        assert "synth" in calls
+        assert "derive" in calls
+
+
+# ── P1-6: 语义抽取 (embedding 增强) ─────────────────────────────────────────
+
+
+class TestExtractRelevantSemantic:
+    def test_embed_enhances_recall_of_synonymous_sentences(self):
+        # 语义 embed: 关键词不直接命中, 但向量与 question 相似 -> 被召回
+        # 用确定性伪向量: 含 "band gap" 的句子编码为 [1.0, 0.0], 其余 [0.0, 1.0]
+        def fake_embed(texts: list[str]) -> list[list[float]]:
+            out = []
+            for t in texts:
+                low = t.lower()
+                if "band gap" in low:
+                    out.append([1.0, 0.0])
+                elif "温度" in t or "temperature" in low:
+                    out.append([0.8, 0.2])
+                else:
+                    out.append([0.0, 1.0])
+            return out
+
+        text = (
+            "This work reports the optical properties of silicon. "
+            "Temperature strongly modulates the forbidden gap width. "
+            "Cooking recipes are unrelated to semiconductors."
+        )
+        # 关键词: 光/性质/硅... 这里 question 刻意换成与正文用词不同的同义描述
+        passages = _extract_relevant(
+            text,
+            "how does heat affect the band gap of silicon",
+            max_passages=2,
+            min_score=1,
+            embed=fake_embed,
+        )
+        joined = " ".join(passages)
+        assert "Temperature strongly modulates" in joined
+        assert "Cooking recipes" not in joined
+
+    def test_embed_failure_falls_back_to_keyword(self, monkeypatch):
+        from huginn.tools import agentic_search_tool as ast_mod
+
+        def _bad_embed(texts):
+            raise RuntimeError("embed model down")
+
+        text = "Silicon has a band gap of 1.12 eV. Unrelated filler."
+        passages = _extract_relevant(
+            text, "silicon band gap", max_passages=2, min_score=1, embed=_bad_embed
+        )
+        assert any("1.12" in p for p in passages)
+

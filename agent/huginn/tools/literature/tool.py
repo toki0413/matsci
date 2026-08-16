@@ -62,8 +62,81 @@ from .search_sources import (
     _search_pubmed,
     _search_s2,
     _search_zenodo,
+    _rerank,
     _sort_papers,
 )
+
+# ───────────────────────── search 增强 (P0-1 / P1-4) ─────────────────────────
+
+from huginn.utils.cache import TimedLRUCache
+
+# P1-4: 检索结果 TTL 缓存 — 同一 query 命中直接返回, 不再重打 15 路 API.
+# 有界 + 带 TTL, 避免重复限流也避免无限增长 (与 checkpointer 容量封顶同一纪律).
+_SEARCH_CACHE: TimedLRUCache[ToolResult] = TimedLRUCache(max_size=128, ttl=3600.0)
+
+# P0-1: 子查询只打"核心学术源" — 面向"侧面/子主题"召回, 材料数据库 (COD/NOMAD/DataCite)
+# 和数据集对分面 query 收益低, 不打, 控制 API 调用量. 每个子查询结果数减半.
+_SUBQUERY_SOURCES: dict[str, Any] = {
+    "arxiv": _search_arxiv,
+    "s2": _search_s2,
+    "crossref": _search_crossref,
+    "openalex": _search_openalex,
+    "pubmed": _search_pubmed,
+}
+
+_EXPAND_SYSTEM_PROMPT = (
+    "你是文献检索助手. 把用户的复杂研究问题拆成 2-3 个互补的子查询, "
+    "每个子查询聚焦一个侧面/子主题, 尽量用具体名词而非修饰语. "
+    "子查询之间不要互相包含 (去掉重叠).\n"
+    '只输出 JSON: {"subqueries": ["子查询1", "子查询2", ...]}\n'
+    "若问题已经足够具体单一, 输出 {\"subqueries\": []}."
+)
+
+
+async def _expand_query(model: Any, query: str, max_n: int = 3) -> list[str]:
+    """LLM 把 query 拆成子查询 (Q 端增强). 失败/空结果返回 [], 不阻塞搜索."""
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    try:
+        messages = [
+            SystemMessage(content=_EXPAND_SYSTEM_PROMPT),
+            HumanMessage(content=f"研究问题: {query}"),
+        ]
+        if hasattr(model, "ainvoke"):
+            response = await model.ainvoke(messages)
+        else:
+            response = await asyncio.to_thread(model.invoke, messages)
+        content = response.content if hasattr(response, "content") else str(response)
+        if not isinstance(content, str):
+            content = json.dumps(content, ensure_ascii=False)
+        parsed = LiteratureTool._parse_json(content)
+        subs = parsed.get("subqueries", []) if parsed else []
+    except Exception as exc:
+        logger.debug("query expansion failed, search without subqueries: %s", exc)
+        return []
+
+    out: list[str] = []
+    norm_orig = _norm_title(query)
+    for s in subs[:max_n]:
+        s = (s or "").strip()
+        if not s or _norm_title(s) == norm_orig:
+            continue
+        if s.lower() not in {o.lower() for o in out}:
+            out.append(s)
+    return out
+
+
+def _search_cache_key(args: "LiteratureInput", subqueries: tuple[str, ...]) -> tuple:
+    """检索缓存 key: 覆盖 query/源/年份/条数 + 是否扩展 + 子查询列表.
+
+    不含 args.action — summarize/ingest/benchmark 内部的隐式 search 与显式
+    search 共享同一缓存 (语义一致, 减少重复 15 路).
+    """
+    return (
+        args.query, tuple(args.sources),
+        args.year_from, args.year_to, args.max_results,
+        args.expand_query, subqueries,
+    )
 
 # ───────────────────────── LLM prompts ─────────────────────────
 
@@ -172,6 +245,11 @@ class LiteratureInput(BaseModel):
     query: str = Field(default="", description="搜索/综述 query")
     max_results: int = Field(
         default=10, ge=1, le=50, description="每个源最多取几条 (多路并发后去重)"
+    )
+    expand_query: bool = Field(
+        default=True,
+        description="search 前用 LLM 把 query 拆成 2-3 个子查询 (打核心学术源) 扩大召回. "
+                    "失败自动降级为不扩展. False=只用原始 query.",
     )
     sources: list[str] = Field(
         default_factory=lambda: ["arxiv", "s2", "crossref", "openalex",
@@ -316,7 +394,7 @@ class LiteratureTool(HuginnTool):
             )
         try:
             if args.action == "search":
-                return await self._do_search(args)
+                return await self._do_search(args, context)
             if args.action == "summarize":
                 return await self._do_summarize(args, context)
             if args.action == "benchmark_lookup":
@@ -344,74 +422,69 @@ class LiteratureTool(HuginnTool):
 
     # ── search ──────────────────────────────────────────────
 
-    async def _do_search(self, args: LiteratureInput) -> ToolResult:
+    async def _do_search(self, args: LiteratureInput, context: ToolContext | None = None) -> ToolResult:
         query = (args.query or "").strip()
         if not query:
             return ToolResult(
                 data=None, success=False, error="query is required for search"
             )
 
+        # P0-1: LLM 把 query 拆成子查询 (Q 端增强). 需要 context 取 model,
+        # 失败降级为不扩展 — 搜索绝不能被增强逻辑阻塞.
+        subqueries: list[str] = []
+        if args.expand_query and context is not None:
+            try:
+                model = self._get_model(context)
+            except Exception as exc:
+                logger.debug("query expansion skipped (no model): %s", exc)
+                model = None
+            if model is not None:
+                subqueries = await _expand_query(model, query)
+
+        # P1-4: TTL 缓存. key 含子查询, 不同扩展不同条目.
+        cache_key = _search_cache_key(args, tuple(subqueries))
+        cached = _SEARCH_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
+
+        # 15 源统一分发表 (显式 if-blocks 的浓缩, 行为一致)
+        src_fn: dict[str, Any] = {
+            "arxiv": _search_arxiv,
+            "s2": _search_s2,
+            "crossref": _search_crossref,
+            "openalex": _search_openalex,
+            "pubmed": _search_pubmed,
+            "doaj": _search_doaj,
+            "core": _search_core,
+            "europepmc": _search_europepmc,
+            "zenodo": _search_zenodo,
+            "openaire": _search_openaire,
+            "cod": _search_cod,
+            "materials_cloud": _search_materials_cloud,
+            "nomad": _search_nomad,
+            "datacite": _search_datacite,
+            "materials_project": _search_materials_project,
+        }
         tasks: list[tuple[str, asyncio.Task]] = []
-        if "arxiv" in args.sources:
-            tasks.append(("arxiv", asyncio.create_task(
-                _search_arxiv(query, args.max_results, args.year_from, args.year_to)
+        for src in args.sources:
+            fn = src_fn.get(src)
+            if fn is None:
+                continue
+            tasks.append((src, asyncio.create_task(
+                fn(query, args.max_results, args.year_from, args.year_to)
             )))
-        if "s2" in args.sources:
-            tasks.append(("s2", asyncio.create_task(
-                _search_s2(query, args.max_results, args.year_from, args.year_to)
-            )))
-        if "crossref" in args.sources:
-            tasks.append(("crossref", asyncio.create_task(
-                _search_crossref(query, args.max_results, args.year_from, args.year_to)
-            )))
-        if "openalex" in args.sources:
-            tasks.append(("openalex", asyncio.create_task(
-                _search_openalex(query, args.max_results, args.year_from, args.year_to)
-            )))
-        if "pubmed" in args.sources:
-            tasks.append(("pubmed", asyncio.create_task(
-                _search_pubmed(query, args.max_results, args.year_from, args.year_to)
-            )))
-        if "doaj" in args.sources:
-            tasks.append(("doaj", asyncio.create_task(
-                _search_doaj(query, args.max_results, args.year_from, args.year_to)
-            )))
-        if "core" in args.sources:
-            tasks.append(("core", asyncio.create_task(
-                _search_core(query, args.max_results, args.year_from, args.year_to)
-            )))
-        if "europepmc" in args.sources:
-            tasks.append(("europepmc", asyncio.create_task(
-                _search_europepmc(query, args.max_results, args.year_from, args.year_to)
-            )))
-        if "zenodo" in args.sources:
-            tasks.append(("zenodo", asyncio.create_task(
-                _search_zenodo(query, args.max_results, args.year_from, args.year_to)
-            )))
-        if "openaire" in args.sources:
-            tasks.append(("openaire", asyncio.create_task(
-                _search_openaire(query, args.max_results, args.year_from, args.year_to)
-            )))
-        if "cod" in args.sources:
-            tasks.append(("cod", asyncio.create_task(
-                _search_cod(query, args.max_results, args.year_from, args.year_to)
-            )))
-        if "materials_cloud" in args.sources:
-            tasks.append(("materials_cloud", asyncio.create_task(
-                _search_materials_cloud(query, args.max_results, args.year_from, args.year_to)
-            )))
-        if "nomad" in args.sources:
-            tasks.append(("nomad", asyncio.create_task(
-                _search_nomad(query, args.max_results, args.year_from, args.year_to)
-            )))
-        if "datacite" in args.sources:
-            tasks.append(("datacite", asyncio.create_task(
-                _search_datacite(query, args.max_results, args.year_from, args.year_to)
-            )))
-        if "materials_project" in args.sources:
-            tasks.append(("materials_project", asyncio.create_task(
-                _search_materials_project(query, args.max_results, args.year_from, args.year_to)
-            )))
+
+        # 子查询只打核心学术源, 结果数减半 — 扩召回而不把 API 调用量翻倍
+        if subqueries:
+            sub_max = max(2, args.max_results // 2)
+            for sq in subqueries:
+                for src, fn in _SUBQUERY_SOURCES.items():
+                    if src not in args.sources:
+                        continue
+                    tasks.append((f"{src}@{sq[:24]}", asyncio.create_task(
+                        fn(sq, sub_max, args.year_from, args.year_to)
+                    )))
+
         if not tasks:
             return ToolResult(
                 data=None, success=False,
@@ -433,12 +506,14 @@ class LiteratureTool(HuginnTool):
                 all_papers.extend(res)
 
         deduped = _dedup(all_papers)
-        ranked = _sort_papers(deduped)[: args.max_results * 2]
+        # P0-2: query 相关度重排 (替代纯 citation 排序)
+        ranked = _rerank(query, deduped)[: args.max_results * 2]
 
-        return ToolResult(
+        result = ToolResult(
             data={
                 "action": "search",
                 "query": query,
+                "subqueries": subqueries,
                 "total": len(ranked),
                 "papers": ranked,
                 "sources_tried": [s for s, _ in tasks],
@@ -446,6 +521,8 @@ class LiteratureTool(HuginnTool):
             },
             success=True,
         )
+        _SEARCH_CACHE.set(cache_key, result)
+        return result
 
     # ── summarize ───────────────────────────────────────────
 
@@ -454,7 +531,7 @@ class LiteratureTool(HuginnTool):
     ) -> ToolResult:
         papers = args.papers
         if not papers and args.query:
-            search_res = await self._do_search(args)
+            search_res = await self._do_search(args, context)
             if not search_res.success:
                 return search_res
             papers = (search_res.data or {}).get("papers", [])
@@ -468,7 +545,7 @@ class LiteratureTool(HuginnTool):
         papers = papers[:15]
         focus_line = f"\n\n综述重点 (如果给的话): {args.focus}" if args.focus else ""
 
-        # 构造论文清单给 LLM
+        # 构造论文清单给 LLM — P0-3: 优先喂全文 (fetch_pdf 拿到的), 退回 abstract
         paper_block_parts: list[str] = []
         for i, p in enumerate(papers, 1):
             authors_short = ", ".join(p.get("authors", [])[:3])
@@ -476,14 +553,15 @@ class LiteratureTool(HuginnTool):
                 authors_short += " et al."
             year = p.get("year") or ""
             venue = p.get("venue") or ""
-            abstract = (p.get("abstract") or "").strip()
-            if len(abstract) > 1500:
-                abstract = abstract[:1500] + "..."
+            body = (p.get("full_text") or p.get("abstract") or "").strip()
+            label = "Full text" if p.get("full_text") else "Abstract"
+            if len(body) > 3000:
+                body = body[:3000] + "..."
             paper_block_parts.append(
                 f"[{i}] {p.get('title','')}\n"
                 f"  Authors: {authors_short}\n"
                 f"  Year: {year}  Venue: {venue}  DOI: {p.get('doi') or '-'}\n"
-                f"  Abstract: {abstract}"
+                f"  {label}: {body}"
             )
         paper_block = "\n\n".join(paper_block_parts)
 
@@ -753,6 +831,18 @@ class LiteratureTool(HuginnTool):
                 "sections": sections,
                 "full_text": full_text,
                 "candidates_tried": tried,
+                # P0-3: 可直接喂回 summarize/ingest_to_rag 的 paper dict —
+                # 打通"抓全文 → 综述/入库用全文"的链路
+                "paper": {
+                    "title": (args.paper or {}).get("title", ""),
+                    "authors": (args.paper or {}).get("authors", []),
+                    "year": (args.paper or {}).get("year"),
+                    "venue": (args.paper or {}).get("venue", ""),
+                    "doi": (args.paper or {}).get("doi") or args.doi,
+                    "url": used_url,
+                    "full_text": full_text,
+                    "sections": sections,
+                },
             },
             success=True,
         )
@@ -1211,7 +1301,7 @@ class LiteratureTool(HuginnTool):
 
         papers = args.papers
         if not papers and args.query:
-            search_res = await self._do_search(args)
+            search_res = await self._do_search(args, context)
             if not search_res.success:
                 return search_res
             papers = (search_res.data or {}).get("papers", [])
@@ -1236,15 +1326,21 @@ class LiteratureTool(HuginnTool):
             venue = p.get("venue", "")
             doi = p.get("doi") or ""
             abstract = p.get("abstract", "") or ""
-            if not abstract and not title:
+            full_text = p.get("full_text", "") or ""
+            if not full_text and not abstract and not title:
                 continue
+            # P0-3: 有全文优先入库全文 (截到 3000 字, 保真度 > 摘要), 退回 abstract
+            body = full_text if full_text else abstract
+            if len(body) > 3000:
+                body = body[:3000] + "..."
+            body_label = "FullText" if full_text else "Abstract"
             doc_text = (
                 f"Title: {title}\n"
                 f"Authors: {authors}\n"
                 f"Year: {year}\n"
                 f"Venue: {venue}\n"
                 f"DOI: {doi}\n"
-                f"Abstract: {abstract}"
+                f"{body_label}: {body}"
             )
             doc_id = doi or f"lit_{_norm_title(title)[:40]}"
             try:
@@ -1510,7 +1606,7 @@ class LiteratureTool(HuginnTool):
         # 1. 拿 papers: 优先用显式传入, 没有就 search
         papers = args.papers
         if not papers and args.query:
-            search_res = await self._do_search(args)
+            search_res = await self._do_search(args, context)
             if not search_res.success:
                 return search_res
             papers = (search_res.data or {}).get("papers", [])
