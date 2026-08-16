@@ -146,6 +146,36 @@ def get_profile() -> TierProfile:
     return get_store().profile()
 
 
+@dataclass(frozen=True)
+class CompactionKnobs:
+    """按档位映射的 compaction 力度旋钮 (M3).
+
+    以"乘子"形式提供, 作用于 streaming.py 里已有的 keep_last_n / keep_root_n
+    决策 (adaptive / CSM / trace 逻辑保持原样, 只按档位整体放宽或收紧):
+
+    - ``keep_multiplier``: 乘到 keep_last_n 上 (>1 保留更多原始消息).
+    - ``root_multiplier``: 乘到 keep_root_n 上 (>1 保留更多稳定前缀).
+    - ``summarize``: 预算超限时是否优先用 LLM 摘要 (light 档留给强模型原样保留).
+    """
+
+    keep_multiplier: float
+    root_multiplier: float
+    summarize: bool
+
+
+def compaction_knobs() -> CompactionKnobs:
+    """当前档位的 compaction 旋钮.
+
+    heavy/medium 保持默认激进裁剪 (乘子 1.0, 照顾弱模型的小上下文); light
+    (minimal 档) 整体放宽 2 倍, 强模型上下文大, 不必为省 token 牺牲细粒度.
+    安全层不受影响.
+    """
+    tier = get_tier()
+    if tier is ModelTier.MINIMAL:
+        return CompactionKnobs(keep_multiplier=2.0, root_multiplier=1.5, summarize=True)
+    return CompactionKnobs(keep_multiplier=1.0, root_multiplier=1.0, summarize=True)
+
+
 __all__ = [
     "ModelTier",
     "TierProfile",

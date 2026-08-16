@@ -29,7 +29,7 @@
 | `ising_frontier` | True | Ising 前沿 (HUGINN_ISING_FRONTIER) | — | — |
 | `ising_rerank` | True | Ising 重排 (HUGINN_ISING_RERANK) | — | — |
 | `json_logs` | True | JSON 结构化日志 (HUGINN_JSON_LOGS) | HUGINN_JSON_LOGS | utils/json_logging.py:122 |
-| `loop_detector` | True | 对话循环检测 | — | agent/streaming.py:1619 |
+| `loop_detector` | True | 对话循环检测 | — | agent/streaming.py:1640 |
 | `memory_typing` | True | 记忆类型标注 (HUGINN_USE_MEMORY_TYPING) | HUGINN_USE_MEMORY_TYPING | memory/typing.py:52 |
 | `persistent_terminal` | False | 持久化终端 (HUGINN_PERSISTENT_TERMINAL) | HUGINN_PERSISTENT_TERMINAL | — |
 | `personalization` | True | 学习用户通信风格 | — | personalization/user_style.py:152, personalization/user_style.py:349 |

@@ -8,7 +8,7 @@
 | `HUGINN_ACTION_HIST_MAX` | 1000 | autoloop/cognitive_loop.py:66 | — | external |
 | `HUGINN_ADMIN_API_KEY` | '' | security/auth.py:115 | — | external |
 | `HUGINN_AGENTS` | '' | config.py:876 | routes/config.py:316 | code-set |
-| `HUGINN_AINVOKE_TIMEOUT` | str(_thinking_scale_timeout( | agent/streaming.py:1782 | — | external |
+| `HUGINN_AINVOKE_TIMEOUT` | str(_thinking_scale_timeout( | agent/streaming.py:1803 | — | external |
 | `HUGINN_ALERT_WEBHOOK_URL` | '' | diagnostics/system_health.py:391 | — | external |
 | `HUGINN_ALIGNMENT_SURPRISE_TRIGGER` | 0 | autoloop/engine_reflect.py:1827 | — | external |
 | `HUGINN_ALLOW_LOCAL_BASH` | '' | config.py:769, security/execution.py:22 | routes/agents.py:84, tools/__init__.py:189, cli/rcb_runner.py:61 | code-set |
@@ -111,7 +111,7 @@
 | `HUGINN_ITER_HIST_MAX` | 50 | autoloop/cognitive_loop.py:68 | — | external |
 | `HUGINN_JWT_SECRET` | '' | security/auth.py:80 | — | external |
 | `HUGINN_KB_CHUNKS_PATH` | '' | evolution/knowledge_distiller.py:497 | — | external |
-| `HUGINN_KEEP_ROOT_N` | 2 | agent/streaming.py:854, agent/streaming.py:1489, agent/streaming.py:1531 | cli/rcb_runner.py:89 | code-set |
+| `HUGINN_KEEP_ROOT_N` | 2 | agent/streaming.py:854, agent/streaming.py:1509, agent/streaming.py:1552 | cli/rcb_runner.py:89 | code-set |
 | `HUGINN_KG_DEPTH` | 1 | config.py:766 | — | external |
 | `HUGINN_KG_ENABLED` | '' | config.py:765 | — | external |
 | `HUGINN_KG_TOP_K` | 10 | config.py:767 | — | external |
