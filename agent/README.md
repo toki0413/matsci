@@ -86,13 +86,13 @@ execute shell commands, inspect git state, and run Python snippets:
 
 ```bash
 # One-shot task
-huginn coder "Add a docstring to huginn/tools/code_tool.py"
+huginn-agent coder "Add a docstring to huginn/tools/code_tool.py"
 
 # Interactive mode
-huginn coder
+huginn-agent coder
 
 # Auto-approve destructive actions (use with caution)
-huginn coder "Refactor the CLI" --auto-approve
+huginn-agent coder "Refactor the CLI" --auto-approve
 ```
 
 Coder tools: `file_read_tool`, `file_write_tool`, `file_edit_tool`,
