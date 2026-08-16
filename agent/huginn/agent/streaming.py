@@ -672,8 +672,21 @@ class StreamingMixin:
         if self._model_context_window <= 0:
             return None
 
+        # P0: 无条件 checkpointer 消息数上限兜底 — 不依赖 token usage / 上下文
+        # 百分比. 长程任务消息条数可能无界增长 (即便每条 token 很小, 总量也常压
+        # 在 token 预算内 → 纯 G34 不触发). 这里按条数硬上限收敛, 保证即使
+        # compaction 门控失效 (如 LLM 不回 usage) 也有兜底.
+        ccap_trimmed = await self._enforce_checkpointer_count_cap(
+            graph, config, turn_span
+        )
+
         usage = self._extract_usage_tokens()
         if not any(usage.values()):
+            # P1①: 无 token usage → 无法可靠计算上下文百分比, 跳过 token-% 
+            # compaction/summary, 但上面 P0 的消息数兜底已执行. 不再是纯 return None
+            # (旧逻辑在无 usage 时连 G34 修剪都不做 → checkpointer 无限膨胀).
+            if ccap_trimmed > 0:
+                turn_span.metadata["compact_p0_count_cap"] = True
             return None
 
         before = calculate_context_usage(usage, self._model_context_window)
@@ -734,7 +747,8 @@ class StreamingMixin:
         ):
             try:
                 removed = await self._trim_checkpointer_messages(
-                    final_state, graph, config
+                    final_state, graph, config,
+                    max_messages=self._checkpointer_max_messages(),
                 )
                 if removed > 0:
                     logger.info(
@@ -808,11 +822,72 @@ class StreamingMixin:
         await _ubus.publish_compact(before["used"], after_pct, thread_id)
         return {"before_pct": before["used"], "after_pct": after_pct}
 
+    def _checkpointer_max_messages(self) -> int | None:
+        """P0: 返回 checkpointer 消息数硬上限 (env 可配). None = 不启用.
+
+        默认 120 条, 覆盖长程对话消息条目无界累积的场景. 设为 0 或负数表示关闭,
+        仅保留原 token-budget 修剪 (保持与旧行为 100% 兼容).
+        """
+        raw = os.environ.get("HUGINN_CHECKPOINTER_MAX_MESSAGES", "120")
+        try:
+            v = int(raw)
+        except (TypeError, ValueError):
+            return 120
+        if v <= 0:
+            return None
+        return v
+
+    async def _enforce_checkpointer_count_cap(
+        self,
+        graph: Any,
+        config: dict[str, Any] | None,
+        turn_span: Any,
+    ) -> int:
+        """P0: 无条件按消息数上限修剪 checkpointer.
+
+        与 G34 的 token-budget 修剪解耦, 不依赖 usage/上下文百分比. 只要
+        graph+config+checkpointer 齐备、策略含 trim、且消息数超过上限, 就收敛.
+        幂等 — 不超过上限或超过上限但退场 (root/keep_last) 已保护无剩余可丢时返回 0.
+        """
+        if (
+            graph is None
+            or config is None
+            or getattr(self, "checkpointer", None) is None
+        ):
+            return 0
+        max_msgs = self._checkpointer_max_messages()
+        if max_msgs is None:
+            return 0
+        strategy = os.environ.get(
+            "HUGINN_COMPACT_STRATEGY", "trim,summarize"
+        ).lower().replace(" ", "")
+        if "trim" not in strategy.split(","):
+            return 0
+        try:
+            removed = await self._trim_checkpointer_messages(
+                None, graph, config, max_messages=max_msgs
+            )
+            if removed > 0:
+                logger.info(
+                    "checkpointer count-cap trimmed %d msgs (P0, cap=%d)",
+                    removed,
+                    max_msgs,
+                )
+                turn_span.metadata["checkpointer_p0_trimmed"] = removed
+            return removed
+        except Exception:
+            logger.warning(
+                "checkpointer count-cap trim failed (P0)", exc_info=True
+            )
+            return 0
+
     async def _trim_checkpointer_messages(
         self,
         final_state: dict[str, Any],
         graph: Any,
         config: dict[str, Any],
+        *,
+        max_messages: int | None = None,
     ) -> int:
         """G34: 真修剪 checkpointer 持久化的 messages state.
 
@@ -825,9 +900,14 @@ class StreamingMixin:
         对齐. root 标记已升级为按消息 metadata (additional_kwargs/metadata 的
         is_root) 标记, 无 metadata 标记时回退到按位置 (前 keep_root_n 条).
 
+        ``max_messages`` (P0): 可选的消息数硬上限. 长程任务里消息条数可能无界
+        增长 (即使每条 token 很小, 总量也压在预算内 → 原逻辑不删). 传入后, 除
+        token 预算外, 还会把消息总数收紧到 ``max_messages`` 以内 (仍受
+        keep_last_n 尾部 + root 保护). 这是不依赖 token usage 的兜底.
+
         Returns 实际删除的消息数.
         """
-        if self.context_budget_tokens <= 0:
+        if self.context_budget_tokens <= 0 and max_messages is None:
             return 0
 
         # 取 checkpointer 现有 state (含 messages + IDs)
@@ -846,7 +926,10 @@ class StreamingMixin:
             count_message_tokens(_msg_content(m), _msg_role(m)) for m in msgs
         ]
         total = sum(per_msg_tokens)
-        if total <= self.context_budget_tokens:
+        # 既没超 token 预算、也没超消息数上限 → 无需修剪
+        under_budget = total <= self.context_budget_tokens
+        under_count = max_messages is None or len(msgs) <= max_messages
+        if under_budget and under_count:
             return 0
 
         keep_last_n = 4
@@ -873,13 +956,19 @@ class StreamingMixin:
         if not droppable_order:
             return 0
 
-        # 算要 drop 几条才能到 budget (从最旧开始扣 token)
+        # 算要 drop 几条 (从最旧开始): 两条件满足任一即继续丢 —
+        #  (a) token 总量仍高于预算;  (b) 剩下消息数仍高于 max_messages.
+        # 丢弃后 acc 应落入预算内, 且保留条数应 ≤ 消息数上限.
         drop_indices: list[int] = []
         acc = total
+        remaining = len(msgs)
         for i in droppable_order:
-            if acc <= self.context_budget_tokens:
+            over_budget = acc > self.context_budget_tokens
+            over_count = max_messages is not None and remaining > max_messages
+            if not over_budget and not over_count:
                 break
             acc -= per_msg_tokens[i]
+            remaining -= 1
             drop_indices.append(i)
 
         if not drop_indices:

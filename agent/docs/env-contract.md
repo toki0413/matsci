@@ -8,7 +8,7 @@
 | `HUGINN_ACTION_HIST_MAX` | 1000 | autoloop/cognitive_loop.py:66 | — | external |
 | `HUGINN_ADMIN_API_KEY` | '' | security/auth.py:115 | — | external |
 | `HUGINN_AGENTS` | '' | config.py:880 | routes/config.py:316 | code-set |
-| `HUGINN_AINVOKE_TIMEOUT` | str(_thinking_scale_timeout( | agent/streaming.py:1804 | — | external |
+| `HUGINN_AINVOKE_TIMEOUT` | str(_thinking_scale_timeout( | agent/streaming.py:1893 | — | external |
 | `HUGINN_ALERT_WEBHOOK_URL` | '' | diagnostics/system_health.py:391 | — | external |
 | `HUGINN_ALIGNMENT_SURPRISE_TRIGGER` | 0 | autoloop/engine_reflect.py:1827 | — | external |
 | `HUGINN_ALLOW_LOCAL_BASH` | '' | config.py:773, security/execution.py:22 | routes/agents.py:84, tools/__init__.py:189, cli/rcb_runner.py:57 | code-set |
@@ -35,6 +35,7 @@
 | `HUGINN_BRANCH_INCUBATOR_DEPTH` | 1 | autoloop/hypothesis_loop.py:1938 | — | external |
 | `HUGINN_BUDGET_MODE` | cumulative | scheduling/scheduler.py:115 | — | external |
 | `HUGINN_CACHE_DIR` | str(get_runtime_home( | autoloop/goal_store.py:124, autoloop/plan_store.py:186, cli/rcb_runner.py:60, +19 处 | agents/task_dag.py:312, autoloop/bandit.py:424, autoloop/variant_gen.py:299, +9 处, autoloop/variant_gen.py:310 | code-set |
+| `HUGINN_CHECKPOINTER_MAX_MESSAGES` | 120 | agent/streaming.py:831 | — | external |
 | `HUGINN_CHECKPOINTER_PATH` | '' | agent_config.py:111, bench/orchestrator.py:172, checkpointer.py:34, +4 处 | bench/orchestrator.py:451, bench/orchestrator.py:475, bench/orchestrator.py:490, bench/orchestrator.py:501 | code-set |
 | `HUGINN_CI` | '' | tools/sci/gp_tool.py:675 | — | external |
 | `HUGINN_CODEACT_MEM_CAP` | 2147483648 | agent/code_act_loop.py:793 | — | external |
@@ -43,7 +44,7 @@
 | `HUGINN_COEVOLUTION` | 0 | cli/rcb_runner.py:1236 | — | external |
 | `HUGINN_COGNITIVE_LLM_DECIDER` | 1 | autoloop/engine.py:388 | cli/rcb_runner.py:97 | code-set |
 | `HUGINN_COMPACT_KIND` | remote | agent/reflection.py:60 | — | external |
-| `HUGINN_COMPACT_STRATEGY` | trim,summarize | agent/streaming.py:725 | — | external |
+| `HUGINN_COMPACT_STRATEGY` | trim,summarize | agent/streaming.py:738, agent/streaming.py:861 | — | external |
 | `HUGINN_COMPLETION_CHECK_INTERVAL` | 10 | cli/rcb_step2.py:420 | — | external |
 | `HUGINN_CONFIG_FILE` | huginn.toml | config.py:1336, routes/config.py:55, routes/config.py:745, +2 处 | — | external |
 | `HUGINN_CONSOLIDATE_MODEL` | '' | memory/longterm.py:1726 | — | external |
@@ -111,7 +112,7 @@
 | `HUGINN_ITER_HIST_MAX` | 50 | autoloop/cognitive_loop.py:68 | — | external |
 | `HUGINN_JWT_SECRET` | '' | security/auth.py:80 | — | external |
 | `HUGINN_KB_CHUNKS_PATH` | '' | evolution/knowledge_distiller.py:497 | — | external |
-| `HUGINN_KEEP_ROOT_N` | 2 | agent/streaming.py:855, agent/streaming.py:1510, agent/streaming.py:1553 | cli/rcb_runner.py:85 | code-set |
+| `HUGINN_KEEP_ROOT_N` | 2 | agent/streaming.py:938, agent/streaming.py:1599, agent/streaming.py:1642 | cli/rcb_runner.py:85 | code-set |
 | `HUGINN_KG_DEPTH` | 1 | config.py:770 | — | external |
 | `HUGINN_KG_ENABLED` | '' | config.py:769 | — | external |
 | `HUGINN_KG_TOP_K` | 10 | config.py:771 | — | external |
@@ -231,7 +232,7 @@
 | `HUGINN_STATE_REGISTRY_PATH` | '' | persistence/state_registry.py:74 | — | external |
 | `HUGINN_STREAM_IDLE_TIMEOUT` | 60 | agent/streaming.py:65 | — | external |
 | `HUGINN_SWARM_DISTRIBUTED` | '' | agents/swarm.py:577 | cli/rcb_runner.py:351, agents/swarm.py:677, agents/swarm.py:668 | code-set |
-| `HUGINN_TASK_TOOL_ROUTER` | 0 | agent/core.py:644, agent/streaming.py:1082 | cli/rcb_runner.py:361 | code-set |
+| `HUGINN_TASK_TOOL_ROUTER` | 0 | agent/core.py:644, agent/streaming.py:1171 | cli/rcb_runner.py:361 | code-set |
 | `HUGINN_TEAM_MODE` | '' | config.py:710 | — | external |
 | `HUGINN_TELEMETRY_ENABLED` | true | config.py:808 | — | external |
 | `HUGINN_TELEMETRY_PATH` | '' | autoloop/phase_gate.py:156 | — | external |
@@ -272,4 +273,4 @@
 | `HUGINN_WS_MAX_CONNECTIONS` | 50 | middleware/ws_governance.py:59 | — | external |
 | `HUGINN_WS_MAX_MSGS_PER_SEC` | 20 | middleware/ws_governance.py:60 | — | external |
 
-共 265 个环境变量。
+共 266 个环境变量。

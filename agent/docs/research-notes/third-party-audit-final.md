@@ -56,7 +56,12 @@
 - 磁盘证据：100 轮后 `checkpoint.sqlite` ≈ **163–170MB**，而 `longterm.db` 仅 **118KB**（记忆库几乎不增长）→ 增长集中在 checkpointer 持久化。
 - 进程内增量：1 turn=69.4MB（一次性懒加载基线：importlib+tiktoken+首次 serde），随轮次≈**0.8MB/turn 线性累积**。
 - 根因链条：[streaming.py](huginn/agent/streaming.py) `_maybe_auto_compact` 在 `if not any(usage.values()): return None` 因 fake LLM **无 token usage** 而永远短路 → `RemoveMessage` 真修剪（G34）从不触发 → checkpointer 内消息历史无界累积。
-- 真实风险提示：当生产 LLM 不返回 token usage（或错误吞掉 usage），compaction 门控失效，checkpointer 同样会线性膨胀。建议修复方向：① 对"连续 N 轮无 usage"实现降级修剪（不依赖 token 百分比），或 ② 为 checkpointer 增加无条件最大消息数/年龄上限兜底。
+- 真实风险提示：当生产 LLM 不返回 token usage（或错误吞掉 usage），compaction 门控失效，checkpointer 同样会线性膨胀。
+
+#### 修复已实施（P0 + P1①）
+- **P0 无条件消息数上限**：新增 [streaming.py](huginn/agent/streaming.py) `_checkpointer_max_messages()`（env `HUGINN_CHECKPOINTER_MAX_MESSAGES` 可配，默认 120，0/负=关闭）+ `_enforce_checkpointer_count_cap()`，在 `_maybe_auto_compact` 顶部**无条件**按条数修剪 checkpointer，与 token budget / usage 解耦。`_trim_checkpointer_messages` 增加 `max_messages` 参数，条数超限时即使 token 未超预算也修剪（仍受 keep_last 尾部 + root 保护）。
+- **P1① 无 usage 降级**：`_maybe_auto_compact` 不再因 `not any(usage.values())` 直接短路 —— 无 usage 时先走 P0 兜底修剪，再返回。
+- **验证**：新增 `TestCheckpointerCountCap` 7 条测试，`test_streaming.py` 90 passed；重跑原失败用例 `test_100_turn_memory_stable` **通过**（38.63s），增长收敛。
 
 ### blind_spot_mapper 接线功能验证
 `TestBlindSpotBlockWiring` 4 条定向测试全部通过（5.22s）：确认失败注入盲点块 / 弱簇不注入 / 无 memory 静默下降级 / block 序位于 topo 之后。
@@ -102,7 +107,7 @@
 | 分级 | 条目 |
 |---|---|
 | **BLOCK** | 无 |
-| **FIX** | ① `test_100_turn_memory_stable` 内存增长超阈值（104MB/100 turn）— 排查潜在慢泄漏；② 重新生成漂移契约 `env-contract.md`、`feature-flags-contract.md` |
+| **FIX** | ① `test_100_turn_memory_stable` checkpointer 累积 — **已修复**（P0 消息数上限 + P1① 无 usage 降级，重跑通过）② 契约漂移 `env-contract.md`、`feature-flags-contract.md` — **已修复**（config_audit 重新生成，3 passed） |
 | **NIT** | ① 报告文档 `159 passed` 标注为定向快照；② `_MASTER_SALT` 取舍注释 |
 
-**总体判断**: agent 安全防御成熟（多纵深、命令白名单、AST 预扫、参数化 SQL、日志脱敏），全量测试 99.97% 通过，本次 blind_spot_mapper 去孤岛实现与文档、测试三方一致，属高质量、低风险的 advisory 增强。无阻塞项，可继续演进；两个 FIX 为既有问题，建议纳入常规维护而非本次交付前置。
+**总体判断**: agent 安全防御成熟（多纵深、命令白名单、AST 预扫、参数化 SQL、日志脱敏），全量测试 99.97% 通过，本次 blind_spot_mapper 去孤岛实现与文档、测试三方一致，属高质量、低风险的 advisory 增强。无阻塞项。审计中暴露的两处 FIX（checkpointer 长程内存累积、契约文档漂移）**均已定位根因并修复，定向回归通过**，可继续演进。
