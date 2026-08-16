@@ -53,7 +53,7 @@
 | `HUGINN_CONTAINER_RUNTIME` | none | config.py:730, security/execution.py:27 | — | external |
 | `HUGINN_CONTEXT_BUDGET_TOKENS` | 0 | agent_config.py:177, config.py:805 | — | external |
 | `HUGINN_CONTEXT_MAX_MESSAGES` | 60 | agent/core.py:370 | — | external |
-| `HUGINN_CONTEXT_ROUTER` | 0 | context_builder.py:1177 | cli/rcb_runner.py:360 | code-set |
+| `HUGINN_CONTEXT_ROUTER` | 0 | context_builder.py:1230 | cli/rcb_runner.py:360 | code-set |
 | `HUGINN_CORE_API_KEY` | '' | tools/literature/search_sources.py:655 | — | external |
 | `HUGINN_CORE_SUPPORT_PROTOCOL` | 1 | tools/bash_tool.py:180, tools/code_tool.py:126 | — | external |
 | `HUGINN_CORS_ORIGINS` | '' | lifespan.py:837 | — | external |
@@ -72,7 +72,7 @@
 | `HUGINN_DISABLE_WEB_SEARCH` | '' | tools/agentic_search_tool.py:463, tools/literature/_http.py:40, tools/web_search_tool.py:56 | tools/web_search_tool.py:667, tools/web_search_tool.py:672 | code-set |
 | `HUGINN_DOCKER_SANDBOX` | '' | security/sandbox.py:594 | — | external |
 | `HUGINN_DOC_ENGINE` | auto | perception/pdf_parser.py:506 | — | external |
-| `HUGINN_EMBED_MODEL` | all-MiniLM-L6-v2 | knowledge/store.py:33 | — | external |
+| `HUGINN_EMBED_MODEL` | all-MiniLM-L6-v2 | knowledge/store.py:34 | — | external |
 | `HUGINN_EM_RECALL_TOP_K` | 5 | config.py:836 | — | external |
 | `HUGINN_ENABLE_EXPLORATION` | true | config.py:759 | — | external |
 | `HUGINN_ENABLE_SCIHUB` | '' | tools/literature/pdf_fetch.py:238 | — | external |

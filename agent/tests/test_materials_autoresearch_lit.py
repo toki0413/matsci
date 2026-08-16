@@ -18,10 +18,10 @@ from huginn.tools.materials_autoresearch_tool import (
 
 
 def _make_args(**kw) -> MaterialsAutoResearchInput:
-    base = dict(
-        research_goal="minimize formation energy of Li7La3Zr2O12",
-        ratchet_metric="formation_energy",
-    )
+    base = {
+        "research_goal": "minimize formation energy of Li7La3Zr2O12",
+        "ratchet_metric": "formation_energy",
+    }
     base.update(kw)
     return MaterialsAutoResearchInput(**base)
 
