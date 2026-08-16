@@ -581,9 +581,12 @@ class WebSearchTool(HuginnTool):
 
     @staticmethod
     def _html_to_text(html: str) -> str:
-        """粗暴去标签 + 解码实体, 拿到可读正文. 不做完整 DOM 解析, 够 LLM 读就行."""
-        # 先抠 <script>/<style> 整块扔掉, 否则 JS 会污染正文
-        html = re.sub(r"<(script|style)\b[^>]*>.*?</\1>", " ", html, flags=re.DOTALL | re.IGNORECASE)
+        """去导航/页脚噪音 + 剥标签 + 解码实体, 拿到可读正文. 不做完整 DOM 解析, 够 LLM 读就行."""
+        # 先抠 <script>/<style>/<noscript> 整块扔掉, 否则 JS 会污染正文
+        html = re.sub(r"<(script|style|noscript)\b[^>]*>.*?</\1>", " ", html, flags=re.DOTALL | re.IGNORECASE)
+        # 再抠导航/页脚/侧栏等噪音容器 (P1-6): 不承载正文, 还常把"下一页/相关链接"
+        # 之类灌进正文, 去标签前整块扔掉
+        html = re.sub(r"<(nav|header|footer|aside)\b[^>]*>.*?</\1>", " ", html, flags=re.DOTALL | re.IGNORECASE)
         # 块级标签换行
         html = re.sub(r"</(p|div|li|h[1-6]|tr|br)\s*>", "\n", html, flags=re.IGNORECASE)
         html = re.sub(r"<br\s*/?>", "\n", html, flags=re.IGNORECASE)
@@ -607,27 +610,41 @@ class WebSearchTool(HuginnTool):
 
     @staticmethod
     def _chunk_text(text: str, size: int = 600) -> list[str]:
-        """按大致句子边界切块, 每块不超过 size 字符."""
+        """按段落/句子边界切块, 每块不超过 size 字符 (P1-6).
+
+        旧实现按句号硬切, 会在段落中间断开, 后续检索/喂 LLM 会丢上下文.
+        新实现: 段落是语义边界 — 段内句子拼到 size 附近; 段尾若已积攒一半以上
+        size 就封块 (段落语义独立, 跨段拼块会混入无关上下文); 超长单句才硬切.
+        """
         if not text:
             return []
-        # 按句号/换行粗切, 再拼到 size 附近. 不追求精确, 够用.
-        sentences = re.split(r"(?<=[。.!?\n])\s+", text)
+        # _html_to_text 已把块级边界转成 \n, 按空行分段 (语义边界)
+        paragraphs = [p.strip() for p in re.split(r"\n\s*\n+", text) if p.strip()]
+        if not paragraphs:
+            return []
         chunks: list[str] = []
         cur = ""
-        for s in sentences:
-            s = s.strip()
-            if not s:
-                continue
-            if len(cur) + len(s) + 1 <= size:
-                cur = (cur + " " + s).strip()
-            else:
+        for para in paragraphs:
+            # 段内按句子软拼
+            sentences = [s.strip() for s in re.split(r"(?<=[。.!?])\s+", para) if s.strip()]
+            if not sentences:
+                sentences = [para]
+            for s in sentences:
+                if len(cur) + len(s) + 1 <= size:
+                    cur = (cur + " " + s).strip()
+                    continue
                 if cur:
                     chunks.append(cur)
+                    cur = ""
                 # 超长单句硬切
                 while len(s) > size:
                     chunks.append(s[:size])
                     s = s[size:]
                 cur = s
+            # 段落末尾: 段尾足量才封块, 否则继续拼下一段 (避免碎块)
+            if cur and len(cur) >= size // 2:
+                chunks.append(cur)
+                cur = ""
         if cur:
             chunks.append(cur)
         return chunks
