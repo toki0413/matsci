@@ -1069,6 +1069,57 @@ LUCID review (mandatory after generating hypothesis):
         except Exception:
             logger.debug("topology insight injection skipped (non-fatal)", exc_info=True)
 
+        # 盲点注入 (blind_spot_mapper 接入主循环): 独立审计发现盲点只在旧 rcb_step2
+        # 编排层被消费, autoloop 主环零接线 → 孤岛. 这里把 self-model 里"确认失败"
+        # (rate==0 且 n≥3) 的簇当成能力盲点, 用 blind_spot_mapper 的
+        # map_blind_spots_to_hint 生成"绕过"建议, 让 agent 生成假设时主动降级/换
+        # 路线而非硬刚. advisory, not blocking. 与 [CURIOSITY] (<0.4 弱簇, 探索)
+        # 互补: 这里只标 rate==0 的确认盲点 (绕过). data source: get_self_model()
+        # 的 cluster 汇总 (persona 粒度), 非 rcb 的 per-skill SelfModel — ceiling:
+        # 盲点判定粗, workaround 表按 skill 名匹配大概率 miss → 给通用建议.
+        # 升级路径: autoloop 维护 per-skill SelfModel 喂 infer_blind_spots.
+        blind_spot_block = ""
+        try:
+            from huginn.metacog.blind_spot_mapper import (
+                BlindSpot,
+                map_blind_spots_to_hint,
+            )
+        except Exception:
+            logger.debug("blind_spot_mapper unavailable, skip blind spot block", exc_info=True)
+        else:
+            _bs_mem = getattr(self, "memory", None)
+            if _bs_mem is not None and hasattr(_bs_mem, "longterm"):
+                try:
+                    _bs_sm = _bs_mem.longterm.get_self_model()
+                except Exception:
+                    logger.debug("blind spot block: self_model unavailable", exc_info=True)
+                    _bs_sm = {}
+                _blind: list[BlindSpot] = []
+                for _key, _v in (_bs_sm or {}).items():
+                    _rate = _v.get("rate")
+                    _succ = _v.get("success", 0)
+                    _fail = _v.get("failure", 0)
+                    _n = _succ + _fail
+                    # 确认失败 (从未成功) 且样本足够 → "blind" 档 (高优先盲点)
+                    if isinstance(_rate, (int, float)) and _rate == 0 and _n >= 3:
+                        _blind.append(BlindSpot(
+                            skill=str(_key),
+                            why_blind=(
+                                f"persona '{_v.get('dimension', _key)}' "
+                                f"历史成功率 0 (n={_n})"
+                            ),
+                            priority="high",
+                        ))
+                _bs_hint = map_blind_spots_to_hint(_blind)
+                if _bs_hint:
+                    blind_spot_block = (
+                        "\n### Blind Spots (advisory, from self-model)\n"
+                        "你在这些方向从未成功过, 视为高优先盲点, 生成假设时优先"
+                        "绕过/换路线, 而非硬刚:\n"
+                        + _bs_hint
+                        + "\n"
+                    )
+
         # 按优先级拼接, 超预算自动裁剪低优先级 block
         blocks = self._apply_block_patches(
             [
@@ -1118,6 +1169,7 @@ Hypothesis:""",
                 ("metacog", metacog_block),
                 ("cluster", cluster_block),
                 ("topo", topo_block),
+                ("blind_spot", blind_spot_block),
                 ("skill", self._build_skill_context_block()),
                 ("hint", hint_block),
             ],
