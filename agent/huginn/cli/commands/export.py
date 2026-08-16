@@ -24,8 +24,8 @@ from huginn.export_manager import ExportManager
     "-f",
     "fmt",
     default="json",
-    type=click.Choice(["json", "markdown", "html"]),
-    help="Export format",
+    type=click.Choice(["json", "markdown", "html", "csv", "xlsx"]),
+    help="Export format (csv/xlsx 仅 knowledge 完整明细表)",
 )
 @click.option(
     "--output",
