@@ -682,7 +682,7 @@ class StreamingMixin:
 
         usage = self._extract_usage_tokens()
         if not any(usage.values()):
-            # P1①: 无 token usage → 无法可靠计算上下文百分比, 跳过 token-% 
+            # P1①: 无 token usage → 无法可靠计算上下文百分比, 跳过 token-%
             # compaction/summary, 但上面 P0 的消息数兜底已执行. 不再是纯 return None
             # (旧逻辑在无 usage 时连 G34 修剪都不做 → checkpointer 无限膨胀).
             if ccap_trimmed > 0:
