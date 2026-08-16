@@ -31,6 +31,41 @@ from huginn.security.sandbox import SandboxResult
 
 logger = logging.getLogger(__name__)
 
+
+def _classify_remote_exception(exc: Any) -> str:
+    """T3: 把远程执行异常/错误串分类为 ErrorKind 值.
+
+    - 认证/权限/host key 拒绝       -> denied
+    - 连接/超时/瞬时                -> transient
+    - 其余 (脚本错误等)             -> fatal
+    输入可以是异常对象或错误字符串 (wait_for 传入的是 str).
+    """
+    msg = str(exc).lower()
+    deny_tags = (
+        "authentication",
+        "permission denied",
+        "password",
+        "rejected",
+        "host key",
+        "not ... in known_hosts",
+        "no known_hosts",
+    )
+    transient_tags = (
+        "timeout",
+        "timed out",
+        "connection",
+        "eof occurred",
+        "temporarily unavailable",
+        "ssh",
+        "network is unreachable",
+        "refused",
+    )
+    if any(tag in msg for tag in deny_tags):
+        return "denied"
+    if any(tag in msg for tag in transient_tags):
+        return "transient"
+    return "fatal"
+
 # Kwargs that are meant for the remote scheduler and must not reach subprocess.run.
 _REMOTE_SCHEDULER_KWARGS = {
     "queue",
@@ -61,7 +96,11 @@ class RemoteExecutor:
         remote_job_backend: RemoteJobBackend | None = None,
     ):
         self.config = config
-        self._client = HPCClient(config)
+        # T1: 注入全局连接池, HPCClient.connect/disconnect 走池复用连接,
+        # 避免每次作业提交/轮询新建 SSH 连接.
+        from huginn.hpc.connection_pool import get_pool
+
+        self._client = HPCClient(config, pool=get_pool())
         self._job_store = job_store
         self._jobs: dict[str, RemoteJobRecord] = {}
 
@@ -168,6 +207,7 @@ class RemoteExecutor:
             stderr=error,
             command=command,
             dry_run=False,
+            error_kind=_classify_remote_exception(error),
         )
 
     def run(
@@ -272,6 +312,12 @@ class RemoteExecutor:
                 stderr=stderr,
                 command=cmd,
                 dry_run=False,
+                # T3: 调度器明确失败 (非零退出) 归为 FATAL; 超时轮询归 TRANSIENT.
+                error_kind=(
+                    "none"
+                    if status.exit_code == 0
+                    else ("transient" if status.state == "UNKNOWN" else "fatal")
+                ),
             )
 
         try:
@@ -285,6 +331,8 @@ class RemoteExecutor:
                 stderr=f"Remote execution failed: {exc}",
                 command=cmd,
                 dry_run=False,
+                # T3: 抛出异常时, 若是连接/权限类走相应分类, 否则不可重试.
+                error_kind=_classify_remote_exception(exc),
             )
         finally:
             with contextlib.suppress(Exception):
