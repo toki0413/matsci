@@ -50,6 +50,8 @@ dependencies = [
     # 之前未声明, 生产环境调 /credentials/import_from_config 会 ImportError.
     "toml>=0.10.2",
     # mcp 2.0 是 major 跳跃 (API 重构), 暂锁 1.x, 单独评估后再升.
+    # 安全: pip-audit --requirement (本 pyproject 解析) 验证 mcp 1.x 最新 1.29.0
+    # 无已知漏洞 (OSV feed), 此锁是 API 稳定性考量而非安全让步.
     "mcp>=1.28.1,<2.0",
     # server
     "fastapi>=0.141",
