@@ -170,7 +170,7 @@ class TestEmbeddingAndTokenize:
 
         # 强制走 jieba 路径
         monkeypatch.setattr(store, "_JIEBA", None, raising=False)
-        if store._get_jieba() is None:
+        if store.get_jieba() is None:
             pytest.skip("jieba not installed")
         tokens = store._tokenize("高熵合金 的 fatigue")
         # jieba 应切出 "合金" 而非按字拆成 "合","金"
@@ -179,7 +179,7 @@ class TestEmbeddingAndTokenize:
     def test_tokenize_fallback_without_jieba(self, monkeypatch: Any) -> None:
         import huginn.knowledge.store as store
 
-        monkeypatch.setattr(store, "_get_jieba", lambda: None)
+        monkeypatch.setattr(store, "get_jieba", lambda: None)
         tokens = store._tokenize("高熵合金 fatigued")
         assert "fatigued" in tokens
         # 中文按字切 (无 jieba 时)

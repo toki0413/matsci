@@ -60,6 +60,7 @@ def test_default_tools_loaded(monkeypatch: pytest.MonkeyPatch) -> None:
         "bash_tool",
         "git_tool",
         "code_tool",
+        "lsp_tool",
     }
 
 

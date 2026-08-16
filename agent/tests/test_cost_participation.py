@@ -8,17 +8,6 @@ branch pruning that is reversible and user-adjudicated.
 
 from __future__ import annotations
 
-import pytest
-
-from huginn.cost_ledger import (
-    CostDimension,
-    CostLedger,
-    CostUnit,
-    get_cost_ledger,
-    reset_cost_ledger,
-)
-from huginn.value_budget import ValueBudget
-from huginn.budget_pause import BudgetPauseHandler, reset_budget_pause_handler
 from huginn.branch_policy import (
     Branch,
     BranchScore,
@@ -27,7 +16,15 @@ from huginn.branch_policy import (
     get_decision_point_registry,
     reset_decision_point_registry,
 )
-
+from huginn.budget_pause import BudgetPauseHandler, reset_budget_pause_handler
+from huginn.cost_ledger import (
+    CostDimension,
+    CostLedger,
+    CostUnit,
+    get_cost_ledger,
+    reset_cost_ledger,
+)
+from huginn.value_budget import ValueBudget
 
 # ── CostLedger ────────────────────────────────────────────────────
 

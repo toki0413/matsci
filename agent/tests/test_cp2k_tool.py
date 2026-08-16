@@ -1,9 +1,8 @@
 """Tests for the CP2K tool."""
 
-from pathlib import Path
-
 import sys
 import types
+from pathlib import Path
 
 import pytest
 

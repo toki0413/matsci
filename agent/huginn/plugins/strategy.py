@@ -15,8 +15,7 @@
 from __future__ import annotations
 
 import threading
-from collections.abc import Callable
-from typing import Any, Generic, TypeVar
+from typing import Generic, TypeVar
 
 T = TypeVar("T")
 

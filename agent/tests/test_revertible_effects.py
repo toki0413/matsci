@@ -229,11 +229,11 @@ def test_skill_execution_failure_rolls_back_new_files(
     monkeypatch.setenv(
         "PATH", str(Path(sys.executable).parent) + os.pathsep + os.environ.get("PATH", "")
     )
+    from huginn.core_types import ToolContext
     from huginn.skills.base import DeclarativeSkillExecutor, SkillDefinition, SkillStep
     from huginn.skills.registry import SkillRegistry
-    from huginn.tools.skill_tool import SkillTool, SkillToolInput
     from huginn.tools.registry import ToolRegistry
-    from huginn.core_types import ToolContext
+    from huginn.tools.skill_tool import SkillTool, SkillToolInput
 
     # 技能: step1 用 code_tool 建文件, step2 必失败 (abort).
     skill = SkillDefinition(
@@ -368,7 +368,6 @@ def test_git_compensator_runs_on_recover(tmp_path: Path) -> None:
     import subprocess
 
     from huginn.security.revertible import recover_from
-    from huginn.tools.git_tool import _compensate_commit
 
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -398,7 +397,7 @@ def test_git_compensator_runs_on_recover(tmp_path: Path) -> None:
 
 # ── 新增: 空间可组合性 CoEffectRegistry (t3) ─────────────────────
 def test_coeffect_declare_and_activate() -> None:
-    from huginn.security.coeffect import ACTIVATE, CoEffectRegistry, NEUTRAL
+    from huginn.security.coeffect import ACTIVATE, NEUTRAL, CoEffectRegistry
 
     reg = CoEffectRegistry()
     events: list[tuple[str, str]] = []
@@ -577,7 +576,7 @@ def test_figure_gate_tracks_intermediate_rerenders(tmp_path: Path) -> None:
 
     # 只要有重渲染发生, 原 v1 图应被登记为可逆产物.
     if rendered:
-        before = set(Path(p).name for p in rendered)
+        before = {Path(p).name for p in rendered}
         rv.revert_all()
         for name in before:
             assert not (tmp_path / name).exists(), f"中间产物 {name} 应被回滚删除"

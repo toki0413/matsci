@@ -38,6 +38,12 @@ def _hardcoded_reference(mode, phase, metacog, system_prompt=None):
 
 @pytest.fixture(autouse=True)
 def _reset_registry_between_tests():
+    # external_thinking flag 是进程级单例, 会被 model_tier 的 set_tier
+    # (M4 联动) 或其它测试开启, 必须在每次用例前恢复默认关, 才能保证
+    # "默认关 → thinking 段为空" 的组装断言不被污染.
+    from huginn.feature_flags import FeatureFlags
+
+    FeatureFlags.shared().reset("external_thinking")
     yield
     # 每个测试后恢复内置六段 + thinking, 防止 clear/override 污染后续用例.
     from huginn.agent.prompt_builder import _register_builtin_segments

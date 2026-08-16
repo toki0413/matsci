@@ -17,11 +17,7 @@ import asyncio
 import json
 import logging
 import os
-import re
-import shutil
 import sys
-import time
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -108,9 +104,23 @@ os.environ.setdefault("HUGINN_SKIP_LOOP_DETECTOR", "1")
 os.environ["HUGINN_FEATURE_LOOP_DETECTOR"] = "false"
 
 # === 从拆分模块 re-export (rcb_runner 作为向后兼容聚合入口) ===
+import contextlib  # noqa: E402
+
+from huginn.cli.rcb.audit import (  # noqa: E402
+    _lint_report_markers,
+    _step2_outputs_gate,
+    _step2_substitution_audit,
+)
+from huginn.cli.rcb.fallback import (  # noqa: E402,F401
+    build_retry_budget,
+    generate_fallback_figures,
+    step2_5_report_fallback,
+)
+from huginn.cli.rcb.prompt_builders import (  # noqa: F401,E402  re-export for backward compat
+    _legacy_build_step2_prompt,
+)
 from huginn.cli.rcb_critique import (  # noqa: E402
     adversarial_critique,
-    format_critique_for_agent,
 )
 from huginn.cli.rcb_fork_merge import (  # noqa: E402
     _FCM_PERSPECTIVES,
@@ -120,22 +130,8 @@ from huginn.cli.rcb_fork_merge import (  # noqa: E402
     fork_critique_merge,
     judge_fork_reports,
 )
-import contextlib  # noqa: E402
-from huginn.cli.rcb.audit import (  # noqa: E402
-    _lint_report_markers,
-    _rcb_drift_check,
-    _step2_outputs_gate,
-    _step2_substitution_audit,
-)
-from huginn.cli.rcb.prompt_builders import (  # noqa: F401,E402  re-export for backward compat
-    _legacy_build_step2_prompt,
-)
 from huginn.utils.common import now_iso  # noqa: E402
-from huginn.cli.rcb.fallback import (  # noqa: E402,F401
-    build_retry_budget,
-    generate_fallback_figures,
-    step2_5_report_fallback,
-)
+
 # Backward-compatible aliases (self-checks + internal callers use _-prefixed names)
 _build_retry_budget = build_retry_budget
 _generate_fallback_figures = generate_fallback_figures
@@ -147,48 +143,6 @@ from huginn.cli.rcb.audit import (  # noqa: E402,F401
     _recompute_report_metrics,
     _should_retry_execute,
     _write_directive_rejection,
-)
-from huginn.cli.rcb_utils import (  # noqa: E402,F401  backward-compat re-export
-    _METRIC_WHITELIST,
-    _MODEL_VERSION,
-    _NUMERIC_PAIR_RE,
-    _cross_task_store,
-    _detect_file_rewrite_stagnation,
-    _detect_gpu_safe,
-    _extract_numeric_targets,
-    _infer_domain,
-    _infer_task_id_from_workspace,
-    _load_manifold,
-    _make_simplex_id,
-    _save_manifold,
-)
-from huginn.cli.rcb_cognition import (  # noqa: E402,F401  backward-compat re-export
-    _append_observations_log,
-    _collect_observations,
-    _compute_v15_fields,
-    _init_hypothesis_manifold,
-    _record_abduction,
-    _trigger_anomaly_hypothesis,
-    _write_cognitive_evidence,
-)
-from huginn.cli.rcb_audit import (  # noqa: E402,F401  backward-compat re-export
-    _ChecklistItem,
-    _checklist_item_parser,
-    _derivation_chain_audit,
-    _llm_coverage_audit,
-    _rcb_effort_floor,
-    _report_coverage_compass,
-    _time_slot_index,
-)
-from huginn.cli.rcb_step2 import (  # noqa: E402,F401  backward-compat re-export
-    _RCBStep2Ctx,
-    _step2_execute,
-)
-from huginn.cli.rcb_step3 import (  # noqa: E402,F401  backward-compat re-export
-    _step3_adversarial,
-)
-from huginn.cli.rcb_mcmc import (  # noqa: E402,F401  backward-compat re-export
-    _run_mcmc_mode,
 )
 from huginn.cli.rcb.self_checks import (  # noqa: F401,E402  re-export for backward compat
     self_check_a2,
@@ -207,6 +161,49 @@ from huginn.cli.rcb.self_checks import (  # noqa: F401,E402  re-export for backw
     self_check_v15_task4,
 )
 from huginn.cli.rcb.smoke import rcb_smoke_test as _rcb_smoke_test  # noqa: E402,F401
+from huginn.cli.rcb_audit import (  # noqa: E402,F401  backward-compat re-export
+    _checklist_item_parser,
+    _ChecklistItem,
+    _derivation_chain_audit,
+    _llm_coverage_audit,
+    _rcb_effort_floor,
+    _report_coverage_compass,
+    _time_slot_index,
+)
+from huginn.cli.rcb_cognition import (  # noqa: E402,F401  backward-compat re-export
+    _append_observations_log,
+    _collect_observations,
+    _compute_v15_fields,
+    _init_hypothesis_manifold,
+    _record_abduction,
+    _trigger_anomaly_hypothesis,
+    _write_cognitive_evidence,
+)
+from huginn.cli.rcb_mcmc import (  # noqa: E402,F401  backward-compat re-export
+    _run_mcmc_mode,
+)
+from huginn.cli.rcb_step2 import (  # noqa: E402,F401  backward-compat re-export
+    _RCBStep2Ctx,
+    _step2_execute,
+)
+from huginn.cli.rcb_step3 import (  # noqa: E402,F401  backward-compat re-export
+    _step3_adversarial,
+)
+from huginn.cli.rcb_utils import (  # noqa: E402,F401  backward-compat re-export
+    _METRIC_WHITELIST,
+    _MODEL_VERSION,
+    _NUMERIC_PAIR_RE,
+    _cross_task_store,
+    _detect_file_rewrite_stagnation,
+    _detect_gpu_safe,
+    _extract_numeric_targets,
+    _infer_domain,
+    _infer_task_id_from_workspace,
+    _load_manifold,
+    _make_simplex_id,
+    _save_manifold,
+)
+
 
 async def run(
     workspace: str,

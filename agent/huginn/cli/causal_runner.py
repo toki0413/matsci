@@ -176,7 +176,7 @@ async def run(
     )
     print(f"[causal] experiment={experiment} session={client._session_id} model={model_ref or alias}", flush=True)
 
-    ws = Path(os.environ.get("HUGINN_WORKSPACE", "/workspace")) / f"causalgame_ws" / experiment
+    ws = Path(os.environ.get("HUGINN_WORKSPACE", "/workspace")) / "causalgame_ws" / experiment
     ws.mkdir(parents=True, exist_ok=True)
 
     from huginn.agent import HuginnAgent
@@ -197,8 +197,6 @@ async def run(
         "Read the action space, run controlled experiments to uncover the hidden causal "
         "mechanism of survival, then submit your final design once."
     )
-    ai_text = ""
-    submit_result = None
     thread_id = f"causal_{experiment}"
     print("\n=== Huginn agent running ===\n", flush=True)
     try:

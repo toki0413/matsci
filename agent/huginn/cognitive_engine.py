@@ -670,7 +670,10 @@ class CognitiveStateMachine:
         if log is None:
             return False
         try:
-            from huginn.events.projection import ProjectionEngine, RuntimeStateProjection
+            from huginn.events.projection import (
+                ProjectionEngine,
+                RuntimeStateProjection,
+            )
             from huginn.events.session_log import SessionEventLog
 
             if not isinstance(log, SessionEventLog):

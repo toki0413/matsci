@@ -15,8 +15,6 @@ from huginn.security.experiment_protocol import (
     C_ASPIRATE,
     C_DISPENSE,
     C_MIX,
-    K_ALIQUOTS,
-    K_MIXED,
     build_pipette_workflow,
     run_pipette_protocol,
 )
@@ -96,11 +94,10 @@ def test_rollback_on_execution_failure() -> None:
 def test_rollback_lifo_order() -> None:
     ex = MockExecutor()
     wa = build_pipette_workflow(ex)
-    with pytest.raises(RuntimeError, match="boom"):
-        with wa.transaction():
-            wa.execute(PhysicalAction("grasp", {"obj": "tube"}))
-            wa.execute(PhysicalAction("move", {"start": "A", "target": "B"}))
-            raise RuntimeError("boom")
+    with pytest.raises(RuntimeError, match="boom"), wa.transaction():
+        wa.execute(PhysicalAction("grasp", {"obj": "tube"}))
+        wa.execute(PhysicalAction("move", {"start": "A", "target": "B"}))
+        raise RuntimeError("boom")
     # LIFO: 先 move 逆 (反向 move), 再 grasp 逆 (release).
     types = [a.type for a in ex.log]
     assert types == ["grasp", "move", "move", "release"]

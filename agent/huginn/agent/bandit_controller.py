@@ -259,8 +259,8 @@ class EffortBandit:
         _tiles = _tile_keys(st.item_idx, st.time_bucket, st.calls_bucket,
                             st.progress_bucket)
         _N_tot = 0
-        _n: dict[str, int] = {a: 0 for a in _ACTIONS}
-        _q_sum: dict[str, float] = {a: 0.0 for a in _ACTIONS}
+        _n: dict[str, int] = dict.fromkeys(_ACTIONS, 0)
+        _q_sum: dict[str, float] = dict.fromkeys(_ACTIONS, 0.0)
         for _k in _tiles:
             _qk = self._Q.get(_k)
             _nk = self._N.get(_k)

@@ -10,9 +10,6 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
-
-import pytest
 
 from huginn.core_types import ToolContext
 from huginn.security.revertible import RevertibleContext

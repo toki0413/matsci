@@ -41,8 +41,8 @@ from typing import Any
 from huginn.api.event import EventType
 from huginn.autoloop.budget import ProgressiveBudget
 from huginn.autoloop.cognitive_checks import (
-    _extract_tests_passed,
     _derive_light_on_track,
+    _extract_tests_passed,
     _snapshot_structure_desc,
     _validation_to_step_eval_fields,
     classify_stall,
@@ -56,7 +56,7 @@ from huginn.autoloop.goal_scheduler import GoalScheduler
 from huginn.autoloop.goal_store import Goal
 from huginn.autoloop.phase_gate import get_shared_phase_gate_state
 from huginn.autoloop.types import AutoloopResult, LoopPhase
-from huginn.utils.runtime import HUGINN_DIR_NAME, get_runtime_home
+from huginn.utils.runtime import HUGINN_DIR_NAME
 
 logger = logging.getLogger(__name__)
 
@@ -372,12 +372,6 @@ class OutputWriter:
 # ponytail: 只抽无状态纯函数, 不引入 CognitiveLoop 子类, 不绑定 LLM.
 # 拆出处: huginn/autoloop/cognitive_guard.py (段 2). 对外契约为空 — 这里再导出,
 # 让 ``from huginn.autoloop.cognitive_loop import build_pmk_state`` 仍可用.
-from huginn.autoloop.cognitive_guard import (
-    update_heat_engine_after_step,
-    update_drift_and_metrics,
-    build_pmk_state,
-    check_pause_decision,
-)
 
 
 class CognitiveLoopMixin:
