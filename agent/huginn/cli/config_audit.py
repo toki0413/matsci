@@ -887,6 +887,76 @@ def render_flags_markdown(rows: list[dict]) -> str:
     return "\n".join(lines)
 
 
+# ---------------------------------------------------------------------------
+# 模型档位契约 (model-tier-contract.md)
+# ---------------------------------------------------------------------------
+# 极简模式的聚合面. 与 env 契约互补: env 契约讲"变量", 这里讲"档位聚合的开关配置".
+# 数据源是 model_tier.py::_TIERS (三档 TierProfile), 动态读取避免与代码漂移.
+# 回答"三档极简模式各自裁剪/保留了哪些认知编排 + compaction 力度 + 外部思考".
+
+
+def build_model_tier_contract() -> dict:
+    """读取 model_tier._TIERS 的三档 profile 聚合配置."""
+    from huginn.plugins.model_tier import ModelTier, _TIERS
+
+    rows = []
+    for tier in ModelTier:
+        p = _TIERS[tier]
+        rows.append(
+            {
+                "tier": tier.value,
+                "use_phase_machine": p.use_phase_machine,
+                "use_plan_gating": p.use_plan_gating,
+                "cognitive_discipline": p.cognitive_discipline,
+                "compaction_tier": p.compaction_tier,
+                "external_thinking": p.external_thinking,
+            }
+        )
+    return {"tiers": rows}
+
+
+def _yn(v: bool) -> str:
+    return "✅ 开" if v else "✗ 关"
+
+
+def render_model_tier_markdown(contract: dict) -> str:
+    lines: list[str] = []
+    lines.append("# 模型档位契约 (ModelTier)")
+    lines.append("")
+    lines.append(
+        "自动生成: `python -m huginn.cli.config_audit --model-tier --out docs/model-tier-contract.md`."
+    )
+    lines.append(
+        "登记极简模式的三档 profile (`model_tier.py::_TIERS`)。每档聚合一组认知编排开关:"
+        "是否启用 phase 机 / plan 门控 / 认知纪律形式 / compaction 力度 / 外部思考。"
+        "安全层 (命令校验 / 物理 sanity check / 资源预算) 在所有档位都保留。"
+        "与**思考强度** (ThinkingIntensity) 是两条正交轴, 互不影响, 可独立设置。"
+    )
+    lines.append("")
+    lines.append(
+        "| 档位 | phase 机 | plan 门控 | 认知纪律 | compaction | 外部思考 | 语义 |"
+    )
+    lines.append("|---|---|---|---|---|---|---|")
+    meanings = {
+        "full": "本地弱模型, 保留全部认知编排 (常驻纪律 + phase 门控)",
+        "balanced": "中等模型, 认知纪律降级为事件驱动 (仅偏离才注入)",
+        "minimal": "顶尖大模型, 跳过 phase/plan 门控, 事件驱动守护, 轻 compaction",
+    }
+    for r in contract["tiers"]:
+        lines.append(
+            f"| `{r['tier']}` | {_yn(r['use_phase_machine'])} | {_yn(r['use_plan_gating'])} "
+            f"| `{r['cognitive_discipline']}` | `{r['compaction_tier']}` | {_yn(r['external_thinking'])} "
+            f"| {meanings.get(r['tier'], '')} |"
+        )
+    lines.append("")
+    lines.append(
+        "运行时切换: `HUGINN_MODEL_TIER` 环境变量设默认档位, `set_tier()` 运行时切换"
+        "(minimal 档 `external_thinking` 默认关, 切换时联动 `FeatureFlags.external_thinking`)。"
+    )
+    lines.append("")
+    return "\n".join(lines)
+
+
 # 契约模式注册表: flag 名 → (builder, renderer, 默认输出文件名).
 # 供 main() 分派, 也供契约漂移测试 (tests/test_config_contracts.py) 复用,
 # 保证"文档与代码一致"的校验对象就是实际分派逻辑本身.
@@ -898,6 +968,11 @@ CONTRACT_MODES: dict[str, tuple[object, object, str]] = {
     "errors": (build_errors_contract, render_errors_markdown, "errors-contract.md"),
     "modes": (build_modes_contract, render_modes_markdown, "modes-contract.md"),
     "flags": (build_flags_contract, render_flags_markdown, "feature-flags-contract.md"),
+    "model-tier": (
+        build_model_tier_contract,
+        render_model_tier_markdown,
+        "model-tier-contract.md",
+    ),
 }
 # env 契约为默认模式 (无 --xxx 时), 单独登记供漂移测试统一遍历.
 ENV_CONTRACT_NAME = "env-contract.md"
@@ -942,6 +1017,11 @@ def main(argv: list[str] | None = None) -> int:
         help="输出 Mode/Phase 契约 (prompt 面) 而非 env 契约",
     )
     parser.add_argument(
+        "--model-tier",
+        action="store_true",
+        help="输出模型档位契约 (ModelTier 极简模式聚合面) 而非 env 契约",
+    )
+    parser.add_argument(
         "--out",
         type=str,
         default="",
@@ -952,7 +1032,8 @@ def main(argv: list[str] | None = None) -> int:
     # 契约模式分派: 每个 --xxx 对应一个 (builder, renderer, 文件名).
     modes = CONTRACT_MODES
     for flag, (builder, renderer, default_name) in modes.items():
-        if getattr(args, flag, False):
+        # argparse 把 flag 名中的 `-` 转成 `_` 作为 dest, 这里对齐取属性.
+        if getattr(args, flag.replace("-", "_"), False):
             data = builder()
             if args.json:
                 json.dump(data, sys.stdout, ensure_ascii=False, indent=2)
