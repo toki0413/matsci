@@ -20,9 +20,30 @@ from typing import Any, Protocol
 
 from huginn.security.coeffect import CoEffectRegistry
 from huginn.security.revertible import RevertibleContext, register_physical_executor
-from huginn.security.world_model import PhysicalAction, WorldModel
+from huginn.security.world_model import (
+    ConstraintViolation,
+    PhysicalAction,
+    WorldModel,
+    apply_forward,
+    check_constraints,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _matches_state(expected: dict[str, Any], actual: dict[str, Any], tolerance: float) -> bool:
+    """状态对比: expected 中每个键与 actual 偏差是否在容差内 (缺失键视为不匹配)."""
+    for k, want in expected.items():
+        got = actual.get(k)
+        if got is None:
+            return False
+        try:
+            if abs(float(got) - float(want)) > tolerance:
+                return False
+        except (TypeError, ValueError):
+            if got != want:
+                return False
+    return True
 
 
 class WorkspaceConfirmError(Exception):
@@ -60,25 +81,10 @@ class MockExecutor:
 class SimExecutor(MockExecutor):
     """状态转移仿真执行器 — 算法可微的物理后端占位 (真实 VLA/仿真器可替换).
 
-    目前以确定性规则近似 VLA 执行结果: 每个动作按 ``_EFFECTS`` 更新内部状态,
-    ``observe()`` 读回当前状态供感知确认. ``fail_on`` 与 ``MockExecutor`` 同语义.
-    这是"真实仿真后端"的接缝: 把 ``_EFFECTS`` / ``_apply`` 换成对接 LAMMPS /
-    ASE / 真实 VLA 控制器即可, 对外 ``execute``/``observe`` 契约不变.
-
-    示例状态:
-      - aspire:   reagent_vol 减少, sample_vol 增加
-      - dispense: sample_vol 减少, tube_vol 增加
-      - mix:      mixed=True
-      - aliquot:  aliquot_count 增加
+    前向转移规则与 ``world_model.apply_forward`` 共用同一事实来源
+    (``FORWARD_EFFECTS``), 保证"世界模型预演"与"实际仿真结果"一致 —
+    感知确认才能对比预期 vs 实际. ``fail_on`` 与 ``MockExecutor`` 同语义.
     """
-
-    _EFFECTS: dict[str, tuple[str, str, str]] = {
-        # type -> (dec_key, inc_key, vol_param)
-        "aspirate": ("reagent_vol", "sample_vol", "vol"),
-        "dispense": ("sample_vol", "tube_vol", "vol"),
-        "mix": ("", "mixed", ""),
-        "aliquot": ("", "aliquot_count", ""),
-    }
 
     def __init__(self, fail_on: set[str] | None = None, *, initial: dict[str, Any] | None = None) -> None:
         super().__init__(fail_on=fail_on)
@@ -93,18 +99,7 @@ class SimExecutor(MockExecutor):
         self.log.append(action)
 
     def _apply(self, action: PhysicalAction) -> None:
-        effect = self._EFFECTS.get(action.type)
-        dec_key, inc_key, vol_param = effect if effect else ("", "", "vol")
-        if dec_key:
-            v = float(action.params.get(vol_param, 0) or 0)
-            self.state[dec_key] = max(0.0, float(self.state.get(dec_key, 0.0)) - v)
-        if inc_key == "mixed":
-            self.state["mixed"] = True
-        elif inc_key == "aliquot_count":
-            self.state["aliquot_count"] = int(self.state.get("aliquot_count", 0)) + 1
-        elif inc_key:
-            v = float(action.params.get(vol_param, 0) or 0)
-            self.state[inc_key] = float(self.state.get(inc_key, 0.0)) + v
+        self.state = apply_forward(self.state, action)
 
 
 class PhysicalWorkspace:
@@ -156,21 +151,54 @@ class PhysicalWorkspace:
         """登记一个感知确认器: 动作执行后校验 key 对应的状态谓词."""
         self._confirmers[key] = verifier
 
+    def preflight(self, action: PhysicalAction) -> dict[str, Any]:
+        """执行前预演: 物理约束校验 + 世界模型前向预测.
+
+        - 违背第一性原理约束 → 抛 :class:`ConstraintViolation`, 不执行.
+        - 通过则返回 ``world_model.predict`` 的预期后状态, 供感知确认对比.
+        """
+        issues = check_constraints(self.state, action)
+        if issues:
+            raise ConstraintViolation(action, issues)
+        return self.world_model.predict(self.state, action)
+
     def execute(
         self,
         action: PhysicalAction,
         confirm_key: str | None = None,
+        *,
+        preflight: bool = False,
+        expected: dict[str, Any] | None = None,
+        tolerance: float = 1e-9,
     ) -> PhysicalAction:
-        """执行物理动作: 世界模型推断逆 → 执行 → 读状态 → 登记逆 → 感知确认.
+        """执行物理动作: (可选预演) → 世界模型推断逆 → 执行 → 读状态 → 登记逆 → 确认.
 
-        确认失败抛 :class:`WorkspaceConfirmError`, 触发外层事务回滚.
-        不可逆动作 (infer_inverse 返回 None) 仍执行, 但不登记逆 (无法自动回滚).
+        - ``preflight=True``: 执行前用世界模型对**当前状态**做约束校验 + 前向
+          预测; 约束违规抛 :class:`ConstraintViolation`, 不执行.
+        - ``expected``: 给定的预期后状态, 执行后与 ``observe()`` 实测状态对比,
+          超容差抛 :class:`WorkspaceConfirmError` (感知确认 — 状态级而非日志级).
+        - ``confirm_key``: 原有按 key 的确认器仍最后执行.
+
+        确认失败触发外层事务回滚. 不可逆动作仍执行但不登记逆.
         """
         state_before = dict(self.state)
+
+        if preflight:
+            # 用当前状态预演: 先约束校验, 再取前向预测 (供 expected 对比).
+            predicted = self.preflight(action)
+            if expected is None:
+                expected = predicted
+
         inverse = self.world_model.infer_inverse(state_before, action)
 
         self.executor.execute(action)
         self.state = dict(self.executor.observe())
+
+        if expected is not None:
+            if not _matches_state(expected, self.state, tolerance):
+                raise WorkspaceConfirmError(
+                    f"感知确认失败: 状态偏离预期 (动作 {action.type})"
+                )
 
         if inverse is not None:
             # state_before 是动作执行前的状态, inverse 是"回到执行前"所需的逆动作.
