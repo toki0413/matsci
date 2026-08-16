@@ -42,7 +42,7 @@
 | `provenance` | True | 计算 provenance 快照 | — | provenance/_legacy.py:259, tools/base.py:325 |
 | `speculator` | True | 投机执行 (意图预测+工具预热) | — | agents/speculator.py:444 |
 | `system_health_auto_fix` | False | 监控异常后自动熔断工具 (默认关) | — | diagnostics/system_health.py:519 |
-| `system_health_monitor` | True | 系统资源监控 (CPU/内存/磁盘) | — | diagnostics/system_health.py:521, routes/config.py:784, tools/__init__.py:477 |
+| `system_health_monitor` | True | 系统资源监控 (CPU/内存/磁盘) | — | diagnostics/system_health.py:521, routes/config.py:843, tools/__init__.py:477 |
 | `task_tool_router` | False | task keyword → tool category 动态路由 (默认关) | — | — |
 | `telemetry` | True | 遥测采集 (HUGINN_TELEMETRY_ENABLED) | HUGINN_TELEMETRY_ENABLED | agent_config.py:158 |
 | `three_cabin` | False | 三舱模型 (HUGINN_USE_THREE_CABIN) | HUGINN_USE_THREE_CABIN | — |

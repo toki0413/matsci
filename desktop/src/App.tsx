@@ -196,6 +196,7 @@ export default function App() {
     toggleModelExpanded, toggleAgentExpanded,
     switchPersona,
     activeModel, activeModelSavedMsg, switchActiveModel,
+    modelTier, availableModelTiers, modelTierSavedMsg, switchModelTier,
   } = useConfig();
 
   const {
@@ -1660,6 +1661,10 @@ export default function App() {
               activeModel={activeModel}
               activeModelSavedMsg={activeModelSavedMsg}
               switchActiveModel={switchActiveModel}
+              modelTier={modelTier}
+              availableModelTiers={availableModelTiers}
+              modelTierSavedMsg={modelTierSavedMsg}
+              switchModelTier={switchModelTier}
             />
           </div>
 

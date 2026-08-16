@@ -366,6 +366,10 @@ export interface SettingsPanelProps {
   activeModel: string;
   activeModelSavedMsg: string;
   switchActiveModel: (alias: string) => Promise<void>;
+  modelTier: string;
+  availableModelTiers: string[];
+  modelTierSavedMsg: string;
+  switchModelTier: (tier: string) => Promise<void>;
 
   // From App.tsx / useChatAndConnection
   startBackend: () => void;
@@ -387,7 +391,8 @@ export function SettingsPanel(props: SettingsPanelProps) {
     updateAgent, addAgent, removeAgent,
     toggleModelExpanded, toggleAgentExpanded, switchPersona,
     activeModel, activeModelSavedMsg, switchActiveModel,
-   startBackend, isConnected, personaList, personaEmotion,
+    modelTier, availableModelTiers, modelTierSavedMsg, switchModelTier,
+    startBackend, isConnected, personaList, personaEmotion,
   } = props;
 
   return (
@@ -1314,6 +1319,29 @@ export function SettingsPanel(props: SettingsPanelProps) {
               平常默认关闭, 开启会增加 LLM 调用和计算开销.
             </p>
             <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+              {/* 模型档位 (极简模式) */}
+              <ConfigField label="模型档位 (极简模式)" full>
+                <select
+                  value={modelTier}
+                  onChange={(e) => switchModelTier(e.target.value)}
+                  className="input"
+                >
+                  {availableModelTiers.length === 0 && (
+                    <option value="">加载中…</option>
+                  )}
+                  <option value="full">full (完整编排, 本地弱模型)</option>
+                  <option value="balanced">balanced (中等模型, 事件驱动守护)</option>
+                  <option value="minimal">minimal (极简模式, 顶尖大模型)</option>
+                </select>
+                {modelTierSavedMsg && (
+                  <p className="mt-1 text-xs text-accent">{modelTierSavedMsg}</p>
+                )}
+                <p className="mt-1 text-[10px] text-text-muted">
+                  极简模式跳过 phase/plan 门控, 认知纪律改为事件驱动, 减轻对强模型的束缚.
+                  安全层 (命令校验 / 物理 sanity / 预算警告) 在所有档位都保留.
+                </p>
+              </ConfigField>
+
               {/* 极限模式总开关 */}
               <ConfigField label="极限模式总开关" full>
                 <label className="flex cursor-pointer items-center gap-2">

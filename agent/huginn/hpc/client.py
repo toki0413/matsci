@@ -8,6 +8,7 @@ from __future__ import annotations
 import contextlib
 import re
 import shlex
+import socket
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -172,17 +173,38 @@ class JobStatus:
 class HPCClient:
     """SSH-based HPC client for job submission and monitoring."""
 
-    def __init__(self, config: HPCConfig):
+    def __init__(self, config: HPCConfig, pool=None):
+        """Create an HPC client.
+
+        ``pool`` is an optional ``SSHConnectionPool``. When provided,
+        ``connect()``/``disconnect()`` route through the pool instead of
+        opening a fresh connection every time — so ``_exec``/``poll_status``
+        reuse one SSH connection across calls (T1: 连接池复用).
+        """
         self.config = config
         self._ssh = None
         self._sftp = None
+        self._pool = pool
+        self._pool_owner = None  # 池中借出的 client (borrowed 时非 None)
+        self._borrowed = False
 
     def connect(self, timeout: int = 10) -> None:
         """Establish SSH connection to the HPC host.
 
         When ``strict_host_key_checking`` is enabled (default), the host key
         must be present in the known_hosts file; unknown hosts are rejected.
+
+        If a connection pool was injected, borrow a connected client from it
+        instead of opening a fresh SSH connection (T1: 连接池复用).
         """
+        if self._pool is not None:
+            owner = self._pool.get_client(self.config)
+            self._pool_owner = owner
+            self._ssh = owner._ssh
+            self._sftp = owner._sftp
+            self._borrowed = True
+            return
+
         import paramiko
 
         self._ssh = paramiko.SSHClient()
@@ -228,7 +250,18 @@ class HPCClient:
             )
 
     def disconnect(self) -> None:
-        """Close SSH connection."""
+        """Close (or release) the SSH connection.
+
+        If the connection was borrowed from a pool, release it back so the
+        pool can reuse it on the next call instead of tearing it down.
+        """
+        if self._borrowed and self._pool is not None and self._pool_owner is not None:
+            self._pool.release_client(self.config, self._pool_owner)
+            self._pool_owner = None
+            self._ssh = None
+            self._sftp = None
+            self._borrowed = False
+            return
         if self._sftp:
             self._sftp.close()
             self._sftp = None
@@ -245,7 +278,32 @@ class HPCClient:
 
         If a list is provided, each element is shell-quoted automatically
         to prevent injection. Returns (stdout, stderr, exit_code).
+
+        T2: 连接层瞬时故障 (SSHException / socket.timeout) 自动重试一次 —
+        丢弃借出的坏连接让池清理, 重连后重跑命令. 非连接层错误直接抛出.
         """
+        try:
+            return self._exec_once(command)
+        except self._transient_exc_types() as exc:
+            logger.warning("SSH exec transient error, retrying once: %s", exc)
+            # 丢弃当前坏连接 (池中借出的归还时会被健康检查剔除, 自建的直接关).
+            with contextlib.suppress(Exception):
+                self.disconnect()
+            return self._exec_once(command)
+
+    @staticmethod
+    def _transient_exc_types() -> tuple[type[BaseException], ...]:
+        """连接层瞬时异常类型集合 (paramiko 惰性取, 未安装时仅 socket/OSError)."""
+        types: list[type[BaseException]] = [socket.timeout, OSError]
+        try:
+            import paramiko
+
+            types.append(paramiko.SSHException)
+        except ImportError:
+            pass
+        return tuple(types)
+
+    def _exec_once(self, command: str | list[str]) -> tuple[str, str, int]:
         self._ensure_connected()
         if isinstance(command, list):
             command = shlex.join(command)

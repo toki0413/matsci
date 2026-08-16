@@ -25,6 +25,10 @@ export function useConfig() {
   // 当前生效模型 (lead agent 绑定的 alias)。由 /config/active-model 读写。
   const [activeModel, setActiveModel] = useState<string>("");
   const [activeModelSavedMsg, setActiveModelSavedMsg] = useState<string>("");
+  // 模型档位 (极简模式)。由 /config/model-tier 读取/切换。
+  const [modelTier, setModelTier] = useState<string>("");
+  const [availableModelTiers, setAvailableModelTiers] = useState<string[]>([]);
+  const [modelTierSavedMsg, setModelTierSavedMsg] = useState<string>("");
 
   // Collapse state for Settings model/agent cards
   const [expandedModels, setExpandedModels] = useState<Set<number>>(new Set());
@@ -186,6 +190,39 @@ export function useConfig() {
     setTimeout(() => setActiveModelSavedMsg(""), 4000);
   }, []);
 
+  // ── Model tier (极简模式) ────────────────────────────────────
+  const loadModelTier = useCallback(async () => {
+    try {
+      const data = await api.get<{
+        model_tier?: string;
+        available_model_tiers?: string[];
+      }>("/config/model-tier");
+      if (data.model_tier) setModelTier(data.model_tier);
+      if (data.available_model_tiers?.length) setAvailableModelTiers(data.available_model_tiers);
+    } catch (e) {
+      // backend offline — keep previous value
+    }
+  }, []);
+
+  const switchModelTier = useCallback(async (tier: string) => {
+    try {
+      const resp = await api.post<{
+        success?: boolean;
+        error?: string;
+        model_tier?: string;
+      }>("/config/model-tier", { tier });
+      if (resp.success && resp.model_tier) {
+        setModelTier(resp.model_tier);
+        setModelTierSavedMsg(`已切换档位: ${resp.model_tier}`);
+      } else {
+        setModelTierSavedMsg(resp.error || "切换失败");
+      }
+    } catch (e: any) {
+      setModelTierSavedMsg(`切换失败: ${e.message}`);
+    }
+    setTimeout(() => setModelTierSavedMsg(""), 4000);
+  }, []);
+
   // ── Persona switch ─────────────────────────────────────────
   const switchPersona = async (personaName: string) => {
     try {
@@ -222,14 +259,22 @@ export function useConfig() {
     return () => { alive = false; };
   }, [settingsTab]);
 
+  // ── Lazy-load model tier when Advanced tab opens ──
+  useEffect(() => {
+    if (settingsTab !== "advanced") return;
+    loadModelTier();
+  }, [settingsTab, loadModelTier]);
+
   return {
     config, configDirty, configSavedMsg, settingsTab, llmCredOptions,
     expandedModels, expandedAgents, activeModel, activeModelSavedMsg,
+    modelTier, availableModelTiers, modelTierSavedMsg,
     setConfig, setConfigDirty, setConfigSavedMsg, setSettingsTab,
     pushConfig, saveConfig,
     ensureDefaultModel, updateModel, addModel, removeModel,
     ensureDefaultAgents, updateAgent, addAgent, removeAgent,
     toggleModelExpanded, toggleAgentExpanded,
     switchPersona, switchActiveModel, loadActiveModel,
+    switchModelTier,
   };
 }
