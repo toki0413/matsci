@@ -21,15 +21,18 @@
 | Physical RSI 概念 | Huginn 现状 | 启发 | 可落地性 |
 |---|---|---|---|
 | 单轴 vs 双轴进化 | `autoloop`/`evolve`/蒸馏是单轴（改进假设/策略，环境视为已知） | 缺**第二根轴**：对"域模型"（材料/物理/仿真正确性）的自改进 | 需设计 |
-| Environment Gap vs Skill Gap 诊断 | `diagnose`（计算化学/MD 错误诊断）+ `failed_direction` 记忆类型 | 失败归因应显式拆出"域模型问题"路径，让 `evolve` 知道该更新认知还是策略 | **可直接落地** |
+| Environment Gap vs Skill Gap 诊断 | `diagnose`（计算化学/MD 错误诊断）+ `failed_direction` 记忆类型 | 失败归因应显式拆出"域模型问题"路径，让 `evolve` 知道该更新认知还是策略 | **已落地**（见 §1.2） |
 | OOD 意外 → 进化燃料 | `verification_status` 蒸馏闭环 | 意外应触发**认知更新**而非仅策略更新 | 需设计 |
 
-### 1.2 建议动作（若推进）
+### 1.2 落地进展
 
-- 在 `diagnose` 输出中新增归因维度：`environment_gap`（世界模型能否复现失败因果）vs
-  `skill_gap`（可复现 → 搜新恢复策略）。`failed_direction` 记忆据此打标。
-- 为 `evolve` 增加"认知更新"通道：当 `environment_gap` 命中时，产出对域模型/仿真假设的
-  修订，而非仅产出新策略。
+- **已落地（2026-08-16）**：`FailedDirectionRecord` 新增 `gap_type` 归因字段
+  （`environment_gap` / `skill_gap` / `unknown`），贯穿 `FailedDirectionStore.record()`
+  写入与 `query()` 过滤，P12 typed 与 legacy 两条路径均支持，随 `strategy:`
+  /`math_concept:` 同一 content+tag 模式存储。selfcheck 与 `tests/test_evolution_modules.py`
+  （118 passed）覆盖。域模型侧 `diagnose_tool` 未改（其为 skill 侧检索工具，硬塞规则归因脆弱）。
+- 待推进：`evolve` 消费 `gap_type` —— 当 `environment_gap` 命中时产出对域模型/仿真假设的修订，
+  而非仅产出新策略。
 
 ---
 

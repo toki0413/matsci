@@ -27,6 +27,9 @@ class FailedDirectionRecord:
     math_concept: str = ""
     strategy_name: str = ""
     status: str = "refuted"  # refuted / superseded / strategy_failed
+    # Physical RSI 归因: environment_gap (世界模型无法复现失败因果, 需更新认知)
+    # / skill_gap (可复现, 需换策略) / unknown (未归因).
+    gap_type: str = "unknown"
 
 
 class FailedDirectionStore:
@@ -44,6 +47,7 @@ class FailedDirectionStore:
         math_concept: str = "",
         strategy_name: str = "",
         status: str = "refuted",
+        gap_type: str = "unknown",
     ) -> str:
         """记一条失败方向. 返回 entry_id (失败时 "")."""
         # P12 typed API 优先 — record_failed_direction 不接 strategy_name,
@@ -57,11 +61,15 @@ class FailedDirectionStore:
                 content += f"\nmath_concept: {math_concept}"
             if strategy_name:
                 content += f"\nstrategy: {strategy_name}"
+            if gap_type and gap_type != "unknown":
+                content += f"\ngap_type: {gap_type}"
             tags: list[str] = []
             if math_concept:
                 tags.append(f"math_concept:{math_concept}")
             if strategy_name:
                 tags.append(f"strategy:{strategy_name}")
+            if gap_type and gap_type != "unknown":
+                tags.append(f"gap_type:{gap_type}")
             try:
                 from huginn.memory.typing import remember_typed
 
@@ -88,6 +96,8 @@ class FailedDirectionStore:
             content = f"[Failed Direction] {hypothesis_text}: {reason}"
             if strategy_name:
                 content += f" [strategy={strategy_name}]"
+            if gap_type and gap_type != "unknown":
+                content += f" [gap_type={gap_type}]"
             return self._mm.remember(
                 content=content,
                 category="failed_direction",
@@ -105,11 +115,13 @@ class FailedDirectionStore:
         limit: int = 5,
         persona_id: str | None = None,
         math_concept: str | None = None,
+        gap_type: str | None = None,
     ) -> list[FailedDirectionRecord]:
         """查最近失败方向. P12 不可用时返空 list (不抛).
 
         优先用 recall_typed 拿全字段 (persona_id / run_id 都能恢复);
         recall_typed 不可用时降级到 recall_failed_directions 三元组.
+        gap_type 为 None 时不过滤.
         """
         records: list[FailedDirectionRecord] = []
 
@@ -132,6 +144,7 @@ class FailedDirectionStore:
                     reason = ""
                     mc = ""
                     strat = ""
+                    gap = "unknown"
                     for line in content.split("\n"):
                         if line.startswith("[Failed Direction] hypothesis: "):
                             hyp = line[len("[Failed Direction] hypothesis: "):]
@@ -141,7 +154,11 @@ class FailedDirectionStore:
                             mc = line[len("math_concept: "):]
                         elif line.startswith("strategy: "):
                             strat = line[len("strategy: "):]
+                        elif line.startswith("gap_type: "):
+                            gap = line[len("gap_type: "):]
                     if math_concept and mc != math_concept:
+                        continue
+                    if gap_type and gap != gap_type:
                         continue
                     records.append(
                         FailedDirectionRecord(
@@ -152,6 +169,7 @@ class FailedDirectionStore:
                             math_concept=mc,
                             strategy_name=strat,
                             status=row.get("status") or "refuted",
+                            gap_type=gap,
                         )
                     )
                 return records
@@ -175,6 +193,9 @@ class FailedDirectionStore:
             mc = t[2] if len(t) > 2 else ""
             if math_concept and mc != math_concept:
                 continue
+            # legacy 三元组不带 gap_type (视为 unknown); 明确过滤非 unknown 时跳过
+            if gap_type and gap_type != "unknown":
+                continue
             records.append(
                 FailedDirectionRecord(
                     hypothesis_text=hyp,
@@ -188,8 +209,8 @@ class FailedDirectionStore:
 
 
 # ── selfcheck ─────────────────────────────────────────────────────────────
-# 2 场景: record + query round-trip / P12 不可用降级. 用真 in-memory SQLite,
-# 跟 memory/typing.py 的 selfcheck 风格一致.
+# 场景: record + query round-trip (含 gap_type 归因) / P12 不可用降级. 用真
+# in-memory SQLite, 跟 memory/typing.py 的 selfcheck 风格一致.
 
 def _selfcheck() -> None:
     import shutil
@@ -219,6 +240,7 @@ def _selfcheck() -> None:
         math_concept="DFT-PZ LDA band gap underestimation",
         strategy_name="lda_direct_gap",
         status="refuted",
+        gap_type="environment_gap",
     )
     assert eid, "record should return entry_id"
     records = store.query(limit=5)
@@ -228,7 +250,11 @@ def _selfcheck() -> None:
     assert "LDA underestimates" in r.reason, r.reason
     assert r.math_concept == "DFT-PZ LDA band gap underestimation", r.math_concept
     assert r.persona_id == "dft_expert", r.persona_id
-    print("1. record + query round-trip OK")
+    assert r.gap_type == "environment_gap", r.gap_type
+    # gap_type 过滤
+    assert store.query(limit=5, gap_type="environment_gap") == records
+    assert store.query(limit=5, gap_type="skill_gap") == []
+    print("1. record + query round-trip (gap_type) OK")
 
     # 场景 2: P12 不可用降级 — 给个 mock mm 没有 typed API, 只 remember
     class _LegacyMM:
