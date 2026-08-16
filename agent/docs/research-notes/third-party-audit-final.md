@@ -63,6 +63,16 @@
 - **P1① 无 usage 降级**：`_maybe_auto_compact` 不再因 `not any(usage.values())` 直接短路 —— 无 usage 时先走 P0 兜底修剪，再返回。
 - **验证**：新增 `TestCheckpointerCountCap` 7 条测试，`test_streaming.py` 90 passed；重跑原失败用例 `test_100_turn_memory_stable` **通过**（38.63s），增长收敛。
 
+#### P2① 已实施 — checkpointer 文件空洞回收（auto_vacuum=INCREMENTAL）
+并发长任务实际存在（[scheduler.py](huginn/scheduling/scheduler.py) cross-agent/parent-sub + 月/年 campaign），所有 agent 共享单 `HUGINN_CHECKPOINTER_PATH` 文件。P0 修逻辑层消息累积，P2① 修物理层文件空洞：
+- [checkpointer.py](huginn/checkpointer.py) 新增 `_preset_incremental_vacuum()`：新建库**建表前**预置 `PRAGMA auto_vacuum=INCREMENTAL`（已存在文件/`:memory:` 静默跳过，避免对在用库迁移）。
+- `_enable_incremental_vacuum()`：打开 saver 后对底层 conn 执行 `incremental_vacuum` 在线回收 freepages，不锁表。
+- 在 `create_checkpointer` / `persistent_checkpointer` 两处接线。
+- **验证**：新增 `TestCheckpointerVacuum` 5 条测试（仅新文件生效 / 预置后 mode=2 / 删行后回收 / 无 conn 静默 / 端到端），`test_checkpointer_vacuum.py` 全过；streaming + vacuum + contracts 集中回归绿。
+
+#### 全量回归
+修复 P0+P1①+P2① 后跑全量 `pytest`：**8435 passed, 208 skipped, 8 xfailed, 0 failed**（578s）。对比修复前 `2 failed`, 通过率 100%。剩余 skipped/xfailed 均为环境性项。
+
 ### blind_spot_mapper 接线功能验证
 `TestBlindSpotBlockWiring` 4 条定向测试全部通过（5.22s）：确认失败注入盲点块 / 弱簇不注入 / 无 memory 静默下降级 / block 序位于 topo 之后。
 
