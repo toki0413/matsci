@@ -60,3 +60,12 @@ class TimedLRUCache(Generic[T]):
         with self._lock:
             self._expire()
             return len(self._data)
+
+
+# 共享 embedding 向量缓存 — 合并 knowledge.store._EmbeddingModel 与
+# rag.vector_store.VectorStore 两套重复缓存为单一实例 (此前各自维护一份,
+# 缓存同一批向量). 存 list[list[float]] (纯 Python, 无 numpy 依赖),
+# 超过 max_size LRU 淘汰 + 1h TTL. 两端按需在 ndarray ↔ list 间转换.
+embedding_cache: TimedLRUCache[list[list[float]]] = TimedLRUCache(
+    max_size=2048, ttl=3600.0
+)
