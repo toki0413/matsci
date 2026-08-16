@@ -46,6 +46,52 @@ export interface ExplorationResult {
   pareto_front?: unknown[];
 }
 
+// ── Cost & pruning participation (docs/cost-participation-contract.md) ──
+export interface DecisionPointOption {
+  id: string;
+  label: string;
+  risk?: string;
+}
+
+export interface DecisionPointAgentJudgment {
+  mean_value?: number;
+  uncertainty?: number;
+  ucb?: number;
+  recommendation?: string;
+  reason?: string;
+}
+
+export interface DecisionPointNarrative {
+  phase?: string;
+  cost_usd?: number;
+  by_dimension?: Record<string, number>;
+  by_phase?: Record<string, number>;
+  predicted_cost_to_converge_usd?: number;
+}
+
+export interface DecisionPointPayload {
+  id: string;
+  kind: string; // prune | hibernate | degrade | pause | resume
+  status: string; // pending | approved | edited | denied | expired
+  session_id?: string;
+  branch_id?: string;
+  narrative?: DecisionPointNarrative;
+  agent_judgment?: DecisionPointAgentJudgment;
+  options?: DecisionPointOption[];
+  response?: { option?: string; at?: number } | null;
+}
+
+export interface CostNarrativePayload {
+  phase?: string;
+  cost_usd?: number;
+  by_dimension?: Record<string, number>;
+  by_phase?: Record<string, number>;
+  by_tool?: Record<string, number>;
+  predicted_cost_to_converge_usd?: number;
+  roi?: number;
+  intent?: string;
+}
+
 // ── Discriminated union ───────────────────────────────────────────
 
 export type WSMessage =
@@ -103,6 +149,8 @@ export type WSMessage =
       warnings: Array<{ severity: string; message: string }>;
     }
   | { type: "exploration_result"; data?: ExplorationResult }
+  | { type: "decision_point"; data: DecisionPointPayload }
+  | { type: "cost_narrative"; data: CostNarrativePayload }
   | { type: "auto_checkpoint"; id: string; base: string; files: number }
   | {
       type: "side_question_pending";

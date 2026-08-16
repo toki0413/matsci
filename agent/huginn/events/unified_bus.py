@@ -411,6 +411,43 @@ class UnifiedBus:
         """
         self._publish_internal_sync(event_type, data, thread_id, source)
 
+    def publish_decision_point(
+        self,
+        decision_point: Any,
+        thread_id: str = "",
+    ) -> None:
+        """发布一个决策点 (agent 主动召回用户, 见 docs/cost-participation-contract.md §3).
+
+        载荷对齐契约 §3.2: id / kind / status / narrative / agent_judgment / options.
+        前端订阅 'decision.point' 事件渲染决策点卡片, 用户裁决后经 WS 回传.
+        """
+        from huginn.events.event_types import DECISION_POINT
+
+        self._publish_internal_sync(
+            DECISION_POINT,
+            decision_point.to_dict() if hasattr(decision_point, "to_dict") else decision_point,
+            thread_id=thread_id,
+            source="branch_policy",
+        )
+
+    def publish_cost_narrative(
+        self,
+        narrative: dict,
+        thread_id: str = "",
+    ) -> None:
+        """发布成本叙事 (数字 + 意图 + 预测), 供前端成本叙事渲染.
+
+        载荷对齐契约 §4: 累计 USD + 维度/阶段/工具分解 + 预测成本 + 价值判断.
+        """
+        from huginn.events.event_types import COST_NARRATIVE
+
+        self._publish_internal_sync(
+            COST_NARRATIVE,
+            narrative,
+            thread_id=thread_id,
+            source="cost_ledger",
+        )
+
 
 # ── 模块级便捷函数 ──────────────────────────────────────────────
 
