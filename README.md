@@ -199,6 +199,9 @@ Huginn 的文档按类别登记在 **[agent/docs/INDEX.md](agent/docs/INDEX.md)*
 | 贡献指南 | [agent/CONTRIBUTING.md](agent/CONTRIBUTING.md) |
 | 路线图 | [agent/ROADMAP.md](agent/ROADMAP.md) |
 | 契约文档（自动生成） | [agent/docs/env-contract.md](agent/docs/env-contract.md) 等 |
+| Rust CLI 前端 | [cli/README.md](cli/README.md) |
+| Sidecar 进程管理 | [sidecar/README.md](sidecar/README.md) |
+| MCP 服务器 | [servers/README.md](servers/README.md) |
 
 ---
 
