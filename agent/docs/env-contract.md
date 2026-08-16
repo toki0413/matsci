@@ -54,7 +54,7 @@
 | `HUGINN_CONTEXT_BUDGET_TOKENS` | 0 | agent_config.py:177, config.py:805 | — | external |
 | `HUGINN_CONTEXT_MAX_MESSAGES` | 60 | agent/core.py:370 | — | external |
 | `HUGINN_CONTEXT_ROUTER` | 0 | context_builder.py:1177 | cli/rcb_runner.py:360 | code-set |
-| `HUGINN_CORE_API_KEY` | '' | tools/literature/search_sources.py:594 | — | external |
+| `HUGINN_CORE_API_KEY` | '' | tools/literature/search_sources.py:655 | — | external |
 | `HUGINN_CORE_SUPPORT_PROTOCOL` | 1 | tools/bash_tool.py:180, tools/code_tool.py:126 | — | external |
 | `HUGINN_CORS_ORIGINS` | '' | lifespan.py:837 | — | external |
 | `HUGINN_COST_BUDGET` | 50.0 | autoloop/budget.py:107 | — | external |
@@ -69,7 +69,7 @@
 | `HUGINN_DARWIN_STAGNATION_LIMIT` | 5 | autoloop/cognitive_loop.py:775 | cli/rcb_runner.py:343 | code-set |
 | `HUGINN_DEEPSEEK_OCR_PATH` | '' | tools/vision_describe_tool.py:67 | — | external |
 | `HUGINN_DEV_MODE` | '' | middleware/error_normalize.py:145, middleware/ws_governance.py:123, routes/agents.py:83, +1 处 | — | external |
-| `HUGINN_DISABLE_WEB_SEARCH` | '' | tools/agentic_search_tool.py:287, tools/literature/_http.py:40, tools/web_search_tool.py:56 | tools/web_search_tool.py:650, tools/web_search_tool.py:655 | code-set |
+| `HUGINN_DISABLE_WEB_SEARCH` | '' | tools/agentic_search_tool.py:463, tools/literature/_http.py:40, tools/web_search_tool.py:56 | tools/web_search_tool.py:667, tools/web_search_tool.py:672 | code-set |
 | `HUGINN_DOCKER_SANDBOX` | '' | security/sandbox.py:594 | — | external |
 | `HUGINN_DOC_ENGINE` | auto | perception/pdf_parser.py:506 | — | external |
 | `HUGINN_EMBED_MODEL` | all-MiniLM-L6-v2 | knowledge/store.py:33 | — | external |
@@ -161,7 +161,7 @@
 | `HUGINN_MODEL` | '' | config.py:686, config.py:709, config.py:1268 | — | external |
 | `HUGINN_MODELS` | '' | config.py:871 | routes/config.py:314 | code-set |
 | `HUGINN_MODEL_TIER` | full | plugins/model_tier.py:88 | — | external |
-| `HUGINN_MP_API_KEY` | '' | tools/literature/search_sources.py:1428 | — | external |
+| `HUGINN_MP_API_KEY` | '' | tools/literature/search_sources.py:1489 | — | external |
 | `HUGINN_MULTI_AGENT` | 0 | memory/longterm.py:1913 | — | external |
 | `HUGINN_NORMALIZE_ERRORS` | '' | middleware/error_normalize.py:139 | — | external |
 | `HUGINN_NO_RUST_SANDBOX` | '' | — | cli/rcb_runner.py:94 | code-set |
@@ -246,7 +246,7 @@
 | `HUGINN_TRACE_SHARD_INTERVAL` | str(_DEFAULT_SHARD_INTERVAL | cli/rcb_step2.py:238, events/audit_log.py:54 | events/audit_log.py:652, events/audit_log.py:708, events/audit_log.py:703, events/audit_log.py:762 | code-set |
 | `HUGINN_TRAJECTORY_PATTERN` | 0 | autoloop/cognitive_loop.py:1692 | — | external |
 | `HUGINN_TRANSCRIPT_DIR` | '' | events/transcript.py:88 | — | external |
-| `HUGINN_UNPAYWALL_EMAIL` | user@example.com | tools/literature/pdf_fetch.py:309, tools/literature/search_sources.py:347 | — | external |
+| `HUGINN_UNPAYWALL_EMAIL` | user@example.com | tools/literature/pdf_fetch.py:309, tools/literature/search_sources.py:408 | — | external |
 | `HUGINN_USE_ATOMWORLD` | 0 | agent/code_act_loop.py:343, agent/code_act_loop.py:397, bench/atomworld_bench.py:53, +2 处 | bench/atomworld_bench.py:154, bench/atomworld_bench.py:162, bench/atomworld_bench.py:173, +1 处, security/code_act_sandbox.py:220, security/code_act_sandbox.py:234 | code-set |
 | `HUGINN_USE_COGNITIVE_MAP` | 0 | agent/code_act_loop.py:354, agent/code_act_loop.py:416, bench/mini_rotation_baseline.py:522, +2 处 | cli/rcb_runner.py:322, security/code_act_sandbox.py:236 | code-set |
 | `HUGINN_USE_COMPLETION_GATE` | 0 | autoloop/cognitive_loop.py:2815 | — | external |
