@@ -313,17 +313,17 @@ jobs:
       - name: Run archive security PoC tests
         run: |
           cd agent
-          python -m pytest tests/pentest_archive_safety.py -v --no-cov
+          python -m pytest tests/security/pentest_archive_safety.py -v --no-cov
 
       - name: Run API security PoC tests
         run: |
           cd agent
-          python -m pytest tests/pentest_api_security.py -v --no-cov
+          python -m pytest tests/security/pentest_api_security.py -v --no-cov
 
       - name: Run API fuzz tests
         run: |
           cd agent
-          python -m pytest tests/fuzz_api.py -v --no-cov
+          python -m pytest tests/security/fuzz_api.py -v --no-cov
 
   deps-and-secrets:
     # 制度化闭环 P2：依赖 lock（uv）+ 密钥扫描（gitleaks）。
