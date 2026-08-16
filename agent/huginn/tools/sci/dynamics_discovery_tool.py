@@ -419,6 +419,11 @@ class DynamicsDiscoveryTool(HuginnTool):
             residuals[f"x{j}"] = (dXdt[:, j] - pred).tolist()
             equations.append(self._equation_string(j, terms, Xi[:, j]))
 
+        # 概率校准拟合分 (NLL/BIC): 高斯独立加性噪声假设下, R² 高不等于模型好;
+        # 不同方法/库的噪声尺度不同 (论文: SINDy 回归瓶颈线性 vs 进化判别超线性),
+        # 用 NLL 给出校准的模型比较, 用 BIC 对非零项数做稀疏性惩罚.
+        fit_metrics = self._fit_metrics(Xi, Theta, dXdt, r2)
+
         return ToolResult(
             data={
                 "equations": equations,
@@ -428,6 +433,7 @@ class DynamicsDiscoveryTool(HuginnTool):
                 },
                 "r2_score": r2,
                 "residuals": residuals,
+                "fit_metrics": fit_metrics,
                 "variables": col_names,
                 "n_samples": int(X.shape[0]),
                 "dt": float(np.mean(np.diff(t))),
@@ -442,6 +448,58 @@ class DynamicsDiscoveryTool(HuginnTool):
             },
             success=True,
         )
+
+    def _fit_metrics(
+        self,
+        Xi: np.ndarray,
+        Theta: np.ndarray,
+        dXdt: np.ndarray,
+        r2: dict[str, float],
+    ) -> dict[str, Any]:
+        """概率校准拟合分 (NLL/BIC) 补充 R².
+
+        高斯独立加性噪声假设 (残差方差用 MLE): R² 高不等于模型好, 且不同方法/
+        噪声尺度不可比 (论文: SINDy 回归瓶颈线性 vs 进化判别超线性). 给出:
+
+          - nll:   每个状态变量的负对数似然 N = (N/2)log(2πσ²) + N/2, σ²=Σresid²/N;
+          - bic:   BIC = 2·NLL + k·log(N), k = 非零系数项数 → 对结构稀疏度惩罚,
+                  支持跨候选库/模型比较 (越小越好, 而非单纯 R² 越大越好);
+          - noise_std: 残差样本标准差 sqrt(σ²ₘₗₑ);
+          - active_terms: 每个变量的非零系数项数 (稀疏结构).
+
+        诚实边界: NLL 依赖"残差 i.i.d. 高斯"这一假设; 对重尾/异方差噪声不成立.
+        """
+        N = float(dXdt.shape[0])
+        nll: dict[str, float] = {}
+        bic: dict[str, float] = {}
+        noise_std: dict[str, float] = {}
+        active: dict[str, int] = {}
+        for j in range(dXdt.shape[1]):
+            key = f"x{j}"
+            resid = dXdt[:, j] - Theta @ Xi[:, j]
+            ss_res = float(np.sum(resid ** 2))
+            sigma2 = ss_res / N if N > 0 else 0.0
+            k = int(np.sum(np.abs(Xi[:, j]) > 0.0))
+            if sigma2 > 1e-300:
+                nll_value = 0.5 * N * (np.log(2.0 * np.pi * sigma2) + 1.0)
+            else:
+                # 零残差 → 完美拟合; 数值上给一个大下界 NLL 避免 -inf.
+                nll_value = -1e12 * float(N) if N > 0 else 0.0
+            nll[key] = float(nll_value)
+            bic[key] = float(2.0 * nll_value + k * np.log(N)) if N > 1 else float(nll_value)
+            noise_std[key] = float(np.sqrt(sigma2)) if sigma2 > 0 else 0.0
+            active[key] = k
+        return {
+            "nll": nll,
+            "bic": bic,
+            "noise_std": noise_std,
+            "active_terms": active,
+            "note": (
+                "NLL/BIC assume i.i.d. Gaussian additive noise on dX/dt (MLE "
+                "variance). Prefer lower BIC across candidate libraries/models, "
+                "not just higher R2; BIC penalizes nonzero terms (sparsity)."
+            ),
+        }
 
     def _identifiability(self, args: DynamicsDiscoveryInput) -> ToolResult:
         """预飞辨识度检查: 不跑任何回归, 只算吸引子几何的辨识天花板.
