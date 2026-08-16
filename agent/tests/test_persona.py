@@ -15,7 +15,8 @@ def test_builtin_personas() -> None:
     assert "default" in mgr.list()
     assert "dft_expert" in mgr.list()
     default = mgr.get()
-    assert "computational materials science" in default.system_prompt
+    # 聚焦已改为"数学作为自然科学的语言"(通用自然科学, 非仅材料), 见 prompts.py
+    assert "Mathematics as the Language of Natural Science" in default.system_prompt
 
 
 def test_default_fallback() -> None:
