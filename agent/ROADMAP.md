@@ -323,6 +323,58 @@
 
 ---
 
+## 极简模式 / 模型档位 (2026-08, 前端可切换)
+
+设计背景: 我们的工作流 (phase 机 / plan gating / 认知纪律 / 重 compaction) 本质是
+对弱本地模型的补偿; 对顶尖大模型这些补偿的边际收益骤降、代价真实 (token / 摩擦)。
+极简模式不是砍功能, 而是把"认知编排"从常驻改为事件驱动 + 按模型档位聚合。
+安全层 (命令校验 / 物理 sanity / 预算警告) 在所有档位保留。
+
+### 1. 模型档位 profile 注册表 (M1) — 已完成
+- **优先级**: P1
+- **落地**: `huginn/plugins/model_tier.py` — `ModelTier` (full/balanced/minimal) +
+  `TierProfile` (use_phase_machine / use_plan_gating / cognitive_discipline /
+  compaction_tier / external_thinking) + `TierProfileStore` 单例运行时切换。
+- **相关文件**: `huginn/plugins/model_tier.py`
+
+### 2. 档位落地到 phase / plan / compaction (M3) — 已完成
+- **优先级**: P1
+- **落地**: `phases._effective_phase()` — minimal 档 phase 折成 OPEN (跳过 phase
+  前缀注入与工具门控); `context_builder.build_plan_text()` — minimal 档跳过 plan
+  上下文注入; `model_tier.compaction_knobs()` — minimal 档 compaction 力度放宽
+  2 倍, 接入 `streaming.py` 的两条 compaction 路径 (乘子作用于 keep_last_n /
+  keep_root_n, adaptive/CSM/trace 逻辑保持原样)。
+- **相关文件**: `huginn/phases.py` / `huginn/context_builder.py` /
+  `huginn/plugins/model_tier.py` / `huginn/agent/streaming.py`
+
+### 3. external thinking 显式开关 (M4) — 已完成
+- **优先级**: P1
+- **落地**: `model_tier.set_tier()` 切换档位时联动 `external_thinking` FeatureFlag,
+  保证 prompt 注入点读到的 flag 与档位 profile 一致。
+- **相关文件**: `huginn/plugins/model_tier.py`
+
+### 4. 认知纪律事件驱动守护 (M2) — 已完成 (v1)
+- **优先级**: P1
+- **落地**: `huginn/cognitive_discipline.py` — `discipline_mode()` 读档位的
+  always/event; `deviation_kind()` 检测偏离 (v1 识别工具失败); `event_reminder()`
+  生成即时提醒; `inject_discipline_reminder()` 在 event 档位、检测到偏离时于
+  streaming 发送前注入一条紧凑 `HumanMessage` 提醒。非 event 档 / 无偏离 / 异常
+  均原样返回, 不影响发送路径。
+- **升级方向**: 偏离检测从"工具失败"扩到"物理不合理值 / 未确认覆盖数据 / 伪造结果"
+  等更多信号 (接 ErrorKind 结构化错误分类)。
+- **相关文件**: `huginn/cognitive_discipline.py` / `huginn/agent/streaming.py` /
+  `huginn/plugins/model_tier.py`
+
+### 5. 前端设置项 — 已完成
+- **优先级**: P1
+- **落地**: 后端 `routes/config.py` 新增 `GET/POST /config/model-tier` + `/config`
+  返回 `model_tier`; 前端 `useConfig.ts` 新增 `modelTier` 状态与 `switchModelTier`,
+  `SettingsPanel.tsx` Advanced 标签新增「模型档位 (极简模式)」下拉。
+- **相关文件**: `huginn/routes/config.py` / `desktop/src/hooks/useConfig.ts` /
+  `desktop/src/components/panels/SettingsPanel.tsx`
+
+---
+
 ## 维护说明
 
 - 新增"升级路径"注释时, 在对应模块段补一行, 标注状态/优先级/文件:line。

@@ -1450,6 +1450,17 @@ class StreamingMixin:
 
             inputs = {"messages": messages}
 
+            # M2: 事件驱动认知纪律守护 — event 档位下, 若对话尾部出现工具失败
+            # 等纪律偏离, 发送前即时注入一条紧凑提醒 (平时不占常驻 prompt).
+            # 纯函数, 非 event 档 / 无偏离 / 异常均原样返回, 不影响发送路径.
+            try:
+                from huginn.cognitive_discipline import inject_discipline_reminder
+
+                messages = inject_discipline_reminder(messages)
+                inputs = {"messages": messages}
+            except Exception:
+                logger.debug("event-driven discipline inject skipped", exc_info=True)
+
             # Compact initial messages if a context budget is configured.
             # mode 切换 flag: CSM 进入 S3_SWITCH/S6_FEEDBACK 时标记需要 compaction.
             # ponytail: flag 模式避开 async/sync 边界. 升级: CSM 直接 emit 事件.
@@ -1464,6 +1475,15 @@ class StreamingMixin:
             except Exception:
                 logger.debug("meta_trace_available check failed", exc_info=True)
             _trace_kln_divisor = 2 if _trace_avail else 1
+            # M3: 按模型档位整体放宽/收紧 compaction 力度 (light 档保留更多原始).
+            try:
+                from huginn.plugins.model_tier import compaction_knobs
+
+                _ck = compaction_knobs()
+            except Exception:
+                _ck = None
+            _keep_mult = _ck.keep_multiplier if _ck else 1.0
+            _root_mult = _ck.root_multiplier if _ck else 1.0
 
             if getattr(self, "_needs_compaction", False) and self.context_budget_tokens > 0:
                 summarizer = self._make_summarizer()
@@ -1474,7 +1494,7 @@ class StreamingMixin:
                         await summarize_compact_messages(
                             inputs["messages"],
                             self.context_budget_tokens,
-                            keep_last_n=max(1, 4 // _trace_kln_divisor),
+                            keep_last_n=max(1, int((4 // _trace_kln_divisor) * _keep_mult)),
                             summarizer=summarizer,
                             existing_summary=self._build_compact_summary(),
                             max_messages=getattr(self, "_context_max_messages", None),
@@ -1486,7 +1506,7 @@ class StreamingMixin:
                         self.context_budget_tokens,
                         keep_last_n=1,
                         # AV5: 默认 2 + markers, σ₂ 补丁下沉到生产路径
-                        keep_root_n=int(os.environ.get("HUGINN_KEEP_ROOT_N", "2")),
+                        keep_root_n=int(int(os.environ.get("HUGINN_KEEP_ROOT_N", "2")) * _root_mult),
                         root_content_markers=_load_root_markers(),
                     )
             elif self.context_budget_tokens > 0:
@@ -1508,6 +1528,7 @@ class StreamingMixin:
                     # Meta-Trace: trace 存在时 keep_last_n 减半, trace 携带历史
                     if _trace_avail and adaptive_kln > 1:
                         adaptive_kln = max(1, adaptive_kln // 2)
+                    adaptive_kln = max(1, int(adaptive_kln * _keep_mult))
                     adaptive_budget = int(
                         self.context_budget_tokens
                         * getattr(self, "_adaptive_budget_ratio", 1.0)
@@ -1528,7 +1549,7 @@ class StreamingMixin:
                         self.context_budget_tokens,
                         keep_last_n=1,
                         # AV5: 默认 2 + markers, σ₂ 补丁下沉到生产路径
-                        keep_root_n=int(os.environ.get("HUGINN_KEEP_ROOT_N", "2")),
+                        keep_root_n=int(int(os.environ.get("HUGINN_KEEP_ROOT_N", "2")) * _root_mult),
                         root_content_markers=_load_root_markers(),
                     )
                 estimated = (
