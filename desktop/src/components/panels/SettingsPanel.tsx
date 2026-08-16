@@ -1337,8 +1337,10 @@ export function SettingsPanel(props: SettingsPanelProps) {
                   <p className="mt-1 text-xs text-accent">{modelTierSavedMsg}</p>
                 )}
                 <p className="mt-1 text-[10px] text-text-muted">
-                  极简模式跳过 phase/plan 门控, 认知纪律改为事件驱动, 减轻对强模型的束缚.
-                  安全层 (命令校验 / 物理 sanity / 预算警告) 在所有档位都保留.
+                  极简模式控制"认知编排开销" (phase/plan 门控、纪律强度、compaction 力度),
+                  与"思考强度"是两条正交轴 —— 思考强度 (低/中/高/MAX, 聊天气泡栏 🧠) 单独决定
+                  模型推理深度, 两者互不影响. 安全层 (命令校验 / 物理 sanity / 预算警告)
+                  在所有档位都保留.
                 </p>
               </ConfigField>
 

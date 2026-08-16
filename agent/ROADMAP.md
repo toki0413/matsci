@@ -330,6 +330,11 @@
 极简模式不是砍功能, 而是把"认知编排"从常驻改为事件驱动 + 按模型档位聚合。
 安全层 (命令校验 / 物理 sanity / 预算警告) 在所有档位保留。
 
+> **与"思考强度"是两条正交轴**: 极简模式 (ModelTier) 决定"认知编排开销"
+> (phase/plan/纪律/compaction); 思考强度 (ThinkingIntensity, 低/中/高/**MAX**)
+> 决定"模型推理深度" (provider reasoning budget)。两者互不影响, 可独立设置。
+> 最高档 MAX 只对支持方生效 (Anthropic budget 64000 / OpenAI reasoning_effort=max)。
+
 ### 1. 模型档位 profile 注册表 (M1) — 已完成
 - **优先级**: P1
 - **落地**: `huginn/plugins/model_tier.py` — `ModelTier` (full/balanced/minimal) +

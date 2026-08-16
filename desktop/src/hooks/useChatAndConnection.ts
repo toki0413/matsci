@@ -23,7 +23,7 @@ import {
   API_BASE, WS_URL, syncBackendUrl, PERSONAS_FALLBACK, wsUrlVersion,
 } from "../lib/config-store";
 import { isWSMessage, type WSMessage } from "../types/ws";
-import type { AppConfig, PersonaSeed, PersonaEmotionResponse, HeatEngineHealth } from "../types/domain";
+import type { AppConfig, PersonaSeed, PersonaEmotionResponse, HeatEngineHealth, ThinkingIntensity } from "../types/domain";
 import type { PetStatusState } from "../components/PetStatusWidget";
 import i18n from "../i18n";
 import { toast } from "../components/Toast";
@@ -239,7 +239,7 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
   const [contextPct, setContextPct] = useState<number>(0);
 
   // ── Thinking intensity (per-request override sent to backend) ──
-  const [thinkingIntensity, setThinkingIntensity] = useState<"low" | "medium" | "high">("medium");
+  const [thinkingIntensity, setThinkingIntensity] = useState<ThinkingIntensity>("medium");
 
   // ── Message queue (Kimi-style: send while streaming, drain on done) ──
   const [pendingMessages, setPendingMessages] = useState<string[]>([]);

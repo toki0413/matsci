@@ -22,7 +22,11 @@ from huginn.crypto import CryptoVault, EncryptedConfig, KeyManager
 
 logger = logging.getLogger(__name__)
 
-ThinkingIntensity = Literal["low", "medium", "high"]
+# 思考强度 (与"极简模式/模型档位"是两条正交轴):
+# - 极简模式 (ModelTier) 决定"认知编排开销" (phase/plan/纪律/compaction);
+# - 思考强度 (ThinkingIntensity) 决定"模型推理深度" (provider reasoning budget).
+# 最高档 MAX 只在支持方可用, 提供端会按 provider 映射或忽略.
+ThinkingIntensity = Literal["low", "medium", "high", "max"]
 
 
 def _parse_queue_map(value: str | None) -> dict[str, str]:
@@ -832,11 +836,11 @@ class HuginnConfig:
 
     @staticmethod
     def _parse_thinking_env() -> ThinkingIntensity | dict[str, Any] | None:
-        """Parse HUGINN_THINKING: a JSON object or one of low/medium/high."""
+        """Parse HUGINN_THINKING: a JSON object or one of low/medium/high/max."""
         raw = os.environ.get("HUGINN_THINKING", "").strip()
         if not raw:
             return None
-        if raw in ("low", "medium", "high"):
+        if raw in ("low", "medium", "high", "max"):
             # 已运行时校验 raw ∈ Literal 值域, 但 mypy 无法通过 in 检查将 str 收窄为 Literal
             return raw  # type: ignore[return-value]
         try:

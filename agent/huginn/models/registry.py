@@ -168,6 +168,7 @@ _INTENSITY_TO_ANTHROPIC_BUDGET: dict[ThinkingIntensity, int] = {
     "low": 4096,
     "medium": 16000,
     "high": 32000,
+    "max": 64000,  # 最高思考强度: 双倍 high 预算
 }
 
 
