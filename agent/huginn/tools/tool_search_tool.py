@@ -17,7 +17,8 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import Any, Callable, Literal
+from collections.abc import Callable
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -134,7 +135,7 @@ def _cosine(a: list[float], b: list[float]) -> float:
     return sum(x * y for x, y in zip(a, b)) / (na * nb)
 
 
-def _tool_search_text(name: str, tool: "HuginnTool") -> str:
+def _tool_search_text(name: str, tool: HuginnTool) -> str:
     """工具的可检索文本: name + description + category + 参数名."""
     parts = [name, tool.description or "", getattr(tool, "category", "")]
     schema = tool.input_json_schema
@@ -143,7 +144,7 @@ def _tool_search_text(name: str, tool: "HuginnTool") -> str:
     return " ".join(p for p in parts if p)
 
 
-def _tool_vector(name: str, tool: "HuginnTool", embed: Callable | None) -> list[float] | None:
+def _tool_vector(name: str, tool: HuginnTool, embed: Callable | None) -> list[float] | None:
     """工具的 embedding 向量, 带 TTL 缓存."""
     if embed is None:
         return None
@@ -161,7 +162,7 @@ def _tool_vector(name: str, tool: "HuginnTool", embed: Callable | None) -> list[
     return vec
 
 
-def _keyword_score(query: str, name: str, tool: "HuginnTool") -> float:
+def _keyword_score(query: str, name: str, tool: HuginnTool) -> float:
     """关键词命中分: name 命中 ×2, description ×1. 无 token 返回 0."""
     tokens = _expand_query_tokens(query)
     if not tokens:
@@ -231,7 +232,7 @@ class ToolSearchTool(HuginnTool):
             return cached
 
         q = query.lower().strip()
-        candidates: list[tuple[str, "HuginnTool"]] = []
+        candidates: list[tuple[str, HuginnTool]] = []
         # 1) 子串精确匹配保底 (原行为)
         for name, tool in ToolRegistry._tools.items():
             if name == self.name:
@@ -319,7 +320,7 @@ class ToolSearchTool(HuginnTool):
 
     @staticmethod
     def _to_result_rows(
-        candidates: list[tuple[str, "HuginnTool"]],
+        candidates: list[tuple[str, HuginnTool]],
         limit: int,
         relevance: float = 0.0,
     ) -> list[dict[str, Any]]:

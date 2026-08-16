@@ -32,7 +32,6 @@ from huginn.kg.graph import ProjectKnowledgeGraph
 from huginn.kg.hypergraph import (
     IMPACT_RECHECK,
     IMPACT_ROOT,
-    IMPACT_WEAKENED,
     STATUS_ACCEPTED,
     STATUS_CONTESTED,
     STATUS_RECHECK,

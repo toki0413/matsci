@@ -7,6 +7,7 @@ archived, or inspected outside the agent.
 
 from __future__ import annotations
 
+import contextlib
 import csv
 import io
 import json
@@ -129,7 +130,7 @@ class ExportManager:
         from datetime import datetime
 
         try:
-            from huginn.knowledge.store import KnowledgeBase, EMBED_MODEL
+            from huginn.knowledge.store import EMBED_MODEL, KnowledgeBase
         except Exception:
             return [], self._empty_summary()
 
@@ -139,10 +140,8 @@ class ExportManager:
             return [], self._empty_summary()
 
         hit_counts: dict[str, int] = {}
-        try:
+        with contextlib.suppress(Exception):
             hit_counts = dict(getattr(kb, "_hit_counts", {}) or {})
-        except Exception:
-            pass
 
         try:
             data = kb.collection.get(include=["documents", "metadatas"])
