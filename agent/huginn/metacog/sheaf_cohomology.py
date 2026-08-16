@@ -42,7 +42,12 @@ ponytail: 单文件, numpy + stdlib, 不引 GUDHI cohomology (Phase 7.1 装的
 GUDHI 是 simplex tree, 跟 sheaf cohomology 是两条路). 手写 coboundary
 matrix + SVD rank.
 
-# 架构状态: 研究探索层 — 未接入主循环, 保留作为 future hook. 如需启用, 在 huginn/events/unified_bus.py 订阅 cognitive.* 事件并接入.
+# 架构状态: 已接入主循环 (hypothesis 域). 入口: hypothesis_loop 的
+# _metacog_topology_audit (P7) 在每次断路器/审计时对假设图算 H¹, 存到
+# _metacog_last_topology; engine_observe 把该结果回灌 prompt, 让 agent 看到
+# "多源证据全局不一致 (gluing obstruction)". advisory: 任一失败都降级不阻断.
+# 定位: hypothesis 域的严格 Čech H¹, 与 task_lifecycle 的感质探针
+# (_pmk_gluing_obstruction, 决策域 cycle_basis 近似) 互补, 两者都活着, 勿合并.
 """
 from __future__ import annotations
 
