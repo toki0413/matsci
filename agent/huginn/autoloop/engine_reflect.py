@@ -2268,6 +2268,13 @@ class EngineReflectMixin:
                     persona_id=getattr(self, "_last_persona", None),
                     run_id=getattr(self, "_run_id", "") or "",
                     math_concept="",
+                    # 归因由上游 agent 推理显式判定 (validation["gap_type"]),
+                    # 缺省 unknown, 不做规则推断.
+                    gap_type=(
+                        validation.get("gap_type", "unknown")
+                        if isinstance(validation, dict)
+                        else "unknown"
+                    ),
                 )
             except Exception:
                 logger.warning(

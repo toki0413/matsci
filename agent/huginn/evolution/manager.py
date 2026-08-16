@@ -40,6 +40,9 @@ class Recommendation:
 
     avoid_directions: list[str] = field(default_factory=list)
     prefer_strategies: list[str] = field(default_factory=list)
+    # 认知更新通道 (Physical RSI): 环境缺口方向 — 需要修订对域的模型/假设,
+    # 而非仅避开/换策略.
+    revisit_world_model: list[str] = field(default_factory=list)
     rationale: str = ""
 
 
@@ -86,10 +89,13 @@ class EvolutionManager:
         persona_id: str | None,
         run_id: str,
         math_concept: str = "",
+        gap_type: str = "unknown",
     ) -> None:
         """统一记录单步 outcome. 内部分流到 FailedDirectionStore + SkillEvolutionLayer.
 
         flag off 时 no-op (走原 _learn 路径).
+        gap_type: environment_gap / skill_gap / unknown. 由上游 (agent 推理/
+        validation 字典) 显式判定并传入, 这里不做脆弱规则推断.
         """
         if not _use_evolution_manager():
             return
@@ -125,6 +131,7 @@ class EvolutionManager:
                     persona_id=persona_id,
                     math_concept=math_concept,
                     status=val_status,
+                    gap_type=gap_type,
                 )
             except Exception:
                 logger.warning("record failed_direction failed", exc_info=True)
@@ -144,6 +151,7 @@ class EvolutionManager:
                     math_concept=math_concept,
                     strategy_name=strategy_name,
                     status="strategy_failed",
+                    gap_type=gap_type,
                 )
             except Exception:
                 logger.warning("record strategy_failed failed", exc_info=True)
@@ -215,6 +223,39 @@ class EvolutionManager:
                     written.append(principle)
                 except Exception:
                     logger.warning("distill stable_principle write failed", exc_info=True)
+
+            # 认知更新通道 (Physical RSI): 连续 3 次同 (persona, math_concept) 的
+            # environment_gap → 写 "revise world model" STABLE_PRINCIPLE
+            # (status="environment_gap"). 告诉 evolve 要修订对域的模型/假设,
+            # 而非只换策略.
+            env_groups: dict[tuple[str, str], list] = defaultdict(list)
+            for r in records:
+                if r.gap_type == "environment_gap":
+                    key = (r.persona_id or "", r.math_concept or "")
+                    env_groups[key].append(r)
+            for (pid, mc), recs in env_groups.items():
+                if len(recs) < 3:
+                    continue
+                principle = (
+                    f"revise world model / domain assumption for math concept "
+                    f"{mc or 'unknown'} (3+ environment gaps)"
+                )
+                try:
+                    from huginn.memory.typing import remember_typed
+
+                    remember_typed(
+                        self._mm,
+                        content=principle,
+                        memory_type="stable_principle",
+                        persona_id=pid or None,
+                        status="environment_gap",
+                        importance=0.8,
+                        tier="long",
+                        source="evolution:distill",
+                    )
+                    written.append(principle)
+                except Exception:
+                    logger.warning("distill environment_gap write failed", exc_info=True)
         except Exception:
             logger.warning("distill failed", exc_info=True)
         return written
@@ -236,6 +277,17 @@ class EvolutionManager:
         except Exception:
             logger.warning("recommend avoid query failed", exc_info=True)
 
+        # 认知更新通道: 环境缺口方向单独列出, 让 hypothesis loop 修订对域的
+        # 模型/假设, 而非仅避开. 与 avoid_directions 重叠但语义不同.
+        revisit: list[str] = []
+        try:
+            env_records = self._failed_store.query(
+                limit=5, gap_type="environment_gap"
+            )
+            revisit = [r.hypothesis_text for r in env_records if r.hypothesis_text]
+        except Exception:
+            logger.warning("recommend revisit query failed", exc_info=True)
+
         prefer: list[str] = []
         try:
             if hasattr(self._mm, "recall_typed"):
@@ -255,10 +307,14 @@ class EvolutionManager:
 
         rationale = (
             f"avoid {len(avoid)} failed directions, "
-            f"prefer {len(prefer)} strategies"
+            f"prefer {len(prefer)} strategies, "
+            f"revisit world model {len(revisit)} direction(s)"
         )
         return Recommendation(
-            avoid_directions=avoid, prefer_strategies=prefer, rationale=rationale
+            avoid_directions=avoid,
+            prefer_strategies=prefer,
+            revisit_world_model=revisit,
+            rationale=rationale,
         )
 
 
@@ -327,11 +383,36 @@ def _selfcheck() -> None:
     assert any("avoid persona dft_expert" in p for p in principles), principles
     print("3. distill 3+ failures → STABLE_PRINCIPLE OK")
 
+    # 场景 4: 认知更新通道 — 3 次 environment_gap → revise world model principle
+    #         + recommend 暴露 revisit_world_model
+    for i in range(3):
+        em.record_outcome(
+            hypothesis=f"env gap {i}",
+            plan={"mode": "lda_direct"},
+            validation={
+                "status": "refuted",
+                "reason": f"model cannot reproduce causality {i}",
+                "gap_type": "environment_gap",
+            },
+            persona_id="dft_expert",
+            run_id=f"run_env_{i}",
+            math_concept="DFT-PZ LDA gap underestimation",
+            gap_type="environment_gap",
+        )
+    env_principles = em.distill()
+    assert any(
+        "revise world model" in p for p in env_principles
+    ), env_principles
+    rec4 = em.recommend()
+    assert rec4.revisit_world_model, rec4.revisit_world_model
+    assert any("env gap" in d for d in rec4.revisit_world_model), rec4.revisit_world_model
+    print("4. environment_gap → revise-world-model + revisit_world_model OK")
+
     # 清理
     os.environ.pop(_FLAG, None)
     EvolutionManager._reset_for_test()
     shutil.rmtree(tmpdir, ignore_errors=True)
-    print("evolution_manager selfcheck OK (3 scenarios)")
+    print("evolution_manager selfcheck OK (4 scenarios)")
 
 
 if __name__ == "__main__":
