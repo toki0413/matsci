@@ -1,6 +1,8 @@
 # P0 里程碑：共享状态后端化 + Rust 沙箱确定性
 
-> 面向"真实产业化发布"的首个里程碑。现状事实见 `docs/tech-spec.md`；差距依据见 `polish-reports/industrialization-gap-analysis.md`（P0 两项）。
+> 状态：**已完成**（T1–T5 全部落地，由 `staging/plans/2026-08-12-p0-state-store-and-rust.md` 提升，
+> 保留为里程碑记录）。现状事实见 [tech-spec.md](tech-spec.md)；差距依据见
+> [industrialization-gap-analysis.md](../polish-reports/industrialization-gap-analysis.md)（P0 两项）。
 > 验收以命令/测试为准，不写步骤与精确代码。
 
 ## 背景事实（不重复 spec）
@@ -29,7 +31,7 @@ status:     已通过。pyext/src/sandbox.rs 新增 decode_exit_status 捕获子
              子模块注册进 sys.modules 消除 ModuleNotFoundError；release.yml 新增
              build-rust-ext job（cargo test + maturin wheel 多 python 版本上传
              Release）；pyproject 新增 [project.optional-dependencies.rust]。
-spec:       polish-reports/industrialization-gap-analysis.md  #P0-1
+spec:       ../polish-reports/industrialization-gap-analysis.md  #P0-1
 ```
 
 ### P0-2 共享状态后端化
@@ -41,7 +43,7 @@ files:      huginn/persistence/state_store.py, huginn/server_core.py, tests/test
 acceptance: SqliteStore("huginn_threads") 实现 MutableMapping 且基于 SQLite（WAL）；
              get_or_create_thread/touch_thread/列列举经 store；重启后既有会话仍在；
              threads 路由测试全绿（MutableMapping 保持原地修改语义）
-spec:       polish-reports/industrialization-gap-analysis.md  #P0-2
+spec:       ../polish-reports/industrialization-gap-analysis.md  #P0-2
 ```
 
 - [x] T3: 引入 `CheckpointStore`（SQLite 持久化的 MutableMapping）替换内存 `_checkpoints`
@@ -53,7 +55,7 @@ files:      huginn/persistence/state_store.py, huginn/server_core.py,
 acceptance: SqliteStore("huginn_checkpoints", encode=encode_checkpoint) 实现
              MutableMapping 且基于 SQLite（WAL）；cp 增删改查/回滚经 store；
              重启后检查点可恢复（encode/decode 往返）；checkpoints/undo 相关测试全绿
-spec:       polish-reports/industrialization-gap-analysis.md  #P0-2
+spec:       ../polish-reports/industrialization-gap-analysis.md  #P0-2
 ```
 
 - [x] T4: 状态后端开关 `HUGINN_STATE_BACKEND=memory|sqlite` + 多进程一致性验证
@@ -64,7 +66,7 @@ files:      huginn/server_core.py, DEPLOYMENT.md, tests/test_state_store.py,
 acceptance: 开关切换后线程/检查点行为等价；多 worker 并发写同一 sqlite 无
              "database is locked"（WAL + busy_timeout）；tests/test_multiprocess_
              state.py 自动化覆盖两种后端（memory 默认 dict + sqlite SqliteStore）
-spec:       polish-reports/industrialization-gap-analysis.md  #P0-2
+spec:       ../polish-reports/industrialization-gap-analysis.md  #P0-2
 ```
 
 ### 收尾
@@ -72,7 +74,7 @@ spec:       polish-reports/industrialization-gap-analysis.md  #P0-2
 - [x] T5: 持久化冒烟 + 文档更新
 ```
 goal:       P0 两项落地后，单机多 worker 状态一致可复现，文档如实
-files:      DEPLOYMENT.md, docs/tech-spec.md, tests/test_state_persistence_smoke.py
+files:      DEPLOYMENT.md, tech-spec.md, tests/test_state_persistence_smoke.py
 acceptance: 一处线程/检查点跨"重启 + 多 worker"的端到端冒烟通过；tech-spec
              contract/convention 与代码一致
 status:     已通过。端到端冒烟 tests/test_state_persistence_smoke.py：writer 进程
@@ -81,7 +83,7 @@ status:     已通过。端到端冒烟 tests/test_state_persistence_smoke.py：
              test_server_endpoints.py 37 过（唯一失败为缺 matplotlib 的 all extra，
              与本次改动无关）。文档：DEPLOYMENT.md 多 worker 状态共享 + tech-spec.md
              状态后端契约。仓库无 CHANGELOG.md，未新建。
-spec:       polish-reports/industrialization-gap-analysis.md  #结论
+spec:       ../polish-reports/industrialization-gap-analysis.md  #结论
 ```
 
 ## 并行性

@@ -37,6 +37,8 @@
 | [tech-spec.md](tech-spec.md) | active | 技术规格（已合并下述 8 个已废弃 spec） |
 | [harness_evolution_spec.md](harness_evolution_spec.md) | active | harness 演进规范（H0-H4 落地，H5-a/H5-b 已落地） |
 | [pluginized-segments-design.md](pluginized-segments-design.md) | active | 插件化分段设计（Everything is a Plugin 落地） |
+| [external-thinking.md](external-thinking.md) | active | deep_think 外部草稿纸工具（已实现，含 `external_thinking` 开关） |
+| [p0-state-store-and-rust.md](p0-state-store-and-rust.md) | active | P0 里程碑记录（共享状态后端化 + Rust 沙箱确定性，已完成） |
 | [reward_design.md](reward_design.md) | staging | 奖励设计（未实现理论稿） |
 | [SPEC_openworker_adoption](../huginn/SPEC_openworker_adoption.md) | active | OpenWorker 采纳规范 |
 | [SPEC_visual_kb_loop](../huginn/metacog/SPEC_visual_kb_loop.md) | active | 视觉知识库闭环规范 |
@@ -48,8 +50,6 @@
 | 文档 | 状态 | 说明 |
 |---|---|---|
 | [cost-participation-contract.md](cost-participation-contract.md) | staging | 成本-剪枝参与感契约（决策点对话 + 成本叙事，待评审） |
-| [staging/plans/2026-08-12-p0-state-store-and-rust.md](staging/plans/2026-08-12-p0-state-store-and-rust.md) | staging | P0 状态存储 + Rust 计划 |
-| [staging/specs/2026-08-13-external-thinking.md](staging/specs/2026-08-13-external-thinking.md) | staging | 外部思考规范 |
 
 > staging 下文档定稿通过评审后，移入"架构与设计"并标记 active。
 
