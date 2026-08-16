@@ -369,6 +369,7 @@ class ProjectKnowledgeGraph:
         "Session": "#f5f5f5",
         "Resource": "#ffe0b2",
         "Literature": "#d1c4e9",
+        "Claim": "#f8bbd0",
         "experiment": "#cfd8dc",
         "Element": "#a5d6a7",
         "Compound": "#81c784",
@@ -768,6 +769,139 @@ class ProjectKnowledgeGraph:
         # 按 created_at 倒序, 取前 limit 条
         results.sort(key=lambda d: d.get("created_at", ""), reverse=True)
         return results[:limit]
+
+    # ── 文献结论层 (claim 提升为一等节点) ──
+
+    def add_claim(
+        self,
+        claim_text: str,
+        *,
+        literature_id: str = "",
+        premises: list[str] | None = None,
+        evidence_strength: float = 0.5,
+        condition: str = "",
+        status: str = "accepted",
+        source: str = "claim_layer",
+        confidence: float = 0.5,
+    ) -> str:
+        """登记一条文献结论为一等 KG 节点, 返回稳定 node id.
+
+        claim 是"某来源对某一断言的登记", 与其文档内 CLAIM 元素解耦 — 同一
+        结论可能被多篇论文提及, 这里按文本规范化去重 (首个来源建节点, 后续
+        来源只累加 mentions).
+
+        附加行为:
+        - premises 非空时, 为每个前提建 CLAIM/实体节点并加 depends_on 边
+          (结论级依赖, 供超图层推导合取/析取语义)
+        - literature_id 非空时, 加 evidence 边: literature supports_claim claim
+        - 节点属性带 evidence_strength / condition / status, 供查询/审计用
+
+        返回 claim 节点 id. 真正的高阶 (AND/OR/传播) 由 ClaimHypergraph 承担,
+        这里只负责把结论注册进二元 KG 以便现有 hybrid_retrieve/社区检索召回.
+        """
+        from huginn.kg.entities import EntityType, Relation
+
+        eid = node_id(claim_text, EntityType.CLAIM)
+        now = datetime.now().isoformat()
+        with self._lock:
+            if eid in self._graph:
+                # 已有结论节点: 累加 mentions, 提升置信度 (重复出现=更可信)
+                self._graph.nodes[eid]["mentions"] = (
+                    self._graph.nodes[eid].get("mentions", 0) + 1
+                )
+                self._graph.nodes[eid]["last_seen"] = now
+                old_conf = self._graph.nodes[eid].get("confidence", confidence)
+                self._graph.nodes[eid]["confidence"] = min(0.99, old_conf + 0.05)
+                # 新证据强度取更强者 (多次独立来源更强)
+                self._graph.nodes[eid]["evidence_strength"] = max(
+                    float(self._graph.nodes[eid].get("evidence_strength", 0.0)),
+                    evidence_strength,
+                )
+            else:
+                self._graph.add_node(
+                    eid,
+                    label=claim_text,
+                    type=EntityType.CLAIM,
+                    source=source,
+                    confidence=confidence,
+                    evidence_strength=evidence_strength,
+                    condition=condition or "",
+                    status=status,
+                    literature_id=literature_id,
+                    created_at=now,
+                    last_seen=now,
+                    mentions=1,
+                )
+
+            # 前提 → 结论 的 depends_on 边 (结论级依赖)
+            for premise in premises or []:
+                if not premise:
+                    continue
+                # 前提若已作为实体/结论存在就指向它, 否则建一个占位 Topic 节点
+                p_eid = premise if premise in self._graph else node_id(premise, EntityType.TOPIC)
+                if p_eid not in self._graph:
+                    self._graph.add_node(
+                        p_eid, label=premise, type=EntityType.TOPIC,
+                        source="claim_layer", confidence=0.5,
+                        created_at=now, last_seen=now, mentions=1,
+                    )
+                if not self._graph.has_edge(p_eid, eid):
+                    self._graph.add_edge(
+                        p_eid, eid, relation=Relation.DEPENDS_ON,
+                        source=source, confidence=confidence,
+                        created_at=now, last_seen=now, mentions=1,
+                    )
+
+            # 文献来源 → 结论 的 supports_claim 边
+            if literature_id:
+                lit_eid = f"{literature_id}"
+                if lit_eid in self._graph and not self._graph.has_edge(lit_eid, eid):
+                    self._graph.add_edge(
+                        lit_eid, eid, relation=Relation.SUPPORTS_CLAIM,
+                        source=source, confidence=confidence,
+                        evidence_strength=evidence_strength,
+                        created_at=now, last_seen=now, mentions=1,
+                    )
+        return eid
+
+    def get_claim(
+        self, claim_text: str,
+    ) -> dict[str, Any] | None:
+        """按文本取回 CLAIM 节点属性, 不存在返回 None."""
+        from huginn.kg.entities import EntityType
+
+        return self.get_entity(claim_text, EntityType.CLAIM)
+
+    def query_claim_deps(
+        self, claim_text: str, direction: str = "backward",
+    ) -> dict[str, Any]:
+        """查某结论的依赖邻域.
+
+        direction="backward": 返回该结论的前提 (depends_on 入边来源).
+        direction="forward":  返回依赖该结论的下游结论 (depends_on 出边目标).
+        返回 {"claim": ..., "nodes": [...], "edges": [...]}, 供超图审计 / 可视化.
+        """
+        from huginn.kg.entities import EntityType
+
+        eid = node_id(claim_text, EntityType.CLAIM)
+        with self._lock:
+            if eid not in self._graph:
+                return {"claim": claim_text, "nodes": [], "edges": []}
+            nodes: list[dict[str, Any]] = []
+            edges: list[dict[str, Any]] = []
+            neighbors = (
+                self._graph.predecessors(eid)
+                if direction == "backward"
+                else self._graph.successors(eid)
+            )
+            for n in neighbors:
+                ed = self._graph.get_edge_data(n, eid) if direction == "backward" \
+                    else self._graph.get_edge_data(eid, n)
+                if not ed or ed.get("relation") != "depends_on":
+                    continue
+                nodes.append({"id": n, **dict(self._graph.nodes[n])})
+                edges.append({"source": n, "target": eid, **dict(ed)})
+            return {"claim": claim_text, "nodes": nodes, "edges": edges}
 
 
 # ── Math concept dependency graph ──────────────────────────────────────

@@ -15,6 +15,11 @@ class EntityType:
     SESSION = "Session"
     RESOURCE = "Resource"
     LITERATURE = "Literature"
+    # ── 文献结论层 (claim 提升为一等节点) ──
+    # 论文内部的结论/断言提为可被指向、可被挑战的图节点.
+    # 与 DocumentGraph 的文档内 CLAIM 元素不同, 这里是一篇论文(或多个来源)
+    # 在 KG 全局层面对某一结论的登记 — 可挂 evidence_strength/condition/status.
+    CLAIM = "Claim"
     # ── Materials science GraphRAG extensions ──
     ELEMENT = "Element"
     COMPOUND = "Compound"
@@ -42,6 +47,10 @@ class Relation:
     USES_METHOD_FROM = "uses_method_from"
     EXTENDS = "extends"
     CONTRADICTS = "contradicts"
+    # ── 文献结论层关系 (claim 提升为一等节点) ──
+    DEPENDS_ON = "depends_on"          # Claim → 其前提假设/实体 (结论级依赖, 非论文级引用)
+    SUPPORTS_CLAIM = "supports_claim"  # Literature/证据 → Claim (正向证据, 带 evidence_strength)
+    CHALLENGES = "challenges"          # 新证据/Literature → Claim (挑战该结论)
     # ── Materials science relations ──
     HAS_ELEMENT = "has_element"          # Compound → Element (with stoichiometry attr)
     HAS_PROPERTY = "has_property"        # Compound → Property (with value+unit attrs)
