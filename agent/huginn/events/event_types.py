@@ -45,6 +45,13 @@ QUALITY_CHECK = "quality.check"
 # 前端订阅 /tasks/stream 的 'heat_engine.health' event 实时展示.
 HEAT_ENGINE_HEALTH = "heat_engine.health"
 
+# ── Cost & pruning participation (docs/cost-participation-contract.md) ──
+# 决策点 (agent 主动召回用户在 prune/hibernate/degrade/pause/resume 关口裁决).
+# data 对齐契约 §3.2: id / kind / status / narrative / agent_judgment / options.
+DECISION_POINT = "decision.point"
+# 成本叙事 (数字 + 意图 + 预测) 流式推送, 供前端 MetricsBar 成本叙事渲染.
+COST_NARRATIVE = "cost.narrative"
+
 # ── Session ─────────────────────────────────────────────────────────
 SESSION_START = "session.start"
 SESSION_END = "session.end"
@@ -70,5 +77,6 @@ ALL_TYPES = frozenset({
     QUALITY_CHECK,
     HEAT_ENGINE_HEALTH,
     SESSION_START, SESSION_END,
+    DECISION_POINT, COST_NARRATIVE,
     STEP_RETRY,
 })
