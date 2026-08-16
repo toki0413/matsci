@@ -654,8 +654,105 @@ class TestTrimCheckpointerRootMarking:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# _dump_completion_records — red_team 数据落盘 (jsonl)
+# P0 / P1① — checkpointer 消息数上限兜底 + 无 usage 降级 (第三方审计修复)
 # ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestCheckpointerCountCap:
+    """P0: 无条件按消息数上限修剪 checkpointer, 与 token budget/usage 解耦."""
+
+    def test_max_messages_default(self):
+        self_obj = object.__new__(StreamingMixin)
+        assert StreamingMixin._checkpointer_max_messages(self_obj) == 120
+
+    def test_max_messages_env_override(self, monkeypatch):
+        monkeypatch.setenv("HUGINN_CHECKPOINTER_MAX_MESSAGES", "80")
+        self_obj = object.__new__(StreamingMixin)
+        assert StreamingMixin._checkpointer_max_messages(self_obj) == 80
+
+    def test_max_messages_disabled_when_zero(self, monkeypatch):
+        monkeypatch.setenv("HUGINN_CHECKPOINTER_MAX_MESSAGES", "0")
+        self_obj = object.__new__(StreamingMixin)
+        assert StreamingMixin._checkpointer_max_messages(self_obj) is None
+
+    async def test_trims_by_count_even_within_budget(self, monkeypatch):
+        # 核心: token 总量压在预算内 (不超 G34 预算), 但条数超上限 → 仍按条数删.
+        # 用足够小的 budget 让 "token 预算" 判据不触发, 只用消息数上限触发.
+        monkeypatch.setenv("HUGINN_KEEP_ROOT_N", "0")
+        # budget 极大 → token 判据必然 pass; 只有 max_messages 生效
+        self_obj = SimpleNamespace(context_budget_tokens=10**12)
+        # 8 条, keep_last_n=4 → body 区 4 条 (idx0..3), max_messages=6
+        msgs = [
+            _big(mid=f"m{i}") for i in range(4)   # body 可丢
+        ] + [
+            _big_ai(mid=f"tail{i}") for i in range(4)  # keep_last_n 尾部
+        ]
+        graph = _make_mock_graph(msgs)
+        n = await StreamingMixin._trim_checkpointer_messages(
+            self_obj, {}, graph, config={}, max_messages=6
+        )
+        # 8 → 收敛到 ≤6, body 丢 2 条
+        assert n == 2
+        dropped = _dropped_ids(graph)
+        assert dropped == ["m0", "m1"]
+
+    async def test_no_trim_when_within_count(self, monkeypatch):
+        monkeypatch.setenv("HUGINN_KEEP_ROOT_N", "0")
+        self_obj = SimpleNamespace(context_budget_tokens=10**12)
+        msgs = [_big(mid=f"m{i}") for i in range(2)] + [
+            _big_ai(mid=f"tail{i}") for i in range(4)
+        ]
+        graph = _make_mock_graph(msgs)
+        n = await StreamingMixin._trim_checkpointer_messages(
+            self_obj, {}, graph, config={}, max_messages=6
+        )
+        assert n == 0
+        graph.update_state.assert_not_called()
+
+    async def test_enforce_count_cap_respects_trim_strategy(self, monkeypatch):
+        # 策略不含 trim → _enforce_checkpointer_count_cap 不动作
+        monkeypatch.setenv("HUGINN_COMPACT_STRATEGY", "summarize")
+        monkeypatch.setenv("HUGINN_KEEP_ROOT_N", "0")
+        msgs = [
+            _big(mid=f"m{i}") for i in range(2)
+        ] + [
+            _big_ai(mid=f"tail{i}") for i in range(4)
+        ]
+        graph = _make_mock_graph(msgs)
+        self_obj = object.__new__(StreamingMixin)
+        self_obj.checkpointer = object()
+        self_obj.context_budget_tokens = 10**12
+        turn_span = SimpleNamespace(metadata={})
+        n = await StreamingMixin._enforce_checkpointer_count_cap(
+            self_obj, graph, {}, turn_span
+        )
+        assert n == 0
+
+    async def test_enforce_count_cap_skips_when_no_checkpointer(self):
+        self_obj = SimpleNamespace(checkpointer=None)
+        n = await StreamingMixin._enforce_checkpointer_count_cap(
+            self_obj, None, None, SimpleNamespace(metadata={})
+        )
+        assert n == 0
+
+    async def test_enforce_count_cap_trims(self, monkeypatch):
+        monkeypatch.setenv("HUGINN_KEEP_ROOT_N", "0")
+        monkeypatch.setenv("HUGINN_CHECKPOINTER_MAX_MESSAGES", "6")
+        self_obj = object.__new__(StreamingMixin)
+        self_obj.checkpointer = object()
+        self_obj.context_budget_tokens = 10**12
+        msgs = [
+            _big(mid=f"m{i}") for i in range(4)   # body 可丢
+        ] + [
+            _big_ai(mid=f"tail{i}") for i in range(4)  # keep_last_n 尾部
+        ]
+        graph = _make_mock_graph(msgs)
+        turn_span = SimpleNamespace(metadata={})
+        n = await StreamingMixin._enforce_checkpointer_count_cap(
+            self_obj, graph, {}, turn_span
+        )
+        assert n == 2
+        assert turn_span.metadata["checkpointer_p0_trimmed"] == 2
 
 
 class TestDumpCompletionRecords:
