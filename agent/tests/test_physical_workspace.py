@@ -25,7 +25,7 @@ from huginn.security.workspace import (
     WorkspaceConfirmError,
 )
 from huginn.security.world_model import (
-    ConstraintViolation,
+    ConstraintViolationError,
     NaiveWorldModel,
     PhysicalAction,
 )
@@ -161,10 +161,10 @@ def test_world_model_predict_matches_sim_executor() -> None:
 
 # ── 物理约束校验 (preflight) ────────────────────────────────────
 def test_preflight_rejects_over_aspiration() -> None:
-    """源量不足 → preflight 抛 ConstraintViolation, 不执行."""
+    """源量不足 → preflight 抛 ConstraintViolationError, 不执行."""
     ex = SimExecutor()
     wa = PhysicalWorkspace(NaiveWorldModel(), ex)
-    with pytest.raises(ConstraintViolation, match="aspirate"):
+    with pytest.raises(ConstraintViolationError, match="aspirate"):
         wa.preflight(PhysicalAction("aspirate", {"vol": 999}))
 
 
@@ -172,7 +172,7 @@ def test_execute_preflight_blocks_before_effect() -> None:
     """preflight=True 时约束违规在 execute 前被阻止 (不产生副作用/逆)."""
     ex = SimExecutor()
     wa = PhysicalWorkspace(NaiveWorldModel(), ex)
-    with pytest.raises(ConstraintViolation, match="dispense"):
+    with pytest.raises(ConstraintViolationError, match="dispense"):
         wa.execute(
             PhysicalAction("dispense", {"vol": 999}), preflight=True
         )

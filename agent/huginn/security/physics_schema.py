@@ -227,10 +227,10 @@ class ProtocolMachine:
     def __init__(self, protocol: ProtocolSpec) -> None:
         self.protocol = protocol
 
-    def run(self, wa: "Any", *, preflight: bool = True) -> list[str]:
+    def run(self, wa: Any, *, preflight: bool = True) -> list[str]:
         """在 ``wa`` (PhysicalWorkspace) 上执行协议, 返回成功执行的步骤 id."""
-        from huginn.security.world_model import PhysicalAction
         from huginn.security.workspace import WorkspaceConfirmError
+        from huginn.security.world_model import PhysicalAction
 
         executed: list[str] = []
         with wa.transaction():
@@ -243,9 +243,8 @@ class ProtocolMachine:
                     preflight=preflight,
                 )
                 executed.append(spec.id)
-            if self.protocol.final_state:
-                if not matches_state(self.protocol.final_state, wa.state):
-                    raise WorkspaceConfirmError(
-                        f"协议终态断言失败: 协议 {self.protocol.name}"
-                    )
+            if self.protocol.final_state and not matches_state(self.protocol.final_state, wa.state):
+                raise WorkspaceConfirmError(
+                    f"协议终态断言失败: 协议 {self.protocol.name}"
+                )
         return executed

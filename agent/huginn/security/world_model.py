@@ -184,7 +184,7 @@ class NaiveWorldModel:
         return apply_forward(state_before, action)
 
 
-class ConstraintViolation(Exception):
+class ConstraintViolationError(Exception):
     """物理约束校验失败 — 动作违背第一性原理边界, 执行前被阻止."""
 
     def __init__(self, action: PhysicalAction, issues: list[str]) -> None:
