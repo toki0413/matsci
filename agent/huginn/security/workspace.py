@@ -27,12 +27,32 @@ from huginn.security.world_model import (
     apply_forward,
     check_constraints,
 )
+from huginn.security.physics_schema import ActionSpec, StepResult
 
 logger = logging.getLogger(__name__)
 
 
-def _matches_state(expected: dict[str, Any], actual: dict[str, Any], tolerance: float) -> bool:
-    """状态对比: expected 中每个键与 actual 偏差是否在容差内 (缺失键视为不匹配)."""
+def _step_allowed(step: "StepResult") -> float:
+    """单个 StepResult 允许的最大偏差 (相对/绝对取大)."""
+    rel = abs(step.expected) * step.tolerance
+    return max(step.tol_abs, rel)
+
+
+def _matches_state(expected: dict[str, Any] | "list[StepResult]", actual: dict[str, Any], tolerance: float = 1e-9) -> bool:
+    """状态对比: 断言列表或期望 dict 是否与实测状态匹配.
+
+    - ``StepResult`` 列表: 每个字段用其自身相对/绝对容差 (声明式断言).
+    - dict: 每个键用统一 ``tolerance`` 绝对容差 (旧契约).
+    """
+    if isinstance(expected, list):  # StepResult 断言列表
+        for step in expected:
+            got = actual.get(step.key)
+            if got is None:
+                return False
+            dev = abs(float(got) - step.expected)
+            if dev > _step_allowed(step):
+                return False
+        return True
     for k, want in expected.items():
         got = actual.get(k)
         if got is None:
@@ -48,6 +68,14 @@ def _matches_state(expected: dict[str, Any], actual: dict[str, Any], tolerance: 
 
 class WorkspaceConfirmError(Exception):
     """感知确认失败 — 动作已执行但状态未达预期, 触发事务回滚."""
+
+
+class DependencyNotMet(Exception):
+    """声明式规格前置依赖不满足 — 动作不应执行.
+
+    ``spec.preconditions`` 中的依赖 key 在此刻不可用 (AvailableDependency 未
+    提供或被 degrade), 在 execute 之前拦截, 不产生任何副作用/逆.
+    """
 
 
 class ActionExecutor(Protocol):
@@ -169,24 +197,39 @@ class PhysicalWorkspace:
         *,
         preflight: bool = False,
         expected: dict[str, Any] | None = None,
+        spec: "ActionSpec | None" = None,
         tolerance: float = 1e-9,
     ) -> PhysicalAction:
         """执行物理动作: (可选预演) → 世界模型推断逆 → 执行 → 读状态 → 登记逆 → 确认.
 
+        - ``spec``: 声明式动作规格. 提供时:
+          - 用 ``spec.expect`` (StepResult 断言列表) 做状态级感知确认, 每字段自带
+            相对/绝对容差;
+          - 前置依赖 ``spec.preconditions`` 不满足 → 抛 :class:`DependencyNotMet`,
+            不执行.
         - ``preflight=True``: 执行前用世界模型对**当前状态**做约束校验 + 前向
           预测; 约束违规抛 :class:`ConstraintViolation`, 不执行.
-        - ``expected``: 给定的预期后状态, 执行后与 ``observe()`` 实测状态对比,
-          超容差抛 :class:`WorkspaceConfirmError` (感知确认 — 状态级而非日志级).
+        - ``expected``: 给定的预期后状态 (dict, 统一绝对容差), 与 ``spec`` 互斥;
+          执行后与 ``observe()`` 实测状态对比, 超容差抛 :class:`WorkspaceConfirmError`.
         - ``confirm_key``: 原有按 key 的确认器仍最后执行.
 
         确认失败触发外层事务回滚. 不可逆动作仍执行但不登记逆.
         """
         state_before = dict(self.state)
 
+        if spec is not None:
+            for dep in spec.preconditions:
+                if not self.is_available(dep):
+                    raise DependencyNotMet(spec.id, dep)
+            if expected is not None:
+                raise ValueError("expected 与 spec 互斥, 二者只能传其一")
+
         if preflight:
             # 用当前状态预演: 先约束校验, 再取前向预测 (供 expected 对比).
             predicted = self.preflight(action)
-            if expected is None:
+            if expected is None and spec is None:
+                expected = predicted
+            elif spec is not None and not spec.expect:
                 expected = predicted
 
         inverse = self.world_model.infer_inverse(state_before, action)
@@ -194,7 +237,12 @@ class PhysicalWorkspace:
         self.executor.execute(action)
         self.state = dict(self.executor.observe())
 
-        if expected is not None:
+        if spec is not None and spec.expect:
+            if not _matches_state(spec.expect, self.state):
+                raise WorkspaceConfirmError(
+                    f"感知确认失败: 状态偏离预期 (规格 {spec.id}, 动作 {action.type})"
+                )
+        elif expected is not None:
             if not _matches_state(expected, self.state, tolerance):
                 raise WorkspaceConfirmError(
                     f"感知确认失败: 状态偏离预期 (动作 {action.type})"
