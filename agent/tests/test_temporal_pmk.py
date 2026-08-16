@@ -164,12 +164,42 @@ def _check_pause_iteration_history():
     print("[ok] 结合2: check_pause_decision iteration_history 重复冲突升级")
 
 
+def _qualia_probe_self_reference():
+    """感质探针: self_eval 自指路与 persona/memory/kb 世界路对同一 subject 冲突 →
+    自指固定点. 这是"同一直由度既当世界事实又当系统自我状态, 不可分离"的工程探针."""
+    from huginn.runtime.task_lifecycle import _check_pmk_consistency
+
+    # persona (世界路, 赞成 GNN 方法) vs self_eval (自指路, 自我报告自己用不好 GNN)
+    # 同一 subject "gnn" 被 persona 当客观方法论主张、被 self_eval 当自身状态 → 冲突
+    _pmk_q = {
+        "persona": "I recommend GNN approach for this task",
+        "self_eval": "self-report: my GNN attempt failed, I now oppose continuing GNN",
+    }
+    _inc, _reason = _check_pmk_consistency(_pmk_q)
+    assert _inc, "world persona + self_eval 对同一 subject 冲突应触发"
+    assert "qualia-probe" in _reason, \
+        f"自指冲突 reason 应带 qualia-probe 标记, 实际: {_reason}"
+
+    # pure 世界冲突 (persona vs memory) — 不涉及自指路 → 无 qualia 标记
+    _pmk_w = {
+        "persona": "I recommend approach A",
+        "memory": "I oppose approach A",
+    }
+    _inc2, _reason2 = _check_pmk_consistency(_pmk_w)
+    assert _inc2, "pure 世界路冲突应触发"
+    assert "qualia-probe" not in _reason2, \
+        f"纯世界冲突不应带 qualia 标记, 实际: {_reason2}"
+
+    print("[ok] 感质探针: self_eval 自指路冲突 → qualia-probe 自指固定点")
+
+
 def main():
     _check_pmk_since_kb()
     _check_pmk_since_memory()
     _check_pmk_timeseries_route()
     _check_pmk_consistency_timeseries()
     _check_pause_iteration_history()
+    _qualia_probe_self_reference()
     print("\nALL CHECKS PASSED")
 
 

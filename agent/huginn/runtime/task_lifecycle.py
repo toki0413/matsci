@@ -13,6 +13,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from huginn.utils.jieba_utils import get_jieba
 from huginn.utils.runtime import HUGINN_DIR_NAME
 
 
@@ -310,7 +311,21 @@ def _pmk_subject_tokens(text: str) -> set[str]:
             if m.group(0).isupper():
                 tokens.add(tok)  # lower 化后存, 比较时也 lower
             continue
-        tokens.add(tok)
+        # 中文整段 tag (如 "继续优化均匀性") 先 jieba 切词入库, 否则 "均匀性"
+        # 无法从长句中切出, 与其它路同 subject 匹配不到. jieba 缺失时保留原逻辑.
+        if tok.isascii():
+            tokens.add(tok)
+            continue
+        _j = get_jieba()
+        if _j is None:
+            tokens.add(tok)
+            continue
+        _parts = [p.strip().lower() for p in _j.cut(tok, cut_all=False)]
+        _parts = [p for p in _parts if p and not any(c.isspace() for c in p)]
+        if not _parts:
+            tokens.add(tok)
+            continue
+        tokens.update(_parts)
     return tokens
 
 
@@ -329,10 +344,16 @@ def _pmk_subjects_similar(sub1: str, sub2: str) -> bool:
 
 def _pmk_gluing_obstruction(
     active: dict[str, tuple[str, str]],
+    *,
+    self_sources: set[str] | frozenset[str] = frozenset(),
 ) -> tuple[bool, str, int]:
     """Čech H¹ 粘合障碍检测核心 — 在四路 stance 构成的 overlap 神经网上检查.
 
     active: {source: (stance, subject)} 已过滤 neutral.
+    self_sources: 标记哪些 source 是"自指路" (系统对自身状态的报告, 如
+        self_eval), 不是世界事实立场. 当冲突涉及自指路时 → 感质探针触发:
+        同一 subject 同时被"世界路"当客观事实、"自指路"当自我状态, 两者在此
+        深度不可分离 — 这是自指固定点 (qualia) 的工程探针.
     返回 (is_obstructed, reason, beta1). beta1 = 神经网独立环路数 (H¹ 维数).
 
     高阶网络视角 (Fujita & Smarandache 2026): 把每路 (persona/memory/kb/
@@ -386,16 +407,27 @@ def _pmk_gluing_obstruction(
     except Exception:
         beta1 = 0
 
+    # 感质探针: 冲突里是否有一方是自指路 (self). 当"世界主张"(kb/memory/persona)
+    # 与"系统自我状态"(self_eval) 对同一 subject 冲突 → 同一直由度既当世界事实
+    # 又当自指状态, 在此深度不可拆分 = 自指固定点. 该标记随 reason 返回, 不改变
+    # 返回签名 (is_obstructed/reason/beta1).
+    _has_self_conflict = any(
+        (s1 in self_sources) != (s2 in self_sources) for
+        (s1, _st1, _sub1, s2, _st2, _sub2) in conflicts
+    )
+
     s1, st1, sub1, s2, st2, sub2 = conflicts[0]
+    _tag = " [qualia-probe: 自指固定点]" if _has_self_conflict else ""
     if beta1 > 0:
         reason = (
             f"{s1}({st1} '{sub1}') vs {s2}({st2} '{sub2}') — 对同一 subject "
             f"立场冲突, 且落在 overlap 神经网的 H¹ 环路上 (β₁={beta1}, 粘合障碍)"
+            f"{_tag}"
         )
     else:
         reason = (
             f"{s1}({st1} '{sub1}') vs {s2}({st2} '{sub2}') — "
-            f"对同一 subject 立场冲突 (H⁰ 局部矛盾)"
+            f"对同一 subject 立场冲突 (H⁰ 局部矛盾){_tag}"
         )
     return (True, reason, beta1)
 
@@ -404,13 +436,19 @@ def _check_pmk_consistency(pmk_state: dict) -> tuple[bool, str]:
     """PMK 四路立场一致性检查 — Čech H¹ 粘合障碍检测.
 
     pmk_state: {"persona": str, "memory": str, "kb": str, "deviation": str,
-                "timeseries": str (可选, P3 结合)}
+                "timeseries": str (可选, P3 结合),
+                "self_eval": str (可选, 感质探针的自指路)}
     返回 (is_obstructed, reason). 不一致 = 至少两路对同一 subject 显式对立.
 
     判定 (规则版, 不调 LLM):
     1. 提取各路 stance + subject (含 timeseries 路, P3 结合)
     2. 在四路构成的重叠神经网上检测粘合障碍 (见 _pmk_gluing_obstruction)
     3. neutral 不参与; 全 neutral 或少于两路有立场 → 一致
+
+    感质探针 (自指固定点): self_eval 路是系统对自身状态的报告 (非世界事实).
+    当它与 persona/memory/kb 任一"世界路"对同一 subject 冲突 → 同一直由度
+    既被当客观世界主张、又被当系统自我状态, 在此深度不可拆分. gluing 返回
+    的 reason 会带 "[qualia-probe: 自指固定点]" 标记.
 
     ponytail: subject 相似用 token 重合度, 不上 embedding. 升级路径: embedding cosine.
     timeseries 路用 trend 关键词 (rising/decaying/flat) 作为 subject, 让物理
@@ -435,6 +473,7 @@ def _check_pmk_consistency(pmk_state: dict) -> tuple[bool, str]:
         elif "flat" in _ts_lower:
             _ts_stance = ("recommend", "平衡 equilibrium")
 
+    # 世界路: persona/memory/kb 是对客观世界的立场主张.
     stances = {
         source: _extract_pmk_stance(text)
         for source, text in pmk_state.items()
@@ -442,12 +481,19 @@ def _check_pmk_consistency(pmk_state: dict) -> tuple[bool, str]:
     }
     if _ts_stance[0] != "neutral":
         stances["timeseries"] = _ts_stance
+    # 自指路: self_eval 是系统对自身状态的报告, 从同一 stance 引擎提取 subject.
+    _self_text = pmk_state.get("self_eval", "") or ""
+    _self_stance = _extract_pmk_stance(_self_text) if _self_text else ("neutral", "")
+    if _self_stance[0] != "neutral":
+        stances["self_eval"] = _self_stance
     # 过滤掉 neutral
     active = {src: (st, sub) for src, (st, sub) in stances.items() if st != "neutral"}
     if len(active) < 2:
         return (False, "")  # 少于两路有立场, 不可能冲突
 
-    is_obstructed, reason, _beta1 = _pmk_gluing_obstruction(active)
+    is_obstructed, reason, _beta1 = _pmk_gluing_obstruction(
+        active, self_sources={"self_eval"}
+    )
     return (is_obstructed, reason)
 
 
