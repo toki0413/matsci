@@ -40,20 +40,13 @@
 | [external-thinking.md](external-thinking.md) | active | deep_think 外部草稿纸工具（已实现，含 `external_thinking` 开关） |
 | [p0-state-store-and-rust.md](p0-state-store-and-rust.md) | active | P0 里程碑记录（共享状态后端化 + Rust 沙箱确定性，已完成） |
 | [reward_design.md](reward_design.md) | staging | 奖励设计（未实现理论稿） |
+| [cost-participation-contract.md](cost-participation-contract.md) | active | 成本-剪枝参与感契约（决策点对话 + 成本叙事，已实现） |
 | [SPEC_openworker_adoption](../huginn/SPEC_openworker_adoption.md) | active | OpenWorker 采纳规范 |
 | [SPEC_visual_kb_loop](../huginn/metacog/SPEC_visual_kb_loop.md) | active | 视觉知识库闭环规范 |
 
 已合并入 [tech-spec.md](tech-spec.md)，不再单独列出的 spec：`async_dispatch_spec`、`layered_memory_spec`、`lsp_hashline_spec`、`memory_dispatch_integration_spec`、`enhanced_modules`、`reinforcement_event_sourcing_sandbox_incremental_ui`、`ising_crdt_p1_spec`、`hils_active_inference_p2_spec`。
 
-## 3. 草稿 / 待评审（staging）
-
-| 文档 | 状态 | 说明 |
-|---|---|---|
-| [cost-participation-contract.md](cost-participation-contract.md) | staging | 成本-剪枝参与感契约（决策点对话 + 成本叙事，待评审） |
-
-> staging 下文档定稿通过评审后，移入"架构与设计"并标记 active。
-
-## 4. 审计 / 报告 / 快照（report）
+## 3. 审计 / 报告 / 快照（report）
 
 | 文档 | 状态 | 说明 |
 |---|---|---|
@@ -63,7 +56,7 @@
 | [polish-reports/benchmark-vs-claude-codex-evoscientist.md](../polish-reports/benchmark-vs-claude-codex-evoscientist.md) | report | 对标报告（Claude/Codex/Evoscientist） |
 | [analysis_20260717/](../../analysis_20260717/) | report | 历史归因/对标分析快照（17 篇，入口见 `00_综合归因报告.md`） |
 
-## 5. 部署与运维
+## 4. 部署与运维
 
 | 文档 | 状态 | 用途 |
 |---|---|---|
@@ -71,7 +64,7 @@
 | [MONITORING.md](../MONITORING.md) | active | 监控指南 |
 | [e2e_deployment_checklist.md](../tests/e2e_deployment_checklist.md) | active | 端到端部署检查清单 |
 
-## 6. 根级文档与其他组件
+## 5. 根级文档与其他组件
 
 | 文档 | 状态 | 用途 |
 |---|---|---|
