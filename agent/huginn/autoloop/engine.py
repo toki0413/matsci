@@ -631,9 +631,30 @@ class AutoloopEngine(
     # 供 4 个 mixin (act/reflect/hypothesis/cognitive) 共享, 避免各写一份
     # "select_model or self.model" 的 fallback.
 
-    def select_model(self, task: str = "agent") -> Any:
+    def select_model(self, task: str = "agent", band: str | None = None) -> Any:
         router = getattr(self, "model_router", None)
         if router is not None:
+            # H6: 双吸引子 band 路由. 显式 band 优先 (调用方已量化到稳定带);
+            # 否则用分类器把 task/阶段量化到稳定带 (spec/react), 避开 mixed
+            # 相变陷阱. 未标注 band 的模型走通用回退, 不破坏旧 task 路由.
+            try:
+                if band is not None or router.list_bands() and any(
+                    router.list_bands().values()
+                ):
+                    target = band if band is not None else ""
+                    if target:
+                        _m = router.select_band(target)
+                    else:
+                        from huginn.models.router import classify_band
+                        _m = router.select_band(classify_band(task))
+                    if _m is not None:
+                        return _m
+            except Exception:
+                logger.debug(
+                    f"model_router band select({task!r},{band!r}) failed — "
+                    "falling back to task routing",
+                    exc_info=True,
+                )
             try:
                 _m = router.select(task)
                 if _m is not None:

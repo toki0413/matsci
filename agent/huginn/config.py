@@ -241,6 +241,9 @@ class ModelConfig:
     # When set, ModelRegistry.get() will use this credential's api_key
     # as fallback when api_key field is empty.
     credential_id: str | None = None
+    # 双吸引子 band 路由: 声明该模型稳定的 persona 行为带 (spec/react 的
+    # 子集). 空 = 通用模型, band 路由作为通用回退承接者. 不允许 mixed.
+    bands: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -577,6 +580,7 @@ class HuginnConfig:
                             if m.max_tokens is not None
                             else self.max_tokens
                         ),
+                        bands={b.strip() for b in m.bands if b.strip()},
                     )
                 except Exception:
                     # Skip models that cannot be initialized (missing keys, etc.)
