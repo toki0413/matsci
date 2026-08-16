@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from huginn.knowledge.store import EMBED_MODEL
-from huginn.utils.cache import TimedLRUCache
+from huginn.utils.cache import TimedLRUCache, embedding_cache
 from huginn.utils.common import hash_text, now_iso
 from huginn.utils.runtime import get_runtime_home
 
@@ -35,10 +35,9 @@ class VectorStore:
     # <name>_encrypted  -> EncryptedVectorStore 自动加后缀
     DEFAULT_COLLECTION = "huginn_knowledge"
 
-    # 增量缓存: 相同内容不重复计算 embedding, 1h TTL
-    _embed_cache: TimedLRUCache[list[list[float]]] = TimedLRUCache(
-        max_size=2048, ttl=3600.0
-    )
+    # 与 KnowledgeBase._EmbeddingModel 共用同一 embedding 缓存 (合并重复缓存).
+    # 属性名保留 _embed_cache 以兼容既有测试/引用.
+    _embed_cache: TimedLRUCache[list[list[float]]] = embedding_cache
 
     def __init__(
         self,

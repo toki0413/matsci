@@ -10,11 +10,12 @@ import math
 import os
 import re
 import uuid
+from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from huginn.utils.cache import TimedLRUCache
+from huginn.utils.cache import TimedLRUCache, embedding_cache
 from huginn.utils.common import chunk_text
 from huginn.utils.jieba_utils import get_jieba
 
@@ -97,9 +98,9 @@ class _EmbeddingModel:
     _st: Any | None = None
     _use_chroma: bool = False
     _initialized: bool = False
-    _embedding_cache: TimedLRUCache[np.ndarray] = TimedLRUCache(
-        max_size=1024, ttl=3600.0
-    )
+    # 与 rag.vector_store.VectorStore 共用同一 embedding 缓存 (合并两套重复缓存).
+    # 共享实例存 list[list[float]], encode() 在 ndarray ↔ list 边界做转换.
+    _embedding_cache: TimedLRUCache[list[list[float]]] = embedding_cache
 
     def __init__(self) -> None:
         if not _EmbeddingModel._initialized:
@@ -118,7 +119,9 @@ class _EmbeddingModel:
         if cache_key:
             cached = _EmbeddingModel._embedding_cache.get(cache_key)
             if cached is not None:
-                return cached
+                # 共享缓存存 list[list[float]], 命中时还原为 ndarray.
+                import numpy as np
+                return np.asarray(cached, dtype=np.float32)
 
 
         if _EmbeddingModel._use_chroma and _EmbeddingModel._ef is not None:
@@ -136,7 +139,7 @@ class _EmbeddingModel:
             result = _EmbeddingModel._st.encode(texts)
 
         if cache_key:
-            _EmbeddingModel._embedding_cache.set(cache_key, result)
+            _EmbeddingModel._embedding_cache.set(cache_key, result.tolist())
         return result
 
     @staticmethod
@@ -209,8 +212,10 @@ class _BM25Index:
     def __init__(self, k1: float = 1.5, b: float = 0.75) -> None:
         self._k1 = k1
         self._b = b
-        # chunk_id → tokens (保留顺序, 用于 rebuild)
-        self._docs: list[tuple[str, list[str]]] = []
+        # chunk_id → 原文 (保留顺序, 用于 rebuild). 不存 token 列表: 分词在
+        # _build 一次性完成, 避免每个 token 一个 Python str 对象把索引内存
+        # 放大 ~10x — BM25 是 KB 在内存里的主结构, 全量索引必须尽量紧凑.
+        self._docs: list[tuple[str, str]] = []
         # P2#2: chunk_id → domain (与 _docs 平行), 供 domain 分片过滤.
         self._doc_domains: list[str] = []
         # 倒排索引: token → [(doc_idx, tf)]; df: token → 文档频次; doc_len 每篇长度
@@ -221,7 +226,7 @@ class _BM25Index:
         self._built: bool = False
 
     def add(self, chunk_id: str, text: str, domain: str = "") -> None:
-        self._docs.append((chunk_id, _tokenize(text)))
+        self._docs.append((chunk_id, text))
         # P2#2: 记录每片 domain, 供 search 做 domain 分片过滤 (有 domain 时也混合).
         self._doc_domains.append(domain or "")
         # 增量加入后, 索引视为失效, 下次 search 前 rebuild
@@ -231,7 +236,8 @@ class _BM25Index:
         df: dict[str, int] = {}
         postings: dict[str, list[tuple[int, int]]] = {}
         doc_len: list[int] = []
-        for i, (_cid, toks) in enumerate(self._docs):
+        for i, (_cid, text) in enumerate(self._docs):
+            toks = _tokenize(text)
             doc_len.append(len(toks))
             tf_map: dict[str, int] = {}
             for t in toks:
@@ -1373,22 +1379,65 @@ def seed_knowledge_base(kb: KnowledgeBase, force: bool = False) -> dict[str, Any
 
 # G39: 单例 + workspace 是矛盾的 — 同一进程跑多 workspace 时, 第一个 workspace
 # 初始化后, 后续传不同 workspace 拿到的还是第一个的 KB. 改按 workspace 路径缓存.
-# ponytail: dict[Path, KB] 是最小的多实例缓存, 升级路径是 LRU 限上限.
-_kb_instances: dict[Path, KnowledgeBase] = {}
+# 内存优化: 实例缓存限 LRU 上限 — 每个 KB 持 ChromaDB client + 全量 BM25 倒排
+# 索引 + query cache + gptcache, 是知识库内存最大的乘数; 多 workspace (per-user/
+# autoloop/distiller) 部署时无上限缓存会随 workspace 数线性膨胀. 超过
+# _KB_INSTANCE_CAP 淘汰最久未用的实例, 热 workspace 常驻, 冷 workspace 按需重建.
+_KB_INSTANCE_CAP = 8
+_kb_instances: OrderedDict[Path, KnowledgeBase] = OrderedDict()
 _kb_lock = __import__("threading").Lock()
 
 
 def get_knowledge_base(workspace: str | Path = ".") -> KnowledgeBase:
-    """Thread-safe workspace-keyed KB factory.
+    """Thread-safe workspace-keyed KB factory (LRU bounded).
 
     按 workspace 路径缓存实例; 同一 workspace 返回同实例, 不同 workspace
     各自独立. 替代旧的单例模式 (单例忽略后续 workspace 参数).
+    超过 _KB_INSTANCE_CAP 个实例时淘汰最久未使用的, 防止内存无界增长.
     """
     key = Path(workspace).resolve() / ".huginn_kb"
-    if key not in _kb_instances:
-        with _kb_lock:
-            if key not in _kb_instances:  # double-checked locking
-                kb = KnowledgeBase(key)
-                seed_knowledge_base(kb, force=False)
-                _kb_instances[key] = kb
-    return _kb_instances[key]
+    with _kb_lock:
+        if key in _kb_instances:
+            _kb_instances.move_to_end(key)
+            return _kb_instances[key]
+        kb = KnowledgeBase(key)
+        seed_knowledge_base(kb, force=False)
+        _kb_instances[key] = kb
+        _kb_instances.move_to_end(key)
+        while len(_kb_instances) > _KB_INSTANCE_CAP:
+            _kb_instances.popitem(last=False)
+        return kb
+
+
+def kb_cache_stats() -> dict[str, Any]:
+    """KB 实例缓存诊断: 实例数 / 上限 / 各 workspace / embedding 缓存条目数.
+
+    用于内存观测: 配合 release_knowledge_base / clear_knowledge_base_cache
+    在长进程里做冷 workspace 的内存回收.
+    """
+    with _kb_lock:
+        return {
+            "instances": len(_kb_instances),
+            "cap": _KB_INSTANCE_CAP,
+            "workspaces": [str(k) for k in _kb_instances],
+            "embedding_cache_entries": len(embedding_cache),
+        }
+
+
+def release_knowledge_base(workspace: str | Path) -> bool:
+    """手动释放指定 workspace 的 KB 实例 (移除缓存引用, 交 GC 回收内存).
+
+    长时间不用的 workspace 调用可提前释放其 Chroma client + BM25 索引 +
+    query cache 内存; 下次 get_knowledge_base 会按需重建. 返回是否命中.
+    """
+    key = Path(workspace).resolve() / ".huginn_kb"
+    with _kb_lock:
+        return _kb_instances.pop(key, None) is not None
+
+
+def clear_knowledge_base_cache() -> int:
+    """清空全部 KB 实例缓存并返回释放的实例数 (测试 / 进程回收场景)."""
+    with _kb_lock:
+        n = len(_kb_instances)
+        _kb_instances.clear()
+        return n
