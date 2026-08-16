@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-08-16
+
+### Added
+- 极简模式 (ModelTier FULL/BALANCED/MINIMAL) × 思考强度 (ThinkingIntensity low/medium/high/max) 正交两轴, 分别控制认知编排开销与模型推理深度
+- 统一成本账本 (CostLedger) + 价值感知阶段伸缩预算 (ValueBudget) + 预算边缘 Checkpoint/暂停 (BudgetPause)
+- 分支评分 (BranchScore/UCB) 与分支休眠/复活 (BranchState/DecisionPoint) 的科研创新矛盾消解
+- 细粒度权限契约 (PermissionMode/RiskLevel/PermissionConfig/PermissionChecker) 与前端设置面板接入
+- 权限契约文档与成本参与契约文档 (docs/permission-contract.md, docs/cost-participation-contract.md)
+
+### Fixed
+- CI 测试隔离模型路由 (engine.model_router=None), 避免全局 config 缓存污染导致测试路由到真实模型
+- 安全 PoC 测试路径修正 (tests/security/pentest_*.py)
+
 ## [1.2.0] - 2026-08-15
 
 ### Added
