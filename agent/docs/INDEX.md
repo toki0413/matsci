@@ -51,6 +51,7 @@
 | 文档 | 状态 | 说明 |
 |---|---|---|
 | [RELEASE_REPORT_v0.2.0.md](../RELEASE_REPORT_v0.2.0.md) | report | v0.2.0 发布报告 |
+| [research-notes/physical-rsi-and-world-model-interpretability.md](research-notes/physical-rsi-and-world-model-interpretability.md) | report | 研究备忘：Physical RSI 与视频世界模型可解释性对 agent 的启发 |
 | [polish-reports/loop-polish-report.md](../polish-reports/loop-polish-report.md) | report | 循环打磨报告 |
 | [polish-reports/industrialization-gap-analysis.md](../polish-reports/industrialization-gap-analysis.md) | report | 工业化缺口分析 |
 | [polish-reports/benchmark-vs-claude-codex-evoscientist.md](../polish-reports/benchmark-vs-claude-codex-evoscientist.md) | report | 对标报告（Claude/Codex/Evoscientist） |
