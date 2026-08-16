@@ -95,7 +95,7 @@ class LeanTool(HuginnTool):
     name = "lean_tool"
     category = "core"
     description = (
-        "Verify materials-science mathematics using the Lean 4 proof assistant. "
+        "Verify scientific mathematics using the Lean 4 proof assistant. "
         "Actions: build (compile library), verify (check theorem exists & compiles), "
         "eval (execute Lean code and capture output), translate (SymPy → Lean 4), "
         "prove_snippet (compile ad-hoc Lean code), auto_verify (feed SymbolicMathTool results into Lean)."

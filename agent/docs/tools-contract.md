@@ -29,7 +29,7 @@
 | `glob` | core | False | True | none | Find files matching a glob pattern. Use '**/*.py' for recursive search, '*.csv'  |
 | `grep` | core | False | True | none | Search file contents using regex. Returns matching lines with file paths and lin |
 | `job_tool` | core | False | False | none | Submit, monitor, and cancel computational jobs on HPC clusters (Slurm/PBS). Supp |
-| `lean_tool` | core | False | False | none | Verify materials-science mathematics using the Lean 4 proof assistant. Actions:  |
+| `lean_tool` | core | False | False | none | Verify scientific mathematics using the Lean 4 proof assistant. Actions: build ( |
 | `list_pending_intentions` | meta | False | True | none | 列出当前所有 pending 状态的 prospective intentions, 按 priority 降序. 已 fired / cancelled 的不 |
 | `literature_pipeline_tool` | materials | False | False | none | MinerU VLM-powered materials literature pipeline: (1) parse_pdf — submit PDF to  |
 | `literature_tool` | search | False | True | none | Search 15 sources in parallel: literature (arXiv/S2/CrossRef/OpenAlex/PubMed/DOA |
