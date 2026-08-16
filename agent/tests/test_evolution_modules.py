@@ -633,6 +633,31 @@ class TestEvolutionManagerDistill:
         assert principles, "expected at least one principle"
         assert any("avoid persona dft_expert" in p for p in principles)
 
+    def test_distill_environment_gap_cognition_channel(self, mm):
+        """3+ environment_gap 失败 → 写 'revise world model' 原则 (认知更新通道)."""
+        em = EvolutionManager(memory_manager=mm)
+        for i in range(3):
+            em.record_outcome(
+                hypothesis=f"env gap {i}",
+                plan={"mode": "lda"},
+                validation={
+                    "status": "refuted",
+                    "reason": f"model cannot reproduce causality {i}",
+                },
+                persona_id="dft_expert",
+                run_id=f"env{i}",
+                math_concept="DFT-PZ LDA gap",
+                gap_type="environment_gap",
+            )
+        principles = em.distill()
+        assert any(
+            "revise world model" in p for p in principles
+        ), principles
+        # recommend 单独暴露环境缺口方向
+        rec = em.recommend()
+        assert rec.revisit_world_model, rec.revisit_world_model
+        assert any("env gap" in d for d in rec.revisit_world_model)
+
     def test_distill_flag_off_returns_empty(self, mm, monkeypatch):
         monkeypatch.setenv("HUGINN_DISABLE_EVOLUTION_MANAGER", "1")
         em = EvolutionManager(memory_manager=mm)
