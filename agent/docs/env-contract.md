@@ -208,7 +208,7 @@
 | `HUGINN_REQUEST_TIMEOUT_SEC` | _DEFAULT_TIMEOUT_SEC | middleware/limits.py:177 | — | external |
 | `HUGINN_RESTRICTED_PYTHON` | 1 | cli/rcb_runner.py:250 | — | external |
 | `HUGINN_ROOT_MARKERS` | _DEFAULT_ROOT_MARKERS | agent/streaming.py:203 | cli/rcb_runner.py:93 | code-set |
-| `HUGINN_SANDBOX_BLOCKED_PATHS` | '' | permissions.py:234 | cli/rcb_runner.py:87 | code-set |
+| `HUGINN_SANDBOX_BLOCKED_PATHS` | '' | permissions.py:286 | cli/rcb_runner.py:87 | code-set |
 | `HUGINN_SANDBOX_RELAX` | '' | security/sandbox.py:152 | — | external |
 | `HUGINN_SECRET_BACKEND` | env | security/secrets.py:439 | — | external |
 | `HUGINN_SELF_GOAL_SYNTHESIS` | 0 | autoloop/engine_reflect.py:785 | — | external |

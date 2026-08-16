@@ -18,7 +18,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from huginn.core_types import PermissionMode, PermissionResult
+from huginn.core_types import PermissionMode, PermissionResult, RiskLevel
 
 # 危险命令模式 — 统一使用 command_filter 的 _BLOCKED_PATTERNS 作为 single source of truth.
 # permissions.py 补充 git 相关模式 (command_filter 不覆盖 git).
@@ -159,6 +159,12 @@ class PermissionConfig:
     # Sandbox 模式: 强制注入 _DEFAULT_SANDBOX_PATH_RULES 硬底线 (跟 path_rules 取并集).
     # 非 sandbox 入口不设, path_rules 仍默认空, 行为不变.
     sandbox_mode: bool = False
+    # ── 细粒度新增 (M5) ──
+    # 成本预算 (CPU 小时): 超过该预算的工具自动升 ASK. None=不限制 (默认).
+    cost_budget_hours: float | None = None
+    # 信任自适应: 开启后按 trust score 浮动 medium 风险 (trust 高放行 / 低强制 ASK).
+    # 默认 False 保持向后兼容.
+    trust_adaptive: bool = False
 
     def get_mode(self, tool_name: str) -> PermissionMode:
         # 先按 rules / 通配规则算出"原始"模式
@@ -184,6 +190,48 @@ class PermissionConfig:
 
     def set_mode(self, tool_name: str, mode: PermissionMode) -> None:
         self.rules[tool_name] = mode
+
+
+# ── 细粒度推断与信任存储 (M5) ─────────────────────────────────────
+# 与 code_act_loop.py 的 risk/trust 算法对齐, 但在此独立实现轻量版,
+# 避免 tool_call 路径因导入 code_act_loop (依赖 ToolRegistry 全量注册) 引入重依赖.
+# trust 是 session 维度, 进程内共享; 升级路径: 持久化到 config/store.
+
+_RISK_BY_MODE = {
+    PermissionMode.AUTO: RiskLevel.NONE,
+    PermissionMode.ASK: RiskLevel.MEDIUM,
+    PermissionMode.DENY: RiskLevel.CRITICAL,
+}
+
+
+def _infer_risk(mode: PermissionMode) -> RiskLevel:
+    """从工具基础 mode 推断风险等级."""
+    return _RISK_BY_MODE.get(mode, RiskLevel.MEDIUM)
+
+
+_trust_scores: dict[str, float] = {}
+_TRUST_DELTA = {"approve": 0.02, "deny": -0.10}
+
+
+def _get_trust(session_id: str) -> float:
+    """当前会话信任分, 默认 0.5 (中性)."""
+    return _trust_scores.get(session_id, 0.5)
+
+
+def _record_approval(session_id: str, action: str) -> float:
+    """记录一次审批决策, 更新信任分, 返回新值."""
+    delta = _TRUST_DELTA.get(action, 0.0)
+    new_score = max(0.0, min(1.0, _get_trust(session_id) + delta))
+    _trust_scores[session_id] = new_score
+    return new_score
+
+
+def reset_trust(session_id: str | None = None) -> None:
+    """测试辅助: 清空信任分 (全部或单会话)."""
+    if session_id is None:
+        _trust_scores.clear()
+    else:
+        _trust_scores.pop(session_id, None)
 
 
 class PermissionChecker:
@@ -218,12 +266,16 @@ class PermissionChecker:
 
         return False, None
 
-    def _check_path_rules(self, args: dict | None) -> PermissionMode | None:
+    def _check_path_rules(self, args: dict | None, tool_name: str = "") -> PermissionMode | None:
         """Match file path from tool args against path_rules (first match wins).
 
         Looks for common path field names in args: file_path, path, working_dir.
         sandbox_mode=True 时强制注入 _DEFAULT_SANDBOX_PATH_RULES (硬底线, 只能收紧不能放宽),
         并读 env var HUGINN_SANDBOX_BLOCKED_PATHS 追加用户路径 (跟默认项取并集).
+
+        path_rules 支持两种 tuple 形态:
+          - (glob_pattern, mode)             : 旧格式, 对所有工具生效
+          - (tool_name, glob_pattern, mode)  : 新格式, 工具×路径矩阵 (per-tool)
         """
         if not args:
             return None
@@ -237,7 +289,9 @@ class PermissionChecker:
                     effective_rules.append((_p, PermissionMode.DENY))
             # 自检: 默认项是硬底线, 不能被移除. 用户只能追加, 不能放宽.
             _default_paths = {p for p, _ in _DEFAULT_SANDBOX_PATH_RULES}
-            _effective_paths = {p for p, _ in effective_rules}
+            _effective_paths = {
+                r[1] if len(r) == 3 else r[0] for r in effective_rules
+            }
             assert _default_paths.issubset(_effective_paths), \
                 "Sandbox default path rules removed -- defaults are a hard floor"
         else:
@@ -250,7 +304,14 @@ class PermissionChecker:
             return None
         # match basename + full path so both "*.env" and "secrets/*" work
         basename = Path(str(path_str)).name
-        for pattern, mode in effective_rules:
+        for rule in effective_rules:
+            if len(rule) == 3:
+                # 工具×路径矩阵: 仅当工具名匹配 (或 tool_name 为空=通用) 才命中
+                rule_tool, pattern, mode = rule
+                if tool_name and rule_tool and tool_name != rule_tool:
+                    continue
+            else:
+                pattern, mode = rule
             if fnmatch.fnmatch(path_str, pattern) or fnmatch.fnmatch(basename, pattern):
                 return mode
         return None
@@ -262,58 +323,122 @@ class PermissionChecker:
         is_destructive: bool = False,
         cost_estimate: dict[str, float] | None = None,
         args: dict | None = None,
+        session_id: str = "default",
     ) -> PermissionResult:
-        # 危险命令检测优先级最高 — 即使 auto_approve_all=True 也要拦下来要求确认.
-        # 这条检查必须放在 get_mode() 之前, 不然 yolo 模式会直接放行.
-        is_dangerous, matched = self._check_dangerous(tool_name, args)
+        """多阶段细粒度判定 (M5).
+
+        判定维度依次叠加, 每命中一个维度记入 matched_rules 供可观测:
+          1. 危险命令 (最高优先级, 即使 auto_approve_all 也拦)
+          2. 路径规则 (工具×路径矩阵覆盖或指定工具)
+          3. 工具基础规则 → 推算出风险等级 (risk_level)
+          4. 成本分级: 超过 cost_budget_hours 的放行工具升 ASK
+          5. 信任自适应 (trust_adaptive 时): 低信任强制 ASK / 高信任放行 medium
+        """
+        matched: list[str] = []
+
+        # 阶段1: 危险命令 — 必须放在 get_mode() 之前, 否则 yolo 会直接放行.
+        is_dangerous, matched_pat = self._check_dangerous(tool_name, args)
         if is_dangerous:
+            matched.append(f"dangerous:{matched_pat}")
             reason = (
-                f"Tool '{tool_name}' matches dangerous pattern '{matched}' — "
+                f"Tool '{tool_name}' matches dangerous pattern '{matched_pat}' — "
                 "requires explicit approval even in auto-approve mode"
             )
-            return PermissionResult(mode=PermissionMode.ASK, reason=reason)
+            return PermissionResult(
+                mode=PermissionMode.ASK,
+                reason=reason,
+                risk_level=RiskLevel.CRITICAL,
+                matched_rules=matched,
+            )
 
-        # path-level rules override tool-level mode (first match wins)
-        path_mode = self._check_path_rules(args)
+        # 阶段2: 路径规则 (工具×路径矩阵 / 通用路径)
+        path_mode = self._check_path_rules(args, tool_name)
         if path_mode is not None:
             if path_mode == PermissionMode.DENY:
                 return PermissionResult(
                     mode=PermissionMode.DENY,
                     reason="Path blocked by path-level rule",
+                    risk_level=RiskLevel.CRITICAL,
+                    matched_rules=["path:deny"],
                 )
             if path_mode == PermissionMode.ASK:
                 return PermissionResult(
                     mode=PermissionMode.ASK,
                     reason="Path requires approval by path-level rule",
+                    risk_level=RiskLevel.MEDIUM,
+                    matched_rules=["path:ask"],
                 )
-            # AUTO — fall through to normal flow (no reason needed)
-            return PermissionResult(mode=PermissionMode.AUTO)
+            # AUTO — fall through (path 命中但放行)
+            matched.append("path:auto")
 
+        # 阶段3: 工具基础规则 → mode + 风险推断
         mode = self.config.get_mode(tool_name)
+        risk = _infer_risk(mode)
+        matched.append(f"tool:{tool_name}:{mode.value}")
+
+        # 阶段4: 成本分级 — 放行工具超预算 → 升 ASK, 风险升 HIGH
+        cost_hours = self._extract_cost(cost_estimate)
+        budget = self.config.cost_budget_hours
+        if cost_hours is not None and budget is not None and cost_hours > budget:
+            matched.append(f"cost:{cost_hours:.1f}>{budget}")
+            if mode == PermissionMode.AUTO:
+                mode = PermissionMode.ASK
+            if risk not in (RiskLevel.HIGH, RiskLevel.CRITICAL):
+                risk = RiskLevel.HIGH
+
+        # 阶段5: 信任自适应 — trust 高放行 medium 以下, 低强制 ASK (high/critical 不浮动)
+        if self.config.trust_adaptive:
+            trust = _get_trust(session_id)
+            if mode == PermissionMode.AUTO and risk in (RiskLevel.MEDIUM, RiskLevel.HIGH) and trust < 0.3:
+                matched.append(f"trust:{trust:.2f}<0.3")
+                mode = PermissionMode.ASK
+            elif mode == PermissionMode.ASK and risk in (RiskLevel.LOW, RiskLevel.MEDIUM) and trust > 0.7:
+                matched.append(f"trust:{trust:.2f}>0.7")
+                mode = PermissionMode.AUTO
 
         if mode == PermissionMode.DENY:
             return PermissionResult(
                 mode=PermissionMode.DENY,
                 reason=f"Tool '{tool_name}' is explicitly blocked by permission policy",
+                risk_level=RiskLevel.CRITICAL,
+                cost_hours=cost_hours,
+                matched_rules=matched,
             )
 
         if mode == PermissionMode.AUTO:
-            return PermissionResult(mode=PermissionMode.AUTO)
+            return PermissionResult(
+                mode=PermissionMode.AUTO,
+                risk_level=risk,
+                cost_hours=cost_hours,
+                matched_rules=matched,
+            )
 
         # ASK mode — build a reason string
         reasons = []
         if is_destructive:
             reasons.append("this operation is destructive")
-        if cost_estimate:
-            cpu = cost_estimate.get("cpu_hours", 0)
-            if cpu > 1:
-                reasons.append(f"estimated cost: {cpu:.1f} CPU hours")
+        if cost_hours is not None and cost_hours > 1:
+            reasons.append(f"estimated cost: {cost_hours:.1f} CPU hours")
 
         reason = f"Tool '{tool_name}' requires approval"
         if reasons:
             reason += f" ({', '.join(reasons)})"
 
-        return PermissionResult(mode=PermissionMode.ASK, reason=reason)
+        return PermissionResult(
+            mode=PermissionMode.ASK,
+            reason=reason,
+            risk_level=risk,
+            cost_hours=cost_hours,
+            matched_rules=matched,
+        )
+
+    @staticmethod
+    def _extract_cost(cost_estimate: dict[str, float] | None) -> float | None:
+        """从 cost_estimate 提取 cpu_hours, 无则 None."""
+        if not cost_estimate:
+            return None
+        cpu = cost_estimate.get("cpu_hours", 0)
+        return float(cpu) if cpu else None
 
 
 # ── P4-2: Standing Rules — (tool, target) 维度常驻授权 ──────────
