@@ -554,7 +554,6 @@ class TestLLMFollowups:
 
     def test_use_llm_gates_synthesis_path(self, monkeypatch):
         """use_llm=False (默认) 时 research 走纯启发式, 不触发 LLM."""
-        from huginn.tools import agentic_search_tool as ast_mod
 
         calls: list[str] = []
 
@@ -623,7 +622,6 @@ class TestExtractRelevantSemantic:
         assert "Cooking recipes" not in joined
 
     def test_embed_failure_falls_back_to_keyword(self, monkeypatch):
-        from huginn.tools import agentic_search_tool as ast_mod
 
         def _bad_embed(texts):
             raise RuntimeError("embed model down")

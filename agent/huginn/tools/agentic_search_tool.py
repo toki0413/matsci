@@ -27,7 +27,9 @@ Cost tier is "none" (not a CPU/GPU-heavy simulation) — gated by phase
 
 from __future__ import annotations
 
+import asyncio
 import ipaddress
+import json
 import logging
 import os
 import re
