@@ -1,118 +1,98 @@
 # Huginn Quick Start
 
-This guide walks you through running Huginn locally — from setup to your first formally verified FEM weak form derivation.
+本指南带你本地运行 Huginn——从安装到完成第一个"经形式化验证的 FEM 弱形式推导"。
+
+> 这是根级分步快速上手。完整文档导航见 [agent/docs/INDEX.md](../agent/docs/INDEX.md)，
+> 部署细节见 [agent/DEPLOYMENT.md](../agent/DEPLOYMENT.md)。
 
 ---
 
-## 1. Installation
+## 1. 安装 Installation
 
 ```bash
-# Clone
-cd matsci-agent/agent
+# 进入 agent 包
+cd agent
 
-# Python dependencies
-pip install -e .
+# 推荐: uv
+uv venv --python 3.11
+uv pip install -e ".[all]"
 
-# Optional: for config file support
-pip install toml
+# 或 pip
+pip install -e ".[all]"
 
-# Lean 4 (required for formal verification)
-# Install via elan: https://github.com/leanprover/elan
-# Verify:
+# Lean 4 (形式化验证所需)
+# 通过 elan 安装: https://github.com/leanprover/elan
 lake --version
 ```
 
 ---
 
-## 2. Configure Your LLM
+## 2. 配置 LLM Configure
 
-Huginn supports **9 providers** including local endpoints. For a fully offline setup:
+Huginn 支持多 provider 与本地端点。完全离线方案：
 
-### Option A: Ollama (recommended for beginners)
+### 方式 A: Ollama（推荐新手）
 
 ```bash
-# Install Ollama: https://ollama.com
 ollama pull qwen2.5:14b
 
-# Configure
-huginn configure
+huginn-agent configure
 # Provider: ollama
 # Model: qwen2.5:14b
 # Ollama host: http://localhost:11434
 ```
 
-### Option B: vLLM / LM Studio
+### 方式 B: vLLM / LM Studio
 
 ```bash
-huginn chat --provider vllm \
+huginn-agent chat --provider vllm \
   --base-url http://localhost:8000/v1 \
   --model llama-3.1-8b
 ```
 
-Local endpoints **do not require a real API key** — a dummy key is sent automatically.
+本地端点**不需要真实 API key**，`--base-url` 指向 `localhost` / `127.*` 时自动发送 dummy key。
 
 ---
 
-## 3. Run the Pipeline Demo (No LLM Required)
+## 3. 验证形式化验证链路（无需 LLM）
 
-To verify that symbolic derivation → Lean formalization works on your machine:
+验证"符号推导 → Lean 形式化"在你的机器上可用：
 
 ```bash
-cd agent
-PYTHONIOENCODING=utf-8 python demo_comprehensive.py
+cd agent/lean/project
+lake build Huginn
 ```
 
-Expected output:
+预期输出：`Huginn` 目标编译成功（生成 `.olean` 缓存）。
 
-```
-============================================================
-Huginn Comprehensive Pipeline Demo
-============================================================
-
---- Phase 1: FEM Weak Forms ---
-  [Heat Conduction] PASS (0.51s)
-  [Linear Elasticity] PASS (0.68s)
-  [Bar Element] PASS (0.52s)
-
---- Phase 2: Tensor Algebra ---
-  [Tensor] PASS
-
---- Phase 3: Numerical Linear Algebra ---
-  [LA] PASS
-
-============================================================
-Results: 5/5 pipelines passed
-============================================================
-```
-
-This demonstrates:
-- **SymPy** derives weak forms from strong forms
-- **Lean 4** compiles the symbolic expressions into verified `Float` definitions
-- The entire bridge from calculus to type-checked proof is automated
+这演示了：
+- **SymPy** 从强形式推导弱形式
+- **Lean 4** 把符号表达式编译为已验证的 `Float` 定义
+- 从微积分到类型检查证明的整条桥全程自动化
 
 ---
 
-## 4. Interactive Chat
+## 4. 交互聊天 Interactive Chat
 
 ```bash
-huginn chat
+huginn-agent chat
 ```
 
-Try asking:
+试试提问：
 
 ```
-> Derive the weak form for 1D heat conduction and verify it in Lean
+> 推导 1D 热传导的弱形式，并在 Lean 中验证
 ```
 
-The agent will:
-1. Call `symbolic_math_tool` with `action=weak_form`, `target=heat_conduction`
-2. Receive the bilinear form `k*ux*vx` and linear functional `f*v`
-3. Automatically route to `lean_tool` with `auto_verify_action=fem`
-4. Generate Lean code, compile with `lake build`, and report success
+Agent 会：
+1. 调用 `symbolic_math_tool`（`action=weak_form`，`target=heat_conduction`）
+2. 得到双线性形式 `k*ux*vx` 与线性泛函 `f*v`
+3. 自动路由到 `lean_tool`（`auto_verify_action=fem`）
+4. 生成 Lean 代码，用 `lake build` 编译并回报成功
 
 ---
 
-## 5. Architecture at a Glance
+## 5. 架构一览 Architecture
 
 ```
 User Input
@@ -129,25 +109,28 @@ User Input
    linear_functional
 ```
 
-**Key insight:** The agent does not "trust" the LLM's math. Every symbolic result is translated into Lean 4 and must pass the type checker before being presented to the user.
+**关键洞见**：Agent 不"信任"LLM 的数学。每个符号结果都会翻译成 Lean 4 并必须通过
+类型检查器才呈现给用户。
 
 ---
 
-## 6. Troubleshooting
+## 6. 疑难排查 Troubleshooting
 
-| Issue | Fix |
-|-------|-----|
-| `UnicodeEncodeError` on Windows | Run with `PYTHONIOENCODING=utf-8` |
-| `lake` not found | Install Lean 4 via `elan` |
-| Lean build timeout | First build is slow; keep `build/` for caching |
-| VASP/LAMMPS not found | Tools fall back to mock mode automatically |
-| API key errors for local models | Ensure `--base-url` points to `localhost` or `127.*` |
+| 问题 | 解决 |
+|------|------|
+| Windows 下 `UnicodeEncodeError` | 用 `PYTHONIOENCODING=utf-8` 运行 |
+| `lake` 未找到 | 通过 `elan` 安装 Lean 4 |
+| Lean 构建超时 | 首次构建较慢；保留 `build/` 缓存 |
+| VASP/LAMMPS 未找到 | 工具自动降级为 mock/导出模式 |
+| 本地模型 API key 报错 | 确保 `--base-url` 指向 `localhost` 或 `127.*` |
+| 后端未启动 | 先 `python -m huginn.server`，CLI 作为客户端连接 |
 
 ---
 
-## 7. Next Steps
+## 7. 下一步 Next Steps
 
-- **Explore workflows**: `huginn/workflows/templates.py` contains 12 preset pipelines
-- **Add a Lean module**: See `agent/lean/HuginnLean/README.md`
-- **Run the test suite**: `pytest tests/ -x -q`
-- **Read the threat model**: `docs/threat_model.md`
+- **探索工作流**：`agent/huginn/workflows/templates.py` 含多个预设 pipeline
+- **添加 Lean 模块**：见 `agent/lean/project/`
+- **运行测试**：`cd agent && pytest tests/ -x -q`
+- **阅读威胁模型**：`docs/threat_model.md`
+- **阅读文档导航**：`agent/docs/INDEX.md`
