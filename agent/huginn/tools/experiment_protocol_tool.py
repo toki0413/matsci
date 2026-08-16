@@ -111,7 +111,7 @@ class ExperimentProtocolTool(HuginnTool):
 
             from huginn.security.experiment_protocol import run_pipette_protocol
 
-            run_pipette_protocol(wa)
+            run_pipette_protocol(wa, sim=(args.executor_backend == "sim"))
             executed = [a.type for a in executor.log]
             degraded = [
                 sid for sid, active in self._steps_status(wa).items() if not active
