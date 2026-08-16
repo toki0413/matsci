@@ -6,7 +6,15 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 5
+    # update-types 只影响 version updates, 不影响 security updates.
+    # 收敛为只放行 patch/minor 常规升级, 拦掉 major 升级噪音;
+    # 真正的安全更新始终会自动开 PR, 不会被这里拦截.
+    allow:
+      - dependency-type: "all"
+        update-types:
+          - "version-update:semver-patch"
+          - "version-update:semver-minor"
     # 安全更新自动合并, 减少人工负担
     # ponytail: 升级路径是加 automerged_updates 配置 (需 GitHub 商业版)
     # 当前靠 CI 绿灯后人工 merge
@@ -68,7 +76,12 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 3
+    allow:
+      - dependency-type: "all"
+        update-types:
+          - "version-update:semver-patch"
+          - "version-update:semver-minor"
     commit-message:
       prefix: "chore(ci)"
       include: "scope"
