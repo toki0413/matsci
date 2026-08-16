@@ -228,12 +228,37 @@ class PhaseManager:
         return True
 
     def prompt_prefix(self) -> str:
-        """Return the system prompt prefix for the current phase."""
-        return PHASE_PROMPTS.get(self._phase, "")
+        """Return the system prompt prefix for the current phase.
+
+        M3: minimal 档位把 phase 视为 OPEN (无约束), 不注入 phase 前缀 —
+        避免对强模型施加冗余的认知编排摩擦.
+        """
+        effective = self._effective_phase()
+        return PHASE_PROMPTS.get(effective, "")
 
     def tool_filter(self) -> set[str] | None:
-        """Return the tool filter for the current phase, or None for all."""
-        return PHASE_TOOLS.get(self._phase)
+        """Return the tool filter for the current phase, or None for all.
+
+        M3: minimal 档位返回 None (全量工具), 跳过 phase 门控.
+        """
+        effective = self._effective_phase()
+        return PHASE_TOOLS.get(effective)
+
+    def _effective_phase(self) -> ResearchPhase:
+        """返回按模型档位折算后的实际生效 phase.
+
+        minimal (use_phase_machine=False) 时任何 phase 都折成 OPEN,
+        从而跳过 phase 前缀注入与工具门控. 其余档位原样返回.
+        惰性 import model_tier, 避免 phases <-> plugins 循环依赖.
+        """
+        try:
+            from huginn.plugins.model_tier import get_profile
+
+            if not get_profile().use_phase_machine:
+                return ResearchPhase.OPEN
+        except Exception:
+            pass  # 取档位失败时保持默认行为 (保留 phase 机)
+        return self._phase
 
     def reset(self, phase: ResearchPhase = ResearchPhase.OPEN) -> None:
         """Reset to *phase* and clear history."""

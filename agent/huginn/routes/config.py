@@ -185,6 +185,11 @@ async def get_config_endpoint() -> dict[str, Any]:
     data["models"] = [_model_to_dict(m) for m in cfg.models]
     data["config_file"] = str(_config_path())
     data["config_file_exists"] = _config_path().exists()
+    # 极简模式: 模型档位 (前端下拉选择的当前值与可用项)
+    from huginn.plugins.model_tier import ModelTier, get_tier
+
+    data["model_tier"] = get_tier().value
+    data["available_model_tiers"] = [t.value for t in ModelTier]
     return data
 
 
@@ -758,6 +763,60 @@ async def toggle_feature_flag(feature: str, params: dict[str, Any]) -> dict[str,
         "requested": enabled,
         "applied": new_state == enabled,
         "persisted": persisted,
+    }
+
+
+# ── /config/model-tier (极简模式) ─────────────────────────────────
+
+
+@router.get("/config/model-tier", dependencies=[Depends(require_api_key)])
+async def get_model_tier() -> dict[str, Any]:
+    """返回当前模型档位 + 可用档位 + 各档位 profile (前端设置面板用)."""
+    from huginn.plugins.model_tier import ModelTier, get_profile, get_tier
+
+    return {
+        "success": True,
+        "model_tier": get_tier().value,
+        "available_model_tiers": [t.value for t in ModelTier],
+        "profile": {
+            "use_phase_machine": get_profile().use_phase_machine,
+            "use_plan_gating": get_profile().use_plan_gating,
+            "cognitive_discipline": get_profile().cognitive_discipline,
+            "compaction_tier": get_profile().compaction_tier,
+            "external_thinking": get_profile().external_thinking,
+        },
+    }
+
+
+@router.post("/config/model-tier", dependencies=[Depends(require_admin_key)])
+async def set_model_tier(params: dict[str, Any]) -> dict[str, Any]:
+    """设置模型档位. body: {"tier": "full|balanced|minimal"}.
+
+    set_tier 内部会同步 external_thinking 功能开关, 保证 prompt 注入点读到的
+    FeatureFlags 与档位 profile 一致.
+    """
+    from huginn.plugins.model_tier import ModelTier, get_profile, get_tier, set_tier
+
+    tier_str = str(params.get("tier", "")).strip().lower()
+    try:
+        tier = ModelTier(tier_str)
+    except ValueError:
+        return {
+            "success": False,
+            "error": f"无效档位: {tier_str!r}. 可用: {[t.value for t in ModelTier]}",
+        }
+
+    set_tier(tier)
+    return {
+        "success": True,
+        "model_tier": get_tier().value,
+        "profile": {
+            "use_phase_machine": get_profile().use_phase_machine,
+            "use_plan_gating": get_profile().use_plan_gating,
+            "cognitive_discipline": get_profile().cognitive_discipline,
+            "compaction_tier": get_profile().compaction_tier,
+            "external_thinking": get_profile().external_thinking,
+        },
     }
 
 

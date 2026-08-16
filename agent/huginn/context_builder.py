@@ -679,6 +679,15 @@ class ContextBuilder:
             parts.append("### End Structural Coordinates")
 
         if session_state and getattr(session_state, "active_plan_id", None):
+            # M3: minimal 档位关闭 plan gating — 强模型自行规划, 不注入 plan 上下文
+            # (只保留 L1 结构坐标, 它是不占推理负担的轻量breadcrumb).
+            try:
+                from huginn.plugins.model_tier import get_profile
+
+                if not get_profile().use_plan_gating:
+                    return "\n".join(parts) if parts else ""
+            except Exception:
+                pass  # 取档位失败时保持默认 (注入 plan)
             parts.append("### Current Plan")
             # P2#4: chat 上下文只引用 active step + 剩余 pending step (PlanStore
             # 动态裁剪), 不引用完整 plan — 已完成步骤折成计数, 降低 token 占用.
