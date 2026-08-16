@@ -11,10 +11,10 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-/// Huginn: Material Science specialized AI Agent Harness.
+/// Huginn: General Scientific Research Agent Harness.
 #[derive(Parser, Debug)]
 #[command(name = "huginn")]
-#[command(about = "Material Science specialized AI Agent Harness")]
+#[command(about = "General Scientific Research Agent Harness")]
 #[command(version)]
 struct Cli {
     /// Workspace directory

@@ -1,15 +1,22 @@
 # Huginn
 
-**Huginn**（包名 `huginn-agent`，v1.3.0，MIT）是一个面向**计算材料科学**的
-LLM 驱动智能 Agent 系统，内置**形式化验证（Lean 4）**数学能力。它自动执行
-DFT 计算、分子动力学、CFD/FEA、符号回归、文献检索与"自主探索"材料设计空间，
-并用 Lean 4 对张量代数、有限元方法、数值线性代数、DFT 理论、热力学与概率同时
-进行形式化证明。
+**Huginn**（包名 `huginn-agent`，v1.3.0，MIT）是一个面向**通用科学研究**的
+LLM 驱动智能 Agent 系统，内置**形式化验证（Lean 4）**数学能力。它从计算材料
+科学起家，现已泛化为覆盖多学科科研自动化的通用 Agent：自动执行 DFT 计算、
+分子动力学、CFD/FEA 仿真、符号回归、因果分析（TDA/SINDy）、文献检索、自主
+探索与多智能体科研协作，并用 Lean 4 对张量代数、有限元方法、数值线性代数、
+DFT 理论、热力学与概率同时进行形式化证明。
+
+> 定位演进：**并非"材料科学专用"**。材料/仿真只是其能力集之一；整系统的
+> 重心是"通用科研自动化"——研究项目编排、多智能体 team、知识蒸馏、因果与
+> 结构分析、MCP 工具生态、远程/HPC 调度等（见 [tech-spec.md](agent/docs/tech-spec.md)）。
 
 ---
 
 ## 核心特性 Highlights
 
+- **通用科研 Agent**：研究项目编排、多智能体 team（`/team`）、知识蒸馏闭环、
+  自进化（`evolve`）、自主科研闭环（`autoloop`）、知识图谱、远程/HPC 调度
 - **6 阶段形式化数学**：张量代数 → FEM 弱形式 → 数值线性代数 → DFT → 热力学 →
   概率，全程 Lean 4 形式化证明；SymPy 表达式自动翻译为 Lean `Float` 定义并类型检查
 - **多 Provider LLM**：OpenAI、Anthropic、DeepSeek、Google GenAI、OpenRouter、

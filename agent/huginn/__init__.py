@@ -1,7 +1,9 @@
-"""Huginn: Material Science specialized AI Agent Harness.
+"""Huginn: General Scientific Research Agent Harness.
 
-Architecture inspired by Claude Code's Tool System, QueryEngine,
-and Exploration patterns, built on Python/LangGraph/EvoScientist.
+Evolved from a computational-materials-science agent into a multi-domain
+scientific research automation agent (simulation, symbolic math, causal
+analysis, knowledge distillation, multi-agent collaboration), with Lean 4
+formal verification of the underlying math.
 """
 
 import enum as _enum

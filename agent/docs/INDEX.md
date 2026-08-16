@@ -60,6 +60,7 @@
 | [polish-reports/loop-polish-report.md](../polish-reports/loop-polish-report.md) | report | 循环打磨报告 |
 | [polish-reports/industrialization-gap-analysis.md](../polish-reports/industrialization-gap-analysis.md) | report | 工业化缺口分析 |
 | [polish-reports/benchmark-vs-claude-codex-evoscientist.md](../polish-reports/benchmark-vs-claude-codex-evoscientist.md) | report | 对标报告（Claude/Codex/Evoscientist） |
+| [analysis_20260717/](../../analysis_20260717/) | report | 历史归因/对标分析快照（17 篇，入口见 `00_综合归因报告.md`） |
 
 ## 5. 部署与运维
 
