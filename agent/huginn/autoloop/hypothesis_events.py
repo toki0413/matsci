@@ -11,6 +11,7 @@ best-effort 契约 (安全护栏):
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import sqlite3
@@ -136,13 +137,11 @@ class HypothesisEventStore:
 
     def close(self) -> None:
         if self._db is not None:
-            try:
+            with contextlib.suppress(Exception):
                 self._db.close()
-            except Exception:
-                pass
             self._db = None
 
-    def __enter__(self) -> "HypothesisEventStore":
+    def __enter__(self) -> HypothesisEventStore:
         return self
 
     def __exit__(self, *_: Any) -> None:

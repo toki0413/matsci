@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from huginn.memory.manager import MemoryManager
+    pass
 
 
 def build_memory_manager(

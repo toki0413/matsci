@@ -12,8 +12,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from huginn.security import revertible
 from huginn.security.revertible import RevertibleContext, recover_from
 from huginn.security.world_model import NaiveWorldModel, PhysicalAction

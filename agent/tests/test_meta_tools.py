@@ -67,11 +67,16 @@ class FakeExecutor:
         self._raises = raises
         self.calls: list[dict] = []
 
-    async def execute(self, skill, params, exec_context):
+    async def execute(self, skill, params, exec_context, workspace=None):
         if self._raises:
             raise self._raises
         self.calls.append(
-            {"skill": skill, "params": params, "exec_context": exec_context}
+            {
+                "skill": skill,
+                "params": params,
+                "exec_context": exec_context,
+                "workspace": workspace,
+            }
         )
         return self._result
 

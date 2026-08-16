@@ -34,7 +34,7 @@ class PhysicalAction:
         return {"type": self.type, "params": self.params}
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "PhysicalAction":
+    def from_dict(cls, d: dict[str, Any]) -> PhysicalAction:
         return cls(d.get("type", ""), d.get("params") or {})
 
     def __eq__(self, other: object) -> bool:

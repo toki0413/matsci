@@ -21,10 +21,10 @@ TokenBudget 按 token、BudgetPolicy 按 CPU/GPU 资源), 无法回答"这个任
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
-import time
 
 try:
     from huginn.env_defaults import get_bool, get_float
@@ -111,7 +111,7 @@ class CostLedger:
         self._entries: list[CostEntry] = []
 
     @classmethod
-    def from_env(cls) -> "CostLedger":
+    def from_env(cls) -> CostLedger:
         """从 HUGINN_COST_* env 读取换算率构建."""
         return cls(
             usd_per_1k_tokens=get_float("HUGINN_COST_USD_PER_1K_TOKENS", default=0.0),
@@ -211,7 +211,7 @@ class CostLedger:
         budget_usd <= 0 视为不限制 → 恒 allow.
         """
         if budget_usd <= 0:
-            return "allow", f"不限制; 已花 self.total_usd() 美元"
+            return "allow", "不限制; 已花 self.total_usd() 美元"
         total = self.total_usd()
         reason = f"已花 ${total:.4f} / 预算 ${budget_usd:.2f}"
         if total >= budget_usd:
@@ -262,14 +262,14 @@ def reset_cost_ledger() -> None:
 
 if __name__ == "__main__":
     # 自检
-    l = CostLedger(usd_per_1k_tokens=2.0, usd_per_cpu_hour=0.5)
-    l.record(CostDimension.LLM, 1000, CostUnit.TOKENS, tool="vasp_tool", phase="explore")
-    l.record(CostDimension.COMPUTE, 2.0, CostUnit.CPU_HOURS, tool="vasp_tool", phase="explore")
-    l.record(CostDimension.EXTERNAL, 0.3, CostUnit.USD, tool="web_search", phase="review")
-    assert l.total_usd() == 2.0 + 1.0 + 0.3, l.snapshot()
-    assert l.by_dimension()["llm"] == 2.0
-    assert l.by_phase()["explore"] == 3.0
-    assert l.check_budget(10.0)[0] == "allow"
-    assert l.check_budget(2.0)[0] == "deny"
-    assert l.check_budget(4.0)[0] == "warn"
+    ledger = CostLedger(usd_per_1k_tokens=2.0, usd_per_cpu_hour=0.5)
+    ledger.record(CostDimension.LLM, 1000, CostUnit.TOKENS, tool="vasp_tool", phase="explore")
+    ledger.record(CostDimension.COMPUTE, 2.0, CostUnit.CPU_HOURS, tool="vasp_tool", phase="explore")
+    ledger.record(CostDimension.EXTERNAL, 0.3, CostUnit.USD, tool="web_search", phase="review")
+    assert ledger.total_usd() == 2.0 + 1.0 + 0.3, ledger.snapshot()
+    assert ledger.by_dimension()["llm"] == 2.0
+    assert ledger.by_phase()["explore"] == 3.0
+    assert ledger.check_budget(10.0)[0] == "allow"
+    assert ledger.check_budget(2.0)[0] == "deny"
+    assert ledger.check_budget(4.0)[0] == "warn"
     print("cost_ledger self-check passed")

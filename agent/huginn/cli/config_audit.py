@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import re
 import sys
@@ -58,7 +59,7 @@ def _scan_file(path: Path, ops: dict):
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return
-    for offset, (pattern, kind) in enumerate(
+    for _offset, (pattern, kind) in enumerate(
         (
             (_ENV_GET, "read"),
             (_ENV_SETDEFAULT, "setdefault"),
@@ -69,9 +70,7 @@ def _scan_file(path: Path, ops: dict):
         for m in pattern.finditer(text):
             name = m.group(1)
             default = ""
-            if kind == "setdefault":
-                default = _clean(m.group(2))
-            elif kind == "read" and m.group(2) is not None:
+            if kind == "setdefault" or kind == "read" and m.group(2) is not None:
                 default = _clean(m.group(2))
             lineno = text[: m.start()].count("\n") + 1
             ops[name][kind].append(
@@ -212,7 +211,7 @@ def _load_prompt_priorities() -> dict[str, int]:
         from huginn.plugins.prompt_segments import _PRIORITY
         _PROMPT_PRIORITIES.update(_PRIORITY)
     except Exception:
-        pass
+        pass  # noqa: BLE001 - 插件可选, 缺失时保持默认 prompt 优先级
     return _PROMPT_PRIORITIES
 
 
@@ -297,16 +296,16 @@ def _policy_defaults() -> dict:
             _DEFAULT_NEVER_TRIM_BLOCK_TYPES,
             _DEFAULT_PROTECTED_ROLES,
         )
-        from huginn.plugins.memory_maintenance_policy import _DEFAULT as _mem_default
+        from huginn.plugins.memory_maintenance_policy import _DEFAULT as _MEM_DEFAULT
 
         out["compaction"] = {
             "protected_roles": sorted(_DEFAULT_PROTECTED_ROLES),
             "never_trim_block_types": sorted(_DEFAULT_NEVER_TRIM_BLOCK_TYPES),
         }
         out["memory"] = {
-            "decay_per_day": _mem_default.decay_per_day,
-            "prune_threshold": _mem_default.prune_threshold,
-            "deduplicate": _mem_default.deduplicate,
+            "decay_per_day": _MEM_DEFAULT.decay_per_day,
+            "prune_threshold": _MEM_DEFAULT.prune_threshold,
+            "deduplicate": _MEM_DEFAULT.deduplicate,
         }
     except Exception as e:  # noqa: BLE001 - 依赖缺失时降级
         out["error"] = str(e)
@@ -526,12 +525,10 @@ def build_events_contract(root: Path | None = None) -> dict:
     ub_path = root / "events" / "unified_bus.py"
     publishes: list[str] = []
     if ub_path.exists():
-        try:
+        with contextlib.suppress(OSError):
             publishes = _EVENT_PUBLISH.findall(
                 ub_path.read_text(encoding="utf-8", errors="replace")
             )
-        except OSError:
-            pass
 
     return {"members": members, "publishes": sorted(set(publishes))}
 
@@ -897,7 +894,7 @@ def render_flags_markdown(rows: list[dict]) -> str:
 
 def build_model_tier_contract() -> dict:
     """读取 model_tier._TIERS 的三档 profile 聚合配置."""
-    from huginn.plugins.model_tier import ModelTier, _TIERS
+    from huginn.plugins.model_tier import _TIERS, ModelTier
 
     rows = []
     for tier in ModelTier:
@@ -962,9 +959,9 @@ def build_permission_contract(root: Path | None = None) -> dict:
     root = root or _ROOT
     from huginn.core_types import PermissionMode, RiskLevel
     from huginn.permissions import (
-        DEFAULT_PERMISSION_RULES,
-        DANGEROUS_PATTERNS,
         _DEFAULT_SANDBOX_PATH_RULES,
+        DANGEROUS_PATTERNS,
+        DEFAULT_PERMISSION_RULES,
     )
 
     modes = [
@@ -1165,7 +1162,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # 契约模式分派: 每个 --xxx 对应一个 (builder, renderer, 文件名).
     modes = CONTRACT_MODES
-    for flag, (builder, renderer, default_name) in modes.items():
+    for flag, (builder, renderer, _default_name) in modes.items():
         # argparse 把 flag 名中的 `-` 转成 `_` 作为 dest, 这里对齐取属性.
         if getattr(args, flag.replace("-", "_"), False):
             data = builder()

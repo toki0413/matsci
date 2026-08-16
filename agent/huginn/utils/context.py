@@ -119,6 +119,8 @@ def compact_messages(
     # 内容 marker 与"永不裁剪 block type"均可由 compaction 策略插件扩展 (并集).
     from huginn.plugins.compaction_policy import (
         never_trim_block_types,
+    )
+    from huginn.plugins.compaction_policy import (
         root_content_markers as policy_root_markers,
     )
 

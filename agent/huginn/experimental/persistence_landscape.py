@@ -32,7 +32,6 @@ from huginn.metacog.simplicial_homology import (  # noqa: E402
     is_gudhi_available,
 )
 
-
 # ---------- point cloud 构造 ----------
 
 def hypothese_to_pointcloud(

@@ -5,12 +5,8 @@
 """
 from __future__ import annotations
 
-import pytest
-
 from huginn.security.gate import (
     GateChain,
-    GateResult,
-    FuncGate,
     adoption_adapter,
     completion_adapter,
     phase_gate_adapter,

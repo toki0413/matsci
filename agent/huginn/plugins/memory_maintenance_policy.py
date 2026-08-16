@@ -17,6 +17,7 @@ from dataclasses import dataclass
 
 from huginn.plugins.strategy import StrategyRegistry
 
+
 # 内置默认策略 (与原 longterm.maintenance 字面量一致).
 @dataclass(frozen=True)
 class MemoryMaintenancePolicy:

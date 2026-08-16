@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import os
 import sys
+import types
 
 import pytest
 
 from huginn.core_types import ToolContext
+from huginn.security import SandboxError
+from huginn.tools import bash_tool as bt
 from huginn.tools.bash_tool import BashTool
 
 # CI sandbox executor 误解析 workspace="." 为重复绝对路径
@@ -54,11 +57,6 @@ class TestBashTool:
 #   - _suggest_fix / _extract_progress / _is_heavy_bash 纯函数全分支
 #
 # Rust sandbox 路径已在 test_bash_rust_sandbox.py 覆盖, 此处不重复.
-
-import types
-
-from huginn.security import SandboxError
-from huginn.tools import bash_tool as bt
 
 # ── ToolContext ─────────────────────────────────────────────────────
 

@@ -21,7 +21,7 @@ from huginn.agents.factory import AgentFactory
 from huginn.agents.orchestrator import Orchestrator
 from huginn.autoloop.plan_store import PlanStore
 from huginn.config import get_config
-from huginn.memory.manager import MemoryConfig, MemoryManager
+from huginn.memory.manager import MemoryManager
 from huginn.models.registry import ModelRegistry
 from huginn.permissions import PermissionMode
 from huginn.personas import PersonaManager

@@ -440,10 +440,7 @@ class WorkflowEngine:
             new_files = after - before
             if new_files:
                 dispose = rev.composite(
-                    *[
-                        (lambda fp: (lambda: fp.unlink(missing_ok=True)))(fp)
-                        for fp in new_files
-                    ]
+                    *[lambda fp=fp: fp.unlink(missing_ok=True) for fp in new_files]
                 )
                 rev.track(dispose)
                 rev.revert_all()
