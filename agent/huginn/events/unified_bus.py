@@ -395,6 +395,22 @@ class UnifiedBus:
             source="agent.streaming",
         )
 
+    def publish_generic_sync(
+        self,
+        event_type: str,
+        data: dict,
+        thread_id: str = "",
+        source: str = "",
+    ) -> None:
+        """通用事件发布 (同步 fire-and-forget).
+
+        统一入口, 替代散落各处直连内部 EventBus 的 ``_publish`` 调用 (autoloop /
+        snapshot / adapter 里的 ad-hoc 事件类型). 只发内部 EventBus, 不做 hook / pet
+        扇出 — 这些事件本就只对 audit / SSE / transcript 可见. 与其它 publish_* 一样
+        是 best-effort, 失败不阻断调用方.
+        """
+        self._publish_internal_sync(event_type, data, thread_id, source)
+
 
 # ── 模块级便捷函数 ──────────────────────────────────────────────
 
@@ -407,4 +423,18 @@ def get_unified_bus(agent: Any = None) -> UnifiedBus:
     return UnifiedBus(agent)
 
 
-__all__ = ["UnifiedBus", "get_unified_bus"]
+def publish_event(
+    event_type: str,
+    data: dict,
+    thread_id: str = "",
+    source: str = "",
+) -> None:
+    """模块级便捷函数: 发布任意事件到内部 EventBus (fire-and-forget).
+
+    统一 ad-hoc 事件 (quality.check / campaign.* / snapshot.* / tool.blocked 等)
+    的发布入口, 让它们与其它事件走同一通道, 不再直连内部 EventBus.
+    """
+    get_unified_bus().publish_generic_sync(event_type, data, thread_id, source)
+
+
+__all__ = ["UnifiedBus", "get_unified_bus", "publish_event"]

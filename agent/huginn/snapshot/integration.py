@@ -52,14 +52,11 @@ _last_step_id: str | None = None
 
 
 def _emit(event_type: str, data: dict, thread_id: str = "") -> None:
-    """Fire-and-forget 事件发布到 EventBus."""
+    """Fire-and-forget 事件发布到 EventBus (统一走 UnifiedBus)."""
     try:
-        import asyncio
+        from huginn.events.unified_bus import publish_event
 
-        from huginn.events.integration import _publish
-        from huginn.utils.concurrency import track_task
-        asyncio.get_running_loop()  # 检测在 event loop 里
-        track_task(_publish(event_type, data, thread_id, source="snapshot"), name="snapshot-emit")
+        publish_event(event_type, data, thread_id, source="snapshot")
     except Exception:
         logger.debug("snapshot event publish failed", exc_info=True)
 
