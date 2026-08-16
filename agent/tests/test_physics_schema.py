@@ -4,24 +4,28 @@ from __future__ import annotations
 
 import pytest
 
+from huginn.security.experiment_protocol import (
+    build_pipette_workflow,
+    run_action_spec,
+    run_pipette_protocol,
+)
 from huginn.security.physics_schema import (
+    PIPETTING_PROTOCOL,
     PIPETTING_SPEC,
     ActionSpec,
+    ProtocolMachine,
+    Quantity,
     StepResult,
+    to_ul,
 )
 from huginn.security.workspace import (
-    DependencyNotMet,
+    DependencyNotMetError,
     ErrorModel,
     PhysicalWorkspace,
     SimExecutor,
     WorkspaceConfirmError,
 )
 from huginn.security.world_model import NaiveWorldModel
-from huginn.security.experiment_protocol import (
-    build_pipette_workflow,
-    run_action_spec,
-    run_pipette_protocol,
-)
 
 
 def _workflow(*, mixer_available: bool = True):
@@ -61,7 +65,7 @@ def test_spec_expect_drives_state_confirm():
 
 
 def test_spec_preconditions_block_execution():
-    """前置依赖不满足 → DependencyNotMet (单步显式调用)."""
+    """前置依赖不满足 → DependencyNotMetError (单步显式调用)."""
     # mixer 缺失 → mixer.ready 不可用
     _, wa = _workflow(mixer_available=False)
     spec = ActionSpec(
@@ -70,7 +74,7 @@ def test_spec_preconditions_block_execution():
         expect=[],
     )
     from huginn.security.world_model import PhysicalAction
-    with pytest.raises(DependencyNotMet):
+    with pytest.raises(DependencyNotMetError):
         wa.execute(PhysicalAction("mix", {"mode": "vortex"}), spec=spec)
 
 
@@ -204,14 +208,6 @@ def test_sim_executor_conservation_holds():
 
 # ── Units + 声明式协议状态机 ──────────────────────────────────
 
-from huginn.security.physics_schema import (
-    PIPETTING_PROTOCOL,
-    ProtocolMachine,
-    to_ul,
-    Quantity,
-    VolumeUnit,
-)
-
 
 def test_to_ul_conversion():
     """单位换算 正确."""
@@ -317,9 +313,8 @@ def test_e2e_error_beyond_tolerance_rolls_back():
         id="asp", action_type="aspirate", params={"vol": 10},
         preconditions=[], expect=[StepResult(key="sample_vol", expected=10.0, tolerance=0.01)],
     )
-    with wa.transaction():
-        with pytest.raises(WorkspaceConfirmError):
-            wa.execute(PhysicalAction("aspirate", {"vol": 10}), spec=asp, preflight=True)
+    with wa.transaction(), pytest.raises(WorkspaceConfirmError):
+        wa.execute(PhysicalAction("aspirate", {"vol": 10}), spec=asp, preflight=True)
     # 事务块正常退出 (未崩溃), 确认失败已抛给调用方 — 这是设计上要的接口.
     # 副作用: aspirate 已执行 (10.5 含偏置), 因确认在登记逆之前失败, 该步无逆可撤.
     assert wa.state["sample_vol"] == pytest.approx(10.5, abs=1e-6)

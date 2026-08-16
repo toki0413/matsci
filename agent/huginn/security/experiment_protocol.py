@@ -20,6 +20,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from huginn.security.physics_schema import ActionSpec
 from huginn.security.workspace import ActionExecutor, PhysicalWorkspace
 from huginn.security.world_model import NaiveWorldModel, PhysicalAction
 
@@ -120,7 +121,7 @@ def run_pipette_protocol(wa: PhysicalWorkspace, *, aliquot: bool = True, sim: bo
 
 def run_action_spec(
     wa: PhysicalWorkspace,
-    spec_list: list["ActionSpec"] | None = None,
+    spec_list: list[ActionSpec] | None = None,
     *,
     sim: bool = True,
 ) -> None:

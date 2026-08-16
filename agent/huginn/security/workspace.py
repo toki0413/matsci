@@ -21,19 +21,18 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from huginn.security.coeffect import CoEffectRegistry
+from huginn.security.physics_schema import (
+    ActionSpec,
+    matches_state,
+)
 from huginn.security.revertible import RevertibleContext, register_physical_executor
 from huginn.security.world_model import (
-    ConstraintViolation,
     FORWARD_EFFECTS,
+    ConstraintViolationError,
     PhysicalAction,
     WorldModel,
     apply_forward,
     check_constraints,
-)
-from huginn.security.physics_schema import (
-    ActionSpec,
-    StepResult,
-    matches_state,
 )
 
 logger = logging.getLogger(__name__)
@@ -43,7 +42,7 @@ class WorkspaceConfirmError(Exception):
     """感知确认失败 — 动作已执行但状态未达预期, 触发事务回滚."""
 
 
-class DependencyNotMet(Exception):
+class DependencyNotMetError(Exception):
     """声明式规格前置依赖不满足 — 动作不应执行.
 
     ``spec.preconditions`` 中的依赖 key 在此刻不可用 (AvailableDependency 未
@@ -116,7 +115,7 @@ class SimExecutor(MockExecutor):
         fail_on: set[str] | None = None,
         *,
         initial: dict[str, Any] | None = None,
-        error_model: "ErrorModel | None" = None,
+        error_model: ErrorModel | None = None,
         seed: int | None = None,
     ) -> None:
         super().__init__(fail_on=fail_on)
@@ -197,12 +196,12 @@ class PhysicalWorkspace:
     def preflight(self, action: PhysicalAction) -> dict[str, Any]:
         """执行前预演: 物理约束校验 + 世界模型前向预测.
 
-        - 违背第一性原理约束 → 抛 :class:`ConstraintViolation`, 不执行.
+        - 违背第一性原理约束 → 抛 :class:`ConstraintViolationError`, 不执行.
         - 通过则返回 ``world_model.predict`` 的预期后状态, 供感知确认对比.
         """
         issues = check_constraints(self.state, action)
         if issues:
-            raise ConstraintViolation(action, issues)
+            raise ConstraintViolationError(action, issues)
         return self.world_model.predict(self.state, action)
 
     def execute(
@@ -212,7 +211,7 @@ class PhysicalWorkspace:
         *,
         preflight: bool = False,
         expected: dict[str, Any] | None = None,
-        spec: "ActionSpec | None" = None,
+        spec: ActionSpec | None = None,
         tolerance: float = 1e-9,
     ) -> PhysicalAction:
         """执行物理动作: (可选预演) → 世界模型推断逆 → 执行 → 读状态 → 登记逆 → 确认.
@@ -220,10 +219,10 @@ class PhysicalWorkspace:
         - ``spec``: 声明式动作规格. 提供时:
           - 用 ``spec.expect`` (StepResult 断言列表) 做状态级感知确认, 每字段自带
             相对/绝对容差;
-          - 前置依赖 ``spec.preconditions`` 不满足 → 抛 :class:`DependencyNotMet`,
+          - 前置依赖 ``spec.preconditions`` 不满足 → 抛 :class:`DependencyNotMetError`,
             不执行.
         - ``preflight=True``: 执行前用世界模型对**当前状态**做约束校验 + 前向
-          预测; 约束违规抛 :class:`ConstraintViolation`, 不执行.
+          预测; 约束违规抛 :class:`ConstraintViolationError`, 不执行.
         - ``expected``: 给定的预期后状态 (dict, 统一绝对容差), 与 ``spec`` 互斥;
           执行后与 ``observe()`` 实测状态对比, 超容差抛 :class:`WorkspaceConfirmError`.
         - ``confirm_key``: 原有按 key 的确认器仍最后执行.
@@ -235,16 +234,14 @@ class PhysicalWorkspace:
         if spec is not None:
             for dep in spec.preconditions:
                 if not self.is_available(dep):
-                    raise DependencyNotMet(spec.id, dep)
+                    raise DependencyNotMetError(spec.id, dep)
             if expected is not None:
                 raise ValueError("expected 与 spec 互斥, 二者只能传其一")
 
         if preflight:
             # 用当前状态预演: 先约束校验, 再取前向预测 (供 expected 对比).
             predicted = self.preflight(action)
-            if expected is None and spec is None:
-                expected = predicted
-            elif spec is not None and not spec.expect:
+            if expected is None and spec is None or spec is not None and not spec.expect:
                 expected = predicted
 
         inverse = self.world_model.infer_inverse(state_before, action)
@@ -252,16 +249,14 @@ class PhysicalWorkspace:
         self.executor.execute(action)
         self.state = dict(self.executor.observe())
 
-        if spec is not None and spec.expect:
-            if not matches_state(spec.expect, self.state):
-                raise WorkspaceConfirmError(
-                    f"感知确认失败: 状态偏离预期 (规格 {spec.id}, 动作 {action.type})"
-                )
-        elif expected is not None:
-            if not matches_state(expected, self.state, tolerance):
-                raise WorkspaceConfirmError(
-                    f"感知确认失败: 状态偏离预期 (动作 {action.type})"
-                )
+        if spec is not None and spec.expect and not matches_state(spec.expect, self.state):
+            raise WorkspaceConfirmError(
+                f"感知确认失败: 状态偏离预期 (规格 {spec.id}, 动作 {action.type})"
+            )
+        elif expected is not None and not matches_state(expected, self.state, tolerance):
+            raise WorkspaceConfirmError(
+                f"感知确认失败: 状态偏离预期 (动作 {action.type})"
+            )
 
         if inverse is not None:
             # state_before 是动作执行前的状态, inverse 是"回到执行前"所需的逆动作.
