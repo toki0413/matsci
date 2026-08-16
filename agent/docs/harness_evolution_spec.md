@@ -479,6 +479,8 @@ H 之间独立, 不互相阻塞 (除 H3 依赖 H1+H2, H4 试点 BUILTIN_SPECS �
    - **补充落地 (autoloop 侧)** — 之前 `_llm_chat` 的 task 路由依赖 `self.model_router`, 但 autoloop engine 走 `get_model()` 单模型路径, 从不挂 router, 导致路由是死代码 (`getattr(self,"model_router",None)` 恒 None). 现已在 `AutoloopEngine.__init__` 从 `get_config().build_agent_kwargs()` 挂 `model_router` (单模型配置时为 None, 行为不变), 并新增 `engine.select_model(task)` 统一入口 (router.select 失败/缺 router 时回退 self.model). `verification_model` 默认值改走 `select_model("verification")`, 让 Moonshine 三槽的验证子服务 (语义一致性 judge / novelty 评估 / trajectory pattern 抽取) 在未显式注入时也能吃到 verification 路由, 而非恒用 self.model.
 2. **H5-b unified tool dispatch** (P9): 让 H4 tool_whitelist 真正强制. 新建 `dispatch_tool(name, args, ctx, phase)` 入口, 改 engine 直接 `tool.call()` 调用.
    - **状态: 已落地** (H5-b) — 新增 `huginn/harness/tool_dispatch.py`: `dispatch_tool` 从 ToolRegistry 取工具 + 按 phase 的 `tool_whitelist` (PhaseRegistry) 校验, 未命中短路返回. 已接入 `dynamic_workflow` 的 `_run_subtask` (orchestrator.run(phase="_execute") 透传), 白名单强制在该路径生效. autoloop 其余内部工具调用 (literature/validation 等) 属内部服务, 非 agent 工具调用, 不强制.
+3. **H6 双吸引子 band 路由** (双吸引子行为策略理论): task 路由按任务字面量选队, 但模型行为沿 persona 轴存在 spec/react 两个稳定带与 mixed 相变陷阱. 模型无法自我路由进入稳定带, 必须由外部路由器把请求量化到稳定带.
+   - **状态: 已落地** — `ModelRouter` 增加 persona band 维度: `RegisteredModel.bands` (只允许 spec/react, register 时剔除 mixed); `classify_band(task, signals)` 轻量分类器把任务/阶段量化到稳定带 (永不返回 mixed); `select_band(band)` 按稳定带选模型, 未标注 band 的通用模型承接 (spec↔react 不互通, 避免相变区跳变). `engine.select_model(task, band)` 优先显式 band, 否则自动走 `classify_band` → `select_band`, 精确命中/通用回退/旧 task 路由三级兜底. `ModelConfig.bands` 让用户在配置里给模型标注稳定带, 经 `register_provider(bands=...)` 传入. 测试: `test_model_router.py::TestBandRouting`.
 
 H4 若需对 phase 方法体其他直接 `tool.call()` 强制白名单时, 再接入 dispatch_tool.
 

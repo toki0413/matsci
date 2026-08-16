@@ -37,6 +37,48 @@ TaskT = Literal[
     "archival",
 ]
 
+# 双吸引子 (double-attractor) 行为理论: 模型行为沿 persona 轴存在两个稳定带
+# (spec / react), 中间是相变陷阱 (mixed). 模型无法自我路由进入稳定带,
+# 必须由外部路由器量化到稳定带. 这是 band 路由的语义锚点.
+PersonaBand = Literal["spec", "react", "mixed"]
+
+# 稳定带: 允许路由的目标. mixed 是陷阱, 永不作为目标.
+_STABLE_BANDS: frozenset[str] = frozenset({"spec", "react"})
+
+# 双吸引子行为策略理论: 模型无法自我路由, 外部路由器必须把请求量化到稳定带
+# (spec/react), 否则容易落入 mixed 相变陷阱. 下面这个轻量分类器把 task/阶段
+# 映射到稳定带 — 只做"该用哪种行为带"的判断, 不涉及具体模型.
+# 规则 (外部量化, 非模型自选):
+#   - 发散/探索/重构类 (science/reasoning/coding/hypothesize/explore) → spec
+#   - 收敛/执行/规范化类 (default/agent/summarize/format/planning/execute) → react
+#   - 明确 risky/spec 基线以上由调用方直接传 band, 此处不回退到 mixed.
+def classify_band(
+    task: TaskT | str | None = None,
+    *,
+    signals: str = "",
+) -> PersonaBand:
+    """把任务/阶段量化到 persona 稳定带 (spec 或 react).
+
+    ``signals`` 为可选的自由文本信号 (如当前 persona 名 / 阶段名), 与 task
+    一同参与量化; 任一命中穷尽性足以判定时即返回. ``mixed`` 永不作为输出 —
+    那是相变陷阱, 外部路由应主动避开.
+    """
+    text = ((task or "") + " " + signals).lower()
+    if not text.strip():
+        return "spec"  # 无信号时默认发散侧 (保持与旧 reasoning 缺省一致)
+
+    _spec = ("science", "reasoning", "coding", "hypothesize", "explore", "spec")
+    _react = (
+        "default", "agent", "planning", "summarize", "format", "cheap",
+        "archival", "verify", "execute", "react",
+    )
+    # 明确 react 信号优先 (收敛/执行是更"确定"的量化目标), 避免双引人带歧义.
+    if any(w in text for w in _react):
+        return "react"
+    if any(w in text for w in _spec):
+        return "spec"
+    return "spec"
+
 
 @dataclass
 class RegisteredModel:
@@ -52,6 +94,9 @@ class RegisteredModel:
     # 用于 cross-family audit — verification 模型应来自不同 family, 避免
     # "模型自己验证自己"的确认偏差. 空串 = 未指定 (向后兼容).
     family: str = ""
+    # 双吸引子 band 路由: 声明该模型稳定的 behavior band (subset of stable
+    # bands, 不允许 mixed). 空集 = 未标注, band 路由退回 task 路由.
+    bands: set[str] = field(default_factory=set)
 
 
 class ModelRouter:
@@ -87,8 +132,13 @@ class ModelRouter:
         cost_output: float = 0.0,
         priority: int = 0,
         family: str = "",
+        bands: set[str] | None = None,
     ) -> RegisteredModel:
         """Register an existing LangChain model instance."""
+        # band 只允许声明稳定带; 若混入 mixed (相变陷阱) 直接剔除并拒绝.
+        valid_bands = (
+            band for band in (bands or set()) if band in _STABLE_BANDS
+        )
         entry = RegisteredModel(
             name=name,
             model=model,
@@ -97,6 +147,7 @@ class ModelRouter:
             cost_output=cost_output,
             priority=priority,
             family=family,
+            bands=set(valid_bands),
         )
         self._models[name] = entry
         return entry
@@ -116,6 +167,7 @@ class ModelRouter:
         thinking: ThinkingIntensity | dict[str, Any] | None = None,
         max_tokens: int | None = None,
         family: str | None = None,
+        bands: set[str] | None = None,
     ) -> RegisteredModel:
         """Register a model by provider descriptor.
 
@@ -139,7 +191,53 @@ class ModelRouter:
             cost_output=cost_output,
             priority=priority,
             family=family if family is not None else str(provider),
+            bands=bands,
         )
+
+    # ── 双吸引子 band 路由 ───────────────────────────────────────────
+    # task 路由按任务字面量选队, 但模型行为沿 persona 轴存在 spec/react 两个
+    # 稳定带与 mixed 相变陷阱. 外部路由器必须把请求量化到稳定带 (spec/react),
+    # 不能交给模型自选 (模型无法自我路由). 未标注 band 的模型作为通用回退.
+
+    def select_band(self, band: PersonaBand | str | None = None) -> Any:
+        """按 persona 稳定带选模型, 优先选该 band 稳定模型.
+
+        规则:
+        - ``band`` 量化到稳定带: mixed (相变陷阱) 不是合法目标, 退回完成回退.
+        - 先精确命中 ``band`` 的模型; 无则退回兼容带 (spec↔react 不互通,
+          仅允许未标注 band 的通用模型承接); 再退回 task 路由.
+        - 稳定带模型必须 ``bands`` 标注且不含 mixed (register 时已剔除).
+        """
+        target = (band or "").strip().lower()
+        if target not in _STABLE_BANDS:
+            logger.info(
+                "band 路由拒绝非法/陷阱 band=%r (合法: spec/react)",
+                target,
+            )
+            return self.select()
+        # 精确命中: 稳定带内按 priority/cost 排序
+        matching = [
+            m for m in self._models.values() if target in m.bands
+        ]
+        if matching:
+            matching.sort(key=lambda m: (-m.priority, m.cost_input + m.cost_output))
+            return matching[0].model
+        # 无稳定带模型 → 通用模型 (未标注 band) 承接; 不带回退到另一稳定带,
+        # 避免在 spec/react 之间跳变 (相变区). 无通用模型则走 task 路由.
+        generic = [m for m in self._models.values() if not m.bands]
+        if generic:
+            generic.sort(key=lambda m: (-m.priority, m.cost_input + m.cost_output))
+            return generic[0].model
+        return self.select()
+
+    def list_bands(self) -> dict[str, list[str]]:
+        """各稳定带下的模型名 (供诊断/可解释性)."""
+        out: dict[str, list[str]] = {"spec": [], "react": []}
+        for m in self._models.values():
+            for b in _STABLE_BANDS:
+                if b in m.bands:
+                    out[b].append(m.name)
+        return out
 
     def select(
         self, task: TaskT | str | None = None, prefer_cheap: bool = False
