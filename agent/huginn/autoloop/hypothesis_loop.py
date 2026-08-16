@@ -2009,6 +2009,20 @@ class HypothesisMixin:
                     "\n### Avoid Directions (evolution learned)\n"
                     f"These directions previously failed, avoid repeating:\n{_avoid_lines}\n"
                 )
+            # 认知更新通道 (Physical RSI): 环境缺口方向 → 修订对域的模型/假设,
+            # 而非仅避开. 与 avoid 语义不同, 单独成段引导.
+            if _rec.revisit_world_model:
+                _revisit_lines = "\n".join(
+                    f"- {d[:100]}" for d in _rec.revisit_world_model[:5]
+                )
+                evolution_hint += (
+                    "\n### Revisit World Model (repeated environment gaps)\n"
+                    "These recurring failures suggest the domain model / simulation "
+                    "assumption (not just the strategy) may be wrong. Re-examine the "
+                    "governing hypothesis, model fidelity, or setup rather than "
+                    "repeating the same approach:\n"
+                    f"{_revisit_lines}\n"
+                )
         except Exception:
             logger.debug("evolution recommend failed (non-fatal)", exc_info=True)
         prompt = self._build_hypothesis_prompt(context)

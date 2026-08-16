@@ -38,9 +38,15 @@
     `stable_principle`（`status="environment_gap"`，内容 "revise world model / domain
     assumption ..."），即"修订域模型"而非仅换策略；
   - `Recommendation.revisit_world_model` 单独暴露环境缺口方向，供 hypothesis loop 修订认知。
-  - 生产调用点 [engine_reflect.py](../huginn/autoloop/engine_reflect.py) 已接线
+  - 生产调用点 [engine_reflect.py](../huginn/autoloop/engine_reflect.py#L2264) 已接线
     `validation["gap_type"]`。selfcheck 4 场景 + `test_evolution_modules.py` 新测试通过。
-- 待推进：hypothesis loop 显式消费 `revisit_world_model`（当前接口已暴露，回环消费留待后续）。
+- **hypothesis loop 认知回环已落地（2026-08-16）**：[hypothesis_loop.py](../huginn/autoloop/hypothesis_loop.py#L2012)
+  消费 `Recommendation.revisit_world_model`，在生成新假设时注入 "Revisit World Model"
+  提示段——引导 agent 重新审视域模型/仿真假设（约束方程、模型保真度、setup），
+  而非重复同一策略。与 `avoid_directions` 分开成段，语义不同。`test_hypothesis_loop.py` 58 passed。
+- 至此 Physical RSI 的"Environment/Skill Gap 诊断 + 认知更新通道"在数据层
+  （`gap_type` 存储）、演化层（`distill` 认知原则）、决策层（`recommend` 暴露）、
+  提示层（hypothesis loop 引导）四层闭环。
 
 ---
 
