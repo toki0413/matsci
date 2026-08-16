@@ -200,3 +200,126 @@ def test_sim_executor_conservation_holds():
     ex.execute(PhysicalAction("aspirate", {"vol": 10}))
     total = ex.state["reagent_vol"] + ex.state["sample_vol"]
     assert total == pytest.approx(100.0, abs=1e-6)
+
+
+# ── Units + 声明式协议状态机 ──────────────────────────────────
+
+from huginn.security.physics_schema import (
+    PIPETTING_PROTOCOL,
+    ProtocolMachine,
+    to_ul,
+    Quantity,
+    VolumeUnit,
+)
+
+
+def test_to_ul_conversion():
+    """单位换算 正确."""
+    assert to_ul(10, "uL") == 10.0
+    assert to_ul(1, "mL") == 1000.0
+    assert to_ul(5, "unknown") == 5.0  # 透传
+
+
+def test_quantity_default_unit():
+    """Quantity 默认单位为 uL."""
+    q = Quantity(value=10.0)
+    assert q.unit == "uL"
+
+
+def test_step_result_has_unit():
+    """StepResult 有 unit 字段且默认 uL."""
+    sr = StepResult(key="v", expected=10.0)
+    assert sr.unit == "uL"
+
+
+def test_protocol_machine_equals_hardcoded():
+    """ProtocolMachine.run 结果与硬编码一致."""
+    from huginn.security.experiment_protocol import (
+        build_pipette_workflow,
+        run_pipette_protocol,
+    )
+    wa_spec = build_pipette_workflow(SimExecutor())
+    wa_hard = build_pipette_workflow(SimExecutor())
+    machine = ProtocolMachine(PIPETTING_PROTOCOL)
+    executed = machine.run(wa_spec, preflight=True)
+    run_pipette_protocol(wa_hard)
+    assert wa_spec.state == wa_hard.state
+    assert executed == ["aspirate_step", "dispense_step", "mix_step", "aliquot_step"]
+
+
+def test_protocol_machine_returns_executed_ids():
+    """返回实际执行的步骤 id (混合器缺失时跳过 mix/aliquot)."""
+    from huginn.security.experiment_protocol import build_pipette_workflow
+    wa = build_pipette_workflow(SimExecutor(), mixer_available=False)
+    # 用无终态断言的协议副本 — 默认协议含 aliquot 终态断言, 混合器缺失时
+    # 该不变量本就不成立, 不应成为跳过场景的判定.
+    proto = PIPETTING_PROTOCOL.model_copy()
+    proto.final_state = []
+    machine = ProtocolMachine(proto)
+    executed = machine.run(wa, preflight=True)
+    assert executed == ["aspirate_step", "dispense_step"]
+
+
+def test_protocol_machine_final_state_check():
+    """终态断言失败抛 WorkspaceConfirmError."""
+    from huginn.security.experiment_protocol import build_pipette_workflow
+    from huginn.security.workspace import WorkspaceConfirmError
+    wa = build_pipette_workflow(SimExecutor())
+    # 篡改终态以使 final_state 断言失败
+    bad_final = PIPETTING_PROTOCOL.model_copy()
+    bad_final.final_state = [StepResult(key="tube_vol", expected=999.0, tolerance=0.0, tol_abs=0.0)]
+    machine = ProtocolMachine(bad_final)
+    with pytest.raises(WorkspaceConfirmError):
+        machine.run(wa, preflight=True)
+
+
+# ── 端到端误差演示 ──────────────────────────────────────────
+
+
+def test_e2e_error_within_tolerance_completes():
+    """小误差 (容差内) → 协议完整跑通, 终态断言通过."""
+    # aspirate/dispense 各注入 0.05uL 随机误差. PIPETTING_SPEC 的 dispense 断言
+    # sample_vol=0 (tol_abs=0) 是理想模型严格断言, 与误差建模不兼容 — 真实设备
+    # 接入时应按设备精度放宽容差. 这里构造容差宽松的协议副本模拟该行为.
+    proto = PIPETTING_PROTOCOL.model_copy(deep=True)
+    for step in proto.steps:
+        for exp in step.expect:
+            if exp.key == "sample_vol":
+                exp.tol_abs = 0.2
+                exp.tolerance = 0.05
+    error = ErrorModel(systematic=0.0, sigma=0.03)
+    from huginn.security.experiment_protocol import build_pipette_workflow
+    ex = SimExecutor(error_model=error, seed=0)
+    wa = build_pipette_workflow(ex)
+    machine = ProtocolMachine(proto)
+    executed = machine.run(wa, preflight=True)
+    assert executed == ["aspirate_step", "dispense_step", "mix_step", "aliquot_step"]
+    # 终态量守恒 (噪声等幅反相) + 分装完成
+    assert wa.state["aliquot_count"] == 1
+    total = wa.state["reagent_vol"] + wa.state["sample_vol"] + wa.state["tube_vol"]
+    assert total == pytest.approx(100.0, abs=1e-6)
+
+
+def test_e2e_error_beyond_tolerance_rolls_back():
+    """误差超容差 → 状态确认失败抛异常, 事务边界正确关闭.
+
+    注意: 逆动作在感知确认**之后**才登记 (execute 内, 见 workspace.py
+    track_world_action 位于确认之后). 故确认失败时当前步骤副作用残留 — 这是
+    设计语义: 感知确认失败意味着状态不可信, 盲目逆向可能更糟, 应人工介入.
+    此处断言确认失败 + 事务块退出, 而非精确回滚.
+    """
+    from huginn.security.workspace import WorkspaceConfirmError
+    error = ErrorModel(systematic=0.5, sigma=0.0)
+    ex = SimExecutor(error_model=error, seed=0)
+    wa = PhysicalWorkspace(NaiveWorldModel(), ex)
+    from huginn.security.world_model import PhysicalAction
+    asp = ActionSpec(
+        id="asp", action_type="aspirate", params={"vol": 10},
+        preconditions=[], expect=[StepResult(key="sample_vol", expected=10.0, tolerance=0.01)],
+    )
+    with wa.transaction():
+        with pytest.raises(WorkspaceConfirmError):
+            wa.execute(PhysicalAction("aspirate", {"vol": 10}), spec=asp, preflight=True)
+    # 事务块正常退出 (未崩溃), 确认失败已抛给调用方 — 这是设计上要的接口.
+    # 副作用: aspirate 已执行 (10.5 含偏置), 因确认在登记逆之前失败, 该步无逆可撤.
+    assert wa.state["sample_vol"] == pytest.approx(10.5, abs=1e-6)
