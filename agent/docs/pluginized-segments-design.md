@@ -196,3 +196,20 @@ O(P) (P = 策略数, 个位), 相对 O(n) 可忽略; 不做事件分发、无 as
 ## 6. Sheaf Gluing 视角(设计动机)
 
 六段 prompt 不是孤立列表, 而是局部约束的 glue 问题。每段是"自己的触发条件域"上的局部解, 全局 system_prompt 要把 overlap 区域一致拼起来。段间优先级冲突就是 Čech H¹ 障碍。priority 仲裁 + `stop()` 就是消障碍的机制 — 这是把"硬编码 join"升级成"可仲裁的 gluing"的数学动机。
+
+### 6.1 Čech H¹ 的两处实现(契约): sheaf_cohomology vs 感质探针
+
+代码库里有两个独立的 Čech H¹ 检测器, 分属不同认知域, **都活着, 勿合并**:
+
+| | sheaf_cohomology | 感质探针 `_pmk_gluing_obstruction` |
+|---|---|---|
+| 数学精度 | 严格 Čech H¹ (coboundary 矩阵 + SVD rank) + restriction-failure proxy | 近似: overlap nerve 的 cycle_basis 当 β₁ + subject token 重合 + 显式 stance 对立 |
+| 建模对象 | Core context + 各假设陈述 → open set / stalk / restriction map | persona/memory/kb/timeseries/self_eval 五路立场文本 → nerve 顶点 |
+| 所在域 | hypothesis(假设) 域 | 决策(decision) 域 |
+| 接入点 | `hypothesis_loop._metacog_topology_audit`(P7) → `_metacog_last_topology` → `engine_observe` prompt 回灌 | `task_lifecycle._check_pmk_consistency` → `check_pause_decision` 暂停门控 |
+| 输入 | 数值 claim (regex) + 语义关键词 pair | 中文/英文 stance 文本 (jieba 增强) |
+| 作用 | multi-source 证据全局不一致; 结果 advisory 注入 prompt | 用户决策是否暂停; 自指冲突打 `[qualia-probe]` 标记 |
+
+- **overlap**: 两者都检测 "多源局部模型粘不成全局 section" 的障碍。
+- **互补**: hypothesis 域用严格数学做无监督证据冲突审计; 决策域用轻量近似做立场冲突门控, 且能通过 `self_eval` 路标记"自指固定点" (感质探针)。
+- **契约**: 唯一接入路径分别是上述两个, 走 `unified_bus` 订阅 cognitive.* 事件是**过时设想**, 已不采用。更新任何 `sheaf_cohomology` 源码 status 注释时, 应以本节为准, 避免误判为孤岛。
