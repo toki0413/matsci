@@ -219,13 +219,13 @@ harness 侧有明确的 H0→H5 路线（见 [harness_evolution_spec.md](harness
 
 | 朗兰兹元素 | 我们的对应物 | 核对后的真实状态 | 实质缺口 |
 |---|---|---|---|
-| **范畴 / 函子** | Category / Morphism / Functor + `verify_functor` | 有**真范畴定义**（[category_functor.py:53](../huginn/metacog/category_functor.py#L53-L120)）；四层验证含保交换图（[404](../huginn/metacog/category_functor.py#L404-L550)） | 三个 category **结构同构**（4 对象/5 态射/2 交换图，[139](../huginn/metacog/category_functor.py#L139-L141)）；functor 在同构结构间找映射，未覆盖异构域 |
-| **自然变换 / 相干性** | 多翻译路径结果应一致 | 无实现 | 无 coherence 检查；`transfer_hypothesis` 是文本替换（[556](../huginn/metacog/category_functor.py#L556-L598)） |
+| **范畴 / 函子** | Category / Morphism / Functor + `verify_functor` | 有**真范畴定义**（[category_functor.py:53](../huginn/metacog/category_functor.py#L53-L120)）；四层验证含保交换图（[404](../huginn/metacog/category_functor.py#L404-L550)）。但主循环只调 `get_category` 贴一句"两域结构同构"提示（[hypothesis_loop.py:2687](../huginn/autoloop/hypothesis_loop.py#L2687-L2699)），**`propose_functor`/`verify_functor`/`transfer_hypothesis` 生产路径无调用**，仅模块自检/eval 用到 | 三个 category **结构同构**（[139](../huginn/metacog/category_functor.py#L139-L141)）；且验证/迁移函数未接主循环，真 functor 应用停留在自检，未进入决策 |
+| **自然变换 / 相干性** | 多翻译路径结果应一致 | 无实现 | 无 coherence 检查；`transfer_hypothesis` 是文本替换且未接生产（[556](../huginn/metacog/category_functor.py#L556-L598)） |
 | **保持结构的可检查判据** | "只在自然边界翻译、保持结构" | .omm 声明 + 唯一 cross-ref 确实保文本结构（[context_builder.py:211](../huginn/context_builder.py#L211)） | "保结构"未形式化成可检查资产；唯一的实例是 KB↔Memory 文本层 cross-ref |
 | **对偶 / 谱侧（Langlands dual）** | 跨库比较 | 无每域对偶重表述 | 跨库比较是 ad hoc（文本层）；无经匹配"对偶不变量" |
 | **局部 ↔ 全局** | sheaf / Čech H¹ | **框架真搭了** C⁰/C¹/C² + δ⁰/δ¹（[sheaf_cohomology.py:266](../huginn/metacog/sheaf_cohomology.py#L266-L336)）；但模块自承 constant sheaf 下真 H¹ 检测不到 pairwise 冲突，主力是 Layer2 proxy（[21](../huginn/metacog/sheaf_cohomology.py#L21-L32)） | 真 Čech H¹ 在 constant sheaf 下主循环常为 0；non-constant sheaf / monodromy 未实现 |
 | **迹公式 / 全局恒等式** | 全局一致性校验 | 无 | 无 "path-sum = eigenvalue-sum" 这类的可验证全局恒等式 |
-| **等变 / 表示理论** | 结构识别应不随视角旋转 | `hodge_signature` 只是 β₁≈E−V+C + 度熵（[topology_lens.py:227](../huginn/metacog/topology_lens.py#L227-L293)），**无表示、无等变** | 需先接真 Betti（gudhi）才有讨论等变的基础 |
+| **等变 / 表示理论** | 结构识别应不随视角旋转 | `hodge_signature` 是 β₁≈E−V+C + 度熵（[topology_lens.py:227](../huginn/metacog/topology_lens.py#L227-L293)），**无表示、无等变**；且其 β₁ **直接进 Darwin 打分**（topology_richness→停滞/棘轮判断，[cognitive_loop.py:685](../huginn/autoloop/cognitive_loop.py#L685-L707)），是**决策输入而非纯 advisory** | 需先接真 Betti（gudhi）才有讨论等变的基础；当前能进决策的只是"近似 β₁"这一维 |
 | **元层（L-群）** | 库间函子作为被研究对象 | 无 | 无"把库间翻译当作应被证明/研究的对象"的三级结构 |
 
 > **反向发现**：跨库结构同步并非不存在——`_sync_simplicials_to_kg`（[hypothesis_loop.py:2318](../huginn/autoloop/hypothesis_loop.py#L2318)）把假设图的超图命题写回 KG 成 hyperedge，是真实的数据层结构继承通道，与".omm 只在自然边界翻译"声明互补（都在自然边界、且保结构），不是矛盾。
