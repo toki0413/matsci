@@ -88,11 +88,43 @@ test.describe('panel navigation', () => {
     });
   }
 
+  // The "Workbench" group surfaces panels that previously had no navigation
+  // entry at all. Like the label panels above, these live only in a sidebar
+  // group, so the top bar renders the tab label after switching — a stable
+  // mount signal that holds even with the backend down.
+  const workbenchPanels: Array<[tool: string, label: string]> = [
+    ['Project Context', 'Project Context'],
+    ['Provenance', 'Provenance'],
+    ['Workflows', 'Workflows'],
+    ['Plugins', 'Plugins'],
+    ['Evolution', 'Evolution'],
+    ['Execute', 'Execute'],
+    ['Explore', 'Explore'],
+    ['Diagnose', 'Diagnose'],
+    ['Notebook', 'Notebook'],
+    ['Sandbox', 'Sandbox'],
+    ['Sweep', 'Sweep'],
+    ['Emotion', 'Emotion'],
+    ['Personas', 'Personas'],
+    ['Side Chat', 'Side Chat'],
+    ['Solver', 'Solver'],
+  ];
+
+  for (const [tool, label] of workbenchPanels) {
+    test(`opens ${tool} via the More Tools palette (top-bar label)`, async ({ page }) => {
+      await page.goto('/');
+      await openFromPalette(page, tool);
+      await expect(page.getByText(label, { exact: true }).first()).toBeVisible({
+        timeout: MOUNT_TIMEOUT,
+      });
+    });
+  }
+
   // Icon-bar tabs that aren't in a sidebar group render their own heading (no
   // top-bar label), so assert each panel's backend-independent mount signal.
   test('opens Projects from the sidebar icon bar', async ({ page }) => {
     await page.goto('/');
-    await openFromIconBar(page, 'Projects');
+    await openFromIconBar(page, 'Research Projects');
     await expect(
       page.getByText('Research Projects', { exact: true }).first(),
     ).toBeVisible({ timeout: MOUNT_TIMEOUT });
