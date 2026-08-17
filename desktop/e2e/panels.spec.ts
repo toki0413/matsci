@@ -65,4 +65,52 @@ test.describe('panel navigation', () => {
       ).toBeVisible({ timeout: MOUNT_TIMEOUT });
     });
   }
+
+  // Remaining palette tabs live in a sidebar group but not the compact icon
+  // bar, so they set activeTabInfo and the app's top bar (not the panel body)
+  // renders the tab's translated label right after switching. Some of their
+  // panels (Code Search, Git) only render backend-dependent content, so the
+  // top-bar label is the stable mount signal that works with the backend down.
+  const paletteLabelPanels: Array<[tool: string, label: string]> = [
+    ['Team', 'Team'],
+    ['Code Search', 'Code Search'],
+    ['Git', 'Git'],
+    ['Periodic Table', 'Periodic Table'],
+  ];
+
+  for (const [tool, label] of paletteLabelPanels) {
+    test(`opens ${tool} via the More Tools palette (top-bar label)`, async ({ page }) => {
+      await page.goto('/');
+      await openFromPalette(page, tool);
+      await expect(page.getByText(label, { exact: true }).first()).toBeVisible({
+        timeout: MOUNT_TIMEOUT,
+      });
+    });
+  }
+
+  // Icon-bar tabs that aren't in a sidebar group render their own heading (no
+  // top-bar label), so assert each panel's backend-independent mount signal.
+  test('opens Projects from the sidebar icon bar', async ({ page }) => {
+    await page.goto('/');
+    await openFromIconBar(page, 'Projects');
+    await expect(
+      page.getByText('Research Projects', { exact: true }).first(),
+    ).toBeVisible({ timeout: MOUNT_TIMEOUT });
+  });
+
+  test('opens Result from the sidebar icon bar', async ({ page }) => {
+    await page.goto('/');
+    await openFromIconBar(page, 'Result');
+    await expect(page.getByText(/expand it here/).first()).toBeVisible({
+      timeout: MOUNT_TIMEOUT,
+    });
+  });
+
+  test('opens Threads from the sidebar icon bar', async ({ page }) => {
+    await page.goto('/');
+    await openFromIconBar(page, 'Threads');
+    await expect(page.getByText('Threads', { exact: true }).first()).toBeVisible({
+      timeout: MOUNT_TIMEOUT,
+    });
+  });
 });
