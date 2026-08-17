@@ -26,7 +26,8 @@ Bourbaki 三结构视角 (B 文档化):
   拓扑   (连通域邻域):  verify 用 extract_box_primitives (M6) 检查连通域.
                          BoxPrimitivesView (huginn/experimental/topology_protocol) 适配 sketch 输出.
 
-# 架构状态: 研究探索层 — 未接入主循环, 保留作为 future hook. 如需启用, 在 huginn/events/unified_bus.py 订阅 cognitive.* 事件并接入.
+# 架构状态: 已接入主循环 — engine_observe 观察阶段调 mental_imagery_loop
+# (sketch→verify), rcb_step2 Task 15 也调用. advisory: 不可用/失败静默降级.
 """
 from __future__ import annotations
 
