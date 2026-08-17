@@ -20,21 +20,50 @@ export const TEST_MESSAGE = {
   thread_id: 'e2e-default',
 };
 
+// In CI the backend-aware specs must not silently skip when the backend is
+// down -- that would let an acceptance run pass-with-hole. So when CI is set
+// and the probe gives up, we throw and the whole file reports a beforeAll
+// failure instead of a quiet skip. Local dev keeps the graceful skip.
+const CI = !!process.env.CI;
+
 /**
- * Probe the backend once. Specs call this in beforeAll and skip the tests
- * that genuinely need a live backend, instead of hard-failing the run.
+ * Probe the backend. Specs call this in beforeAll and skip the tests that
+ * genuinely need a live backend, instead of hard-failing the run.
+ *
+ * The backend's very first /health/live hit is slow (~2s+, and far worse on a
+ * cold MCP/agent init), so a single probe with a tight timeout flaps into
+ * "not running" and silently skips the most important integration specs. We
+ * therefore retry with backoff: the first slow response doubles as warmup,
+ * and a retry on the now-warm backend answers fast. In CI the Playwright
+ * webServer has already waited for /health/live before tests run, so this
+ * almost never waits; it's a local-dev/robustness guard.
  */
-export async function backendReachable(timeoutMs = 3000): Promise<boolean> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-  try {
-    const res = await fetch(`${BACKEND_URL}/health/live`, { signal: ctrl.signal });
-    return res.ok;
-  } catch {
-    return false;
-  } finally {
-    clearTimeout(timer);
+export async function backendReachable(attempts = 4): Promise<boolean> {
+  for (let i = 0; i < attempts; i++) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 8000);
+    try {
+      const res = await fetch(`${BACKEND_URL}/health/live`, { signal: ctrl.signal });
+      if (res.ok) return true;
+    } catch {
+      // connection refused / aborted -> try again below
+    } finally {
+      clearTimeout(timer);
+    }
+    // Gap lets the backend finish whatever cold-init was blocking /health/live.
+    await new Promise((r) => setTimeout(r, 1500));
   }
+  // Down. In CI a backend-dependent spec must not silently skip -- an
+  // acceptance run passing-with-hole is worse than a loud failure -- so throw
+  // and let the file's beforeAll report red. Locally, return false so the body
+  // skips and a frontend-only run stays green.
+  if (CI) {
+    throw new Error(
+      `backend ${BACKEND_URL} unreachable after ${attempts} probes: ` +
+        'backend-aware specs would silently skip. Start it (HUGINN_DEV_MODE=1) or fix the probe.',
+    );
+  }
+  return false;
 }
 
 // Override the page fixture so the "Welcome to Huginn" onboarding guide is
