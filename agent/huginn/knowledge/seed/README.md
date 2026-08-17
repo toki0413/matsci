@@ -41,9 +41,25 @@ into the Huginn RAG knowledge base on first use.
 | `31_biomaterials.md` | Biocompatibility, scaffolds, implants |
 | `32_mechanical_properties.md` | Elasticity, strength, DFT prediction |
 | `33_computational_thermodynamics.md` | Phonons, free energy, phase diagrams |
+| `34_topological_data_analysis.md` | TDA, persistent homology, ring/cavity descriptors |
+| `35_geometric_invariants.md` | Coordinate-free structural invariants, ML descriptors |
+| `36_multi_modal_visualization.md` | Plot/structure/text visualization for simulation output |
+| `37_scientific_discovery_benchmarking.md` | RCBench cross-domain lessons: phased protocol, anti-over-engineering |
 | `38_benchmark_evaluation_lessons.md` | Benchmark evaluation lessons: PaperBench/MLE-bench/SAB/HLE + noise-as-feature epistemology |
 | `39_orchestrator_unification_lessons.md` | Orchestrator 4-layer architecture + min_calls patch history (v5 R17 reverted) |
 | `40_security_hardening_and_bench_activation.md` | v5 spec: 25 additions (G20-G44) + 8 subtractions (R14-R21) + 5 milestones (M1-M5) |
+| `41_ai4science_onescience.md` | OneScience AI4Science toolkit: install/domains, GPU & DCU platforms |
+| `42_optimade_federation.md` | OPTIMADE REST API: one client, many materials databases |
+| `43_jarvis_databases.md` | JARVIS (NIST) DFT/FF/TB/ML/ChemNLP infrastructure |
+| `44_optical_constants_reference.md` | refractiveindex.info optical constants subset |
+| `45_catalysis_her_pipeline.md` | HER: Volmer-Heyrovsky/Tafel, volcano, scaling relations |
+| `46_catalysis_oer_pipeline.md` | OER: 4-electron bottleneck, adsorbate scaling, stability |
+| `47_catalysis_co2rr_pipeline.md` | CO₂RR: C1/C2/C3 products, C-C coupling, selectivity |
+| `48_catalysis_nrr_pipeline.md` | NRR: N₂ activation, Faradaic efficiency limits |
+| `49_gibbs_three_stage_workflow.md` | geo_opt → freq → gibbs_energy thermochemistry pipeline |
+| `50_deepmd_cohp_pyscf_gpaw.md` | DeepMD-kit / LOBSTER-COHP / PySCF / GPAW quick reference |
+| `51_fde_subsystem_dft.md` | Frozen density embedding (FDE) subsystem DFT |
+| `52_nature_review_strategies.md` | Nature-style peer review & author response taxonomy |
 
 ## Updating seeds
 
