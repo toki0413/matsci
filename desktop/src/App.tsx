@@ -67,7 +67,7 @@ import {
   Search, Grid, Sun, Moon, Plus, Trash2, Globe,
   Maximize2, GitBranch, Brain, Cpu, Atom, Box, Gauge,
   NotepadText, Puzzle, Network, Workflow, Dna, Play, Compass,
-  Stethoscope, Notebook, Broom, Smile, User, PanelRight, Calculator,
+  Stethoscope, NotebookPen, Eraser, Smile, User, PanelRight, Calculator,
 } from 'lucide-react';
 
 const IS_PET_MODE = window.location.search.includes("pet=1");
@@ -758,24 +758,42 @@ export default function App() {
       ],
     },
     {
-      key: "workbench",
-      label: t('nav.workbench') || 'Workbench',
+      key: "plan",
+      label: t('nav.plan') || 'Research & Planning',
       tabs: [
         { id: "project" as const, label: "Project Context", icon: <NotepadText size={16} aria-hidden="true" /> },
-        { id: "provenance" as const, label: "Provenance", icon: <Network size={16} aria-hidden="true" /> },
-        { id: "workflows" as const, label: "Workflows", icon: <Workflow size={16} aria-hidden="true" /> },
-        { id: "plugins" as const, label: "Plugins", icon: <Puzzle size={16} aria-hidden="true" /> },
-        { id: "evolution" as const, label: "Evolution", icon: <Dna size={16} aria-hidden="true" /> },
-        { id: "execute" as const, label: "Execute", icon: <Play size={16} aria-hidden="true" /> },
         { id: "explore" as const, label: "Explore", icon: <Compass size={16} aria-hidden="true" /> },
-        { id: "diagnose" as const, label: "Diagnose", icon: <Stethoscope size={16} aria-hidden="true" /> },
-        { id: "notebook" as const, label: "Notebook", icon: <Notebook size={16} aria-hidden="true" /> },
+        { id: "workflows" as const, label: "Workflows", icon: <Workflow size={16} aria-hidden="true" /> },
+        { id: "notebook" as const, label: "Notebook", icon: <NotebookPen size={16} aria-hidden="true" /> },
+      ],
+    },
+    {
+      key: "build",
+      label: t('nav.build') || 'Build & Execute',
+      tabs: [
+        { id: "execute" as const, label: "Execute", icon: <Play size={16} aria-hidden="true" /> },
         { id: "sandbox" as const, label: "Sandbox", icon: <Box size={16} aria-hidden="true" /> },
-        { id: "sweep" as const, label: "Sweep", icon: <Broom size={16} aria-hidden="true" /> },
-        { id: "emotion" as const, label: "Emotion", icon: <Smile size={16} aria-hidden="true" /> },
-        { id: "persona" as const, label: "Personas", icon: <User size={16} aria-hidden="true" /> },
-        { id: "side" as const, label: "Side Chat", icon: <PanelRight size={16} aria-hidden="true" /> },
+        { id: "sweep" as const, label: "Sweep", icon: <Eraser size={16} aria-hidden="true" /> },
         { id: "solver" as const, label: "Solver", icon: <Calculator size={16} aria-hidden="true" /> },
+      ],
+    },
+    {
+      key: "govern",
+      label: t('nav.observe') || 'Observe & Govern',
+      tabs: [
+        { id: "diagnose" as const, label: "Diagnose", icon: <Stethoscope size={16} aria-hidden="true" /> },
+        { id: "provenance" as const, label: "Provenance", icon: <Network size={16} aria-hidden="true" /> },
+        { id: "evolution" as const, label: "Evolution", icon: <Dna size={16} aria-hidden="true" /> },
+        { id: "plugins" as const, label: "Plugins", icon: <Puzzle size={16} aria-hidden="true" /> },
+      ],
+    },
+    {
+      key: "collab",
+      label: t('nav.collab') || 'Persona & Collab',
+      tabs: [
+        { id: "persona" as const, label: "Personas", icon: <User size={16} aria-hidden="true" /> },
+        { id: "emotion" as const, label: "Emotion", icon: <Smile size={16} aria-hidden="true" /> },
+        { id: "side" as const, label: "Side Chat", icon: <PanelRight size={16} aria-hidden="true" /> },
       ],
     },
   ];
