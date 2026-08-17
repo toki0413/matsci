@@ -51,7 +51,13 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-function makeClient(overrides: { maxRetries?: number; pingInterval?: number; authToken?: string | (() => string | null) } = {}) {
+function makeClient(overrides: {
+  maxRetries?: number;
+  pingInterval?: number;
+  initialDelay?: number;
+  maxDelay?: number;
+  authToken?: string | (() => string | null);
+} = {}) {
   const client = new ReconnectingWebSocket({
     url: 'ws://127.0.0.1:8000/ws/agent',
     initialDelay: 10, // tiny for tests
@@ -65,10 +71,10 @@ function makeClient(overrides: { maxRetries?: number; pingInterval?: number; aut
 // helper: connect and simulate the socket opening
 function connectAndOpen(client: ReconnectingWebSocket) {
   client.connect();
-  const ws = FakeWebSocket.lastConstructedUrl && FakeWebSocket.instances[FakeWebSocket.instances.length - 1];
+  const ws = FakeWebSocket.instances[FakeWebSocket.instances.length - 1];
   expect(ws).toBeTruthy();
-  ws!.onopen?.();
-  return ws!;
+  ws.onopen?.();
+  return ws;
 }
 
 describe('ReconnectingWebSocket', () => {

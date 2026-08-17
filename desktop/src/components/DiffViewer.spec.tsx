@@ -54,7 +54,6 @@ describe('DiffViewer', () => {
     ];
     render(<DiffViewer diffs={multi} />);
     const prev = screen.getAllByTitle('Previous file')[0] as HTMLButtonElement;
-    const next = screen.getAllByTitle('Next file')[0] as HTMLButtonElement;
     // we're on the first file: prev is disabled
     expect((screen.getByTitle('Previous file') as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(screen.getByTitle('Next file'));

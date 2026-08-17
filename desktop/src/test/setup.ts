@@ -1,4 +1,5 @@
 import '@testing-library/jest-dom/vitest';
+import { afterEach } from 'vitest';
 
 // Global fetch/WebSocket mocks come from the individual specs (they need
 // per-test control). Keep shared cleanup here:
