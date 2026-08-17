@@ -1316,7 +1316,11 @@ def seed_knowledge_base(kb: KnowledgeBase, force: bool = False) -> dict[str, Any
     if not SEED_DIR.is_dir():
         return {"added": 0, "skipped": 0, "failed": 0}
 
-    seed_files = sorted(SEED_DIR.glob("*.md"))
+    # 只灌真正的种子文档, 排除目录自身的 README.md (否则 README 也被当种子入库).
+    seed_files = sorted(
+        p for p in SEED_DIR.glob("*.md")
+        if p.name.lower() != "readme.md"
+    )
     existing_seed_ids = {
         doc["doc_id"]
         for doc in kb.list_documents()
