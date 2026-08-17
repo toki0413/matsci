@@ -24,16 +24,27 @@ from huginn.autoloop.budget import TokenBudget
 logger = logging.getLogger(__name__)
 
 
-def _harness_workflow_evolution_enabled() -> bool:
-    """H2 toggle: cfg.feature_flags.harness_workflow_evolution (默认 off)."""
+def _feature_flag(name: str, default: bool) -> bool:
+    """读取 cfg.feature_flags.<name>, 缺省返回 default (契约收敛单一读取路径).
+
+    原三个 flag 探测函数 (_harness_workflow_evolution_enabled /
+    _autoloop_meta_trace_inject_enabled / _autoloop_streaming_enabled) 各自重复
+    get_config→feature_flags→get 逻辑 (审计 R3 知识重复). 统一收拢到此处, 异常
+    时 best-effort 返回 default, 与原实现逐字段一致.
+    """
     try:
         from huginn.config import get_config
         cfg = get_config()
         ff = getattr(cfg, "feature_flags", None) or {}
-        return bool(ff.get("harness_workflow_evolution", False))
+        return bool(ff.get(name, default))
     except Exception:
         logger.debug("best-effort op failed", exc_info=True)
-        return False
+        return default
+
+
+def _harness_workflow_evolution_enabled() -> bool:
+    """H2 toggle: cfg.feature_flags.harness_workflow_evolution (默认 off)."""
+    return _feature_flag("harness_workflow_evolution", False)
 
 
 def _autoloop_meta_trace_inject_enabled() -> bool:
@@ -46,14 +57,7 @@ def _autoloop_meta_trace_inject_enabled() -> bool:
     ponytail: 默认 off, 因为 meta_trace 跟 FTS5 memory 可能内容重叠,
       注入会增加 prompt 长度. 升级路径: 默认 on + 按 darwin_score top-K 去重.
     """
-    try:
-        from huginn.config import get_config
-        cfg = get_config()
-        ff = getattr(cfg, "feature_flags", None) or {}
-        return bool(ff.get("autoloop_meta_trace_inject", False))
-    except Exception:
-        logger.debug("best-effort op failed", exc_info=True)
-        return False
+    return _feature_flag("autoloop_meta_trace_inject", False)
 
 
 def _autoloop_streaming_enabled() -> bool:
@@ -66,15 +70,7 @@ def _autoloop_streaming_enabled() -> bool:
     """
     if os.environ.get("HUGINN_AUTOLOOP_STREAMING", "1") == "0":
         return False
-    try:
-        from huginn.config import get_config
-        cfg = get_config()
-        ff = getattr(cfg, "feature_flags", None) or {}
-        # 默认 True, 显式 False 才关
-        return ff.get("autoloop_streaming", True)
-    except Exception:
-        logger.debug("best-effort op failed", exc_info=True)
-        return True
+    return _feature_flag("autoloop_streaming", True)
 
 
 from huginn.autoloop.cognitive_loop import CognitiveLoopMixin  # noqa: E402
@@ -332,6 +328,25 @@ class AutoloopEngine(
         )
         self.coder = CoderRunner()
 
+        self._init_failure_state()
+        self._init_lazy_backends(goal_scheduler)
+
+        # P15: crash-safe resume. flag off / snapshot 缺失时静默跳过, 行为不变.
+        # ponytail: 用 duck typing, 不做 isinstance 检查; 失败 log warning 不抛.
+        # Task 2.2: 未显式传 resume_from_state 时, 默认尝试加载最新 checkpoint
+        # (按 mtime). 加载失败不 fatal, warn 后从零开始.
+        self._init_resume_state(resume_from_state)
+        self._init_runtime_ledger()
+
+        # Step 8: latent space 对齐数据集. None = 还没用过 (懒加载, 跟 cognitive_map 同范式).
+        # 首次 _collect_alignment_pair 触发时从 <workspace>/.huginn/alignment_dataset.json 加载.
+        # ponytail: 全进程一份, JSON 落盘. ceiling: 多进程不共享, 升级路径接 SQLite.
+        self._alignment_dataset: Any = None
+
+    # ── 状态初始化分片 (b4 slim: 纯 self.xxx 默认值块外移, 行为等价) ──
+
+    def _init_failure_state(self) -> None:
+        """失败跟踪 / 窗口 / refine / pivot 状态 (原 __init__ 主体, 纯默认值)."""
         self._should_stop = False
         self._iteration = 0
         # 连续验证失败计数: 给 _maybe_clarify 判断是否该问用户;
@@ -396,6 +411,9 @@ class AutoloopEngine(
         # 自动发现的 scene_tag 关键词 (跨 run 积累), 跟写死的关键词表互补.
         # ponytail: dict[label, set[keyword]], 简单加法; 不上 embedding.
         self._scene_tag_extra_keywords: dict[str, set[str]] = {}
+
+    def _init_lazy_backends(self, goal_scheduler: GoalScheduler | None = None) -> None:
+        """懒加载词汇表 + phase_gate_hook 装配 (原 __init__ 主体, 行为等价)."""
         # ClarificationManager 懒加载 — autoloop 期间在关键决策点提问用户
         self._clarification_mgr = None
         # Evolution engine 懒加载——只在 _learn 真正用到时初始化
@@ -526,6 +544,8 @@ class AutoloopEngine(
         # off 时不触发 (向后兼容). ponytail: 复用 longterm typed memory 存储.
         self._experiment_count_since_self_model_update = 0
 
+    def _init_resume_state(self, resume_from_state: str | None) -> None:
+        """crash-safe resume + WakeStore 自动唤醒 flag (原 __init__ 主体, 行为等价)."""
         # P15: crash-safe resume. flag off / snapshot 缺失时静默跳过, 行为不变.
         # ponytail: 用 duck typing, 不做 isinstance 检查; 失败 log warning 不抛.
         # Task 2.2: 未显式传 resume_from_state 时, 默认尝试加载最新 checkpoint
@@ -606,6 +626,8 @@ class AutoloopEngine(
             "HUGINN_AUTO_WAKE", "1"
         ) == "1"
 
+    def _init_runtime_ledger(self) -> None:
+        """MCMC 状态 + token/cost 预算 (原 __init__ 主体, 纯默认值)."""
         # MCMC 状态 (单链) — 长程采样断点续跑, _maybe_save_engine_state 周期落盘
         # rcb_runner 路径不经过 AutoloopEngine, 那边自己持 holder 对象
         self._mcmc_current: str | None = None
@@ -618,11 +640,6 @@ class AutoloopEngine(
         # P2-7: token/cost 硬刹车预算. 每次 LLM 调用后 update, 超硬上限抛 BudgetExhausted.
         # 默认 10M tokens / $50, 长任务/极限模式用 HUGINN_TOKEN_BUDGET / HUGINN_COST_BUDGET 覆盖.
         self._token_budget: TokenBudget = TokenBudget()
-        # Step 8: latent space 对齐数据集. None = 还没用过 (懒加载, 跟 cognitive_map 同范式).
-        # 首次 _collect_alignment_pair 触发时从 <workspace>/.huginn/alignment_dataset.json 加载.
-        # ponytail: 全进程一份, JSON 落盘. ceiling: 多进程不共享, 升级路径接 SQLite.
-        self._alignment_dataset: Any = None
-
 
     # ── H5-a: 模型选择 ────────────────────────────────────────────
     # 统一模型选择入口. 多模型配置 (config.models 非空) 时走 model_router
