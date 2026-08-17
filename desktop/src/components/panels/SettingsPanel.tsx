@@ -172,6 +172,7 @@ function ApiKeyInput({ value, onChange, placeholder, inputClassName }: {
       <button
         type="button"
         onClick={() => setShow(!show)}
+        aria-label={show ? "Hide password" : "Show password"}
         className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary"
         tabIndex={-1}
       >
