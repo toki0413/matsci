@@ -149,8 +149,6 @@ export type WSMessage =
       warnings: Array<{ severity: string; message: string }>;
     }
   | { type: "exploration_result"; data?: ExplorationResult }
-  | { type: "decision_point"; data: DecisionPointPayload }
-  | { type: "cost_narrative"; data: CostNarrativePayload }
   | { type: "auto_checkpoint"; id: string; base: string; files: number }
   | {
       type: "side_question_pending";

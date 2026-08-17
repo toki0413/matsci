@@ -20,6 +20,7 @@ from huginn.routes.ws_helpers import (
     WSCtx,
     _handle_approval_response,
     _handle_clarification_response,
+    _handle_decision_response,
     _handle_explore_start,
     _handle_ping,
     _handle_plan_confirm,
@@ -74,6 +75,7 @@ _MESSAGE_HANDLERS: dict[str, Any] = {
     "set_auto_approve": _handle_set_auto_approve,
     "set_suggest_mode": _handle_set_suggest_mode,
     "suggest_response": _handle_suggest_response,
+    "decision_response": _handle_decision_response,
     "ping": _handle_ping,
 }
 
