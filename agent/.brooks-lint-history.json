@@ -1,0 +1,13 @@
+[
+  {
+    "date": "2026-08-17",
+    "mode": "health",
+    "score": 81,
+    "findings": {
+      "critical": 2,
+      "warning": 3,
+      "suggestion": 1
+    },
+    "scope": "agent/huginn (entire project)"
+  }
+]
