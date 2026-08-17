@@ -11,7 +11,11 @@ import AxeBuilder from '@axe-core/playwright';
 test.describe('accessibility — main views', () => {
   test('chat view — axe scan reports violations', async ({ page }) => {
     await page.goto('/');
-    await page.waitForLoadState('networkidle');
+    // The /events/stream SSE keeps the page "network active" forever, so
+    // networkidle never fires. Await the chat input being enabled instead —
+    // that's the real mount signal the rest of the suite relies on.
+    await page.waitForLoadState('load');
+    await expect(page.locator('textarea.flex-1')).toBeEnabled({ timeout: 30_000 });
 
     const results = await new AxeBuilder({ page })
       .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
@@ -70,7 +74,11 @@ test.describe('accessibility — keyboard navigation', () => {
       'Tab order needs fixing for Firefox/WebKit focus model');
 
     await page.goto('/');
-    await page.waitForLoadState('networkidle');
+    // The /events/stream SSE keeps the page "network active" forever, so
+    // networkidle never fires. Await the chat input being enabled instead —
+    // that's the real mount signal the rest of the suite relies on.
+    await page.waitForLoadState('load');
+    await expect(page.locator('textarea.flex-1')).toBeEnabled({ timeout: 30_000 });
 
     // The chat textarea is disabled while the WS handshake is pending, and a
     // disabled control is skipped by Tab. Wait for it to be enabled first so
@@ -94,7 +102,11 @@ test.describe('accessibility — keyboard navigation', () => {
 
   test('send button is keyboard-activatable', async ({ page }) => {
     await page.goto('/');
-    await page.waitForLoadState('networkidle');
+    // The /events/stream SSE keeps the page "network active" forever, so
+    // networkidle never fires. Await the chat input being enabled instead —
+    // that's the real mount signal the rest of the suite relies on.
+    await page.waitForLoadState('load');
+    await expect(page.locator('textarea.flex-1')).toBeEnabled({ timeout: 30_000 });
 
     const input = page.locator('textarea.flex-1');
     await input.fill('keyboard test');
@@ -112,7 +124,11 @@ test.describe('accessibility — keyboard navigation', () => {
 test.describe('accessibility — ARIA and semantics', () => {
   test('page has landmark regions for screen readers', async ({ page }) => {
     await page.goto('/');
-    await page.waitForLoadState('networkidle');
+    // The /events/stream SSE keeps the page "network active" forever, so
+    // networkidle never fires. Await the chat input being enabled instead —
+    // that's the real mount signal the rest of the suite relies on.
+    await page.waitForLoadState('load');
+    await expect(page.locator('textarea.flex-1')).toBeEnabled({ timeout: 30_000 });
 
     // Check for landmark elements (nav, main, aside, header, etc.)
     // or ARIA roles that define page structure for screen readers.
@@ -133,7 +149,11 @@ test.describe('accessibility — ARIA and semantics', () => {
 
   test('interactive elements have accessible names', async ({ page }) => {
     await page.goto('/');
-    await page.waitForLoadState('networkidle');
+    // The /events/stream SSE keeps the page "network active" forever, so
+    // networkidle never fires. Await the chat input being enabled instead —
+    // that's the real mount signal the rest of the suite relies on.
+    await page.waitForLoadState('load');
+    await expect(page.locator('textarea.flex-1')).toBeEnabled({ timeout: 30_000 });
 
     const issues = await page.evaluate(() => {
       const problems: string[] = [];
@@ -170,7 +190,11 @@ test.describe('accessibility — ARIA and semantics', () => {
 
   test('images have alt text', async ({ page }) => {
     await page.goto('/');
-    await page.waitForLoadState('networkidle');
+    // The /events/stream SSE keeps the page "network active" forever, so
+    // networkidle never fires. Await the chat input being enabled instead —
+    // that's the real mount signal the rest of the suite relies on.
+    await page.waitForLoadState('load');
+    await expect(page.locator('textarea.flex-1')).toBeEnabled({ timeout: 30_000 });
 
     const imgIssues = await page.evaluate(() => {
       const problems: string[] = [];
