@@ -204,9 +204,7 @@ def _is_strip_cp(cp: int) -> bool:
     # Tag characters used in some stego schemes (U+E0001–U+E007F)
     if 0xE0001 <= cp <= 0xE007F:
         return True
-    if _is_private_use(cp):
-        return True
-    return False
+    return _is_private_use(cp)
 
 
 def _strip_kind(cp: int) -> str:
@@ -245,9 +243,8 @@ def _is_emoji_base(cp: int) -> bool:
         return True
     if cp in (0x00A9, 0x00AE, 0x2122, 0x3030, 0x303D, 0x3297, 0x3299):
         return True
-    if cp in (0x0023, 0x002A) or 0x0030 <= cp <= 0x0039:  # keycap bases
-        return True
-    return False
+    # keycap bases
+    return cp in (0x0023, 0x002A) or 0x0030 <= cp <= 0x0039
 
 
 # ZWNJ/ZWJ are orthographic inside complex scripts (Persian می‌روم, Devanagari
@@ -315,9 +312,13 @@ def _decide(
     kind is the inspect classification (None when not suspicious).
     """
     cp = ord(ch)
-    if _is_emoji_glue(cp) and not strip_emoji_glue:
-        if prev_kept is not None and _is_emoji_base(ord(prev_kept)):
-            return ("keep", ch, None)
+    if (
+        _is_emoji_glue(cp)
+        and not strip_emoji_glue
+        and prev_kept is not None
+        and _is_emoji_base(ord(prev_kept))
+    ):
+        return ("keep", ch, None)
     if not strip_emoji_glue:
         if cp in _SCRIPT_JOINERS and prev_kept is not None and _is_joining_letter(ord(prev_kept)):
             return ("keep", ch, None)
