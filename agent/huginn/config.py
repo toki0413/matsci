@@ -28,6 +28,34 @@ logger = logging.getLogger(__name__)
 # 最高档 MAX 只在支持方可用, 提供端会按 provider 映射或忽略.
 ThinkingIntensity = Literal["low", "medium", "high", "max"]
 
+# 单一权威源: LLM provider 枚举. 兼容 registry._PROVIDER_IDS (更全, 含
+# minimax/lm-studio 等本地预设), 但 config 仅暴露已正式接入的 provider.
+# ModelConfig.provider 与 HuginnConfig.provider 共用, 避免两处 Literal 漂移.
+ProviderLiteral = Literal[
+    "anthropic",
+    "openai",
+    "ollama",
+    "deepseek",
+    "google-genai",
+    "openrouter",
+    "nvidia",
+    "vllm",
+    "local",
+    "default",
+    "siliconflow",
+    "moonshot",
+    "zhipu",
+    "baichuan",
+    "dashscope",
+    "qianfan",
+    "doubao",
+    "hunyuan",
+    "openai-compatible",
+]
+
+# 单一权威源: 容器运行时枚举. SandboxConfig 与 HuginnConfig 共用.
+ContainerRuntimeLiteral = Literal["none", "docker", "podman", "apptainer", "singularity"]
+
 
 def _parse_queue_map(value: str | None) -> dict[str, str]:
     """Parse a JSON or comma-separated queue map from an environment variable."""
@@ -207,27 +235,7 @@ class ModelConfig:
     """A single LLM provider/model entry in the model pool."""
 
     alias: str  # e.g. "gpt4o", "claude-sonnet"
-    provider: Literal[
-        "anthropic",
-        "openai",
-        "ollama",
-        "deepseek",
-        "google-genai",
-        "openrouter",
-        "nvidia",
-        "vllm",
-        "local",
-        "default",
-        "siliconflow",
-        "moonshot",
-        "zhipu",
-        "baichuan",
-        "dashscope",
-        "qianfan",
-        "doubao",
-        "hunyuan",
-        "openai-compatible",
-    ]
+    provider: ProviderLiteral
     model: str | None = None
     api_key: str | None = None
     base_url: str | None = None
@@ -291,9 +299,7 @@ class PersistenceConfig:
 class SandboxConfig:
     """Sandbox and container execution settings."""
 
-    container_runtime: Literal[
-        "none", "docker", "podman", "apptainer", "singularity"
-    ] = "none"
+    container_runtime: ContainerRuntimeLiteral = "none"
     container_image: str | None = None
     max_tool_output_tokens: int = 25000
     context_budget_tokens: int = 0
@@ -308,27 +314,7 @@ class HuginnConfig:
     config_version: int = 1
 
     # Legacy single-model settings (kept for backward compatibility)
-    provider: Literal[
-        "anthropic",
-        "openai",
-        "ollama",
-        "deepseek",
-        "google-genai",
-        "openrouter",
-        "nvidia",
-        "vllm",
-        "local",
-        "default",
-        "siliconflow",
-        "moonshot",
-        "zhipu",
-        "baichuan",
-        "dashscope",
-        "qianfan",
-        "doubao",
-        "hunyuan",
-        "openai-compatible",
-    ] = "default"
+    provider: ProviderLiteral = "default"
     model: str | None = None
     api_key: str | None = None
     base_url: str | None = None
@@ -359,9 +345,7 @@ class HuginnConfig:
 
     # HPC / remote execution settings
     execution_backend: Literal["local", "remote"] = "local"
-    container_runtime: Literal[
-        "none", "docker", "podman", "apptainer", "singularity"
-    ] = "none"
+    container_runtime: ContainerRuntimeLiteral = "none"
     container_image: str | None = None
     hpc_scheduler: Literal["slurm", "pbs", "local"] = "local"
     hpc_host: str | None = None
