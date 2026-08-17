@@ -1071,26 +1071,34 @@ export default function App() {
             </button>
             <div className="max-h-[calc(100vh-320px)] overflow-y-auto px-1 pb-2">
               {threads.map((th) => (
-                <button
+                // The row used to be a <button> wrapping a delete <button>,
+                // which is invalid nesting. Now it's a plain row (selected/hover
+                // styles live here) with two sibling buttons: switch + delete.
+                <div
                   key={th.id}
-                  onClick={() => switchThread(th.id)}
-                  className={`group flex w-full cursor-pointer items-center gap-2 rounded-md px-2.5 py-1.5 text-sm transition-colors focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:outline-none ${
+                  className={`group flex w-full cursor-pointer items-center gap-2 rounded-md px-2.5 py-1.5 text-sm transition-colors ${
                     activeThread === th.id
                       ? "bg-accent/15 text-text-primary"
                       : "text-text-secondary hover:bg-bg-tertiary"
                   }`}
                 >
-                  <MessageSquare size={13} className="shrink-0 opacity-50" aria-hidden="true" />
-                  <span className="flex-1 truncate text-left">{th.label}</span>
                   <button
-                    onClick={(e) => { e.stopPropagation(); deleteThread(th.id); }}
+                    onClick={() => switchThread(th.id)}
+                    aria-current={activeThread === th.id ? "page" : undefined}
+                    className="flex min-w-0 flex-1 items-center gap-2 rounded-md py-0.5 text-left focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:outline-none"
+                  >
+                    <MessageSquare size={13} className="shrink-0 opacity-50" aria-hidden="true" />
+                    <span className="flex-1 truncate text-left">{th.label}</span>
+                  </button>
+                  <button
+                    onClick={() => deleteThread(th.id)}
                     className="opacity-0 group-hover:opacity-100 text-text-muted hover:text-error transition-opacity focus-visible:opacity-100"
                     title={t('common.delete') || 'Delete'}
                     aria-label={`Delete conversation ${th.label}`}
                   >
                     <Trash2 size={13} aria-hidden="true" />
                   </button>
-                </button>
+                </div>
               ))}
               {threads.length === 0 && (
                 <div className="px-3 py-4 text-center text-xs text-text-muted">
