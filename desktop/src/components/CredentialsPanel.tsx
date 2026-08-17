@@ -339,6 +339,7 @@ export function CredentialsPanel() {
             <button
               type="button"
               onClick={() => setShowSecret((s) => !s)}
+              aria-label={showSecret ? "Hide password" : "Show password"}
               className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-secondary"
               tabIndex={-1}
             >
@@ -433,6 +434,7 @@ export function CredentialsPanel() {
               <button
                 type="button"
                 onClick={() => setShowSecret((s) => !s)}
+                aria-label={showSecret ? "Hide password" : "Show password"}
                 className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-secondary"
                 tabIndex={-1}
               >
@@ -553,6 +555,7 @@ export function CredentialsPanel() {
             <button
               type="button"
               onClick={() => setShowSecret((s) => !s)}
+              aria-label={showSecret ? "Hide password" : "Show password"}
               className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-secondary"
               tabIndex={-1}
             >

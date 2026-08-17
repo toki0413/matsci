@@ -138,9 +138,28 @@ test.describe('accessibility — ARIA and semantics', () => {
     const issues = await page.evaluate(() => {
       const problems: string[] = [];
       document.querySelectorAll('button, a, [role="button"]').forEach(el => {
-        const name = (el.getAttribute('aria-label') || el.textContent || '').trim();
+        // Accessible name = aria-label, else aria-labelledby target text,
+        // else title, else the first image's alt (icon buttons), else content.
+        // element.accessibleName isn't reliable on headless Chromium, so
+        // approximate the accessible name computation ourselves.
+        const labelledBy = el.getAttribute('aria-labelledby');
+        let byId = '';
+        if (labelledBy) {
+          const t = document.getElementById(labelledBy);
+          if (t) byId = t.textContent || '';
+        }
+        const img = el.querySelector('img:not([aria-hidden="true"])');
+        const svgTitle = el.querySelector('svg title');
+        const name =
+          (el.getAttribute('aria-label') ||
+            byId ||
+            el.getAttribute('title') ||
+            img?.getAttribute('alt') ||
+            svgTitle?.textContent ||
+            el.textContent ||
+            '').trim();
         if (!name) {
-          problems.push(`${el.tagName}#${el.id} has no accessible name`);
+          problems.push(`${el.tagName}#${el.id} (${el.getAttribute('class') || ''}) has no accessible name`);
         }
       });
       return problems;
