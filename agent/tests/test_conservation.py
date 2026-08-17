@@ -8,6 +8,10 @@ sim/vasp_tool.py `_with_conservation` 注入 (不依赖真实 OUTCAR, 直接喂 
 
 from __future__ import annotations
 
+import types
+
+import pytest
+
 from huginn.security.conservation import (
     audit_material_conservation,
     net_force,
@@ -155,3 +159,109 @@ def test_with_conservation_nonfatal_on_garbage():
     out = vt.VaspTool()._with_conservation(result)
     assert "conservation" in out
     assert out["conservation"]["verdict"] == "skip"  # 无可用受力数据
+
+
+# ── 端到端冒烟: mock 走完整 call() 真实解析路径, 守恒不破坏主流程 ─────
+
+
+def _balanced_outcar(tmp_path) -> list[str]:
+    """构造一份平移/旋转都平衡的 OUTCAR 文本.
+
+    4 个原子成对称配置: 受力成对抵消, 位置绕中心对称, 故
+    ΣF≈0 且 Σ(r×F)≈0, 守恒审计应判 pass. 含 relax 收敛标记.
+    """
+    return [
+        "INCAR: POTIM = 0.02",
+        "free  energy   TOTEN  =       -152.3 eV",
+        "reached required accuracy - stopping structural energy minimisation",
+        "volume of cell :      42.875",
+        "TOTAL-FORCE (eV/Angst)",
+        # 径向配置: 每原子受力与位置坐标平行 (r×F=0), 且受力成对抵消 (ΣF=0)
+        #          position                      force
+        "  1.000  0.000  0.000    1.000  0.000  0.000",
+        " -1.000  0.000  0.000   -1.000  0.000  0.000",
+        "  0.000  1.000  0.000    0.000  1.000  0.000",
+        "  0.000 -1.000  0.000    0.000 -1.000  0.000",
+        "",
+        "    total drift:    0.000000    0.000000    0.000000",
+    ]
+
+
+def _install_fake_sandbox(monkeypatch, outcar_lines):
+    """装一个假 SandboxExecutor: run 返回 success + 写 OUTCAR 到 cwd."""
+
+    class _Result:
+        success = True
+        returncode = 0
+        stdout = ""
+        stderr = ""
+        command = ["vasp_std"]
+        dry_run = False
+        blocked = False
+        block_reason = None
+        timed_out = False
+        error_kind = "none"
+
+    class _FakeSandbox:
+        def run(self, cmd, cwd=None, timeout=None, queue=None, walltime=None):
+            outcar = __import__("pathlib").Path(cwd) / "OUTCAR"
+            outcar.write_text("\n".join(outcar_lines), encoding="utf-8")
+            return _Result()
+
+    monkeypatch.setattr(vt, "_HAS_HUGINN_EXT", False)
+    return _FakeSandbox()
+
+
+@pytest.mark.anyio
+async def test_call_consumes_conservation_end_to_end(monkeypatch, tmp_path):
+    """走真实 call() → _run_vasp → _parse_outcar 全链路.
+
+    核心断言: 守恒审计被注入 `parsed.conservation`, 且平移/旋转平衡判 pass;
+    主流程 success 不被守恒破坏 (守恒失败也绝不阻塞/抛错).
+    """
+    work = tmp_path / "run"
+    work.mkdir()
+    (work / "INCAR").write_text("System = Si\n", encoding="utf-8")
+    (work / "POSCAR").write_text("Si\n1.0\n1 0 0\n0 1 0\n0 0 1\n2\ncart\n0 0 0\n0.5 0.5 0.5\n", encoding="utf-8")
+
+    fake = _install_fake_sandbox(monkeypatch, _balanced_outcar(tmp_path))
+    tool = vt.VaspTool(vasp_executable="vasp_std", sandbox=fake)
+
+    res = await tool.call(
+        vt.VaspToolInput(action="relax", working_dir=str(work)),
+        context=types.SimpleNamespace(workspace=str(tmp_path)),
+    )
+
+    # 主流程成功, 守恒注入没把计算搞挂
+    assert res.success is True
+    parsed = res.data["parsed"]
+    assert "conservation" in parsed
+    assert parsed["conservation"]["verdict"] == "pass"
+    assert parsed["converged"] is True
+
+
+@pytest.mark.anyio
+async def test_call_conservation_nonfatal_when_unbalanced(monkeypatch, tmp_path):
+    """守恒判 fail 也只进审计结果, 绝不改主流程 success 判定."""
+    work = tmp_path / "run2"
+    work.mkdir()
+    (work / "INCAR").write_text("System = Fe\n", encoding="utf-8")
+    (work / "POSCAR").write_text("Fe\n1.0\n1 0 0\n0 1 0\n0 0 1\n1\ncart\n0 0 0\n", encoding="utf-8")
+
+    unbalanced = _balanced_outcar(tmp_path)
+    # 第 4 个原子 (索引 8) 受力改成带 Z 分量, 净力不再为零 → 平移破坏
+    unbalanced[8] = "  0.000 -1.000  0.000    0.000 -1.000  2.000"
+
+    fake = _install_fake_sandbox(monkeypatch, unbalanced)
+    tool = vt.VaspTool(vasp_executable="vasp_std", sandbox=fake)
+
+    res = await tool.call(
+        vt.VaspToolInput(action="relax", working_dir=str(work)),
+        context=types.SimpleNamespace(workspace=str(tmp_path)),
+    )
+
+    # 守恒判 fail 但主流程依然 success, 审计独立于成功判定
+    assert res.success is True
+    parsed = res.data["parsed"]
+    assert "conservation" in parsed
+    assert parsed["conservation"]["verdict"] == "fail"
