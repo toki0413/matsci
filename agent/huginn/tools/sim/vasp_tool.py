@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from huginn.core_types import HandleType, ToolContext, ToolResult, ValidationResult
 from huginn.security import SandboxExecutor
+from huginn.security.conservation import audit_material_conservation
 from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
 from huginn.validation.handle_validator import HandleValidator
 
@@ -726,11 +727,22 @@ class VaspTool(HuginnTool):
                     # Rust parser may not recognise the "reached required
                     # accuracy" convergence marker in minimal OUTCARs,
                     # so double-check with Python if Rust says not converged.
-                    return result
+                    return self._with_conservation(result)
             except Exception:
                 logger.debug("suppressed in _parse_outcar", exc_info=True)
 
-        return self._parse_outcar_python(outcar_path, action=action)
+        return self._with_conservation(self._parse_outcar_python(outcar_path, action=action))
+
+    def _with_conservation(self, result: dict[str, Any]) -> dict[str, Any]:
+        """为解析结果附加守恒对账 (独立于 LLM 的机械不变量审计).
+
+        纯附加, 失败也只记 debug, 绝不阻塞解析主流程/抛出.
+        """
+        try:
+            result["conservation"] = audit_material_conservation(result)
+        except Exception:
+            logger.debug("conservation audit failed (non-fatal)", exc_info=True)
+        return result
 
     def _parse_outcar_python(
         self, outcar_path: Path, action: str | None = None
