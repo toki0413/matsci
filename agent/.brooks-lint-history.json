@@ -9,5 +9,27 @@
       "suggestion": 1
     },
     "scope": "agent/huginn (entire project)"
+  },
+  {
+    "date": "2026-08-17",
+    "mode": "audit",
+    "score": null,
+    "findings": {
+      "critical": 2,
+      "warning": 3,
+      "suggestion": 1
+    },
+    "scope": "agent/huginn/autoloop/engine.py, agent/huginn/config.py, agent/huginn/feature_flags.py"
+  },
+  {
+    "date": "2026-08-17",
+    "mode": "debt",
+    "score": null,
+    "findings": {
+      "critical": 1,
+      "warning": 3,
+      "suggestion": 2
+    },
+    "scope": "agent/huginn (entire project)"
   }
 ]
