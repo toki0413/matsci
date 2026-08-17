@@ -397,7 +397,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
   } = props;
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full">
       <SettingsTabNav activeTab={settingsTab} onTabChange={setSettingsTab} />
       <div className="flex-1 overflow-y-auto p-6">
         {settingsTab === "general" && (

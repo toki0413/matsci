@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { renderHook, act } from '@testing-library/react';
+import { renderHook } from '@testing-library/react';
 import { useFocusTrap } from './useFocusTrap';
 
 function mountContainer(html: string) {
@@ -24,7 +24,7 @@ describe('useFocusTrap', () => {
     const container = mountContainer(
       '<input class="a" /><button>One</button><button>Two</button>',
     );
-    const { result, unmount } = renderHook(() => useFocusTrap({ current: container } as any, true));
+    const { unmount } = renderHook(() => useFocusTrap({ current: container } as any, true));
     expect(document.activeElement).toBe(container.querySelector('input'));
     unmount();
   });
@@ -89,7 +89,7 @@ describe('useFocusTrap', () => {
     const container = mountContainer('<button>One</button>');
 
     Object.defineProperty(document, 'activeElement', { value: trigger, configurable: true });
-    const { result, unmount } = renderHook(() => useFocusTrap({ current: container } as any, true));
+    const { unmount } = renderHook(() => useFocusTrap({ current: container } as any, true));
     // trap moved focus away from the trigger
     expect((trigger as any).focus).not.toHaveBeenCalled();
     unmount();

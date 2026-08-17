@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { api, authHeaders } from './api';
+import { api } from './api';
 import { setApiBase } from './api-client';
 
 type FetchCall = { url: string; init: RequestInit };
