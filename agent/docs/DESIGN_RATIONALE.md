@@ -203,13 +203,34 @@ harness 侧有明确的 H0→H5 路线（见 [harness_evolution_spec.md](harness
 
 ## 7. 诚实的边界（别人一眼容易高估、你接手要记住的）
 
-1. **数学层 ≠ 全部接好**：同调/sheaf/Hodge/范畴/functor 已接主循环（advisory）；但
-   persistence_landscape、topology_protocol 仍是 research 层。**判断一个模块胆子以代码调用点为准，别以模块头 docstring 为准**（我们这次就因此踩过一次）。
+1. **数学层 ≠ 全部接好**：sheaf 框架、simplicial Betti、persistence、范畴 functor 已接主循环（advisory）；
+   但 `hodge_signature` 只是**图论近似**（β₁≈E−V+C + 度熵，非真 Hodge 分解，[topology_lens.py:227](../huginn/metacog/topology_lens.py#L227)），
+   persistence_landscape、topology_protocol 仍是 research 层。
+   **判断一个模块胆子以代码调用点为准，别以模块头 docstring 为准**（我们这次就因此踩过一次）。
 2. **数学不是基底语言**：地基是 LLM 推理循环；数学是工具+审计层。
 3. **朗兰兹是隐喻**：字面无朗兰兹数学。
 4. **CLAIM/contested 是审计+提示**：不产生新科学事实。
 5. **部分机制是 staging 理论稿**：如 `reward_design.md`（建设中的设计，别当已实现）。
 6. **advisory 不阻断**：数学结果默认只影响判断，不强行阻断假设。
+
+### 7.1 对标语：若要"认真学习朗兰兹函子性精神"，现状缺口在哪（附源码锚点）
+
+下表是逐字核对源码后的真实状态，用于把"朗兰兹=隐喻"这句话落到可执行层面。每个状态都带文件行号，读者可直接验证。
+
+| 朗兰兹元素 | 我们的对应物 | 核对后的真实状态 | 实质缺口 |
+|---|---|---|---|
+| **范畴 / 函子** | Category / Morphism / Functor + `verify_functor` | 有**真范畴定义**（[category_functor.py:53](../huginn/metacog/category_functor.py#L53-L120)）；四层验证含保交换图（[404](../huginn/metacog/category_functor.py#L404-L550)） | 三个 category **结构同构**（4 对象/5 态射/2 交换图，[139](../huginn/metacog/category_functor.py#L139-L141)）；functor 在同构结构间找映射，未覆盖异构域 |
+| **自然变换 / 相干性** | 多翻译路径结果应一致 | 无实现 | 无 coherence 检查；`transfer_hypothesis` 是文本替换（[556](../huginn/metacog/category_functor.py#L556-L598)） |
+| **保持结构的可检查判据** | "只在自然边界翻译、保持结构" | .omm 声明 + 唯一 cross-ref 确实保文本结构（[context_builder.py:211](../huginn/context_builder.py#L211)） | "保结构"未形式化成可检查资产；唯一的实例是 KB↔Memory 文本层 cross-ref |
+| **对偶 / 谱侧（Langlands dual）** | 跨库比较 | 无每域对偶重表述 | 跨库比较是 ad hoc（文本层）；无经匹配"对偶不变量" |
+| **局部 ↔ 全局** | sheaf / Čech H¹ | **框架真搭了** C⁰/C¹/C² + δ⁰/δ¹（[sheaf_cohomology.py:266](../huginn/metacog/sheaf_cohomology.py#L266-L336)）；但模块自承 constant sheaf 下真 H¹ 检测不到 pairwise 冲突，主力是 Layer2 proxy（[21](../huginn/metacog/sheaf_cohomology.py#L21-L32)） | 真 Čech H¹ 在 constant sheaf 下主循环常为 0；non-constant sheaf / monodromy 未实现 |
+| **迹公式 / 全局恒等式** | 全局一致性校验 | 无 | 无 "path-sum = eigenvalue-sum" 这类的可验证全局恒等式 |
+| **等变 / 表示理论** | 结构识别应不随视角旋转 | `hodge_signature` 只是 β₁≈E−V+C + 度熵（[topology_lens.py:227](../huginn/metacog/topology_lens.py#L227-L293)），**无表示、无等变** | 需先接真 Betti（gudhi）才有讨论等变的基础 |
+| **元层（L-群）** | 库间函子作为被研究对象 | 无 | 无"把库间翻译当作应被证明/研究的对象"的三级结构 |
+
+> **反向发现**：跨库结构同步并非不存在——`_sync_simplicials_to_kg`（[hypothesis_loop.py:2318](../huginn/autoloop/hypothesis_loop.py#L2318)）把假设图的超图命题写回 KG 成 hyperedge，是真实的数据层结构继承通道，与".omm 只在自然边界翻译"声明互补（都在自然边界、且保结构），不是矛盾。
+
+> 读表须知：本表"状态"列每个论断都来自源码锚点，不涉及主观判断，欢迎读者用行号复核；我们这次就因相信模块 docstring 而非调用点，误判过一次。
 
 ---
 
