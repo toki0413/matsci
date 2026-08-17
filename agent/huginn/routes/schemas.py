@@ -60,6 +60,11 @@ class WSMessage(BaseModel):
     edited_code: str | None = None
     config: dict[str, Any] | None = Field(None, description="explore_start config")
 
+    # decision_response (cost & pruning participation, contract §3.2)
+    decision_point_id: str | None = None
+    decision: str | None = None
+    option: str | None = None
+
 
 class CreateThreadRequest(BaseModel):
     """Body schema for POST /threads."""

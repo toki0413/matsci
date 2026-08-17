@@ -1586,6 +1586,31 @@ async def _handle_suggest_response(
         await _send_error(websocket, "No active SUGGEST approval for this thread.")
 
 
+async def _handle_decision_response(
+    websocket: WebSocket,
+    msg: WSMessage,
+    ctx: WSCtx,
+) -> None:
+    """Record a user's decision-point verdict (received via SSE, replied over WS)."""
+    from huginn.branch_policy import get_decision_point_registry
+
+    dp_id = msg.decision_point_id or ""
+    if not dp_id:
+        await _send_error(websocket, "decision_response requires decision_point_id")
+        return
+    dp = get_decision_point_registry().resolve(
+        dp_id,
+        decision=str(msg.decision or "approved"),
+        option=str(msg.option or ""),
+    )
+    if dp is None:
+        await _send_error(websocket, f"Unknown decision point: {dp_id}")
+        return
+    await websocket.send_json(
+        {"type": "decision_resolved", "id": dp_id, "status": dp.status}
+    )
+
+
 async def _handle_ping(
     websocket: WebSocket,
     msg: WSMessage,
