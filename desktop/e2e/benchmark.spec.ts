@@ -30,6 +30,10 @@ test.describe('benchmark via frontend', () => {
 
   test('runs benchmark through the frontend and renders a report', async ({ page }) => {
     test.skip(!backendUp, 'backend not running');
+    // This drives a real LLM through POST /bench/run, so it can't pass green
+    // without an API key. Skip (loudly documented) when none is supplied;
+    // set the HUGINN_API_KEY repo secret to enable it in CI acceptance runs.
+    test.skip(!process.env.HUGINN_API_KEY, 'real LLM benchmark requires HUGINN_API_KEY');
     test.setTimeout(300_000);
 
     await openBenchmarkPanel(page);
