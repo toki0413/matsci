@@ -24,7 +24,9 @@ Bourbaki 三结构视角 (B 文档化):
                          neighborhood 方法 (A 拓扑 Protocol) 适配 SupportsNeighborhood.
                          升级路径: Hodge decomposition (gradient/curl/harmonic 三分量).
 
-# 架构状态: 研究探索层 — 未接入主循环, 保留作为 future hook. 如需启用, 在 huginn/events/unified_bus.py 订阅 cognitive.* 事件并接入.
+# 架构状态: 已接入 — 作为 CodeAct 沙箱工具 structure_cognitive_map_tool 暴露,
+# 并经 EngineState 持久化 (与上方第 11-12 行接入点一致). 受
+# HUGINN_USE_COGNITIVE_MAP / pymatgen/scipy 可用性门控, 默认 off.
 """
 from __future__ import annotations
 
