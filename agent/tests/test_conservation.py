@@ -24,7 +24,7 @@ def _atom(pos, force):
     return {"position": list(pos), "force": list(force)}
 
 
-def _F(fx, fy, fz):
+def _force_vec(fx, fy, fz):
     return {"position": [0.0, 0.0, 0.0], "force": [fx, fy, fz]}
 
 
@@ -33,19 +33,19 @@ def _F(fx, fy, fz):
 
 def test_net_force_vanishes_on_balance():
     """对称受力 → 净力 ≈ 0."""
-    forces = [_F(1.0, 0.0, 0.0), _F(-1.0, 0.0, 0.0), _F(0.0, 2.0, 0.0), _F(0.0, -2.0, 0.0)]
+    forces = [_force_vec(1.0, 0.0, 0.0), _force_vec(-1.0, 0.0, 0.0), _force_vec(0.0, 2.0, 0.0), _force_vec(0.0, -2.0, 0.0)]
     assert net_force(forces) < 1e-9
 
 
 def test_net_force_compiles_unbalanced():
     """单向受力 → 净力 = 矢量和模长."""
-    forces = [_F(3.0, 0.0, 0.0), _F(4.0, 0.0, 0.0)]
+    forces = [_force_vec(3.0, 0.0, 0.0), _force_vec(4.0, 0.0, 0.0)]
     assert abs(net_force(forces) - 7.0) < 1e-9
 
 
 def test_net_torque_placeholder_skipped():
     """position 全占位 [0,0,0] → 扭矩不可判, 返回 None."""
-    forces = [_F(1.0, 0.0, 0.0), _F(0.0, 1.0, 0.0)]
+    forces = [_force_vec(1.0, 0.0, 0.0), _force_vec(0.0, 1.0, 0.0)]
     assert net_torque(forces) is None
 
 
@@ -64,7 +64,7 @@ def test_net_torque_real_position_computed():
 def test_audit_balanced_forces_pass():
     """完美平衡 → pass."""
     r = audit_material_conservation(
-        {"forces": [_F(1.0, 0, 0), _F(-1.0, 0, 0), _F(0, 2.0, 0), _F(0, -2.0, 0)]}
+        {"forces": [_force_vec(1.0, 0, 0), _force_vec(-1.0, 0, 0), _force_vec(0, 2.0, 0), _force_vec(0, -2.0, 0)]}
     )
     assert r["verdict"] == "pass"
     assert r["net_force_gap"] < 1e-6
@@ -75,7 +75,7 @@ def test_audit_balanced_forces_pass():
 def test_audit_unbalanced_force_fail():
     """净力达最强原子力 100% → fail (平移破坏)."""
     r = audit_material_conservation(
-        {"forces": [_F(5.0, 0, 0), _F(5.0, 0, 0)]}
+        {"forces": [_force_vec(5.0, 0, 0), _force_vec(5.0, 0, 0)]}
     )
     assert r["verdict"] == "fail"
     assert r["net_force_gap"] > 0
@@ -85,7 +85,7 @@ def test_audit_unbalanced_force_fail():
 def test_audit_warn_moderate_unbalance():
     """净力为最强原子力 20% (>10% warn 阈值, <50% fail) → warn."""
     r = audit_material_conservation(
-        {"forces": [_F(1.0, 0, 0), _F(-0.8, 0, 0)]}
+        {"forces": [_force_vec(1.0, 0, 0), _force_vec(-0.8, 0, 0)]}
     )
     assert r["verdict"] == "warn"
     assert abs(r["force_balance_ratio"] - 0.2) < 1e-6
@@ -104,7 +104,7 @@ def test_audit_converged_but_large_force_warn():
     用对称抵消构造"净力=0 (平衡通过) 但 max|F| 很大 + 宣称收敛" → 只触发矛盾 warn.
     """
     r = audit_material_conservation(
-        {"forces": [_F(2.0, 0, 0), _F(-2.0, 0, 0)], "converged": True}
+        {"forces": [_force_vec(2.0, 0, 0), _force_vec(-2.0, 0, 0)], "converged": True}
     )
     assert r["verdict"] == "warn"
     assert r["forces_relaxed"] is False
@@ -147,7 +147,7 @@ def test_audit_torque_cancelled_pass():
 
 def test_with_conservation_injects_field():
     """_parse_outcar 的 _with_conservation 为 result 附带 conservation."""
-    result = {"forces": [_F(1.0, 0, 0), _F(-1.0, 0, 0)]}
+    result = {"forces": [_force_vec(1.0, 0, 0), _force_vec(-1.0, 0, 0)]}
     out = vt.VaspTool()._with_conservation(result)
     assert "conservation" in out
     assert out["conservation"]["verdict"] == "pass"
