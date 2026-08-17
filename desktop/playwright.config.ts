@@ -28,6 +28,9 @@ const BACKEND_CMD =
 export default defineConfig({
   testDir: './e2e',
   outputDir: './test-results',
+  // Warms the backend before any spec so the first files don't race its cold
+  // start and flap into "backend not running" skips. See e2e/global-setup.ts.
+  globalSetup: './e2e/global-setup.ts',
   fullyParallel: true,
   // WS-backed chat tests share the default thread, so serialize to avoid
   // interleaving. Bump up if a spec ever needs isolation via thread_id.
