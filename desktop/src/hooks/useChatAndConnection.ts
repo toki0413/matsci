@@ -893,16 +893,6 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
         setRiskThreshold(data.threshold);
         break;
       }
-      case "decision_point": {
-        setPendingDecisionPoint(data.data as DecisionPointPayload);
-        // 决策点需要用户立刻注意, 即使窗口在前台也弹通知
-        notify("Huginn 需要决策", `Agent 在 ${(data.data as DecisionPointPayload).kind} 关口需要你选择`, true);
-        break;
-      }
-      case "cost_narrative": {
-        setCostNarrative(data.data as CostNarrativePayload);
-        break;
-      }
       case "side_question_pending": {
         // Backend sends a single question, not an array
         const q = data.question;
@@ -1603,6 +1593,37 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
         toast.error(`Event bus dropped ${n} event(s) [${victim}]`);
       } catch {
         // ignore
+      }
+    });
+    return () => es.close();
+  }, []);
+
+  // ── Event-bus SSE subscription ────────────────────────────────
+  // Cost & pruning participation lives on the unified event bus, not WS:
+  // decision.point triggers the decision card, cost.narrative feeds the
+  // running cost view. EventSource can't set Authorization headers, but
+  // this route is not gated, so a bare connection is fine.
+  useEffect(() => {
+    const es = new EventSource(`${API_BASE}/events/stream`);
+    es.addEventListener("decision.point", (e: MessageEvent) => {
+      try {
+        const t = JSON.parse(e.data);
+        setPendingDecisionPoint(t.data as DecisionPointPayload);
+        notify(
+          "Huginn 需要决策",
+          `Agent 在 ${(t.data as DecisionPointPayload).kind} 关口需要你选择`,
+          true
+        );
+      } catch {
+        // ignore malformed frames
+      }
+    });
+    es.addEventListener("cost.narrative", (e: MessageEvent) => {
+      try {
+        const t = JSON.parse(e.data);
+        setCostNarrative(t.data as CostNarrativePayload);
+      } catch {
+        // ignore malformed frames
       }
     });
     return () => es.close();
