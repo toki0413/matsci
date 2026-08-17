@@ -19,7 +19,7 @@ propose 一个 functor F: source → target, 验证 functor 保 structure
 的 open problem). 我们走 LLM propose + 结构验证的路径 — LLM 给候选, 我们用
 图论算法验证是否真的 functor.
 
-研究探索层 (Open Problem 7.3): 不改 conjecture.py, 不阻塞 Phase 1-6.
+已接入主循环 (Open Problem 7.3): 不改 conjecture.py, 不阻塞 Phase 1-6.
 失败容忍: LLM propose 质量差就降级到手工定义的已知 functor. 升级路径:
 把 functor search 改成 constraint satisfaction (CSP) 求解所有合法 functor.
 
@@ -27,7 +27,8 @@ ponytail: 单文件, stdlib + 现有 LLM client. 不引 category theory 库
 (`functors` / `category-theory` 等都是研究工具, 跟工程实现是两条路).
 手写图遍历 + path equality check.
 
-# 架构状态: 研究探索层 — 未接入主循环, 保留作为 future hook. 如需启用, 在 huginn/events/unified_bus.py 订阅 cognitive.* 事件并接入.
+# 架构状态: 已接入主循环 — hypothesis_loop P7 (get_category) 在源/目标域命中已知
+# category 时附加跨域 functor 保结构提示. advisory: 只影响 prompt note, 不改变 hint.
 """
 from __future__ import annotations
 

@@ -14,10 +14,12 @@ Phase 1-6 的 trace_topology.compute_betti 用 networkx 算 β_0/β_1:
 reduction, 等价于 Smith normal form 在 Z_2 上), 用 RipsComplex 算
 persistence diagram — 后者是 networkx 结构上无法给出的不变量.
 
-研究探索层 (Open Problem 7.1): 不改 trace_topology.py, 不阻塞 Phase 1-6.
+已接入主循环 (Open Problem 7.1): 不改 trace_topology.py, 不阻塞 Phase 1-6.
 GUDHI 没装时退回 networkx 风格的 β_0 + β_1 估计, 升级路径: pip install gudhi.
 
-# 架构状态: 研究探索层 — 未接入主循环, 保留作为 future hook. 如需启用, 在 huginn/events/unified_bus.py 订阅 cognitive.* 事件并接入.
+# 架构状态: 已接入主循环 — hypothesis_loop._metacog_topology_audit 每轮对假设图
+# 算 β_0/β_1 (compute_exact_betti) 与 Rips persistence, 结果经 engine_observe
+# 回灌 prompt. advisory: GUDHI 缺失时走 fallback, 失败静默降级不阻断.
 """
 from __future__ import annotations
 

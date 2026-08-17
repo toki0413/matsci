@@ -11,7 +11,9 @@
   calphad-thermo, phase-field,
   bourbaki-structure (advisory), extreme-argument, computational-check
 
-# 架构状态: 研究探索层 — 未接入主循环, 保留作为 future hook. 如需启用, 在 huginn/events/unified_bus.py 订阅 cognitive.* 事件并接入.
+# 架构状态: 已接入主循环 — 收敛度监控 + 重定向 (engine_observe 的
+# _get_metacog_method_registry 及 hypothesis_loop / cognitive_loop 调用). advisory:
+# 分类/监控失败静默降级, 不阻断假设.
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""Sheaf cohomology — Open Problem 7.2 探索层.
+"""Sheaf cohomology — Open Problem 7.2 探索层 (已接入主循环).
 
 替代 hint_coordinator 的 keyword overlap / cosine similarity 代理. 把 Core
 context + Support findings 建模成 sheaf (open set / stalk / restriction
@@ -34,7 +34,7 @@ map 失败 作为 H^1≠0 的代理". 我们做双层:
 返回 H^1 = Čech_H^1 + restriction_failure_count. 一致 sources -> 0;
 任一数值/语义冲突 -> >0.
 
-研究探索层 (Open Problem 7.2): 不改 hint_coordinator.py, 不阻塞 Phase 1-6.
+已接入主循环 (Open Problem 7.2): 不改 hint_coordinator.py, 不阻塞 Phase 1-6.
 失败容忍: 算不动就降级到 layer 2 (proxy). 升级路径: 把 layer 2 替换成
 non-constant sheaf (e.g. local system with monodromy) 的真 Čech H^1.
 
