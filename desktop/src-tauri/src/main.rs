@@ -232,6 +232,13 @@ fn read_backend_port_file() -> Option<u16> {
     text.trim().parse::<u16>().ok()
 }
 
+/// Cheap liveness check for a port the port file claims a backend sits on.
+/// TCP connect with a short timeout — enough to tell "alive" from "ghost".
+fn port_alive(port: u16) -> bool {
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(500)).is_ok()
+}
+
 #[tauri::command]
 fn get_backend_port(state: tauri::State<'_, AppState>) -> u16 {
     // 1. Single source of truth: the port file the backend wrote.
@@ -263,9 +270,18 @@ async fn start_backend(
     // If a backend is already running externally, don't start another one.
     // ADR-0001: honor the port the external backend wrote to backend_port,
     // then fall back to probing the once-default port.
+    // The port file alone is NOT proof of life — a crashed backend leaves it
+    // behind and every launch after that got hijacked into "already running
+    // externally", leaving the app permanently offline. Probe before trusting.
     if let Some(p) = read_backend_port_file() {
-        state.backend_port.store(p, std::sync::atomic::Ordering::Relaxed);
-        return Ok("already running externally".to_string());
+        if port_alive(p) {
+            state.backend_port.store(p, std::sync::atomic::Ordering::Relaxed);
+            return Ok("already running externally".to_string());
+        }
+        // Stale file: the backend that wrote it is gone. Fall through and
+        // spawn our own; it will overwrite the file with the real port.
+        // ponytail: if two app instances race here we may spawn two backends
+        // on different ports — last writer wins on the port file, harmless.
     }
     if std::net::TcpStream::connect("127.0.0.1:8000").is_ok() {
         state.backend_port.store(8000, std::sync::atomic::Ordering::Relaxed);

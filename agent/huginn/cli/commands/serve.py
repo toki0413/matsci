@@ -131,6 +131,19 @@ def serve(ctx: CliContext, port: int, host: str) -> None:
     pid_file = _write_pid_file(port)
     _setup_signal_handlers(pid_file)
 
+    # Port file is how external frontends discover us (ADR-0001).
+    # python -m huginn.server writes it in its __main__ block; the CLI/sidecar
+    # path never runs that block, so without this write the desktop app keeps
+    # reading a stale port left behind by whatever ran last.
+    try:
+        from huginn.utils.runtime import get_runtime_home
+
+        port_file = get_runtime_home() / "backend_port"
+        port_file.parent.mkdir(parents=True, exist_ok=True)
+        port_file.write_text(str(port))
+    except Exception:
+        logger.debug("failed to write backend port file", exc_info=True)
+
     ctx.console.print(
         Panel(
             f"[bold blue]Huginn Server[/bold blue]\n"

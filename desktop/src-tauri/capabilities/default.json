@@ -22,7 +22,7 @@
         {
           "name": "sidecars/huginn-sidecar",
           "sidecar": true,
-          "args": []
+          "args": ["serve", "--port", { "regex": "^[0-9]+$" }]
         },
         {
           "name": "python",
