@@ -7,6 +7,7 @@ interface StatusBarProps {
   wsReconnecting?: boolean;
   wsFailed?: boolean;
   cwd?: string;
+  cursor?: { line: number; col: number };
 }
 
 interface Metrics {
@@ -39,7 +40,7 @@ function formatTokens(n: number): string {
   return String(n);
 }
 
-export function StatusBar({ isConnected, wsReconnecting, wsFailed, cwd }: StatusBarProps) {
+export function StatusBar({ isConnected, wsReconnecting, wsFailed, cwd, cursor }: StatusBarProps) {
   const [metrics, setMetrics] = useState<Metrics>({
     tokens: 0,
     model: "",
@@ -48,6 +49,7 @@ export function StatusBar({ isConnected, wsReconnecting, wsFailed, cwd }: Status
     ttft: null,
   });
   const [currentTime, setCurrentTime] = useState(new Date());
+  const [gitBranch, setGitBranch] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -76,6 +78,17 @@ export function StatusBar({ isConnected, wsReconnecting, wsFailed, cwd }: Status
       clearInterval(id);
     };
   }, []);
+
+  // 跟随当前目录，读取 Git 分支（非仓库时为空）
+  useEffect(() => {
+    if (!cwd) { setGitBranch(null); return; }
+    let cancelled = false;
+    api
+      .get<{ branch: string | null }>("/fs/branch", { params: new URLSearchParams({ path: cwd }) })
+      .then((data) => { if (!cancelled) setGitBranch(data.branch || null); })
+      .catch(() => { if (!cancelled) setGitBranch(null); });
+    return () => { cancelled = true; };
+  }, [cwd]);
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
@@ -137,6 +150,21 @@ export function StatusBar({ isConnected, wsReconnecting, wsFailed, cwd }: Status
             <span className="text-text-muted truncate max-w-[200px]">
               {cwd.length > 50 ? `…${cwd.slice(-47)}` : cwd}
             </span>
+          </div>
+        )}
+
+        {gitBranch && (
+          <div className="flex items-center gap-1" title="Git branch">
+            <span>⎇</span>
+            <span className="text-text-muted">{gitBranch}</span>
+          </div>
+        )}
+
+        <div className="text-text-muted" title="File encoding (all read/write is UTF-8)">UTF-8</div>
+
+        {cursor && cursor.line > 0 && (
+          <div className="text-text-muted" title="Cursor position">
+            Ln {cursor.line}, Col {cursor.col + 1}
           </div>
         )}
 

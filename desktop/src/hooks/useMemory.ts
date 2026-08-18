@@ -67,7 +67,12 @@ export function useMemory() {
     try {
       const data = await api.post<{ results?: MemoryEntry[] } & Record<string, any>>(
         '/memory/search',
-        { query: memorySearch, top_k: 10 }
+        {
+          query: memorySearch,
+          top_k: 10,
+          category: memoryFilter.category || undefined,
+          tier: memoryFilter.tier || undefined,
+        }
       );
       setMemories(data.results || []);
       setMemoryMsg(data.results?.length ? `Found ${data.results.length} results` : 'No results');

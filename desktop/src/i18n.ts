@@ -24,6 +24,7 @@ const resources = {
       'nav.build': 'BUILD & EXECUTE',
       'nav.observe': 'OBSERVE & GOVERN',
       'nav.collab': 'PERSONA & COLLAB',
+      'nav.science': 'Science',
 
       /* ── Core tabs ── */
       'tab.chat': 'Chat',
@@ -151,6 +152,29 @@ const resources = {
       'chat.chars': 'chars',
       'chat.failedToSend': '⚠️ Failed to send — WebSocket disconnected. Please wait for reconnection.',
       'chat.commandHint': 'Type / for commands',
+      'chat.attachFile': 'Attach file',
+      'chat.openFiles': 'Open files panel',
+      'chat.stop': 'Stop generation',
+      'common.rename': 'Rename',
+      'chat.approveEdit': 'Approve edit (Ctrl+↵)',
+      'chat.approveWithShortcut': 'Approve (Ctrl+↵)',
+      'chat.reset': 'Reset',
+      'chat.edited': 'Edited',
+      'chat.unchanged': 'Unchanged',
+      'chat.exportMarkdown': 'Export as Markdown',
+      'chat.exportJson': 'Export as JSON',
+      'chat.shellCommands': 'Shell commands',
+      'chat.exportConversation': 'Export conversation',
+      'chat.export': 'Export',
+      'chat.exportedAsMarkdown': 'Exported as Markdown',
+      'chat.exportedAsJson': 'Exported as JSON',
+      'chat.pinned': 'Pinned',
+      'chat.unpinned': 'Unpinned',
+      'chat.pin': 'Pin',
+      'chat.unpin': 'Unpin',
+      'chat.editHistory': 'Edit history',
+      'chat.copied': 'Copied',
+      'chat.editedXTimes': 'Edited ({{count}}x)',
 
       /* ── Language switcher ── */
       'lang.label': 'EN',
@@ -205,6 +229,11 @@ const resources = {
       'kb.docCount': 'documents',
       'kb.deepParse': 'Deep Parse',
       'kb.graph': 'Document Graph',
+      'kb.title': 'Knowledge Base',
+      'kb.ragToggle': 'Use RAG in chat',
+      'kb.provenanceDag': 'Provenance DAG',
+      'kb.provenanceEmpty': 'No provenance data yet',
+      'kb.provenanceNoEntries': 'No provenance entries',
 
       /* ── Knowledge panel — query brain (Metaso-style transparent search) ── */
       'kb.testRetrieval': 'Test retrieval',
@@ -355,6 +384,10 @@ const resources = {
       'settings.discovering': 'Discovering…',
       'settings.discoverError': 'No models found, check the base URL',
       'settings.requestFailed': 'Request failed',
+      'settings.activeModel': 'Active model (runtime switch)',
+      'settings.activeModelHint': 'Sets the model the lead agent uses. Only enabled models can be selected.',
+      'settings.selectModel': '— select —',
+      'settings.current': 'current:',
 
       /* Agents tab */
       'settings.agents.desc': 'Agent profiles used by Team mode and @ routing.',
@@ -376,6 +409,8 @@ const resources = {
 
       /* Pet tab */
       'settings.pet.desc': 'Customize your desktop companion.',
+      'settings.pet.enabled': 'Show the pet window',
+      'settings.pet.disabled': 'Pet is hidden',
       'settings.petName': 'Pet name',
       'settings.personality': 'Personality',
       'settings.personality.cheerful': 'Cheerful',
@@ -466,6 +501,7 @@ const resources = {
       'result.notConverged': 'Not converged',
       'result.relevance': 'match',
       'result.outputFiles': 'Output files',
+      'result.save': 'Save',
 
       /* ── Panel descriptions ── */
       'panel.team.desc': 'Multi-agent collaboration for complex research workflows',
@@ -576,6 +612,7 @@ const resources = {
       'benchmark.passed': 'Passed:',
       'benchmark.failed': 'Failed:',
       'benchmark.skipped': 'Skipped:',
+      'benchmark.export': 'Export JSON',
 
       /* ── Coder panel ── */
       'coder.title': '💻 Coder Mode',
@@ -591,6 +628,9 @@ const resources = {
 
       /* ── Files panel ── */
       'files.workspace': 'Workspace',
+      'files.open': 'Open',
+      'files.openFolderTitle': 'Open folder',
+      'files.close': 'Close tab',
       'files.refresh': 'Refresh',
       'files.upload': 'Upload',
       'files.remote': 'Remote',
@@ -635,6 +675,7 @@ const resources = {
       'memory.sync': 'Sync MEMORY.md',
       'memory.prune': 'Prune',
       'memory.refresh': 'Refresh',
+      'memory.export': 'Export',
       'memory.stats': 'Stats',
       'memory.total': 'Total',
       'memory.short': 'Short',
@@ -648,6 +689,12 @@ const resources = {
       'memory.searchPh': 'Search memory...',
       'memory.search': 'Search',
       'memory.allCats': 'all categories',
+      'memory.layersTitle': 'No layer data',
+      'memory.snapshotHint': 'Click refresh to load the 4-layer memory snapshot.',
+      'memory.recentEpisodes': 'Recent episodes',
+      'memory.patterns': 'Recent trajectory patterns',
+      'memory.topPrinciples': 'Top principles',
+      'memory.topPatterns': 'Top patterns by confidence',
       'memory.allTiers': 'all tiers',
       'memory.noMatch': 'No matching memories',
       'memory.noMemories': 'No memories yet',
@@ -818,6 +865,14 @@ const resources = {
       'cmd.clearChat': 'Clear Chat',
       'cmd.goSettings': 'Go to Settings',
       'cmd.globalSearch': 'Global Search',
+      'cmd.commandPalette': 'Command Palette',
+      'cmd.quickOpen': 'Quick Open',
+      'cmd.palettePlaceholder': 'Run a command…',
+      'cmd.quickOpenPlaceholder': 'Open a file…',
+      'cmd.scanning': 'Scanning workspace…',
+      'cmd.noMatch': 'No matching results',
+      'cmd.runCurrentFile': 'Run current file in terminal',
+      'cmd.noFileOpen': 'No file is open',
 
       /* ── Global search ── */
       'search.placeholder': 'Search across threads, memory, knowledge…',
@@ -838,6 +893,7 @@ const resources = {
       'nav.build': '构建与执行',
       'nav.observe': '观测与治理',
       'nav.collab': '协作与拟人',
+      'nav.science': '科学',
 
       /* ── Core tabs ── */
       'tab.chat': '对话',
@@ -964,6 +1020,10 @@ const resources = {
       'chat.chars': '字符',
       'chat.failedToSend': '⚠️ 发送失败 — WebSocket 已断开。请等待重连。',
       'chat.commandHint': '输入 / 查看命令',
+      'chat.attachFile': '附加文件',
+      'chat.openFiles': '打开文件面板',
+      'chat.stop': '停止生成',
+      'common.rename': '重命名',
       'chat.approveEdit': '批准编辑 (Ctrl+↵)',
       'chat.approveWithShortcut': '批准 (Ctrl+↵)',
       'chat.reset': '重置',
@@ -1037,6 +1097,11 @@ const resources = {
       'kb.docCount': '篇文档',
       'kb.deepParse': '深度解析',
       'kb.graph': '文档图谱',
+      'kb.title': '知识库',
+      'kb.ragToggle': '在对话中使用 RAG',
+      'kb.provenanceDag': '溯源 DAG',
+      'kb.provenanceEmpty': '暂无溯源数据',
+      'kb.provenanceNoEntries': '暂无溯源条目',
 
       /* ── 知识面板 — 检索大脑（Metaso 风格透明搜索）── */
       'kb.testRetrieval': '检索测试',
@@ -1187,6 +1252,10 @@ const resources = {
       'settings.discovering': '探测中…',
       'settings.discoverError': '未发现可用模型，请检查 base URL',
       'settings.requestFailed': '请求失败',
+      'settings.activeModel': '活动模型（运行时切换）',
+      'settings.activeModelHint': '设置主导智能体使用的模型。仅可选择已启用的模型。',
+      'settings.selectModel': '— 请选择 —',
+      'settings.current': '当前：',
 
       /* Agents tab */
       'settings.agents.desc': '团队模式和 @ 路由使用的智能体配置。',
@@ -1208,6 +1277,8 @@ const resources = {
 
       /* Pet tab */
       'settings.pet.desc': '自定义你的桌面伙伴。',
+      'settings.pet.enabled': '显示宠物窗口',
+      'settings.pet.disabled': '宠物已隐藏',
       'settings.petName': '宠物名称',
       'settings.personality': '性格',
       'settings.personality.cheerful': '活泼',
@@ -1298,6 +1369,7 @@ const resources = {
       'result.notConverged': '未收敛',
       'result.relevance': '匹配',
       'result.outputFiles': '输出文件',
+      'result.save': '保存',
 
       /* ── Panel descriptions ── */
       'panel.team.desc': '多智能体协同处理复杂研究工作流',
@@ -1408,6 +1480,7 @@ const resources = {
       'benchmark.passed': '通过:',
       'benchmark.failed': '失败:',
       'benchmark.skipped': '跳过:',
+      'benchmark.export': '导出 JSON',
 
       /* ── Coder panel ── */
       'coder.title': '💻 编程模式',
@@ -1423,6 +1496,9 @@ const resources = {
 
       /* ── Files panel ── */
       'files.workspace': '工作区',
+      'files.open': '打开',
+      'files.openFolderTitle': '打开文件夹',
+      'files.close': '关闭标签页',
       'files.refresh': '刷新',
       'files.upload': '上传',
       'files.remote': '远程',
@@ -1467,6 +1543,7 @@ const resources = {
       'memory.sync': '同步 MEMORY.md',
       'memory.prune': '修剪',
       'memory.refresh': '刷新',
+      'memory.export': '导出',
       'memory.stats': '统计',
       'memory.total': '总计',
       'memory.short': '短期',
@@ -1488,6 +1565,12 @@ const resources = {
       'memory.recent': '最近',
       'memory.save': '保存',
       'memory.cancel': '取消',
+      'memory.layersTitle': '暂无分层数据',
+      'memory.snapshotHint': '点击刷新加载 4 层记忆快照。',
+      'memory.recentEpisodes': '近期片段',
+      'memory.patterns': '近期轨迹模式',
+      'memory.topPrinciples': '核心原则',
+      'memory.topPatterns': '高置信度模式',
       'memory.tags': '标签:',
       'memory.source': '来源:',
       'memory.expires': '过期:',
@@ -1650,6 +1733,14 @@ const resources = {
       'cmd.clearChat': '清空对话',
       'cmd.goSettings': '跳转设置',
       'cmd.globalSearch': '全局搜索',
+      'cmd.commandPalette': '命令面板',
+      'cmd.quickOpen': '快速打开',
+      'cmd.palettePlaceholder': '输入命令…',
+      'cmd.quickOpenPlaceholder': '打开文件…',
+      'cmd.scanning': '正在扫描工作区…',
+      'cmd.noMatch': '无匹配结果',
+      'cmd.runCurrentFile': '在终端运行当前文件',
+      'cmd.noFileOpen': '未打开文件',
 
       /* ── Global search ── */
       'search.placeholder': '搜索对话、记忆、知识库…',

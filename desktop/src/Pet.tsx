@@ -164,6 +164,56 @@ const PERSONALITIES: Record<PetPersonality, PersonalityPack> = {
   },
 };
 
+/* ── 心智模式移植 (参考 dsh-dafeiyu) ─────────────────────────────
+ * 1) toolActivity: 按工具名把事件归类成"在干什么", 驱动气泡文案而非
+ *    笼统 mood. 后端已把 tool.name 放进 details.tool 随 SSE 透传.
+ * 2) MOOD_PRIORITY: 多事件冲突时高优先级胜出, 避免 working/success/
+ *    error 快速交替把宠物状态闪得乱跳. 规则同 dsh-dafeiyu:
+ *    等待 > 错误 > 成功 > 工作 > 思考 > 空闲.
+ * 3) ACTIVITY_COPY: 每类活动一组自然文案, 事件到达时随机取一条.
+ */
+type PetActivity =
+  | "searching"
+  | "editing"
+  | "testing"
+  | "commanding"
+  | "computing"
+  | "using-tool";
+
+function toolActivity(name: string): PetActivity {
+  const v = (name || "").toLowerCase();
+  if (/search|grep|find|glob|look|fetch|open|read|list|web|query|download|load|import/.test(v)) return "searching";
+  if (/write|edit|patch|replace|create|move|delete|rename|touch|append|insert/.test(v)) return "editing";
+  if (/test|check|lint|build|verify|validate|compile|assert|prove/.test(v)) return "testing";
+  if (/shell|bash|exec|command|terminal|powershell|run|code|python|notebook|execute/.test(v)) return "commanding";
+  if (/vasp|lammps|structure|crystal|density|md|simulate|compute|symbolic|math|espresso/.test(v)) return "computing";
+  return "using-tool";
+}
+
+const ACTIVITY_COPY: Record<PetActivity, string[]> = {
+  searching: ["Digging through the data…", "Hunting for the needle…", "Peeking into the repo…", "Scanning the files…"],
+  editing: ["Fixing that up…", "Tweaking the file…", "Rearranging the code…"],
+  testing: ["Running the checks…", "Making sure it works…", "Verifying results…"],
+  commanding: ["Firing up the terminal…", "Running code…", "Executing commands…"],
+  computing: ["Crunching numbers…", "Simulating…", "Doing the math…"],
+  "using-tool": ["Working on it…", "Calling a tool…", "On it!"],
+};
+
+const MOOD_PRIORITY: Record<PetMood, number> = {
+  error: 8,
+  success: 7,
+  happy: 6,
+  levelup: 6,
+  working: 5,
+  coding: 5,
+  reviewing: 4,
+  thinking: 3,
+  eating: 3,
+  idle: 1,
+  sleeping: 0,
+  hungry: 0,
+};
+
 const XP_PER_LEVEL_BASE = 100;
 const XP_PER_SUCCESS = 15;
 const HUNGER_DECAY_INTERVAL = 30000; // 30s
@@ -550,17 +600,16 @@ function makeParticles(kind: ParticleKind, count: number): Particle[] {
   return arr;
 }
 
-/* ── Progress ring ── */
-function ProgressRing({ progress, visible }: { progress: number; visible: boolean }) {
-  const circumference = 2 * Math.PI * 60;
-  const offset = circumference * (1 - progress);
+/* ── Progress ring ──
+ * ponytail: 后端只上报 active_tasks 计数, 没有真实 step 进度, 因此这里
+ * 展示未确定态 (转圈) 而非编造的百分比 — 对齐 dsh-dafeiyu「不编造进度」.
+ * 若将来后端给出 done/total, 再改为确定态弧线即可. */
+function ProgressRing({ visible }: { visible: boolean }) {
   return (
     <div className={`pet-progress-ring ${visible ? "pet-progress-ring-visible" : ""}`}>
-      <svg viewBox="0 0 130 130" className="w-full h-full" style={{ transform: "rotate(-90deg)" }}>
+      <svg viewBox="0 0 130 130" className="w-full h-full pet-progress-ring-spin">
         <circle cx="65" cy="65" r="60" fill="none" stroke="rgba(42,37,32,0.08)" strokeWidth="2" />
-        <circle cx="65" cy="65" r="60" fill="none" stroke="var(--seed-primary, #3b82f6)" strokeWidth="2.5" strokeLinecap="round"
-          strokeDasharray={circumference} strokeDashoffset={offset}
-          style={{ transition: "stroke-dashoffset 0.8s ease" }} />
+        <circle cx="65" cy="65" r="60" fill="none" stroke="var(--seed-primary, #3b82f6)" strokeWidth="2.5" strokeLinecap="round" strokeDasharray="94.2 282.7" />
       </svg>
     </div>
   );
@@ -627,6 +676,11 @@ export default function Pet() {
   const pack = PERSONALITIES[personality] || PERSONALITIES.cheerful;
   const xpMax = useMemo(() => xpForLevel(level), [level]);
 
+  // 状态优先级合并: 记录当前展示的高优先级状态与时刻, 低优先级事件在其
+  // 存活窗口内不覆盖之 (dsh-dafeiyu: 等待>错误>成功>工作>思考>空闲).
+  const petMoodRef = useRef<{ mood: PetMood; at: number }>({ mood: "idle", at: 0 });
+  const ACTIVITY_HOLD_MS = 6000;
+
   // Day/night cycle based on local time
   const [timeOfDay, setTimeOfDay] = useState<'dawn' | 'day' | 'dusk' | 'night'>(() => {
     const h = new Date().getHours();
@@ -684,6 +738,37 @@ export default function Pet() {
 
   useEffect(() => {
     appWindow.current = getCurrentWindow();
+  }, []);
+
+  // Reflect Settings changes (name/personality/accessories) live, and close
+  // ourselves if the user disables the pet window. SettingsPanel writes
+  // huginn:config on save; storage events fire cross-window.
+  useEffect(() => {
+    const closeIfDisabled = () => {
+      if (localStorage.getItem("huginn:pet_enabled") === "0") {
+        getCurrentWindow().close().catch(() => {});
+      }
+    };
+    const onStore = (e: StorageEvent) => {
+      // The Settings toggle writes huginn:pet_enabled, not huginn:config, so
+      // a disable while this window is open won't fire a config event. Watch
+      // that key too and self-close.
+      if (e.key === "huginn:pet_enabled") return closeIfDisabled();
+      if (e.key !== "huginn:config" || !e.newValue) return;
+      try {
+        const cfg = JSON.parse(e.newValue);
+        if (cfg.pet_name) setPetName(cfg.pet_name);
+        if (cfg.pet_personality) setPersonality(cfg.pet_personality as PetPersonality);
+        if (Array.isArray(cfg.pet_accessories) && cfg.pet_accessories.length) {
+          setAccessory(cfg.pet_accessories[0] as AccessoryId);
+        }
+      } catch {
+        // malformed config — ignore
+      }
+    };
+    window.addEventListener("storage", onStore);
+    closeIfDisabled();
+    return () => window.removeEventListener("storage", onStore);
   }, []);
 
   useEffect(() => {
@@ -813,6 +898,21 @@ export default function Pet() {
     hopTimer.current = setTimeout(() => setHopping(false), 500);
   }, []);
 
+  // SSE 事件专用的合并入口: 只在 agent 事件路径走优先级判断, 用户交互
+  // (feed/pet/click) 仍走 speak 直接生效.
+  const mergeAndSpeak = useCallback((mood: PetMood, text: string, persist: boolean) => {
+    const cur = petMoodRef.current;
+    const incoming = MOOD_PRIORITY[mood] ?? 0;
+    const curPrio = MOOD_PRIORITY[cur.mood] ?? 0;
+    const stillFresh = Date.now() - cur.at < ACTIVITY_HOLD_MS;
+    if (stillFresh && incoming < curPrio && !persist) {
+      // 高级别状态仍在存活窗口内, 吞掉这个低优先级事件, 避免状态闪跳.
+      return;
+    }
+    petMoodRef.current = { mood, at: Date.now() };
+    speak(text, mood, persist);
+  }, [speak]);
+
   // SSE + idle + decay timers
   useEffect(() => {
     document.body.style.background = "transparent";
@@ -837,7 +937,8 @@ export default function Pet() {
             updateFromState(data.state as PetState);
           } else if (data.type === "event") {
             const moodEvt = data.mood as PetMood;
-            const msg = data.message as string;
+            const details = (data.details as Record<string, any>) ?? {};
+            const toolName = typeof details.tool === "string" ? details.tool : "";
             const persist = moodEvt === "error";
             // Urgent events (error, success) break through focus mode; others suppressed
             const isUrgent = moodEvt === "error" || moodEvt === "success";
@@ -845,7 +946,15 @@ export default function Pet() {
               // Silently absorb events during focus mode
               return;
             }
-            speak(msg, moodEvt, persist);
+            // 工具驱动的事件: 用活动分类的自然文案替换后端的 "Running X…"/"X done",
+            // 错误保留原始信息便于排查.
+            let msg = data.message as string;
+            if (toolName && moodEvt !== "error") {
+              const act = toolActivity(toolName);
+              const copies = ACTIVITY_COPY[act];
+              msg = copies[Math.floor(Math.random() * copies.length)];
+            }
+            mergeAndSpeak(moodEvt, msg, persist);
             hop();
             // Auto XP gain on success
             if (moodEvt === "success") {
@@ -1048,7 +1157,7 @@ export default function Pet() {
       document.body.style.background = "";
       document.documentElement.style.background = "";
     };
-  }, [backendOnline, hop, mood, muted, persistent, pack, petName, speak, tipIndex, updateFromState, gainXp, spawnParticles, hunger, memorySummary]);
+  }, [backendOnline, hop, mood, muted, persistent, pack, petName, speak, mergeAndSpeak, tipIndex, updateFromState, gainXp, spawnParticles, hunger, memorySummary]);
 
   // Track pointer start so we can distinguish click vs drag.
   // startDragging() eats subsequent pointer events, so we only call it
@@ -1248,7 +1357,6 @@ export default function Pet() {
   }, []);
 
   const progressVisible = activeTasks > 0 || mood === "working";
-  const progressValue = activeTasks > 0 ? Math.min(activeTasks * 0.3, 1) : 0.6;
 
   return (
     <div
@@ -1305,7 +1413,7 @@ export default function Pet() {
           <div key={`speck-${i}`} className="pet-ambient-particle ambient-speck"
             style={{ left: `${30 + i * 30}%`, top: `${20 + i * 12}%`, animationDelay: `${i * 3}s` }} />
         ))}
-        <ProgressRing progress={progressValue} visible={progressVisible} />
+        <ProgressRing visible={progressVisible} />
         <div className="pet-particle-layer" ref={particleContainerRef}>
           {particles.map(p => (
             <div key={p.id}

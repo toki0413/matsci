@@ -13,6 +13,7 @@ import { SettingsTabNav, ConfigField } from "../settings-shared";
 import type { SettingsTab } from "../settings-shared";
 import { PROVIDERS } from "../../lib/constants";
 import { api } from "../../lib/api";
+import { downloadBlob, downloadJson } from "../../lib/download";
 import type { ModelConfig, AgentProfile, AppConfig } from "../../types/domain";
 
 // Lazy-load heavy sub-panels so their chunks stay out of the initial bundle.
@@ -452,6 +453,37 @@ export function SettingsPanel(props: SettingsPanelProps) {
                   </div>
                 )}
               </ConfigField>
+              <ConfigField label="Theme Skin" full>
+                <div className="flex flex-wrap items-center gap-2">
+                  {[
+                    { name: 'Meili', bg: 'linear-gradient(135deg,#66b2ff,#d66cff)', rgb: '66 133 244' },
+                    { name: 'Rust', bg: 'linear-gradient(135deg,#8b5e34,#d97706)', rgb: '212 136 74' },
+                    { name: 'Beam', bg: 'linear-gradient(135deg,#34d399,#10b981)', rgb: '52 168 83' },
+                    { name: 'Pyro', bg: 'linear-gradient(135deg,#fb923c,#ef4444)', rgb: '236 72 153' },
+                    { name: 'Aura', bg: 'linear-gradient(135deg,#a855f7,#ec4899)', rgb: '168 85 247' },
+                    { name: 'Frost', bg: 'linear-gradient(135deg,#22d3ee,#3b82f6)', rgb: '6 182 212' },
+                  ].map((s) => (
+                    <button
+                      key={s.name}
+                      onClick={() => {
+                        document.documentElement.style.setProperty('--accent-rgb', s.rgb);
+                        document.documentElement.style.setProperty('--seed-primary', `rgb(${s.rgb})`);
+                        localStorage.setItem('accent-color', s.rgb);
+                        localStorage.setItem('huginn:skin', s.name);
+                      }}
+                      className="flex h-9 flex-1 items-center justify-center rounded-lg border px-2 text-[11px] font-medium text-white transition-transform hover:scale-105 min-w-[64px]"
+                      style={{
+                        background: s.bg,
+                        borderColor: localStorage.getItem('huginn:skin') === s.name ? 'var(--text-primary)' : 'transparent',
+                      }}
+                      title={s.name}
+                      aria-label={`Apply ${s.name} theme`}
+                    >
+                      {s.name}
+                    </button>
+                  ))}
+                </div>
+              </ConfigField>
               <ConfigField label="Accent Color" full>
                 <div className="flex items-center gap-3">
                   {[
@@ -621,17 +653,17 @@ export function SettingsPanel(props: SettingsPanelProps) {
         {settingsTab === "models" && (
           <div className="max-w-3xl space-y-4">
             <div className="flex items-center justify-between">
-              <p className="text-sm text-text-secondary">Configure multiple provider/model entries.</p>
-              <button onClick={addModel} className="btn-secondary px-3 py-1.5 text-xs">+ Add Model</button>
+              <p className="text-sm text-text-secondary">{t('settings.models.desc')}</p>
+              <button onClick={addModel} className="btn-secondary px-3 py-1.5 text-xs">{t('settings.addModel')}</button>
             </div>
 
             {/* Active model — runtime provider switch */}
             <div className="rounded-lg border border-border bg-bg-tertiary p-3">
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
-                  <label className="block text-xs font-medium text-text-secondary">Active model (runtime switch)</label>
+                  <label className="block text-xs font-medium text-text-secondary">{t('settings.activeModel')}</label>
                   <p className="mt-0.5 text-xs text-text-muted">
-                    Sets the model the lead agent uses. Only enabled models can be selected.
+                    {t('settings.activeModelHint')}
                   </p>
                   {activeModelSavedMsg && (
                     <p className="mt-1 text-xs text-accent">{activeModelSavedMsg}</p>
@@ -644,13 +676,13 @@ export function SettingsPanel(props: SettingsPanelProps) {
                     onChange={(e) => switchActiveModel(e.target.value)}
                     disabled={config.models.filter((m) => m.enabled).length === 0}
                   >
-                    <option value="">— select —</option>
+                    <option value="">{t('settings.selectModel')}</option>
                     {config.models.filter((m) => m.enabled).map((m) => (
                       <option key={m.alias} value={m.alias}>{m.alias} ({m.provider})</option>
                     ))}
                   </select>
                   {activeModel && (
-                    <span className="text-[10px] text-text-muted">current: {activeModel}</span>
+                    <span className="text-[10px] text-text-muted">{t('settings.current')} {activeModel}</span>
                   )}
                 </div>
               </div>
@@ -938,6 +970,22 @@ export function SettingsPanel(props: SettingsPanelProps) {
             <p className="text-sm text-text-secondary">
               {t('settings.pet.desc')}
             </p>
+            <ConfigField label="Enable pet">
+              <label className="flex cursor-pointer items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={localStorage.getItem("huginn:pet_enabled") !== "0"}
+                  onChange={(e) => {
+                    localStorage.setItem("huginn:pet_enabled", e.target.checked ? "1" : "0");
+                    setConfigDirty(true);
+                  }}
+                  className="h-4 w-4 rounded border-border"
+                />
+                {localStorage.getItem("huginn:pet_enabled") !== "0"
+                  ? t('settings.pet.enabled') || 'Show the pet window'
+                  : t('settings.pet.disabled') || 'Pet is hidden'}
+              </label>
+            </ConfigField>
             <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
               <ConfigField label="Pet name">
                 <input
@@ -1158,12 +1206,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
                         body: JSON.stringify({ format: "zip" }),
                         headers: { "Content-Type": "application/json" },
                       });
-                      const url = URL.createObjectURL(blob);
-                      const a = document.createElement("a");
-                      a.href = url;
-                      a.download = "huginn_export.zip";
-                      a.click();
-                      URL.revokeObjectURL(url);
+                      downloadBlob(blob, "huginn_export.zip");
                     } catch (e: any) {
                       setConfigSavedMsg("Export failed: " + (e?.message || "unknown error"));
                     }
@@ -1180,12 +1223,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
                         body: JSON.stringify({ format: "json" }),
                         headers: { "Content-Type": "application/json" },
                       });
-                      const url = URL.createObjectURL(blob);
-                      const a = document.createElement("a");
-                      a.href = url;
-                      a.download = "huginn_memory.json";
-                      a.click();
-                      URL.revokeObjectURL(url);
+                      downloadBlob(blob, "huginn_memory.json");
                     } catch (e: any) {
                       setConfigSavedMsg("Export failed: " + (e?.message || "unknown error"));
                     }
@@ -1202,12 +1240,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
                         body: JSON.stringify({ format: "json" }),
                         headers: { "Content-Type": "application/json" },
                       });
-                      const url = URL.createObjectURL(blob);
-                      const a = document.createElement("a");
-                      a.href = url;
-                      a.download = "huginn_knowledge.json";
-                      a.click();
-                      URL.revokeObjectURL(url);
+                      downloadBlob(blob, "huginn_knowledge.json");
                     } catch (e: any) {
                       setConfigSavedMsg("Export failed: " + (e?.message || "unknown error"));
                     }
@@ -1261,15 +1294,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
               <div className="mb-2 text-xs font-medium text-text-secondary">Config Backup</div>
               <div className="flex gap-2">
                 <button
-                  onClick={() => {
-                    const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = `huginn-config-${new Date().toISOString().slice(0, 10)}.json`;
-                    a.click();
-                    URL.revokeObjectURL(url);
-                  }}
+                  onClick={() => downloadJson(config, `huginn-config-${new Date().toISOString().slice(0, 10)}.json`)}
                   className="btn-secondary text-xs"
                 >
                   Export Config

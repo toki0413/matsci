@@ -1243,7 +1243,12 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
   }, [messages.length]);
 
   // ── Load tools and skills on tab switch ──────────────────────
+  // Gated on isConnected so a cold start (sidecar backend still booting)
+  // doesn't burn the single fetch attempt and leave the panel empty forever.
+  // Re-runs re-fire the request once the backend reports connected.
   useEffect(() => {
+    const gated = isConnected;
+    if (!gated) return;
     if (activeTab === "tools" && toolsLength === 0) {
       api.get<any[]>('/tools')
         .then(setTools)
@@ -1254,7 +1259,7 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
         .then(setSkills)
         .catch((e) => console.error("Failed to load skills:", e));
     }
-  }, [activeTab, toolsLength, skillsLength]);
+  }, [activeTab, toolsLength, skillsLength, isConnected]);
 
   // ── Dynamic persona loading ──────────────────────────────────
   useEffect(() => {

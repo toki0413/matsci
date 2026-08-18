@@ -6,6 +6,7 @@
  */
 import { useTranslation } from 'react-i18next';
 import { ToolResultRenderer } from '../ToolResultRenderer';
+import { downloadText } from '../../lib/download';
 
 interface ResultPanelProps {
   resultContent: string;
@@ -23,13 +24,24 @@ export function ResultPanel({ resultContent, resultToolName }: ResultPanelProps)
   }
 
   return (
-    <div className="h-full overflow-auto p-4">
-      <ToolResultRenderer
-        content={resultContent}
-        toolName={resultToolName}
-        maxRows={200}
-        className="h-full"
-      />
+    <div className="flex h-full flex-col overflow-hidden p-4">
+      <div className="mb-2 flex items-center justify-end">
+        <button
+          onClick={() => downloadText(resultContent, `result-${Date.now()}.txt`)}
+          className="btn-secondary px-3 py-1 text-xs"
+          title={t('result.save') || 'Save'}
+        >
+          {t('result.save') || 'Save'}
+        </button>
+      </div>
+      <div className="h-full min-h-0 overflow-auto">
+        <ToolResultRenderer
+          content={resultContent}
+          toolName={resultToolName}
+          maxRows={200}
+          className="h-full"
+        />
+      </div>
     </div>
   );
 }

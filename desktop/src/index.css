@@ -832,6 +832,16 @@
     opacity: 1;
   }
 
+  /* 未确定态: 整圈旋转, 不表达编造的完成百分比 */
+  .pet-progress-ring-spin {
+    animation: pet-ring-spin 2s linear infinite;
+  }
+
+  @keyframes pet-ring-spin {
+    from { transform: rotate(-90deg) rotate(0turn); }
+    to   { transform: rotate(-90deg) rotate(1turn); }
+  }
+
   /* ── Particle layer ── */
   .pet-particle-layer {
     position: absolute;
