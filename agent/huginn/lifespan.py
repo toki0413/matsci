@@ -120,7 +120,12 @@ async def _init_mcp_tools():
         from huginn.tools.mcp_adapter import register_mcp_tools
 
         get_context().mcp_manager = MCPClientManager()
-        base = Path(__file__).parent.parent.parent  # repo root
+        # dev: repo root (three parents up from huginn/lifespan.py).
+        # frozen: PyInstaller lands --add-data payloads at sys._MEIPASS, and
+        # __file__ in a onedir build sits under _internal/, so the naive three-
+        # parents-up points one level too high and the bundled servers/.mcp.json
+        # are unreachable.
+        base = Path(getattr(sys, "_MEIPASS", Path(__file__).parent.parent.parent))
 
         servers: list[tuple[str, MCPServerConfig]] = []
 

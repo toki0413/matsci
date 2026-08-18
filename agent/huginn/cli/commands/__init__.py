@@ -17,6 +17,7 @@ from huginn.cli.commands import (
     encrypt_config,
     evolve,
     execute,
+    headless,
     explore,
     export,
     hpc,
@@ -57,6 +58,7 @@ def register_commands(cli: click.Group) -> None:
     cli.add_command(bench.bench)
     cli.add_command(evolve.evolve)
     cli.add_command(execute.execute)
+    cli.add_command(headless.exec_cmd)
     cli.add_command(workflow.workflow)
     cli.add_command(diagnose.diagnose)
     cli.add_command(model_list.model_list)

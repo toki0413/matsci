@@ -30,6 +30,12 @@ def build_sidecar():
     assets_src = PROJECT_ROOT / "huginn" / "assets"
     assets_dst = "huginn/assets"
 
+    # MCP server definitions live outside the package. In dev they resolve via
+    # __file__ -> repo root; in the frozen sidecar sys._MEIPASS is the data dir,
+    # so land them at its root (lifespan/discover read from there).
+    mcp_servers_src = REPO_ROOT / "servers"
+    mcp_json_src = REPO_ROOT / ".mcp.json"
+
     # Core hidden imports only — avoid heavy optional deps
     core_imports = [
         # Tools (core only, exclude heavy simulation packages)
@@ -264,6 +270,8 @@ def build_sidecar():
         "--name", output_name,
         "--noconfirm",
         *(f"--add-data={assets_src}{os.pathsep}{assets_dst}".split() if assets_src.exists() else []),
+        *(f"--add-data={mcp_servers_src}{os.pathsep}servers".split() if mcp_servers_src.exists() else []),
+        *(f"--add-data={mcp_json_src}{os.pathsep}.".split() if mcp_json_src.exists() else []),
         *[f"--hidden-import={imp}" for imp in core_imports],
         # chromadb bundles SQL migrations/proto data and the ONNX tokenizer
         # model, which PyInstaller won't find via import analysis alone — must
@@ -307,20 +315,19 @@ def build_sidecar():
         "--exclude-module=transformers",
         "--exclude-module=easyocr",
         "--exclude-module=skimage",
-        "--exclude-module=sklearn",
-        "--exclude-module=matplotlib",
         "--exclude-module=numba",
         "--exclude-module=llvmlite",
         "--exclude-module=pyarrow",
-        "--exclude-module=pandas",
         "--exclude-module=shapely",
         "--exclude-module=altair",
         "--exclude-module=narwhals",
         "--exclude-module=lxml",
-        "--exclude-module=PIL",
         "--exclude-module=cv2",
         "--exclude-module=sentence_transformers",
         "--exclude-module=tensorflow",
+        # Core science libs must stay IN: dozens of tools top-level import
+        # matplotlib/pandas/sklearn/PIL (visualize, descriptor, uq, image_analysis…).
+        # Excluding them silently breaks those tools at runtime.
         # ChromaDB's optional extras drag in a huge dependency tree that the KB
         # never exercises (client-side persistent store + ONNX MiniLM only).
         # Keep them out so the sidecar stays lean.

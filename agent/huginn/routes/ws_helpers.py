@@ -737,6 +737,50 @@ async def _stream_agent_response(
     return full_response
 
 
+async def _dispatch_user_spec(
+    websocket: WebSocket,
+    factory: Any,
+    spec_name: str,
+    task_text: str,
+    thread_id: str,
+    ws_approval: Any,
+) -> None:
+    """Dispatch a user-selected subagent (``@spec task``) and stream its result.
+
+    仅用户显式 @点名 的子代理走这里. 不经过主 agent 决策, spec 和任务文本
+    由用户直接给定. 结果以 text_delta 流式返回, 最后 done.
+    """
+    from huginn.agents.subagent import SubagentDispatch
+
+    _dispatch = SubagentDispatch()
+    result = await _dispatch.dispatch(
+        spec_name,
+        task_text,
+        context={
+            "agent_factory": factory,
+            "approval_callback": ws_approval,
+        },
+    )
+
+    if not result.success:
+        await websocket.send_json({
+            "type": "text_delta",
+            "text": f"⚠️ subagent [{spec_name}] 执行失败: {result.error}\n",
+        })
+        await websocket.send_json({"type": "done", "thread_id": thread_id})
+        return
+
+    summary = result.summary or "（子代理未返回内容）"
+    try:
+        from huginn.events.session_writer import record_assistant_message
+        record_assistant_message(thread_id, summary)
+    except Exception:
+        logger.debug("session subagent record skipped", exc_info=True)
+
+    await websocket.send_json({"type": "text_delta", "text": summary})
+    await websocket.send_json({"type": "done", "thread_id": thread_id})
+
+
 # ── Message-type handlers (extracted from agent_websocket) ───────
 
 
@@ -843,6 +887,23 @@ async def _handle_user_input(
                     content = actual_content
                 except Exception as e:
                     logger.warning("Failed to create agent %s: %s", agent_cfg, e)
+
+    # @spec subagent routing — 仅用户显式 @点名 的子代理才 dispatch.
+    # 主 agent 不会自主调 subagent_tool; 只有用户输入 @explore/... 才走这里.
+    if content.startswith("@"):
+        parts = content[1:].split(None, 1)
+        if len(parts) == 2:
+            spec_token, task_text = parts
+            spec_token = spec_token.lower()
+            from huginn.agents.subagent import SubagentDispatch
+
+            _specs = list(SubagentDispatch.BUILTIN_SPECS.keys())
+            if spec_token in _specs:
+                await _dispatch_user_spec(
+                    websocket, factory, spec_token, task_text,
+                    thread_id, ws_approval,
+                )
+                return
 
     # Build a ModelTeam reference for cross-agent vision delegation.
     # The team is lazily constructed from config; the agent can use it
