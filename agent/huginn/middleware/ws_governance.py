@@ -94,21 +94,34 @@ def _extract_identity(websocket: WebSocket) -> str:
     return "anonymous"
 
 
+async def _accept(websocket: WebSocket) -> bool:
+    """完成 WebSocket 握手, 失败(客户端已断开)返回 False.
+
+    accept 与客户端断开的竞态: 事件循环被长 LLM 回合阻塞期间, 浏览器可能
+    已关闭旧连接, 此时延迟执行的 accept() 会抛 RuntimeError —— 连接已无法
+    使用, 视为丢弃即可, 不应向上抛成 403/500.
+    """
+    try:
+        await websocket.accept()
+    except RuntimeError:
+        return False
+    return True
+
+
 async def ws_auth_and_track(websocket: WebSocket) -> str | None:
     """Unified WS auth + connection tracking.
 
     Returns the identity string on success, or None (after closing the
-    socket) on failure. The caller MUST release the slot in a finally block::
+    socket) on failure. Callers must release the slot in a finally block::
 
-        identity = await ws_auth_and_track(websocket)
-        if identity is None:
-            return  # already closed
-        try:
-            if not websocket.scope.get("_ws_pre_accepted"):
-                await websocket.accept()
-            # ... WS logic ...
-        finally:
-            get_tracker().release(identity)
+    identity = await ws_auth_and_track(websocket)
+    if identity is None:
+        return  # already closed/auth-failed
+    try:
+        # 握手已由本函数统一完成
+        # ... WS logic ...
+    finally:
+        get_tracker().release(identity)
 
     Two auth paths:
     1. URL query param (?token=xxx) — backward compat, validated before accept.
@@ -136,7 +149,8 @@ async def ws_auth_and_track(websocket: WebSocket) -> str | None:
         # 30s timeout — was 10s but under heavy load (concurrent LLM calls
         # blocking the event loop) the client's auth message can take
         # longer to arrive. 30s is still short enough to reject idle probes.
-        await websocket.accept()
+        if not await _accept(websocket):
+            return None
         websocket.scope["_ws_pre_accepted"] = True
         try:
             raw = await asyncio.wait_for(
@@ -175,6 +189,12 @@ async def ws_auth_and_track(websocket: WebSocket) -> str | None:
             code=status.WS_1008_POLICY_VIOLATION, reason="auth failed"
         )
         return None
+
+    # 在所有 /ws/* 路由统一在这里完成 accept, 调用方不再各自 accept.
+    # first-message auth 已经 accept 过 (设置了 _ws_pre_accepted 标志).
+    if not websocket.scope.get("_ws_pre_accepted"):
+        if not await _accept(websocket):
+            return None
 
     identity = _extract_identity(websocket)
 

@@ -467,9 +467,6 @@ async def hpc_job_output_stream(websocket: WebSocket, local_id: str):
     if identity is None:
         return
 
-    if not websocket.scope.get("_ws_pre_accepted"):
-        await websocket.accept()
-
     store = _get_store()
     record = store.get(local_id)
     if record is None:
