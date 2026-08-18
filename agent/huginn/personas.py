@@ -235,6 +235,26 @@ class PersonaManager:
         for name, persona in scan_persona_skills(*self._skill_dirs).items():
             self._personas[name] = persona
 
+    def sync_skills(self, source: Path) -> int:
+        """从外部 skill 目录(md/SKILL.md)自动同步视角类 persona 到本地 store.
+
+        source 下每个含 SKILL.md 的子目录视为一个 skill, 解析 name 后复制到
+        .huginn/personas/{name}.md 并加载. 返回本次实际同步(含更新)的数量.
+        ponytail: 按 SKILL.md 目录扫描, 每个 name 一个文件; 升级路径:
+        需要删除本地已失效 persona 时再补 diff/清理逻辑.
+        """
+        store = self._skill_dirs[0]
+        store.mkdir(parents=True, exist_ok=True)
+        synced = 0
+        try:
+            for skill_dir in sorted(source.glob("*/SKILL.md")):
+                persona = self.import_skill(skill_dir, dest_dir=store)
+                synced += 1
+                logger.info("auto-synced persona %s from %s", persona.name, skill_dir)
+        except FileNotFoundError:
+            logger.debug("skill source dir missing, skip sync: %s", source)
+        return synced
+
     def import_skill(
         self,
         source: Path,

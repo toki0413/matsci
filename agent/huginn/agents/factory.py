@@ -22,6 +22,17 @@ from huginn.project_context import load_project_context
 logger = logging.getLogger(__name__)
 
 
+# 反跑题任务锚 — 挂在主 agent 系统提示词尾部, 防止在开放任务里被中间输出带偏.
+# 三条硬约束: 锚定原目标 / 不回绕无关主题 / 收敛到交付件. 措辞直接, 不绕弯.
+_TASK_ANCHOR = (
+    "Stay anchored to the user's stated task. Re-read it after every tool call.\n"
+    "If exploration or a tool result is drifting away from the goal, stop expanding "
+    "scope and return to the original request.\n"
+    "Do not chase tangential topics, newly-surfaced features, or adjacent problems "
+    "unless the user asks. When the task is complete, say so and stop."
+)
+
+
 
 class AgentFactory:
     """Factory for creating configured agent instances."""
@@ -36,6 +47,12 @@ class AgentFactory:
         self.model_registry = model_registry or ModelRegistry.from_config(config)
         self.memory_manager = memory_manager
         self.persona_manager = PersonaManager(workspace=config.workspace)
+        if config.persona_auto_sync and config.persona_sync_dir:
+            try:
+                from pathlib import Path
+                self.persona_manager.sync_skills(Path(config.persona_sync_dir))
+            except Exception:
+                logger.debug("persona auto-sync failed (non-fatal)", exc_info=True)
         self._profiles: dict[str, AgentProfileConfig] = {
             a.id: a for a in config.agents if a.enabled
         }
@@ -222,6 +239,11 @@ class AgentFactory:
                     prompt = f"{prompt}\n\n# Project Context\n\n{ctx}"
             except Exception:
                 logger.debug("load project context failed", exc_info=True)
+
+            # 反跑题任务锚: 明确本轮目标并锁死, 防止 agent 被中间输出
+            # (搜索结果/无关文件)带偏. 惩罚偏离, 约束结尾, 收敛工具使用.
+            if not system_prompt_override:
+                prompt = f"{prompt}\n\n# Task Anchor\n" + _TASK_ANCHOR
 
         emotion_tracker = EmotionTracker(
             profile.persona, workspace=self.config.workspace

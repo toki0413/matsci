@@ -155,6 +155,70 @@ def persona_import(ctx: CliContext, path: Path) -> None:
         ctx.console.print(f"[red]Failed to import persona: {e}[/red]")
 
 
+@persona.command("import-dir")
+@click.argument("source", type=click.Path(exists=True, path_type=Path))
+@click.option(
+    "--perspective-only",
+    is_flag=True,
+    default=False,
+    help="只导入 nuwa 视角类 (名字以 -perspective 结尾) 的 skill",
+)
+@click.option(
+    "--name",
+    "only_names",
+    multiple=True,
+    help="只导入指定名字的 skill (可重复传, 名字用 frontmatter 的 name)",
+)
+@click.pass_obj
+def persona_import_dir(
+    ctx: CliContext,
+    source: Path,
+    perspective_only: bool,
+    only_names: tuple[str, ...],
+) -> None:
+    """批量导入 Nuwa-style 视角 skill 目录里的所有 persona.
+
+    遍历 source 的每个子目录下的 SKILL.md (nuwa 视角 skill 的标准布局),
+    逐个用 import_skill 注册进 agent 的 persona store
+    ({workspace}/.huginn/personas/), 之后 server 启动即自动加载.
+
+    --perspective-only: 只导入名字以 \"-perspective\" 结尾的
+    --name X: 只导入名字在 given list 里的 (沿用 frontmatter 的 name)
+    两种过滤可叠加.
+    """
+    from huginn.persona_loader import load_persona_skill
+    from huginn.personas import PersonaManager
+
+    mgr = PersonaManager(workspace=ctx.workspace)
+    want = set(only_names)
+    imported, skipped = [], []
+    for skill_path in sorted(source.glob("*/SKILL.md")):
+        # 先解析 frontmatter 拿名字/是否 nuwa, 再决定要不要导入
+        try:
+            p = load_persona_skill(skill_path)
+        except Exception:
+            skipped.append(f"{skill_path} (parse failed)")
+            continue
+        if want and p.name not in want:
+            continue
+        if perspective_only and not p.name.endswith("-perspective"):
+            continue
+        try:
+            mgr.import_skill(skill_path)
+            imported.append(p.name)
+        except Exception as e:
+            skipped.append(f"{p.name} ({e})")
+
+    if imported:
+        ctx.console.print(
+            f"[green]Imported {len(imported)} persona(s): {', '.join(imported)}[/green]"
+        )
+    else:
+        ctx.console.print("[yellow]No personas imported.[/yellow]")
+    for s in skipped:
+        ctx.console.print(f"[dim]  skipped: {s}[/dim]")
+
+
 @persona.command("create")
 @click.argument("name")
 @click.option("--prompt", required=True, help="System prompt text")
