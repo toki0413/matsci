@@ -400,6 +400,9 @@ class HuginnConfig:
     persona: str = "default"
     persona_auto_route: bool = True
     persona_auto_route_threshold: float = 0.3
+    # 启动时从外部 skill 目录(md/SKILL.md)自动同步视角类 persona
+    persona_auto_sync: bool = False
+    persona_sync_dir: str = ""
     rag_enabled: bool = False
 
     # Knowledge graph
@@ -753,6 +756,10 @@ class HuginnConfig:
             persona_auto_route_threshold=float(
                 os.environ.get("HUGINN_PERSONA_AUTO_ROUTE_THRESHOLD", "0.3")
             ),
+            persona_auto_sync=os.environ.get(
+                "HUGINN_PERSONA_AUTO_SYNC", ""
+            ).lower() in ("1", "true", "yes"),
+            persona_sync_dir=os.environ.get("HUGINN_PERSONA_SYNC_DIR", "").strip(),
             rag_enabled=os.environ.get("HUGINN_RAG_ENABLED", "").lower() == "true",
             kg_enabled=os.environ.get("HUGINN_KG_ENABLED", "").lower() == "true",
             kg_depth=int(os.environ.get("HUGINN_KG_DEPTH", "1")),
@@ -980,6 +987,8 @@ class HuginnConfig:
             "persona": self.persona,
             "persona_auto_route": self.persona_auto_route,
             "persona_auto_route_threshold": self.persona_auto_route_threshold,
+            "persona_auto_sync": self.persona_auto_sync,
+            "persona_sync_dir": self.persona_sync_dir,
             "rag_enabled": self.rag_enabled,
             "kg_enabled": self.kg_enabled,
             "kg_depth": self.kg_depth,
