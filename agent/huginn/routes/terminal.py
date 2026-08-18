@@ -54,9 +54,6 @@ async def terminal_websocket(websocket: WebSocket):
     if identity is None:
         return
 
-    if not websocket.scope.get("_ws_pre_accepted"):
-        await websocket.accept()
-
     # 从 query 取连接参数
     credential_id = websocket.query_params.get("credential_id")
     if not credential_id:

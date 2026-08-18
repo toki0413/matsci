@@ -99,9 +99,7 @@ async def agent_websocket(websocket: WebSocket):
     if identity is None:
         return
 
-    # ws_auth_and_track may have already accepted (first-message auth)
-    if not websocket.scope.get("_ws_pre_accepted"):
-        await websocket.accept()
+    # 握手已由 ws_auth_and_track 统一完成 (含 first-message auth 与断开保护).
 
     # Per-connection state
     _pending_approvals: dict[str, asyncio.Future[bool]] = {}

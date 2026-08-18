@@ -241,6 +241,16 @@ def build_sidecar():
         "websockets",
         # Scientific (lightweight only — heavy deps excluded below)
         "sympy",
+        # Knowledge base RAG (chromadb + ONNX embedder).  ONLY the ONNX path is
+        # bundled; sentence-transformers/torch stays excluded to keep the
+        # installer small — the KB defaults to chromadb's cached ONNX embedder.
+        "chromadb",
+        "chromadb.api.segment",
+        "chromadb.api.fastapi",
+        "chromadb.utils.embedding_functions",
+        "onnxruntime",
+        "tokenizers",
+        "huggingface_hub",
     ]
 
     cmd = [
@@ -251,6 +261,16 @@ def build_sidecar():
         "--noconfirm",
         *(f"--add-data={assets_src}{os.pathsep}{assets_dst}".split() if assets_src.exists() else []),
         *[f"--hidden-import={imp}" for imp in core_imports],
+        # chromadb bundles SQL migrations/proto data and the ONNX tokenizer
+        # model, which PyInstaller won't find via import analysis alone — must
+        # collect the full package so the KB embedder loads at runtime.
+        "--collect-all=chromadb",
+        "--collect-all=onnxruntime",
+        # serve.py imports uvicorn lazily inside the function and uvicorn
+        # wires its loop/protocols dynamically, so the import graph misses it.
+        # Collect it wholesale or `serve` reports "uvicorn not installed".
+        "--collect-all=uvicorn",
+        "--collect-submodules=fastapi",
         # Exclude heavy test/dev tools
         "--exclude-module=pytest",
         "--exclude-module=pytest_asyncio",
@@ -275,7 +295,6 @@ def build_sidecar():
         "--exclude-module=easyocr",
         "--exclude-module=skimage",
         "--exclude-module=sklearn",
-        "--exclude-module=scipy",
         "--exclude-module=matplotlib",
         "--exclude-module=numba",
         "--exclude-module=llvmlite",
@@ -287,9 +306,7 @@ def build_sidecar():
         "--exclude-module=lxml",
         "--exclude-module=PIL",
         "--exclude-module=cv2",
-        "--exclude-module=chromadb",
         "--exclude-module=sentence_transformers",
-        "--exclude-module=onnxruntime",
         "--exclude-module=tensorflow",
         str(PROJECT_ROOT / "scripts" / "entry.py"),
     ]
