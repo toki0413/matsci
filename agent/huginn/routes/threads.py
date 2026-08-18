@@ -395,3 +395,101 @@ async def event_path(thread_id: str, request: Request) -> dict[str, Any]:
     except Exception:
         logger.debug("event-path failed for %s", thread_id, exc_info=True)
         return {"thread_id": thread_id, "leaf_id": None, "path": []}
+
+
+@router.post("/threads/{thread_id}/compact")
+async def compact_thread(thread_id: str, request: Request) -> dict[str, Any]:
+    """手动触发一次长会话智能压缩 (对标 Codex /compact).
+
+    读取 checkpointer 里的会话历史, 把超出预算的旧消息让 LLM 折叠成一条摘要,
+    再从 checkpointer 真删除旧消息, 摘要写入 agent 的会话摘要侧 (下轮注入
+    system prompt, 跟运行时自动压缩同一条链路, 消息顺序因此不会被破坏).
+
+    Response: ``{ success, thread_id, before, after, summarized, summary }``.
+    """
+    err = _check_thread_owner(thread_id, request)
+    if err:
+        return err
+
+    import asyncio
+
+    from langchain_core.messages import RemoveMessage
+    from huginn.utils.context import summarize_compact_messages
+
+    try:
+        agent = await get_agent()
+        graph = agent.build_graph()
+        if graph is None:
+            return {"success": False, "error": "graph unavailable"}
+        config = {"configurable": {"thread_id": thread_id}}
+        snapshot = graph.get_state(config)
+        raw_msgs = snapshot.values.get("messages", []) if snapshot else []
+    except Exception:
+        logger.debug("compact failed to load thread state for %s", thread_id, exc_info=True)
+        return {"success": False, "error": "failed to load thread state"}
+
+    # 太短没有压缩价值, 直接跳过 (与 _sliding_window_compact 同阈值).
+    if len(raw_msgs) < 10:
+        return {"success": True, "thread_id": thread_id, "summarized": 0}
+
+    # 预算复用运行时配置; 摘要模型走与运行时相同的便宜模型分诊.
+    budget = getattr(agent, "context_budget_tokens", 0) or 0
+    summarizer = agent._make_summarizer()
+    existing = agent._build_compact_summary() if hasattr(agent, "_build_compact_summary") else ""
+
+    try:
+        compacted, summary_text = await summarize_compact_messages(
+            raw_msgs,
+            budget,
+            summarizer=summarizer,
+            existing_summary=existing,
+        )
+    except Exception:
+        logger.debug("summarize_compact_messages failed", exc_info=True)
+        return {"success": False, "error": "compaction failed"}
+
+    # 计算被折叠掉的旧消息 id, 用 LangGraph 官方 RemoveMessage + update_state
+    # 真删 checkpointer 历史 (与运行时 G34 同一套, 避免 checkpoint 无限膨胀).
+    keep_ids = {
+        m.id for m in compacted if getattr(m, "id", None)
+    }
+    drop_ids = [
+        m.id for m in raw_msgs
+        if getattr(m, "id", None) and m.id not in keep_ids
+    ]
+    removed = 0
+    if drop_ids and graph is not None:
+        try:
+            removals = [RemoveMessage(id=mid) for mid in drop_ids]
+            await asyncio.to_thread(graph.update_state, config, {"messages": removals})
+            removed = len(drop_ids)
+        except Exception:
+            logger.warning("checkpointer remove failed (compact endpoint)", exc_info=True)
+
+    # 摘要进会话摘要侧, 下轮自动注入 system prompt.
+    if summary_text:
+        try:
+            base = getattr(agent, "_conversation_summary", "") or ""
+            agent._conversation_summary = (
+                f"{base}\n{summary_text}".strip() if base else summary_text
+            )
+        except Exception:
+            logger.debug("store conversation summary failed", exc_info=True)
+
+    # 事件源记录一条 compaction divider, 让前端块模型渲染成 ── compacted ──.
+    try:
+        from huginn.events.session_writer import record_compaction
+        record_compaction(thread_id, summary_text or "")
+    except Exception:
+        logger.debug("record_compaction skipped", exc_info=True)
+
+    touch_thread(thread_id)
+    return {
+        "success": True,
+        "thread_id": thread_id,
+        "summarized": len(raw_msgs) - len(compacted),
+        "removed_from_checkpointer": removed,
+        "before": len(raw_msgs),
+        "after": len(compacted),
+        "summary": summary_text or "",
+    }
