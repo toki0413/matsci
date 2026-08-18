@@ -32,8 +32,7 @@
       "sidecars/huginn-sidecar"
     ],
     "resources": {
-      "python-runtime/**/*": "python-runtime/",
-      "sidecars/_internal/**/*": "_internal/"
+      "sidecars/_internal": "_internal/"
     },
     "icon": [
       "icons/32x32.png",
