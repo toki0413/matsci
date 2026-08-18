@@ -15,8 +15,12 @@ import time
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent.resolve()
+# agent/ 位于仓库根目录下, 真正的 Tauri 目录 desktop/ 是 agent/ 的同级目录.
+# 之前误用 PROJECT_ROOT / "desktop" 会把产物拷进 agent/desktop/ 这个空目录,
+# 导致真正的 desktop/src-tauri/sidecars 一直拿着旧的胖包.
+REPO_ROOT = PROJECT_ROOT.parent
 DIST_DIR = PROJECT_ROOT / "dist"
-SIDECAR_DIR = PROJECT_ROOT / "desktop" / "src-tauri" / "sidecars"
+SIDECAR_DIR = REPO_ROOT / "desktop" / "src-tauri" / "sidecars"
 
 
 def build_sidecar():
@@ -350,13 +354,10 @@ def build_sidecar():
         "--exclude-module=babel",
         "--exclude-module=Pythonwin",
         "--exclude-module=mace",
-        "--exclude-module=langchain",
-        "--exclude-module=langchain_core",
-        "--exclude-module=langchain_community",
-        "--exclude-module=langchain_openai",
-        "--exclude-module=langchain_text_splitters",
-        "--exclude-module=langsmith",
-        "--exclude-module=gptcache",
+        # NOTE: langchain / langchain_core / langgraph 被 agent 核心代码在模块
+        # 顶层 import (core.py, middlewares.py, streaming.py, checkpointer.py 等),
+        # 之前把它们 exclude 掉会让打包后的 sidecar 启动即 ModuleNotFoundError.
+        # 必须保留, 不能排除.
         "--exclude-module=chromadb.test",
         str(PROJECT_ROOT / "scripts" / "entry.py"),
     ]

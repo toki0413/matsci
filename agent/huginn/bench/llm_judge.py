@@ -21,8 +21,6 @@ import os
 import re
 from dataclasses import dataclass
 
-from langchain_openai import ChatOpenAI
-
 from .task import TaskResult
 
 
@@ -171,6 +169,11 @@ def judge_task(
         return JudgeRubric(reason="无 API key, 跳过 LLM judge", strict=strict)
 
     try:
+        # langchain_openai 只在 judge 路径用到, 惰性导入 — 打包时不带它
+        # (见 build_sidecar.py 的 exclude), 但 llm_judge 被 autoloop 导入链
+        # 拉到, 顶层 import 会在 sidecar 启动时直接崩.
+        from langchain_openai import ChatOpenAI
+
         llm = ChatOpenAI(
             model=model,
             api_key=key,

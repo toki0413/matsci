@@ -1,5 +1,5 @@
 provider = "deepseek"
-model = "deepseek-reasoner"
+model = "deepseek-v4-flash"
 api_key = ""  # P0-9: 从 DEEPSEEK_API_KEY 环境变量读, 不再明文硬编码
 base_url = "https://api.deepseek.com"
 team_mode_enabled = false
@@ -58,7 +58,7 @@ phys_steering_gain = 0.0
 [[models]]
 alias = "default"
 provider = "deepseek"
-model = "deepseek-reasoner"
+model = "deepseek-v4-flash"
 api_key = ""  # P0-9: 从 DEEPSEEK_API_KEY 环境变量读
 base_url = "https://api.deepseek.com"
 temperature = 0.7
