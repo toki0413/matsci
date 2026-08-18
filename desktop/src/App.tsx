@@ -58,13 +58,14 @@ import { LogsPanel } from "./components/panels/LogsPanel";
 import { TerminalPanel } from "./components/panels/TerminalPanel";
 import { PanelHeader } from "./components/settings-shared";
 import { GlobalSearch } from "./components/GlobalSearch";
+import { CommandPalette, type PaletteMode } from "./components/CommandPalette";
 import type { DiffEntry, Checkpoint, ToolInfo, SkillInfo, GlobalSearchResult } from "./types/domain";
 import {
   MessageSquare, Wrench, FolderTree, Terminal, Settings,
   Users, Code2, BookOpen,
   MessageCircle, Bird, Briefcase, HelpCircle,
   ChevronDown, Sparkles,
-  Search, Grid, Sun, Moon, Plus, Trash2, Globe,
+  Search, Grid, Sun, Moon, Plus, Trash2, Globe, Pencil,
   Maximize2, GitBranch, Brain, Cpu, Atom, Box, Gauge,
   NotepadText, Puzzle, Network, Workflow, Dna, Play, Compass,
   Stethoscope, NotebookPen, Eraser, Smile, User, PanelRight, Calculator,
@@ -74,6 +75,9 @@ const IS_PET_MODE = window.location.search.includes("pet=1");
 
 async function openPetWindow() {
   try {
+    if (localStorage.getItem("huginn:pet_enabled") === "0") {
+      return; // pet disabled in Settings
+    }
     const existing = await WebviewWindow.getByLabel("pet");
     if (existing) {
       await existing.setFocus();
@@ -110,6 +114,20 @@ function LoadingFallback() {
 
 export default function App() {
   const { theme, toggleTheme } = useTheme();
+
+  // Restore the user's chosen accent on startup. SettingsPanel writes the
+  // CSS vars + localStorage only when the color is picked; on reload the
+  // defaults win unless we re-apply here.
+  useEffect(() => {
+    const rgb = localStorage.getItem("accent-color");
+    if (!rgb) return;
+    document.documentElement.style.setProperty("--accent-rgb", rgb);
+    document.documentElement.style.setProperty("--seed-primary", `rgb(${rgb})`);
+  }, []);
+
+  // Inline rename for the chat sidebar thread rows.
+  const [editingThreadId, setEditingThreadId] = useState<string | null>(null);
+  const [editingLabel, setEditingLabel] = useState("");
 
   if (IS_PET_MODE) {
     return <Pet />;
@@ -174,6 +192,8 @@ export default function App() {
   const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
   const [toolSearch, setToolSearch] = useState("");
   const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [paletteMode, setPaletteMode] = useState<PaletteMode>('commands');
   const [draggedTab, setDraggedTab] = useState<string | null>(null);
   const [dragOverTab, setDragOverTab] = useState<string | null>(null);
   const [customTabOrder, setCustomTabOrder] = useState<any[]>(() => {
@@ -235,12 +255,15 @@ export default function App() {
   } = memory;
 
   const {
-    cwd, selectedFile,
+    cwd, selectedFile, tabs,
     editorContent, editorDirty, editorMsg,
+    editorCursor,
     terminalOutput, terminalInput, terminalEndRef,
-    setEditorContent, setEditorDirty,
+    setCwd,
+    setEditorCursor,
     setTerminalOutput, setTerminalInput,
-    loadDir, saveFile, renderTree,
+    loadDir, saveFile, renderTree, createDir,
+    openFile, activateTab, closeTab, onEditContent,
   } = useWorkspace();
 
   const {
@@ -798,6 +821,24 @@ export default function App() {
     },
   ];
 
+  // 任务/脚本快捷入口：切到终端运行当前打开的文件
+  const runCurrentFile = async () => {
+    if (!selectedFile) {
+      toast((t('cmd.noFileOpen') || 'No file is open'));
+      return;
+    }
+    setActiveTab("terminal");
+    setTerminalInput(`python "${selectedFile}"`);
+    setTerminalOutput((prev) => prev + "\n> python \"" + selectedFile + "\"\n");
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("write_terminal", { text: `python "${selectedFile}"\r\n` });
+      setTerminalInput("");
+    } catch (err: any) {
+      setTerminalOutput((prev) => prev + "[error] " + err + "\n");
+    }
+  };
+
   // Command palette actions
   const commandActions = [
     {
@@ -842,6 +883,14 @@ export default function App() {
       handler: () => { setToolPaletteOpen(false); setGlobalSearchOpen(true); },
       group: "search",
     },
+    // 任务/脚本快捷入口：切到终端并预填命令，回车即执行
+    {
+      id: "run-current-file",
+      label: t('cmd.runCurrentFile'),
+      icon: <Play size={16} />,
+      handler: runCurrentFile,
+      group: "task",
+    },
   ];
 
   // Apply custom tab order if saved
@@ -866,6 +915,23 @@ export default function App() {
       tabs: reordered.slice(idx, idx + groupSizes[gi]),
     }));
   })();
+
+  // 命令面板（Ctrl+Shift+P）可执行项：快捷命令 + 全部侧栏导航
+  const commandPaletteItems: Array<{ id: string; label: string; detail?: string; icon?: React.ReactNode; handler: () => void }> = [
+    ...commandActions.map((a) => ({ id: a.id, label: a.label as string, icon: a.icon, handler: a.handler })),
+    ...orderedSidebarGroups.flatMap((g) => g.tabs.map((tab) => ({
+      id: `tab-${tab.id}`,
+      label: String(tab.label),
+      detail: String(g.label),
+      handler: () => { setActiveTab(tab.id as typeof activeTab); },
+    }))),
+  ];
+
+  // 快速打开（Ctrl+P）：切到文件面板并打开该文件
+  const handlePaletteOpenFile = (path: string) => {
+    setActiveTab("files");
+    openFile(path);
+  };
 
   const handleTabDrop = (targetId: string) => {
     if (!draggedTab || draggedTab === targetId) return;
@@ -970,6 +1036,16 @@ export default function App() {
       if (isMod && e.shiftKey && e.key === "F") {
         e.preventDefault();
         setGlobalSearchOpen(true);
+      }
+      // VS Code 风格：Ctrl+P 或 Ctrl+N? 用 Ctrl+P 快速打开文件；Ctrl+Shift+P 打开命令面板
+      if (isMod && e.shiftKey && (e.key === "P" || e.key === "p")) {
+        e.preventDefault();
+        setPaletteMode("commands");
+        setCommandPaletteOpen(true);
+      } else if (isMod && !e.shiftKey && e.key === "p") {
+        e.preventDefault();
+        setPaletteMode("files");
+        setCommandPaletteOpen(true);
       }
       if (isMod && e.key === "n" && activeTab === "chat") {
         e.preventDefault();
@@ -1096,7 +1172,13 @@ export default function App() {
                   : "text-text-muted hover:bg-bg-tertiary hover:text-text-secondary"
               }`}
             >
-              {item.icon}
+              <span className="relative">
+                {/* agent 流式输出时给主会话图标打运行态点, 切到别的面板也有注意力锚 */}
+                {item.icon}
+                {item.id === "chat" && isStreaming && (
+                  <span className="absolute -right-1.5 -top-1.5 h-2 w-2 rounded-full bg-accent animate-[task-pulse_1.5s_ease-in-out_infinite]" aria-hidden="true" />
+                )}
+              </span>
             </button>
           ))}
         </div>
@@ -1129,7 +1211,34 @@ export default function App() {
                     className="flex min-w-0 flex-1 items-center gap-2 rounded-md py-0.5 text-left focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:outline-none"
                   >
                     <MessageSquare size={13} className="shrink-0 opacity-50" aria-hidden="true" />
-                    <span className="flex-1 truncate text-left">{th.label}</span>
+                    {editingThreadId === th.id ? (
+                      <input
+                        autoFocus
+                        value={editingLabel}
+                        onChange={(e) => setEditingLabel(e.target.value)}
+                        onBlur={() => {
+                          if (editingLabel.trim()) renameThread(th.id, editingLabel.trim());
+                          setEditingThreadId(null);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") e.currentTarget.blur();
+                          if (e.key === "Escape") setEditingThreadId(null);
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                        className="w-full min-w-0 rounded border border-accent/40 bg-bg-primary px-1.5 py-0.5 text-sm text-text-primary focus:outline-none"
+                        aria-label={`Rename conversation ${th.label}`}
+                      />
+                    ) : (
+                      <span className="flex-1 truncate text-left">{th.label}</span>
+                    )}
+                  </button>
+                  <button
+                    onClick={() => { setEditingLabel(th.label); setEditingThreadId(th.id); }}
+                    className="opacity-0 group-hover:opacity-100 text-text-muted hover:text-text-primary transition-opacity focus-visible:opacity-100"
+                    title={t('common.rename') || 'Rename'}
+                    aria-label={`Rename conversation ${th.label}`}
+                  >
+                    <Pencil size={13} aria-hidden="true" />
                   </button>
                   <button
                     onClick={() => deleteThread(th.id)}
@@ -1485,15 +1594,20 @@ export default function App() {
           <div hidden={activeTab !== "files"}>
             <FilesPanel
               cwd={cwd}
+              setCwd={setCwd}
+              tabs={tabs}
               selectedFile={selectedFile ?? ""}
               editorContent={editorContent}
               editorDirty={editorDirty}
               editorMsg={editorMsg}
-              setEditorContent={setEditorContent}
-              setEditorDirty={setEditorDirty}
               loadDir={loadDir}
               saveFile={saveFile}
               renderTree={renderTree}
+              createDir={createDir}
+              activateTab={activateTab}
+              closeTab={closeTab}
+              onEditContent={onEditContent}
+              onCursor={(line, col) => setEditorCursor({ line, col })}
             />
           </div>
 
@@ -1598,7 +1712,16 @@ export default function App() {
             onSelect={handleGlobalSearchSelect}
           />
 
-          <div hidden={activeTab !== "memory"}>
+          <CommandPalette
+            isOpen={commandPaletteOpen}
+            mode={paletteMode}
+            cwd={cwd}
+            commands={commandPaletteItems}
+            onClose={() => setCommandPaletteOpen(false)}
+            onOpenFile={handlePaletteOpenFile}
+          />
+
+          <div hidden={activeTab !== "memory"} className="h-full">
             <MemoryPanel
               memories={memories}
               memoriesLoading={memoriesLoading}
@@ -1684,7 +1807,7 @@ export default function App() {
             />
           )}
 
-          <div hidden={activeTab !== "settings"}>
+          <div hidden={activeTab !== "settings"} className="h-full">
             <SettingsPanel
               config={config}
               configDirty={configDirty}
@@ -2168,6 +2291,7 @@ export default function App() {
           wsReconnecting={wsReconnecting}
           wsFailed={wsFailed}
           cwd={cwd}
+          cursor={activeTab === "files" ? editorCursor : undefined}
         />
       </main>
 
@@ -2264,7 +2388,12 @@ export default function App() {
                               : "border-border bg-bg-tertiary hover:border-accent/50 hover:bg-accent/5"
                           } ${draggedTab === tab.id ? 'opacity-40' : ''}`}
                         >
-                          <span className="text-text-secondary">{tab.icon}</span>
+                          <span className="relative text-text-secondary">
+                            {tab.icon}
+                            {tab.id === "chat" && isStreaming && (
+                              <span className="absolute -right-1.5 -top-1.5 h-2 w-2 rounded-full bg-accent animate-[task-pulse_1.5s_ease-in-out_infinite]" aria-hidden="true" />
+                            )}
+                          </span>
                           <span className="text-[11px] font-medium leading-tight text-text-primary">
                             {toolSearch
                               ? (() => {

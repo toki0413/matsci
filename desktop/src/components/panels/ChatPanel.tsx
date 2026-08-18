@@ -4,6 +4,7 @@ import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { useTranslation } from 'react-i18next';
 import { formatTimeAgo } from '../../lib/constants';
 import { api } from '../../lib/api';
+import { downloadText } from '../../lib/download';
 import { toast } from '../Toast';
 import { ToolResultRenderer } from '../ToolResultRenderer';
 import { IterationTimeline } from '../IterationTimeline';
@@ -470,17 +471,9 @@ export function ChatPanel(props: ChatPanelProps) {
       mime = 'text/markdown';
     }
 
-    const blob = new Blob([content], { type: mime });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `huginn-conversation-${ts}.${format}`;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadText(content, `huginn-conversation-${ts}.${format}`, mime);
     toast.success(`Exported ${messages.length} messages as ${format.toUpperCase()}`);
   };
-
-  // Close context menu on any click outside
   useEffect(() => {
     if (!ctxMenu) return;
     const close = () => setCtxMenu(null);
@@ -1036,11 +1029,7 @@ status: ${heatEngineHealth.status}${heatEngineHealth.warnings.length ? '\nwarnin
                         if (m.role === 'tool') return `### 🔧 ${m.tool_name || 'Tool'}\n\n\`\`\`\n${m.tool_result || m.content}\n\`\`\``;
                         return m.content;
                       }).join('\n\n---\n\n');
-                      const blob = new Blob([`# Conversation Export\n\n${new Date().toISOString()}\n\n---\n\n${md}`], { type: 'text/markdown' });
-                      const url = URL.createObjectURL(blob);
-                      const a = document.createElement('a');
-                      a.href = url; a.download = `chat-${Date.now()}.md`; a.click();
-                      URL.revokeObjectURL(url);
+                      downloadText(`# Conversation Export\n\n${new Date().toISOString()}\n\n---\n\n${md}`, `chat-${Date.now()}.md`, 'text/markdown');
                       setShowExportMenu(false);
                       toast.success(t('chat.exportedAsMarkdown'));
                     }}
@@ -1051,11 +1040,7 @@ status: ${heatEngineHealth.status}${heatEngineHealth.warnings.length ? '\nwarnin
                   <button
                     onClick={() => {
                       const json = JSON.stringify({ exported_at: new Date().toISOString(), messages }, null, 2);
-                      const blob = new Blob([json], { type: 'application/json' });
-                      const url = URL.createObjectURL(blob);
-                      const a = document.createElement('a');
-                      a.href = url; a.download = `chat-${Date.now()}.json`; a.click();
-                      URL.revokeObjectURL(url);
+                      downloadText(json, `chat-${Date.now()}.json`, 'application/json');
                       setShowExportMenu(false);
                       toast.success(t('chat.exportedAsJson'));
                     }}
@@ -1981,7 +1966,7 @@ status: ${heatEngineHealth.status}${heatEngineHealth.warnings.length ? '\nwarnin
                         }`}
                       >
                         <span className={`flex h-4 w-4 items-center justify-center rounded-full text-[10px] ${
-                          currentPersona === p.name ? 'bg-purple-500 text-white' : 'bg-bg-tertiary text-text-muted'
+                          currentPersona === p.name ? 'bg-accent text-white' : 'bg-bg-tertiary text-text-muted'
                         }`}>
                           {p.name[0].toUpperCase()}
                         </span>

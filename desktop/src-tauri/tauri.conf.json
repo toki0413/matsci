@@ -28,7 +28,6 @@
     "targets": ["nsis"],
     "useLocalToolsDir": true,
     "externalBin": [
-      "sidecars/huginn",
       "sidecars/huginn-sidecar"
     ],
     "resources": {

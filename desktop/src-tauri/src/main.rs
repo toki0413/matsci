@@ -311,7 +311,9 @@ async fn start_backend(
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| config_dir.join("huginn.toml").to_string_lossy().to_string());
 
-    // ── Production: try sidecars first ──────────────────────────────
+    // ── Production: spawn the sidecar, fail loudly if absent ────────
+    // Legacy `huginn` sidecar fallback removed: if the new sidecar is
+    // missing we surface the error instead of silently running an old build.
     if !is_dev {
         // Desktop app runs locally — always bypass auth so Pet window
         // and main window can connect without token dance.
@@ -321,74 +323,43 @@ async fn start_backend(
         let model = std::env::var("HUGINN_MODEL").unwrap_or_default();
         let config_file = std::env::var("HUGINN_CONFIG_FILE").unwrap_or_default();
 
-        if let Ok(sidecar) = app.shell().sidecar("huginn-sidecar") {
-            eprintln!("[start_backend] Found huginn-sidecar, spawning...");
-            let (mut rx, child) = sidecar
-                // sidecar 默认进 CLI(chat/help), 必须显式带 serve 才会起 HTTP 服务
-                .args(["serve", "--port", &port.to_string()])
-                .env("HUGINN_DEV_MODE", &dev_mode)
-                .env("DEEPSEEK_API_KEY", &deepseek_key)
-                .env("HUGINN_PROVIDER", &provider)
-                .env("HUGINN_MODEL", &model)
-                .env("HUGINN_CONFIG_FILE", &config_file)
-                .env("PYTHONUNBUFFERED", "1")
-                .spawn()
-                .map_err(|e| format!("failed to spawn huginn-sidecar: {}", e))?;
+        eprintln!("[start_backend] Found huginn-sidecar, spawning...");
+        let (mut rx, child) = app
+            .shell()
+            .sidecar("huginn-sidecar")
+            .map_err(|e| format!("huginn-sidecar missing: {}", e))?
+            // sidecar 默认进 CLI(chat/help), 必须显式带 serve 才会起 HTTP 服务
+            .args(["serve", "--port", &port.to_string()])
+            .env("HUGINN_DEV_MODE", &dev_mode)
+            .env("DEEPSEEK_API_KEY", &deepseek_key)
+            .env("HUGINN_PROVIDER", &provider)
+            .env("HUGINN_MODEL", &model)
+            .env("HUGINN_CONFIG_FILE", &config_file)
+            .env("PYTHONUNBUFFERED", "1")
+            .spawn()
+            .map_err(|e| format!("failed to spawn huginn-sidecar: {}", e))?;
 
-            let app_stdout = app.clone();
-            tauri::async_runtime::spawn(async move {
-                while let Some(event) = rx.recv().await {
-                    let (source, bytes) = match event {
-                        CommandEvent::Stdout(b) => ("stdout", b),
-                        CommandEvent::Stderr(b) => ("stderr", b),
-                        _ => continue,
-                    };
-                    let text = String::from_utf8_lossy(&bytes).to_string();
-                    let _ = app_stdout.emit(
-                        "backend-log",
-                        serde_json::json!({"source": source, "text": text}),
-                    );
-                }
-            });
+        let app_stdout = app.clone();
+        tauri::async_runtime::spawn(async move {
+            while let Some(event) = rx.recv().await {
+                let (source, bytes) = match event {
+                    CommandEvent::Stdout(b) => ("stdout", b),
+                    CommandEvent::Stderr(b) => ("stderr", b),
+                    _ => continue,
+                };
+                let text = String::from_utf8_lossy(&bytes).to_string();
+                let _ = app_stdout.emit(
+                    "backend-log",
+                    serde_json::json!({"source": source, "text": text}),
+                );
+            }
+        });
 
-            *state.backend.lock().unwrap() = Some(child);
-            return Ok("started".to_string());
-        }
-
-        if let Ok(sidecar) = app.shell().sidecar("huginn") {
-            let (mut rx, child) = sidecar
-                .args(["serve", "--port", "8000"])
-                .env("HUGINN_DEV_MODE", &dev_mode)
-                .env("DEEPSEEK_API_KEY", &deepseek_key)
-                .env("HUGINN_PROVIDER", &provider)
-                .env("HUGINN_MODEL", &model)
-                .env("HUGINN_CONFIG_FILE", &config_file)
-                .env("PYTHONUNBUFFERED", "1")
-                .spawn()
-                .map_err(|e| format!("failed to spawn huginn sidecar: {}", e))?;
-
-            let app_stdout = app.clone();
-            tauri::async_runtime::spawn(async move {
-                while let Some(event) = rx.recv().await {
-                    let (source, bytes) = match event {
-                        CommandEvent::Stdout(b) => ("stdout", b),
-                        CommandEvent::Stderr(b) => ("stderr", b),
-                        _ => continue,
-                    };
-                    let text = String::from_utf8_lossy(&bytes).to_string();
-                    let _ = app_stdout.emit(
-                        "backend-log",
-                        serde_json::json!({"source": source, "text": text}),
-                    );
-                }
-            });
-
-            *state.backend.lock().unwrap() = Some(child);
-            return Ok("started (legacy sidecar)".to_string());
-        }
+        *state.backend.lock().unwrap() = Some(child);
+        return Ok("started".to_string());
     }
 
-    // ── Dev / standalone fallback: direct Python ────────────────────
+    // ── Dev fallback: direct Python ─────────────────────────────────
     eprintln!("[start_backend] Using Python fallback (dev={})", is_dev);
 
     // Use system Python from PATH. The installed python-runtime directory

@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next';
+import { downloadJson } from '../../lib/download';
 
 interface BenchmarkPanelProps {
   isConnected: boolean;
@@ -45,7 +46,15 @@ export function BenchmarkPanel({
 
         {benchResult && (
           <div className="card space-y-3">
-            <h3 className="text-sm font-semibold">{t('benchmark.report')}</h3>
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold">{t('benchmark.report')}</h3>
+              <button
+                onClick={() => downloadJson(benchResult, `benchmark-${Date.now()}.json`)}
+                className="btn-secondary px-3 py-1 text-xs"
+              >
+                {t('benchmark.export') || 'Export JSON'}
+              </button>
+            </div>
             <div className="text-xs text-text-secondary">
               {t('benchmark.passRate')} {(benchResult.metrics?.pass_rate * 100).toFixed(0)}% · {t('benchmark.total')} {benchResult.total} · {t('benchmark.passed')} {benchResult.passed} · {t('benchmark.failed')} {benchResult.failed} · {t('benchmark.skipped')} {benchResult.skipped}
             </div>

@@ -11,6 +11,7 @@
     "core:webview:allow-create-webview-window",
     "shell:default",
     "notification:default",
+    "dialog:default",
     {
       "identifier": "shell:allow-spawn",
       "allow": [

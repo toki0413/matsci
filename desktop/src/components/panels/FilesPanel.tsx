@@ -1,26 +1,35 @@
 import { useState, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { FolderTree } from 'lucide-react';
+import { open } from '@tauri-apps/plugin-dialog';
 import { PanelHeader } from '../settings-shared';
 import EmptyState from '../EmptyState';
 import { api } from '../../lib/api';
+import { downloadBlob } from '../../lib/download';
+import { CodeMirrorEditor } from '../editor/CodeMirrorEditor';
 
 interface FilesPanelProps {
   cwd: string;
+  setCwd: (v: string) => void;
+  tabs: Array<{ path: string; content: string; dirty: boolean }>;
   selectedFile: string;
   editorContent: string;
   editorDirty: boolean;
   editorMsg: string;
-  setEditorContent: (v: string) => void;
-  setEditorDirty: (v: boolean) => void;
   loadDir: (dir: string) => void;
   saveFile: () => void;
   renderTree: (dir: string) => React.ReactNode;
+  createDir: (path: string) => Promise<string>;
+  activateTab: (path: string) => void;
+  closeTab: (path: string) => void;
+  onEditContent: (path: string, content: string) => void;
+  onCursor: (line: number, col: number) => void;
 }
 
 export function FilesPanel({
-  cwd, selectedFile, editorContent, editorDirty, editorMsg,
-  setEditorContent, setEditorDirty, loadDir, saveFile, renderTree,
+  cwd, setCwd, tabs, selectedFile, editorContent, editorDirty, editorMsg,
+  loadDir, saveFile, renderTree, createDir,
+  activateTab, closeTab, onEditContent, onCursor,
 }: FilesPanelProps) {
   const { t } = useTranslation();
   const [remoteFiles, setRemoteFiles] = useState<any[] | null>(null);
@@ -70,16 +79,26 @@ export function FilesPanel({
     }
   };
 
+  const openFolder = async () => {
+    let dir: string | null = null;
+    try {
+      const picked = await open({ directory: true, multiple: false, title: t('files.openFolderTitle') });
+      if (typeof picked === 'string' && picked) dir = picked;
+    } catch {
+      // 非 Tauri 环境（纯 web）降级：手动输入路径
+      dir = window.prompt('请输入要打开的文件夹路径:');
+    }
+    if (!dir) return;
+    setCwd(dir);
+    await loadDir(dir);
+    setRemoteFiles(null);
+  };
+
   const downloadRemote = async (path: string) => {
     setTransferMsg(`Downloading ${path}…`);
     try {
       const blob = await api.getBlob(`/transfer/download?path=${encodeURIComponent(path)}`);
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = path.split('/').pop() || 'download';
-      a.click();
-      URL.revokeObjectURL(url);
+      downloadBlob(blob, path.split('/').pop() || 'download');
       setTransferMsg(`Downloaded ${path}`);
     } catch (err: any) {
       setTransferMsg(`Download failed: ${err.message}`);
@@ -91,6 +110,13 @@ export function FilesPanel({
       {/* File tree sidebar */}
       <aside className="flex w-72 flex-col border-r border-border bg-bg-secondary">
         <PanelHeader title={t('files.workspace')}>
+          <button
+            onClick={openFolder}
+            className="text-xs font-semibold text-accent hover:text-text-primary"
+            title={t('files.openFolderTitle')}
+          >
+            {t('files.open')}
+          </button>
           <button
             onClick={() => cwd && loadDir(cwd)}
             className="text-xs text-text-secondary hover:text-text-primary"
@@ -115,6 +141,21 @@ export function FilesPanel({
             className="text-xs text-text-secondary hover:text-text-primary"
           >
             {t('files.sync')}
+          </button>
+          <button
+            onClick={async () => {
+              const name = window.prompt('新建文件夹名称:');
+              if (!name) return;
+              try {
+                await createDir(`${cwd}\\${name}`);
+                loadDir(cwd);
+              } catch (err: any) {
+                setTransferMsg(String(err.message || err));
+              }
+            }}
+            className="text-xs font-semibold text-accent hover:text-text-primary"
+          >
+            + 文件夹
           </button>
         </PanelHeader>
         <div className="flex-1 overflow-y-auto p-2">
@@ -154,14 +195,42 @@ export function FilesPanel({
 
       {/* Editor */}
       <div className="flex flex-1 flex-col bg-bg-primary">
-        {/* ponytail: raw div, not PanelHeader — title is a dynamic file path needing
-            truncate + font-medium, which PanelHeader's <h2> can't express. Add a
-            titleClassName prop to PanelHeader if a second case shows up. */}
-        <div className="flex h-12 items-center justify-between border-b border-border bg-bg-secondary px-4">
-          <span className="text-sm font-medium truncate">
-            {selectedFile || t('files.noFileSelected')}
-          </span>
-          <div className="flex items-center gap-3">
+        {/* Tab 栏：列出所有已打开的会话，可切换/关闭。始终可见，保证多文件好操作 */}
+        <div className="flex h-9 items-center border-b border-border bg-bg-secondary">
+          <div className="flex flex-1 items-center overflow-x-auto">
+            {tabs.length === 0 && (
+              <span className="px-3 text-xs text-text-muted">{t('files.noFileSelected')}</span>
+            )}
+            {tabs.map((tab) => {
+              const fname = tab.path.split(/[\\/]/).pop() || tab.path;
+              const active = tab.path === selectedFile;
+              return (
+                <button
+                  key={tab.path}
+                  onClick={() => activateTab(tab.path)}
+                  className={`group flex items-center gap-1 border-r border-border px-3 py-2 text-xs whitespace-nowrap ${
+                    active ? 'bg-bg-primary text-text-primary' : 'text-text-secondary hover:bg-bg-tertiary'
+                  }`}
+                >
+                  <span className="max-w-40 truncate">{fname}</span>
+                  {tab.dirty && <span className="text-warning">●</span>}
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    onClick={(e) => { e.stopPropagation(); closeTab(tab.path); }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); closeTab(tab.path); }
+                    }}
+                    className="text-text-muted hover:text-danger"
+                    title={t('files.close')}
+                  >
+                    ✕
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          <div className="flex items-center gap-3 px-4">
             {editorDirty && (
               <span className="text-xs text-warning">{t('files.unsavedChanges')}</span>
             )}
@@ -171,22 +240,21 @@ export function FilesPanel({
             <button
               onClick={saveFile}
               disabled={!selectedFile || !editorDirty}
-              className="btn-primary px-3 py-1.5 text-xs"
+              className="btn-primary px-3 py-1 text-xs"
             >
               {t('files.save')}
             </button>
           </div>
         </div>
         {selectedFile ? (
-          <textarea
-            value={editorContent}
-            onChange={(e) => {
-              setEditorContent(e.target.value);
-              setEditorDirty(true);
-            }}
-            className="flex-1 resize-none bg-bg-primary p-4 font-mono text-sm text-text-primary focus:outline-none"
-            spellCheck={false}
-          />
+          <div className="min-h-0 flex-1">
+            <CodeMirrorEditor
+              path={selectedFile}
+              value={editorContent}
+              onChange={onEditContent}
+              onCursor={onCursor}
+            />
+          </div>
         ) : (
           <div className="flex flex-1 items-center justify-center text-sm text-text-muted">
             {t('files.selectHint')}

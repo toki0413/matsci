@@ -6,6 +6,7 @@ import { PanelHeader } from '../settings-shared';
 import EmptyState from '../EmptyState';
 import { SkeletonText } from '../Skeleton';
 import type { MemoryEntry, MemoryLayers, MemoryStats } from '../../types/domain';
+import { downloadJson } from '../../lib/download';
 
 export interface MemoryPanelProps {
   memories: MemoryEntry[];
@@ -110,6 +111,13 @@ export function MemoryPanel({
           <button onClick={syncMemoryMd} className="btn-secondary px-3 py-1.5 text-xs">{t('memory.sync')}</button>
           <button onClick={pruneMemory} className="btn-secondary px-3 py-1.5 text-xs">{t('memory.prune')}</button>
           <button onClick={loadMemory} className="btn-secondary px-3 py-1.5 text-xs">{t('memory.refresh')}</button>
+          <button
+            onClick={() => downloadJson(sortedMemories, `memory-${Date.now()}.json`)}
+            className="btn-secondary px-3 py-1.5 text-xs"
+            title={t('memory.export') || 'Export visible'}
+          >
+            {t('memory.export') || 'Export'}
+          </button>
         </div>
       </PanelHeader>
       {memoryView === 'layers' ? (
@@ -183,7 +191,7 @@ export function MemoryPanel({
           {memoryMsg && <p className="text-xs text-text-secondary">{memoryMsg}</p>}
         </div>
         <div className="flex flex-1 flex-col overflow-hidden bg-bg-primary p-4">
-          <div className="mem-search-bar items-center gap-2">
+          <div className="mem-search-bar flex items-center gap-2">
             <input
               className="input-field flex-1 text-xs"
               placeholder={t('memory.searchPh')}
