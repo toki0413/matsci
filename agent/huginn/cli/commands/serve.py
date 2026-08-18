@@ -153,6 +153,9 @@ def serve(ctx: CliContext, port: int, host: str) -> None:
         _uvicorn_server = _build_drainable_server(app, host=host, port=port)
         _uvicorn_server.run()
     except ImportError:
+        import traceback
+
+        traceback.print_exc()
         ctx.console.print(
             "[red]uvicorn not installed. Run: pip install uvicorn fastapi[/red]"
         )

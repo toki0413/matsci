@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "huginn-agent"
-version = "1.3.0"
+version = "1.3.2"
 description = "General Scientific Research Agent Harness (simulation, formal math, causal analysis, knowledge distillation, multi-agent collaboration)"
 readme = "README.md"
 license = {text = "MIT"}
@@ -118,8 +118,9 @@ include = ["huginn*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-# --cov-fail-under is NOT set here: CI passes --cov-fail-under=60 explicitly
-# (see .github/workflows/ci.yml). Local runs use [tool.coverage.report].fail_under.
+# 覆盖门禁只在本地/单独跑 --cov 时由 [tool.coverage.report].fail_under=60 强制;
+# CI 全量 job 因串行防 OOM 显式用 `-p no:cov` 关闭覆盖率(见 ci.yml#168),
+# 不再声称 CI 会传 --cov-fail-under=60——那句是失实的纸面门禁, 已移除。
 addopts = "--cov=huginn --cov-report=term-missing"
 markers = [
     "integration: heavy tests that need full stack (skip on fast CI)",

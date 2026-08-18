@@ -106,8 +106,13 @@ app.add_middleware(
 
 
 # ── Rate limiting (sliding window per client IP) ──────────────────────
-# Default to 120 req/min when not explicitly configured. Set to 0 to disable.
-_RATE_LIMIT = int(os.environ.get("HUGINN_RATE_LIMIT_PER_MINUTE", "120"))
+# 生产默认 120 req/min, 设 0 关闭. dev 本地 / 桌面 E2E 会把整套流量折叠到
+# 127.0.0.1 单 IP, 120/min 一轮全量就被打满误回 429, 所以 dev 下默认关掉,
+# 只有显式配了 HUGINN_RATE_LIMIT_PER_MINUTE 才生效.
+_DEV_MODE = os.environ.get("HUGINN_DEV_MODE", "").lower() in ("1", "true", "yes")
+_RATE_LIMIT = int(
+    os.environ.get("HUGINN_RATE_LIMIT_PER_MINUTE", "0" if _DEV_MODE else "120")
+)
 _AUTH_RATE_LIMIT = 10  # stricter per-IP limit for /auth/login and /auth/token
 _rate_buckets: dict[str, deque] = defaultdict(deque)
 _RATE_WINDOW = 60.0  # seconds
@@ -130,8 +135,16 @@ async def rate_limit_middleware(request: Request, call_next):
         return await call_next(request)
 
     # Skip health checks, docs, and the Prometheus scrape endpoint.
+    # 健康检查走 /health/live、/health/ready 这些子路径, 前缀匹配才真正豁免,
+    # 否则测试/探针高频打健康端点会被当普通请求计入 per-IP 限流, 误回 429.
     path = request.url.path
-    if path in ("/health", "/docs", "/openapi.json", "/redoc", "/metrics", "/diagnostics"):
+    if path == "/health" or path.startswith("/health/") or path in (
+        "/docs",
+        "/openapi.json",
+        "/redoc",
+        "/metrics",
+        "/diagnostics",
+    ):
         return await call_next(request)
 
     client_ip = request.client.host if request.client else "unknown"
