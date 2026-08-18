@@ -263,8 +263,17 @@ def build_sidecar():
         *[f"--hidden-import={imp}" for imp in core_imports],
         # chromadb bundles SQL migrations/proto data and the ONNX tokenizer
         # model, which PyInstaller won't find via import analysis alone — must
-        # collect the full package so the KB embedder loads at runtime.
-        "--collect-all=chromadb",
+        # collect the package data so the KB embedder loads at runtime.
+        #
+        # Note: we use --collect-data + --collect-submodules instead of
+        # --collect-all. collect-all also pulls chromadb's giant optional
+        # dependency tree (torch, jax, PyQt5, bitsandbytes, datasets, ...),
+        # inflating the sidecar by ~2GB for features we never use. The KB only
+        # needs the persistent client + the bundled ONNX MiniLM embedder.
+        "--collect-data=chromadb",
+        "--collect-submodules=chromadb.api",
+        "--collect-submodules=chromadb.telemetry",
+        "--collect-submodules=chromadb.utils",
         "--collect-all=onnxruntime",
         # serve.py imports uvicorn lazily inside the function and uvicorn
         # wires its loop/protocols dynamically, so the import graph misses it.
@@ -308,6 +317,47 @@ def build_sidecar():
         "--exclude-module=cv2",
         "--exclude-module=sentence_transformers",
         "--exclude-module=tensorflow",
+        # ChromaDB's optional extras drag in a huge dependency tree that the KB
+        # never exercises (client-side persistent store + ONNX MiniLM only).
+        # Keep them out so the sidecar stays lean.
+        "--exclude-module=jax",
+        "--exclude-module=jaxlib",
+        "--exclude-module=bitsandbytes",
+        "--exclude-module=PyQt5",
+        "--exclude-module=PyQt6",
+        "--exclude-module=datasets",
+        "--exclude-module=datasets_benchmark",
+        "--exclude-module=modelscope",
+        "--exclude-module=trl",
+        "--exclude-module=opt_einsum",
+        "--exclude-module=netCDF4",
+        "--exclude-module=rdkit",
+        "--exclude-module=selenium",
+        "--exclude-module=patchright",
+        "--exclude-module=polars",
+        "--exclude-module=botocore",
+        "--exclude-module=boto3",
+        "--exclude-module=transformers",
+        "--exclude-module=torchmetrics",
+        "--exclude-module=torchtext",
+        "--exclude-module=torchvision",
+        "--exclude-module=spherely",
+        "--exclude-module=seaborn",
+        "--exclude-module=dask",
+        "--exclude-module=xarray",
+        "--exclude-module=h5py",
+        "--exclude-module=sphinx",
+        "--exclude-module=babel",
+        "--exclude-module=Pythonwin",
+        "--exclude-module=mace",
+        "--exclude-module=langchain",
+        "--exclude-module=langchain_core",
+        "--exclude-module=langchain_community",
+        "--exclude-module=langchain_openai",
+        "--exclude-module=langchain_text_splitters",
+        "--exclude-module=langsmith",
+        "--exclude-module=gptcache",
+        "--exclude-module=chromadb.test",
         str(PROJECT_ROOT / "scripts" / "entry.py"),
     ]
 
