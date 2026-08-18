@@ -109,12 +109,14 @@ test.describe('text + reasoning dual-stream rendering', () => {
   });
 
   test('interleaved text and reasoning deltas land in separate areas', async ({ page }) => {
+    // No `done`: 保持 turn 处于 streaming, reasoning 披露保持展开 (open);
+    // 若发 done, timestamp 离开 streaming 会立即折叠 details, webkit 下
+    // 折叠立刻隐藏内容, 断言就会在关闭的 details 里找 REASON-A 而失败.
     await sendAndAwaitStream(page, [
       { type: 'reasoning_delta', text: 'REASON-A' },
       { type: 'text_delta', text: 'TEXT-A' },
       { type: 'reasoning_delta', text: 'REASON-B' },
       { type: 'text_delta', text: 'TEXT-B' },
-      { type: 'done' },
     ]);
 
     // Text deltas accumulate in the message body.

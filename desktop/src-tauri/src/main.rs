@@ -5,7 +5,6 @@ use std::io::{Read, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::Mutex;
 
-use serde::Serialize;
 use tauri::{
     Emitter, Manager,
     menu::{Menu, MenuItem},
@@ -309,6 +308,8 @@ async fn start_backend(
         if let Ok(sidecar) = app.shell().sidecar("huginn-sidecar") {
             eprintln!("[start_backend] Found huginn-sidecar, spawning...");
             let (mut rx, child) = sidecar
+                // sidecar 默认进 CLI(chat/help), 必须显式带 serve 才会起 HTTP 服务
+                .args(["serve", "--port", &port.to_string()])
                 .env("HUGINN_DEV_MODE", &dev_mode)
                 .env("DEEPSEEK_API_KEY", &deepseek_key)
                 .env("HUGINN_PROVIDER", &provider)

@@ -52,12 +52,23 @@ def engine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AutoloopEngine:
     )
     monkeypatch.setattr("huginn.autoloop.engine.AutoloopEngine._get_kb", lambda self: None)
     monkeypatch.setattr("huginn.autoloop.conjecture.get_kg", lambda *a, **kw: None)
+    # 根因: 本文件声明 all-LLM-hermetic, 但 verification 槽走真实的
+    # select_model("verification") → 拿到真 LLM → RedTeam 对抗审查 mock 的单薄
+    # evidence → validate→learn 被真实门禁拒绝, full-loop 断言缺 learn。
+    # 补上这最后一个 slot, _llm_findings 因 _mock_name 跳过, 只留确定性扫描。
+    monkeypatch.setattr(
+        "huginn.autoloop.engine.AutoloopEngine.select_model", lambda self, slot: MagicMock()
+    )
 
     # 注册核心工具, 供主循环 dispatch_tool 分派真实工具
     import huginn.tools as _tools
     _tools.register_core_tools()
 
     eng = AutoloopEngine(workspace=tmp_path)
+    # 密封守卫: 任一模型槽一旦漏桩(select_model 走向真实 router/self.model),
+    # 构造期直接引爆, 而不是像 982ea42 之前的 bug 那样等 full-loop 跑到
+    # validate→learn 才被真实 RedTeam 门禁静默拦下。
+    _assert_llm_slots_hermetic(eng)
     return eng
 
 
@@ -71,6 +82,20 @@ def _isolate_phase_registry():
     """
     yield
     PhaseRegistry._instance = None
+
+
+def _assert_llm_slots_hermetic(eng: AutoloopEngine) -> None:
+    """构造期强制本文件 all-LLM-hermetic: 关键模型槽必须全是 mock.
+
+    任何槽泄漏(real router / self.model)→ 真实 LLM → full-loop 到
+    validate→learn 会被真实 RedTeam 对抗审查拦下, 测试结果取决于网络与
+    环境噪音。显式枚举主循环实际会查询的槽位, 一票否决真实模型。
+    """
+    for task in ("verification", "agent", "summarize"):
+        model = eng.select_model(task)
+        assert isinstance(model, MagicMock), (
+            f"hermetic boundary leaked on slot '{task}': got {type(model).__name__}"
+        )
 
 
 def _set_execute_whitelist(*tools: str) -> None:

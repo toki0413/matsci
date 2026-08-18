@@ -101,6 +101,33 @@ test.describe('accessibility — keyboard navigation', () => {
   });
 
   test('send button is keyboard-activatable', async ({ page }) => {
+    // The Send button stays disabled until isConnected flips true. Under a
+    // full-suite run the real WS can connect slowly (or the probe thread is
+    // starved), so a plain goto flakes toEnabled on Firefox. This a11y test
+    // is about keyboard activation, not connectivity -- stub the WS so the
+    // button's enable/disable is deterministic and the keyboard path alone
+    // is exercised. Mirrors the mock in chat.spec.ts.
+    await page.addInitScript(() => {
+      window.WebSocket = class MockWS {
+        onopen: ((ev: any) => void) | null = null;
+        onmessage: ((ev: any) => void) | null = null;
+        onclose: ((ev: any) => void) | null = null;
+        onerror: ((ev: any) => void) | null = null;
+        url: string;
+        readyState = 0;
+        private closed = false;
+        constructor(url: string) {
+          this.url = url;
+          setTimeout(() => {
+            if (this.closed) return;
+            this.readyState = 1; // OPEN
+            this.onopen?.({ type: 'open' });
+          }, 0);
+        }
+        send() { /* not needed here; just keep the WS "open" */ }
+        close() { this.closed = true; this.readyState = 3; }
+      };
+    });
     await page.goto('/');
     // The /events/stream SSE keeps the page "network active" forever, so
     // networkidle never fires. Await the chat input being enabled instead —
@@ -113,11 +140,20 @@ test.describe('accessibility — keyboard navigation', () => {
     expect(await input.inputValue()).toBe('keyboard test');
 
     const sendBtn = page.getByRole('button', { name: 'Send', exact: true });
+    // fill() 只写进 DOM, disabled 由 React 受控态决定; 不等按钮真正使能就 focus,
+    // 会在 disabled→enabled 的竞态窗口里拿到 "inactive" 偶发失败。先钉住使能态。
+    await expect(sendBtn).toBeEnabled({ timeout: 10_000 });
     await sendBtn.focus();
     await expect(sendBtn).toBeFocused();
 
     await page.keyboard.press('Enter');
-    await page.waitForTimeout(500);
+
+    // Pressing Enter must actually send: sendMessage optimistically clears the
+    // input and renders the user message, so both are observable even though
+    // the mock WS never replies. This is what proves the keyboard path works —
+    // without it, a broken Enter handler would silently pass.
+    await expect(input).toHaveValue('', { timeout: 10_000 });
+    await expect(page.getByText('keyboard test')).toBeVisible({ timeout: 10_000 });
   });
 });
 
