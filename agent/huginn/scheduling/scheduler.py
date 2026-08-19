@@ -296,8 +296,10 @@ class ToolScheduler:
         """
         job_id = f"job_{uuid.uuid4().hex[:12]}"
         cores = None
+        gpu_hours = None
         if cost is not None:
             cores = cost.get("cpu_hours")
+            gpu_hours = cost.get("gpu_hours")
         record = JobRecord(
             job_id=job_id,
             tool_name=tool_name,
@@ -307,6 +309,7 @@ class ToolScheduler:
             working_dir=working_dir,
             compute_action=compute_action,
             cores_requested=cores,
+            gpu_hours_requested=gpu_hours,
             queue_position=self.store.next_queue_position(),
         )
         self.store.upsert_job(record)
@@ -433,12 +436,20 @@ class ToolScheduler:
           job_tool / HPC layer to pick up.
         - Jobs left ``queued`` → re-enqueued in memory (FIFO order preserved by
           ``queue_position``).
+        - In ``current`` budget mode, orphaned jobs request machine-hours at a
+          remote layer that keeps running across the restart; we fold their
+          requested hours back into the concurrent-occupancy budget so a fresh
+          process doesn't see a zeroed account and flood past the cap.
 
         Returns a small summary for logging.
         """
         orphaned = 0
         requeued = 0
         for rec in self.store.list_jobs_by_status("running"):
+            # These were admitted before the crash; in current mode their
+            # machine-hours are still burning remotely, so recount them.
+            if self.policy.budget_mode == "current":
+                self._count_orphaned(rec)
             rec.status = "orphaned"
             rec.finished_at = time.time()
             rec.error = "orphaned: no live task on restart"
@@ -450,6 +461,14 @@ class ToolScheduler:
             # keep the record so poll_job still reflects "queued".
             requeued += 1
         return {"orphaned": orphaned, "requeued": requeued}
+
+    def _count_orphaned(self, rec: JobRecord) -> None:
+        """Fold an orphaned job's requested hours back into the budget."""
+        with self._budget_lock:
+            if rec.cores_requested is not None:
+                self._cpu_hours_used += rec.cores_requested
+            if rec.gpu_hours_requested is not None:
+                self._gpu_hours_used += rec.gpu_hours_requested
 
     def touch(self, job_id: str) -> None:
         """Mark ``job_id`` as making progress (P2 heartbeat).
