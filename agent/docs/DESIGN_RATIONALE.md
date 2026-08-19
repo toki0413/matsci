@@ -199,6 +199,16 @@ harness 侧有明确的 H0→H5 路线（见 [harness_evolution_spec.md](harness
 - **选它**：env/events/tools/routes 等由代码生成，永不漂移。
 - **代价**：契约"全面"但**不解释为什么**——所以需要本文档补上设计论据那一半。
 
+### D-6 不去中心化核心仲裁，也不收敛 Orchestrator/SubagentDispatch
+- **背景**：对照 oh-my-pi（子代理隔离工作树）与 DeepSeek Harness（插件化注册 + 可逆副作用 + 时空可组合性），判断是否需要进一步去中心化或收敛双轨。
+- **选项**：① 去中心化核心仲裁；② 收敛 Orchestrator 与 SubagentDispatch；③ 维持现状。
+- **选它（③）**：
+  - 核心仲裁点（GoalStore / PlanStore / ToolScheduler / 证伪账本）承载**长程科研任务的共识不变量**——"一次长跑排空"和"多阶段、中间停很久"并存，单一共识来源正是优点。这两个参考系统都是"拆执行、留仲裁"，方向已一致。
+  - **Orchestrator 与 SubagentDispatch 不是重复实现**：不同入口（顶层多 agent 工作流 vs 主 agent 的上下文卸载工具）、不同生命周期，共享同一 `factory.create()` 底层；防失控守卫保护**不同风险**（Orchestrator = DAG 环检测+max_concurrent 计划合法性；SubagentDispatch = max_depth 递归 + max_tool_calls 上下文预算）。强行合并是修 bug 之外的高风险重构。
+  - **子代理隔离工作树不考虑引入**：子代理（coder/support/analyst）产出**必须回流主工作区**（file_edit_tool 写代码、support_rejections.jsonl 证据），隔离会切断回流链（YAGNI）。
+  - **可逆副作用 / 时空可组合性 / 插件化注册已存在**：`security/revertible.py`（RevertibleContext LIFO 逆栈 + composite 扭结算子 + transaction 异常回滚 + track_op 数据驱动逆 + journal 崩溃重放 `recover_from` + register 回协调效应 + compensate 出站补偿 + track_world_action 物理世界逆）；`workflows/engine.py` 用 `composite()` 编排多 stage；`snapshot/file_snapshot.py` 的 revert/unrevert 做文件系统 undo；ToolRegistry / ModelRegistry 已是可插拔注册表。
+- **代价**：执行层面未做更激进的并行/组件替换（oh-my-pi 式隔离工作树、Harness 式全插件化改造）——只有在出现"单一协调器瘫痪"或"某组件无法独立替换"的真实失败场景时才值得回头做。这是刻意的诚实边界：当前没有 bug 驱动的动机支撑动它。
+
 ---
 
 ## 7. 诚实的边界（别人一眼容易高估、你接手要记住的）
