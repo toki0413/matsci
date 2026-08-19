@@ -183,13 +183,13 @@
 | `HUGINN_PM_C_MIN` | 0.2 | config.py:828 | — | external |
 | `HUGINN_PRIVACY_BLOCK_ON_SECRETS` | 0 | agent_config.py:142, config.py:788 | — | external |
 | `HUGINN_PRIVACY_REDACT_SECRETS` | 1 | agent_config.py:139, config.py:774, tools\adapter.py:750 | — | external |
-| `HUGINN_PRM_VERIFIER` | 0 | agents\factory.py:300 | — | external |
+| `HUGINN_PRM_VERIFIER` | 0 | agents\factory.py:306 | — | external |
 | `HUGINN_PROFILE_MODEL` | '' | tools\personalization_tool.py:158 | — | external |
 | `HUGINN_PROFILE_PROVIDER` | deepseek | tools\personalization_tool.py:157 | — | external |
 | `HUGINN_PROMPT_CACHE_CONTROL` | true | agent_config.py:64, config.py:798 | — | external |
 | `HUGINN_PROVENANCE_ENABLED` | 1 | provenance\registry.py:370 | — | external |
 | `HUGINN_PROVIDER` | default | config.py:642, config.py:1262 | — | external |
-| `HUGINN_PRT_LEVEL1` | 0 | agents\factory.py:293 | — | external |
+| `HUGINN_PRT_LEVEL1` | 0 | agents\factory.py:299 | — | external |
 | `HUGINN_RAG_ENABLED` | '' | config.py:763 | — | external |
 | `HUGINN_RATE_LIMIT_ENABLED` | 1 | security\rate_limiter.py:491 | cli\rcb_runner.py:54 | code-set |
 | `HUGINN_RATE_LIMIT_PER_MINUTE` | 0 | server.py:114 | — | external |
