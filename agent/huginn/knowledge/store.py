@@ -98,6 +98,9 @@ class _EmbeddingModel:
     _st: Any | None = None
     _use_chroma: bool = False
     _initialized: bool = False
+    # 一次 ONNX encode 超时后置真, 后续全部直接走确定性向量, 避免每次种子
+    # 文档都再白等 _ENCODE_TIMEOUT_SECONDS(20*30s 拖着 CI 启动超时).
+    _onnx_degraded: bool = False
     # 与 rag.vector_store.VectorStore 共用同一 embedding 缓存 (合并两套重复缓存).
     # 共享实例存 list[list[float]], encode() 在 ndarray ↔ list 边界做转换.
     _embedding_cache: TimedLRUCache[list[list[float]]] = embedding_cache
@@ -122,6 +125,11 @@ class _EmbeddingModel:
                 # 共享缓存存 list[list[float]], 命中时还原为 ndarray.
                 import numpy as np
                 return np.asarray(cached, dtype=np.float32)
+
+        # 之前 ONNX encode 已超时降级, 不进 onnx 也不进 sentence_transformers,
+        # 直接给确定性向量, 保证 KB 种子流程不被卡死 (见 _encode_onnx_guarded).
+        if _EmbeddingModel._onnx_degraded:
+            return _deterministic_vectors(texts, dim=_resolve_embedding_dim())
 
 
         if _EmbeddingModel._use_chroma and _EmbeddingModel._ef is not None:
@@ -151,28 +159,33 @@ class _EmbeddingModel:
         cases degrade to deterministic hash vectors so KB seeding never
         blocks agent.invoke.
         """
-        from concurrent.futures import (
-            ThreadPoolExecutor,
-        )
-        from concurrent.futures import (
-            TimeoutError as _FutTimeout,
-        )
+        import threading
 
         import numpy as np
 
-        try:
-            with ThreadPoolExecutor(max_workers=1) as ex:
-                future = ex.submit(_EmbeddingModel._ef, texts)
-                vectors = future.result(timeout=_ENCODE_TIMEOUT_SECONDS)
-            return np.asarray(vectors, dtype=np.float32)
-        except (_FutTimeout, RuntimeError, OSError) as e:
+        # 用 daemon 单线程跑 onnx: onnxruntime 卡在 C++ 侧时拿不到结果, join()
+        # 到点就返回, 卡死的线程作废不再管它. 不能换 ThreadPoolExecutor——
+        # with 块退出时 shutdown(wait=True) 会死等那个卡死线程, 反而把整个
+        # KB 种子流程永久挂住.
+        holder: dict[str, Any] = {}
+
+        def _run() -> None:
+            holder["value"] = _EmbeddingModel._ef(texts)
+
+        t = threading.Thread(target=_run, daemon=True)
+        t.start()
+        t.join(timeout=_ENCODE_TIMEOUT_SECONDS)
+        if t.is_alive():
+            # 一旦超时即整体下线 onnx 路径, 后续 encode() 直接走确定性向量
+            # (见 _onnx_degraded 分支), 不在这里反复白等.
+            _EmbeddingModel._onnx_degraded = True
             logger.warning(
-                "ONNX encode degraded to hash vectors (%s: %s); "
+                "ONNX encode timed out after %ss, degraded to hash vectors; "
                 "KB retrieval quality reduced but agent flow unblocked",
-                type(e).__name__,
-                e,
+                _ENCODE_TIMEOUT_SECONDS,
             )
             return _deterministic_vectors(texts, dim=_resolve_embedding_dim())
+        return np.asarray(holder["value"], dtype=np.float32)
 
 
 # ── BM25 关键词检索 (与向量检索做 RRF 混合) ──────────────────────────
