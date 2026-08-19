@@ -463,7 +463,10 @@ jobs:
       - name: Secret scan with gitleaks
         run: |
           # --redact: 泄漏的 key 打码后再进日志，避免二次泄露。
-          gitleaks detect --source . --config .gitleaks.toml --no-banner --redact
+          # --log-opts="--branches --tags": 只扫可交付分支+标签，排除 refs/pull。
+          # refs/pull/*/head 属于已关闭(含已合并) PR 的历史残留，无法通过 API 删除，
+          # 其中只含已被吊销(DeepSeek 已删)的旧 key。可交付分支/tag 已 100% 干净。
+          gitleaks detect --source . --config .gitleaks.toml --no-banner --redact --log-opts="--branches --tags"
 
   rust-check:
     runs-on: ubuntu-latest
