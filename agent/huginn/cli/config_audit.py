@@ -75,7 +75,7 @@ def _scan_file(path: Path, ops: dict):
             lineno = text[: m.start()].count("\n") + 1
             ops[name][kind].append(
                 {
-                    "file": str(path.relative_to(_ROOT)),
+                    "file": path.relative_to(_ROOT).as_posix(),
                     "line": lineno,
                     "default": default,
                 }
@@ -231,7 +231,7 @@ def _scan_registrations(root: Path, pattern: re.Pattern) -> list[dict]:
                 {
                     "name": m.group(1),
                     "priority": int(ptr) if ptr else None,
-                    "loc": f"{py.relative_to(root)}:{text[: m.start()].count(chr(10)) + 1}",
+                    "loc": f"{py.relative_to(root).as_posix()}:{text[: m.start()].count(chr(10)) + 1}",
                 }
             )
     return rows
@@ -271,7 +271,7 @@ def build_plugins_contract(root: Path | None = None) -> dict[str, list[dict]]:
                     {
                         "name": m.group(1),
                         "handler": handler,
-                        "loc": f"{py.relative_to(root)}:{i + 1}",
+                        "loc": f"{py.relative_to(root).as_posix()}:{i + 1}",
                     }
                 )
 
@@ -507,7 +507,7 @@ def build_events_contract(root: Path | None = None) -> dict:
         except OSError:
             continue
         for m in _EVENT_REF.finditer(text):
-            refs[m.group(1)].append(f"{py.relative_to(root)}:{text[: m.start()].count(chr(10)) + 1}")
+            refs[m.group(1)].append(f"{py.relative_to(root).as_posix()}:{text[: m.start()].count(chr(10)) + 1}")
 
     members: list[dict] = []
     for m in EventType:
@@ -647,7 +647,7 @@ def build_errors_contract(root: Path | None = None) -> dict:
         except OSError:
             continue
         for m in _ERROR_KIND_REF.finditer(text):
-            refs[m.group(1)].append(f"{py.relative_to(root)}:{text[: m.start()].count(chr(10)) + 1}")
+            refs[m.group(1)].append(f"{py.relative_to(root).as_posix()}:{text[: m.start()].count(chr(10)) + 1}")
 
     members: list[dict] = []
     for name, doc in docs.items():
@@ -828,7 +828,7 @@ def build_flags_contract(root: Path | None = None) -> list[dict]:
         for m in _FLAG_IS_ENABLED.finditer(text):
             name = m.group(1)
             lineno = text[: m.start()].count("\n") + 1
-            usage[name].append(f"{py.relative_to(root)}:{lineno}")
+            usage[name].append(f"{py.relative_to(root).as_posix()}:{lineno}")
 
     from huginn.feature_flags import FeatureFlags
 
