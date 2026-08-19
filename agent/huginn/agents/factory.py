@@ -7,6 +7,7 @@ provider/model instances are cached.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 from collections.abc import Callable
@@ -108,11 +109,16 @@ class AgentFactory:
         except Exception:
             store = NullCampaignStore()
         try:
-            return ToolScheduler(
+            scheduler = ToolScheduler(
                 store=store,
                 policy=AdmissionPolicy.from_env(),
                 hpc_layer=self._build_hpc_layer(),
             )
+            # 重启后先对账: 遗留 running→orphaned、queued 重新挂起、current 模式下
+            # 把远端还在烧机时的作业机时反推回预算占用, 防止新进程看到归零预算而超投.
+            with contextlib.suppress(Exception):
+                scheduler.recover()
+            return scheduler
         except Exception:
             logger.debug("best-effort op failed", exc_info=True)
             return None

@@ -12,6 +12,7 @@ from __future__ import annotations
 import sqlite3
 import threading
 from abc import ABC, abstractmethod
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -31,6 +32,7 @@ class JobRecord:
     working_dir: str | None = None
     compute_action: str | None = None
     cores_requested: float | None = None
+    gpu_hours_requested: float | None = None
     queue_position: int | None = None
     admitted_at: float | None = None
     started_at: float | None = None
@@ -48,6 +50,7 @@ class JobRecord:
             "working_dir": self.working_dir,
             "compute_action": self.compute_action,
             "cores_requested": self.cores_requested,
+            "gpu_hours_requested": self.gpu_hours_requested,
             "queue_position": self.queue_position,
             "admitted_at": self.admitted_at,
             "started_at": self.started_at,
@@ -67,6 +70,7 @@ class JobRecord:
             working_dir=row["working_dir"],
             compute_action=row["compute_action"],
             cores_requested=row["cores_requested"],
+            gpu_hours_requested=row["gpu_hours_requested"],
             queue_position=row["queue_position"],
             admitted_at=row["admitted_at"],
             started_at=row["started_at"],
@@ -205,6 +209,7 @@ class SqliteCampaignStore(CampaignStoreBackend):
                 working_dir TEXT,
                 compute_action TEXT,
                 cores_requested REAL,
+                gpu_hours_requested REAL,
                 queue_position INTEGER,
                 admitted_at REAL,
                 started_at REAL,
@@ -216,6 +221,10 @@ class SqliteCampaignStore(CampaignStoreBackend):
             CREATE INDEX IF NOT EXISTS idx_jobs_campaign ON jobs(campaign_id);
             """
         )
+        # 老库建表时没有 gpu 列 (改版前只存 cores_requested); 补一列,
+        # 列已存在时忽略错误, 普通升级路径不受影响.
+        with suppress(sqlite3.OperationalError):
+            conn.execute("ALTER TABLE jobs ADD COLUMN gpu_hours_requested REAL")
         conn.commit()
         self._conn = conn
         return conn
@@ -223,13 +232,15 @@ class SqliteCampaignStore(CampaignStoreBackend):
     def upsert_job(self, record: JobRecord) -> None:
         cols = [
             "job_id", "tool_name", "status", "cost_tier", "campaign_id",
-            "working_dir", "compute_action", "cores_requested", "queue_position",
+            "working_dir", "compute_action", "cores_requested", "gpu_hours_requested",
+            "queue_position",
             "admitted_at", "started_at", "finished_at", "result_json", "error",
         ]
         values = (
             record.job_id, record.tool_name, record.status, record.cost_tier,
             record.campaign_id, record.working_dir, record.compute_action,
-            record.cores_requested, record.queue_position, record.admitted_at,
+            record.cores_requested, record.gpu_hours_requested,
+            record.queue_position, record.admitted_at,
             record.started_at, record.finished_at, record.result_json, record.error,
         )
         placeholders = ",".join(["?"] * len(cols))

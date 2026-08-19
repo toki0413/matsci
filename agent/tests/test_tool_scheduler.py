@@ -229,6 +229,64 @@ def test_recover_marks_running_orphaned_and_keeps_queued(tmp_path):
     store.close()
 
 
+# ── Test 7: current-mode recover rebuilds concurrent budget ────────────────
+
+
+def test_recover_rebuilds_current_budget(tmp_path):
+    db = tmp_path / "campaigns.sqlite"
+    store = SqliteCampaignStore(db)
+    from huginn.persistence.campaign import JobRecord
+
+    # A heavy GPU job was admitted then the process crashed; its remote compute
+    # keeps burning machine-hours, so the fresh process must recount it.
+    store.upsert_job(
+        JobRecord(
+            job_id="job_gpu_oncluster",
+            tool_name="transolver_tool",
+            status="running",
+            cost_tier="heavy",
+            cores_requested=4.0,
+            gpu_hours_requested=2.0,
+            started_at=time.time(),
+        )
+    )
+    # queued job hasn't started — must NOT count toward concurrent occupancy.
+    store.upsert_job(
+        JobRecord(
+            job_id="job_queued_not_started",
+            tool_name="vasp_tool",
+            status="queued",
+            cost_tier="heavy",
+            cores_requested=8.0,
+            queue_position=0,
+        )
+    )
+
+    s2 = ToolScheduler(
+        store=store,
+        policy=AdmissionPolicy(
+            max_concurrent_heavy=2, cpu_hour_budget=5.0, budget_mode="current"
+        ),
+    )
+    s2.recover()
+    snap = s2.snapshot()
+    assert snap.cpu_hours_used == pytest.approx(4.0)
+    assert snap.gpu_hours_used == pytest.approx(2.0)
+    assert snap.cpu_hour_budget == 5.0
+    # The queued-but-unstarted 8h job must NOT eat into the 5h budget account
+    # (it starts at 0 occupancy and only claims when admitted).
+    assert snap.cpu_hours_used <= 5.0
+    # A fresh current-mode claim that would bust the rediscovered capacity is
+    # rejected — budget is no longer zeroed by the restart.
+    with pytest.raises(ResourceExhausted) as exc:
+        asyncio.run(
+            s2.acquire("transolver_tool", "heavy", {"cpu_hours": 2.0, "gpu_hours": 1.0})
+        )
+    assert exc.value.kind == "cpu"
+
+    store.close()
+
+
 # ── Test 7: main-path integration — concurrent acquire never exceeds cap ────
 
 
