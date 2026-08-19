@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import unittest.mock as mock
 
-from huginn.agents.factory import AgentFactory, _TASK_ANCHOR
+from huginn.agents.factory import _TASK_ANCHOR, AgentFactory
 
 
 class _FakePersona:
@@ -86,8 +86,8 @@ def test_task_anchor_skipped_on_override():
 
 def test_spec_dispatch_requires_explicit_token():
     """仅用户 @点名 的 spec 才派发; 未知 spec 干净失败不落副作用."""
-    from tests.test_e2e_agent_loop import _FakeFactory, _FakeSubagent
     from huginn.agents.subagent import SubagentDispatch
+    from tests.test_e2e_agent_loop import _FakeFactory, _FakeSubagent
 
     factory = _FakeFactory(_FakeSubagent())
     dispatch = SubagentDispatch()

@@ -9,7 +9,6 @@
 
 运行: python -m huginn.memory._test_get_self_model
 """
-import os
 import sys
 import tempfile
 from pathlib import Path
@@ -28,7 +27,7 @@ def _make_ltm(db_path: Path):
 
 def _write_iteration(mm, persona: str, status: str, content: str = "test"):
     """模拟 engine._learn 写 iteration_result."""
-    from huginn.memory.typing import remember_typed, MemoryType
+    from huginn.memory.typing import MemoryType, remember_typed
     remember_typed(
         mm,
         content=content,

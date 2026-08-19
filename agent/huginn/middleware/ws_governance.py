@@ -192,9 +192,8 @@ async def ws_auth_and_track(websocket: WebSocket) -> str | None:
 
     # 在所有 /ws/* 路由统一在这里完成 accept, 调用方不再各自 accept.
     # first-message auth 已经 accept 过 (设置了 _ws_pre_accepted 标志).
-    if not websocket.scope.get("_ws_pre_accepted"):
-        if not await _accept(websocket):
-            return None
+    if not websocket.scope.get("_ws_pre_accepted") and not await _accept(websocket):
+        return None
 
     identity = _extract_identity(websocket)
 

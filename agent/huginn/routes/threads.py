@@ -414,6 +414,7 @@ async def compact_thread(thread_id: str, request: Request) -> dict[str, Any]:
     import asyncio
 
     from langchain_core.messages import RemoveMessage
+
     from huginn.utils.context import summarize_compact_messages
 
     try:
