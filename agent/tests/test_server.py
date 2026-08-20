@@ -260,3 +260,44 @@ class TestMCPEndpoints:
         manager.disconnect_server("test_echo")
         manager.remove_server("test_echo")
         assert manager.list_servers() == []
+
+
+class TestModelCaps:
+    """/models/caps 端点逻辑: 按活跃模型返回能力标记 (vision/tools/reasoning/streaming)."""
+
+    @staticmethod
+    def _run(agents, models, monkeypatch):
+        from types import SimpleNamespace as NS
+
+        from huginn.routes import config as config_routes
+
+        def loader():
+            return NS(agents=agents, models=models)
+
+        monkeypatch.setattr(config_routes, "_load_runtime_config", loader)
+        return asyncio.run(config_routes.get_model_caps())
+
+    def test_text_model_vision_false(self, monkeypatch):
+        r = self._run(
+            [type("A", (), {"id": "lead", "enabled": True, "model_alias": "deepseek"})()],
+            [type("M", (), {"alias": "deepseek", "model": "deepseek-v4-flash", "enabled": True})()],
+            monkeypatch,
+        )
+        assert r["model"] == "deepseek-v4-flash"
+        assert r["vision"] is False
+        assert r["tools"] is True
+
+    def test_vision_model_vision_true(self, monkeypatch):
+        r = self._run(
+            [type("A", (), {"id": "lead", "enabled": True, "model_alias": "gpt4o"})()],
+            [type("M", (), {"alias": "gpt4o", "model": "gpt-4o", "enabled": True})()],
+            monkeypatch,
+        )
+        assert r["model"] == "gpt-4o"
+        assert r["vision"] is True
+        assert r["tools"] is True
+
+    def test_no_model_returns_fail_closed(self, monkeypatch):
+        r = self._run([], [], monkeypatch)
+        assert r["model"] is None
+        assert r["vision"] is False

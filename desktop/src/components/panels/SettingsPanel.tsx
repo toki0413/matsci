@@ -5,7 +5,7 @@
  * agents / privacy / pet / security / credentials / jobs / export / bot tabs,
  * plus the save button and backend start/stop card.
  */
-import { useState, lazy, Suspense } from "react";
+import { useState, useEffect, lazy, Suspense } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { ChevronDown, Zap, Check, X, Loader2, Eye, EyeOff, Save } from "lucide-react";
@@ -397,6 +397,20 @@ export function SettingsPanel(props: SettingsPanelProps) {
     startBackend, isConnected, personaList, personaEmotion,
   } = props;
 
+  // 运行期能力提示: 从 /models/caps 读当前活跃模型能否看图, 在模型选择处
+  // 显示"支持看图 / 文本模型"。后端不可用或缺权限时静默跳过, 不影响面板。
+  const [caps, setCaps] = useState<{ vision: boolean } | null>(null);
+  useEffect(() => {
+    let stale = false;
+    setCaps(null);
+    if (!activeModel) return;
+    api
+      .get<any>("/models/caps")
+      .then((d) => { if (!stale && d && typeof d.vision === "boolean") setCaps(d); })
+      .catch(() => { /* 后端未起/未授权 — 不展示即可 */ });
+    return () => { stale = true; };
+  }, [activeModel]);
+
   return (
     <div className="flex h-full">
       <SettingsTabNav activeTab={settingsTab} onTabChange={setSettingsTab} />
@@ -683,6 +697,17 @@ export function SettingsPanel(props: SettingsPanelProps) {
                   </select>
                   {activeModel && (
                     <span className="text-[10px] text-text-muted">{t('settings.current')} {activeModel}</span>
+                  )}
+                  {caps && (
+                    <span
+                      className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                        caps.vision
+                          ? "bg-pink-500/10 text-pink-600"
+                          : "bg-bg-tertiary text-text-muted"
+                      }`}
+                    >
+                      {caps.vision ? "支持看图" : "文本模型"}
+                    </span>
                   )}
                 </div>
               </div>

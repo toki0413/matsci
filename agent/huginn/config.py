@@ -305,6 +305,11 @@ class SandboxConfig:
     context_budget_tokens: int = 0
 
 
+# MCP stdio 子进程解释器的默认白名单. 被 mcp_allowed_commands 字段默认值和
+# from_env 的空 env 回退共用, 单一来源避免两处默认漂移.
+_DEFAULT_MCP_ALLOWED_COMMANDS = ("python", "python3", "node", "npx", "uvx")
+
+
 @dataclass
 class HuginnConfig:
     """Huginn configuration."""
@@ -369,6 +374,12 @@ class HuginnConfig:
     abaqus_mcp_server: str | None = None
     # Generic MCP server configurations (name -> {command, args, env, transport})
     mcp_servers: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # stdio 子进程解释器白名单. 所有 MCP 接入入口 (config/.mcp.json/API/CLI) 统一
+    # 过此名单, 防止任意命令被执行. 空列表 = 完全禁止 stdio. SSE 不启动本地进程, 不受限.
+    # 通用 MCP 客户端连接时强制走此白名单 (见 mcp_client.validate_mcp_command).
+    mcp_allowed_commands: list[str] = field(
+        default_factory=lambda: list(_DEFAULT_MCP_ALLOWED_COMMANDS)
+    )
 
     # ToolUniverse MCP integration (curated: only materials-science tools pass
     # the whitelist in mcp_adapter.MATERIAL_SCIENCE_TOOL_WHITELIST).
@@ -741,6 +752,11 @@ class HuginnConfig:
             ).lower()
             != "false",
             abaqus_mcp_server=os.environ.get("ABAQUS_MCP_SERVER_PATH"),
+            mcp_allowed_commands=[
+                c.strip()
+                for c in os.environ.get("HUGINN_MCP_ALLOWED_COMMANDS", "").split(",")
+                if c.strip()
+            ] or list(_DEFAULT_MCP_ALLOWED_COMMANDS),
             workspace=os.environ.get("HUGINN_WORKSPACE", "."),
             auto_approve=os.environ.get("HUGINN_AUTO_APPROVE", "").lower() == "true",
             enable_exploration=os.environ.get(

@@ -1275,11 +1275,30 @@ class StreamingMixin:
             if _vision_route == VisionRoute.BOTH:
                 _vision_content, _cv_hints = _vr.coordinate(message, image_path, model_name)
             elif _vision_route == VisionRoute.CV_TOOLS:
-                # Current model can't see images — check if team has a
-                # VISION member (e.g., local multimodal model like
-                # qwen2.5-vl) that can handle it instead.
+                # Current model can't see images. Prefer a resident local
+                # decoder (e.g. ollama qwen2.5-vl) — one cheap local LLM call,
+                # far cheaper than a full cross-agent round-trip. Only if the
+                # decoder has no available model do we delegate to a VISION
+                # team member.
+                _decoded: str | None = None
+                try:
+                    from huginn.vision.local_decoder import decode_image
+                    _decoded = await asyncio.to_thread(decode_image, image_path)
+                except Exception:
+                    logger.debug("local vision decoder unavailable", exc_info=True)
                 _team = getattr(self, "_team_ref", None)
-                if _team is not None:
+                if _decoded:
+                    _model_src = os.environ.get(
+                        "HUGINN_LOCAL_VISION_MODEL", "qwen2.5-vl"
+                    )
+                    message = (
+                        f"[视觉描述 (本地解码 {_model_src})]\n"
+                        f"{_decoded}\n\n"
+                        f"[用户问题]\n{message or '请根据上述视觉描述进行分析.'}"
+                    )
+                    _vision_route = VisionRoute.TEXT_ONLY
+                elif _team is not None:
+                    # 本地解码器没可用模型 → 回落跨 agent 委托.
                     try:
                         from huginn.agents.team import TeamRole
                         vision_member = _team.members.get(TeamRole.VISION)

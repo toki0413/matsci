@@ -35,6 +35,8 @@ _PRIORITY = {
     "phase": 30,
     "metacog": 40,
     "tools": 50,
+    "multimodal": 55,  # 多模态引导: 紧挨 tools, 先于 writing
+    "writing": 60,  # 写作引导: 夹在 tools 与 thinking 之间
     "thinking": 100,
     "safety": 200,
 }
@@ -124,11 +126,20 @@ def clear_registry() -> None:
     _registry.clear()
 
 
+def registered_prompt_segments() -> list[str]:
+    """返回当前注册的 prompt 段名 (去重后), 供 Catalog 枚举 kind=prompt."""
+    seen: set[str] = set()
+    for name, _priority, _fn in _registry.ordered():
+        seen.add(name)
+    return sorted(seen)
+
+
 __all__ = [
     "PromptSegmentFn",
     "assemble_prompt_segments",
     "clear_registry",
     "register_prompt_segment",
+    "registered_prompt_segments",
     "render_prompt_segment",
     "unregister_prompt_segment",
 ]

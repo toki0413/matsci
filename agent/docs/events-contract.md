@@ -7,7 +7,7 @@
 
 | 事件 | 分组 | 派发点 |
 |---|---|---|
-| ON_HUGINN_LOADED | 生命周期 | lifespan.py:784 |
+| ON_HUGINN_LOADED | 生命周期 | lifespan.py:802 |
 | ON_PLUGIN_LOADED | 生命周期 | plugins/loader.py:238, plugins/loader.py:291 |
 | ON_PLUGIN_UNLOADED | 生命周期 | plugins/loader.py:331 |
 | ON_PLUGIN_ERROR | 生命周期 | plugins/loader.py:225, plugins/loader.py:317 |

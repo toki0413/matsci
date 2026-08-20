@@ -34,6 +34,7 @@ async def _connect_mcp_server(
     manager: Any,
     name: str,
     config: Any,
+    origin: str = "builtin",
     timeout: float = 60.0,
 ) -> bool:
     """Connect to a single MCP server with timeout and full error containment.
@@ -43,7 +44,7 @@ async def _connect_mcp_server(
     被取消, 进而触发 anyio 的 cancel-scope 竞态并使 server 启动踩坑。
     """
     try:
-        await asyncio.wait_for(manager.connect(config), timeout=timeout)
+        await asyncio.wait_for(manager.connect(config, origin=origin), timeout=timeout)
         return True
     except TimeoutError:
         logger.info(f"[MCP] Warning: {name} connection timed out ({timeout}s)")
@@ -128,6 +129,8 @@ async def _init_mcp_tools():
         base = Path(getattr(sys, "_MEIPASS", Path(__file__).parent.parent.parent))
 
         servers: list[tuple[str, MCPServerConfig]] = []
+        # 来源归一 (catalog 用): builtin = servers/ 目录内置, .mcp.json = 根配置.
+        origin_by_name: dict[str, str] = {}
 
         mat_db_path = base / "servers" / "mat-db-mcp" / "server.py"
         if mat_db_path.exists():
@@ -161,7 +164,11 @@ async def _init_mcp_tools():
         # 消费仓库根 .mcp.json 里的 mcpServers（标准 MCP 配置，IDE/桌面共用）。
         # 例如 flint-chart（npx -y flint-chart-mcp）会被拉起并注册工具，真正进入
         # agent 的工具池，而不只是 IDE 能连。best-effort，连不上只是告警不阻塞。
-        servers.extend(_load_mcp_json_servers(base))
+        mcp_json_servers = _load_mcp_json_servers(base)
+        servers.extend(mcp_json_servers)
+        # 来源归一: .mcp.json 来源单独标 origin (其余 builtin 走默认).
+        for _name, _cfg in mcp_json_servers:
+            origin_by_name[_name] = ".mcp.json"
 
         # ToolUniverse (curated: only materials-science tools pass the whitelist
         # in mcp_adapter.MATERIAL_SCIENCE_TOOL_WHITELIST). Off by default — user
@@ -183,7 +190,10 @@ async def _init_mcp_tools():
         # stdio_client). 逐个连接 + 每连接独立超时最稳, 且 _connect_mcp_server
         # 内部已 try/except 全量兜底, 不会因单个失败阻塞后续.
         for name, cfg in servers:
-            await _connect_mcp_server(get_context().mcp_manager, name, cfg)
+            await _connect_mcp_server(
+                get_context().mcp_manager, name, cfg,
+                origin=origin_by_name.get(name, "builtin"),
+            )
 
         # ToolUniverse 单独走白名单 (只注册 7 个材料相关工具, 过滤 350+ 生物医学工具).
         # 不能先做一次无过滤的 generic 注册 —— 那会把 343 个非白名单 tooluniverse 工具
@@ -212,6 +222,14 @@ async def _init_mcp_tools():
             logger.info(f"[MCP] Registered {len(registered)} tools from MCP servers")
     except Exception as e:
         logger.info(f"[MCP] Warning: Could not initialize MCP tools: {e}")
+
+    # ── Catalog: 采集一次 (骨架期), 让统一清单带上已连接的 MCP server ──
+    try:
+        _cat = getattr(get_context(), "catalog", None)
+        if _cat is not None:
+            _cat.discover_all(mcp_manager=get_context().mcp_manager)
+    except Exception as e:
+        logger.warning(f"[Catalog] discover after MCP init failed: {e}")
 
     # ── Load Star plugins ─────────────────────────────────────────
     await _load_star_plugins()

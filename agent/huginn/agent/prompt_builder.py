@@ -176,6 +176,47 @@ def safety_segment() -> str:
     )
 
 
+# 反防御性写作引导 (anti-defensive-writing). 目标是让论文/报告主张先行、
+# 措辞精确, 避免"过度免责 / 以限制开头 / 堆叠 hedges / not-X-but-Y"这类
+# 削弱表达又没增加准确度的写法。必要限制(scope/method/safety)保留一次放到
+# 对的位置, 不四处散落。
+def multimodal_segment() -> str:
+    """多模态引导 —— 面向文本模型兜底路径 (DeepSeek Flash vision=False).
+
+    当图像只能走 CV_TOOLS 分支时, 明确告诉模型"该直接看还是调定量工具"的取舍,
+    把静默降级改成可见决策点。与 writing 段同机制挂进 prompt_segments 注册表。
+    """
+    return (
+        "## MULTIMODAL\n"
+        "- Prefer native vision: if the current model supports image input, "
+        "read the image directly before reaching for tools.\n"
+        "- Text model path: when native vision is unavailable, pick one explicit "
+        "route — ① delegate to a vision-specialized agent, ② retrieve similar "
+        "images from visual memory, ③ call image_analysis_tool for quantitative "
+        "measurements.\n"
+        "- No silent degradation: never describe an image without either native "
+        "visual understanding or an explicit tool-based analysis."
+    )
+
+
+def writing_segment() -> str:
+    return (
+        "## WRITING\n"
+        "- Lead with the claim: say what the analysis shows, proposes, or "
+        "contributes before any caveat.\n"
+        "- Write as the author explaining an argument, not negotiating with a "
+        "hypothetical critic.\n"
+        "- Convert defensive framing into positive scope: state what the work "
+        "examines, not what it does not claim.\n"
+        "- Replace hedging (may/could/potentially) with precise claims backed by "
+        "scope and evidence strength; if uncertainty is real, name its source.\n"
+        "- Keep necessary limits (scope, method, safety, accuracy) once, in the "
+        "right section; drop disclaimers that add no precision.\n"
+        "- Present data and conclusions honestly: state what a single mechanism "
+        "can and cannot explain without apologizing for the data."
+    )
+
+
 def build_prompt(
     mode: str,
     phase: str,
@@ -204,6 +245,7 @@ def build_prompt(
         phase_segment(phase),
         metacog_segment(metacog_state),
         tools_segment(mode, phase, metacog_state),
+        writing_segment(),
         safety_segment(),
     ]
     return "\n\n".join(s for s in segments if s)
@@ -232,6 +274,14 @@ def _metacog_plugin(mode, phase, metacog_state, system_prompt):
 
 def _tools_plugin(mode, phase, metacog_state, system_prompt):
     return tools_segment(mode, phase, metacog_state)
+
+
+def _multimodal_plugin(mode, phase, metacog_state, system_prompt):
+    return multimodal_segment()
+
+
+def _writing_plugin(mode, phase, metacog_state, system_prompt):
+    return writing_segment()
 
 
 def _safety_plugin(mode, phase, metacog_state, system_prompt):
@@ -278,6 +328,8 @@ def _register_builtin_segments() -> None:
     register_prompt_segment("phase", _phase_plugin)
     register_prompt_segment("metacog", _metacog_plugin)
     register_prompt_segment("tools", _tools_plugin)
+    register_prompt_segment("multimodal", _multimodal_plugin)
+    register_prompt_segment("writing", _writing_plugin)
     # thinking 段: priority 100, 位于 tools(50) 与 safety(200) 之间.
     register_prompt_segment("thinking", _thinking_plugin)
     register_prompt_segment("safety", _safety_plugin)
@@ -299,4 +351,8 @@ if __name__ == "__main__":
     # persona 迁移: 传入 system_prompt 时应替换内置最小 persona
     p4 = build_prompt("chat", "execute", "s0_blank", system_prompt="My custom persona.")
     assert "My custom persona." in p4
+    # writing 段应注入反防御写作引导, 且位于 safety 之前
+    p5 = build_prompt("research", "execute", "s4_construct")
+    assert "WRITING" in p5 and "Lead with the claim" in p5
+    assert p5.index("WRITING") < p5.index("SAFETY")
     print("OK")

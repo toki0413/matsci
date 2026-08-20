@@ -470,6 +470,7 @@ jobs:
 
   rust-check:
     runs-on: ubuntu-latest
+    timeout-minutes: 30  # 依赖安装+编译若 30 分钟内不完成, 直接标记失败, 别让 runner 空烧满默认 6 小时
     steps:
       - uses: actions/checkout@v7
 
@@ -477,6 +478,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install Tauri system dependencies
+        timeout-minutes: 10  # apt 拉依赖卡死是环境问题, 不应无限重试
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential \

@@ -379,6 +379,15 @@ def build_cv_context(
         "If you need structured analysis (SEM/TEM/XRD), call image_analysis_tool."
     )
 
+    # ── capability self-introspection ──
+    # 走到这里必然是文本模型 (vision=False) 兜底路径: 把"该看哪张 / 该调哪个工具"
+    # 的取舍显式化成可见决策点, 避免模型静默描述一眼瞎猜。三个选项按开销排序给全。
+    parts.append(
+        "Native vision unavailable on this model. Pick one explicit route: "
+        "① delegate to a vision-specialized agent, ② use visual-memory similar "
+        "images above, ③ call image_analysis_tool for quantitative measurements."
+    )
+
     return "\n".join(parts)
 
 

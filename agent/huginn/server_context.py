@@ -85,6 +85,8 @@ class ServerContext:
     planner_agent: Any | None = None
     plan_store: PlanStore | None = None
     mcp_manager: Any | None = None
+    # 统一接入清单控制面 (E 清单第 4 步): 对 5 类注册表提供发现/追踪/快照编排.
+    catalog: Any = None
     # 加密 RAG 管理器 (可选): encryption_enabled=True 时由 lifespan 初始化,
     # 提供文档级 + DB 级加密. 与 kb (ChromaDB 明文) 独立存储.
     encrypted_rag: Any | None = None
@@ -180,6 +182,11 @@ def create_server_context(config: HuginnConfig | None = None) -> ServerContext:
     with contextlib.suppress(Exception):
         transcript_store.start()
 
+    # 统一接入清单控制面 —— 骨架期先建实例并采集一次, 生产路径挂 mcp_manager.
+    from huginn.catalog import CatalogManager
+
+    _catalog = CatalogManager()
+
     return ServerContext(
         config=cfg,
         permission_config=permission_config,
@@ -191,6 +198,7 @@ def create_server_context(config: HuginnConfig | None = None) -> ServerContext:
         transcript_store=transcript_store,
         state_registry=StateRegistry.shared(),
         tool_deduper=ToolDeduper(),
+        catalog=_catalog,
     )
 
 

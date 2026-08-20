@@ -20,6 +20,7 @@ from huginn.routes.auth import router as auth_router
 from huginn.routes.autoloop import router as autoloop_router
 from huginn.routes.bench import router as bench_router
 from huginn.routes.bot import router as bot_router
+from huginn.routes.catalog import router as catalog_router
 from huginn.routes.checkpoints import router as checkpoints_router
 from huginn.routes.codebase import router as codebase_router
 from huginn.routes.coder import router as coder_router
@@ -106,6 +107,7 @@ ALL_ROUTERS = [
     workflows_router,
     skills_router,
     mcp_router,
+    catalog_router,
     threads_router,
     users_router,
     checkpoints_router,

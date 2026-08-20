@@ -130,6 +130,15 @@ class TestBuildCvContext:
         ctx = build_cv_context("/tmp/test.png", mock_encoder, mock_index)
         assert "No similar indexed images" in ctx
 
+    def test_explicit_route_hint_for_text_model(self):
+        """文本模型兜底路径应给出三项显式取舍, 把静默降级变成可见决策点."""
+        ctx = build_cv_context("/tmp/test.png")
+        assert "Native vision unavailable" in ctx
+        # ① 委托视觉成员 ② 视觉记忆相似图 ③ image_analysis_tool 定量
+        assert "vision-specialized agent" in ctx
+        assert "visual-memory similar" in ctx
+        assert "image_analysis_tool" in ctx
+
 
 # ── VisionRouter class ───────────────────────────────────────────
 

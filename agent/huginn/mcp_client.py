@@ -60,6 +60,84 @@ _HEALTH_CHECK_INTERVAL: float = 30.0  # seconds between health polls
 _HEALTH_CHECK_TIMEOUT: float = 5.0    # seconds before a health probe is considered hung
 
 
+# stdio 子进程解释器白名单. 所有 MCP 接入入口 (lifespan 启动配置/.mcp.json/API/CLI)
+# 都汇聚到 MCPClientManager.connect, 在 connect 里统一校验一处兜底. 注意这不是
+# "允许名单之外的命令就安全"的保证 — 只是把"哪些解释器可以启动"收敛成一个配置点.
+# SSE 传输不启动本地进程, 不受此名单约束.
+_DEFAULT_MCP_ALLOWED_COMMANDS = ("python", "python3", "node", "npx", "uvx")
+
+
+def get_mcp_allowed_commands() -> set[str]:
+    """解析允许的 stdio 命令白名单.
+
+    优先级: HUGINN_MCP_ALLOWED_COMMANDS (逗号分隔) > HuginnConfig.mcp_allowed_commands >
+    内置默认. 这样无论走配置还是走环境变量, 校验结果一致.
+    """
+    raw = os.environ.get("HUGINN_MCP_ALLOWED_COMMANDS")
+    if raw:
+        return {s.strip() for s in raw.split(",") if s.strip()}
+    try:
+        from huginn.config import get_settings
+
+        cfg = getattr(get_settings().config, "mcp_allowed_commands", None)
+        if cfg:
+            return set(cfg)
+    except Exception:  # pragma: no cover - 配置尚未就绪, 退回内置默认
+        pass
+    return set(_DEFAULT_MCP_ALLOWED_COMMANDS)
+
+
+def validate_mcp_command(command: str) -> str:
+    """stdio 命令白名单的统一校验入口.
+
+    command 不在白名单内抛 ValueError (携带当前白名单, 便于客户端回显), 否则原样返回.
+    所有 stdio 连接在拉起子进程前必须过这道门.
+    """
+    allowed = get_mcp_allowed_commands()
+    if command not in allowed:
+        raise ValueError(
+            f"mcp command '{command}' not allowed; allowed: {sorted(allowed)}"
+        )
+    return command
+
+
+# 敏感键名 (子串匹配, 小写): 与 events/audit_log 的脱敏集合保持一致.
+# 凡是把 MCP 配置序列化到外部 (list_servers / 状态接口 / catalog) 都必须掩码,
+# 防止 api_key / headers / env 令牌泄漏到 UI 或日志.
+_SENSITIVE_CONFIG_KEYS = (
+    "token", "secret", "password", "api_key", "apikey",
+    "access_token", "bot_token", "app_token", "credential",
+    "authorization", "cookie",
+)
+
+
+def mask_mcp_config(config: dict[str, Any] | None) -> dict[str, Any]:
+    """深拷贝 MCP 配置并对敏感键掩码, 返回不泄漏凭据的字典.
+
+    递归处理嵌套 dict (env / headers), 列表元素仅当含 dict 时深入。
+    原始输入不被修改; 非 dict 输入原样返回 (兼容 None)。
+    """
+    if config is None:
+        return {}
+    if not isinstance(config, dict):
+        return dict(config) if isinstance(config, dict) else {}
+
+    out: dict[str, Any] = {}
+    for k, v in config.items():
+        lk = str(k).lower()
+        if any(s in lk for s in _SENSITIVE_CONFIG_KEYS):
+            out[k] = "***"
+        elif isinstance(v, dict):
+            out[k] = mask_mcp_config(v)
+        elif isinstance(v, list):
+            out[k] = [
+                mask_mcp_config(i) if isinstance(i, dict) else i for i in v
+            ]
+        else:
+            out[k] = v
+    return out
+
+
 @dataclass
 class MCPServerConfig:
     """Configuration for a single MCP server connection."""
@@ -121,6 +199,9 @@ class MCPClientManager:
         self._last_health_check: dict[str, float] = {}
         # Registry for server configs (sync interface for tests)
         self._registry: dict[str, dict[str, Any]] = {}
+        # 来源追踪: server_name -> origin (builtin/.mcp.json/config/api/runtime).
+        # catalog 据此做来源归一, 同一 server 多源同时出现时按 ORIGIN_PRIORITY 取一.
+        self._origins: dict[str, str] = {}
         # Serializes connect/disconnect to prevent races between
         # concurrent lifecycle operations on the same server.
         self._lock = asyncio.Lock()
@@ -135,15 +216,24 @@ class MCPClientManager:
     # Registry API (sync, used by tests and CLI)
     # ------------------------------------------------------------------ #
     def list_servers(self) -> list[dict[str, Any]]:
-        """List registered server configurations."""
+        """List registered server configurations (secrets masked, with origin)."""
         return [
-            {"name": name, "config": cfg}
+            {
+                "name": name,
+                "config": mask_mcp_config(cfg),
+                "origin": self._origins.get(name, "runtime"),
+            }
             for name, cfg in self._registry.items()
         ]
 
-    def register_server(self, name: str, config: dict[str, Any]) -> None:
+    def register_server(self, name: str, config: dict[str, Any], origin: str = "runtime") -> None:
         """Register a server configuration without connecting."""
         self._registry[name] = config
+        self._origins[name] = origin
+
+    def set_server_origin(self, name: str, origin: str) -> None:
+        """补充/修正某 server 的来源标签 (供各接入源在注册后标注)."""
+        self._origins[name] = origin
 
     def remove_server(self, name: str) -> None:
         """Remove a registered server configuration."""
@@ -218,7 +308,7 @@ class MCPClientManager:
         if not config:
             return
         for name, cfg in config.items():
-            self.register_server(name, cfg)
+            self.register_server(name, cfg, origin="config")
             logger.info(f"Registered MCP server '{name}' from config")
 
     def load_from_huginn_config(self) -> None:
@@ -234,8 +324,12 @@ class MCPClientManager:
     # ------------------------------------------------------------------ #
     # Async connection API
     # ------------------------------------------------------------------ #
-    async def connect(self, config: MCPServerConfig) -> None:
-        """Connect to an MCP server via stdio or SSE (see config.transport)."""
+    async def connect(self, config: MCPServerConfig, origin: str | None = None) -> None:
+        """Connect to an MCP server via stdio or SSE (see config.transport).
+
+        ``origin`` 标注该 server 的来源 (builtin/.mcp.json/config/api), 供 catalog
+        来源归一使用; 传 None 则沿用已登记的来源, 无则记 runtime.
+        """
         async with self._lock:
             if config.name in self._sessions:
                 logger.warning(f"MCP server '{config.name}' already connected")
@@ -243,6 +337,8 @@ class MCPClientManager:
 
             # Store config for future reconnection attempts
             self._configs[config.name] = config
+            if origin is not None:
+                self._origins[config.name] = origin
 
             # Clear any stale tools from a previous connection (idempotent)
             self._tools = [t for t in self._tools if t.server_name != config.name]
@@ -263,6 +359,7 @@ class MCPClientManager:
                         )
                     client = _sse_client(config.url, headers=config.effective_headers())
                 else:
+                    validate_mcp_command(config.command)
                     params = StdioServerParameters(
                         command=config.command,
                         args=config.args,

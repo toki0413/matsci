@@ -30,6 +30,7 @@ from huginn.models.registry import (
     _PROVIDER_DEFAULTS,
     _PROVIDER_KEY_ENV,
     create_langchain_model,
+    get_model_capabilities,
     resolve_provider_key,
 )
 from huginn.pet import configure_pet
@@ -625,7 +626,39 @@ async def set_active_model(params: dict[str, Any]) -> dict[str, Any]:
     return {"success": True, "active_alias": alias}
 
 
-# ── /config/encrypt · /config/decrypt ───────────────────────────
+@router.get("/models/caps", dependencies=[Depends(require_admin_key)])
+async def get_model_caps() -> dict[str, Any]:
+    """返回当前活跃模型的能力标记 (vision/tools/reasoning/streaming).
+
+    前端据此在模型选择处提示"支持看图 / 文本模型", 并让多模态路由知道当前
+    模型到底能不能原生看图 —— 避免用户以为能传图却实际走了纯文本静默降级.
+    """
+    cfg = _load_runtime_config()
+    alias = None
+    model_name = None
+    lead = next((a for a in cfg.agents if a.id == "lead" and a.enabled), None)
+    if lead and lead.model_alias:
+        target = next((m for m in cfg.models if m.alias == lead.model_alias), None)
+        if target:
+            alias, model_name = lead.model_alias, target.model
+    if not alias:
+        for m in cfg.models:
+            if m.enabled:
+                alias, model_name = m.alias, m.model
+                break
+    if not model_name:
+        return {"active_alias": alias, "model": None, "vision": False,
+                "tools": False, "reasoning": False, "streaming": False}
+
+    caps = get_model_capabilities(model_name)
+    return {
+        "active_alias": alias,
+        "model": model_name,
+        "vision": caps.vision,
+        "tools": caps.tools,
+        "reasoning": caps.reasoning,
+        "streaming": caps.streaming,
+    }
 
 
 @router.post("/config/encrypt", dependencies=[Depends(require_admin_key)])
