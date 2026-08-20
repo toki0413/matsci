@@ -98,9 +98,9 @@ pub fn list_tools() -> Result<Vec<(String, String, bool)>> {
     let expr = r#"
 import json
 try:
-    from huginn.cli import _register_all_tools
+    from huginn.tools import register_all_tools
     from huginn.tools.registry import ToolRegistry
-    _register_all_tools()
+    register_all_tools()
     tools = []
     for name in ToolRegistry.list_tools():
         tool = ToolRegistry.get(name)

@@ -328,8 +328,11 @@ async fn start_backend(
             .shell()
             .sidecar("huginn-sidecar")
             .map_err(|e| format!("huginn-sidecar missing: {}", e))?
-            // sidecar 默认进 CLI(chat/help), 必须显式带 serve 才会起 HTTP 服务
-            .args(["serve", "--port", &port.to_string()])
+            // huginn-sidecar 是进程管理器 (sidecar/src/main.rs), 不是 CLI:
+            // 它没有 serve 子命令, 通过 --backend-port 指定后端端口, 内部
+            // autostart 自己拉起 python-runtime/python.exe。前端连的是后端
+            // 端口, 不连 sidecar 自身 HTTP, 所以 sidecar 端口留默认即可。
+            .args(["--backend-port", &port.to_string()])
             .env("HUGINN_DEV_MODE", &dev_mode)
             .env("DEEPSEEK_API_KEY", &deepseek_key)
             .env("HUGINN_PROVIDER", &provider)
