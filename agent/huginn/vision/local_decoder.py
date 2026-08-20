@@ -17,7 +17,6 @@ import os
 import time
 import urllib.request
 from pathlib import Path
-from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -73,9 +72,8 @@ def _find_model(host: str) -> str | None:
         return exact
     best = None
     for n in names:
-        if n.lower().startswith(prefix):
-            if best is None or len(n) > len(best):
-                best = n
+        if n.lower().startswith(prefix) and (best is None or len(n) > len(best)):
+            best = n
     return best
 
 

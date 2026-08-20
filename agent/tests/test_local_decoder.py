@@ -54,9 +54,7 @@ def test_decode_returns_none_without_model():
 def test_decode_success_returns_text():
     _clear()
     body = mock.Mock()
-    body.read.return_value = '{"message": {"content": " 针状晶粒, 沿晶界分布  "}}'.encode(
-        "utf-8"
-    )
+    body.read.return_value = '{"message": {"content": " 针状晶粒, 沿晶界分布  "}}'.encode()
     ctx = mock.MagicMock()
     ctx.__enter__.return_value = body
     with (

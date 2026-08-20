@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from huginn.catalog import CatalogManager, ORIGIN_PRIORITY, make_entry_id
+from huginn.catalog import ORIGIN_PRIORITY, CatalogManager, make_entry_id
 
 
 class _FakeMCP:

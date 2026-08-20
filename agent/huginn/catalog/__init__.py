@@ -3,10 +3,10 @@ from __future__ import annotations
 
 from huginn.catalog.manager import CatalogManager
 from huginn.catalog.models import (
-    CatalogEntry,
     KINDS,
-    ORIGINS,
     ORIGIN_PRIORITY,
+    ORIGINS,
+    CatalogEntry,
     make_entry_id,
 )
 
