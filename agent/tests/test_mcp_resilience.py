@@ -22,6 +22,16 @@ from huginn.mcp_client import (
 # ── Helpers ──────────────────────────────────────────────────────
 
 
+# 命令白名单默认只放 python/node/npx/uvx; 本套件用 echo/false 做占位命令,
+# 测的是 resilience 而非命令鉴权 (stdio_client 均被 mock), 故放开白名单.
+@pytest.fixture(autouse=True)
+def _allow_placeholder_mcp_commands(monkeypatch):
+    monkeypatch.setenv(
+        "HUGINN_MCP_ALLOWED_COMMANDS",
+        "python,python3,node,npx,uvx,echo,false",
+    )
+
+
 def _make_manager() -> MCPClientManager:
     """Create a fresh manager without any connections."""
     return MCPClientManager()

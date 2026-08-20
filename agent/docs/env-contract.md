@@ -122,9 +122,9 @@
 | `HUGINN_LLM_LIKELIHOOD_INTERVAL` | 5 | metacog/llm_likelihood.py:52 | metacog/llm_likelihood.py:285, metacog/llm_likelihood.py:287 | code-set |
 | `HUGINN_LLM_REQUEST_TIMEOUT` | 120 | models/registry.py:158 | — | external |
 | `HUGINN_LOCAL_ONLY` | 0 | config.py:783, models/registry.py:1174 | — | external |
-| `HUGINN_LOCAL_VISION_MODEL` | qwen2.5-vl | agent/streaming.py:1291, vision/local_decoder.py:25 | — | external |
-| `HUGINN_LOCAL_VISION_TIMEOUT` | 20 | vision/local_decoder.py:31 | — | external |
-| `HUGINN_LOCAL_VISION_TTL` | 2.0 | vision/local_decoder.py:29 | — | external |
+| `HUGINN_LOCAL_VISION_MODEL` | qwen2.5-vl | agent/streaming.py:1291, vision/local_decoder.py:24 | — | external |
+| `HUGINN_LOCAL_VISION_TIMEOUT` | 20 | vision/local_decoder.py:30 | — | external |
+| `HUGINN_LOCAL_VISION_TTL` | 2.0 | vision/local_decoder.py:28 | — | external |
 | `HUGINN_LOG_LEVEL` | INFO | utils/json_logging.py:126 | — | external |
 | `HUGINN_LOOP_LIGHT_ON_TRACK` | 1 | autoloop/cognitive_loop.py:2390 | — | external |
 | `HUGINN_LOOP_ROLLBACK` | 1 | autoloop/cognitive_loop.py:1776 | — | external |
