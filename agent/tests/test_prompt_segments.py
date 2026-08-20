@@ -10,10 +10,12 @@ import pytest
 from huginn.agent.prompt_builder import (
     metacog_segment,
     mode_segment,
+    multimodal_segment,
     persona_segment,
     phase_segment,
     safety_segment,
     tools_segment,
+    writing_segment,
 )
 from huginn.plugins.prompt_segments import (
     assemble_prompt_segments,
@@ -24,13 +26,15 @@ from huginn.plugins.prompt_segments import (
 
 
 def _hardcoded_reference(mode, phase, metacog, system_prompt=None):
-    """切换前 build_prompt 的硬编码六段拼接 (不含 flag-gated thinking)."""
+    """切换前 build_prompt 的硬编码拼接 (单段含 multimodal/writing, 不含 flag-gated thinking)."""
     segments = [
         persona_segment(system_prompt),
         mode_segment(mode),
         phase_segment(phase),
         metacog_segment(metacog),
         tools_segment(mode, phase, metacog),
+        multimodal_segment(),
+        writing_segment(),
         safety_segment(),
     ]
     return "\n\n".join(s for s in segments if s)

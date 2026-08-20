@@ -131,7 +131,9 @@ def _fallback_skill_header(path: Path) -> dict[str, Any]:
             name = fm.get("name") or name
             description = fm.get("description") or ""
         except Exception:
-            pass
+            # frontmatter 解析失败就退回纯目录名, 不阻碍接入项发现.
+            name = path.parent.name
+            description = ""
     return {"name": name, "description": description, "version": "0.0.0", "paths": []}
 
 
