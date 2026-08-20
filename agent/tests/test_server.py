@@ -267,12 +267,12 @@ class TestModelCaps:
 
     @staticmethod
     def _run(agents, models, monkeypatch):
-        from types import SimpleNamespace as NS
+        from types import SimpleNamespace
 
         from huginn.routes import config as config_routes
 
         def loader():
-            return NS(agents=agents, models=models)
+            return SimpleNamespace(agents=agents, models=models)
 
         monkeypatch.setattr(config_routes, "_load_runtime_config", loader)
         return asyncio.run(config_routes.get_model_caps())
