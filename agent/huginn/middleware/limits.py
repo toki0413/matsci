@@ -20,7 +20,8 @@ from typing import Any
 
 # -- defaults ---------------------------------------------------------------
 
-_DEFAULT_MAX_BODY_MB = 10
+# 默认 100MB: 需放行大于 10MB 的文档/知识库上传, 并给后续多模态(图片/视频)留余量
+_DEFAULT_MAX_BODY_MB = 100
 _DEFAULT_TIMEOUT_SEC = 180
 
 

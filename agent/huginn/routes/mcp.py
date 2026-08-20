@@ -100,16 +100,18 @@ async def connect_mcp_server(
             args = params.get("args", [])
             env = params.get("env")
 
-            # Command whitelist: only allow known-safe interpreters
-            _ALLOWED_COMMANDS = {"python", "python3", "node", "npx", "uvx"}
-            if command not in _ALLOWED_COMMANDS:
-                return {
-                    "success": False,
-                    "error": f"Command '{command}' not in allowed list: {_ALLOWED_COMMANDS}",
-                }
+            # 命令白名单收敛到 mcp_client 单一配置点, 与 config/.mcp.json/CLI 共用,
+            # 避免每处各写一份. 非法命令由 validate_mcp_command 抛 ValueError,
+            # 下方统一捕获并回显当前白名单.
+            from huginn.mcp_client import validate_mcp_command
 
             await get_context().mcp_manager.connect(
-                MCPServerConfig(name=name, command=command, args=args, env=env)
+                MCPServerConfig(
+                    name=name,
+                    command=validate_mcp_command(command),
+                    args=args,
+                    env=env,
+                )
             )
 
         registered = register_mcp_tools(get_context().mcp_manager, server_name=name)

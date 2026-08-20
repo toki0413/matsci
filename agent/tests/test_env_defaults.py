@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import pytest
+from pathlib import Path
 
 from huginn.env_defaults import (
     ENV_REGISTRY,
@@ -113,7 +114,7 @@ class TestGetPath:
         monkeypatch.setenv("TEST_PATH", "/tmp/foo")
         p = get_path("TEST_PATH")
         assert p is not None
-        assert str(p) == "/tmp/foo"
+        assert p == Path("/tmp/foo")
 
     def test_expands_user(self, monkeypatch):
         monkeypatch.setenv("TEST_PATH", "~/foo")
@@ -125,7 +126,7 @@ class TestGetPath:
         monkeypatch.setenv("TEST_PATH", "  /tmp/foo  ")
         p = get_path("TEST_PATH")
         assert p is not None
-        assert str(p) == "/tmp/foo"
+        assert p == Path("/tmp/foo")
 
     def test_unset_returns_default(self):
         assert get_path("TEST_PATH_UNSET") is None

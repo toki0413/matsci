@@ -495,7 +495,7 @@ ENV_REGISTRY: dict[str, dict[str, Any]] = {
     "HUGINN_MAX_BODY_SIZE_MB": {
         "category": EnvCategory.MIDDLEWARE,
         "type": "int",
-        "default": 16,
+        "default": 100,
         "description": "Max request body size in MB.",
         "consumer": "huginn.middleware.limits",
     },
@@ -542,5 +542,35 @@ ENV_REGISTRY: dict[str, dict[str, Any]] = {
         "default": False,
         "description": "Maintenance mode (returns 503).",
         "consumer": "huginn.middleware.maintenance",
+    },
+    # ── MCP ─────────────────────────────────────────────────────────
+    "HUGINN_MCP_ALLOWED_COMMANDS": {
+        "category": EnvCategory.GOVERNANCE,
+        "type": "str",
+        "default": "python,python3,node,npx,uvx",
+        "description": "Allowed commands for MCP stdio servers (comma-separated).",
+        "consumer": "huginn.mcp_client",
+    },
+    # ── Local vision decoder (ollama 等本地多模态 LLM) ─────────────
+    "HUGINN_LOCAL_VISION_MODEL": {
+        "category": EnvCategory.LLM,
+        "type": "str",
+        "default": "qwen2.5-vl",
+        "description": "本地视觉解码模型前缀 (Ollama)。文本模型看图时优先用它解码, 再回落跨 agent 委托。",
+        "consumer": "huginn.vision.local_decoder",
+    },
+    "HUGINN_LOCAL_VISION_TTL": {
+        "category": EnvCategory.LLM,
+        "type": "float",
+        "default": 2.0,
+        "description": "本地视觉解码可用性探测的缓存 TTL (秒), 避免每个图像 turn 都打 /api/tags。",
+        "consumer": "huginn.vision.local_decoder",
+    },
+    "HUGINN_LOCAL_VISION_TIMEOUT": {
+        "category": EnvCategory.LLM,
+        "type": "float",
+        "default": 20.0,
+        "description": "单次本地视觉解码超时 (秒), 防止本地模型抽风拖死文本请求。",
+        "consumer": "huginn.vision.local_decoder",
     },
 }

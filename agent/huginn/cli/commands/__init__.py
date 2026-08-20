@@ -10,6 +10,7 @@ from huginn.cli.commands import (
     autoresearch,
     background,
     bench,
+    catalog_cmd,
     chat,
     coder,
     configure,
@@ -54,6 +55,7 @@ def register_commands(cli: click.Group) -> None:
     cli.add_command(serve.serve)
     cli.add_command(tools.tools)
     cli.add_command(version.version)
+    cli.add_command(catalog_cmd.catalog)
     cli.add_command(configure.configure)
     cli.add_command(bench.bench)
     cli.add_command(evolve.evolve)
