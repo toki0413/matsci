@@ -64,10 +64,9 @@ def main() -> int:
     args = ap.parse_args()
 
     text = args.query
-    if text is None:
-        # 无 --query 时允许从 stdin 读, 便于管道
-        if not sys.stdin.isatty():
-            text = sys.stdin.read()
+    # 无 --query 时允许从 stdin 读, 便于管道
+    if text is None and not sys.stdin.isatty():
+        text = sys.stdin.read()
     if not text:
         print("no text given (use --query or stdin)", file=sys.stderr)
         return 2

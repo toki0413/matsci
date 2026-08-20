@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 
 import click
 from rich.table import Table
@@ -45,9 +46,6 @@ def _plugins_dir():
     from huginn.plugins.loader import DEFAULT_PLUGINS_DIR
 
     return DEFAULT_PLUGINS_DIR
-
-
-import contextlib
 
 
 @contextlib.contextmanager
