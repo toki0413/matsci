@@ -497,15 +497,16 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
     };
 
     const run = async () => {
+      if (!alive) return;
       const online = await check();
       if (online) {
         // Healthy — poll every 30s to catch disconnects
         pollTimer = setTimeout(run, 30000);
         return;
       }
-      // Not online yet — try startBackend, then poll with backoff
+      // Down — ask Tauri to (re)start the backend, then poll with backoff.
       await startBackend();
-      for (let i = 0; i < 60; i++) {
+      for (let i = 0; i < 20; i++) {
         await new Promise((r) => setTimeout(r, backoff));
         if (!alive) return;
         if (await check()) {
@@ -513,9 +514,18 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
           pollTimer = setTimeout(run, 30000);
           return;
         }
-        backoff = Math.min(backoff * 2, 16000); // cap at 16s
+        backoff = Math.min(backoff * 2, 10000); // cap at 10s
       }
-      if (alive) setStatus("backend did not come online");
+      // Still down after a full window — wrap back around to another
+      // startBackend cycle instead of locking into a terminal "did not come
+      // online". The sidecar also auto-restarts a crashed backend, so this is
+      // a backstop. Ease up between cycles so we don't hammer /start.
+      // ponytail: unbounded recovery loop; upgrade path = cap cycles via const.
+      if (alive) {
+        setStatus("backend offline • will retry");
+        backoff = 1000;
+        pollTimer = setTimeout(run, 15000);
+      }
     };
 
     run();

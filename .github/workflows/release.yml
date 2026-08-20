@@ -57,6 +57,64 @@ jobs:
           cp "target/release/huginn.exe" "$SIDECAR_DIR/huginn-$TARGET.exe"
           cp "target/release/huginn-sidecar.exe" "$SIDECAR_DIR/huginn-sidecar-$TARGET.exe"
 
+      # NOTE: mirrors desktop.yml — keep the two workflows' bundle step in sync.
+      - name: Bundle Python runtime
+        shell: pwsh
+        run: |
+          try {
+            $ErrorActionPreference = "Stop"
+
+            Write-Host "=== 1. Downloading python-build-standalone ==="
+            $url = "https://github.com/indygreg/python-build-standalone/releases/download/20240415/cpython-3.12.3+20240415-x86_64-pc-windows-msvc-install_only.tar.gz"
+            Invoke-WebRequest -Uri $url -OutFile python-standalone.tar.gz
+            Write-Host "Downloaded $([math]::Round((Get-Item python-standalone.tar.gz).Length / 1MB, 1)) MB"
+
+            Write-Host "=== 2. Extracting ==="
+            $runtimeDir = "desktop/src-tauri/python-runtime"
+            $extractDir = "python-extract-tmp"
+            python -c "import tarfile; tarfile.open('python-standalone.tar.gz', 'r:gz').extractall('$extractDir')"
+            if ($LASTEXITCODE -ne 0) { throw "Python tarfile extract failed (exit $LASTEXITCODE)" }
+            if (Test-Path "$extractDir/python") {
+              robocopy "$extractDir/python" $runtimeDir /E /NFL /NDL /NJH /NJS /NP
+              Remove-Item $extractDir -Recurse -Force
+            } else {
+              throw "Expected python/ dir in archive, found: $(Get-ChildItem $extractDir -Name)"
+            }
+
+            Write-Host "=== 3. Verifying python.exe ==="
+            if (-not (Test-Path "$runtimeDir/python.exe")) { throw "python.exe not found at $runtimeDir/python.exe" }
+            & "$runtimeDir/python.exe" --version
+            if ($LASTEXITCODE -ne 0) { throw "python.exe --version failed" }
+
+            Write-Host "=== 4. Installing huginn-agent ==="
+            Push-Location agent
+            & "..\$runtimeDir\python.exe" -m pip install . --no-warn-script-location --no-cache-dir 2>&1 | ForEach-Object { Write-Host $_ }
+            if ($LASTEXITCODE -ne 0) { throw "pip install huginn failed (exit $LASTEXITCODE)" }
+            Pop-Location
+
+            Write-Host "=== 5. Verifying imports ==="
+            & "$runtimeDir/python.exe" -c "import huginn.server; print('server OK')"
+            if ($LASTEXITCODE -ne 0) { throw "server import failed" }
+            & "$runtimeDir/python.exe" -c "from huginn.routes import ALL_ROUTERS; print('routes:', len(ALL_ROUTERS))"
+
+            Write-Host "=== 6. Cleaning up ==="
+            Get-ChildItem $runtimeDir -Filter "__pycache__" -Directory -Recurse | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+            Get-ChildItem "$runtimeDir/Lib/site-packages" -Directory -Filter "tests" -Recurse | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+            Get-ChildItem "$runtimeDir/Lib/site-packages" -Directory -Filter "*.dist-info" | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+            Get-ChildItem $runtimeDir -Filter "*.pyc" -Recurse | Remove-Item -Force -ErrorAction SilentlyContinue
+            Remove-Item "$runtimeDir/include" -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item "$runtimeDir/tcl" -Recurse -Force -ErrorAction SilentlyContinue
+
+            $size = (Get-ChildItem $runtimeDir -Recurse | Measure-Object -Property Length -Sum).Sum / 1MB
+            Write-Host "=== Final size: $([math]::Round($size, 1)) MB ==="
+          } catch {
+            Write-Host "FATAL ERROR in Bundle Python runtime:"
+            Write-Host $_
+            Write-Host $_.ScriptStackTrace
+            throw
+          }
+        timeout-minutes: 20
+
       - name: Install frontend dependencies
         working-directory: ./desktop
         run: npm ci

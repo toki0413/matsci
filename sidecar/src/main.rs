@@ -53,6 +53,8 @@ struct SidecarState {
     backend_port: u16,
     child: Mutex<Option<Box<dyn ChildWrapper + Send>>>,
     events: broadcast::Sender<Event>,
+    /// Set by stop_backend_inner so the supervisor knows an exit was intentional.
+    stopped: std::sync::atomic::AtomicBool,
 }
 
 #[tokio::main]
@@ -64,6 +66,7 @@ async fn main() {
         backend_port: args.backend_port,
         child: Mutex::new(None),
         events: events.clone(),
+        stopped: std::sync::atomic::AtomicBool::new(false),
     });
 
     if args.autostart {
@@ -77,6 +80,9 @@ async fn main() {
             }
         });
     }
+
+    // Always watch for crashes; survives manual /stop and idle periods.
+    tokio::spawn(supervise_backend(state.clone()));
 
     let app = Router::new()
         .route("/", get(root))
@@ -171,6 +177,11 @@ async fn start_backend_inner(state: &SidecarState) -> Result<(), String> {
         }
     }
 
+    // (Re)starting is the opposite of a manual stop.
+    state
+        .stopped
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+
     // If a backend is already running externally, just adopt it.
     if backend_health(state.backend_port).await.is_ok() {
         let _ = state.events.send(Event::Status {
@@ -258,16 +269,67 @@ async fn start_backend_inner(state: &SidecarState) -> Result<(), String> {
     Ok(())
 }
 
+// Long-lived supervisor, spawned once from main. Watches whichever child the
+// mutex holds, and if it dies in a way that wasn't a manual /stop, brings it
+// back with a backoff. Poll-loop rather than a blocking wait so a concurrent
+// /stop can still grab the child and kill it.
+async fn supervise_backend(state: Arc<SidecarState>) {
+    loop {
+        let exited_unexpectedly = {
+            let mut lock = state.child.lock().await;
+            match lock.as_mut() {
+                Some(child) => match child.try_wait() {
+                    Ok(Some(_status)) => {
+                        // Exited; take it out so a restart isn't blocked by the guard.
+                        lock.take();
+                        true
+                    }
+                    _ => false,
+                },
+                None => false, // nothing managed, just idle
+            }
+        };
+
+        if exited_unexpectedly
+            && !state.stopped.load(std::sync::atomic::Ordering::SeqCst)
+        {
+            let _ = state.events.send(Event::Status {
+                message: "backend exited unexpectedly, restarting".to_string(),
+            });
+            for attempt in 0.. { // ponytail: unbounded retries; upgrade path = cap via const
+                tokio::time::sleep(tokio::time::Duration::from_secs(restart_backoff(attempt))).await;
+                if state.stopped.load(std::sync::atomic::Ordering::SeqCst) {
+                    return;
+                }
+                if backend_health(state.backend_port).await.is_ok() {
+                    return; // some sibling already brought it up
+                }
+                if start_backend_inner(&state).await.is_ok() {
+                    return; // fresh child back under this same supervisor loop
+                }
+            }
+            return;
+        }
+
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+    }
+}
+
+// Give a crashed backend breathing room instead of hot-spinning it.
+// 1s, 2s, 4s, ... capped at 16s.
+fn restart_backoff(attempt: u64) -> u64 {
+    1u64 << attempt.min(4)
+}
+
 async fn stop_backend_inner(state: &SidecarState) -> Result<(), String> {
+    state
+        .stopped
+        .store(true, std::sync::atomic::Ordering::SeqCst);
     let mut lock = state.child.lock().await;
-    if let Some(mut child) = lock.take() {
+    if let Some(child) = lock.as_mut() {
         child
             .start_kill()
-            .map_err(|e| format!("failed to start killing backend: {}", e))?;
-        let _ = child.wait().await;
-        let _ = state.events.send(Event::Status {
-            message: "backend stopped".to_string(),
-        });
+            .map_err(|e| format!("failed to kill backend: {}", e))?;
     }
     Ok(())
 }

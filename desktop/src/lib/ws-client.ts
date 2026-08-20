@@ -19,6 +19,10 @@ export interface WsClientOptions {
   maxDelay?: number;
   /** 最大重连次数，默认 Infinity */
   maxRetries?: number;
+  /** 认证拒绝(4001/1008)时的慢速恢复重连次数，默认 3；用尽后进入 failed */
+  maxAuthRetries?: number;
+  /** 认证拒绝后的恢复窗口，默认 30s */
+  recoveryDelay?: number;
   /** 心跳间隔，默认 30s；设为 0 关闭 */
   pingInterval?: number;
   /** 状态变更回调 */
@@ -35,6 +39,7 @@ export class ReconnectingWebSocket {
   private ws: WebSocket | null = null;
   private status: WsStatus = 'idle';
   private retries = 0;
+  private authRetries = 0;
   private buffer: string[] = [];
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
@@ -51,6 +56,8 @@ export class ReconnectingWebSocket {
       initialDelay: options.initialDelay ?? 1000,
       maxDelay: options.maxDelay ?? 30000,
       maxRetries: options.maxRetries ?? Infinity,
+      maxAuthRetries: options.maxAuthRetries ?? 3,
+      recoveryDelay: options.recoveryDelay ?? 30000,
       pingInterval: options.pingInterval ?? 30000,
       onStatus: options.onStatus,
       onMessage: options.onMessage,
@@ -148,6 +155,7 @@ export class ReconnectingWebSocket {
 
   private handleOpen(): void {
     this.retries = 0;
+    this.authRetries = 0;
     this.setStatus('connected');
     this.startPing();
     // 重连后先等一个小窗口让服务端就绪，再批量 flush 缓冲
@@ -179,10 +187,24 @@ export class ReconnectingWebSocket {
     this.stopPing();
     this.ws = null;
     if (this.manuallyClosed) return;
-    // 4001 = auth failure from backend, don't retry
-    // 1008 = policy violation (WS auth timeout in non-dev mode), don't retry
+    // 4001 = auth failure from backend, 1008 = policy violation (WS auth
+    // timeout in non-dev mode). Both can be transient while the backend is
+    // still coming up / issuing tokens on first boot, so instead of locking
+    // into failed forever we retry slowly a bounded number of times.
     if (ev?.code === 4001 || ev?.code === 1008) {
-      this.setStatus('failed');
+      if (this.authRetries >= this.opts.maxAuthRetries) {
+        this.setStatus('failed');
+        return;
+      }
+      this.authRetries += 1;
+      this.setStatus('reconnecting', {
+        retries: this.authRetries,
+        delay: this.opts.recoveryDelay,
+      });
+      if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = setTimeout(() => {
+        this.openSocket('reconnecting');
+      }, this.opts.recoveryDelay);
       return;
     }
     this.scheduleReconnect();
