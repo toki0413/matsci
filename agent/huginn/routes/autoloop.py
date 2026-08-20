@@ -125,6 +125,64 @@ async def start_autoloop(req: AutoloopStartRequest) -> dict[str, Any]:
     }
 
 
+@router.get("/autoloop/resumable")
+async def autoloop_resumable() -> dict[str, Any]:
+    """枚举磁盘上可续跑的 autoloop run (engine_state snapshot), 最新在前.
+
+    进程重启后 `autoloop/start` 构造 engine 时会自动恢复最新 checkpoint
+    (_init_resume_state → latest_run_id), 所以"续跑"其实只是再次 start 且
+    带上同 objective. 这个端点给 UI 在重启后看到"上次中断的 run"并一键续跑,
+    不用猜 objective. 至多返回最近 5 条, 按 saved_at 倒序.
+    """
+    workspace = get_context().config.workspace or "."
+    from huginn.runtime.engine_state import _engine_state_dir, load_engine_state
+
+    runs: list[dict[str, Any]] = []
+    d = _engine_state_dir(workspace)
+    if d.exists():
+        for p in sorted(
+            d.glob("*.json"), key=lambda x: x.stat().st_mtime, reverse=True
+        )[:5]:
+            state = load_engine_state(p.stem, workspace)
+            runs.append({
+                "run_id": p.stem,
+                "objective": state._objective if state else "",
+                "iteration": state._iteration if state else 0,
+                "saved_at": state.saved_at if state else p.stat().st_mtime,
+                "resumable": state is not None,
+            })
+    return {"latest_run_id": runs[0]["run_id"] if runs else None, "runs": runs}
+
+
+@router.post("/autoloop/resume")
+async def resume_autoloop() -> dict[str, Any]:
+    """一键续跑最近一次中断的 autoloop run.
+
+    复用它最后一次的 objective 调 `autoloop/start` — start 构造 engine 时自动
+    加载最新 checkpoint, 计数器/假设图/hypothesis 连续性都会恢复. 无 run 时
+    404, 由调用方走普通 start.
+    """
+    from fastapi import HTTPException
+
+    workspace = get_context().config.workspace or "."
+    from huginn.runtime.engine_state import (
+        load_engine_state,
+        latest_run_id,
+    )
+    run_id = latest_run_id(workspace)
+    if not run_id:
+        raise HTTPException(status_code=404, detail="no resumable autoloop run")
+    state = load_engine_state(run_id, workspace)
+    objective = (state._objective if state else "").strip()
+    if not objective:
+        raise HTTPException(
+            status_code=409,
+            detail="resumable run has no objective; call start with one",
+        )
+    req = AutoloopStartRequest(objective=objective)
+    return await start_autoloop(req)
+
+
 @router.get("/autoloop/status")
 async def autoloop_status() -> dict[str, Any]:
     """Return the status of any running autoloop tasks."""

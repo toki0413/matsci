@@ -201,6 +201,23 @@ class MemoryManager:
                     seen.add(tr["content"])
 
         blocks: list[str] = []
+        # 降噪门控: 抑制低 importance 的中短期自动晋升噪音, 防止无关/弱相关
+        # 记忆灌进 prompt 撑爆上下文. 保留: long tier + typed(结构化) — 这些是
+        # 常用事实/洞察, 不设阈值; 只对 mid/short 做重要性过滤. ponytail: 阈值
+        # 可经 HUGINN_RECALL_NOISE_FLOOR 覆盖, 默认 0.35 是启发式, 不区分领域;
+        # 升级路径: 按 category 做自适应阈值或让 LLM 打分.
+        _noise_floor = float(
+            os.environ.get("HUGINN_RECALL_NOISE_FLOOR", "0.35")
+        )
+        _prioritized = lambda r: bool(
+            r.get("memory_type") or r.get("tier") == "long"
+        )
+        results.sort(key=lambda r: (not _prioritized(r), float(r.get("importance", 0.5))))
+        results = [
+            r
+            for r in results
+            if _prioritized(r) or float(r.get("importance", 0.5)) >= _noise_floor
+        ]
         if results:
             lines = ["## Relevant past knowledge:"]
             for r in results:

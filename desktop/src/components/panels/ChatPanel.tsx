@@ -22,8 +22,16 @@ const INLINE_COMMANDS = [
   { cmd: '/clear', desc: 'Clear all messages in this thread' },
   { cmd: '/new', desc: 'Create a new thread' },
   { cmd: '/help', desc: 'Show available commands and shortcuts' },
-  { cmd: '/tools', desc: 'Open the tools panel' },
-  { cmd: '/settings', desc: 'Open settings' },
+  { cmd: '/tools', desc: 'Open the tools panel', nav: 'tools' },
+  { cmd: '/settings', desc: 'Open settings', nav: 'settings' },
+  // 五大模块 + 技能：斜杠直达，工作流里也能用 agent 发的导航事件自动打开，
+  // 不需要用户去 Ctrl+K 里翻找。
+  { cmd: '/science', desc: 'Open Sciences (periodic, structures)', nav: 'periodic' },
+  { cmd: '/build', desc: 'Open Build & Execute', nav: 'execute' },
+  { cmd: '/observe', desc: 'Open Observe & Govern', nav: 'diagnose' },
+  { cmd: '/collab', desc: 'Open Persona & Collab', nav: 'persona' },
+  { cmd: '/skills', desc: 'Open the skills panel', nav: 'skills' },
+  { cmd: '/modules', desc: 'Open the full module picker', nav: '__palette__' },
 ];
 
 // extensions we treat as plain text on drag-drop (materials-science friendly)
@@ -307,6 +315,7 @@ interface ChatPanelProps {
   setResearchMode: (v: boolean) => void;
   contextBudgetTokens?: number;
   onExpandResult?: (content: string, toolName?: string) => void;
+  onNavigate?: (target: string) => void;
   campaignEvents?: Array<{
     event: string;
     data: Record<string, unknown>;
@@ -370,6 +379,7 @@ export function ChatPanel(props: ChatPanelProps) {
     personas = [],
     currentPersona,
     setCurrentPersona,
+    onNavigate,
   } = props;
 
   const [showCommands, setShowCommands] = useState(false);
@@ -499,6 +509,20 @@ export function ChatPanel(props: ChatPanelProps) {
   const filteredCommands = showCommands
     ? INLINE_COMMANDS.filter(c => c.cmd.startsWith(input))
     : [];
+
+  // 统一派发内联斜杠命令：有 nav 的走前端直达(不占上下文), 其余退回原有行为.
+  // ponytail: 直接在组件里 switch, 不抽模块; 命令多了再拆 table.
+  const runInlineCommand = (c: (typeof INLINE_COMMANDS)[number]) => {
+    switch (c.cmd) {
+      case '/plan': setMode('plan'); setInput(''); break;
+      case '/research': setResearchMode(true); setInput(''); break;
+      case '/clear': setMessages([]); setInput(''); break;
+      default:
+        if (c.nav) { onNavigate?.(c.nav); setInput(''); }
+        else setInput(c.cmd + ' ');
+    }
+    setShowCommands(false);
+  };
 
   // ── @mention system ──────────────────────────────────────────
   const MENTION_ITEMS = [
@@ -1338,6 +1362,10 @@ status: ${heatEngineHealth.status}${heatEngineHealth.warnings.length ? '\nwarnin
                       <CollapsibleMessageContent content={msg.content} isStreaming={msg.timestamp === "streaming"} />
                     )
                   )}
+                  {/* 流式光标: 已有内容还在生成时, 尾部给个闪烁块, 用户一眼知道没卡死 */}
+                  {msg.timestamp === "streaming" && msg.content && (
+                    <span className="stream-caret" aria-hidden="true" />
+                  )}
                   {/* Typing dots — shown when streaming hasn't produced content yet */}
                   {msg.timestamp === "streaming" && !msg.content && !msg.reasoning && (
                     <div className="flex items-center gap-1 py-2" aria-label="Assistant is typing">
@@ -2069,11 +2097,7 @@ status: ${heatEngineHealth.status}${heatEngineHealth.warnings.length ? '\nwarnin
               <button
                 key={c.cmd}
                 onClick={() => {
-                  if (c.cmd === '/plan') { setMode('plan'); setInput(''); }
-                  else if (c.cmd === '/research') { setResearchMode(true); setInput(''); }
-                  else if (c.cmd === '/clear') { setMessages([]); setInput(''); }
-                  else { setInput(c.cmd + ' '); }
-                  setShowCommands(false);
+                  runInlineCommand(c);
                 }}
                 onMouseEnter={() => setCmdSelectIdx(i)}
                 className={`flex w-full items-center gap-3 px-4 py-2 text-left transition-colors ${
@@ -2172,11 +2196,7 @@ status: ${heatEngineHealth.status}${heatEngineHealth.warnings.length ? '\nwarnin
                   e.preventDefault();
                   const selected = filteredCommands[cmdSelectIdx];
                   if (selected) {
-                    if (selected.cmd === '/plan') { setMode('plan'); setInput(''); }
-                    else if (selected.cmd === '/research') { setResearchMode(true); setInput(''); }
-                    else if (selected.cmd === '/clear') { setMessages([]); setInput(''); }
-                    else { setInput(selected.cmd + ' '); }
-                    setShowCommands(false);
+                    runInlineCommand(selected);
                     return;
                   }
                 }
@@ -2215,6 +2235,12 @@ status: ${heatEngineHealth.status}${heatEngineHealth.warnings.length ? '\nwarnin
                   setShowMentions(false);
                   return;
                 }
+              }
+              // Esc 停流: 弹层已关闭时, 流式生成中按 Esc 立即停止 (Cursor/Claude Code 同款).
+              if (e.key === 'Escape' && isStreaming) {
+                e.preventDefault();
+                stopGeneration();
+                return;
               }
               // Up arrow in empty input → recall last user message
               if (e.key === 'ArrowUp' && !showCommands && !showMentions && input === '') {
