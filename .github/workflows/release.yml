@@ -102,7 +102,8 @@ jobs:
             Write-Host "=== 6. Cleaning up ==="
             Get-ChildItem $runtimeDir -Filter "__pycache__" -Directory -Recurse | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
             Get-ChildItem "$runtimeDir/Lib/site-packages" -Directory -Filter "tests" -Recurse | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-            Get-ChildItem "$runtimeDir/Lib/site-packages" -Directory -Filter "*.dist-info" | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+            # 别删 *.dist-info: sentence-transformers 等用 pkg_resources 查依赖元数据,
+            # 删了 import 即炸 (PackageNotFoundError). 留着只多几 MB, 换工具可用.
             Get-ChildItem $runtimeDir -Filter "*.pyc" -Recurse | Remove-Item -Force -ErrorAction SilentlyContinue
             Remove-Item "$runtimeDir/include" -Recurse -Force -ErrorAction SilentlyContinue
             Remove-Item "$runtimeDir/tcl" -Recurse -Force -ErrorAction SilentlyContinue
