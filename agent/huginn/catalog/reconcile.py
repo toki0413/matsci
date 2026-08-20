@@ -17,7 +17,7 @@ from huginn.catalog.models import CatalogEntry
 logger = logging.getLogger(__name__)
 
 # 非 MCP 工具 stash, 供 re-enable 复原 (MCP 工具 re-enable 走 reconnect 重新生成适配器).
-_tool_stash: dict[str, "object"] = {}
+_tool_stash: dict[str, object] = {}
 
 
 def _mcp_tool_names(mcp_manager: object, server: str) -> list[str]:

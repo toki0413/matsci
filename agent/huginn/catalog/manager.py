@@ -14,12 +14,13 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from huginn.catalog.models import (
     KINDS,
-    CatalogEntry,
     ORIGIN_PRIORITY,
+    CatalogEntry,
     make_entry_id,
 )
 
@@ -188,7 +189,7 @@ class CatalogManager:
         set_enabled 标记的"用户禁用"不会在 rediscover 时被冲掉.
         """
         raw: dict[str, CatalogEntry] = {}
-        for kind, entries in _kind_collectors(handles).items():
+        for _kind, entries in _kind_collectors(handles).items():
             for e in entries:
                 prev = raw.get(e.id)
                 if prev is None or ORIGIN_PRIORITY[e.origin] > ORIGIN_PRIORITY[prev.origin]:

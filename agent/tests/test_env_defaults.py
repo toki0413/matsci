@@ -1,8 +1,9 @@
 """Tests for huginn.env_defaults — typed env accessors and registry."""
 from __future__ import annotations
 
-import pytest
 from pathlib import Path
+
+import pytest
 
 from huginn.env_defaults import (
     ENV_REGISTRY,
