@@ -6,7 +6,7 @@
 | 开关 | 默认 | 描述 | 旧 env 别名 | 消费点 |
 |---|---|---|---|---|
 | `bandit_mdp` | True | bandit MDP 决策 (HUGINN_BANDIT_MDP) | HUGINN_BANDIT_MDP | agent/bandit_controller.py:117 |
-| `belief_darwin` | True | 信念 Darwin 演化 (HUGINN_BELIEF_DARWIN) | — | — |
+| `belief_darwin` | True | 信念 Darwin 演化 (HUGINN_BELIEF_DARWIN) | — | autoloop/cognitive_loop.py:822, autoloop/cognitive_loop.py:931 |
 | `belief_mode_switch` | True | 信念模式切换 (HUGINN_BELIEF_MODE_SWITCH) | — | — |
 | `belief_update` | True | 信念更新管线 (HUGINN_BELIEF_UPDATE) | — | — |
 | `clarification` | True | agent 主动向用户提问 | — | tools/clarification_tool.py:206 |
@@ -45,10 +45,10 @@
 | `system_health_monitor` | True | 系统资源监控 (CPU/内存/磁盘) | — | diagnostics/system_health.py:521, routes/config.py:876, tools/__init__.py:476 |
 | `task_tool_router` | False | task keyword → tool category 动态路由 (默认关) | — | — |
 | `telemetry` | True | 遥测采集 (HUGINN_TELEMETRY_ENABLED) | HUGINN_TELEMETRY_ENABLED | agent_config.py:158 |
-| `three_cabin` | False | 三舱模型 (HUGINN_USE_THREE_CABIN) | HUGINN_USE_THREE_CABIN | — |
+| `three_cabin` | False | 三舱模型 (HUGINN_USE_THREE_CABIN) | HUGINN_USE_THREE_CABIN | autoloop/cognitive_loop.py:2675 |
 | `tool_call_router` | True | 重型工具 sanity check 路由 | — | agents/tool_call_router.py:123 |
 | `use_atomworld` | False | AtomWorld 环境 (HUGINN_USE_ATOMWORLD) | HUGINN_USE_ATOMWORLD | — |
-| `use_cognitive_map` | False | 认知地图 (HUGINN_USE_COGNITIVE_MAP) | HUGINN_USE_COGNITIVE_MAP | — |
+| `use_cognitive_map` | False | 认知地图 (HUGINN_USE_COGNITIVE_MAP) | HUGINN_USE_COGNITIVE_MAP | runtime/engine_state.py:203 |
 | `world_model` | True | 世界模型 (HUGINN_WORLD_MODEL) | HUGINN_WORLD_MODEL | autoloop/engine_observe.py:365 |
 
 共 45 个功能开关。

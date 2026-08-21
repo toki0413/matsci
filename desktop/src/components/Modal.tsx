@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { X } from 'lucide-react';
 
 interface ModalProps {
@@ -11,16 +11,29 @@ interface ModalProps {
 }
 
 export function Modal({ isOpen, onClose, title, children, size = 'md', className = '' }: ModalProps) {
+  const panelRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     if (!isOpen) return;
+    const prevFocused = document.activeElement as HTMLElement | null;
+    // 打开时把焦点移进弹窗 (第一个可聚焦元素), 关闭时还给触发按钮 —
+    // 否则键盘 Tab 会落到背景页面上, 屏幕阅读器也感知不到弹窗接管了焦点.
+    const raf = requestAnimationFrame(() => {
+      const focusable = panelRef.current?.querySelector<HTMLElement>(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+      );
+      (focusable ?? panelRef.current)?.focus();
+    });
     const handleEsc = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
     };
     window.addEventListener('keydown', handleEsc);
     document.body.style.overflow = 'hidden';
     return () => {
+      cancelAnimationFrame(raf);
       window.removeEventListener('keydown', handleEsc);
       document.body.style.overflow = '';
+      prevFocused?.focus?.();
     };
   }, [isOpen, onClose]);
 
@@ -42,6 +55,7 @@ export function Modal({ isOpen, onClose, title, children, size = 'md', className
       aria-label={title}
     >
       <div
+        ref={panelRef}
         className={`w-full ${sizeClasses[size]} overflow-hidden rounded-2xl border border-border bg-bg-secondary shadow-2xl ${className}`}
         onClick={(e) => e.stopPropagation()}
       >

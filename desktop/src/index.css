@@ -178,11 +178,14 @@
   }
 
   ::-webkit-scrollbar-thumb {
-    @apply bg-transparent rounded-full;
+    @apply rounded-full;
+    /* 默认半透明可见 — Windows 上完全隐藏会让用户看不出可滚动区域.
+       悬停时加深 (下方 :hover 规则). */
+    background: color-mix(in srgb, var(--seed-fg) 14%, transparent);
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    background: color-mix(in srgb, var(--seed-fg) 20%, transparent);
+    background: color-mix(in srgb, var(--seed-fg) 28%, transparent);
   }
 
   code, pre {
@@ -331,6 +334,51 @@
   }
   .btn-danger:hover { opacity: 0.85; }
   .btn-danger:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* ── 全局点击体验: 指针光标 + 按压反馈 ──
+     整个 app 之前没有 :active 状态, 点击按钮没有任何"触感"回执.
+     统一在这里补: 可点元素显示指针, 按下时轻微下沉 3%.
+     ponytail: 全局一条规则替代逐组件 cursor-pointer / active:scale.
+     ceiling: 缩放会叠加到已有 transform 动画的按钮 (如 pet 审批卡的
+     hover scale), 但 :active 是瞬时态, 释放即还原, 不冲突. */
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]) {
+    cursor: pointer;
+  }
+
+  button:not(:disabled):active,
+  [role="button"]:not([aria-disabled="true"]):active {
+    transform: scale(0.97);
+  }
+
+  /* 尊重系统"减少动态效果"偏好: 关掉全局按压缩放 */
+  @media (prefers-reduced-motion: reduce) {
+    button:not(:disabled):active,
+    [role="button"]:not([aria-disabled="true"]):active {
+      transform: none;
+    }
+  }
+
+  /* ── 流式光标 ──
+     内容非空仍在生成时, 消息尾部闪烁块. 没有它, 长响应停顿期用户会
+     误以为卡死. 纯 CSS, 无 JS; 尊重减少动效. */
+  .stream-caret {
+    display: inline-block;
+    width: 2px;
+    height: 1em;
+    margin-left: 2px;
+    vertical-align: text-bottom;
+    background: currentColor;
+    animation: stream-caret-blink 1s steps(2, start) infinite;
+  }
+
+  @keyframes stream-caret-blink {
+    to { visibility: hidden; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .stream-caret { animation: none; }
+  }
 
   /* Success button — for approve/confirm actions */
   .btn-success {
@@ -566,7 +614,11 @@
   }
 
   /* ── SVG Raven state-based animations ── */
-  .raven-idle .raven-svg { animation: raven-svg-float 2.8s ease-in-out infinite; }
+  .raven-idle .raven-svg { animation: raven-svg-float 3.6s ease-in-out infinite; }
+  /* 静态待机不该像个贴图被整张抬起: 翅膀轻轻张合 + 胸腹呼吸微缩放,
+     让它像活物而不是一张被上下搬的图片. */
+  .raven-idle .raven-svg #ravenWingL { animation: raven-wing-rustle-l 3.6s ease-in-out infinite; }
+  .raven-idle .raven-svg #ravenWingR { animation: raven-wing-rustle-r 3.6s ease-in-out infinite; }
   .raven-thinking .raven-svg { animation: raven-svg-think 2.5s ease-in-out infinite; }
   .raven-thinking .raven-svg #ravenEyes { transform: scaleY(0.5); }
   .raven-working .raven-svg { animation: raven-svg-work 0.8s ease-in-out infinite; }
@@ -938,10 +990,20 @@
 
 /* ── SVG Raven keyframes ── */
 @keyframes raven-svg-float {
-  0%, 100% { transform: translateX(-50%) translateY(0) rotate(0deg); }
-  25% { transform: translateX(-50%) translateY(-3px) rotate(-1deg); }
-  50% { transform: translateX(-50%) translateY(-6px) rotate(0deg); }
-  75% { transform: translateX(-50%) translateY(-3px) rotate(1deg); }
+  0%, 100% { transform: translateX(-50%) translateY(0) scale(1); }
+  25% { transform: translateX(-50%) translateY(-3px) scale(1.015); }
+  50% { transform: translateX(-50%) translateY(-6px) scale(1.03); }
+  75% { transform: translateX(-50%) translateY(-3px) scale(1.015); }
+}
+
+@keyframes raven-wing-rustle-l {
+  0%, 100% { transform: rotate(0deg); }
+  40% { transform: rotate(-5deg); }
+}
+
+@keyframes raven-wing-rustle-r {
+  0%, 100% { transform: rotate(0deg); }
+  40% { transform: rotate(5deg); }
 }
 
 @keyframes raven-svg-think {

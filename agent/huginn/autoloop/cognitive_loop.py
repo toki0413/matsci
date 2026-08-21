@@ -30,6 +30,7 @@ import contextlib
 import json
 import logging
 import os
+import re
 import time
 import uuid
 from collections.abc import Awaitable, Callable
@@ -56,6 +57,7 @@ from huginn.autoloop.goal_scheduler import GoalScheduler
 from huginn.autoloop.goal_store import Goal
 from huginn.autoloop.phase_gate import get_shared_phase_gate_state
 from huginn.autoloop.types import AutoloopResult, LoopPhase
+from huginn.feature_flags import FeatureFlags
 from huginn.utils.runtime import HUGINN_DIR_NAME
 
 logger = logging.getLogger(__name__)
@@ -380,6 +382,59 @@ from huginn.autoloop.cognitive_guard import (  # noqa: F401,E402  (晚于类定�
 )
 
 
+def _inject_failed_direction_lessons(
+    objective: str,
+    memory,
+    persona_id,
+    current_hint: str,
+    limit: int = 3,
+) -> str:
+    """按 objective 关键词过滤 recent failed directions, 拼进 hint.
+
+    启动期回灌历史失败教训 — 每次 run 自带前次败因, hypothesis/plan 开场就避开
+    已证伪的路. 纯函数可单测. 复用 memory.recall_failed_directions, 不另起
+    FailedDirectionStore 实例.
+    ponytail: recall 不收 free-text, 本地 token 重叠过滤; ceiling: 同义/泛概念
+    可能漏, 之后可换 embedding recall.
+    """
+    if memory is None or not hasattr(memory, "recall_failed_directions"):
+        return current_hint
+
+    def _tokens(txt) -> set[str]:
+        toks: set[str] = set()
+        for seg in re.split(r"[^A-Za-z0-9]", txt or ""):
+            if len(seg) >= 3:
+                toks.add(seg.lower())
+        return toks
+
+    try:
+        goal_toks = _tokens(objective)
+        lessons: list[str] = []
+        for h, reason, mc in memory.recall_failed_directions(limit=10, persona_id=persona_id):
+            if not h or not reason:
+                continue
+            cand_toks = _tokens(h) | (_tokens(mc) if mc else set())
+            if not (cand_toks & goal_toks):
+                continue
+            line = f"- {h[:120]} | 败因: {reason[:160]}"
+            if mc:
+                line += f" | 概念: {mc[:40]}"
+            lessons.append(line)
+            if len(lessons) >= limit:
+                break
+    except Exception:
+        logger.debug("startup lessons injection skipped", exc_info=True)
+        return current_hint
+
+    if not lessons:
+        return current_hint
+    logger.info("startup failed-direction lessons injected: %d", len(lessons))
+    return (current_hint or "") + (
+        "\n[HISTORICAL LESSONS] 之前 run 在这些相关方向上失败过, 别再重复踩坑:\n"
+        + "\n".join(lessons)
+    )
+
+
 class CognitiveLoopMixin:
     """cognitive loop 主循环方法族, 从 engine.py 下沉 (P3 slim-down). 通过 self 访问 engine 状态."""
 
@@ -459,6 +514,48 @@ class CognitiveLoopMixin:
         save_task_lifecycle(lifecycle, self.workspace)
 
         logger.info("P4-1 autoloop resumed, answer: %s", str(resolution)[:80])
+
+        # PMK 决策回写: 用户已表态(遵从哪一路), 记一条 typed 记忆.
+        # 下次同 subject 冲突时, 回写的那条会被召回到 prompt, 作为既有立场,
+        # 避免换个措辞又重复问同类问题. 用 subject 标签去重, 而不是按内容 —
+        # 用户对同一冲突换措辞表态(如"还是遵从知识")不该再写一条. best-effort,
+        # 拿不到 memory 就跳过.
+        try:
+            _mm = getattr(self, "memory", None)
+            if _mm is not None and hasattr(_mm, "remember_typed") and resolution:
+                _subject_tag = f"pmk_subject:{reason}"
+                _already: list = []
+                if hasattr(_mm, "recall_typed"):
+                    _already = _mm.recall_typed("persona_decision", limit=50) or []
+                # tags 列是 JSON 字符串 (SQLite), 转成 list 再精确匹配 subject;
+                # 不能对字符串做 substring, 否则 pmk_subject:xxx 会误命中前缀.
+                def _tag_list(r: dict) -> list:
+                    raw = r.get("tags")
+                    if isinstance(raw, list):
+                        return raw
+                    if isinstance(raw, str) and raw.strip():
+                        with contextlib.suppress(Exception):
+                            return json.loads(raw)
+                        return raw.split(",")
+                    return []
+
+                _dup = any(
+                    _subject_tag in _tag_list(r)
+                    for r in _already
+                )
+                if not _dup:
+                    _mm.remember_typed(
+                        content=str(resolution).strip(),
+                        memory_type="persona_decision",
+                        status="resolved",
+                        importance=0.9,
+                        tier="long",
+                        tags=["pmk", "human_decision", _subject_tag],
+                        source=f"autoloop pause {run_id} step {step_id}",
+                    )
+        except Exception:
+            logger.debug("best-effort PMK decision writeback failed", exc_info=True)
+
         return resolution
 
 # === 自检 ===
@@ -722,7 +819,7 @@ class CognitiveLoopMixin:
         # P2-6 belief: Gaussian 后验更新. 单值 score 当观测, obs_sigma2=1.0
         # (0-10 分制下单次观测噪声约 1 分). σ² 减小 = belief 收敛.
         # toggle: HUGINN_BELIEF_DARWIN (默认 on). off 时只走原 delta<0.5 逻辑.
-        if os.environ.get("HUGINN_BELIEF_DARWIN", "1") != "0":
+        if FeatureFlags.shared().is_enabled("belief_darwin"):
             try:
                 from huginn.tools.subagent_tool import _gaussian_update
                 self._darwin_belief_mu, self._darwin_belief_sigma2 = _gaussian_update(
@@ -831,7 +928,7 @@ class CognitiveLoopMixin:
         # 后续观测不会显著改变 μ, 边际信息收益递减. 跟 stagnation 互补:
         # stagnation 测"score 不增", σ² 测" belief 不再变". 两者任一触发即 stop.
         if (
-            os.environ.get("HUGINN_BELIEF_DARWIN", "1") != "0"
+            FeatureFlags.shared().is_enabled("belief_darwin")
             and self._darwin_belief_sigma2 < 0.1
             and self._iteration > 2
         ):
@@ -1127,6 +1224,15 @@ class CognitiveLoopMixin:
                 logger.info("autoloop speculator: %s", self._speculator_hint)
         except Exception:
             logger.warning("autoloop speculator skipped", exc_info=True)
+
+        # 方向2: 启动期回灌历史失败教训 — 每次 run 自带前次败因, 而不是等到卡壳
+        # 才想起. 复用模块级纯函数 _inject_failed_direction_lessons (可单测).
+        self._speculator_hint = _inject_failed_direction_lessons(
+            objective,
+            getattr(self, "memory", None),
+            getattr(self, "_last_persona", None),
+            getattr(self, "_speculator_hint", "") or "",
+        )
 
         return run_id, provenance_record, run_collector
 
@@ -1856,6 +1962,8 @@ Respond JSON only:
         )
         self._run_id = run_id
         self._parent_run_id = None
+        # 目标持久化到 engine_state — 重启后 UI 能读回, 一键续跑不用重输.
+        self._objective = objective
         from huginn.autoloop.engine import AUTOLOOP_PHASES
         from huginn.interaction.progress import get_progress_tracker
         tracker = get_progress_tracker()
@@ -2564,7 +2672,7 @@ Respond JSON only:
                     # "pmk_cycle_count/tool_call_health_avg 在 autoloop 路径不增".
                     # run_three_cabin 内部已 append step_eval, 调用方别再 append.
                     # 失败 fallback 到 SimpleNamespace (向后兼容).
-                    if os.environ.get("HUGINN_USE_THREE_CABIN", "0") == "1":
+                    if FeatureFlags.shared().is_enabled("three_cabin"):
                         try:
                             from huginn.metacog.three_cabin_reflector import (
                                 run_three_cabin,
