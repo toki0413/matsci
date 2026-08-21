@@ -21,6 +21,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from huginn.feature_flags import FeatureFlags
 from huginn.runtime.trace_context import get_trace_id as _get_trace_id
 from huginn.utils.common import atomic_write_json
 from huginn.utils.runtime import HUGINN_DIR_NAME
@@ -116,6 +117,7 @@ class EngineState:
     """
 
     _iteration: int = 0
+    _objective: str = ""
     _consecutive_failures: int = 0
     _refine_count: int = 0
     _pivot_count: int = 0
@@ -198,7 +200,7 @@ def save_engine_state(
         state = _snapshot_engine(engine, run_id)
         # P1: Structure Cognitive Map — flag on 时从 tool registry 拉活跃 map.
         # 跟 hypothesis_graph 同范式: try/except, 失败不阻塞 engine_state save.
-        if os.environ.get("HUGINN_USE_COGNITIVE_MAP", "0") == "1":
+        if FeatureFlags.shared().is_enabled("use_cognitive_map"):
             try:
                 from huginn.tools import structure_cognitive_map_tool as _cm
                 state.cognitive_maps = {
