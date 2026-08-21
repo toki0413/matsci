@@ -53,6 +53,8 @@ afterEach(() => {
 
 function makeClient(overrides: {
   maxRetries?: number;
+  maxAuthRetries?: number;
+  recoveryDelay?: number;
   pingInterval?: number;
   initialDelay?: number;
   maxDelay?: number;
@@ -167,11 +169,35 @@ describe('ReconnectingWebSocket', () => {
     expect(FakeWebSocket.instances.length).toBe(countAfter);
   });
 
-  it('does NOT retry on auth/policy close codes (4001, 1008)', () => {
-    const client = makeClient({ initialDelay: 5, pingInterval: 0 });
+  it('retries slowly on auth/policy close codes (4001, 1008) and fails after the auth-retry budget', () => {
+    // Auth failures can be transient while the backend is still booting /
+    // issuing tokens, so 4001/1008 use a slow bounded recovery instead of the
+    // fast exponential path. Exhausting maxAuthRetries is a hard failure.
+    const client = makeClient({ initialDelay: 5, pingInterval: 0, maxAuthRetries: 2, recoveryDelay: 30 });
     const ws = connectAndOpen(client) as FakeWebSocket;
+
+    // first auth close -> slow recovery retry (not failed, not fast path)
     ws.onclose?.({ code: 4001 });
+    expect(client.getStatus()).toBe('reconnecting');
+
+    // recovery window fires -> new socket
+    vi.advanceTimersByTime(30);
+    const ws2 = FakeWebSocket.instances[FakeWebSocket.instances.length - 1] as FakeWebSocket;
+
+    // second auth close (different code) -> still within budget
+    ws2.onclose?.({ code: 1008 });
+    expect(client.getStatus()).toBe('reconnecting');
+
+    // budget exhausted on the next auth close -> permanent failure
+    vi.advanceTimersByTime(30);
+    const ws3 = FakeWebSocket.instances[FakeWebSocket.instances.length - 1] as FakeWebSocket;
+    ws3.onclose?.({ code: 4001 });
     expect(client.getStatus()).toBe('failed');
+
+    // no further sockets are created after failure
+    const countAfter = FakeWebSocket.instances.length;
+    vi.advanceTimersByTime(1000);
+    expect(FakeWebSocket.instances.length).toBe(countAfter);
   });
 
   it('send() returns false after the client has failed', () => {
