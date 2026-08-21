@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -209,9 +210,9 @@ class MemoryManager:
         _noise_floor = float(
             os.environ.get("HUGINN_RECALL_NOISE_FLOOR", "0.35")
         )
-        _prioritized = lambda r: bool(
-            r.get("memory_type") or r.get("tier") == "long"
-        )
+
+        def _prioritized(r: dict[str, Any]) -> bool:
+            return bool(r.get("memory_type") or r.get("tier") == "long")
         results.sort(key=lambda r: (not _prioritized(r), float(r.get("importance", 0.5))))
         results = [
             r

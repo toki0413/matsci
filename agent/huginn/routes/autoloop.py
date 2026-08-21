@@ -166,8 +166,8 @@ async def resume_autoloop() -> dict[str, Any]:
 
     workspace = get_context().config.workspace or "."
     from huginn.runtime.engine_state import (
-        load_engine_state,
         latest_run_id,
+        load_engine_state,
     )
     run_id = latest_run_id(workspace)
     if not run_id:
