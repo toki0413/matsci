@@ -136,6 +136,8 @@ from huginn.utils.common import now_iso  # noqa: E402
 _build_retry_budget = build_retry_budget
 _generate_fallback_figures = generate_fallback_figures
 _step2_5_report_fallback = step2_5_report_fallback
+
+from huginn.agent_config import resolve_tool_budget  # noqa: E402,I001
 from huginn.cli.rcb.audit import (  # noqa: E402,F401
     _METRIC_RE,
     _derive_gap_type,
@@ -203,8 +205,7 @@ from huginn.cli.rcb_utils import (  # noqa: E402,F401  backward-compat re-export
     _make_simplex_id,
     _save_manifold,
 )
-from huginn.agent_config import resolve_tool_budget  # noqa: E402
-from huginn.context_manager import get_context_window  # noqa: E402  (full module import)
+from huginn.context_manager import get_context_window  # noqa: E402,I001  (full module import)
 
 
 async def run(
