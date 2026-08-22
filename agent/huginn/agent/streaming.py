@@ -1166,9 +1166,11 @@ class StreamingMixin:
         # 的 _build_graph 用 get_user_message() 读, 无竞争.
 
         # P4 Task-Dynamic Tool Router: task 变化时 refresh tool_filter.
-        # env=0 时 set_current_task 内部直接 return (无 op). ponytail: 只在
+        # flag 关时 set_current_task 内部直接 return (无 op). ponytail: 只在
         # task 变化时 refresh, 避免每次 chat 都重建 graph cache.
-        if os.environ.get("HUGINN_TASK_TOOL_ROUTER", "0") == "1":
+        from huginn.feature_flags import FeatureFlags
+
+        if FeatureFlags.shared().is_enabled("task_tool_router"):
             prev_task = self._last_routed_task
             self.set_current_task(message)
             if message != prev_task:
@@ -1686,9 +1688,12 @@ class StreamingMixin:
             # budget_override: PhaseManager 转移后通过 Orchestrator 传入, 打通 phase→budget
             if budget_override is not None:
                 _mc = budget_override.max_calls
+                _mt = self._max_tool_calls_per_tool
                 _rec_limit = budget_override.recursion_limit
             else:
-                _mc = self._max_tool_calls or 50
+                # tool 预算随 mode 联动: research/extreme 放宽 max_calls/per_tool
+                # (科研长工具链反复迭代同工具, 默认 5 一次就卡死).
+                _mc, _mt = self._effective_tool_budget()
                 # P1-5: 之前 max(250, _mc*5) 覆盖了 mode 联动 — research/extreme
                 # 模式期望 500/400 recursion, 实际拿到 250. 现在取两者最大值,
                 # 既保证 max_tool_calls 空间, 又让 mode 联动真正生效.
@@ -1711,7 +1716,7 @@ class StreamingMixin:
 
             turn_budget = ToolCallBudget(
                 max_calls=_mc,
-                max_per_tool=self._max_tool_calls_per_tool,
+                max_per_tool=_mt,
             )
             self._tool_adapter.set_budget(turn_budget)
             turn_router = ToolCallRouter(budget=turn_budget)

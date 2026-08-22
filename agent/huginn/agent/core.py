@@ -15,13 +15,18 @@ from typing import Any
 
 from langchain_core.messages import SystemMessage
 
-from huginn.agent_config import _UNSET_SENTINEL, AgentConfig
+from huginn.agent_config import (
+    _UNSET_SENTINEL,
+    AgentConfig,
+    resolve_tool_budget,
+)
 from huginn.checkpointer import create_in_memory_checkpointer
 from huginn.cognitive_engine import STATE_TO_MODEL_TASK
 from huginn.context_manager import (
     get_context_window,
     reset_context_cache,
 )
+from huginn.feature_flags import FeatureFlags
 from huginn.hooks import HookManager
 from huginn.models.router import ModelRouter
 from huginn.permissions import PermissionConfig
@@ -465,6 +470,13 @@ class HuginnAgent(
     # cycle 检测才不重复犯错. chat/plan 是短程, 不开.
     _LONG_HORIZON_MODES = ("research", "extreme")
 
+    # tool 预算单一数据源在 agent_config.MODE_TOOL_BUDGET, 这里不再自持一份.
+    # 科研长工具链吃单工具上限, 默认 5 次一碰就卡死 — mode 联动已在统一入口做.
+    # 向后兼容别名: 旧版用 _LONG_HORIZON_TOOL_BUDGET 映射 mode→(calls, per_tool),
+    # 现收敛到 agent_config. 保留别名防外部代码读取报 AttributeError.
+    _LONG_HORIZON_TOOL_BUDGET: tuple[int, int] = (300, 100)
+    # 上下文窗口已到 1M (deepseek-v4), 200K 时代的 100/300 明显偏小.
+
     def set_mode(self, mode: str) -> None:
         """切换 agent mode (chat/research/plan/extreme).
 
@@ -546,13 +558,24 @@ class HuginnAgent(
         - 普通 chat/plan → 250 (短程, 省计算)
         ponytail: 三档够用, 不上配置. 升级: 暴露到 config.py.
         """
-        import os
 
         if self._mode in self._LONG_HORIZON_MODES:
             return 500
-        if os.environ.get("HUGINN_EXTREME_DISPATCH", "0").lower() in ("1", "true"):
+        if FeatureFlags.shared().is_enabled("extreme_dispatch"):
             return 400
         return 250
+
+    def _effective_tool_budget(self) -> tuple[int, int]:
+        """tool 预算随 mode 联动, 与 _effective_recursion_limit 档位对齐.
+
+        数值与长程地基都收敛在 agent_config.resolve_tool_budget, 这里只透传
+        mode 与显式配置. 保持方法名不变, streaming 调用点无感.
+        """
+        return resolve_tool_budget(
+            self._mode,
+            self._max_tool_calls,
+            self._max_tool_calls_per_tool,
+        )
 
     def enter_plan_execution(self) -> None:
         """执行阶段临时开启 plan_mode (写工具强制 ASK), 不改 _mode 字段.
@@ -641,7 +664,7 @@ class HuginnAgent(
         # tool_filter 是硬约束 (限制 agent 只能用 code_tool/bash_tool), 不能被
         # task router 冲掉. 交集为空 → 保留原 tool_filter (task router 误判时不破坏).
         effective_filter: set[str] | None = self.tool_filter
-        if os.environ.get("HUGINN_TASK_TOOL_ROUTER", "0") == "1" and self._current_task:
+        if FeatureFlags.shared().is_enabled("task_tool_router") and self._current_task:
             try:
                 from huginn.runtime.task_tool_router import route_tools
 
