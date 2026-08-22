@@ -226,3 +226,30 @@ class TestHealthStatus:
         assert data["status"] == "ok"
         assert data["provider"] == "ollama"
         monkeypatch.delenv("HUGINN_PROVIDER", raising=False)
+
+
+# ── Autoloop config-error mapping ────────────────────────────────
+# 复现验收发现的缺陷: 无 LLM 配置时 /autoloop/start 不应返回含糊 500
+# "Internal server error", 而应把"缺模型/缺 key"作为 400 配置问题暴露.
+
+
+class TestAutoloopConfigErrorMapping:
+    def test_missing_model_maps_to_400(self, monkeypatch):
+        # 模拟引擎构造在无模型配置时抛干净的 ValueError (get_model 路径的真实行为).
+        from huginn.autoloop import engine as engine_mod
+
+        def _boom(self, *a, **kw):
+            raise ValueError(
+                "Provider 'acme' requires an explicit model name. "
+                "Use --model / HUGINN_MODEL to set it."
+            )
+
+        monkeypatch.setattr(engine_mod.AutoloopEngine, "__init__", _boom)
+        r = client.post(
+            "/autoloop/start",
+            json={"objective": "smoke", "max_iterations": 1},
+        )
+        assert r.status_code == 400  # 配置问题 → 400, 而非 500
+        body = r.json()
+        assert "model" in body.get("message", "")
+        assert "Internal server error" not in body.get("message", "")
