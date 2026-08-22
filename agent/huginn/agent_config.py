@@ -27,13 +27,58 @@ def _env_bool(name: str, default: bool) -> bool:
 
     兼容原 __init__ 里两种写法:
     - ``!= "0"``      -> 传 default=True,  命中 "0" 为 False
-    - ``== "1"``      -> 传 default=False, 命中 "1" 为 True
-    - ``.lower() in ("1","true","yes")`` -> 同上
+    - ``== "1"``      -> 传 default=True,  命中 "1" 为 True
+    - ``.lower() in ("1","true","yes")``  -> 同上
     """
     raw = os.environ.get(name)
     if raw is None:
         return default
     return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
+# ── tool 预算统一数据源 ─────────────────────────────────────────
+# 之前散在 core.py (_LONG_HORIZON_TOOL_BUDGET) 与 rcb_runner.py
+# (max_tool_calls=1200/400, per_tool=300/50) 两套数值, 靠 max() 折中.
+# 这里收敛成单一 mode → 预算表, core / rcb_runner 都从这里读.
+# 长程模式带地基 (最低值); 显式配置比地基高时向上取, 不削用户.
+# 普通 chat/plan 无地基, 显式配置优先, 否则回落默认 15/5.
+
+#: mode → (max_calls, max_per_tool) 地基. 未列出的 mode 回落默认 (15, 5).
+MODE_TOOL_BUDGET: dict[str, tuple[int, int]] = {
+    "chat": (15, 5),       # 短程对话, 省调用
+    "plan": (15, 5),       # 短程计划, 同 chat
+    "research": (300, 100),  # day 级科研长任务, 300 次单轮看得到产出拐点
+    "extreme": (1200, 300),  # 全能力打开, 1M 上下文下可长时间探索
+}
+
+#: 未显式配置时 tool 预算回落值 (对应 HUGINN_MAX_TOOL_CALLS 默认).
+_DEFAULT_TOOL_BUDGET = (15, 5)
+
+
+def resolve_tool_budget(
+    mode: str,
+    explicit_max_calls: int | None = None,
+    explicit_max_per_tool: int | None = None,
+    base: tuple[int, int] | None = None,
+) -> tuple[int, int]:
+    """解析单轮 tool 调用预算, 统一入口.
+
+    规则与旧 _effective_tool_budget 保持一致:
+    - 长程模式 (research/extreme): 取地基; 显式配置更高则 max 向上取.
+    - 普通模式 (chat/plan): 显式配置优先, 否则回落默认 15/5.
+    调用方可传 ``base`` 覆盖地基 (rcb_runner 用它保 audit-20 预算-产出曲线的
+    经验拐点 400/1200, 避免并入 mode 表的 research=300 而掉分).
+    """
+    base_calls, base_per_tool = base or MODE_TOOL_BUDGET.get(mode, _DEFAULT_TOOL_BUDGET)
+    if mode in ("research", "extreme"):
+        return (
+            max(explicit_max_calls or 0, base_calls),
+            max(explicit_max_per_tool or 0, base_per_tool),
+        )
+    return (
+        explicit_max_calls or base_calls,
+        explicit_max_per_tool or base_per_tool,
+    )
 
 
 @dataclass
@@ -60,9 +105,7 @@ class AgentModelConfig:
     @classmethod
     def from_env(cls) -> AgentModelConfig:
         return cls(
-            prompt_cache_control=(
-                os.environ.get("HUGINN_PROMPT_CACHE_CONTROL", "1") != "0"
-            ),
+            prompt_cache_control=FeatureFlags.shared().is_enabled("prompt_cache_control"),
         )
 
 
@@ -135,12 +178,8 @@ class AgentSecurityConfig:
     @classmethod
     def from_env(cls) -> AgentSecurityConfig:
         return cls(
-            privacy_redact_secrets=(
-                os.environ.get("HUGINN_PRIVACY_REDACT_SECRETS", "1") != "0"
-            ),
-            privacy_block_on_secrets=(
-                os.environ.get("HUGINN_PRIVACY_BLOCK_ON_SECRETS", "0") == "1"
-            ),
+            privacy_redact_secrets=FeatureFlags.shared().is_enabled("privacy_redact_secrets"),
+            privacy_block_on_secrets=FeatureFlags.shared().is_enabled("privacy_block_on_secrets"),
             auto_approve=_env_bool("HUGINN_AUTO_APPROVE", False),
         )
 

@@ -203,6 +203,8 @@ from huginn.cli.rcb_utils import (  # noqa: E402,F401  backward-compat re-export
     _make_simplex_id,
     _save_manifold,
 )
+from huginn.agent_config import resolve_tool_budget  # noqa: E402
+from huginn.context_manager import get_context_window  # noqa: E402  (full module import)
 
 
 async def run(
@@ -360,7 +362,7 @@ async def run(
         os.environ.setdefault("HUGINN_CONTEXT_ROUTER", "1")
         os.environ.setdefault("HUGINN_TASK_TOOL_ROUTER", "1")
         cfg = HuginnConfig.from_env()  # 重读 env 拿 thinking
-        print("[EXTREME MODE] thinking=high, max_tool_calls=300, context_budget=200K, autoloop thresholds 50/50/20/15, persistent_goal=on, wall_clock=86400s", flush=True)
+        print("[EXTREME MODE] thinking=high, max_tool_calls=1200, context_budget=model-window, autoloop thresholds 50/50/20/15, persistent_goal=on, wall_clock=86400s", flush=True)
 
     # P5: persistent goal mode — 创建 active goal with wall_clock_budget.
     # 主循环每轮查 wall_clock_expired, stagnation/TASK COMPLETE break 加守卫,
@@ -501,10 +503,17 @@ async def run(
 
     # C3: 预算扩容 — 默认 150→400, 极限 300→600.
     # audit 20 动作1: 预算-产出曲线最陡段在 150-400, 再投 150 次 ≈ +6.5 分.
+    # 走统一 resolve_tool_budget, 但传 audit 拟合出的经验拐点做 base,
+    # 不并入 mode 表的 research=300 (那会退化掉分). 显式配置更高则 max 向上取.
     # ponytail: 不扩 timeout (已 7200s 够用), 只扩 calls.
-    _max_calls = 600 if extreme else 400
-    _max_per_tool = 100 if extreme else 50
-    _ctx_budget = 200000 if extreme else cfg.context_budget_tokens
+    _mode = "extreme" if extreme else "research"
+    _max_calls, _max_per_tool = resolve_tool_budget(
+        _mode,
+        base=(1200, 300) if extreme else (400, 50),
+    )
+    # 上下文预算对齐模型窗口, 不写死 200K. 模型 1M (deepseek-v4) 时用 1M,
+    # 写死 200K 会在长任务里过早触发压缩, 截断本该继续探索的轨迹.
+    _ctx_budget = get_context_window(model_name) if extreme else cfg.context_budget_tokens
 
     # Task 12: Memory 接线 — 跨任务共享 db 让 self_model/curiosity 积累.
     # 默认跨任务共享 db, 多个 RCB task 积累 iteration_result 给 curiosity hint.
@@ -1295,7 +1304,7 @@ def main() -> None:
     parser.add_argument("--workspace", required=True, help="RCB workspace path")
     parser.add_argument(
         "--extreme", action="store_true",
-        help="v6 极限模式: thinking=high, max_tool_calls=300, context_budget=200K",
+        help="v6 极限模式: thinking=high, max_tool_calls=1200, context_budget=model-window",
     )
     # Task 4.1: MCMC 多模式入口 — 不传 --mcmc-mode 走原 RCB 路径, 100% 不变.
     # env var 回退: CLI 未传时读 HUGINN_MCMC_*
