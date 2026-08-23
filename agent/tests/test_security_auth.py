@@ -8,8 +8,8 @@ from fastapi import HTTPException, Request
 from huginn.routes.auth import _issue_token
 from huginn.security.auth import (
     get_user_store,
-    require_api_key,
     require_admin_key,
+    require_api_key,
     secrets_match,
 )
 from huginn.security.rbac import Role
