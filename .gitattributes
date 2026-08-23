@@ -1,0 +1,5 @@
+# 契约文档必须存 LF: config_audit 渲染输出 LF, 测试 read_text 后逐字符对比.
+# 若 blob 被 autocrlf 转成 CRLF, Linux CI 检出后 read 到 \r\n 与渲染的 \n 不符,
+# 契约测试跨平台必漂移. 仅约束 agent/docs/ 下的契约文档, 不动其它文件行尾.
+agent/docs/* text eol=lf
+.gitattributes text eol=lf
