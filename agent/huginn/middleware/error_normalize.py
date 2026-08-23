@@ -112,9 +112,22 @@ class ErrorNormalizeMiddleware(BaseHTTPMiddleware):
                 media_type=response.media_type,
             )
 
-        # For 200 responses, only normalize if success=false
+        # For 200 responses, only normalize if success=false. The body was
+        # consumed above, so returning the original response here would send
+        # an empty stream with a stale Content-Length (fastapi serializes the
+        # dict first, so the header is right but the bytes are gone). Rebuild
+        # the response with the preserved bytes instead.
         if status_code == 200 and body.get("success") is not False:
-            return response
+            return Response(
+                content=body_bytes,
+                status_code=response.status_code,
+                headers={
+                    k: v
+                    for k, v in response.headers.items()
+                    if k.lower() != "content-length"
+                },
+                media_type=response.media_type,
+            )
 
         request_id = getattr(request.state, "request_id", "unknown")
         normalized = _normalize_error_body(body, request_id, status_code)
