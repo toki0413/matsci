@@ -56,6 +56,7 @@ function makeClient(overrides: {
   maxAuthRetries?: number;
   recoveryDelay?: number;
   pingInterval?: number;
+  pingTimeout?: number;
   initialDelay?: number;
   maxDelay?: number;
   authToken?: string | (() => string | null);
@@ -245,17 +246,20 @@ describe('ReconnectingWebSocket', () => {
   });
 
   it('sends ping on the configured interval and force-closes on missing pong', () => {
-    // Important: the 10s pong-watchdog is re-armed on every ping tick, so the
-    // interval must be LONGER than 10s for a missing pong to ever fire. Use
-    // 15s: ping at t=15s arms a watchdog for t=25s, well before the next ping.
-    const client = makeClient({ pingInterval: 15_000, initialDelay: 10, maxDelay: 10, maxRetries: 1 });
+    // The pingTimeout watchdog is re-armed on every ping tick, so the
+    // interval must be LONGER than pingTimeout for a missing pong to ever
+    // fire. Use 15s interval / 10s timeout: ping at t=15s arms a watchdog
+    // for t=25s, well before the next ping. The 20s default timeout would
+    // arm for t=35s, past the retry window -- pin it explicitly to isolate
+    // the "no pong -> reconnect" behaviour.
+    const client = makeClient({ pingInterval: 15_000, pingTimeout: 10_000, initialDelay: 10, maxDelay: 10, maxRetries: 1 });
     const ws = connectAndOpen(client) as FakeWebSocket;
 
-    // first ping tick -> {type:'ping'} is emitted, watchdog armed for +10s
+    // first ping tick -> {type:'ping'} is emitted, watchdog armed for +pingTimeout
     vi.advanceTimersByTime(15_000);
     expect(ws.sent).toContain(JSON.stringify({ type: 'ping' }));
 
-    // no pong within the 10s watchdog window -> force reconnect
+    // no pong within the pingTimeout watchdog window -> force reconnect
     vi.advanceTimersByTime(10_000);
     expect(capturedStatuses.some((s) => s.status === 'reconnecting')).toBe(true);
   });

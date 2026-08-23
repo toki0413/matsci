@@ -58,6 +58,7 @@ import { LogsPanel } from "./components/panels/LogsPanel";
 import { TerminalPanel } from "./components/panels/TerminalPanel";
 import { PanelHeader } from "./components/settings-shared";
 import { GlobalSearch } from "./components/GlobalSearch";
+import { RuntimeStatusPanel } from "./components/RuntimeStatusPanel";
 import { CommandPalette, type PaletteMode } from "./components/CommandPalette";
 import type { DiffEntry, Checkpoint, ToolInfo, SkillInfo, GlobalSearchResult } from "./types/domain";
 import {
@@ -192,6 +193,7 @@ export default function App() {
   const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
   const [toolSearch, setToolSearch] = useState("");
   const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
+  const [runtimeStatusOpen, setRuntimeStatusOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [paletteMode, setPaletteMode] = useState<PaletteMode>('commands');
   const [draggedTab, setDraggedTab] = useState<string | null>(null);
@@ -883,6 +885,13 @@ export default function App() {
       handler: () => { setToolPaletteOpen(false); setGlobalSearchOpen(true); },
       group: "search",
     },
+    {
+      id: "runtime-status",
+      label: t('cmd.runtimeStatus') || "Run Status",
+      icon: <Gauge size={16} />,
+      handler: () => { setCommandPaletteOpen(false); setRuntimeStatusOpen(true); },
+      group: "search",
+    },
     // 任务/脚本快捷入口：切到终端并预填命令，回车即执行
     {
       id: "run-current-file",
@@ -1103,6 +1112,16 @@ export default function App() {
   const providerLabel = PROVIDERS.find((p) => p.id === config.provider)?.label || config.provider;
   const allTabs = sidebarGroupsData.flatMap((g) => g.tabs);
   const activeTabInfo = allTabs.find((t) => t.id === activeTab);
+
+  // 斜杠命令导航：__palette__ 打开模块选择器，其余按 id/label 模糊匹配到具体面板.
+  // 匹配不上就回退到模块选择器，避免把无效目标发回后端当消息发出去.
+  const handleSlashNavigate = (target: string) => {
+    if (target === '__palette__') { setToolPaletteOpen(true); return; }
+    const id = target.toLowerCase();
+    const hit = allTabs.find((t) => t.id === id || t.label.toLowerCase() === id);
+    if (hit) { setActiveTab(hit.id as typeof activeTab); return; }
+    setToolPaletteOpen(true);
+  };
 
   const handleCoderRun = coder.run;
   const handleExecuteRun = execute.run;
@@ -1549,6 +1568,7 @@ export default function App() {
                 setActiveTab("result");
               }}
               onOpenFiles={() => setActiveTab("files")}
+              onNavigate={handleSlashNavigate}
               personas={personaList.map(p => ({ name: p.label, description: p.description }))}
               currentPersona={config.persona}
               setCurrentPersona={switchPersona}
@@ -1642,7 +1662,7 @@ export default function App() {
             />
           )}
 
-          <div hidden={activeTab !== "knowledge"}>
+          <div hidden={activeTab !== "knowledge"} className="h-full">
             <KnowledgePanel
               config={config}
               setConfig={setConfig}
@@ -1710,6 +1730,11 @@ export default function App() {
             isOpen={globalSearchOpen}
             onClose={() => setGlobalSearchOpen(false)}
             onSelect={handleGlobalSearchSelect}
+          />
+
+          <RuntimeStatusPanel
+            isOpen={runtimeStatusOpen}
+            onClose={() => setRuntimeStatusOpen(false)}
           />
 
           <CommandPalette

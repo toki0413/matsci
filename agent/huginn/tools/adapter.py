@@ -14,6 +14,8 @@ import inspect
 import json
 import logging
 import os
+import re
+import threading
 import time
 import typing
 from collections.abc import Callable
@@ -30,6 +32,7 @@ from huginn.core_types import (
     ToolContext,
     ToolResult,
 )
+from huginn.feature_flags import FeatureFlags
 from huginn.permissions import PermissionConfig
 from huginn.pet import PetMood, get_pet_bus
 from huginn.privacy import redact_secrets
@@ -43,6 +46,96 @@ from huginn.utils.runtime import get_runtime_home
 from huginn.utils.tokens import count_tokens
 
 logger = logging.getLogger(__name__)
+
+
+# ── Tool economy — 让"工具瘦身"每天可见、可变、可调 ───────────────────────
+# 进程内累计 (进程启动清零), 不持久化、跨 session 共享一份。纯展示埋点,
+# 绝不碰执行路径。真实调用 vs 缓存/去重命中 vs 压缩省字符, 前端抽屉/路由只读。
+_economy_lock = threading.Lock()
+_economy: dict[str, int] = {
+    "calls": 0,
+    "cache_hits": 0,
+    "dedupe_hits": 0,
+    "chars_before": 0,
+    "chars_after": 0,
+}
+
+
+def _economy_bump(**kw: int) -> None:
+    """对若干计数器累加, 线程安全, best-effort 不抛。"""
+    with _economy_lock:
+        for k, v in kw.items():
+            if v > 0 and k in _economy:
+                _economy[k] += v
+
+
+def _estimate_chars(o: Any) -> int:
+    """粗略估算对象体量的字符数, 只用于省量对比, 不追求精确。"""
+    try:
+        return len(json.dumps(o, default=str, ensure_ascii=False))
+    except Exception:
+        return len(str(o))
+
+
+def tool_economy_snapshot() -> dict[str, Any]:
+    """返回当前工具经济快照。tokens 省量是字符差的粗略 4:1 换算。"""
+    with _economy_lock:
+        saved_chars = max(0, _economy["chars_before"] - _economy["chars_after"])
+        return dict(_economy, chars_saved=saved_chars, tokens_saved=saved_chars // 4)
+
+
+# ── 可操作错误信息 — 把裸异常转成人话 + 下一步 ─────────────────────────
+# 工具失败时 _serialize 会把 result.error 原样回喂给 LLM, 常常是一长串
+# 没人读的堆栈/路径。这里是模块级纯函数: 对常见模式做一次性改写, 识别
+# 不了就原样返回 (不掩盖原始文本, 宁可不改也不丢信息)。原则: 只在汇聚
+# 点改一处, 而不是在几十个工具里各写一遍。
+_ERR_HINTS = (
+    # (regex, 人话一句话, 建议下一步)
+    (re.compile(r"Permission denied(?:'[^']*')?", re.I),
+     "目标文件/目录没有写权限",
+     "检查文件属主和读写权限, 或换到有写权限的路径"),
+    (re.compile(r"FileNotFoundError|No such file|ENOENT", re.I),
+     "目标路径不存在",
+     "确认路径拼写和相对/绝对目录, 或先创建目录再写"),
+    (re.compile(r"TimeoutError|timed out|Timeout while await|> processor timeout", re.I),
+     "操作超时",
+     "缩小输入规模、加大 timeout, 或把大任务拆小分步跑"),
+    (re.compile(r"Too many open files|EMFILE|Resource temporarily unavailable", re.I),
+     "系统文件描述符耗尽",
+     "释放不再用的句柄, 减少并发, 或重启 agent 进程"),
+    (re.compile(r"Broken pipe|Connection (reset|closed|refused)|Errno 32", re.I),
+     "底层连接被断开",
+     "重试一次; 若持续失败检查网络/服务端是否还在"),
+    (re.compile(r"Out of memory|Killed|No memory|CUDA out of memory", re.I),
+     "内存/显存不足",
+     "减小单次数据量或 batch, 给计算程序配更小的内存占用"),
+    (re.compile(r"TypeError:|ValueError:", re.I),
+     "参数类型或取值不对",
+     "核对传入参数的类型和取值范围, 修正后再调"),
+    (re.compile(r"ModuleNotFoundError|ImportError", re.I),
+     "缺少依赖模块",
+     "安装缺失的依赖包后重试"),
+    (re.compile(r"ENOSPC|No space left on device", re.I),
+     "磁盘空间不足",
+     "清理临时文件/中间产物, 释放磁盘后再跑"),
+    (re.compile(r"Segmentation fault|EINSTRUCTION|assert .* failed", re.I),
+     "程序崩溃(非脚本逻辑问题)",
+     "多半是底层/砂箱问题, 换一种实现或换工具绕过"),
+)
+
+def humanize_tool_error(raw: str) -> str:
+    """把工具返回的裸错误改写成'一句话 + 下一步'。
+
+    只匹配上面清单里的常见模式, 命中就在开头加两行 `可操作` 提示;
+    没命中就原样返回。纯函数、无副作用、不回填、不丢原文。
+    """
+    if not raw:
+        return raw
+    for pattern, hint, action in _ERR_HINTS:
+        if pattern.search(raw):
+            return f"[{hint}] {action}。原文: {raw}"
+    return raw
+
 
 # 插件事件总线 (typed Event 分发, api/event.py 的 ToolCallEvent/ToolRespondEvent).
 # 跟 events/integration.py 的内部字符串事件总线是两套, 这里只管插件系统.
@@ -203,6 +296,7 @@ def _record_outcome(
     error: str | None = None,
 ) -> None:
     """工具执行完记一笔到熔断器 + 仪表盘，best-effort 不抛。"""
+    _economy_bump(calls=1)  # 真实执行计数, economy 不随健康监控开关走
     if not _HEALTH_MONITOR_ON and not _is_heavy_tool(tool_name):
         return
     try:
@@ -224,6 +318,7 @@ def _record_outcome(
 
 def _record_cache_hit(tool_name: str) -> None:
     """缓存命中记一笔到仪表盘（不算熔断器的成败）。"""
+    _economy_bump(cache_hits=1)
     if not _HEALTH_MONITOR_ON:
         return
     try:
@@ -668,6 +763,9 @@ class ToolAdapter:
                 data = {"result": result.data}
             else:
                 data = {"error": result.error or "Unknown error"}
+                # 可操作错误: 把裸异常转成人话+下一步, 让 LLM 不再啃一长串堆栈.
+                # 识别不了就原样返回, 不掩盖原文.
+                data["error"] = humanize_tool_error(data["error"])
                 # 兜底: 从 data 字典里抓 stderr/stdout 作为 error_detail.
                 # 之前用 getattr(result, "stderr") 是死代码 — ToolResult 没这字段.
                 # bash_tool/code_tool 把 stderr 放在 data 里, 这里抽出来给 agent 看.
@@ -744,24 +842,27 @@ class ToolAdapter:
             return data
 
         def _sanitize_and_compress(obj: Any) -> Any:
+            _eco_before = _estimate_chars(obj)
             # Strings: privacy redaction first, then token-aware truncation.
             if isinstance(obj, str):
                 s = obj
-                if os.environ.get("HUGINN_PRIVACY_REDACT_SECRETS", "1") != "0":
+                if FeatureFlags.shared().is_enabled("privacy_redact_secrets"):
                     s = redact_secrets(s)
-                return compress_tool_output(
+                out = compress_tool_output(
                     s,
                     max_output_tokens=compression_max_tokens,
                     tool_name=tool.name,
                 )
-
-            # Everything else: apply structured compression (numeric summaries,
-            # list head/tail, long-text truncation).
-            return compress_tool_output(
-                obj,
-                max_output_tokens=compression_max_tokens,
-                tool_name=tool.name,
-            )
+            else:
+                # Everything else: structured compression (numeric summaries,
+                # list head/tail, long-text truncation).
+                out = compress_tool_output(
+                    obj,
+                    max_output_tokens=compression_max_tokens,
+                    tool_name=tool.name,
+                )
+            _economy_bump(chars_before=_eco_before, chars_after=_estimate_chars(out))
+            return out
 
         def _audit(
             input_data: BaseModel,
@@ -1077,6 +1178,7 @@ class ToolAdapter:
             if deduper is not None:
                 cached_dedup = deduper.lookup(tool.name, kwargs)
                 if cached_dedup is not None:
+                    _economy_bump(dedupe_hits=1)
                     _audit(input_data, cached_dedup, approved=True, reason="dedupe_hit")
                     _publish(
                         PetMood.SUCCESS, f"{tool.name} (deduped)", {"tool": tool.name}
@@ -1404,7 +1506,9 @@ class ToolAdapter:
                 output = _serialize(result)
                 # LLM-based smart compression for very large text payloads.
                 # Runs only when a summarizer has been registered.
+                _eco_before = _estimate_chars(output)
                 output = await _smart_compress_output(output)
+                _economy_bump(chars_before=_eco_before, chars_after=_estimate_chars(output))
                 span.metadata["success"] = result.success
                 span.metadata["args"] = _truncate_for_trajectory(payload)
                 span.metadata["result"] = _truncate_for_trajectory(output)
@@ -1583,7 +1687,9 @@ class ToolAdapter:
                 if result.success:
                     _update_hashline_cache(tool.name, input_data, context)
                 output = _serialize(result)
+                _eco_before = _estimate_chars(output)
                 output = _sync_smart_compress(output)
+                _economy_bump(chars_before=_eco_before, chars_after=_estimate_chars(output))
                 span.metadata["success"] = result.success
                 span.metadata["args"] = _truncate_for_trajectory(payload)
                 span.metadata["result"] = _truncate_for_trajectory(output)

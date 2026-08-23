@@ -45,8 +45,9 @@ EdgeType = Literal["support", "refute", "derive", "pivot"]
 # ponytail: 不引入 embedding, 用 dimension 共享 + sibling 关系做 Tᵢⱼ.
 # ceiling: 纯结构耦合, 不捕捉语义. 升级路径: LLM/embedding 算 Tᵢⱼ.
 def _ising_frontier_enabled() -> bool:
-    """toggle: env HUGINN_ISING_FRONTIER (默认 on). off 时回退原 frontier()."""
-    return os.environ.get("HUGINN_ISING_FRONTIER", "1") != "0"
+    """toggle: FeatureFlags `ising_frontier` (默认 on). off 时回退原 frontier()."""
+    from huginn.feature_flags import FeatureFlags
+    return FeatureFlags.shared().is_enabled("ising_frontier")
 
 
 # ── data structures ──────────────────────────────────────────────────────────
@@ -1729,10 +1730,10 @@ def _selfcheck_save_load() -> None:
 
 def _selfcheck_frontier_ranked() -> None:
     """P1-1 Ising-ranked frontier selfcheck."""
-    import os as _os
+    from huginn.feature_flags import FeatureFlags
 
-    _saved = _os.environ.get("HUGINN_ISING_FRONTIER")
-    _os.environ["HUGINN_ISING_FRONTIER"] = "1"
+    _saved = FeatureFlags.shared().is_enabled("ising_frontier")
+    FeatureFlags.shared().enable("ising_frontier")
 
     # 场景 1: 假设数 <= top_k → 回退原 frontier
     g = HypothesisGraph()
@@ -1778,16 +1779,13 @@ def _selfcheck_frontier_ranked() -> None:
         f"同 sibling_group 不应同时选两个, got {grp_count} from {[n.id for n in out4]}"
 
     # 场景 5: toggle off → 回退原 frontier() 顺序 (无 ranking)
-    _os.environ["HUGINN_ISING_FRONTIER"] = "0"
+    FeatureFlags.shared().disable("ising_frontier")
     out5 = g3.frontier_ranked(top_k=3)
     # toggle off 时返回 frontier() 完整列表 (未截断), 顺序保持
     assert len(out5) == len(g3.frontier()), \
         f"toggle off 应回退完整 frontier, got {len(out5)} vs {len(g3.frontier())}"
 
-    if _saved is None:
-        _os.environ.pop("HUGINN_ISING_FRONTIER", None)
-    else:
-        _os.environ["HUGINN_ISING_FRONTIER"] = _saved
+    FeatureFlags.shared().toggle("ising_frontier", _saved)
 
     print("OK: frontier_ranked selfcheck passed")
 

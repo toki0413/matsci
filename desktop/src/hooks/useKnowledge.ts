@@ -6,6 +6,7 @@
  */
 import { useState, useRef, useCallback } from 'react';
 import { api } from '../lib/api';
+import { toast } from '../components/Toast';
 import type { KbDoc, DocumentParseResult, DocumentGraph } from '../types/domain';
 
 export function useKnowledge() {
@@ -48,10 +49,12 @@ export function useKnowledge() {
         loadKnowledge();
       } else {
         setKbMsg(`Upload failed: ${data.error}`);
+        toast.error(`Upload failed: ${data.error}`);
         setUploadPct(0);
       }
     } catch (e: any) {
       setKbMsg(`Upload error: ${e.message}`);
+      toast.error(`Upload error: ${e.message}`);
       setUploadPct(0);
     }
   };

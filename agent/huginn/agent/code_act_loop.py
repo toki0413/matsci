@@ -29,6 +29,7 @@ from datetime import datetime
 from typing import Any
 
 from huginn.core_types import ToolContext
+from huginn.feature_flags import FeatureFlags
 from huginn.security.code_act_sandbox import (
     _BLOCKED_TOOLS,
     make_safe_builtins,
@@ -340,7 +341,7 @@ Rules:
 Remember: one code block per turn, then stop and wait for the execution result."""
     # AtomWorld benchmark functions are injected when HUGINN_USE_ATOMWORLD=1.
     # Surface them in the prompt so the agent knows they exist without dir().
-    if os.environ.get("HUGINN_USE_ATOMWORLD", "0") == "1":
+    if FeatureFlags.shared().is_enabled("use_atomworld"):
         prompt += (
             "\n\nAtomWorld benchmark tools (plain Python functions in this "
             "namespace): atomworld_evaluate(target_cif, generated_output), "
@@ -351,7 +352,7 @@ Remember: one code block per turn, then stop and wait for the execution result."
     # Structure Cognitive Map — explicit 3D coords + adjacency + SE(3) equivariant
     # queries, opt-in via HUGINN_USE_COGNITIVE_MAP=1. Returns map_id handles so
     # the agent doesn't dump large structures into the conversation directly.
-    if os.environ.get("HUGINN_USE_COGNITIVE_MAP", "0") == "1":
+    if FeatureFlags.shared().is_enabled("use_cognitive_map"):
         prompt += (
             "\n\nStructure Cognitive Map tools (3D spatial reasoning, plain "
             "Python functions): cognitive_map_from_cif(cif_str) -> map_id, "
@@ -394,7 +395,7 @@ def _build_namespace(
     # AtomWorld benchmark — opt-in via HUGINN_USE_ATOMWORLD=1 (mirrors
     # BranchIncubator gating). atomworld_tool already no-ops when the
     # atomworld package isn't installed, so we just log and skip.
-    if os.environ.get("HUGINN_USE_ATOMWORLD", "0") == "1":
+    if FeatureFlags.shared().is_enabled("use_atomworld"):
         try:
             from huginn.tools import atomworld_tool as _aw
             if _aw.is_available():
@@ -413,7 +414,7 @@ def _build_namespace(
 
     # Structure Cognitive Map — opt-in via HUGINN_USE_COGNITIVE_MAP=1.
     # SE(3) equivariant 3D spatial queries for rotation-skill recovery.
-    if os.environ.get("HUGINN_USE_COGNITIVE_MAP", "0") == "1":
+    if FeatureFlags.shared().is_enabled("use_cognitive_map"):
         try:
             from huginn.tools import structure_cognitive_map_tool as _cm
             if _cm.is_available():
