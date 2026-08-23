@@ -263,6 +263,55 @@ class TestWSConnection:
         ):
             pass
 
+    def test_ws_connect_api_key_via_url_token(self, monkeypatch):
+        # Regression: a browser/WebView WS can only carry credentials in
+        # the URL (?token=), it cannot set custom headers. A raw API key in
+        # that slot must be routed to X-HUGINN-API-KEY (the fallback that
+        # require_api_key actually checks after JWT decode fails), so a
+        # key-only desktop app holds the connection just like HTTP.
+        monkeypatch.delenv("HUGINN_DEV_MODE", raising=False)
+        monkeypatch.setenv("HUGINN_API_KEY", "test-key")
+        from huginn.security import auth as auth_mod
+
+        monkeypatch.setattr(auth_mod, "get_user_store", lambda: _FakeUserStore())
+
+        with client.websocket_connect(WS_PATH + "?token=test-key") as ws:
+            ws.send_json({"type": "ping"})
+            assert ws.receive_json()["type"] == "pong"
+
+    def test_ws_connect_api_key_via_url_token_wrong(self, monkeypatch):
+        monkeypatch.delenv("HUGINN_DEV_MODE", raising=False)
+        monkeypatch.setenv("HUGINN_API_KEY", "test-key")
+        from huginn.security import auth as auth_mod
+
+        monkeypatch.setattr(auth_mod, "get_user_store", lambda: _FakeUserStore())
+
+        with pytest.raises(WebSocketDisconnect), client.websocket_connect(
+            WS_PATH + "?token=totally-wrong"
+        ):
+            pass
+
+    def test_ws_connect_jwt_via_url_token(self, monkeypatch):
+        # Regression: a JWT (three-dot token) in ?token= must be injected as
+        # Authorization: Bearer so require_api_key decodes it against the
+        # user store. This is the distinct half of the _inject_token_auth
+        # routing that the raw-API-key test above does not exercise.
+        monkeypatch.delenv("HUGINN_DEV_MODE", raising=False)
+        monkeypatch.setenv("HUGINN_API_KEY", "test-key")
+        from huginn.security import auth as auth_mod
+        from huginn.security.rbac import Role, User, jwt_encode
+
+        class _Store(_FakeUserStore):
+            def get_user(self, uid):
+                return User(user_id=uid, username="tester", role=Role.VIEWER)
+
+        monkeypatch.setattr(auth_mod, "get_user_store", lambda: _Store())
+
+        token = jwt_encode({"sub": "u-1"}, "test-key")
+        with client.websocket_connect(WS_PATH + f"?token={token}") as ws:
+            ws.send_json({"type": "ping"})
+            assert ws.receive_json()["type"] == "pong"
+
 
 # ── 2. chat message tests ───────────────────────────────────────────
 

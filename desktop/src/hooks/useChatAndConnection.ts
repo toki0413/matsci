@@ -16,7 +16,7 @@ import {
 import { playTaskComplete, playError as playErrorSound } from "../sounds";
 import { formatTime } from "../lib/constants";
 import { ReconnectingWebSocket } from "../lib/ws-client";
-import { getAuthToken, getApiBase } from "../lib/api-client";
+import { getWsAuthToken, getApiBase } from "../lib/api-client";
 import { api } from "../lib/api";
 import { useIncrementalMessages } from "./useIncrementalMessages";
 import {
@@ -1158,7 +1158,7 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
 
     const ws = new ReconnectingWebSocket({
       url: wsUrl,
-      authToken: () => getAuthToken(),
+      authToken: () => getWsAuthToken(),
       pingInterval: 30_000,
       maxDelay: 30_000,
       onStatus: (wsStatus) => {

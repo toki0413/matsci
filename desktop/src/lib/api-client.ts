@@ -27,3 +27,11 @@ export function getAuthToken(): string | null {
   }
   return authToken;
 }
+
+// WebSocket token: a browser WS can ride credentials only through ?token=, and
+// the backend accepts either a JWT or a raw API key there. Prefer the JWT and
+// fall back to the stored API key, mirroring how api.ts authHeaders() handles
+// HTTP (an API-key-only user stays connected instead of looping on WS 401).
+export function getWsAuthToken(): string | null {
+  return getAuthToken() ?? localStorage.getItem('huginn:api_key');
+}
