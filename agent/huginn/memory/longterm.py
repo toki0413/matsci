@@ -20,7 +20,6 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from huginn.feature_flags import FeatureFlags
 from huginn.rag.vector_store import VectorStore
 from huginn.utils.runtime import HUGINN_DIR_NAME, get_runtime_home
 
@@ -359,7 +358,7 @@ class LongTermMemory:
                     (clean,),
                 ).fetchone()[0]
                 if hit == 0:
-                    if not FeatureFlags.shared().is_enabled("fts_auto_rebuild"):
+                    if os.environ.get("HUGINN_FTS_AUTO_REBUILD", "1") == "0":
                         logger.warning(
                             "FTS5 stale: MATCH '%s' = 0 but memory exists "
                             "(auto-rebuild disabled)", clean,
@@ -618,7 +617,7 @@ class LongTermMemory:
         off 时行为完全回退到原排序, 回归测试安全.
         ponytail: 默认 on 是因为 fallback 完整 — 无 embedding 自动 no-op.
         """
-        return FeatureFlags.shared().is_enabled("ising_rerank")
+        return os.environ.get("HUGINN_ISING_RERANK", "1") != "0"
 
     def _ising_rerank(
         self,
@@ -727,7 +726,7 @@ class LongTermMemory:
         off 时回退到 P1-1 Ising 贪心 (已有 fallback 链).
         ponytail: 默认 on 因 fallback 完整 — 无 vector_store / N<K 自动退化.
         """
-        return FeatureFlags.shared().is_enabled("hils_attention")
+        return os.environ.get("HUGINN_HILS_ATTENTION", "1") != "0"
 
     def _hils_attention(
         self,
