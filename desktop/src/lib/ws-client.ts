@@ -25,6 +25,8 @@ export interface WsClientOptions {
   recoveryDelay?: number;
   /** 心跳间隔，默认 30s；设为 0 关闭 */
   pingInterval?: number;
+  /** 发 ping 后等待 pong 的容忍时长，默认 20s；超时才判定连接死亡。 */
+  pingTimeout?: number;
   /** 状态变更回调 */
   onStatus?: (status: WsStatus, info?: { retries: number; delay?: number }) => void;
   /** 收到消息回调（已 JSON.parse） */
@@ -59,6 +61,7 @@ export class ReconnectingWebSocket {
       maxAuthRetries: options.maxAuthRetries ?? 3,
       recoveryDelay: options.recoveryDelay ?? 30000,
       pingInterval: options.pingInterval ?? 30000,
+      pingTimeout: options.pingTimeout ?? 20000,
       onStatus: options.onStatus,
       onMessage: options.onMessage,
       onConnected: options.onConnected,
@@ -248,12 +251,13 @@ export class ReconnectingWebSocket {
     this.stopPing();
     this.pingTimer = setInterval(() => {
       this.send({ type: 'ping' });
-      // if no pong within 10s, connection is dead — force reconnect
+      // 超时未收到 pong 判定连接死亡, 主动关闭触发重连. 间隔给得比原 10s
+      // 宽 (默认 20s): 强负载下 pong 帧偶尔延迟, 误关健康连接反而加剧断连.
       if (this.pongTimer) clearTimeout(this.pongTimer);
       this.pongTimer = setTimeout(() => {
         // ponytail: silent death is worse than a reconnect cycle
         try { this.ws?.close(); } catch { /* will trigger handleClose */ }
-      }, 10_000);
+      }, this.opts.pingTimeout);
     }, this.opts.pingInterval);
   }
 
