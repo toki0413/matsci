@@ -44,8 +44,8 @@
 | `HUGINN_COMPACT_STRATEGY` | trim,summarize | agent/streaming.py:738, agent/streaming.py:861 | — | external |
 | `HUGINN_COMPLETION_CHECK_INTERVAL` | 10 | cli/rcb_step2.py:421 | — | external |
 | `HUGINN_CONFIG_FILE` | huginn.toml | config.py:1349, routes/config.py:56, routes/config.py:778, +2 处 | — | external |
-| `HUGINN_CONSOLIDATE_MODEL` | '' | memory/longterm.py:1727 | — | external |
-| `HUGINN_CONSOLIDATE_PROVIDER` | deepseek | memory/longterm.py:1726 | — | external |
+| `HUGINN_CONSOLIDATE_MODEL` | '' | memory/longterm.py:1726 | — | external |
+| `HUGINN_CONSOLIDATE_PROVIDER` | deepseek | memory/longterm.py:1725 | — | external |
 | `HUGINN_CONTAINER_IMAGE` | '' | config.py:729, security/execution.py:28 | — | external |
 | `HUGINN_CONTAINER_RUNTIME` | none | config.py:728, security/execution.py:27 | — | external |
 | `HUGINN_CONTEXT_BUDGET_TOKENS` | 0 | agent_config.py:216, config.py:812 | — | external |
@@ -90,17 +90,18 @@
 | `HUGINN_FILE_READ_MAX_OUTPUT_TOKENS` | str(DEFAULT_MAX_OUTPUT_TOKENS | tools/file_read_tool.py:93 | — | external |
 | `HUGINN_FILE_READ_MAX_SIZE_BYTES` | str(DEFAULT_MAX_SIZE_BYTES | tools/file_read_tool.py:88 | — | external |
 | `HUGINN_FP_DB` | _DEFAULT_DB | rag/adaptive_parser.py:35 | — | external |
+| `HUGINN_FTS_AUTO_REBUILD` | 1 | memory/longterm.py:361 | — | external |
 | `HUGINN_GOVERNANCE_DEFAULT_DECISION` | deny | governance.py:41 | — | external |
 | `HUGINN_HARD_CHECKPOINT_PHASES` | '' | autoloop/phase_gate.py:54 | — | external |
 | `HUGINN_HEALTH_MONITOR` | 0 | tools/adapter.py:241 | cli/rcb_runner.py:99 | code-set |
 | `HUGINN_HIDE_DOCS` | '' | security/auth.py:48, server.py:85 | — | external |
-| `HUGINN_HILS_ATTENTION` | '' | — | memory/longterm.py:2233, memory/longterm.py:2235 | code-set |
+| `HUGINN_HILS_ATTENTION` | 1 | memory/longterm.py:729 | memory/longterm.py:2232, memory/longterm.py:2234 | code-set |
 | `HUGINN_HINT_COORDINATOR` | 1 | cli/rcb_step2.py:194 | — | external |
 | `HUGINN_HPC_HOST` | '' | cli/availability.py:53 | — | external |
 | `HUGINN_HTTP_QPS` | 5 | tools/literature/_http.py:85 | — | external |
 | `HUGINN_HUMAN_CHECKPOINT_PHASES` | '' | autoloop/phase_gate.py:31 | — | external |
-| `HUGINN_INHERIT_STABLE_PRINCIPLES` | 1 | memory/longterm.py:1904 | — | external |
-| `HUGINN_ISING_RERANK` | '' | — | memory/longterm.py:2178, memory/longterm.py:2180 | code-set |
+| `HUGINN_INHERIT_STABLE_PRINCIPLES` | 1 | memory/longterm.py:1903 | — | external |
+| `HUGINN_ISING_RERANK` | 1 | memory/longterm.py:620 | memory/longterm.py:2177, memory/longterm.py:2179 | code-set |
 | `HUGINN_ITER_HIST_MAX` | 50 | autoloop/cognitive_loop.py:70 | — | external |
 | `HUGINN_JWT_SECRET` | '' | security/auth.py:80 | — | external |
 | `HUGINN_KB_CHUNKS_PATH` | '' | evolution/knowledge_distiller.py:497 | — | external |
@@ -150,7 +151,7 @@
 | `HUGINN_MCMC_STEPS` | 7000000 | cli/rcb_runner.py:1319 | — | external |
 | `HUGINN_MCMC_T_HIGH` | 10 | cli/rcb_mcmc.py:277 | — | external |
 | `HUGINN_MCP_ALLOWED_COMMANDS` | '' | config.py:757, mcp_client.py:76 | — | external |
-| `HUGINN_MEMORY_CLUSTER` | 0 | memory/longterm.py:1583 | — | external |
+| `HUGINN_MEMORY_CLUSTER` | 0 | memory/longterm.py:1582 | — | external |
 | `HUGINN_MEMORY_DECAY_ENABLED` | '' | agent_config.py:156, config.py:821 | — | external |
 | `HUGINN_MEMORY_DECAY_INTERVAL_TURNS` | 0 | agent_config.py:159, config.py:826 | — | external |
 | `HUGINN_MEMORY_DECAY_PRUNE_THRESHOLD` | 0.15 | agent_config.py:162, config.py:829 | — | external |
@@ -158,7 +159,7 @@
 | `HUGINN_MODELS` | '' | config.py:878 | routes/config.py:315 | code-set |
 | `HUGINN_MODEL_TIER` | full | plugins/model_tier.py:88 | — | external |
 | `HUGINN_MP_API_KEY` | '' | tools/literature/search_sources.py:1489 | — | external |
-| `HUGINN_MULTI_AGENT` | 0 | memory/longterm.py:1914 | — | external |
+| `HUGINN_MULTI_AGENT` | 0 | memory/longterm.py:1913 | — | external |
 | `HUGINN_NORMALIZE_ERRORS` | '' | middleware/error_normalize.py:152 | — | external |
 | `HUGINN_NO_RUST_SANDBOX` | '' | — | cli/rcb_runner.py:94 | code-set |
 | `HUGINN_OAUTH_TOKEN` | '' | cli/availability.py:52 | — | external |
@@ -246,8 +247,8 @@
 | `HUGINN_TRAJECTORY_PATTERN` | 0 | autoloop/cognitive_loop.py:1798 | — | external |
 | `HUGINN_TRANSCRIPT_DIR` | '' | events/transcript.py:88 | — | external |
 | `HUGINN_UNPAYWALL_EMAIL` | user@example.com | tools/literature/pdf_fetch.py:309, tools/literature/search_sources.py:408 | — | external |
-| `HUGINN_USE_ATOMWORLD` | 0 | bench/atomworld_bench.py:53, bench/atomworld_bench.py:151 | bench/atomworld_bench.py:154, bench/atomworld_bench.py:162, bench/atomworld_bench.py:173 | code-set |
-| `HUGINN_USE_COGNITIVE_MAP` | 0 | bench/mini_rotation_baseline.py:522 | cli/rcb_runner.py:325 | code-set |
+| `HUGINN_USE_ATOMWORLD` | 0 | bench/atomworld_bench.py:53, bench/atomworld_bench.py:151, security/code_act_sandbox.py:112 | bench/atomworld_bench.py:154, bench/atomworld_bench.py:162, bench/atomworld_bench.py:173, +1 处, security/code_act_sandbox.py:220, security/code_act_sandbox.py:234 | code-set |
+| `HUGINN_USE_COGNITIVE_MAP` | 0 | bench/mini_rotation_baseline.py:522, security/code_act_sandbox.py:119 | cli/rcb_runner.py:325, security/code_act_sandbox.py:236 | code-set |
 | `HUGINN_USE_COMPLETION_GATE` | 0 | autoloop/cognitive_loop.py:2923 | — | external |
 | `HUGINN_USE_CROSS_DOMAIN` | 0 | autoloop/hypothesis_loop.py:2614 | — | external |
 | `HUGINN_USE_DOCKER` | '' | security/sandbox.py:591 | — | external |
@@ -271,4 +272,4 @@
 | `HUGINN_WS_MAX_CONNECTIONS` | 50 | middleware/ws_governance.py:59 | — | external |
 | `HUGINN_WS_MAX_MSGS_PER_SEC` | 20 | middleware/ws_governance.py:60 | — | external |
 
-共 264 个环境变量。
+共 265 个环境变量。
