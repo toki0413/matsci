@@ -74,7 +74,14 @@ all = ["pymatgen>=2025.10.7", "ase>=3.22", "dscribe>=2.0", "paramiko>=5.0.0",
         # /api/v2/.../collections 端点 + trust_remote_code=true. huginn 用
         # PersistentClient (本地嵌入式, 不暴露 HTTP), 不受影响. 无 fix version.
         "chromadb>=0.4",
-        "sentence-transformers>=2.5", "pymupdf>=1.23", "pypdf>=6.13.3", "easyocr>=1.7", "pytesseract>=0.3", "paddleocr>=2.7", "nougat-ocr>=0.1", "py4vasp>=0.5", "chgnet>=0.3", "matplotlib>=3.7", "SciencePlots>=2.2", "ultraplot>=0.1"]
+        # nougat-ocr 0.1.x 用旧 transformers API (modeling_utils.PretrainedConfig),
+        # 锁 <5 避免装到 5.x 后 import 崩; sentence-transformers 6.x 强制
+        # transformers>=5, 与 nougat 互斥 → 一并降到 <4. albumentations 2.x
+        # 的 pydantic 校验与 nougat 不兼容, 锁 <2.
+        "sentence-transformers>=2.5,<4", "transformers>=4.46,<5",
+        "pymupdf>=1.23", "pypdf>=6.13.3", "easyocr>=1.7", "pytesseract>=0.3",
+        "paddleocr>=2.7", "nougat-ocr>=0.1", "albumentations>=1.4,<2",
+        "py4vasp>=0.5", "chgnet>=0.3", "matplotlib>=3.7", "SciencePlots>=2.2", "ultraplot>=0.1"]
 # ML 势能模型互斥: mace-torch 要 e3nn==0.4.4, fairchem-core 要 e3nn>=0.5.
 # 拆成两个 group, 按需装其一, 避免 uv lock 解析失败.
 ml-mace = ["mace-torch>=0.3"]
