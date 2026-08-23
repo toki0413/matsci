@@ -67,7 +67,7 @@
 | `HUGINN_DARWIN_LLM_INTERVAL` | 5 | metacog/step_evaluator.py:573, metacog/step_evaluator.py:1042 | metacog/step_evaluator.py:1046, metacog/step_evaluator.py:1077, metacog/step_evaluator.py:1109, metacog/step_evaluator.py:1111 | code-set |
 | `HUGINN_DARWIN_STAGNATION_LIMIT` | 5 | autoloop/cognitive_loop.py:872 | cli/rcb_runner.py:346 | code-set |
 | `HUGINN_DEEPSEEK_OCR_PATH` | '' | tools/vision_describe_tool.py:67 | — | external |
-| `HUGINN_DEV_MODE` | '' | middleware/error_normalize.py:145, middleware/ws_governance.py:136, routes/agents.py:83, +2 处 | — | external |
+| `HUGINN_DEV_MODE` | '' | middleware/error_normalize.py:158, middleware/ws_governance.py:136, routes/agents.py:83, +2 处 | — | external |
 | `HUGINN_DISABLE_WEB_SEARCH` | '' | tools/agentic_search_tool.py:463, tools/literature/_http.py:40, tools/web_search_tool.py:56 | tools/web_search_tool.py:667, tools/web_search_tool.py:672 | code-set |
 | `HUGINN_DOCKER_SANDBOX` | '' | security/sandbox.py:594 | — | external |
 | `HUGINN_DOC_ENGINE` | auto | perception/pdf_parser.py:506 | — | external |
@@ -166,7 +166,7 @@
 | `HUGINN_MODEL_TIER` | full | plugins/model_tier.py:88 | — | external |
 | `HUGINN_MP_API_KEY` | '' | tools/literature/search_sources.py:1489 | — | external |
 | `HUGINN_MULTI_AGENT` | 0 | memory/longterm.py:1913 | — | external |
-| `HUGINN_NORMALIZE_ERRORS` | '' | middleware/error_normalize.py:139 | — | external |
+| `HUGINN_NORMALIZE_ERRORS` | '' | middleware/error_normalize.py:152 | — | external |
 | `HUGINN_NO_RUST_SANDBOX` | '' | — | cli/rcb_runner.py:94 | code-set |
 | `HUGINN_OAUTH_TOKEN` | '' | cli/availability.py:52 | — | external |
 | `HUGINN_OCR_ENGINE` | auto | knowledge/ocr_loader.py:146, knowledge/ocr_loader.py:190, knowledge/ocr_loader.py:238 | — | external |
