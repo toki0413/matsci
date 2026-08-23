@@ -34,12 +34,19 @@ updates:
     #
     # 3. setuptools (PYSEC-2026-3447 / GHSA-h35f-9h28-mq5c): 被 fairchem-core 2.x
     #    硬约束 setuptools<81.0.0 锁死在 80.10.2, 无法升级到 fix 版本 83.0.0.
+    #
+    # 4. lightning (PYSEC-2026-3624 / GHSA-w37p-236h-pfx3 / CVE-2026-44484):
+    #    PyPI 供应链投毒, 受影响的是 2.6.2/2.6.3 两个已下架的版本. 经 nougat-ocr
+    #    的可选组引入, uv 锁定最新的干净版 2.6.5 (官方下架恶意版后推荐 2.6.4).
+    #    OSV 告警误伤后封禁重发的干净版本, 无更高修复版本可升.
     ignore:
       - dependency-name: "chromadb"
         versions: ["*"]
       - dependency-name: "torch"
         versions: ["*"]
       - dependency-name: "setuptools"
+        versions: ["*"]
+      - dependency-name: "lightning"
         versions: ["*"]
     commit-message:
       prefix: "chore(deps)"
