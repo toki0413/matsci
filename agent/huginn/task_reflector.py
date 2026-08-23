@@ -17,7 +17,6 @@ This is the "reflection" phase in the loop engineering cycle:
 from __future__ import annotations
 
 import logging
-import os
 from dataclasses import dataclass
 from typing import Any
 
@@ -35,8 +34,9 @@ _MODE_SWITCH_THRESHOLD = 0.5  # 失败率超过 50% 才切 discover
 
 
 def _belief_switch_enabled() -> bool:
-    """toggle: env HUGINN_BELIEF_MODE_SWITCH (默认 on). off 时回退原硬规则."""
-    return os.environ.get("HUGINN_BELIEF_MODE_SWITCH", "1") != "0"
+    """toggle: FeatureFlags `belief_mode_switch` (默认 on). off 时回退原硬规则."""
+    from huginn.feature_flags import FeatureFlags
+    return FeatureFlags.shared().is_enabled("belief_mode_switch")
 
 
 @dataclass
@@ -280,8 +280,9 @@ class TaskReflector:
 
 def _selfcheck() -> int:
     """assert-based demo for P2-6 belief-driven mode switch."""
-    import os as _os
     from enum import Enum
+
+    from huginn.feature_flags import FeatureFlags
 
     class _Mode(Enum):
         DISCOVER = "discover"
@@ -292,9 +293,9 @@ def _selfcheck() -> int:
             self.cognitive_mode = _Mode(mode)
             self.active_plan_id = None
 
-    # save env, 强制 belief 模式
-    _saved = _os.environ.get("HUGINN_BELIEF_MODE_SWITCH")
-    _os.environ["HUGINN_BELIEF_MODE_SWITCH"] = "1"
+    # save toggle, 强制 belief 模式
+    _saved = FeatureFlags.shared().is_enabled("belief_mode_switch")
+    FeatureFlags.shared().enable("belief_mode_switch")
 
     # 48. 单次失败不切 (窗口 < 3 不决策)
     r = TaskReflector()
@@ -326,17 +327,14 @@ def _selfcheck() -> int:
         f"5 成功在 discover 应切 construct, got switch={res.should_switch_mode} mode={res.suggested_mode}"
 
     # 52. toggle off → 回退原硬规则 (单次失败立即切)
-    _os.environ["HUGINN_BELIEF_MODE_SWITCH"] = "0"
+    FeatureFlags.shared().disable("belief_mode_switch")
     r5 = TaskReflector()
     res = r5.reflect("t", {"success": False}, _FakeState("construct"))
     assert res.should_switch_mode and res.suggested_mode == "discover", \
         "toggle off 时单次失败应立即切 (原硬规则)"
 
-    # restore env
-    if _saved is None:
-        _os.environ.pop("HUGINN_BELIEF_MODE_SWITCH", None)
-    else:
-        _os.environ["HUGINN_BELIEF_MODE_SWITCH"] = _saved
+    # restore toggle
+    FeatureFlags.shared().toggle("belief_mode_switch", _saved)
 
     print("task_reflector selfcheck OK (48-52 P2-6 belief-driven mode switch)")
     return 0

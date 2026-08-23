@@ -616,6 +616,15 @@ async def lifespan(app: FastAPI):
         await asyncio.to_thread(run_all_migrations)
     except Exception as e:
         logger.warning(f"[migrations] startup sweep failed: {e}")
+    # Deps & dead-code probe: 一次性探测可选第三方依赖是否齐全, 缺失的
+    # 相关工具会在运行时静默降级 — 启动期就暴露出来, 而不是等用户踩到.
+    # find_spec 很轻 (~几十 ms), 不加载模块; 死代码扫描用
+    # HUGINN_STARTUP_DEADCODE=1 显式打开, 默认只在缺失依赖层面报告.
+    try:
+        from huginn.diagnostics.startup_validator import run_startup_check
+        await asyncio.to_thread(run_startup_check)
+    except Exception as e:
+        logger.warning(f"[startup] dep/dead-code probe failed: {e}")
     # Bootstrap QQ / WeChat bot bridge configs from env (one-click connect).
     # 设了 BOT_QQ_API_URL / BOT_WECHAT_API_URL 才生效, 否则保持默认 disabled.
     try:

@@ -22,7 +22,6 @@ from __future__ import annotations
 import json
 import logging
 import math
-import os
 import re
 from collections import Counter
 from pathlib import Path
@@ -1226,8 +1225,10 @@ class ContextBuilder:
         # P3: Context Router — 根据 phase + task 语义稀疏化 context 段
         # 参考 "Diversity of information pathways drives sparsity in real-world
         # networks" (Nature Physics 2023). 信息路径多样性 D_proxy 监控.
-        # 默认关, HUGINN_CONTEXT_ROUTER=1 开启 (零 LLM 成本, 纯规则).
-        _router_enabled = os.environ.get("HUGINN_CONTEXT_ROUTER", "0") == "1"
+        # 默认关, flag 开启 (零 LLM 成本, 纯规则).
+        from huginn.feature_flags import FeatureFlags
+
+        _router_enabled = FeatureFlags.shared().is_enabled("context_router")
         _selected: set[str] | None = None
         if _router_enabled:
             try:

@@ -314,11 +314,8 @@ class WebSearchTool(HuginnTool):
         arxiv API 稳定免费, 无需 key, 对论文/物理/材料 query 尤其有效.
         对非学术 query (如"铜的电导率") 通常返回空, 自然降级到 DDG.
         """
-        try:
-            import xml.etree.ElementTree as ET
-        except ImportError:
-            logger.debug("best-effort op failed", exc_info=True)
-            return None
+        # xml 是 stdlib, 导入永不会失败, 无需 try 包裹
+        import xml.etree.ElementTree as ET
 
         try:
             api_url = (

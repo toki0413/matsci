@@ -296,6 +296,19 @@ async def list_tasks(active_only: bool = False) -> dict[str, Any]:
     return {"success": True, "count": len(tasks), "tasks": tasks}
 
 
+@router.get("/tool-economy")
+async def get_tool_economy() -> dict[str, Any]:
+    """工具经济快照 — 真实调用 vs 缓存/去重命中 vs 压缩省量.
+
+    数据来自 ToolAdapter 的进程内计数器 (进程启动清零), 只读不 reset。
+    让"工具瘦身"每天可见、可变、可调, 而不是只能靠猜。
+    """
+    from huginn.tools.adapter import tool_economy_snapshot
+
+    snapshot = tool_economy_snapshot()
+    return {"success": True, **snapshot}
+
+
 @router.get("/tasks/{task_id}")
 async def get_task(task_id: str) -> dict[str, Any]:
     """拿单个任务的进度."""

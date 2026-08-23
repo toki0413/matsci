@@ -12,13 +12,13 @@ Actions:
 from __future__ import annotations
 
 import logging
-import os
 import time
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 from huginn.core_types import ToolContext, ToolResult
+from huginn.feature_flags import FeatureFlags
 from huginn.tools.base import HuginnTool
 from huginn.utils.common import hash_text
 
@@ -29,17 +29,17 @@ logger = logging.getLogger(__name__)
 # ponytail: 纯函数, 不引入新依赖. 语义冲突仍走 LLM 仲裁.
 # ceiling: G-Set 单调增, 长跑会膨胀; 升级 OR-Set 可删, 但需要 tombstone.
 def _crdt_merge_enabled() -> bool:
-    """P1-2 toggle: env HUGINN_CRDT_MERGE (默认 on)."""
-    return os.environ.get("HUGINN_CRDT_MERGE", "1") != "0"
+    """P1-2 toggle: FeatureFlags `crdt_merge` (默认 on)."""
+    return FeatureFlags.shared().is_enabled("crdt_merge")
 
 
 def _belief_update_enabled() -> bool:
-    """P2-6 toggle: env HUGINN_BELIEF_UPDATE (默认 on).
+    """P2-6 toggle: FeatureFlags `belief_update` (默认 on).
 
     Bayesian belief update for LWW fields. off 时回退 P1-2 LWW (ts 大者胜).
     ponytail: 默认 on 因 fallback 完整 — result 无 belief 字段时自动走 LWW.
     """
-    return os.environ.get("HUGINN_BELIEF_UPDATE", "1") != "0"
+    return FeatureFlags.shared().is_enabled("belief_update")
 
 
 # ── P2-6: Bayesian belief update ──────────────────────────────────────────
@@ -598,8 +598,7 @@ class SubagentTool(HuginnTool[SubagentToolInput, SubagentToolOutput]):
             )
 
         # 有 dependencies: DAG 分层调度 (极限模式才开)
-        import os
-        if os.environ.get("HUGINN_EXTREME_DISPATCH", "0").lower() not in ("1", "true"):
+        if not FeatureFlags.shared().is_enabled("extreme_dispatch"):
             return ToolResult(
                 data=SubagentToolOutput(
                     success=False, action="dispatch_parallel",
@@ -776,11 +775,11 @@ def _selfcheck() -> None:
     print("36. CRDT 整合 (4 subagent, 2 成功 2 失败, mixed fields) OK")
 
     # 37. toggle off — 不合并 (回归原 list[dict])
-    os.environ["HUGINN_CRDT_MERGE"] = "0"
+    FeatureFlags.shared().disable("crdt_merge")
     assert _crdt_merge_enabled() is False
-    os.environ["HUGINN_CRDT_MERGE"] = "1"
+    FeatureFlags.shared().enable("crdt_merge")
     assert _crdt_merge_enabled() is True
-    print("37. CRDT toggle (HUGINN_CRDT_MERGE=0/1) OK")
+    print("37. CRDT toggle (crdt_merge off/on) OK")
 
     # ── P2-6: Bayesian belief update ──────────────────────────────
     # 42. Gaussian update — prior N(520, 20²), obs N(572, 10²)
@@ -877,7 +876,7 @@ def _selfcheck() -> None:
     print("46c. M6 _belief_merge 低 KL 不标冲突 OK")
 
     # 47. toggle off — 回退 P1-2 LWW
-    os.environ["HUGINN_BELIEF_UPDATE"] = "0"
+    FeatureFlags.shared().disable("belief_update")
     assert _belief_update_enabled() is False
     # toggle off 时 _crdt_merge 应走 LWW (不调 _belief_merge)
     m47 = _crdt_merge([r45a, r45b])
@@ -886,9 +885,9 @@ def _selfcheck() -> None:
     )
     assert "best_encut_belief" not in m47, "toggle off 不应输出 belief"
     # 恢复 toggle on
-    os.environ["HUGINN_BELIEF_UPDATE"] = "1"
+    FeatureFlags.shared().enable("belief_update")
     assert _belief_update_enabled() is True
-    print("47. belief toggle (HUGINN_BELIEF_UPDATE=0/1) + LWW fallback OK")
+    print("47. belief toggle (belief_update off/on) + LWW fallback OK")
 
     print("subagent_tool selfcheck OK (33-37 CRDT + 42-47 Bayesian belief)")
 

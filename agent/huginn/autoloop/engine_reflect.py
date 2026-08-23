@@ -1296,11 +1296,11 @@ class EngineReflectMixin:
         启用条件: HUGINN_EXTREME_DISPATCH=1, 或长程任务 (max_iterations >= 20).
         短程任务默认关, 省 cycle/trajectory 计算.
         """
-        import os
         # 长程任务 (max_iterations >= 20) 默认开 cycle/trajectory 检测,
         # 短程任务仍需 HUGINN_EXTREME_DISPATCH=1 才开 (省计算).
         _max_iter = getattr(self, "_max_iterations", 10)
-        _extreme = os.environ.get("HUGINN_EXTREME_DISPATCH", "0").lower() in ("1", "true")
+        from huginn.feature_flags import FeatureFlags
+        _extreme = FeatureFlags.shared().is_enabled("extreme_dispatch")
         if not (_extreme or _max_iter >= 20):
             return None
         if len(action_history) < 4:

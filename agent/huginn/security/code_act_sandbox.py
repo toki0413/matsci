@@ -16,7 +16,6 @@ agent/code_act_loop.py 引用本模块, 不再保留内联副本.
 from __future__ import annotations
 
 import builtins
-import os
 import tracemalloc
 from typing import Any
 
@@ -107,16 +106,17 @@ def safe_import(
     - atomworld: 需 HUGINN_USE_ATOMWORLD=1
     - cognitive_map / structure_cognitive_map: 需 HUGINN_USE_COGNITIVE_MAP=1
     """
+    from huginn.feature_flags import FeatureFlags
     # AtomWorld — flag-off 时即使装了也不让 import
     if name == "atomworld":
-        if os.environ.get("HUGINN_USE_ATOMWORLD", "0") != "1":
+        if not FeatureFlags.shared().is_enabled("use_atomworld"):
             raise ImportError("import of 'atomworld' requires HUGINN_USE_ATOMWORLD=1")
         return builtins.__import__(name, globals, locals, fromlist, level)
     # Structure Cognitive Map — 同理, agent 应走 namespace 函数而非直 import.
     # flag-on 时直接返回 (跳过白名单, 因为 cognitive_map 不在 _ALLOWED_IMPORTS),
     # 与 atomworld 分支保持同一结构.
     if name in ("cognitive_map", "structure_cognitive_map"):
-        if os.environ.get("HUGINN_USE_COGNITIVE_MAP", "0") != "1":
+        if not FeatureFlags.shared().is_enabled("use_cognitive_map"):
             raise ImportError("import of 'cognitive_map' requires HUGINN_USE_COGNITIVE_MAP=1")
         return builtins.__import__(name, globals, locals, fromlist, level)
     root = name.split(".")[0]
@@ -176,6 +176,7 @@ def exec_with_mem_cap(code: str, namespace: dict, mem_cap_bytes: int) -> None:
 if __name__ == "__main__":
     # Self-check: 验证关键安全机制生效, 失败就 assert 失败.
     # 不引入测试框架, ponytail: 最小可运行检查.
+    from huginn.feature_flags import FeatureFlags
 
     # 1. _BLOCKED_TOOLS 过滤生效 (工具名 list)
     names_in = [
@@ -217,13 +218,13 @@ if __name__ == "__main__":
     assert ["numpy"][0] in _ALLOWED_IMPORTS
 
     # 3b. opt-in 模块: flag-off 时被拦截, flag-on 时放行
-    os.environ.pop("HUGINN_USE_ATOMWORLD", None)
+    FeatureFlags.shared().disable("use_atomworld")
     try:
         safe_import("atomworld")
         raise AssertionError("atomworld should be blocked without HUGINN_USE_ATOMWORLD=1")
     except ImportError:
         pass
-    os.environ["HUGINN_USE_ATOMWORLD"] = "1"
+    FeatureFlags.shared().enable("use_atomworld")
     # flag-on 时不抛 ImportError (模块可能没装, 那是 ImportError 不是白名单拦截)
     try:
         safe_import("atomworld")
@@ -231,9 +232,9 @@ if __name__ == "__main__":
         # 区分: 白名单拦截的 msg 含 "requires", 没装的 msg 不含
         assert "requires" not in str(e), f"atomworld should pass whitelist with flag on: {e}"
     finally:
-        os.environ.pop("HUGINN_USE_ATOMWORLD", None)
+        FeatureFlags.shared().disable("use_atomworld")
 
-    os.environ.pop("HUGINN_USE_COGNITIVE_MAP", None)
+    FeatureFlags.shared().disable("use_cognitive_map")
     for cm_name in ("cognitive_map", "structure_cognitive_map"):
         try:
             safe_import(cm_name)

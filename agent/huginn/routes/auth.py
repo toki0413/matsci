@@ -19,7 +19,7 @@ from uuid import uuid4
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel
 
-from huginn.security.auth import _jwt_secret, secrets_match
+from huginn.security.auth import _jwt_secret, get_user_store, secrets_match
 from huginn.security.rbac import (
     _ROLE_CAPABILITIES,
     Role,
@@ -67,14 +67,28 @@ def _configured_api_key() -> str | None:
 
 
 def _issue_token(username: str, role: Role, expires_in: int = _TOKEN_TTL) -> str:
-    """Build and sign a JWT for the given identity."""
+    """Build and sign a JWT for the given identity.
+
+    The ``sub`` claim must be a real user_id in the user store, because
+    ``require_api_key`` validates tokens by ``store.get_user(sub)``. Signing
+    the bare username here meant every token from /auth/login + /auth/token
+    failed lookup and fell through to the (often unset) API-key check, so
+    protected endpoints returned 401 even with a freshly logged-in token.
+    """
     secret = _jwt_secret()
     if secret is None:
         raise RuntimeError(
             "No JWT secret configured -- set HUGINN_JWT_SECRET or HUGINN_API_KEY"
         )
+    store = get_user_store()
+    user = store.get_user_by_username(username)
+    if user is None:
+        # persists a fresh user so the token round-trips through the store
+        user, _ = store.create_user(username, role=role)
+    elif user.role != role:
+        user = store.update_role(user.user_id, role)
     payload = {
-        "sub": username,
+        "sub": user.user_id,
         "username": username,
         "role": role.value,
         "jti": uuid4().hex,
