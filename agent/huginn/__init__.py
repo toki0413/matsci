@@ -24,4 +24,4 @@ if not hasattr(_enum, "StrEnum"):  # pragma: no cover
 try:
     __version__ = _pkg_version("huginn-agent")
 except PackageNotFoundError:  # 源码 checkout 直接 import, 还没装
-    __version__ = "1.3.4"
+    __version__ = "1.3.5"
