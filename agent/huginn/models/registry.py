@@ -244,9 +244,14 @@ class ModelCaps:
     """模型能力声明, 4 个槽位.
 
     参考 claude-code-haha 的能力路由设计, 上层按能力筛选模型
-    (带 vision 的才能看图, 带 tools 的才能调函数, 以此类推).
+    (带 vision 的才能原生看图, 带 tools 的才能调函数, 以此类推).
     未知名返回全 False (fail-closed), 避免把不支持工具调用的模型
     当成支持的.
+
+    vision 只表示"原生多模态 API 能否接收图像". vision=False 的文本
+    模型并非全盲: vision/router.py 会对它们走 CV_TOOLS 补偿链路
+    (visual encoder + 图像分析工具), 语义与定量信息也会注入文本 prompt,
+    所以文本模型同样具备视觉能力.
     """
 
     vision: bool = False
@@ -301,9 +306,9 @@ MODEL_CAPABILITIES: dict[str, ModelCaps] = {
     "gpt-3.5-turbo": ModelCaps(
         vision=False, tools=True, reasoning=False, streaming=True
     ),
-    # o 系列推理模型 — 2025 起支持 function calling
-    "o1": ModelCaps(vision=False, tools=True, reasoning=True, streaming=False),
-    "o3": ModelCaps(vision=False, tools=True, reasoning=True, streaming=False),
+    # o 系列推理模型 — 当前 API 版本均支持图像输入 + function calling + 流式
+    "o1": ModelCaps(vision=True, tools=True, reasoning=True, streaming=True),
+    "o3": ModelCaps(vision=True, tools=True, reasoning=True, streaming=True),
     "o1-mini": ModelCaps(vision=False, tools=False, reasoning=True, streaming=False),
     "o3-mini": ModelCaps(vision=False, tools=True, reasoning=True, streaming=False),
     # ── DeepSeek ───────────────────────────────────────────────
@@ -313,6 +318,10 @@ MODEL_CAPABILITIES: dict[str, ModelCaps] = {
     ),
     "deepseek-v4-flash": ModelCaps(
         vision=False, tools=True, reasoning=True, streaming=True
+    ),
+    # V4-Flash-Vision-Exp: 在 flash 基础上额外接受图像输入 (实验版)
+    "deepseek-v4-flash-vision-exp": ModelCaps(
+        vision=True, tools=True, reasoning=True, streaming=True
     ),
     "deepseek-chat": ModelCaps(
         vision=False, tools=True, reasoning=False, streaming=True
@@ -345,10 +354,11 @@ MODEL_CAPABILITIES: dict[str, ModelCaps] = {
     ),
     # ── Qwen / 通义 (DashScope) ───────────────────────────────
     "qwen-max": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
+    # qwen3-max 仍为纯文本; 原生多模态从 qwen3.5-plus 起
     "qwen3-max": ModelCaps(vision=False, tools=True, reasoning=True, streaming=True),
-    "qwen3.5-plus": ModelCaps(vision=False, tools=True, reasoning=True, streaming=True),
+    "qwen3.5-plus": ModelCaps(vision=True, tools=True, reasoning=True, streaming=True),
     "qwen3.6-max-preview": ModelCaps(vision=False, tools=True, reasoning=True, streaming=True),
-    "qwen3.6-flash": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
+    "qwen3.6-flash": ModelCaps(vision=True, tools=True, reasoning=False, streaming=True),
     "qwen-long": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
     "qwen2.5:14b": ModelCaps(
         vision=False, tools=True, reasoning=False, streaming=True
@@ -369,15 +379,16 @@ MODEL_CAPABILITIES: dict[str, ModelCaps] = {
     "kimi-k2-thinking": ModelCaps(vision=False, tools=True, reasoning=True, streaming=True),
     "kimi-k2-turbo-preview": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
     # ── GLM (智谱) ────────────────────────────────────────────
-    "glm-4": ModelCaps(vision=True, tools=True, reasoning=False, streaming=True),
+    # GLM-4/5/4.7 文本系原生无视觉; 智谱视觉走独立 GLM-4.xV / GLM-5V 模型
+    "glm-4": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
     "glm-4-flash": ModelCaps(
         vision=False, tools=True, reasoning=False, streaming=True
     ),
     "glm-4.7": ModelCaps(vision=False, tools=True, reasoning=True, streaming=True),
     "glm-4.7-flash": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
-    "glm-5": ModelCaps(vision=True, tools=True, reasoning=True, streaming=True),
-    "glm-5.1": ModelCaps(vision=True, tools=True, reasoning=True, streaming=True),
-    "glm-5.2": ModelCaps(vision=True, tools=True, reasoning=True, streaming=True),
+    "glm-5": ModelCaps(vision=False, tools=True, reasoning=True, streaming=True),
+    "glm-5.1": ModelCaps(vision=False, tools=True, reasoning=True, streaming=True),
+    "glm-5.2": ModelCaps(vision=False, tools=True, reasoning=True, streaming=True),
     # ── MiniMax ───────────────────────────────────────────────
     "MiniMax-M2.7": ModelCaps(vision=False, tools=True, reasoning=True, streaming=True),
     "MiniMax-M2.7-highspeed": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
@@ -401,6 +412,8 @@ MODEL_CAPABILITIES: dict[str, ModelCaps] = {
     # ── 本地文本模型 ──────────────────────────────────────────
     "qwen2.5": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
     "qwen2": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
+    # Qwen 3.8 是原生多模态基座 (2026-08 发布, 支持视觉理解)
+    "qwen3.8": ModelCaps(vision=True, tools=True, reasoning=True, streaming=True),
     "llama3.1": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
     "llama3": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
     "deepseek-r1": ModelCaps(vision=False, tools=False, reasoning=True, streaming=True),
@@ -423,6 +436,7 @@ def get_model_capabilities(model_name: str) -> ModelCaps:
         lower = name.lower()
         for key, _caps in MODEL_CAPABILITIES.items():
             if lower.startswith(key.lower()):
+                caps = _caps
                 break
         else:
             return ModelCaps()
@@ -519,7 +533,7 @@ _LOCAL_PRESETS: dict[str, dict[str, str]] = {
 _PROVIDER_DEFAULTS: dict[ProviderT, str | None] = {
     "anthropic": "claude-3-5-sonnet-20241022",
     "openai": "gpt-4o",
-    "ollama": "qwen2.5:14b",
+    "ollama": "qwen3.8",
     "deepseek": "deepseek-v4-flash",
     "google-genai": "gemini-2.5-pro",
     "openrouter": "anthropic/claude-sonnet-4",
@@ -963,7 +977,7 @@ def list_providers() -> list[dict[str, Any]]:
     entries.append({
         "id": "ollama", "label": "Ollama (本地)",
         "base_url": "http://localhost:11434",
-        "default_model": "qwen2.5:14b",
+        "default_model": "qwen3.8",
         "env_var": "", "local": True, "needs_key": False,
     })
     entries.append({
