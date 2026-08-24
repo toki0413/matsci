@@ -74,13 +74,12 @@ all = ["pymatgen>=2025.10.7", "ase>=3.22", "dscribe>=2.0", "paramiko>=5.0.0",
         # /api/v2/.../collections 端点 + trust_remote_code=true. huginn 用
         # PersistentClient (本地嵌入式, 不暴露 HTTP), 不受影响. 无 fix version.
         "chromadb>=0.4",
-        # nougat-ocr 0.1.x 用旧 transformers API (modeling_utils.PretrainedConfig),
-        # 锁 <5 避免装到 5.x 后 import 崩; sentence-transformers 6.x 强制
-        # transformers>=5, 与 nougat 互斥 → 一并降到 <4. albumentations 2.x
-        # 的 pydantic 校验与 nougat 不兼容, 锁 <2.
-        "sentence-transformers>=2.5,<4", "transformers>=4.46,<5",
-        "pymupdf>=1.23", "pypdf>=6.13.3", "easyocr>=1.7", "pytesseract>=0.3",
-        "paddleocr>=2.7", "nougat-ocr>=0.1", "albumentations>=1.4,<2",
+        # nougat-ocr 0.1.x 只兼容 transformers 4.x, 但 4.x 全线带已知漏洞
+        # (PYSEC-2026-2290 9.8 高危, fixed 5.5.0), security-check 门禁要求
+        # 可修复漏洞必须升级, 无法锁 <5. 故 nougat 不随 [all] 打包,
+        # 需要时单独装独立环境 (会与主包 transformers 5.x 冲突).
+        "sentence-transformers>=2.5", "pymupdf>=1.23", "pypdf>=6.13.3", "easyocr>=1.7", "pytesseract>=0.3",
+        "paddleocr>=2.7",
         "py4vasp>=0.5", "chgnet>=0.3", "matplotlib>=3.7", "SciencePlots>=2.2", "ultraplot>=0.1"]
 # ML 势能模型互斥: mace-torch 要 e3nn==0.4.4, fairchem-core 要 e3nn>=0.5.
 # 拆成两个 group, 按需装其一, 避免 uv lock 解析失败.
