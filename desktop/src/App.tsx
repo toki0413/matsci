@@ -50,6 +50,7 @@ import { BenchmarkPanel } from "./components/panels/BenchmarkPanel";
 import { ResultPanel } from "./components/panels/ResultPanel";
 import { CodeSearchPanel } from "./components/panels/CodeSearchPanel";
 import { GitPanel } from "./components/panels/GitPanel";
+import { TodoPanel } from "./components/panels/TodoPanel";
 import { HPCPanel } from "./components/panels/HPCPanel";
 import { useTheme } from "./hooks/useTheme";
 import { useFocusTrap } from "./hooks/useFocusTrap";
@@ -70,6 +71,7 @@ import {
   Maximize2, GitBranch, Brain, Cpu, Atom, Box, Gauge,
   NotepadText, Puzzle, Network, Workflow, Dna, Play, Compass,
   Stethoscope, NotebookPen, Eraser, Smile, User, PanelRight, Calculator,
+  ListChecks,
 } from 'lucide-react';
 
 const IS_PET_MODE = window.location.search.includes("pet=1");
@@ -148,7 +150,7 @@ export default function App() {
     | "evolution" | "execute" | "workflows" | "explore" | "diagnose"
     | "hpc" | "periodic" | "notebook" | "sandbox" | "sweep"
     | "structure" | "emotion" | "provenance" | "side" | "solver"
-    | "persona" | "result" | "code" | "git"
+    | "persona" | "result" | "code" | "git" | "todo"
   >("chat");
   const [sidebarHidden, setSidebarHidden] = useState(false);
   const [isNarrowScreen, setIsNarrowScreen] = useState(false);
@@ -763,6 +765,7 @@ export default function App() {
         { id: "terminal" as const, label: t('tab.terminal'), icon: <Terminal size={16} aria-hidden="true" /> },
         { id: "tools" as const, label: t('tab.tools'), icon: <Wrench size={16} aria-hidden="true" /> },
         { id: "skills" as const, label: t('tab.skills'), icon: <Sparkles size={16} aria-hidden="true" /> },
+        { id: "todo" as const, label: t('tab.todo'), icon: <ListChecks size={16} aria-hidden="true" /> },
       ],
     },
     {
@@ -1637,6 +1640,10 @@ export default function App() {
 
           {activeTab === "git" && (
             <GitPanel apiBase={getApiBase()} />
+          )}
+
+          {activeTab === "todo" && (
+            <TodoPanel />
           )}
 
           {activeTab === "terminal" && (
