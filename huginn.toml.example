@@ -25,7 +25,7 @@ model = "gpt-4o-mini"
 [[models]]
 alias = "local"
 provider = "ollama"
-model = "qwen2.5:14b"
+model = "qwen3.8"
 base_url = "http://localhost:11434"
 
 # Agent profiles map tasks/tools to a model alias.

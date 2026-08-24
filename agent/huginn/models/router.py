@@ -367,7 +367,7 @@ class ModelRouter:
         Example:
             HUGINN_MODEL_DEFAULT=openai:gpt-4o
             HUGINN_MODEL_CHEAP=openai:gpt-4o-mini
-            HUGINN_MODEL_LOCAL=ollama:qwen2.5:14b
+            HUGINN_MODEL_LOCAL=ollama:qwen3.8
             # Moonshine 三槽: 注册独立验证/归档模型
             HUGINN_MODEL_VERIFICATION=deepseek:deepseek-chat
             HUGINN_MODEL_ARCHIVAL=openai:gpt-4o-mini
@@ -396,7 +396,7 @@ class ModelRouter:
                 failed_providers,
             )
             try:
-                model = create_langchain_model(provider="ollama", model_name="qwen2.5:7b")
+                model = create_langchain_model(provider="ollama", model_name="qwen3.8")
                 router.register("default", model, tags={"default"})
             except Exception:
                 logger.debug("best-effort op failed", exc_info=True)  # ollama 也没装就只能让 select() 报 RuntimeError
