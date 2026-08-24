@@ -75,6 +75,11 @@ all = ["pymatgen>=2025.10.7", "ase>=3.22", "dscribe>=2.0", "paramiko>=5.0.0",
         # PersistentClient (本地嵌入式, 不暴露 HTTP), 不受影响. 无 fix version.
         "chromadb>=0.4",
         "sentence-transformers>=2.5", "pymupdf>=1.23", "pypdf>=6.13.3", "easyocr>=1.7", "pytesseract>=0.3", "py4vasp>=0.5", "chgnet>=0.3", "matplotlib>=3.7", "SciencePlots>=2.2", "ultraplot>=0.1"]
+# 中文/混合版式 OCR 加分组: paddleocr 依赖链庞大 (paddlex/opencv-contrib/modelscope),
+# 不进 [all], 否则 CI 测试与 security-check 作业也会装它 (拖慢 + 增大告警面)。
+# 只在桌面打包步骤额外 `pip install ".[all,ocr]"` 时打入. paddlex 3.7 走 onnxruntime
+# 后端, 不再强制绑定 paddlepaddle, 体积可控, numpy<2.4 与现有栈兼容.
+ocr = ["paddleocr>=2.7"]
 # ML 势能模型互斥: mace-torch 要 e3nn==0.4.4, fairchem-core 要 e3nn>=0.5.
 # 拆成两个 group, 按需装其一, 避免 uv lock 解析失败.
 ml-mace = ["mace-torch>=0.3"]
@@ -233,7 +238,7 @@ exclude_lines = [
     "if __name__ == .__main__.:",
     "if TYPE_CHECKING:",
     "@abstractmethod",
-    "\\.\\.\\.",  # protocol/body-less methods
+    "\.\.\.",  # protocol/body-less methods
 ]
 
 [dependency-groups]
