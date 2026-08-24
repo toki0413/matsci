@@ -89,8 +89,9 @@ jobs:
             Write-Host "=== 4. Installing huginn-agent ==="
             Push-Location agent
             # [all] 把工具/技能所需重库 (pymatgen/ase/matplotlib/chromadb/sentence-transformers 等)
-            # 一并打进包; 与 desktop.yml 保持一致.
-            & "..\$runtimeDir\python.exe" -m pip install ".[all]" --no-warn-script-location --no-cache-dir 2>&1 | ForEach-Object { Write-Host $_ }
+            # 一并打进包; [ocr] 额外打入 paddleocr (中文/混合版式识别).
+            # 必须与 desktop.yml 的 ".[all,ocr]" 保持一致, 否则 stable 版缺中文 OCR.
+            & "..\$runtimeDir\python.exe" -m pip install ".[all,ocr]" --no-warn-script-location --no-cache-dir 2>&1 | ForEach-Object { Write-Host $_ }
             if ($LASTEXITCODE -ne 0) { throw "pip install huginn failed (exit $LASTEXITCODE)" }
             Pop-Location
 
@@ -116,7 +117,8 @@ jobs:
             Write-Host $_.ScriptStackTrace
             throw
           }
-        timeout-minutes: 20
+        # paddleocr 依赖链大, 首次下载 + pip 装机耗时长, 放宽超时 (与 desktop.yml 一致).
+        timeout-minutes: 45
 
       - name: Install frontend dependencies
         working-directory: ./desktop
