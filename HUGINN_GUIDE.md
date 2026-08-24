@@ -400,28 +400,30 @@ huginn-agent chat --provider vllm --base-url http://localhost:8000/v1
 
 Huginn 按 provider 区分云端与本地：**云端必须配置有效 key，本地自动豁免**。云端 provider 清单（来自 `models/registry.py`）：
 
-| provider | 环境变量 | 默认 base_url | 默认模型 |
-|---|---|---|---|
-| `openai` | `OPENAI_API_KEY` | https://api.openai.com/v1 | gpt-4o |
-| `anthropic` | `ANTHROPIC_API_KEY` | https://api.anthropic.com | claude-3-5-sonnet-20241022 |
-| `deepseek` | `DEEPSEEK_API_KEY` | https://api.deepseek.com | deepseek-v4-flash（另供 deepseek-v4-pro / deepseek-v4-flash-vision-exp 视觉版） |
-| `google-genai` | `GOOGLE_API_KEY` | https://generativelanguage.googleapis.com | gemini-2.5-pro |
-| `openrouter` | `OPENROUTER_API_KEY` | https://openrouter.ai/api/v1 | anthropic/claude-sonnet-4 |
-| `nvidia` | `NVIDIA_API_KEY` | （NVIDIA AI Endpoints） | meta/llama-3.1-405b-instruct |
+| provider | 环境变量 | 默认 base_url | 默认模型 | 原生多模态 |
+|---|---|---|---|---|
+| `openai` | `OPENAI_API_KEY` | https://api.openai.com/v1 | gpt-4o | ✅ |
+| `anthropic` | `ANTHROPIC_API_KEY` | https://api.anthropic.com | claude-3-5-sonnet-20241022 | ✅ |
+| `deepseek` | `DEEPSEEK_API_KEY` | https://api.deepseek.com | deepseek-v4-flash（另供 deepseek-v4-pro / deepseek-v4-flash-vision-exp 视觉版） | —（仅 vision-exp ✅） |
+| `google-genai` | `GOOGLE_API_KEY` | https://generativelanguage.googleapis.com | gemini-2.5-pro | ✅ |
+| `openrouter` | `OPENROUTER_API_KEY` | https://openrouter.ai/api/v1 | anthropic/claude-sonnet-4 | ✅ |
+| `nvidia` | `NVIDIA_API_KEY` | （NVIDIA AI Endpoints） | meta/llama-3.1-405b-instruct | — |
 
 国内 OpenAI 兼容云端：
 
-| provider | 环境变量 | 默认 base_url | 默认模型 |
-|---|---|---|---|
-| `siliconflow` | `SILICONFLOW_API_KEY` | https://api.siliconflow.cn/v1 | deepseek-ai/DeepSeek-V3 |
-| `moonshot` | `MOONSHOT_API_KEY` | https://api.moonshot.cn/v1 | kimi-k2.6 |
-| `zhipu` | `ZHIPU_API_KEY` | https://open.bigmodel.cn/api/paas/v4/ | glm-4-flash |
-| `baichuan` | `BAICHUAN_API_KEY` | https://api.baichuan-ai.com/v1 | Baichuan4 |
-| `dashscope` | `DASHSCOPE_API_KEY` | https://dashscope.aliyuncs.com/compatible-mode/v1 | qwen3.5-plus |
-| `qianfan` | `QIANFAN_API_KEY` | https://qianfan.baidubce.com/v2 | ernie-4.0-turbo-8k |
-| `doubao` | `DOUBAO_API_KEY` | https://ark.cn-beijing.volces.com/api/v3 | doubao-pro-32k |
-| `hunyuan` | `HUNYUAN_API_KEY` | https://api.hunyuan.tencentcloudapi.com/v1 | hunyuan-turbo |
-| `minimax` | `MINIMAX_API_KEY` | https://api.minimaxi.com/v1 | MiniMax-M2.7 |
+| provider | 环境变量 | 默认 base_url | 默认模型 | 原生多模态 |
+|---|---|---|---|---|
+| `siliconflow` | `SILICONFLOW_API_KEY` | https://api.siliconflow.cn/v1 | deepseek-ai/DeepSeek-V3 | — |
+| `moonshot` | `MOONSHOT_API_KEY` | https://api.moonshot.cn/v1 | kimi-k2.6 | ✅ |
+| `zhipu` | `ZHIPU_API_KEY` | https://open.bigmodel.cn/api/paas/v4/ | glm-4-flash | —（视觉走独立 GLM-4.xV/5V） |
+| `baichuan` | `BAICHUAN_API_KEY` | https://api.baichuan-ai.com/v1 | Baichuan4 | — |
+| `dashscope` | `DASHSCOPE_API_KEY` | https://dashscope.aliyuncs.com/compatible-mode/v1 | qwen3.5-plus | ✅ |
+| `qianfan` | `QIANFAN_API_KEY` | https://qianfan.baidubce.com/v2 | ernie-4.0-turbo-8k | — |
+| `doubao` | `DOUBAO_API_KEY` | https://ark.cn-beijing.volces.com/api/v3 | doubao-pro-32k | — |
+| `hunyuan` | `HUNYUAN_API_KEY` | https://api.hunyuan.tencentcloudapi.com/v1 | hunyuan-turbo | — |
+| `minimax` | `MINIMAX_API_KEY` | https://api.minimaxi.com/v1 | MiniMax-M2.7 | — |
+
+> 「原生多模态」✅ 表示该模型 API 能直接接收图像（走 `BOTH` 路径），— 表示纯文本模型。**— 不代表拿图像没办法**：文本模型经 `vision/router.py` 的 `CV_TOOLS` 链路（视觉编码器 + 图像分析工具）照样能"看"图像，详细见 §17.4。✅/— 与 `models/registry.py` 的 `MODEL_CAPABILITIES` 一致。
 
 任意一个都可省略 `base_url`（用上表默认值），**只需设对应的环境变量（或配置文件里写 key）即可**。
 
