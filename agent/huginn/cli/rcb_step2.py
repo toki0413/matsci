@@ -41,6 +41,7 @@ from huginn.cli.rcb_utils import (
     _make_simplex_id,
     _save_manifold,
 )
+from huginn.feature_flags import FeatureFlags
 from huginn.utils.runtime import HUGINN_DIR_NAME, get_runtime_home
 
 logger = logging.getLogger(__name__)
@@ -864,7 +865,7 @@ LUCID review (mandatory after generating hypothesis):
         # 跨任务 curiosity hint — 跨任务共享 db 时, 注入历史弱 persona.
         # 单任务首次跑 self_model 空 → 返空串, 不影响. 跨任务积累后, agent
         # 知道"哪些 persona 历史成功率低", 主动 seek 而非被动 escape.
-        if os.environ.get("HUGINN_CURIOSITY_HINT", "0") == "1" and _mem_mgr is not None:
+        if FeatureFlags.shared().is_enabled("curiosity_hint") and _mem_mgr is not None:
             try:
                 _sm = _mem_mgr.longterm.get_self_model()
                 if _sm:

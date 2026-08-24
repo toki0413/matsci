@@ -277,7 +277,8 @@ def resolve_persistent_terminal_flag(
     """
     if use_persistent_terminal is not None:
         return use_persistent_terminal
-    return os.environ.get("HUGINN_PERSISTENT_TERMINAL", "0") == "1"
+    from huginn.feature_flags import FeatureFlags
+    return FeatureFlags.shared().is_enabled("persistent_terminal")
 
 
 def _extract_finding(output: str) -> dict | str | None:
@@ -533,9 +534,10 @@ def _selfcheck_task13() -> None:
     assert sid2 not in term.list_sessions()
 
     # case 3: env HUGINN_PERSISTENT_TERMINAL=0 → resolve_persistent_terminal_flag 返回 False
-    saved = os.environ.get("HUGINN_PERSISTENT_TERMINAL")
+    from huginn.feature_flags import FeatureFlags
+    saved = FeatureFlags.shared().is_enabled("persistent_terminal")
     try:
-        os.environ["HUGINN_PERSISTENT_TERMINAL"] = "0"
+        FeatureFlags.shared().disable("persistent_terminal")
         assert resolve_persistent_terminal_flag(None) is False, (
             "env=0 should disable persistent terminal"
         )
@@ -544,7 +546,7 @@ def _selfcheck_task13() -> None:
         assert resolve_persistent_terminal_flag(True) is True
         print("[case3] explicit use_persistent_terminal=True overrides env")
 
-        os.environ["HUGINN_PERSISTENT_TERMINAL"] = "1"
+        FeatureFlags.shared().enable("persistent_terminal")
         assert resolve_persistent_terminal_flag(None) is True, (
             "env=1 should enable persistent terminal"
         )
@@ -553,10 +555,7 @@ def _selfcheck_task13() -> None:
         assert resolve_persistent_terminal_flag(False) is False
         print("[case3] explicit use_persistent_terminal=False overrides env")
     finally:
-        if saved is None:
-            os.environ.pop("HUGINN_PERSISTENT_TERMINAL", None)
-        else:
-            os.environ["HUGINN_PERSISTENT_TERMINAL"] = saved
+        FeatureFlags.shared().toggle("persistent_terminal", saved)
 
     # case 4 (额外): <FINDING_END> marker 也能被 _extract_finding 识别.
     marker_code = (

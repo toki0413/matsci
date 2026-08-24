@@ -340,10 +340,10 @@ class ConversationTree:
 
 def _selfcheck() -> int:
     """assert-based demo for P1-2 CRDT branch merge."""
-    import os as _os
+    from huginn.feature_flags import FeatureFlags
 
-    _saved = _os.environ.get("HUGINN_CRDT_BRANCH_MERGE")
-    _os.environ["HUGINN_CRDT_BRANCH_MERGE"] = "1"
+    _saved = FeatureFlags.shared().is_enabled("crdt_branch_merge")
+    FeatureFlags.shared().enable("crdt_branch_merge")
 
     # 场景 1: fork + 合并分支 findings (G-Set union)
     t = ConversationTree()
@@ -382,7 +382,7 @@ def _selfcheck() -> int:
         f"LWW 应取 active (ts 新), got {t2.get_node(m2.id).metadata.get('best_encut')}"
 
     # 场景 3: toggle off → 不合并, 返回 None
-    _os.environ["HUGINN_CRDT_BRANCH_MERGE"] = "0"
+    FeatureFlags.shared().disable("crdt_branch_merge")
     t3 = ConversationTree()
     t3.add_message("user", "q")
     m3 = t3.add_message("assistant", "m", metadata={"findings": ["x"]})
@@ -393,7 +393,7 @@ def _selfcheck() -> int:
     assert out3 is None, "toggle off 应返回 None"
 
     # 场景 4: branch_leaf == active_leaf → 自己合自己无意义
-    _os.environ["HUGINN_CRDT_BRANCH_MERGE"] = "1"
+    FeatureFlags.shared().enable("crdt_branch_merge")
     t4 = ConversationTree()
     t4.add_message("user", "q")
     n4 = t4.add_message("assistant", "m")
@@ -414,10 +414,7 @@ def _selfcheck() -> int:
     assert findings_1 == findings_2, \
         f"幂等公理: 两次合并应一致, got {findings_1} vs {findings_2}"
 
-    if _saved is None:
-        _os.environ.pop("HUGINN_CRDT_BRANCH_MERGE", None)
-    else:
-        _os.environ["HUGINN_CRDT_BRANCH_MERGE"] = _saved
+    FeatureFlags.shared().toggle("crdt_branch_merge", _saved)
 
     print("conversation_tree selfcheck OK (P1-2 CRDT branch merge: union/LWW/toggle/idempotent)")
     return 0

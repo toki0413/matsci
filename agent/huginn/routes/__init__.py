@@ -61,6 +61,7 @@ from huginn.routes.system import router as system_router
 from huginn.routes.team import router as team_router
 from huginn.routes.terminal import router as terminal_router
 from huginn.routes.threads import router as threads_router
+from huginn.routes.todos import router as todos_router
 from huginn.routes.tools import router as tools_router
 from huginn.routes.transfer import router as transfer_router
 
@@ -109,6 +110,8 @@ ALL_ROUTERS = [
     mcp_router,
     catalog_router,
     threads_router,
+    # 待办清单: 前端面板与 agent todo 工具共用
+    todos_router,
     users_router,
     checkpoints_router,
     compat_router,

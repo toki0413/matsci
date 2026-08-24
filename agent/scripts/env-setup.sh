@@ -84,6 +84,7 @@ if [ "$ALL_EXTRAS" -eq 1 ]; then
         "pymatgen>=2025.10.7" ase dscribe paramiko jedi \
         "chromadb>=0.4" "sentence-transformers>=2.5" \
         pymupdf pypdf easyocr pytesseract py4vasp \
+        paddleocr nougat-ocr \
         matplotlib SciencePlots ultraplot jieba openpyxl \
         "mp-api>=0.12" statsmodels matminer rdkit trimesh \
         2>&1 | tail -n 2 || true

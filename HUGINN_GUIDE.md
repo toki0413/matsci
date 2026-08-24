@@ -32,7 +32,7 @@
   - 15. 桌面应用
   - 16. 技能（Skills）与预设
   - 17. 记忆系统、知识蒸馏与视觉/时空工作流
-    - 17.1 三层记忆 · 17.2 知识蒸馏 · 17.3 三库隔离 · 17.4 视觉→知识库→记忆闭环 · 17.5 时空可组合
+    - 17.1 三层记忆 · 17.2 知识蒸馏 · 17.3 外部思维（External Thinking） · 17.4 三库隔离 · 17.5 视觉→知识库→记忆闭环 · 17.6 时空可组合
   - 18. Coder / 多 Agent / 自主科研（autoloop）
   - 19. 安全
   - 20. 监控、部署与运维
@@ -423,7 +423,7 @@ Huginn 按 provider 区分云端与本地：**云端必须配置有效 key，本
 | `hunyuan` | `HUNYUAN_API_KEY` | https://api.hunyuan.tencentcloudapi.com/v1 | hunyuan-turbo | — |
 | `minimax` | `MINIMAX_API_KEY` | https://api.minimaxi.com/v1 | MiniMax-M2.7 | — |
 
-> 「原生多模态」✅ 表示该模型 API 能直接接收图像（走 `BOTH` 路径），— 表示纯文本模型。**— 不代表拿图像没办法**：文本模型经 `vision/router.py` 的 `CV_TOOLS` 链路（视觉编码器 + 图像分析工具）照样能"看"图像，详细见 §17.4。✅/— 与 `models/registry.py` 的 `MODEL_CAPABILITIES` 一致。
+> 「原生多模态」✅ 表示该模型 API 能直接接收图像（走 `BOTH` 路径），— 表示纯文本模型。**— 不代表拿图像没办法**：文本模型经 `vision/router.py` 的 `CV_TOOLS` 链路（视觉编码器 + 图像分析工具）照样能"看"图像，详细见 §17.5。✅/— 与 `models/registry.py` 的 `MODEL_CAPABILITIES` 一致。
 
 任意一个都可省略 `base_url`（用上表默认值），**只需设对应的环境变量（或配置文件里写 key）即可**。
 
@@ -663,7 +663,7 @@ huginn-agent coder "给 code_tool.py 加 docstring"
 | `tool_tip` | `distill_tool_tips(tool_logs)`（同工具 ≥3 条且成败并存） | 对比同工具成败，提炼使用技巧 |
 | `domain_fact` | `distill_domain_facts(conversations)` | 从成功对话里提炼领域事实 |
 | `feynman_note` | 主动请求 | 用通俗语言重组知识，暴露理解缺口（Feynman 学习法） |
-| `visual_lesson` | 视觉工作流（见 17.4） | 从视觉原语中蒸馏视觉经验 |
+| `visual_lesson` | 视觉工作流（见 17.5） | 从视觉原语中蒸馏视觉经验 |
 
 **验证与元蒸馏（HiSME）**：
 - 每条知识带 `verification_status ∈ {unverified, confirmed, rejected}`。被检索并成功使用后，`MemoryManager._verify_distilled_for_tool` 调 `verify_knowledge` 将其提升为 `confirmed`（usage_count+1，confidence+0.1）。
@@ -671,11 +671,37 @@ huginn-agent coder "给 code_tool.py 加 docstring"
 - **去重**：md5 防完全相同；Jaccard 词集重叠 ≥0.65 判语义重复（`_is_semantically_duplicate`），避免措辞不同内容相同的教训重复入库。
 - **KB 回写闭环（F6）**：每次 `_save` 把新增条目 `add_text` 写回主 KB（带 `source_type`/`confidence`/`distilled=1` 元数据），让 agent 检索得到结构化知识——蒸馏结果不再只躺 JSON 文件。
 
-### 17.3 三库存储隔离
+### 17.3 外部思维（External Thinking，`deep_think` 外部草稿纸）
+
+厂商普遍隐藏原生思维链（chain-of-thought）后，模型"愿意"暴露的 `reasoning_content` 并不总是有。External Thinking 的思路来自 oh-my-pi 的 `externalThinking`：**给模型一个普通工具，让它在动手前把分析写进工具参数**——工具参数经 API 返回，开发者能直接读取保存。Huginn 把它做成了可一键开启的正式能力，是 17.1 里 `reasoning_trace` 的另一条注入通道。
+
+**核心工具 `deep_think`**（`tools/deep_think_tool.py`）：`read_only=True`、无副作用，输入 `analysis: str`。开启后系统提示要求模型在**回答问题、改代码、调其他工具之前**，先调用 `deep_think` 把逐步分析写进去。工具执行时经 `memory_manager.add_reasoning` 写入 `session.reasoning_trace`——与原生 `reasoning_content` 捕获**共用同一条蒸馏通道**，且不把分析内容回显给 LLM（避免重复占用上下文）。
+
+**补充通道策略**：Huginn 对接的 provider 很杂（OpenAI-compatible / Anthropic / Ollama / 国产模型），统一强制关原生推理（`forceReasoningOff`）不现实，所以 deep_think 是**补充**而非替代——`deep_think` 拿显式草稿、`reasoning_content` 拿原生推理，两路都汇入 `reasoning_trace`，蒸馏闭环统一消费。
+
+**开关**（`external_thinking` feature flag，默认关），三层开启：
+
+| 方式 | 写法 |
+|---|---|
+| 配置文件 | `huginn.toml` 的 `[feature_flags]` 里 `external_thinking = true` |
+| 环境变量 | `HUGINN_FEATURE_EXTERNAL_THINKING=true` |
+| 运行时 | `FeatureFlags.enable("external_thinking")` |
+
+开启时由 `_thinking_plugin`（"thinking" 段，priority 100）注入指令，关闭时不注入、默认行为不变。fail-open：flag 层异常返回空串，prompt 构建永不崩。与 `model_tier` 联动：`full` / `balanced` 档默认开，`minimal` 档默认关（可按需开）。
+
+**结构化推理协议（深化）**：`memory/reasoning.py` 把被动捕获（自由文本 → 扁平字符串）升级为**结构化推理**——每条推理是一条 `ReasoningRecord`：
+
+- **字段**：`claim`（核心论断）、`phase`（think → plan → pre_action → reflect 阶段化编排）、`evidence`（依据）、`estimate`（量化预估，带单位/范围）、`uncertainty`（边界条件）、`plan`（下一步）。
+- **自校验闭环**：执行后回填 `outcome ∈ {confirmed, refuted, partial}`，`last_pending()` 从最近的 pre_action/plan 记录开始回填——预估在执行后被验证，形成"预测 → 对照 → 回映"的地基。
+- **可蒸馏信号**：`is_distillable` = confirmed 且带 claim + estimate。**一条被验证过的 pre_action 量化预估，是留给蒸馏闭环的最强信号**——它直接成为 17.2 里可复用知识的候选。
+
+结构化通道是**新增侧信道**，不破坏扁平 `reasoning_trace`（原生 reasoning_content + 旧 deep_think 仍写那里），下游蒸馏/反思消费方可平滑迁移。
+
+### 17.4 三库存储隔离
 
 memory（时序）/ knowledge（向量）/ kg（图拓扑）各自用原生结构存储，只在自然边界跨库翻译、保结构（见第 3 节）。
 
-### 17.4 视觉 → 知识库 → 记忆闭环（`visual_hook.py`）
+### 17.5 视觉 → 知识库 → 记忆闭环（`visual_hook.py`）
 
 视觉不是旁观功能，而是一条注入记忆与推理的感知通道。核心是 **`extract_visual_primitives`**：把工具输出的数值/坐标抽成带结构化标签的原语，让 LLM 能精确引用图像细节，而不是"看图说一嘴"。
 
@@ -709,7 +735,7 @@ extract_visual_primitives
 
 所以"某模型 vision=false"只表示它**没有原生多模态输入**，不代表 Huginn 拿图像没办法——纯文本模型照样能"看图"，只是经由上述数字链路理解图像。这也是 Material 科研场景里关键能力：即便只有本地文本模型，也能分析 SEM/TEM/XRD 图谱。
 
-### 17.5 时空可组合工作流（`security/revertible.py` + `workflows/engine.py`）
+### 17.6 时空可组合工作流（`security/revertible.py` + `workflows/engine.py`）
 
 科研 agent 的每个副作用都要能**撤销**，才能真放心让它自主尝试。Huginn 把"时空可组合性"做成了可逆副作用栈：
 

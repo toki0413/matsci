@@ -5,7 +5,14 @@ from __future__ import annotations
 import pytest
 from fastapi import HTTPException, Request
 
-from huginn.security.auth import require_admin_key, require_api_key, secrets_match
+from huginn.routes.auth import _issue_token
+from huginn.security.auth import (
+    get_user_store,
+    require_admin_key,
+    require_api_key,
+    secrets_match,
+)
+from huginn.security.rbac import Role
 
 
 def _make_request(
@@ -112,3 +119,41 @@ class TestRequireAdminKey:
         with pytest.raises(HTTPException) as exc:
             require_admin_key(req, None)
         assert exc.value.status_code == 403
+
+
+class TestLoginTokenRoundTrip:
+    """Login/refresh tokens must authenticate protected endpoints.
+
+    ``require_api_key`` validates a JWT by ``store.get_user(claims["sub"])``,
+    i.e. the ``sub`` claim has to be the store's user_id. If ``_issue_token``
+    signed the bare username instead, every /auth/login token failed that
+    lookup and protected routes returned 401.
+    """
+
+    def test_issued_token_sub_resolves_in_user_store(self, monkeypatch):
+        monkeypatch.setenv("HUGINN_API_KEY", "secret")
+
+        token = _issue_token("operator", Role.OPERATOR)
+        claims = token.split(".")[1]
+        # crude decode: enough to pull sub without pulling in jwt lib here
+        import base64
+        claims += "=" * (-len(claims) % 4)
+        payload = __import__("json").loads(
+            base64.urlsafe_b64decode(claims.encode("ascii"))
+        )
+        user = get_user_store().get_user(payload["sub"])
+        assert user is not None
+        assert user.username == "operator"
+        assert user.role == Role.OPERATOR
+
+    def test_issued_token_passes_require_api_key(self, monkeypatch):
+        monkeypatch.setenv("HUGINN_API_KEY", "secret")
+
+        token = _issue_token("operator", Role.OPERATOR)
+        # Non-loopback client so the conftest DEV_MODE-1 exemption doesn't
+        # short-circuit the check -- we want to exercise the JWT path itself.
+        req = _make_request(
+            "/tools", {"Authorization": f"Bearer {token}"}, client="203.0.113.10"
+        )
+        # JWT path validates sub against the store and returns the bearer
+        assert require_api_key(req, None) == token

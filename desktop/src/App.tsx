@@ -50,6 +50,7 @@ import { BenchmarkPanel } from "./components/panels/BenchmarkPanel";
 import { ResultPanel } from "./components/panels/ResultPanel";
 import { CodeSearchPanel } from "./components/panels/CodeSearchPanel";
 import { GitPanel } from "./components/panels/GitPanel";
+import { TodoPanel } from "./components/panels/TodoPanel";
 import { HPCPanel } from "./components/panels/HPCPanel";
 import { useTheme } from "./hooks/useTheme";
 import { useFocusTrap } from "./hooks/useFocusTrap";
@@ -58,6 +59,7 @@ import { LogsPanel } from "./components/panels/LogsPanel";
 import { TerminalPanel } from "./components/panels/TerminalPanel";
 import { PanelHeader } from "./components/settings-shared";
 import { GlobalSearch } from "./components/GlobalSearch";
+import { RuntimeStatusPanel } from "./components/RuntimeStatusPanel";
 import { CommandPalette, type PaletteMode } from "./components/CommandPalette";
 import type { DiffEntry, Checkpoint, ToolInfo, SkillInfo, GlobalSearchResult } from "./types/domain";
 import {
@@ -69,6 +71,7 @@ import {
   Maximize2, GitBranch, Brain, Cpu, Atom, Box, Gauge,
   NotepadText, Puzzle, Network, Workflow, Dna, Play, Compass,
   Stethoscope, NotebookPen, Eraser, Smile, User, PanelRight, Calculator,
+  ListChecks,
 } from 'lucide-react';
 
 const IS_PET_MODE = window.location.search.includes("pet=1");
@@ -147,7 +150,7 @@ export default function App() {
     | "evolution" | "execute" | "workflows" | "explore" | "diagnose"
     | "hpc" | "periodic" | "notebook" | "sandbox" | "sweep"
     | "structure" | "emotion" | "provenance" | "side" | "solver"
-    | "persona" | "result" | "code" | "git"
+    | "persona" | "result" | "code" | "git" | "todo"
   >("chat");
   const [sidebarHidden, setSidebarHidden] = useState(false);
   const [isNarrowScreen, setIsNarrowScreen] = useState(false);
@@ -192,6 +195,7 @@ export default function App() {
   const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
   const [toolSearch, setToolSearch] = useState("");
   const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
+  const [runtimeStatusOpen, setRuntimeStatusOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [paletteMode, setPaletteMode] = useState<PaletteMode>('commands');
   const [draggedTab, setDraggedTab] = useState<string | null>(null);
@@ -761,6 +765,7 @@ export default function App() {
         { id: "terminal" as const, label: t('tab.terminal'), icon: <Terminal size={16} aria-hidden="true" /> },
         { id: "tools" as const, label: t('tab.tools'), icon: <Wrench size={16} aria-hidden="true" /> },
         { id: "skills" as const, label: t('tab.skills'), icon: <Sparkles size={16} aria-hidden="true" /> },
+        { id: "todo" as const, label: t('tab.todo'), icon: <ListChecks size={16} aria-hidden="true" /> },
       ],
     },
     {
@@ -881,6 +886,13 @@ export default function App() {
       label: t('cmd.globalSearch') || "Global Search",
       icon: <Search size={16} />,
       handler: () => { setToolPaletteOpen(false); setGlobalSearchOpen(true); },
+      group: "search",
+    },
+    {
+      id: "runtime-status",
+      label: t('cmd.runtimeStatus') || "Run Status",
+      icon: <Gauge size={16} />,
+      handler: () => { setCommandPaletteOpen(false); setRuntimeStatusOpen(true); },
       group: "search",
     },
     // 任务/脚本快捷入口：切到终端并预填命令，回车即执行
@@ -1103,6 +1115,16 @@ export default function App() {
   const providerLabel = PROVIDERS.find((p) => p.id === config.provider)?.label || config.provider;
   const allTabs = sidebarGroupsData.flatMap((g) => g.tabs);
   const activeTabInfo = allTabs.find((t) => t.id === activeTab);
+
+  // 斜杠命令导航：__palette__ 打开模块选择器，其余按 id/label 模糊匹配到具体面板.
+  // 匹配不上就回退到模块选择器，避免把无效目标发回后端当消息发出去.
+  const handleSlashNavigate = (target: string) => {
+    if (target === '__palette__') { setToolPaletteOpen(true); return; }
+    const id = target.toLowerCase();
+    const hit = allTabs.find((t) => t.id === id || t.label.toLowerCase() === id);
+    if (hit) { setActiveTab(hit.id as typeof activeTab); return; }
+    setToolPaletteOpen(true);
+  };
 
   const handleCoderRun = coder.run;
   const handleExecuteRun = execute.run;
@@ -1549,6 +1571,7 @@ export default function App() {
                 setActiveTab("result");
               }}
               onOpenFiles={() => setActiveTab("files")}
+              onNavigate={handleSlashNavigate}
               personas={personaList.map(p => ({ name: p.label, description: p.description }))}
               currentPersona={config.persona}
               setCurrentPersona={switchPersona}
@@ -1619,6 +1642,10 @@ export default function App() {
             <GitPanel apiBase={getApiBase()} />
           )}
 
+          {activeTab === "todo" && (
+            <TodoPanel />
+          )}
+
           {activeTab === "terminal" && (
             <TerminalPanel
               terminalOutput={terminalOutput}
@@ -1642,7 +1669,7 @@ export default function App() {
             />
           )}
 
-          <div hidden={activeTab !== "knowledge"}>
+          <div hidden={activeTab !== "knowledge"} className="h-full">
             <KnowledgePanel
               config={config}
               setConfig={setConfig}
@@ -1710,6 +1737,11 @@ export default function App() {
             isOpen={globalSearchOpen}
             onClose={() => setGlobalSearchOpen(false)}
             onSelect={handleGlobalSearchSelect}
+          />
+
+          <RuntimeStatusPanel
+            isOpen={runtimeStatusOpen}
+            onClose={() => setRuntimeStatusOpen(false)}
           />
 
           <CommandPalette

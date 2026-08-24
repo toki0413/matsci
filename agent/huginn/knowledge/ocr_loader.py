@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".tiff", ".tif", ".bmp", ".webp"}
 _EASYOCR_READER: Any | None = None
+_PADDLE_READER: Any | None = None
 _NOUGAT_MODEL: Any | None = None
 
 # LLM-as-OCR callback — DeepSeek-OCR 启发: 解码器就是 LLM, 不跑独立 OCR 模型.
@@ -82,6 +83,53 @@ def _get_easyocr_reader() -> Any | None:
         return None
 
 
+def _get_paddle_reader() -> Any | None:
+    """Lazy PaddleOCR reader (cached at module level).
+
+    PaddleOCR handles Chinese / mixed-script layouts markedly better than
+    EasyOCR, so in 'auto' mode we give it the first shot on images.
+    Prefers a CUDA build if present, else CPU -- both just work.
+    """
+    global _PADDLE_READER
+    if _PADDLE_READER is not None:
+        return _PADDLE_READER
+    try:
+        from paddleocr import PaddleOCR
+
+        # show_log=False 关掉 Paddle 启动时那一屏幕的告警.
+        _PADDLE_READER = PaddleOCR(
+            use_angle_cls=True, lang="ch", show_log=False
+        )
+        return _PADDLE_READER
+    except Exception as exc:
+        logger.debug("PaddleOCR not available: %s", exc)
+        return None
+
+
+def _paddle_ocr_pil(image: Any) -> str:
+    """Run PaddleOCR against a (already RGB/L) PIL image, return plain text."""
+    reader = _get_paddle_reader()
+    if reader is None:
+        return ""
+    try:
+        import numpy as np
+
+        # ocr() 返回 [page][line][ [box], (text, score) ] 的多层嵌套.
+        result = reader.ocr(np.asarray(image), cls=True)
+        lines: list[str] = []
+        for page in result or []:
+            for line in page or []:
+                if not isinstance(line, (list, tuple)) or len(line) < 2:
+                    continue
+                text = line[1][0] if isinstance(line[1], (list, tuple)) else None
+                if text and str(text).strip():
+                    lines.append(str(text).strip())
+        return "\n".join(lines)
+    except Exception as exc:
+        logger.debug("PaddleOCR failed: %s", exc)
+        return ""
+
+
 def _get_nougat_model() -> Any | None:
     """Lazy-load the Nougat model (cached at module level).
 
@@ -144,6 +192,14 @@ def _ocr_image(image: Any, engine: str | None = None) -> str:
         image = image.convert("RGB")
 
     chosen_engine = engine or os.environ.get("HUGINN_OCR_ENGINE", "auto").lower()
+
+    if chosen_engine in ("auto", "paddle", "paddleocr"):
+        # PaddleOCR 中文/混排更强, auto 链的最前面. 失败再退 EasyOCR.
+        text = _paddle_ocr_pil(image)
+        if text:
+            return text
+        if chosen_engine in ("paddle", "paddleocr"):
+            return ""
 
     if chosen_engine in ("auto", "easyocr"):
         reader = _get_easyocr_reader()

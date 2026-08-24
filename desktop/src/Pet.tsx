@@ -5,8 +5,12 @@ import {
   playPetChirp, playHappyCoo, playFeedTick, playLevelUp,
   startAmbient, stopAmbient, setMuted as setSoundMuted,
 } from "./sounds";
-import { getApiBase, setApiBase, getAuthToken } from "./lib/api-client";
+import { getApiBase, setApiBase, getAuthToken, getWsAuthToken } from "./lib/api-client";
 import { ReconnectingWebSocket } from "./lib/ws-client";
+
+// 宠物窗口持久开关键, 与 SettingsPanel/App 共用. 关闭窗口时写 0,
+// 让主窗口的 openPetWindow() 尊重永久关闭, 而不是关一次又被召唤回来.
+const PET_ENABLED_KEY = "huginn:pet_enabled";
 
 // Minimal API helper — avoids importing the full api module into the pet overlay.
 const api = {
@@ -999,10 +1003,11 @@ export default function Pet() {
     // 求值到新地址, 不再钉死在挂载时解析的旧端口. 端口轮询变化时也会
     // 重建它, 双保险覆盖 "连接还活着但端口已换" 的场景.
     const buildPetWs = () => {
+      const wsUrl = getApiBase().replace("http", "ws") + "/ws/agent";
       petWsRef.current?.close();
       petWsRef.current = new ReconnectingWebSocket({
-        url: () => getApiBase().replace("http", "ws") + "/ws/agent",
-        authToken: () => getAuthToken(),
+        url: wsUrl,
+        authToken: () => getWsAuthToken(),
         pingInterval: 30_000,
         onMessage: (data) => {
           if (typeof data !== "object" || data === null) return;
@@ -1629,6 +1634,9 @@ export default function Pet() {
           <button className="pet-menu-item pet-menu-item-danger" onClick={(e) => {
             e.stopPropagation();
             setMenuOpen(false);
+            // Quit 是"永久关闭"而非临时隐藏: 落盘禁用标记, 主窗口的
+            // openPetWindow() 之后会尊重 pet_enabled=0, 不再召唤回来.
+            localStorage.setItem(PET_ENABLED_KEY, "0");
             appWindow.current?.close();
           }}>
             <span className="pet-menu-item-icon">{"\u274C"}</span> Quit

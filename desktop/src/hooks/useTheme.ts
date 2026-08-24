@@ -24,6 +24,17 @@ export function useTheme() {
     localStorage.setItem("huginn:theme", theme);
   }, [theme]);
 
+  // Re-apply the persisted accent/skin. Setting inline style in SettingsPanel
+  // is enough while the panel is open, but on reload useTheme() must restore
+  // it too -- otherwise the chosen skin silently resets to the default blue.
+  useEffect(() => {
+    const savedRgb = localStorage.getItem("accent-color");
+    if (savedRgb && /^\d+( \d+ \d+)$/.test(savedRgb.trim())) {
+      document.documentElement.style.setProperty("--accent-rgb", savedRgb.trim());
+      document.documentElement.style.setProperty("--seed-primary", `rgb(${savedRgb.trim()})`);
+    }
+  }, []);
+
   // Listen to system theme changes when in auto mode
   useEffect(() => {
     if (theme !== "auto") return;

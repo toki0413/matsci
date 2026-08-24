@@ -320,7 +320,8 @@ LUCID review (mandatory after generating hypothesis):
         toggle HUGINN_CURIOSITY_HINT 默认 off — 不开不消耗 self_model 查询.
         ceiling: self_model 按 (dimension, hyp_type) 聚合, 关键词命中粗.
         """
-        if os.environ.get("HUGINN_CURIOSITY_HINT", "0") != "1":
+        from huginn.feature_flags import FeatureFlags
+        if not FeatureFlags.shared().is_enabled("curiosity_hint"):
             return ""
         _mem = getattr(self, "memory", None)
         if _mem is None or not hasattr(_mem, "longterm"):
@@ -361,7 +362,6 @@ LUCID review (mandatory after generating hypothesis):
         开关统一走 FeatureFlags (默认 on), 兼容旧 env HUGINN_WORLD_MODEL.
         """
         from huginn.feature_flags import FeatureFlags
-
         if not FeatureFlags.shared().is_enabled("world_model"):
             return ""
         _mem = getattr(self, "memory", None)
