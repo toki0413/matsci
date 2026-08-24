@@ -12,7 +12,7 @@ import logging
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from huginn.interaction.progress import get_progress_tracker
@@ -84,14 +84,24 @@ async def start_autoloop(req: AutoloopStartRequest) -> dict[str, Any]:
     """
     objective = req.objective.strip()
     if not objective:
-        from fastapi import HTTPException
-
         raise HTTPException(status_code=400, detail="objective is required")
 
     from huginn.autoloop.engine import AutoloopEngine
 
     workspace = get_context().config.workspace or "."
-    engine = AutoloopEngine(workspace=workspace)
+    # 引擎构造阶段就可能因缺 LLM provider / 缺 API key 同步抛配置错误.
+    # 统一错误处理器会把干净的 ValueError 吞成 500 "Internal server error",
+    # 用户在无 LLM 的首次运行里只会看到不明所以的内部错误. 这里把配置性
+    # 失败提前转成可读的 400, 把"我该去配置什么"暴露给客户端.
+    try:
+        engine = AutoloopEngine(workspace=workspace)
+    except (TypeError, ValueError) as e:
+        message = str(e) or e.__class__.__name__
+        if "provider" in message.lower() or "key" in message.lower() or "model" in message.lower():
+            # 缺 provider / 缺 key → 400(配置问题), 不走 500 兜底, 别把
+            # "我该配置什么" 误报成 "系统内部错误".
+            raise HTTPException(status_code=400, detail=message) from e
+        raise
 
     task = asyncio.create_task(engine.run_cognitive(objective, max_iterations=req.max_iterations))
     _pending.add(task)

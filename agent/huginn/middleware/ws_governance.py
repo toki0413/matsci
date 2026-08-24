@@ -108,6 +108,39 @@ async def _accept(websocket: WebSocket) -> bool:
     return True
 
 
+def _inject_token_auth(websocket: WebSocket, token: str) -> None:
+    """Attach a WS token to the request scope the way require_api_key reads it.
+
+    A browser/WebView WebSocket can't set custom headers (only ?token=), so the
+    token arrives here via the URL. A JWT is three dot-separated segments and is
+    validated by _decode_token through the Authorization header; a raw API key is
+    not, so it has to be injected as X-HUGINN-API-KEY — the fallback that
+    require_api_key checks after JWT decode fails. Routing each to the header it
+    is actually validated against lets a key-only desktop app hold a WS connection
+    exactly as it already holds HTTP (see api.ts authHeaders()).
+    """
+    if token.count(".") >= 2:
+        websocket.scope["headers"].append(
+            (b"authorization", f"Bearer {token}".encode())
+        )
+    else:
+        websocket.scope["headers"].append(
+            (b"x-huginn-api-key", token.encode())
+        )
+
+
+def _inject_token_auth(websocket: WebSocket, token: str) -> None:
+    """Route a WS token to the header its validation path reads.
+
+    Canonical copy lives in huginn.security.auth (both the global app-level
+    require_api_key dependency and this first-message path inject here); this
+    alias keeps the local call sites short.
+    """
+    from huginn.security.auth import _inject_token_auth as _impl
+
+    _impl(websocket, token)
+
+
 async def ws_auth_and_track(websocket: WebSocket) -> str | None:
     """Unified WS auth + connection tracking.
 
@@ -140,10 +173,10 @@ async def ws_auth_and_track(websocket: WebSocket) -> str | None:
     )
 
     if url_token:
-        # Backward compat: inject URL token as Authorization header
-        websocket.scope["headers"].append(
-            (b"authorization", f"Bearer {url_token}".encode())
-        )
+        # Backward compat: accept the token via ?token= for either a JWT or a
+        # raw API key (browsers can't set WS headers). _inject_token_auth routes
+        # it to the header require_api_key actually validates against.
+        _inject_token_auth(websocket, url_token)
     elif not _dev and not _has_header_key:
         # First-message auth: accept, wait for auth message.
         # 30s timeout — was 10s but under heavy load (concurrent LLM calls
@@ -176,9 +209,7 @@ async def ws_auth_and_track(websocket: WebSocket) -> str | None:
                 reason="no token in auth message",
             )
             return None
-        websocket.scope["headers"].append(
-            (b"authorization", f"Bearer {token}".encode())
-        )
+        _inject_token_auth(websocket, token)
     # else: dev mode, no token — require_api_key will bypass
 
     # require_api_key is sync — it raises HTTPException on bad credentials

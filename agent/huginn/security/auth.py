@@ -188,6 +188,38 @@ def _decode_token(token: str) -> dict[str, Any]:
     return jwt_decode(token, secret)
 
 
+def _token_header(token: str) -> tuple[bytes, bytes]:
+    """Pick the header frame for a token (JWT → Authorization, else API key).
+
+    A three-dot token is decodable as a JWT and is read from the
+    Authorization header; anything else is read as X-HUGINN-API-KEY. Keeping
+    this mapping in one place guarantees the global app-level dependency and
+    the ws route's first-message path agree.
+    """
+    if token.count(".") >= 2:
+        return (b"authorization", f"Bearer {token}".encode())
+    return (b"x-huginn-api-key", token.encode())
+
+
+def _inject_token_auth(websocket: WebSocket, token: str) -> None:
+    """Attach a WS token to the scope as the header it is validated against.
+
+    A browser/WebView WebSocket can only carry credentials through the URL
+    (?token=), it cannot set custom headers. require_api_key decodes a JWT
+    from Authorization and a raw API key from X-HUGINN-API-KEY, so the token
+    is routed to whichever header its path reads. Idempotent on purpose:
+    the same WS passes through both the global app dependency and the route's
+    own auth, and a second call must not stack duplicate header frames.
+    """
+    key, value = _token_header(token)
+    headers = websocket.scope.setdefault("headers", [])
+    # If the target header is already populated we skip: either a real client
+    # header or an earlier injection already carried the credentials.
+    if any(k == key and v for k, v in headers):
+        return
+    headers.append((key, value))
+
+
 def _extract_bearer(conn: Request | WebSocket) -> str | None:
     """Pull the Bearer token from the Authorization header."""
     auth = getattr(conn, "headers", {}).get("authorization", "")
@@ -237,6 +269,16 @@ def require_api_key(
     conn = request or websocket
     if conn is None:
         return ""
+
+    # WebSocket upgrade requests can't set custom headers — FastAPI's global
+    # app-level require_api_key dependency runs for every route *before* the
+    # ws route's own ws_auth_and_track, so a ?token= URL cursor must be
+    # interpreted here or a key-only desktop app is rejected at the handshake.
+    if isinstance(conn, WebSocket):
+        ws_token = getattr(conn, "query_params", None)
+        ws_token = ws_token.get("token") if ws_token is not None else None
+        if ws_token:
+            _inject_token_auth(conn, ws_token)
 
     if _public_path(conn):
         return ""

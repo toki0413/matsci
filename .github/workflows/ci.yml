@@ -359,6 +359,12 @@ jobs:
           #     其他组 (mace/all) 用无漏洞的 torch 2.13.0. 上游锁死无法升级.
           #     注: CVE-2025-2999/3001 是 torch.jit 相关 critical, 同属此硬约束,
           #     必须一并 ignore, 否则 CI 会因这 2 个漏网告警变红.
+          #   - lightning PYSEC-2026-3624 / GHSA-w37p-236h-pfx3 (CVE-2026-44484):
+          #     PyPI 供应链投毒, 受影响的是 2.6.2/2.6.3 两个已下架的版本.
+          #     OSV 将其粗编码为 >=2.6.2 受影响, 误伤后封禁重发的干净版本.
+          #     nougat-ocr 经 --extra all/rag 引入, uv 解析锁定最新的 2.6.5
+          #     (官方屏蔽恶意版后用 2.6.4 作为推荐版本), 已不在受影响集合内,
+          #     且无更高的修复版本可升.
           # 其余任何漏洞都会让 CI 变红, 强制升级修复.
           # 注意: 不能把三个组的钉版行合并审计 —— 不同组可能锁定同一包的不同
           # 版本 (如 fsspec), pip-audit 内部用 pip 解析会报 ResolutionImpossible.
@@ -372,6 +378,7 @@ jobs:
               --ignore-vuln PYSEC-2025-204 --ignore-vuln PYSEC-2025-206 \
               --ignore-vuln PYSEC-2026-139 --ignore-vuln PYSEC-2026-2286 \
               --ignore-vuln CVE-2025-2999 --ignore-vuln CVE-2025-3001 \
+              --ignore-vuln PYSEC-2026-3624 --ignore-vuln GHSA-w37p-236h-pfx3 \
               || { echo "::error::optional-dependency vulnerability(s) in $lock. 可修复漏洞必须升级约束版本; 新增无 fix 漏洞需先在 dependabot.yml 显式 ignore 并记录理由"; exit 1; }
           done
 

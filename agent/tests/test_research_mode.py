@@ -13,6 +13,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from huginn.agent import HuginnAgent
+from huginn.feature_flags import FeatureFlags
 
 
 def _make_mock_tool(name: str) -> SimpleNamespace:
@@ -43,6 +44,8 @@ def _make_agent_stub(
     stub._EXPENSIVE_TOOL_NAMES = HuginnAgent._EXPENSIVE_TOOL_NAMES
     # SimpleNamespace 不会 fall through 到类属性, 长程模式集合需显式复制.
     stub._LONG_HORIZON_MODES = HuginnAgent._LONG_HORIZON_MODES
+    stub._max_tool_calls = 15
+    stub._max_tool_calls_per_tool = 5
 
     # Phase manager — no filtering by default (tool_filter returns None).
     stub._phase_manager = MagicMock()
@@ -203,11 +206,14 @@ class TestRecursionLimit:
 
     def test_extreme_dispatch_chat_400(self, monkeypatch):
         # chat mode 手动开 extreme → 400 (不是 250 也不是 500)
+        # FeatureFlags 是进程级单例, 启动时快照 env — setenv 前清掉单例让它重读.
+        monkeypatch.setattr(FeatureFlags, "_singleton", None)
         monkeypatch.setenv("HUGINN_EXTREME_DISPATCH", "1")
         agent = _make_agent_stub(mode="chat")
         assert HuginnAgent._effective_recursion_limit(agent) == 400
 
     def test_extreme_dispatch_plan_400(self, monkeypatch):
+        monkeypatch.setattr(FeatureFlags, "_singleton", None)
         monkeypatch.setenv("HUGINN_EXTREME_DISPATCH", "1")
         agent = _make_agent_stub(mode="plan")
         assert HuginnAgent._effective_recursion_limit(agent) == 400
@@ -217,6 +223,30 @@ class TestRecursionLimit:
         monkeypatch.setenv("HUGINN_EXTREME_DISPATCH", "1")
         agent = _make_agent_stub(mode="research")
         assert HuginnAgent._effective_recursion_limit(agent) == 500
+
+
+class TestEffectiveToolBudget:
+    """_effective_tool_budget: research/extreme 放宽, chat/plan 回落默认."""
+
+    def test_chat_default_budget(self):
+        agent = _make_agent_stub(mode="chat")
+        assert HuginnAgent._effective_tool_budget(agent) == (15, 5)
+
+    def test_research_budget_loosened(self):
+        # 比默认 15/5 放宽: 单轮 300, 单工具 100 (day 级长任务)
+        agent = _make_agent_stub(mode="research")
+        assert HuginnAgent._effective_tool_budget(agent) == (300, 100)
+
+    def test_extreme_budget_greater(self):
+        agent = _make_agent_stub(mode="extreme")
+        assert HuginnAgent._effective_tool_budget(agent) == (1200, 300)
+
+    def test_explicit_high_config_respected(self):
+        # 显式配置比地基高 → max 向上取, 不削用户设置
+        agent = _make_agent_stub(mode="research")
+        agent._max_tool_calls = 500
+        agent._max_tool_calls_per_tool = 200
+        assert HuginnAgent._effective_tool_budget(agent) == (500, 200)
 
 
 # ── System prompt enhancement ────────────────────────────────────

@@ -32,7 +32,8 @@ async def list_memories(
             entries = mgr.longterm.list_all(limit=limit, alive_only=True)
         if tier:
             entries = [e for e in entries if e.get("tier") == tier]
-        return {"entries": entries}
+        # 列表本身按 last_accessed 倒序(最新在前), 直接按 content 去重保留第一条即可.
+        return {"entries": _dedupe_by_content(entries)}
     except Exception as e:
         return {"error": str(e)}
 
@@ -59,9 +60,23 @@ async def search_memories(params: dict[str, Any]) -> dict[str, Any]:
             tier=params.get("tier"),
             top_k=params.get("top_k", 10),
         )
-        return {"results": results}
+        return {"results": _dedupe_by_content(results)}
     except Exception as e:
         return {"error": str(e)}
+
+
+def _dedupe_by_content(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """按 content 去重, 保留顺序中的第一条 (调用处已是最新优先)."""
+    seen: set[str] = set()
+    result: list[dict[str, Any]] = []
+    for e in entries:
+        c = (e.get("content") or "").strip()
+        # 空 content 直接跳过, 遇到重复内容只保留头一个.
+        if not c or c in seen:
+            continue
+        seen.add(c)
+        result.append(e)
+    return result
 
 
 @router.post("/memory")

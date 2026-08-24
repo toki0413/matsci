@@ -80,7 +80,7 @@ class FeatureFlags:
         "use_atomworld": False,          # AtomWorld 环境 (HUGINN_USE_ATOMWORLD)
         "persistent_terminal": False,    # 持久化终端 (HUGINN_PERSISTENT_TERMINAL)
         "world_model": True,             # 世界模型 (HUGINN_WORLD_MODEL)
-        "curiosity_hint": False,         # 好奇心提示 (HUGINN_CURIOSITY_HINT)
+        "curiosity_hint": True,          # 好奇心提示 (HUGINN_CURIOSITY_HINT)
         "privacy_block_on_secrets": False,  # 检测到密钥时阻断 (HUGINN_PRIVACY_BLOCK_ON_SECRETS)
         # P1#1 (v25): 假设维度/方法族/失败类型 关键词匹配 → LLM 语义判定.
         # 默认关 (与 harness 实验栅栏同款): 显式开启 + 有 model provider 才生效,
@@ -111,6 +111,18 @@ class FeatureFlags:
         "HUGINN_CURIOSITY_HINT": "curiosity_hint",
         "HUGINN_PRIVACY_REDACT_SECRETS": "privacy_redact_secrets",
         "HUGINN_PRIVACY_BLOCK_ON_SECRETS": "privacy_block_on_secrets",
+        # 与各模块裸读点对齐的旧变量名, 迁移 read 点后旧配置仍生效.
+        "HUGINN_BELIEF_UPDATE": "belief_update",
+        "HUGINN_BELIEF_DARWIN": "belief_darwin",
+        "HUGINN_BELIEF_MODE_SWITCH": "belief_mode_switch",
+        "HUGINN_EXTREME_DISPATCH": "extreme_dispatch",
+        "HUGINN_TASK_TOOL_ROUTER": "task_tool_router",
+        "HUGINN_CONTEXT_ROUTER": "context_router",
+        "HUGINN_ISING_FRONTIER": "ising_frontier",
+        "HUGINN_ISING_RERANK": "ising_rerank",
+        "HUGINN_HILS_ATTENTION": "hils_attention",
+        "HUGINN_FTS_AUTO_REBUILD": "fts_auto_rebuild",
+        "HUGINN_CRDT_MERGE": "crdt_merge",
     }
 
     # 给 list_flags 用的功能描述

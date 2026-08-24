@@ -525,3 +525,36 @@ class TestVizEndpoints:
         response = client.post("/viz/phase", json={})
         assert response.status_code == 200
         assert "html" in response.json()
+
+
+class TestErrorNormalizeBodyPreserved:
+    """Regression: 200 JSON responses must keep their body through the
+    ErrorNormalizeMiddleware.
+
+    The middleware consumes ``response.body_iterator`` to inspect the payload;
+    a 200 response without a ``success: false`` marker used to return the
+    already-drained original response, so clients got an empty stream with a
+    stale Content-Length (observed on ``/health/rust`` in production builds,
+    where the bundled python lacks the optional ``huginn_ext`` module and the
+    handler returns ``{"available": false, "error": "..."}``).
+    """
+
+    def test_200_json_without_success_preserves_body(self):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from huginn.middleware.error_normalize import ErrorNormalizeMiddleware
+
+        app = FastAPI()
+
+        @app.get("/rust-like")
+        async def rust_like():
+            return {"available": False, "error": "No module named 'huginn_ext'", "functions": []}
+
+        app.add_middleware(ErrorNormalizeMiddleware)
+        with TestClient(app) as client:
+            r = client.get("/rust-like")
+            assert r.status_code == 200
+            assert r.json()["available"] is False
+            assert "error" in r.json()
+            assert r.json()["functions"] == []
