@@ -92,7 +92,8 @@ jobs:
             Push-Location agent
             # [all] 把 pymatgen/ase/matplotlib/chromadb/sentence-transformers/pymupdf/
             # easyocr 等工具依赖一并打进包, 否则桌面端调这些工具会 ImportError.
-            & "..\$runtimeDir\python.exe" -m pip install ".[all]" --no-warn-script-location --no-cache-dir 2>&1 | ForEach-Object { Write-Host $_ }
+            # [ocr] 额外打入 paddleocr (中文/混合版式识别), 体积大所以不进 [all].
+            & "..\$runtimeDir\python.exe" -m pip install ".[all,ocr]" --no-warn-script-location --no-cache-dir 2>&1 | ForEach-Object { Write-Host $_ }
             if ($LASTEXITCODE -ne 0) { throw "pip install huginn failed (exit $LASTEXITCODE)" }
             Pop-Location
 
@@ -118,7 +119,8 @@ jobs:
             Write-Host $_.ScriptStackTrace
             throw
           }
-        timeout-minutes: 20
+        # paddleocr 依赖链大, 首次下载 + pip 装机在裸 runner 上耗时长, 放宽超时.
+        timeout-minutes: 45
 
       - name: Install frontend dependencies
         working-directory: ./desktop
