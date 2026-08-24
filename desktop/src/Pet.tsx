@@ -925,8 +925,25 @@ export default function Pet() {
     // Sync backend port before opening SSE so we connect to the right URL.
     let es: EventSource | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let pollTimer: ReturnType<typeof setInterval> | null = null;
 
-    const connectSSE = () => {
+    // 后端可能被重启后换到新端口 (崩溃自启/托盘重启). 每次(重)连前
+    // 都重新从 backend_port 文件拉一次端口, 免得 SSE/WS 一直钉在旧端口.
+    const refreshBackendPort = async (): Promise<boolean> => {
+      try {
+        const port: number = await invoke("get_backend_port");
+        if (port && port > 0 && port !== parseInt(getApiBase().split(":")[2], 10)) {
+          setApiBase(`http://127.0.0.1:${port}`);
+          return true;
+        }
+      } catch {
+        // Tauri IPC not available — keep current base
+      }
+      return false;
+    };
+
+    const connectSSE = async () => {
+      await refreshBackendPort();
       const baseUrl = getApiBase();
       es = new EventSource(`${baseUrl}/events`);
       es.onmessage = (ev) => {
@@ -981,18 +998,11 @@ export default function Pet() {
       };
     };
 
-    const init = async () => {
-      try {
-        const port: number = await invoke("get_backend_port");
-        if (port && port > 0) {
-          setApiBase(`http://127.0.0.1:${port}`);
-        }
-      } catch {
-        // Tauri IPC not available — keep default
-      }
-      connectSSE();
-
-      // WS for real-time pet_update pushes (mood, xp, level, hunger, happiness)
+    // WS for real-time pet_update pushes (mood, xp, level, hunger, happiness)
+    // url 用 getter: 后端换端口后, ReconnectingWebSocket 内部重连会自动
+    // 求值到新地址, 不再钉死在挂载时解析的旧端口. 端口轮询变化时也会
+    // 重建它, 双保险覆盖 "连接还活着但端口已换" 的场景.
+    const buildPetWs = () => {
       const wsUrl = getApiBase().replace("http", "ws") + "/ws/agent";
       petWsRef.current?.close();
       petWsRef.current = new ReconnectingWebSocket({
@@ -1030,7 +1040,23 @@ export default function Pet() {
       });
       petWsRef.current.connect();
     };
-    init();
+
+    const init = async () => {
+      await refreshBackendPort();
+      connectSSE();
+      buildPetWs();
+
+      // 轻量端口轮询: 覆盖 "连接看似健康但后端已换端口" 的场景 —— 每 30s
+      // 重新取一次端口, 变了就断开重建, 让 SSE/WS 落到新地址. 与主窗口同节奏.
+      pollTimer = setInterval(async () => {
+        if (await refreshBackendPort()) {
+          es?.close();
+          connectSSE();
+          buildPetWs();
+        }
+      }, 30_000);
+    };
+    void init();
 
     // ── Smart Interruption: track user activity for focus detection ──
     const ACTIVITY_FOCUS_THRESHOLD = 30; // events per minute to count as "active"
@@ -1150,6 +1176,7 @@ export default function Pet() {
       petWsRef.current?.close();
       petWsRef.current = null;
       if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (pollTimer) clearInterval(pollTimer);
       if (hideTimer.current) clearTimeout(hideTimer.current);
       if (hopTimer.current) clearTimeout(hopTimer.current);
       if (idleTimer.current) clearInterval(idleTimer.current);

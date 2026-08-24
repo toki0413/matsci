@@ -142,6 +142,26 @@ describe('ReconnectingWebSocket', () => {
     expect(FakeWebSocket.instances.length).toBe(2);
   });
 
+  it('re-resolves a getter url so a backend port change is picked up on reconnect', () => {
+    let port = 8000;
+    const client = new ReconnectingWebSocket({
+      url: () => `ws://127.0.0.1:${port}/ws/agent`,
+      initialDelay: 10,
+      maxDelay: 100,
+      pingInterval: 0,
+      onStatus: (status, info) => capturedStatuses.push({ status, ...info }),
+    });
+    const ws = connectAndOpen(client) as FakeWebSocket;
+    expect(FakeWebSocket.lastConstructedUrl).toBe('ws://127.0.0.1:8000/ws/agent');
+
+    // backend restarts on a new port; drop the socket to force a reconnect
+    port = 60799;
+    ws.onclose?.({ code: 1006 });
+    vi.advanceTimersByTime(10); // backoff tick
+    expect(FakeWebSocket.instances.length).toBe(2);
+    expect(FakeWebSocket.lastConstructedUrl).toBe('ws://127.0.0.1:60799/ws/agent');
+  });
+
   it('gives up (failed) when retries exceed maxRetries', () => {
     // Note: on a successful open retries reset to 0, so to exhaust the budget
     // we must keep failing *without* opening — consecutive failed reconnect

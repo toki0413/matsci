@@ -11,8 +11,11 @@
 export type WsStatus = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'failed';
 
 export interface WsClientOptions {
-  /** ws:// 或 wss:// 完整地址 */
-  url: string;
+  /**
+   * ws:// 或 wss:// 完整地址. 传函数时每次(重)连都会重新求值,
+   * 这样后端换端口后重连能自动跟上新地址, 而不是钉死在旧端口.
+   */
+  url: string | (() => string | null);
   /** 首次重连延迟，默认 1000ms */
   initialDelay?: number;
   /** 退避上限，默认 30000ms */
@@ -133,7 +136,9 @@ export class ReconnectingWebSocket {
     this.setStatus(initialStatus);
 
     // Build URL with auth token if configured
-    let url = this.opts.url;
+    let url = typeof this.opts.url === 'function'
+      ? (this.opts.url() ?? '')
+      : this.opts.url;
     const tokenVal = typeof this.opts.authToken === 'function'
       ? this.opts.authToken()
       : this.opts.authToken;
