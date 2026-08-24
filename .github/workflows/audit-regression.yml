@@ -44,9 +44,9 @@ jobs:
           python -m pytest -v --no-cov --timeout=60 \
             tests/test_mechanics.py::TestHexagonalBornCriteria \
             tests/test_eos_fit.py::TestEosReferenceConsistency \
-            tests/test_audit14_p1_3_4_5.py::TestDemScriptSyntax \
-            tests/test_audit14_p1_3_4_5.py::TestMsdUnwrap \
-            tests/test_audit14_p1_3_4_5.py::TestScfConvergenceCriterion \
+            tests/test_sim_audit_regression.py::TestDemScriptSyntax \
+            tests/test_sim_audit_regression.py::TestMsdUnwrap \
+            tests/test_sim_audit_regression.py::TestScfConvergenceCriterion \
             tests/test_context_and_jwt.py \
             tests/test_fts5_consistency.py \
             --tb=short
