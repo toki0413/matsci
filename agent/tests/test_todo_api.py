@@ -5,17 +5,15 @@
 """
 from __future__ import annotations
 
-import os
-
 import pytest
 
 
 @pytest.fixture
 def client(monkeypatch, tmp_path):
     """TestClient with a valid API key (dev mode doesn't exempt testserver)."""
-    import huginn.server as server_module
-
     from fastapi.testclient import TestClient
+
+    import huginn.server as server_module
 
     monkeypatch.setenv("HUGINN_DEV_MODE", "1")
     monkeypatch.setenv("HUGINN_API_KEY", "test-todo-key")
