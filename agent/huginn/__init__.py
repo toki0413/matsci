@@ -7,8 +7,8 @@ formal verification of the underlying math.
 """
 
 import enum as _enum
-from importlib.metadata import version as _pkg_version
 from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _pkg_version
 
 # StrEnum was added in Python 3.11.  Patch a minimal backport onto the
 # ``enum`` module so all submodules can use ``enum.StrEnum`` (or
