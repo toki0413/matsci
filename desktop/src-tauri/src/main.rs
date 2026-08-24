@@ -242,8 +242,15 @@ fn port_alive(port: u16) -> bool {
 #[tauri::command]
 fn get_backend_port(state: tauri::State<'_, AppState>) -> u16 {
     // 1. Single source of truth: the port file the backend wrote.
+    //    文件不代表存活: 崩溃/被杀的后端会留下 stale 端口文件, 直接返回
+    //    会让 pet 之类一次性取端口的连接方钉在死地址上。读到存活的才用。
     if let Some(p) = read_backend_port_file() {
-        return p;
+        if port_alive(p) {
+            return p;
+        }
+        // stale 文件: 退回本进程分配的计划端口。后端可能仍在上线窗口
+        // (绑定未完成), 由前端轮询/重连兜底, 而不是落到错误的老默认值。
+        return state.backend_port.load(std::sync::atomic::Ordering::Relaxed);
     }
     // 2. The port this app allocated when it spawned the backend itself.
     let port = state.backend_port.load(std::sync::atomic::Ordering::Relaxed);
