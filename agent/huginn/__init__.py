@@ -7,6 +7,8 @@ formal verification of the underlying math.
 """
 
 import enum as _enum
+from importlib.metadata import version as _pkg_version
+from importlib.metadata import PackageNotFoundError
 
 # StrEnum was added in Python 3.11.  Patch a minimal backport onto the
 # ``enum`` module so all submodules can use ``enum.StrEnum`` (or
@@ -18,4 +20,8 @@ if not hasattr(_enum, "StrEnum"):  # pragma: no cover
 
     _enum.StrEnum = _StrEnumBackport  # type: ignore[attr-defined]
 
-__version__ = "1.3.2"
+# 走包元数据, pyproject.toml 是唯一来源; 源码直接跑没装包时回退到硬编码
+try:
+    __version__ = _pkg_version("huginn-agent")
+except PackageNotFoundError:  # 源码 checkout 直接 import, 还没装
+    __version__ = "1.3.4"
