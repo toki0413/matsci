@@ -31,7 +31,7 @@
 | `HUGINN_BOURBAKI_PATH` | '' | tools/__init__.py:190 | — | external |
 | `HUGINN_BRANCH_INCUBATOR_DEPTH` | 1 | autoloop/hypothesis_loop.py:1936 | — | external |
 | `HUGINN_BUDGET_MODE` | cumulative | scheduling/scheduler.py:115 | — | external |
-| `HUGINN_CACHE_DIR` | str(get_runtime_home( | autoloop/goal_store.py:124, autoloop/plan_store.py:186, cli/rcb_runner.py:60, +19 处 | agents/task_dag.py:312, autoloop/bandit.py:424, autoloop/variant_gen.py:299, +9 处, autoloop/variant_gen.py:310 | code-set |
+| `HUGINN_CACHE_DIR` | str(get_runtime_home( | autoloop/goal_store.py:124, autoloop/plan_store.py:186, cli/rcb_runner.py:60, +20 处 | agents/task_dag.py:312, autoloop/bandit.py:424, autoloop/variant_gen.py:299, +9 处, autoloop/variant_gen.py:310 | code-set |
 | `HUGINN_CHECKPOINTER_MAX_MESSAGES` | 120 | agent/streaming.py:831 | — | external |
 | `HUGINN_CHECKPOINTER_PATH` | '' | agent_config.py:154, bench/orchestrator.py:172, checkpointer.py:90, +4 处 | bench/orchestrator.py:451, bench/orchestrator.py:475, bench/orchestrator.py:490, bench/orchestrator.py:501 | code-set |
 | `HUGINN_CI` | '' | tools/sci/gp_tool.py:675 | — | external |
@@ -114,7 +114,7 @@
 | `HUGINN_LLM_LIKELIHOOD` | 0 | metacog/llm_likelihood.py:42, metacog/llm_likelihood.py:270 | metacog/llm_likelihood.py:273, metacog/llm_likelihood.py:278, metacog/llm_likelihood.py:281 | code-set |
 | `HUGINN_LLM_LIKELIHOOD_INTERVAL` | 5 | metacog/llm_likelihood.py:52 | metacog/llm_likelihood.py:285, metacog/llm_likelihood.py:287 | code-set |
 | `HUGINN_LLM_REQUEST_TIMEOUT` | 120 | models/registry.py:158 | — | external |
-| `HUGINN_LOCAL_ONLY` | 0 | config.py:783, models/registry.py:1174 | — | external |
+| `HUGINN_LOCAL_ONLY` | 0 | config.py:783, models/registry.py:1188 | — | external |
 | `HUGINN_LOCAL_VISION_MODEL` | qwen2.5-vl | agent/streaming.py:1293, vision/local_decoder.py:24 | — | external |
 | `HUGINN_LOCAL_VISION_TIMEOUT` | 20 | vision/local_decoder.py:30 | — | external |
 | `HUGINN_LOCAL_VISION_TTL` | 2.0 | vision/local_decoder.py:28 | — | external |
@@ -222,9 +222,9 @@
 | `HUGINN_SKIP_SMOKE` | 0 | cli/rcb_runner.py:1366 | — | external |
 | `HUGINN_SOBKO_HIERARCHICAL_INDEX` | '' | rag/router_retriever.py:123 | — | external |
 | `HUGINN_SOBKO_TROUBLESHOOTING` | '' | tools/diagnose_tool.py:74 | — | external |
-| `HUGINN_SPECULATIVE_DRAFT_TOKENS` | 5 | models/registry.py:790 | — | external |
-| `HUGINN_SPECULATIVE_ENABLED` | '' | models/registry.py:782 | — | external |
-| `HUGINN_SPECULATIVE_MODEL` | '' | models/registry.py:787 | — | external |
+| `HUGINN_SPECULATIVE_DRAFT_TOKENS` | 5 | models/registry.py:804 | — | external |
+| `HUGINN_SPECULATIVE_ENABLED` | '' | models/registry.py:796 | — | external |
+| `HUGINN_SPECULATIVE_MODEL` | '' | models/registry.py:801 | — | external |
 | `HUGINN_SPECULATOR_HISTORY` | '' | agents/speculator.py:32 | — | external |
 | `HUGINN_STANDING_RULES` | '' | tools/adapter.py:610, tools/adapter.py:645 | — | external |
 | `HUGINN_STARTUP_DEADCODE` | '' | diagnostics/startup_validator.py:239 | — | external |
