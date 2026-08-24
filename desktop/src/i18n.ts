@@ -56,6 +56,14 @@ const resources = {
       'tab.review': 'Review',
       'tab.tools': 'Tools',
       'tab.skills': 'Skills',
+      'tab.todo': 'Todos',
+
+      /* ── Todos panel ── */
+      'todos.title': 'Coding Todos',
+      'todos.clearDone': 'Clear done',
+      'todos.refresh': 'Refresh',
+      'todos.empty': 'No todos yet',
+      'todos.inProgress': 'In progress',
 
       /* ── System tabs ── */
       'tab.memory': 'Memory',
@@ -925,6 +933,14 @@ const resources = {
       'tab.review': '审查',
       'tab.tools': '工具',
       'tab.skills': '技能',
+      'tab.todo': '待办',
+
+      /* ── Todos panel ── */
+      'todos.title': '待办清单',
+      'todos.clearDone': '清除已完成',
+      'todos.refresh': '刷新',
+      'todos.empty': '暂无待办',
+      'todos.inProgress': '进行中',
 
       /* ── System tabs ── */
       'tab.memory': '记忆',
