@@ -75,7 +75,7 @@ _OPTIONAL_DEPS: dict[str, dict[str, str]] = {
     "easyocr":           {"group": "all/rag", "desc": "OCR 识别 (vision 工具)"},
     "paddleocr":         {"group": "all/rag", "desc": "OCR 识别 (vision 工具, 中文优先)"},
     "pytesseract":       {"group": "all/rag", "desc": "Tesseract OCR (vision 工具, 需系统 tesseract)"},
-    "nougat_ocr":        {"group": "all", "desc": "学术 PDF 解析 (文献链路)"},
+    "nougat_ocr":        {"group": "manual", "desc": "学术 PDF 解析 (文献链路), 只兼容 transformers 4.x 但 4.x 有 9.8 高危漏洞 (PYSEC-2026-2290), 未随 [all] 打包"},
     # RAG / 检索
     "chromadb":          {"group": "rag", "desc": "向量库 (RAG/工具检索)"},
     "sentence_transformers": {"group": "rag", "desc": "嵌入模型 (RAG/检索)"},
