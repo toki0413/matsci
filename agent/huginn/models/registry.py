@@ -306,9 +306,9 @@ MODEL_CAPABILITIES: dict[str, ModelCaps] = {
     "gpt-3.5-turbo": ModelCaps(
         vision=False, tools=True, reasoning=False, streaming=True
     ),
-    # o 系列推理模型 — 2025 起支持 function calling
-    "o1": ModelCaps(vision=False, tools=True, reasoning=True, streaming=False),
-    "o3": ModelCaps(vision=False, tools=True, reasoning=True, streaming=False),
+    # o 系列推理模型 — 当前 API 版本均支持图像输入 + function calling + 流式
+    "o1": ModelCaps(vision=True, tools=True, reasoning=True, streaming=True),
+    "o3": ModelCaps(vision=True, tools=True, reasoning=True, streaming=True),
     "o1-mini": ModelCaps(vision=False, tools=False, reasoning=True, streaming=False),
     "o3-mini": ModelCaps(vision=False, tools=True, reasoning=True, streaming=False),
     # ── DeepSeek ───────────────────────────────────────────────
@@ -354,10 +354,11 @@ MODEL_CAPABILITIES: dict[str, ModelCaps] = {
     ),
     # ── Qwen / 通义 (DashScope) ───────────────────────────────
     "qwen-max": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
+    # qwen3-max 仍为纯文本; 原生多模态从 qwen3.5-plus 起
     "qwen3-max": ModelCaps(vision=False, tools=True, reasoning=True, streaming=True),
-    "qwen3.5-plus": ModelCaps(vision=False, tools=True, reasoning=True, streaming=True),
+    "qwen3.5-plus": ModelCaps(vision=True, tools=True, reasoning=True, streaming=True),
     "qwen3.6-max-preview": ModelCaps(vision=False, tools=True, reasoning=True, streaming=True),
-    "qwen3.6-flash": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
+    "qwen3.6-flash": ModelCaps(vision=True, tools=True, reasoning=False, streaming=True),
     "qwen-long": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
     "qwen2.5:14b": ModelCaps(
         vision=False, tools=True, reasoning=False, streaming=True
@@ -378,15 +379,16 @@ MODEL_CAPABILITIES: dict[str, ModelCaps] = {
     "kimi-k2-thinking": ModelCaps(vision=False, tools=True, reasoning=True, streaming=True),
     "kimi-k2-turbo-preview": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
     # ── GLM (智谱) ────────────────────────────────────────────
-    "glm-4": ModelCaps(vision=True, tools=True, reasoning=False, streaming=True),
+    # GLM-4/5/4.7 文本系原生无视觉; 智谱视觉走独立 GLM-4.xV / GLM-5V 模型
+    "glm-4": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
     "glm-4-flash": ModelCaps(
         vision=False, tools=True, reasoning=False, streaming=True
     ),
     "glm-4.7": ModelCaps(vision=False, tools=True, reasoning=True, streaming=True),
     "glm-4.7-flash": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
-    "glm-5": ModelCaps(vision=True, tools=True, reasoning=True, streaming=True),
-    "glm-5.1": ModelCaps(vision=True, tools=True, reasoning=True, streaming=True),
-    "glm-5.2": ModelCaps(vision=True, tools=True, reasoning=True, streaming=True),
+    "glm-5": ModelCaps(vision=False, tools=True, reasoning=True, streaming=True),
+    "glm-5.1": ModelCaps(vision=False, tools=True, reasoning=True, streaming=True),
+    "glm-5.2": ModelCaps(vision=False, tools=True, reasoning=True, streaming=True),
     # ── MiniMax ───────────────────────────────────────────────
     "MiniMax-M2.7": ModelCaps(vision=False, tools=True, reasoning=True, streaming=True),
     "MiniMax-M2.7-highspeed": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
