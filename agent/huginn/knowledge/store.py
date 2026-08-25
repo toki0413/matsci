@@ -28,12 +28,16 @@ if TYPE_CHECKING:
 CHUNK_SIZE = 800
 CHUNK_OVERLAP = 100
 
-# 默认 embedding 模型: all-MiniLM-L6-v2 (384 维, 体积小速度快).
-# 可用环境变量 HUGINN_EMBED_MODEL 覆盖 (如 BGE-M3 / bge-m3: 1024 维, 中文/多语言更强).
-# 注意: 切换模型维度后需重建 ChromaDB collection (旧向量维度不兼容).
-EMBED_MODEL = os.environ.get("HUGINN_EMBED_MODEL", "all-MiniLM-L6-v2")
+# 默认 embedding 模型: paraphrase-multilingual-MiniLM-L12-v2 (384 维, 多语言).
+# 原本想用 BAAI/bge-m3 (1024 维, 中英更强), 但 2.2GB 权重在当前环境的下载/解码不稳,
+# 桌面侧car 内存压力也偏大, 退回这个轻量多语言模型. 可用 HUGINN_EMBED_MODEL 覆盖.
+# 注意: 切换模型维度后需重建 collection -> 旧向量的源文本仍在 chroma 的
+# documents 字段里, 可按 "读出→删collection→用新模型重灌" 升级而不丢内容.
+EMBED_MODEL = os.environ.get(
+    "HUGINN_EMBED_MODEL", "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+)
 
-# MiniLM 默认维度. 切换模型后由 _resolve_embedding_dim 动态推导, 供确定性降级向量对齐.
+# 默认维度 (MiniLM 384). 切换模型后由 _resolve_embedding_dim 动态推导, 供确定性降级向量对齐.
 _EMBED_DIM_DEFAULT = 384
 SEED_DIR = Path(__file__).parent / "seed"
 
@@ -132,19 +136,27 @@ class _EmbeddingModel:
             return _deterministic_vectors(texts, dim=_resolve_embedding_dim())
 
 
-        if _EmbeddingModel._use_chroma and _EmbeddingModel._ef is not None:
-            result = self._encode_onnx_guarded(texts)
-        else:
-            if _EmbeddingModel._st is None:
-                try:
-                    from sentence_transformers import SentenceTransformer
-                except ImportError as e:
-                    raise RuntimeError(
-                        "Embedding requires sentence-transformers or chromadb's default embedder. "
-                        "Install: pip install sentence-transformers"
-                    ) from e
-                _EmbeddingModel._st = SentenceTransformer(EMBED_MODEL)
-            result = _EmbeddingModel._st.encode(texts)
+        # 优先用 EMBED_MODEL (sentence-transformers): 与重灌后的存量向量同语义空间.
+        # chroma 自带 onnx (英文 all-MiniLM) 仅作回退 —— 否则查询向量与存量向量
+        # 维度一样但模型不同、语义空间错位, 检索命中率反而变差.
+        if _EmbeddingModel._st is None:
+            try:
+                from sentence_transformers import SentenceTransformer
+            except ImportError as e:
+                raise RuntimeError(
+                    "Embedding requires sentence-transformers or chromadb's default embedder. "
+                    "Install: pip install sentence-transformers"
+                ) from e
+            _EmbeddingModel._st = SentenceTransformer(EMBED_MODEL)
+        try:
+            # 与 rebuild_kb 重灌时保持一致, 输出单位向量; 否则 l2 距离被模长主导, 命中差.
+            result = _EmbeddingModel._st.encode(texts, normalize_embeddings=True)
+        except Exception:
+            # ST 不可用/挂起时回退 chroma onnx, 再不行给确定性向量兜底.
+            if _EmbeddingModel._use_chroma and _EmbeddingModel._ef is not None:
+                result = self._encode_onnx_guarded(texts)
+            else:
+                result = _deterministic_vectors(texts, dim=_resolve_embedding_dim())
 
         if cache_key:
             _EmbeddingModel._embedding_cache.set(cache_key, result.tolist())
