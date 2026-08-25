@@ -190,6 +190,7 @@ export type WSMessage =
     }
   | { type: "ping" }
   | { type: "pong" }
+  | { type: "guide_ack"; stored: boolean; thread_id?: string; error?: string }
   | { type: "context_compacted"; before_pct: number; after_pct: number }
   | {
       type: "governance";

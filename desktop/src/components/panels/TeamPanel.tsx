@@ -1,5 +1,7 @@
 import { useTranslation } from 'react-i18next';
+import { useState } from 'react';
 import type { AppConfig } from '../../types/domain';
+import type { TeamRunStatus } from '../../hooks/useChatAndConnection';
 
 interface TeamPanelProps {
   config: AppConfig;
@@ -17,6 +19,24 @@ interface TeamPanelProps {
   handleTeamPlan: () => void;
   handleTeamRun: () => void;
   handleTeamFusion: (rounds: number) => void;
+  teamRuns: Record<string, TeamRunStatus>;
+}
+
+const ROLE_EMOJI: Record<string, string> = {
+  planner: '🧭', scientist: '🔬', coder: '💻', executor: '⚙️',
+  critic: '🕵️', vision: '👁️', synthesizer: '🧩',
+};
+
+function fmtMs(ms?: number): string {
+  if (ms === undefined) return '–';
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
+function fmtTokens(tokens?: Record<string, number>): string {
+  if (!tokens) return '';
+  const total = Object.values(tokens).reduce((s, v) => s + v, 0);
+  return total > 0 ? `${total.toLocaleString()} tok` : '';
 }
 
 export function TeamPanel({
@@ -24,8 +44,13 @@ export function TeamPanel({
   teamObjective, setTeamObjective, teamRunning, teamError, teamPlan, teamResult,
   teamFusionResult,
   handleTeamPlan, handleTeamRun, handleTeamFusion,
+  teamRuns,
 }: TeamPanelProps) {
   const { t } = useTranslation();
+  // 可展开的成员节点: `${runId}:${role}` → 展开看工具调用序列
+  const [expanded, setExpanded] = useState<string | null>(null);
+
+  const runs = Object.values(teamRuns).sort((a, b) => b.startedAt - a.startedAt);
 
   return (
     <div className="flex h-full flex-col">
@@ -52,6 +77,91 @@ export function TeamPanel({
               <span className="text-xs text-text-muted">{t('team.hintKeyword')}</span>
             </div>
           </div>
+
+          {/* ── 子任务面板: 实时并行状态 / 耗时 / token / 工具调用序列 ── */}
+          {runs.length > 0 && (
+            <div className="card space-y-3">
+              <h3 className="text-sm font-semibold flex items-center gap-2">
+                <span>🛰️ Sub-tasks</span>
+                <span className="text-xs text-text-muted">{runs.length} run(s) · live SSE</span>
+              </h3>
+              {runs.map((run) => {
+                const members = Object.values(run.members);
+                const running = members.filter((m) => m.status === "running").length;
+                const done = members.filter((m) => m.status === "done").length;
+                return (
+                  <div key={run.run_id} className="rounded-lg border border-border bg-bg-tertiary p-3 space-y-2">
+                    {/* Run header */}
+                    <div className="flex items-center gap-2 text-xs">
+                      <span className={`inline-flex h-2 w-2 rounded-full ${run.status === "running" ? "bg-amber-400 animate-pulse" : "bg-emerald-400"}`} />
+                      <span className="font-mono text-text-muted">{run.run_id}</span>
+                      <span className="text-text-secondary truncate flex-1">{run.task || "—"}</span>
+                      <span className="text-text-muted whitespace-nowrap">
+                        {running > 0 && <span className="text-amber-400">{running} running</span>}
+                        {running > 0 && done > 0 && <span className="mx-1">·</span>}
+                        {done > 0 && <span className="text-emerald-400">{done} done</span>}
+                      </span>
+                    </div>
+                    {/* Member nodes */}
+                    {members.length === 0 && (
+                      <div className="text-[11px] text-text-muted italic">Waiting for members to start…</div>
+                    )}
+                    {members.map((m) => {
+                      const key = `${run.run_id}:${m.role}`;
+                      const isOpen = expanded === key;
+                      const statusColor = m.status === "running" ? "text-amber-400"
+                        : m.status === "failed" ? "text-red-400" : "text-emerald-400";
+                      return (
+                        <div key={key} className="rounded border border-border/70 bg-bg-secondary/60 px-2 py-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setExpanded(isOpen ? null : key)}
+                            className="flex w-full items-center gap-2 text-left"
+                          >
+                            <span className="text-xs">{isOpen ? "▾" : "▸"}</span>
+                            <span className="text-sm">{ROLE_EMOJI[m.role] || '🤖'}</span>
+                            <span className="text-xs font-semibold text-accent">{m.role}</span>
+                            {m.model && <span className="text-[10px] text-text-muted">{m.model}</span>}
+                            <span className={`ml-auto text-[10px] font-medium ${statusColor}`}>
+                              {m.status === "running" ? "● running" : m.status === "failed" ? "✕ failed" : "✓ done"}
+                            </span>
+                            <span className="text-[10px] text-text-muted tabular-nums w-16 text-right">{fmtMs(m.duration_ms)}</span>
+                            {fmtTokens(m.tokens) && (
+                              <span className="text-[10px] text-text-muted tabular-nums">{fmtTokens(m.tokens)}</span>
+                            )}
+                          </button>
+                          {/* Expanded: tool call sequence + current step */}
+                          {isOpen && (
+                            <div className="mt-2 ml-6 space-y-1">
+                              {m.task && (
+                                <div className="text-[11px] text-text-secondary">
+                                  <span className="text-text-muted">step:</span> {m.task}
+                                </div>
+                              )}
+                              <div className="text-[10px] text-text-muted">tool calls: {m.toolCalls.length}</div>
+                              {m.toolCalls.length === 0 ? (
+                                <div className="text-[10px] text-text-muted italic">No tool calls yet.</div>
+                              ) : (
+                                m.toolCalls.slice(-12).map((tc, i) => (
+                                  <div key={i} className="flex items-center gap-2 text-[11px]">
+                                    <span className="text-accent/80">#{i + 1}</span>
+                                    <code className="rounded bg-bg-tertiary px-1.5 py-0.5 text-[10px] text-text-secondary">{tc.tool}</code>
+                                    {tc.args && (
+                                      <span className="text-[10px] text-text-muted truncate max-w-[240px]">{tc.args}</span>
+                                    )}
+                                  </div>
+                                ))
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+            </div>
+          )}
 
           {/* Objective input */}
           <div className="card space-y-3">
