@@ -112,8 +112,12 @@ export interface Checkpoint {
 }
 
 export interface DocumentParseResult {
-  info_packages?: number;
-  graph?: { nodes?: unknown[]; edges?: unknown[] };
+  document_id: string;
+  filename: string;
+  n_packages: number;
+  packages?: unknown[];
+  auto_ingested?: number;
+  stats?: { n_nodes?: number; n_edges?: number; [k: string]: unknown };
 }
 
 export interface DocumentGraph {

@@ -174,6 +174,80 @@ export const api = {
     });
   },
 
+  /** Multipart upload + SSE response reader. Resolves the final `result` event. */
+  uploadStream: <T = unknown>(
+    path: string,
+    file: File,
+    onEvent?: (ev: { type: string; [k: string]: unknown }) => void,
+  ): Promise<T> => {
+    const form = new FormData();
+    form.append("file", file);
+    return new Promise<T>(async (resolve, reject) => {
+      let resp: Response;
+      try {
+        resp = await fetch(`${getApiBase()}${path}`, {
+          method: "POST",
+          body: form,
+          headers: authHeaders(),
+        });
+      } catch (e) {
+        reject(e instanceof Error ? e : new Error(String(e)));
+        return;
+      }
+      if (!resp.ok || !resp.body) {
+        reject(new Error(`HTTP ${resp.status}`));
+        return;
+      }
+
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let settled = false;
+      const finish = (err?: Error) => {
+        if (settled) return;
+        settled = true;
+        if (err) reject(err);
+        reader.cancel().catch(() => {});
+      };
+
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          let sepIdx: number;
+          // SSE blocks are blank-line separated: parse each "data: ..." line.
+          while ((sepIdx = buffer.indexOf("\n\n")) >= 0) {
+            const block = buffer.slice(0, sepIdx);
+            buffer = buffer.slice(sepIdx + 2);
+            for (const line of block.split("\n")) {
+              if (!line.startsWith("data:")) continue;
+              const raw = line.slice(5).trim();
+              if (!raw) continue;
+              let ev: { type: string; [k: string]: unknown };
+              try {
+                ev = JSON.parse(raw);
+              } catch {
+                continue;
+              }
+              if (ev.type === "result") {
+                resolve(ev.result as T);
+                finish();
+                return;
+              }
+              onEvent?.(ev);
+            }
+          }
+        }
+        // Stream ended without a result event — treat as a failure.
+        if (!settled) reject(new Error("解析流提前结束，未收到结果事件"));
+      } catch (e) {
+        finish(e instanceof Error ? e : new Error(String(e)));
+      }
+    });
+  },
+
   search: <T = unknown>(query: string, limit?: number, sources?: string) => {
     const params = new URLSearchParams({ query });
     if (limit) params.set("limit", String(limit));
