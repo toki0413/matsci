@@ -150,12 +150,38 @@ class ModelTeam:
 
         team = ModelTeam.from_config(cfg)
         result = await team.run("帮我算一下 Si 的声子谱")
+
+    每次 run/fusion 会往 EventBus 发 ``team.*`` 事件 (run/member start-done +
+    tool_call), 前端通过 /events/stream 的 SSE 实时渲染子任务面板.
     """
 
     def __init__(self, members: list[TeamMember]) -> None:
         self.members: dict[TeamRole, TeamMember] = {}
         for m in members:
             self.assign(m)
+
+    # ── 实时事件 (子任务面板数据源) ─────────────────────────
+
+    async def _publish(self, event_type: str, data: dict[str, Any]) -> None:
+        """发布 team.* 事件到全局 EventBus.
+
+        后端失败不阻塞团队执行 (best-effort): 前端面板挂了不影响流水线.
+        """
+        try:
+            import time as _time
+
+            from huginn.events.event_bus import AgentEvent, EventBus
+
+            await EventBus.shared().publish(
+                AgentEvent(
+                    type=event_type,
+                    timestamp=_time.time(),
+                    data=data,
+                    source="model_team",
+                )
+            )
+        except Exception:
+            logger.debug("team event publish failed: %s", event_type, exc_info=True)
 
     def assign(self, member: TeamMember) -> ModelTeam:
         """把成员绑定到其声明的角色 (覆盖同角色的旧成员)."""
@@ -273,12 +299,25 @@ class ModelTeam:
         self, task: str, context: dict[str, Any] | None = None
     ) -> dict[str, Any]:
         """跑完整流水线: 规划 → 按步骤执行 → 审查."""
+        import uuid
+
+        run_id = context.get("team_run_id") if context else None
+        if not run_id:
+            run_id = uuid.uuid4().hex[:12]
         traces: list[TeamTrace] = []
         ctx = dict(context or {})
         ctx["original_task"] = task
+        ctx["team_run_id"] = run_id
+        t0 = time.time()
+
+        await self._publish("team.run.start", {
+            "run_id": run_id,
+            "task": task,
+            "members": [m.role.value for m in self.members.values()],
+        })
 
         # 1. 规划
-        plan_text = await self._delegate(TeamRole.PLANNER, task, ctx, traces)
+        plan_text = await self._delegate(TeamRole.PLANNER, task, ctx, traces, run_id)
         ctx["planner_output"] = plan_text
         steps = self._parse_plan(plan_text)
         if not steps:
@@ -286,7 +325,7 @@ class ModelTeam:
         ctx["plan"] = self._plan_to_text(steps)
 
         # 2. 执行
-        step_outputs = await self._execute_plan(steps, ctx, traces)
+        step_outputs = await self._execute_plan(steps, ctx, traces, run_id)
         role_outputs: dict[TeamRole, str] = {}
         for step, output in zip(steps, step_outputs):
             role_outputs[step.role] = output
@@ -306,12 +345,20 @@ class ModelTeam:
                 f"Execution result: {ctx['execution_result']}"
             )
             critic_output = await self._delegate(
-                TeamRole.CRITIC, critic_input, ctx, traces
+                TeamRole.CRITIC, critic_input, ctx, traces, run_id
             )
         ctx["review"] = critic_output
 
+        await self._publish("team.run.done", {
+            "run_id": run_id,
+            "task": task,
+            "duration_ms": round((time.time() - t0) * 1000, 2),
+            "steps": len(traces),
+        })
+
         return {
             "task": task,
+            "run_id": run_id,
             "context": ctx,
             "members": [
                 {"role": m.role.value, "name": m.name, "model": m.model_name}
@@ -330,11 +377,12 @@ class ModelTeam:
         task: str,
         ctx: dict[str, Any],
         traces: list[TeamTrace],
+        run_id: str = "",
     ) -> str:
         member = self.members.get(role)
         if member is None:
             return ""
-        return await self._run_member(member, task, ctx, traces)
+        return await self._run_member(member, task, ctx, traces, run_id)
 
     async def _run_member(
         self,
@@ -342,9 +390,17 @@ class ModelTeam:
         task: str,
         ctx: dict[str, Any],
         traces: list[TeamTrace],
+        run_id: str = "",
     ) -> str:
         start = time.time()
         agent = member.get_agent()
+        base = {
+            "run_id": run_id,
+            "role": member.role.value,
+            "member": member.name,
+            "model": member.model_name,
+        }
+        await self._publish("team.member.start", {**base, "status": "running", "task": task[:500]})
         final_output = ""
         # VISION member 需要把真实图像透传给 agent.chat(), 否则多模态模型
         # 只能看到文本拼的"图片路径", 无法真正看图. ctx 里由调用方注入
@@ -354,13 +410,51 @@ class ModelTeam:
         }
         if ctx.get("image_path") is not None:
             chat_kwargs["image_path"] = ctx["image_path"]
-        async for state in agent.chat(task, **chat_kwargs):
-            messages = state.get("messages", [])
-            for msg in messages:
-                content = getattr(msg, "content", None)
-                if content:
-                    final_output = str(content)
+        # 记录该成员这轮用掉的 token (best-effort, 拿不到就不带).
+        usage: dict[str, int] = {}
+        try:
+            async for state in agent.chat(task, **chat_kwargs):
+                # 工具调用 → team.member.tool 事件 (前端节点展开看调用序列)
+                for msg in state.get("messages", []):
+                    tcs = getattr(msg, "tool_calls", None)
+                    if tcs:
+                        for tc in tcs:
+                            name = "?"
+                            if isinstance(tc, dict):
+                                name = tc.get("name") or (tc.get("function") or {}).get("name", "?")
+                            else:
+                                name = getattr(tc, "name", "?")
+                            args = ""
+                            if isinstance(tc, dict):
+                                args = tc.get("args") or (tc.get("function") or {}).get("arguments", "")
+                            await self._publish(
+                                "team.member.tool",
+                                {**base, "tool": str(name), "args": str(args)[:300]},
+                            )
+                    content = getattr(msg, "content", None)
+                    if content:
+                        final_output = str(content)
+                # 尝试从 state 拿 token usage (各 agent 字段名不完全一致)
+                for key in ("usage", "_usage", "token_usage", "_tokens"):
+                    u = state.get(key) if isinstance(state, dict) else None
+                    if isinstance(u, dict) and any(u.values()):
+                        usage.update({k: int(v) for k, v in u.items() if isinstance(v, (int, float))})
+        except Exception as exc:
+            await self._publish("team.member.done", {
+                **base,
+                "status": "failed",
+                "error": str(exc)[:300],
+                "duration_ms": round((time.time() - start) * 1000, 2),
+                "tokens": usage,
+            })
+            raise
         duration_ms = round((time.time() - start) * 1000, 2)
+        await self._publish("team.member.done", {
+            **base,
+            "status": "done",
+            "duration_ms": duration_ms,
+            "tokens": usage,
+        })
         traces.append(
             TeamTrace(
                 role=member.role,
@@ -378,6 +472,7 @@ class ModelTeam:
         steps: list[TeamStep],
         ctx: dict[str, Any],
         traces: list[TeamTrace],
+        run_id: str = "",
     ) -> list[str]:
         results: dict[str, str] = {}
         pending = {s.id: s for s in steps}
@@ -390,6 +485,12 @@ class ModelTeam:
             ]
             if not ready:
                 ready = list(pending.values())
+
+            # 并行 batch 开始 → 前端可看到哪些 step 同时在跑.
+            await self._publish("team.batch.start", {
+                "run_id": run_id,
+                "steps": [{"id": s.id, "role": s.role.value, "task": s.task[:200]} for s in ready],
+            })
 
             async def run_one(step: TeamStep) -> tuple[str, str]:
                 member = self.members.get(step.role)
@@ -404,7 +505,7 @@ class ModelTeam:
                     task = step.task
                     if dep_text:
                         task = f"{task}\n\nContext from previous steps:\n{dep_text}"
-                    output = await self._run_member(member, task, ctx, traces)
+                    output = await self._run_member(member, task, ctx, traces, run_id)
                     return step.id, output
                 except Exception as exc:
                     # 失败隔离: 单个 member 异常不应团灭整个并行 batch.
@@ -584,11 +685,19 @@ class ModelTeam:
             }
 
         # 2. 并行分发 (多轮讨论)
+        import uuid as _uuid
+        fusion_run_id = (context or {}).get("team_run_id") or _uuid.uuid4().hex[:12]
+        await self._publish("team.run.start", {
+            "run_id": fusion_run_id,
+            "task": query,
+            "members": [r.value for r in panel_roles],
+        })
+
         async def _parallel_delegate(
             role: TeamRole, task: str
         ) -> tuple[TeamRole, str, float]:
             start = time.time()
-            output = await self._delegate(role, task, ctx, traces)
+            output = await self._delegate(role, task, ctx, traces, fusion_run_id)
             duration = round((time.time() - start) * 1000, 2)
             return role, output, duration
 
@@ -682,7 +791,7 @@ class ModelTeam:
 """
 
         synth_output = await self._delegate(
-            synthesizer_role, synthesis_prompt, ctx, traces
+            synthesizer_role, synthesis_prompt, ctx, traces, fusion_run_id
         )
 
         # 解析合成结果

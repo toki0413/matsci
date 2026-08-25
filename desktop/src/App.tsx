@@ -628,6 +628,8 @@ export default function App() {
     contextPct,
     thinkingIntensity, setThinkingIntensity,
     pendingMessages,
+    sendGuide, guideStatus, setGuideStatus,
+    teamRuns,
     stopGeneration,
     pauseGeneration, resumeGeneration, isPaused,
     researchMode, setResearchMode,
@@ -1558,6 +1560,9 @@ export default function App() {
               thinkingIntensity={thinkingIntensity}
               setThinkingIntensity={setThinkingIntensity}
               pendingMessages={pendingMessages}
+              sendGuide={sendGuide}
+              guideStatus={guideStatus}
+              setGuideStatus={setGuideStatus}
               stopGeneration={stopGeneration}
               pauseGeneration={pauseGeneration}
               resumeGeneration={resumeGeneration}
@@ -1595,6 +1600,7 @@ export default function App() {
               handleTeamPlan={handleTeamPlan}
               handleTeamRun={handleTeamRun}
               handleTeamFusion={handleTeamFusion}
+              teamRuns={teamRuns}
             />
           )}
 

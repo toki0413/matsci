@@ -69,6 +69,26 @@ export interface Message {
   persona?: string;
 }
 
+// 子任务面板类型: 每次 ModelTeam run 的实时状态快照 (来自 /events/stream team.*)
+export interface TeamMemberStatus {
+  role: string;
+  member: string;
+  model: string;
+  status: "running" | "done" | "failed";
+  task?: string;
+  duration_ms?: number;
+  tokens?: Record<string, number>;
+  toolCalls: { tool: string; args?: string }[];
+}
+
+export interface TeamRunStatus {
+  run_id: string;
+  task: string;
+  status: "running" | "done";
+  members: Record<string, TeamMemberStatus>;
+  startedAt: number;
+}
+
 export interface Thread {
   id: string;
   label: string;
@@ -250,6 +270,19 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
   // ── Message queue (Kimi-style: send while streaming, drain on done) ──
   const [pendingMessages, setPendingMessages] = useState<string[]>([]);
   const pendingMessagesRef = useRef<string[]>([]);
+
+  // ── Guide (中途引导): 流式生成中把补充内容注入会话 memory ──────
+  // 不走排队, 也不开新回合 — 后端把它写进 session memory, agent 下一次
+  // LLM 生成 (含工具调用间隙) 就会纳入考量, 用于中途修正方向.
+  const [guideStatus, setGuideStatus] = useState<"idle" | "sent" | "failed">("idle");
+
+  // ── Team run live status (from /events/stream team.* SSE) ──────
+  // run_id → 每次团队运行的实时快照: 每个成员角色当前状态 + 工具调用序列.
+  // 后端 ModelTeam 在 run/execute 时发 team.run.start / team.member.start /
+  // team.member.tool / team.member.done / team.run.done, 前端聚合渲染子任务面板.
+  const [teamRuns, setTeamRuns] = useState<Record<string, TeamRunStatus>>({});
+  const teamRunsRef = useRef<Record<string, TeamRunStatus>>({});
+  useEffect(() => { teamRunsRef.current = teamRuns; }, [teamRuns]);
 
   // ── Research mode toggle (prepends /research to outgoing messages) ──
   const [researchMode, setResearchMode] = useState(false);
@@ -785,6 +818,10 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
         }
         break;
       case "pong":
+        break;
+      case "guide_ack":
+        // 中途引导注入结果: stored=true 已写入会话 memory, false 注入失败.
+        setGuideStatus(data.stored ? "sent" : "failed");
         break;
       case "context_compacted": {
         setContextPct(data.after_pct || 0);
@@ -1371,6 +1408,21 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
     armWatchdog(180_000);
   };
 
+  // ── Send guide (中途引导): 不排队不新回合, 注入当前会话 memory ──
+  // 只在流式生成中启用 — agent 下一次工具调用前的 LLM 生成会读到它.
+  const sendGuide = useCallback(() => {
+    const content = input.trim();
+    if (!content || !wsClientRef.current) return;
+    setInput("");
+    setGuideStatus("idle");
+    const payload = JSON.stringify({ type: "guide", content, thread_id: activeThread });
+    try {
+      wsClientRef.current.send(payload);
+    } catch {
+      setGuideStatus("failed");
+    }
+  }, [input, activeThread]);
+
   // Undo last send — removes the last user message + bot placeholder, restores input
   const undoSend = useCallback(() => {
     if (!undoWindow) return;
@@ -1641,6 +1693,68 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
         // ignore malformed frames
       }
     });
+
+    // ── 子任务面板: team.* 事件聚合 (ModelTeam 实时状态) ─────
+    const handleTeamEvent = (e: MessageEvent) => {
+      try {
+        const t = JSON.parse(e.data);
+        const d = t.data || {};
+        const rid = d.run_id;
+        if (!rid) return;
+        const now = Date.now();
+        setTeamRuns((prev) => {
+          const runs = { ...prev };
+          const cur = runs[rid] || { run_id: rid, task: "", status: "running", members: {}, startedAt: now };
+          const members = { ...cur.members };
+          switch (t.type) {
+            case "team.run.start":
+              runs[rid] = { ...cur, task: d.task || "", startedAt: now };
+              break;
+            case "team.batch.start":
+              // batch 里出现的 role 若尚无记录, 预置 running 占位 (并行可见)
+              (d.steps || []).forEach((s: any) => {
+                if (s?.role && !members[s.role]) {
+                  members[s.role] = { role: s.role, member: "", model: "", status: "running", task: s.task, toolCalls: [] };
+                }
+              });
+              runs[rid] = { ...cur, members };
+              break;
+            case "team.member.start":
+              members[d.role] = {
+                role: d.role, member: d.member || "", model: d.model || "",
+                status: "running", task: d.task, toolCalls: members[d.role]?.toolCalls || [],
+              };
+              runs[rid] = { ...cur, members };
+              break;
+            case "team.member.tool": {
+              const m = members[d.role] || { role: d.role, member: "", model: "", status: "running", toolCalls: [] };
+              m.toolCalls = [...(m.toolCalls || []), { tool: d.tool || "?", args: d.args || "" }];
+              m.status = "running";
+              members[d.role] = m;
+              runs[rid] = { ...cur, members };
+              break;
+            }
+            case "team.member.done": {
+              const m = members[d.role] || { role: d.role, member: d.member || "", model: d.model || "", status: "done", toolCalls: [] };
+              m.status = d.status || "done";
+              m.duration_ms = d.duration_ms;
+              m.tokens = d.tokens || m.tokens;
+              members[d.role] = m;
+              runs[rid] = { ...cur, members };
+              break;
+            }
+            case "team.run.done":
+              runs[rid] = { ...cur, status: "done", members };
+              break;
+          }
+          return runs;
+        });
+      } catch {
+        // ignore malformed frames
+      }
+    };
+    ["team.run.start", "team.run.done", "team.batch.start", "team.member.start", "team.member.tool", "team.member.done"]
+      .forEach((ev) => es.addEventListener(ev, handleTeamEvent));
     return () => es.close();
   }, []);
 
@@ -1686,6 +1800,10 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
     thinkingIntensity, setThinkingIntensity,
     // Message queue
     pendingMessages,
+    // Guide (中途引导)
+    sendGuide, guideStatus, setGuideStatus,
+    // Team run live status (子任务面板数据源)
+    teamRuns,
     // Stop generation
     stopGeneration,
     // Pause / resume generation

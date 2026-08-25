@@ -307,6 +307,9 @@ interface ChatPanelProps {
   thinkingIntensity: ThinkingIntensity;
   setThinkingIntensity: (v: ThinkingIntensity) => void;
   pendingMessages: string[];
+  sendGuide: () => void;
+  guideStatus: "idle" | "sent" | "failed";
+  setGuideStatus: (v: "idle" | "sent" | "failed") => void;
   stopGeneration: () => void;
   pauseGeneration: () => void;
   resumeGeneration: () => void;
@@ -362,7 +365,8 @@ export function ChatPanel(props: ChatPanelProps) {
     setMode, input, setInput, mode, isStreaming, messagesEndRef,
     pendingApproval, respondToApproval, autoApprove, toggleAutoApprove,
     thinkingIntensity, setThinkingIntensity,
-    pendingMessages, stopGeneration, pauseGeneration, resumeGeneration, isPaused, researchMode, setResearchMode,
+    pendingMessages, sendGuide, guideStatus, setGuideStatus,
+    stopGeneration, pauseGeneration, resumeGeneration, isPaused, researchMode, setResearchMode,
     contextBudgetTokens, onExpandResult, campaignEvents, threadTaskState, planExecState,
     agentMode,
     trustScore,
@@ -396,6 +400,14 @@ export function ChatPanel(props: ChatPanelProps) {
   const [copyingId, setCopyingId] = useState<number | null>(null);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; msg: Message; index: number } | null>(null);
   const [quotedMsg, setQuotedMsg] = useState<string | null>(null);
+  // 流式生成中发送内容的去向: 排队 (下一轮) 或 引导 (当前回合工具间隙注入)
+  const [sendMode, setSendMode] = useState<"queue" | "guide">("queue");
+  // 引导注入状态提示 3s 后自动消失
+  useEffect(() => {
+    if (guideStatus === "idle") return;
+    const timer = setTimeout(() => setGuideStatus("idle"), 3000);
+    return () => clearTimeout(timer);
+  }, [guideStatus, setGuideStatus]);
   const [showStats, setShowStats] = useState(false);
   const [notifSound, setNotifSound] = useState(() => localStorage.getItem('chat-notif-sound') !== 'off');
   const [streamingWasActive, setStreamingWasActive] = useState(false);
@@ -2069,6 +2081,32 @@ status: ${heatEngineHealth.status}${heatEngineHealth.warnings.length ? '\nwarnin
           </details>
         </div>
 
+        {isStreaming && (
+          <div className="mb-2 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-bg-tertiary/60 px-3 py-2">
+            <span className="text-[10px] text-text-muted">发送时:</span>
+            <button
+              type="button"
+              onClick={() => setSendMode("queue")}
+              className={`rounded px-2 py-0.5 text-[11px] transition-colors ${sendMode === "queue" ? "bg-accent/20 text-accent font-medium" : "text-text-muted hover:text-text-secondary"}`}
+            >
+              🕐 排队 (下一轮)
+            </button>
+            <button
+              type="button"
+              onClick={() => setSendMode("guide")}
+              className={`rounded px-2 py-0.5 text-[11px] transition-colors ${sendMode === "guide" ? "bg-accent/20 text-accent font-medium" : "text-text-muted hover:text-text-secondary"}`}
+            >
+              🧭 引导 (当前回合修正方向)
+            </button>
+            {guideStatus === "sent" && (
+              <span className="text-[11px] text-emerald-400">✓ 已注入, 将在工具调用间隙生效</span>
+            )}
+            {guideStatus === "failed" && (
+              <span className="text-[11px] text-error">✕ 注入失败, 请检查连接</span>
+            )}
+          </div>
+        )}
+
         {pendingMessages.length > 0 && (
           <div className="mb-2 space-y-1">
             {pendingMessages.map((pmsg, i) => (
@@ -2277,7 +2315,9 @@ status: ${heatEngineHealth.status}${heatEngineHealth.warnings.length ? '\nwarnin
                   inputHistoryRef.current.push(val);
                   historyIdxRef.current = -1;
                 }
-                sendMessage();
+                // 流式生成中按当前模式分发: 引导直接注入会话, 否则走排队
+                if (isStreaming && sendMode === "guide") sendGuide();
+                else sendMessage();
                 setTimeout(autoResize, 0);
               }
             }}
@@ -2330,12 +2370,12 @@ status: ${heatEngineHealth.status}${heatEngineHealth.warnings.length ? '\nwarnin
               </div>
             ) : (
               <button
-                onClick={() => { setQuotedMsg(null); sendMessage(); }}
+                onClick={() => { setQuotedMsg(null); if (isStreaming && sendMode === "guide") sendGuide(); else sendMessage(); }}
                 disabled={!isConnected || !input.trim()}
                 className="btn-primary h-11 px-5"
                 aria-label={mode === "plan" ? t('chat.mode.plan') : t('chat.send')}
               >
-                {mode === "plan" ? t('chat.mode.plan') : t('chat.send')}
+                {isStreaming && sendMode === "guide" ? "引导" : mode === "plan" ? t('chat.mode.plan') : t('chat.send')}
               </button>
             )}
           </div>

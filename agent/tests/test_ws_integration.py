@@ -60,6 +60,16 @@ class _MockModel:
         return _Resp(self.plan_text)
 
 
+class _MemoryStub:
+    """Records (role, content) pairs; the guide handler writes into this."""
+
+    def __init__(self) -> None:
+        self.messages: list[tuple[str, str]] = []
+
+    def add_message(self, role: str, content: str) -> None:
+        self.messages.append((role, content))
+
+
 class MockAgent:
     """Async-generator agent that replays a scripted list of states."""
 
@@ -73,6 +83,7 @@ class MockAgent:
         # so always hand it something truthy.
         self.model = model if model is not None else _MockModel()
         self.persona_name = "default"
+        self.memory = _MemoryStub()
 
     def set_states(self, states: list[dict]) -> None:
         self._states = list(states)
@@ -370,6 +381,33 @@ class TestWSChat:
         call = harness.factory.create_lead_calls[-1]
         assert call.get("thinking") == "medium"
         assert call.get("max_tokens") == 1000
+
+
+# ── 2b. guide (中途引导) message tests ─────────────────────────────
+
+
+class TestWSGuide:
+    def test_ws_guide_injects_memory(self, harness):
+        # 引导不触发 agent.chat, 只把内容写进会话 memory, 然后回 guide_ack.
+        # 后续 LLM 生成 (含工具调用间隙) 会在读取 session memory 时纳入考量.
+        harness.states([{"messages": [AIMessage(content="ignored")]}])
+        with client.websocket_connect(WS_PATH) as ws:
+            ws.send_json(
+                {"type": "guide", "content": "先专注力学, 别管热耦合", "thread_id": "guide-1"}
+            )
+            ack = ws.receive_json()
+        assert ack["type"] == "guide_ack"
+        assert ack["stored"] is True
+        assert harness.factory.create_lead_calls  # 走 lead agent 拿会话 memory
+        assert ("user", "[用户中途引导] 先专注力学, 别管热耦合") in harness.agent.memory.messages
+
+    def test_ws_guide_empty_content(self, harness):
+        # 空引导直接拒绝, 不写 memory 也不崩.
+        with client.websocket_connect(WS_PATH) as ws:
+            ws.send_json({"type": "guide", "content": "", "thread_id": "guide-empty"})
+            ack = ws.receive_json()
+        assert ack["type"] == "guide_ack"
+        assert ack["stored"] is False
 
 
 # ── 3. plan mode tests ──────────────────────────────────────────────

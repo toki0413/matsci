@@ -1,6 +1,6 @@
 [package]
 name = "huginn-agent-desktop"
-version = "1.3.6"
+version = "1.3.7"
 description = "Huginn Desktop App"
 authors = ["toki"]
 edition = "2021"

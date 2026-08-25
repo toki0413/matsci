@@ -1679,3 +1679,49 @@ async def _handle_ping(
 ) -> None:
     """Reply to a client ping."""
     await websocket.send_json({"type": "pong"})
+
+
+async def _handle_guide_input(
+    websocket: WebSocket,
+    msg: WSMessage,
+    ctx: WSCtx,
+) -> None:
+    """Handle a `guide` message: 把用户补充内容注入当前 thread 的会话 memory.
+
+    引导与普通排队消息的区别:
+    - 排队消息会在下一轮作为"新问题"发送 (前端 pendingMessages drain).
+    - 引导消息不开启新回合, 而是直接写进 agent 的 session memory, 作为
+      一条 user 消息进入会话上下文 — agent 后续的 LLM 推理 (包括下一次
+      工具调用前的生成) 都会把这条引导纳入考量.
+
+    ponytail: 同回合内的"工具调用间隙注入"需要 langgraph interrupt 或
+    tool-adapter 层 hook 才能做到 (当前回合 agent.chat 的 message 快照
+    已固定), 本实现注入 memory 后从下一轮 LLM 生成起生效. 升级路径: 在
+    HuginnAgent 的工具执行前钩子 (approval_callback 同位置) 检查 pending
+    guidance 并改写输入 messages.
+    """
+    from huginn.routes.ws import get_agent_factory
+
+    content = (msg.content or "").strip()
+    thread_id = msg.thread_id or "desktop"
+    if not content:
+        await websocket.send_json({"type": "guide_ack", "stored": False, "error": "empty content"})
+        return
+
+    try:
+        factory = get_agent_factory()
+        agent = factory.create_lead(thread_id=thread_id, approval_callback=ctx.ws_approval)
+        # 注入会话 memory: 引导成为持久上下文的一部分.
+        agent.memory.add_message("user", f"[用户中途引导] {content}")
+        await websocket.send_json({
+            "type": "guide_ack",
+            "stored": True,
+            "thread_id": thread_id,
+        })
+    except Exception as exc:
+        logger.debug("guide inject failed", exc_info=True)
+        await websocket.send_json({
+            "type": "guide_ack",
+            "stored": False,
+            "error": str(exc),
+        })

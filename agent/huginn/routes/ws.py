@@ -22,6 +22,7 @@ from huginn.routes.ws_helpers import (
     _handle_clarification_response,
     _handle_decision_response,
     _handle_explore_start,
+    _handle_guide_input,
     _handle_ping,
     _handle_plan_confirm,
     _handle_set_auto_approve,
@@ -69,6 +70,7 @@ router = APIRouter(tags=["ws"])
 _MESSAGE_HANDLERS: dict[str, Any] = {
     "user_input": _handle_user_input,
     "explore_start": _handle_explore_start,
+    "guide": _handle_guide_input,
     "approval_response": _handle_approval_response,
     "plan_confirm": _handle_plan_confirm,
     "clarification_response": _handle_clarification_response,

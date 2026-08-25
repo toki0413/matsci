@@ -221,6 +221,12 @@ async fn start_backend_inner(state: &SidecarState) -> Result<(), String> {
     .stderr(Stdio::piped())
     .env("PYTHONUNBUFFERED", "1");
 
+    // 打包时把默认 embedding 模型放进 <python-runtime>/hf_home/hub (见 CI 的
+    // "Bundle embedding model" 步骤)。这里指过去并强制离线, 让 KB 首次联网
+    // 下载变成本地命中, 冷启动/断网也能用新多语言模型。
+    let hf_cache = python_exe.parent().join("hf_home").join("hub");
+    cmd.env("HF_HUB_CACHE", hf_cache).env("HF_HUB_OFFLINE", "1");
+
     // Run from the user's home dir so the backend doesn't drop files into the
     // install directory (which may be read-only after packaging).
     if let Some(home) = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")).ok() {
