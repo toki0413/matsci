@@ -27,21 +27,21 @@ setups. Swap for a real store when going multi-tenant.
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
+import os
+import sys
 import tempfile
 import uuid
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
 
-from huginn.perception.cross_validator import CrossModalAdapter
-from huginn.perception.data_extractor import FigureDataExtractor
-from huginn.perception.document_graph import DocumentGraph
-from huginn.perception.info_pack import InfoPackAssembler
-from huginn.perception.pdf_parser import PDFElementExtractor
 from huginn.perception.rag_bridge import RAGBridge
-from huginn.perception.relation_predictor import RelationPredictor
+from huginn.server_core import get_context
 
 logger = logging.getLogger(__name__)
 
@@ -92,11 +92,17 @@ def _try_ingest(record: dict[str, Any]) -> tuple[int, bool]:
 
 
 @router.post("/parse")
-async def parse_document(file: UploadFile = File(...)) -> dict[str, Any]:
-    """Upload a PDF and run the full DocGraph pipeline.
+async def parse_document(file: UploadFile = File(...)) -> StreamingResponse:
+    """Upload a PDF, stream the DocGraph pipeline.
 
-    Returns the document_id along with a summary of the extracted
-    information packages.
+    Responds with Server-Sent Events. Every stage yields ``{type: stage, pct,
+    message}``; the final event is ``{type: result, result}`` (or ``{type:
+    error, error}`` on failure).
+
+    The heavy M1-M6 + KB ingest runs in a *worker subprocess*
+    (huginn.perception.doc_parse_worker). A native crash in a C extension
+    (e.g. the VCRUNTIME140 access-violation we hit on real papers) then kills
+    only the worker instead of the whole backend.
     """
     content = await file.read()
 
@@ -114,60 +120,72 @@ async def parse_document(file: UploadFile = File(...)) -> dict[str, Any]:
             detail="only PDF files are accepted",
         )
 
-    # spill to a temp file so PyMuPDF can mmap it rather than holding the
-    # whole thing in memory twice.
-    tmp_path = Path(tempfile.gettempdir()) / f"doc_{uuid.uuid4().hex}.pdf"
-    try:
-        tmp_path.write_bytes(content)
+    tmp_pdf = Path(tempfile.gettempdir()) / f"doc_{uuid.uuid4().hex}.pdf"
+    out_json = Path(tempfile.gettempdir()) / f"doc_{uuid.uuid4().hex}.json"
+    tmp_pdf.write_bytes(content)
+    filename = file.filename or "uploaded.pdf"
+    # 把 KB 存储位置传给 worker, 让自动入库也在子进程里做 (连 embedding 一起隔离).
+    workspace = _get_workspace()
 
-        # M1: parse PDF into elements
-        extractor = PDFElementExtractor()
-        elements = extractor.extract(tmp_path)
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-m",
+        "huginn.perception.doc_parse_worker",
+        str(tmp_pdf),
+        str(out_json),
+        filename,
+        workspace,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env={
+            **os.environ,
+            # OpenBLAS 多线程栈分配失败会直接带崩进程 (我们实测到
+            # "Memory allocation still failed"→VCRUNTIME140 崩). worker 是隔离的
+            # 轻活, 单线程足够, 也降低那种原生崩的触发率.
+            "OPENBLAS_NUM_THREADS": "1",
+            "OMP_NUM_THREADS": "1",
+        },
+    )
 
-        # M2: extract data from chart figures (best-effort, non-fatal)
+    async def event_stream():
+        assert proc.stdout is not None and proc.stderr is not None
         try:
-            FigureDataExtractor().process(elements)
-        except Exception as exc:
-            logger.warning("M2 figure data extraction skipped: %s", exc)
+            async for line in proc.stdout:
+                text = line.decode("utf-8", errors="replace").rstrip("\n")
+                if text.startswith("PROGRESS "):
+                    yield f"data: {text[len('PROGRESS '):]}\n\n"
 
-        # M3: build the heterogeneous graph (structural edges only)
-        graph = DocumentGraph(elements)
+            rc = await proc.wait()
+            if rc != 0:
+                err = (await proc.stderr.read()).decode("utf-8", errors="replace")
+                detail = err.strip() or f"解析进程异常退出 (code {rc})"
+                yield f"data: {json.dumps({'type': 'error', 'error': detail})}\n\n"
+            else:
+                record = json.loads(out_json.read_text(encoding="utf-8"))
+                _document_store[record["document_id"]] = record
+                result = {
+                    "document_id": record["document_id"],
+                    "filename": record["filename"],
+                    "stats": record["stats"],
+                    "n_packages": len(record["packages"]),
+                    "packages": record["packages"],
+                    "auto_ingested": record.get("auto_ingested", 0),
+                }
+                yield f"data: {json.dumps({'type': 'result', 'result': result}, ensure_ascii=False)}\n\n"
+        finally:
+            tmp_pdf.unlink(missing_ok=True)
+            out_json.unlink(missing_ok=True)
 
-        # M4: predict REFERENCES edges (mention -> figure/table)
-        RelationPredictor().predict(graph)
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
-        # M5: cross-modal validation (injects CLAIM nodes + verdict edges)
-        CrossModalAdapter().process(graph)
 
-        # M6: assemble information packages
-        packages = InfoPackAssembler().assemble(graph)
-    finally:
-        # always clean up the temp file, even if the pipeline blew up
-        tmp_path.unlink(missing_ok=True)
-
-    document_id = uuid.uuid4().hex
-    record: dict[str, Any] = {
-        "document_id": document_id,
-        "filename": file.filename or "uploaded.pdf",
-        "graph": graph,
-        "packages": packages,
-        "stats": graph.stats(),
-    }
-    _document_store[document_id] = record
-
-    # Auto-ingest into KB when one is wired up. Best-effort: a KB failure
-    # must not poison the parse response -- the client already has the
-    # packages in the response body, the KB is just a retrieval side-channel.
-    auto_ingested, _kb_on = _try_ingest(record)
-
-    return {
-        "document_id": document_id,
-        "filename": record["filename"],
-        "stats": record["stats"],
-        "n_packages": len(packages),
-        "packages": [p.to_dict() for p in packages],
-        "auto_ingested": auto_ingested,
-    }
+def _get_workspace() -> str:
+    """后端单行 workspace 路径, 传给 worker 做 KB 入库; 没有就空串."""
+    try:
+        ws = get_context().config.workspace
+    except Exception:
+        return ""
+    return str(ws) if ws else ""
 
 
 @router.get("/{document_id}/packages")
@@ -180,7 +198,7 @@ async def get_packages(document_id: str) -> dict[str, Any]:
     return {
         "document_id": document_id,
         "n_packages": len(packages),
-        "packages": [p.to_dict() for p in packages],
+        "packages": packages,
     }
 
 
@@ -190,7 +208,7 @@ async def get_graph(document_id: str) -> dict[str, Any]:
     record = _document_store.get(document_id)
     if record is None:
         raise HTTPException(status_code=404, detail="document not found")
-    return record["graph"].to_dict()
+    return record["graph"]
 
 
 @router.get("/{document_id}/stats")

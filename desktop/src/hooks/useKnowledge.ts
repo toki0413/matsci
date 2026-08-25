@@ -62,21 +62,26 @@ export function useKnowledge() {
   const parseDocument = async (file: File) => {
     setParseLoading(true);
     setKbMsg('Parsing document (6-stage pipeline)…');
-    setUploadPct(0);
+    setUploadPct(5);
     try {
-      const d = await api.uploadWithProgress<DocumentParseResult>('/document/parse', file, (loaded, total) => {
-        // Upload phase is ~30% of total; remaining 70% is server-side parsing
-        setUploadPct(Math.round((loaded / total) * 30));
-        if (loaded === total) setKbMsg('Upload complete, parsing (6-stage pipeline)…');
+      const d = await api.uploadStream<DocumentParseResult>('/document/parse', file, (ev) => {
+        // 后端每个 M 阶段推一条 stage 事件; 用它的 pct 当服务端进度展示.
+        if (ev.type === 'stage') {
+          setUploadPct(typeof ev.pct === 'number' ? ev.pct : 5);
+          setKbMsg(typeof ev.message === 'string' ? `解析中: ${ev.message}…` : '解析中…');
+        }
       });
       setKbMsg(
-        `✅ Parsed: ${d.info_packages || 0} info packages, ` +
-        `${d.graph?.nodes?.length || 0} graph nodes, ` +
-        `${d.graph?.edges?.length || 0} edges`
+        `✅ Parsed: ${d.n_packages ?? 0} info packages, ` +
+        `${d.stats?.n_nodes ?? 0} graph nodes, ` +
+        `${d.stats?.n_edges ?? 0} edges`
       );
       loadKnowledge();
     } catch (e) {
       setKbMsg(`Parse error: ${(e as Error).message}`);
+      setParseLoading(false);
+      setUploadPct(0);
+      return;
     } finally {
       setParseLoading(false);
       setUploadPct(0);
