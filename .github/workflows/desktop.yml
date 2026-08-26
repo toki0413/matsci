@@ -122,21 +122,6 @@ jobs:
         # paddleocr 依赖链大, 首次下载 + pip 装机在裸 runner 上耗时长, 放宽超时.
         timeout-minutes: 45
 
-      # 把默认 embedding 模型权重也打进运行时的 HF 缓存, 让 KB 冷启动离线可用
-      # (store.EMBED_MODEL = sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2).
-      # sidecar 启动 python 时会设 HF_HUB_CACHE 指向这里并 HF_HUB_OFFLINE=1。
-      # 与 release.yml 的对应步骤保持同步。
-      - name: Bundle embedding model (offline KB)
-        shell: pwsh
-        run: |
-          $runtimeDir = "desktop/src-tauri/python-runtime"
-          $hubDir = "$runtimeDir/hf_home/hub"
-          New-Item -ItemType Directory -Force -Path $hubDir | Out-Null
-          & "$runtimeDir/python.exe" -c "from huggingface_hub import snapshot_download; snapshot_download('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2', cache_dir='$hubDir')"
-          if ($LASTEXITCODE -ne 0) { throw "embedding model download failed (exit $LASTEXITCODE)" }
-          $size = (Get-ChildItem $hubDir -Recurse -File -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum / 1MB
-          Write-Host "=== embedding model bundled: $([math]::Round($size, 1)) MB ==="
-
       - name: Install frontend dependencies
         working-directory: ./desktop
         run: npm ci
