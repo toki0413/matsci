@@ -32,7 +32,7 @@
   - 15. 桌面应用
   - 16. 技能（Skills）与预设
   - 17. 记忆系统、知识蒸馏与视觉/时空工作流
-    - 17.1 三层记忆 · 17.2 知识蒸馏 · 17.3 外部思维（External Thinking） · 17.4 三库隔离 · 17.5 视觉→知识库→记忆闭环 · 17.6 时空可组合
+    - 17.1 三层记忆 · 17.2 知识蒸馏 · 17.3 外部思维（External Thinking） · 17.4 三库隔离 · 17.5 视觉→知识库→记忆闭环 · 17.6 时空可组合 · 17.7 接入 Embedding 模型 · 17.8 文档文字提取与 OCR 优先级
   - 18. Coder / 多 Agent / 自主科研（autoloop）
   - 19. 安全
   - 20. 监控、部署与运维
@@ -748,6 +748,52 @@ extract_visual_primitives
 - **文件系统 undo**：`snapshot/file_snapshot.py` 的 revert/unrevert 独立于内存栈，提供整目录快照级撤销。
 
 `workflows/engine.py` 用 `composite()` 把多 stage 编排成一个可逆的原子单元——**stage 之间任一失败，整体回到执行前状态**。这是"让 agent 敢大胆试错"的能力基础。
+
+### 17.7 接入 Embedding 模型（知识库的向量引擎）
+
+知识库（RAG KB）靠 embedding 模型把文档和查询映射到同一向量空间再做相似度检索，Embedding 模型是 `knowledge/store.py` 的底座，独立于第 12 章的 LLM Provider（Embedding 走 `sentence-transformers`，不消耗 LLM API）。
+
+**默认模型**（`store.py` 的 `EMBED_MODEL`）：
+
+```
+sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2（384 维，多语言）
+```
+
+选它是因为**多语言 + 轻量**：中英材料术语都能编，384 维向量内存占用小，桌面侧car 冷启动/内存压力都可控。曾尝试更强的 `BAAI/bge-m3`（1024 维，中英更准），但 ~2.2GB 权重在桌面环境下载/解码不稳、内存压力偏大，故退回到 MiniLM。**若你的语料偏单一语言且想要更强语义，可自行覆盖**。
+
+**桌面版零操作（自动）**：python-runtime + `sentence-transformers` 都随安装包内置；首次用到知识库时自动下载权重（~470MB，见下方离线说明），无需手动装依赖或设环境变量。下面"三步"只针对想覆盖默认模型/离线分发的开发者。
+
+**开发/覆盖三步**：
+
+1. **安装依赖**：`sentence-transformers>=2.5`（KB 本身还需 `chromadb>=0.4`）。两处依赖声明在 `agent/pyproject.toml` 的 `[all]` / `rag` extra。
+
+2. **一次性下载权重**（首次使用触发，~470MB）：默认从 HuggingFace 拉取，国内网络建议先设镜像再运行：
+   ```bash
+   export HF_ENDPOINT=https://hf-mirror.com   # 国内镜像
+   python -m sentence_transformers.models    # 任意触发生成即可预取
+   ```
+   离线环境需在联网机器下载权重到 HF 缓存目录（`~/.cache/huggingface/hub`），随安装包一并分发（打包时放入 `python-runtime`，设 `HF_HUB_OFFLINE=1`）。
+
+3. **覆盖默认模型（可选）**：
+   ```bash
+   export HUGINN_EMBED_MODEL=BAAI/bge-m3      # 换成其他模型
+   python agent/rebuild_kb.py --yes ~        # 重编码重灌存量向量
+   ```
+
+**⚠️ 换模型必须重建 collection**：不同模型的向量维度/语义空间不同，否则查询向量与存量向量"维度一样但模型不同、语义错位"，检索命中反而变差。用 `agent/rebuild_kb.py [workspace]` 迁移（先备份 → 读出源文本 → 删 collection → 用新模型重灌 → 校验条目数）。桌面 App 的默认工作区在主目录 `~/.huginn_kb`，运行前先退出桌面 App 释放文件占用。
+
+**降级链路**（`store.py` 的 `_EmbeddingModel.encode`）：正常走 `sentence-transformers`（unit 向量，`normalize_embeddings=True` 与重灌存量对齐）；ST 不可用/挂起时退 `chroma` 自带 ONNX；再异常给确定性哈希向量兜底，保证 KB 流程不阻塞。**切换模型后务必重建 collection**，否则查询落在旧语义空间，混合检索（向量 + BM25 RRF）的排序会失真。
+
+### 17.8 文档文字提取与 OCR 优先级（`knowledge/ocr_loader.py`）
+
+扫描件 / 无文字层 PDF 入库前要先做文字提取，Huginn 的 OCR 链路是 **LLM-as-OCR 首选、无 LLM 才回退传统 OCR**：
+
+**图像（单张）**：LLM-as-OCR → PaddleOCR（中文/混排强）→ EasyOCR → Tesseract。
+**PDF**：逐页渲染成图后按上图链逐页提取；逐页全空时 Nougat 再整体兜底一次（保留数学/公式结构）。
+
+- **LLM-as-OCR**（`_llm_ocr_image`，DeepSeek-OCR 思路）：解码器就是多模态 LLM，不走独立 OCR 模型。`server_core` 启动时若 agent 模型支持 vision 会注入 `_vision_decode` callback，`set_llm_vision_callback` 注入；对扫描件公式/表格/中文混排比传统 OCR 强。
+- **无 vision / 无 LLM 时**：自动回退传统 OCR 链，功能不缺失；`engine=llm` 强制只走 LLM，`HUGINN_OCR_ENGINE` 可显式指定某引擎。
+- **开关门控**：`llm_vision_available()` 判断是否已注入 callback；`smart_ingest` 在无 vision 时跳过整页视觉压缩，避免白渲染/白存图。
 
 ## 18. Coder / 多 Agent / 自主科研（autoloop）
 
