@@ -224,7 +224,9 @@ async fn start_backend_inner(state: &SidecarState) -> Result<(), String> {
     // 打包时把默认 embedding 模型放进 <python-runtime>/hf_home/hub (见 CI 的
     // "Bundle embedding model" 步骤)。这里指过去并强制离线, 让 KB 首次联网
     // 下载变成本地命中, 冷启动/断网也能用新多语言模型。
-    let hf_cache = python_exe.parent().join("hf_home").join("hub");
+    // parent() 在裸文件名 (fallback "python") 时返回 None, 兜底用空路径.
+    let python_dir = python_exe.parent().map_or(std::path::Path::new(""), |p| p);
+    let hf_cache = python_dir.join("hf_home").join("hub");
     cmd.env("HF_HUB_CACHE", hf_cache).env("HF_HUB_OFFLINE", "1");
 
     // Run from the user's home dir so the backend doesn't drop files into the
