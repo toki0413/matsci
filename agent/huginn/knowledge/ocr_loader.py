@@ -1,6 +1,8 @@
 """OCR text extraction for image files and scanned PDFs.
 
-Tries EasyOCR first, then pytesseract, then gives up gracefully.
+Prefers LLM-as-OCR (decode via the injected multimodal-LLM callback) when one
+is available, then falls back to PaddleOCR → EasyOCR → Tesseract, giving up
+gracefully only if none of them produce text.
 """
 
 from __future__ import annotations
@@ -193,6 +195,17 @@ def _ocr_image(image: Any, engine: str | None = None) -> str:
 
     chosen_engine = engine or os.environ.get("HUGINN_OCR_ENGINE", "auto").lower()
 
+    # LLM-as-OCR 首选 (DeepSeek-OCR 启发): 解码器就是多模态 LLM, 对扫描件公式/
+    # 表格/中文混排比传统 OCR 强, 还能随版式理解。auto 链的最前面; engine=llm 时
+    # 也走这里。有 vision LLM 注入 callback 就用它, 没注入或返回空再依次退
+    # PaddleOCR → EasyOCR → Tesseract。
+    if chosen_engine in ("auto", "llm"):
+        llm_text = _llm_ocr_image(image, hint="ocr_page")
+        if llm_text:
+            return llm_text
+        if chosen_engine == "llm":
+            return ""
+
     if chosen_engine in ("auto", "paddle", "paddleocr"):
         # PaddleOCR 中文/混排更强, auto 链的最前面. 失败再退 EasyOCR.
         text = _paddle_ocr_pil(image)
@@ -224,33 +237,18 @@ def _ocr_image(image: Any, engine: str | None = None) -> str:
         except Exception as exc:
             logger.debug("Tesseract OCR failed: %s", exc)
 
-    # LLM-as-OCR fallback (DeepSeek-OCR 启发): EasyOCR/Tesseract 都失败或 engine=llm 时,
-    # 把整页当视觉信息喂给多模态 LLM. 对扫描件公式/表格/中文混排比传统 OCR 强.
-    # engine=llm 时跳过上面两条直接走这里; auto 时作为最后兜底.
-    if chosen_engine in ("auto", "llm"):
-        llm_text = _llm_ocr_image(image, hint="ocr_page")
-        if llm_text:
-            return llm_text
-
     return ""
 
 
 def _ocr_pdf(content: bytes, engine: str | None = None) -> str:
     """Render PDF pages to images and OCR them.
 
-    When the engine is "nougat" or "auto" we give Nougat the first shot --
-    it produces structured Markdown (with math) that rasterized OCR can't.
-    If Nougat is unavailable or returns nothing we fall through to the
-    page-by-page image OCR pipeline below.
+    Each page goes through ``_ocr_image``, which prefers LLM-as-OCR (when a
+    vision callback is injected) and falls back to PaddleOCR → EasyOCR →
+    Tesseract. If every page comes back empty, we give Nougat a final shot --
+    it preserves math/structure that rasterized OCR can't.
     """
     chosen_engine = engine or os.environ.get("HUGINN_OCR_ENGINE", "auto").lower()
-
-    # Nougat handles the whole PDF at once and keeps math/structure intact.
-    if chosen_engine in ("auto", "nougat"):
-        nougat_text = _nougat_pdf(content)
-        if nougat_text.strip():
-            return nougat_text
-        # Nougat not installed or produced nothing -- keep going.
 
     try:
         import fitz  # pymupdf
@@ -281,7 +279,17 @@ def _ocr_pdf(content: bytes, engine: str | None = None) -> str:
             with contextlib.suppress(Exception):
                 doc.close()
 
-    return "\n\n".join(parts)
+    if parts:
+        return "\n\n".join(parts)
+
+    # 逐页 OCR 全空时的整体兜底: Nougat 一次性读整篇, 保留数学/结构.
+    # (有 vision LLM 的话上面逐页已走了 LLM-as-OCR, 到这里是 LLM 不可用的情况.)
+    if chosen_engine in ("auto", "nougat"):
+        nougat_text = _nougat_pdf(content)
+        if nougat_text.strip():
+            return nougat_text
+
+    return ""
 
 
 def extract_text_with_ocr(filename: str, content: bytes) -> str:
@@ -297,15 +305,9 @@ def extract_text_with_ocr(filename: str, content: bytes) -> str:
         return _ocr_image(content, engine=engine)
 
     if suffix == ".pdf":
-        # For PDFs, try Nougat first when the engine allows it -- it captures
-        # math formulas and document structure that rasterized OCR misses.
-        # _ocr_pdf also has this check, but doing it here lets us short-circuit
-        # before the page-rendering pipeline even starts.
-        if engine in ("auto", "nougat"):
-            nougat_text = _nougat_pdf(content)
-            if nougat_text.strip():
-                return nougat_text
-
+        # PDF: 每页渲染成图片后走 _ocr_image, 其内部已是 LLM-as-OCR 首选
+        # (有 vision LLM 用 LLM, 否则退 Paddle→EasyOCR→Tesseract)。Nougat 在
+        # _ocr_pdf 里仍作为数学/结构保持的兜底路径之一。
         return _ocr_pdf(content, engine=engine)
 
     return ""
