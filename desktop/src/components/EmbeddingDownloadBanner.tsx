@@ -16,9 +16,10 @@ export default function EmbeddingDownloadBanner({ state, onDismiss }: Props) {
   const downloading = state.status === "downloading";
   const done = state.status === "done";
   const error = state.status === "error";
-  // 后端只保 start/done/error 三态 (snapshot_download 不好拿逐字节进度),
-  // 故百分比恒为 0, 这里渲染一条不确定进度的动画条, 表达"正在跑"而非卡死.
-  const indeterminate = downloading;
+  // 后端现在会推 embedding.download.progress 事件带真实 percent; percent 仍为 0
+  // (常见于刚 start、还没来得及算字节) 时退回 y不确定动画, 避免误判为卡死.
+  const indeterminate = downloading && !state.percent;
+  const pct = downloading ? state.percent ?? 0 : 0;
 
   return (
     <div
@@ -63,9 +64,30 @@ export default function EmbeddingDownloadBanner({ state, onDismiss }: Props) {
               <div className="h-full w-1/3 rounded-full bg-accent animate-slide-indeterminate" />
             </div>
           )}
+          {downloading && !indeterminate && (
+            <div
+              className="mt-1 flex items-center gap-2"
+              role="progressbar"
+              aria-valuenow={Math.round(pct)}
+              aria-valuemin={0}
+              aria-valuemax={100}
+            >
+              <div className="h-1.5 flex-1 rounded-full bg-bg-tertiary overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-accent transition-[width] duration-300"
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
+              <span className="w-9 text-right text-[10px] tabular-nums text-text-muted">
+                {Math.round(pct)}%
+              </span>
+            </div>
+          )}
           {downloading && (
             <span className="mt-0.5 block text-[10px] text-text-muted">
-              下载中，可继续使用其他功能 · 视网速可能需要几分钟
+              {indeterminate
+                ? "连接下载源中… · 可继续使用其他功能，视网速可能需要几分钟"
+                : "下载中，可继续使用其他功能 · 视网速可能需要几分钟"}
             </span>
           )}
           {error && (
