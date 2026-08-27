@@ -139,6 +139,19 @@ target-version = ['py311']
 [tool.ruff]
 line-length = 88
 target-version = "py311"
+# 本地调试/工作区脚本不进 lint 门禁 — 未跟踪, 不是交付代码.
+# 它们只是 scratch, 不应拖累 CI 全绿.
+extend-exclude = [
+    "_archive",
+    "workspaces",
+    "tmo_vacancy_pipeline",
+    "_stress_test*",
+    # glob 的 * 不跨目录分隔符: _*.py 只命中仓库根的调试脚本,
+    # 不会误排 huginn/ 下真实 _*.py. 畸形路径文件用 C* 兜住.
+    "_*.py",
+    "C*",
+    "fix_async_call.py",
+]
 
 [tool.ruff.lint]
 select = [
