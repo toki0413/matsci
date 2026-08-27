@@ -37,6 +37,7 @@ import { StatusBar } from "./components/StatusBar";
 import { MemoryPanel } from "./components/panels/MemoryPanel";
 import { SettingsPanel } from "./components/panels/SettingsPanel";
 import { KnowledgePanel } from "./components/panels/KnowledgePanel";
+import { EventAuditPanel } from "./components/panels/EventAuditPanel";
 import { PluginsPanel } from "./components/panels/PluginsPanel";
 import { ToolsPanel } from "./components/panels/ToolsPanel";
 import { SkillsPanel } from "./components/panels/SkillsPanel";
@@ -72,7 +73,7 @@ import {
   Maximize2, GitBranch, Brain, Cpu, Atom, Box, Gauge,
   NotepadText, Puzzle, Network, Workflow, Dna, Play, Compass,
   Stethoscope, NotebookPen, Eraser, Smile, User, PanelRight, Calculator,
-  ListChecks,
+  ListChecks, ScrollText,
 } from 'lucide-react';
 
 const IS_PET_MODE = window.location.search.includes("pet=1");
@@ -151,7 +152,7 @@ export default function App() {
     | "evolution" | "execute" | "workflows" | "explore" | "diagnose"
     | "hpc" | "periodic" | "notebook" | "sandbox" | "sweep"
     | "structure" | "emotion" | "provenance" | "side" | "solver"
-    | "persona" | "result" | "code" | "git" | "todo"
+    | "persona" | "result" | "code" | "git" | "todo" | "audit"
   >("chat");
   const [sidebarHidden, setSidebarHidden] = useState(false);
   const [isNarrowScreen, setIsNarrowScreen] = useState(false);
@@ -1185,6 +1186,7 @@ export default function App() {
             { id: "projects", label: "Research Projects", icon: <Briefcase size={15} aria-hidden="true" /> },
             { id: "threads", label: t('tab.threads'), icon: <MessageCircle size={15} aria-hidden="true" /> },
             { id: "result", label: "Result", icon: <Maximize2 size={15} aria-hidden="true" /> },
+            { id: "audit", label: "Audit", icon: <ScrollText size={15} aria-hidden="true" /> },
             { id: "settings", label: t('tab.settings'), icon: <Settings size={15} aria-hidden="true" /> },
           ] as const).map((item) => (
             <button
@@ -1608,6 +1610,10 @@ export default function App() {
               handleTeamFusion={handleTeamFusion}
               teamRuns={teamRuns}
             />
+          )}
+
+          {activeTab === "audit" && (
+            <EventAuditPanel />
           )}
 
           {activeTab === "coder" && (

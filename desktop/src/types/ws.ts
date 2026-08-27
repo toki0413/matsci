@@ -126,7 +126,7 @@ export type WSMessage =
       detail?: string;
       topic?: string;
     }
-  | { type: "sediment"; stored: boolean; preview?: string }
+  | { type: "sediment"; stored: boolean; preview?: string; kind?: string }
   | {
       type: "approval_request";
       request_id: string;
