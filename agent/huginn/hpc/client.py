@@ -720,6 +720,100 @@ class HPCClient:
             return []
         return stdout.strip().split("\n") if stdout.strip() else []
 
+    # ── Software Installation ─────────────────────────────────────
+
+    # 支持的软件及安装策略: 优先 module, 其次 conda
+    # ponytail: 不做源码编译 — HPC 环境编译链太复杂, module/conda 覆盖 90% 场景
+    _SUPPORTED_SOFTWARE: dict[str, dict[str, str]] = {
+        "gromacs": {
+            "module_name": "gromacs",
+            "conda_package": "gromacs",
+            "check_cmd": "gmx --version",
+        },
+        "lammps": {
+            "module_name": "lammps",
+            "conda_package": "lammps",
+            "check_cmd": "lmp -h",
+        },
+        "vasp": {
+            "module_name": "vasp",
+            "conda_package": "vasp",
+            "check_cmd": "vasp_std --version",
+        },
+        "cp2k": {
+            "module_name": "cp2k",
+            "conda_package": "cp2k",
+            "check_cmd": "cp2k --version",
+        },
+    }
+
+    def install_software(
+        self, name: str, method: str = "auto"
+    ) -> dict[str, str]:
+        """在远程 HPC 上安装科学计算软件.
+
+        策略 (method):
+          auto (默认): module load → conda install → 报失败
+          module: 只尝试 module load
+          conda: 只尝试 conda install
+
+        返回 {status, method, message}. 不抛异常 — 调用方决定是否继续.
+        """
+        name = name.strip().lower()
+        sw = self._SUPPORTED_SOFTWARE.get(name)
+        if sw is None:
+            return {
+                "status": "unsupported",
+                "method": "none",
+                "message": f"不支持自动安装 '{name}', 支持列表: {list(self._SUPPORTED_SOFTWARE)}",
+            }
+
+        self._ensure_connected()
+        check = sw["check_cmd"]
+
+        # 0. 先检查是否已装
+        _, _, rc = self._exec(check)
+        if rc == 0:
+            return {"status": "already_installed", "method": "none", "message": f"{name} 已安装"}
+
+        methods = (
+            ["module", "conda"] if method == "auto"
+            else [method]
+        )
+
+        for m in methods:
+            if m == "module":
+                mod = sw["module_name"]
+                stdout, stderr, rc = self._exec(f"module load {mod} && {check}")
+                if rc == 0:
+                    return {"status": "installed", "method": "module", "message": f"module load {mod} 成功"}
+                avail, _, _ = self._exec(f"module avail {mod} 2>&1")
+                if avail.strip():
+                    return {
+                        "status": "manual_required",
+                        "method": "module",
+                        "message": f"module {mod} 存在但加载失败, 请手动 module load. 可用版本:\n{avail[:500]}",
+                    }
+
+            elif m == "conda":
+                pkg = sw["conda_package"]
+                stdout, stderr, rc = self._exec(
+                    f"conda install -y -c conda-forge {pkg} && {check}"
+                )
+                if rc == 0:
+                    return {"status": "installed", "method": "conda", "message": f"conda install {pkg} 成功"}
+                return {
+                    "status": "failed",
+                    "method": "conda",
+                    "message": f"conda install {pkg} 失败: {stderr[:300]}",
+                }
+
+        return {
+            "status": "failed",
+            "method": method,
+            "message": f"{name} 安装失败, 所有策略均未成功",
+        }
+
     def __enter__(self):
         self.connect()
         return self
