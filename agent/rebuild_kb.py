@@ -20,6 +20,7 @@ import sys
 import time
 from pathlib import Path
 
+
 def main() -> int:
     args = sys.argv[1:]
     force = "--yes" in args
@@ -33,6 +34,7 @@ def main() -> int:
         return 2
 
     import chromadb
+
     from huginn.knowledge.store import EMBED_MODEL
 
     print(f"workspace : {workspace}")
