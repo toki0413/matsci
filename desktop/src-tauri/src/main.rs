@@ -409,6 +409,9 @@ async fn start_backend(
         .env("HUGINN_MODEL", std::env::var("HUGINN_MODEL").unwrap_or_default())
         .env("HUGINN_DEV_MODE", "1")
         .env("HUGINN_CONFIG_FILE", &config_file)
+        // Embedding 权重首次联网拉取走国内镜像 (详见 store.py HF_ENDPOINT), 避免
+        // huggingface.co 在国内超时/被墙导致下载失败。允许用户在桌面外覆盖。
+        .env("HF_ENDPOINT", std::env::var("HUGINN_HF_ENDPOINT").unwrap_or("https://hf-mirror.com".to_string()))
         .spawn()
         .map_err(|e| format!("failed to start backend via python: {}", e))?;
 

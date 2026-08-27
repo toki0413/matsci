@@ -37,6 +37,18 @@ EMBED_MODEL = os.environ.get(
     "HUGINN_EMBED_MODEL", "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 )
 
+# HuggingFace 下载端点: 默认国内镜像 (huggingface.co 在国内频繁超时/被墙).
+# 桌面版首次联网拉权重时走这里, 避免用户直接撞墙. 可用 HUGINN_HF_ENDPOINT 或用
+# 标准 HF_ENDPOINT 覆盖; 离线部署时把权重放进本地缓存并设 local-files, 走缓存不联网.
+HF_ENDPOINT = (
+    os.environ.get("HUGINN_HF_ENDPOINT")
+    or os.environ.get("HF_ENDPOINT")
+    or "https://hf-mirror.com"
+)
+# 下载失败自动重试次数 (指数退避). 0 = 不重试. 网络抖动一次失败就放弃对普通
+# 用户太脆——HF 单文件缺块也能断点续传, 重试成本接近零.
+_EMBED_DOWNLOAD_RETRIES = 3
+
 # 默认维度 (MiniLM 384). 切换模型后由 _resolve_embedding_dim 动态推导, 供确定性降级向量对齐.
 _EMBED_DIM_DEFAULT = 384
 SEED_DIR = Path(__file__).parent / "seed"
@@ -66,29 +78,78 @@ def _resolve_embedding_dim(fallback: int = _EMBED_DIM_DEFAULT) -> int:
 
 
 def _download_embedding_with_progress() -> None:
-    """Lazily pull the embedding model, publishing start/done/error events.
+    """Lazily pull the embedding model, publishing start/progress/done/error events.
 
     桌面版侧car 安装包不含权重 (NSIS 打包 2GB 上限), 首次用到 KB 时才联网拉取.
-    用户要能感知: 发 start/done/error 事件给前端横幅; 失败不抛异常, 由调用方
-    降级到 onnx/确定性向量兜底, 避免用户的提问因下载失败而卡死.
+    用户要能感知: 发 start/progress/done/error 事件给前端横幅; 失败走指数退避自动重试,
+    仍失败不抛异常, 由调用方降级到 onnx/确定性向量兜底, 避免提问因下载失败卡死.
     """
     if _EmbeddingModel._st is not None:
         return
     cache_dir = os.path.join(os.path.expanduser("~"), ".cache", "huggingface", "hub")
     if os.path.isdir(os.path.join(cache_dir, f"models--{EMBED_MODEL.replace('/', '--')}")):
+        # 已在缓存: 让 huggingface_hub 离线读取, 不再联网做 HEAD 检查 —— 否则
+        # 无网/被墙时它也会先撞一次 huggingface.co 再退, 白白卡住用户的提问.
+        os.environ.setdefault("HF_HUB_OFFLINE", "1")
+        os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
         return  # 已缓存, 无需联网
     from huginn.events.integration import publish_event_sync
-    publish_event_sync("embedding.download.start", {"repo_id": EMBED_MODEL})
-    try:
-        from huggingface_hub import snapshot_download
 
-        # ponytail: 不做逐字节进度回调 —— snapshot_download 各版本签名漂移
-        # (早些版本无 progress_callback, 1.6 用 tqdm_class), 硬 hook 会直接让
-        # 下载失败. 这里只保 start/done/error 三态, 前端用不确定进度条动画.
-        snapshot_download(EMBED_MODEL)
+    # 节流对象: 只在累计前进 ≥2% 时发一次 progress, 免得每字节都刷事件.
+    throttle: dict[str, Any] = {"last": 0.0}
+    try:
+        from huggingface_hub import HfApi, snapshot_download
+
+        # 先拿仓库文件清单 + 总字节 (files_metadata=True 才带 size), 用于算真实百分比.
+        files = HfApi(endpoint=HF_ENDPOINT).model_info(EMBED_MODEL, files_metadata=True).siblings
+        total = max(1, sum(f.size or 0 for f in files))
+        done_bytes = [0]
+
+        class _ProgressTqdm:
+            """Tqdm 兼容壳: 接住 snapshot_download 的 update(), 按字节累计发 progress."""
+            def __init__(self, *args, **kwargs):
+                ...
+
+            def reset(self, *args, **kwargs):
+                ...
+
+            def update(self, n=1):
+                done_bytes[0] += n
+                pct = done_bytes[0] / total * 100
+                if pct - throttle["last"] >= 2 or pct >= 99:
+                    throttle["last"] = pct
+                    publish_event_sync(
+                        "embedding.download.progress",
+                        {"repo_id": EMBED_MODEL, "percent": round(min(pct, 99), 1)},
+                    )
+
+        publish_event_sync("embedding.download.start", {"repo_id": EMBED_MODEL})
+        last_err: Exception | None = None
+        for attempt in range(1, _EMBED_DOWNLOAD_RETRIES + 2):
+            try:
+                snapshot_download(
+                    EMBED_MODEL, endpoint=HF_ENDPOINT,
+                    tqdm_class=_ProgressTqdm,  # type: ignore[arg-type]
+                )
+                break
+            except Exception as e:  # noqa: BLE001 - 下载失败要逐个尝试重试
+                last_err = e
+                if attempt > _EMBED_DOWNLOAD_RETRIES:
+                    continue
+                import time
+                wait = 2 ** (attempt - 1)  # 1s, 2s, 4s 指数退避
+                logger.warning("embedding download attempt %d failed (%s), retry in %ss", attempt, e, wait)
+                time.sleep(wait)
+        if last_err and attempt > _EMBED_DOWNLOAD_RETRIES:
+            publish_event_sync(
+                "embedding.download.error",
+                {"repo_id": EMBED_MODEL, "error": str(last_err)},
+            )
+            logger.warning("embedding download failed after %d attempts: %s", attempt, last_err)
+            return
         publish_event_sync("embedding.download.done", {"repo_id": EMBED_MODEL})
     except Exception as e:
-        # 下载失败要让用户知道, 但 KB 不能因此卡死 -> error 事件 + 调用方降级兜底.
+        # 连文件清单都拿不到 (比如镜像也不通), 让用户知道但 KB 不能卡死 -> error + 调用方降级.
         logger.warning("embedding download failed: %s", e)
         publish_event_sync("embedding.download.error", {"repo_id": EMBED_MODEL, "error": str(e)})
 
