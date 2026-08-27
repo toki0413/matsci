@@ -1285,7 +1285,11 @@ class StreamingMixin:
                 _decoded: str | None = None
                 try:
                     from huginn.vision.local_decoder import decode_image
-                    _decoded = await asyncio.to_thread(decode_image, image_path)
+                    # 把用户问题当 focus hint 传给视觉解码器, 让多模态模型
+                    # 回答"当前这一步想知道什么", 而不是泛泛描述整张图.
+                    _decoded = await asyncio.to_thread(
+                        decode_image, image_path, message or None
+                    )
                 except Exception:
                     logger.debug("local vision decoder unavailable", exc_info=True)
                 _team = getattr(self, "_team_ref", None)

@@ -8,10 +8,10 @@
 | `HUGINN_ACTION_HIST_MAX` | 1000 | autoloop/cognitive_loop.py:68 | — | external |
 | `HUGINN_ADMIN_API_KEY` | '' | security/auth.py:115 | — | external |
 | `HUGINN_AGENTS` | '' | config.py:891 | routes/config.py:317 | code-set |
-| `HUGINN_AINVOKE_TIMEOUT` | str(_thinking_scale_timeout( | agent/streaming.py:1917 | — | external |
+| `HUGINN_AINVOKE_TIMEOUT` | str(_thinking_scale_timeout( | agent/streaming.py:1921 | — | external |
 | `HUGINN_ALERT_WEBHOOK_URL` | '' | diagnostics/system_health.py:391 | — | external |
 | `HUGINN_ALIGNMENT_SURPRISE_TRIGGER` | 0 | autoloop/engine_reflect.py:1827 | — | external |
-| `HUGINN_ALLOW_LOCAL_BASH` | '' | config.py:784, security/execution.py:22 | routes/agents.py:84, tools/__init__.py:189, cli/rcb_runner.py:57 | code-set |
+| `HUGINN_ALLOW_LOCAL_BASH` | '' | config.py:784, security/execution.py:22 | routes/agents.py:84, tools/__init__.py:190, cli/rcb_runner.py:57 | code-set |
 | `HUGINN_ALLOW_UNRESTRICTED_READ` | '' | routes/fs.py:49, tools/file_read_tool.py:64, tools/sci/xrd_sim_tool.py:141 | — | external |
 | `HUGINN_API_KEY` | '' | bench/llm_judge.py:167, cli/availability.py:49, config.py:656, +3 处 | bench/llm_judge.py:302, bench/runner.py:818, bench/llm_judge.py:291, bench/runner.py:803 | code-set |
 | `HUGINN_APPROVAL_MODE` | '' | agent/code_act_loop.py:705, agent/core.py:335 | — | external |
@@ -28,7 +28,7 @@
 | `HUGINN_BELIEF_ENTROPY_LOW` | 0.3 | utils/belief_entropy.py:458 | — | external |
 | `HUGINN_BENCHMARK_MODE_PROMPT` | '' | agent/core.py:895 | cli/rcb_runner.py:72 | code-set |
 | `HUGINN_BLIND_RECONSTRUCTION` | 0 | autoloop/engine_reflect.py:384 | — | external |
-| `HUGINN_BOURBAKI_PATH` | '' | tools/__init__.py:190 | — | external |
+| `HUGINN_BOURBAKI_PATH` | '' | tools/__init__.py:191 | — | external |
 | `HUGINN_BRANCH_INCUBATOR_DEPTH` | 1 | autoloop/hypothesis_loop.py:1936 | — | external |
 | `HUGINN_BUDGET_MODE` | cumulative | scheduling/scheduler.py:115 | — | external |
 | `HUGINN_CACHE_DIR` | str(get_runtime_home( | autoloop/goal_store.py:124, autoloop/plan_store.py:186, cli/rcb_runner.py:60, +20 处 | agents/task_dag.py:312, autoloop/bandit.py:424, autoloop/variant_gen.py:299, +9 处, autoloop/variant_gen.py:310 | code-set |
@@ -106,7 +106,7 @@
 | `HUGINN_ITER_HIST_MAX` | 50 | autoloop/cognitive_loop.py:70 | — | external |
 | `HUGINN_JWT_SECRET` | '' | security/auth.py:80 | — | external |
 | `HUGINN_KB_CHUNKS_PATH` | '' | evolution/knowledge_distiller.py:497 | — | external |
-| `HUGINN_KEEP_ROOT_N` | 2 | agent/streaming.py:938, agent/streaming.py:1620, agent/streaming.py:1663 | cli/rcb_runner.py:85 | code-set |
+| `HUGINN_KEEP_ROOT_N` | 2 | agent/streaming.py:938, agent/streaming.py:1624, agent/streaming.py:1667 | cli/rcb_runner.py:85 | code-set |
 | `HUGINN_KG_DEPTH` | 1 | config.py:781 | — | external |
 | `HUGINN_KG_ENABLED` | '' | config.py:780 | — | external |
 | `HUGINN_KG_TOP_K` | 10 | config.py:782 | — | external |
@@ -116,7 +116,7 @@
 | `HUGINN_LLM_LIKELIHOOD_INTERVAL` | 5 | metacog/llm_likelihood.py:52 | metacog/llm_likelihood.py:285, metacog/llm_likelihood.py:287 | code-set |
 | `HUGINN_LLM_REQUEST_TIMEOUT` | 120 | models/registry.py:158 | — | external |
 | `HUGINN_LOCAL_ONLY` | 0 | config.py:783, models/registry.py:1188 | — | external |
-| `HUGINN_LOCAL_VISION_MODEL` | qwen2.5-vl | agent/streaming.py:1293, vision/local_decoder.py:24 | — | external |
+| `HUGINN_LOCAL_VISION_MODEL` | qwen2.5-vl | agent/streaming.py:1297, vision/local_decoder.py:24 | — | external |
 | `HUGINN_LOCAL_VISION_TIMEOUT` | 20 | vision/local_decoder.py:30 | — | external |
 | `HUGINN_LOCAL_VISION_TTL` | 2.0 | vision/local_decoder.py:28 | — | external |
 | `HUGINN_LOG_LEVEL` | INFO | utils/json_logging.py:126 | — | external |
@@ -263,6 +263,9 @@
 | `HUGINN_VALIDATE_WINDOW` | 100 | autoloop/engine.py:378 | — | external |
 | `HUGINN_VAULT_ADDR` | '' | security/secrets.py:166 | — | external |
 | `HUGINN_VAULT_TOKEN` | '' | security/secrets.py:167 | — | external |
+| `HUGINN_VISION_BASE_URL` | '' | vision/local_decoder.py:119 | — | external |
+| `HUGINN_VISION_MODEL` | '' | vision/local_decoder.py:118 | — | external |
+| `HUGINN_VISION_PROVIDER` | '' | vision/local_decoder.py:109 | — | external |
 | `HUGINN_WEB_SEARCH_TIMEOUT` | 15 | tools/web_search_tool.py:45 | — | external |
 | `HUGINN_WECOM_TOKEN` | '' | routes/bot.py:285, routes/bot.py:303 | — | external |
 | `HUGINN_WETLAB_ENDPOINT` | '' | tools/wetlab_rpc_tool.py:426 | — | external |
@@ -273,4 +276,4 @@
 | `HUGINN_WS_MAX_CONNECTIONS` | 50 | middleware/ws_governance.py:59 | — | external |
 | `HUGINN_WS_MAX_MSGS_PER_SEC` | 20 | middleware/ws_governance.py:60 | — | external |
 
-共 266 个环境变量。
+共 269 个环境变量。

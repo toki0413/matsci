@@ -156,6 +156,7 @@ _OPTIONAL_MODULES = [
     ("huginn.tools.image_design_tool", "ImageDesignTool"),
     ("huginn.tools.visualize_tool", "VisualizeTool"),
     ("huginn.tools.vision_describe_tool", "VisionDescribeTool"),
+    ("huginn.tools.vision_locate_tool", "VisionLocateTool"),
     ("huginn.causal.predict_intervention", "PredictInterventionTool"),
     ("huginn.causal.visual_causal_chain", "FitSCMFromObservationsTool"),
     ("huginn.causal.counterfactual_render", "CounterfactualRenderTool"),
