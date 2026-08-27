@@ -820,6 +820,10 @@ class KnowledgeBase:
         self._bm25: _BM25Index | None = None
         self._bm25_dirty: bool = True
 
+        # 项目知识图谱 (lazy): GraphRAG 关系扩展用. 首次检索用到时才探测
+        # project_kg.json, 没有就缓存 None/False 避免反复探测.
+        self._kg: Any | None = None
+
     @property
     def model(self) -> _EmbeddingModel:
         if self._model is None:
@@ -1330,6 +1334,20 @@ class KnowledgeBase:
                         if len(chunks) >= top_k + 2:
                             break
 
+        # KG 关系扩展 (GraphRAG): 候选仍不足时, 用项目知识图谱的实体词
+        # 补跨文档关联块. WeKnora 的"图谱查询 → 关系扩展 → 增强检索"启发 —
+        # 语义没命中的材料/方法实体, 图谱里可能连着别的文档块.
+        if chunks and len(chunks) < top_k + 3:
+            kg_activated = self._kg_relation_activate(chunks, text, top_k)
+            if kg_activated:
+                seen_ids = {c["chunk_id"] for c in chunks}
+                for c in kg_activated:
+                    if c["chunk_id"] not in seen_ids:
+                        chunks.append(c)
+                        seen_ids.add(c["chunk_id"])
+                        if len(chunks) >= top_k + 2:
+                            break
+
         self._query_cache.set(cache_key, chunks)
 
         # Apply feedback-based reranking if tracker is available
@@ -1437,6 +1455,80 @@ class KnowledgeBase:
                         "chunk_id": doc_id,
                         "text": results["documents"][0][i],
                         "metadata": meta,
+                        "distance": results["distances"][0][i],
+                    }
+                )
+                if len(activated) >= 2:
+                    break
+        return activated
+
+    def _get_kg(self) -> Any | None:
+        """懒加载项目知识图谱. 兼容两种路径约定 (engine: workspace 根 /
+        context_builder: workspace/.huginn). 没有 KG 文件就返回 None 并缓存,
+        避免每次检索都重复探测. self._kg=False 表示已探测过且无 KG."""
+        if self._kg is not None:
+            return self._kg if self._kg is not False else None
+        try:
+            from huginn.kg.graph import ProjectKnowledgeGraph
+
+            candidates = [self.root, self.root / ".huginn"]
+            for cand in candidates:
+                if (cand / ProjectKnowledgeGraph.FILENAME).exists():
+                    self._kg = ProjectKnowledgeGraph(cand)
+                    return self._kg
+            self._kg = False
+        except Exception:
+            self._kg = False
+        return None
+
+    def _kg_relation_activate(
+        self, chunks: list[dict[str, Any]], original_query: str, top_k: int
+    ) -> list[dict[str, Any]]:
+        """GraphRAG 关系扩展: 用项目知识图谱补跨文档关联块 (WeKnora 启发).
+
+        向量检索给精度, 图谱给跨文档连接 — 从查询 + 首轮结果里抽实体词,
+        用 KG 社区扩展拿关联实体, 再按实体命中做二次检索. 只在首轮候选
+        不足时由 query() 调用, 最多补 2-3 条, 不做多跳 (避免无界扩散,
+        对齐 _recursive_activate 的单轮边界).
+
+        ponytail: 实体命中用朴素 substring 判断, 不引 NLP; 升级路径:
+        图谱边权重加权 + 实体消歧.
+        """
+        kg = self._get_kg()
+        if kg is None:
+            return []
+        try:
+            res = kg.hybrid_retrieve(
+                original_query, vector_chunks=chunks, depth=2, top_k=top_k
+            )
+            seed_terms = res.get("seed_terms") or []
+        except Exception:
+            return []
+        if not seed_terms:
+            return []
+        # 实体词连接成补充查询, 语义检索相关 chunks
+        seed_query = " ".join(seed_terms[:8])
+        try:
+            embedding = self.model.encode([seed_query]).tolist()
+            results = self.collection.query(
+                query_embeddings=embedding,
+                n_results=min(top_k * 2, max(1, self.collection.count())),
+                include=["documents", "metadatas", "distances"],
+            )
+        except Exception:
+            return []
+        seen_ids = {c["chunk_id"] for c in chunks}
+        activated: list[dict[str, Any]] = []
+        for i, doc_id in enumerate(results.get("ids", [[]])[0]):
+            if doc_id in seen_ids:
+                continue
+            chunk_text = (results["documents"][0][i] or "").lower()
+            if any(t.lower() in chunk_text for t in seed_terms):
+                activated.append(
+                    {
+                        "chunk_id": doc_id,
+                        "text": results["documents"][0][i],
+                        "metadata": results["metadatas"][0][i],
                         "distance": results["distances"][0][i],
                     }
                 )
