@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import tempfile
 from pathlib import Path
@@ -19,6 +20,36 @@ router = APIRouter(tags=["knowledge"], dependencies=[Depends(require_api_key)])
 logger = logging.getLogger(__name__)
 
 _MAX_UPLOAD_BYTES = 100 * 1024 * 1024  # 100 MB
+
+
+def _sem_distill_upload(content: bytes, filename: str) -> None:
+    """对上传的纯文本资料补一层语义蒸馏(决策启发式/领域事实).
+
+    只处理能按 UTF-8 解码且无 NUL(bytes 的二进制如 PDF/图片会带 \x00 或
+    解析不了), 由 auto_ingest.distill_semantic_text 走质量门槛入库。
+    ponytail: 非阻塞等待 LLM 一次调用; 上传是显式动作, 多花一点时间可接受.
+    """
+    try:
+        if b"\x00" in content:
+            return
+        text = content.decode("utf-8")
+    except Exception:
+        return
+    if len(text.strip()) < 80:
+        return
+    try:
+        from huginn.knowledge.auto_ingest import distill_semantic_text
+
+        asyncio.get_running_loop().create_task(
+            asyncio.to_thread(
+                distill_semantic_text,
+                text,
+                source=filename,
+                source_type="user_upload",
+            )
+        )
+    except Exception:
+        logger.debug("upload semantic distill 失败 (非致命)", exc_info=True)
 
 
 class KnowledgeQuery(BaseModel):
@@ -57,10 +88,12 @@ async def upload_knowledge(file: UploadFile = File(...)) -> dict[str, Any]:
             logger.debug("SmartIngester 不可用, 退回原生 add_document", exc_info=True)
 
         if smart_result is not None:
+            _sem_distill_upload(content, filename)
             return {"success": True, "document": smart_result}
 
         # 退路: KB 原生摄入
         result = get_context().kb.add_document(filename, content)
+        _sem_distill_upload(content, filename)
         return {"success": True, "document": result}
     except Exception as e:
         logger.error("unexpected error", exc_info=True)

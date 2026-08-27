@@ -393,7 +393,7 @@ const resources = {
       'settings.discoverError': 'No models found, check the base URL',
       'settings.requestFailed': 'Request failed',
       'settings.activeModel': 'Active model (runtime switch)',
-      'settings.activeModelHint': 'Sets the model the lead agent uses. Only enabled models can be selected.',
+      'settings.activeModelHint': 'Sets the model the lead agent uses. Only enabled models can be selected. Note: if an entry with alias "default" is enabled, the HUGINN_PROVIDER / HUGINN_MODEL env vars will NOT override it — switch the model here instead.',
       'settings.selectModel': '— select —',
       'settings.current': 'current:',
 
@@ -1269,7 +1269,7 @@ const resources = {
       'settings.discoverError': '未发现可用模型，请检查 base URL',
       'settings.requestFailed': '请求失败',
       'settings.activeModel': '活动模型（运行时切换）',
-      'settings.activeModelHint': '设置主导智能体使用的模型。仅可选择已启用的模型。',
+      'settings.activeModelHint': '设置主导智能体使用的模型。仅可选择已启用的模型。注意：若已启用 alias 为 default 的入口，环境变量 HUGINN_PROVIDER/HUGINN_MODEL 不会覆盖它，请在此处切换默认模型。',
       'settings.selectModel': '— 请选择 —',
       'settings.current': '当前：',
 

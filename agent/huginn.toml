@@ -174,12 +174,48 @@ base_url = "https://api.minimaxi.com/v1"
 enabled = false
 
 # ── 本地/免 key 网关 ────────────────────────────────────────────────
+# qwen3.8 是系列, 不同量级对应不同规格; 裸名 qwen3.8 = 首推默认规格.
+# 要指定量级就把 model 改成带 tag 的形态, 如 ollama 用 "qwen3.8:14b",
+# vLLM/llama.cpp 用对应 --served-model-name/--alias.
 [[models]]
 alias = "ollama"
 provider = "ollama"
-model = "qwen2.5:14b"
+model = "qwen3.8"
 api_key = "not-needed"  # ollama 本地免 key
-enabled = false
+base_url = "http://localhost:11434"
+thinking = "high"       # 本地推理模型放开长思考(配 num_ctx=16384 不截断)
+temperature = 0.3
+enabled = true
+
+[[models]]
+alias = "vllm"
+provider = "vllm"
+model = "qwen3.8"
+api_key = "not-needed"  # vLLM 本地免 key(留空会读 OPENAI_API_KEY, 本地不需要)
+base_url = "http://localhost:8000/v1"
+thinking = "high"       # 与 ollama 同套长思考放开
+temperature = 0.3
+enabled = true
+
+[[models]]
+alias = "lm-studio"
+provider = "lm-studio"
+model = "qwen3.8"
+api_key = "not-needed"  # LM Studio 本地免 key
+base_url = "http://localhost:1234/v1"
+thinking = "high"
+temperature = 0.3
+enabled = true
+
+[[models]]
+alias = "llama-cpp"
+provider = "llama-cpp"
+model = "qwen3.8"
+api_key = "not-needed"  # llama.cpp 本地免 key
+base_url = "http://localhost:8080/v1"
+thinking = "high"
+temperature = 0.3
+enabled = true
 
 [[agents]]
 id = "lead"

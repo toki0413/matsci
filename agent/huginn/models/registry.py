@@ -813,6 +813,23 @@ def create_langchain_model(
         except ImportError as err:
             raise ImportError("pip install langchain-ollama") from err
         _ollama_kwargs = {"model": model, "base_url": base_url or "http://localhost:11434", "temperature": temperature}
+        # 长思考: qwen3.8 这类推理模型的推理链会长, 而 Ollama 默认 num_ctx=2048
+        # 会把长推理/长输入直接截断, 输出也有上限. 本地模型尤其要放开, 否则
+        # enable 了 thinking 也白搭. 两个参数都走 env 可调, 服务端 Modfile 可兜底.
+        _ollama_kwargs.setdefault(
+            "num_ctx", int(os.environ.get("OLLAMA_NUM_CTX", "16384"))
+        )
+        _ollama_kwargs.setdefault(
+            "num_predict", int(os.environ.get("OLLAMA_NUM_PREDICT", "-1"))
+        )
+        # 调用方显式给了 max_tokens 才当作输出上限; 默认 -1(不截断)留给长思考.
+        if max_tokens is not None:
+            _ollama_kwargs["num_predict"] = int(max_tokens)
+        _ollama_kwargs["request_timeout"] = _llm_request_timeout()
+        if thinking and thinking != "off":
+            # 本地 OpenAI 兼容约定: 用 extra_body 开推理. 对 Ollama 推理模型
+            # 是提示, 不是强开关; 真正的硬约束在 num_ctx/num_predict.
+            _ollama_kwargs["extra_body"] = {"enable_thinking": True}
         return ChatOllama(**_with_usage_cb(_ollama_kwargs, _usage_cb))
 
     if provider == "deepseek":

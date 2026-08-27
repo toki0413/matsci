@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 from typing import Any
@@ -16,6 +17,10 @@ from typing import Any
 from huginn.hooks import HookContext
 
 logger = logging.getLogger(__name__)
+
+# 语义蒸馏的常驻后台任务表 — 只保留引用防 GC, 不等待. 蒸馏是锦上添花,
+# 不能阻塞 agent 的工具返回. 见 _spawn_semantic_distill.
+_pending_sem: set[asyncio.Task] = set()
 
 
 # ── 模块级懒加载单例 ─────────────────────────────────────────────
@@ -502,7 +507,79 @@ def ingest_sobko_chunks(
     return ingested
 
 
-# ── POST_TOOL_USE hooks ─────────────────────────────────────────
+# ── 通用 LLM 语义蒸馏 ─────────────────────────────────────────────
+# 任意来源文本(工具结果 / 上传资料)补一层"场景→做法、领域事实"语义蒸馏,
+# 复用 KnowledgeDistiller.distill_semantic_source 的质量门槛 + KB 回写。
+
+
+def distill_semantic_text(
+    text: str,
+    *,
+    source: str = "document",
+    source_url: str = "",
+    source_type: str = "domain_document",
+    domain_hint: str = "",
+) -> int:
+    """用通用 LLM 语义蒸馏器处理一段文本, 条目经质量门槛入库. 返回新条数.
+
+    无 distiller / 无 LLM / 抽不出都静默返回 0, 不 throw.
+    """
+    d = _get_distiller()
+    if d is None:
+        return 0
+    try:
+        return len(
+            d.distill_semantic_source(
+                text,
+                source=source,
+                source_url=source_url,
+                source_type=source_type,
+                domain_hint=domain_hint,
+            )
+        )
+    except Exception:
+        logger.debug("distill_semantic_text 失败 (非致命)", exc_info=True)
+        return 0
+
+
+def _spawn_semantic_distill(
+    text: str,
+    *,
+    source: str = "document",
+    source_url: str = "",
+    source_type: str = "domain_document",
+    domain_hint: str = "",
+    min_len: int = 80,
+) -> None:
+    """后台火山式语义蒸馏: 不阻塞 agent 工具返回.
+
+    ponytail: 一次性生成快照文本大多很短 (<80 字), 长度门槛就过滤掉了,
+    不给单行快照浪费 LLM 调用; 只有长/有信息密度的输出才走蒸馏.
+    ceiling: 门槛是纯长度, 不识别语义密度; 要更准可改用 _has_real_signal.
+    """
+    text = (text or "").strip()
+    if len(text) < min_len:
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+
+    # _run 通过闭包捕获 current(真实 task), 协程体在函数返回后才被执行,
+    # 那时 current 已赋值, finally 能 discard 到同一个 task.
+    async def _run() -> None:
+        try:
+            # to_thread 里没有 running loop, semantic_distiller 走同步 invoke,
+            # 避免在事件循环内 _invoke_llm 的 run_coroutine_threadsafe 自锁.
+            await asyncio.to_thread(
+                distill_semantic_text, text, source=source, source_url=source_url,
+                source_type=source_type, domain_hint=domain_hint,
+            )
+        finally:
+            _pending_sem.discard(current)
+
+    current = loop.create_task(_run())
+    _pending_sem.add(current)
 
 
 async def calculation_ingest_hook(ctx: HookContext) -> HookContext | None:
@@ -526,6 +603,17 @@ async def calculation_ingest_hook(ctx: HookContext) -> HookContext | None:
         _get_ingester().ingest_calculation(
             ctx.tool_name, tool_input, ctx.result, workspace=workspace
         )
+
+        # 语义蒸馏: 对"有实质输出"的工具结果补一层"场景→做法/领域事实".
+        # 后台火山式, 不阻塞本 hook; 短快照(<80 字)由 _spawn 内门槛直接跳过.
+        sem_text = _build_knowledge_text(ctx.tool_name, tool_input, ctx.result)
+        if not _is_info_empty(sem_text):
+            _spawn_semantic_distill(
+                sem_text,
+                source=ctx.tool_name,
+                source_type="tool_result",
+                domain_hint=_infer_software(ctx.tool_name),
+            )
 
         # G4: 把 visual_primitives 单独 ingest 到 KB, 让视觉经验能被 RAG 召回.
         # visual_hook 给 result 塞 _visual_primitives 字段, 之前只流向 memory/KG,
