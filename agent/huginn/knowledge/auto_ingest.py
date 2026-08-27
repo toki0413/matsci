@@ -215,6 +215,24 @@ def _build_qchem_text(software: str, tool_input: dict, data: dict) -> str:
     )
 
 
+def _is_info_empty(text: str) -> bool:
+    """判定生成的知识文本是否只是无信息的占位符.
+
+    auto_ingest 的通用模板在拿不到任何关键属性时会把空结果拼成
+    'xxx produced: no key properties' / 'xxx produced: no properties' —
+    这种条目放进 KB 只会污染检索 (就是之前那 278 条噪音的来源).
+    返回 True 表示这条不该入库. 只挡明确的占位符, 不做内容价值判断.
+    ponytail: 字符串匹配足够覆盖当前两类噪声; 若以后出现新的空模板
+    占位, 在这里加匹配即可.
+    """
+    t = text.strip()
+    if not t:
+        return True
+    if "no key properties" in t or "produced: no properties" in t:
+        return True
+    return False
+
+
 def _build_knowledge_text(tool_name: str, tool_input: dict, tool_output: Any) -> str:
     """根据工具类型生成知识文本, 拿不到的字段填 N/A."""
     name_lower = tool_name.lower()
@@ -267,7 +285,9 @@ class CalculationToKnowledge:
         返回 doc_id 或 None (没有 KB / 文本为空时返回 None).
         """
         text = _build_knowledge_text(tool_name, tool_input, tool_output)
-        if not text.strip():
+        # 空占位 (如 'xxx produced: no key properties') 不入库也不进 distiller,
+        # 否则 KB 会被没有实际信息量的快照污染. 见 _is_info_empty.
+        if _is_info_empty(text):
             return None
 
         doc_id: str | None = None
