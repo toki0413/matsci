@@ -9,12 +9,12 @@ import math
 import re
 import sys
 from collections import Counter, defaultdict, deque
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 import numpy as np
-
 
 MIN_MDANALYSIS_VERSION = (2, 10, 0)
 RECORDS_FILENAME = "solvation_environment_records.csv"
@@ -621,7 +621,7 @@ def analyze_universe(
 
         time_ps = float(timestep.time) if timestep.time is not None and math.isfinite(float(timestep.time)) else None
         for center_index, center in enumerate(centers):
-            composition = {species: 0 for species in species_order}
+            composition = dict.fromkeys(species_order, 0)
             for molecule_index in sorted(neighbor_indices[center_index]):
                 composition[molecule_definitions[molecule_index].moltype] += 1
             records.append(
@@ -742,7 +742,7 @@ def build_plot_summary(summary_payload: dict[str, Any], max_environment_types: i
             "count": other_count,
             "fraction": float(other_count / total_entries) if total_entries else 0.0,
             "composition": {},
-            "composition_full": {species: 0 for species in species_order},
+            "composition_full": dict.fromkeys(species_order, 0),
             "display_label": "Other",
         }
     )
