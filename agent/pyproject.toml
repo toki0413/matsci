@@ -183,6 +183,9 @@ ignore = [
 "huginn/unified/*.py" = ["N806"]
 "huginn/tensor_algebra.py" = ["N806"]
 "huginn/visualize.py" = ["N806"]
+# science-skills 沉降脚本保留原风格: C401 set(x for x in ..) 与 N813(mda 惯用别名)
+# 不改写 1000+ 行科学计算代码; E402 是独立脚本在 sys.path 后导入模块的固有模式.
+"huginn/plugins/science-skills/skills/gromacs-solvation-environment/scripts/*.py" = ["C401", "E402", "N813"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
