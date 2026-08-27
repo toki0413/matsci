@@ -282,6 +282,7 @@ export default function App() {
     setKbQuery,
     loadKnowledge, uploadKnowledge, parseDocument, loadDocumentGraph,
     deleteKnowledge, queryKnowledge, ingestUrl, loadProvenanceDag,
+    viewingDoc, docChunks, docLoading, loadDocumentContent, clearDocView,
   } = useKnowledge();
 
   const {
@@ -1703,6 +1704,11 @@ export default function App() {
               queryKnowledge={queryKnowledge}
               ingestUrl={ingestUrl}
               loadProvenanceDag={loadProvenanceDag}
+              viewingDoc={viewingDoc}
+              docChunks={docChunks}
+              docLoading={docLoading}
+              loadDocumentContent={loadDocumentContent}
+              clearDocView={clearDocView}
             />
           </div>
 

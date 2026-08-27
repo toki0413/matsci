@@ -138,6 +138,19 @@ async def ingest_url(req: UrlIngestRequest) -> dict[str, Any]:
         return {"success": False, "error": str(e)}
 
 
+@router.get("/knowledge/{doc_id}/chunks")
+async def get_document_chunks(doc_id: str) -> dict[str, Any]:
+    """Return a document's chunks in order (full-text/fragment preview)."""
+    kb = get_context().kb
+    if kb is None:
+        return {"chunks": [], "error": "Knowledge base is not available"}
+    try:
+        return {"chunks": kb.get_document_chunks(doc_id)}
+    except Exception as e:
+        logger.error("get_document_chunks failed", exc_info=True)
+        return {"chunks": [], "error": str(e)}
+
+
 @router.delete("/knowledge/{doc_id}")
 async def delete_knowledge(doc_id: str) -> dict[str, Any]:
     """Remove a document from the knowledge base."""

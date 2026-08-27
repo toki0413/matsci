@@ -1022,6 +1022,20 @@ class KnowledgeBase:
             }
         return sorted(docs.values(), key=lambda d: d["filename"])
 
+    def get_document_chunks(self, doc_id: str) -> list[dict[str, Any]]:
+        """Return a document's chunks in order (for full-text/fragment preview).
+
+        chunk 编号存在 metadata.chunk 里, 聚合后按它排序, 前端才能按原文档
+        顺序阅读而不只是看到乱序的检索命中.
+        """
+        data = self.collection.get(where={"doc_id": doc_id}, include=["documents", "metadatas"])
+        rows: list[dict[str, Any]] = []
+        for text, meta in zip(data.get("documents") or [], data.get("metadatas") or []):
+            meta = meta or {}
+            rows.append({"chunk": int(meta.get("chunk", 0) or 0), "text": text, "metadata": meta})
+        rows.sort(key=lambda r: r["chunk"])
+        return rows
+
     def delete_document(self, doc_id: str) -> bool:
         """Remove a document and its chunks from the knowledge base."""
         data = self.collection.get(where={"doc_id": doc_id}, include=[])
