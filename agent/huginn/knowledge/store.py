@@ -1451,10 +1451,15 @@ class KnowledgeBase:
 def seed_knowledge_base(kb: KnowledgeBase, force: bool = False) -> dict[str, Any]:
     """Ingest built-in seed reference documents into a knowledge base.
 
-    Seeds are loaded from ``huginn/knowledge/seed/*.md``. Each seed is
-    identified by ``seed:<sha256>`` so that unchanged files are skipped on
-    subsequent runs. Passing ``force=True`` removes all existing seed entries
-    and re-ingests them.
+    Seeds are loaded from ``huginn/knowledge/seed/*.md`` plus any bulk
+    ``*_chunks.jsonl`` (pre-chunked knowledge, e.g. sobereva 波函数分析预置).
+    Each seed is identified by ``seed:<sha256>`` so that unchanged files are
+    skipped on subsequent runs. Passing ``force=True`` removes all existing
+    seed entries and re-ingests them.
+
+    JSONL bulk files carry already-split chunks (``pre_chunked=1`` per row)
+    with their own title/tags/url metadata; they are upserted directly without
+    a second chunk pass, preserving the source chunk boundaries.
     """
     if not SEED_DIR.is_dir():
         return {"added": 0, "skipped": 0, "failed": 0}
@@ -1464,6 +1469,9 @@ def seed_knowledge_base(kb: KnowledgeBase, force: bool = False) -> dict[str, Any
         p for p in SEED_DIR.glob("*.md")
         if p.name.lower() != "readme.md"
     )
+    # 预置 bulk 知识: pre-chunked JSONL (如 sobko_chunks.jsonl)
+    bulk_files = sorted(SEED_DIR.glob("*_chunks.jsonl"))
+
     existing_seed_ids = {
         doc["doc_id"]
         for doc in kb.list_documents()
@@ -1476,6 +1484,8 @@ def seed_knowledge_base(kb: KnowledgeBase, force: bool = False) -> dict[str, Any
         existing_seed_ids = set()
 
     added = skipped = failed = 0
+
+    # 1) 传统 markdown 种子文档 (二次分块)
     for path in seed_files:
         content = path.read_bytes()
         digest = hashlib.sha256(content).hexdigest()
@@ -1521,7 +1531,82 @@ def seed_knowledge_base(kb: KnowledgeBase, force: bool = False) -> dict[str, Any
         except Exception:
             failed += 1
 
+    # 2) bulk 预置知识 (JSONL): 整文件一个 doc_id, 每行已是独立 chunk
+    for path in bulk_files:
+        content = path.read_bytes()
+        digest = hashlib.sha256(content).hexdigest()
+        doc_id = f"seed:{digest}"
+        if doc_id in existing_seed_ids:
+            skipped += 1
+            continue
+        try:
+            _seed_bulk_chunks(kb, path, doc_id)
+            added += 1
+        except Exception:
+            logger.warning("seed bulk ingest failed: %s", path.name, exc_info=True)
+            failed += 1
+
     return {"added": added, "skipped": skipped, "failed": failed}
+
+
+def _seed_bulk_chunks(kb: KnowledgeBase, path: Path, doc_id: str) -> None:
+    """把 pre-chunked JSONL seed 文件直接 upsert 进 collection (不二次分块).
+
+    每行一条已分块的 knowledge (text + 自带 title/domain/tags/url 元数据),
+    与普通 markdown seed 那种"一个文件分块成多 chunk"不同 —— 这里 chunk 边界
+    是数据自带好的, 保留它才能保住原始检索单元. 用 upsert 幂等 (重复跑覆盖).
+    """
+    BATCH = 200
+    docs: list[str] = []
+    ids: list[str] = []
+    metas: list[dict[str, Any]] = []
+    created_at = datetime.now().isoformat()
+
+    def _flush() -> None:
+        if not docs:
+            return
+        embs = kb.model.encode(docs, cache_key=f"{doc_id}:{len(ids)}").tolist()
+        kb.collection.upsert(ids=ids, documents=docs, embeddings=embs, metadatas=metas)
+        docs.clear()
+        ids.clear()
+        metas.clear()
+
+    n = 0
+    with path.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            row = json.loads(line)
+            text = row.get("text", "").strip()
+            if not text:
+                continue
+            docs.append(text)
+            ids.append(f"{doc_id}_{n}")
+            meta: dict[str, Any] = {
+                "doc_id": doc_id,
+                "filename": path.name,
+                "chunk": n,
+                "seed": True,
+                "created_at": created_at,
+            }
+            # 直接透传数据自带的元数据字段 (字符串原样, 列表走 JSON 序列化)
+            for key in ("title", "source", "source_type", "authority_level",
+                        "domain", "canonical_url", "canonical_path", "chunk_id", "pre_chunked"):
+                v = row.get(key)
+                if v is not None:
+                    meta[key] = str(v) if not isinstance(v, str) else v
+            for key in ("software_tags", "method_tags", "topic_tags"):
+                v = row.get(key)
+                if v:
+                    meta[key] = json.dumps(v, ensure_ascii=False)
+            metas.append(meta)
+            n += 1
+            if len(docs) >= BATCH:
+                _flush()
+
+    _flush()
+    kb._bm25_dirty = True
 
 
 # G39: 单例 + workspace 是矛盾的 — 同一进程跑多 workspace 时, 第一个 workspace
