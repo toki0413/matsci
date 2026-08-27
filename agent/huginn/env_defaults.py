@@ -573,4 +573,26 @@ ENV_REGISTRY: dict[str, dict[str, Any]] = {
         "description": "单次本地视觉解码超时 (秒), 防止本地模型抽风拖死文本请求。",
         "consumer": "huginn.vision.local_decoder",
     },
+    # ── Cloud vision decoder (复用现有 provider 层, 文本模型走云端多模态 LLM) ──
+    "HUGINN_VISION_PROVIDER": {
+        "category": EnvCategory.LLM,
+        "type": "str",
+        "default": "",
+        "description": "云端视觉解码 provider (如 dashscope/siliconflow/openrouter)。留空则只用本地 ollama 视觉模型。文本模型看图时优先走它, 再回落本地解码。",
+        "consumer": "huginn.vision.local_decoder",
+    },
+    "HUGINN_VISION_MODEL": {
+        "category": EnvCategory.LLM,
+        "type": "str",
+        "default": "",
+        "description": "云端视觉解码模型名, 留空用 provider 的 default_model (如 dashscope 的 qwen3.5-plus)。",
+        "consumer": "huginn.vision.local_decoder",
+    },
+    "HUGINN_VISION_BASE_URL": {
+        "category": EnvCategory.LLM,
+        "type": "str",
+        "default": "",
+        "description": "云端视觉解码 base_url 覆盖 (可选, 默认用 provider 的预设地址)。",
+        "consumer": "huginn.vision.local_decoder",
+    },
 }

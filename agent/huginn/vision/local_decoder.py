@@ -88,12 +88,58 @@ def _encode_image(image_path: str | Path | bytes) -> str | None:
         return None
 
 
-def decode_image(image_path: str | Path | bytes, question: str | None = None) -> str | None:
-    """常驻本地视觉解码: 一张图 → 一段文本描述. 失败/无模型返回 None.
+# 默认视觉提示: 没给 question (focus hint) 时的兜底, 要求材料科学相关要点.
+_DEFAULT_PROMPT = (
+    "请用中文简要描述这张图片最明显的视觉内容, 重点标注与材料科学相关的特征, "
+    "例如显微结构、晶体形貌、谱图峰位或形貌异常."
+)
 
-    *question* 给模型的指令, 默认要材料科学相关要点. 在一次请求里完成,
-    不掉 agent, 也不动提示堆的其余部分.
+
+def _cloud_decode(
+    image_path: str | Path | bytes, question: str | None = None
+) -> str | None:
+    """云端视觉解码: 复用现有 provider 层, 给文本模型接多模态 LLM.
+
+    配置 HUGINN_VISION_PROVIDER (如 dashscope/siliconflow/openrouter) 后启用;
+    模型名走 HUGINN_VISION_MODEL (留空用 provider 的 default_model), 可再覆盖
+    HUGINN_VISION_BASE_URL. 复用 create_langchain_model + build_multimodal_content,
+    零新依赖, API key 跟主 agent 同一份 (如 DASHSCOPE_API_KEY). 失败返回 None,
+    由 decode_image 回落本地 ollama 解码.
     """
+    provider = os.environ.get("HUGINN_VISION_PROVIDER", "").strip()
+    if not provider:
+        return None
+    try:
+        from langchain_core.messages import HumanMessage
+
+        from huginn.models.registry import create_langchain_model
+        from huginn.vision.router import build_multimodal_content
+
+        model = os.environ.get("HUGINN_VISION_MODEL", "").strip() or None
+        base_url = os.environ.get("HUGINN_VISION_BASE_URL", "").strip() or None
+        llm = create_langchain_model(
+            provider, model_name=model, base_url=base_url, temperature=0
+        )
+        prompt = question or _DEFAULT_PROMPT
+        content = build_multimodal_content(prompt, image_path)
+        resp = llm.invoke([HumanMessage(content=content)])
+        text = getattr(resp, "content", "") or ""
+        return text.strip() or None
+    except Exception:
+        logger.debug("cloud vision decode failed", exc_info=True)
+        return None
+
+
+def decode_image(image_path: str | Path | bytes, question: str | None = None) -> str | None:
+    """常驻视觉解码: 一张图 → 一段文本描述. 失败/无模型返回 None.
+
+    *question* 给模型的指令 (focus hint), 默认要材料科学相关要点. 在一次请求里
+    完成, 不掉 agent, 也不动提示堆的其余部分. 解码顺序: 配置了云端视觉 provider
+    先走云端多模态 LLM, 否则回落本地 ollama (qwen2.5-vl).
+    """
+    cloud = _cloud_decode(image_path, question)
+    if cloud:
+        return cloud
     if not available():
         return None
     host = _ollama_host()
@@ -105,10 +151,7 @@ def decode_image(image_path: str | Path | bytes, question: str | None = None) ->
     if not b64:
         return None
 
-    prompt = question or (
-        "请用中文简要描述这张图片最明显的视觉内容, 重点标注与材料科学相关的特征, "
-        "例如显微结构、晶体形貌、谱图峰位或形貌异常."
-    )
+    prompt = question or _DEFAULT_PROMPT
     payload = {
         "model": model,
         "messages": [
