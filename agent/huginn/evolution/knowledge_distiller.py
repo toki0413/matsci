@@ -34,6 +34,27 @@ _META_KNOWLEDGE_FLAG_USAGE = 2          # ≥2 次调用才有资格判"低价�
 _META_KNOWLEDGE_FLAG_CONFIDENCE = 0.4   # confidence <0.4 → flag_low_value
 
 
+def _has_real_signal(text: str) -> bool:
+    """判定一段工具快照文本里是否含实质信息 (数值/单位/结论).
+
+    纯 'X produced: no key properties' 或 'X produced:' 就拒; 只要带一个
+    数字或单位 (eV/K/Å 等) 或明确结论词, 就认为有可复用信号. ponytail:
+    正则匹配强度够用, 不必上 NER; 若要更严可在最后加实体白名单.
+    """
+    if not text:
+        return False
+    low = text.lower()
+    # 常见材料计算物理量的单位, 命中即算有信号
+    if re.search(r"\d+\.?\d*\s*(ev|mev|hartree|kj|kcal|k|a|nm|cm-1|\%/|mol)", low):
+        return True
+    # 明确的结论动词/形容词也算信号 (区别于纯 trace)
+    for kw in ("converged", "gap", "band", "energy", "temp", "formula", "volume",
+               "成功", "收敛", "失败", "建议", "原因"):
+        if kw in low:
+            return True
+    return False
+
+
 @dataclass
 class DistilledKnowledge:
     """A single piece of distilled knowledge ready for RAG."""
@@ -143,6 +164,33 @@ class KnowledgeDistiller:
     # Distillation Methods
     # ------------------------------------------------------------------
 
+    def _quality_gate(self, dk: DistilledKnowledge) -> bool:
+        """蒸馏入库前的硬质量门槛. 返回 True=通过(保留), False=拒绝.
+
+        借鉴 distilly 的 source-grounding 思路: 没有实际信息量、没有可以
+        溯源的证据的蒸馏条目不值得进 KB, 否则只会在检索时提供噪音.
+
+        拒绝条件 (命中任一即拒):
+          1. 正文是空占位 ('' / 'produces: no key properties' 之类)
+          2. 正文是纯工具快照 (形如 'X produced:' 且没带任何实体数值),
+             这种通常是执行痕迹而非可复用知识
+          3. 没有任何 source_evidence 溯源
+        """
+        content = (dk.content or "").strip()
+        if not content:
+            return False
+        # 与 auto_ingest._is_info_empty 同标准的空占位过滤
+        low = content.lower()
+        if "no key properties" in low or low.endswith("produced: no properties"):
+            return False
+        # 纯工具快照: 'xxx_tool produced: ...' 且后续无实体数值
+        if "produced:" in low and not _has_real_signal(content):
+            return False
+        # 没有可溯源证据的条目不进库
+        if not any((ev or "").strip() for ev in (dk.source_evidence or [])):
+            return False
+        return True
+
     def _is_semantically_duplicate(self, content: str, threshold: float = 0.65) -> bool:
         """检查是否已有语义相似的蒸馏知识 (Jaccard 词集重叠).
 
@@ -198,6 +246,9 @@ class KnowledgeDistiller:
                     category=f"troubleshooting_{software}",
                     tags=["error", "lesson", tool, software, calc_type],
                 )
+                # 质量硬门槛: 无实质信息/无溯源的错误快照不入库
+                if not self._quality_gate(dk):
+                    continue
                 self.knowledge_base.append(dk)
                 new_knowledge.append(dk)
 
@@ -245,6 +296,9 @@ class KnowledgeDistiller:
                     category=f"best_practices_{software}",
                     tags=["success", "pattern", software, calc_type],
                 )
+                # 质量硬门槛: 空占位/纯快照成功模式不入库
+                if not self._quality_gate(dk):
+                    continue
                 self.knowledge_base.append(dk)
                 new_knowledge.append(dk)
 
@@ -287,6 +341,9 @@ class KnowledgeDistiller:
                         category=f"tips_{tool}",
                         tags=["tip", tool],
                     )
+                    # 质量硬门槛: 空占位/无信息 tip 不入库
+                    if not self._quality_gate(dk):
+                        continue
                     self.knowledge_base.append(dk)
                     new_knowledge.append(dk)
 
@@ -320,6 +377,9 @@ class KnowledgeDistiller:
                     category=topic_tags[0] if topic_tags else "general",
                     tags=topic_tags,
                 )
+                # 质量硬门槛: 无实质内容/无溯源的事实不入库
+                if not self._quality_gate(dk):
+                    continue
                 self.knowledge_base.append(dk)
                 new_knowledge.append(dk)
 
@@ -530,6 +590,51 @@ class KnowledgeDistiller:
                             out.write(line + "\n")
 
         return str(merged_path)
+
+    def distill_semantic_source(
+        self,
+        text: str,
+        *,
+        source_url: str = "",
+        source: str = "document",
+        source_type: str = "domain_document",
+        domain_hint: str = "",
+        llm: Any = None,
+    ) -> list[DistilledKnowledge]:
+        """用通用 LLM 语义蒸馏器处理任意来源文本, 结果经质量门槛入库.
+
+        接入点: CoT / 任务轨迹 / 用户上传的多领域资料 / 专家帖子都可调。
+        复用本类的 _quality_gate / _save / KB 回写闭环。无 LLM 或抽不出时
+        返回空, 不 throw。对应 distilly 语义抽取层的通用落地。
+        """
+        try:
+            from huginn.evolution.semantic_distiller import distill_semantic
+
+            entries = distill_semantic(
+                text,
+                source_url=source_url,
+                source=source,
+                source_type=source_type,
+                domain_hint=domain_hint,
+                llm=llm,
+            )
+        except Exception:
+            logger.debug("semantic distill failed", exc_info=True)
+            return []
+        new = []
+        known = {k.knowledge_id for k in self.knowledge_base}
+        for dk in entries:
+            if dk.knowledge_id in known:
+                continue
+            # 复用同一套硬门槛: 无实质信息/无溯源的不进库
+            if not self._quality_gate(dk):
+                continue
+            self.knowledge_base.append(dk)
+            known.add(dk.knowledge_id)
+            new.append(dk)
+        if new:
+            self._save()
+        return new
 
     def auto_ingest_to_kb(self, kb=None) -> int:
         """Auto-ingest confirmed distilled knowledge into the KnowledgeBase.
