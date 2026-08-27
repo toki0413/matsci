@@ -94,6 +94,7 @@
 | `HUGINN_GOVERNANCE_DEFAULT_DECISION` | deny | governance.py:41 | — | external |
 | `HUGINN_HARD_CHECKPOINT_PHASES` | '' | autoloop/phase_gate.py:54 | — | external |
 | `HUGINN_HEALTH_MONITOR` | 0 | tools/adapter.py:241 | cli/rcb_runner.py:99 | code-set |
+| `HUGINN_HF_ENDPOINT` | '' | knowledge/store.py:44 | — | external |
 | `HUGINN_HIDE_DOCS` | '' | security/auth.py:48, server.py:85 | — | external |
 | `HUGINN_HILS_ATTENTION` | 1 | memory/longterm.py:729 | memory/longterm.py:2232, memory/longterm.py:2234 | code-set |
 | `HUGINN_HINT_COORDINATOR` | 1 | cli/rcb_step2.py:194 | — | external |
@@ -272,4 +273,4 @@
 | `HUGINN_WS_MAX_CONNECTIONS` | 50 | middleware/ws_governance.py:59 | — | external |
 | `HUGINN_WS_MAX_MSGS_PER_SEC` | 20 | middleware/ws_governance.py:60 | — | external |
 
-共 265 个环境变量。
+共 266 个环境变量。
