@@ -656,8 +656,24 @@ async def _stream_agent_response(
                 await _ws_send({
                     "type": "sediment",
                     "stored": True,
-                    "preview": sediment_text[:100],
+                    "kind": sediment_type,
+                    "preview": sediment_text[:200],
                 })
+                # 沉淀也发到全局 EventBus, 让审计视图(/events/recent|stream)能回放明细
+                try:
+                    from huginn.events.integration import publish_event_sync
+                    publish_event_sync(
+                        "sediment",
+                        {
+                            "stored": True,
+                            "kind": sediment_type,
+                            "preview": sediment_text[:200],
+                        },
+                        thread_id=thread_id,
+                        source="auto_sediment",
+                    )
+                except Exception:
+                    logger.debug("sediment event publish failed", exc_info=True)
             except Exception:
                 logger.debug(
                     "plan auto-sediment failed"

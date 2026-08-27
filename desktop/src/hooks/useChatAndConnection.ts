@@ -1149,9 +1149,12 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
       }
       case "sediment": {
         if (data.stored) {
+          // 沉淀明细: 除了"已入库"提示, 顺带显示存进去的内容片断(来自后端 preview)
+          const snippet = data.preview ? `\n\n> ${data.preview}` : '';
+          const kind = data.kind ? ` (${data.kind})` : '';
           setMessages((prev) => [
             ...prev,
-            { role: "assistant", content: `💾 Result saved to knowledge base`, timestamp: formatTime() },
+            { role: "assistant", content: `💾 结果已写入知识库${kind}${snippet}`, timestamp: formatTime() },
           ]);
         }
         break;
