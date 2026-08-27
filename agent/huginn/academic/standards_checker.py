@@ -334,6 +334,82 @@ class StandardsChecker:
             f"删减至 {spec.keywords_max} 个",
         )
 
+    # ── GB/T 7714 引用格式审查 ────────────────────────────────
+
+    # 文献类型标识: [J] [M] [C] [D] [R] [S] [P] [EB/OL] [N] [DB/OL]
+    _GBT7714_TYPE_RE = re.compile(
+        r"\[(?:J|M|C|D|R|S|P|N|DB/OL|EB/OL|CP/OL|Z)\]"
+    )
+    # 年份: 4位数字, 1900-2099
+    _YEAR_RE = re.compile(r"\b(19|20)\d{2}\b")
+
+    def check_reference_format(
+        self, references: list[str], journal: str
+    ) -> CheckResult:
+        """检查参考文献是否符合 GB/T 7714 格式要求.
+
+        逐条检查三个核心要素:
+        1. 文献类型标识 ([J]/[M]/[C]/[D] 等) — GB/T 7714 强制要求
+        2. 出版年份 — 所有文献类型都需标注
+        3. 基本结构完整性 — 作者 + 题名 + 出处
+
+        非中文期刊时此检查降级为 info (仅参考).
+        """
+        spec = get_journal(journal)
+        if spec is None:
+            return CheckResult(
+                "reference_format", False,
+                f"未找到期刊 '{journal}'",
+                "请确认期刊名称",
+            )
+
+        # 非中文期刊不强制 GB/T 7714, 降级提示
+        if not spec.language.startswith("zh"):
+            return CheckResult(
+                "reference_format", True,
+                "非中文期刊, GB/T 7714 检查已跳过",
+                severity="info",
+            )
+
+        issues: list[str] = []
+        for i, ref in enumerate(references, 1):
+            ref_issues: list[str] = []
+
+            # 1. 文献类型标识
+            if not self._GBT7714_TYPE_RE.search(ref):
+                ref_issues.append("缺少文献类型标识(如[J]/[M]/[C])")
+
+            # 2. 年份
+            if not self._YEAR_RE.search(ref):
+                ref_issues.append("缺少出版年份")
+
+            # 3. 基本结构: 至少包含一个句号或逗号分隔的多段信息
+            # ponytail: 不做完整 AST 解析, 只验证有足够的分隔信息段
+            parts = [p.strip() for p in re.split(r"[.．]", ref) if p.strip()]
+            if len(parts) < 2:
+                ref_issues.append("结构不完整(应含作者. 题名. 出处等)")
+
+            if ref_issues:
+                issues.append(f"[{i}] {'; '.join(ref_issues)}")
+
+        if not issues:
+            return CheckResult(
+                "reference_format", True,
+                f"GB/T 7714 格式检查通过 ({len(references)} 条)",
+                severity="info",
+                details={"checked": len(references), "issues": []},
+            )
+
+        severity = "warning"
+        return CheckResult(
+            "reference_format", False,
+            f"GB/T 7714 格式问题 ({len(issues)}/{len(references)} 条): "
+            + "; ".join(issues[:5]) + ("..." if len(issues) > 5 else ""),
+            "按 GB/T 7714 补充文献类型标识和年份",
+            severity=severity,
+            details={"checked": len(references), "issues": issues},
+        )
+
     # ── 综合检查 ──────────────────────────────────────────────
 
     def check_compliance(
@@ -376,6 +452,9 @@ class StandardsChecker:
 
         if "references" in manuscript and manuscript["references"] is not None:
             results.append(self.check_references(
+                manuscript["references"], journal
+            ))
+            results.append(self.check_reference_format(
                 manuscript["references"], journal
             ))
 

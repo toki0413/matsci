@@ -168,6 +168,40 @@ _DEFAULT_MODES: list[FailureMode] = [
         match_keywords=["convergence", "encut", "k-spacing", "kpoint", "scf"],
         mitigation="报 convergence test 结果, 关键量做 encut/k-sp 收敛扫描",
     ),
+    # SWE-bench Science 四类失败模式 (arXiv:2608.19799)
+    # 科学软件工程中的反复出现模式, 同样适用于科研 agent 的代码修复/假设修正场景.
+    FailureMode(
+        id="scientific-knowledge-deficit",
+        category="methodology",
+        description="agent 缺乏领域科学知识或抽象能力, 导致修复/假设方向错误",
+        severity="warn",
+        match_keywords=["unknown", "not sure", "unclear", "unfamiliar", "don't know"],
+        mitigation="查 RAG KB 或请教领域专家, 补充科学背景后再修复",
+    ),
+    FailureMode(
+        id="surface-repair",
+        category="methodology",
+        description="只改症状不改根因 (surface-level repair), 探索方向被误导",
+        severity="warn",
+        match_keywords=["workaround", "hack", "temporary fix", "bypass", "quick fix"],
+        mitigation="追溯根因: grep 所有调用方, 修共享函数而非打补丁",
+    ),
+    FailureMode(
+        id="incomplete-coverage",
+        category="methodology",
+        description="修复覆盖不完整或系统集成失败, 漏了边缘情况或关联路径",
+        severity="warn",
+        match_keywords=["edge case", "missing", "incomplete", "partial fix", "untested"],
+        mitigation="列全部调用方和测试用例, 逐个验证修复覆盖",
+    ),
+    FailureMode(
+        id="generalization-failure",
+        category="transfer",
+        description="无法将科学知识泛化到未见案例, 过拟合于观察样本",
+        severity="warn",
+        match_keywords=["specific case", "only works for", "doesn't generalize", "overfit"],
+        mitigation="提取抽象原理而非记忆特定解, 用反事实测试验证泛化性",
+    ),
 ]
 
 
