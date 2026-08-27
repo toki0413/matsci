@@ -43,7 +43,8 @@ dependencies = [
     "z3-solver>=4.12",
     "aiohttp>=3.14.3",
     "python-dotenv>=1.0",
-    "cryptography>=43.0",
+    # 版本下限直接对齐 Dependabot 修复版, 防止 manifest 约束范围里带漏洞版本.
+    "cryptography>=50.0.0",
     "pyyaml>=6.0",
     # config.py 用 toml.dumps/loads 读写 TOML 配置. Python 3.11+ 内置 tomllib
     # 只能读不能写, config.py 的 save_config 需要 dumps → 必须装 toml 包.
@@ -62,7 +63,8 @@ dependencies = [
     "websockets>=12.0",
     "requests>=2.32.0",
     "tenacity>=8.0",
-    "Pillow>=10.0",
+    # Pillow 下界对齐 Dependabot 修复版 12.3.0 (CVE 集中在 <12.3.0).
+    "Pillow>=12.3.0",
 ]
 
 [project.optional-dependencies]
