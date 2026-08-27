@@ -1175,8 +1175,12 @@ export default function App() {
           </button>
         </div>
 
-        {/* Compact icon tabs — horizontal bar */}
-        <div className="flex items-center gap-0.5 border-b border-border px-1.5 py-1.5">
+        {/* Compact icon tabs — horizontal bar.
+         * 10 个 tab (含 Settings 在最右) 最小宽约 23px/个, 总宽超出 224px 侧栏.
+         * flex 行默认不换行会横向溢出到 main-content, 盖住最右的 Settings,
+         * e2e 点它被 main 里的 chat 工具栏拦截. 加 overflow-x-auto 让行内滚动,
+         * tab 留在侧栏内, 溢出项可滚动到视口内点击. */}
+        <div className="flex items-center gap-0.5 overflow-x-auto border-b border-border px-1.5 py-1.5">
           {([
             { id: "chat", label: t('tab.chat'), icon: <MessageSquare size={15} aria-hidden="true" /> },
             { id: "tools", label: t('tab.tools') || 'Tools', icon: <Wrench size={15} aria-hidden="true" /> },
