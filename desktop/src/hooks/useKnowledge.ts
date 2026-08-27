@@ -19,6 +19,10 @@ export function useKnowledge() {
   const [parseLoading, setParseLoading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const parseFileInputRef = useRef<HTMLInputElement>(null);
+  // 全文预览: 点左侧文件名 -> 拉该文档的分块内容在右侧顺序展示
+  const [viewingDoc, setViewingDoc] = useState<{ doc_id: string; filename: string } | null>(null);
+  const [docChunks, setDocChunks] = useState<any[] | null>(null);
+  const [docLoading, setDocLoading] = useState(false);
 
   const loadKnowledge = async () => {
     try {
@@ -100,6 +104,31 @@ export function useKnowledge() {
     return null;
   }, []);
 
+  const loadDocumentContent = useCallback(async (doc: { doc_id: string; filename: string }) => {
+    setViewingDoc(doc);
+    setDocLoading(true);
+    setKbMsg('Loading document content…');
+    try {
+      const data = await api.get<{ chunks?: any[]; error?: string }>(`/knowledge/${doc.doc_id}/chunks`);
+      setDocChunks(data.chunks || []);
+      setKbMsg(
+        data.chunks?.length
+          ? `📄 ${doc.filename} — ${data.chunks.length} chunks`
+          : (data.error || `No content for ${doc.filename}`)
+      );
+    } catch (e: any) {
+      setKbMsg(`Failed to load content: ${e.message}`);
+      setDocChunks([]);
+    } finally {
+      setDocLoading(false);
+    }
+  }, []);
+
+  const clearDocView = useCallback(() => {
+    setViewingDoc(null);
+    setDocChunks(null);
+  }, []);
+
   const deleteKnowledge = async (docId: string) => {
     try {
       await api.del(`/knowledge/${docId}`);
@@ -158,5 +187,6 @@ export function useKnowledge() {
     setKbQuery, setKbMsg,
     loadKnowledge, uploadKnowledge, parseDocument, loadDocumentGraph,
     deleteKnowledge, queryKnowledge, ingestUrl, loadProvenanceDag,
+    viewingDoc, docChunks, docLoading, loadDocumentContent, clearDocView,
   };
 }

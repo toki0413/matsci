@@ -37,6 +37,12 @@ interface KnowledgePanelProps {
   queryKnowledge: () => void;
   ingestUrl: (url: string) => void;
   loadProvenanceDag: () => Promise<any>;
+  // 全文/分块预览
+  viewingDoc: { doc_id: string; filename: string } | null;
+  docChunks: any[] | null;
+  docLoading: boolean;
+  loadDocumentContent: (doc: { doc_id: string; filename: string }) => void;
+  clearDocView: () => void;
 }
 
 type ViewMode = 'concise' | 'detailed' | 'research';
@@ -69,6 +75,7 @@ export function KnowledgePanel({
   kbMsg, kbDocs, kbAvailable, kbQuery, kbChunks, setKbQuery,
   uploadKnowledge, parseDocument, loadDocumentGraph, deleteKnowledge, queryKnowledge,
   ingestUrl, loadProvenanceDag,
+  viewingDoc, docChunks, docLoading, loadDocumentContent, clearDocView,
 }: KnowledgePanelProps) {
   const { t } = useTranslation();
   const [viewMode, setViewMode] = useState<ViewMode>('detailed');
@@ -262,8 +269,15 @@ export function KnowledgePanel({
                 key={doc.doc_id}
                 className="kb-doc-item mb-2 flex items-center justify-between rounded-lg border border-border bg-bg-tertiary p-2"
               >
-                <span className="truncate text-xs text-text-primary">{doc.filename}</span>
-                <div className="flex gap-2">
+                <button
+                  onClick={() => loadDocumentContent(doc)}
+                  className="min-w-0 flex-1 truncate text-left text-xs text-text-primary hover:text-accent"
+                  title="View document content"
+                  aria-label={`View document ${doc.filename}`}
+                >
+                  {doc.filename}
+                </button>
+                <div className="flex shrink-0 gap-2">
                   <button
                     onClick={() => loadDocumentGraph(doc.doc_id)}
                     className="text-xs text-accent hover:underline"
@@ -297,26 +311,64 @@ export function KnowledgePanel({
         {/* Query tester — Metaso-style "transparent brain" retrieval view */}
         <div className="kb-query-area flex flex-1 flex-col bg-bg-primary p-4">
           <div className="mb-3 flex items-center justify-between">
-            <h3 className="text-sm font-semibold">{t('kb.testRetrieval')}</h3>
-            {/* three search-depth modes, mirrors Metaso's concise / detailed / research */}
-            <div className="flex rounded-lg border border-border bg-bg-secondary p-0.5">
-              {(['concise', 'detailed', 'research'] as ViewMode[]).map((m) => (
+            {viewingDoc ? (
+              <h3 className="min-w-0 text-sm font-semibold">
                 <button
-                  key={m}
-                  onClick={() => switchView(m)}
-                  className={
-                    'rounded-md px-2.5 py-1 text-xs font-medium transition-colors ' +
-                    (viewMode === m
-                      ? 'bg-accent text-white'
-                      : 'text-text-secondary hover:text-text-primary')
-                  }
+                  onClick={clearDocView}
+                  className="mr-2 text-accent hover:underline"
+                  title="Back to search"
+                  aria-label="Back to search"
                 >
-                  {t(`kb.view.${m}`)}
+                  ← {t('kb.search')}
                 </button>
-              ))}
-            </div>
+                <span className="truncate">{viewingDoc.filename}</span>
+              </h3>
+            ) : (
+              <>
+                <h3 className="text-sm font-semibold">{t('kb.testRetrieval')}</h3>
+                {/* three search-depth modes, mirrors Metaso's concise / detailed / research */}
+                <div className="flex rounded-lg border border-border bg-bg-secondary p-0.5">
+                  {(['concise', 'detailed', 'research'] as ViewMode[]).map((m) => (
+                    <button
+                      key={m}
+                      onClick={() => switchView(m)}
+                      className={
+                        'rounded-md px-2.5 py-1 text-xs font-medium transition-colors ' +
+                        (viewMode === m
+                          ? 'bg-accent text-white'
+                          : 'text-text-secondary hover:text-text-primary')
+                      }
+                    >
+                      {t(`kb.view.${m}`)}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
 
+          {/* 全文预览：点文件名后按文档顺序展示分块；否则原检索视图 */}
+          {viewingDoc ? (
+            <div className="flex-1 overflow-y-auto space-y-3">
+              {docLoading ? (
+                [0, 1, 2].map(i => (
+                  <div key={i} className="kb-chunk rounded-lg border border-border bg-bg-secondary p-3">
+                    <SkeletonText lines={3} />
+                  </div>
+                ))
+              ) : !docChunks || docChunks.length === 0 ? (
+                <div className="text-xs text-text-muted">此文件暂无可预览的分块内容</div>
+              ) : (
+                docChunks.map((c, i) => (
+                  <div key={i} className="kb-chunk rounded-lg border border-border bg-bg-secondary p-3">
+                    <div className="mb-1 text-[10px] text-text-muted">#{c.chunk != null ? c.chunk + 1 : i + 1}</div>
+                    <p className="whitespace-pre-wrap text-xs text-text-primary">{c.text}</p>
+                  </div>
+                ))
+              )}
+            </div>
+          ) : (
+            <>
           <div className="mb-3 flex gap-2">
             <input
               type="text"
@@ -427,6 +479,8 @@ export function KnowledgePanel({
               })
             )}
           </div>
+            </>
+          )}
         </div>
       </div>
     </div>
