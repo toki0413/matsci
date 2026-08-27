@@ -348,6 +348,18 @@ jobs:
           #   - chromadb  PYSEC-2026-311 / GHSA-f4j7-r4q5-qw2c: 预认证代码注入,
           #     仅影响 HTTP API + trust_remote_code=true; huginn 全程嵌入式
           #     PersistentClient, 不受影响. 上游无 fix 版本.
+          #   - chromadb  CVE-2026-45830 / GHSA-2wm9-hf6c-p5cr: 服务端多租户
+          #     授权缺失, 已认证用户可跨租户删改数据. huginn 用嵌入式
+          #     PersistentClient (file-based, 单租户, 无 HTTP/租户授权模型),
+          #     数据路径无可认证外部用户, 不受影响. 上游 (>=0.4.17) 无 fix.
+          #   - chromadb  CVE-2026-45831 / GHSA-xph7-9rjv-w5fr: RBAC 提供方
+          #     不校验租户/库/集合作用域即可跨租户操作 (>=0.5.0). 同上, 嵌入式
+          #     单租户无 RBAC 服务端, 不受影响.
+          #   - chromadb  CVE-2026-45833 / GHSA-36p7-vc44-83pf: 需要
+          #     trust_remote_code=true + UPDATE_COLLECTION 权限的服务端代码注入
+          #     (>=0.4.17). huginn 嵌入式 PersistentClient 从不启用信任远程模型,
+          #     不受影响.
+          #     这三者 + 45829 均为 "嵌入式用法免疫" 的忽略.
           #   - setuptools PYSEC-2026-3447 / GHSA-h35f-9h28-mq5c: MANIFEST.in
           #     NFC/NFD 绕过, 仅打包 sdist 时触发; 仅 fairchem 可选组经
           #     fairchem-core 硬约束 setuptools<81.0.0 被锁死在 80.10.2, 无法升级.
@@ -372,6 +384,9 @@ jobs:
           for lock in /tmp/gate-all.lock /tmp/gate-fairchem.lock /tmp/gate-mace.lock; do
             pip-audit -r "$lock" --vulnerability-service osv \
               --ignore-vuln PYSEC-2026-311 --ignore-vuln GHSA-f4j7-r4q5-qw2c \
+              --ignore-vuln CVE-2026-45830 --ignore-vuln GHSA-2wm9-hf6c-p5cr \
+              --ignore-vuln CVE-2026-45831 --ignore-vuln GHSA-xph7-9rjv-w5fr \
+              --ignore-vuln CVE-2026-45833 --ignore-vuln GHSA-36p7-vc44-83pf \
               --ignore-vuln PYSEC-2026-3447 --ignore-vuln GHSA-h35f-9h28-mq5c \
               --ignore-vuln PYSEC-2025-193 --ignore-vuln PYSEC-2025-194 \
               --ignore-vuln PYSEC-2025-195 --ignore-vuln PYSEC-2025-203 \

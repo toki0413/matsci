@@ -16,6 +16,12 @@ export default defineConfig({
     include: ['src/**/*.{test,spec}.{ts,tsx}'],
     exclude: ['e2e/**', 'node_modules/**', 'dist/**'],
     css: false,
+    // 24 个 spec 文件, 默认 forks pool 按 CPU 核数全量并行拉起, 直接吃爆
+    // runner (7G/2vCPU), 所有 worker "Timeout waiting for worker to respond".
+    // 限制并发到 2 个进程即可稳定跑完. (Vitest 4 里 poolOptions 已废弃,
+    // 并发上限是顶层 maxWorkers/minWorkers.)
+    maxWorkers: 2,
+    minWorkers: 1,
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html'],

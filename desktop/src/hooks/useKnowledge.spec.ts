@@ -6,6 +6,7 @@ const apiGet = vi.fn();
 const apiPost = vi.fn();
 const apiDel = vi.fn();
 const apiUpload = vi.fn();
+const apiUploadStream = vi.fn();
 
 vi.mock('../lib/api', () => ({
   api: {
@@ -15,6 +16,7 @@ vi.mock('../lib/api', () => ({
     patch: vi.fn(),
     del: (...a: unknown[]) => apiDel(...a),
     uploadWithProgress: (...a: unknown[]) => apiUpload(...a),
+    uploadStream: (...a: unknown[]) => apiUploadStream(...a),
   },
 }));
 
@@ -27,6 +29,7 @@ beforeEach(() => {
   apiPost.mockReset();
   apiDel.mockReset();
   apiUpload.mockReset();
+  apiUploadStream.mockReset();
   vi.useFakeTimers();
 });
 
@@ -87,16 +90,18 @@ describe('useKnowledge', () => {
   });
 
   it('parses a document and reports graph node counts', async () => {
-    apiUpload.mockResolvedValue({
-      info_packages: 3,
-      graph: { nodes: [1, 2, 3], edges: [1] },
+    apiUploadStream.mockResolvedValue({
+      document_id: 'doc-1',
+      filename: 'paper.pdf',
+      n_packages: 3,
+      stats: { n_nodes: 3, n_edges: 1 },
     });
     apiGet.mockResolvedValue({ documents: [], available: true });
     const { result } = renderHook(() => useKnowledge());
     await act(async () => {
       await result.current.parseDocument(fakeFile);
     });
-    expect(apiUpload).toHaveBeenCalledWith('/document/parse', fakeFile, expect.any(Function));
+    expect(apiUploadStream).toHaveBeenCalledWith('/document/parse', fakeFile, expect.any(Function));
     expect(result.current.parseLoading).toBe(false);
     expect(result.current.kbMsg).toContain('3 info packages');
     expect(result.current.kbMsg).toContain('3 graph nodes');

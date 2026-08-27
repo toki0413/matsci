@@ -66,7 +66,7 @@
 | `HUGINN_DISABLE_WEB_SEARCH` | '' | tools/agentic_search_tool.py:463, tools/literature/_http.py:40, tools/web_search_tool.py:56 | tools/web_search_tool.py:664, tools/web_search_tool.py:669 | code-set |
 | `HUGINN_DOCKER_SANDBOX` | '' | security/sandbox.py:594 | — | external |
 | `HUGINN_DOC_ENGINE` | auto | perception/pdf_parser.py:506 | — | external |
-| `HUGINN_EMBED_MODEL` | all-MiniLM-L6-v2 | knowledge/store.py:34 | — | external |
+| `HUGINN_EMBED_MODEL` | sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 | knowledge/store.py:36 | — | external |
 | `HUGINN_EM_RECALL_TOP_K` | 5 | config.py:843 | — | external |
 | `HUGINN_ENABLE_EXPLORATION` | true | config.py:762 | — | external |
 | `HUGINN_ENABLE_SCIHUB` | '' | tools/literature/pdf_fetch.py:238 | — | external |
@@ -163,7 +163,7 @@
 | `HUGINN_NORMALIZE_ERRORS` | '' | middleware/error_normalize.py:152 | — | external |
 | `HUGINN_NO_RUST_SANDBOX` | '' | — | cli/rcb_runner.py:94 | code-set |
 | `HUGINN_OAUTH_TOKEN` | '' | cli/availability.py:52 | — | external |
-| `HUGINN_OCR_ENGINE` | auto | knowledge/ocr_loader.py:194, knowledge/ocr_loader.py:246, knowledge/ocr_loader.py:294 | — | external |
+| `HUGINN_OCR_ENGINE` | auto | knowledge/ocr_loader.py:196, knowledge/ocr_loader.py:251, knowledge/ocr_loader.py:302 | — | external |
 | `HUGINN_PERSISTENT_GOAL_MODE` | 0 | autoloop/cognitive_loop.py:898, autoloop/engine_reflect.py:906, cli/rcb_runner.py:373 | cli/rcb_runner.py:350 | code-set |
 | `HUGINN_PERSISTENT_TERMINAL_TIMEOUT` | '' | tools/persistent_terminal.py:30 | — | external |
 | `HUGINN_PERSONA` | default | config.py:700, config.py:767 | cli/commands/persona.py:131, routes/agents.py:462 | code-set |
