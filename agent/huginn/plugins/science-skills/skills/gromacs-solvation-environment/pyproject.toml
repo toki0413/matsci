@@ -1,0 +1,16 @@
+[project]
+name = "gromacs-solvation-environment"
+version = "1.0.0"
+description = "GROMACS fixed-radius solvation/coordination environment statistics (standalone skill)"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26.0",
+    "MDAnalysis>=2.10.0",
+    "matplotlib>=3.7",
+    "Pillow>=9.0",
+]
+
+[tool.uv]
+# 这个 skill 自包含: 运行脚本不需要 huginn-agent 完整依赖, 只有它自己的
+# MDAnalysis/numpy/matplotlib/Pillow. 放独立 pyproject 让 `uv run` 在目录内
+# 用轻量环境解析, 避免把 agent/ 根依赖全拉进来产生版本冲突.

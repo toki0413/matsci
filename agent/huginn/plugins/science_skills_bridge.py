@@ -49,7 +49,10 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _BUNDLED_DIR = Path(__file__).parent / "science-skills"
-_SKIP_DIRS = {"workflow_skill_creator", "__pycache__"}
+# gromacs-solvation-environment 是交互式两步 skill (inspect -> 用户确认 -> analyze),
+# 与 bridge 的泛化参数骨架 (--query/--id/--output, 单次调用) 不匹配; 若被 bridge 接管
+# 会注册成调用会失败的工具。走 /skills/import 的 SkillRegistry 链路更合适, 故排除.
+_SKIP_DIRS = {"workflow_skill_creator", "gromacs-solvation-environment", "__pycache__"}
 
 
 def _resolve_skills_dir() -> Path | None:
