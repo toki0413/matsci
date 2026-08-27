@@ -1,0 +1,4 @@
+interface:
+  display_name: "GROMACS Solvation Environment"
+  short_description: "Fixed-radius molecular-COG solvation statistics"
+  default_prompt: "Use $gromacs-solvation-environment to inspect a GROMACS TPR, confirm the center and cutoff settings, and analyze fixed-radius solvation-environment compositions."
