@@ -65,6 +65,34 @@ def _resolve_embedding_dim(fallback: int = _EMBED_DIM_DEFAULT) -> int:
     return fallback
 
 
+def _download_embedding_with_progress() -> None:
+    """Lazily pull the embedding model, publishing start/done/error events.
+
+    桌面版侧car 安装包不含权重 (NSIS 打包 2GB 上限), 首次用到 KB 时才联网拉取.
+    用户要能感知: 发 start/done/error 事件给前端横幅; 失败不抛异常, 由调用方
+    降级到 onnx/确定性向量兜底, 避免用户的提问因下载失败而卡死.
+    """
+    if _EmbeddingModel._st is not None:
+        return
+    cache_dir = os.path.join(os.path.expanduser("~"), ".cache", "huggingface", "hub")
+    if os.path.isdir(os.path.join(cache_dir, f"models--{EMBED_MODEL.replace('/', '--')}")):
+        return  # 已缓存, 无需联网
+    from huginn.events.integration import publish_event_sync
+    publish_event_sync("embedding.download.start", {"repo_id": EMBED_MODEL})
+    try:
+        from huggingface_hub import snapshot_download
+
+        # ponytail: 不做逐字节进度回调 —— snapshot_download 各版本签名漂移
+        # (早些版本无 progress_callback, 1.6 用 tqdm_class), 硬 hook 会直接让
+        # 下载失败. 这里只保 start/done/error 三态, 前端用不确定进度条动画.
+        snapshot_download(EMBED_MODEL)
+        publish_event_sync("embedding.download.done", {"repo_id": EMBED_MODEL})
+    except Exception as e:
+        # 下载失败要让用户知道, 但 KB 不能因此卡死 -> error 事件 + 调用方降级兜底.
+        logger.warning("embedding download failed: %s", e)
+        publish_event_sync("embedding.download.error", {"repo_id": EMBED_MODEL, "error": str(e)})
+
+
 def _deterministic_vectors(texts: list[str], dim: int | None = None) -> np.ndarray:
     """Deterministic hash-based pseudo-embeddings (fallback when ONNX hangs).
 
@@ -140,6 +168,7 @@ class _EmbeddingModel:
         # chroma 自带 onnx (英文 all-MiniLM) 仅作回退 —— 否则查询向量与存量向量
         # 维度一样但模型不同、语义空间错位, 检索命中率反而变差.
         if _EmbeddingModel._st is None:
+            _download_embedding_with_progress()
             try:
                 from sentence_transformers import SentenceTransformer
             except ImportError as e:
@@ -147,7 +176,21 @@ class _EmbeddingModel:
                     "Embedding requires sentence-transformers or chromadb's default embedder. "
                     "Install: pip install sentence-transformers"
                 ) from e
-            _EmbeddingModel._st = SentenceTransformer(EMBED_MODEL)
+            try:
+                _EmbeddingModel._st = SentenceTransformer(EMBED_MODEL)
+            except Exception as e:
+                # 下载/加载失败(权重拉不下来或模型损坏): _download_embedding_with_progress
+                # 已发 error 事件给前端, 这里留 _st=None 好让下方降级路径兜底,
+                # 不把这个异常抛给用户的提问, 而是用 onnx/确定性向量继续.
+                if not _EmbeddingModel._use_chroma:
+                    from huginn.events.integration import publish_event_sync
+                    publish_event_sync("embedding.download.error", {
+                        "repo_id": EMBED_MODEL, "error": str(e),
+                    })
+                logger.warning(
+                    "sentence-transformers load failed (%s); degrade to fallback vectors", e
+                )
+                _EmbeddingModel._st = None
         try:
             # 与 rebuild_kb 重灌时保持一致, 输出单位向量; 否则 l2 距离被模长主导, 命中差.
             result = _EmbeddingModel._st.encode(texts, normalize_embeddings=True)

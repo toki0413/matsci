@@ -97,6 +97,13 @@ export interface Thread {
   archived?: boolean;
 }
 
+// Embedding 模型下载状态 (来自 /events/stream embedding.download.*)
+export type EmbeddingDownloadState =
+  | { status: "idle" }
+  | { status: "downloading"; percent: number }
+  | { status: "done"; percent: number }
+  | { status: "error"; error: string };
+
 // ── Hook parameters ────────────────────────────────────────────
 interface UseChatAndConnectionParams {
   config: AppConfig;
@@ -228,6 +235,15 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
   const [pendingDecisionPoint, setPendingDecisionPoint] = useState<DecisionPointPayload | null>(null);
   // 成本叙事: 数字 + 意图 + 预测, 供 MetricsBar 成本叙事增强.
   const [costNarrative, setCostNarrative] = useState<CostNarrativePayload | null>(null);
+
+  // Embedding 模型下载: 桌面版不内置权重, 首次用到 KB 时联网拉取.
+  // 用 start/progress/done/error 事件让用户感知下载进度与失败, 避免"首次提问莫名卡住".
+  const [embeddingDownload, setEmbeddingDownload] = useState<EmbeddingDownloadState>({ status: "idle" });
+  const embeddingDoneTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearEmbeddingDone = (): void => {
+    if (embeddingDoneTimer.current) clearTimeout(embeddingDoneTimer.current);
+    setEmbeddingDownload({ status: "idle" });
+  };
 
   // ── Dynamic risk threshold (HRI: trust-adaptive risk classification) ──
   const [riskThreshold, setRiskThreshold] = useState<number>(0.5);
@@ -1694,6 +1710,38 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
       }
     });
 
+    // ── Embedding 模型下载: 让用户感知进度/成败, 避免首次提问莫名卡死 ─
+    const handleEmbedding = (e: MessageEvent) => {
+      try {
+        const t = JSON.parse(e.data);
+        const d = t.data || {};
+        switch (t.type) {
+          case "embedding.download.start":
+            setEmbeddingDownload({ status: "downloading", percent: 0 });
+            break;
+          case "embedding.download.progress":
+            setEmbeddingDownload({ status: "downloading", percent: Math.min(99, Math.round(d.percent ?? 0)) });
+            break;
+          case "embedding.download.done":
+            if (embeddingDoneTimer.current) clearTimeout(embeddingDoneTimer.current);
+            setEmbeddingDownload({ status: "done", percent: 100 });
+            notify("知识库模型已就绪", "Embedding 模型下载完成，知识库可以开始检索了", false);
+            // 5s 后收回绿色横幅, 免留固定占位
+            embeddingDoneTimer.current = setTimeout(() => setEmbeddingDownload({ status: "idle" }), 5000);
+            break;
+          case "embedding.download.error":
+            if (embeddingDoneTimer.current) clearTimeout(embeddingDoneTimer.current);
+            setEmbeddingDownload({ status: "error", error: d.error || "未知错误" });
+            notify("知识库模型下载失败", `${d.error || "未知错误"}，可稍后重试或检查网络`, true);
+            break;
+        }
+      } catch {
+        // ignore malformed frames
+      }
+    };
+    ["embedding.download.start", "embedding.download.progress", "embedding.download.done", "embedding.download.error"]
+      .forEach((ev) => es.addEventListener(ev, handleEmbedding));
+
     // ── 子任务面板: team.* 事件聚合 (ModelTeam 实时状态) ─────
     const handleTeamEvent = (e: MessageEvent) => {
       try {
@@ -1804,6 +1852,8 @@ export function useChatAndConnection(params: UseChatAndConnectionParams) {
     sendGuide, guideStatus, setGuideStatus,
     // Team run live status (子任务面板数据源)
     teamRuns,
+    // Embedding 模型下载状态 (横幅展示)
+    embeddingDownload, clearEmbeddingDone,
     // Stop generation
     stopGeneration,
     // Pause / resume generation

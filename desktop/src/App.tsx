@@ -28,6 +28,7 @@ import { useConfig } from "./hooks/useConfig";
 import { useChatAndConnection } from "./hooks/useChatAndConnection";
 import { PetStatusWidget } from "./components/PetStatusWidget";
 import AutoloopProgress from "./components/AutoloopProgress";
+import EmbeddingDownloadBanner from "./components/EmbeddingDownloadBanner";
 import DecisionTracePanel from "./components/DecisionTracePanel";
 import { ContextBar } from "./components/ContextBar";
 import { ChatPanel } from "./components/panels/ChatPanel";
@@ -630,6 +631,7 @@ export default function App() {
     pendingMessages,
     sendGuide, guideStatus, setGuideStatus,
     teamRuns,
+    embeddingDownload, clearEmbeddingDone,
     stopGeneration,
     pauseGeneration, resumeGeneration, isPaused,
     researchMode, setResearchMode,
@@ -1477,6 +1479,9 @@ export default function App() {
         {autoloopPhase && (
           <AutoloopProgress currentPhase={autoloopPhase} progress={autoloopProgress} />
         )}
+
+        {/* Embedding 模型下载进度/失败横幅 */}
+        <EmbeddingDownloadBanner state={embeddingDownload} onDismiss={clearEmbeddingDone} />
 
         {/* Decision trace: governance + state machine */}
         {governanceEvents.length > 0 && (

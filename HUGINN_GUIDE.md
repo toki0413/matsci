@@ -753,6 +753,8 @@ extract_visual_primitives
 
 知识库（RAG KB）靠 embedding 模型把文档和查询映射到同一向量空间再做相似度检索，Embedding 模型是 `knowledge/store.py` 的底座，独立于第 12 章的 LLM Provider（Embedding 走 `sentence-transformers`，不消耗 LLM API）。
 
+> **用户感知**：桌面版首次用到 KB 时联网拉权重，`store.py` 会通过事件总线发 `embedding.download.start/done/error`，前端在 chat 顶部显示下载横幅（动画进度条，失败转红色提示 + 系统通知）。用户无需任何操作；下载失败只降级到 onnx/确定性向量兜底，知识点检索不中断，可稍后重试。
+
 **默认模型**（`store.py` 的 `EMBED_MODEL`）：
 
 ```
