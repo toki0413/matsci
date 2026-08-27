@@ -1531,6 +1531,15 @@
   to { opacity: 1; transform: translateX(0); }
 }
 
+/* ── Embedding 下载不确定进度条（滑块往复滑动）── */
+@keyframes slideIndeterminate {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(400%); }
+}
+.animate-slide-indeterminate {
+  animation: slideIndeterminate 1.4s ease-in-out infinite;
+}
+
 /* ── Spinner ── */
 @keyframes spin {
   to { transform: rotate(360deg); }

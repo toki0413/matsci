@@ -186,6 +186,15 @@ def _schedule_sync(coro) -> None:
         logger.debug("sync event schedule failed", exc_info=True)
 
 
+def publish_event_sync(event_type: str, data: dict, thread_id: str = "", source: str = "") -> None:
+    """Publish an arbitrary event from sync code (fire and forget).
+
+    Used by e.g. the embedding model lazy-download to surface progress /
+    failure to the desktop UI without turning embed encode into an async path.
+    """
+    _schedule_sync(_publish(event_type, data, thread_id, source))
+
+
 def publish_tool_event_sync(
     tool_name: str,
     tool_input: Any,
