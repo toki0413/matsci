@@ -43,7 +43,7 @@
 | `HUGINN_COMPACT_KIND` | remote | agent/reflection.py:60 | — | external |
 | `HUGINN_COMPACT_STRATEGY` | trim,summarize | agent/streaming.py:738, agent/streaming.py:861 | — | external |
 | `HUGINN_COMPLETION_CHECK_INTERVAL` | 10 | cli/rcb_step2.py:421 | — | external |
-| `HUGINN_CONFIG_FILE` | huginn.toml | config.py:1349, routes/config.py:56, routes/config.py:778, +2 处 | — | external |
+| `HUGINN_CONFIG_FILE` | huginn.toml | config.py:1349, routes/config.py:56, routes/config.py:794, +2 处 | — | external |
 | `HUGINN_CONSOLIDATE_MODEL` | '' | memory/longterm.py:1726 | — | external |
 | `HUGINN_CONSOLIDATE_PROVIDER` | deepseek | memory/longterm.py:1725 | — | external |
 | `HUGINN_CONTAINER_IMAGE` | '' | config.py:729, security/execution.py:28 | — | external |
@@ -105,7 +105,7 @@
 | `HUGINN_ISING_RERANK` | 1 | memory/longterm.py:620 | memory/longterm.py:2177, memory/longterm.py:2179 | code-set |
 | `HUGINN_ITER_HIST_MAX` | 50 | autoloop/cognitive_loop.py:70 | — | external |
 | `HUGINN_JWT_SECRET` | '' | security/auth.py:80 | — | external |
-| `HUGINN_KB_CHUNKS_PATH` | '' | evolution/knowledge_distiller.py:497 | — | external |
+| `HUGINN_KB_CHUNKS_PATH` | '' | evolution/knowledge_distiller.py:555 | — | external |
 | `HUGINN_KEEP_ROOT_N` | 2 | agent/streaming.py:938, agent/streaming.py:1624, agent/streaming.py:1667 | cli/rcb_runner.py:85 | code-set |
 | `HUGINN_KG_DEPTH` | 1 | config.py:781 | — | external |
 | `HUGINN_KG_ENABLED` | '' | config.py:780 | — | external |
@@ -115,7 +115,7 @@
 | `HUGINN_LLM_LIKELIHOOD` | 0 | metacog/llm_likelihood.py:42, metacog/llm_likelihood.py:270 | metacog/llm_likelihood.py:273, metacog/llm_likelihood.py:278, metacog/llm_likelihood.py:281 | code-set |
 | `HUGINN_LLM_LIKELIHOOD_INTERVAL` | 5 | metacog/llm_likelihood.py:52 | metacog/llm_likelihood.py:285, metacog/llm_likelihood.py:287 | code-set |
 | `HUGINN_LLM_REQUEST_TIMEOUT` | 120 | models/registry.py:158 | — | external |
-| `HUGINN_LOCAL_ONLY` | 0 | config.py:783, models/registry.py:1188 | — | external |
+| `HUGINN_LOCAL_ONLY` | 0 | config.py:783, models/registry.py:1205 | — | external |
 | `HUGINN_LOCAL_VISION_MODEL` | qwen2.5-vl | agent/streaming.py:1297, vision/local_decoder.py:24 | — | external |
 | `HUGINN_LOCAL_VISION_TIMEOUT` | 20 | vision/local_decoder.py:30 | — | external |
 | `HUGINN_LOCAL_VISION_TTL` | 2.0 | vision/local_decoder.py:28 | — | external |
