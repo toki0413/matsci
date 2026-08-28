@@ -4,7 +4,7 @@
  * Manages the AppConfig (models, agents, privacy, pet, encryption),
  * settings tab navigation, model/agent CRUD, and config save/push.
  */
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { api } from "../lib/api";
 import {
   loadStoredConfig, saveStoredConfig,
@@ -25,6 +25,14 @@ export function useConfig() {
   // 当前生效模型 (lead agent 绑定的 alias)。由 /config/active-model 读写。
   const [activeModel, setActiveModel] = useState<string>("");
   const [activeModelSavedMsg, setActiveModelSavedMsg] = useState<string>("");
+  // active-model 消息定时器: 切换时清理旧 timer, 卸载时也清理, 避免互相提前清除 / setState on unmounted
+  const activeModelMsgTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    // 仅卸载时清理, 一次性
+    return () => {
+      if (activeModelMsgTimer.current) clearTimeout(activeModelMsgTimer.current);
+    };
+  }, []);
   // 模型档位 (极简模式)。由 /config/model-tier 读取/切换。
   const [modelTier, setModelTier] = useState<string>("");
   const [availableModelTiers, setAvailableModelTiers] = useState<string[]>([]);
@@ -176,6 +184,13 @@ export function useConfig() {
   }, []);
 
   const switchActiveModel = useCallback(async (alias: string) => {
+    // #4: 空值或切到当前已生效的模型都不发请求 (幂等, 避免冗余请求)
+    if (!alias || alias === activeModel) return;
+    // #3: 清理上一个消息定时器, 快速连切时不互相提前清除
+    if (activeModelMsgTimer.current) {
+      clearTimeout(activeModelMsgTimer.current);
+      activeModelMsgTimer.current = null;
+    }
     try {
       const resp = await api.post<{ success?: boolean; error?: string }>("/config/active-model", { alias });
       if (resp.success) {
@@ -187,8 +202,8 @@ export function useConfig() {
     } catch (e: any) {
       setActiveModelSavedMsg(`切换失败: ${e.message}`);
     }
-    setTimeout(() => setActiveModelSavedMsg(""), 4000);
-  }, []);
+    activeModelMsgTimer.current = setTimeout(() => setActiveModelSavedMsg(""), 4000);
+  }, [activeModel]);
 
   // ── Model tier (极简模式) ────────────────────────────────────
   const loadModelTier = useCallback(async () => {
