@@ -187,9 +187,7 @@ class KnowledgeDistiller:
         if "produced:" in low and not _has_real_signal(content):
             return False
         # 没有可溯源证据的条目不进库
-        if not any((ev or "").strip() for ev in (dk.source_evidence or [])):
-            return False
-        return True
+        return any((ev or "").strip() for ev in (dk.source_evidence or []))
 
     def _is_semantically_duplicate(self, content: str, threshold: float = 0.65) -> bool:
         """检查是否已有语义相似的蒸馏知识 (Jaccard 词集重叠).

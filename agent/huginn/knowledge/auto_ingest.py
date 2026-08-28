@@ -233,9 +233,7 @@ def _is_info_empty(text: str) -> bool:
     t = text.strip()
     if not t:
         return True
-    if "no key properties" in t or "produced: no properties" in t:
-        return True
-    return False
+    return "no key properties" in t or "produced: no properties" in t
 
 
 def _build_knowledge_text(tool_name: str, tool_input: dict, tool_output: Any) -> str:

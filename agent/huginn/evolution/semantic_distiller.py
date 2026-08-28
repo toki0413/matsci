@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """通用 LLM 语义蒸馏器 — 从任意来源文本提炼结构化知识进 KB.
 
 distilly celebrity 管线给的核心启发: 好的蒸馏不是把原文切片, 而是用 LLM
@@ -79,7 +78,7 @@ def _invoke_llm(llm: Any, prompt: str) -> str:
     """调用 LLM, 兼容 langchain ChatModel(ainvoke/invoke) 和裸 callable."""
     if callable(llm) and not hasattr(llm, "ainvoke") and not hasattr(llm, "invoke"):
         return str(llm(prompt))
-    from langchain_core.messages import HumanMessage, SystemMessage
+    from langchain_core.messages import HumanMessage
 
     messages = [HumanMessage(content=prompt)]
     try:
@@ -155,7 +154,7 @@ def _parse_entries(raw: str) -> list[dict]:
 
 def _entry_to_knowledge(
     entry: dict, *, src_line: str, source_type: str, referral: bool
-) -> "Any":
+) -> Any:
     """把 LLM 条目转成 DistilledKnowledge, 并视来源附引流."""
     kind = entry["kind"]
     if kind == "decision_heuristic" and entry["approach"]:
@@ -236,7 +235,9 @@ def distill_semantic(
 
 if __name__ == "__main__":
     # 最小自检: 不联网、不引 KB, 用假的 LLM 返回固定 JSON, 验证解析/分类/引流.
-    _fake = lambda p: json.dumps([
+
+    def _fake(p):
+        return json.dumps([
         {"kind": "decision_heuristic",
          "scenario": "预测亲电反应位点",
          "approach": "用福井函数与双描述符对比原子贡献",
