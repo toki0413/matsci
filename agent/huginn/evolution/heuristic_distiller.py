@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """决策启发式蒸馏器 — 从 sobereva 方法一览帖提炼 '场景→方法' 判断规则。
 
 借鉴 distilly 的 decision-heuristics 思路: 专家知识不止是 '是什么',
@@ -114,7 +113,7 @@ def _is_noise_word(w: str) -> bool:
 
 def extract_rules(post_text: str, source_url: str) -> list[DecisionRule]:
     """从一篇方法一览帖抽取决策规则."""
-    lines = [l.rstrip() for l in post_text.splitlines()]
+    lines = [line.rstrip() for line in post_text.splitlines()]
     # 跳过 YAML frontmatter (首行 --- 到下一个 ---)
     start_body = 0
     if lines and lines[0].strip() == "---":
@@ -178,11 +177,6 @@ def extract_rules(post_text: str, source_url: str) -> list[DecisionRule]:
             sec = _clean(s.group(1))
             # 剔除编号前缀 "2.1 "
             sec_name = re.sub(r"^\d+(\.\d+)*\s*", "", sec)
-            # 若当前 pending_scenario 存在且是归纳列表, 把章节方法名并入
-            if pending_scenario and _is_scenario_line(pending_scenario):
-                if not _is_noise_word(sec_name) and 2 <= len(sec_name) <= 30:
-                    if pending_scenario not in [r.scenario for r in rules]:
-                        pass
             # 新的大场景: 章节标题含动作词, 作为独立规则(单方法)
             if _is_scenario_line(sec_name) and pending_scenario is None:
                 pending_scenario = sec_name
@@ -223,12 +217,10 @@ def _is_plausible_method(text: str) -> bool:
     是描述句, 不是方法名, 过滤掉. 真正的像 '福井函数' / '双描述符' /
     'M06-2X' / 'ALIE' 都通过. ponytail: 关键词黑名单够用, 不引入 POS tagger.
     """
-    if any(k in text for k in ("鼠标", "然后", "但是", "因为", "如果", "使得",
-                               "用", "让", "是指", "这是", "那是", "记录了",
-                               "告诉", "比如", "强烈", "可选", "失效", "推荐",
-                               "当手头")):
-        return False
-    return True
+    return not any(k in text for k in ("鼠标", "然后", "但是", "因为", "如果", "使得",
+                                       "用", "让", "是指", "这是", "那是", "记录了",
+                                       "告诉", "比如", "强烈", "可选", "失效", "推荐",
+                                       "当手头"))
 
 
 def _rule_id(scenario: str, methods: list[str]) -> str:
