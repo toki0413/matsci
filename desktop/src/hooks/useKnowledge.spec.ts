@@ -71,7 +71,11 @@ describe('useKnowledge', () => {
       fakeFile,
       expect.any(Function),
     );
-    expect(result.current.kbMsg).toContain('7 chunks');
+    // 反馈闭环: 索引后提示条数, 自检检索完成后给出"可验证/通过"结论
+    expect(result.current.kbMsg).toContain('7 条');
+    await act(async () => {
+      await Promise.resolve();
+    });
     expect(result.current.uploadPct).toBe(100); // reaches 100 on completion
     // the 2s timer then resets progress back to 0
     await act(async () => {

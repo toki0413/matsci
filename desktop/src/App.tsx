@@ -281,9 +281,12 @@ export default function App() {
     kbDocs, kbAvailable, kbLoading, kbMsg, kbQuery, kbChunks, parseLoading, uploadPct,
     fileInputRef, parseFileInputRef,
     setKbQuery,
-    loadKnowledge, uploadKnowledge, parseDocument, loadDocumentGraph,
+    loadKnowledge, uploadKnowledge, uploadKnowledgeMany, parseDocument, loadDocumentGraph,
     deleteKnowledge, queryKnowledge, ingestUrl, loadProvenanceDag,
     viewingDoc, docChunks, docLoading, loadDocumentContent, clearDocView,
+    docGraph, viewDocGraph, clearDocGraph,
+    docImages, imagesLoading, reportLoading, reportContent, reportError,
+    loadDocImages, generateReport, fetchRawText, downloadRaw,
   } = useKnowledge();
 
   const {
@@ -1708,6 +1711,7 @@ export default function App() {
               kbChunks={kbChunks}
               setKbQuery={setKbQuery}
               uploadKnowledge={uploadKnowledge}
+              uploadKnowledgeMany={uploadKnowledgeMany}
               parseDocument={parseDocument}
               loadDocumentGraph={loadDocumentGraph}
               deleteKnowledge={deleteKnowledge}
@@ -1719,6 +1723,19 @@ export default function App() {
               docLoading={docLoading}
               loadDocumentContent={loadDocumentContent}
               clearDocView={clearDocView}
+              docGraph={docGraph}
+              viewDocGraph={viewDocGraph}
+              clearDocGraph={clearDocGraph}
+              embeddingDownload={embeddingDownload}
+              docImages={docImages}
+              imagesLoading={imagesLoading}
+              reportLoading={reportLoading}
+              reportContent={reportContent}
+              reportError={reportError}
+              loadDocImages={loadDocImages}
+              generateReport={generateReport}
+              fetchRawText={fetchRawText}
+              downloadRaw={downloadRaw}
             />
           </div>
 

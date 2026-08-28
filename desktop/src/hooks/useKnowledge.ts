@@ -5,9 +5,13 @@
  * knowledge querying, and document management.
  */
 import { useState, useRef, useCallback } from 'react';
-import { api } from '../lib/api';
+import { api, authHeaders } from '../lib/api';
+import { getApiBase } from '../lib/api-client';
 import { toast } from '../components/Toast';
 import type { KbDoc, DocumentParseResult, DocumentGraph } from '../types/domain';
+
+// to build /knowledge/{id}/raw links for inline preview + download
+const rawUrl = (docId: string) => `${getApiBase()}/knowledge/${docId}/raw`;
 
 export function useKnowledge() {
   const [kbDocs, setKbDocs] = useState<KbDoc[]>([]);
@@ -24,6 +28,15 @@ export function useKnowledge() {
   const [docChunks, setDocChunks] = useState<any[] | null>(null);
   const [docLoading, setDocLoading] = useState(false);
 
+  // 图片画廊: 点图片 tab 后拉 /knowledge/{id}/images
+  const [docImages, setDocImages] = useState<any[] | null>(null);
+  const [imagesLoading, setImagesLoading] = useState(false);
+
+  // 报告生成: loading / 内容 / 错误
+  const [reportLoading, setReportLoading] = useState(false);
+  const [reportContent, setReportContent] = useState<string | null>(null);
+  const [reportError, setReportError] = useState<string | null>(null);
+
   const loadKnowledge = async () => {
     try {
       const data = await api.get<{ documents?: any[]; available?: any }>('/knowledge');
@@ -38,28 +51,59 @@ export function useKnowledge() {
   const [uploadPct, setUploadPct] = useState(0);
 
   const uploadKnowledge = async (file: File) => {
-    setKbMsg('Uploading…');
+    setKbMsg('上传中…');
     setUploadPct(0);
     try {
-      const data = await api.uploadWithProgress<{ success?: boolean; error?: string; document?: { chunks: number } }>(
+      const data = await api.uploadWithProgress<{ success?: boolean; error?: string; document?: { chunks: number; doc_id?: string; filename?: string } }>(
         '/knowledge/upload',
         file,
         (loaded, total) => setUploadPct(Math.round((loaded / total) * 100)),
       );
       if (data.success) {
-        setKbMsg(`Uploaded ${data.document?.chunks ?? 0} chunks from ${file.name}`);
+        const n = data.document?.chunks ?? 0;
         setUploadPct(100);
         setTimeout(() => setUploadPct(0), 2000);
         loadKnowledge();
+        // 反馈闭环: 索引完成后做一次自检检索, 确认"能搜到"再告诉用户, 而不是只报索引条数.
+        setKbMsg(`已索引 ${n} 条，正在验证可检索性…`);
+        selfCheckSearch(file, data.document);
       } else {
-        setKbMsg(`Upload failed: ${data.error}`);
-        toast.error(`Upload failed: ${data.error}`);
+        setKbMsg(`上传失败: ${data.error}`);
+        toast.error(`上传失败: ${data.error}`);
         setUploadPct(0);
       }
     } catch (e: any) {
-      setKbMsg(`Upload error: ${e.message}`);
-      toast.error(`Upload error: ${e.message}`);
+      setKbMsg(`上传出错: ${e.message}`);
+      toast.error(`上传出错: ${e.message}`);
       setUploadPct(0);
+    }
+  };
+
+  // 用文件名去掉扩展名当 query 跑一次检索, 命中刚上传的 doc 才算"可立即检索".
+  // src 已落在 /tmp 之外, 这里不会触发沙箱目录检查; 失败也不抛, 只降级提示.
+  const selfCheckSearch = async (file: File, doc?: { doc_id?: string; filename?: string; chunks?: number }) => {
+    const query = file.name.replace(/\.[^.]+$/, '').replace(/[_\-]+/g, ' ').slice(0, 40);
+    if (!query.trim()) {
+      setKbMsg(`已索引 ${doc?.chunks ?? 0} 条，可在右侧搜索验证`);
+      return;
+    }
+    try {
+      const check = await api.post<{ chunks?: any[] } & Record<string, any>>('/knowledge/query', { query, top_k: 3 });
+      const hit = (check?.chunks || []).some((c: any) =>
+        (c.metadata && c.metadata.doc_id && doc && c.metadata.doc_id === doc.doc_id) ||
+        String(c.metadata?.filename) === (doc?.filename || file.name)
+      );
+      setKbMsg(hit
+        ? `✅ 已索引 ${doc?.chunks ?? 0} 条，检索验证通过`
+        : `已索引 ${doc?.chunks ?? 0} 条，可在右侧输入关键词验证`);
+    } catch {
+      setKbMsg(`已索引 ${doc?.chunks ?? 0} 条，可在右侧搜索验证`);
+    }
+  };
+
+  const uploadKnowledgeMany = async (files: FileList | File[]) => {
+    for (const f of Array.from(files)) {
+      await uploadKnowledge(f);
     }
   };
 
@@ -96,13 +140,20 @@ export function useKnowledge() {
     try {
       const data = await api.get<DocumentGraph>(`/document/${docId}/graph`);
       setKbMsg(
-        `📊 Document graph: ${data.nodes?.length || 0} nodes, ` +
-        `${data.edges?.length || 0} edges`
+        `📊 知识图谱: ${data.nodes?.length || 0} 个节点, ` +
+        `${data.edges?.length || 0} 条边`
       );
       return data;
     } catch { /* ignore */ }
     return null;
   }, []);
+
+  // 文档结构图谱: 📊 按钮把图数据结构存这里, 面板用 SVG 渲染, 而非只弹一行文字.
+  const [docGraph, setDocGraph] = useState<DocumentGraph | null>(null);
+  const viewDocGraph = useCallback(async (docId: string) => {
+    const g = await loadDocumentGraph(docId);
+    setDocGraph(g);
+  }, [loadDocumentGraph]);
 
   const loadDocumentContent = useCallback(async (doc: { doc_id: string; filename: string }) => {
     setViewingDoc(doc);
@@ -127,6 +178,74 @@ export function useKnowledge() {
   const clearDocView = useCallback(() => {
     setViewingDoc(null);
     setDocChunks(null);
+    setDocImages(null);
+    setReportContent(null);
+    setReportError(null);
+    setReportLoading(false);
+  }, []);
+
+  // 图片画廊: 拉缺失且未加载时获取
+  const loadDocImages = useCallback(async (docId: string) => {
+    setImagesLoading(true);
+    try {
+      const data = await api.get<{ images?: any[] } & Record<string, any>>(`/knowledge/${docId}/images`);
+      setDocImages(data.images || []);
+    } catch {
+      setDocImages([]);
+    } finally {
+      setImagesLoading(false);
+    }
+  }, []);
+
+  // 生成综合报告: 把当前文档内容喂给 lead agent 合成, 结果留在 reportContent
+  const generateReport = useCallback(async (docId: string, title: string) => {
+    setReportLoading(true);
+    setReportError(null);
+    setReportContent(null);
+    try {
+      const data = await api.post<{ success?: boolean; report?: string; error?: string }>(
+        '/knowledge/report',
+        { doc_ids: [docId], title },
+      );
+      if (data.success) {
+        setReportContent(data.report || '（报告为空）');
+      } else {
+        setReportError(data.error || '报告生成失败');
+      }
+    } catch (e: any) {
+      setReportError(`报告生成失败: ${e.message}`);
+    } finally {
+      setReportLoading(false);
+    }
+  }, []);
+
+  // 原文预览: 带鉴权拉取原始文本 (仅文本类文件), 失败返回空串
+  const fetchRawText = useCallback(async (docId: string) => {
+    try {
+      const resp = await fetch(rawUrl(docId), { headers: authHeaders() });
+      if (!resp.ok) return '';
+      return await resp.text();
+    } catch {
+      return '';
+    }
+  }, []);
+
+  // 原文下载: 带鉴权拉 blob 触发下载, 绕开 <a download> 不带头导致的 401
+  const downloadRaw = useCallback(async (docId: string, filename: string) => {
+    try {
+      const resp = await fetch(rawUrl(docId), { headers: authHeaders() });
+      if (!resp.ok) return false;
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+      return true;
+    } catch {
+      return false;
+    }
   }, []);
 
   const deleteKnowledge = async (docId: string) => {
@@ -185,8 +304,11 @@ export function useKnowledge() {
     kbDocs, kbAvailable, kbLoading, kbMsg, kbQuery, kbChunks, parseLoading, uploadPct,
     fileInputRef, parseFileInputRef,
     setKbQuery, setKbMsg,
-    loadKnowledge, uploadKnowledge, parseDocument, loadDocumentGraph,
+    loadKnowledge, uploadKnowledge, uploadKnowledgeMany, parseDocument, loadDocumentGraph,
     deleteKnowledge, queryKnowledge, ingestUrl, loadProvenanceDag,
     viewingDoc, docChunks, docLoading, loadDocumentContent, clearDocView,
+    docGraph, viewDocGraph, clearDocGraph: () => setDocGraph(null),
+    docImages, imagesLoading, reportLoading, reportContent, reportError,
+    loadDocImages, generateReport, fetchRawText, downloadRaw,
   };
 }
