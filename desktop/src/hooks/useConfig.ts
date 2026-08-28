@@ -192,10 +192,11 @@ export function useConfig() {
       activeModelMsgTimer.current = null;
     }
     try {
-      const resp = await api.post<{ success?: boolean; error?: string }>("/config/active-model", { alias });
+      const resp = await api.post<{ success?: boolean; error?: string; runtime_applied?: boolean }>("/config/active-model", { alias });
       if (resp.success) {
         setActiveModel(alias);
-        setActiveModelSavedMsg(`已切换到 ${alias}`);
+        // 后端 best-effort 热切换: 有活 agent 就立即生效, 否则下次启动生效
+        setActiveModelSavedMsg(resp.runtime_applied ? `已切换到 ${alias}` : `已切换 ${alias}，下次启动生效`);
       } else {
         setActiveModelSavedMsg(resp.error || "切换失败");
       }
