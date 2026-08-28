@@ -755,6 +755,24 @@ def _chunk_pdf_sections(
     return chunks
 
 
+def _classify_doc_source(doc_id: str, meta: dict[str, Any]) -> str:
+    """给文档归类来源, 供前端来源徽标/过滤.
+
+    优先级: 预置(seed) > 蒸馏(distill) > 自动沉淀(auto) > 用户上传(upload).
+    上传/URL 链接都算 upload —— 都是用户主动喂进来的资料.
+    """
+    if meta.get("seed") or (doc_id or "").startswith("seed:"):
+        return "seed"
+    st = str(meta.get("source_type") or "")
+    fname = str(meta.get("filename") or "")
+    # 蒸馏条目标记为 distilled_ 前缀 (见 knowledge_distiller._save)
+    if "distill" in st or "heuristic" in st or fname.startswith("distilled_"):
+        return "distill"
+    if fname.startswith("autoloop_iter_") or fname.startswith("auto_") or st == "auto_sediment":
+        return "auto"
+    return "upload"
+
+
 class KnowledgeBase:
     """A local vector knowledge base backed by ChromaDB."""
 
@@ -1084,8 +1102,24 @@ class KnowledgeBase:
                 # _score_document_value 的 recency 维度需要 created_at
                 # 之前 list 路径不带此字段, 导致三维评分退化成两维
                 "created_at": meta.get("created_at", ""),
+                # 来源分类: 前端据此显示来源徽标 + 按来源过滤
+                "source": _classify_doc_source(doc_id, meta),
             }
         return sorted(docs.values(), key=lambda d: d["filename"])
+
+    def save_raw(self, doc_id: str, filename: str, content: bytes) -> None:
+        """持久化上传的原始字节到 docs_dir, 供 `原文查看/下载` 端点使用.
+
+        SmartIngester 走 add_text 不落 docs_dir, 所以路由在拿到 doc_id 后
+        主动存一份, 于 `原文` 预览才有原始数据/表格/源码可看可下.
+        """
+        self.docs_dir.mkdir(exist_ok=True)
+        (self.docs_dir / f"{doc_id}_{Path(filename).name}").write_bytes(content)
+
+    def get_raw(self, doc_id: str) -> Path | None:
+        """返回 doc 的原始文件路径 (docs_dir/{doc_id}_*). 没有则 None."""
+        matches = sorted(self.docs_dir.glob(f"{doc_id}_*"))
+        return matches[0] if matches else None
 
     def get_document_chunks(self, doc_id: str) -> list[dict[str, Any]]:
         """Return a document's chunks in order (for full-text/fragment preview).

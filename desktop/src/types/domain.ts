@@ -83,6 +83,7 @@ export interface MemoryLayers {
 export interface KbDoc {
   doc_id: string;
   filename: string;
+  source?: 'seed' | 'distill' | 'auto' | 'upload';
 }
 
 export interface FileEntry {
