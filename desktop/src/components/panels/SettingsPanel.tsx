@@ -686,11 +686,22 @@ export function SettingsPanel(props: SettingsPanelProps) {
                 <div className="flex shrink-0 items-center gap-2">
                   <select
                     className="input text-xs"
-                    value={activeModel}
-                    onChange={(e) => switchActiveModel(e.target.value)}
+                    value={activeModel || ""}
+                    onChange={(e) => {
+                      // 空占位("请选择")不触发请求, 避免向后端发 alias="" 拿"必填"报错
+                      if (!e.target.value) return;
+                      switchActiveModel(e.target.value);
+                    }}
                     disabled={config.models.filter((m) => m.enabled).length === 0}
                   >
                     <option value="">{t('settings.selectModel')}</option>
+                    {/* 活跃模型被禁用时也展示一个只读项, 保证下拉与旁边的 "current:" 一致 */}
+                    {activeModel &&
+                      !config.models.some((m) => m.enabled && m.alias === activeModel) && (
+                        <option value={activeModel} disabled>
+                          {activeModel} · 已禁用
+                        </option>
+                      )}
                     {config.models.filter((m) => m.enabled).map((m) => (
                       <option key={m.alias} value={m.alias}>{m.alias} ({m.provider})</option>
                     ))}
