@@ -194,6 +194,10 @@ class _EmbeddingModel:
     # 一次 ONNX encode 超时后置真, 后续全部直接走确定性向量, 避免每次种子
     # 文档都再白等 _ENCODE_TIMEOUT_SECONDS(20*30s 拖着 CI 启动超时).
     _onnx_degraded: bool = False
+    # ST 权重下载/加载失败过一次后置真, 后续 encode() 直接给确定性向量并跳过
+    # 联网下载与 onnx 兜底 —— 否则 CI 离线时每个 batch 都要重试联网(慢到拖垮
+    # TestClient 启动), 也在无网桌面环境反复白等.
+    _st_failed: bool = False
     # 与 rag.vector_store.VectorStore 共用同一 embedding 缓存 (合并两套重复缓存).
     # 共享实例存 list[list[float]], encode() 在 ndarray ↔ list 边界做转换.
     _embedding_cache: TimedLRUCache[list[list[float]]] = embedding_cache
@@ -219,9 +223,9 @@ class _EmbeddingModel:
                 import numpy as np
                 return np.asarray(cached, dtype=np.float32)
 
-        # 之前 ONNX encode 已超时降级, 不进 onnx 也不进 sentence_transformers,
-        # 直接给确定性向量, 保证 KB 种子流程不被卡死 (见 _encode_onnx_guarded).
-        if _EmbeddingModel._onnx_degraded:
+        # 之前 ST 权重加载失败 或 ONNX 已超时降级: 不进 onnx 也不进
+        # sentence_transformers, 直接给确定性向量, 保证 KB 种子流程不被卡死.
+        if _EmbeddingModel._st_failed or _EmbeddingModel._onnx_degraded:
             return _deterministic_vectors(texts, dim=_resolve_embedding_dim())
 
 
@@ -252,6 +256,8 @@ class _EmbeddingModel:
                     "sentence-transformers load failed (%s); degrade to fallback vectors", e
                 )
                 _EmbeddingModel._st = None
+                # 下载/加载彻底失败一次就永久降级, 别再为后续 batch 重试联网.
+                _EmbeddingModel._st_failed = True
         try:
             # 与 rebuild_kb 重灌时保持一致, 输出单位向量; 否则 l2 距离被模长主导, 命中差.
             result = _EmbeddingModel._st.encode(texts, normalize_embeddings=True)
