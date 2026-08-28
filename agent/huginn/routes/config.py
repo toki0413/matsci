@@ -623,7 +623,23 @@ async def set_active_model(params: dict[str, Any]) -> dict[str, Any]:
         logger.error("unexpected error", exc_info=True)
         return {"success": False, "error": f"持久化失败: {e}"}
 
-    return {"success": True, "active_alias": alias}
+    # runtime 热切换: 让正在运行的 lead agent 立刻换到新模型, 不用重启.
+    # best-effort — 没有活着的 agent, 或解析新模型失败时不影响"已持久化"的结果,
+    # 只是下次启动才生效. 返回 runtime_applied 让前端如实告知用户.
+    runtime_applied = False
+    try:
+        agent = getattr(get_context(), "agent", None)
+        if agent is not None and getattr(agent, "model", None) is not None:
+            from huginn.models.registry import ModelRegistry
+
+            resolved = ModelRegistry.from_config(cfg).resolve(alias)
+            agent.model = resolved
+            runtime_applied = True
+    except Exception:
+        logger.debug("runtime model hot-swap skipped (no live agent or resolve failed)",
+                     exc_info=True)
+
+    return {"success": True, "active_alias": alias, "runtime_applied": runtime_applied}
 
 
 @router.get("/models/caps", dependencies=[Depends(require_admin_key)])
