@@ -93,8 +93,8 @@ def _invoke_llm(llm: Any, prompt: str) -> str:
     if loop is not None:
         try:
             return asyncio.run_coroutine_threadsafe(_ainvoke(), loop).result()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("事件循环线程安全调用失败, 回退到同步 invoke: %s", e)
     try:
         resp = llm.invoke(messages)
         return getattr(resp, "content", str(resp))
