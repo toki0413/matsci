@@ -108,6 +108,12 @@ class TokenBudget:
     )
     current_tokens: int = 0
     current_cost: float = 0.0
+    # 软限制续投 (budget_approval 接线). 硬刹车是 update 抛 BudgetExhausted;
+    # 软限制只在这里记状态, 由上层决定 auto 有限续 / GUI 人工批 / 忽略(off).
+    max_renewals: int = field(
+        default_factory=lambda: int(os.environ.get("HUGINN_BUDGET_MAX_RENEWALS", "3"))
+    )
+    _renewals: int = field(default=0, repr=False)
 
     def __post_init__(self) -> None:
         if self.soft_limit_tokens < 0:
@@ -130,6 +136,33 @@ class TokenBudget:
             self.current_tokens > self.hard_limit_tokens
             or self.current_cost > self.hard_limit_cost
         )
+
+    # ── 软限制 (快用完预警) ──────────────────────────────────────────
+    def is_over_soft(self) -> bool:
+        """是否已超过软限制(硬上限 80%). soft_limit_tokens 是 token 维."""
+        return self.current_tokens > self.soft_limit_tokens
+
+    def renewals_left(self) -> int:
+        """还剩几次续投额度 (auto + GUI 人工批共用同一个额度)."""
+        return self.max_renewals - self._renewals
+
+    def renew(self) -> bool:
+        """执行一次续投: 硬上限×1.5 并按比例重算软限制. 额度用尽返回 False.
+
+        auto 自动续与 GUI 人工批准都走这里, 共用 max_renewals, 防止无头任务
+        无限烧钱。续满后不再续, 下次 update 自然被硬刹车兜住。
+        ponytail: 固定 1.5 倍增, 不为每种模式做可配置放大系数.
+        """
+        if self._renewals >= self.max_renewals:
+            return False
+        self._renewals += 1
+        self.hard_limit_tokens = int(self.hard_limit_tokens * 1.5)
+        self._recompute_soft()
+        return True
+
+    def _recompute_soft(self) -> None:
+        """按新的 hard_limit 重算软限制(默认 80%)."""
+        self.soft_limit_tokens = int(self.hard_limit_tokens * 0.8)
 
 
 __all__ = ["IterationBudget", "ProgressiveBudget", "PlanMode", "TokenBudget", "BudgetExhausted"]
