@@ -122,6 +122,13 @@ where = ["."]
 include = ["huginn*"]
 
 
+[tool.setuptools.package-data]
+# 预置知识种子(.md 参考文档 + *_chunks.jsonl 预分块知识)是运行时数据,
+# 不是 Python 源码 —— 不声明 package-data 就不会进 wheel, 导致安装版
+# 知识库缺 sobereva 等预置知识 (seed_knowledge_base 直接 Added:0).
+"huginn.knowledge.seed" = ["*.md", "*.jsonl"]
+
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
