@@ -121,7 +121,7 @@ class EngineControlMixin:
         if budget is None:
             return
         try:
-            from huginn.autoloop.budget_approval import get_approval_controller
+            from huginn.budget_pause import get_approval_controller
             ctl = get_approval_controller(budget)
             if not ctl.is_active():
                 return
