@@ -421,11 +421,24 @@ ENV_REGISTRY: dict[str, dict[str, Any]] = {
         "consumer": "huginn.cost_ledger.CostLedger.usd_per_gpu_hour",
     },
     "HUGINN_COST_USD_PER_CALL": {
-        "category": EnvCategory.AGENT,
         "type": "float",
         "default": 0.0,
         "description": "CostLedger: USD per tool call (0=unpriced).",
         "consumer": "huginn.cost_ledger.CostLedger.usd_per_call",
+    },
+    "HUGINN_BUDGET_APPROVAL": {
+        "category": EnvCategory.AGENT,
+        "type": "str",
+        "default": "off",
+        "description": "预算软限制审批: off(默认, 只管硬刹车) / auto(快用完自动有限续投) / gui(注入回调人工批).",
+        "consumer": "huginn.autoloop.budget_approval",
+    },
+    "HUGINN_BUDGET_MAX_RENEWALS": {
+        "category": EnvCategory.AGENT,
+        "type": "int",
+        "default": 3,
+        "description": "预算续投额度上限: soft_limit 触发后可续投的最大次数(auto+gui 共用, 防无头无限烧钱).",
+        "consumer": "huginn.autoloop.budget.TokenBudget",
     },
     "HUGINN_MAX_TOOL_OUTPUT_TOKENS": {
         "category": EnvCategory.AGENT,

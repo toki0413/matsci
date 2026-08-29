@@ -101,12 +101,43 @@ class EngineControlMixin:
                 + output_tokens / 1_000_000.0 * 15.0
             )
             self._token_budget.update(total, cost)
+            self._maybe_run_budget_approval()
         except BudgetExhausted:
             # 超硬上限: 先保存进度 (可 resume), 再抛 — agent loop 优雅停止而非继续烧钱.
             self._maybe_save_engine_state(force=True, reason="budget_exhausted")
             raise
         except Exception:
             logger.debug("token budget tracking failed (non-fatal)", exc_info=True)
+
+    def _maybe_run_budget_approval(self) -> None:
+        """预算软限制审批: off 不触发(auto 有限续/gui 回调). abort -> 保存状态并优雅停.
+
+        每次 LLM 调用后由 _track_llm_usage 触发。soft 不抛(不像硬刹车), 靠
+        续投把 hard_limit 抬起来; 续满或用户拒绝则走 BudgetExhausted 停止。
+        ponytail: gui 回调是同步状态查询, 真正的弹窗等待由桌面端在两次调用
+        之间异步完成, 这里不阻塞主循环。
+        """
+        budget = getattr(self, "_token_budget", None)
+        if budget is None:
+            return
+        try:
+            from huginn.autoloop.budget_approval import get_approval_controller
+            ctl = get_approval_controller(budget)
+            if not ctl.is_active():
+                return
+            decision = ctl.on_tokens_used()
+            if decision == "renewed":
+                logger.info(
+                    "budget soft-limit renewed: tokens=%s/%s hard=%s",
+                    budget.current_tokens, budget.soft_limit_tokens, budget.hard_limit_tokens,
+                )
+            elif decision == "abort":
+                self._maybe_save_engine_state(force=True, reason="budget_renew_denied")
+                raise BudgetExhausted("budget renewal denied by user/limit")
+        except BudgetExhausted:
+            raise
+        except Exception:
+            logger.debug("budget approval check failed (non-fatal)", exc_info=True)
 
 
     def _get_event_bus(self):
