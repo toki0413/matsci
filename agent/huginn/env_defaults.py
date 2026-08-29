@@ -431,7 +431,7 @@ ENV_REGISTRY: dict[str, dict[str, Any]] = {
         "type": "str",
         "default": "off",
         "description": "预算软限制审批: off(默认, 只管硬刹车) / auto(快用完自动有限续投) / gui(注入回调人工批).",
-        "consumer": "huginn.autoloop.budget_approval",
+        "consumer": "huginn.budget_pause",
     },
     "HUGINN_BUDGET_MAX_RENEWALS": {
         "category": EnvCategory.AGENT,

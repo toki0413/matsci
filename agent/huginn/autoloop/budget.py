@@ -108,7 +108,7 @@ class TokenBudget:
     )
     current_tokens: int = 0
     current_cost: float = 0.0
-    # 软限制续投 (budget_approval 接线). 硬刹车是 update 抛 BudgetExhausted;
+    # 软限制续投 (budget_pause 接线). 硬刹车是 update 抛 BudgetExhausted;
     # 软限制只在这里记状态, 由上层决定 auto 有限续 / GUI 人工批 / 忽略(off).
     max_renewals: int = field(
         default_factory=lambda: int(os.environ.get("HUGINN_BUDGET_MAX_RENEWALS", "3"))
