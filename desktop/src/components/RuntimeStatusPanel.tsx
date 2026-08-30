@@ -140,6 +140,25 @@ export function RuntimeStatusPanel({ isOpen, onClose }: RuntimeStatusPanelProps)
     }
   };
 
+  const [resolvingId, setResolvingId] = useState<string | null>(null);
+
+  const resolveInbox = async (item: InboxEntry, decision: string) => {
+    if (resolvingId) return;
+    setResolvingId(item.id);
+    setError("");
+    try {
+      await api.post(`/inbox/${encodeURIComponent(item.id)}/resolve`, {
+        resolution: decision,
+      });
+      // 已决的项从列表移除, 引擎侧 await store.wait 会收到答案恢复.
+      setInbox((prev) => prev.filter((x) => x.id !== item.id));
+    } catch (e: any) {
+      setError(e.message || "提交失败");
+    } finally {
+      setResolvingId(null);
+    }
+  };
+
   if (!isOpen) return null;
 
   const runningTasks = tasks.filter((t) =>
@@ -269,6 +288,24 @@ export function RuntimeStatusPanel({ isOpen, onClose }: RuntimeStatusPanelProps)
                             {item.body}
                           </p>
                         )}
+                        <div className="mt-2 flex items-center gap-2">
+                          <button
+                            onClick={() => resolveInbox(item, "approve: 批准续投")}
+                            disabled={resolvingId != null}
+                            className="inline-flex items-center gap-1.5 rounded-md bg-accent px-2.5 py-1 text-xs font-medium text-accent-contrast transition-opacity hover:opacity-90 disabled:opacity-50"
+                          >
+                            <CheckCircle2 size={12} aria-hidden="true" />
+                            {t("runtime.approve", "批准")}
+                          </button>
+                          <button
+                            onClick={() => resolveInbox(item, "deny: 停止")}
+                            disabled={resolvingId != null}
+                            className="inline-flex items-center gap-1.5 rounded-md border border-border bg-bg-tertiary px-2.5 py-1 text-xs font-medium text-text-primary transition-opacity hover:opacity-90 disabled:opacity-50"
+                          >
+                            <X size={12} aria-hidden="true" />
+                            {t("runtime.deny", "拒绝")}
+                          </button>
+                        </div>
                       </li>
                     ))}
                   </ul>
