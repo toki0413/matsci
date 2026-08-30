@@ -123,8 +123,8 @@ def test_maybe_run_budget_approval_renews_on_gui_approve():
 def test_maybe_run_budget_approval_aborts_on_gui_deny():
     import pytest
 
-    from huginn.autoloop.budget import BudgetExhausted
     import huginn.autoloop.engine_control as ec
+    from huginn.autoloop.budget import BudgetExhausted
 
     engine = _StubEngine()
     _attach_budget_helpers(engine)
@@ -135,6 +135,7 @@ def test_maybe_run_budget_approval_aborts_on_gui_deny():
     engine._await_human_decision_via_inbox = AsyncMock(return_value="deny: 停止")
     engine._maybe_save_engine_state = lambda **kw: None
 
-    with patch.dict("os.environ", {"HUGINN_BUDGET_APPROVAL": "gui"}):
-        with pytest.raises(BudgetExhausted):
-            asyncio.run(ec.EngineControlMixin._maybe_run_budget_approval(engine))
+    with patch.dict("os.environ", {"HUGINN_BUDGET_APPROVAL": "gui"}), pytest.raises(
+        BudgetExhausted
+    ):
+        asyncio.run(ec.EngineControlMixin._maybe_run_budget_approval(engine))

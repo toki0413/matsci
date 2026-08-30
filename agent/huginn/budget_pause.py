@@ -25,7 +25,6 @@ GUI 的人机交互不在此模块阻塞: callback 是同步"状态查询", 由�
 
 from __future__ import annotations
 
-import asyncio
 import os
 import time
 from collections.abc import Awaitable, Callable
@@ -170,7 +169,7 @@ def get_approval_mode() -> str:
     return mode if mode in ("off", "auto", "gui") else "off"
 
 
-def get_approval_controller(budget: Any) -> "BudgetApprovalController":
+def get_approval_controller(budget: Any) -> BudgetApprovalController:
     """构造当前模式的审批控制器(读 env + 全局 callback)."""
     return BudgetApprovalController(budget, mode=get_approval_mode(), callback=_callback)
 

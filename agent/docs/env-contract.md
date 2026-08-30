@@ -30,6 +30,8 @@
 | `HUGINN_BLIND_RECONSTRUCTION` | 0 | autoloop/engine_reflect.py:384 | — | external |
 | `HUGINN_BOURBAKI_PATH` | '' | tools/__init__.py:191 | — | external |
 | `HUGINN_BRANCH_INCUBATOR_DEPTH` | 1 | autoloop/hypothesis_loop.py:1936 | — | external |
+| `HUGINN_BUDGET_APPROVAL` | off | budget_pause.py:168 | — | external |
+| `HUGINN_BUDGET_MAX_RENEWALS` | 3 | autoloop/budget.py:114 | — | external |
 | `HUGINN_BUDGET_MODE` | cumulative | scheduling/scheduler.py:115 | — | external |
 | `HUGINN_CACHE_DIR` | str(get_runtime_home( | autoloop/goal_store.py:124, autoloop/plan_store.py:186, cli/rcb_runner.py:60, +20 处 | agents/task_dag.py:312, autoloop/bandit.py:424, autoloop/variant_gen.py:299, +9 处, autoloop/variant_gen.py:310 | code-set |
 | `HUGINN_CHECKPOINTER_MAX_MESSAGES` | 120 | agent/streaming.py:831 | — | external |
@@ -276,4 +278,4 @@
 | `HUGINN_WS_MAX_CONNECTIONS` | 50 | middleware/ws_governance.py:59 | — | external |
 | `HUGINN_WS_MAX_MSGS_PER_SEC` | 20 | middleware/ws_governance.py:60 | — | external |
 
-共 269 个环境变量。
+共 271 个环境变量。

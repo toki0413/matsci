@@ -421,6 +421,7 @@ ENV_REGISTRY: dict[str, dict[str, Any]] = {
         "consumer": "huginn.cost_ledger.CostLedger.usd_per_gpu_hour",
     },
     "HUGINN_COST_USD_PER_CALL": {
+        "category": EnvCategory.AGENT,
         "type": "float",
         "default": 0.0,
         "description": "CostLedger: USD per tool call (0=unpriced).",
