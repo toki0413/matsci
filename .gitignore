@@ -395,3 +395,14 @@ agent/huginn/**/_*demo*.py
 /drone_analysis.py
 /agent/fix_verify*.txt
 /agent/local_*.txt
+
+# 一次性 HTML 报告/研究产物 (已删, 防回流)
+/huginn-acceptance-report/
+/huginn-agent-technical-guide/
+/huginn-architecture-research/
+/huginn-audit-report/
+/huginn-competitive-research/
+/huginn-iteration-research/
+/huginn-test-report/
+/polish-reports/
+/causalgame_ws/
