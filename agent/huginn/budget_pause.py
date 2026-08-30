@@ -25,9 +25,10 @@ GUI 的人机交互不在此模块阻塞: callback 是同步"状态查询", 由�
 
 from __future__ import annotations
 
+import asyncio
 import os
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -213,6 +214,56 @@ class BudgetApprovalController:
         # gui: 无 callback 时降级为 auto(不堵死), 有则问用户.
         approved = self._callback("budget_renew", "预算快用完, 是否批准续投额度?") if self._callback else True
         if approved:
+            b.renew()
+            return "renewed"
+        return "abort"
+
+    async def on_tokens_used_async(
+        self,
+        human_decide: Callable[[str, str], Awaitable[bool]] | None = None,
+    ) -> str:
+        """GUI 模式的异步审批路径: 越过软限制时用注入的 human_decide 问用户.
+
+        与同步 on_tokens_used 的区别: gui 模式不再"无 callback 降级为 auto",
+        而是真挂起等用户 (Inbox 通道)。human_decide(question, reason) -> bool:
+        批准续投返回 True, 否则 False。engine 侧把它接到
+        _await_human_decision_via_inbox 上, 由用户在任意 surface 决定。
+
+        decision 语义与同步版一致: continue / renewed / abort。
+        """
+        if self._mode == "off":
+            return "continue"
+        b = self._budget
+        if not b.is_over_soft():
+            return "continue"
+        if b.renewals_left() <= 0:
+            # 额度用尽: gui 明确停, auto/无等待路径交硬刹车兜住.
+            if self._mode == "gui":
+                return "abort"
+            if b.current_tokens > b.hard_limit_tokens:
+                return "abort"
+            return "continue"
+
+        def _decide(question: str, reason: str) -> bool:
+            approved = self._callback(question, reason) if self._callback else True
+            return approved
+
+        if human_decide is not None:
+            # Inbox 人工审批优先: 真挂起等用户, 不问同步 callback.
+            approved = await human_decide(
+                "预算快用完, 是否批准续投额度?",
+                f"当前 tokens {b.current_tokens}, 超软限制 {b.soft_limit_tokens}",
+            )
+            if approved:
+                b.renew()
+                return "renewed"
+            return "abort"
+
+        if self._mode == "auto":
+            b.renew()
+            return "renewed"
+        # gui + 无 human_decide + 有同步 callback: 回退同步语义.
+        if _decide("budget_renew", "预算快用完, 是否批准续投额度?"):
             b.renew()
             return "renewed"
         return "abort"

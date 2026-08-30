@@ -81,7 +81,7 @@ class EngineControlMixin:
         self._save_alignment_dataset()
 
 
-    def _track_llm_usage(self, usage_meta) -> None:
+    async def _track_llm_usage(self, usage_meta) -> None:
         """P2-7: 从 langchain usage_metadata 累加 token/cost 到 _token_budget.
 
         usage_meta 是 langchain BaseMessage.usage_metadata (dict | None),
@@ -101,7 +101,7 @@ class EngineControlMixin:
                 + output_tokens / 1_000_000.0 * 15.0
             )
             self._token_budget.update(total, cost)
-            self._maybe_run_budget_approval()
+            await self._maybe_run_budget_approval()
         except BudgetExhausted:
             # 超硬上限: 先保存进度 (可 resume), 再抛 — agent loop 优雅停止而非继续烧钱.
             self._maybe_save_engine_state(force=True, reason="budget_exhausted")
@@ -109,23 +109,31 @@ class EngineControlMixin:
         except Exception:
             logger.debug("token budget tracking failed (non-fatal)", exc_info=True)
 
-    def _maybe_run_budget_approval(self) -> None:
-        """预算软限制审批: off 不触发(auto 有限续/gui 回调). abort -> 保存状态并优雅停.
+    async def _maybe_run_budget_approval(self) -> None:
+        """预算软限制审批: off 不触发(auto 有限续/gui Inbox 人工批). abort -> 保存状态并优雅停.
 
         每次 LLM 调用后由 _track_llm_usage 触发。soft 不抛(不像硬刹车), 靠
         续投把 hard_limit 抬起来; 续满或用户拒绝则走 BudgetExhausted 停止。
-        ponytail: gui 回调是同步状态查询, 真正的弹窗等待由桌面端在两次调用
-        之间异步完成, 这里不阻塞主循环。
+        gui 模式经 Inbox 真挂起等用户 (复用 _await_human_decision_via_inbox),
+        批准才续投, 拒绝则优雅停止 — 不静默降级为 auto。
         """
         budget = getattr(self, "_token_budget", None)
         if budget is None:
             return
         try:
-            from huginn.budget_pause import get_approval_controller
-            ctl = get_approval_controller(budget)
-            if not ctl.is_active():
-                return
-            decision = ctl.on_tokens_used()
+            from huginn.budget_pause import get_approval_controller, get_approval_mode
+
+            if get_approval_mode() != "gui":
+                # auto / off 走同步裁决, 不与 Inbox 交互.
+                ctl = get_approval_controller(budget)
+                if not ctl.is_active():
+                    return
+                decision = ctl.on_tokens_used()
+            else:
+                # gui: 注入 Inbox 人工决定. 无 Inbox 可用时回退同步 callback 语义.
+                human_decide = self._build_budget_human_decide()
+                ctl = get_approval_controller(budget)
+                decision = await ctl.on_tokens_used_async(human_decide)
             if decision == "renewed":
                 logger.info(
                     "budget soft-limit renewed: tokens=%s/%s hard=%s",
@@ -138,6 +146,34 @@ class EngineControlMixin:
             raise
         except Exception:
             logger.debug("budget approval check failed (non-fatal)", exc_info=True)
+
+    def _build_budget_human_decide(self):
+        """构造预算续投的人工决定协程 -> 接 Inbox 真挂起.
+
+        reason 经 _await_human_decision_via_inbox 生成带 quick-reply 的
+        Inbox question, 用户在任意 surface 回答。回答含批准则续投, 否则中止。
+        ponytail: 回调闭包直接抓 self, 由 engine 生命周期保证有效。
+        """
+        async def _human_decide(question: str, detail: str) -> bool:
+            try:
+                _step_id = int(getattr(self, "_iteration", 0) or 0)
+                answer = await self._await_human_decision_via_inbox(
+                    f"预算审批: {question}\n{detail}",
+                    [
+                        {"id": "approve", "label": "批准续投"},
+                        {"id": "deny", "label": "停止 (保存并结束)"},
+                    ],
+                    _step_id,
+                )
+                if not answer:
+                    # Inbox 不可用 / 超时 -> 默认不续投, 交硬刹车兜住.
+                    return False
+                low = str(answer).strip().lower()
+                return "approve" in low or low.startswith("y") or "批准" in str(answer)
+            except Exception:
+                logger.debug("budget human decide failed (non-fatal)", exc_info=True)
+                return False
+        return _human_decide
 
 
     def _get_event_bus(self):
