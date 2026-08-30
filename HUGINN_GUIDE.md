@@ -149,6 +149,11 @@ HUGINN_MODEL_TIER=minimal HUGINN_THINKING=max huginn-agent chat
 - 递归深度 `recursion_limit`：research/extreme mode → 500，extreme dispatch → 400，普通 chat/plan → 250；
 - extreme 模式同时放宽 autoloop 阈值（max_consecutive_failures/max_refines=50、max_pivots=20、stagnation_limit=15），并把 wall-clock 预算放宽到 1 天级（`HUGINN_RCB_TIMEOUT=86400`）。
 
+**预算软限制 + 审批续投**：token 预算以 `soft_limit`（默认 = 硬上限的 80%）为边缘信号，超过软限制后由 `HUGINN_BUDGET_APPROVAL` 决定行为——
+- `off`（默认）：只保留硬刹车，软限制仅作信号；
+- `auto`：每次超软限制自动续投一次（限额 ×1.5），最多 `HUGINN_BUDGET_MAX_RENEWALS`（默认 3）次，防无头无限烧钱；
+- `gui`：真挂起等人工审批——生成一条 **Inbox 待决项**（"批准续投" / "停止"），用户在桌面"运行状态"抽屉（Ctrl+K → 待决策）或任意 surface 答复；批准才续投，拒绝则保存进度并优雅停止。无人答复超时默认不续投，交硬刹车兜住。
+
 （来自 `cli/rcb_runner.py` 的 C3 预算扩容记录与 `agent/core.py._effective_recursion_limit`。）
 
 ## 5.2 权限模式（PermissionMode + RiskLevel）

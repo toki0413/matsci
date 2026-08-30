@@ -732,7 +732,7 @@ Please modify the code to address this task."""
         _cb = _progress_cb.get(None)
         if _cb is None or not hasattr(llm, "astream") or not _autoloop_streaming_enabled():
             response = await llm.ainvoke(messages)
-            self._track_llm_usage(getattr(response, "usage_metadata", None))
+            await self._track_llm_usage(getattr(response, "usage_metadata", None))
             return str(response.content)
         # 流式: 累积 content, 同时推 thinking chunk 到 WS
         parts: list[str] = []
@@ -763,11 +763,11 @@ Please modify the code to address this task."""
                             "phase": self._current_phase or "decider",
                             "delta": _delta[:200],  # 截断防超大 delta
                         })
-            self._track_llm_usage(_usage_meta)
+            await self._track_llm_usage(_usage_meta)
             return "".join(parts)
         except Exception as e:
             # 流式失败回退 ainvoke (某些 provider astream 实现有 bug)
             logger.debug("astream failed, fallback to ainvoke: %s", e)
             response = await llm.ainvoke(messages)
-            self._track_llm_usage(getattr(response, "usage_metadata", None))
+            await self._track_llm_usage(getattr(response, "usage_metadata", None))
             return str(response.content)
