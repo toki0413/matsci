@@ -383,3 +383,15 @@ agent/huginn/**/_*demo*.py
 
 # 开发审查报告 (含硬编码本地路径)
 /backend-review-report.md
+
+# CausalGame 跑批输出 (本地 benchmark 产物, 大文件, 不进 VCS)
+/cg_result_*.json
+/causalgame_test.json
+/causalgame_huginn.py
+
+# 根/agent 散落分析脚本与记录 (报告已由 *_report.md 覆盖)
+/analysis_*.py
+/analysis_notes*.txt
+/drone_analysis.py
+/agent/fix_verify*.txt
+/agent/local_*.txt
