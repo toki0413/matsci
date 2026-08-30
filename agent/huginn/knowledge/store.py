@@ -113,6 +113,15 @@ def _download_embedding_with_progress() -> None:
             def reset(self, *args, **kwargs):
                 ...
 
+            # 新版本 huggingface_hub 把 tqdm_class 当 context manager 用
+            # (HfApi._walk 用 `with tqdm_class(...)`), 补上协议以免 "_ProgressTqdm
+            # object does not support the context manager protocol" 拖垮启动.
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
             def update(self, n=1):
                 done_bytes[0] += n
                 pct = done_bytes[0] / total * 100
