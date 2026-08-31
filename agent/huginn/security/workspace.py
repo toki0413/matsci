@@ -15,11 +15,10 @@
 from __future__ import annotations
 
 import logging
-import random
 from collections.abc import Callable
-from dataclasses import dataclass
 from typing import Any, Protocol
 
+from huginn.security.actuator_model import ErrorModel, SensorModelExecutor
 from huginn.security.coeffect import CoEffectRegistry
 from huginn.security.physics_schema import (
     ActionSpec,
@@ -92,39 +91,15 @@ class MockExecutor:
         return dict(state)
 
 
-@dataclass
-class ErrorModel:
-    """硬件执行误差模型 — 施加在体积相关量的实测值上.
+class SimExecutor(SensorModelExecutor):
+    """状态转移仿真执行器 — 复用可复用执行器骨架 (阶段1 首个工具实例).
 
-    真实移液站有系统偏置 (accuracy) + 随机误差 (precision). 有误差时仿真执行器
-    的实测状态偏离 world_model 的理想预测, 让状态级感知确认 (``spec.expect`` /
-    ``expected``) 在纯软件下就能处理设备噪声:
+    前向真值 = ``world_model.apply_forward`` (规则表, 与 world model 共用唯一
+    事实来源, 保证"世界模型预演"与"实际仿真结果"一致); 传感器键取自
+    ``FORWARD_EFFECTS``; 执行误差仅在带 ``vol`` 参数的动作上注入 (量守恒).
 
-    - ``systematic``: **系统(刻度/安装)偏置**, 每次固定叠加, 绝对体积单位.
-    - ``sigma``: 随机误差标准差, 绝对体积单位 (uL), 服从**零均值**高斯.
-
-    两类误差的处理方式必须不同 (microduck sim2real 核心教训): 零均值 ``sigma``
-    是"域随机化"要训练容忍的东西; ``systematic`` 是 DR **治不了**的 — 只能由
-    运行时标定 (``SimExecutor.calibrate``) 补偿, 而不是靠放宽确认容差去"吞掉"它.
-    仅对 ``aspirate`` / ``dispense`` 这类带体积参数的动作注入; 不影响
-    ``mix`` / ``aliquot`` 等离散量.
-    """
-
-    systematic: float = 0.0
-    sigma: float = 0.0
-
-
-class SimExecutor(MockExecutor):
-    """状态转移仿真执行器 — 算法可微的物理后端占位 (真实 VLA/仿真器可替换).
-
-    前向转移规则与 ``world_model.apply_forward`` 共用同一事实来源
-    (``FORWARD_EFFECTS``), 保证"世界模型预演"与"实际仿真结果"一致 —
-    感知确认才能对比预期 vs 实际. ``fail_on`` 与 ``MockExecutor`` 同语义.
-
-    ``error_model``: 可注入的硬件误差 (系统偏置 + 随机 sigma, 均以绝对体积单位
-    施加在体积相关量上). 有误差时执行结果与 world_model 的理想预测存在偏差,
-    让状态级感知确认在纯软件下就能处理真实设备噪声. ``seed`` 保证同 seed 同
-    误差序列 (测试可复现). ``error_model=None`` 时行为与旧完全一致 (确定性).
+    真实 VLA / 计算工具后端只需声明自己的 ``_forward`` 与 ``_sensor_keys`` +
+    ``error_model``, 即可同享 execute / observe / sensor_view / calibrate 语义.
     """
 
     def __init__(
@@ -135,69 +110,25 @@ class SimExecutor(MockExecutor):
         error_model: ErrorModel | None = None,
         seed: int | None = None,
     ) -> None:
-        super().__init__(fail_on=fail_on)
-        self.state = dict(initial or {"reagent_vol": 100.0, "sample_vol": 0.0, "tube_vol": 0.0})
+        super().__init__(
+            fail_on=fail_on,
+            initial=initial or {"reagent_vol": 100.0, "sample_vol": 0.0, "tube_vol": 0.0},
+            error_model=error_model,
+            seed=seed,
+        )
         self.state.setdefault("mixed", False)
         self.state.setdefault("aliquot_count", 0)
-        self.error_model = error_model
-        self._rng = random.Random(seed)
 
-    def execute(self, action: PhysicalAction) -> None:
-        if action.type in self.fail_on:
-            raise RuntimeError(f"sim executor: action {action.type} failed")
-        self._apply(action)
-        self.log.append(action)
+    def _forward(self, state: dict[str, Any], action: PhysicalAction) -> dict[str, Any]:
+        return apply_forward(state, action)
 
-    def _apply(self, action: PhysicalAction) -> None:
-        self.state = apply_forward(self.state, action)
-        # 体积相关动作注入硬件噪声: 目标增量 +noise, 源减量 -noise (等幅反相,
-        # 保持量守恒 − 移错体积而非凭空增减). 物理上 = 一次移液量的测量误差.
-        if self.error_model is not None and "vol" in action.params:
-            dec_key, inc_key, _ = FORWARD_EFFECTS.get(action.type, ("", "", ""))
-            noise = self.error_model.systematic + self._rng.gauss(0.0, self.error_model.sigma)
-            if inc_key and isinstance(self.state.get(inc_key), (int, float)):
-                self.state[inc_key] = float(self.state.get(inc_key, 0.0)) + noise
-            if dec_key and isinstance(self.state.get(dec_key), (int, float)):
-                self.state[dec_key] = float(self.state.get(dec_key, 0.0)) - noise
+    def _sensor_keys(self, action_type: str) -> tuple[str, str]:
+        dec_key, inc_key, _ = FORWARD_EFFECTS.get(action_type, ("", "", ""))
+        return (dec_key, inc_key)
 
-    def calibrate(self, bias_uL: float | None = None) -> float:
-        """运行时标定: 把系统性偏置 ``systematic`` 从读数里补偿掉.
-
-        microduck 核心 sim2real 教训: **系统(刻度/安装)偏置 DR 治不了, 只能
-        运行时标定** — 不要靠放宽确认容差去"训练出容忍". 调用后, 后续感知确认
-        在**同一容差**下即可通过, 无需动容差.
-        ``bias_uL=None`` 时自动取当前 ``systematic`` 全量补偿.
-        返回本次消除的偏置量 (供上层记录到标定档案).
-        """
-        if self.error_model is None:
-            return 0.0
-        take = self.error_model.systematic if bias_uL is None else bias_uL
-        self.error_model.systematic -= take
-        return take
-
-    def sensor_view(self, state: dict[str, Any], action_type: str) -> dict[str, Any]:
-        """把 ``action_type`` 执行后的**理想世界状态**投影到与实测量同一读数视角.
-
-        复刻 ``_apply`` 的等幅反相系统偏置 (目标接收量 +bias, 源 -bias, 量守恒),
-        但只施加 ``systematic`` (确定、幂等); 零均值 ``sigma`` 属 execute 时真实
-        注入, 在确认时保留为真随机 DR — 这正是 microduck "编码器读穿输出侧"
-        的语义: 感知确认用 sensor_view(predict) 对比 observe(), 避免把
-        "偏置但正确补偿" 的动作误判失败.
-        """
-        if self.error_model is None or self.error_model.systematic == 0.0:
-            return dict(state)
-        bias = self.error_model.systematic
-        view = dict(state)
-        effect = FORWARD_EFFECTS.get(action_type)
-        if effect is not None:
-            dec_key, inc_key, _ = effect
-            if inc_key and inc_key not in ("mixed", "aliquot_count") and isinstance(
-                view.get(inc_key), (int, float)
-            ):
-                view[inc_key] = float(view.get(inc_key, 0.0)) + bias
-            if dec_key and isinstance(view.get(dec_key), (int, float)):
-                view[dec_key] = float(view.get(dec_key, 0.0)) - bias
-        return view
+    def _noise_eligible(self, action: PhysicalAction) -> bool:
+        # 只对带体积参数的动作注入 (mix/aliquot 为离散量, 不注入).
+        return bool(getattr(action, "params", None) and "vol" in action.params)
 
 
 class PhysicalWorkspace:
