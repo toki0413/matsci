@@ -206,6 +206,59 @@ def test_sim_executor_conservation_holds():
     assert total == pytest.approx(100.0, abs=1e-6)
 
 
+def test_systematic_fixed_by_calibration_not_tolerance():
+    """系统偏置由运行时标定消除, 而非放宽确认容差 (microduck sim2real rule).
+
+    严格容差(0.4)下 0.5uL 偏置会让确认失败; 标定掉 systematic 后, **同一容差**
+    即通过 — 证明系统偏置靠 ``calibrate()`` 处理, 不是靠把 tolerance 撑大.
+    """
+    em = ErrorModel(systematic=0.5, sigma=0.0)
+    ex = SimExecutor(error_model=em, seed=0)
+    from huginn.security.world_model import PhysicalAction
+    step = StepResult(key="sample_vol", expected=10.0, tol_abs=0.4, tolerance=0.0)
+    spec = ActionSpec(
+        id="asp", action_type="aspirate", params={"vol": 10},
+        preconditions=[], expect=[step],
+    )
+
+    wa = PhysicalWorkspace(NaiveWorldModel(), ex)
+    with pytest.raises(WorkspaceConfirmError):
+        wa.execute(PhysicalAction("aspirate", {"vol": 10}), spec=spec)
+
+    # 运行时标定掉偏置 → 同一容差下通过 (容差未放宽).
+    removed = ex.calibrate(0.5)
+    assert removed == pytest.approx(0.5)
+    assert em.systematic == 0.0
+    ex.state = {"reagent_vol": 100.0, "sample_vol": 0.0, "tube_vol": 0.0,
+                "mixed": False, "aliquot_count": 0}
+    wa2 = PhysicalWorkspace(NaiveWorldModel(), ex)
+    wa2.execute(PhysicalAction("aspirate", {"vol": 10}), spec=spec)
+
+
+def test_sensor_view_consistent_confirm():
+    """感知确认与观测同视角 (sensor_view) — 偏置但正确的动作不被误判.
+
+    world-model 理想预演落在"世界状态"视角, 执行后读数落在"读数"视角.
+    用 naive 理想预测对比实测 → 0.5uL 偏置使严格确认失败 (误判);
+    用 ``sensor_view(ideal)`` 同视角对比 → 通过 (正确补偿不被惩罚).
+    """
+    em = ErrorModel(systematic=0.5, sigma=0.0)
+    ex = SimExecutor(error_model=em, seed=0)
+    wa = PhysicalWorkspace(NaiveWorldModel(), ex)
+    from huginn.security.world_model import PhysicalAction
+
+    check = wa.execute(PhysicalAction("aspirate", {"vol": 10}), preflight=True)
+    assert check.type == "aspirate"  # 未抛 WorkbookConfirmError: 预演预期已同视角
+    obs = wa.state
+    assert wa.state["sample_vol"] == pytest.approx(10.5, abs=1e-6)
+
+    ideal = {"reagent_vol": 90.0, "sample_vol": 10.0}
+    # naive: 理想预测直接对比实测 → 偏置 0.5 破坏了严格确认.
+    assert not matches_state(ideal, obs, tolerance=1e-9)
+    # 同视角: sensor_view(ideal) == 实测 → 判定一致.
+    assert matches_state(ex.sensor_view(ideal, "aspirate"), obs, tolerance=1e-9)
+
+
 # ── Units + 声明式协议状态机 ──────────────────────────────────
 
 

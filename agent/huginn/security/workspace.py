@@ -51,11 +51,20 @@ class DependencyNotMetError(Exception):
 
 
 class ActionExecutor(Protocol):
-    """VLA / 仿真 / Mock 执行器: 执行动作并读回当前状态."""
+    """VLA / 仿真 / Mock 执行器: 执行动作并读回当前状态.
+
+    ``sensor_view``: 把一个动作执行后的**理想世界状态**投影到与该动作实际
+    测量(**observe()**)一致的"读数"视角. 这是感知确认的视角一致性钩子 —
+    microduck 的核心 sim2real 教训: 编码器读穿齿轮输出侧, 感知确认必须在观测
+    同一视角下进行, 否则一个"偏置但正确补偿"的动作会被判为失败. 真实 VLA /
+    执行器 adapter 用传感器模型(系统偏置/位姿噪声)实现它; 无偏置时恒等.
+    """
 
     def execute(self, action: PhysicalAction) -> None: ...
 
     def observe(self) -> dict[str, Any]: ...
+
+    def sensor_view(self, state: dict[str, Any], action_type: str) -> dict[str, Any]: ...
 
 
 class MockExecutor:
@@ -77,6 +86,11 @@ class MockExecutor:
     def observe(self) -> dict[str, Any]:
         return dict(self.state)
 
+    def sensor_view(self, state: dict[str, Any], action_type: str) -> dict[str, Any]:
+        """Mock 无传感器模型 — 读数与状态恒等."""
+        del action_type
+        return dict(state)
+
 
 @dataclass
 class ErrorModel:
@@ -86,9 +100,12 @@ class ErrorModel:
     的实测状态偏离 world_model 的理想预测, 让状态级感知确认 (``spec.expect`` /
     ``expected``) 在纯软件下就能处理设备噪声:
 
-    - ``systematic``: 系统偏置, 绝对体积单位 (uL), 每次固定叠加.
-    - ``sigma``: 随机误差标准差, 绝对体积单位 (uL), 服从高斯.
+    - ``systematic``: **系统(刻度/安装)偏置**, 每次固定叠加, 绝对体积单位.
+    - ``sigma``: 随机误差标准差, 绝对体积单位 (uL), 服从**零均值**高斯.
 
+    两类误差的处理方式必须不同 (microduck sim2real 核心教训): 零均值 ``sigma``
+    是"域随机化"要训练容忍的东西; ``systematic`` 是 DR **治不了**的 — 只能由
+    运行时标定 (``SimExecutor.calibrate``) 补偿, 而不是靠放宽确认容差去"吞掉"它.
     仅对 ``aspirate`` / ``dispense`` 这类带体积参数的动作注入; 不影响
     ``mix`` / ``aliquot`` 等离散量.
     """
@@ -142,6 +159,45 @@ class SimExecutor(MockExecutor):
                 self.state[inc_key] = float(self.state.get(inc_key, 0.0)) + noise
             if dec_key and isinstance(self.state.get(dec_key), (int, float)):
                 self.state[dec_key] = float(self.state.get(dec_key, 0.0)) - noise
+
+    def calibrate(self, bias_uL: float | None = None) -> float:
+        """运行时标定: 把系统性偏置 ``systematic`` 从读数里补偿掉.
+
+        microduck 核心 sim2real 教训: **系统(刻度/安装)偏置 DR 治不了, 只能
+        运行时标定** — 不要靠放宽确认容差去"训练出容忍". 调用后, 后续感知确认
+        在**同一容差**下即可通过, 无需动容差.
+        ``bias_uL=None`` 时自动取当前 ``systematic`` 全量补偿.
+        返回本次消除的偏置量 (供上层记录到标定档案).
+        """
+        if self.error_model is None:
+            return 0.0
+        take = self.error_model.systematic if bias_uL is None else bias_uL
+        self.error_model.systematic -= take
+        return take
+
+    def sensor_view(self, state: dict[str, Any], action_type: str) -> dict[str, Any]:
+        """把 ``action_type`` 执行后的**理想世界状态**投影到与实测量同一读数视角.
+
+        复刻 ``_apply`` 的等幅反相系统偏置 (目标接收量 +bias, 源 -bias, 量守恒),
+        但只施加 ``systematic`` (确定、幂等); 零均值 ``sigma`` 属 execute 时真实
+        注入, 在确认时保留为真随机 DR — 这正是 microduck "编码器读穿输出侧"
+        的语义: 感知确认用 sensor_view(predict) 对比 observe(), 避免把
+        "偏置但正确补偿" 的动作误判失败.
+        """
+        if self.error_model is None or self.error_model.systematic == 0.0:
+            return dict(state)
+        bias = self.error_model.systematic
+        view = dict(state)
+        effect = FORWARD_EFFECTS.get(action_type)
+        if effect is not None:
+            dec_key, inc_key, _ = effect
+            if inc_key and inc_key not in ("mixed", "aliquot_count") and isinstance(
+                view.get(inc_key), (int, float)
+            ):
+                view[inc_key] = float(view.get(inc_key, 0.0)) + bias
+            if dec_key and isinstance(view.get(dec_key), (int, float)):
+                view[dec_key] = float(view.get(dec_key, 0.0)) - bias
+        return view
 
 
 class PhysicalWorkspace:
@@ -243,6 +299,13 @@ class PhysicalWorkspace:
             predicted = self.preflight(action)
             if expected is None and spec is None or spec is not None and not spec.expect:
                 expected = predicted
+                # 感知确认须与观测同一视角 (microduck: 编码器读穿输出侧). 预演得到
+                # 的是"理想世界状态", 先投影到执行器读数视角再对比 observe(), 否则
+                # 一个"偏置但正确"的动作会被误判失败. 真实 adapter 用 sensor_view
+                # 建模传感器系统偏置/位姿噪声; 无偏置执行器走恒等, 行为不变.
+                sensor_view = getattr(self.executor, "sensor_view", None)
+                if sensor_view is not None:
+                    expected = sensor_view(expected, action.type)
 
         inverse = self.world_model.infer_inverse(state_before, action)
 
