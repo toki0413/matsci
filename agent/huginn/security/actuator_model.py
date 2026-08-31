@@ -72,12 +72,16 @@ class SensorModelExecutor(ABC):
 
     def _noise_eligible(self, action: PhysicalAction) -> bool:
         """是否对本动作注入执行误差 (默认总是; 移液等按需覆盖)."""
-        return bool(self._sensor_keys(action.type)[0] or self._sensor_keys(action.type)[1])
+        return bool(
+            self._sensor_keys(action.type)[0] or self._sensor_keys(action.type)[1]
+        )
 
     # ── 对外公共接口 (全实现) ───────────────────────────────────
     def execute(self, action: PhysicalAction) -> None:
         if action.type in self.fail_on:
-            raise RuntimeError(f"{self.__class__.__name__}: action {action.type} failed")
+            raise RuntimeError(
+                f"{self.__class__.__name__}: action {action.type} failed"
+            )
         self.state = self._forward(self.state, action)
         self._inject_noise(action)
         self.log.append(action)
@@ -108,11 +112,13 @@ class SensorModelExecutor(ABC):
         bias = self.error_model.systematic
         view = dict(state)
         dec_key, inc_key = self._sensor_keys(action_type)
-        if inc_key and inc_key not in ("mixed", "aliquot_count") and isinstance(
-            view.get(inc_key), (int, float)
+        if (
+            inc_key
+            and inc_key not in ("mixed", "aliquot_count")
+            and isinstance(view.get(inc_key), int | float)
         ):
             view[inc_key] = float(view.get(inc_key, 0.0)) + bias
-        if dec_key and isinstance(view.get(dec_key), (int, float)):
+        if dec_key and isinstance(view.get(dec_key), int | float):
             view[dec_key] = float(view.get(dec_key, 0.0)) - bias
         return view
 
@@ -122,10 +128,14 @@ class SensorModelExecutor(ABC):
         if self.error_model is None or not self._noise_eligible(action):
             return
         dec_key, inc_key = self._sensor_keys(action.type)
-        noise = self.error_model.systematic + self._rng.gauss(0.0, self.error_model.sigma)
-        if inc_key and inc_key not in ("mixed", "aliquot_count") and isinstance(
-            self.state.get(inc_key), (int, float)
+        noise = self.error_model.systematic + self._rng.gauss(
+            0.0, self.error_model.sigma
+        )
+        if (
+            inc_key
+            and inc_key not in ("mixed", "aliquot_count")
+            and isinstance(self.state.get(inc_key), int | float)
         ):
             self.state[inc_key] = float(self.state.get(inc_key, 0.0)) + noise
-        if dec_key and isinstance(self.state.get(dec_key), (int, float)):
+        if dec_key and isinstance(self.state.get(dec_key), int | float):
             self.state[dec_key] = float(self.state.get(dec_key, 0.0)) - noise

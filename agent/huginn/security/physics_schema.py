@@ -50,15 +50,16 @@ class StepResult(BaseModel):
 
     key: str = Field(..., description="状态字段名, 如 sample_vol")
     expected: float = Field(..., description="期望值 (默认内部单位 uL)")
-    unit: VolumeUnit = Field(
-        default="uL", description="期望值的物理单位 (契约元数据)"
-    )
+    unit: VolumeUnit = Field(default="uL", description="期望值的物理单位 (契约元数据)")
     tolerance: float = Field(
-        default=0.01, ge=0, le=1,
+        default=0.01,
+        ge=0,
+        le=1,
         description="相对容差 (比例, 0.01=±1%). 对 vol/pos 等有量纲量为主体判据",
     )
     tol_abs: float = Field(
-        default=1e-9, ge=0,
+        default=1e-9,
+        ge=0,
         description="绝对容差兜底: 当 |expected| 极小 (相对无意义) 时改用此值",
     )
 
@@ -243,8 +244,46 @@ class ProtocolMachine:
                     preflight=preflight,
                 )
                 executed.append(spec.id)
-            if self.protocol.final_state and not matches_state(self.protocol.final_state, wa.state):
+            if self.protocol.final_state and not matches_state(
+                self.protocol.final_state, wa.state
+            ):
                 raise WorkspaceConfirmError(
                     f"协议终态断言失败: 协议 {self.protocol.name}"
                 )
         return executed
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 共享行为契约 (microduck "shared obs contract; unused slots zero-padded,
+# not dropped"). 所有物理后端 (mock / sim / VLA) 必须喂**同一份**动作参数形状,
+# 未用的参数槽用 0 填充而不是删字段 — 这是后端可热切 (mock→sim→真实执行器
+# 无缝换) 的前提. 每个动作的规范化参数键在此登记, 是**单一事实来源**; 后端之间
+# 彼此漂移正是各写各的键所致.
+# ═══════════════════════════════════════════════════════════════════
+
+# 契约版本 — 新增/变更参数槽时递增; 后端/运行时据此握手 (microduck model_api).
+SHARED_CONTRACT_VERSION = 1
+
+# action_type -> 规范化参数槽 (有序). 新增动作必须在此登记; 未启用的数值槽零填充.
+OP_PARAM_SLOTS: dict[str, tuple[str, ...]] = {
+    "aspirate": ("vol",),
+    "dispense": ("vol",),
+    "mix": ("mode",),
+    "aliquot": ("n",),
+}
+
+
+def canonical_params(
+    action_type: str, params: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """按共享契约规范化动作参数: 只保留登记过的键 + 缺失数值槽补 0.
+
+    这样 mock/sim/VLA 后端喂同一份 ActionSpec 得到**同一形状**的参数向量,
+    未用槽零填充而非删字段 — 与 microduck "共享 61 维观测, 不用的命令槽
+    zero-pad 不 drop" 同构. 未登记的动作按原样透传 (暂不进契约).
+    """
+    slots = OP_PARAM_SLOTS.get(action_type)
+    if not slots:
+        return dict(params or {})
+    src = params or {}
+    return {k: src.get(k, 0.0) for k in slots}

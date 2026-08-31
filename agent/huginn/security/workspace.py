@@ -63,7 +63,9 @@ class ActionExecutor(Protocol):
 
     def observe(self) -> dict[str, Any]: ...
 
-    def sensor_view(self, state: dict[str, Any], action_type: str) -> dict[str, Any]: ...
+    def sensor_view(
+        self, state: dict[str, Any], action_type: str
+    ) -> dict[str, Any]: ...
 
 
 class MockExecutor:
@@ -112,7 +114,8 @@ class SimExecutor(SensorModelExecutor):
     ) -> None:
         super().__init__(
             fail_on=fail_on,
-            initial=initial or {"reagent_vol": 100.0, "sample_vol": 0.0, "tube_vol": 0.0},
+            initial=initial
+            or {"reagent_vol": 100.0, "sample_vol": 0.0, "tube_vol": 0.0},
             error_model=error_model,
             seed=seed,
         )
@@ -228,7 +231,12 @@ class PhysicalWorkspace:
         if preflight:
             # 用当前状态预演: 先约束校验, 再取前向预测 (供 expected 对比).
             predicted = self.preflight(action)
-            if expected is None and spec is None or spec is not None and not spec.expect:
+            if (
+                expected is None
+                and spec is None
+                or spec is not None
+                and not spec.expect
+            ):
                 expected = predicted
                 # 感知确认须与观测同一视角 (microduck: 编码器读穿输出侧). 预演得到
                 # 的是"理想世界状态", 先投影到执行器读数视角再对比 observe(), 否则
@@ -243,11 +251,17 @@ class PhysicalWorkspace:
         self.executor.execute(action)
         self.state = dict(self.executor.observe())
 
-        if spec is not None and spec.expect and not matches_state(spec.expect, self.state):
+        if (
+            spec is not None
+            and spec.expect
+            and not matches_state(spec.expect, self.state)
+        ):
             raise WorkspaceConfirmError(
                 f"感知确认失败: 状态偏离预期 (规格 {spec.id}, 动作 {action.type})"
             )
-        elif expected is not None and not matches_state(expected, self.state, tolerance):
+        elif expected is not None and not matches_state(
+            expected, self.state, tolerance
+        ):
             raise WorkspaceConfirmError(
                 f"感知确认失败: 状态偏离预期 (动作 {action.type})"
             )

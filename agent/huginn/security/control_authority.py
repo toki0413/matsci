@@ -14,8 +14,8 @@ microduck §6 "safety and authority" 三条, 在 Huginn 接真实执行器前的
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 
 @dataclass(frozen=True, order=True)
@@ -63,7 +63,13 @@ class ControlAuthority:
 class Deadman:
     """死手: 超过 ``max_idle`` 未喂命令即触发一次安全停机 (simplify 一次性, 需 reset)."""
 
-    def __init__(self, max_idle: float, on_stall: Callable[[], None], *, clock: Callable[[], float] | None = None) -> None:
+    def __init__(
+        self,
+        max_idle: float,
+        on_stall: Callable[[], None],
+        *,
+        clock: Callable[[], float] | None = None,
+    ) -> None:
         self.max_idle = max_idle
         self.on_stall = on_stall
         self._clock = clock if clock is not None else _default_clock

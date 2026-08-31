@@ -21,9 +21,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 # 制品契约版本 — SDK/daemon 版本会漂移, 用一个整数做握手, 不符即拒绝 (microduck model_api).
 ARTIFACT_CONTRACT_VERSION = 1
@@ -45,7 +46,12 @@ class BehaviorArtifact:
 
     def fingerprint(self) -> str:
         blob = json.dumps(
-            {"v": self.version, "c": self.contract_version, "cfg": self.config, "data": self.data},
+            {
+                "v": self.version,
+                "c": self.contract_version,
+                "cfg": self.config,
+                "data": self.data,
+            },
             sort_keys=True,
         )
         return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
@@ -95,7 +101,9 @@ class BehaviorLifecycle:
         health_check: Callable[[int], bool] | None = None,
     ) -> InstallResult:
         if not artifact.contract_ok():
-            return InstallResult(artifact.version, None, False, "contract-version-mismatch")
+            return InstallResult(
+                artifact.version, None, False, "contract-version-mismatch"
+            )
         prior = self.current_version()
         self._write_release(artifact)
         self._swap(artifact.version)
@@ -106,7 +114,9 @@ class BehaviorLifecycle:
             return InstallResult(artifact.version, None, True)
         rollback = self._rollback_to(prior)
         return InstallResult(
-            artifact.version, rollback, False,
+            artifact.version,
+            rollback,
+            False,
             f"health-gate-failed, rolled back to {rollback}",
         )
 
