@@ -17,7 +17,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from huginn.security.actuator_model import SensorModelExecutor
+from huginn.security.actuator_model import ErrorModel, SensorModelExecutor
+from huginn.security.behavior_lifecycle import (
+    BehaviorArtifact,
+    BehaviorLifecycle,
+    InstallResult,
+)
 from huginn.security.world_model import PhysicalAction, WorldModel
 
 # 理想气体常数 J/(mol·K)
@@ -116,3 +121,81 @@ class ThermoExecutor(SensorModelExecutor):
             if isinstance(view.get(key), int | float):
                 view[key] = float(view.get(key, 0.0)) + magnitude
         return view
+
+
+# ═══════════════════════════════════════════════════════════════════
+# M3 生命周期接线 (microduck "releases swapped not patched"):
+# 该执行器的"策略/参数"以**自包含制品**交付, 走 BehaviorLifecycle 安装,
+# 用**物理健康门控**验证 (EOS 恒成立 + 状态物理合法), 不合格自动回滚.
+# ═══════════════════════════════════════════════════════════════════
+
+# 该工具制品契约(参数槽)版本 — 运行时据此握手 (microduck model_api).
+THERMO_CONTRACT_VERSION = 1
+
+
+def build_thermo_artifact(
+    version: int,
+    *,
+    cv: float = _CV,
+    initial: dict[str, Any] | None = None,
+    systematic: float = 0.0,
+    sigma: float = 0.0,
+) -> BehaviorArtifact:
+    """把热力学执行器参数打包成自包含制品 (config 烘焙, 部署侧不依赖外部上下文)."""
+    return BehaviorArtifact(
+        name="ideal_gas_chamber",
+        version=version,
+        contract_version=THERMO_CONTRACT_VERSION,
+        config={
+            "cv": cv,
+            "initial": dict(initial or _INITIAL),
+            "error_model": {"systematic": systematic, "sigma": sigma},
+        },
+    )
+
+
+def executor_from_artifact(artifact: BehaviorArtifact) -> ThermoExecutor:
+    """由制品 config 实例化执行器 (归一化/参数已烘焙进制品, 不靠运行时补)."""
+    cfg = artifact.config
+    em = ErrorModel(
+        systematic=float(cfg["error_model"]["systematic"]),
+        sigma=float(cfg["error_model"]["sigma"]),
+    )
+    return ThermoExecutor(
+        initial=dict(cfg["initial"]),
+        error_model=em,
+        seed=0,
+    )
+
+
+def thermo_health_check(artifact: BehaviorArtifact) -> bool:
+    """物理健康门控: 用制品配置实例化并跑一次可逆探查, 校验 EOS 恒成立 + 状态合法.
+
+    任一状态量为非正, 或任一步违反 pV = nRT (超容差), 即判不健康 → 触发回滚.
+    """
+    ex = executor_from_artifact(artifact)
+    s = ex.observe()
+    ok: bool = all(s.get(k, 0.0) > 0 for k in ("p", "V", "T", "n"))
+    for action in (
+        PhysicalAction("heat", {"dq": 100.0}),
+        PhysicalAction("move", {"v": float(s["V"]) * 2}),
+    ):
+        ex.execute(action)
+        s = ex.observe()
+        if not (s["p"] > 0 and s["V"] > 0 and s["T"] > 0):
+            return False
+        lhs = s["p"] * s["V"]
+        rhs = _R * s["T"] * s["n"]
+        if abs(lhs - rhs) > 1e-6 * max(lhs, rhs):
+            return False
+    return bool(ok)
+
+
+def install_thermo(
+    lifecycle: BehaviorLifecycle,
+    artifact: BehaviorArtifact,
+) -> InstallResult:
+    """把热力学制品装进生命周期, 用该制品自身的物理健康检查做健康门控."""
+    return lifecycle.install(
+        artifact, health_check=lambda _v: thermo_health_check(artifact)
+    )

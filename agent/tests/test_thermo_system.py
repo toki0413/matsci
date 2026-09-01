@@ -9,8 +9,17 @@ from __future__ import annotations
 import pytest
 
 from huginn.security.actuator_model import ErrorModel
+from huginn.security.behavior_lifecycle import BehaviorLifecycle
 from huginn.security.physics_schema import matches_state
-from huginn.security.thermo_system import IdealGasWorldModel, ThermoExecutor, forward
+from huginn.security.thermo_system import (
+    IdealGasWorldModel,
+    ThermoExecutor,
+    build_thermo_artifact,
+    executor_from_artifact,
+    forward,
+    install_thermo,
+    thermo_health_check,
+)
 from huginn.security.workspace import PhysicalWorkspace
 from huginn.security.world_model import PhysicalAction
 
@@ -82,3 +91,27 @@ def test_m2_view_consistent_confirm_closed_loop():
     assert not matches_state(ideal, obs, tolerance=1e-9)
     # 同视角: sensor_view(ideal) == 实测 → 判定一致.
     assert matches_state(ex.sensor_view(ideal, a.type), obs, tolerance=1e-9)
+
+
+def test_m3_artifact_lifecycle_good_then_rollback_bad(tmp_path):
+    """M3 制品生命周期: 自包含交付 + 物理健康门控 + 不合格自动回滚.
+
+    microduck "releases swapped, not patched": 好的策略制品装上并成为 current;
+    坏制品 (初始态 T=0 → p=0, 物理非法) 被健康门控拦下并回滚到前一版本.
+    """
+    lc = BehaviorLifecycle(tmp_path)
+
+    good = build_thermo_artifact(1, initial=dict(_S0))
+    r1 = install_thermo(lc, good)
+    assert r1.healthy and lc.current_version() == 1
+
+    # 制品参数烘焙进 config, 由制品实例化的执行器与 EOS 自洽.
+    ex = executor_from_artifact(good)
+    s = ex.observe()
+    assert s["p"] * s["V"] == pytest.approx(_R * s["T"] * s["n"])
+
+    # 坏制品: T=0 使状态物理非法 → 健康检查失败.
+    bad = build_thermo_artifact(2, initial={**_S0, "T": 0.0})
+    assert thermo_health_check(bad) is False
+    r2 = install_thermo(lc, bad)
+    assert (not r2.healthy) and r2.rolled_back_to == 1 and lc.current_version() == 1
