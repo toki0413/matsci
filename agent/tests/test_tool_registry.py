@@ -10,6 +10,10 @@ from __future__ import annotations
 import pytest
 
 from huginn.security.behavior_lifecycle import BehaviorLifecycle
+from huginn.security.mechanics_oscillator import (
+    OscillatorExecutor,
+    OscillatorWorldModel,
+)
 from huginn.security.thermo_system import ThermoExecutor, build_thermo_artifact
 from huginn.security.tool_registry import (
     UnknownToolError,
@@ -30,10 +34,9 @@ from huginn.security.world_model import PhysicalAction
 _R = 8.31446261815324
 
 
-def test_registry_has_both_tools():
-    """两个真实(软件)工具已注册 → 同界面可解析不同后端."""
-    assert set(registered_tools()) == {"ideal_gas", "van_der_waals"}
-    assert get_tool("ideal_gas").health_check is not None
+def test_registry_has_multi_domain_tools():
+    """多物理域工具已注册 (热力学 + 力学) → 同界面可解析不同后端."""
+    assert set(registered_tools()) == {"ideal_gas", "van_der_waals", "oscillator"}
 
 
 def test_make_components_swaps_backend():
@@ -85,3 +88,29 @@ def test_install_vdw_good_then_rollback_invalid(tmp_path):
 def test_unknown_tool_raises():
     with pytest.raises(UnknownToolError):
         install_tool(BehaviorLifecycle(), "vasp", build_thermo_artifact(1))
+
+
+def test_cross_domain_mechanics_via_same_interface(tmp_path):
+    """不止 VASP / 不只热力学: 力学域振子经同一接口/同一 workspace 运行并健康门控."""
+    from huginn.security.mechanics_oscillator import _INITIAL as OSC_INITIAL
+    from huginn.security.mechanics_oscillator import build_osc_artifact
+
+    # 同一接口解析出力学后端 (不同领域).
+    exe, wm = make_components("oscillator", build_osc_artifact(1))
+    assert isinstance(exe, OscillatorExecutor)
+    assert isinstance(wm, OscillatorWorldModel)
+
+    # 同一 PhysicalWorkspace 驱动力学域动作 (kick / displace) 感知确认通过.
+    wa = PhysicalWorkspace(wm, exe)
+    wa.execute(PhysicalAction("kick", {"dv": 3.0}), preflight=True)
+    wa.execute(PhysicalAction("displace", {"dx": 2.0}), preflight=True)
+    assert wa.state["x"] == pytest.approx(2.0) and wa.state["v"] == pytest.approx(3.0)
+
+    # 经 registry 安装: 好制品通过力学健康门控; 超界制品 (x 越界) 回滚.
+    lc = BehaviorLifecycle(tmp_path)
+    good = build_osc_artifact(1, initial=dict(OSC_INITIAL))
+    assert install_tool(lc, "oscillator", good).healthy and lc.current_version() == 1
+    bad = build_osc_artifact(2, initial={"x": 500.0, "v": 0.0})  # |x|>x_max=100
+    assert get_tool("oscillator").health_check(bad) is False
+    r2 = install_tool(lc, "oscillator", bad)
+    assert (not r2.healthy) and r2.rolled_back_to == 1 and lc.current_version() == 1

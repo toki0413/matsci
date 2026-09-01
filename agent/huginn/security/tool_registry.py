@@ -76,6 +76,11 @@ def registered_tools() -> tuple[str, ...]:
 
 # ── 内置工具注册 (导入时完成) ──────────────────────────────────
 def _register_builtins() -> None:
+    from huginn.security.mechanics_oscillator import (
+        OscillatorWorldModel,
+        osc_executor_from_artifact,
+        osc_health_check,
+    )
     from huginn.security.thermo_system import (
         IdealGasWorldModel,
         executor_from_artifact,
@@ -87,6 +92,7 @@ def _register_builtins() -> None:
         vdw_health_check,
     )
 
+    # 热力学域 (理想气 / 范德华) + 力学域 (一维振子): 领域无关, 只是各自 ToolSpec.
     register_tool(
         ToolSpec(
             name="ideal_gas",
@@ -101,6 +107,14 @@ def _register_builtins() -> None:
             build_executor=vdw_executor_from_artifact,
             build_world_model=VanDerWaalsWorldModel,
             health_check=vdw_health_check,
+        )
+    )
+    register_tool(
+        ToolSpec(
+            name="oscillator",
+            build_executor=osc_executor_from_artifact,
+            build_world_model=OscillatorWorldModel,
+            health_check=osc_health_check,
         )
     )
 
