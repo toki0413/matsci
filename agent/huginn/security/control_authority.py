@@ -43,8 +43,10 @@ class ControlAuthority:
         self._owner_rank = self._NO_OWNER
 
     def request(self, src: AuthoritySource) -> bool:
-        """请求权威. 更高优先级 (更小 rank) 或无主时获得; 同 rank 保持当前 holder.
-        返回是否获得控制权."""
+        """请求权威. 当前持有者继续持权 (重复命令不被误拒); 更高优先级 (更小 rank)
+        或无主时获得; 否则拒绝. 返回是否获得/持有控制权."""
+        if self._owner == src.name:
+            return True  # 当前 owner 继续持有, 否则重复命令会被误拒
         if self._owner is None or src.rank < self._owner_rank:
             self._owner = src.name
             self._owner_rank = src.rank
