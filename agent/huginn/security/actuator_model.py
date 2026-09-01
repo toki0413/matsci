@@ -109,7 +109,21 @@ class SensorModelExecutor(ABC):
         """
         if self.error_model is None or self.error_model.systematic == 0.0:
             return dict(state)
-        bias = self.error_model.systematic
+        return self._apply_bias(state, action_type, self.error_model.systematic)
+
+    # ── 内部 ───────────────────────────────────────────────────
+    def _apply_bias(
+        self,
+        state: dict[str, Any],
+        action_type: str,
+        magnitude: float,
+    ) -> dict[str, Any]:
+        """把幅值 ``magnitude`` 的读数偏置施加到 ``state`` 的实测量上.
+
+        默认实现 = 移液式"来源 -magnitude / 接收 +magnitude" (等幅反相, 保持量
+        守恒). 真实仪器 (压力表/温度计/力传感器) 是**每通道 gauge 偏置**, 应覆写
+        本方法直接对各自实测键 += magnitude. 返回偏置后的新状态, 不修改入参.
+        """
         view = dict(state)
         dec_key, inc_key = self._sensor_keys(action_type)
         if (
@@ -117,25 +131,16 @@ class SensorModelExecutor(ABC):
             and inc_key not in ("mixed", "aliquot_count")
             and isinstance(view.get(inc_key), int | float)
         ):
-            view[inc_key] = float(view.get(inc_key, 0.0)) + bias
+            view[inc_key] = float(view.get(inc_key, 0.0)) + magnitude
         if dec_key and isinstance(view.get(dec_key), int | float):
-            view[dec_key] = float(view.get(dec_key, 0.0)) - bias
+            view[dec_key] = float(view.get(dec_key, 0.0)) - magnitude
         return view
 
-    # ── 内部 ───────────────────────────────────────────────────
     def _inject_noise(self, action: PhysicalAction) -> None:
-        """域随机化注入: systematic + 零均值 sigma, 等幅反相保持量守恒."""
+        """域随机化注入: systematic + 零均值 sigma (RNG 一次性, 经 _apply_bias 施于实测量)."""
         if self.error_model is None or not self._noise_eligible(action):
             return
-        dec_key, inc_key = self._sensor_keys(action.type)
         noise = self.error_model.systematic + self._rng.gauss(
             0.0, self.error_model.sigma
         )
-        if (
-            inc_key
-            and inc_key not in ("mixed", "aliquot_count")
-            and isinstance(self.state.get(inc_key), int | float)
-        ):
-            self.state[inc_key] = float(self.state.get(inc_key, 0.0)) + noise
-        if dec_key and isinstance(self.state.get(dec_key), int | float):
-            self.state[dec_key] = float(self.state.get(dec_key, 0.0)) - noise
+        self.state = self._apply_bias(self.state, action.type, noise)
