@@ -117,6 +117,21 @@ def _register_builtins() -> None:
             health_check=osc_health_check,
         )
     )
+    # 外部计算工具占位: 真跑子进程 (compute_adapter). 真实 HPC 工具以同种 ToolSpec 接入.
+    from huginn.security.compute_adapter import (
+        ShellComputeWorldModel,
+        shell_executor_from_artifact,
+        shell_health_check,
+    )
+
+    register_tool(
+        ToolSpec(
+            name="external_shell_compute",
+            build_executor=shell_executor_from_artifact,
+            build_world_model=ShellComputeWorldModel,
+            health_check=shell_health_check,
+        )
+    )
 
 
 _register_builtins()

@@ -35,8 +35,13 @@ _R = 8.31446261815324
 
 
 def test_registry_has_multi_domain_tools():
-    """多物理域工具已注册 (热力学 + 力学) → 同界面可解析不同后端."""
-    assert set(registered_tools()) == {"ideal_gas", "van_der_waals", "oscillator"}
+    """多物理域工具已注册 (热力学 + 力学 + 外部计算占位) → 同界面可解析不同后端."""
+    assert set(registered_tools()) == {
+        "ideal_gas",
+        "van_der_waals",
+        "oscillator",
+        "external_shell_compute",
+    }
 
 
 def test_make_components_swaps_backend():
