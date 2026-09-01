@@ -90,9 +90,9 @@ def test_install_vdw_good_then_rollback_invalid(tmp_path):
     assert (not r2.healthy) and r2.rolled_back_to == 1 and lc.current_version() == 1
 
 
-def test_unknown_tool_raises():
+def test_unknown_tool_raises(tmp_path):
     with pytest.raises(UnknownToolError):
-        install_tool(BehaviorLifecycle(), "vasp", build_thermo_artifact(1))
+        install_tool(BehaviorLifecycle(tmp_path), "vasp", build_thermo_artifact(1))
 
 
 def test_cross_domain_mechanics_via_same_interface(tmp_path):
