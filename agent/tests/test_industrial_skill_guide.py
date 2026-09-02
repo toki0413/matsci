@@ -67,3 +67,27 @@ def test_guide_references_example_skill_path():
     # 手册里声明的原生字段清单与代码一致
     for field in ("allowed-tools", "when_to_use", "steps", "trigger"):
         assert field in guide
+
+
+def test_metadata_spec_registered_in_index():
+    index = (_REPO / "docs/INDEX.md").read_text(encoding="utf-8")
+    assert "industrial-skill-metadata-spec.md" in index
+
+
+def test_metadata_spec_declares_native_fields_only():
+    spec = (_REPO / "docs/industrial-skill-metadata-spec.md").read_text(
+        encoding="utf-8"
+    )
+    # 规范声明的 frontmatter 字段必须全部属于解析器原生字段集
+    declared = [f for f in _NATIVE_FIELDS if f in spec]
+    assert {"name", "description", "category", "allowed-tools", "steps"} <= set(
+        declared
+    )
+    # 未引入规范自身的私有 frontmatter 字段名（抽查几个高频臆造字段不应出现）
+    for madeup in ("triggers_en", "skill_policy", "owner_team"):
+        assert madeup not in spec.split("\n")[0:1], madeup
+    # 与接入指南互链
+    assert (
+        "industrial-skill-metadata-spec.md" in spec
+        or "industrial-skill-guide.md" in spec
+    )

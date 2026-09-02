@@ -4,6 +4,7 @@
 > 一句话：**不接西门子套件本体**，把「Skill Creator · Agent Framework · Workflow · ICX」这套
 > 工业智能体范式映射到 Huginn 现有体系，用我们已有的 Skill/工具/MCP 体系封装 OT 工程
 > Know-how，得到可复用的工业 Skill。示例与字段均与代码解析器对齐，防契约漂移。
+> **字段级规范见**：[industrial-skill-metadata-spec.md](industrial-skill-metadata-spec.md)（外部接收时先读它定义字段）。
 
 ---
 
