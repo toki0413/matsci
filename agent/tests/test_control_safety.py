@@ -8,6 +8,10 @@ from huginn.security.control_authority import AUTONOMOUS, LOCAL, PHYSICAL, REMOT
 from huginn.security.control_safety import (
     CommandDeniedError,
     ExecutionGuard,
+    GatePolicy,
+    PolicyDeniedError,
+    PolicyLevel,
+    SafetyRule,
     SafetyStopError,
 )
 
@@ -80,3 +84,71 @@ def test_safety_guard_wraps_an_executor_call():
     assert guard.command(LOCAL, compute) == 42  # 当前 owner 重复命令不被误拒
     with pytest.raises(CommandDeniedError):
         guard.command(REMOTE, compute)  # REMOTE(rank2) 低于 LOCAL(rank1) 持权 → 拒
+
+
+# ── 分层策略清单 (Fable 穷举护栏粒径) ──────────────────────────
+
+
+def test_policy_absolute_deny_rejects_even_physical():
+    """绝对禁止: 即使物理来源也拒 — 该动作不值得被任何人做, 先于权威仲裁."""
+    policy = GatePolicy([SafetyRule(PolicyLevel.ABSOLUTE_DENY, "禁止反向驱动", "home")])
+    guard = ExecutionGuard(5.0, policy=policy)
+
+    def drive():
+        return "moved"
+
+    with pytest.raises(PolicyDeniedError):
+        guard.command(PHYSICAL, drive, action="home")
+    # 策略拒时不占权威, 也未喂心跳.
+    assert guard.authority.owner() is None
+
+
+def test_policy_require_authority_blocks_weak_source():
+    """需授权: 默认 LOCAL(rank1) 阈值, 物理/本地可, 远程/自治被策略拒."""
+    policy = GatePolicy(
+        [SafetyRule(PolicyLevel.REQUIRE_AUTHORITY, "高压操作需授权", "hazard")]
+    )
+    guard = ExecutionGuard(5.0, policy=policy)
+
+    with pytest.raises(PolicyDeniedError):
+        guard.command(REMOTE, lambda: None, action="hazard")
+    with pytest.raises(PolicyDeniedError):
+        guard.command(AUTONOMOUS, lambda: None, action="hazard")
+    # 更强来源 (本地/物理) 通过.
+    assert guard.command(LOCAL, lambda: 7, action="hazard") == 7
+    assert guard.command(PHYSICAL, lambda: 8, action="hazard") == 8
+
+
+def test_policy_harm_reduction_allowed_and_logged():
+    """减少伤害: 放行但记入 policy_log; 同来源继续持权不误拒."""
+    policy = GatePolicy(
+        [SafetyRule(PolicyLevel.HARM_REDUCTION, "降级执行", "wide_move")]
+    )
+    guard = ExecutionGuard(5.0, policy=policy)
+
+    guard.command(LOCAL, lambda: "ok", action="wide_move")
+    assert guard.policy_log[-1]["action"] == "wide_move"
+    # 未命中的动作不入 log.
+    guard.command(LOCAL, lambda: "ok", action="fine")
+    assert len(guard.policy_log) == 1
+
+    # 绝对禁止 > 需授权 > 减少伤害 的优先级.
+    mixed = GatePolicy(
+        [
+            SafetyRule(PolicyLevel.HARM_REDUCTION, "降级", "wide_move"),
+            SafetyRule(PolicyLevel.ABSOLUTE_DENY, "禁", "wide_move"),
+        ]
+    )
+    guard2 = ExecutionGuard(5.0, policy=mixed)
+    with pytest.raises(PolicyDeniedError):
+        guard2.command(PHYSICAL, lambda: None, action="wide_move")
+
+
+def test_policy_disabled_by_default_no_behavior_change():
+    """无 policy 时行为不变 (向后兼容): 仅权威仲裁 + 死手/心跳生效."""
+    guard = ExecutionGuard(5.0)
+    guard.command(LOCAL, lambda: None)  # 不带 action 正常过
+    _, clock = _mk_clock()
+    g2 = ExecutionGuard(5.0, clock=clock)
+    g2.command(LOCAL, lambda: None)
+    assert g2.policy is None and g2.policy_log == []

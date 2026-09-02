@@ -119,3 +119,34 @@ def test_cross_domain_mechanics_via_same_interface(tmp_path):
     assert get_tool("oscillator").health_check(bad) is False
     r2 = install_tool(lc, "oscillator", bad)
     assert (not r2.healthy) and r2.rolled_back_to == 1 and lc.current_version() == 1
+
+
+def test_tool_schema_machine_readable_for_self_routing():
+    """机器可读 schema: agent 可据此自我路由 (Fable 46 工具 schema 的等价物)."""
+    from huginn.security.tool_registry import tool_schema
+
+    ig = tool_schema("ideal_gas")
+    assert ig["domain"] == "thermodynamics"
+    assert "heat" in ig["space"]["action"] and "p" in ig["space"]["state"]
+    assert "p" in ig["observables"]
+
+    osc = tool_schema("oscillator")
+    assert osc["domain"] == "mechanics"
+    assert set(osc["space"]["action"]) >= {"kick", "displace"}
+
+    ext = tool_schema("external_shell_compute")
+    assert ext["domain"] == "external_compute" and ext["backend"] == "subprocess"
+
+
+def test_tool_contract_handshake_mismatch_raises(tmp_path):
+    """工具级契约握手: 制品 contract_version 与 ToolSpec 不符即拒 (升级走换后端)."""
+    from huginn.security.tool_registry import ToolContractError
+
+    lc = BehaviorLifecycle(tmp_path)
+    spec_ver = get_tool("ideal_gas").contract_version
+    # 伪造一个契约版本漂移的制品 → 安装被拒, 不入盘.
+    drifted = build_thermo_artifact(1)
+    drifted.contract_version = spec_ver + 999
+    with pytest.raises(ToolContractError):
+        install_tool(lc, "ideal_gas", drifted)
+    assert lc.current_version() is None
