@@ -166,8 +166,12 @@ class ToolScheduler:
         policy: AdmissionPolicy | None = None,
         hpc_layer: HpcQueueLayer | None = None,
     ) -> None:
-        self.store: CampaignStoreBackend = store if store is not None else NullCampaignStore()
-        self.policy: AdmissionPolicy = policy if policy is not None else AdmissionPolicy.from_env()
+        self.store: CampaignStoreBackend = (
+            store if store is not None else NullCampaignStore()
+        )
+        self.policy: AdmissionPolicy = (
+            policy if policy is not None else AdmissionPolicy.from_env()
+        )
         # P1: optional HPC queue layer. When set, long-running async jobs
         # additionally arbitrate remote admission before running.
         self.hpc_layer = hpc_layer
@@ -186,6 +190,9 @@ class ToolScheduler:
         # async-job path
         self._queue: deque[_QueuedJob] = deque()
         self._live_tasks: dict[str, asyncio.Task] = {}
+        # job_id -> 原始 factory 引用. 记录以便 resume_orphaned() 在恢复 orphaned
+        # 作业时复用同一工厂, 而不必外部重新 attach.
+        self._factories: dict[str, Callable[[], Coroutine[Any, Any, Any]]] = {}
         self._drainer: asyncio.Task | None = None
         self._drainer_wake = asyncio.Event()
         self._stopped = False
@@ -264,14 +271,20 @@ class ToolScheduler:
                 and self._cpu_hours_used + requested_cpu > self.policy.cpu_hour_budget
             ):
                 raise ResourceExhausted(
-                    "cpu", self._cpu_hours_used, self.policy.cpu_hour_budget, requested_cpu
+                    "cpu",
+                    self._cpu_hours_used,
+                    self.policy.cpu_hour_budget,
+                    requested_cpu,
                 )
             if (
                 self.policy.gpu_hour_budget is not None
                 and self._gpu_hours_used + requested_gpu > self.policy.gpu_hour_budget
             ):
                 raise ResourceExhausted(
-                    "gpu", self._gpu_hours_used, self.policy.gpu_hour_budget, requested_gpu
+                    "gpu",
+                    self._gpu_hours_used,
+                    self.policy.gpu_hour_budget,
+                    requested_gpu,
                 )
             self._cpu_hours_used += requested_cpu
             self._gpu_hours_used += requested_gpu
@@ -313,11 +326,56 @@ class ToolScheduler:
             queue_position=self.store.next_queue_position(),
         )
         self.store.upsert_job(record)
-        self._queue.append(
-            _QueuedJob(job_id, tool_name, cost_tier, cost, factory)
-        )
+        self._queue.append(_QueuedJob(job_id, tool_name, cost_tier, cost, factory))
+        # 记录 factory 引用, 供 resume_orphaned() 恢复同类 orphaned 作业使用.
+        self._factories[job_id] = factory
         self._wake_drainer()
         return job_id
+
+    async def cancel(self, job_id: str) -> bool:
+        """真正取消一个 queued / running 作业, 返回是否成功取消.
+
+        优先级:
+          - running 作业: 取消其 asyncio Task (由 _run_job 兜底置 status).
+          - queued 作业: 直接从内存队列摘除, 不再被 drainer 吸收.
+          - 退化情况: 不在内存里但持久层仍是 queued/orphaned → 直接置 cancelled.
+        无论哪条路径, 都把 JobRecord.status 持久化为 cancelled.
+
+        未知或已终态的 job_id 返回 False.
+        """
+        # 1) running: 取消 live task
+        task = self._live_tasks.get(job_id)
+        if task is not None:
+            if not task.done():
+                task.cancel()
+            self._mark_cancelled(job_id)
+            return True
+
+        # 2) queued: 从内存队列摘除
+        for i, qj in enumerate(self._queue):
+            if qj.job_id == job_id:
+                del self._queue[i]
+                self._mark_cancelled(job_id)
+                return True
+
+        # 3) 退化: job 不在内存但持久层仍待跑 (e.g. recover 后未重挂内存) → 可取消
+        record = self.store.get_job(job_id)
+        if record is not None and record.status in ("queued", "orphaned"):
+            self._mark_cancelled(job_id)
+            return True
+
+        return False
+
+    def _mark_cancelled(self, job_id: str) -> None:
+        """把持久层 JobRecord 置为 cancelled 并落库."""
+        record = self.store.get_job(job_id)
+        if record is None:
+            return
+        record.status = "cancelled"
+        record.finished_at = time.time()
+        record.error = "cancelled"
+        self._factories.pop(job_id, None)
+        self.store.upsert_job(record)
 
     def get_job_status(self, job_id: str) -> JobRecord | None:
         """Live status for poll_job. Reads the persistent store."""
@@ -386,6 +444,7 @@ class ToolScheduler:
         error: str | None = None
         result: Any = None
         hpc_held = False
+        cancelled = False
         try:
             # P1: acquire a remote admission slot before running when an HPC
             # layer is wired. Blocks (backpressure) while the cluster is full.
@@ -400,6 +459,11 @@ class ToolScheduler:
             # make progress (or call touch() periodically).
             self._heartbeats[job.job_id] = time.time()
             result = await job.factory()
+        except asyncio.CancelledError:
+            # 真取消: 由 cancel() 触发. CancelledError 是 BaseException, 不走下面的
+            # Exception 分支, 这里标记后 re-raise, 让 finally 把 status 置为 cancelled.
+            cancelled = True
+            raise
         except Exception as exc:  # noqa: BLE001 — persist whatever failed
             error = repr(exc)
             logger.exception("queued job %s failed", job.job_id)
@@ -413,9 +477,13 @@ class ToolScheduler:
                 with contextlib.suppress(ValueError):
                     sem.release()
             self._live_tasks.pop(job.job_id, None)
+            self._factories.pop(job.job_id, None)
             now = time.time()
             if record is not None:
-                record.status = "failed" if error is not None else "finished"
+                if cancelled:
+                    record.status = "cancelled"
+                else:
+                    record.status = "failed" if error is not None else "finished"
                 record.finished_at = now
                 record.error = error
                 if result is not None:
@@ -461,6 +529,53 @@ class ToolScheduler:
             # keep the record so poll_job still reflects "queued".
             requeued += 1
         return {"orphaned": orphaned, "requeued": requeued}
+
+    def resume_orphaned(
+        self,
+        factory_provider: (
+            Callable[[str, JobRecord], Callable[[], Coroutine[Any, Any, Any]] | None]
+            | None
+        ) = None,
+    ) -> int:
+        """一次性 resume 已 orphaned 作业: 重新排队并交给 drainer 继续跑.
+
+        ``recover()`` 会把崩溃遗留的 running 标记为 orphaned; 本方法把它们
+        重新插回内存队列。factory 优先级:
+            1. 外部传入的 ``factory_provider(job_id, record)`` —— 拿到就用;
+            2. 回退到提交时记录的原始 factory 引用 (``self._factories``);
+            3. 都没有则该作业跳过(无法恢复), 计数不计入。
+
+        返回成功重新排队的数量。
+        """
+        resumed = 0
+        for rec in self.store.list_jobs_by_status("orphaned"):
+            factory = (
+                factory_provider(rec.job_id, rec)
+                if factory_provider is not None
+                else None
+            )
+            if factory is None:
+                factory = self._factories.get(rec.job_id)
+            if factory is None:
+                # 没有 factory 无法恢复, 保持 orphaned 状态等外部 re-submit.
+                logger.warning("no factory to resume orphaned job %s", rec.job_id)
+                continue
+            rec.status = "queued"
+            rec.finished_at = None
+            rec.error = None
+            if rec.queue_position is None:
+                rec.queue_position = self.store.next_queue_position()
+            self.store.upsert_job(rec)
+            cost = {
+                "cpu_hours": rec.cores_requested,
+                "gpu_hours": rec.gpu_hours_requested,
+            }
+            self._queue.append(
+                _QueuedJob(rec.job_id, rec.tool_name, rec.cost_tier, cost, factory)
+            )
+            resumed += 1
+        self._wake_drainer()
+        return resumed
 
     def _count_orphaned(self, rec: JobRecord) -> None:
         """Fold an orphaned job's requested hours back into the budget."""
