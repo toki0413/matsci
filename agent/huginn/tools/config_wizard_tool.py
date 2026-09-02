@@ -34,6 +34,36 @@ from huginn.tools.base import HuginnTool
 
 logger = logging.getLogger(__name__)
 
+
+def persist_config_with_hot_reload(cfg: HuginnConfig, path: Path) -> None:
+    """保存配置并尽量热加载, 使变更无需重启即可生效.
+
+    对齐 ``routes/config._persist_config`` 的语义: 清 API key SWR 缓存 →
+    强制重载缓存配置 → 重建 server 上下文里的 agent/factory/orchestrator.
+    无 server 上下文 / 依赖缺失时静默跳过, 不影响已保存的结果.
+    """
+    cfg.save(path, format="toml")
+    try:
+        from huginn.config import get_config as _get_cached_config
+        from huginn.pet import configure_pet
+        from huginn.security.auth import clear_api_key_cache
+
+        clear_api_key_cache()
+        _get_cached_config(force_reload=True)
+        import huginn.server_core as _sc
+
+        ctx = _sc.get_context()
+        if ctx is not None:
+            ctx.agent = None
+            ctx.agent_factory = None
+            ctx.planner_agent = None
+            ctx.orchestrator = None
+        configure_pet(cfg.pet_name, cfg.pet_personality)
+    except Exception:
+        # best-effort: CLI / 无 server 上下文 / 单测环境下不阻断保存.
+        logger.debug("config hot-reload skipped", exc_info=True)
+
+
 # Provider 特点说明, 给 LLM 做推荐时参考
 _PROVIDER_NOTES: dict[str, str] = {
     "anthropic": "Claude 系列, 推理/代码强, 支持 extended thinking, 价格中高",
@@ -737,32 +767,8 @@ class ConfigWizardTool(HuginnTool):
 
     # ── 落盘 + 热加载 ─────────────────────────────────────────
     def _persist_config(self, cfg: HuginnConfig, path: Path) -> None:
-        """保存配置并尽量热加载, 使变更无需重启即可生效.
-
-        对齐 ``routes/config._persist_config`` 的语义: 清 API key SWR 缓存 →
-        强制重载缓存配置 → 重建 server 上下文里的 agent/factory/orchestrator.
-        无 server 上下文 / 依赖缺失时静默跳过, 不影响已保存的结果.
-        """
-        cfg.save(path, format="toml")
-        try:
-            from huginn.config import get_config as _get_cached_config
-            from huginn.pet import configure_pet
-            from huginn.security.auth import clear_api_key_cache
-
-            clear_api_key_cache()
-            _get_cached_config(force_reload=True)
-            import huginn.server_core as _sc
-
-            ctx = _sc.get_context()
-            if ctx is not None:
-                ctx.agent = None
-                ctx.agent_factory = None
-                ctx.planner_agent = None
-                ctx.orchestrator = None
-            configure_pet(cfg.pet_name, cfg.pet_personality)
-        except Exception:
-            # best-effort: CLI / 无 server 上下文 / 单测环境下不阻断保存.
-            logger.debug("config hot-reload skipped", exc_info=True)
+        """落盘 + best-effort 热加载, 委托给模块级实现, 供其它配置工具复用."""
+        persist_config_with_hot_reload(cfg, path)
 
     # ── list_features / toggle_feature ──────────────────────────
 
