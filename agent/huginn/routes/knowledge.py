@@ -76,9 +76,38 @@ def _save_raw_if_docid(kb: Any, doc_id: str, filename: str, content: bytes) -> N
         logger.debug("save_raw failed (non-fatal)", exc_info=True)
 
 
+async def _ingest_bytes(kb: Any, filename: str, content: bytes) -> dict[str, Any]:
+    """把一份字节内容摄入 KB (单/多文件上传共用).
+
+    优先走 SmartIngester: 按文件类型自动选解析方式 (图片 OCR + CV 分析,
+    PDF 文本/OCR + 内嵌图片, CSV/JSON 摘要). 缺依赖时退回 KB 原生 add_document.
+    """
+    smart_result = None
+    try:
+        from huginn.knowledge.smart_ingest import build_smart_ingester
+
+        ingester = build_smart_ingester(kb)
+        if ingester is not None:
+            smart_result = await ingester.ingest(filename, content)
+    except Exception:
+        logger.debug("SmartIngester 不可用, 退回原生 add_document", exc_info=True)
+
+    if smart_result is not None:
+        _sem_distill_upload(content, filename)
+        # SmartIngester 用 add_text 入库不落原始文件, 这里补存一份供"原文"预览
+        _save_raw_if_docid(kb, smart_result.get("doc_id", ""), filename, content)
+        return smart_result
+
+    # 退路: KB 原生摄入
+    result = kb.add_document(filename, content)
+    _sem_distill_upload(content, filename)
+    _save_raw_if_docid(kb, result.get("doc_id", ""), filename, content)
+    return result
+
+
 @router.post("/knowledge/upload")
 async def upload_knowledge(file: UploadFile = File(...)) -> dict[str, Any]:
-    """Upload a document to the private knowledge base."""
+    """Upload a document to the private knowledge base (单文件, 保留向后兼容)."""
     kb = get_context().kb
     if kb is None:
         return {"error": "Knowledge base is not available"}
@@ -90,33 +119,89 @@ async def upload_knowledge(file: UploadFile = File(...)) -> dict[str, Any]:
                 "error": f"File too large ({len(content)} bytes, max {_MAX_UPLOAD_BYTES})",
             }
 
-        # 优先走 SmartIngester: 按文件类型自动选解析方式 (图片 OCR + CV
-        # 分析, PDF 文本/OCR + 内嵌图片, CSV/JSON 摘要). 缺依赖时退回原逻辑.
         filename = file.filename or "unnamed"
-        smart_result = None
-        try:
-            from huginn.knowledge.smart_ingest import build_smart_ingester
-
-            ingester = build_smart_ingester(get_context().kb)
-            if ingester is not None:
-                smart_result = await ingester.ingest(filename, content)
-        except Exception:
-            logger.debug("SmartIngester 不可用, 退回原生 add_document", exc_info=True)
-
-        if smart_result is not None:
-            _sem_distill_upload(content, filename)
-            # SmartIngester 用 add_text 入库不落原始文件, 这里补存一份供"原文"预览
-            _save_raw_if_docid(kb, smart_result.get("doc_id", ""), filename, content)
-            return {"success": True, "document": smart_result}
-
-        # 退路: KB 原生摄入
-        result = get_context().kb.add_document(filename, content)
-        _sem_distill_upload(content, filename)
-        _save_raw_if_docid(kb, result.get("doc_id", ""), filename, content)
+        result = await _ingest_bytes(kb, filename, content)
         return {"success": True, "document": result}
     except Exception as e:
         logger.error("unexpected error", exc_info=True)
         return {"success": False, "error": str(e)}
+
+
+_MAX_UPLOAD_COUNT = 50
+
+
+@router.post("/knowledge/upload_many")
+async def upload_knowledge_many(files: list[UploadFile] = File(...)) -> dict[str, Any]:
+    """多文件上传: 先把所有附件**分块流式落地**到统一附件目录, 再逐个摄入 KB.
+
+    落盘阶段用 attachment.land_files 逐块写盘, 不整读进内存, 降低大批量上传
+    的内存峰值; 摄入阶段需要完整字节, 再从磁盘读回, 每次只处理一个文件, 内存
+    占用受限于单文件大小而非所有文件总和。保留原单文件端点不变。
+    """
+    kb = get_context().kb
+    if kb is None:
+        return {
+            "success": False,
+            "error": "Knowledge base is not available",
+            "landed": 0,
+        }
+    if not files:
+        return {"success": False, "error": "no files uploaded", "landed": 0}
+    if len(files) > _MAX_UPLOAD_COUNT:
+        return {
+            "success": False,
+            "error": f"too many files ({len(files)}), max {_MAX_UPLOAD_COUNT}",
+            "landed": 0,
+        }
+
+    try:
+        from huginn.utils.attachment import land_files
+
+        landing = await land_files(files, compress=False)
+    except Exception as e:
+        logger.error("附件落地失败", exc_info=True)
+        return {"success": False, "error": f"landing failed: {e}", "landed": 0}
+
+    landed_meta = [
+        {
+            "filename": info.filename,
+            "path": str(info.path),
+            "size": info.size,
+            "compressed": info.compressed,
+        }
+        for info in landing.files
+    ]
+
+    results: list[dict[str, Any]] = []
+    ingested = 0
+    for info in landing.files:
+        if info.size > _MAX_UPLOAD_BYTES:
+            results.append(
+                {"filename": info.filename, "success": False, "error": "file too large"}
+            )
+            continue
+        try:
+            content = info.path.read_bytes()  # 摄入需完整字节, 从磁盘读回
+            result = await _ingest_bytes(kb, info.filename, content)
+            results.append(
+                {"filename": info.filename, "success": True, "document": result}
+            )
+            ingested += 1
+        except Exception as e:
+            logger.error("入 KB 失败: %s", info.filename, exc_info=True)
+            results.append(
+                {"filename": info.filename, "success": False, "error": str(e)}
+            )
+
+    return {
+        "success": True,
+        "landed": len(landing.files),
+        "ingested": ingested,
+        "files": landed_meta,
+        "directory": str(landing.directory),
+        "archive": str(landing.archive) if landing.archive else None,
+        "documents": results,
+    }
 
 
 @router.get("/knowledge")
@@ -157,6 +242,7 @@ async def ingest_url(req: UrlIngestRequest) -> dict[str, Any]:
         import urllib.request
 
         req_obj = urllib.request.Request(url, headers={"User-Agent": "Huginn/1.0"})
+
         # 关闭重定向跟随: 30x 到内网是已知 SSRF 绕过手段.
         # urllib 的 HTTPRedirectHandler 默认跟随, 这里装一个 no-op 替代.
         class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -176,10 +262,14 @@ async def ingest_url(req: UrlIngestRequest) -> dict[str, Any]:
         text = re.sub(r"\s+", " ", text).strip()
 
         if len(text) < 50:
-            return {"success": False, "error": "Page content too short after extraction"}
+            return {
+                "success": False,
+                "error": "Page content too short after extraction",
+            }
 
         # use URL-derived filename
         from urllib.parse import urlparse
+
         domain = urlparse(url).netloc or "web"
         filename = f"{domain}_{hash(url) % 100000}.txt"
 
@@ -226,6 +316,7 @@ async def get_knowledge_image(path: str) -> Any:
     # ponytail: 仅 compressed_pages/ 下的图能服务, 不开放任意路径读取
     try:
         from huginn.utils.runtime import get_runtime_home
+
         base = (get_runtime_home() / "compressed_pages").resolve()
     except Exception:
         base = (get_runtime_home() / "compressed_pages").resolve()
@@ -239,7 +330,9 @@ async def get_knowledge_image(path: str) -> Any:
     try:
         target.relative_to(base)
     except ValueError:
-        raise HTTPException(status_code=403, detail="path outside compressed_pages") from None
+        raise HTTPException(
+            status_code=403, detail="path outside compressed_pages"
+        ) from None
 
     if not target.is_file():
         raise HTTPException(status_code=404, detail="image not found")
@@ -259,7 +352,9 @@ async def get_document_raw(doc_id: str) -> Any:
         raise HTTPException(status_code=404, detail="知识库不可用")
     path = kb.get_raw(doc_id)
     if path is None:
-        raise HTTPException(status_code=404, detail="该文档无原始文件（蒸馏/自动沉淀无上游文件）")
+        raise HTTPException(
+            status_code=404, detail="该文档无原始文件（蒸馏/自动沉淀无上游文件）"
+        )
     return FileResponse(str(path), filename=path.name)
 
 
@@ -283,11 +378,13 @@ async def get_document_images(doc_id: str) -> dict[str, Any]:
             ref = meta.get("image_ref")
             if not ref:
                 continue
-            images.append({
-                "url": f"/knowledge/image?path={str(ref)}",  # 相对 compressed_pages 根
-                "page": meta.get("page"),
-                "caption": ((data.get("documents") or [])[i] or "")[:400],
-            })
+            images.append(
+                {
+                    "url": f"/knowledge/image?path={str(ref)}",  # 相对 compressed_pages 根
+                    "page": meta.get("page"),
+                    "caption": ((data.get("documents") or [])[i] or "")[:400],
+                }
+            )
         return {"images": images}
     except Exception as e:
         logger.debug("get_document_images failed", exc_info=True)
@@ -341,8 +438,7 @@ async def generate_kb_report(req: ReportRequest) -> dict[str, Any]:
         f"请基于下面给出的多份资料，撰写一份结构化的 Markdown 综合报告《{title}》。\n"
         "要求：分『核心结论 / 分项数据与证据 / 图表与图像说明 / 关联与矛盾点 / 建议下一步』"
         "五个小节；提炼关键数据和数值，标注来自哪份资料；不要编造资料里没有的数据；"
-        "只输出 Markdown，不要对话寒暄。\n\n资料如下：\n\n"
-        + "\n\n".join(sections)
+        "只输出 Markdown，不要对话寒暄。\n\n资料如下：\n\n" + "\n\n".join(sections)
     )
 
     agent = getattr(get_context(), "agent", None)
@@ -376,7 +472,14 @@ async def export_data(
 ) -> Any:
     """Export Huginn records as a downloadable file."""
     # 白名单校验, 防止路径穿越 (source 直接拼进文件名)
-    ALLOWED_SOURCES = {"audit", "remote_jobs", "knowledge", "checkpoints", "provenance", "trajectories"}
+    ALLOWED_SOURCES = {
+        "audit",
+        "remote_jobs",
+        "knowledge",
+        "checkpoints",
+        "provenance",
+        "trajectories",
+    }
     if source not in ALLOWED_SOURCES:
         raise HTTPException(status_code=400, detail=f"Invalid source: {source}")
     # defense-in-depth: 剥掉可能的路径分隔符
