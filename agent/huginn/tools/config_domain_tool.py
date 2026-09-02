@@ -13,6 +13,11 @@ dataclass 字段**自动生成可对话的字段清单, 用三层保护取代手
   v1 不在对话里直接 set.
 - ``EDITABLE``: 标量 (bool/int/float/str 含 Literal 枚举) 可读可写, 类型自动校验.
 
+注意 ``mcp_servers`` 保持 READ_ONLY (复杂 dict, 不适合用 set_field 整体替换), 它是
+**链接型字段**: MCP server 的增删连应由 ``eco_tool``(huginn.tools.eco_tool) 的
+``mcp_connect`` 统一管理 —— 那才是唯一对话入口, 会走 register_server + connect +
+register_mcp_tools 并热刷新 agent 工具缓存; 不要用 config_domain 的 set_field 改它.
+
 写盘走模块级 ``persist_config_with_hot_reload`` (与 ConfigWizardTool 共用), 因此任何域
 的 set 都即刻热生效. 后续可在 set 前接 ``control_safety`` 策略闸门 + 配置回滚.
 """

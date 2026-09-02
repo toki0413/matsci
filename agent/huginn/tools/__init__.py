@@ -55,6 +55,7 @@ _CORE_MODULES = [
     ("huginn.tools.literature_tool", "LiteraturePipelineTool"),
     ("huginn.tools.orchestrate_tool", "OrchestrateTool"),
     ("huginn.tools.skill_tool", "SkillTool"),
+    ("huginn.tools.eco_tool", "EcoTool"),
     ("huginn.tools.memory_tool", "RememberTool"),
     ("huginn.tools.memory_tool", "RecallTool"),
     ("huginn.tools.prospective_tool", "ScheduleIntentionTool"),
