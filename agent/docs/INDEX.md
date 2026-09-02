@@ -40,6 +40,7 @@
 | [harness_evolution_spec.md](harness_evolution_spec.md) | active | harness 演进规范（H0-H4 落地，H5-a/H5-b 已落地） |
 | [pluginized-segments-design.md](pluginized-segments-design.md) | active | 插件化分段设计（Everything is a Plugin 落地） |
 | [external-thinking.md](external-thinking.md) | active | deep_think 外部草稿纸工具（已实现，含 `external_thinking` 开关） |
+| [industrial-skill-guide.md](industrial-skill-guide.md) | active | 工业 Skill 接入指南（对齐"工业智能体开发套件"范式，含示例与防漂移护栏） |
 | [p0-state-store-and-rust.md](p0-state-store-and-rust.md) | active | P0 里程碑记录（共享状态后端化 + Rust 沙箱确定性，已完成） |
 | [reward_design.md](reward_design.md) | staging | 奖励设计（未实现理论稿） |
 | [cost-participation-contract.md](cost-participation-contract.md) | active | 成本-剪枝参与感契约（决策点对话 + 成本叙事，已实现） |
