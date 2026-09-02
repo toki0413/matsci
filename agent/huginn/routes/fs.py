@@ -7,6 +7,7 @@
 「用户可写区域放行、系统敏感目录与其他用户 profile 拦截」的原有语义不因
 迁移而丢失；同时把 `HUGINN_ALLOW_UNRESTRICTED_READ=1` 视为显式放行（测试/CI）。
 """
+
 from __future__ import annotations
 
 import logging
@@ -17,6 +18,10 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
+
+# WSL ↔ Windows 路径转换: fs_read/fs_list/fs_open 在收到 Windows 或 \\wsl$ UNC
+# 路径时先在 WSL 侧归一, 再走既有的 resolve/安全校验。纯函数, 不依赖 wsl 命令。
+from huginn.utils import wslpath
 
 router = APIRouter(tags=["fs"])
 
@@ -46,7 +51,11 @@ def _is_system_sensitive(path: Path) -> bool:
 def _is_path_safe(path: Path) -> bool:
     """与 Tauri `is_path_safe` 语义一致：用户可写区域放行，系统/profile 敏感区拦截。"""
     # 显式放行开关（测试 / 本地开发取证用）
-    if os.environ.get("HUGINN_ALLOW_UNRESTRICTED_READ", "").lower() in ("1", "true", "yes"):
+    if os.environ.get("HUGINN_ALLOW_UNRESTRICTED_READ", "").lower() in (
+        "1",
+        "true",
+        "yes",
+    ):
         return True
 
     home = os.environ.get("USERPROFILE") or os.environ.get("HOME")
@@ -67,13 +76,18 @@ def _is_path_safe(path: Path) -> bool:
 
 
 def _safe_resolve(raw: str) -> Path:
-    p = Path(raw).expanduser()
+    # Windows / \\wsl$ UNC 路径先转成 WSL 侧 (纯函数), 不影响既有 POSIX 行为:
+    # 非 Windows/相对路径 to_wsl 原样返回; 绝对 POSIX 路径原样经过。
+    converted = wslpath.to_wsl(raw)
+    p = Path(converted).expanduser()
     try:
         resolved = p.resolve()
     except OSError as e:
         raise HTTPException(status_code=400, detail=f"无法解析路径: {e}") from e
     if not _is_path_safe(resolved):
-        raise HTTPException(status_code=403, detail="Access denied: 路径在允许访问的目录之外")
+        raise HTTPException(
+            status_code=403, detail="Access denied: 路径在允许访问的目录之外"
+        )
     return resolved
 
 
@@ -105,10 +119,25 @@ async def fs_list(path: str = ".") -> dict[str, Any]:
 
 # 快速打开时要跳过的目录（构建产物 / 依赖 / 版本控制 / Python 缓存）
 _SKIP_DIRS = {
-    "node_modules", ".git", ".svn", ".hg",
-    "__pycache__", ".venv", "venv", "env",
-    "dist", "build", "out", "target", ".idea", ".vscode",
+    "node_modules",
+    ".git",
+    ".svn",
+    ".hg",
+    "__pycache__",
+    ".venv",
+    "venv",
+    "env",
+    "dist",
+    "build",
+    "out",
+    "target",
+    ".idea",
+    ".vscode",
 }
+
+# /fs/read 整读上限 (字节). 超过则拒绝整读并引导走 file_read_tool 懒读窗口,
+# 防止超大文件被 read_text 一次性载入导致内存/上下文暴涨. 可用环境变量覆盖.
+_FS_READ_MAX_BYTES = 1024 * 1024
 
 
 @router.get("/fs/branch")
@@ -157,10 +186,31 @@ async def fs_search(path: str = ".", max_results: int = 500) -> dict[str, Any]:
 
 @router.get("/fs/read")
 async def fs_read(path: str) -> dict[str, Any]:
-    """读取文本文件内容。"""
+    """读取文本文件内容.
+
+    超大文件 (超过 HUGINN_FS_READ_MAX_SIZE_BYTES, 默认 1MB) 拒绝整读并返回
+    明确提示, 避免 read_text 一次性读进内存导致内存/上下文暴涨. 大文件应改走
+    file_read_tool 的 window_offset/window_size 懒读窗口.
+    """
     target = _safe_resolve(path)
     if not target.is_file():
         raise HTTPException(status_code=400, detail=f"不是文件: {path}")
+    try:
+        size = target.stat().st_size
+    except OSError:
+        size = 0
+    max_bytes = int(
+        os.environ.get("HUGINN_FS_READ_MAX_SIZE_BYTES", str(_FS_READ_MAX_BYTES))
+    )
+    if size > max_bytes:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"文件过大: {size} bytes (上限 {max_bytes} bytes). "
+                "为避免整读爆内存, 请改用 file_read_tool 的 "
+                "window_offset/window_size 懒读窗口分段读取."
+            ),
+        )
     try:
         content = target.read_text(encoding="utf-8", errors="replace")
     except OSError as e:
@@ -237,16 +287,56 @@ async def fs_delete(path: str) -> dict[str, Any]:
 
 @router.post("/fs/open")
 async def fs_open(params: dict[str, Any]) -> dict[str, Any]:
-    """在系统文件管理器（Windows 资源管理器）中打开目录并选中目标。"""
+    """在系统文件管理器（Windows 资源管理器）中打开目录并选中目标。
+
+    对 `\\\\wsl$\\<distro>\\...` UNC 路径先转成发行版内路径；若该发行版未
+    挂载（路径不存在），给出可重连提示（带发行版探测结果）；普通 POSIX 路径
+    行为与原来完全一致。
+    """
     path = params.get("path")
     if not isinstance(path, str) or not path:
         raise HTTPException(status_code=400, detail="缺少 path")
     target = _safe_resolve(path)
     if not target.exists():
-        raise HTTPException(status_code=404, detail=f"目标不存在: {path}")
+        detail = f"目标不存在: {path}"
+        hint = _wsl_unc_reconnect_hint(path)
+        if hint:
+            detail += f"。{hint}"
+        raise HTTPException(status_code=404, detail=detail)
     try:
         reveal = str(target) if target.is_dir() else str(target.parent)
-        os.startfile(reveal) if sys.platform == "win32" else subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", reveal])
+        (
+            os.startfile(reveal)
+            if sys.platform == "win32"
+            else subprocess.Popen(
+                ["open" if sys.platform == "darwin" else "xdg-open", reveal]
+            )
+        )
     except OSError as e:
         raise HTTPException(status_code=400, detail=f"打开失败: {e}") from e
     return {"opened": str(target)}
+
+
+def _wsl_unc_reconnect_hint(path: str) -> str:
+    """为 `\\\\wsl$\\...` 路径生成重连提示 (探测发行版, 失败静默)。
+
+    只有当原始输入是 WSL 网络共享 UNC 时才提示；其余路径返回空串, 不干扰
+    既有的 404 行为。探测优先读 WSL_DISTRO_NAME, 其次才尝试调用 wsl.exe (探测
+    失败不影响返回, 最坏情况给通用提示)。
+    """
+    if not wslpath.is_wsl_unc(path):
+        return ""
+    distro = wslpath.detect_default_distro()
+    if not distro:
+        found = wslpath.probe_wsl_distoros()
+        if found:
+            distro = found[0]
+    if distro:
+        return (
+            f"WSL 发行版 '{distro}' 可能未运行或该路径在该发行版内不可访问。"
+            "请先在终端执行 `wsl --shutdown && wsl --distribution <发行版>` 重连后重试。"
+        )
+    return (
+        "该 WSL 发行版可能未运行，请在 Windows 中执行 "
+        "`wsl --list --online` 确认发行版并 `wsl` 启动后重连。"
+    )
