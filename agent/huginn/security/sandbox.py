@@ -23,6 +23,19 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _powershell_enabled_by_default() -> bool:
+    """PowerShell 支持开关的默认值: posix 关、win32 开.
+
+    显式设置 ``HUGINN_ALLOW_POWERSHELL`` (1/true/yes) 时一律按其取值
+    (无论平台); 未设置时按平台默认 (win32 开, 其余关). 放在模块级以便
+    在 ``SandboxConfig`` 的 dataclass ``default_factory`` 中复用.
+    """
+    val = os.environ.get("HUGINN_ALLOW_POWERSHELL")
+    if val is not None and val.strip():
+        return val.strip().lower() in ("1", "true", "yes")
+    return os.name == "nt"
+
+
 class SandboxError(Exception):
     """Raised when a sandbox policy is violated."""
 
@@ -112,6 +125,26 @@ class SandboxConfig:
     # 默认 True (安全优先); HUGINN_SANDBOX_RELAX=1 可关.
     strict_work_dir: bool = True
 
+    # PowerShell 执行支持 (安全开关). 由默认白名单里**不含** pwsh/powershell,
+    # 只有在此开关为真 (显式 HUGINN_ALLOW_POWERSHELL=1 或 win32 平台默认) 时,
+    # 才经 __post_init__ 把它们并入 allowed_executables. 默认 posix 关、win32 开.
+    allow_powershell: bool = field(
+        default_factory=_powershell_enabled_by_default,
+    )
+
+    def __post_init__(self) -> None:
+        # 开关开 → 把 PowerShell 可执行文件并入白名单; 关 → 从白名单剔除.
+        # 保持默认 posix 白名单不含 pwsh (除非显式开关打开), 不破坏既有安全假设.
+        self._sync_powershell()
+
+    def _sync_powershell(self) -> None:
+        """按 ``allow_powershell`` 同步白名单中的 pwsh/powershell 项."""
+        if self.allow_powershell:
+            self.allowed_executables.update({"pwsh", "powershell"})
+        else:
+            self.allowed_executables.discard("pwsh")
+            self.allowed_executables.discard("powershell")
+
 
 @dataclass
 class SandboxResult:
@@ -137,8 +170,15 @@ class SandboxExecutor:
         self,
         config: SandboxConfig | None = None,
         profile: str = "light",
+        allow_powershell: bool | None = None,
     ) -> None:
         self.config = config or SandboxConfig()
+        # allow_powershell 参数显式覆盖 config 的开关: None=沿用 config 默认
+        # (env HUGINN_ALLOW_POWERSHELL / 平台默认); 显式 True/False 强制收放,
+        # 供调用方在不改全局环境的前提下按任务粒度开/关 PowerShell.
+        if allow_powershell is not None:
+            self.config.allow_powershell = allow_powershell
+            self.config._sync_powershell()
         # T-BCSE-14: RevertibleEffect — 沙箱级可逆效应上下文 (Cordis 论文).
         # 每个经沙箱的副作用 (建文件/写 env/起进程/注册依赖) 都经它累积逆,
         # exit 时可整体回滚到沙箱建立前的状态. 见 huginn/security/revertible.py.
@@ -154,6 +194,7 @@ class SandboxExecutor:
         # strict=True 但 allowed_work_dirs 空 → path scoping 实际不生效, warn
         if self.config.strict_work_dir and not self.config.allowed_work_dirs:
             import logging
+
             logging.getLogger(__name__).warning(
                 "strict_work_dir=True but allowed_work_dirs empty — path scoping "
                 "inactive. Set allowed_work_dirs or HUGINN_WORKSPACE to enable."
@@ -341,6 +382,7 @@ class SandboxExecutor:
         ):
             try:
                 from huginn.security.landlock import make_preexec_fn
+
                 # ro 集合含 (a) 工作目录 (只读读/执行) + (b) 白名单可执行文件自身
                 # 所在目录, 否则隔离后子进程读不到二进制本身而无法 exec (正确性缺陷).
                 # rw 全量放行 allowed_work_dirs.
@@ -370,20 +412,54 @@ class SandboxExecutor:
         #   不完全一致 (e.g. ls -la vs dir), agent LLM 通常会自己适配 Windows 语法.
         #   升级路径: 装 git-bash 让 coreutils 在 PATH 里直接 which 到.
         _WIN_COREUTILS = {
-            "ls", "cp", "mv", "rm", "cat", "touch", "mkdir", "rmdir",
-            "echo", "pwd", "which", "find", "sort", "head", "tail",
-            "wc", "grep", "diff", "true", "false", "test", "env",
+            "ls",
+            "cp",
+            "mv",
+            "rm",
+            "cat",
+            "touch",
+            "mkdir",
+            "rmdir",
+            "echo",
+            "pwd",
+            "which",
+            "find",
+            "sort",
+            "head",
+            "tail",
+            "wc",
+            "grep",
+            "diff",
+            "true",
+            "false",
+            "test",
+            "env",
         }
         if os.name == "nt" and cmd and cmd[0].lower() in _WIN_COREUTILS:
             # shutil.which 已经在 _resolve_executable 里试过失败, 直接走 cmd /c
             _win_map = {
-                "ls": "dir", "cp": "copy", "mv": "move", "rm": "del",
-                "cat": "type", "touch": "copy /b", "mkdir": "mkdir",
-                "rmdir": "rmdir", "echo": "echo", "pwd": "cd",
-                "which": "where", "find": "find", "sort": "sort",
-                "head": "more", "tail": "more", "wc": "find /c",
-                "grep": "findstr", "diff": "fc", "true": "rem",
-                "false": "rem", "test": "if", "env": "set",
+                "ls": "dir",
+                "cp": "copy",
+                "mv": "move",
+                "rm": "del",
+                "cat": "type",
+                "touch": "copy /b",
+                "mkdir": "mkdir",
+                "rmdir": "rmdir",
+                "echo": "echo",
+                "pwd": "cd",
+                "which": "where",
+                "find": "find",
+                "sort": "sort",
+                "head": "more",
+                "tail": "more",
+                "wc": "find /c",
+                "grep": "findstr",
+                "diff": "fc",
+                "true": "rem",
+                "false": "rem",
+                "test": "if",
+                "env": "set",
             }
             _mapped = _win_map.get(cmd[0].lower(), cmd[0])
             # 重组: cmd /c <mapped> <rest args>
@@ -403,6 +479,7 @@ class SandboxExecutor:
         if os.name != "nt":
             try:
                 import resource as _resource
+
                 _mem = _profile_mem_bytes(self.profile)
                 if _mem and _mem > 0:
                     _cur_soft, _cur_hard = _resource.getrlimit(_resource.RLIMIT_AS)
@@ -410,9 +487,11 @@ class SandboxExecutor:
                     _resource.setrlimit(_resource.RLIMIT_AS, (_mem, _cur_hard))
             except Exception:
                 import logging
+
                 logging.getLogger(__name__).debug(
                     "setrlimit(RLIMIT_AS, profile=%s) failed (non-fatal)",
-                    self.profile, exc_info=True,
+                    self.profile,
+                    exc_info=True,
                 )
 
         try:
@@ -444,8 +523,11 @@ class SandboxExecutor:
             if _saved_rlimit_soft is not None:
                 try:
                     import resource as _resource
+
                     _cur_soft, _cur_hard = _resource.getrlimit(_resource.RLIMIT_AS)
-                    _resource.setrlimit(_resource.RLIMIT_AS, (_saved_rlimit_soft, _cur_hard))
+                    _resource.setrlimit(
+                        _resource.RLIMIT_AS, (_saved_rlimit_soft, _cur_hard)
+                    )
                 except Exception:
                     logger.debug("failed to restore parent rlimit", exc_info=True)
 
@@ -520,15 +602,19 @@ class SandboxExecutor:
         放弃结果时把沙箱文件系统恢复原状 (时间可组合).
         """
         snap_dir = Path(poll_dir or cwd or Path.cwd())
-        before = {
-            p for p in snap_dir.iterdir() if p.is_file()
-        } if snap_dir.is_dir() else set()
+        before = (
+            {p for p in snap_dir.iterdir() if p.is_file()}
+            if snap_dir.is_dir()
+            else set()
+        )
 
         result = self.run(cmd, cwd=cwd, **kwargs)
 
-        after = {
-            p for p in snap_dir.iterdir() if p.is_file()
-        } if snap_dir.is_dir() else set()
+        after = (
+            {p for p in snap_dir.iterdir() if p.is_file()}
+            if snap_dir.is_dir()
+            else set()
+        )
         new_files = after - before
 
         def dispose() -> None:
@@ -551,6 +637,7 @@ def _profile_mem_bytes(profile: str) -> int | None:
     _FALLBACK_GB = {"light": 2, "standard": 8, "heavy": 16}
     try:
         from huginn.security.docker_sandbox import _PROFILES
+
         mem_str = _PROFILES.get(profile or "light", _PROFILES["light"])[0]
         mem_str = mem_str.strip().lower()
         if mem_str.endswith("g"):
@@ -603,17 +690,23 @@ def create_sandbox(
         except Exception:
             _log.warning(
                 "docker_sandbox import failed, falling back to subprocess "
-                "sandbox (profile=%s)", profile, exc_info=True,
+                "sandbox (profile=%s)",
+                profile,
+                exc_info=True,
             )
             return SandboxExecutor(cfg, profile=profile)
 
         try:
-            docker_executor = DockerSandboxExecutor(image=docker_image, config=cfg, profile=profile)
+            docker_executor = DockerSandboxExecutor(
+                image=docker_image, config=cfg, profile=profile
+            )
         except Exception:
             # 构造失败也别让上层挂掉
             _log.warning(
                 "DockerSandboxExecutor init failed, falling back to "
-                "subprocess sandbox (profile=%s)", profile, exc_info=True,
+                "subprocess sandbox (profile=%s)",
+                profile,
+                exc_info=True,
             )
             return SandboxExecutor(cfg, profile=profile)
 

@@ -33,7 +33,7 @@ _BLOCKED_PATTERNS: list[str] = [
     r"\bdel\s+/[fsq]\b",
     r"\brmdir\s+/s\b",
     r"\brd\s+/s\b",
-    r"powershell\s+-enc\b",
+    r"(?:powershell|pwsh)(?:\.exe)?\s+-enc(?:odedcommand)?\b",
     r"\bnc\s+-[elp]",
     r"netcat\b",
     r"crontab\s+-[er]",
