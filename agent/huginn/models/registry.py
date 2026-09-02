@@ -91,6 +91,7 @@ def _patch_langchain_reasoning_content():
     """
     try:
         from langchain_openai.chat_models import base as _base
+
         if getattr(_base, "_reasoning_patched", False):
             return
         _original = _base._convert_delta_to_message_chunk
@@ -143,6 +144,7 @@ ProviderT = Literal[
     "doubao",
     "hunyuan",
     "minimax",
+    "spark",
     "openai-compatible",
     # Local LLM presets (all OpenAI-compatible)
     "lm-studio",
@@ -357,12 +359,14 @@ MODEL_CAPABILITIES: dict[str, ModelCaps] = {
     # qwen3-max 仍为纯文本; 原生多模态从 qwen3.5-plus 起
     "qwen3-max": ModelCaps(vision=False, tools=True, reasoning=True, streaming=True),
     "qwen3.5-plus": ModelCaps(vision=True, tools=True, reasoning=True, streaming=True),
-    "qwen3.6-max-preview": ModelCaps(vision=False, tools=True, reasoning=True, streaming=True),
-    "qwen3.6-flash": ModelCaps(vision=True, tools=True, reasoning=False, streaming=True),
-    "qwen-long": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
-    "qwen2.5:14b": ModelCaps(
-        vision=False, tools=True, reasoning=False, streaming=True
+    "qwen3.6-max-preview": ModelCaps(
+        vision=False, tools=True, reasoning=True, streaming=True
     ),
+    "qwen3.6-flash": ModelCaps(
+        vision=True, tools=True, reasoning=False, streaming=True
+    ),
+    "qwen-long": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
+    "qwen2.5:14b": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
     # ── Moonshot / Kimi ───────────────────────────────────────
     "moonshot-v1-8k": ModelCaps(
         vision=False, tools=True, reasoning=False, streaming=True
@@ -376,24 +380,37 @@ MODEL_CAPABILITIES: dict[str, ModelCaps] = {
     "kimi-k2.5": ModelCaps(vision=True, tools=True, reasoning=True, streaming=True),
     "kimi-k2.6": ModelCaps(vision=True, tools=True, reasoning=True, streaming=True),
     "kimi-k2.7": ModelCaps(vision=True, tools=True, reasoning=True, streaming=True),
-    "kimi-k2-thinking": ModelCaps(vision=False, tools=True, reasoning=True, streaming=True),
-    "kimi-k2-turbo-preview": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
+    "kimi-k2-thinking": ModelCaps(
+        vision=False, tools=True, reasoning=True, streaming=True
+    ),
+    "kimi-k2-turbo-preview": ModelCaps(
+        vision=False, tools=True, reasoning=False, streaming=True
+    ),
     # ── GLM (智谱) ────────────────────────────────────────────
     # GLM-4/5/4.7 文本系原生无视觉; 智谱视觉走独立 GLM-4.xV / GLM-5V 模型
     "glm-4": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
-    "glm-4-flash": ModelCaps(
+    "glm-4-flash": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
+    "glm-4.7": ModelCaps(vision=False, tools=True, reasoning=True, streaming=True),
+    "glm-4.7-flash": ModelCaps(
         vision=False, tools=True, reasoning=False, streaming=True
     ),
-    "glm-4.7": ModelCaps(vision=False, tools=True, reasoning=True, streaming=True),
-    "glm-4.7-flash": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
     "glm-5": ModelCaps(vision=False, tools=True, reasoning=True, streaming=True),
     "glm-5.1": ModelCaps(vision=False, tools=True, reasoning=True, streaming=True),
     "glm-5.2": ModelCaps(vision=False, tools=True, reasoning=True, streaming=True),
     # ── MiniMax ───────────────────────────────────────────────
     "MiniMax-M2.7": ModelCaps(vision=False, tools=True, reasoning=True, streaming=True),
-    "MiniMax-M2.7-highspeed": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
-    "MiniMax-M2.5": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
+    "MiniMax-M2.7-highspeed": ModelCaps(
+        vision=False, tools=True, reasoning=False, streaming=True
+    ),
+    "MiniMax-M2.5": ModelCaps(
+        vision=False, tools=True, reasoning=False, streaming=True
+    ),
     "MiniMax-M2": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
+    # ── 讯飞星火 X2.5 端侧 (词元星火 2026-09) — 围绕智能体/代码/指令遵循优化
+    # 4B 为主入口; 是否原生长链推理未知, 保守 reasoning=False (fail-closed).
+    "spark-x2.5-4b": ModelCaps(
+        vision=False, tools=True, reasoning=False, streaming=True
+    ),
     # ── 本地多模态模型 (Ollama / vLLM / LM Studio) ────────────
     # vision=True 标记让 VisionRouter 走 NATIVE_LLM / BOTH 路径
     # 前缀模糊匹配会自动覆盖 :7b, :32b, :latest, -q4_0 等标签变体
@@ -401,13 +418,19 @@ MODEL_CAPABILITIES: dict[str, ModelCaps] = {
     "qwen2-vl": ModelCaps(vision=True, tools=False, reasoning=False, streaming=True),
     "qwen-vl": ModelCaps(vision=True, tools=False, reasoning=False, streaming=True),
     "llava": ModelCaps(vision=True, tools=False, reasoning=False, streaming=True),
-    "llama3.2-vision": ModelCaps(vision=True, tools=False, reasoning=False, streaming=True),
+    "llama3.2-vision": ModelCaps(
+        vision=True, tools=False, reasoning=False, streaming=True
+    ),
     "minicpm-v": ModelCaps(vision=True, tools=False, reasoning=False, streaming=True),
-    "minicpm-v2.6": ModelCaps(vision=True, tools=False, reasoning=False, streaming=True),
+    "minicpm-v2.6": ModelCaps(
+        vision=True, tools=False, reasoning=False, streaming=True
+    ),
     "internvl2": ModelCaps(vision=True, tools=False, reasoning=False, streaming=True),
     "internvl": ModelCaps(vision=True, tools=False, reasoning=False, streaming=True),
     "mllama": ModelCaps(vision=True, tools=False, reasoning=False, streaming=True),
-    "phi3.5-vision": ModelCaps(vision=True, tools=False, reasoning=False, streaming=True),
+    "phi3.5-vision": ModelCaps(
+        vision=True, tools=False, reasoning=False, streaming=True
+    ),
     "pixtral": ModelCaps(vision=True, tools=False, reasoning=False, streaming=True),
     # ── 本地文本模型 ──────────────────────────────────────────
     "qwen2.5": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
@@ -503,6 +526,12 @@ _DOMESTIC_OPENAI_COMPATIBLE: dict[str, dict[str, str | None]] = {
         "base_url": "https://api.minimaxi.com/v1",
         "default_model": "MiniMax-M2.7",
     },
+    "spark": {
+        "env": "SPARK_API_KEY",
+        # 讯飞星辰 MaaS 的 OpenAI 兼容端点; 实际模型名以控制台 modelId 为准.
+        "base_url": "https://maas-api.cn-huabei-1.xf-yun.com/v2",
+        "default_model": "spark-x2.5-4b",
+    },
     "openai-compatible": {
         "env": "OPENAI_API_KEY",
         "base_url": None,
@@ -550,6 +579,7 @@ _PROVIDER_DEFAULTS: dict[ProviderT, str | None] = {
     "doubao": "doubao-pro-32k",
     "hunyuan": "hunyuan-turbo",
     "minimax": "MiniMax-M2.7",
+    "spark": "spark-x2.5-4b",
     "openai-compatible": None,
     "lm-studio": "local-model",
     "llama-cpp": "local-model",
@@ -576,6 +606,7 @@ _PROVIDER_KEY_ENV: dict[ProviderT, str] = {
     "doubao": "DOUBAO_API_KEY",
     "hunyuan": "HUNYUAN_API_KEY",
     "minimax": "MINIMAX_API_KEY",
+    "spark": "SPARK_API_KEY",
     "openai-compatible": "OPENAI_API_KEY",
     # MinerU 文献解析服务 (非 LLM provider, 复用 pick_api_key 做轮询)
     "mineru": "MINERU_API_KEY",
@@ -608,6 +639,7 @@ _CLOUD_PROVIDERS: set[str] = {
     "doubao",
     "hunyuan",
     "minimax",
+    "spark",
 }
 
 # A2: Anthropic 2026 beta header 集合 (5 项).
@@ -683,6 +715,7 @@ def _get_usage_cb() -> Any:
     """懒加载 UsageCallback 单例. langchain 没装时返回 None."""
     try:
         from huginn.routes.metrics import get_usage_callback
+
         return get_usage_callback()
     except Exception:
         logger.debug("best-effort op failed", exc_info=True)
@@ -793,9 +826,10 @@ def create_langchain_model(
         # Speculative decoding — vLLM only, passed through OpenAI extra_body.
         # create_langchain_model has no cfg handle, so we read the same env
         # vars that HuginnConfig.from_env uses (see config.py).
-        if provider == "vllm" and os.environ.get(
-            "HUGINN_SPECULATIVE_ENABLED", ""
-        ).lower() == "true":
+        if (
+            provider == "vllm"
+            and os.environ.get("HUGINN_SPECULATIVE_ENABLED", "").lower() == "true"
+        ):
             extra_body = kwargs.get("extra_body") or {}
             extra_body["speculative_model"] = (
                 os.environ.get("HUGINN_SPECULATIVE_MODEL", "") or "auto"
@@ -812,7 +846,11 @@ def create_langchain_model(
             from langchain_ollama import ChatOllama
         except ImportError as err:
             raise ImportError("pip install langchain-ollama") from err
-        _ollama_kwargs = {"model": model, "base_url": base_url or "http://localhost:11434", "temperature": temperature}
+        _ollama_kwargs = {
+            "model": model,
+            "base_url": base_url or "http://localhost:11434",
+            "temperature": temperature,
+        }
         # 长思考: qwen3.8 这类推理模型的推理链会长, 而 Ollama 默认 num_ctx=2048
         # 会把长推理/长输入直接截断, 输出也有上限. 本地模型尤其要放开, 否则
         # enable 了 thinking 也白搭. 两个参数都走 env 可调, 服务端 Modfile 可兜底.
@@ -951,18 +989,42 @@ def list_providers() -> list[dict[str, Any]]:
 
     # Cloud providers with dedicated handling
     cloud_meta: list[tuple[str, str, str | None, str | None, str]] = [
-        ("anthropic", "Anthropic (Claude)", None, "claude-3-5-sonnet-20241022", "ANTHROPIC_API_KEY"),
+        (
+            "anthropic",
+            "Anthropic (Claude)",
+            None,
+            "claude-3-5-sonnet-20241022",
+            "ANTHROPIC_API_KEY",
+        ),
         ("openai", "OpenAI (GPT)", None, "gpt-4o", "OPENAI_API_KEY"),
         ("google-genai", "Google (Gemini)", None, "gemini-2.5-pro", "GOOGLE_API_KEY"),
-        ("openrouter", "OpenRouter (聚合)", None, "anthropic/claude-sonnet-4", "OPENROUTER_API_KEY"),
-        ("nvidia", "NVIDIA NIM", None, "meta/llama-3.1-405b-instruct", "NVIDIA_API_KEY"),
+        (
+            "openrouter",
+            "OpenRouter (聚合)",
+            None,
+            "anthropic/claude-sonnet-4",
+            "OPENROUTER_API_KEY",
+        ),
+        (
+            "nvidia",
+            "NVIDIA NIM",
+            None,
+            "meta/llama-3.1-405b-instruct",
+            "NVIDIA_API_KEY",
+        ),
     ]
     for pid, label, url, model, env in cloud_meta:
-        entries.append({
-            "id": pid, "label": label, "base_url": url,
-            "default_model": model, "env_var": env,
-            "local": False, "needs_key": True,
-        })
+        entries.append(
+            {
+                "id": pid,
+                "label": label,
+                "base_url": url,
+                "default_model": model,
+                "env_var": env,
+                "local": False,
+                "needs_key": True,
+            }
+        )
 
     # Domestic OpenAI-compatible providers
     for pid, cfg in _DOMESTIC_OPENAI_COMPATIBLE.items():
@@ -979,49 +1041,73 @@ def list_providers() -> list[dict[str, Any]]:
             "doubao": "字节豆包",
             "hunyuan": "腾讯混元",
             "minimax": "MiniMax (稀宇)",
+            "spark": "讯飞星火 (Spark)",
         }
-        entries.append({
-            "id": pid,
-            "label": label_map.get(pid, pid),
-            "base_url": cfg.get("base_url"),
-            "default_model": cfg.get("default_model"),
-            "env_var": cfg.get("env"),
-            "local": False,
-            "needs_key": True,
-        })
+        entries.append(
+            {
+                "id": pid,
+                "label": label_map.get(pid, pid),
+                "base_url": cfg.get("base_url"),
+                "default_model": cfg.get("default_model"),
+                "env_var": cfg.get("env"),
+                "local": False,
+                "needs_key": True,
+            }
+        )
 
     # Local LLM presets
-    entries.append({
-        "id": "ollama", "label": "Ollama (本地)",
-        "base_url": "http://localhost:11434",
-        "default_model": "qwen3.8",
-        "env_var": "", "local": True, "needs_key": False,
-    })
-    entries.append({
-        "id": "vllm", "label": "vLLM (本地)",
-        "base_url": "http://localhost:8000/v1",
-        "default_model": None, "env_var": "", "local": True, "needs_key": False,
-    })
+    entries.append(
+        {
+            "id": "ollama",
+            "label": "Ollama (本地)",
+            "base_url": "http://localhost:11434",
+            "default_model": "qwen3.8",
+            "env_var": "",
+            "local": True,
+            "needs_key": False,
+        }
+    )
+    entries.append(
+        {
+            "id": "vllm",
+            "label": "vLLM (本地)",
+            "base_url": "http://localhost:8000/v1",
+            "default_model": None,
+            "env_var": "",
+            "local": True,
+            "needs_key": False,
+        }
+    )
     for pid, preset in _LOCAL_PRESETS.items():
         label_map = {
             "lm-studio": "LM Studio (本地)",
             "llama-cpp": "llama.cpp (本地)",
             "sglang": "SGLang (本地)",
         }
-        entries.append({
-            "id": pid,
-            "label": label_map.get(pid, pid),
-            "base_url": preset["base_url"],
-            "default_model": preset["default_model"],
-            "env_var": "", "local": True, "needs_key": False,
-        })
+        entries.append(
+            {
+                "id": pid,
+                "label": label_map.get(pid, pid),
+                "base_url": preset["base_url"],
+                "default_model": preset["default_model"],
+                "env_var": "",
+                "local": True,
+                "needs_key": False,
+            }
+        )
 
     # Generic OpenAI-compatible (user provides everything)
-    entries.append({
-        "id": "openai-compatible", "label": "自定义 (OpenAI 兼容)",
-        "base_url": None, "default_model": None,
-        "env_var": "OPENAI_API_KEY", "local": False, "needs_key": True,
-    })
+    entries.append(
+        {
+            "id": "openai-compatible",
+            "label": "自定义 (OpenAI 兼容)",
+            "base_url": None,
+            "default_model": None,
+            "env_var": "OPENAI_API_KEY",
+            "local": False,
+            "needs_key": True,
+        }
+    )
 
     return entries
 
@@ -1150,7 +1236,9 @@ class ModelRegistry:
                     if not cfg.base_url and cred_info.get("base_url"):
                         cfg = replace(cfg, base_url=cred_info["base_url"])
             except Exception:
-                logger.debug("get failed", exc_info=True)  # CredentialStore not available, fall through
+                logger.debug(
+                    "get failed", exc_info=True
+                )  # CredentialStore not available, fall through
 
         instance = create_langchain_model(
             provider=cfg.provider,  # type: ignore[arg-type]
