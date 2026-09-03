@@ -34,10 +34,13 @@ def test_every_huginn_path_in_doc_exists():
 
 
 def test_true_gaps_are_still_gaps():
-    """文档标注'真缺'的符号不得已在代码里出现(否则要改文档标为已存在)"""
+    """文档标'真缺'的符号(**表格结论列**)不得已在代码里出现(否则要改文档标为已实现)"""
     src_lines = _doc_text().splitlines()
     for sym in ("StateEstimator", "StateSnapshot", "ObsVector", "ForwardPredictor"):
-        marked_gap = any(("`" + sym + "`") in ln and "真缺" in ln for ln in src_lines)
+        marked_gap = any(
+            ln.startswith("|") and ("`" + sym + "`") in ln and "**真缺**" in ln
+            for ln in src_lines
+        )
         if not marked_gap:
             continue
         hits = _grep_symbol(sym)
@@ -54,6 +57,13 @@ def _grep_symbol(symbol: str) -> list[str]:
         except OSError:
             continue
         for lineno, line in enumerate(text.splitlines(), 1):
-            if f"class {symbol}" in line or f"class {symbol}" in line:
+            if "class " + symbol in line:
                 hits.append(f"{py.relative_to(_REPO)}:{lineno}")
     return hits
+
+
+def test_stage0_components_exist():
+    """盘点文档标'阶段0 已实现'的核心件必须真实可import(防回退为纸面)"""
+    mod = (_REPO / "huginn/security/world_state.py").read_text(encoding="utf-8")
+    for cls in ("ObsVector", "StateSnapshot", "StateEstimator", "ForwardPredictor"):
+        assert "class " + cls in mod, f"world_state.py 缺少 class {cls}"

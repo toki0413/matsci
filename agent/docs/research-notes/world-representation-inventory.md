@@ -32,7 +32,7 @@
 | 可观测空间声明 | `security/tool_registry.py` | `schema.space{state,action}` + `observables` | ⚠️ 消费方未完全 | 岛状 |
 | 观测最小表征(σ) | `metacog/hypothesis_manifold.py` | `Observation(name,value,sigma)` | ⚠️ | 岛状 |
 | 可辨识性档位 | `validation/identifiability.py` | `identifiability_ceiling`/`lambda_min` | ⚠️ | 岛状 |
-| **`StateEstimator` / `StateSnapshot` / `ObsVector`** | — | Grep **0 命中** | — | **真缺** |
+| **`StateEstimator` / `StateSnapshot` / `ObsVector`** | `security/world_state.py` | 已实现(阶段0) | 未接主循环 | 已实现·未接线 |
 
 ### ③ 接下来会发生什么（预测）
 | 部件 | 位置 | 证据 | 接主循环 | 结论 |
@@ -40,7 +40,7 @@
 | 懒路世界模型块 | `autoloop/engine_observe.py`(L355) | `_build_world_model_block` | ✅ 已注入 `[WORLD MODEL]`，注释"无外推" | 已接入·简化 |
 | 解析前向真值 | `security/thermo_system.py`(`IdealGasWorldModel.predict`)、`compute_adapter.py`(`ShellComputeWorldModel.predict`) | `predict` 存在 | ⚠️ 按工具调用，非主动逐轮 | 岛状 |
 | 数据驱动预测 | `tools/sci/dynamics_discovery_tool.py`(SINDy)、`msm_tool.py`、`tools/neural_proxy.py` | 均可 predict | ⚠️ 需被调用 | 岛状 |
-| **`ForwardPredictor`** | — | Grep **0 命中** | — | **真缺** |
+| **`ForwardPredictor`** | `security/world_state.py` | 已实现(阶段0) | 未接主循环 | 已实现·未接线 |
 
 ### ④ 为了目标应该做什么（行动）
 | 部件 | 位置 | 证据 | 接主循环 | 结论 |
@@ -60,29 +60,31 @@
   检索历史实验注入 `[WORLD MODEL]`，但它标注"**无外推**"——即"记忆类比"，不是"前向数值预测"。
 - **与 rewards 类似**：奖励也不是空的——是 bandit/PRM/`r_phys` 的启发式链（无梯度训练）。
 
-## 4. 真缺清单（唯一需要做的事）
+## 4. 真缺清单（更新：阶段 0 已实现）
 
-1) **无 `StateEstimator`/`StateSnapshot`/`ObsVector`**：物理状态仍以 `dict` 存在，没有
-    "带不确定性（均值±σ）的状态分布"统一进入主循环。
-2) **无 `ForwardPredictor`**：主循环没有逐轮"当前状态 → 前向数值预测"，只有类比检索块。
-3) **预测不回流**：预测命中率未作为 reward/记忆特征送入 bandit 与 episodic。
-4) （可选）**深度 RL 奖励未落地**：`docs/reward_design.md` 为理论稿，无梯度训练，无
-    "预测命中→过程奖励"的稀疏回流。
+> 阶段 0（收口核心件）**已于 `security/world_state.py` 实现**：`ObsVector`（定长槽零填充+契约握手）、
+> `StateSnapshot`（状态+不确定度+可辨识档位）、`StateEstimator`（由 `space.state/observables` 生成状态分布）、
+> `ForwardPredictor`（逐轮前向投影 + `[WORLD PREDICTION]`，命中回填 `predicted` 供奖励/记忆回流预留）。
+> 尚未做的（真缺）：
+1) **未接主循环**：`StateEstimator`/`ForwardPredictor` 尚未被 autoloop 引擎逐轮调用（现为库件，有单测）。
+2) **预测不回流**：`ForwardPredictor.predicted` 尚未作为 reward/记忆特征送入 bandit 与 episodic。
+3) （可选）**深度 RL 奖励未落地**：`docs/reward_design.md` 为理论稿，无梯度训练，无
+   "预测命中→过程奖励"的稀疏回流。
 
 ## 5. 结论与建议方向
 
 - **"做过"= 真**：感知、观测契约、解析前向真值、逆模型/tsim2real、分层控制、启发式 reward
   都已存在且多数已挂到主循环/执行链上。
 - **"再造"= 不必**：不要再从零写一个世界模型。
-- **该做 = 收口/接线**：以 `physics_schema` 的契约 + `ToolSpec.observables` 为锚，把
-  `IdealGas/ShellCompute` 等解析真值 + `identifiability` 收成一个 `StateEstimator(+Snapshot)`，
-  再补一个逐轮 `ForwardPredictor`，让预测命中回流到 bandit/episodic。这才是当前唯一真缺，
-  且改动量远小于"重造"。
+- **该做 = 接线/回流（阶段 0 已实现）**：以 `physics_schema` 的契约 + `ToolSpec.observables` 为锚，
+  把已实现的 `IdealGas/ShellCompute` 等解析真值 + `identifiability` 经 `security/world_state.py` 的
+  `StateEstimator`/`ForwardPredictor` 接入 autoloop 逐轮调用，并让预测命中回流到 bandit/episodic。
+  这才是阶段 0 之后唯一真缺（接线 + 回流），改动量远小于"重造"。
 
 ---
 
 ## 6. 相关文件索引（供追踪）
 `huginn/autoloop/{engine_perceive,engine_observe}.py` · `huginn/perception/__init__.py` ·
-`huginn/security/{physics_schema,tool_registry,world_model,actuator_model,compute_adapter,control_safety,control_authority,thermo_system}.py` ·
+`huginn/security/{physics_schema,tool_registry,world_model,actuator_model,compute_adapter,control_safety,control_authority,thermo_system,world_state}.py` ·
 `huginn/validation/identifiability.py` · `huginn/tools/{sci/dynamics_discovery_tool,sci/msm_tool,neural_proxy,validate_tool}.py` ·
 `huginn/agent/bandit_controller.py` · `huginn/runtime/step_verifier.py` · `docs/research-notes/physical-rsi-and-world-model-interpretability.md`
