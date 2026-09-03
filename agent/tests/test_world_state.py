@@ -482,3 +482,63 @@ def test_tracker_observe_produces_bayesian_posterior():
     # V 等容不可直测 → 由前向预测/观测折叠后仍有有限后验方差 (σ 远小于 1)
     assert tracker.last_posterior.posterior_var.get("V") is not None
     assert tracker.last_posterior.posterior_var["V"] < 1e-3
+
+
+# ── token 瘦身: to_prompt 只带结论 ─────────────────────────────
+def _dummy_mixin():
+    from huginn.autoloop.engine_observe import EngineObserveMixin
+
+    class _Dummy(EngineObserveMixin):
+        pass
+
+    return _Dummy()
+
+
+def test_snapshot_to_prompt_keeps_identifiable_and_diff():
+    """to_prompt 精简: 只列可辨识 σ 与有变化的 Δpred, 无变化标 Δpred=0."""
+    est = StateEstimator(_SCHEMA)
+    snap = est.estimate({"p": 1.0, "V": 5.0, "T": 300.0, "n": 2.0})
+    snap.predicted = {"p": 1.0, "T": 305.0}  # T 有变化, p 无变化
+    p = snap.to_prompt()
+    assert "identifiability=" in p
+    assert "σ=" in p  # 只列可辨识 σ
+    assert "Δpred=" in p and "Δpred=0" not in p
+    assert "'T': 305.0" in p  # 差分只带变化的键
+    # 预测与状态一致 → Δpred=0
+    snap2 = est.estimate({"p": 1.0, "V": 5.0, "T": 300.0, "n": 2.0})
+    snap2.predicted = {"T": 300.0}
+    assert "Δpred=0" in snap2.to_prompt()
+
+
+def test_snapshot_to_prompt_truncates_long_state():
+    """超长状态截断: max_state 后加省略号, 避免大状态全刷屏."""
+    est = StateEstimator(
+        {"space": {"state": ["a", "b", "c", "d", "e", "f", "g", "h"]},
+         "observables": ["a"]}
+    )
+    snap = est.estimate({k: float(i + 1) for i, k in enumerate("abcdefgh")})
+    p = snap.to_prompt(max_state=2)
+    assert "..." in p
+    # 默认 6 键: 8 键仍截断; 显式给足则不截断
+    assert len(snap.to_prompt(max_state=20).split("state=")[1]) > len(p.split("state=")[1])
+
+
+def test_world_catalog_filters_by_domain_on_demand():
+    """按需注入: domains={d} 只列该物理域工具, 比全量短 (省 token)."""
+    from huginn.security.tool_registry import get_tool
+
+    d = str(get_tool("ideal_gas").schema.get("domain"))
+    full = _dummy_mixin()._build_world_catalog_block()
+    filtered = _dummy_mixin()._build_world_catalog_block(domains={d})
+    assert "已注册解析世界模型" in filtered
+    assert "ideal_gas" in filtered
+    assert len(filtered.splitlines()) < len(full.splitlines())
+
+
+def test_matching_domains_drives_on_demand_injection():
+    """hypothesis 命中 domain 词 → 只注入该域 (None 否则)."""
+    from huginn.security.tool_registry import get_tool
+
+    d = str(get_tool("ideal_gas").schema.get("domain"))
+    assert _dummy_mixin()._matching_domains(f"研究 {d} 下的物性") == {d}
+    assert _dummy_mixin()._matching_domains("unrelated xyztopic") is None

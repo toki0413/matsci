@@ -125,15 +125,31 @@ class StateSnapshot:
     posterior_var: dict[str, float | None] = field(default_factory=dict)
     ts: float = field(default_factory=time.time)
 
-    def to_prompt(self) -> str:
-        parts = [
-            f"state={self.state}",
-            f"identifiability={self.identifiable_level}",
-        ]
-        if self.uncertainty:
-            parts.append(f"uncertainty={self.uncertainty}")
+    def to_prompt(self, *, max_state: int = 6, diff_tol: float = 1e-9) -> str:
+        """精简 prompt 视图 — 对话里只带结论:
+        - *state* 紧凑、超长截断 (``max_state``);
+        - 只列可辨识 σ (uncertainty 非空) → 不可估长尾不刷屏;
+        - *prediction* 只列相对当前状态**有变化**的键 (差分), 无变化标 ``Δpred=0``.
+        这是"只带结论 + 证据指针"的 token 瘦身 (对齐长程外化记忆的用法)."""
+        items = list(self.state.items())
+        shown = items[:max_state]
+        hidden = len(items) - len(shown)
+        body = ", ".join(f"{k}={v:g}" for k, v in shown)
+        s = "{" + body + ("..." if hidden > 0 else "") + "}"
+        parts = [f"state={s}", f"identifiability={self.identifiable_level}"]
+        sigma = {k: v for k, v in self.uncertainty.items() if v is not None}
+        if sigma:
+            parts.append(f"σ={sigma}")
         if self.predicted:
-            parts.append(f"prediction={self.predicted}")
+            diff = {
+                k: float(v)
+                for k, v in self.predicted.items()
+                if k in self.state and abs(float(v) - float(self.state[k])) > diff_tol
+            }
+            parts.append(f"Δpred={diff}" if diff else "Δpred=0")
+        ident = [k for k, v in self.uncertainty.items() if v is not None]
+        if ident:
+            parts.append(f"estimated={ident}")
         return "\n[STATE] " + "; ".join(parts)
 
 

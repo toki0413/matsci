@@ -366,8 +366,11 @@ LUCID review (mandatory after generating hypothesis):
         if not FeatureFlags.shared().is_enabled("world_model"):
             return ""
         blocks: list[str] = []
-        # 1) 世界模型注册表 (稳定来源 tool_registry, 零 LLM 调用)
-        catalog = self._build_world_catalog_block()
+        # 1) 世界模型注册表 (稳定来源 tool_registry, 零 LLM 调用). 按需: 若 hypothesis 命中了
+        #    某些 ToolSpec.domain 词, 只注入这些域 (省 token); 未命中则全量 (不丢信息).
+        catalog = self._build_world_catalog_block(
+            domains=self._matching_domains(hypothesis)
+        )
         if catalog:
             blocks.append(catalog)
         _mem = getattr(self, "memory", None)
@@ -398,12 +401,13 @@ LUCID review (mandatory after generating hypothesis):
         )
         return "\n\n".join(blocks)
 
-    def _build_world_catalog_block(self) -> str:
+    def _build_world_catalog_block(self, domains: set[str] | None = None) -> str:
         """已注册解析世界模型注册表 — 让 planner 知道哪些物理工具可预演/校验.
 
         来源是 ToolSpec.schema (domain/space.state/observables/forward), 稳定且
         零 LLM; 底层是上轮"真实解析真值 (IdealGas/ShellCompute)" 的注册表. 只列
-        注册过的工具, 未注册的不臆造. 失败静默返回空串 (advisory).
+        注册过的工具, 未注册的不臆造. ``domains`` 提供时只列这些物理域 (按需省
+        token); None = 全量. 失败静默返回空串 (advisory).
         """
         try:
             from huginn.security.tool_registry import get_tool, registered_tools
@@ -417,6 +421,8 @@ LUCID review (mandatory after generating hypothesis):
             try:
                 _schema = get_tool(_name).schema
                 _domain = _schema.get("domain", "?")
+                if domains is not None and str(_domain) not in domains:
+                    continue
                 _state = ",".join(_schema.get("space", {}).get("state", []) or [])
                 _obs = ",".join(_schema.get("observables", []) or [])
                 _fwd = str(_schema.get("forward", ""))[:80]
@@ -430,6 +436,28 @@ LUCID review (mandatory after generating hypothesis):
         if len(_lines) == 1:
             return ""
         return "\n".join(_lines) + "\n"
+
+    @staticmethod
+    def _matching_domains(hypothesis: str) -> set[str] | None:
+        """从 hypothesis 挑出相关物理域 (ToolSpec.domain 名子串命中). None=未命中→全量.
+
+        按需注入的依据: hypothesis 含 "thermal/力学" 等词时命中对应 domain, 只注入该
+        域的工具; 未命中返回 None (catalog 走全量), 保证总是有信息、只在能确定时省 token.
+        """
+        try:
+            from huginn.security.tool_registry import get_tool, registered_tools
+        except Exception:
+            return None
+        h = (hypothesis or "").lower()
+        hits: set[str] = set()
+        for _name in registered_tools():
+            try:
+                d = str(get_tool(_name).schema.get("domain", "")).lower()
+            except Exception:
+                continue
+            if d and d in h:
+                hits.add(d)
+        return hits or None
 
     def _build_metacog_imagery_block(self, context: dict[str, Any]) -> str:
         """metacog 视觉/时空 sketch→verify 闭环 — 把"想象结构"喂回 hypothesis prompt.
