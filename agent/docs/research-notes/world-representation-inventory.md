@@ -94,10 +94,18 @@
 > 仍照常积累代理样本，让代理在真实执行/真实计算工具上自学习。端到端测试
 > `test_tracker_observe_feeds_learnable_surrogate` 用活着的主循环跑多轮后代理能对同型动作输出预测。
 >
+> 阶段 7（最小贝叶斯滤波，已落地，对齐 Life Operators Eq.4）：`StateEstimator.filter(prior, predicted=, observation=)`
+> 做**对角高斯贝叶斯更新** `_gaussian_update`（增益 K = prior_var/(prior_var+obs_var)，后验均值/方差 = (1−K) 规则），
+> 把"演化先验(E) × 观测似然(G)"逐轮折叠成后验；结果写回 `StateSnapshot.posterior_var`（σ²）并把 σ=√var 回填
+> `uncertainty`。`WorldStateTracker.observe` 已接：用已有点 E=last_prediction + G=实测 state_after 产出
+> `last_posterior`（advisory，失败静默）。这填补了文档 §3 真缺①"P 应给状态后验而非单一启发式 σ"的最小实现。
+>
 > 尚未做（真缺）：
 1) （可选）**策略梯度 / 真深度 RL**：当前梯度学习只到 `SparseRewardTuner`（单参数残差自校准）与
    `LearnableForwardModel`（数据驱动线性前向代理）。在两线之上接神经网络策略、以"预测命中→过程奖励"
    为稀疏信号的策略梯度训练，仍属更后续的 P2 深层路径，不由当前解析前向真值闭环冒充。
+2) （可选）**桥路不确定度透传 / 独立数据选候选门**：`compute_adapter` 桥未沿连接显式传播 σ；自演化侧
+   缺真正 "hold-out 独立证据选候选" 一步（`BehaviorLifecycle` 健康门 + `reconcile_r_phys` 已有雏形）。
 
 ## 5. 结论与建议方向
 

@@ -85,6 +85,31 @@ class ObsVector:
         return dict(zip(self.slots, self.values))
 
 
+def _gaussian_update(
+    prior_mean: float | None,
+    prior_var: float | None,
+    obs_value: float | None,
+    obs_var: float | None,
+) -> tuple[float | None, float | None]:
+    """最小对角高斯贝叶斯更新 — 论文 Eq.4 的单键实现.
+
+    ``posterior ∝ N(prior) · N(obs)``: 增益 ``K = prior_var/(prior_var+obs_var)``,
+    后验均值 = prior + K·(obs − prior), 后验方差 = (1−K)·prior_var.
+    任一侧缺 (None) 时退化为"只信那一侧" (观测可直接给状态 → 均值=观测, 方差=obs_var;
+    仅先验 → 原样保留). 这是把"演化先验(E) + 观测似然(G)"逐轮折叠成后验的最小结元.
+    """
+    if obs_value is None:
+        return prior_mean, prior_var
+    if prior_mean is None or prior_var is None:
+        return float(obs_value), float(obs_var if obs_var is not None else _OBSERVED_SIGMA)
+    pv = max(float(prior_var), 1e-12)
+    ov = float(obs_var) if obs_var is not None else _OBSERVED_SIGMA
+    ov = max(ov, 1e-12)
+    k = pv / (pv + ov)
+    mu = float(prior_mean) + k * (float(obs_value) - float(prior_mean))
+    return mu, (1.0 - k) * pv
+
+
 @dataclass
 class StateSnapshot:
     """带不确定性的状态视图: 观测项给 σ, 不可估项给 None, 可辨识档位标出哪些状态其实不可估."""
@@ -96,6 +121,8 @@ class StateSnapshot:
     contract_version: int = physics_schema.SHARED_CONTRACT_VERSION
     # 前向投影结果(可选回填), 供奖励/记忆回流占位
     predicted: dict[str, float] | None = None
+    # 最小贝叶斯滤波的后验方差 (σ², 逐键); filter() 回填. 空 = 未做滤波.
+    posterior_var: dict[str, float | None] = field(default_factory=dict)
     ts: float = field(default_factory=time.time)
 
     def to_prompt(self) -> str:
@@ -142,6 +169,56 @@ class StateEstimator:
             identifiable_level=level,
             contract_version=self.contract_version,
         )
+
+    def filter(
+        self,
+        prior: StateSnapshot,
+        *,
+        predicted: Mapping[str, Any] | None = None,
+        observation: Mapping[str, Any] | None = None,
+        obs_sigma: float | None = None,
+        process_sigma: float | None = None,
+    ) -> StateSnapshot:
+        """一次最小贝叶斯滤波 (论文 Eq.4): 演化先验 × 观测似然 → 后验快照.
+
+        - ``predicted``  = Evolution 输出 (E: 未来状态均值).
+        - ``observation`` = Generation/实测量 (G: 带高斯噪声的读音).
+        - 逐键: 先验方差取 ``prior.posterior_var`` (有) 否则 ``prior.uncertainty``(σ→σ²);
+          观测方差 = ``obs_sigma²`` (缺省 ``_OBSERVED_SIGMA``).
+        - 结果: 后验均值写回 ``snapshot.state``, 后验方差(σ²)写回 ``snapshot.posterior_var``,
+          并把 σ=√var 回填 ``uncertainty`` 供下游读 (advisory, 失败逐键退回先验).
+        """
+        obs_s = _OBSERVED_SIGMA if obs_sigma is None else float(obs_sigma)
+        # 过程噪声: 预测比先验更不确定 (时间推进/未建模量), 缺省取先验方差.
+        snap = StateSnapshot(
+            state=dict(prior.state),
+            observables=prior.observables,
+            identifiable_level=prior.identifiable_level,
+            contract_version=prior.contract_version,
+            predicted=prior.predicted,
+        )
+        for s in self.states:
+            prior_m = prior.state.get(s)
+            unc = prior.uncertainty.get(s)
+            if prior.posterior_var.get(s) is not None:
+                pvar = float(prior.posterior_var[s])
+            elif unc is not None:
+                pvar = float(unc) ** 2  # uncertainty 存 σ → 方差
+            else:
+                pvar = None
+            # 先验 → 演化预测 (过程噪声放大方差)
+            pred_m = predicted.get(s) if isinstance(predicted, Mapping) else None
+            p2var = pvar if process_sigma is None else float(process_sigma) ** 2
+            prior_m2, prior_v2 = _gaussian_update(prior_m, pvar, pred_m, p2var)
+            # 预测 → 观测 (观测似然)
+            obs_v = observation.get(s) if isinstance(observation, Mapping) else None
+            mu, var = _gaussian_update(prior_m2, prior_v2, obs_v, obs_s * obs_s)
+            if mu is not None:
+                snap.state[s] = float(mu)
+            if var is not None:
+                snap.posterior_var[s] = var
+                snap.uncertainty[s] = math.sqrt(var)
+        return snap
 
 
 class ForwardPredictor:
@@ -213,6 +290,7 @@ class WorldStateTracker:
         self._last_state_before: dict[str, float] | None = None
         self._last_action: Any = None
         self.last_snapshot: StateSnapshot | None = None
+        self.last_posterior: StateSnapshot | None = None
         self.last_prediction: dict[str, float] | None = None
         self.last_prediction_error: float | None = None
         self.last_prediction_reward: float | None = None
@@ -253,6 +331,15 @@ class WorldStateTracker:
                     self._last_state_before, self._last_action, state_after
                 )
         pred = self.last_prediction
+        # 阶段7 (Life Operators Eq.4): 用演化先验(last_prediction) × 观测(state_after)
+        # 做最小贝叶斯滤波 → 后验快照. advisory: 失败静默, 不阻塞误差/奖励回流.
+        if self.last_snapshot is not None:
+            with contextlib.suppress(Exception):
+                self.last_posterior = self.estimator.filter(
+                    self.last_snapshot,
+                    predicted=pred,
+                    observation=state_after,
+                )
         if not pred:
             return None
         # 数值量级可能悬殊 (p ~1e5, n ~1), 用相对误差归一, 避免高压压倒低压.

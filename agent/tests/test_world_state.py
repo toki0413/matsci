@@ -416,3 +416,69 @@ def test_workspace_execute_feeds_learnable_surrogate():
     assert "T" in pred
     # 世界跟踪本体照常工作 (解析前向真值自洽)
     assert wa.reconcile_r_phys(0.6) == pytest.approx(0.8, abs=0.05)
+
+
+# ── 阶段7: 最小贝叶斯滤波 (Life Operators Eq.4) ────────────────
+def test_gaussian_update_folds_prior_and_observation():
+    """单键高斯折叠: 先验(0,1) × 观测(2,1) → 后验均值 1, 方差 0.5 (K=0.5)."""
+    from huginn.security.world_state import _gaussian_update
+
+    mu, var = _gaussian_update(0.0, 1.0, 2.0, 1.0)
+    assert mu == pytest.approx(1.0, rel=1e-9)
+    assert var == pytest.approx(0.5, rel=1e-9)
+    # 仅观测 → 直接取观测 (无先验可折叠)
+    mu2, var2 = _gaussian_update(None, None, 5.0, 2.0)
+    assert mu2 == 5.0 and var2 == 2.0
+    # 无观测 → 保留先验
+    mu3, var3 = _gaussian_update(3.0, 0.4, None, None)
+    assert mu3 == 3.0 and var3 == 0.4
+
+
+def test_state_estimator_filter_folds_predict_and_observation():
+    """filter: 先验(0,1) —预测→1—观测→3 三层折叠 → 后验 ≈(1.333, 1/3)."""
+    from huginn.security.world_state import StateSnapshot
+
+    est = StateEstimator(_SCHEMA)
+    prior = StateSnapshot(
+        state={"p": 0.0, "V": 5.0, "T": 300.0, "n": 2.0},
+        posterior_var={"p": 1.0, "V": None, "T": 1.0, "n": None},
+    )
+    snap = est.filter(prior, predicted={"p": 1.0}, observation={"p": 3.0}, obs_sigma=1.0)
+    # p: 先验 0 → 预测 (K=0.5 → 0.5) → 观测 3 (K=1/3 → 0.5 + 2/3·(3−0.5)≈1.333)
+    assert snap.state["p"] == pytest.approx(1.333, rel=1e-2)
+    assert snap.posterior_var["p"] == pytest.approx(1.0 / 3.0, rel=1e-2)
+    # V/n 无预测无观测 → 保持原值
+    assert snap.state["V"] == 5.0 and snap.state["n"] == 2.0
+    # 观测噪声大 → 后验被拉回观测较近 (体现"不确定性按方差加权")
+    snap2 = est.filter(
+        prior, predicted={"p": 1.0}, observation={"p": 3.0}, obs_sigma=10.0
+    )
+    assert snap2.state["p"] < snap.state["p"]  # 观测更不可信 → 后验更贴近预测
+
+
+def test_filter_via_prior_uncertainty_sigma_interpreted_as_sigma2():
+    """从 estimate 出的 σ(uncertainty) 平滑进入滤波: p 观测 σ=0.01 → 后验方差 σ²缩小."""
+    est = StateEstimator(_SCHEMA)
+    prior = est.estimate({"p": 1.0, "V": 5.0, "T": 300.0, "n": 2.0})
+    snap = est.filter(prior, predicted={"p": 1.0}, observation={"p": 1.02})
+    # p 强观测先验 → 两次 Gauss 折叠后 posterior_var 应小于初始 σ²=1e-4 (不确定性收敛)
+    assert snap.posterior_var["p"] is not None
+    assert 0 < snap.posterior_var["p"] < 1e-4
+
+
+def test_tracker_observe_produces_bayesian_posterior():
+    """阶段7 接线: WorldStateTracker.observe 用演化先验 × 实测做滤波 → last_posterior."""
+    from huginn.security.thermo_system import IdealGasWorldModel, ThermoExecutor
+
+    schema = tool_schema("ideal_gas")
+    wm = IdealGasWorldModel()
+    tracker = WorldStateTracker(schema, wm)
+    sb = {"p": 101325.0, "V": 0.022414, "T": 273.15, "n": 1.0}
+    tracker.step(sb, PhysicalAction("heat", {"dq": 100.0}))
+    exe = ThermoExecutor(initial=dict(sb))
+    exe.execute(PhysicalAction("heat", {"dq": 100.0}))
+    tracker.observe(exe.observe())
+    assert tracker.last_posterior is not None
+    # V 等容不可直测 → 由前向预测/观测折叠后仍有有限后验方差 (σ 远小于 1)
+    assert tracker.last_posterior.posterior_var.get("V") is not None
+    assert tracker.last_posterior.posterior_var["V"] < 1e-3
