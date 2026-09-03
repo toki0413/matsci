@@ -6,6 +6,8 @@ PREDICTION]、一站入口。不依赖任何真实物理后端。
 
 from __future__ import annotations
 
+import pytest
+
 from huginn.security import physics_schema
 from huginn.security.tool_registry import tool_schema
 from huginn.security.workspace import PhysicalWorkspace
@@ -204,3 +206,33 @@ def test_world_prediction_reward_reflows_to_bandit_and_episodic(tmp_path):
     kg = ProjectKnowledgeGraph(tmp_path / "kg")
     nid = kg.add_episode_node(1, "heat", f"prediction reward={reward:.3f}", "success")
     assert nid == "episode_1"
+
+
+def test_workspace_prediction_reward_avg_over_steps():
+    """阶段3: 多步运行平均预测命中奖励 — runner 求整协议 r_phys 贡献."""
+    from huginn.security.thermo_system import IdealGasWorldModel, ThermoExecutor
+
+    schema = tool_schema("ideal_gas")
+    wa = PhysicalWorkspace(IdealGasWorldModel(), ThermoExecutor(), schema=schema)
+    for dq in (50.0, 100.0, 150.0):
+        wa.execute(PhysicalAction("heat", {"dq": dq}))
+    avg = wa.prediction_reward_avg()
+    assert avg is not None
+    assert 0.99 < avg <= 1.0  # 解析前向真值自洽 → 每步命中奖励≈1
+
+
+def test_workspace_reconcile_r_phys_folds_prediction_reward():
+    """阶段3: runner 默认消费 — reconcile_r_phys 把预测命中奖励并进底层 r_phys."""
+    from huginn.security.thermo_system import IdealGasWorldModel, ThermoExecutor
+
+    schema = tool_schema("ideal_gas")
+    wa = PhysicalWorkspace(IdealGasWorldModel(), ThermoExecutor(), schema=schema)
+    wa.execute(PhysicalAction("heat", {"dq": 50.0}))
+
+    reconciled = wa.reconcile_r_phys(0.6)
+    # 预测命中奖励≈1, base=0.6 → 0.5*0.6 + 0.5*1 ≈ 0.8
+    assert reconciled == pytest.approx(0.8, abs=0.02)
+    # 无 schema/无世界跟踪 → 原样返回 base, 不因缺世界模型扣分
+    wa2 = PhysicalWorkspace(IdealGasWorldModel(), ThermoExecutor())
+    wa2.execute(PhysicalAction("heat", {"dq": 50.0}))
+    assert wa2.reconcile_r_phys(0.55) == 0.55

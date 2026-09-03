@@ -205,6 +205,8 @@ class WorldStateTracker:
         self.last_prediction: dict[str, float] | None = None
         self.last_prediction_error: float | None = None
         self.last_prediction_reward: float | None = None
+        # 运行期累计预测命中奖励 (每次 observe 追加), 供 runner 求均作 r_phys 贡献.
+        self._rewards: list[float] = []
 
     def step(
         self, state_before: Mapping[str, Any], action: Any = None
@@ -241,7 +243,15 @@ class WorldStateTracker:
         self.last_prediction_reward = prediction_error_to_reward(
             self.last_prediction_error
         )
+        if self.last_prediction_reward is not None:
+            self._rewards.append(self.last_prediction_reward)
         return self.last_prediction_error
+
+    def avg_reward(self) -> float | None:
+        """运行期平均预测命中奖励: runner 求整次协议的 r_phys 贡献. 无样本返回 None."""
+        if not self._rewards:
+            return None
+        return sum(self._rewards) / len(self._rewards)
 
 
 def prediction_error_to_reward(

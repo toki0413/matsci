@@ -318,6 +318,23 @@ class PhysicalWorkspace:
             return None
         return self._world_state.last_prediction_reward
 
+    def prediction_reward_avg(self) -> float | None:
+        """整次运行的平均预测命中奖励 ([0,1]) — runner 把整协议预测命中原样并进 r_phys."""
+        if self._world_state is None:
+            return None
+        return self._world_state.avg_reward()
+
+    def reconcile_r_phys(self, base: float) -> float:
+        """把平均预测命中奖励并进底层 r_phys 聚合: ``base`` 加权 0.5 + 预测奖励加权 0.5.
+
+        无预测样本时原样返回 ``base`` (不因缺世界模型而扣分). 这是物理 runner
+        默认消费 ``last_prediction_reward`` 的出口: 下游用它当 r_phys 喂 bandit.
+        """
+        world = self.prediction_reward_avg()
+        if world is None:
+            return float(base)
+        return 0.5 * float(base) + 0.5 * world
+
     def transaction(self) -> Any:
         """事务边界: 块内异常 → 物理逆按 LIFO 执行, 工作台恢复到块前."""
         return self.revertible.transaction()

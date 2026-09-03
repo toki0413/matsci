@@ -60,28 +60,30 @@
   检索历史实验注入 `[WORLD MODEL]`，但它标注"**无外推**"——即"记忆类比"，不是"前向数值预测"。
 - **与 rewards 类似**：奖励也不是空的——是 bandit/PRM/`r_phys` 的启发式链（无梯度训练）。
 
-## 4. 真缺清单（更新：阶段 0/1 已实现+接线 / 阶段 2 已回流）
+## 4. 真缺清单（更新：阶段 0/1/2/3 已落地）
 
 > 阶段 0（收口核心件）**已于 `security/world_state.py` 实现**：`ObsVector`（定长槽零填充+契约握手）、
 > `StateSnapshot`（状态+不确定度+可辨识档位）、`StateEstimator`（由 `space.state/observables` 生成状态分布）、
-> `ForwardPredictor`（逐轮前向投影 + `[WORLD PREDICTION]`，命中回填 `predicted` 供奖励/记忆回流预留）。
+> `ForwardPredictor`（逐轮前向投影 + `[WORLD PREDICTION]`，命中回填 `predicted`）。
 >
-> 阶段 1（接线，已落地）：新增 `WorldStateTracker`（组合 `StateEstimator` + `ForwardPredictor`，
-> 用注册的解析前向真值 `world_model.predict` 做逐轮前向投影），并以**可选 `schema=`** 接入
-> `PhysicalWorkspace.execute` —— 每个物理动作执行后记录一次 `StateSnapshot`（含 `predicted`）并算
-> **预测 vs 实测** 的相对 RMS 误差（`last_prediction_error()`）。全部 advisory、失败静默不阻塞。
+> 阶段 1（接线，已落地）：`WorldStateTracker`（`StateEstimator`+`ForwardPredictor`+解析前向真值）以可选 `schema=`
+> 接入 `PhysicalWorkspace.execute`，每动作记录含 `predicted` 的快照并算预测 vs 实测的相对 RMS 误差。
+> 全部 advisory、失败静默不阻塞。
 >
-> 阶段 2（预测命中→奖励回流，已落地）：新增 `prediction_error_to_reward(error)` 把相对 RMS 误差映射为
-> [0,1] 的"预测命中"过程奖励（`exp(-error)`，命中≈1、漂移趋 0），tracker/workspace 暴露
-> `last_prediction_reward()`；`tests/test_world_state.py` 用真实理想气体工作台跑通**端到端回流**：
-> 该奖励喂进 `WorkflowBandit.record_variant_outcome(r_phys=reward)`（bandit）与
-> `ProjectKnowledgeGraph.add_episode_node(...)`（episodic）。
+> 阶段 2（奖励回流，已落地）：`prediction_error_to_reward(error)` 把误差映射为 [0,1] 命中奖励；
+> tracker/workspace 暴露 `last_prediction_reward()`；端到端测试喂进 `WorkflowBandit(r_phys=reward)` 与
+> `ProjectKnowledgeGraph.add_episode_node`（bandit+episodic）。
+>
+> 阶段 3（runner 默认消费，已落地）：tracker 累计运行期奖励并暴露 `avg_reward()`，workspace 出
+> `prediction_reward_avg()` 与 `reconcile_r_phys(base)`（base 与平均预测奖励各 0.5 加权；无世界跟踪时
+> 原样返回 base 不扣分）；生产 runner `build_pipette_workflow` 新增可选 `schema=` 透传给工作台，使
+> 物理工具 runner 可把 `last_prediction_reward` 并进其 `r_phys` 聚合。
 >
 > 尚未做（真缺）：
 1) **autoloop LLM prompt 注入未接**：`StateEstimator`/`ForwardPredictor` 尚未进入 autoloop 的
    `_build_world_model_block`（现注的是"历史类比"），只因该路径缺稳定的物理工具 schema/state。
-2) **物理运行器未默认消费 `last_prediction_reward()`**：回流通道已存在且有测试，但物理工具的真实
-   runner（LLM mode 内部实例化工作台的路径）尚未在下游默认把该奖励并进其 `r_phys` 聚合。
+2) **各物理 tool 未逐个接 `reconcile_r_phys`**：`reconcile_r_phys` 是权威出口，但上游各物理 tool
+   尚未逐个把其工作台结果调到它再喂 bandit。
 3) （可选）**深度 RL 奖励未落地**：`docs/reward_design.md` 为理论稿，无梯度训练，无
    "预测命中→过程奖励"的稀疏回流。
 
@@ -90,10 +92,10 @@
 - **"做过"= 真**：感知、观测契约、解析前向真值、逆模型/tsim2real、分层控制、启发式 reward
   都已存在且多数已挂到主循环/执行链上。
 - **"再造"= 不必**：不要再从零写一个世界模型。
-- **该做 = 接线/回流（阶段 0/1/2 已完成）**：以 `physics_schema` 的契约 + `ToolSpec.observables`
-  + `ToolSpec.build_world_model` 为锚，`WorldStateTracker` 已在 `PhysicalWorkspace`（物理逐轮循环）
-  产出逐轮快照与预测命中奖励，且该奖励已能喂进 bandit 与 episodic；剩余是把奖励的默认消费推进到
-  物理工具的真实 runner（阶段 3），改动量远小于"重造"。
+- **该做 = 接线/回流（阶段 0/1/2/3 已完成）**：以 `physics_schema` 契约 + `ToolSpec.observables`
+  + `ToolSpec.build_world_model` 为锚，`WorldStateTracker` 已在 `PhysicalWorkspace` 产出逐轮快照、
+  预测命中奖励，并经 `reconcile_r_phys` 可作为物理 runner 的 r_phys 贡献；奖励已能喂进 bandit 与
+  episodic。剩余是把 `reconcile_r_phys` 逐个接进各物理 tool（阶段 4），改动量远小于"重造"。
 
 ---
 
