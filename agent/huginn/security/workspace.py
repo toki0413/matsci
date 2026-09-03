@@ -337,6 +337,20 @@ class PhysicalWorkspace:
 
         return reconcile_r_phys(base, self.prediction_reward_avg())
 
+    def surrogate_samples(self) -> int:
+        """学代理已积累的观测对数 (P2 快预演积累证据). 无跟踪/无代理 → 0."""
+        if self._world_state is None:
+            return 0
+        return self._world_state.surrogate_samples()
+
+    def surrogate_predict(
+        self, state: dict[str, Any], action: Any
+    ) -> dict[str, float] | None:
+        """快预演: 让学代理基于真实运行样本先预测 (有样本才预测, 无则 None)."""
+        if self._world_state is None:
+            return None
+        return self._world_state.surrogate_predict(state, action)
+
     def transaction(self) -> Any:
         """事务边界: 块内异常 → 物理逆按 LIFO 执行, 工作台恢复到块前."""
         return self.revertible.transaction()

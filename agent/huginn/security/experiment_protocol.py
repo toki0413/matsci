@@ -51,6 +51,7 @@ def build_pipette_workflow(
     mixer_available: bool = True,
     revertible: Any | None = None,
     schema: Mapping[str, Any] | None = None,
+    surrogate: Any = None,
 ) -> PhysicalWorkspace:
     """接线一个"移液—混合—分装"工作台: 声明依赖链 + 感知确认器.
 
@@ -59,9 +60,16 @@ def build_pipette_workflow(
     进入 agent 统一逆栈; 否则工作台自建.
     ``schema``: 传入 ToolSpec 机器可读描述时启用世界表征跟踪, runner 可用
     ``wa.reconcile_r_phys(base)`` 把预测命中奖励并进 r_phys (阶段3默认消费).
+    ``surrogate``: 可选学代理 (``LearnableForwardModel``), 配 ``schema`` 一起用 —
+    每次真实执行 (sim/真工具) 的观测对会喂进代理积累样本, 随后可用
+    ``wa.surrogate_predict(state, action)`` 做快预演 (P2 线).
     """
     wa = PhysicalWorkspace(
-        world_model or NaiveWorldModel(), executor, revertible=revertible, schema=schema
+        world_model or NaiveWorldModel(),
+        executor,
+        revertible=revertible,
+        schema=schema,
+        surrogate=surrogate,
     )
 
     # 资源后端 (无 requires, 后端就绪即激活).

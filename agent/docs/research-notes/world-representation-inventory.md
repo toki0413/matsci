@@ -104,9 +104,12 @@
 - **"做过"= 真**：感知、观测契约、解析前向真值、逆模型/tsim2real、分层控制、启发式 reward
   都已存在且多数已挂到主循环/执行链上。
 - **"再造"= 不必**：不要再从零写一个世界模型。
-- **P2 learned-surrogate（已开新线，最小种子）**：`LearnableForwardModel` — 数据驱动的线性前向
+- **P2 learned-surrogate（已开新线 + 生产接线）**：`LearnableForwardModel` — 数据驱动的线性前向
   代理，按 (state, action_type) 从数据对拟合 observed_after，`predict(state, action)` 契约与
-  `ForwardPredictor` 打通，可直接替换解析真值当 predictor（"把解析前向真值换成可学代理"那一步）。
+  `ForwardPredictor` 打通，可直接替换解析真值当 predictor。已接到生产消费端：`build_pipette_workflow`
+  透传 `surrogate=`，`ExperimentProtocolTool(learn_surrogate=True)` 在 sim 后端每次真实执行把观测对喂进
+  代理（返回 `surrogate_samples` 作积累证据），`WorldStateTracker/PhysicalWorkspace` 暴露
+  `surrogate_predict(state, action)` 做快预演。全协议跑完代理即在 4 种动作类型上可预演；退化学随执行步。
   上线后可在此代理上接策略梯度（真深度 RL）。当前解析真值仍精确，故代理主要用于未来
   VASP/DFT 样板：计算工具的世界模型是"快代理"，执行器是"真实计算"，即可用本代理做迁移预演。
 - **该做 = 接线/回流（阶段 0~6 + P2 surrogate 种子全部落地）**：以 `physics_schema` 契约 + `ToolSpec.observables`

@@ -278,6 +278,27 @@ class WorldStateTracker:
             return None
         return sum(self._rewards) / len(self._rewards)
 
+    def surrogate_samples(self) -> int:
+        """学代理已积累的观测对数 (跨动作类型). 无代理 → 0.
+        供调用方确认"真实运行数据确实喂进代理" (P2 快预演积累的证据)."""
+        if self.surrogate is None:
+            return 0
+        return sum(len(rows) for rows, _ in getattr(self.surrogate, "_samples", {}).values())
+
+    def surrogate_predict(
+        self, state: Mapping[str, Any], action: Any
+    ) -> dict[str, float] | None:
+        """快预演入口: 让学代理先试着预测 (有样本才预测; 无代理/无样本 → None).
+        ``world_model`` 解析投影是慢而准的真值, 代理是基于真实运行学来的快近似 —
+        这里把代理预测作为可选项给出, 供调用方权衡 (不必替换解析真值)."""
+        if self.surrogate is None:
+            return None
+        try:
+            pred = self.surrogate.predict(state, action)
+        except Exception:
+            return None
+        return pred if isinstance(pred, Mapping) else None
+
 
 def prediction_error_to_reward(
     error: float | None,
