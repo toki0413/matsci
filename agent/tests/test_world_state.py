@@ -7,10 +7,14 @@ PREDICTION]、一站入口。不依赖任何真实物理后端。
 from __future__ import annotations
 
 from huginn.security import physics_schema
+from huginn.security.tool_registry import tool_schema
+from huginn.security.workspace import PhysicalWorkspace
+from huginn.security.world_model import PhysicalAction
 from huginn.security.world_state import (
     ForwardPredictor,
     ObsVector,
     StateEstimator,
+    WorldStateTracker,
     snapshot_from_schema,
 )
 
@@ -96,3 +100,50 @@ def test_snapshot_from_schema_standalone_entry():
     assert snap.state["p"] == 1.0
     assert snap.identifiable_level == "limited"
     assert "[STATE]" in snap.to_prompt()
+
+
+def test_world_state_tracker_step_fills_prediction_and_error():
+    """用真实解析前向真值 (IdealGasWorldModel) 跑一轮, 验证 estimated + predicted + 误差."""
+    from huginn.security.thermo_system import IdealGasWorldModel, ThermoExecutor
+
+    schema = tool_schema("ideal_gas")
+    wm = IdealGasWorldModel()
+    tracker = WorldStateTracker(schema, wm)
+
+    state_before = {"p": 101325.0, "V": 0.022414, "T": 273.15, "n": 1.0}
+    snap = tracker.step(state_before, PhysicalAction("heat", {"dq": 100.0}))
+    # 前向投影命中: predicted 含后状态的 p/T (等容加热 V 不动, T/p 升)
+    assert snap.predicted is not None
+    assert snap.predicted["T"] > 273.15
+    assert snap.predicted["V"] == 0.022414
+    # 回流: 无传感器偏置的确定性执行 → 预测 vs 实测 ≈ 0
+    exe = ThermoExecutor(initial=dict(state_before))
+    exe.execute(PhysicalAction("heat", {"dq": 100.0}))
+    err = tracker.observe(exe.observe())
+    assert err is not None
+    assert err < 1e-6
+
+
+def test_workspace_records_world_prediction_reflow():
+    """接主循环: PhysicalWorkspace 带 schema 时逐轮记录快照 + 预测误差回流."""
+    from huginn.security.thermo_system import IdealGasWorldModel, ThermoExecutor
+
+    schema = tool_schema("ideal_gas")
+    exe = ThermoExecutor()
+    wa = PhysicalWorkspace(IdealGasWorldModel(), exe, schema=schema)
+
+    wa.execute(PhysicalAction("heat", {"dq": 50.0}))
+    snap = wa.last_world_snapshot()
+    assert snap is not None
+    assert snap.predicted is not None
+    assert "p" in snap.predicted
+    # 回流信号为 0 附近 (解析前向真值自洽)
+    err = wa.last_prediction_error()
+    assert err is not None and err < 1e-6
+
+
+def test_tracker_observe_without_prediction_returns_none():
+    tracker = WorldStateTracker(_SCHEMA, None)  # 无前向模型 → no prediction
+    tracker.step({"p": 1.0, "V": 2.0, "T": 300.0, "n": 1.0})
+    assert tracker.last_prediction is None
+    assert tracker.observe({"p": 1.0}) is None

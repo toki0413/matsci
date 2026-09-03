@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import json
+import math
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -181,6 +182,64 @@ class ForwardPredictor:
         )
 
 
+class WorldStateTracker:
+    """逐轮世界状态跟踪器 — 把 StateEstimator + ForwardPredictor 接进物理主循环.
+
+    每执行一个动作 (前状态 → 后状态) 收口一次世界表征闭环:
+
+    1. ``StateEstimator`` 由 ``schema`` 生成当前状态快照 (含可辨识档位/不确定度);
+    2. ``ForwardPredictor`` 复用解析前向真值 (``world_model.predict``) 对"后状态"
+       做前向投影, 命中回填 ``snapshot.predicted``;
+    3. ``observe(state_after)`` 把"预测的后状态" vs "实测后状态" 的 RMS 差当成
+       **预测误差** —— 这是回流到奖励/记忆的过程信号 (命中 → 误差小 → 正信号).
+
+    世界表征是 advisory: 任何一步失败都吞掉, 不阻塞实验执行.
+    """
+
+    def __init__(self, schema: Mapping[str, Any], world_model: Any) -> None:
+        self.schema = schema
+        self.estimator = StateEstimator(schema)
+        self.predictor = ForwardPredictor(schema)
+        self.world_model = world_model
+        self.last_snapshot: StateSnapshot | None = None
+        self.last_prediction: dict[str, float] | None = None
+        self.last_prediction_error: float | None = None
+
+    def step(
+        self, state_before: Mapping[str, Any], action: Any = None
+    ) -> StateSnapshot:
+        """前向一步: 对状态做估计, 再用解析真值把后状态投影出来 (回填 predicted)."""
+        snapshot = self.estimator.estimate(state_before)
+        pred = self.predictor.predict(
+            snapshot, predictor=self.world_model, action=action
+        )
+        if isinstance(pred, Mapping):
+            snapshot.predicted = {str(k): float(v) for k, v in pred.items()}
+        self.last_snapshot = snapshot
+        self.last_prediction = snapshot.predicted
+        return snapshot
+
+    def observe(self, state_after: Mapping[str, Any]) -> float | None:
+        """执行后观测: 算"预测 vs 实测"的 RMS 误差 (回流信号).
+
+        无预测 / 二者无共享维度时返回 None (不误报 0 错).
+        """
+        pred = self.last_prediction
+        if not pred:
+            return None
+        # 数值量级可能悬殊 (p ~1e5, n ~1), 用相对误差归一, 避免高压压倒低压.
+        errs: list[float] = []
+        for k, v in pred.items():
+            if k in state_after:
+                actual = float(state_after[k])
+                scale = max(abs(float(v)), abs(actual), 1e-12)
+                errs.append(((float(v) - actual) / scale) ** 2)
+        if not errs:
+            return None
+        self.last_prediction_error = math.sqrt(sum(errs) / len(errs))
+        return self.last_prediction_error
+
+
 def snapshot_from_schema(
     schema: Mapping[str, Any],
     state: Mapping[str, Any],
@@ -197,5 +256,6 @@ __all__ = [
     "StateSnapshot",
     "StateEstimator",
     "ForwardPredictor",
+    "WorldStateTracker",
     "snapshot_from_schema",
 ]

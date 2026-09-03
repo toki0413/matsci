@@ -60,14 +60,23 @@
   检索历史实验注入 `[WORLD MODEL]`，但它标注"**无外推**"——即"记忆类比"，不是"前向数值预测"。
 - **与 rewards 类似**：奖励也不是空的——是 bandit/PRM/`r_phys` 的启发式链（无梯度训练）。
 
-## 4. 真缺清单（更新：阶段 0 已实现）
+## 4. 真缺清单（更新：阶段 0 已实现 / 阶段 1 已接线）
 
 > 阶段 0（收口核心件）**已于 `security/world_state.py` 实现**：`ObsVector`（定长槽零填充+契约握手）、
 > `StateSnapshot`（状态+不确定度+可辨识档位）、`StateEstimator`（由 `space.state/observables` 生成状态分布）、
 > `ForwardPredictor`（逐轮前向投影 + `[WORLD PREDICTION]`，命中回填 `predicted` 供奖励/记忆回流预留）。
-> 尚未做的（真缺）：
-1) **未接主循环**：`StateEstimator`/`ForwardPredictor` 尚未被 autoloop 引擎逐轮调用（现为库件，有单测）。
-2) **预测不回流**：`ForwardPredictor.predicted` 尚未作为 reward/记忆特征送入 bandit 与 episodic。
+>
+> 阶段 1（接线 + 回流，已落地）：新增 `WorldStateTracker`（组合 `StateEstimator` + `ForwardPredictor`，
+> 用注册的解析前向真值 `world_model.predict` 做逐轮前向投影），并以**可选 `schema=`** 接入
+> `PhysicalWorkspace.execute` —— 每个物理动作执行后记录一次 `StateSnapshot`（含 `predicted`）并算
+> **预测 vs 实测** 的相对 RMS 误差（`last_prediction_error()`），作为回流给奖励/记忆的过程信号。
+> 全部 advisory、失败静默不阻塞；有 ToolSpec schema 的工作台即启用，无 schema 的行为不变。
+>
+> 尚未做（真缺）：
+1) **autoloop LLM prompt 注入未接**：`StateEstimator`/`ForwardPredictor` 尚未进入 autoloop 的
+   `_build_world_model_block`（现注的是"历史类比"），只因该路径缺稳定的物理工具 schema/state。
+2) **预测误差未进 bandit/episodic 奖励**：`last_prediction_error()` 已产出可回流信号，但 bandit 与
+   episodic 尚未消费它。
 3) （可选）**深度 RL 奖励未落地**：`docs/reward_design.md` 为理论稿，无梯度训练，无
    "预测命中→过程奖励"的稀疏回流。
 
@@ -76,10 +85,10 @@
 - **"做过"= 真**：感知、观测契约、解析前向真值、逆模型/tsim2real、分层控制、启发式 reward
   都已存在且多数已挂到主循环/执行链上。
 - **"再造"= 不必**：不要再从零写一个世界模型。
-- **该做 = 接线/回流（阶段 0 已实现）**：以 `physics_schema` 的契约 + `ToolSpec.observables` 为锚，
-  把已实现的 `IdealGas/ShellCompute` 等解析真值 + `identifiability` 经 `security/world_state.py` 的
-  `StateEstimator`/`ForwardPredictor` 接入 autoloop 逐轮调用，并让预测命中回流到 bandit/episodic。
-  这才是阶段 0 之后唯一真缺（接线 + 回流），改动量远小于"重造"。
+- **该做 = 接线/回流（阶段 0/1 已实现核心件 + 物理主循环接线）**：以 `physics_schema` 的契约
+  + `ToolSpec.observables` + `ToolSpec.build_world_model` 为锚，`WorldStateTracker` 已在
+  `PhysicalWorkspace`（物理逐轮循环）产出逐轮快照与预测误差；剩余是把该误差信号接入
+  bandit/episodic 奖励（阶段 2），改动量远小于"重造"。
 
 ---
 

@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any, Protocol
 
 from huginn.security.actuator_model import ErrorModel, SensorModelExecutor
@@ -142,6 +142,8 @@ class PhysicalWorkspace:
         world_model: WorldModel,
         executor: ActionExecutor,
         revertible: RevertibleContext | None = None,
+        *,
+        schema: Mapping[str, Any] | None = None,
     ) -> None:
         self.world_model = world_model
         self.executor = executor
@@ -153,6 +155,16 @@ class PhysicalWorkspace:
         self.state: dict[str, Any] = dict(getattr(executor, "state", {}))
         # 感知确认器: key -> 校验当前状态是否满足.
         self._confirmers: dict[str, Callable[[], bool]] = {}
+        # 世界表征闭环跟踪器 (advisory): 给 schema 则在逐轮后记录状态快照 +
+        # 前向预测误差 (回流信号). world_model 作为解析前向真值注入.
+        self._world_state = None
+        if schema is not None:
+            try:
+                from huginn.security.world_state import WorldStateTracker
+
+                self._world_state = WorldStateTracker(schema, world_model)
+            except Exception:
+                logger.debug("world-state tracker init failed", exc_info=True)
         # 全局物理执行器接管 OP_ACTION 逆的执行 (与 register_compensator 同构).
         register_physical_executor(self._run_inverse)
 
@@ -278,7 +290,27 @@ class PhysicalWorkspace:
                 raise WorkspaceConfirmError(
                     f"感知确认失败: {confirm_key} (动作 {action.type})"
                 )
+        # 世界表征回流 (advisory): 记录本轮状态快照 + 前向预测误差, 供奖励/记忆消费.
+        # 失败静默吞掉, 不阻塞实验执行.
+        if self._world_state is not None:
+            try:
+                self._world_state.step(state_before, action)
+                self._world_state.observe(self.state)
+            except Exception:
+                logger.debug("world-state step failed", exc_info=True)
         return action
+
+    def last_world_snapshot(self):
+        """最近一轮的世界状态快照 (含 predicted), 无跟踪器时返回 None."""
+        return (
+            self._world_state.last_snapshot if self._world_state is not None else None
+        )
+
+    def last_prediction_error(self) -> float | None:
+        """最近一轮的前向预测误差 (预测 vs 实测, 相对 RMS), 回流给奖励用."""
+        if self._world_state is None:
+            return None
+        return self._world_state.last_prediction_error
 
     def transaction(self) -> Any:
         """事务边界: 块内异常 → 物理逆按 LIFO 执行, 工作台恢复到块前."""
