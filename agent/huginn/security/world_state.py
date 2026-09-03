@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import math
 import time
@@ -196,11 +197,21 @@ class WorldStateTracker:
     世界表征是 advisory: 任何一步失败都吞掉, 不阻塞实验执行.
     """
 
-    def __init__(self, schema: Mapping[str, Any], world_model: Any) -> None:
+    def __init__(
+        self,
+        schema: Mapping[str, Any],
+        world_model: Any,
+        *,
+        surrogate: LearnableForwardModel | None = None,
+    ) -> None:
         self.schema = schema
         self.estimator = StateEstimator(schema)
         self.predictor = ForwardPredictor(schema)
         self.world_model = world_model
+        # P2 线: 可选学代理, observe 时把 (前状态, 动作, 实测后状态) 喂给它积累训练数据.
+        self.surrogate = surrogate
+        self._last_state_before: dict[str, float] | None = None
+        self._last_action: Any = None
         self.last_snapshot: StateSnapshot | None = None
         self.last_prediction: dict[str, float] | None = None
         self.last_prediction_error: float | None = None
@@ -220,13 +231,27 @@ class WorldStateTracker:
             snapshot.predicted = {str(k): float(v) for k, v in pred.items()}
         self.last_snapshot = snapshot
         self.last_prediction = snapshot.predicted
+        self._last_state_before = {str(k): float(v) for k, v in state_before.items()}
+        self._last_action = action
         return snapshot
 
     def observe(self, state_after: Mapping[str, Any]) -> float | None:
         """执行后观测: 算"预测 vs 实测"的 RMS 误差 (回流信号).
 
-        无预测 / 二者无共享维度时返回 None (不误报 0 错).
+        无预测 / 二者无共享维度时返回 None (不误报 0 错). 学代理喂养独立于预测成功 —
+        只要有 (前状态, 动作, 实测后状态) 就喂, 让代理从实际执行里积累数据.
         """
+        # P2 线: 本轮 (前状态, 动作, 实测后状态) 喂给学代理积累真实运行数据.
+        # 有前状态/动作/代理三件套才喂; 失败吞掉 (advisory, 不阻塞实验).
+        if (
+            self.surrogate is not None
+            and self._last_state_before is not None
+            and self._last_action is not None
+        ):
+            with contextlib.suppress(Exception):
+                self.surrogate.fit(
+                    self._last_state_before, self._last_action, state_after
+                )
         pred = self.last_prediction
         if not pred:
             return None
@@ -381,17 +406,31 @@ def _forward_features(
 def _solve_bucket(
     rows: list[list[float]], ys: dict[str, list[float]]
 ) -> dict[str, list[float]] | None:
-    """对每个输出键解正规方程 (A w = b), 样本不足/奇异返回 None."""
+    """对每个输出键解正规方程 (A w = b), 样本不足返回 None.
+
+    特征矩阵可能列秩不足: 真实运行里某状态键恒定 (如等容加热 V/n 不变) 会让 Gram 矩阵
+    奇异 -> ``_gauss_solve`` 无解. 此时对每个键内做 ridge 兜底 (A + λI), 把最小二乘
+    解稳定出来, 而不是整体 drop. 满秩时走原精确路径, 不引入扰动.
+    """
     if not rows or len(rows) < len(rows[0]):
         return None
     d = len(rows[0])
+    A = [[sum(r[i] * r[j] for r in rows) for j in range(d)] for i in range(d)]
+    # ridge 系数相对对角量级取极小值, 只用来稳住奇异 Gram, 不污染满秩解.
+    lam = 1e-6 * max(sum(A[i][i] for i in range(d)) / d, 1.0)
     out: dict[str, list[float]] = {}
     for k, ylist in ys.items():
         if len(ylist) < len(rows):
             continue
-        A = [[sum(r[i] * r[j] for r in rows) for j in range(d)] for i in range(d)]
         b = [sum(r[i] * y for r, y in zip(rows, ylist)) for i in range(d)]
-        w = _gauss_solve(A, b)
+        # _gauss_solve 内联消元会就地改写传入矩阵, 每键都须用 A 的拷贝.
+        w = _gauss_solve([list(Ai) for Ai in A], b)
+        if w is None:
+            # 奇异 -> ridge 兜底 (仅该键), 不影响其他键/满秩场景.
+            Ar = [list(Ai) for Ai in A]
+            for i in range(d):
+                Ar[i][i] += lam
+            w = _gauss_solve(Ar, b)
         if w is not None:
             out[k] = w
     return out or None

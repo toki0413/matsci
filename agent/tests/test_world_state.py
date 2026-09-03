@@ -282,6 +282,41 @@ def test_learnable_surrogate_drops_into_forward_predictor():
     assert pred["V"] == pytest.approx(0.023, rel=1e-6)
 
 
+def test_tracker_observe_feeds_learnable_surrogate():
+    """P2 线: observe 把本轮 (前状态, 动作, 实测后状态) 喂给学代理积累真实运行数据.
+
+    用活着的主循环跑多轮: tracker.step → tracker.observe(实测后状态), surrogate 通过
+    observe 内部自学习 → 能对同型动作输出预测 (不再硬编造 None). 喂养独立于预测成败
+    (世界模型传 None → 无预测, observe 返回 None, 但代理仍照常积累样本).
+    """
+    import random
+
+    from huginn.security.thermo_system import _R, forward
+    from huginn.security.world_state import LearnableForwardModel
+
+    schema = tool_schema("ideal_gas")
+    sur = LearnableForwardModel(["p", "V", "T", "n"])
+    # 世界模型传 None: 无预测 → observe 返回 None, 但代理喂养不受影响
+    tracker = WorldStateTracker(schema, None, surrogate=sur)
+    rng = random.Random(3)
+
+    for _ in range(60):
+        T = rng.uniform(260, 340)
+        V = rng.uniform(0.015, 0.03)
+        n = rng.uniform(0.8, 1.2)
+        s = {"p": _R * T * n / V, "V": V, "T": T, "n": n}
+        a = PhysicalAction("move", {"v": rng.uniform(0.015, 0.03)})
+        tracker.step(s, a)
+        assert tracker.observe(forward(s, a)) is None  # 无预测 → None
+    # 同型 move 动作已有 60 条样本 → 回学出可学传输 → 输出预测而非硬编造
+    pred = sur.predict(
+        {"p": _R * 300.0 / 0.02, "V": 0.02, "T": 300.0, "n": 1.0},
+        PhysicalAction("move", {"v": 0.023}),
+    )
+    assert pred is not None and "V" in pred
+    assert pred["V"] == pytest.approx(0.023, rel=1e-6)
+
+
 def test_workspace_exposes_prediction_reward():
     from huginn.security.thermo_system import IdealGasWorldModel, ThermoExecutor
 
@@ -352,3 +387,32 @@ def test_workspace_reconcile_r_phys_folds_prediction_reward():
     wa2 = PhysicalWorkspace(IdealGasWorldModel(), ThermoExecutor())
     wa2.execute(PhysicalAction("heat", {"dq": 50.0}))
     assert wa2.reconcile_r_phys(0.55) == 0.55
+
+
+def test_workspace_execute_feeds_learnable_surrogate():
+    """P2 线: workspace 带 surrogate 时, 真实 execute (step+observe) 把观测对喂给学代理.
+
+    用活着的主循环跑多次 heat, 代理从实际执行的 (前状态, 动作, 实测后状态) 积累样本,
+    独立于解析前向真值 → 能对同型 heat 动作输出非空预测 (不在解析循环里冒充新物理).
+    """
+    import random
+
+    from huginn.security.thermo_system import IdealGasWorldModel, ThermoExecutor
+    from huginn.security.world_state import LearnableForwardModel
+
+    schema = tool_schema("ideal_gas")
+    sur = LearnableForwardModel(["p", "V", "T", "n"])
+    wa = PhysicalWorkspace(
+        IdealGasWorldModel(), ThermoExecutor(), schema=schema, surrogate=sur
+    )
+    rng = random.Random(5)
+    for _ in range(60):
+        wa.execute(PhysicalAction("heat", {"dq": rng.uniform(-50, 50)}))
+
+    # surrogate 已积累样本 → heat 动作能回归出非空预测
+    pred = sur.predict({"p": 101325.0, "V": 0.022414, "T": 273.15, "n": 1.0},
+                       PhysicalAction("heat", {"dq": 10.0}))
+    assert pred is not None
+    assert "T" in pred
+    # 世界跟踪本体照常工作 (解析前向真值自洽)
+    assert wa.reconcile_r_phys(0.6) == pytest.approx(0.8, abs=0.05)

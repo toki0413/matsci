@@ -144,6 +144,7 @@ class PhysicalWorkspace:
         revertible: RevertibleContext | None = None,
         *,
         schema: Mapping[str, Any] | None = None,
+        surrogate: Any = None,
     ) -> None:
         self.world_model = world_model
         self.executor = executor
@@ -162,7 +163,9 @@ class PhysicalWorkspace:
             try:
                 from huginn.security.world_state import WorldStateTracker
 
-                self._world_state = WorldStateTracker(schema, world_model)
+                self._world_state = WorldStateTracker(
+                    schema, world_model, surrogate=surrogate
+                )
             except Exception:
                 logger.debug("world-state tracker init failed", exc_info=True)
         # 全局物理执行器接管 OP_ACTION 逆的执行 (与 register_compensator 同构).

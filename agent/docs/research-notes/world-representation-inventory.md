@@ -88,10 +88,16 @@
 > （domain/state/observables/forward），稳定来源、零 LLM，无长程记忆时仍会注入，告诉 planner
 > 哪些物理工具自带解析前向真值、可预演/校验状态。已接 autoloop plan prompt（advisory）。
 >
+> P2 learned-surrogate **数据喂养闭环已落地**：`WorldStateTracker.observe` 在算预测误差之外，
+> 把本轮 `(前状态, 动作, 实测后状态)` 喂给 `LearnableForwardModel.fit`（有前状态/动作/代理三件套才喂，
+> 失败吞掉）。**喂养独立于预测成败**——即使无解析预测（world_model 传 None），观察到的状态转移
+> 仍照常积累代理样本，让代理在真实执行/真实计算工具上自学习。端到端测试
+> `test_tracker_observe_feeds_learnable_surrogate` 用活着的主循环跑多轮后代理能对同型动作输出预测。
+>
 > 尚未做（真缺）：
-1) （可选）**深度 RL 奖励——仅最小梯度原型**：`SparseRewardTuner` 已实现"预测命中→过程奖励"
-   驱动**梯度学习**的最小残差自校准（从 (预测,实测) 数据对把 sensor 系统偏置学出来，收敛后命中
-   奖励→1）。真深度 RL（神经网络+策略）仍属 P2 learned-surrogate 路径，不在本解析前向真值闭环里冒充。
+1) （可选）**策略梯度 / 真深度 RL**：当前梯度学习只到 `SparseRewardTuner`（单参数残差自校准）与
+   `LearnableForwardModel`（数据驱动线性前向代理）。在两线之上接神经网络策略、以"预测命中→过程奖励"
+   为稀疏信号的策略梯度训练，仍属更后续的 P2 深层路径，不由当前解析前向真值闭环冒充。
 
 ## 5. 结论与建议方向
 
