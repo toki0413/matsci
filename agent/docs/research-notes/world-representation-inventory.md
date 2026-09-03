@@ -89,19 +89,21 @@
 > 哪些物理工具自带解析前向真值、可预演/校验状态。已接 autoloop plan prompt（advisory）。
 >
 > 尚未做（真缺）：
-1) （可选）**深度 RL 奖励未落地**：`docs/reward_design.md` 为理论稿，无梯度训练，无
-   "预测命中→过程奖励"的稀疏回流。
+1) （可选）**深度 RL 奖励——仅最小梯度原型**：`SparseRewardTuner` 已实现"预测命中→过程奖励"
+   驱动**梯度学习**的最小残差自校准（从 (预测,实测) 数据对把 sensor 系统偏置学出来，收敛后命中
+   奖励→1）。真深度 RL（神经网络+策略）仍属 P2 learned-surrogate 路径，不在本解析前向真值闭环里冒充。
 
 ## 5. 结论与建议方向
 
 - **"做过"= 真**：感知、观测契约、解析前向真值、逆模型/tsim2real、分层控制、启发式 reward
   都已存在且多数已挂到主循环/执行链上。
 - **"再造"= 不必**：不要再从零写一个世界模型。
-- **该做 = 接线/回流（阶段 0/1/2/3/4/5 已完成）**：以 `physics_schema` 契约 + `ToolSpec.observables`
-  + `ToolSpec.build_world_model` 为锚，`WorldStateTracker` 已在 `PhysicalWorkspace` 产出逐轮快照、
-  预测命中奖励，并经单一权威 `reconcile_r_phys` 同时被 workspace 与 `ValidateTool` 消费、并进 r_phys
-  后喂 bandit 与 episodic；`engine_observe` 亦把已注册解析世界模型注册表注入 plan prompt（advisory）。
-  世界表征闭环在主循环里既"算出来"也"说给 planner 听"。剩可选一项：深度 RL 奖励（理论稿，非重造）。
+- **该做 = 接线/回流（阶段 0~6 全部落地）**：以 `physics_schema` 契约 + `ToolSpec.observables`
+  + `ToolSpec.build_world_model` 为锚，世界表征闭环已是"算出来 + 说给 planner 听 + 奖励喂学习"的
+  完整链条：`WorldStateTracker` 逐轮快照与预测命中奖励 → 单一权威 `reconcile_r_phys`
+  （workspace/ValidateTool）并进 r_phys → 喂 bandit 与 episodic → autoloop 注入注册表 →
+  `SparseRewardTuner` 让该奖励驱动梯度自校准。真深度 RL 留给 P2 learned-surrogate（解析前向真值
+  换成可学代理后再谈策略梯度）。
 
 ---
 

@@ -203,6 +203,22 @@ def test_world_model_block_includes_catalog_when_no_memory():
     assert "已注册解析世界模型" in block
 
 
+def test_sparse_reward_tuner_learns_sensor_bias():
+    """深度 RL 奖励: 预测命中奖励驱动的梯度学习能把 sensor 系统偏置学出来."""
+    from huginn.security.world_state import SparseRewardTuner
+
+    tuner = SparseRewardTuner(["T"], lr=0.02)
+    ideal = 300.0
+    observed = ideal + 7.0  # 温度表 +7K 系统偏置 (未知)
+    for _ in range(3000):
+        tuner.update({"T": ideal}, {"T": observed})
+    # 学到的加性残差逼近真实偏置
+    assert tuner.offset["T"] == pytest.approx(7.0, abs=1e-3)
+    # 收敛后命中奖励接近 1 (预测>>实测误差趋 0)
+    r = tuner.update({"T": ideal}, {"T": observed})
+    assert r is not None and r > 0.99
+
+
 def test_workspace_exposes_prediction_reward():
     from huginn.security.thermo_system import IdealGasWorldModel, ThermoExecutor
 

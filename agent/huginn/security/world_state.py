@@ -20,7 +20,7 @@ from __future__ import annotations
 import json
 import math
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -272,6 +272,46 @@ def prediction_error_to_reward(
     return float(math.exp(-float(error) / float(half_life)))
 
 
+class SparseRewardTuner:
+    """用"预测命中→过程奖励"驱动梯度学习的最小残差自校准器.
+
+    对每个观测键学习一个加性残差 offset, 在线 SGD 最小化 (predicted+offset - observed)²,
+    即最大化命中奖励 exp(-mse). 适用: sensor 读数带未知系统偏置 / 外部工具输出与解析
+    预演有稳定偏差 —— 从 (预测, 实测) 数据对把偏置学出来. 单参数梯度 (ponytail);
+    真深度 RL (网络+策略) 属 P2 learned-surrogate 路径, 不在此冒充.
+    """
+
+    def __init__(
+        self, keys: Sequence[str], *, lr: float = 0.05, reward_exponent: float = 1.0
+    ) -> None:
+        self.offset: dict[str, float] = dict.fromkeys(keys, 0.0)
+        self.lr = lr
+        self.reward_exponent = reward_exponent
+
+    def update(
+        self, predicted: Mapping[str, Any], observed: Mapping[str, Any]
+    ) -> float | None:
+        """在线一步: 用预测误差更新 offset, 返回本步命中奖励 (∈(0,1]).
+
+        误差 ~ (predicted+offset - observed). offset 沿 -误差 方向走 = 让误差
+        变小 = 让命中奖励变大 (因为 reward = exp(-mse), 单调反比于误差).
+        """
+        sq = 0.0
+        n = 0
+        for k in self.offset:
+            if k not in predicted or k not in observed:
+                continue
+            p = float(predicted[k])
+            o = float(observed[k])
+            err = (p + self.offset[k]) - o
+            self.offset[k] -= self.lr * err
+            sq += err * err
+            n += 1
+        if not n:
+            return None
+        return math.exp(-self.reward_exponent * sq / float(n))
+
+
 def reconcile_r_phys(
     base: float,
     world_reward: float | None = None,
@@ -307,6 +347,7 @@ __all__ = [
     "StateEstimator",
     "ForwardPredictor",
     "WorldStateTracker",
+    "SparseRewardTuner",
     "prediction_error_to_reward",
     "reconcile_r_phys",
     "snapshot_from_schema",
