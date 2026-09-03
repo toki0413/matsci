@@ -219,6 +219,69 @@ def test_sparse_reward_tuner_learns_sensor_bias():
     assert r is not None and r > 0.99
 
 
+def test_learnable_forward_model_learns_transfer():
+    """P2 surrogate: 数据驱动线性前向代理学习状态转移 (全状态变化保证满秩)."""
+    import random
+
+    from huginn.security.thermo_system import _R, forward
+    from huginn.security.world_model import PhysicalAction
+    from huginn.security.world_state import LearnableForwardModel
+
+    schema = tool_schema("ideal_gas")
+    sur = LearnableForwardModel(["p", "V", "T", "n"])
+    rng = random.Random(0)
+    for _ in range(120):
+        T = rng.uniform(260, 340)
+        V = rng.uniform(0.015, 0.03)
+        n = rng.uniform(0.8, 1.2)
+        s = {"p": _R * T * n / V, "V": V, "T": T, "n": n}
+        a_heat = PhysicalAction("heat", {"dq": rng.uniform(-50, 50)})
+        sur.fit(s, a_heat, forward(s, a_heat))
+        a_move = PhysicalAction("move", {"v": rng.uniform(0.015, 0.03)})
+        sur.fit(s, a_move, forward(s, a_move))
+    s0 = {"p": _R * 310.0 * 1.0 / 0.02, "V": 0.02, "T": 310.0, "n": 1.0}
+    # move: V_after = 目标 v, 线性代理精确够到
+    pred_v = sur.predict(s0, PhysicalAction("move", {"v": 0.025}))
+    assert pred_v is not None and "V" in pred_v
+    assert pred_v["V"] == pytest.approx(0.025, rel=1e-6)
+    # heat: 温度转移可学, 给出非空预测
+    pred_h = sur.predict(s0, PhysicalAction("heat", {"dq": 20.0}))
+    assert pred_h is not None and "T" in pred_h
+    # 未见过的动作类型 → None (不硬编造)
+    assert sur.predict(s0, PhysicalAction("kick", {"dv": 0.1})) is None
+
+
+def test_learnable_surrogate_drops_into_forward_predictor():
+    """P2 surrogate 契约: 可直接当 ForwardPredictor.predictor 替换解析真值."""
+    import random
+
+    from huginn.security.thermo_system import _R, forward
+    from huginn.security.world_model import PhysicalAction
+    from huginn.security.world_state import (
+        ForwardPredictor,
+        LearnableForwardModel,
+        StateEstimator,
+    )
+
+    schema = tool_schema("ideal_gas")
+    sur = LearnableForwardModel(["p", "V", "T", "n"])
+    rng = random.Random(2)
+    for _ in range(120):
+        T = rng.uniform(260, 340)
+        V = rng.uniform(0.015, 0.03)
+        n = rng.uniform(0.8, 1.2)
+        s = {"p": _R * T * n / V, "V": V, "T": T, "n": n}
+        a_move = PhysicalAction("move", {"v": rng.uniform(0.015, 0.03)})
+        sur.fit(s, a_move, forward(s, a_move))
+    s0 = {"p": _R * 300.0 / 0.02, "V": 0.02, "T": 300.0, "n": 1.0}
+    snap = StateEstimator(schema).estimate(s0)
+    pred = ForwardPredictor(schema).predict(
+        snap, predictor=sur, action=PhysicalAction("move", {"v": 0.023})
+    )
+    assert pred is not None and "V" in pred
+    assert pred["V"] == pytest.approx(0.023, rel=1e-6)
+
+
 def test_workspace_exposes_prediction_reward():
     from huginn.security.thermo_system import IdealGasWorldModel, ThermoExecutor
 

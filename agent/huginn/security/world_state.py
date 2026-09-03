@@ -312,6 +312,116 @@ class SparseRewardTuner:
         return math.exp(-self.reward_exponent * sq / float(n))
 
 
+class LearnableForwardModel:
+    """P2 learned-surrogate 最小种子: 数据驱动的线性前向代理.
+
+    用 (state_before, action_params) 拼特征, 按 ``action.type`` 分别做多输出最小
+    二乘, 拟合 ``observed_after`` 的每个状态键. ``predict(state, action)`` 契约与
+    ``ForwardPredictor`` 打通 —— 可直接替换解析前向真值当 predictor 用
+    (这正是"把解析真值换成可学代理"的那一步). 样本不足/该动作类型无样本时返回
+    None, 不硬编造. 解析前向真值 → 代理可学后, 接策略梯度属更后续 (P2 深).
+    """
+
+    def __init__(self, state_keys: Sequence[str]) -> None:
+        self.state_keys = list(state_keys)
+        # action_type -> (特征行列表, {输出键: [真实值]}); 系数按动作分桶缓存.
+        self._samples: dict[str, tuple[list[list[float]], dict[str, list[float]]]] = {}
+        self._coef: dict[str, dict[str, list[float]]] = {}
+
+    def fit(
+        self,
+        state_before: Mapping[str, Any],
+        action: Any,
+        observed_after: Mapping[str, Any],
+    ) -> LearnableForwardModel:
+        """喂一条 (前状态, 动作, 后状态) 数据对并惰性重解该动作的最小二乘."""
+        act_type = getattr(action, "type", None)
+        if act_type is None:
+            return self
+        feat = _forward_features(state_before, self.state_keys, action)
+        rows, ys = self._samples.setdefault(act_type, ([], {}))
+        rows.append(feat)
+        for k in self.state_keys:
+            if k in observed_after:
+                ys.setdefault(k, []).append(float(observed_after[k]))
+        w = _solve_bucket(rows, ys)
+        if w is not None:
+            self._coef[act_type] = w
+        return self
+
+    def predict(self, state: Mapping[str, Any], action: Any) -> dict[str, float] | None:
+        """代理前向预测. 契约与 ForwardPredictor 兼容 (predict(state, action))."""
+        act_type = getattr(action, "type", None)
+        coef = self._coef.get(act_type)
+        if not coef:
+            return None
+        feat = _forward_features(state, self.state_keys, action)
+        return {k: _dot(w, feat) for k, w in coef.items()}
+
+
+def _forward_features(
+    state: Mapping[str, Any], state_keys: Sequence[str], action: Any
+) -> list[float]:
+    """特征: [1] + 各状态键值 + 动作参数量(可转 float 的)."""
+    feat = [1.0]
+    for k in state_keys:
+        try:
+            feat.append(float(state.get(k, 0.0)))
+        except (TypeError, ValueError):
+            feat.append(0.0)
+    params = getattr(action, "params", {}) or {}
+    for _k, _v in params.items():
+        try:
+            feat.append(float(_v))
+        except (TypeError, ValueError):
+            continue
+    return feat
+
+
+def _solve_bucket(
+    rows: list[list[float]], ys: dict[str, list[float]]
+) -> dict[str, list[float]] | None:
+    """对每个输出键解正规方程 (A w = b), 样本不足/奇异返回 None."""
+    if not rows or len(rows) < len(rows[0]):
+        return None
+    d = len(rows[0])
+    out: dict[str, list[float]] = {}
+    for k, ylist in ys.items():
+        if len(ylist) < len(rows):
+            continue
+        A = [[sum(r[i] * r[j] for r in rows) for j in range(d)] for i in range(d)]
+        b = [sum(r[i] * y for r, y in zip(rows, ylist)) for i in range(d)]
+        w = _gauss_solve(A, b)
+        if w is not None:
+            out[k] = w
+    return out or None
+
+
+def _gauss_solve(A: list[list[float]], b: list[float]) -> list[float] | None:
+    """高斯消去解小方阵 A w = b; 奇异返回 None."""
+    n = len(A)
+    for i in range(n):
+        piv = max(range(i, n), key=lambda r: abs(A[r][i]))
+        if abs(A[piv][i]) < 1e-12:
+            return None
+        A[i], A[piv] = A[piv], A[i]
+        b[i], b[piv] = b[piv], b[i]
+        for r in range(i + 1, n):
+            m = A[r][i] / A[i][i]
+            for c in range(i, n):
+                A[r][c] -= m * A[i][c]
+            b[r] -= m * b[i]
+    x = [0.0] * n
+    for i in range(n - 1, -1, -1):
+        s = sum(A[i][j] * x[j] for j in range(i + 1, n))
+        x[i] = (b[i] - s) / A[i][i]
+    return x
+
+
+def _dot(w: Sequence[float], x: Sequence[float]) -> float:
+    return sum(float(w[i]) * float(x[i]) for i in range(len(w)))
+
+
 def reconcile_r_phys(
     base: float,
     world_reward: float | None = None,
@@ -348,6 +458,7 @@ __all__ = [
     "ForwardPredictor",
     "WorldStateTracker",
     "SparseRewardTuner",
+    "LearnableForwardModel",
     "prediction_error_to_reward",
     "reconcile_r_phys",
     "snapshot_from_schema",

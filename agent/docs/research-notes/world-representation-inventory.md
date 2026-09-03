@@ -98,12 +98,16 @@
 - **"做过"= 真**：感知、观测契约、解析前向真值、逆模型/tsim2real、分层控制、启发式 reward
   都已存在且多数已挂到主循环/执行链上。
 - **"再造"= 不必**：不要再从零写一个世界模型。
-- **该做 = 接线/回流（阶段 0~6 全部落地）**：以 `physics_schema` 契约 + `ToolSpec.observables`
+- **P2 learned-surrogate（已开新线，最小种子）**：`LearnableForwardModel` — 数据驱动的线性前向
+  代理，按 (state, action_type) 从数据对拟合 observed_after，`predict(state, action)` 契约与
+  `ForwardPredictor` 打通，可直接替换解析真值当 predictor（"把解析前向真值换成可学代理"那一步）。
+  上线后可在此代理上接策略梯度（真深度 RL）。当前解析真值仍精确，故代理主要用于未来
+  VASP/DFT 样板：计算工具的世界模型是"快代理"，执行器是"真实计算"，即可用本代理做迁移预演。
+- **该做 = 接线/回流（阶段 0~6 + P2 surrogate 种子全部落地）**：以 `physics_schema` 契约 + `ToolSpec.observables`
   + `ToolSpec.build_world_model` 为锚，世界表征闭环已是"算出来 + 说给 planner 听 + 奖励喂学习"的
   完整链条：`WorldStateTracker` 逐轮快照与预测命中奖励 → 单一权威 `reconcile_r_phys`
   （workspace/ValidateTool）并进 r_phys → 喂 bandit 与 episodic → autoloop 注入注册表 →
-  `SparseRewardTuner` 让该奖励驱动梯度自校准。真深度 RL 留给 P2 learned-surrogate（解析前向真值
-  换成可学代理后再谈策略梯度）。
+  `SparseRewardTuner` 让该奖励驱动梯度自校准 → `LearnableForwardModel` 提供可学前向代理（P2 线）。
 
 ---
 
