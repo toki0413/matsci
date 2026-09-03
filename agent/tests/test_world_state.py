@@ -177,6 +177,32 @@ def test_module_reconcile_r_phys_folds_or_passthrough():
     assert reconcile_r_phys(0.4, 1.0, graft=0.25) == pytest.approx(0.85)
 
 
+def test_world_catalog_block_lists_registered_tools():
+    """autoloop 注入: 世界模型注册表列出 ToolSpec 解析前向真值 (advisory, 零 LLM)."""
+    from huginn.autoloop.engine_observe import EngineObserveMixin
+    from huginn.security.tool_registry import registered_tools
+
+    class _Dummy(EngineObserveMixin):
+        pass
+
+    block = _Dummy()._build_world_catalog_block()
+    assert "已注册解析世界模型" in block
+    assert "ideal_gas" in block
+    assert "observables=[p,T]" in block
+    assert len(registered_tools()) >= 4
+
+
+def test_world_model_block_includes_catalog_when_no_memory():
+    """无长程记忆时仍注入解析世界模型注册表, 不因缺相似历史而空转."""
+    from huginn.autoloop.engine_observe import EngineObserveMixin
+
+    class _Dummy(EngineObserveMixin):
+        pass
+
+    block = _Dummy()._build_world_model_block("hypothesis test")
+    assert "已注册解析世界模型" in block
+
+
 def test_workspace_exposes_prediction_reward():
     from huginn.security.thermo_system import IdealGasWorldModel, ThermoExecutor
 

@@ -83,10 +83,13 @@
 > **单一权威**折叠实现（workspace 与 validate tool 共用）；`ValidateTool._aggregate_physics_score`
 > 新增可选 `world_reward` 参数，缺失时零回归，物理 tool 可默认把世界预测命中奖励并进其 r_phys 再喂 bandit。
 >
+> 阶段 5（autoloop prompt 注入，已落地）：`_build_world_model_block` 追加 `_build_world_catalog_block()`
+> ——从 `tool_registry` 已注册 ToolSpec 的 schema 生成"已注册解析世界模型注册表"
+> （domain/state/observables/forward），稳定来源、零 LLM，无长程记忆时仍会注入，告诉 planner
+> 哪些物理工具自带解析前向真值、可预演/校验状态。已接 autoloop plan prompt（advisory）。
+>
 > 尚未做（真缺）：
-1) **autoloop LLM prompt 注入未接**：`StateEstimator`/`ForwardPredictor` 尚未进入 autoloop 的
-   `_build_world_model_block`（现注的是"历史类比"），只因该路径缺稳定的物理工具 schema/state。
-2) （可选）**深度 RL 奖励未落地**：`docs/reward_design.md` 为理论稿，无梯度训练，无
+1) （可选）**深度 RL 奖励未落地**：`docs/reward_design.md` 为理论稿，无梯度训练，无
    "预测命中→过程奖励"的稀疏回流。
 
 ## 5. 结论与建议方向
@@ -94,11 +97,11 @@
 - **"做过"= 真**：感知、观测契约、解析前向真值、逆模型/tsim2real、分层控制、启发式 reward
   都已存在且多数已挂到主循环/执行链上。
 - **"再造"= 不必**：不要再从零写一个世界模型。
-- **该做 = 接线/回流（阶段 0/1/2/3/4 已完成）**：以 `physics_schema` 契约 + `ToolSpec.observables`
+- **该做 = 接线/回流（阶段 0/1/2/3/4/5 已完成）**：以 `physics_schema` 契约 + `ToolSpec.observables`
   + `ToolSpec.build_world_model` 为锚，`WorldStateTracker` 已在 `PhysicalWorkspace` 产出逐轮快照、
   预测命中奖励，并经单一权威 `reconcile_r_phys` 同时被 workspace 与 `ValidateTool` 消费、并进 r_phys
-  后喂 bandit 与 episodic。剩两项皆非重造：把 `_build_world_model_block` 换成前向数值预测（依赖稳定
-  的 schema/state 通道）、以及可选的深度 RL 奖励。
+  后喂 bandit 与 episodic；`engine_observe` 亦把已注册解析世界模型注册表注入 plan prompt（advisory）。
+  世界表征闭环在主循环里既"算出来"也"说给 planner 听"。剩可选一项：深度 RL 奖励（理论稿，非重造）。
 
 ---
 

@@ -353,20 +353,26 @@ LUCID review (mandatory after generating hypothesis):
         )
 
     def _build_world_model_block(self, hypothesis: str) -> str:
-        """P1 Task 5: retrieval world model (懒路) — predict_via_analogy.
+        """P1 Task 5: world model 注入 (懒路) — 注册表的解析世界模型 + 历史类比.
 
-        把 hypothesis 当 query, 调 longterm.predict_via_analogy 检索相似
-        历史实验, 注入 [WORLD MODEL] block 给 plan prompt. LLM 参考历史
-        结果做 plan, 不是硬约束.
-        ceiling: 无外推能力, 仅返回历史最相似实验. 升级: P2 surrogate.
+        把 hypothesis 当 query 检索相似历史实验, 再加"已注册解析世界模型注册表",
+        一并注入 [WORLD MODEL] block 给 plan prompt。注册表来自 ToolSpec schema
+        (domain/state/observables/forward), 是稳定源头、零 LLM; 告诉 planner 哪些
+        物理工具自带解析前向真值、可预演/校验状态 (advisory, 非硬约束).
+        ceiling: 无外推能力, 类比仅返回历史最相似实验. 升级: P2 surrogate.
         开关统一走 FeatureFlags (默认 on), 兼容旧 env HUGINN_WORLD_MODEL.
         """
         from huginn.feature_flags import FeatureFlags
         if not FeatureFlags.shared().is_enabled("world_model"):
             return ""
+        blocks: list[str] = []
+        # 1) 世界模型注册表 (稳定来源 tool_registry, 零 LLM 调用)
+        catalog = self._build_world_catalog_block()
+        if catalog:
+            blocks.append(catalog)
         _mem = getattr(self, "memory", None)
         if _mem is None or not hasattr(_mem, "longterm"):
-            return ""
+            return "\n\n".join(blocks)
         try:
             _pred = _mem.longterm.predict_via_analogy(
                 {"hypothesis": hypothesis[:200]},
@@ -375,21 +381,55 @@ LUCID review (mandatory after generating hypothesis):
             )
         except Exception:
             logger.debug("best-effort op failed", exc_info=True)
-            return ""
+            return "\n\n".join(blocks)
         if _pred.get("prediction_type") != "analogy":
-            return ""
+            return "\n\n".join(blocks)
         _analogy = _pred.get("analogy", [])
         if not _analogy:
-            return ""
+            return "\n\n".join(blocks)
         _lines: list[str] = []
         for _a in _analogy[:3]:
             _content = str(_a.get("content", ""))[:120]
             _score = _a.get("score", 0)
             _lines.append(f"  - (sim={_score:.2f}) {_content}")
-        return (
+        blocks.append(
             "\n[WORLD MODEL] 历史相似实验结果 (懒路预测, 仅供参考, 无外推):\n"
             + "\n".join(_lines) + "\n"
         )
+        return "\n\n".join(blocks)
+
+    def _build_world_catalog_block(self) -> str:
+        """已注册解析世界模型注册表 — 让 planner 知道哪些物理工具可预演/校验.
+
+        来源是 ToolSpec.schema (domain/space.state/observables/forward), 稳定且
+        零 LLM; 底层是上轮"真实解析真值 (IdealGas/ShellCompute)" 的注册表. 只列
+        注册过的工具, 未注册的不臆造. 失败静默返回空串 (advisory).
+        """
+        try:
+            from huginn.security.tool_registry import get_tool, registered_tools
+        except Exception:
+            return ""
+        _names = registered_tools()
+        if not _names:
+            return ""
+        _lines = ["[WORLD MODEL] 已注册解析世界模型 (可预演/校验状态, advisory):"]
+        for _name in _names:
+            try:
+                _schema = get_tool(_name).schema
+                _domain = _schema.get("domain", "?")
+                _state = ",".join(_schema.get("space", {}).get("state", []) or [])
+                _obs = ",".join(_schema.get("observables", []) or [])
+                _fwd = str(_schema.get("forward", ""))[:80]
+                _fwd_suffix = f" fwd={_fwd}" if _fwd else ""
+                _lines.append(
+                    f"  - {_name}: domain={_domain} state=[{_state}]"
+                    f" observables=[{_obs}]{_fwd_suffix}"
+                )
+            except Exception:
+                continue
+        if len(_lines) == 1:
+            return ""
+        return "\n".join(_lines) + "\n"
 
     def _build_metacog_imagery_block(self, context: dict[str, Any]) -> str:
         """metacog 视觉/时空 sketch→verify 闭环 — 把"想象结构"喂回 hypothesis prompt.
