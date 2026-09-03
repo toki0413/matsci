@@ -312,6 +312,12 @@ class PhysicalWorkspace:
             return None
         return self._world_state.last_prediction_error
 
+    def last_prediction_reward(self) -> float | None:
+        """最近一轮的前向预测命中奖励 ([0,1]), 喂给 bandit/episodic 的 r_phys."""
+        if self._world_state is None:
+            return None
+        return self._world_state.last_prediction_reward
+
     def transaction(self) -> Any:
         """事务边界: 块内异常 → 物理逆按 LIFO 执行, 工作台恢复到块前."""
         return self.revertible.transaction()

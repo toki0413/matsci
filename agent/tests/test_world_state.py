@@ -147,3 +147,60 @@ def test_tracker_observe_without_prediction_returns_none():
     tracker.step({"p": 1.0, "V": 2.0, "T": 300.0, "n": 1.0})
     assert tracker.last_prediction is None
     assert tracker.observe({"p": 1.0}) is None
+
+
+def test_prediction_error_to_reward():
+    from huginn.security.world_state import prediction_error_to_reward
+
+    assert prediction_error_to_reward(None) is None
+    assert prediction_error_to_reward(float("nan")) is None
+    assert prediction_error_to_reward(0.0) == 1.0
+    # 单调递减: 命中(误差0)高奖励 > 小漂移 > 大漂移
+    assert (
+        prediction_error_to_reward(0.0)
+        > prediction_error_to_reward(0.5)
+        > prediction_error_to_reward(2.0)
+    )
+    assert 0.0 < prediction_error_to_reward(0.5) < 1.0
+
+
+def test_workspace_exposes_prediction_reward():
+    from huginn.security.thermo_system import IdealGasWorldModel, ThermoExecutor
+
+    schema = tool_schema("ideal_gas")
+    wa = PhysicalWorkspace(IdealGasWorldModel(), ThermoExecutor(), schema=schema)
+    wa.execute(PhysicalAction("heat", {"dq": 50.0}))
+    reward = wa.last_prediction_reward()
+    assert reward is not None
+    assert reward > 0.99  # 解析前向真值自洽 → 误差≈0 → 命中奖励≈1
+
+
+def test_world_prediction_reward_reflows_to_bandit_and_episodic(tmp_path):
+    """阶段2 回流: 世界预测命中奖励 → bandit r_phys + episodic episode 节点."""
+    import os
+
+    import huginn.autoloop.bandit as bd
+    from huginn.kg import ProjectKnowledgeGraph
+    from huginn.security.thermo_system import IdealGasWorldModel, ThermoExecutor
+
+    os.environ["HUGINN_CACHE_DIR"] = str(tmp_path)
+    bd.WorkflowBandit._instance = None
+    bd.VariantArchive._instance = None
+
+    schema = tool_schema("ideal_gas")
+    wa = PhysicalWorkspace(IdealGasWorldModel(), ThermoExecutor(), schema=schema)
+    wa.execute(PhysicalAction("heat", {"dq": 100.0}))
+    reward = wa.last_prediction_reward()
+    assert reward is not None and reward > 0.99
+
+    # bandit: r_phys 吃世界预测命中奖励
+    bandit = bd.WorkflowBandit.get_instance()
+    bandit.record_variant_outcome("test_v1", "obj_world", success=True, r_phys=reward)
+    belief = bandit.get_belief("test_v1", "obj_world")
+    assert belief is not None
+    assert belief.last_r_phys == reward
+
+    # episodic: episode 节点记录预测命中
+    kg = ProjectKnowledgeGraph(tmp_path / "kg")
+    nid = kg.add_episode_node(1, "heat", f"prediction reward={reward:.3f}", "success")
+    assert nid == "episode_1"

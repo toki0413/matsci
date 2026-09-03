@@ -204,6 +204,7 @@ class WorldStateTracker:
         self.last_snapshot: StateSnapshot | None = None
         self.last_prediction: dict[str, float] | None = None
         self.last_prediction_error: float | None = None
+        self.last_prediction_reward: float | None = None
 
     def step(
         self, state_before: Mapping[str, Any], action: Any = None
@@ -237,7 +238,28 @@ class WorldStateTracker:
         if not errs:
             return None
         self.last_prediction_error = math.sqrt(sum(errs) / len(errs))
+        self.last_prediction_reward = prediction_error_to_reward(
+            self.last_prediction_error
+        )
         return self.last_prediction_error
+
+
+def prediction_error_to_reward(
+    error: float | None,
+    *,
+    half_life: float = 1.0,
+) -> float | None:
+    """预测误差 → 过程奖励 (回流给 bandit/episodic 的稀疏"预测命中"信号).
+
+    把相对 RMS 预测误差映射到 [0, 1]: 命中 (误差→0) 得高奖励, 漂移 (误差大) 趋 0.
+    ``reward = exp(-error / half_life)``, 单调递减、无除零、对量级稳健.
+    ``error`` 为 None/NaN 时返回 None (没有预测就谈不上"命中", 不给奖励, 不误报 0).
+    """
+    if error is None:
+        return None
+    if isinstance(error, float) and math.isnan(error):
+        return None
+    return float(math.exp(-float(error) / float(half_life)))
 
 
 def snapshot_from_schema(
@@ -257,5 +279,6 @@ __all__ = [
     "StateEstimator",
     "ForwardPredictor",
     "WorldStateTracker",
+    "prediction_error_to_reward",
     "snapshot_from_schema",
 ]
