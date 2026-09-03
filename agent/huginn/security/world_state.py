@@ -272,6 +272,24 @@ def prediction_error_to_reward(
     return float(math.exp(-float(error) / float(half_life)))
 
 
+def reconcile_r_phys(
+    base: float,
+    world_reward: float | None = None,
+    *,
+    graft: float = 0.5,
+) -> float:
+    """把"世界预测命中奖励"并进底层 r_phys 聚合 (单一权威实现).
+
+    ``reconciled = graft*base + (1-graft)*world_reward``.
+    ``world_reward`` 为 None (无世界跟踪/无预测样本) 时原样返回 ``base``,
+    不因缺世界模型而扣分. 这是物理 runner / validate tool 默认消费
+    `last_prediction_reward` 的出口 — 下游统一用它喂 bandit.
+    """
+    if world_reward is None:
+        return float(base)
+    return float(graft) * float(base) + (1.0 - float(graft)) * float(world_reward)
+
+
 def snapshot_from_schema(
     schema: Mapping[str, Any],
     state: Mapping[str, Any],
@@ -290,5 +308,6 @@ __all__ = [
     "ForwardPredictor",
     "WorldStateTracker",
     "prediction_error_to_reward",
+    "reconcile_r_phys",
     "snapshot_from_schema",
 ]

@@ -325,15 +325,14 @@ class PhysicalWorkspace:
         return self._world_state.avg_reward()
 
     def reconcile_r_phys(self, base: float) -> float:
-        """把平均预测命中奖励并进底层 r_phys 聚合: ``base`` 加权 0.5 + 预测奖励加权 0.5.
+        """把平均预测命中奖励并进底层 r_phys 聚合 (单一权威实现见 world_state).
 
-        无预测样本时原样返回 ``base`` (不因缺世界模型而扣分). 这是物理 runner
-        默认消费 ``last_prediction_reward`` 的出口: 下游用它当 r_phys 喂 bandit.
+        无世界跟踪 (无 schema) / 无预测样本时原样返回 ``base``, 不因缺世界模型
+        而扣分. 这是物理 runner 默认消费 ``last_prediction_reward`` 的出口.
         """
-        world = self.prediction_reward_avg()
-        if world is None:
-            return float(base)
-        return 0.5 * float(base) + 0.5 * world
+        from huginn.security.world_state import reconcile_r_phys
+
+        return reconcile_r_phys(base, self.prediction_reward_avg())
 
     def transaction(self) -> Any:
         """事务边界: 块内异常 → 物理逆按 LIFO 执行, 工作台恢复到块前."""

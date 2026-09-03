@@ -77,6 +77,20 @@ class TestValidateTool:
         assert result.success
         assert not result.data["all_passed"]
 
+    def test_aggregate_physics_score_folds_world_reward(self):
+        """阶段4: 世界预测命中奖励并进物理校验 r_phys; 缺省零回归."""
+        tool = ValidateTool()
+        checks = [
+            {"name": "a", "passed": True, "severity": "error", "score": None},
+            {"name": "b", "passed": False, "severity": "warn", "score": None},
+        ]
+        # 无 world_reward → 行为不变 (基分 = (1*3 + 0*2)/5 = 0.6)
+        base = tool._aggregate_physics_score(checks)
+        assert base == pytest.approx(0.6)
+        # 有 world_reward (预测全中≈1) → 0.5*0.6 + 0.5*1 = 0.8
+        folded = tool._aggregate_physics_score(checks, world_reward=1.0)
+        assert folded == pytest.approx(0.8)
+
 
 class TestDiagnoseTool:
     def test_vasp_eddav(self):

@@ -166,6 +166,17 @@ def test_prediction_error_to_reward():
     assert 0.0 < prediction_error_to_reward(0.5) < 1.0
 
 
+def test_module_reconcile_r_phys_folds_or_passthrough():
+    from huginn.security.world_state import reconcile_r_phys
+
+    # 有 world_reward → 各 0.5 并进
+    assert reconcile_r_phys(0.6, 1.0) == pytest.approx(0.8)
+    # 无 world_reward (None) → 原样返回 base, 不扣分
+    assert reconcile_r_phys(0.55, None) == 0.55
+    # graft 可调
+    assert reconcile_r_phys(0.4, 1.0, graft=0.25) == pytest.approx(0.85)
+
+
 def test_workspace_exposes_prediction_reward():
     from huginn.security.thermo_system import IdealGasWorldModel, ThermoExecutor
 
