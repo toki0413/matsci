@@ -118,6 +118,13 @@
   （workspace/ValidateTool）并进 r_phys → 喂 bandit 与 episodic → autoloop 注入注册表 →
   `SparseRewardTuner` 让该奖励驱动梯度自校准 → `LearnableForwardModel` 提供可学前向代理（P2 线）。
 
+- **三形态计算适配（v2 已落地）**：`compute_adapter.py` 的 `ComputationalToolAdapter` 接缝不变，新增统一
+  `JobBackend.run(spec) -> JobResult` 后端抽象覆盖三种计算形态 —— `LocalJobBackend`(子进程)、
+  `RemoteHpcJobBackend`(提交→轮询→取回, 调度器只实现 `HpcTransport`)、`HttpJobBackend`(常驻 REST/API,
+  urllib 默认 / caller 可注入); 并新增收敛语义 `ParsedObservation` + `max_iterations` 迭代重试
+  (`ConvergencePendingError` 标记未收敛挂起)。占位: `RelaxComputeTool`(模拟 DFT 弛豫, workdir checkpoint 续算)、
+  `HttpRelaxTool` 均为 CI 可跑。接 VASP/DFT/MD/CFD/FEM 仍只写一个 adapter, 换形态仅换 backend。
+
 ---
 
 ## 6. 相关文件索引（供追踪）
