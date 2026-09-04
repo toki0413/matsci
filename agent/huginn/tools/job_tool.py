@@ -11,7 +11,7 @@ import shlex
 import time
 import uuid
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -94,6 +94,23 @@ class JobTool(HuginnTool):
     description = "Submit, monitor, and cancel computational jobs on HPC clusters (Slurm/PBS). Supports remote SSH submission."
     input_schema = JobToolInput
 
+    def __init__(self, scheduler: Any | None = None) -> None:
+        super().__init__()
+        # 可注入的 scheduler 引用. 测试或 agent 接线时传入真实/假调度器,
+        # 未注入时回落为从 context.agent_factory 解析.
+        self._scheduler: Any | None = scheduler
+
+    def _resolve_scheduler(self, context: ToolContext | None) -> Any | None:
+        """优先用注入的 scheduler; 否则从 context 的共享 factory 解析."""
+        if self._scheduler is not None:
+            return self._scheduler
+        if context is not None:
+            factory = getattr(context, "agent_factory", None)
+            sched = getattr(factory, "_shared_scheduler", None)
+            if sched is not None:
+                return sched
+        return None
+
     def is_read_only(self, args: JobToolInput) -> bool:
         return args.action in ["status", "list", "poll_remote"]
 
@@ -110,7 +127,9 @@ class JobTool(HuginnTool):
     ) -> ValidationResult:
         """Pre-flight: verify required handles based on action."""
         if args.action in ("submit", "submit_remote") and args.script_path:
-            vr = HandleValidator.validate(HandleType.FILE_PATH, args.script_path, context)
+            vr = HandleValidator.validate(
+                HandleType.FILE_PATH, args.script_path, context
+            )
             if not vr.result:
                 return ValidationResult(
                     result=False,
@@ -118,9 +137,7 @@ class JobTool(HuginnTool):
                     error_code=404,
                 )
         if args.action in ("status", "cancel", "poll_remote"):
-            vr = HandleValidator.validate(
-                HandleType.JOB_ID, args.job_id or "", context
-            )
+            vr = HandleValidator.validate(HandleType.JOB_ID, args.job_id or "", context)
             if not vr.result:
                 return ValidationResult(
                     result=False,
@@ -135,7 +152,7 @@ class JobTool(HuginnTool):
         elif args.action == "status":
             return self._status_local(args)
         elif args.action == "cancel":
-            return self._cancel_local(args)
+            return await self._cancel_local(args, context)
         elif args.action == "list":
             return self._list_local(args)
         elif args.action == "submit_remote":
@@ -185,15 +202,55 @@ class JobTool(HuginnTool):
         )
         return ToolResult(data=output.model_dump(), success=True)
 
-    def _cancel_local(self, args: JobToolInput) -> ToolResult:
+    async def _cancel_local(
+        self, args: JobToolInput, context: ToolContext
+    ) -> ToolResult:
+        """取消作业: 真实调用 scheduler.cancel, 未连接 scheduler 时明确报错.
+
+        不再返回假成功 — 没有调度器时返回 success=False + 明确 message,
+        避免 LLM 误以为作业已被真正取消.
+        """
         if not args.job_id:
             return ToolResult(
                 data=None, success=False, error="job_id is required for cancel"
             )
 
+        scheduler = self._resolve_scheduler(context)
+        if scheduler is None:
+            return ToolResult(
+                data=None,
+                success=False,
+                error=(
+                    "scheduler not connected: cannot truly cancel job "
+                    f"{args.job_id}. Wire the ToolScheduler (e.g. via "
+                    "context.agent_factory) or inject it."
+                ),
+            )
+
+        cancelled = await scheduler.cancel(args.job_id)
+        if cancelled:
+            return ToolResult(
+                data={"job_id": args.job_id, "status": "cancelled"},
+                success=True,
+            )
+
+        # 未成功取消: 区分"未知作业"与"已终态作业"
+        status = None
+        lookup = getattr(scheduler, "get_job_status", None)
+        if callable(lookup):
+            rec = lookup(args.job_id)
+            if rec is not None:
+                status = getattr(rec, "status", None)
+        if status is not None:
+            return ToolResult(
+                data={"job_id": args.job_id, "status": status},
+                success=False,
+                message=f"Job {args.job_id} not cancellable (current status: {status}).",
+            )
         return ToolResult(
-            data={"job_id": args.job_id, "status": "cancelled"},
-            success=True,
+            data={"job_id": args.job_id, "status": "unknown"},
+            success=False,
+            message=f"Job {args.job_id} not found.",
         )
 
     def _list_local(self, args: JobToolInput) -> ToolResult:
@@ -278,6 +335,7 @@ class JobTool(HuginnTool):
                         RemoteJobRecord,
                         RemoteJobStore,
                     )
+
                     workspace = Path(os.environ.get("HUGINN_WORKSPACE", "."))
                     store = RemoteJobStore(workspace=workspace)
                     record = RemoteJobRecord(

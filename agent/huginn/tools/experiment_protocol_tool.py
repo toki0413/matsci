@@ -48,6 +48,14 @@ class ExperimentProtocolInput(BaseModel):
             "sim=状态转移仿真 (确定性规则, 感知确认可校验量变化)"
         ),
     )
+    learn_surrogate: bool = Field(
+        default=False,
+        description=(
+            "仅 sim 后端: 启用 P2 学代理 (LearnableForwardModel), 每次真实(sim)执行 "
+            "把 (前状态, 动作, 实测后状态) 喂给代理积累样本; 返回里给 surrogate_samples"
+            " 与已积累样本的动作类型, 随后可用 wa.surrogate_predict 做快预演"
+        ),
+    )
 
 
 class ExperimentProtocolTool(HuginnTool):
@@ -78,11 +86,27 @@ class ExperimentProtocolTool(HuginnTool):
         else:
             executor = MockExecutor()
         rv = getattr(context, "revertible", None)
+        # sim + learn_surrogate: 建学代理 + 内置连续体积 schema, 真实(sim)执行的
+        # 观测对会在 workspace 的 WorldStateTracker.observe 里喂进代理 (P2 快预演积累).
+        schema = None
+        surrogate = None
+        if args.learn_surrogate and args.executor_backend == "sim":
+            from huginn.security.world_state import LearnableForwardModel
+
+            state_keys = ["reagent_vol", "sample_vol", "tube_vol"]
+            schema = {
+                "domain": "wetlab",
+                "space": {"state": state_keys},
+                "observables": state_keys,
+            }
+            surrogate = LearnableForwardModel(state_keys)
         wa = build_pipette_workflow(
             executor,
             world_model=NaiveWorldModel(),
             mixer_available=args.mixer_available,
             revertible=rv,
+            schema=schema,
+            surrogate=surrogate,
         )
         return wa, executor, rv
 
@@ -116,18 +140,19 @@ class ExperimentProtocolTool(HuginnTool):
             degraded = [
                 sid for sid, active in self._steps_status(wa).items() if not active
             ]
-            return ToolResult(
-                success=True,
-                data={
-                    "protocol": args.protocol,
-                    "executor_backend": args.executor_backend,
-                    "executed_steps": executed,
-                    "degraded_steps": degraded,
-                    "final_state": executor.observe() if args.executor_backend == "sim" else None,
-                    "inverse_count": wa.revertible.depth,
-                    "revertible_shared_with_agent": rv is not None,
-                },
-            )
+            data: dict[str, Any] = {
+                "protocol": args.protocol,
+                "executor_backend": args.executor_backend,
+                "executed_steps": executed,
+                "degraded_steps": degraded,
+                "final_state": executor.observe() if args.executor_backend == "sim" else None,
+                "inverse_count": wa.revertible.depth,
+                "revertible_shared_with_agent": rv is not None,
+            }
+            # P2 快预演积累证据: 代理吃掉的观测对数 + 每种动作类型的样本数.
+            if args.learn_surrogate and hasattr(wa, "surrogate_samples"):
+                data["surrogate_samples"] = wa.surrogate_samples()
+            return ToolResult(success=True, data=data)
         except Exception as exc:
             # 执行失败/感知确认失败 → 事务已回滚, 物理逆已执行. 透传失败语义.
             return ToolResult(data=None, success=False, error=f"{type(exc).__name__}: {exc}")

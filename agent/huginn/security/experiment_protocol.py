@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from typing import Any
 
 from huginn.security.physics_schema import ActionSpec
@@ -49,15 +50,26 @@ def build_pipette_workflow(
     *,
     mixer_available: bool = True,
     revertible: Any | None = None,
+    schema: Mapping[str, Any] | None = None,
+    surrogate: Any = None,
 ) -> PhysicalWorkspace:
     """接线一个"移液—混合—分装"工作台: 声明依赖链 + 感知确认器.
 
     ``mixer_available=False`` 模拟混合器缺失 → mix/aliquot 自动停用.
     ``revertible`` 可传入外部逆上下文 (如 ToolContext.revertible), 让物理逆
     进入 agent 统一逆栈; 否则工作台自建.
+    ``schema``: 传入 ToolSpec 机器可读描述时启用世界表征跟踪, runner 可用
+    ``wa.reconcile_r_phys(base)`` 把预测命中奖励并进 r_phys (阶段3默认消费).
+    ``surrogate``: 可选学代理 (``LearnableForwardModel``), 配 ``schema`` 一起用 —
+    每次真实执行 (sim/真工具) 的观测对会喂进代理积累样本, 随后可用
+    ``wa.surrogate_predict(state, action)`` 做快预演 (P2 线).
     """
     wa = PhysicalWorkspace(
-        world_model or NaiveWorldModel(), executor, revertible=revertible
+        world_model or NaiveWorldModel(),
+        executor,
+        revertible=revertible,
+        schema=schema,
+        surrogate=surrogate,
     )
 
     # 资源后端 (无 requires, 后端就绪即激活).
@@ -90,7 +102,9 @@ def build_pipette_workflow(
     return wa
 
 
-def run_pipette_protocol(wa: PhysicalWorkspace, *, aliquot: bool = True, sim: bool = False) -> None:
+def run_pipette_protocol(
+    wa: PhysicalWorkspace, *, aliquot: bool = True, sim: bool = False
+) -> None:
     """在一个事务里执行完整协议 (失败即整体回滚).
 
     只执行当前激活的步骤 (依赖缺失的步骤被空间链自动停用).
@@ -100,22 +114,26 @@ def run_pipette_protocol(wa: PhysicalWorkspace, *, aliquot: bool = True, sim: bo
         if wa.is_active(C_ASPIRATE):
             wa.execute(
                 PhysicalAction("aspirate", {"vol": 10}),
-                confirm_key=K_ASPIRATED, preflight=sim,
+                confirm_key=K_ASPIRATED,
+                preflight=sim,
             )
         if wa.is_active(C_DISPENSE):
             wa.execute(
                 PhysicalAction("dispense", {"vol": 10}),
-                confirm_key=K_FILLED, preflight=sim,
+                confirm_key=K_FILLED,
+                preflight=sim,
             )
         if wa.is_active(C_MIX):
             wa.execute(
                 PhysicalAction("mix", {"mode": "vortex"}),
-                confirm_key=K_MIXED, preflight=sim,
+                confirm_key=K_MIXED,
+                preflight=sim,
             )
         if aliquot and wa.is_active(C_ALIQUOT):
             wa.execute(
                 PhysicalAction("aliquot", {"n": 3}),
-                confirm_key=K_ALIQUOTS, preflight=sim,
+                confirm_key=K_ALIQUOTS,
+                preflight=sim,
             )
 
 

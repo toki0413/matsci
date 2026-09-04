@@ -234,13 +234,21 @@ class ValidateTool(HuginnTool):
             for c in raw
         ]
 
-    def _aggregate_physics_score(self, checks: list[dict[str, Any]]) -> float:
+    def _aggregate_physics_score(
+        self, checks: list[dict[str, Any]], world_reward: float | None = None
+    ) -> float:
         """把校验结果聚合成物理轨数值奖励 R_phys ∈ [0, 1]。
 
         每个检查的分数: 优先用显式 score, 没有则 passed→1.0/failed→0.0。
         按 severity 加权 (error=3, warn=2, info=1)——物理硬错误必须比
         质量警告更重地拉低 R_phys, 避免 "warn 堆得再多也压不过一个 error"。
+
+        ``world_reward``: 世界预测命中奖励 (物理工作台 ``last_prediction_reward``)，
+        提供时经 ``reconcile_r_phys`` 与基分并进 r_phys (阶段4: 物理 tool 默认消费
+        预测命中); 缺省 None 时行为不变 (零回归).
         """
+        from huginn.security.world_state import reconcile_r_phys
+
         if not checks:
             return 1.0
         weight_map = {"error": 3.0, "warn": 2.0, "info": 1.0}
@@ -254,7 +262,8 @@ class ValidateTool(HuginnTool):
                 s = 1.0 if c.get("passed") else 0.0
             total_weight += w
             weighted_score += s * w
-        return weighted_score / total_weight if total_weight > 0 else 1.0
+        base = weighted_score / total_weight if total_weight > 0 else 1.0
+        return reconcile_r_phys(base, world_reward)
 
     # ── benchmark action: 文献/数据库基准对比 ──────────────────────────
 

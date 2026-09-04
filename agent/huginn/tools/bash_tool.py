@@ -27,8 +27,17 @@ logger = logging.getLogger(__name__)
 
 
 class BashToolInput(BaseModel):
-    action: Literal["run", "stream"] = Field(default="run")
-    command: list[str] = Field(..., description="Command as a list of arguments")
+    action: Literal["run", "stream", "status", "cancel"] = Field(
+        default="run",
+        description=(
+            "run/stream: 同步执行命令. 以尾随 '&' 结尾的命令作为后台任务投递到 "
+            "ToolScheduler, 立即返回 job_id. status/cancel: 查询/取消后台 job_id."
+        ),
+    )
+    command: list[str] | None = Field(
+        default=None,
+        description="Command as a list of arguments (required for run/stream)",
+    )
     working_dir: str | None = Field(default=None)
     timeout: float = Field(default=300.0, gt=0)
     capture_output: bool = Field(default=True)
@@ -36,6 +45,22 @@ class BashToolInput(BaseModel):
         default=False,
         description="Stream stdout/stderr line-by-line while the command runs",
     )
+    job_id: str | None = Field(
+        default=None, description="Background job_id (for action=status/cancel)"
+    )
+
+
+def _is_background_command(command: list[str]) -> bool:
+    """是否尾随 '&' 的后台命令 (bash 后台语义)."""
+    return bool(command) and command[-1] == "&"
+
+
+def _strip_background(command: list[str]) -> list[str]:
+    """去掉命令末尾的 '&' 标记, 返回真正要执行的命令."""
+    out = list(command)
+    while out and out[-1] == "&":
+        out.pop()
+    return out
 
 
 # v14 Task 9: bash 重活识别 heuristic
@@ -65,8 +90,12 @@ def _is_heavy_bash(command: list[str]) -> tuple[bool, str]:
     # ponytail: 不用 re, 简单 substring 即可. 升级: shlex 解析精确判定.
     has_python = "python" in cmd_lower
     has_py_file = bool(re.search(r"\.py\b", cmd_str))
-    if has_python and has_py_file and any(kw in cmd_lower for kw in _PY_LONG_RUN_KEYWORDS):
-            return True, "python training/fitting task (train/fit/epoch keyword)"
+    if (
+        has_python
+        and has_py_file
+        and any(kw in cmd_lower for kw in _PY_LONG_RUN_KEYWORDS)
+    ):
+        return True, "python training/fitting task (train/fit/epoch keyword)"
 
     return False, ""
 
@@ -89,7 +118,9 @@ def _suggest_fix(returncode: int, stderr: str, stdout: str, command: list[str]) 
     if "filenotfounderror" in sl or "no such file" in sl:
         return "FileNotFoundError: check path with glob/grep, or create the file first via file_write_tool (code_tool sandbox blocks open())."
     if "importerror" in sl:
-        return "ImportError: check if the module exists in workspace, or pip install it."
+        return (
+            "ImportError: check if the module exists in workspace, or pip install it."
+        )
     if "timed out" in sl or "timeout" in sl:
         return f"Timeout: reduce iterations or split the task. Command was: {' '.join(command[:5])}."
     if "attributeerror" in sl:
@@ -97,7 +128,9 @@ def _suggest_fix(returncode: int, stderr: str, stdout: str, command: list[str]) 
     if "valueerror" in sl or "typeerror" in sl:
         return "Value/TypeError: check input shapes/types. Use code_tool to print them before the failing line."
     if "runtimeerror" in sl and "cuda" in sl:
-        return "CUDA RuntimeError: fall back to CPU (device='cpu'), or reduce batch size."
+        return (
+            "CUDA RuntimeError: fall back to CPU (device='cpu'), or reduce batch size."
+        )
     if returncode != 0 and not s.strip():
         return "Command failed with no output. Check if the executable exists and is in PATH."
     return ""
@@ -107,9 +140,27 @@ def _suggest_fix(returncode: int, stderr: str, stdout: str, command: list[str]) 
 # ponytail: 不是真正流式 IO (那需要 async generator), 而是从已捕获的 stdout
 # 提取关键行. 升级路径: Popen 逐行读 + async yield.
 _PROGRESS_KEYWORDS = (
-    "loss", "epoch", "step", "it/s", "s/it", "accuracy", "error",
-    "traceback", "exception", "warning", "complete", "done", "finished",
-    "epoch:", "step:", "iter", "train", "val", "test", "metric", "score",
+    "loss",
+    "epoch",
+    "step",
+    "it/s",
+    "s/it",
+    "accuracy",
+    "error",
+    "traceback",
+    "exception",
+    "warning",
+    "complete",
+    "done",
+    "finished",
+    "epoch:",
+    "step:",
+    "iter",
+    "train",
+    "val",
+    "test",
+    "metric",
+    "score",
 )
 
 
@@ -163,6 +214,22 @@ class BashTool(HuginnTool):
     destructive = True
     input_schema = BashToolInput
 
+    def __init__(self, scheduler: Any | None = None) -> None:
+        super().__init__()
+        # 可注入的 scheduler 引用; 未注入时回落为从 context.agent_factory 解析.
+        self._scheduler: Any | None = scheduler
+
+    def _resolve_scheduler(self, context: ToolContext | None) -> Any | None:
+        """优先用注入的 scheduler; 否则从 context 的共享 factory 解析."""
+        if self._scheduler is not None:
+            return self._scheduler
+        if context is not None:
+            factory = getattr(context, "agent_factory", None)
+            sched = getattr(factory, "_shared_scheduler", None)
+            if sched is not None:
+                return sched
+        return None
+
     async def call(
         self, args: dict[str, Any], context: ToolContext | None = None
     ) -> ToolResult:
@@ -171,8 +238,19 @@ class BashTool(HuginnTool):
             Path(input_data.working_dir) if input_data.working_dir else Path.cwd()
         )
 
+        # status/cancel: 复用 scheduler 查询/取消后台 job, 不执行命令.
+        if input_data.action in ("status", "cancel"):
+            return await self._handle_job_action(
+                input_data.action, input_data.job_id, context
+            )
+
         if not input_data.command:
             return ToolResult(data=None, success=False, error="Empty command.")
+
+        # 后台语义: 命令以尾随 '&' 结尾 → 投递到 ToolScheduler, 立即返回 job_id,
+        # 不作同步等待. 仍走下方 executor / 沙箱, 保持 command_filter 安全边界.
+        if _is_background_command(input_data.command):
+            return await self._submit_background(input_data, work_dir, context)
 
         # v14 Task 9: bash 重活识别 + 自动 dispatch 给 Support subagent
         # ponytail: 失败时降级到原行为 (直接执行 bash), 不阻塞主流程.
@@ -182,6 +260,7 @@ class BashTool(HuginnTool):
             from huginn.tools.persistent_terminal import (
                 resolve_persistent_terminal_flag,
             )
+
             if resolve_persistent_terminal_flag(None):
                 dispatched = _dispatch_to_support_bash_persistent(
                     input_data.command, context, reason
@@ -199,7 +278,11 @@ class BashTool(HuginnTool):
         # P0-7: 默认关闭 — Rust sandbox 在 RDKit+sklearn GPR 等场景静默崩溃
         # 返回空 stderr, 导致 "Unknown error" (audit 08: 8 个出分单元 62.5% 有
         # 工具层直接背书). 显式 HUGINN_USE_RUST_SANDBOX=1 才启用.
-        if os.environ.get("HUGINN_USE_RUST_SANDBOX", "").lower() in ("1", "true", "yes"):
+        if os.environ.get("HUGINN_USE_RUST_SANDBOX", "").lower() in (
+            "1",
+            "true",
+            "yes",
+        ):
             try:
                 from huginn_ext.sandbox import (
                     run_sandboxed,  # type: ignore[import-not-found]
@@ -229,7 +312,16 @@ class BashTool(HuginnTool):
                         "stderr": result["stderr"],
                         "message": result["message"],
                         "timed_out": result["timed_out"],
-                        "suggest_fix": _suggest_fix(result["returncode"], result["stderr"], result["stdout"], input_data.command) if not result["success"] else "",
+                        "suggest_fix": (
+                            _suggest_fix(
+                                result["returncode"],
+                                result["stderr"],
+                                result["stdout"],
+                                input_data.command,
+                            )
+                            if not result["success"]
+                            else ""
+                        ),
                         "stream_progress": _extract_progress(result["stdout"]),
                     },
                     success=result["success"],
@@ -237,8 +329,31 @@ class BashTool(HuginnTool):
                 )
             except Exception:
                 # Rust extension not available; proceed to the configured backend.
-                logger.debug("Rust extension unavailable, proceeding to configured backend", exc_info=True)
+                logger.debug(
+                    "Rust extension unavailable, proceeding to configured backend",
+                    exc_info=True,
+                )
 
+        # 统一走 executor (Container / SandboxExecutor), 保持 command_filter 安全边界.
+        return await self._run_executor(
+            command=input_data.command,
+            work_dir=work_dir,
+            timeout=input_data.timeout,
+            capture_output=input_data.capture_output,
+        )
+
+    async def _run_executor(
+        self,
+        command: list[str],
+        work_dir: Path,
+        timeout: float,
+        capture_output: bool,
+    ) -> ToolResult:
+        """用配置好的 executor (Container / SandboxExecutor) 执行命令.
+
+        后台任务 (尾随 '&') 的 factory 也会走这里, 确保走 command_filter / executor
+        安全边界, 不会绕过沙箱.
+        """
         try:
             executor = get_executor()
         except SandboxError as exc:
@@ -248,9 +363,9 @@ class BashTool(HuginnTool):
 
         if isinstance(executor, ContainerExecutor):
             result = executor.run(
-                input_data.command,
+                command,
                 cwd=work_dir,
-                timeout=input_data.timeout,
+                timeout=timeout,
                 capture_output=True,
                 text=True,
             )
@@ -260,7 +375,7 @@ class BashTool(HuginnTool):
                 _err = f"Command failed (rc={result.returncode}).\n{_tail}"
             return ToolResult(
                 data={
-                    "command": input_data.command,
+                    "command": command,
                     "returncode": result.returncode,
                     "stdout": result.stdout,
                     "stderr": result.stderr,
@@ -268,7 +383,13 @@ class BashTool(HuginnTool):
                         "Command succeeded." if result.success else "Command failed."
                     ),
                     "container": True,
-                    "suggest_fix": _suggest_fix(result.returncode, result.stderr, result.stdout, input_data.command) if not result.success else "",
+                    "suggest_fix": (
+                        _suggest_fix(
+                            result.returncode, result.stderr, result.stdout, command
+                        )
+                        if not result.success
+                        else ""
+                    ),
                     "stream_progress": _extract_progress(result.stdout),
                 },
                 success=result.success,
@@ -276,30 +397,26 @@ class BashTool(HuginnTool):
                 error_kind=_result_error_kind(result),
             )
 
-        # SandboxExecutor path — uses executable whitelist + work-dir validation.
+        # SandboxExecutor path
         if isinstance(executor, SandboxExecutor):
             try:
-                # RevertibleEffect (Cordis 时间可组合性): run_revertible 登记
-                # "删除本次在 work_dir 新建文件"的逆, 命令失败时回滚, 沙箱恢复原状.
                 result, _dispose = executor.run_revertible(
-                    input_data.command,
+                    command,
                     cwd=work_dir,
                     poll_dir=work_dir,
-                    timeout=input_data.timeout,
-                    capture_output=input_data.capture_output,
+                    timeout=timeout,
+                    capture_output=capture_output,
                     text=True,
                 )
                 if result.returncode != 0:
                     _dispose()
-                # 失败时把 stderr 拼进 error, 否则 adapter 只看到 "Unknown error",
-                # agent 无法 debug (Material_000 卡死的根因).
                 _err = None
                 if result.returncode != 0:
                     _tail = (result.stderr or result.stdout or "")[-2000:]
                     _err = f"Command failed (rc={result.returncode}).\n{_tail}"
                 return ToolResult(
                     data={
-                        "command": input_data.command,
+                        "command": command,
                         "returncode": result.returncode,
                         "stdout": result.stdout,
                         "stderr": result.stderr,
@@ -309,7 +426,13 @@ class BashTool(HuginnTool):
                             else "Command failed."
                         ),
                         "sandbox": True,
-                        "suggest_fix": _suggest_fix(result.returncode, result.stderr, result.stdout, input_data.command) if result.returncode != 0 else "",
+                        "suggest_fix": (
+                            _suggest_fix(
+                                result.returncode, result.stderr, result.stdout, command
+                            )
+                            if result.returncode != 0
+                            else ""
+                        ),
                         "stream_progress": _extract_progress(result.stdout),
                     },
                     success=result.returncode == 0,
@@ -318,16 +441,126 @@ class BashTool(HuginnTool):
                 )
             except SandboxError as e:
                 return ToolResult(
-                    data=None, success=False,
+                    data=None,
+                    success=False,
                     error=f"Sandbox blocked command: {e}",
                     error_kind=ErrorKind.DENIED,
                 )
             except Exception as e:
                 return ToolResult(
-                    data=None, success=False,
+                    data=None,
+                    success=False,
                     error=f"Sandbox execution failed: {e}",
                     error_kind=ErrorKind.FATAL,
                 )
+        return ToolResult(
+            data=None,
+            success=False,
+            error=f"Unsupported executor: {type(executor).__name__}",
+            error_kind=ErrorKind.FATAL,
+        )
+
+    async def _submit_background(
+        self,
+        input_data: BashToolInput,
+        work_dir: Path,
+        context: ToolContext | None,
+    ) -> ToolResult:
+        """把以 '&' 结尾的后台命令投递到 ToolScheduler, 立即返回 job_id.
+
+        不阻塞主流程; 用 scheduler.submit_async 排队, 由 drainer 分配重活槽位后
+        再执行. 工厂内部仍走 _run_executor, 保沙箱安全.
+        """
+        cmd = _strip_background(input_data.command)
+        if not cmd:
+            return ToolResult(
+                data=None, success=False, error="Empty command after stripping '&'."
+            )
+
+        scheduler = self._resolve_scheduler(context)
+        if scheduler is None:
+            return ToolResult(
+                data=None,
+                success=False,
+                error=(
+                    "scheduler not connected: cannot submit background bash task. "
+                    "Wire the ToolScheduler (e.g. via context.agent_factory) or inject it."
+                ),
+            )
+
+        async def _run() -> ToolResult:
+            return await self._run_executor(
+                cmd,
+                work_dir=work_dir,
+                timeout=input_data.timeout,
+                capture_output=input_data.capture_output,
+            )
+
+        job_id = await scheduler.submit_async(
+            "bash_tool",
+            "heavy",
+            None,
+            _run,
+            working_dir=str(work_dir),
+        )
+        return ToolResult(
+            data={
+                "job_id": job_id,
+                "command": cmd,
+                "status": "queued",
+                "background": True,
+                "message": (
+                    f"Background bash job {job_id} submitted. "
+                    "Use action=status/cancel with this job_id to query or cancel."
+                ),
+            },
+            success=True,
+        )
+
+    async def _handle_job_action(
+        self,
+        action: str,
+        job_id: str | None,
+        context: ToolContext | None,
+    ) -> ToolResult:
+        """status / cancel: 复用 scheduler 查询或取消后台 bash 作业."""
+        if not job_id:
+            return ToolResult(
+                data=None,
+                success=False,
+                error=f"job_id required for action='{action}'",
+            )
+        scheduler = self._resolve_scheduler(context)
+        if scheduler is None:
+            return ToolResult(
+                data=None,
+                success=False,
+                error=f"scheduler not connected: cannot {action} job {job_id}",
+            )
+        if action == "status":
+            rec = scheduler.get_job_status(job_id)
+            if rec is None:
+                return ToolResult(
+                    data={"job_id": job_id, "status": "unknown"},
+                    success=False,
+                    error=f"job {job_id} not found",
+                )
+            return ToolResult(
+                data={"job_id": job_id, "status": getattr(rec, "status", "unknown")},
+                success=True,
+            )
+        # cancel
+        cancelled = await scheduler.cancel(job_id)
+        if cancelled:
+            return ToolResult(
+                data={"job_id": job_id, "status": "cancelled"},
+                success=True,
+            )
+        return ToolResult(
+            data={"job_id": job_id, "status": "unknown"},
+            success=False,
+            error=f"job {job_id} not found or not cancellable",
+        )
 
 
 async def _dispatch_to_support_bash(
@@ -374,13 +607,17 @@ async def _dispatch_to_support_bash(
                 _check_finding_consistency,
                 _write_support_rejection,
             )
+
             core_context = " ".join(command)
             h1_zero, h1_reason = _check_finding_consistency(finding, core_context)
             result.metadata["h1_status"] = "zero" if h1_zero else "nonzero"
             result.metadata["h1_reason"] = h1_reason
             if not h1_zero:
                 _write_support_rejection(
-                    context.workspace, finding, h1_reason, core_context,
+                    context.workspace,
+                    finding,
+                    h1_reason,
+                    core_context,
                 )
                 result.data = {
                     "summary": None,

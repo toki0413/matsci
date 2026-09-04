@@ -15,11 +15,10 @@
 from __future__ import annotations
 
 import logging
-import random
-from collections.abc import Callable
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping
 from typing import Any, Protocol
 
+from huginn.security.actuator_model import ErrorModel, SensorModelExecutor
 from huginn.security.coeffect import CoEffectRegistry
 from huginn.security.physics_schema import (
     ActionSpec,
@@ -51,11 +50,22 @@ class DependencyNotMetError(Exception):
 
 
 class ActionExecutor(Protocol):
-    """VLA / 仿真 / Mock 执行器: 执行动作并读回当前状态."""
+    """VLA / 仿真 / Mock 执行器: 执行动作并读回当前状态.
+
+    ``sensor_view``: 把一个动作执行后的**理想世界状态**投影到与该动作实际
+    测量(**observe()**)一致的"读数"视角. 这是感知确认的视角一致性钩子 —
+    microduck 的核心 sim2real 教训: 编码器读穿齿轮输出侧, 感知确认必须在观测
+    同一视角下进行, 否则一个"偏置但正确补偿"的动作会被判为失败. 真实 VLA /
+    执行器 adapter 用传感器模型(系统偏置/位姿噪声)实现它; 无偏置时恒等.
+    """
 
     def execute(self, action: PhysicalAction) -> None: ...
 
     def observe(self) -> dict[str, Any]: ...
+
+    def sensor_view(
+        self, state: dict[str, Any], action_type: str
+    ) -> dict[str, Any]: ...
 
 
 class MockExecutor:
@@ -77,37 +87,21 @@ class MockExecutor:
     def observe(self) -> dict[str, Any]:
         return dict(self.state)
 
-
-@dataclass
-class ErrorModel:
-    """硬件执行误差模型 — 施加在体积相关量的实测值上.
-
-    真实移液站有系统偏置 (accuracy) + 随机误差 (precision). 有误差时仿真执行器
-    的实测状态偏离 world_model 的理想预测, 让状态级感知确认 (``spec.expect`` /
-    ``expected``) 在纯软件下就能处理设备噪声:
-
-    - ``systematic``: 系统偏置, 绝对体积单位 (uL), 每次固定叠加.
-    - ``sigma``: 随机误差标准差, 绝对体积单位 (uL), 服从高斯.
-
-    仅对 ``aspirate`` / ``dispense`` 这类带体积参数的动作注入; 不影响
-    ``mix`` / ``aliquot`` 等离散量.
-    """
-
-    systematic: float = 0.0
-    sigma: float = 0.0
+    def sensor_view(self, state: dict[str, Any], action_type: str) -> dict[str, Any]:
+        """Mock 无传感器模型 — 读数与状态恒等."""
+        del action_type
+        return dict(state)
 
 
-class SimExecutor(MockExecutor):
-    """状态转移仿真执行器 — 算法可微的物理后端占位 (真实 VLA/仿真器可替换).
+class SimExecutor(SensorModelExecutor):
+    """状态转移仿真执行器 — 复用可复用执行器骨架 (阶段1 首个工具实例).
 
-    前向转移规则与 ``world_model.apply_forward`` 共用同一事实来源
-    (``FORWARD_EFFECTS``), 保证"世界模型预演"与"实际仿真结果"一致 —
-    感知确认才能对比预期 vs 实际. ``fail_on`` 与 ``MockExecutor`` 同语义.
+    前向真值 = ``world_model.apply_forward`` (规则表, 与 world model 共用唯一
+    事实来源, 保证"世界模型预演"与"实际仿真结果"一致); 传感器键取自
+    ``FORWARD_EFFECTS``; 执行误差仅在带 ``vol`` 参数的动作上注入 (量守恒).
 
-    ``error_model``: 可注入的硬件误差 (系统偏置 + 随机 sigma, 均以绝对体积单位
-    施加在体积相关量上). 有误差时执行结果与 world_model 的理想预测存在偏差,
-    让状态级感知确认在纯软件下就能处理真实设备噪声. ``seed`` 保证同 seed 同
-    误差序列 (测试可复现). ``error_model=None`` 时行为与旧完全一致 (确定性).
+    真实 VLA / 计算工具后端只需声明自己的 ``_forward`` 与 ``_sensor_keys`` +
+    ``error_model``, 即可同享 execute / observe / sensor_view / calibrate 语义.
     """
 
     def __init__(
@@ -118,30 +112,26 @@ class SimExecutor(MockExecutor):
         error_model: ErrorModel | None = None,
         seed: int | None = None,
     ) -> None:
-        super().__init__(fail_on=fail_on)
-        self.state = dict(initial or {"reagent_vol": 100.0, "sample_vol": 0.0, "tube_vol": 0.0})
+        super().__init__(
+            fail_on=fail_on,
+            initial=initial
+            or {"reagent_vol": 100.0, "sample_vol": 0.0, "tube_vol": 0.0},
+            error_model=error_model,
+            seed=seed,
+        )
         self.state.setdefault("mixed", False)
         self.state.setdefault("aliquot_count", 0)
-        self.error_model = error_model
-        self._rng = random.Random(seed)
 
-    def execute(self, action: PhysicalAction) -> None:
-        if action.type in self.fail_on:
-            raise RuntimeError(f"sim executor: action {action.type} failed")
-        self._apply(action)
-        self.log.append(action)
+    def _forward(self, state: dict[str, Any], action: PhysicalAction) -> dict[str, Any]:
+        return apply_forward(state, action)
 
-    def _apply(self, action: PhysicalAction) -> None:
-        self.state = apply_forward(self.state, action)
-        # 体积相关动作注入硬件噪声: 目标增量 +noise, 源减量 -noise (等幅反相,
-        # 保持量守恒 − 移错体积而非凭空增减). 物理上 = 一次移液量的测量误差.
-        if self.error_model is not None and "vol" in action.params:
-            dec_key, inc_key, _ = FORWARD_EFFECTS.get(action.type, ("", "", ""))
-            noise = self.error_model.systematic + self._rng.gauss(0.0, self.error_model.sigma)
-            if inc_key and isinstance(self.state.get(inc_key), (int, float)):
-                self.state[inc_key] = float(self.state.get(inc_key, 0.0)) + noise
-            if dec_key and isinstance(self.state.get(dec_key), (int, float)):
-                self.state[dec_key] = float(self.state.get(dec_key, 0.0)) - noise
+    def _sensor_keys(self, action_type: str) -> tuple[str, str]:
+        dec_key, inc_key, _ = FORWARD_EFFECTS.get(action_type, ("", "", ""))
+        return (dec_key, inc_key)
+
+    def _noise_eligible(self, action: PhysicalAction) -> bool:
+        # 只对带体积参数的动作注入 (mix/aliquot 为离散量, 不注入).
+        return bool(getattr(action, "params", None) and "vol" in action.params)
 
 
 class PhysicalWorkspace:
@@ -152,6 +142,9 @@ class PhysicalWorkspace:
         world_model: WorldModel,
         executor: ActionExecutor,
         revertible: RevertibleContext | None = None,
+        *,
+        schema: Mapping[str, Any] | None = None,
+        surrogate: Any = None,
     ) -> None:
         self.world_model = world_model
         self.executor = executor
@@ -163,6 +156,18 @@ class PhysicalWorkspace:
         self.state: dict[str, Any] = dict(getattr(executor, "state", {}))
         # 感知确认器: key -> 校验当前状态是否满足.
         self._confirmers: dict[str, Callable[[], bool]] = {}
+        # 世界表征闭环跟踪器 (advisory): 给 schema 则在逐轮后记录状态快照 +
+        # 前向预测误差 (回流信号). world_model 作为解析前向真值注入.
+        self._world_state = None
+        if schema is not None:
+            try:
+                from huginn.security.world_state import WorldStateTracker
+
+                self._world_state = WorldStateTracker(
+                    schema, world_model, surrogate=surrogate
+                )
+            except Exception:
+                logger.debug("world-state tracker init failed", exc_info=True)
         # 全局物理执行器接管 OP_ACTION 逆的执行 (与 register_compensator 同构).
         register_physical_executor(self._run_inverse)
 
@@ -241,19 +246,37 @@ class PhysicalWorkspace:
         if preflight:
             # 用当前状态预演: 先约束校验, 再取前向预测 (供 expected 对比).
             predicted = self.preflight(action)
-            if expected is None and spec is None or spec is not None and not spec.expect:
+            if (
+                expected is None
+                and spec is None
+                or spec is not None
+                and not spec.expect
+            ):
                 expected = predicted
+                # 感知确认须与观测同一视角 (microduck: 编码器读穿输出侧). 预演得到
+                # 的是"理想世界状态", 先投影到执行器读数视角再对比 observe(), 否则
+                # 一个"偏置但正确"的动作会被误判失败. 真实 adapter 用 sensor_view
+                # 建模传感器系统偏置/位姿噪声; 无偏置执行器走恒等, 行为不变.
+                sensor_view = getattr(self.executor, "sensor_view", None)
+                if sensor_view is not None:
+                    expected = sensor_view(expected, action.type)
 
         inverse = self.world_model.infer_inverse(state_before, action)
 
         self.executor.execute(action)
         self.state = dict(self.executor.observe())
 
-        if spec is not None and spec.expect and not matches_state(spec.expect, self.state):
+        if (
+            spec is not None
+            and spec.expect
+            and not matches_state(spec.expect, self.state)
+        ):
             raise WorkspaceConfirmError(
                 f"感知确认失败: 状态偏离预期 (规格 {spec.id}, 动作 {action.type})"
             )
-        elif expected is not None and not matches_state(expected, self.state, tolerance):
+        elif expected is not None and not matches_state(
+            expected, self.state, tolerance
+        ):
             raise WorkspaceConfirmError(
                 f"感知确认失败: 状态偏离预期 (动作 {action.type})"
             )
@@ -270,7 +293,63 @@ class PhysicalWorkspace:
                 raise WorkspaceConfirmError(
                     f"感知确认失败: {confirm_key} (动作 {action.type})"
                 )
+        # 世界表征回流 (advisory): 记录本轮状态快照 + 前向预测误差, 供奖励/记忆消费.
+        # 失败静默吞掉, 不阻塞实验执行.
+        if self._world_state is not None:
+            try:
+                self._world_state.step(state_before, action)
+                self._world_state.observe(self.state)
+            except Exception:
+                logger.debug("world-state step failed", exc_info=True)
         return action
+
+    def last_world_snapshot(self):
+        """最近一轮的世界状态快照 (含 predicted), 无跟踪器时返回 None."""
+        return (
+            self._world_state.last_snapshot if self._world_state is not None else None
+        )
+
+    def last_prediction_error(self) -> float | None:
+        """最近一轮的前向预测误差 (预测 vs 实测, 相对 RMS), 回流给奖励用."""
+        if self._world_state is None:
+            return None
+        return self._world_state.last_prediction_error
+
+    def last_prediction_reward(self) -> float | None:
+        """最近一轮的前向预测命中奖励 ([0,1]), 喂给 bandit/episodic 的 r_phys."""
+        if self._world_state is None:
+            return None
+        return self._world_state.last_prediction_reward
+
+    def prediction_reward_avg(self) -> float | None:
+        """整次运行的平均预测命中奖励 ([0,1]) — runner 把整协议预测命中原样并进 r_phys."""
+        if self._world_state is None:
+            return None
+        return self._world_state.avg_reward()
+
+    def reconcile_r_phys(self, base: float) -> float:
+        """把平均预测命中奖励并进底层 r_phys 聚合 (单一权威实现见 world_state).
+
+        无世界跟踪 (无 schema) / 无预测样本时原样返回 ``base``, 不因缺世界模型
+        而扣分. 这是物理 runner 默认消费 ``last_prediction_reward`` 的出口.
+        """
+        from huginn.security.world_state import reconcile_r_phys
+
+        return reconcile_r_phys(base, self.prediction_reward_avg())
+
+    def surrogate_samples(self) -> int:
+        """学代理已积累的观测对数 (P2 快预演积累证据). 无跟踪/无代理 → 0."""
+        if self._world_state is None:
+            return 0
+        return self._world_state.surrogate_samples()
+
+    def surrogate_predict(
+        self, state: dict[str, Any], action: Any
+    ) -> dict[str, float] | None:
+        """快预演: 让学代理基于真实运行样本先预测 (有样本才预测, 无则 None)."""
+        if self._world_state is None:
+            return None
+        return self._world_state.surrogate_predict(state, action)
 
     def transaction(self) -> Any:
         """事务边界: 块内异常 → 物理逆按 LIFO 执行, 工作台恢复到块前."""

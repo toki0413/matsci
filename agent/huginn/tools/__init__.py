@@ -55,6 +55,7 @@ _CORE_MODULES = [
     ("huginn.tools.literature_tool", "LiteraturePipelineTool"),
     ("huginn.tools.orchestrate_tool", "OrchestrateTool"),
     ("huginn.tools.skill_tool", "SkillTool"),
+    ("huginn.tools.eco_tool", "EcoTool"),
     ("huginn.tools.memory_tool", "RememberTool"),
     ("huginn.tools.memory_tool", "RecallTool"),
     ("huginn.tools.prospective_tool", "ScheduleIntentionTool"),
@@ -73,6 +74,7 @@ _CORE_MODULES = [
     ("huginn.tools.phase_tool", "PhaseTool"),
     ("huginn.tools.workflow_tool", "WorkflowTool"),
     ("huginn.tools.config_wizard_tool", "ConfigWizardTool"),
+    ("huginn.tools.config_domain_tool", "ConfigDomainTool"),
     ("huginn.tools.clarification_tool", "ClarificationTool"),
     ("huginn.evaluation.evaluation_tool", "EvaluationTool"),
     ("huginn.rag.rag_tool", "RAGTool"),
@@ -80,6 +82,7 @@ _CORE_MODULES = [
     ("huginn.academic.paper_tool", "PaperTool"),
     ("huginn.academic.deli_research", "DeliAutoResearchTool"),
     ("huginn.tools.tool_search_tool", "ToolSearchTool"),
+    ("huginn.tools.prompt_optimize_tool", "PromptOptimizeTool"),
 ]
 
 # Optional tools — heavy imports (numpy/scipy/simulation), safe to defer
@@ -185,6 +188,7 @@ _OPTIONAL_MODULES = [
 
 def _resolve_config(config: Any | None = None):
     from huginn.config import HuginnConfig
+
     resolved = config if config is not None else HuginnConfig.from_env()
     if getattr(resolved, "allow_local_bash", False):
         os.environ.setdefault("HUGINN_ALLOW_LOCAL_BASH", "1")
@@ -196,8 +200,10 @@ def _resolve_config(config: Any | None = None):
 
 def _make_tool_kwargs(resolved_config, executor):
     """Build the kwargs factory for tool instantiation."""
+
     def _tool_kwargs(cls: type) -> dict[str, Any]:
         import inspect
+
         sig = inspect.signature(cls.__init__)
         params = sig.parameters
         kwargs: dict[str, Any] = {}
@@ -207,12 +213,14 @@ def _make_tool_kwargs(resolved_config, executor):
         if "sandbox" in params:
             kwargs["sandbox"] = executor
         return kwargs
+
     return _tool_kwargs
 
 
 def _do_register(modules_list, _tool_kwargs) -> tuple[list[str], list[str]]:
     """Import and register a list of (module, class) tuples."""
     import importlib
+
     registered: list[str] = []
     skipped: list[str] = []
 
@@ -225,10 +233,12 @@ def _do_register(modules_list, _tool_kwargs) -> tuple[list[str], list[str]]:
             # RAGTool shares the KB collection if available
             if class_name == "RAGTool":
                 import inspect
+
                 sig = inspect.signature(cls.__init__)
                 if "kb" in sig.parameters:
                     try:
                         from huginn import server_context as _sc
+
                         _ctx = _sc._server_context
                         if _ctx is not None and _ctx.kb is not None:
                             kwargs["kb"] = _ctx.kb
@@ -250,6 +260,7 @@ def _rebuild_dispatch_tables() -> None:
     from huginn.agents.tool_call_router import _rebuild_router_tables
     from huginn.phases import _rebuild_phase_tools
     from huginn.tools.adapter import _rebuild_constraint_scopes
+
     _rebuild_phase_tools()
     _rebuild_router_tables()
     _rebuild_constraint_scopes()
@@ -285,7 +296,9 @@ def validate_tool_specs() -> list[str]:
                 raise
             logger.warning(
                 "validate_tool_specs: skipping %s.%s (missing dep: %s)",
-                module_name, class_name, exc.name or exc,
+                module_name,
+                class_name,
+                exc.name or exc,
             )
             continue
         cls = getattr(mod, class_name)
@@ -364,7 +377,9 @@ def _collect_top_level_imports(path: str, _depth: int = 0) -> set[str]:
     return deps
 
 
-def probe_tool_dependencies(tool_lists: list[tuple[str, str]] | None = None) -> dict[str, list[str]]:
+def probe_tool_dependencies(
+    tool_lists: list[tuple[str, str]] | None = None,
+) -> dict[str, list[str]]:
     """Detect optional tools whose third-party deps are missing at runtime.
 
     Some optional tools import heavy libs (``torch``, ``pymatgen``, ``rdkit``,
@@ -406,7 +421,8 @@ def probe_tool_dependencies(tool_lists: list[tuple[str, str]] | None = None) -> 
             report[module_name] = missing
             logger.warning(
                 "Tool %s registered but its deps are missing — capability degraded: %s",
-                module_name, ", ".join(missing),
+                module_name,
+                ", ".join(missing),
             )
     return report
 
@@ -421,13 +437,16 @@ def register_core_tools(config: Any | None = None) -> list[str]:
         return ToolRegistry.list_tools()
 
     from huginn.execution.remote_executor import build_executor
+
     resolved_config = _resolve_config(config)
     executor = build_executor(resolved_config)
     _tool_kwargs = _make_tool_kwargs(resolved_config, executor)
 
     registered, skipped = _do_register(_CORE_MODULES, _tool_kwargs)
     if skipped:
-        logger.info(f"Skipped {len(skipped)} core tools (missing deps): {', '.join(skipped[:5])}")
+        logger.info(
+            f"Skipped {len(skipped)} core tools (missing deps): {', '.join(skipped[:5])}"
+        )
     _rebuild_dispatch_tables()
     logger.info(f"[tools] registered {len(registered)} core tools")
     return ToolRegistry.list_tools()
@@ -444,17 +463,21 @@ def register_optional_tools(config: Any | None = None) -> list[str]:
         return ToolRegistry.list_tools()
 
     from huginn.execution.remote_executor import build_executor
+
     resolved_config = _resolve_config(config)
     executor = build_executor(resolved_config)
     _tool_kwargs = _make_tool_kwargs(resolved_config, executor)
 
     registered, skipped = _do_register(pending, _tool_kwargs)
     if skipped:
-        logger.info(f"Skipped {len(skipped)} optional tools (missing deps): {', '.join(skipped[:5])}")
+        logger.info(
+            f"Skipped {len(skipped)} optional tools (missing deps): {', '.join(skipped[:5])}"
+        )
 
     # Science-skills bridge
     try:
         from huginn.plugins.science_skills_bridge import register_science_skills
+
         science_names = register_science_skills()
         registered.extend(science_names)
         logger.info(f"Registered {len(science_names)} science-skills bridge tools")
@@ -474,13 +497,17 @@ def register_optional_tools(config: Any | None = None) -> list[str]:
     # Start system health monitor if enabled
     try:
         from huginn.feature_flags import FeatureFlags
+
         if FeatureFlags.shared().is_enabled("system_health_monitor"):
             from huginn.diagnostics.system_health import SystemHealthMonitor
+
             SystemHealthMonitor.shared().start()
     except Exception as exc:
         logger.warning(f"System health monitor failed to start: {exc}")
 
-    logger.info(f"[tools] registered {len(registered)} optional tools (total: {len(ToolRegistry.list_tools())})")
+    logger.info(
+        f"[tools] registered {len(registered)} optional tools (total: {len(ToolRegistry.list_tools())})"
+    )
     return ToolRegistry.list_tools()
 
 

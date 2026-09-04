@@ -13,6 +13,7 @@ actions:
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import re
 from pathlib import Path
@@ -30,6 +31,38 @@ from huginn.models.registry import (
     resolve_provider_key,
 )
 from huginn.tools.base import HuginnTool
+
+logger = logging.getLogger(__name__)
+
+
+def persist_config_with_hot_reload(cfg: HuginnConfig, path: Path) -> None:
+    """保存配置并尽量热加载, 使变更无需重启即可生效.
+
+    对齐 ``routes/config._persist_config`` 的语义: 清 API key SWR 缓存 →
+    强制重载缓存配置 → 重建 server 上下文里的 agent/factory/orchestrator.
+    无 server 上下文 / 依赖缺失时静默跳过, 不影响已保存的结果.
+    """
+    cfg.save(path, format="toml")
+    try:
+        from huginn.config import get_config as _get_cached_config
+        from huginn.pet import configure_pet
+        from huginn.security.auth import clear_api_key_cache
+
+        clear_api_key_cache()
+        _get_cached_config(force_reload=True)
+        import huginn.server_core as _sc
+
+        ctx = _sc.get_context()
+        if ctx is not None:
+            ctx.agent = None
+            ctx.agent_factory = None
+            ctx.planner_agent = None
+            ctx.orchestrator = None
+        configure_pet(cfg.pet_name, cfg.pet_personality)
+    except Exception:
+        # best-effort: CLI / 无 server 上下文 / 单测环境下不阻断保存.
+        logger.debug("config hot-reload skipped", exc_info=True)
+
 
 # Provider 特点说明, 给 LLM 做推荐时参考
 _PROVIDER_NOTES: dict[str, str] = {
@@ -126,17 +159,24 @@ class ConfigWizardInput(BaseModel):
     )
 
     # setup_local_model 用
-    model_type: Literal["ollama", "vllm", "llama.cpp", "text-generation-inference"] | None = Field(
-        default=None, description="本地推理后端类型"
+    model_type: (
+        Literal["ollama", "vllm", "llama.cpp", "text-generation-inference"] | None
+    ) = Field(default=None, description="本地推理后端类型")
+    model_name: str | None = Field(
+        default=None, description="模型名, 如 llama3:70b / Qwen2.5-72B-Instruct"
     )
-    model_name: str | None = Field(default=None, description="模型名, 如 llama3:70b / Qwen2.5-72B-Instruct")
     port: int | None = Field(default=None, description="服务端口, 不传用默认值")
-    host: str | None = Field(default="localhost", description="服务主机, 默认 localhost")
-    alias: str | None = Field(default=None, description="模型别名, 不传用 model_name 推断")
+    host: str | None = Field(
+        default="localhost", description="服务主机, 默认 localhost"
+    )
+    alias: str | None = Field(
+        default=None, description="模型别名, 不传用 model_name 推断"
+    )
 
     # 通用: 配置文件路径
     config_path: str | None = Field(
-        default=None, description="配置文件路径, 不传用 HUGINN_CONFIG_FILE 或默认 huginn.toml"
+        default=None,
+        description="配置文件路径, 不传用 HUGINN_CONFIG_FILE 或默认 huginn.toml",
     )
 
 
@@ -203,25 +243,30 @@ class ConfigWizardTool(HuginnTool):
     ) -> ValidationResult:
         if args.action == "recommend_provider" and not args.requirement:
             return ValidationResult(
-                result=False, message="recommend_provider 需要 requirement 参数",
+                result=False,
+                message="recommend_provider 需要 requirement 参数",
             )
         if args.action == "setup_local_model":
             if not args.model_type:
                 return ValidationResult(
-                    result=False, message="setup_local_model 需要 model_type",
+                    result=False,
+                    message="setup_local_model 需要 model_type",
                 )
             if not args.model_name:
                 return ValidationResult(
-                    result=False, message="setup_local_model 需要 model_name",
+                    result=False,
+                    message="setup_local_model 需要 model_name",
                 )
         if args.action == "toggle_feature":
             if not args.feature:
                 return ValidationResult(
-                    result=False, message="toggle_feature 需要 feature 参数",
+                    result=False,
+                    message="toggle_feature 需要 feature 参数",
                 )
             if args.enabled is None:
                 return ValidationResult(
-                    result=False, message="toggle_feature 需要 enabled 参数",
+                    result=False,
+                    message="toggle_feature 需要 enabled 参数",
                 )
         if args.action == "set_privacy" and not args.level:
             return ValidationResult(
@@ -252,7 +297,8 @@ class ConfigWizardTool(HuginnTool):
             if inp.action == "set_privacy":
                 return self._set_privacy(inp.level or "")
             return ToolResult(
-                data=None, success=False,
+                data=None,
+                success=False,
                 error=f"未知 action: {inp.action}",
             )
         except Exception as e:
@@ -262,10 +308,25 @@ class ConfigWizardTool(HuginnTool):
 
     def _list_providers(self) -> ToolResult:
         order = [
-            "anthropic", "openai", "deepseek", "google-genai", "openrouter",
-            "nvidia", "ollama", "vllm", "local", "siliconflow",
-            "moonshot", "zhipu", "baichuan", "dashscope", "qianfan",
-            "doubao", "hunyuan", "openai-compatible", "default",
+            "anthropic",
+            "openai",
+            "deepseek",
+            "google-genai",
+            "openrouter",
+            "nvidia",
+            "ollama",
+            "vllm",
+            "local",
+            "siliconflow",
+            "moonshot",
+            "zhipu",
+            "baichuan",
+            "dashscope",
+            "qianfan",
+            "doubao",
+            "hunyuan",
+            "openai-compatible",
+            "default",
         ]
         providers = [_provider_full_info(p) for p in order]
         return ToolResult(
@@ -288,11 +349,26 @@ class ConfigWizardTool(HuginnTool):
         req = requirement.lower()
         # 关键词 → provider 候选, 按匹配度排序
         rules = [
-            (["本地", "local", "离线", "offline", "自己机器", "无 key", "免费", "隐私"], "ollama"),
+            (
+                [
+                    "本地",
+                    "local",
+                    "离线",
+                    "offline",
+                    "自己机器",
+                    "无 key",
+                    "免费",
+                    "隐私",
+                ],
+                "ollama",
+            ),
             (["vllm", "高吞吐", "生产部署", "gpu 集群"], "vllm"),
             (["llama.cpp", "gguf", "cpu", "单机"], "local"),
             (["便宜", "性价比", "低价", "省钱", "免费额度"], "deepseek"),
-            (["最强推理", "推理强", "reasoning", "o1", "o3", "deepseek-reasoner"], "deepseek"),
+            (
+                ["最强推理", "推理强", "reasoning", "o1", "o3", "deepseek-reasoner"],
+                "deepseek",
+            ),
             (["claude", "anthropic", "代码", "extended thinking"], "anthropic"),
             (["gpt", "openai", "生态全", "function calling"], "openai"),
             (["gemini", "google", "多模态", "长上下文", "免费"], "google-genai"),
@@ -357,55 +433,73 @@ class ConfigWizardTool(HuginnTool):
         issues: list[dict[str, Any]] = []
 
         if not cfg.models:
-            issues.append({
-                "severity": "warn",
-                "field": "models",
-                "message": "模型池为空, agent 无法启动. 用 setup_local_model 或前端添加模型.",
-            })
+            issues.append(
+                {
+                    "severity": "warn",
+                    "field": "models",
+                    "message": "模型池为空, agent 无法启动. 用 setup_local_model 或前端添加模型.",
+                }
+            )
         else:
             for m in cfg.models:
                 if not m.alias:
-                    issues.append({"severity": "error", "field": "models[].alias", "message": "alias 为空"})
+                    issues.append(
+                        {
+                            "severity": "error",
+                            "field": "models[].alias",
+                            "message": "alias 为空",
+                        }
+                    )
                 if not m.model and m.provider not in ("default",):
-                    issues.append({
-                        "severity": "warn",
-                        "field": f"models[{m.alias}].model",
-                        "message": f"model 名为空, provider={m.provider}",
-                    })
+                    issues.append(
+                        {
+                            "severity": "warn",
+                            "field": f"models[{m.alias}].model",
+                            "message": f"model 名为空, provider={m.provider}",
+                        }
+                    )
                 # 本地 provider 不需要 key, 跳过
                 if m.provider in ("ollama", "vllm", "local"):
                     continue
                 resolved = resolve_provider_key(m.provider, m.api_key)  # type: ignore[arg-type]
                 if not resolved:
                     env_var = _PROVIDER_KEY_ENV.get(m.provider, "?")
-                    issues.append({
-                        "severity": "error",
-                        "field": f"models[{m.alias}].api_key",
-                        "message": f"未配置 api_key (env:{env_var} 也没设)",
-                    })
+                    issues.append(
+                        {
+                            "severity": "error",
+                            "field": f"models[{m.alias}].api_key",
+                            "message": f"未配置 api_key (env:{env_var} 也没设)",
+                        }
+                    )
                 # 检查 base_url 格式
                 if m.base_url and not re.match(r"^https?://", m.base_url):
-                    issues.append({
-                        "severity": "warn",
-                        "field": f"models[{m.alias}].base_url",
-                        "message": f"base_url 不是 http(s):// 开头: {m.base_url}",
-                    })
+                    issues.append(
+                        {
+                            "severity": "warn",
+                            "field": f"models[{m.alias}].base_url",
+                            "message": f"base_url 不是 http(s):// 开头: {m.base_url}",
+                        }
+                    )
 
         # 检查活跃 model 是否存在
         lead = next((a for a in cfg.agents if a.id == "lead"), None)
         if lead and lead.model_alias:
             if not any(m.alias == lead.model_alias and m.enabled for m in cfg.models):
-                issues.append({
-                    "severity": "error",
-                    "field": "agents[lead].model_alias",
-                    "message": f"活跃 model '{lead.model_alias}' 不存在或未启用",
-                })
+                issues.append(
+                    {
+                        "severity": "error",
+                        "field": "agents[lead].model_alias",
+                        "message": f"活跃 model '{lead.model_alias}' 不存在或未启用",
+                    }
+                )
         elif cfg.models:
-            issues.append({
-                "severity": "warn",
-                "field": "agents[lead].model_alias",
-                "message": "未设置活跃 model, 会用第一个 enabled 的 model",
-            })
+            issues.append(
+                {
+                    "severity": "warn",
+                    "field": "agents[lead].model_alias",
+                    "message": "未设置活跃 model, 会用第一个 enabled 的 model",
+                }
+            )
 
         ok = not any(i["severity"] == "error" for i in issues)
         return ToolResult(
@@ -417,7 +511,8 @@ class ConfigWizardTool(HuginnTool):
                 "config_exists": path.exists(),
                 "model_count": len(cfg.models),
                 "message": (
-                    "配置有效, 可以正常使用" if ok
+                    "配置有效, 可以正常使用"
+                    if ok
                     else f"发现 {sum(1 for i in issues if i['severity']=='error')} 个错误, 需修复"
                 ),
             },
@@ -444,12 +539,14 @@ class ConfigWizardTool(HuginnTool):
                 continue
             # 已有同 provider 的 key 就跳过, 不重复添加
             if provider in existing_keys:
-                found.append({
-                    "provider": provider,
-                    "env_var": env_var,
-                    "status": "skipped",
-                    "reason": "config 里已有该 provider 的 key",
-                })
+                found.append(
+                    {
+                        "provider": provider,
+                        "env_var": env_var,
+                        "status": "skipped",
+                        "reason": "config 里已有该 provider 的 key",
+                    }
+                )
                 continue
             # 用 env: 引用, 不把明文 key 写进文件
             alias = provider.replace("-", "_")
@@ -460,18 +557,22 @@ class ConfigWizardTool(HuginnTool):
                 alias = f"{base_alias}_{n}"
                 n += 1
             existing_aliases.add(alias)
-            cfg.models.append(ModelConfig(
-                alias=alias,
-                provider=provider,  # type: ignore[arg-type]
-                model=_PROVIDER_DEFAULTS.get(provider),
-                api_key=f"env:{env_var}",
-            ))
-            found.append({
-                "provider": provider,
-                "env_var": env_var,
-                "status": "migrated",
-                "alias": alias,
-            })
+            cfg.models.append(
+                ModelConfig(
+                    alias=alias,
+                    provider=provider,  # type: ignore[arg-type]
+                    model=_PROVIDER_DEFAULTS.get(provider),
+                    api_key=f"env:{env_var}",
+                )
+            )
+            found.append(
+                {
+                    "provider": provider,
+                    "env_var": env_var,
+                    "status": "migrated",
+                    "alias": alias,
+                }
+            )
 
         if not any(f["status"] == "migrated" for f in found):
             return ToolResult(
@@ -484,10 +585,11 @@ class ConfigWizardTool(HuginnTool):
             )
 
         try:
-            cfg.save(path, format="toml")
+            self._persist_config(cfg, path)
         except Exception as e:
             return ToolResult(
-                data=None, success=False,
+                data=None,
+                success=False,
                 error=f"保存配置失败: {e}",
             )
 
@@ -516,7 +618,8 @@ class ConfigWizardTool(HuginnTool):
         preset = _LOCAL_MODEL_PRESETS.get(model_type)
         if preset is None:
             return ToolResult(
-                data=None, success=False,
+                data=None,
+                success=False,
                 error=f"不支持的 model_type: {model_type}. 支持: {list(_LOCAL_MODEL_PRESETS)}",
             )
 
@@ -557,19 +660,21 @@ class ConfigWizardTool(HuginnTool):
         set_active = False
         if lead is None or not lead.model_alias:
             from huginn.config import AgentProfileConfig
+
             if lead is None:
-                cfg.agents.append(AgentProfileConfig(
-                    id="lead", name="Lead", model_alias=alias
-                ))
+                cfg.agents.append(
+                    AgentProfileConfig(id="lead", name="Lead", model_alias=alias)
+                )
             else:
                 lead.model_alias = alias
             set_active = True
 
         try:
-            cfg.save(path, format="toml")
+            self._persist_config(cfg, path)
         except Exception as e:
             return ToolResult(
-                data=None, success=False,
+                data=None,
+                success=False,
                 error=f"保存配置失败: {e}",
             )
 
@@ -581,11 +686,17 @@ class ConfigWizardTool(HuginnTool):
                 f"确认 {model_type} 服务已启动 (检查 {base_url}), 模型已加载."
             )
         if model_type == "ollama":
-            recommendations.append("用 `ollama list` 查看已安装的模型, `ollama pull <model>` 下载新模型.")
+            recommendations.append(
+                "用 `ollama list` 查看已安装的模型, `ollama pull <model>` 下载新模型."
+            )
         if model_type == "vllm":
-            recommendations.append("vLLM 启动示例: `python -m vllm.entrypoints.openai.api_server --model <path> --port 8000`")
+            recommendations.append(
+                "vLLM 启动示例: `python -m vllm.entrypoints.openai.api_server --model <path> --port 8000`"
+            )
         if model_type == "llama.cpp":
-            recommendations.append("llama.cpp 启动示例: `./server -m model.gguf --port 8080`")
+            recommendations.append(
+                "llama.cpp 启动示例: `./server -m model.gguf --port 8080`"
+            )
         if set_active:
             recommendations.append(f"已将 {alias} 设为活跃 model.")
 
@@ -614,6 +725,7 @@ class ConfigWizardTool(HuginnTool):
     async def _test_local_connectivity(self, config: ModelConfig) -> dict[str, Any]:
         """跑一次轻量调用验证本地模型可达。"""
         import time as _time
+
         start = _time.perf_counter()
         try:
             client = create_langchain_model(
@@ -652,6 +764,11 @@ class ConfigWizardTool(HuginnTool):
                 "error": str(e),
                 "model_response": "",
             }
+
+    # ── 落盘 + 热加载 ─────────────────────────────────────────
+    def _persist_config(self, cfg: HuginnConfig, path: Path) -> None:
+        """落盘 + best-effort 热加载, 委托给模块级实现, 供其它配置工具复用."""
+        persist_config_with_hot_reload(cfg, path)
 
     # ── list_features / toggle_feature ──────────────────────────
 

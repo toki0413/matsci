@@ -50,11 +50,14 @@ ProviderLiteral = Literal[
     "qianfan",
     "doubao",
     "hunyuan",
+    "spark",
     "openai-compatible",
 ]
 
 # 单一权威源: 容器运行时枚举. SandboxConfig 与 HuginnConfig 共用.
-ContainerRuntimeLiteral = Literal["none", "docker", "podman", "apptainer", "singularity"]
+ContainerRuntimeLiteral = Literal[
+    "none", "docker", "podman", "apptainer", "singularity"
+]
 
 
 def _parse_queue_map(value: str | None) -> dict[str, str]:
@@ -103,19 +106,23 @@ def _file_lock(path: pathlib.Path):
     try:
         if sys.platform == "win32":
             import msvcrt
+
             # Windows 下用 msvcrt.locking 做独占锁
             msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
         else:
             import fcntl
+
             fcntl.flock(fd, fcntl.LOCK_EX)
         yield
     finally:
         try:
             if sys.platform == "win32":
                 import msvcrt
+
                 msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
             else:
                 import fcntl
+
                 fcntl.flock(fd, fcntl.LOCK_UN)
         except OSError:
             logger.debug("suppressed in _file_lock", exc_info=True)
@@ -195,9 +202,7 @@ def _check_disk_freshness(path: pathlib.Path | None) -> bool:
     return mtime > _config_cache_mtime
 
 
-def _atomic_write(
-    target: pathlib.Path, data: dict[str, Any], format: str
-) -> None:
+def _atomic_write(target: pathlib.Path, data: dict[str, Any], format: str) -> None:
     """原子写入配置文件.
 
     流程: 序列化 -> 回读校验 -> 写临时文件 -> os.replace 原子替换.
@@ -720,7 +725,8 @@ class HuginnConfig:
             mp_api_key=os.environ.get("MP_API_KEY") or None,
             oqmd_api_key=os.environ.get("OQMD_API_KEY") or None,
             mineru_api_keys=[
-                k.strip() for k in os.environ.get("MINERU_API_KEYS", "").split(",")
+                k.strip()
+                for k in os.environ.get("MINERU_API_KEYS", "").split(",")
                 if k.strip()
             ],
             # 以下两处 Literal 字段从 env str 读取, mypy 无法静态收窄 str → Literal
@@ -756,7 +762,8 @@ class HuginnConfig:
                 c.strip()
                 for c in os.environ.get("HUGINN_MCP_ALLOWED_COMMANDS", "").split(",")
                 if c.strip()
-            ] or list(_DEFAULT_MCP_ALLOWED_COMMANDS),
+            ]
+            or list(_DEFAULT_MCP_ALLOWED_COMMANDS),
             workspace=os.environ.get("HUGINN_WORKSPACE", "."),
             auto_approve=os.environ.get("HUGINN_AUTO_APPROVE", "").lower() == "true",
             enable_exploration=os.environ.get(
@@ -772,9 +779,8 @@ class HuginnConfig:
             persona_auto_route_threshold=float(
                 os.environ.get("HUGINN_PERSONA_AUTO_ROUTE_THRESHOLD", "0.3")
             ),
-            persona_auto_sync=os.environ.get(
-                "HUGINN_PERSONA_AUTO_SYNC", ""
-            ).lower() in ("1", "true", "yes"),
+            persona_auto_sync=os.environ.get("HUGINN_PERSONA_AUTO_SYNC", "").lower()
+            in ("1", "true", "yes"),
             persona_sync_dir=os.environ.get("HUGINN_PERSONA_SYNC_DIR", "").strip(),
             rag_enabled=os.environ.get("HUGINN_RAG_ENABLED", "").lower() == "true",
             kg_enabled=os.environ.get("HUGINN_KG_ENABLED", "").lower() == "true",
@@ -842,7 +848,9 @@ class HuginnConfig:
             wm_token_budget=int(os.environ.get("HUGINN_WM_TOKEN_BUDGET", "8192")),
             em_recall_top_k=int(os.environ.get("HUGINN_EM_RECALL_TOP_K", "5")),
             pm_c_min=float(os.environ.get("HUGINN_PM_C_MIN", "0.2")),
-            wm_summarize_every_n=int(os.environ.get("HUGINN_WM_SUMMARIZE_EVERY_N", "5")),
+            wm_summarize_every_n=int(
+                os.environ.get("HUGINN_WM_SUMMARIZE_EVERY_N", "5")
+            ),
         )
 
     @staticmethod
@@ -1238,7 +1246,9 @@ class HuginnConfig:
             try:
                 import tomli as tomllib
             except ModuleNotFoundError:
-                logger.warning("Neither tomllib nor tomli available; TOML config healing skipped")
+                logger.warning(
+                    "Neither tomllib nor tomli available; TOML config healing skipped"
+                )
                 return []
 
         try:
@@ -1273,6 +1283,7 @@ def config_fingerprint() -> str:
     hash 模型/provider/thinking/judge 等影响行为的关键 env, 让历史分数可溯源到具体配置.
     """
     import hashlib
+
     parts = [
         os.environ.get("HUGINN_MODEL", ""),
         os.environ.get("HUGINN_PROVIDER", ""),
@@ -1308,6 +1319,7 @@ class Settings:
 
 
 _cached_settings: Settings | None = None
+
 
 def get_settings() -> Settings:
     """Load application settings — cached after first call."""
@@ -1355,9 +1367,10 @@ def get_config(
                 # harness_* toggle 在 CLI/server 入口里读不到 (那些入口用
                 # HuginnConfig.load 直接拿 cfg, 没填 _config_cache).
                 # 升级路径: 统一所有入口都走 get_config(), 不要旁路 load.
-                cwd_toml = pathlib.Path(
-                    os.environ.get("HUGINN_WORKSPACE", ".")
-                ) / "huginn.toml"
+                cwd_toml = (
+                    pathlib.Path(os.environ.get("HUGINN_WORKSPACE", "."))
+                    / "huginn.toml"
+                )
                 if cwd_toml.exists():
                     path = cwd_toml
                 elif _config_cache is None or force_reload:

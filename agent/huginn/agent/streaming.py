@@ -1138,6 +1138,13 @@ class StreamingMixin:
         into input messages. Used by Step 3 retry — fresh thread 的 prompt
         已结构化注入所有必要 state, 不需要 Step 2 的 1M+ tokens 历史累积.
         """
+        # ── 超长用户粘贴文本自动落盘 (paste-to-file) ──────────────────
+        # 复用 compress.py 的 offload 目录. 超长纯文本不再内联进 prompt,
+        # 落盘后替换成"已保存"提示, 需要全文时由 file_read_tool 读取.
+        from huginn.tools.paste_offload import maybe_offload_pasted_text
+
+        message, _ = maybe_offload_pasted_text(message)
+
         # ponytail: CodeAct 早返回 — 不走 langgraph / vision / cognitive engine,
         # 直接进 code_act_loop. CodeAct 模式下 LLM 输出 Python 代码块替代 JSON
         # tool_call, 工具作为 namespace 函数注入. 连续 3 次代码异常自动降级回

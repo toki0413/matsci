@@ -105,7 +105,7 @@ rules:
 
   - name: deny_powershell_encoded
     match:
-      command_pattern: 'powershell\s+-enc\b'
+      command_pattern: '(?:powershell|pwsh)(?:\.exe)?\s+-enc(?:odedcommand)?\b'
     action: deny
     reason: "Encoded PowerShell command"
 

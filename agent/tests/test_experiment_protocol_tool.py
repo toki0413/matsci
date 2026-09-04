@@ -80,6 +80,47 @@ def test_run_without_shared_revertible_builds_own() -> None:
     assert res.data["inverse_count"] == 2
 
 
+def test_run_learn_surrogate_accumulates_samples() -> None:
+    """P2 快预演积累: sim 后端 + learn_surrogate 时, 真实(sim)执行的观测对喂进学代理.
+
+    每个激活步骤 (aspirate/dispense/mix/aliquot) 让 workspace 的 observe 喂一条样本,
+    在无退化时 surrogate_samples == 4; 退化时等于实际执行步数.
+    """
+    res = _call(
+        ExperimentProtocolInput(action="run", executor_backend="sim", learn_surrogate=True)
+    )
+    assert res.success, res.error
+    data = res.data
+    assert data["executor_backend"] == "sim"
+    assert data["surrogate_samples"] == len(data["executed_steps"]) == 4
+    # 全协议: surrogate 覆盖全部动作类型
+    assert data["surrogate_samples"] == 4
+    # final_state 仍照常产出 (代理不影响执行本体)
+    assert "sample_vol" in data["final_state"]
+
+
+def test_run_learn_surrogate_degrades_still_accumulates() -> None:
+    """退化时只积累实际执行步的样本 (mix/aliquot 停用 → 只积累 aspirate/dispense)."""
+    res = _call(
+        ExperimentProtocolInput(
+            action="run", executor_backend="sim", mixer_available=False,
+            learn_surrogate=True,
+        )
+    )
+    assert res.success, res.error
+    data = res.data
+    assert data["executed_steps"] == ["aspirate", "dispense"]
+    assert data["surrogate_samples"] == 2
+    assert "sample_vol" in data["final_state"]
+
+
+def test_run_no_surrogate_field_when_disabled() -> None:
+    """默认 (learn_surrogate=False) 不暴露 surrogate 字段, 零回归."""
+    res = _call(ExperimentProtocolInput(action="run"))
+    assert res.success, res.error
+    assert "surrogate_samples" not in res.data
+
+
 def test_tool_registered() -> None:
     from huginn.tools import register_all_tools
 
