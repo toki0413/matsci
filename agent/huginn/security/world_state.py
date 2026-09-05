@@ -19,13 +19,20 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import math
+import os
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
 from huginn.security import physics_schema
+
+logger = logging.getLogger(__name__)
+
+# 幽灵回流防御: 从磁盘反水化的历史痕迹超过此年龄即视为已淘汰 (禁止回流进当前).
+_GHOST_MAX_AGE_S = 3600.0
 
 # 可辨识档位名(对齐 validation/identifiability 的三档命名)
 _ADEOUATE = "adequate"
@@ -124,6 +131,33 @@ class StateSnapshot:
     # 最小贝叶斯滤波的后验方差 (σ², 逐键); filter() 回填. 空 = 未做滤波.
     posterior_var: dict[str, float | None] = field(default_factory=dict)
     ts: float = field(default_factory=time.time)
+
+    def to_dict(self) -> dict[str, Any]:
+        """序列化为可 JSON 化的 dict (世界状态持久化用)."""
+        return {
+            "state": self.state,
+            "observables": list(self.observables),
+            "uncertainty": {k: (v if v is not None else None) for k, v in self.uncertainty.items()},
+            "identifiable_level": self.identifiable_level,
+            "contract_version": self.contract_version,
+            "predicted": self.predicted,
+            "posterior_var": {k: (v if v is not None else None) for k, v in self.posterior_var.items()},
+            "ts": self.ts,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> StateSnapshot:
+        """反序列化, 缺省安全 (advisory: 字段缺失给默认)."""
+        return cls(
+            state=dict(data.get("state") or {}),
+            observables=tuple(data.get("observables") or ()),
+            uncertainty=dict(data.get("uncertainty") or {}),
+            identifiable_level=str(data.get("identifiable_level") or _DEFICIENT),
+            contract_version=int(data.get("contract_version") or physics_schema.SHARED_CONTRACT_VERSION),
+            predicted=dict(data["predicted"]) if data.get("predicted") is not None else None,
+            posterior_var=dict(data.get("posterior_var") or {}),
+            ts=float(data.get("ts") or time.time()),
+        )
 
     def to_prompt(self, *, max_state: int = 6, diff_tol: float = 1e-9) -> str:
         """精简 prompt 视图 — 对话里只带结论:
@@ -312,6 +346,15 @@ class WorldStateTracker:
         self.last_prediction_reward: float | None = None
         # 运行期累计预测命中奖励 (每次 observe 追加), 供 runner 求均作 r_phys 贡献.
         self._rewards: list[float] = []
+        # 幽灵回流防御 (对齐 Hermes ghost-skill defense):
+        # - ``epoch``            : 观测代数, 每次 observe 递增 — 新一代观测出现后,
+        #   旧一代的预测/快照即被 "淘汰", 不再作为 "当前".
+        # - ``restored``/``saved_at``: load_state 反水化的证明指针 — 任何从磁盘恢复的
+        #   预测必须带 "这是历史痕迹" 的失效标记, 防止冻结的旧预测冒充当前, 悄悄回流
+        #   进 prompt/奖励 (保活尾部: 只有 fresh 的预测才被消费, 旧的不复活).
+        self._epoch: int = 0
+        self.restored: bool = False
+        self.saved_at: float | None = None
 
     def step(
         self, state_before: Mapping[str, Any], action: Any = None
@@ -335,6 +378,8 @@ class WorldStateTracker:
         无预测 / 二者无共享维度时返回 None (不误报 0 错). 学代理喂养独立于预测成功 —
         只要有 (前状态, 动作, 实测后状态) 就喂, 让代理从实际执行里积累数据.
         """
+        # 幽灵回流防御: 每收到一代新观测, 老一代预测即被淘汰 (避免旧预测冒充当前).
+        self._epoch += 1
         # P2 线: 本轮 (前状态, 动作, 实测后状态) 喂给学代理积累真实运行数据.
         # 有前状态/动作/代理三件套才喂; 失败吞掉 (advisory, 不阻塞实验).
         if (
@@ -380,6 +425,125 @@ class WorldStateTracker:
         if not self._rewards:
             return None
         return sum(self._rewards) / len(self._rewards)
+
+    # ── 世界状态持久化 (HarnessDev 启发的状态落地) ──────────────
+    # 之前 StateSnapshot/WorldStateTracker 是纯内存态, 进程重启即丢. 这里补:
+    # snapshot / posterior / prediction / 误差 / 奖励 深度落盘, 供跨重启恢复.
+    # advisory: 任何一步失败吞掉, 不阻塞实验执行 (与 observe/step 一致).
+
+    def save_state(self, path: Any = None) -> None:
+        """把可跨重启恢复的核心状态原子落盘 (JSON). 默认落 runtime home.
+
+        ``path`` 为 None 时写 ``<runtime_home>/world_state.json``. 用临时文件 +
+        原子 rename 避免写一半损坏. 失败静默 (advisory).
+        """
+        if not self.last_snapshot:
+            return
+        path = self._resolve_state_path(path)
+        payload = {
+            "snapshot": self.last_snapshot.to_dict(),
+            "posterior": (
+                self.last_posterior.to_dict() if self.last_posterior is not None else None
+            ),
+            "prediction": self.last_prediction,
+            "prediction_error": self.last_prediction_error,
+            "prediction_reward": self.last_prediction_reward,
+            "avg_reward": self.avg_reward(),
+            "surrogate_samples": self.surrogate_samples(),
+            # 幽灵回流防御: 落盘时代留存活代 + 写入时刻, 供恢复时判定新鲜度.
+            "epoch": self._epoch,
+            "saved_at": time.time(),
+        }
+        try:
+            import tempfile
+
+            path.parent.mkdir(parents=True, exist_ok=True)
+            fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                    json.dump(payload, fh, ensure_ascii=False)
+                os.replace(tmp, path)
+            except Exception:
+                with contextlib.suppress(OSError):
+                    os.unlink(tmp)
+                raise
+        except Exception:
+            logger.debug("world-state save failed", exc_info=True)
+
+    @classmethod
+    def load_state(cls, path: Any = None) -> WorldStateTracker | None:
+        """从磁盘恢复世界状态痕迹 (仅供跨重启续跟踪参考).
+
+        返回一个只含已持久化痕迹的轻量 tracker (无 schema/estimator, 因为
+        schema 是运行时构造的); 失败/无文件返回 None. advisory.
+        """
+        path = cls._resolve_state_path(path)
+        try:
+            with open(path, encoding="utf-8") as fh:
+                payload = json.load(fh)
+        except Exception:
+            return None
+        tracker = cls.__new__(cls)
+        tracker.schema = {}
+        tracker.estimator = None  # type: ignore[assignment]
+        tracker.predictor = None  # type: ignore[assignment]
+        tracker.world_model = None
+        tracker.surrogate = None
+        tracker._last_state_before = None
+        tracker._last_action = None
+        tracker.last_snapshot = (
+            StateSnapshot.from_dict(payload["snapshot"]) if payload.get("snapshot") else None
+        )
+        tracker.last_posterior = (
+            StateSnapshot.from_dict(payload["posterior"]) if payload.get("posterior") else None
+        )
+        tracker.last_prediction = dict(payload["prediction"]) if payload.get("prediction") else None
+        tracker.last_prediction_error = payload.get("prediction_error")
+        tracker.last_prediction_reward = payload.get("prediction_reward")
+        avg = payload.get("avg_reward")
+        tracker._rewards = [float(avg)] if avg is not None else []
+        # 幽灵回流防御: 标记这是从磁盘反水化的历史痕迹 — 带失效指针, 不冒充当前.
+        tracker.restored = True
+        tracker._epoch = int(payload.get("epoch") or 0)
+        tracker.saved_at = payload.get("saved_at")
+        return tracker
+
+    # ── 幽灵回流防御 API (失效标记 + 保活尾部) ──────────────────
+    def is_restored(self) -> bool:
+        """是否来自磁盘反水化 (历史痕迹). True → 调用方应把它当"证据指针"而非当前态."""
+        return self.restored
+
+    def is_stale(self, max_age_s: float = _GHOST_MAX_AGE_S) -> bool:
+        """失效标记判定: 历史痕迹且写入过久 (或从无存活代) → 视为已淘汰, 禁止回流.
+
+        新鲜度 = 存活代 (``epoch``) 足够新且 ``saved_at`` 距今未超 ``max_age_s``.
+        未恢复的活运行始终 fresh (epoch 在 observe 时递增). 这是"保活尾部":
+        只有新鲜尾部被消费, 冻结的旧预测不复活.
+        """
+        if not self.restored:
+            return False
+        if self._epoch <= 0:
+            return True  # 历史痕迹却无存活观测代 → 不可信, 按失效处理
+        if self.saved_at is None:
+            return True
+        return (time.time() - float(self.saved_at)) > max_age_s
+
+    def fresh_prediction(self, max_age_s: float = _GHOST_MAX_AGE_S) -> dict[str, float] | None:
+        """安全取"当前新鲜"的预测: 过期/反水化的旧预测返回 None, 而非悄悄回流."""
+        if self.is_stale(max_age_s=max_age_s):
+            return None
+        return self.last_prediction
+
+    @staticmethod
+    def _resolve_state_path(path: Any = None) -> Any:
+        """解析落盘路径: 缺省 runtime home 下的 world_state.json."""
+        if path is not None:
+            import pathlib
+
+            return pathlib.Path(path)
+        from huginn.utils.runtime import get_runtime_home
+
+        return get_runtime_home() / "world_state.json"
 
     def surrogate_samples(self) -> int:
         """学代理已积累的观测对数 (跨动作类型). 无代理 → 0.

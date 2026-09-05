@@ -6,6 +6,8 @@ PREDICTION]、一站入口。不依赖任何真实物理后端。
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from huginn.security import physics_schema
@@ -542,3 +544,122 @@ def test_matching_domains_drives_on_demand_injection():
     d = str(get_tool("ideal_gas").schema.get("domain"))
     assert _dummy_mixin()._matching_domains(f"研究 {d} 下的物性") == {d}
     assert _dummy_mixin()._matching_domains("unrelated xyztopic") is None
+
+
+# ── HarnessDev 结论①: 世界状态持久化 ─────────────────────────
+def test_state_snapshot_roundtrip_to_dict():
+    """StateSnapshot.to_dict/from_dict 往返无损 (状态/可辨识/后验方差)."""
+    from huginn.security.world_state import StateSnapshot
+
+    snap = StateSnapshot(
+        state={"p": 1.0, "T": 300.0},
+        observables=("p", "T"),
+        uncertainty={"p": 0.01, "T": None},
+        identifiable_level="limited",
+        predicted={"T": 305.0},
+        posterior_var={"p": 1e-4, "T": None},
+        ts=123456.0,
+    )
+    back = StateSnapshot.from_dict(snap.to_dict())
+    assert back.state == snap.state
+    assert back.observables == ("p", "T")
+    assert back.uncertainty == {"p": 0.01, "T": None}
+    assert back.identifiable_level == "limited"
+    assert back.predicted == {"T": 305.0}
+    assert back.posterior_var == {"p": 1e-4, "T": None}
+    assert back.ts == 123456.0
+
+
+def test_tracker_save_load_roundtrip(tmp_path):
+    """WorldStateTracker.save_state/load_state 跨重启恢复快照与奖励痕迹."""
+    from huginn.security.thermo_system import IdealGasWorldModel, ThermoExecutor
+
+    schema = tool_schema("ideal_gas")
+    wm = IdealGasWorldModel()
+    tracker = WorldStateTracker(schema, wm)
+    sb = {"p": 101325.0, "V": 0.022414, "T": 273.15, "n": 1.0}
+    tracker.step(sb, PhysicalAction("heat", {"dq": 100.0}))
+    exe = ThermoExecutor(initial=dict(sb))
+    exe.execute(PhysicalAction("heat", {"dq": 100.0}))
+    tracker.observe(exe.observe())
+    assert tracker.last_snapshot is not None
+
+    p = str(tmp_path / "ws.json")
+    tracker.save_state(p)
+    restored = WorldStateTracker.load_state(p)
+    assert restored is not None
+    assert restored.last_snapshot is not None
+    assert restored.last_snapshot.state["p"] == pytest.approx(tracker.last_snapshot.state["p"])
+    assert restored.last_prediction_error == pytest.approx(tracker.last_prediction_error)
+
+
+def test_tracker_load_missing_returns_none(tmp_path):
+    assert WorldStateTracker.load_state(str(tmp_path / "nope.json")) is None
+
+
+# ── 幽灵回流防御 (对齐 Hermes ghost-skill defense) ─────────────
+def test_restored_tracker_marked_with_provenance(tmp_path):
+    """load_state 恢复的 tracker 带失效标记 (restored/epoch/saved_at), 不冒充当前."""
+    from huginn.security.thermo_system import IdealGasWorldModel, ThermoExecutor
+
+    schema = tool_schema("ideal_gas")
+    wm = IdealGasWorldModel()
+    tracker = WorldStateTracker(schema, wm)
+    sb = {"p": 101325.0, "V": 0.022414, "T": 273.15, "n": 1.0}
+    tracker.step(sb, PhysicalAction("heat", {"dq": 100.0}))
+    exe = ThermoExecutor(initial=dict(sb))
+    exe.execute(PhysicalAction("heat", {"dq": 100.0}))
+    tracker.observe(exe.observe())
+    p = str(tmp_path / "ws.json")
+    tracker.save_state(p)
+    restored = WorldStateTracker.load_state(p)
+    assert restored is not None
+    assert restored.is_restored() is True
+    assert restored._epoch == tracker._epoch
+    assert restored.saved_at is not None
+
+
+def test_live_tracker_never_stale():
+    """未恢复的活运行始终 fresh — 保活尾部, 不误伤当前预测."""
+    from huginn.security.thermo_system import IdealGasWorldModel
+
+    tracker = WorldStateTracker(tool_schema("ideal_gas"), IdealGasWorldModel())
+    sb = {"p": 101325.0, "V": 0.022414, "T": 273.15, "n": 1.0}
+    tracker.step(sb, None)
+    assert tracker.is_stale() is False
+    assert tracker.fresh_prediction() is tracker.last_prediction  # 未恢复 → 原样返回
+
+
+def test_restored_stale_blocked_from_feedforward(tmp_path, monkeypatch):
+    """失效标记: 写入过久的历史痕迹视为已淘汰, fresh_prediction 拒绝回流."""
+    from huginn.security.thermo_system import IdealGasWorldModel, ThermoExecutor
+
+    schema = tool_schema("ideal_gas")
+    wm = IdealGasWorldModel()
+    tracker = WorldStateTracker(schema, wm)
+    sb = {"p": 101325.0, "V": 0.022414, "T": 273.15, "n": 1.0}
+    tracker.step(sb, PhysicalAction("heat", {"dq": 100.0}))
+    exe = ThermoExecutor(initial=dict(sb))
+    exe.execute(PhysicalAction("heat", {"dq": 100.0}))
+    tracker.observe(exe.observe())
+    p = str(tmp_path / "ws.json")
+    tracker.save_state(p)
+
+    restored = WorldStateTracker.load_state(p)
+    assert restored.fresh_prediction() == tracker.last_prediction  # 新鲜 → 放行
+
+    # 写入时刻很早 (淘汰) → 应判定失效, 旧预测不得悄悄回流.
+    restored.saved_at = 1.0  # 距今远超 _GHOST_MAX_AGE_S
+    assert restored.is_stale() is True
+    assert restored.fresh_prediction() is None
+
+
+def test_restored_no_epoch_considered_stale():
+    """历史痕迹却无存活观测代 (epoch=0) → 不可信, 按失效处理, 不回流."""
+    # 直接构造一个"无存活代"的恢复痕迹 (等价于磁盘里 epoch=0 的旧档).
+    tracker = WorldStateTracker.__new__(WorldStateTracker)
+    tracker.restored = True
+    tracker._epoch = 0
+    tracker.saved_at = time.time()
+    assert tracker.is_stale() is True
+    assert tracker.fresh_prediction() is None

@@ -84,6 +84,7 @@ class ExecutionOrchestrator:
         enable_autofix: bool = True,
         max_retries: int = 2,
         compute_router: Any = None,
+        local_only: bool = False,
     ):
         self.working_dir = Path(working_dir) if working_dir else Path.cwd()
         self.working_dir.mkdir(parents=True, exist_ok=True)
@@ -100,6 +101,11 @@ class ExecutionOrchestrator:
         # ComputeRouter — auto-selects local vs HPC. Default instance so
         # route() always runs even when caller doesn't inject one.
         self.compute_router = compute_router or ComputeRouter()
+        # M2 细粒度计算权限 + 预算. 默认 None (FeatureFlags.compute_policy 关则不
+        # 实例化, 不改变现有执行); 首次 enforce 时按 flag 惰性构建.
+        self.compute_policy: Any = None
+        # M3 设备私有化: local_only=True 时路由强制远程回落本地, 数据不离开设备.
+        self.local_only = local_only
         self._execution_history: list[WorkflowExecutionRecord] = []
 
     def register_tool(self, name: str, fn: Callable) -> None:
@@ -116,6 +122,139 @@ class ExecutionOrchestrator:
                 "register_tool no-op: tool_registry is %s, not a dict",
                 type(self.tool_registry).__name__,
             )
+
+    def _audit_compute_route(
+        self,
+        stage_id: str,
+        tool_name: str,
+        action: str,
+        params: dict[str, Any],
+        target: str | None,
+        reason: str | None,
+    ) -> None:
+        """M1 分流审计: 把一次计算路由决策写进 append-only audit 日志.
+
+        记录 tool/action/目标/原因 + 参数哈希 (不落明文参, 防泄敏), 带 trace_id。
+        best-effort: audit 层不可用/异常只 debug 记, 绝不阻断执行 (与 routing 本身
+        "失败不阻塞" 同一哲学)。文案经 AuditLogger._redact_details 二次脱敏。
+        """
+        try:
+            from huginn.security.audit import get_audit_logger
+
+            get_audit_logger().log(
+                event_type="compute_route",
+                actor="orchestrator",
+                action=f"{tool_name}:{action}",
+                details={
+                    "stage_id": stage_id,
+                    "tool": tool_name,
+                    "action": action,
+                    "target": target,
+                    "reason": reason,
+                },
+                input_data=str(params),
+            )
+        except Exception:
+            logger.debug("compute_route audit write failed", exc_info=True)
+
+    def _decide_call_privacy(self, tool_name: str, params: dict[str, Any]) -> Any:
+        """P1(修正版): 判定本次调用承载的数据是否敏感 (需强制本地).
+
+        内容 = tool 名 + 参数 (含路径/结构/凭证式字段)。不敏感 → 返回敏感=False,
+        正常任务照常放行。判定失败/不可用 → None (fail-open 放行, 不阻塞)。
+        """
+        try:
+            from huginn.execution.privacy_decision import decide_privacy
+
+            # 用户自由度出口: 调用方可在 params 里带 privacy_override ("allow"/"local")
+            # 显式覆盖本次私有化判定; 不在合法取值则落回默认规则.
+            override = params.get("privacy_override")
+            if override not in ("allow", "local"):
+                override = None
+            content = f"{tool_name} {params}"
+            return decide_privacy(
+                content, conservative_temporary=self.local_only, override=override
+            )
+        except Exception:
+            logger.debug("privacy classify failed, fail-open allow", exc_info=True)
+            return None
+
+    def _audit_privacy_enforce(
+        self,
+        tool_name: str,
+        params: dict[str, Any],
+        decision: Any,
+    ) -> None:
+        """把一次"敏感数据 → 强制本地"的私有化覆盖落审计 (含 signal/reason)."""
+        try:
+            from huginn.security.audit import get_audit_logger
+
+            get_audit_logger().log(
+                event_type="privacy_enforce",
+                actor="orchestrator",
+                action=f"{tool_name}",
+                details={
+                    "tool": tool_name,
+                    "sensitive": decision.sensitive,
+                    "signal": decision.signal,
+                    "reason": decision.reason,
+                },
+                input_data=str(params),
+            )
+        except Exception:
+            logger.debug("privacy_enforce audit write failed", exc_info=True)
+
+    def _enforce_compute_policy(
+        self,
+        tool_name: str,
+        target: str | None,
+        actor: str,
+        params: dict[str, Any],
+    ) -> Any:
+        """M2 细粒度权限 + 预算: 按 (tool×target×actor×heavy) 判定一次调用.
+
+        FeatureFlags.compute_policy 默认关 ⇒ 返回 None (不拦截, 不改变现有行为)。
+        开启后返回 PolicyVerdict; 决策落 audit. 任何异常 fail-open (只 debug, 不阻断),
+        保持与路由一致"故障不阻塞执行"哲学。
+        """
+        try:
+            from huginn.feature_flags import FeatureFlags
+
+            if not FeatureFlags.shared().is_enabled("compute_policy"):
+                return None
+
+            scaling = "generic"
+            if self.compute_router is not None:
+                scaling = self.compute_router.spec_for(tool_name).scaling
+
+            from huginn.execution.compute_policy import ComputePolicy
+
+            if self.compute_policy is None:
+                self.compute_policy = ComputePolicy()
+            verdict = self.compute_policy.enforce(
+                tool_name, target, actor, scaling=scaling
+            )
+            try:
+                from huginn.security.audit import get_audit_logger
+
+                get_audit_logger().log(
+                    event_type="compute_policy",
+                    actor=actor,
+                    action=f"{tool_name}:{target}",
+                    details={
+                        "tool": tool_name,
+                        "target": target,
+                        "allowed": verdict.allowed,
+                        "requires_approval": verdict.requires_approval,
+                        "reason": verdict.reason,
+                    },
+                )
+            except Exception:
+                logger.debug("compute_policy audit write failed", exc_info=True)
+            return verdict
+        except Exception:
+            logger.debug("compute_policy enforce failed, fail-open", exc_info=True)
+            return None
 
     # ------------------------------------------------------------------
     # Core execution
@@ -252,8 +391,62 @@ class ExecutionOrchestrator:
                     _route_target,
                     _route_reason,
                 )
+                # M1 分流审计: 路由决策落 audit (hash 链 + 脱敏), 供 per-tool×target
+                # 报表与"该 hpc 却 local"偏差排查. best-effort, 失败不阻断执行.
+                self._audit_compute_route(
+                    stage_id, tool_name, action, params, _route_target, _route_reason
+                )
             except Exception:
                 logger.debug("route failed", exc_info=True)  # routing failure shouldn't block execution
+
+        # P1(修正版) 私有化: 逐调用敏感判定覆盖远程目标.
+        # 只有"这条数据的敏感度"决定是否强制本地, 全局开关不阻塞正常任务:
+        #   敏感 → hpc/remote 改投 local (数据不出设备);
+        #   不敏感 → 照常放行 (普通 DFT/MD 任务不受 local_only 妨碍).
+        _privacy_pd = self._decide_call_privacy(tool_name, params)
+        if _privacy_pd is not None:
+            _privacy_override_signal = _privacy_pd.signal in (
+                "user_override_allow",
+                "user_override_local",
+            )
+            if _privacy_pd.sensitive and _route_target in ("hpc", "remote"):
+                _route_target = "local"
+                _route_reason = f"privacy override: {_privacy_pd.reason}"
+                self._audit_privacy_enforce(tool_name, params, _privacy_pd)
+            elif _privacy_override_signal:
+                # 用户显式 override (允许外发 / 要求留本地): 即便未改目标也落审计,
+                # 让"用户自由度"透明可追溯, 并给合规回放证据.
+                self._audit_privacy_enforce(tool_name, params, _privacy_pd)
+
+        # M2 细粒度权限 + 预算 (flag 门; 默认关 => _enforce 返回 None 不过滤).
+        _verdict = self._enforce_compute_policy(
+            tool_name, _route_target, "system", params
+        )
+        if _verdict is not None and not _verdict.allowed:
+            return StageResult(
+                stage_id=stage_id,
+                stage_name=stage_name,
+                tool_name=tool_name,
+                success=False,
+                error_message=f"blocked by compute policy: {_verdict.reason}",
+                started_at=datetime.now().isoformat(),
+                finished_at=datetime.now().isoformat(),
+                execution_target=_route_target,
+                route_reason=_route_reason,
+            )
+        if _verdict is not None and _verdict.requires_approval:
+            # orchestrator 无交互审批回调 → fail-secure: 标记需审批即拦截, 留审计.
+            return StageResult(
+                stage_id=stage_id,
+                stage_name=stage_name,
+                tool_name=tool_name,
+                success=False,
+                error_message=f"compute policy requires approval: {_verdict.reason}",
+                started_at=datetime.now().isoformat(),
+                finished_at=datetime.now().isoformat(),
+                execution_target=_route_target,
+                route_reason=_route_reason,
+            )
 
         started = datetime.now().isoformat()
         t0 = time.time()

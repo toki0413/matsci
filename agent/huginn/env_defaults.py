@@ -50,6 +50,7 @@ __all__ = [
     "get_int",
     "get_float",
     "get_path",
+    "registry_default",
     "ENV_REGISTRY",
     "EnvCategory",
 ]
@@ -115,6 +116,15 @@ def get_path(key: str, *, default: Path | None = None) -> Path | None:
     if val is None or not val.strip():
         return default
     return Path(val.strip()).expanduser()
+
+
+def registry_default(key: str) -> Any:
+    """Return the registered default for an env var (single authority).
+
+    让消费方从 :data:`ENV_REGISTRY` 取默认值, 硬编码数字只留在注册表一处,
+    消费方不再重复字面量. 未注册/无 default 返回 None.
+    """
+    return (ENV_REGISTRY.get(key) or {}).get("default")
 
 
 # ── Registry ───────────────────────────────────────────────────────
@@ -433,6 +443,54 @@ ENV_REGISTRY: dict[str, dict[str, Any]] = {
         "default": "off",
         "description": "预算软限制审批: off(默认, 只管硬刹车) / auto(快用完自动有限续投) / gui(注入回调人工批).",
         "consumer": "huginn.budget_pause",
+    },
+    "HUGINN_TOKEN_BUDGET": {
+        "category": EnvCategory.AGENT,
+        "type": "int",
+        "default": 10000000,
+        "description": "TokenBudget: LLM 累计 token 硬上限 (默认 10M). 超限抛 BudgetExhausted.",
+        "consumer": "huginn.autoloop.budget.TokenBudget",
+    },
+    "HUGINN_COST_BUDGET": {
+        "category": EnvCategory.AGENT,
+        "type": "float",
+        "default": 50.0,
+        "description": "TokenBudget: LLM 累计美元成本硬上限 (默认 $50). 超限抛 BudgetExhausted.",
+        "consumer": "huginn.autoloop.budget.TokenBudget",
+    },
+    "HUGINN_VALUE_BUDGET_USD": {
+        "category": EnvCategory.AGENT,
+        "type": "float",
+        "default": 10.0,
+        "description": "ValueBudget: 价值感知预算的基准上限美元 (默认 $10).",
+        "consumer": "huginn.value_budget.ValueBudget.base_budget_usd",
+    },
+    "HUGINN_VALUE_MIN_ROI": {
+        "category": EnvCategory.AGENT,
+        "type": "float",
+        "default": 0.0,
+        "description": "ValueBudget: 最低投入产出比阈值, <=0 禁用价值感知.",
+        "consumer": "huginn.value_budget.ValueBudget.min_roi",
+    },
+    "HUGINN_MAX_FAILURES_BY_TYPE": {
+        "category": EnvCategory.AGENT,
+        "type": "json",
+        "default": {
+            "tool_error": 5,
+            "prompt_injection_suspect": 3,
+            "param_error": 5,
+            "data_noise": 5,
+            "hypothesis_error": 10,
+        },
+        "description": "分类失败止损阈值 (JSON dict): 各 failure_type 的连续失败上限, 可按执行者校准.",
+        "consumer": "huginn.autoloop.engine._config_failures_by_type",
+    },
+    "HUGINN_HARNESS_GATES": {
+        "category": EnvCategory.AGENT,
+        "type": "bool",
+        "default": False,
+        "description": "HarnessDev 结论④ 接线开关: on 时 evolution 把真实 outcome 喂进 OOD holdout 门控.",
+        "consumer": "huginn.evolution.manager._record_harness_gates_enabled",
     },
     "HUGINN_BUDGET_MAX_RENEWALS": {
         "category": EnvCategory.AGENT,

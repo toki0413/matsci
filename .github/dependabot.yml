@@ -39,6 +39,13 @@ updates:
     #    PyPI 供应链投毒, 受影响的是 2.6.2/2.6.3 两个已下架的版本. 经 nougat-ocr
     #    的可选组引入, uv 锁定最新的干净版 2.6.5 (官方下架恶意版后推荐 2.6.4).
     #    OSV 告警误伤后封禁重发的干净版本, 无更高修复版本可升.
+    #
+    # 5. nltk (PYSEC-2026-3740 / GHSA-8mgp-746c-j5xp / CVE-2026-81726): NLTK 的
+    #    model-artifact 加载 API (unzip/multi_zip/auto_unzip) 绕过 pathsec,
+    #    可触达允许根目录外的文件. 经 nougat-ocr 的可选组引入, 上游尚无修复版本
+    #    (OSV fix_versions 为空), 起作用的形态是加载用户可写的 corpura/模型制品;
+    #    huginn 的 nougat-ocr 用法是解析本地 PDF 的文本, 不加载外部 NLTK 模型归档,
+    #    不受影响. 等待上游发布修复版.
     ignore:
       - dependency-name: "chromadb"
         versions: ["*"]
@@ -47,6 +54,8 @@ updates:
       - dependency-name: "setuptools"
         versions: ["*"]
       - dependency-name: "lightning"
+        versions: ["*"]
+      - dependency-name: "nltk"
         versions: ["*"]
     commit-message:
       prefix: "chore(deps)"

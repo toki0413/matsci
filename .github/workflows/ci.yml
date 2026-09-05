@@ -377,6 +377,10 @@ jobs:
           #     nougat-ocr 经 --extra all/rag 引入, uv 解析锁定最新的 2.6.5
           #     (官方屏蔽恶意版后用 2.6.4 作为推荐版本), 已不在受影响集合内,
           #     且无更高的修复版本可升.
+          #   - nltk PYSEC-2026-3740 / GHSA-8mgp-746c-j5xp (CVE-2026-81726):
+          #     model-artifact 加载 API 绕过 pathsec. 经 nougat-ocr 可选组引入,
+          #     上游无修复版本 (OSV fix_versions 为空); huginn 用它解析本地 PDF
+          #     文本, 不加载外部 NLTK 模型归档, 不受影响. 等上游修复版.
           # 其余任何漏洞都会让 CI 变红, 强制升级修复.
           # 注意: 不能把三个组的钉版行合并审计 —— 不同组可能锁定同一包的不同
           # 版本 (如 fsspec), pip-audit 内部用 pip 解析会报 ResolutionImpossible.
@@ -394,6 +398,7 @@ jobs:
               --ignore-vuln PYSEC-2026-139 --ignore-vuln PYSEC-2026-2286 \
               --ignore-vuln CVE-2025-2999 --ignore-vuln CVE-2025-3001 \
               --ignore-vuln PYSEC-2026-3624 --ignore-vuln GHSA-w37p-236h-pfx3 \
+              --ignore-vuln PYSEC-2026-3740 --ignore-vuln GHSA-8mgp-746c-j5xp \
               || { echo "::error::optional-dependency vulnerability(s) in $lock. 可修复漏洞必须升级约束版本; 新增无 fix 漏洞需先在 dependabot.yml 显式 ignore 并记录理由"; exit 1; }
           done
 

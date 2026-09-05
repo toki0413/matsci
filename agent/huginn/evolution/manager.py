@@ -26,6 +26,15 @@ _FLAG = "HUGINN_USE_EVOLUTION_MANAGER"
 _DISABLE_FLAG = "HUGINN_DISABLE_EVOLUTION_MANAGER"
 
 
+def _record_harness_gates_enabled() -> bool:
+    """HarnessDev 结论④ 门控数据接线开关 (默认 off ⇒ 不开不改变现有行为).
+
+    设 HUGINN_HARNESS_GATES=1 开启后, record_outcome 会把真实 supported/refuted
+    喂进 OOD holdout 门控, 让门控存储积累数据而不再恒空.
+    """
+    return os.environ.get("HUGINN_HARNESS_GATES", "0").lower() in ("1", "true", "yes")
+
+
 def _use_evolution_manager() -> bool:
     # 显式关闭
     if os.environ.get(_DISABLE_FLAG, "0") == "1":
@@ -171,6 +180,25 @@ class EvolutionManager:
                     )
             except Exception:
                 logger.warning("SkillEvolutionLayer record failed", exc_info=True)
+
+        # HarnessDev 结论④ 接线: 把真实 outcome 喂进 OOD holdout / significance 门控.
+        # 之前 record_outcome/record_pair 在生产零调用, 门控存储恒空、恒 advisory.
+        # 这里在单步 validation 有明确 supported/refuted 信号时, 记一条
+        # (config=strategy|candidate, task=hypothesis, score=1.0/0.0). fail-open:
+        # 任何异常吞掉不阻断; 由常量门开关默认关 ⇒ 不开不影响现有行为.
+        if _record_harness_gates_enabled() and strategy_name and val_status:
+            try:
+                from huginn.harness.ood_holdout import OODHoldoutValidator
+
+                cfg = f"strategy:{strategy_name}"
+                score = 1.0 if val_status in ("supported",) else 0.0
+                OODHoldoutValidator.get_instance().record_outcome(
+                    config_id=cfg,
+                    task_id=hypothesis,
+                    score=score,
+                )
+            except Exception:
+                logger.debug("harness gate record failed-open", exc_info=True)
 
     def distill(self, run_id: str | None = None) -> list[str]:
         """蒸馏 STABLE_PRINCIPLE. 返回写入的 principle 文本列表.

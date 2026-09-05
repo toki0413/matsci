@@ -18,10 +18,9 @@ from pydantic import BaseModel, Field
 if TYPE_CHECKING:
     from huginn.security.revertible import RevertibleContext
 
-# Importing presets has a side effect: every SkillDefinition passed to
-# register_skill() lands in SkillRegistry. Keep this import above the
-# tool class so the registry is populated before the first call.
-import huginn.skills.presets  # noqa: F401
+# Preset skills register lazily via SkillRegistry.ensure_presets() (skills/__init__
+# no longer eager-imports presets), so importing this module doesn't pull in the
+# ~45 preset SkillDefinitions until a query/execute actually needs them.
 from huginn.core_types import ToolContext, ToolResult
 from huginn.memory.longterm import LongTermMemory
 from huginn.skills.base import (
