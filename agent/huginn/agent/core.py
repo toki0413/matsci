@@ -666,19 +666,19 @@ class HuginnAgent(
         effective_filter: set[str] | None = self.tool_filter
         if FeatureFlags.shared().is_enabled("task_tool_router") and self._current_task:
             try:
-                from huginn.runtime.task_tool_router import route_tools
+                from huginn.runtime.task_tool_router import compute_effective_subset
 
                 available = ToolRegistry.list_tools()
-                routed = route_tools(self._current_task, available)
-                if routed:
-                    routed_set = set(routed)
+                candidate = compute_effective_subset(self._current_task, available)
+                if candidate:
+                    candidate_set = set(candidate)
                     if self.tool_filter is not None:
-                        candidate = routed_set & self.tool_filter
-                        if candidate:
-                            effective_filter = candidate
+                        inter = candidate_set & self.tool_filter
+                        if inter:
+                            effective_filter = inter
                         # else: 交集空 → task router 误判, 保留原 tool_filter
                     else:
-                        effective_filter = routed_set
+                        effective_filter = candidate_set
             except Exception:
                 logger.debug(
                     "task_tool_router failed, fallback to tool_filter",
@@ -686,13 +686,17 @@ class HuginnAgent(
                 )
 
         tools = []
+        # C: 懒加载边界 — 先按名过滤 (effective_filter/denied), 命中才 get()/adapt.
+        # 之前对全部 132 工具先 get() 再过滤, 每次 task 变化都把重后端工具实例化并
+        # 包进 langchain. 现在只在被选中子集内 get()/adapt, 未命中的重工具不实例化,
+        # 与常驻 task_tool_router 的最小子集联动.
         for name in ToolRegistry.list_tools():
-            tool = ToolRegistry.get(name)
-            if tool is None:
-                continue
             if effective_filter is not None and name not in effective_filter:
                 continue
             if name in denied:
+                continue
+            tool = ToolRegistry.get(name)
+            if tool is None:
                 continue
             if isinstance(tool, HuginnTool):
                 lc_tool = self._tool_adapter.adapt(

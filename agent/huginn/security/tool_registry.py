@@ -27,6 +27,12 @@ from huginn.security.behavior_lifecycle import (
     BehaviorLifecycle,
     InstallResult,
 )
+from huginn.security.transfer_gate import (
+    SUBTYPE,
+    TransferRelation,
+    TransferVerdict,
+    resolve_transfer,
+)
 from huginn.security.world_model import WorldModel
 
 
@@ -44,6 +50,9 @@ class ToolSpec:
 
     - ``schema``          : 机器可读 JSON 描述 (物理域/状态空间/动作/观测), agent 自我路由.
     - ``contract_version``: 工具级契约版本; 制品安装须与之握手一致, 升级走换后端.
+    - ``structural_relation``: P2 转用门 (transfer_gate) — 本工具相对同族工具的
+      结构关系 (⊂ is_subcase_of / ≅ isomorphic_to / ≢ independent_of).
+      决定跨工具借模型时哪些合法; ``None`` = 未声明 → 隔离失效安全 (禁转).
     """
 
     name: str
@@ -52,9 +61,17 @@ class ToolSpec:
     health_check: Callable[[BehaviorArtifact], bool]
     contract_version: int = 1
     schema: Mapping[str, Any] = field(default_factory=dict)
+    structural_relation: TransferRelation | None = None
 
 
 _TOOLS: dict[str, ToolSpec] = {}
+
+# 内置工具的 P2 结构关系常量; 供 _register_builtins 里的 ToolSpec 复用.
+_SUBTYPE_IDEAL_VAN_DER_WAALS = TransferRelation(
+    kind=SUBTYPE,
+    with_tool="van_der_waals",
+    note="ideal gas is the a=b=0 limit of the van der Waals EOS",
+)
 
 
 def register_tool(spec: ToolSpec) -> None:
@@ -106,6 +123,20 @@ def registered_tools() -> tuple[str, ...]:
     return tuple(sorted(_TOOLS))
 
 
+def borrow_verdict(tool_a: str, tool_b: str) -> TransferVerdict:
+    """P2 转用门: ``tool_b`` 能否向 ``tool_a`` 借用?
+
+    依 ``tool_b`` 声明的 ``structural_relation`` (指向 ``tool_a``) 判定; 未声明
+    或指向不符 → 按隔离失效安全 (禁转). 三者关系 (⊂/≅/≢) 的转用规则见
+    :mod:`huginn.security.transfer_gate`.
+    """
+    spec_b = _TOOLS.get(tool_b)
+    rel = spec_b.structural_relation if spec_b else None
+    if rel is None or rel.with_tool != tool_a:
+        return resolve_transfer(None)
+    return resolve_transfer(rel)
+
+
 # ── 内置工具注册 (导入时完成) ──────────────────────────────────
 def _register_builtins() -> None:
     from huginn.security.mechanics_oscillator import (
@@ -125,6 +156,7 @@ def _register_builtins() -> None:
     )
 
     # 热力学域 (理想气 / 范德华) + 力学域 (一维振子): 领域无关, 只是各自 ToolSpec.
+    # 理想气 = 范德华 a=b=0 的极端情形 → ⊂. 力学振子与热力学域无声明 → 隔离失效安全.
     register_tool(
         ToolSpec(
             name="ideal_gas",
@@ -137,6 +169,8 @@ def _register_builtins() -> None:
                 "observables": ["p", "T"],
                 "forward": "pV=nRT, isochoric heat / isothermal move",
             },
+            # P2 转用门: 理想气是范德华场的子情形, 可借求解/世界模型骨架, 不借校准参数.
+            structural_relation=_SUBTYPE_IDEAL_VAN_DER_WAALS,
         )
     )
     register_tool(

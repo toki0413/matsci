@@ -2185,6 +2185,16 @@ Respond JSON only:
                 return ActionDecision(action="plan", rationale="hint=plan")
             if hint == "perceive":
                 return ActionDecision(action="observe", rationale="hint=perceive")
+            # Monitor-hold 减负 (对齐 Hermes monitor): 连续空观测达阈值 → 保持
+            # silent, 跳过昂贵 LLM 推理. 只新增 skip 决策, 绝不改其他分支合法性.
+            if getattr(self, "_monitor_state", None) is not None:
+                from huginn.autoloop.monitor_hold import decide_hold
+
+                _hold = decide_hold(self._monitor_state, had_activity=self._last_had_activity)
+                if _hold.hold:
+                    return ActionDecision(
+                        action="skip", rationale=f"monitor-hold: {_hold.reason}"
+                    )
             # LLM 自主决策 (开启时, 且非首轮). 失败/非法 → fallback 到规则版
             if self._use_llm_decider and state.last_action not in ("", "skip"):
                 try:
@@ -2236,6 +2246,14 @@ Respond JSON only:
                     cog["completed_steps"] += 1
                     if phase.result:
                         cog["context"] = phase.result
+                    # Monitor-hold 减负: 记录本回合是否有新观测/活动, 供决策器判定
+                    # 是否保持 silent (跳过昂贵推理). 惰性初始化, 失败静默.
+                    had_activity = bool(phase.result)
+                    if getattr(self, "_monitor_state", None) is None:
+                        from huginn.autoloop.monitor_hold import MonitorHoldState
+
+                        self._monitor_state = MonitorHoldState()
+                    self._last_had_activity = had_activity
                     return phase.result
                 if action == "hypothesize":
                     # v11: FDE 对齐轮 — hypothesize 前问用户方向 (首轮/有 blind_spots).

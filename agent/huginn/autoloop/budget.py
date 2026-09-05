@@ -18,9 +18,10 @@ iteration's prompt carries "mode X not allowed at tier Y, use Z instead".
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 from typing import Literal
+
+from huginn.env_defaults import get_float, get_int, registry_default
 
 PlanMode = Literal["coder", "workflow", "explore"]
 
@@ -100,18 +101,27 @@ class TokenBudget:
     """
 
     hard_limit_tokens: int = field(
-        default_factory=lambda: int(os.environ.get("HUGINN_TOKEN_BUDGET", "10000000"))
+        default_factory=lambda: get_int(
+            "HUGINN_TOKEN_BUDGET",
+            default=int(registry_default("HUGINN_TOKEN_BUDGET") or 0),
+        )
     )
     soft_limit_tokens: int = -1  # <0 = 取 hard_limit 的 80%
     hard_limit_cost: float = field(
-        default_factory=lambda: float(os.environ.get("HUGINN_COST_BUDGET", "50.0"))
+        default_factory=lambda: get_float(
+            "HUGINN_COST_BUDGET",
+            default=float(registry_default("HUGINN_COST_BUDGET") or 0.0),
+        )
     )
     current_tokens: int = 0
     current_cost: float = 0.0
     # 软限制续投 (budget_pause 接线). 硬刹车是 update 抛 BudgetExhausted;
     # 软限制只在这里记状态, 由上层决定 auto 有限续 / GUI 人工批 / 忽略(off).
     max_renewals: int = field(
-        default_factory=lambda: int(os.environ.get("HUGINN_BUDGET_MAX_RENEWALS", "3"))
+        default_factory=lambda: get_int(
+            "HUGINN_BUDGET_MAX_RENEWALS",
+            default=int(registry_default("HUGINN_BUDGET_MAX_RENEWALS") or 0),
+        )
     )
     _renewals: int = field(default=0, repr=False)
 

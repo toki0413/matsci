@@ -50,7 +50,10 @@ class PhysicsValidator:
         # 4. Volume check (positive)
         checks.append(self._check_volume_positive(result))
 
-        # 5. Magnetic moment consistency
+        # 5. Charge/electron conservation (HarnessDev 语义验证 — 堵住电荷守恒缺失盲区)
+        checks.append(self._check_charge_conservation(result))
+
+        # 6. Magnetic moment consistency
         checks.append(self._check_magnetic_moments(result))
 
         return checks
@@ -161,6 +164,65 @@ class PhysicsValidator:
             expected="> 0",
             tolerance=0,
             message="Volume is non-positive" if not passed else "Volume OK",
+        )
+
+    def _check_charge_conservation(self, result: dict) -> ValidationCheck:
+        """校验总电荷/电子数守恒与物理界 (HarnessDev 结论②补盲区).
+
+        守则:
+        - ``charge``(体系净电荷, e) + ``total_electrons``(体系总电子数) 应等于
+          原子核电荷和``nuclear_charge``(整数物理界); 若三者都给出, 用相对容差
+          ``charge_conservation_tolerance`` (>0 默认 0.01) 校验, 否则 warn.
+        - ``charge`` 幅值不得超过 ``total_electrons`` (体系净电荷不能多于总电子数),
+          违反物理界 → fail.
+        - 缺任一字段 → advisory 通过 (不误报, 与其它 check 一致).
+        """
+        charge = result.get("charge")
+        electrons = result.get("total_electrons")
+        nuclear = result.get("nuclear_charge")
+        if charge is None:
+            return ValidationCheck(
+                "charge_conservation", True, None, "charge conserved", 0,
+                "Charge not available; conservation not checked",
+            )
+
+        # 物理界: |net charge| <= total electrons
+        if electrons is not None and abs(float(charge)) > float(electrons) + 1e-9:
+            return ValidationCheck(
+                name="charge_conservation",
+                passed=False,
+                value=(charge, electrons),
+                expected="|charge| <= total_electrons",
+                tolerance=0,
+                message=(
+                    f"|net charge| {abs(float(charge))} exceeds total electrons "
+                    f"{float(electrons)} — unphysical"
+                ),
+            )
+
+        # 守恒恒等: charge + electrons == nuclear_charge (净电荷 = 核电荷 - 电子数)
+        tol = float(getattr(self, "charge_conservation_tolerance", 0.01))
+        if electrons is not None and nuclear is not None:
+            lhs = float(charge) + float(electrons)
+            err = abs(lhs - float(nuclear))
+            scale = max(abs(float(nuclear)), 1e-12)
+            passed = (err / scale) <= tol
+            return ValidationCheck(
+                name="charge_conservation",
+                passed=passed,
+                value=(charge, electrons, nuclear),
+                expected=f"charge + electrons = nuclear_charge (±{tol})",
+                tolerance=tol,
+                message=(
+                    f"charge+electrons={lhs:.3f} != nuclear_charge={float(nuclear):.3f}"
+                    if not passed
+                    else "Charge/electron conservation OK"
+                ),
+            )
+
+        return ValidationCheck(
+            "charge_conservation", True, (charge, electrons, nuclear),
+            "charge conserved", 0, "Partial charge data; treated as OK",
         )
 
     def _check_magnetic_moments(self, result: dict) -> ValidationCheck:

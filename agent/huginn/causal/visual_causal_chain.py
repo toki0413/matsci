@@ -37,7 +37,6 @@ from typing import Any
 
 import numpy as np
 from pydantic import BaseModel, Field
-from scipy.optimize import curve_fit
 
 from huginn.causal.visual_scm import (
     VisualSCM,
@@ -290,6 +289,7 @@ def fit_scm_from_observations(
     y = np.array([o.features[spec.feature] for o in valid_obs], dtype=float)
 
     # curve_fit
+    from scipy.optimize import curve_fit  # 懒导入: 唯一 scipy 依赖, 外移到调用点
     p0 = [spec.defaults[p] for p in spec.params]
     lower, upper = spec.bounds
     try:

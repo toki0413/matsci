@@ -47,6 +47,43 @@ def _harness_workflow_evolution_enabled() -> bool:
     return _feature_flag("harness_workflow_evolution", False)
 
 
+#: 分类失败阈值默认值 — 历史硬编码语义, 收敛到此作为单一缺省依据.
+_DEFAULT_MAX_FAILURES_BY_TYPE: dict[str, int] = {
+    "tool_error": 5,
+    "prompt_injection_suspect": 3,
+    "param_error": 5,
+    "data_noise": 5,
+    "hypothesis_error": 10,
+}
+
+
+def _config_failures_by_type() -> dict[str, int]:
+    """读取分类失败阈值, 默认从 env_defaults 注册表取 (HUGINN_MAX_FAILURES_BY_TYPE, JSON).
+
+    支持按执行者定制: 设 ``HUGINN_MAX_FAILURES_BY_TYPE='{"tool_error":8,"hypothesis_error":15}'``
+    即覆盖对应键, 未覆盖键回退默认. 解析失败/缺省 → 全默认 (兼容旧硬编码行为).
+    """
+    import json as _json
+
+    default = dict(_DEFAULT_MAX_FAILURES_BY_TYPE)
+    raw = os.environ.get("HUGINN_MAX_FAILURES_BY_TYPE", "")
+    if not raw:
+        return default
+    try:
+        parsed = _json.loads(raw)
+    except ValueError:
+        return default
+    if isinstance(parsed, dict):
+        for k, v in parsed.items():
+            try:
+                int_v = int(float(v))
+            except (TypeError, ValueError):
+                continue
+            if int_v > 0:
+                default[str(k)] = int_v
+    return default
+
+
 def _autoloop_meta_trace_inject_enabled() -> bool:
     """C4 toggle: cfg.feature_flags.autoloop_meta_trace_inject (默认 off).
 
@@ -362,14 +399,9 @@ class AutoloopEngine(
         # ponytail: 不拆总数 (向后兼容), 在其上叠加. 升级路径: 走 PhaseRegistry extra.
         self._consecutive_failures_by_type: dict[str, int] = {}
         # 按类阈值 — tool_error 类短期可恢复, 阈值低; hypothesis_error 持续才是真死路, 阈值高.
-        # ponytail: 硬编码, 跟 _max_pivot=10 一致. 升级路径: env / PhaseRegistry extra.
-        self._max_failures_by_type: dict[str, int] = {
-            "tool_error": 5,
-            "prompt_injection_suspect": 3,
-            "param_error": 5,
-            "data_noise": 5,
-            "hypothesis_error": 10,
-        }
+        # 默认值集中在 env_defaults 注册表 (HUGINN_MAX_FAILURES_BY_TYPE, JSON), 可按执行者校准.
+        # 兼容旧行为: 注册表缺省 {tool_error:5, ...}, 与历史硬编码一致.
+        self._max_failures_by_type: dict[str, int] = _config_failures_by_type()
         # 700 万步极限场景: consecutive 语义在长轨迹里太窄 (20 次 tool timeout 就停).
         # 加滑动窗口失败率 — 最近 N 次 validate 的失败率超阈值才 stop, 允许局部失败.
         # consecutive 保留作快速止损 (短任务 / 连续坏方向), windowed rate 兜底长轨迹.

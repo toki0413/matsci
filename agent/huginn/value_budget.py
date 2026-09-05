@@ -25,6 +25,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from huginn.env_defaults import get_float, registry_default
+
 __all__ = [
     "default_phase_ratios",
     "ValueBudget",
@@ -48,12 +50,22 @@ def default_phase_ratios() -> dict[str, float]:
 class ValueBudget:
     """价值感知 + 阶段伸缩预算."""
 
-    base_budget_usd: float = 10.0
+    base_budget_usd: float = field(
+        default_factory=lambda: get_float(
+            "HUGINN_VALUE_BUDGET_USD",
+            default=float(registry_default("HUGINN_VALUE_BUDGET_USD") or 0.0),
+        )
+    )
     # 阶段 → 预算伸缩系数.
     phase_ratios: dict[str, float] = field(default_factory=default_phase_ratios)
     # 最低投入产出比 (value_per_usd): 已实现价值 / 已花成本 低于它 → 停止.
     # <=0 表示不启用价值感知 (纯预算控制).
-    min_roi: float = 0.0
+    min_roi: float = field(
+        default_factory=lambda: get_float(
+            "HUGINN_VALUE_MIN_ROI",
+            default=float(registry_default("HUGINN_VALUE_MIN_ROI") or 0.0),
+        )
+    )
     # 预算告警比例 (达到预算的该比例时 warn).
     warn_ratio: float = 0.8
 

@@ -111,6 +111,111 @@ class TestValueBudget:
         assert "explore" in allowed and "converge" in allowed
         assert "verify" not in allowed
 
+    def test_default_budget_from_registry(self, monkeypatch):
+        """默认上限来自 env_defaults 注册表单一权威, 不内联硬编码."""
+        from huginn.env_defaults import registry_default
+
+        monkeypatch.delenv("HUGINN_VALUE_BUDGET_USD", raising=False)
+        monkeypatch.delenv("HUGINN_VALUE_MIN_ROI", raising=False)
+        assert ValueBudget().base_budget_usd == registry_default("HUGINN_VALUE_BUDGET_USD")
+        assert ValueBudget().min_roi == registry_default("HUGINN_VALUE_MIN_ROI")
+
+    def test_value_budget_env_override(self, monkeypatch):
+        """HUGINN_VALUE_* env 覆盖注册表默认值."""
+        monkeypatch.setenv("HUGINN_VALUE_BUDGET_USD", "25.0")
+        monkeypatch.setenv("HUGINN_VALUE_MIN_ROI", "2.0")
+        vb = ValueBudget()
+        assert vb.base_budget_usd == 25.0
+        assert vb.min_roi == 2.0
+
+
+# ── TokenBudget 成本上限经 env 覆盖 (不再内联硬编码) ──────────────
+
+
+class TestTokenBudgetDefaults:
+    def test_hard_limit_defaults_from_registry(self, monkeypatch):
+        """HUGINN_TOKEN_BUDGET / HUGINN_COST_BUDGET 默认值来自注册表."""
+        from huginn.autoloop.budget import TokenBudget
+        from huginn.env_defaults import registry_default
+
+        monkeypatch.delenv("HUGINN_TOKEN_BUDGET", raising=False)
+        monkeypatch.delenv("HUGINN_COST_BUDGET", raising=False)
+        monkeypatch.delenv("HUGINN_BUDGET_MAX_RENEWALS", raising=False)
+        b = TokenBudget()
+        assert b.hard_limit_tokens == registry_default("HUGINN_TOKEN_BUDGET")
+        assert b.hard_limit_cost == registry_default("HUGINN_COST_BUDGET")
+        assert b.max_renewals == registry_default("HUGINN_BUDGET_MAX_RENEWALS")
+
+    def test_hard_limit_env_override(self, monkeypatch):
+        """env 覆盖能改变硬上限 (成本上限不再写死)."""
+        from huginn.autoloop.budget import TokenBudget
+
+        monkeypatch.setenv("HUGINN_TOKEN_BUDGET", "12345")
+        monkeypatch.setenv("HUGINN_COST_BUDGET", "9.5")
+        monkeypatch.setenv("HUGINN_BUDGET_MAX_RENEWALS", "7")
+        b = TokenBudget()
+        assert b.hard_limit_tokens == 12345
+        assert b.hard_limit_cost == 9.5
+        assert b.max_renewals == 7
+
+
+# ── HarnessDev 结论③: 分类失败阈值参数化 + 结论④: held-out 门控接线 ──
+
+
+class TestFailureTypeConfig:
+    def test_defaults_match_historic_hardcode(self, monkeypatch):
+        """默认分类失败阈值与历史硬编码一致, 不 env 时无行为变化."""
+        from huginn.autoloop.engine import _config_failures_by_type
+
+        monkeypatch.delenv("HUGINN_MAX_FAILURES_BY_TYPE", raising=False)
+        cfg = _config_failures_by_type()
+        assert cfg["tool_error"] == 5
+        assert cfg["hypothesis_error"] == 10
+        assert cfg["prompt_injection_suspect"] == 3
+
+    def test_json_env_overrides_and_validates(self, monkeypatch):
+        """JSON env 可按执行者校准覆盖, 非法键/<=0 忽略, 缺省键回退."""
+        from huginn.autoloop.engine import _config_failures_by_type
+
+        monkeypatch.setenv(
+            "HUGINN_MAX_FAILURES_BY_TYPE",
+            '{"tool_error":8,"hypothesis_error":15,"bogus":-1}',
+        )
+        cfg = _config_failures_by_type()
+        assert cfg["tool_error"] == 8
+        assert cfg["hypothesis_error"] == 15
+        assert cfg["param_error"] == 5  # 未覆盖 → 回退默认
+        assert "bogus" not in cfg  # <=0 忽略
+
+    def test_bad_json_falls_back_to_default(self, monkeypatch):
+        from huginn.autoloop.engine import _config_failures_by_type
+
+        monkeypatch.setenv("HUGINN_MAX_FAILURES_BY_TYPE", "not-json{{")
+        assert _config_failures_by_type()["tool_error"] == 5
+
+
+class TestHarnessGateWiring:
+    def test_gate_helper_default_off_then_on(self, monkeypatch):
+        """结论④ 接线默认关 (不改变行为), 设 env 开."""
+        from huginn.evolution.manager import _record_harness_gates_enabled
+
+        monkeypatch.delenv("HUGINN_HARNESS_GATES", raising=False)
+        assert _record_harness_gates_enabled() is False
+        monkeypatch.setenv("HUGINN_HARNESS_GATES", "1")
+        assert _record_harness_gates_enabled() is True
+
+    def test_gate_on_records_real_outcome_to_holdout(self, monkeypatch):
+        """开启后 OOD holdout 门控能积累真实 supported/refuted outcome (不再恒空)."""
+        from huginn.harness.ood_holdout import OODHoldoutValidator
+
+        OODHoldoutValidator._instance = None
+        monkeypatch.setenv("HUGINN_HARNESS_GATES", "1")
+        validator = OODHoldoutValidator.get_instance()
+        validator.record_outcome("strategy:explore", "some-task", 1.0)
+        records = validator.get_records("strategy:explore")
+        assert records and records[0].score == 1.0
+        OODHoldoutValidator._instance = None
+
 
 # ── BudgetPause ───────────────────────────────────────────────────
 

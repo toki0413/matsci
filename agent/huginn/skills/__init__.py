@@ -1,5 +1,7 @@
 """Skills package for material science workflows."""
 
+from typing import Any
+
 from huginn.skills.base import (
     DeclarativeSkillExecutor,
     SkillDefinition,
@@ -16,55 +18,6 @@ from huginn.skills.composite import (
     PHONON_ANALYSIS,
 )
 from huginn.skills.evolution import SkillEvolutionLayer, ToolBelief
-from huginn.skills.presets import (
-    ACTIVE_LEARNING_SCREENING,
-    AIMD_WORKFLOW,
-    AUTORESEARCH_WORKFLOW,
-    BAND_GAP_ANALYSIS,
-    BATTERY_IONIC_CONDUCTIVITY,
-    BAYESIAN_CALIBRATION,
-    CALPHAD_PHASE_DIAGRAM,
-    CATALYSIS_SCREENING,
-    CATALYSIS_VOLCANO,
-    CHARACTERIZATION_ANALYSIS,
-    CONVERGENCE_DIAGNOSIS,
-    CONVERGENCE_TEST,
-    DEFECT_CALCULATION,
-    DEFECT_FORMATION_ENERGY,
-    DFT_VERIFY,
-    ELASTIC_CONSTANTS,
-    ELECTROCHEMISTRY_POURBAIX,
-    FEM_VERIFY,
-    FETCH_REFERENCE_STRUCTURE,
-    GP_PREDICTION,
-    HPC_REMOTE_RUN,
-    HT_SCREENING,
-    HYPOTHESIS_GENERATOR,
-    LA_VERIFY,
-    LAMMPS_MELT_QUENCH,
-    MAGNETIC_ANISOTROPY,
-    MATERIALS_AUTORESEARCH,
-    MD_DFT_CROSS_VALIDATION,
-    ML_POTENTIAL_PREDICTION,
-    PHASE_DIAGRAM_CONSTRUCTION,
-    PHONON_CALCULATION,
-    PHONON_SPECTROSCOPY_WORKFLOW,
-    POLYMER_GLASS_TRANSITION,
-    PROBABILITY_VERIFY,
-    SCENARIO_TOOL_SELECTOR,
-    SENSITIVITY_ANALYSIS,
-    STANDARD_DFT,
-    SURFACE_CALCULATION,
-    SYMBOLIC_REGRESSION,
-    SYMBOLIC_VERIFY,
-    SYNTHESIS_PLANNING,
-    TENSOR_VERIFY,
-    THERMO_VERIFY,
-    TOPOLOGICAL_GEOMETRY_ANALYSIS,
-    UNCERTAINTY_PROPAGATION,
-    VISUALIZE_RESULTS,
-    XRD_STRUCTURE_SOLUTION,
-)
 from huginn.skills.registry import SkillRegistry, register_skill
 
 __all__ = [
@@ -136,3 +89,18 @@ __all__ = [
     "PHONON_ANALYSIS",
     "FRACTURE_ASSESSMENT",
 ]
+
+# 懒加载 (设备端/小模型): ``import huginn.skills`` 不再副作用注册 ~45 个预设技能.
+# 预设 SkillDefinition 只在其名字被访问时 (或 SkillRegistry 查询触发 ensure_presets)
+# 才导入 ``huginn.skills.presets`` 注册. base/registry/composite 保持轻量 eager.
+# ``from huginn.skills import presets`` 走子模块导入 (__getattr__ 抛 AttributeError →
+# 包导入机制顶回落), 与 routes/skill_import 既有用法兼容.
+_LAZY_SKILL_NAMES: frozenset[str] = frozenset(__all__)
+
+
+def __getattr__(name: str) -> Any:
+    if name in _LAZY_SKILL_NAMES:
+        import huginn.skills.presets as _presets
+        if hasattr(_presets, name):
+            return getattr(_presets, name)
+    raise AttributeError(f"module 'huginn.skills' has no attribute {name!r}")

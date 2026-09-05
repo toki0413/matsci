@@ -133,6 +133,8 @@ class LocalJobBackend:
     """本地进程后端: subprocess 一次运行 (现有 ``run_job`` 语义)."""
 
     name = "local"
+    # M3 后端访问门: 标记计算形态, 供"设备私有化"判定某形态是否把数据投递远端.
+    backend_kind = "local"
 
     def run(self, spec: Any, *, timeout: float) -> JobResult:
         if not isinstance(spec, JobSpec):
@@ -157,6 +159,8 @@ class RemoteHpcJobBackend:
     """
 
     name = "remote_hpc"
+    # M3 后端访问门: 远程作业会提交到远端集群 → 设备私有化下禁用.
+    backend_kind = "remote_hpc"
 
     def __init__(
         self,
@@ -198,6 +202,8 @@ class HttpJobBackend:
     """
 
     name = "http"
+    # M3 后端访问门: HTTP 调用可能打到远端服务 → 设备私有化下需判定.
+    backend_kind = "http"
 
     def __init__(
         self,
@@ -211,6 +217,21 @@ class HttpJobBackend:
         if self._caller is not None:
             return self._caller(spec)
         return _urllib_call(spec)
+
+
+# M3 后端访问门: "设备私有化" (local_only) 下仍允许的计算形态.
+_DEVICE_PRIVACY_OK_KINDS = frozenset({"local", "device"})
+
+
+def backend_allows_local_only(kind: str | None) -> bool:
+    """设备私有化 (execution_privacy=local_only) 下某计算形态是否可用.
+
+    local / device 在设备端就地算 → 允许; remote_hpc / http 会把作业/数据投递远端
+    → 禁止. unknown (None/未标注) 保守允许, 避免因元数据缺位误伤.
+    """
+    if kind is None:
+        return True
+    return kind in _DEVICE_PRIVACY_OK_KINDS
 
 
 def _urllib_call(req: HttpJob) -> JobResult:

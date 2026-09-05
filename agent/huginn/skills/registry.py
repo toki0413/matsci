@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from huginn.skills.base import SkillDefinition
+
+logger = logging.getLogger(__name__)
 
 
 class SkillValidationError(ValueError):
@@ -104,20 +107,24 @@ class SkillRegistry:
 
     @classmethod
     def get(cls, name: str) -> SkillDefinition | None:
+        ensure_presets()
         return cls._skills.get(name)
 
     @classmethod
     def list_skills(cls, category: str | None = None) -> list[str]:
+        ensure_presets()
         if category:
             return [n for n, s in cls._skills.items() if s.category == category]
         return list(cls._skills.keys())
 
     @classmethod
     def get_by_category(cls, category: str) -> list[SkillDefinition]:
+        ensure_presets()
         return [s for s in cls._skills.values() if s.category == category]
 
     @classmethod
     def get_all_definitions(cls) -> list[SkillDefinition]:
+        ensure_presets()
         return list(cls._skills.values())
 
     @classmethod
@@ -139,6 +146,7 @@ class SkillRegistry:
     @classmethod
     def search(cls, query: str) -> list[SkillDefinition]:
         """Fuzzy search skills by name, description, or tags."""
+        ensure_presets()
         query = query.lower()
         results = []
         for skill in cls._skills.values():
@@ -154,6 +162,7 @@ class SkillRegistry:
     @classmethod
     def children(cls, name: str) -> list[str]:
         """返回 skill 的直接子技能名 (parent == name)."""
+        ensure_presets()
         return sorted(
             s.name for s in cls._skills.values() if s.parent == name
         )
@@ -187,6 +196,7 @@ class SkillRegistry:
 
         顶层技能 (parent is None) 用 key None 列出.
         """
+        ensure_presets()
         mapping: dict[str, list[str]] = {}
         for s in cls._skills.values():
             key = s.parent or ""
@@ -203,3 +213,17 @@ class SkillRegistry:
 def register_skill(skill: SkillDefinition) -> SkillDefinition:
     """Decorator-style registration."""
     return SkillRegistry.register(skill)
+
+
+def ensure_presets() -> None:
+    """懒加载注册预设技能.
+
+    从 ``skills/__init__`` 移除 eager ``from ... import presets`` 后, 这里负责在
+    查询/取用技能前按需导入 presets. 副作用：导入 ``huginn.skills.presets`` 会
+    把 ~45 个预设 SkillDefinition 注册进 SkillRegistry. Python 模块缓存保证重复
+    调用是 no-op（幂等）; import 失败静默吞掉, 不阻断查询（advisory）.
+    """
+    try:
+        import huginn.skills.presets  # noqa: F401
+    except Exception:
+        logger.debug("ensure_presets: presets import failed", exc_info=True)

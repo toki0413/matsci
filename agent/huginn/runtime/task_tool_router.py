@@ -30,6 +30,21 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+# === 常驻基础子集 ===
+#
+# 设备端/小模型懒加载: agent 在任何 task 下都至少需要这几类"基础设施"工具
+# (读写文件/分析/文献/联网). 无 keyword / world-domain 命中时给这份而非全量
+# 132 工具, 避免每次对话把全部 schema 灌进小模型. 仅在 available 里存在的才保留.
+CORE_TOOL_NAMES: list[str] = [
+    "file_read_tool",
+    "file_write_tool",
+    "file_edit_tool",
+    "analysis_tool",
+    "literature_tool",
+    "web_search_tool",
+]
+
+
 # === Tool Category 定义 ===
 #
 # ponytail: category 名跟工具名前缀对齐 (vasp_tool → "vasp"). 这样
@@ -237,6 +252,52 @@ def route_tools(
         matched_categories, len(routed), len(available_tool_names),
     )
     return routed
+
+
+def world_domain_tools(task_message: str | None) -> list[str]:
+    """从 task 命中物理域, 返回该域已注册世界模型工具的**名字** (不实例化).
+
+    复用 security.tool_registry 的 ToolSpec.domain 作静态依据 (零 LLM):
+    task 文本子串命中某 ToolSpec.domain 即拉入该域工具. 无命中 / 注册表
+    不可用返回空. 这是把 autoloop 侧 ``_matching_domains`` 的按域过滤思想
+    带进工具路由: 让"热力学/力学"这类物理 task 把对应世界模型工具并进子集.
+    """
+    if not task_message:
+        return []
+    try:
+        from huginn.security.tool_registry import get_tool, registered_tools
+    except Exception:
+        return []
+    h = task_message.lower()
+    hits: list[str] = []
+    for name in registered_tools():
+        try:
+            dom = str(get_tool(name).schema.get("domain", "")).lower()
+        except Exception:
+            continue
+        if dom and dom in h:
+            hits.append(name)
+    return hits
+
+
+def compute_effective_subset(
+    task_message: str | None,
+    available_tool_names: list[str],
+) -> list[str]:
+    """常驻路由的最终工具子集 = keyword 命中 ∪ core 基础 ∪ world-domain 命中.
+
+    这是 ``register_tools_from_registry`` 在 task 存在时实际用的入口: 相比
+    ``route_tools`` (纯 keyword, 无命中返回空), 这里保证"总有最小可用集"——
+    无任何 keyword/domain 命中时返回 core 基础子集, 而非让调用方回退到全量.
+    空 task / 空 available → 空 (调用方回退原 tool_filter, 不破坏现状).
+    """
+    if not task_message or not available_tool_names:
+        return []
+    available_set = set(available_tool_names)
+    subset: set[str] = set(route_tools(task_message, available_tool_names))
+    subset |= {t for t in CORE_TOOL_NAMES if t in available_set}
+    subset |= {t for t in world_domain_tools(task_message) if t in available_set}
+    return [t for t in subset if t in available_set]
 
 
 # === 自检 ===

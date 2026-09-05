@@ -43,7 +43,14 @@ class FeatureFlags:
         # 注意: 模块代码仍读 env var, FeatureFlags 这里只是登记, 不直接控制.
         # 升级路径: 模块代码改为读 FeatureFlags 后, 删除 env var setdefault.
         "context_router": False,       # P3 信息路径多样性稀疏化 (context_builder)
-        "task_tool_router": False,     # task keyword → tool category 动态路由
+        # 设备端/小模型懒加载: 默认常驻. 按 task 路由最小工具子集, 无命中给
+        # core 基础子集而非全量 132 工具 (省 token/attention). 可
+        # HUGINN_FEATURE_TASK_TOOL_ROUTER=false 关回全量.
+        "task_tool_router": True,      # task keyword → tool category 动态路由
+        # M2 计算细粒度权限 + 预算 (execution/compute_policy.py). 默认关:
+        # 显式开启后在 orchestrator 热路径按 (tool×target×actor×heavy) 判权 + 配额,
+        # 关则不改变现有执行行为.
+        "compute_policy": False,       # 计算路由目标维度策略 + 预算
         # harness 实验性栅栏 (默认 off, 显式开启才生效). 见 huginn/harness/_enabled.py.
         # 开启方式: huginn.toml [feature_flags] 字段, 或环境变量 HUGINN_FEATURE_<NAME>=true.
         "harness_workflow_evolution": False,  # H2: variant bandit 演化回路
@@ -137,7 +144,8 @@ class FeatureFlags:
         "system_health_monitor": "系统资源监控 (CPU/内存/磁盘)",
         "system_health_auto_fix": "监控异常后自动熔断工具 (默认关)",
         "context_router": "P3 信息路径多样性稀疏化 (context_builder, 默认关)",
-        "task_tool_router": "task keyword → tool category 动态路由 (默认关)",
+        "task_tool_router": "task keyword → tool category 动态路由 (默认开, 无命中给 core 子集)",
+        "compute_policy": "M2 计算路由目标维度策略 + 预算 (默认关)",
         "harness_workflow_evolution": "H2 variant bandit 演化回路 (实验性, 默认关)",
         "harness_ood_holdout": "H6 OOD 留出验证, 防背题补丁 (实验性, 默认关)",
         "harness_significance_gate": "H5 结果显著性门, 统计检验 (实验性, 默认关)",
