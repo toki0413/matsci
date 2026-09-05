@@ -7,12 +7,27 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from huginn.agent import HuginnAgent
+from huginn.feature_flags import FeatureFlags
 from huginn.memory.longterm import LongTermMemory
 from huginn.memory.manager import MemoryManager
 from huginn.utils.prompt_cache import PromptCacheBuilder
+
+
+@pytest.fixture(autouse=True)
+def _disable_task_tool_router(monkeypatch):
+    """本文件单元测试注入 _agent_graph/假模型，不测 task 路由。
+
+    默认开启的 task_tool_router 会让 chat() 按新 task 调 refresh_tools_from_registry()，
+    从而重置注入的 graph → build_graph 走到 select_model → model=None 抛错。
+    路由有专门用例，这里显式关掉以保持被测行为隔离。
+    """
+    ff = FeatureFlags()
+    ff.disable("task_tool_router")
+    monkeypatch.setattr("huginn.feature_flags.FeatureFlags.shared", lambda: ff)
 
 
 class _CaptureGraph:

@@ -5,11 +5,26 @@ from __future__ import annotations
 import asyncio
 import time
 
+import pytest
+
 from huginn.agent import HuginnAgent
+from huginn.feature_flags import FeatureFlags
 from huginn.telemetry import (
     TelemetryCollector,
     set_telemetry_collector,
 )
+
+
+@pytest.fixture(autouse=True)
+def _disable_task_tool_router(monkeypatch):
+    """测试注入假 graph/假模型，不测 task 路由。
+
+    默认开启的 task_tool_router 会让 chat() 按新 task 重置注入的 graph → 走
+    select_model → model=None 抛错。这里显式关掉以隔离被测行为。
+    """
+    ff = FeatureFlags()
+    ff.disable("task_tool_router")
+    monkeypatch.setattr("huginn.feature_flags.FeatureFlags.shared", lambda: ff)
 
 
 class TestTelemetryCollector:

@@ -19,6 +19,21 @@ pytestmark = pytest.mark.skipif(
     not _sqlite_saver_available, reason="langgraph sqlite checkpointer not available"
 )
 
+
+@pytest.fixture(autouse=True)
+def _disable_task_tool_router(monkeypatch):
+    """本文件是端到端 agent 流程测试，非 task 路由测试。
+
+    默认开启的 task_tool_router 会按 query 过滤出最小工具子集，把已注册的
+    e2e_calculator 排除，导致脚本化 tool_call 变 dangling 被中间件丢弃。
+    这里显式关掉，让被测假模型始终可见已注册工具。
+    """
+    from huginn.feature_flags import FeatureFlags
+
+    ff = FeatureFlags()
+    ff.disable("task_tool_router")
+    monkeypatch.setattr("huginn.feature_flags.FeatureFlags.shared", lambda: ff)
+
 from langchain_core.language_models.chat_models import BaseChatModel  # noqa: E402
 from langchain_core.messages import AIMessage  # noqa: E402
 from langchain_core.outputs import ChatGeneration, ChatResult  # noqa: E402

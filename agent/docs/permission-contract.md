@@ -108,7 +108,7 @@
   - `\bdel\s+/[fsq]\b`
   - `\brmdir\s+/s\b`
   - `\brd\s+/s\b`
-  - `powershell\s+-enc\b`
+  - `(?:powershell|pwsh)(?:\.exe)?\s+-enc(?:odedcommand)?\b`
   - `\bnc\s+-[elp]`
   - `netcat\b`
   - `crontab\s+-[er]`
