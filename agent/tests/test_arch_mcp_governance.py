@@ -32,6 +32,7 @@ _ALLOWED_WIRING_FILES = frozenset({
     "huginn/tools/mcp_adapter.py",   # register_mcp_tools 定义地
     "huginn/cli/context.py",         # CLI 本地 MCP 兜底
     "huginn/catalog/reconcile.py",   # catalog 控制面：MCP 启停/重连的唯一落地处
+    "huginn/tools/eco_tool.py",      # 会话内 mcp_connect：经 MCPClientManager + mcp_adapter 代理的合法接线入口
 })
 
 
