@@ -1,0 +1,30 @@
+cff-version: 1.2.0
+message: "If you use Huginn in your research or project, please cite it as below."
+title: "Huginn"
+abstract: >-
+  Huginn is an LLM-driven agent system for general scientific research. It
+  automates DFT calculations, molecular dynamics, CFD/FEA simulation, symbolic
+  regression, causal analysis (TDA/SINDy), and multi-agent research collaboration,
+  with Lean 4 formal verification of the underlying mathematics. Its literature
+  depth layers factor reported values by real physical degrees of freedom
+  (functional / temperature / method) rather than conflating discrepancies, and
+  attach object-level provenance to every extracted claim.
+type: software
+keywords:
+  - scientific-agent
+  - materials-science
+  - dft
+  - molecular-dynamics
+  - formal-verification
+  - lean4
+  - causal-analysis
+  - llm
+authors:
+  - family-names: toki0413
+    given-names: "Huginn contributors"
+    website: "https://github.com/toki0413"
+repository-code: "https://github.com/toki0413/matsci"
+url: "https://github.com/toki0413/matsci"
+license: MIT
+version: "1.3.8"
+date-released: "2026-09-06"

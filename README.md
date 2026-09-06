@@ -28,27 +28,28 @@ DFT 理论、热力学与概率同时进行形式化证明。
 是三个不同的条件。跑这个零网络、零凭据、确定性的演示即可复现：
 
 ```bash
-cd agent && python -m huginn.experimental.local_global_compat
+python examples/demo_evidence_chain.py
 ```
 
 ```
-== 局部化 (按自由度分组) ==
-  dft/pbe/eV      n=3 median= 4.0965  组内verdict=consensus  缺=['temperature']
-  experiment/t_room/eV  n=3 median= 5.8014  组内verdict=consensus  缺=无
-  dft/hse06/eV    n=3 median= 5.9712  组内verdict=consensus  缺=['temperature']
-== 组间互洽 (整体兼容) ==
-  dft/pbe/eV vs experiment/t_room/eV:  rel_dev=0.2939 → conflicting
-  experiment/t_room/eV vs dft/hse06/eV: rel_dev=0.0284 → consistent
-== 缺自由度汇总 == ['method_family', 'temperature']
+[1] 局部化: 按物理自由度分组 (每个条件组内部是否收敛)
+  dft/pbe/eV      2  4.0750  consensus      temperature
+  experiment/t_room/eV  2  5.8000  consensus      无
+  dft/hse06/eV    2  6.0000  consensus      temperature
+[2] 缺度追问: 缺 temperature (urgency=3) -> Li2O band gap value at temperature T eV
+[3] 对象级取证: 每条值绑定来源论文强引用证据 (fid + sha256 快照)
+[4] 门禁不变量: 豁免决策 w-2f38… dim=temperature  → 门禁 pass_with_waiver
 ```
 
 它揭示的正是**朗兰兹式"局部-整体"本体**：每个条件组内部收敛（局部一致），组间差异
-被显式归因于缺省的自由度（泛函/温度），而非吞进一个笼统的 `conflicting`。这也是
-Huginn 打动科研用户的核心理念——**不假装一致，也不捏造自由度**。
+被显式归因于缺省的自由度（泛函/温度），而非吞进一个笼统的 `conflicting`；补后仍缺的
+关键自由度落**显式豁免决策档**（哈希链可复核），而不是被悄悄吞掉。这是 Huginn 打动
+科研用户的核心理念——**不假装一致，也不捏造自由度**。
 
-> 缺度追问（补全检索取证 + 显式豁免决策档）见
+> 演示脚本见 [`examples/demo_evidence_chain.py`](examples/demo_evidence_chain.py)；
+> 缺度追问取证实现（对象级取证 + 显式豁免决策档 + 门禁不变量）见
 > [`completion_evidence.py`](agent/huginn/tools/literature/completion_evidence.py)，
-> 三组纯函数均有单测可跑：`cd agent && python -m pytest tests/test_completion_evidence.py -q`。
+> 三组纯函数均有单测：`cd agent && python -m pytest tests/test_completion_evidence.py -q`。
 
 ---
 
