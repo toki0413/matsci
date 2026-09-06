@@ -140,8 +140,11 @@ def build() -> gr.Blocks:
             with gr.Tab("③ MCP 能力"):
                 gr.Markdown("### 3 个可独立发布的 MCP server（mat-db / math-anything / vision-pixel）")
                 gr.Markdown(panel3_tools())
-                gr.Markdown("### 试 graph 视觉: vision-pixel 取主色")
-                img_in = gr.Image(type="filepath", label="上传图片")
+                gr.Markdown("### 试 vision-pixel 取主色（已预置示例图，或上传你自己的）")
+                img_in = gr.Image(
+                    type="filepath", value="assets/sample_crystal.jpg",
+                    label="图片（默认示例：Li2O 晶体质感图）",
+                )
                 img_btn = gr.Button("提取主色")
                 img_out = gr.Markdown()
                 img_btn.click(panel3_colors, img_in, img_out)
