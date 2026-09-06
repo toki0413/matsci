@@ -1,6 +1,14 @@
 # Huginn
 
-**Huginn**（包名 `huginn-agent`，v1.3.0，MIT）是一个面向**通用科学研究**的
+> **Intelligence for Materials Discovery** — 一个能*解释分歧*、不只是检索文献的通用科研 Agent。
+
+<center>
+
+**[Huginn 品牌落地页](huginn-brand/pages/index.html)** · 通用科研自动化（非材料专用） · MIT · `huginn-agent` v1.3.x
+
+</center>
+
+**Huginn**（包名 `huginn-agent`，v1.3.x，MIT）是一个面向**通用科学研究**的
 LLM 驱动智能 Agent 系统，内置**形式化验证（Lean 4）**数学能力。它从计算材料
 科学起家，现已泛化为覆盖多学科科研自动化的通用 Agent：自动执行 DFT 计算、
 分子动力学、CFD/FEA 仿真、符号回归、因果分析（TDA/SINDy）、文献检索、自主
@@ -10,6 +18,37 @@ DFT 理论、热力学与概率同时进行形式化证明。
 > 定位演进：**并非"材料科学专用"**。材料/仿真只是其能力集之一；整系统的
 > 重心是"通用科研自动化"——研究项目编排、多智能体 team、知识蒸馏、因果与
 > 结构分析、MCP 工具生态、远程/HPC 调度等（见 [tech-spec.md](agent/docs/tech-spec.md)）。
+
+---
+
+## 30 秒感受它有什么不同
+
+许多 agent 会"检索到 3 个互相矛盾的数值"然后告诉你结论。Huginn 会**先把它们
+按真实自由度拆开归因**：0K 的 PBE 低估带隙、室温实验、HSE 杂化——它们不是矛盾，
+是三个不同的条件。跑这个零网络、零凭据、确定性的演示即可复现：
+
+```bash
+cd agent && python -m huginn.experimental.local_global_compat
+```
+
+```
+== 局部化 (按自由度分组) ==
+  dft/pbe/eV      n=3 median= 4.0965  组内verdict=consensus  缺=['temperature']
+  experiment/t_room/eV  n=3 median= 5.8014  组内verdict=consensus  缺=无
+  dft/hse06/eV    n=3 median= 5.9712  组内verdict=consensus  缺=['temperature']
+== 组间互洽 (整体兼容) ==
+  dft/pbe/eV vs experiment/t_room/eV:  rel_dev=0.2939 → conflicting
+  experiment/t_room/eV vs dft/hse06/eV: rel_dev=0.0284 → consistent
+== 缺自由度汇总 == ['method_family', 'temperature']
+```
+
+它揭示的正是**朗兰兹式"局部-整体"本体**：每个条件组内部收敛（局部一致），组间差异
+被显式归因于缺省的自由度（泛函/温度），而非吞进一个笼统的 `conflicting`。这也是
+Huginn 打动科研用户的核心理念——**不假装一致，也不捏造自由度**。
+
+> 缺度追问（补全检索取证 + 显式豁免决策档）见
+> [`completion_evidence.py`](agent/huginn/tools/literature/completion_evidence.py)，
+> 三组纯函数均有单测可跑：`cd agent && python -m pytest tests/test_completion_evidence.py -q`。
 
 ---
 

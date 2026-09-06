@@ -1,5 +1,25 @@
 # Huginn (agent package `huginn-agent`)
 
+> **Intelligence for Materials Discovery, generalized.** An agent that *explains
+> discrepancies* — it factors reported values by their real physical degrees of
+> freedom (functional / temperature / method) instead of telling you "3 papers
+> disagree". Reproduce it now, with no network, no keys:
+
+```bash
+python -m huginn.experimental.local_global_compat
+```
+
+```
+== 局部化 (按自由度分组) ==
+  dft/pbe/eV      n=3 median= 4.0965  组内verdict=consensus  缺=['temperature']
+  experiment/t_room/eV  n=3 median= 5.8014  组内verdict=consensus  缺=无
+  dft/hse06/eV    n=3 median= 5.9712  组内verdict=consensus  缺=['temperature']
+== 组间互洽 (整体兼容) ==
+  dft/pbe/eV vs experiment/t_room/eV:  rel_dev=0.2939 → conflicting
+  experiment/t_room/eV vs dft/hse06/eV: rel_dev=0.0284 → consistent
+== 缺自由度汇总 == ['method_family', 'temperature']
+```
+
 An LLM-driven agent system for **general scientific research**. It started in
 computational materials science and has since generalized into a multi-domain
 research automation agent: DFT / molecular dynamics / CFD-FEA simulation,
