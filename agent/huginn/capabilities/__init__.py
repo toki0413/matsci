@@ -26,9 +26,12 @@ from huginn.capabilities.intents import (
     ExternalCapability,
     capability_from_tool,
 )
-from huginn.capabilities.registry import CapabilityRegistry
 from huginn.capabilities.presets import register_capability_presets
+from huginn.capabilities.registry import CapabilityRegistry
 
+# 对外"MCP 码头" (共享经济/生态融入): 能力 → 标准 MCP server / OpenAI function.
+# 经 PEP 562 惰性导出 (见 __getattr__), 保证 `python -m
+# huginn.capabilities.mcp_export` 能把该模块当 __main__ 干净加载.
 __all__ = [
     "Capability",
     "CapabilityError",
@@ -39,4 +42,31 @@ __all__ = [
     "capability_from_tool",
     "CapabilityRegistry",
     "register_capability_presets",
+    # MCP 码头 (惰性)
+    "CapabilityMCPBackend",
+    "as_mcp_tools",
+    "as_openai_functions",
+    "server",
+    "list_json",
 ]
+
+
+def __getattr__(name: str):
+    """PEP 562 惰性暴露 MCP 码头符号.
+
+    不在包顶层 eager import ``mcp_export``: 否则 ``python -m
+    huginn.capabilities.mcp_export`` 时该模块会被包先装入 sys.modules,
+    ``if __name__ == '__main__'`` 永不触发, `-m` 起不了 server. 惰性导出
+    让 ``from huginn.capabilities import server`` 依旧可用, 又不污染包导入.
+    """
+    if name in {
+        "CapabilityMCPBackend",
+        "as_mcp_tools",
+        "as_openai_functions",
+        "server",
+        "list_json",
+    }:
+        from huginn.capabilities import mcp_export as _m
+
+        return getattr(_m, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

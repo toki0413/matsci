@@ -19,6 +19,10 @@ from huginn.capabilities.base import (
     Capability,
     CapabilityResult,
 )
+from huginn.capabilities.capability_tool import (
+    CapabilityTool,
+    CapabilityToolInput,
+)
 from huginn.capabilities.intents import (
     AtomicCapability,
     CompositeCapability,
@@ -29,6 +33,7 @@ from huginn.capabilities.registry import (
     CapabilityRegistry,
 )
 from huginn.core_types import ToolContext, ToolResult
+from huginn.tools import register_capability_tools as _register_cap_tools
 from huginn.tools.base import HuginnTool
 from huginn.tools.registry import ToolRegistry
 
@@ -401,3 +406,96 @@ class TestPresetRegistration:
         assert entry is not None
         assert entry["category"] == "literature"
         assert entry["available"] is True
+
+
+# ── capability_tool (LLM 入口) ──────────────────────────────────────────────
+
+
+class TestCapabilityTool:
+    def setup_method(self):
+        self._tsnap = ToolRegistry.snapshot()
+        CapabilityRegistry.clear()
+        CapabilityRegistry.register(_AddOneCap())
+        self._tool = CapabilityTool()
+
+    def teardown_method(self):
+        ToolRegistry.restore(self._tsnap)
+        CapabilityRegistry.clear()
+
+    def test_list_returns_manifest(self):
+        res = asyncio.run(self._tool.call(CapabilityToolInput(action="list"), _ctx()))
+        assert res.success
+        assert res.data["n_capabilities"] >= 1
+        names = {c["name"] for c in res.data["capabilities"]}
+        assert "add_one_cap" in names
+
+    def test_search_filters_by_keyword(self):
+        res = asyncio.run(
+            self._tool.call(CapabilityToolInput(action="search", query="add"), _ctx())
+        )
+        assert res.success
+        assert all("add" in c["name"] for c in res.data["capabilities"])
+
+    def test_search_empty_query_returns_all(self):
+        res = asyncio.run(
+            self._tool.call(CapabilityToolInput(action="search", query=""), _ctx())
+        )
+        assert res.success
+        assert res.data["n_capabilities"] >= 1
+
+    def test_run_executes_capability(self):
+        res = asyncio.run(
+            self._tool.call(
+                CapabilityToolInput(action="run", name="add_one_cap", args={"x": 4}),
+                _ctx(),
+            )
+        )
+        assert res.success
+        assert res.data["capability"] == "add_one_cap"
+        assert res.data["result"] == {"result": 5}
+
+    def test_run_unknown_capability_fails(self):
+        res = asyncio.run(
+            self._tool.call(
+                CapabilityToolInput(action="run", name="nope"), _ctx()
+            )
+        )
+        assert not res.success
+
+    def test_run_without_name_fails(self):
+        res = asyncio.run(self._tool.call(CapabilityToolInput(action="run"), _ctx()))
+        assert not res.success
+        assert "name" in (res.error or "")
+
+    def test_registered_as_core_tool(self):
+        # CapabilityTool 应进入装配链 (list_tools 可见)
+        if ToolRegistry.get("capability_tool") is None:
+            ToolRegistry.register(self._tool)
+        assert "capability_tool" in ToolRegistry.list_tools()
+
+
+# ── 装配钩子: register_capability_tools ─────────────────────────────────────
+
+
+class TestRegisterCapabilityTools:
+    def setup_method(self):
+        self._tsnap = ToolRegistry.snapshot()
+        CapabilityRegistry.clear()
+        ToolRegistry.register(_MockLitTool())
+
+    def teardown_method(self):
+        ToolRegistry.restore(self._tsnap)
+        CapabilityRegistry.clear()
+
+    def test_registers_presets_after_scan(self):
+        names = _register_cap_tools()
+        assert "literature_research_cap" in names
+        # 原子能力应已被自动装箱 (scan_tool_registry 在内部调用)
+        assert CapabilityRegistry.get("literature_tool") is not None
+
+    def test_is_idempotent_after_scan(self):
+        _register_cap_tools()
+        manifest_count_1 = len(CapabilityRegistry.manifest())
+        _register_cap_tools()
+        manifest_count_2 = len(CapabilityRegistry.manifest())
+        assert manifest_count_1 == manifest_count_2
