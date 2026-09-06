@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from typing import Any
 
 from huginn.core_types import ToolContext, ToolResult
@@ -139,19 +140,45 @@ async def run_real_body(
     seed: int,
     noise_sd: float = 0.04,
     drop: float = 0.1,
+    model=None,
 ) -> dict[str, Any]:
-    """用假身体驱动真实 `_do_benchmark_lookup`, 返回结构化结果."""
+    """用 (假或真) 身体驱动真实 `_do_benchmark_lookup`.
+
+    model 缺省时用 `FakeBodyModel` (可复现, 离线); 传真 model (如真实
+    ChatOpenAI) 时就跑真 LLM 身体. 其余 (搜索/过滤/后端路由/校验) 全走生产代码.
+    """
     tool = LiteratureTool()
     ctx = ToolContext(session_id="real-body", workspace=".")
-    # 注入假身体: 替换 _get_model, 其余 (搜索/过滤/后端路由) 完全不碰
+    # 注入身体: 替换 _get_model, 其余完全不碰
     pts = _papers_with_text(papers)
-    model = FakeBodyModel(
-        [(i, p) for i, p in pts if p], seed=seed, noise_sd=noise_sd, drop=drop
-    )
+    if model is None:
+        model = FakeBodyModel(
+            [(i, p) for i, p in pts if p],
+            seed=seed,
+            noise_sd=noise_sd,
+            drop=drop,
+        )
     tool._get_model = lambda context: model  # type: ignore[method-assign]
     args = _benchmark_args(system, property_, pts)
     result: ToolResult = await tool._do_benchmark_lookup(args, ctx)
     return result.data if isinstance(result.data, dict) else {}
+
+
+def _real_deepseek_model(
+    api_key: str, *, temperature: float, model: str = "deepseek-chat"
+):
+    """构造真实 deepseek 身体 (走 huginn/bench/llm_judge 同款封装)."""
+    from langchain_openai import ChatOpenAI
+
+    if not api_key:
+        raise RuntimeError("DEEPSEEK_API_KEY 未设置")
+    return ChatOpenAI(
+        model=model,
+        api_key=api_key,
+        base_url="https://api.deepseek.com/v1",
+        temperature=temperature,
+        max_tokens=2000,
+    )
 
 
 # ── 内联驱动 (无重依赖) ──────────────────────────────────────────────────
@@ -161,7 +188,7 @@ def run(*, seed: int = 0, noise_sd: float = 0.04, drop: float = 0.1) -> dict[str
     papers = _synthetic_papers(seed)
     # 取 Li2O band_gap 单体系, 保证单一 unit 语义
     system, property_ = "Li2O", "band_gap"
-    subset = [p for p in papers if p["system"] == system]
+    subset = [p for p in papers if p["system"] == system and p["property"] == property_]
     if not subset:
         return {"ok": False, "error": "no papers for system"}
 
@@ -191,7 +218,109 @@ def run(*, seed: int = 0, noise_sd: float = 0.04, drop: float = 0.1) -> dict[str
     }
 
 
+def run_deepseek(
+    *,
+    api_key: str,
+    system: str = "Li2O",
+    property_: str = "band_gap",
+    seed: int = 0,
+    model: str = "deepseek-chat",
+    papers: list[dict[str, Any]] | None = None,
+    temps: tuple[float, float] = (0.2, 0.7),
+    full_text: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """用真实 deepseek 身体跑多次 (不同 temperature), 判断结构层收敛性.
+
+    诚实标注: 这里两个"身体"是**同一个真实 LLM、不同解码温度**, 不是两个
+    不同品牌模型. 因此它在真实生产路径下验证的是"读取误差(解码随机性)下,
+    agent 结构层仍把分散抽取收敛成同一稳健结论"; 它**不**声称验证"跨品牌
+    模型一致性" (那需要两套独立 API key, 本环境不具备).
+
+    判别: 各 body 的 consensus 中位数应落在同一真值邻域、verdict 一致.
+    """
+    if papers is None:
+        papers = [
+            p
+            for p in _synthetic_papers(seed)
+            if p["system"] == system and p["property"] == property_
+        ]
+    if not papers:
+        return {"ok": False, "error": f"no {system} {property_} papers"}
+
+    base = os.environ.get("DEEPSEEK_API_KEY", api_key)
+    runs = []
+    for t in temps:
+        model_obj = _real_deepseek_model(base, temperature=t, model=model)
+        aug = []
+        for p in papers:
+            item = dict(p)
+            if full_text:
+                key = p.get("doi") or p.get("source_paper") or ""
+                item["full_text"] = full_text.get(key, item.get("full_text", ""))
+            aug.append(item)
+        data = asyncio.run(
+            run_real_body(
+                papers=aug,
+                system=system,
+                property_=property_,
+                model=model_obj,
+                seed=seed,
+                drop=0.0,
+                noise_sd=0.0,
+            )
+        )
+        runs.append(
+            {
+                "temperature": t,
+                "reported_values": data.get("reported_values", []),
+                "consensus": data.get("consensus"),
+                "consistency": data.get("consistency"),
+                "n_reported": len(data.get("reported_values", [])),
+            }
+        )
+
+    # 判别: 跨两身体稳健中心一致性
+    medians = [
+        r["consensus"]["median"]
+        for r in runs
+        if r["consensus"] and r["consensus"]["median"] is not None
+    ]
+    verdicts = [
+        (r["consistency"] or {}).get("overall", {}).get("verdict") for r in runs
+    ]
+    tol = max(abs(papers[0]["value"]) * 0.15, 0.05) if papers else 0.05
+    converge = False
+    if len(medians) == len(runs) and len(medians) >= 2:
+        converge = max(medians) - min(medians) <= tol
+    return {
+        "ok": True,
+        "system": system,
+        "property": property_,
+        "model": model,
+        "n_real_bodies": len(runs),
+        "runs": runs,
+        "real_bodies_converge": converge,
+        "median_spread": (
+            round(max(medians) - min(medians), 6) if len(medians) >= 2 else None
+        ),
+        "verdicts": verdicts,
+    }
+
+
 if __name__ == "__main__":
     import json
+    import sys
 
-    print(json.dumps(run(seed=1), ensure_ascii=False, indent=2))
+    if len(sys.argv) > 1 and sys.argv[1] == "--deepseek":
+        key = os.environ.get("DEEPSEEK_API_KEY", "")
+        if not key:
+            sys.exit("set DEEPSEEK_API_KEY and pass --deepseek")
+        print(
+            json.dumps(
+                run_deepseek(api_key=key, temps=(0.2, 0.7)),
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+    else:
+        print(json.dumps(run(seed=1), ensure_ascii=False, indent=2))
