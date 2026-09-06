@@ -279,16 +279,31 @@ async def serve_stdio(server_: Any) -> None:
         )
 
 
+def _http_app(server_: Any) -> Any:
+    """按当前 mcp SDK 版本选 API 组装 streamable HTTP ASGI app (跨版本兼容)."""
+    try:
+        from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+        return StreamableHTTPSessionManager(server_)
+    except ImportError:
+        pass
+    try:
+        from mcp.server.streamable_http import streamable_http_server
+        return streamable_http_server(server_)
+    except ImportError:
+        pass
+    from mcp.server.http import streamable_http_server
+    return streamable_http_server(server_)
+
+
 async def serve_http(server_: Any, host: str, port: int) -> None:
     """HTTP-streamable 传输: 让远程 MCP host 通过 HTTP POST 调用能力.
 
     建在 starlette/uvicorn 上, 便于 LAN / 内网共享 (共享经济的"对外服务"形态).
     """
-    from mcp.server.http import streamable_http_server
     from uvicorn import Config
     from uvicorn import Server as UvicornServer
 
-    app = streamable_http_server(server_)
+    app = _http_app(server_)
     cfg = Config(app=app, host=host, port=port, log_level="info")
     uvicorn_server = UvicornServer(cfg)
     await uvicorn_server.serve()

@@ -159,6 +159,33 @@ def _collect_plugins(plugins_dir: str | Path | None) -> list[CatalogEntry]:
     return out
 
 
+def _collect_workflows() -> list[CatalogEntry]:
+    """从 WorkflowRegistry 采集命名工作流 (内置模板 + 已注册脚本)."""
+    from huginn.workflows.registry import WorkflowRegistry
+
+    WorkflowRegistry.register_builtin_templates()
+    out: list[CatalogEntry] = []
+    for it in WorkflowRegistry.manifest():
+        name = it.get("name")
+        if not name:
+            continue
+        out.append(CatalogEntry(
+            id=make_entry_id("workflow", name),
+            kind="workflow",
+            name=name,
+            origin="builtin",
+            registered_names=[name],
+            meta={
+                "kind": it.get("kind"),
+                "category": it.get("category", ""),
+                "n_stages": it.get("n_stages", 0),
+                "n_subtasks": it.get("n_subtasks", 0),
+                "params": it.get("params", []),
+            },
+        ))
+    return out
+
+
 # 各 kind 的采集函数: kind -> callable(handles, ...) -> list[CatalogEntry].
 def _kind_collectors(handles: dict[str, Any]) -> dict[str, list[CatalogEntry]]:
     return {
@@ -168,6 +195,7 @@ def _kind_collectors(handles: dict[str, Any]) -> dict[str, list[CatalogEntry]]:
         "plugin": _collect_plugins(handles.get("plugins_dir")),
         "prompt": _collect_prompts(),
         "mcp": _collect_mcps(handles.get("mcp_manager")),
+        "workflow": _collect_workflows(),
     }
 
 

@@ -16,7 +16,8 @@ from typing import Any
 #   skill  -> SkillRegistry
 #   prompt -> prompt_segments
 #   plugin -> plugins/loader + StarHandlerRegistry
-KINDS = ("mcp", "plugin", "skill", "tool", "prompt", "model")
+#   workflow -> WorkflowRegistry
+KINDS = ("mcp", "plugin", "skill", "tool", "prompt", "model", "workflow")
 
 # 来源. discover_all 去重时按该优先级: 值越大越优先保留.
 #   builtin   -> lifespan/servers 目录内置 server
