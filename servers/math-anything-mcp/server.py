@@ -345,5 +345,10 @@ async def main():
         )
 
 
-if __name__ == "__main__":
+def console_main() -> None:
+    """PyPI console-script 入口 (pip install 后由 math-anything-mcp 命令调用)."""
     asyncio.run(main())
+
+
+if __name__ == "__main__":
+    console_main()

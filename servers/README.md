@@ -23,6 +23,17 @@ python mat-db-mcp/server.py
 python mat-db-mcp/server.py --transport sse
 ```
 
+每个 server 也可独立从 PyPI 安装（即可被 `uvx`/`pipx` 拉起，也满足 MCP 生态目录收录）：
+
+```bash
+# mat-db:   pip install matsci-mat-db-mcp          # 接真实 MP 数据需 [db] extra
+#           uvx --from matsci-mat-db-mcp mat-db-mcp
+# math:     pip install matsci-math-anything-mcp
+#           uvx --from matsci-math-anything-mcp math-anything-mcp
+# vision:   pip install matsci-vision-pixel-mcp
+#           uvx --from matsci-vision-pixel-mcp vision-pixel-mcp
+```
+
 各服务器依赖（`mcp` 客户端库、`PIL`/`numpy` 等）由 `agent` 的 Python 环境提供；
 如需独立部署，请在对应目录内 `pip install mcp pillow numpy`。
 

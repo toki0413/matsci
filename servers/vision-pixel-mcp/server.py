@@ -353,8 +353,16 @@ async def main(transport: str) -> None:
         )
 
 
-if __name__ == "__main__":
+def console_main() -> None:
+    """PyPI console-script 入口 (pip install 后由 vision-pixel-mcp 命令调用).
+
+    默认 stdio; 传 --transport sse 可切 SSE 远程调用.
+    """
     ap = argparse.ArgumentParser()
     ap.add_argument("--transport", default="stdio", choices=["stdio", "sse"])
     args = ap.parse_args()
     asyncio.run(main(args.transport))
+
+
+if __name__ == "__main__":
+    console_main()

@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "matsci-mat-db-mcp"
+version = "0.1.0"
+description = "Material Science DB MCP server — query Materials Project (MP), AFLOW, NOMAD, OQMD, NIST interatomic potentials"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [{name = "Huginn contributors"}]
+requires-python = ">=3.11"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Chemistry",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+keywords = ["mcp", "materials", "materials-project", "aflow", "nomad", "oqmd", "llm"]
+dependencies = [
+    "mcp>=1.28.1,<2.0",
+]
+
+[project.optional-dependencies]
+# mp-api 较大默认不装; 有 MP_API_KEY 才需要接真实 Materials Project.
+db = ["mp-api>=0.12"]
+dev = ["pytest>=7.0"]
+
+[project.scripts]
+mat-db-mcp = "server:console_main"
+
+[project.urls]
+Repository = "https://github.com/toki0413/matsci/tree/master/servers/mat-db-mcp"
+Issues = "https://github.com/toki0413/matsci/issues"
+
+[tool.setuptools]
+py-modules = ["server"]
