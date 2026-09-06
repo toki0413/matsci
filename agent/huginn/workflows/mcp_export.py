@@ -138,12 +138,30 @@ async def serve_stdio(server_: Any) -> None:
         await server_.run(rs, ws, server_.create_initialization_options())
 
 
-async def serve_http(server_: Any, host: str, port: int) -> None:
+def _http_app(server_: Any) -> Any:
+    """按当前 mcp SDK 版本选 API 组装 streamable HTTP ASGI app."""
+    try:
+        # 新版: StreamableHTTPSessionManager 本身是 ASGI (有 __call__)
+        from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+        return StreamableHTTPSessionManager(server_)
+    except ImportError:
+        pass
+    try:
+        # 中版 helper
+        from mcp.server.streamable_http import streamable_http_server
+        return streamable_http_server(server_)
+    except ImportError:
+        pass
+    # 老版
     from mcp.server.http import streamable_http_server
+    return streamable_http_server(server_)
+
+
+async def serve_http(server_: Any, host: str, port: int) -> None:
     from uvicorn import Config
     from uvicorn import Server as UvicornServer
 
-    app = streamable_http_server(server_)
+    app = _http_app(server_)
     await UvicornServer(Config(app=app, host=host, port=port, log_level="info")).serve()
 
 
