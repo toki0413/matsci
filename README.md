@@ -1,6 +1,6 @@
 # Huginn
 
-> **Intelligence for Materials Discovery** — 一个能*解释分歧*、不只是检索文献的通用科研 Agent。
+> **Intelligence for Scientific Discovery** — 一个能*解释分歧*、不只是检索文献的通用科研 Agent。
 
 <center>
 
