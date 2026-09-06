@@ -134,6 +134,27 @@ class TestBenchmarkFetchesCompletion:
         assert "overall_verdict_before" in comp
         assert "revised" in comp
 
+        # 三条沉淀产物:
+        # (1) 对象级取证: 首轮 reported 每条都绑定了证据标签 (fid/sha256/source_id)
+        for rv in result.data["reported_values"]:
+            assert rv.get("evidence"), "每条 reported 值都应绑定对象级证据标签"
+            assert rv["evidence"]["source_id"]
+        #    补全轮 new_reported 也带证据标签
+        for rv in comp["new_reported"]:
+            assert rv.get("evidence")
+
+        # (2)/(3) 显式豁免 + 门禁: 补后 PBE/HSE 组仍缺 temperature (关键自由度,
+        #     urgency=3) → 应生成 waiver 决策档 + 门禁判定
+        assert "temperature" in comp["missing_dims_after"]
+        assert comp["waivers"], "补后仍缺关键自由度应生成显式豁免决策"
+        assert comp["waivers"][0]["dim"] == "temperature"
+        assert comp["waivers"][0]["decision_id"].startswith("w-")
+        gate = comp["gate"]
+        #    waiver 覆盖了 temperature → 门禁 pass_with_waiver (不再 needs_waiver)
+        assert gate["status"] == "pass_with_waiver"
+        assert gate["issues"] == []
+        assert "temperature" in gate["waived_dims"]
+
     def test_no_missing_dims_skips_complement(self, tmp_path, monkeypatch):
         # 三条值都声明了温度 → 不再缺 temperature, 不应发真实补全检索
         clean_llm = json.dumps({

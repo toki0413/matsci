@@ -816,6 +816,14 @@ class LiteratureTool(HuginnTool):
 
         # 抽取报道值 — 复用 _llm_extract_reported (缺度补全检索的二次抽取也走它)
         reported = await self._llm_extract_reported(papers, args.system, args.property, model)
+        # 对象级取证 (#1): 给每条值绑定来源论文的强引用证据标签 (fid + sha256 快照),
+        # 让 "这条值来自哪段原文" 随结果流动、可独立核实, 而非事后声明.
+        try:
+            from .completion_evidence import attach_evidence
+
+            reported = attach_evidence(reported, papers)
+        except Exception:
+            logger.debug("attach_evidence skipped (non-fatal)", exc_info=True)
 
         # 共识 + 离散度
         consensus = None
@@ -845,6 +853,7 @@ class LiteratureTool(HuginnTool):
         completion = None
         if reported:
             from huginn.experimental.local_global_compat import run_compat_experiment
+
             from .query_completion import build_followup_input, summarize_missing
             try:
                 known = _infer_known_conditions(reported)
@@ -926,6 +935,23 @@ class LiteratureTool(HuginnTool):
         )
 
     # ── 缺度追问: 抽取 + 实际补全检索 (对接1/对接2) ─────────────
+
+    def _decision_ledger(self) -> Any:
+        """返回缺度豁免决策档 (可注入/可 mock).
+
+        默认写到系统临时目录下的 decisions.jsonl, 不绑定全局单例, 便于测试
+        与隔离; 子类/测试可覆写此方法注入自定义路径或 mock.
+        """
+        import tempfile
+        from pathlib import Path
+
+        from .completion_evidence import DecisionLedger
+
+        return DecisionLedger(
+            str(getattr(self, "_decision_log_path", "") or "") or str(
+                Path(tempfile.gettempdir()) / "huginn_completion_decisions.jsonl"
+            )
+        )
 
     async def _llm_extract_reported(
         self,
@@ -1033,6 +1059,13 @@ class LiteratureTool(HuginnTool):
         new_reported: list[dict[str, Any]] = []
         if new_papers:
             new_reported = await self._llm_extract_reported(new_papers, system, property, model)
+        # 补全轮同样做对象级取证 (#1): 给补新值绑定证据标签, 随合并流动.
+        try:
+            from .completion_evidence import attach_evidence
+
+            new_reported = attach_evidence(new_reported, new_papers)
+        except Exception:
+            logger.debug("complement attach_evidence skipped (non-fatal)", exc_info=True)
         if not new_reported:
             return {
                 "executed": True,
@@ -1048,6 +1081,44 @@ class LiteratureTool(HuginnTool):
         merged = reported + new_reported
         revised = run_compat_experiment(merged)
         revised_consistency = _annotate_value_consistency(merged)
+        missing_after = revised.get("missing_dims", [])
+
+        # 显式豁免 + 决策档 (#2) + 门禁不变量 (#3):
+        # 补后仍缺的关键自由度 (urgency>=2, 影响整体互洽判定) 不再 silent 接受,
+        # 落一条 waiver 决策档 (可复核), 再由 assess_gate 判能否放行.
+        from .completion_evidence import (
+            assess_gate,
+            build_waivers,
+            critical_missing,
+        )
+        from .query_completion import _URGENCY
+
+        gate = None
+        waivers: list[dict[str, Any]] = []
+        decision_log_verified = None
+        if missing_after:
+            blocking_dims = critical_missing(missing_after, _URGENCY)
+            waivers = build_waivers(
+                blocking_dims, reason_var=f"system={system},property={property}"
+            )
+            waived_dims = [w["dim"] for w in waivers]
+            gate = assess_gate(
+                blocking_dims, waived_dims, verdict=revised["overall_verdict"]
+            )
+            # 落决策档 (best-effort, 失败不阻塞主结果). DecisionLedger/路径均可
+            # 由测试注入; 默认写到系统临时目录, 不绑定全局单例.
+            try:
+                ledger = self._decision_ledger()
+                for w in waivers:
+                    ledger.append(w)
+                decision_log_verified, decision_log_problems = ledger.verify()
+                gate["decision_log_path"] = str(getattr(ledger, "_path", ""))
+                gate["decision_log_verified"] = bool(decision_log_verified)
+                if decision_log_problems:
+                    gate["decision_log_problems"] = decision_log_problems
+            except Exception:
+                logger.debug("waiver decision ledger write skipped (non-fatal)", exc_info=True)
+
         return {
             "executed": True,
             "query": query,
@@ -1055,11 +1126,14 @@ class LiteratureTool(HuginnTool):
             "new_reported": new_reported,
             "n_total_sources": len(merged),
             "missing_dims_before": compat.get("missing_dims", []),
-            "missing_dims_after": revised.get("missing_dims", []),
+            "missing_dims_after": missing_after,
             "overall_verdict_before": compat["overall_verdict"],
             "overall_verdict_after": revised["overall_verdict"],
             "consistency_before": compat["flat_confounding"]["overall"]["verdict"],
             "consistency_after": revised_consistency["overall"]["verdict"],
+            "waivers": waivers,
+            "gate": gate,
+            "decision_log_verified": decision_log_verified,
             "revised": revised,
         }
 
