@@ -24,10 +24,13 @@ from huginn.permissions import PermissionConfig
 from huginn.tools.agentic_search_tool import (
     AgenticSearchInput,
     AgenticSearchTool,
+    _build_provenance,
+    _critique,
     _derive_followups,
     _extract_relevant,
     _html_to_text,
     _keywords,
+    _refine_queries,
     _score_passage,
     _sentences,
     _synthesize,
@@ -631,4 +634,148 @@ class TestExtractRelevantSemantic:
             text, "silicon band gap", max_passages=2, min_score=1, embed=_bad_embed
         )
         assert any("1.12" in p for p in passages)
+
+
+# ── L3: critique→refine 闭环 + 逐断言 provenance ─────────────────────────────
+
+class TestCritique:
+    def test_multi_source_ok(self):
+        fs = [
+            {"url": "http://a.com/x", "passages": ["silicon band gap 1.12"]},
+            {"url": "http://b.org/y", "passages": ["band gap depends on temperature"]},
+        ]
+        out = _critique(fs, "band gap silicon")
+        assert out["coverage_ok"] is True
+        assert out["verdict"] == "satisfactory"
+        assert out["n_domains"] == 2
+
+    def test_single_domain_gap(self):
+        fs = [
+            {"url": "http://a.com/x", "passages": ["silicon band gap"]},
+            {"url": "http://a.com/y", "passages": ["more band gap"]},
+        ]
+        out = _critique(fs, "band gap silicon")
+        assert out["coverage_ok"] is False
+        assert any("independent sources" in g for g in out["gaps"])
+
+    def test_no_keyword_match_gap(self):
+        fs = [{"url": "http://a.com/x", "passages": ["weather is nice today"]}]
+        out = _critique(fs, "silicon band gap")
+        assert out["coverage_ok"] is False
+        assert any("no passage matched" in g for g in out["gaps"])
+
+    def test_empty_findings_gap(self):
+        out = _critique([], "silicon band gap")
+        assert out["verdict"] == "needs_refinement"
+        assert "no evidence found" in out["gaps"]
+
+    def test_custom_thresholds(self):
+        fs = [{"url": "http://a.com/x", "passages": ["silicon band gap 1.12"]}]
+        out = _critique(fs, "silicon band gap", min_sources=1)
+        assert out["coverage_ok"] is True  # 单源 + 命中即通过
+
+
+class TestRefineQueries:
+    def test_local_coverage_no_refine(self):
+        fs = [
+            {"url": "http://a.com/x", "passages": ["band gap 1.12"]},
+            {"url": "http://b.org/y", "passages": ["band gap temp"]},
+        ]
+        crit = _critique(fs, "band gap")
+        assert _refine_queries(fs, crit, "band gap") == []
+
+    def test_derives_queries_to_close_gap(self):
+        # 单一来源 -> refine 需派生带新词的查询
+        fs = [{"url": "http://a.com/x", "title": "Silicon temperature dependence",
+               "passages": ["silicon band gap"], "hop": 0}]
+        crit = _critique(fs, "band gap silicon", min_sources=2)
+        rq = _refine_queries(fs, crit, "band gap silicon", max_n=3)
+        assert rq  # 非空
+        assert any("temperature" in q or "dependence" in q for q in rq)
+
+    def test_empty_findings_no_refine(self):
+        assert _refine_queries([], {"coverage_ok": False}, "q") == []
+
+
+class TestBuildProvenance:
+    def test_maps_each_finding_to_fid(self):
+        fs = [
+            {"url": "http://a.com/x", "title": "T1", "passages": ["p1"], "hop": 0},
+            {"url": "http://b.org/y", "title": "T2", "passages": ["p2"], "hop": 1},
+        ]
+        prov = _build_provenance(fs)
+        assert "1" in prov and "2" in prov
+        assert prov["1"]["url"] == "http://a.com/x"
+        assert prov["1"]["fid"] == "1"
+        assert prov["2"]["hop"] == 1
+
+    def test_empty_findings(self):
+        assert _build_provenance([]) == {}
+
+
+class TestResearchWithRefine:
+    def test_refine_adds_pass_when_coverage_gap(self):
+        # hop 1 只有单一来源 -> critique 判缺口 -> refine 补一轮多源.
+        # _refine_queries 走 _derive_followups: orig "band gap" + title 新词
+        # (silicon/temperature/dependence) -> 派生 "band gap silicon temperature dependence",
+        # 命中 b.org 的新来源, 补齐单源缺口.
+        searcher = _make_searcher({
+            "band gap": [
+                {"url": "http://a.com/x", "title": "Silicon temperature dependence study",
+                 "snippet": "s"},
+            ],
+            "band gap silicon temperature dependence": [
+                {"url": "http://b.org/y", "title": "Temp effects on band gap",
+                 "snippet": "s2"},
+            ],
+        })
+        fetcher = _make_fetcher({
+            "http://a.com/x": "Silicon band gap has strong temperature dependence. Varshni eq.",
+            "http://b.org/y": "Temperature lowers silicon band gap significantly.",
+        })
+        tool = AgenticSearchTool(searcher=searcher, fetcher=fetcher)
+        result = asyncio.run(tool.call({
+            "question": "band gap",
+            "max_hops": 1,
+            "use_refine": True,
+        }, _ctx()))
+        assert result.success
+        data = result.data
+        # 补了一轮 refine, 应有两个来源 findings
+        urls = {f["url"] for f in data["findings"]}
+        assert "http://a.com/x" in urls
+        assert "http://b.org/y" in urls
+        assert data["n_refine_passes"] == 1
+        # critique 存在且 provenance 可溯源
+        assert "critique" in data
+        assert "provenance" in data
+        assert any("silicon" in (prov.get("title", "")).lower()
+                   for prov in data["provenance"].values())
+
+    def test_refine_disabled_by_default(self):
+        # 默认 use_refine=False: 不触发 refine, n_refine_passes == 0
+        searcher = _make_searcher({
+            "band gap": [
+                {"url": "http://a.com/x", "title": "Silicon band gap", "snippet": "s"},
+            ],
+        })
+        fetcher = _make_fetcher({
+            "http://a.com/x": "Silicon has a band gap of 1.12 eV at room temperature.",
+        })
+        tool = AgenticSearchTool(searcher=searcher, fetcher=fetcher)
+        result = asyncio.run(tool.call({"question": "band gap", "max_hops": 1}, _ctx()))
+        assert result.success
+        assert result.data["n_refine_passes"] == 0
+
+    def test_provenance_disabled(self):
+        searcher = _make_searcher({
+            "q": [{"url": "http://a.com/x", "title": "t", "snippet": "s"}],
+        })
+        fetcher = _make_fetcher({"http://a.com/x": "silicon band gap content."})
+        tool = AgenticSearchTool(searcher=searcher, fetcher=fetcher)
+        result = asyncio.run(tool.call(
+            {"question": "q", "max_hops": 1, "provenance": False}, _ctx()
+        ))
+        assert result.success
+        assert "provenance" not in result.data
 

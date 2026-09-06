@@ -222,6 +222,91 @@ def _derive_followups(findings: list[dict[str, Any]], question: str, max_n: int 
     return followups
 
 
+def _host_of(url: str) -> str:
+    """从 URL 提域名 (hostname), 无则空串. 用于 critique 判"是否只有单一来源"."""
+    try:
+        return urllib.parse.urlparse(url).hostname or ""
+    except Exception:
+        return ""
+
+
+def _critique(
+    findings: list[dict[str, Any]],
+    question: str,
+    *,
+    min_sources: int = 2,
+    min_passages_hits: int = 1,
+) -> dict[str, Any]:
+    """证据覆盖度评估 — 深度检索闭环里的 critique 步 (纯函数, 不打网络).
+
+    不看内容好坏 (那个交给下游 LLM), 这里只做"够不够 / 有没有明显缺口"的
+    结构性判据, 据此决定要不要 refine:
+
+      - n_findings: 证据条数
+      - n_domains: 独立来源域名数 (单一来源 = 无法交叉验证)
+      - n_keyword_hits: 有多少条 evidence 的 passages 命中问题关键词
+      - gaps: 发现的缺口 (可读字符串列表)
+      - coverage_ok: 是否满足全部阈值 (够、多源、有实打实的相关证据)
+      - verdict: satisfactory / needs_refinement
+
+    返回 dict. 所有阈值可覆盖, 便于测试.
+    """
+    n = len(findings)
+    kws = _keywords(question)
+    domains: set[str] = set()
+    n_kw_hits = 0
+    for f in findings:
+        dom = _host_of(f.get("url", ""))
+        if dom:
+            domains.add(dom)
+        for p in f.get("passages", []):
+            if any(k.lower() in (p or "").lower() for k in kws):
+                n_kw_hits += 1
+                break
+
+    gaps: list[str] = []
+    if n == 0:
+        gaps.append("no evidence found")
+    else:
+        if len(domains) < min_sources:
+            gaps.append(
+                f"few independent sources ({len(domains)} domain{'s' if len(domains) != 1 else ''}, "
+                f"need >= {min_sources})"
+            )
+        if kws and n_kw_hits < min_passages_hits:
+            gaps.append("no passage matched the question keywords")
+
+    return {
+        "n_findings": n,
+        "n_domains": len(domains),
+        "n_keyword_hits": n_kw_hits,
+        "gaps": gaps,
+        "coverage_ok": n > 0 and not gaps,
+        "verdict": "satisfactory" if (n > 0 and not gaps) else "needs_refinement",
+    }
+
+
+def _refine_queries(
+    findings: list[dict[str, Any]],
+    critique: dict[str, Any],
+    question: str,
+    max_n: int = 3,
+) -> list[str]:
+    """根据 critique 的缺口生成补齐查询 — 闭环里的 refine 步 (纯函数).
+
+    策略: 先试关键词派生新词; 若仍没得补 (单一来源/无相关证据), 退回
+    原问题的重组版本去其他角度撞. 返回空表示缺口已由启发式判定无法补, 结束.
+    """
+    if not findings or critique.get("coverage_ok"):
+        return []
+    base = _derive_followups(findings, question, max_n)
+    if base:
+        return base[:max_n]
+    # 兜底: 用问句本身(去掉疑问停用词)再撞一轮, 换 page 排序/来源
+    q = " ".join(_ordered_keywords(question)) or question
+    return [q][:max_n]
+
+
 def _synthesize(findings: list[dict[str, Any]], question: str) -> str:
     """把发现拼成一段带引用的回答. 不调 LLM, 纯拼接, 让调用方自己精炼."""
     if not findings:
@@ -238,6 +323,24 @@ def _synthesize(findings: list[dict[str, Any]], question: str) -> str:
             lines.append(f"    - {p}")
         lines.append("")
     return "\n".join(lines).strip()
+
+
+def _build_provenance(findings: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """给每条 finding 分配稳定 fid, 返回可溯源索引 {fid: {url,title,passages,hop}}.
+
+    综合回答/下游引用里的 [n] 通过 n 对应 findings 顺序映射回这个索引, 做到
+    "逐断言 provenance" — 每个结论都能追溯到具体来源 URL + 引文原文.
+    """
+    index: dict[str, dict[str, Any]] = {}
+    for i, f in enumerate(findings, 1):
+        index[str(i)] = {
+            "url": f.get("url", ""),
+            "title": f.get("title", "") or "(untitled)",
+            "passages": f.get("passages", []),
+            "hop": f.get("hop", 0),
+            "fid": str(i),
+        }
+    return index
 
 
 def _is_safe_url(url: str) -> bool:
@@ -278,6 +381,22 @@ class AgenticSearchInput(BaseModel):
         default=False,
         description="True=用 LLM 做回答综合与下一跳查询派生 (失败自动降级为启发式). "
                     "False=纯启发式 (确定性/可复现, 测试友好).",
+    )
+    use_refine: bool = Field(
+        default=False,
+        description="True=检索后做 critique→refine 闭环: 评估证据覆盖度, "
+                    "发现缺口则补一轮定向检索再综合. False=直接综合 (更快, 测试友好).",
+    )
+    max_refine_queries: int = Field(
+        default=3, ge=1, le=5,
+        description="refine 那轮最多派生几个补齐缺口的定向查询.",
+    )
+    # 逐断言 provenance: 是否给每条 finding 分配稳定 fid, 并在结果里带
+    # 可解析的 provenance 索引 (fid -> {url,title,passages}). 默认开.
+    provenance: bool = Field(
+        default=True,
+        description="True=结果带逐断言溯源索引 (fid -> 来源url/title/passages), "
+                    "综合回答里的 [n] 引用可据此追溯到具体来源.",
     )
 
 
@@ -516,29 +635,11 @@ class AgenticSearchTool(HuginnTool):
         if self._embed is None:
             self._embed = _lazy_embed_fn()
 
+        # L3: 深度检索闭环 = plan→retrieve→critique→refine (+ 可选再 retrieve)
         for hop in range(inp.max_hops):
-            new_findings: list[dict[str, Any]] = []
-            for q in queries:
-                results = await self._search(q, inp.max_results_per_hop)
-                for r in results:
-                    url = r.get("url", "")
-                    if not url or url in visited:
-                        continue
-                    visited.add(url)
-                    content = await self._fetch(url, inp.max_content_chars)
-                    passages = (
-                        _extract_relevant(content, inp.question, embed=self._embed)
-                        if content else
-                        ([r.get("snippet", "")] if r.get("snippet") else [])
-                    )
-                    if not passages:
-                        continue
-                    new_findings.append({
-                        "url": url,
-                        "title": r.get("title", ""),
-                        "passages": passages,
-                        "hop": hop,
-                    })
+            new_findings = await self._retrieve_round(
+                queries, inp, visited, hop, inp.question
+            )
             findings.extend(new_findings)
             # 下一跳查询: 从本轮发现派生. 没有新查询就停, 不硬撑 max_hops.
             queries = await self._derive_next_queries(
@@ -547,18 +648,70 @@ class AgenticSearchTool(HuginnTool):
             if not queries:
                 break
 
+        # critique: 评估证据覆盖度 (够不够 / 有没有缺口)
+        critique = _critique(findings, inp.question)
+        n_refine = 0
+        # refine 闭环: 有缺口且允许 refine 时, 补一轮定向检索, 再 re-critique
+        if inp.use_refine and findings and not critique["coverage_ok"]:
+            rq = _refine_queries(findings, critique, inp.question, inp.max_refine_queries)
+            if rq:
+                refine_hit = await self._retrieve_round(
+                    rq, inp, visited, inp.max_hops, inp.question
+                )
+                if refine_hit:
+                    findings.extend(refine_hit)
+                    n_refine = 1
+                    # re-critique: 看补齐后是否达标
+                    critique = _critique(findings, inp.question)
+
         answer = await self._synthesize_answer(findings, inp.question, inp, context)
-        return ToolResult(
-            data={
-                "action": "research",
-                "question": inp.question,
-                "n_hops": min(inp.max_hops, hop + 1) if findings else 0,
-                "n_findings": len(findings),
-                "findings": findings,
-                "answer": answer,
-            },
-            success=True,
-        )
+        data: dict[str, Any] = {
+            "action": "research",
+            "question": inp.question,
+            "n_hops": min(inp.max_hops, hop + 1) if findings else 0,
+            "n_findings": len(findings),
+            "findings": findings,
+            "answer": answer,
+            # L3: 覆盖度评估 + refine 统计
+            "critique": critique,
+            "n_refine_passes": n_refine,
+        }
+        if inp.provenance:
+            data["provenance"] = _build_provenance(findings)
+        return ToolResult(data=data, success=True)
+
+    async def _retrieve_round(
+        self,
+        queries: list[str],
+        inp: AgenticSearchInput,
+        visited: set[str],
+        hop: int,
+        question: str,
+    ) -> list[dict[str, Any]]:
+        """一轮检索: 对 query 列表搜索 + fetch + 抽相关段落. 返回本轮 findings."""
+        round_findings: list[dict[str, Any]] = []
+        for q in queries:
+            results = await self._search(q, inp.max_results_per_hop)
+            for r in results:
+                url = r.get("url", "")
+                if not url or url in visited:
+                    continue
+                visited.add(url)
+                content = await self._fetch(url, inp.max_content_chars)
+                passages = (
+                    _extract_relevant(content, question, embed=self._embed)
+                    if content else
+                    ([r.get("snippet", "")] if r.get("snippet") else [])
+                )
+                if not passages:
+                    continue
+                round_findings.append({
+                    "url": url,
+                    "title": r.get("title", ""),
+                    "passages": passages,
+                    "hop": hop,
+                })
+        return round_findings
 
 
 def _parse_json_text(text: str) -> dict[str, Any] | None:
