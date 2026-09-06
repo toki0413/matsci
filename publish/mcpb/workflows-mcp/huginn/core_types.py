@@ -1,0 +1,256 @@
+"""Core type definitions for Huginn.
+
+Inspired by Claude Code's Tool.ts — every type is explicit and serializable.
+"""
+
+from __future__ import annotations
+
+import contextvars
+from dataclasses import dataclass, field
+from datetime import datetime
+from enum import Enum, StrEnum
+from typing import Any, Literal
+
+# Tools can push live progress events to the WS client by calling this.
+# Set by the WS layer before running the agent loop; defaults to None so
+# tools running outside WS (CLI, tests) just skip it.
+progress_cb: contextvars.ContextVar = contextvars.ContextVar(
+    "progress_cb", default=None
+)
+
+
+class PermissionMode(Enum):
+    AUTO = "auto"
+    ASK = "ask"
+    DENY = "deny"
+    PLAN = "plan"  # 只读模式, 所有写工具强制 ASK
+
+
+class RiskLevel(StrEnum):
+    """风险的细粒度等级 — 与 PermissionMode(二元决策) 互补.
+
+    五档 (对齐 ontology.actions.RiskLevel 的粒度, 便于两处语义一致):
+    NONE: 纯只读/查询, 无副作用, 直接放行
+    LOW: 本地只读分析或可逆变更, 默认放行
+    MEDIUM: 外部 IO/网络 或 改状态但非破坏, 默认需确认 (可被信任阈值放行)
+    HIGH: 破坏性/危险, 必须确认 (即使 auto_approve_all 也拦)
+    CRITICAL: 不可逆破坏 / 系统级 / 极高成本, 强制拦截或最高级确认
+    """
+    NONE = "none"
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
+
+
+class BudgetDecision(Enum):
+    ALLOW = "allow"
+    WARN = "warn"
+    DENY = "deny"
+
+
+class HandleType(StrEnum):
+    """Types of opaque handles used by tools to reference external resources."""
+
+    FILE_PATH = "file_path"
+    JOB_ID = "job_id"
+    MATERIAL_ID = "material_id"
+    FORMULA = "formula"
+
+
+class ErrorKind(StrEnum):
+    """Structured classification of tool execution failures.
+
+    Lets downstream (debugging, trace, auto-retry) distinguish failure classes
+    that are flattened to a plain string on ``ToolResult.error`` today. Default
+    ``NONE`` keeps existing callers behaviour-identical.
+    """
+
+    NONE = "none"  # 正常或模型可见的业务失败
+    TIMEOUT = "timeout"  # 沙箱/命令超时
+    DENIED = "denied"  # 沙箱策略拒绝 (SandboxError / result.blocked)
+    SIGNAL = "signal"  # 被信号终止
+    TRANSIENT = "transient"  # 瞬时错误, 可安全重试
+    FATAL = "fatal"  # 不可重试
+
+
+@dataclass
+class PermissionResult:
+    mode: PermissionMode
+    reason: str | None = None
+    # 细粒度新增: 风险等级 / 成本估算 / 命中的判定维度 (可观测).
+    # 向后兼容: mode + reason 保持原语义, 消费方只读这两个字段不受影响.
+    risk_level: RiskLevel = RiskLevel.LOW
+    cost_hours: float | None = None
+    matched_rules: list[str] = field(default_factory=list)
+
+
+@dataclass
+class ToolResult:
+    """Result of a tool execution, mirroring Claude Code's ToolResult<T>.
+
+    CLI-Anything 契约: 任何工具的输出都必须可序列化为 JSON.
+    to_dict() / to_json() 处理常见不可序列化类型.
+    """
+
+    data: Any
+    success: bool = True
+    error: str | None = None
+    error_kind: ErrorKind = ErrorKind.NONE
+    new_messages: list[dict] = field(default_factory=list)
+    side_effects: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to a JSON-serializable dict (CLI-Anything --json contract)."""
+        d = {
+            "data": _jsonify(self.data),
+            "success": self.success,
+            "error": self.error,
+            "error_kind": self.error_kind.value,
+            "side_effects": list(self.side_effects),
+        }
+        if self.metadata:
+            d["metadata"] = _jsonify(self.metadata)
+        return d
+
+    def to_json(self, **kwargs: Any) -> str:
+        import json
+        return json.dumps(self.to_dict(), ensure_ascii=False, **kwargs)
+
+
+_MAX_ARRAY_ELEMENTS = 200
+
+
+def _summarize_large_array(arr: Any) -> dict[str, Any]:
+    # 大数组 (MD 轨迹/DOS/声子谱) 全量 tolist 会撑爆 LLM 上下文,
+    # 只保留 shape/dtype + 均匀采样的少量元素. 对齐 SciExplorer 的 get_description.
+    shape = getattr(arr, "shape", None)
+    dtype = str(getattr(arr, "dtype", ""))
+    try:
+        flat = arr.flatten() if hasattr(arr, "flatten") else arr
+        n = flat.size if hasattr(flat, "size") else len(flat)
+        step = max(1, n // 20)
+        sample = flat[::step][:20].tolist()
+    except Exception:
+        sample = []
+    return {"_array_summary": True, "shape": list(shape) if shape else [], "dtype": dtype, "sample": sample}
+
+
+def _jsonify(obj: Any) -> Any:
+    """Recursively convert non-serializable types to JSON-safe equivalents."""
+    if obj is None or isinstance(obj, (bool, int, float, str)):
+        return obj
+    # Pydantic v2
+    if hasattr(obj, "model_dump"):
+        return obj.model_dump()
+    # Pydantic v1 fallback
+    if hasattr(obj, "dict") and not isinstance(obj, dict):
+        return obj.dict()
+    # numpy / jax array — 大数组只给摘要, 小数组才 tolist
+    if hasattr(obj, "tolist"):
+        try:
+            n = obj.size if hasattr(obj, "size") else len(obj)
+        except (TypeError, AttributeError):
+            n = 0
+        if n > _MAX_ARRAY_ELEMENTS:
+            return _summarize_large_array(obj)
+        return obj.tolist()
+    if hasattr(obj, "item") and not isinstance(obj, dict):
+        try:
+            return obj.item()
+        except (ValueError, AttributeError):
+            pass
+    if isinstance(obj, bytes):
+        return obj.decode("utf-8", errors="replace")
+    if isinstance(obj, (set, frozenset)):
+        return [ _jsonify(x) for x in obj]
+    if isinstance(obj, dict):
+        return {str(k): _jsonify(v) for k, v in obj.items()}
+    # 长 list/tuple 也截断, 防止万级 thermo 数据撑爆上下文
+    if isinstance(obj, (list, tuple)):
+        if len(obj) > _MAX_ARRAY_ELEMENTS:
+            step = max(1, len(obj) // 20)
+            sampled = list(obj[::step][:20])
+            return {"_list_summary": True, "length": len(obj), "sample": [_jsonify(x) for x in sampled]}
+        return [_jsonify(x) for x in obj]
+    # datetime / other isoformat-able objects
+    if hasattr(obj, "isoformat"):
+        return obj.isoformat()
+    return str(obj)
+
+
+@dataclass
+class ValidationResult:
+    result: bool
+    message: str = ""
+    error_code: int = 0
+
+
+@dataclass
+class AgentMessage:
+    role: Literal["system", "user", "assistant", "tool"]
+    content: str | dict[str, Any]
+    timestamp: datetime = field(default_factory=datetime.now)
+    # ARGUS influence provenance: metadata["source_class"] 标记消息出身,
+    # 取值复用 Anomaly.source: user_input / tool_output / external_content.
+    # 不给默认值 (system/assistant 不需要), 由入口处 add_message 显式打标.
+    # ponytail: 软约定, 调用方诚实标记. 升级: 从工具调用栈自动派生 (不可伪造).
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class ToolContext:
+    """Runtime context passed to every tool call."""
+
+    session_id: str
+    workspace: str
+    abort_controller: Any | None = None
+    permissions: dict[str, PermissionMode] = field(default_factory=dict)
+    memory_manager: Any | None = None
+    agent_factory: Any | None = None
+    audit_logger: Any | None = None
+    boundary_state: Any | None = None
+    config: Any | None = None
+    # v7: 父 agent 的 approval_callback, 让 subagent_tool 能透传给子 agent.
+    # 之前子 agent 拿到 None, 调 vasp_tool 等 ASK 工具会被静默拒绝.
+    approval_callback: Any | None = None
+    # RevertibleEffect (Cordis): 出站写操作 (git/消息/远端) 的逆上下文.
+    # 工具写操作成功后把补偿逆登记进来, 上层 workflow/沙箱统一回滚.
+    revertible: Any | None = None
+
+
+@dataclass
+class CostEstimate:
+    cpu_hours: float
+    gpu_hours: float
+    memory_gb: float
+    storage_gb: float
+    walltime_hours: float
+
+
+@dataclass
+class BudgetPolicy:
+    max_cpu_hours: float = float("inf")
+    max_gpu_hours: float = float("inf")
+    max_storage_gb: float = float("inf")
+    max_parallel_jobs: int = 5
+    max_walltime_hours: float = 168.0
+
+    def check(self, estimate: CostEstimate) -> tuple[BudgetDecision, str]:
+        if estimate.cpu_hours > self.max_cpu_hours:
+            return (
+                BudgetDecision.DENY,
+                f"CPU hours {estimate.cpu_hours:.1f} exceed budget {self.max_cpu_hours:.1f}",
+            )
+        if estimate.gpu_hours > self.max_gpu_hours:
+            return (
+                BudgetDecision.DENY,
+                f"GPU hours {estimate.gpu_hours:.1f} exceed budget {self.max_gpu_hours:.1f}",
+            )
+        if estimate.storage_gb > self.max_storage_gb:
+            return (
+                BudgetDecision.DENY,
+                f"Storage {estimate.storage_gb:.1f}GB exceed budget {self.max_storage_gb:.1f}GB",
+            )
+        return BudgetDecision.ALLOW, ""

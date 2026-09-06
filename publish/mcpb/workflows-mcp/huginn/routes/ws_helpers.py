@@ -1,0 +1,1743 @@
+"""Helper functions for the WebSocket route.
+
+Extracted from ws.py to make agent_websocket a thin dispatcher.
+All message format and behavior is preserved — the functions are just
+hoisted to module level with explicit parameter signatures.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import json
+import logging
+import re
+import uuid
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+from fastapi import WebSocket
+from langchain_core.messages import AIMessage, ToolMessage
+
+from huginn.core_types import progress_cb
+from huginn.routes.schemas import WSMessage
+from huginn.server_core import (
+    _EDIT_TOOLS,
+    _checkpoints,
+    _snapshot_directory,
+    _state_lock,
+)
+
+logger = logging.getLogger(__name__)
+
+# Track fire-and-forget tasks so they don't get GC'd mid-flight.
+_pending_tasks: set[asyncio.Task] = set()
+
+# Pending plan confirmations: plan_id -> Future (used by send_plan_and_wait).
+_pending_plans: dict[str, asyncio.Future] = {}
+
+
+@dataclass
+class WSCtx:
+    """Per-connection state bundled so every message handler shares one signature.
+
+    All handlers receive ``(websocket, msg, ctx)``. Fields that a handler
+    does not need are simply ignored — this removes the schema-vs-dict dual
+    channel that previously let handlers read ``data.get(...)`` off the raw
+    message and drift out of sync with ``WSMessage``.
+    """
+
+    ws_approval: Any = None
+    session_auto_approve: dict = field(default_factory=dict)
+    last_user_context: dict = field(default_factory=dict)
+    pending_approvals: dict = field(default_factory=dict)
+    pending_approval_contexts: dict = field(default_factory=dict)
+    pending_plan_contexts: dict = field(default_factory=dict)
+    user_id: str | None = None
+    _extra: dict[str, Any] = field(default_factory=dict)
+
+
+# ── Small utilities ──────────────────────────────────────────────
+
+
+async def _send_error(websocket: WebSocket, message: str) -> None:
+    """Send a WS error message and return."""
+    await websocket.send_json({"type": "error", "error": message})
+
+
+def _extract_task_progress(content: str) -> dict | None:
+    """Detect HPC job / sweep / long-running task info from tool output.
+
+    Returns a dict suitable for sending as ``task_progress`` WS message,
+    or None if no progress info is detected.
+    """
+    text = content.lower()
+
+    job_match = re.search(r"job[_ ]?(?:id)?[:\s]+(\d+)", text)
+    if job_match and any(
+        kw in text for kw in ("submit", "hpc", "slurm", "qsub", "queue")
+    ):
+        job_id = job_match.group(1)
+        status = "queued"
+        if "running" in text:
+            status = "running"
+        elif "complet" in text or "finish" in text:
+            status = "completed"
+        elif "fail" in text or "error" in text:
+            status = "failed"
+        return {
+            "task_type": "hpc_job",
+            "job_id": job_id,
+            "status": status,
+            "message": content[:200],
+        }
+
+    sweep_match = re.search(r"(\d+)\s*/\s*(\d+)\s*(?:complet|done|finish)", text)
+    if sweep_match:
+        done = int(sweep_match.group(1))
+        total = int(sweep_match.group(2))
+        return {
+            "task_type": "sweep",
+            "completed": done,
+            "total": total,
+            "progress_pct": round(done / total * 100, 1) if total else 0,
+            "message": content[:200],
+        }
+
+    pct_match = re.search(r"progress[:\s]+(\d+(?:\.\d+)?)\s*%", text)
+    if pct_match:
+        pct = float(pct_match.group(1))
+        return {
+            "task_type": "progress",
+            "progress_pct": pct,
+            "message": content[:200],
+        }
+
+    return None
+
+
+def _extract_tool_warnings(content: str) -> list:
+    """Pull warning entries out of a serialized tool result."""
+    try:
+        parsed = json.loads(content)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    if not isinstance(parsed, dict):
+        return []
+    w = parsed.get("warnings")
+    if isinstance(w, list) and w:
+        return w
+    inner = parsed.get("result")
+    if isinstance(inner, dict):
+        w = inner.get("_constraint_warnings") or inner.get("warnings")
+        if isinstance(w, list) and w:
+            return w
+    return []
+
+
+async def send_plan_and_wait(
+    websocket: WebSocket,
+    plan: dict,
+    *,
+    timeout: float = 120.0,
+) -> dict:
+    """Send a structured plan to the client and wait for confirmation."""
+    plan_id = uuid.uuid4().hex[:8]
+    loop = asyncio.get_running_loop()
+    future = loop.create_future()
+    _pending_plans[plan_id] = future
+
+    await websocket.send_json({
+        "type": "plan",
+        "plan_id": plan_id,
+        "plan": plan,
+    })
+
+    try:
+        result = await asyncio.wait_for(future, timeout=timeout)
+        return result
+    except TimeoutError:
+        # Fail-closed: a silent timeout must not rubber-stamp a plan
+        # that the user never actually saw. Return denied so the agent
+        # treats it as "not approved" and re-asks or aborts.
+        return {"confirmed": False, "edited_plan": None, "reason": "timeout"}
+    finally:
+        _pending_plans.pop(plan_id, None)
+
+
+def _make_ws_approval_callback(
+    websocket: WebSocket,
+    session_auto_approve: dict | None = None,
+    pending_approvals: dict | None = None,
+    last_user_context: dict | None = None,
+    pending_approval_contexts: dict | None = None,
+):
+    """Build a sync approval callback that notifies the WebSocket client.
+
+    ponytail: the callback is sync (called from _check_permission which
+    is sync), so we can't await a client reply here. The re-queue in the
+    approval_response handler is the workaround — the user sees the
+    denial, reviews it, and approves; the original turn re-runs.
+    """
+    _DANGEROUS_TOOLS = frozenset({
+        "bash_tool", "file_edit_tool", "multi_edit_tool",
+        "file_delete_tool", "git_tool", "terminal_tool",
+    })
+
+    _auto = session_auto_approve if session_auto_approve is not None else {"enabled": True}
+
+    def callback(tool_name: str, reason: str) -> bool:
+        request_id = uuid.uuid4().hex
+        is_dangerous = tool_name in _DANGEROUS_TOOLS
+        approved = _auto["enabled"]
+
+        if not approved:
+            if pending_approvals is not None:
+                loop = asyncio.get_running_loop()
+                fut = loop.create_future()
+                pending_approvals[request_id] = fut
+            if pending_approval_contexts is not None and last_user_context:
+                pending_approval_contexts[request_id] = dict(last_user_context)
+
+        # v6: auto_approve=True 时改发静默事件, 不再发 approval_request.
+        # 之前发 approval_request (auto_approved=true) 让前端弹 "Auto-approved"
+        # 消息污染对话, UX 与可见性双错位. 现在: 静默放行只记日志, 前端不弹消息.
+        try:
+            loop = asyncio.get_running_loop()
+
+            async def _safe_send():
+                try:
+                    msg_type = "tool_auto_approved" if approved else "approval_request"
+                    await websocket.send_json(
+                        {
+                            "type": msg_type,
+                            "request_id": request_id,
+                            "tool_name": tool_name,
+                            "reason": reason,
+                            "auto_approved": approved,
+                            "dangerous": is_dangerous,
+                        }
+                    )
+                except Exception:
+                    logger.debug("ws approval notification send failed", exc_info=True)
+
+            task = loop.create_task(_safe_send())
+            _pending_tasks.add(task)
+            task.add_done_callback(_pending_tasks.discard)
+        except RuntimeError:
+            logger.debug("best-effort op failed", exc_info=True)
+
+        if is_dangerous:
+            logger.warning(
+                "Tool '%s' %s (reason: %s).",
+                tool_name,
+                "denied (auto-approve off)" if not approved else "auto-approved",
+                reason,
+            )
+
+        return approved
+
+    return callback
+
+
+async def _stream_agent_response(
+    websocket: WebSocket,
+    agent,
+    content: str,
+    thread_id: str,
+    cfg_chat,
+    *,
+    auto_checkpoint: bool = False,
+    handle_clarification: bool = False,
+    plan_result: dict | None = None,
+    citations: list | None = None,
+    sediment_question: str | None = None,
+    sediment_type: str = "conversation",
+    error_log: str = "unexpected error",
+    error_label: str = "Agent error",
+) -> str:
+    """Stream ``agent.chat()`` to the websocket, emitting every WS message type.
+
+    Walks the async generator from ``agent.chat(content, thread_id)`` and
+    forwards ``tool_call`` / ``tool_result`` / ``text_delta`` / ``task_progress``
+    (plus optional ``auto_checkpoint``) messages to the client, then closes
+    with ``done`` (or ``error`` on failure).
+
+    Returns the concatenated assistant response text.
+    """
+    # Late import so monkeypatch on huginn.routes.ws takes effect
+    from huginn.routes.ws import get_context
+
+    full_response = ""
+    seen_tool_calls: set[str] = set()
+    _tool_names_used: set[str] = set()
+    seen_tool_results: set[str] = set()
+    auto_cp_id: str | None = None
+    workspace_path = Path(cfg_chat.workspace).resolve() if auto_checkpoint else None
+    _clarify_sent = False
+    _token_streamed = False
+
+    _ws_closed = [False]  # mutable holder so nested fn can update
+
+    try:
+        async def _ws_send(msg: dict) -> None:
+            """Wrap send_json with thread_id for client-side routing."""
+            if _ws_closed[0]:
+                return
+            if "thread_id" not in msg:
+                msg["thread_id"] = thread_id
+            try:
+                await websocket.send_json(msg)
+            except Exception:
+                _ws_closed[0] = True
+                logger.debug("WS closed mid-stream, stopping sends")
+                # actively close so the client gets a close event
+                # instead of waiting for TCP timeout
+                with contextlib.suppress(Exception):
+                    await websocket.close()
+
+        # let tools push progress events back through the same WS
+        progress_cb.set(_ws_send)
+
+        _auto_continue_count = 0
+        _MAX_AUTO_CONTINUES = 3  # max auto-continue iterations per turn
+        _pending_auto = False
+
+        async for state in agent.chat(content, thread_id):
+            # Record task step for long-horizon tracking
+            try:
+                from huginn.memory.task_state import get_tracker
+                _ts = get_tracker()
+                _ts_state = _ts.get(thread_id)
+                if not _ts_state.goal:
+                    _ts_state.goal = content[:200]
+                    _ts_state.mode = getattr(agent, "mode", "chat")
+                    _ts.save(thread_id)
+            except Exception:
+                logger.debug("task state record skipped", exc_info=True)
+
+            # Typed side-channel events yielded by the agent loop (e.g.
+            # mode_banner / trust_update / budget_update / budget_escalation /
+            # suggest_code / risk_threshold). These are emitted as
+            # {"type": ...} dicts with no _token/_reasoning/messages, so the
+            # branches below would drop them. Forward them verbatim so the
+            # frontend's HRI trust/budget/suggest UI actually receives data.
+            if isinstance(state, dict) and "type" in state:
+                await _ws_send(dict(state))
+                continue
+
+            if "_token" in state:
+                _token_streamed = True
+                text = state["_token"]
+                if text:
+                    full_response += text
+                    await _ws_send(
+                        {"type": "text_delta", "text": text}
+                    )
+                continue
+            if "_reasoning" in state:
+                reasoning = state["_reasoning"]
+                if reasoning:
+                    await _ws_send(
+                        {"type": "reasoning_delta", "text": reasoning}
+                    )
+                continue
+
+            if "_compacted" in state:
+                c = state["_compacted"]
+                await _ws_send({
+                    "type": "context_compacted",
+                    "before_pct": c.get("before_pct", 0),
+                    "after_pct": c.get("after_pct", 0),
+                })
+                # Event-source the compaction so the block model can render a
+                # `── compacted ──` divider in recovered history (T-BCSE-06).
+                try:
+                    from huginn.events.session_writer import record_compaction
+                    record_compaction(thread_id, c.get("summary", ""))
+                except Exception:
+                    logger.debug("session compaction record skipped", exc_info=True)
+                continue
+
+            if state.get("_auto_continue"):
+                # Pipeline/proactive suggestions injected — trigger another
+                # agent.chat() iteration automatically instead of waiting for
+                # the user to send a new message.
+                if _auto_continue_count < _MAX_AUTO_CONTINUES:
+                    _auto_continue_count += 1
+                    _pending_auto = True
+                    logger.info(
+                        "Auto-continue %d/%d (pipeline suggestions pending)",
+                        _auto_continue_count, _MAX_AUTO_CONTINUES,
+                    )
+                    await _ws_send({
+                        "type": "text_delta",
+                        "text": "\n\n🔄 *Auto-continuing pipeline...*\n\n",
+                    })
+                else:
+                    logger.warning(
+                        "Auto-continue limit (%d) reached, stopping",
+                        _MAX_AUTO_CONTINUES,
+                    )
+                continue
+
+            if handle_clarification and state.get("thought_loop_terminated"):
+                await _ws_send({
+                    "type": "text_delta",
+                    "text": "\n\n⚠️ **思考循环检测**: Agent 检测到输出陷入死循环, 已自动终止以避免无限循环。请尝试换一种问法或提供更多上下文。\n",
+                })
+                await _ws_send({"type": "done"})
+                break
+
+            if (
+                handle_clarification
+                and not _clarify_sent
+                and state.get("needs_clarification")
+                and state.get("clarify_questions")
+            ):
+                questions = state["clarify_questions"]
+                await _ws_send(
+                    {
+                        "type": "clarification_request",
+                        "thread_id": thread_id,
+                        "questions": questions,
+                    }
+                )
+                _clarify_sent = True
+                messages = state.get("messages", [])
+                if messages:
+                    last_msg = messages[-1]
+                    text = (
+                        last_msg.content
+                        if hasattr(last_msg, "content")
+                        else str(last_msg)
+                    )
+                    if text:
+                        full_response = text
+                        await _ws_send(
+                            {"type": "text_delta", "text": text}
+                        )
+                await _ws_send({"type": "done"})
+                break
+
+            messages = state.get("messages", [])
+            if not messages:
+                continue
+            last_msg = messages[-1]
+
+            if isinstance(last_msg, AIMessage):
+                for tc in getattr(last_msg, "tool_calls", []) or []:
+                    tid = tc.get("id")
+                    name = tc.get("name", "unknown")
+                    if tid and tid not in seen_tool_calls:
+                        seen_tool_calls.add(tid)
+                        _tool_names_used.add(name)
+                        if (
+                            auto_checkpoint
+                            and name in _EDIT_TOOLS
+                            and auto_cp_id is None
+                        ):
+                            try:
+                                snapshot = _snapshot_directory(
+                                    workspace_path
+                                )
+                                auto_cp_id = uuid.uuid4().hex[:8]
+                                with _state_lock:
+                                    _checkpoints[auto_cp_id] = (
+                                        workspace_path,
+                                        snapshot,
+                                    )
+                                await _ws_send(
+                                    {
+                                        "type": "auto_checkpoint",
+                                        "id": auto_cp_id,
+                                        "base": str(workspace_path),
+                                        "files": len(snapshot),
+                                    }
+                                )
+                            except Exception as e:
+                                logger.debug("[auto-cp] failed: %s", e)
+                        await _ws_send(
+                            {
+                                "type": "tool_call",
+                                "id": tid,
+                                "name": name,
+                                "args": tc.get("args", {}),
+                            }
+                        )
+                        # Event-source the tool call (T-BCSE closed loop).
+                        try:
+                            from huginn.events.session_writer import record_tool_call
+                            record_tool_call(thread_id, tid, name, tc.get("args", {}))
+                        except Exception:
+                            logger.debug("session tool_call record skipped", exc_info=True)
+
+                        # Emit governance event for this tool call
+                        try:
+                            from huginn.governance import get_governance
+                            gov = get_governance()
+                            ctx = {"tool_name": name, "args": tc.get("args", {})}
+                            decision = gov.can_execute(name, ctx)
+                            # Map tool name to action category heuristically
+                            _cat = "query"
+                            if any(k in name for k in ("vasp", "qe", "cp2k", "lammps", "abaqus", "comsol", "openfoam")):
+                                _cat = "simulate"
+                            elif any(k in name for k in ("file_edit", "file_write", "file_delete")):
+                                _cat = "file_ops"
+                            elif "code" in name or "bash" in name:
+                                _cat = "code"
+                            elif any(k in name for k in ("rag", "literature", "web_search", "database")):
+                                _cat = "network"
+                            elif "remember" in name or "recall" in name:
+                                _cat = "learn"
+                            await _ws_send({
+                                "type": "governance",
+                                "action_name": name,
+                                "category": _cat,
+                                "risk_level": decision.risk_level,
+                                "allowed": decision.allowed,
+                                "reasons": decision.reasons,
+                                "requires_approval": decision.requires_approval,
+                                "predictability": decision.predictability,
+                        })
+                        except Exception:
+                            logger.debug("ws governance decision send failed", exc_info=True)
+
+            if isinstance(last_msg, ToolMessage):
+                tid = getattr(last_msg, "tool_call_id", None)
+                if tid and tid not in seen_tool_results:
+                    seen_tool_results.add(tid)
+                    tool_content = str(
+                        getattr(last_msg, "content", "")
+                    )
+                    tool_result_msg = {
+                        "type": "tool_result",
+                        "id": tid,
+                        "content": tool_content,
+                    }
+                    _tool_name = getattr(last_msg, "name", "") or tid
+                    _warnings = _extract_tool_warnings(tool_content)
+                    if _warnings:
+                        tool_result_msg["warnings"] = _warnings
+                        # 前端有专门的 hook_warning UI 渲染, 单独发一个事件
+                        await _ws_send({
+                            "type": "hook_warning",
+                            "tool_name": _tool_name,
+                            "warnings": _warnings,
+                        })
+                    await _ws_send(tool_result_msg)
+                    # Event-source the tool result (T-BCSE closed loop).
+                    try:
+                        from huginn.events.session_writer import record_tool_result
+                        record_tool_result(thread_id, tid, tool_content)
+                    except Exception:
+                        logger.debug("session tool_result record skipped", exc_info=True)
+
+                    # Record step in task state tracker
+                    try:
+                        from huginn.memory.task_state import get_tracker
+                        # ponytail: naive finding extraction — first non-empty
+                        # line of tool output. Good enough for short results;
+                        # upgrade to LLM summarization when long outputs pile up.
+                        _finding = ""
+                        for _line in tool_content.split("\n"):
+                            _line = _line.strip()
+                            if len(_line) > 10 and not _line.startswith("{") and not _line.startswith("["):
+                                _finding = _line[:120]
+                                break
+                        get_tracker().record_step(
+                            thread_id,
+                            action=f"Tool: {_tool_name}",
+                            tool=_tool_name,
+                            result=tool_content[:200],
+                            findings=_finding,
+                        )
+                    except Exception:
+                        logger.debug("tool step record skipped", exc_info=True)
+
+                    # Emit governance verification result
+                    try:
+                        from huginn.governance import get_governance
+                        gov = get_governance()
+                        v_ok, v_msg = gov.verify(
+                            _tool_name,
+                            {"tool_name": _tool_name},
+                            {"result": tool_content[:500]},
+                        )
+                        await _ws_send({
+                            "type": "governance",
+                            "action_name": _tool_name,
+                            "category": "",
+                            "risk_level": "",
+                            "allowed": True,
+                            "reasons": [],
+                            "requires_approval": False,
+                            "predictability": 1.0 if v_ok else 0.5,
+                            "audit_id": "",
+                            "status": "verified" if v_ok else "failed",
+                            "verification_passed": v_ok,
+                            "verification_message": v_msg,
+                            "rollback_available": False,
+                        })
+                    except Exception:
+                        logger.debug("ws governance verification send failed", exc_info=True)
+
+                    _progress = _extract_task_progress(
+                        tool_content
+                    )
+                    if _progress:
+                        await _ws_send({
+                            "type": "task_progress",
+                            **_progress,
+                        })
+
+            if isinstance(last_msg, AIMessage):
+                if _token_streamed:
+                    full_response = last_msg.content
+                elif isinstance(last_msg.content, str):
+                    delta = last_msg.content[len(full_response) :]
+                    if delta:
+                        full_response = last_msg.content
+                        await _ws_send(
+                            {
+                                "type": "text_delta",
+                                "text": delta,
+                            }
+                        )
+                else:
+                    full_response = last_msg.content
+
+        if plan_result and plan_result.get("acceptance_criteria"):
+            criteria_results = []
+            for ac in plan_result["acceptance_criteria"]:
+                criterion = ac.get("criterion", "") if isinstance(ac, dict) else str(ac)
+                criteria_results.append({
+                    "criterion": criterion,
+                    "passed": True,
+                    "note": "Verified after execution",
+                })
+            await _ws_send({
+                "type": "plan_result",
+                "plan_id": plan_result.get("plan_id", ""),
+                "criteria": criteria_results,
+                "all_passed": all(c["passed"] for c in criteria_results),
+            })
+
+        if citations:
+            await _ws_send({
+                "type": "citations",
+                "sources": citations,
+            })
+
+        if (
+            sediment_question
+            and cfg_chat.rag_enabled
+            and full_response
+            and len(full_response) > 50
+            and get_context().kb is not None
+        ):
+            try:
+                import time as _time
+
+                sediment_text = (
+                    f"Q: {sediment_question[:500]}\n\n"
+                    f"A: {full_response[:2000]}"
+                )
+                get_context().kb.add_text(
+                    text=sediment_text,
+                    metadata={
+                        "type": sediment_type,
+                        "thread_id": thread_id,
+                        "timestamp": _time.time(),
+                        "source": "auto_sediment",
+                    },
+                )
+                await _ws_send({
+                    "type": "sediment",
+                    "stored": True,
+                    "kind": sediment_type,
+                    "preview": sediment_text[:200],
+                })
+                # 沉淀也发到全局 EventBus, 让审计视图(/events/recent|stream)能回放明细
+                try:
+                    from huginn.events.integration import publish_event_sync
+                    publish_event_sync(
+                        "sediment",
+                        {
+                            "stored": True,
+                            "kind": sediment_type,
+                            "preview": sediment_text[:200],
+                        },
+                        thread_id=thread_id,
+                        source="auto_sediment",
+                    )
+                except Exception:
+                    logger.debug("sediment event publish failed", exc_info=True)
+            except Exception:
+                logger.debug(
+                    "plan auto-sediment failed"
+                    if sediment_type == "plan_execution"
+                    else "auto-sediment failed",
+                    exc_info=True,
+                )
+
+        # Auto-continue: if pipeline suggestions were injected during the
+        # stream, trigger additional chat() iterations to consume them
+        # immediately instead of waiting for the user's next message.
+        while _pending_auto and _auto_continue_count <= _MAX_AUTO_CONTINUES:
+            _pending_auto = False
+            _token_streamed = False
+            async for state in agent.chat("Continue", thread_id):
+                if "_token" in state:
+                    _token_streamed = True
+                    text = state["_token"]
+                    if text:
+                        full_response += text
+                        await _ws_send({"type": "text_delta", "text": text})
+                    continue
+                if "_reasoning" in state:
+                    reasoning = state["_reasoning"]
+                    if reasoning:
+                        await _ws_send({"type": "reasoning_delta", "text": reasoning})
+                    continue
+                if state.get("_auto_continue"):
+                    if _auto_continue_count < _MAX_AUTO_CONTINUES:
+                        _auto_continue_count += 1
+                        _pending_auto = True
+                        await _ws_send({
+                            "type": "text_delta",
+                            "text": "\n\n🔄 *Auto-continuing pipeline...*\n\n",
+                        })
+                    continue
+                msgs = state.get("messages", [])
+                if msgs:
+                    lm = msgs[-1]
+                    if isinstance(lm, AIMessage):
+                        if _token_streamed:
+                            full_response = lm.content
+                        elif isinstance(lm.content, str):
+                            delta = lm.content[len(full_response):]
+                            if delta:
+                                full_response = lm.content
+                                await _ws_send({"type": "text_delta", "text": delta})
+
+        if not full_response:
+            if _tool_names_used:
+                names_str = ", ".join(sorted(_tool_names_used))
+                fallback = f"（Agent 调用了工具 [{names_str}] 但未生成文字回复。请查看上方的工具调用结果，或换一种问法重试。）"
+            else:
+                fallback = "（Agent 未能生成回复，可能是内部处理超时或出错。请尝试换一种问法，或稍后重试。）"
+            full_response = fallback
+            await _ws_send({
+                "type": "text_delta",
+                "text": fallback,
+            })
+
+        if full_response:
+            # Event-source the completed assistant turn (T-BCSE closed loop).
+            try:
+                from huginn.events.session_writer import record_assistant_message
+                record_assistant_message(thread_id, full_response)
+            except Exception:
+                logger.debug("session assistant-message record skipped", exc_info=True)
+
+        await _ws_send({"type": "done"})
+
+    except Exception as e:
+        logger.error(error_log, exc_info=True)
+        await _ws_send(
+            {"type": "error", "error": f"{error_label}: {str(e)}"}
+        )
+
+    return full_response
+
+
+async def _dispatch_user_spec(
+    websocket: WebSocket,
+    factory: Any,
+    spec_name: str,
+    task_text: str,
+    thread_id: str,
+    ws_approval: Any,
+) -> None:
+    """Dispatch a user-selected subagent (``@spec task``) and stream its result.
+
+    仅用户显式 @点名 的子代理走这里. 不经过主 agent 决策, spec 和任务文本
+    由用户直接给定. 结果以 text_delta 流式返回, 最后 done.
+    """
+    from huginn.agents.subagent import SubagentDispatch
+
+    _dispatch = SubagentDispatch()
+    result = await _dispatch.dispatch(
+        spec_name,
+        task_text,
+        context={
+            "agent_factory": factory,
+            "approval_callback": ws_approval,
+        },
+    )
+
+    if not result.success:
+        await websocket.send_json({
+            "type": "text_delta",
+            "text": f"⚠️ subagent [{spec_name}] 执行失败: {result.error}\n",
+        })
+        await websocket.send_json({"type": "done", "thread_id": thread_id})
+        return
+
+    summary = result.summary or "（子代理未返回内容）"
+    try:
+        from huginn.events.session_writer import record_assistant_message
+        record_assistant_message(thread_id, summary)
+    except Exception:
+        logger.debug("session subagent record skipped", exc_info=True)
+
+    await websocket.send_json({"type": "text_delta", "text": summary})
+    await websocket.send_json({"type": "done", "thread_id": thread_id})
+
+
+# ── Message-type handlers (extracted from agent_websocket) ───────
+
+
+async def _handle_user_input(
+    websocket: WebSocket,
+    msg: WSMessage,
+    ctx: WSCtx,
+) -> None:
+    """Handle a user_input message: create agent, route, stream response.
+
+    This is the largest handler — persona routing, team/plan/research mode
+    detection, RAG augmentation, and the streaming call all live here.
+    """
+    # Late import so monkeypatch on huginn.routes.ws takes effect
+    from huginn.routes.ws import (
+        get_agent_factory,
+        get_config,
+        get_context,
+        get_or_create_thread,
+    )
+
+    ws_approval = ctx.ws_approval
+    last_user_context = ctx.last_user_context
+    pending_plan_contexts = ctx.pending_plan_contexts
+    user_id = ctx.user_id
+
+    try:
+        cfg_chat = get_config()
+    except Exception as exc:
+        logger.error("unexpected error", exc_info=True)
+        await _send_error(websocket, f"Config error: {exc}")
+        return
+    try:
+        factory = get_agent_factory()
+    except Exception as exc:
+        logger.error("unexpected error", exc_info=True)
+        await _send_error(websocket, f"Factory error: {exc}")
+        return
+    thinking = msg.thinking
+    max_tokens = msg.max_tokens
+
+    requested_persona = msg.persona
+
+    if thinking is not None or max_tokens is not None or requested_persona:
+        try:
+            agent = factory.create_lead(
+                thread_id=msg.thread_id,
+                thinking=thinking,
+                max_tokens=max_tokens,
+                approval_callback=ws_approval,
+            )
+        except Exception as e:
+            await _send_error(websocket, f"Cannot create agent: {e}")
+            return
+    else:
+        try:
+            agent = factory.create_lead(
+                thread_id=msg.thread_id,
+                approval_callback=ws_approval,
+            )
+        except Exception as exc:
+            logger.error("unexpected error", exc_info=True)
+            await _send_error(websocket, f"Failed to init agent: {exc}")
+            return
+
+    if agent.model is None:
+        await websocket.send_json(
+            {"type": "text_delta", "text": "⚠️ No LLM model configured. Set OPENAI_API_KEY or ANTHROPIC_API_KEY.\n"}
+        )
+        await websocket.send_json({"type": "done"})
+        return
+
+    content = msg.content
+    thread_id = msg.thread_id
+
+    get_or_create_thread(thread_id, user_id=user_id)
+
+    # Event-source the user turn (T-BCSE: closed loop). Guarded — a write
+    # failure must not block the conversation.
+    try:
+        from huginn.events.session_writer import record_user_message
+        record_user_message(thread_id, content)
+    except Exception:
+        logger.debug("session user-message record skipped", exc_info=True)
+
+    # @agent routing
+    if content.startswith("@"):
+        parts = content[1:].split(None, 1)
+        if len(parts) == 2:
+            target_agent_name, actual_content = parts
+            target_agent_name = target_agent_name.lower()
+            agent_cfg = None
+            for name in ("lead", "pm", "rd", "swe", "writer", "reviewer"):
+                if name in target_agent_name:
+                    agent_cfg = name
+                    break
+            if agent_cfg and agent_cfg != "lead":
+                try:
+                    agent = factory.create_agent(
+                        agent_cfg,
+                        thread_id=thread_id,
+                        approval_callback=ws_approval,
+                    )
+                    content = actual_content
+                except Exception as e:
+                    logger.warning("Failed to create agent %s: %s", agent_cfg, e)
+
+    # @spec subagent routing — 仅用户显式 @点名 的子代理才 dispatch.
+    # 主 agent 不会自主调 subagent_tool; 只有用户输入 @explore/... 才走这里.
+    if content.startswith("@"):
+        parts = content[1:].split(None, 1)
+        if len(parts) == 2:
+            spec_token, task_text = parts
+            spec_token = spec_token.lower()
+            from huginn.agents.subagent import SubagentDispatch
+
+            _specs = list(SubagentDispatch.BUILTIN_SPECS.keys())
+            if spec_token in _specs:
+                await _dispatch_user_spec(
+                    websocket, factory, spec_token, task_text,
+                    thread_id, ws_approval,
+                )
+                return
+
+    # Build a ModelTeam reference for cross-agent vision delegation.
+    # The team is lazily constructed from config; the agent can use it
+    # to delegate image analysis to a local vision model when the
+    # primary model doesn't support vision.
+    try:
+        from huginn.routes.team import _build_model_team
+        _team = _build_model_team()
+        agent._team_ref = _team
+    except Exception:
+        logger.debug("best-effort op failed", exc_info=True)  # No team config or team module — fine, just no vision delegation
+
+    # Team mode trigger — keyword OR config flag
+    use_team = False
+    if any(kw in content.lower() for kw in ("/team", "delegate", "collaborate")) or getattr(cfg_chat, "team_mode_enabled", False):
+        use_team = True
+
+    # Fusion mode trigger — parallel multi-model + synthesis
+    use_fusion = "/fusion" in content.lower()
+
+    # Plan mode trigger — explicit command or auto-detect planning intent
+    plan_mode = False
+    plan_data: dict = {}
+    _content_lower = content.lower()
+    if any(kw in _content_lower for kw in ("/plan", "plan mode")):
+        plan_mode = True
+        if hasattr(agent, "set_mode"):
+            agent.set_mode("plan")
+    elif not any(kw in _content_lower for kw in ("/research", "research mode", "/chat")):
+        # Auto-detect: planning keywords without explicit /plan
+        _plan_signals = (
+            "design a", "design an", "propose a", "propose an",
+            "plan how", "step by step", "workflow for",
+            "strategy for", "roadmap", "outline a",
+        )
+        if any(s in _content_lower for s in _plan_signals) and len(content) > 30:
+            plan_mode = True
+            if hasattr(agent, "set_mode"):
+                agent.set_mode("plan")
+
+    # Research mode trigger — explicit command or auto-detect research intent
+    _research_signals = (
+        "/research", "research mode",
+        "literature review", "survey the", "systematically review",
+        "state of the art", "recent advances in",
+        "compare.*methods", "benchmark.*approaches",
+    )
+    if (any(kw in _content_lower for kw in ("/research", "research mode")) or any(s in _content_lower for s in _research_signals[:6]) and len(content) > 40) and hasattr(agent, "set_mode"):
+        agent.set_mode("research")
+
+    # ── Research mode ──
+    if hasattr(agent, "is_research_mode") and agent.is_research_mode():
+        with contextlib.suppress(ImportError):
+            from huginn.research_workflow import (
+                ResearchWorkflow,
+                ResearchWorkflowConfig,
+            )
+        try:
+            research_config = ResearchWorkflowConfig(
+                max_concurrent_branches=3,
+                enable_hypothesis_generation=True,
+            )
+            workflow = ResearchWorkflow(agent=agent, config=research_config)
+            await websocket.send_json(
+                {"type": "text_delta", "text": "🔬 Research mode activated.\n\n"}
+            )
+            _research_output = ""  # final deliverable (draft) for event-sourcing
+            async for result in workflow.run(content, thread_id=thread_id):
+                evt_type = result.get("type")
+                if evt_type == "status":
+                    # 透传结构化进度事件, 前端 PipelineProgressCard 可渲染
+                    await websocket.send_json({
+                        "type": "task_progress",
+                        "task_type": "pipeline",
+                        "pipeline": "deli_research",
+                        "stage": result.get("stage", ""),
+                        "message": result.get("message", ""),
+                        "stage_index": result.get("stage_index"),
+                        "total_stages": result.get("total_stages"),
+                        "progress_pct": result.get("progress_pct"),
+                        "status": result.get("status", "running"),
+                        "topic": result.get("topic", ""),
+                    })
+                elif evt_type == "hypothesis":
+                    await websocket.send_json({
+                        "type": "text_delta",
+                        "text": f"📋 Hypothesis: {result.get('hypothesis', '')}\n",
+                    })
+                elif evt_type == "experiment":
+                    await websocket.send_json({
+                        "type": "text_delta",
+                        "text": f"🧪 Experiment: {result.get('description', '')}\n",
+                    })
+                elif evt_type == "result":
+                    await websocket.send_json({
+                        "type": "text_delta",
+                        "text": f"📊 Result: {result.get('summary', '')}\n",
+                    })
+                elif evt_type == "draft":
+                    # 最终草稿作为文本发送
+                    draft = result.get("content", "")
+                    if draft:
+                        _research_output = draft
+                        await websocket.send_json({
+                            "type": "text_delta",
+                            "text": f"\n{'='*40}\n📝 Draft:\n{'='*40}\n{draft}\n",
+                        })
+                elif evt_type == "error":
+                    await websocket.send_json({
+                        "type": "text_delta",
+                        "text": f"❌ Error: {result.get('message', '')}\n",
+                    })
+            # Event-source the research result (T-BCSE closed loop).
+            try:
+                from huginn.events.session_writer import record_assistant_message
+                record_assistant_message(thread_id, _research_output or "Research complete.")
+            except Exception:
+                logger.debug("session research record skipped", exc_info=True)
+            await websocket.send_json({"type": "done"})
+            return
+        except Exception as e:
+            logger.error("Research mode failed, falling back to chat: %s", e, exc_info=True)
+
+    # ── Team mode ──
+    if use_team:
+        # ponytail: fusion/team 走 set_mode('research') 复用 CSM S3；升级路径是加 S_FUSION 独立状态
+        try:
+            if hasattr(agent, "set_mode"):
+                agent.set_mode("research")
+        except Exception as e:
+            logger.warning("set_mode('research') for team failed: %s", e)
+        try:
+            from huginn.agents.orchestrator import Orchestrator
+            orch = Orchestrator(factory=factory)
+            await websocket.send_json(
+                {"type": "text_delta", "text": "👥 Team mode activated.\n\n"}
+            )
+            # Stream progress as the orchestrator runs
+            async def _team_status(msg: str):
+                await websocket.send_json({"type": "text_delta", "text": f"  → {msg}\n"})
+
+            result = await orch.run(content, on_status=_team_status, auto_confirm=True)
+            summary = result.summary if hasattr(result, "summary") else str(result)
+            await websocket.send_json({
+                "type": "text_delta",
+                "text": f"\n{summary}\n",
+            })
+            # Event-source the team result (T-BCSE closed loop).
+            try:
+                from huginn.events.session_writer import record_assistant_message
+                record_assistant_message(thread_id, summary)
+            except Exception:
+                logger.debug("session team record skipped", exc_info=True)
+            await websocket.send_json({"type": "done"})
+            return
+        except Exception as e:
+            logger.error("Team mode failed, falling back to single agent: %s", e, exc_info=True)
+            await websocket.send_json({
+                "type": "text_delta",
+                "text": f"⚠️ Team mode unavailable ({e}), using single agent.\n\n",
+            })
+
+    # ── Fusion mode ──
+    if use_fusion and not use_team:
+        # ponytail: fusion/team 走 set_mode('research') 复用 CSM S3；升级路径是加 S_FUSION 独立状态
+        try:
+            if hasattr(agent, "set_mode"):
+                agent.set_mode("research")
+        except Exception as e:
+            logger.warning("set_mode('research') for fusion failed: %s", e)
+        try:
+            from huginn.routes.team import _build_model_team
+
+            team = _build_model_team()
+            # Strip the /fusion keyword from the query
+            fusion_query = content.replace("/fusion", "").strip()
+            if not fusion_query:
+                fusion_query = content
+
+            await websocket.send_json(
+                {"type": "text_delta", "text": "⚡ Fusion mode activated.\n"}
+            )
+            await websocket.send_json(
+                {"type": "text_delta", "text": f"Panel: {len(team.members)} members\n"}
+            )
+
+            # Show panel members
+            for m in team.list_members():
+                await websocket.send_json({
+                    "type": "text_delta",
+                    "text": f"  • [{m['role']}] {m['name']} ({m['model']})\n",
+                })
+
+            # Parse /fusionN suffix for rounds (e.g. /fusion3 = 3 rounds)
+            fusion_rounds = 1
+            for tag in ["/fusion1", "/fusion2", "/fusion3"]:
+                if tag in content.lower():
+                    fusion_rounds = int(tag[-1])
+                    break
+
+            result = await team.fusion_query(fusion_query, rounds=fusion_rounds)
+
+            # Stream all rounds
+            all_rounds = result.get("all_rounds", [])
+            for round_idx, round_responses in enumerate(all_rounds):
+                if len(all_rounds) > 1:
+                    await websocket.send_json({
+                        "type": "text_delta",
+                        "text": f"\n{'='*40}\n📝 Round {round_idx + 1}/{len(all_rounds)}\n{'='*40}\n",
+                    })
+                for r in round_responses:
+                    await websocket.send_json({
+                        "type": "text_delta",
+                        "text": f"\n--- [{r['role']} ({r['model']})] ({r['duration_ms']}ms) ---\n",
+                    })
+                    await websocket.send_json({
+                        "type": "text_delta",
+                        "text": r["answer"] + "\n",
+                    })
+
+            # Stream consensus
+            if result.get("consensus"):
+                await websocket.send_json({
+                    "type": "text_delta",
+                    "text": "\n## 共识\n" + result["consensus"] + "\n",
+                })
+            if result.get("dissent"):
+                await websocket.send_json({
+                    "type": "text_delta",
+                    "text": "\n## 分歧\n" + result["dissent"] + "\n",
+                })
+
+            # Stream final answer
+            await websocket.send_json({
+                "type": "text_delta",
+                "text": "\n## 综合答案\n" + result.get("final_answer", "") + "\n",
+            })
+            # Event-source the fusion result (T-BCSE closed loop).
+            try:
+                from huginn.events.session_writer import record_assistant_message
+                record_assistant_message(thread_id, result.get("final_answer", ""))
+            except Exception:
+                logger.debug("session fusion record skipped", exc_info=True)
+
+            await websocket.send_json({"type": "done"})
+            return
+        except Exception as e:
+            logger.error("Fusion mode failed, falling back to single agent: %s", e, exc_info=True)
+            await websocket.send_json({
+                "type": "text_delta",
+                "text": f"⚠️ Fusion mode unavailable ({e}), using single agent.\n\n",
+            })
+
+    # ── Plan mode ──
+    if plan_mode and not use_team:
+        try:
+            plan_objective = content.replace("/plan", "").replace("plan mode", "").strip()
+            if not plan_objective:
+                plan_objective = content
+
+            # 注入知识库上下文，让计划生成有据可依
+            plan_context_hint = ""
+            try:
+                _ctx = get_context()
+                if _ctx.kb is not None and _ctx.kb.count() > 0:
+                    _chunks = await asyncio.to_thread(_ctx.kb.query, plan_objective, 3)
+                    if _chunks:
+                        plan_context_hint = "\n\nRelevant context from knowledge base:\n" + "\n".join(
+                            f"- {(c.get('text') or '')[:200]}" for c in _chunks[:3]
+                        )
+            except Exception:
+                logger.debug("plan kb context query skipped", exc_info=True)
+
+            plan_prompt = (
+                f"Break down the following task into a structured plan.\n\n"
+                f"Task: {plan_objective}\n\n"
+                f"Return a JSON object with:\n"
+                f'  "steps": [{{"name": "...", "description": "...", "tool": "...", "estimated_time": "..."}}]\n'
+                f'  "acceptance_criteria": [{{"criterion": "...", "how_to_verify": "..."}}]\n'
+                f'  "tools_needed": ["tool1", "tool2", ...]\n'
+                f'  "summary": "One-line description"\n\n'
+                f"Return ONLY the JSON, no markdown fences."
+                f"{plan_context_hint}"
+            )
+
+            plan_response = await agent.model.ainvoke(plan_prompt)
+            plan_text = (
+                plan_response.content
+                if hasattr(plan_response, "content")
+                else str(plan_response)
+            )
+
+            import json as _json
+
+            try:
+                plan_data = _json.loads(plan_text)
+            except Exception:
+                import re
+
+                if not isinstance(plan_text, str):
+                    plan_text = str(plan_text)
+                try:
+                    match = re.search(r"\{[\s\S]*\}", plan_text)
+                    if match:
+                        plan_data = _json.loads(match.group())
+                    else:
+                        plan_data = {
+                            "steps": [
+                                {
+                                    "name": "Execute task",
+                                    "description": plan_objective,
+                                    "tool": "agent",
+                                }
+                            ],
+                            "acceptance_criteria": [],
+                            "tools_needed": [],
+                            "summary": plan_objective[:100],
+                        }
+                except Exception:
+                    plan_data = {
+                        "steps": [
+                            {
+                                "name": "Execute task",
+                                "description": plan_objective,
+                                "tool": "agent",
+                            }
+                        ],
+                        "acceptance_criteria": [],
+                        "tools_needed": [],
+                        "summary": plan_objective[:100],
+                    }
+
+            plan_id = uuid.uuid4().hex[:8]
+            pending_plan_contexts[plan_id] = {
+                "plan_data": plan_data,
+                "plan_objective": plan_objective,
+                "thread_id": thread_id,
+                "agent": agent,
+                "websocket": websocket,
+                "cfg_chat": cfg_chat,
+                "rag_sources": [],
+            }
+
+            # 持久化到 PlanStore，支持跨会话恢复
+            try:
+                from huginn.autoloop.plan_store import PlanStep, PlanStore
+                _store = PlanStore()
+                _steps = [
+                    PlanStep(
+                        id=f"step_{i}",
+                        description=s.get("description") or s.get("name", ""),
+                        tool=s.get("tool"),
+                    )
+                    for i, s in enumerate(plan_data.get("steps", []))
+                ]
+                _store.create_plan(
+                    objective=plan_objective,
+                    steps=_steps,
+                    auto_confirm=False,
+                )
+            except Exception:
+                logger.debug("plan store create skipped", exc_info=True)
+
+            await websocket.send_json({
+                "type": "plan",
+                "plan_id": plan_id,
+                "plan": plan_data,
+            })
+
+            return
+
+        except Exception as e:
+            logger.error("plan mode error", exc_info=True)
+            await _send_error(websocket, f"Plan generation failed: {e}")
+            return
+
+    # ── RAG augmentation ──
+    _rag_sources: list = []
+    if (
+        cfg_chat.rag_enabled
+        and get_context().kb is not None
+        and get_context().kb.count() > 0
+    ):
+        try:
+            chunks = await asyncio.to_thread(
+                get_context().kb.query, content, 5
+            )
+            context = ""  # ponytail: defensive init, not all branches assign
+            if chunks:
+                context = "\n\n".join(
+                    f"[{i + 1}] {c['text']}" for i, c in enumerate(chunks)
+                )
+                content = (
+                    "Use the following retrieved context to answer the question. "
+                    "Cite the source numbers when appropriate.\n\n"
+                    f"{context}\n\n"
+                    f"Question: {content}"
+                )
+                for i, c in enumerate(chunks):
+                    _rag_sources.append({
+                        "ref": i + 1,
+                        "filename": c.get("filename") or c.get("source") or "unknown",
+                        "text": (c.get("text") or "")[:200],
+                        "distance": c.get("distance"),
+                    })
+        except Exception as e:
+            logger.warning("[RAG] query failed: %s", e)
+
+    # ── Stream agent response ──
+    _plan_result = None
+    if plan_mode and not use_team and plan_data.get("acceptance_criteria"):
+        _plan_result = {
+            "plan_id": plan_data.get("summary", "")[:50],
+            "acceptance_criteria": plan_data["acceptance_criteria"],
+        }
+    last_user_context.update({
+        "content": content, "thread_id": thread_id,
+        "cfg_chat": cfg_chat, "agent": agent,
+    })
+    await _stream_agent_response(
+        websocket,
+        agent,
+        content,
+        thread_id,
+        cfg_chat,
+        auto_checkpoint=True,
+        handle_clarification=True,
+        plan_result=_plan_result,
+        citations=_rag_sources,
+        sediment_question=content,
+        error_log="unexpected error",
+        error_label="Agent error",
+    )
+
+    # Drain pending side-channel questions
+    try:
+        from huginn.side_conversation import get_shared_side_channel
+
+        for sq in get_shared_side_channel().drain():
+            await websocket.send_json({
+                "type": "side_question_pending",
+                "question_id": sq.id,
+                "question": sq.question,
+                "created_at": sq.created_at,
+            })
+    except Exception:
+        logger.debug("side-channel drain failed", exc_info=True)
+
+
+async def _handle_explore_start(
+    websocket: WebSocket,
+    msg: WSMessage,
+    ctx: WSCtx,
+) -> None:
+    """Handle explore_start: run the exploration orchestrator."""
+    # Late import so monkeypatch on huginn.routes.ws takes effect
+    from huginn.routes.ws import get_context
+
+    content = msg.content
+    config = msg.config or {}
+
+    await websocket.send_json(
+        {
+            "type": "text_delta",
+            "text": f"🚀 Starting exploration: {content}\n",
+        }
+    )
+    try:
+        from huginn.exploration.orchestrator import ExplorationOrchestrator
+        from huginn.exploration.strategies import ParetoPruningStrategy
+
+        cfg = get_context().config
+        orch = ExplorationOrchestrator(
+            strategy=ParetoPruningStrategy(max_active=5),
+            max_parallel=cfg.max_parallel_branches,
+        )
+
+        config = msg.config or {}
+        initial_branches = config.get(
+            "initial_branches",
+            [
+                {
+                    "name": "baseline",
+                    "hypothesis": f"Baseline for: {content}",
+                }
+            ],
+        )
+        objectives = config.get("objectives", {"score": "maximize"})
+
+        result = await orch.explore(
+            objective=content,
+            initial_branches=initial_branches,
+            objectives_config=objectives,
+            max_iterations=config.get("max_iterations", 10),
+        )
+
+        await websocket.send_json(
+            {
+                "type": "text_delta",
+                "text": f"\n✅ Exploration complete!\n"
+                f"• Branches explored: {result.n_branches_explored}\n"
+                f"• Branches pruned: {result.n_branches_pruned}\n"
+                f"• Pareto front size: {len(result.pareto_front)}\n"
+                f"• Convergence: {result.convergence_reason}\n",
+            }
+        )
+
+        if result.best_branch:
+            await websocket.send_json(
+                {
+                    "type": "text_delta",
+                    "text": f"\n🏆 Best branch: {result.best_branch['name']}\n"
+                    f"   Hypothesis: {result.best_branch['hypothesis']}\n"
+                    f"   Objectives: {result.best_branch['objectives']}\n",
+                }
+            )
+
+        await websocket.send_json(
+            {
+                "type": "exploration_result",
+                "data": {
+                    "pareto_front": result.pareto_front,
+                    "best_branch": result.best_branch,
+                    "convergence_reason": result.convergence_reason,
+                },
+            }
+        )
+
+    except Exception as e:
+        logger.error("unexpected error", exc_info=True)
+        await websocket.send_json(
+            {"type": "error", "error": f"Exploration failed: {str(e)}"}
+        )
+    await websocket.send_json({"type": "done"})
+
+
+async def _handle_approval_response(
+    websocket: WebSocket,
+    msg: WSMessage,
+    ctx: WSCtx,
+) -> None:
+    """Handle approval_response: resolve future, re-queue if approved."""
+    request_id = msg.request_id
+    approved = msg.approved if msg.approved is not None else False
+    pending_approvals = ctx.pending_approvals
+    future = pending_approvals.pop(request_id, None)
+    if future is not None and not future.done():
+        future.set_result(approved)
+
+    ctx_ap = ctx.pending_approval_contexts.pop(request_id, None)
+    if approved and ctx_ap:
+        # ponytail: re-runs the full turn, not just the denied tool —
+        # acceptable since the user explicitly approved.
+        if ctx.session_auto_approve is not None:
+            ctx.session_auto_approve["enabled"] = True
+        await _stream_agent_response(
+            websocket,
+            ctx_ap["agent"],
+            ctx_ap["content"],
+            ctx_ap["thread_id"],
+            ctx_ap["cfg_chat"],
+            auto_checkpoint=True,
+            handle_clarification=True,
+            error_log="approval re-queue error",
+            error_label="Approval re-queue failed",
+        )
+        if ctx.session_auto_approve is not None:
+            ctx.session_auto_approve["enabled"] = False
+
+
+async def _handle_plan_confirm(
+    websocket: WebSocket,
+    msg: WSMessage,
+    ctx: WSCtx,
+) -> None:
+    """Handle plan_confirm: execute or cancel a previously generated plan."""
+    plan_id = msg.plan_id
+    confirmed = msg.confirmed if msg.confirmed is not None else False
+    edited_plan = msg.edited_plan
+    pending_plan_contexts = ctx.pending_plan_contexts
+    last_user_context = ctx.last_user_context
+
+    ctx_plan = pending_plan_contexts.pop(plan_id, None)
+    if ctx_plan is None:
+        future = _pending_plans.pop(plan_id, None)
+        if future is not None and not future.done():
+            future.set_result({"confirmed": confirmed, "edited_plan": edited_plan})
+        return
+
+    if not confirmed:
+        await websocket.send_json({
+            "type": "text_delta",
+            "text": "📋 Plan cancelled by user.\n",
+        })
+        await websocket.send_json({"type": "done"})
+        return
+
+    plan_data = edited_plan or ctx_plan["plan_data"]
+    plan_objective = ctx_plan["plan_objective"]
+    agent = ctx_plan["agent"]
+    thread_id = ctx_plan["thread_id"]
+    cfg_chat = ctx_plan["cfg_chat"]
+
+    import json as _json2
+    plan_context = (
+        f"Agreed plan:\n"
+        f"{_json2.dumps(plan_data, indent=2, ensure_ascii=False)}\n\n"
+        f"Execute this plan step by step. "
+        f"After completion, verify each acceptance criterion.\n\n"
+        f"Original request: {plan_objective}"
+    )
+
+    _plan_result = None
+    if plan_data.get("acceptance_criteria"):
+        _plan_result = {
+            "plan_id": plan_id,
+            "acceptance_criteria": plan_data["acceptance_criteria"],
+        }
+    last_user_context.update({
+        "content": plan_context, "thread_id": thread_id,
+        "cfg_chat": cfg_chat, "agent": agent,
+    })
+
+    # 执行阶段开启 plan_mode — 写工具强制 ASK, 只读工具放行.
+    # 走 enter/exit_plan_execution 配对方法, 集中状态管理 (之前直接改 _permission_config
+    # 会让 is_plan_mode() 与 _mode 不一致, 误导 research_safety_hook).
+    agent.enter_plan_execution()
+    # 发 plan.exec_start / exec_complete 到 campaign SSE 通道, 前端拿到后给
+    # plan 卡片挂 "executing" / "done" 状态徽标. 之前用户点 Confirm 后整个
+    # 流式期间没有任何指示, 只能盯着 streaming 光标.
+    try:
+        from huginn.interaction.progress import get_progress_tracker
+        get_progress_tracker().emit_campaign_event(
+            task_id=plan_id,
+            event_type="plan.exec_start",
+            data={
+                "plan_id": plan_id,
+                "thread_id": thread_id,
+                "objective": plan_objective,
+                "total_steps": len(plan_data.get("steps") or []),
+                "steps": [
+                    {"name": s.get("name", "Step"), "description": s.get("description", "")}
+                    for s in (plan_data.get("steps") or [])
+                ],
+            },
+        )
+    except Exception:
+        logger.debug("plan.exec_start emit failed", exc_info=True)
+    try:
+        await _stream_agent_response(
+            websocket,
+            agent,
+            plan_context,
+            thread_id,
+            cfg_chat,
+            plan_result=_plan_result,
+            sediment_question=plan_objective,
+            sediment_type="plan_execution",
+            error_log="plan execution error",
+            error_label="Plan execution failed",
+        )
+    finally:
+        agent.exit_plan_execution()
+        try:
+            from huginn.interaction.progress import get_progress_tracker
+            get_progress_tracker().emit_campaign_event(
+                task_id=plan_id,
+                event_type="plan.exec_complete",
+                data={"plan_id": plan_id, "thread_id": thread_id},
+            )
+        except Exception:
+            logger.debug("plan.exec_complete emit failed", exc_info=True)
+
+
+async def _handle_clarification_response(
+    websocket: WebSocket,
+    msg: WSMessage,
+    ctx: WSCtx,
+) -> None:
+    """Resolve a pending clarification question (by id or thread)."""
+    from huginn.interaction.clarification import get_clarification_manager
+
+    mgr = get_clarification_manager()
+    if msg.question_id:
+        mgr.resolve(msg.question_id, msg.answer)
+    else:
+        mgr.resolve_thread(msg.thread_id, msg.answer)
+
+
+async def _handle_set_auto_approve(
+    websocket: WebSocket,
+    msg: WSMessage,
+    ctx: WSCtx,
+) -> None:
+    """Toggle per-session auto-approve for tool permission checks."""
+    enabled = bool(msg.enabled if msg.enabled is not None else True)
+    if ctx.session_auto_approve is not None:
+        ctx.session_auto_approve["enabled"] = enabled
+    await websocket.send_json(
+        {
+            "type": "auto_approve_set",
+            "enabled": enabled,
+            "scope": "session",
+        }
+    )
+
+
+async def _handle_set_suggest_mode(
+    websocket: WebSocket,
+    msg: WSMessage,
+    ctx: WSCtx,
+) -> None:
+    """HRI #4: SUGGEST mode toggle — 所有 code_act 代码先展示给用户编辑."""
+    enabled = bool(msg.enabled if msg.enabled is not None else True)
+    tid = msg.thread_id or "default"
+    from huginn.agent.code_act_loop import set_suggest_mode as _set_suggest
+
+    _set_suggest(f"code_act:{tid}", enabled)
+    await websocket.send_json(
+        {
+            "type": "suggest_mode_set",
+            "enabled": enabled,
+            "scope": "session",
+        }
+    )
+
+
+async def _handle_suggest_response(
+    websocket: WebSocket,
+    msg: WSMessage,
+    ctx: WSCtx,
+) -> None:
+    """HRI #4: 用户对 suggest_code 的响应 (approve/edit/deny + 可选 edited_code)."""
+    tid = msg.thread_id or "default"
+    action = str(msg.action or "approve")
+    edited_code = str(msg.edited_code or "")
+    from huginn.agent.code_act_loop import resume_suggest
+
+    ok = resume_suggest(f"code_act:{tid}", action, edited_code)
+    if not ok:
+        await _send_error(websocket, "No active SUGGEST approval for this thread.")
+
+
+async def _handle_decision_response(
+    websocket: WebSocket,
+    msg: WSMessage,
+    ctx: WSCtx,
+) -> None:
+    """Record a user's decision-point verdict (received via SSE, replied over WS)."""
+    from huginn.branch_policy import get_decision_point_registry
+
+    dp_id = msg.decision_point_id or ""
+    if not dp_id:
+        await _send_error(websocket, "decision_response requires decision_point_id")
+        return
+    dp = get_decision_point_registry().resolve(
+        dp_id,
+        decision=str(msg.decision or "approved"),
+        option=str(msg.option or ""),
+    )
+    if dp is None:
+        await _send_error(websocket, f"Unknown decision point: {dp_id}")
+        return
+    await websocket.send_json(
+        {"type": "decision_resolved", "id": dp_id, "status": dp.status}
+    )
+
+
+async def _handle_ping(
+    websocket: WebSocket,
+    msg: WSMessage,
+    ctx: WSCtx,
+) -> None:
+    """Reply to a client ping."""
+    await websocket.send_json({"type": "pong"})
+
+
+async def _handle_guide_input(
+    websocket: WebSocket,
+    msg: WSMessage,
+    ctx: WSCtx,
+) -> None:
+    """Handle a `guide` message: 把用户补充内容注入当前 thread 的会话 memory.
+
+    引导与普通排队消息的区别:
+    - 排队消息会在下一轮作为"新问题"发送 (前端 pendingMessages drain).
+    - 引导消息不开启新回合, 而是直接写进 agent 的 session memory, 作为
+      一条 user 消息进入会话上下文 — agent 后续的 LLM 推理 (包括下一次
+      工具调用前的生成) 都会把这条引导纳入考量.
+
+    ponytail: 同回合内的"工具调用间隙注入"需要 langgraph interrupt 或
+    tool-adapter 层 hook 才能做到 (当前回合 agent.chat 的 message 快照
+    已固定), 本实现注入 memory 后从下一轮 LLM 生成起生效. 升级路径: 在
+    HuginnAgent 的工具执行前钩子 (approval_callback 同位置) 检查 pending
+    guidance 并改写输入 messages.
+    """
+    from huginn.routes.ws import get_agent_factory
+
+    content = (msg.content or "").strip()
+    thread_id = msg.thread_id or "desktop"
+    if not content:
+        await websocket.send_json({"type": "guide_ack", "stored": False, "error": "empty content"})
+        return
+
+    try:
+        factory = get_agent_factory()
+        agent = factory.create_lead(thread_id=thread_id, approval_callback=ctx.ws_approval)
+        # 注入会话 memory: 引导成为持久上下文的一部分.
+        agent.memory.add_message("user", f"[用户中途引导] {content}")
+        await websocket.send_json({
+            "type": "guide_ack",
+            "stored": True,
+            "thread_id": thread_id,
+        })
+    except Exception as exc:
+        logger.debug("guide inject failed", exc_info=True)
+        await websocket.send_json({
+            "type": "guide_ack",
+            "stored": False,
+            "error": str(exc),
+        })

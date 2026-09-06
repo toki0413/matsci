@@ -1,0 +1,12 @@
+name: ponytail
+version: "1.0.0"
+author: Huginn Integration
+description: >
+  Behavior-constraint plugin that enforces a 7-rung decision ladder
+  (YAGNI → stdlib → platform → existing dep → one-liner → minimal code)
+  to eliminate over-engineering. Inspired by DietrichGebert/ponytail.
+huginn_version_range: ">=0.1.0"
+permissions:
+  - llm_call
+homepage: https://github.com/DietrichGebert/ponytail
+repo: https://github.com/DietrichGebert/ponytail

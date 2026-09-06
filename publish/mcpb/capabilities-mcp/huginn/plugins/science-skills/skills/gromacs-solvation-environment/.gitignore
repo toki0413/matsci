@@ -1,0 +1,25 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# 大型或可能包含私有信息的分子动力学输入/输出
+*.tpr
+*.xtc
+*.trr
+*.gro
+*.edr
+*.cpt
+*.dcd
+*.nc
+
+# 默认分析输出
+solvation_environment_records.csv
+solvation_environment_distribution.csv
+solvation_environment_summary.json
+fig_coordination_environment_*.png
+# 仅公开 README 中经过核对的 Zn²⁺示例图；其他分析图片仍保持忽略。
+!assets/zn2_high_entropy_electrolyte/fig_coordination_environment_distribution.png
+!assets/zn2_high_entropy_electrolyte/fig_coordination_environment_polar.png
+results/
+outputs/

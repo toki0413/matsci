@@ -1,0 +1,230 @@
+"""Prompt-caching utilities for HuginnAgent.
+
+LLM providers (Anthropic Claude, Kimi, etc.) cache the *prefix* of a prompt.
+To maximize cache hits we must keep the beginning of every request stable:
+
+1. Static system prompt and persona begin-dialogs come first.
+2. Dynamic content (recalled long-term memory, the current user message)
+   is appended afterwards.
+3. Optional provider-specific ``cache_control`` hints mark the last static
+   block so the provider can reuse the KV-cache for the entire prefix.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import logging
+import sys
+from typing import Any
+
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+
+logger = logging.getLogger(__name__)
+
+
+class PromptCacheBuilder:
+    """Build message lists with a stable, cache-friendly static prefix.
+
+    The builder splits each LLM request into:
+
+    * ``state_modifier`` - the static system prompt only. This becomes the
+      LangGraph ``state_modifier`` or the ``system_prompt`` for DeepAgents.
+    * ``input_messages`` - persona begin-dialogs + optional memory context +
+      the current user message. Begin-dialogs are static, but they live in the
+      input stream so that a changing memory/user tail does not invalidate the
+      cached prefix that precedes it.
+
+    Provider-specific ``cache_control`` markers are only emitted for providers
+    known to support prompt caching (Anthropic Claude, Kimi). Other providers
+    still benefit from the stable prefix because identical prefixes share KV
+    cache on the provider side even without explicit markers.
+    """
+
+    _SUPPORTED_PROVIDERS = {"anthropic", "claude"}
+
+    def __init__(
+        self,
+        system_prompt: str,
+        begin_dialogs: list[tuple[str, str]] | None = None,
+        cache_control: bool = False,
+        provider: str | None = None,
+    ):
+        self.system_prompt = system_prompt
+        self.begin_dialogs = begin_dialogs or []
+        self.cache_control = cache_control
+        self.provider = (provider or "").lower().strip()
+        # Track whether the static prefix changed since the last build.
+        # Hit = same prefix (provider can reuse KV cache), miss = changed.
+        self._last_prefix_key: str | None = None
+        self.cache_hits = 0
+        self.cache_misses = 0
+
+    def set_provider(self, provider: str | None) -> None:
+        """Update provider after the builder is constructed."""
+        self.provider = (provider or "").lower().strip()
+
+    def _provider_supports_cache_control(self) -> bool:
+        if not self.cache_control:
+            return False
+        if not self.provider:
+            # Default to the Anthropic-style ephemeral marker for backward
+            # compatibility when no provider is specified.
+            return True
+        return any(p in self.provider for p in self._SUPPORTED_PROVIDERS)
+
+    def _track_prefix_stability(self) -> None:
+        """Bump hit/miss counters based on whether the prefix changed.
+
+        Called once per build_input_messages() call (i.e. once per turn).
+        If the system prompt + begin-dialogs are identical to the previous
+        turn it's a cache hit — the provider can reuse its KV cache for the
+        entire prefix. A persona switch or prompt rebuild counts as a miss.
+        """
+        raw = f"{self.system_prompt}\x00{self.begin_dialogs}"
+        key = hashlib.md5(raw.encode("utf-8"), usedforsecurity=False).hexdigest()
+        if key == self._last_prefix_key:
+            self.cache_hits += 1
+            self._inc_metric("hit")
+        else:
+            self.cache_misses += 1
+            self._inc_metric("miss")
+        self._last_prefix_key = key
+
+    @staticmethod
+    def _inc_metric(kind: str) -> None:
+        # Skip if the routes package isn't loaded yet — importing it
+        # triggers a heavy chain (scipy, perception, 30+ route modules)
+        # that blocks the event loop during chat().
+        if "huginn.routes" not in sys.modules:
+            return
+        try:
+            from huginn.routes.metrics import (
+                PROMPT_CACHE_HITS_TOTAL,
+                PROMPT_CACHE_MISSES_TOTAL,
+            )
+
+            if kind == "hit":
+                PROMPT_CACHE_HITS_TOTAL.inc()
+            else:
+                PROMPT_CACHE_MISSES_TOTAL.inc()
+        except Exception:
+            # metrics lib missing — instance counters still work
+            logger.debug("metrics unavailable, instance counters still work", exc_info=True)
+
+    def _cache_control_kwargs(self) -> dict[str, Any]:
+        # Kimi/Moonshot 走 OpenAI 协议, Anthropic-style cache_control 会被静默忽略.
+        # ponytail: 在 provider 层注入 OpenAI 协议的 prompt_cache_key, 不在这里打标记.
+        if "kimi" in self.provider or "moonshot" in self.provider:
+            return {}
+        return {"cache_control": {"type": "ephemeral"}}
+
+    def _static_prefix(self) -> list[BaseMessage]:
+        """Return system prompt + begin-dialogs as a single static prefix.
+
+        When ``cache_control`` is enabled, the *last* static message is
+        tagged so the provider can cache everything up to that point.
+
+        Each begin-dialog message carries a stable positional ID (``bd_0``,
+        ``bd_1``, …) so LangGraph's ``add_messages`` replaces it in-place
+        on subsequent turns rather than appending a fresh copy each time.
+        """
+        messages: list[BaseMessage] = [SystemMessage(content=self.system_prompt, id="sys_prompt")]
+        for idx, (role, content) in enumerate(self.begin_dialogs):
+            stable_id = f"bd_{idx}"
+            if role == "user":
+                messages.append(HumanMessage(content=content, id=stable_id))
+            elif role == "assistant":
+                messages.append(AIMessage(content=content, id=stable_id))
+            else:
+                # Treat any other role as a system-level instruction.
+                messages.append(SystemMessage(content=content, id=stable_id))
+
+        if self._provider_supports_cache_control() and messages:
+            messages[-1].additional_kwargs.update(self._cache_control_kwargs())
+
+        return messages
+
+    def build_state_modifier(self) -> list[SystemMessage]:
+        """Static system message used as the graph state modifier.
+
+        This is intentionally only the system prompt. Begin-dialogs are kept
+        in the input stream so the same message-order logic works for both
+        ``create_react_agent`` and DeepAgents.
+        """
+        prefix = self._static_prefix()
+        return [prefix[0]] if prefix else []
+
+    def build_input_messages(
+        self,
+        memory_text: str,
+        user_message: str,
+        kg_text: str = "",
+        history_messages: list[BaseMessage] | None = None,
+        kb_text: str = "",
+    ) -> list[BaseMessage]:
+        """Messages placed after the system prompt.
+
+        Order: begin-dialogs (static), conversation history (dynamic),
+        optional memory context (dynamic),
+        optional project knowledge graph context (dynamic),
+        optional domain knowledge base context (dynamic),
+        current user message (dynamic).
+
+        Dynamic context messages (memory, KG, KB) carry stable IDs so
+        LangGraph's ``add_messages`` replaces them each turn instead of
+        accumulating unbounded duplicates in the graph state.
+        """
+        self._track_prefix_stability()
+        prefix = self._static_prefix()
+        messages: list[BaseMessage] = list(prefix[1:])
+
+        if history_messages:
+            messages.extend(history_messages)
+
+        # memory/kg/kb 合并进 user message, 不单独插 SystemMessage.
+        # 旧版各自插 SystemMessage 在 history 和 user 之间, 内容每turn变
+        # (检索结果不同), 破坏 DeepSeek context cache prefix hash.
+        # 合并进 user message 让 prefix = system + history (稳定).
+        _dyn_parts: list[str] = []
+        if memory_text:
+            _dyn_parts.append(memory_text)
+        if kg_text:
+            _dyn_parts.append(kg_text)
+        if kb_text:
+            _dyn_parts.append(kb_text)
+
+        if _dyn_parts:
+            _dyn_text = "\n\n".join(_dyn_parts)
+            messages.append(HumanMessage(
+                content=f"{_dyn_text}\n\n---\n\n{user_message}"
+            ))
+        else:
+            messages.append(HumanMessage(content=user_message))
+        return messages
+
+    def build_full_messages(
+        self,
+        memory_text: str,
+        user_message: str,
+        kg_text: str = "",
+        kb_text: str = "",
+    ) -> list[BaseMessage]:
+        """Convenience: full message list for one-shot callers."""
+        return self.build_state_modifier() + self.build_input_messages(
+            memory_text, user_message, kg_text=kg_text, kb_text=kb_text
+        )
+
+
+if __name__ == "__main__":
+    # A1 self-check: Kimi/Moonshot 不打 cache_control, Anthropic 保留.
+    b = PromptCacheBuilder("sys", [], cache_control=True)
+    b.set_provider("kimi")
+    assert b._cache_control_kwargs() == {}, "kimi must not carry cache_control"
+    assert not b._provider_supports_cache_control(), "kimi must not support cache_control"
+    b.set_provider("moonshot")
+    assert b._cache_control_kwargs() == {}, "moonshot must not carry cache_control"
+    assert not b._provider_supports_cache_control(), "moonshot must not support cache_control"
+    b.set_provider("anthropic")
+    assert b._cache_control_kwargs() == {"cache_control": {"type": "ephemeral"}}, "anthropic keeps cache_control"
+    assert b._provider_supports_cache_control(), "anthropic must support cache_control"
+    print("A1 self-check OK")

@@ -1,0 +1,551 @@
+"""v18 Bandit-Based Effort Controller — advisory effort allocation.
+
+tabular UCB1 bandit, 双时间尺度 reward (Δoutputs_progress + Δdarwin_score).
+跨任务持久化 Q table. 所有异常 fallback 到 "continue" 不阻断主流程.
+
+ponytail: 不引依赖, 不做 function approximation. 天花板 = 4 维 state space
+稀疏, 升级路径 = tile coding 或网络逼近. 跨任务持久化让稀疏问题部分缓解.
+
+参考: MemCon (arXiv:2607.13591) — memory ops MDP + UCB + 跨任务学习.
+"""
+from __future__ import annotations
+
+import json
+import logging
+import math
+import os
+import threading
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+from huginn.feature_flags import FeatureFlags
+from huginn.utils.runtime import HUGINN_DIR_NAME
+
+logger = logging.getLogger(__name__)
+
+_ACTIONS = ("continue", "switch", "requery")
+_C = 1.0
+_ALPHA = 1.0
+_BETA = 0.5
+_GAMMA = 0.9  # MC discounted return 折扣 — 与 autoloop/bandit.py 的 0.99 同源,
+# 取 0.9 更强调近期 reward, 信用分配更短视更稳 (短 episode 不衰减到 0).
+_PERSIST_FLUSH_EVERY = 10
+
+
+def _bucket(value: float, edges: list[float]) -> int:
+    for i, e in enumerate(edges):
+        if value < e:
+            return i
+    return len(edges)
+
+
+# tile coding (P1#3): 多 tiling 泛化, 缓解 4 维稀疏 state space.
+# item_idx 离散不 tiling; 对 time/calls/progress 三个分桶做 coarse tiling + 偏移,
+# 让未访问的精确状态也能从同 coarse tile 的邻居继承经验.
+# tiling 0 = 精确状态 (现有行为); 其余 tiling 用 /2 粗化 + 不同偏移错开 coarse 边界,
+# 多个粗化 tiling 让不同维度组合都能共享邻居经验.
+_TILE_OFFSETS: tuple[tuple[int, int, int], ...] = (
+    (0, 0, 0), (1, 1, 1), (0, 1, 1), (1, 0, 1),
+)
+
+
+def _tile_keys(item_idx: int, time_bucket: int, calls_bucket: int,
+               progress_bucket: int) -> list[str]:
+    """返回该状态所属的多个 tiling key (精确 + 粗化)."""
+    keys = [f"{item_idx}|{time_bucket}|{calls_bucket}|{progress_bucket}"]
+    for _ot, _oc, _op in _TILE_OFFSETS:
+        if _ot == _oc == _op == 0:
+            continue
+        keys.append(
+            f"{item_idx}|{(time_bucket + _ot) // 2}"
+            f"|{(calls_bucket + _oc) // 2}|{(progress_bucket + _op) // 2}"
+        )
+    return keys
+
+
+@dataclass(frozen=True)
+class _BanditState:
+    item_idx: int
+    time_bucket: int
+    calls_bucket: int
+    progress_bucket: int
+
+    def key(self) -> str:
+        return f"{self.item_idx}|{self.time_bucket}|{self.calls_bucket}|{self.progress_bucket}"
+
+
+@dataclass
+class _ItemRuntime:
+    item_idx: int
+    start_ts: float
+    tool_calls: int = 0
+    last_progress_pct: float = 0.0
+    last_advice: str = "continue"
+    same_advice_streak: int = 0
+
+
+class EffortBandit:
+    """单例. thread-safe. advisory only — 所有公开方法 catch Exception."""
+
+    _instance: EffortBandit | None = None
+    _instance_lock = threading.Lock()
+
+    def __init__(self, persist_path: Path | None = None):
+        self._lock = threading.RLock()
+        self._Q: dict[str, dict[str, float]] = {}
+        self._N: dict[str, dict[str, int]] = {}
+        # DeLM shared verified context: {item_pattern: {action: {"avg": float, "n": int}}}
+        # cross-task prior, bandit cold-start 时用. ponytail: 不引DB, JSON持久化够用.
+        self._verified_lessons: dict[str, dict[str, dict]] = {}
+        self._persist_path = persist_path
+        self._update_count = 0
+        self._runtime: _ItemRuntime | None = None
+        self._items_count = 0
+        self._items_names: list[str] = []
+        self._items_labels: list[str] = []  # [EXACT]/[VARIANT]/... per item
+        self._last_darwin_score = 0.5
+        # MCMC 接受率信号 — exploration/exploitation 指示器.
+        # 高接受率 = MCMC 仍在 posterior 上探索 (尚未收敛); 低接受率 = 已收敛到
+        # 局部最优, 应利用当前假设. advisory only, 不改变 UCB1 决策, 只进 hint.
+        self._mcmc_accept_rate: float | None = None
+        self._mcmc_accept_n = 0
+        # MDP 升级: episode 轨迹缓冲 + 起点 darwin (终点奖励的参照).
+        # FeatureFlags bandit_mdp (旧 env HUGINN_BANDIT_MDP) =0 时回退旧单步增量
+        # 更新, 零行为变化 (回归逃生门).
+        self._mdp_enabled = FeatureFlags.shared().is_enabled("bandit_mdp")
+        self._trajectory: list[tuple[str, str, float]] = []
+        self._episode_start_darwin = 0.5
+        self._load()
+
+    @classmethod
+    def get_instance(cls) -> EffortBandit:
+        if cls._instance is None:
+            with cls._instance_lock:
+                if cls._instance is None:
+                    cls._instance = EffortBandit(cls._default_persist_path())
+        return cls._instance
+
+    @staticmethod
+    def _default_persist_path() -> Path | None:
+        # env var 优先, 否则用文件位置定位项目根.
+        # ponytail: 不能用 cwd — agent subprocess 的 cwd 是 workspace 子目录,
+        # cwd-relative 找不到 _cross_task/, _save() 静默跳过, Q table 丢不学.
+        try:
+            _env = os.environ.get("HUGINN_BANDIT_Q_PATH")
+            if _env:
+                _p = Path(_env)
+                _p.parent.mkdir(parents=True, exist_ok=True)
+                return _p
+            # bandit_controller.py 在 agent/huginn/agent/, parents[3] = 项目根
+            # __file__ 在 staticmethod 里走 module globals, 不会是 caller 的 globals.
+            import huginn.agent.bandit_controller as _self_mod
+            _root = Path(_self_mod.__file__).resolve().parents[3]
+            _cand = _root / HUGINN_DIR_NAME / "bandit_q.json"
+            _cand.parent.mkdir(parents=True, exist_ok=True)
+            return _cand
+        except Exception as _e:
+            logger.warning("[v19] _default_persist_path failed: %s", _e)
+            return None
+
+    def _load(self) -> None:
+        if not self._persist_path or not self._persist_path.exists():
+            return
+        try:
+            _data = json.loads(self._persist_path.read_text(encoding="utf-8"))
+            self._Q = _data.get("Q", {})
+            self._N = _data.get("N", {})
+            # 向后兼容: 旧 v18 文件没有 verified_lessons, 默认空 dict.
+            self._verified_lessons = _data.get("verified_lessons", {})
+            logger.info("[v19] bandit loaded %d states, %d patterns",
+                        len(self._Q), len(self._verified_lessons))
+        except Exception as _e:
+            logger.warning("[v19] bandit load failed: %s", _e)
+
+    def _save(self) -> None:
+        if not self._persist_path:
+            return
+        try:
+            _data = {"version": 2, "C": _C, "alpha": _ALPHA, "beta": _BETA,
+                     "Q": self._Q, "N": self._N,
+                     "verified_lessons": self._verified_lessons}
+            _tmp = self._persist_path.with_suffix(".tmp")
+            _tmp.write_text(json.dumps(_data), encoding="utf-8")
+            _tmp.replace(self._persist_path)
+        except Exception as _e:
+            logger.warning("[v19] bandit save failed: %s", _e)
+
+    def set_items(self, items: list[Any]) -> None:
+        with self._lock:
+            self._items_count = len(items)
+            self._items_names = [getattr(i, "name", f"item{i}") for i in items]
+            # DeLM: item pattern 来自 checklist label, 用于 verified_lessons 聚合.
+            # 无 label 的 item 归到 "UNLABELED" bucket, 不影响主流程.
+            self._items_labels = [getattr(i, "label", "") or "UNLABELED" for i in items]
+            self._runtime = None
+
+    def _ensure_runtime(self, item_idx: int = 0) -> _ItemRuntime:
+        if self._runtime is None or self._runtime.item_idx != item_idx:
+            self._runtime = _ItemRuntime(item_idx=item_idx, start_ts=time.time())
+        return self._runtime
+
+    def _build_state(self, rt: _ItemRuntime, progress_pct: float) -> _BanditState:
+        _elapsed = time.time() - rt.start_ts
+        return _BanditState(
+            rt.item_idx,
+            _bucket(_elapsed, [30, 120, 300]),
+            _bucket(float(rt.tool_calls), [5, 15, 30]),
+            4 if progress_pct >= 100 else _bucket(progress_pct, [1, 25, 75, 100]),
+        )
+
+    def _scan_outputs_progress(self, item_idx: int) -> float:
+        try:
+            _cwd = Path.cwd()
+            _out = _cwd / "outputs"
+            if not _out.exists():
+                return self._proxy_progress(item_idx)
+            _status = _out / f"item_{item_idx}_status.md"
+            if _status.exists():
+                _txt = _status.read_text(encoding="utf-8", errors="ignore")[:2000]
+                import re as _re
+                _m = _re.search(r"progress[:\s]+(\d+)%", _txt, _re.IGNORECASE)
+                if _m:
+                    return float(_m.group(1))
+                if "complete" in _txt.lower():
+                    return 100.0
+            _n_files = sum(1 for _ in _out.glob("*") if _.is_file() and _.stat().st_size > 100)
+            _file_prog = min(100.0, (_n_files / max(self._items_count, 1) / 3) * 100)
+            if _file_prog > 0:
+                return _file_prog
+            # agent 不写 outputs/item_N_status.md 时, 用 tool_calls 作 proxy.
+            # ponytail: 单调递增, 不准但比恒 0 强, reward_slow (darwin) 兜底.
+            # 天花板: agent 调工具不代表有产出, 升级路径 = 扫 chat 输出关键词.
+            return self._proxy_progress(item_idx)
+        except Exception:
+            return self._runtime.last_progress_pct if self._runtime else 0.0
+
+    def _proxy_progress(self, item_idx: int) -> float:
+        """tool_calls based progress proxy — agent 不写 status 文件时的 fallback."""
+        if self._runtime is None or self._runtime.item_idx != item_idx:
+            return self._runtime.last_progress_pct if self._runtime else 0.0
+        _calls = self._runtime.tool_calls
+        if _calls <= 0:
+            return 0.0
+        # 分桶: 1-5→10%, 6-15→25%, 16-30→50%, 31+→75%
+        # 不给 100% — 100% 只由 status 文件 "complete" 触发, 避免假完成.
+        if _calls <= 5:
+            return 10.0
+        if _calls <= 15:
+            return 25.0
+        if _calls <= 30:
+            return 50.0
+        return 75.0
+
+    def _policy_locked(self, _prog: float | None = None) -> str:
+        """UCB1 策略 — 调用者已持锁. _prog 传入时复用, 省一次文件系统扫描."""
+        if self._runtime is None or self._items_count == 0:
+            return "continue"
+        rt = self._runtime
+        if rt.tool_calls < 10:
+            return "continue"
+        if _prog is None:
+            _prog = self._scan_outputs_progress(rt.item_idx)
+        if _prog >= 100.0:
+            return "continue"
+        st = self._build_state(rt, _prog)
+        # tile coding: 聚合状态所属所有 tiling 的 Q/N 做 UCB — 未访问的精确状态
+        # 也能从同 coarse tile 的邻居继承经验 (缓解稀疏), 有经验的精确状态仍主导.
+        _tiles = _tile_keys(st.item_idx, st.time_bucket, st.calls_bucket,
+                            st.progress_bucket)
+        _N_tot = 0
+        _n: dict[str, int] = dict.fromkeys(_ACTIONS, 0)
+        _q_sum: dict[str, float] = dict.fromkeys(_ACTIONS, 0.0)
+        for _k in _tiles:
+            _qk = self._Q.get(_k)
+            _nk = self._N.get(_k)
+            if _qk is None or _nk is None:
+                continue
+            for _a in _ACTIONS:
+                _c = _nk.get(_a, 0)
+                _n[_a] += _c
+                _N_tot += _c
+                _q_sum[_a] += _qk.get(_a, 0.0) * _c
+        if _N_tot == 0:
+            return self._prior_from_lessons(rt.item_idx)
+        best_a, best_ucb = "continue", -float("inf")
+        for a in _ACTIONS:
+            _N_sa = _n[a]
+            if _N_sa == 0:
+                continue
+            _q_ref = _q_sum[a] / _N_sa
+            _ucb = _q_ref + _C * math.sqrt(math.log(_N_tot) / _N_sa)
+            if _ucb > best_ucb:
+                best_ucb, best_a = _ucb, a
+        if best_a == rt.last_advice and rt.same_advice_streak >= 3:
+            return "continue"
+        return best_a
+
+    def policy(self) -> str:
+        try:
+            with self._lock:
+                return self._policy_locked()
+        except Exception as _e:
+            logger.debug("[v19] policy fallback: %s", _e)
+            return "continue"
+
+    def _prior_from_lessons(self, item_idx: int) -> str:
+        """DeLM shared verified context: 同 item_pattern 的 cross-task best action.
+
+        ponytail: 强信号 (n>=3 且 avg>0.05) 才信, 否则默认 continue 让 UCB1 explore.
+        天花板: pattern 聚合丢失 state 细节, 升级路径 = tile coding + pattern 混合.
+        """
+        if item_idx >= len(self._items_labels):
+            return "continue"
+        _pattern = self._items_labels[item_idx]
+        _lessons = self._verified_lessons.get(_pattern, {})
+        if not _lessons:
+            return "continue"
+        best_a, best_avg = "continue", 0.05  # 阈值: avg>0.05 才信
+        for a in _ACTIONS:
+            _entry = _lessons.get(a, {})
+            if _entry.get("n", 0) >= 3 and _entry.get("avg", 0.0) > best_avg:
+                best_avg = _entry["avg"]
+                best_a = a
+        return best_a
+
+    def update_mcmc_acceptance(self, accept_rate: float) -> None:
+        """记录 MCMC 接受率作为探索/利用信号.
+
+        advisory only — 不改变 UCB1 决策, 只进 build_hint 供 agent 参考.
+        接受率指数滑动平均 (n 越大越平滑), 失败静默.
+        """
+        try:
+            with self._lock:
+                self._mcmc_accept_n += 1
+                _n = self._mcmc_accept_n
+                if self._mcmc_accept_rate is None:
+                    self._mcmc_accept_rate = accept_rate
+                else:
+                    # 滑动平均: avg ← avg + (x - avg)/n
+                    self._mcmc_accept_rate += (accept_rate - self._mcmc_accept_rate) / _n
+        except Exception as _e:
+            logger.debug("[v19] update_mcmc_acceptance fallback: %s", _e)
+
+    def record_tool_call(self) -> None:
+        try:
+            with self._lock:
+                if self._runtime is None:
+                    return
+                rt = self._ensure_runtime(self._runtime.item_idx)
+                rt.tool_calls += 1
+                _prog = self._scan_outputs_progress(rt.item_idx)
+                _delta = _prog - rt.last_progress_pct
+                rt.last_progress_pct = _prog
+                _reward = _ALPHA * max(0.0, _delta) / 100.0
+                _advice = self._policy_locked(_prog)
+                if _advice == rt.last_advice:
+                    rt.same_advice_streak += 1
+                else:
+                    rt.last_advice = _advice
+                    rt.same_advice_streak = 1
+                _st = self._build_state(rt, _prog)
+                if self._mdp_enabled:
+                    # MDP: fast reward 记入 episode 轨迹, episode 结束再 MC 回传.
+                    self._record_step(_st, _advice, _reward)
+                    # item 完成 → 立即 flush 本 episode (terminal reward=1.0).
+                    if _prog >= 100.0:
+                        self._flush_trajectory(1.0)
+                else:
+                    self._update_q(_st, _advice, _reward)
+        except Exception as _e:
+            logger.debug("[v18] record_tool_call fallback: %s", _e)
+
+    def update_iter_end(self, darwin_score: float) -> None:
+        try:
+            with self._lock:
+                if self._runtime is None:
+                    self._last_darwin_score = darwin_score
+                    return
+                _delta = darwin_score - self._last_darwin_score
+                self._last_darwin_score = darwin_score
+                _reward_slow = _BETA * _delta
+                rt = self._runtime
+                _prog = self._scan_outputs_progress(rt.item_idx)
+                st = self._build_state(rt, _prog)
+                _a = rt.last_advice
+                if self._mdp_enabled:
+                    # MDP: slow reward 合并进当前步轨迹, 不直接改 Q.
+                    self._record_step(st, _a, _reward_slow)
+                else:
+                    # tile coding: slow reward 更新状态所属的所有 tiling.
+                    self._bump_tiles(st, _a, _reward_slow)
+                # DeLM: 同步更新 verified_lessons (cross-task shared context).
+                # ponytail: incremental mean, 不存原始 reward 序列, JSON 够小.
+                _pattern = (self._items_labels[rt.item_idx]
+                            if rt.item_idx < len(self._items_labels) else "UNLABELED")
+                _pl = self._verified_lessons.setdefault(_pattern, {})
+                _entry = _pl.setdefault(_a, {"avg": 0.0, "n": 0})
+                _n = _entry["n"]
+                _entry["avg"] = _entry["avg"] + (_reward_slow - _entry["avg"]) / (_n + 1)
+                _entry["n"] = _n + 1
+                self._update_count += 1
+                if self._update_count % _PERSIST_FLUSH_EVERY == 0:
+                    self._save()
+        except Exception as _e:
+            logger.debug("[v19] update_iter_end fallback: %s", _e)
+
+    def _bump_tiles(self, st: _BanditState, action: str, delta: float,
+                   alpha: float | None = None) -> None:
+        """tile coding 更新: 对状态所属的所有 tiling key 做 Q 更新.
+
+        alpha=None 用增量均值学习率 1/(N+1) (与 _update_q 语义一致);
+        传 alpha 则用固定学习率 (如 _flush_trajectory 的 MC alpha=1.0).
+        coarse key 与精确 key 同存 _Q/_N, 持久化无需改 schema.
+        """
+        for k in _tile_keys(st.item_idx, st.time_bucket, st.calls_bucket,
+                            st.progress_bucket):
+            if k not in self._Q:
+                self._Q[k] = dict.fromkeys(_ACTIONS, 0.0)
+                self._N[k] = dict.fromkeys(_ACTIONS, 0)
+            _N_sa = self._N[k][action]
+            _lr = alpha if alpha is not None else 1.0 / (_N_sa + 1)
+            self._Q[k][action] = self._Q[k][action] + _lr * (delta - self._Q[k][action])
+            self._N[k][action] = _N_sa + 1
+        self._update_count += 1
+        if self._update_count % _PERSIST_FLUSH_EVERY == 0:
+            self._save()
+
+    def _update_q(self, st: _BanditState, action: str, reward: float) -> None:
+        self._bump_tiles(st, action, reward)
+
+    # ── MDP 升级: episode 轨迹 + MC 信用分配 ──────────────────────────
+    # 从 contextual bandit (单步即时更新) 升级为 episode 级 Monte Carlo:
+    # 每一步的 reward 先记入轨迹, episode 结束沿轨迹自后向前回传 discounted
+    # return — 让"整条 item 的成败"落到前面每一步的 state-action, 而不只是
+    # 最后一步的瞬时 Δprogress. 这是 RL 三要素里缺的时间信用分配.
+
+    def _record_step(self, st: _BanditState, action: str, reward: float) -> None:
+        """把一步 (state, action, reward) 记入当前 episode 轨迹.
+
+        同一 (state, action) 连续注入时累加 reward — fast (record_tool_call)
+        与 slow (update_iter_end) 两条 stream 合并进同一步, 便于 MC 回传.
+        """
+        k = st.key()
+        if self._trajectory and \
+                self._trajectory[-1][0].key() == k and self._trajectory[-1][1] == action:
+            _prev_st, _a, _r = self._trajectory[-1]
+            self._trajectory[-1] = (_prev_st, _a, _r + reward)
+        else:
+            self._trajectory.append((st, action, reward))
+
+    def _current_terminal_reward(self) -> float:
+        """episode 终点奖励: item 完成 +1, 否则按 darwin 相对起点增量.
+
+        作为 MC return 的 r_T — 让"这条 item 是否做成"作为终点信号回传.
+        """
+        if self._runtime is None:
+            return 0.0
+        _prog = self._scan_outputs_progress(self._runtime.item_idx)
+        if _prog >= 100.0:
+            return 1.0
+        return max(0.0, self._last_darwin_score - self._episode_start_darwin)
+
+    def _flush_trajectory(self, terminal_reward: float) -> None:
+        """episode 级 MC discounted return 回传.
+
+        自后向前算 G_t = Σ_{k=0}^{T-t} γ^k r_{t+k}, 其中 r_T = terminal_reward;
+        对轨迹上每个 (s,a) 做 MC 更新 Q(s,a) ← Q(s,a) + α(G_t − Q(s,a)).
+        这是把单步 bandit 升成 MDP 的信用分配: 整条 episode 的累计回报沿
+        轨迹回传到每一步的 state-action.
+
+        ponytail: 离线全量 MC, 无函数近似 (表格 Q 保持 empirical). 升级路径:
+        TD(λ)/eligibility trace 做在线 credit assignment, 或 tile coding 逼近.
+        """
+        if not self._trajectory:
+            return
+        _g = terminal_reward
+        for _st, _a, _r in reversed(self._trajectory):
+            _g = _r + _GAMMA * _g
+            # tile coding: MC return 沿轨迹回传到每一步所属的所有 tiling (alpha=_ALPHA=1.0).
+            self._bump_tiles(_st, _a, _g, alpha=_ALPHA)
+        self._trajectory = []
+
+    def end_episode(self) -> None:
+        """显式结束当前 episode, flush 轨迹 (run 结束 / 无后续 item 时调用).
+
+        terminal reward 按当前进度判定, 避免最后一条轨迹永不回传.
+        """
+        with self._lock:
+            if self._mdp_enabled:
+                self._flush_trajectory(self._current_terminal_reward())
+
+    def switch_item(self, new_idx: int) -> None:
+        with self._lock:
+            # MDP: 切走旧 item 前 flush 其轨迹 (terminal 按进度判定).
+            if self._mdp_enabled:
+                self._flush_trajectory(self._current_terminal_reward())
+            self._episode_start_darwin = self._last_darwin_score
+            self._runtime = _ItemRuntime(item_idx=new_idx, start_ts=time.time())
+
+    def build_hint(self) -> str:
+        try:
+            with self._lock:
+                if self._runtime is None or self._items_count == 0:
+                    return ""
+                _advice = self._policy_locked(self._runtime.last_progress_pct)
+                if _advice != "continue":
+                    # 有明确 bandit advice (switch/requery) 时, 优先返回它.
+                    pass
+                elif self._mcmc_accept_rate is not None:
+                    # MCMC 探索/利用信号 (advisory): 高接受率=仍在探索, 低接受率=已收敛.
+                    # 收敛 + progress 停滞 → 提示可能是局部最优, 考虑换个假设方向.
+                    _mcmc_line = (
+                        "still exploring hypothesis space (MCMC accept high)"
+                        if self._mcmc_accept_rate >= 0.1
+                        else "MCMC converged (accept low) — if progress stalled, "
+                             "consider exploring a different hypothesis direction"
+                    )
+                    return (
+                        f"\n\n## MCMC Exploration Signal (advisory)\n"
+                        f"MCMC accept rate ≈ {self._mcmc_accept_rate:.3f}: {_mcmc_line}\n"
+                        f"You can ignore this and continue if your current direction is working.\n"
+                    )
+                else:
+                    return ""
+                rt = self._runtime
+                _prog = rt.last_progress_pct
+                _elapsed = time.time() - rt.start_ts
+                _cur = (self._items_names[rt.item_idx]
+                        if rt.item_idx < len(self._items_names) else f"item{rt.item_idx}")
+                if _advice == "switch":
+                    # DeLM 去中心化 task queue: 给 candidate list, agent 自治选, 不强制指定.
+                    _cands = []
+                    for _i in range(rt.item_idx + 1, min(rt.item_idx + 4, self._items_count)):
+                        _name = (self._items_names[_i]
+                                 if _i < len(self._items_names) else f"item{_i}")
+                        _pat = (self._items_labels[_i]
+                                if _i < len(self._items_labels) else "UNLABELED")
+                        _cands.append(f"  - item {_i + 1}: {_name} [{_pat}]")
+                    _cand_str = "\n".join(_cands) if _cands else "  (no further items)"
+                    return (
+                        f"\n\n## Effort Controller Hint (advisory)\n"
+                        f"Current: item {rt.item_idx + 1}/{self._items_count} ({_cur}), "
+                        f"{_elapsed:.0f}s in, {rt.tool_calls} tool calls, progress {_prog:.0f}%.\n"
+                        f"Suggestion: progress plateaued — consider claiming a different item:\n"
+                        f"{_cand_str}\n"
+                        f"Reason: bandit Q(switch) > Q(continue), cross-task lessons suggest pivot.\n"
+                        f"You can ignore this, continue current, or pick any item (not limited above).\n"
+                    )
+                if _advice == "requery":
+                    return (
+                        f"\n\n## Effort Controller Hint (advisory)\n"
+                        f"Current: item {rt.item_idx + 1}/{self._items_count} ({_cur}), "
+                        f"{_elapsed:.0f}s in, {rt.tool_calls} tool calls, progress {_prog:.0f}%.\n"
+                        f"Suggestion: appears stuck — try an alternative approach or re-query KB.\n"
+                        f"You can ignore this and continue if you have a clear plan.\n"
+                    )
+                return ""
+        except Exception as _e:
+            logger.debug("[v19] build_hint fallback: %s", _e)
+            return ""

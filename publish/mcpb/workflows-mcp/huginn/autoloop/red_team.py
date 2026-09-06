@@ -1,0 +1,757 @@
+"""Red-team 对抗性审查 — 在关键阶段转移点生成反驳意见.
+
+R3 (W3): 作为 PhaseGateHook 的 reviewer_fn 注入. 在 hypothesize→plan 和
+validate→learn 两个转移点触发, 生成对抗性反驳 (隐含前提 / 混淆变量 / 替代解释 /
+方法论缺陷). 高严重度未消解 → blocked.
+
+两种模式:
+- rule-based (默认, model=None): 按规则检查 evidence 里的常见问题, 确定性, 测试用.
+- LLM-enhanced (model 传入): 规则检查 + LLM 生成更深层的对抗性意见.
+
+ReviewerFn 接口: __call__(from, to, evidence) -> (approved: bool, reason: str)
+"""
+
+from __future__ import annotations
+
+import logging
+from collections import Counter
+from dataclasses import dataclass, field
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+
+def _dominant_source_class(evidence: dict[str, Any]) -> str:
+    """从 evidence 递归收集 source_class, 返回占比最高的.
+
+    用于 LLM 没标 source_class 的 finding 自动派生. 没找到返回 "".
+    ponytail: depth=20 防异常深度 (evidence 实际嵌套 < 10).
+    """
+    from huginn.autoloop.phase_gate import _collect_source_classes
+    classes = _collect_source_classes(evidence)
+    if not classes:
+        return ""
+    return Counter(classes).most_common(1)[0][0]
+
+
+# Phase-gate 用的阶段名是字符串字面量, 不是 ResearchPhase enum
+# (见 phase_gate.py._DEFAULT_EVIDENCE_REQUIREMENTS)
+_REVIEW_TRANSITIONS: set[tuple[str, str]] = {
+    ("hypothesize", "plan"),
+    ("validate", "learn"),
+}
+
+
+# ── data structures ──────────────────────────────────────────────────────────
+
+
+@dataclass
+class RedTeamFinding:
+    """一条对抗性发现."""
+
+    category: str  # hidden_assumption | confounder | alternative_explanation | methodology_gap
+    description: str
+    severity: str  # high | medium | low
+    mitigation: str = ""
+    # ARGUS: 这条 finding 基于哪类来源得出的判断.
+    # user_input / tool_output / external_content / agent_generated 四选一.
+    # ponytail: LLM 自报 + evidence 自动派生兜底. 空串时通过 effective_source_class 兜底.
+    source_class: str = ""
+
+    @property
+    def effective_source_class(self) -> str:
+        """空串时兜底为 agent_generated (LLM 没声明就是 agent 自己的判断)."""
+        return self.source_class or "agent_generated"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "category": self.category,
+            "description": self.description,
+            "severity": self.severity,
+            "mitigation": self.mitigation,
+            "source_class": self.effective_source_class,
+        }
+
+
+@dataclass
+class RedTeamReport:
+    """一次 red-team 审查的完整报告."""
+
+    transition: tuple[str, str]
+    findings: list[RedTeamFinding] = field(default_factory=list)
+    summary: str = ""
+
+    @property
+    def has_blocking(self) -> bool:
+        """有 high 严重度发现 → 阻断."""
+        return any(f.severity == "high" for f in self.findings)
+
+    @property
+    def n_findings(self) -> int:
+        return len(self.findings)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "transition": list(self.transition),
+            "findings": [f.to_dict() for f in self.findings],
+            "summary": self.summary,
+            "has_blocking": self.has_blocking,
+            "n_findings": self.n_findings,
+        }
+
+
+# ── reviewer ─────────────────────────────────────────────────────────────────
+
+
+class RedTeamReviewer:
+    """对抗性审查器, 注入 PhaseGateHook 做 reviewer_fn.
+
+    在 hypothesize→plan 检查假设的隐含前提和可证伪性;
+    在 validate→learn 检查验证的充分性和替代解释.
+    其他转移点直接放行.
+
+    model 不为 None 时会尝试 LLM 增强 (生成更深层反驳), 失败则降级到纯规则.
+    """
+
+    def __init__(
+        self,
+        model: Any | None = None,
+        enabled_transitions: set[tuple[str, str]] | None = None,
+        failure_mode_registry: Any | None = None,
+        critic_model: Any | None = None,
+        critic_models: list[Any] | None = None,
+    ) -> None:
+        self._model = model
+        # 跨模型审查: 优先用 critic_model 做对抗, 避免同模型自审 (confirmation bias).
+        # None 时 fallback 到 self._model, 保持向后兼容.
+        self._critic_model = critic_model
+        # 多 critic 并行审查 + DS 合成: 每个 critic 独立产 findings, 按 severity
+        # 分布转 (m_pass, m_fail, m_unc), 用 DempsterShaferCombiner 合成.
+        # 高冲突 (K>0.5) 自动降级到 Smets 折扣. 这是高阶交互: N 个 critic
+        # 作为整体形成共识, 而非简单多数决.
+        # ponytail: severity→mass 映射是启发式, 未做大规模校准. 升级: 学习映射.
+        self._critic_models = critic_models or []
+        self._enabled = enabled_transitions or _REVIEW_TRANSITIONS
+        self._last_report: RedTeamReport | None = None
+        # 领域失败模式注册表 (材料科学具体陷阱). None 时用默认单例.
+        # ponytail: 懒导入避免循环依赖, 测试可注入自定义 registry
+        if failure_mode_registry is None:
+            from huginn.metacog.failure_modes import DEFAULT_REGISTRY
+            self._failure_registry = DEFAULT_REGISTRY
+        else:
+            self._failure_registry = failure_mode_registry
+
+    def __call__(
+        self, from_phase: str, to_phase: str, evidence: dict[str, Any]
+    ) -> tuple[bool, str]:
+        """ReviewerFn 接口: 返回 (approved, reason)."""
+        if (from_phase, to_phase) not in self._enabled:
+            return True, ""
+        report = self.review(from_phase, to_phase, evidence)
+        self._last_report = report
+        if report.has_blocking:
+            return False, report.summary
+        return True, ""
+
+    def review(
+        self, from_phase: str, to_phase: str, evidence: dict[str, Any]
+    ) -> RedTeamReport:
+        """执行审查, 返回 RedTeamReport."""
+        transition = (from_phase, to_phase)
+        if from_phase == "hypothesize":
+            findings = self._review_hypothesis(evidence)
+        elif from_phase == "validate":
+            findings = self._review_validation(evidence)
+        else:
+            findings = []
+
+        # 多 critic 并行 + DS 合成 (如果配置了 critic_models)
+        if self._critic_models:
+            critic_findings, ds_note = self._multi_critic_review(
+                from_phase, to_phase, evidence
+            )
+            findings.extend(critic_findings)
+        else:
+            # 单 critic 路径 (向后兼容)
+            model_for_review = self._critic_model or self._model
+            if model_for_review is not None and not hasattr(model_for_review, "_mock_name"):
+                try:
+                    findings.extend(self._llm_findings(from_phase, to_phase, evidence))
+                except Exception:
+                    logger.debug("extend failed", exc_info=True)
+            ds_note = ""
+
+        # 领域失败模式扫描 (材料科学具体陷阱: 数据泄漏 / 单位混乱 / 对称性 / ...)
+        findings.extend(self._domain_failure_scan(evidence))
+
+        # 拓扑透镜扫描 (高阶网络视角: 检查假设的证据网络结构是否合理)
+        findings.extend(self._topology_scan(evidence))
+
+        # 离散反例搜索 (互补人类连续化偏置: 假设可离散化时, 用 SMT 找反例)
+        findings.extend(self._discrete_counterexample_scan(evidence))
+
+        # 文献共识扫描: multi_review 产出的 high_conf claims 与假设对齐检查
+        findings.extend(self._literature_consensus_check(evidence))
+
+        summary = self._build_summary(findings, transition)
+        if ds_note:
+            summary = f"{summary}\n{ds_note}" if summary else ds_note
+        return RedTeamReport(transition=transition, findings=findings, summary=summary)
+
+    def _domain_failure_scan(self, evidence: dict[str, Any]) -> list[RedTeamFinding]:
+        """扫描材料科学领域失败模式清单, 把命中的转成 RedTeamFinding.
+
+        severity 映射: block→high (会阻断), warn→medium, info→low.
+        这样 first-principles-violation (warn) 不会硬阻断, 对齐用户
+        '先警告再 force proceed' 偏好.
+        """
+        if self._failure_registry is None:
+            return []
+        # evidence 里可能带 method_family 标记, 没有就当通用
+        family_id = evidence.get("method_family")
+        hit_modes = self._failure_registry.scan(evidence, family_id=family_id)
+        sev_map = {"block": "high", "warn": "medium", "info": "low"}
+        out: list[RedTeamFinding] = []
+        for mode in hit_modes:
+            out.append(RedTeamFinding(
+                category="methodology_gap",  # 复用现有 category, 不改 enum
+                description=f"[{mode.id}] {mode.description}",
+                severity=sev_map.get(mode.severity, "medium"),
+                mitigation=mode.mitigation,
+            ))
+        return out
+
+    def _topology_scan(self, evidence: dict[str, Any]) -> list[RedTeamFinding]:
+        """拓扑透镜扫描: 用高阶网络视角检查假设的证据网络结构.
+
+        检查项 (从 topology_lens 调判据):
+        1. 若 evidence 带 interactions 且需拓扑不变量, 检查是否用了错误族
+           (该用单纯复形却用超图 → 丢失同调工具 → medium)
+        2. 若 evidence 带 target_mode + nodes/edges, 检查拓扑是否许可该模式
+           (β_k=0 但假设该模式 → high, 假设物理上不可能)
+        3. 若 evidence 带 local_models, 检查层粘合障碍
+           (H¹≠0 但声称全局一致 → high)
+
+        ponytail: 只在 evidence 显式带拓扑字段时触发, 不强加给所有 review.
+        无拓扑字段 → 返回空, 不干扰现有流程.
+        """
+        out: list[RedTeamFinding] = []
+        try:
+            from huginn.metacog.topology_lens import (
+                classify_system,
+                gluing_obstruction,
+                topology_permits,
+            )
+
+            # 1. 族 + 闭包检查
+            interactions = evidence.get("interactions")
+            if interactions and isinstance(interactions, list):
+                need_inv = evidence.get("need_topological_invariants", False)
+                need_hodge = evidence.get("need_orthogonal_decomposition", False)
+                fam = classify_system(interactions, need_inv, need_hodge)
+                # 若需要拓扑不变量但 evidence 标记用了 combinatorial → 警告
+                used_family = evidence.get("used_network_family")
+                if need_inv and used_family == "combinatorial" and fam.family == "topological":
+                    out.append(RedTeamFinding(
+                        category="methodology_gap",
+                        description=(
+                            "假设需要拓扑不变量 (Betti/同调) 但证据网络用了超图 "
+                            "(无向下闭包), 丢失同调工具. 应升级到单纯复形."
+                        ),
+                        severity="medium",
+                        mitigation="转单纯复形, 或显式标注放弃同调分析",
+                        source_class="agent_generated",
+                    ))
+
+            # 2. 拓扑许可检查
+            nodes = evidence.get("topology_nodes")
+            edges = evidence.get("topology_edges")
+            target_mode = evidence.get("target_dynamics_mode")
+            if nodes and edges and target_mode:
+                perm = topology_permits(nodes, edges, target_mode)
+                if not perm.permitted:
+                    out.append(RedTeamFinding(
+                        category="methodology_gap",
+                        description=(
+                            f"假设的动力学模式 '{target_mode}' 被当前拓扑不允许: "
+                            f"{perm.reason}. 物理上不可能, 假设需重构."
+                        ),
+                        severity="high",
+                        mitigation=perm.required_change or "重构假设以匹配拓扑约束",
+                        source_class="agent_generated",
+                    ))
+
+            # 3. 层粘合障碍检查
+            local_models = evidence.get("local_models")
+            overlap_pairs = evidence.get("overlap_pairs")
+            if local_models and overlap_pairs:
+                glu = gluing_obstruction(local_models, overlap_pairs)
+                claims_global = evidence.get("claims_global_consistency", False)
+                if not glu.can_glue and claims_global:
+                    out.append(RedTeamFinding(
+                        category="methodology_gap",
+                        description=(
+                            f"假设声称全局一致但局部模型存在粘合障碍: {glu.reason}. "
+                            f"拓扑障碍 H¹≠0, 无法一致粘合."
+                        ),
+                        severity="high",
+                        mitigation="修正局部模型使粘合条件一致, 或显式处理障碍",
+                        source_class="agent_generated",
+                    ))
+
+        except Exception:
+            logger.debug("topology_scan failed (non-fatal)", exc_info=True)
+        return out
+
+    def _discrete_counterexample_scan(
+        self, evidence: dict[str, Any]
+    ) -> list[RedTeamFinding]:
+        """离散反例搜索: 假设可离散化时, 用 SMT 找反例.
+
+        触发条件: evidence 带 discrete_hypothesis 字段, 含:
+          - variables: list[dict] (z3 变量声明)
+          - premises: list[str] (z3 约束)
+          - conclusion: str (要验证的结论)
+        调 DiscreteSMTTool.verify_implication 找反例.
+
+        找到反例 → severity="high" (阻断), mitigation 给出反例.
+        找不到 → 不发 finding (z3 unknown 不算通过, 但也不误判).
+
+        ponytail: 只在 evidence 显式声明可离散化时触发, 不强加.
+        天花板: 只支持显式声明的离散假设, 不能从自然语言 hypothesis 自动提取.
+        升级路径: LLM 把 hypothesis 翻译成 z3 表达式 (留后续).
+        """
+        out: list[RedTeamFinding] = []
+        disc = evidence.get("discrete_hypothesis")
+        if not disc or not isinstance(disc, dict):
+            return out
+        variables = disc.get("variables")
+        premises = disc.get("premises")
+        conclusion = disc.get("conclusion")
+        if not (variables and premises and conclusion):
+            return out
+        try:
+            from huginn.tools.sci.discrete_smt import _verify_implication
+            r = _verify_implication(variables, premises, conclusion, timeout_ms=5000)
+            if r.get("holds") is False:
+                ce = r.get("counterexample", {})
+                out.append(RedTeamFinding(
+                    category="hidden_assumption",
+                    description=(
+                        f"离散反例搜索找到反例, 假设不成立. "
+                        f"反例: {ce}"
+                    ),
+                    severity="high",
+                    mitigation=(
+                        f"修改假设以排除反例 {ce}, 或承认假设只在子集上成立."
+                    ),
+                    source_class="tool_output",
+                ))
+            # holds=True 或 holds=None (unknown) 都不发 finding
+        except Exception:
+            logger.debug("discrete_counterexample_scan failed (non-fatal)", exc_info=True)
+        return out
+
+    def _literature_consensus_check(
+        self, evidence: dict[str, Any]
+    ) -> list[RedTeamFinding]:
+        """检查假设是否对齐 multi_review 产出的高置信文献共识.
+
+        evidence 带 literature_claims (list[dict], 每个 claim + final_confidence) 时触发.
+        high_confidence claims 是 V1 跨域复现 + V2 生成力 + V3 排他性三重验证通过的.
+        假设与所有 high_conf claims 零关键词重叠 → medium (假设与文献共识脱节).
+
+        ponytail: 关键词重叠是粗启发式. 升级: LLM 判定语义对齐.
+        ponytail: 只在 evidence 显式带 literature_claims 时触发, 不强加给所有 review.
+        """
+        import re
+
+        claims = evidence.get("literature_claims")
+        if not claims or not isinstance(claims, list):
+            return []
+
+        hyp = self._extract_hypothesis(evidence)
+        if not hyp:
+            return []  # 假设为空的 finding 已由 _review_hypothesis 报
+
+        high_conf = [
+            c for c in claims
+            if isinstance(c, dict) and c.get("final_confidence") == "high"
+        ]
+        if not high_conf:
+            return []
+
+        # 简单分词: 英文按 \w+, 中文按字. 去停用词避免假重叠.
+        _STOP = {
+            "the", "a", "an", "is", "are", "of", "in", "to", "and", "for",
+            "with", "that", "this", "be", "by", "on", "at", "as",
+        }
+
+        def _tokens(s: str) -> set[str]:
+            toks = set(re.findall(r"\w+", s.lower()))
+            return toks - _STOP
+
+        hyp_toks = _tokens(hyp)
+        # 假设与任一 high_conf claim 有关键词重叠 → 对齐, 不报
+        for c in high_conf:
+            if hyp_toks & _tokens(c.get("claim", "")):
+                return []
+
+        return [RedTeamFinding(
+            category="methodology_gap",
+            description=(
+                f"假设与 {len(high_conf)} 条高置信文献共识零关键词重叠. "
+                "multi_review 三重验证 (V1 跨域/V2 生成力/V3 排他性) 通过的 claims "
+                "未被假设引用, 假设可能与文献共识脱节."
+            ),
+            severity="medium",
+            mitigation="在假设中显式对齐文献共识: 引用相关 high_conf claims, 或说明为何不适用",
+            source_class="external_content",
+        )]
+
+    # ── 规则审查 ────────────────────────────────────────────────────
+
+    def _multi_critic_review(
+        self, from_phase: str, to_phase: str, evidence: dict[str, Any]
+    ) -> tuple[list[RedTeamFinding], str]:
+        """多 critic 并行审查 + DS 合成.
+
+        每个 critic 独立调 LLM 产 findings, 按 severity 分布转 (m_pass, m_fail, m_unc),
+        用 DempsterShaferCombiner 合成. 高冲突 (K>0.5) 降级到 Smets 折扣.
+
+        返回 (合并 findings, DS 合成备注). 备注含各 critic mass 和合成结果,
+        让下游 prompt 能看到"N 个 critic 作为整体形成共识"的置信度.
+
+        ponytail: severity→mass 映射是启发式 (0 finding→全 pass, 有 high→
+        主 fail, 只有 medium/low→主 unc). 升级: 学习映射或用 LLM 自报置信度.
+        """
+        import asyncio
+
+        # 不用 self._critic_model 做临时传参 — 多协程并行会互相覆盖. 直接传参.
+        async def _run_one_critic(critic: Any) -> list[RedTeamFinding]:
+            if hasattr(critic, "_mock_name"):
+                return []
+            try:
+                return self._llm_findings_with(from_phase, to_phase, evidence, critic)
+            except Exception:
+                logger.debug("critic review failed", exc_info=True)
+                return []
+
+        async def _run_all() -> list[list[RedTeamFinding]]:
+            return await asyncio.gather(
+                *[_run_one_critic(c) for c in self._critic_models]
+            )
+
+        try:
+            per_critic = asyncio.run(_run_all())
+        except RuntimeError:
+            # 嵌套事件循环 fallback: 串行跑
+            per_critic = []
+            for c in self._critic_models:
+                if hasattr(c, "_mock_name"):
+                    per_critic.append([])
+                    continue
+                try:
+                    per_critic.append(
+                        self._llm_findings_with(from_phase, to_phase, evidence, c)
+                    )
+                except Exception:
+                    per_critic.append([])
+
+        from huginn.autoloop.phase_gate import DempsterShaferCombiner
+
+        masses: list[tuple[float, float, float]] = []
+        all_findings: list[RedTeamFinding] = []
+        for findings in per_critic:
+            all_findings.extend(findings)
+            masses.append(self._findings_to_mass(findings))
+
+        k = DempsterShaferCombiner.conflict(masses)
+        if k > 0.5:
+            # 高冲突: findings 少的 critic 更可信 (findings 多 = 吹毛求疵/误报多)
+            # 公式: 0 findings→w=1.0, 5+ findings→w=0.4. 少 findings 高权重.
+            # ponytail: 反向加权是启发式, 升级: 按 critic 历史准确率
+            weights = [1.0 - 0.6 * min(len(f) / 5.0, 1.0) for f in per_critic]
+            combined = DempsterShaferCombiner.combine_robust(masses, weights)
+            method = f"Smets (K={k:.2f})"
+        else:
+            combined = DempsterShaferCombiner.combine(masses)
+            method = f"Dempster (K={k:.2f})"
+
+        m_pass, m_fail, m_unc = combined
+        ds_note = (
+            f"[DS共识] {len(self._critic_models)} critics, {method}, "
+            f"m_pass={m_pass:.2f} m_fail={m_fail:.2f} m_unc={m_unc:.2f}"
+        )
+        # 如果 DS 合成 m_fail > 0.5, 强制补一条 high severity finding 确保阻断
+        # ponytail: 0.5 阈值未校准. 升级: 用 m_fail vs m_pass 的 belief/plausibility 区间.
+        if m_fail > 0.5 and not any(f.severity == "high" for f in all_findings):
+            all_findings.append(RedTeamFinding(
+                category="methodology_gap",
+                description=f"多 critic DS 共识判定 fail mass={m_fail:.2f} > 0.5, "
+                           f"虽无单 critic 产 high finding, 但共识认为应阻断",
+                severity="high",
+                mitigation="检查 critic 分歧原因, 补充证据或修正假设",
+                source_class="agent_generated",
+            ))
+
+        return all_findings, ds_note
+
+    def _llm_findings_with(
+        self, from_phase: str, to_phase: str, evidence: dict[str, Any], critic: Any
+    ) -> list[RedTeamFinding]:
+        """用指定 critic model 跑 LLM 审查 (不修改 self._critic_model, 线程安全).
+
+        根因修复 (已完成): 旧版 _multi_critic_review 用 self._critic_model = critic
+        临时赋值传参, 多协程/多线程并行会互相覆盖该实例属性. 现已改为直接给
+        _llm_findings 传 model=critic 参数, 消除共享状态 — self._critic_model 仅
+        在 __init__ 中赋值, 本方法及 _llm_findings 在 model 显式传入时都不再读它.
+        旧写法在同步 invoke 下不真并行所以暂时安全, 但 asyncio.to_thread 并行化
+        会暴露竞态; 现已修掉, 并行化时只需把 _run_one_critic 里的同步调用换成
+        await asyncio.to_thread(self._llm_findings_with, ...) 即可, 无需再处理竞态.
+        """
+        return self._llm_findings(from_phase, to_phase, evidence, model=critic)
+
+    @staticmethod
+    def _findings_to_mass(findings: list[RedTeamFinding]) -> tuple[float, float, float]:
+        """把单个 critic 的 findings 转 DS mass (m_pass, m_fail, m_unc).
+
+        启发式映射:
+        - 0 findings → (0.9, 0.05, 0.05) 强 pass
+        - 有 high → (0.05, 0.8, 0.15) 强 fail
+        - 只有 medium → (0.2, 0.4, 0.4) 偏 fail 不确定
+        - 只有 low → (0.5, 0.1, 0.4) 偏 pass 不确定
+
+        ponytail: 启发式映射, 未做大规模校准. 升级: 学习映射或 LLM 自报.
+        """
+        if not findings:
+            return (0.9, 0.05, 0.05)
+        severities = [f.severity for f in findings]
+        if "high" in severities:
+            return (0.05, 0.8, 0.15)
+        if "medium" in severities:
+            return (0.2, 0.4, 0.4)
+        # 只有 low
+        return (0.5, 0.1, 0.4)
+
+    def _review_hypothesis(self, evidence: dict[str, Any]) -> list[RedTeamFinding]:
+        """审查假设: 隐含前提 / 可证伪性 / 混淆变量."""
+        findings: list[RedTeamFinding] = []
+        hyp = self._extract_hypothesis(evidence)
+        if not hyp:
+            findings.append(RedTeamFinding(
+                category="methodology_gap",
+                description="假设为空或未明确表述, 无法做对抗性审查",
+                severity="high",
+                mitigation="明确写出可检验的假设, 包括自变量、因变量、预期关系",
+            ))
+            return findings
+
+        # 可证伪性: 有没有 if-then 结构
+        falsifiable_markers = ["如果", "if ", "当", "when ", "则", "then", "若", "假设"]
+        if not any(m in hyp.lower() for m in falsifiable_markers):
+            findings.append(RedTeamFinding(
+                category="methodology_gap",
+                description="假设缺乏可证伪的预测结构 (if-then 形式), 难以实验反驳",
+                severity="medium",
+                mitigation="重写为 '如果 X 成立, 则应观察到 Y' 的形式",
+            ))
+
+        # 隐含前提: 长假设没提边界条件 (中文紧凑, 阈值比英文低)
+        if len(hyp) > 30 and not any(
+            m in hyp.lower() for m in ["前提", "assumption", "given", "assuming", "条件", "范围"]
+        ):
+            findings.append(RedTeamFinding(
+                category="hidden_assumption",
+                description="假设较长但未显式列出边界条件, 可能遗漏关键隐含前提",
+                severity="medium",
+                mitigation="列出温度范围、尺度限制、理想化条件等隐含假设",
+            ))
+
+        # 混淆变量: 没提控制变量
+        if not any(m in hyp.lower() for m in ["控制", "control", "固定", "fixed", "排除"]):
+            findings.append(RedTeamFinding(
+                category="confounder",
+                description="未提及控制变量, 可能存在混淆变量影响因果归因",
+                severity="low",
+                mitigation="列出可能的混淆变量及控制策略",
+            ))
+
+        # 文献共识检查: multi_review 产出的 high_confidence_claims 作为外部共识
+        # 对抗 agent 自欺 — 假设与文献共识冲突或无视共识 → flag
+        # _literature_consensus_check 自己从 evidence 抽假设, 无需传 hyp
+        findings.extend(self._literature_consensus_check(evidence))
+
+        return findings
+
+    def _review_validation(self, evidence: dict[str, Any]) -> list[RedTeamFinding]:
+        """审查验证: 测试通过 / 替代解释 / 收敛性 / 物理 oracle 警告."""
+        findings: list[RedTeamFinding] = []
+
+        tests_passed = evidence.get("tests_passed")
+        if tests_passed is False:
+            findings.append(RedTeamFinding(
+                category="methodology_gap",
+                description="验证未通过测试, 结论不可靠",
+                severity="high",
+                mitigation="修复失败项, 或降低结论强度并标注局限性",
+            ))
+
+        # 物理 oracle findings: PhaseGate 已在 has_errors=True 时硬阻断, 这里只看 warnings.
+        # 把 warning 级 finding 提升为 medium, 让红队报告对物理警告不再失明.
+        # ponytail: 只看 severity=warning, error 已被 PhaseGate 拦截. 升级: DS 合成置信度.
+        pa = evidence.get("physics_audit")
+        if isinstance(pa, dict):
+            for f in (pa.get("findings") or []):
+                sev = str(f.get("severity", "")).lower()
+                if sev in ("warning", "warn"):
+                    findings.append(RedTeamFinding(
+                        category="methodology_gap",
+                        description=f"Physics audit warning: {f.get('category', '?')} — {f.get('message', '')}",
+                        severity="medium",
+                        mitigation="确认物理合理性后再采信结果, 或修复后重跑",
+                    ))
+
+        # 视觉自验证: 工具产出的数值数据有 _visual_self_check 字段 (Nullmax 启发).
+        # low confidence 或有 caveats 时, 红队报告标注可视化结论不可信.
+        vsc = evidence.get("_visual_self_check")
+        if isinstance(vsc, dict):
+            conf = float(vsc.get("confidence", 1.0))
+            caveats = vsc.get("caveats") or []
+            if conf < 0.3 or any("too_few" in c or "low_snr" in c for c in caveats):
+                findings.append(RedTeamFinding(
+                    category="methodology_gap",
+                    description=f"可视化数据置信度低 (confidence={conf:.2f}): {'; '.join(caveats[:3])}",
+                    severity="medium",
+                    mitigation="增加数据点 / 检查数据质量 / 用替代方法交叉验证可视化结论",
+                ))
+
+        mode = str(evidence.get("mode", ""))
+        # 单一方法验证: 没有交叉验证
+        if mode and not any(
+            m in str(evidence).lower() for m in ["cross", "交叉", "对比", "baseline", "基准"]
+        ):
+            findings.append(RedTeamFinding(
+                category="alternative_explanation",
+                description="仅用单一方法验证, 未排除替代解释 (参数巧合 / 代码 bug / 数据泄漏)",
+                severity="medium",
+                mitigation="用独立方法或基准交叉验证, 排除替代解释",
+            ))
+
+        return findings
+
+    # ── LLM 增强 ────────────────────────────────────────────────────
+
+    def _is_real_model(self) -> bool:
+        """检测是不是 MagicMock (测试注入的)."""
+        return not hasattr(self._model, "_mock_name")
+
+    def _llm_findings(
+        self, from_phase: str, to_phase: str, evidence: dict[str, Any],
+        model: Any | None = None,
+    ) -> list[RedTeamFinding]:
+        """用 LLM 生成对抗性意见. 失败返回空列表 (调用方 try/except).
+
+        model 参数: 显式指定审查用的 LLM, 不再依赖 self._critic_model 共享状态.
+        None 时 fallback 到 self._critic_model or self._model (向后兼容).
+        多 critic 并行时通过 model 参数传参, 避免实例属性互相覆盖.
+        """
+        from langchain_core.messages import HumanMessage, SystemMessage
+
+        prompt = self._build_llm_prompt(from_phase, to_phase, evidence)
+        messages = [
+            SystemMessage(content=(
+                "你是红队审查员 (red-team reviewer). 任务: 对下面的研究证据做对抗性审查, "
+                "找出隐含前提、混淆变量、替代解释、方法论缺陷. "
+                "输出 JSON 数组, 每条: {category, description, severity, mitigation, source_class}. "
+                "category ∈ hidden_assumption|confounder|alternative_explanation|methodology_gap. "
+                "severity ∈ high|medium|low. "
+                "source_class ∈ user_input|tool_output|external_content, "
+                "标这条 finding 基于哪类来源得出 (ARGUS 影响溯源用). 没问题就输出 []. "
+                "反向激励: 假设证据有错, 找最可能失败的点, 不要验证正确性."
+            )),
+            HumanMessage(content=prompt),
+        ]
+        # 用同步 invoke 避免在 async 引擎上下文里 run_until_complete 报错.
+        # 跨模型审查: 优先显式 model 参数, fallback 到 self._critic_model/self._model.
+        critic = model or self._critic_model or self._model
+        resp = critic.invoke(messages)
+        text = str(resp.content).strip()
+        findings = self._parse_llm_findings(text)
+        # ARGUS: LLM 没标 source_class 的 finding, 从 evidence 自动派生 dominant.
+        # ponytail: 调用方诚实标记 + 自动兜底. 升级: 按参数值路径精确溯源.
+        dominant = _dominant_source_class(evidence)
+        if dominant:
+            for f in findings:
+                if not f.source_class:
+                    f.source_class = dominant
+        return findings
+
+    def _build_llm_prompt(
+        self, from_phase: str, to_phase: str, evidence: dict[str, Any]
+    ) -> str:
+        import json
+
+        return (
+            f"阶段转移: {from_phase} → {to_phase}\n"
+            f"证据: {json.dumps(evidence, ensure_ascii=False, default=str)}\n\n"
+            f"请做对抗性审查."
+        )
+
+    @staticmethod
+    def _parse_llm_findings(text: str) -> list[RedTeamFinding]:
+        """解析 LLM 返回的 JSON 数组. 解析失败返回空列表."""
+        import json
+
+        try:
+            # 去掉可能的 markdown 代码块包裹
+            if "```" in text:
+                text = text.split("```")[1]
+                if text.startswith("json"):
+                    text = text[4:]
+            items = json.loads(text)
+            findings = []
+            for item in items:
+                findings.append(RedTeamFinding(
+                    category=item.get("category", "methodology_gap"),
+                    description=item.get("description", ""),
+                    severity=item.get("severity", "medium"),
+                    mitigation=item.get("mitigation", ""),
+                    source_class=item.get("source_class", ""),
+                ))
+            return findings
+        except (json.JSONDecodeError, TypeError):
+            return []
+
+    # ── helpers ─────────────────────────────────────────────────────
+
+    @staticmethod
+    def _extract_hypothesis(evidence: dict[str, Any]) -> str:
+        """从 evidence 里抽假设文本."""
+        for key in ("hypothesis", "value", "description"):
+            val = evidence.get(key)
+            if val and isinstance(val, str):
+                return val
+        return ""
+
+    @staticmethod
+    def _build_summary(findings: list[RedTeamFinding], transition: tuple[str, str]) -> str:
+        if not findings:
+            return ""
+        from_str, to_str = transition
+        parts = [f"Red-team 审查 {from_str}→{to_str}: {len(findings)} 条发现."]
+        for f in findings:
+            line = f"  [{f.severity}] {f.category}: {f.description}"
+            if f.mitigation:
+                line += f" → 修复: {f.mitigation}"
+            if f.source_class == "external_content":
+                line += " [来源: external_content, 可能被注入]"
+            parts.append(line)
+        return "\n".join(parts)
+
+
+__all__ = [
+    "RedTeamReviewer",
+    "RedTeamReport",
+    "RedTeamFinding",
+]

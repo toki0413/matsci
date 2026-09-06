@@ -1,0 +1,980 @@
+"""Materials database tool — query Materials Project, OQMD, AFLOW, and NOMAD.
+
+A read-only tool for retrieving structures, thermodynamic data, and
+properties from public materials databases. Requires user-supplied API keys
+or environment variables (MP_API_KEY / OQMD_API_KEY).
+AFLOW and NOMAD public data do not require API keys.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import os
+import re
+from dataclasses import dataclass, field
+from datetime import UTC
+from pathlib import Path
+from typing import Any, Literal
+from urllib.parse import urlencode
+
+from pydantic import BaseModel, Field
+
+from huginn.core_types import ToolContext, ToolResult
+from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
+from huginn.tools.local_structure_db import LocalStructureDB
+from huginn.tools.tool_cache import EXTERNAL_API_TTL, cacheable
+
+logger = logging.getLogger(__name__)
+
+
+def _formula_to_elements(formula: str) -> list[str]:
+    """从化学式抽元素符号, 给 NOMAD query DSL 用. 'SiO2' -> ['Si','O']."""
+    symbols = re.findall(r"[A-Z][a-z]?", formula)
+    return symbols
+
+
+class MaterialsDatabaseInput(BaseModel):
+    action: Literal[
+        "mp_summary",
+        "mp_structure",
+        "oqmd_query",
+        "oqmd_structure",
+        "batch_query",
+        "aflow_query",
+        "aflow_structure",
+        "nomad_query",
+        "omat24_predict",
+    ] = Field(..., description="Database action to perform")
+    query: str | None = Field(
+        default=None,
+        description="Formula (e.g. 'SiO2'), material_id (e.g. 'mp-149'), or OQMD filter",
+    )
+    fields: list[str] | None = Field(
+        default=None,
+        description="Fields to return. Default depends on action.",
+    )
+    limit: int = Field(default=10, ge=1, le=100, description="Max records to return")
+    output_format: Literal["json", "cif", "poscar"] | None = Field(
+        default=None,
+        description="If set, save the structure to workspace in this format",
+    )
+    output_file: str | None = Field(
+        default=None,
+        description="Filename for saved structure (default auto-generated)",
+    )
+    api_key: str | None = Field(
+        default=None,
+        description="API key override. Falls back to MP_API_KEY / OQMD_API_KEY env vars.",
+    )
+    # batch_query 专用: 一次查多个 mp_id 或化学式, 内部并发受 _BATCH_CONCURRENCY 限制
+    mp_ids: list[str] | None = Field(
+        default=None,
+        description="For batch_query: list of material_ids (e.g. ['mp-149', 'mp-13'])",
+    )
+    formulas: list[str] | None = Field(
+        default=None,
+        description="For batch_query: list of formulas (e.g. ['SiO2', 'TiO2'])",
+    )
+    # omat24_predict 专用: 结构文件路径 + 传给 MLIP 的参数
+    structure_file: str | None = Field(
+        default=None,
+        description="For omat24_predict: path to structure file for OMat24 energy prediction",
+    )
+    parameters: dict[str, Any] = Field(
+        default_factory=dict,
+        description="For omat24_predict: extra kwargs passed to ml_potential_tool (device, etc.)",
+    )
+
+
+@dataclass
+class MaterialsRecord:
+    id: str
+    formula: str | None = None
+    energy_per_atom: float | None = None
+    band_gap: float | None = None
+    spacegroup: str | None = None
+    source: str = ""
+    raw: dict[str, Any] = field(default_factory=dict)
+
+
+class MaterialsDatabaseOutput(BaseModel):
+    source: str
+    count: int
+    records: list[dict[str, Any]]
+    saved_file: str | None = None
+    warnings: list[str] = []
+    retrieval_contract: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Provenance for reproducibility: action/query/fields/limit + "
+            "endpoint + timestamp. Another agent should be able to replay "
+            "the lookup from this dict alone."
+        ),
+    )
+
+
+# batch_query 内部并发查 MP API 的最大并发数, MP 公开 API 限流比较紧,
+# 给 5 比较稳妥. 超过这个数的查询自动排队, 不会一次性把 API 打爆.
+_BATCH_CONCURRENCY = 5
+
+
+def _retrieval_contract(args: MaterialsDatabaseInput, endpoint: str = "") -> dict[str, Any]:
+    """Build a provenance dict so another agent can replay this lookup.
+
+    K-Dense database-lookup skill 的 retrieval-contract 模式: 记录 entity /
+    identifiers / constraints / expected_fields / exhaustive_vs_targeted,
+    让查询结果离开工具后仍可复现.
+    """
+    from datetime import datetime
+    return {
+        "action": args.action,
+        "query": args.query,
+        "fields": args.fields,
+        "limit": args.limit,
+        "mp_ids": args.mp_ids,
+        "formulas": args.formulas,
+        "endpoint": endpoint,
+        "timestamp": datetime.now(UTC).isoformat(timespec="seconds"),
+    }
+
+
+class MaterialsDatabaseTool(HuginnTool):
+    """Query public materials databases (Materials Project, OQMD)."""
+
+    name = "materials_database_tool"
+    category = "materials"
+    profile = ToolProfile(
+        cost_tier="light",
+        phases=frozenset({ResearchPhase.LITERATURE, ResearchPhase.HYPOTHESIS}),
+        quality_tier="database",  # database lookup = medium-high confidence
+    )
+    description = (
+        "Query Materials Project, OQMD, AFLOW, or NOMAD for structures, energies, "
+        "band gaps, and thermodynamic data. Provide an API key or set MP_API_KEY / OQMD_API_KEY. "
+        "AFLOW and NOMAD public data are accessible without keys. "
+        "Also supports omat24_predict: predict formation energy and stability "
+        "with OMat24 EquiformerV2 and compare to the MP hull."
+    )
+    input_schema = MaterialsDatabaseInput
+    output_schema = MaterialsDatabaseOutput
+    read_only = True
+    _init_kwargs_map = {
+        "mp_api_key": "mp_api_key",
+        "oqmd_api_key": "oqmd_api_key",
+        "aflow_api_key": "aflow_api_key",
+        "nomad_api_key": "nomad_api_key",
+    }
+
+    def __init__(
+        self,
+        mp_api_key: str | None = None,
+        oqmd_api_key: str | None = None,
+        aflow_api_key: str | None = None,
+        nomad_api_key: str | None = None,
+    ):
+        self._config_mp_key = mp_api_key
+        self._config_oqmd_key = oqmd_api_key
+        self._config_aflow_key = aflow_api_key
+        self._config_nomad_key = nomad_api_key
+
+    def is_read_only(self, args: MaterialsDatabaseInput) -> bool:
+        return True
+
+    async def call(
+        self, args: MaterialsDatabaseInput, context: ToolContext
+    ) -> ToolResult:
+        return await self._call_cached(args, context)
+
+    @cacheable(
+        ttl_seconds=EXTERNAL_API_TTL,
+        tool_name="materials_database_tool",
+        # api_key 不进 key（敏感且不影响查询结果），output_format 也不进
+        # （落盘路径每次可能不同，但查到的数据是一样的）
+        # batch_query 把 mp_ids/formulas 拼进 key, 否则不同批次的查询会撞缓存
+        key_fn=lambda self, args, ctx: {
+            "action": args.action,
+            "query": args.query,
+            "fields": args.fields,
+            "limit": args.limit,
+            "mp_ids": args.mp_ids,
+            "formulas": args.formulas,
+            "structure_file": args.structure_file,
+        },
+    )
+    async def _call_cached(
+        self, args: MaterialsDatabaseInput, context: ToolContext
+    ) -> ToolResult:
+        # 属性别名归一化: 用户/LLM 可能写 "bg"/"Eg"/"band-gap" 等, 统一到 canonical name
+        if args.fields:
+            from huginn.data.property_aliases import normalize_property_name
+            args.fields = [normalize_property_name(f) for f in args.fields]
+        # omat24_predict 走 MLIP 预测 + MP hull 比对, 不走本地结构库
+        if args.action == "omat24_predict":
+            return await self._handle_omat24_predict(args, context)
+        # batch_query 走单独路径, 内部并发查多个 mp_id/formula
+        if args.action == "batch_query":
+            return await self._handle_batch_query(args, context)
+        # AFLOW / NOMAD 公开数据, 不走本地结构库
+        if args.action.startswith("aflow_"):
+            return await self._handle_aflow(args, context)
+        if args.action.startswith("nomad_"):
+            return await self._handle_nomad(args, context)
+        # 先查本地结构库，命中就省掉一次外部 API 往返
+        local_hit = self._local_lookup(args)
+        if local_hit is not None:
+            return local_hit
+        try:
+            if args.action.startswith("mp_"):
+                return await self._handle_mp(args, context)
+            return await self._handle_oqmd(args, context)
+        except (
+            Exception
+        ) as exc:  # pragma: no cover - broad catch for user-facing errors
+            return ToolResult(data=None, success=False, error=str(exc))
+
+    def _local_lookup(self, args: MaterialsDatabaseInput) -> ToolResult | None:
+        """查本地结构库，命中返回 ToolResult，没命中返回 None。
+
+        只对 mp_summary / mp_structure 这两个读操作做本地短路，
+        OQMD 的数据格式不一样，不走本地库。
+        """
+        if args.action not in ("mp_summary", "mp_structure"):
+            return None
+        if not args.query:
+            return None
+        struct = LocalStructureDB.shared().get(args.query)
+        if struct is None:
+            return None
+        record = {
+            "id": struct.get("mp_id"),
+            "formula": struct.get("formula_pretty") or struct.get("formula"),
+            "energy_per_atom": None,
+            "band_gap": struct.get("band_gap"),
+            "spacegroup": struct.get("space_group"),
+            "source": f"local_db ({struct.get('mp_id')})",
+            "lattice_params": struct.get("lattice_params"),
+            "atomic_positions": struct.get("atomic_positions"),
+            "density": struct.get("density"),
+            "volume": struct.get("volume"),
+        }
+        output = MaterialsDatabaseOutput(
+            source="local_db",
+            count=1,
+            records=[record],
+            warnings=[f"from local structure db, not live API: {args.query}"],
+            retrieval_contract=_retrieval_contract(args, "local_db"),
+        )
+        return ToolResult(data=output.model_dump(exclude_none=True))
+
+    async def _handle_batch_query(
+        self, args: MaterialsDatabaseInput, context: ToolContext
+    ) -> ToolResult:
+        """批量查多个 mp_id / formula, 内部并发受 _BATCH_CONCURRENCY 限制.
+
+        每个条目单独走 _call_cached 路径, 这样:
+          - 单条命中本地结构库就直接短路, 不打 API
+          - 单条命中 tool_cache 就直接返回, 重复 batch_query 不烧 API
+          - 没命中的条目走 mp_summary 拿 MP API
+
+        单条失败不影响其它, 错误塞进该条的 record["error"] 返回.
+        """
+        items: list[str] = []
+        items.extend(args.mp_ids or [])
+        items.extend(args.formulas or [])
+        # 去重保序, 避免 LLM 把同一个 mp_id 写两遍白跑一次
+        seen: set[str] = set()
+        unique_items: list[str] = []
+        for it in items:
+            if it not in seen:
+                seen.add(it)
+                unique_items.append(it)
+
+        if not unique_items:
+            return ToolResult(
+                data=None,
+                success=False,
+                error="batch_query requires mp_ids or formulas (non-empty)",
+            )
+
+
+        sem = asyncio.Semaphore(_BATCH_CONCURRENCY)
+
+        async def _query_one(item: str) -> dict[str, Any]:
+            """单条查询, 走 _call_cached 复用本地缓存 + tool_cache."""
+            single_args = MaterialsDatabaseInput(
+                action="mp_summary",
+                query=item,
+                fields=args.fields,
+                limit=args.limit,
+                api_key=args.api_key,
+            )
+            async with sem:
+                try:
+                    result = await self._call_cached(single_args, context)
+                except Exception as exc:
+                    return {
+                        "query": item,
+                        "error": str(exc),
+                        "records": [],
+                    }
+            if not result.success:
+                return {
+                    "query": item,
+                    "error": result.error or "unknown error",
+                    "records": [],
+                }
+            data = result.data or {}
+            records = data.get("records", []) if isinstance(data, dict) else []
+            return {
+                "query": item,
+                "records": records,
+                "source": data.get("source") if isinstance(data, dict) else None,
+                "warnings": data.get("warnings", []) if isinstance(data, dict) else [],
+            }
+
+        # 并发跑所有单条查询, 单条挂掉不影响其它
+        per_item = await asyncio.gather(
+            *[_query_one(it) for it in unique_items]
+        )
+
+        # 把单条结果摊平成 records 列表, 方便上层统一处理
+        all_records: list[dict[str, Any]] = []
+        all_warnings: list[str] = []
+        for entry in per_item:
+            if entry.get("error"):
+                all_warnings.append(f"{entry['query']}: {entry['error']}")
+                # 错误条目也进 records, 让 LLM 知道哪条挂了
+                all_records.append({
+                    "query": entry["query"],
+                    "error": entry["error"],
+                })
+                continue
+            for rec in entry.get("records", []):
+                rec_with_query = dict(rec)
+                rec_with_query.setdefault("query", entry["query"])
+                all_records.append(rec_with_query)
+            for w in entry.get("warnings", []):
+                all_warnings.append(f"{entry['query']}: {w}")
+
+        output = MaterialsDatabaseOutput(
+            source="materials_project_batch",
+            count=len(all_records),
+            records=all_records,
+            warnings=all_warnings,
+            retrieval_contract=_retrieval_contract(args, "https://api.materialsproject.org"),
+        )
+        return ToolResult(data=output.model_dump(exclude_none=True))
+
+    def _mp_key(self, override: str | None) -> str:
+        key = override or self._config_mp_key or os.environ.get("MP_API_KEY")
+        if not key:
+            raise ValueError(
+                "Materials Project API key is required. "
+                "Pass api_key, set MP_API_KEY, or configure mp_api_key."
+            )
+        return key
+
+    def _oqmd_key(self, override: str | None) -> str | None:
+        return (
+            override or self._config_oqmd_key or os.environ.get("OQMD_API_KEY") or None
+        )
+
+    def _aflow_key(self, override: str | None) -> str | None:
+        # AFLOW REST is public, key is optional
+        return (
+            override or self._config_aflow_key or os.environ.get("AFLOW_API_KEY") or None
+        )
+
+    def _nomad_key(self, override: str | None) -> str | None:
+        # NOMAD public data doesn't need a key, only private uploads do
+        return (
+            override or self._config_nomad_key or os.environ.get("NOMAD_API_KEY") or None
+        )
+
+    async def _handle_mp(
+        self, args: MaterialsDatabaseInput, context: ToolContext
+    ) -> ToolResult:
+        import aiohttp
+
+        api_key = self._mp_key(args.api_key)
+        base_url = "https://api.materialsproject.org"
+
+        async with aiohttp.ClientSession() as session:
+            if args.action == "mp_summary":
+                records, warnings = await self._mp_summary(
+                    session, base_url, api_key, args
+                )
+            elif args.action == "mp_structure":
+                records, warnings, saved = await self._mp_structure(
+                    session, base_url, api_key, args, context
+                )
+                output = MaterialsDatabaseOutput(
+                    source="materials_project",
+                    count=len(records),
+                    records=records,
+                    saved_file=saved,
+                    warnings=warnings,
+                    retrieval_contract=_retrieval_contract(args, "https://api.materialsproject.org"),
+                )
+                return ToolResult(data=output.model_dump(exclude_none=True))
+            else:  # pragma: no cover
+                raise ValueError(f"Unknown action: {args.action}")
+
+        output = MaterialsDatabaseOutput(
+            source="materials_project",
+            count=len(records),
+            records=records,
+            warnings=warnings,
+            retrieval_contract=_retrieval_contract(args, "https://api.materialsproject.org"),
+        )
+        return ToolResult(data=output.model_dump(exclude_none=True))
+
+    async def _mp_summary(
+        self,
+        session: Any,
+        base_url: str,
+        api_key: str,
+        args: MaterialsDatabaseInput,
+    ) -> tuple[list[dict[str, Any]], list[str]]:
+        warnings: list[str] = []
+        params: dict[str, Any] = {"limit": args.limit, "API_KEY": api_key}
+        if args.query:
+            # Heuristic: mp-NNN is a material id, otherwise treat as formula.
+            if args.query.lower().startswith("mp-"):
+                params["material_ids"] = args.query
+            else:
+                params["formula"] = args.query
+        fields = args.fields or [
+            "material_id",
+            "formula_pretty",
+            "energy_per_atom",
+            "band_gap",
+            "symmetry",
+        ]
+        params["fields"] = ",".join(fields)
+        url = f"{base_url}/materials/summary/?{urlencode(params, doseq=True)}"
+        data = await self._get_json(session, url)
+        records = []
+        for item in data.get("data", []):
+            records.append(self._normalize_mp_summary(item))
+        if not records and data.get("meta", {}).get("total", 0) == 0:
+            warnings.append(f"No Materials Project results for query: {args.query}")
+        return records, warnings
+
+    async def _mp_structure(
+        self,
+        session: Any,
+        base_url: str,
+        api_key: str,
+        args: MaterialsDatabaseInput,
+        context: ToolContext,
+    ) -> tuple[list[dict[str, Any]], list[str], str | None]:
+        warnings: list[str] = []
+        material_id = (args.query or "").strip()
+        if not material_id:
+            raise ValueError("mp_structure requires a material_id query (e.g. mp-149)")
+        params: dict[str, Any] = {
+            "API_KEY": api_key,
+            "fields": "structure,material_id,formula_pretty",
+        }
+        url = f"{base_url}/materials/core/{material_id}?{urlencode(params)}"
+        data = await self._get_json(session, url)
+        item = (
+            data.get("data", [None])[0]
+            if isinstance(data.get("data"), list)
+            else data.get("data")
+        )
+        if item is None:
+            warnings.append(f"No structure found for {material_id}")
+            return [], warnings, None
+
+        record = self._normalize_mp_summary(item)
+        saved = None
+        if args.output_format:
+            saved = self._save_structure(
+                item.get("structure"),
+                material_id,
+                args.output_format,
+                args.output_file,
+                context,
+            )
+        return [record], warnings, saved
+
+    async def _handle_oqmd(
+        self, args: MaterialsDatabaseInput, context: ToolContext
+    ) -> ToolResult:
+        import aiohttp
+
+        api_key = self._oqmd_key(args.api_key)
+        base_url = "http://oqmd.org/oqmdapi"
+        headers = {"X-API-KEY": api_key} if api_key else {}
+
+        async with aiohttp.ClientSession(headers=headers) as session:
+            if args.action == "oqmd_query":
+                records, warnings = await self._oqmd_query(session, base_url, args)
+            elif args.action == "oqmd_structure":
+                records, warnings, saved = await self._oqmd_structure(
+                    session, base_url, args, context
+                )
+                output = MaterialsDatabaseOutput(
+                    source="oqmd",
+                    count=len(records),
+                    records=records,
+                    saved_file=saved,
+                    warnings=warnings,
+                    retrieval_contract=_retrieval_contract(args, "http://oqmd.org/oqmdapi"),
+                )
+                return ToolResult(data=output.model_dump(exclude_none=True))
+            else:  # pragma: no cover
+                raise ValueError(f"Unknown action: {args.action}")
+
+        output = MaterialsDatabaseOutput(
+            source="oqmd", count=len(records), records=records, warnings=warnings,
+            retrieval_contract=_retrieval_contract(args, "http://oqmd.org/oqmdapi"),
+        )
+        return ToolResult(data=output.model_dump(exclude_none=True))
+
+    async def _oqmd_query(
+        self,
+        session: Any,
+        base_url: str,
+        args: MaterialsDatabaseInput,
+    ) -> tuple[list[dict[str, Any]], list[str]]:
+        warnings: list[str] = []
+        params: dict[str, Any] = {"limit": args.limit}
+        if args.query:
+            # Treat plain formula as composition filter.
+            if "=" in args.query or "<" in args.query or ">" in args.query:
+                params["filter"] = args.query
+            else:
+                params["composition"] = args.query
+        fields = args.fields or ["name", "entry_id", "icsd_id", "band_gap", "delta_e"]
+        params["fields"] = ",".join(fields)
+        url = f"{base_url}/entry?{urlencode(params, doseq=True)}"
+        data = await self._get_json(session, url)
+        records = []
+        for item in data.get("data", []):
+            records.append(self._normalize_oqmd_entry(item))
+        if not records:
+            warnings.append(f"No OQMD results for query: {args.query}")
+        return records, warnings
+
+    async def _oqmd_structure(
+        self,
+        session: Any,
+        base_url: str,
+        args: MaterialsDatabaseInput,
+        context: ToolContext,
+    ) -> tuple[list[dict[str, Any]], list[str], str | None]:
+        warnings: list[str] = []
+        entry_id = (args.query or "").strip()
+        if not entry_id:
+            raise ValueError("oqmd_structure requires an entry_id query")
+        url = f"{base_url}/entry/{entry_id}?fields=structure,name,entry_id,band_gap,delta_e"
+        data = await self._get_json(session, url)
+        item = (
+            data.get("data", [None])[0]
+            if isinstance(data.get("data"), list)
+            else data.get("data")
+        )
+        if item is None:
+            warnings.append(f"No OQMD structure found for {entry_id}")
+            return [], warnings, None
+        record = self._normalize_oqmd_entry(item)
+        saved = None
+        if args.output_format:
+            saved = self._save_structure(
+                item.get("structure"),
+                entry_id,
+                args.output_format,
+                args.output_file,
+                context,
+            )
+        return [record], warnings, saved
+
+    async def _get_json(self, session: Any, url: str) -> dict[str, Any]:
+        import aiohttp
+
+        async with session.get(url, timeout=aiohttp.ClientTimeout(total=60)) as resp:
+            text = await resp.text()
+            if resp.status != 200:
+                raise RuntimeError(
+                    f"Database request failed ({resp.status}): {text[:500]}"
+                )
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError as exc:
+                raise RuntimeError(
+                    f"Invalid JSON response from database: {exc}"
+                ) from exc
+
+    # ── AFLOW ───────────────────────────────────────────────────────
+    # AFLOW REST (aflowlib.duke.edu) is public, no key needed.
+
+    async def _handle_aflow(
+        self, args: MaterialsDatabaseInput, context: ToolContext
+    ) -> ToolResult:
+        import aiohttp
+
+        target = args.query
+        if not target:
+            return ToolResult(
+                data=None, success=False,
+                error="aflow_query requires a query (formula or material_id)",
+            )
+
+        base = "http://aflowlib.duke.edu/aflowlib"
+        params: dict[str, Any] = {"limit": args.limit}
+        if target.lower().startswith("aflow:"):
+            params["aflow"] = target
+        else:
+            params["composition"] = target
+        url = f"{base}?{urlencode(params, doseq=True)}"
+
+        try:
+            timeout = aiohttp.ClientTimeout(total=30)
+            async with aiohttp.ClientSession(timeout=timeout) as session, session.get(url) as resp:
+                    if resp.status != 200:
+                        text = await resp.text()
+                        return ToolResult(
+                            data=None, success=False,
+                            error=f"AFLOW API error {resp.status}: {text[:200]}",
+                        )
+                    # AFLOW returns JSON (newer) or AFLUX text (older)
+                    try:
+                        raw = await resp.json(content_type=None)
+                    except Exception:
+                        raw = await resp.text()
+        except TimeoutError:
+            return ToolResult(
+                data=None, success=False, error="AFLOW request timed out (30s)"
+            )
+        except Exception as e:
+            return ToolResult(data=None, success=False, error=f"AFLOW request failed: {e}")
+
+        records = self._normalize_aflow(raw)
+        output = MaterialsDatabaseOutput(
+            source="aflow", count=len(records), records=records,
+            warnings=[] if records else [f"No AFLOW results for: {target}"],
+            retrieval_contract=_retrieval_contract(args, "http://aflowlib.org"),
+        )
+        return ToolResult(data=output.model_dump(exclude_none=True))
+
+    def _normalize_aflow(self, raw: Any) -> list[dict[str, Any]]:
+        """AFLOW responses are heterogeneous: list / dict / AFLUX text."""
+        records: list[dict[str, Any]] = []
+        if isinstance(raw, str):
+            for block in raw.split(">>>"):
+                rec: dict[str, Any] = {}
+                for line in block.strip().splitlines():
+                    if "=" in line:
+                        k, v = line.split("=", 1)
+                        k = k.strip()
+                        v = v.strip()
+                        if k in ("compound", "formula"):
+                            rec["formula"] = v
+                        elif k in ("aflow_id", "auid"):
+                            rec["entry_id"] = v
+                        elif k in ("spacegroup", "sg"):
+                            rec["spacegroup"] = v
+                        elif k == "Egap":
+                            try:
+                                rec["band_gap"] = float(v)
+                            except ValueError:
+                                rec["band_gap"] = v
+                        elif k in ("enthalpy", "enthalpy_atom"):
+                            try:
+                                rec["energy"] = float(v)
+                            except ValueError:
+                                rec["energy"] = v
+                if rec:
+                    rec["source"] = "aflow"
+                    records.append(rec)
+        elif isinstance(raw, list):
+            for item in raw:
+                if not isinstance(item, dict):
+                    continue
+                records.append({
+                    "formula": item.get("compound") or item.get("formula"),
+                    "entry_id": item.get("aflow_id") or item.get("auid"),
+                    "spacegroup": item.get("spacegroup") or item.get("sg"),
+                    "band_gap": item.get("Egap"),
+                    "energy": item.get("enthalpy") or item.get("enthalpy_atom"),
+                    "source": "aflow",
+                })
+        elif isinstance(raw, dict) and "data" in raw:
+            for item in raw["data"]:
+                records.append({
+                    "formula": item.get("compound") or item.get("formula"),
+                    "entry_id": item.get("aflow_id") or item.get("auid"),
+                    "spacegroup": item.get("spacegroup") or item.get("sg"),
+                    "band_gap": item.get("Egap"),
+                    "energy": item.get("enthalpy") or item.get("enthalpy_atom"),
+                    "source": "aflow",
+                })
+        return records[:50]
+
+    # ── NOMAD ───────────────────────────────────────────────────────
+    # NOMAD public data doesn't need a key.
+
+    async def _handle_nomad(
+        self, args: MaterialsDatabaseInput, context: ToolContext
+    ) -> ToolResult:
+        import aiohttp
+
+        target = args.query
+        if not target:
+            return ToolResult(
+                data=None, success=False,
+                error="nomad_query requires a query (formula or material_id)",
+            )
+
+        base = "https://nomad-lab.eu/prod-1/api/v1/entries/query"
+        headers: dict[str, str] = {}
+        nomad_key = self._nomad_key(args.api_key)
+        if nomad_key:
+            headers["Authorization"] = f"Bearer {nomad_key}"
+
+        body: dict[str, Any] = {
+            "owner": "public",
+            "pagination": {"page_size": min(args.limit, 50)},
+            "query": {
+                "results.material.elements:all": _formula_to_elements(target),
+                "results.material.chemical_formula_descriptive:contains": target,
+            },
+        }
+
+        try:
+            timeout = aiohttp.ClientTimeout(total=30)
+            async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session, session.post(base, json=body) as resp:
+                    if resp.status != 200:
+                        text = await resp.text()
+                        return ToolResult(
+                            data=None, success=False,
+                            error=f"NOMAD API error {resp.status}: {text[:200]}",
+                        )
+                    raw = await resp.json()
+        except TimeoutError:
+            return ToolResult(
+                data=None, success=False, error="NOMAD request timed out (30s)"
+            )
+        except Exception as e:
+            return ToolResult(data=None, success=False, error=f"NOMAD request failed: {e}")
+
+        records = self._normalize_nomad(raw)
+        output = MaterialsDatabaseOutput(
+            source="nomad", count=len(records), records=records,
+            warnings=[] if records else [f"No NOMAD results for: {target}"],
+            retrieval_contract=_retrieval_contract(args, "https://nomad-lab.eu/prod/rae/api"),
+        )
+        return ToolResult(data=output.model_dump(exclude_none=True))
+
+    def _normalize_nomad(self, raw: Any) -> list[dict[str, Any]]:
+        """Normalize NOMAD /entries/query response into records."""
+        records: list[dict[str, Any]] = []
+        if not isinstance(raw, dict):
+            return records
+        for item in raw.get("data", []):
+            entry_id = item.get("entry_id") or item.get("upload_id")
+            results = item.get("results", {})
+            material = results.get("material") or [{}]
+            mat = material[0] if isinstance(material, list) and material else material
+            formula = (
+                mat.get("chemical_formula_descriptive")
+                or mat.get("chemical_formula_reduced")
+            )
+            props = results.get("properties", {})
+            records.append({
+                "entry_id": entry_id,
+                "formula": formula,
+                "spacegroup": (mat.get("structure") or {}).get("space_group"),
+                "band_gap": props.get("electronic", {}).get("band_gap"),
+                "energy": props.get("energetic", {}).get("total_energy"),
+                "source": "nomad",
+            })
+        return records[:50]
+
+    def _normalize_mp_summary(self, item: dict[str, Any]) -> dict[str, Any]:
+        symmetry = item.get("symmetry") or {}
+        record = {
+            "id": item.get("material_id") or item.get("task_id"),
+            "formula": item.get("formula_pretty") or item.get("formula"),
+            "energy_per_atom": item.get("energy_per_atom"),
+            "band_gap": item.get("band_gap"),
+            "spacegroup": (
+                symmetry.get("symbol") if isinstance(symmetry, dict) else None
+            ),
+            "source": "materials_project",
+        }
+        record.update({k: v for k, v in item.items() if k not in record})
+        return record
+
+    def _normalize_oqmd_entry(self, item: dict[str, Any]) -> dict[str, Any]:
+        record = {
+            "id": item.get("entry_id") or item.get("id"),
+            "formula": item.get("name"),
+            "energy_per_atom": item.get("delta_e"),
+            "band_gap": item.get("band_gap"),
+            "source": "oqmd",
+        }
+        record.update({k: v for k, v in item.items() if k not in record})
+        return record
+
+    def _save_structure(
+        self,
+        structure_data: dict[str, Any] | None,
+        record_id: str,
+        fmt: Literal["json", "cif", "poscar"],
+        output_file: str | None,
+        context: ToolContext,
+    ) -> str | None:
+        if not structure_data:
+            return None
+        workspace = Path(context.workspace).expanduser().resolve()
+        workspace.mkdir(parents=True, exist_ok=True)
+        filename = output_file or f"{record_id}.{fmt}"
+        path = workspace / filename
+
+        if fmt == "json":
+            path.write_text(json.dumps(structure_data, indent=2), encoding="utf-8")
+            return str(path)
+
+        # Try pymatgen for CIF/POSCAR conversion; fall back to JSON if unavailable.
+        try:
+            from pymatgen.core import Structure
+
+            structure = Structure.from_dict(structure_data)
+            if fmt == "cif":
+                structure.to(fmt="cif", filename=str(path))
+            elif fmt == "poscar":
+                structure.to(fmt="poscar", filename=str(path))
+            return str(path)
+        except Exception:
+            fallback = path.with_suffix(".json")
+            fallback.write_text(json.dumps(structure_data, indent=2), encoding="utf-8")
+            return str(fallback)
+
+    # ── OMat24 预测 ─────────────────────────────────────────────────
+    # 用 OMat24 EquiformerV2 预测能量, 再跟 MP hull 比稳定性.
+    # 实际的 ML 推理委托给 ml_potential_tool, 这里只做编排 + hull 比对.
+
+    async def _handle_omat24_predict(
+        self, args: MaterialsDatabaseInput, context: ToolContext
+    ) -> ToolResult:
+        import aiohttp
+
+        struct_path = args.structure_file
+        if not struct_path or not Path(struct_path).exists():
+            return ToolResult(
+                data=None,
+                success=False,
+                error=f"Structure file not found: {struct_path}",
+            )
+
+        # 1. 读结构拿组成和原子数
+        try:
+            from ase.io import read
+
+            atoms = read(struct_path)
+            formula = atoms.get_chemical_formula()
+            n_atoms = len(atoms)
+        except Exception as exc:
+            return ToolResult(
+                data=None,
+                success=False,
+                error=f"Failed to read structure: {exc}",
+            )
+
+        # 2. 调 ml_potential_tool 预测能量
+        from huginn.tools.sci.ml_potential_tool import (
+            MLPotentialInput,
+            MLPotentialTool,
+        )
+
+        ml_tool = MLPotentialTool()
+        ml_result = await ml_tool.call(
+            MLPotentialInput(
+                backend="equiformer_v2_omat24",
+                action="predict",
+                structure_file=struct_path,
+                parameters=args.parameters,
+            ),
+            context,
+        )
+
+        if not ml_result.success:
+            return ToolResult(
+                data={
+                    "backend": "equiformer_v2_omat24",
+                    "action": "omat24_predict",
+                    "formula": formula,
+                    "status": "prediction_failed",
+                },
+                success=False,
+                error=f"OMat24 prediction failed: {ml_result.error}",
+            )
+
+        predicted_energy = ml_result.data["energy"]
+        predicted_energy_per_atom = predicted_energy / n_atoms
+
+        # 3. 查 MP 同组成, 拿参考能量做 hull 比对
+        mp_energy_per_atom = None
+        mp_material_id = None
+        try:
+            api_key = self._mp_key(args.api_key)
+            base_url = "https://api.materialsproject.org"
+            params: dict[str, Any] = {
+                "formula": formula,
+                "fields": "material_id,formula_pretty,energy_per_atom",
+                "limit": 1,
+                "API_KEY": api_key,
+            }
+            url = f"{base_url}/materials/summary/?{urlencode(params, doseq=True)}"
+            async with aiohttp.ClientSession() as session:
+                data = await self._get_json(session, url)
+                items = data.get("data", [])
+                if items:
+                    mp_energy_per_atom = items[0].get("energy_per_atom")
+                    mp_material_id = items[0].get("material_id")
+        except Exception:
+            # MP 查不到不影响预测, 只是少了 hull 参考
+            logger.debug("MP lookup failed, proceeding without hull reference", exc_info=True)
+
+        # 4. 判断稳定性 + 置信度
+        stability = "unknown (no MP reference)"
+        confidence = "low"
+        energy_diff = None
+
+        if mp_energy_per_atom is not None:
+            energy_diff = predicted_energy_per_atom - mp_energy_per_atom
+            # ponytail: 粗略阈值, 不是真正的凸包计算.
+            # 要精确的 energy above hull 需要查所有竞争相, 这里只跟 MP 已知最稳定相对比.
+            if energy_diff < -0.05:
+                stability = "below hull (predicted more stable than MP reference)"
+            elif energy_diff > 0.05:
+                stability = "above hull (predicted less stable than MP reference)"
+            else:
+                stability = "near hull (within 50 meV/atom of MP reference)"
+            confidence = "high" if abs(energy_diff) < 0.05 else "medium"
+        else:
+            # 没有 MP 参考, 只能说预测本身成功了
+            confidence = "medium"
+
+        return ToolResult(
+            data={
+                "backend": "equiformer_v2_omat24",
+                "action": "omat24_predict",
+                "formula": formula,
+                "n_atoms": n_atoms,
+                "predicted_energy": predicted_energy,
+                "predicted_energy_per_atom": predicted_energy_per_atom,
+                "mp_energy_per_atom": mp_energy_per_atom,
+                "mp_material_id": mp_material_id,
+                "energy_diff_per_atom": energy_diff,
+                "stability": stability,
+                "confidence": confidence,
+            },
+            success=True,
+        )

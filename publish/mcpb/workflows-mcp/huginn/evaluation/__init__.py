@@ -1,0 +1,41 @@
+"""Evaluation — MCDA 决策分析 + 统一 Grader."""
+
+from huginn.evaluation.core import evaluate
+from huginn.evaluation.goal_judge import GoalJudge
+from huginn.evaluation.grader import (
+    BenchGrader,
+    DimensionalGrader,
+    GraderRegistry,
+    GraderResult,
+    HallucinationGrader,
+    LiteratureGrader,
+    MaterialsBoundsGrader,
+    PhysicsGrader,
+    RedTeamGrader,
+    default_registry,
+)
+from huginn.evaluation.matworld_bench import (
+    CATEGORIES,
+    BenchResult,
+    BenchTask,
+    MatWorldBench,
+)
+
+__all__ = [
+    "evaluate",
+    "GoalJudge",
+    "GraderResult",
+    "GraderRegistry",
+    "PhysicsGrader",
+    "DimensionalGrader",
+    "RedTeamGrader",
+    "HallucinationGrader",
+    "BenchGrader",
+    "LiteratureGrader",
+    "MaterialsBoundsGrader",
+    "default_registry",
+    "CATEGORIES",
+    "BenchTask",
+    "BenchResult",
+    "MatWorldBench",
+]
