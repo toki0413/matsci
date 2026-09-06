@@ -1,0 +1,8 @@
+# Huginn HF Space — app.py 运行依赖
+# 演示壳只需 gradio；但 demo_core 会 import huginn 的文献/兼容实验模块，
+# 其依赖链需要 langchain-core + pydantic 及网络工具库，因此直接安装 agent
+# 源码（dependency resolution 交给 pip，均为成熟 wheel）。
+gradio>=4.0
+huginn-agent @ git+https://github.com/toki0413/matsci.git#subdirectory=agent
+numpy
+Pillow
