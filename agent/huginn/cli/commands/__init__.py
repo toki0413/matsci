@@ -35,6 +35,7 @@ from huginn.cli.commands import (
     seed_knowledge,
     serve,
     sessions,
+    share,
     skill_import,
     swarm,
     telemetry,
@@ -90,6 +91,7 @@ def register_commands(cli: click.Group) -> None:
     cli.add_command(visualize.visualize)
     cli.add_command(kg.kg)
     cli.add_command(sessions.sessions)
+    cli.add_command(share.share)
     # 跨平台技能导入 (OpenClaw / Hermes)
     cli.add_command(skill_import.skill_import)
     # 后台任务管理

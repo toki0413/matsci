@@ -181,6 +181,15 @@ def build() -> gr.Blocks:
                 wf_out = gr.Markdown("（未加载）")
                 wf_btn.click(core.workflow_manifest, [], wf_out)
 
+            with gr.Tab("⑧ 统一分享总线"):
+                gr.Markdown(
+                    "### 能力/工作流/人格/技能/证明单元 —— 并进同一份可导入 bundle\n"
+                    "点「展开分享总线」列出全资产统一清单 + 一份真实导出样张。"
+                )
+                share_btn = gr.Button("展开分享总线")
+                share_out = gr.Markdown("（未加载）")
+                share_btn.click(core.share_manifest, [], share_out)
+
         gr.Markdown(
             "\n---\n*Huginn · 不假装一致，也不捏造自由度。源码: "
             "<https://github.com/toki0413/matsci>*"
