@@ -170,6 +170,8 @@ class _LitArgs:
         self.year_from = kw.get("year_from")
         self.year_to = kw.get("year_to")
         self.max_results = kw.get("max_results", 10)
+        self.min_citations = kw.get("min_citations")
+        self.oa_only = kw.get("oa_only", False)
         self.expand_query = kw.get("expand_query", False)
         self.action = kw.get("action", "search")
 
@@ -201,6 +203,16 @@ def test_search_cache_key_differs_on_year_and_count():
     a = _LitArgs(query="q", year_from=2020, year_to=2024, max_results=5)
     b = _LitArgs(query="q", year_from=2010, year_to=2015, max_results=10)
     assert _search_cache_key(a, ()) != _search_cache_key(b, ())
+
+
+def test_search_cache_key_differs_on_citation_and_oa_filters():
+    """L1b: 引用数下限 / OA-only 过滤不同时, 结果不同, key 要区分, 不能撞缓存."""
+    base = _LitArgs(query="q")
+    minc = _LitArgs(query="q", min_citations=50)
+    oa = _LitArgs(query="q", oa_only=True)
+    assert _search_cache_key(minc, ()) != _search_cache_key(base, ())
+    assert _search_cache_key(oa, ()) != _search_cache_key(base, ())
+    assert _search_cache_key(minc, ()) != _search_cache_key(oa, ())
 
 
 # ── P0-3: ingest 全文优先 ───────────────────────────────────────────────────

@@ -118,6 +118,83 @@ def _sort_papers(papers: list[dict[str, Any]]) -> list[dict[str, Any]]:
     )
 
 
+def _coerce_int(v: Any) -> int | None:
+    """跨源归一把 citations/pubYear 等字段统一成 int 或 None.
+
+    各源给的引用数可能缺、是字符串 ("123")、dict (`{"@id": ...}`) 或 float.
+    归一化失败返回 None (保留记录, 不做硬过滤误杀).
+    """
+    if v is None:
+        return None
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, int):
+        return v
+    if isinstance(v, float):
+        return int(v)
+    if isinstance(v, str):
+        s = v.strip()
+        if not s:
+            return None
+        try:
+            return int(float(s))
+        except (TypeError, ValueError):
+            return None
+    # dict 之类不可解析的, 尝试取常见 key
+    if isinstance(v, dict):
+        for k in ("@score", "value", "count", "citationCount"):
+            if v.get(k) is not None:
+                return _coerce_int(v.get(k))
+        return None
+    return None
+
+
+def _is_oa(p: dict[str, Any]) -> bool:
+    """跨源判断论文是否开放获取 (归一).
+
+    OA 信号分散在多个字段:
+      - OpenAlex / 部分源: is_oa (bool) 或 oa_url (非空)
+      - EuropePMC / DOAJ / OpenAIRE / 材料库: open_access (bool)
+      - CORE / Zenodo: download_url (能拿到全文链接大概率可下载)
+    任一命中即视为 OA. 无任何信号则保守视为非 OA.
+    """
+    if p.get("is_oa") is True:
+        return True
+    if p.get("is_oa") is False:
+        return False
+    if p.get("open_access") is True:
+        return True
+    if p.get("oa_url"):
+        return True
+    return bool(p.get("download_url"))
+
+
+def _apply_filters(
+    papers: list[dict[str, Any]],
+    *,
+    min_citations: int | None = None,
+    oa_only: bool = False,
+) -> list[dict[str, Any]]:
+    """统一后置过滤: 引用数下限 + 只保留开放获取.
+
+    - min_citations: 引用数 ≥ 阈值才留. 未知引用数 (None) 不过滤 — 否则
+      arXiv/CORD 这些没引用数据的源会被整体误杀.
+    - oa_only: True 时只保留被 _is_oa 判为 OA 的记录.
+
+    返回新列表, 不就地改.
+    """
+    out: list[dict[str, Any]] = []
+    for p in papers:
+        if oa_only and not _is_oa(p):
+            continue
+        if min_citations is not None:
+            c = _coerce_int(p.get("citations"))
+            if c is not None and c < min_citations:
+                continue
+        out.append(p)
+    return out
+
+
 # 查询重排停用词 (轻量, 覆盖最常见的连接词/疑问词, 避免它们刷命中)
 _QUERY_STOP: set[str] = {
     "the", "a", "an", "is", "are", "was", "were", "be", "been", "of", "in",
@@ -173,7 +250,12 @@ def _rerank(query: str, papers: list[dict[str, Any]], top_n: int | None = None) 
         p["relevance"] = round(score(p), 4)
     ranked = sorted(
         papers,
-        key=lambda p: (p["relevance"], bool(p.get("abstract")), p.get("citations") or 0),
+        key=lambda p: (
+            p["relevance"],
+            _is_oa(p),                     # OA 优先 (同一相关度下)
+            bool(p.get("abstract")),
+            p.get("citations") or 0,
+        ),
         reverse=True,
     )
     return ranked[:top_n] if top_n else ranked
@@ -1388,10 +1470,14 @@ async def _search_datacite(
         f"https://api.datacite.org/dois"
         f"?page[size]={page_size}&query={q}"
     )
+    # DataCite 支持逗号分隔的多个 filter (同一 filter 参数)
+    filters = []
     if year_from:
-        url += f"&filter=publicationYear>={year_from}"
+        filters.append(f"publicationYear>={year_from}")
     if year_to:
-        url += f"&filter=publicationYear<={year_to}"
+        filters.append(f"publicationYear<={year_to}")
+    if filters:
+        url += "&filter=" + ",".join(filters)
 
     def _fetch() -> dict[str, Any]:
         if not _is_safe_url(url):

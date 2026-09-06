@@ -1,15 +1,20 @@
-"""联网搜索工具 —— 支持 Tavily / DuckDuckGo 多后端降级。
+"""联网搜索工具 —— 支持 Tavily / Bing / Brave / SearXNG / DuckDuckGo 多后端降级。
 
 只读工具，无副作用，可以自动执行。
-后端优先级：
-  1. Tavily（需要 TAVILY_API_KEY）
-  2. duckduckgo_search 库（免费）
-  3. urllib 直接抓 DuckDuckGo HTML（最后兜底）
+后端按健康分降级（有 key/URL 才激活，连续失败进入 cooldown 跳过）：
+  1. Tavily（TAVILY_API_KEY）
+  2. Bing Web Search（HUGINN_BING_API_KEY，可选 HUGINN_BING_ENDPOINT）
+  3. Brave Search（HUGINN_BRAVE_API_KEY）
+  4. SearXNG（HUGINN_SEARXNG_URL，自托管实例需开 format=json）
+  5. arxiv API（免费学术）
+  6. duckduckgo_search 库（免费）
+  7. urllib 直接抓 DuckDuckGo HTML（最后兜底）
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import re
@@ -156,6 +161,17 @@ class WebSearchTool(HuginnTool):
     _consecutive_failures: int = 0
     _circuit_broken: bool = False
 
+    # 按后端健康分: 某路后端连续失败达到阈值后进入 cooldown, 后续跳过 (不等 timeout 拖累).
+    # 任一后端成功后整体复位; 这是"健康分驱动"的路由, 而非固定硬编码优先级.
+    _BACKEND_COOLDOWN_THRESHOLD = 3
+    _backend_health: dict[str, int] = {}
+    _backend_cooldown: set[str] = set()
+
+    # 降级链顺序 (BS1 起): 有 key/URL 才激活. arxiv 偏学术, DDG/fallback 通用.
+    _BACKEND_ORDER = (
+        "tavily", "bing", "brave", "searxng", "arxiv", "ddgs",
+    )
+
     @property
     def name(self) -> str:
         return "web_search_tool"
@@ -225,26 +241,16 @@ class WebSearchTool(HuginnTool):
             logger.debug("best-effort op failed", exc_info=True)
             max_results = 5
 
-        # 1) Tavily（有 API key 才走这条）
-        if os.environ.get("TAVILY_API_KEY"):
-            result = self._search_tavily(query, max_results)
+        # 按健康分遍历降级链: 每路可选后端依赖 key/URL 激活, 非激活或过热直接跳过.
+        # 任一成功立即返回并重置全局健康分; 全部失败走 urllib 兜底.
+        for backend in self._ordered_active_backends():
+            result = self._run_backend(backend, query, max_results)
             if result is not None:
                 self._on_success()
                 return self._maybe_compact(result, args)
+            self._mark_backend_failure(backend)
 
-        # 2) arxiv API — 学术搜索, 稳定免费, 对 paper/physics query 尤其有效
-        result = self._search_arxiv(query, max_results)
-        if result is not None:
-            self._on_success()
-            return self._maybe_compact(result, args)
-
-        # 3) duckduckgo_search 库
-        result = self._search_ddgs(query, max_results)
-        if result is not None:
-            self._on_success()
-            return self._maybe_compact(result, args)
-
-        # 4) urllib 兜底 — 到这里说明前面全失败
+        # urllib 兜底 — 到这里说明前面全失败
         self._on_failure()
         return self._maybe_compact(self._search_fallback(query, max_results), args)
 
@@ -268,6 +274,60 @@ class WebSearchTool(HuginnTool):
     async def call(self, args: dict, context: ToolContext) -> ToolResult:
         """HuginnTool 入口。放到线程池里跑，避免阻塞事件循环。"""
         return await asyncio.to_thread(self.execute, args, context)
+
+    # ── 按后端健康分的降级路由 (BS1) ──────────────────────────────
+
+    @classmethod
+    def _backend_active(cls, name: str) -> bool:
+        """某路后端是否激活 (依赖 key/URL). 无配置则直接视为不可用."""
+        if name == "tavily":
+            return bool(os.environ.get("TAVILY_API_KEY"))
+        if name == "bing":
+            return bool(os.environ.get("HUGINN_BING_API_KEY"))
+        if name == "brave":
+            return bool(os.environ.get("HUGINN_BRAVE_API_KEY"))
+        if name == "searxng":
+            return bool(os.environ.get("HUGINN_SEARXNG_URL"))
+        return True  # arxiv / ddgs 无需 key
+
+    @classmethod
+    def _ordered_active_backends(cls) -> list[str]:
+        """按 _BACKEND_ORDER 返回激活且未被 cooldown 的后端."""
+        return [
+            name
+            for name in cls._BACKEND_ORDER
+            if cls._backend_active(name) and name not in cls._backend_cooldown
+        ]
+
+    def _run_backend(
+        self, name: str, query: str, max_results: int
+    ) -> ToolResult | None:
+        """分派到某路后端的 _search_* 方法; 返回 None 表示可降级 (失败/超时)."""
+        try:
+            return getattr(self, f"_search_{name}")(query, max_results)
+        except AttributeError:
+            logger.warning("unknown web_search backend: %s", name)
+            self._mark_backend_failure(name)
+            return None
+
+    @classmethod
+    def _mark_backend_failure(cls, name: str) -> None:
+        """累计某后端连续失败; 达阈值进入 cooldown."""
+        cls._backend_health[name] = cls._backend_health.get(name, 0) + 1
+        if cls._backend_health[name] >= cls._BACKEND_COOLDOWN_THRESHOLD:
+            cls._backend_cooldown.add(name)
+            logger.warning(
+                "web_search backend '%s' 连续失败达 %d 次, 会话内 cooldown 跳过",
+                name, cls._backend_health[name],
+            )
+
+    @classmethod
+    def _on_success(cls) -> None:
+        """搜索成功, 重置失败计数 + 清空各后端健康分/cooldown (整体热了)."""
+        cls._consecutive_failures = 0
+        cls._circuit_broken = False
+        cls._backend_health = {}
+        cls._backend_cooldown = set()
 
     # ── Tavily ───────────────────────────────────────────────────────
 
@@ -302,6 +362,131 @@ class WebSearchTool(HuginnTool):
             )
         except Exception as exc:
             logger.warning("Tavily 搜索失败，降级到下一个后端: %s", exc)
+            return None
+
+    # ── Bing Web Search API (需 HUGINN_BING_API_KEY) ──────────────
+
+    def _search_bing(
+        self, query: str, max_results: int
+    ) -> ToolResult | None:
+        """Bing Web Search v7: 走 REST 接口, 依赖 key.
+
+        key: HUGINN_BING_API_KEY; 可选端点 HUGINN_BING_ENDPOINT
+        (默认全球域名; 某些 region 需自备国内端点). JSON 里 webPages.value[].
+        """
+        key = os.environ.get("HUGINN_BING_API_KEY")
+        if not key:
+            return None
+        try:
+            endpoint = os.environ.get(
+                "HUGINN_BING_ENDPOINT",
+                "https://api.bing.microsoft.com/v7.0/search",
+            )
+            url = f"{endpoint}?q={urllib.parse.quote(query)}&count={max_results}"
+            req = urllib.request.Request(
+                url,
+                headers={
+                    "Ocp-Apim-Subscription-Key": key,
+                    "User-Agent": "HuginnAgent/1.0",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=_search_timeout()) as resp:
+                payload = json.loads(resp.read().decode("utf-8", errors="ignore"))
+            results = [
+                {
+                    "title": p.get("name", ""),
+                    "url": p.get("url", ""),
+                    "snippet": p.get("snippet", ""),
+                }
+                for p in (payload.get("webPages", {}) or {}).get("value", [])
+            ][:max_results]
+            if not results:
+                return None
+            return ToolResult(
+                data={"query": query, "results": results, "search_engine": "bing"},
+                success=True,
+            )
+        except Exception as exc:
+            logger.warning("Bing 搜索失败, 降级到下一后端: %s", exc)
+            return None
+
+    # ── Brave Search API (需 HUGINN_BRAVE_API_KEY) ────────────────
+
+    def _search_brave(
+        self, query: str, max_results: int
+    ) -> ToolResult | None:
+        """Brave Search Web API: 免费 key + 干净 JSON, 隐私友好."""
+        key = os.environ.get("HUGINN_BRAVE_API_KEY")
+        if not key:
+            return None
+        try:
+            url = (
+                "https://api.search.brave.com/res/v1/web/search"
+                f"?q={urllib.parse.quote(query)}&count={max_results}"
+            )
+            req = urllib.request.Request(
+                url,
+                headers={"X-Subscription-Token": key},
+            )
+            with urllib.request.urlopen(req, timeout=_search_timeout()) as resp:
+                payload = json.loads(resp.read().decode("utf-8", errors="ignore"))
+            results = [
+                {
+                    "title": r.get("title", ""),
+                    "url": r.get("url", ""),
+                    "snippet": r.get("description", ""),
+                }
+                for r in (payload.get("web", {}) or {}).get("results", [])
+            ][:max_results]
+            if not results:
+                return None
+            return ToolResult(
+                data={"query": query, "results": results, "search_engine": "brave"},
+                success=True,
+            )
+        except Exception as exc:
+            logger.warning("Brave 搜索失败, 降级到下一后端: %s", exc)
+            return None
+
+    # ── SearXNG 自托管 (需 HUGINN_SEARXNG_URL) ───────────────────
+
+    def _search_searxng(
+        self, query: str, max_results: int
+    ) -> ToolResult | None:
+        """SearXNG 元搜索: 自托管实例, 聚合多个上游, 无 key.
+
+        实例需开启 JSON 输出 (format=json). 返回 results[] 的 title/url/content.
+        适合私有/自定义部署; 未配置 URL 则跳过.
+        """
+        searxng_url = os.environ.get("HUGINN_SEARXNG_URL", "").strip().rstrip("/")
+        if not searxng_url:
+            return None
+        try:
+            url = (
+                f"{searxng_url}/search?q={urllib.parse.quote(query)}&format=json"
+            )
+            req = urllib.request.Request(
+                url,
+                headers={"User-Agent": "HuginnAgent/1.0"},
+            )
+            with urllib.request.urlopen(req, timeout=_search_timeout()) as resp:
+                payload = json.loads(resp.read().decode("utf-8", errors="ignore"))
+            results = [
+                {
+                    "title": r.get("title", ""),
+                    "url": r.get("url", ""),
+                    "snippet": r.get("content", ""),
+                }
+                for r in (payload.get("results", []) or [])
+            ][:max_results]
+            if not results:
+                return None
+            return ToolResult(
+                data={"query": query, "results": results, "search_engine": "searxng"},
+                success=True,
+            )
+        except Exception as exc:
+            logger.warning("SearXNG 搜索失败, 降级到下一后端: %s", exc)
             return None
 
     # ── arxiv API ────────────────────────────────────────────────────
@@ -681,18 +866,47 @@ def _c4_self_check() -> int:
     WebSearchTool._circuit_broken = False
     WebSearchTool._consecutive_failures = 0
 
-    # 3. 多源降级链: 4 个 _search_* 方法都存在
-    for name in ("_search_tavily", "_search_arxiv", "_search_ddgs", "_search_fallback"):
+    # 3. 多源降级链: 7 个 _search_* 方法都存在
+    for name in (
+        "_search_tavily", "_search_bing", "_search_brave", "_search_searxng",
+        "_search_arxiv", "_search_ddgs", "_search_fallback",
+    ):
         assert hasattr(WebSearchTool, name), f"missing {name} — 降级链断"
-    print("[CHECK C4.3] 4-backend degradation chain exists OK")
+    print("[CHECK C4.3] 7-backend degradation chain exists OK")
 
-    # 4. ddgs 兼容: ddgs + duckduckgo_search 双导入路径 (C4 迁移)
+    # 4. 按后端健康分路由: 未配置 key 的后端应被 _backend_active 判为不可用
+    import os as _os2
+    for _k in ("TAVILY_API_KEY", "HUGINN_BING_API_KEY",
+               "HUGINN_BRAVE_API_KEY", "HUGINN_SEARXNG_URL"):
+        _os2.environ.pop(_k, None)
+    assert WebSearchTool._backend_active("bing") is False, "bing should be inactive without key"
+    assert WebSearchTool._backend_active("brave") is False, "brave should be inactive without key"
+    assert WebSearchTool._backend_active("searxng") is False, "searxng should be inactive without URL"
+    assert WebSearchTool._backend_active("arxiv") is True, "arxiv should be active by default"
+    assert WebSearchTool._backend_active("ddgs") is True, "ddgs should be active by default"
+    print("[CHECK C4.4] per-backend active-gating OK")
+
+    # 5. cooldown: 后端连续失败达阈值后, _ordered_active_backends 跳过它
+    _os2.environ["TAVILY_API_KEY"] = "test"
+    WebSearchTool._backend_health = {}
+    WebSearchTool._backend_cooldown = set()
+    WebSearchTool._mark_backend_failure("tavily")
+    WebSearchTool._mark_backend_failure("tavily")
+    WebSearchTool._mark_backend_failure("tavily")
+    assert "tavily" in WebSearchTool._backend_cooldown, "tavily should be in cooldown after 3 fails"
+    assert "tavily" not in WebSearchTool._ordered_active_backends(), "cooldown backend should be skipped"
+    WebSearchTool._on_success()
+    assert WebSearchTool._backend_cooldown == set(), "success should reset cooldown"
+    print("[CHECK C4.5] health-based cooldown + reset OK")
+    _os2.environ.pop("TAVILY_API_KEY", None)
+
+    # 6. ddgs 兼容: ddgs + duckduckgo_search 双导入路径 (C4 迁移)
     # 不真导入 (可能没装), 只验 _search_ddgs 里有双 try
     import inspect
     src = inspect.getsource(WebSearchTool._search_ddgs)
     assert "from ddgs import DDGS" in src, "ddgs import path missing"
     assert "from duckduckgo_search import DDGS" in src, "duckduckgo_search fallback missing"
-    print("[CHECK C4.4] ddgs/duckduckgo_search dual import path OK")
+    print("[CHECK C4.6] ddgs/duckduckgo_search dual import path OK")
 
     print("[CHECK C4] ALL ASSERTS PASSED")
     return 0

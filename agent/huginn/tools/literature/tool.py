@@ -45,6 +45,7 @@ from .pdf_fetch import (
     unpaywall_pdf,
 )
 from .search_sources import (
+    _apply_filters,
     _dedup,
     _enrich_with_crossref,
     _norm_title,
@@ -133,6 +134,7 @@ def _search_cache_key(args: LiteratureInput, subqueries: tuple[str, ...]) -> tup
     return (
         args.query, tuple(args.sources),
         args.year_from, args.year_to, args.max_results,
+        args.min_citations, args.oa_only,
         args.expand_query, subqueries,
     )
 
@@ -264,6 +266,16 @@ class LiteratureInput(BaseModel):
     )
     year_from: int | None = Field(default=None, description="年份下限 (含)")
     year_to: int | None = Field(default=None, description="年份上限 (含)")
+    min_citations: int | None = Field(
+        default=None, ge=0,
+        description="引用数下限. 搜到的结果里引用数已知且 < 该值的会被过滤掉. "
+                    "未提供引用数的源 (arXiv/CORE 等) 不受影响. 默认不过滤.",
+    )
+    oa_only: bool = Field(
+        default=False,
+        description="True 时只返回开放获取 (可下载全文) 的论文. "
+                    "各源的 OA 信号统一归一: is_oa/open_access/oa_url/download_url. 默认关.",
+    )
 
     # summarize 专用: 可以直接喂 papers 跳过 search
     papers: list[dict[str, Any]] | None = Field(
@@ -504,8 +516,14 @@ class LiteratureTool(HuginnTool):
                 all_papers.extend(res)
 
         deduped = _dedup(all_papers)
-        # P0-2: query 相关度重排 (替代纯 citation 排序)
-        ranked = _rerank(query, deduped)[: args.max_results * 2]
+        # L1b: 引用数下限 + OA 优先过滤 (跨源归一)
+        filtered = _apply_filters(
+            deduped,
+            min_citations=args.min_citations,
+            oa_only=args.oa_only,
+        )
+        # P0-2: query 相关度重排 (替代纯 citation 排序), OA 在同等相关度下靠前
+        ranked = _rerank(query, filtered)[: args.max_results * 2]
 
         result = ToolResult(
             data={
