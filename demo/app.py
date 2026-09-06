@@ -172,6 +172,15 @@ def build() -> gr.Blocks:
                     [lean_expr, lean_op], lean_out,
                 )
 
+            with gr.Tab("⑦ 工作流封装分享"):
+                gr.Markdown(
+                    "### 工作流也集装箱化：命名模板 + 并行脚本统一注册，`export`→`import` 即分享\n"
+                    "点「展示可分享工作流」罗列全部命名工作流 + 一份真实导出样张。"
+                )
+                wf_btn = gr.Button("展示可分享工作流")
+                wf_out = gr.Markdown("（未加载）")
+                wf_btn.click(core.workflow_manifest, [], wf_out)
+
         gr.Markdown(
             "\n---\n*Huginn · 不假装一致，也不捏造自由度。源码: "
             "<https://github.com/toki0413/matsci>*"

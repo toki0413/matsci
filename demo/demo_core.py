@@ -374,3 +374,62 @@ def symbolic_to_lean(expr_text: str, op: str = "diff") -> str:
         "Huginn 不只看结果——它把符号计算 **机械翻译** 成 Lean 4 形式化语言，",
         "为后续一步步证明留好接口（张量代数 → FEM → DFT → 热力学 → 概率）。",
     ])
+
+
+# ───────────────────────── 面板 7: 工作流封装分享 ─────────────────────────
+
+
+def workflow_manifest(limit: int = 20) -> str:
+    """把"工作流"也集装箱化: 命名模板 + 并行脚本统一注册, 可 export/import 分享."""
+    import json
+
+    from huginn.workflows.registry import WorkflowRegistry
+
+    WorkflowRegistry.register_builtin_templates()
+    demo_script = {
+        "id": "wf-share-demo", "objective": "扫参 + 汇总", "max_concurrent": 4,
+        "subtasks": [
+            {"id": "s1", "tool": "bash_tool", "args": {"cmd": "ls"}},
+            {"id": "s2", "tool": "code_tool", "args": {"task": "报告"}},
+        ],
+    }
+    WorkflowRegistry.register_script(
+        "param-sweep-example", demo_script, "并行扫参工作流(示例)", "share-demo"
+    )
+    items = WorkflowRegistry.manifest()
+    n_scripts = sum(1 for x in items if x["kind"] == "script")
+    n_templates = sum(1 for x in items if x["kind"] == "template")
+    lines = [
+        f"### 工作流也能集装箱化——**{len(items)}** 个命名工作流可分享",
+        "",
+        f"> 模板(拓扑 stage 管线) {n_templates} · 并行脚本 {n_scripts} · "
+        f"`WorkflowRegistry` ≈ 堆场, `export(name)` 出一份单文件, "
+        f"外地 `import_dict()` 即可还原复用 = 分享, 与能力集装箱对称",
+        "",
+        "| # | 工作流 | 类型 | 规模 | 说明 |",
+        "|---|---|---|---|---|",
+    ]
+    ordered = sorted(items, key=lambda d: (d["kind"], d["name"]))
+    for i, item in enumerate(ordered[:limit], 1):
+        size = (f"{item['n_stages']} 阶段" if item["kind"] in ("stages", "template")
+                else f"{item['n_subtasks']} subtask")
+        spec = (f"模板·需{','.join(item['params'])}" if item["kind"] == "template"
+                else item["kind"])
+        desc = (item["description"] or "").strip().replace("\n", " ")
+        desc = desc[:36] + ("…" if len(desc) > 36 else "")
+        lines.append(f"| {i} | `{item['name']}` | {spec} | {size} | {desc} |")
+    if len(ordered) > limit:
+        lines.append(f"| … | 其余 {len(ordered)-limit} 个… | | | |")
+
+    # 一份真实导出样张, 展示"分享"长什么样
+    preview = WorkflowRegistry.export("param-sweep-example")
+    preview["source"] = preview["source"]
+    sample = json.dumps(preview, ensure_ascii=False, indent=1, sort_keys=True)
+    sample = "\n".join(sample.splitlines()[:12]) + "\n…"
+    lines += [
+        "", "### 分享长什么样 —— 一次 `export()` 的单文件样张", "",
+        "```json", sample, "```",
+        "",
+        "把这份 dict 发给任何装了 Huginn 的环境，`import_dict()` 即还原可复用。",
+    ]
+    return "\n".join(lines)
