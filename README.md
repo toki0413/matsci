@@ -53,6 +53,33 @@ python examples/demo_evidence_chain.py
 
 ---
 
+## 生态共享：把能力带走
+
+Huginn 内置一条统一"分享总线"——把**能力、工作流、人格、技能、Lean 证明单元**
+并进同一份可导入的 bundle，一条命令导出、一条命令还原，像集装箱一样随拿随走：
+
+```bash
+huginn-agent share list                # 全资产统一清单（含每类计数）
+huginn-agent share export -o bundle.json   # 单文件导出
+huginn-agent share import bundle.json   # 还原并登记
+```
+
+**公开分享包**（238 项 = 157 能力 / 15 工作流 / 8 人格 / 56 技能 / 2 证明单元）：
+
+- Release 页：<https://github.com/toki0413/matsci/releases/tag/asset-bundle-v1>
+- 直接下载：`https://github.com/toki0413/matsci/releases/download/asset-bundle-v1/huginn-bundle.json`
+
+```bash
+curl -LO https://github.com/toki0413/matsci/releases/download/asset-bundle-v1/huginn-bundle.json
+huginn-agent share import huginn-bundle.json
+```
+
+设计：一切有可序列化载体的资产都能进总线，失败自动跳过、不阻塞整体——
+这是"集装箱 → 共享经济"在科研 Agent 上的落地（实现见 [`share.py`](agent/huginn/share.py)
+与 [`cli/commands/share.py`](agent/huginn/cli/commands/share.py)）。
+
+---
+
 ## 核心特性 Highlights
 
 - **通用科研 Agent**：研究项目编排、多智能体 team（`/team`）、知识蒸馏闭环、
