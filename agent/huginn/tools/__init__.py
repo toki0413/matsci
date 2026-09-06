@@ -18,6 +18,7 @@ __all__ = [
     "register_all_tools",
     "register_core_tools",
     "register_optional_tools",
+    "register_capability_tools",
     "validate_tool_specs",
 ]
 
@@ -82,6 +83,7 @@ _CORE_MODULES = [
     ("huginn.academic.paper_tool", "PaperTool"),
     ("huginn.academic.deli_research", "DeliAutoResearchTool"),
     ("huginn.tools.tool_search_tool", "ToolSearchTool"),
+    ("huginn.capabilities.capability_tool", "CapabilityTool"),
     ("huginn.tools.prompt_optimize_tool", "PromptOptimizeTool"),
 ]
 
@@ -524,3 +526,23 @@ def register_all_tools(config: Any | None = None) -> list[str]:
     register_core_tools(config)
     register_optional_tools(config)
     return ToolRegistry.list_tools()
+
+
+def register_capability_tools(config: Any | None = None) -> list[str]:
+    """注册能力集装箱化预设 (组合/外部能力) 到 CapabilityRegistry.
+
+    让 ``capability_tool`` (已注册为 core tool) 有一条真实的组合能力可暴露给
+    LLM。原子能力会在 ``CapabilityRegistry.scan_tool_registry()`` 首次访问时
+    自动装箱, 不重复注册成工具 (避免 schema 爆炸)。
+
+    独立于 register_all_tools 存在, 便于仅想用能力层而不全量注册工具的
+    场景手动调用。注册失败静默 (能力层是新特性, 不阻塞主装配链)。
+    """
+    try:
+        from huginn.capabilities.presets import register_capability_presets
+        from huginn.capabilities.registry import CapabilityRegistry
+    except Exception as exc:
+        logger.warning(f"capability presets unavailable: {exc}")
+        return []
+    CapabilityRegistry.scan_tool_registry()
+    return register_capability_presets()
