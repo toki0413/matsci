@@ -232,6 +232,53 @@ def _annotate_value_consistency(
     return {"by_unit": by_unit, "overall": overall}
 
 
+def _infer_known_conditions(reported: list[dict[str, Any]]) -> dict[str, str]:
+    """从 reported 聚合"已定义"的自由度, 作缺度追问的 known 条件.
+
+    原则 (与 condition_normalize 一致): 只把"明确出现"的自由度当作已知.
+      为避免个别来源的声明掩盖真实的缺度, 采用**过半锁定**:
+      - method_family: 超过 60% 来源明确同一方法族才锁定
+      - functional  : 仅当全表过半集中在同一种明确泛函 (PBE+HSE 并存 → 不锁定,
+                      恰好让 functional 维持缺度 → 触发 HSE vs PBE 补全)
+      - temperature: 仅当过半来源落在同一明确温度档才锁定 (少数来源声明室温,
+                     不掩盖其余 DFT 组的温度缺度)
+
+    纯函数, 零网络/零 LLM.
+    """
+    from .condition_normalize import feature_vector
+
+    n_total = max(1, len(reported))
+    thr = 0.6
+    fams: dict[str, int] = {}
+    funcs: dict[str, int] = {}
+    temps: dict[str, int] = {}
+    for r in reported:
+        f = feature_vector(
+            str(r.get("method") or ""), str(r.get("note") or ""), str(r.get("unit") or "")
+        )
+        if f["method_family"] != "unknown":
+            fams[f["method_family"]] = fams.get(f["method_family"], 0) + 1
+        if f["functional"]:
+            funcs[f["functional"]] = funcs.get(f["functional"], 0) + 1
+        if f["temperature"] != "unknown":
+            temps[f["temperature"]] = temps.get(f["temperature"], 0) + 1
+
+    known: dict[str, str] = {}
+    if fams:
+        fam = max(fams, key=fams.get)
+        if fams[fam] / n_total >= thr:
+            known["method_family"] = fam
+    if len(funcs) == 1:
+        func = next(iter(funcs))
+        if funcs[func] / n_total >= thr:
+            known["functional"] = func
+    if len(temps) == 1:
+        temp = next(iter(temps))
+        if temps[temp] / n_total >= thr:
+            known["temperature"] = temp
+    return known
+
+
 # ───────────────────────── LLM prompts ─────────────────────────
 
 
@@ -759,29 +806,6 @@ class LiteratureTool(HuginnTool):
                 success=True,
             )
 
-        # 只喂有文本的论文给 LLM; 优先 full_text (fetch_pdf 拿到的), 退回 abstract
-        papers_with_text = [p for p in papers if p.get("full_text") or p.get("abstract")]
-        # 重新编号, paper_idx 对应这个子集. 全文长, 上限 10 篇避免撑爆 context
-        paper_block_parts: list[str] = []
-        for i, p in enumerate(papers_with_text[:10], 1):
-            text = (p.get("full_text") or p.get("abstract") or "").strip()
-            # full_text 可能几万字, 截到 4000 字 (~1000 token) 够 LLM 抽数值
-            if len(text) > 4000:
-                text = text[:4000] + "..."
-            label = "Full text" if p.get("full_text") else "Abstract"
-            paper_block_parts.append(
-                f"[{i}] {p.get('title','')}\n  {label}: {text}"
-            )
-        paper_block = "\n\n".join(paper_block_parts)
-
-        user_prompt = (
-            f"体系: {args.system}\n"
-            f"性质: {args.property}\n\n"
-            f"论文列表 ({len(papers_with_text[:10])} 篇, 含全文或 abstract):\n\n"
-            f"{paper_block}\n\n"
-            f"请抽出关于 {args.system} 的 {args.property} 报道值."
-        )
-
         try:
             model = self._get_model(context)
         except Exception as exc:
@@ -790,33 +814,8 @@ class LiteratureTool(HuginnTool):
                 error=f"LLM 初始化失败: {exc}",
             )
 
-        content = await self._llm_invoke(model, _BENCHMARK_SYSTEM_PROMPT, user_prompt)
-        parsed = self._parse_json(content)
-        raw_values = parsed.get("values", []) if parsed else []
-
-        # 把 paper_idx 映射回真实 paper 信息
-        reported: list[dict[str, Any]] = []
-        for v in raw_values:
-            if not isinstance(v, dict):
-                continue
-            try:
-                value = float(v.get("value"))
-            except (TypeError, ValueError):
-                continue
-            idx = int(v.get("paper_idx", 0))
-            if idx < 1 or idx > len(papers_with_text[:10]):
-                continue
-            paper = papers_with_text[idx - 1]
-            reported.append({
-                "value": value,
-                "unit": str(v.get("unit", "")),
-                "method": str(v.get("method", "")),
-                "note": str(v.get("note", "")),
-                "source_paper": paper.get("title", ""),
-                "doi": paper.get("doi"),
-                "year": paper.get("year"),
-                "venue": paper.get("venue", ""),
-            })
+        # 抽取报道值 — 复用 _llm_extract_reported (缺度补全检索的二次抽取也走它)
+        reported = await self._llm_extract_reported(papers, args.system, args.property, model)
 
         # 共识 + 离散度
         consensus = None
@@ -839,6 +838,52 @@ class LiteratureTool(HuginnTool):
 
         # L2a: 跨源数值一致性标注 — 每个值打标签 + 整体一致性判定
         consistency = _annotate_value_consistency(reported)
+
+        # 缺度追问 (对接1): 局部-整体实验 + 缺失自由度 → 补全查询
+        # 对接2: 对关键缺度发起实际补全检索, 再跑一轮局部-整体 → 自我完备闭环
+        compat = None
+        completion = None
+        if reported:
+            from huginn.experimental.local_global_compat import run_compat_experiment
+            from .query_completion import build_followup_input, summarize_missing
+            try:
+                known = _infer_known_conditions(reported)
+                compat = run_compat_experiment(reported)
+                missing_dims = compat.get("missing_dims", [])
+                unit = (reported[0].get("unit") or "") if reported else ""
+                followup = build_followup_input(
+                    args.system,
+                    args.property,
+                    unit,
+                    missing_dims,
+                    method_family=known.get("method_family"),
+                    functional=known.get("functional"),
+                    temperature=known.get("temperature"),
+                )
+                completion = {
+                    "missing_dims": missing_dims,
+                    "missing_summaries": summarize_missing(missing_dims),
+                    "known_conditions": known,
+                    "local": compat["local"],
+                    "global_compat": compat["global_compat"],
+                    "flat_confounding": compat["flat_confounding"],
+                    "overall_verdict": compat["overall_verdict"],
+                    "followup": followup,
+                }
+                # 对接2: 只对"应发起且关键"的补全查询跑实际检索
+                if followup.get("fills"):
+                    complement = await self._do_complement_retrieval(
+                        reported,
+                        compat,
+                        followup,
+                        args.system,
+                        args.property,
+                        model,
+                        args,
+                    )
+                    completion["complement_retrieval"] = complement
+            except Exception as exc:
+                logger.warning("benchmark_lookup 缺度追问失败: %s", exc)
 
         # 把抽到的文献报道值写回知识库，下次同体系查询能直接命中
         kb_written = 0
@@ -871,12 +916,152 @@ class LiteratureTool(HuginnTool):
                 "consensus": consensus,
                 "spread": spread,
                 "consistency": consistency,
+                "compat": compat,
+                "completion": completion,
                 "n_papers_searched": len(papers),
                 "n_papers_with_values": len(reported),
                 "kb_written": kb_written,
             },
             success=True,
         )
+
+    # ── 缺度追问: 抽取 + 实际补全检索 (对接1/对接2) ─────────────
+
+    async def _llm_extract_reported(
+        self,
+        papers: list[dict[str, Any]],
+        system: str,
+        property: str,
+        model: Any,
+    ) -> list[dict[str, Any]]:
+        """从论文列表抽报道值: 组装 paper_block → LLM → 映射回真实 paper.
+
+        benchmark_lookup 与缺度补全检索共用同一管线, 保证两轮抽取一致.
+        无文本论文 / LLM 失败 → 返回 [].
+        """
+        papers_with_text = [p for p in papers if p.get("full_text") or p.get("abstract")]
+        if not papers_with_text:
+            return []
+        paper_block_parts: list[str] = []
+        for i, p in enumerate(papers_with_text[:10], 1):
+            text = (p.get("full_text") or p.get("abstract") or "").strip()
+            # full_text 可能几万字, 截到 4000 字 (~1000 token) 够 LLM 抽数值
+            if len(text) > 4000:
+                text = text[:4000] + "..."
+            label = "Full text" if p.get("full_text") else "Abstract"
+            paper_block_parts.append(f"[{i}] {p.get('title','')}\n  {label}: {text}")
+        paper_block = "\n\n".join(paper_block_parts)
+
+        user_prompt = (
+            f"体系: {system}\n"
+            f"性质: {property}\n\n"
+            f"论文列表 ({len(papers_with_text[:10])} 篇, 含全文或 abstract):\n\n"
+            f"{paper_block}\n\n"
+            f"请抽出关于 {system} 的 {property} 报道值."
+        )
+        try:
+            content = await self._llm_invoke(model, _BENCHMARK_SYSTEM_PROMPT, user_prompt)
+        except Exception as exc:
+            logger.debug("benchmark value extraction failed: %s", exc)
+            return []
+        parsed = self._parse_json(content)
+        raw_values = parsed.get("values", []) if parsed else []
+
+        # 把 paper_idx 映射回真实 paper 信息
+        reported: list[dict[str, Any]] = []
+        for v in raw_values:
+            if not isinstance(v, dict):
+                continue
+            try:
+                value = float(v.get("value"))
+            except (TypeError, ValueError):
+                continue
+            idx = int(v.get("paper_idx", 0))
+            if idx < 1 or idx > len(papers_with_text[:10]):
+                continue
+            paper = papers_with_text[idx - 1]
+            reported.append({
+                "value": value,
+                "unit": str(v.get("unit", "")),
+                "method": str(v.get("method", "")),
+                "note": str(v.get("note", "")),
+                "source_paper": paper.get("title", ""),
+                "doi": paper.get("doi"),
+                "year": paper.get("year"),
+                "venue": paper.get("venue", ""),
+            })
+        return reported
+
+    async def _do_complement_retrieval(
+        self,
+        reported: list[dict[str, Any]],
+        compat: dict[str, Any],
+        followup: dict[str, Any],
+        system: str,
+        property: str,
+        model: Any,
+        args: LiteratureInput,
+    ) -> dict[str, Any]:
+        """缺度追问的实际补全检索执行 (对接2).
+
+        把 followup 里"应检索且关键"的补全查询 (`target_query`) 丢给 _do_search,
+        拿回新论文 → 用 _llm_extract_reported 再抽一轮 → 合并两轮后重跑局部-整体
+        (补后校验), 报告缺失自由度/整体判定/一致性判定在补前补后的变化.
+        任何失败都降级返回诊断, 不影响主 benchmark 结果.
+        """
+        fills = followup.get("fills") or []
+        if not fills:
+            return {"executed": False, "reason": "无满足条件的补全查询"}
+        query = fills[0]["query"]
+        try:
+            search_res = await self._do_search(
+                LiteratureInput(
+                    action="search",
+                    query=query,
+                    max_results=max(args.max_results, 10),
+                    sources=args.sources,
+                    year_from=args.year_from,
+                    year_to=args.year_to,
+                )
+            )
+        except Exception as exc:  # pragma: no cover - 网络层异常降级
+            return {"executed": False, "reason": f"补全检索失败: {exc}"}
+        if not search_res.success:
+            return {"executed": False, "reason": search_res.error or "补全检索失败"}
+        new_papers = (search_res.data or {}).get("papers", [])
+
+        new_reported: list[dict[str, Any]] = []
+        if new_papers:
+            new_reported = await self._llm_extract_reported(new_papers, system, property, model)
+        if not new_reported:
+            return {
+                "executed": True,
+                "query": query,
+                "n_new_papers": len(new_papers),
+                "new_reported": [],
+                "message": "补全检索没抽到新的报道值",
+            }
+
+        # 补后校验: 合并两轮, 重跑局部-整体 + 一致性
+        from huginn.experimental.local_global_compat import run_compat_experiment
+
+        merged = reported + new_reported
+        revised = run_compat_experiment(merged)
+        revised_consistency = _annotate_value_consistency(merged)
+        return {
+            "executed": True,
+            "query": query,
+            "n_new_papers": len(new_papers),
+            "new_reported": new_reported,
+            "n_total_sources": len(merged),
+            "missing_dims_before": compat.get("missing_dims", []),
+            "missing_dims_after": revised.get("missing_dims", []),
+            "overall_verdict_before": compat["overall_verdict"],
+            "overall_verdict_after": revised["overall_verdict"],
+            "consistency_before": compat["flat_confounding"]["overall"]["verdict"],
+            "consistency_after": revised_consistency["overall"]["verdict"],
+            "revised": revised,
+        }
 
     # ── fetch_pdf ───────────────────────────────────────────
 

@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import numpy as np
 
-from huginn.core_types import ToolContext
+from huginn.core_types import ToolContext, ToolResult
 from huginn.tools.characterization_tool import CharacterizationTool
 from huginn.tools.literature.tool import LiteratureInput, LiteratureTool
 
@@ -124,6 +124,12 @@ class TestBenchmarkLookupKBWriteback:
         monkeypatch.setattr(
             tool, "_llm_invoke", AsyncMock(return_value=_FAKE_LLM_JSON)
         )
+        # 缺度追问会触发补全检索 — mock 掉 _do_search, 避免真实网络
+        monkeypatch.setattr(
+            tool,
+            "_do_search",
+            AsyncMock(return_value=ToolResult(data={"papers": []}, success=True)),
+        )
 
         # swap in our fake KB so we can inspect the calls
         fake_kb = FakeKB()
@@ -160,6 +166,12 @@ class TestBenchmarkLookupKBWriteback:
         monkeypatch.setattr(tool, "_get_model", lambda ctx: MagicMock())
         monkeypatch.setattr(
             tool, "_llm_invoke", AsyncMock(return_value=_FAKE_LLM_JSON)
+        )
+        # 缺度追问的补全检索 — mock 掉, 避免真实网络
+        monkeypatch.setattr(
+            tool,
+            "_do_search",
+            AsyncMock(return_value=ToolResult(data={"papers": []}, success=True)),
         )
 
         # KB blows up — main flow should still return the extracted values
