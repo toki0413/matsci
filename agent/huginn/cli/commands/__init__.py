@@ -44,6 +44,7 @@ from huginn.cli.commands import (
     version,
     visualize,
     workflow,
+    workflows_mcp,
 )
 
 
@@ -65,6 +66,7 @@ def register_commands(cli: click.Group) -> None:
     cli.add_command(execute.execute)
     cli.add_command(headless.exec_cmd)
     cli.add_command(workflow.workflow)
+    cli.add_command(workflows_mcp.workflows_mcp)
     cli.add_command(diagnose.diagnose)
     cli.add_command(model_list.model_list)
     cli.add_command(memory_maintenance.memory_maintenance)
