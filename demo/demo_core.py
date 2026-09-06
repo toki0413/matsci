@@ -433,3 +433,51 @@ def workflow_manifest(limit: int = 20) -> str:
         "把这份 dict 发给任何装了 Huginn 的环境，`import_dict()` 即还原可复用。",
     ]
     return "\n".join(lines)
+
+
+# ───────────────────────── 面板 8: 统一分享总线 ─────────────────────────
+
+
+def share_manifest(sample_kind: str = "lean") -> str:
+    """把"所有可分享资产"并进同一份 bundle: 统一清单 + 导出样张."""
+    import json
+
+    from huginn.share import ShareManager
+
+    counts = ShareManager.list()
+    lines = [
+        f"### 统一分享总线——把**{counts['total']} 项**可分享资产并进同一份 bundle",
+        "",
+        "> 能力 / 工作流 / 人格 / 技能 / 证明单元 各自可能散在不同注册表，",
+        "> `ShareManager` 把它们并进同一入口：`huginn share list|export|import`",
+        "",
+        "| 资产 | 可分享数 | 说明 |",
+        "|---|---|---|",
+    ]
+    for k in ("capability", "workflow", "persona", "skill", "lean"):
+        v = counts[k]
+        lines.append(f"| {v['title']} | **{v['available']}** | 见下方样例 |")
+
+    # 每类少量样例
+    lines += ["", "| 类 | 样例 (前几条) |", "|---|---|"]
+    m = ShareManager.manifest(per_kind_limit=5)
+    for k, items in m["kinds"].items():
+        names = "、".join(f"`{i['name']}`" for i in items[:5]) or "—"
+        lines.append(f"| {counts[k]['title']} | {names} |")
+
+    # 导出样张 (选 1 类, 突出"可搬运")
+    bundle = ShareManager.export_bundle(kinds=(sample_kind,))
+    first = bundle["items"][0]["payload"]
+    sample = json.dumps(first, ensure_ascii=False, indent=1, sort_keys=True)
+    sample = "\n".join(sample.splitlines()[:10]) + "\n…"
+    lines += [
+        "",
+        f"### 一次 `export` 的样张 ({sample_kind} · {bundle['count']} 项 / spec=`{bundle['spec']}`)",
+        "",
+        "```json",
+        sample,
+        "```",
+        "",
+        "这份 bundle(jSON) 发给任何 Huginn 环境：`huginn share import x.json` 即还原登记。",
+    ]
+    return "\n".join(lines)
