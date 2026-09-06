@@ -17,13 +17,27 @@ const SERVERS = {
 
 const EXTS = process.platform === 'win32' ? ['', '.exe', '.cmd', '.bat'] : [''];
 
+// 只接受「真实存在、非目录、可执行」的命令, 否则返回 null.
 function which(cmd) {
   const dirs = (process.env.PATH || '').split(path.delimiter);
   for (const d of dirs) {
     if (!d) continue;
     for (const ext of EXTS) {
       const p = path.join(d, cmd + ext);
-      if (fs.existsSync(p)) return p;
+      if (!fs.existsSync(p)) continue;
+      let st;
+      try {
+        st = fs.statSync(p);
+      } catch {
+        continue;
+      }
+      if (st.isDirectory()) continue;
+      try {
+        fs.accessSync(p, fs.constants.X_OK);
+        return p;
+      } catch {
+        continue;
+      }
     }
   }
   return null;
@@ -43,7 +57,12 @@ function start(serverName) {
     );
     process.exit(1);
   }
-  const child = spawn(bin, spec.args, { stdio: 'inherit' });
+  // Windows 上 .cmd/.bat 需经 shell 启动(且路径可能含空格, 引号包裹).
+  const winScript = /\.(cmd|bat)$/i.test(bin);
+  const child = spawn(winScript ? `"${bin}"` : bin, spec.args, {
+    stdio: 'inherit',
+    shell: winScript,
+  });
   child.on('error', (err) => {
     console.error(`[${serverName}] 启动失败: ${err.message}`);
     process.exit(1);
