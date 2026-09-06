@@ -10,8 +10,9 @@ const SERVERS = {
   'mat-db-mcp': { cmd: 'mat-db-mcp', args: [], need: 'matsci-mat-db-mcp' },
   'math-anything-mcp': { cmd: 'math-anything-mcp', args: [], need: 'matsci-math-anything-mcp' },
   'vision-pixel-mcp': { cmd: 'vision-pixel-mcp', args: [], need: 'matsci-vision-pixel-mcp' },
-  'capabilities-mcp': { cmd: 'huginn', args: ['capabilities-mcp'], need: 'huginn-agent' },
-  'workflows-mcp': { cmd: 'huginn', args: ['workflows-mcp'], need: 'huginn-agent' },
+  // Huginn CLI console script 是 huginn-agent (旧版曾用 huginn), 两者都兜底.
+  'capabilities-mcp': { cmds: ['huginn-agent', 'huginn'], args: ['capabilities-mcp'], need: 'huginn-agent' },
+  'workflows-mcp': { cmds: ['huginn-agent', 'huginn'], args: ['workflows-mcp'], need: 'huginn-agent' },
 };
 
 const EXTS = process.platform === 'win32' ? ['', '.exe', '.cmd', '.bat'] : [''];
@@ -34,10 +35,11 @@ function start(serverName) {
     console.error(`[huginn-mcp] 未知 server: ${serverName}`);
     process.exit(1);
   }
-  const bin = which(spec.cmd);
+  const cmds = spec.cmds || [spec.cmd];
+  const bin = cmds.map(which).find(Boolean);
   if (!bin) {
     console.error(
-      `[${serverName}] 找不到 '${spec.cmd}'。请先安装依赖：pip install ${spec.need}`
+      `[${serverName}] 找不到 ${cmds.map((c) => `'${c}'`).join(' / ')}。请先安装依赖：pip install ${spec.need}`
     );
     process.exit(1);
   }
