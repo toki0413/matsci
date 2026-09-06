@@ -113,9 +113,9 @@ rust = ["huginn-ext>=0.1"]
 huginn-agent = "huginn.cli:main"
 
 [project.urls]
-Repository = "https://github.com/huginn-agent/huginn"
-Documentation = "https://github.com/huginn-agent/huginn/blob/main/docs/architecture.md"
-Issues = "https://github.com/huginn-agent/huginn/issues"
+Repository = "https://github.com/toki0413/matsci"
+Documentation = "https://github.com/toki0413/matsci/blob/master/agent/docs/architecture.md"
+Issues = "https://github.com/toki0413/matsci/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]
