@@ -152,6 +152,26 @@ def build() -> gr.Blocks:
             with gr.Tab("④ 系统概览"):
                 gr.Markdown(panel4_overview())
 
+            with gr.Tab("⑤ 能力集装箱全貌"):
+                gr.Markdown(
+                    "### 真实注册能力清单（原子 + 复合，可导出/复用/组合）\n"
+                    "点击「加载能力清单」离线注册工具池后展示完整清单（约几秒）。"
+                )
+                cap_btn = gr.Button("加载能力清单")
+                cap_out = gr.Markdown("（未加载）")
+                cap_btn.click(core.capability_manifest, [], cap_out)
+
+            with gr.Tab("⑥ 符号数学 × Lean4 形式化"):
+                gr.Markdown("### 输入 sympy 表达式 → 求导/积分 → 机械翻译成 Lean 4 源码")
+                lean_expr = gr.Textbox(value="sin(x)**2 + cos(x)**2", label="表达式 (e.g. `x**2 * exp(x)`)")
+                lean_op = gr.Radio(["diff", "integrate"], value="diff", label="操作")
+                lean_btn = gr.Button("计算并翻译成 Lean 4")
+                lean_out = gr.Markdown()
+                lean_btn.click(
+                    lambda t, o: core.symbolic_to_lean(t, op=o),
+                    [lean_expr, lean_op], lean_out,
+                )
+
         gr.Markdown(
             "\n---\n*Huginn · 不假装一致，也不捏造自由度。源码: "
             "<https://github.com/toki0413/matsci>*"

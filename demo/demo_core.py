@@ -204,19 +204,20 @@ def mcp_server_tools() -> str:
 
 
 def system_overview() -> str:
-    """版本 / 能力数 / 组成 — 信任信息."""
+    """版本 / 能力数(只读缓存, 不在启动时触发) */ 组成."""
     try:
         from huginn import __version__  # type: ignore[attr-defined]
         ver = f"huginn-agent {__version__}"
     except Exception:  # noqa: BLE001
         ver = "huginn-agent (dev)"
-    try:
-        from huginn.capabilities.registry import CapabilityRegistry
-
-        n_caps = len(CapabilityRegistry.list_capabilities())
-    except Exception:  # noqa: BLE001
-        n_caps = "n/a"
-    return "\n".join([
+    if _CAPS_CACHE is not None:
+        n_caps = _CAPS_CACHE["n"]
+        cap_row = (f"| capabilities 已注册 | {n_caps} "
+                   f"(atomic {_CAPS_CACHE['breakdown']['atomic']} / "
+                   f"composite {_CAPS_CACHE['breakdown']['composite']}) |")
+    else:
+        cap_row = "| capabilities 已注册 | 完整清单见 ⑤ (惰性加载, 不阻塞) |"
+    rows = [
         f"**{ver}**",
         "",
         "| 组件 | 说明 |",
@@ -225,7 +226,151 @@ def system_overview() -> str:
         "| capability 集装箱 | 原子/组合/外部能力统一契约 + MCP 导出 |",
         "| MCP servers | mat-db / math-anything / vision-pixel (standalone 发布) |",
         "| Lean 4 形式化 | 张量代数 → FEM → DFT → 热力学 → 概率 全程证明 |",
-        f"| capabilities 已注册 | {n_caps} |",
+        cap_row,
         "",
         "本 Demo 零 LLM / 零凭据 / 确定性，全部可离线复现。",
+    ]
+    return "\n".join(rows)
+
+
+# ───────────────────────── 面板 5: 能力集装箱全貌 ─────────────────────────
+
+
+import threading as _threading
+
+_CAPS_LOCK = _threading.Lock()
+_CAPS_CACHE: dict | None = None
+
+
+def _ensure_capabilities(timeout: float = 30.0) -> bool:
+    """在线程里注册工具池 + 能力, 超时兜底避免拖死 UI. 返回是否完成."""
+    global _CAPS_CACHE
+    with _CAPS_LOCK:
+        if _CAPS_CACHE is not None:
+            return True
+    try:
+        from concurrent.futures import ThreadPoolExecutor, TimeoutError
+
+        def _reg() -> None:
+            try:
+                from huginn.capabilities.registry import CapabilityRegistry
+                from huginn.tools import (
+                    register_all_tools,
+                    register_capability_tools,
+                )
+                from huginn.tools.registry import ToolRegistry
+
+                if not ToolRegistry.list_tools():
+                    register_all_tools(None)
+                register_capability_tools(None)
+                CapabilityRegistry.scan_tool_registry()
+            except Exception:  # noqa: BLE001
+                pass
+
+        with ThreadPoolExecutor(max_workers=1) as ex:
+            ex.submit(_reg).result(timeout=timeout)
+    except TimeoutError:
+        return False
+    except Exception:  # noqa: BLE001
+        return False
+    return True
+
+
+def _capability_manifest(timeout: float = 30.0) -> list[dict]:
+    """返回完整能力清单; 注册超时/失败返回空 (调用方做降级文案)."""
+    if not _ensure_capabilities(timeout):
+        return []
+    try:
+        from huginn.capabilities.registry import CapabilityRegistry
+        return CapabilityRegistry.manifest()
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _capability_stats(timeout: float = 30.0):
+    """atomic/composite 能力数. 首次注册时可能最多等 timeout 秒."""
+    global _CAPS_CACHE
+    with _CAPS_LOCK:
+        if _CAPS_CACHE is not None:
+            return _CAPS_CACHE["n"], _CAPS_CACHE["breakdown"]
+    n_atomic = n_composite = 0
+    for item in _capability_manifest(timeout):
+        subs = item.get("sub_capabilities") or []
+        if subs:
+            n_composite += 1
+        else:
+            n_atomic += 1
+    n = n_atomic + n_composite
+    with _CAPS_LOCK:
+        if _CAPS_CACHE is None:
+            _CAPS_CACHE = {"n": n, "breakdown": {"atomic": n_atomic, "composite": n_composite}}
+        return _CAPS_CACHE["n"], _CAPS_CACHE["breakdown"]
+
+
+def capability_manifest(limit: int = 12, timeout: float = 30.0) -> str:
+    """能力集装箱全貌 — 直接展示真实注册数, 而非"少量 demo 面板"."""
+    items = _capability_manifest(timeout)
+    if not items:
+        return ("### 能力集装箱全貌\n\n"
+                "本环境未完成工具池加载（可能依赖缺失或超时）。"
+                "完整 157 个能力（含 DFT/仿真/因果/符号/Literature 等工具箱）"
+                "在完整安装环境注册后可见。")
+    n = len(items)
+    n_atomic = sum(0 if (i.get("sub_capabilities") or []) else 1 for i in items)
+    n_composite = n - n_atomic
+    lines = [
+        f"### 不是几个面板——是 **{n}** 个可组合、可导出、可复用的能力集装箱",
+        "",
+        f"> atomic {n_atomic} · composite {n_composite} · "
+        f"统一契约 `Capability` ≈ 货柜, `CapabilityRegistry` ≈ 堆场, "
+        f"`capabilities-mcp` ≈ 码头(导出成 MCP 给任意 host 用)",
+        "",
+        "| # | 能力 | 类型 | 一句话 |",
+        "|---|---|---|---|",
+    ]
+    ordered = sorted(items, key=lambda d: (not bool(d.get("sub_capabilities")), d["name"]))
+    for i, item in enumerate(ordered[:limit], 1):
+        name = item.get("name", "?")
+        subs = item.get("sub_capabilities") or []
+        kind = "composite" if subs else "atomic"
+        desc = (item.get("description") or "").strip().replace("\n", " ")
+        desc = desc[:42] + ("…" if len(desc) > 42 else "")
+        lines.append(f"| {i} | `{name}` | {kind} | {desc} |")
+    if len(ordered) > limit:
+        lines.append(f"| … | 其余 {len(ordered)-limit} 个… | | |")
+    return "\n".join(lines)
+
+
+# ───────────────────────── 面板 6: 符号数学 × Lean4 形式化 ─────────────────────────
+
+
+def symbolic_to_lean(expr_text: str, op: str = "diff") -> str:
+    """sympy 解析表达式 → 求导/积分 → SymPyToLean 翻译成 Lean 4 源码."""
+    import sympy as sp
+    from huginn.lean.sympy_to_lean import SymPyToLean
+
+    x = sp.Symbol("x")
+    try:
+        expr = sp.sympify(expr_text)
+    except Exception as exc:  # noqa: BLE001
+        return f"⚠ 无法解析表达式：{exc}"
+    try:
+        if op == "integrate":
+            result = sp.integrate(expr, x)
+            op_name = "不定积分 ∫"
+        else:
+            result = sp.diff(expr, x)
+            op_name = "求导 d/dx"
+    except Exception as exc:  # noqa: BLE001
+        return f"⚠ 计算失败：{exc}"
+
+    lean_src = SymPyToLean().translate(result)
+    return "\n".join([
+        f"### {op_name}  $f(x)\\;=\\;{expr_text}$",
+        "",
+        f"- **SymPy 结果**: `{result}`",
+        f"- **Lean 4 源码**: `{lean_src}`",
+        "",
+        "Huginn 不只看结果——它把符号计算 **机械翻译** 成 Lean 4 形式化语言，",
+        "为后续一步步证明留好接口（张量代数 → FEM → DFT → 热力学 → 概率）。",
     ])
