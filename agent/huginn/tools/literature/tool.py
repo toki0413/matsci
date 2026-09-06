@@ -138,6 +138,100 @@ def _search_cache_key(args: LiteratureInput, subqueries: tuple[str, ...]) -> tup
         args.expand_query, subqueries,
     )
 
+# ───────────────────────── helper: 跨源数值一致性标注 (L2a) ─────────────────────────
+
+
+def _annotate_value_consistency(
+    reported: list[dict[str, Any]],
+    *,
+    consistent_rel: float = 0.05,
+    moderate_rel: float = 0.20,
+) -> dict[str, Any]:
+    """跨源数值校验 — 给 benchmark_lookup 报的每个值打一致性标签.
+
+    同体系同性质, 不同文献报的值应互相印证. 这里按单位分组, 用中位数作
+    稳健中心 (对离群值不敏感), 算每个值的相对偏差 |v-median|/max(|median|,1),
+    按阈值打标签:
+
+      - single_source: 该单位只有一个来源, 无法交叉验证
+      - consistent:  相对偏差 ≤ consistent_rel (5%)  — 跨源一致
+      - moderate:    ≤ moderate_rel (20%)            — 大致相符, 可重复性一般
+      - conflicting: > moderate_rel                  — 显著分歧, 需人工排查
+
+    返回 {"by_unit": [...], "overall": {...}}. 纯函数, 不打网络.
+    """
+    # 按 (unit) 分组, 跳过无数值的
+    groups: dict[str, list[tuple[int, float]]] = {}
+    for idx, v in enumerate(reported):
+        unit = str(v.get("unit") or "").strip() or "_none"
+        groups.setdefault(unit, []).append((idx, v["value"]))
+
+    by_unit: list[dict[str, Any]] = []
+    total_consistent = total_moderate = total_conflicting = total_single = 0
+    overall = {
+        "n_sources": len(reported),
+        "n_units": len(groups),
+        "agreement_ratio": 0.0,  # 一致 + 大致相符 占全部的比例 (可交叉验证的)
+        "verdict": "insufficient_data",
+    }
+
+    for unit, items in groups.items():
+        vals = sorted(v for _, v in items)
+        n = len(vals)
+        median = vals[n // 2] if n % 2 else (vals[n // 2 - 1] + vals[n // 2]) / 2
+        span = max(abs(median), 1.0)
+        unit_status: dict[str, Any] = {
+            "unit": None if unit == "_none" else unit,
+            "n_sources": n,
+            "median": round(median, 6),
+            "min": round(min(vals), 6),
+            "max": round(max(vals), 6),
+            "values": [],
+        }
+        for _, v in items:
+            rel = abs(v - median) / span
+            if n == 1:
+                label = "single_source"
+                total_single += 1
+            elif rel <= consistent_rel:
+                label = "consistent"
+                total_consistent += 1
+            elif rel <= moderate_rel:
+                label = "moderate"
+                total_moderate += 1
+            else:
+                label = "conflicting"
+                total_conflicting += 1
+            unit_status["values"].append({
+                "rel_dev": round(rel, 4),
+                "label": label,
+                "value": v,
+            })
+        by_unit.append(unit_status)
+
+    by_unit.sort(key=lambda u: u.get("unit") or "")
+    cross_verifiable = total_consistent + total_moderate + total_conflicting
+    agreement = total_consistent + total_moderate
+    overall["agreement_ratio"] = round(
+        agreement / cross_verifiable, 4
+    ) if cross_verifiable else 0.0
+    overall["counts"] = {
+        "consistent": total_consistent,
+        "moderate": total_moderate,
+        "conflicting": total_conflicting,
+        "single_source": total_single,
+    }
+    if len(reported) < 2:
+        overall["verdict"] = "insufficient_data"
+    elif cross_verifiable and overall["agreement_ratio"] >= 0.75:
+        overall["verdict"] = "consensus"
+    elif cross_verifiable and overall["agreement_ratio"] >= 0.5:
+        overall["verdict"] = "mixed"
+    else:
+        overall["verdict"] = "conflicting_values"
+    return {"by_unit": by_unit, "overall": overall}
+
+
 # ───────────────────────── LLM prompts ─────────────────────────
 
 
@@ -318,7 +412,8 @@ class LiteratureInput(BaseModel):
     # citations 专用
     direction: Literal["forward", "backward", "both"] = Field(
         default="both",
-        description="forward=谁引了这篇; backward=这篇引了谁; both=都要",
+        description="forward=谁引了这篇; backward=这篇引了谁; both=都要. "
+                    "citations/citation_graph 共用. citation_graph 默认 both (双向 snowballing).",
     )
     max_citations: int = Field(
         default=20, ge=1, le=100, description="每个方向最多取几条引用"
@@ -742,6 +837,9 @@ class LiteratureTool(HuginnTool):
                     "range": round(max(vals) - min(vals), 6),
                 }
 
+        # L2a: 跨源数值一致性标注 — 每个值打标签 + 整体一致性判定
+        consistency = _annotate_value_consistency(reported)
+
         # 把抽到的文献报道值写回知识库，下次同体系查询能直接命中
         kb_written = 0
         try:
@@ -772,6 +870,7 @@ class LiteratureTool(HuginnTool):
                 "reported_values": reported,
                 "consensus": consensus,
                 "spread": spread,
+                "consistency": consistency,
                 "n_papers_searched": len(papers),
                 "n_papers_with_values": len(reported),
                 "kb_written": kb_written,
@@ -1169,6 +1268,15 @@ class LiteratureTool(HuginnTool):
         nodes.append(seed_node)
         visited.add(seed_node["paper_id"])
 
+        # 双向 snowballing 开关: forward=沿被引(向上游), backward=沿被引(向下游)
+        # 这里沿用 citations 的 direction 语义:
+        #   forward = 谁引用了这篇 (citations 端点)
+        #   backward = 这篇引用了谁 (references 端点)
+        #   both = 双向扩展 (默认, snowballing 全图)
+        direction = getattr(args, "direction", "both") or "both"
+        do_backward = direction in ("backward", "both")
+        do_forward = direction in ("forward", "both")
+
         # BFS: 当前层的 paper_id 列表
         current_layer: list[str] = [seed_node["paper_id"]]
         # 同步维护 current_dois, 用于 OpenCitations fallback
@@ -1186,75 +1294,123 @@ class LiteratureTool(HuginnTool):
                     break
                 parent_doi = current_dois[idx] if idx < len(current_dois) else None
 
-                # ── S2 模式: 调 references API ──
-                if source_mode == "s2" and parent_id:
-                    try:
-                        pid_enc = urllib.parse.quote(parent_id, safe="")
-                        data = await _http_get_json(
-                            f"https://api.semanticscholar.org/graph/v1/paper/{pid_enc}/references"
-                            f"?fields=title,year,externalIds,paperId&limit={args.max_citations}"
-                        )
-                        for ref in data.get("data", []) or []:
-                            cp = ref.get("citedPaper", {}) or {}
-                            child_id = cp.get("paperId") or ""
-                            if not child_id:
-                                continue
-                            edges.append({"from": parent_id, "to": child_id})
-                            if child_id not in visited:
-                                if len(nodes) >= args.max_nodes:
+                # ── backward: 这篇引用了谁 (references 端点) ──
+                if do_backward:
+                    if source_mode == "s2" and parent_id:
+                        try:
+                            pid_enc = urllib.parse.quote(parent_id, safe="")
+                            data = await _http_get_json(
+                                f"https://api.semanticscholar.org/graph/v1/paper/{pid_enc}/references"
+                                f"?fields=title,year,externalIds,paperId&limit={args.max_citations}"
+                            )
+                            for ref in data.get("data", []) or []:
+                                cp = ref.get("citedPaper", {}) or {}
+                                child_id = cp.get("paperId") or ""
+                                if not child_id:
+                                    continue
+                                edges.append({"from": parent_id, "to": child_id, "direction": "backward"})
+                                added = self._add_node(
+                                    nodes, visited, next_layer, next_dois,
+                                    child_id=child_id, title=cp.get("title", "") or "",
+                                    year=cp.get("year"), doi=(cp.get("externalIds") or {}).get("DOI"),
+                                    depth=depth, max_nodes=args.max_nodes,
+                                )
+                                if added is False:
                                     break
-                                child_doi = (cp.get("externalIds") or {}).get("DOI")
-                                nodes.append({
-                                    "paper_id": child_id,
-                                    "title": cp.get("title", "") or "",
-                                    "year": cp.get("year"),
-                                    "doi": child_doi,
-                                    "depth": depth,
-                                })
-                                visited.add(child_id)
-                                next_layer.append(child_id)
-                                if child_doi:
-                                    next_dois.append(child_doi)
-                        depth_reached = depth
-                        continue  # S2 成功就跳过 OpenCitations
-                    except Exception as exc:
-                        errors.append(f"depth={depth} parent={parent_id} s2: {exc}"[:200])
-                        logger.warning("S2 BFS depth=%d failed, switching to OpenCitations: %s", depth, exc)
-                        source_mode = "opencitations"
+                            depth_reached = depth
+                        except Exception as exc:
+                            errors.append(f"depth={depth} {parent_id} backward s2: {exc}"[:200])
+                            logger.warning(
+                                "S2 BFS depth=%d backward failed, switching to OpenCitations: %s",
+                                depth, exc,
+                            )
+                            source_mode = "opencitations"
 
-                # ── OpenCitations 模式: DOI 边 + CrossRef 补元数据 ──
-                if source_mode == "opencitations" and parent_doi:
-                    try:
-                        oc_refs = await _opencitations_references(parent_doi, args.max_citations)
-                        if not oc_refs:
-                            continue
-                        # 批量补元数据
-                        oc_refs = await _enrich_with_crossref(oc_refs)
-                        for ref in oc_refs:
-                            child_doi = ref.get("doi", "")
-                            child_id = f"DOI:{child_doi}" if child_doi else ""
-                            if not child_id or child_id in visited:
-                                continue
-                            edges.append({"from": parent_id, "to": child_id})
-                            if len(nodes) >= args.max_nodes:
-                                break
-                            nodes.append({
-                                "paper_id": child_id,
-                                "title": ref.get("title", ""),
-                                "year": ref.get("year"),
-                                "doi": child_doi,
-                                "depth": depth,
-                                "source": "opencitations",
-                            })
-                            visited.add(child_id)
-                            next_layer.append(child_id)
-                            next_dois.append(child_doi)
-                        depth_reached = depth
-                    except Exception as exc:
-                        errors.append(f"depth={depth} parent={parent_doi} oc: {exc}"[:200])
+                    if source_mode == "opencitations" and parent_doi:
+                        try:
+                            oc_refs = await _opencitations_references(parent_doi, args.max_citations)
+                            if oc_refs:
+                                oc_refs = await _enrich_with_crossref(oc_refs)
+                                for ref in oc_refs:
+                                    child_doi = ref.get("doi", "")
+                                    child_id = f"DOI:{child_doi}" if child_doi else ""
+                                    if not child_id or child_id in visited:
+                                        continue
+                                    edges.append({"from": parent_id, "to": child_id, "direction": "backward"})
+                                    added = self._add_node(
+                                        nodes, visited, next_layer, next_dois,
+                                        child_id=child_id, title=ref.get("title", ""),
+                                        year=ref.get("year"), doi=child_doi,
+                                        depth=depth, max_nodes=args.max_nodes,
+                                        source="opencitations",
+                                    )
+                                    if added is False:
+                                        break
+                                depth_reached = depth
+                        except Exception as exc:
+                            errors.append(f"depth={depth} {parent_id} backward oc: {exc}"[:200])
+
+                # ── forward: 谁引用了这篇 (citations 端点) ──
+                if do_forward:
+                    if source_mode == "s2" and parent_id:
+                        try:
+                            pid_enc = urllib.parse.quote(parent_id, safe="")
+                            data = await _http_get_json(
+                                f"https://api.semanticscholar.org/graph/v1/paper/{pid_enc}/citations"
+                                f"?fields=title,year,externalIds,paperId&limit={args.max_citations}"
+                            )
+                            for cit in data.get("data", []) or []:
+                                cp = cit.get("citingPaper", {}) or {}
+                                child_id = cp.get("paperId") or ""
+                                if not child_id:
+                                    continue
+                                edges.append({"from": child_id, "to": parent_id, "direction": "forward"})
+                                added = self._add_node(
+                                    nodes, visited, next_layer, next_dois,
+                                    child_id=child_id, title=cp.get("title", "") or "",
+                                    year=cp.get("year"), doi=(cp.get("externalIds") or {}).get("DOI"),
+                                    depth=depth, max_nodes=args.max_nodes,
+                                )
+                                if added is False:
+                                    break
+                            depth_reached = depth
+                        except Exception as exc:
+                            errors.append(f"depth={depth} {parent_id} forward s2: {exc}"[:200])
+
+                    if source_mode == "opencitations" and parent_doi:
+                        try:
+                            oc_cites = await _opencitations_citations(parent_doi, args.max_citations)
+                            if oc_cites:
+                                oc_cites = await _enrich_with_crossref(oc_cites)
+                                for cit in oc_cites:
+                                    child_doi = cit.get("doi", "")
+                                    child_id = f"DOI:{child_doi}" if child_doi else ""
+                                    if not child_id or child_id in visited:
+                                        continue
+                                    edges.append({"from": child_id, "to": parent_id, "direction": "forward"})
+                                    added = self._add_node(
+                                        nodes, visited, next_layer, next_dois,
+                                        child_id=child_id, title=cit.get("title", ""),
+                                        year=cit.get("year"), doi=child_doi,
+                                        depth=depth, max_nodes=args.max_nodes,
+                                        source="opencitations",
+                                    )
+                                    if added is False:
+                                        break
+                                depth_reached = depth
+                        except Exception as exc:
+                            errors.append(f"depth={depth} {parent_id} forward oc: {exc}"[:200])
 
             current_layer = next_layer
             current_dois = next_dois
+
+        # L2b: 双向 snowballing 统计 — 区分前向 (被引) / 后向 (被引)
+        n_forward = n_backward = 0
+        for e in edges:
+            if e.get("direction") == "forward":
+                n_forward += 1
+            elif e.get("direction") == "backward":
+                n_backward += 1
 
         # 引文图持久化到 KG — Zotero 启发: 引用关系应持久存储供后续查询.
         # 之前是 ephemeral 的, agent 每次都要重新 BFS. 现在写一次, 后续
@@ -1283,8 +1439,8 @@ class LiteratureTool(HuginnTool):
                 )
                 eid_map[pid] = eid
             for edge in edges:
-                src = eid_map.get(edge.get("source", ""))
-                dst = eid_map.get(edge.get("target", ""))
+                src = eid_map.get(edge.get("from", ""))
+                dst = eid_map.get(edge.get("to", ""))
                 if src and dst:
                     kg.add_relation(src, Relation.CITES, dst, source="citation_graph")
             kg.save()
@@ -1295,9 +1451,12 @@ class LiteratureTool(HuginnTool):
             data={
                 "action": "citation_graph",
                 "seed_paper_id": seed_node["paper_id"],
+                "direction": direction,
                 "depth_reached": depth_reached,
                 "n_unique_papers": len(nodes),
                 "n_edges": len(edges),
+                "n_forward_edges": n_forward,
+                "n_backward_edges": n_backward,
                 "nodes": nodes,
                 "edges": edges,
                 "errors": errors,
@@ -1306,6 +1465,40 @@ class LiteratureTool(HuginnTool):
             },
             success=True,
         )
+
+    @staticmethod
+    def _add_node(
+        nodes: list[dict[str, Any]],
+        visited: set[str],
+        next_layer: list[str],
+        next_dois: list[str],
+        *,
+        child_id: str,
+        title: str,
+        year: Any,
+        doi: Any,
+        depth: int,
+        max_nodes: int,
+        source: str = "s2",
+    ) -> bool | None:
+        """向图谱追加一个节点 (去重 + 加入下一层). 返回 False 表示触顶应停."""
+        if child_id in visited:
+            return True
+        if len(nodes) >= max_nodes:
+            return False
+        nodes.append({
+            "paper_id": child_id,
+            "title": title,
+            "year": year,
+            "doi": doi,
+            "depth": depth,
+            "source": source,
+        })
+        visited.add(child_id)
+        next_layer.append(child_id)
+        if doi:
+            next_dois.append(doi)
+        return True
 
     # ── ingest_to_rag ───────────────────────────────────────
 

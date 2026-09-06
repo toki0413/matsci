@@ -17,6 +17,10 @@ from huginn.tools.literature.search_sources import (
     _is_oa,
     _rerank,
 )
+from huginn.tools.literature.tool import (
+    LiteratureTool,
+    _annotate_value_consistency,
+)
 
 # ── _coerce_int ─────────────────────────────────────────────────────────────
 
@@ -134,3 +138,94 @@ class TestRerankOaPriority:
               "source": "b", "is_oa": True}
         ranked = _rerank("band gap Li2O", [hi, lo])
         assert ranked[0]["source"] == "a"
+
+
+# ── L2a: 跨源数值一致性标注 ──────────────────────────────────────────────────
+
+class TestAnnotateValueConsistency:
+    def test_single_source_not_verifiable(self):
+        r = [{"value": 1.23, "unit": "eV"}]
+        out = _annotate_value_consistency(r)
+        assert out["overall"]["verdict"] == "insufficient_data"
+        assert out["by_unit"][0]["values"][0]["label"] == "single_source"
+
+    def test_clustered_values_marked_consistent(self):
+        r = [{"value": 2.0, "unit": "eV"},
+             {"value": 2.05, "unit": "eV"},
+             {"value": 2.1, "unit": "eV"}]
+        out = _annotate_value_consistency(r)
+        assert out["overall"]["verdict"] == "consensus"
+        # 21.05 -> median 2.05, 2.0 偏差 ~0.024, 2.1 偏差 ~0.024, 都在 5% 内
+        for u in out["by_unit"]:
+            for v in u["values"]:
+                assert v["label"] == "consistent"
+
+    def test_outlier_marked_conflicting(self):
+        r = [{"value": 2.0, "unit": "eV"},
+             {"value": 2.05, "unit": "eV"},
+             {"value": 5.0, "unit": "eV"}]
+        out = _annotate_value_consistency(r)
+        labels = [v["label"] for u in out["by_unit"] for v in u["values"]]
+        assert "conflicting" in labels
+        assert out["overall"]["verdict"] == "mixed"
+
+    def test_groups_by_unit_separately(self):
+        r = [{"value": 1.0, "unit": "eV"},
+             {"value": 10.0, "unit": "J/mol"}]
+        out = _annotate_value_consistency(r)
+        assert out["overall"]["n_units"] == 2
+        # 每个 unit 单源 -> single_source
+        assert all(u["n_sources"] == 1 for u in out["by_unit"])
+
+    def test_empty_input(self):
+        out = _annotate_value_consistency([])
+        assert out["by_unit"] == []
+        assert out["overall"]["verdict"] == "insufficient_data"
+        assert out["overall"]["n_sources"] == 0
+
+
+# ── L2b: 引文图 snowballing 节点添加辅助 ──────────────────────────────────────
+
+class TestAddNode:
+    @staticmethod
+    def _base():
+        return (
+            [{"paper_id": "seed"}],  # nodes
+            {"seed"},                # visited
+            [],                      # next_layer
+            [],                      # next_dois
+        )
+
+    def test_adds_new_node_and_tracks_next_layer(self):
+        nodes, visited, next_layer, next_dois = self._base()
+        res = LiteratureTool._add_node(
+            nodes, visited, next_layer, next_dois,
+            child_id="A", title="Paper A", year=2020, doi="10.x/a",
+            depth=1, max_nodes=10,
+        )
+        assert res is True
+        assert "A" in visited
+        assert next_layer == ["A"]
+        assert next_dois == ["10.x/a"]
+        assert nodes[-1]["depth"] == 1
+
+    def test_duplicate_not_readded(self):
+        nodes, visited, next_layer, next_dois = self._base()
+        res = LiteratureTool._add_node(
+            nodes, visited, next_layer, next_dois,
+            child_id="seed", title="x", year=1, doi=None,
+            depth=1, max_nodes=10,
+        )
+        assert res is True
+        assert len(nodes) == 1  # 未重复加
+        assert next_layer == []
+
+    def test_cap_returns_false(self):
+        nodes, visited, next_layer, next_dois = self._base()
+        res = LiteratureTool._add_node(
+            nodes, visited, next_layer, next_dois,
+            child_id="B", title="x", year=1, doi=None,
+            depth=1, max_nodes=1,  # 已满 1 个
+        )
+        assert res is False
+        assert "B" not in visited
