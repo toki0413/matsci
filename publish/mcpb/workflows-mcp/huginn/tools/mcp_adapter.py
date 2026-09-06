@@ -1,0 +1,351 @@
+"""Adapter to expose MCP tools as LangChain-compatible tools.
+
+Allows Huginn to use tools from external MCP servers
+(mat-db-mcp, math-anything-mcp) as if they were native tools.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+from typing import Any
+
+from pydantic import BaseModel, create_model
+
+from huginn.core_types import ToolContext, ToolResult
+from huginn.mcp_client import MCPClientManager
+from huginn.tools.base import HuginnTool
+
+logger = logging.getLogger(__name__)
+
+# MCP tool timeout defaults (seconds), by read-only classification.
+_MCP_TIMEOUT_READONLY = 60  # read queries: 60s
+_MCP_TIMEOUT_WRITE = 120  # write ops: 120s
+
+# High-value MCP tools whose results should be promoted to memory.
+_HIGH_VALUE_MCP_TOOLS = {
+    "query_materials_project",
+    "get_structure",
+    "search_by_property",
+    "query_interatomic_potentials",
+    "compare_materials",
+    "extract_math",
+}
+
+# G38: ToolUniverse 白名单 — 350+ 生物医学工具里挑 7 个材料相关工具.
+# 之前 lifespan.py:123 引用此常量但本文件没定义, 启用 ToolUniverse 时
+# 直接 ImportError. 按文档 docs/tooluniverse-integration.md 的 7 个工具名
+# 补齐定义. 工具名随 ToolUniverse 版本变, 手动维护更稳.
+MATERIAL_SCIENCE_TOOL_WHITELIST: set[str] = {
+    "CrystalStructure_validate",
+    "PubChem_get_record",
+    "PubChem_search_compounds",
+    "PubChem_get_properties",
+    "ChEMBL_get_compound",
+    "RCSB_PDB_search",
+    "RCSB_PDB_get_entry",
+}
+
+
+def _schema_to_pydantic(
+    schema: dict[str, Any], model_name: str = "DynamicInput"
+) -> type[BaseModel]:
+    """Convert a JSON schema to a Pydantic model dynamically."""
+    properties = schema.get("properties", {})
+    required = set(schema.get("required", []))
+
+    fields: dict[str, tuple[type, Any]] = {}
+    for name, prop in properties.items():
+        json_type = prop.get("type", "string")
+        if json_type == "string":
+            py_type = str
+        elif json_type == "integer":
+            py_type = int
+        elif json_type == "number":
+            py_type = float
+        elif json_type == "boolean":
+            py_type = bool
+        elif json_type == "array":
+            py_type = list
+        elif json_type == "object":
+            py_type = dict
+        else:
+            py_type = str
+
+        if name not in required:
+            default = prop.get("default", None)
+            fields[name] = (py_type | None, default)
+        else:
+            fields[name] = (py_type, ...)
+
+    return create_model(model_name, **fields)
+
+
+class MCPToolAdapter(HuginnTool):
+    """Wraps an MCP tool as a HuginnTool.
+
+    This enables seamless integration of MCP server tools into the
+    Huginn tool registry and LangGraph agent.
+
+    Includes:
+    - CircuitBreaker protection (prevents cascading failures)
+    - Async timeout (prevents hanging MCP calls)
+    - Automatic memory promotion for high-value results
+    """
+
+    def __init__(
+        self,
+        name: str,
+        description: str,
+        input_schema: dict[str, Any],
+        client_manager: MCPClientManager,
+    ):
+        self._tool_name = name
+        self._description = description
+        self._client_manager = client_manager
+        self.name = name
+        self.description = description
+        # Build Pydantic model from JSON schema
+        self.input_schema = _schema_to_pydantic(input_schema, f"{name}Input")
+
+    def is_read_only(self, args: BaseModel) -> bool:
+        # Conservative default: assume MCP tools that query DB are read-only
+        read_only_names = {
+            "query_materials_project",
+            "search_by_property",
+            "get_structure",
+            "query_interatomic_potentials",
+            "compare_materials",
+            "extract_math",
+            "math_diff",
+            "dimensional_analysis",
+            "track_precision",
+            "normalize_expression",
+            "read_resource",
+        }
+        return self._tool_name in read_only_names
+
+    async def call(self, args: BaseModel, context: ToolContext) -> ToolResult:
+        # Determine timeout based on read/write classification
+        timeout = (
+            _MCP_TIMEOUT_READONLY
+            if self.is_read_only(args)
+            else _MCP_TIMEOUT_WRITE
+        )
+
+        # Use async CircuitBreaker if available
+        try:
+            from huginn.agents.circuit_breaker import async_circuit_guard
+
+            async with async_circuit_guard(self._tool_name) as guard:
+                if guard.get("blocked"):
+                    return ToolResult(
+                        data=None,
+                        success=False,
+                        error=f"MCP tool '{self._tool_name}' circuit breaker open",
+                    )
+                return await self._call_with_timeout(args, context, timeout)
+        except ImportError:
+            # CircuitBreaker not available, just use timeout
+            return await self._call_with_timeout(args, context, timeout)
+        except Exception as e:
+            # CircuitBreaker open or other protection error
+            cb_msg = "Circuit breaker open" if "circuit" in str(e).lower() else str(e)
+            return ToolResult(
+                data=None,
+                success=False,
+                error=f"MCP tool '{self._tool_name}' unavailable: {cb_msg}",
+            )
+
+    async def _call_with_timeout(
+        self, args: BaseModel, context: ToolContext, timeout: int
+    ) -> ToolResult:
+        """Execute MCP tool call with timeout and memory promotion."""
+        try:
+            arguments = args.model_dump(exclude_none=True)
+            result = await asyncio.wait_for(
+                self._client_manager.call_tool(self._tool_name, arguments),
+                timeout=timeout,
+            )
+
+            if result.get("is_error"):
+                return ToolResult(
+                    data=None,
+                    success=False,
+                    error=result.get("output", "Unknown MCP error"),
+                )
+
+            # Try to parse JSON output
+            output = result.get("output", "")
+            try:
+                data = json.loads(output)
+            except Exception:
+                data = {"raw_output": output}
+
+            # ── Promote high-value MCP results to memory ──────────
+            # If this is a high-value tool (materials DB query, structure
+            # retrieval, etc.), store the result in long-term memory so
+            # future queries can benefit without re-calling the MCP server.
+            if self._tool_name in _HIGH_VALUE_MCP_TOOLS and context.memory_manager:
+                try:
+                    memory_text = output[:2000] if isinstance(output, str) else json.dumps(data)[:2000]
+                    context.memory_manager.add_tool_call(
+                        tool_name=self._tool_name,
+                        tool_args=arguments,
+                        tool_result=memory_text,
+                        success=True,
+                    )
+                except Exception:
+                    # Memory promotion failure should never block tool result
+                    logger.debug(
+                        "MCP memory promotion failed for %s",
+                        self._tool_name,
+                        exc_info=True,
+                    )
+
+            return ToolResult(data=data, success=True)
+
+        except TimeoutError:
+            return ToolResult(
+                data=None,
+                success=False,
+                error=f"MCP tool '{self._tool_name}' timed out after {timeout}s",
+            )
+        except Exception as e:
+            return ToolResult(data=None, success=False, error=f"MCP tool error: {e}")
+
+
+class MCPPromptAdapter(HuginnTool):
+    """Wraps an MCP prompt as a HuginnTool so the agent can render it.
+
+    Prompts aren't tools in the MCP sense, but exposing them through the tool
+    registry lets the agent call them like any other capability: the rendered
+    message text comes back as the tool result and can be fed into context.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        description: str,
+        arguments: list[dict[str, Any]],
+        client_manager: MCPClientManager,
+    ):
+        self._prompt_name = name
+        self._client_manager = client_manager
+        # Prefix so prompt adapters never collide with same-named MCP tools.
+        self.name = f"prompt_{name}"
+        self.description = description or f"MCP prompt: {name}"
+        # Prompt arguments are always strings in the MCP spec.
+        properties = {
+            a["name"]: {"type": "string", "description": a.get("description", "")}
+            for a in arguments
+        }
+        required = [a["name"] for a in arguments if a.get("required")]
+        self.input_schema = _schema_to_pydantic(
+            {"type": "object", "properties": properties, "required": required},
+            f"{name}PromptInput",
+        )
+
+    def is_read_only(self, args: BaseModel) -> bool:
+        # Rendering a prompt only produces text, never mutates state.
+        return True
+
+    async def call(self, args: BaseModel, context: ToolContext) -> ToolResult:
+        try:
+            arguments = args.model_dump(exclude_none=True)
+            text = await self._client_manager.get_prompt(self._prompt_name, arguments)
+            return ToolResult(
+                data={"prompt": self._prompt_name, "content": text},
+                success=True,
+            )
+        except Exception as e:
+            return ToolResult(data=None, success=False, error=f"MCP prompt error: {e}")
+
+
+def register_mcp_tools(
+    client_manager: MCPClientManager,
+    server_name: str | None = None,
+    whitelist: set[str] | None = None,
+) -> list[HuginnTool]:
+    """Discover MCP tools and register them as HuginnTools.
+
+    If *server_name* is given, only tools from that server are registered
+    (used during reconnection).  If *whitelist* is given, only tools whose
+    name appears in the set are registered (used to filter ToolUniverse's
+    350+ biomedical tools down to the materials-science subset).
+
+    Existing tools with the same name are replaced and a debug message is
+    logged.
+
+    Returns the list of newly registered (or replaced) adapters.
+    """
+    from huginn.tools.registry import ToolRegistry
+
+    tools: list[HuginnTool] = []
+    skipped_by_whitelist = 0
+    for info in client_manager.list_tools():
+        if server_name and info.server_name != server_name:
+            continue
+        if whitelist is not None and info.name not in whitelist:
+            skipped_by_whitelist += 1
+            continue
+
+        existing = ToolRegistry.get(info.name)
+        if existing is not None:
+            logger.debug(
+                f"Replacing existing tool '{info.name}' "
+                f"(server: {info.server_name})"
+            )
+
+        adapter = MCPToolAdapter(
+            name=info.name,
+            description=info.description,
+            input_schema=info.input_schema,
+            client_manager=client_manager,
+        )
+        ToolRegistry.register(adapter)
+        tools.append(adapter)
+
+    if whitelist is not None and skipped_by_whitelist:
+        logger.info(
+            f"MCP whitelist filtered out {skipped_by_whitelist} tools "
+            f"from server '{server_name or 'all'}' ({len(tools)} kept)"
+        )
+
+    return tools
+
+
+async def register_mcp_prompts(
+    client_manager: MCPClientManager,
+    server_name: str | None = None,
+) -> list[HuginnTool]:
+    """Discover MCP prompts and register each as a HuginnTool.
+
+    Async because :meth:`MCPClientManager.list_prompts` is. When *server_name*
+    is given, only prompts from that server are registered (used during
+    reconnect). Returns the list of registered prompt adapters.
+    """
+    from huginn.tools.registry import ToolRegistry
+
+    prompts_by_server = await client_manager.list_prompts()
+    adapters: list[HuginnTool] = []
+    for srv, prompts in prompts_by_server.items():
+        if server_name and srv != server_name:
+            continue
+        for p in prompts:
+            adapter = MCPPromptAdapter(
+                name=p["name"],
+                description=p.get("description", ""),
+                arguments=p.get("arguments", []),
+                client_manager=client_manager,
+            )
+            ToolRegistry.register(adapter)
+            adapters.append(adapter)
+
+    if adapters:
+        logger.info(
+            f"Registered {len(adapters)} MCP prompt(s) "
+            f"from server '{server_name or 'all'}'"
+        )
+    return adapters

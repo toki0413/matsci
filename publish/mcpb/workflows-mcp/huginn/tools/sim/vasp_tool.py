@@ -1,0 +1,1097 @@
+"""VASP DFT calculation tool.
+
+Supports both real VASP execution (if available) and mock mode.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import os
+import subprocess
+import time
+import uuid
+from pathlib import Path
+from typing import Any, Literal
+
+from pydantic import BaseModel, Field, model_validator
+
+from huginn.core_types import HandleType, ToolContext, ToolResult, ValidationResult
+from huginn.security import SandboxExecutor
+from huginn.security.conservation import audit_material_conservation
+from huginn.tools.base import HuginnTool, ResearchPhase, ToolProfile
+from huginn.validation.handle_validator import HandleValidator
+
+logger = logging.getLogger(__name__)
+
+try:
+    import huginn_ext
+
+    _HAS_HUGINN_EXT = True
+except ImportError:
+    logger.debug("best-effort op failed", exc_info=True)
+    huginn_ext = None
+    _HAS_HUGINN_EXT = False
+
+# submit_async 实际可以跑的计算类型
+_COMPUTE_ACTIONS = ("relax", "scf", "band", "dos", "md", "phonon")
+
+
+class VaspToolInput(BaseModel):
+    action: Literal[
+        "relax",
+        "scf",
+        "band",
+        "dos",
+        "md",
+        "phonon",
+        "eos",
+        "submit_async",
+        "poll_job",
+        "wait_job",
+    ] = Field(...)
+    working_dir: str | None = Field(
+        default=None,
+        description="Directory containing POSCAR/INCAR/POTCAR/KPOINTS",
+    )
+    incar_overrides: dict = Field(
+        default_factory=dict, description="Override specific INCAR tags"
+    )
+    queue: Literal["debug", "normal", "gpu"] = Field(default="normal")
+    walltime_hours: int = Field(default=24, ge=1, le=168)
+    # submit_async 专用: 指定实际跑哪种计算 (relax/scf/band/...)
+    compute_action: Literal["relax", "scf", "band", "dos", "md", "phonon"] | None = (
+        Field(
+            default=None,
+            description="For submit_async: which computation to run (relax/scf/band/dos/md/phonon)",
+        )
+    )
+    # poll_job / wait_job 专用
+    job_id: str | None = Field(
+        default=None,
+        description="For poll_job/wait_job: the job_id returned by submit_async",
+    )
+    # wait_job 专用: 最长等多久 (秒), 超时返回 status=running
+    timeout: float = Field(
+        default=3600.0,
+        ge=1.0,
+        description="For wait_job: max seconds to wait before returning (default 3600)",
+    )
+    # 计算失败时自动诊断 + 改 INCAR 重试的次数. 0 = 关闭自愈.
+    max_auto_retries: int = Field(
+        default=2,
+        ge=0,
+        le=5,
+        description="On failure, auto-diagnose + patch INCAR and retry up to N times",
+    )
+    # eos action 专用: 指定拟合哪种状态方程
+    eos_type: Literal["birch_murnaghan", "murnaghan", "vinet"] | None = Field(
+        default=None, description="For eos action: which EOS to fit."
+    )
+
+    @model_validator(mode="after")
+    def _check_action_fields(self) -> VaspToolInput:
+        """不同 action 需要不同字段, 在 schema 层兜底, 别等 call() 才挂."""
+        if (self.action in _COMPUTE_ACTIONS or self.action in ("submit_async", "eos")) and not self.working_dir:
+                raise ValueError(
+                    f"action '{self.action}' requires 'working_dir'"
+                )
+        if self.action == "submit_async" and not self.compute_action:
+            raise ValueError(
+                "submit_async requires 'compute_action' (relax/scf/band/dos/md/phonon)"
+            )
+        if self.action in ("poll_job", "wait_job") and not self.job_id:
+            raise ValueError(f"action '{self.action}' requires 'job_id'")
+        return self
+
+
+class VaspToolOutput(BaseModel):
+    job_id: str | None = None
+    status: Literal["completed", "failed", "mock"] = "mock"
+    energy: float | None = None
+    converged: bool = False
+    output_files: list[str] = []
+    warnings: list[str] = []
+
+
+class VaspTool(HuginnTool):
+    """Submit and manage VASP DFT calculations."""
+
+    name = "vasp_tool"
+    category = "sim"
+    profile = ToolProfile(
+        cost_tier="heavy",
+        phases=frozenset({ResearchPhase.EXECUTION}),
+        constraint_scope="dft",
+        light_alternatives=(
+            "materials_database_tool",
+            "local_structure_db",
+            "symbolic_math_tool",
+            "numerical_tool",
+        ),
+    )
+    description = (
+        "Run VASP DFT calculations (relaxation, SCF, band structure, DOS, MD, phonons). "
+        "Supports async submission via submit_async / poll_job / wait_job for long-running jobs."
+    )
+    input_schema = VaspToolInput
+    _init_kwargs_map = {"vasp_executable": "vasp_executable"}
+
+    # 异步作业注册表: job_id -> {status, task, result, error, started_at, finished_at}
+    # 类级别共享, 同一进程内多次 submit_async / poll_job 能互通.
+    # 注意: 进程重启后作业状态丢失, 长跑作业建议用 job_tool 走 HPC.
+    _async_jobs: dict[str, dict[str, Any]] = {}
+
+    def __init__(
+        self, vasp_executable: str | None = None, sandbox: SandboxExecutor | None = None
+    ):
+        super().__init__()
+        self.vasp_executable = vasp_executable or self._find_vasp()
+        self.sandbox = sandbox or SandboxExecutor()
+
+    def _find_vasp(self) -> str | None:
+        """Find VASP executable."""
+        env_path = os.environ.get("VASP_EXECUTABLE")
+        if env_path and Path(env_path).exists():
+            return env_path
+
+        # Check PATH
+        try:
+            import shutil
+
+            for name in ["vasp", "vasp_std", "vasp_gam", "vasp_ncl"]:
+                exe = shutil.which(name)
+                if exe:
+                    return exe
+        except Exception:
+            logger.debug("suppressed in _find_vasp", exc_info=True)
+
+        return None
+
+    def estimate_cost(self, args: VaspToolInput) -> dict[str, float] | None:
+        # poll_job / wait_job 是查询操作, 不消耗计算资源
+        if args.action in ("poll_job", "wait_job"):
+            return None
+        return {
+            "cpu_hours": args.walltime_hours * 4,
+            "walltime_hours": args.walltime_hours,
+        }
+
+    async def validate_input(
+        self, args: VaspToolInput, context: ToolContext
+    ) -> ValidationResult:
+        """Pre-flight: verify working directory and required VASP input files.
+
+        submit_async 跟普通计算 action 一样需要 working_dir + POSCAR.
+        poll_job / wait_job 只需要 job_id, 不检查工作目录.
+        """
+        if args.action in ("poll_job", "wait_job"):
+            # job_id 在 schema 层已经强制非空, 这里直接放行
+            return ValidationResult(result=True)
+
+        if args.action == "eos":
+            # eos 只需要 working_dir 存在, 不检查 POSCAR
+            vr = HandleValidator.validate(HandleType.FILE_PATH, args.working_dir, context)
+            if not vr.result:
+                return ValidationResult(
+                    result=False,
+                    message=f"Working directory not found: {args.working_dir}",
+                    error_code=404,
+                )
+            return ValidationResult(result=True)
+
+        vr = HandleValidator.validate(HandleType.FILE_PATH, args.working_dir, context)
+        if not vr.result:
+            return ValidationResult(
+                result=False,
+                message=f"Working directory not found: {args.working_dir}",
+                error_code=404,
+            )
+        poscar = Path(args.working_dir) / "POSCAR"
+        if not poscar.exists():
+            ws_poscar = Path(context.workspace) / args.working_dir / "POSCAR" if context.workspace else None
+            if not (ws_poscar and ws_poscar.exists()):
+                return ValidationResult(
+                    result=False,
+                    message="POSCAR not found in working directory",
+                    error_code=404,
+                )
+        return ValidationResult(result=True)
+
+    async def call(self, args: VaspToolInput, context: ToolContext) -> ToolResult:
+        # 异步作业管理动作: 不跑实际计算, 只查/等作业状态
+        if args.action == "submit_async":
+            return await self._handle_submit_async(args, context)
+        if args.action == "poll_job":
+            return self._handle_poll_job(args)
+        if args.action == "wait_job":
+            return await self._handle_wait_job(args)
+
+        if args.action == "eos":
+            return await self._eos(args, context)
+
+        work_dir = Path(args.working_dir)
+        if not work_dir.exists():
+            return ToolResult(
+                data=None,
+                success=False,
+                error=f"Working directory not found: {work_dir}",
+            )
+
+        # Check for required input files
+        poscar = work_dir / "POSCAR"
+        incar = work_dir / "INCAR"
+        if not poscar.exists():
+            return ToolResult(
+                data=None, success=False, error="POSCAR not found in working directory"
+            )
+
+        # Apply INCAR overrides
+        if args.incar_overrides and incar.exists():
+            self._modify_incar(incar, args.incar_overrides)
+
+        # If VASP is available, run it
+        if self.vasp_executable:
+            return await self._run_vasp(args, work_dir)
+
+        # 找不到可执行文件 — 走 mock 模式
+        from huginn.tools.sim.executable_resolver import resolve_executable
+
+        resolution = resolve_executable("vasp")
+        if isinstance(resolution, str):
+            self.vasp_executable = resolution
+            return await self._run_vasp(args, work_dir)
+        return self._mock_result(args, work_dir)
+
+    async def _run_vasp(self, args: VaspToolInput, work_dir: Path) -> ToolResult:
+        """Execute real VASP calculation, 自动诊断+改 INCAR 重试."""
+        autoheal_log: list[dict[str, Any]] = []
+        try:
+            cmd = [self.vasp_executable]
+            result: Any = None
+            max_retries = args.max_auto_retries
+            # 软失败原因. returncode=0 但 SCF 没收敛 / 物理审计报错都属于软失败,
+            # 这种情况 result.returncode==0, 不能让最终 success 判定当成成功.
+            soft_failure_msg: str | None = None
+            audit_report = None
+
+            for attempt in range(max_retries + 1):
+                sb_result = self.sandbox.run(
+                    cmd,
+                    cwd=str(work_dir),
+                    timeout=args.walltime_hours * 3600,
+                    queue=args.queue,
+                    walltime=f"{args.walltime_hours}:00:00",
+                )
+                result = sb_result
+
+                # 判断这次跑完到底算成功还是失败:
+                # - returncode != 0 → 硬失败, 用 stderr 诊断
+                # - returncode == 0 但 SCF 没收敛 → 软失败, VASP 经常静默返回 0
+                # - returncode == 0 且 SCF 收敛, 但物理审计报错 → 软失败
+                error: str | None = None
+                soft_failure_msg = None
+                if result.returncode != 0:
+                    error = result.stderr or ""
+                else:
+                    # returncode=0 不代表收敛了, 先查 OUTCAR 的 SCF 状态
+                    parsed_now = (
+                        self._parse_outcar(work_dir / "OUTCAR", action=args.action)
+                        if (work_dir / "OUTCAR").exists()
+                        else {}
+                    )
+                    vasprun_now = work_dir / "vasprun.xml"
+                    if vasprun_now.exists():
+                        parsed_now.update(self._parse_vasprun_quick(vasprun_now))
+                    if not parsed_now.get("converged", True):
+                        # SCF 没收敛 (NELM 撑满), 软失败走重试
+                        error = (
+                            "SCF did not converge — "
+                            "electronic convergence not reached (NELM)"
+                        )
+                        soft_failure_msg = error
+                    else:
+                        # SCF 收敛了, 再过一遍物理审计,
+                        # 抓 unbound energy / 负 gap 之类的 "成功但不可信"
+                        try:
+                            from huginn.execution.physics_auditor import (
+                                PhysicsAuditor,
+                            )
+
+                            auditor = PhysicsAuditor()
+                            audit_report = auditor.audit(
+                                "vasp_tool",
+                                args.action,
+                                parsed_now,
+                                args.model_dump(),
+                            )
+                            if audit_report.has_errors:
+                                errs = [
+                                    f.message
+                                    for f in audit_report.findings
+                                    if f.severity == "error"
+                                ]
+                                error = f"Physics audit found errors: {errs}"
+                                soft_failure_msg = error
+                        except Exception:
+                            logger.debug("审计本身挂了不能阻塞结果", exc_info=True)
+
+                if error is None:
+                    break  # 真正成功
+
+                # 失败了 (硬失败或软失败), 看还有没有重试额度 + 能不能自动修
+                if attempt < max_retries:
+                    fixed = self._try_autofix(work_dir, error)
+                    if fixed:
+                        autoheal_log.append(
+                            {
+                                "attempt": attempt + 1,
+                                "error": error[:300],
+                                "fixes_applied": fixed["fixes"],
+                                "reasoning": fixed["reasoning"],
+                            }
+                        )
+                        continue
+                break  # 没修动或重试耗尽
+
+            # Parse OUTCAR for comprehensive results
+            outcar = work_dir / "OUTCAR"
+            parsed = (
+                self._parse_outcar(outcar, action=args.action)
+                if outcar.exists() else {}
+            )
+
+            # Also try vasprun.xml for structured data
+            vasprun = work_dir / "vasprun.xml"
+            if vasprun.exists():
+                parsed.update(self._parse_vasprun_quick(vasprun))
+
+            # 最终成功判定: returncode==0 且没有遗留软失败 (SCF 没收敛 / 物理审计报错)
+            ok = result.returncode == 0 and soft_failure_msg is None
+            output = VaspToolOutput(
+                status="completed" if ok else "failed",
+                energy=parsed.get("energy"),
+                converged=parsed.get("converged", False),
+                output_files=[
+                    f.name
+                    for f in work_dir.iterdir()
+                    if f.suffix in [".OUTCAR", ".vasprun", ".CHG"]
+                ],
+            )
+
+            # Include parsed details in result
+            data = output.model_dump()
+            data["parsed"] = parsed
+            if autoheal_log:
+                data["autoheal_attempts"] = autoheal_log
+
+            # Physics audit — check if results are physically reasonable.
+            # AutoFixLoop only handles hard failures; this catches results that
+            # "succeeded" but violate basic physics (e.g. unbound energy, neg gap).
+            # 循环里跑过审计就复用, 没跑过 (比如硬失败) 就补跑一次兜底.
+            if audit_report is not None:
+                data["physics_audit"] = audit_report.to_dict()
+            else:
+                try:
+                    from huginn.execution.physics_auditor import PhysicsAuditor
+
+                    auditor = PhysicsAuditor()
+                    audit_report = auditor.audit(
+                        "vasp_tool", args.action, parsed, args.model_dump()
+                    )
+                    data["physics_audit"] = audit_report.to_dict()
+                except Exception:
+                    logger.debug("audit failure can't block result delivery", exc_info=True)
+
+            # 带上 provenance 快照, 事后能追溯参数/版本/环境
+            try:
+                from huginn.provenance import capture
+
+                data["provenance"] = capture(
+                    "vasp_tool", args.model_dump(), output=dict(data)
+                ).to_dict()
+            except Exception:
+                logger.debug("provenance 失败不能把计算结果带挂", exc_info=True)
+
+            # 提示 agent 可以链式调 gp_tool 做 GP 不确定性量化
+            data["uq_hint"] = self._uq_hint()
+            # 告知下游工具 (xrd_sim/descriptor/symmetry) 可以从哪里读优化结构
+            data["structure_file_hint"] = self._structure_file_hint(work_dir)
+
+            return ToolResult(
+                data=data,
+                success=ok,
+                error=(
+                    None
+                    if ok
+                    else (
+                        result.stderr[:500]
+                        if result.returncode != 0
+                        else soft_failure_msg
+                    )
+                ),
+            )
+
+        except subprocess.TimeoutExpired:
+            return ToolResult(
+                data=None,
+                success=False,
+                error=f"VASP execution timed out ({args.walltime_hours}h)",
+            )
+        except Exception as e:
+            return ToolResult(
+                data=None, success=False, error=f"VASP execution failed: {e}"
+            )
+
+    def _read_incar_params(self, work_dir: Path) -> dict[str, Any]:
+        """读 INCAR 解析成 dict, 给 AutoFixLoop 判断当前参数用."""
+        incar = work_dir / "INCAR"
+        if not incar.exists():
+            return {}
+        params: dict[str, Any] = {}
+        try:
+            for line in incar.read_text(encoding="utf-8").splitlines():
+                s = line.strip()
+                if not s or s.startswith("#"):
+                    continue
+                if "=" not in s:
+                    continue
+                k, v = s.split("=", 1)
+                k = k.strip().upper()
+                v = v.strip()
+                # 数字尽量转成数字, 方便 halve/double 规则
+                try:
+                    num = float(v)
+                    v = int(num) if num == int(num) else num  # type: ignore[assignment]
+                except ValueError:
+                    logger.debug("suppressed in _read_incar_params", exc_info=True)
+                params[k] = v
+        except Exception:
+            logger.debug("suppressed in _read_incar_params", exc_info=True)
+        return params
+
+    def _try_autofix(self, work_dir: Path, stderr: str) -> dict[str, Any] | None:
+        """跑一次 AutoFixLoop, 命中规则就改 INCAR 返回修了啥. 没命中返回 None."""
+        incar = work_dir / "INCAR"
+        if not incar.exists():
+            return None
+        try:
+            from huginn.execution.autofix import AutoFixLoop
+
+            current = self._read_incar_params(work_dir)
+            fixed = AutoFixLoop().apply_fix("vasp_tool", stderr, current)
+            if not fixed:
+                return None
+            reasoning = fixed.pop("__auto_fix", None)
+            fixed.pop("__auto_fix_patterns_matched", None)
+            # 剩下的才是真正要改的 INCAR tag
+            if not fixed:
+                return None
+            self._modify_incar(incar, fixed)
+            return {"fixes": fixed, "reasoning": reasoning}
+        except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
+            return None
+
+    # ------------------------------------------------------------------ async job API
+
+    async def _handle_submit_async(
+        self, args: VaspToolInput, context: ToolContext
+    ) -> ToolResult:
+        """异步提交 VASP 计算, 立即返回 job_id, 不阻塞等待结果.
+
+        内部用 asyncio.create_task 在后台跑实际计算 (relax/scf/band/...),
+        计算完成后把结果存进 _async_jobs[job_id]. 进程重启后作业状态丢失,
+        长跑作业建议走 job_tool 提交到 HPC.
+
+        Returns:
+            ToolResult.data = {"job_id": str, "status": "running", "compute_action": str}
+        """
+        # 构造同步调用的 args: 用 compute_action 作为 action
+        sync_args = VaspToolInput(
+            action=args.compute_action,
+            working_dir=args.working_dir,
+            incar_overrides=args.incar_overrides,
+            queue=args.queue,
+            walltime_hours=args.walltime_hours,
+        )
+
+        job_id = f"vasp-{uuid.uuid4().hex[:12]}"
+
+        job_entry: dict[str, Any] = {
+            "status": "running",
+            "task": None,
+            "result": None,
+            "error": None,
+            "compute_action": args.compute_action,
+            "working_dir": args.working_dir,
+            "started_at": time.time(),
+            "finished_at": None,
+        }
+        VaspTool._async_jobs[job_id] = job_entry
+
+        async def _run_in_background() -> None:
+            """后台跑实际计算, 完成后更新 job_entry."""
+            try:
+                result = await self.call(sync_args, context)
+                job_entry["result"] = (
+                    result.data if result.success else None
+                )
+                job_entry["error"] = result.error
+                job_entry["status"] = "done" if result.success else "failed"
+            except Exception as exc:
+                job_entry["error"] = str(exc)
+                job_entry["status"] = "failed"
+            finally:
+                job_entry["finished_at"] = time.time()
+
+        # create_task 把协程排到当前事件循环, agent chat 期间会并发跑
+        try:
+            task = asyncio.create_task(_run_in_background())
+            job_entry["task"] = task
+        except RuntimeError:
+            # 没有运行中的事件循环 (比如同步路径调用), 退化为同步执行
+            # 这种情况下 "异步" 提交实际是阻塞的, 但至少功能正确
+            await _run_in_background()
+
+        return ToolResult(
+            data={
+                "job_id": job_id,
+                "status": "running",
+                "compute_action": args.compute_action,
+                "working_dir": args.working_dir,
+            },
+            success=True,
+        )
+
+    def _handle_poll_job(self, args: VaspToolInput) -> ToolResult:
+        """查作业状态, 立即返回, 不阻塞.
+
+        Returns:
+            ToolResult.data = {
+                "job_id": str,
+                "status": "running" | "done" | "failed",
+                "progress": 0-100,
+                "partial_result": ... | None,
+                "error": str | None,
+                "elapsed": float,
+            }
+        """
+        job_id = args.job_id
+        job = VaspTool._async_jobs.get(job_id)
+        if job is None:
+            return ToolResult(
+                data=None,
+                success=False,
+                error=f"Unknown job_id: {job_id}",
+            )
+
+        elapsed = time.time() - job["started_at"]
+        status = job["status"]
+        # 进度估算: running 给 50 (无法精确跟踪 VASP 内部进度),
+        # done/failed 给 100. 真要精确进度得解析 OUTCAR 的 ionic step,
+        # 这里先做粗略估计.
+        progress = 100 if status in ("done", "failed") else 50
+
+        return ToolResult(
+            data={
+                "job_id": job_id,
+                "status": status,
+                "progress": progress,
+                "partial_result": job["result"] if status == "done" else None,
+                "error": job["error"],
+                "elapsed": round(elapsed, 2),
+                "compute_action": job.get("compute_action"),
+            },
+            success=True,
+        )
+
+    async def _handle_wait_job(self, args: VaspToolInput) -> ToolResult:
+        """阻塞等待作业完成或超时.
+
+        内部用 asyncio.wait_for 等后台 task, 超时返回当前状态 (status=running).
+        作业完成返回最终结果, 失败返回错误.
+        """
+        job_id = args.job_id
+        timeout = args.timeout
+        job = VaspTool._async_jobs.get(job_id)
+        if job is None:
+            return ToolResult(
+                data=None,
+                success=False,
+                error=f"Unknown job_id: {job_id}",
+            )
+
+        task = job.get("task")
+        if task is None:
+            # 同步退化路径下没有 task, 直接返回当前状态
+            return self._handle_poll_job(args)
+
+        # 已经完成的作业直接返回, 不再 wait
+        if job["status"] in ("done", "failed"):
+            return self._handle_poll_job(args)
+
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
+        except TimeoutError:
+            # 超时: 作业还在跑, 返回当前状态 (不取消 task, 让它继续)
+            logger.debug("best-effort op failed", exc_info=True)
+        except Exception as exc:
+            # task 本身挂了 (不是超时), 把错误记下来
+            job["status"] = "failed"
+            job["error"] = str(exc)
+            job["finished_at"] = time.time()
+
+        return self._handle_poll_job(args)
+
+    async def _eos(self, args: VaspToolInput, context: ToolContext) -> ToolResult:
+        """批量读取不同体积的 SCF 结果, 拟合 EOS.
+
+        working_dir 下每个子目录包含一个已完成 SCF 的 OUTCAR.
+        从每个 OUTCAR 解析 volume + energy, 然后调 numerical_tool 做拟合.
+        """
+        work_dir = Path(args.working_dir)
+        if not work_dir.exists():
+            return ToolResult(
+                data=None, success=False,
+                error=f"Working directory not found: {work_dir}",
+            )
+
+        ev_points: list[tuple[float, float]] = []
+        for subdir in sorted(work_dir.iterdir()):
+            if not subdir.is_dir():
+                continue
+            outcar = subdir / "OUTCAR"
+            if not outcar.exists():
+                continue
+            parsed = self._parse_outcar(outcar)
+            vol = parsed.get("volume")
+            en = parsed.get("energy")
+            if vol is not None and en is not None:
+                ev_points.append((float(vol), float(en)))
+
+        if len(ev_points) < 4:
+            return ToolResult(
+                data=None, success=False,
+                error=f"EOS fit needs ≥4 points with volume+energy, found {len(ev_points)}.",
+            )
+
+        ev_points.sort()
+        volumes, energies = zip(*ev_points)
+
+        from huginn.tools.numerical_tool import NumericalTool
+
+        num_tool = NumericalTool()
+        eos_result = await num_tool.call({
+            "action": "eos_fit",
+            "volumes": list(volumes),
+            "energies": list(energies),
+            "eos_type": args.eos_type or "birch_murnaghan",
+        })
+
+        return ToolResult(
+            data={
+                "eos_fit": eos_result.data,
+                "ev_points": [{"volume": v, "energy": e} for v, e in ev_points],
+                "n_points": len(ev_points),
+            },
+            success=eos_result.success,
+            error=eos_result.error,
+        )
+
+    def _parse_outcar(
+        self, outcar_path: Path, action: str | None = None
+    ) -> dict[str, Any]:
+        """Parse OUTCAR for key physical quantities.
+
+        Uses the Rust accelerator when available and falls back to pure Python.
+
+        action controls the convergence criterion (audit_20260717/14 P1-5):
+        - "relax" (or None / md / phonon): ionic convergence ("reached
+          required accuracy" — VASP's ionic-step marker)
+        - "scf": electronic convergence — last SCF reached EDIFF before NELM
+        - "band" / "dos": non-self-consistent, no SCF loop — converged if
+          any output exists (initial CHGCAR read counts as success)
+
+        The previous code applied the ionic marker to scf/band/dos, which
+        never have that marker → all healthy SCF/band/dos were misjudged as
+        "not converged" → AutoFixLoop wasted 2× compute re-running them.
+        """
+        # For scf/band/dos we can't trust the Rust parser's converged field
+        # (it uses the ionic marker). Fall through to Python which is
+        # action-aware. For relax/md/phonon, Rust is fine for perf.
+        if _HAS_HUGINN_EXT and action not in ("scf", "band", "dos"):
+            try:
+                result = huginn_ext.parse_outcar(str(outcar_path))
+                if "error" not in result and result.get("converged"):
+                    # Rust parser may not recognise the "reached required
+                    # accuracy" convergence marker in minimal OUTCARs,
+                    # so double-check with Python if Rust says not converged.
+                    return self._with_conservation(result)
+            except Exception:
+                logger.debug("suppressed in _parse_outcar", exc_info=True)
+
+        return self._with_conservation(self._parse_outcar_python(outcar_path, action=action))
+
+    def _with_conservation(self, result: dict[str, Any]) -> dict[str, Any]:
+        """为解析结果附加守恒对账 (独立于 LLM 的机械不变量审计).
+
+        纯附加, 失败也只记 debug, 绝不阻塞解析主流程/抛出.
+        """
+        try:
+            result["conservation"] = audit_material_conservation(result)
+        except Exception:
+            logger.debug("conservation audit failed (non-fatal)", exc_info=True)
+        return result
+
+    def _parse_outcar_python(
+        self, outcar_path: Path, action: str | None = None
+    ) -> dict[str, Any]:
+        """Pure-Python OUTCAR parser (baseline/fallback)."""
+        import re
+
+        result = {
+            "energy": None,
+            "converged": False,
+            "forces": [],
+            "magnetic_moments": [],
+            "lattice_vectors": [],
+            "volume": None,
+            "band_gap": None,
+            "encut": None,
+            "kpoints": None,
+            "nelm": None,
+            "nelmin": None,
+            "ispin": None,
+        }
+
+        # 优先用 pymatgen 解析, 拿不到的字段留给后面的 regex 兜底.
+        # 注意 pymatgen 的 Outcar.converged 也是用离子收敛标记,
+        # 对 scf/band/dos 同样误判 — 下面 action-aware 检查会覆盖它.
+        try:
+            from pymatgen.io.vasp import Outcar
+
+            oc = Outcar(str(outcar_path))
+            if oc.final_energy is not None:
+                result["energy"] = float(oc.final_energy)
+            if oc.forces:
+                result["forces"] = [
+                    {"position": [0.0, 0.0, 0.0], "force": list(f)}
+                    for f in oc.forces[-1]
+                ]
+            if oc.magnetizations:
+                result["magnetic_moments"] = list(oc.magnetizations[-1])
+            result["converged"] = bool(oc.converged)
+            result["parse_source"] = "pymatgen"
+        except Exception:
+            logger.debug("pymatgen 没装或解析失败, 走下面的 regex", exc_info=True)
+
+        try:
+            content = outcar_path.read_text(encoding="utf-8", errors="ignore")
+
+            # Energy — pymatgen 已经填了就不覆盖
+            if result["energy"] is None:
+                energy_matches = re.findall(r"free  energy   TOTEN  =\s+([-\d.]+)", content)
+                if energy_matches:
+                    result["energy"] = float(energy_matches[-1])
+
+            # Convergence — action-aware (audit_20260717/14 P1-5):
+            # - relax/md/phonon: "reached required accuracy" 是 VASP 的
+            #   离子步收敛标记 (NSW>1 时出现).
+            # - scf: NSW=0, OUTCAR 永远不会有 "reached required accuracy";
+            #   应当检查电子步是否达到 EDIFF. VASP 在 SCF 收敛时打印
+            #   "EDIFF is reached" 串, 撑满 NELM 时不打印.
+            # - band/dos: 非自洽 (ICHARG=11), 完全没有 SCF 循环, OUTCAR 里
+            #   只有 Kohn-Sham 本征值; 输出存在就算成功.
+            if action in ("scf", "band", "dos"):
+                if "EDIFF is reached" in content:
+                    result["converged"] = True
+                elif action in ("band", "dos") and (
+                    "E-fermi" in content or "free  energy" in content
+                ):
+                    # 非自洽计算无 SCF, 输出存在即可
+                    result["converged"] = True
+                else:
+                    # NELM 撑满 = 未收敛
+                    result["converged"] = False
+                result["convergence_criterion"] = f"electronic (action={action})"
+            else:
+                # relax/md/phonon: 离子收敛标记
+                if not result["converged"] or "reached required accuracy" in content:
+                    result["converged"] = "reached required accuracy" in content
+                result["convergence_criterion"] = "ionic (reached required accuracy)"
+
+            # ENCUT
+            encut_match = re.search(r"ENCUT\s*=\s*([\d.]+)", content)
+            if encut_match:
+                result["encut"] = float(encut_match.group(1))
+
+            # ISPIN
+            ispin_match = re.search(r"ISPIN\s*=\s*(\d+)", content)
+            if ispin_match:
+                result["ispin"] = int(ispin_match.group(1))
+
+            # NELM / NELMIN
+            nelm_match = re.search(r"NELM\s*=\s*(\d+)", content)
+            if nelm_match:
+                result["nelm"] = int(nelm_match.group(1))
+            nelmin_match = re.search(r"NELMIN\s*=\s*(\d+)", content)
+            if nelmin_match:
+                result["nelmin"] = int(nelmin_match.group(1))
+
+            # K-points
+            kpoint_match = re.search(
+                r"k-points in units of 2pi/SCALE and weight:.*\n.*\n.*", content
+            )
+            if kpoint_match:
+                result["kpoints"] = "found"  # Simplified
+
+            # Lattice vectors (last occurrence)
+            lattice_pattern = r"direct lattice vectors\s+reciprocal lattice vectors\n\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+.*\n\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+.*\n\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+.*"
+            lattice_matches = re.findall(lattice_pattern, content)
+            if lattice_matches:
+                last = lattice_matches[-1]
+                result["lattice_vectors"] = [
+                    [float(last[0]), float(last[1]), float(last[2])],
+                    [float(last[3]), float(last[4]), float(last[5])],
+                    [float(last[6]), float(last[7]), float(last[8])],
+                ]
+
+            # Volume
+            vol_match = re.findall(r"volume of cell :\s+([\d.]+)", content)
+            if vol_match:
+                result["volume"] = float(vol_match[-1])
+
+            # Final forces — pymatgen 已填就不覆盖
+            if not result["forces"]:
+                force_section = re.findall(
+                    r"TOTAL-FORCE.*?\n(.*?)(?:\n\n|\n---)", content, re.DOTALL
+                )
+                if force_section:
+                    forces = []
+                    for line in force_section[-1].strip().split("\n"):
+                        parts = line.split()
+                        if len(parts) >= 6 and all(self._is_float(p) for p in parts[:6]):
+                            forces.append(
+                                {
+                                    "position": [
+                                        float(parts[0]),
+                                        float(parts[1]),
+                                        float(parts[2]),
+                                    ],
+                                    "force": [
+                                        float(parts[3]),
+                                        float(parts[4]),
+                                        float(parts[5]),
+                                    ],
+                                }
+                            )
+                    result["forces"] = forces
+
+            # Magnetic moments — pymatgen 已填就不覆盖
+            if not result["magnetic_moments"]:
+                mag_matches = re.findall(
+                    r"magnetization \(x\).*?\n(.*?)(?:\n\n|\n---)", content, re.DOTALL
+                )
+                if mag_matches:
+                    mag_moments = []
+                    for line in mag_matches[-1].strip().split("\n"):
+                        parts = line.split()
+                        if len(parts) >= 5 and self._is_float(parts[-1]):
+                            mag_moments.append(float(parts[-1]))
+                    result["magnetic_moments"] = mag_moments
+
+            # Band gap — OUTCAR 里没有直接值, 只记 efermi, 真值靠 vasprun.xml
+            efermi_match = re.search(r"E-fermi\s*:\s*([-\d.]+)", content)
+            if efermi_match:
+                result["efermi"] = float(efermi_match.group(1))
+
+        except Exception as e:
+            result["parse_error"] = str(e)
+
+        return result
+
+    def _parse_vasprun_quick(self, vasprun_path: Path) -> dict[str, Any]:
+        """Quick-parse vasprun.xml for structured data."""
+        import xml.etree.ElementTree as ET
+
+        result = {"parse_source": "vasprun.xml"}
+
+        # 优先用 pymatgen 拿 band gap / efermi, 失败落回 ElementTree
+        try:
+            from pymatgen.io.vasp import Vasprun
+
+            vr = Vasprun(str(vasprun_path))
+            try:
+                gap, cbm, vbm = vr.eigenvalue_band_properties
+                result["band_gap"] = float(gap) if gap is not None else None
+                result["cbm"] = float(cbm) if cbm is not None else None
+                result["vbm"] = float(vbm) if vbm is not None else None
+            except Exception:
+                logger.debug("suppressed in _parse_vasprun_quick", exc_info=True)
+            result["efermi"] = float(vr.efermi) if vr.efermi is not None else None
+            result["parse_source"] = "pymatgen_vasprun"
+            return result
+        except Exception:
+            logger.debug("pymatgen 没装或解析失败, 走 ElementTree", exc_info=True)
+
+        try:
+            tree = ET.parse(vasprun_path)
+            root = tree.getroot()
+
+            # Find calculation/energy/i
+            for calc in root.findall(".//calculation"):
+                energy_elem = calc.find(".//energy/i[@name='e_wo_entrp']")
+                if energy_elem is not None and energy_elem.text:
+                    result["energy_vasprun"] = float(energy_elem.text)
+
+                # Forces
+                varray = calc.find(".//varray[@name='forces']")
+                if varray is not None:
+                    forces = []
+                    for v in varray.findall("v"):
+                        forces.append([float(x) for x in v.text.split()])
+                    result["forces_vasprun"] = forces
+                break  # Only first calc for quick parse
+
+            # K-points
+            kpoints = root.find(".//kpoints")
+            if kpoints is not None:
+                varray = kpoints.find("varray[@name='kpointlist']")
+                if varray is not None:
+                    result["kpoint_count"] = len(varray.findall("v"))
+
+        except Exception as e:
+            result["parse_error"] = str(e)
+
+        return result
+
+    def _is_float(self, s: str) -> bool:
+        try:
+            float(s)
+            return True
+        except ValueError:
+            logger.debug("best-effort op failed", exc_info=True)
+            return False
+
+    def _mock_result(self, args: VaspToolInput, work_dir: Path) -> ToolResult:
+        """Generate mock results when VASP is not available."""
+        import random
+
+        mock_energies = {
+            "relax": -150.0,
+            "scf": -152.3,
+            "band": -152.3,
+            "dos": -152.3,
+            "md": -148.5,
+            "phonon": -152.3,
+        }
+
+        output = VaspToolOutput(
+            status="mock",
+            energy=mock_energies.get(args.action, -100.0) + random.uniform(-0.5, 0.5),
+            converged=True,
+            output_files=["OUTCAR", "vasprun.xml", "OSZICAR"],
+            warnings=[
+                "VASP executable not found. Results are MOCK data for demonstration."
+            ],
+        )
+
+        data = output.model_dump()
+        # mock 数据也带 provenance, 方便区分真跑 vs 演示
+        try:
+            from huginn.provenance import capture
+
+            data["provenance"] = capture(
+                "vasp_tool", args.model_dump(), output=dict(data)
+            ).to_dict()
+        except Exception:
+            logger.debug("suppressed in _mock_result", exc_info=True)
+
+        # mock 结果也带 uq_hint, 让 agent 能练习链式调用
+        data["uq_hint"] = self._uq_hint()
+        data["structure_file_hint"] = self._structure_file_hint(work_dir)
+
+        return ToolResult(
+            data=data,
+            success=True,
+            error=None,
+            metadata={"mock": True, "mock_reason": "vasp_executable_not_found"},
+        )
+
+    def _uq_hint(self) -> dict[str, Any]:
+        """提示 agent 用 gp_tool 做 VASP 结果的不确定性量化."""
+        return {
+            "tool": "gp_tool",
+            "action": "fit",
+            "suggestion": (
+                "Consider calling gp_tool with action='fit' to fit a Gaussian "
+                "Process to your energy/property data for uncertainty quantification. "
+                "Pass the VASP results as (X, y) training data."
+            ),
+            "data_mapping": {
+                "X": "lattice_parameters or volumes",
+                "y": "energy or bandgap",
+            },
+        }
+
+    def _structure_file_hint(self, work_dir: Path) -> dict[str, Any]:
+        """告知下游化学工具 (xrd_sim/descriptor/symmetry) 优化后结构的文件路径.
+
+        VASP relax/static 会在 working_dir 下写 CONTCAR (优化后结构),
+        agent 可以把 xrd_sim_tool/descriptor_tool/symmetry_tool 的
+        file_path 参数指向这个路径, 直接完成 DFT→化学分析的数据传递.
+        """
+        contcar = work_dir / "CONTCAR"
+        return {
+            "type": "vasp_optimized_structure",
+            "path": str(contcar),
+            "format": "POSCAR/CONTCAR",
+            "exists": contcar.exists(),
+            "downstream_tools": [
+                "xrd_sim_tool (action='simulate_xrd', file_path=<CONTCAR path>)",
+                "descriptor_tool (action='compute', structure_file=<CONTCAR path>)",
+                "symmetry_tool (action='analyze', file_path=<CONTCAR path>)",
+            ],
+            "note": (
+                "Pass this path as 'file_path' to xrd_sim_tool, descriptor_tool, "
+                "or symmetry_tool to analyze the DFT-optimized structure."
+            ) if contcar.exists() else (
+                "CONTCAR not found — VASP may not have completed a structural optimization."
+            ),
+        }
+
+    def _modify_incar(self, incar_path: Path, overrides: dict) -> None:
+        """Modify INCAR file with override values."""
+        try:
+            content = incar_path.read_text(encoding="utf-8")
+            lines = content.split("\n")
+            modified = []
+            overridden_keys = set()
+
+            for line in lines:
+                stripped = line.strip()
+                if not stripped or stripped.startswith("#"):
+                    modified.append(line)
+                    continue
+
+                # Check if this line defines a key we want to override
+                for key in overrides:
+                    if stripped.upper().startswith(
+                        key.upper() + " ="
+                    ) or stripped.upper().startswith(key.upper() + "="):
+                        modified.append(f"{key} = {overrides[key]}")
+                        overridden_keys.add(key)
+                        break
+                else:
+                    modified.append(line)
+
+            # Add any new keys that weren't in the original file
+            for key, value in overrides.items():
+                if key not in overridden_keys:
+                    modified.append(f"{key} = {value}")
+
+            incar_path.write_text("\n".join(modified), encoding="utf-8")
+
+        except Exception:
+            logger.warning("INCAR autofix modification failed", exc_info=True)

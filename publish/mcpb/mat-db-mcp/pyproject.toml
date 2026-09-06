@@ -1,0 +1,11 @@
+[project]
+name = "mat-db-mcp"
+version = "0.1.0"
+description = "Materials science database query MCP server (offline-first, mock fallback)"
+requires-python = ">=3.11"
+dependencies = [
+    "mcp>=1.28.1,<2.0",
+]
+
+[project.optional-dependencies]
+db = ["mp-api>=0.12"]

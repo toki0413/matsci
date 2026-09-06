@@ -1,0 +1,362 @@
+"""FastAPI + WebSocket server for Huginn.
+
+Serves the desktop frontend with:
+- HTTP API for tools, workflows, and health checks
+- WebSocket endpoint for real-time Agent chat
+- Compatibility stubs for math-anything frontend APIs
+
+This module is a thin entry point.  All shared state lives in
+``huginn.server_core``, lifecycle management in ``huginn.lifespan``,
+and route handlers in ``huginn.routes.*``.
+
+Backward-compatible re-exports are provided via a ``sys.modules`` wrapper
+so that ``server_module._context = ctx`` in tests correctly propagates
+to ``server_core._context``.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import logging
+import os
+import sys
+import time
+import types
+from collections import defaultdict, deque
+from typing import Any
+
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
+
+import huginn.lifespan as _lf
+
+# ── Import server_core so its symbols are available for re-export ──────
+import huginn.server_core as _sc
+from huginn import __version__
+from huginn.lifespan import _get_cors_origins, lifespan
+from huginn.middleware.error_normalize import (
+    ErrorNormalizeMiddleware,
+    should_enable_normalize,
+)
+from huginn.middleware.limits import (
+    RequestSizeLimitMiddleware,
+    RequestTimeoutMiddleware,
+)
+from huginn.middleware.maintenance import MaintenanceMiddleware
+from huginn.middleware.request_id import RequestIDMiddleware
+from huginn.routes import include_v1_routes
+from huginn.utils.runtime import get_runtime_home
+
+logger = logging.getLogger(__name__)
+
+# Re-export route handler functions so tests and external callers can do
+# `from huginn.server import list_personas, create_persona, ...` without
+# reaching into the routes package. These are the canonical endpoint
+# callables; the FastAPI routers in huginn.routes wire them onto the app.
+# E402: 这些 import 必须在 logger 定义之后 (上面的 routes re-export 用 logger),
+# 所以不能放到文件顶部. 加 noqa 抑制.
+from huginn.routes.agents import (  # noqa: F401, E402
+    create_persona,
+    get_persona,
+    list_personas,
+    telemetry_spans,
+    telemetry_summary,
+)
+from huginn.routes.memory import memory_maintenance  # noqa: F401, E402
+from huginn.routes.metrics import (  # noqa: E402
+    RATE_LIMIT_BLOCKED_TOTAL,
+    http_metrics_dispatch,
+)
+from huginn.routes.threads import get_thread  # noqa: F401, E402
+from huginn.routes.unified import (  # noqa: F401, E402
+    unified_plot_endpoint,
+    unified_solve_endpoint,
+)
+from huginn.security.auth import require_api_key  # noqa: E402
+
+# Tool registration is deferred to lifespan startup so the server can
+# begin accepting health checks immediately. See lifespan._register_tools.
+
+# Hide interactive docs in production to avoid leaking API surface.
+_hide_docs = (
+    os.environ.get("HUGINN_ENV", "").lower() == "production"
+    or os.environ.get("HUGINN_HIDE_DOCS", "").lower() in ("1", "true", "yes")
+)
+
+app = FastAPI(
+    title="Huginn Server",
+    version=__version__,
+    lifespan=lifespan,
+    dependencies=[Depends(require_api_key)],
+    docs_url=None if _hide_docs else "/docs",
+    redoc_url=None if _hide_docs else "/redoc",
+    openapi_url=None if _hide_docs else "/openapi.json",
+)
+
+_cors_origins = _get_cors_origins()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins,
+    allow_credentials="*" not in _cors_origins,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-HUGINN-API-KEY", "X-Request-ID"],
+)
+
+
+# ── Rate limiting (sliding window per client IP) ──────────────────────
+# 生产默认 120 req/min, 设 0 关闭. dev 本地 / 桌面 E2E 会把整套流量折叠到
+# 127.0.0.1 单 IP, 120/min 一轮全量就被打满误回 429, 所以 dev 下默认关掉,
+# 只有显式配了 HUGINN_RATE_LIMIT_PER_MINUTE 才生效.
+_DEV_MODE = os.environ.get("HUGINN_DEV_MODE", "").lower() in ("1", "true", "yes")
+_RATE_LIMIT = int(
+    os.environ.get("HUGINN_RATE_LIMIT_PER_MINUTE", "0" if _DEV_MODE else "120")
+)
+_AUTH_RATE_LIMIT = 10  # stricter per-IP limit for /auth/login and /auth/token
+_rate_buckets: dict[str, deque] = defaultdict(deque)
+_RATE_WINDOW = 60.0  # seconds
+# Sweep empty buckets every N requests so _rate_buckets doesn't grow
+# without bound as we see more and more distinct client IPs.
+_BUCKET_SWEEP_INTERVAL = 1000
+_request_counter = 0
+
+
+def _sweep_empty_buckets() -> None:
+    """Drop buckets that have drained to keep _rate_buckets bounded."""
+    for ip in [ip for ip, bucket in _rate_buckets.items() if not bucket]:
+        del _rate_buckets[ip]
+
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    """Enforce per-IP rate limiting when HUGINN_RATE_LIMIT_PER_MINUTE > 0."""
+    if _RATE_LIMIT <= 0:
+        return await call_next(request)
+
+    # Skip health checks, docs, and the Prometheus scrape endpoint.
+    # 健康检查走 /health/live、/health/ready 这些子路径, 前缀匹配才真正豁免,
+    # 否则测试/探针高频打健康端点会被当普通请求计入 per-IP 限流, 误回 429.
+    path = request.url.path
+    if path == "/health" or path.startswith("/health/") or path in (
+        "/docs",
+        "/openapi.json",
+        "/redoc",
+        "/metrics",
+        "/diagnostics",
+    ):
+        return await call_next(request)
+
+    client_ip = request.client.host if request.client else "unknown"
+    now = time.monotonic()
+
+    # Stricter limit for auth endpoints — brute-force protection
+    if path in ("/auth/login", "/auth/token", "/v1/auth/login", "/v1/auth/token"):
+        auth_key = f"auth:{client_ip}"
+        auth_bucket = _rate_buckets[auth_key]
+        while auth_bucket and auth_bucket[0] < now - _RATE_WINDOW:
+            auth_bucket.popleft()
+        if not auth_bucket:
+            del _rate_buckets[auth_key]
+        if len(auth_bucket) >= _AUTH_RATE_LIMIT:
+            RATE_LIMIT_BLOCKED_TOTAL.labels(session="all").inc()
+            from huginn.errors import huginn_error_response
+            request_id = getattr(request.state, "request_id", "unknown")
+            return JSONResponse(
+                status_code=429,
+                content=huginn_error_response(
+                    "RATE_LIMITED",
+                    "Too many auth attempts, slow down.",
+                    request_id,
+                    status_code=429,
+                ),
+                headers={"Retry-After": str(int(_RATE_WINDOW))},
+            )
+        _rate_buckets[auth_key].append(now)
+        return await call_next(request)
+
+    bucket = _rate_buckets[client_ip]
+
+    # Drop timestamps older than the window
+    while bucket and bucket[0] < now - _RATE_WINDOW:
+        bucket.popleft()
+
+    # If this client's bucket has drained, drop the dict entry so we don't
+    # keep empty deques around for every IP we've ever seen. defaultdict
+    # will hand us a fresh one on the next request from this IP.
+    if not bucket:
+        del _rate_buckets[client_ip]
+
+    if len(bucket) >= _RATE_LIMIT:
+        RATE_LIMIT_BLOCKED_TOTAL.labels(session="all").inc()
+        from huginn.errors import huginn_error_response
+        request_id = getattr(request.state, "request_id", "unknown")
+        return JSONResponse(
+            status_code=429,
+            content=huginn_error_response(
+                "RATE_LIMITED",
+                "Rate limit exceeded",
+                request_id,
+                status_code=429,
+            ),
+            headers={"Retry-After": str(int(_RATE_WINDOW))},
+        )
+
+    # defaultdict re-creates the bucket if we deleted it above.
+    _rate_buckets[client_ip].append(now)
+
+    # Every so often, reclaim buckets for clients that have gone quiet.
+    global _request_counter
+    _request_counter += 1
+    if _request_counter >= _BUCKET_SWEEP_INTERVAL:
+        _request_counter = 0
+        _sweep_empty_buckets()
+
+    return await call_next(request)
+
+
+# Metrics middleware — registered after the rate limiter so it sits outside
+# it (and outside CORS), counting every request — including 429s — and
+# timing the full handler stack. It still wraps CORS, as required.
+app.add_middleware(BaseHTTPMiddleware, dispatch=http_metrics_dispatch)
+
+# Body size limit — reject requests whose payload exceeds
+# HUGINN_MAX_BODY_SIZE_MB (default 10 MB) before they reach the app.
+app.add_middleware(RequestSizeLimitMiddleware)
+
+# Request timeout — cancel requests that run longer than
+# HUGINN_REQUEST_TIMEOUT_SEC (default 180 s).
+app.add_middleware(RequestTimeoutMiddleware)
+
+# Request-ID middleware — registered last so it runs outermost and the
+# correlation id is in place before any other middleware / handler logs.
+app.add_middleware(RequestIDMiddleware)
+
+# Error normalization — rewrites legacy {"error": "..."} responses to the
+# unified envelope. Opt-out via HUGINN_NORMALIZE_ERRORS=0.
+if should_enable_normalize():
+    app.add_middleware(ErrorNormalizeMiddleware)
+
+# Maintenance mode middleware — returns 503 for non-health requests
+# when HUGINN_MAINTENANCE=1 or runtime toggle is on.
+app.add_middleware(MaintenanceMiddleware)
+
+
+# ── Global exception handler ──────────────────────────────────────────
+# Catches unhandled exceptions and returns a proper 500 response instead
+# of letting FastAPI return a 500 with a generic message.
+@app.exception_handler(Exception)
+async def _global_exception_handler(request: Request, exc: Exception):
+    import logging
+
+    request_id = getattr(request.state, "request_id", "unknown")
+    logging.getLogger("huginn.server").error(
+        "Unhandled exception in %s %s [request_id=%s]: %s",
+        request.method, request.url.path, request_id, exc,
+        exc_info=True,
+    )
+    # Don't leak internal details to the client, but include request_id
+    # so the client can correlate with server logs.
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error_code": "INTERNAL_ERROR",
+            "message": "Internal server error",
+            "request_id": request_id,
+        },
+    )
+
+
+# ── Unified HTTPException handler ───────────────────────────────────
+# Ensures all HTTPExceptions (including those raised by FastAPI's own
+# validation) return the same JSON envelope.
+@app.exception_handler(HTTPException)
+async def _http_exception_handler(request: Request, exc: HTTPException):
+
+    from huginn.errors import huginn_error_response
+
+    request_id = getattr(request.state, "request_id", "unknown")
+    body = huginn_error_response(
+        code=getattr(exc, "huginn_code", "HTTP_ERROR"),
+        message=str(exc.detail) if exc.detail else "Error",
+        request_id=request_id,
+        status_code=exc.status_code,
+    )
+    return JSONResponse(status_code=exc.status_code, content=body)
+
+
+# Mount the full route surface. include_v1_routes mounts every router
+# under the /v1 version prefix (the canonical API going forward) and, for
+# backward compatibility, also at the root path — with a deprecation
+# warning + header nudging callers toward /v1.
+include_v1_routes(app, keep_root_compat=True)
+
+
+# ── sys.modules wrapper for backward-compatible attribute access ───────
+#
+# Tests do ``import huginn.server as m; m._context = ctx`` which must
+# propagate to server_core._context (where get_context() reads from).
+# A plain ``from server_core import _context`` creates a local copy that
+# doesn't reflect later mutations.  The wrapper delegates shared-state
+# reads/writes to the authoritative modules.
+
+_DELEGATED_SC = {"_context", "_checkpoints", "_threads"}
+_DELEGATED_LF = {"_init_mcp_tools", "_shutdown_mcp"}
+_THIS = sys.modules[__name__]
+
+
+class _ServerModule(types.ModuleType):
+    """Module wrapper delegating shared-state attrs to server_core / lifespan."""
+
+    def __getattr__(self, name: str) -> Any:
+        if name in _DELEGATED_SC:
+            return getattr(_sc, name)
+        if name in _DELEGATED_LF:
+            return getattr(_lf, name)
+        raise AttributeError(f"module 'huginn.server' has no attribute {name!r}")
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name in _DELEGATED_SC:
+            setattr(_sc, name, value)
+            return
+        if name in _DELEGATED_LF:
+            setattr(_lf, name, value)
+            return
+        super().__setattr__(name, value)
+
+
+_wrapper = _ServerModule(__name__)
+_wrapper.__dict__.update(
+    {k: v for k, v in _THIS.__dict__.items() if not k.startswith("__")}
+)
+_wrapper.__file__ = __file__
+_wrapper.__package__ = __package__
+_wrapper.__path__ = getattr(_THIS, "__path__", [])
+_wrapper.__spec__ = _THIS.__spec__
+sys.modules[__name__] = _wrapper
+
+
+if __name__ == "__main__":
+    import sys
+
+    import uvicorn
+
+    # Accept --port from sidecar; default to 8000
+    port = 8000
+    for i, arg in enumerate(sys.argv):
+        if arg == "--port" and i + 1 < len(sys.argv):
+            with contextlib.suppress(ValueError):
+                port = int(sys.argv[i + 1])
+
+    # DeepSeek reasoner can take 60s+ per turn; default 20s ping kills
+    # the WS mid-response. Bump to 5 min so long LLM calls survive.
+    # Write port to file so external frontends can discover it.
+    try:
+        _port_file = get_runtime_home() / "backend_port"
+        _port_file.parent.mkdir(parents=True, exist_ok=True)
+        _port_file.write_text(str(port))
+    except Exception:
+        logger.debug("failed to write backend port file", exc_info=True)
+
+    uvicorn.run(app, host="127.0.0.1", port=port,
+                ws_ping_interval=300, ws_ping_timeout=300)

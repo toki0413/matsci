@@ -1,0 +1,454 @@
+"""Vision routing — detect images in user messages and route to appropriate handler.
+
+Fallback chain:
+1. Vision LLM (GPT-4o/Claude/Gemini) — direct multimodal
+2. Visual encoder + image index — "visual memory" for text LLM
+3. Image analysis tool — structured numerical analysis (SEM/TEM/XRD)
+
+When a vision LLM is available, BOTH paths fire: the LLM gets the raw image
+for semantic understanding, and CV pre-analysis runs in parallel to provide
+quantitative hints (image type, rough metrics) injected into the text prompt.
+This avoids the old either/or split where vision LLMs never got structured
+measurements and CV tools never got semantic context.
+"""
+
+from __future__ import annotations
+
+import base64
+import logging
+import mimetypes
+import re
+from enum import Enum
+from pathlib import Path
+from typing import Any
+
+from huginn.models.registry import get_model_capabilities
+
+logger = logging.getLogger(__name__)
+
+# Image extensions we recognise as user-supplied image paths.
+_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".tif"}
+
+# Matches a filesystem-ish path ending in a known image extension.
+_IMAGE_PATH_RE = re.compile(
+    r'(?:[\w./\\-]+\.(?:png|jpg|jpeg|gif|webp|bmp|tiff|tif))',
+    re.IGNORECASE,
+)
+
+
+class VisionRoute(Enum):
+    """Where an image-bearing message should be sent."""
+
+    NATIVE_LLM = "native_llm"
+    CV_TOOLS = "cv_tools"
+    BOTH = "both"
+    TEXT_ONLY = "text_only"
+
+
+def detect_image_in_message(message: str | dict | list) -> bool:
+    """Return True if *message* references an image path or carries raw bytes.
+
+    Handles three shapes the agent might pass in:
+    - plain string: looks for a path-like token ending in an image ext
+    - dict with ``image_path`` / ``image_bytes`` keys
+    - list of content blocks (LangChain multimodal) containing an image_url type
+    """
+    if message is None:
+        return False
+    if isinstance(message, str):
+        return bool(_IMAGE_PATH_RE.search(message))
+    if isinstance(message, dict):
+        return bool(message.get("image_path") or message.get("image_bytes"))
+    if isinstance(message, list):
+        for block in message:
+            if isinstance(block, dict) and block.get("type") in ("image_url", "image"):
+                return True
+            if isinstance(block, dict) and block.get("image_path"):
+                return True
+    return False
+
+
+def route_vision(model_name: str | None, has_image: bool) -> VisionRoute:
+    """Decide how to handle an image based on the active model's capabilities.
+
+    - No image at all -> TEXT_ONLY (the common case, zero overhead).
+    - Image + vision-capable model -> BOTH (LLM sees image + CV pre-analysis
+      runs in parallel to inject quantitative hints).
+    - Image + text-only model -> CV_TOOLS (fall back to encoder + analysis tool).
+    """
+    if not has_image:
+        return VisionRoute.TEXT_ONLY
+    caps = get_model_capabilities(model_name or "")
+    if caps.vision:
+        return VisionRoute.BOTH
+    return VisionRoute.CV_TOOLS
+
+
+def _guess_mime(path: str | Path) -> str:
+    mime, _ = mimetypes.guess_type(str(path))
+    return mime or "image/png"
+
+
+def build_multimodal_content(message: str, image_path: str | Path | bytes) -> list[dict]:
+    """Build a LangChain/OpenAI multimodal content list from text + image.
+
+    Returns a list of content blocks:
+    ``[{"type": "text", ...}, {"type": "image_url", ...}]``
+
+    If the image can't be read (missing file, bad bytes) we degrade to
+    text-only so the LLM still gets the user's question.
+    """
+    blocks: list[dict] = [{"type": "text", "text": message}]
+
+    if isinstance(image_path, (bytes, bytearray)):
+        b64 = base64.b64encode(image_path).decode("ascii")
+        blocks.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:image/png;base64,{b64}"},
+        })
+        return blocks
+
+    p = Path(image_path)
+    if not p.is_file():
+        return blocks
+
+    raw = p.read_bytes()
+    b64 = base64.b64encode(raw).decode("ascii")
+    mime = _guess_mime(p)
+    blocks.append({
+        "type": "image_url",
+        "image_url": {"url": f"data:{mime};base64,{b64}"},
+    })
+    return blocks
+
+
+def _cv_pre_analyze(image_path: str | Path | bytes) -> str:
+    """Fast CV pre-analysis: image type guess + basic stats.
+
+    Runs numpy-only feature extraction (~50ms, no LLM cost) to give the
+    vision LLM quantitative hints alongside the raw image. Falls back
+    gracefully if the image can't be loaded or numpy is unavailable.
+    """
+    if isinstance(image_path, (bytes, bytearray)):
+        return "[CV pre-analysis skipped: raw bytes, no path]"
+
+    p = Path(image_path)
+    if not p.is_file():
+        return f"[CV pre-analysis skipped: file not found: {image_path}]"
+
+    try:
+        import numpy as np
+
+        from huginn.tools.image_analysis._utils import load_gray
+    except ImportError:
+        return "[CV pre-analysis unavailable: numpy/Pillow not installed]"
+
+    try:
+        arr = load_gray(str(p))
+        mean_i = float(arr.mean())
+        std_i = float(arr.std())
+        p5, p50, p95 = np.percentile(arr, [5, 50, 95])
+
+        # Edge density — rough indicator of "busy" vs "smooth" image
+        edges = 0
+        try:
+            from scipy.ndimage import sobel
+            sx = sobel(arr, axis=0)
+            sy = sobel(arr, axis=1)
+            edges = int((np.hypot(sx, sy) > 50).sum())
+            total = arr.shape[0] * arr.shape[1]
+            edge_density = edges / total if total > 0 else 0.0
+        except Exception:
+            edge_density = -1.0
+
+        # Guess image type from extension + stats
+        ext = p.suffix.lower()
+        name_hint = p.stem.lower()
+        img_type = "unknown"
+        if any(kw in name_hint for kw in ("sem", "sem_photo", "fesem")):
+            img_type = "SEM"
+        elif any(kw in name_hint for kw in ("tem", "hrtem", "stem")):
+            img_type = "TEM"
+        elif any(kw in name_hint for kw in ("xrd", "diffraction")):
+            img_type = "XRD_plot"
+        elif any(kw in name_hint for kw in ("eds", "mapping")):
+            img_type = "EDS_map"
+        elif ext in (".csv", ".txt"):
+            img_type = "tabular_data"
+        elif edge_density > 0 and edge_density < 0.05:
+            img_type = "likely_microscopy_smooth"
+        elif edge_density > 0.15:
+            img_type = "likely_microscopy_busy_or_plot"
+
+        lines = [
+            f"[CV pre-analysis] image_type_guess={img_type}",
+            f"  shape={arr.shape[1]}x{arr.shape[0]}, mean={mean_i:.1f}, "
+            f"std={std_i:.1f}, percentiles(5/50/95)={p5:.0f}/{p50:.0f}/{p95:.0f}",
+        ]
+        if edge_density >= 0:
+            lines.append(f"  edge_density={edge_density:.4f} "
+                         f"({'busy' if edge_density > 0.1 else 'smooth'})")
+        lines.append(
+            "  Use image_analysis_tool for detailed SEM/TEM/EDS/particle metrics."
+        )
+        return "\n".join(lines)
+    except Exception as exc:
+        return f"[CV pre-analysis failed: {exc}]"
+
+
+def _cv_qa_diagnostic(image_path: str | Path | bytes) -> str:
+    """批次 E: 对图表 PNG 跑确定性 QA, 给视觉 LLM 附加机读诊断文本.
+
+    BOTH 场景视觉 LLM 已能看原图, 这里附加的是它"看不见"的确定性质检
+    (blank/clipped/aspect/cluttered + 修正指令), 帮它在做语义级解读/校验时
+    判断"这张图是否值得解读、哪里需要重渲染". best-effort: 非图片/读取失败
+    返回空串, 不阻塞主链路.
+    """
+    if isinstance(image_path, (bytes, bytearray)):
+        return ""
+    p = Path(image_path)
+    if not p.is_file() or p.suffix.lower() not in _IMAGE_EXTS:
+        return ""
+    try:
+        from huginn.tools.visualize_qa import qa_directive, qa_figure
+
+        qa = qa_figure(p)
+        verdict = qa.get("verdict")
+        if not verdict or verdict == "pass":
+            return ""
+        flags = qa.get("flags", [])
+        directive = qa_directive(qa)
+        parts = [f"[CV QA] verdict={verdict}"]
+        if flags:
+            parts.append(f"  flags={', '.join(flags)}")
+        if directive:
+            parts.append(f"  directive={directive}")
+        parts.append(
+            "  若该图需要语义解读, 请优先解读; 若为可重渲染修正问题, "
+            "建议触发重渲染后再解读."
+        )
+        return "\n".join(parts)
+    except Exception:
+        logger.debug("cv qa diagnostic failed, non-fatal", exc_info=True)
+    return ""
+
+
+_MICROSCOPY_ACTIONS = {
+    "SEM_image": "sem_analysis",
+    "TEM_image": "tem_lattice",
+    "EDS_map": "eds_mapping",
+}
+
+
+def _microscopy_quant_summary(image_path: str | Path | bytes, image_type: str) -> str:
+    """对 SEM/TEM/EDS 显微图调对应 action, 把 measurement 压成一行文本摘要.
+
+    best-effort: 非显微图 / 调用失败时返回空串, 不阻塞主链路.
+    """
+    action = _MICROSCOPY_ACTIONS.get(image_type)
+    if action is None or isinstance(image_path, (bytes, bytearray)):
+        return ""
+    p = Path(image_path)
+    if not p.is_file():
+        return ""
+
+    try:
+        from huginn.tools.image_analysis.tool import ImageAnalysisInput
+        scene_name = action
+        if scene_name == "sem_analysis":
+            from huginn.tools.image_analysis.scenes_sem import sem_analysis as scene
+        elif scene_name == "tem_lattice":
+            from huginn.tools.image_analysis.scenes_tem import tem_lattice as scene
+        else:
+            from huginn.tools.image_analysis.scenes_eds import eds_mapping as scene
+        inp = ImageAnalysisInput(image_path=str(p), action=scene_name, parameters={})
+        res = scene(inp)
+        if res.success and res.data:
+            summary = res.data.get("summary")
+            if summary:
+                return f"[{scene_name} 定量] {summary}"
+            import json as _json
+            return f"[{scene_name} 定量] {_json.dumps(res.data, ensure_ascii=False, default=str)[:400]}"
+    except Exception:
+        logger.debug("microscopy quant summary failed, non-fatal", exc_info=True)
+    return ""
+
+
+def build_cv_context(
+    image_path: str | Path | bytes,
+    visual_encoder: Any | None = None,
+    image_index: Any | None = None,
+) -> str:
+    """Build a text description of an image for text-only LLMs.
+
+    Tries two things in order, both best-effort:
+    1. Encode the image with *visual_encoder* (if available) and search
+       *image_index* for similar indexed images — gives the LLM a
+       "visual memory" hit: "this looks like SEM image X you saw before".
+    2. Falls back to a bare path annotation so the LLM at least knows
+       an image was attached and can call image_analysis_tool itself.
+    """
+    parts: list[str] = []
+
+    # ── CV pre-analysis (fast, always runs) ──
+    cv_hints = _cv_pre_analyze(image_path)
+    if cv_hints:
+        parts.append(cv_hints)
+
+    # ── 自研模态路由 (modality_router): 动态分辨率 + 模态路由 ──
+    # 把"该不该降采样 / 该用哪个 image_analysis action"的机读提示注入文本通道,
+    # 让 agent 知道如何最高效地分析这张图. best-effort, 失败不影响主链路.
+    try:
+        from huginn.vision.modality_router import modality_routing_hint
+
+        _mm_hint = modality_routing_hint(image_path)
+        if _mm_hint:
+            parts.append(_mm_hint)
+    except Exception:
+        logger.debug("modality_router hint failed, non-fatal", exc_info=True)
+
+    # ── Visual→Symbols: 单次提取, 文本 + 结构化复用同一份 chart_data ──
+    # 之前 visual_to_symbols 和 visual_to_symbols_structured 各自跑一遍
+    # extract_chart_data, 同一张图被算两次. 这里抽出来跑一次, 两个格式共用.
+    try:
+        from huginn.vision.symbol_encoder import (
+            _format_symbols_structured,
+            _format_symbols_text,
+            extract_chart_data,
+        )
+        chart_data = extract_chart_data(image_path)
+        if "error" not in chart_data:
+            # 文本部分 (去掉 _cv_pre_analyze 已输出的重复行)
+            symbol_text = _format_symbols_text(chart_data)
+            new_lines = [
+                _l for _l in symbol_text.split("\n")
+                if _l and not _l.startswith("[CV pre-analysis]")
+            ]
+            if new_lines:
+                parts.append("\n".join(new_lines))
+            # 结构化部分: agent 能精确引用字段 + 读 self_check 判断可信度
+            structured = _format_symbols_structured(chart_data)
+            if structured and "error" not in structured:
+                import json as _json
+                parts.append(
+                    "[VISUAL→SYMBOLS structured]\n"
+                    + _json.dumps(structured, ensure_ascii=False, default=str)
+                )
+            # 显微图定量: SEM/TEM/EDS 调对应 action, 把 measurement 压成一行摘要
+            _img_type = chart_data.get("image_type", "")
+            _quant = _microscopy_quant_summary(image_path, _img_type)
+            if _quant:
+                parts.append(_quant)
+    except Exception:
+        logger.debug("visual_to_symbols failed, graceful degradation", exc_info=True)
+
+    # ── visual memory: similar-image search ──
+    if visual_encoder is not None and image_index is not None:
+        try:
+            results = image_index.search(image_path, top_k=5)
+        except Exception:
+            results = []
+
+        if results:
+            paths = [r.get("path", "?") for r in results]
+            parts.append(f"Found {len(results)} similar indexed images: {', '.join(paths)}")
+            best = results[0]
+            meta = best.get("metadata", {})
+            sim = best.get("similarity", 0.0)
+            meta_str = ", ".join(f"{k}={v}" for k, v in meta.items()) if meta else "no metadata"
+            parts.append(
+                f"Closest match: {best.get('path', '?')} "
+                f"(similarity={sim:.3f}, {meta_str})"
+            )
+        else:
+            parts.append("No similar indexed images found in visual memory.")
+
+    # ── encoder health check ──
+    if visual_encoder is not None:
+        avail = getattr(visual_encoder, "available", False)
+        backend = getattr(visual_encoder, "backend_name", None)
+        if avail:
+            parts.append(f"Visual encoder active (backend={backend}).")
+        else:
+            parts.append("Visual encoder unavailable — image_analysis_tool recommended.")
+
+    # ── always: tell the LLM an image was attached ──
+    label = "<bytes>" if isinstance(image_path, (bytes, bytearray)) else str(image_path)
+    parts.append(
+        f"User attached an image ({label}). "
+        "If you need structured analysis (SEM/TEM/XRD), call image_analysis_tool."
+    )
+
+    # ── capability self-introspection ──
+    # 走到这里必然是文本模型 (vision=False) 兜底路径: 把"该看哪张 / 该调哪个工具"
+    # 的取舍显式化成可见决策点, 避免模型静默描述一眼瞎猜。三个选项按开销排序给全。
+    parts.append(
+        "Native vision unavailable on this model. Pick one explicit route: "
+        "① delegate to a vision-specialized agent, ② use visual-memory similar "
+        "images above, ③ call image_analysis_tool for quantitative measurements."
+    )
+
+    return "\n".join(parts)
+
+
+class VisionRouter:
+    """Stateful wrapper that an agent holds to route images per-turn.
+
+    The encoder and image index are optional — if either is missing the
+    router degrades gracefully (NATIVE_LLM still works, CV_TOOLS falls
+    back to a path-annotation only).
+    """
+
+    def __init__(
+        self,
+        visual_encoder: Any | None = None,
+        image_index: Any | None = None,
+    ) -> None:
+        self.visual_encoder = visual_encoder
+        self.image_index = image_index
+
+    def route(self, model_name: str | None, message: str | dict | list) -> VisionRoute:
+        has_image = detect_image_in_message(message)
+        return route_vision(model_name, has_image)
+
+    def build_context(
+        self, image_path: str | Path | bytes
+    ) -> str:
+        return build_cv_context(image_path, self.visual_encoder, self.image_index)
+
+    def build_content(
+        self, message: str, image_path: str | Path | bytes
+    ) -> list[dict]:
+        return build_multimodal_content(message, image_path)
+
+    def coordinate(
+        self,
+        message: str,
+        image_path: str | Path | bytes,
+        model_name: str | None = None,
+    ) -> tuple[list[dict], str]:
+        """Run BOTH paths: multimodal content for LLM + CV pre-analysis text.
+
+        Returns (multimodal_content, cv_hints_text). The caller should inject
+        cv_hints_text as a SystemMessage alongside the multimodal content so
+        the vision LLM sees both the raw image and quantitative hints.
+        """
+        content = self.build_content(message, image_path)
+        cv_hints = _cv_pre_analyze(image_path)
+        # 自研模态路由 (modality_router): 给视觉 LLM 附加模态路由建议 (该调哪个 action).
+        # 视觉 LLM 已能看原图, 这里给的是"该用哪个工具做定量/结构化分析"的提示.
+        try:
+            from huginn.vision.modality_router import modality_routing_hint
+
+            _mm_hint = modality_routing_hint(image_path)
+            if _mm_hint:
+                cv_hints = f"{cv_hints}\n{_mm_hint}" if cv_hints else _mm_hint
+        except Exception:
+            logger.debug("modality_router coordinate hint failed, non-fatal", exc_info=True)
+        # 批次 E: BOTH 场景给视觉 LLM 附加确定性 QA 诊断 — 视觉 LLM 既能看原图
+        # 做语义级判断, 又能参考确定性质检 (blank/clipped/aspect/cluttered + 机读
+        # directive) 聚焦"这张图是否值得语义解读、哪里需要修正". 失败降级不阻塞.
+        qa_hint = _cv_qa_diagnostic(image_path)
+        if qa_hint:
+            cv_hints = f"{cv_hints}\n{qa_hint}" if cv_hints else qa_hint
+        return content, cv_hints

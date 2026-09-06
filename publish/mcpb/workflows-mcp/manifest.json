@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json.schemastore.org/mcpb.json",
+  "manifest_version": "0.4",
+  "name": "workflows-mcp",
+  "version": "0.1.0",
+  "description": "Huginn workflow-blueprint MCP server — read-only sharing of 15 named research workflows (DFT/MD/CFD/proof pipelines) over MCP",
+  "author": {
+    "name": "Huginn contributors",
+    "url": "https://github.com/toki0413/matsci"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/toki0413/matsci"
+  },
+  "license": "MIT",
+  "keywords": ["mcp", "workflow", "pipeline", "dft", "md", "cfd", "llm", "huginn"],
+  "tools": [],
+  "server": {
+    "type": "python",
+    "entry_point": "mcp_entry:main",
+    "mcp_config": {
+      "command": "python",
+      "args": ["mcp_entry.py"]
+    }
+  },
+  "compatibility": {
+    "claude_desktop": ">=20250501",
+    "platforms": ["darwin", "win32", "linux"],
+    "runtimes": { "python": ">=3.11" }
+  }
+}

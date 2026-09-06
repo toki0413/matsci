@@ -1,0 +1,24 @@
+{
+  "name": "huginn-mcp",
+  "version": "0.1.0",
+  "description": "npx launchers for 5 Huginn MCP servers — materials database, math semantics, pixel vision, capability containers, workflow blueprints",
+  "keywords": ["mcp", "model-context-protocol", "materials", "science", "llm", "agent", "workflow"],
+  "license": "MIT",
+  "author": "Huginn contributors",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/toki0413/matsci"
+  },
+  "engines": { "node": ">=18" },
+  "files": ["bin"],
+  "bin": {
+    "mat-db-mcp": "bin/mat-db-mcp.js",
+    "math-anything-mcp": "bin/math-anything-mcp.js",
+    "vision-pixel-mcp": "bin/vision-pixel-mcp.js",
+    "capabilities-mcp": "bin/capabilities-mcp.js",
+    "workflows-mcp": "bin/workflows-mcp.js"
+  },
+  "scripts": {
+    "test:list": "node -e \"console.log(Object.keys(require('./package.json').bin))\""
+  }
+}

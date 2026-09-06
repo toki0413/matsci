@@ -1,0 +1,11 @@
+[project]
+name = "instrument-ingest"
+version = "1.0.0"
+description = "Parse XRD/EC instrument exports into a structured measurement summary"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26.0",
+]
+
+[tool.uv]
+# file-exchange instrument bridge: pure numpy, deliberately no heavy deps.

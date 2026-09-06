@@ -1,0 +1,12 @@
+[project]
+name = "structure-encoder"
+version = "1.0.0"
+description = "Normalize crystal-structure files / formulas into a unified descriptor JSON"
+requires-python = ">=3.11"
+dependencies = [
+    "pymatgen>=2024.1.1",
+]
+
+[tool.uv]
+# retrieval-scope structure encoder: only needs pymatgen, not the full
+# huginn dependency tree; standalone pyproject keeps `uv run` light.

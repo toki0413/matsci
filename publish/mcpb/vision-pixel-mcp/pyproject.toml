@@ -1,0 +1,10 @@
+[project]
+name = "vision-pixel-mcp"
+version = "0.1.0"
+description = "Pixel/vision analysis MCP server"
+requires-python = ">=3.11"
+dependencies = [
+    "mcp>=1.28.1,<2.0",
+    "Pillow>=12.3.0",
+    "numpy>=1.24",
+]

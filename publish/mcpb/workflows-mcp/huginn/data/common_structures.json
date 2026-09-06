@@ -1,0 +1,305 @@
+{
+  "_meta": {
+    "description": "常用晶体结构本地库，避免每次都去 Materials Project 拉数据",
+    "version": 1,
+    "source": "Materials Project (https://materialsproject.org)"
+  },
+  "structures": {
+    "mp-149": {
+      "mp_id": "mp-149",
+      "formula": "Si",
+      "formula_pretty": "Si",
+      "space_group": "Fd-3m",
+      "space_group_number": 227,
+      "crystal_system": "cubic",
+      "lattice_params": {
+        "a": 5.468732,
+        "b": 5.468732,
+        "c": 5.468732,
+        "alpha": 90.0,
+        "beta": 90.0,
+        "gamma": 90.0
+      },
+      "atomic_positions": {
+        "lattice_type": "FCC",
+        "basis": [
+          {"element": "Si", "frac_coords": [0.0, 0.0, 0.0]},
+          {"element": "Si", "frac_coords": [0.25, 0.25, 0.25]}
+        ],
+        "num_sites": 8
+      },
+      "band_gap": 0.61,
+      "density": 2.336,
+      "volume": 163.46,
+      "source": "Materials Project mp-149",
+      "cached_at": "2025-01-01T00:00:00Z"
+    },
+    "mp-804": {
+      "mp_id": "mp-804",
+      "formula": "GaN",
+      "formula_pretty": "GaN",
+      "space_group": "P6_3mc",
+      "space_group_number": 186,
+      "crystal_system": "hexagonal",
+      "lattice_params": {
+        "a": 3.201913,
+        "b": 3.201913,
+        "c": 5.227518,
+        "alpha": 90.0,
+        "beta": 90.0,
+        "gamma": 120.0
+      },
+      "atomic_positions": {
+        "lattice_type": "wurtzite",
+        "basis": [
+          {"element": "Ga", "frac_coords": [0.333333, 0.666667, 0.0]},
+          {"element": "Ga", "frac_coords": [0.666667, 0.333333, 0.5]},
+          {"element": "N", "frac_coords": [0.333333, 0.666667, 0.3771]},
+          {"element": "N", "frac_coords": [0.666667, 0.333333, 0.8771]}
+        ],
+        "num_sites": 4
+      },
+      "band_gap": 1.88,
+      "density": 6.096,
+      "volume": 46.41,
+      "source": "Materials Project mp-804",
+      "cached_at": "2025-01-01T00:00:00Z"
+    },
+    "mp-30": {
+      "mp_id": "mp-30",
+      "formula": "Cu",
+      "formula_pretty": "Cu",
+      "space_group": "Fm-3m",
+      "space_group_number": 225,
+      "crystal_system": "cubic",
+      "lattice_params": {
+        "a": 3.637683,
+        "b": 3.637683,
+        "c": 3.637683,
+        "alpha": 90.0,
+        "beta": 90.0,
+        "gamma": 90.0
+      },
+      "atomic_positions": {
+        "lattice_type": "FCC",
+        "basis": [
+          {"element": "Cu", "frac_coords": [0.0, 0.0, 0.0]}
+        ],
+        "num_sites": 4
+      },
+      "band_gap": 0.0,
+      "density": 8.833,
+      "volume": 48.16,
+      "source": "Materials Project mp-30",
+      "cached_at": "2025-01-01T00:00:00Z"
+    },
+    "mp-5986": {
+      "mp_id": "mp-5986",
+      "formula": "BaTiO3",
+      "formula_pretty": "BaTiO3",
+      "space_group": "P4mm",
+      "space_group_number": 99,
+      "crystal_system": "tetragonal",
+      "lattice_params": {
+        "a": 4.006371,
+        "b": 4.006371,
+        "c": 4.205397,
+        "alpha": 90.0,
+        "beta": 90.0,
+        "gamma": 90.0
+      },
+      "atomic_positions": {
+        "lattice_type": "perovskite",
+        "basis": [
+          {"element": "Ba", "frac_coords": [0.0, 0.0, 0.0]},
+          {"element": "Ti", "frac_coords": [0.5, 0.5, 0.515]},
+          {"element": "O", "frac_coords": [0.5, 0.5, 0.025]},
+          {"element": "O", "frac_coords": [0.5, 0.0, 0.515]},
+          {"element": "O", "frac_coords": [0.0, 0.5, 0.515]}
+        ],
+        "num_sites": 5
+      },
+      "band_gap": 2.31,
+      "density": 5.826,
+      "volume": 67.48,
+      "source": "Materials Project mp-5986",
+      "cached_at": "2025-01-01T00:00:00Z"
+    },
+    "mp-390": {
+      "mp_id": "mp-390",
+      "formula": "TiO2",
+      "formula_pretty": "TiO2",
+      "space_group": "P4_2/mnm",
+      "space_group_number": 136,
+      "crystal_system": "tetragonal",
+      "lattice_params": {
+        "a": 4.596312,
+        "b": 4.596312,
+        "c": 2.959218,
+        "alpha": 90.0,
+        "beta": 90.0,
+        "gamma": 90.0
+      },
+      "atomic_positions": {
+        "lattice_type": "rutile",
+        "basis": [
+          {"element": "Ti", "frac_coords": [0.0, 0.0, 0.0]},
+          {"element": "Ti", "frac_coords": [0.5, 0.5, 0.5]},
+          {"element": "O", "frac_coords": [0.305, 0.305, 0.0]},
+          {"element": "O", "frac_coords": [0.695, 0.695, 0.0]},
+          {"element": "O", "frac_coords": [0.195, 0.805, 0.5]},
+          {"element": "O", "frac_coords": [0.805, 0.195, 0.5]}
+        ],
+        "num_sites": 6
+      },
+      "band_gap": 3.07,
+      "density": 4.299,
+      "volume": 62.52,
+      "source": "Materials Project mp-390",
+      "cached_at": "2025-01-01T00:00:00Z"
+    },
+    "mp-13": {
+      "mp_id": "mp-13",
+      "formula": "Fe",
+      "formula_pretty": "Fe",
+      "space_group": "Im-3m",
+      "space_group_number": 229,
+      "crystal_system": "cubic",
+      "lattice_params": {
+        "a": 2.850518,
+        "b": 2.850518,
+        "c": 2.850518,
+        "alpha": 90.0,
+        "beta": 90.0,
+        "gamma": 90.0
+      },
+      "atomic_positions": {
+        "lattice_type": "BCC",
+        "basis": [
+          {"element": "Fe", "frac_coords": [0.0, 0.0, 0.0]}
+        ],
+        "num_sites": 2
+      },
+      "band_gap": 0.0,
+      "density": 8.109,
+      "volume": 23.17,
+      "source": "Materials Project mp-13",
+      "cached_at": "2025-01-01T00:00:00Z"
+    },
+    "mp-134": {
+      "mp_id": "mp-134",
+      "formula": "Al",
+      "formula_pretty": "Al",
+      "space_group": "Fm-3m",
+      "space_group_number": 225,
+      "crystal_system": "cubic",
+      "lattice_params": {
+        "a": 4.039064,
+        "b": 4.039064,
+        "c": 4.039064,
+        "alpha": 90.0,
+        "beta": 90.0,
+        "gamma": 90.0
+      },
+      "atomic_positions": {
+        "lattice_type": "FCC",
+        "basis": [
+          {"element": "Al", "frac_coords": [0.0, 0.0, 0.0]}
+        ],
+        "num_sites": 4
+      },
+      "band_gap": 0.0,
+      "density": 2.721,
+      "volume": 65.89,
+      "source": "Materials Project mp-134",
+      "cached_at": "2025-01-01T00:00:00Z"
+    },
+    "mp-66": {
+      "mp_id": "mp-66",
+      "formula": "C",
+      "formula_pretty": "C",
+      "space_group": "Fd-3m",
+      "space_group_number": 227,
+      "crystal_system": "cubic",
+      "lattice_params": {
+        "a": 3.566352,
+        "b": 3.566352,
+        "c": 3.566352,
+        "alpha": 90.0,
+        "beta": 90.0,
+        "gamma": 90.0
+      },
+      "atomic_positions": {
+        "lattice_type": "diamond",
+        "basis": [
+          {"element": "C", "frac_coords": [0.0, 0.0, 0.0]},
+          {"element": "C", "frac_coords": [0.25, 0.25, 0.25]}
+        ],
+        "num_sites": 8
+      },
+      "band_gap": 4.37,
+      "density": 3.525,
+      "volume": 45.37,
+      "source": "Materials Project mp-66",
+      "cached_at": "2025-01-01T00:00:00Z"
+    },
+    "mp-22862": {
+      "mp_id": "mp-22862",
+      "formula": "NaCl",
+      "formula_pretty": "NaCl",
+      "space_group": "Fm-3m",
+      "space_group_number": 225,
+      "crystal_system": "cubic",
+      "lattice_params": {
+        "a": 5.687831,
+        "b": 5.687831,
+        "c": 5.687831,
+        "alpha": 90.0,
+        "beta": 90.0,
+        "gamma": 90.0
+      },
+      "atomic_positions": {
+        "lattice_type": "rocksalt",
+        "basis": [
+          {"element": "Na", "frac_coords": [0.0, 0.0, 0.0]},
+          {"element": "Cl", "frac_coords": [0.5, 0.5, 0.5]}
+        ],
+        "num_sites": 8
+      },
+      "band_gap": 5.04,
+      "density": 2.143,
+      "volume": 183.86,
+      "source": "Materials Project mp-22862",
+      "cached_at": "2025-01-01T00:00:00Z"
+    },
+    "mp-1265": {
+      "mp_id": "mp-1265",
+      "formula": "MgO",
+      "formula_pretty": "MgO",
+      "space_group": "Fm-3m",
+      "space_group_number": 225,
+      "crystal_system": "cubic",
+      "lattice_params": {
+        "a": 4.219552,
+        "b": 4.219552,
+        "c": 4.219552,
+        "alpha": 90.0,
+        "beta": 90.0,
+        "gamma": 90.0
+      },
+      "atomic_positions": {
+        "lattice_type": "rocksalt",
+        "basis": [
+          {"element": "Mg", "frac_coords": [0.0, 0.0, 0.0]},
+          {"element": "O", "frac_coords": [0.5, 0.5, 0.5]}
+        ],
+        "num_sites": 8
+      },
+      "band_gap": 5.83,
+      "density": 3.553,
+      "volume": 75.14,
+      "source": "Materials Project mp-1265",
+      "cached_at": "2025-01-01T00:00:00Z"
+    }
+  }
+}

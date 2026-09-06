@@ -1,0 +1,763 @@
+"""Hypothesis Generator Tool —— 文献综述 → 科学假设 → 可执行 workflow.
+
+把 gap_analysis + LLM 推理串成一条链:
+  1. 检索文献 (web_search_tool 优先, 退回 rag_tool, 走 ToolRegistry 互调)
+  2. 识别研究空白 (gap_analysis_tool)
+  3. LLM 生成可测试假设 (statement / rationale / testable_prediction / required_data)
+  4. LLM 把假设映射到 workflow 模板
+     (template_name / args / expected_observable / falsification_criterion)
+
+假设生成和模板映射都需要 LLM 推理, SkillDefinition 的声明式步骤搞不定, 所以
+独立成一个 tool. presets.py 里的 hypothesis_generator skill 只是声明式壳, 真活
+在这里干. LLM 调用方式对齐 review_committee_tool (get_model + langchain messages).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import re
+from pathlib import Path
+from typing import Any, Literal
+
+from pydantic import BaseModel, Field
+
+from huginn.core_types import ToolContext, ToolResult
+from huginn.tools.base import HuginnTool
+
+logger = logging.getLogger(__name__)
+
+# 已知 workflow 模板, 给 LLM 做映射时只能从里选. 名字对齐
+# workflows/templates.py 和 skills/presets.py 里的 skill name.
+_WORKFLOW_TEMPLATES: list[str] = [
+    "standard_dft",
+    "aimd",
+    "defect_calculation",
+    "surface_calculation",
+    "ml_potential_training",
+    "phonon_calculation",
+    "lammps_melt_quench",
+    "elastic_constants",
+    "band_gap_analysis",
+    "ht_screening",
+]
+
+# 假设证据状态: pending 默认, 由后续验证流程更新为 verified / unsupported
+_EvidenceStatus = Literal["verified", "pending", "unsupported"]
+
+_HYPOTHESIS_SYSTEM_PROMPT = """你是材料科学假设生成专家. 基于给定的研究主题、文献摘要和研究空白, 生成可测试的科学假设.
+
+每个假设必须包含:
+- hypothesis_id: 假设编号, 格式 H1, H2, ... (按生成顺序递增, 上限 H5)
+- statement: 假设的清晰陈述 (一句话)
+- rationale: 提出该假设的依据, 要引用具体的研究空白
+- testable_prediction: 可被计算/实验验证的预测, 要具体到可观测量
+- required_data: 验证该假设需要的数据/结构/参数
+
+要求:
+1. 假设要具体、可证伪, 不要泛泛而谈.
+2. 优先针对研究空白里的矛盾结论 / 未覆盖组合 / 少被研究的方法.
+3. 数量不超过指定的 max_hypotheses.
+4. 定性行为优先: testable_prediction 先描述定性趋势/方向 (如 "随 X 增大 Y 单调递增"),
+   再给定量区间. LLM 推理本质是定性的, 跳过定性判断直接给精确数字容易幻觉.
+5. 守恒律自洽: 假设不得违反能量/动量/电荷/质量守恒. 若假设涉及相变/反应,
+   需在 rationale 里说明守恒关系如何满足.
+
+输出严格 JSON, 不要 markdown 代码块标记, 不要任何解释文字. 格式:
+{
+  "hypotheses": [
+    {"hypothesis_id": "H1", "statement": "...", "rationale": "...", "testable_prediction": "...", "required_data": "..."}
+  ]
+}"""
+
+_WORKFLOW_MAPPING_SYSTEM_PROMPT = (
+    "你是计算材料科学 workflow 设计专家. 把科学假设映射到合适的 workflow 模板, "
+    "让假设能被计算验证.\n\n"
+    f"可选的 workflow 模板 (只能从里选): {_WORKFLOW_TEMPLATES}\n\n"
+    "每个映射结果必须包含:\n"
+    "- template_name: 从上面列表里选的模板名\n"
+    "- args: 调用该模板需要的关键参数 (dict), 例如 "
+    '{"structure_file": "...", "functional": "PBE"}\n'
+    "- expected_observable: 该 workflow 能给出的可观测结果, 用来检验假设\n"
+    "- falsification_criterion: 什么结果能证伪该假设 (具体判据)\n\n"
+    "Problem Type → Baseline Routing (映射前必须先定问题类型):\n"
+    "- Prediction (regression/classification): 先用可解释模型 "
+    "(Gaussian Process / symbolic regression), 数据 >10k 才考虑神经网络\n"
+    "- Causal inference: 先建 DAG, 用 do-calculus 或 IV 方法\n"
+    "- Clustering: 先定 distance metric + linkage, 再选算法\n"
+    "- Retrieval: 先定 similarity metric + corpus, 再选 embedding 模型\n"
+    "- Anomaly detection: 先定 'normal' 分布, 再选算法\n"
+    "- Mechanism elucidation: 必须有 first-principles 约束, ML 只作 surrogate\n\n"
+    "Rule: problem type MUST be stated before workflow mapping. "
+    "'Apply XGBoost' without problem type is rejected.\n\n"
+    "如果用户指定了 target_workflow, 全部映射到那个模板 (args 仍按假设调整).\n"
+    "输出严格 JSON, 不要 markdown 代码块. 格式:\n"
+    "{\n"
+    '  "workflow_proposals": [\n'
+    '    {"template_name": "...", "args": {...}, '
+    '"expected_observable": "...", "falsification_criterion": "..."}\n'
+    "  ]\n"
+    "}"
+)
+
+
+class HypothesisGeneratorInput(BaseModel):
+    research_topic: str = Field(
+        ..., description="研究主题, 如 'GaN p-type doping efficiency'"
+    )
+    literature_query: str | None = Field(
+        default=None, description="文献检索 query, 留空则用 research_topic"
+    )
+    max_hypotheses: int = Field(
+        default=3, ge=1, le=10, description="最多生成几个假设"
+    )
+    target_workflow: str | None = Field(
+        default=None,
+        description="指定 workflow 模板名, 不指定则由 LLM 自动选",
+    )
+    # 排序开关: 关掉就按 LLM 输出顺序返回
+    rank: bool = Field(
+        default=True,
+        description="Score hypotheses by novelty+feasibility+kb_relevance",
+    )
+
+
+class HypothesisGeneratorTool(HuginnTool):
+    """文献综述 → 科学假设 → 可执行 workflow 的编排工具.
+
+    内部调 web_search_tool / rag_tool / gap_analysis_tool (走 ToolRegistry),
+    再用 LLM 做假设生成和模板映射. 只读, 不写文件不提交作业.
+    """
+
+    name = "hypothesis_generator_tool"
+    category = "search"
+    description = (
+        "From literature review to executable workflow: search literature, "
+        "identify research gaps, generate testable scientific hypotheses via LLM, "
+        "and map each hypothesis to a workflow template. Returns hypotheses + "
+        "workflow_proposals + literature_summary."
+    )
+    input_schema = HypothesisGeneratorInput
+    read_only = True
+
+    async def call(
+        self, args: HypothesisGeneratorInput, context: ToolContext
+    ) -> ToolResult:
+        query = args.literature_query or args.research_topic
+
+        # 1. 检索文献
+        papers, literature_summary = await self._search_literature(query, context)
+
+        # 1b. 文献阈值门禁: 决定生成模式 + 警告, 不阻断流程
+        lit_mode, lit_warnings = self._check_literature_threshold(len(papers))
+
+        # 2. 识别研究空白
+        research_gaps = await self._identify_gaps(
+            args.research_topic, papers, context
+        ) or {}
+
+        # 3. 拿 LLM 客户端
+        try:
+            model = self._get_model(context)
+        except Exception as exc:
+            return ToolResult(
+                data=None,
+                success=False,
+                error=f"初始化 LLM 客户端失败: {exc}",
+            )
+
+        # 4. LLM 生成假设 (带文献门禁模式)
+        hypotheses = await self._generate_hypotheses(
+            args.research_topic,
+            literature_summary,
+            research_gaps,
+            args.max_hypotheses,
+            model,
+            mode=lit_mode,
+            warnings=lit_warnings,
+        )
+
+        # 4b. 排序: novelty + feasibility + kb_relevance 三维打分
+        ranked = False
+        if args.rank and hypotheses:
+            hypotheses = await self._rank_hypotheses(hypotheses, context)
+            ranked = True
+
+        # 4c. 守恒律自洽检查: 标记可能违反守恒律的假设, 不阻断只警告
+        conservation_flags = [
+            self._check_conservation_laws(h) for h in hypotheses
+        ]
+
+        # 5. LLM 映射到 workflow 模板
+        workflow_proposals = await self._map_to_workflow(
+            hypotheses, args.target_workflow, model
+        )
+
+        data: dict[str, Any] = {
+            "research_topic": args.research_topic,
+            "literature_summary": literature_summary,
+            "literature_count": len(papers),
+            "literature_mode": lit_mode,
+            "literature_warnings": lit_warnings,
+            "research_gaps": research_gaps,
+            "hypotheses": hypotheses,
+            "conservation_flags": conservation_flags,
+            "workflow_proposals": workflow_proposals,
+            "n_hypotheses": len(hypotheses),
+            "ranked": ranked,
+        }
+        return ToolResult(data=data, success=True)
+
+    # ------------------------------------------------------------------ helpers
+
+    def _get_model(self, context: ToolContext) -> Any:
+        """拿 LangChain chat model, 优先用 context.config. 对齐 review_committee_tool."""
+        from huginn.llm import get_model
+
+        config = getattr(context, "config", None)
+        return get_model(config=config, temperature=0.4, max_tokens=6000)
+
+    # ------------------------------------------------------------------ ranking
+
+    async def _rank_hypotheses(
+        self, candidates: list[dict[str, Any]], context: ToolContext
+    ) -> list[dict[str, Any]]:
+        """给每个候选假设打三个分再按加权 score 降序排.
+
+        novelty: 查 LongTermMemory 看历史上有没有类似的, 没见过=新颖=高分.
+        feasibility: 看假设需要的工具/模板在不在 ToolRegistry 里, 凑齐=高分.
+        kb_relevance: 查领域 KB, 命中越多=越接地气=高分.
+
+        任一子项失败给 0.5 中性分, 不阻断排序. 排完把分数写回每个 hypothesis dict.
+        """
+        scored: list[dict[str, Any]] = []
+        for h in candidates:
+            novelty = await self._score_novelty(h, context)
+            feasibility = self._score_feasibility(h)
+            kb_rel = await self._score_kb_relevance(h, context)
+            score = 0.4 * novelty + 0.4 * feasibility + 0.2 * kb_rel
+            enriched = dict(h)
+            enriched["score"] = round(score, 4)
+            enriched["novelty"] = round(novelty, 4)
+            enriched["feasibility"] = round(feasibility, 4)
+            enriched["kb_relevance"] = round(kb_rel, 4)
+            scored.append(enriched)
+        # 降序排, score 相同就保留原顺序 (stable sort)
+        scored.sort(key=lambda x: x["score"], reverse=True)
+        return scored
+
+    async def _score_novelty(
+        self, hypothesis: dict[str, Any], context: ToolContext
+    ) -> float:
+        """查长期记忆里有没有类似假设. 没命中=1.0, 命中≥3=0.2, 中间线性插值."""
+        statement = (hypothesis.get("statement") or "").strip()
+        if not statement:
+            return 0.5
+        try:
+            from huginn.memory.longterm import LongTermMemory
+
+            # 用 context.workspace 当 cache dir, 跟 agent 主进程对齐
+            cache_dir = getattr(context, "workspace", None) or "."
+            mem = LongTermMemory(db_path=str(Path(cache_dir) / "memory.db"))
+            hits = mem.retrieve(
+                query=statement, category="hypothesis", top_k=3, semantic=False
+            )
+            n = len(hits)
+            if n == 0:
+                return 1.0
+            if n >= 3:
+                return 0.2
+            # 1 hit -> 0.73, 2 hits -> 0.47, 3 hits -> 0.2
+            return 1.0 - 0.27 * n
+        except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
+            return 0.5
+
+    def _score_feasibility(self, hypothesis: dict[str, Any]) -> float:
+        """看假设需要的工具在不在 ToolRegistry 里. 全有=1.0, 缺一个=0.5, 缺多=0.2."""
+        try:
+            from huginn.tools.registry import ToolRegistry
+
+            available = set(ToolRegistry.list_tools())
+            if not available:
+                # 注册表为空 (测试环境/早期启动) 给中性分, 不冤枉
+                return 0.5
+            # 从 required_data 字段抠工具名, LLM 一般会列 vasp_tool/lammps_tool 之类
+            required_text = (hypothesis.get("required_data") or "").lower()
+            # 常见计算工具关键词 → tool name 映射
+            tool_hints = {
+                "vasp": "vasp_tool",
+                "dft": "vasp_tool",
+                "lammps": "lammps_tool",
+                "md": "lammps_tool",
+                "molecular dynamics": "lammps_tool",
+                "phonon": "vasp_tool",
+                "band": "vasp_tool",
+                "ml_potential": "ml_potential_tool",
+                "mace": "ml_potential_tool",
+                "gpaw": "gpaw_tool",
+                "quantum espresso": "qe_tool",
+                "qespresso": "qe_tool",
+                "database": "database_tool",
+                "materials project": "database_tool",
+            }
+            required_tools: set[str] = set()
+            for kw, tool_name in tool_hints.items():
+                if kw in required_text:
+                    required_tools.add(tool_name)
+            if not required_tools:
+                # 没抠到工具需求, 假设可行, 给中性偏高的分
+                return 0.8
+            missing = required_tools - available
+            if not missing:
+                return 1.0
+            if len(missing) == 1:
+                return 0.5
+            return 0.2
+        except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
+            return 0.5
+
+    async def _score_kb_relevance(
+        self, hypothesis: dict[str, Any], context: ToolContext
+    ) -> float:
+        """查领域 KB, 命中 chunk 数 / 3 当分数. KB 不可用给中性分 0.5."""
+        statement = (hypothesis.get("statement") or "").strip()
+        if not statement:
+            return 0.5
+        try:
+            from huginn.knowledge.store import get_knowledge_base
+
+            cache_dir = getattr(context, "workspace", None) or "."
+            kb = get_knowledge_base(str(cache_dir))
+            if kb.count() == 0:
+                return 0.5
+            chunks = kb.query(statement, top_k=3)
+            return min(len(chunks) / 3.0, 1.0)
+        except Exception:
+            logger.debug("best-effort op failed", exc_info=True)
+            return 0.5
+
+    async def _search_literature(
+        self, query: str, context: ToolContext
+    ) -> tuple[list[dict[str, Any]], str]:
+        """走 ToolRegistry 调 literature_tool (arXiv/S2/CrossRef), 拿不到再退回
+        web_search_tool / rag_tool. 返回 (papers, summary).
+
+        literature_tool 给的是结构化论文元数据 (title/authors/year/venue/doi/
+        abstract/url/citations), 比 web_search 的 snippet 质量高得多, 能撑起
+        真正的文献综述. web_search/rag 只作 fallback.
+        """
+        from huginn.tools.registry import ToolRegistry
+
+        ctx = self._fallback_context(context)
+        papers: list[dict[str, Any]] = []
+        summary_parts: list[str] = []
+
+        # 1. 优先 literature_tool: 学术三路并发, 拿结构化论文
+        lit = ToolRegistry.get("literature_tool")
+        if lit is not None:
+            try:
+                res = await self._invoke_tool(
+                    lit,
+                    {"action": "search", "query": query, "max_results": 8},
+                    ctx,
+                )
+                if res and res.success and isinstance(res.data, dict):
+                    hits = res.data.get("papers", []) or []
+                    for h in hits:
+                        if isinstance(h, dict) and h.get("title"):
+                            papers.append({
+                                "title": h.get("title", ""),
+                                "authors": h.get("authors", []),
+                                "year": h.get("year"),
+                                "venue": h.get("venue", ""),
+                                "doi": h.get("doi"),
+                                "abstract": h.get("abstract", "") or "",
+                                "url": h.get("url", ""),
+                                "citations": h.get("citations"),
+                            })
+                    src_status = res.data.get("source_status", {}) or {}
+                    ok_sources = [
+                        s for s, st in src_status.items()
+                        if isinstance(st, dict) and st.get("ok")
+                    ]
+                    summary_parts.append(
+                        f"literature_tool: {len(papers)} 篇 "
+                        f"(sources: {','.join(ok_sources) or 'none'})"
+                    )
+                else:
+                    # 调了但失败 (disabled/网络/空), 记一笔方便排查 fallback 链路
+                    err = (res.error if res else "no result") or ""
+                    summary_parts.append(
+                        f"literature_tool: 无结果 ({err[:80]})"
+                    )
+            except Exception as exc:
+                logger.warning("literature_tool 调用失败: %s", exc)
+                summary_parts.append(f"literature_tool 失败: {exc}")
+
+        # 2. literature_tool 没拿到, 退回 web_search_tool (snippet 当 abstract)
+        if not papers:
+            web = ToolRegistry.get("web_search_tool")
+            if web is not None:
+                try:
+                    res = await self._invoke_tool(
+                        web, {"query": query, "max_results": 8}, ctx
+                    )
+                    if res and res.success and isinstance(res.data, dict):
+                        hits = res.data.get("results", []) or []
+                        for h in hits:
+                            if isinstance(h, dict):
+                                papers.append({
+                                    "title": h.get("title", ""),
+                                    "authors": [],
+                                    "year": None,
+                                    "venue": "",
+                                    "doi": None,
+                                    "abstract": h.get("snippet", h.get("content", "")),
+                                    "url": h.get("url", ""),
+                                    "citations": None,
+                                })
+                        summary_parts.append(
+                            f"web_search fallback: {len(papers)} 条 (query='{query}')"
+                        )
+                    else:
+                        err = (res.error if res else "no result") or ""
+                        summary_parts.append(
+                            f"web_search fallback: 无结果 ({err[:80]})"
+                        )
+                except Exception as exc:
+                    logger.warning("web_search_tool 调用失败: %s", exc)
+                    summary_parts.append(f"web_search 失败: {exc}")
+
+        # 3. 还没拿到, 退回本地 RAG
+        if not papers:
+            rag = ToolRegistry.get("rag_tool")
+            if rag is not None:
+                try:
+                    res = await self._invoke_tool(
+                        rag,
+                        {"action": "search", "query": query, "top_k": 8},
+                        ctx,
+                    )
+                    if res and res.success and isinstance(res.data, dict):
+                        # rag_tool 返回 results 字段, 兼容 documents
+                        docs = res.data.get("results") or res.data.get("documents") or []
+                        for d in docs:
+                            if isinstance(d, dict):
+                                papers.append({
+                                    "title": d.get("title", d.get("doc_id", "")),
+                                    "authors": [],
+                                    "year": None,
+                                    "venue": "",
+                                    "doi": None,
+                                    "abstract": str(
+                                        d.get("content", d.get("text", ""))
+                                    )[:500],
+                                    "url": "",
+                                    "citations": None,
+                                })
+                        summary_parts.append(f"rag fallback: {len(papers)} 条本地文档")
+                    else:
+                        err = (res.error if res else "no result") or ""
+                        summary_parts.append(f"rag fallback: 无结果 ({err[:80]})")
+                except Exception as exc:
+                    logger.warning("rag_tool 调用失败: %s", exc)
+                    summary_parts.append(f"rag 失败: {exc}")
+
+        if not papers:
+            summary_parts.append(
+                "未检索到文献 (literature_tool / web_search / rag 都没结果), "
+                "仅基于研究主题生成假设"
+            )
+
+        return papers, "; ".join(summary_parts)
+
+    async def _identify_gaps(
+        self,
+        topic: str,
+        papers: list[dict[str, Any]],
+        context: ToolContext,
+    ) -> dict[str, Any] | None:
+        from huginn.tools.registry import ToolRegistry
+
+        tool = ToolRegistry.get("gap_analysis_tool")
+        if tool is None:
+            return None
+        ctx = self._fallback_context(context)
+        try:
+            res = await self._invoke_tool(
+                tool,
+                {"action": "analyze_gaps", "topic": topic, "papers": papers},
+                ctx,
+            )
+            if res and res.success and isinstance(res.data, dict):
+                return res.data
+        except Exception as exc:
+            logger.warning("gap_analysis_tool 调用失败: %s", exc)
+        return None
+
+    async def _generate_hypotheses(
+        self,
+        topic: str,
+        literature_summary: str,
+        research_gaps: dict[str, Any],
+        max_hypotheses: int,
+        model: Any,
+        mode: str = "standard",
+        warnings: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        from langchain_core.messages import HumanMessage, SystemMessage
+
+        gaps = research_gaps.get("gaps", []) if research_gaps else []
+        user_prompt = (
+            f"研究主题: {topic}\n\n"
+            f"文献检索情况: {literature_summary}\n\n"
+            f"识别出的研究空白 (JSON):\n"
+            f"{json.dumps(gaps, ensure_ascii=False, indent=2)}\n\n"
+            f"请生成不超过 {max_hypotheses} 条可测试的科学假设."
+        )
+        # 文献门禁模式提示: deep 模式允许引用方法学论文, 不足时强制标 limitation
+        if mode == "deep":
+            user_prompt += (
+                "\n文献量充足 (>50), 进入 deep 模式: 允许在 rationale 里引用方法学论文"
+                "支撑假设的设计依据."
+            )
+        if warnings:
+            user_prompt += "\n文献门禁警告:\n- " + "\n- ".join(warnings)
+        messages = [
+            SystemMessage(content=_HYPOTHESIS_SYSTEM_PROMPT),
+            HumanMessage(content=user_prompt),
+        ]
+        content = await self._llm_invoke(model, messages)
+        parsed = self._parse_json(content)
+        if parsed and isinstance(parsed.get("hypotheses"), list):
+            return [
+                self._normalize_hypothesis(h, idx=i)
+                for i, h in enumerate(parsed["hypotheses"][:max_hypotheses])
+                if isinstance(h, dict)
+            ]
+        # LLM 没给合法 JSON, 兜底用 gap_analysis 的空白拼几条规则型假设
+        logger.warning("假设生成 JSON 解析失败, 退回规则兜底")
+        return self._fallback_hypotheses(topic, gaps, max_hypotheses)
+
+    async def _map_to_workflow(
+        self,
+        hypotheses: list[dict[str, Any]],
+        target_workflow: str | None,
+        model: Any,
+    ) -> list[dict[str, Any]]:
+        from langchain_core.messages import HumanMessage, SystemMessage
+
+        if not hypotheses:
+            return []
+        user_prompt = (
+            "科学假设 (JSON):\n"
+            f"{json.dumps(hypotheses, ensure_ascii=False, indent=2)}\n\n"
+        )
+        if target_workflow:
+            user_prompt += (
+                f"用户指定 target_workflow='{target_workflow}', "
+                "全部映射到该模板.\n"
+            )
+        user_prompt += "请输出每个假设对应的 workflow 映射."
+        messages = [
+            SystemMessage(content=_WORKFLOW_MAPPING_SYSTEM_PROMPT),
+            HumanMessage(content=user_prompt),
+        ]
+        content = await self._llm_invoke(model, messages)
+        parsed = self._parse_json(content)
+        if parsed and isinstance(parsed.get("workflow_proposals"), list):
+            proposals: list[dict[str, Any]] = []
+            for p in parsed["workflow_proposals"]:
+                if not isinstance(p, dict):
+                    continue
+                # 用户指定了模板就强制覆盖, 不信 LLM 自己选的
+                if target_workflow:
+                    p["template_name"] = target_workflow
+                proposals.append(self._normalize_proposal(p))
+            return proposals
+        logger.warning("workflow 映射 JSON 解析失败, 返回空列表")
+        return []
+
+    # ---- 小工具 ----
+
+    async def _invoke_tool(
+        self, tool: Any, args: dict[str, Any], ctx: ToolContext
+    ) -> Any:
+        """统一调 ToolRegistry 里的工具. web_search_tool / gap_analysis_tool
+        的 call 都吃 dict, rag_tool.call 吃 pydantic 模型但内部也兼容 dict."""
+        if hasattr(tool, "call"):
+            return await tool.call(args, ctx)
+        if hasattr(tool, "execute"):
+            return await asyncio.to_thread(tool.execute, args, ctx)
+        return None
+
+    async def _llm_invoke(self, model: Any, messages: list[Any]) -> str:
+        """对齐 review_committee_tool: 优先 ainvoke, 退回同步 invoke + to_thread."""
+        if hasattr(model, "ainvoke"):
+            response = await model.ainvoke(messages)
+        else:
+            response = await asyncio.to_thread(model.invoke, messages)
+        content = response.content if hasattr(response, "content") else str(response)
+        # 个别 provider 返回 list[ContentBlock], 拼成纯文本
+        if not isinstance(content, str):
+            content = json.dumps(content, ensure_ascii=False)
+        return content
+
+    @staticmethod
+    def _fallback_context(context: ToolContext) -> ToolContext:
+        """构造给子工具用的 ctx, 复用原 context 的 config/workspace."""
+        return ToolContext(
+            session_id=getattr(context, "session_id", "hypothesis") or "hypothesis",
+            workspace=getattr(context, "workspace", ".") or ".",
+            config=getattr(context, "config", None),
+        )
+
+    @staticmethod
+    def _parse_json(content: str) -> dict[str, Any] | None:
+        """从 LLM 回复里抠 JSON. 容忍前后多余文字和 ```json 代码块."""
+        text = content.strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```[a-zA-Z]*\n?", "", text)
+            text = re.sub(r"\n?```\s*$", "", text)
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            start = text.find("{")
+            end = text.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                try:
+                    return json.loads(text[start : end + 1])
+                except json.JSONDecodeError:
+                    logger.debug("best-effort op failed", exc_info=True)
+                    return None
+            return None
+
+    @staticmethod
+    def _check_conservation_laws(hypothesis: dict[str, Any]) -> dict[str, Any]:
+        """对假设做守恒律自洽检查 (启发式, 不调 LLM).
+
+        扫 statement + testable_prediction 里的关键词, 标记可能违反
+        能量/动量/电荷/质量守恒的假设. 只警告不阻断 — 物理预检由
+        PhysicsAuditor 在计算结果阶段做硬门禁, 这里只是早期信号.
+
+        ponytail: 纯关键词匹配, 不引 NLP; 升级路径: 调 LLM 做语义判断.
+        """
+        text = (
+            str(hypothesis.get("statement", ""))
+            + " "
+            + str(hypothesis.get("testable_prediction", ""))
+        ).lower()
+        hid = hypothesis.get("hypothesis_id", "?")
+        flags: list[str] = []
+
+        # 能量守恒: "创造能量"/"无中生有"/"效率>100%" 这类表述
+        if any(kw in text for kw in ["创造能量", "产生能量", "efficiency > 100", "效率大于100", "overunity", "perpetual"]):
+            flags.append("energy_conservation_suspect")
+
+        # 电荷守恒: 提到电荷转移但不平衡的表述
+        if ("charge transfer" in text or "电荷转移" in text) and not any(kw in text for kw in ["balanced", "守恒", "compensated", "平衡"]):
+                flags.append("charge_conservation_check_needed")
+
+        # 质量守恒: 相变/反应但没提到产物/反应物守恒
+        if any(kw in text for kw in ["相变", "phase transition", "反应", "reaction", "decomposition"]) and not any(kw in text for kw in ["守恒", "conserve", "balanced", "stoichiometric"]):
+                flags.append("mass_conservation_check_needed")
+
+        return {
+            "hypothesis_id": hid,
+            "flags": flags,
+            "passed": len(flags) == 0,
+        }
+
+    @staticmethod
+    def _check_literature_threshold(papers_count: int) -> tuple[str, list[str]]:
+        """文献阈值门禁: 按检索回的论文数决定生成模式 + 警告.
+
+        返回 (mode, warnings):
+        - <15:   standard + literature_insufficient 警告 (不阻断, 建议放宽 query)
+        - 15-30: standard, 无警告
+        - 31-50: standard + 提示可进 deep
+        - >50:   deep, 允许引用方法学论文
+
+        ponytail: papers_count 是检索回的条数, 不去重不过滤相关性,
+        实际有效文献数 ≤ 该值; 后续验证流程应重新核对.
+        """
+        if papers_count < 15:
+            return "standard", [
+                f"literature_insufficient: 仅 {papers_count} 篇 (<15), "
+                "建议放宽 query 重检; 继续生成但需在假设 rationale 里标注"
+                "文献覆盖不足的 limitation"
+            ]
+        if papers_count <= 30:
+            return "standard", []
+        if papers_count <= 50:
+            return "standard", [
+                f"literature_count={papers_count} (31-50), standard 模式可用, "
+                "文献量充足可考虑切到 deep 模式 (允许引用方法学论文)"
+            ]
+        return "deep", [
+            f"literature_count={papers_count} (>50), 进入 deep 模式, "
+            "允许引用方法学论文"
+        ]
+
+    @staticmethod
+    def _normalize_hypothesis(
+        h: dict[str, Any], idx: int = 0
+    ) -> dict[str, Any]:
+        # hypothesis_id: LLM 应给 H1-H5, 没给或格式错就按 idx 递增兜底
+        raw_id = str(h.get("hypothesis_id") or "").strip()
+        if not re.match(r"^H\d+$", raw_id):
+            raw_id = f"H{idx + 1}"
+        return {
+            "hypothesis_id": raw_id,
+            "statement": str(h.get("statement", "")),
+            "rationale": str(h.get("rationale", "")),
+            "testable_prediction": str(h.get("testable_prediction", "")),
+            "required_data": str(h.get("required_data", "")),
+            # 默认 pending, 由后续 evidence_fusion / validate 流程更新
+            "evidence_status": "pending",
+            # 默认 0, 由后续验证流程按实际支撑文献数更新
+            "literature_count": 0,
+        }
+
+    @staticmethod
+    def _normalize_proposal(p: dict[str, Any]) -> dict[str, Any]:
+        args = p.get("args", {})
+        if not isinstance(args, dict):
+            args = {}
+        template = str(p.get("template_name", "standard_dft"))
+        return {
+            "template_name": template,
+            "args": args,
+            "expected_observable": str(p.get("expected_observable", "")),
+            "falsification_criterion": str(p.get("falsification_criterion", "")),
+        }
+
+    @staticmethod
+    def _fallback_hypotheses(
+        topic: str, gaps: list[dict[str, Any]], max_h: int
+    ) -> list[dict[str, Any]]:
+        """LLM 不可用时, 从 gap_analysis 的空白里拼几条规则型假设兜底."""
+        out: list[dict[str, Any]] = []
+        for i, g in enumerate(gaps[:max_h]):
+            desc = g.get("description", "")
+            out.append(
+                {
+                    "hypothesis_id": f"H{i + 1}",
+                    "statement": f"针对 '{topic}' 的研究空白待验证: {desc}",
+                    "rationale": desc,
+                    "testable_prediction": "",
+                    "required_data": "",
+                    "evidence_status": "pending",
+                    "literature_count": 0,
+                }
+            )
+        return out
+
+    def estimate_cost(
+        self, args: HypothesisGeneratorInput
+    ) -> dict[str, float] | None:
+        # 1 次检索 + 1 次 gap 分析 + 2 次 LLM 调用, 都是轻量
+        return {"cpu_hours": 0.0, "gpu_hours": 0.0, "walltime_hours": 0.03}
