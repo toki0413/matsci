@@ -28,6 +28,7 @@ sys.path.insert(0, str(_HERE))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "agent"))   # 产品模块(huginn.*)
 import hotjupiter_sw as hj  # noqa: E402
 import hotjupiter_sw2 as hj2  # noqa: E402   # 非线性浅水核（超自转喷射）
+import hotjupiter_topology as tj  # noqa: E402   # 高阶拓扑诊断（实验性）
 from huginn.research import grounding_verifier  # noqa: E402   # 声明门禁唯一实现
 
 _BASE_URL = os.environ.get("INTERNLM_BASE_URL", "https://chat.intern-ai.org.cn/api/v1")
@@ -103,6 +104,8 @@ _TOOLS = [
         "parameters": {"type": "object", "properties": {"name": {"type": "string", "enum": _COMPARE}},
             "required": ["name"], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "comparison_linear_nonlinear", "description": "对比线性/非线性模型的超自转喷射与热点东移, 量化非线性项贡献(可证伪判定)。",
+        "parameters": {"type": "object", "properties": {}, "required": [], "additionalProperties": False}}},
+    {"type": "function", "function": {"name": "hodge_circulation", "description": "高阶拓扑诊断(实验性): 对非线性稳态流场做 Helmholtz-Hodge 分解, 返回谐和(超自转环)/辐散/旋度三分量占比 + ortho/harmonic_*_residual 自检。你自己判断其适用性并如实在报告中标注。",
         "parameters": {"type": "object", "properties": {}, "required": [], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "submit_report", "description": "把最终成文的完整研究报告作为 report_text 参数提交(正文放这里, 思维链留在 content)。",
         "parameters": {"type": "object", "properties": {"report_text": {"type": "string"}},
@@ -289,14 +292,27 @@ def main() -> int:
                 "note": s["note"]}, ensure_ascii=False)
         if name == "solve_nonlinear":
             sys_name = a.get("name") or state["system"]; state["system"] = sys_name
-            r = hj2.run_scenario2(sys_name, nx=NX, ny=NY, t_end_s=2.0e6)
+            # 直接持有 solver, 供 hodge_circulation 等后续工具对同一终态流场调用
+            sw = hj2.NonlinearSWChannelsFVM(sys_name, nx=NX, ny=NY)
+            r = sw.integrate(2.0e6)
             state["nl"] = r
+            state["nl_solver"] = sw
+            a_obj = sw.analyze()
             return json.dumps({"system": sys_name, "method": "非线性浅水(守恒 FVM/HLLC)",
                                "mass_drift": round(r["mass_drift"], 6),
                                "rel_energy_drift": round(r["rel_energy_drift"], 6),
-                               "day_night_delta_T_K": r["day_night_delta_T_K"],
-                               "hot_spot_offset_deg": r["hot_spot_offset_deg"],
-                               "equatorial_jet_max_ms": r["equatorial_jet_max_ms"]}, ensure_ascii=False)
+                               "day_night_delta_T_K": a_obj["day_night_delta_T_K"],
+                               "hot_spot_offset_deg": a_obj["hot_spot_offset_deg"],
+                               "equatorial_jet_max_ms": a_obj["equatorial_jet_max_ms"]}, ensure_ascii=False)
+        if name == "hodge_circulation":
+            sw = state.get("nl_solver")
+            if not sw:
+                return json.dumps({"error": "请先 solve_nonlinear 得到非线性流场再调用本工具"},
+                                  ensure_ascii=False)
+            d = tj.topological_circulation(sw)
+            d["experimental"] = ("实验性拓扑诊断: 纯超自转环的谐和隔离精确; 通用强切向流场有边界残差, "
+                                 "请结合 ortho_* 与 harmonic_*_residual 自检字段判断本问题是否适用。")
+            return json.dumps(d, ensure_ascii=False)
         if name == "comparison_linear_nonlinear":
             lin = state.get("run")
             nl = state.get("nl")

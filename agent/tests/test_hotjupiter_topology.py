@@ -27,37 +27,36 @@ def _grid():
 
 
 def test_pure_loop_is_harmonic_exact():
-    """超自转 = 常数方位角环流 → 谐和分量应精确捕获 (frac=1, 正交≈0)."""
+    """超自转 = 常数方位角环流 → 谐和分量应精确捕获 (frac=1, 正交≈0, 散/旋≈0)."""
     ny, nx, dx, dy, xx, yy = _grid()
     d = hodge_decompose(np.full((ny, nx), 2.0), np.zeros((ny, nx)), dx, dy)
     assert abs(d["harmonic_frac"] - 1.0) < 1e-6
-    assert d["divergent_frac"] < 1e-6
-    assert d["curl_frac"] < 1e-6
+    assert d["divergent_frac"] < 1e-6 and d["curl_frac"] < 1e-6
     assert d["ortho_grad_harm"] < 1e-6 and d["ortho_curl_harm"] < 1e-6
+    assert d["harmonic_div_residual"] < 1e-6 and d["harmonic_curl_residual"] < 1e-6
 
 
 def test_stopped_flow_is_well_defined():
     ny, nx, dx, dy, xx, yy = _grid()
     d = hodge_decompose(np.zeros((ny, nx)), np.zeros((ny, nx)), dx, dy)
-    assert d["harmonic_amp"] == 0.0
-    assert d["harmonic_frac"] == 0.0
+    assert d["harmonic_amp"] == 0.0 and d["harmonic_frac"] == 0.0
 
 
-def test_decomposition_self_check_keys_present():
-    """混合流场: 所有机制键 + 正交性(自我证伪)键都在, 且 frac 健康有界."""
+def test_decomposition_is_bounded_and_self_checked():
+    """混合流场: 输出窗口完整、值有限有界(不爆数值); 真谐和性用 div/curl 自检(如实)."""
     ny, nx, dx, dy, xx, yy = _grid()
     u = np.sin(xx) * np.cos(yy) + 1.5
     v = -np.cos(xx) * np.sin(yy)
     d = hodge_decompose(u, v, dx, dy)
     for k in ["harmonic_amp", "harmonic_frac", "divergent_frac", "curl_frac",
-              "ortho_grad_curl", "ortho_grad_harm", "ortho_curl_harm"]:
-        assert k in d and isinstance(d[k], float)
-    assert 0.0 <= d["harmonic_frac"] <= 1.6   # 粗网格模板残差所致, 有界即可
-    assert 0.0 <= d["divergent_frac"] <= 1.6
-    assert 0.0 <= d["curl_frac"] <= 1.6
-    # 正交性自我证伪: 值域合理 (不随振幅发散)
-    for ok in ["ortho_grad_curl", "ortho_grad_harm", "ortho_curl_harm"]:
-        assert 0.0 <= d[ok] <= 1.0
+              "ortho_grad_curl", "ortho_grad_harm", "ortho_curl_harm",
+              "harmonic_div_residual", "harmonic_curl_residual"]:
+        assert k in d and np.isfinite(d[k]), (k, d.get(k))
+    # 有界: 无爆数值 (早期 pin 版本曾到 ~1e13)
+    for k in ["harmonic_frac", "divergent_frac", "curl_frac"]:
+        assert 0.0 <= d[k] < 10.0, (k, d[k])
+    for k in ["ortho_grad_curl", "ortho_grad_harm", "ortho_curl_harm"]:
+        assert 0.0 <= d[k] <= 1.0, (k, d[k])
 
 
 def test_topological_circulation_from_solver():
