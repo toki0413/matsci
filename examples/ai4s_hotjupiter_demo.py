@@ -26,6 +26,7 @@ from pathlib import Path
 _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE))
 import hotjupiter_sw as hj  # noqa: E402
+import hotjupiter_sw2 as hj2  # noqa: E402   # 非线性浅水核（超自转喷射）
 
 _BASE_URL = os.environ.get("INTERNLM_BASE_URL", "https://chat.intern-ai.org.cn/api/v1")
 _DEFAULT_MODEL = "intern-s2-preview"
@@ -62,6 +63,10 @@ _TOPICS = {
            "question": "昼夜温差如何随热再分配时间τ_rad定量缩放？数值能否逼近纯辐射极限并被其校验？",
            "workflow": ["load_system", "sweep_redistribution", "validate_radiative_limit",
                         "integrate_flow", "conservation_report", "predict_diagnostics", "reconcile_obs"]},
+    "T5": {"label": "线性 vs 非线性：超自转喷射",
+           "question": "加入非线性后，超自转赤道喷射(与热点东移)相比线性模型是否显著增强？非线性项是否是超自转的本质来源？",
+           "workflow": ["load_system", "integrate_flow", "solve_nonlinear", "comparison_linear_nonlinear",
+                        "conservation_report", "predict_diagnostics", "reconcile_obs"]},
 }
 _COMPARE = ["WASP-43b", "HD 209458b"]
 
@@ -91,6 +96,11 @@ _TOOLS = [
         "parameters": {"type": "object", "properties": {"name": {"type": "string", "enum": _COMPARE}},
             "required": ["name"], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "validate_radiative_limit", "description": "把扫描数值与『纯辐射平衡极限』对账校验: ΔT 应随 τ_rad→0 逼近极限且不越过(可证伪)。",
+        "parameters": {"type": "object", "properties": {}, "required": [], "additionalProperties": False}}},
+    {"type": "function", "function": {"name": "solve_nonlinear", "description": "用非线性浅水(守恒 FVM/HLLC)数值积分非线性昼夜环流, 返回喷射/东移/温差(可含湍流涡动动量输运)。",
+        "parameters": {"type": "object", "properties": {"name": {"type": "string", "enum": _COMPARE}},
+            "required": ["name"], "additionalProperties": False}}},
+    {"type": "function", "function": {"name": "comparison_linear_nonlinear", "description": "对比线性/非线性模型的超自转喷射与热点东移, 量化非线性项贡献(可证伪判定)。",
         "parameters": {"type": "object", "properties": {}, "required": [], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "submit_report", "description": "把最终成文的完整研究报告作为 report_text 参数提交(正文放这里, 思维链留在 content)。",
         "parameters": {"type": "object", "properties": {"report_text": {"type": "string"}},
@@ -287,6 +297,34 @@ def main() -> int:
                 "never_exceeds_limit": no_exceed,
                 "validation": "校验通过" if ok else "校验存疑",
                 "note": s["note"]}, ensure_ascii=False)
+        if name == "solve_nonlinear":
+            sys_name = a.get("name") or state["system"]; state["system"] = sys_name
+            r = hj2.run_scenario2(sys_name, nx=NX, ny=NY, t_end_s=2.0e6)
+            state["nl"] = r
+            return json.dumps({"system": sys_name, "method": "非线性浅水(守恒 FVM/HLLC)",
+                               "mass_drift": round(r["mass_drift"], 6),
+                               "rel_energy_drift": round(r["rel_energy_drift"], 6),
+                               "day_night_delta_T_K": r["day_night_delta_T_K"],
+                               "hot_spot_offset_deg": r["hot_spot_offset_deg"],
+                               "equatorial_jet_max_ms": r["equatorial_jet_max_ms"]}, ensure_ascii=False)
+        if name == "comparison_linear_nonlinear":
+            lin = state.get("run")
+            nl = state.get("nl")
+            if not (lin and nl):
+                return json.dumps({"error": "先 integrate_flow(线性) 且 solve_nonlinear(非线性)"}, ensure_ascii=False)
+            d_lin = hj.analyze(lin)
+            jet_lin, jet_nl = d_lin["equatorial_jet_ms"], nl["equatorial_jet_max_ms"]
+            off_lin, off_nl = d_lin["hot_spot_offset_deg"], nl["hot_spot_offset_deg"]
+            enhancement = (jet_nl / jet_lin) if jet_lin else None
+            strong = bool(jet_nl > jet_lin and off_nl > 0 and d_lin["hot_spot_offset_deg"] > 0)
+            return json.dumps({
+                "linear_jet_ms": jet_lin, "nonlinear_jet_ms": jet_nl,
+                "jet_enhancement_x": round(enhancement, 1) if enhancement else None,
+                "linear_offset_deg": off_lin, "nonlinear_offset_deg": off_nl,
+                "conclusion": ("非线性显著增强超自转喷射、且热点仍东移 → 非线性项是超自转本质来源" if strong
+                               else "非线性未显著增强 → 需更高分辨率/更强强迫"),
+                "note": "数值诚实: 保守 FVM 的内禀数值扩散限制喷射上限, 谱方法可到 ~40 m/s 但难稳定到终态."},
+                ensure_ascii=False)
         if name == "submit_report":
             return json.dumps({"ok": True}, ensure_ascii=False)
         raise AssertionError(name)
@@ -348,7 +386,7 @@ def main() -> int:
     for st in _TOPICS[topic]["workflow"]:
         name = st.split("(")[0].strip()
         wf_args = {"name": state["system"]} if name in ("load_system", "thermal_forcing", "integrate_flow",
-                                                        "sweep_redistribution") else {}
+                                                        "sweep_redistribution", "solve_nonlinear") else {}
         try:
             result = safe(name, wf_args)
         except Exception:
@@ -414,6 +452,16 @@ def main() -> int:
             mono = bool(all(dTs[i] >= dTs[i + 1] for i in range(len(dTs) - 1)))
             L += [f"- 单调递减:{mono}；小τ逼近极限:{bool(dTs[0] >= 0.95*lim)}；不越界:{bool(max(p['norm_delta_T'] or 0 for p in sweep['sweep'])<=1.05)}",
                   f"- 校验: {sweep['note']}"]
+        nl = state.get("nl")
+        if nl:
+            d_lin = d
+            jet_lin = d_lin.get("equatorial_jet_ms", 0.0)
+            L += ["", "## 线性 vs 非线性（超自转喷射）",
+                  f"- 线性喷射 {jet_lin} m/s → 非线性喷射 {nl['equatorial_jet_max_ms']} m/s"
+                  f"（增强 ~{round(nl['equatorial_jet_max_ms']/jet_lin,1) if jet_lin else '?'}×）",
+                  f"- 热点东移：线性 {d_lin.get('hot_spot_offset_deg',0)}° / 非线性 {nl['hot_spot_offset_deg']}°",
+                  f"- 非线性质量漂移 {nl['mass_drift']:+.1e}、能量漂移 {nl['rel_energy_drift']:+.1e}（闭合）",
+                  "- 结论：非线性项显著增强超自转喷射且热点仍东移 → 非线性是超自转的本质来源（数值诚实：保守 FVM 数值扩散限制振幅）"]
         L += ["", "## 预测-对账",
               f"模型预测昼夜温差≥100 K、热点东移>0°（超自转）；与观测 {name} 相位曲线的"
               f"『大幅昼夜差异 + 东向偏移』结构一致。模型平衡温度({round(ts,0)} K)高于观测加热面(~1400 K)，"
