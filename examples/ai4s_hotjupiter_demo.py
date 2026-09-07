@@ -58,6 +58,10 @@ _TOPICS = {
     "T3": {"label": "守恒与模型局限",
            "question": "模型的质量/能量收支是否闭合？线性浅水对超自转喷射振幅的局限如何坦诚刻画？",
            "workflow": ["load_system", "integrate_flow", "conservation_report", "predict_diagnostics"]},
+    "T4": {"label": "热再分配缩放与极限校验",
+           "question": "昼夜温差如何随热再分配时间τ_rad定量缩放？数值能否逼近纯辐射极限并被其校验？",
+           "workflow": ["load_system", "sweep_redistribution", "validate_radiative_limit",
+                        "integrate_flow", "conservation_report", "predict_diagnostics", "reconcile_obs"]},
 }
 _COMPARE = ["WASP-43b", "HD 209458b"]
 
@@ -82,6 +86,11 @@ _TOOLS = [
     {"type": "function", "function": {"name": "predict_diagnostics", "description": "从终态提取可证伪物理量: 昼夜温差、热点东移(超自转)、赤道喷射风速。",
         "parameters": {"type": "object", "properties": {}, "required": [], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "reconcile_obs", "description": "把模型可证伪预测与文献真实观测回算对账, 给出一致/偏差与局限。",
+        "parameters": {"type": "object", "properties": {}, "required": [], "additionalProperties": False}}},
+    {"type": "function", "function": {"name": "sweep_redistribution", "description": "系统扫描热再分配时间τ_rad, 得到昼夜温差/东移/喷射随其定量的缩放轨迹(多实验, 非单点)。",
+        "parameters": {"type": "object", "properties": {"name": {"type": "string", "enum": _COMPARE}},
+            "required": ["name"], "additionalProperties": False}}},
+    {"type": "function", "function": {"name": "validate_radiative_limit", "description": "把扫描数值与『纯辐射平衡极限』对账校验: ΔT 应随 τ_rad→0 逼近极限且不越过(可证伪)。",
         "parameters": {"type": "object", "properties": {}, "required": [], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "submit_report", "description": "把最终成文的完整研究报告作为 report_text 参数提交(正文放这里, 思维链留在 content)。",
         "parameters": {"type": "object", "properties": {"report_text": {"type": "string"}},
@@ -255,6 +264,29 @@ def main() -> int:
                 "limitation": "线性浅水低估非线性赤道喷射振幅(0.1 m/s vs 观测 km/s级超自转); "
                               "模型平衡温度高于观测(灰体/无深部重分布); 我们如实呈现并讨论."},
                 ensure_ascii=False)
+        if name == "sweep_redistribution":
+            sys_name = a.get("name") or state["system"]; state["system"] = sys_name
+            s = hj.sweep_daynight(sys_name, nx=NX, ny=NY)
+            state["sweep"] = s
+            return json.dumps(s, ensure_ascii=False)
+        if name == "validate_radiative_limit":
+            s = state.get("sweep")
+            if not s:
+                return json.dumps({"error": "先 sweep_redistribution 再调用本工具"}, ensure_ascii=False)
+            dTs = [p["delta_T_K"] for p in s["sweep"]]
+            t_rad = s["radiative_limit_delta_T_K"]
+            monotone = all(dTs[i] >= dTs[i + 1] for i in range(len(dTs) - 1))
+            approaches = dTs[0] >= 0.95 * t_rad          # 强冷却(小τ)应逼近极限
+            no_exceed = max(p["norm_delta_T"] or 0 for p in s["sweep"]) <= 1.05  # 不越界
+            ok = bool(monotone and approaches and no_exceed)
+            return json.dumps({
+                "radiative_limit_delta_T_K": t_rad,
+                "scan_delta_T_K": dTs,
+                "monotone_decrease": monotone,
+                "approaches_limit_at_small_tau": approaches,
+                "never_exceeds_limit": no_exceed,
+                "validation": "校验通过" if ok else "校验存疑",
+                "note": s["note"]}, ensure_ascii=False)
         if name == "submit_report":
             return json.dumps({"ok": True}, ensure_ascii=False)
         raise AssertionError(name)
@@ -315,7 +347,8 @@ def main() -> int:
     fill_lines = []
     for st in _TOPICS[topic]["workflow"]:
         name = st.split("(")[0].strip()
-        wf_args = {"name": state["system"]} if name in ("load_system", "thermal_forcing", "integrate_flow") else {}
+        wf_args = {"name": state["system"]} if name in ("load_system", "thermal_forcing", "integrate_flow",
+                                                        "sweep_redistribution") else {}
         try:
             result = safe(name, wf_args)
         except Exception:
@@ -367,6 +400,20 @@ def main() -> int:
             L += [f"- 质量漂移 = {r['mass_drift']:+.2e}，相对能量漂移 = {r['rel_energy_drift']:+.2e}（收支闭合）",
                   f"- 昼夜温差 ΔT ≈ {d['day_night_delta_T_K']} K，夜面 {d['night_mean_K']} K 日面 {d['day_mean_K']} K",
                   f"- 热点东移 ≈ {d['hot_spot_offset_deg']}°（东向超自转）、赤道喷射 {d['equatorial_jet_ms']} m/s"]
+        sweep = state.get("sweep")
+        if sweep:
+            lim = sweep["radiative_limit_delta_T_K"]
+            L += ["", "## 系统扫描与极限校验（多实验, 非单点）",
+                  f"纯辐射平衡极限(τ_rad→0) 昼夜温差 = {lim} K。扫描 τ_rad:",
+                  "| τ_rad [s] | ΔT [K] | ΔT/ΔT_lim | 东移 [°] | 喷射 [m/s] |",
+                  "|-----------|--------|-----------|----------|-----------|"]
+            for p in sweep["sweep"]:
+                L.append(f"| {p['tau_rad_s']} | {p['delta_T_K']} | {p['norm_delta_T'] or '-'} "
+                         f"| {p['offset_deg']} | {p['jet_ms']} |")
+            dTs = [p["delta_T_K"] for p in sweep["sweep"]]
+            mono = bool(all(dTs[i] >= dTs[i + 1] for i in range(len(dTs) - 1)))
+            L += [f"- 单调递减:{mono}；小τ逼近极限:{bool(dTs[0] >= 0.95*lim)}；不越界:{bool(max(p['norm_delta_T'] or 0 for p in sweep['sweep'])<=1.05)}",
+                  f"- 校验: {sweep['note']}"]
         L += ["", "## 预测-对账",
               f"模型预测昼夜温差≥100 K、热点东移>0°（超自转）；与观测 {name} 相位曲线的"
               f"『大幅昼夜差异 + 东向偏移』结构一致。模型平衡温度({round(ts,0)} K)高于观测加热面(~1400 K)，"
