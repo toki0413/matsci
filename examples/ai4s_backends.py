@@ -16,6 +16,7 @@ from pathlib import Path
 
 import hotjupiter_sw as hj
 import hotjupiter_sw2 as hj2
+import hotjupiter_topology as tj_top
 
 from huginn.research import Experiment
 
@@ -123,3 +124,55 @@ OBJECTIVES = {
     "hotjupiter": {"eastward_offset": "maximize", "daynight_contrast": "maximize", "conservation": "maximize"},
     "exoplanet": {"eq_temp_K": "maximize", "insolation_Wm2": "maximize", "consistency": "maximize"},
 }
+
+
+# ═══════════ 域诊断工具能力 (agent 能力层, 独立可调用) ═══════════
+# 这是 agent 的产品级能力: LLM 跑在 agent 上应能发现并调用它去尝试探索;
+# 工具是否适用于某个问题, 由工具自带的自检字段 (ortho_*/harmonic_*_residual)
+# 交给 LLM 判断并以发现写进报告 —— 工具存在与否不由"值不值得"决定.
+HOTJUPITER_SYSTEMS = ["WASP-43b", "HD 209458b"]
+
+
+def hotjupiter_topology_tool() -> dict:
+    """热木星域的高阶拓扑诊断工具能力 (schema + 独立 handler).
+
+    自包含: 对任意系统自跑非线性浅水到终态, 再做 Helmholtz-Hodge 分解。
+    实验性: 纯超自转环谐和隔离精确; 通用强切向流场有边界残差 — 如实返回自检。
+    """
+    tool_schema = {
+        "type": "function",
+        "function": {
+            "name": "hodge_circulation",
+            "description": ("高阶拓扑诊断(实验性): 对非线性稳态流场做 Helmholtz-Hodge 分解, "
+                            "返回谐和(超自转环)/辐散/旋度三分量占比 + ortho_*/harmonic_*_residual "
+                            "自检。你自己判断本问题是否适用并如实在报告中标注。"),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "enum": HOTJUPITER_SYSTEMS},
+                    "nx": {"type": "integer", "default": 48},
+                    "ny": {"type": "integer", "default": 24},
+                },
+                "required": [], "additionalProperties": False,
+            },
+        },
+    }
+
+    def handle(a: dict) -> str:
+        system = a.get("name") or "WASP-43b"
+        if system not in HOTJUPITER_SYSTEMS:
+            return json.dumps({"error": f"unknown system {system}"}, ensure_ascii=False)
+        nx = int(a.get("nx", 48)); ny = int(a.get("ny", 24))
+        sw = hj2.NonlinearSWChannelsFVM(system, nx=nx, ny=ny)
+        sw.integrate(2.0e6)
+        d = tj_top.topological_circulation(sw)
+        d["system"] = system
+        d["experimental"] = ("实验性拓扑诊断: 纯超自转环的谐和隔离精确; 通用强切向流场有边界残差, "
+                             "请结合 ortho_* 与 harmonic_*_residual 自检字段判断适用性。")
+        return json.dumps(d, ensure_ascii=False)
+
+    return {"tool": tool_schema, "handle": handle, "domain": "hotjupiter"}
+
+
+# 供任意工具型 harness 挂载: 领域 → [能力工具...]。demo 从这里"挂载"而非"拥有".
+DIAGNOSTIC_TOOLS = {"hotjupiter": [hotjupiter_topology_tool()]}
