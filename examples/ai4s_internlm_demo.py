@@ -243,28 +243,45 @@ def _make_fit_svg(path, problem, law, params):
     path.write_text(svg, encoding="utf-8")
 
 
-def _write_report(path, final, transcript, title, evidence, best_law):
+def _write_report(path, final, transcript, title, trace, verdict, ungrounded):
+    gate_note = (
+        f"**结论证伪门禁：{verdict}**（未落地主张: {ungrounded or '无'}。每个报告数值均可"
+        f"回溯到下方工具执行轨迹。）" if verdict == "pass" else
+        f"**结论证伪门禁：{verdict}** ⚠ 以下数值不在工具轨迹中、未被采纳: {ungrounded}。")
     header = (
         "# 开放问题研究 — 书生 Intern-S2 × Huginn 自主科研报告\n\n"
-        "> **研究性质：开放问题（无预设答案）**。数据稀疏含噪，规律未知；以下结论由 "
-        "AIC 模型选择 + Bootstrap 参数置信区间 + 留一交叉验证 + 费雪信息实验设计推断得出。\n\n"
-        "## 一、研究问题\n\n" + title + "\n\n## 二、Grounded 真实证据（来自工具，非模型声明）\n\n```\n"
-        + evidence + "```\n\n## 三、执行轨迹\n\n"
+        f"> **研究性质：开放问题（无预设答案）** · {gate_note}\n\n"
+        "## 一、研究问题\n\n" + title + "\n\n## 二、工具执行轨迹（门禁证据）\n\n"
     )
-    trace = "\n".join(f"- {t}" for t in transcript)
-    body = ("\n\n## 四、研究方法\n\n"
-            "候选规律: linear / exponential; 最小二乘拟合并按 AIC 比较; "
-            "参数可辨识性用残差自助法(Bootstrap)95% CI 判定; 用留一交叉验证(LOOCV)复核; "
-            "用费雪信息矩阵(FIM)对补样点做最优实验设计。\n\n"
-            f"经 AIC 判定的更优规律：**{best_law}**。\n\n## 五、结论(开放性)\n\n")
-    footer = ("\n\n---\n*Huginn: 不假装一致，也不捏造自由度。所有统计量均由真实工具结果落地，"
-              "参数不确定性与实验盲区均已显式报告。*\n")
+    trace = "\n".join(f"- {t}" for t in trace)
+    body = ("\n\n## 三、方法\n\n"
+            "方法由模型自主决定：候选规律比较(AIC)、可辨识性(Bootstrap CI)、"
+            "泛化(留一交叉)、最优补样(费雪信息)。任何统计量以工具轨迹落地的真值为准。\n\n"
+            "## 四、结论(开放性)\n\n")
+    footer = ("\n\n---\n*Huginn: 不假装一致，也不捏造自由度。模型自由假设，框架用"
+              "结论证伪门禁锁住每一个数值的可复现性。*\n")
     path.write_text(header + trace + body + final.strip() + footer, encoding="utf-8")
 
 
-# ── 受控科研流水线：每个数字都由真实工具结果落地（防模型编造）───
-# 与 Huginn 的 phase/plan 门控一致：框架编排阶段、模型在阶段内推理/解释，
-# 但任何统计量只来自工具返回，绝不采纳模型"脑内模拟"的数字。
+# ── 自由探索 + 结论证伪门禁 ──────────────────────────────────────
+# 方法完全自由：模型自行决定调哪些工具、用什么参数、按什么顺序走；
+# 框架不设阶段墙、不覆盖模型参数。
+# 只在交付结论时收紧：verify_claims 将报告里每个数值与「工具执行轨迹」比对，
+# 未落地主张 → needs_grounding，回给模型要求删除或补跑工具溯源。
+# 复用框架已落地的 huginn/validation/claim_grounding（纯标准库，可单测）。
+
+
+def _load_gate():
+    """优先 import 框架的 claim_grounding；极简环境退而直接加载该模块文件."""
+    try:
+        from huginn.validation.claim_grounding import verify_claims
+        return verify_claims
+    except Exception:
+        import importlib.util
+        src = Path(__file__).resolve().parents[1] / "agent/huginn/validation/claim_grounding.py"
+        spec = importlib.util.spec_from_file_location("_cg", str(src))
+        mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+        return mod.verify_claims
 
 
 def _pick(tc):
@@ -285,41 +302,22 @@ def _pick(tc):
             return name, ast.literal_eval(c)
         except Exception:
             pass
-    # 仍失败：尽力取缺失字段, 允许空参(用 force_args 兜底)
     return name, {}
 
 
-def _run_stage(client, model_args, messages, required_tool, prompt, legal_tools, force_args=None, fallback_args=None):
-    """反复提示直至模型调用 required_tool（最多 3 次），执行并返回 (name,args,result).
-
-    force_args 非空时，无论模型传入什么，都按框架给定参数执行——确保每个统计量同属
-    一个受控实验(grounded)。若模型一直不调工具，则用 fallback_args 兜底执行。
-    """
-    messages.append({"role": "user", "content": prompt})
-    for _ in range(3):
-        r = client.chat.completions.create(
-            model=model_args["model"], messages=messages,
-            tools=legal_tools, tool_choice="auto", max_tokens=800, temperature=0.2)
-        msg = r.choices[0].message
-        calls = msg.tool_calls or []
-        if calls:
-            name, model_args_raw = _pick(calls[0])
-            args = force_args if (name == required_tool and force_args is not None) else model_args_raw
-            result = exec_tool(name, args)
-            messages.append({"role": "assistant", "content": msg.content or "",
-                            "tool_calls": [tc.model_dump() for tc in calls]})
-            messages.append({"role": "tool", "tool_call_id": calls[0].id, "content": result})
-            if name == required_tool:
-                return name, args, result
-        messages.append({"role": "user",
-                        "content": f"请直接调用 {required_tool} 工具(其余工具请不要调用)。若你仍不调用，系统将代为执行。"})
-    # 兜底：模型一直不调 → 由框架代执行，保证结果落地
-    fb = fallback_args
-    if fb is None and force_args is not None:
-        fb = force_args
-    if fb is None:
-        fb = {}
-    return required_tool, fb, exec_tool(required_tool, fb)
+_OPEN_GOAL = (
+    "你是 Huginn 科研智能体，以 Intern-S2 身份对一个**开放科学问题**做原创研究。\n"
+    "问题库里有多个稀疏含噪、规律未知的数据集。研究步骤完全由你决定：\n"
+    "  - 用 list_problems 看有哪些问题，用 load_dataset 选定一个；\n"
+    "  - 自行提出候选规律并拟合比较（fit_law），评估参数可辨识性与泛化"
+    "（analyze_uncertainty / cross_validate），并规划最优补样（design_experiment）；\n"
+    "  - 你决定用什么工具、什么参数、什么顺序，可自由反复。\n"
+    "最后撰写开放式科研报告：结论、置信区间、局限性与下一步实验。\n"
+    "门禁提醒：系统会把报告里每个数值与你实际调用工具返回的轨迹比对，"
+    "未落地的主张会被拒绝。因此你引用的每个统计量都必须先用工具真实算出。\n"
+    "最终请撰写一份**完整研究报告**，结构：研究问题 / 数据与方法 / 结果分析 / "
+    "结论与局限 / 下一步实验。只输出报告正文，不要输出思考过程。"
+)
 
 
 def main() -> int:
@@ -336,129 +334,73 @@ def main() -> int:
     from openai import OpenAI
     client = OpenAI(api_key=key, base_url=args.base_url or _BASE_URL)
     outdir = Path(args.outdir); outdir.mkdir(parents=True, exist_ok=True)
-    messages: list[dict] = []
-    grounded: dict[str, str] = {}          # 阶段名 -> 工具返回(真实)
+    verify = _load_gate()
+
+    messages: list[dict] = [{"role": "user", "content": _OPEN_GOAL}]
+    trace: list[str] = []          # 工具执行轨迹(每条工具结果) → 门禁证据
     transcript: list[str] = []
+    problem_title = "（模型自选）"
 
-    def closure(label, result, note=""):
-        transcript.append(f"- **{label}**: {note}{result}")
-        print(f"[{label}] {note}{result}" if not note else f"[{label}] {note}")
-
-    # 阶段1 选题+加载（模型自主从问题库选一个）
-    name1, a1, r1 = _run_stage(
-        client, {"model": args.model}, messages, "load_dataset",
-        "科研启动：先调用 list_problems 查看问题库(可先看一眼)，然后调用 load_dataset 选定要研究的开放问题(exp_law 或 comp_law)。",
-        [t for t in _TOOLS if t["function"]["name"] in ("list_problems", "load_dataset")])
-    grounded["dataset"] = r1
-    closure("选题与数据加载", r1)
-    problem = a1["problem"]
-    p = _PROBLEMS[problem]
-
-    # 阶段2 假设+算：对两个互相竞争的候选规律各做一次真实拟合(AIC 比较)
-    fits: dict[str, str] = {}
-    for law in ("linear", "exponential"):
-        _, _, rl = _run_stage(
-            client, {"model": args.model}, messages, "fit_law",
-            f"假设: 对已选问题({problem})调用 fit_law 拟合 {law} 律。",
-            [t for t in _TOOLS if t["function"]["name"] == "fit_law"],
-            force_args={"problem": problem, "law": law},
-            fallback_args={"problem": problem, "law": law})
-        grounded[f"fit_{law}"] = rl
-        fits[law] = rl
-        closure(f"拟合 {law} 律", rl)
-
-    # 由真实 AIC 决定更优规律（不依赖模型的声明）
-    aic = {law: json.loads(fits[law])["AIC"] for law in fits}
-    best_law = min(aic, key=aic.get)
-
-    # 阶段3 验证：对更优规律做 bootstrap 可辨识性 + 留一交叉
-    _, _, r3 = _run_stage(
-        client, {"model": args.model}, messages, "analyze_uncertainty",
-        f"对更优规律 {best_law}(AIC={aic[best_law]}) 调用 analyze_uncertainty 评估参数可辨识性。",
-        [t for t in _TOOLS if t["function"]["name"] in ("analyze_uncertainty", "cross_validate")],
-        force_args={"problem": problem, "law": best_law},
-        fallback_args={"problem": problem, "law": best_law})
-    grounded["uncertainty"] = r3
-    closure("参数可辨识性(Bootstrap CI)", r3)
-    _, _, r4 = _run_stage(
-        client, {"model": args.model}, messages, "cross_validate",
-        f"对 {best_law} 律调用 cross_validate 做留一交叉验证。",
-        [t for t in _TOOLS if t["function"]["name"] == "cross_validate"],
-        force_args={"problem": problem, "law": best_law},
-        fallback_args={"problem": problem, "law": best_law})
-    grounded["cv"] = r4
-    closure("留一交叉验证", r4)
-
-    # 阶段4 做：FIM 最优实验设计
-    _, _, r5 = _run_stage(
-        client, {"model": args.model}, messages, "design_experiment",
-        f"对 {best_law} 律调用 design_experiment 规划下一步最该补样的 x 点。",
-        [t for t in _TOOLS if t["function"]["name"] == "design_experiment"],
-        force_args={"problem": problem, "law": best_law},
-        fallback_args={"problem": problem, "law": best_law})
-    grounded["design"] = r5
-    closure("最优实验设计(FIM)", r5)
-
-    # 生成拟合图(用真实拟合参数)
-    prm = _FITTED[best_law](p["x"], p["y"])
-    _make_fit_svg(outdir / "open_research_fit.svg", problem, best_law, prm)
-
-    # 阶段5 写：把全部真实数值注入, 让模型只做开放式的解释与写作
-    evidence = (
-        "以下为本研究通过工具获得的**全部真实数值**(只能引用这些, 禁止编造/外推):\n"
-        f"- 数据: x={p['x']}, y={p['y']}, 测量噪声 sigma={p['sigma']}\n"
-        f"- linear 拟合: {json.loads(grounded['fit_linear'])['params']}, "
-        f"AIC={json.loads(grounded['fit_linear'])['AIC']}, R²={json.loads(grounded['fit_linear'])['R2']}\n"
-        f"- exponential 拟合: {json.loads(grounded['fit_exponential'])['params']}, "
-        f"AIC={json.loads(grounded['fit_exponential'])['AIC']}, R²={json.loads(grounded['fit_exponential'])['R2']}\n"
-        f"- AIC 更优规律: {best_law}\n"
-        f"- 参数可辨识性: {grounded['uncertainty']}\n"
-        f"- 留一交叉验证: {grounded['cv']}\n"
-        f"- 最优补样点(FIM): {grounded['design']}\n"
-    )
-    messages.append({"role": "user", "content":
-        f"{evidence}\n\n请以开放式科研报告的形式撰写最终结论：\n"
-        "1) 两个候选规律孰优(引用各自 AIC)；\n"
-        "2) 参数是否可识别(引用 CI 是否含 0 与其 95% 区间)；\n"
-        "3) 留一交叉验证误差；\n"
-        "4) 建议下一步补样的 x 点(引用 FIM 推荐)与理由；\n"
-        "5) 局限性与后续实验方向。\n"
-        "只能使用上方给出的真实数值，不要编造任何未给出的统计量。\n"
-        "直接输出研究报告正文，不要输出任何思考过程。"})
-
-    # 写作阶段关掉 thinking_mode, 避免 intern-s2 把思维链写进 content
-    final = ""
-    for attempt in range(2):
-        kwargs = dict(model=args.model, messages=messages, max_tokens=2000, temperature=0.2)
-        if attempt == 0:
-            kwargs["extra_body"] = {"thinking_mode": False}
-        r = client.chat.completions.create(**kwargs)
-        raw = (r.choices[0].message.content or "").strip()
-        import re
-        m = re.search(r"<report>(.*?)</report>", raw, flags=re.DOTALL | re.IGNORECASE)
-        candidate = m.group(1).strip() if m else raw
-        if "Thinking Process" in candidate[:120]:
-            candidate = candidate.split("Thinking Process", 1)[-1].strip()
-        # 判质: 正文应有一定长度且含句读; 否则换 thinking 档重试一次
-        if len(candidate) > 120 and (candidate.count("。") + candidate.count("\n")) >= 3:
-            final = candidate
+    # ── 自由探索：模型自主调工具/参数/顺序，框架只收集轨迹 ──
+    for _ in range(14):
+        r = client.chat.completions.create(
+            model=args.model, messages=messages, tools=_TOOLS,
+            tool_choice="auto", max_tokens=1200, temperature=0.2)
+        msg = r.choices[0].message
+        calls = msg.tool_calls or []
+        if not calls:
             break
-        final = candidate
-    if not final or len(final) < 80:
-        final = ("（模型生成异常，已退化为基于 Grounded 证据的确定性结论）\n"
-                 f"依据真实统计：exponential({json.loads(fits['exponential'])['AIC']}) 优于 "
-                 f"linear({json.loads(fits['linear'])['AIC']})，参数可识别(Boot CI="
-                 f"{json.loads(grounded['uncertainty'])['bootstrap_95ci']}，"
-                 f"{json.loads(grounded['uncertainty'])['verdict']})，LOOCV="
-                 f"{json.loads(grounded['cv'])['loocv_mse']}，下一步建议在 "
-                 f"{json.loads(grounded['design'])['recommended_next_sample_x']} 处补样。")
+        for tc in calls:
+            name, a = _pick(tc)
+            result = exec_tool(name, a)
+            print(f"[tool] {name} {tc.function.arguments}\n  -> {result}")
+            trace.append(result)
+            transcript.append(f"`{name}` {tc.function.arguments} → {result}")
+            if name == "load_dataset":
+                problem_title = _PROBLEMS.get(a.get("problem", ""), {}).get("title", problem_title)
+            if name == "fit_law":
+                try:
+                    prm = _FITTED[a["law"]](_PROBLEMS[a["problem"]]["x"], _PROBLEMS[a["problem"]]["y"])
+                    _make_fit_svg(outdir / "open_research_fit.svg", a["problem"], a["law"], prm)
+                except Exception:
+                    pass
+            messages.append({"role": "assistant", "content": msg.content or "",
+                            "tool_calls": [tc.model_dump() for tc in calls]})
+            messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
+            break  # 一次只回执一条，保持展开简单
+
+    # ── 结论证伪门禁：模型交报告 → 核对每个数值是否落在轨迹里 ──
+    def _gen_final() -> str:
+        return client.chat.completions.create(
+            model=args.model, messages=messages, max_tokens=1800, temperature=0.2,
+            extra_body={"thinking_mode": False}).choices[0].message.content or ""
+
+    final = ""
+    verdict_state, ungrounded = "needs_grounding", []
+    for _ in range(2):
+        final = _gen_final()
+        g = verify(final, trace)
+        transcript.append(f"门禁: verify={g['verdict']} unsubstantiated={g['unsubstantiated']}")
+        print(f"\n[门禁] {g['verdict']}  unsubstantiated={g['unsubstantiated']}")
+        if g["verdict"] == "pass":
+            verdict_state, ungrounded = "pass", []
+            break
+        ungrounded = g["unsubstantiated"]
+        # 自由但不得绕过门禁：请删除未落地主张或补跑工具溯源
+        messages.append({"role": "user", "content":
+            "门禁未通过：以下数值不在你的工具执行轨迹中、无法溯源: "
+            f"{ungrounded}。请删除这些未落地的主张（若要保留，先用对应工具获得真实值），"
+            "然后重写一份**完整研究报告**（研究问题/数据与方法/结果分析/结论与局限/"
+            "下一步实验），确保每个数值都能在工具轨迹中找到。"})
+        messages.append({"role": "assistant", "content": final})
 
     report = outdir / "ai4s_open_research_report.md"
-    _write_report(report, final, transcript, p["title"], evidence, best_law)
+    _write_report(report, final, transcript, problem_title, trace, verdict_state, ungrounded)
     print("\n==== 开放研究报告已写入 ====")
     print(report.resolve())
-    print("\n---- 正文（前 1600 字）----\n")
-    print(final[:1600])
+    print(f"\n结论证伪门禁: {verdict_state}  未落地主张: {ungrounded}")
+    print("\n---- 正文（前 1200 字）----\n")
+    print(final[:1200])
     return 0
 
 
