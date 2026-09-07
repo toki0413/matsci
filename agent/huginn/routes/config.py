@@ -493,13 +493,13 @@ def _build_model_config(params: dict[str, Any]) -> ModelConfig:
 
 @router.get("/config/providers", dependencies=[Depends(require_admin_key)])
 async def list_providers() -> dict[str, Any]:
-    """列出支持的 19 个 provider + 默认 base_url + 是否需要 key。"""
+    """列出支持的 provider + 默认 base_url + 是否需要 key。"""
     # 顺序固定, 前端展示更稳定
     order = [
         "anthropic", "openai", "deepseek", "google-genai", "openrouter",
         "nvidia", "ollama", "vllm", "local", "siliconflow",
         "moonshot", "zhipu", "baichuan", "dashscope", "qianfan",
-        "doubao", "hunyuan", "minimax",
+        "doubao", "hunyuan", "minimax", "internlm",
         "lm-studio", "llama-cpp", "sglang",
         "openai-compatible", "default",
     ]

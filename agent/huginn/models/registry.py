@@ -145,6 +145,7 @@ ProviderT = Literal[
     "hunyuan",
     "minimax",
     "spark",
+    "internlm",
     "openai-compatible",
     # Local LLM presets (all OpenAI-compatible)
     "lm-studio",
@@ -428,6 +429,30 @@ MODEL_CAPABILITIES: dict[str, ModelCaps] = {
     "internvl2": ModelCaps(vision=True, tools=False, reasoning=False, streaming=True),
     "internvl": ModelCaps(vision=True, tools=False, reasoning=False, streaming=True),
     "mllama": ModelCaps(vision=True, tools=False, reasoning=False, streaming=True),
+    # ── 书生 InternLM (上海AI实验室) ──────────────────────────
+    # Intern-S2-Preview (35B-A3B 科学多模态推理模型, 256K 上下文): 深度思考 +
+    # 工具调用. 注意: ChatAPI 的 thinking_mode 会把思维链写进 content 字段
+    # (无独立 reasoning_content), 拖后最终答案; 强推理任务建议走 harness 的
+    # dedicated reasoning 逻辑或在 ingest 时剥离首段思考.
+    "intern-s2-preview": ModelCaps(
+        vision=True, tools=True, reasoning=True, streaming=True
+    ),
+    "intern-s1-pro": ModelCaps(
+        vision=True, tools=True, reasoning=True, streaming=True
+    ),
+    "intern-s1": ModelCaps(vision=False, tools=True, reasoning=True, streaming=True),
+    "intern-s1-mini": ModelCaps(
+        vision=False, tools=True, reasoning=True, streaming=True
+    ),
+    # intern-latest: 书生 ChatAPI 通用最新模型, 支持 tool calling
+    "intern-latest": ModelCaps(
+        vision=False, tools=True, reasoning=False, streaming=True
+    ),
+    "internlm3": ModelCaps(vision=False, tools=True, reasoning=True, streaming=True),
+    "internlm3.5": ModelCaps(vision=False, tools=True, reasoning=True, streaming=True),
+    "internlm2.5": ModelCaps(
+        vision=False, tools=True, reasoning=False, streaming=True
+    ),
     "phi3.5-vision": ModelCaps(
         vision=True, tools=False, reasoning=False, streaming=True
     ),
@@ -532,6 +557,14 @@ _DOMESTIC_OPENAI_COMPATIBLE: dict[str, dict[str, str | None]] = {
         "base_url": "https://maas-api.cn-huabei-1.xf-yun.com/v2",
         "default_model": "spark-x2.5-4b",
     },
+    "internlm": {
+        "env": "INTERNLM_API_KEY",
+        # 书生 · 端砚 ChatAPI 的 OpenAI 兼容端点; 模型含 intern-s2-preview
+        # / intern-s1-pro / internvl-latest 等. 智能体任务推荐 intern-s2-preview
+        # (thinking_mode 默认开启).
+        "base_url": "https://chat.intern-ai.org.cn/api/v1",
+        "default_model": "intern-s2-preview",
+    },
     "openai-compatible": {
         "env": "OPENAI_API_KEY",
         "base_url": None,
@@ -580,6 +613,7 @@ _PROVIDER_DEFAULTS: dict[ProviderT, str | None] = {
     "hunyuan": "hunyuan-turbo",
     "minimax": "MiniMax-M2.7",
     "spark": "spark-x2.5-4b",
+    "internlm": "intern-s2-preview",
     "openai-compatible": None,
     "lm-studio": "local-model",
     "llama-cpp": "local-model",
@@ -607,6 +641,7 @@ _PROVIDER_KEY_ENV: dict[ProviderT, str] = {
     "hunyuan": "HUNYUAN_API_KEY",
     "minimax": "MINIMAX_API_KEY",
     "spark": "SPARK_API_KEY",
+    "internlm": "INTERNLM_API_KEY",
     "openai-compatible": "OPENAI_API_KEY",
     # MinerU 文献解析服务 (非 LLM provider, 复用 pick_api_key 做轮询)
     "mineru": "MINERU_API_KEY",
@@ -640,6 +675,7 @@ _CLOUD_PROVIDERS: set[str] = {
     "hunyuan",
     "minimax",
     "spark",
+    "internlm",
 }
 
 # A2: Anthropic 2026 beta header 集合 (5 项).
@@ -1042,6 +1078,7 @@ def list_providers() -> list[dict[str, Any]]:
             "hunyuan": "腾讯混元",
             "minimax": "MiniMax (稀宇)",
             "spark": "讯飞星火 (Spark)",
+            "internlm": "书生 InternLM (上海AI实验室)",
         }
         entries.append(
             {

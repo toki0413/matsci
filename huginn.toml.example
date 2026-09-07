@@ -28,6 +28,16 @@ provider = "ollama"
 model = "qwen3.8"
 base_url = "http://localhost:11434"
 
+# 书生 InternLM (方向1/AI4S 推荐): 需要环境变量 INTERNLM_API_KEY
+# 智能体任务默认用 intern-s2-preview (科学多模态 + 深度思考 + 工具调用),
+# 多模态图表/谱图解析可另挂 internvl-latest。
+[[models]]
+alias = "intern"
+provider = "internlm"
+model = "intern-s2-preview"
+# api_key 省略时从 INTERNLM_API_KEY 环境变量读取
+# base_url 默认 https://chat.intern-ai.org.cn/api/v1, 可覆盖
+
 # Agent profiles map tasks/tools to a model alias.
 [[agents]]
 id = "lead"

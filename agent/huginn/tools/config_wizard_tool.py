@@ -1,7 +1,7 @@
 """配置向导工具 —— 帮用户选 provider / 校验配置 / 迁移 env / 接本地模型。
 
 actions:
-- list_providers:    列出 19 个 provider + 默认 base_url + 是否需要 key + 特点说明
+- list_providers:    列出 20 个 provider + 默认 base_url + 是否需要 key + 特点说明
 - recommend_provider: 按自然语言需求 ("本地部署" / "便宜" / "最强推理") 推荐
 - validate_config:   检查当前配置完整性 (缺 key / base_url 空 / model 名错)
 - migrate_from_env:  扫环境变量 (OPENAI_API_KEY 等) 迁移到 config 文件
@@ -227,7 +227,7 @@ class ConfigWizardTool(HuginnTool):
     category = "meta"
     description = (
         "Configuration wizard for LLM providers. Actions: "
-        "list_providers (list 19 supported providers with defaults), "
+        "list_providers (list 20 supported providers with defaults), "
         "recommend_provider (recommend based on natural-language requirement), "
         "validate_config (check current config completeness), "
         "migrate_from_env (scan env vars and migrate API keys to config file), "
@@ -325,6 +325,7 @@ class ConfigWizardTool(HuginnTool):
             "qianfan",
             "doubao",
             "hunyuan",
+            "internlm",
             "openai-compatible",
             "default",
         ]
@@ -334,7 +335,7 @@ class ConfigWizardTool(HuginnTool):
                 "providers": providers,
                 "count": len(providers),
                 "message": (
-                    "共 19 个 provider. 本地方案 (ollama/vllm/local) 无需 key, "
+                    "共 20 个 provider. 本地方案 (ollama/vllm/local) 无需 key, "
                     "云端方案需要对应环境变量的 API key. "
                     "用 recommend_provider 按需求推荐, setup_local_model 接本地模型."
                 ),

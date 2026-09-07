@@ -527,12 +527,12 @@ async def test_personalization_unknown_action_returns_error():
 # ════════════════════════════════════════════════════════════════════
 
 
-async def test_config_list_providers_returns_19():
-    """list_providers 返回 19 个 provider (含 anthropic/openai/ollama 等)."""
+async def test_config_list_providers_returns_20():
+    """list_providers 返回 20 个 provider (含 anthropic/openai/ollama 等)."""
     tool = ConfigWizardTool()
     result = await tool.call({"action": "list_providers"}, context=None)
     assert result.success is True
-    assert result.data["count"] == 19
+    assert result.data["count"] == 20
     provider_names = [p["provider"] for p in result.data["providers"]]
     assert "anthropic" in provider_names
     assert "ollama" in provider_names
