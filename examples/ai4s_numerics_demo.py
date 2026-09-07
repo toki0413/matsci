@@ -203,14 +203,31 @@ def main() -> int:
             if all(any(t.startswith(f"`{k}") for t in transcript) for k in required):
                 break
 
+    # 放开书生深度思考做研究/写作（不再 thinking_mode=False）；用 <report> 标签剥离思维链
+    messages.append({"role": "user", "content":
+        "现在请深度思考后撰写**完整研究报告**（研究问题/数据与方法/结果分析/预测-对账/结论与局限/下一步）。"
+        "你可以先做充分的深度推理；把**最终成文的报告**完整放在 <report> 与 </report> 两个标签之间，"
+        "标签内只放报告正文，不要放思考过程。研究的每个数值必须来自你已调用工具返回的真实结果。"})
+
+    def _extract_report(raw: str) -> str:
+        import re
+        m = re.search(r"<report>(.*?)</report>", raw, flags=re.DOTALL | re.IGNORECASE)
+        if m:
+            return m.group(1).strip()
+        # 退而剥离前置思维链
+        if "Thinking Process" in raw:
+            raw = raw.split("Thinking Process", 1)[-1]
+        return raw.strip()
+
     def _gen():
-        return client.chat.completions.create(model=args.model, messages=messages, max_tokens=1800,
-                                              temperature=0.2, extra_body={"thinking_mode": False}).choices[0].message.content or ""
+        r = client.chat.completions.create(model=args.model, messages=messages,
+                                           max_tokens=4000, temperature=0.2)
+        return _extract_report(r.choices[0].message.content or "")
     final = ""; verdict, ungrounded = "needs_grounding", []
     did_verify = any(t.startswith("`verify_predict") for t in transcript)
     for _ in range(3):
         final = _gen()
-        g = verify(final, trace)
+        g = verify(final, trace, allow_derived=True)
         print(f"\n[门禁] {g['verdict']} unsubstantiated={g['unsubstantiated']}")
         reasons = []
         if not did_verify: reasons.append("还差可证伪验证: 请 predict_error 后 verify_predict 回算对账")

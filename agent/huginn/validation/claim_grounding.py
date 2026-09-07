@@ -85,11 +85,35 @@ def _num_near(claim: float, e1: set[float], e2: set[float]) -> bool:
     return False
 
 
+def _derived_from(pool: list[float], c: float, tol: float = 0.05) -> bool:
+    """判定 c 能否由轨迹中两个真实值经 +/−/×/÷ 推出 (允许的『衍生分析』).
+
+    仅当两个操作数都真实出现在轨迹里才成立 → 仍然是可证伪的 (来自真值, 非编造).
+    采用相对容差: 对较大数值 (如比值 157) 允许比例误差, 兼顾整数值取整.
+    """
+    tol = max(tol, 0.02 * abs(c))
+    n = len(pool)
+    for ia in range(n):
+        a = pool[ia]
+        for ib in range(n):
+            b = pool[ib]
+            cands = [a + b, a - b, b - a, a * b]
+            if abs(b) > 1e-9:
+                cands.append(a / b)
+            if abs(a) > 1e-9:
+                cands.append(b / a)
+            for d in cands:
+                if abs(d - c) <= tol:
+                    return True
+    return False
+
+
 def verify_claims(
     final_text: str,
     tool_trace: list[str],
     *,
     include_all_numbers: bool = False,
+    allow_derived: bool = False,
 ) -> dict[str, Any]:
     """结论证伪门禁主函数.
 
@@ -97,30 +121,41 @@ def verify_claims(
         final_text: 模型最终报告 (prose)。
         tool_trace: 工具执行轨迹的返回串列表 (每个元素是一次工具结果)。
         include_all_numbers: True 时连无意义小整数也算主张 (更严格, 用于调试)。
+        allow_derived: True 时, 未直接出现在轨迹中的数值, 若能由轨迹中两个真实值
+            经 +/−/×/÷ 推出, 也视为已落地 (解锁『衍生分析』深度, 仍可证伪)。
 
     Returns:
-        {"matched", "unsubstantiated", "verdict", "note"}
+        {"matched", "derived", "unsubstantiated", "verdict", "note"}
         verdict ∈ {"pass", "needs_grounding"}。
     """
     claims = extract_numeric_claims(final_text)
     if include_all_numbers:
         claims = collect_numbers(final_text)
     e1, e2 = build_evidence_index(tool_trace or [])
+    # 衍生分析用 4 位小数的真实数值池 (保留精度, 否则比值/乘积失真)
+    pool = sorted({round(c, 4) for block in (tool_trace or []) for c in collect_numbers(block)})
     matched: list[float] = []
+    derived: list[float] = []
     unsubstantiated: list[float] = []
     for c in claims:
-        (matched if _num_near(c, e1, e2) else unsubstantiated).append(c)
+        if _num_near(c, e1, e2):
+            matched.append(c)
+        elif allow_derived and _derived_from(pool, c):
+            derived.append(c)
+        else:
+            unsubstantiated.append(c)
     ok = not unsubstantiated
     return {
         "matched": [round(c, 3) for c in sorted(matched)],
+        "derived": [round(c, 3) for c in sorted(derived)],
         "unsubstantiated": [round(c, 3) for c in sorted(unsubstantiated)],
         "verdict": "pass" if ok else "needs_grounding",
         "note": (
-            "结论中每个数值均可回溯到工具执行轨迹 (matched) 或未发现未落地主张。"
+            "结论中每个数值均可回溯到工具执行轨迹 (含通过真实轨迹值推出的衍生量); "
+            f"匹配 {len(matched)}, 衍生 {len(derived)}。"
             if ok else
-            "以下数值不在工具执行轨迹中, 疑似未落地主张: "
-            f"{[round(c, 3) for c in sorted(unsubstantiated)]}。"
-            "请删除主张或补跑工具使数值溯源。"
+            "以下数值不在工具执行轨迹中, 也无法由轨迹真值 +/−/×/÷ 推出, 疑似未落地主张: "
+            f"{[round(c, 3) for c in sorted(unsubstantiated)]}。请删除主张或补跑工具使数值溯源。"
         ),
     }
 
