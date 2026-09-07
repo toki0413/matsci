@@ -51,6 +51,21 @@ def _build_trace(cache: dict[str, dict]) -> list[str]:
     return [json.dumps(v, ensure_ascii=False) for v in cache.values()]
 
 
+def grounding_verifier() -> Callable[[str, list[str]], dict]:
+    """声明门禁唯一实现 (claim_grounding). 所有 demo/管线统一从这里取, 不再各自 bootstrap."""
+    def _v(text: str, trace: list[str]) -> dict:
+        try:
+            from huginn.validation.claim_grounding import verify_claims
+            return verify_claims(text, trace, allow_derived=True)
+        except Exception:
+            from importlib import util
+            src = Path(__file__).resolve().parents[1] / "validation/claim_grounding.py"
+            spec = util.spec_from_file_location("_cg", str(src))
+            mod = util.module_from_spec(spec); spec.loader.exec_module(mod)
+            return mod.verify_claims(text, trace, allow_derived=True)
+    return _v
+
+
 def run_research_program(
     goal: str,
     experiments: list[Experiment],
@@ -88,19 +103,8 @@ def run_research_program(
         max_parallel=max_parallel,
     )
 
-    # 声明门禁: 默认从产品内加载 claim_grounding
-    def _default_verify(text, trace):
-        try:
-            from huginn.validation.claim_grounding import verify_claims
-            return verify_claims(text, trace, allow_derived=True)
-        except Exception:
-            from importlib import util
-            src = Path(__file__).resolve().parents[1] / "validation/claim_grounding.py"
-            spec = util.spec_from_file_location("_cg", str(src))
-            mod = util.module_from_spec(spec); spec.loader.exec_module(mod)
-            return mod.verify_claims(text, trace, allow_derived=True)
-
-    verify = verify or _default_verify
+    # 声明门禁: 默认从产品内单一实现取
+    verify = verify or grounding_verifier()
 
     result = asyncio.run(orch.explore(
         objective=goal,

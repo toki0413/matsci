@@ -25,8 +25,10 @@ from pathlib import Path
 
 _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "agent"))   # 产品模块(huginn.*)
 import hotjupiter_sw as hj  # noqa: E402
 import hotjupiter_sw2 as hj2  # noqa: E402   # 非线性浅水核（超自转喷射）
+from huginn.research import grounding_verifier  # noqa: E402   # 声明门禁唯一实现
 
 _BASE_URL = os.environ.get("INTERNLM_BASE_URL", "https://chat.intern-ai.org.cn/api/v1")
 _DEFAULT_MODEL = "intern-s2-preview"
@@ -148,18 +150,6 @@ def _pick(tc):
     return name, _salvage(raw)
 
 
-def _load_gate():
-    try:
-        from huginn.validation.claim_grounding import verify_claims
-        return verify_claims
-    except Exception:
-        import importlib.util
-        src = Path(__file__).resolve().parents[1] / "agent/huginn/validation/claim_grounding.py"
-        spec = importlib.util.spec_from_file_location("_cg", str(src))
-        mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
-        return mod.verify_claims
-
-
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--model", default=_DEFAULT_MODEL)
@@ -174,7 +164,7 @@ def main() -> int:
 
     from openai import OpenAI
     client = OpenAI(api_key=key or "dry", base_url=args.base_url or _BASE_URL) if not args.dry else None
-    verify = _load_gate()
+    verify = grounding_verifier()
 
     state = {"system": args.system, "run": None, "cons": None}
     if args.topic:

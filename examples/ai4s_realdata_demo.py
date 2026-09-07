@@ -24,6 +24,7 @@ import json
 import math
 import os
 import random
+import sys
 from pathlib import Path
 
 _BASE_URL = os.environ.get("INTERNLM_BASE_URL", "https://chat.intern-ai.org.cn/api/v1")
@@ -32,18 +33,9 @@ _DEFAULT_MODEL = "intern-s2-preview"
 OUT = Path(__file__).resolve().parent / "out"
 OUT.mkdir(parents=True, exist_ok=True)
 
-
-# ─────────────────────────── 0) 结论证伪门禁 ───────────────────────────
-def _load_gate():
-    try:
-        from huginn.validation.claim_grounding import verify_claims
-        return verify_claims
-    except Exception:
-        import importlib.util
-        src = Path(__file__).resolve().parents[1] / "agent/huginn/validation/claim_grounding.py"
-        spec = importlib.util.spec_from_file_location("_cg", str(src))
-        mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
-        return mod.verify_claims
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "agent"))   # 产品模块(huginn.*)
+from huginn.research import grounding_verifier  # noqa: E402   # 声明门禁唯一实现
+_verify = grounding_verifier()
 
 
 # ─────────────────────────── 1) 真实数据抓取 + 缓存 ─────────────────────
@@ -296,7 +288,7 @@ def main() -> int:
 
     from openai import OpenAI
     client = OpenAI(api_key=key, base_url=args.base_url or _BASE_URL)
-    verify = _load_gate()
+    verify = _verify
     prob = PROBLEMS[args.problem]
 
     # 抓取真实数据 + 确定性留出切分

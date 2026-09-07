@@ -40,23 +40,13 @@ OUT.mkdir(parents=True, exist_ok=True)
 
 _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "agent"))   # 产品模块(huginn.*)
 import numerics as nm  # noqa: E402
+from huginn.research import grounding_verifier  # noqa: E402   # 声明门禁唯一实现
 
 METHODS = {"fem_linear": "线性拉格朗日有限元", "iga_p2": "二次 B 样条等几何分析(IGA)"}
 THEORY = {"fem_linear": {"H1": 1, "L2": 2}, "iga_p2": {"H1": 2, "L2": 3}}
 MESHES = [8, 16, 32, 64]
-
-
-def _load_gate():
-    try:
-        from huginn.validation.claim_grounding import verify_claims
-        return verify_claims
-    except Exception:
-        import importlib.util
-        src = Path(__file__).resolve().parents[1] / "agent/huginn/validation/claim_grounding.py"
-        spec = importlib.util.spec_from_file_location("_cg", str(src))
-        mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
-        return mod.verify_claims
 
 
 _TOPICS = {
@@ -190,7 +180,7 @@ def main() -> int:
         print("error: INTERNLM_API_KEY not set (或使用 --dry 演示兜底)", file=sys.stderr); return 2
     from openai import OpenAI
     client = OpenAI(api_key=key or "dry", base_url=args.base_url or _BASE_URL) if not args.dry else None
-    verify = _load_gate()
+    verify = grounding_verifier()
     state = {}  # 累积确定性状态, 供补全与报告组装
     state.setdefault("verifies", [])
     messages = [{"role": "user", "content": _GOAL}]

@@ -38,6 +38,9 @@ from pathlib import Path
 _BASE_URL = os.environ.get("INTERNLM_BASE_URL", "https://chat.intern-ai.org.cn/api/v1")
 _DEFAULT_MODEL = "intern-s2-preview"
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "agent"))   # 产品模块(huginn.*)
+from huginn.research import grounding_verifier  # noqa: E402   # 声明门禁唯一实现
+
 
 # ── 开放问题库：稀疏含噪观测，噪声标准差 sigma 已知，规律未知 ─────
 _PROBLEMS = {
@@ -268,20 +271,7 @@ def _write_report(path, final, transcript, title, trace, verdict, ungrounded):
 # 框架不设阶段墙、不覆盖模型参数。
 # 只在交付结论时收紧：verify_claims 将报告里每个数值与「工具执行轨迹」比对，
 # 未落地主张 → needs_grounding，回给模型要求删除或补跑工具溯源。
-# 复用框架已落地的 huginn/validation/claim_grounding（纯标准库，可单测）。
-
-
-def _load_gate():
-    """优先 import 框架的 claim_grounding；极简环境退而直接加载该模块文件."""
-    try:
-        from huginn.validation.claim_grounding import verify_claims
-        return verify_claims
-    except Exception:
-        import importlib.util
-        src = Path(__file__).resolve().parents[1] / "agent/huginn/validation/claim_grounding.py"
-        spec = importlib.util.spec_from_file_location("_cg", str(src))
-        mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
-        return mod.verify_claims
+# 复用产品模块已落地的声明门禁唯一实现 ground_verifier。
 
 
 def _pick(tc):
@@ -334,7 +324,7 @@ def main() -> int:
     from openai import OpenAI
     client = OpenAI(api_key=key, base_url=args.base_url or _BASE_URL)
     outdir = Path(args.outdir); outdir.mkdir(parents=True, exist_ok=True)
-    verify = _load_gate()
+    verify = grounding_verifier()
 
     messages: list[dict] = [{"role": "user", "content": _OPEN_GOAL}]
     trace: list[str] = []          # 工具执行轨迹(每条工具结果) → 门禁证据
