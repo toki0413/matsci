@@ -149,20 +149,95 @@ def synthesize(front: list[dict], cache: dict) -> str:
     return "\n".join(L)
 
 
+def _load_gate():
+    try:
+        from huginn.validation.claim_grounding import verify_claims
+        return verify_claims
+    except Exception:
+        import importlib.util
+        src = Path(__file__).resolve().parents[1] / "agent/huginn/validation/claim_grounding.py"
+        spec = importlib.util.spec_from_file_location("_cg", str(src))
+        mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+        return mod.verify_claims
+
+
+def _build_trace(cache: dict) -> list[str]:
+    """把已执行假说的真实结果转成门禁轨道(让 agent 报告里的数值可被 ground)."""
+    return [json.dumps(v, ensure_ascii=False) for v in cache.values()]
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--dry", action="store_true", help="确定性运行(不调模型), 展示锦标赛机制")
+    ap.add_argument("--model", default="intern-s2-preview")
+    ap.add_argument("--base-url", default=None)
     args = ap.parse_args()
 
     out = run_arena()
-    report = synthesize(out["front"], out["cache"])
+    front = out["front"]
+    trace = _build_trace(out["cache"])
+    verify = _load_gate()
+
+    survivors_text = "\n".join(
+        f"- {br['name']}: {json.dumps(out['cache'].get(br['name'], {}).get('summary', {}), ensure_ascii=False)}"
+        for br in front)
+
+    final = ""; verdict = "needs_grounding"; ungrounded = []
+    if not args.dry:
+        import os
+        key = os.environ.get("INTERNLM_API_KEY")
+        if not key:
+            print("error: INTERNLM_API_KEY not set (或 --dry)", file=sys.stderr); return 2
+        from openai import OpenAI
+        client = OpenAI(api_key=key, base_url=args.base_url or
+                        os.environ.get("INTERNLM_BASE_URL", "https://chat.intern-ai.org.cn/api/v1"))
+        prompt = (
+            "你是 Huginn 科研智能体。以下是研究假说锦标赛(Pareto 前沿)存活假说的**真实数值证据**(可复现、非伪造):\n"
+            f"{survivors_text}\n\n"
+            "请撰写跨学科深度研究报告(研究问题/数据与方法/结果分析/对账与局限/下一步)。"
+            "每个数值必须来自上面真实结果中, 不许编造。把最终报告放在 <report> 与 </report> 之间。")
+        for _ in range(3):
+            r = client.chat.completions.create(model=args.model, messages=[{"role": "user", "content": prompt}],
+                                               max_tokens=4000, temperature=0.2)
+            final = r.choices[0].message.content or ""
+            m = __import__("re").search(r"<report>(.*?)</report>", final, flags=__import__("re").DOTALL | __import__("re").IGNORECASE)
+            if m:
+                final = m.group(1).strip()
+            g = verify(final, trace, allow_derived=True)
+            if g["verdict"] == "pass" and len(final.strip()) > 200:
+                verdict, ungrounded = "pass", []; break
+            ungrounded = g["unsubstantiated"]
+            prompt = (f"未交付(未落地数值:{ungrounded})。请只用上面真实证据重写: "
+                      f"[被拒数值必须删掉或改为真实值]\n" + prompt)
+        else:
+            # 弱模型交不出可落地报告 → L3b 确定性组装兜底(数值全来自真实 cache, 必过门禁)
+            final = synthesize(front, out["cache"])
+            g = verify(final, trace, allow_derived=True)
+            if g["verdict"] == "pass":
+                verdict, ungrounded = "pass", []
+            else:
+                ungrounded = g["unsubstantiated"]
+    else:
+        final = synthesize(front, out["cache"])
+        g = verify(final, trace, allow_derived=True)
+        if g["verdict"] == "pass":
+            verdict, ungrounded = "pass", []
+        else:
+            ungrounded = g["unsubstantiated"]
+
+    header = (f"# 假说锦标赛(Research Arena) — Huginn × 书生 跨学科自主深研\n\n"
+              f"> **结论证伪门禁: {verdict}**（未落地主张: {ungrounded or '无'}）\n"
+              f"> real orchestrator: explored={out['explored']} pruned={out['pruned']} "
+              f"convergence={out['convergence']}\n"
+              f"> 存活假说: " + ", ".join(b["name"] for b in front) + "\n\n")
     rep = OUT / "ai4s_arena_report.md"
-    rep.write_text(report + "\n", encoding="utf-8")
+    rep.write_text(header + final.strip() + "\n", encoding="utf-8")
 
     print(f"[arena] explored={out['explored']} pruned={out['pruned']} "
-          f"pareto_front={len(out['front'])} convergence={out['convergence']}")
-    for br in out["front"]:
+          f"pareto_front={len(front)} convergence={out['convergence']}")
+    for br in front:
         print(f"  surv → {br['name']}")
+    print(f"[gate] {verdict} {ungrounded}")
     print("报告:", rep.resolve())
     return 0
 
