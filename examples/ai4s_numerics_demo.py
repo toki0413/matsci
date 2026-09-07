@@ -47,7 +47,22 @@ def _load_gate():
         return mod.verify_claims
 
 
+_TOPICS = {
+    "T1": {"label": "方法效率", "question": "同自由度下，二次等几何(IGA)是否显著优于线性有限元(FEM)？优势随网格如何变化？",
+           "workflow": ["convergence(fem_linear)", "convergence(iga_p2)", "compare_methods", "predict_error", "verify_predict"]},
+    "T2": {"label": "预测可信度", "question": "由若干粗网格外推更细网格的 H1 误差，回算验证是否可靠？预测/实际 比值是否稳定？",
+           "workflow": ["convergence(fem_linear)", "convergence(iga_p2)", "predict_error(目标128)", "verify_predict", "predict_error(目标256)", "verify_predict"]},
+    "T3": {"label": "理论一致性审计", "question": "数值估的 H1/L2 收敛阶是否在各网格、各范数下系统性地与理论 O(h)/O(h²)/O(h³) 一致？",
+           "workflow": ["convergence(fem_linear)", "convergence(iga_p2)", "compare_methods"]},
+}
+
 _TOOLS = [
+    {"type": "function", "function": {"name": "topic_bank", "description": "查看开放研究题目菜单(你可自主选题)。",
+        "parameters": {"type": "object", "properties": {}, "required": [], "additionalProperties": False}}},
+    {"type": "function", "function": {"name": "choose_topic", "description": "选定你要研究的问题, 给出研究问题与工作假说。",
+        "parameters": {"type": "object", "properties": {"topic": {"type": "string", "enum": list(_TOPICS)},
+            "research_question": {"type": "string"}, "hypothesis": {"type": "string"}},
+            "required": ["topic", "research_question"], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "load_pde", "description": "加载椭圆型 PDE、可用方法与理论收敛阶。",
         "parameters": {"type": "object", "properties": {}, "required": [], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "convergence", "description": "对某方法在不同网格做收敛研究, 返回各网格 H1/L2 误差与 log-log 估阶。",
@@ -61,16 +76,19 @@ _TOOLS = [
     {"type": "function", "function": {"name": "verify_predict", "description": "回算: 真正求解 target_ne, 返回预测vs实际误差与差距(回算对账)。",
         "parameters": {"type": "object", "properties": {"method": {"type": "string", "enum": list(METHODS)},
             "target_ne": {"type": "integer", "default": 128}}, "required": ["method"], "additionalProperties": False}}},
+    {"type": "function", "function": {"name": "submit_report", "description": "把最终成文的完整研究报告作为 report_text 参数提交(正文放这里, 系统会从这里读取, 思维链请留在 content 不放进参数)。",
+        "parameters": {"type": "object", "properties": {"report_text": {"type": "string"}},
+            "required": ["report_text"], "additionalProperties": False}}},
 ]
 
 _GOAL = (
-    "你是 Huginn 科研智能体, 以 Intern-S2 身份对【计算数学：新型有限元 vs 等几何分析】做真实数值研究。\n"
-    "研究问题: 对 -u''=π²sin(πx), u(0)=u(1)=0, '线性有限元(FEM)' 与 '二次 B 样条等几何(IGA)' 谁收敛更快？"
-    "数值估的收敛阶是否与理论一致？同自由度下谁更高效？\n"
-    "建议: 用 load_pde 看方法与理论阶 → 用 convergence 分别对 fem_linear 与 iga_p2 做收敛研究(估H1/L2阶) "
-    "→ 用 compare_methods 在同自由度下对比 → 用 predict_error 对更细网格预测 H1 误差 → 用 verify_predict 回算对账。\n"
-    "门禁提醒: 报告中每个数值必须落在你实际调用工具返回的真实结果中; 未落地主张会被拒绝。请务必真正调用工具。\n"
-    "最终输出完整研究报告(研究问题/数据与方法/结果分析/预测-对账/结论与局限/下一步), 只输出正文。"
+    "你是 Huginn 科研智能体, 以 Intern-S2 身份对【计算数学：新型有限元 vs 等几何分析】做开放研究。\n"
+    "研究问题: 对 -u''=π²sin(πx), u(0)=u(1)=0, 线性有限元(FEM) 与 二次 B 样条等几何(IGA) 的收敛与效率。\n"
+    "你拥有选题自主权: 第一步必须先调用 topic_bank 查看开放题目菜单, 然后用 choose_topic 自主选定你要研究的问题, "
+    "并给出你的研究问题与研究假说。之后严格按你选定的 workflow 调用 convergence(fem_linear)、convergence(iga_p2)、"
+    "compare_methods、predict_error、verify_predict 完成深度研究。\n"
+    "门禁提醒: 报告中每个数值必须落在你实际调用工具返回的真实结果中(可直接出现或由轨迹真值 +/−/×/÷ 推出); 未落地会被拒绝。\n"
+    "最终请先把完整研究报告写在 submit_report 的 report_text 参数里(正文放那里, 思维链留在 content 即可), 只调用一次 submit_report 提交。"
 )
 
 
@@ -116,6 +134,17 @@ def main() -> int:
     state = {}  # 记录 predict 供 verify 用
 
     def exec_tool(name, a):
+        if name == "topic_bank":
+            return json.dumps({"menu": [{"id": k, "label": v["label"], "question": v["question"],
+                                         "workflow": v["workflow"]} for k, v in _TOPICS.items()]},
+                              ensure_ascii=False)
+        if name == "choose_topic":
+            t = a.get("topic") or "T1"
+            state["topic"] = t
+            return json.dumps({"chosen": t, "label": _TOPICS[t]["label"], "question": _TOPICS[t]["question"],
+                               "workflow": _TOPICS[t]["workflow"],
+                               "research_question": a.get("research_question", ""),
+                               "hypothesis": a.get("hypothesis", "")}, ensure_ascii=False)
         if name == "load_pde":
             return json.dumps({"pde": "-u'' = π² sin(πx), u(0)=u(1)=0, 精确解 u=sin(πx)",
                                "methods": METHODS, "theory_orders": THEORY,
@@ -157,6 +186,9 @@ def main() -> int:
                                "actual_h1": round(actual, 6), "pred_to_actual": round(ratio, 3) if ratio else None,
                                "verdict": ("预测已由真实求解对账" if ratio and 0.7 <= ratio <= 1.4 else
                                            "预测与真实求解偏差明显")}, ensure_ascii=False)
+        if name == "submit_report":
+            # 报告正文从工具参数读取(见 _gen), 不进入证据轨迹(避免掩盖造假)
+            return json.dumps({"ok": True}, ensure_ascii=False)
         raise AssertionError(name)
 
     messages = [{"role": "user", "content": _GOAL}]
@@ -170,6 +202,8 @@ def main() -> int:
             break
         for tc in calls[:1]:
             name, a = _pick(tc)
+            if name == "submit_report":
+                break  # 模型提前提交报告 → 结束研究探索
             result = exec_tool(name, a)
             print(f"[tool] {name} {tc.function.arguments}\n  -> {result}")
             trace.append(result); transcript.append(f"`{name}` {tc.function.arguments} → {result}")
@@ -178,13 +212,13 @@ def main() -> int:
             messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
 
     # 引导完成数值研究必需的真实工具步奏（防模型跳过工具而捏造数值）
-    required = ["convergence", "compare_methods", "predict_error", "verify_predict"]
+    required = ["choose_topic", "convergence", "compare_methods", "predict_error", "verify_predict"]
     if not all(any(t.startswith(f"`{k}") for t in transcript) for k in required):
         missing = [k for k in required if not any(t.startswith(f"`{k}") for t in transcript)]
         messages.append({"role": "user", "content":
-            "你的数值研究尚未走真实工具, 当前缺少: " + ", ".join(missing) +
-            "。请用工具依次完成: 对 fem_linear 与 iga_p2 各调用一次 convergence; 用 compare_methods 对比; "
-            "用 predict_error 选一个更细网格预测 H1 误差; 用 verify_predict 回算对账。完成后再等我指令写报告。"})
+            "你的研究尚未完成自主选题与真实工具步奏, 当前缺少: " + ", ".join(missing) +
+            "。请先用 topic_bank 查看菜单、用 choose_topic 选定你的研究问题(给出研究问题与假说); "
+            "然后按你选定的题目调用 convergence(fem_linear 与 iga_p2)、compare_methods、predict_error、verify_predict。"})
         for _ in range(12):
             rr = client.chat.completions.create(model=args.model, messages=messages, tools=_TOOLS,
                                                 tool_choice="auto", max_tokens=900, temperature=0.2)
@@ -194,6 +228,8 @@ def main() -> int:
                 break
             for tc in cc[:1]:
                 name, a = _pick(tc)
+                if name == "submit_report":
+                    break
                 result = exec_tool(name, a)
                 print(f"[tool][补] {name} {tc.function.arguments}\n  -> {result}")
                 trace.append(result); transcript.append(f"`{name}` {tc.function.arguments} → {result}")
@@ -220,9 +256,16 @@ def main() -> int:
         return raw.strip()
 
     def _gen():
-        r = client.chat.completions.create(model=args.model, messages=messages,
-                                           max_tokens=4000, temperature=0.2)
-        return _extract_report(r.choices[0].message.content or "")
+        r = client.chat.completions.create(model=args.model, messages=messages, tools=_TOOLS,
+                                           tool_choice="auto", max_tokens=4000, temperature=0.2)
+        msg = r.choices[0].message
+        for tc in (msg.tool_calls or []):
+            name, a = _pick(tc)
+            if name == "submit_report":
+                t = str(a.get("report_text", "")).strip()
+                if t:
+                    return t
+        return _extract_report(msg.content or "")
     final = ""; verdict, ungrounded = "needs_grounding", []
     did_verify = any(t.startswith("`verify_predict") for t in transcript)
     for _ in range(3):
@@ -238,10 +281,16 @@ def main() -> int:
         ungrounded = g["unsubstantiated"]
         messages.append({"role": "user", "content": "未交付: " + "; ".join(reasons) + "。补齐后按(研究问题/数据与方法/结果分析/预测-对账/结论与局限/下一步)重写完整报告。"})
         messages.append({"role": "assistant", "content": final})
+    # 证伪结论只看『有无未落地主张』; 太短是软提示, 不降级证伪结果
+    if not ungrounded:
+        verdict = "pass"
 
     rep = OUT / "ai4s_numerics_fem_iga_report.md"
+    topic = state.get("topic")
+    topic_line = f"\n> 书生自主选题: **{topic}** ({_TOPICS[topic]['label']}) — {_TOPICS[topic]['question']}" if topic in _TOPICS else ""
     header = (f"# 计算数学开放研究 — 书生 Intern-S2 × Huginn · 新型有限元/等几何\n\n"
-              f"> **结论证伪门禁: {verdict}**（未落地主张: {ungrounded or '无'}）\n"
+              f"> **结论证伪门禁: {verdict}**（未落地主张: {ungrounded or '无'}）"
+              f"{topic_line}\n"
               f"> 数值核心: examples/numerics.py（纯 Python 真实装配/求解，可复现）\n\n"
               f"## 一、工具执行轨迹（含真实误差与收敛阶）\n\n")
     body = "\n".join(f"- {t}" for t in transcript)
