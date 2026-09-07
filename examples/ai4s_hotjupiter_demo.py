@@ -393,6 +393,11 @@ def main() -> int:
                 reasons.append("报告过短或为空")
             if g["verdict"] != "pass":
                 reasons.append(f"未落地数值: {g['unsubstantiated']}")
+            # 防早停：研究深度门槛——必须落地『环流积分+可证伪预测+观测对账』才算做完研究
+            min_ev = {"integrate_flow", "predict_diagnostics", "reconcile_obs"}
+            missing_ev = sorted(k for k in min_ev if not any(t.startswith(f"`{k}") for t in transcript))
+            if missing_ev:
+                reasons.append("研究深度不足(防早停): 还缺真实证据步奏 " + ", ".join(missing_ev))
             if not reasons:
                 verdict, ungrounded = "pass", []; break
             ungrounded = g["unsubstantiated"]
@@ -408,9 +413,11 @@ def main() -> int:
         final = assemble_report(); degraded = True; verdict, ungrounded = "pass", []
     elif final:
         g = verify(final, trace, allow_derived=True)
-        if g["verdict"] != "pass" or len(final) < 200:
+        min_ev = {"integrate_flow", "predict_diagnostics", "reconcile_obs"}
+        shallow = bool(sorted(k for k in min_ev if not any(t.startswith(f"`{k}") for t in transcript)))
+        if g["verdict"] != "pass" or len(final) < 200 or shallow:
             final = assemble_report(); degraded = True; verdict, ungrounded = "pass", []
-            fallback_notes.append("提前提交的模型报告未落地, 由系统确定性组装")
+            fallback_notes.append("提前提交的模型报告深度不足/未落地, 由系统确定性组装")
         else:
             verdict, ungrounded = "pass", []
 
