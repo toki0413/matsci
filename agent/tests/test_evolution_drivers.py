@@ -124,3 +124,62 @@ def test_research_program_wiring_mutation_and_supervisor() -> None:
     assert isinstance(out.supervision_log, list)
     assert human["n"] >= 1, "human_review 应至少被触发一次"
     assert out.report and out.verdict in {"pass", "needs_grounding"}
+
+
+# ── 5) 统一诊断工具挂载面: LLM 可自主发现并调用后端能力工具 ───────────
+def test_research_program_mounts_diagnostic_tools() -> None:
+    """给定 diagnostic_tools, 假 LLM 调一次 hodge_circulation, 其数值落 trace 并被门禁放行."""
+    from huginn.research.program import Experiment, run_research_program
+
+    called = {"n": 0}
+
+    def fake_handle(a):
+        called["n"] += 1
+        return '{"harmonic_frac": 0.42, "curl_frac": 0.58}'
+
+    # 假 OpenAI client: 第 1 次 create → 工具调用; 之后 → 长报告引用该数值
+    def make_client():
+        state = {"round": 0}
+
+        class Func:
+            def __init__(s, n, a): s.name, s.arguments = n, a
+            def model_dump(s): return {"name": s.name, "arguments": s.arguments}
+
+        class TC:
+            def __init__(s, n, a): s.id = "t1"; s.function = Func(n, a)
+            def model_dump(s): return {"id": "t1", "function": s.function.model_dump()}
+
+        class M:
+            def __init__(s, c, t=None): s.content, s.tool_calls = c, t
+
+        def ch(m): return type("C", (), {"message": m})()
+
+        class Co:
+            def create(s, **kw):
+                state["round"] += 1
+                if state["round"] == 1:
+                    return type("R", (), {"choices": [ch(M("", [TC("hodge_circulation", "{}")]))]})()
+                long = ("本研究针对目标开展自主深研。经帕累托演化淘汰, 存活假说提供真实数值证据。"
+                        "进一步调用域诊断工具 hodge_circulation 得到谐和占比 harmonic_frac=0.42 与"
+                        "旋度占比 0.58, 该测量来自对真实非线性稳态流场的 Helmholtz-Hodge 分解, 可直接"
+                        "回溯。综合证据得出下阶段计划并如实标注所有数值均来自工具执行轨迹, 可复现可证伪。"
+                        "这段正文足够长以满足报告长度门槛。")
+                return type("R", (), {"choices": [ch(M("<report>" + long + "</report>"))]})()
+        class Chat: completions = Co()
+        return type("Client", (), {"chat": Chat()})()
+
+    exps = [Experiment("lin", "线性浅水",
+                       lambda: {"success": True, "objectives": {"eastward_offset": 12.3},
+                                "summary": {"hot_spot_offset_deg": 12.3}})]
+    schema = {"type": "function", "function": {"name": "hodge_circulation", "description": "d",
+                                               "parameters": {"type": "object", "properties": {},
+                                                             "required": [], "additionalProperties": False}}}
+    out = run_research_program(
+        goal="g", experiments=exps, objectives_config={"eastward_offset": "maximize"},
+        max_iterations=5, min_iterations=1, max_parallel=1,
+        client=make_client(), model="fake",
+        diagnostic_tools=[{"tool": schema, "handle": fake_handle}],
+    )
+    assert called["n"] == 1, "LLM 应自主调用一次诊断工具"
+    assert "0.42" in out.report, "被引用的诊断数值应进入最终报告"
+    assert out.verdict == "pass", "诊断数值已在 trace → 门禁应放行"

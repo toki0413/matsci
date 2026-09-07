@@ -85,6 +85,7 @@ def run_research_program(
     human_review: Callable[[dict], dict] | None = None,  # 人工/专家评审回调(card)->{drop,keep,guidance}
     supervisor_every: int = 0,             # 每 N 轮一次 HITL 评审; 0=关闭
     debate: bool = False,                  # 用 client 对存活想法做 LLM tournament 筛选
+    diagnostic_tools: list[dict] | None = None,  # 域诊断工具能力 [{"tool":schema,"handle":fn}], LLM 可自主发现并调用
 ) -> ResearchOutcome:
     """跑一条完整深研管线并返回结果."""
     from huginn.exploration.orchestrator import ExplorationOrchestrator
@@ -198,10 +199,48 @@ def run_research_program(
                   f"以下是存活假说的真实数值证据(可复现、非伪造):\n{survivors_text}\n\n"
                   f"请撰写跨学科深度研究报告(研究问题/数据与方法/结果分析/对账与局限/下一步)。"
                   f"每个数值必须来自上面真实结果, 不许编造。把最终报告放在 <report> 与 </report> 之间。")
+        # 统一诊断工具挂载面: LLM 可在成文过程中自主发现/调用域能力工具, 结果落 trace 作门禁证据
+        tool_schemas = [t["tool"] for t in (diagnostic_tools or [])]
+        tool_handlers = {t["tool"]["function"]["name"]: t["handle"] for t in (diagnostic_tools or [])}
+        if tool_schemas:
+            prompt += ("\n可自主调用的域诊断工具(结果作为可证伪证据进报告): "
+                       + ", ".join(t["function"]["name"] for t in tool_schemas) + "。")
+
+        def _one_attempt(msgs):
+            for _round in range(4):
+                r = client.chat.completions.create(model=model, messages=msgs,
+                                                   tools=tool_schemas or None,
+                                                   tool_choice="auto" if tool_schemas else None,
+                                                   max_tokens=4000, temperature=0.2)
+                msg = r.choices[0].message
+                calls = msg.tool_calls or []
+                if not calls:
+                    return msg.content or ""
+                for tc in calls[:4]:
+                    name = tc.function.name
+                    a = {}
+                    try:
+                        a = json.loads(tc.function.arguments) if isinstance(
+                            tc.function.arguments, str) else (tc.function.arguments or {})
+                    except Exception:  # noqa: BLE001 — 参数容错
+                        a = {}
+                    h = tool_handlers.get(name)
+                    if h is None:
+                        res = json.dumps({"error": f"unknown tool {name}"}, ensure_ascii=False)
+                    else:
+                        try:
+                            res = h(a)
+                        except Exception as ee:  # noqa: BLE001
+                            res = json.dumps({"error": str(ee)}, ensure_ascii=False)
+                    trace.append(res)  # 门禁证据: 诊断工具真实 return 落 trace
+                    msgs += [{"role": "assistant", "content": msg.content or "",
+                              "tool_calls": [tc.model_dump()]},
+                             {"role": "tool", "tool_call_id": tc.id, "content": res}]
+            return msg.content or ""
+
+        msgs = [{"role": "user", "content": prompt}]
         for _ in range(3):
-            r = client.chat.completions.create(model=model, messages=[{"role": "user", "content": prompt}],
-                                               max_tokens=4000, temperature=0.2)
-            final = r.choices[0].message.content or ""
+            final = _one_attempt(msgs).strip()
             m = re.search(r"<report>(.*?)</report>", final, flags=re.DOTALL | re.IGNORECASE)
             if m:
                 final = m.group(1).strip()
@@ -209,7 +248,8 @@ def run_research_program(
             if g["verdict"] == "pass" and len(final.strip()) > 200:
                 verdict, ungrounded = "pass", []; break
             ungrounded = g["unsubstantiated"]
-            prompt = f"未交付(未落地:{ungrounded})。请只用真实证据重写:\n" + prompt
+            msgs = [{"role": "user",
+                     "content": f"未交付(未落地:{ungrounded})。请只用真实证据重写:\n" + prompt}]
         else:
             final = _synthesize()      # L3b 兜底组装, 必过门禁
             out.report_source = "fallback_assembly(agent failed)"

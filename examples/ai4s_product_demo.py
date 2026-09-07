@@ -19,21 +19,25 @@ _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "agent"))
 
-from ai4s_backends import BACKENDS, GOALS, OBJECTIVES  # noqa: E402
+from ai4s_backends import BACKENDS, GOALS, OBJECTIVES, DIAGNOSTIC_TOOLS  # noqa: E402
 from huginn.research import run_research_program  # noqa: E402
 
 OUT = Path(__file__).resolve().parent / "out"
 
 
 def _one(domain: str, client, model: str, base_url: str | None) -> None:
+    # 统一诊断工具挂载面: 把该域的能力工具交给管线, LLM 可自主发现并调用 (结果落门禁证据)
+    diag = DIAGNOSTIC_TOOLS.get(domain, [])
     out = run_research_program(
         goal=GOALS[domain],
         experiments=BACKENDS[domain](),
         objectives_config=OBJECTIVES[domain],
         client=client, model=model, base_url=base_url,
+        diagnostic_tools=diag or None,
         out_md=OUT / f"ai4s_product_{domain}_report.md",
     )
-    print(f"\n=== domain={domain} ===")
+    mounted = ", ".join(t["tool"]["function"]["name"] for t in diag) or "none"
+    print(f"\n=== domain={domain} (diagnostic_tools mounted: {mounted}) ===")
     print(f"[program] explored={out.explored} pruned={out.pruned} "
           f"pareto_front={len(out.pareto_front)} convergence={out.converred}")
     for b in out.pareto_front:
