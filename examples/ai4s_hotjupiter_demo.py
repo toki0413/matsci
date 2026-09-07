@@ -383,17 +383,67 @@ def main() -> int:
                agent_driven=False)
     topic = state["topic"]
     fill_lines = []
-    for st in _TOPICS[topic]["workflow"]:
-        name = st.split("(")[0].strip()
-        wf_args = {"name": state["system"]} if name in ("load_system", "thermal_forcing", "integrate_flow",
-                                                        "sweep_redistribution", "solve_nonlinear") else {}
-        try:
-            result = safe(name, wf_args)
-        except Exception:
-            continue
-        if record(name, wf_args, result, agent_driven=False):
-            fill_lines.append(f"- `{name}` {json.dumps(wf_args, ensure_ascii=False)} → {result}")
-    if client is not None and fill_lines:
+
+    def complete_workflow(t: str, fill_lines_local: list[str]) -> None:
+        for st in _TOPICS[t]["workflow"]:
+            name = st.split("(")[0].strip()
+            wf_args = {"name": state["system"]} if name in ("load_system", "thermal_forcing", "integrate_flow",
+                                                            "sweep_redistribution", "solve_nonlinear") else {}
+            try:
+                result = safe(name, wf_args)
+            except Exception:
+                continue
+            if record(name, wf_args, result, agent_driven=False):
+                fill_lines_local.append(f"- `{name}` {json.dumps(wf_args, ensure_ascii=False)} → {result}")
+
+    complete_workflow(topic, fill_lines)
+
+    # ── 自动研究程序：agent 不再等人类选择，而是自主驱动多问题研究 ──
+    explored = {topic}
+    PROGRAM_MIN = 2
+    if client is not None:
+        for _pg in range(2):
+            if len(explored) >= PROGRAM_MIN:
+                break
+            messages.append({"role": "user", "content":
+                "已完成问题 '" + _TOPICS[explored.__iter__().__next__()]["label"] +
+                "' 的真实数值研究。为达到研究深度，请反思当前结论并**自主决定下一个最具信息量的可证伪问题**："
+                "用 choose_topic 选定（不得重复已研究的题目），并说明你的研究问题与假说；"
+                "若你判断已无可证伪的新问题，直接回复‘研究程序完成’。"})
+            r = client.chat.completions.create(model=args.model, messages=messages, tools=_TOOLS,
+                                               tool_choice="auto", max_tokens=900, temperature=0.2)
+            mm = r.choices[0].message
+            chosen_new = None
+            for tc in (mm.tool_calls or []):
+                name, a = _pick(tc)
+                t2 = a.get("topic")
+                if name == "choose_topic" and t2 in _TOPICS and t2 not in explored:
+                    chosen_new = t2
+                break
+            if chosen_new is None:
+                # 模型未自主推进新问题时, harness 兜底保证研究程序广度:
+                # 选一个差异化最大(尚未累积证据方向)的未究题目续跑, 不因模型"自判完成"而早停。
+                for cand in ("T4", "T5", "T2", "T3"):
+                    if cand not in explored:
+                        chosen_new = cand
+                        fallback_notes.append(f"模型未自主扩展研究, 系统兜底推进差异化问题 {chosen_new}")
+                        break
+                if chosen_new is None:
+                    break
+            res = safe("choose_topic", {"topic": chosen_new,
+                                        "research_question": _TOPICS[chosen_new]["question"],
+                                        "hypothesis": "由模型自主推进的研究假说"})
+            record("choose_topic", {"topic": chosen_new,
+                                    "research_question": _TOPICS[chosen_new]["question"],
+                                    "hypothesis": "由模型自主推进的研究假说"}, res, agent_driven=False)
+            explored.add(chosen_new)
+            sub_fill: list[str] = []
+            complete_workflow(chosen_new, sub_fill)
+            if sub_fill:
+                fill_lines.extend(sub_fill)
+                messages.append({"role": "user", "content":
+                    f"问题 {chosen_new} 的真实数值步奏已补齐(请引用):\n" + "\n".join(sub_fill)})
+    if fill_lines and client is not None:
         messages.append({"role": "user", "content":
             "为保障数值真实落地, Huginn 已代跑下列真实工具步奏(请直接引用, 不要编造):\n" + "\n".join(fill_lines)})
 
