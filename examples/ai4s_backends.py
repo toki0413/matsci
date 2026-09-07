@@ -174,5 +174,82 @@ def hotjupiter_topology_tool() -> dict:
     return {"tool": tool_schema, "handle": handle, "domain": "hotjupiter"}
 
 
+def _exoplanet_record_by_name(name: str) -> dict | None:
+    """从真实目录缓存里按行星名模糊匹配一条记录 (无缓存/未匹配 → None)."""
+    path = _HERE / "out" / "real_exoplanet.json"
+    if not path.exists():
+        return None
+    try:
+        rows = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return None
+    key = (name or "").strip().lower()
+    if not key:
+        return None
+    for r in rows:
+        if key in str(r.get("name", "")).lower():
+            return r
+    return None
+
+
+def exoplanet_diagnostics_tool() -> dict:
+    """系外行星域诊断工具能力: 第一性原理日晒/平衡温度 (复用 exoplanet_backend 常量).
+
+    自包含: 输入 轨道周期 period_d 直接算, 或 行星名 name 查真实目录缓存取周期。
+    输出 S[W/m²]、全球平均平衡温度、子恒星点平衡温度、S/S⊕ —— 全部解析一致、可证伪。
+    """
+    tool_schema = {
+        "type": "function",
+        "function": {
+            "name": "exoplanet_insolation",
+            "description": ("第一性原理日晒诊断: 由轨道周期(或真实目录行星名)经开普勒第三定律→"
+                            "半长轴→日晒 S→黑体平衡温度, 返回 S(W/m²)/全球平衡温/子恒星点温/S比地球。"),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "period_d": {"type": "number", "description": "轨道周期(天); 与 name 二选一"},
+                    "name": {"type": "string", "description": "真实目录行星名(模糊匹配, 取周期)"},
+                },
+                "required": [], "additionalProperties": False,
+            },
+        },
+    }
+
+    def handle(a: dict) -> str:
+        period_d = a.get("period_d")
+        rec = None
+        if period_d is None and a.get("name"):
+            rec = _exoplanet_record_by_name(a["name"])
+            if rec is None:
+                return json.dumps({"error": f"cache 中未找到行星 {a['name']} (可用 period_d 直接给周期)"},
+                                  ensure_ascii=False)
+            period_d = float(rec["orbper_d"])
+        if period_d is None:
+            return json.dumps({"error": "需提供 period_d 或 name"}, ensure_ascii=False)
+        period_d = float(period_d)
+        a_au = _kepler_semimajor_au(period_d, _ASSUMED_HOST_MSUN)
+        a_m = a_au * AU_M
+        S = SOLAR_LUM / (4 * math.pi * a_m ** 2)
+        A = 0.1  # 债反照率建模假设(与 exoplanet_backend 一致), 如实标注
+        T_global = ((1 - A) * S / (4 * STEFAN)) ** 0.25
+        T_sub = ((1 - A) * S / STEFAN) ** 0.25
+        S_earth = 1361.0
+        return json.dumps({
+            "source": rec["name"] if rec else f"period_d={period_d}",
+            "period_d": round(period_d, 3),
+            "semimajor_au": round(a_au, 4),
+            "insolation_Wm2": round(S, 1),
+            "S_over_S_earth": round(S / S_earth, 3),
+            "T_eq_global_K": round(T_global, 1),
+            "T_substellar_K": round(T_sub, 1),
+            "assumption": "host=M_☉, A=0.1 (目录无宿主质量/反照率)",
+        }, ensure_ascii=False)
+
+    return {"tool": tool_schema, "handle": handle, "domain": "exoplanet"}
+
+
 # 供任意工具型 harness 挂载: 领域 → [能力工具...]。demo 从这里"挂载"而非"拥有".
-DIAGNOSTIC_TOOLS = {"hotjupiter": [hotjupiter_topology_tool()]}
+DIAGNOSTIC_TOOLS = {
+    "hotjupiter": [hotjupiter_topology_tool()],
+    "exoplanet": [exoplanet_diagnostics_tool()],
+}
