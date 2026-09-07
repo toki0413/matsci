@@ -199,9 +199,9 @@ def run_research_program(
                   f"以下是存活假说的真实数值证据(可复现、非伪造):\n{survivors_text}\n\n"
                   f"请撰写跨学科深度研究报告(研究问题/数据与方法/结果分析/对账与局限/下一步)。"
                   f"每个数值必须来自上面真实结果, 不许编造。把最终报告放在 <report> 与 </report> 之间。")
-        # 统一诊断工具挂载面: LLM 可在成文过程中自主发现/调用域能力工具, 结果落 trace 作门禁证据
-        tool_schemas = [t["tool"] for t in (diagnostic_tools or [])]
-        tool_handlers = {t["tool"]["function"]["name"]: t["handle"] for t in (diagnostic_tools or [])}
+        # 统一诊断工具挂载面 —— 走单一薄控制点 (resolve_diagnostic_tools), 不内联再造 schema
+        from huginn.research.tool_surface import resolve_diagnostic_tools
+        tool_schemas, tool_handlers = resolve_diagnostic_tools(diagnostic_tools)
         if tool_schemas:
             prompt += ("\n可自主调用的域诊断工具(结果作为可证伪证据进报告): "
                        + ", ".join(t["function"]["name"] for t in tool_schemas) + "。")
