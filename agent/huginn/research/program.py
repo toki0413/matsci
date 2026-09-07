@@ -45,6 +45,8 @@ class ResearchOutcome:
     verdict: str = "needs_grounding"
     ungrounded: list = field(default_factory=list)
     report_source: str = "deterministic"
+    mutations: int = 0                                 # 进化变异生成的子代数
+    supervision_log: list = field(default_factory=list)  # HITL 人工反馈记录
 
 
 def _build_trace(cache: dict[str, dict]) -> list[str]:
@@ -79,10 +81,16 @@ def run_research_program(
     base_url: str | None = None,
     verify: Callable[[str, list[str]], dict] | None = None,
     out_md: Path | None = None,
+    mutation_config: dict | None = None,   # {"param_space":{p:(lo,hi)}, "mutation_rate":0.5, "max_children":3}
+    human_review: Callable[[dict], dict] | None = None,  # 人工/专家评审回调(card)->{drop,keep,guidance}
+    supervisor_every: int = 0,             # 每 N 轮一次 HITL 评审; 0=关闭
+    debate: bool = False,                  # 用 client 对存活想法做 LLM tournament 筛选
 ) -> ResearchOutcome:
     """跑一条完整深研管线并返回结果."""
     from huginn.exploration.orchestrator import ExplorationOrchestrator
     import huginn.exploration.strategies as S
+    from huginn.exploration.strategies import MutationStrategy
+    from huginn.exploration.supervisor import SupervisorStrategy
 
     cache: dict[str, dict] = {}
     spec_by_name = {e.name: e for e in experiments}
@@ -97,8 +105,46 @@ def run_research_program(
                 "objectives": res.get("objectives", {}),
                 "results": res.get("summary", {})}
 
+    def _llm_tournament(ideas: list[dict]) -> list[dict]:
+        """用 client 做 LLM 想法 tournament: 返回存活想法 (解析失败则全存活, 保证稳健)."""
+        bullets = "\n".join(
+            f"- {it['name']}: hypothesis={it['hypothesis']} obj={json.dumps(it['objectives'], ensure_ascii=False)}"
+            for it in ideas)
+        prompt = (
+            f"你是科研创意评审委员。目标: {goal}。\n候选存活想法:\n{bullets}\n\n"
+            "请交叉评审, 淘汰缺乏证据、重复或低可行性的想法, 返回存活想法的 name 列表, "
+            '只输出 JSON: {"survivors": ["name", ...]}。'
+        )
+        try:
+            r = client.chat.completions.create(model=model, messages=[{"role": "user", "content": prompt}],
+                                               max_tokens=500, temperature=0.2)
+            text = r.choices[0].message.content or ""
+            m = re.search(r"\{.*\}", text, flags=re.DOTALL)
+            survivors = set(json.loads(m.group(0))["survivors"])
+            return [it for it in ideas if it["name"] in survivors] or ideas
+        except Exception:  # noqa: BLE001 — 评审失败不退化为空, 全存活
+            return ideas
+
+    # 策略链: Pareto → (可选)变异 → (可选)HITL/辩论评审
+    strategy: S.ExplorationStrategy = S.ParetoPruningStrategy(max_active=max_parallel + 6)
+    if mutation_config:
+        strategy = MutationStrategy(
+            wrapped=strategy,
+            param_space=mutation_config.get("param_space"),
+            mutation_rate=mutation_config.get("mutation_rate", 0.5),
+            max_children=mutation_config.get("max_children", 3),
+        )
+    if human_review or debate:
+        debate_eval = _llm_tournament if (debate and client is not None) else None
+        strategy = SupervisorStrategy(
+            wrapped=strategy,
+            human_review=human_review,
+            review_every=supervisor_every,
+            debate_evaluator=debate_eval,
+        )
+
     orch = ExplorationOrchestrator(
-        strategy=S.ParetoPruningStrategy(max_active=max_parallel + 6),
+        strategy=strategy,
         branch_executor=executor,
         max_parallel=max_parallel,
     )
@@ -120,6 +166,14 @@ def run_research_program(
                           explored=result.n_branches_explored,
                           pruned=result.n_branches_pruned,
                           pareto_front=front, cache=cache)
+    # 进化/监督衍生量: 变异子代数 + HITL 反馈记录(若启用了对应策略)
+    mstrat = getattr(strategy, "wrapped", None) if isinstance(strategy, SupervisorStrategy) else None
+    if isinstance(strategy, MutationStrategy):
+        out.mutations = strategy.created
+    elif isinstance(mstrat, MutationStrategy):
+        out.mutations = mstrat.created
+    if isinstance(strategy, SupervisorStrategy):
+        out.supervision_log = list(strategy.review_log)
     survivors = [(b["name"], cache.get(b["name"], {})) for b in front]
 
     def _synthesize() -> str:
@@ -175,6 +229,9 @@ def run_research_program(
     if out_md is not None:
         header = (f"# 自主深研(Huginn×书生)\n\n> **门禁: {verdict}** (未落地: {ungrounded or '无'})\n"
                   f"> real orchestration: explored={out.explored} pruned={out.pruned} "
-                  f"convergence={out.converred}\n> 报告来源: {out.report_source}\n\n")
+                  f"convergence={out.converred}\n> 报告来源: {out.report_source}"
+                  + (f"\n> 进化变异: {out.mutations} 子代; HITL 反馈: {len(out.supervision_log)} 轮"
+                     if (out.mutations or out.supervision_log) else "")
+                  + "\n\n")
         out_md.write_text(header + final.strip() + "\n", encoding="utf-8")
     return out

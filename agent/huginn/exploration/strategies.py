@@ -7,6 +7,7 @@ AdaptiveGrid:   Coarse-to-fine grid refinement
 
 from __future__ import annotations
 
+import random
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -358,3 +359,102 @@ class AdaptiveGridStrategy(ExplorationStrategy):
         # Simple sigmoid of average
         avg = np.mean(vals)
         return float(1 / (1 + np.exp(-avg)))
+
+
+class MutationStrategy(ExplorationStrategy):
+    """进化正交算子 — 对存活分支做**显式参数变异**生成子代.
+
+    审计缺口的补齐: 此前 exploration 只有 expand/refine/prune/backtrack/网格精化
+    (增量式演化), 却没有随机/定向的**参数变异** operator。本策略在基础策略
+    (默认 Pareto) 之上, 按 ``param_space`` 对 Pareto 前沿存活分支做数值扰动,
+    生成 ``{parent}~mut{i}`` 子代分支, 使"进化式实验规划"具备真正的变异一环。
+
+    纯确定可测: ``rng`` 可控; 变异常试上限由 ``max_children`` / ``max_active`` 限制,
+    避免无限爆炸。生成法则与 Pareto/refine 一致 (仍是 ``refine`` 型 Action + 新子代),
+    复用现有 ``ExplorationOrchestrator`` 的落子/执行机制。
+    """
+
+    def __init__(
+        self,
+        wrapped: ExplorationStrategy | None = None,
+        param_space: dict[str, tuple[float, float]] | None = None,
+        mutation_rate: float = 0.5,
+        max_children: int = 3,
+        max_active: int = 10,
+        rng: random.Random | None = None,
+    ):
+        self.wrapped = wrapped or ParetoPruningStrategy()
+        self.param_space = param_space or {}          # param -> (min, max), 变异峰值取目标值(缺则取中值)
+        self.mutation_rate = mutation_rate
+        self.max_children = max_children
+        self.max_active = max_active
+        self.rng = rng or random.Random(0)
+        self.created = 0                              # 累计生成的变异子代数 (供上层/报告统计)
+
+    def name(self) -> str:
+        return f"mutation({self.wrapped.name()})"
+
+    def evaluate(self, space: ExplorationSpace) -> list[Action]:
+        actions = self.wrapped.evaluate(space)
+        if not self.param_space:
+            return actions
+        front = list(space.update_pareto_front() or [])
+        active_count = len(
+            [
+                b
+                for b in space.branches.values()
+                if b.status in {BranchStatus.PENDING, BranchStatus.RUNNING}
+            ]
+        )
+        candidates = [
+            b
+            for b in space.branches.values()
+            if b.id in front and b.status == BranchStatus.COMPLETED and b.objectives
+        ]
+        if not candidates or active_count >= self.max_active:
+            return actions
+
+        mutated: list[dict[str, Any]] = []
+        allowed = self.max_active - active_count
+        for b in candidates:
+            if self.rng.random() > self.mutation_rate:
+                continue
+            for i in range(self.max_children):
+                new_params = self._perturb(b)
+                if not new_params:
+                    continue
+                self.created += 1
+                mutated.append({
+                    "name": f"{b.name}~mut{i}",
+                    "hypothesis": (
+                        f"[mutation of {b.name}] "
+                        + ", ".join(f"{p}={v}" for p, v in sorted(new_params.items()))
+                    ),
+                    "params": new_params,
+                    "mutation_of": b.name,
+                    "parent_hypothesis": b.hypothesis,
+                })
+            if len(mutated) >= allowed:
+                break
+        if mutated:
+            actions.append(
+                Action(
+                    action_type="refine",
+                    target_branch=None,
+                    new_branches=mutated,
+                    reason=f"parameter mutation (evolutionary) ×{len(mutated)}",
+                )
+            )
+        return actions
+
+    def _perturb(self, branch: Branch) -> dict[str, float]:
+        """对 param_space 里每个参数做高斯型扰动 (以目标值/中值为基, 10% 步长)."""
+        mutated: dict[str, float] = {}
+        for p, (lo, hi) in self.param_space.items():
+            base = branch.objectives.get(p)
+            if base is None:
+                base = (lo + hi) / 2.0
+            step = (hi - lo) * 0.1
+            val = base + self.rng.uniform(-step, step)
+            mutated[p] = round(min(max(val, lo), hi), 4)
+        return mutated
