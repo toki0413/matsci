@@ -49,8 +49,23 @@ def _is_claim_candidate(token: str, value: float) -> bool:
     return f > _MAX_SMALL_ABS
 
 
+def _strip_num_markers(text: str) -> str:
+    """剔除 markdown 的小节号/有序列表编号等『编号型数字』(如 2.2 / 3.4 / 1).
+
+    只处理行首的编号标记, 不影响正文中的真实数值.
+    """
+    import re as _re
+    lines = []
+    for ln in (text or "").splitlines():
+        s = _re.sub(r"^\s*#{1,6}\s*", "", ln)          # 去掉 ATX 标题井号
+        s = _re.sub(r"^\s*(\d+(?:\.\d+)*)\s*(?:[.:、，]\s*|\s(?![0-9]))", "", s, count=1)
+        lines.append(s)
+    return "\n".join(lines)
+
+
 def extract_numeric_claims(text: str) -> list[float]:
     """从报告 prose 中抽出"候选主张数值" (统计量/坐标等, 桥掉无意义小整数)."""
+    text = _strip_num_markers(text)   # 去小节号等编号型数字
     out: list[float] = []
     for m in _NUM.findall(text or ""):
         c = _canon(m)
