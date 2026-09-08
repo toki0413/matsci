@@ -54,10 +54,17 @@ class ResearchOutcome:
     plan_summary: dict | None = None                   # 需求拆解/自主规划摘要(planner) — 若提供
     structural_gate: dict | None = None                # 结构闸门(交互等效/多元论)审计结果
     structural_aligned: bool | None = None             # 代理是否通过结构对齐(Shortcut 探测)
+    workspace_verified: bool | None = None             # C-Space 工作区门: 报告断言是否作为在场落地
 
 
 def _build_trace(cache: dict[str, dict]) -> list[str]:
     return [json.dumps(v, ensure_ascii=False) for v in cache.values()]
+
+
+def _slug_goal(goal: str, limit: int = 40) -> str:
+    """把 goal 规整成工作区 Being id 用的小写 slug (供报告在场命名)."""
+    s = re.sub(r"[^0-9a-z_]+", "_", (goal or "final").lower()).strip("_")
+    return s[:limit] or "final"
 
 
 def grounding_verifier() -> Callable[[str, list[str]], dict]:
@@ -94,6 +101,7 @@ def run_research_program(
     diagnostic_tools: list[dict] | None = None,  # 域诊断工具能力 [{"tool":schema,"handle":fn}], LLM 可自主发现并调用
     self_audit: Callable[[], list[str]] | None = None,  # 能力自省 §3: 返回需并入 trace 的可证伪工件(能力缺口提案)
     structural_audit: Callable[[list[dict], str], dict] | None = None,  # 结构闸门: (survivors, goal)->{"pass",...} 交互等效审计(张拳石/多元论治理)
+    workspace: Any = None,  # C-Space 工作区: 若提供, 最终报告须经 workspace.broadcast 作为"在场断言"落地才成文
     planner: Callable[[str], "ResearchPlan"] | None = None,  # 需求拆解/自主规划: goal->{experiments, max_parallel, plan_summary}
 ) -> ResearchOutcome:
     """跑一条完整深研管线并返回结果."""
@@ -364,6 +372,25 @@ def run_research_program(
     else:
         ungrounded = g2["unsubstantiated"]
 
+    # C-Space 工作区门: 若注入工作区, 先以存活结论的真实执行证据"灌出在场 + trace"，
+    # 再把最终报告作为一条 broadcast 经其声明门禁落地才成文. 未过 → 如实醒目标注.
+    if workspace is not None:
+        for name, res in survivors:
+            workspace.register(name, "state", payload=dict(res.get("summary", {})),
+                               source=f"survivor:{name}", falsifiable=True)
+            if res.get("summary"):
+                workspace.trace.append(json.dumps(res["summary"], ensure_ascii=False))
+        ws_res = workspace.broadcast(final)
+        out.workspace_verified = bool(ws_res.get("verified"))
+        if out.workspace_verified:
+            workspace.register("report_" + (_slug_goal(goal) or "final"), "concept",
+                               payload={"source": "run_research_program.final"}, source="report",
+                               falsifiable=True)
+        else:
+            _miss = ws_res.get("unsubstantiated", [])
+            final += ("\n\n## 工作区门禁(未确认在场)\n报告断言未作为可证伪在场落地; "
+                      "未落地主张: " + str(_miss) + "\n")
+
     out.report = final
     out.verdict, out.ungrounded = verdict, ungrounded
 
@@ -372,6 +399,7 @@ def run_research_program(
                   f"> real orchestration: explored={out.explored} pruned={out.pruned} "
                   f"convergence={out.converred}\n> 报告来源: {out.report_source}"
                   + (f"\n> 结构对齐闸门: {out.structural_aligned}" if audit is not None else "")
+                  + (f"\n> 工作区门: {out.workspace_verified}" if workspace is not None else "")
                   + (f"\n> 进化变异: {out.mutations} 子代; HITL 反馈: {len(out.supervision_log)} 轮"
                      if (out.mutations or out.supervision_log) else "")
                   + "\n\n")

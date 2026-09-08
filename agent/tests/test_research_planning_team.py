@@ -17,6 +17,8 @@
      (不合并只标注: 物理因果 / 隐态转移 / 物理逆生成器)
   10. C-Space 外部化工作区 —— 读/控/推理/审计四操作, 一致 GWT(概念在场) + S-Space
       (状态在场) + 交互可读, 且"无凭据不确认在场"的治理门禁
+  11. C-Space 工作区门挂进深研管线报告阶段 —— `run_research_program(workspace=)` 让最终
+      报告经 workspace.broadcast 作为可证伪"在场断言"落地才成文(out.workspace_verified)
 
 纯确定性/本地, 零网络/零 LLM。实验 run 返回真实可区分数值。
 """
@@ -670,3 +672,31 @@ def test_cspace_state_and_interaction_at_hand_are_falsifiable():
     assert st["source"] == "real_execution (reconcile 数值对账)"
     assert "inter_ab" in {b["id"] for b in out["at_hand"]}
     assert not out["pending_no_source"]
+
+
+# ── 11) C-Space 工作区门自动挂进深研管线报告阶段 ─────────────────────
+def _pipeline_with_workspace(ws):
+    from huginn.research.program import run_research_program
+    return run_research_program(
+        goal="工作区门测试", experiments=[_exp("e1", 1.0)],
+        objectives_config={"score": "maximize"},
+        max_iterations=6, min_iterations=1, client=None, workspace=ws,
+    )
+
+
+def test_run_research_program_primes_and_verifies_workspace():
+    """注入 C-Space 后: 存活结论作为在场断言灌入工作区, 报告经 broadcast 落地."""
+    from huginn.research.cspace import CSpace
+    ws = CSpace()
+    out = _pipeline_with_workspace(ws)
+    assert out.workspace_verified is True, "存活结论来自真实执行 → 应作为在场断言落地"
+    assert "e1" in ws.beings, "存活子研究应被灌成工作区在场(state/concept)"
+    assert "工作区门禁(未确认在场)" not in out.report, "已落地 → 无告警"
+    assert any(b.kind == "state" or b.id.startswith("report_") for b in ws.beings.values())
+
+    # 缺省: 不注入工作区 → workspace_verified 保持 None, 行为不变
+    from huginn.research.program import run_research_program
+    out0 = run_research_program(goal="g", experiments=[_exp("e1", 1.0)],
+                                objectives_config={"score": "maximize"},
+                                max_iterations=6, min_iterations=1, client=None)
+    assert out0.workspace_verified is None
