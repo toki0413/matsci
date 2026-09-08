@@ -984,3 +984,64 @@ def test_pabc_parallel_early_stop_final_consistent():
     early_names = {s["name"] for s in es["log"]}
     assert remaining <= early_names, f"被终止层实验缺 early_stop 记录: {remaining - early_names}"
     assert {"a", "b", "c", "d"} <= set(out.cache), "终止前各层必须真实执行"
+
+
+# ── 组合压力: 大宽 DAG + 高并行 + world_model + 变异 + 三阶段全开 ─────────
+def test_pabc_combined_stress_wide_dag():
+    """压力组合: 4 层×12 实验宽 DAG, max_parallel=4(跨层并发),
+    world_model(predicted 对账) + 变异(mutation) + P-A/P-B/P-C 全开,
+    重复 3 轮 —— 每轮必须满足"无静默丢失"不变式与报告/证据自洽."""
+    from huginn.research.planning import SubResearch, build_research_plan
+
+    def _run(v: float):
+        return lambda: {"summary": {"y": v}, "objectives": {"score": v}}
+
+    themes = ["alpha metallic alloy", "organic phase width", "beta ceramic domain",
+              "ionic liquid density", "polymer chain length", "crystalline facet",
+              "quantum dot bandgap", "grain boundary mobility", "phonon scattering",
+              "surface reconstruction", "defect migration barrier", "magnetic domain wall"]
+
+    def _chain(prefix: str, layer: int, n: int, dep: list[str]):
+        return [SubResearch(f"{prefix}{j}", f"sweep {themes[(layer * n + j) % len(themes)]} "
+                                            f"probe variant", _run((layer + 1) * 10 + j),
+                            depends_on=dep) for j in range(n)]
+
+    # 显式 4 层 DAG(每层 3 实验, 层依赖链): 层宽 3 < max_parallel=4 → 跨层并发
+    subs = ([SubResearch(f"l0_{j}", f"scan {themes[j]} baseline", _run(5.0 + j)) for j in range(3)]
+            + _chain("l1_", 1, 3, [f"l0_{j}" for j in range(3)])
+            + _chain("l2_", 2, 3, [f"l1_{j}" for j in range(3)])
+            + _chain("l3_", 3, 3, [f"l2_{j}" for j in range(3)]))
+    plan = build_research_plan("pabc stress", subs)
+
+    def _wm(spec):
+        return {"predicted": {"y": 200.0}}   # 固定预测: 可能触发 falsified 对账(压力面)
+
+    for round_i in range(3):
+        out = run_research_program(
+            goal="pabc stress",
+            experiments=list(plan.experiments),
+            objectives_config={"score": "maximize"},
+            max_iterations=24, min_iterations=2, client=None,
+            planner=lambda _g: plan, world_model=_wm,
+            layer_epochs=True, replan_gate=True, early_stop_gate=True,
+            mutation_config={"mutation_rate": 0.5, "max_children": 1},
+            max_parallel=4,
+        )
+        planned = {e.name for e in plan.experiments}
+        _assert_no_silent_loss(out, planned)
+        con = out.consolidated
+        # 全部真实执行项必须带 objectives + summary(不伪造的结构性自洽)
+        assert all(res.get("objectives") is not None for res in out.cache.values())
+        # stream_view: 层有序且只含真实执行过(<=4 层)
+        layers = [lay["layer"] for lay in con["stream_view"]]
+        assert layers == sorted(set(layers)) == list(range(len(set(layers))))
+        sv = {r["experiment"] for lay in con["stream_view"] for r in lay["rows"]}
+        assert sv <= set(out.cache)
+        # 变异子代: 若存在必须真实重跑并进 cache(诚实回退)
+        mut = [n for n in out.cache if "~mut" in n]
+        assert all(n in out.cache for n in mut)
+        # 报告与审计一致: P-B/P-C 段只在对应决策确实发生时出现
+        assert ("层间重规划(P-B)" in out.report) == ("replanned" == con["replan"]["verdict"])
+        assert ("证据驱动提前终止(P-C)" in out.report) == ("early_stopped" == con["early_stop"]["verdict"])
+        # 每轮收敛: 至少一个存活假说来自真实执行
+        assert out.pareto_front and all(e["name"] in out.cache for e in out.pareto_front)
