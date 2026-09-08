@@ -179,6 +179,9 @@ def run_research_program(
                                       # 接入后, predict 在每次真实执行前对候选做预期目标预筛,
                                       # 预测值作为**可证伪证据**进 cache/trace —— 让 LawModel 真进决策路径(真深思 D),
                                       # 而非只存在于代码里. 不提供则深研走纯真实执行(R).
+    external_verifier: Callable[[dict], dict] | None = None,  # 缺陷五: 独立验证方(可选).
+                                      # 纯函数契约 {verified: bool, reason: str}, 不共享策略参数;
+                                      # 不提供则用出厂最小确定性复核 oracle_verify_consolidated.
 ) -> ResearchOutcome:
     """跑一条完整深研管线并返回结果."""
     from huginn.exploration.orchestrator import ExplorationOrchestrator
@@ -655,6 +658,40 @@ def run_research_program(
                 detail="自省已接线但本 run 无审计产物", ref="capabilities/introspection"))
 
         out.consolidated = consolidate(heads, grounding_verdict=verdict).as_dict()
+
+        # 缺陷三/五接缝: 在第一轮聚合视图上追加"元头"(外部验证 + 团队视角分离度).
+        # 第一轮先用可替换外部验证方(缺省出厂 oracle)复核; 派生两个头后第二轮合并,
+        # 再以第一轮验证结果覆盖 external_verify(第二轮不重跑验证方, 幂等).
+        try:
+            from huginn.research.aggregation_head import oracle_verify_consolidated
+            _ver = external_verifier if external_verifier is not None else oracle_verify_consolidated
+            base = consolidate(heads, grounding_verdict=verdict,
+                               role_view=list(front), external_verifier=_ver)
+            ext = base.external_verify or {}
+            heads.append(HeadResult(
+                "governance.external_verify", "独立验证方(可替换的外部复核)",
+                ext.get("evidence", EVIDENCE_UNOBSERVED),
+                ("passed" if ext.get("verified") else "failed")
+                if ext.get("verified") is not None else "unobserved",
+                detail=str(ext), ref="out.consolidated.external_verify", gate=True))
+            _role = base.role_diversity or {}
+            if front:
+                heads.append(HeadResult(
+                    "team.diversity", "团队视角分离度(防多头塌缩)",
+                    EVIDENCE_OBSERVED,
+                    {"diverse": "passed", "collapsed_single_view": "failed"}.get(
+                        _role.get("verdict"), "unobserved"),
+                    detail=str(_role), ref="out.pareto_front"))
+            else:
+                heads.append(HeadResult(
+                    "team.diversity", "团队视角分离度(防多头塌缩)",
+                    EVIDENCE_UNOBSERVED, "unobserved",
+                    detail="无存活假说, 无从度量视角分化", ref="out.pareto_front"))
+            final_cons = consolidate(heads, grounding_verdict=verdict, role_view=list(front))
+            final_cons.external_verify = ext   # 第二轮不重跑验证方, 保留第一轮独立复核结果
+            out.consolidated = final_cons.as_dict()
+        except Exception:  # noqa: BLE001 — 元头派生失败: 保留第一轮聚合视图, 不阻断
+            pass
     except Exception:  # noqa: BLE001 — 聚合头为新增视图, 失败不阻断管线
         out.consolidated = None
 

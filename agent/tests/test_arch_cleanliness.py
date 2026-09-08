@@ -241,6 +241,7 @@ _REQUIRED_HEAD_IDS = frozenset({
     "gate.claim_grounding", "gate.structural", "gate.workspace",
     "wm.actually_used", "audit.score_usage", "audit.plan_revision",
     "controlled.supervision", "reliable.evidence_cache", "learning.self_audit",
+    "team.diversity", "governance.external_verify",
 })
 
 

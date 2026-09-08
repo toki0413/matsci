@@ -78,6 +78,8 @@ class Consolidated:
     diversity: float = 0.0                           # 头间分歧度 (防御多头塌缩)
     heads: list[str] = field(default_factory=list)   # 本次真实注册的头 id (有界清单)
     head_details: list[dict] = field(default_factory=list)  # 每头详情(供 P2 消费者投影六维)
+    role_diversity: dict | None = None               # 缺陷三: 存活假说的视角分离度(防多头塌缩)
+    external_verify: dict | None = None              # 缺陷五: 独立验证方(可替换的外部复核)结果
     score: float = 0.0                               # 加权总分 (0..1)
 
     def as_dict(self) -> dict[str, Any]:
@@ -89,6 +91,8 @@ class Consolidated:
             "diversity": round(self.diversity, 3),
             "heads": self.heads,
             "head_details": self.head_details,
+            "role_diversity": self.role_diversity,
+            "external_verify": self.external_verify,
             "score": round(self.score, 3),
         }
 
@@ -97,6 +101,8 @@ def consolidate(
     heads: list[HeadResult],
     *,
     grounding_verdict: str = "needs_grounding",
+    role_view: list[dict] | None = None,
+    external_verifier: Any | None = None,
 ) -> Consolidated:
     """多头 → 单一收敛视图 (纯函数, 无副作用).
 
@@ -109,6 +115,11 @@ def consolidate(
         结果一致时接近 0(单文化雷达), 高度分化时接近 1.
       - **grounding 透传**: ``grounding`` 原样携带 grounding 门禁判定, 保证
         P1 阶段 ``consolidated.grounding == out.verdict`` 恒成立 (向后兼容锚).
+
+    缺陷三/五的接缝:
+      - ``role_view``: 存活假说列表 → ``role_diversity`` 视角分离度 (防共识孤岛);
+      - ``external_verifier``: 可替换的**独立验证方**(纯函数, 不共享策略参数) →
+        在聚合视图上复核并写入 ``external_verify``, 缓解"审计者兼被审者"的自指盲区.
     """
     heads = list(heads)
     gates_failed = [h.id for h in heads if h.gate and h.outcome == "failed"]
@@ -130,7 +141,7 @@ def consolidate(
     w_sum = sum(h.weight for h in heads) or 1.0
     score = sum(h.score() * h.weight for h in heads) / w_sum
 
-    return Consolidated(
+    cons = Consolidated(
         verdict=verdict,
         grounding=grounding_verdict,
         gates_failed=gates_failed,
@@ -138,5 +149,63 @@ def consolidate(
         diversity=diversity,
         heads=[h.id for h in heads],
         head_details=[h.__dict__ for h in heads],
+        role_diversity=None,
+        external_verify=None,
         score=score,
     )
+
+    # 缺陷三: 视角分离度 (决策头之外的第二平面; 失败不阻断聚合)
+    if role_view is not None:
+        try:
+            from huginn.research.decision_gate import role_separation  # 单向依赖
+            cons.role_diversity = role_separation(role_view)
+        except Exception:  # noqa: BLE001 — 分离度计算失败: 如实留空, 不伪造
+            cons.role_diversity = None
+
+    # 缺陷五: 独立外部验证 (可替换; 未被注入 ↔ 未观察到外部复核)
+    if external_verifier is not None:
+        try:
+            v = external_verifier(cons.as_dict())
+            cons.external_verify = {
+                "evidence": EVIDENCE_OBSERVED,
+                "verified": bool(v.get("verified")),
+                "reason": str(v.get("reason", "")),
+            }
+        except Exception as exc:  # noqa: BLE001 — 验证方异常: 如实记为未通过(不静默吞)
+            cons.external_verify = {
+                "evidence": EVIDENCE_OBSERVED,
+                "verified": False,
+                "reason": f"external verifier raised: {exc}",
+            }
+    else:
+        cons.external_verify = {
+            "evidence": EVIDENCE_UNOBSERVED,
+            "verified": None,
+            "reason": "未注入独立验证方",
+        }
+    return cons
+
+
+def oracle_verify_consolidated(cons: dict) -> dict[str, Any]:
+    """出厂最小独立验证器 (可整体替换的外部验证方, 不含 LLM/策略共享参数).
+
+    用与 harness/audit/决策逻辑**相互独立**的确定性规则复核聚合视图, 抓"自评盲区":
+      1. 聚合矛盾: ``gates_failed`` 非空 却 grounding 判定为 pass 系 → 矛盾;
+      2. pass 一致性: 聚合判定 ``pass`` 而 grounding 不在 pass 系 → 声明门禁与
+         聚合视图脱节.
+    任一不满足 → ``verified=False``。可证伪: 改动任一条规则, 输出立即翻转;
+    生产环境可换更强的独立验证方(如跨 run 对账、外部校验服务), 契约不变.
+    """
+    reasons: list[str] = []
+    pass_set = ("pass", "grounded", "accept", "confirmed")
+    gf = cons.get("gates_failed") or []
+    grounding = cons.get("grounding", "")
+    verdict = cons.get("verdict", "")
+    if gf and grounding in pass_set:
+        reasons.append(f"gates_failed={gf} 却 grounding={grounding}")
+    if verdict == "pass" and grounding not in pass_set:
+        reasons.append(f"verdict=pass 但 grounding={grounding}")
+    return {
+        "verified": False if reasons else True,
+        "reason": "；".join(reasons) or "确定性复核一致",
+    }

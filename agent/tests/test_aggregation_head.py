@@ -12,7 +12,9 @@ from huginn.research.aggregation_head import (
     EVIDENCE_UNOBSERVED,
     HeadResult,
     consolidate,
+    oracle_verify_consolidated,
 )
+from huginn.research.decision_gate import role_separation
 from huginn.research.harness import build_harness_report
 from huginn.research.harness_ledger import HarnessLedger
 from huginn.research.program import Experiment, ResearchOutcome, run_research_program
@@ -249,3 +251,146 @@ def test_p2_direct_out_keeps_legacy_harness_path():
     rep = build_harness_report("g", out)
     names = [c.name for d in rep.dimensions for c in d.checks]
     assert all("聚合投影" not in n for n in names)
+
+
+# ── 缺陷三: 团队视角分离度(防多头塌缩) ───────────────────────────────────
+def test_role_separation_detects_collapsed_single_view():
+    survivors = [
+        {"name": "a", "objectives": {"f": 1}, "worldview": "physics_causal"},
+        {"name": "b", "objectives": {"f": 2}, "worldview": "physics_causal"},
+    ]
+    r = role_separation(survivors)
+    assert r["verdict"] == "collapsed_single_view"   # 全员同一视角 → 共识孤岛雷达
+    assert r["separation"] == 0.5
+
+
+def test_role_separation_healthy_diversity():
+    survivors = [
+        {"name": "a", "objectives": {"f": 1}, "worldview": "physics_causal"},
+        {"name": "b", "objectives": {"f": 2}, "worldview": "latent_transition"},
+    ]
+    r = role_separation(survivors)
+    assert r["verdict"] == "diverse"
+    assert r["separation"] == 1.0
+
+
+def test_role_separation_unlabeled_is_honest_unobserved():
+    # 全未打标签 → 无显式视角分化证据 → unlabeled(不硬判失败)
+    survivors = [
+        {"name": "a", "objectives": {"f": 1}},
+        {"name": "b", "objectives": {"f": 2}},
+    ]
+    assert role_separation(survivors)["verdict"] == "unlabeled"
+
+
+def test_consolidate_role_diversity_registered():
+    c = consolidate([HeadResult("h", "h", EVIDENCE_OBSERVED, "passed")],
+                    role_view=[{"worldview": "physics_causal"}] * 3)
+    assert c.role_diversity["verdict"] == "collapsed_single_view"
+
+
+# ── 缺陷五: 独立验证方(可替换的外部复核) ─────────────────────────────────
+def test_oracle_verify_flags_consolidation_contradiction():
+    # gates_failed 非空 却 grounding=pass → 自评盲区被抓
+    c = consolidate(
+        [HeadResult("gate.x", "X", EVIDENCE_OBSERVED, "failed", gate=True)],
+        grounding_verdict="pass",
+    )
+    v = oracle_verify_consolidated(c.as_dict())
+    assert v["verified"] is False
+    assert "gates_failed" in v["reason"]
+
+
+def test_oracle_verify_cross_check_pass_pass():
+    c = consolidate(
+        [HeadResult("gate.x", "X", EVIDENCE_OBSERVED, "passed", gate=True)],
+        grounding_verdict="pass",
+    )
+    assert oracle_verify_consolidated(c.as_dict())["verified"] is True
+
+
+def test_oracle_verify_catches_verdict_pass_without_grounding():
+    c = consolidate(
+        [HeadResult("gate.x", "X", EVIDENCE_OBSERVED, "passed", gate=True)],
+        grounding_verdict="needs_grounding",
+    )
+    assert oracle_verify_consolidated(c.as_dict())["verified"] is False
+
+
+def test_consolidate_injects_external_verifier():
+    def _evil(cons):
+        return {"verified": False, "reason": "外部复核发现不一致"}
+
+    c = consolidate(
+        [HeadResult("gate.x", "X", EVIDENCE_OBSERVED, "passed", gate=True)],
+        grounding_verdict="pass", external_verifier=_evil,
+    )
+    assert c.external_verify["evidence"] == EVIDENCE_OBSERVED
+    assert c.external_verify["verified"] is False
+
+
+def test_consolidate_without_verifier_marks_unobserved():
+    c = consolidate([HeadResult("h", "h", EVIDENCE_OBSERVED, "passed")])
+    assert c.external_verify["evidence"] == EVIDENCE_UNOBSERVED
+
+
+# ── 管道集成: 两个新头 + 元视图字段 ───────────────────────────────────────
+def test_pipeline_registers_diversity_and_external_verify_heads():
+    from huginn.research.planning import SubResearch, build_research_plan
+
+    def _run(v: float):
+        return lambda: {"summary": {"y": v}, "objectives": {"score": v}}
+
+    plan = build_research_plan(
+        "p3 heads",
+        [SubResearch("a", "a", _run(1.0)), SubResearch("b", "b", _run(2.0))],
+    )
+    out = run_research_program(
+        goal="p3 heads",
+        experiments=list(plan.experiments),
+        objectives_config={"score": "maximize"},
+        max_iterations=3, min_iterations=1, client=None,
+        planner=lambda _g: plan,
+    )
+    heads = out.consolidated["heads"]
+    assert "team.diversity" in heads
+    assert "governance.external_verify" in heads
+    # 元视图: role_diversity(未打标签 → unlabeled, 诚实) + external_verify(出厂 oracle 验证一致)
+    assert out.consolidated["role_diversity"]["verdict"] in ("unlabeled", "diverse", "collapsed_single_view")
+    ext = out.consolidated["external_verify"]
+    assert ext["evidence"] == EVIDENCE_OBSERVED
+    assert ext["verified"] is True
+    # harness 六维投影囊括两者
+    sa = next(d for d in out.harness["dimensions"] if d["name"] == "safety_authority")
+    names = {c["name"] for c in sa["checks"]}
+    assert any("独立验证方" in n for n in names)
+    assert any("团队视角分离度" in n for n in names)
+
+
+def test_pipeline_custom_verifier_is_respected():
+    from huginn.research.planning import SubResearch, build_research_plan
+
+    def _run(v: float):
+        return lambda: {"summary": {"y": v}, "objectives": {"score": v}}
+
+    def _strict(cons):                      # 独立验证方: 任何 gates_failed 都拒
+        return {"verified": not (cons.get("gates_failed") or []),
+                "reason": "strict external policy"}
+
+    plan = build_research_plan(
+        "p3 custom verifier",
+        [SubResearch("a", "a", _run(1.0)), SubResearch("b", "b", _run(2.0))],
+    )
+    out = run_research_program(
+        goal="p3 custom verifier",
+        experiments=list(plan.experiments),
+        objectives_config={"score": "maximize"},
+        max_iterations=3, min_iterations=1, client=None,
+        planner=lambda _g: plan,
+        external_verifier=_strict,
+    )
+    assert out.consolidated["external_verify"]["verified"] is True   # 本 run 无否决 → 放行
+    sa = next(d for d in out.harness["dimensions"] if d["name"] == "safety_authority")
+    ext = next(c for c in sa["checks"] if "独立验证方" in c["name"])
+    assert ext["outcome"] == "passed"
+    assert "strict external policy" in ext["detail"]

@@ -209,3 +209,54 @@ def grounding_audit(report: str, pareto_front: list[dict], /) -> dict[str, Any]:
         "unused": unused,
         "verdict": ("proper_use" if not unused else "score_without_use"),
     }
+
+
+# ── 缺陷三映射: 团队/假说视角分离度(防多头塌缩成单头) ────────────────────
+def role_separation(
+    survivors: list[dict], *, worldview_key: str = "worldview"
+) -> dict[str, Any]:
+    """度量存活假说在"视角/角色"上的分歧度 —— 防御"共识孤岛".
+
+    背景 (缺陷三): Scientist×N 并行跑, 但没有机制保证 N 个头给出分歧; Pareto 剪枝
+    还会主动淘汰少数派 → 幸存集可能全是同一视角, 注意力头塌缩成单头. 本函数给每个
+    存活假说取一个"视角标签"并测分离度:
+
+      - 标签: 显式 worldview / role / source 之一优先; 否则 "∅"(未标记).
+      - separation = 去重标签数 / 存活数 (0..1)
+      - verdict 三态(诚实, 不硬判):
+          * unlabeled           : 全部未打标签 —— 无显式视角分化证据, 记 unobserved;
+          * collapsed_single_view: 有标签但只剩单一视角(或分离度 < 0.5) —— 塌缩雷达;
+          * diverse             : 去重视角 >= 2 且占比过半 —— 视角分化健康.
+
+    可证伪: 换一批标签或阈值, 判定立即翻转.
+    """
+    labels: list[str] = []
+    untagged = 0
+    for it in survivors or []:
+        if not isinstance(it, dict):
+            continue
+        lab = it.get(worldview_key) or it.get("role") or it.get("source")
+        if lab in (None, "", "∅", "unknown"):
+            untagged += 1
+            labels.append("∅")
+        else:
+            labels.append(str(lab))
+    n = len(labels)
+    if n == 0:
+        return {"checked": 0, "separation": 0.0, "untagged": 0,
+                "labels": [], "verdict": "unlabeled"}
+    distinct = len({l for l in labels if l != "∅"})
+    separation = distinct / n
+    if untagged == n:
+        verdict = "unlabeled"
+    elif distinct >= 2 and separation >= 0.5:
+        verdict = "diverse"
+    else:
+        verdict = "collapsed_single_view"
+    return {
+        "checked": n,
+        "separation": round(separation, 3),
+        "untagged": untagged,
+        "labels": sorted(set(labels)),
+        "verdict": verdict,
+    }

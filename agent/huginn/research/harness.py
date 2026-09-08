@@ -78,7 +78,8 @@ _P2_DIM_HEADS: dict[str, list[str]] = {
     "change_validation": ["gate.claim_grounding", "gate.structural"],
     "reliable_delivery": ["reliable.evidence_cache", "gate.workspace"],
     "learning_capture": ["learning.self_audit"],
-    "safety_authority": ["wm.actually_used", "audit.score_usage"],
+    "safety_authority": ["wm.actually_used", "audit.score_usage",
+                         "team.diversity", "governance.external_verify"],
 }
 _P2_DIM_LABEL = {
     "task_understanding": "需求拆解/plan 修订(聚合投影)",
