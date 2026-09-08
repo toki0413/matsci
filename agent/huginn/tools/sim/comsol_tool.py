@@ -459,7 +459,7 @@ public class {prefix} {{
             auditor = PhysicsAuditor()
             audit_report = auditor.audit("comsol_tool", action, data, {})
             data["physics_audit"] = audit_report.to_dict()
-        except Exception:
+        except Exception as exc:
             logger.debug("audit failure can't block result delivery", exc_info=True)
 
         return ToolResult(data=data, success=success)

@@ -183,7 +183,7 @@ class OpenMMTool(HuginnTool):
                 auditor = PhysicsAuditor()
                 audit = auditor.audit("openmm_tool", "energy_minimize", data, inp.model_dump())
                 data["physics_audit"] = audit.to_dict()
-            except Exception:
+            except Exception as exc:
                 logger.debug("audit failure can't block result delivery", exc_info=True)
 
             return ToolResult(data=data)
@@ -289,7 +289,7 @@ class OpenMMTool(HuginnTool):
                 auditor = PhysicsAuditor()
                 audit = auditor.audit("openmm_tool", "md_run", data, inp.model_dump())
                 data["physics_audit"] = audit.to_dict()
-            except Exception:
+            except Exception as exc:
                 logger.debug("audit failure can't block result delivery", exc_info=True)
 
             return ToolResult(data=data)
@@ -457,7 +457,7 @@ class OpenMMTool(HuginnTool):
                     except (ValueError, IndexError):
                         logger.debug("best-effort op failed", exc_info=True)
                         continue
-        except Exception:
+        except Exception as exc:
             logger.debug("md log parse failed", exc_info=True)
 
         return {

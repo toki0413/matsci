@@ -160,7 +160,7 @@ class GromacsTool(HuginnTool):
                     "gromacs_tool", "md_run", data, input_data.model_dump()
                 )
                 data["physics_audit"] = audit_report.to_dict()
-            except Exception:
+            except Exception as exc:
                 logger.debug("audit failure can't block result delivery", exc_info=True)
 
             return ToolResult(
@@ -235,7 +235,7 @@ class GromacsTool(HuginnTool):
                     "gromacs_tool", "energy_minimize", data, input_data.model_dump()
                 )
                 data["physics_audit"] = audit_report.to_dict()
-            except Exception:
+            except Exception as exc:
                 logger.debug("audit failure can't block result delivery", exc_info=True)
 
             return ToolResult(
@@ -343,7 +343,7 @@ class GromacsTool(HuginnTool):
             return data
         try:
             content = log_path.read_text(encoding="utf-8", errors="ignore")
-        except Exception:
+        except Exception as exc:
             return data
 
         data["lincs_warnings"] = content.count("LINCS WARNING")

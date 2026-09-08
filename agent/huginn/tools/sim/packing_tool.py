@@ -225,7 +225,7 @@ class PackingTool(HuginnTool):
                 f"Named molecule '{name}' requires ASE or RDKit. "
                 "Install ase/rdkit or provide an XYZ file."
             ) from None
-        except Exception:
+        except Exception as exc:
             # ASE may raise KeyError for unknown names; fall back to built-ins.
             if builtin is not None:
                 return builtin

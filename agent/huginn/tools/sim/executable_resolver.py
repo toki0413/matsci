@@ -215,7 +215,7 @@ class ExecutableResolver:
                 data = json.loads(_CACHE_FILE.read_text(encoding="utf-8"))
                 if isinstance(data, dict):
                     self._cache = data
-        except Exception:
+        except Exception as exc:
             logger.debug("failed to load executable cache", exc_info=True)
 
     def _save_cache(self) -> None:
@@ -224,7 +224,7 @@ class ExecutableResolver:
             _CACHE_FILE.write_text(
                 json.dumps(self._cache, indent=2), encoding="utf-8"
             )
-        except Exception:
+        except Exception as exc:
             logger.debug("failed to save executable cache", exc_info=True)
 
     def resolve(self, tool_name: str) -> str | ResolutionRequest:

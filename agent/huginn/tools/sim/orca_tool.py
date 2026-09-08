@@ -245,7 +245,7 @@ class OrcaTool(HuginnTool):
                             ]
                             error = f"Physics audit found errors: {errs}"
                             soft_failure_msg = error
-                    except Exception:
+                    except Exception as exc:
                         logger.debug("审计本身挂了不能阻塞结果", exc_info=True)
 
             if error is None:
@@ -302,7 +302,7 @@ class OrcaTool(HuginnTool):
                     "orca_tool", args.action, parsed, args.model_dump()
                 )
                 data["physics_audit"] = audit_report.to_dict()
-            except Exception:
+            except Exception as exc:
                 logger.debug("audit failure can't block result delivery", exc_info=True)
 
         return ToolResult(
@@ -333,7 +333,7 @@ class OrcaTool(HuginnTool):
 
             self._apply_input_overrides(inp_file, applicable)
             return {"fixes": applicable, "reasoning": reasoning}
-        except Exception:
+        except Exception as exc:
             logger.debug("best-effort op failed", exc_info=True)
             return None
 
@@ -348,7 +348,7 @@ class OrcaTool(HuginnTool):
                 if s.startswith("!"):
                     for token in s.lstrip("!").split():
                         params[token.lower()] = True
-        except Exception:
+        except Exception as exc:
             logger.debug("read text failed", exc_info=True)
         return params
 
@@ -396,7 +396,7 @@ class OrcaTool(HuginnTool):
                         break
 
             inp_path.write_text("\n".join(lines), encoding="utf-8")
-        except Exception:
+        except Exception as exc:
             logger.warning("ORCA input autofix failed", exc_info=True)
 
     @staticmethod

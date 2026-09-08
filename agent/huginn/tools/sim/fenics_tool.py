@@ -53,7 +53,7 @@ def _fenics_available(sandbox: SandboxExecutor) -> bool:
     except SandboxError:
         logger.debug("best-effort op failed", exc_info=True)
         return False
-    except Exception:
+    except Exception as exc:
         logger.debug("best-effort op failed", exc_info=True)
         return False
 
@@ -159,7 +159,7 @@ class FenicsTool(HuginnTool):
                 auditor = PhysicsAuditor()
                 audit_report = auditor.audit("fenics_tool", "solve_pde", data, {})
                 data["physics_audit"] = audit_report.to_dict()
-            except Exception:
+            except Exception as exc:
                 logger.debug("audit failure can't block result delivery", exc_info=True)
 
             return ToolResult(
@@ -281,7 +281,7 @@ class FenicsTool(HuginnTool):
                 try:
                     d = errornorm(u1, u2, "L2")
                     print("diff", d)
-                except Exception:
+                except Exception as exc:
                     n1 = norm(u1, "L2")
                     n2 = norm(u2, "L2")
                     denom = max(n1, n2, 1e-15)
@@ -315,7 +315,7 @@ class FenicsTool(HuginnTool):
                     diffs.append(float("nan"))
             except subprocess.TimeoutExpired:
                 diffs.append(float("nan"))
-            except Exception:
+            except Exception as exc:
                 diffs.append(float("nan"))
 
         valid = [d for d in diffs if d == d]
@@ -342,7 +342,7 @@ class FenicsTool(HuginnTool):
             auditor = PhysicsAuditor()
             audit_report = auditor.audit("fenics_tool", "convergence_check", data, {})
             data["physics_audit"] = audit_report.to_dict()
-        except Exception:
+        except Exception as exc:
             logger.debug("audit failure can't block result delivery", exc_info=True)
 
         return ToolResult(data=data, success=True)

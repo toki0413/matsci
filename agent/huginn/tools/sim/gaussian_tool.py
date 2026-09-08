@@ -257,7 +257,7 @@ class GaussianTool(HuginnTool):
                             ]
                             error = f"Physics audit found errors: {errs}"
                             soft_failure_msg = error
-                    except Exception:
+                    except Exception as exc:
                         logger.debug("审计本身挂了不能阻塞结果", exc_info=True)
 
             if error is None:
@@ -310,7 +310,7 @@ class GaussianTool(HuginnTool):
                     "gaussian_tool", args.action, parsed, args.model_dump()
                 )
                 data["physics_audit"] = audit_report.to_dict()
-            except Exception:
+            except Exception as exc:
                 logger.debug("audit failure can't block result delivery", exc_info=True)
 
         return ToolResult(
@@ -341,7 +341,7 @@ class GaussianTool(HuginnTool):
 
             self._apply_route_overrides(gjf_file, route_fixes)
             return {"fixes": route_fixes, "reasoning": reasoning}
-        except Exception:
+        except Exception as exc:
             logger.debug("best-effort op failed", exc_info=True)
             return None
 
@@ -368,7 +368,7 @@ class GaussianTool(HuginnTool):
                         else:
                             params[token.lower()] = True
                     break
-        except Exception:
+        except Exception as exc:
             logger.debug("read text failed", exc_info=True)
         return params
 
@@ -407,7 +407,7 @@ class GaussianTool(HuginnTool):
                         break
 
             gjf_path.write_text("\n".join(lines), encoding="utf-8")
-        except Exception:
+        except Exception as exc:
             logger.warning("Gaussian input autofix failed", exc_info=True)
 
     @staticmethod

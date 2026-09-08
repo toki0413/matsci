@@ -163,7 +163,7 @@ class VaspTool(HuginnTool):
                 exe = shutil.which(name)
                 if exe:
                     return exe
-        except Exception:
+        except Exception as exc:
             logger.debug("suppressed in _find_vasp", exc_info=True)
 
         return None
@@ -333,7 +333,7 @@ class VaspTool(HuginnTool):
                                 ]
                                 error = f"Physics audit found errors: {errs}"
                                 soft_failure_msg = error
-                        except Exception:
+                        except Exception as exc:
                             logger.debug("审计本身挂了不能阻塞结果", exc_info=True)
 
                 if error is None:
@@ -400,7 +400,7 @@ class VaspTool(HuginnTool):
                         "vasp_tool", args.action, parsed, args.model_dump()
                     )
                     data["physics_audit"] = audit_report.to_dict()
-                except Exception:
+                except Exception as exc:
                     logger.debug("audit failure can't block result delivery", exc_info=True)
 
             # 带上 provenance 快照, 事后能追溯参数/版本/环境
@@ -410,7 +410,7 @@ class VaspTool(HuginnTool):
                 data["provenance"] = capture(
                     "vasp_tool", args.model_dump(), output=dict(data)
                 ).to_dict()
-            except Exception:
+            except Exception as exc:
                 logger.debug("provenance 失败不能把计算结果带挂", exc_info=True)
 
             # 提示 agent 可以链式调 gp_tool 做 GP 不确定性量化
@@ -466,7 +466,7 @@ class VaspTool(HuginnTool):
                 except ValueError:
                     logger.debug("suppressed in _read_incar_params", exc_info=True)
                 params[k] = v
-        except Exception:
+        except Exception as exc:
             logger.debug("suppressed in _read_incar_params", exc_info=True)
         return params
 
@@ -489,7 +489,7 @@ class VaspTool(HuginnTool):
                 return None
             self._modify_incar(incar, fixed)
             return {"fixes": fixed, "reasoning": reasoning}
-        except Exception:
+        except Exception as exc:
             logger.debug("best-effort op failed", exc_info=True)
             return None
 
@@ -728,7 +728,7 @@ class VaspTool(HuginnTool):
                     # accuracy" convergence marker in minimal OUTCARs,
                     # so double-check with Python if Rust says not converged.
                     return self._with_conservation(result)
-            except Exception:
+            except Exception as exc:
                 logger.debug("suppressed in _parse_outcar", exc_info=True)
 
         return self._with_conservation(self._parse_outcar_python(outcar_path, action=action))
@@ -740,7 +740,7 @@ class VaspTool(HuginnTool):
         """
         try:
             result["conservation"] = audit_material_conservation(result)
-        except Exception:
+        except Exception as exc:
             logger.debug("conservation audit failed (non-fatal)", exc_info=True)
         return result
 
@@ -783,7 +783,7 @@ class VaspTool(HuginnTool):
                 result["magnetic_moments"] = list(oc.magnetizations[-1])
             result["converged"] = bool(oc.converged)
             result["parse_source"] = "pymatgen"
-        except Exception:
+        except Exception as exc:
             logger.debug("pymatgen 没装或解析失败, 走下面的 regex", exc_info=True)
 
         try:
@@ -927,12 +927,12 @@ class VaspTool(HuginnTool):
                 result["band_gap"] = float(gap) if gap is not None else None
                 result["cbm"] = float(cbm) if cbm is not None else None
                 result["vbm"] = float(vbm) if vbm is not None else None
-            except Exception:
+            except Exception as exc:
                 logger.debug("suppressed in _parse_vasprun_quick", exc_info=True)
             result["efermi"] = float(vr.efermi) if vr.efermi is not None else None
             result["parse_source"] = "pymatgen_vasprun"
             return result
-        except Exception:
+        except Exception as exc:
             logger.debug("pymatgen 没装或解析失败, 走 ElementTree", exc_info=True)
 
         try:
@@ -1005,7 +1005,7 @@ class VaspTool(HuginnTool):
             data["provenance"] = capture(
                 "vasp_tool", args.model_dump(), output=dict(data)
             ).to_dict()
-        except Exception:
+        except Exception as exc:
             logger.debug("suppressed in _mock_result", exc_info=True)
 
         # mock 结果也带 uq_hint, 让 agent 能练习链式调用
@@ -1093,5 +1093,5 @@ class VaspTool(HuginnTool):
 
             incar_path.write_text("\n".join(modified), encoding="utf-8")
 
-        except Exception:
+        except Exception as exc:
             logger.warning("INCAR autofix modification failed", exc_info=True)
