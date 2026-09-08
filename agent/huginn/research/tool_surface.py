@@ -62,19 +62,72 @@ def _registry_call(name: str) -> Callable[[dict], str]:
     return _call
 
 
-def resolve_diagnostic_tools(items) -> tuple[list[dict], dict[str, Callable[[dict], str]]]:
+def governed_handler(name: str, inner: Callable[[dict], str],
+                     *, authorize: Callable[[dict], tuple[bool, str]] | None = None,
+                     audit: Callable[[dict], None] | None = None) -> Callable[[dict], str]:
+    """给单个工具调用包一层**可选治理门禁**: 调用前可否执行, 调用后记审计.
+
+    这是研究管线侧的执行治理**薄控制点** —— 对齐系统级 `governance.can_execute` 的语义,
+    但不引入 governance 重栈依赖(research/ 保持纯 stdlib 叶子)。
+
+    - `authorize(audit_ctx) -> (allowed, reason)`: 每次调用前判定。返回 (False, reason) →
+      拒绝, 结果如实返回 {error: "denied: reason"} 且**不触达内层 handler**(防越权执行)。
+      默认 None → 放行(向后兼容, 不改变现有行为)。
+    - `audit(audit_ctx)`: 每次真实调用后回调, 用于记录谁调了什么/结果如何(审计链)。
+      audit_ctx = {"tool": name, "args": a, "allowed": bool, "result_ok": bool}。
+
+    诚实红线: 门禁是**可选注入** —— 注入才生效, 不注入回到"任何工具直接 call"的现状。
+    这显式要求治理由调用方注入, 而非假装"工具面自带治理"。
+    """
+    def _wrapped(a: dict) -> str:
+        ctx = {"tool": name, "args": a}
+        if authorize is not None:
+            allowed, reason = authorize(a)
+            ctx["allowed"] = bool(allowed)
+            if not allowed:
+                res = f'{{"error": "denied by governance: {reason}"}}'
+                ctx["result_ok"] = False
+                if audit is not None:
+                    audit(ctx)
+                return res
+        else:
+            ctx["allowed"] = True
+        try:
+            res = inner(a)
+        except Exception as exc:  # noqa: BLE001 — 工具边界收敛, 结果如实回传
+            ctx["result_ok"] = False
+            if audit is not None:
+                audit(ctx)
+            return f'{{"error": "{type(exc).__name__}: {exc}"}}'
+        ctx["result_ok"] = True
+        if audit is not None:
+            audit(ctx)
+        return res
+    return _wrapped
+
+
+def resolve_diagnostic_tools(items, *, manage: dict | None = None) -> tuple[list[dict], dict[str, Callable[[dict], str]]]:
     """把研究管线诊断工具面归一到规范形状.
 
     `items`: None / list[str] / list[dict{"tool","handle"}] / 二者混排。
     返回 (schemas, handlers)；空输入返回 ([], {})。
+
+    `manage`(可选治理注入): {"authorize": fn(a)->(ok,reason), "audit": fn(ctx)->None}。
+    提供时, 所有返回的 handler 都被 `governed_handler` 包一层门禁(先授权、后审计),
+    否则保持现状(任何工具直接 call) —— 治理由调用方显式注入才生效。
     """
     schemas: list[dict] = []
     handlers: dict[str, Callable[[dict], str]] = {}
     registry_ok = _try_registry()
+    authorize = (manage or {}).get("authorize")
+    audit = (manage or {}).get("audit")
+    wrapped = (authorize is not None) or (audit is not None)
     for it in items or []:
         if isinstance(it, str):  # ToolRegistry 工具名
             schemas.append(_registry_tool_schema(it))
-            handlers[it] = _registry_call(it)
+            raw = _registry_call(it)
+            handlers[it] = governed_handler(it, raw, authorize=authorize, audit=audit) \
+                if wrapped else raw
             continue
         t = it.get("tool", {})
         fn = t.get("function", {})
@@ -82,7 +135,9 @@ def resolve_diagnostic_tools(items) -> tuple[list[dict], dict[str, Callable[[dic
         if not name:
             raise ValueError("诊断工具 dict 缺少 'tool.function.name'")
         schemas.append(canonical_tool_shape(name, fn.get("description", ""), fn.get("parameters")))
-        handlers[name] = it["handle"]
+        raw = it["handle"]
+        handlers[name] = governed_handler(name, raw, authorize=authorize, audit=audit) \
+            if wrapped else raw
     # 若环境无 ToolRegistry 且只有 dict 逃生口, 也正常解析(registry_ok 只是旁路说明)
     return schemas, handlers
 

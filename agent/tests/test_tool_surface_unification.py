@@ -129,3 +129,67 @@ def test_register_diagnostic_tools_surfaces_in_capability_manifest():
     finally:
         ToolRegistry.restore(snap)  # 恢复全局注册表, 满足 conftest 防泄漏守卫
         CapabilityRegistry.clear()
+
+
+# ── 治理门禁注入(物理 AI / 治理完善: 工具调用可选过风险门) ────────────────
+def test_governed_handler_denies_before_touching_inner():
+    """注入 authorize=拒绝时, 内层 handler 不被触达(防越权执行), 结果如实标 denied."""
+    from huginn.research.tool_surface import governed_handler
+
+    inner_called = []
+
+    def _inner(a):
+        inner_called.append(a)          # 不应发生
+        return '{"ran": true}'
+
+    auth = governed_handler("danger_tool", _inner,
+                            authorize=lambda a: (False, "tool on denylist"))
+    res = auth({})
+    assert "denied by governance" in res and "denylist" in res
+    assert inner_called == [], "授权被拒必须不触达内层 handler"
+
+
+def test_governed_handler_allow_runs_inner_and_audits():
+    """注入 authorize=放行 + audit 时, 内层执行且每次调用都记审计痕迹."""
+    from huginn.research.tool_surface import governed_handler
+
+    audit_log = []
+    handled = governed_handler("safe_tool",
+                               lambda a: '{"ok": 1}',
+                               authorize=lambda a: (True, ""),
+                               audit=lambda ctx: audit_log.append(ctx))
+    res = handled({"x": 1})
+    assert '"ok": 1' in res
+    assert len(audit_log) == 1
+    assert audit_log[0]["tool"] == "safe_tool"
+    assert audit_log[0]["allowed"] is True and audit_log[0]["result_ok"] is True
+
+
+def test_resolve_diagnostic_tools_manage_wraps_all_handlers():
+    """enable manage= 时所有 handler 被统一包治理; 不传则保持原样(向后兼容)."""
+    items = [
+        {"tool": canonical_tool_shape("t1", "A"), "handle": lambda a: '{"t": 1}'},
+        {"tool": canonical_tool_shape("t2", "B"), "handle": lambda a: '{"t": 2}'},
+    ]
+    # 无 manage: 直接 call(现行为不变)
+    _, plain = resolve_diagnostic_tools(items)
+    assert plain["t1"]({}) == '{"t": 1}'
+    # 有 manage + 拒绝: 全部被包, 拒绝 → denied 且不触达内层
+    audit = []
+    _, governed = resolve_diagnostic_tools(items, manage={
+        "authorize": lambda a: (False, "read-only project"),
+        "audit": lambda ctx: audit.append(ctx),
+    })
+    for name in ("t1", "t2"):
+        assert "denied by governance" in governed[name]({})
+    assert len(audit) == 2, "每次调用都应记审计(即使被拒)"
+    # authorize 未触发内层 → 内层无副作用(这里 handler 是纯函数, 由 resp 证明未被调)
+
+
+def test_governed_handler_no_authorize_stays_seamless():
+    """只注入 audit、不注入 authorize 时, 不改变放行行为, 但仍记审计."""
+    from huginn.research.tool_surface import governed_handler
+    log = []
+    h = governed_handler("x", lambda a: '{"v": 3}', audit=lambda ctx: log.append(ctx))
+    assert h({}) == '{"v": 3}'
+    assert len(log) == 1 and log[0]["allowed"] is True
