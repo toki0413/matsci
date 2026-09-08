@@ -145,6 +145,7 @@ class ExplorationOrchestrator:
                             name=nb.get("name", "unnamed"),
                             hypothesis=nb.get("hypothesis", "No hypothesis"),
                             parent=action.target_branch,
+                            metadata=self._branch_meta(nb),
                         )
                 elif action.action_type == "refine" and action.new_branches:
                     for nb in action.new_branches:
@@ -153,6 +154,7 @@ class ExplorationOrchestrator:
                             name=nb.get("name", "refinement"),
                             hypothesis=nb.get("hypothesis", "Refinement"),
                             parent=action.target_branch,
+                            metadata=self._branch_meta(nb),
                         )
 
             if terminate:
@@ -205,6 +207,17 @@ class ExplorationOrchestrator:
             convergence_reason=convergence_reason,
             knowledge_graph_json=space.export_knowledge_graph("json"),
         )
+
+    @staticmethod
+    def _branch_meta(nb: dict[str, Any]) -> dict[str, Any] | None:
+        """把策略 new_branches 里 name/hypothesis 之外的字段透传为演化 metadata.
+
+        关键通道: MutationStrategy 生成的 `params` / `mutation_of` / `parent_hypothesis`
+        若不透传, 动态子代到 executor 手里时就丢了世系与参数, 无法被真实执行 ——
+        「评估→变异→再执行」的迭代闭环就在这里断链。
+        """
+        meta = {k: v for k, v in nb.items() if k not in ("name", "hypothesis")}
+        return meta or None
 
     async def run(
         self,

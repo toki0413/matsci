@@ -85,3 +85,66 @@ def resolve_diagnostic_tools(items) -> tuple[list[dict], dict[str, Callable[[dic
         handlers[name] = it["handle"]
     # 若环境无 ToolRegistry 且只有 dict 逃生口, 也正常解析(registry_ok 只是旁路说明)
     return schemas, handlers
+
+
+# ── MCP 面接线: 把研究管线诊断工具装箱进 ToolRegistry ───────────────────────
+# 使 `CapabilityRegistry.scan_tool_registry() → mcp_export` 这条链能看到它们
+# (否则域科学计算工具只在 run_research_program 的 dict 逃生口里, MCP tools/list 看不见).
+
+
+def register_diagnostic_tools(diagnostic_tools) -> list[str]:
+    """把研究管线诊断工具注册进 ToolRegistry, 返回注册名列表.
+
+    接线链: ToolRegistry → CapabilityRegistry.scan_tool_registry()(自动装箱)
+    → mcp_export (tools/list + tools/call)。注册后同一工具面既服务深研管线
+    (resolve_diagnostic_tools 的 str 回退), 也服务 MCP 外部调用。
+    重依赖 (HuginnTool 基类) lazy —— 本函数在轻量环境无人调用时零开销。
+    """
+    from huginn.core_types import ToolResult
+    from huginn.tools.base import HuginnTool
+    from huginn.tools.registry import ToolRegistry
+
+    class _DictHandleTool(HuginnTool):
+        """把 {schema, handle} 诊断工具装箱成 HuginnTool (MCP 导出/统一注册面用)."""
+
+        category = "sim"
+        read_only = True
+        active = True
+
+        def __init__(self, *, name: str, description: str,
+                     parameters_schema: dict, handle: Callable) -> None:
+            self.name = name
+            self.description = description or "域诊断科学计算工具 (runtime-mount)"
+            self._parameters_schema = parameters_schema
+            self._handle = handle
+            super().__init__()
+
+        def is_available(self) -> bool:
+            return True
+
+        @property
+        def input_json_schema(self) -> dict:
+            return self._parameters_schema or {"type": "object", "properties": {}}
+
+        async def call(self, args, context=None):
+            try:
+                res = self._handle(dict(args or {}))
+                return ToolResult(success=True, data=res, metadata={})
+            except Exception as exc:  # noqa: BLE001 — 工具边界收敛, 不上抛
+                return ToolResult(success=False, error=f"{type(exc).__name__}: {exc}",
+                                  metadata={})
+
+    names: list[str] = []
+    for it in diagnostic_tools or []:
+        fn = it["tool"].get("function", {})
+        name = fn.get("name")
+        if not name:
+            continue
+        ToolRegistry.register(_DictHandleTool(
+            name=name,
+            description=fn.get("description", ""),
+            parameters_schema=fn.get("parameters"),
+            handle=it["handle"],
+        ))
+        names.append(name)
+    return names

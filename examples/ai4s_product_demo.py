@@ -19,10 +19,15 @@ _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "agent"))
 
-from ai4s_backends import BACKENDS, GOALS, OBJECTIVES, DIAGNOSTIC_TOOLS  # noqa: E402
+from ai4s_backends import (  # noqa: E402
+    BACKENDS, DIAGNOSTIC_TOOLS, EXOPLANET_MUTATION_CONFIG, GOALS, OBJECTIVES,
+)
 from huginn.research import run_research_program  # noqa: E402
 
 OUT = Path(__file__).resolve().parent / "out"
+
+# 进化迭代配置 (域可选): exoplanet 声明 a_scale 变异的 param_space, 变异子代真实生效
+MUTATION_CONFIG = {"hotjupiter": None, "exoplanet": EXOPLANET_MUTATION_CONFIG}
 
 
 def _one(domain: str, client, model: str, base_url: str | None) -> None:
@@ -34,6 +39,7 @@ def _one(domain: str, client, model: str, base_url: str | None) -> None:
         objectives_config=OBJECTIVES[domain],
         client=client, model=model, base_url=base_url,
         diagnostic_tools=diag or None,
+        mutation_config=MUTATION_CONFIG.get(domain),   # 进化迭代: 变异子代真实再执行
         out_md=OUT / f"ai4s_product_{domain}_report.md",
     )
     mounted = ", ".join(t["tool"]["function"]["name"] for t in diag) or "none"
@@ -42,6 +48,8 @@ def _one(domain: str, client, model: str, base_url: str | None) -> None:
           f"pareto_front={len(out.pareto_front)} convergence={out.converred}")
     for b in out.pareto_front:
         print(f"  surv → {b['name']}")
+    if out.mutations:
+        print(f"[evolution] 变异子代 {out.mutations} 个已真实执行并入前沿候筛")
     print(f"[gate] {out.verdict} {out.ungrounded} | report_source={out.report_source}")
 
 

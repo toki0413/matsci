@@ -28,10 +28,14 @@ class Experiment:
 
     name: 唯一标识; hypothesis: 人类可读假说; run: 执行真实实验,
         返回 dict(含 summary 与 objectives[magnet maximize]).
+    parametrize: 可选 —— 给定 MutationStrategy 的变异参数(如 {"a_scale": 1.05}),
+        返回一个执行**真实变异实验**的 run 闭包。缺省 None 时, 变异子代以父实验
+        的 run 真实重跑(诚实回退, 不再让子代"被创建却无法执行")。
     """
     name: str
     hypothesis: str
     run: Callable[[], dict[str, Any]]
+    parametrize: Callable[[dict[str, float]], Callable[[], dict[str, Any]]] | None = None
 
 
 @dataclass
@@ -97,8 +101,48 @@ def run_research_program(
     cache: dict[str, dict] = {}
     spec_by_name = {e.name: e for e in experiments}
 
+    def _resolve_variant(branch_name: str, branch) -> Experiment | None:
+        """把动态子代(变异/演化)解析成可真实执行的实验 spec.
+
+        迭代闭环的关键: MutationStrategy 生成的 `{parent}~mut{i}` 子代不在初始
+        `experiments` 里, 以前 executor 直接返回 failure → 子代被创建却永不产生
+        真实 objectives(「评估→变异→再执行」断裂)。这里按 branch.metadata 里的
+        世系与参数重建变体:
+
+          - 父实验声明了 parametrize → 用变异参数生成真实变异实验(参数真正生效);
+          - 未声明 → 复用父实验 run 真实重跑(诚实回退, 不伪造数值);
+          - 参数化失败 → 丢弃该子代(不产生假数据), 由 orchestrator 正常失败兜底。
+        """
+        meta = branch.metadata or {}
+        parent = meta.get("mutation_of")
+        if parent is None:
+            return None  # 非变异子代(如 refine 缺参), 保持原行为
+        spec = spec_by_name.get(parent)
+        if spec is None:
+            return None
+        params = meta.get("params") or {}
+        if spec.parametrize is not None:
+            try:
+                variant_run = spec.parametrize(params)
+                if variant_run is None:
+                    raise TypeError("parametrize 返回 None")
+            except Exception:  # noqa: BLE001 — 参数化失败: 不伪造, 子代丢弃
+                return None
+        else:
+            variant_run = spec.run  # 诚实回退: 父实验真实重跑
+        return dataclasses.replace(
+            spec,
+            run=variant_run,
+            name=branch_name,
+            hypothesis=branch.hypothesis or spec.hypothesis,
+        )
+
     async def executor(branch):
         spec = spec_by_name.get(branch.name)
+        if spec is None:  # 动态子代(变异/演化新分支)
+            spec = _resolve_variant(branch.name, branch)
+            if spec is not None:
+                spec_by_name[branch.name] = spec  # 注册, 供综合阶段取假说/摘要
         if spec is None:
             return {"success": False, "objectives": {}, "results": {}}
         res = await asyncio.to_thread(spec.run)

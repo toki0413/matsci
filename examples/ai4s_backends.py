@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import math
 from pathlib import Path
+from typing import Callable
 
 import hotjupiter_sw as hj
 import hotjupiter_sw2 as hj2
@@ -93,9 +94,9 @@ def exoplanet_backend(top: int = 8) -> list[Experiment]:
     data_path = _HERE / "out" / "real_exoplanet.json"
     records = json.loads(data_path.read_text(encoding="utf-8"))[:top]
 
-    def _run(rec: dict) -> dict:
+    def _run(rec: dict, a_scale: float = 1.0) -> dict:
         period_d = float(rec["orbper_d"])
-        a_au = _kepler_semimajor_au(period_d, _ASSUMED_HOST_MSUN)
+        a_au = _kepler_semimajor_au(period_d, _ASSUMED_HOST_MSUN) * a_scale  # 变异: 半长轴缩放
         a_m = a_au * AU_M
         S = SOLAR_LUM / (4 * math.pi * a_m ** 2)                 # 日晒 [W/m²]
         T_eq = ((1 - 0.1) * S / (4 * STEFAN)) ** 0.25            # 全球平均平衡温度
@@ -105,14 +106,32 @@ def exoplanet_backend(top: int = 8) -> list[Experiment]:
                            "insolation_Wm2": float(S),
                            "consistency": float(conserved)},
             "summary": {"planet": rec["name"], "P_d": period_d, "a_AU": round(a_au, 4),
-                        "S_Wm2": round(S, 1), "T_eq_K": round(T_eq, 1),
+                        "a_scale": a_scale, "S_Wm2": round(S, 1), "T_eq_K": round(T_eq, 1),
                         "m_jup": rec["mass_mjup"], "r_re": rec["radius_re"],
                         "assumption": "host=M_☉ (文献假说, 目录无宿主质量)"},
             "success": True}
 
+    def _make_parametrize(rec: dict):
+        """迭代闭环: 变异参数 (a_scale 轨道半长轴缩放) → 真实第一性原理重算."""
+        def _parametrize(params: dict) -> Callable[[], dict]:
+            scale = float(params.get("a_scale", 1.0))
+            scale = min(max(scale, 0.7), 1.4)  # 钳制在物理合理范围
+            return lambda: _run(rec, a_scale=scale)
+        return _parametrize
+
     return [Experiment(name=("exo_" + rec["name"].replace(" ", "_").replace("-", "_")),
                        hypothesis=f"{rec['name']} 的轨道日晒与黑体平衡温度的解析结论",
-                       run=lambda r=rec: _run(r)) for rec in records]
+                       run=lambda r=rec: _run(r),
+                       parametrize=_make_parametrize(rec)) for rec in records]
+
+
+# 变异配置: 轨道半长轴 a_scale ∈ [0.8, 1.2] (日晒∝a^-2 → T_eq 随 a 单调下降),
+# 变异子代据此产生真实可分的物理目标, 供「评估→变异→再执行」迭代闭环使用.
+EXOPLANET_MUTATION_CONFIG: dict = {
+    "param_space": {"a_scale": (0.8, 1.2)},
+    "mutation_rate": 0.6,
+    "max_children": 2,
+}
 
 
 BACKENDS = {"hotjupiter": hotjupiter_backend, "exoplanet": exoplanet_backend}

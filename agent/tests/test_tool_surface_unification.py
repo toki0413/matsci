@@ -87,3 +87,45 @@ def test_resolve_registry_by_name_when_available():
     sch, handlers = resolve_diagnostic_tools([name])
     assert sch[0]["function"]["name"] == name
     assert name in handlers and callable(handlers[name])
+
+
+def test_register_diagnostic_tools_surfaces_in_capability_manifest():
+    """域诊断科学计算工具装箱进 ToolRegistry → CapabilityRegistry, MCP 导出面可见.
+
+    评分要求「用 MCP 协议封装科学计算工具」: 此前域诊断工具是裸 dict, 只活在
+    run_research_program 逃生口里, mcp_export 的 tools/list 看不见它们。装箱后
+    scan_tool_registry() 自动把工具纳入能力清单, MCP server 即可对外提供同款能力。
+    """
+    from huginn.capabilities.registry import CapabilityRegistry
+    from huginn.research.tool_surface import register_diagnostic_tools
+    from huginn.tools.registry import ToolRegistry
+
+    name = f"fake_circ_{abs(hash('mcp_surface')) % 10000}"
+    diag = [{
+        "tool": canonical_tool_shape(name, "环流诊断",
+                                     {"type": "object", "properties": {"F": {"type": "number"}}}),
+        "handle": lambda a: {"helicity": 1.0},
+    }]
+    snap = ToolRegistry.snapshot()
+    try:
+        assert register_diagnostic_tools(diag) == [name]
+
+        # 1) ToolRegistry 注册面可见且可调用
+        assert name in ToolRegistry.list_tools()
+        assert any(s["function"]["name"] == name
+                   for s in ToolRegistry.get_all_schemas()), "schema 应进入 LLM 工具面"
+        tool = ToolRegistry.get(name)
+        assert tool is not None and tool.read_only is True   # 默认只读 → MCP 默认可导出
+
+        # 2) 装箱成能力 → 出现在 CapabilityRegistry (MCP tools/list 的数据源)
+        CapabilityRegistry.clear()
+        CapabilityRegistry.scan_tool_registry([name])
+        assert name in CapabilityRegistry.list_capabilities(), "能力清单应含该域诊断工具"
+
+        # 3) 真实调用走通 (handler 被装箱后仍可执行)
+        import asyncio
+        res = asyncio.run(tool.call({"F": 1}))
+        assert res.success is True and res.data == {"helicity": 1.0}
+    finally:
+        ToolRegistry.restore(snap)  # 恢复全局注册表, 满足 conftest 防泄漏守卫
+        CapabilityRegistry.clear()

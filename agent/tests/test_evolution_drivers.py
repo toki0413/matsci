@@ -183,3 +183,68 @@ def test_research_program_mounts_diagnostic_tools() -> None:
     assert called["n"] == 1, "LLM 应自主调用一次诊断工具"
     assert "0.42" in out.report, "被引用的诊断数值应进入最终报告"
     assert out.verdict == "pass", "诊断数值已在 trace → 门禁应放行"
+
+
+# ── 6) 迭代闭环: 变异子代被真实执行并进入 Pareto 前沿 ────────────────
+def test_mutation_children_actually_execute_and_join_front() -> None:
+    """「评估→变异→再执行」闭环: MutationStrategy 的子代不再"被创建却无法执行".
+
+    修复前: orchestrator 建分支时丢 params/mutation_of → executor 查不到 spec →
+    子代 objectives 恒空, 迭代断裂。修复后: 世系经 branch.metadata 透传, executor
+    用父实验 parametrize 重建真实变异实验 → 子代产生真实目标、进前沿候选。
+    """
+    from huginn.research.program import Experiment, run_research_program
+
+    def run_a() -> dict:
+        return {"success": True, "objectives": {"score": 1.0},
+                "summary": {"note": "parent"}}
+
+    def parametrize(params: dict):
+        # 真实变异: score 随参数 k 单调上升 (k∈[0,1]) → 变异子代可支配父代, 必然入前沿
+        k = round(float(params.get("k", 0.0)), 4)
+        return lambda: {"success": True,
+                        "objectives": {"score": round(1.0 + k, 4)},
+                        "summary": {"note": f"mutant k={k}"}}
+
+    out = run_research_program(
+        goal="g",
+        experiments=[Experiment("A", "baseline", run_a, parametrize=parametrize)],
+        objectives_config={"score": "maximize"},
+        max_iterations=8, min_iterations=2, max_parallel=2,
+        mutation_config={"param_space": {"k": (0.0, 1.0)},
+                         "mutation_rate": 1.0, "max_children": 2},
+        client=None,
+    )
+    assert out.mutations > 0, "应生成变异子代"
+    mut_names = [n for n in out.cache if "~mut" in n]
+    assert mut_names, f"变异子代应被真实执行并进入 cache: {list(out.cache)}"
+    front_names = {b["name"] for b in out.pareto_front}
+    assert any("~mut" in n for n in front_names), f"变异子代应进入 Pareto 前沿: {front_names}"
+    # 子代数值是真实变异结果(非编造): score > 1.0 且与参数单调一致
+    for n in mut_names:
+        assert out.cache[n]["objectives"]["score"] >= 1.0
+
+
+def test_mutation_without_parametrize_reuses_parent_honestly() -> None:
+    """父实验未声明 parametrize → 变异子代复用父 run 真实重跑(诚实回退, 不伪造)."""
+    from huginn.research.program import Experiment, run_research_program
+
+    runs = {"n": 0}
+
+    def run_a() -> dict:
+        runs["n"] += 1
+        return {"success": True, "objectives": {"score": 1.0}, "summary": {}}
+
+    out = run_research_program(
+        goal="g",
+        experiments=[Experiment("A", "baseline", run_a)],
+        objectives_config={"score": "maximize"},
+        max_iterations=6, min_iterations=1, max_parallel=2,
+        mutation_config={"param_space": {"k": (0.0, 1.0)},
+                         "mutation_rate": 1.0, "max_children": 1},
+        client=None,
+    )
+    mut = [n for n in out.cache if "~mut" in n]
+    assert mut, "无 parametrize 时变异子代也应真实重跑父实验"
+    for n in mut:
+        assert out.cache[n]["objectives"]["score"] == 1.0, "重跑结果必须来自真实执行"

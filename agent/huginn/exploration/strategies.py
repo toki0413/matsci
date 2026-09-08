@@ -419,13 +419,13 @@ class MutationStrategy(ExplorationStrategy):
         for b in candidates:
             if self.rng.random() > self.mutation_rate:
                 continue
-            for i in range(self.max_children):
+            for _ in range(self.max_children):
                 new_params = self._perturb(b)
                 if not new_params:
                     continue
-                self.created += 1
+                self.created += 1  # 全局递增序号 → 子代名唯一(跨轮次不重名, 保证 cache/前沿可溯源)
                 mutated.append({
-                    "name": f"{b.name}~mut{i}",
+                    "name": f"{b.name}~mut{self.created}",
                     "hypothesis": (
                         f"[mutation of {b.name}] "
                         + ", ".join(f"{p}={v}" for p, v in sorted(new_params.items()))
