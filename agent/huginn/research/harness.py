@@ -1,0 +1,280 @@
+"""Self-Harness 报告 — 对齐 Qoder/Better Harness 五维 + 组织层任务实录(Self-Harness Report, M1).
+
+阐明红线(Better Harness 同源): 「配置存在 ≠ 能力可用」——本模块不复制 Better Harness
+实现, 只采纳它的方法论: 用一条**证据绑定**的五维评分, 把我们散装的机械门禁 (planner /
+security / claim_grounding / structural_gate / C-Space / 能力自省) 收敛成能
+「横跨项目/会话看」的治理面.
+
+evidence 三态 (取自 spec §2):
+  - Observed  : 该检查在本任务实录里真实执行并留下了结果.
+  - Unobserved: 机制存在(已接线), 但本任务没走到.
+  - Missing   : 无对应机制或无从推断 → 诚实标缺失并计入缺口.
+
+透明计分 (spec §3): passed=1 / unobserved=0.5 / missing=0 (observed 但 failed=0).
+保留各检查项明细, 供 reading 用「这条实录到底触发过哪些门」.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+import time
+from dataclasses import dataclass, field
+from typing import Any
+
+
+# ── Task Episode 统一身份 (spec §4) ─────────────────────────────────────────
+def make_task_episode_id(goal: str, salt: str = "") -> str:
+    """为同一 intent 生成稳定、可跨 Agent/项目/机器聚合的 episode id.
+
+    设计: goal 的规范化 slug + 一个「非突变」时间桶种子. 同一任务在同一天内的
+    多次 run 都落到同一个 episode id, 从而把「同一需求的实录」聚合到治理账本的一行.
+    传入 salt(如 agent/machine 名) 可把 id 限定到单实例维度.
+
+    用 day 级时间桶而非精确时戳: 保证聚合稳定性; 想要随时间演化, 把时间桶改成
+    周/次版本即可(spec deferred).
+    """
+    slug = re.sub(r"[^0-9a-z_]+", "_", (goal or "task").lower()).strip("_") or "task"
+    bucket = time.strftime("%Y%m%d", time.localtime())  # day 级桶 → 同任务当日稳定
+    seed = f"{slug}::{bucket}::{salt}".encode("utf-8")
+    return f"ep-{hashlib.sha256(seed).hexdigest()[:20]}"
+
+
+# ── 检查项 / 维度结果 ────────────────────────────────────────────────────────
+# evidence 三态: observed / unobserved / missing
+EVIDENCE_OBSERVED = "observed"
+EVIDENCE_UNOBSERVED = "unobserved"
+EVIDENCE_MISSING = "missing"
+
+# 分值: passed=1 / unobserved=0.5 / missing=0 / observed-but-failed=0
+_SCORE = {
+    "passed": 1.0,
+    "unobserved": 0.5,
+    "missing": 0.0,
+    "failed": 0.0,
+}
+
+
+@dataclass
+class CheckResult:
+    """一条检查项的实录结果(可被 reading 逐条还原)."""
+
+    dimension: str
+    name: str
+    evidence: str            # observed / unobserved / missing
+    outcome: str             # passed / failed / unobserved / missing
+    detail: str = ""
+    ref: str = ""            # 指向形如 "out.plan_summary" 的证据来源, 便于溯源
+
+    def score(self) -> float:
+        return _SCORE[self.outcome]
+
+
+@dataclass
+class DimensionScore:
+    name: str
+    score: float
+    evidence: str            # 该维聚合后的证据态: observed 若任一子项 observed
+    checks: list[CheckResult] = field(default_factory=list)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "score": round(self.score, 3),
+            "evidence": self.evidence,
+            "checks": [c.__dict__ for c in self.checks],
+        }
+
+
+@dataclass
+class HarnessReport:
+    """一条任务实录的五维治理报告 (spec §3/§4).
+
+    构造后调用 :meth:`assess` 从 ``out``(ResearchOutcome) 提炼五维评分; 输出
+    :meth:`to_json()` 带 task_episode 身份, 可直接作为组织层治理账本的一行.
+    红线: 打分「跟证据走」 — 例: 没跑 planner 就说 Task Understanding=unobserved,
+    而不是因为代码里有 planning.py 就给满分.
+    """
+
+    goal: str
+    task_episode: str = ""
+    agent: str = ""
+    machine: str = ""
+    dimensions: list[DimensionScore] = field(default_factory=list)
+    overall: float = 0.0
+
+    def assess(self, out: Any, *, agent: str = "", machine: str = "") -> "HarnessReport":
+        """从 ResearchOutcome 提炼五维评分. 只复用 out 已记录的 gate 结果, 不重复计算.
+
+        spec §1 映射表:
+          1 Task Understanding   <- out.plan_summary      (planner)
+          2 Controlled Execution <- out.supervision_log + plan budget (HITL/权限)
+          3 Change Validation    <- out.verdict/structural_gate/report_source
+          4 Reliable Delivery    <- out.cache/workspace_verified (reconcile/对账/回滚)
+          5 Learning Capture     <- 能力自省提案 + 审计产出 (structural_gate 等)
+        """
+        self.agent = agent
+        self.machine = machine
+        self.task_episode = self.task_episode or make_task_episode_id(self.goal, salt=f"{agent}:{machine}")
+
+        checks = [
+            *self._task_understanding(out),
+            *self._controlled_execution(out),
+            *self._change_validation(out),
+            *self._reliable_delivery(out),
+            *self._learning_capture(out),
+        ]
+
+        by_dim: dict[str, list[CheckResult]] = {}
+        for c in checks:
+            by_dim.setdefault(c.dimension, []).append(c)
+
+        self.dimensions = []
+        for dim in ("task_understanding", "controlled_execution",
+                    "change_validation", "reliable_delivery", "learning_capture"):
+            items = by_dim.get(dim, [])
+            if not items:
+                continue
+            scores = [c.score() for c in items]
+            dim_evidence = (EVIDENCE_OBSERVED
+                            if any(c.evidence == EVIDENCE_OBSERVED for c in items)
+                            else (EVIDENCE_UNOBSERVED
+                                  if any(c.evidence == EVIDENCE_UNOBSERVED for c in items)
+                                  else EVIDENCE_MISSING))
+            ds = DimensionScore(name=dim, score=sum(scores) / len(scores),
+                                evidence=dim_evidence, checks=items)
+            self.dimensions.append(ds)
+
+        # 总体 = 五维均值; 无任何维时记为 0
+        self.overall = (sum(d.score for d in self.dimensions) / len(self.dimensions)
+                        if self.dimensions else 0.0)
+        return self
+
+    # ── 五维检查项从 out 提炼 ──────────────────────────────────────────────
+    @staticmethod
+    def _task_understanding(out: Any) -> list[CheckResult]:
+        if getattr(out, "plan_summary", None) is not None:
+            return [
+                CheckResult("task_understanding", "需求拆解(planner 产出计划)",
+                            EVIDENCE_OBSERVED, "passed",
+                            detail=f"plan_summary={out.plan_summary!r}", ref="out.plan_summary"),
+            ]
+        return [
+            CheckResult("task_understanding", "需求拆解(planner 产出计划)",
+                        EVIDENCE_UNOBSERVED, "unobserved",
+                        detail="未传 planner → plan_summary 为空", ref="out.plan_summary"),
+        ]
+
+    @staticmethod
+    def _controlled_execution(out: Any) -> list[CheckResult]:
+        hits = getattr(out, "supervision_log", None)
+        n = len(hits) if hits else 0
+        if n > 0:
+            return [
+                CheckResult("controlled_execution", "受控执行(HITL/权限评审记录)",
+                            EVIDENCE_OBSERVED, "passed",
+                            detail=f"记录 {n} 条", ref="out.supervision_log"),
+            ]
+        return [
+            CheckResult("controlled_execution", "受控执行(HITL/权限评审记录)",
+                        EVIDENCE_UNOBSERVED, "unobserved",
+                        detail="supervisor_every=0 或未触发人工评审", ref="out.supervision_log"),
+        ]
+
+    @staticmethod
+    def _change_validation(out: Any) -> list[CheckResult]:
+        results: list[CheckResult] = []
+        # 声明门禁: verdict
+        verdict = getattr(out, "verdict", "needs_grounding")
+        passed = verdict in ("grounded", "pass", "accept", "confirmed")
+        results.append(CheckResult(
+            "change_validation", "声明门禁(claim_grounding)",
+            EVIDENCE_OBSERVED if verdict != "needs_grounding" or getattr(out, "ungrounded", None)
+            else EVIDENCE_UNOBSERVED,
+            "passed" if passed else ("failed" if getattr(out, "ungrounded", None) else "unobserved"),
+            detail=f"verdict={verdict}", ref="out.verdict"))
+        # 结构闸门
+        sg = getattr(out, "structural_gate", None)
+        if sg is not None:
+            ok = bool(sg.get("pass") or sg.get("aligned"))
+            results.append(CheckResult(
+                "change_validation", "结构闸门(交互等效/多元论审计)",
+                EVIDENCE_OBSERVED, "passed" if ok else "failed",
+                detail=str(sg), ref="out.structural_gate"))
+        else:
+            results.append(CheckResult(
+                "change_validation", "结构闸门(交互等效/多元论审计)",
+                EVIDENCE_UNOBSERVED, "unobserved", detail="未注入 structural_audit",
+                ref="out.structural_gate"))
+        return results
+
+    @staticmethod
+    def _reliable_delivery(out: Any) -> list[CheckResult]:
+        results: list[CheckResult] = []
+        cache = getattr(out, "cache", None)
+        if cache:
+            results.append(CheckResult(
+                "reliable_delivery", "真实执行证据(缓存/expts 实录)",
+                EVIDENCE_OBSERVED, "passed",
+                detail=f"{len(cache)} 个实验", ref="out.cache"))
+        else:
+            results.append(CheckResult(
+                "reliable_delivery", "真实执行证据(缓存/expts 实录)",
+                EVIDENCE_UNOBSERVED, "unobserved", detail="cache 为空", ref="out.cache"))
+        wv = getattr(out, "workspace_verified", None)
+        if wv is not None:
+            results.append(CheckResult(
+                "reliable_delivery", "工作区广播门(C-Space 在场断言)",
+                EVIDENCE_OBSERVED, "passed" if wv else "failed",
+                detail=f"workspace_verified={wv}", ref="out.workspace_verified"))
+        else:
+            results.append(CheckResult(
+                "reliable_delivery", "工作区广播门(C-Space 在场断言)",
+                EVIDENCE_UNOBSERVED, "unobserved",
+                detail="未注入 workspace(可选) ", ref="out.workspace_verified"))
+        return results
+
+    @staticmethod
+    def _learning_capture(out: Any) -> list[CheckResult]:
+        # 能力自省/审计产出: 以各种审计 gate 的结果作为「下个任务可复用知识」的证据.
+        # 主导信号是有没有留下审计/规划产物; 导入能力仅用于区分 unobserved/missing.
+        audit_artifacts = ("structural_gate", "structural_aligned", "converred",
+                           "supervision_log", "plan_summary")
+        produced_audit = any(getattr(out, name, None) is not None for name in audit_artifacts)
+        if produced_audit:
+            return [
+                CheckResult("learning_capture", "能力自省闭环(缺口→提案)",
+                            EVIDENCE_OBSERVED, "passed",
+                            detail="该 run 产生了可复用审计/规划产物", ref="out.structural_gate"),
+            ]
+        try:
+            from huginn.capabilities.introspection import self_audit  # noqa: F401
+        except Exception:  # noqa: BLE001 — 导入失败视为机制缺失/缺口
+            return [
+                CheckResult("learning_capture", "能力自省闭环(缺口→提案)",
+                            EVIDENCE_MISSING, "missing",
+                            detail="无法加载自省机制", ref="capabilities/introspection"),
+            ]
+        return [
+            CheckResult("learning_capture", "能力自省闭环(缺口→提案)",
+                        EVIDENCE_UNOBSERVED, "unobserved",
+                        detail="自省已接线但本 run 无审计产物", ref="capabilities/introspection"),
+        ]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "task_episode": self.task_episode,
+            "goal": self.goal,
+            "agent": self.agent,
+            "machine": self.machine,
+            "overall": round(self.overall, 3),
+            "dimensions": [d.as_dict() for d in self.dimensions],
+        }
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), ensure_ascii=False, indent=2)
+
+
+def build_harness_report(goal: str, out: Any, *, agent: str = "", machine: str = "") -> HarnessReport:
+    """便捷入口: 从 out 生成并评估一份 Self-Harness 报告."""
+    return HarnessReport(goal=goal).assess(out, agent=agent, machine=machine)
