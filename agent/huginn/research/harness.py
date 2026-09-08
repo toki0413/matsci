@@ -159,17 +159,26 @@ class HarnessReport:
     # ── 五维检查项从 out 提炼 ──────────────────────────────────────────────
     @staticmethod
     def _task_understanding(out: Any) -> list[CheckResult]:
+        results: list[CheckResult] = []
         if getattr(out, "plan_summary", None) is not None:
-            return [
-                CheckResult("task_understanding", "需求拆解(planner 产出计划)",
-                            EVIDENCE_OBSERVED, "passed",
-                            detail=f"plan_summary={out.plan_summary!r}", ref="out.plan_summary"),
-            ]
-        return [
-            CheckResult("task_understanding", "需求拆解(planner 产出计划)",
-                        EVIDENCE_UNOBSERVED, "unobserved",
-                        detail="未传 planner → plan_summary 为空", ref="out.plan_summary"),
-        ]
+            results.append(CheckResult(
+                "task_understanding", "需求拆解(planner 产出计划)",
+                EVIDENCE_OBSERVED, "passed",
+                detail=f"plan_summary={out.plan_summary!r}", ref="out.plan_summary"))
+        else:
+            results.append(CheckResult(
+                "task_understanding", "需求拆解(planner 产出计划)",
+                EVIDENCE_UNOBSERVED, "unobserved",
+                detail="未传 planner → plan_summary 为空", ref="out.plan_summary"))
+        # 漏A · plan 修订门: 跑过 planner 且有执行后证据 → 显式复盘(锚定反制).
+        rev = getattr(out, "plan_revision", None)
+        if rev is not None:
+            results.append(CheckResult(
+                "task_understanding", "plan 修订门(新证据→显式复盘初始计划)",
+                EVIDENCE_OBSERVED,
+                "passed" if rev.get("verdict") == "plan_holds" else "failed",
+                detail=f"plan_revision={rev!r}", ref="out.plan_revision"))
+        return results
 
     @staticmethod
     def _controlled_execution(out: Any) -> list[CheckResult]:
@@ -321,6 +330,16 @@ class HarnessReport:
             results.append(CheckResult(
                 "safety_authority", "世界模型真用?(predict 参与决策 = 真深思 D)",
                 EVIDENCE_OBSERVED, outcome, detail=detail, ref="out.law_model_used"))
+
+        # 漏C · "得分≠使用"(看过≠用过, Jain & Wallace 镜像): 高分存活项是否真进
+        # 最终报告 — 高 attention/高分 不等于 真被用于产出结论.
+        ga = getattr(out, "grounding_audit", None)
+        if ga is not None:
+            results.append(CheckResult(
+                "safety_authority", "得分≠使用(高分存活项真进最终报告?)",
+                EVIDENCE_OBSERVED,
+                "passed" if ga.get("verdict") == "proper_use" else "failed",
+                detail=f"grounding_audit={ga!r}", ref="out.grounding_audit"))
         return results
 
     def to_dict(self) -> dict[str, Any]:

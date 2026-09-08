@@ -57,6 +57,8 @@ class ResearchOutcome:
     workspace_verified: bool | None = None             # C-Space 工作区门: 报告断言是否作为在场落地
     harness: dict | None = None                        # Self-Harness 五维报告(dict) — demo 一键出报告
     law_model_used: dict | None = None                 # 世界模型真用证据: predict 产物/是否参与决策 (真深思 D)
+    plan_revision: dict | None = None                  # 漏A: plan 修订门(新证据→显式复盘初始计划)审计
+    grounding_audit: dict | None = None                # 漏C: "得分≠使用"(高分存活项是否真进最终报告)审计
 
 
 def _build_trace(cache: dict[str, dict]) -> list[str]:
@@ -422,9 +424,19 @@ def run_research_program(
                         except Exception as ee:  # noqa: BLE001 — 工具调用异常如实入 trace 供门禁对照
                             res = json.dumps({"error": str(ee)}, ensure_ascii=False)
                     trace.append(res)  # 门禁证据: 诊断工具真实 return 落 trace
+                    # 漏B 决策先导摘要: 长工具回调进决策上下文前先净化(先导摘要),
+                    # 防止均匀灌注稀释; 完整原始证据仍在 trace 供 grounding 门禁核对.
+                    try:
+                        from huginn.research.decision_gate import distill_tool_output
+                        _g = distill_tool_output(name, res, goal=str(goal), max_chars=4000)
+                        _message = _g["front"]
+                    except Exception:  # noqa: BLE001 — 门控不可用时退原样, 不阻断
+                        _message = res
+                    trace.append(json.dumps({"gate": "front_summary",
+                                             "tool": name, "len": len(res)}, ensure_ascii=False))
                     msgs += [{"role": "assistant", "content": msg.content or "",
                               "tool_calls": [tc.model_dump()]},
-                             {"role": "tool", "tool_call_id": tc.id, "content": res}]
+                             {"role": "tool", "tool_call_id": tc.id, "content": _message}]
             return msg.content or ""
 
         msgs = [{"role": "user", "content": prompt}]
@@ -473,6 +485,23 @@ def run_research_program(
 
     out.report = final
     out.verdict, out.ungrounded = verdict, ungrounded
+
+    # ── 漏C · "得分≠使用" grounding 审计(看过≠用过) ─────────────────────
+    # 高价值(存活/高分)假说的数值是否真写进最终报告. **不**因为被检索到就当作用过.
+    try:
+        from huginn.research.decision_gate import grounding_audit
+        out.grounding_audit = grounding_audit(final, list(front))
+    except Exception:  # noqa: BLE001 — 审计为附加值, 失败不应阻断管线
+        out.grounding_audit = None
+
+    # ── 漏A · plan 修订门(锚定反制) ─────────────────────────────────────
+    # 若跑过 planner, 用执行后证据显式复盘初始计划是否仍成立(而非默认上下文覆盖).
+    if plan_summary is not None:
+        try:
+            from huginn.research.decision_gate import revision_gate
+            out.plan_revision = revision_gate(plan_summary, cache, goal)
+        except Exception:  # noqa: BLE001 — 修订审计失败不阻断, 如实留空
+            out.plan_revision = None
 
     if out_md is not None:
         header = (f"# 自主深研(Huginn×书生)\n\n> **门禁: {verdict}** (未落地: {ungrounded or '无'})\n"
