@@ -537,3 +537,191 @@ def test_pa_default_off_keeps_epochs_zero():
     )
     assert out.consolidated["epochs"] == 0
     assert out.consolidated["stream_view"] is None
+
+
+# ── 缺陷二(P-B): 层间重规划门 ────────────────────────────────────────────
+def test_pb_replan_skips_redundant_direction():
+    """P-B: 前序层证据结算后, 假说重叠的后序实验被重规划跳过(预算再分配)."""
+    from huginn.research.planning import SubResearch, build_research_plan
+
+    def _run(v: float):
+        return lambda: {"summary": {"y": v}, "objectives": {"score": v}}
+
+    plan = build_research_plan(
+        "pb redundant",
+        [SubResearch("a", "baseline sweep temperature 300 kelvin oxide", _run(1.0)),
+         SubResearch("c", "baseline sweep temperature 300 kelvin oxide variant",
+                     _run(3.0), depends_on=["a"])],
+    )
+    out = run_research_program(
+        goal="pb redundant",
+        experiments=list(plan.experiments),
+        objectives_config={"score": "maximize"},
+        max_iterations=4, min_iterations=1, client=None,
+        planner=lambda _g: plan, replan_gate=True, max_parallel=1,
+    )
+    assert "c" not in out.cache, "冗余方向的后序实验应被跳过(未执行=无证据)"
+    assert "a" in out.cache, "前序实验无条件执行"
+    _log = out.consolidated["replan"]["log"]
+    assert len(_log) == 1
+    assert _log[0]["name"] == "c"
+    assert any(r["rule"] == "redundant_direction" for r in _log[0]["reasons"])
+    # 报告如实陈述重规划决策(grounding 用 trace.replan_gate 支撑, 不捏造结果)
+    assert "层间重规划(P-B)" in out.report
+    assert "c" in out.report
+
+def test_pb_default_off_is_lossless_bsp():
+    """P-B 默认关闭: 与全 BSP 一致 —— 不启用族层间门控, 零行为变化."""
+    from huginn.research.planning import SubResearch, build_research_plan
+
+    def _run(v: float):
+        return lambda: {"summary": {"y": v}, "objectives": {"score": v}}
+
+    plan = build_research_plan(
+        "pb off",
+        [SubResearch("a", "baseline temperature oxide", _run(1.0)),
+         SubResearch("c", "baseline temperature oxide variant", _run(3.0),
+                     depends_on=["a"])],
+    )
+    out = run_research_program(
+        goal="pb off",
+        experiments=list(plan.experiments),
+        objectives_config={"score": "maximize"},
+        max_iterations=4, min_iterations=1, client=None,
+        planner=lambda _g: plan, max_parallel=1,   # replan_gate 默认 False
+    )
+    assert "c" in out.cache, "未启用重规划门 → 全部真实执行"
+    assert out.consolidated["replan"]["log"] == []
+
+def test_pb_skip_never_fabricates_evidence():
+    """P-B 诚实红线: 跳过的实验不产生任何证据(不进 cache/stream_view/trace)."""
+    from huginn.research.planning import SubResearch, build_research_plan
+
+    def _run(v: float):
+        return lambda: {"summary": {"y": v}, "objectives": {"score": v}}
+
+    plan = build_research_plan(
+        "pb honest",
+        [SubResearch("a", "sweep alpha metallic alloy", _run(1.0)),
+         SubResearch("c", "sweep alpha metallic alloy dense", _run(9.0),
+                     depends_on=["a"])],
+    )
+    out = run_research_program(
+        goal="pb honest",
+        experiments=list(plan.experiments),
+        objectives_config={"score": "maximize"},
+        max_iterations=4, min_iterations=1, client=None,
+        planner=lambda _g: plan, replan_gate=True, layer_epochs=True, max_parallel=1,
+    )
+    assert "c" not in out.cache
+    assert "c" not in {r["experiment"] for lay in (out.consolidated["stream_view"] or [])
+                       for r in lay["rows"]}, "跳过项不得进入流式证据视图"
+    # 存活集合与报告只锚定真实执行过的实验
+    assert all(e["name"] != "c" for e in out.pareto_front)
+
+def test_pb_falsified_direction_via_world_model():
+    """P-B: 前序层实验的 predicted 被真实执行证伪 → 依赖该方向的后序实验跳过."""
+    from huginn.research.planning import SubResearch, build_research_plan
+
+    def _run(v: float):
+        return lambda: {"summary": {"y": v}, "objectives": {"score": v}}
+
+    plan = build_research_plan(
+        "pb falsified",
+        [SubResearch("a", "probe band gap silicon interface", _run(1.0)),
+         SubResearch("c", "probe band gap silicon interface deep", _run(5.0),
+                     depends_on=["a"])],
+    )
+    # 世界模型对 a 预测 300, 真实 1 → 相对误差 >> 3% → 方向被证伪
+    def _wm(spec):
+        return {"predicted": {"y": 300.0}} if spec.name == "a" else {"predicted": {}}
+
+    out = run_research_program(
+        goal="pb falsified",
+        experiments=list(plan.experiments),
+        objectives_config={"score": "maximize"},
+        max_iterations=4, min_iterations=1, client=None,
+        planner=lambda _g: plan, replan_gate=True, world_model=_wm, max_parallel=1,
+    )
+    assert "c" not in out.cache
+    _log = out.consolidated["replan"]["log"]
+    assert len(_log) == 1
+    rules = {r["rule"] for r in _log[0]["reasons"]}
+    assert rules == {"redundant_direction", "falsified_direction"}, "冗余+证伪双理由"
+
+def test_pb_aggregated_head_records_replan():
+    """P-B 聚合视图: gate.replan 头注册 + consolidated.replan 元数据透传."""
+    from huginn.research.planning import SubResearch, build_research_plan
+
+    def _run(v: float):
+        return lambda: {"summary": {"y": v}, "objectives": {"score": v}}
+
+    plan = build_research_plan(
+        "pb aggregate",
+        [SubResearch("a", "single sweep baseline oxide", _run(1.0)),
+         SubResearch("c", "single sweep baseline oxide extended", _run(2.0),
+                     depends_on=["a"])],
+    )
+    out = run_research_program(
+        goal="pb aggregate",
+        experiments=list(plan.experiments),
+        objectives_config={"score": "maximize"},
+        max_iterations=4, min_iterations=1, client=None,
+        planner=lambda _g: plan, replan_gate=True, max_parallel=1,
+    )
+    assert "gate.replan" in out.consolidated["heads"]
+    assert out.consolidated["replan"]["enabled"] is True
+    assert out.consolidated["replan"]["skipped"] == 1
+    assert out.consolidated["replan"]["verdict"] == "replanned"
+
+def test_pb_unset_replan_is_unobserved_head():
+    """未启用 replan → gate.replan 头以 unobserved 注册(机制接线, 本 run 未触发)."""
+    from huginn.research.planning import SubResearch, build_research_plan
+
+    def _run(v: float):
+        return lambda: {"summary": {"y": v}, "objectives": {"score": v}}
+
+    plan = build_research_plan(
+        "pb unobserved", [SubResearch("a", "plain", _run(1.0))],
+    )
+    out = run_research_program(
+        goal="pb unobserved",
+        experiments=list(plan.experiments),
+        objectives_config={"score": "maximize"},
+        max_iterations=2, min_iterations=1, client=None,
+        planner=lambda _g: plan,
+    )
+    h = next(x for x in out.consolidated["head_details"] if x["id"] == "gate.replan")
+    assert h["outcome"] == "unobserved"
+    assert out.consolidated["replan"]["verdict"] == "no_replan"
+
+
+# ── 缺陷二(P-B): replan_gate 纯函数(无 orchestrator 依赖) ─────────────────
+def test_pb_gate_guards_unsettled_prior_layer():
+    """前序层未全部结算 → 一律放行(保守), 不因部分证据就跳过."""
+    from huginn.research.replan_gate import decide_replan_skip
+
+    cache = {"a": {"summary": {"y": 1.0}}}
+    hyp = {"a": "shared keyword alpha", "c": "shared keyword alpha plus"}
+    d = decide_replan_skip("c", 1, ["a", "b"], cache, hyp,
+                           already_decided={"a"})   # b 未执行也未决策 → 未结算
+    assert d is None, "前序未结算必须保守放行"
+
+
+def test_pb_gate_pure_decision_and_batch():
+    """纯函数: 单实验判定与整计划批判定(含阈值与已执行豁免)."""
+    from huginn.research.replan_gate import decide_replan_skip, replan_gate
+
+    hyp = {"a": "probe band gap silicon", "c": "probe band gap silicon deep",
+           "x": "unrelated ferromagnet domain"}
+    cache = {"a": {"summary": {"y": 1.0}}}
+    # 单判: c 与 a 重叠 → 跳过; x 无重叠 → 放行
+    d_c = decide_replan_skip("c", 1, ["a"], cache, hyp, already_decided={"a"})
+    assert d_c is not None and "redundant_direction" in {r["rule"] for r in d_c["reasons"]}
+    d_x = decide_replan_skip("x", 1, ["a"], cache, hyp, already_decided={"a"})
+    assert d_x is None
+    # 整批: 层0=[a] 层1=[c, x] → 只跳过 c
+    batch = replan_gate([["a"], ["c", "x"]], cache, hyp)
+    assert [s["name"] for s in batch["skipped"]] == ["c"]
+    assert batch["verdict"] == "replanned"
+    assert set(batch["proceeded"]) == {"x"}

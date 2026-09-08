@@ -85,6 +85,10 @@ _HEAD_BUDGET = 14
 # 与漏B 先导摘要同语义 —— 只压缩表达冗余, 全量证据始终留在 cache/trace.
 _STREAM_SUMMARY_CHARS = 1200
 
+# 缺陷二(P-B): 层间重规划门 —— 假说 Jaccard 重叠阈值(>= 视为"该方向已被前序层
+# 覆盖采样", 跳过=预算再分配, 不伪造). 与 distill_tool_output 同关键词切法.
+_REPLAN_SIM = 0.55
+
 
 def _first_scalar(node: Any) -> float | None:
     """从预测/真实结果里取"第一个可用的数值指标"作对账依据(深度优先, 不伪造).
@@ -194,6 +198,10 @@ def run_research_program(
     layer_epochs: bool = False,       # 缺陷一(P-A): 分层流式结算. 提供 planner 时, 每个真实实验
                                       # 完成即按层把压缩摘要增量记录进 stream_view(有界决策上下文),
                                       # 并记 epochs —— 决策不再"全跑完才结算". 默认关闭(全 BSP, 零行为变化).
+    replan_gate: bool = False,        # 缺陷二(P-B): 层间重规划门. 提供 planner(含 layers)时,
+                                      # 前序层真实证据结算后, 用假说重叠/证伪判定跳过已冗余或被打脸方向的
+                                      # 后序实验(预算再分配; 跳过=不执行=不产生证据, **绝不伪造**),
+                                      # 全程记录 replan_log 供审计. 默认关闭(全执行, 零行为变化).
 ) -> ResearchOutcome:
     """跑一条完整深研管线并返回结果."""
     from huginn.exploration.orchestrator import ExplorationOrchestrator
@@ -254,8 +262,35 @@ def run_research_program(
     # 摘要增量记入 _stream_rows —— 决策上下文随执行生长, 而非全跑完后一次性结算.
     _layer_epochs = bool(layer_epochs) and plan_summary is not None \
         and bool(plan_summary.get("layers"))
-    _layers_map: list[list[str]] = (plan_summary.get("layers") or []) if _layer_epochs else []
+    # 拓扑层映射: 只要 planner 给过 layers 就可用 —— P-A(P-B 亦共用)的门控前提.
+    # 与 _layer_epochs 解耦: replan_gate(P-B) 不要求流式视图开启.
+    _layers_map: list[list[str]] = (plan_summary.get("layers") or []) \
+        if plan_summary is not None else []
     _stream_rows: list[dict] = []
+
+    # ── 缺陷二(P-B) 层间重规划门: 状态与单实验判定 ──────────────────────────
+    # 前序层真实证据结算后, 用假说重叠(冗余方向)/predicted 对账(证伪方向)判定
+    # 后序实验是否仍值得执行 —— DAG 边在证据到达后可修订, 不再一次性冻结.
+    # _replan_enabled 只要求 planner 给出 layers(重规划把先验边当可修订工作假说);
+    # 与 _layer_epochs 正交: 不开 P-A 也可单独启用 replan(P-B 只依赖 cache 证据面).
+    _replan_enabled = bool(replan_gate) and plan_summary is not None \
+        and bool(plan_summary.get("layers"))
+    _replan_log: list[dict] = []
+    _replan_checked = 0                          # 被门控评估过的后序实验数(审计计数)
+    _hypotheses = {e.name: e.hypothesis for e in experiments}
+
+    def _replan_decision(name: str) -> dict | None:
+        """单个后序实验的层间重规划判定 (纯函数托管在 replan_gate.decide_replan_skip)."""
+        from huginn.research.replan_gate import decide_replan_skip
+        i = _layer_of(name)
+        if i <= 0:
+            return None
+        prior = [n for j in range(i) for n in _layers_map[j]]
+        return decide_replan_skip(
+            name, i, prior, cache, _hypotheses,
+            already_decided=set(cache) | {r["name"] for r in _replan_log},
+            similarity=_REPLAN_SIM, tol=_WM_TOL,
+        )
 
     def _layer_of(name: str) -> int:
         for i, lay in enumerate(_layers_map):
@@ -264,6 +299,7 @@ def run_research_program(
         return -1
 
     async def executor(branch):
+        nonlocal _replan_checked          # P-B 审计计数: 嵌套闭包需 nonlocal 才能 +=
         spec = spec_by_name.get(branch.name)
         if spec is None:  # 动态子代(变异/演化新分支)
             spec = _resolve_variant(branch.name, branch)
@@ -271,6 +307,17 @@ def run_research_program(
                 spec_by_name[branch.name] = spec  # 注册, 供综合阶段取假说/摘要
         if spec is None:
             return {"success": False, "objectives": {}, "results": {}}
+        # P-B 层间重规划门: 前序层真实证据结算后, 判定该实验是否仍值得执行.
+        # 跳过 = 预算再分配 —— 不写 cache/stream_view/trace(未执行=不产生证据, 不伪造);
+        # 决策全程记录进 _replan_log 供审计(gate.replan / out.replan_log).
+        if _replan_enabled:
+            _rp = _replan_decision(branch.name)
+            if _rp is not None:
+                _replan_checked += 1
+                _replan_log.append(_rp)
+                return {"success": False, "objectives": {},
+                        "results": {"replanned": _rp["reasons"]}}
+            _replan_checked += 1
         res = await asyncio.to_thread(spec.run)
         # 世界模型预筛(真 D): predict 在真实执行前对候选作预期目标预判, 预测值作为
         # 可证伪证据并入结果 —— 供 post-hoc reconcile 对账, 并让"预测参与决策"成为事实.
@@ -528,6 +575,18 @@ def run_research_program(
         final = _synthesize()
         out.report_source = "deterministic"
 
+    # P-B 层间重规划审计: 报告如实说明被门控跳过的实验(证据进 trace 供 grounding 核对).
+    # 跳过 = 未执行 = 无证据 —— 报告只陈述"重规划决策", 不捏造任何实验结果.
+    if _replan_log:
+        trace.append(json.dumps({"type": "replan_gate", "log": _replan_log},
+                                ensure_ascii=False))
+        final += ("\n\n## 层间重规划(P-B)\n"
+                  f"{len(_replan_log)} 个计划内实验经前序层真实证据门控判定冗余/被证伪方向, "
+                  "重规划跳过(预算再分配; 未执行 = 不产生证据, 不伪造): "
+                  + ", ".join(f"{r['name']}({'; '.join(x['rule'] for x in r['reasons'])})"
+                              for r in _replan_log)
+                  + "。完整理由见 trace.replan_gate。")
+
     g2 = verify(final, trace)
     if g2["verdict"] == "pass":
         verdict, ungrounded = "pass", []
@@ -622,6 +681,23 @@ def run_research_program(
         )
 
         heads: list[HeadResult] = []
+        # gate.replan —— P-B 层间重规划门 (缺陷二, 建议级: DAG 边在证据到达后可修订).
+        # 视为 unobserved = 未启用(默认全执行, 零行为变化); observed = 真实完成门控判定
+        # 并留下可证伪记录(跳过项+理由)—— 无论是否跳过, 门工作即 passed, 明细供复核.
+        if _replan_enabled:
+            heads.append(HeadResult(
+                "gate.replan", "层间重规划门(缺陷二: DAG 边不再冻结)",
+                EVIDENCE_OBSERVED, "passed",
+                detail=(f"checked={_replan_checked} skipped={len(_replan_log)}; "
+                        + str([(r["name"], [x["rule"] for x in r["reasons"]])
+                               for r in _replan_log])),
+                ref="out.consolidated.replan"))
+        else:
+            heads.append(HeadResult(
+                "gate.replan", "层间重规划门(缺陷二: DAG 边可在证据后修订)",
+                EVIDENCE_UNOBSERVED, "unobserved",
+                detail="replan_gate 未启用(默认全执行, 零行为变化)",
+                ref="out.consolidated.replan"))
         # gate.claim_grounding —— 声明门禁 (对报告是否成文有否决权)
         if verdict != "needs_grounding" or ungrounded:
             heads.append(HeadResult(
@@ -722,8 +798,19 @@ def run_research_program(
                 EVIDENCE_UNOBSERVED, "unobserved",
                 detail="自省已接线但本 run 无审计产物", ref="capabilities/introspection"))
 
+        _replan_meta = {
+            "enabled": _replan_enabled,
+            "layers": len(_layers_map) if _replan_enabled else 0,
+            "checked": _replan_checked,
+            "skipped": len(_replan_log),
+            "log": list(_replan_log),              # 完整审计: 被跳过实验+理由+证据面(可证伪)
+            "verdict": ("no_replan" if not _replan_enabled
+                        else ("replanned" if _replan_log else "all_proceed")),
+        }
+
         out.consolidated = consolidate(heads, grounding_verdict=verdict,
-                                       epochs=_n_epochs, stream_view=stream_view).as_dict()
+                                       epochs=_n_epochs, stream_view=stream_view,
+                                       replan=_replan_meta).as_dict()
 
         # 缺陷三/五接缝: 在第一轮聚合视图上追加"元头"(外部验证 + 团队视角分离度).
         # 第一轮先用可替换外部验证方(缺省出厂 oracle)复核; 派生两个头后第二轮合并,
@@ -733,7 +820,8 @@ def run_research_program(
             _ver = external_verifier if external_verifier is not None else oracle_verify_consolidated
             base = consolidate(heads, grounding_verdict=verdict,
                            role_view=list(front), external_verifier=_ver,
-                           epochs=_n_epochs, stream_view=stream_view)
+                           epochs=_n_epochs, stream_view=stream_view,
+                           replan=_replan_meta)
             ext = base.external_verify or {}
             heads.append(HeadResult(
                 "governance.external_verify", "独立验证方(可替换的外部复核)",
@@ -756,7 +844,8 @@ def run_research_program(
                     detail="无存活假说, 无从度量视角分化", ref="out.pareto_front"))
             final_cons = consolidate(heads, grounding_verdict=verdict,
                                  role_view=list(front), head_budget=_HEAD_BUDGET,
-                                 epochs=_n_epochs, stream_view=stream_view)
+                                 epochs=_n_epochs, stream_view=stream_view,
+                                 replan=_replan_meta)
             final_cons.external_verify = ext   # 第二轮不重跑验证方, 保留第一轮独立复核结果
             # 缺陷七: 治理自身是否过度建制 —— 建议级元头(不否决, 只亮灯).
             _ob = final_cons.overbuild or {}
@@ -767,7 +856,8 @@ def run_research_program(
                 detail=str(_ob), ref="out.consolidated.overbuild"))
             final_cons2 = consolidate(heads, grounding_verdict=verdict,
                                   role_view=list(front), head_budget=_HEAD_BUDGET,
-                                  epochs=_n_epochs, stream_view=stream_view)
+                                  epochs=_n_epochs, stream_view=stream_view,
+                                  replan=_replan_meta)
             final_cons2.external_verify = ext   # 保留第一轮独立复核结果(第二轮不重跑验证方)
             out.consolidated = final_cons2.as_dict()   # overbuild 用含全部头的最终视图(自洽)
         except Exception:  # noqa: BLE001 — 元头派生失败: 保留第一轮聚合视图, 不阻断
@@ -798,6 +888,8 @@ def run_research_program(
                   + (f"\n> 工作区门: {out.workspace_verified}" if workspace is not None else "")
                   + (f"\n> 进化变异: {out.mutations} 子代; HITL 反馈: {len(out.supervision_log)} 轮"
                      if (out.mutations or out.supervision_log) else "")
+                  + (f"\n> 层间重规划(P-B): {len(_replan_log)} 实验跳过(预算再分配, 见 out.replan_log)"
+                     if _replan_log else "")
                   + "\n\n")
         out_md.write_text(header + final.strip() + "\n", encoding="utf-8")
     return out

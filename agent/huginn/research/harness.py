@@ -77,7 +77,7 @@ _P2_DIM_HEADS: dict[str, list[str]] = {
     "controlled_execution": ["controlled.supervision"],
     "change_validation": ["gate.claim_grounding", "gate.structural"],
     "reliable_delivery": ["reliable.evidence_cache", "gate.workspace"],
-    "learning_capture": ["learning.self_audit", "meta.overbuild_guard"],
+    "learning_capture": ["learning.self_audit", "meta.overbuild_guard", "gate.replan"],
     "safety_authority": ["wm.actually_used", "audit.score_usage",
                          "team.diversity", "governance.external_verify"],
 }

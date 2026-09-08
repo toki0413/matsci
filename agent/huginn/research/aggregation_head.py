@@ -83,6 +83,7 @@ class Consolidated:
     overbuild: dict | None = None                    # 缺陷七: 过度建制(second system effect)审计
     epochs: int = 0                                  # 缺陷一(P-A): 分层流式结算覆盖的层数
     stream_view: list[dict] | None = None            # 缺陷一(P-A): 增量层摘要(经漏B 门控压缩, 有界)
+    replan: dict | None = None                       # 缺陷二(P-B): 层间重规划(边在证据后修订)元数据
     score: float = 0.0                               # 加权总分 (0..1)
 
     def as_dict(self) -> dict[str, Any]:
@@ -99,6 +100,7 @@ class Consolidated:
             "overbuild": self.overbuild,
             "epochs": self.epochs,
             "stream_view": self.stream_view,
+            "replan": self.replan,
             "score": round(self.score, 3),
         }
 
@@ -192,6 +194,7 @@ def consolidate(
     head_budget: int = 14,
     epochs: int = 0,
     stream_view: list[dict] | None = None,
+    replan: dict | None = None,
 ) -> Consolidated:
     """多头 → 单一收敛视图 (纯函数, 无副作用).
 
@@ -213,6 +216,8 @@ def consolidate(
         ref/零边际头, 结果入 ``overbuild``, 让"治理自身膨胀"成为可观测、可反驳量.
       - ``epochs`` / ``stream_view``: 缺陷一(P-A)分层流式结算的元数据 —— 覆盖层数
         与增量层摘要(经漏B 门控压缩的有界视图), 仅透传记录, 不参与仲裁/建制审计.
+      - ``replan``: 缺陷二(P-B)层间重规划的元数据 —— 被门控评估/跳过的实验与理由,
+        仅透传记录 (重规划是预算决策, 不影响本视图的治理判定).
     """
     heads = list(heads)
     verdict, diversity, score, gates_failed, conflicts = _arbitrate(
@@ -231,6 +236,7 @@ def consolidate(
         overbuild=_overbuild_audit(heads, grounding_verdict, head_budget),
         epochs=int(epochs or 0),
         stream_view=stream_view,
+        replan=replan,
         score=score,
     )
 
