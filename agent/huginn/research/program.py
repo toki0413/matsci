@@ -322,10 +322,12 @@ def run_research_program(
     _early_stop_meta: dict = {"enabled": _early_stop_enabled}
 
     # A2: 先验注入 —— 只把早停参数推向更保守方向(上次 N 层才稳定, 这次至少等 N 层).
+    # A4: 附当前 goal 的归一化 slug —— 异域先验(goal_slug 不匹配)被拒绝套用.
     # 无先验 → defaults 取参数原件(优先级: 参数 > 常量), 行为不变; 有先验 → min_layers 单调不减且钳制 [2,4].
     from huginn.research.prior_store import resolve_early_stop_args
     _prior_args = resolve_early_stop_args(
-        prior, default_min_layers=early_stop_min_layers, default_margin=early_stop_margin)
+        prior, default_min_layers=early_stop_min_layers, default_margin=early_stop_margin,
+        current_goal_slug=_slug_goal(str(goal)))
     _early_stop_min_layers = int(_prior_args["min_layers"])
     _early_stop_margin = float(_prior_args["margin"])
 
@@ -801,7 +803,8 @@ def run_research_program(
             "prior_used": {"min_layers": _early_stop_min_layers,
                            "margin": _early_stop_margin,
                            "source": _prior_args["source"],
-                           "note": _prior_args["note"]},
+                           "note": _prior_args["note"],
+                           "goal_matched": _prior_args["goal_matched"]},
             "verdict": ("no_early_stop" if not _early_stop_enabled
                         else _early_stop_meta.get("verdict", "checked_and_continued")),
         }

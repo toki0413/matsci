@@ -1222,3 +1222,70 @@ def test_a3_prior_none_keeps_defaults():
     es = out.consolidated["early_stop"]
     assert es["prior_used"]["note"] == "no_prior"
     assert es["prior_used"]["min_layers"] == 2
+
+
+# ── 生产化 A4: 跨 run 先验 goal 归一化匹配 ────────────────────────────────
+def test_a4_goal_slug_matches_program_slug():
+    """goal_slug 与 program._slug_goal 同语义(跨 run 匹配口径统一, 防漂移)."""
+    from huginn.research.prior_store import goal_slug
+    from huginn.research.program import _slug_goal
+
+    for g in ("Probe Band Gap ? Silicon!", "材料 2026 研究 HEAT", "a b c", "X", ""):
+        assert goal_slug(g) == _slug_goal(g), f"口径不一致: {g!r}"
+
+
+def test_a4_prior_same_goal_slug_injected():
+    """同域先验(slug 匹配) → 正常保守注入, prior_used.marked=True."""
+    from huginn.research.planning import SubResearch, build_research_plan
+
+    plan = build_research_plan(
+        "a4 match",
+        [SubResearch("a", "sweep alpha metallic alloy", _run_(10.0)),
+         SubResearch("c", "sweep beta ceramic domain", _run_(10.1), depends_on=["a"]),
+         SubResearch("e", "scan polymer chain length", _run_(8.0), depends_on=["c"])],
+    )
+    prior = {"source": "layered_settlement", "applicable": True,
+             "goal": "a4 match", "goal_slug": "a4_match",
+             "plateau": {"layer_index": 2, "top": "g", "score": 15.1,
+                         "relative_change": 0.0067}}
+    out = run_research_program(
+        goal="a4 match", experiments=list(plan.experiments),
+        objectives_config={"score": "maximize"},
+        max_iterations=5, min_iterations=1, client=None,
+        planner=lambda _g: plan, early_stop_gate=True,
+        prior=prior, max_parallel=1,
+    )
+    es = out.consolidated["early_stop"]
+    assert es["prior_used"]["goal_matched"] is True
+    assert es["prior_used"]["note"] == "plateau_layer=2"
+    assert es["prior_used"]["min_layers"] == 3
+    assert "e" in out.cache, "同域先验保守注入(min_layers=3) → 剩余层执行"
+
+
+def test_a4_prior_foreign_goal_slug_rejected():
+    """异域先验(slug 不匹配) → 拒绝套用, 行为=无先验(默认 min_layers=2 → 层1 后终止)."""
+    from huginn.research.planning import SubResearch, build_research_plan
+
+    plan = build_research_plan(
+        "a4 foreign",
+        [SubResearch("a", "sweep alpha metallic alloy", _run_(10.0)),
+         SubResearch("c", "sweep beta ceramic domain", _run_(10.1), depends_on=["a"]),
+         SubResearch("e", "scan polymer chain length", _run_(8.0), depends_on=["c"])],
+    )
+    prior = {"source": "layered_settlement", "applicable": True,
+             "goal": "humboldt glacier flow", "goal_slug": "humboldt_glacier_flow",
+             "plateau": {"layer_index": 5, "top": "g", "score": 99.0,
+                         "relative_change": 0.0001}}
+    out = run_research_program(
+        goal="a4 foreign", experiments=list(plan.experiments),
+        objectives_config={"score": "maximize"},
+        max_iterations=5, min_iterations=1, client=None,
+        planner=lambda _g: plan, early_stop_gate=True,
+        prior=prior, max_parallel=1,
+    )
+    es = out.consolidated["early_stop"]
+    assert es["prior_used"]["goal_matched"] is False
+    assert es["prior_used"]["note"] == "goal_mismatch"
+    assert es["prior_used"]["min_layers"] == 2, "异域先验不套用 → 用默认参数"
+    assert "e" not in out.cache, "3 层场景默认 min_layers=2 → 层1 高原后终止层2"
+    assert es["verdict"] == "early_stopped"

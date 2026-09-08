@@ -112,6 +112,9 @@
      `early_stop_min_layers` / `early_stop_margin`)；稳定度先验已沉淀
      (`prior_store.extract_prior` → `run_research_program(prior=...)` 保守注入,
      min_layers 单调不减, prior_used 入聚合视图)。
+- [x] 跨 run 先验 goal 归一化匹配: `prior_store.goal_slug`(与 program._slug_goal
+     同口径) —— 异域先验(goal_slug ≠ 当前 goal)被 `resolve_early_stop_args` 拒绝
+     套用(note=goal_mismatch), 先验只对同域生效, 绝不张冠李戴。
      实施计划: `docs/superpowers/plans/2026-09-09-settlement-productionize.md`。
 
 ## 10. 非目标
