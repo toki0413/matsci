@@ -28,7 +28,8 @@ _OWNED_DIRS = ["research", "exploration", "validation"]
 
 _OWNED_FILES = ["huginn/capabilities/introspection.py",
                 "huginn/capabilities/mcp_export.py",
-                "huginn/capabilities/registry.py"]
+                "huginn/capabilities/registry.py",
+                "huginn/capabilities/world_model.py"]
 
 # 静态 catch-all 检测: 命中 `except Exception:` / `except BaseException:` / 裸 `except:`
 _CATCHALL = re.compile(r"^\s*except\s*(BaseException|Exception)?\s*:")

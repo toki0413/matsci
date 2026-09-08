@@ -28,6 +28,7 @@ from __future__ import annotations
 import math
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any
 
 # 基础物理常数 (世界模型的数学参数) —— SI 单位
@@ -35,6 +36,49 @@ SOLAR_LUM = 3.828e26          # L☉ [W]
 STEFAN = 5.670374419e-8        # σ [W/m²/K⁴]
 AU_M = 1.49597870700e11        # [m]
 SOLAR_MASS_KG = 1.98892e30
+
+
+class Worldview(str, Enum):
+    """世界模型的世界观谱系 (多元论治理) —— 不同学科对『世界/状态/动力学』的不同刻画.
+
+    '世界模型'不是边界明确的单一技术范式: 强化学习、生成模型、认知科学、具身智能、
+    复杂系统对'世界''状态'及其动力学各有理解。能力治理要求每个世界模型能力**显式声明
+    自己站在哪一极**, 避免把"预测感知信号""学隐空间状态转移""刻画行动/物理约束/因果"
+    混为一谈:
+
+    - PHYSICS_CAUSAL:        把世界刻画为**行动/物理约束/因果**(方程驱动前向模型 +
+                             真实执行对账)。这是 LawModel 的实现极: 预告(方程)→真实
+                             执行→reconcile 数值对账(证伪式可信)。
+    - PERCEPTION_PREDICTIVE: 世界=感官信号序列, 模型预测下一个感知信号 (感知闭环)。
+    - LATENT_TRANSITION:     世界=隐空间状态, 学 s_{t+1}=f(s_t,a_t) 的转移。
+    - BEHAVIOR_POLICY:       不显式建模世界, 直接从(状态,动作)学策略/价值 (RL 极)。
+    """
+    PHYSICS_CAUSAL = "physics_causal"
+    PERCEPTION_PREDICTIVE = "perception_predictive"
+    LATENT_TRANSITION = "latent_transition"
+    BEHAVIOR_POLICY = "behavior_policy"
+
+
+def world_model_card(model: "LawModel") -> dict:
+    """世界模型能力的治理卡片 (多元论 + 具身可信).
+
+    回答两个治理问题:
+      - 它在世界模型谱系里**站在哪一极**(worldview)—— 防止"预测感知/隐态转移/物理因果"
+        被当成同一类能力;
+      - 它的预告是否**可证伪**(falsifiable)—— 真相检验由"真实执行"经 reconcile 提供,
+        不可证伪的预判不得冒充"世界知识"。
+
+    Returns: {"model", "domain", "worldview", "falsifiable", "truth_reference", "methods"}
+    """
+    return {
+        "model": type(model).__name__,
+        "domain": getattr(model, "domain", ""),
+        "worldview": getattr(model, "worldview", Worldview.PHYSICS_CAUSAL).value,
+        "falsifiable": (hasattr(model, "predict") and hasattr(model, "law")
+                        and hasattr(model, "seed")),
+        "truth_reference": "real_execution (reconcile 数值对账)",
+        "methods": sorted(k for k in ("predict", "law", "seed") if hasattr(model, k)),
+    }
 
 
 def kepler_semimajor_au(period_d: float, host_msun: float = 1.0) -> float:
@@ -93,6 +137,9 @@ class LawModel(ABC):
     """世界的转移模型: predict(state, action) -> next state, law() 给数学方程. """
 
     domain = ""
+    # 多元论治理: 本实现站在"物理-行动-因果"这一极 (见 Worldview). 其它极在能力面
+    # 显式标注, 不混淆.
+    worldview: Worldview = Worldview.PHYSICS_CAUSAL
 
     @abstractmethod
     def law(self) -> str:

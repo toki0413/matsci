@@ -9,6 +9,8 @@
      可证伪对账与 VLA 团队跨域复用(对账指标随域, 不写死)
   6. `research.interaction_explain` 交互可解释性 —— order-1/2 博弈交互分解 + 等效交互
      度量 + 代理/定律**结构对齐**治理闸门(张拳石理论落地, shortcut 探测)
+  7. 世界模型能力贯通 —— 多元论世界观(worldview 卡片) + LawModel 装箱建 Capability +
+     具身闸门(不可证伪拒收) + MCP 码头可见可调, 交互审计作用在世界模型域
 
 纯确定性/本地, 零网络/零 LLM。实验 run 返回真实可区分数值。
 """
@@ -371,3 +373,117 @@ def test_surrogate_law_alignment_is_structural_gate():
     # surrogate 是 a, 定律是 b → 代理多出来的虚假交互记在 surrogate_only
     assert ("2", "x1", "x2") in bad["surrogate_only"], bad["surrogate_only"]
     assert bad["law_only"] == [], "纯 2-feature 定律无联合交互 → 不应被误报缺失"
+
+
+# ── 7) 世界模型能力 + 多元论世界观 (张拳石交互审计与 world-model 能力贯通) ──
+def test_worldview_pluralism_card():
+    """多元论落地: 每个世界模型能力声明 worldview + 治理卡片(可证伪/真相参照)."""
+    from huginn.research.law_model import (
+        FirstPrinciplesLawModel, MechanicsLawModel, Worldview, world_model_card,
+    )
+    w_fp = FirstPrinciplesLawModel()
+    w_me = MechanicsLawModel()
+    # 二者都是"物理-行动-因果"极 (LawModel 默认), 但域不同 → 卡片能区分
+    for m in (w_fp, w_me):
+        assert getattr(m, "worldview") is Worldview.PHYSICS_CAUSAL
+        card = world_model_card(m)
+        assert card["falsifiable"] is True, "定律模型须可证伪(reconcile 真相参照)"
+        assert card["truth_reference"]  # 具身参照: 真实执行
+        assert card["worldview"] == "physics_causal"
+    assert world_model_card(w_fp)["domain"] == "exoplanet"
+    assert world_model_card(w_me)["domain"] == "mechanics"
+
+
+def test_world_model_capability_rejects_unfalsifiable():
+    """具身闸门: 不可证伪对象(predict-only 鸭子) 一律拒绝装箱为世界模型能力."""
+    from huginn.capabilities.world_model import WorldModelCapability
+    from huginn.research.law_model import FirstPrinciplesLawModel
+    # 合法: 第一性原理定律模型可装箱
+    cap = WorldModelCapability(FirstPrinciplesLawModel())
+    assert cap.name == "world_model.exoplanet"
+    assert cap.read_only is True
+
+    class _PredictOnly:  # noqa: D106
+        def predict(self, *a, **k):
+            return {"x": 1}
+
+    try:
+        WorldModelCapability(_PredictOnly())  # type: ignore[arg-type]
+        raised = False
+    except TypeError:
+        raised = True
+    assert raised, "无对账能力(不可证伪)的对象不能装箱为世界模型能力"
+
+
+def test_world_model_capability_ops_law_predict_reconcile():
+    """能力 op 面: law(数学定律) / predict(预告=假说) / reconcile(对账可证伪)."""
+    import asyncio
+    from huginn.capabilities.world_model import WorldModelCapability
+    from huginn.research.law_model import FirstPrinciplesLawModel
+
+    wm = FirstPrinciplesLawModel(albedo=0.1)
+    cap = WorldModelCapability(wm)
+
+    r_law = asyncio.run(cap.run({"op": "law"}))
+    assert r_law.success and "T_eq" in r_law.data["law"]
+
+    r_pred = asyncio.run(cap.run({"op": "predict",
+                                  "state": {"a_AU": 1.0}, "action": {"a_scale": 1.0}}))
+    assert r_pred.success
+    assert r_pred.data["falsifiable"] is True, "预告必须标注为可证伪假说"
+
+    # 对账: 数值一致 → 证实; 注入偏差 → 如实 falsified
+    pred = r_pred.data["predicted"]
+    r_ok = asyncio.run(cap.run({"op": "reconcile", "predicted": pred, "actual": pred}))
+    assert r_ok.success and r_ok.data["borne_out"] is True
+    bad_pred = {**pred, "state": {**pred["state"], "T_eq_K": pred["state"]["T_eq_K"] * 1.5}}
+    r_bad = asyncio.run(cap.run({"op": "reconcile", "predicted": pred, "actual": bad_pred}))
+    assert r_bad.success and r_bad.data["borne_out"] is False, "偏差须如实标 falsified"
+
+
+def test_world_model_capability_mcp_surface():
+    """世界模型能力进注册表 → MCP 码头可见、可调(默认 exoplanet 世界模型)."""
+    import asyncio
+    from huginn.capabilities.mcp_export import CapabilityMCPBackend
+    from huginn.capabilities.registry import CapabilityRegistry
+    from huginn.capabilities.world_model import register_world_model_capabilities
+    from huginn.research.law_model import FirstPrinciplesLawModel
+
+    class _Local(CapabilityRegistry):  # noqa: D101
+        pass
+
+    name = register_world_model_capabilities(FirstPrinciplesLawModel(), registry=_Local)
+    assert name == "world_model.exoplanet"
+    manifest = _Local.manifest()
+    m = next(m for m in manifest if m["name"] == name)
+    assert m["read_only"] is True and m["category"] == "world_model"
+    assert m["input_schema"] and "op" in m["input_schema"]["properties"]
+
+    backend = CapabilityMCPBackend(allow_write=False, registry=_Local)
+    assert backend.contains(name)
+    # mcp SDK 可能未装: Manifest/contains/call 均不依赖 mcp 包, 只有 as_mcp_tools 才需.
+    assert any(t["function"]["name"] == name for t in backend.openai_functions())
+    out = asyncio.run(backend.call(name, {"op": "law"}))
+    assert out["success"] and "T_eq" in out["data"]["law"]
+
+
+def test_interaction_alignment_applies_on_world_model_domain():
+    """贯通: 结构门禁(张拳石)亦可作用在世界模型域 —— 代理带虚假交互即拦."""
+    from huginn.research.interaction_explain import surrogate_law_alignment
+
+    # 世界模型域标量"定律"(在 albedo/a_AU 两特征上**加性**, 无联合交互), 作为真值结构
+    def _law(inp):
+        return 250.0 * (1.0 - inp["albedo"]) + 30.0 * inp["a_AU"]
+
+    def _surrogate_shortcut(inp):
+        # 数值上逼近, 但引入定律没有的 albedo·a_AU 联合交互 (shortcut)
+        return _law(inp) + 6.0 * inp["albedo"] * inp["a_AU"]
+
+    features = ["a_AU", "albedo"]
+    instance = {"a_AU": 1.0, "albedo": 0.2}
+    baseline = {"a_AU": 5.0, "albedo": 0.3}
+    bad = surrogate_law_alignment(surrogate=_surrogate_shortcut, law=_law,
+                                  features=features, instance=instance,
+                                  baseline=baseline)
+    assert bad["aligned"] is False, "世界模型域的代理结构失调 → 闸门拦住进决策"
+    assert ("2", "a_AU", "albedo") in bad["surrogate_only"], bad["surrogate_only"]

@@ -329,6 +329,15 @@ def _ensure_capabilities_registered() -> None:
 
         register_all_tools(None)
     register_capability_tools(None)
+    # 具身原则: 让"世界模型能力"进 MCP 码头 —— 默认挂一个系外行星第一性原理世界模型,
+    # 经其 law/predict/reconcile 三操作对外提供"预告→执行→对账"的可证伪面(见
+    # capabilities.world_model / research.law_model). 加入失败仅降级, 不阻断 server 启动.
+    try:
+        from huginn.capabilities.world_model import register_world_model_capabilities
+        from huginn.research.law_model import FirstPrinciplesLawModel
+        register_world_model_capabilities(FirstPrinciplesLawModel())
+    except Exception:  # noqa: BLE001 — 默认世界模型可选, 失败不影响 MCP server 启动
+        logger.debug("world-model capability registration skipped", exc_info=True)
 
 
 def main(argv: list[str] | None = None) -> None:
