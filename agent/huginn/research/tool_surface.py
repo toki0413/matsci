@@ -38,7 +38,7 @@ def _try_registry() -> bool:
     try:
         import huginn.tools.registry as _r  # noqa: F401
         return True
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 — ToolRegistry 不可用(轻量环境)则仅支持 dict 逃生口
         return False
 
 

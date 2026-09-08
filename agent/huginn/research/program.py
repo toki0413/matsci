@@ -64,8 +64,7 @@ def grounding_verifier() -> Callable[[str, list[str]], dict]:
         try:
             from huginn.validation.claim_grounding import verify_claims
             return verify_claims(text, trace, allow_derived=True)
-        except Exception:
-            from importlib import util
+        except Exception:  # noqa: BLE001 — claim_grounding 不可用时拉文件级兜底
             src = Path(__file__).resolve().parents[1] / "validation/claim_grounding.py"
             spec = util.spec_from_file_location("_cg", str(src))
             mod = util.module_from_spec(spec); spec.loader.exec_module(mod)
@@ -293,7 +292,7 @@ def run_research_program(
                     else:
                         try:
                             res = h(a)
-                        except Exception as ee:  # noqa: BLE001
+                        except Exception as ee:  # noqa: BLE001 — 工具调用异常如实入 trace 供门禁对照
                             res = json.dumps({"error": str(ee)}, ensure_ascii=False)
                     trace.append(res)  # 门禁证据: 诊断工具真实 return 落 trace
                     msgs += [{"role": "assistant", "content": msg.content or "",

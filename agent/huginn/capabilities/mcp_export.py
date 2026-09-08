@@ -176,17 +176,17 @@ def _jsonable(obj: Any) -> Any:
     if hasattr(obj, "model_dump"):
         try:
             return obj.model_dump()
-        except Exception:
+        except Exception:  # serialization 兜底 → 回退 str
             return str(obj)
     if hasattr(obj, "to_dict"):
         try:
             return obj.to_dict()
-        except Exception:
+        except Exception:  # serialization 兜底 → 回退 str
             return str(obj)
     if hasattr(obj, "tolist"):
         try:
             return obj.tolist()
-        except Exception:
+        except Exception:  # serialization 兜底 → 回退 str
             return str(obj)
     return str(obj)
 

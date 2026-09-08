@@ -67,7 +67,7 @@ def _discoverable_tool_names() -> list[str]:
     try:
         from huginn.tools.registry import ToolRegistry
         return [s["function"]["name"] for s in ToolRegistry.get_all_schemas()]
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 — 无注册表(轻量环境)时视为不可见
         return []
 
 
@@ -143,7 +143,7 @@ def propose_capabilities(goal: str, discoverable: list[str],
                 d = (r.choices[0].message.content or "").strip()
                 if d:
                     desc = d[:80]
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001 — LLM 增强失败即用规则 desc (rules-first)
                 pass
         proposals.append(conform_proposal({
             "name": name, "description": f"{gap['capability']}：{desc}"[:160]}))
@@ -371,7 +371,7 @@ def rollback_realization(rec: RealizationRecord, *, registry=None) -> RollbackRe
         try:
             registry.unregister(rec.name)
             removed = True
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001 — 回滚 unregister 失败则如实记 removed=False
             removed = False
     return RollbackRecord(
         name=rec.name, removed=removed, restored=rec.prev_registered, journal_only=journal_only)
