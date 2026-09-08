@@ -144,6 +144,44 @@ class FirstPrinciplesLawModel(LawModel):
                          "T_eq_K": round(T_eq, 1)}, domain=self.domain)
 
 
+class MechanicsLawModel(LawModel):
+    """简单谐振子 —— 第二类第一性原理域 (纯力学, 对标 VLA/机器人周期动力学).
+
+    与 FirstPrinciplesLawModel(轨道热力学) 同构但属不同物理, 说明 LawModel 是
+    **域无关**的: 世界怎样转移用数学定律描述, 规划/预告/验证共用同一套语言。
+
+    law (数学):
+
+        ω = √(k/m)            固有角频率 (刚度↑ / 质量↓ → ω↑)
+        T = 2π/ω = 2π·√(m/k)  周期 (动能-势能相互转换的固有节律)
+
+    动作空间: LawAction.config = {"k_scale": s_k, "m_scale": s_m}
+      → 施加动作后 ω' = √((k·s_k)/(m·s_m)).
+
+    域解读 (VLA/机器人对齐): 状态即"系统的力学特征"(质量、刚度), 动作即"改配置",
+    定律预告"改变配置后系统的固有节律", 真实执行校验定律是否被证实。
+    """
+
+    domain = "mechanics"
+
+    def law(self) -> str:
+        return "ω = √(k/m);  T = 2π/ω = 2π·√(m/k)"
+
+    def seed(self, observation: dict[str, Any]) -> LawState:
+        return LawState({"mass_kg": float(observation["mass_kg"]),
+                         "stiffness_Nm": float(observation["stiffness_Nm"])},
+                        domain=self.domain)
+
+    def predict(self, state: LawState, action: LawAction) -> LawState:
+        m = state.get("mass_kg", 1.0) * action.config.get("m_scale", 1.0)
+        k = state.get("stiffness_Nm", 1.0) * action.config.get("k_scale", 1.0)
+        omega = math.sqrt(k / m)                     # ω = √(k/m)
+        T = 2 * math.pi / omega                      # T = 2π/ω
+        return LawState({"mass_kg": round(m, 4), "stiffness_Nm": round(k, 3),
+                         "omega_rad_s": round(omega, 4), "T_s": round(T, 4)},
+                        domain=self.domain)
+
+
 # ── 预测 vs 真实 的数学对账 (可证伪性校验) ──────────────────────
 
 

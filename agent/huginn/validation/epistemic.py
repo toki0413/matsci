@@ -59,7 +59,7 @@ def _text_of(value: Any, limit: int = 4000) -> str:
             import json
 
             return json.dumps(value, ensure_ascii=False, default=str)[:limit]
-        except Exception:
+        except Exception:  # — 序列化失败 → 回退 str 截断(不抛)
             return str(value)[:limit]
     return str(value)[:limit]
 

@@ -22,8 +22,9 @@ _ROOT = Path(__file__).resolve().parents[1]          # agent/
 _HUGINN = _ROOT / "huginn"
 _EXAMPLES = Path(__file__).resolve().parents[2] / "examples"
 
-# 自研接缝: 只对这两处强制"带原因的 catch-all"纪律 (避免全库 687 处一次性改写).
-_OWNED_DIRS = ["research"]
+# 自研接缝: 深研运行时的全部四块 (只对这三处强制"带原因的 catch-all"纪律,
+# 避免全库 687 处一次性改写; 全库新代码的 BLE001 由 CI lint 另行覆盖).
+_OWNED_DIRS = ["research", "exploration", "validation"]
 
 _OWNED_FILES = ["huginn/capabilities/introspection.py",
                 "huginn/capabilities/mcp_export.py",
@@ -87,6 +88,30 @@ def test_deep_research_entrypoints_use_canonical_seam() -> None:
         assert any(marker in src for marker in (
             "run_research_program", "ScienceTeam", "ModelBasedScienceTeam")), \
             f"{name} 未通过 canonical 深研入口 (run_research_program/ScienceTeam)"
+
+
+def test_no_new_root_parallel_research_pipeline() -> None:
+    """禁止在根级新增平行深研管线模块 (research_* 顶层文件)。
+
+    根级 `research_*.py` 分两类, 白名单只放"允许留在根级的既有成员":
+      - 在线 WS 研究模式入口 `research_workflow.py` (流式事件, 服务在线会话);
+      - 遗留支撑基础设施 `research_budget.py` / `research_log.py` (前者限制昂贵
+        工具调用次数, 后者记录猜想演化树 —— 都是**共享 IO/账本辅助**, 不是
+        假说→实验→报告 的深研管线, 无自己的 pitch-science 闭环)。
+
+    新增任何根级 `research_*.py` 都不在白名单 → 必须在此评审: 若是深研管线入口
+    (pitch/实验/综合/报告任何一环) 则拒绝, 要求规划进 `huginn/research/` (program/
+    planning/science_team/law_model) 统一收敛; 若是复用的共享辅助, 也应尽量并入相同
+    职责模块, 而非再起一个"以 research_ 打头的平行文件"。
+    """
+    allowed_root = {"research_workflow.py", "research_budget.py", "research_log.py"}
+    root_research = {f.name for f in _HUGINN.glob("research_*.py")}
+    unexpected = sorted(root_research - allowed_root)
+    assert not unexpected, (
+        "根级不允许新增平行深研模块。深研能力应放进 `huginn/research/`(program/"
+        "planning/science_team/law_model)。遗留 shared infra 已在白名单(research_budget/"
+        "research_log); 新增文件即便只是复用辅助, 也请先并入既有职责模块。违规: "
+        + ", ".join(unexpected))
 
 
 def test_dependency_allowlist_blocks_unbounded_new_deps() -> None:

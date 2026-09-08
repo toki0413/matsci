@@ -14,7 +14,7 @@
 验证的公共语言。与 DAG 式 :class:`ScienceTeam`(分层任务分工) 互补 —— 前者管"怎么
 分工", 后者管"怎么按定律规划/预告/验证"。
 
-复用: `research.planning`(规划) + `research.world_model`(数学核心) + `claim_grounding`(批判/
+复用: `research.planning`(规划) + `research.law_model`(数学核心) + `claim_grounding`(批判/
 门禁)。纯确定性/标准库, 零网络/零 LLM, 可单测。
 """
 from __future__ import annotations
@@ -269,13 +269,17 @@ class ModelBasedScienceTeam:
 
     def __init__(self, model: LawModel, *, objective: str = "T_eq_K",
                  sense: str = "maximize", tol: float = 0.03,
-                 n_scientists: int = 2, verify=None) -> None:
+                 n_scientists: int = 2, verify=None,
+                 metrics: tuple[str, ...] | None = None) -> None:
         self.model = model
         self.planner = ModelBasedPlanner(model, objective, sense)
         self.scientists = [ScientistAgent(f"vla.scientist.{i}") for i in range(n_scientists)]
         self.critic = CriticAgent(verify=verify)
         self.synthesizer = SynthesizerAgent()
         self.tol = tol
+        # 对账指标应跟随模型域: 传入则用调用方给的力学/其他域指标; 缺省保持历史
+        # exoplanet 行为, 避免换域时报错.
+        self.metrics = metrics if metrics is not None else ("S_Wm2", "T_eq_K")
         self.log: list[RoleLogEntry] = []
 
     def _log(self, role: str, action: str, detail: str = "") -> None:
@@ -292,7 +296,8 @@ class ModelBasedScienceTeam:
             step = self.planner.best(init, actions)        # 定律预告 → 选动作
             scientist = self.scientists[worker % len(self.scientists)]; worker += 1
             actual = real_executor(init, step.action)      # 科学者: 真实执行(真相)
-            rep = reconcile(step.predicted, actual, tol=self.tol)  # 批判: 数学对账
+            rep = reconcile(step.predicted, actual, tol=self.tol,
+                            metrics=self.metrics)  # 批判: 数学对账 (指标随域)
             rid = obs.get("name", f"obs_{len(plan)}")
             plan.append({"id": rid, **step.to_dict()})
             execs.append({"id": rid, "actual": actual,

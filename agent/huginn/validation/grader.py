@@ -396,7 +396,7 @@ class ValidityJudge:
                     checks=[{"is_valid": is_valid, "reason": reason}],
                     message=reason,
                 )
-        except Exception:
+        except Exception:  # — LLM 评分器失败 → 回退规则评分(降级不静默)
             logger.debug("LLM grader failed, falling back to rules", exc_info=True)
 
         return self._rule_fallback(agent_code)

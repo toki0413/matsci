@@ -106,7 +106,7 @@ def _get_project_kg() -> Any | None:
         kg = getattr(ctx, "knowledge_graph", None)
         if kg is not None:
             return kg
-    except Exception:
+    except Exception:  # — 项目知识图谱不可得 → 回退 None(不抛)
         logger.debug("project knowledge graph lookup failed", exc_info=True)
     return None
 

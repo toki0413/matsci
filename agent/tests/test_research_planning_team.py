@@ -5,6 +5,8 @@
   2. `run_research_program(planner=...)` —— 自主规划的 experiment 序列与并行度真实生效
   3. `research.science_team.ScienceTeam` —— 多角色分工(plan/scientist/critic/synthesizer)
   4. 全链 demo `ai4s_fullchain_demo` —— 搜读算做写 offline smoke
+  5. `research.law_model` 域无关 —— 系外行星(热力学) + 力学谐振子双域, 含 reconcile
+     可证伪对账与 VLA 团队跨域复用(对账指标随域, 不写死)
 
 纯确定性/本地, 零网络/零 LLM。实验 run 返回真实可区分数值。
 """
@@ -212,3 +214,68 @@ def test_model_based_science_team_bears_and_falsifies_law():
     out2 = team.run("同一目标(偏差执行)", obs, actions, _bad_executor)
     assert set(out2.survivors) == set(), f"定律不符 → 全部证伪, got {out2.survivors}"
     assert set(out2.pruned) == {"Kepler-999 b", "Fake-Planet b"}, out2.pruned
+
+
+# ── 5) 第二类第一性原理域: 力学谐振子 (LawModel 域无关 + VLA 团队指标随域) ──
+def test_mechanics_law_model_predicts_omega_monotonicity():
+    """力学域定律: ω=√(k/m)——刚度↑→ω↑, 质量↑→ω↓; 且 T=2π/ω 自洽."""
+    from huginn.research.law_model import MechanicsLawModel, LawAction, LawState
+    wm = MechanicsLawModel()
+    assert wm.domain == "mechanics"
+    assert "T = 2π/ω" in wm.law() and "√(k/m)" in wm.law()
+    init = LawState({"mass_kg": 2.0, "stiffness_Nm": 8.0}, domain="mechanics")
+    base = wm.predict(init, LawAction({"k_scale": 1.0, "m_scale": 1.0}))
+    stiffer = wm.predict(init, LawAction({"k_scale": 2.0, "m_scale": 1.0}))
+    heavier = wm.predict(init, LawAction({"k_scale": 1.0, "m_scale": 2.0}))
+    assert stiffer.get("omega_rad_s") > base.get("omega_rad_s"), "刚度↑ → ω↑"
+    assert heavier.get("omega_rad_s") < base.get("omega_rad_s"), "质量↑ → ω↓"
+    import math
+    assert abs(base.get("T_s") * base.get("omega_rad_s") - 2 * math.pi) < 1e-3, \
+        "T = 2π/ω 应数值自洽"
+
+
+def test_mechanics_reconcile_falsifies_perturbed_period():
+    """力学域对账(显式传 metrics): 周期被放大 → 定律如实 falsified."""
+    from huginn.research.law_model import (
+        MechanicsLawModel, LawAction, LawState, reconcile,
+    )
+    wm = MechanicsLawModel()
+    init = LawState({"mass_kg": 1.0, "stiffness_Nm": 4.0}, domain="mechanics")
+    pred = wm.predict(init, LawAction({"k_scale": 1.0, "m_scale": 1.0}))
+    tru = {"omega_rad_s": pred.get("omega_rad_s"), "T_s": pred.get("T_s") * 1.5}
+    resp = reconcile(pred, tru, tol=0.03, metrics=("omega_rad_s", "T_s"))
+    assert resp["borne_out"] is False, resp
+    assert "T_s" in resp["mismatch"], "周期偏差应被如实记录"
+
+
+def test_model_based_team_reconcile_metrics_follow_domain():
+    """VLA 团队跨域复用: 力学域对账指标随域 (不再写死 exoplanet S/T_eq)."""
+    from huginn.research.science_team import ModelBasedScienceTeam
+    from huginn.research.law_model import MechanicsLawModel, LawAction
+
+    wm = MechanicsLawModel()
+    obs = [{"name": "Osc-A", "mass_kg": 1.0, "stiffness_Nm": 4.0},
+           {"name": "Osc-B", "mass_kg": 4.0, "stiffness_Nm": 8.0}]
+    actions = [LawAction({"k_scale": 1.0, "m_scale": s}, label=f"m{int(s*10)}")
+               for s in (0.8, 1.0, 1.2)]
+    team = ModelBasedScienceTeam(wm, objective="T_s", sense="maximize",
+                                 metrics=("omega_rad_s", "T_s"), n_scientists=2)
+
+    def _ok(init, act):
+        st = wm.predict(init, act)
+        return {"omega_rad_s": st.get("omega_rad_s"), "T_s": st.get("T_s")}
+
+    out = team.run("谐振子固有节律(定律预告-执行-对账)", obs, actions, _ok)
+    assert "√(k/m)" in out.law, "力学定律入产出"
+    assert out.verdict == "pass"
+    assert set(out.survivors) == {"Osc-A", "Osc-B"}, f"定律一致 → 全部证实, got {out.survivors}"
+    assert {e.role for e in out.role_log} >= {"planner", "scientist", "critic", "synthesizer"}
+
+    # 注入周期偏差 → 定律证伪 → 全部 pruned (跨域对账同样守住可证伪性)
+    def _bad(init, act):
+        st = wm.predict(init, act)
+        return {"omega_rad_s": st.get("omega_rad_s"), "T_s": st.get("T_s") * 1.5}
+
+    out2 = team.run("同一目标(偏差执行)", obs, actions, _bad)
+    assert set(out2.survivors) == set(), f"定律不符 → 全部证伪, got {out2.survivors}"
+    assert set(out2.pruned) == {"Osc-A", "Osc-B"}, out2.pruned
