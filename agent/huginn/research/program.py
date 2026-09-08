@@ -59,6 +59,7 @@ class ResearchOutcome:
     law_model_used: dict | None = None                 # 世界模型真用证据: predict 产物/是否参与决策 (真深思 D)
     plan_revision: dict | None = None                  # 漏A: plan 修订门(新证据→显式复盘初始计划)审计
     grounding_audit: dict | None = None                # 漏C: "得分≠使用"(高分存活项是否真进最终报告)审计
+    consolidated: dict | None = None                   # 收敛聚合头(P1): 现有治理头统一注册后的收敛视图
 
 
 def _build_trace(cache: dict[str, dict]) -> list[str]:
@@ -549,6 +550,89 @@ def run_research_program(
             "reconcile": reconcile_rows,
             "borne_out_all": bool(reconcile_rows) and all(r["borne_out"] for r in reconcile_rows),
         }
+
+    # ── 收敛聚合头 (P1 纯适配器) ─────────────────────────────────────────
+    # 把现有治理字段一次性收敛成 head 注册视图 out.consolidated; 旧字段保留为
+    # 残差兼容(报告/self-harness/账本 P2 前仍读旧字段). 未来新视角一律走
+    # HeadResult 注册, 不再加 out.* 字段 (P3 由 arch_cleanliness 执法).
+    try:
+        from huginn.research.aggregation_head import (
+            EVIDENCE_OBSERVED,
+            EVIDENCE_UNOBSERVED,
+            HeadResult,
+            consolidate,
+        )
+
+        heads: list[HeadResult] = []
+        # gate.claim_grounding —— 声明门禁 (对报告是否成文有否决权)
+        if verdict != "needs_grounding" or ungrounded:
+            heads.append(HeadResult(
+                "gate.claim_grounding", "声明门禁(claim_grounding)",
+                EVIDENCE_OBSERVED,
+                "passed" if verdict in ("grounded", "pass", "accept", "confirmed")
+                else "failed",
+                detail=f"verdict={verdict}", ref="out.verdict", gate=True))
+        else:
+            heads.append(HeadResult(
+                "gate.claim_grounding", "声明门禁(claim_grounding)",
+                EVIDENCE_UNOBSERVED, "unobserved",
+                detail="verdict=needs_grounding 且无 ungrounded 素材",
+                ref="out.verdict", gate=True))
+        # gate.structural —— 结构闸门 (交互等效/多元论审计)
+        if audit is not None:
+            heads.append(HeadResult(
+                "gate.structural", "结构闸门(交互等效/多元论审计)",
+                EVIDENCE_OBSERVED,
+                "passed" if out.structural_aligned is not False else "failed",
+                detail=str(audit), ref="out.structural_gate", gate=True))
+        else:
+            heads.append(HeadResult(
+                "gate.structural", "结构闸门(交互等效/多元论审计)",
+                EVIDENCE_UNOBSERVED, "unobserved",
+                detail="未注入 structural_audit", ref="out.structural_gate", gate=True))
+        # gate.workspace —— 工作区广播门 (C-Space 在场断言)
+        if workspace is not None:
+            heads.append(HeadResult(
+                "gate.workspace", "工作区广播门(C-Space 在场断言)",
+                EVIDENCE_OBSERVED,
+                "passed" if out.workspace_verified else "failed",
+                detail=f"workspace_verified={out.workspace_verified}",
+                ref="out.workspace_verified", gate=True))
+        else:
+            heads.append(HeadResult(
+                "gate.workspace", "工作区广播门(C-Space 在场断言)",
+                EVIDENCE_UNOBSERVED, "unobserved",
+                detail="未注入 workspace", ref="out.workspace_verified", gate=True))
+        # wm.actually_used —— 世界模型真用 (误区二审计, 建议级)
+        if out.law_model_used is not None:
+            wm_ok = out.law_model_used.get("borne_out_all") is not False
+            heads.append(HeadResult(
+                "wm.actually_used", "世界模型真用?(predict 参与决策 = 真深思 D)",
+                EVIDENCE_OBSERVED, "passed" if wm_ok else "failed",
+                detail=str(out.law_model_used), ref="out.law_model_used"))
+        else:
+            heads.append(HeadResult(
+                "wm.actually_used", "世界模型真用?(predict 参与决策 = 真深思 D)",
+                EVIDENCE_UNOBSERVED, "unobserved",
+                detail="未见 predict/reconcile 产物", ref="out.law_model_used"))
+        # audit.plan_revision —— 锚定反制 (漏A, 建议级)
+        if out.plan_revision is not None:
+            heads.append(HeadResult(
+                "audit.plan_revision", "plan 修订门(新证据→显式复盘初始计划)",
+                EVIDENCE_OBSERVED,
+                "passed" if out.plan_revision.get("verdict") == "plan_holds" else "failed",
+                detail=str(out.plan_revision), ref="out.plan_revision"))
+        # audit.score_usage —— 得分≠使用 (漏C, 对疑似 lipstick 有否决权)
+        if out.grounding_audit is not None:
+            heads.append(HeadResult(
+                "audit.score_usage", "得分≠使用(高分存活项真进最终报告?)",
+                EVIDENCE_OBSERVED,
+                "passed" if out.grounding_audit.get("verdict") == "proper_use" else "failed",
+                detail=str(out.grounding_audit), ref="out.grounding_audit", gate=True))
+
+        out.consolidated = consolidate(heads, grounding_verdict=verdict).as_dict()
+    except Exception:  # noqa: BLE001 — 聚合头为新增视图, 失败不阻断管线
+        out.consolidated = None
 
     # M2: Self-Harness 五维报告 — 复用本 out 已记录的 gate 结果, 不重复计算 (例行轻量)
     try:
