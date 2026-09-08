@@ -1,24 +1,26 @@
-"""世界模型核心 —— 对标 VLA / 机器人模型驱动规划, 以**数学语言**为规划与验证的载体.
+"""科学定律模型核心 (LawModel) —— 对标 世界模型/VLA/机器人分层规划, 以**数学定律**为
+规划与验证的载体. 科研级前向模型 + 可证伪验证.
 
-把「搜读算做写」里的科研决策, 从散文式 prompt 升级为「状态/动作/转移(定律)」的
-形式化对象, 使规划与验证都能用**方程与数值对账**表达 (数学即核心):
+设计说明 (与既有实现的**关系**, 避免命名混淆): 
+  仓库已有 security/world_state.py(ObsVector/StateEstimator/**ForwardPredictor** 前向
+  投影, 服务 agent 控制环/奖励/记忆) 与 security/world_model.py(物理动作**逆生成器**,
+  服务可逆撤销). 本模块不再叫 world_model/world_state 以免撞名, 改称 **LawModel**, 只
+  做科研管线的**第一性原理前向模型 + 数学对账**:
+    - 与 ForwardPredictor 的差别: 我提供 `law()`(数学定律方程串) 作为规划/验证的公共
+      语言, 并有 `reconcile()` **可证伪对账**(borne_out/falsified) —— 前向投影只报告
+      "下一状态", 不校验"定律是否被执行证实"; 这是科研结论的硬验证, 二者互补而非替换.
+    - 消费方: 科研管线 / ScienceTeam(而非 sandbox 控制环).
 
-  - :class:`WorldState`  世界可测状态(科学系统的数值特征向量, 如 a_AU/S/T_eq)。
-  - :class:`Action`      可执行动作(实验/仿真配置, 如轨道半长轴缩放 a_scale)。
-  - :class:`WorldModel`  世界的转移模型 —— ``predict(state, action) -> state'``,
-    其 ``law()`` 返回该域的**数学定律(方程串)**。这是"模型基规划"里的 forward model。
-  - :func:`reconcile`    预测 vs 真实执行的数值对账: 判定定律是否被证实/证伪
-    (不悄悄覆盖 —— 偏差本身就是科学发现)。
-  - :class:`ModelBasedPlanner` 在状态空间里 rollout: 对每个候选动作用世界模型预告后继
-    状态, 按预测目标排序产出**计划即数学** (每个 PlanStep = 动作 + 定律 + 预测状态)。
+核心对象:
+  - :class:`LawState`  世界可测状态(科学系统的数值特征向量, 如 a_AU/S/T_eq)。
+  - :class:`LawAction` 可执行动作(实验/仿真配置, 如轨道半长轴缩放 a_scale)。
+  - :class:`LawModel`  世界转移模型 —— ``predict(state, action) -> state'``, 其 ``law()``
+    返回该域的**数学定律(方程串)**。这是"模型基规划"里的 forward model。
+  - :func:`reconcile`  预测 vs 真实执行的数值对账: 判定定律被证实/证伪 (偏差不覆盖)。
+  - :class:`ModelBasedPlanner` 在状态空间里 rollout: 按预测目标排候选动作, 产出
+    **计划即数学**(每步 PlanStep = 动作 + 定律 + 预告状态)。
 
-设计对照:
-  - 机器人分层规划/世界模型: 高层 goal →(本次) 状态空间 rollout 预告, 再落地真实执行。
-  - VLA: 感知(读入状态) → 语言+定律推理(这里是方程) → 动作 → 验证(对账) → 微调。
-  - 数学核心: law() 是符号方程, predict() 是它的数值实现, reconcile() 是它的可证伪性
-    校验 —— 全程无语义幻觉: 一个数值来自哪个定律、预测对否, 都可审计。
-
-诚实边界: 世界模型是**假说**, execute 是**真相检验**。predict 只做预告, 不替代执行;
+诚实边界: 世界模型是**假说**, execute 是**真相检验**。predict 只预告, 不替代执行;
 reconcile 把预测与真值并排审计, 不符则如实标 falsified。
 """
 from __future__ import annotations
@@ -44,7 +46,7 @@ def kepler_semimajor_au(period_d: float, host_msun: float = 1.0) -> float:
 
 
 @dataclass
-class WorldState:
+class LawState:
     """世界可测状态: 数值特征向量 (如 a_AU / S_Wm2 / T_eq_K)."""
     vector: dict[str, float] = field(default_factory=dict)
     domain: str = ""
@@ -60,7 +62,7 @@ class WorldState:
 
 
 @dataclass
-class Action:
+class LawAction:
     """可执行动作: 实验/仿真配置 (参数向量)."""
     config: dict[str, float] = field(default_factory=dict)
     label: str = ""
@@ -71,10 +73,10 @@ class Action:
 
 @dataclass
 class PlanStep:
-    """计划即数学: 一个动作 + 其数学定律 + 世界模型预告的下继状态."""
-    action: Action
+    """计划即数学: 一个动作 + 其数学定律 + 定律预告的下继状态."""
+    action: LawAction
     law: str = ""                        # 数学语言核心: 该步依据的方程
-    predicted: WorldState | None = None  # predict(state, action)
+    predicted: LawState | None = None    # predict(state, action)
 
     def to_dict(self) -> dict:
         return {
@@ -84,10 +86,10 @@ class PlanStep:
         }
 
 
-# ── 世界模型 (forward model) ────────────────────────────────────
+# ── 定律模型 (forward model) ────────────────────────────────────
 
 
-class WorldModel(ABC):
+class LawModel(ABC):
     """世界的转移模型: predict(state, action) -> next state, law() 给数学方程. """
 
     domain = ""
@@ -97,16 +99,16 @@ class WorldModel(ABC):
         """返回该世界的数学定律(方程串)—— 规划/预告/验证共享的证据来源."""
 
     @abstractmethod
-    def predict(self, state: WorldState, action: Action) -> WorldState:
+    def predict(self, state: LawState, action: LawAction) -> LawState:
         """预告: 施加动作后世界应转移到的状态 (数学定律的数值实现)."""
 
     @abstractmethod
-    def seed(self, observation: dict[str, Any]) -> WorldState:
+    def seed(self, observation: dict[str, Any]) -> LawState:
         """从外部观测(读入的科学数据)落下初始状态."""
 
 
-class FirstPrinciplesWorldModel(WorldModel):
-    """系外行星第一性原理世界模型: 轨道日晒 - 黑体平衡温度.
+class FirstPrinciplesLawModel(LawModel):
+    """系外行星第一性原理定律模型: 轨道日晒 - 黑体平衡温度.
 
     law (数学):
 
@@ -114,7 +116,7 @@ class FirstPrinciplesWorldModel(WorldModel):
         S = L☉ / (4π a²)  [W/m²]                      日晒(各向同性辐射)
         T_eq = ((1-α) S / (4σ))^{1/4}  [K]             黑体平衡温度(Stefan-Boltzmann)
 
-    动作空间: Action.config = {"a_scale": s}   → 半长轴缩放 a' = a·s (扰动轨道假设).
+    动作空间: LawAction.config = {"a_scale": s}   → 半长轴缩放 a' = a·s.
     """
 
     domain = "exoplanet"
@@ -127,25 +129,25 @@ class FirstPrinciplesWorldModel(WorldModel):
         return ("T_eq = ((1-α)·S/(4σ))^{1/4};  S = L☉/(4πa²);  "
                 f"a = ({self.host_msun} M☉)^{1/3}(P/yr)^{{2/3}} AU;  α={self.albedo}")
 
-    def seed(self, observation: dict[str, Any]) -> WorldState:
+    def seed(self, observation: dict[str, Any]) -> LawState:
         p_d = float(observation["orbper_d"])
         a_au = kepler_semimajor_au(p_d, self.host_msun)
-        return WorldState({"P_d": p_d, "a_AU": a_au}, domain=self.domain)
+        return LawState({"P_d": p_d, "a_AU": a_au}, domain=self.domain)
 
-    def predict(self, state: WorldState, action: Action) -> WorldState:
+    def predict(self, state: LawState, action: LawAction) -> LawState:
         a_au = state.get("a_AU", 1.0) * action.config.get("a_scale", 1.0)
         a_m = a_au * AU_M
         S = SOLAR_LUM / (4 * math.pi * a_m ** 2)
         T_eq = ((1 - self.albedo) * S / (4 * STEFAN)) ** 0.25
-        return WorldState({"a_AU": round(a_au, 4),
-                           "S_Wm2": round(S, 1),
-                           "T_eq_K": round(T_eq, 1)}, domain=self.domain)
+        return LawState({"a_AU": round(a_au, 4),
+                         "S_Wm2": round(S, 1),
+                         "T_eq_K": round(T_eq, 1)}, domain=self.domain)
 
 
 # ── 预测 vs 真实 的数学对账 (可证伪性校验) ──────────────────────
 
 
-def reconcile(predicted: WorldState, actual: dict, *, tol: float = 0.03,
+def reconcile(predicted: LawState, actual: dict, *, tol: float = 0.03,
               metrics: tuple[str, ...] = ("S_Wm2", "T_eq_K")) -> dict:
     """预测 vs 真实执行的数值对账.
 
@@ -173,28 +175,28 @@ def reconcile(predicted: WorldState, actual: dict, *, tol: float = 0.03,
 
 
 class ModelBasedPlanner:
-    """在状态空间里用世界模型 rollout, 产出"计划即数学".
+    """在状态空间里用定律模型 rollout, 产出"计划即数学".
 
     - 对每个初始状态 × 候选动作, predict 预告后继状态;
     - 按预测目标(取某指标的期望)排候选动作, 返回 Ranked PlanStep;
     - 预告只做决策依据, 落地仍由真实执行检验 (Planner 不代替执行).
     """
 
-    def __init__(self, model: WorldModel, objective: str = "T_eq_K",
+    def __init__(self, model: LawModel, objective: str = "T_eq_K",
                  sense: str = "maximize") -> None:
         self.model = model
         self.objective = objective
         self.sense = sense  # "maximize" | "minimize"
 
-    def rollout(self, state: WorldState,
-                actions: list[Action]) -> list[PlanStep]:
+    def rollout(self, state: LawState,
+                actions: list[LawAction]) -> list[PlanStep]:
         steps: list[PlanStep] = []
         for a in actions:
             pred = self.model.predict(state, a)
             steps.append(PlanStep(action=a, law=self.model.law(), predicted=pred))
         return steps
 
-    def plan(self, state: WorldState, actions: list[Action]) -> list[PlanStep]:
+    def plan(self, state: LawState, actions: list[LawAction]) -> list[PlanStep]:
         """按预测目标排序, 返回从优到劣的计划(每步都带数学定律与预告)."""
         steps = self.rollout(state, actions)
         sign = 1.0 if self.sense == "maximize" else -1.0
@@ -202,6 +204,6 @@ class ModelBasedPlanner:
                    reverse=True)
         return steps
 
-    def best(self, state: WorldState, actions: list[Action]) -> PlanStep | None:
+    def best(self, state: LawState, actions: list[LawAction]) -> PlanStep | None:
         steps = self.plan(state, actions)
         return steps[0] if steps else None

@@ -24,8 +24,8 @@ from typing import Any, Callable
 
 from huginn.research.planning import ResearchPlan, SubResearch, build_research_plan
 from huginn.research.program import grounding_verifier
-from huginn.research.world_model import (
-    Action, ModelBasedPlanner, WorldModel, WorldState, reconcile,
+from huginn.research.law_model import (
+    LawAction, LawModel, LawState, ModelBasedPlanner, reconcile,
 )
 
 
@@ -267,7 +267,7 @@ class ModelBasedScienceTeam:
       定律证伪(如实标注, 不覆盖)。只把被证实的证据送入结论。
     """
 
-    def __init__(self, model: WorldModel, *, objective: str = "T_eq_K",
+    def __init__(self, model: LawModel, *, objective: str = "T_eq_K",
                  sense: str = "maximize", tol: float = 0.03,
                  n_scientists: int = 2, verify=None) -> None:
         self.model = model
@@ -281,8 +281,8 @@ class ModelBasedScienceTeam:
     def _log(self, role: str, action: str, detail: str = "") -> None:
         self.log.append(RoleLogEntry(role=role, action=action, detail=detail))
 
-    def run(self, goal: str, observations: list[dict], actions: list[Action],
-            real_executor: Callable[[WorldState, Action], dict]) -> VLAOutcome:
+    def run(self, goal: str, observations: list[dict], actions: list[LawAction],
+            real_executor: Callable[[LawState, LawAction], dict]) -> VLAOutcome:
         self._log("planner", "law", self.model.law())
         evidences: list[Evidence] = []
         plan, execs, recons = [], [], []

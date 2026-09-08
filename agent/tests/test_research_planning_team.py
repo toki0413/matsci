@@ -136,25 +136,25 @@ def test_fullchain_demo_offline_smoke():
 # ── 4) 世界模型 / VLA 式团队 (数学为核心) ────────────────────
 def test_first_principles_world_model_predicts_law():
     """世界模型的 predict 与数学定律一致: T_eq 随 a_scale 增大而单调下降."""
-    from huginn.research.world_model import (
-        Action, FirstPrinciplesWorldModel, WorldState,
+    from huginn.research.law_model import (
+        FirstPrinciplesLawModel, LawAction, LawState,
     )
-    wm = FirstPrinciplesWorldModel(albedo=0.1)
+    wm = FirstPrinciplesLawModel(albedo=0.1)
     assert "T_eq" in wm.law() and "S" in wm.law()   # 数学定律(方程串)作为核心语言
-    init = WorldState({"a_AU": 1.0}, domain="exoplanet")
-    t_far = wm.predict(init, Action({"a_scale": 1.2})).get("T_eq_K")
-    t_near = wm.predict(init, Action({"a_scale": 0.8})).get("T_eq_K")
+    init = LawState({"a_AU": 1.0}, domain="exoplanet")
+    t_far = wm.predict(init, LawAction({"a_scale": 1.2})).get("T_eq_K")
+    t_near = wm.predict(init, LawAction({"a_scale": 0.8})).get("T_eq_K")
     assert t_far < t_near, "a 更大 → S∝a^-2 → T_eq 更小 (定律单调性)"
 
 
 def test_reconcile_flags_wrong_world_model_as_falsified():
     """预测 vs 真值对账: 定律不符 → 如实标 falsified(不覆盖偏差)."""
-    from huginn.research.world_model import (
-        Action, FirstPrinciplesWorldModel, reconcile, WorldState,
+    from huginn.research.law_model import (
+        FirstPrinciplesLawModel, LawAction, LawState, reconcile,
     )
-    wm = FirstPrinciplesWorldModel(albedo=0.1)
-    init = WorldState({"a_AU": 1.0}, domain="exoplanet")
-    act = Action({"a_scale": 1.0})
+    wm = FirstPrinciplesLawModel(albedo=0.1)
+    init = LawState({"a_AU": 1.0}, domain="exoplanet")
+    act = LawAction({"a_scale": 1.0})
     pred = wm.predict(init, act)
     # 真值(独立执行)被系统性放大 1.5 倍 → 靠近轨道但温度假设错误
     tru_t = pred.get("T_eq_K") * 1.5
@@ -165,13 +165,13 @@ def test_reconcile_flags_wrong_world_model_as_falsified():
 
 def test_model_based_planner_ranks_actions_by_predicted_objective():
     """模型基规划: 按预测目标(minimize T_eq → 最大 a_scale)排候选动作."""
-    from huginn.research.world_model import (
-        Action, FirstPrinciplesWorldModel, ModelBasedPlanner, WorldState,
+    from huginn.research.law_model import (
+        FirstPrinciplesLawModel, LawAction, LawState, ModelBasedPlanner,
     )
-    wm = FirstPrinciplesWorldModel(albedo=0.1)
+    wm = FirstPrinciplesLawModel(albedo=0.1)
     planner = ModelBasedPlanner(wm, objective="T_eq_K", sense="minimize")
-    plan = planner.plan(WorldState({"a_AU": 1.0}, domain="exoplanet"),
-                        [Action({"a_scale": s}, label=f"s{int(s*10)}")
+    plan = planner.plan(LawState({"a_AU": 1.0}, domain="exoplanet"),
+                        [LawAction({"a_scale": s}, label=f"s{int(s*10)}")
                          for s in (0.8, 1.0, 1.2)])
     assert plan[0].action.label == "s12", "最小 T_eq → 最大 a_scale 应第一个"
     assert all("law" in p.to_dict() for p in plan), "每个计划步都带数学定律"
@@ -184,14 +184,14 @@ def test_model_based_science_team_bears_and_falsifies_law():
     - 注入偏差执行(定律被破坏) → 如实 falsified 进 pruned, 不进结论.
     """
     from huginn.research.science_team import ModelBasedScienceTeam
-    from huginn.research.world_model import Action, FirstPrinciplesWorldModel
+    from huginn.research.law_model import FirstPrinciplesLawModel, LawAction
 
-    wm = FirstPrinciplesWorldModel(albedo=0.1)
+    wm = FirstPrinciplesLawModel(albedo=0.1)
     team = ModelBasedScienceTeam(wm, objective="T_eq_K", sense="maximize",
                                  n_scientists=2)
     obs = [{"name": "Kepler-999 b", "orbper_d": 100.0},
            {"name": "Fake-Planet b", "orbper_d": 300.0}]
-    actions = [Action({"a_scale": s}, label=f"a{int(s*10)}") for s in (0.9, 1.0, 1.1)]
+    actions = [LawAction({"a_scale": s}, label=f"a{int(s*10)}") for s in (0.9, 1.0, 1.1)]
 
     def _executor(init, act):
         # 真值 = 世界模型本身(第一性原理一致) → 定律被证实
