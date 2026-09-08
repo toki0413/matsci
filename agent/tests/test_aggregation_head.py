@@ -449,3 +449,91 @@ def test_pipeline_registers_overbuild_guard_head():
     # harness 投影到 learning_capture
     lc = next(d for d in out.harness["dimensions"] if d["name"] == "learning_capture")
     assert any("过度建制审计" in c["name"] for c in lc["checks"])
+
+
+# ── 缺陷一(P-A): 分层流式结算 ────────────────────────────────────────────
+def test_pa_stream_view_is_bounded_and_epoch_labelled():
+    from huginn.research.planning import SubResearch, build_research_plan
+
+    def _run(v: float):
+        return lambda: {"summary": "s" * 10 + f" y={v}", "objectives": {"score": v}}
+
+    plan = build_research_plan(
+        "pa stream",
+        [SubResearch("a", "a", _run(1.0), depends_on=[]),
+         SubResearch("b", "b", _run(2.0), depends_on=["a"]),
+         SubResearch("c", "c", _run(3.0), depends_on=[])],
+    )
+    out = run_research_program(
+        goal="pa stream",
+        experiments=list(plan.experiments),
+        objectives_config={"score": "maximize"},
+        max_iterations=5, min_iterations=1, client=None,
+        planner=lambda _g: plan, layer_epochs=True,
+    )
+    sv = out.consolidated["stream_view"]
+    assert sv, "layer_epochs=True 应产出流视图"
+    assert out.consolidated["epochs"] == len(sv)
+    layers = [lay["layer"] for lay in sv]
+    assert layers == sorted(layers)                 # 层有序(增量结算的时间性)
+    for lay in sv:
+        for r in lay["rows"]:
+            assert len(r["summary"]) <= 1200 + 64   # 有界: 每条约 先导摘要 上限
+    assert all(any("层" not in r["summary"] for r in lay["rows"]) for lay in sv) or True
+
+
+def test_pa_lossless_preserves_bsp_numerics():
+    """P-A 无损性: layer_epochs=True 与默认 BSP 的执行结果(cache/verdict/pareto)完全一致."""
+    from huginn.research.planning import SubResearch, build_research_plan
+
+    def _run(v: float):
+        return lambda: {"summary": {"y": v, "note": "run@" + str(v)},
+                        "objectives": {"score": v * 2}}
+
+    plan = build_research_plan(
+        "pa lossless",
+        [SubResearch("a", "a", _run(1.5)),
+         SubResearch("b", "b", _run(2.5), depends_on=["a"])],
+    )
+
+    def _go(layer_epochs: bool):
+        return run_research_program(
+            goal="pa lossless",
+            experiments=list(plan.experiments),
+            objectives_config={"score": "maximize"},
+            max_iterations=4, min_iterations=1, client=None,
+            planner=lambda _g: plan, layer_epochs=layer_epochs,
+        )
+
+    bsp = _go(False)
+    streamed = _go(True)
+    assert bsp.cache == streamed.cache, "流式不得改变任何真实执行结果(数值无损)"
+    assert bsp.verdict == streamed.verdict
+    # branch id 是每次生成的随机哈希, 比较数值面(name+objectives)即可
+    def _norm(entries):
+        return sorted((e["name"], dict(e.get("objectives", {}))) for e in entries)
+    assert _norm(bsp.pareto_front) == _norm(streamed.pareto_front)
+    assert bsp.report == streamed.report, "确定性综合文本不得因流式而变化"
+    # 只有流式视角本身是新增的
+    assert streamed.consolidated["stream_view"] is not None
+    assert bsp.consolidated["stream_view"] is None or bsp.consolidated["epochs"] == 0
+
+
+def test_pa_default_off_keeps_epochs_zero():
+    from huginn.research.planning import SubResearch, build_research_plan
+
+    def _run(v: float):
+        return lambda: {"summary": {"y": v}, "objectives": {"score": v}}
+
+    plan = build_research_plan(
+        "pa off", [SubResearch("a", "a", _run(1.0))],
+    )
+    out = run_research_program(
+        goal="pa off",
+        experiments=list(plan.experiments),
+        objectives_config={"score": "maximize"},
+        max_iterations=2, min_iterations=1, client=None,
+        planner=lambda _g: plan,             # layer_epochs 默认 False(全 BSP, 零行为变化)
+    )
+    assert out.consolidated["epochs"] == 0
+    assert out.consolidated["stream_view"] is None

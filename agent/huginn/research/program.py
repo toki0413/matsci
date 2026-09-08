@@ -81,6 +81,10 @@ _WM_TOL = 0.03
 # 新增审计视角先评审其增益, 再考虑提预算 —— 与依赖白名单同哲学.
 _HEAD_BUDGET = 14
 
+# 缺陷一(P-A): 流式层摘要单条上限(字符). 决策上下文 = 各层增量摘要之和, 有界;
+# 与漏B 先导摘要同语义 —— 只压缩表达冗余, 全量证据始终留在 cache/trace.
+_STREAM_SUMMARY_CHARS = 1200
+
 
 def _first_scalar(node: Any) -> float | None:
     """从预测/真实结果里取"第一个可用的数值指标"作对账依据(深度优先, 不伪造).
@@ -187,6 +191,9 @@ def run_research_program(
     external_verifier: Callable[[dict], dict] | None = None,  # 缺陷五: 独立验证方(可选).
                                       # 纯函数契约 {verified: bool, reason: str}, 不共享策略参数;
                                       # 不提供则用出厂最小确定性复核 oracle_verify_consolidated.
+    layer_epochs: bool = False,       # 缺陷一(P-A): 分层流式结算. 提供 planner 时, 每个真实实验
+                                      # 完成即按层把压缩摘要增量记录进 stream_view(有界决策上下文),
+                                      # 并记 epochs —— 决策不再"全跑完才结算". 默认关闭(全 BSP, 零行为变化).
 ) -> ResearchOutcome:
     """跑一条完整深研管线并返回结果."""
     from huginn.exploration.orchestrator import ExplorationOrchestrator
@@ -242,6 +249,20 @@ def run_research_program(
             hypothesis=branch.hypothesis or spec.hypothesis,
         )
 
+    # ── 缺陷一(P-A) 分层流式结算: 流视图 + 层映射 ──────────────────────
+    # 提供 planner(有 layers)且 layer_epochs=True 时, 每完成一个真实实验就把压缩
+    # 摘要增量记入 _stream_rows —— 决策上下文随执行生长, 而非全跑完后一次性结算.
+    _layer_epochs = bool(layer_epochs) and plan_summary is not None \
+        and bool(plan_summary.get("layers"))
+    _layers_map: list[list[str]] = (plan_summary.get("layers") or []) if _layer_epochs else []
+    _stream_rows: list[dict] = []
+
+    def _layer_of(name: str) -> int:
+        for i, lay in enumerate(_layers_map):
+            if name in lay:
+                return i
+        return -1
+
     async def executor(branch):
         spec = spec_by_name.get(branch.name)
         if spec is None:  # 动态子代(变异/演化新分支)
@@ -260,6 +281,22 @@ def run_research_program(
             except Exception:  # noqa: BLE001 — 世界模型预筛失败: 不伪造, 保留纯真实结果
                 res.setdefault("predicted", {})
         cache[branch.name] = res
+        # P-A 流式入账: 每完成一个真实实验, 经漏B 门控压缩后按层增量记录(有界上下文).
+        if _layer_epochs:
+            try:
+                from huginn.research.decision_gate import distill_tool_output
+                _d = distill_tool_output(
+                    spec.name,
+                    json.dumps(res.get("summary", {}), ensure_ascii=False),
+                    goal=str(goal), max_chars=_STREAM_SUMMARY_CHARS)
+                _stream_rows.append({
+                    "layer": _layer_of(spec.name),
+                    "experiment": spec.name,
+                    "summary": _d["front"],
+                    "relevance": _d["relevance"],
+                })
+            except Exception:  # noqa: BLE001 — 流式记录失败不影响执行结果
+                pass
         return {"success": bool(res.get("success", True)),
                 "objectives": res.get("objectives", {}),
                 "results": res.get("summary", {})}
@@ -318,6 +355,20 @@ def run_research_program(
         max_iterations=max_iterations,
         min_iterations=min_iterations,
     ))
+
+    # P-A · 流式结算视图: 把逐实验增量行按层分组为有界的 stream_view(仅记录, 不改执行)
+    stream_view: list[dict] | None = None
+    _n_epochs = 0
+    if _layer_epochs and _stream_rows:
+        by_layer: dict[int, list[dict]] = {}
+        for _r in _stream_rows:
+            by_layer.setdefault(_r["layer"], []).append(
+                {"experiment": _r["experiment"], "summary": _r["summary"]})
+        stream_view = [
+            {"layer": i, "experiments": len(rows), "rows": rows}
+            for i, rows in sorted(by_layer.items())
+        ]
+        _n_epochs = len(stream_view)
 
     trace = _build_trace(cache)
     # 能力自省 §3: 把能力缺口提案的可证伪工件并入 trace, 使报告引用可被 grounding 门禁核实
@@ -393,6 +444,15 @@ def run_research_program(
                   f"以下是存活假说的真实数值证据(可复现、非伪造):\n{survivors_text}\n\n"
                   f"请撰写跨学科深度研究报告(研究问题/数据与方法/结果分析/对账与局限/下一步)。"
                   f"每个数值必须来自上面真实结果, 不许编造。把最终报告放在 <report> 与 </report> 之间。")
+        # 缺陷一(P-A) 分层流式结算: 决策上下文改为"增量层摘要视图(有界)"而非全 trace——
+        # LLM 只读 stream_view(每层经漏B 压缩), 全量证据始终留 trace 供 grounding 门禁.
+        if stream_view:
+            _sv_text = "\n".join(
+                f"- {_lay['experiments']} 实验(层 {_lay['layer']}): "
+                + "; ".join(f"{_r['experiment']}={_r['summary']}" for _r in _lay["rows"])
+                for _lay in stream_view)
+            prompt += ("\n\n【分层流式证据视图(P-A)】已按执行层增量结算的摘要(有界上下文; "
+                       "完整可证伪证据在 trace 中):\n" + _sv_text)
         # 结构闸门提示: 让 LLM 成文时如实反映交互等效审计结果, 不隐瞒 shortcut 风险.
         if audit is not None:
             if out.structural_aligned is not False:
@@ -662,7 +722,8 @@ def run_research_program(
                 EVIDENCE_UNOBSERVED, "unobserved",
                 detail="自省已接线但本 run 无审计产物", ref="capabilities/introspection"))
 
-        out.consolidated = consolidate(heads, grounding_verdict=verdict).as_dict()
+        out.consolidated = consolidate(heads, grounding_verdict=verdict,
+                                       epochs=_n_epochs, stream_view=stream_view).as_dict()
 
         # 缺陷三/五接缝: 在第一轮聚合视图上追加"元头"(外部验证 + 团队视角分离度).
         # 第一轮先用可替换外部验证方(缺省出厂 oracle)复核; 派生两个头后第二轮合并,
@@ -671,7 +732,8 @@ def run_research_program(
             from huginn.research.aggregation_head import oracle_verify_consolidated
             _ver = external_verifier if external_verifier is not None else oracle_verify_consolidated
             base = consolidate(heads, grounding_verdict=verdict,
-                               role_view=list(front), external_verifier=_ver)
+                           role_view=list(front), external_verifier=_ver,
+                           epochs=_n_epochs, stream_view=stream_view)
             ext = base.external_verify or {}
             heads.append(HeadResult(
                 "governance.external_verify", "独立验证方(可替换的外部复核)",
@@ -693,7 +755,8 @@ def run_research_program(
                     EVIDENCE_UNOBSERVED, "unobserved",
                     detail="无存活假说, 无从度量视角分化", ref="out.pareto_front"))
             final_cons = consolidate(heads, grounding_verdict=verdict,
-                                     role_view=list(front), head_budget=_HEAD_BUDGET)
+                                 role_view=list(front), head_budget=_HEAD_BUDGET,
+                                 epochs=_n_epochs, stream_view=stream_view)
             final_cons.external_verify = ext   # 第二轮不重跑验证方, 保留第一轮独立复核结果
             # 缺陷七: 治理自身是否过度建制 —— 建议级元头(不否决, 只亮灯).
             _ob = final_cons.overbuild or {}
@@ -703,7 +766,8 @@ def run_research_program(
                 "passed" if _ob.get("verdict") == "healthy" else "failed",
                 detail=str(_ob), ref="out.consolidated.overbuild"))
             final_cons2 = consolidate(heads, grounding_verdict=verdict,
-                                      role_view=list(front), head_budget=_HEAD_BUDGET)
+                                  role_view=list(front), head_budget=_HEAD_BUDGET,
+                                  epochs=_n_epochs, stream_view=stream_view)
             final_cons2.external_verify = ext   # 保留第一轮独立复核结果(第二轮不重跑验证方)
             out.consolidated = final_cons2.as_dict()   # overbuild 用含全部头的最终视图(自洽)
         except Exception:  # noqa: BLE001 — 元头派生失败: 保留第一轮聚合视图, 不阻断

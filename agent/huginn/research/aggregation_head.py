@@ -81,6 +81,8 @@ class Consolidated:
     role_diversity: dict | None = None               # 缺陷三: 存活假说的视角分离度(防多头塌缩)
     external_verify: dict | None = None              # 缺陷五: 独立验证方(可替换的外部复核)结果
     overbuild: dict | None = None                    # 缺陷七: 过度建制(second system effect)审计
+    epochs: int = 0                                  # 缺陷一(P-A): 分层流式结算覆盖的层数
+    stream_view: list[dict] | None = None            # 缺陷一(P-A): 增量层摘要(经漏B 门控压缩, 有界)
     score: float = 0.0                               # 加权总分 (0..1)
 
     def as_dict(self) -> dict[str, Any]:
@@ -95,6 +97,8 @@ class Consolidated:
             "role_diversity": self.role_diversity,
             "external_verify": self.external_verify,
             "overbuild": self.overbuild,
+            "epochs": self.epochs,
+            "stream_view": self.stream_view,
             "score": round(self.score, 3),
         }
 
@@ -186,6 +190,8 @@ def consolidate(
     role_view: list[dict] | None = None,
     external_verifier: Any | None = None,
     head_budget: int = 14,
+    epochs: int = 0,
+    stream_view: list[dict] | None = None,
 ) -> Consolidated:
     """多头 → 单一收敛视图 (纯函数, 无副作用).
 
@@ -205,6 +211,8 @@ def consolidate(
         在聚合视图上复核并写入 ``external_verify``, 缓解"审计者兼被审者"的自指盲区;
       - ``head_budget``: 过度建制(second system effect)的上限 —— 审计头数/重复
         ref/零边际头, 结果入 ``overbuild``, 让"治理自身膨胀"成为可观测、可反驳量.
+      - ``epochs`` / ``stream_view``: 缺陷一(P-A)分层流式结算的元数据 —— 覆盖层数
+        与增量层摘要(经漏B 门控压缩的有界视图), 仅透传记录, 不参与仲裁/建制审计.
     """
     heads = list(heads)
     verdict, diversity, score, gates_failed, conflicts = _arbitrate(
@@ -221,6 +229,8 @@ def consolidate(
         role_diversity=None,
         external_verify=None,
         overbuild=_overbuild_audit(heads, grounding_verdict, head_budget),
+        epochs=int(epochs or 0),
+        stream_view=stream_view,
         score=score,
     )
 
