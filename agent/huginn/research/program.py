@@ -235,6 +235,10 @@ def run_research_program(
 
     cache: dict[str, dict] = {}
     spec_by_name = {e.name: e for e in experiments}
+    # §10 扩展: 重复实验一致性 —— 变异回退(parametrize=None 复用父 run)时,
+    # 子代与父执行的是**同一实验体**, 按其被重复执行的 objectives 聚合审计.
+    _reuse_plan: dict[str, str] = {}                 # branch_name -> 被复用父实验名
+    _runs_by_base: dict[str, list[dict]] = {}        # base_name -> [objectives, ...]
 
     def _resolve_variant(branch_name: str, branch) -> Experiment | None:
         """把动态子代(变异/演化)解析成可真实执行的实验 spec.
@@ -265,6 +269,7 @@ def run_research_program(
                 return None
         else:
             variant_run = spec.run  # 诚实回退: 父实验真实重跑
+            _reuse_plan[branch_name] = parent  # §10: 同体重复执行指纹 = 父实验
         return dataclasses.replace(
             spec,
             run=variant_run,
@@ -397,6 +402,9 @@ def run_research_program(
             except Exception:  # noqa: BLE001 — 世界模型预筛失败: 不伪造, 保留纯真实结果
                 res.setdefault("predicted", {})
         cache[branch.name] = res
+        # §10 扩展: 按同体指纹聚合 objectives(变异回退 → 父名; 普通 → 自身).
+        _base = _reuse_plan.get(branch.name, branch.name)
+        _runs_by_base.setdefault(_base, []).append(res.get("objectives") or {})
         # P-C 层结算检查: 本实验所在层全部结算(执行/重规划跳过/提前终止)后,
         # 用真实成绩跑稳定度判据 —— 稳定则激活提前终止(见 _settle_layer_check).
         if _early_stop_enabled and not _early_stop_active:
@@ -769,6 +777,8 @@ def run_research_program(
             EVIDENCE_OBSERVED,
             EVIDENCE_UNOBSERVED,
             HeadResult,
+            build_replication_head,
+            build_replication_view,
             consolidate,
         )
 
@@ -818,6 +828,11 @@ def run_research_program(
             EVIDENCE_OBSERVED if _early_stop_enabled else EVIDENCE_UNOBSERVED,
             "passed" if _early_stop_enabled else "unobserved",
             detail=str(_early_stop_head), ref="out.consolidated.early_stop"))
+        # audit.replication —— §10 扩展: 重复实验一致性 (同体多次执行是否可复现).
+        # 无重复执行 → unobserved(默认零噪音); 有重复 → observed + 明细(供人类决策,
+        # 一致性不是质量判据, 无否决权).
+        _replication_view = build_replication_view(_runs_by_base)
+        heads.append(build_replication_head(_runs_by_base))
         # gate.claim_grounding —— 声明门禁 (对报告是否成文有否决权)
         if verdict != "needs_grounding" or ungrounded:
             heads.append(HeadResult(
@@ -931,7 +946,8 @@ def run_research_program(
         out.consolidated = consolidate(heads, grounding_verdict=verdict,
                                        epochs=_n_epochs, stream_view=stream_view,
                                        replan=_replan_meta,
-                                       early_stop=_early_stop_head).as_dict()
+                                       early_stop=_early_stop_head,
+                                       replication=_replication_view).as_dict()
 
         # 缺陷三/五接缝: 在第一轮聚合视图上追加"元头"(外部验证 + 团队视角分离度).
         # 第一轮先用可替换外部验证方(缺省出厂 oracle)复核; 派生两个头后第二轮合并,
@@ -942,7 +958,8 @@ def run_research_program(
             base = consolidate(heads, grounding_verdict=verdict,
                            role_view=list(front), external_verifier=_ver,
                            epochs=_n_epochs, stream_view=stream_view,
-                           replan=_replan_meta, early_stop=_early_stop_head)
+                           replan=_replan_meta, early_stop=_early_stop_head,
+                           replication=_replication_view)
             ext = base.external_verify or {}
             heads.append(HeadResult(
                 "governance.external_verify", "独立验证方(可替换的外部复核)",
@@ -966,7 +983,8 @@ def run_research_program(
             final_cons = consolidate(heads, grounding_verdict=verdict,
                                  role_view=list(front), head_budget=_HEAD_BUDGET,
                                  epochs=_n_epochs, stream_view=stream_view,
-                                 replan=_replan_meta, early_stop=_early_stop_head)
+                                 replan=_replan_meta, early_stop=_early_stop_head,
+                                 replication=_replication_view)
             final_cons.external_verify = ext   # 第二轮不重跑验证方, 保留第一轮独立复核结果
             # 缺陷七: 治理自身是否过度建制 —— 建议级元头(不否决, 只亮灯).
             _ob = final_cons.overbuild or {}
@@ -978,7 +996,8 @@ def run_research_program(
             final_cons2 = consolidate(heads, grounding_verdict=verdict,
                                   role_view=list(front), head_budget=_HEAD_BUDGET,
                                   epochs=_n_epochs, stream_view=stream_view,
-                                  replan=_replan_meta, early_stop=_early_stop_head)
+                                  replan=_replan_meta, early_stop=_early_stop_head,
+                                  replication=_replication_view)
             final_cons2.external_verify = ext   # 保留第一轮独立复核结果(第二轮不重跑验证方)
             out.consolidated = final_cons2.as_dict()   # overbuild 用含全部头的最终视图(自洽)
         except Exception:  # noqa: BLE001 — 元头派生失败: 保留第一轮聚合视图, 不阻断

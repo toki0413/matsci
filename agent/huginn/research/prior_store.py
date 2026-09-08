@@ -13,10 +13,11 @@ A4(goal 归一化匹配): 先验携带 goal_slug(与 program._slug_goal 同语�
 A5(先验时间衰减): prior["age"](距上次 run 的轮数)按半衰期=1 的指数衰减
 (weight = 0.5 ** age) —— 越旧先验权重越低, 领域漂移后旧经验自然淡出.
 
-A6(goal 模糊匹配): 超越 slug 字符串等价, 按 token 集合 Jaccard 重叠分档:
-  - exact(同 slug / 同文本) → 重叠 1.0, 全量注入;
-  - related(重叠 >= 0.5, 领域语义聚类) → 重叠比例注入(半权起步);
-  - foreign(重叠 < 0.5) → 拒绝套用(等同 A4 异域拒绝, 文本也可证伪);
+A6(goal 模糊匹配): 超越 slug 字符串等价, 按 TF-IDF 余弦相似度(平滑 IDF, 纯
+Python 确定性)分档:
+  - exact(同 slug / 同文本) → 相似度 1.0, 全量注入;
+  - related(相似度 >= 0.5, 领域语义聚类) → 相似度比例注入(半权起步);
+  - foreign(相似度 < 0.5) → 拒绝套用(等同 A4 异域拒绝, 文本也可证伪);
   - unknown(先验无 goal 信息) → 向后兼容: 不惩罚, 只受 A5 衰减影响.
 
 诚实红线(不可逾越):
@@ -28,6 +29,7 @@ A6(goal 模糊匹配): 超越 slug 字符串等价, 按 token 集合 Jaccard 重
 """
 from __future__ import annotations
 
+import math
 import re
 from typing import Any
 
@@ -77,13 +79,46 @@ def extract_prior(out: Any) -> dict[str, Any]:
     return _base
 
 
-def _jaccard_overlap(a: str, b: str) -> float:
-    """token 集合 Jaccard 重叠(小写, 非字母/数字切分). 空集一方 → 0.0."""
-    ta = set(re.findall(r"[0-9a-z]+", (a or "").lower()))
-    tb = set(re.findall(r"[0-9a-z]+", (b or "").lower()))
+# 轻量英文功能词停用表(冠词/介词/连词/代词等): 只剔纯语法词, 不碰领域实义词.
+# 让"同一领域不同措辞"的共享实义词主导相似度(双文档语料下泛词 IDF 会失真,
+# 不剔除反而抬高独有功能词权重, 稀释主题信号).
+_STOPWORDS = frozenset(
+    "a an the and or of for to in on with at by from into about as be by over under "
+    "this that these those it its is are was were been being have has had do does did "
+    "we you they them their our your my me him her he she i will would can could "
+    "should may might must not no nor but if then than so such more most".split()
+)
+
+
+def _tfidf_cosine(a: str, b: str) -> float:
+    """TF-IDF 余弦相似度(两文档语料, 平滑 IDF, 纯 Python 确定性).
+
+    与 Jaccard 的区别: ① 剔除功能词停用表(and/of/the...), 共享实义词主导相似度;
+    ② 词频加权 —— 重复出现的领域词贡献更高; ③ 连续值域(0..1), 而非离散重叠比.
+    实现: 平滑 IDF = ln((N+1)/(df+1)) + 1 (N=2, scikit-learn 同款公式),
+    词频 × IDF 后 L2 归一化求余弦 —— 同输入必同输出, 无外部依赖.
+    """
+    ta = [w for w in re.findall(r"[0-9a-z]+", (a or "").lower()) if w not in _STOPWORDS]
+    tb = [w for w in re.findall(r"[0-9a-z]+", (b or "").lower()) if w not in _STOPWORDS]
     if not ta or not tb:
         return 0.0
-    return len(ta & tb) / len(ta | tb)
+    vocab = set(ta) | set(tb)
+    df = {w: (w in ta) + (w in tb) for w in vocab}
+    idf = {w: math.log(3.0 / (d + 1.0)) + 1.0 for w, d in df.items()}
+
+    def _vec(tokens: list[str]) -> dict[str, float]:
+        tf: dict[str, int] = {}
+        for w in tokens:
+            tf[w] = tf.get(w, 0) + 1
+        return {w: tf.get(w, 0) * idf[w] for w in vocab}
+
+    va, vb = _vec(ta), _vec(tb)
+    dot = sum(va[w] * vb[w] for w in vocab)
+    na = math.sqrt(sum(v * v for v in va.values()))
+    nb = math.sqrt(sum(v * v for v in vb.values()))
+    if na == 0.0 or nb == 0.0:
+        return 0.0
+    return dot / (na * nb)
 
 
 def goal_match_level(
@@ -96,8 +131,8 @@ def goal_match_level(
 
     返回 {"level", "overlap"}:
       - exact:   slug 双方存在且相等(或全文等价) → overlap=1.0;
-      - related: 文本 Jaccard 重叠 >= 0.5(领域聚类) → overlap=该重叠;
-      - foreign: 文本 Jaccard 重叠 < 0.5(异域) → overlap=该重叠;
+      - related: TF-IDF 余弦相似度 >= 0.5(领域聚类) → overlap=该相似度;
+      - foreign: TF-IDF 余弦相似度 < 0.5(异域) → overlap=该相似度;
       - unknown: 先验不含 goal 信息(无法判定) → overlap=None.
     """
     prior_goal = (prior_goal or "").strip()
@@ -106,10 +141,10 @@ def goal_match_level(
         return {"level": "exact", "overlap": 1.0}
     if not prior_goal or not current_goal:
         return {"level": "unknown", "overlap": None}
-    ov = _jaccard_overlap(prior_goal, current_goal)
-    if ov >= 0.5:
-        return {"level": "related", "overlap": ov}
-    return {"level": "foreign", "overlap": ov}
+    sim = _tfidf_cosine(prior_goal, current_goal)
+    if sim >= 0.5:
+        return {"level": "related", "overlap": sim}
+    return {"level": "foreign", "overlap": sim}
 
 
 def resolve_early_stop_args(
@@ -125,13 +160,13 @@ def resolve_early_stop_args(
 
     规则(全部可证伪):
       - prior 为空/不可用 → 默认参数, note="no_prior", goal_matched=None;
-      - goal 判定为 foreign(异域, slug 与文本均可证伪) → **拒绝套用**:
+      - goal 判定为 foreign(异域, slug 与 TF-IDF 文本相似度均可证伪) → **拒绝套用**:
         返回默认参数, note="goal_mismatch", goal_matched=False(绝不张冠李戴);
       - 其余(exact/related/unknown 且 applicable) → min_layers =
         default + round(delta * weight), 钳制在 [default_min_layers, 4];
         delta = max(0, clamp(plateau.layer_index+1, 4) - default) —— 上次 N 层
         才稳定, 这次至少等 N 层才允许查稳定(**更保守**, 防领域漂移误停);
-        weight = decay(0.5 ** age) × match(1.0 exact/unknown, overlap related);
+        weight = decay(0.5 ** age) × match(1.0 exact/unknown, sim related);
       - unknown(先验无 goal 信息) → 不因匹配惩罚, 只受 A5 衰减影响(向后兼容).
     """
     no_prior = not prior or not prior.get("applicable")

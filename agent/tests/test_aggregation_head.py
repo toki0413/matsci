@@ -1370,6 +1370,14 @@ def test_a6_goal_match_level_pure():
                                "humboldt_glacier_flow", "sweep_silicon_bandgap")
     assert foreign["level"] == "foreign" and foreign["overlap"] == 0.0
 
+    # A6 升级: TF-IDF 余弦(停用词剔除 + 词频加权) —— 同一领域不同措辞,
+    # 功能词干扰下 Jaccard 只给 0.5(临界), TF-IDF 给到连续高值 0.7+.
+    upgraded = goal_match_level("study of silicon bandgap",
+                                "bandgap study for silicon materials",
+                                "study_silicon_bandgap", "bandgap_study_silicon")
+    assert upgraded["level"] == "related"
+    assert upgraded["overlap"] >= 0.7, "停用词剔除后共享实义词主导 → 相似度应显著高于 Jaccard 临界值"
+
     unknown = goal_match_level("", "sweep silicon bandgap", None, "sweep_silicon")
     assert unknown["level"] == "unknown"
 
@@ -1431,3 +1439,63 @@ def test_a6_related_recorded_in_view():
     assert pu["goal_level"] == "related"
     assert pu["goal_matched"] is True
     assert pu["goal_overlap"] >= 0.5
+
+
+# ── §10 扩展: 重复实验一致性审计 (replication) ────────────────────────────
+def test_replication_view_consistent_repeat():
+    """同体重复执行结果一致(偏差 <=5%) → consistent, 可复现."""
+    from huginn.research.aggregation_head import build_replication_view
+
+    view = build_replication_view({"a": [{"score": 10.0}, {"score": 10.01}]})
+    assert view is not None
+    assert view["replicated"] == 1
+    assert view["inconsistent"] == []
+    assert view["bases"]["a"]["runs"] == 2
+    assert view["bases"]["a"]["consistent"] is True
+    assert view["bases"]["a"]["objectives_spread"]["score"]["rel_spread"] < 0.05
+
+
+def test_replication_view_inconsistent_repeat():
+    """同体重复执行偏差超容差(11 vs 10, 10%) → inconsistent 亮灯(供人类决策)."""
+    from huginn.research.aggregation_head import build_replication_view
+
+    view = build_replication_view({"a": [{"score": 10.0}, {"score": 11.0}]})
+    assert view["bases"]["a"]["consistent"] is False
+    assert view["inconsistent"] == ["a"]
+    assert abs(view["bases"]["a"]["objectives_spread"]["score"]["rel_spread"] - (1.0 / 10.5)) < 1e-3
+
+
+def test_replication_view_unobserved_when_single_run():
+    """单次执行(无重复) → 视角未观测(不产生噪音)."""
+    from huginn.research.aggregation_head import build_replication_view, build_replication_head
+
+    assert build_replication_view({"a": [{"score": 1.0}]}) is None
+    head = build_replication_head({"a": [{"score": 1.0}]})
+    assert head.evidence == "unobserved"
+    assert head.outcome == "unobserved"
+
+
+def test_replication_detected_on_mutation_rerun():
+    """集成: 变异回退(parametrize=None 复用父 run) → 同体重复执行被聚合进视图.
+
+    用 mutation_rate=1.0(必变异)驱动 orchestrator 产生 {parent}~mut{i} 子代;
+    子代诚实回退复用父 run → 父/子 objectives 一致 → replication 视图 observed."""
+    from huginn.research.planning import SubResearch, build_research_plan
+
+    plan = build_research_plan(
+        "replication", [SubResearch("a", "sweep alpha metallic alloy", _run_(10.0))],
+    )
+    out = run_research_program(
+        goal="replication", experiments=list(plan.experiments),
+        objectives_config={"score": "maximize"},
+        max_iterations=4, min_iterations=1, client=None,
+        planner=lambda _g: plan,
+        mutation_config={"param_space": {"a_scale": (0.5, 1.5)},
+                         "mutation_rate": 1.0, "max_children": 1},
+    )
+    assert out.mutations >= 1, "orchestrator 应产生至少一个变异子代"
+    rep = out.consolidated["replication"]
+    assert rep is not None, "存在重复执行 → replication 视图应被观测"
+    assert rep["replicated"] >= 1
+    assert rep["inconsistent"] == [], "确定性 run 重跑 → 全部一致"
+    assert all(b["consistent"] for b in rep["bases"].values())

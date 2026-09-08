@@ -85,6 +85,7 @@ class Consolidated:
     stream_view: list[dict] | None = None            # 缺陷一(P-A): 增量层摘要(经漏B 门控压缩, 有界)
     replan: dict | None = None                       # 缺陷二(P-B): 层间重规划(边在证据后修订)元数据
     early_stop: dict | None = None                 # 缺陷一(P-C): 证据驱动提前终止(分数高原)元数据
+    replication: dict | None = None                # §10 扩展: 重复实验一致性(同体多次执行可复现性)
     score: float = 0.0                               # 加权总分 (0..1)
 
     def as_dict(self) -> dict[str, Any]:
@@ -103,6 +104,7 @@ class Consolidated:
             "stream_view": self.stream_view,
             "replan": self.replan,
             "early_stop": self.early_stop,
+            "replication": self.replication,
             "score": round(self.score, 3),
         }
 
@@ -198,6 +200,7 @@ def consolidate(
     stream_view: list[dict] | None = None,
     replan: dict | None = None,
     early_stop: dict | None = None,
+    replication: dict | None = None,
 ) -> Consolidated:
     """多头 → 单一收敛视图 (纯函数, 无副作用).
 
@@ -223,6 +226,8 @@ def consolidate(
         仅透传记录 (重规划是预算决策, 不影响本视图的治理判定).
       - ``early_stop``: 缺陷一(P-C)证据驱动提前终止的元数据 —— 稳定判据结果与被
         终止的实验, 仅透传记录 (提前终止是预算决策, 不影响本视图的治理判定).
+      - ``replication``: §10 扩展的重复实验一致性视图 —— 同体实验被多次执行时的
+        可复现性(spread/consistent), 仅透传记录 (一致性是审计发现, 不做质量判据).
     """
     heads = list(heads)
     verdict, diversity, score, gates_failed, conflicts = _arbitrate(
@@ -243,6 +248,7 @@ def consolidate(
         stream_view=stream_view,
         replan=replan,
         early_stop=early_stop,
+        replication=replication,
         score=score,
     )
 
@@ -301,3 +307,63 @@ def oracle_verify_consolidated(cons: dict) -> dict[str, Any]:
         "verified": False if reasons else True,
         "reason": "；".join(reasons) or "确定性复核一致",
     }
+
+
+# ── §10 扩展: 重复实验一致性视角 (replication) ─────────────────────────────
+# 确定性信号家族再加一员: "同一实验体被多次执行时, 结果是否可复现".
+# 触发点: 变异回退重跑(parametrize=None 时子代复用父 run) / 任何同体重复执行.
+# 诚实边界: 一致性只是审计发现(供人类决策), 不做"该方向值不值得"的质量判据 ——
+# 与 spec §10 非目标一致; 单次执行(无重复) → 视角未观测(unobserved), 不产生噪音.
+_REPLICATION_TOL = 0.05  # 相对极差容差: objectives 多次执行偏差 <=5% 视为一致
+
+
+def build_replication_view(
+    runs_by_base: dict[str, list[dict]], tol: float = _REPLICATION_TOL
+) -> dict | None:
+    """重复实验一致性视图(纯函数, 确定性).
+
+    runs_by_base: base_name -> [objectives{key: float}, ...](同一实验体被执行多次).
+    只对执行次数 >= 2 的基线计算(一次执行无法谈一致性):
+      - objectives_spread: 每目标键的 {min, max, rel_spread}(rel = 极差/|均值|);
+      - consistent: 所有键 rel_spread <= tol(重复可复现);
+      - inconsistent: consistent=False 的基线清单(可复现性存疑, 供人类决策).
+    无任何基线被重复执行 → 返回 None(视角未观测).
+    """
+    bases = {b: rs for b, rs in runs_by_base.items() if len(rs) >= 2}
+    if not bases:
+        return None
+    view: dict[str, Any] = {"replicated": len(bases), "inconsistent": [], "bases": {}}
+    for base, runs in sorted(bases.items()):
+        keys = sorted({k for r in runs for k in (r or {})})
+        spreads: dict[str, Any] = {}
+        ok = True
+        for k in keys:
+            vals = [float((r or {}).get(k, 0.0) or 0.0) for r in runs]
+            lo, hi = min(vals), max(vals)
+            mean = sum(vals) / len(vals)
+            rel = (hi - lo) / (abs(mean) or 1e-12)
+            spreads[k] = {"min": round(lo, 6), "max": round(hi, 6),
+                          "rel_spread": round(rel, 6)}
+            if rel > tol:
+                ok = False
+        view["bases"][base] = {"runs": len(runs), "objectives_spread": spreads,
+                               "consistent": ok}
+        if not ok:
+            view["inconsistent"].append(base)
+    return view
+
+
+def build_replication_head(
+    runs_by_base: dict[str, list[dict]], tol: float = _REPLICATION_TOL
+) -> HeadResult:
+    """把重复实验一致性视图注册成聚合头(唯一出口, 不新增 out.* 字段)."""
+    view = build_replication_view(runs_by_base, tol=tol)
+    if view is None:
+        return HeadResult(
+            "audit.replication", "重复实验一致性审计(同体多次执行是否可复现)",
+            EVIDENCE_UNOBSERVED, "unobserved",
+            detail="无重复执行(每个实验体仅执行一次)", ref="out.consolidated.replication")
+    return HeadResult(
+        "audit.replication", "重复实验一致性审计(同体多次执行是否可复现)",
+        EVIDENCE_OBSERVED, "passed",
+        detail=str(view), ref="out.consolidated.replication")

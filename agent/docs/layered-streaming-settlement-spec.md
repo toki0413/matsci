@@ -118,9 +118,14 @@
 - [x] 先验时间衰减(A5): `prior["age"]` 按半衰期=1 的指数衰减(`0.5 ** age`,
      age=2 → 权重 0.25) —— 越旧先验权重越低, 领域漂移后旧经验自然淡出;
      诚实红线不变: 衰减只降权, min_layers 永不低于默认。
-- [x] goal 模糊匹配(A6): `prior_store.goal_match_level` 用 token Jaccard 重叠分档
-     (exact / related ≥0.5 / foreign / unknown) —— related 按重叠比例注入(半权起步),
+- [x] goal 模糊匹配(A6): `prior_store.goal_match_level` 用 TF-IDF 余弦相似度
+     (平滑 IDF + 停用词剔除 + 词频加权, 纯 Python 确定性)分档
+     (exact / related ≥0.5 / foreign / unknown) —— related 按相似度比例注入(半权起步),
      foreign 拒绝套用(文本也可证伪), unknown 向后兼容只受衰减影响。
+- [x] §10 边界扩展: 重复实验一致性视角(`aggregation_head.build_replication_view` /
+     `build_replication_head`) —— 变异回退(parametrize=None 复用父 run)导致的同体
+     多次执行被聚合审计, 报告每目标键的极差/相对极差与 consistent 判定; 一致性是
+     确定性审计发现(供人类决策), 不做质量判据; 无重复 → unobserved(零噪音)。
      实施计划: `docs/superpowers/plans/2026-09-09-settlement-productionize.md`。
 
 ## 10. 非目标
