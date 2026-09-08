@@ -211,6 +211,10 @@ def run_research_program(
                                       # 每层结算后用稳定度判据(连续层 top-1 分数高原)判定占优方向是否饱和,
                                       # 饱和则提前终止剩余层(预算回收; 未执行=不产生证据, **绝不伪造**).
                                       # 防早停: 至少 2 个有分观测层才允许判稳定. 默认关闭(全 BSP, 零行为变化).
+    stream_summary_chars: int = _STREAM_SUMMARY_CHARS,  # A1: P-A 单条层摘要上限(字符)
+    replan_similarity: float = _REPLAN_SIM,             # A1: P-B 假说重叠阈值(0..1)
+    early_stop_min_layers: int = _EARLY_STOP_MIN_LAYERS, # A1: P-C 防早停最小观测层数
+    early_stop_margin: float = _EARLY_STOP_MARGIN,      # A1: P-C 分数高原容差
 ) -> ResearchOutcome:
     """跑一条完整深研管线并返回结果."""
     from huginn.exploration.orchestrator import ExplorationOrchestrator
@@ -298,7 +302,7 @@ def run_research_program(
         return decide_replan_skip(
             name, i, prior, cache, _hypotheses,
             already_decided=set(cache) | {r["name"] for r in _replan_log},
-            similarity=_REPLAN_SIM, tol=_WM_TOL,
+            similarity=replan_similarity, tol=_WM_TOL,
         )
 
     def _layer_of(name: str) -> int:
@@ -330,8 +334,8 @@ def run_research_program(
                 if s is not None:
                     rows.append((n, s))
             settled_layers.append(rows)
-        _st = stability_check(settled_layers, min_layers=_EARLY_STOP_MIN_LAYERS,
-                              margin=_EARLY_STOP_MARGIN)
+        _st = stability_check(settled_layers, min_layers=early_stop_min_layers,
+                              margin=early_stop_margin)
         _early_stop_meta["stability"] = _st
         # 稳定 且 还有剩余层可终止 → 激活
         if _st["stable"] and settled_until + 1 < len(_layers_map):
@@ -398,7 +402,7 @@ def run_research_program(
                 _d = distill_tool_output(
                     spec.name,
                     json.dumps(res.get("summary", {}), ensure_ascii=False),
-                    goal=str(goal), max_chars=_STREAM_SUMMARY_CHARS)
+                    goal=str(goal), max_chars=stream_summary_chars)
                 _stream_rows.append({
                     "layer": _layer_of(spec.name),
                     "experiment": spec.name,

@@ -93,6 +93,11 @@ def stability_check(
                 "layers_observed": observed, "top": None, "prev_top": None,
                 "score": None, "prev_score": None, "relative_change": None}
 
+    if len(tops) < 2:
+        return {"stable": False, "verdict": "missing_scores",
+                "layers_observed": observed, "top": None, "prev_top": None,
+                "score": None, "prev_score": None, "relative_change": None}
+
     prev = tops[-2]
     cur = tops[-1]
     if prev is None or cur is None:

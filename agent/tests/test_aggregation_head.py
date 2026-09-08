@@ -1045,3 +1045,89 @@ def test_pabc_combined_stress_wide_dag():
         assert ("证据驱动提前终止(P-C)" in out.report) == ("early_stopped" == con["early_stop"]["verdict"])
         # 每轮收敛: 至少一个存活假说来自真实执行
         assert out.pareto_front and all(e["name"] in out.cache for e in out.pareto_front)
+
+
+# ── 生产化 A1: 阈值参数化 ─────────────────────────────────────────────────
+def _run_(v: float):
+    return lambda: {"summary": {"y": v}, "objectives": {"score": v}}
+
+
+def test_a1_stream_summary_chars_parameterized():
+    """P-A 单条摘要上限参数化: 传 stream_summary_chars 有界生效(默认 1200 不变)."""
+    from huginn.research.planning import SubResearch, build_research_plan
+
+    plan = build_research_plan(
+        "a1 stream", [SubResearch("a", "sweep alpha metallic alloy", _run_(10.0))],
+    )
+    out = run_research_program(
+        goal="a1 stream", experiments=list(plan.experiments),
+        objectives_config={"score": "maximize"},
+        max_iterations=2, min_iterations=1, client=None,
+        planner=lambda _g: plan, layer_epochs=True, stream_summary_chars=80,
+    )
+    rows = [r for lay in out.consolidated["stream_view"] for r in lay["rows"]]
+    assert rows, "stream_view 应有记录"
+    assert all(len(r["summary"]) <= 80 + 80 for r in rows), "自定义上限生效(有界)"
+
+
+def test_a1_replan_similarity_parameterized():
+    """P-B 重叠阈值参数化: 调高到 0.9 后, Jaccard 0.83 的方向不再视为冗余 → 真实执行."""
+    from huginn.research.planning import SubResearch, build_research_plan
+
+    plan = build_research_plan(
+        "a1 sim",
+        [SubResearch("a", "sweep beta ceramic domain thick", _run_(10.0)),
+         SubResearch("e", "sweep beta ceramic domain thick dense", _run_(8.0),
+                     depends_on=["a"])],
+    )
+    out = run_research_program(
+        goal="a1 sim", experiments=list(plan.experiments),
+        objectives_config={"score": "maximize"},
+        max_iterations=4, min_iterations=1, client=None,
+        planner=lambda _g: plan, replan_gate=True, replan_similarity=0.9,
+        max_parallel=1,
+    )
+    assert "e" in out.cache, "0.83 < 0.9 → 不冗余, 必须执行"
+
+
+def test_a1_early_stop_margin_parameterized():
+    """P-C margin 参数化: 放宽到 0.5 后, rel=0.4 的移动也视为高原 → 提前终止."""
+    from huginn.research.planning import SubResearch, build_research_plan
+
+    plan = build_research_plan(
+        "a1 margin",
+        [SubResearch("a", "sweep alpha metallic alloy", _run_(10.0)),
+         SubResearch("c", "sweep beta ceramic domain", _run_(14.0), depends_on=["a"]),
+         SubResearch("e", "scan polymer chain length", _run_(8.0), depends_on=["c"])],
+    )
+    out = run_research_program(
+        goal="a1 margin", experiments=list(plan.experiments),
+        objectives_config={"score": "maximize"},
+        max_iterations=5, min_iterations=1, client=None,
+        planner=lambda _g: plan, early_stop_gate=True, early_stop_margin=0.5,
+        max_parallel=1,
+    )
+    assert out.consolidated["early_stop"]["verdict"] == "early_stopped"
+    assert "e" not in out.cache, "margin=0.5 视 rel=0.4 为高原 → 剩余层终止"
+
+
+def test_a1_early_stop_min_layers_parameterized():
+    """P-C 防早停参数化: min_layers=3 时 2 层稳定不足置信 → 剩余层执行
+    (对照: 默认 min_layers=2 会在层1 结算后终止层2, 参数生效可证伪)."""
+    from huginn.research.planning import SubResearch, build_research_plan
+
+    plan = build_research_plan(
+        "a1 minlayers",
+        [SubResearch("a", "sweep alpha metallic alloy", _run_(10.0)),
+         SubResearch("c", "sweep beta ceramic domain", _run_(10.1), depends_on=["a"]),
+         SubResearch("e", "scan polymer chain length", _run_(8.0), depends_on=["c"])],
+    )
+    out = run_research_program(
+        goal="a1 minlayers", experiments=list(plan.experiments),
+        objectives_config={"score": "maximize"},
+        max_iterations=5, min_iterations=1, client=None,
+        planner=lambda _g: plan, early_stop_gate=True, early_stop_min_layers=3,
+        max_parallel=1,
+    )
+    assert "e" in out.cache, "min_layers=3 → 2 层观测不足置信 → 剩余层真实执行"
+    assert out.consolidated["early_stop"]["verdict"] != "early_stopped"
