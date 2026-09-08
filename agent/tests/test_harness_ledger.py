@@ -136,3 +136,40 @@ def test_persist_replaces_atomically(tmp_path):
     ledger.append(_harness("ep-f", 0.7)).persist(path)
     ledger.append(_harness("ep-f", 0.8)).persist(path)  # 再次写入应仍是完整两本
     assert len(HarnessLedger.load(path).entries) == 2
+
+
+# ── 世界模型教训聚合(跨 run 统计证伪) ────────────────────────────────────
+def _harness_with_wm(ep: str, wm_outcome: str) -> dict:
+    """构造带 safety_authority 维 + "世界模型真用?" check 的 harness."""
+    return {
+        "task_episode": ep,
+        "goal": "g",
+        "overall": 0.5,
+        "dimensions": [
+            {"name": "task_understanding", "score": 0.5, "evidence": "observed", "checks": []},
+            {"name": "safety_authority", "score": 0.5, "evidence": "observed",
+             "checks": [{"name": "世界模型真用?(predict 参与决策 = 真深思 D)",
+                         "outcome": wm_outcome, "evidence": "observed", "score": 0.5}]},
+        ],
+    }
+
+
+def test_summary_world_model_lessons_across_runs():
+    """跨 run 统计世界模型教训: confirmed / falsified / unobserved / not_evaluated 占比."""
+    ep = "ep-wm"
+    ledger = HarnessLedger()
+    ledger.append(_harness_with_wm(ep, "passed"))      # 用了且被证实
+    ledger.append(_harness_with_wm(ep, "passed"))      # 用了且被证实
+    ledger.append(_harness_with_wm(ep, "failed"))      # 用了但被证伪 ← 教训
+    ledger.append(_harness_with_wm(ep, "unobserved"))  # 没进决策路径
+    ledger.append(_harness(ep, 0.5))                   # 无该 check → not_evaluated
+    s = ledger.summary(ep)
+    lm = s["world_model_lessons"]
+    assert lm["confirmed"]["count"] == 2
+    assert lm["confirmed"]["ratio"] == round(2 / 5, 3)
+    assert lm["falsified"]["count"] == 1               # 证伪教训被如实统计进账本
+    assert lm["falsified"]["ratio"] == round(1 / 5, 3)
+    assert lm["unobserved"]["count"] == 1
+    assert lm["not_evaluated"]["count"] == 1
+    # 6 维齐全(safety_authority 已纳入聚合维度集)
+    assert "safety_authority" in s["dimensions"]

@@ -23,13 +23,14 @@ from pathlib import Path
 from statistics import fmean
 from typing import Any
 
-# 五维固定顺序(与 harness.py 的 dimensions 顺序一致), 保证聚合输出可解释
+# 六维固定顺序(与 harness.py 的 dimensions 顺序一致), 保证聚合输出可解释
 _DIMENSIONS = (
     "task_understanding",
     "controlled_execution",
     "change_validation",
     "reliable_delivery",
     "learning_capture",
+    "safety_authority",
 )
 _EVIDENCE_BITS = ("observed", "unobserved", "missing")
 
@@ -204,7 +205,47 @@ class HarnessLedger:
             "runs": len(rows),
             by: metric,
             "dimensions": dims,
+            **self._world_model_lessons(rows),
         }
+
+    # ── 世界模型教训聚合(物理 AI 诚实扩展) ──────────────────────────────
+    @staticmethod
+    def _world_model_lessons(rows: list[dict]) -> dict[str, Any]:
+        """跨 run 统计"世界模型真用"的教训 —— reconcilable 证伪 / 未用 / 证实 三类占比.
+
+        解析 harness dict 里 safety_authority 维下名为"世界模型真用?"的 check item:
+          - outcome=passed & evidence=observed   → 用了且被证实(强在场);
+          - outcome=failed & evidence=observed   → 用了但被证伪(教训, 进账本统计);
+          - outcome=unobserved                   → 没进决策路径(能力存在≠部署时在规划)。
+        不硬解析 reconcile 数值, 只消费 harness 已判定的 outcome —— 保持 ledger「不重复
+        实现评分, 只消费已产出」的红线。fail-open: 无此 check 的 run 计为 not_evaluated。
+        """
+        def _check_ev(e: dict) -> str:
+            # 该 run 的 safety_authority 维下 "世界模型真用?" 项的状态
+            for d in e.get("dimensions", []):
+                if not isinstance(d, dict) or d.get("name") != "safety_authority":
+                    continue
+                for c in d.get("checks", []):
+                    nm = c.get("name", "") if isinstance(c, dict) else ""
+                    if "世界模型真用?" in nm:
+                        outcome = c.get("outcome")
+                        if outcome == "passed":
+                            return "confirmed"
+                        if outcome == "failed":
+                            return "falsified"      # 用了但被证伪 → 教训
+                        return str(outcome or "unobserved")
+            return "not_evaluated"
+
+        tally = Counter(_check_ev(e) for e in rows)
+        total = len(rows)
+        lessons = {
+            key: {
+                "count": tally.get(key, 0),
+                "ratio": round(tally.get(key, 0) / total, 3) if total else None,
+            }
+            for key in ("confirmed", "falsified", "unobserved", "not_evaluated")
+        }
+        return {"world_model_lessons": lessons}
 
     def cross_run(self, task_episode: str) -> list[dict[str, Any]]:
         """列出该 episode 下所有 run(按 append 序/序号), 供 reading 追溯「多次实录」."""
