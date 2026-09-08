@@ -51,6 +51,7 @@ class ResearchOutcome:
     report_source: str = "deterministic"
     mutations: int = 0                                 # 进化变异生成的子代数
     supervision_log: list = field(default_factory=list)  # HITL 人工反馈记录
+    plan_summary: dict | None = None                   # 需求拆解/自主规划摘要(planner) — 若提供
 
 
 def _build_trace(cache: dict[str, dict]) -> list[str]:
@@ -91,12 +92,22 @@ def run_research_program(
     debate: bool = False,                  # 用 client 对存活想法做 LLM tournament 筛选
     diagnostic_tools: list[dict] | None = None,  # 域诊断工具能力 [{"tool":schema,"handle":fn}], LLM 可自主发现并调用
     self_audit: Callable[[], list[str]] | None = None,  # 能力自省 §3: 返回需并入 trace 的可证伪工件(能力缺口提案)
+    planner: Callable[[str], "ResearchPlan"] | None = None,  # 需求拆解/自主规划: goal->{experiments, max_parallel, plan_summary}
 ) -> ResearchOutcome:
     """跑一条完整深研管线并返回结果."""
     from huginn.exploration.orchestrator import ExplorationOrchestrator
     import huginn.exploration.strategies as S
     from huginn.exploration.strategies import MutationStrategy
     from huginn.exploration.supervisor import SupervisorStrategy
+
+    # 需求拆解/自主规划: planner 把高层 goal 解成子任务 DAG, 调整实验序列与并行度
+    plan_summary: dict | None = None
+    if planner is not None:
+        plan = planner(goal)
+        if plan is not None:
+            experiments = list(plan.experiments or experiments)
+            max_parallel = int(plan.max_parallel or max_parallel)
+            plan_summary = plan.to_dict()
 
     cache: dict[str, dict] = {}
     spec_by_name = {e.name: e for e in experiments}
@@ -217,7 +228,8 @@ def run_research_program(
     out = ResearchOutcome(converred=result.convergence_reason,
                           explored=result.n_branches_explored,
                           pruned=result.n_branches_pruned,
-                          pareto_front=front, cache=cache)
+                          pareto_front=front, cache=cache,
+                          plan_summary=plan_summary)
     # 进化/监督衍生量: 变异子代数 + HITL 反馈记录(若启用了对应策略)
     mstrat = getattr(strategy, "wrapped", None) if isinstance(strategy, SupervisorStrategy) else None
     if isinstance(strategy, MutationStrategy):
