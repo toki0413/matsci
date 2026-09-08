@@ -145,3 +145,52 @@ def test_dependency_allowlist_blocks_unbounded_new_deps() -> None:
     assert not unknown, (
         "发现未在白名单里的顶层依赖。若要引入, 请先评审其在轻量/离线/沙箱的导入成本, "
         f"再显式加入 test_arch_cleanliness.allowlist。未批准: {unknown}")
+
+
+# ── 双接缝边界门: 文献层(academic/deli_research) 与 计算层(research/) 各司其职 ──
+# 审计确认(2026): deli_research 是"文献→综述→论文→评审"的文档研究管线, program 是
+# "假说→真实数值实验→Pareto"的可复现计算管线 —— 是两条不同产品层, 不应互相串层。
+# 计算接缝已唯一化(research/), 这里再钉死"文献层不产计算、计算层不产文献"的方向性,
+# 防未来新 API 误把计算深研塞进文献人才, 或把文献写作塞进计算接缝。
+def test_no_academic_literature_layer_imports_compute_research() -> None:
+    """文献层 (academic/) 不得 import 计算深研接缝 (huginn.research.*)。
+
+    文献流水线依赖检索/编排内核(empty autoloop.engine、kg/rag)做 LLM 协同写作与引用校验;
+    它一旦 import research.program/science_team/law_model, 就是想把"可复现数值闭环"揉进
+    文档产出的第一信号 —— 串层。计算能力应单独对接, 不内嵌进文献人才。
+    """
+    import re as _re
+    academic_dir = _HUGINN / "academic"
+    compute_seam = _re.compile(r"from\s+huginn\.research\b|import\s+huginn\.research\b")
+    offenders = []
+    for f in sorted(academic_dir.glob("*.py")):
+        if f.name == "__init__.py":
+            continue
+        if compute_seam.search(f.read_text(encoding="utf-8")):
+            offenders.append(f.relative_to(_ROOT).as_posix())
+    assert not offenders, (
+        "文献层 (academic/) 串了计算深研接缝 (huginn.research.*)。"
+        "两条产品层应各司其职: 文献层做文档/评审, 计算层做可复现数值闭环。"
+        "新增计算能力应单独对接, 不要 import 计算接缝进文献人才文件。违规: "
+        + ", ".join(offenders))
+
+
+def test_no_compute_research_imports_academic_literature() -> None:
+    """计算深研接缝 (research/) 不得 import 文献层 (huginn.academic.*)。
+
+    research/ 是可复现科学计算的纯接缝(零相对导入、近叶子); 一旦它 import
+    academic/deli_research, 就背着"文档写作"的隐重, 破坏其纯计算可移植性。
+    """
+    import re as _re
+    compute_research_dir = _HUGINN / "research"
+    lit_seam = _re.compile(r"from\s+huginn\.academic\b|import\s+huginn\.academic\b")
+    offenders = []
+    for f in sorted(compute_research_dir.glob("*.py")):
+        if f.name == "__init__.py":
+            continue
+        if lit_seam.search(f.read_text(encoding="utf-8")):
+            offenders.append(f.relative_to(_ROOT).as_posix())
+    assert not offenders, (
+        "计算深研接缝 (research/) 串了文献层 (huginn.academic.*)。"
+        "计算接缝是纯计算叶子, 不应背文档写作的隐重。违规: "
+        + ", ".join(offenders))
