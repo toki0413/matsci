@@ -901,3 +901,86 @@ def test_pabc_interleave_cooperative():
     assert sv_rows == {"a", "b", "c", "d", "f"} and "e" not in sv_rows
     assert "层间重规划(P-B)" in out.report
     assert all(elem["name"] != "e" for elem in out.pareto_front)
+
+
+# ── 并发压力: max_parallel>1 下的预算决策最终一致性 ──────────────────────
+def _assert_no_silent_loss(out, planned: set[str]):
+    """不变式: 每个计划内实验要么真实执行(cache), 要么有明确的预算决策记录
+    (replan 跳过 / early_stop 终止)。绝不静默消失 —— 这是并行下的审计完整性."""
+    cache_set = set(out.cache)
+    tracked = (cache_set
+               | {s["name"] for s in out.consolidated["replan"]["log"]}
+               | {s["name"] for s in out.consolidated["early_stop"]["log"]})
+    assert planned <= tracked, f"计划内无审计记录的实验: {planned - tracked}"
+    # 诚实红线: report/pareto/stream_view 只锚定真实执行过的实验
+    sv = {r["experiment"] for lay in out.consolidated["stream_view"] for r in lay["rows"]}
+    assert sv <= cache_set, "stream_view 引用了未执行证据"
+    assert all(e["name"] in cache_set for e in out.pareto_front)
+
+
+def test_pabc_parallel_no_loss_invariant():
+    """max_parallel=3 + 三阶段: P-B 跳过(冗余) 且 P-C 判定过但未触发(top 移动)。
+    并行下逐实验执行顺序非确定, 但"无静默丢失"不变式必须成立."""
+    from huginn.research.planning import SubResearch, build_research_plan
+
+    def _run(v: float):
+        return lambda: {"summary": {"y": v}, "objectives": {"score": v}}
+
+    plan = build_research_plan(
+        "pabc par noloss",
+        [SubResearch("a", "sweep alpha metallic alloy", _run(10.0)),
+         SubResearch("b", "probe organic phase width", _run(1.0)),
+         SubResearch("c", "sweep beta ceramic domain", _run(50.0), depends_on=["a"]),
+         SubResearch("d", "probe ionic liquid density", _run(9.0), depends_on=["b"]),
+         SubResearch("e", "sweep beta ceramic domain dense", _run(48.0), depends_on=["c"]),
+         SubResearch("f", "scan polymer chain length", _run(8.0), depends_on=["c"])],
+    )
+    out = run_research_program(
+        goal="pabc par noloss",
+        experiments=list(plan.experiments),
+        objectives_config={"score": "maximize"},
+        max_iterations=8, min_iterations=1, client=None,
+        planner=lambda _g: plan,
+        layer_epochs=True, replan_gate=True, early_stop_gate=True,
+        max_parallel=3,
+    )
+    planned = {e.name for e in plan.experiments}
+    _assert_no_silent_loss(out, planned)
+    # 并行下 e(与 c 冗余)必然有审计记录(执行 或 被 replan)
+    if "e" not in out.cache:
+        assert "e" in {s["name"] for s in out.consolidated["replan"]["log"]}
+
+
+def test_pabc_parallel_early_stop_final_consistent():
+    """max_parallel=2 + 三阶段: 分数高原(10.0→10.1) 触发 P-C 提前终止。
+    并行下终止边界最终一致 —— 被终止层实验要么早已执行, 要么被 early_stop 记录."""
+    from huginn.research.planning import SubResearch, build_research_plan
+
+    def _run(v: float):
+        return lambda: {"summary": {"y": v}, "objectives": {"score": v}}
+
+    plan = build_research_plan(
+        "pabc par estop",
+        [SubResearch("a", "sweep alpha metallic alloy", _run(10.0)),
+         SubResearch("b", "probe organic phase width", _run(1.0)),
+         SubResearch("c", "sweep beta ceramic domain", _run(10.1), depends_on=["a"]),
+         SubResearch("d", "probe ionic liquid density", _run(9.0), depends_on=["b"]),
+         SubResearch("e", "scan polymer chain length", _run(8.0), depends_on=["c"]),
+         SubResearch("f", "sort crystalline facet", _run(7.0), depends_on=["c"])],
+    )
+    out = run_research_program(
+        goal="pabc par estop",
+        experiments=list(plan.experiments),
+        objectives_config={"score": "maximize"},
+        max_iterations=8, min_iterations=1, client=None,
+        planner=lambda _g: plan,
+        layer_epochs=True, replan_gate=True, early_stop_gate=True,
+        max_parallel=2,
+    )
+    _assert_no_silent_loss(out, {e.name for e in plan.experiments})
+    es = out.consolidated["early_stop"]
+    # 层2([e,f])若未执行必被 early_stop 记录, 不得落入 replan/静默
+    remaining = {"e", "f"} - set(out.cache)
+    early_names = {s["name"] for s in es["log"]}
+    assert remaining <= early_names, f"被终止层实验缺 early_stop 记录: {remaining - early_names}"
+    assert {"a", "b", "c", "d"} <= set(out.cache), "终止前各层必须真实执行"
