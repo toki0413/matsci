@@ -196,3 +196,97 @@ def test_no_compute_research_imports_academic_literature() -> None:
         "计算深研接缝 (research/) 串了文献层 (huginn.academic.*)。"
         "计算接缝是纯计算叶子, 不应背文档写作的隐重。违规: "
         + ", ".join(offenders))
+
+
+# ── P3 · 收敛聚合头执法: 多头不再无限摊派 ────────────────────────────────
+# 缺陷六("多一个视角 = 多一个字段")的机械闸: `ResearchOutcome` 字段白名单冻结,
+# 审计头必须经聚合头 (aggregation_head.consolidate) 注册, `out.* =` 赋值单点出口.
+# 新增"视角"的合法路径只有一条: 注册一个新 HeadResult → 由聚合头/投影表认领.
+def _research_outcome_fields() -> set[str]:
+    import ast as _ast
+    tree = _ast.parse((_HUGINN / "research/program.py").read_text(encoding="utf-8"))
+    for node in _ast.walk(tree):
+        if isinstance(node, _ast.ClassDef) and node.name == "ResearchOutcome":
+            return {s.target.id for s in node.body
+                    if isinstance(s, _ast.AnnAssign) and isinstance(s.target, _ast.Name)}
+    return set()
+
+
+def _registered_head_ids() -> set[str]:
+    import ast as _ast
+    tree = _ast.parse((_HUGINN / "research/program.py").read_text(encoding="utf-8"))
+    ids: set[str] = set()
+    for node in _ast.walk(tree):
+        if (isinstance(node, _ast.Call) and isinstance(node.func, _ast.Name)
+                and node.func.id == "HeadResult" and node.args
+                and isinstance(node.args[0], _ast.Constant)
+                and isinstance(node.args[0].value, str)):
+            ids.add(node.args[0].value)
+    return ids
+
+
+# ResearchOutcome 字段白名单(冻结): 全量既有字段. 新增任何字段都须先评审该"视角"
+# 是否真该经聚合头注册而非挂到 god-object 上 —— 这是 P3 的核心红线.
+_EXPECTED_RESEARCH_OUTCOME_FIELDS = frozenset({
+    "converred", "explored", "pruned", "pareto_front", "cache", "report",
+    "verdict", "ungrounded", "report_source", "mutations", "supervision_log",
+    "plan_summary", "structural_gate", "structural_aligned", "workspace_verified",
+    "harness", "law_model_used", "plan_revision", "grounding_audit", "consolidated",
+})
+
+# 聚合头注册面(审计头白名单): 这些 head 必须在 program.py 的 consolidate 注册中出现.
+# 新增审计视角的合法路径: 在聚合头注册一个新 HeadResult(自动进 consolidated.heads),
+# 而不是给 ResearchOutcome 加字段.
+_REQUIRED_HEAD_IDS = frozenset({
+    "gate.claim_grounding", "gate.structural", "gate.workspace",
+    "wm.actually_used", "audit.score_usage", "audit.plan_revision",
+    "controlled.supervision", "reliable.evidence_cache", "learning.self_audit",
+})
+
+
+def test_research_outcome_fields_are_frozen() -> None:
+    """ResearchOutcome 字段冻结 —— 新视角不许再加 out.* 字段.
+
+    多头不再无限摊派: 一个"新视角"要么注册进聚合头(aggregation_head.consolidate,
+    自动出现在 consolidated.heads + harness 投影), 要么不算治理能力。给 ResearchOutcome
+    加字段是这条红线的反面, 一律拒绝(即使测试同步更新也不行, 白名单即冻结语义).
+    """
+    actual = _research_outcome_fields()
+    assert actual == set(_EXPECTED_RESEARCH_OUTCOME_FIELDS), (
+        "ResearchOutcome 字段被改动: 往 god-object 上挂字段是缺陷六(多头无限摊派)的"
+        "复发。新视角必须注册进收敛聚合头 (aggregation_head.consolidate), 已是"
+        "consolidated.heads + harness 投影视图, 无需也不应成为 ResearchOutcome 新字段。"
+        f"差异: added={sorted(actual - set(_EXPECTED_RESEARCH_OUTCOME_FIELDS))} "
+        f"removed={sorted(set(_EXPECTED_RESEARCH_OUTCOME_FIELDS) - actual)}")
+
+
+def test_new_audit_heads_must_register_into_consolidation_gate() -> None:
+    """审计头必须经聚合头注册 —— 聚合头是治理出口, 不是可绕过的旁路."""
+    registered = _registered_head_ids()
+    missing = sorted(_REQUIRED_HEAD_IDS - registered)
+    assert not missing, (
+        "以下审计面 head 未在 program.py 的聚合头注册: " + ", ".join(missing) +
+        "。每个治理视角(门禁/审计/world-model 确认)都必须在收敛聚合头里占一席, "
+        "才能在 consolidated.heads / harness 六维投影中如实出现。")
+
+
+def test_out_field_assignment_singleton_egress() -> None:
+    """`out.<attr> =` 赋值只允许在 program.py(流水线) —— 治理字段单点出口.
+
+    research/ 其余模块只允许在聚合头里注册 head/读取 out, 不得直接给 ResearchOutcome
+    写字段 —— 防止旁路直写绕过聚合头的可反驳视图与 harness 投影.
+    """
+    import re as _re
+    out_assign = _re.compile(r"\bout\s*\.\s*[a-zA-Z_][a-zA-Z0-9_]*\s*=")
+    offenders = []
+    for f in sorted((_HUGINN / "research").glob("*.py")):
+        if f.name in ("program.py", "__init__.py", "aggregation_head.py"):
+            continue
+        hits = [l.strip() for l in f.read_text(encoding="utf-8").splitlines()
+                if out_assign.search(l)]
+        if hits:
+            offenders.append(f"{f.relative_to(_ROOT)}: " + " | ".join(hits))
+    assert not offenders, (
+        "research/ 里出现了对 ResearchOutcome/out 的直接字段赋值(旁路)。所有治理字段"
+        "只能由 program.py 的流水线统一写出, 新视角一律经聚合头注册。违规: "
+        + "\n".join(offenders))
