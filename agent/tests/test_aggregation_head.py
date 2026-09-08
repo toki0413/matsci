@@ -1131,3 +1131,46 @@ def test_a1_early_stop_min_layers_parameterized():
     )
     assert "e" in out.cache, "min_layers=3 → 2 层观测不足置信 → 剩余层真实执行"
     assert out.consolidated["early_stop"]["verdict"] != "early_stopped"
+
+
+# ── 生产化 A2: 跨 run 稳定度先验 ─────────────────────────────────────────
+def test_a2_extract_prior_from_out():
+    """从一次稳定终止的 run 提取可复用先验(纯函数)."""
+    from huginn.research.prior_store import extract_prior
+    from huginn.research.planning import SubResearch, build_research_plan
+
+    plan = build_research_plan(
+        "a2 extract",
+        [SubResearch("a", "sweep alpha metallic alloy", _run_(10.0)),
+         SubResearch("c", "sweep beta ceramic domain", _run_(10.1), depends_on=["a"]),
+         SubResearch("e", "scan polymer chain length", _run_(8.0), depends_on=["c"])],
+    )
+    out = run_research_program(
+        goal="a2 extract", experiments=list(plan.experiments),
+        objectives_config={"score": "maximize"},
+        max_iterations=5, min_iterations=1, client=None,
+        planner=lambda _g: plan, early_stop_gate=True, max_parallel=1,
+    )
+    prior = extract_prior(out)
+    assert prior["applicable"] is True
+    assert prior["source"] == "layered_settlement"
+    assert prior["plateau"]["layer_index"] == 1
+    assert prior["plateau"]["top"] == "c"
+    assert prior["goal"] == "a2 extract"
+
+
+def test_a2_extract_prior_not_applicable_for_plain_run():
+    """未启用早停的 run → 提取出不可用先验(诚实标 applicable=False)."""
+    from huginn.research.prior_store import extract_prior
+    from huginn.research.planning import SubResearch, build_research_plan
+
+    plan = build_research_plan(
+        "a2 plain", [SubResearch("a", "sweep alpha metallic alloy", _run_(1.0))],
+    )
+    out = run_research_program(
+        goal="a2 plain", experiments=list(plan.experiments),
+        objectives_config={"score": "maximize"},
+        max_iterations=2, min_iterations=1, client=None,
+        planner=lambda _g: plan,
+    )
+    assert extract_prior(out)["applicable"] is False

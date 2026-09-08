@@ -787,6 +787,7 @@ def run_research_program(
             "stopped_after_layer": _early_stop_meta.get("stopped_after_layer"),
             "skipped": len(_early_stop_meta.get("skipped", [])),
             "log": list(_early_stop_meta.get("skipped", [])),   # 完整终止名单(可证伪)
+            "stability": dict(_early_stop_meta.get("stability") or {}),  # 稳定判据细节(可证伪)
             "verdict": ("no_early_stop" if not _early_stop_enabled
                         else _early_stop_meta.get("verdict", "checked_and_continued")),
         }
