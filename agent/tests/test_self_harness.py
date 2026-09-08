@@ -37,18 +37,35 @@ def test_full_observed_run_gets_high_scores():
         structural_gate={"pass": True},
         cache={"exp_1": {"summary": {"m": 1}}},
         workspace_verified=True,
+        law_model_used={"planner_rollout": ["a", "b"]},  # 世界模型 predict 真实参与决策
     )
     rep = build_harness_report("goal-x", out, agent="a", machine="m")
     assert rep.task_episode.startswith("ep-")
     assert set(d.name for d in rep.dimensions) == {
         "task_understanding", "controlled_execution", "change_validation",
-        "reliable_delivery", "learning_capture",
+        "reliable_delivery", "learning_capture", "safety_authority",
     }
     # 全部 observed passed
     for dim in rep.dimensions:
         assert dim.evidence == EVIDENCE_OBSERVED
         assert dim.score == 1.0
     assert rep.overall == 1.0
+
+
+def test_safety_authority_reports_world_model_not_actually_used():
+    # 误区二诚实审计: law_model 存在于代码 ≠ 部署时在"真规划".
+    # 本 run 无 law_model_used/planner_rollout 证据 → world_model 项标 unobserved 不虚报.
+    out = _out(
+        verdict="grounded",
+        structural_gate={"pass": True},   # 外部安全否决器真实触发
+    )
+    rep = build_harness_report("goal-x", out)
+    sa = next(d for d in rep.dimensions if d.name == "safety_authority")
+    wm = next(c for c in sa.checks if "世界模型真用?" in c.name)
+    assert wm.evidence == EVIDENCE_UNOBSERVED
+    assert wm.outcome == "unobserved"
+    assert sa.evidence == EVIDENCE_OBSERVED  # 否决器触发 → 该维仍有 observed 证据态
+    assert sa.score < 1.0
 
 
 def test_missing_planner_reports_unobserved_not_fullcredit():
@@ -119,8 +136,12 @@ def test_pipeline_populates_out_harness():
     assert out.harness["machine"] == "sandbox-1"
     assert {d["name"] for d in out.harness["dimensions"]} == {
         "task_understanding", "controlled_execution", "change_validation",
-        "reliable_delivery", "learning_capture",
+        "reliable_delivery", "learning_capture", "safety_authority",
     }
+    # 主环路未接入 law_model → 世界模型项诚实标 unobserved(非出身虚报真深思 D)
+    sa = next(d for d in out.harness["dimensions"] if d["name"] == "safety_authority")
+    wm = next(c for c in sa["checks"] if "世界模型真用?" in c["name"])
+    assert wm["outcome"] == "unobserved"
     # 同一 goal 同日内 → 稳定 episode id, 可跨 run 聚合
     out2 = run_research_program(
         goal="harness m2 integration",

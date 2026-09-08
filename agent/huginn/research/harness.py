@@ -112,6 +112,10 @@ class HarnessReport:
           3 Change Validation    <- out.verdict/structural_gate/report_source
           4 Reliable Delivery    <- out.cache/workspace_verified (reconcile/对账/回滚)
           5 Learning Capture     <- 能力自省提案 + 审计产出 (structural_gate 等)
+          6 Safety/Authority     <- 谁有权叫停/是否真 D (外部安全否决器 + 世界模型真用?)
+             (对齐 Physical AI 六格判据: "谁有下一步决定权" + 误区二"训练用过 future ≠
+              部署时在规划"。权威审计诚实标真——law_model 只存在于代码里但未进决策路径,
+              就是 Unobserved, 不给它"世界模型规划"的虚名。)
         """
         self.agent = agent
         self.machine = machine
@@ -123,6 +127,7 @@ class HarnessReport:
             *self._change_validation(out),
             *self._reliable_delivery(out),
             *self._learning_capture(out),
+            *self._safety_authority(out),
         ]
 
         by_dim: dict[str, list[CheckResult]] = {}
@@ -131,7 +136,8 @@ class HarnessReport:
 
         self.dimensions = []
         for dim in ("task_understanding", "controlled_execution",
-                    "change_validation", "reliable_delivery", "learning_capture"):
+                    "change_validation", "reliable_delivery", "learning_capture",
+                    "safety_authority"):
             items = by_dim.get(dim, [])
             if not items:
                 continue
@@ -260,6 +266,55 @@ class HarnessReport:
                         EVIDENCE_UNOBSERVED, "unobserved",
                         detail="自省已接线但本 run 无审计产物", ref="capabilities/introspection"),
         ]
+
+    @staticmethod
+    def _safety_authority(out: Any) -> list[CheckResult]:
+        """第六维 —— 对齐 Physical AI 六格判据: "谁有下一步决定权".
+
+        两项检查(都诚实标真, 配置存在≠能力可用):
+          1. 外部安全否决器: 是否存在不共享策略参数、可独立验证的"叫停/改判"组件?
+             物理 AI 洞察: 学习提出动作, 独立安全模块在外部拒绝 —— 是可分开验证的两个。
+             → 我们的 structural_gate / claim_grounding / C-Space 广播门属此列。
+          2. 世界模型真用?(误区二): predict 的后果是否真的参与当前决策选择?
+             只在代码里有 law_model.py 不算; 只有预测结果改变选择的才是真深思 D。
+        """
+        results: list[CheckResult] = []
+        # (1) 外部安全否决器 —— 独立门禁是否真实触发
+        gate_attrs = ("structural_gate", "ungrounded", "workspace_verified")
+        gate_fired = any(getattr(out, name, None) not in (None, []) for name in gate_attrs)
+        if gate_fired:
+            results.append(CheckResult(
+                "safety_authority", "外部安全否决器(可独立验证的叫停组件)",
+                EVIDENCE_OBSERVED,
+                "passed" if getattr(out, "structural_aligned", None) is not False else "failed",
+                detail="结构闸门/声明门/工作区门任一在本 run 真实触发",
+                ref="out.structural_gate/out.ungrounded/out.workspace_verified"))
+        else:
+            results.append(CheckResult(
+                "safety_authority", "外部安全否决器(可独立验证的叫停组件)",
+                EVIDENCE_UNOBSERVED, "unobserved",
+                detail="本 run 未触发任何独立门禁(未注入 structural_audit/workspace)",
+                ref="out.structural_gate/out.ungrounded/out.workspace_verified"))
+
+        # (2) 世界模型真用? —— 误区二诚实审计: predict 是否参与决策而非仅在代码里
+        # 判据: 决策/规划路径里有意义地消费了 predict/reconcile 的产物, 才算真 D。
+        # LawModel 默认只挂在 ModelBasedScienceTeam(可选路径); run_research_program 主环路
+        # 不引用它 —— 若 out 里没有 "model_based"/"law_model" 型证据, 就标 unobserved, 不虚报。
+        wm_attrs = ("law_model_used", "model_based", "world_model_used", "planner_rollout")
+        wm_evidence = next((getattr(out, a, None) for a in wm_attrs
+                            if getattr(out, a, None) not in (None, False, [])), None)
+        if wm_evidence is None:
+            results.append(CheckResult(
+                "safety_authority", "世界模型真用?(predict 参与决策 = 真深思 D)",
+                EVIDENCE_UNOBSERVED, "unobserved",
+                detail="LawModel 存在但本 run 未见 predict/reconcile 产物 —— 能力未进决策路径",
+                ref="out.law_model_used/out.planner_rollout"))
+        else:
+            results.append(CheckResult(
+                "safety_authority", "世界模型真用?(predict 参与决策 = 真深思 D)",
+                EVIDENCE_OBSERVED, "passed",
+                detail=f"predict 产物参与决策: {wm_evidence!r}", ref="out.law_model_used"))
+        return results
 
     def to_dict(self) -> dict[str, Any]:
         return {
