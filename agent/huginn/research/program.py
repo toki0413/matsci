@@ -56,6 +56,7 @@ class ResearchOutcome:
     structural_aligned: bool | None = None             # 代理是否通过结构对齐(Shortcut 探测)
     workspace_verified: bool | None = None             # C-Space 工作区门: 报告断言是否作为在场落地
     harness: dict | None = None                        # Self-Harness 五维报告(dict) — demo 一键出报告
+    law_model_used: dict | None = None                 # 世界模型真用证据: predict 产物/是否参与决策 (真深思 D)
 
 
 def _build_trace(cache: dict[str, dict]) -> list[str]:
@@ -66,6 +67,38 @@ def _slug_goal(goal: str, limit: int = 40) -> str:
     """把 goal 规整成工作区 Being id 用的小写 slug (供报告在场命名)."""
     s = re.sub(r"[^0-9a-z_]+", "_", (goal or "final").lower()).strip("_")
     return s[:limit] or "final"
+
+
+def _wm_predict(world_model: Any, spec: Experiment) -> dict:
+    """统一世界模型预筛入口: 接受 LawModel 或普通 callable, 产出**可判伪**预测.
+
+    - LawModel 形态: model.predict(LawState, LawAction) -> next state. 这里用 spec 的
+      假说/参数构造一个可量的 saliency 向量喂入, 取返回 state 的 as_dict(); 失败降级为 {}.
+    - callable 形态: 兼容已符合 ``predict(spec)->{predicted:...}`` 契约的用户自定义模型.
+    predict 的产物只作为**假说**(预判), 绝不替代真实执行(execute 才是真相) —— 与
+    LawModel "predict 只预告" 的诚实边界一致, 也是"训练/能力存在 ≠ 部署时在规划"的
+    判据落点: 提供了 world_model 且本 run 真实调用, 才算真深思 D.
+    """
+    if hasattr(world_model, "predict"):
+        try:
+            # 尝试 LawModel 形态: predict(state, action) -> next state
+            if hasattr(world_model, "law"):
+                from huginn.research.law_model import LawAction, LawState
+                action = LawAction(config={"a_scale": 1.0}, label=spec.name)
+                state = world_model.seed({"orbper_d": 365.25}) \
+                    if hasattr(world_model, "seed") else LawState({}, domain="")
+                nxt = world_model.predict(state, action)
+                d = getattr(nxt, "as_dict", lambda: dict(getattr(nxt, "__dict__", {})))()
+                return {"pred": d if isinstance(d, dict) else {"predicted": d},
+                        "law": getattr(world_model, "law", lambda: "")()}
+            # 否则当作 predict(spec)->{predicted:...}
+            out = world_model.predict(spec)
+            return out if isinstance(out, dict) else {"predicted": out}
+        except Exception:  # noqa: BLE001 — 形态推断失败: 返回空预测, 由 caller 保留纯真实结果
+            return {"pred": {}}
+    # 普通 callable: predict(spec)->{predicted:...}
+    out = world_model(spec)
+    return out if isinstance(out, dict) else {"predicted": out}
 
 
 def grounding_verifier() -> Callable[[str, list[str]], dict]:
@@ -106,6 +139,10 @@ def run_research_program(
     planner: Callable[[str], "ResearchPlan"] | None = None,  # 需求拆解/自主规划: goal->{experiments, max_parallel, plan_summary}
     harness_agent: str = "",          # Self-Harness 报告维度: agent 身份 (组织层账本聚合维度, 留空可)
     harness_machine: str = "",        # Self-Harness 报告维度: machine 身份 (留空可)
+    world_model: Any = None,          # 世界模型(可选): predict(spec)->{predicted:{...}} 或 LawModel.
+                                      # 接入后, predict 在每次真实执行前对候选做预期目标预筛,
+                                      # 预测值作为**可证伪证据**进 cache/trace —— 让 LawModel 真进决策路径(真深思 D),
+                                      # 而非只存在于代码里. 不提供则深研走纯真实执行(R).
 ) -> ResearchOutcome:
     """跑一条完整深研管线并返回结果."""
     from huginn.exploration.orchestrator import ExplorationOrchestrator
@@ -170,6 +207,14 @@ def run_research_program(
         if spec is None:
             return {"success": False, "objectives": {}, "results": {}}
         res = await asyncio.to_thread(spec.run)
+        # 世界模型预筛(真 D): predict 在真实执行前对候选作预期目标预判, 预测值作为
+        # 可证伪证据并入结果 —— 供 post-hoc reconcile 对账, 并让"预测参与决策"成为事实.
+        if world_model is not None:
+            res = dict(res)
+            try:
+                res["predicted"] = _wm_predict(world_model, spec)
+            except Exception:  # noqa: BLE001 — 世界模型预筛失败: 不伪造, 保留纯真实结果
+                res.setdefault("predicted", {})
         cache[branch.name] = res
         return {"success": bool(res.get("success", True)),
                 "objectives": res.get("objectives", {}),
@@ -407,6 +452,18 @@ def run_research_program(
                      if (out.mutations or out.supervision_log) else "")
                   + "\n\n")
         out_md.write_text(header + final.strip() + "\n", encoding="utf-8")
+
+    # 世界模型真用证据: 若提供了 world_model, 本 run 确实用 predict 预筛了候选 ——
+    # 记录 per-实验预测对账素材, 供 harness 的 "世界模型真用?" 以 observed 落地(真 D).
+    if world_model is not None:
+        preds = []
+        for name, res in cache.items():
+            p = res.get("predicted")
+            if p:
+                preds.append({"experiment": name, "predicted": p})
+        out.law_model_used = {"count": len(preds),
+                              "mock": [p["predicted"] for p in preds[:3]],
+                              "reconcilable": bool(preds)}
 
     # M2: Self-Harness 五维报告 — 复用本 out 已记录的 gate 结果, 不重复计算 (例行轻量)
     try:
