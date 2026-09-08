@@ -298,8 +298,8 @@ class HarnessReport:
 
         # (2) 世界模型真用? —— 误区二诚实审计: predict 是否参与决策而非仅在代码里
         # 判据: 决策/规划路径里有意义地消费了 predict/reconcile 的产物, 才算真 D。
-        # LawModel 默认只挂在 ModelBasedScienceTeam(可选路径); run_research_program 主环路
-        # 不引用它 —— 若 out 里没有 "model_based"/"law_model" 型证据, 就标 unobserved, 不虚报。
+        # 更进一步: 用了≠全对 —— 若 reconcile 对账存在但 borne_out_all=False, 如实标
+        # observed-failed(预测被真实执行证伪, 这是发现不是失败), 不虚报"世界模型对啊"。
         wm_attrs = ("law_model_used", "model_based", "world_model_used", "planner_rollout")
         wm_evidence = next((getattr(out, a, None) for a in wm_attrs
                             if getattr(out, a, None) not in (None, False, [])), None)
@@ -310,10 +310,17 @@ class HarnessReport:
                 detail="LawModel 存在但本 run 未见 predict/reconcile 产物 —— 能力未进决策路径",
                 ref="out.law_model_used/out.planner_rollout"))
         else:
+            wm_dict = wm_evidence if isinstance(wm_evidence, dict) else {}
+            borne_out_all = wm_dict.get("borne_out_all")
+            has_reconcile = bool(wm_dict.get("reconcile"))
+            # 有对账且被证伪 → observed-failed(诚实的发现); 否则 passed(用了 or 无对账素材)
+            outcome = ("failed" if (has_reconcile and borne_out_all is False) else "passed")
+            detail = (f"predict 参与决策: {wm_evidence!r}; "
+                      f"reconcile={wm_dict.get('reconcile', [])}"
+                      if has_reconcile else f"predict 参与决策: {wm_evidence!r}")
             results.append(CheckResult(
                 "safety_authority", "世界模型真用?(predict 参与决策 = 真深思 D)",
-                EVIDENCE_OBSERVED, "passed",
-                detail=f"predict 产物参与决策: {wm_evidence!r}", ref="out.law_model_used"))
+                EVIDENCE_OBSERVED, outcome, detail=detail, ref="out.law_model_used"))
         return results
 
     def to_dict(self) -> dict[str, Any]:

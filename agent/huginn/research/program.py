@@ -69,6 +69,38 @@ def _slug_goal(goal: str, limit: int = 40) -> str:
     return s[:limit] or "final"
 
 
+# 世界模型对账容差: 相对误差 <= 此值视为预测被真实执行"证实"(默认 3%, 同 law_model.reconcile)
+_WM_TOL = 0.03
+
+
+def _first_scalar(node: Any) -> float | None:
+    """从预测/真实结果里取"第一个可用的数值指标"作对账依据(深度优先, 不伪造).
+
+    优先取常见量纲判定名(T/K/score/value/...); 折返时取任意第一个 float。
+    取不到返回 None(调用方跳过, 不硬造对账)。
+    """
+    if isinstance(node, bool):
+        return None
+    if isinstance(node, (int, float)):
+        return float(node)
+    if isinstance(node, dict):
+        for k in ("T_eq_K", "T", "score", "value", "y", "actual", "S_Wm2"):
+            if k in node:
+                v = _first_scalar(node[k])
+                if v is not None:
+                    return v
+        for v in node.values():
+            s = _first_scalar(v)
+            if s is not None:
+                return s
+    elif isinstance(node, (list, tuple)):
+        for v in node:
+            s = _first_scalar(v)
+            if s is not None:
+                return s
+    return None
+
+
 def _wm_predict(world_model: Any, spec: Experiment) -> dict:
     """统一世界模型预筛入口: 接受 LawModel 或普通 callable, 产出**可判伪**预测.
 
@@ -454,16 +486,40 @@ def run_research_program(
         out_md.write_text(header + final.strip() + "\n", encoding="utf-8")
 
     # 世界模型真用证据: 若提供了 world_model, 本 run 确实用 predict 预筛了候选 ——
-    # 记录 per-实验预测对账素材, 供 harness 的 "世界模型真用?" 以 observed 落地(真 D).
+    # 记录 per-实验预测对账素材, 供 harness 的 "世界模型真用?" 以 observed 落地(真 D)。
+    # 更进一步: 把预测与真实执行 reconcile 数值对账 —— 预测升级为"强在场"检验,
+    # 偏差如实记 falsified(这就是发现), 而非只记"用过了"。诚实红线不变。
     if world_model is not None:
         preds = []
+        reconcile_rows: list[dict] = []
         for name, res in cache.items():
             p = res.get("predicted")
-            if p:
-                preds.append({"experiment": name, "predicted": p})
-        out.law_model_used = {"count": len(preds),
-                              "mock": [p["predicted"] for p in preds[:3]],
-                              "reconcilable": bool(preds)}
+            if not p:
+                continue
+            preds.append({"experiment": name, "predicted": p})
+            # 尝试与真实 summary 数值对账 (law_model.reconcile 语义): 预测里挑第一个
+            # 标量指标 vs 真实结果 --- 可行则记 reconcile; 对不上/无数不去伪造。
+            try:
+                pred_scalar = _first_scalar(p)
+                actual_scalar = _first_scalar(res.get("summary", {}))
+                if pred_scalar is not None and actual_scalar is not None:
+                    err = abs(pred_scalar - actual_scalar) / (abs(actual_scalar) or 1.0)
+                    reconcile_rows.append({
+                        "experiment": name,
+                        "rel_err": round(err, 4),
+                        "borne_out": err <= _WM_TOL,
+                        "predicted": round(pred_scalar, 4),
+                        "actual": round(actual_scalar, 4),
+                    })
+            except Exception:  # noqa: BLE001 — 对账失败不伪造, 只跳过
+                pass
+        out.law_model_used = {
+            "count": len(preds),
+            "mock": [p["predicted"] for p in preds[:3]],
+            "reconcilable": bool(preds),
+            "reconcile": reconcile_rows,
+            "borne_out_all": bool(reconcile_rows) and all(r["borne_out"] for r in reconcile_rows),
+        }
 
     # M2: Self-Harness 五维报告 — 复用本 out 已记录的 gate 结果, 不重复计算 (例行轻量)
     try:

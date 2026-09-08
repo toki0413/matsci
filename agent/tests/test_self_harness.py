@@ -69,26 +69,31 @@ def test_safety_authority_reports_world_model_not_actually_used():
 
 
 def test_pipeline_world_model_actually_used_is_observed():
-    """更进一步: 真实接入 LawModel 到深研主环路, predict 参与预筛 → harness 标真 D(observed)."""
+    """更进一步: 真实接入 LawModel 到深研主环路, predict 参与预筛 → harness 标真 D(observed).
+    真实执行返回与预测一致 → reconcile 证实 → 世界模型项 passed(预测被证实, 强在场)."""
     from huginn.research.law_model import FirstPrinciplesLawModel
     from huginn.research.program import Experiment, run_research_program
+
+    wm = FirstPrinciplesLawModel(albedo=0.1)   # 真实定律模型(黑体平衡温度 forward model)
+    T_truth = 271.1                            # 与 P=365d, α=0.1 的定律预测一致
 
     def _run(v: float):
         return lambda: {"summary": {"T_eq_K": v}, "objectives": {"score": v}}
 
-    wm = FirstPrinciplesLawModel(albedo=0.1)   # 真实定律模型(黑体平衡温度 forward model)
     out = run_research_program(
         goal="world model in main loop",
-        experiments=[Experiment("e0", "baseline", _run(1.0)),
-                     Experiment("e1", "candidate", _run(2.0))],
+        experiments=[Experiment("e0", "baseline", _run(T_truth)),
+                     Experiment("e1", "candidate", _run(T_truth))],
         objectives_config={"score": "maximize"},
         max_iterations=4, min_iterations=1, client=None,
         world_model=wm,                       # 关键: 把 LawModel 挂进主环路
         harness_agent="a", harness_machine="m",
     )
-    # law_model_used 有真实预测证据
+    # law_model_used 有真实预测 + reconcile 对账素材
     assert out.law_model_used is not None
     assert out.law_model_used["count"] >= 1
+    assert out.law_model_used["reconcile"], "应产出 reconcile 对账行"
+    assert out.law_model_used["borne_out_all"] is True, "预测被真实执行证实"
     assert any(p["pred"].get("state") for p in out.law_model_used["mock"]), \
         "LawModel.predict 应产出非空结果"
     # harness 世界模型项 → observed(passed), 真深思 D 不再虚报 unobserved
@@ -96,6 +101,31 @@ def test_pipeline_world_model_actually_used_is_observed():
     wm_item = next(c for c in sa["checks"] if "世界模型真用?" in c["name"])
     assert wm_item["outcome"] == "passed"
     assert wm_item["evidence"] == EVIDENCE_OBSERVED
+
+
+def test_pipeline_world_model_falsified_is_observed_failed():
+    """诚实红线: 预测被真实执行证伪 → 世界模型项如实标 observed-failed, 不虚报"对啊"."""
+    from huginn.research.law_model import FirstPrinciplesLawModel
+    from huginn.research.program import Experiment, run_research_program
+
+    wm = FirstPrinciplesLawModel(albedo=0.1)
+
+    def _run(v: float):
+        return lambda: {"summary": {"T_eq_K": v}, "objectives": {"score": v}}
+
+    # 真实执行给 2.0K, 而定律预测 271.1K —— 偏差巨大, 预测被证伪(这是发现, 不是 failure)
+    out = run_research_program(
+        goal="world model falsified",
+        experiments=[Experiment("e0", "baseline", _run(2.0))],
+        objectives_config={"score": "maximize"},
+        max_iterations=2, min_iterations=1, client=None,
+        world_model=wm, harness_agent="a", harness_machine="m",
+    )
+    assert out.law_model_used["borne_out_all"] is False
+    sa = next(d for d in out.harness["dimensions"] if d["name"] == "safety_authority")
+    wm_item = next(c for c in sa["checks"] if "世界模型真用?" in c["name"])
+    assert wm_item["evidence"] == EVIDENCE_OBSERVED      # 真用了(确实参与决策)
+    assert wm_item["outcome"] == "failed"                # 但被证伪, 不虚报
 
 
 def test_missing_planner_reports_unobserved_not_fullcredit():
