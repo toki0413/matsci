@@ -115,6 +115,12 @@
 - [x] 跨 run 先验 goal 归一化匹配: `prior_store.goal_slug`(与 program._slug_goal
      同口径) —— 异域先验(goal_slug ≠ 当前 goal)被 `resolve_early_stop_args` 拒绝
      套用(note=goal_mismatch), 先验只对同域生效, 绝不张冠李戴。
+- [x] 先验时间衰减(A5): `prior["age"]` 按半衰期=1 的指数衰减(`0.5 ** age`,
+     age=2 → 权重 0.25) —— 越旧先验权重越低, 领域漂移后旧经验自然淡出;
+     诚实红线不变: 衰减只降权, min_layers 永不低于默认。
+- [x] goal 模糊匹配(A6): `prior_store.goal_match_level` 用 token Jaccard 重叠分档
+     (exact / related ≥0.5 / foreign / unknown) —— related 按重叠比例注入(半权起步),
+     foreign 拒绝套用(文本也可证伪), unknown 向后兼容只受衰减影响。
      实施计划: `docs/superpowers/plans/2026-09-09-settlement-productionize.md`。
 
 ## 10. 非目标

@@ -10,6 +10,15 @@ A4(goal 归一化匹配): 先验携带 goal_slug(与 program._slug_goal 同语�
 若当前 goal 的 slug 与先验不一致 → 视为异域先验, 拒绝套用(行为=无先验) ——
 防止把 A 领域的"高原层数"错套到 B 领域.
 
+A5(先验时间衰减): prior["age"](距上次 run 的轮数)按半衰期=1 的指数衰减
+(weight = 0.5 ** age) —— 越旧先验权重越低, 领域漂移后旧经验自然淡出.
+
+A6(goal 模糊匹配): 超越 slug 字符串等价, 按 token 集合 Jaccard 重叠分档:
+  - exact(同 slug / 同文本) → 重叠 1.0, 全量注入;
+  - related(重叠 >= 0.5, 领域语义聚类) → 重叠比例注入(半权起步);
+  - foreign(重叠 < 0.5) → 拒绝套用(等同 A4 异域拒绝, 文本也可证伪);
+  - unknown(先验无 goal 信息) → 向后兼容: 不惩罚, 只受 A5 衰减影响.
+
 诚实红线(不可逾越):
   1. extract_prior 只读 out.consolidated(聚合头唯一出口), 不新增 out.* 字段;
   2. 先验只能把早停参数推向**更保守**方向(min_layers 单调不减), 永不因"上次稳定"
@@ -68,41 +77,104 @@ def extract_prior(out: Any) -> dict[str, Any]:
     return _base
 
 
+def _jaccard_overlap(a: str, b: str) -> float:
+    """token 集合 Jaccard 重叠(小写, 非字母/数字切分). 空集一方 → 0.0."""
+    ta = set(re.findall(r"[0-9a-z]+", (a or "").lower()))
+    tb = set(re.findall(r"[0-9a-z]+", (b or "").lower()))
+    if not ta or not tb:
+        return 0.0
+    return len(ta & tb) / len(ta | tb)
+
+
+def goal_match_level(
+    prior_goal: str,
+    current_goal: str,
+    prior_slug: str | None,
+    current_slug: str | None,
+) -> dict[str, Any]:
+    """goal 匹配档位(纯函数, 确定性). A6: 超越 slug 等价, 支持领域语义聚类.
+
+    返回 {"level", "overlap"}:
+      - exact:   slug 双方存在且相等(或全文等价) → overlap=1.0;
+      - related: 文本 Jaccard 重叠 >= 0.5(领域聚类) → overlap=该重叠;
+      - foreign: 文本 Jaccard 重叠 < 0.5(异域) → overlap=该重叠;
+      - unknown: 先验不含 goal 信息(无法判定) → overlap=None.
+    """
+    prior_goal = (prior_goal or "").strip()
+    current_goal = (current_goal or "").strip()
+    if prior_slug and current_slug and str(prior_slug) == str(current_slug):
+        return {"level": "exact", "overlap": 1.0}
+    if not prior_goal or not current_goal:
+        return {"level": "unknown", "overlap": None}
+    ov = _jaccard_overlap(prior_goal, current_goal)
+    if ov >= 0.5:
+        return {"level": "related", "overlap": ov}
+    return {"level": "foreign", "overlap": ov}
+
+
 def resolve_early_stop_args(
     prior: dict | None,
     *,
     default_min_layers: int = 2,
     default_margin: float = 0.02,
     current_goal_slug: str | None = None,
+    current_goal: str | None = None,
 ) -> dict[str, Any]:
     """把先验映射为早停参数(纯函数, 确定性). A4: 异域先验拒绝套用.
+    A5: 时间衰减(半衰期=1). A6: goal 模糊匹配分档注入.
 
     规则(全部可证伪):
       - prior 为空/不可用 → 默认参数, note="no_prior", goal_matched=None;
-      - prior 带 goal_slug 且 != current_goal_slug → **异域先验**: 拒绝套用,
+      - goal 判定为 foreign(异域, slug 与文本均可证伪) → **拒绝套用**:
         返回默认参数, note="goal_mismatch", goal_matched=False(绝不张冠李戴);
-      - prior 可用且(同域 或 无 slug 旧格式) → min_layers = plateau.layer_index + 1,
-        钳制在 [default_min_layers, 4] —— 上次 N 层才稳定, 这次至少等 N 层
-        才允许查稳定(**更保守**, 防领域漂移误停); margin 原样传默认;
-        goal_matched: True(有 slug 且匹配) / None(无 slug, 未验证, 向后兼容).
+      - 其余(exact/related/unknown 且 applicable) → min_layers =
+        default + round(delta * weight), 钳制在 [default_min_layers, 4];
+        delta = max(0, clamp(plateau.layer_index+1, 4) - default) —— 上次 N 层
+        才稳定, 这次至少等 N 层才允许查稳定(**更保守**, 防领域漂移误停);
+        weight = decay(0.5 ** age) × match(1.0 exact/unknown, overlap related);
+      - unknown(先验无 goal 信息) → 不因匹配惩罚, 只受 A5 衰减影响(向后兼容).
     """
     no_prior = not prior or not prior.get("applicable")
+    prior_goal = (prior or {}).get("goal", "")
     prior_slug = (prior or {}).get("goal_slug")
-    mismatch = (prior_slug is not None and current_goal_slug is not None
-                and str(prior_slug) != str(current_goal_slug))
+    # A6: 匹配档位(exact/related/foreign/unknown)
+    _match = goal_match_level(prior_goal, current_goal or "",
+                              prior_slug, current_goal_slug)
+    goal_level = _match["level"]
+    goal_overlap = _match["overlap"]
+    goal_matched = (goal_level in ("exact", "related"))
+    # A5: 时间衰减(半衰期=1)
+    prior_age = float((prior or {}).get("age", 0.0) or 0.0)
+    decay_weight = 0.5 ** prior_age
+    # 综合权重: 匹配档位权重(exact/unknown=1.0, related=overlap) × 时间衰减
+    match_weight = 1.0 if goal_level in ("exact", "unknown") else goal_overlap
+    weight = (decay_weight * match_weight) if match_weight is not None else decay_weight
+
     if no_prior:
         return {"min_layers": default_min_layers, "margin": default_margin,
-                "source": "default", "note": "no_prior", "goal_matched": None}
-    if mismatch:
+                "source": "default", "note": "no_prior",
+                "goal_matched": None, "goal_level": goal_level,
+                "goal_overlap": goal_overlap, "decay_weight": decay_weight,
+                "prior_age": prior_age, "weight": weight}
+    if goal_level == "foreign":
         return {"min_layers": default_min_layers, "margin": default_margin,
-                "source": "rejected", "note": "goal_mismatch", "goal_matched": False}
+                "source": "rejected", "note": "goal_mismatch", "goal_matched": False,
+                "goal_level": goal_level, "goal_overlap": goal_overlap,
+                "decay_weight": decay_weight, "prior_age": prior_age, "weight": weight}
     plateau = prior.get("plateau") or {}
     idx = plateau.get("layer_index")
     if idx is None:
         return {"min_layers": default_min_layers, "margin": default_margin,
                 "source": "default", "note": "prior_without_plateau",
-                "goal_matched": (None if prior_slug is None else True)}
-    min_layers = max(default_min_layers, min(int(idx) + 1, 4))
+                "goal_matched": goal_matched, "goal_level": goal_level,
+                "goal_overlap": goal_overlap, "decay_weight": decay_weight,
+                "prior_age": prior_age, "weight": weight}
+    candidate = min(int(idx) + 1, 4)                      # 钳制上限 4
+    delta = max(0, candidate - default_min_layers)
+    adjusted = default_min_layers + round(delta * weight)  # 权重合成的增量
+    min_layers = max(default_min_layers, adjusted)         # 诚实红线: 永不低于默认
     return {"min_layers": min_layers, "margin": default_margin,
             "source": "cross_run_prior", "note": f"plateau_layer={idx}",
-            "goal_matched": (None if prior_slug is None else True)}
+            "goal_matched": goal_matched, "goal_level": goal_level,
+            "goal_overlap": goal_overlap, "decay_weight": decay_weight,
+            "prior_age": prior_age, "weight": weight}

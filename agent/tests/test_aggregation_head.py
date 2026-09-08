@@ -1289,3 +1289,145 @@ def test_a4_prior_foreign_goal_slug_rejected():
     assert es["prior_used"]["min_layers"] == 2, "异域先验不套用 → 用默认参数"
     assert "e" not in out.cache, "3 层场景默认 min_layers=2 → 层1 高原后终止层2"
     assert es["verdict"] == "early_stopped"
+
+
+# ── 生产化 A5: 跨 run 先验时间衰减(旧先验降权) ────────────────────────────
+def test_a5_prior_decay_full_weight_at_age_zero():
+    """age=0(最新) → 权重 1.0, plateau 全量生效(与现行为一致)."""
+    from huginn.research.prior_store import resolve_early_stop_args
+
+    prior = {"applicable": True, "plateau": {"layer_index": 2}}
+    r = resolve_early_stop_args(prior, default_min_layers=2, default_margin=0.02)
+    assert r["min_layers"] == 3
+    assert r["decay_weight"] == 1.0
+    assert r["prior_age"] == 0.0
+
+
+def test_a5_prior_decay_wanes_with_age():
+    """越旧权重越低: age=0.5 → 部分生效; age=2(half_life=1) → 衰减到默认."""
+    from huginn.research.prior_store import resolve_early_stop_args
+
+    prior = {"applicable": True, "plateau": {"layer_index": 2}}   # candidate=3
+    r05 = resolve_early_stop_args({**prior, "age": 0.5},
+                                  default_min_layers=2, default_margin=0.02)
+    assert 0.5 < r05["decay_weight"] < 1.0
+    assert r05["min_layers"] == 3, "age=0.5 → 2+(1*0.707)=2.707 → round 3(仍生效)"
+    r2 = resolve_early_stop_args({**prior, "age": 2.0},
+                                 default_min_layers=2, default_margin=0.02)
+    assert abs(r2["decay_weight"] - 0.25) < 1e-9
+    assert r2["min_layers"] == 2, "age=2 → 2+(1*0.25)=2.25 → round 2(衰减回默认)"
+
+
+def test_a5_prior_decay_never_below_default():
+    """衰减只降权不回退: 任意 age 下 min_layers 均 >= 默认(诚实红线)."""
+    from huginn.research.prior_store import resolve_early_stop_args
+
+    prior = {"applicable": True, "plateau": {"layer_index": 5}}   # candidate=4
+    for age in (0.0, 0.5, 1.0, 2.0, 5.0, 10.0):
+        r = resolve_early_stop_args({**prior, "age": age},
+                                    default_min_layers=2, default_margin=0.02)
+        assert r["min_layers"] >= 2, f"age={age} 不得低于默认"
+
+
+def test_a5_prior_decay_recorded_in_view():
+    """集成: 带 age 的先验注入 → prior_used 记录 decay_weight / prior_age."""
+    from huginn.research.planning import SubResearch, build_research_plan
+
+    plan = build_research_plan(
+        "a5 decay", [SubResearch("a", "sweep alpha metallic alloy", _run_(10.0))],
+    )
+    prior = {"source": "layered_settlement", "applicable": True, "age": 2.0,
+             "plateau": {"layer_index": 2, "top": "g", "score": 15.1,
+                         "relative_change": 0.0067}}
+    out = run_research_program(
+        goal="a5 decay", experiments=list(plan.experiments),
+        objectives_config={"score": "maximize"},
+        max_iterations=2, min_iterations=1, client=None,
+        planner=lambda _g: plan, early_stop_gate=True,
+        prior=prior, max_parallel=1,
+    )
+    pu = out.consolidated["early_stop"]["prior_used"]
+    assert abs(pu["decay_weight"] - 0.25) < 1e-9
+    assert pu["prior_age"] == 2.0
+    assert pu["min_layers"] == 2
+
+
+# ── 生产化 A6: goal 模糊匹配(领域聚类, 超越字符串等价) ───────────────────
+def test_a6_goal_match_level_pure():
+    """匹配档位纯函数: exact(同 slug) / related(领域重叠) / foreign / unknown."""
+    from huginn.research.prior_store import goal_match_level
+
+    exact = goal_match_level("sweep silicon bandgap", "sweep silicon bandgap",
+                             "bandgap_silicon", "bandgap_silicon")
+    assert exact["level"] == "exact" and exact["overlap"] == 1.0
+
+    related = goal_match_level("sweep silicon bandgap materials",
+                               "bandgap of silicon materials study",
+                               "sweep_silicon_bandgap", "bandgap_silicon_study")
+    assert related["level"] == "related" and related["overlap"] >= 0.5
+
+    foreign = goal_match_level("humboldt glacier flow", "sweep silicon bandgap",
+                               "humboldt_glacier_flow", "sweep_silicon_bandgap")
+    assert foreign["level"] == "foreign" and foreign["overlap"] == 0.0
+
+    unknown = goal_match_level("", "sweep silicon bandgap", None, "sweep_silicon")
+    assert unknown["level"] == "unknown"
+
+
+def test_a6_goal_related_admits_half_weight():
+    """related(领域重叠) → 半权注入: candidate=4 的 plateau 生效为 3."""
+    from huginn.research.prior_store import resolve_early_stop_args
+
+    prior = {"applicable": True, "goal": "sweep silicon bandgap materials",
+             "plateau": {"layer_index": 5}}             # candidate=4
+    r = resolve_early_stop_args(
+        prior, default_min_layers=2, default_margin=0.02,
+        current_goal="bandgap of silicon materials study",
+        current_goal_slug="bandgap_silicon_study",
+    )
+    assert r["goal_level"] == "related"
+    assert r["goal_matched"] is True
+    assert r["min_layers"] == 3, "2+(4-2)*0.5=3(半权)"
+    assert r["goal_overlap"] >= 0.5
+
+
+def test_a6_no_slug_but_foreign_text_rejected():
+    """无 slug 但有 goal 原文的异域先验 → 拒绝套用(文本可证伪)."""
+    from huginn.research.prior_store import resolve_early_stop_args
+
+    prior = {"applicable": True, "goal": "humboldt glacier flow",
+             "plateau": {"layer_index": 5}}
+    r = resolve_early_stop_args(
+        prior, default_min_layers=2, default_margin=0.02,
+        current_goal="sweep silicon bandgap",
+        current_goal_slug="sweep_silicon_bandgap",
+    )
+    assert r["note"] == "goal_mismatch"
+    assert r["goal_level"] == "foreign"
+    assert r["min_layers"] == 2
+
+
+def test_a6_related_recorded_in_view():
+    """集成: 领域重叠先验注入 → prior_used 记录 goal_level=related 与 overlap."""
+    from huginn.research.planning import SubResearch, build_research_plan
+
+    plan = build_research_plan(
+        "bandgap of silicon materials study",
+        [SubResearch("a", "sweep alpha metallic alloy", _run_(10.0))],
+    )
+    prior = {"source": "layered_settlement", "applicable": True,
+             "goal": "sweep silicon bandgap materials",
+             "plateau": {"layer_index": 2, "top": "g", "score": 15.1,
+                         "relative_change": 0.0067}}
+    out = run_research_program(
+        goal="bandgap of silicon materials study",
+        experiments=list(plan.experiments),
+        objectives_config={"score": "maximize"},
+        max_iterations=2, min_iterations=1, client=None,
+        planner=lambda _g: plan, early_stop_gate=True,
+        prior=prior, max_parallel=1,
+    )
+    pu = out.consolidated["early_stop"]["prior_used"]
+    assert pu["goal_level"] == "related"
+    assert pu["goal_matched"] is True
+    assert pu["goal_overlap"] >= 0.5
