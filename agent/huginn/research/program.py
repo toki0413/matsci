@@ -215,6 +215,8 @@ def run_research_program(
     replan_similarity: float = _REPLAN_SIM,             # A1: P-B 假说重叠阈值(0..1)
     early_stop_min_layers: int = _EARLY_STOP_MIN_LAYERS, # A1: P-C 防早停最小观测层数
     early_stop_margin: float = _EARLY_STOP_MARGIN,      # A1: P-C 分数高原容差
+    prior: dict | None = None,                      # A2: 跨 run 稳定度先验(prior_store.extract_prior 产物).
+                                                    # 只保守调整早停预算参数(min_layers 单调不减), 绝不参与实验.
 ) -> ResearchOutcome:
     """跑一条完整深研管线并返回结果."""
     from huginn.exploration.orchestrator import ExplorationOrchestrator
@@ -319,6 +321,14 @@ def run_research_program(
     _early_stop_active = False
     _early_stop_meta: dict = {"enabled": _early_stop_enabled}
 
+    # A2: 先验注入 —— 只把早停参数推向更保守方向(上次 N 层才稳定, 这次至少等 N 层).
+    # 无先验 → defaults 取参数原件(优先级: 参数 > 常量), 行为不变; 有先验 → min_layers 单调不减且钳制 [2,4].
+    from huginn.research.prior_store import resolve_early_stop_args
+    _prior_args = resolve_early_stop_args(
+        prior, default_min_layers=early_stop_min_layers, default_margin=early_stop_margin)
+    _early_stop_min_layers = int(_prior_args["min_layers"])
+    _early_stop_margin = float(_prior_args["margin"])
+
     def _settle_layer_check(settled_until: int) -> None:
         """层 settled_until 刚结算: 用稳定度判据决定是否激活提前终止(预算决策)."""
         nonlocal _early_stop_active
@@ -334,8 +344,8 @@ def run_research_program(
                 if s is not None:
                     rows.append((n, s))
             settled_layers.append(rows)
-        _st = stability_check(settled_layers, min_layers=early_stop_min_layers,
-                              margin=early_stop_margin)
+        _st = stability_check(settled_layers, min_layers=_early_stop_min_layers,
+                              margin=_early_stop_margin)
         _early_stop_meta["stability"] = _st
         # 稳定 且 还有剩余层可终止 → 激活
         if _st["stable"] and settled_until + 1 < len(_layers_map):
@@ -788,6 +798,10 @@ def run_research_program(
             "skipped": len(_early_stop_meta.get("skipped", [])),
             "log": list(_early_stop_meta.get("skipped", [])),   # 完整终止名单(可证伪)
             "stability": dict(_early_stop_meta.get("stability") or {}),  # 稳定判据细节(可证伪)
+            "prior_used": {"min_layers": _early_stop_min_layers,
+                           "margin": _early_stop_margin,
+                           "source": _prior_args["source"],
+                           "note": _prior_args["note"]},
             "verdict": ("no_early_stop" if not _early_stop_enabled
                         else _early_stop_meta.get("verdict", "checked_and_continued")),
         }

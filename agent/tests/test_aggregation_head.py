@@ -1174,3 +1174,51 @@ def test_a2_extract_prior_not_applicable_for_plain_run():
         planner=lambda _g: plan,
     )
     assert extract_prior(out)["applicable"] is False
+
+
+# ── 生产化 A3: 先验注入(resolve 接线) ────────────────────────────────────
+def test_a3_prior_injection_relaxes_min_layers():
+    """先验注入: 上次 plateau 在第 2 层 → 本次 min_layers 保守提高到 3,
+    3 层场景不再提前终止(全执行), 且 prior_used 记录进聚合视图."""
+    from huginn.research.planning import SubResearch, build_research_plan
+
+    # 3 层场景: 层0=10, 层1=10.1(rel 0.01 高原) → 默认 min_layers=2 会在层1 后终止层2
+    plan = build_research_plan(
+        "a3 inject",
+        [SubResearch("a", "sweep alpha metallic alloy", _run_(10.0)),
+         SubResearch("c", "sweep beta ceramic domain", _run_(10.1), depends_on=["a"]),
+         SubResearch("e", "scan polymer chain length", _run_(8.0), depends_on=["c"])],
+    )
+    prior = {"source": "layered_settlement", "applicable": True,
+             "plateau": {"layer_index": 2, "top": "g", "score": 15.1,
+                         "relative_change": 0.0067}}
+    out = run_research_program(
+        goal="a3 inject", experiments=list(plan.experiments),
+        objectives_config={"score": "maximize"},
+        max_iterations=5, min_iterations=1, client=None,
+        planner=lambda _g: plan, early_stop_gate=True,
+        prior=prior, max_parallel=1,
+    )
+    es = out.consolidated["early_stop"]
+    assert es["prior_used"]["note"] == "plateau_layer=2"
+    assert es["prior_used"]["min_layers"] == 3
+    assert es["verdict"] != "early_stopped", "min_layers=3 > 3 层场景可观测层数 → 不终止"
+    assert "e" in out.cache, "先验把等待拉长 → 剩余层真实执行"
+
+
+def test_a3_prior_none_keeps_defaults():
+    """无先验 → 不注入, 默认 min_layers=2, prior_used 记为未使用."""
+    from huginn.research.planning import SubResearch, build_research_plan
+
+    plan = build_research_plan(
+        "a3 none", [SubResearch("a", "sweep alpha metallic alloy", _run_(1.0))],
+    )
+    out = run_research_program(
+        goal="a3 none", experiments=list(plan.experiments),
+        objectives_config={"score": "maximize"},
+        max_iterations=2, min_iterations=1, client=None,
+        planner=lambda _g: plan, early_stop_gate=True,
+    )
+    es = out.consolidated["early_stop"]
+    assert es["prior_used"]["note"] == "no_prior"
+    assert es["prior_used"]["min_layers"] == 2

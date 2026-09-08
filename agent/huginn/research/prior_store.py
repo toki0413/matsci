@@ -51,3 +51,30 @@ def extract_prior(out: Any) -> dict[str, Any]:
             "relative_change": st.get("relative_change"),
         },
     }
+
+
+def resolve_early_stop_args(
+    prior: dict | None,
+    *,
+    default_min_layers: int = 2,
+    default_margin: float = 0.02,
+) -> dict[str, Any]:
+    """把先验映射为早停参数(纯函数, 确定性).
+
+    规则(全部可证伪):
+      - prior 为空/不可用 → 返回默认参数, note="no_prior";
+      - prior 可用(early_stopped) → min_layers = plateau.layer_index + 1,
+        且钳制在 [default_min_layers, 4] —— 上次 N 层才稳定, 这次至少等 N 层
+        才允许查稳定(**更保守**, 防领域漂移误停); margin 原样传默认(不因先验放宽).
+    """
+    if not prior or not prior.get("applicable"):
+        return {"min_layers": default_min_layers, "margin": default_margin,
+                "source": "default", "note": "no_prior"}
+    plateau = prior.get("plateau") or {}
+    idx = plateau.get("layer_index")
+    if idx is None:
+        return {"min_layers": default_min_layers, "margin": default_margin,
+                "source": "default", "note": "prior_without_plateau"}
+    min_layers = max(default_min_layers, min(int(idx) + 1, 4))
+    return {"min_layers": min_layers, "margin": default_margin,
+            "source": "cross_run_prior", "note": f"plateau_layer={idx}"}
