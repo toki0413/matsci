@@ -89,6 +89,11 @@ _STREAM_SUMMARY_CHARS = 1200
 # 覆盖采样", 跳过=预算再分配, 不伪造). 与 distill_tool_output 同关键词切法.
 _REPLAN_SIM = 0.55
 
+# 缺陷一(P-C): 证据驱动提前终止门 —— 防早停: 至少 N 个有分观测层才允许查稳定;
+# 稳定判据: 最后两层 top-1 得分相对变化 <= margin(分数高原) → 提前终止剩余层.
+_EARLY_STOP_MIN_LAYERS = 2
+_EARLY_STOP_MARGIN = 0.02
+
 
 def _first_scalar(node: Any) -> float | None:
     """从预测/真实结果里取"第一个可用的数值指标"作对账依据(深度优先, 不伪造).
@@ -202,6 +207,10 @@ def run_research_program(
                                       # 前序层真实证据结算后, 用假说重叠/证伪判定跳过已冗余或被打脸方向的
                                       # 后序实验(预算再分配; 跳过=不执行=不产生证据, **绝不伪造**),
                                       # 全程记录 replan_log 供审计. 默认关闭(全执行, 零行为变化).
+    early_stop_gate: bool = False,    # 缺陷一(P-C): 证据驱动提前终止门. 提供 planner(含 layers)时,
+                                      # 每层结算后用稳定度判据(连续层 top-1 分数高原)判定占优方向是否饱和,
+                                      # 饱和则提前终止剩余层(预算回收; 未执行=不产生证据, **绝不伪造**).
+                                      # 防早停: 至少 2 个有分观测层才允许判稳定. 默认关闭(全 BSP, 零行为变化).
 ) -> ResearchOutcome:
     """跑一条完整深研管线并返回结果."""
     from huginn.exploration.orchestrator import ExplorationOrchestrator
@@ -298,6 +307,41 @@ def run_research_program(
                 return i
         return -1
 
+    # ── 缺陷一(P-C) 证据驱动提前终止门: 状态与层结算判定 ──────────────────
+    # 与 P-B 同族(层间预算决策, 不伪造): P-B 逐实验修订边; P-C 在"分数进入高原
+    # (连续层 top-1 得分趋平)"时直接终止剩余层. 判定只基于真实执行成绩(cache).
+    _early_stop_enabled = bool(early_stop_gate) and plan_summary is not None \
+        and bool(plan_summary.get("layers"))
+    _early_stop_active = False
+    _early_stop_meta: dict = {"enabled": _early_stop_enabled}
+
+    def _settle_layer_check(settled_until: int) -> None:
+        """层 settled_until 刚结算: 用稳定度判据决定是否激活提前终止(预算决策)."""
+        nonlocal _early_stop_active
+        if not _early_stop_enabled or _early_stop_active:
+            return
+        from huginn.research.early_stop_gate import stability_check
+        settled_layers: list[list[tuple[str, float]]] = []
+        for i in range(min(settled_until, len(_layers_map) - 1) + 1):
+            rows = []
+            for n in _layers_map[i]:
+                res = cache.get(n) or {}
+                s = _first_scalar(res.get("objectives") or res.get("summary"))
+                if s is not None:
+                    rows.append((n, s))
+            settled_layers.append(rows)
+        _st = stability_check(settled_layers, min_layers=_EARLY_STOP_MIN_LAYERS,
+                              margin=_EARLY_STOP_MARGIN)
+        _early_stop_meta["stability"] = _st
+        # 稳定 且 还有剩余层可终止 → 激活
+        if _st["stable"] and settled_until + 1 < len(_layers_map):
+            _early_stop_active = True
+            _early_stop_meta["stopped_after_layer"] = settled_until
+            _early_stop_meta["skipped"] = []
+            _early_stop_meta["verdict"] = "early_stopped"
+        else:
+            _early_stop_meta.setdefault("verdict", "checked_and_continued")
+
     async def executor(branch):
         nonlocal _replan_checked          # P-B 审计计数: 嵌套闭包需 nonlocal 才能 +=
         spec = spec_by_name.get(branch.name)
@@ -307,6 +351,15 @@ def run_research_program(
                 spec_by_name[branch.name] = spec  # 注册, 供综合阶段取假说/摘要
         if spec is None:
             return {"success": False, "objectives": {}, "results": {}}
+        # P-C 提前终止: 占优方向已稳定(分数高原), 剩余层实验直接终止(预算回收).
+        # 与 P-B 同红线: 未执行 = 不产生证据, 不伪造; 决策记录进 _early_stop_meta.
+        if _early_stop_active and _layer_of(branch.name) > _early_stop_meta.get("stopped_after_layer", -1):
+            _early_stop_meta.setdefault("skipped", []).append({
+                "name": branch.name, "layer": _layer_of(branch.name),
+                "reason": "early_termination",
+                "evidence_from": f"layers 0..{_early_stop_meta['stopped_after_layer']}"})
+            return {"success": False, "objectives": {},
+                    "results": {"early_stopped": True}}
         # P-B 层间重规划门: 前序层真实证据结算后, 判定该实验是否仍值得执行.
         # 跳过 = 预算再分配 —— 不写 cache/stream_view/trace(未执行=不产生证据, 不伪造);
         # 决策全程记录进 _replan_log 供审计(gate.replan / out.replan_log).
@@ -328,6 +381,16 @@ def run_research_program(
             except Exception:  # noqa: BLE001 — 世界模型预筛失败: 不伪造, 保留纯真实结果
                 res.setdefault("predicted", {})
         cache[branch.name] = res
+        # P-C 层结算检查: 本实验所在层全部结算(执行/重规划跳过/提前终止)后,
+        # 用真实成绩跑稳定度判据 —— 稳定则激活提前终止(见 _settle_layer_check).
+        if _early_stop_enabled and not _early_stop_active:
+            _i = _layer_of(branch.name)
+            if _i >= 0:
+                _layer = _layers_map[_i]
+                _es_skipped = {s.get("name") for s in _early_stop_meta.get("skipped", [])}
+                _rp_skipped = {r["name"] for r in _replan_log}
+                if all(n in cache or n in _es_skipped or n in _rp_skipped for n in _layer):
+                    _settle_layer_check(_i)
         # P-A 流式入账: 每完成一个真实实验, 经漏B 门控压缩后按层增量记录(有界上下文).
         if _layer_epochs:
             try:
@@ -587,6 +650,19 @@ def run_research_program(
                               for r in _replan_log)
                   + "。完整理由见 trace.replan_gate。")
 
+    # P-C 证据驱动提前终止审计: 报告如实说明被终止的实验(证据进 trace 供 grounding 核对).
+    # 终止 = 未执行 = 无证据 —— 报告只陈述"稳定度预算决策", 不捏造任何实验结果.
+    if _early_stop_active:
+        trace.append(json.dumps({"type": "early_stop_gate", "meta": _early_stop_meta},
+                                ensure_ascii=False))
+        _st = _early_stop_meta.get("stability", {})
+        _es_n = len(_early_stop_meta.get("skipped", []))
+        final += ("\n\n## 证据驱动提前终止(P-C)\n"
+                  f"执行到层 {_early_stop_meta.get('stopped_after_layer')} 后占优方向进入分数高原"
+                  f"(top={_st.get('top')}, score={_st.get('score')}, "
+                  f"rel_change={_st.get('relative_change')}), 剩余 {_es_n} 个计划内实验提前终止"
+                  "(预算回收; 未执行 = 不产生证据, 不伪造)。证据见 trace.early_stop_gate。")
+
     g2 = verify(final, trace)
     if g2["verdict"] == "pass":
         verdict, ungrounded = "pass", []
@@ -698,6 +774,23 @@ def run_research_program(
                 EVIDENCE_UNOBSERVED, "unobserved",
                 detail="replan_gate 未启用(默认全执行, 零行为变化)",
                 ref="out.consolidated.replan"))
+        # gate.early_stop —— P-C 证据驱动提前终止门 (缺陷一, 建议级: 稳定后不等全层).
+        # unobserved = 未启用(默认全 BSP, 零行为变化); observed = 真实完成稳定度
+        # 判定并留下可证伪记录 —— 无论是否终止, 门工作即 passed, 明细供复核.
+        _early_stop_head = {
+            "enabled": _early_stop_enabled,
+            "layers": len(_layers_map) if _early_stop_enabled else 0,
+            "stopped_after_layer": _early_stop_meta.get("stopped_after_layer"),
+            "skipped": len(_early_stop_meta.get("skipped", [])),
+            "log": list(_early_stop_meta.get("skipped", [])),   # 完整终止名单(可证伪)
+            "verdict": ("no_early_stop" if not _early_stop_enabled
+                        else _early_stop_meta.get("verdict", "checked_and_continued")),
+        }
+        heads.append(HeadResult(
+            "gate.early_stop", "证据驱动提前终止门(P-C: 分数高原后不等全层)",
+            EVIDENCE_OBSERVED if _early_stop_enabled else EVIDENCE_UNOBSERVED,
+            "passed" if _early_stop_enabled else "unobserved",
+            detail=str(_early_stop_head), ref="out.consolidated.early_stop"))
         # gate.claim_grounding —— 声明门禁 (对报告是否成文有否决权)
         if verdict != "needs_grounding" or ungrounded:
             heads.append(HeadResult(
@@ -810,7 +903,8 @@ def run_research_program(
 
         out.consolidated = consolidate(heads, grounding_verdict=verdict,
                                        epochs=_n_epochs, stream_view=stream_view,
-                                       replan=_replan_meta).as_dict()
+                                       replan=_replan_meta,
+                                       early_stop=_early_stop_head).as_dict()
 
         # 缺陷三/五接缝: 在第一轮聚合视图上追加"元头"(外部验证 + 团队视角分离度).
         # 第一轮先用可替换外部验证方(缺省出厂 oracle)复核; 派生两个头后第二轮合并,
@@ -821,7 +915,7 @@ def run_research_program(
             base = consolidate(heads, grounding_verdict=verdict,
                            role_view=list(front), external_verifier=_ver,
                            epochs=_n_epochs, stream_view=stream_view,
-                           replan=_replan_meta)
+                           replan=_replan_meta, early_stop=_early_stop_head)
             ext = base.external_verify or {}
             heads.append(HeadResult(
                 "governance.external_verify", "独立验证方(可替换的外部复核)",
@@ -845,7 +939,7 @@ def run_research_program(
             final_cons = consolidate(heads, grounding_verdict=verdict,
                                  role_view=list(front), head_budget=_HEAD_BUDGET,
                                  epochs=_n_epochs, stream_view=stream_view,
-                                 replan=_replan_meta)
+                                 replan=_replan_meta, early_stop=_early_stop_head)
             final_cons.external_verify = ext   # 第二轮不重跑验证方, 保留第一轮独立复核结果
             # 缺陷七: 治理自身是否过度建制 —— 建议级元头(不否决, 只亮灯).
             _ob = final_cons.overbuild or {}
@@ -857,7 +951,7 @@ def run_research_program(
             final_cons2 = consolidate(heads, grounding_verdict=verdict,
                                   role_view=list(front), head_budget=_HEAD_BUDGET,
                                   epochs=_n_epochs, stream_view=stream_view,
-                                  replan=_replan_meta)
+                                  replan=_replan_meta, early_stop=_early_stop_head)
             final_cons2.external_verify = ext   # 保留第一轮独立复核结果(第二轮不重跑验证方)
             out.consolidated = final_cons2.as_dict()   # overbuild 用含全部头的最终视图(自洽)
         except Exception:  # noqa: BLE001 — 元头派生失败: 保留第一轮聚合视图, 不阻断
@@ -890,6 +984,9 @@ def run_research_program(
                      if (out.mutations or out.supervision_log) else "")
                   + (f"\n> 层间重规划(P-B): {len(_replan_log)} 实验跳过(预算再分配, 见 out.replan_log)"
                      if _replan_log else "")
+                  + (f"\n> 证据驱动提前终止(P-C): 层 {_early_stop_meta.get('stopped_after_layer')} 后稳定, "
+                     f"{len(_early_stop_meta.get('skipped', []))} 实验终止(见 out.consolidated.early_stop)"
+                     if _early_stop_active else "")
                   + "\n\n")
         out_md.write_text(header + final.strip() + "\n", encoding="utf-8")
     return out

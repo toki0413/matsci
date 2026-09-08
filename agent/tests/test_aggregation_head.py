@@ -725,3 +725,133 @@ def test_pb_gate_pure_decision_and_batch():
     assert [s["name"] for s in batch["skipped"]] == ["c"]
     assert batch["verdict"] == "replanned"
     assert set(batch["proceeded"]) == {"x"}
+
+
+# ── 缺陷一(P-C): 证据驱动提前终止门 ───────────────────────────────────────
+def test_pc_early_stop_on_score_plateau():
+    """P-C: 连续两层 top-1 进入分数高原 → 剩余层提前终止(预算回收, 不伪造)."""
+    from huginn.research.planning import SubResearch, build_research_plan
+
+    def _run(v: float):
+        return lambda: {"summary": {"y": v}, "objectives": {"score": v}}
+
+    plan = build_research_plan(
+        "pc plateau",
+        [SubResearch("a", "sweep alpha metallic alloy", _run(10.0)),
+         SubResearch("b", "probe organic phase width", _run(1.0)),
+         SubResearch("c", "sweep beta ceramic domain", _run(10.1), depends_on=["a"]),
+         SubResearch("d", "probe ionic liquid density", _run(9.0), depends_on=["b"]),
+         SubResearch("e", "scan polymer chain length", _run(8.0), depends_on=["c"])],
+    )
+    out = run_research_program(
+        goal="pc plateau",
+        experiments=list(plan.experiments),
+        objectives_config={"score": "maximize"},
+        max_iterations=6, min_iterations=1, client=None,
+        planner=lambda _g: plan, early_stop_gate=True, max_parallel=1,
+    )
+    # 层0/层1 真实执行; 分数高原(10.0 vs 10.1, rel=0.01<=0.02) → 层2 提前终止
+    es = out.consolidated["early_stop"]
+    assert es["verdict"] == "early_stopped"
+    assert es["stopped_after_layer"] == 1
+    assert [s["name"] for s in es["log"]] == ["e"]
+    assert {"a", "b", "c", "d"} <= set(out.cache), "终止前各层真实执行"
+    assert "e" not in out.cache, "终止的实验未执行=无证据(不伪造)"
+    assert "证据驱动提前终止(P-C)" in out.report
+    assert all(elem["name"] != "e" for elem in out.pareto_front)
+
+def test_pc_no_stop_when_top_moves():
+    """P-C: top-1 分数大幅移动(未饱和) → 不终止, 剩余层继续执行."""
+    from huginn.research.planning import SubResearch, build_research_plan
+
+    def _run(v: float):
+        return lambda: {"summary": {"y": v}, "objectives": {"score": v}}
+
+    plan = build_research_plan(
+        "pc moving",
+        [SubResearch("a", "sweep alpha metallic alloy", _run(10.0)),
+         SubResearch("c", "sweep beta ceramic domain", _run(50.0), depends_on=["a"]),
+         SubResearch("e", "scan polymer chain length", _run(8.0), depends_on=["c"])],
+    )
+    out = run_research_program(
+        goal="pc moving",
+        experiments=list(plan.experiments),
+        objectives_config={"score": "maximize"},
+        max_iterations=5, min_iterations=1, client=None,
+        planner=lambda _g: plan, early_stop_gate=True, max_parallel=1,
+    )
+    es = out.consolidated["early_stop"]
+    assert es["verdict"] == "checked_and_continued", "top 大幅上升 → 探索未饱和, 继续"
+    assert "e" in out.cache, "未终止 → 全部真实执行"
+
+def test_pc_default_off_is_lossless_bsp():
+    """P-C 默认关闭: 全 BSP 语义, 零行为变化."""
+    from huginn.research.planning import SubResearch, build_research_plan
+
+    def _run(v: float):
+        return lambda: {"summary": {"y": v}, "objectives": {"score": v}}
+
+    plan = build_research_plan(
+        "pc off",
+        [SubResearch("a", "sweep alpha metallic alloy", _run(10.0)),
+         SubResearch("c", "sweep beta ceramic domain", _run(10.1), depends_on=["a"]),
+         SubResearch("e", "scan polymer chain length", _run(8.0), depends_on=["c"])],
+    )
+    out = run_research_program(
+        goal="pc off",
+        experiments=list(plan.experiments),
+        objectives_config={"score": "maximize"},
+        max_iterations=5, min_iterations=1, client=None,
+        planner=lambda _g: plan, max_parallel=1,   # early_stop_gate 默认 False
+    )
+    assert "e" in out.cache, "未启用早停 → 全部真实执行"
+    es = out.consolidated["early_stop"]
+    assert es["enabled"] is False and es["verdict"] == "no_early_stop"
+    h = next(x for x in out.consolidated["head_details"] if x["id"] == "gate.early_stop")
+    assert h["outcome"] == "unobserved"
+
+def test_pc_single_layer_never_stops():
+    """P-C 防早停: 单层计划(观测层 < min_layers)永不触发提前终止."""
+    from huginn.research.planning import SubResearch, build_research_plan
+
+    def _run(v: float):
+        return lambda: {"summary": {"y": v}, "objectives": {"score": v}}
+
+    plan = build_research_plan(
+        "pc single", [SubResearch("a", "sweep alpha metallic alloy", _run(10.0))],
+    )
+    out = run_research_program(
+        goal="pc single",
+        experiments=list(plan.experiments),
+        objectives_config={"score": "maximize"},
+        max_iterations=2, min_iterations=1, client=None,
+        planner=lambda _g: plan, early_stop_gate=True, max_parallel=1,
+    )
+    es = out.consolidated["early_stop"]
+    assert es["verdict"] != "early_stopped", "观测层 < 2 → 防早停门拦住"
+    assert es["skipped"] == 0 and "a" in out.cache
+
+
+# ── 缺陷一(P-C): early_stop_gate 纯函数 ───────────────────────────────────
+def test_pc_stability_check_pure():
+    """稳定度判据: 高原→stable; 大幅移动/层数不足/缺分 → 不稳定(可证伪)."""
+    from huginn.research.early_stop_gate import stability_check
+
+    plateau = stability_check([[("a", 10.0), ("b", 1.0)], [("c", 10.1), ("d", 9.0)]],
+                              min_layers=2, margin=0.02)
+    assert plateau["stable"] is True
+    assert plateau["verdict"] == "stable_top_plateau"
+    assert plateau["top"] == "c" and abs(plateau["relative_change"] - 0.01) < 1e-9
+
+    moved = stability_check([[("a", 10.0)], [("c", 50.0)]], min_layers=2, margin=0.02)
+    assert moved["stable"] is False and moved["verdict"] == "top_not_saturated"
+
+    early = stability_check([[("a", 10.0)]], min_layers=2, margin=0.02)
+    assert early["stable"] is False and early["verdict"] == "insufficient_layers"
+
+    miss = stability_check([[("a", 10.0)], []], min_layers=2, margin=0.02)
+    assert miss["stable"] is False and miss["verdict"] == "missing_scores"
+
+    tie = stability_check([[("z", 5.0), ("a", 5.0)], [("b", 5.01)]],
+                          min_layers=2, margin=0.02)
+    assert tie["top"] == "b"      # tiebreak 确定性(本层 top 选择不影响终止判定)
