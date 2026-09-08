@@ -108,8 +108,11 @@
 - [x] P-C: 证据驱动提前终止（分数高原判据 + 防早停门）。
 - [x] 三阶段组合 + 并发 + 大压力验证（`tests/test_aggregation_head.py`）。
 - [x] 聚合头统一出口 + harness 投影（learning_capture）。
-- [ ] 生产化: `min_layers` / `margin` / `skip_similarity` 从常量提为可配置参数；
-     跨 run 的稳定度学习（把一次 run 的分数高原当作下个 run 的预算先验）。
+- [x] 生产化: 阈值已参数化(`stream_summary_chars` / `replan_similarity` /
+     `early_stop_min_layers` / `early_stop_margin`)；稳定度先验已沉淀
+     (`prior_store.extract_prior` → `run_research_program(prior=...)` 保守注入,
+     min_layers 单调不减, prior_used 入聚合视图)。
+     实施计划: `docs/superpowers/plans/2026-09-09-settlement-productionize.md`。
 
 ## 10. 非目标
 

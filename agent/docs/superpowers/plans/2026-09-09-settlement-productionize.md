@@ -111,24 +111,44 @@ def test_a1_early_stop_margin_parameterized():
 
 
 def test_a1_early_stop_min_layers_parameterized():
-    """P-C 防早停参数化: min_layers=1 时 1 层结算即可查稳定并终止."""
+    """P-C 防早停参数化: min_layers=3 时 2 层稳定不足置信 → 剩余层执行
+    (对照: 默认 min_layers=2 会在层1 结算后终止层2, 参数生效可证伪)."""
     from huginn.research.planning import SubResearch, build_research_plan
 
     plan = build_research_plan(
         "a1 minlayers",
         [SubResearch("a", "sweep alpha metallic alloy", _run_(10.0)),
-         SubResearch("c", "sweep beta ceramic domain", _run_(10.1), depends_on=["a"])],
+         SubResearch("c", "sweep beta ceramic domain", _run_(10.1), depends_on=["a"]),
+         SubResearch("e", "scan polymer chain length", _run_(8.0), depends_on=["c"])],
     )
     out = run_research_program(
         goal="a1 minlayers", experiments=list(plan.experiments),
         objectives_config={"score": "maximize"},
-        max_iterations=4, min_iterations=1, client=None,
-        planner=lambda _g: plan, early_stop_gate=True, early_stop_min_layers=1,
+        max_iterations=5, min_iterations=1, client=None,
+        planner=lambda _g: plan, early_stop_gate=True, early_stop_min_layers=3,
         max_parallel=1,
     )
-    assert out.consolidated["early_stop"]["verdict"] == "early_stopped"
-    assert "c" not in out.cache, "min_layers=1 → 层0 结算即查稳定"
+    assert "e" in out.cache, "min_layers=3 → 2 层观测不足置信 → 剩余层真实执行"
+    assert out.consolidated["early_stop"]["verdict"] != "early_stopped"
 ```
+
+> **边界防御（参数化引出，必须一并完成）**：`early_stop_gate.py::stability_check` 在
+> `len(scored) >= min_layers` 后直接取 `tops[-2]`，当 min_layers < 2 且仅单层观测时会
+> `IndexError` —— 参数化使 min_layers=1 成为合法可达值，须在取 `prev` 前防御：
+>
+> ```python
+>     prev = tops[-2]
+>     cur = tops[-1]
+> ```
+>
+> 改为（在 `if len(scored) < min_layers:` 块之后、`prev = tops[-2]` 之前插入）：
+>
+> ```python
+>     if len(tops) < 2:
+>         return {"stable": False, "verdict": "missing_scores",
+>                 "layers_observed": observed, "top": None, "prev_top": None,
+>                 "score": None, "prev_score": None, "relative_change": None}
+> ```
 
 - [ ] **Step 2: 运行测试确认失败**
 
@@ -294,17 +314,19 @@ def extract_prior(out: Any) -> dict[str, Any]:
     st = es.get("stability") or {}
     stopped = es.get("verdict") == "early_stopped"
     layer_index = es.get("stopped_after_layer")
+    _goal = ((getattr(out, "plan_summary", None) or {}).get("goal")
+             or (getattr(out, "harness", None) or {}).get("goal") or "")
     if not stopped or layer_index is None or not st:
         return {
             "source": "layered_settlement",
             "applicable": False,
             "reason": "no_early_stopped",
-            "goal": getattr(out, "converred", "") or "",
+            "goal": _goal,
         }
     return {
         "source": "layered_settlement",
         "applicable": True,
-        "goal": getattr(out, "converred", "") or "",
+        "goal": _goal,
         "plateau": {
             "layer_index": int(layer_index),
             "top": st.get("top"),
@@ -348,6 +370,20 @@ cd /workspace/agent && python -m pytest tests/test_aggregation_head.py -q --no-c
 ```
 
 Expected: `2 passed`。
+
+> **聚合视图透传修正（Task 2 必须连同完成）**：`out.consolidated["early_stop"]` 的
+> `_early_stop_head`（`huginn/research/program.py` ~L784-792）此前未把稳定判据
+> `_early_stop_meta["stability"]` 写进聚合视图 —— extract_prior 将恒取不到 plateau。
+> 在 `_early_stop_head` 的 `"verdict": ...` 一行之后追加：
+>
+> ```python
+>             "stability": dict(_early_stop_meta.get("stability") or {}),  # 稳定判据细节(可证伪)
+> ```
+>
+> （stability 仍留在 `_early_stop_meta`（报告段消费），此处是透传副本。）
+> `test_research_outcome_fields_are_frozen` 不受影响（只加了 consolidated 子字典键，
+> 非 `out.*` 字段）。此项使 Task 2 提交波及 3 个文件（program.py + prior_store.py +
+> tests/test_aggregation_head.py），属计划修正可接受。
 
 - [ ] **Step 5: Commit**
 
@@ -440,8 +476,10 @@ Expected: `KeyError: 'prior_used'`（`_early_stop_head` 尚无此键）—— �
 ```python
     # A2: 先验注入 —— 只把早停参数推向更保守方向(上次 N 层才稳定, 这次至少等 N 层).
     from huginn.research.prior_store import resolve_early_stop_args
+    # 注意: defaults 传**调用方参数**(非模块常量) —— 无 prior 时行为与 A1 参数化一致,
+    #       prior 只能把 min_layers 提高(更保守), 不会覆盖用户显式传入的值.
     _prior_args = resolve_early_stop_args(
-        prior, default_min_layers=_EARLY_STOP_MIN_LAYERS, default_margin=_EARLY_STOP_MARGIN)
+        prior, default_min_layers=early_stop_min_layers, default_margin=early_stop_margin)
     _early_stop_min_layers = int(_prior_args["min_layers"])
     _early_stop_margin = float(_prior_args["margin"])
 ```
@@ -464,6 +502,7 @@ Expected: `KeyError: 'prior_used'`（`_early_stop_head` 尚无此键）—— �
             "stopped_after_layer": _early_stop_meta.get("stopped_after_layer"),
             "skipped": len(_early_stop_meta.get("skipped", [])),
             "log": list(_early_stop_meta.get("skipped", [])),   # 完整终止名单(可证伪)
+            "stability": dict(_early_stop_meta.get("stability") or {}),  # 稳定判据(Task 2 已加, 保留)
             "prior_used": {"min_layers": _early_stop_min_layers,
                            "margin": _early_stop_margin,
                            "source": _prior_args["source"],
