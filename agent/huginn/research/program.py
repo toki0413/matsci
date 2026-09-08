@@ -51,15 +51,16 @@ class ResearchOutcome:
     report_source: str = "deterministic"
     mutations: int = 0                                 # 进化变异生成的子代数
     supervision_log: list = field(default_factory=list)  # HITL 人工反馈记录
-    plan_summary: dict | None = None                   # 需求拆解/自主规划摘要(planner) — 若提供
-    structural_gate: dict | None = None                # 结构闸门(交互等效/多元论)审计结果
-    structural_aligned: bool | None = None             # 代理是否通过结构对齐(Shortcut 探测)
-    workspace_verified: bool | None = None             # C-Space 工作区门: 报告断言是否作为在场落地
-    harness: dict | None = None                        # Self-Harness 五维报告(dict) — demo 一键出报告
-    law_model_used: dict | None = None                 # 世界模型真用证据: predict 产物/是否参与决策 (真深思 D)
-    plan_revision: dict | None = None                  # 漏A: plan 修订门(新证据→显式复盘初始计划)审计
-    grounding_audit: dict | None = None                # 漏C: "得分≠使用"(高分存活项是否真进最终报告)审计
-    consolidated: dict | None = None                   # 收敛聚合头(P1): 现有治理头统一注册后的收敛视图
+    plan_summary: dict | None = None                   # (P2 遗存) 需求拆解/自主规划摘要(planner) — 聚合头 head 源
+    structural_gate: dict | None = None                # (P2 遗存) 结构闸门(交互等效/多元论)审计结果
+    structural_aligned: bool | None = None             # (P2 遗存) 代理是否通过结构对齐(Shortcut 探测)
+    workspace_verified: bool | None = None             # (P2 遗存) C-Space 工作区门: 报告断言是否作为在场落地
+    harness: dict | None = None                        # Self-Harness 六维报告(dict) — demo 一键出报告
+    law_model_used: dict | None = None                 # (P2 遗存) 世界模型真用证据: predict 产物/是否参与决策 (真深思 D)
+    plan_revision: dict | None = None                  # (P2 遗存) 漏A: plan 修订门(新证据→显式复盘初始计划)审计
+    grounding_audit: dict | None = None                # (P2 遗存) 漏C: "得分≠使用"(高分存活项是否真进最终报告)审计
+    consolidated: dict | None = None                   # 收敛聚合头(P1/P2): 现有治理头统一注册后的收敛视图.
+                                                       # P3 起为唯一治理出口 —— 新视角只许在此注册, 不再加 out.* 字段.
 
 
 def _build_trace(cache: dict[str, dict]) -> list[str]:
@@ -504,17 +505,6 @@ def run_research_program(
         except Exception:  # noqa: BLE001 — 修订审计失败不阻断, 如实留空
             out.plan_revision = None
 
-    if out_md is not None:
-        header = (f"# 自主深研(Huginn×书生)\n\n> **门禁: {verdict}** (未落地: {ungrounded or '无'})\n"
-                  f"> real orchestration: explored={out.explored} pruned={out.pruned} "
-                  f"convergence={out.converred}\n> 报告来源: {out.report_source}"
-                  + (f"\n> 结构对齐闸门: {out.structural_aligned}" if audit is not None else "")
-                  + (f"\n> 工作区门: {out.workspace_verified}" if workspace is not None else "")
-                  + (f"\n> 进化变异: {out.mutations} 子代; HITL 反馈: {len(out.supervision_log)} 轮"
-                     if (out.mutations or out.supervision_log) else "")
-                  + "\n\n")
-        out_md.write_text(header + final.strip() + "\n", encoding="utf-8")
-
     # 世界模型真用证据: 若提供了 world_model, 本 run 确实用 predict 预筛了候选 ——
     # 记录 per-实验预测对账素材, 供 harness 的 "世界模型真用?" 以 observed 落地(真 D)。
     # 更进一步: 把预测与真实执行 reconcile 数值对账 —— 预测升级为"强在场"检验,
@@ -629,6 +619,40 @@ def run_research_program(
                 EVIDENCE_OBSERVED,
                 "passed" if out.grounding_audit.get("verdict") == "proper_use" else "failed",
                 detail=str(out.grounding_audit), ref="out.grounding_audit", gate=True))
+        # controlled.supervision —— 受控执行 (建议级, 供 P2 六维投影)
+        if getattr(out, "supervision_log", None):
+            heads.append(HeadResult(
+                "controlled.supervision", "受控执行(HITL/权限评审记录)",
+                EVIDENCE_OBSERVED, "passed",
+                detail=f"记录 {len(out.supervision_log)} 条", ref="out.supervision_log"))
+        else:
+            heads.append(HeadResult(
+                "controlled.supervision", "受控执行(HITL/权限评审记录)",
+                EVIDENCE_UNOBSERVED, "unobserved",
+                detail="supervisor_every=0 或未触发人工评审", ref="out.supervision_log"))
+        # reliable.evidence_cache —— 真实执行证据 (建议级, 供 P2 六维投影)
+        if cache:
+            heads.append(HeadResult(
+                "reliable.evidence_cache", "真实执行证据(缓存/expts 实录)",
+                EVIDENCE_OBSERVED, "passed",
+                detail=f"{len(cache)} 个实验", ref="out.cache"))
+        else:
+            heads.append(HeadResult(
+                "reliable.evidence_cache", "真实执行证据(缓存/expts 实录)",
+                EVIDENCE_UNOBSERVED, "unobserved", detail="cache 为空", ref="out.cache"))
+        # learning.self_audit —— 自省与经验沉淀 (建议级, 供 P2 六维投影)
+        artifacts = (out.structural_gate, out.plan_summary, out.plan_revision,
+                     out.grounding_audit, getattr(out, "supervision_log", None))
+        if any(a not in (None, []) for a in artifacts):
+            heads.append(HeadResult(
+                "learning.self_audit", "能力自省闭环(缺口→提案)",
+                EVIDENCE_OBSERVED, "passed",
+                detail="该 run 产生可复用审计/规划产物", ref="out.structural_gate"))
+        else:
+            heads.append(HeadResult(
+                "learning.self_audit", "能力自省闭环(缺口→提案)",
+                EVIDENCE_UNOBSERVED, "unobserved",
+                detail="自省已接线但本 run 无审计产物", ref="capabilities/introspection"))
 
         out.consolidated = consolidate(heads, grounding_verdict=verdict).as_dict()
     except Exception:  # noqa: BLE001 — 聚合头为新增视图, 失败不阻断管线
@@ -641,4 +665,22 @@ def run_research_program(
             goal, out, agent=harness_agent, machine=harness_machine).to_dict()
     except Exception:  # noqa: BLE001 — harness 为可选附加值, 失败不应阻断管线
         out.harness = None
+
+    # 报告页眉 (移动到底部, 聚合头/账本产出后再写): 门禁按声明定稿, 聚合视图取
+    # out.consolidated(统一入口), 旧字段仅作残差回显.
+    if out_md is not None:
+        _con = out.consolidated or {}
+        _con_line = f"verdict={_con.get('verdict', 'n/a')}"
+        if _con.get("gates_failed"):
+            _con_line += f", gates_failed={_con['gates_failed']}"
+        header = (f"# 自主深研(Huginn×书生)\n\n> **门禁: {verdict}** (未落地: {ungrounded or '无'})\n"
+                  f"> 聚合视图: {_con_line}"
+                  f"> real orchestration: explored={out.explored} pruned={out.pruned} "
+                  f"convergence={out.converred}\n> 报告来源: {out.report_source}"
+                  + (f"\n> 结构对齐闸门: {out.structural_aligned}" if audit is not None else "")
+                  + (f"\n> 工作区门: {out.workspace_verified}" if workspace is not None else "")
+                  + (f"\n> 进化变异: {out.mutations} 子代; HITL 反馈: {len(out.supervision_log)} 轮"
+                     if (out.mutations or out.supervision_log) else "")
+                  + "\n\n")
+        out_md.write_text(header + final.strip() + "\n", encoding="utf-8")
     return out

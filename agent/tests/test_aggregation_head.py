@@ -13,6 +13,8 @@ from huginn.research.aggregation_head import (
     HeadResult,
     consolidate,
 )
+from huginn.research.harness import build_harness_report
+from huginn.research.harness_ledger import HarnessLedger
 from huginn.research.program import Experiment, ResearchOutcome, run_research_program
 
 
@@ -134,3 +136,116 @@ def test_consolidated_absent_on_direct_out_construction():
     assert getattr(out, "consolidated", None) is None
     # 旧字段照常工作
     assert out.verdict == "grounded"
+
+
+def test_consolidated_carries_head_details():
+    from huginn.research.planning import SubResearch, build_research_plan
+
+    def _run(v: float):
+        return lambda: {"summary": {"y": v}, "objectives": {"score": v}}
+
+    plan = build_research_plan(
+        "detail heads",
+        [SubResearch("a", "a", _run(1.0)), SubResearch("b", "b", _run(2.0))],
+    )
+    out = run_research_program(
+        goal="detail heads",
+        experiments=list(plan.experiments),
+        objectives_config={"score": "maximize"},
+        max_iterations=3, min_iterations=1, client=None,
+        planner=lambda _g: plan,
+    )
+    details = out.consolidated["head_details"]
+    ids = {d["id"] for d in details}
+    # 六维投影所需头都注册了
+    assert {"gate.claim_grounding", "gate.structural", "gate.workspace",
+            "wm.actually_used", "audit.score_usage", "controlled.supervision",
+            "reliable.evidence_cache", "learning.self_audit", "audit.plan_revision"} <= ids
+
+
+# ── P2 · 消费者切换: harness 从聚合头投影六维 ────────────────────────────
+def test_p2_harness_projects_consolidated():
+    from huginn.research.planning import SubResearch, build_research_plan
+
+    def _run(v: float):
+        return lambda: {"summary": {"y": v}, "objectives": {"score": v}}
+
+    plan = build_research_plan(
+        "p2 projection",
+        [SubResearch("base", "baseline", _run(1.0)),
+         SubResearch("cand", "candidate", _run(2.0))],
+    )
+    out = run_research_program(
+        goal="p2 projection",
+        experiments=list(plan.experiments),
+        objectives_config={"score": "maximize"},
+        max_iterations=4, min_iterations=1, client=None,
+        planner=lambda _g: plan,
+        harness_agent="a", harness_machine="m",
+    )
+    assert {d["name"] for d in out.harness["dimensions"]} == {
+        "task_understanding", "controlled_execution", "change_validation",
+        "reliable_delivery", "learning_capture", "safety_authority",
+    }
+    # 六维投影 = consolidated.head_details 的投影(单一入口), 非逐字段扫描
+    sa = next(d for d in out.harness["dimensions"] if d["name"] == "safety_authority")
+    names = {c["name"] for c in sa["checks"]}
+    assert any("得分≠使用" in n for n in names)          # audit.score_usage 投影
+    assert any("世界模型真用?" in n for n in names)       # wm.actually_used 投影
+    tu = next(d for d in out.harness["dimensions"] if d["name"] == "task_understanding")
+    assert any("plan 修订门" in c["name"] for c in tu["checks"])
+
+
+def test_p2_harness_projection_evidence_matches_head():
+    # 无 world_model → wm 头 unobserved → 投影后 safety_authority 的 wm check 也是 unobserved
+    from huginn.research.planning import SubResearch, build_research_plan
+
+    def _run(v: float):
+        return lambda: {"summary": {"y": v}, "objectives": {"score": v}}
+
+    plan = build_research_plan(
+        "p2 evidence",
+        [SubResearch("a", "a", _run(1.0)), SubResearch("b", "b", _run(2.0))],
+    )
+    out = run_research_program(
+        goal="p2 evidence",
+        experiments=list(plan.experiments),
+        objectives_config={"score": "maximize"},
+        max_iterations=3, min_iterations=1, client=None,
+        planner=lambda _g: plan,
+    )
+    sa = next(d for d in out.harness["dimensions"] if d["name"] == "safety_authority")
+    wm = next(c for c in sa["checks"] if "世界模型真用?" in c["name"])
+    assert wm["evidence"] == EVIDENCE_UNOBSERVED
+    assert wm["outcome"] == "unobserved"
+
+
+def test_p2_ledger_consumes_projected_harness():
+    from huginn.research.planning import SubResearch, build_research_plan
+
+    def _run(v: float):
+        return lambda: {"summary": {"y": v}, "objectives": {"score": v}}
+
+    plan = build_research_plan(
+        "p2 ledger", [SubResearch("a", "a", _run(1.0))],
+    )
+    out = run_research_program(
+        goal="p2 ledger",
+        experiments=list(plan.experiments),
+        objectives_config={"score": "maximize"},
+        max_iterations=2, min_iterations=1, client=None,
+        planner=lambda _g: plan,
+        harness_agent="a", harness_machine="m",
+    )
+    ledger = HarnessLedger().append(out.harness)
+    s = ledger.summary(out.harness["task_episode"])
+    assert s["task_episode"] == out.harness["task_episode"]
+    assert "world_model_lessons" in s          # 投影后账本仍能聚合世界模型经验
+
+
+def test_p2_direct_out_keeps_legacy_harness_path():
+    # 直构 out(无 consolidated) → harness 走旧逐字段路径, 无"聚合投影"标记
+    out = ResearchOutcome(verdict="grounded", cache={"e": {"summary": {}}})
+    rep = build_harness_report("g", out)
+    names = [c.name for d in rep.dimensions for c in d.checks]
+    assert all("聚合投影" not in n for n in names)

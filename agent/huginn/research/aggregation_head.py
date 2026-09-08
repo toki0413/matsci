@@ -76,7 +76,8 @@ class Consolidated:
     gates_failed: list[str] = field(default_factory=list)   # 否决项 id 清单
     conflicts: list[list[str]] = field(default_factory=list)  # 显式冲突对(不静默合并)
     diversity: float = 0.0                           # 头间分歧度 (防御多头塌缩)
-    heads: list[str] = field(default_factory=list)   # 本次真实注册的头 (有界清单)
+    heads: list[str] = field(default_factory=list)   # 本次真实注册的头 id (有界清单)
+    head_details: list[dict] = field(default_factory=list)  # 每头详情(供 P2 消费者投影六维)
     score: float = 0.0                               # 加权总分 (0..1)
 
     def as_dict(self) -> dict[str, Any]:
@@ -87,6 +88,7 @@ class Consolidated:
             "conflicts": self.conflicts,
             "diversity": round(self.diversity, 3),
             "heads": self.heads,
+            "head_details": self.head_details,
             "score": round(self.score, 3),
         }
 
@@ -135,5 +137,6 @@ def consolidate(
         conflicts=conflicts,
         diversity=diversity,
         heads=[h.id for h in heads],
+        head_details=[h.__dict__ for h in heads],
         score=score,
     )

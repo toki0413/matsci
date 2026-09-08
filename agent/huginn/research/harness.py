@@ -70,6 +70,26 @@ class CheckResult:
         return _SCORE[self.outcome]
 
 
+#── P2 聚合头投影表(模块级): 六维 ← consolidated.head_details 的映射 ──────
+# 缺头 → 生成 unobserved 检查(诚实标"该源未注册/未触发", 不伪造).
+_P2_DIM_HEADS: dict[str, list[str]] = {
+    "task_understanding": ["audit.plan_revision"],
+    "controlled_execution": ["controlled.supervision"],
+    "change_validation": ["gate.claim_grounding", "gate.structural"],
+    "reliable_delivery": ["reliable.evidence_cache", "gate.workspace"],
+    "learning_capture": ["learning.self_audit"],
+    "safety_authority": ["wm.actually_used", "audit.score_usage"],
+}
+_P2_DIM_LABEL = {
+    "task_understanding": "需求拆解/plan 修订(聚合投影)",
+    "controlled_execution": "受控执行(聚合投影)",
+    "change_validation": "变更验证(声明/结构闸门聚合)",
+    "reliable_delivery": "可靠交付(证据缓存/工作区聚合)",
+    "learning_capture": "自省与经验沉淀(聚合投影)",
+    "safety_authority": "权威审计(世界模型真用/得分≠使用聚合)",
+}
+
+
 @dataclass
 class DimensionScore:
     name: str
@@ -121,14 +141,21 @@ class HarnessReport:
         self.machine = machine
         self.task_episode = self.task_episode or make_task_episode_id(self.goal, salt=f"{agent}:{machine}")
 
-        checks = [
-            *self._task_understanding(out),
-            *self._controlled_execution(out),
-            *self._change_validation(out),
-            *self._reliable_delivery(out),
-            *self._learning_capture(out),
-            *self._safety_authority(out),
-        ]
+        # P2 双轨: 有收敛聚合头(管道产物) → 从 out.consolidated.head_details 投影六维
+        # (单一入口, 不再 ad hoc 扫 15 个 out.* 字段); 无 consolidated(直构 out /
+        # 旧数据) → 退回既有的逐字段扫描, 保证单元测试与旧调用语义不变.
+        cons = getattr(out, "consolidated", None)
+        if cons and cons.get("head_details"):
+            checks = self._project_consolidated(cons)
+        else:
+            checks = [
+                *self._task_understanding(out),
+                *self._controlled_execution(out),
+                *self._change_validation(out),
+                *self._reliable_delivery(out),
+                *self._learning_capture(out),
+                *self._safety_authority(out),
+            ]
 
         by_dim: dict[str, list[CheckResult]] = {}
         for c in checks:
@@ -157,6 +184,28 @@ class HarnessReport:
         return self
 
     # ── 五维检查项从 out 提炼 ──────────────────────────────────────────────
+    # P2: 聚合头(consolidated.head_details) → 六维投影表. 每个维映射到一组 head,
+    # 缺头生成 unobserved 检查(诚实标"该源未注册/未触发", 不伪造). 六维集合与
+    # 既有断言 {task_understanding, ..., safety_authority} 天然一致.
+    @classmethod
+    def _project_consolidated(cls, cons: dict) -> list[CheckResult]:
+        heads = {h["id"]: h for h in cons.get("head_details", [])}
+        results: list[CheckResult] = []
+        for dim, ids in _P2_DIM_HEADS.items():
+            items = [heads[i] for i in ids if i in heads]
+            if not items:
+                results.append(CheckResult(
+                    dim, _P2_DIM_LABEL[dim], EVIDENCE_UNOBSERVED, "unobserved",
+                    detail="聚合头未注册该维来源", ref="out.consolidated"))
+                continue
+            for h in items:
+                results.append(CheckResult(
+                    dim, h.get("name", h["id"]),
+                    h.get("evidence", EVIDENCE_UNOBSERVED),
+                    h.get("outcome", "unobserved"),
+                    detail=h.get("detail", ""), ref=h.get("ref", "")))
+        return results
+
     @staticmethod
     def _task_understanding(out: Any) -> list[CheckResult]:
         results: list[CheckResult] = []
