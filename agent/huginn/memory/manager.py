@@ -109,6 +109,14 @@ class MemoryManager:
         """追加结构化推理记录 (external thinking 深化侧信道)."""
         self.session.add_reasoning_record(record)
 
+    def iter_reasoning_records(self):
+        """只读迭代结构化推理记录 (deep_think→CSpace 桥读回用).
+
+        惰性迭代 session.reasoning_records, 不复制敏感全文入上下文; 桥从这条
+        访问器读回 records 入工作区, 供体征/promote 门禁消费.
+        """
+        return iter(self.session.reasoning_records)
+
     # --- Long-term memory operations ---
 
     def remember(
