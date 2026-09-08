@@ -152,6 +152,8 @@ def test_dependency_allowlist_blocks_unbounded_new_deps() -> None:
 # "假说→真实数值实验→Pareto"的可复现计算管线 —— 是两条不同产品层, 不应互相串层。
 # 计算接缝已唯一化(research/), 这里再钉死"文献层不产计算、计算层不产文献"的方向性,
 # 防未来新 API 误把计算深研塞进文献人才, 或把文献写作塞进计算接缝。
+# 注意: 高扇出≠熵 —— routes/__init__ 扇出 56 是"健康的路由注册表"(只做 ALL_ROUTERS
+# 聚合与 /v1 挂载, 无一逻辑); 判熵看"有没有真实逻辑重复/绕路", 不看聚合点的扇出数值。
 def test_no_academic_literature_layer_imports_compute_research() -> None:
     """文献层 (academic/) 不得 import 计算深研接缝 (huginn.research.*)。
 
