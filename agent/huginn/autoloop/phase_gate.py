@@ -169,7 +169,7 @@ class PhaseGate:
             }
             with open(path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
-        except Exception:
+        except Exception as exc:
             logger.debug("phase gate telemetry write skipped", exc_info=True)
 
     def to_dict(self) -> dict[str, Any]:
@@ -436,7 +436,7 @@ class MathEvidenceChecker:
                             else self._DUAL_NOT_COVERED_MASS
                         )
                         sources.append("dual_coverage")
-                except Exception:
+                except Exception as exc:
                     logger.debug("dual_coverage check failed", exc_info=True)
 
         if not masses:
@@ -507,7 +507,7 @@ class PhaseGateHook:
         try:
             state = get_shared_phase_gate_state()
             return state.needs_human_checkpoint(from_phase, to_phase)
-        except Exception:
+        except Exception as exc:
             logger.debug("best-effort op failed", exc_info=True)
             return False
 
@@ -582,7 +582,7 @@ class PhaseGateHook:
                         feedback=f"Math evidence blocked: {math_feedback}",
                         reviewer="math_checker",
                     )
-            except Exception:
+            except Exception as exc:
                 # math_checker 挂了不阻断, 降级放行
                 logger.debug("best-effort op failed", exc_info=True)
 
@@ -620,7 +620,7 @@ class PhaseGateHook:
                         feedback=f"Reviewer 拒绝: {reason}",
                         reviewer="reviewer",
                     )
-            except Exception:
+            except Exception as exc:
                 logger.debug("reviewer fn failed", exc_info=True)
 
         return PhaseGate(

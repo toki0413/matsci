@@ -200,7 +200,7 @@ class ConjectureGenerator:
                 result = self._llm_extract(
                     source_problem, source_domain, model, domain_context
                 )
-            except Exception:
+            except Exception as exc:
                 logger.debug("LLM extract failed, fallback to template", exc_info=True)
                 result = self._template_extract(source_problem, source_domain)
         else:
@@ -248,7 +248,7 @@ class ConjectureGenerator:
         if model is not None and self._is_real_model(model):
             try:
                 result = self._llm_transfer(pattern, target_domain, model)
-            except Exception:
+            except Exception as exc:
                 logger.debug("LLM transfer failed, fallback to template", exc_info=True)
                 result = self._template_transfer(pattern, target_domain)
         else:
@@ -328,7 +328,7 @@ class ConjectureGenerator:
                                 "method": f"imagination:{t_type}",
                             }
                             break
-            except Exception:
+            except Exception as exc:
                 logger.debug("imagination in generate_conjecture failed, fallback", exc_info=True)
                 result = None
 
@@ -341,7 +341,7 @@ class ConjectureGenerator:
                         prompt_level=prompt_level,
                         known_solutions=known_solutions,
                     )
-                except Exception:
+                except Exception as exc:
                     logger.debug("LLM generate failed, fallback to template", exc_info=True)
                     result = self._template_generate(transfer_result)
             else:
@@ -659,7 +659,7 @@ class ConjectureGenerator:
             tgt = next((d for d in _REGISTRY if d.name == tgt_name), None)
             if src and tgt:
                 return shared_structure(src, tgt)
-        except Exception:
+        except Exception as exc:
             logger.debug("shared_structure lookup failed", exc_info=True)
         return []
 
@@ -889,7 +889,7 @@ Output ONLY a JSON object with keys: transferred_pattern, domain_mapping (object
                 metadata=metadata or {},
             )
             return record.id
-        except Exception:
+        except Exception as exc:
             logger.debug("research log write failed", exc_info=True)
             return None
 
@@ -943,7 +943,7 @@ Output ONLY a JSON object with keys: transferred_pattern, domain_mapping (object
 
             kg.save()
             return conjecture_id
-        except Exception:
+        except Exception as exc:
             logger.debug("conjecture KG write-back failed", exc_info=True)
             return None
 
@@ -961,7 +961,7 @@ Output ONLY a JSON object with keys: transferred_pattern, domain_mapping (object
             if not nodes:
                 return None
             return kg.to_text({n["id"] for n in nodes})
-        except Exception:
+        except Exception as exc:
             logger.debug("KG domain context fetch failed", exc_info=True)
             return None
 
@@ -983,7 +983,7 @@ def _lookup_domain(domain: str) -> dict[str, str]:
             query=domain,
             top_k=3,
         )
-    except Exception:
+    except Exception as exc:
         logger.debug("best-effort op failed", exc_info=True)
         return {}
     if not results:
@@ -1045,7 +1045,7 @@ def get_kg() -> Any:
                     from huginn.kg.graph import ProjectKnowledgeGraph
 
                     _kg_singleton = ProjectKnowledgeGraph(get_runtime_home())
-                except Exception:
+                except Exception as exc:
                     logger.debug("KG singleton init failed", exc_info=True)
                     return None
     return _kg_singleton
@@ -1459,7 +1459,7 @@ def _reframe_abstract_lift(
         mcg = get_math_concept_graph()
         nb = mcg.query_concept_neighborhood(math_concept, depth=2)
         ancestors = nb.get("ancestors", []) if nb.get("found") else []
-    except Exception:
+    except Exception as exc:
         ancestors = []
 
     if not ancestors:
@@ -1571,9 +1571,9 @@ def _reframe_analogy_map(
                 tgt = next((d for d in _REGISTRY if d.name == target_domain), None)
                 if src and tgt:
                     shared = shared_structure(src, tgt)
-            except Exception:
+            except Exception as exc:
                 logger.debug("shared structure lookup skipped", exc_info=True)
-    except Exception:
+    except Exception as exc:
         transfer = None
         shared = []
 
@@ -1630,7 +1630,7 @@ def _find_dual_concepts(text: str) -> list[str]:
             if d.get("relation") == "dual_to":
                 duals.append(f"{u} ↔ {v}")
         return duals
-    except Exception:
+    except Exception as exc:
         return []
 
 
@@ -1661,7 +1661,7 @@ def _llm_reframe_abstract_lift(problem: str, model: Any) -> dict[str, Any]:
                 "mapping": parsed.get("mapping", {}),
                 "method": "llm",
             }
-    except Exception:
+    except Exception as exc:
         logger.debug("LLM abstract_lift failed, fallback to template", exc_info=True)
     # 降级
     return _reframe_abstract_lift(problem, problem.lower(), None)
@@ -1692,7 +1692,7 @@ def _llm_reframe_dual_flip(problem: str, model: Any) -> dict[str, Any]:
                 "mapping": parsed.get("mapping", {}),
                 "method": "llm",
             }
-    except Exception:
+    except Exception as exc:
         logger.debug("LLM dual_flip failed, fallback to template", exc_info=True)
     return _reframe_dual_flip(problem, problem.lower(), None)
 
@@ -1729,7 +1729,7 @@ def _llm_reframe_analogy_map(
                 "mapping": parsed.get("mapping", {}),
                 "method": "llm",
             }
-    except Exception:
+    except Exception as exc:
         logger.debug("LLM analogy_map failed, fallback to template", exc_info=True)
     # 降级到模板 (target_domain 传入时走模板, 否则 as-is)
     return _reframe_analogy_map(problem, domain, target_domain, None)
@@ -1764,7 +1764,7 @@ def _log_reframe_to_research_log(
             },
         )
         return record.id
-    except Exception:
+    except Exception as exc:
         logger.debug("reframe research_log write failed", exc_info=True)
         return None
 
@@ -1807,12 +1807,12 @@ def _write_reframe_to_kg(
                 deepest = ancestor_chain[-1] if ancestor_chain else None
                 if deepest:
                     kg.attach_math_concept_graph(deepest, depth=1)
-            except Exception:
+            except Exception as exc:
                 logger.debug("attach_math_concept_graph in reframe failed", exc_info=True)
 
         kg.save()
         return reframed_id
-    except Exception:
+    except Exception as exc:
         logger.debug("reframe KG write-back failed", exc_info=True)
         return None
 

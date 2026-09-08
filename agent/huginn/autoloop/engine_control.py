@@ -73,7 +73,7 @@ class EngineControlMixin:
                     "engine_state saved (reason=%s, iter=%d, run_id=%s)",
                     reason, self._iteration, run_id,
                 )
-        except Exception:
+        except Exception as exc:
             logger.warning(
                 "_maybe_save_engine_state failed (non-fatal)", exc_info=True,
             )
@@ -106,7 +106,7 @@ class EngineControlMixin:
             # 超硬上限: 先保存进度 (可 resume), 再抛 — agent loop 优雅停止而非继续烧钱.
             self._maybe_save_engine_state(force=True, reason="budget_exhausted")
             raise
-        except Exception:
+        except Exception as exc:
             logger.debug("token budget tracking failed (non-fatal)", exc_info=True)
 
     async def _maybe_run_budget_approval(self) -> None:
@@ -144,7 +144,7 @@ class EngineControlMixin:
                 raise BudgetExhausted("budget renewal denied by user/limit")
         except BudgetExhausted:
             raise
-        except Exception:
+        except Exception as exc:
             logger.debug("budget approval check failed (non-fatal)", exc_info=True)
 
     def _build_budget_human_decide(self):
@@ -170,7 +170,7 @@ class EngineControlMixin:
                     return False
                 low = str(answer).strip().lower()
                 return "approve" in low or low.startswith("y") or "批准" in str(answer)
-            except Exception:
+            except Exception as exc:
                 logger.debug("budget human decide failed (non-fatal)", exc_info=True)
                 return False
         return _human_decide
@@ -184,7 +184,7 @@ class EngineControlMixin:
             from huginn.plugins.event_bus import EventBus
 
             self._event_bus = EventBus()
-        except Exception:
+        except Exception as exc:
             logger.debug("best-effort op failed", exc_info=True)
             return None
         return self._event_bus
@@ -222,7 +222,7 @@ class EngineControlMixin:
                     event_type.name,
                     stage_name,
                 )
-        except Exception:
+        except Exception as exc:
             logger.warning(
                 "error in _dispatch_stage_event: bus.dispatch failed", exc_info=True
             )
@@ -420,7 +420,7 @@ class EngineControlMixin:
                 },
             )
             await bus.dispatch(ev)
-        except Exception:
+        except Exception as exc:
             logger.debug("checkpoint event publish failed", exc_info=True)
 
 
@@ -519,7 +519,7 @@ class EngineControlMixin:
                     channel.respond(sq.id, answer)
                     answered += 1
                     logger.info("side answered %s: %s", sq.id, answer[:80])
-            except Exception:
+            except Exception as exc:
                 # 单条失败不影响其他, 也不影响主 loop
                 logger.warning("side failed to answer %s", sq.id, exc_info=True)
         return answered
@@ -533,7 +533,7 @@ class EngineControlMixin:
             from huginn.interaction.clarification import get_clarification_manager
 
             self._clarification_mgr = get_clarification_manager()
-        except Exception:
+        except Exception as exc:
             logger.debug("best-effort op failed", exc_info=True)
             return None
         return self._clarification_mgr
@@ -547,7 +547,7 @@ class EngineControlMixin:
             from huginn.autoloop.plan_store import PlanStore
 
             self._plan_store = PlanStore()
-        except Exception:
+        except Exception as exc:
             logger.debug("best-effort op failed", exc_info=True)
             return None
         return self._plan_store
@@ -648,7 +648,7 @@ class EngineControlMixin:
                 for _dim, _nodes in list(_clusters.items())[:3]:
                     if _dim != "unknown" and _nodes:
                         _directions.append(f"{_dim}: {_nodes[0].statement[:80]}")
-            except Exception:
+            except Exception as exc:
                 logger.debug("cluster directions skipped", exc_info=True)
             # 不足 3 个时补 speculator predictions (首轮自然走这条)
             while len(_directions) < 3:
@@ -658,7 +658,7 @@ class EngineControlMixin:
                         _directions.append(f"speculator: {str(_preds[len(_directions)])[:80]}")
                     else:
                         break
-                except Exception:
+                except Exception as exc:
                     logger.debug("best-effort op failed", exc_info=True)
                     break
 
@@ -703,7 +703,7 @@ class EngineControlMixin:
             if checkpoint == "hypothesize_align" and answer:
                 self._speculator_hint += f"\n[FDE 对齐] 用户方向: {answer[:200]}\n"
             return answer
-        except Exception:
+        except Exception as exc:
             logger.warning("clarify %s failed", checkpoint, exc_info=True)
             return None
 
@@ -735,7 +735,7 @@ class EngineControlMixin:
         try:
             for nd in self.hypothesis_graph.supported()[:3]:
                 evidence.append(str(nd.statement)[:150])
-        except Exception:
+        except Exception as exc:
             logger.debug("supported evidence collect skipped", exc_info=True)
 
         artifacts: list[str] = []
@@ -770,7 +770,7 @@ class EngineControlMixin:
             trace_path.parent.mkdir(parents=True, exist_ok=True)
             with trace_path.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-        except Exception:
+        except Exception as exc:
             logger.debug("meta_trace write failed (non-fatal)", exc_info=True)
 
 

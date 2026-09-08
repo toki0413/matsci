@@ -33,6 +33,7 @@ import os
 import re
 import time
 import uuid
+from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -180,7 +181,7 @@ class CognitiveLoop:
         # ON_WORKFLOW_BEGIN: 之前只发 stage 级事件, workflow 整体首尾缺失.
         try:
             await self._dispatch_stage_event(EventType.ON_WORKFLOW_BEGIN, "workflow_start")
-        except Exception:
+        except Exception as exc:
             logger.debug("ON_WORKFLOW_BEGIN dispatch failed (non-fatal)", exc_info=True)
 
         while state.iteration < state.max_iterations and not state.should_stop:
@@ -306,7 +307,7 @@ class CognitiveLoop:
         # ON_WORKFLOW_DONE: 与 ON_WORKFLOW_BEGIN 对称, workflow 结束时发一次.
         try:
             await self._dispatch_stage_event(EventType.ON_WORKFLOW_DONE, "workflow_done")
-        except Exception:
+        except Exception as exc:
             logger.debug("ON_WORKFLOW_DONE dispatch failed (non-fatal)", exc_info=True)
 
         return state
@@ -346,17 +347,18 @@ class CognitiveLoop:
 
 # === output_writer 接口 (可选钩子, 生产路径传 None) ===
 
-class OutputWriter:
+class OutputWriter(ABC):
     """output_writer 接口 — 可选的 per-step 产物钩子.
 
     这是一个可选的扩展点 (extension point): 生产路径不传 (output_writer=None,
     provenance 走 _record_provenance). 需要自定义产物落盘时实现此接口并传给
     CognitiveLoop. self-check 用 MockWriter 验证 loop 语义.
 
-    NotImplementedError 是有意的 — 强制子类实现, 不提供默认空实现
+    @abstractmethod + ``...`` 强制子类实现, 不提供默认空实现
     (空实现会静默吞掉调用方期望的落盘行为).
     """
 
+    @abstractmethod
     def write_step(
         self,
         iteration: int,
@@ -364,7 +366,7 @@ class OutputWriter:
         result: Any,
         reflection: ReflectionResult,
     ) -> None:
-        raise NotImplementedError
+        ...
 
 
 # === AV4 路径 B: 共享元认知护航原语 ===
@@ -422,7 +424,7 @@ def _inject_failed_direction_lessons(
             lessons.append(line)
             if len(lessons) >= limit:
                 break
-    except Exception:
+    except Exception as exc:
         logger.debug("startup lessons injection skipped", exc_info=True)
         return current_hint
 
@@ -553,7 +555,7 @@ class CognitiveLoopMixin:
                         tags=["pmk", "human_decision", _subject_tag],
                         source=f"autoloop pause {run_id} step {step_id}",
                     )
-        except Exception:
+        except Exception as exc:
             logger.debug("best-effort PMK decision writeback failed", exc_info=True)
 
         return resolution
@@ -592,7 +594,7 @@ class CognitiveLoopMixin:
             try:
                 phase_span.metadata["status"] = "failed"
                 phase_span.metadata["error"] = str(e)
-            except Exception:
+            except Exception as exc:
                 logger.warning(
                     "error in _run_phase: span metadata update failed", exc_info=True
                 )
@@ -632,12 +634,12 @@ class CognitiveLoopMixin:
         # 读模型经 AutoloopStateProjection 派生 — 可重放/可恢复.
         try:
             self._record_autoloop_phase(name, "running", getattr(self, "_iteration", 0))
-        except Exception:
+        except Exception as exc:
             logger.debug("autoloop phase event record failed (non-fatal)", exc_info=True)
         # H3: 把投影读模型推到 UI 进度通道 (current_label + phase_seq).
         try:
             self._publish_progress()
-        except Exception:
+        except Exception as exc:
             logger.debug("autoloop progress publish failed (non-fatal)", exc_info=True)
         # C2: 追踪本 run 的 phase 序列, 供 trajectory_match 召回用.
         if not hasattr(self, "_current_run_phases"):
@@ -661,7 +663,7 @@ class CognitiveLoopMixin:
             try:
                 phase_span.metadata["status"] = "failed"
                 phase_span.metadata["error"] = str(e)
-            except Exception:
+            except Exception as exc:
                 logger.warning(
                     "error in _run_phase_async: span metadata update failed",
                     exc_info=True,
@@ -685,14 +687,14 @@ class CognitiveLoopMixin:
             self._record_autoloop_phase(
                 name, phase.status, getattr(self, "_iteration", 0)
             )
-        except Exception:
+        except Exception as exc:
             logger.debug(
                 "autoloop phase status event record failed (non-fatal)", exc_info=True,
             )
         # H3: 完成状态也推到 UI 进度通道.
         try:
             self._publish_progress()
-        except Exception:
+        except Exception as exc:
             logger.debug(
                 "autoloop progress publish (complete) failed (non-fatal)", exc_info=True,
             )
@@ -735,7 +737,7 @@ class CognitiveLoopMixin:
                     break
                 if _attempt < 2:
                     _time.sleep(1 * (_attempt + 1))
-        except Exception:
+        except Exception as exc:
             logger.debug("best-effort op failed", exc_info=True)  # no git repo or git unavailable — not our problem
 
     def _darwin_ratchet_check(self) -> None:
@@ -793,7 +795,7 @@ class CognitiveLoopMixin:
             sig = hodge_signature(node_ids, edge_pairs)
             # β₁/n 标准化到 [0,1]: 树状图 β₁=0 → 0 分; 完全交叉 → 趋近 1
             topology_richness = min(sig.beta1_approx / max(n, 1), 1.0)
-        except Exception:
+        except Exception as exc:
             logger.debug("topology_richness calc failed (non-fatal)", exc_info=True)
 
         # 0-10 分制, 对齐 darwin-skill 原版
@@ -829,9 +831,9 @@ class CognitiveLoopMixin:
                 try:
                     from huginn.routes.metrics import track_belief_update
                     track_belief_update("gaussian")
-                except Exception:
+                except Exception as exc:
                     logger.debug("belief metric track skipped", exc_info=True)
-            except Exception:
+            except Exception as exc:
                 logger.debug("best-effort op failed", exc_info=True)  # 循环 import 或其他故障 → 回退原逻辑
 
         # v6 G54: 把 darwin 分数 / supported_ratio 暴露给 _plan / _validate
@@ -855,7 +857,7 @@ class CognitiveLoopMixin:
             try:
                 sp = getattr(self, "stable_principles", None)
                 n_principles = len(sp) if sp else 0
-            except Exception:
+            except Exception as exc:
                 logger.debug("stable_principles count skipped", exc_info=True)
             sys_prompt_len = 0
             with contextlib.suppress(Exception):
@@ -864,7 +866,7 @@ class CognitiveLoopMixin:
 
             health = eng.health_check()
             self._emit_campaign("heat_engine.health", health)
-        except Exception:
+        except Exception as exc:
             logger.debug("heat_engine.update_T_cold failed (non-fatal)", exc_info=True)
 
         # v7 长任务: stagnation 阈值 2→5. Oxelra 206 步允许长期低增益,
@@ -907,7 +909,7 @@ class CognitiveLoopMixin:
                         if _ag is not None:
                             _has_active_goal = True
                             _wall_expired = _gs.wall_clock_expired(_ag.id)
-                    except Exception:
+                    except Exception as exc:
                         logger.debug("P5 wall_clock check failed", exc_info=True)
                 if _persistent and _has_active_goal and not _wall_expired:
                     logger.info(
@@ -943,7 +945,7 @@ class CognitiveLoopMixin:
         # ponytail: 从已有 self.* 字段抽, 不调 LLM (省 token). ceiling 是 LLM 蒸馏.
         try:
             self._distill_meta_trace(score, supported_ratio)
-        except Exception:
+        except Exception as exc:
             logger.debug("meta_trace distill failed (non-fatal)", exc_info=True)
 
     def _classify_stall(self) -> str:
@@ -1026,7 +1028,7 @@ class CognitiveLoopMixin:
                                 )
                                 return
                             _ce_node.evidence["ce_rounds_used"] = _ce_used + 1
-            except Exception:
+            except Exception as exc:
                 logger.debug("per-hyp ce budget check failed", exc_info=True)
         # 强制开 imagination (override _should_imaginate 的判断)
         self._force_imaginate = True
@@ -1038,7 +1040,7 @@ class CognitiveLoopMixin:
                 _node = self.hypothesis_graph._nodes.get(_cur_hyp)
                 if _node:
                     _stmt = _node.statement[:200]
-            except Exception:
+            except Exception as exc:
                 logger.debug("hypothesis statement lookup skipped", exc_info=True)
         _hint = (
             f"Stagnation classified as evidence_against. "
@@ -1078,7 +1080,7 @@ class CognitiveLoopMixin:
                 self._speculator_hint = (
                     (getattr(self, "_speculator_hint", "") or "") + "\n" + _block
                 )
-        except Exception:
+        except Exception as exc:
             logger.debug("recall failed directions for exemplar failed", exc_info=True)
         # P1 Task 8: inject [VERIFIER WEAKNESS] from past blind mismatches
         try:
@@ -1093,7 +1095,7 @@ class CognitiveLoopMixin:
                             f"- hyp: {str(_md.get('hypothesis', '?'))[:100]} "
                             f"(blind={_md.get('blind_holds')}, orig={_md.get('orig_holds')})"
                         )
-                    except Exception:
+                    except Exception as exc:
                         _wl.append(f"- {_mc[:100]}")
                 if _wl:
                     _wb = (
@@ -1104,7 +1106,7 @@ class CognitiveLoopMixin:
                     self._speculator_hint = (
                         (getattr(self, "_speculator_hint", "") or "") + _wb
                     )
-        except Exception:
+        except Exception as exc:
             logger.debug("verifier weakness hint failed", exc_info=True)
         logger.info("P2 counterexample hunt triggered, hint injected")
     def _emit_campaign(self, event_type: str, data: dict) -> None:
@@ -1118,7 +1120,7 @@ class CognitiveLoopMixin:
             from huginn.events.unified_bus import publish_event
 
             publish_event(event_type, data, source="autoloop")
-        except Exception:
+        except Exception as exc:
             logger.debug("campaign EventBus emit failed", exc_info=True)
         # SSE 推送到 /tasks/stream 的 'campaign' event, 前端结构化消费
         try:
@@ -1127,7 +1129,7 @@ class CognitiveLoopMixin:
             get_progress_tracker().emit_campaign_event(
                 getattr(self, "_progress_task_id", ""), event_type, data
             )
-        except Exception:
+        except Exception as exc:
             logger.debug("campaign SSE emit failed", exc_info=True)
 
     def _prepare_run(
@@ -1171,13 +1173,13 @@ class CognitiveLoopMixin:
         self._last_run_failure_pattern: str = ""
         try:
             self._last_run_failure_pattern = self._load_failure_pattern()
-        except Exception:
+        except Exception as exc:
             logger.debug("load failure pattern failed", exc_info=True)
         # P2: 加载上 run 探索摘要 — 跟 failure_pattern 互补, 存探索路径而非失败数据.
         self._prev_run_context: str = ""
         try:
             self._prev_run_context = self._load_prev_run_context()
-        except Exception:
+        except Exception as exc:
             logger.debug("load prev run_context failed (non-fatal)", exc_info=True)
         # P3: 物理时序数据收集 — 任何工具可通过 result["_physical_timeseries"]
         # 返回标准化时序 (name/unit/data/meaning/source), engine 收集后注入
@@ -1212,7 +1214,7 @@ class CognitiveLoopMixin:
         # 失败/空都不影响 run, 只是少了 cross-run 匹配能力.
         try:
             self._traj_history = self._load_trajectory_action_history(limit=20)
-        except Exception:
+        except Exception as exc:
             self._traj_history = []
             logger.debug("G2 traj history load failed (non-fatal)", exc_info=True)
         try:
@@ -1222,7 +1224,7 @@ class CognitiveLoopMixin:
             self._speculator_hint = spec_result.get("hint", "")
             if spec_result.get("predictions"):
                 logger.info("autoloop speculator: %s", self._speculator_hint)
-        except Exception:
+        except Exception as exc:
             logger.warning("autoloop speculator skipped", exc_info=True)
 
         # 方向2: 启动期回灌历史失败教训 — 每次 run 自带前次败因, 而不是等到卡壳
@@ -1267,7 +1269,7 @@ class CognitiveLoopMixin:
                 importance=0.6,
                 tier="mid",
             )
-        except Exception:
+        except Exception as exc:
             logger.debug("failure_pattern store failed", exc_info=True)
 
     def _load_failure_pattern(self) -> str:
@@ -1282,7 +1284,7 @@ class CognitiveLoopMixin:
                 category="failure_pattern",
                 top_k=1,
             )
-        except Exception:
+        except Exception as exc:
             logger.debug("best-effort op failed", exc_info=True)
             return ""
         if not results:
@@ -1483,7 +1485,7 @@ class CognitiveLoopMixin:
             return None
         try:
             data = json.loads(raw[start:end + 1])
-        except Exception:
+        except Exception as exc:
             logger.debug("best-effort op failed", exc_info=True)
             return None
         action = str(data.get("action", "")).strip().lower()
@@ -1668,7 +1670,7 @@ Respond JSON only:
         # ponytail: 复用 longterm.store, JSON 序列化. 升级路径: 独立 failure_pattern 表.
         try:
             self._persist_failure_pattern(run_id)
-        except Exception:
+        except Exception as exc:
             logger.debug("persist failure pattern failed", exc_info=True)
         total_time = time.time() - getattr(self, "_run_start_time", time.time())
         report_phase = await self._run_phase_async(
@@ -1692,7 +1694,7 @@ Respond JSON only:
         # session summary → long-term memory
         try:
             self.memory.promote_session_summary(tier="long")
-        except Exception:
+        except Exception as exc:
             logger.debug("session summary promotion failed", exc_info=True)
 
         # trajectory
@@ -1726,7 +1728,7 @@ Respond JSON only:
                     "'%s' — autoloop may be空转 (audit 06 F1)",
                     objective[:100],
                 )
-        except Exception:
+        except Exception as exc:
             logger.debug("best-effort op failed", exc_info=True)
             trajectory_path = None
 
@@ -1744,7 +1746,7 @@ Respond JSON only:
                 final_output=final_output,
             )
             goal_achieved = goal_judgment.get("achieved")
-        except Exception:
+        except Exception as exc:
             logger.warning("autoloop goal judge skipped", exc_info=True)
 
         # provenance
@@ -1753,7 +1755,7 @@ Respond JSON only:
             provenance_record.timestamps["end"] = datetime.now().isoformat()
             self._provenance_logger.log(provenance_record)
             provenance_path = str(self._provenance_logger.path)
-        except Exception:
+        except Exception as exc:
             logger.debug("best-effort op failed", exc_info=True)
             provenance_path = None
 
@@ -1787,7 +1789,7 @@ Respond JSON only:
             jsonld_path = self.workspace / f"{run_id}_dataset.jsonld"
             write_fair_jsonld(fair_metadata, jsonld_path)
             logger.info("FAIR JSON-LD written to %s", jsonld_path)
-        except Exception:
+        except Exception as exc:
             logger.debug("FAIR metadata generation failed", exc_info=True)
 
         # P2: trajectory success pattern 抽取 — 复用 KB + auto_ingest 路径
@@ -1821,7 +1823,7 @@ Respond JSON only:
                         "trajectory pattern stored: doc_id=%s (run %s)",
                         pattern_doc_id, run_id,
                     )
-            except Exception:
+            except Exception as exc:
                 logger.debug(
                     "trajectory pattern extraction failed (non-fatal)",
                     exc_info=True,
@@ -1866,7 +1868,7 @@ Respond JSON only:
         try:
             from huginn.provenance.registry import ProvenanceRegistry
             return ProvenanceRegistry.shared().current_version()
-        except Exception:
+        except Exception as exc:
             return -1
 
     def _rollback_on_execute_failure(
@@ -1897,7 +1899,7 @@ Respond JSON only:
                     "loop rollback: execute failed (%s), reverted %d file(s) to v%d",
                     type(exc).__name__, len(affected), pre_version,
                 )
-        except Exception:
+        except Exception as exc:
             logger.debug("provenance rollback failed (non-fatal)", exc_info=True)
 
     async def run_cognitive(
@@ -1938,7 +1940,7 @@ Respond JSON only:
                         "auto-spawned WakeScheduler (%d pending wakes)",
                         len(store.pending()),
                     )
-            except Exception:
+            except Exception as exc:
                 logger.debug("auto wake scheduler spawn failed", exc_info=True)
 
         from huginn.autoloop.cognitive_loop import (
@@ -2053,7 +2055,7 @@ Respond JSON only:
                                 _active_goal.id,
                                 reason=f"budget exhausted: {_active_goal.iteration}/{_active_goal.max_iterations}",
                             )
-                        except Exception:
+                        except Exception as exc:
                             logger.debug("fail_goal failed (non-fatal)", exc_info=True)
                         self._emit_campaign(
                             "campaign.budget_exhausted",
@@ -2072,7 +2074,7 @@ Respond JSON only:
                             "last_action": state.last_action,
                             "budget_exhausted": True,
                         }
-            except Exception:
+            except Exception as exc:
                 logger.debug("v10 goal increment/budget failed (non-fatal)", exc_info=True)
 
             # v10-F6: build_continuation_prompt — 对齐 run() L1321-1331.
@@ -2086,7 +2088,7 @@ Respond JSON only:
                             (self._speculator_hint + "\n" + _cont).strip()
                             if self._speculator_hint else _cont
                         )
-                except Exception:
+                except Exception as exc:
                     logger.debug("v10 F6 build_continuation_prompt failed (non-fatal)", exc_info=True)
 
             # _perceive 是 sync (跑 git subprocess + rglob), 丢线程池不阻塞
@@ -2145,7 +2147,7 @@ Respond JSON only:
                     _n_drained = await self._drain_side_questions()
                     if _n_drained:
                         logger.info("v10 F8 drained %d side questions", _n_drained)
-                except Exception:
+                except Exception as exc:
                     logger.debug("v10 F8 drain_side_questions failed (non-fatal)", exc_info=True)
 
             # v10-F5: blind_spot_pass — 对齐 run() L1391-1402.
@@ -2157,7 +2159,7 @@ Respond JSON only:
                     if _bs:
                         cog["context"]["blind_spots"] = _bs
                         logger.info("v10 blind spot pass: %d unknowns", len(_bs))
-                except Exception:
+                except Exception as exc:
                     logger.debug("v10 blind_spot_pass failed (non-fatal)", exc_info=True)
 
             return {
@@ -2263,7 +2265,7 @@ Respond JSON only:
                         await self._maybe_clarify(
                             "hypothesize_align", ctx, thread_id="autoloop",
                         )
-                    except Exception:
+                    except Exception as exc:
                         logger.debug("v11 FDE hypothesize_align failed (non-fatal)", exc_info=True)
                     phase = await self._run_phase_async(
                         "hypothesize", self._hypothesize, ctx
@@ -2278,7 +2280,7 @@ Respond JSON only:
                                 rationale=ctx.get("summary", ""),
                             )
                             self._current_hyp_id_for_plan = cog["current_hyp_id"]
-                        except Exception:
+                        except Exception as exc:
                             logger.debug("hypothesis_graph add failed", exc_info=True)
                     # P0 Task 3: per-hyp 验证预算 — 创建时评估 informativeness + 分配 budget
                     # toggle off 时跳过 (向后兼容, 不消耗 LLM 调用)
@@ -2294,7 +2296,7 @@ Respond JSON only:
                                 cog["current_hyp_id"],
                                 _info["expected_informativeness"],
                             )
-                        except Exception:
+                        except Exception as exc:
                             logger.debug("per-hyp budget eval failed", exc_info=True)
                     # P1.4: campaign SSE 对齐 run() L1435
                     self._emit_campaign(
@@ -2365,7 +2367,7 @@ Respond JSON only:
                             # 上限防膨胀: 保留最近 20 条时序
                             if len(self._physical_timeseries) > 20:
                                 del self._physical_timeseries[: -20]
-                    except Exception:
+                    except Exception as exc:
                         logger.debug("timeseries collect failed (non-fatal)", exc_info=True)
                     # v10: 下沉 run() L1567-1577 plan 完成标记.
                     _plan_id = cog["plan"].get("plan_id") if isinstance(cog["plan"], dict) else None
@@ -2374,7 +2376,7 @@ Respond JSON only:
                             _store = self._get_plan_store()
                             if _store is not None:
                                 _store.complete_plan(_plan_id)
-                        except Exception:
+                        except Exception as exc:
                             logger.warning("v10 complete_plan failed (non-fatal)", exc_info=True)
                     # git commit after execute (同 run(): 让下轮 perceive 看到 diff)
                     await asyncio.to_thread(self._git_commit_after_execute,
@@ -2476,7 +2478,7 @@ Respond JSON only:
                             )
                             # P15: pivot 是关键事件, 立刻 save (force=True)
                             self._maybe_save_engine_state(force=True, reason="pivot")
-                        except Exception:
+                        except Exception as exc:
                             logger.warning("cognitive pivot failed", exc_info=True)
                     # 清中间状态, 下轮重新 observe
                     for k in ("hypothesis", "plan", "execution_result", "validation", "current_hyp_id"):
@@ -2571,7 +2573,7 @@ Respond JSON only:
                         _redteam = self._redteam_findings()
                         from huginn.autoloop.engine import AutoloopEngine
                         ftype = AutoloopEngine._classify_failure(validation, _redteam)
-                    except Exception:
+                    except Exception as exc:
                         logger.debug("best-effort op failed", exc_info=True)
                         ftype = "hypothesis_error"
                     by_type = getattr(self, "_consecutive_failures_by_type", {}) or {}
@@ -2643,7 +2645,7 @@ Respond JSON only:
                         )
                         advice = (advice + " | G2 match: " + stuck["advice"]).strip(" |")
                         logger.info("G2 trajectory match: %s", stuck["advice"])
-            except Exception:
+            except Exception as exc:
                 logger.debug("G2 _check_stuck failed (non-fatal)", exc_info=True)
 
             # timeout / pivot 预算 (硬停)
@@ -2714,7 +2716,7 @@ Respond JSON only:
                                 self._speculator_hint = (
                                     self._speculator_hint + f"\n{_hint_text}"
                                 ).strip()
-                        except Exception:
+                        except Exception as exc:
                             logger.debug(
                                 "ThreeCabin failed, fallback to SimpleNamespace",
                                 exc_info=True,
@@ -2756,9 +2758,9 @@ Respond JSON only:
                             prompt_len=len(getattr(self, "_last_hypothesis", "") or ""),
                             idea_count=self.hypothesis_graph.component_count() if hasattr(self, "hypothesis_graph") else 1,
                         )
-                    except Exception:
+                    except Exception as exc:
                         logger.debug("AV4 heat_engine update in autoloop failed", exc_info=True)
-                except Exception:
+                except Exception as exc:
                     logger.debug("AV2 metrics/drift update failed", exc_info=True)
 
                 # PMK 一致性 + should_pause_for_decision — autoloop 无人在环,
@@ -2816,7 +2818,7 @@ Respond JSON only:
                             self._speculator_hint = (
                                 self._speculator_hint + f"\n[PAUSE] {_reason}\n"
                             ).strip()
-                except Exception:
+                except Exception as exc:
                     logger.debug("AV2 should_pause_for_decision failed", exc_info=True)
 
                 # v23 Unified Decision: HUGINN_USE_UNIFIED_DECISION=1 时走
@@ -2865,7 +2867,7 @@ Respond JSON only:
                             )
 
                             _bandit = EffortBandit.get_instance()
-                        except Exception:
+                        except Exception as exc:
                             logger.debug("bandit unavailable for arbiter", exc_info=True)
 
                         _arbiter = DecisionArbiter()
@@ -2899,7 +2901,7 @@ Respond JSON only:
                                 if self._goal_scheduler is not None:
                                     try:
                                         self._goal_scheduler.complete_goal(goal.id)
-                                    except Exception:
+                                    except Exception as exc:
                                         logger.debug(
                                             "complete_goal failed (non-fatal)",
                                             exc_info=True,
@@ -2927,7 +2929,7 @@ Respond JSON only:
                                 else _gap_hint
                             )
                             logger.info("unified eval gaps: %s", _gap_hint)
-                    except Exception:
+                    except Exception as exc:
                         logger.debug(
                             "Unified decision failed, fallback to F2/F17/F4",
                             exc_info=True,
@@ -2979,7 +2981,7 @@ Respond JSON only:
                             if self._goal_scheduler is not None:
                                 try:
                                     self._goal_scheduler.complete_goal(goal.id)
-                                except Exception:
+                                except Exception as exc:
                                     logger.debug("complete_goal failed (non-fatal)", exc_info=True)
                         if _decision.status == "block" and _decision.reason:
                             logger.info("completion gate blocked: %s", _decision.reason)
@@ -2991,7 +2993,7 @@ Respond JSON only:
                                 (self._speculator_hint + f"\n{_decision.reason}").strip()
                             )
                             logger.info("completion gate gaps: %s", _decision.reason)
-                    except Exception:
+                    except Exception as exc:
                         logger.debug("CompletionGate failed, fallback to F2+F17", exc_info=True)
                         _use_gate = False
 
@@ -3015,10 +3017,10 @@ Respond JSON only:
                                     if self._goal_scheduler is not None:
                                         try:
                                             self._goal_scheduler.complete_goal(goal.id)
-                                        except Exception:
+                                        except Exception as exc:
                                             logger.debug("complete_goal failed (non-fatal)", exc_info=True)
                                     state.should_stop = True
-                        except Exception:
+                        except Exception as exc:
                             logger.debug("v10 F2 completion audit failed (non-fatal)", exc_info=True)
 
                     # v10-F17: GoalJudge — 对齐 run() L1899-1945.
@@ -3060,7 +3062,7 @@ Respond JSON only:
                                         if self._speculator_hint else _gap_hint
                                     )
                                     logger.info("v10 GoalJudge gaps: %s", _gap_hint)
-                            except Exception:
+                            except Exception as exc:
                                 logger.debug("v10 F17 GoalJudge failed (non-fatal)", exc_info=True)
 
                 # v10-F4: surprise 早停 — 对齐 run() L1967-1999.
@@ -3085,7 +3087,7 @@ Respond JSON only:
                                     _thr, _avg_noise,
                                 )
                                 state.should_stop = True
-                    except Exception:
+                    except Exception as exc:
                         logger.debug("v10 F4 surprise early-stop failed (non-fatal)", exc_info=True)
 
                 # v10-F3: darwin_ratchet — 对齐 run() L2003-2004.
@@ -3097,7 +3099,7 @@ Respond JSON only:
                         self._darwin_ratchet_check()
                         if getattr(self, "_should_stop", False):
                             state.should_stop = True
-                    except Exception:
+                    except Exception as exc:
                         logger.debug("v10 F3 darwin_ratchet failed (non-fatal)", exc_info=True)
 
             # P0: 迭代历史栈 — push 当前轮快照, 让 N 轮后的 decider/validate
@@ -3147,9 +3149,9 @@ Respond JSON only:
                             task_id=str(self._run_id),
                         )
                     self._episodic_writer.append(state.iteration, _snapshot)
-                except Exception:
+                except Exception as exc:
                     logger.debug("episodic shard write failed (non-fatal)", exc_info=True)
-            except Exception:
+            except Exception as exc:
                 logger.debug("iteration_history push failed (non-fatal)", exc_info=True)
 
             # P15: 周期 save — flag off 时 no-op, iteration % save_every == 0 才真写.
@@ -3190,7 +3192,7 @@ Respond JSON only:
                 _prev_outcome_for_advisor = (
                     "completed" if _val.get("tests_passed") else "inconclusive"
                 )
-        except Exception:
+        except Exception as exc:
             logger.debug("persist run_context failed (non-fatal)", exc_info=True)
 
         # 轻量 next-step 推荐: 任务完成后, 科研伴侣姿态给 2-3 个方向 + 自由出口.
@@ -3201,7 +3203,7 @@ Respond JSON only:
                 run_id, objective, cog, state,
                 prev_outcome=_prev_outcome_for_advisor,
             )
-        except Exception:
+        except Exception as exc:
             logger.debug("advisor_post_task_recommend failed (non-fatal)", exc_info=True)
 
         # finalize — 复用 run() 的收尾 (含 _report)
@@ -3464,7 +3466,7 @@ def learn_from_rcb(
                     source="rcb_learn_from_rcb",
                 )
                 result["memory_written"] = True
-            except Exception:
+            except Exception as exc:
                 # 老接口 fallback
                 mem_mgr.remember(
                     content=mem_content,

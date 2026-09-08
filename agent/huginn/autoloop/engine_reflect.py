@@ -84,7 +84,7 @@ class EngineReflectMixin:
                             if self._last_visual_context
                             else comp
                         )
-                except Exception:
+                except Exception as exc:
                     logger.debug("comparative primitives extraction skipped", exc_info=True)
 
             r_phys = execution_result.get("r_phys")
@@ -219,7 +219,7 @@ class EngineReflectMixin:
                         content = str(content)[:500]
                     conv_snippets.append(f"[{role}] {str(content)[:500]}")
                 merged["conversation_log"] = "\n".join(conv_snippets)
-            except Exception:
+            except Exception as exc:
                 logger.debug("conversation_log extract for judge failed", exc_info=True)
             # agent_code: execution_result 里可能带 code/parsed/script
             if isinstance(execution_result, dict):
@@ -277,7 +277,7 @@ class EngineReflectMixin:
                                 "score": br.score,
                             }
                         )
-                    except Exception:
+                    except Exception as exc:
                         logger.debug("benchmark result collect skipped", exc_info=True)
             if eval_scores:
                 passed = sum(1 for e in eval_scores if e["passed"])
@@ -333,7 +333,7 @@ class EngineReflectMixin:
                 )
                 if len(self._speculator_hint) > 2000:
                     self._speculator_hint = self._speculator_hint[-2000:]
-        except Exception:
+        except Exception as exc:
             logger.debug("AV7 effort floor check in _validate failed", exc_info=True)
 
         # H2: bandit 记录 variant outcome (r_phys + efficiency + novelty 都算出后)
@@ -366,7 +366,7 @@ class EngineReflectMixin:
                     alpha=b.successes if b else 1,
                     beta=b.failures if b else 1,
                 )
-            except Exception:
+            except Exception as exc:
                 logger.debug("H2 bandit record in _validate failed", exc_info=True)
 
         self._last_validation = json.dumps(results, ensure_ascii=False, default=str)[
@@ -384,7 +384,7 @@ class EngineReflectMixin:
         if os.environ.get("HUGINN_BLIND_RECONSTRUCTION", "0") == "1":
             try:
                 await self._blind_reconstruct_verify(execution_result, results)
-            except Exception:
+            except Exception as exc:
                 logger.debug("P1 blind reconstruct failed", exc_info=True)
 
         # Epistemic gate (IOED 兜底): 强断言 + 证据缺失 → 暴露知识缺口.
@@ -399,7 +399,7 @@ class EngineReflectMixin:
                 logger.warning(
                     "epistemic_gap: %s", _gap.get("advice", "")[:120]
                 )
-        except Exception:
+        except Exception as exc:
             logger.debug("epistemic gate check failed (non-fatal)", exc_info=True)
 
         return results
@@ -424,7 +424,7 @@ class EngineReflectMixin:
             return
         try:
             _node = self.hypothesis_graph._nodes.get(_hyp_id)
-        except Exception:
+        except Exception as exc:
             logger.debug("best-effort op failed", exc_info=True)
             return
         if _node is None or _node.status != "untested":
@@ -449,7 +449,7 @@ class EngineReflectMixin:
                         )
                         return
                     _node.evidence["blind_rounds_used"] = _used + 1
-            except Exception:
+            except Exception as exc:
                 logger.debug("per-hyp blind budget check failed", exc_info=True)
         if self._agent_factory is None:
             logger.debug("P1 blind reconstruct: no agent_factory, skip")
@@ -464,7 +464,7 @@ class EngineReflectMixin:
         _ctx = {"agent_factory": self._agent_factory}
         try:
             _res = await _dispatch.dispatch("blind_reconstructor", _task, context=_ctx)
-        except Exception:
+        except Exception as exc:
             logger.debug("P1 blind reconstruct dispatch failed", exc_info=True)
             return
         if not _res.success or not _res.summary:
@@ -473,7 +473,7 @@ class EngineReflectMixin:
         import json as _json
         try:
             _blind = _json.loads(_res.summary)
-        except Exception:
+        except Exception as exc:
             # LLM 没输出合法 JSON, 从 summary 文本推断
             _blind = {"holds": "true" in _res.summary.lower(), "confidence": 0.5}
         _blind_holds = bool(_blind.get("holds", False))
@@ -492,7 +492,7 @@ class EngineReflectMixin:
             _rt = getattr(self.memory.session, "reasoning_trace", None) or []
             if _rt:
                 _orig_reasoning = "\n".join(str(_x) for _x in _rt[-5:])[:2000]
-        except Exception:
+        except Exception as exc:
             logger.debug("orig reasoning_trace extract failed", exc_info=True)
         # derivation 语义一致性: 仅当 blind+orig 都有内容时才判
         # ponytail: LLM zero-shot 判语义一致, 失败降级 token Jaccard heuristic
@@ -503,7 +503,7 @@ class EngineReflectMixin:
                 _derivation_consistent = await self._judge_derivation_consistency(
                     _blind_derivation, _orig_reasoning,
                 )
-            except Exception:
+            except Exception as exc:
                 logger.debug("derivation consistency judge crashed", exc_info=True)
                 _derivation_consistent = None
         _evidence = {
@@ -543,7 +543,7 @@ class EngineReflectMixin:
                     importance=0.7,
                     tier="mid",
                 )
-            except Exception:
+            except Exception as exc:
                 logger.debug("verification_mismatch record failed", exc_info=True)
             logger.info("P1 blind reconstruct: mismatch → refute %s", _hyp_id)
             return
@@ -614,7 +614,7 @@ class EngineReflectMixin:
                 _text = _text.strip()
             _verdict = _json_jdg.loads(_text)
             return bool(_verdict.get("consistent", False))
-        except Exception:
+        except Exception as exc:
             logger.debug(
                 "LLM derivation consistency judge failed, fallback heuristic",
                 exc_info=True,
@@ -630,7 +630,7 @@ class EngineReflectMixin:
                 return None
             _jac = len(_tok_a & _tok_b) / len(_tok_a | _tok_b)
             return _jac > 0.3
-        except Exception:
+        except Exception as exc:
             logger.debug("best-effort op failed", exc_info=True)
             return None
 
@@ -665,7 +665,7 @@ class EngineReflectMixin:
         _ctx = {"agent_factory": self._agent_factory}
         try:
             _res = await _dispatch.dispatch("failure_inverter", _task, context=_ctx)
-        except Exception:
+        except Exception as exc:
             logger.debug("failure inversion dispatch failed", exc_info=True)
             return ""
         if not _res.success or not _res.summary:
@@ -673,7 +673,7 @@ class EngineReflectMixin:
         import json as _json_inv
         try:
             _inv = _json_inv.loads(_res.summary)
-        except Exception:
+        except Exception as exc:
             logger.debug("failure inversion summary not JSON, skip")
             return ""
         _reasoning = str(_inv.get("failure_reasoning", "") or "").strip()
@@ -735,14 +735,14 @@ class EngineReflectMixin:
                     _res = await _dispatch.dispatch(
                         "skill_abstractor", _task, context=_ctx
                     )
-                except Exception:
+                except Exception as exc:
                     logger.debug("skill_abstractor dispatch failed", exc_info=True)
                     continue
                 if not _res.success or not _res.summary:
                     continue
                 try:
                     _skill = json.loads(_res.summary)
-                except Exception:
+                except Exception as exc:
                     logger.debug("skill_abstractor summary not JSON, skip")
                     continue
                 # function_name 为空 = traces 太散, abstractor 自己放弃
@@ -768,9 +768,9 @@ class EngineReflectMixin:
                         "skill abstracted for cluster=%s function=%s",
                         cluster_key, _skill.get("function_name"),
                     )
-                except Exception:
+                except Exception as exc:
                     logger.debug("skill store failed", exc_info=True)
-        except Exception:
+        except Exception as exc:
             logger.debug("skill abstraction failed", exc_info=True)
 
 
@@ -789,7 +789,7 @@ class EngineReflectMixin:
             return
         try:
             _sm = _mem.longterm.get_self_model()
-        except Exception:
+        except Exception as exc:
             logger.debug("best-effort op failed", exc_info=True)
             return
         if not _sm:
@@ -797,7 +797,7 @@ class EngineReflectMixin:
         try:
             from huginn.autoloop.goal_store import get_goal_store
             _gs = get_goal_store()
-        except Exception:
+        except Exception as exc:
             logger.debug("best-effort op failed", exc_info=True)
             return
         _existing: set[str] = set()
@@ -809,7 +809,7 @@ class EngineReflectMixin:
                     _ck = (_g.metadata or {}).get("cluster_key")
                     if _ck:
                         _existing.add(_ck)
-        except Exception:
+        except Exception as exc:
             logger.debug("cluster_key dedup skipped", exc_info=True)
         _synth = 0
         for _key, _v in _sm.items():
@@ -831,7 +831,7 @@ class EngineReflectMixin:
                 _synth += 1
                 _existing.add(_ck)
                 logger.info("self-goal synthesized: %s r=%.2f n=%d", _ck, _rate, _n)
-            except Exception:
+            except Exception as exc:
                 logger.debug("self-goal create failed", exc_info=True)
         if _synth:
             logger.info("self-goal synthesis: %d pending_confirmation", _synth)
@@ -855,7 +855,7 @@ class EngineReflectMixin:
         _MAX_CE = 3
         try:
             _node = self.hypothesis_graph._nodes.get(hypothesis_id)
-        except Exception:
+        except Exception as exc:
             logger.debug("best-effort op failed", exc_info=True)
             return
         if _node is None:
@@ -898,7 +898,7 @@ class EngineReflectMixin:
                             _rationale = "normal_self_efficacy"
                 else:
                     _rationale = "no_self_model"
-        except Exception:
+        except Exception as exc:
             logger.debug("self_model lookup for budget failed", exc_info=True)
             _rationale = "no_self_model"
         # wall_clock 全局上限: 耗尽则预算强制 0
@@ -911,7 +911,7 @@ class EngineReflectMixin:
                     _blind = 0.0
                     _ce = 0.0
                     _rationale = "wall_clock_exhausted"
-        except Exception:
+        except Exception as exc:
             logger.debug("wall_clock budget check failed", exc_info=True)
         # 轮数取整 (正数 floor), 存 node evidence
         _node.evidence["verification_budget"] = {
@@ -959,7 +959,7 @@ class EngineReflectMixin:
                 "failed": report.failed,
                 "skipped": report.skipped,
             }
-        except Exception:
+        except Exception as exc:
             logger.warning("BenchmarkRunner failed", exc_info=True)
             return {}
 
@@ -1096,7 +1096,7 @@ class EngineReflectMixin:
                     continue
                 signal = detector.detect(prop_key, agent_value, lit_values)
                 comparison[prop_key] = signal
-            except Exception:
+            except Exception as exc:
                 logger.debug("best-effort op failed", exc_info=True)
                 continue
 
@@ -1118,7 +1118,7 @@ class EngineReflectMixin:
                 high_claims = mr_res.data.get("high_confidence_claims") or []
                 if high_claims:
                     comparison["high_confidence_claims"] = high_claims
-        except Exception:
+        except Exception as exc:
             logger.debug(
                 "multi_review in _literature_comparison failed (non-fatal)",
                 exc_info=True,
@@ -1144,7 +1144,7 @@ class EngineReflectMixin:
                 if v is not None:
                     parts.append(f"{k}={v}")
             return " ".join(parts)[:400]
-        except Exception:
+        except Exception as exc:
             logger.debug("best-effort op failed", exc_info=True)
             return ""
 
@@ -1225,7 +1225,7 @@ class EngineReflectMixin:
             params = call.get("input") or call.get("params") or call.get("args") or {}
             try:
                 payload = name + json.dumps(params, sort_keys=True, default=str)
-            except Exception:
+            except Exception as exc:
                 payload = name + str(params)
             key = hashlib.sha256(payload.encode()).hexdigest()[:12]
             seen[key] = seen.get(key, 0) + 1
@@ -1257,13 +1257,13 @@ class EngineReflectMixin:
                 key=lambda p: p.stat().st_mtime,
                 reverse=True,
             )[:limit]
-        except Exception:
+        except Exception as exc:
             self._traj_run_ids = []
             return []
         for f in files:
             try:
                 data = json.loads(f.read_text(encoding="utf-8"))
-            except Exception:
+            except Exception as exc:
                 logger.debug("best-effort op failed", exc_info=True)
                 continue
             spans = data.get("spans") or []
@@ -1325,7 +1325,7 @@ class EngineReflectMixin:
                         f"最近 {len(action_history)} 步: {action_history[-8:]}"
                     ),
                 }
-        except Exception:
+        except Exception as exc:
             logger.debug("G2 cycle_detect failed (non-fatal)", exc_info=True)
 
         # M2: 历史轨迹 prefix 匹配 (跨 run)
@@ -1346,7 +1346,7 @@ class EngineReflectMixin:
                             f"考虑下一步: {match['next_step']}"
                         ),
                     }
-        except Exception:
+        except Exception as exc:
             logger.debug("G2 trajectory_match failed (non-fatal)", exc_info=True)
 
         return None
@@ -1553,7 +1553,7 @@ class EngineReflectMixin:
                     "Cross-check: does the current result contradict any historical finding above?\n"
                     "If yes, note the contradiction in 'reason'.\n"
                 )
-        except Exception:
+        except Exception as exc:
             logger.debug(
                 "_build_memory_text failed — validate prompt missing cross-check",
                 exc_info=True,
@@ -1663,7 +1663,7 @@ class EngineReflectMixin:
                 for c in chunks
                 if c.get("text")
             ]
-        except Exception:
+        except Exception as exc:
             return []
 
 
@@ -1679,11 +1679,11 @@ class EngineReflectMixin:
             exec_blob = json.dumps(execution_result, ensure_ascii=False, default=str)[
                 :1500
             ]
-        except Exception:
+        except Exception as exc:
             exec_blob = str(execution_result)[:1500]
         try:
             res_blob = json.dumps(results, ensure_ascii=False, default=str)[:1500]
-        except Exception:
+        except Exception as exc:
             res_blob = str(results)[:1500]
         kb_section = f"\n{kb_text}\n" if kb_text else ""
         return (
@@ -1803,7 +1803,7 @@ class EngineReflectMixin:
                     tier="mid",
                     tags=_tags,
                 )
-            except Exception:
+            except Exception as exc:
                 logger.debug(
                     "typed remember_typed failed, fallback to legacy remember",
                     exc_info=True,
@@ -1815,7 +1815,7 @@ class EngineReflectMixin:
                     tier="mid",
                     tags=_tags,
                 )
-        except Exception:
+        except Exception as exc:
             logger.warning(
                 "error in _learn: memory.remember iteration failed", exc_info=True
             )
@@ -1831,7 +1831,7 @@ class EngineReflectMixin:
                     await self.trigger_alignment_surprise_hypothesis(
                         [(hypothesis[:80], _surprise)]
                     )
-                except Exception:
+                except Exception as exc:
                     logger.debug(
                         "surprise → hypothesis trigger failed (non-fatal)",
                         exc_info=True,
@@ -1881,7 +1881,7 @@ class EngineReflectMixin:
                 store = PromptPatchStore.get_instance()
                 for _pid in _ids:
                     store.update_alpha_beta(_pid, success=bool(_tests_passed))
-        except Exception:
+        except Exception as exc:
             logger.debug("H1 patch Beta update failed", exc_info=True)
 
         # H3: 记录 (block_subset, workflow_params) 组合的 outcome 给 JointBandit.
@@ -1910,7 +1910,7 @@ class EngineReflectMixin:
                         _h3_phase, _h3_subset, {}, _h3_success,
                         problem_domain=str(hypothesis)[:64],
                     )
-        except Exception:
+        except Exception as exc:
             logger.debug("H3 joint record failed", exc_info=True)
 
         # Forest 回流: 如果是森林模式运行, 把 merged_graph 合并到本地假设图
@@ -1954,7 +1954,7 @@ class EngineReflectMixin:
                     "Forest merged %d nodes into hypothesis_graph",
                     len(self._merged_graph.nodes),
                 )
-            except Exception:
+            except Exception as exc:
                 logger.warning("Forest merge failed", exc_info=True)
 
         # KB 回写: 把本次实验结论存入知识库, 下次同类问题能从 KB 召回.
@@ -1979,7 +1979,7 @@ class EngineReflectMixin:
                     filename=f"autoloop_iter_{self._iteration}.txt",
                     content=summary_text.encode("utf-8"),
                 )
-        except Exception:
+        except Exception as exc:
             logger.warning("error in _learn: KB writeback failed", exc_info=True)
 
         # KB 自动清理: 每 10 轮迭代清理一次旧文档, 防止 KB 无限增长.
@@ -1992,7 +1992,7 @@ class EngineReflectMixin:
                     deleted = kb.cleanup_old_documents(max_docs=200)
                     if deleted:
                         logger.info("KB cleanup: removed %d old documents", deleted)
-            except Exception:
+            except Exception as exc:
                 logger.debug("kb cleanup skipped", exc_info=True)
 
         # KG 回写: 把 hypothesis 作为 experiment 实体加入知识图,
@@ -2041,7 +2041,7 @@ class EngineReflectMixin:
                     if exp_id in self.kg._graph:
                         old_conf = self.kg._graph.nodes[exp_id].get("confidence", 0.5)
                         self.kg._graph.nodes[exp_id]["confidence"] = old_conf * 0.7
-                except Exception:
+                except Exception as exc:
                     logger.debug("kg confidence decay skipped", exc_info=True)
             # Hyperedge: 把 hypothesis → plan_mode → validation 结果
             # 连成 n-ary 关系. 之前 add_hyperedge 是死代码, 现在接上.
@@ -2092,10 +2092,10 @@ class EngineReflectMixin:
                     r_phys=r_phys,
                     iteration=self._iteration,
                 )
-            except Exception:
+            except Exception as exc:
                 logger.debug("persona_use entity write skipped", exc_info=True)
             self.kg.save()
-        except Exception:
+        except Exception as exc:
             logger.warning("error in _learn: KG add_entity failed", exc_info=True)
 
         # Benchmark 失败回写: 把验证失败写入 memory, 下次 _plan 能读到.
@@ -2111,7 +2111,7 @@ class EngineReflectMixin:
                     importance=0.7,
                     tier="mid",
                 )
-            except Exception:
+            except Exception as exc:
                 logger.warning(
                     "error in _learn: benchmark_failure memory writeback failed",
                     exc_info=True,
@@ -2138,7 +2138,7 @@ class EngineReflectMixin:
                         )
                         if _inverted:
                             _fail_reason = _inverted
-                    except Exception:
+                    except Exception as exc:
                         logger.debug(
                             "failure inversion failed, fallback to original reason",
                             exc_info=True,
@@ -2151,7 +2151,7 @@ class EngineReflectMixin:
                         persona_id=getattr(self, "_last_persona", None),
                         math_concept="",
                     )
-            except Exception:
+            except Exception as exc:
                 logger.debug(
                     "record_failed_direction failed, fallback to legacy path",
                     exc_info=True,
@@ -2168,7 +2168,7 @@ class EngineReflectMixin:
                 _surprise_val = _pe.get("surprise", 0) if isinstance(_pe, dict) else 0
             if _surprise_val > 0.5 or (r_phys is not None and r_phys > 0.7):
                 _should_feynman = True
-        except Exception:
+        except Exception as exc:
             logger.debug(
                 "surprise detection failed — _feynman_learn trigger may silently skip",
                 exc_info=True,
@@ -2180,7 +2180,7 @@ class EngineReflectMixin:
                     hypothesis, plan, validation, r_phys,
                     getattr(self, "_last_context", {}) or {},
                 )
-            except Exception:
+            except Exception as exc:
                 logger.warning(
                     "error in _learn: feynman note generation failed", exc_info=True
                 )
@@ -2202,7 +2202,7 @@ class EngineReflectMixin:
                             status=persisted.status,
                             l1_coordinates=f"autoloop: {persisted.objective[:100]}",
                         )
-            except Exception:
+            except Exception as exc:
                 logger.warning(
                     "error in _learn: store_plan_progress writeback failed",
                     exc_info=True,
@@ -2218,7 +2218,7 @@ class EngineReflectMixin:
             await self._generate_next_loop_directive(
                 hypothesis, plan, validation, r_phys
             )
-        except Exception:
+        except Exception as exc:
             logger.debug(
                 "RSI directive generation failed — loop continues without directive",
                 exc_info=True,
@@ -2247,7 +2247,7 @@ class EngineReflectMixin:
                 tier="long",
                 tags=["autoloop", "summary", f"iter:{self._iteration}"],
             )
-        except Exception:
+        except Exception as exc:
             # memory 失败不阻断 _learn, 上一轮的迭代已经入账
             logger.debug(
                 "autoloop_summary writeback failed — loop continues",
@@ -2276,7 +2276,7 @@ class EngineReflectMixin:
                         else "unknown"
                     ),
                 )
-            except Exception:
+            except Exception as exc:
                 logger.warning(
                     "EvolutionManager.record_outcome failed", exc_info=True
                 )
@@ -2292,7 +2292,7 @@ class EngineReflectMixin:
             )
             if _pid:
                 _principles_added = 1
-        except Exception:
+        except Exception as exc:
             logger.debug(
                 "distill_episodic_to_procedural failed", exc_info=True
             )
@@ -2315,7 +2315,7 @@ class EngineReflectMixin:
                     len(_sm),
                     sum(s["success"] + s["failure"] for s in _sm.values()),
                 )
-        except Exception:
+        except Exception as exc:
             logger.debug("self_model periodic update failed", exc_info=True)
 
         # P0 Task 1: 实验成功后扫 trace clusters, ≥3 条同簇 + 无 skill 时
@@ -2324,13 +2324,13 @@ class EngineReflectMixin:
         # 每轮实验成功都查一次, cluster_key 命中已有 skill 直接跳过.
         try:
             await self._abstract_skill_if_ready()
-        except Exception:
+        except Exception as exc:
             logger.debug("skill abstraction hook failed", exc_info=True)
 
         # P1 Task 7: scan self_model weak clusters, synthesize self-goal.
         try:
             await self._synthesize_self_goal_if_ready()
-        except Exception:
+        except Exception as exc:
             logger.debug("self-goal synthesis hook failed", exc_info=True)
 
         # C3 闭环: 本轮如果命中过 trajectory_match, 按 validation 结果做 ±ε.
@@ -2360,7 +2360,7 @@ class EngineReflectMixin:
                             if isinstance(validation, dict) else False
                         )
                         update_pattern_confidence(kb, doc_id, success=_tests_ok)
-            except Exception:
+            except Exception as exc:
                 logger.debug("C3 trajectory confidence update failed", exc_info=True)
             # 清掉本轮 match 标记, 下轮重新记
             self._last_traj_match_run_id = None
@@ -2424,7 +2424,7 @@ class EngineReflectMixin:
 
         try:
             response = await self._llm_chat(prompt, task="summarize")
-        except Exception:
+        except Exception as exc:
             # LLM 挂了不阻断 — directive 是 enhancement, 不是 critical path
             logger.debug("RSI directive LLM call failed", exc_info=True)
             return
@@ -2446,7 +2446,7 @@ class EngineReflectMixin:
                 tier="mid",
             )
             logger.info("RSI directive stored in memory: %s", directive[:120])
-        except Exception:
+        except Exception as exc:
             logger.debug("RSI directive memory write failed", exc_info=True)
 
         # H1: 看 r_phys + directive + 当前 hypothesis/plan blocks, LLM 生成
@@ -2466,7 +2466,7 @@ class EngineReflectMixin:
                     directive=directive,
                     llm_chat_fn=self._llm_chat,
                 )
-        except Exception:
+        except Exception as exc:
             logger.debug("H1 generate_patch failed", exc_info=True)
 
 
@@ -2534,7 +2534,7 @@ class EngineReflectMixin:
                 task="summarize",
             )
             report_narrative = (report_narrative or "").strip()
-        except Exception:
+        except Exception as exc:
             logger.debug("best-effort op failed", exc_info=True)
             report_narrative = ""
 
@@ -2667,7 +2667,7 @@ class EngineReflectMixin:
                 tags=tags,
                 confidence=_feynman_conf,
             )
-        except Exception:
+        except Exception as exc:
             logger.warning("feynman note storage failed", exc_info=True)
 
         # 缺口写入 GoalStore, 分类为 known_unknown / unknown_unknown
@@ -2684,7 +2684,7 @@ class EngineReflectMixin:
                     for gap_text, gap_type in gaps[:3]:  # 最多 3 个, 避免子目标爆炸
                         _gs.add_sub_goal(_active.id, f"[Feynman {gap_type}] {gap_text}")
                         _gs.add_unknown(_active.id, gap_text, unknown_type=gap_type)
-            except Exception:
+            except Exception as exc:
                 logger.debug("feynman gap subgoal skipped", exc_info=True)
 
         # 同时把 feynman note 写入 KB, 下次检索能命中
@@ -2699,7 +2699,7 @@ class EngineReflectMixin:
                     filename=f"feynman_iter_{self._iteration}.txt",
                     metadata={"confidence": str(_feynman_conf)},
                 )
-        except Exception:
+        except Exception as exc:
             logger.debug("feynman note save failed", exc_info=True)
 
 
@@ -2760,7 +2760,7 @@ class EngineReflectMixin:
                             content,
                             unknown_type="blind_spot",
                         )
-                except Exception:
+                except Exception as exc:
                     logger.debug("blind_spot unknown add skipped", exc_info=True)
 
         return results
@@ -2890,7 +2890,7 @@ class EngineReflectMixin:
                             "trigger_reason": _reason,
                         },
                     )
-                except Exception:
+                except Exception as exc:
                     logger.debug("next_step_hint memory write failed (non-fatal)", exc_info=True)
 
             # HUMAN_PAUSE=1 时走 pause_for_decision 让用户选
@@ -2908,10 +2908,10 @@ class EngineReflectMixin:
                         f"本轮结束, 推荐下一步 (触发: {_reason}):\n\n{response[:500]}",
                         _options, _step_id,
                     )
-                except Exception:
+                except Exception as exc:
                     logger.debug("pause_for_decision failed (non-fatal)", exc_info=True)
 
-        except Exception:
+        except Exception as exc:
             logger.debug("_advisor_post_task_recommend failed (non-fatal)", exc_info=True)
 
 
@@ -2934,7 +2934,7 @@ class EngineReflectMixin:
         """
         try:
             phases_blob = json.dumps(report_data["phases"], ensure_ascii=False)[:800]
-        except Exception:
+        except Exception as exc:
             phases_blob = str(report_data.get("phases", ""))[:800]
         kb_section = f"\n## Domain Knowledge\n{kb_text}\n" if kb_text else ""
         exec_section = f"\n## Execution Data\n{exec_summary}\n" if exec_summary else ""

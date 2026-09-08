@@ -77,7 +77,7 @@ def _snapshot_structure_desc(cog: dict) -> list[float]:
             return [0.0] * 16
         vec = StructureDescriptor().encode(cmap)
         return [float(x) for x in vec]
-    except Exception:
+    except Exception as exc:
         return [0.0] * 16
 
 
@@ -341,7 +341,7 @@ def metacog_check_completion(
             n_comp = hypothesis_graph.component_count()
             # 0 节点 → 0; 否则 [0,1] 标准化, 越多分量越健康
             topo = (n_comp / n_nodes) if n_nodes > 0 else 0.0
-        except Exception:
+        except Exception as exc:
             logger.debug("best-effort op failed", exc_info=True)
             topo = 0.5  # 不阻断, advisory
     else:
@@ -363,7 +363,7 @@ def metacog_check_completion(
             repro = min(1.0, len(evidence_files) / 5.0)
         else:
             repro = 0.0
-    except Exception:
+    except Exception as exc:
         logger.debug("best-effort op failed", exc_info=True)
         repro = 0.5
     if repro < 0.5:
@@ -379,7 +379,7 @@ def metacog_check_completion(
         )
         # 10+ 引用 → 1.0
         strength = min(1.0, cite_hits / 10.0)
-    except Exception:
+    except Exception as exc:
         logger.debug("best-effort op failed", exc_info=True)
         strength = 0.5
     if strength < 0.5:

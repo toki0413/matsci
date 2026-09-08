@@ -222,7 +222,7 @@ class EffortBandit:
             # ponytail: 单调递增, 不准但比恒 0 强, reward_slow (darwin) 兜底.
             # 天花板: agent 调工具不代表有产出, 升级路径 = 扫 chat 输出关键词.
             return self._proxy_progress(item_idx)
-        except Exception:
+        except Exception as exc:
             return self._runtime.last_progress_pct if self._runtime else 0.0
 
     def _proxy_progress(self, item_idx: int) -> float:

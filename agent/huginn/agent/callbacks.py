@@ -94,7 +94,7 @@ class CallbackMixin:
                 if admission is not None and sched is not None:
                     try:
                         sched.release(admission)
-                    except Exception:
+                    except Exception as exc:
                         logger.warning("scheduler release failed for %s", tool_name)
                 duration_ms = (time.time() - start) * 1000
                 await hm.run_post(
@@ -107,7 +107,7 @@ class CallbackMixin:
             if admission is not None and sched is not None:
                 try:
                     sched.release(admission)
-                except Exception:
+                except Exception as exc:
                     logger.warning("scheduler release failed for %s", tool_name)
             duration_ms = (time.time() - start) * 1000
             post_ctx = await hm.run_post(
@@ -123,7 +123,7 @@ class CallbackMixin:
             try:
                 from huginn.agent.bandit_controller import EffortBandit
                 EffortBandit.get_instance().record_tool_call()
-            except Exception:
+            except Exception as exc:
                 logger.debug("bandit record_tool_call failed", exc_info=True)
             return result
 
@@ -164,9 +164,9 @@ class CallbackMixin:
             cost_tier = t.cost_tier
             try:
                 cost = t.estimate_cost(input_data)
-            except Exception:
+            except Exception as exc:
                 logger.debug("best-effort op failed", exc_info=True)
                 cost = None
             return cost_tier, cost
-        except Exception:
+        except Exception as exc:
             return "none", None

@@ -151,7 +151,7 @@ def metacog_segment(metacog_state: str) -> str:
         if principles:
             parts.append("### STABLE_PRINCIPLES")
             parts.extend(f"- {p}" for p in principles)
-    except Exception:
+    except Exception as exc:
         # 文件缺失/损坏/import 失败都不应让 build_prompt 抛异常
         logger.debug("stable_principles load skipped in prompt_builder", exc_info=True)
     return "\n".join(parts)
@@ -299,7 +299,7 @@ def _thinking_plugin(mode, phase, metacog_state, system_prompt):
 
         if not FeatureFlags.shared().is_enabled("external_thinking"):
             return ""
-    except Exception:
+    except Exception as exc:
         return ""
     return (
         "## External Thinking\n"

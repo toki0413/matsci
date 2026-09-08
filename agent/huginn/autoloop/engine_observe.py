@@ -220,7 +220,7 @@ LUCID review (mandatory after generating hypothesis):
             applied_ids = [p.id for p in by_block.values()]
             if applied_ids:
                 self._last_applied_patches = (phase, applied_ids)
-        except Exception:
+        except Exception as exc:
             logger.debug("_apply_block_patches: track applied fail", exc_info=True)
         return new_blocks
 
@@ -299,7 +299,7 @@ LUCID review (mandatory after generating hypothesis):
             return ""
         try:
             persona = self._get_persona_manager().get(persona_name)
-        except Exception:
+        except Exception as exc:
             logger.debug("best-effort op failed", exc_info=True)
             return ""
         # 优先用 permanent_core, 没设就退回 system_prompt (老 persona)
@@ -328,7 +328,7 @@ LUCID review (mandatory after generating hypothesis):
             return ""
         try:
             _sm = _mem.longterm.get_self_model()
-        except Exception:
+        except Exception as exc:
             logger.debug("best-effort op failed", exc_info=True)
             return ""
         if not _sm:
@@ -382,7 +382,7 @@ LUCID review (mandatory after generating hypothesis):
                 top_k=3,
                 similarity_threshold=0.6,
             )
-        except Exception:
+        except Exception as exc:
             logger.debug("best-effort op failed", exc_info=True)
             return "\n\n".join(blocks)
         if _pred.get("prediction_type") != "analogy":
@@ -411,7 +411,7 @@ LUCID review (mandatory after generating hypothesis):
         """
         try:
             from huginn.security.tool_registry import get_tool, registered_tools
-        except Exception:
+        except Exception as exc:
             return ""
         _names = registered_tools()
         if not _names:
@@ -431,7 +431,7 @@ LUCID review (mandatory after generating hypothesis):
                     f"  - {_name}: domain={_domain} state=[{_state}]"
                     f" observables=[{_obs}]{_fwd_suffix}"
                 )
-            except Exception:
+            except Exception as exc:
                 continue
         if len(_lines) == 1:
             return ""
@@ -446,14 +446,14 @@ LUCID review (mandatory after generating hypothesis):
         """
         try:
             from huginn.security.tool_registry import get_tool, registered_tools
-        except Exception:
+        except Exception as exc:
             return None
         h = (hypothesis or "").lower()
         hits: set[str] = set()
         for _name in registered_tools():
             try:
                 d = str(get_tool(_name).schema.get("domain", "")).lower()
-            except Exception:
+            except Exception as exc:
                 continue
             if d and d in h:
                 hits.add(d)
@@ -476,7 +476,7 @@ LUCID review (mandatory after generating hypothesis):
         """
         try:
             from huginn.metacog import mental_imagery
-        except Exception:
+        except Exception as exc:
             logger.debug("metacog mental_imagery unavailable, skip imagery block", exc_info=True)
             return ""
 
@@ -485,7 +485,7 @@ LUCID review (mandatory after generating hypothesis):
             return ""
         try:
             out = mental_imagery.mental_imagery_loop(spec)
-        except Exception:
+        except Exception as exc:
             logger.debug("mental_imagery_loop failed (non-fatal)", exc_info=True)
             return ""
         # 没出图 (PIL 缺失) → sketch_image_bytes 空, 无法给视觉基准, 降级.
@@ -528,7 +528,7 @@ LUCID review (mandatory after generating hypothesis):
             elif not isinstance(v, (str, int, float, bool)):
                 return str(v)[:80]
             return v
-        except Exception:
+        except Exception as exc:
             return str(v)[:80]
 
     def _pick_imagery_spec(self, context: dict[str, Any]) -> str:
@@ -565,7 +565,7 @@ LUCID review (mandatory after generating hypothesis):
         try:
             from huginn.skills.evolution import SkillEvolutionLayer
             return SkillEvolutionLayer.shared().get_skill_context()
-        except Exception:
+        except Exception as exc:
             logger.debug("skill context injection failed", exc_info=True)
             return ""
 
@@ -588,7 +588,7 @@ LUCID review (mandatory after generating hypothesis):
                         self._episodic_replay_obj = None
                     else:
                         self._episodic_replay_obj = EpisodicReplay(store)
-                except Exception:
+                except Exception as exc:
                     logger.debug(
                         "episodic replay init failed (non-fatal)", exc_info=True
                     )
@@ -622,7 +622,7 @@ LUCID review (mandatory after generating hypothesis):
                 for r in replays
             ]
             return "\n".join(lines) + "\n"
-        except Exception:
+        except Exception as exc:
             logger.debug("episodic replay failed (non-fatal)", exc_info=True)
             return ""
 
@@ -692,7 +692,7 @@ LUCID review (mandatory after generating hypothesis):
                             error=reason[:300],
                         )
                         _evo.evolve_from_failures()
-                    except Exception:
+                    except Exception as exc:
                         logger.debug(
                             "PMK → evolution bridge failed (non-fatal)",
                             exc_info=True,
@@ -714,12 +714,12 @@ LUCID review (mandatory after generating hypothesis):
                 )
                 if not pmk_text:
                     pmk_text = self._format_pmk_fallback(pmk_state, is_inconsistent)
-            except Exception:
+            except Exception as exc:
                 pmk_text = self._format_pmk_fallback(pmk_state, is_inconsistent)
 
             return pmk_text
 
-        except Exception:
+        except Exception as exc:
             logger.debug("PMK block failed (non-fatal)", exc_info=True)
             return ""
 
@@ -762,7 +762,7 @@ LUCID review (mandatory after generating hypothesis):
                 self._episodic_writer = writer
             writer.append(iter_n, entry)
             logger.debug("PMK conflict written to episodic shard")
-        except Exception:
+        except Exception as exc:
             logger.debug("PMK conflict write to episodic failed (non-fatal)", exc_info=True)
 
     def _ensure_hypo_manifold(self, context: dict[str, Any]) -> Any:
@@ -799,7 +799,7 @@ LUCID review (mandatory after generating hypothesis):
                         n_params=n,
                     ))
             self._hypo_manifold = manifold
-        except Exception:
+        except Exception as exc:
             logger.debug("hypo manifold init failed (non-fatal)", exc_info=True)
             self._hypo_manifold = None
         return self._hypo_manifold
@@ -905,7 +905,7 @@ LUCID review (mandatory after generating hypothesis):
                             if _next_h != _prev:
                                 self._mcmc_accept_count = getattr(
                                     self, "_mcmc_accept_count", 0) + 1
-                except Exception:
+                except Exception as exc:
                     logger.debug(
                         "MCMC step advance skipped (non-fatal)", exc_info=True)
                 # MCMC 动态采样路径接入: 把采样链当前驻留的假设作为 hint 注入,
@@ -919,14 +919,14 @@ LUCID review (mandatory after generating hypothesis):
                         hint_block + f"\n### Posterior-guided\n{_pg}"
                         if hint_block else f"\n### Posterior-guided\n{_pg}"
                     )
-        except Exception:
+        except Exception as exc:
             logger.debug("posterior hint injection skipped (non-fatal)", exc_info=True)
         # H0: stable_principles 注入 (修 P3 断链 — 之前只进 chat agent system prompt,
         # autoloop 完全跳过 PM 层). 取 top-5 避免塞爆 prompt.
         try:
             from huginn.memory.longterm import load_stable_principles
             _principles = load_stable_principles()[:5]
-        except Exception:
+        except Exception as exc:
             _principles = []
         principles_block = (
             "\n".join(f"- {p}" for p in _principles) if _principles else ""
@@ -982,7 +982,7 @@ LUCID review (mandatory after generating hypothesis):
                     + "\n".join(_lines) + "\n"
                     "Consider testing one of these before generating a new hypothesis.\n"
                 )
-        except Exception:
+        except Exception as exc:
             logger.debug("frontier_ranked injection failed", exc_info=True)
         # P0: FAILED.md / PROVED.md durable state 注入 (chaoxu 启发).
         # context 压缩后 agent 重读这两个文件, 不重试死路, 不重新证明已过的.
@@ -1008,7 +1008,7 @@ LUCID review (mandatory after generating hypothesis):
                     + "\n".join(_proved_lines) + "\n"
                     "These are already established — build on them.\n"
                 )
-        except Exception:
+        except Exception as exc:
             logger.debug("FAILED/PROVED injection failed", exc_info=True)
         # 想象力引导: 高 surprise 或连续 refine 时, 要求 LLM 跳出分析思维,
         # 考虑反事实假设. 基于 MToM P4 (hybrid ST+TT): 心智模型预测错误时
@@ -1047,7 +1047,7 @@ LUCID review (mandatory after generating hypothesis):
                 git_log_block = (
                     f"\n### Recent Experiments (git log)\n{_r.stdout.strip()}\n"
                 )
-        except Exception:
+        except Exception as exc:
             logger.debug("git log block build skipped", exc_info=True)
 
         # 分量代表制: 多条独立探索路线时, 给 LLM 看各路线的代表假设,
@@ -1077,7 +1077,7 @@ LUCID review (mandatory after generating hypothesis):
                     for rid in reps[:5]:
                         try:
                             stmt = self.hypothesis_graph.get(rid).statement
-                        except Exception:
+                        except Exception as exc:
                             logger.debug("best-effort op failed", exc_info=True)
                             stmt = ""
                         lines.append(f"  - {rid}: {stmt[:120]}")
@@ -1088,7 +1088,7 @@ LUCID review (mandatory after generating hypothesis):
                         + "\n"
                         "综合判断时不要让某条路线靠节点数主导, 注意挑战和重定向.\n"
                     )
-        except Exception:
+        except Exception as exc:
             logger.debug("cluster block build skipped", exc_info=True)
 
         # 拓扑洞察注入 (B/C 路径): 把最近一次同调/拓扑审计 (_metacog_topology_audit
@@ -1134,7 +1134,7 @@ LUCID review (mandatory after generating hypothesis):
                         + "\n".join(_lines[:6])
                         + "\nConsider these structural signals when generating hypotheses.\n"
                     )
-        except Exception:
+        except Exception as exc:
             logger.debug("topology insight injection skipped (non-fatal)", exc_info=True)
 
         # 盲点注入 (blind_spot_mapper 接入主循环): 独立审计发现盲点只在旧 rcb_step2
@@ -1152,14 +1152,14 @@ LUCID review (mandatory after generating hypothesis):
                 BlindSpot,
                 map_blind_spots_to_hint,
             )
-        except Exception:
+        except Exception as exc:
             logger.debug("blind_spot_mapper unavailable, skip blind spot block", exc_info=True)
         else:
             _bs_mem = getattr(self, "memory", None)
             if _bs_mem is not None and hasattr(_bs_mem, "longterm"):
                 try:
                     _bs_sm = _bs_mem.longterm.get_self_model()
-                except Exception:
+                except Exception as exc:
                     logger.debug("blind spot block: self_model unavailable", exc_info=True)
                     _bs_sm = {}
                 _blind: list[BlindSpot] = []
@@ -1328,7 +1328,7 @@ Hypothesis:""",
                     generated.append(new_hyp)
                     self._last_hypothesis = new_hyp
                     self._last_raw_hypothesis = new_hyp
-            except Exception:
+            except Exception as exc:
                 logger.warning(
                     "hypothesis_generator unavailable for anomaly %s/%s, "
                     "log only (non-fatal)", h_a, h_b, exc_info=True,
@@ -1376,7 +1376,7 @@ Hypothesis:""",
                     generated.append(new_hyp)
                     self._last_hypothesis = new_hyp
                     self._last_raw_hypothesis = new_hyp
-            except Exception:
+            except Exception as exc:
                 logger.warning(
                     "hypothesis_generator unavailable for surprise %s (score=%.2f), "
                     "log only (non-fatal)", h_id, score, exc_info=True,
@@ -1441,7 +1441,7 @@ Hypothesis:""",
             if not checklist.is_complete:
                 return True, checklist.block_reason()
             return False, ""
-        except Exception:
+        except Exception as exc:
             logger.debug("metacog completion check failed", exc_info=True)
             return False, ""  # 出错不阻断, advisory
 
@@ -1484,14 +1484,14 @@ Hypothesis:""",
                                     f"< 下限 {floor}, 且无重定向目标"
                                 ),
                             )
-                    except Exception:
+                    except Exception as exc:
                         logger.debug("block_registry register skipped (non-fatal)", exc_info=True)
                 if self._speculator_hint:
                     self._speculator_hint = f"{self._speculator_hint}\n{hint}"
                 else:
                     self._speculator_hint = hint
                 logger.info("metacog: %s", hint)
-        except Exception:
+        except Exception as exc:
             logger.debug("metacog topology check failed", exc_info=True)
 
     def _metacog_component_representatives(self) -> list[str]:
@@ -1509,7 +1509,7 @@ Hypothesis:""",
                 if rep:
                     reps.append(rep)
             return reps
-        except Exception:
+        except Exception as exc:
             return []
 
     def _metacog_dominant_family(self) -> str:
@@ -1526,7 +1526,7 @@ Hypothesis:""",
             largest = max(components, key=len)
             rep = self.hypothesis_graph.component_representative(largest)
             return rep or ""
-        except Exception:
+        except Exception as exc:
             logger.debug("best-effort op failed", exc_info=True)
             return ""
 

@@ -47,7 +47,7 @@ class EngineActMixin:
                 prompt, persona_name="default", task="planning"
             )
             plan = self._parse_plan(response)
-        except Exception:
+        except Exception as exc:
             logger.debug("best-effort op failed", exc_info=True)
             return None
 
@@ -220,7 +220,7 @@ class EngineActMixin:
             from huginn.provenance import capture
 
             record.add_snapshot(capture(tool_name, input_params, output=output))
-        except Exception:
+        except Exception as exc:
             logger.warning(
                 "error in _record_provenance: capture snapshot failed", exc_info=True
             )
@@ -250,7 +250,7 @@ class EngineActMixin:
                     logger.warning("evolved fix hit but no description, skipping")
                     return None
                 return await self._execute_workflow(patched_desc, {"_evolved_fix": True})
-        except Exception:
+        except Exception as exc:
             logger.warning(
                 "error in _try_evolved_fix: apply_heuristic_fix failed", exc_info=True
             )
@@ -344,7 +344,7 @@ class EngineActMixin:
                 raw_script = {}
         try:
             base_script = WorkflowScript.from_dict(raw_script)
-        except Exception:
+        except Exception as exc:
             return {
                 "mode": "dynamic_workflow",
                 "success": False,
@@ -368,7 +368,7 @@ class EngineActMixin:
                 base_script=base_script,
                 llm_chat_fn=getattr(self, "_llm_chat", None),
             )
-        except Exception:
+        except Exception as exc:
             logger.debug("H2 generate_variants failed", exc_info=True)
             variants = []
         if not variants:
@@ -413,7 +413,7 @@ class EngineActMixin:
             archive = VariantArchive.get_instance()
             existing = archive.list_variants(obj_hash)
             novelty = compute_novelty(chosen.to_dict(), existing)
-        except Exception:
+        except Exception as exc:
             logger.debug("best-effort op failed", exc_info=True)
             novelty = 0.0
 
@@ -673,7 +673,7 @@ Please modify the code to address this task."""
                     )
                     if routed is not None:
                         model = routed
-                except Exception:
+                except Exception as exc:
                     logger.debug(
                         "model router select failed — using fallback model",
                         exc_info=True,

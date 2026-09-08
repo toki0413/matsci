@@ -34,7 +34,7 @@ def _enabled() -> bool:
     """LLM 语义判定开关 (默认关). 关闭时 classify_* 直接走 fallback, 零开销."""
     try:
         return FeatureFlags.shared().is_enabled(_FLAG)
-    except Exception:
+    except Exception as exc:
         return False
 
 
@@ -53,7 +53,7 @@ def _model() -> Any:
         return None
     try:
         return _provider()
-    except Exception:
+    except Exception as exc:
         logger.debug("hypothesis_semantic model provider failed", exc_info=True)
         return None
 
@@ -75,7 +75,7 @@ def _llm_classify(
     try:
         resp = m.invoke(prompt)
         text = resp.content if hasattr(resp, "content") else str(resp)
-    except Exception:
+    except Exception as exc:
         logger.debug("hypothesis_semantic: LLM invoke failed, fallback", exc_info=True)
         return fallback()
     label = (text or "").strip().strip('"\'`').strip().lower()

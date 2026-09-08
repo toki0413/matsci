@@ -81,6 +81,49 @@ def world_model_card(model: "LawModel") -> dict:
     }
 
 
+def world_model_inventory() -> list[dict]:
+    """多元论治理清册 —— 仓库里并存的世界模型实现及其世界观(**不合并, 只标注**).
+
+    世界模型不是单一范式 (多元论): 仓库里本就有三套视角各异的实现, 服务不同消费者,
+    彼此**不是冲突重复** —— 强行合并会同时破坏两者的本职:
+
+      1. ``research.law_model``    物理-行动-因果极 (方程前向 + reconcile 对账)  → 科研管线
+      2. ``security.world_state``  隐态转移极 (StateEstimator 状态估计 +
+                                    LearnableForwardModel 从真实运行**学** s')      → 沙箱主循环
+      3. ``security.world_model``  物理逆生成器 (infer_inverse, 前向+逆向)          → 可逆撤销控制环
+
+    多元论治理的落法是: 用 ``worldview`` 把这三种"世界"**显式区别开**, 而不是熔成一团
+    或悄悄让某个实现冒充全部。``available`` 为 best-effort(对应模块可导入即 True)。
+
+    Returns: 每项的 {id, worldview, purpose, consumer, falsifiable, available}
+    """
+    spec = [
+        ("research.law_model", Worldview.PHYSICS_CAUSAL.value,
+         "方程前向模型 + reconcile 数值对账(证伪式可信)", "科研管线(规划/验证)", "huginn.research.law_model"),
+        ("security.world_state", Worldview.LATENT_TRANSITION.value,
+         "StateEstimator 状态估计 + LearnableForwardModel 从真实运行学 s' 转移", "沙箱主循环(奖励/记忆)", "huginn.security.world_state"),
+        ("security.world_model", Worldview.PHYSICS_CAUSAL.value,
+         "物理逆生成器 (infer_inverse 前向+逆向)", "可逆撤销控制环", "huginn.security.world_model"),
+    ]
+    entries: list[dict] = []
+    for eid, worldview, purpose, consumer, modname in spec:
+        available = True
+        try:
+            __import__(modname)
+        except Exception:  # noqa: BLE001 — 可选实现不可导入仅记录, 不阻断清册
+            available = False
+        entries.append({
+            "id": eid,
+            "worldview": worldview,
+            "purpose": purpose,
+            "consumer": consumer,
+            "falsifiable": worldview in (Worldview.PHYSICS_CAUSAL.value,
+                                         Worldview.LATENT_TRANSITION.value),
+            "available": available,
+        })
+    return entries
+
+
 def kepler_semimajor_au(period_d: float, host_msun: float = 1.0) -> float:
     """开普勒第三定律: a[AU] = (M*[M☉])^{1/3} (P[yr])^{2/3}. (数学定律)"""
     return host_msun ** (1 / 3) * (period_d / 365.25) ** (2 / 3)

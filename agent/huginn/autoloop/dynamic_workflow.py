@@ -203,12 +203,12 @@ def _serialize(obj: Any) -> Any:
     if hasattr(obj, "to_dict"):
         try:
             return obj.to_dict()
-        except Exception:
+        except Exception as exc:
             logger.debug("to dict failed", exc_info=True)
     if hasattr(obj, "__dict__"):
         try:
             return {k: _serialize(v) for k, v in vars(obj).items() if not k.startswith("_")}
-        except Exception:
+        except Exception as exc:
             logger.debug("serialize failed", exc_info=True)
     return str(obj)
 

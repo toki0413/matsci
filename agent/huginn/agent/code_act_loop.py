@@ -476,7 +476,7 @@ def _audit_code(agent: Any, code: str, error: str | None) -> None:
         try:
             ctx = getattr(agent, "_session_state", None)
             audit_logger = getattr(ctx, "audit_logger", None)
-        except Exception:
+        except Exception as exc:
             logger.debug("best-effort op failed", exc_info=True)
             return
     if audit_logger is None:
@@ -493,7 +493,7 @@ def _audit_code(agent: Any, code: str, error: str | None) -> None:
             input_data=code,
             output_data=error,
         )
-    except Exception:
+    except Exception as exc:
         logger.debug("code_act audit log failed", exc_info=True)
 
 
@@ -730,7 +730,7 @@ async def run_code_act_turn(
                             }
                             action, payload = await inbox_fn(code, risk, risk_reason)
                             resume_decision = (action, payload)
-                        except Exception:
+                        except Exception as exc:
                             logger.debug(
                                 "inbox fallback failed, conservative deny",
                                 exc_info=True,

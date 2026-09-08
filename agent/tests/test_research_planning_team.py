@@ -13,6 +13,8 @@
      具身闸门(不可证伪拒收) + MCP 码头可见可调, 交互审计作用在世界模型域
   8. 结构闸门自动挂进深研管线 —— `run_research_program(structural_audit=)` 让代理结论
      进报告/决策前自动过交互等效审计, 结果并入 trace + 报告(out.structural_*)
+  9. 世界模型多元论清册 —— `world_model_inventory` 把并存的三套实现按世界观显著区分
+     (不合并只标注: 物理因果 / 隐态转移 / 物理逆生成器)
 
 纯确定性/本地, 零网络/零 LLM。实验 run 返回真实可区分数值。
 """
@@ -574,3 +576,20 @@ def test_build_alignment_outcome_gates_surrogate_conclusion_in_pipeline():
     out_ok = _pipeline_with_structural_gate(gate_ok)
     assert out_ok.structural_aligned is True
     assert "未通过" not in out_ok.report
+
+
+# ── 9) 世界模型多元论清册 (不合并, 只标注 —— 治理三套并存实现) ──────────
+def test_world_model_inventory_distinguishes_plural_worldviews():
+    """多元论治理: 仓库并存的世界模型实现按其世界观显式区别, 而非熔成一团."""
+    from huginn.research.law_model import Worldview, world_model_inventory
+    inv = world_model_inventory()
+    by_id = {e["id"]: e for e in inv}
+    assert len(inv) >= 3
+    # 隐态转移极(可学前向 s') vs 物理因果极: 世界观确实被区别开
+    assert by_id["security.world_state"]["worldview"] == Worldview.LATENT_TRANSITION.value
+    assert by_id["research.law_model"]["worldview"] == Worldview.PHYSICS_CAUSAL.value
+    # 三者消费者各异(科研管线 / 沙箱主循环 / 可逆撤销控制环) —— 是分工不是冲突重复
+    consumers = {e["consumer"] for e in inv}
+    assert len(consumers) >= 3, consumers
+    # 每项都声明可证伪性(物理/隐态极做前向都必须留对账/回测参照)
+    assert all(e["falsifiable"] for e in inv), inv

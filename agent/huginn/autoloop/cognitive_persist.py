@@ -82,7 +82,7 @@ def persist_run_context(
             importance=0.5,
             tier="mid",
         )
-    except Exception:
+    except Exception as exc:
         logger.debug("run_context store failed (non-fatal)", exc_info=True)
 
 
@@ -100,7 +100,7 @@ def load_run_context(memory: Any) -> str:
             category="run_context",
             top_k=1,
         )
-    except Exception:
+    except Exception as exc:
         logger.debug("best-effort op failed", exc_info=True)
         return ""
     if not results:

@@ -21,7 +21,7 @@ class MemoryBackend(ABC):
         ttl_hours: float | None = None,
     ) -> str:
         """Store a memory entry and return its ID."""
-        raise NotImplementedError
+        ...
 
     @abstractmethod
     def retrieve(
@@ -33,12 +33,12 @@ class MemoryBackend(ABC):
         semantic: bool = True,
     ) -> list[dict[str, Any]]:
         """Retrieve memories matching the query."""
-        raise NotImplementedError
+        ...
 
     @abstractmethod
     def delete(self, memory_id: str) -> bool:
         """Delete a memory entry by ID."""
-        raise NotImplementedError
+        ...
 
 
 class SQLiteMemoryBackend(MemoryBackend):

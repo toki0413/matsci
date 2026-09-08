@@ -266,7 +266,7 @@ def _read_completion_records(path: Path) -> list[dict[str, Any]]:
                 except json.JSONDecodeError:
                     logger.debug("skip bad completion line in %s", path)
         return out
-    except Exception:
+    except Exception as exc:
         logger.debug("read completion records failed", exc_info=True)
         return []
 
@@ -325,7 +325,7 @@ def _dump_completion_records(
         with open(comp_path, "w", encoding="utf-8") as f:
             f.write("\n".join(lines) + "\n")
         return comp_path
-    except Exception:
+    except Exception as exc:
         logger.debug("completion dump failed", exc_info=True)
         return None
 
@@ -418,12 +418,12 @@ class StreamingMixin:
                         continue
                     try:
                         self._conversation_tree.merge_branch_into_active(leaf)
-                    except Exception:
+                    except Exception as exc:
                         logger.debug(
                             "ConversationTree merge skipped for branch %s",
                             leaf, exc_info=True,
                         )
-        except Exception:
+        except Exception as exc:
             logger.debug("ConversationTree fork/merge skipped", exc_info=True)
         logger.info("Research phase -> %s", target_phase.value)
         return True
@@ -587,7 +587,7 @@ class StreamingMixin:
                             "tool_input": _tool_input,
                         }
                     )
-                except Exception:
+                except Exception as exc:
                     logger.debug("session_state tool tracking failed", exc_info=True)
                 if self._break_after_tool:
                     self._break_flag = True
@@ -627,7 +627,7 @@ class StreamingMixin:
         """
         try:
             mgr = get_interrupt_manager()
-        except Exception:
+        except Exception as exc:
             logger.debug("best-effort op failed", exc_info=True)
             return None
         await mgr.wait_if_paused(thread_id)
@@ -642,7 +642,7 @@ class StreamingMixin:
                 self._conversation_tree.add_message(
                     "user", f"[modified] {evt.message}"
                 )
-            except Exception:
+            except Exception as exc:
                 logger.warning("Failed to save user input to memory", exc_info=True)
             return {"modified": True, "message": evt.message}
         return None
@@ -717,7 +717,7 @@ class StreamingMixin:
         )
         try:
             await self.hook_manager.trigger(PRE_COMPACT, pre_ctx)
-        except Exception:
+        except Exception as exc:
             logger.warning("PRE_COMPACT hook raised", exc_info=True)
 
         try:
@@ -728,7 +728,7 @@ class StreamingMixin:
                     if self._conversation_summary
                     else summary
                 )
-        except Exception:
+        except Exception as exc:
             logger.warning("promote_session_summary failed", exc_info=True)
 
         # G34: 真修剪 checkpointer 持久化状态. compact_messages 只修 inputs 临时
@@ -755,7 +755,7 @@ class StreamingMixin:
                         "checkpointer trimmed %d old messages (G34)", removed
                     )
                     turn_span.metadata["checkpointer_trimmed"] = removed
-            except Exception:
+            except Exception as exc:
                 logger.warning(
                     "checkpointer trim failed (G34)", exc_info=True
                 )
@@ -771,7 +771,7 @@ class StreamingMixin:
                 self._model_context_window,
             )
             after_pct = after["used"]
-        except Exception:
+        except Exception as exc:
             logger.debug("best-effort op failed", exc_info=True)
             after_pct = 0
 
@@ -799,9 +799,9 @@ class StreamingMixin:
                     )
                     try:
                         self.memory.promote_session_summary(tier="long")
-                    except Exception:
+                    except Exception as exc:
                         logger.warning("memory promote_session_summary failed", exc_info=True)
-        except Exception:
+        except Exception as exc:
             logger.warning("adaptive compaction skipped", exc_info=True)
 
         logger.info(
@@ -875,7 +875,7 @@ class StreamingMixin:
                 )
                 turn_span.metadata["checkpointer_p0_trimmed"] = removed
             return removed
-        except Exception:
+        except Exception as exc:
             logger.warning(
                 "checkpointer count-cap trim failed (P0)", exc_info=True
             )
@@ -1015,7 +1015,7 @@ class StreamingMixin:
                 from huginn.provenance.pipeline import SimulationPipeline
                 pipeline = SimulationPipeline()
                 pipeline_block = pipeline.to_context_block()
-            except Exception:
+            except Exception as exc:
                 logger.debug("pipeline context block skipped", exc_info=True)
 
             prov_block = ""
@@ -1027,7 +1027,7 @@ class StreamingMixin:
                 # P1-1: 压缩后注入 DAG mermaid, 防止 agent 丢文件产出关系全局视图
                 from huginn.provenance import to_mermaid_for_context
                 dag_block = to_mermaid_for_context(reg)
-            except Exception:
+            except Exception as exc:
                 logger.debug("provenance context block skipped", exc_info=True)
 
             # Long-horizon task state — gives the agent a view of what it
@@ -1039,7 +1039,7 @@ class StreamingMixin:
                 _tid = getattr(self, "thread_id", "") or ""
                 if _tid:
                     task_block = get_tracker().context_block(_tid)
-            except Exception:
+            except Exception as exc:
                 logger.debug("task state context block skipped", exc_info=True)
 
             if not pipeline_block and not task_block and not ended_at_tool and not dag_block:
@@ -1069,7 +1069,7 @@ class StreamingMixin:
                 "Synthetic Continue injected (tool_boundary=%s, has_pipeline=%s)",
                 ended_at_tool, bool(pipeline_block),
             )
-        except Exception:
+        except Exception as exc:
             logger.debug("synthetic continue injection skipped", exc_info=True)
 
     async def _maybe_inject_proactive_suggestion(self) -> None:
@@ -1109,7 +1109,7 @@ class StreamingMixin:
                 "Proactive suggestion injected: %d ready steps",
                 len(ready),
             )
-        except Exception:
+        except Exception as exc:
             logger.debug("proactive suggestion skipped", exc_info=True)
 
     # ── The main chat loop ────────────────────────────────────────
@@ -1191,7 +1191,7 @@ class StreamingMixin:
                 role="user", content=message,
                 metadata={"thread_id": thread_id, "trace_id": thread_id},
             )
-        except Exception:
+        except Exception as exc:
             logger.debug("ConversationTree add_message (user) skipped", exc_info=True)
 
         # ── Mode banner: 告诉前端当前 agent 工作模式 (端到端通信) ──
@@ -1213,7 +1213,7 @@ class StreamingMixin:
         # without judgment". 这里是声明式触发, 不做语义判断.
         try:
             self.memory.capture_intuition(message)
-        except Exception:
+        except Exception as exc:
             logger.debug("intuition capture skipped", exc_info=True)
 
         from huginn.interaction.clarification import should_ask_clarification
@@ -1273,7 +1273,7 @@ class StreamingMixin:
 
                     _ve = _ve or get_visual_encoder()
                     _ii = _ii or get_image_index()
-                except Exception:
+                except Exception as exc:
                     logger.debug("visual_encoder/image_index 注入失败", exc_info=True)
             _vr = VisionRouter(
                 visual_encoder=_ve,
@@ -1297,7 +1297,7 @@ class StreamingMixin:
                     _decoded = await asyncio.to_thread(
                         decode_image, image_path, message or None
                     )
-                except Exception:
+                except Exception as exc:
                     logger.debug("local vision decoder unavailable", exc_info=True)
                 _team = getattr(self, "_team_ref", None)
                 if _decoded:
@@ -1346,7 +1346,7 @@ class StreamingMixin:
                                 f"[用户问题]\n{message or '请根据上述视觉描述进行分析.'}"
                             )
                             _vision_route = VisionRoute.TEXT_ONLY
-                    except Exception:
+                    except Exception as exc:
                         logger.warning(
                             "Cross-agent vision delegation failed",
                             exc_info=True,
@@ -1378,7 +1378,7 @@ class StreamingMixin:
             from huginn.privacy.scanner import SecretScanner
             scanner = SecretScanner()
             message = scanner.redact_pii(message)
-        except Exception:
+        except Exception as exc:
             logger.debug("PII scanner unavailable, skipping redaction", exc_info=True)
 
         self.memory.add_message("user", message)
@@ -1398,7 +1398,7 @@ class StreamingMixin:
         try:
             from huginn.routes.metrics import track_agent_turn
             track_agent_turn(thread_id)
-        except Exception:
+        except Exception as exc:
             logger.debug("Prometheus turn counter unavailable", exc_info=True)
 
         # TPS / TTFT 实时监控: t0=turn 起点, t_first_token=首个 chunk 时间.
@@ -1437,7 +1437,7 @@ class StreamingMixin:
                 prompt_ctx = await self.hook_manager.trigger(
                     USER_PROMPT_SUBMIT, prompt_ctx
                 )
-            except Exception:
+            except Exception as exc:
                 logger.warning(
                     "USER_PROMPT_SUBMIT hook raised", exc_info=True
                 )
@@ -1494,7 +1494,7 @@ class StreamingMixin:
                         directive = self.style_learner.get_style_directive()
                         if directive:
                             messages.insert(-1, SystemMessage(content=directive, id="ctx_style"))
-                except Exception:
+                except Exception as exc:
                     logger.warning(
                         "style directive injection failed", exc_info=True
                     )
@@ -1565,7 +1565,7 @@ class StreamingMixin:
                         messages = _pg.redact_messages_for_cloud(messages)
             except RuntimeError:
                 raise
-            except Exception:
+            except Exception as exc:
                 logger.warning(
                     "PrivacyGuard hook failed", exc_info=True
                 )
@@ -1580,7 +1580,7 @@ class StreamingMixin:
 
                 messages = inject_discipline_reminder(messages)
                 inputs = {"messages": messages}
-            except Exception:
+            except Exception as exc:
                 logger.debug("event-driven discipline inject skipped", exc_info=True)
 
             # Compact initial messages if a context budget is configured.
@@ -1594,7 +1594,7 @@ class StreamingMixin:
             _trace_avail = False
             try:
                 _trace_avail = self._ctx_builder.meta_trace_available()
-            except Exception:
+            except Exception as exc:
                 logger.debug("meta_trace_available check failed", exc_info=True)
             _trace_kln_divisor = 2 if _trace_avail else 1
             # M3: 按模型档位整体放宽/收紧 compaction 力度 (light 档保留更多原始).
@@ -1602,7 +1602,7 @@ class StreamingMixin:
                 from huginn.plugins.model_tier import compaction_knobs
 
                 _ck = compaction_knobs()
-            except Exception:
+            except Exception as exc:
                 _ck = None
             _keep_mult = _ck.keep_multiplier if _ck else 1.0
             _root_mult = _ck.root_multiplier if _ck else 1.0
@@ -1644,7 +1644,7 @@ class StreamingMixin:
                             self._adaptive_keep_last_n = last.adaptive_keep_last_n
                         if last is not None and last.adaptive_budget_ratio is not None:
                             self._adaptive_budget_ratio = last.adaptive_budget_ratio
-                    except Exception:
+                    except Exception as exc:
                         logger.debug("belief_entropy adaptive read failed", exc_info=True)
                     adaptive_kln = getattr(self, "_adaptive_keep_last_n", 4)
                     # Meta-Trace: trace 存在时 keep_last_n 减半, trace 携带历史
@@ -1717,7 +1717,7 @@ class StreamingMixin:
             try:
                 from langgraph.checkpoint.sqlite import SqliteSaver
                 use_sync_stream = isinstance(self.checkpointer, SqliteSaver)
-            except Exception:
+            except Exception as exc:
                 logger.debug("best-effort op failed", exc_info=True)
                 use_sync_stream = False
 
@@ -1753,7 +1753,7 @@ class StreamingMixin:
                     m for m in _msgs if getattr(m, "id", None) != "ctx_tool_budget"
                 ]
                 inputs["messages"] = _msgs + [_budget_msg]
-            except Exception:
+            except Exception as exc:
                 logger.debug("budget injection skipped", exc_info=True)
             # AV5: 默认 skip — ToolLoopDetector + ThoughtLoopDetector 在长任务 (benchmark 或
             # 真实研究) 都会误判: agent 反复跑 code_tool 是正常, 写报告反复用术语
@@ -1787,7 +1787,7 @@ class StreamingMixin:
                     snapshot = graph.get_state(config)
                     existing_msgs = snapshot.values.get("messages", [])
                     self._state_msg_offsets[thread_id] = len(existing_msgs)
-                except Exception:
+                except Exception as exc:
                     logger.debug("checkpointer state fetch skipped", exc_info=True)
 
             # 统一事件总线: ON_LLM_REQUEST + ON_BEFORE_MESSAGE_SENT
@@ -2031,7 +2031,7 @@ class StreamingMixin:
                                 wait_ms=int(wait * 1000),
                                 states_yielded=states_yielded,
                             )
-                        except Exception:
+                        except Exception as exc:
                             logger.debug(
                                 "step retry event publish failed", exc_info=True
                             )
@@ -2079,12 +2079,12 @@ class StreamingMixin:
                                 role="assistant", content=ai_content,
                                 metadata={"thread_id": thread_id, "phase": self.phase},
                             )
-                        except Exception:
+                        except Exception as exc:
                             logger.debug("ConversationTree add_message (ai) skipped", exc_info=True)
                         if self.style_learner is not None:
                             try:
                                 self.style_learner.observe(message, ai_content)
-                            except Exception:
+                            except Exception as exc:
                                 logger.warning(
                                     "style_learner.observe failed",
                                     exc_info=True,
@@ -2109,7 +2109,7 @@ class StreamingMixin:
                 try:
                     if self._session_state.tool_results_this_turn:
                         self._run_post_turn_reflection()
-                except Exception:
+                except Exception as exc:
                     logger.debug("finally reflection failed", exc_info=True)
                 # TPS 收尾: chunk_chars/4 ≈ tokens (latin). 写 turn_span + Prometheus.
                 if _tps_t_first is not None and _tps_chunk_chars > 0:
@@ -2125,7 +2125,7 @@ class StreamingMixin:
                                 ttft_ms=turn_span.metadata.get("llm_ttft_ms", 0),
                                 tps=tps,
                             )
-                        except Exception:
+                        except Exception as exc:
                             logger.debug("TPS prometheus publish failed", exc_info=True)
                 self._tool_adapter.set_budget(None)
                 self._tool_adapter.set_router(None)
@@ -2147,7 +2147,7 @@ class StreamingMixin:
                             "turn_count": self._turn_count,
                         },
                     )
-                except Exception:
+                except Exception as exc:
                     logger.debug("trajectory save failed", exc_info=True)
                 # wire-level completion dump: prompt/response/tool_call/tool_result
                 # 落盘 jsonl 给 red_team + 未来 RL 训练消费. 提取为 _dump_completion_records
@@ -2163,7 +2163,7 @@ class StreamingMixin:
                 if self.is_research_mode():
                     try:
                         self.memory.promote_session_summary(tier="long")
-                    except Exception:
+                    except Exception as exc:
                         logger.debug(
                             "research-mode memory promote failed",
                             exc_info=True,
@@ -2186,7 +2186,7 @@ class StreamingMixin:
                         importance=0.6,
                         tier="mid",
                     )
-                except Exception:
+                except Exception as exc:
                     logger.debug("session snapshot save failed", exc_info=True)
                 await _ubus.publish_pet_mood(PetMood.IDLE, "Ready", {"thread_id": thread_id})
                 self._turn_count += 1
@@ -2269,7 +2269,7 @@ class StreamingMixin:
                 )
             if text and str(text).strip():
                 return [AIMessage(content=str(text).strip())]
-        except Exception:
+        except Exception as exc:
             logger.debug("closing-answer synthesis skipped", exc_info=True)
         return []
 

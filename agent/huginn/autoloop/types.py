@@ -110,7 +110,7 @@ def save_autoloop_snapshot(
             encoding="utf-8",
         )
         return path
-    except Exception:
+    except Exception as exc:
         logger.debug("failed to save autoloop snapshot", exc_info=True)
         return None
 
@@ -128,6 +128,6 @@ def load_autoloop_snapshot(
         return None
     try:
         return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
+    except Exception as exc:
         logger.debug("failed to load autoloop snapshot: %s", path, exc_info=True)
         return None

@@ -165,7 +165,7 @@ def build_pmk_state(
                 )
                 if _ts_mem:
                     _mem_text = (_mem_text + " | recent: " + _ts_mem[:200]).strip()
-            except Exception:
+            except Exception as exc:
                 logger.debug("memory recall_for_prompt skipped", exc_info=True)
         # 桥 H: M 路补 failed_directions — 让 PMK 一致性检查感知"persona 推荐
         # 的方向 vs 已知失败方向"的冲突. 顺带接通 recall_procedural 死代码
@@ -181,7 +181,7 @@ def build_pmk_state(
                         _mem_text + " | failed_directions: "
                         + " ; ".join(_f_lines)
                     ).strip()
-            except Exception:
+            except Exception as exc:
                 logger.debug("failed_directions recall skipped", exc_info=True)
             try:
                 _attempted = getattr(last_step_eval, "attempted", "") or ""
@@ -191,7 +191,7 @@ def build_pmk_state(
                         _mem_text + " | procedural: "
                         + " ; ".join(p[:60] for p in _proc)
                     ).strip()
-            except Exception:
+            except Exception as exc:
                 logger.debug("procedural recall skipped", exc_info=True)
         _kb_text = ""
         if kb is not None and last_step_eval is not None:
@@ -210,7 +210,7 @@ def build_pmk_state(
                         str(h.get("content", "") if isinstance(h, dict) else h)
                         for h in _kb_hits[:top_k]
                     )[:200]
-            except Exception:
+            except Exception as exc:
                 logger.debug("kb query skipped", exc_info=True)
         # 桥 C: evolution_rules 作为 Knowledge 路 — 让 PMK 一致性检查能看到
         # 历史教训, 不只 ChromaDB 检索. 路径对齐 context_builder.build_evolution_rules.
@@ -243,7 +243,7 @@ def build_pmk_state(
                             + " | "
                             + _kb_text
                         ).strip(" |")
-        except Exception:
+        except Exception as exc:
             logger.debug("evolution_rules load skipped", exc_info=True)
         # 桥 D: stable_principles 作为 Knowledge 路 — 蒸馏出的原则直接作为 KB 立场,
         # 让 PMK 能检测 persona/memory 与长期原则的冲突. load_stable_principles 返回 list[str].
@@ -259,7 +259,7 @@ def build_pmk_state(
                         + " | "
                         + _kb_text
                     ).strip(" |")
-        except Exception:
+        except Exception as exc:
             logger.debug("stable_principles load skipped", exc_info=True)
         _result: dict[str, str] = {}
         if _persona_text:

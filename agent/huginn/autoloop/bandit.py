@@ -41,7 +41,7 @@ def _harness_enabled(key: str, default: bool = False) -> bool:
         cfg = get_config()
         ff = getattr(cfg, "feature_flags", None) or {}
         return bool(ff.get(key, default))
-    except Exception:
+    except Exception as exc:
         return default
 
 
@@ -147,7 +147,7 @@ class WorkflowBandit:
         self._store_dir = cache_dir / "workflow_beliefs"
         try:
             self._store_dir.mkdir(parents=True, exist_ok=True)
-        except Exception:
+        except Exception as exc:
             logger.debug("workflow_beliefs dir create failed", exc_info=True)
         self._beliefs: dict[tuple[str, str], WorkflowBelief] = {}
         self._load_all()
@@ -167,9 +167,9 @@ class WorkflowBandit:
                     d = json.loads(f.read_text(encoding="utf-8"))
                     b = WorkflowBelief.from_dict(d)
                     self._beliefs[(b.objective_hash, b.variant_id)] = b
-                except Exception:
+                except Exception as exc:
                     logger.debug("belief load fail: %s", f, exc_info=True)
-        except Exception:
+        except Exception as exc:
             logger.debug("belief dir scan fail", exc_info=True)
 
     def _save(self, b: WorkflowBelief) -> None:
@@ -179,7 +179,7 @@ class WorkflowBandit:
                 json.dumps(b.to_dict(), ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
-        except Exception:
+        except Exception as exc:
             logger.debug("belief save fail: %s", b.variant_id, exc_info=True)
 
     def record_variant_outcome(
@@ -232,7 +232,7 @@ class WorkflowBandit:
                     beta = 1 + b.weighted_failure
                     try:
                         s = random.betavariate(alpha, beta)
-                    except Exception:
+                    except Exception as exc:
                         s = b.posterior_mean
                     samples.append((vid, s))
         return max(samples, key=lambda x: x[1])[0]
@@ -268,7 +268,7 @@ class VariantArchive:
         self._store_dir = cache_dir / "workflow_archive"
         try:
             self._store_dir.mkdir(parents=True, exist_ok=True)
-        except Exception:
+        except Exception as exc:
             logger.debug("workflow_archive dir create failed", exc_info=True)
 
     @classmethod
@@ -288,7 +288,7 @@ class VariantArchive:
             return {"variants": []}
         try:
             return json.loads(f.read_text(encoding="utf-8"))
-        except Exception:
+        except Exception as exc:
             logger.debug("archive load fail: %s", f, exc_info=True)
             return {"variants": []}
 
@@ -299,7 +299,7 @@ class VariantArchive:
                 json.dumps(data, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
-        except Exception:
+        except Exception as exc:
             logger.debug("archive save fail: %s", f, exc_info=True)
 
     def add_variant(

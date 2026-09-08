@@ -147,7 +147,7 @@ def _perturb_script(script: WorkflowScript) -> WorkflowScript:
                     select_workflow_params_for_stage,
                 )
                 new_args = select_workflow_params_for_stage(st.tool_name, st.args)
-            except Exception:
+            except Exception as exc:
                 new_args = _perturb_args(st.args, st.tool_name)
         else:
             new_args = _perturb_args(st.args, st.tool_name)
@@ -187,7 +187,7 @@ async def _llm_generate_variants(
     )
     try:
         response = await llm_chat_fn(prompt, task="summarize")
-    except Exception:
+    except Exception as exc:
         logger.debug("llm_generate_variants LLM fail", exc_info=True)
         return []
     if not (response and response.strip()):
@@ -197,7 +197,7 @@ async def _llm_generate_variants(
         txt = txt.split("\n", 1)[-1].rsplit("```", 1)[0]
     try:
         d = json.loads(txt)
-    except Exception:
+    except Exception as exc:
         logger.debug("llm_generate_variants JSON parse fail: %s", txt[:200])
         return []
     variants_raw = d.get("variants", [])
@@ -207,7 +207,7 @@ async def _llm_generate_variants(
             continue
         try:
             out.append(WorkflowScript.from_dict(v))
-        except Exception:
+        except Exception as exc:
             logger.debug("llm variant parse fail", exc_info=True)
     return out[:n]
 

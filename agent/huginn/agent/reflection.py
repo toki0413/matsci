@@ -73,14 +73,14 @@ class ReflectionMixin:
             if self.model_router is not None:
                 try:
                     model = self.model_router.select("summarize_v2", prefer_cheap=True)
-                except Exception:
+                except Exception as exc:
                     logger.warning(
                         "summarize_v2 unavailable, fallback to remote", exc_info=True
                     )
         if model is None and self.model_router is not None:
             try:
                 model = self.model_router.select("summarize", prefer_cheap=True)
-            except Exception:
+            except Exception as exc:
                 logger.warning(
                     "model_router.select failed for summarize model", exc_info=True
                 )
@@ -211,7 +211,7 @@ class ReflectionMixin:
 
                 self._csm._state = CognitiveState.S4_CONSTRUCT
                 logger.info("synced plan from PlanStore: %s", p.id)
-        except Exception:
+        except Exception as exc:
             logger.debug("PlanStore sync failed", exc_info=True)
 
     def _run_post_turn_reflection(self) -> None:
@@ -239,7 +239,7 @@ class ReflectionMixin:
                     tool_result=tr,
                     session_state=self._session_state,
                 )
-            except Exception:
+            except Exception as exc:
                 logger.debug("reflection failed", exc_info=True)
                 continue
 
@@ -250,7 +250,7 @@ class ReflectionMixin:
                 ev_engine.mark_fix_success(
                     tr.get("tool_name", ""), reflection.tool_succeeded
                 )
-            except Exception:
+            except Exception as exc:
                 logger.debug("mark_fix_success failed", exc_info=True)
 
             # Trigger evolution on failure / success signals.
@@ -295,7 +295,7 @@ class ReflectionMixin:
                                     f"{_fix.get('description','')[:200]}. "
                                     "Apply this fix in your next action.",
                                 )
-                        except Exception:
+                        except Exception as exc:
                             logger.debug(
                                 "apply_heuristic_fix in reflection failed",
                                 exc_info=True,
@@ -306,7 +306,7 @@ class ReflectionMixin:
                         # 弥合 SkillTemplate 池与 SkillRegistry 两个技能池.
                         try:
                             ev_engine.sync_to_registry()
-                        except Exception:
+                        except Exception as exc:
                             logger.debug(
                                 "sync evolved skills to registry failed",
                                 exc_info=True,
@@ -325,9 +325,9 @@ class ReflectionMixin:
                                     },
                                 )
                             )
-                        except Exception:
+                        except Exception as exc:
                             logger.debug("evolution CSM signal failed", exc_info=True)
-                except Exception:
+                except Exception as exc:
                     logger.debug("evolution trigger failed", exc_info=True)
 
             # Drive the cognitive state machine with the reflection result.
@@ -387,11 +387,11 @@ class ReflectionMixin:
                             run_async(
                                 self._handle_s7_self_modify(reflection, self._csm)
                             )
-                        except Exception:
+                        except Exception as exc:
                             logger.warning(
                                 "S7 self-modify handler failed", exc_info=True
                             )
-            except Exception:
+            except Exception as exc:
                 logger.debug("CSM transition failed", exc_info=True)
 
             # 反思 sidecar: 把反思结论写文件, 主上下文只引用结论不引用推理过程.
@@ -400,7 +400,7 @@ class ReflectionMixin:
             if reflection.message or reflection.has_physics_errors:
                 try:
                     self._append_reflection_sidecar(tr, reflection)
-                except Exception:
+                except Exception as exc:
                     logger.debug("reflection sidecar write failed", exc_info=True)
 
             # Persist plan progress when a step is judged done.
@@ -414,7 +414,7 @@ class ReflectionMixin:
                         status="in_progress",
                         l1_coordinates=self._session_state.l1_coordinates,
                     )
-                except Exception:
+                except Exception as exc:
                     logger.debug("plan progress store failed", exc_info=True)
 
             # If reflection says we need user input, set pending confirmation.
@@ -455,11 +455,11 @@ class ReflectionMixin:
         # ponytail: 补充现有 reflection 规则信号, 不替代. try/except 静默, 不破坏 turn.
         try:
             self._check_event_signals(self._csm)
-        except Exception:
+        except Exception as exc:
             logger.debug("event signal check failed", exc_info=True)
         try:
             self._check_belief_entropy_signal(self._csm)
-        except Exception:
+        except Exception as exc:
             logger.debug("belief entropy signal check failed", exc_info=True)
 
         # H1: drain SignalHub pending queue — tool runtime error 等无 csm 引用的
@@ -470,9 +470,9 @@ class ReflectionMixin:
                 for sig in SignalHub.shared().drain_pending():
                     try:
                         self._csm.transition(sig)
-                    except Exception:
+                    except Exception as exc:
                         logger.debug("drain signal transition failed", exc_info=True)
-            except Exception:
+            except Exception as exc:
                 logger.debug("signal hub drain failed", exc_info=True)
 
         # 节流保存 session snapshot: 每 3 turn 一次, 让下次会话能恢复 _mode/_csm/_phase.
@@ -481,7 +481,7 @@ class ReflectionMixin:
         if getattr(self, "_turn_count", 0) % 3 == 0:
             try:
                 self._save_session_snapshot()
-            except Exception:
+            except Exception as exc:
                 logger.debug("session snapshot save failed", exc_info=True)
 
         # 元技能规则反哺: 每 N 次反思跑一次, 让 record_invocation 的
@@ -502,7 +502,7 @@ class ReflectionMixin:
                         len(_report.get("flag_high_failure", [])),
                         len(_report.get("untested", [])),
                     )
-            except Exception:
+            except Exception as exc:
                 logger.debug("meta skill rules evaluation failed", exc_info=True)
 
             # 元蒸馏反哺: 同节拍跑一次, 让蒸馏知识库的复用/置信统计回流成
@@ -519,7 +519,7 @@ class ReflectionMixin:
                         len(_krep.get("flag_low_value", [])),
                         len(_krep.get("untested", [])),
                     )
-            except Exception:
+            except Exception as exc:
                 logger.debug("meta knowledge rules evaluation failed", exc_info=True)
 
         self._session_state.clear_turn_results()
@@ -645,7 +645,7 @@ class ReflectionMixin:
             try:
                 store_stable_principle(proposal, source="S7_self_modify")
                 logger.info("S7 accepted proposal: %s", proposal[:80])
-            except Exception:
+            except Exception as exc:
                 logger.warning("store_stable_principle failed", exc_info=True)
         else:
             try:
@@ -655,7 +655,7 @@ class ReflectionMixin:
                     proposal[:80],
                     verdict.get("reason"),
                 )
-            except Exception:
+            except Exception as exc:
                 logger.warning("write_rejection failed", exc_info=True)
 
         # 6. 回 S1_DISCOVER (无论 accept/reject, S7 处理完都回 discovery)
@@ -718,7 +718,7 @@ class ReflectionMixin:
                 ]
                 if all_ts:
                     self._last_event_check_ts = max(all_ts)
-        except Exception:
+        except Exception as exc:
             logger.debug("event signal check failed", exc_info=True)
 
     def _check_belief_entropy_signal(self, csm) -> None:
@@ -747,7 +747,7 @@ class ReflectionMixin:
                 from huginn.metacog.cognitive_heat_engine import get_heat_engine
 
                 get_heat_engine().update_T_hot(float(h_belief))
-            except Exception:
+            except Exception as exc:
                 logger.debug(
                     "heat_engine.update_T_hot failed (non-fatal)", exc_info=True
                 )
@@ -765,5 +765,5 @@ class ReflectionMixin:
 
                     sig = TransitionSignal("belief_high", payload)
                 csm.transition(sig)
-        except Exception:
+        except Exception as exc:
             logger.debug("belief_entropy signal check failed", exc_info=True)

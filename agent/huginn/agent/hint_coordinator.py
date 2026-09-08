@@ -47,7 +47,7 @@ def _build_posterior_guided_hint(
         return ""
     try:
         hyp_count = len(manifold._hyp)
-    except Exception:
+    except Exception as exc:
         logger.debug("best-effort op failed", exc_info=True)
         return ""
     if hyp_count == 0 or not observations:
@@ -81,7 +81,7 @@ def _build_posterior_guided_hint(
                 f"(log_post={log_post:.3f}, log_prior={log_prior:.3f})"
             )
             parts.append("\n".join(core_lines))
-    except Exception:
+    except Exception as exc:
         logger.debug("posterior core hint failed", exc_info=True)
 
     # 探索 hint: max Fisher distance to current best (info gain 代理)
@@ -100,7 +100,7 @@ def _build_posterior_guided_hint(
                 )
                 explore_lines.append(f"predictions: {pred_str}")
             parts.append("\n".join(explore_lines))
-    except Exception:
+    except Exception as exc:
         logger.debug("posterior explore hint failed", exc_info=True)
 
     # MCMC hint: MCMC 采样链当前驻留的假设 (动态采样路径, 补充 argmax 贪婪盲区).
@@ -131,10 +131,10 @@ def _build_posterior_guided_hint(
                             "least_visited (underexplored directions): "
                             + ", ".join(_lv)
                         )
-                except Exception:
+                except Exception as exc:
                     logger.debug("mcmc_least_visited lookup failed", exc_info=True)
                 parts.append("\n".join(m_lines))
-        except Exception:
+        except Exception as exc:
             logger.debug("posterior mcmc hint failed", exc_info=True)
 
     if not parts:
@@ -368,7 +368,7 @@ class HintCoordinator:
                             if _h is not None:
                                 _best_lift = _log_post - _h.log_prior()
                                 _best_entry_v15 = True
-                        except Exception:
+                        except Exception as exc:
                             logger.debug("manifold hypothesis lookup failed", exc_info=True)
                 if _best_overlap > 0.5:
                     if _best_entry_v15:

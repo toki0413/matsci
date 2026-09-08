@@ -35,7 +35,7 @@ def _histogram_correlation(img_bytes1: bytes, img_bytes2: bytes) -> float:
         h2 = h2.astype(float) / (h2.sum() + 1e-8)
         corr = float(np.corrcoef(h1, h2)[0, 1])
         return corr if not np.isnan(corr) else 0.0
-    except Exception:
+    except Exception as exc:
         logger.debug("best-effort op failed", exc_info=True)
         return 0.0
 
@@ -303,7 +303,7 @@ class VisualInspectMixin:
             enriched = enrich_with_visual("visual_inspect", {"result": result})
             if "_visual_hint" in enriched:
                 result["_visual_hint"] = enriched["_visual_hint"]
-        except Exception:
+        except Exception as exc:
             logger.debug("visual enrich skipped", exc_info=True)
 
         return result

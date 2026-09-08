@@ -69,7 +69,7 @@ class PlanCheckMixin:
         # H0: stable_principles 注入 (同 hypothesize, 修 P3 断链)
         try:
             _principles = load_stable_principles()[:5]
-        except Exception:
+        except Exception as exc:
             _principles = []
         principles_block = (
             "\n".join(f"- {p}" for p in _principles) if _principles else ""
@@ -122,7 +122,7 @@ class PlanCheckMixin:
                     + "\n".join(f"  - {p}" for p in patches[:3])
                     + "\n"
                 )
-        except Exception:
+        except Exception as exc:
             logger.warning(
                 "error in _build_plan_prompt: evolution skill/patch fetch failed",
                 exc_info=True,
@@ -170,7 +170,7 @@ class PlanCheckMixin:
                         + "\n\n".join(lines)
                         + "\n"
                     )
-            except Exception:
+            except Exception as exc:
                 logger.debug("composite skill lookup failed", exc_info=True)
 
         # Pipeline 建议: 基于 provenance 规则推荐下一步工具.
@@ -200,7 +200,7 @@ class PlanCheckMixin:
                         + "\n".join(s_lines)
                         + "\n"
                     )
-        except Exception:
+        except Exception as exc:
             logger.debug("best-effort op failed", exc_info=True)  # pipeline 是 advisory, 失败不阻塞
 
         blocks = self._apply_block_patches(
@@ -275,7 +275,7 @@ PREDICTION: <what you expect the result to look like — be specific: "energy ~ 
                     "CRITICAL: 当前假设是图的关键割点, 需要双模态验证. "
                     "优先选 workflow/skill 跑符号验证, 不要只选 coder."
                 )
-        except Exception:
+        except Exception as exc:
             logger.debug("dual coverage hint skipped", exc_info=True)
         # 连续失败 → 倾向换方向
         cf = getattr(self, "_consecutive_failures", 0)
@@ -333,7 +333,7 @@ PREDICTION: <what you expect the result to look like — be specific: "energy ~ 
                 self._log_plan_override(
                     "cut_vertex_dual_coverage", f"割点 {current_hyp} 需双覆盖"
                 )
-        except Exception:
+        except Exception as exc:
             logger.debug("dual coverage override skipped", exc_info=True)
         # 连败/surprise 强制 explore (合并条件, 共享覆盖路径)
         cf = getattr(self, "_consecutive_failures", 0)
@@ -377,7 +377,7 @@ PREDICTION: <what you expect the result to look like — be specific: "energy ~ 
                     reviewer="auto_router",
                 )
             )
-        except Exception:
+        except Exception as exc:
             logger.debug("log plan override failed", exc_info=True)
 
     def _parse_plan(self, response: str) -> dict[str, Any]:
@@ -883,7 +883,7 @@ PREDICTION: <what you expect the result to look like — be specific: "energy ~ 
         warnings: list[str] = []
         try:
             from huginn.validation.dimensional import DimensionalValidator
-        except Exception:
+        except Exception as exc:
             return warnings
 
         # 拼 plan + hypothesis 文本
@@ -917,7 +917,7 @@ PREDICTION: <what you expect the result to look like — be specific: "energy ~ 
                         f"dimensional inconsistency: '{line.strip()[:80]}' "
                         f"LHS={result.lhs_dimensions} RHS={result.rhs_dimensions}"
                     )
-            except Exception:
+            except Exception as exc:
                 # 解析失败静默跳过 — 量纲库不全不该阻塞 plan_check
                 logger.debug("best-effort op failed", exc_info=True)
                 continue
