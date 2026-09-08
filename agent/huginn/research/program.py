@@ -86,6 +86,7 @@ def run_research_program(
     supervisor_every: int = 0,             # 每 N 轮一次 HITL 评审; 0=关闭
     debate: bool = False,                  # 用 client 对存活想法做 LLM tournament 筛选
     diagnostic_tools: list[dict] | None = None,  # 域诊断工具能力 [{"tool":schema,"handle":fn}], LLM 可自主发现并调用
+    self_audit: Callable[[], list[str]] | None = None,  # 能力自省 §3: 返回需并入 trace 的可证伪工件(能力缺口提案)
 ) -> ResearchOutcome:
     """跑一条完整深研管线并返回结果."""
     from huginn.exploration.orchestrator import ExplorationOrchestrator
@@ -162,6 +163,12 @@ def run_research_program(
     ))
 
     trace = _build_trace(cache)
+    # 能力自省 §3: 把能力缺口提案的可证伪工件并入 trace, 使报告引用可被 grounding 门禁核实
+    if self_audit is not None:
+        try:
+            trace += list(self_audit())
+        except Exception:  # noqa: BLE001 — 自省失败不阻断主流程
+            pass
     front = result.pareto_front or []
     out = ResearchOutcome(converred=result.convergence_reason,
                           explored=result.n_branches_explored,
