@@ -38,6 +38,7 @@
 | [permission-contract.md](permission-contract.md) | active | 权限契约（PermissionMode + RiskLevel 五档 + PermissionConfig 细粒度面，可自动再生成） |
 | [tech-spec.md](tech-spec.md) | active | 技术规格（已合并下述 8 个已废弃 spec） |
 | [harness_evolution_spec.md](harness_evolution_spec.md) | active | harness 演进规范（H0-H4 落地，H5-a/H5-b 已落地） |
+| [layered-streaming-settlement-spec.md](layered-streaming-settlement-spec.md) | active | 分层流式结算规范（缺陷一/二三阶段 P-A/P-B/P-C：流式结算/层间重规划/提前终止，已落地） |
 | [pluginized-segments-design.md](pluginized-segments-design.md) | active | 插件化分段设计（Everything is a Plugin 落地） |
 | [external-thinking.md](external-thinking.md) | active | deep_think 外部草稿纸工具（已实现，含 `external_thinking` 开关） |
 | [industrial-skill-guide.md](industrial-skill-guide.md) | active | 工业 Skill 接入指南（对齐"工业智能体开发套件"范式，含示例与防漂移护栏） |
