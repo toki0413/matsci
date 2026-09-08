@@ -33,13 +33,19 @@ class TestMCPBridge:
         )
         assert tool.name == "lit_search"
         assert tool.description == "search literature"
-        assert tool.inputSchema["properties"]["q"]["type"] == "string"
+        # 用 model_dump(by_alias=True) 读取字段: pydantic v2/mcp>=2 内部字段为
+        # snake_case(input_schema), 线格式为 camelCase(inputSchema). 该读法两者皆兼容.
+        schema = tool.model_dump(by_alias=True)["inputSchema"]
+        assert schema["properties"]["q"]["type"] == "string"
 
     def test_as_mcp_tool_empty_schema_fallback(self):
         from huginn.capabilities.mcp_export import as_mcp_tool
 
         tool = as_mcp_tool("no_schema", None, None)
-        assert tool.inputSchema == {"type": "object", "properties": {}}
+        assert tool.model_dump(by_alias=True)["inputSchema"] == {
+            "type": "object",
+            "properties": {},
+        }
 
     def test_as_openai_function_shape(self):
         from huginn.capabilities.mcp_export import as_openai_function
@@ -186,7 +192,7 @@ class TestBuildServer:
         from huginn.capabilities.mcp_export import call_tool_handler
 
         result = asyncio.run(call_tool_handler("cap_x", {"q": 1}, _FakeServerBackend()))
-        assert result.isError is False
+        assert result.model_dump(by_alias=True)["isError"] is False
         text = result.content[0].text
         assert '"echo"' in text
 
@@ -194,7 +200,7 @@ class TestBuildServer:
         from huginn.capabilities.mcp_export import call_tool_handler
 
         result = asyncio.run(call_tool_handler("secret", {}, _FakeServerBackend()))
-        assert result.isError is True
+        assert result.model_dump(by_alias=True)["isError"] is True
         assert "not found" in result.content[0].text
 
 

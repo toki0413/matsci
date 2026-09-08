@@ -234,10 +234,32 @@ def build_server(
     """把后端接成一个 mcp.server.Server (低层 API).
 
     ``tools/list`` 返回后端过滤后的能力; ``tools/call`` 分派到能力执行.
-    函数返回 ``Any`` (惰性 import mcp), 让上层在未装 mcp 的环境也能 import.
+    跨 mcp SDK 版本: 新版(>=2)在构造函数里注入 ``on_list_tools``/``on_call_tool``
+    回调; 旧版(1.x)用 ``@server.list_tools()``/``@server.call_tool()`` 装饰器.
+    这里先试新版, 失败再回退旧版, 保证两种都被支持.
     """
     from mcp.server import Server
 
+    async def _call(name: str, arguments: dict[str, Any]) -> Any:
+        return await call_tool_handler(name, arguments, backend)
+
+    # 新版: 构造函数回调.
+    try:
+        from mcp.types import CallToolRequestParams, ListToolsResult
+
+        async def _list_ctor(ctx: Any, params: Any = None) -> Any:
+            return ListToolsResult(tools=await list_tools_handler(backend))
+
+        async def _call_ctor(ctx: Any, params: CallToolRequestParams) -> Any:
+            return await call_tool_handler(
+                params.name, dict(params.arguments or {}), backend
+            )
+
+        return Server(server_name, on_list_tools=_list_ctor, on_call_tool=_call_ctor)
+    except TypeError:
+        pass  # 旧版: Server 不接受 on_* 构造参数, 走装饰器.
+
+    # 旧版: 装饰器 API.
     server = Server(server_name)
 
     @server.list_tools()
@@ -245,8 +267,8 @@ def build_server(
         return await list_tools_handler(backend)
 
     @server.call_tool()
-    async def _call(name: str, arguments: dict[str, Any]) -> Any:
-        return await call_tool_handler(name, arguments, backend)
+    async def _call_deco(name: str, arguments: dict[str, Any]) -> Any:
+        return await _call(name, arguments or {})
 
     return server
 
