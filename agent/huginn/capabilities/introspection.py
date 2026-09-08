@@ -186,3 +186,219 @@ def run_capability_self_audit(goal: str, client=None, model: str = "intern-s2-pr
         "proposals": proposals,
         "trace": trace,
     }
+
+
+# ════ §4–§6: 提案生命周期 → 确认 → 实现(Journal) → 回滚 ════════════════════
+# 延续 §3 的诚实边界: 提案默认是 staged spec(handler_implemented=False)。
+# §4 确认门禁判定"是否值得落地"; §5 仅当拿到**真实 handler/后端** 才实现,
+#    绝不把"缺失当拥有"(handler=None 一律拒绝); §6 依据 Journal 回滚, 恢复原能力面。
+# 重依赖(CapabilityRegistry / ExternalCapability, 会拉 pydantic)一律 lazy + best-effort,
+#    核心状态机纯标准库可测(与 §1–§3 同模式)。
+
+PROPOSAL_STATES = ("staged", "approved", "implemented", "rejected")
+
+
+@dataclass
+class ProposalRecord:
+    """能力提案的生命周期记录 (§4)."""
+    name: str
+    description: str
+    parameters: dict = field(default_factory=dict)
+    status: str = "staged"            # PROPOSAL_STATES 之一
+    reason: str = ""                  # 缺口依据 (create)/ 拒绝/驳回说明
+    handler_implemented: bool = False
+    auth: str = "runtime-proposed"    # §4: 落地须显式确认(默认未确认)
+
+    def to_dict(self) -> dict:
+        return dict(self.__dict__)
+
+
+@dataclass
+class RealizationRecord:
+    """§5 实现的 Journal 记录 —— 承载 §6 回滚所需的完整 provenance.
+
+    prev_registered: 实现前注册表里已有的能力名快照(实现后新增名字据此可精确移除).
+    registered:      是否真正落入 CapabilityRegistry(轻量环境下可能仅 journal).
+    """
+    name: str
+    description: str
+    parameters: dict = field(default_factory=dict)
+    prev_registered: list = field(default_factory=list)
+    registered: bool = False
+    handler_implemented: bool = True
+    reason: str = ""
+
+    def to_dict(self) -> dict:
+        return dict(self.__dict__)
+
+
+@dataclass
+class RollbackRecord:
+    """§6 回滚的结果: 移除了哪个落地能力, 剩余表面恢复成实现前快照."""
+    name: str
+    removed: bool = False
+    restored: list = field(default_factory=list)
+    journal_only: bool = False
+
+    def to_dict(self) -> dict:
+        return dict(self.__dict__)
+
+
+def create_proposal(name: str, description: str, parameters: dict | None = None,
+                    reason: str = "") -> ProposalRecord:
+    """§4 新建提案: 初始恒为 staged(未确认=不可落地)."""
+    p = parameters if isinstance(parameters, dict) else {}
+    return ProposalRecord(name=name, description=description, parameters=p, reason=reason)
+
+
+def confirm_proposal(rec: ProposalRecord, authorized_by: str = "gate") -> ProposalRecord:
+    """§4 确认门禁: 仅 staged 可 → approved (拿到落地许可)."""
+    if rec.status == "implemented":
+        raise ValueError(f"proposal '{rec.name}' 已实现, 无需重复确认")
+    if rec.status == "rejected":
+        raise ValueError(f"proposal '{rec.name}' 已驳回, 先 reactivate 再确认")
+    rec.status = "approved"
+    rec.auth = authorized_by or "gate"
+    return rec
+
+
+def reject_proposal(rec: ProposalRecord, reason: str = "") -> ProposalRecord:
+    """§4 驳回: staged/approved → rejected; 已实现不能直接驳回(先回滚)."""
+    if rec.status == "implemented":
+        raise ValueError(f"proposal '{rec.name}' 已实现, 请先 rollback 再驳回")
+    rec.status = "rejected"
+    rec.reason = reason or rec.reason
+    return rec
+
+
+def reactivate_proposal(rec: ProposalRecord, *,
+                        reset_auth: bool = True) -> ProposalRecord:
+    """把 rejected 提案重新拉回 staged(允许修改后再走确认门禁)."""
+    if rec.status != "rejected":
+        raise ValueError(f"只有 rejected 可 reactivate, 当前 '{rec.status}'")
+    rec.status = "staged"
+    if reset_auth:
+        rec.auth = "runtime-proposed"
+    return rec
+
+
+def realize_proposal(rec: ProposalRecord, handler, *,
+                     registry=None, reason: str = "") -> RealizationRecord:
+    """§5 落地实现: 仅 approved 提案 + **真实 handler/后端** 可实现.
+
+    诚实边界(核心): ``handler`` 为 None → 一律拒绝, 绝不把 staged spec"包装成已实现"
+    假信息。真实 handler 可以是可调用(HuginnTool.backend / fn)或显式传入的 registry
+    能力装配。重依赖(CapabilityRegistry) lazy + best-effort: 装不进注册表时仅记
+    journal(registered=False), 仍保留 provenance 供 §6 回滚。
+    """
+    if rec.status != "approved":
+        raise ValueError(
+            f"proposal '{rec.name}' 未确认(auth='{rec.auth}'), 须先 confirm_proposal")
+    if handler is None:
+        raise ValueError(
+            f"proposal '{rec.name}' 缺真实 handler —— 未实现不伪装(拒绝空实现)")
+    prev = sorted(registry.list_capabilities()) if registry is not None else []
+    registered = False
+    if registry is not None:
+        try:
+            registry.register(_assemble_capability(rec, handler))
+            registered = True
+        except Exception:  # noqa: BLE001 — 注册面失败不吞 Job, 仅 journal
+            registered = False
+    rec.status = "implemented"
+    rec.handler_implemented = True
+    rec.reason = reason or rec.reason
+    return RealizationRecord(
+        name=rec.name, description=rec.description, parameters=rec.parameters,
+        prev_registered=prev, registered=registered, reason=rec.reason,
+    )
+
+
+def _assemble_capability(rec: ProposalRecord, handler):
+    """把 approved 提案装成可注册的 Capability (ExternalCapability / 函数包装).
+
+    lazy 拉取(会带出 pydantic 重栈), 由调用方 try 兜底 —— 轻量/沙箱环境无注册表
+    时本函数不会被调用, 因此重依赖只在真正要落注册表时才加载。
+    """
+    from huginn.capabilities.base import Capability, CapabilityResult
+    from huginn.capabilities.intents import ExternalCapability
+    from huginn.core_types import ToolContext
+
+    if isinstance(handler, Capability):
+        return handler
+
+    if callable(handler):
+        # 本地子类: 把纯函数 handler 包成 Capability, 供注册表/编排器统一契约使用
+        class _FunctorCapability(Capability):
+            name = ""
+            category = "runtime-proposed"
+
+            def __init__(self, _rec_outer, _fn_outer):
+                self.name = _rec_outer.name
+                self.description = _rec_outer.description
+                self._fn = _fn_outer
+
+            def is_available(self) -> bool:
+                return True
+
+            async def _run(self, args, context: ToolContext | None) -> CapabilityResult:
+                import inspect
+                try:
+                    if context is None:
+                        context = ToolContext(session_id="capability", workspace=".")
+                    eats_ctx = "context" in inspect.signature(self._fn).parameters
+                    res = self._fn(args, context) if eats_ctx else self._fn(args)
+                    return CapabilityResult.ok(res)
+                except Exception as exc:  # noqa: BLE001
+                    return CapabilityResult.fail(f"{type(exc).__name__}: {exc}",
+                                                 code="execution_error")
+
+        return _FunctorCapability(rec, handler)
+
+    return ExternalCapability(
+        rec.name, description=rec.description, backend=handler, read_only=True)
+
+
+def rollback_realization(rec: RealizationRecord, *, registry=None) -> RollbackRecord:
+    """§6 回滚: 依据 Journal 移除新落地能力, 恢复实现前快照.
+
+    - 注册表可用: 精确 unregister 该能力名(只动自己新增的, 不动 prev_registered).
+    - 轻量环境: registered=False, 仅移除 journal(移除能力未真正落注册表).
+    """
+    removed = False
+    journal_only = not rec.registered
+    if registry is not None and rec.registered:
+        try:
+            registry.unregister(rec.name)
+            removed = True
+        except Exception:  # noqa: BLE001
+            removed = False
+    return RollbackRecord(
+        name=rec.name, removed=removed, restored=rec.prev_registered, journal_only=journal_only)
+
+
+def evolution_run(goal: str, *, handler_store: dict[str, Any] | None = None,
+                  registry=None, authorized_by: str = "gate",
+                  discoverable: list[str] | None = None) -> dict:
+    """§1→§6 闭环一键跑通; 返回 {surface, proposals, confirmed, realized, rollbacks}."""
+    surface = diagnose_surface(discoverable=discoverable)
+    proposals = propose_capabilities(goal, surface.discoverable)
+    confirmed, realized, rollbacks = [], [], []
+    for p in proposals:
+        rec = create_proposal(**{k: p[k] for k in ("name", "description", "parameters")},
+                              reason=p.get("reason", ""))
+        confirm_proposal(rec, authorized_by=authorized_by)
+        confirmed.append(rec)
+        handler = (handler_store or {}).get(rec.name)
+        try:
+            j = realize_proposal(rec, handler, registry=registry)
+            realized.append(j)
+        except ValueError as exc:
+            # 无 handler -> 保持 approved(未实现), 记入可见提案
+            rollbacks.append({"name": rec.name, "error": str(exc)})
+    return {
+        "surface": surface.to_dict(),
+        "proposals": [r.to_dict() for r in confirmed],
+        "realized": [r.to_dict() for r in realized],
+        "pending_no_handler": rollbacks,
+    }

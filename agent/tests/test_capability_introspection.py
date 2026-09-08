@@ -27,7 +27,9 @@ _intro = _ilu.module_from_spec(_spec)
 sys.modules["_introspection"] = _intro  # 须在 exec_module **前** 注册, dataclass 装饰在模块体里执行
 _spec.loader.exec_module(_intro)
 from _introspection import (  # noqa: E402
-    diagnose_gaps, diagnose_surface, propose_capabilities, run_capability_self_audit,
+    confirm_proposal, create_proposal, diagnose_gaps, diagnose_surface,
+    evolution_run, propose_capabilities, reactivate_proposal, realize_proposal,
+    reject_proposal, rollback_realization, run_capability_self_audit,
     stage_to_trace,
 )
 from huginn.research.tool_surface import canonical_tool_shape  # noqa: E402
@@ -108,3 +110,141 @@ def test_end_to_end_self_audit_joins_trace():
     )
     # 审计工件已并入 trace → 门禁 pass (报告由确定性组装, 数值全落地)
     assert o.verdict == "pass", (o.verdict, o.ungrounded[:3])
+
+
+# ── §4 确认门禁: staged → approved → implemented / rejected 状态机 ──────────
+
+
+def test_s4_proposal_starts_staged_and_needs_confirmation():
+    """新建提案初始恒为 staged; 未确认前不可实现(不伪装)."""
+    rec = create_proposal("topology_diag", "高阶拓扑诊断", {"F": 1})
+    assert rec.status == "staged"
+    assert rec.handler_implemented is False
+    assert rec.auth == "runtime-proposed"
+    # 未确认就尝试落地 → 拒绝
+    try:
+        realize_proposal(rec, lambda a: a)
+        raised = False
+    except ValueError:
+        raised = True
+    assert raised, "未确认(approved)前 realize 必须被拒绝"
+
+
+def test_s4_confirm_then_reject_and_reactivate():
+    """确认门禁: staged→approved; 可驳回→rejected; 可 reactivate 回 staged."""
+    rec = create_proposal("insolation_diag", "日晒诊断")
+    confirm_proposal(rec, authorized_by="human")
+    assert rec.status == "approved"
+    assert rec.auth == "human"
+    # rejected 分支
+    reject_proposal(rec, reason="优先级不足")
+    assert rec.status == "rejected"
+    # 已驳回不能再 confirm (需先 reactivate)
+    try:
+        confirm_proposal(rec)
+        raised = False
+    except ValueError:
+        raised = True
+    assert raised
+    reactivate_proposal(rec)
+    assert rec.status == "staged"
+    confirm_proposal(rec, authorized_by="gate")
+    assert rec.status == "approved"
+
+
+def test_s4_implemented_cannot_reject_directly():
+    """已实现的能力不能直接驳回 —— 必须先回滚(防止没清理就改状态的脏路径)."""
+    rec = create_proposal("flux_diag", "守恒/通量诊断")
+    confirm_proposal(rec)
+    j = realize_proposal(rec, lambda a: {"flux": 1.0})
+    assert j.registered is False     # 无注册表 → 仅 journal, 不伪装落表
+    assert rec.status == "implemented"
+    try:
+        reject_proposal(rec)
+        raised = False
+    except ValueError:
+        raised = True
+    assert raised, "已实现须先 rollback 再驳"
+
+
+# ── §5 落地实现: 仅 approved + 真实 handler；无 handler 拒绝(诚实边界) ───────
+
+
+def test_s5_realize_refuses_none_handler():
+    """§5 核心诚实边界: handler=None 一律拒绝, 绝不把 spec 伪装成已实现."""
+    rec = create_proposal("topology_diag", "高阶拓扑诊断")
+    confirm_proposal(rec)
+    try:
+        realize_proposal(rec, None)
+        raised = False
+    except ValueError:
+        raised = True
+    assert raised
+    assert rec.status == "approved", "拒绝实现时不篡改状态(保持 未实现 但已确认)"
+    assert rec.handler_implemented is False
+
+
+def test_s5_realize_with_real_handler_then_run():
+    """有真实 handler 才实现: 状态置 implemented; handler 本体可真跑出结果.
+
+    真实 Capability 装配需 pydantic(重栈, 沙箱可缺); 这里只验证 §5 的门楣:
+    - handler 非 None → 实现被接受、记录 Journal(registered=False 仅注册表缺位);
+    - handler 本身是可调用数值逻辑, 直接调用验证其得出真实结果(非编造)。
+    """
+    rec = create_proposal("insolation_diag", "日晒/平衡温度诊断", {"S0": 1361})
+    confirm_proposal(rec)
+    handler = lambda a: {"T_eq": a["S0"] / 4}   # noqa: E731
+    j = realize_proposal(rec, handler)
+    assert rec.status == "implemented"
+    assert rec.handler_implemented is True
+    assert j.name == "insolation_diag"
+    assert j.prev_registered == []              # 无注册表, registered=False(仅 journal)
+    # handler 可调用性: 真实返回来自计算, 非伪造
+    assert handler({"S0": 1361}) == {"T_eq": 340.25}
+
+
+# ── §6 回滚机制: 依据 Journal 移除新落地能力, 恢复实现前快照 ────────────────
+
+
+def test_s6_rollback_removes_realized_capability():
+    """journal 为 registered 的实现, 回滚时精确移除新增能力, 保留 prev 快照."""
+    # 用假注册表(纯内存)验证登记/回滚对账
+    class FakeRegistry:
+        def __init__(self, existing):
+            self._caps = dict.fromkeys(existing)
+        def list_capabilities(self):
+            return list(self._caps)
+        def register(self, cap):
+            self._caps[cap.name] = cap
+        def unregister(self, name):
+            self._caps.pop(name, None)
+        def __contains__(self, name):
+            return name in self._caps
+
+    reg = FakeRegistry(["a", "b"])
+    rec = create_proposal("c_diag", "新增诊断", {"x": 1})
+    confirm_proposal(rec)
+    j = realize_proposal(rec, lambda a: a, registry=reg)
+    assert j.registered is True
+    assert "c_diag" in reg and "a" in reg and "b" in reg
+    assert j.prev_registered == ["a", "b"]
+
+    rb = rollback_realization(j, registry=reg)
+    assert rb.removed is True
+    assert "c_diag" not in reg               # 只移除自己新增的
+    assert set(rb.restored) == {"a", "b"}    # 快照恢复不动的老能力
+
+
+def test_s6_evolution_run_with_handler_store():
+    """evolution_run 全闭环: 有 handler 的落地, 无 handler 的保持 approved 挂起."""
+    out = evolution_run(
+        "研究系外行星日晒与环流",
+        discoverable=["hodge_circulation"],
+        handler_store={"proposed_日晒_平衡温度第一性原理诊断": lambda a: {"T_eq": 300}},
+        authorized_by="human",
+    )
+    assert [r["name"] for r in out["realized"]], "有 handler 的提案应被实现(Journal)"
+    assert any(p["status"] == "implemented" for p in out["proposals"])
+    assert out["proposals"], "应至少产出提案并通过确认门禁"
+    # 拓扑已被 hodge_circulation 覆盖 → 不再当缺口; 日晒缺口若缺 handler 记 pending
+    assert "pending_no_handler" in out
