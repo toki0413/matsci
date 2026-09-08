@@ -80,6 +80,7 @@ class Consolidated:
     head_details: list[dict] = field(default_factory=list)  # 每头详情(供 P2 消费者投影六维)
     role_diversity: dict | None = None               # 缺陷三: 存活假说的视角分离度(防多头塌缩)
     external_verify: dict | None = None              # 缺陷五: 独立验证方(可替换的外部复核)结果
+    overbuild: dict | None = None                    # 缺陷七: 过度建制(second system effect)审计
     score: float = 0.0                               # 加权总分 (0..1)
 
     def as_dict(self) -> dict[str, Any]:
@@ -93,35 +94,19 @@ class Consolidated:
             "head_details": self.head_details,
             "role_diversity": self.role_diversity,
             "external_verify": self.external_verify,
+            "overbuild": self.overbuild,
             "score": round(self.score, 3),
         }
 
 
-def consolidate(
-    heads: list[HeadResult],
-    *,
-    grounding_verdict: str = "needs_grounding",
-    role_view: list[dict] | None = None,
-    external_verifier: Any | None = None,
-) -> Consolidated:
-    """多头 → 单一收敛视图 (纯函数, 无副作用).
+def _arbitrate(
+    heads: list[HeadResult], grounding_verdict: str
+) -> tuple[str, float, float, list[str], list[list[str]]]:
+    """核心仲裁 (纯函数) → (verdict, diversity, score, gates_failed, conflicts).
 
-    仲裁策略 (P1):
-      - **gate 否决**: 任一 ``gate=True`` 且 outcome=``failed`` 的头 → 聚合判定
-        ``gate_blocked``, 并把否决项列入 ``gates_failed`` —— 报告不得以 pass 定稿.
-      - **冲突显式化**: 若既有 gate 头 failed、又有 gate 头 passed → 记入
-        ``conflicts``, 拒绝静默平均相互矛盾的头.
-      - **多头塌缩防御**: ``diversity`` = 去重 outcome 数 / 注册头数 —— 全部头
-        结果一致时接近 0(单文化雷达), 高度分化时接近 1.
-      - **grounding 透传**: ``grounding`` 原样携带 grounding 门禁判定, 保证
-        P1 阶段 ``consolidated.grounding == out.verdict`` 恒成立 (向后兼容锚).
-
-    缺陷三/五的接缝:
-      - ``role_view``: 存活假说列表 → ``role_diversity`` 视角分离度 (防共识孤岛);
-      - ``external_verifier``: 可替换的**独立验证方**(纯函数, 不共享策略参数) →
-        在聚合视图上复核并写入 ``external_verify``, 缓解"审计者兼被审者"的自指盲区.
+    提取成独立函数供 :func:`consolidate` 与缺陷七的 leave-one-out 消融复用,
+    保证"删除某头重算"与"整体聚合"走同一套规则(可复现、无副作用).
     """
-    heads = list(heads)
     gates_failed = [h.id for h in heads if h.gate and h.outcome == "failed"]
     gate_passed = [h.id for h in heads if h.gate and h.outcome == "passed"]
     conflicts: list[list[str]] = []
@@ -140,6 +125,90 @@ def consolidate(
 
     w_sum = sum(h.weight for h in heads) or 1.0
     score = sum(h.score() * h.weight for h in heads) / w_sum
+    return verdict, diversity, score, gates_failed, conflicts
+
+
+def _overbuild_audit(
+    heads: list[HeadResult], grounding_verdict: str, budget: int
+) -> dict[str, Any]:
+    """缺陷七 · 过度建制审计 (second system effect 反制).
+
+    对治理自身做三点可证伪的体检, 全部基于确定性数据、无副作用:
+      1. **头数预算**: 注册头数超过 ``budget`` → 建制膨胀信号.
+      2. **重复审计检测**: 多个 head 引用同一证据源 (``ref`` 相同) → 同一份证据被
+         重复消费, 是"多一个门控就多摊一份权重"的最直接证据.
+      3. **边际贡献消融 (leave-one-out)**: 逐个剔除每个 head 重算聚合 —— 删除后
+         verdict 与 diversity 都不变、且分数差 < 1e-9 的头对整体零边际贡献 → 冗余.
+
+    verdict 三态(可证伪): healthy / bloating / over_built / duplicate_audit.
+    诚实边界: 本审计只抓"建制冗余的信号", 不裁决"某个头该不该留" —— 后者由人决.
+    """
+    n = len(heads)
+    by_ref: dict[str, list[str]] = {}
+    for h in heads:
+        if h.ref:
+            by_ref.setdefault(h.ref, []).append(h.id)
+    duplicates = sorted({",".join(v) for v in by_ref.values() if len(v) >= 2})
+
+    zero_marginal: list[str] = []
+    verdict0, div0, score0, _, _ = _arbitrate(heads, grounding_verdict)
+    for h in heads:
+        rest = [x for x in heads if x.id != h.id]
+        if not rest:
+            continue
+        v1, d1, s1, _, _ = _arbitrate(rest, grounding_verdict)
+        if v1 == verdict0 and abs(d1 - div0) <= 1e-9 and abs(s1 - score0) < 1e-9:
+            zero_marginal.append(h.id)
+
+    if duplicates:
+        signal, verdict = "has_duplicate_refs", "duplicate_audit"
+    elif n > budget:
+        signal, verdict = "over_budget", "over_built"
+    elif n > int(budget * 0.8):
+        signal, verdict = "near_budget", "bloating"
+    else:
+        signal, verdict = "within_budget", "healthy"
+
+    return {
+        "configured_heads": n,
+        "head_budget": budget,
+        "signal": signal,
+        "verdict": verdict,
+        "duplicate_refs": duplicates,
+        "zero_marginal": zero_marginal,
+    }
+
+
+def consolidate(
+    heads: list[HeadResult],
+    *,
+    grounding_verdict: str = "needs_grounding",
+    role_view: list[dict] | None = None,
+    external_verifier: Any | None = None,
+    head_budget: int = 14,
+) -> Consolidated:
+    """多头 → 单一收敛视图 (纯函数, 无副作用).
+
+    仲裁策略 (P1):
+      - **gate 否决**: 任一 ``gate=True`` 且 outcome=``failed`` 的头 → 聚合判定
+        ``gate_blocked``, 并把否决项列入 ``gates_failed`` —— 报告不得以 pass 定稿.
+      - **冲突显式化**: 若既有 gate 头 failed、又有 gate 头 passed → 记入
+        ``conflicts``, 拒绝静默平均相互矛盾的头.
+      - **多头塌缩防御**: ``diversity`` = 去重 outcome 数 / 注册头数 —— 全部头
+        结果一致时接近 0(单文化雷达), 高度分化时接近 1.
+      - **grounding 透传**: ``grounding`` 原样携带 grounding 门禁判定, 保证
+        P1 阶段 ``consolidated.grounding == out.verdict`` 恒成立 (向后兼容锚).
+
+    缺陷三/五/七的接缝:
+      - ``role_view``: 存活假说列表 → ``role_diversity`` 视角分离度 (防共识孤岛);
+      - ``external_verifier``: 可替换的**独立验证方**(纯函数, 不共享策略参数) →
+        在聚合视图上复核并写入 ``external_verify``, 缓解"审计者兼被审者"的自指盲区;
+      - ``head_budget``: 过度建制(second system effect)的上限 —— 审计头数/重复
+        ref/零边际头, 结果入 ``overbuild``, 让"治理自身膨胀"成为可观测、可反驳量.
+    """
+    heads = list(heads)
+    verdict, diversity, score, gates_failed, conflicts = _arbitrate(
+        heads, grounding_verdict)
 
     cons = Consolidated(
         verdict=verdict,
@@ -151,6 +220,7 @@ def consolidate(
         head_details=[h.__dict__ for h in heads],
         role_diversity=None,
         external_verify=None,
+        overbuild=_overbuild_audit(heads, grounding_verdict, head_budget),
         score=score,
     )
 

@@ -394,3 +394,58 @@ def test_pipeline_custom_verifier_is_respected():
     ext = next(c for c in sa["checks"] if "独立验证方" in c["name"])
     assert ext["outcome"] == "passed"
     assert "strict external policy" in ext["detail"]
+
+
+# ── 缺陷七: 过度建制审计(second system effect 反制) ─────────────────────
+def test_overbuild_detects_budget_exceeded():
+    heads = [HeadResult("h%d" % i, "h%d" % i, EVIDENCE_OBSERVED, "passed")
+             for i in range(3)]
+    c = consolidate(heads, head_budget=2)
+    assert c.overbuild["verdict"] == "over_built"
+    assert c.overbuild["signal"] == "over_budget"
+    assert c.overbuild["configured_heads"] == 3
+
+
+def test_overbuild_flat_budget_is_healthy():
+    heads = [HeadResult("h%d" % i, "h%d" % i, EVIDENCE_OBSERVED, "passed")
+             for i in range(3)]
+    c = consolidate(heads, head_budget=4)
+    assert c.overbuild["verdict"] == "healthy"
+
+
+def test_overbuild_detects_duplicate_audit_refs():
+    # 两个 head 引用同一证据源 → 同一份证据被重复消费(建制病信号)
+    heads = [
+        HeadResult("a1", "a1", EVIDENCE_OBSERVED, "passed", ref="out.cache"),
+        HeadResult("a2", "a2", EVIDENCE_UNOBSERVED, "unobserved", ref="out.cache"),
+    ]
+    c = consolidate(heads)
+    assert c.overbuild["verdict"] == "duplicate_audit"
+    assert any("a1,a2" in r or "a2,a1" in r for r in c.overbuild["duplicate_refs"])
+
+
+def test_pipeline_registers_overbuild_guard_head():
+    from huginn.research.planning import SubResearch, build_research_plan
+
+    def _run(v: float):
+        return lambda: {"summary": {"y": v}, "objectives": {"score": v}}
+
+    plan = build_research_plan(
+        "p3 overbuild",
+        [SubResearch("a", "a", _run(1.0)), SubResearch("b", "b", _run(2.0))],
+    )
+    out = run_research_program(
+        goal="p3 overbuild",
+        experiments=list(plan.experiments),
+        objectives_config={"score": "maximize"},
+        max_iterations=3, min_iterations=1, client=None,
+        planner=lambda _g: plan,
+    )
+    # 元视图: overbuild 体检(当前 12 头 ≤ 预算 14 → healthy)
+    ob = out.consolidated["overbuild"]
+    assert ob is not None
+    assert ob["verdict"] in ("healthy", "bloating", "over_built", "duplicate_audit")
+    assert "meta.overbuild_guard" in out.consolidated["heads"]
+    # harness 投影到 learning_capture
+    lc = next(d for d in out.harness["dimensions"] if d["name"] == "learning_capture")
+    assert any("过度建制审计" in c["name"] for c in lc["checks"])

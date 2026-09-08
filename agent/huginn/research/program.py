@@ -76,6 +76,11 @@ def _slug_goal(goal: str, limit: int = 40) -> str:
 # 世界模型对账容差: 相对误差 <= 此值视为预测被真实执行"证实"(默认 3%, 同 law_model.reconcile)
 _WM_TOL = 0.03
 
+# 缺陷七 · 聚合头头数预算: 超过即"建制膨胀"亮灯(second system effect 反制).
+# 当前既有 11 头 + meta.overbuild_guard 自身 = 12; 预算留 2 个余量,
+# 新增审计视角先评审其增益, 再考虑提预算 —— 与依赖白名单同哲学.
+_HEAD_BUDGET = 14
+
 
 def _first_scalar(node: Any) -> float | None:
     """从预测/真实结果里取"第一个可用的数值指标"作对账依据(深度优先, 不伪造).
@@ -687,9 +692,20 @@ def run_research_program(
                     "team.diversity", "团队视角分离度(防多头塌缩)",
                     EVIDENCE_UNOBSERVED, "unobserved",
                     detail="无存活假说, 无从度量视角分化", ref="out.pareto_front"))
-            final_cons = consolidate(heads, grounding_verdict=verdict, role_view=list(front))
+            final_cons = consolidate(heads, grounding_verdict=verdict,
+                                     role_view=list(front), head_budget=_HEAD_BUDGET)
             final_cons.external_verify = ext   # 第二轮不重跑验证方, 保留第一轮独立复核结果
-            out.consolidated = final_cons.as_dict()
+            # 缺陷七: 治理自身是否过度建制 —— 建议级元头(不否决, 只亮灯).
+            _ob = final_cons.overbuild or {}
+            heads.append(HeadResult(
+                "meta.overbuild_guard", "过度建制审计(second system effect 反制)",
+                EVIDENCE_OBSERVED,
+                "passed" if _ob.get("verdict") == "healthy" else "failed",
+                detail=str(_ob), ref="out.consolidated.overbuild"))
+            final_cons2 = consolidate(heads, grounding_verdict=verdict,
+                                      role_view=list(front), head_budget=_HEAD_BUDGET)
+            final_cons2.external_verify = ext   # 保留第一轮独立复核结果(第二轮不重跑验证方)
+            out.consolidated = final_cons2.as_dict()   # overbuild 用含全部头的最终视图(自洽)
         except Exception:  # noqa: BLE001 — 元头派生失败: 保留第一轮聚合视图, 不阻断
             pass
     except Exception:  # noqa: BLE001 — 聚合头为新增视图, 失败不阻断管线
