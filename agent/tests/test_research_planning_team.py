@@ -15,6 +15,8 @@
      进报告/决策前自动过交互等效审计, 结果并入 trace + 报告(out.structural_*)
   9. 世界模型多元论清册 —— `world_model_inventory` 把并存的三套实现按世界观显著区分
      (不合并只标注: 物理因果 / 隐态转移 / 物理逆生成器)
+  10. C-Space 外部化工作区 —— 读/控/推理/审计四操作, 一致 GWT(概念在场) + S-Space
+      (状态在场) + 交互可读, 且"无凭据不确认在场"的治理门禁
 
 纯确定性/本地, 零网络/零 LLM。实验 run 返回真实可区分数值。
 """
@@ -593,3 +595,78 @@ def test_world_model_inventory_distinguishes_plural_worldviews():
     assert len(consumers) >= 3, consumers
     # 每项都声明可证伪性(物理/隐态极做前向都必须留对账/回测参照)
     assert all(e["falsifiable"] for e in inv), inv
+
+
+# ── 10) C-Space 外部化工作区 (J-Space/GWT + S-Space 落地的可读·可控·可证伪) ──
+def test_cspace_probe_spreads_to_associated_concepts():
+    """report: 词命中点亮 + 关联扩散点亮邻居; readout 折叠可引用上下文."""
+    from huginn.research.cspace import CSpace
+    ws = CSpace()
+    ws.register("alpha_source", "concept", payload={"key_x": 1},
+                source="trace_1", falsifiable=True)
+    ws.register("beta_trigger", "concept", payload={"key_y": 2},
+                source="trace_2", falsifiable=True)
+    ws.associate("alpha_source", "beta_trigger", weight=0.8)
+
+    r = ws.probe("beta_trigger")
+    assert "beta_trigger" in r["lit"] and "alpha_source" in r["lit"], r
+    out = ws.readout()
+    at = {b["id"]: b for b in out["at_hand"]}
+    assert "beta_trigger" in at and "alpha_source" in at
+    assert at["beta_trigger"]["source"] == "trace_2", "在场必须带证据指针"
+    assert not out["pending_no_source"]
+
+
+def test_cspace_control_pin_and_suppress():
+    """control: pin 钉住持续点亮; suppress 压制; wake 复位."""
+    from huginn.research.cspace import CSpace
+    ws = CSpace()
+    ws.register("target", "concept", payload={"gap_eV": 3.1}, source="s", falsifiable=True)
+    assert ws.probe("unrelated")["lit"] == [], "未命中时不应点亮"
+    ws.pin("target")
+    assert "target" in ws.probe("unrelated")["lit"], "pin 使在场始终点亮"
+    ws.suppress("target")
+    assert "target" not in ws.probe("unrelated")["lit"], "suppress 压制点亮"
+    ws.wake("target")
+    assert "target" not in ws.probe("unrelated")["lit"], "复位后回到初始(未点亮)"
+
+
+def test_cspace_ungrounded_never_confirmed_at_hand():
+    """治理: 无证据指针的声称(falsifiable=False)即使被命中也不确认在场."""
+    from huginn.research.cspace import CSpace
+    ws = CSpace()
+    ws.register("ghost_claim", "concept", payload={"gap_eV": 3.1},
+                source="", falsifiable=True)   # 有 source='' → register 强制 falsifiable=False
+    r = ws.probe("ghost gap")
+    assert "ghost_claim" not in r["lit"], "无凭据声称不得点亮在场"
+    assert "ghost_claim" in ws.readout()["pending_no_source"], "如实挂起等待证据"
+
+
+def test_cspace_broadcast_passes_gate_only_with_grounded_numbers():
+    """audit: 广播必须过声明门禁(数值在 trace 才 verified), 未落地拒绝."""
+    from huginn.research.cspace import CSpace
+    ws = CSpace()
+    ws.trace.append('{"T_eq_K": 1000.0, "source": "观测在场"}')
+    ok = ws.broadcast("测得平衡温度 1000.0 K 与在场一致。")
+    assert ok["verified"] is True, ok
+    bad = ws.broadcast("结论: 测得平衡温度 2435.7 K。")
+    assert bad["verified"] is False and 2435.7 in bad["unsubstantiated"], bad
+
+
+def test_cspace_state_and_interaction_at_hand_are_falsifiable():
+    """state(S-Space) 与 interaction(可读) 在场经既有治理组件灌入且可证伪."""
+    from huginn.research.cspace import CSpace
+    from huginn.research.law_model import MechanicsLawModel
+    ws = CSpace()
+    ws.add_state("law.mechanics", MechanicsLawModel(),
+                 state={"mass_kg": 2.0, "stiffness_Nm": 8.0},
+                 action={"k_scale": 1.0, "m_scale": 1.0})
+    ws.add_interaction("inter_ab", {("2", "a", "b"): 0.4})
+    # 状态+交互在场: probe 同时命中两者, 均带证据、可证伪、无挂起
+    r = ws.probe("mechanics law inter_ab")
+    assert "law.mechanics" in r["lit"] and "inter_ab" in r["lit"], r
+    out = ws.readout()
+    st = next(b for b in out["at_hand"] if b["id"] == "law.mechanics")
+    assert st["source"] == "real_execution (reconcile 数值对账)"
+    assert "inter_ab" in {b["id"] for b in out["at_hand"]}
+    assert not out["pending_no_source"]
