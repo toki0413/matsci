@@ -7,6 +7,8 @@
   4. 全链 demo `ai4s_fullchain_demo` —— 搜读算做写 offline smoke
   5. `research.law_model` 域无关 —— 系外行星(热力学) + 力学谐振子双域, 含 reconcile
      可证伪对账与 VLA 团队跨域复用(对账指标随域, 不写死)
+  6. `research.interaction_explain` 交互可解释性 —— order-1/2 博弈交互分解 + 等效交互
+     度量 + 代理/定律**结构对齐**治理闸门(张拳石理论落地, shortcut 探测)
 
 纯确定性/本地, 零网络/零 LLM。实验 run 返回真实可区分数值。
 """
@@ -279,3 +281,93 @@ def test_model_based_team_reconcile_metrics_follow_domain():
     out2 = team.run("同一目标(偏差执行)", obs, actions, _bad)
     assert set(out2.survivors) == set(), f"定律不符 → 全部证伪, got {out2.survivors}"
     assert set(out2.pruned) == {"Osc-A", "Osc-B"}, out2.pruned
+
+
+# ── 6) 交互可解释性 (张拳石交互理论落地): 等效交互度量 + 代理/定律结构对齐 ──
+def _add_features() -> tuple[list[str], dict, dict]:
+    features = ["x1", "x2", "x3"]
+    instance = {"x1": 0.8, "x2": 1.2, "x3": 0.5}
+    baseline = {"x1": 0.0, "x2": 0.0, "x3": 0.0}
+    return features, instance, baseline
+
+
+def _f_additive(inp):
+    return 1.0 * inp["x1"] + 2.0 * inp["x2"] + 0.5 * inp["x3"]
+
+
+def test_interaction_order2_detects_joint_product():
+    """order-2 Shapley 交互指数: 纯加性→0; 含 x1·x2 乘积项→非零(shortcut 探测)."""
+    from huginn.research.interaction_explain import (
+        PAIR, interaction_primitives, pair_interactions,
+    )
+    features, instance, baseline = _add_features()
+    inter_f = pair_interactions(_f_additive, features, instance, baseline)
+    assert abs(inter_f[("x1", "x2")]) < 1e-3, "纯加性 → 无联合交互"
+
+    def _g_shortcut(inp):
+        return _f_additive(inp) + 5.0 * inp["x1"] * inp["x2"]
+
+    inter_g = pair_interactions(_g_shortcut, features, instance, baseline)
+    # 值函数 v(S) 里 Δ 只保留联合非加性: 5*x1*x2 该交互应 ≈ 5*0.8*1.2 = 4.8
+    assert abs(inter_g[("x1", "x2")] - 4.8) < 1e-2, inter_g[("x1", "x2")]
+    prim_g = interaction_primitives(_g_shortcut, features, instance, baseline)
+    assert (PAIR, "x1", "x2") in prim_g and abs(prim_g[(PAIR, "x1", "x2")] - 4.8) < 1e-2
+
+
+def test_equivalent_interaction_flags_spurious_interaction():
+    """等效交互: 代理多出一条乘积交互 → 与纯加性定律 **不等效** 且定位出该交互."""
+    from huginn.research.interaction_explain import equivalent_interaction
+
+    def _g_shortcut(inp):
+        return _f_additive(inp) + 5.0 * inp["x1"] * inp["x2"]
+
+    features, instance, baseline = _add_features()
+    from huginn.research.interaction_explain import interaction_primitives
+    pi_f = interaction_primitives(_f_additive, features, instance, baseline)
+    pi_g = interaction_primitives(_g_shortcut, features, instance, baseline)
+    # 与自身等效 / 与纯加性异构等效
+    assert equivalent_interaction(pi_f, pi_f)["equivalent"] is True
+    assert equivalent_interaction(pi_g, pi_g)["equivalent"] is True
+    # 代理带上乘积交互 → 两结构不等效, b_only 精确指出这条 shortcut 交互
+    eq = equivalent_interaction(pi_f, pi_g)
+    assert eq["equivalent"] is False
+    assert ("2", "x1", "x2") in eq["b_only"], eq["b_only"]
+    assert 0.0 <= eq["agreement"] < 1.0
+
+
+def test_interaction_trace_is_json_and_grounding_ready():
+    """交互基元可序列化成 grounding 证据 (可并入研究 trace)."""
+    from huginn.research.interaction_explain import interaction_primitives, interaction_trace
+    features, instance, baseline = _add_features()
+    prim = interaction_primitives(_f_additive, features, instance, baseline)
+    s = interaction_trace(prim)
+    import json as _json
+    obj = _json.loads(s)
+    assert obj["type"] == "interaction_primitives"
+    assert all({"order", "features", "interaction"} <= set(r) for r in obj["rows"])
+
+
+def test_surrogate_law_alignment_is_structural_gate():
+    """治理门禁: 数值可吻合的代理, 只要交互结构(shortcut)与定律不符即报 not-aligned."""
+    from huginn.research.interaction_explain import surrogate_law_alignment
+
+    def _law(inp):
+        return 3.0 * inp["x1"] + 1.0 * inp["x2"]
+
+    def _surrogate_ok(inp):
+        return 3.0 * inp["x1"] + 1.0 * inp["x2"]   # 数值+结构都与定律一致
+
+    def _surrogate_shortcut(inp):
+        # 数值上刻意逼近但引入一条定律没有的 x1·x2 虚假交互
+        return 3.0 * inp["x1"] + 1.0 * inp["x2"] + 0.4 * inp["x1"] * inp["x2"]
+
+    features, instance, baseline = _add_features()
+    ok = surrogate_law_alignment(surrogate=_surrogate_ok, law=_law,
+                                 features=features, instance=instance)
+    assert ok["aligned"] is True, ok
+    bad = surrogate_law_alignment(surrogate=_surrogate_shortcut, law=_law,
+                                  features=features, instance=instance)
+    assert bad["aligned"] is False, "结构失调 → 治理闸门拦住进决策"
+    # surrogate 是 a, 定律是 b → 代理多出来的虚假交互记在 surrogate_only
+    assert ("2", "x1", "x2") in bad["surrogate_only"], bad["surrogate_only"]
+    assert bad["law_only"] == [], "纯 2-feature 定律无联合交互 → 不应被误报缺失"
