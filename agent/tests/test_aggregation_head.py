@@ -855,3 +855,49 @@ def test_pc_stability_check_pure():
     tie = stability_check([[("z", 5.0), ("a", 5.0)], [("b", 5.01)]],
                           min_layers=2, margin=0.02)
     assert tie["top"] == "b"      # tiebreak 确定性(本层 top 选择不影响终止判定)
+
+
+# ── 三阶段(P-A + P-B + P-C)联合协同 ──────────────────────────────────────
+def test_pabc_interleave_cooperative():
+    """P-A/P-B/P-C 同时开启: 共享层映射、决策互认、诚实红线不互相破坏."""
+    from huginn.research.planning import SubResearch, build_research_plan
+
+    def _run(v: float):
+        return lambda: {"summary": {"y": v}, "objectives": {"score": v}}
+
+    # 层0: a/b; 层1: c(50, top 大幅上升)→P-C 不触发; d;
+    # 层2: e(与 c 假说重叠)→P-B 跳过; f(无重叠)→真实执行
+    plan = build_research_plan(
+        "pabc interleave",
+        [SubResearch("a", "sweep alpha metallic alloy", _run(10.0)),
+         SubResearch("b", "probe organic phase width", _run(1.0)),
+         SubResearch("c", "sweep beta ceramic domain", _run(50.0), depends_on=["a"]),
+         SubResearch("d", "probe ionic liquid density", _run(9.0), depends_on=["b"]),
+         SubResearch("e", "sweep beta ceramic domain dense", _run(48.0), depends_on=["c"]),
+         SubResearch("f", "scan polymer chain length", _run(8.0), depends_on=["c"])],
+    )
+    out = run_research_program(
+        goal="pabc interleave",
+        experiments=list(plan.experiments),
+        objectives_config={"score": "maximize"},
+        max_iterations=8, min_iterations=1, client=None,
+        planner=lambda _g: plan,
+        layer_epochs=True, replan_gate=True, early_stop_gate=True,
+        max_parallel=1,
+    )
+    con = out.consolidated
+    # 三阶段元数据并存于同一收敛视图(唯一治理出口)
+    assert con["epochs"] == 3
+    assert "gate.replan" in con["heads"] and "gate.early_stop" in con["heads"]
+    # P-C: top 大幅上升 → 判定过但未触发终止(诚实标 continued)
+    assert con["early_stop"]["verdict"] == "checked_and_continued"
+    assert "证据驱动提前终止(P-C)" not in out.report
+    # P-B: e 与前序层假说重叠 → 跳过(未执行=无证据); f 无重叠 → 执行
+    assert [s["name"] for s in con["replan"]["log"]] == ["e"]
+    assert "e" not in out.cache
+    assert {"a", "b", "c", "d", "f"} <= set(out.cache)
+    # P-A: stream_view 只含真实执行(e 不在任何层), 3 层有序
+    sv_rows = {r["experiment"] for lay in con["stream_view"] for r in lay["rows"]}
+    assert sv_rows == {"a", "b", "c", "d", "f"} and "e" not in sv_rows
+    assert "层间重规划(P-B)" in out.report
+    assert all(elem["name"] != "e" for elem in out.pareto_front)
