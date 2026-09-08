@@ -180,7 +180,7 @@ class ModelTeam:
                     source="model_team",
                 )
             )
-        except Exception:
+        except Exception as exc:
             logger.debug("team event publish failed: %s", event_type, exc_info=True)
 
     def assign(self, member: TeamMember) -> ModelTeam:
@@ -532,7 +532,7 @@ class ModelTeam:
                 text = parts[1].strip("json").strip()
         try:
             data = json.loads(text)
-        except Exception:
+        except Exception as exc:
             return []
         if not isinstance(data, list):
             return []
@@ -552,7 +552,7 @@ class ModelTeam:
                         ],
                     )
                 )
-            except Exception:
+            except Exception as exc:
                 logger.debug("best-effort op failed", exc_info=True)
                 continue
         return steps

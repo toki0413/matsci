@@ -154,7 +154,7 @@ class HuginnSwarm:
                 text = parts[1].strip("json").strip()
         try:
             data = json.loads(text)
-        except Exception:
+        except Exception as exc:
             return []
         if not isinstance(data, list):
             return []
@@ -172,7 +172,7 @@ class HuginnSwarm:
                         depends_on=[str(d) for d in item.get("depends_on", []) if d],
                     )
                 )
-            except Exception:
+            except Exception as exc:
                 logger.debug("best-effort op failed", exc_info=True)
                 continue
         return steps
@@ -442,7 +442,7 @@ class RedisBackend(DistributedSwarmBackend):
             if raw is not None:
                 try:
                     return json.loads(raw)
-                except Exception:
+                except Exception as exc:
                     return {"error": "result decode failed", "raw": str(raw)}
             time.sleep(0.1)
         return {"error": f"timeout after {timeout}s", "task_id": task_id}
@@ -542,7 +542,7 @@ class PostgresBackend(DistributedSwarmBackend):
                 if row is not None and row[0] is not None:
                     try:
                         return json.loads(row[0])
-                    except Exception:
+                    except Exception as exc:
                         return {"error": "result decode failed", "raw": str(row[0])}
             time.sleep(self._poll_interval)
         return {"error": f"timeout after {timeout}s", "task_id": task_id}

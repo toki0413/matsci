@@ -2,8 +2,8 @@
 
 对标上轮审计结论: 仓库治理在接缝处是干净的, 熵主要来自静默吞异常、并行重复管线、
 超宽依赖面。本模块给**自研接缝**(huginn/research/ + exploration/ + validation/ +
-autoloop/ + agent/ + coder/ + rag/ + tools/sim/ + capabilities 关键文件)与**展示入口**
-立三条不靠人自觉的栅栏:
+autoloop/ + agent/ + agents/ + coder/ + rag/ + tools/sim/ + capabilities 关键文件 +
+server_core)与**展示入口**立三条不靠人自觉的栅栏:
 
   1. 静默 catch-all 禁用: `except Exception:`/`except:`(无 `as` 绑定) 必须带 `— 原因`
      注释, 否则视为"吞异常"拦截 (禁止新的盲 except)。
@@ -23,17 +23,17 @@ _ROOT = Path(__file__).resolve().parents[1]          # agent/
 _HUGINN = _ROOT / "huginn"
 _EXAMPLES = Path(__file__).resolve().parents[2] / "examples"
 
-# 自研接缝: 深研运行时 + 核心认知循环 + agent 主循环 + 代码/检索子系统 + 科学计算工具封装
-# (对这些强制"带原因的 catch-all"纪律). 已机械治理的模块才能进接缝 —— 新增目录
-# 同样须先清零静默盲 except, 否则本门会拦. tools/sim 是 AI4S"算"环节: 科学数值异常
-# 必须在有原因的前提下显式处理, 不得静默吞掉.
+# 自研接缝: 深研运行时 + 核心认知循环 + agent 主循环 + 团队编排 + 代码/检索子系统
+# + 科学计算工具封装 + 运行时 server 核心 (对这些强制"带原因的 catch-all"纪律).
+# 已机械治理的模块才能进接缝 —— 新增目录同样须先清零静默盲 except, 否则本门会拦.
 _OWNED_DIRS = ["research", "exploration", "validation", "autoloop", "agent",
-               "coder", "rag", "tools/sim"]
+               "agents", "coder", "rag", "tools/sim"]
 
 _OWNED_FILES = ["huginn/capabilities/introspection.py",
                 "huginn/capabilities/mcp_export.py",
                 "huginn/capabilities/registry.py",
-                "huginn/capabilities/world_model.py"]
+                "huginn/capabilities/world_model.py",
+                "huginn/server_core.py"]
 
 # 静态 catch-all 检测: 命中 `except Exception:` / `except BaseException:` / 裸 `except:`
 _CATCHALL = re.compile(r"^\s*except\s*(BaseException|Exception)?\s*:")

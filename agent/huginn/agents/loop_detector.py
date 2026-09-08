@@ -43,7 +43,7 @@ def _hash_tool_input(tool_input: Any) -> str:
     """
     try:
         payload = json.dumps(tool_input, sort_keys=True, default=str)
-    except Exception:
+    except Exception as exc:
         payload = str(tool_input)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 

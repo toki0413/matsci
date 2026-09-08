@@ -122,7 +122,7 @@ class ToolCallRouter:
             from huginn.feature_flags import FeatureFlags
             if not FeatureFlags.shared().is_enabled("tool_call_router"):
                 return True, ""
-        except Exception:
+        except Exception as exc:
             # flag 层挂了不能带挂业务, 继续走原逻辑
             logger.debug("best-effort op failed", exc_info=True)
 

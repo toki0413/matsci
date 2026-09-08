@@ -198,7 +198,7 @@ class Orchestrator:
                 ))
             if steps:
                 return steps
-        except Exception:
+        except Exception as exc:
             logger.debug("loads failed", exc_info=True)
         # Fallback: single step for lead agent
         return [PlanStep(id="s1", description=text or objective, agent_id="lead")]
@@ -235,7 +235,7 @@ class Orchestrator:
                 fields["error"] = task.result
             try:
                 self.plan_store.update_step(plan_id, task.task_id, **fields)
-            except Exception:
+            except Exception as exc:
                 logger.debug("update step failed", exc_info=True)
 
     def _parse_plan(self, objective: str, raw: str) -> TaskPlan:
@@ -247,7 +247,7 @@ class Orchestrator:
         try:
             data = json.loads(text)
             tasks = [SubTask(**t) for t in data.get("tasks", [])]
-        except Exception:
+        except Exception as exc:
             # Fallback: single task for lead agent
             tasks = [
                 SubTask(

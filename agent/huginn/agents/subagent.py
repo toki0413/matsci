@@ -247,7 +247,7 @@ class SubagentDispatch:
                 get_subagent_specs_for_dispatch,
             )
             specs_override = get_subagent_specs_for_dispatch()
-        except Exception:
+        except Exception as exc:
             logger.debug("subagent phase spec override unavailable", exc_info=True)
         if specs_override is not None:
             self._specs: dict[str, SubagentSpec] = dict(specs_override)
@@ -348,7 +348,7 @@ class SubagentDispatch:
                     if on_state is not None:
                         try:
                             await on_state(state)
-                        except Exception:
+                        except Exception as exc:
                             logger.debug("on_state callback failed", exc_info=True)
 
             # 子 agent 完成: 触发 SUBAGENT_STOP hook.
@@ -371,7 +371,7 @@ class SubagentDispatch:
                         },
                     )
                     await _hook_mgr.trigger(SUBAGENT_STOP, _sub_ctx)
-            except Exception:
+            except Exception as exc:
                 logger.debug("SUBAGENT_STOP hook raised (non-fatal)", exc_info=True)
 
             output = self._extract_output(final_state)
@@ -386,7 +386,7 @@ class SubagentDispatch:
                 try:
                     if hasattr(agent, "select_model"):
                         summarize_model = agent.select_model("summarize")
-                except Exception:
+                except Exception as exc:
                     logger.debug(
                         "select summarize model failed, fallback to default",
                         exc_info=True,
@@ -521,7 +521,7 @@ class SubagentDispatch:
                 if not alias:
                     return output[:_SUMMARIZE_THRESHOLD] + "..."
                 model = factory.model_registry.resolve(alias)
-            except Exception:
+            except Exception as exc:
                 logger.debug("resolve model for summarize failed", exc_info=True)
                 return output[:_SUMMARIZE_THRESHOLD] + "..."
 
@@ -555,7 +555,7 @@ class SubagentDispatch:
             ]
             result = await asyncio.to_thread(model.invoke, messages)
             return result.content if hasattr(result, "content") else str(result)
-        except Exception:
+        except Exception as exc:
             logger.debug("summarize LLM call failed", exc_info=True)
             return output[:_SUMMARIZE_THRESHOLD] + "..."
 

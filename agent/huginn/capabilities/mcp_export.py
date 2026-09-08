@@ -329,13 +329,15 @@ def _ensure_capabilities_registered() -> None:
 
         register_all_tools(None)
     register_capability_tools(None)
-    # 具身原则: 让"世界模型能力"进 MCP 码头 —— 默认挂一个系外行星第一性原理世界模型,
-    # 经其 law/predict/reconcile 三操作对外提供"预告→执行→对账"的可证伪面(见
-    # capabilities.world_model / research.law_model). 加入失败仅降级, 不阻断 server 启动.
+    # 具身原则: 让"世界模型能力"进 MCP 码头 —— 默认挂"系外行星 + 力学"两个第一性原理
+    # 科学计算域, 各自经 law/predict/reconcile 三操作对外提供"预告→执行→对账"的可证伪面
+    # (见 capabilities.world_model / research.law_model). 这也就是把 AI4S"算"环节的科学
+    # 模型接到能力/MCP 面上; 其它需要外部可执行(sim 工具)的只在其 is_available 时被自动装箱.
     try:
         from huginn.capabilities.world_model import register_world_model_capabilities
-        from huginn.research.law_model import FirstPrinciplesLawModel
+        from huginn.research.law_model import FirstPrinciplesLawModel, MechanicsLawModel
         register_world_model_capabilities(FirstPrinciplesLawModel())
+        register_world_model_capabilities(MechanicsLawModel())
     except Exception:  # noqa: BLE001 — 默认世界模型可选, 失败不影响 MCP server 启动
         logger.debug("world-model capability registration skipped", exc_info=True)
 

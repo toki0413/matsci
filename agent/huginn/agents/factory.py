@@ -52,7 +52,7 @@ class AgentFactory:
             try:
                 from pathlib import Path
                 self.persona_manager.sync_skills(Path(config.persona_sync_dir))
-            except Exception:
+            except Exception as exc:
                 logger.debug("persona auto-sync failed (non-fatal)", exc_info=True)
         self._profiles: dict[str, AgentProfileConfig] = {
             a.id: a for a in config.agents if a.enabled
@@ -93,7 +93,7 @@ class AgentFactory:
             self._audit_unsub = install_audit_subscriber()
             # campaign.* / quality.check 业务订阅: 之前 emit→audit→dead, 现在至少 log 可见.
             install_campaign_subscriber()
-        except Exception:
+        except Exception as exc:
             logger.debug("audit subscriber install failed (non-fatal)", exc_info=True)
             self._audit_unsub = None
 
@@ -106,7 +106,7 @@ class AgentFactory:
 
         try:
             store = SqliteCampaignStore(self._campaign_db_path())
-        except Exception:
+        except Exception as exc:
             store = NullCampaignStore()
         try:
             scheduler = ToolScheduler(
@@ -119,7 +119,7 @@ class AgentFactory:
             with contextlib.suppress(Exception):
                 scheduler.recover()
             return scheduler
-        except Exception:
+        except Exception as exc:
             logger.debug("best-effort op failed", exc_info=True)
             return None
 
@@ -243,7 +243,7 @@ class AgentFactory:
                 ctx = load_project_context(self.config.workspace)
                 if ctx.strip():
                     prompt = f"{prompt}\n\n# Project Context\n\n{ctx}"
-            except Exception:
+            except Exception as exc:
                 logger.debug("load project context failed", exc_info=True)
 
             # 反跑题任务锚: 明确本轮目标并锁死, 防止 agent 被中间输出

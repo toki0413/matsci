@@ -37,7 +37,7 @@ try:
     from huginn.knowledge import get_knowledge_base  # noqa: F401
 
     _KB_AVAILABLE = True
-except Exception:
+except Exception as exc:
     logger.debug("best-effort op failed", exc_info=True)
     _KB_AVAILABLE = False
     get_knowledge_base = None  # type: ignore[assignment]
@@ -46,7 +46,7 @@ try:
     from huginn.codebase import get_codebase_index  # noqa: F401
 
     _CODEBASE_AVAILABLE = True
-except Exception:
+except Exception as exc:
     logger.debug("best-effort op failed", exc_info=True)
     _CODEBASE_AVAILABLE = False
     get_codebase_index = None  # type: ignore[assignment]
@@ -139,7 +139,7 @@ def _check_ollama_available_sync(base_url: str, timeout: float = 2.0) -> bool:
         req = urllib.request.Request(f"{base_url}/api/tags", method="GET")
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.status == 200
-    except Exception:
+    except Exception as exc:
         logger.debug("best-effort op failed", exc_info=True)
         return False
 
@@ -183,7 +183,7 @@ async def get_agent() -> HuginnAgent:
         logger.info("Falling back to mock mode (no LLM)")
         get_context().agent = HuginnAgent(model=None, memory_manager=memory_manager)
         get_context().agent.register_tools_from_registry()
-    except Exception:
+    except Exception as exc:
         logger.warning("Failed to initialize agent: {e}")
         logger.info("Falling back to mock mode (no LLM)")
         get_context().agent = HuginnAgent(model=None, memory_manager=memory_manager)
@@ -194,7 +194,7 @@ async def get_agent() -> HuginnAgent:
         agent = get_context().agent
         if agent is not None and getattr(agent, "memory", None) is not None:
             agent.memory.set_llm(getattr(agent, "model", None))
-    except Exception:
+    except Exception as exc:
         logger.debug("把 agent LLM 接到 memory manager 失败", exc_info=True)
 
     # 注入 LLM-as-OCR callback (DeepSeek-OCR 启发): 让 ocr_loader / smart_ingest
@@ -202,7 +202,7 @@ async def get_agent() -> HuginnAgent:
     # agent 模型不支持 vision 就跳过, 不影响原 OCR 链.
     try:
         _install_llm_vision_callback(get_context().agent)
-    except Exception:
+    except Exception as exc:
         logger.debug("LLM vision callback install failed", exc_info=True)
 
     return get_context().agent
@@ -226,7 +226,7 @@ def _install_llm_vision_callback(agent: Any) -> None:
         if not caps.vision:
             logger.debug("model %s 不支持 vision, 跳过 LLM-as-OCR 注入", model_name)
             return
-    except Exception:
+    except Exception as exc:
         logger.debug("best-effort op failed", exc_info=True)
         return  # 拿不到 caps 就不注入, 不影响原 OCR 链
 
@@ -286,7 +286,7 @@ def get_memory_manager() -> MemoryManager:
         from huginn.memory.longterm import LongTermMemory
 
         longterm = LongTermMemory(vector_store=vector_store, enable_semantic=True)
-    except Exception:
+    except Exception as exc:
         # chromadb not installed or VectorStore init failed — FTS5 only
         logger.debug("best-effort op failed", exc_info=True)
         longterm = None
@@ -372,7 +372,7 @@ def get_image_index():
         workspace = "."
         try:
             workspace = get_context().config.workspace or "."
-        except Exception:
+        except Exception as exc:
             logger.debug("读取 workspace 失败, 用默认 '.'", exc_info=True)
         store_path = Path(workspace) / HUGINN_DIR_NAME / "visual_index.json"
         _image_index = ImageIndex(store_path=store_path)
@@ -399,7 +399,7 @@ def _current_user_id(conn: Any) -> str | None:
             uid = getattr(user, "user_id", None)
             if uid:
                 return uid
-    except Exception:
+    except Exception as exc:
         logger.debug("从 request.state 提取 user_id 失败", exc_info=True)
 
     # WebSocket / fallback: pull the bearer token from headers and decode it.
@@ -414,7 +414,7 @@ def _current_user_id(conn: Any) -> str | None:
 
             claims = _decode_token(token)
             return claims.get("sub")
-    except Exception:
+    except Exception as exc:
         logger.debug("从 bearer token 提取 user_id 失败", exc_info=True)
     return None
 
@@ -537,7 +537,7 @@ def get_planner_agent() -> HuginnAgent:
         project_ctx = load_project_context(cfg.workspace)
         if project_ctx.strip():
             base_prompt = f"{base_prompt}\n\n# Project Context\n\n{project_ctx}"
-    except Exception:
+    except Exception as exc:
         logger.info("[planner] project context warning: {e}")
 
     system_prompt = base_prompt + PLANNER_SUFFIX
@@ -553,7 +553,7 @@ def get_planner_agent() -> HuginnAgent:
         get_context().planner_agent = factory.create_lead(
             system_prompt_override=system_prompt
         )
-    except Exception:
+    except Exception as exc:
         logger.warning("Failed to initialize planner model: {e}")
         get_context().planner_agent = HuginnAgent(
             model=None, system_prompt=system_prompt
@@ -582,7 +582,7 @@ def _snapshot_directory(base: Path) -> dict[str, str]:
             snapshot[str(path.relative_to(base))] = data.decode(
                 "utf-8", errors="ignore"
             )
-        except Exception:
+        except Exception as exc:
             logger.debug("best-effort op failed", exc_info=True)
             continue
     return snapshot
@@ -602,7 +602,7 @@ def _server_allows_tool(tool_name: str, input_data: Any) -> tuple[bool, str | No
     try:
         if tool_name in _EDIT_TOOLS or getattr(input_data, "destructive", False):
             reasons.append("this operation is destructive")
-    except Exception:
+    except Exception as exc:
         logger.debug("destructive 标记检查失败", exc_info=True)
 
     reason = f"Tool '{tool_name}' requires approval"
