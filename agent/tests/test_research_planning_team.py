@@ -11,6 +11,8 @@
      度量 + 代理/定律**结构对齐**治理闸门(张拳石理论落地, shortcut 探测)
   7. 世界模型能力贯通 —— 多元论世界观(worldview 卡片) + LawModel 装箱建 Capability +
      具身闸门(不可证伪拒收) + MCP 码头可见可调, 交互审计作用在世界模型域
+  8. 结构闸门自动挂进深研管线 —— `run_research_program(structural_audit=)` 让代理结论
+     进报告/决策前自动过交互等效审计, 结果并入 trace + 报告(out.structural_*)
 
 纯确定性/本地, 零网络/零 LLM。实验 run 返回真实可区分数值。
 """
@@ -487,3 +489,88 @@ def test_interaction_alignment_applies_on_world_model_domain():
                                   baseline=baseline)
     assert bad["aligned"] is False, "世界模型域的代理结构失调 → 闸门拦住进决策"
     assert ("2", "a_AU", "albedo") in bad["surrogate_only"], bad["surrogate_only"]
+
+
+# ── 8) 结构闸门自动挂进深研管线 (代理结论进报告前过交互等效审计) ──────────
+def _pipeline_with_structural_gate(gate):
+    from huginn.research.program import run_research_program
+    return run_research_program(
+        goal="结构性结论", experiments=[_exp("e1", 1.0)],
+        objectives_config={"score": "maximize"},
+        max_iterations=6, min_iterations=1, client=None,
+        structural_audit=gate,
+    )
+
+
+def _exp(name, obj):
+    from huginn.research.program import Experiment
+    return Experiment(name, f"hyp_{name}", _run(obj))
+
+
+def test_structural_gate_pass_and_fail_lands_in_outcome_and_report():
+    """结构闸门: 通过 → structural_aligned True 且报告如实; 未通过 → 报告醒目标注 shortcut."""
+    gate_ok = lambda surv, goal: {"pass": True, "reason": "ok",  # noqa: E731
+                                  "surrogate_only": [], "law_only": []}
+    gate_bad = lambda surv, goal: {"pass": False, "reason": "shortcut",  # noqa: E731
+                                   "surrogate_only": [("2", "a", "b")], "law_only": []}
+    out_ok = _pipeline_with_structural_gate(gate_ok)
+    assert out_ok.structural_aligned is True
+    assert out_ok.structural_gate["pass"] is True
+    assert "结构对齐闸门" in out_ok.report
+    assert "未通过" not in out_ok.report
+
+    out_bad = _pipeline_with_structural_gate(gate_bad)
+    assert out_bad.structural_aligned is False
+    assert out_bad.structural_gate["surrogate_only"] == [("2", "a", "b")]
+    assert "结构对齐闸门(未通过)" in out_bad.report
+    assert "shortcut" in out_bad.report, "未通过的报告必须醒目标注结构风险"
+    # 数值 grounding 仍独立判(结构风险是额外治理信号, 不过度绑架数值门禁)
+    assert out_bad.verdict == "pass"
+
+
+def test_structural_gate_artifact_joins_trace_and_json():
+    """结构闸门的可证伪工件并入 trace(可与 grounding 对账), 异常如实降级."""
+    gate_bad = lambda surv, goal: {"pass": False, "reason": "albedo·a 交互",  # noqa: E731
+                                   "surrogate_only": [("2", "a_AU", "albedo")], "law_only": []}
+    out = _pipeline_with_structural_gate(gate_bad)
+    assert out.structural_gate["surrogate_only"], "结构闸门应记录代理独有交互"
+    assert out.structural_gate["pass"] is False
+
+    # 结构闸门抛异常 → 如实降级为未通过, 不阻断主流程
+    def _boom(surv, goal):  # noqa: ARG001
+        raise RuntimeError("audit backend down")
+    out2 = _pipeline_with_structural_gate(_boom)
+    assert out2.structural_aligned is False
+    assert "structural_audit failed" in out2.structural_gate["reason"]
+    assert out2.verdict == "pass", "审计异常不应拖垮整个深研管线"
+
+
+def test_build_alignment_outcome_gates_surrogate_conclusion_in_pipeline():
+    """端到端: 用 interaction_explain.build_alignment_outcome 作 structural_audit,
+    代理带 shortcut → 管线自动判未通过并在报告标注; 定律一致 → 通过."""
+    from huginn.research.interaction_explain import build_alignment_outcome
+
+    def _law(inp):
+        return 250.0 * (1.0 - inp["albedo"]) + 30.0 * inp["a_AU"]
+
+    def _surrogate_shortcut(inp):
+        return _law(inp) + 6.0 * inp["albedo"] * inp["a_AU"]
+
+    features = ["a_AU", "albedo"]
+    instance = {"a_AU": 1.0, "albedo": 0.2}
+    baseline = {"a_AU": 5.0, "albedo": 0.3}
+
+    gate_shortcut = build_alignment_outcome(
+        surrogate=_surrogate_shortcut, law=_law, features=features,
+        instance=instance, baseline=baseline)
+    out_bad = _pipeline_with_structural_gate(gate_shortcut)
+    assert out_bad.structural_aligned is False
+    assert ("2", "a_AU", "albedo") in out_bad.structural_gate["surrogate_only"]
+    assert "未通过" in out_bad.report
+
+    gate_ok = build_alignment_outcome(
+        surrogate=_law, law=_law, features=features,
+        instance=instance, baseline=baseline)
+    out_ok = _pipeline_with_structural_gate(gate_ok)
+    assert out_ok.structural_aligned is True
+    assert "未通过" not in out_ok.report

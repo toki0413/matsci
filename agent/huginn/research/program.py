@@ -52,6 +52,8 @@ class ResearchOutcome:
     mutations: int = 0                                 # 进化变异生成的子代数
     supervision_log: list = field(default_factory=list)  # HITL 人工反馈记录
     plan_summary: dict | None = None                   # 需求拆解/自主规划摘要(planner) — 若提供
+    structural_gate: dict | None = None                # 结构闸门(交互等效/多元论)审计结果
+    structural_aligned: bool | None = None             # 代理是否通过结构对齐(Shortcut 探测)
 
 
 def _build_trace(cache: dict[str, dict]) -> list[str]:
@@ -91,6 +93,7 @@ def run_research_program(
     debate: bool = False,                  # 用 client 对存活想法做 LLM tournament 筛选
     diagnostic_tools: list[dict] | None = None,  # 域诊断工具能力 [{"tool":schema,"handle":fn}], LLM 可自主发现并调用
     self_audit: Callable[[], list[str]] | None = None,  # 能力自省 §3: 返回需并入 trace 的可证伪工件(能力缺口提案)
+    structural_audit: Callable[[list[dict], str], dict] | None = None,  # 结构闸门: (survivors, goal)->{"pass",...} 交互等效审计(张拳石/多元论治理)
     planner: Callable[[str], "ResearchPlan"] | None = None,  # 需求拆解/自主规划: goal->{experiments, max_parallel, plan_summary}
 ) -> ResearchOutcome:
     """跑一条完整深研管线并返回结果."""
@@ -237,6 +240,23 @@ def run_research_program(
         out.mutations = mstrat.created
     if isinstance(strategy, SupervisorStrategy):
         out.supervision_log = list(strategy.review_log)
+    # 结构闸门(交互等效/多元论治理): 代理/结论进报告前, 自动过一遍结构对齐审计.
+    audit: dict | None = None
+    if structural_audit is not None:
+        try:
+            audit = structural_audit(list(front), goal)
+        except Exception as exc:  # noqa: BLE001 — 结构审计异常不阻断主流程, 如实记为未通过
+            audit = {"pass": False, "reason": f"structural_audit failed: {exc}",
+                     "surrogate_only": [], "law_only": []}
+        if isinstance(audit, dict):
+            audit.setdefault("pass", False)
+            audit.setdefault("surrogate_only", [])
+            audit.setdefault("law_only", [])
+            # 可证伪工件并入 trace —— 报告里对结构风险的引用即可被 grounding 门禁核实.
+            trace.append(json.dumps({"type": "structural_gate", **audit}, ensure_ascii=False))
+            out.structural_gate = audit
+            out.structural_aligned = bool(audit["pass"])
+
     survivors = [(b["name"], cache.get(b["name"], {})) for b in front]
 
     def _synthesize() -> str:
@@ -251,6 +271,18 @@ def run_research_program(
             L.append("")
         L.append("## 结论(开放)")
         L.append("存活假说覆盖目标下的多证据方向, 数值均来自真实执行、可复现。")
+        # 结构闸门: 代理结论进决策前的交互等效审计(通过/未通过如实写明)
+        if audit is not None:
+            if out.structural_aligned is not False:
+                L.append("## 结构对齐闸门")
+                L.append("代理经交互等效审计与定律结构一致(无虚假交互)。")
+            else:
+                L.append("## 结构对齐闸门(未通过)")
+                L.append(f"- 原因: {audit.get('reason', '')}")
+                L.append(f"- 代理独有交互(surrogate_only): {audit.get('surrogate_only')}")
+                L.append(f"- 定律独有交互(law_only): {audit.get('law_only')}")
+                L.append("**代理结论存在与定律不符的交互结构(疑似 shortcut/混淆), "
+                         "不应直接进入决策。**")
         return "\n".join(L)
 
     final, verdict, ungrounded = "", "needs_grounding", []
@@ -261,6 +293,13 @@ def run_research_program(
                   f"以下是存活假说的真实数值证据(可复现、非伪造):\n{survivors_text}\n\n"
                   f"请撰写跨学科深度研究报告(研究问题/数据与方法/结果分析/对账与局限/下一步)。"
                   f"每个数值必须来自上面真实结果, 不许编造。把最终报告放在 <report> 与 </report> 之间。")
+        # 结构闸门提示: 让 LLM 成文时如实反映交互等效审计结果, 不隐瞒 shortcut 风险.
+        if audit is not None:
+            if out.structural_aligned is not False:
+                prompt += "\n【结构对齐闸门】代理经交互等效审计与定律一致(无虚假交互)。"
+            else:
+                prompt += (f"\n【结构对齐闸门】代理未通过: {audit.get('reason', '')}; "
+                           f"surrogate_only={audit.get('surrogate_only')}。报告中须如实说明此结构风险, 不许隐瞒。")
         # 统一诊断工具挂载面 —— 走单一薄控制点 (resolve_diagnostic_tools), 不内联再造 schema
         from huginn.research.tool_surface import resolve_diagnostic_tools
         tool_schemas, tool_handlers = resolve_diagnostic_tools(diagnostic_tools)
@@ -332,6 +371,7 @@ def run_research_program(
         header = (f"# 自主深研(Huginn×书生)\n\n> **门禁: {verdict}** (未落地: {ungrounded or '无'})\n"
                   f"> real orchestration: explored={out.explored} pruned={out.pruned} "
                   f"convergence={out.converred}\n> 报告来源: {out.report_source}"
+                  + (f"\n> 结构对齐闸门: {out.structural_aligned}" if audit is not None else "")
                   + (f"\n> 进化变异: {out.mutations} 子代; HITL 反馈: {len(out.supervision_log)} 轮"
                      if (out.mutations or out.supervision_log) else "")
                   + "\n\n")

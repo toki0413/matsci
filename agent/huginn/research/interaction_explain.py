@@ -212,3 +212,34 @@ def interaction_trace(prim: dict[tuple[str, ...], float]) -> str:
         for k, v in sorted(prim.items(), key=lambda kv: (kv[0][0], str(kv[0])))
     ]
     return json.dumps({"type": "interaction_primitives", "rows": rows}, ensure_ascii=False)
+
+
+def build_alignment_outcome(surrogate: Callable[[dict[str, float]], float],
+                            law: Callable[[dict[str, float]], float],
+                            features: list[str],
+                            instance: dict[str, float],
+                            baseline: dict[str, float] | None = None,
+                            tol: float = 1e-3,
+                            ) -> Callable[[list[dict], str], dict]:
+    """装饰成 `run_research_program(structural_audit=...)` 可用的**结构闸门**.
+
+    返回一个 ``(survivors, goal) -> dict`` 回调, 供深研管线在代理结论进报告/决策前自动
+    调用; 内部跑 :func:`surrogate_law_alignment`(代理 vs 定律的交互等效审计)。管线会把这个
+    结果的 pass/surrogate_only/law_only 并入 trace、写进报告, 并在未通过时醒目标注
+    shortcut 风险。survivors 仅为满足管线调用签名, 审计对象由本闭包外注入的
+    surrogate/law/instance 决定。
+    """
+    def _gate(survivors: list[dict], goal: str) -> dict:
+        audit = surrogate_law_alignment(
+            surrogate=surrogate, law=law, features=features, instance=instance,
+            baseline=baseline, tol=tol)
+        return {
+            "pass": audit["aligned"],
+            "reason": ("交互结构一致, 代理与定律无结构偏差。" if audit["aligned"]
+                       else "代理存在与定律不符的交互结构(疑似 shortcut/混淆), 未通过结构闸门。"),
+            "surrogate_only": audit["surrogate_only"],
+            "law_only": audit["law_only"],
+            "goal": goal,
+        }
+
+    return _gate
