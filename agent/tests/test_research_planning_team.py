@@ -131,3 +131,84 @@ def test_fullchain_demo_offline_smoke():
     stage = out["S3_compute_S4_execute_S5_write"]
     assert {"planner", "critic", "synthesizer"} <= set(stage["team_roles"])
     assert stage["survivors"], "S3/S4 应产出存活证据"
+
+
+# ── 4) 世界模型 / VLA 式团队 (数学为核心) ────────────────────
+def test_first_principles_world_model_predicts_law():
+    """世界模型的 predict 与数学定律一致: T_eq 随 a_scale 增大而单调下降."""
+    from huginn.research.world_model import (
+        Action, FirstPrinciplesWorldModel, WorldState,
+    )
+    wm = FirstPrinciplesWorldModel(albedo=0.1)
+    assert "T_eq" in wm.law() and "S" in wm.law()   # 数学定律(方程串)作为核心语言
+    init = WorldState({"a_AU": 1.0}, domain="exoplanet")
+    t_far = wm.predict(init, Action({"a_scale": 1.2})).get("T_eq_K")
+    t_near = wm.predict(init, Action({"a_scale": 0.8})).get("T_eq_K")
+    assert t_far < t_near, "a 更大 → S∝a^-2 → T_eq 更小 (定律单调性)"
+
+
+def test_reconcile_flags_wrong_world_model_as_falsified():
+    """预测 vs 真值对账: 定律不符 → 如实标 falsified(不覆盖偏差)."""
+    from huginn.research.world_model import (
+        Action, FirstPrinciplesWorldModel, reconcile, WorldState,
+    )
+    wm = FirstPrinciplesWorldModel(albedo=0.1)
+    init = WorldState({"a_AU": 1.0}, domain="exoplanet")
+    act = Action({"a_scale": 1.0})
+    pred = wm.predict(init, act)
+    # 真值(独立执行)被系统性放大 1.5 倍 → 靠近轨道但温度假设错误
+    tru_t = pred.get("T_eq_K") * 1.5
+    resp = reconcile(pred, {"S_Wm2": pred.get("S_Wm2"), "T_eq_K": tru_t}, tol=0.03)
+    assert resp["borne_out"] is False, resp
+    assert "T_eq_K" in resp["mismatch"], "偏差应被如实记录, 而非悄悄抹平"
+
+
+def test_model_based_planner_ranks_actions_by_predicted_objective():
+    """模型基规划: 按预测目标(minimize T_eq → 最大 a_scale)排候选动作."""
+    from huginn.research.world_model import (
+        Action, FirstPrinciplesWorldModel, ModelBasedPlanner, WorldState,
+    )
+    wm = FirstPrinciplesWorldModel(albedo=0.1)
+    planner = ModelBasedPlanner(wm, objective="T_eq_K", sense="minimize")
+    plan = planner.plan(WorldState({"a_AU": 1.0}, domain="exoplanet"),
+                        [Action({"a_scale": s}, label=f"s{int(s*10)}")
+                         for s in (0.8, 1.0, 1.2)])
+    assert plan[0].action.label == "s12", "最小 T_eq → 最大 a_scale 应第一个"
+    assert all("law" in p.to_dict() for p in plan), "每个计划步都带数学定律"
+
+
+def test_model_based_science_team_bears_and_falsifies_law():
+    """VLA 团队端到端: 世界模型预告 → 科学家执行 → 批判对账.
+
+    - 真实执行与定律一致 → borne_out=True, 进入结论并通过门禁;
+    - 注入偏差执行(定律被破坏) → 如实 falsified 进 pruned, 不进结论.
+    """
+    from huginn.research.science_team import ModelBasedScienceTeam
+    from huginn.research.world_model import Action, FirstPrinciplesWorldModel
+
+    wm = FirstPrinciplesWorldModel(albedo=0.1)
+    team = ModelBasedScienceTeam(wm, objective="T_eq_K", sense="maximize",
+                                 n_scientists=2)
+    obs = [{"name": "Kepler-999 b", "orbper_d": 100.0},
+           {"name": "Fake-Planet b", "orbper_d": 300.0}]
+    actions = [Action({"a_scale": s}, label=f"a{int(s*10)}") for s in (0.9, 1.0, 1.1)]
+
+    def _executor(init, act):
+        # 真值 = 世界模型本身(第一性原理一致) → 定律被证实
+        st = wm.predict(init, act)
+        return {"S_Wm2": st.get("S_Wm2"), "T_eq_K": st.get("T_eq_K")}
+
+    out = team.run("系外行星平衡温度(定律预告-执行-对账)", obs, actions, _executor)
+    assert out.law and "T_eq" in out.law                # 数学定律入产出
+    assert {e.role for e in out.role_log} >= {"planner", "scientist", "critic", "synthesizer"}
+    assert set(out.survivors) == {"Kepler-999 b", "Fake-Planet b"}, \
+        f"与定律一致 → 全部证实, got survivors={out.survivors}, pruned={out.pruned}"
+    assert out.verdict == "pass"
+
+    # 注入系统性偏差: 真实执行把温度放大 1.5 倍 → 定律被证伪
+    def _bad_executor(init, act):
+        return {"S_Wm2": wm.predict(init, act).get("S_Wm2"),
+                "T_eq_K": wm.predict(init, act).get("T_eq_K") * 1.5}
+    out2 = team.run("同一目标(偏差执行)", obs, actions, _bad_executor)
+    assert set(out2.survivors) == set(), f"定律不符 → 全部证伪, got {out2.survivors}"
+    assert set(out2.pruned) == {"Kepler-999 b", "Fake-Planet b"}, out2.pruned

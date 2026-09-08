@@ -9,10 +9,12 @@
   - CriticAgent    对账本做 Pareto 前沿筛 + 逐证据 grounding 校验, 淘汰被支配/未落地主张
   - SynthesizerAgent 据存活证据 + 完整 trace 组装可复现报告, 过 claim_grounding 门禁
 
-与 `run_research_program` 的区别: 后者是单编排器串起一条 pipeline; 这里是「分工 +
-并行 + 批判 + 综合」的团队, 科学与批判分属不同 agent, 证据只在账本上流转。
+第二套 VLA 式团队 :class:`ModelBasedScienceTeam` 对标 世界模型/VLA: 感知(读入状态)
+→ 数学定律预告(世界模型选择动作) → 执行(科学家) → 数值对账(批判), 数学为规划与
+验证的公共语言。与 DAG 式 :class:`ScienceTeam`(分层任务分工) 互补 —— 前者管"怎么
+分工", 后者管"怎么按定律规划/预告/验证"。
 
-复用: `research.planning`(规划) + `providers`(真实实验) + `claim_grounding`(批判/
+复用: `research.planning`(规划) + `research.world_model`(数学核心) + `claim_grounding`(批判/
 门禁)。纯确定性/标准库, 零网络/零 LLM, 可单测。
 """
 from __future__ import annotations
@@ -22,6 +24,9 @@ from typing import Any, Callable
 
 from huginn.research.planning import ResearchPlan, SubResearch, build_research_plan
 from huginn.research.program import grounding_verifier
+from huginn.research.world_model import (
+    Action, ModelBasedPlanner, WorldModel, WorldState, reconcile,
+)
 
 
 # ── 共享数据结构 (团队协作的公共契约) ─────────────────────────────
@@ -230,4 +235,89 @@ class ScienceTeam:
             survivors=survivors,
             pruned=pruned,
             role_log=list(self.log),
+        )
+
+
+# ── 第二套: VLA 式团队 (世界模型预告 → 执行 → 数学对账) ─────────────────────
+# 对标 世界模型 / VLA: 感知(seed) → 定律预告(planner 选动作) → 执行(scientist)
+# → 对账(critic, 数学可证伪)。数学定律是规划与验证的公共语言。
+
+
+@dataclass
+class VLAOutcome:
+    """VLA 式团队的产出: 每步预告/执行/对账 + 定律 + 报告 + 门禁."""
+    goal: str
+    law: str = ""
+    plan: list = field(default_factory=list)             # [{id, action, predicted}]
+    executions: list = field(default_factory=list)       # [{id, actual}]
+    reconciliations: list = field(default_factory=list)  # [{id, borne_out, errors, mismatch}]
+    survivors: list = field(default_factory=list)        # 定律被证实的证据名
+    pruned: list = field(default_factory=list)           # 被证伪/被支配的证据名
+    report: str = ""
+    verdict: str = "needs_grounding"
+    role_log: list[RoleLogEntry] = field(default_factory=list)
+
+
+class ModelBasedScienceTeam:
+    """VLA 式科研团队: 当世界模型给定律, 科学家给真相, 批判者对账 (数学为核).
+
+    - Planner(世界模型): ``predict`` 预告每个候选动作的后继状态, 按预测目标选动作。
+    - Scientist: 对选定动作做**真实执行**(独立于 predict, 是真相检验)。
+    - Critic: ``reconcile`` 把 predict 与 actual 数值对账 —— 相符=定律证实, 偏差=
+      定律证伪(如实标注, 不覆盖)。只把被证实的证据送入结论。
+    """
+
+    def __init__(self, model: WorldModel, *, objective: str = "T_eq_K",
+                 sense: str = "maximize", tol: float = 0.03,
+                 n_scientists: int = 2, verify=None) -> None:
+        self.model = model
+        self.planner = ModelBasedPlanner(model, objective, sense)
+        self.scientists = [ScientistAgent(f"vla.scientist.{i}") for i in range(n_scientists)]
+        self.critic = CriticAgent(verify=verify)
+        self.synthesizer = SynthesizerAgent()
+        self.tol = tol
+        self.log: list[RoleLogEntry] = []
+
+    def _log(self, role: str, action: str, detail: str = "") -> None:
+        self.log.append(RoleLogEntry(role=role, action=action, detail=detail))
+
+    def run(self, goal: str, observations: list[dict], actions: list[Action],
+            real_executor: Callable[[WorldState, Action], dict]) -> VLAOutcome:
+        self._log("planner", "law", self.model.law())
+        evidences: list[Evidence] = []
+        plan, execs, recons = [], [], []
+        worker = 0
+        for obs in observations:
+            init = self.model.seed(obs)                    # 感知: 读入观测 → 初始状态
+            step = self.planner.best(init, actions)        # 定律预告 → 选动作
+            scientist = self.scientists[worker % len(self.scientists)]; worker += 1
+            actual = real_executor(init, step.action)      # 科学者: 真实执行(真相)
+            rep = reconcile(step.predicted, actual, tol=self.tol)  # 批判: 数学对账
+            rid = obs.get("name", f"obs_{len(plan)}")
+            plan.append({"id": rid, **step.to_dict()})
+            execs.append({"id": rid, "actual": actual,
+                          "executed_by": f"{scientist.role}:{scientist.name}"})
+            recons.append({"id": rid, **rep})
+            evidences.append(Evidence(
+                name=rid, hypothesis="世界模型定律预告，经真实执行数值对账证实",
+                objectives=actual.get("objectives", {}),
+                # summary 并入观测标识(id), 让报告引用的天体名/编号可被 grounding 溯源
+                summary={**dict(actual), "id": rid},
+                source=f"{scientist.role}:{scientist.name}"))
+            self._log("scientist", f"exec '{rid}'", f"borne_out={rep['borne_out']} "
+                       f"errors={rep.get('errors', {})}")
+
+        # 数学核心: 只把定律被**证实**的证据送入结论; 证伪的如实列为 pruned
+        survivors = [e for e, rc in zip(evidences, recons) if rc.get("borne_out")]
+        pruned = [e for e, rc in zip(evidences, recons) if not rc.get("borne_out")]
+        self._log("critic", "reconcile(math)",
+                  f"borne_out {len(survivors)} / {len(evidences)}")
+
+        report, gate = self.synthesizer.act(goal, survivors, pruned, self.critic.verify)
+        self._log("synthesizer", "assemble", f"verdict={gate['verdict']}")
+        return VLAOutcome(
+            goal=goal, law=self.model.law(), plan=plan, executions=execs,
+            reconciliations=recons,
+            survivors=[e.name for e in survivors], pruned=[e.name for e in pruned],
+            report=report, verdict=gate["verdict"], role_log=list(self.log),
         )
