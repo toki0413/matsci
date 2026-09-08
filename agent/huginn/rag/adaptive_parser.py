@@ -130,7 +130,7 @@ def save_fingerprint(
                 ),
             )
             conn.commit()
-        except Exception:
+        except Exception as exc:
             logger.debug("save_fingerprint failed", exc_info=True)
         finally:
             conn.close()
@@ -155,7 +155,7 @@ def retrieve_fingerprint(
                 (domain, identifier),
             ).fetchone()
             return dict(row) if row else None
-        except Exception:
+        except Exception as exc:
             logger.debug("best-effort op failed", exc_info=True)
             return None
         finally:
@@ -233,7 +233,7 @@ def extract_domain(url: str) -> str:
     try:
         parsed = urlparse(url)
         return parsed.netloc.lower()
-    except Exception:
+    except Exception as exc:
         logger.debug("best-effort op failed", exc_info=True)
         return ""
 

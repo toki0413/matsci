@@ -177,7 +177,7 @@ def _try_import_tree_sitter() -> tuple[Any, dict[str, Any]] | None:
     """
     try:
         from tree_sitter import Language, Parser  # noqa: F401
-    except Exception:
+    except Exception as exc:
         logger.debug("best-effort op failed", exc_info=True)
         return None
 
@@ -193,7 +193,7 @@ def _try_import_tree_sitter() -> tuple[Any, dict[str, Any]] | None:
     for lang_name, mod_name in lang_modules.items():
         try:
             mod = importlib.import_module(mod_name)
-        except Exception:
+        except Exception as exc:
             logger.debug("best-effort op failed", exc_info=True)
             continue
         # 不同版本 language 包 API:
@@ -204,13 +204,13 @@ def _try_import_tree_sitter() -> tuple[Any, dict[str, Any]] | None:
         if hasattr(mod, "language"):
             try:
                 lang_obj = mod.language()
-            except Exception:
+            except Exception as exc:
                 logger.debug("best-effort op failed", exc_info=True)
                 lang_obj = None
         if lang_obj is None and hasattr(mod, "Language"):
             try:
                 lang_obj = mod.Language
-            except Exception:
+            except Exception as exc:
                 logger.debug("best-effort op failed", exc_info=True)
                 lang_obj = None
         if lang_obj is not None:
@@ -246,7 +246,7 @@ class _TreeSitterExtractor:
         # 新版: Language(ptr)
         try:
             lang_obj = self._Language(raw)
-        except Exception:
+        except Exception as exc:
             # 中间/旧版: raw 本身就是 Language 对象
             lang_obj = raw
         self._language_obj_cache[lang_name] = lang_obj
@@ -265,16 +265,16 @@ class _TreeSitterExtractor:
         # 新版: Parser(language=...)
         try:
             parser = Parser(language=lang_obj)
-        except Exception:
+        except Exception as exc:
             logger.debug("Parser failed", exc_info=True)
         if parser is None:
             try:
                 parser = Parser()
                 try:
                     parser.language = lang_obj
-                except Exception:
+                except Exception as exc:
                     parser.set_language(lang_obj)
-            except Exception:
+            except Exception as exc:
                 logger.debug("best-effort op failed", exc_info=True)
                 parser = None
         if parser is not None:
@@ -292,14 +292,14 @@ class _TreeSitterExtractor:
         # 新版: Language.query(source)
         try:
             query = lang_obj.query(source)
-        except Exception:
+        except Exception as exc:
             logger.debug("query failed", exc_info=True)
         if query is None:
             try:
                 from tree_sitter import Query
 
                 query = Query(lang_obj, source)
-            except Exception:
+            except Exception as exc:
                 logger.debug("best-effort op failed", exc_info=True)
                 query = None
         self._query_cache[key] = query
@@ -320,7 +320,7 @@ class _TreeSitterExtractor:
 
         try:
             tree = parser.parse(source.encode("utf-8"))
-        except Exception:
+        except Exception as exc:
             return [], []
         if tree is None or tree.root_node is None:
             return [], []
@@ -397,7 +397,7 @@ class _TreeSitterExtractor:
         result: dict[str, list[Any]] = defaultdict(list)
         try:
             captures = query.captures(root)
-        except Exception:
+        except Exception as exc:
             return result
         if isinstance(captures, dict):
             # 新版: {name: [nodes]}
@@ -413,19 +413,19 @@ class _TreeSitterExtractor:
                     if isinstance(item, tuple) and len(item) == 2:
                         node, name = item
                         result[name].append(node)
-            except Exception:
+            except Exception as exc:
                 logger.debug("run captures failed", exc_info=True)
         return result
 
     def _node_text(self, node: Any, source: str) -> str:
         try:
             return node.text.decode("utf-8")
-        except Exception:
+        except Exception as exc:
             try:
                 return source.encode("utf-8", errors="ignore")[
                     node.start_byte:node.end_byte
                 ].decode("utf-8", errors="ignore")
-            except Exception:
+            except Exception as exc:
                 logger.debug("best-effort op failed", exc_info=True)
                 return ""
 
@@ -688,7 +688,7 @@ class RepoMap:
         for path in self._walk_source_files():
             try:
                 source = path.read_text(encoding="utf-8", errors="ignore")
-            except Exception:
+            except Exception as exc:
                 logger.debug("best-effort op failed", exc_info=True)
                 continue
 
@@ -719,7 +719,7 @@ class RepoMap:
                 if src is None:
                     try:
                         src = Path(sym.file).read_text(encoding="utf-8", errors="ignore")
-                    except Exception:
+                    except Exception as exc:
                         logger.debug("best-effort op failed", exc_info=True)
                         src = ""
                     py_sources[sym.file] = src
@@ -753,7 +753,7 @@ class RepoMap:
         try:
             if path.stat().st_size > _MAX_FILE_BYTES:
                 return True
-        except Exception:
+        except Exception as exc:
             logger.debug("best-effort op failed", exc_info=True)
             return True
         return False

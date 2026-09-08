@@ -150,7 +150,7 @@ async def rag_provenance_hook(ctx: HookContext) -> HookContext | None:
 
         enhanced = enhance_rag_results(query, search_results)
         ctx.metadata["enhanced_results"] = enhanced
-    except Exception:
+    except Exception as exc:
         # 增强失败不能影响主流程
         logger.debug("rag_provenance_hook failed (non-fatal)", exc_info=True)
     return None

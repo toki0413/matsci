@@ -149,7 +149,7 @@ class RefactorEngine:
         for path in candidate_paths:
             try:
                 text = path.read_text(encoding="utf-8", errors="ignore")
-            except Exception:
+            except Exception as exc:
                 continue
             score = sum(1 for kw in keywords if kw in text.lower())
             scored.append((score, path))
@@ -162,7 +162,7 @@ class RefactorEngine:
         for path in paths:
             try:
                 content = path.read_text(encoding="utf-8", errors="ignore")
-            except Exception:
+            except Exception as exc:
                 continue
             rel = path.relative_to(self.root)
             tokens = rough_token_count(content)
