@@ -94,3 +94,39 @@ def test_learning_capture_missing_when_no_mechanism():
     lc = next(d for d in rep.dimensions if d.name == "learning_capture")
     assert lc.evidence in (EVIDENCE_OBSERVED, EVIDENCE_UNOBSERVED, EVIDENCE_MISSING)
     assert 0.0 <= lc.score <= 1.0
+
+
+# ── M2: run_research_program 返回 out.harness ─────────────────────────────
+def test_pipeline_populates_out_harness():
+    """真实跑一条确定性深研管线, out.harness 被填充为五维报告 dict (一键出报告)."""
+    from huginn.research.program import Experiment, run_research_program
+
+    def _run(v: float):
+        return lambda: {"summary": {"y": v}, "objectives": {"score": v}}
+
+    out = run_research_program(
+        goal="harness m2 integration",
+        experiments=[Experiment("e0", "baseline", _run(1.0)),
+                     Experiment("e1", "candidate", _run(2.0))],
+        objectives_config={"score": "maximize"},
+        max_iterations=4, min_iterations=1,
+        client=None,                       # 确定性综合, 不依赖 LLM
+        harness_agent="huginn-lite", harness_machine="sandbox-1",
+    )
+    assert out.harness is not None, "管线应填充 out.harness"
+    assert out.harness["task_episode"].startswith("ep-")
+    assert out.harness["agent"] == "huginn-lite"
+    assert out.harness["machine"] == "sandbox-1"
+    assert {d["name"] for d in out.harness["dimensions"]} == {
+        "task_understanding", "controlled_execution", "change_validation",
+        "reliable_delivery", "learning_capture",
+    }
+    # 同一 goal 同日内 → 稳定 episode id, 可跨 run 聚合
+    out2 = run_research_program(
+        goal="harness m2 integration",
+        experiments=[Experiment("e0", "baseline", _run(1.0))],
+        objectives_config={"score": "maximize"},
+        max_iterations=2, min_iterations=1, client=None,
+        harness_agent="huginn-lite", harness_machine="sandbox-1",
+    )
+    assert out2.harness["task_episode"] == out.harness["task_episode"]

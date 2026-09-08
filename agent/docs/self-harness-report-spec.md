@@ -1,6 +1,7 @@
 # Spec: Self-Harness 报告（对齐 Qoder/Better Harness 五维 + 组织层任务实录）
 
-> 状态: **Design + 部分已落地**（`huginn/research/harness.py` 提供 `HarnessReport`）。
+> 状态: **M1 + M2 已落地**（`huginn/research/harness.py` 提供 `HarnessReport` +
+> `run_research_program` 返回 `out.harness`）。
 > 目标: 不复制 Better Harness 的实现，采纳它的**方法论**——用一个证据绑定的五维评分，
 > 把我们的散装机械门禁收敛成"能横跨项目/会话看"的治理面。
 > 红线（与 Better Harness 同）：**配置存在 ≠ 能力可用**；每个维度都必须"链到真实任务实录
@@ -41,6 +42,7 @@
 - 不自动改仓库；报告只点名断点，改进仍走"人工批准"（对齐 Better Harness no-auto-apply）。
 
 ## 6. 里程碑
-- M1: `huginn/research/harness.py` 的 `HarnessReport` + `make_task_episode_id`（纯 stdlib）。
-- M2: 接入 `run_research_program` 返回值（可选 `out.harness`），demo 可一键出报告。
-- M3: 跨 run 按 task_episode 聚合（治理账本行）——组织层。
+- [x] M1: `huginn/research/harness.py` 的 `HarnessReport` + `make_task_episode_id`（纯 stdlib）。
+- [x] M2: 接入 `run_research_program` 返回值 `out.harness`（可选 `harness_agent`/`harness_machine`），
+  走完任意管线即出一份 `to_dict()` 报告，demo 一键出报告。测试: `tests/test_self_harness.py`。
+- [ ] M3: 跨 run 按 task_episode 聚合（治理账本行）——组织层。

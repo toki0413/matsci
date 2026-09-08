@@ -55,6 +55,7 @@ class ResearchOutcome:
     structural_gate: dict | None = None                # 结构闸门(交互等效/多元论)审计结果
     structural_aligned: bool | None = None             # 代理是否通过结构对齐(Shortcut 探测)
     workspace_verified: bool | None = None             # C-Space 工作区门: 报告断言是否作为在场落地
+    harness: dict | None = None                        # Self-Harness 五维报告(dict) — demo 一键出报告
 
 
 def _build_trace(cache: dict[str, dict]) -> list[str]:
@@ -103,6 +104,8 @@ def run_research_program(
     structural_audit: Callable[[list[dict], str], dict] | None = None,  # 结构闸门: (survivors, goal)->{"pass",...} 交互等效审计(张拳石/多元论治理)
     workspace: Any = None,  # C-Space 工作区: 若提供, 最终报告须经 workspace.broadcast 作为"在场断言"落地才成文
     planner: Callable[[str], "ResearchPlan"] | None = None,  # 需求拆解/自主规划: goal->{experiments, max_parallel, plan_summary}
+    harness_agent: str = "",          # Self-Harness 报告维度: agent 身份 (组织层账本聚合维度, 留空可)
+    harness_machine: str = "",        # Self-Harness 报告维度: machine 身份 (留空可)
 ) -> ResearchOutcome:
     """跑一条完整深研管线并返回结果."""
     from huginn.exploration.orchestrator import ExplorationOrchestrator
@@ -404,4 +407,12 @@ def run_research_program(
                      if (out.mutations or out.supervision_log) else "")
                   + "\n\n")
         out_md.write_text(header + final.strip() + "\n", encoding="utf-8")
+
+    # M2: Self-Harness 五维报告 — 复用本 out 已记录的 gate 结果, 不重复计算 (例行轻量)
+    try:
+        from huginn.research.harness import build_harness_report
+        out.harness = build_harness_report(
+            goal, out, agent=harness_agent, machine=harness_machine).to_dict()
+    except Exception:  # noqa: BLE001 — harness 为可选附加值, 失败不应阻断管线
+        out.harness = None
     return out
