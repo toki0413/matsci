@@ -50,14 +50,16 @@ _OUT = Path(__file__).resolve().parent / "out" / "shusheng_huginn_workflow"
 _OUT.mkdir(parents=True, exist_ok=True)
 
 GOAL = (
-    "以神经网络容量为探针测量 bootstrap 解空间刚性: 饱和判据应依赖什么? "
-    "给定 eps(精度截止)主导 vs N(样本量)主导, 优化器财政如何污染该判据, "
-    "约束数量如何决定解族维数 —— 寻找多证据方向的稳健研究结论。"
+    "深化 NN 容量探针解空间刚性研究: 上一轮已初步确立「饱和判据依赖 eps(精度截止) "
+    "而非 N(样本量)」与「约束数钳制解族维数」, 但强度仅够相关性。本轮补齐对照组: "
+    "固定 eps 扫 N 验证 C* 平台、约束 k=0..3 全序列建立维数-约束曲线、训练预算扫描 "
+    "量化优化器财政的假饱和窗口、以及多系统普适性 —— 把结论强度提到「对照+曲线+跨系统」水平。"
 )
 
 # 每个实验独立目标(各自支撑不同子结论; 独立维度互不支配 → 全部存活).
-# distinct-key 方案的科学诚实: 不高维拼接一个作假性综合分, 每条证据各自可复核.
-ACCURACY_OBJ = ["eps_discrimination", "opt_convergence", "dim_effect"]
+# 本轮五个证据向量: 判据区分(N 平台)/约束钳制全曲线/财政收敛/跨系统普适.
+ACCURACY_OBJ = ["eps_discrimination", "n_stability", "budget_convergence",
+                "dim_effect", "univ_effect"]
 _OBJECTIVES = {k: "maximize" for k in ACCURACY_OBJ}
 
 # 收敛聚合头头数预算等通用治理参数走 run_research_program 默认, 本 demo 不再重复.
@@ -126,20 +128,22 @@ def _exp_optimizer_finance(w: int = 32, steps: int = 1600) -> dict:
     # 收敛证据: -log10(vho) 越大 = 越收敛(真实标量; vho 越小越好 → 取负对数最大化).
     conv = float(-math.log10(max(vho, 1e-12)))
     return {
-        "objectives": {"opt_convergence": conv},
+        "objectives": {"budget_convergence": conv},
         "summary": {"w": w, "steps": steps, "vtr_last": round(vtr_last, 6),
-                    "vho": round(vho, 6), "opt_convergence": round(conv, 3)},
+                    "vho": round(vho, 6), "budget_convergence": round(conv, 3)},
         "success": True,
     }
 
 
-def _solve_under(k: int, seed: int, basis: int) -> np.ndarray:
-    """欠定 u''=-cos + k 个点值约束 -> 构造解族成员 (真实, 冻结留出上的一个样本).
+def _solve_under(k: int, seed: int, basis: int,
+                 rhs=lambda t: -np.cos(t), ref=lambda t: np.cos(t)) -> np.ndarray:
+    """欠定 u''=rhs(t) + k 个点值约束 u(t_i)=ref(t_i) -> 解族成员 (真实, 冻结留出采样).
 
     不做 min-norm 唯一解(lstsq 恒唯一 → 重解零散布, 测不出"解族维数"); 而是
     在约束线性系统 A c ≈ b 的**零空间**里随机取向, 叠加到特解上 —— 采样得到的
     是同一个真实解族(常数+线性 2 维核), k 个独立点值约束逐条钳制核自由度:
       k=0 -> 核维 2, 散布最大; k=2 -> 核被完全钳制, 散布 ~0. → 解族维数真测量.
+    多系统普适性: 传不同 (rhs, ref) 即换一个真实 ODE 系统, 核恒为 2 维线性流形.
     """
     from numpy.polynomial import legendre as Lg
     import numpy.polynomial.polynomial as PP
@@ -153,13 +157,13 @@ def _solve_under(k: int, seed: int, basis: int) -> np.ndarray:
         for kk, cc in enumerate(d2):
             acc += cc * mesh ** kk
         D2[:, j] = acc
-    fvec = -np.cos(mesh)
+    fvec = rhs(mesh)
     rng = np.random.default_rng(seed)
     A = D2.copy(); b = fvec.copy()
     if k > 0:
         idx = rng.choice(N, size=k, replace=False)
         A = np.vstack([D2, 3.0 * P[idx]])
-        b = np.concatenate([fvec, 3.0 * np.cos(mesh[idx])])
+        b = np.concatenate([fvec, 3.0 * ref(mesh[idx])])
     # 特解(解族的一个成员) + 零空间采样(recover the真 family spread)
     c_particular, *_ = np.linalg.lstsq(A, b, rcond=None)
     _, s, vh = np.linalg.svd(A, full_matrices=True)
@@ -190,37 +194,144 @@ def exp_constraint_dimension(seeds: int = 8) -> dict:
     }
 
 
+def exp_n_scale(steps_eps: float = 1e-4, Ns=(512, 1024, 2048, 4096, 8192)) -> dict:
+    """X4 · N 平台: 固定 eps 扫 N, 刚性/胖的 C* 是否随 N 平台化(判据不依赖 N 的对照)."""
+    rows = []
+    span_rig, span_fat = [], []
+    for N in Ns:
+        c_rig = _poly_cstar("rigid", steps_eps, N)
+        c_fat = _poly_cstar("fat", steps_eps, N)
+        rows.append({"N": N, "Cstar_rigid": c_rig, "Cstar_fat": c_fat})
+        span_rig.append(c_rig); span_fat.append(c_fat)
+    # N 稳定性: C* 在 N 上的取值区间半径越小 → 对 N 越不敏感(平台化). 
+    # 分辨率: N 跨度 8 倍, 若 C* 只 ±0 (完美平台) → 判据纯粹依赖 eps.
+    rig_span = max(span_rig) - min(span_rig)
+    fat_span = max(span_fat) - min(span_fat)
+    n_stability = float(1.0 / (1.0 + rig_span + fat_span))   # 越大 = 对 N 越不敏感
+    return {
+        "objectives": {"n_stability": n_stability},
+        "summary": {"eps": steps_eps, "Ns": list(Ns), "rows": rows,
+                    "rig_span": rig_span, "fat_span": fat_span,
+                    "n_stability": round(n_stability, 4)},
+        "success": True,
+    }
+
+
+def exp_constraint_curve(seeds: int = 8, ks=(0, 1, 2, 3)) -> dict:
+    """X5 · 约束全曲线: k=0..3 的 sigmaH 序列, 验证「约束数→解族维数」单调钳制曲线."""
+    curve = []
+    for k in ks:
+        vals = np.stack([_solve_under(k, s, 12) for s in range(seeds)])
+        sig = float(vals.std(axis=0).mean() / (np.abs(vals).mean() + 1e-9))
+        curve.append({"k": k, "sigmaH": round(sig, 4)})
+    # 钳制强度: k=0 到 k=3 的总下降量 (maximize) —— 约束逐条钳掉核自由度.
+    strength = float(curve[0]["sigmaH"] - curve[-1]["sigmaH"])
+    return {
+        "objectives": {"dim_effect": strength},
+        "summary": {"seeds": seeds, "curve": curve, "dim_effect": round(strength, 4)},
+        "success": True,
+    }
+
+
+def exp_budget_sweep(w: int = 32, budgets=(400, 800, 1600, 3200, 6400)) -> dict:
+    """X6 · 预算扫描: 训练预算递增下的 vho 收敛曲线(量化优化器财政假饱和窗口)."""
+    rows = []
+    for steps in budgets:
+        r = _exp_optimizer_finance(w=w, steps=steps)
+        rows.append({"steps": steps, "vho": r["summary"]["vho"],
+                     "budget_convergence": r["summary"]["budget_convergence"]})
+    # 假饱和窗口: (vho@min_budget - vho@max_budget) 相对改善 —— 预算不足会假饱和(污染判据).
+    v0, v1 = rows[0]["vho"], rows[-1]["vho"]
+    window = float(max(0.0, v0 - v1))
+    return {
+        "objectives": {"budget_convergence": rows[-1]["budget_convergence"]},
+        "summary": {"w": w, "budgets": list(budgets), "rows": rows,
+                    "vho_min_budget": round(v0, 6), "vho_max_budget": round(v1, 6),
+                    "finance_window": round(window, 6)},
+        "success": True,
+    }
+
+
+def exp_multi_system(seeds: int = 8) -> dict:
+    """X7 · 多系统普适: 不同 ODE 系统下约束钳制解族维数的效应是否一致."""
+    systems = [
+        ("u''=-cos(t), ref=cos", lambda t: -np.cos(t), lambda t: np.cos(t)),
+        ("u''=-sin(2t), ref=sin(2t)/4", lambda t: -np.sin(2 * t), lambda t: np.sin(2 * t) / 4.0),
+        ("u''=-(1-t^2), ref=(t^2-t^4)/12", lambda t: -(1 - t ** 2), lambda t: (t ** 2 - t ** 4) / 12.0),
+    ]
+    per = []
+    for label, rhs, ref in systems:
+        ev0 = np.stack([_solve_under(0, s, 12, rhs=rhs, ref=ref) for s in range(seeds)])
+        ev2 = np.stack([_solve_under(2, s, 12, rhs=rhs, ref=ref) for s in range(seeds)])
+        sig0 = float(ev0.std(axis=0).mean() / (np.abs(ev0).mean() + 1e-9))
+        sig2 = float(ev2.std(axis=0).mean() / (np.abs(ev2).mean() + 1e-9))
+        per.append({"system": label, "sigmaH_k0": round(sig0, 4),
+                    "sigmaH_k2": round(sig2, 4), "effect": round(sig0 - sig2, 4)})
+    effects = [p["effect"] for p in per]
+    univ = float(min(effects))          # 最弱系统也有正效应 → 普适(保守最大化)
+    return {
+        "objectives": {"univ_effect": univ},
+        "summary": {"seeds": seeds, "systems": per, "min_effect": univ,
+                    "mean_effect": round(float(np.mean(effects)), 4)},
+        "success": True,
+    }
+
+
 def _make_experiments():
-    """三条真实证据分支 → Experiment 列表."""
+    """七个真实证据分支 → Experiment 列表(三条深化对照组 + 原三条确认组)."""
     from huginn.research import Experiment
 
     specs = [
         (lambda: exp_eps_criterion(), "X1_eps_criterion",
-         "eps判据: 固定N扫eps, 刚性cos的C*在阈值后不再随eps收紧而增长(平台), "
-         "而胖|x|需无限阶表示 -> 饱和由精度截止eps的判据区分度拉大两类系统."),
+         "eps判据(基准): 固定N扫eps, 刚性cos的C*在阈值后平台化而胖|x|持续增长 → "
+         "饱和由精度截止eps的判据区分度拉大两类系统."),
+        (lambda: exp_n_scale(), "X4_n_platform",
+         "N平台(对照组): 固定eps扫N=512..8192, 若刚/胖的C*对N平台化(span≈0), "
+         "则饱和判据不依赖N —— 直接检验「依赖eps而非N」."),
+        (lambda: exp_constraint_curve(), "X5_constraint_curve",
+         "约束全曲线: k=0..3 的sigmaH序列单调下降 → 约束数逐条钳制解族核自由度, "
+         "建立「约束数→解族维数」定量曲线(此前仅有k=0/2两点)."),
+        (lambda: exp_budget_sweep(), "X6_budget_sweep",
+         "预算扫描: 训练预算递增下vho收敛曲线 → 量化优化器财政的假饱和窗口 "
+         "(预算不足的vho虚高会污染容量饱和判据)."),
+        (lambda: exp_multi_system(), "X7_multi_system",
+         "多系统普适: 在不同ODE系统(u''=f(t))下约束钳制效应是否一致 → 结论跨系统稳健性."),
         (lambda: _exp_optimizer_finance(), "X2_optimizer_finance",
-         "优化器财政: 真实PINN在固定训练预算下的留出误差vho -> 若vho未收敛, "
-         "则容量饱和信号会被预算不足的'假饱和'污染(判据须加优化器财政守卫)."),
+         "优化器财政(确认): 真实PINN在固定训练预算下的留出误差vho若未收敛, "
+         "容量饱和信号会被预算不足的'假饱和'污染(判据须加财政守卫)."),
         (lambda: exp_constraint_dimension(), "X3_constraint_dimension",
-         "约束维数: 欠定u''=-cos + k个点值约束 -> 解族维数由约束数决定; "
-         "k:0->2 钳制核自由度使重解散布 sigmaH 收掉 -> 约束数才是决定解空间维度的主导量(非N)."),
+         "约束维数(确认): 欠定u''=-cos + k个点值约束 → k=0 vs k=2 的sigmaH钳制效应."),
     ]
     return [Experiment(name=n, hypothesis=h, run=fn) for fn, n, h in specs]
 
 
 def _build_plan(goal: str, run_by_name: dict):
-    """需求拆解 -> 带依赖 DAG -> 分层(层0: X1 基准; 层1: X2,X3 并行确认)."""
+    """需求拆解 -> 带依赖 DAG -> 分层.
+
+    层0: X1 (判据基准, 无依赖)
+    层1: X4/N平台 + X5/约束曲线 + X6/预算扫描 (对照, 依赖判据校准)
+    层2: X7/多系统 (跨系统, 依赖约束曲线) + X2/X3 (原确认组, 依赖判据)
+    """
     from huginn.research.planning import build_research_plan, SubResearch
     return build_research_plan(goal, [
         SubResearch("X1_eps_criterion", "基准判据: eps 区分刚性/胖",
                     run=run_by_name["X1_eps_criterion"], depends_on=[]),
-        SubResearch("X2_optimizer_finance", "优化器财政守卫",
+        SubResearch("X4_n_platform", "N平台对照: C* 对 N 不敏感",
+                    run=run_by_name["X4_n_platform"], depends_on=["X1_eps_criterion"]),
+        SubResearch("X5_constraint_curve", "约束全曲线 k=0..3",
+                    run=run_by_name["X5_constraint_curve"], depends_on=["X1_eps_criterion"]),
+        SubResearch("X6_budget_sweep", "预算扫描: 假饱和窗口",
+                    run=run_by_name["X6_budget_sweep"], depends_on=["X1_eps_criterion"]),
+        SubResearch("X7_multi_system", "多系统普适",
+                    run=run_by_name["X7_multi_system"],
+                    depends_on=["X5_constraint_curve"]),
+        SubResearch("X2_optimizer_finance", "优化器财政确认",
                     run=run_by_name["X2_optimizer_finance"],
                     depends_on=["X1_eps_criterion"]),
-        SubResearch("X3_constraint_dimension", "约束维数主导",
+        SubResearch("X3_constraint_dimension", "约束维数确认",
                     run=run_by_name["X3_constraint_dimension"],
-                    depends_on=["X1_eps_criterion"]),
-    ], parallel_cap=2)
+                    depends_on=["X5_constraint_curve"]),
+    ], parallel_cap=3)
 
 
 def _diagnostic_tools():
@@ -246,6 +357,16 @@ def _diagnostic_tools():
             evs.append({"k": k, "sigmaH": round(sig, 4)})
         return json.dumps({"sigmaH_by_k": evs}, ensure_ascii=False)
 
+    def h_probe_n_platform(a):
+        eps = float(a.get("eps", 1e-4))
+        Ns = a.get("Ns") or [512, 1024, 2048, 4096, 8192]
+        rows = []
+        for N in Ns:
+            rows.append({"N": N,
+                         "Cstar_rigid": _poly_cstar("rigid", eps, N),
+                         "Cstar_fat": _poly_cstar("fat", eps, N)})
+        return json.dumps({"eps": eps, "rows": rows}, ensure_ascii=False)
+
     return [
         {"tool": {"function": {"name": "probe_Cstar",
             "description": "固定N扫eps, 返回刚性/胖系统达到精度eps所需最小容量C*曲线(真实)",
@@ -254,6 +375,12 @@ def _diagnostic_tools():
                 "eps_list": {"type": "array", "items": {"type": "number"}},
                 "N": {"type": "integer"}}, "required": ["target"],
                 "additionalProperties": False}}}, "handle": h_probe_cstar},
+        {"tool": {"function": {"name": "probe_n_platform",
+            "description": "固定eps扫N, 返回刚/胖C*随N的平台化对照(N平台探针, 检验判据是否依赖N)",
+            "parameters": {"type": "object", "properties": {
+                "eps": {"type": "number"},
+                "Ns": {"type": "array", "items": {"type": "integer"}}},
+                "required": [], "additionalProperties": False}}}, "handle": h_probe_n_platform},
         {"tool": {"function": {"name": "probe_optimizer",
             "description": "真实PINN在给定宽度w与训练预算steps下的训练残差/留出误差vho(优化器财政审计)",
             "parameters": {"type": "object", "properties": {
@@ -318,7 +445,8 @@ def main() -> int:
     )
 
     print("\n[program] explored=%d pruned=%d pareto_front=%d convergence=%s mutations=%d"
-          % (out.explored, out.pruned, len(out.pareto_front), out.converred, out.mutations))
+      % (out.explored, out.pruned, len(out.pareto_front), out.converred, out.mutations))
+    print(f"[program] executed_cache={sorted(out.cache.keys())}")
     for b in out.pareto_front:
         print(f"  surv -> {b['name']}")
     print(f"[gate] {out.verdict} unsubstantiated={out.ungrounded} source={out.report_source}")
