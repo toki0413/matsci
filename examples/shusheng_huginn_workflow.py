@@ -1024,6 +1024,7 @@ def _ask_json(client, model: str, system: str, user: str, max_tokens: int = 900)
     try:
         r = client.chat.completions.create(
             model=model, max_tokens=max_tokens, temperature=0.2,
+            extra_body={"thinking_mode": False},   # 关思考流: 否则 JSON 常被前置 thinking 污染
             messages=[{"role": "system", "content": system},
                       {"role": "user", "content": user}])
         text = r.choices[0].message.content or ""
@@ -1228,6 +1229,25 @@ def _try_author_code(client, model: str, next_open: str, cycle: int):
     return exp, probes, obj_keys, ""
 
 
+def _llm_critic(client, model: str, report_text: str, survivors_text: str) -> list[dict]:
+    """书生饰演 CriticAgent(对立审稿副体): 挑主报告的过度断言.
+
+    多智能体协同: 主研究员(成文)与审稿副体(反对立场)双角色冷却, 意见只作
+    文本追加进报告 —— 不参与 grounding 门禁(Pareto/verify 仍是确定性代码).
+    返回 [] 或 [{"claim", "risk", "suggest"}] (JSON 解析失败不阻断).
+    """
+    d = _ask_json(
+        client, model,
+        "你是科研审稿人 CriticAgent, 立场是反对者: 逐条挑主报告的过度断言。"
+        "只允许针对『结论强度超过证据强度』的问题: 未做对照却说主导、单次测量说因果、"
+        "自定义指标当客观阈值、未量化不确定度。每条输出: 断言原文 / 具体风险 / 建议降级措辞。"
+        "不超过 3 条; 没有就把 findings 置空。只输出 JSON: "
+        '{"findings": [{"claim": "", "risk": "", "suggest": ""}]}',
+        f"存活假说的真实数值证据:\n{survivors_text[:3000]}\n\n主报告:\n{report_text[:6000]}")
+    fs = [f for f in (d.get("findings") or []) if isinstance(f, dict) and f.get("claim")]
+    return fs[:3]
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--dry", action="store_true", help="确定性运行(不调模型), 验证整条管线")
@@ -1363,6 +1383,24 @@ def main() -> int:
             print(f"  surv -> {b['name']}")
         print(f"[gate] {out.verdict} unsubstantiated={out.ungrounded} source={out.report_source}")
         print(f"[护栏] strictness={args.strictness} 判断层软提示 ×{len(out.judgment_hints or [])}")
+
+        # ── 多智能体协同: 书生饰演 CriticAgent 对立审稿(只追加文本, 不碰门禁) ──
+        if client is not None and out.report:
+            _sv = "\n".join(
+                f"- {b['name']}: {json.dumps(out.cache.get(b['name'], {}).get('summary', {}), ensure_ascii=False)[:400]}"
+                for b in out.pareto_front) or "(无存活)"
+            _finds = _llm_critic(client, args.model, out.report, _sv)
+            if _finds:
+                _blk = ["", "## 对立审稿(CriticAgent)", "> 书生双角色协同: 主研究员成文, 审稿副体持反对立场复核。"
+                        "意见不参与 grounding 门禁(Pareto/verify 仍为确定性代码)。"]
+                for f in _finds:
+                    _blk.append(f"- 断言: {f['claim']}\n  - 风险: {f['risk']}\n  - 建议: {f['suggest']}")
+                out.report += "\n" + "\n".join(_blk)
+                _md = report_md.read_text(encoding="utf-8") if report_md.exists() else out.report
+                if report_md.exists():
+                    report_md.write_text(_md.rstrip() + "\n" + "\n".join(_blk) + "\n",
+                                         encoding="utf-8")
+                print(f"  [CriticAgent] 审稿副体提出 {len(_finds)} 条降级建议(已并入报告)")
         if out.consolidated:
             _c = out.consolidated
             print(f"[P-A layers_covered] {_c.get('epochs')}  stream_view_sections={len(_c.get('stream_view') or [])}")
