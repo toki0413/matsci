@@ -75,8 +75,10 @@ def _strip_ordinal_markers(text: str) -> str:
     s = _re.sub(r"轮次\s*\d+", "", s)
     # 实验分支名 author_c{cycle} / author_cNNN: 命名标识符, 不是统计主张.
     # (trace 只含结果值, 不含实验名 → 否则兜底报告里分支名必被判未落地.)
-    s = _re.sub(r"\bauthor_c\d+\b", "", s)
-    s = _re.sub(r"\bS\d+_scan\b", "", s)
+    # 注意不能用 \b 词边界: 数字后紧跟中文(如 author_c270仅) 时中文不算
+    # \w 也不构成"非词边界点", \b 判定失效 → 用显式"非数字"字符类收尾.
+    s = _re.sub(r"author_c\d+(?![0-9])", "", s)
+    s = _re.sub(r"S\d+_scan", "", s)
     return s
 
 

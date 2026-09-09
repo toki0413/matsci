@@ -1,0 +1,154 @@
+[
+  {
+    "knowledge_id": "fact_1c356ab7",
+    "content": "The position law is defined as lin_frac(t_i) = 1/(1+t_i^2), validated across systems 0/1/2 under k=1, point constraint, order=2; the typical error is calculated to be 1e-3 magnitude (max 0.0023 in the middle band).",
+    "source_type": "domain_fact",
+    "source_evidence": [
+      "shusheng_huginn_264cycles"
+    ],
+    "confidence": 0.5,
+    "category": "position_law",
+    "tags": [
+      "position_law",
+      "lin_frac",
+      "high_confidence"
+    ],
+    "created_at": "2026-09-09T14:59:32.440937",
+    "usage_count": 0,
+    "verification_status": "unverified",
+    "meta_status": ""
+  },
+  {
+    "knowledge_id": "fact_c368c48f",
+    "content": "There is no single ti=0.8 outlier point; the deviation significance depends on multi-point tests and is based on full-band data, so conclusions must be downgraded to an observed 0.0023 deviation, not a confirmed anomaly.",
+    "source_type": "domain_fact",
+    "source_evidence": [
+      "shusheng_huginn_264cycles"
+    ],
+    "confidence": 0.5,
+    "category": "ti_anomaly",
+    "tags": [
+      "ti_anomaly",
+      "caution",
+      "statistics"
+    ],
+    "created_at": "2026-09-09T14:59:32.440976",
+    "usage_count": 0,
+    "verification_status": "unverified",
+    "meta_status": ""
+  },
+  {
+    "knowledge_id": "fact_48d4f724",
+    "content": "The constraint-type phase transition is determined by whether the value or the derivative is constrained: derivative constraint fixes the linear kernel and always preserves the constant kernel, so lin_frac is defined as 0 and position-independent.",
+    "source_type": "domain_fact",
+    "source_evidence": [
+      "shusheng_huginn_264cycles"
+    ],
+    "confidence": 0.5,
+    "category": "constraint_type",
+    "tags": [
+      "constraint_type",
+      "derivative",
+      "caution"
+    ],
+    "created_at": "2026-09-09T14:59:32.440999",
+    "usage_count": 0,
+    "verification_status": "unverified",
+    "meta_status": ""
+  },
+  {
+    "knowledge_id": "fact_4b319d59",
+    "content": "The k=2 sigmaH nullification requires that order equals the kernel dimension; under order=3 the two constraints leave one residual direction, so the claimed k=2 universality loss is a definitional artifact.",
+    "source_type": "domain_fact",
+    "source_evidence": [
+      "shusheng_huginn_264cycles"
+    ],
+    "confidence": 0.5,
+    "category": "k_dependence",
+    "tags": [
+      "k_dependence",
+      "order",
+      "nullspace"
+    ],
+    "created_at": "2026-09-09T14:59:32.441016",
+    "usage_count": 0,
+    "verification_status": "unverified",
+    "meta_status": ""
+  },
+  {
+    "knowledge_id": "fact_c62a91b2",
+    "content": "sigmaH monotonicity depends on the system: it is NOT monotonic in |ti| with center minimum; sigmaH is highly sensitive to basis/seeds, whereas the lin_frac direction ratio is robust across all configurations.",
+    "source_type": "domain_fact",
+    "source_evidence": [
+      "shusheng_huginn_264cycles"
+    ],
+    "confidence": 0.5,
+    "category": "sigmaH",
+    "tags": [
+      "sigmaH",
+      "robustness",
+      "caution"
+    ],
+    "created_at": "2026-09-09T14:59:32.441033",
+    "usage_count": 0,
+    "verification_status": "unverified",
+    "meta_status": ""
+  },
+  {
+    "knowledge_id": "fact_9dec11de",
+    "content": "Statistical robustness is based on whether the quantity is lin_frac or sigmaH: the lin_frac value is robust to basis/seeds, while sigmaH and its std are sensitive; fill data gaps with deterministic probes, do not fabricate.",
+    "source_type": "domain_fact",
+    "source_evidence": [
+      "shusheng_huginn_264cycles"
+    ],
+    "confidence": 0.5,
+    "category": "robustness",
+    "tags": [
+      "robustness",
+      "basis",
+      "seeds"
+    ],
+    "created_at": "2026-09-09T14:59:32.441052",
+    "usage_count": 0,
+    "verification_status": "unverified",
+    "meta_status": ""
+  },
+  {
+    "knowledge_id": "fact_64eb974b",
+    "content": "The report header 'gate pass' coexisting with aggregated gate_blocked is a fixed CI-layer artifact; judgment must be based on audit.score_usage/external_verify, not treated as a scientific rejection.",
+    "source_type": "domain_fact",
+    "source_evidence": [
+      "shusheng_huginn_264cycles"
+    ],
+    "confidence": 0.5,
+    "category": "engineering",
+    "tags": [
+      "engineering",
+      "gate_blocked",
+      "critic"
+    ],
+    "created_at": "2026-09-09T14:59:32.441066",
+    "usage_count": 0,
+    "verification_status": "unverified",
+    "meta_status": ""
+  },
+  {
+    "knowledge_id": "fact_a0cba4c4",
+    "content": "The resolved questions are based on history and closed: ti=0.8 significance, seeds sensitivity and basis plateau are unconfirmed observed deviations; redirect future budget to new mechanisms instead of reopening them.",
+    "source_type": "domain_fact",
+    "source_evidence": [
+      "shusheng_huginn_264cycles"
+    ],
+    "confidence": 0.5,
+    "category": "closed",
+    "tags": [
+      "closed",
+      "research_strategy",
+      "efficiency"
+    ],
+    "created_at": "2026-09-09T14:59:32.441081",
+    "usage_count": 0,
+    "verification_status": "unverified",
+    "meta_status": ""
+  }
+]
