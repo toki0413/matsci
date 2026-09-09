@@ -737,6 +737,82 @@ def _scan_pred_hint(cfg: dict) -> str:
                 "null_dim 恒 ≥1")
 
 
+def _kendall_tau_abs(x: np.ndarray, y: np.ndarray) -> float:
+    """(按 x 升序后)y 的单调性强弱: Kendall tau ∈ [-1, 1], 纯实现对平移鲁棒.
+
+    tau=+1 严格单调递增; -1 严格单调递减; 0 无单调趋势.
+    """
+    idx = np.argsort(x)
+    y = y[idx].astype(float)
+    n = len(y)
+    inv = 0
+    for i in range(n):
+        for j in range(i + 1, n):
+            if y[j] < y[i]:
+                inv += 1
+    return float(1.0 - 4.0 * inv / max(1, n * (n - 1)))
+
+
+def exp_monotonicity_basis(system: int = 0, order: int = 2, ctype: str = "point",
+                           k: int = 1, seeds: int = 8,
+                           bases=(8, 12, 16),
+                           positions=(-0.97, -0.66, -0.33, 0.0, 0.33, 0.66, 0.97)) -> dict:
+    """X13 · 位置单调性 × basis 敏感性对照(第 29 轮书生开放问题的专项执行).
+
+    对每个 basis: 扫全部 7 个约束位置, 测 σH_full 与 lin_frac 曲线.
+      - 方向单调性: lin_frac 随 |t_i| 的理论行为 = 1/(1+t_i²) 单调下降
+        → Kendall tau 应 ≈ -1(若实测请偏离, 就是机制破口);
+      - σH 单调性: 不设先验(实录, system1 可能非单调 —— 待发现);
+      - basis 敏感性: 跨 basis 的同位置 lin_frac std 越小 = 判据越平台化.
+    两个 independent 目标(指纹键, 不与扫描分支互支配):
+      mono_lin_{system}  = 1/(1+mean_basis(τ_lin+1)²)   —— 方向单调律的符合度
+      basis_stab_{system}= 1/(1+mean(跨 basis lin_frac std)) —— 基函数平台化
+    """
+    per_basis = []
+    lin_curves = []
+    for b in bases:
+        rows = []
+        for ti in positions:
+            d = _direction_metrics_g(order, ctype, float(ti), system, k, seeds, b)
+            rows.append({"ti": float(ti), "sigmaH": d["sigmaH_full"],
+                         "lin_frac": d["lin_frac"]})
+        t_abs = np.array([abs(r["ti"]) for r in rows])
+        lf = np.array([r["lin_frac"] for r in rows])
+        sig = np.array([r["sigmaH"] for r in rows])
+        per_basis.append({"basis": b, "rows": rows,
+                          "tau_lin_abs": round(_kendall_tau_abs(t_abs, lf), 4),
+                          "tau_sigmaH_abs": round(_kendall_tau_abs(t_abs, sig), 4)})
+        lin_curves.append(lf)
+    arr = np.array(lin_curves)                       # (nbasis, npos)
+    stab = float(1.0 / (1.0 + float(arr.std(axis=0).mean())))
+    taus = np.array([p["tau_lin_abs"] for p in per_basis])
+    mono = float(1.0 / (1.0 + float(np.mean((taus + 1.0) ** 2))))
+    return {
+        "objectives": {f"mono_lin_{system}": mono, f"basis_stab_{system}": stab},
+        "summary": {"system": _SYSTEMS[system][0], "order": order, "ctype": ctype,
+                    "k": k, "seeds": seeds, "bases": list(bases),
+                    "positions": list(positions), "per_basis": per_basis,
+                    "cross_basis_lin_std": round(float(arr.std(axis=0).mean()), 4),
+                    "mono_lin": round(mono, 4), "basis_stab": round(stab, 4)},
+        "success": True,
+    }
+
+
+def exp_monotonicity_plan() -> list:
+    """第 30 轮专项: 基准(system0 单调律) → 挑战(system1 σH 疑似非单调) 两分支."""
+    from huginn.research import Experiment
+    return [
+        Experiment("X13_mono_basis_s0",
+                   "位置单调性×basis敏感性 基准(system0): lin_frac 随 |t_i| 应单调下降(τ≈-1) "
+                   "且跨 basis 稳定 —— 执行第29轮书生开放问题1/2/3的对照计划",
+                   run=lambda: exp_monotonicity_basis(system=0)),
+        Experiment("X13_mono_basis_s1",
+                   "挑战(system1): σH(t_i) 是否真的非单调(第3轮测到中心σH>边界), "
+                   "lin_frac 单调律是否仍成立; basis 敏感性是否与 system0 一致",
+                   run=lambda: exp_monotonicity_basis(system=1)),
+    ]
+
+
 def _make_experiments(cycle: int = 1):
     """按轮次返回真实证据分支 → Experiment 列表.
 
@@ -785,6 +861,9 @@ def _make_experiments(cycle: int = 1):
              "→ 方向钳制机制跨系统普适(齐次核 span{1,t} 对任意 u''=rhs 成立)."),
         ]
         return [Experiment(name=n, hypothesis=h, run=fn) for fn, n, h in specs]
+
+    if cycle == 30:
+        return exp_monotonicity_plan()
 
     raise ValueError(f"cycle={cycle} 无内置实验; cycle>=3 应走 _make_scan_experiments")
 
@@ -853,6 +932,14 @@ def _build_plan(goal: str, run_by_name: dict, cycle: int = 1):
             SubResearch("X11_direction_universal", "方向定律跨系统普适",
                         run=run_by_name["X11_direction_universal"],
                         depends_on=["X10_position_curve"]),
+        ], parallel_cap=3)
+    if cycle == 30:
+        return build_research_plan(goal, [
+            SubResearch("X13_mono_basis_s0", "位置单调性×basis敏感性 基准(system0)",
+                        run=run_by_name["X13_mono_basis_s0"], depends_on=[]),
+            SubResearch("X13_mono_basis_s1", "挑战(system1): σH 非单调? 单调律仍立?",
+                        run=run_by_name["X13_mono_basis_s1"],
+                        depends_on=["X13_mono_basis_s0"]),
         ], parallel_cap=3)
     names = list(run_by_name.keys())
     return build_research_plan(goal, [
@@ -1301,6 +1388,14 @@ def main() -> int:
             goal = GOAL_CYCLE2
             exps = _make_experiments(2)
             objectives = dict(_OBJECTIVES_CYCLE2)
+        elif cycle == 30:
+            goal = (f"执行位置单调性×basis敏感性对照计划(第29轮书生开放问题): "
+                    f"对 k=1 值约束, 扫全部7位置 × basis∈{{8,12,16}}, 检验 "
+                    f"① lin_frac 随 |t_i| 单调律(τ≈-1, 理论 1/(1+t_i²))在 system0/1 是否成立; "
+                    f"② σH(t_i) 是否 system1 非单调(第3轮疑似中心σH>边界) —— 真实判读, 不做预设.")
+            exps = _make_experiments(30)
+            objectives = {k: "maximize" for k in
+                          ("mono_lin_0", "basis_stab_0", "mono_lin_1", "basis_stab_1")}
         else:
             next_open = _extract_next_open(last_report)
             if client is not None:
