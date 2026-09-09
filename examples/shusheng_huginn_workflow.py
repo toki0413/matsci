@@ -835,6 +835,110 @@ def exp_monotonicity_plan_dense() -> list:
     ]
 
 
+# ── 第 32 轮专项: basis 边界扩展 / basis-12 异常复核 / 定律定量拟合 / 种子稳定性 ──
+_EXT_BASES_S0 = (2, 3, 6, 24, 32)
+_EXT_BASES_S1 = (2, 3, 6, 12, 24, 32)
+
+
+def exp_law_fit(systems=(0, 1), seeds: int = 8, bases=(4, 8, 12, 16, 20),
+                positions=_DENSE_POSITIONS) -> dict:
+    """X15 · 定律定量拟合: lin_frac 实测 vs 理论 1/(1+t_i²) 的逐点误差.
+
+    回应 CriticAgent「『看起来吻合』缺定量」: 对每个 (system, basis, ti) 记
+    err=|lin_frac - 1/(1+t_i²)|, 报 max_err 与 mse(真实标量, 全点覆盖).
+    两个独立目标: law_fit=1/(1+max_err) / law_mse=1/(1+mse).
+    """
+    rows = []
+    max_err = 0.0
+    mse_acc = 0.0
+    n = 0
+    for si in systems:
+        for b in bases:
+            for ti in positions:
+                d = _direction_metrics_g(2, "point", float(ti), int(si), 1, seeds, b)
+                pred = 1.0 / (1.0 + float(ti) * float(ti))
+                err = float(abs(d["lin_frac"] - pred))
+                rows.append({"system": int(si), "basis": b, "ti": float(ti),
+                             "lin_frac": d["lin_frac"], "pred": round(pred, 4),
+                             "err": round(err, 5)})
+                max_err = max(max_err, err)
+                mse_acc += err * err
+                n += 1
+    mse = mse_acc / max(1, n)
+    return {
+        "objectives": {"law_fit": 1.0 / (1.0 + max_err),
+                       "law_mse": 1.0 / (1.0 + mse)},
+        "summary": {"systems": list(systems), "bases": list(bases),
+                    "positions": list(positions), "n_points": n,
+                    "max_err": round(max_err, 6), "mse": round(mse, 6),
+                    "law_fit": round(1.0 / (1.0 + max_err), 4),
+                    "law_mse": round(1.0 / (1.0 + mse), 4),
+                    "rows": rows},
+        "success": True,
+    }
+
+
+def exp_seed_stab(systems=(0, 1), bases=(8, 12), seeds_list=(4, 8, 16),
+                  positions=_DENSE_POSITIONS) -> dict:
+    """X15 · 种子稳定性: σH 曲线与 τ_σH 随 seeds 的漂移(统计鲁棒性).
+
+    对每个 (system, basis): 分别用 seeds∈{4,8,16} 重跑 19 点 σH 曲线,
+    跨 seeds 的 σH 逐点 std 越小 = 统计越稳定(回应『只是5档basis离散采样』).
+    """
+    rows = []
+    max_drift = 0.0
+    for si in systems:
+        for b in bases:
+            curves, taus = [], []
+            for s in seeds_list:
+                pb = exp_monotonicity_basis(system=int(si), seeds=s,
+                                            bases=(b,), positions=positions)
+                per = pb["summary"]["per_basis"][0]
+                curves.append(np.array([r["sigmaH"] for r in per["rows"]]))
+                taus.append(per["tau_sigmaH_abs"])
+            arr = np.array(curves)                    # (n_seeds, n_pos)
+            drift = float(arr.std(axis=0).mean())
+            rows.append({"system": int(si), "basis": b,
+                         "seeds": list(seeds_list),
+                         "tau_sigmaH_by_seeds": [round(float(t), 4) for t in taus],
+                         "sigmaH_cross_seed_std": round(drift, 5)})
+            max_drift = max(max_drift, drift)
+    return {
+        "objectives": {"seed_stab": 1.0 / (1.0 + max_drift)},
+        "summary": {"rows": rows, "max_drift": round(max_drift, 5),
+                    "seed_stab": round(1.0 / (1.0 + max_drift), 4)},
+        "success": True,
+    }
+
+
+def exp_basis_ext_plan() -> list:
+    """第 32 轮专项: basis 边界扩展 {2,3,6,24,32} + system1 basis-12 异常复核
+    (seeds=16) + 定律定量拟合 + 种子稳定性 —— 全部回应第 31 轮报告'下一步'
+    与 CriticAgent 的质疑点."""
+    from huginn.research import Experiment
+    return [
+        Experiment("X15_basis_ext_s0",
+                   "扩展基准(system0): 19点连续位置 × basis{2,3,6,24,32} — "
+                   "lin_frac 单调律与 σH τ 在极端 basis 下是否仍成立/收敛",
+                   run=lambda: exp_monotonicity_basis(
+                       system=0, positions=_DENSE_POSITIONS, bases=_EXT_BASES_S0)),
+        Experiment("X15_basis_ext_s1",
+                   "扩展挑战(system1): basis{2,3,6,12,24,32} × seeds=16 — "
+                   "第31轮 basis-12 异常(τ_σH=-0.7661)是否可复现; τ 漂移渐近行为",
+                   run=lambda: exp_monotonicity_basis(
+                       system=1, seeds=16, positions=_DENSE_POSITIONS,
+                       bases=_EXT_BASES_S1)),
+        Experiment("X15_law_fit",
+                   "定律定量拟合: lin_frac 实测 vs 1/(1+t_i²) — 19点×5basis×2系统"
+                   "的 max_err/mse(回应 CriticAgent: 需定量拟合而非看起来吻合)",
+                   run=lambda: exp_law_fit()),
+        Experiment("X15_seed_stab",
+                   "种子稳定性: σH 曲线与 τ_σH 随 seeds∈{4,8,16} 的漂移 — 统计鲁棒性"
+                   "(回应 CriticAgent: 5档basis离散采样不足以证收敛)",
+                   run=lambda: exp_seed_stab()),
+    ]
+
+
 def _make_experiments(cycle: int = 1):
     """按轮次返回真实证据分支 → Experiment 列表.
 
@@ -889,6 +993,9 @@ def _make_experiments(cycle: int = 1):
 
     if cycle == 31:
         return exp_monotonicity_plan_dense()
+
+    if cycle == 32:
+        return exp_basis_ext_plan()
 
     raise ValueError(f"cycle={cycle} 无内置实验; cycle>=3 应走 _make_scan_experiments")
 
@@ -974,6 +1081,20 @@ def _build_plan(goal: str, run_by_name: dict, cycle: int = 1):
                         run=run_by_name["X14_mono19_s1"],
                         depends_on=["X14_mono19_s0"]),
         ], parallel_cap=3)
+    if cycle == 32:
+        return build_research_plan(goal, [
+            SubResearch("X15_basis_ext_s0", "扩展基准(system0): basis{2,3,6,24,32}",
+                        run=run_by_name["X15_basis_ext_s0"], depends_on=[]),
+            SubResearch("X15_basis_ext_s1", "扩展挑战(system1)+basis-12异常复核",
+                        run=run_by_name["X15_basis_ext_s1"],
+                        depends_on=["X15_basis_ext_s0"]),
+            SubResearch("X15_law_fit", "定律定量拟合 lin_frac vs 1/(1+t²)",
+                        run=run_by_name["X15_law_fit"],
+                        depends_on=["X15_basis_ext_s0"]),
+            SubResearch("X15_seed_stab", "种子稳定性 seeds∈{4,8,16}",
+                        run=run_by_name["X15_seed_stab"],
+                        depends_on=["X15_basis_ext_s1"]),
+        ], parallel_cap=2)
     names = list(run_by_name.keys())
     return build_research_plan(goal, [
         SubResearch(n, f"书生提议扫描分支 {n}", run=run_by_name[n], depends_on=[])
@@ -1437,6 +1558,16 @@ def main() -> int:
             exps = _make_experiments(31)
             objectives = {k: "maximize" for k in
                           ("mono_lin_0", "basis_stab_0", "mono_lin_1", "basis_stab_1")}
+        elif cycle == 32:
+            goal = (f"执行第32轮专项(第31轮报告'下一步'+CriticAgent 质疑): "
+                    f"① basis 边界扩展 {{2,3,6,24,32}} — lin_frac 平台化与 τ_σH "
+                    f"漂移的渐近行为; ② system1 basis-12 异常(-0.7661)用 seeds=16 "
+                    f"复核是否真实; ③ lin_frac vs 1/(1+t_i²) 定量拟合(max_err/mse); "
+                    f"④ seeds∈{{4,8,16}} 下 σH 曲线与 τ 的统计稳定性.")
+            exps = _make_experiments(32)
+            objectives = {k: "maximize" for k in
+                          ("mono_lin_0", "basis_stab_0", "mono_lin_1", "basis_stab_1",
+                           "law_fit", "law_mse", "seed_stab")}
         else:
             next_open = _extract_next_open(last_report)
             if client is not None:
