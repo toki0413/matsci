@@ -129,6 +129,7 @@ _SCAN_DEFAULTS = {"pair": 0, "material": 0, "flaw_idx": 2.0, "n_flaws": 100,
 _DIM_VALUES = {
     "pair": "pair", "material": "material", "flaw": "flaw", "n_flaws": "n_flaws",
     "bridge": "bridge_ratio", "barrier": "nu", "kic": "kic_mat",
+    "nu": "nu",  # 书生可能直接用白名单键名 nu 当 dim —— 归入 barrier 族
 }
 
 # ═══════════════════════════════ 真实物理实验 ═══════════════════════════════
@@ -433,18 +434,24 @@ def exp_fracture_scan(cfg: dict, name: str) -> dict:
         obj = {"flaw_tol_100nm": round(float(max(a) / (min(a) + 1e-9)), 3)}
         return {"objectives": obj, "summary": {"dim": "flaw", "rows": rows}, "success": True}
     if dim == "n_flaws":
-        slope, r2 = _weibull_size_exponent(2.0, ns=list(vals))
+        # values 是 n_flaws 值; 受限于蒙特卡洛内存, 单点抽样上限截到 3e3.
+        # summary 只放结果标量(斜率/R²), 不放配置参数列表 —— 避免 _first_scalar
+        # 把配置值当"主张"而触发声明门禁未落地误报.
+        ns = [float(v) for v in vals]
+        slope, r2 = _weibull_size_exponent(2.0, ns=ns, seeds=150)
         obj = {"weibull_fit": round(r2, 4)}
         return {"objectives": obj,
-                "summary": {"dim": "n_flaws", "slope": round(slope, 4),
-                            "theory=1/4": 0.25, "r2": round(r2, 4)}, "success": True}
+                "summary": {"dim": "n_flaws",
+                            "slope": round(slope, 4),
+                            "theory_1over2m": 0.25, "r2": round(r2, 4),
+                            "n_sampled": len(ns)}, "success": True}
     if dim == "bridge":
         rows = [{"sigma0/sy": r, "Kc/K0": round(_bridge_gain(r), 4)} for r in vals]
         peak = max(_bridge_gain(r) for r in vals)
         obj = {"kce_gain": round(float(peak - 1.0), 4)}
         return {"objectives": obj, "summary": {"dim": "bridge", "rows": rows},
                 "success": True}
-    if dim == "barrier":
+    if dim == "barrier" or dim == "nu":   # nu 是书生可能用的 barrier 别名
         rows = []
         for nu in vals:
             cR, c1, _ = _rayleigh_speed(nu)
@@ -600,7 +607,7 @@ def _propose_next_open(client, model: str, report_text: str) -> list[str]:
     )
     user = f"上一周期报告:\n{report_text[:6000]}\n\n审稿副体意见:\n{critique or '(无)'}"
     # 端到端闭合(断点 B): 先召回已沉淀的品味启发式, 注入下一轮发问 —— 让问题从品味长出.
-    recalled = _recall_taste("下一轮值得研究的前沿问题, 用已沉淀的提出机制/发问品味来生成本土问题")
+    recalled = _recall_taste("how to pose next frontier research questions using distilled taste patterns: assumption failure, scale break, paradox, analogy")
     if recalled:
         user += (f"\n\n【可复用参考 · 全局知识库召回的研究品味】\n{recalled}\n"
                  "可吸收其发问模式, 但下一轮问题必须落在断裂白名单可验证、且不重复已有结论。")
@@ -770,44 +777,121 @@ def _sync_llm_create(client, model: str):
 
 
 def _ensure_kb_embedding_available() -> None:
-    """KB embedding 可用性守卫: 无 sentence-transformers/torch 时走内置确定性向量兜底.
+    """KB embedding 可用性守卫: 无 sentence-transformers/torch 时让 chromadb ONNX 兜底.
 
-    端到端闭环不因缺重依赖而断: 维度统一回退 384(与 _resolve_embedding_dim 一致),
-    蒸馏→全局RAG→召回→注入 离线可信。生产装真语义模型后此守卫自动让位(_st 加载成功),
-    此处仅设置设计内置的降级开关, 不重造任何东西。
+    端到端闭环不因缺重依赖/断网而断:
+      ST(多语言, 最好) → chromadb ONNX(英文 all-MiniLM, 384 维, 零下载) → 确定性兜底.
+    仅设设计内置降级开关, 不重造; 装 ST 后自动让位。
     """
     try:
         from huginn.knowledge.store import _EmbeddingModel
         try:
-            import sentence_transformers  # noqa: F401 — 有真语义模型就用
+            _EmbeddingModel()  # 初始化加载 chromadb DefaultEmbeddingFunction(ONNX)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            import sentence_transformers  # noqa: F401 — 有真语义模型(多语言)就用
         except Exception:  # noqa: BLE001
             _EmbeddingModel._st_failed = True
+            _EmbeddingModel._onnx_degraded = False
     except Exception:  # noqa: BLE001
         pass
 
 
-def _recall_taste(q: str = "如何提出值得研究的前沿问题", top_k: int = 4) -> str:
-    """从全局知识库(RAG)召回已蒸馏的【研究品味/提出机制】启发式, 注入书生问题生成.
+_TASTE_KB = None  # 品味专属细 KB 的进程级缓存.
+_ONNX_EF = None   # 自包含语义编码器: chromadb ONNX(384 维, 零下载, 写入/查询同模型).
 
-    端到端原生于 Huginn: 品味经 auto_ingest_to_kb 落入 RAG → query(text) 混合检索
-    (向量+BM25)召回 → 作为系统段注入后续发问 prompt。任何一步失败/无知识 → 优雅降级空串,
-    绝不阻断主线。
+
+def _taste_st():
+    """品味语义路径的 ST 单例: 复用 store.py 全局, 本地快照加载, 不联网.
+
+    权重已下载到 HF 缓存后, local_files_only 直读快照, 避免再次触发 xet/镜像下载;
+    任何失败(缺权重/降级)返回 None, 由 _taste_embed 走 ONNX 兜底。
     """
-    _ensure_kb_embedding_available()
     try:
-        from huginn.knowledge.store import get_knowledge_base
-        kb = get_knowledge_base(".")
-        hits = kb.query(q, top_k=max(top_k * 2, 8), domain="未分类")  # 跳开挖领域语料, 只取蒸馏域
-    except Exception as ee:  # noqa: BLE001 — KB 未初始化/超时均优雅降级
+        from huginn.knowledge.store import _EmbeddingModel, EMBED_MODEL
+        if _EmbeddingModel._st is None and not _EmbeddingModel._st_failed:
+            try:
+                from sentence_transformers import SentenceTransformer
+                _EmbeddingModel._st = SentenceTransformer(EMBED_MODEL, local_files_only=True)
+            except Exception as ee:  # noqa: BLE001
+                print(f"  [taste] ST 本地加载失败({ee}); 品味编码降级 ONNX")
+                _EmbeddingModel._st_failed = True
+        return _EmbeddingModel._st
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _taste_embedder_fingerprint() -> str:
+    """当前品味编码器指纹: 语义空间(模型)切换时用于触发品味 KB 重建."""
+    return "st-384" if _taste_st() is not None else "onnx-384"
+
+
+def _taste_embed(texts: list[str]) -> list[list[float]]:
+    """品味语义编码: 优先 ST(多语言); 无 ST 用 chromadb ONNX(英文, 零下载).
+
+    返回 list[list[float]]。所有路径都真实编码(非哈希), 保证品味增/查同一语义空间。
+    """
+    global _ONNX_EF
+    st = _taste_st()
+    if st is not None:
+        import numpy as np
+        return st.encode(texts, normalize_embeddings=True).tolist()
+    if _ONNX_EF is None:
+        from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
+        _ONNX_EF = DefaultEmbeddingFunction()
+    return _ONNX_EF(texts)
+
+
+def _get_taste_kb():
+    """品味召回用的自包含语义 KB(ST/ONNX 编码, 不依赖全局 KB 的 embedder 选择).
+
+    与工作区共享 KB(预置 11881 块、embedder 全局选择)解耦: 单独一个 Chroma 集合,
+    写入/查询都用 _taste_embed(同一模型), 快、不混化学语料、可离线。
+    用 collection metadata 记录 embedder 指纹: 指纹不变 → 跨批次保留并继续积累;
+    仅当语义空间切换(ST↔ONNX)才清空重建, 避免混空间检索。
+    """
+    global _TASTE_KB
+    if _TASTE_KB is None:
+        import chromadb
+        root = _OUT / "taste_kb"
+        root.mkdir(parents=True, exist_ok=True)
+        client = chromadb.PersistentClient(path=str(root / "chroma"))
+        col = client.get_or_create_collection("taste_kb")
+        fp = _taste_embedder_fingerprint()
+        old_fp = (col.metadata or {}).get("embedder_fingerprint")
+        if old_fp != fp and col.count() > 0:
+            # 语义空间变化 → 清空重来, 保证与当前 embedder 同空间.
+            stale = col.get(include=[])
+            if stale.get("ids"):
+                col.delete(ids=stale["ids"])
+            print(f"  [taste] embedder 空间切换({old_fp}->{fp}), 清空品味 KB 重建")
+        col.modify(metadata={"embedder_fingerprint": fp})
+        _TASTE_KB = col
+    return _TASTE_KB
+
+
+def _recall_taste(q: str = "How to pose research frontier questions: idealized assumption failure, cross-domain analogy, new enabling tools",
+                  top_k: int = 4) -> str:
+    """从品味专属语义 KB 召回已蒸馏的【研究品味/提出机制】启发式, 注入书生问题生成.
+
+    自包含 RAG: 写入/查询同一 ONNX/ST 编码器; 查询词用英文(ONNX 为英文模型)。
+    任何一步失败/无知识 → 优雅降级空串, 绝不阻断主线。
+    """
+    try:
+        col = _get_taste_kb()
+        n = col.count()
+        if n == 0:
+            return ""
+        emb = _taste_embed([q])[0]
+        hits = col.query(query_embeddings=[emb], n_results=min(top_k, n))
+    except Exception as ee:  # noqa: BLE001 — 任何失败优雅降级
         print(f"  [taste-recall] 召回失败(降级空): {type(ee).__name__}")
         return ""
-    # 优先保住从 distill 进入的品味条目(source=distilled_knowledge), 其余作兜底.
-    preferred = [c for c in (hits or [])
-                 if ((c.get("metadata") or {}).get("source") == "distilled_knowledge")]
-    pool = preferred or (hits or [])
     lines = []
-    for c in pool[:top_k]:
-        t = (c.get("text") or "").strip()
+    docs = (hits or {}).get("documents") or [[]]
+    for d in docs[0] or []:
+        t = str(d).strip()
         if t and t not in lines:
             lines.append(f"- {t[:240]}")
     return "\n".join(lines) if lines else ""
@@ -836,7 +920,7 @@ def _distill_research_taste(client, model: str, goal: str) -> dict:
     )
     user = f"{evidence}\n\n目标(供对齐节律): {goal[:600]}"
     # 端到端闭合(断点 B): 先召回已沉淀的品味记忆, 注入本次反身 —— 新品味从旧品味长出.
-    recalled = _recall_taste("如何提出值得研究的前沿问题: 理想化假设失效/跨域类比/新使能工具")
+    recalled = _recall_taste("research taste: how frontier questions form via idealized-assumption failure, cross-domain analogy, enabling tools")
     if recalled:
         user += (f"\n\n【可复用参考 · 全局知识库召回的研究品味】\n{recalled}\n"
                  "(可吸收其模式, 但必须给出新的机制/新问题, 不要复读已有结论)")
@@ -870,19 +954,27 @@ def _persist_taste(taste: dict, client, model: str, out_dir: Path) -> Path:
     path.write_text("\n".join(md), encoding="utf-8")
     # 原生知识蒸馏: 把品味作为一个可 RAG 检索的语义来源沉淀(无 LLM 契约/超时均优雅降级).
     try:
-        _ensure_kb_embedding_available()
         from huginn.evolution.knowledge_distiller import KnowledgeDistiller
         kd = KnowledgeDistiller(output_dir=str(out_dir / "knowledge"))
         new = kd.distill_semantic_source(
             "\n".join(md), source_url="https://doi.org/10.1007/s10704-025-00907-6",
             source="review_taste", source_type="research_taste",
             domain_hint="fracture mechanics, research methodology", llm=_sync_llm_create(client, model))
-        # 端到端闭合(断点 A): 蒸馏条目经 auto_ingest_to_kb 提升进全局 RAG 知识库,
-        # 后续 _recall_taste 才能召回到 —— 让品味真正可被书生在发问时检索.
-        n_ingested = kd.auto_ingest_to_kb() or 0
-        print(f"  [taste] 蒸馏新条目 {len(new)} 条, 提升进全局 RAG {n_ingested} 条")
+        # 端到端闭合(断点 A): 蒸馏条目写入【品味专属语义 KB】(同一 ONNX/ST 编码器),
+        # 后续 _recall_taste 在同一语义空间召回 —— 让品味真正可被书生在发问时检索.
+        col = _get_taste_kb()
+        docs = [dk.content for dk in new if dk.content and dk.content.strip()]
+        if docs:
+            embs = _taste_embed(docs)
+            ids = [f"taste_{dk.knowledge_id}" for dk in new if dk.content and dk.content.strip()]
+            metas = [{"source": "distilled_knowledge", "source_type": dk.source_type,
+                      "confidence": dk.confidence, "created_at": dk.created_at}
+                     for dk in new if dk.content and dk.content.strip()]
+            col.upsert(ids=ids, documents=docs, embeddings=embs, metadatas=metas)
+        print(f"  [taste] 蒸馏新条目 {len(new)} 条, 写入品味语义 KB {len(docs)} 条"
+              f"(集合共 {col.count()} 条)")
     except Exception as ee:  # noqa: BLE001 — 蒸馏/提升失败不阻断主流程(品味 md 已是主产物)
-        print(f"  [taste] 知识蒸馏/提升失败(不影响分析产物): {ee}")
+        print(f"  [taste] 知识蒸馏/写入失败(不影响分析产物): {ee}")
     return path
 
 # ═══════════════════════════════ 计划与主循环 ═══════════════════════════════
@@ -960,7 +1052,8 @@ def _dim_objective(dim: str) -> str:
     """扫描维度 → 该族实验返回的真实目标键(与基分支公式一致, 保证门禁可落地)."""
     return {"pair": "osc_span", "material": "dbt_span", "flaw": "flaw_tol_100nm",
             "n_flaws": "weibull_fit", "bridge": "kce_gain",
-            "barrier": "barrier_sharpness", "kic": "kic_span"}[dim]
+            "barrier": "barrier_sharpness", "nu": "barrier_sharpness",
+            "kic": "kic_span"}.get(dim, "osc_span")  # 未知维兜底到 pair 族(不崩批)
 
 
 def main() -> int:
