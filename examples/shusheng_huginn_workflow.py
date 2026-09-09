@@ -37,6 +37,7 @@ import argparse
 import json
 import math
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -62,10 +63,66 @@ ACCURACY_OBJ = ["eps_discrimination", "n_stability", "budget_convergence",
                 "dim_effect", "univ_effect", "k1_locality"]
 _OBJECTIVES = {k: "maximize" for k in ACCURACY_OBJ}
 
+# ── 第二轮(X9/X10/X11): 核方向分解 —— 上一轮报告"下一步"之首 ────────────
+GOAL_CYCLE2 = (
+    "深挖 k=1 中间态的核方向钳制机制(上轮报告'下一步'第2/3/4条): "
+    "(1) 显式把残余零空间方向分解到常数核 P0=1 与线性核 P1=t, 确认约束位置 t_i 如何决定 "
+    "钳制哪个核方向 —— 理论预言: 约束 u(t_i)=ref 在解族 u=cos(t)+C1+C2·t 上等价于 C1=-C2·t_i, "
+    "残余方向 = (t-t_i), 即 lin_frac = 1/(1+t_i^2)(中心≈1 纯线性核; 边界≈0.52 常数+线性混合); "
+    "(2) 建立位置→方向占比的定量曲线并检验该定律; "
+    "(3) 跨系统(cos/sin2t/多项式)验证该方向定律普适。同时用分解数据复核上一轮 X8 解读: "
+    "'中心约束几乎测不到线性核方向'是真实机制还是归一化伪影。要求所有数值真实可复现。"
+)
+KERNEL_OBJ = ["k1_direction_purity", "locality_law_fit", "direction_universality"]
+_OBJECTIVES_CYCLE2 = {k: "maximize" for k in KERNEL_OBJ}
+
+# 长程驱动: 通用方向扫描能力白名单(书生在第 3+ 轮据此提议新实验配置).
+# 每个配置都映射到真实执行(约束钳制 → 零空间方向分解), 无任何编造.
+SCAN_OPS = {
+    "system": [0, 1, 2],                    # 0=cos, 1=sin2t, 2=多项式
+    "k": [1, 2],                            # 约束数
+    "positions": [0.0, 0.33, 0.66, 0.97, -0.33, -0.66, -0.97],
+    "basis": [8, 12, 16],
+    "seeds": [4, 8, 12],
+}
+_SCAN_DEFAULTS = {"system": 0, "k": 1, "positions": [0.0, 0.97],
+                  "basis": 12, "seeds": 8}
+
 # 收敛聚合头头数预算等通用治理参数走 run_research_program 默认, 本 demo 不再重复.
 
 # ── 真实证据实验 (run 返回 {objectives, summary, success}) ────────────────
 _RNG = np.random.default_rng(0)
+
+# 多系统表 (label, rhs, ref) —— X7/X11/X12+ 共用, 一处定义不漂移.
+_SYSTEMS = [
+    ("u''=-cos(t), ref=cos", lambda t: -np.cos(t), lambda t: np.cos(t)),
+    ("u''=-sin(2t), ref=sin(2t)/4", lambda t: -np.sin(2 * t),
+     lambda t: np.sin(2 * t) / 4.0),
+    ("u''=-(1-t^2), ref=t^4/12-t^2/2", lambda t: -(1 - t ** 2),
+     lambda t: t ** 4 / 12.0 - t ** 2 / 2.0),
+]
+
+# 勒让德算子缓存: (basis, N) -> (mesh, P, D2), 供各实验复用(同一真实算子).
+_OP_CACHE: dict = {}
+
+
+def _build_system(basis: int, N: int = 256):
+    from numpy.polynomial import legendre as Lg
+    import numpy.polynomial.polynomial as PP
+    key = (basis, N)
+    if key in _OP_CACHE:
+        return _OP_CACHE[key]
+    mesh = np.linspace(-1, 1, N)
+    P = Lg.legval(mesh, np.eye(basis)).T
+    D2 = np.zeros((N, basis))
+    for j in range(basis):
+        d2 = PP.polyder(Lg.leg2poly(np.eye(j + 1)[:, j]), 2)
+        acc = np.zeros_like(mesh)
+        for kk, cc in enumerate(d2):
+            acc += cc * mesh ** kk
+        D2[:, j] = acc
+    _OP_CACHE[(basis, N)] = (mesh, P, D2)
+    return mesh, P, D2
 
 
 def _poly_cstar(target: str, eps: float, N: int, pmax: int = 48) -> float:
@@ -148,17 +205,8 @@ def _solve_under(k: int, seed: int, basis: int,
     fixed_ti(仅 k=1): 把唯一约束位置钉在 t≈fixed_ti, 检验位置如何决定钳制哪个核方向.
     """
     from numpy.polynomial import legendre as Lg
-    import numpy.polynomial.polynomial as PP
-    N = 256
-    mesh = np.linspace(-1, 1, N)
-    P = Lg.legval(mesh, np.eye(basis)).T
-    D2 = np.zeros((N, basis))
-    for j in range(basis):
-        d2 = PP.polyder(Lg.leg2poly(np.eye(j + 1)[:, j]), 2)
-        acc = np.zeros_like(mesh)
-        for kk, cc in enumerate(d2):
-            acc += cc * mesh ** kk
-        D2[:, j] = acc
+    mesh, P, D2 = _build_system(basis)
+    N = mesh.shape[0]
     fvec = rhs(mesh)
     rng = np.random.default_rng(seed)
     A = D2.copy(); b = fvec.copy()
@@ -320,65 +368,334 @@ def exp_k1_locality(seeds: int = 8, basis: int = 12) -> dict:
     }
 
 
-def _make_experiments():
-    """八个真实证据分支 → Experiment 列表(深化对照组 + 确认组)."""
+def _solve_under_decomp(k: int, seed: int, basis: int,
+                        rhs=lambda t: -np.cos(t), ref=lambda t: np.cos(t),
+                        fixed_ti: float | None = None):
+    """同 _solve_under, 但额外返回零空间方向 v(勒让德系数空间).
+
+    v 是欠定系统 [D2; 3P(t_i)] 的零空间方向(确定性, 由约束位置决定):
+    对 u''=rhs 齐次核 = span{1,t}, 加 1 个点值约束后 v 落在 (P0, P1) 子空间,
+    且等价于 (t - t_i) 方向(理论: u=particular+C1+C2·t, 约束 ⇒ C1=-C2·t_i).
+    返回 (uvals, v) 或 (uvals, None)(核已被完全钳制时无零空间).
+    """
+    from numpy.polynomial import legendre as Lg
+    mesh, P, D2 = _build_system(basis)
+    N = mesh.shape[0]
+    fvec = rhs(mesh)
+    rng = np.random.default_rng(seed)
+    A = D2.copy(); b = fvec.copy()
+    if k > 0:
+        if fixed_ti is not None and k == 1:
+            idx = np.array([int(np.argmin(np.abs(mesh - fixed_ti)))])
+        else:
+            idx = rng.choice(N, size=k, replace=False)
+        A = np.vstack([D2, 3.0 * P[idx]])
+        b = np.concatenate([fvec, 3.0 * ref(mesh[idx])])
+    c_particular, *_ = np.linalg.lstsq(A, b, rcond=None)
+    _, s, vh = np.linalg.svd(A, full_matrices=True)
+    rank = int(np.sum(s > 1e-8))
+    null_basis = vh[rank:]
+    if null_basis.shape[0] > 0:
+        coeff = rng.normal(0.0, 0.5, size=null_basis.shape[0])
+        c_family = c_particular + coeff @ null_basis
+        v = null_basis[0]
+    else:
+        c_family = c_particular
+        v = None
+    xv = np.linspace(-1, 1, 321)
+    uvals = Lg.legval(xv, np.eye(basis)).T @ c_family
+    return uvals, v
+
+
+def _direction_metrics(ti: float, system: int = 0, k: int = 1,
+                       seeds: int = 8, basis: int = 12) -> dict:
+    """k=1 约束钉在精确位置 ti 的核方向分解(全部真实数值).
+
+    理论预言(可证伪): 残余方向 = (t - ti) ⇒ v=(c0,c1,0,...) 且
+      lin_frac = c1²/(c0²+c1²) ≈ 1/(1+ti²),  rest_norm ≈ 0.
+    返回: {ti, c0, c1, rest_norm, lin_frac, const_frac, sigmaH_full,
+           w_const, w_lin, pred_lin_frac, err}
+      w_const/w_lin: σH 按方向归因权重 —— w_const=|c0|/mean|v|, w_lin=mean|c1·t|/mean|v|.
+      中心 ti=0: c0≈0 ⇒ w_lin≈1 —— "σH 完全由线性核方向承载"(复核 X8 解读).
+    """
+    label, rhs, ref = _SYSTEMS[system]
+    evs = []
+    for s in range(seeds):
+        u, v = _solve_under_decomp(k, s, basis, rhs=rhs, ref=ref, fixed_ti=ti)
+        evs.append(u)
+    evs = np.stack(evs)
+    stds = evs.std(axis=0)
+    amean = np.abs(evs.mean(axis=0))
+    sigmaH_full = float(stds.mean() / (amean.mean() + 1e-9))
+    if k >= 2:
+        return {"ti": round(ti, 4), "system": system, "k": k,
+                "sigmaH_full": round(sigmaH_full, 6),
+                "null_dim": 0, "lin_frac": 0.0, "const_frac": 0.0,
+                "c0": 0.0, "c1": 0.0, "rest_norm": 0.0, "w_const": 0.0, "w_lin": 0.0,
+                "pred_lin_frac": 0.0, "err": round(sigmaH_full, 6)}
+    u, v = _solve_under_decomp(k, 0, basis, rhs=rhs, ref=ref, fixed_ti=ti)
+    c0, c1 = float(v[0]), float(v[1])
+    rest = float(np.linalg.norm(v[2:]))
+    norm2 = c0 * c0 + c1 * c1 + 1e-12
+    lin_frac = c1 * c1 / norm2
+    const_frac = c0 * c0 / norm2
+    t_lin = np.linspace(-1, 1, 321)
+    vabs = np.abs(c0 + c1 * t_lin)
+    mv = float(vabs.mean()) + 1e-12
+    w_const = float(abs(c0) / mv)
+    w_lin = float(np.abs(c1 * t_lin).mean() / mv)
+    pred = 1.0 / (1.0 + ti * ti)
+    return {"ti": round(ti, 4), "system": system, "k": k,
+            "c0": round(c0, 6), "c1": round(c1, 6), "rest_norm": float(rest),
+            "lin_frac": round(lin_frac, 4), "const_frac": round(const_frac, 4),
+            "sigmaH_full": round(sigmaH_full, 4),
+            "w_const": round(w_const, 4), "w_lin": round(w_lin, 4),
+            "pred_lin_frac": round(pred, 4), "err": round(abs(lin_frac - pred), 4)}
+
+
+def exp_k1_direction(seeds: int = 8, basis: int = 12) -> dict:
+    """X9 · 核方向分解: k=1 约束钉中心 vs 边界, 显式分解残余零空间方向.
+
+    直接回答报告'下一步'第2条与第3条的证据部分:
+      - 中心 ti≈0: v≈(0,1) ⇒ lin_frac≈1, w_lin≈1 —— 残余是**纯线性核**, 
+        修正 X8 '中心几乎测不到线性核'的归一化误导(那是 |v(x)|=|x| 幅值小, 非方向消失);
+      - 边界 ti≈0.97: v≈(-0.97,1) ⇒ lin_frac≈0.52 —— 常数+线性混合.
+    客观: 方向分解下的中心-边界「线性核占比」差(中心 1 vs 边界 0.52)最大化.
+    """
+    c = _direction_metrics(0.0, system=0, k=1, seeds=seeds, basis=basis)
+    b = _direction_metrics(0.97, system=0, k=1, seeds=seeds, basis=basis)
+    purity = float(c["lin_frac"])            # 中心应≈1(纯线性核)
+    return {
+        "objectives": {"k1_direction_purity": purity},
+        "summary": {"seeds": seeds, "basis": basis,
+                    "center": c, "boundary": b,
+                    "k1_direction_purity": round(purity, 4),
+                    "correction_note": ("X8 '中心测不到线性核'为归一化伪影: 中心 v=(0,1) 纯线性核, "
+                                        "σH 低是因 |t| 幅值小, 非方向消失; 边界 v 为常数+线性混合.")},
+        "success": True,
+    }
+
+
+def exp_position_curve(seeds: int = 8, basis: int = 12,
+                       positions=(-0.97, -0.66, -0.33, 0.0, 0.33, 0.66, 0.97)) -> dict:
+    """X10 · 位置→方向曲线: 扫约束位置, 检验方向定律 lin_frac(t_i)=1/(1+t_i²).
+
+    同一系统(cos)下扫 ti, 每条 ODE 真实求解+零空间分解 —— 定量曲线.
+    客观: 定律拟合分 1/(1+mse) 最大化(与预言偏差越小越好).
+    """
+    rows = []
+    for ti in positions:
+        d = _direction_metrics(ti, system=0, k=1, seeds=seeds, basis=basis)
+        rows.append({k: d[k] for k in ("ti", "lin_frac", "pred_lin_frac", "err",
+                                       "w_const", "w_lin", "sigmaH_full")})
+    mse = float(np.mean([r["err"] ** 2 for r in rows]))
+    fit = float(1.0 / (1.0 + mse))
+    return {
+        "objectives": {"locality_law_fit": fit},
+        "summary": {"seeds": seeds, "basis": basis, "positions": list(positions),
+                    "rows": rows, "mse": round(mse, 6),
+                    "law": "lin_frac(t_i) = 1/(1+t_i^2)",
+                    "locality_law_fit": round(fit, 4)},
+        "success": True,
+    }
+
+
+def exp_direction_universal(seeds: int = 8, basis: int = 12) -> dict:
+    """X11 · 方向定律普适: 三系统下中心/边界的 lin_frac 是否同服从 1/(1+t_i²).
+
+    齐次核 span{1,t} 对所有 u''=rhs 恒成立 ⇒ 方向定律应跨系统不变(强可证伪).
+    客观: 普适吻合度 = 1/(1+max|measured-pred|) 最大化.
+    """
+    per = []
+    for si in range(3):
+        c = _direction_metrics(0.0, system=si, k=1, seeds=seeds, basis=basis)
+        b = _direction_metrics(0.97, system=si, k=1, seeds=seeds, basis=basis)
+        per.append({"system": _SYSTEMS[si][0], "center_lin_frac": c["lin_frac"],
+                    "boundary_lin_frac": b["lin_frac"],
+                    "pred_boundary": b["pred_lin_frac"],
+                    "ci_center": c["err"], "err_boundary": b["err"]})
+    max_err = max(r["err_boundary"] + r["ci_center"] for r in per)
+    univ = float(1.0 / (1.0 + max_err))
+    return {
+        "objectives": {"direction_universality": univ},
+        "summary": {"seeds": seeds, "basis": basis, "systems": per,
+                    "max_err": round(max_err, 6),
+                    "direction_universality": round(univ, 4)},
+        "success": True,
+    }
+
+
+def _sanitize_scan(cfg: dict) -> dict:
+    """把书生提议的扫描配置校验/落入白名单(越界回落到默认, 绝不执行编造的实验)."""
+    out = dict(_SCAN_DEFAULTS)
+    try:
+        if cfg.get("system") in SCAN_OPS["system"]:
+            out["system"] = int(cfg["system"])
+        if cfg.get("k") in SCAN_OPS["k"]:
+            out["k"] = int(cfg["k"])
+        ps = [float(p) for p in (cfg.get("positions") or [])]
+        ps = [p for p in ps if p in SCAN_OPS["positions"]]
+        if ps:
+            out["positions"] = list(dict.fromkeys(ps))
+        if cfg.get("basis") in SCAN_OPS["basis"]:
+            out["basis"] = int(cfg["basis"])
+        if cfg.get("seeds") in SCAN_OPS["seeds"]:
+            out["seeds"] = int(cfg["seeds"])
+    except Exception:  # noqa: BLE001 — 无法解析的配置一律用默认(诚实回退)
+        pass
+    if out["positions"][0] != min(out["positions"]):
+        out["positions"].sort()
+    return out
+
+
+def exp_dir_scan(cfg: dict, name: str) -> dict:
+    """X12+ · 通用方向扫描: 书生在第 3+ 轮提议的 (system, k, positions, basis, seeds).
+
+    每个位置真实求解+分解; 返回对定律的拟合分与残余方向均值 —— 双目标(独立维度):
+      scan_fit   : 1/(1+mse vs 1/(1+t_i²)) —— 该配置下方向定律是否成立;
+      scan_extent: 平均 lin_frac —— 残余自由度倾向哪个核方向(中心高=偏线性核).
+    """
+    cfg = _sanitize_scan(cfg)
+    ti_map = {"0.0": 0.0, "0.33": 0.33, "0.66": 0.66, "0.97": 0.97,
+              "-0.33": -0.33, "-0.66": -0.66, "-0.97": -0.97}
+    rows = []
+    for ti in [ti_map[str(p)] for p in cfg["positions"]]:
+        d = _direction_metrics(ti, system=cfg["system"], k=cfg["k"],
+                               seeds=cfg["seeds"], basis=cfg["basis"])
+        rows.append(d)
+    errs = [r["err"] for r in rows]
+    mse = float(np.mean([e * e for e in errs]))
+    fit = float(1.0 / (1.0 + mse))
+    lins = [r["lin_frac"] for r in rows if r["k"] == 1]
+    extent = float(np.mean(lins)) if lins else 0.0
+    return {
+        "objectives": {"scan_fit": fit, "scan_extent": extent},
+        "summary": {"name": name, **cfg, "rows": rows,
+                    "scan_fit": round(fit, 4), "scan_extent": round(extent, 4)},
+        "success": True,
+    }
+
+
+def _make_experiments(cycle: int = 1):
+    """按轮次返回真实证据分支 → Experiment 列表.
+
+    cycle=1: X1..X8(判据/预算/约束曲线/普适四方向);
+    cycle=2: X9(核方向分解) + X10(位置-方向定律) + X11(方向定律跨系统普适);
+    cycle>=3: 由书生提议配置(X12+ 通用方向扫描, 见 _make_scan_experiments).
+    """
     from huginn.research import Experiment
 
-    specs = [
-        (lambda: exp_eps_criterion(), "X1_eps_criterion",
-         "eps判据(基准): 固定N扫eps, 刚性cos的C*在阈值后平台化而胖|x|持续增长 → "
-         "饱和由精度截止eps的判据区分度拉大两类系统."),
-        (lambda: exp_n_scale(), "X4_n_platform",
-         "N平台(对照组): 固定eps扫N=512..8192, 刚/胖的C*对N平台化 → 饱和判据不依赖N."),
-        (lambda: exp_constraint_curve(), "X5_constraint_curve",
-         "约束全曲线: k=0..3 的sigmaH序列单调下降 → 约束数逐条钳制解族核自由度, "
-         "建立「约束数→解族维数」定量曲线."),
-        (lambda: exp_budget_sweep(), "X6_budget_sweep",
-         "预算扫描: 训练预算递增下vho收敛曲线 → 量化优化器财政的假饱和窗口."),
-        (lambda: exp_multi_system(), "X7_multi_system",
-         "多系统普适(修 ref): 修正第三个系统 ref=t^4/12-t^2/2 后, 若 σH_k2 全系统归零 "
-         "则上一轮'多项式系统减弱'是实验定义伪影, 约束钳制跨系统普适."),
-        (lambda: exp_k1_locality(), "X8_k1_locality",
-         "k=1 中间态位置依赖: 约束钉在中心(测不到线性核)vs 边界(钳住线性核)的 σH_k1 差 → "
-         "1 个点值约束钳制哪个核方向由位置决定."),
-        (lambda: _exp_optimizer_finance(), "X2_optimizer_finance",
-         "优化器财政(确认): 真实PINN在固定训练预算下的留出误差vho若未收敛, "
-         "容量饱和信号会被预算不足的'假饱和'污染(判据须加财政守卫)."),
-        (lambda: exp_constraint_dimension(), "X3_constraint_dimension",
-         "约束维数(确认): 欠定u''=-cos + k个点值约束 → k=0 vs k=2 的sigmaH钳制效应."),
-    ]
-    return [Experiment(name=n, hypothesis=h, run=fn) for fn, n, h in specs]
+    if cycle == 1:
+        specs = [
+            (lambda: exp_eps_criterion(), "X1_eps_criterion",
+             "eps判据(基准): 固定N扫eps, 刚性cos的C*在阈值后平台化而胖|x|持续增长 → "
+             "饱和由精度截止eps的判据区分度拉大两类系统."),
+            (lambda: exp_n_scale(), "X4_n_platform",
+             "N平台(对照组): 固定eps扫N=512..8192, 刚/胖的C*对N平台化 → 饱和判据不依赖N."),
+            (lambda: exp_constraint_curve(), "X5_constraint_curve",
+             "约束全曲线: k=0..3 的sigmaH序列单调下降 → 约束数逐条钳制解族核自由度, "
+             "建立「约束数→解族维数」定量曲线."),
+            (lambda: exp_budget_sweep(), "X6_budget_sweep",
+             "预算扫描: 训练预算递增下vho收敛曲线 → 量化优化器财政的假饱和窗口."),
+            (lambda: exp_multi_system(), "X7_multi_system",
+             "多系统普适(修 ref): 修正第三个系统 ref=t^4/12-t^2/2 后, 若 σH_k2 全系统归零 "
+             "则上一轮'多项式系统减弱'是实验定义伪影, 约束钳制跨系统普适."),
+            (lambda: exp_k1_locality(), "X8_k1_locality",
+             "k=1 中间态位置依赖: 约束钉在中心(测不到线性核)vs 边界(钳住线性核)的 σH_k1 差 → "
+             "1 个点值约束钳制哪个核方向由位置决定."),
+            (lambda: _exp_optimizer_finance(), "X2_optimizer_finance",
+             "优化器财政(确认): 真实PINN在固定训练预算下的留出误差vho若未收敛, "
+             "容量饱和信号会被预算不足的'假饱和'污染(判据须加财政守卫)."),
+            (lambda: exp_constraint_dimension(), "X3_constraint_dimension",
+             "约束维数(确认): 欠定u''=-cos + k个点值约束 → k=0 vs k=2 的sigmaH钳制效应."),
+        ]
+        return [Experiment(name=n, hypothesis=h, run=fn) for fn, n, h in specs]
+
+    if cycle == 2:
+        specs = [
+            (lambda: exp_k1_direction(), "X9_k1_direction",
+             "核方向分解: k=1 约束钉中心(ti≈0)=>lin_frac≈1 残余纯线性核, 边界(ti≈0.97)"
+             "=>常数+线性混合 —— 用零空间方向分解复核 X8 '中心测不到线性核'是否归一化伪影."),
+            (lambda: exp_position_curve(), "X10_position_curve",
+             "位置-方向定律: 扫 ti∈±{0.33,0.66,0.97,0.0}, lin_frac 应服从 1/(1+t_i²) "
+             "→ 建立约束位置→核方向占比的定量曲线."),
+            (lambda: exp_direction_universal(), "X11_direction_universal",
+             "方向定律普适: 三系统(cos/sin2t/多项式)下中心/边界 lin_frac 同服 1/(1+t_i²)"
+             "→ 方向钳制机制跨系统普适(齐次核 span{1,t} 对任意 u''=rhs 成立)."),
+        ]
+        return [Experiment(name=n, hypothesis=h, run=fn) for fn, n, h in specs]
+
+    raise ValueError(f"cycle={cycle} 无内置实验; cycle>=3 应走 _make_scan_experiments")
 
 
-def _build_plan(goal: str, run_by_name: dict):
-    """需求拆解 -> 带依赖 DAG -> 分层.
+def _make_scan_experiments(configs: list[dict]) -> list:
+    """第 3+ 轮: 书生提议的扫描配置 → 真实 Experiment 分支(白名单校验).
 
-    层0: X1 (判据基准, 无依赖)
-    层1: X4/N平台 + X5/约束曲线 + X6/预算扫描 (对照, 依赖判据校准)
-    层2: X7/多系统 (依赖约束曲线) + X8/k1位置依赖 (依赖约束曲线) + X2/X3 (确认组)
+    每个配置一个独立分支, 双目标(scan_fit 定律拟合 / scan_extent 方向倾向),
+    互相独立不支配 → 全部存活, 保住多配置证据面.
+    """
+    from huginn.research import Experiment
+    exps = []
+    for i, cfg in enumerate(configs):
+        c = _sanitize_scan(cfg)
+        name = f"S{i + 1}_scan"
+        exps.append(Experiment(
+            name=name,
+            hypothesis=(f"方向扫描 config #{i + 1}: system={c['system']} k={c['k']} "
+                        f"positions={c['positions']} basis={c['basis']} seeds={c['seeds']} "
+                        f"→ 检验方向定律拟合与残余方向倾向(书生本轮提议)."),
+            run=lambda cc=c, nn=name: exp_dir_scan(cc, nn)))
+    return exps
+
+
+def _build_plan(goal: str, run_by_name: dict, cycle: int = 1):
+    """需求拆解 -> 带依赖 DAG -> 分层(按轮次).
+
+    cycle=1 层0: X1 (判据基准);  层1: X4/N平台 + X5/约束曲线 + X6/预算扫描;
+           层2: X7/多系统 + X8/k1位置依赖 + X2/X3 (确认组).
+    cycle=2 层0: X10/位置-方向定律 (基准曲线);
+           层1: X9/核方向分解 + X11/方向律普适 (依赖曲线, 并行).
+    cycle>=3: 扫描分支无层间依赖 → 单层全并行(书生提议的配置彼此独立).
     """
     from huginn.research.planning import build_research_plan, SubResearch
+    if cycle == 1:
+        return build_research_plan(goal, [
+            SubResearch("X1_eps_criterion", "基准判据: eps 区分刚性/胖",
+                        run=run_by_name["X1_eps_criterion"], depends_on=[]),
+            SubResearch("X4_n_platform", "N平台对照: C* 对 N 不敏感",
+                        run=run_by_name["X4_n_platform"], depends_on=["X1_eps_criterion"]),
+            SubResearch("X5_constraint_curve", "约束全曲线 k=0..3",
+                        run=run_by_name["X5_constraint_curve"], depends_on=["X1_eps_criterion"]),
+            SubResearch("X6_budget_sweep", "预算扫描: 假饱和窗口",
+                        run=run_by_name["X6_budget_sweep"], depends_on=["X1_eps_criterion"]),
+            SubResearch("X7_multi_system", "多系统普适(修 ref)",
+                        run=run_by_name["X7_multi_system"],
+                        depends_on=["X5_constraint_curve"]),
+            SubResearch("X8_k1_locality", "k=1 中间态位置依赖",
+                        run=run_by_name["X8_k1_locality"],
+                        depends_on=["X5_constraint_curve"]),
+            SubResearch("X2_optimizer_finance", "优化器财政确认",
+                        run=run_by_name["X2_optimizer_finance"],
+                        depends_on=["X1_eps_criterion"]),
+            SubResearch("X3_constraint_dimension", "约束维数确认",
+                        run=run_by_name["X3_constraint_dimension"],
+                        depends_on=["X5_constraint_curve"]),
+        ], parallel_cap=3)
+    if cycle == 2:
+        return build_research_plan(goal, [
+            SubResearch("X10_position_curve", "位置-方向定律基准曲线",
+                        run=run_by_name["X10_position_curve"], depends_on=[]),
+            SubResearch("X9_k1_direction", "核方向分解(中心vs边界)",
+                        run=run_by_name["X9_k1_direction"],
+                        depends_on=["X10_position_curve"]),
+            SubResearch("X11_direction_universal", "方向定律跨系统普适",
+                        run=run_by_name["X11_direction_universal"],
+                        depends_on=["X10_position_curve"]),
+        ], parallel_cap=3)
+    names = list(run_by_name.keys())
     return build_research_plan(goal, [
-        SubResearch("X1_eps_criterion", "基准判据: eps 区分刚性/胖",
-                    run=run_by_name["X1_eps_criterion"], depends_on=[]),
-        SubResearch("X4_n_platform", "N平台对照: C* 对 N 不敏感",
-                    run=run_by_name["X4_n_platform"], depends_on=["X1_eps_criterion"]),
-        SubResearch("X5_constraint_curve", "约束全曲线 k=0..3",
-                    run=run_by_name["X5_constraint_curve"], depends_on=["X1_eps_criterion"]),
-        SubResearch("X6_budget_sweep", "预算扫描: 假饱和窗口",
-                    run=run_by_name["X6_budget_sweep"], depends_on=["X1_eps_criterion"]),
-        SubResearch("X7_multi_system", "多系统普适(修 ref)",
-                    run=run_by_name["X7_multi_system"],
-                    depends_on=["X5_constraint_curve"]),
-        SubResearch("X8_k1_locality", "k=1 中间态位置依赖",
-                    run=run_by_name["X8_k1_locality"],
-                    depends_on=["X5_constraint_curve"]),
-        SubResearch("X2_optimizer_finance", "优化器财政确认",
-                    run=run_by_name["X2_optimizer_finance"],
-                    depends_on=["X1_eps_criterion"]),
-        SubResearch("X3_constraint_dimension", "约束维数确认",
-                    run=run_by_name["X3_constraint_dimension"],
-                    depends_on=["X5_constraint_curve"]),
+        SubResearch(n, f"书生提议扫描分支 {n}", run=run_by_name[n], depends_on=[])
+        for n in names
     ], parallel_cap=3)
 
 
@@ -433,6 +750,29 @@ def _diagnostic_tools():
                            "locality_norm": round(cr - br, 4),
                            "locality_abs": round(cs - bs, 4)}, ensure_ascii=False)
 
+    def h_probe_kernel_direction(a):
+        """k=1 约束钉 ti 的零空间方向分解: c0/c1/lin_frac/sigmaH(真实)."""
+        ti = float(a.get("ti", 0.0))
+        return json.dumps(_direction_metrics(ti, system=int(a.get("system", 0)),
+                                             k=int(a.get("k", 1)),
+                                             seeds=int(a.get("seeds", 8)),
+                                             basis=int(a.get("basis", 12))),
+                          ensure_ascii=False)
+
+    def h_probe_direction_curve(a):
+        """扫约束位置, 返回 lin_frac(t_i) 与预言 1/(1+t_i²) 的曲线对照(真实)."""
+        positions = a.get("positions") or [0.0, 0.33, 0.66, 0.97]
+        rows = []
+        for ti in positions:
+            d = _direction_metrics(float(ti), system=int(a.get("system", 0)),
+                                   k=int(a.get("k", 1)),
+                                   seeds=int(a.get("seeds", 8)),
+                                   basis=int(a.get("basis", 12)))
+            rows.append({"ti": d["ti"], "lin_frac": d["lin_frac"],
+                         "pred_lin_frac": d["pred_lin_frac"], "err": d["err"],
+                         "sigmaH_full": d["sigmaH_full"]})
+        return json.dumps({"rows": rows}, ensure_ascii=False)
+
     return [
         {"tool": {"function": {"name": "probe_Cstar",
             "description": "固定N扫eps, 返回刚性/胖系统达到精度eps所需最小容量C*曲线(真实)",
@@ -453,6 +793,20 @@ def _diagnostic_tools():
                 "seeds": {"type": "integer"}, "center": {"type": "number"},
                 "boundary": {"type": "number"}},
                 "required": [], "additionalProperties": False}}}, "handle": h_probe_k1_locality},
+        {"tool": {"function": {"name": "probe_kernel_direction",
+            "description": "k=1约束钉在位置ti的零空间方向分解(c0/c1/lin_frac/const_frac/sigmaH): 残余方向落在哪个核",
+            "parameters": {"type": "object", "properties": {
+                "ti": {"type": "number"}, "system": {"type": "integer"},
+                "k": {"type": "integer"}, "seeds": {"type": "integer"},
+                "basis": {"type": "integer"}},
+                "required": [], "additionalProperties": False}}}, "handle": h_probe_kernel_direction},
+        {"tool": {"function": {"name": "probe_direction_curve",
+            "description": "扫约束位置, 返回lin_frac(t_i)与预言1/(1+t_i^2)曲线对照(核方向定律检验)",
+            "parameters": {"type": "object", "properties": {
+                "positions": {"type": "array", "items": {"type": "number"}},
+                "system": {"type": "integer"}, "k": {"type": "integer"},
+                "seeds": {"type": "integer"}, "basis": {"type": "integer"}},
+                "required": [], "additionalProperties": False}}}, "handle": h_probe_direction_curve},
         {"tool": {"function": {"name": "probe_optimizer",
             "description": "真实PINN在给定宽度w与训练预算steps下的训练残差/留出误差vho(优化器财政审计)",
             "parameters": {"type": "object", "properties": {
@@ -465,6 +819,123 @@ def _diagnostic_tools():
     ]
 
 
+def _extract_next_open(report_text: str) -> str:
+    """从上一轮报告里提取「下一步/局限」开放问题(供下一轮 goal 拼接).
+
+    兼容编号标题(如 "## 5. 下一步")与无编号标题; 提取到首个后续标题前为止.
+    """
+    pat = re.compile(r"#+\s*(?:[0-9]+[.、)]?\s*)*(下一步|局限|后续工作|未来工作)"
+                     r"[^\n]*\n(.*?)(?=\n[#]{1,3}\s|\Z)", flags=re.DOTALL)
+    m = pat.search(report_text or "")
+    if not m:
+        # 兜底: 最后 900 字符(结论段) —— 至少保留"本轮收尾视角"进下轮 context
+        return (report_text or "").strip()[-900:]
+    return m.group(2).strip()[:2000]
+
+
+def _ask_json(client, model: str, system: str, user: str, max_tokens: int = 900) -> dict:
+    """让书生输出 JSON(解析失败/空返回 {}, 绝不阻塞主线)."""
+    try:
+        r = client.chat.completions.create(
+            model=model, max_tokens=max_tokens, temperature=0.2,
+            messages=[{"role": "system", "content": system},
+                      {"role": "user", "content": user}])
+        text = r.choices[0].message.content or ""
+    except Exception as ee:  # noqa: BLE001 — 提议失败不阻断, 调用方走默认
+        print(f"  [提议] LLM 失败: {ee}")
+        return {}
+    m = re.search(r"\{.*\}", text, flags=re.DOTALL)
+    if not m:
+        return {}
+    try:
+        return json.loads(m.group(0))
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _propose_next_open(client, model: str, report_text: str) -> list[str]:
+    """书生[观察]: 读上一轮报告, 提出下一轮最重要的开放问题(3 条以内)."""
+    d = _ask_json(
+        client, model,
+        "你是长程科研规划者。基于前一周期报告, 提出下一周期最值得攻克的开放问题。"
+        "要求: 问题必须能被 {零空间方向分解:{system∈[0,1,2], k∈[1,2], positions∈"
+        "[-0.97,-0.66,-0.33,0,0.33,0.66,0.97], basis∈[8,12,16], seeds∈[4,8,12]}} "
+        "这类真实数值实验检验; 每条一句, 指向具体可证伪预言。只输出 JSON, 格式: "
+        '{"open_questions": ["q1", "q2"]}, 不含其他文字。',
+        f"上一周期报告:\n{report_text[:6000]}")
+    qs = [str(q).strip() for q in (d.get("open_questions") or []) if str(q).strip()]
+    return qs[:3]
+
+
+def _propose_scan_configs(client, model: str, next_open: str,
+                          done_cfgs: list[dict] | None = None) -> list[dict]:
+    """书生[行动规划]: 基于下一轮开放问题, 在白名单内提议 ≤3 个扫描配置.
+
+    已执行过的配置指纹(done_cfgs)进 prompt —— 强制避开重复, 把预算投向
+    开放问题指出的未检维度(如 k=2 双约束、ti=±1.0、不同 system/basis 组合).
+    """
+    done = " ".join(json.dumps(c, sort_keys=True, ensure_ascii=False)
+                    for c in (done_cfgs or [])) or "无"
+    d = _ask_json(
+        client, model,
+        "你是实验设计者。基于给定的开放问题, 从白名单 {system∈{0,1,2}(0=cos u''=-cos,"
+        "1=sin2t, 2=多项式), k∈{1,2}, positions∈[-0.97,-0.66,-0.33,0,0.33,0.66,0.97],"
+        " basis∈{8,12,16}, seeds∈{4,8,12}} 里设计最多3个互不重复的真实数值实验. "
+        "必须避开已经执行过的配置(它们不再提供新信息), 优先选择能直接检验开放问题的"
+        "未做配置(如开放问题提到'约束数量', 就设计 k=2 且 positions 含多个位置的实验; "
+        "提到'边界效应', 就设计 positions 含 ±0.97 或非对称组合; 提到'系统普适', 就覆盖 "
+        "三个 system). 已执行配置:\n" + done + "\n只输出 JSON: {\"configs\": "
+        '[{"system":0,"k":1,"positions":[0.0,0.97],"basis":12,"seeds":8}], '
+        '不含其他文字。}',
+        f"下一轮开放问题:\n{next_open[:2500]}")
+    cfgs = d.get("configs") or []
+    ok = []
+    for c in cfgs[:3]:
+        if isinstance(c, dict):
+            ok.append(c)
+    return ok
+
+
+def _pad_scan_configs(cfgs: list[dict], open_text: str) -> list[dict]:
+    """兜底/补齐: 保证 ≥3 个配置, 并优先覆盖开放问题点名的未检维度.
+
+    覆盖策略(全部真实, 不编造): 若开放问题提到约束数量 → 补 k=2 配置;
+    提到边界/ti=1.0 → 补含 ±0.97 的位置; 提到系统/普适 → 补 system 0/1/2 横扫.
+    """
+    out = list(cfgs)
+    text = open_text or ""
+    wants_k2 = ("约束数量" in text or "k=2" in text or "k=0" in text
+                or "约束阶" in text or "对照" in text)
+    wants_boundary = ("边界" in text or "ti=1.0" in text or "位置" in text
+                      or "曲线" in text)
+    wants_sys = ("系统" in text or "普适" in text)
+    cand = []
+    if wants_k2:
+        cand.append({"system": 0, "k": 2, "positions": [0.0, 0.33, 0.66, 0.97],
+                     "basis": 12, "seeds": 8})
+        cand.append({"system": 1, "k": 2, "positions": [0.0, 0.97],
+                     "basis": 12, "seeds": 8})
+    if wants_boundary:
+        cand.append({"system": 0, "k": 1,
+                     "positions": [-0.97, -0.66, -0.33, 0.0, 0.33, 0.66, 0.97],
+                     "basis": 12, "seeds": 8})
+    if wants_sys:
+        for si in range(3):
+            cand.append({"system": si, "k": 1, "positions": [0.0, 0.97],
+                         "basis": 12, "seeds": 8})
+    cand.append({"system": 2, "k": 1, "positions": [0.0, 0.33, 0.66, 0.97],
+                 "basis": 12, "seeds": 8})
+    seen = set()
+    for c in list(out) + cand:
+        key = json.dumps(_sanitize_scan(c), sort_keys=True)
+        if key not in seen:
+            seen.add(key)
+            out.append(c)
+        if len(out) >= 3:
+            break
+    return out[:3]
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--dry", action="store_true", help="确定性运行(不调模型), 验证整条管线")
@@ -474,6 +945,10 @@ def main() -> int:
     ap.add_argument("--min-iters", type=int, default=3)
     ap.add_argument("--strictness", type=int, default=0, choices=[0, 1, 2],
                     help="判断层·分级护栏 0/1/2(默认0=纯真伪硬门禁, 信任模型)")
+    ap.add_argument("--cycles", type=int, default=2,
+                    help="长程轮数: 每轮=报告→书生提开放问题→新实验→新报告, 不停顿")
+    ap.add_argument("--start-cycle", type=int, default=2,
+                    help="起始轮次(默认2=复用已有 cycle1 报告继续; 1=重跑探测轮)")
     args = ap.parse_args()
 
     from huginn.research import run_research_program, grounding_verifier
@@ -489,48 +964,103 @@ def main() -> int:
                         os.environ.get("INTERNLM_BASE_URL",
                                        "https://chat.intern-ai.org.cn/api/v1"))
 
-    exps = _make_experiments()
-    run_by_name = {e.name: e.run for e in exps}
-    plan = _build_plan(GOAL, run_by_name)
+    _REPORT_BY_CYCLE = {1: "research_report.md", 2: "cycle2_report.md"}
+    def _report_for(cycle: int) -> Path:
+        return _OUT / _REPORT_BY_CYCLE.get(cycle, f"cycle{cycle}_report.md")
 
-    print("== 书生 + Huginn 完整深研管线 ==")
-    print(f"goals: {GOAL}")
-    print(f"layers: {plan.layers}  topo: {plan.topo_order}  antichain_width={plan.antichain_width}")
-    print(f"objectives: {_OBJECTIVES}\n")
+    print("== 书生 + Huginn 长程深研管线 ==")
 
-    out = run_research_program(
-        goal=GOAL,
-        experiments=exps,
-        objectives_config=_OBJECTIVES,
-        client=client, model=args.model, base_url=args.base_url,
-        verify=grounding_verifier(),
-        out_md=_OUT / "research_report.md",
-        planner=lambda _g: plan,          # 需求拆解 -> DAG 分层
-        layer_epochs=True,                # P-A: 分层流式结算
-        replan_gate=True,                 # P-B: 层间重规划门
-        early_stop_gate=True,             # P-C: 证据驱动提前终止门
-        diagnostic_tools=_diagnostic_tools(),
-        max_iterations=args.max_iters,
-        min_iterations=args.min_iters,
-        max_parallel=2,
-        strictness=args.strictness,       # 判断层·分级护栏(默认0=零提示, 不强锁模型)
-    )
+    last_report = ""
+    if args.start_cycle >= 2:
+        prev = _report_for(1)
+        if prev.exists():
+            last_report = prev.read_text(encoding="utf-8")
 
-    print("\n[program] explored=%d pruned=%d pareto_front=%d convergence=%s mutations=%d"
-      % (out.explored, out.pruned, len(out.pareto_front), out.converred, out.mutations))
-    print(f"[program] executed_cache={sorted(out.cache.keys())}")
-    for b in out.pareto_front:
-        print(f"  surv -> {b['name']}")
-    print(f"[gate] {out.verdict} unsubstantiated={out.ungrounded} source={out.report_source}")
-    print(f"[护栏] strictness={args.strictness} 判断层软提示 ×{len(out.judgment_hints or [])}")
-    if out.consolidated:
-        _c = out.consolidated
-        print(f"[P-A layers_covered] {_c.get('epochs')}  stream_view_sections={len(_c.get('stream_view') or [])}")
-        print(f"[P-B replan] checked={(_c.get('replan') or {}).get('checked')} "
-              f"skipped={len((_c.get('replan') or {}).get('skipped', []) or [])}")
-        _es = _c.get('early_stop') or {}
-        print(f"[P-C early_stop] verdict={_es.get('verdict')} stopped_after_layer={_es.get('stopped_after_layer')}")
-    print("报告:", _OUT / "research_report.md")
+    done_cfgs: list[dict] = []     # 已执行过的扫描配置指纹(防长程重复)
+
+    for cycle in range(max(1, args.start_cycle), args.start_cycle + args.cycles):
+        print(f"\n===== 第 {cycle} 轮(长程自主) =====")
+        # ── 书生[推理·规划]: 本轮 goal 与实验集 ─────────────────────────
+        if cycle == 1:
+            goal = GOAL
+            exps = _make_experiments(1)
+            objectives = dict(_OBJECTIVES)
+        elif cycle == 2:
+            goal = GOAL_CYCLE2
+            exps = _make_experiments(2)
+            objectives = dict(_OBJECTIVES_CYCLE2)
+        else:
+            next_open = _extract_next_open(last_report)
+            if client is not None:
+                qs = _propose_next_open(client, args.model, last_report)
+                next_open = next_open or " ".join(qs)
+                if qs:
+                    print(f"  [书生·观察] 下一轮开放问题: {qs}")
+            if client is not None:
+                cand = _propose_scan_configs(client, args.model, next_open, done_cfgs)
+            else:
+                cand = []
+            cfgs = _pad_scan_configs(cand, next_open)  # 兜底+补齐未检维度(全为真实实验)
+            fresh = [c for c in cfgs
+                     if json.dumps(_sanitize_scan(c), sort_keys=True)
+                     not in {json.dumps(_sanitize_scan(d), sort_keys=True)
+                             for d in done_cfgs}]
+            need = max(0, 3 - len(fresh))
+            cfgs = fresh + [c for c in cfgs if c not in fresh][:need]
+            for c in cfgs:
+                done_cfgs.append(_sanitize_scan(c))
+            print(f"  [书生·行动] 本轮扫描配置: {cfgs}")
+            goal = (f"检验书生本轮提出的开放问题(数值证据由方向扫描分支提供): {next_open}")
+            exps = _make_scan_experiments(cfgs)
+            objectives = {k: "maximize" for k in ("scan_fit", "scan_extent")}
+
+        run_by_name = {e.name: e.run for e in exps}
+        plan = _build_plan(goal, run_by_name, cycle)
+        report_md = _report_for(cycle)
+        print(f"goal: {goal[:120]}...")
+        print(f"experiments: {[e.name for e in exps]}  layers: {plan.layers} "
+              f"topo: {plan.topo_order}")
+        print(f"objectives: {objectives}\n")
+
+        # ── 书生[行动]: 全程驱动 run_research_program(观察→推理→行动闭环) ──
+        out = run_research_program(
+            goal=goal,
+            experiments=exps,
+            objectives_config=objectives,
+            client=client, model=args.model, base_url=args.base_url,
+            verify=grounding_verifier(),
+            out_md=report_md,
+            planner=lambda _g: plan,          # 需求拆解 -> DAG 分层
+            layer_epochs=True,                # P-A: 分层流式结算
+            replan_gate=True,                 # P-B: 层间重规划门
+            early_stop_gate=True,             # P-C: 证据驱动提前终止门
+            diagnostic_tools=_diagnostic_tools(),
+            max_iterations=args.max_iters,
+            min_iterations=min(args.min_iters, max(1, len(exps) - 1)),
+            max_parallel=2,
+            strictness=args.strictness,       # 判断层·分级护栏(默认0=零提示, 不强锁模型)
+        )
+
+        print("\n[program] explored=%d pruned=%d pareto_front=%d convergence=%s mutations=%d"
+          % (out.explored, out.pruned, len(out.pareto_front), out.converred, out.mutations))
+        print(f"[program] executed_cache={sorted(out.cache.keys())}")
+        for b in out.pareto_front:
+            print(f"  surv -> {b['name']}")
+        print(f"[gate] {out.verdict} unsubstantiated={out.ungrounded} source={out.report_source}")
+        print(f"[护栏] strictness={args.strictness} 判断层软提示 ×{len(out.judgment_hints or [])}")
+        if out.consolidated:
+            _c = out.consolidated
+            print(f"[P-A layers_covered] {_c.get('epochs')}  stream_view_sections={len(_c.get('stream_view') or [])}")
+            print(f"[P-B replan] checked={(_c.get('replan') or {}).get('checked')} "
+                  f"skipped={len((_c.get('replan') or {}).get('skipped', []) or [])}")
+            _es = _c.get('early_stop') or {}
+            print(f"[P-C early_stop] verdict={_es.get('verdict')} stopped_after_layer={_es.get('stopped_after_layer')}")
+        print(f"第{cycle}轮报告: {report_md}")
+        last_report = out.report or (report_md.read_text(encoding="utf-8")
+                                     if report_md.exists() else "")
+
+    print("\n===== 长程任务结束: 连续完成 %d 轮(观察→推理→行动→报告→下一轮, 无人工停顿) ====="
+          % args.cycles)
     return 0
 
 
