@@ -710,6 +710,122 @@ def _llm_critic(client, model: str, report_text: str, survivors_text: str) -> li
     out = [f for f in finds if isinstance(f, dict) and f.get("claim")]
     return out[:4]
 
+# ══════════════════ 研究品味层: 思考"问题如何被提出"并自主生成新问题 ══════════════════
+# 不只是执行给定开放问题; 而是让书生反身读出每个问题背后的"提出机制"(理想假说在哪
+# 一步失效/何种悖论/何种尺度耦合断裂), 提炼可复用的问题生成启示(taste), 再依此自生
+# 成白名单外的可证伪新问题 —— 品味是可迁移的元认知, 而非一次性答案列表.
+
+_THEMES = (
+    "综述七大开放问题及其参考证据(名词即可激发机制)"
+)
+
+# 问题→提出机制的证据锚(来自 IJF 2026 综述引文, 供书生归纳生成机制).
+_THEME_EVIDENCE = [
+    ("ON1 界面裂纹互穿悖论",
+     "LEMF 双材料界面 K 场均含振荡项 r^{±iε}: ε≠0 ⇒ 裂纹面互相穿透(material interpenetration)。"
+     "引: Mantič 有限牵引线性脆性界面 / Liechti 双向加载界面韧性 / Needleman-Rosakis 内聚 bond。"),
+    ("ON2 脆-韧转变的统一判据",
+     "同族材料何以有的本能脆、有的本能韧: Rice-Thomson 位错发射 vs 解理竞争仍是开放问题。"
+     "引: Rice & Thomson 1974 / Rice 1992 Peierls 位错形核 / Li 2002 atomistic mechanisms / "
+     "McMeeking 有限变形裂纹张开。"),
+    ("ON3 纳尺度缺陷容差与极致强度",
+     "理想强度在宏观现实; 纳米试样却达到: 缺陷一旦小于临界尺度便不敏感(Griffith∝1/√a 与 σ_th 的交叉)。"
+     "引: Lee 2008 石墨烯 / Zhang 2016 Si NW / Nie 2019 金刚石 / Yang2025 nano-scale solids。"),
+    ("ON4 统计尺寸效应的失效/适用范围",
+     "Weibull 弱链律基于缺陷尾部分布; 当缺陷尺寸有界/相互作用强时, 尺寸效应饱和偏离幂律。"
+     "引: Zhang-Li-Yang 统计强度 / Li-Yang 微裂纹聚合 / Shockey 岩石动态碎裂 / Mott 碎裂统计。"),
+    ("ON5 桥联增韧的韧性-强度冲突",
+     "珍珠母等牺牲性桥联把表观韧性推离尖端临界, 但代价是强度; 增益存在上界与最优层级。"
+     "引: Shao 2012 非连续桥联 / Yao-Gao 多尺度内聚律 / Yan nacre T-stress / Zhang 最优层级。"),
+    ("ON6 动态断裂的速度禁区",
+     "mode-I 在 c_R<v<c_S 无稳态张开裂纹(Rayleigh 势垒); 而界面/剪切(超剪切)可进入跨声速。"
+     "引: Rosakis 1999 intersonic / Xia 2004 实验室地震 / Needleman-Rosakis bond 强度/加载率。"),
+    ("ON7 KIC 有效性的工程边界",
+     "高韧性低屈服金属需要米级试样以满足 ASTM E399 的 2.5(K/σy)² 门槛: K-dominance 有尺度前提。"
+     "引: ASTM E399-19 / Murakami、Tada-Paris-Irwin 手册 / Wu 权函数。"),
+]
+
+_TASTE_CATEGORIES = ("PARADOX(理想理论内在矛盾)", "ASSUMPTION_FAIL(某个理想化假设在现实边界失效)",
+                     "SCALE_BREAK(跨尺度耦合在中间尺度断裂)", "MODEL_GAP(模型与实验观测的鸿沟)",
+                     "ENABLER(新方法/新测量/新使能打开旧禁区)", "ANALOGY(跨域类比带进来的问题)")
+
+
+def _sync_llm_create(client, model: str):
+    """把书生包成语义蒸馏器可用的同步 callable(llm(prompt)->str)."""
+    def _call(prompt: str) -> str:
+        try:
+            r = client.chat.completions.create(
+                model=model, max_tokens=1800, temperature=0.3,
+                extra_body={"thinking_mode": False},
+                messages=[{"role": "user", "content": prompt}])
+            return r.choices[0].message.content or ""
+        except Exception:  # noqa: BLE001
+            return ""
+    return _call
+
+
+def _distill_research_taste(client, model: str, goal: str) -> dict:
+    """书生反身阅读: 每个问题是如何被提出的 + 提炼可迁移的发问品味 + 自生成新问题.
+
+    返回 {mechanisms, taste_patterns, new_questions}.
+    """
+    evidence = "\n".join(f"- {q}: {ev[:220]}" for q, ev in _THEME_EVIDENCE)
+    sys = (
+        "你是研究品味提炼者(methodologist)。给你一份断裂力学综述的七大开放问题及其参考证据。"
+        "任务不是解决它们, 而是反身回答『这些问题是怎么被提出来的』: 逐条定位它背后的"
+        "【提出机制】—— 是哪一步理想化假设在现实的哪个边界失效、或哪种悖论/尺度耦合断裂/"
+        "模型-实验鸿沟/新使能工具/跨域类比孕育了它。"
+        "然后提炼可迁移的『发问品味』(生成新研究问题的可复用启示, 每个配一个非断裂域的类比例子)。"
+        "最后依此品味, 提出 2~3 个白名单之外的、可证伪的、并能在纯数值实验里落地验证的"
+        "新前沿问题(给出具体预言与拟用实验)。"
+        "机制分类只用这些标签: " + " ".join(_TASTE_CATEGORIES) + "。"
+        "只输出 JSON: "
+        '{"mechanisms":[{"issue":"..","tension":"..(追问要点)","formation":"..(它如何被提出)",'
+        '"category":"<标签>"}], "taste_patterns":[{"pattern":"..","nonfracture_example":".."}], '
+        '"new_questions":[{"q":"..","mechanism":"..","prediction":"..","experiment":".."}]}, '
+        "new_questions 每条 <300 字, 不含其他文字。"
+    )
+    user = f"{evidence}\n\n目标(供对齐节律): {goal[:600]}"
+    d = _ask_json(client, model, sys, user, max_tokens=2000)
+    if not (d.get("mechanisms") and d.get("taste_patterns")):
+        return {"mechanisms": [], "taste_patterns": [], "new_questions": [],
+                "raw": d}
+    return d
+
+
+def _persist_taste(taste: dict, client, model: str, out_dir: Path) -> Path:
+    """把品味分析落盘 markdown, 并经 Huginn 原生知识蒸馏沉淀进长期记忆(RAG 可检索)."""
+    md = ["# 研究品味分析 —— 这些问题是如何被提出的", "",
+          f"> 来自 IJF 2026 综述(杨卫/冯西桥/高华健)七大开放问题的问题-提出机制反身。", ""]
+    md += ["## 一、问题背后的提出机制", ""]
+    for m in taste.get("mechanisms") or []:
+        md.append(f"- **{m.get('issue','')}** `[{m.get('category','')}]`")
+        md.append(f"  - 追问要点(tension): {m.get('tension','')}")
+        md.append(f"  - 如何被提出(formation): {m.get('formation','')}")
+    md += ["", "## 二、可迁移的发问品味(taste patterns)", ""]
+    for i, p in enumerate(taste.get("taste_patterns") or [], 1):
+        md.append(f"{i}. **{p.get('pattern','')}** — 跨域类比: {p.get('nonfracture_example','')}")
+    md += ["", "## 三、依品味自生成的新前沿问题(可证伪)", ""]
+    for j, nq in enumerate(taste.get("new_questions") or [], 1):
+        md.append(f"{j}. **{nq.get('q','')}**")
+        md.append(f"   - 机制: {nq.get('mechanism','')}")
+        md.append(f"   - 预言: {nq.get('prediction','')}")
+        md.append(f"   - 拟实验: {nq.get('experiment','')}")
+    md.append("")
+    path = out_dir / "research_taste.md"
+    path.write_text("\n".join(md), encoding="utf-8")
+    # 原生知识蒸馏: 把品味作为一个可 RAG 检索的语义来源沉淀(无 LLM 契约/超时均优雅降级).
+    try:
+        from huginn.evolution.knowledge_distiller import KnowledgeDistiller
+        kd = KnowledgeDistiller(output_dir=str(out_dir / "knowledge"))
+        kd.distill_semantic_source(
+            "\n".join(md), source_url="https://doi.org/10.1007/s10704-025-00907-6",
+            source="review_taste", source_type="research_taste",
+            domain_hint="fracture mechanics, research methodology", llm=_sync_llm_create(client, model))
+    except Exception as ee:  # noqa: BLE001 — 蒸馏失败不阻断主流程(品味 md 已是主产物)
+        print(f"  [taste] 知识蒸馏失败(不影响分析产物): {ee}")
+    return path
+
 # ═══════════════════════════════ 计划与主循环 ═══════════════════════════════
 
 def _make_experiments(cycle: int = 1) -> list:
@@ -798,6 +914,9 @@ def main() -> int:
     ap.add_argument("--strictness", type=int, default=0, choices=[0, 1, 2])
     ap.add_argument("--cycles", type=int, default=2)
     ap.add_argument("--start-cycle", type=int, default=1)
+    ap.add_argument("--taste", action="store_true",
+                    help="开启研究品味层: 每轮前让书生反身思考【这些问题如何被提出】"
+                         "并自生成白名单外的新前沿问题(写入 research_taste.md 并蒸馏进记忆)")
     args = ap.parse_args()
 
     from huginn.research import run_research_program, grounding_verifier   # noqa: F401
@@ -881,6 +1000,23 @@ def main() -> int:
         report_md = _report_for(cycle)
         print(f"goal: {goal[:120]}...")
         print(f"experiments: {[e.name for e in exps]}  layers: {plan.layers}")
+
+        # ── 研究品味层(可选, 需书生): 反身"这些问题如何被提出" + 自生成新问题 ──
+        taste_new_questions: list[dict] = []
+        if args.taste and client is not None:
+            _taste = _distill_research_taste(client, args.model, goal)
+            if _taste.get("mechanisms") or _taste.get("taste_patterns"):
+                _persist_taste(_taste, client, args.model, _OUT)
+                taste_new_questions = _taste.get("new_questions") or []
+                print(f"  [taste] 提炼 {len(_taste.get('mechanisms', []))} 条提出机制, "
+                      f"{len(_taste.get('taste_patterns', []))} 条发问品味, "
+                      f"自生成 {len(taste_new_questions)} 个新前沿问题")
+                for _nq in taste_new_questions:
+                    print(f"    · {str(_nq.get('q',''))[:90]}")
+                # 书生自生成问题并入本轮目标, 交由后续扫描/书生成码/报告成文承接.
+                if taste_new_questions:
+                    _nq_txt = " | ".join(str(n.get("q", "")) for n in taste_new_questions)
+                    goal = f"{goal}\n（书生依品味自生成的新问题: {_nq_txt[:500]}）"
 
         out = run_research_program(
             goal=goal,
