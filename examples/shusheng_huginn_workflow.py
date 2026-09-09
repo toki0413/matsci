@@ -50,16 +50,16 @@ _OUT = Path(__file__).resolve().parent / "out" / "shusheng_huginn_workflow"
 _OUT.mkdir(parents=True, exist_ok=True)
 
 GOAL = (
-    "深化 NN 容量探针解空间刚性研究: 上一轮已初步确立「饱和判据依赖 eps(精度截止) "
-    "而非 N(样本量)」与「约束数钳制解族维数」, 但强度仅够相关性。本轮补齐对照组: "
-    "固定 eps 扫 N 验证 C* 平台、约束 k=0..3 全序列建立维数-约束曲线、训练预算扫描 "
-    "量化优化器财政的假饱和窗口、以及多系统普适性 —— 把结论强度提到「对照+曲线+跨系统」水平。"
+    "深入 X7 开放问题: 约束钳制解族维数的机制与边界。上一轮 X7 报告'多项式系统 u''=-(1-t^2) "
+    "下 σH_k2 不归零(普适性减弱)'——本轮先证伪/确证该异常是否是实验定义伪影; 再研究真正开放的机制: "
+    "k=1 中间态(σH 只降 ~54%)下 1 个点值约束钳制哪个核方向 {常数, 线性}, 以及它随约束位置取值的 "
+    "依赖(约束在中心 t_i≈0 时几乎测不到线性核方向)。要求: 所有数值真实可复现, 区分'实验伪影'与'真实机制'。"
 )
 
 # 每个实验独立目标(各自支撑不同子结论; 独立维度互不支配 → 全部存活).
-# 本轮五个证据向量: 判据区分(N 平台)/约束钳制全曲线/财政收敛/跨系统普适.
+# 本轮新增: 普适性真伪(修正 ref 后)/k=1 中间态对约束位置的依赖.
 ACCURACY_OBJ = ["eps_discrimination", "n_stability", "budget_convergence",
-                "dim_effect", "univ_effect"]
+                "dim_effect", "univ_effect", "k1_locality"]
 _OBJECTIVES = {k: "maximize" for k in ACCURACY_OBJ}
 
 # 收敛聚合头头数预算等通用治理参数走 run_research_program 默认, 本 demo 不再重复.
@@ -136,7 +136,8 @@ def _exp_optimizer_finance(w: int = 32, steps: int = 1600) -> dict:
 
 
 def _solve_under(k: int, seed: int, basis: int,
-                 rhs=lambda t: -np.cos(t), ref=lambda t: np.cos(t)) -> np.ndarray:
+                 rhs=lambda t: -np.cos(t), ref=lambda t: np.cos(t),
+                 fixed_ti: float | None = None) -> np.ndarray:
     """欠定 u''=rhs(t) + k 个点值约束 u(t_i)=ref(t_i) -> 解族成员 (真实, 冻结留出采样).
 
     不做 min-norm 唯一解(lstsq 恒唯一 → 重解零散布, 测不出"解族维数"); 而是
@@ -144,6 +145,7 @@ def _solve_under(k: int, seed: int, basis: int,
     是同一个真实解族(常数+线性 2 维核), k 个独立点值约束逐条钳制核自由度:
       k=0 -> 核维 2, 散布最大; k=2 -> 核被完全钳制, 散布 ~0. → 解族维数真测量.
     多系统普适性: 传不同 (rhs, ref) 即换一个真实 ODE 系统, 核恒为 2 维线性流形.
+    fixed_ti(仅 k=1): 把唯一约束位置钉在 t≈fixed_ti, 检验位置如何决定钳制哪个核方向.
     """
     from numpy.polynomial import legendre as Lg
     import numpy.polynomial.polynomial as PP
@@ -161,7 +163,10 @@ def _solve_under(k: int, seed: int, basis: int,
     rng = np.random.default_rng(seed)
     A = D2.copy(); b = fvec.copy()
     if k > 0:
-        idx = rng.choice(N, size=k, replace=False)
+        if fixed_ti is not None and k == 1:
+            idx = np.array([int(np.argmin(np.abs(mesh - fixed_ti)))])
+        else:
+            idx = rng.choice(N, size=k, replace=False)
         A = np.vstack([D2, 3.0 * P[idx]])
         b = np.concatenate([fvec, 3.0 * ref(mesh[idx])])
     # 特解(解族的一个成员) + 零空间采样(recover the真 family spread)
@@ -257,7 +262,7 @@ def exp_multi_system(seeds: int = 8) -> dict:
     systems = [
         ("u''=-cos(t), ref=cos", lambda t: -np.cos(t), lambda t: np.cos(t)),
         ("u''=-sin(2t), ref=sin(2t)/4", lambda t: -np.sin(2 * t), lambda t: np.sin(2 * t) / 4.0),
-        ("u''=-(1-t^2), ref=(t^2-t^4)/12", lambda t: -(1 - t ** 2), lambda t: (t ** 2 - t ** 4) / 12.0),
+        ("u''=-(1-t^2), ref=t^4/12-t^2/2", lambda t: -(1 - t ** 2), lambda t: t ** 4 / 12.0 - t ** 2 / 2.0),
     ]
     per = []
     for label, rhs, ref in systems:
@@ -277,8 +282,46 @@ def exp_multi_system(seeds: int = 8) -> dict:
     }
 
 
+def exp_k1_locality(seeds: int = 8, basis: int = 12) -> dict:
+    """X8 · k=1 中间态: 约束位置 t_i 决定 1 个点值约束钳制核的哪个方向.
+
+    欠定 u''=-cos 的核 = span{1, t}(2 维). k=1 留 1 维残余自由. 位置的作用(开放问题, 待实测):
+      中心 t_i≈0 时, 约束 u(0)=ref ≈ C1·1, 对线性核 C2·t 几乎无感 → 钳常数、留纯线性核;
+      边界 t_i≈±1 时, u(t_i) 含满 C2·t_i 之幅 → 同时钳常数+线性(混合方向).
+    但 σH 是**归一化相对量**(std/|mean|), 差异既来自绝对散布也来自分母 |mean| ——
+    须同时报告绝对 std, 才能区分"钳制力差异"与"归一化/核形状效应".
+    """
+    def sigma_at(t_center: float) -> tuple[float, float, float]:
+        evs = []
+        for s in range(seeds):
+            rng = np.random.default_rng(s)
+            t_i = float(np.clip(t_center + rng.uniform(-0.02, 0.02), -1, 1))
+            evs.append(_solve_under(1, s, basis, rhs=lambda t: -np.cos(t),
+                                    ref=lambda t: np.cos(t), fixed_ti=t_i))
+        evs = np.stack(evs)
+        abs_std = float(evs.std(axis=0).mean())
+        abs_mean = float(np.abs(evs).mean())
+        return abs_std, abs_mean, float(abs_std / (abs_mean + 1e-9))
+
+    c_std, c_mean, c_ratio = sigma_at(0.0)
+    b_std, b_mean, b_ratio = sigma_at(0.97)
+    loc_norm = float(c_ratio - b_ratio)
+    loc_abs = float(c_std - b_std)        # 绝对散布差(排除归一化影响)
+    return {
+        "objectives": {"k1_locality": loc_norm},
+        "summary": {"seeds": seeds,
+                    "center": {"abs_std": round(c_std, 4), "abs_mean": round(c_mean, 4),
+                               "sigmaH": round(c_ratio, 4)},
+                    "boundary": {"abs_std": round(b_std, 4), "abs_mean": round(b_mean, 4),
+                                 "sigmaH": round(b_ratio, 4)},
+                    "k1_locality_norm": round(loc_norm, 4),
+                    "k1_locality_abs": round(loc_abs, 4)},
+        "success": True,
+    }
+
+
 def _make_experiments():
-    """七个真实证据分支 → Experiment 列表(三条深化对照组 + 原三条确认组)."""
+    """八个真实证据分支 → Experiment 列表(深化对照组 + 确认组)."""
     from huginn.research import Experiment
 
     specs = [
@@ -286,16 +329,18 @@ def _make_experiments():
          "eps判据(基准): 固定N扫eps, 刚性cos的C*在阈值后平台化而胖|x|持续增长 → "
          "饱和由精度截止eps的判据区分度拉大两类系统."),
         (lambda: exp_n_scale(), "X4_n_platform",
-         "N平台(对照组): 固定eps扫N=512..8192, 若刚/胖的C*对N平台化(span≈0), "
-         "则饱和判据不依赖N —— 直接检验「依赖eps而非N」."),
+         "N平台(对照组): 固定eps扫N=512..8192, 刚/胖的C*对N平台化 → 饱和判据不依赖N."),
         (lambda: exp_constraint_curve(), "X5_constraint_curve",
          "约束全曲线: k=0..3 的sigmaH序列单调下降 → 约束数逐条钳制解族核自由度, "
-         "建立「约束数→解族维数」定量曲线(此前仅有k=0/2两点)."),
+         "建立「约束数→解族维数」定量曲线."),
         (lambda: exp_budget_sweep(), "X6_budget_sweep",
-         "预算扫描: 训练预算递增下vho收敛曲线 → 量化优化器财政的假饱和窗口 "
-         "(预算不足的vho虚高会污染容量饱和判据)."),
+         "预算扫描: 训练预算递增下vho收敛曲线 → 量化优化器财政的假饱和窗口."),
         (lambda: exp_multi_system(), "X7_multi_system",
-         "多系统普适: 在不同ODE系统(u''=f(t))下约束钳制效应是否一致 → 结论跨系统稳健性."),
+         "多系统普适(修 ref): 修正第三个系统 ref=t^4/12-t^2/2 后, 若 σH_k2 全系统归零 "
+         "则上一轮'多项式系统减弱'是实验定义伪影, 约束钳制跨系统普适."),
+        (lambda: exp_k1_locality(), "X8_k1_locality",
+         "k=1 中间态位置依赖: 约束钉在中心(测不到线性核)vs 边界(钳住线性核)的 σH_k1 差 → "
+         "1 个点值约束钳制哪个核方向由位置决定."),
         (lambda: _exp_optimizer_finance(), "X2_optimizer_finance",
          "优化器财政(确认): 真实PINN在固定训练预算下的留出误差vho若未收敛, "
          "容量饱和信号会被预算不足的'假饱和'污染(判据须加财政守卫)."),
@@ -310,7 +355,7 @@ def _build_plan(goal: str, run_by_name: dict):
 
     层0: X1 (判据基准, 无依赖)
     层1: X4/N平台 + X5/约束曲线 + X6/预算扫描 (对照, 依赖判据校准)
-    层2: X7/多系统 (跨系统, 依赖约束曲线) + X2/X3 (原确认组, 依赖判据)
+    层2: X7/多系统 (依赖约束曲线) + X8/k1位置依赖 (依赖约束曲线) + X2/X3 (确认组)
     """
     from huginn.research.planning import build_research_plan, SubResearch
     return build_research_plan(goal, [
@@ -322,8 +367,11 @@ def _build_plan(goal: str, run_by_name: dict):
                     run=run_by_name["X5_constraint_curve"], depends_on=["X1_eps_criterion"]),
         SubResearch("X6_budget_sweep", "预算扫描: 假饱和窗口",
                     run=run_by_name["X6_budget_sweep"], depends_on=["X1_eps_criterion"]),
-        SubResearch("X7_multi_system", "多系统普适",
+        SubResearch("X7_multi_system", "多系统普适(修 ref)",
                     run=run_by_name["X7_multi_system"],
+                    depends_on=["X5_constraint_curve"]),
+        SubResearch("X8_k1_locality", "k=1 中间态位置依赖",
+                    run=run_by_name["X8_k1_locality"],
                     depends_on=["X5_constraint_curve"]),
         SubResearch("X2_optimizer_finance", "优化器财政确认",
                     run=run_by_name["X2_optimizer_finance"],
@@ -367,6 +415,24 @@ def _diagnostic_tools():
                          "Cstar_fat": _poly_cstar("fat", eps, N)})
         return json.dumps({"eps": eps, "rows": rows}, ensure_ascii=False)
 
+    def h_probe_k1_locality(a):
+        seeds = int(a.get("seeds", 8))
+        center = float(a.get("center", 0.0))
+        boundary = float(a.get("boundary", 0.97))
+        def _sig(ti):
+            evs = np.stack([_solve_under(1, s, 12, rhs=lambda t: -np.cos(t),
+                                         ref=lambda t: np.cos(t), fixed_ti=ti)
+                            for s in range(seeds)])
+            std = float(evs.std(axis=0).mean()); mean = float(np.abs(evs).mean())
+            return std, mean, float(std / (mean + 1e-9))
+        cs, cm, cr = _sig(center); bs, bm, br = _sig(boundary)
+        return json.dumps({"center": {"abs_std": round(cs, 4), "abs_mean": round(cm, 4),
+                                      "sigmaH": round(cr, 4)},
+                           "boundary": {"abs_std": round(bs, 4), "abs_mean": round(bm, 4),
+                                        "sigmaH": round(br, 4)},
+                           "locality_norm": round(cr - br, 4),
+                           "locality_abs": round(cs - bs, 4)}, ensure_ascii=False)
+
     return [
         {"tool": {"function": {"name": "probe_Cstar",
             "description": "固定N扫eps, 返回刚性/胖系统达到精度eps所需最小容量C*曲线(真实)",
@@ -381,6 +447,12 @@ def _diagnostic_tools():
                 "eps": {"type": "number"},
                 "Ns": {"type": "array", "items": {"type": "integer"}}},
                 "required": [], "additionalProperties": False}}}, "handle": h_probe_n_platform},
+        {"tool": {"function": {"name": "probe_k1_locality",
+            "description": "k=1中间态: 单点值约束钉在中心(测不到线性核)vs边界(钳住)的sigmaH_k1差(位置依赖探针)",
+            "parameters": {"type": "object", "properties": {
+                "seeds": {"type": "integer"}, "center": {"type": "number"},
+                "boundary": {"type": "number"}},
+                "required": [], "additionalProperties": False}}}, "handle": h_probe_k1_locality},
         {"tool": {"function": {"name": "probe_optimizer",
             "description": "真实PINN在给定宽度w与训练预算steps下的训练残差/留出误差vho(优化器财政审计)",
             "parameters": {"type": "object", "properties": {
