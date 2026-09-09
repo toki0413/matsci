@@ -339,7 +339,15 @@ def main() -> int:
         msg = r.choices[0].message
         calls = msg.tool_calls or []
         if not calls:
-            break
+            # 无工具调用: 追问必须先用真实工具获取数据(防"脑内"臆造), 而非直接进入成文.
+            messages.append({"role": "assistant", "content": msg.content or ""})
+            messages.append({"role": "user", "content":
+                "你还没有调用任何科研工具。必须先用 list_problems 查看问题库、"
+                "load_dataset 加载真实数据(而这个 load_dataset 数据是 title 与 x/y 观测), "
+                "再调用 fit_law / analyze_uncertainty / cross_validate / design_experiment "
+                "获取真实统计量。门禁会把报告里每个数值与实际工具轨迹比对: 凭记忆或脑内"
+                "模拟编写的数字一律拦截。请立即开始调用工具。"})
+            continue  # 继续探索而不是直接成文
         for tc in calls:
             name, a = _pick(tc)
             result = exec_tool(name, a)
@@ -367,8 +375,16 @@ def main() -> int:
 
     final = ""
     verdict_state, ungrounded = "needs_grounding", []
-    for _ in range(2):
+    for _ in range(3):
         final = _gen_final()
+        if not final.strip():
+            # 空报告不视为通过(没有数值不代表正确, 代表没干活) —— 追问重写.
+            verdict_state, ungrounded = "needs_grounding", ["<空报告>"]
+            messages.append({"role": "assistant", "content": final})
+            messages.append({"role": "user", "content":
+                "你的报告是空的。请基于上面已调用的真实工具结果, 撰写一份**完整研究报告**"
+                "(研究问题/数据与方法/结果分析/结论与局限/下一步实验), 所有数字必须来自工具轨迹。"})
+            continue
         g = verify(final, trace)
         transcript.append(f"门禁: verify={g['verdict']} unsubstantiated={g['unsubstantiated']}")
         print(f"\n[门禁] {g['verdict']}  unsubstantiated={g['unsubstantiated']}")

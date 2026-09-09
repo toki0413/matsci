@@ -162,6 +162,7 @@ def grounding_verifier() -> Callable[[str, list[str]], dict]:
             from huginn.validation.claim_grounding import verify_claims
             return verify_claims(text, trace, allow_derived=True)
         except Exception:  # noqa: BLE001 — claim_grounding 不可用时拉文件级兜底
+            import importlib.util as util  # noqa: F401 — 文件级加载绕开 package 深层 import
             src = Path(__file__).resolve().parents[1] / "validation/claim_grounding.py"
             spec = util.spec_from_file_location("_cg", str(src))
             mod = util.module_from_spec(spec); spec.loader.exec_module(mod)
