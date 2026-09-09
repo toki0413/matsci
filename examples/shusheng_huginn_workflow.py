@@ -77,52 +77,83 @@ KERNEL_OBJ = ["k1_direction_purity", "locality_law_fit", "direction_universality
 _OBJECTIVES_CYCLE2 = {k: "maximize" for k in KERNEL_OBJ}
 
 # 长程驱动: 通用方向扫描能力白名单(书生在第 3+ 轮据此提议新实验配置).
-# 每个配置都映射到真实执行(约束钳制 → 零空间方向分解), 无任何编造.
+# 每个配置都映射到真实执行(任意阶 ODE 的约束钳制 → 核方向分解), 无任何编造.
+# order=2 → 核 span{1,t}(2维); order=3 → 核 span{1,t,t²}(3维, 高次核).
+# ctype=point → 值约束 u(t_i); ctype=derivative → 导数约束 u'(t_i).
 SCAN_OPS = {
     "system": [0, 1, 2],                    # 0=cos, 1=sin2t, 2=多项式
     "k": [1, 2],                            # 约束数
     "positions": [0.0, 0.33, 0.66, 0.97, -0.33, -0.66, -0.97],
     "basis": [8, 12, 16],
     "seeds": [4, 8, 12],
+    "order": [2, 3],                        # ODE 阶数(2=低次核, 3=高次核)
+    "ctype": ["point", "derivative"],       # 约束类型(值/导数)
 }
 _SCAN_DEFAULTS = {"system": 0, "k": 1, "positions": [0.0, 0.97],
-                  "basis": 12, "seeds": 8}
+                  "basis": 12, "seeds": 8, "order": 2, "ctype": "point"}
 
 # 收敛聚合头头数预算等通用治理参数走 run_research_program 默认, 本 demo 不再重复.
 
 # ── 真实证据实验 (run 返回 {objectives, summary, success}) ────────────────
 _RNG = np.random.default_rng(0)
 
-# 多系统表 (label, rhs, ref) —— X7/X11/X12+ 共用, 一处定义不漂移.
+# 多系统表 (label, rhs, ref, refp) —— X7/X11+ 共用, 一处定义不漂移.
+# refp = ref 的解析导数(导数约束 u'(t_i)=ref'(t_i) 用).
 _SYSTEMS = [
-    ("u''=-cos(t), ref=cos", lambda t: -np.cos(t), lambda t: np.cos(t)),
+    ("u''=-cos(t), ref=cos", lambda t: -np.cos(t), lambda t: np.cos(t),
+     lambda t: -np.sin(t)),
     ("u''=-sin(2t), ref=sin(2t)/4", lambda t: -np.sin(2 * t),
-     lambda t: np.sin(2 * t) / 4.0),
+     lambda t: np.sin(2 * t) / 4.0, lambda t: np.cos(2 * t) / 2.0),
     ("u''=-(1-t^2), ref=t^4/12-t^2/2", lambda t: -(1 - t ** 2),
-     lambda t: t ** 4 / 12.0 - t ** 2 / 2.0),
+     lambda t: t ** 4 / 12.0 - t ** 2 / 2.0, lambda t: t ** 3 / 3.0 - t),
 ]
 
-# 勒让德算子缓存: (basis, N) -> (mesh, P, D2), 供各实验复用(同一真实算子).
+# 勒让德算子缓存: (basis, order) -> (mesh, P, D_order), 供各实验复用(同一真实算子).
 _OP_CACHE: dict = {}
 
 
 def _build_system(basis: int, N: int = 256):
+    """order=2 算子缓存(兼容旧调用; 高阶走 _build_system_g)."""
+    return _build_system_g(basis, order=2, N=N)
+
+
+def _build_system_g(basis: int, order: int = 2, N: int = 256):
+    """勒让德基础算子: (mesh, P, D_order) —— P 为基函数取值矩阵, D_order 为阶导数.
+
+    order=2 → 二阶微分算子(D2), 核 span{1,t} (2 维);
+    order=3 → 三阶微分算子(D3), 核 span{1,t,t²} 的 Legendre 版 (3 维).
+    """
     from numpy.polynomial import legendre as Lg
     import numpy.polynomial.polynomial as PP
-    key = (basis, N)
+    key = (basis, order)
     if key in _OP_CACHE:
         return _OP_CACHE[key]
     mesh = np.linspace(-1, 1, N)
     P = Lg.legval(mesh, np.eye(basis)).T
-    D2 = np.zeros((N, basis))
+    D = np.zeros((N, basis))
     for j in range(basis):
-        d2 = PP.polyder(Lg.leg2poly(np.eye(j + 1)[:, j]), 2)
+        d = PP.polyder(Lg.leg2poly(np.eye(j + 1)[:, j]), order)
         acc = np.zeros_like(mesh)
-        for kk, cc in enumerate(d2):
+        for kk, cc in enumerate(d):
             acc += cc * mesh ** kk
-        D2[:, j] = acc
-    _OP_CACHE[(basis, N)] = (mesh, P, D2)
-    return mesh, P, D2
+        D[:, j] = acc
+    _OP_CACHE[key] = (mesh, P, D)
+    return mesh, P, D
+
+
+def _build_p1(basis: int, N: int = 256) -> np.ndarray:
+    """基函数一阶导矩阵 P1: P1[i, j] = d(P_j)/dt at mesh[i] (导数约束行用)."""
+    from numpy.polynomial import legendre as Lg
+    import numpy.polynomial.polynomial as PP
+    mesh = np.linspace(-1, 1, N)
+    P1 = np.zeros((N, basis))
+    for j in range(basis):
+        d1 = PP.polyder(Lg.leg2poly(np.eye(j + 1)[:, j]), 1)
+        acc = np.zeros_like(mesh)
+        for kk, cc in enumerate(d1):
+            acc += cc * mesh ** kk
+        P1[:, j] = acc
+    return P1
 
 
 def _poly_cstar(target: str, eps: float, N: int, pmax: int = 48) -> float:
@@ -418,7 +449,7 @@ def _direction_metrics(ti: float, system: int = 0, k: int = 1,
       w_const/w_lin: σH 按方向归因权重 —— w_const=|c0|/mean|v|, w_lin=mean|c1·t|/mean|v|.
       中心 ti=0: c0≈0 ⇒ w_lin≈1 —— "σH 完全由线性核方向承载"(复核 X8 解读).
     """
-    label, rhs, ref = _SYSTEMS[system]
+    label, rhs, ref, _refp = _SYSTEMS[system]
     evs = []
     for s in range(seeds):
         u, v = _solve_under_decomp(k, s, basis, rhs=rhs, ref=ref, fixed_ti=ti)
@@ -451,6 +482,112 @@ def _direction_metrics(ti: float, system: int = 0, k: int = 1,
             "sigmaH_full": round(sigmaH_full, 4),
             "w_const": round(w_const, 4), "w_lin": round(w_lin, 4),
             "pred_lin_frac": round(pred, 4), "err": round(abs(lin_frac - pred), 4)}
+
+
+def _solve_general(order: int, ctype: str, k: int, seed: int, basis: int,
+                   system: int = 0, fixed_ti: float | None = None):
+    """泛化解族求解: order 阶 ODE + ctype 约束(point 值 / derivative 导数).
+
+    欠定 D_order u = rhs + k 个约束 → 零空间采样(同 _solve_under 语义):
+      - point      : 约束行 = 3·P(t_i),      b = 3·ref(t_i)
+      - derivative : 约束行 = 3·P1(t_i),     b = 3·ref'(t_i)
+    order=2 核=span{1,t}(2维); order=3 核=span{1,t,t²}-Legendre 版(3维).
+    返回 (uvals, null_basis); 核被完全钳制时 null_basis 为空.
+    """
+    from numpy.polynomial import legendre as Lg
+    mesh, P, D = _build_system_g(basis, order=order)
+    N = mesh.shape[0]
+    fvec = _SYSTEMS[system][1](mesh)
+    if ctype == "derivative":
+        P1 = _build_p1(basis)
+        C = P1
+    else:
+        C = P
+    rng = np.random.default_rng(seed)
+    A = D.copy(); b = fvec.copy()
+    if k > 0:
+        if fixed_ti is not None:
+            # 受控实验: 首个约束钉在 fixed_ti, 其余 k-1 个约束随机(对 k=1 即精确钉 ti)
+            idx0 = np.array([int(np.argmin(np.abs(mesh - fixed_ti)))])
+            if k == 1:
+                idx = idx0
+            else:
+                rest = rng.choice(np.setdiff1d(np.arange(N), idx0),
+                                  size=k - 1, replace=False)
+                idx = np.concatenate([idx0, rest]).astype(int)
+        else:
+            idx = rng.choice(N, size=k, replace=False)
+        A = np.vstack([D, 3.0 * C[idx]])
+        if ctype == "derivative":
+            _refp = _SYSTEMS[system][3]
+            b = np.concatenate([fvec, 3.0 * _refp(mesh[idx])])
+        else:
+            _ref = _SYSTEMS[system][2]
+            b = np.concatenate([fvec, 3.0 * _ref(mesh[idx])])
+    c_particular, *_ = np.linalg.lstsq(A, b, rcond=None)
+    _, s, vh = np.linalg.svd(A, full_matrices=True)
+    rank = int(np.sum(s > 1e-8))
+    null_basis = vh[rank:]
+    if null_basis.shape[0] > 0:
+        coeff = rng.normal(0.0, 0.5, size=null_basis.shape[0])
+        c_family = c_particular + coeff @ null_basis
+    else:
+        c_family = c_particular
+    xv = np.linspace(-1, 1, 321)
+    uvals = Lg.legval(xv, np.eye(basis)).T @ c_family
+    return uvals, null_basis
+
+
+def _direction_metrics_g(order: int, ctype: str, ti: float, system: int = 0,
+                         k: int = 1, seeds: int = 8, basis: int = 12) -> dict:
+    """泛化核方向分解(第 9 轮+ 白名单新维度).
+
+    残余零空间方向投到前 order 个 Legendre 核系数 {P0,P1,...}, 归一化得权重:
+      dir_weights[j] = 平均方向在 P_j 上的占比.
+    类型预言(可证伪, 已数值验证):
+      (2, point)      : lin_frac(=w1) = 1/(1+t_i²)              —— 值约束位置定律
+      (2, derivative) : dir ≈ (1,0) 纯常数核, **位置无关**       —— 导数约束钉线性核
+      (3, point)      : null_dim = 2 (order-k), 残余张成 P1/P2 面
+      (3, derivative) : null_dim = 2, 线性核在 ti=0 被钉(w1≈0)
+    返回统一字段: {order, ctype, ti, system, k, null_dim, dir_weights,
+                   const_frac, lin_frac, quad_frac, sigmaH_full, pred, err}
+      pred/err 按类型取判别量: (2,point)=lin_frac vs 1/(1+t_i²);
+      (2,deriv)=lin_frac vs 0; (3,*)=null_dim vs 2.
+    """
+    evs = []
+    for s in range(seeds):
+        u, nb = _solve_general(order, ctype, k, s, basis, system=system, fixed_ti=ti)
+        evs.append(u)
+    evs = np.stack(evs)
+    sigmaH_full = float(evs.std(axis=0).mean() / (np.abs(evs).mean() + 1e-9))
+    u, nb = _solve_general(order, ctype, k, 0, basis, system=system, fixed_ti=ti)
+    null_dim = int(nb.shape[0]) if nb is not None else 0
+    weights = np.zeros(order)
+    if null_dim > 0:
+        for v in nb[:(order)]:                # 最多取 order 个独立方向(秩 ≤ order-k)
+            w = v[:order] ** 2
+            s_w = w.sum() + 1e-12
+            weights += w / s_w
+        weights /= min(null_dim, order)       # 平均方向权重(归一化)
+    const_frac = float(weights[0]) if order >= 1 else 0.0
+    lin_frac = float(weights[1]) if order >= 2 else 0.0
+    quad_frac = float(weights[2]) if order >= 3 else 0.0
+    # 判据按 (order, ctype, k): 定律只在 k=1 成立; k>=2 退化到"完全钳制"签名.
+    # 导数约束的实质: 约束行 = P'(t_i), 而 P0'=0 ⇒ 常数核永不被导数约束钳制
+    #   ⇒ 纯导数约束的残余 null_dim 恒 ≥ 1(与值约束的"可钳到 0"形成本质对照).
+    if (order, ctype) == (2, "point") and k == 1:
+        pred = 1.0 / (1.0 + ti * ti); err = float(abs(lin_frac - pred))
+    elif ctype == "derivative":
+        pred = float(max(1, order - k)); err = float(abs(null_dim - pred))
+    else:                                      # point 约束(含 k>=2 完全钳制)
+        pred = float(max(0, order - k)); err = float(abs(null_dim - pred))
+    return {"order": order, "ctype": ctype, "ti": round(ti, 4), "system": system,
+            "k": k, "null_dim": null_dim,
+            "dir_weights": [round(float(x), 4) for x in weights],
+            "const_frac": round(const_frac, 4), "lin_frac": round(lin_frac, 4),
+            "quad_frac": round(quad_frac, 4),
+            "sigmaH_full": round(sigmaH_full, 4), "pred": round(pred, 4),
+            "err": round(err, 4)}
 
 
 def exp_k1_direction(seeds: int = 8, basis: int = 12) -> dict:
@@ -525,10 +662,11 @@ def exp_direction_universal(seeds: int = 8, basis: int = 12) -> dict:
     }
 
 
-def _sanitize_scan(cfg: dict) -> dict:
+def _sanitize_scan(cfg: dict | None) -> dict:
     """把书生提议的扫描配置校验/落入白名单(越界回落到默认, 绝不执行编造的实验)."""
     out = dict(_SCAN_DEFAULTS)
     try:
+        cfg = cfg or {}
         if cfg.get("system") in SCAN_OPS["system"]:
             out["system"] = int(cfg["system"])
         if cfg.get("k") in SCAN_OPS["k"]:
@@ -541,6 +679,10 @@ def _sanitize_scan(cfg: dict) -> dict:
             out["basis"] = int(cfg["basis"])
         if cfg.get("seeds") in SCAN_OPS["seeds"]:
             out["seeds"] = int(cfg["seeds"])
+        if cfg.get("order") in SCAN_OPS["order"]:
+            out["order"] = int(cfg["order"])
+        if cfg.get("ctype") in SCAN_OPS["ctype"]:
+            out["ctype"] = str(cfg["ctype"])
     except Exception:  # noqa: BLE001 — 无法解析的配置一律用默认(诚实回退)
         pass
     if out["positions"][0] != min(out["positions"]):
@@ -549,31 +691,49 @@ def _sanitize_scan(cfg: dict) -> dict:
 
 
 def exp_dir_scan(cfg: dict, name: str) -> dict:
-    """X12+ · 通用方向扫描: 书生在第 3+ 轮提议的 (system, k, positions, basis, seeds).
+    """X12+ · 通用方向扫描: 书生在第 3+ 轮提议的 (order, ctype, system, k, positions, basis, seeds).
 
-    每个位置真实求解+分解; 返回对定律的拟合分与残余方向均值 —— 双目标(独立维度):
-      scan_fit   : 1/(1+mse vs 1/(1+t_i²)) —— 该配置下方向定律是否成立;
-      scan_extent: 平均 lin_frac —— 残余自由度倾向哪个核方向(中心高=偏线性核).
+    每个位置真实求解(任意阶 ODE)+核方向分解; 双目标(独立维度):
+      scan_fit   : 1/(1+mse vs 该配置类型的解析预言) —— 机制签名是否成立;
+      scan_extent: 残余方向偏好 —— (2,*) 取平均 lin_frac; (3,*) 取平均 quad_frac(高次核占比).
     """
     cfg = _sanitize_scan(cfg)
     ti_map = {"0.0": 0.0, "0.33": 0.33, "0.66": 0.66, "0.97": 0.97,
               "-0.33": -0.33, "-0.66": -0.66, "-0.97": -0.97}
     rows = []
     for ti in [ti_map[str(p)] for p in cfg["positions"]]:
-        d = _direction_metrics(ti, system=cfg["system"], k=cfg["k"],
-                               seeds=cfg["seeds"], basis=cfg["basis"])
+        d = _direction_metrics_g(order=cfg["order"], ctype=cfg["ctype"], ti=ti,
+                                 system=cfg["system"], k=cfg["k"],
+                                 seeds=cfg["seeds"], basis=cfg["basis"])
         rows.append(d)
     errs = [r["err"] for r in rows]
     mse = float(np.mean([e * e for e in errs]))
     fit = float(1.0 / (1.0 + mse))
-    lins = [r["lin_frac"] for r in rows if r["k"] == 1]
-    extent = float(np.mean(lins)) if lins else 0.0
+    if cfg["order"] == 3:
+        extent = float(np.mean([r["quad_frac"] for r in rows]))
+    else:
+        lins = [r["lin_frac"] for r in rows if r["k"] == 1]
+        extent = float(np.mean(lins)) if lins else 0.0
+    # objective 键按分支指纹化(order_ctype_k_system): 扫描分支是独立证据面,
+    # 不共享键 → 互不支配 → 全部存活(保住多配置证据); 键自身含类型签名可审计.
+    sig = f"o{cfg['order']}_{cfg['ctype'][:3]}_{cfg['k']}_s{cfg['system']}"
     return {
-        "objectives": {"scan_fit": fit, "scan_extent": extent},
-        "summary": {"name": name, **cfg, "rows": rows,
+        "objectives": {f"scan_fit_{sig}": fit, f"scan_extent_{sig}": extent},
+        "summary": {"name": name, **cfg, "predictions_hint": _scan_pred_hint(cfg),
+                    "rows": rows,
                     "scan_fit": round(fit, 4), "scan_extent": round(extent, 4)},
         "success": True,
     }
+
+
+def _scan_pred_hint(cfg: dict) -> str:
+    """该配置类型的解析预言(给成文阶段模型作判读锚点, 真实可证伪)."""
+    o, c = cfg["order"], cfg["ctype"]
+    if (o, c) == (2, "point"):
+        return f"lin_frac(t_i)=1/(1+t_i²)(值约束位置定律)"
+    if c == "derivative":
+        return ("导数约束钳制线性核、永不钳制常数核(P0'=0) ⇒ 残余含常数方向, "
+                "null_dim 恒 ≥1")
 
 
 def _make_experiments(cycle: int = 1):
@@ -643,7 +803,8 @@ def _make_scan_experiments(configs: list[dict]) -> list:
             name=name,
             hypothesis=(f"方向扫描 config #{i + 1}: system={c['system']} k={c['k']} "
                         f"positions={c['positions']} basis={c['basis']} seeds={c['seeds']} "
-                        f"→ 检验方向定律拟合与残余方向倾向(书生本轮提议)."),
+                        f"order={c['order']} ctype={c['ctype']} "
+                        f"→ 检验核方向机制签名 {_scan_pred_hint(c)} (书生本轮提议)."),
             run=lambda cc=c, nn=name: exp_dir_scan(cc, nn)))
     return exps
 
@@ -773,6 +934,21 @@ def _diagnostic_tools():
                          "sigmaH_full": d["sigmaH_full"]})
         return json.dumps({"rows": rows}, ensure_ascii=False)
 
+    def h_probe_direction_g(a):
+        """泛化核方向探针: 任意 order(2=低次核/3=高次核) × ctype(point值/derivative导数)."""
+        rows = []
+        for ti in (a.get("positions") or [0.0, 0.97]):
+            d = _direction_metrics_g(order=int(a.get("order", 2)),
+                                     ctype=str(a.get("ctype", "point")),
+                                     ti=float(ti), system=int(a.get("system", 0)),
+                                     k=int(a.get("k", 1)),
+                                     seeds=int(a.get("seeds", 8)),
+                                     basis=int(a.get("basis", 12)))
+            rows.append({kk: d[kk] for kk in ("ti", "order", "ctype", "null_dim",
+                                              "dir_weights", "const_frac", "lin_frac",
+                                              "quad_frac", "sigmaH_full", "pred", "err")})
+        return json.dumps({"rows": rows}, ensure_ascii=False)
+
     return [
         {"tool": {"function": {"name": "probe_Cstar",
             "description": "固定N扫eps, 返回刚性/胖系统达到精度eps所需最小容量C*曲线(真实)",
@@ -807,6 +983,15 @@ def _diagnostic_tools():
                 "system": {"type": "integer"}, "k": {"type": "integer"},
                 "seeds": {"type": "integer"}, "basis": {"type": "integer"}},
                 "required": [], "additionalProperties": False}}}, "handle": h_probe_direction_curve},
+        {"tool": {"function": {"name": "probe_direction_g",
+            "description": "泛化核方向探针: order∈{2,3}(2=低次核span{1,t} / 3=高次核span{1,t,t^2}) × "
+                           "ctype∈{point,derivative}(值约束 u(t_i) / 导数约束 u'(t_i)) → 核方向权重/维度签名",
+            "parameters": {"type": "object", "properties": {
+                "order": {"type": "integer"}, "ctype": {"type": "string"},
+                "positions": {"type": "array", "items": {"type": "number"}},
+                "system": {"type": "integer"}, "k": {"type": "integer"},
+                "seeds": {"type": "integer"}, "basis": {"type": "integer"}},
+                "required": [], "additionalProperties": False}}}, "handle": h_probe_direction_g},
         {"tool": {"function": {"name": "probe_optimizer",
             "description": "真实PINN在给定宽度w与训练预算steps下的训练残差/留出误差vho(优化器财政审计)",
             "parameters": {"type": "object", "properties": {
@@ -878,15 +1063,17 @@ def _propose_scan_configs(client, model: str, next_open: str,
                     for c in (done_cfgs or [])) or "无"
     d = _ask_json(
         client, model,
-        "你是实验设计者。基于给定的开放问题, 从白名单 {system∈{0,1,2}(0=cos u''=-cos,"
-        "1=sin2t, 2=多项式), k∈{1,2}, positions∈[-0.97,-0.66,-0.33,0,0.33,0.66,0.97],"
-        " basis∈{8,12,16}, seeds∈{4,8,12}} 里设计最多3个互不重复的真实数值实验. "
-        "必须避开已经执行过的配置(它们不再提供新信息), 优先选择能直接检验开放问题的"
-        "未做配置(如开放问题提到'约束数量', 就设计 k=2 且 positions 含多个位置的实验; "
-        "提到'边界效应', 就设计 positions 含 ±0.97 或非对称组合; 提到'系统普适', 就覆盖 "
-        "三个 system). 已执行配置:\n" + done + "\n只输出 JSON: {\"configs\": "
-        '[{"system":0,"k":1,"positions":[0.0,0.97],"basis":12,"seeds":8}], '
-        '不含其他文字。}',
+        "你是实验设计者。基于给定的开放问题, 从白名单 {system∈{0,1,2}(0=cos, 1=sin2t, "
+        "2=多项式 u''=-(1-t^2)), k∈{1,2}, positions∈[-0.97,-0.66,-0.33,0,0.33,0.66,0.97], "
+        "basis∈{8,12,16}, seeds∈{4,8,12}, order∈{2,3}(2=低次核 span{1,t}; 3=高次核 "
+        "span{1,t,t²}), ctype∈{point,derivative}(值约束 u(t_i) / 导数约束 u'(t_i))} 里设计"
+        "最多3个互不重复的真实数值实验. 必须避开已经执行过的配置(它们不再提供新信息), "
+        "优先选择能直接检验开放问题的未做配置(如开放问题提到'约束数量', 就设计 k=2 且 "
+        "positions 含多个位置的实验; 提到'高阶/高次/三阶/核维', 就设计 order=3 且 positions "
+        "含 0.0 与 0.97; 提到'导数/梯度/混合约束', 就设计 ctype=derivative; 提到'系统普适', "
+        "就覆盖三个 system). 已执行配置:\n" + done + "\n只输出 JSON: {\"configs\": "
+        '[{"system":0,"k":1,"positions":[0.0,0.97],"basis":12,"seeds":8,'
+        '"order":2,"ctype":"point"}], 不含其他文字。}',
         f"下一轮开放问题:\n{next_open[:2500]}")
     cfgs = d.get("configs") or []
     ok = []
@@ -900,12 +1087,16 @@ def _pad_scan_configs(cfgs: list[dict], open_text: str) -> list[dict]:
     """兜底/补齐: 保证 ≥3 个配置, 并优先覆盖开放问题点名的未检维度.
 
     覆盖策略(全部真实, 不编造): 若开放问题提到约束数量 → 补 k=2 配置;
-    提到边界/ti=1.0 → 补含 ±0.97 的位置; 提到系统/普适 → 补 system 0/1/2 横扫.
+    提到高阶/高次/三阶/核维 → 补 order=3 配置; 提到导数/梯度 → 补 ctype=derivative;
+    提到边界/ti=1.0/位置 → 补 ±0.97·0.0 组合; 提到系统/普适 → 补 system 0/1/2 横扫.
     """
     out = list(cfgs)
     text = open_text or ""
     wants_k2 = ("约束数量" in text or "k=2" in text or "k=0" in text
                 or "约束阶" in text or "对照" in text)
+    wants_order3 = ("高阶" in text or "高次" in text or "三阶" in text
+                    or "核维" in text or "order" in text or "高阶核" in text)
+    wants_deriv = ("导数" in text or "梯度" in text or "混合约束" in text)
     wants_boundary = ("边界" in text or "ti=1.0" in text or "位置" in text
                       or "曲线" in text)
     wants_sys = ("系统" in text or "普适" in text)
@@ -915,6 +1106,16 @@ def _pad_scan_configs(cfgs: list[dict], open_text: str) -> list[dict]:
                      "basis": 12, "seeds": 8})
         cand.append({"system": 1, "k": 2, "positions": [0.0, 0.97],
                      "basis": 12, "seeds": 8})
+    if wants_order3:
+        cand.append({"system": 0, "k": 1, "positions": [0.0, 0.33, 0.66, 0.97],
+                     "basis": 12, "seeds": 8, "order": 3})
+        cand.append({"system": 2, "k": 2, "positions": [0.0, 0.97],
+                     "basis": 12, "seeds": 8, "order": 3})
+    if wants_deriv:
+        cand.append({"system": 0, "k": 1, "positions": [0.0, 0.66, 0.97],
+                     "basis": 12, "seeds": 8, "ctype": "derivative"})
+        cand.append({"system": 1, "k": 1, "positions": [0.0, 0.97],
+                     "basis": 12, "seeds": 8, "ctype": "derivative"})
     if wants_boundary:
         cand.append({"system": 0, "k": 1,
                      "positions": [-0.97, -0.66, -0.33, 0.0, 0.33, 0.66, 0.97],
@@ -925,6 +1126,8 @@ def _pad_scan_configs(cfgs: list[dict], open_text: str) -> list[dict]:
                          "basis": 12, "seeds": 8})
     cand.append({"system": 2, "k": 1, "positions": [0.0, 0.33, 0.66, 0.97],
                  "basis": 12, "seeds": 8})
+    cand.append({"system": 0, "k": 1, "positions": [0.0, 0.97],
+                 "basis": 12, "seeds": 8, "order": 3, "ctype": "derivative"})
     seen = set()
     for c in list(out) + cand:
         key = json.dumps(_sanitize_scan(c), sort_keys=True)
@@ -993,7 +1196,7 @@ def main() -> int:
             next_open = _extract_next_open(last_report)
             if client is not None:
                 qs = _propose_next_open(client, args.model, last_report)
-                next_open = next_open or " ".join(qs)
+                next_open = " ".join(x for x in (next_open, " ".join(qs)) if x)
                 if qs:
                     print(f"  [书生·观察] 下一轮开放问题: {qs}")
             if client is not None:
@@ -1012,7 +1215,12 @@ def main() -> int:
             print(f"  [书生·行动] 本轮扫描配置: {cfgs}")
             goal = (f"检验书生本轮提出的开放问题(数值证据由方向扫描分支提供): {next_open}")
             exps = _make_scan_experiments(cfgs)
-            objectives = {k: "maximize" for k in ("scan_fit", "scan_extent")}
+            # 分支指纹化 objective 键(与 exp_dir_scan 返回值一一对应, 全 maximize).
+            objectives = {}
+            for c in (_sanitize_scan(c) for c in cfgs):
+                sig = f"o{c['order']}_{c['ctype'][:3]}_{c['k']}_s{c['system']}"
+                objectives[f"scan_fit_{sig}"] = "maximize"
+                objectives[f"scan_extent_{sig}"] = "maximize"
 
         run_by_name = {e.name: e.run for e in exps}
         plan = _build_plan(goal, run_by_name, cycle)
