@@ -57,8 +57,9 @@ class ResearchOutcome:
     workspace_verified: bool | None = None             # (P2 遗存) C-Space 工作区门: 报告断言是否作为在场落地
     harness: dict | None = None                        # Self-Harness 六维报告(dict) — demo 一键出报告
     law_model_used: dict | None = None                 # (P2 遗存) 世界模型真用证据: predict 产物/是否参与决策 (真深思 D)
-    plan_revision: dict | None = None                  # (P2 遗存) 漏A: plan 修订门(新证据→显式复盘初始计划)审计
-    grounding_audit: dict | None = None                # (P2 遗存) 漏C: "得分≠使用"(高分存活项是否真进最终报告)审计
+    plan_revision: dict | None = None                # (P2 遗存) 漏A: plan 修订门(新证据→显式复盘初始计划)审计
+    grounding_audit: dict | None = None              # (P2 遗存) 漏C: "得分≠使用"(高分存活项是否真进最终报告)审计
+    judgment_hints: list = field(default_factory=list)  # 判断层·分级护栏: 本次注入的软提示(仅写进 prompt, 不参与 verify)
     consolidated: dict | None = None                   # 收敛聚合头(P1/P2): 现有治理头统一注册后的收敛视图.
                                                        # P3 起为唯一治理出口 —— 新视角只许在此注册, 不再加 out.* 字段.
 
@@ -218,6 +219,9 @@ def run_research_program(
     early_stop_margin: float = _EARLY_STOP_MARGIN,      # A1: P-C 分数高原容差
     prior: dict | None = None,                      # A2: 跨 run 稳定度先验(prior_store.extract_prior 产物).
                                                     # 只保守调整早停预算参数(min_layers 单调不减), 绝不参与实验.
+    strictness: int = 0,                        # 判断层·分级护栏: 0=只真伪硬门禁(信任模型, 零变化);
+                                                # 1=最小软提示(候选自变量对照确认); 2=完整软提示(量纲/不确定度).
+                                                # 仅追加进成文 prompt, 不参与 verify —— 强模型不受锁.
 ) -> ResearchOutcome:
     """跑一条完整深研管线并返回结果."""
     from huginn.exploration.orchestrator import ExplorationOrchestrator
@@ -601,6 +605,16 @@ def run_research_program(
         if tool_schemas:
             prompt += ("\n可自主调用的域诊断工具(结果作为可证伪证据进报告): "
                        + ", ".join(t["function"]["name"] for t in tool_schemas) + "。")
+        # 判断层·分级护栏: 只追加进 prompt (软提示), 不参与 verify —— 强模型不受锁.
+        # strictness=0 → 空串, 零行为变化(默认信任模型推理).
+        if strictness > 0:
+            from huginn.research.judgment_guardrail import hint_block
+            _hs_block = hint_block(str(goal), trace=trace, survivors=survivors,
+                                   strictness=int(strictness))
+            if _hs_block:
+                prompt += "\n" + _hs_block
+                out.judgment_hints = [
+                    h for h in _hs_block.split("\n") if h.startswith("- ")]
 
         def _one_attempt(msgs):
             for _round in range(4):

@@ -273,6 +273,8 @@ def main() -> int:
     ap.add_argument("--base-url", default=None)
     ap.add_argument("--max-iters", type=int, default=12)
     ap.add_argument("--min-iters", type=int, default=3)
+    ap.add_argument("--strictness", type=int, default=0, choices=[0, 1, 2],
+                    help="判断层·分级护栏 0/1/2(默认0=纯真伪硬门禁, 信任模型)")
     args = ap.parse_args()
 
     from huginn.research import run_research_program, grounding_verifier
@@ -312,6 +314,7 @@ def main() -> int:
         max_iterations=args.max_iters,
         min_iterations=args.min_iters,
         max_parallel=2,
+        strictness=args.strictness,       # 判断层·分级护栏(默认0=零提示, 不强锁模型)
     )
 
     print("\n[program] explored=%d pruned=%d pareto_front=%d convergence=%s mutations=%d"
@@ -319,6 +322,7 @@ def main() -> int:
     for b in out.pareto_front:
         print(f"  surv -> {b['name']}")
     print(f"[gate] {out.verdict} unsubstantiated={out.ungrounded} source={out.report_source}")
+    print(f"[护栏] strictness={args.strictness} 判断层软提示 ×{len(out.judgment_hints or [])}")
     if out.consolidated:
         _c = out.consolidated
         print(f"[P-A layers_covered] {_c.get('epochs')}  stream_view_sections={len(_c.get('stream_view') or [])}")
