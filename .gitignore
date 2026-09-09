@@ -239,6 +239,12 @@ _long_task_results.json
 *_report.md
 agents-cli-analysis/
 
+# 长程科研产物长期保留(白名单): 书生×Huginn 自主循环的 cycle{}.md 报告/经验沉淀,
+# 需跨环境持久化并在 git 中归档, 不被上面的 *_report.md 规则排除.
+/research_outputs/
+!research_outputs/
+!research_outputs/**
+
 # Screenshots from UI / e2e runs
 screenshot_*.png
 test.png

@@ -48,7 +48,9 @@ _AGENT = Path(__file__).resolve().parents[1] / "agent"
 if str(_AGENT) not in sys.path:
     sys.path.insert(0, str(_AGENT))
 
-_OUT = Path(__file__).resolve().parent / "out" / "shusheng_huginn_workflow"
+# 产物持久化: 不写 examples/out(运行时目录, 环境重置即丢), 写项目根 research_outputs/
+# (git 白名单跟踪, 支持报表长期保留与跨环境恢复).
+_OUT = Path(__file__).resolve().parents[1] / "research_outputs" / "shusheng_huginn_workflow"
 _OUT.mkdir(parents=True, exist_ok=True)
 
 GOAL = (
