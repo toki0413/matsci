@@ -40,6 +40,7 @@ import os
 import re
 import sys
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -1139,6 +1140,94 @@ def _pad_scan_configs(cfgs: list[dict], open_text: str) -> list[dict]:
     return out[:3]
 
 
+# ── Code Lab: 书生亲手写实验代码(受限代码面, 沙箱真实执行) ────────────────
+_AUTHOR_CFG = {"order": 2, "ctype": "point", "system": 0, "k": 1,
+               "positions": [0.0, 0.33, 0.97], "basis": 12, "seeds": 8}
+_AUTHOR_TEMPLATE = (
+    "import numpy as np\n"
+    "def run(cfg):\n"
+    "    # cfg 含 order/ctype/system/k/positions/basis/seeds.\n"
+    "    # 用 np 做真实数值计算, 禁止 IO/网络; 返回 {success, summary, objectives}.\n"
+    "    n = 256; mesh = np.linspace(-1, 1, n)\n"
+    "    # ... 你的真实实验逻辑 ...\n"
+    "    return {\"success\": True,\n"
+    "            \"summary\": {\"computed\": True},\n"
+    "            \"objectives\": {\"author_score\": 0.0}}\n"
+    "def probe_author_probe(cfg):\n"
+    "    return {\"note\": \"可选诊断探针; 成文期可自主调用\"}"
+)
+
+
+def _try_author_code(client, model: str, next_open: str, cycle: int):
+    """书生亲手写本轮实验代码 → Code Lab 沙箱试跑校验.
+
+    返回值: (experiment|None, probe_specs|list, objectives_keys|list, err|str):
+      - 成功: Experiment 分支(每次执行走沙箱真实重跑) + 注册的探针面 + 试跑 objectives 键;
+      - 失败: (None, [], [], 原因) —— 主循环回退白名单扫描, 不伪造.
+    """
+    from huginn.research.code_lab import (
+        author_probe_specs,
+        extract_code,
+        sandbox_run,
+    )
+    from huginn.research import Experiment
+
+    def _ask_code(extra_ctx: str = "") -> str:
+        r = client.chat.completions.create(
+            model=model, max_tokens=6000, temperature=0.2,
+            extra_body={"thinking_mode": False},     # 关思考流, 防止模板引用混入提取
+            messages=[{"role": "user",
+                       "content": ("你是实验代码作者。基于开放问题, 用一个纯 numpy 的短函数 "
+                                   "run(cfg) 做真实数值实验, 不能 IO/网络。签名与返回格式照抄模板"
+                                   "(替换注释处逻辑), 只实现 <=25 行核心计算: 不要 try/except、"
+                                   "不要 class、不要嵌套函数、不要写教学注释; 单行不超过 88 字符;"
+                                   "每个 for/if/def 后紧跟缩进 4 空格; 结尾 return 必须存在。"
+                                   "模板:\n" + _AUTHOR_TEMPLATE +
+                                   "\nrun(cfg) 的 objectives 返回判别指标(数值, 越大越支持你要"
+                                   "验证的机制); summary 放可证伪中间量。可额外写 1 个 probe_<name>"
+                                   "(cfg)。只输出 <code>...</code> 内的**完整可用代码**, 不要截断、"
+                                   "不要多余文字。\n" + extra_ctx +
+                                   "\n\n本轮开放问题:\n" + next_open[:1200])}])
+        return extract_code(r.choices[0].message.content or "")
+
+    try:
+        code = _ask_code()
+    except Exception:  # noqa: BLE001 — 写码调用失败即回退白名单
+        return None, [], [], "书生写码调用失败"
+    if not code.strip():
+        return None, [], [], "书生未输出可解析的 <code> 块"
+    res, reason = sandbox_run(code, dict(_AUTHOR_CFG))
+    # 语法/运行修复回路: 把沙箱错误反馈给书生, 最多修 2 次(修复后仍须凭真实执行通过).
+    for _attempt in range(2):
+        if reason is None:
+            break
+        try:
+            fixed = _ask_code(extra_ctx=(
+                f"你上次的代码没通过校验, 错误:\n{reason}\n"
+                f"请只修正错误, 重输出 <code>...</code> 完整代码, 保持短小。"))
+        except Exception:  # noqa: BLE001
+            break
+        if not fixed.strip() or fixed == code:
+            break
+        code = fixed
+        res, reason = sandbox_run(code, dict(_AUTHOR_CFG))
+    if reason or res is None:
+        return None, [], [], f"CodeLab 校验失败: {reason}"
+    name = f"author_c{cycle}"
+    exp = Experiment(
+        name=name,
+        hypothesis=(f"书生亲手编写的实验代码(Code Lab): 基于开放问题 '{next_open[:60]}' "
+                    f"自研数值实验, 沙箱真实执行, 数值进 trace 过门禁."),
+        run=lambda cc=code, cg=dict(_AUTHOR_CFG): sandbox_run(cc, cg)[0] or {
+            "success": False, "summary": {"error": "author run failed"}, "objectives": {}},
+    )
+    probes = author_probe_specs(code)
+    obj_keys = sorted(res["objectives"])
+    print(f"  [书生成码] 分支 {name} 校验通过, 探针 ×{len(probes)}, "
+          f"objectives_keys={obj_keys}")
+    return exp, probes, obj_keys, ""
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--dry", action="store_true", help="确定性运行(不调模型), 验证整条管线")
@@ -1199,6 +1288,15 @@ def main() -> int:
                 next_open = " ".join(x for x in (next_open, " ".join(qs)) if x)
                 if qs:
                     print(f"  [书生·观察] 下一轮开放问题: {qs}")
+            # Code Lab: 书生亲手写本轮实验代码(每轮自动尝试, 失败回退白名单).
+            author_exp: Any = None
+            author_probes: list = []
+            author_obj_keys: list = []
+            if client is not None:
+                author_exp, author_probes, author_obj_keys, author_err = \
+                    _try_author_code(client, args.model, next_open, cycle)
+                if author_exp is None:
+                    print(f"  [书生成码] 未通过, 回退白名单扫描: {author_err}")
             if client is not None:
                 cand = _propose_scan_configs(client, args.model, next_open, done_cfgs)
             else:
@@ -1208,23 +1306,32 @@ def main() -> int:
                      if json.dumps(_sanitize_scan(c), sort_keys=True)
                      not in {json.dumps(_sanitize_scan(d), sort_keys=True)
                              for d in done_cfgs}]
-            need = max(0, 3 - len(fresh))
+            need = max(0, 3 - (1 if author_exp is not None else 0) - len(fresh))
             cfgs = fresh + [c for c in cfgs if c not in fresh][:need]
             for c in cfgs:
                 done_cfgs.append(_sanitize_scan(c))
-            print(f"  [书生·行动] 本轮扫描配置: {cfgs}")
-            goal = (f"检验书生本轮提出的开放问题(数值证据由方向扫描分支提供): {next_open}")
-            exps = _make_scan_experiments(cfgs)
+            if author_exp is not None:
+                exps = [author_exp] + _make_scan_experiments(cfgs)
+            else:
+                exps = _make_scan_experiments(cfgs)
             # 分支指纹化 objective 键(与 exp_dir_scan 返回值一一对应, 全 maximize).
             objectives = {}
             for c in (_sanitize_scan(c) for c in cfgs):
                 sig = f"o{c['order']}_{c['ctype'][:3]}_{c['k']}_s{c['system']}"
                 objectives[f"scan_fit_{sig}"] = "maximize"
                 objectives[f"scan_extent_{sig}"] = "maximize"
+            if author_exp is not None:
+                for _k in author_obj_keys:
+                    objectives[_k] = "maximize"
+            print(f"  [书生·行动] 本轮扫描配置: {cfgs}")
+            goal = (f"检验书生本轮提出的开放问题(数值证据由方向扫描+书生成码分支提供): "
+                    f"{next_open}")
+            diagnostics = _diagnostic_tools() + author_probes
 
         run_by_name = {e.name: e.run for e in exps}
         plan = _build_plan(goal, run_by_name, cycle)
         report_md = _report_for(cycle)
+        diagnostics = locals().get("diagnostics") or _diagnostic_tools()  # cycle1/2 无 author 探针
         print(f"goal: {goal[:120]}...")
         print(f"experiments: {[e.name for e in exps]}  layers: {plan.layers} "
               f"topo: {plan.topo_order}")
@@ -1242,7 +1349,7 @@ def main() -> int:
             layer_epochs=True,                # P-A: 分层流式结算
             replan_gate=True,                 # P-B: 层间重规划门
             early_stop_gate=True,             # P-C: 证据驱动提前终止门
-            diagnostic_tools=_diagnostic_tools(),
+            diagnostic_tools=diagnostics,     # 含书生成码注册的自定义探针(有则给)
             max_iterations=args.max_iters,
             min_iterations=min(args.min_iters, max(1, len(exps) - 1)),
             max_parallel=2,
