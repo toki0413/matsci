@@ -813,6 +813,28 @@ def exp_monotonicity_plan() -> list:
     ]
 
 
+# 第 31 轮密集采样: 19 点连续位置 × 5 档 basis(审稿副体与书生均点名要的补证据).
+_DENSE_POSITIONS = tuple(round(float(x), 2) for x in np.linspace(-0.95, 0.95, 19))
+_DENSE_BASES = (4, 8, 12, 16, 20)
+
+
+def exp_monotonicity_plan_dense() -> list:
+    """第 31 轮专项: 19 点连续单调性 + basis∈{4,20} 扩展(system0/1)."""
+    from huginn.research import Experiment
+    return [
+        Experiment("X14_mono19_s0",
+                   "高密度对照 基准(system0): 19 点连续位置 × basis{4,8,12,16,20}, "
+                   "检验 lin_frac 逐点连续单调(无 tie), 并把 basis 范围扩到 4/20",
+                   run=lambda: exp_monotonicity_basis(
+                       system=0, positions=_DENSE_POSITIONS, bases=_DENSE_BASES)),
+        Experiment("X14_mono19_s1",
+                   "高密度对照 挑战(system1): σH 反向单调是否在所有 basis 恒成立, "
+                   "τ_σH 的 basis 漂移(第30轮 -0.62→-0.24)在高密度下是否再现",
+                   run=lambda: exp_monotonicity_basis(
+                       system=1, positions=_DENSE_POSITIONS, bases=_DENSE_BASES)),
+    ]
+
+
 def _make_experiments(cycle: int = 1):
     """按轮次返回真实证据分支 → Experiment 列表.
 
@@ -864,6 +886,9 @@ def _make_experiments(cycle: int = 1):
 
     if cycle == 30:
         return exp_monotonicity_plan()
+
+    if cycle == 31:
+        return exp_monotonicity_plan_dense()
 
     raise ValueError(f"cycle={cycle} 无内置实验; cycle>=3 应走 _make_scan_experiments")
 
@@ -940,6 +965,14 @@ def _build_plan(goal: str, run_by_name: dict, cycle: int = 1):
             SubResearch("X13_mono_basis_s1", "挑战(system1): σH 非单调? 单调律仍立?",
                         run=run_by_name["X13_mono_basis_s1"],
                         depends_on=["X13_mono_basis_s0"]),
+        ], parallel_cap=3)
+    if cycle == 31:
+        return build_research_plan(goal, [
+            SubResearch("X14_mono19_s0", "高密度对照 基准(system0): 19点×basis{4,20}",
+                        run=run_by_name["X14_mono19_s0"], depends_on=[]),
+            SubResearch("X14_mono19_s1", "高密度对照 挑战(system1): σH 反向单调+basis漂移",
+                        run=run_by_name["X14_mono19_s1"],
+                        depends_on=["X14_mono19_s0"]),
         ], parallel_cap=3)
     names = list(run_by_name.keys())
     return build_research_plan(goal, [
@@ -1394,6 +1427,14 @@ def main() -> int:
                     f"① lin_frac 随 |t_i| 单调律(τ≈-1, 理论 1/(1+t_i²))在 system0/1 是否成立; "
                     f"② σH(t_i) 是否 system1 非单调(第3轮疑似中心σH>边界) —— 真实判读, 不做预设.")
             exps = _make_experiments(30)
+            objectives = {k: "maximize" for k in
+                          ("mono_lin_0", "basis_stab_0", "mono_lin_1", "basis_stab_1")}
+        elif cycle == 31:
+            goal = (f"执行第31轮高密度对照(审稿副体与书生共同点名): 19 点连续位置"
+                    f"× basis∈{{4,8,12,16,20}}, 钉死两个问题: ① lin_frac 逐点连续单调律"
+                    f"(无 tie)在 system0/1 是否严格成立且 basis 无关; ② σH 反向单调与"
+                    f"τ_σH 的 basis 漂移在第30轮高密度采样下是否再现/收敛.")
+            exps = _make_experiments(31)
             objectives = {k: "maximize" for k in
                           ("mono_lin_0", "basis_stab_0", "mono_lin_1", "basis_stab_1")}
         else:
