@@ -604,11 +604,18 @@ def run_research_program(
 
         def _one_attempt(msgs):
             for _round in range(4):
-                r = client.chat.completions.create(model=model, messages=msgs,
-                                                   tools=tool_schemas or None,
-                                                   tool_choice="auto" if tool_schemas else None,
-                                                   max_tokens=4000, temperature=0.2)
-                msg = r.choices[0].message
+                try:
+                    r = client.chat.completions.create(model=model, messages=msgs,
+                                                       tools=tool_schemas or None,
+                                                       tool_choice="auto" if tool_schemas else None,
+                                                       max_tokens=4000, temperature=0.2,
+                                                       extra_body={"thinking_mode": False})
+                    msg = r.choices[0].message
+                except Exception as ee:
+                    # Client API 调用失败（权限/网络/base-url 错） → 记 trace 并进下一轮
+                    trace.append(json.dumps({"error": f"client.chat.completions.create: {ee}"},
+                                         ensure_ascii=False))
+                    return ""
                 calls = msg.tool_calls or []
                 if not calls:
                     return msg.content or ""
@@ -642,20 +649,37 @@ def run_research_program(
                     msgs += [{"role": "assistant", "content": msg.content or "",
                               "tool_calls": [tc.model_dump()]},
                              {"role": "tool", "tool_call_id": tc.id, "content": _message}]
+            # 工具轮结束后若仍无正文(如模型一路调工具未收尾), 强制一次"只写报告"调用,
+            # 避免返回空 content → 门禁因空报告打回 → 白白兜底.
+            if not (msg.content or "").strip():
+                try:
+                    rr = client.chat.completions.create(
+                        model=model,
+                        messages=msgs + [{"role": "user",
+                                          "content": "不要再调用工具。基于轨迹里的真实数值, "
+                                                     "现在直接撰写完整研究报告, 把正文放在 "
+                                                     "<report> 与 </report> 之间。"}],
+                        max_tokens=4000, temperature=0.2)
+                    return rr.choices[0].message.content or ""
+                except Exception as ee:  # noqa: BLE001 — 兜底成文失败如实返回空
+                    trace.append(json.dumps({"error": f"final write: {ee}"},
+                                             ensure_ascii=False))
+                    return ""
             return msg.content or ""
 
         msgs = [{"role": "user", "content": prompt}]
-        for _ in range(3):
+        for _i in range(3):
             final = _one_attempt(msgs).strip()
             m = re.search(r"<report>(.*?)</report>", final, flags=re.DOTALL | re.IGNORECASE)
             if m:
                 final = m.group(1).strip()
             g = verify(final, trace)
             if g["verdict"] == "pass" and len(final.strip()) > 200:
-                verdict, ungrounded = "pass", []; break
+                verdict, ungrounded = "pass", []; out.report_source = "agent"; break
             ungrounded = g["unsubstantiated"]
             msgs = [{"role": "user",
                      "content": f"未交付(未落地:{ungrounded})。请只用真实证据重写:\n" + prompt}]
+            out.report_source = "agent(retry)"
         else:
             final = _synthesize()      # L3b 兜底组装, 必过门禁
             out.report_source = "fallback_assembly(agent failed)"
