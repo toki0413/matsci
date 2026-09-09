@@ -591,15 +591,20 @@ def _propose_next_open(client, model: str, report_text: str) -> list[str]:
     m = re.search(r"对立审稿\(CriticAgent\)(.*)", report_text or "", flags=re.DOTALL)
     if m:
         critique = m.group(1)[:2000]
-    d = _ask_json(
-        client, model,
+    sys = (
         "你是断裂力学长程科研规划者。基于前一周期报告与审稿副体意见, 提出下一周期"
         f"最值得攻克的开放问题。要求: 每条必须能被白名单真实数值实验 {_WHITELIST_DESC} "
         "检验, 指向具体可证伪预言(如: 'ν 变大时声学缺口减小到什么量级?'; "
         "'桥联增益在 σ0/σy>0.7 是否饱和?'); 每条一句。"
-        '只输出 JSON: {"open_questions": ["q1","q2"]}, 不含其他文字。',
-        f"上一周期报告:\n{report_text[:6000]}\n\n"
-        f"审稿副体意见:\n{critique or '(无)'}")
+        '只输出 JSON: {"open_questions": ["q1","q2"]}, 不含其他文字。'
+    )
+    user = f"上一周期报告:\n{report_text[:6000]}\n\n审稿副体意见:\n{critique or '(无)'}"
+    # 端到端闭合(断点 B): 先召回已沉淀的品味启发式, 注入下一轮发问 —— 让问题从品味长出.
+    recalled = _recall_taste("下一轮值得研究的前沿问题, 用已沉淀的提出机制/发问品味来生成本土问题")
+    if recalled:
+        user += (f"\n\n【可复用参考 · 全局知识库召回的研究品味】\n{recalled}\n"
+                 "可吸收其发问模式, 但下一轮问题必须落在断裂白名单可验证、且不重复已有结论。")
+    d = _ask_json(client, model, sys, user)
     qs = [str(q).strip() for q in (d.get("open_questions") or []) if str(q).strip()]
     return qs[:3]
 
@@ -764,6 +769,50 @@ def _sync_llm_create(client, model: str):
     return _call
 
 
+def _ensure_kb_embedding_available() -> None:
+    """KB embedding 可用性守卫: 无 sentence-transformers/torch 时走内置确定性向量兜底.
+
+    端到端闭环不因缺重依赖而断: 维度统一回退 384(与 _resolve_embedding_dim 一致),
+    蒸馏→全局RAG→召回→注入 离线可信。生产装真语义模型后此守卫自动让位(_st 加载成功),
+    此处仅设置设计内置的降级开关, 不重造任何东西。
+    """
+    try:
+        from huginn.knowledge.store import _EmbeddingModel
+        try:
+            import sentence_transformers  # noqa: F401 — 有真语义模型就用
+        except Exception:  # noqa: BLE001
+            _EmbeddingModel._st_failed = True
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _recall_taste(q: str = "如何提出值得研究的前沿问题", top_k: int = 4) -> str:
+    """从全局知识库(RAG)召回已蒸馏的【研究品味/提出机制】启发式, 注入书生问题生成.
+
+    端到端原生于 Huginn: 品味经 auto_ingest_to_kb 落入 RAG → query(text) 混合检索
+    (向量+BM25)召回 → 作为系统段注入后续发问 prompt。任何一步失败/无知识 → 优雅降级空串,
+    绝不阻断主线。
+    """
+    _ensure_kb_embedding_available()
+    try:
+        from huginn.knowledge.store import get_knowledge_base
+        kb = get_knowledge_base(".")
+        hits = kb.query(q, top_k=max(top_k * 2, 8), domain="未分类")  # 跳开挖领域语料, 只取蒸馏域
+    except Exception as ee:  # noqa: BLE001 — KB 未初始化/超时均优雅降级
+        print(f"  [taste-recall] 召回失败(降级空): {type(ee).__name__}")
+        return ""
+    # 优先保住从 distill 进入的品味条目(source=distilled_knowledge), 其余作兜底.
+    preferred = [c for c in (hits or [])
+                 if ((c.get("metadata") or {}).get("source") == "distilled_knowledge")]
+    pool = preferred or (hits or [])
+    lines = []
+    for c in pool[:top_k]:
+        t = (c.get("text") or "").strip()
+        if t and t not in lines:
+            lines.append(f"- {t[:240]}")
+    return "\n".join(lines) if lines else ""
+
+
 def _distill_research_taste(client, model: str, goal: str) -> dict:
     """书生反身阅读: 每个问题是如何被提出的 + 提炼可迁移的发问品味 + 自生成新问题.
 
@@ -786,6 +835,11 @@ def _distill_research_taste(client, model: str, goal: str) -> dict:
         "new_questions 每条 <300 字, 不含其他文字。"
     )
     user = f"{evidence}\n\n目标(供对齐节律): {goal[:600]}"
+    # 端到端闭合(断点 B): 先召回已沉淀的品味记忆, 注入本次反身 —— 新品味从旧品味长出.
+    recalled = _recall_taste("如何提出值得研究的前沿问题: 理想化假设失效/跨域类比/新使能工具")
+    if recalled:
+        user += (f"\n\n【可复用参考 · 全局知识库召回的研究品味】\n{recalled}\n"
+                 "(可吸收其模式, 但必须给出新的机制/新问题, 不要复读已有结论)")
     d = _ask_json(client, model, sys, user, max_tokens=2000)
     if not (d.get("mechanisms") and d.get("taste_patterns")):
         return {"mechanisms": [], "taste_patterns": [], "new_questions": [],
@@ -816,14 +870,19 @@ def _persist_taste(taste: dict, client, model: str, out_dir: Path) -> Path:
     path.write_text("\n".join(md), encoding="utf-8")
     # 原生知识蒸馏: 把品味作为一个可 RAG 检索的语义来源沉淀(无 LLM 契约/超时均优雅降级).
     try:
+        _ensure_kb_embedding_available()
         from huginn.evolution.knowledge_distiller import KnowledgeDistiller
         kd = KnowledgeDistiller(output_dir=str(out_dir / "knowledge"))
-        kd.distill_semantic_source(
+        new = kd.distill_semantic_source(
             "\n".join(md), source_url="https://doi.org/10.1007/s10704-025-00907-6",
             source="review_taste", source_type="research_taste",
             domain_hint="fracture mechanics, research methodology", llm=_sync_llm_create(client, model))
-    except Exception as ee:  # noqa: BLE001 — 蒸馏失败不阻断主流程(品味 md 已是主产物)
-        print(f"  [taste] 知识蒸馏失败(不影响分析产物): {ee}")
+        # 端到端闭合(断点 A): 蒸馏条目经 auto_ingest_to_kb 提升进全局 RAG 知识库,
+        # 后续 _recall_taste 才能召回到 —— 让品味真正可被书生在发问时检索.
+        n_ingested = kd.auto_ingest_to_kb() or 0
+        print(f"  [taste] 蒸馏新条目 {len(new)} 条, 提升进全局 RAG {n_ingested} 条")
+    except Exception as ee:  # noqa: BLE001 — 蒸馏/提升失败不阻断主流程(品味 md 已是主产物)
+        print(f"  [taste] 知识蒸馏/提升失败(不影响分析产物): {ee}")
     return path
 
 # ═══════════════════════════════ 计划与主循环 ═══════════════════════════════
