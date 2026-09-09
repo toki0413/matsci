@@ -44,11 +44,15 @@ def extract_code(text: str) -> str:
         blocks.append(m.group(1).strip())
     i = text.find("def run(")                      # 裸函数体兜底
     if i >= 0:
-        blocks.append(text[i:].strip())
+        raw = text[i:].strip()
+        fence = raw.find("```")                    # 截断尾部栅栏/后附叙述, 只留代码
+        if fence >= 0:
+            raw = raw[:fence].rstrip()
+        blocks.insert(0, raw)                      # 放最前: 倒序扫描时最后才兜底, 干净块优先
     for b in reversed(blocks):                     # 后→前, 避开思考流里的模板引用
-        if "def run(" in b and "return" in b:
+        if "def run(" in b and "return" in b and "```" not in b:
             return b
-    return blocks[-1] if blocks else ""
+    return blocks[0] if blocks else ""
 
 
 def _to_py(v: Any) -> Any:
@@ -103,19 +107,38 @@ def _load_namespace(code: str, mem_cap: int = SAFE_MEM_CAP) -> dict:
 
 def _check_run_schema(res: Any) -> str | None:
     """run() 返回 schema 校验; 通过返回 None, 否则返回原因."""
+    import numpy as np
     if not isinstance(res, dict):
         return "run(cfg) 必须返回 dict"
-    if not isinstance(res.get("success"), bool):
-        return "需要 bool 字段 success"
+    if not isinstance(res.get("success"), (bool, np.bool_)):
+        return "需要 bool 字段 success (数值比较结果需显式 bool() 或依 numpy 标量)"
     if not isinstance(res.get("summary"), dict):
         return "需要 dict 字段 summary (可证伪数值轨迹)"
     obj = res.get("objectives")
     if not isinstance(obj, dict) or not obj:
         return "需要非空 dict 字段 objectives (每个值须为数值)"
     for _, v in obj.items():
-        if not isinstance(v, (int, float)):
+        if not isinstance(v, (int, float, np.number)):
             return f"objectives 值须为数值: {v!r}"
     return None
+
+
+def _alias_cfg(cfg: dict) -> dict:
+    """给书生代码一个宽容的 cfg 视图: 常用别名键补齐(值是同一份真实配置的引用).
+
+    书生习惯用领域术语 ti / t_i / t 称呼约束位置, 框架键名是 positions;
+    seeds 也可能写成 n_seeds. 补齐后代码可自由选键, 数值源不变(仍为真实配置).
+    只做键别名, 绝不引入新数值 —— 诚实红线不变.
+    """
+    out: dict = dict(cfg or {})
+    positions = out.get("positions")
+    if positions:
+        out.setdefault("ti", positions[0] if len(positions) == 1 else positions)
+        out.setdefault("t_i", out["ti"])
+        out.setdefault("t", positions[0] if len(positions) == 1 else positions)
+    out.setdefault("n_seeds", out.get("seeds"))
+    out.setdefault("basis_size", out.get("basis"))
+    return out
 
 
 def sandbox_run(code: str, cfg: dict, *, mem_cap: int = SAFE_MEM_CAP,
@@ -123,6 +146,7 @@ def sandbox_run(code: str, cfg: dict, *, mem_cap: int = SAFE_MEM_CAP,
     """执行书生写的实验代码: 返回 (结果 dict 或 None, 错误原因或 None)."""
     if not code.strip():
         return None, "空代码"
+    cfg = _alias_cfg(cfg)
     try:
         ns = _load_namespace(code, mem_cap)
         run_fn = ns.get("run")

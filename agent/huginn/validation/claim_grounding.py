@@ -63,9 +63,27 @@ def _strip_num_markers(text: str) -> str:
     return "\n".join(lines)
 
 
+def _strip_ordinal_markers(text: str) -> str:
+    """剔除『轮次/周期编号』型数字 (第238轮 / cycle 242 / 轮次 12 / 第 N 轮).
+
+    长程自主管线每轮报告常带轮次编号, 是编排索引而非统计主张;
+    与 `_strip_num_markers` 的小节号剔除同哲学 —— 不锁真实数值主张.
+    """
+    import re as _re
+    s = _re.sub(r"第\s*\d+\s*轮", "", text or "")
+    s = _re.sub(r"cycle\s*\d+", "", s, flags=_re.IGNORECASE)
+    s = _re.sub(r"轮次\s*\d+", "", s)
+    # 实验分支名 author_c{cycle} / author_cNNN: 命名标识符, 不是统计主张.
+    # (trace 只含结果值, 不含实验名 → 否则兜底报告里分支名必被判未落地.)
+    s = _re.sub(r"\bauthor_c\d+\b", "", s)
+    s = _re.sub(r"\bS\d+_scan\b", "", s)
+    return s
+
+
 def extract_numeric_claims(text: str) -> list[float]:
     """从报告 prose 中抽出"候选主张数值" (统计量/坐标等, 桥掉无意义小整数)."""
     text = _strip_num_markers(text)   # 去小节号等编号型数字
+    text = _strip_ordinal_markers(text)   # 去轮次编号等编排索引
     out: list[float] = []
     for m in _NUM.findall(text or ""):
         c = _canon(m)

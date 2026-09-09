@@ -84,9 +84,10 @@ _OBJECTIVES_CYCLE2 = {k: "maximize" for k in KERNEL_OBJ}
 SCAN_OPS = {
     "system": [0, 1, 2],                    # 0=cos, 1=sin2t, 2=多项式
     "k": [1, 2],                            # 约束数
-    "positions": [0.0, 0.33, 0.66, 0.97, -0.33, -0.66, -0.97],
-    "basis": [8, 12, 16],
-    "seeds": [4, 8, 12],
+    "positions": [0.0, 0.1, 0.2, 0.33, 0.4, 0.5, 0.66, 0.8, 0.97, 1.5, 2.0, -0.1, -0.2, -0.33, -0.4, -0.5, -0.66, -0.8, -0.97],
+    # 1.5/2.0: 第225-226轮书生请求 t_i>1 外推验证未遂, 扩展供其验证位置定律外推
+    "basis": [4, 8, 12, 16, 20, 24, 32],   # 第53轮书生请求4/20未遂, 扩展供其basis收敛检验
+    "seeds": [4, 8, 12, 16, 24, 32, 50],   # 第37轮书生请求50未遂(白名单外), 扩展供其自主统计验证
     "order": [2, 3],                        # ODE 阶数(2=低次核, 3=高次核)
     "ctype": ["point", "derivative"],       # 约束类型(值/导数)
 }
@@ -700,7 +701,10 @@ def exp_dir_scan(cfg: dict, name: str) -> dict:
     """
     cfg = _sanitize_scan(cfg)
     ti_map = {"0.0": 0.0, "0.33": 0.33, "0.66": 0.66, "0.97": 0.97,
-              "-0.33": -0.33, "-0.66": -0.66, "-0.97": -0.97}
+              "-0.33": -0.33, "-0.66": -0.66, "-0.97": -0.97,
+              "0.1": 0.1, "0.2": 0.2, "0.4": 0.4, "0.5": 0.5, "0.8": 0.8,
+              "-0.1": -0.1, "-0.2": -0.2, "-0.4": -0.4, "-0.5": -0.5, "-0.8": -0.8,
+              "1.5": 1.5, "2.0": 2.0}
     rows = []
     for ti in [ti_map[str(p)] for p in cfg["positions"]]:
         d = _direction_metrics_g(order=cfg["order"], ctype=cfg["ctype"], ti=ti,
@@ -937,6 +941,14 @@ def exp_basis_ext_plan() -> list:
                    "(回应 CriticAgent: 5档basis离散采样不足以证收敛)",
                    run=lambda: exp_seed_stab()),
     ]
+
+
+def _make_seed_stab_experiment():
+    """X15 · 种子稳定性实验(第 32 轮被 P-C 早停, 后续轮次补跑, 不跳票)."""
+    from huginn.research import Experiment
+    return Experiment("X15_seed_stab",
+                      "补跑第32轮被P-C早停: seeds∈{4,8,16} 下 σH 曲线与 τ_σH 的统计稳定性",
+                      run=exp_seed_stab)
 
 
 def _make_experiments(cycle: int = 1):
@@ -1282,15 +1294,28 @@ def _ask_json(client, model: str, system: str, user: str, max_tokens: int = 900)
 
 
 def _propose_next_open(client, model: str, report_text: str) -> list[str]:
-    """书生[观察]: 读上一轮报告, 提出下一轮最重要的开放问题(3 条以内)."""
+    """书生[观察]: 读上一轮报告, 提出下一轮最重要的开放问题(3 条以内).
+
+    把上一轮 CriticAgent 审稿副体的意见(报告尾部「对立审稿」段)一并输入 ——
+    多智能体闭环: 副体指出的"未做对照却说主导"等批评必须成为下一轮规划输入,
+    否则主研究员会反复签发同强度结论(第 33-35 轮已观察到循环).
+    """
+    critique = ""
+    m = re.search(r"对立审稿\(CriticAgent\)(.*)", report_text or "", flags=re.DOTALL)
+    if m:
+        critique = m.group(1)[:2000]
     d = _ask_json(
         client, model,
-        "你是长程科研规划者。基于前一周期报告, 提出下一周期最值得攻克的开放问题。"
-        "要求: 问题必须能被 {零空间方向分解:{system∈[0,1,2], k∈[1,2], positions∈"
-        "[-0.97,-0.66,-0.33,0,0.33,0.66,0.97], basis∈[8,12,16], seeds∈[4,8,12]}} "
-        "这类真实数值实验检验; 每条一句, 指向具体可证伪预言。只输出 JSON, 格式: "
+        "你是长程科研规划者。基于前一周期报告与其审稿副体的意见, 提出下一周期"
+        "最值得攻克的开放问题。要求: 问题必须能被 {零空间方向分解:{system∈[0,1,2], "
+        "k∈[1,2], positions∈[-0.97..0.97]∪{±0.1,±0.2,±0.4,±0.5,±0.8}∪{1.5,2.0}(外推), "
+        "basis∈[4,8,12,16,20,24,32], "
+        "seeds∈[4,8,12,16,24,32,50]}} 这类真实数值实验检验; 每条一句, 指向具体可证伪预言; "
+        "若上一轮副体已批评'跨条件不可比', 必须补抽一个控制变量问题(同一 system/k/"
+        "ctype, 仅变化待检维度)。只输出 JSON, 格式: "
         '{"open_questions": ["q1", "q2"]}, 不含其他文字。',
-        f"上一周期报告:\n{report_text[:6000]}")
+        f"上一周期报告:\n{report_text[:6000]}\n\n"
+        f"上一轮审稿副体(CriticAgent)意见:\n{critique or '(无)'}")
     qs = [str(q).strip() for q in (d.get("open_questions") or []) if str(q).strip()]
     return qs[:3]
 
@@ -1307,14 +1332,18 @@ def _propose_scan_configs(client, model: str, next_open: str,
     d = _ask_json(
         client, model,
         "你是实验设计者。基于给定的开放问题, 从白名单 {system∈{0,1,2}(0=cos, 1=sin2t, "
-        "2=多项式 u''=-(1-t^2)), k∈{1,2}, positions∈[-0.97,-0.66,-0.33,0,0.33,0.66,0.97], "
-        "basis∈{8,12,16}, seeds∈{4,8,12}, order∈{2,3}(2=低次核 span{1,t}; 3=高次核 "
+        "2=多项式 u''=-(1-t^2)), k∈{1,2}, positions∈[-0.97,-0.66,-0.33,0,0.33,0.66,0.97]∪"
+        "{±0.1,±0.2,±0.4,±0.5,±0.8}(加密中间点)∪{1.5,2.0}(t_i>1外推), "
+        "basis∈{4,8,12,16,20,24,32}, seeds∈{4,8,12,16,24,32,50}, order∈{2,3}(2=低次核 span{1,t}; 3=高次核 "
         "span{1,t,t²}), ctype∈{point,derivative}(值约束 u(t_i) / 导数约束 u'(t_i))} 里设计"
         "最多3个互不重复的真实数值实验. 必须避开已经执行过的配置(它们不再提供新信息), "
         "优先选择能直接检验开放问题的未做配置(如开放问题提到'约束数量', 就设计 k=2 且 "
         "positions 含多个位置的实验; 提到'高阶/高次/三阶/核维', 就设计 order=3 且 positions "
         "含 0.0 与 0.97; 提到'导数/梯度/混合约束', 就设计 ctype=derivative; 提到'系统普适', "
-        "就覆盖三个 system). 已执行配置:\n" + done + "\n只输出 JSON: {\"configs\": "
+        "就覆盖三个 system). 控制变量纪律: 若开放问题是跨 basis 收敛/单调, 三档配置必须"
+        "system/k/order/ctype 全相同、仅 basis 不同(否则跨 basis 不可比, 第34-35轮副体已批评); "
+        "若开放问题是跨系统普适, 三档配置必须 k/basis/order/ctype 相同、仅 system 不同。"
+        "已执行配置:\n" + done + "\n只输出 JSON: {\"configs\": "
         '[{"system":0,"k":1,"positions":[0.0,0.97],"basis":12,"seeds":8,'
         '"order":2,"ctype":"point"}], 不含其他文字。}',
         f"下一轮开放问题:\n{next_open[:2500]}")
@@ -1424,6 +1453,11 @@ def _try_author_code(client, model: str, next_open: str, cycle: int):
                                    "(替换注释处逻辑), 只实现 <=25 行核心计算: 不要 try/except、"
                                    "不要 class、不要嵌套函数、不要写教学注释; 单行不超过 88 字符;"
                                    "每个 for/if/def 后紧跟缩进 4 空格; 结尾 return 必须存在。"
+                                   "cfg 是 dict, 读取参数必须逐个写 cfg['order']/cfg['positions']"
+                                   "等; 严禁写 `a, b = cfg` 这种整体解包(会把键名 str 解出来, 必崩)。"
+                                   "cfg 里另有别名键可用: cfg['ti']/cfg['t_i']/cfg['t'] = 约束位置"
+                                   "(单位置时即 positions[0]), cfg['n_seeds']=seeds, "
+                                   "cfg['basis_size']=basis。"
                                    "模板:\n" + _AUTHOR_TEMPLATE +
                                    "\nrun(cfg) 的 objectives 返回判别指标(数值, 越大越支持你要"
                                    "验证的机制); summary 放可证伪中间量。可额外写 1 个 probe_<name>"
@@ -1485,7 +1519,8 @@ def _llm_critic(client, model: str, report_text: str, survivors_text: str) -> li
         "不超过 3 条; 没有就把 findings 置空。只输出 JSON: "
         '{"findings": [{"claim": "", "risk": "", "suggest": ""}]}',
         f"存活假说的真实数值证据:\n{survivors_text[:3000]}\n\n主报告:\n{report_text[:6000]}")
-    fs = [f for f in (d.get("findings") or []) if isinstance(f, dict) and f.get("claim")]
+    fs = [f for f in (d.get("findings") or []) if isinstance(f, dict)
+          and f.get("claim") and f.get("risk") and f.get("suggest")]
     return fs[:3]
 
 
@@ -1525,7 +1560,9 @@ def main() -> int:
 
     last_report = ""
     if args.start_cycle >= 2:
-        prev = _report_for(1)
+        prev = _report_for(max(1, args.start_cycle - 1))   # 续跑时喂上一轮报告给书生观察
+        if not prev.exists():
+            prev = _report_for(1)
         if prev.exists():
             last_report = prev.read_text(encoding="utf-8")
 
@@ -1597,7 +1634,12 @@ def main() -> int:
             cfgs = fresh + [c for c in cfgs if c not in fresh][:need]
             for c in cfgs:
                 done_cfgs.append(_sanitize_scan(c))
-            if author_exp is not None:
+            # 第 33 轮补充: 补跑第 32 轮被 P-C 早停的种子稳定性实验(真实证据, 不伪造跳票).
+            if cycle == 33:
+                exps = [_make_seed_stab_experiment()] + \
+                    ([author_exp] if author_exp is not None else []) + \
+                    _make_scan_experiments(cfgs)
+            elif author_exp is not None:
                 exps = [author_exp] + _make_scan_experiments(cfgs)
             else:
                 exps = _make_scan_experiments(cfgs)
@@ -1610,6 +1652,8 @@ def main() -> int:
             if author_exp is not None:
                 for _k in author_obj_keys:
                     objectives[_k] = "maximize"
+            if cycle == 33:
+                objectives["seed_stab"] = "maximize"
             print(f"  [书生·行动] 本轮扫描配置: {cfgs}")
             goal = (f"检验书生本轮提出的开放问题(数值证据由方向扫描+书生成码分支提供): "
                     f"{next_open}")
@@ -1661,7 +1705,9 @@ def main() -> int:
                 _blk = ["", "## 对立审稿(CriticAgent)", "> 书生双角色协同: 主研究员成文, 审稿副体持反对立场复核。"
                         "意见不参与 grounding 门禁(Pareto/verify 仍为确定性代码)。"]
                 for f in _finds:
-                    _blk.append(f"- 断言: {f['claim']}\n  - 风险: {f['risk']}\n  - 建议: {f['suggest']}")
+                    _blk.append(f"- 断言: {f.get('claim', '')}\n"
+                                f"  - 风险: {f.get('risk', '')}\n"
+                                f"  - 建议: {f.get('suggest', '')}")
                 out.report += "\n" + "\n".join(_blk)
                 _md = report_md.read_text(encoding="utf-8") if report_md.exists() else out.report
                 if report_md.exists():
