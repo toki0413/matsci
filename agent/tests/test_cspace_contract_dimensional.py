@@ -14,7 +14,9 @@ from pathlib import Path
 from huginn.research.cspace import CSpace
 from huginn.research import cspace_bridge as cb
 from huginn.research.coldstart_guards import compile_domain_guards
-from huginn.research.external_validator import validate_declared_units, resolve_unit_dimension
+from huginn.research.external_validator import (
+    validate_declared_units, validate_derived_dimensions, resolve_unit_dimension,
+)
 
 _QUANT = compile_domain_guards("ecology_dynamics")["scientific_contract"]["quantities"]
 
@@ -74,3 +76,36 @@ def test_garbage_unit_is_dimensionally_invalid():
     assert res["speed"]["dimension_signature"] is None
     # 复合量纲能解析: velocity = m/s
     assert resolve_unit_dimension("velocity") == "L1·T-1"
+
+
+# ═══════════════ S3: 跨量量纲恒等式(velocity=distance/time) ═══════════════
+
+_PHOTOS = {
+    "distance": {"unit": "length"},
+    "time_elapsed": {"unit": "time"},
+    "velocity": {"unit": "velocity",
+                 "derived_from": ["distance"], "derived_denom": ["time_elapsed"]},
+    "acceleration": {"unit": "acceleration",
+                     "derived_from": ["velocity"], "derived_denom": ["time_elapsed"]},
+}
+
+
+def test_cross_quantity_dimensional_identity_consistent():
+    """派生量单位与 constituents 的量纲恒等(v=d/t, a=v/t)成立 → 全 ok."""
+    res = validate_derived_dimensions(_PHOTOS)
+    assert res["velocity"]["ok"] is True
+    assert res["velocity"]["declared"] == "L1·T-1"
+    assert res["velocity"]["expected"] == "L1·T-1"
+    assert res["acceleration"]["ok"] is True
+    assert res["acceleration"]["expected"] == "L1·T-2"
+
+
+def test_cross_quantity_dimensional_identity_catches_contract_typo():
+    """契约自身声明不自洽(velocity 单位误写为 time) → 量纲恒等式咬住. """
+    bad = dict(_PHOTOS)
+    bad["velocity"] = {"unit": "time",
+                       "derived_from": ["distance"], "derived_denom": ["time_elapsed"]}
+    res = validate_derived_dimensions(bad)
+    assert res["velocity"]["ok"] is False
+    assert res["velocity"]["declared"] == "T1"          # 被误写成 time
+    assert res["velocity"]["expected"] == "L1·T-1"      # 但理论上必须是 distance/time

@@ -97,6 +97,12 @@ _DEFAULT_UNIT_MAP = {
 }
 
 
+def _to_symbol(unit: str, unit_map: dict | None = None) -> str:
+    """unit 标签 → SI 符号(经默认或调用方 unit_map); 未命中则原样当复合符号. 纯函数."""
+    m = dict(unit_map or _DEFAULT_UNIT_MAP)
+    return m.get(str(unit).strip(), str(unit).strip())
+
+
 def resolve_unit_dimension(unit: str, unit_map: dict | None = None) -> str | None:
     """把科学契约的 unit 标签解析成 dimensional 维度签名(经 UnitRegistry).
 
@@ -105,11 +111,9 @@ def resolve_unit_dimension(unit: str, unit_map: dict | None = None) -> str | Non
     - 无法解析/量纲引擎不可用 → 返回 None(调用方判为量纲未知, 不硬编).
     这让 ``unit`` 从"字符串标注"变成"可注册的量纲向量", 不是裸字符串.
     """
-    m = dict(unit_map or _DEFAULT_UNIT_MAP)
-    symbol = m.get(str(unit).strip(), str(unit).strip())
     try:
         from huginn.execution.dimensional_validator import registry
-        return registry.get(symbol).dimension_signature
+        return registry.get(_to_symbol(unit, unit_map)).dimension_signature
     except Exception:  # noqa: BLE001 — 量纲引擎不可用/不可解析 → 如实判未知
         return None
 
@@ -128,5 +132,52 @@ def validate_declared_units(quantities: dict, unit_map: dict | None = None) -> d
     return out
 
 
+def validate_derived_dimensions(quantities: dict, unit_map: dict | None = None) -> dict:
+    """跨量关系的量纲恒等式(契约层, 无需数值): 校验派生量声明的单位量纲自洽.
+
+    契约若给量声明 ``derived_from``(分子量名列表) / ``derived_denom``(分母量名列表),
+    则校验:
+        unit(量) == unit(分子₁)·… / unit(分母₁)·…
+    例如 ``velocity: {unit:'velocity', derived_from:['distance','time_elapsed']}``:
+        dim(velocity)=L1·T-1, dim(distance)/dim(time_elapsed)=L1/T1=L1·T-1 → 自洽.
+    这捕捉**契约自身**的单位笔误(如把 velocity 声成 unit='time'), 独立于数值;
+
+    Returns: {quantity: {'derived_from','derived_denom','declared','expected','ok'}}
+    非学习; 基础量(无 derived_from/denom)不查.
+    """
+    from huginn.execution.dimensional_validator import Unit, registry
+
+    def _sig(qn: str) -> Any:
+        meta = (quantities or {}).get(qn) or {}
+        return registry.get(_to_symbol(meta.get("unit", ""), unit_map))
+
+    results: dict = {}
+    for name, meta in (quantities or {}).items():
+        m = meta or {}
+        num = list(m.get("derived_from") or [])
+        den = list(m.get("derived_denom") or [])
+        if not num and not den:
+            continue  # 基础量, 无派生关系可查
+        try:
+            lhs = registry.get(_to_symbol(m.get("unit", ""), unit_map))
+        except Exception as e:  # noqa: BLE001
+            results[name] = {"declared_unit": m.get("unit"), "ok": False,
+                             "error": f"declared unit 不可解析: {str(e)[:50]}"}
+            continue
+        rhs: Any = Unit.dimensionless()
+        for qn in num:
+            rhs = rhs * _sig(qn)
+        for qn in den:
+            rhs = rhs / _sig(qn)
+        results[name] = {
+            "derived_from": num, "derived_denom": den,
+            "declared": lhs.dimension_signature,
+            "expected": rhs.dimension_signature,
+            "ok": lhs == rhs,
+        }
+    return results
+
+
 __all__ = ["strict_objectives", "validate_scientific_contract",
-           "resolve_unit_dimension", "validate_declared_units"]
+           "resolve_unit_dimension", "validate_declared_units",
+           "validate_derived_dimensions"]

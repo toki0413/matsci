@@ -344,6 +344,12 @@ HEP agent harness 论文(arXiv 2609.00107，2026-09)给出**科学 agent 的契�
   从字符串标注升级为**可注册量纲向量**(`time→T1`、`count→dimensionless`、`m/s→L1·T-1`)；
   `validate_declared_units` 校验每个 unit 可解析，垃圾单位(`secods`)如实判 invalid。
   量纲代数现在真正可用——不再是死代码。
+- **跨量量纲恒等式(S3)**：`external_validator.validate_derived_dimensions` —— 域契约若给
+  量声明 `derived_from`(分子)/`derived_denom`(分母)，在**契约层**校验
+  `unit(量)==∏unit(分子)/∏unit(分母)`(如 `velocity=distance/time`、`acceleration=velocity/time`)。
+  它捕捉**契约作者自己的单位笔误**(把 velocity 声成 unit='time' 但 derived 关系写
+  distance/time → dim 不自洽标红)，独立于数值、无需真值。实测：dt 自洽 pass、误写 fail。
+  这是量纲从"单位可解析"到"跨量关系量纲恒等"的推进。
 - **引擎盘点(诚实, 非铺全)**：同主题的低风险引擎已接(dimensional/claim_grounding/law_model
   /C-Space)；其余是独立的能力工具(符号回归/bourbaki/lean/FEM 等)，**刻意不全接**——强接会
   过度工程 + 高回归面；`LearnableForwardModel` 属权重线, 不进非学习契约路径。pydantic 缺失
