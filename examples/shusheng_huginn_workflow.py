@@ -1544,6 +1544,22 @@ def main() -> int:
     from huginn.research import run_research_program, grounding_verifier
     from huginn.research import Experiment   # noqa: F401 — re-export 校验
 
+    # ── 跨域冷启动守卫: 依赖预检 + 守卫清单(open rigidity 域批次前自动编译) ──
+    # 与断裂域同一套跨域守卫库; rigidity 已在 DOMAIN_PROFILES 登记(符号+矩阵数值)。
+    from huginn.research.coldstart_guards import (
+        compile_domain_guards, verify_domain_ready,
+    )
+    _guards = compile_domain_guards("rigidity")
+    _ready = verify_domain_ready(_guards)
+    if not _ready["ready"]:
+        print("error: 冷启动守卫依赖缺失(rigidity): %s" % _ready["missing_deps"],
+              file=sys.stderr)
+        return 3                                         # 缺依赖即拒, 不进入主链路
+    print("== 冷启动守卫(rigidity) ==")
+    print("  依赖预检: %s" % _guards["deps_check"])
+    print("  书生成码重试预算: %d" % _guards["code_retry_budget"])
+    print("  成文探针: %s" % (", ".join(_guards["probes"]) or "(无)"))
+
     client = None
     if not args.dry:
         key = os.environ.get("INTERNLM_API_KEY")
