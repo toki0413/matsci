@@ -87,6 +87,19 @@ DOMAIN_PROFILES: dict[str, dict[str, Any]] = {
         "deps": ["numpy", "scipy", "matplotlib"],
         "imports_extra": [],   # 纯标准库守卫由跨域 GUARD_LIBRARY 兜底
         "code_retry_budget": 1,   # 倾斜: 书生成码一次失败即回退, 火让给 probe/scan
+        # 域级 cfg 键别名(书生近义名 → 白名单规范键, 全映射同一份真实数值):
+        # 域专用物理别名显式待在域声明里, 不让通用 harness 累积例外(低熵红线).
+        "cfg_aliases": {
+            "sigma_0": "bridge_ratio", "sigma0": "bridge_ratio",
+            "sigma0_sigmay": "bridge_ratio", "sigma0_over_sy": "bridge_ratio",
+            "bridge": "bridge_ratio", "bridging_ratio": "bridge_ratio",
+            "n_flaw": "n_flaws", "n_defects": "n_flaws", "defect_count": "n_flaws",
+            "a_over_astar": "flaw_idx", "aastar": "flaw_idx",
+            "aa_star": "flaw_idx", "flaw_size": "flaw_idx",
+            "kic_i": "kic_mat", "kic_idx": "kic_mat", "KIC_mat": "kic_mat",
+            "v_cr": "vcR", "v_cR": "vcR", "v_over_cR": "vcR",
+            "poisson": "nu", "poisson_ratio": "nu",
+        },
         "probes": ["probe_interface", "probe_dbt", "probe_flaw", "probe_weibull",
                    "probe_bridge", "probe_barrier", "probe_kic"],
         "note": "断裂力学: IJF2026 七开放问题, scan+probe 主导, 书生成码低频",
@@ -108,6 +121,7 @@ _DEFAULTS: dict[str, Any] = {
     "deps": [],
     "imports_extra": [],
     "code_retry_budget": 2,
+    "cfg_aliases": {},
     "probes": [],
     "note": "",
 }
@@ -138,6 +152,7 @@ def compile_domain_guards(domain: str) -> dict[str, Any]:
         "imports_whitelist_extra": [str],
         "schema_contract": {strict: bool, coerce_numeric_dict: bool},
         "code_retry_budget": int,
+        "cfg_aliases": {alias: target},   # 域级 cfg 键别名(书生成码沙箱注入依据)
         "probes": [str],
         "prompt_guards": [str],     # 注入成文 system prompt 的软提示块
         "note": str,
@@ -166,6 +181,7 @@ def compile_domain_guards(domain: str) -> dict[str, Any]:
         "imports_whitelist_extra": list(pf["imports_extra"]),
         "schema_contract": {"strict": False, "coerce_numeric_dict": True},
         "code_retry_budget": retry,
+        "cfg_aliases": dict(pf["cfg_aliases"]),
         "probes": list(pf["probes"]),
         "prompt_guards": prompt_guards,
         "note": pf["note"],

@@ -185,13 +185,14 @@ def _check_run_schema(res: Any) -> str | None:
     return None
 
 
-def _alias_cfg(cfg: dict) -> dict:
+def _alias_cfg(cfg: dict, extra_aliases: dict | None = None) -> dict:
     """给书生代码一个宽容的 cfg 视图: 常用别名键补齐(值是同一份真实配置的引用).
 
-    书生习惯用领域术语 ti / t_i / t 称呼约束位置, 框架键名是 positions;
-    seeds 也可能写成 n_seeds. 断裂域书生则常用 sigma_0 / sigma0_sigmay /
-    sigma0_over_sy 表达"桥联比"而非框架键 bridge_ratio —— 物理命名合理, 只差键名.
-    补齐后代码可自由选键, 数值源不变(仍为真实配置).
+    只保留**域无关**的别名(约束位置 positions→ti/t_i/t、seeds→n_seeds、
+    basis→basis_size —— 它们是 huginn 自带配置域的通用键位, 与具体物理解耦).
+    域级物理别名(如断裂域 sigma_0→bridge_ratio)不在通用 harness 里硬编码, 而由
+    调用方经 `extra_aliases`(compile_domain_guards 的 cfg_aliases)注入 —— 域专用
+    该显式待在域声明里, 不让共享骨架悄悄累积例外(低熵红线).
     只做键别名, 绝不引入新数值 —— 诚实红线不变.
     """
     out: dict = dict(cfg or {})
@@ -202,29 +203,21 @@ def _alias_cfg(cfg: dict) -> dict:
         out.setdefault("t", positions[0] if len(positions) == 1 else positions)
     out.setdefault("n_seeds", out.get("seeds"))
     out.setdefault("basis_size", out.get("basis"))
-    # 断裂域物理键别名: 全映射到同一份真实数值, 不新造任何量.
-    for alias in ("sigma_0", "sigma0", "sigma0_sigmay", "sigma0_over_sy",
-                  "bridge", "bridging_ratio"):
-        out.setdefault(alias, out.get("bridge_ratio"))
-    for alias in ("n_flaw", "n_defects", "defect_count"):
-        out.setdefault(alias, out.get("n_flaws"))
-    for alias in ("a_over_astar", "aastar", "aa_star", "flaw_size"):
-        out.setdefault(alias, out.get("flaw_idx"))
-    for alias in ("kic_i", "kic_idx", "KIC_mat"):
-        out.setdefault(alias, out.get("kic_mat"))
-    for alias in ("v_cr", "v_cR", "v_over_cR"):
-        out.setdefault(alias, out.get("vcR"))
-    for alias in ("poisson", "poisson_ratio"):
-        out.setdefault(alias, out.get("nu"))
+    # 域级别名: 全映射到同一份真实数值, 不新造任何量; 缺失的才补, 显式给的不覆盖.
+    for alias, target in (extra_aliases or {}).items():
+        out.setdefault(alias, out.get(target))
     return out
 
 
 def sandbox_run(code: str, cfg: dict, *, mem_cap: int = SAFE_MEM_CAP,
                 timeout: float = SAFE_TIMEOUT_S,
-                imports_whitelist_extra: tuple[str, ...] = ()) -> tuple[dict | None, str | None]:
+                imports_whitelist_extra: tuple[str, ...] = (),
+                cfg_aliases: dict | None = None) -> tuple[dict | None, str | None]:
     """执行书生写的实验代码: 返回 (结果 dict 或 None, 错误原因或 None).
 
     ``imports_whitelist_extra``: 冷启动守卫的域级 import 白名单增量, 仅该次调用生效.
+    ``cfg_aliases``: 冷启动守卫的域级 cfg 键别名(compile_domain_guards 的 cfg_aliases),
+    ``_alias_cfg`` 据此补齐别名, 域专用别名不进通用 harness.
     """
     if not code.strip():
         return None, "空代码"
@@ -232,7 +225,7 @@ def sandbox_run(code: str, cfg: dict, *, mem_cap: int = SAFE_MEM_CAP,
     # 数值计算/存图照常走 Agg, 不依赖 GUI 头. (对已设 MPLBACKEND 的调用方生效)
     import os as _os
     _os.environ.setdefault("MPLBACKEND", "Agg")
-    cfg = _alias_cfg(cfg)
+    cfg = _alias_cfg(cfg, extra_aliases=cfg_aliases)
     try:
         ns = _load_namespace(code, mem_cap,
                              imports_whitelist_extra=imports_whitelist_extra)

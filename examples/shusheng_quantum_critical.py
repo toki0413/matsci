@@ -144,7 +144,8 @@ def _try_author_code(client, model: str, next_open: str, cycle: int):
             _wle = tuple(compile_domain_guards("quantum_critical").get("imports_whitelist_extra") or ())
         except Exception:  # noqa: BLE001 — 守卫取不到则不带增量, 不阻断
             _wle = ()
-        res, err = sandbox_run(code, cfg, imports_whitelist_extra=_wle)
+        res, err = sandbox_run(code, cfg, imports_whitelist_extra=_wle,
+                               cfg_aliases=dict(compile_domain_guards("quantum_critical").get("cfg_aliases") or {}))
         if res is not None:
             break
         last_err = err or "代码执行失败"

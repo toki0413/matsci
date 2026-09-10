@@ -24,6 +24,9 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+from huginn.research.code_lab import _alias_cfg
+from huginn.research.coldstart_guards import compile_domain_guards
+
 _ROOT = Path(__file__).resolve().parents[1]  # agent/
 _EXDIR = Path(__file__).resolve().parents[2] / "examples"
 
@@ -71,6 +74,36 @@ def _objectives_extract(res: dict) -> dict:
             if isinstance(v, (int, float)) and not isinstance(v, bool)}
 
 
+def _needs_bare_dict_coercion(res: dict) -> bool:
+    """该结果是否必须走 harness 的"裸数值 dict"宽容分支(即没有原生 objectives 容器).
+
+    B-豁免量化: 这是 **harness 侧迁就量** —— 域输出越能提供统一 {summary,objectives}
+    容器, harness 越不需要为它开宽容侧门; 反之(裸标量 dict)就是一次隐性豁免.
+    """
+    return not (isinstance(res.get("objectives"), dict) and isinstance(res.get("summary"), dict))
+
+
+def measure_waivers() -> dict:
+    """跨域"豁免清单"量化: 把跨域复用的隐性迁就/显式域足印都摊到台面上.
+
+    harness_side_coercions : 该域结果里"需 harness 开裸 dict 宽容侧门"的次数(harness 迁就度,
+                            理想为 0 —— 域对齐契约则无需迁就).
+    n_declared_cfg_aliases : 该域自己声明的物理键别名数(compile_domain_guards.cfg_aliases,
+                            现在显式待在域声明里, 不属于 shared harness —— A 的落点).
+    n_declared_probes      : 该域自己注册的成文探针数(域知识, 同样归域).
+    """
+    out: dict[str, dict] = {}
+    for name, producer in DOMAINS.items():
+        results = producer()
+        guards = compile_domain_guards(name)
+        out[name] = {
+            "harness_side_coercions": sum(1 for r in results if _needs_bare_dict_coercion(r)),
+            "n_declared_cfg_aliases": len(guards.get("cfg_aliases") or {}),
+            "n_declared_probes": len(guards.get("probes") or []),
+        }
+    return out
+
+
 # ── 每个域产出一组"结果 dict"(统一契约可吃) ─────────────────────────────
 def _rig_results() -> list[dict]:
     # 只用 numpy 系实验(不触发 torch 桩体): X1 eps-判据 + X3 约束维数.
@@ -116,6 +149,7 @@ def measure_reuse() -> dict:
 
 
 _RESULT = measure_reuse()
+_WAIVERS = measure_waivers()
 
 
 def test_three_domains_all_loaded():
@@ -165,3 +199,42 @@ def test_reuse_score_is_falsifiable_and_documented():
         v = _RESULT["per_domain"][name]
         assert v["stages"]["contract_wrapper"] and v["stages"]["grounding_ready"]
         assert v["stages"]["multi_evidence"]
+
+
+# ═══════════════ B: 豁免量化 —— 跨域"改动"如实摊开, 不让隐性迁就刷分 ═══════════════
+
+def test_harness_carries_zero_coercion_for_conforming_domains():
+    """契约对齐的域(fracture/quantum)**不需要 harness 开宽容侧门** —— harness 侧迁就 = 0.
+
+    这正是 B 想量化的: reuse_score 只数"通过/不通过", 但它没有暴露"harness 为够到某域
+    背了多少隐性豁免"。对齐域的 harness_side_coercions 必须为 0 —— 机制跨域不是靠代偿,
+    而是靠域本身对齐统一契约。
+    """
+    for name in ("fracture", "quantum_critical"):
+        w = _WAIVERS[name]
+        assert w["harness_side_coercions"] == 0, (name, w)
+    # 老域 rigidity 的裸数值/int 键 dict 确实是 harness 的隐性迁就(已知 gap 的量化形态)
+    assert _WAIVERS["rigidity"]["harness_side_coercions"] > 0
+
+
+def test_domain_physical_aliases_live_in_domain_not_shared_harness():
+    """A 的落点断言: 断裂域物理别名**不再硬编码在 shared `_alias_cfg`**, 只在 fracture
+    域声明里显式声明(cfg_aliases)。
+
+    - 通用 harness `_alias_cfg` 在未注入 extra_aliases 时, 不再凭空造出断裂键。
+    - fracture 域的 cfg_aliases 在 compile_domain_guards 里显式可见(域知识归域)。
+    低熵红线: 域专用例外不能悄悄长进"通用层", 换域即换域声明, 共享骨架不累积。
+    """
+    # 通用 harness 不带域级别名时: 不注入断裂别名(sigma_0 原样不存在)
+    assert "sigma_0" not in _alias_cfg({"bridge_ratio": 0.5})
+    # 只有断裂域声明里才有这些物理别名; 其它对齐域不声明, 故为 0
+    frag = compile_domain_guards("fracture")["cfg_aliases"]
+    assert frag.get("sigma_0") == "bridge_ratio"
+    assert frag.get("poisson_ratio") == "nu"
+    assert frag.get("KIC_mat") == "kic_mat"
+    assert _WAIVERS["fracture"]["n_declared_cfg_aliases"] > 0
+    assert _WAIVERS["quantum_critical"]["n_declared_cfg_aliases"] == 0
+    assert _WAIVERS["rigidity"]["n_declared_cfg_aliases"] == 0
+    # 域级别名经 _alias_cfg 注入后依旧可用(数值源不变, 只补键别名)
+    assert _alias_cfg({"bridge_ratio": 0.3},
+                      extra_aliases=frag)["sigma_0"] == 0.3

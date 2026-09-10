@@ -978,7 +978,13 @@ def _try_author_code(client, model: str, next_open: str, cycle: int):
             break
         code = extract_code(code) if not code.strip().startswith("def run") else code
         cfg = dict(_SCAN_DEFAULTS)
-        res, err = sandbox_run(code, cfg)
+        # 冷启动守卫: 域级 cfg 键别名(compile_domain_guards 的 cfg_aliases)注入此次沙箱.
+        try:
+            from huginn.research.coldstart_guards import compile_domain_guards
+            _cfa = dict(compile_domain_guards("fracture").get("cfg_aliases") or {})
+        except Exception:  # noqa: BLE001 — 守卫取不到则不带别名, 不阻断
+            _cfa = {}
+        res, err = sandbox_run(code, cfg, cfg_aliases=_cfa)
         if res is not None:
             break                     # 一次通过, 不再重试
         last_err = err or "代码执行失败"

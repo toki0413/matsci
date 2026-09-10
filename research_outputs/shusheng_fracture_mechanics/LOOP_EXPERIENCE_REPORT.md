@@ -210,6 +210,33 @@ Dundurs 界面参数、Weibull 弱链…)，才能驱动深研？这看似"负�
   无条件满格**, 老域/旧风格域需要做契约对齐(统一 `{summary,objectives}` 包装、扁平化
   objectives)才能从 0.92 → 1.0。这正是"泛化能力"要量化的东西。
 
+### 4.5 熵回落实证：域级别名归域 + 豁免量化(A+B)
+
+"泛化"与"低熵"是否是一回事，取决于**隐性迁就藏在哪**。曾有一次把断裂物理键别名
+(`sigma_0→bridge_ratio` 等 21 个)硬编码进自称"域无关"的 `code_lab._alias_cfg`——换个域
+就静默拉长共享骨架，熵悄悄回来。两处修正(全在 `pytest` 里落了断言):
+
+- **A 把域专用别名归域**：`_alias_cfg` 只留域无关别名(positions→ti / seeds→n_seeds /
+  basis→basis_size)；断裂物理别名删出共享 harness，改为 fracture 的 `DOMAIN_PROFILES
+  cfg_aliases` 显式声明，`compile_domain_guards` 返回、域示例注入 `sandbox_run(
+  cfg_aliases=…)`。换域即换域声明，共享骨架不再累积。
+- **B 豁免量化**: `test_cross_domain_reuse` 新增 `measure_waivers()`——把跨域复用的隐性
+  迁就摊到台面上(honest numbers)：
+
+  | 域 | harness_side_coercions | n_declared_cfg_aliases | n_declared_probes |
+  |---|---|---|---|
+  | fracture | 0 | 21 | 7 |
+  | quantum_critical | 0 | 0 | 0 |
+  | rigidity | 2 | 0 | 0 |
+
+  - **harness 侧迁就=0 才算真复用**：fracture/quantum 对齐统一 `{summary,objectives}`
+    容器，harness 不需为其开宽容侧门；rigidity 的裸数值/int 键 dict 仍是 2 次隐性迁就
+    (已知契约 gap 的量化形态)。
+  - **域声明侧可数**：fracture 的 21 个别名、7 个探针显式活在域声明里(域知识归域，非
+    harness 例外)；quantum 零足印 = 真"零改动"。reuse_score 语义不变(0.9167)。
+  - 意义：分数不再只数"通过/不通过"，而把"机制为够到某域背了多少代价"摊开——防止靠
+    harness 代偿把跨域刷成假满分。
+
 ---
 
 ## 5. 可迁移性与复用路径(这份品味不只在断裂力学成立)
