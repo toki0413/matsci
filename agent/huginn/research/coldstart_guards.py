@@ -131,6 +131,9 @@ DOMAIN_PROFILES: dict[str, dict[str, Any]] = {
                 "trace":     {"unit": "1",     "domain": None},
                 "period_est": {"unit": "time", "domain": {"min": 0.0}},
                 "final_prey": {"unit": "count", "domain": {"min": 0.0}},
+                # 派生量关系(跨量量纲恒等, S3): frequency = 1/period_est ⇒ dim(1/s)=T-1.
+                "frequency": {"unit": "frequency",
+                              "derived_denom": ["period_est"], "domain": {"min": 0.0}},
             }
         },
         "note": ("群体生态捕食-被捕食(Lotka-Volterra): 平衡点 Jacobian 稳定性 + "
@@ -177,6 +180,7 @@ def compile_domain_guards(domain: str) -> dict[str, Any]:
         "code_retry_budget": int,
         "cfg_aliases": {alias: target},   # 域级 cfg 键别名(书生成码沙箱注入依据)
         "scientific_contract": {quantities: {key: {unit, domain}}},  # 机器可读科学契约工件
+        "dimensional": {quantities, derived, ok},  # 量纲/跨量恒等预检(新域加载即跑)
         "probes": [str],
         "prompt_guards": [str],     # 注入成文 system prompt 的软提示块
         "note": str,
@@ -197,6 +201,9 @@ def compile_domain_guards(domain: str) -> dict[str, Any]:
         f"[冷启动守卫·{c}] {GUARD_LIBRARY[c]['abstract_fix']}"
         for c in cats
     ]
+    # 量纲/跨量恒等预检(惰性引 sympy, 新域加载时即跑): 域契约的单位是否合法、
+    # 派生关系是否量纲自洽. 引擎不可用 → 空(不阻断, 与"纯标准库 import"相容).
+    dimensional = _dimensional_precheck(pf.get("scientific_contract") or {})
     return {
         "domain": domain,
         "summary": summary,
@@ -207,21 +214,51 @@ def compile_domain_guards(domain: str) -> dict[str, Any]:
         "code_retry_budget": retry,
         "cfg_aliases": dict(pf["cfg_aliases"]),
         "scientific_contract": dict(pf["scientific_contract"] or {}),
+        "dimensional": dimensional,
         "probes": list(pf["probes"]),
         "prompt_guards": prompt_guards,
         "note": pf["note"],
     }
 
 
+def _dimensional_precheck(scientific_contract: dict) -> dict:
+    """对科学契约做量纲预检(单位可注册 + 跨量恒等自洽); 引擎不可用 → 空 dict.
+
+    结果形态: {"quantities": {量: {unit, dimension_signature, valid}},
+               "derived": {量: {declared, expected, ok}},
+               "ok": bool}   —— ok=False 表示该域契约存在单位/量纲不自洽, 新域应修.
+    """
+    q = (scientific_contract or {}).get("quantities") or {}
+    try:
+        from huginn.research.external_validator import (
+            validate_declared_units, validate_derived_dimensions,
+        )
+        decl = validate_declared_units(q)
+        derived = validate_derived_dimensions(q)
+        ok = all(v["valid"] for v in decl.values())
+        if ok:
+            ok = all(v.get("ok", True) for v in derived.values())
+        return {"quantities": decl, "derived": derived, "ok": ok}
+    except Exception:  # noqa: BLE001 — 量纲引擎不可用 → 空预检, 不阻断冷启动
+        return {}
+
+
 def verify_domain_ready(guards: dict[str, Any]) -> dict[str, Any]:
-    """冷启动可准备性检查(不伪造): mostly 依赖是否就绪, 缺失列出来."""
+    """冷启动可准备性检查(不伪造): mostly 依赖是否就绪, 缺失列出来.
+
+    ``dimensional_ready``: 域契约的**量纲预检**是否自洽(单位合法 + 跨量恒等).
+    与 ``ready``(依赖就绪)正交; 引擎不可用(无 dimensional)视为"未启用, 不挡".
+    """
     missing = list(guards.get("missing_deps") or [])
     ready = not missing
+    dim = guards.get("dimensional")
+    dimensional_ready = bool(dim.get("ok", True)) if dim else True
     return {
         "ready": ready,
         "missing_deps": missing,
         "whitelist_ok": bool(guards.get("imports_whitelist_extra") or True),
         "retry_budget": guards.get("code_retry_budget"),
+        "dimensional_ready": dimensional_ready,
     }
 
 
