@@ -116,6 +116,8 @@ def grounding_source_reward(
     tool_trace: list[str],
     *,
     allow_derived: bool = True,
+    objectives: dict | None = None,
+    quantities: dict | None = None,
 ) -> dict[str, Any]:
     """基于溯源系数的连续接地奖励 (无 ground-truth 也能算).
 
@@ -124,7 +126,16 @@ def grounding_source_reward(
     单独一个未落地主张 = 1/(n+1) 档, 多个未落地 => 分数显著压低 —— 这是对
     "背答案 / 脑内模拟数字" 的连续惩罚, 比布尔 needs_grounding 更平滑。
 
-    Returns: {"grounding_score", "verdict", "matched", "derived", "unsubstantiated"}
+    ``objectives`` + ``quantities``(可选): 提供时把**机器可读科学契约**并进判官——
+    对实验 objectives(键→值)用 `validate_scientific_contract` 校验量纲/有效域。
+    契约层与溯源源独立: 即便某数值溯源到了轨迹, 只要越出声明的有效域, 判官照样记
+    `domain_violations`(数值局限的硬判据, 不靠 harness 代偿)。返回新增
+    ``contract_score`` / ``contract_verdict`` / ``domain_violations`` / ``coverage_gaps``;
+    ``grounding_score`` 仍为纯溯源分(不变, 保证既有消费者零回归)。
+
+    Returns: {"grounding_score", "verdict", "matched", "derived", "unsubstantiated",
+              (+契约时) "contract_score", "contract_verdict", "domain_violations",
+              "coverage_gaps", "trusted"}
     """
     res = _load_verify_claims()(
         final_text,
@@ -137,13 +148,40 @@ def grounding_source_reward(
     u = len(res["unsubstantiated"])
     n = m + d + u
     score = 1.0 if n == 0 else (m + d) / n
-    return {
+    out: dict[str, Any] = {
         "grounding_score": score,
         "verdict": res["verdict"],
         "matched": m,
         "derived": d,
         "unsubstantiated": u,
     }
+    # 契约融合层 (可选): 判定与溯源正交 —— 有效域违反即使溯源到轨迹也不算数.
+    if objectives is not None and quantities is not None:
+        from huginn.research.external_validator import validate_scientific_contract
+        valid, gaps = validate_scientific_contract(objectives, quantities)
+        viol = [g for g in gaps if "违反" in g]
+        cov = [g for g in gaps if "未声明" in g]
+        # 三档: 无违反无 gap=1(oK); 仅 coverage gap=0.5(有效域未知, 不硬判但不全信);
+        # 有违反=0(数值局限, 硬判不过)。
+        contract_score = 1.0 if (valid and not viol and not cov) else \
+                         (0.5 if (not viol and cov) else 0.0)
+        contract_verdict = "ok" if (valid and not viol and not cov) else \
+                           ("partial" if (not viol and cov) else "needs_grounding")
+        trusted = (score >= 1.0 - 1e-9 or n == 0) and contract_verdict == "ok"
+        out["contract_score"] = contract_score
+        out["contract_verdict"] = contract_verdict
+        out["domain_violations"] = viol
+        out["coverage_gaps"] = cov
+        out["trusted"] = trusted   # 判官结论: 溯源 AND 契约(ok) 都过才算可信
+        if contract_verdict != "ok":
+            out["verdict"] = contract_verdict   # 合并判官: 契约不过/不全即不过
+    else:
+        out["contract_score"] = None
+        out["contract_verdict"] = None
+        out["domain_violations"] = []
+        out["coverage_gaps"] = []
+        out["trusted"] = (score >= 1.0 - 1e-9 or n == 0)
+    return out
 
 
 def grounded_accuracy_reward(

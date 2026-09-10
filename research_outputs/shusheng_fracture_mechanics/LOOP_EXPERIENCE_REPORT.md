@@ -289,6 +289,26 @@ HEP agent harness 论文(arXiv 2609.00107，2026-09)给出**科学 agent 的契�
   "跨域手调"的 JIT-Agent(2026-09，arXiv 2608.25593，harness 关联智力本身可训练)是
   外部 harness 生成器，拒绝进 agent 推理路径 —— 同 §4.3 界线。
 
+### 4.8 运行时判官融合：溯源 AND 科学契约
+
+把 §4.7 的科学契约工件**从测试层焊进运行时判官** `claim_reward.grounding_source_reward`：
+默认行为零回归(不传 objectives/quantities 时仍是纯溯源, `grounding_score` 不变)；传
+`objectives`(实验键→值) + `quantities`(域的 scientific_contract)时，判官升级为
+**溯源 AND 契约**：
+
+- 判定与溯源**正交**：一个数值就算溯源到了轨迹(grounding=1)，只要越出声明的有效域
+  (如 `period_est=-1` 违反 `min=0`)，`trusted` 仍为 False，`verdict=needs_grounding`。
+  这是"检查器能与产出分歧"在**运行时判官**的落地，非 harness 代偿。
+- 三档契约 verdict：`ok`(无违反无 coverage gap) / `partial`(有效域未知, 仅 coverage
+  gap，不硬判但不全信) / `needs_grounding`(数值局限，硬判不过)。
+- 全部非学习：契约来自 `compile_domain_guards` 透出的域数据工件，判定走
+  `external_validator.validate_scientific_contract`，不引入任何权重。
+
+测试 `tests/test_claim_reward_contract.py` 覆盖：不传的零回归、溯源+契约双过 trusted、
+**契约对"已溯源但越有效域"的数值照样否决**、coverage gap 的 partial 语义。
+注意：`sympy` 依赖缺失导致 `huginn.validation.__init__`→`dimensional_validator` 的其它测试
+收集报 `ModuleNotFoundError`(既存环境缺口，非本次改动引入；本模块经文件级加载绕开 `__init__`)。
+
 ---
 
 ## 5. 可迁移性与复用路径(这份品味不只在断裂力学成立)
