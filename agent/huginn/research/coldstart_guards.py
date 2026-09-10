@@ -91,6 +91,15 @@ DOMAIN_PROFILES: dict[str, dict[str, Any]] = {
                    "probe_bridge", "probe_barrier", "probe_kic"],
         "note": "断裂力学: IJF2026 七开放问题, scan+probe 主导, 书生成码低频",
     },
+    "quantum_critical": {
+        "deps": ["numpy", "scipy"],
+        "imports_extra": [],
+        "code_retry_budget": 1,   # 倾斜: 解析+数值扫描主导, 书生成码低频(与 fracture 同理)
+        "probes": ["probe_qc_landau", "probe_qc_critical", "probe_qc_phase",
+                   "probe_qc_universality"],
+        "note": ("应变耦合量子相变: 序参量 Landau-Ginzburg + 临界指数/普适类/"
+                 "相图拓扑/材料谱系, 多尺度耦合, 与固体力学零族(泛化验证)"),
+    },
 }
 
 # 默认(未声明域)参数
