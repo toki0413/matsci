@@ -14824,5 +14824,882 @@
     "usage_count": 0,
     "verification_status": "unverified",
     "meta_status": ""
+  },
+  {
+    "knowledge_id": "sem_5ffab01f",
+    "content": "决策启发式: 场景『当理想化假设在现实边界失效时』推荐做法 — 从理想化假设在现实边界的失效中提炼问题。 (经典热力学假设系统无限大，但在纳米尺度下表面效应主导，导致热容和相变行为异常。)",
+    "source_type": "semantic_heuristic",
+    "source_evidence": [
+      "review_taste(https://doi.org/10.1007/s10704-025-00907-6)"
+    ],
+    "confidence": 0.9,
+    "category": "semantic_decision_heuristic",
+    "tags": [
+      "假设失效",
+      "跨域类比",
+      "纳米尺度",
+      "decision_heuristic"
+    ],
+    "created_at": "2026-09-10T09:31:53.595616",
+    "usage_count": 0,
+    "verification_status": "unverified",
+    "meta_status": ""
+  },
+  {
+    "knowledge_id": "sem_de306bbe",
+    "content": "决策启发式: 场景『当跨尺度耦合出现力学行为不连续时』推荐做法 — 从跨尺度耦合的断裂中提炼问题。 (生物组织中细胞尺度与组织尺度的力学行为不连续，导致宏观力学性能预测困难。)",
+    "source_type": "semantic_heuristic",
+    "source_evidence": [
+      "review_taste(https://doi.org/10.1007/s10704-025-00907-6)"
+    ],
+    "confidence": 0.9,
+    "category": "semantic_decision_heuristic",
+    "tags": [
+      "跨尺度耦合",
+      "力学行为",
+      "预测困难",
+      "decision_heuristic"
+    ],
+    "created_at": "2026-09-10T09:31:53.595646",
+    "usage_count": 0,
+    "verification_status": "unverified",
+    "meta_status": ""
+  },
+  {
+    "knowledge_id": "sem_11884cc1",
+    "content": "决策启发式: 场景『当模型预测与实验观测存在显著偏差时』推荐做法 — 从模型与实验观测的鸿沟中提炼问题。 (气候模型预测与观测数据在极端天气事件上的偏差，揭示模型对非线性过程的简化不足。)",
+    "source_type": "semantic_heuristic",
+    "source_evidence": [
+      "review_taste(https://doi.org/10.1007/s10704-025-00907-6)"
+    ],
+    "confidence": 0.9,
+    "category": "semantic_decision_heuristic",
+    "tags": [
+      "模型偏差",
+      "非线性过程",
+      "实验验证",
+      "decision_heuristic"
+    ],
+    "created_at": "2026-09-10T09:31:53.595654",
+    "usage_count": 0,
+    "verification_status": "unverified",
+    "meta_status": ""
+  },
+  {
+    "knowledge_id": "sem_a885e1a3",
+    "content": "LEMF双材料界面K场解在数学上包含振荡项r^{±iε}，导致裂纹面互相穿透，与物理现实矛盾。",
+    "source_type": "semantic_fact",
+    "source_evidence": [
+      "review_taste(https://doi.org/10.1007/s10704-025-00907-6)"
+    ],
+    "confidence": 0.95,
+    "category": "semantic_domain_fact",
+    "tags": [
+      "LEMF",
+      "界面裂纹",
+      "振荡项",
+      "悖论",
+      "domain_fact"
+    ],
+    "created_at": "2026-09-10T09:31:53.595659",
+    "usage_count": 0,
+    "verification_status": "unverified",
+    "meta_status": ""
+  },
+  {
+    "knowledge_id": "sem_fb6a2bcf",
+    "content": "Rice-Thomson模型提出位错发射与解理竞争，但缺乏统一判据解释同族材料脆韧差异。",
+    "source_type": "semantic_fact",
+    "source_evidence": [
+      "review_taste(https://doi.org/10.1007/s10704-025-00907-6)"
+    ],
+    "confidence": 0.9,
+    "category": "semantic_domain_fact",
+    "tags": [
+      "Rice-Thomson",
+      "位错发射",
+      "解理竞争",
+      "脆韧转变",
+      "domain_fact"
+    ],
+    "created_at": "2026-09-10T09:31:53.595664",
+    "usage_count": 0,
+    "verification_status": "unverified",
+    "meta_status": ""
+  },
+  {
+    "knowledge_id": "sem_e472f543",
+    "content": "纳米试样强度接近理想强度，缺陷尺寸小于临界尺度时不敏感，与宏观Griffith理论矛盾。",
+    "source_type": "semantic_fact",
+    "source_evidence": [
+      "review_taste(https://doi.org/10.1007/s10704-025-00907-6)"
+    ],
+    "confidence": 0.9,
+    "category": "semantic_domain_fact",
+    "tags": [
+      "纳米尺度",
+      "理想强度",
+      "Griffith理论",
+      "尺度效应",
+      "domain_fact"
+    ],
+    "created_at": "2026-09-10T09:31:53.595669",
+    "usage_count": 0,
+    "verification_status": "unverified",
+    "meta_status": ""
+  },
+  {
+    "knowledge_id": "sem_08f59dc0",
+    "content": "Weibull弱链律基于缺陷尾部分布，但缺陷有界或强相互作用时尺寸效应饱和偏离幂律。",
+    "source_type": "semantic_fact",
+    "source_evidence": [
+      "review_taste(https://doi.org/10.1007/s10704-025-00907-6)"
+    ],
+    "confidence": 0.9,
+    "category": "semantic_domain_fact",
+    "tags": [
+      "Weibull",
+      "缺陷分布",
+      "尺寸效应",
+      "幂律偏离",
+      "domain_fact"
+    ],
+    "created_at": "2026-09-10T09:31:53.595673",
+    "usage_count": 0,
+    "verification_status": "unverified",
+    "meta_status": ""
+  },
+  {
+    "knowledge_id": "sem_1c16015e",
+    "content": "桥联增韧牺牲性机制提升韧性但降低强度，增益存在上界与最优层级，缺乏统一理论。",
+    "source_type": "semantic_fact",
+    "source_evidence": [
+      "review_taste(https://doi.org/10.1007/s10704-025-00907-6)"
+    ],
+    "confidence": 0.9,
+    "category": "semantic_domain_fact",
+    "tags": [
+      "桥联增韧",
+      "韧性-强度冲突",
+      "牺牲机制",
+      "domain_fact"
+    ],
+    "created_at": "2026-09-10T09:31:53.595678",
+    "usage_count": 0,
+    "verification_status": "unverified",
+    "meta_status": ""
+  },
+  {
+    "knowledge_id": "sem_66cec91a",
+    "content": "Mode-I断裂在c_R<v<c_S无稳态张开裂纹，但界面/剪切断裂可进入跨声速，缺乏统一解释。",
+    "source_type": "semantic_fact",
+    "source_evidence": [
+      "review_taste(https://doi.org/10.1007/s10704-025-00907-6)"
+    ],
+    "confidence": 0.9,
+    "category": "semantic_domain_fact",
+    "tags": [
+      "Mode-I断裂",
+      "Rayleigh势垒",
+      "跨声速断裂",
+      "domain_fact"
+    ],
+    "created_at": "2026-09-10T09:31:53.595683",
+    "usage_count": 0,
+    "verification_status": "unverified",
+    "meta_status": ""
+  },
+  {
+    "knowledge_id": "sem_0074d051",
+    "content": "高韧性低屈服金属需米级试样满足ASTM E399门槛，K-dominance尺度前提与工程实践矛盾。",
+    "source_type": "semantic_fact",
+    "source_evidence": [
+      "review_taste(https://doi.org/10.1007/s10704-025-00907-6)"
+    ],
+    "confidence": 0.9,
+    "category": "semantic_domain_fact",
+    "tags": [
+      "KIC",
+      "K-dominance",
+      "ASTM E399",
+      "工程边界",
+      "domain_fact"
+    ],
+    "created_at": "2026-09-10T09:31:53.595687",
+    "usage_count": 0,
+    "verification_status": "unverified",
+    "meta_status": ""
+  },
+  {
+    "knowledge_id": "sem_e548d778",
+    "content": "1. 确定机制类型（如ASSUMPTION_FAIL, SCALE_BREAK）；2. 提出具体预言（如Kc/K0在σ0/σy≈1.0处饱和）；3. 设计拟实验（如有限元模拟不同σ0/σy比值）。",
+    "source_type": "semantic_workflow",
+    "source_evidence": [
+      "review_taste(https://doi.org/10.1007/s10704-025-00907-6)"
+    ],
+    "confidence": 0.85,
+    "category": "semantic_workflow",
+    "tags": [
+      "问题生成",
+      "可证伪",
+      "拟实验",
+      "机制分类",
+      "workflow"
+    ],
+    "created_at": "2026-09-10T09:31:53.595692",
+    "usage_count": 0,
+    "verification_status": "unverified",
+    "meta_status": ""
+  },
+  {
+    "knowledge_id": "sem_2591ce00",
+    "content": "决策启发式: 场景『当理想化假设在现实边界失效时』推荐做法 — 通过尺度、耦合或边界条件变化提出新问题。 (识别理想化假设在现实边界的失效点，通过尺度、耦合或边界条件变化提出新问题。)",
+    "source_type": "semantic_heuristic",
+    "source_evidence": [
+      "review_taste(https://doi.org/10.1007/s10704-025-00907-6)"
+    ],
+    "confidence": 0.95,
+    "category": "semantic_decision_heuristic",
+    "tags": [
+      "假设检验",
+      "尺度效应",
+      "边界条件",
+      "decision_heuristic"
+    ],
+    "created_at": "2026-09-10T09:33:59.441972",
+    "usage_count": 0,
+    "verification_status": "unverified",
+    "meta_status": ""
+  },
+  {
+    "knowledge_id": "sem_c6d434cf",
+    "content": "决策启发式: 场景『当需要揭示传统模型局限性时』推荐做法 — 通过跨域类比引入新视角。 (通过跨域类比（如统计力学、材料科学）引入新视角，揭示传统模型的局限性。)",
+    "source_type": "semantic_heuristic",
+    "source_evidence": [
+      "review_taste(https://doi.org/10.1007/s10704-025-00907-6)"
+    ],
+    "confidence": 0.9,
+    "category": "semantic_decision_heuristic",
+    "tags": [
+      "跨域类比",
+      "模型局限",
+      "新视角",
+      "decision_heuristic"
+    ],
+    "created_at": "2026-09-10T09:33:59.441998",
+    "usage_count": 0,
+    "verification_status": "unverified",
+    "meta_status": ""
+  },
+  {
+    "knowledge_id": "sem_d899ab5e",
+    "content": "决策启发式: 场景『当有新使能工具可用时』推荐做法 — 利用新工具打开旧禁区提出可证伪问题。 (利用新使能工具（如纳米技术、高分辨率测量）打开旧禁区，提出可证伪的前沿问题。)",
+    "source_type": "semantic_heuristic",
+    "source_evidence": [
+      "review_taste(https://doi.org/10.1007/s10704-025-00907-6)"
+    ],
+    "confidence": 0.85,
+    "category": "semantic_decision_heuristic",
+    "tags": [
+      "新工具",
+      "可证伪",
+      "前沿问题",
+      "decision_heuristic"
+    ],
+    "created_at": "2026-09-10T09:33:59.442005",
+    "usage_count": 0,
+    "verification_status": "unverified",
+    "meta_status": ""
+  },
+  {
+    "knowledge_id": "sem_19b121d7",
+    "content": "复数K场在r→0时振荡项导致裂纹面穿透，但物理上裂纹面不可互穿。基于线弹性断裂力学（LEMF）的双材料界面解假设材料连续且无接触，但实际界面存在摩擦和接触，导致数学解与物理现实矛盾。",
+    "source_type": "semantic_fact",
+    "source_evidence": [
+      "review_taste(https://doi.org/10.1007/s10704-025-00907-6)"
+    ],
+    "confidence": 0.95,
+    "category": "semantic_domain_fact",
+    "tags": [
+      "界面裂纹",
+      "LEMF",
+      "数学完备性",
+      "物理接触",
+      "domain_fact"
+    ],
+    "created_at": "2026-09-10T09:33:59.442011",
+    "usage_count": 0,
+    "verification_status": "unverified",
+    "meta_status": ""
+  },
+  {
+    "knowledge_id": "sem_a071fcc1",
+    "content": "Rice-Thomson理论基于位错发射与解理的竞争，但未考虑材料微观结构（如晶界、缺陷）对竞争过程的调制，导致无法统一解释不同材料的脆-韧转变。",
+    "source_type": "semantic_fact",
+    "source_evidence": [
+      "review_taste(https://doi.org/10.1007/s10704-025-00907-6)"
+    ],
+    "confidence": 0.9,
+    "category": "semantic_domain_fact",
+    "tags": [
+      "脆-韧转变",
+      "Rice-Thomson理论",
+      "位错发射",
+      "解理",
+      "微观结构",
+      "domain_fact"
+    ],
+    "created_at": "2026-09-10T09:33:59.442024",
+    "usage_count": 0,
+    "verification_status": "unverified",
+    "meta_status": ""
+  },
+  {
+    "knowledge_id": "sem_1ba0547b",
+    "content": "Griffith理论假设缺陷尺寸远大于原子尺度，但在纳米尺度下，缺陷尺寸与原子间距相当，导致传统理论失效，需引入原子尺度效应。",
+    "source_type": "semantic_fact",
+    "source_evidence": [
+      "review_taste(https://doi.org/10.1007/s10704-025-00907-6)"
+    ],
+    "confidence": 0.95,
+    "category": "semantic_domain_fact",
+    "tags": [
+      "Griffith理论",
+      "纳尺度",
+      "缺陷容差",
+      "原子尺度",
+      "domain_fact"
+    ],
+    "created_at": "2026-09-10T09:33:59.442028",
+    "usage_count": 0,
+    "verification_status": "unverified",
+    "meta_status": ""
+  },
+  {
+    "knowledge_id": "sem_23d7827c",
+    "content": "Weibull统计基于缺陷尾部分布和独立假设，但在小尺度或强相互作用下，缺陷分布不再独立，导致尺寸效应偏离幂律。",
+    "source_type": "semantic_fact",
+    "source_evidence": [
+      "review_taste(https://doi.org/10.1007/s10704-025-00907-6)"
+    ],
+    "confidence": 0.9,
+    "category": "semantic_domain_fact",
+    "tags": [
+      "Weibull统计",
+      "尺寸效应",
+      "缺陷独立",
+      "强相互作用",
+      "domain_fact"
+    ],
+    "created_at": "2026-09-10T09:33:59.442033",
+    "usage_count": 0,
+    "verification_status": "unverified",
+    "meta_status": ""
+  },
+  {
+    "knowledge_id": "sem_157ef497",
+    "content": "桥联增韧模型假设桥联机制独立于基体，但实际桥联与基体存在耦合，导致韧性-强度冲突难以突破。",
+    "source_type": "semantic_fact",
+    "source_evidence": [
+      "review_taste(https://doi.org/10.1007/s10704-025-00907-6)"
+    ],
+    "confidence": 0.85,
+    "category": "semantic_domain_fact",
+    "tags": [
+      "桥联增韧",
+      "韧性-强度冲突",
+      "基体耦合",
+      "增益上限",
+      "domain_fact"
+    ],
+    "created_at": "2026-09-10T09:33:59.442037",
+    "usage_count": 0,
+    "verification_status": "unverified",
+    "meta_status": ""
+  },
+  {
+    "knowledge_id": "sem_353d3681",
+    "content": "传统动态断裂理论基于连续介质假设，未考虑界面效应和加载率对断裂速度的调制，导致速度禁区解释不完整。Mode-I断裂在c_R<v<c_S无稳态解，但界面/剪切断裂可进入跨声速。",
+    "source_type": "semantic_fact",
+    "source_evidence": [
+      "review_taste(https://doi.org/10.1007/s10704-025-00907-6)"
+    ],
+    "confidence": 0.9,
+    "category": "semantic_domain_fact",
+    "tags": [
+      "动态断裂",
+      "速度禁区",
+      "Rayleigh势垒",
+      "连续介质假设",
+      "加载率",
+      "domain_fact"
+    ],
+    "created_at": "2026-09-10T09:33:59.442043",
+    "usage_count": 0,
+    "verification_status": "unverified",
+    "meta_status": ""
+  },
+  {
+    "knowledge_id": "sem_c7dc611f",
+    "content": "ASTM E399标准基于K-dominance假设，但实际工程中试样尺寸受限，导致KIC有效性难以保证。K-dominance的尺度前提与工程应用的矛盾。",
+    "source_type": "semantic_fact",
+    "source_evidence": [
+      "review_taste(https://doi.org/10.1007/s10704-025-00907-6)"
+    ],
+    "confidence": 0.9,
+    "category": "semantic_domain_fact",
+    "tags": [
+      "KIC",
+      "K-dominance",
+      "ASTM E399",
+      "工程边界",
+      "试样尺寸",
+      "domain_fact"
+    ],
+    "created_at": "2026-09-10T09:33:59.442048",
+    "usage_count": 0,
+    "verification_status": "unverified",
+    "meta_status": ""
+  },
+  {
+    "knowledge_id": "sem_7a686362",
+    "content": "生成可证伪的前沿问题需包含：机制识别、具体预言（如当缺陷尺寸a<10nm时，强度不再遵循Griffith定律）、拟实验设计（如通过分子动力学模拟验证强度与缺陷尺寸的关系）。",
+    "source_type": "semantic_workflow",
+    "source_evidence": [
+      "review_taste(https://doi.org/10.1007/s10704-025-00907-6)"
+    ],
+    "confidence": 0.9,
+    "category": "semantic_workflow",
+    "tags": [
+      "可证伪问题",
+      "预言",
+      "拟实验",
+      "分子动力学模拟",
+      "workflow"
+    ],
+    "created_at": "2026-09-10T09:33:59.442052",
+    "usage_count": 0,
+    "verification_status": "unverified",
+    "meta_status": ""
+  },
+  {
+    "knowledge_id": "sem_9d350504",
+    "content": "引入复数应力强度因子导致振荡项 r^{±iε}，在 r→0 时裂纹面位移出现振荡，导致物理上不可能出现的裂纹面互相穿透。",
+    "source_type": "semantic_fact",
+    "source_evidence": [
+      "review_taste(https://doi.org/10.1007/s10704-025-00907-6)"
+    ],
+    "confidence": 0.95,
+    "category": "semantic_domain_fact",
+    "tags": [
+      "LEFM",
+      "界面裂纹",
+      "复数应力强度因子",
+      "振荡项",
+      "domain_fact"
+    ],
+    "created_at": "2026-09-10T09:35:46.642400",
+    "usage_count": 0,
+    "verification_status": "unverified",
+    "meta_status": ""
+  },
+  {
+    "knowledge_id": "sem_973fa06e",
+    "content": "位错发射是韧性的来源，但不同材料在相同条件下表现脆性或韧性，涉及 Peierls 位错形核、原子尺度缺陷与宏观断裂行为的耦合，缺乏统一判据。",
+    "source_type": "semantic_fact",
+    "source_evidence": [
+      "review_taste(https://doi.org/10.1007/s10704-025-00907-6)"
+    ],
+    "confidence": 0.9,
+    "category": "semantic_domain_fact",
+    "tags": [
+      "Rice-Thomson",
+      "位错发射",
+      "脆-韧转变",
+      "统一判据",
+      "domain_fact"
+    ],
+    "created_at": "2026-09-10T09:35:46.642423",
+    "usage_count": 0,
+    "verification_status": "unverified",
+    "meta_status": ""
+  },
+  {
+    "knowledge_id": "sem_b85806e4",
+    "content": "宏观 Griffith 理论预测强度随缺陷尺寸增大而降低，但纳米材料（如石墨烯、Si 纳米线）在缺陷尺寸极小时表现出接近理想强度，表明尺度效应导致传统理论失效。",
+    "source_type": "semantic_fact",
+    "source_evidence": [
+      "review_taste(https://doi.org/10.1007/s10704-025-00907-6)"
+    ],
+    "confidence": 0.95,
+    "category": "semantic_domain_fact",
+    "tags": [
+      "Griffith 理论",
+      "纳米尺度",
+      "理想强度",
+      "尺度效应",
+      "domain_fact"
+    ],
+    "created_at": "2026-09-10T09:35:46.642429",
+    "usage_count": 0,
+    "verification_status": "unverified",
+    "meta_status": ""
+  },
+  {
+    "knowledge_id": "sem_cdb7e6e7",
+    "content": "Weibull 统计基于缺陷尾部分布和独立假设，但在缺陷尺寸有界或相互作用强时（如岩石动态碎裂），尺寸效应出现饱和，偏离传统幂律行为。",
+    "source_type": "semantic_fact",
+    "source_evidence": [
+      "review_taste(https://doi.org/10.1007/s10704-025-00907-6)"
+    ],
+    "confidence": 0.9,
+    "category": "semantic_domain_fact",
+    "tags": [
+      "Weibull 统计",
+      "缺陷相互作用",
+      "尺寸效应",
+      "幂律偏离",
+      "domain_fact"
+    ],
+    "created_at": "2026-09-10T09:35:46.642435",
+    "usage_count": 0,
+    "verification_status": "unverified",
+    "meta_status": ""
+  },
+  {
+    "knowledge_id": "sem_d9ce2b5b",
+    "content": "通过能量耗散提高韧性，但导致强度下降，增韧增益存在上界，跨尺度层级设计缺乏统一优化准则。",
+    "source_type": "semantic_fact",
+    "source_evidence": [
+      "review_taste(https://doi.org/10.1007/s10704-025-00907-6)"
+    ],
+    "confidence": 0.85,
+    "category": "semantic_domain_fact",
+    "tags": [
+      "桥联增韧",
+      "韧性-强度冲突",
+      "生物材料",
+      "能量耗散",
+      "domain_fact"
+    ],
+    "created_at": "2026-09-10T09:35:46.642442",
+    "usage_count": 0,
+    "verification_status": "unverified",
+    "meta_status": ""
+  },
+  {
+    "knowledge_id": "sem_606bb624",
+    "content": "预测 Mode-I 断裂速度无法超过 Rayleigh 波速，但实验和模拟发现界面断裂或剪切断裂可进入跨声速，挑战传统速度禁区理论。",
+    "source_type": "semantic_fact",
+    "source_evidence": [
+      "review_taste(https://doi.org/10.1007/s10704-025-00907-6)"
+    ],
+    "confidence": 0.9,
+    "category": "semantic_domain_fact",
+    "tags": [
+      "动态断裂",
+      "Rayleigh 波速",
+      "跨声速断裂",
+      "Mode-I",
+      "domain_fact"
+    ],
+    "created_at": "2026-09-10T09:35:46.642447",
+    "usage_count": 0,
+    "verification_status": "unverified",
+    "meta_status": ""
+  },
+  {
+    "knowledge_id": "sem_27d555ea",
+    "content": "要求大试样满足 K-dominance，但高韧性低屈服金属需要米级试样才能满足，导致工程应用中 KIC 有效性受限。",
+    "source_type": "semantic_fact",
+    "source_evidence": [
+      "review_taste(https://doi.org/10.1007/s10704-025-00907-6)"
+    ],
+    "confidence": 0.9,
+    "category": "semantic_domain_fact",
+    "tags": [
+      "ASTM E399",
+      "K-dominance",
+      "KIC 有效性",
+      "高韧性材料",
+      "domain_fact"
+    ],
+    "created_at": "2026-09-10T09:35:46.642452",
+    "usage_count": 0,
+    "verification_status": "unverified",
+    "meta_status": ""
+  },
+  {
+    "knowledge_id": "sem_eec56d12",
+    "content": "决策启发式: 场景『识别理想化假设在现实边界的失效点』推荐做法 — 通过尺度、条件或材料类型的拓展发现理论预测与实验的偏差。 (识别理想化假设在现实边界的失效点，通过尺度、条件或材料类型的拓展发现理论预测与实验的偏差。)",
+    "source_type": "semantic_heuristic",
+    "source_evidence": [
+      "review_taste(https://doi.org/10.1007/s10704-025-00907-6)"
+    ],
+    "confidence": 0.95,
+    "category": "semantic_decision_heuristic",
+    "tags": [
+      "理想化假设",
+      "尺度拓展",
+      "理论偏差",
+      "实验验证",
+      "decision_heuristic"
+    ],
+    "created_at": "2026-09-10T09:35:46.642460",
+    "usage_count": 0,
+    "verification_status": "unverified",
+    "meta_status": ""
+  },
+  {
+    "knowledge_id": "sem_ff596b29",
+    "content": "决策启发式: 场景『捕捉跨尺度耦合中的断裂或矛盾』推荐做法 — 从微观机制到宏观现象的传递过程中寻找未解的衔接问题。 (捕捉跨尺度耦合中的断裂或矛盾，从微观机制到宏观现象的传递过程中寻找未解的衔接问题。)",
+    "source_type": "semantic_heuristic",
+    "source_evidence": [
+      "review_taste(https://doi.org/10.1007/s10704-025-00907-6)"
+    ],
+    "confidence": 0.9,
+    "category": "semantic_decision_heuristic",
+    "tags": [
+      "跨尺度耦合",
+      "微观机制",
+      "宏观现象",
+      "衔接问题",
+      "decision_heuristic"
+    ],
+    "created_at": "2026-09-10T09:35:46.642466",
+    "usage_count": 0,
+    "verification_status": "unverified",
+    "meta_status": ""
+  },
+  {
+    "knowledge_id": "sem_24d752e5",
+    "content": "决策启发式: 场景『利用新使能工具打开旧禁区』推荐做法 — 提出传统方法无法观测的新问题。 (利用新使能工具（如纳米测量、高速成像）打开旧禁区，提出传统方法无法观测的新问题。)",
+    "source_type": "semantic_heuristic",
+    "source_evidence": [
+      "review_taste(https://doi.org/10.1007/s10704-025-00907-6)"
+    ],
+    "confidence": 0.9,
+    "category": "semantic_decision_heuristic",
+    "tags": [
+      "新使能工具",
+      "纳米测量",
+      "高速成像",
+      "新问题",
+      "decision_heuristic"
+    ],
+    "created_at": "2026-09-10T09:35:46.642472",
+    "usage_count": 0,
+    "verification_status": "unverified",
+    "meta_status": ""
+  },
+  {
+    "knowledge_id": "sem_a8d46cb2",
+    "content": "决策启发式: 场景『当理想化假设在现实边界失效时』推荐做法 — 通过跨尺度耦合或悖论提出可证伪问题。 (识别理想化假设在现实边界的失效点，通过跨尺度耦合或悖论提出可证伪问题)",
+    "source_type": "semantic_heuristic",
+    "source_evidence": [
+      "review_taste(https://doi.org/10.1007/s10704-025-00907-6)"
+    ],
+    "confidence": 0.95,
+    "category": "semantic_decision_heuristic",
+    "tags": [
+      "理想化假设",
+      "失效点",
+      "跨尺度耦合",
+      "可证伪问题",
+      "decision_heuristic"
+    ],
+    "created_at": "2026-09-10T09:37:12.740294",
+    "usage_count": 0,
+    "verification_status": "unverified",
+    "meta_status": ""
+  },
+  {
+    "knowledge_id": "sem_ab552f87",
+    "content": "决策启发式: 场景『当有新使能工具可用时』推荐做法 — 打开旧禁区，通过类比跨域问题生成新前沿。 (利用新使能工具（如纳米测量、动态实验）打开旧禁区，通过类比跨域问题生成新前沿)",
+    "source_type": "semantic_heuristic",
+    "source_evidence": [
+      "review_taste(https://doi.org/10.1007/s10704-025-00907-6)"
+    ],
+    "confidence": 0.9,
+    "category": "semantic_decision_heuristic",
+    "tags": [
+      "新使能工具",
+      "跨域类比",
+      "新前沿",
+      "可证伪模型",
+      "decision_heuristic"
+    ],
+    "created_at": "2026-09-10T09:37:12.740317",
+    "usage_count": 0,
+    "verification_status": "unverified",
+    "meta_status": ""
+  },
+  {
+    "knowledge_id": "sem_6210b5bb",
+    "content": "复数应力强度因子在数学上完备，但物理上裂纹面不可穿透，形成界面裂纹互穿悖论",
+    "source_type": "semantic_fact",
+    "source_evidence": [
+      "review_taste(https://doi.org/10.1007/s10704-025-00907-6)"
+    ],
+    "confidence": 0.95,
+    "category": "semantic_domain_fact",
+    "tags": [
+      "界面裂纹",
+      "互穿悖论",
+      "复数应力强度因子",
+      "物理接触条件",
+      "domain_fact"
+    ],
+    "created_at": "2026-09-10T09:37:12.740323",
+    "usage_count": 0,
+    "verification_status": "unverified",
+    "meta_status": ""
+  },
+  {
+    "knowledge_id": "sem_d0a56a5a",
+    "content": "Griffith 理论在纳米尺度失效，理想强度实现与缺陷主导断裂的理想化假设在纳米尺度边界失效",
+    "source_type": "semantic_fact",
+    "source_evidence": [
+      "review_taste(https://doi.org/10.1007/s10704-025-00907-6)"
+    ],
+    "confidence": 0.9,
+    "category": "semantic_domain_fact",
+    "tags": [
+      "Griffith理论",
+      "纳米尺度",
+      "理想强度",
+      "缺陷尺寸效应",
+      "domain_fact"
+    ],
+    "created_at": "2026-09-10T09:37:12.740328",
+    "usage_count": 0,
+    "verification_status": "unverified",
+    "meta_status": ""
+  },
+  {
+    "knowledge_id": "sem_83790b82",
+    "content": "Weibull 弱链律在缺陷有界或强相互作用时失效，统计假设（缺陷独立分布）在现实边界失效导致尺寸效应偏离幂律",
+    "source_type": "semantic_fact",
+    "source_evidence": [
+      "review_taste(https://doi.org/10.1007/s10704-025-00907-6)"
+    ],
+    "confidence": 0.9,
+    "category": "semantic_domain_fact",
+    "tags": [
+      "Weibull弱链律",
+      "缺陷有界",
+      "尺寸效应",
+      "统计假设",
+      "domain_fact"
+    ],
+    "created_at": "2026-09-10T09:37:12.740334",
+    "usage_count": 0,
+    "verification_status": "unverified",
+    "meta_status": ""
+  },
+  {
+    "knowledge_id": "sem_67509c16",
+    "content": "Rayleigh势垒与跨声速断裂存在矛盾，理想化假设（稳态裂纹扩展）在动态边界失效导致速度禁区与超剪切现象的悖论",
+    "source_type": "semantic_fact",
+    "source_evidence": [
+      "review_taste(https://doi.org/10.1007/s10704-025-00907-6)"
+    ],
+    "confidence": 0.9,
+    "category": "semantic_domain_fact",
+    "tags": [
+      "Rayleigh势垒",
+      "跨声速断裂",
+      "动态断裂",
+      "超剪切现象",
+      "domain_fact"
+    ],
+    "created_at": "2026-09-10T09:37:12.740338",
+    "usage_count": 0,
+    "verification_status": "unverified",
+    "meta_status": ""
+  },
+  {
+    "knowledge_id": "sem_2dc4682d",
+    "content": "K-dominance尺度前提与工程试样尺寸存在矛盾，理想化假设（小尺度屈服）在高韧性材料边界失效导致ASTM标准与实际应用的鸿沟",
+    "source_type": "semantic_fact",
+    "source_evidence": [
+      "review_taste(https://doi.org/10.1007/s10704-025-00907-6)"
+    ],
+    "confidence": 0.85,
+    "category": "semantic_domain_fact",
+    "tags": [
+      "K-dominance",
+      "工程试样",
+      "小尺度屈服",
+      "ASTM标准",
+      "domain_fact"
+    ],
+    "created_at": "2026-09-10T09:37:12.740343",
+    "usage_count": 0,
+    "verification_status": "unverified",
+    "meta_status": ""
+  },
+  {
+    "knowledge_id": "sem_b0e505e7",
+    "content": "在纳米尺度下，缺陷尺寸效应饱和的临界尺度是否与材料本征长度直接相关？预言：当缺陷尺寸小于本征长度时，强度不再随尺寸减小而增加，且饱和值接近理论强度。拟实验：通过分子动力学模拟不同缺陷尺寸的纳米线拉伸，验证强度-尺寸关系的饱和行为。",
+    "source_type": "semantic_workflow",
+    "source_evidence": [
+      "review_taste(https://doi.org/10.1007/s10704-025-00907-6)"
+    ],
+    "confidence": 0.9,
+    "category": "semantic_workflow",
+    "tags": [
+      "可证伪问题",
+      "预言",
+      "拟实验",
+      "分子动力学模拟",
+      "workflow"
+    ],
+    "created_at": "2026-09-10T09:37:12.740349",
+    "usage_count": 0,
+    "verification_status": "unverified",
+    "meta_status": ""
+  },
+  {
+    "knowledge_id": "sem_1d9a88d8",
+    "content": "桥联增韧的最优层级是否受限于能量耗散效率的跨尺度耦合？预言：当桥联层级超过3级时，增韧效率因能量传递损耗而下降。拟实验：通过多尺度有限元模拟不同层级桥联结构的断裂过程，验证增韧效率与层级的关系。",
+    "source_type": "semantic_workflow",
+    "source_evidence": [
+      "review_taste(https://doi.org/10.1007/s10704-025-00907-6)"
+    ],
+    "confidence": 0.9,
+    "category": "semantic_workflow",
+    "tags": [
+      "桥联增韧",
+      "能量耗散",
+      "多尺度有限元",
+      "可证伪验证",
+      "workflow"
+    ],
+    "created_at": "2026-09-10T09:37:12.740354",
+    "usage_count": 0,
+    "verification_status": "unverified",
+    "meta_status": ""
+  },
+  {
+    "knowledge_id": "sem_40083d99",
+    "content": "动态断裂中，超剪切裂纹的起始是否受加载率与材料惯性效应的共同控制？预言：当加载率超过临界值时，超剪切裂纹起始速度将突破Rayleigh势垒。拟实验：通过高速摄影与数值模拟结合，研究不同加载率下的裂纹扩展速度。",
+    "source_type": "semantic_workflow",
+    "source_evidence": [
+      "review_taste(https://doi.org/10.1007/s10704-025-00907-6)"
+    ],
+    "confidence": 0.9,
+    "category": "semantic_workflow",
+    "tags": [
+      "超剪切裂纹",
+      "加载率",
+      "惯性效应",
+      "高速摄影",
+      "workflow"
+    ],
+    "created_at": "2026-09-10T09:37:12.740358",
+    "usage_count": 0,
+    "verification_status": "unverified",
+    "meta_status": ""
   }
 ]

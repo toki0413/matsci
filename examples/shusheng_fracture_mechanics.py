@@ -1377,10 +1377,23 @@ def _build_plan(goal: str, run_by_name: dict, cycle: int = 1):
                         depends_on=["F3_flaw_tolerance"]),
         ], parallel_cap=3)
     names = list(run_by_name.keys())
-    return build_research_plan(goal, [
+    plan = build_research_plan(goal, [
         SubResearch(n, f"书生提议断裂扫描分支 {n}", run=run_by_name[n], depends_on=[])
         for n in names
     ], parallel_cap=3)
+    # 相位级全序门 + 增量边重算 (Ghidra 启发): 给本轮扫描维标注语义相位,
+    # 并记录"若某上游契约漂移需重算的候选集"——纯调度元数据, 不改执行、不伪造证据.
+    _phases = plan.to_dict()
+    try:
+        from huginn.research.phase_recompute import assign_phases, phase_total_order
+        _phases.update({
+            "phase_map": assign_phases(plan.layers),
+            "phase_order": phase_total_order(assign_phases(plan.layers)),
+        })
+    except Exception:  # noqa: BLE001 — 相位元数据失败不影响计划本体
+        _phases.update({"phase_map": {}, "phase_order": []})
+    plan.to_dict = lambda cn_p=plan, cn_ph=_phases: cn_ph
+    return plan
 
 
 def _dim_objective(dim: str) -> str:
