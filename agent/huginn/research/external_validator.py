@@ -50,4 +50,39 @@ def strict_objectives(res: Any) -> tuple[bool, str]:
     return True, ""
 
 
-__all__ = ["strict_objectives"]
+def validate_scientific_contract(objectives: dict, quantities: dict) -> tuple[bool, list[str]]:
+    """域级科学契约校验(HEP 机器可读科学契约: 约定/有效域).
+
+    消费域声明(compile_domain_guards 的 scientific_contract.quantities)里的
+    量纲(unit) + 有效域(domain)。判定**独立于 harness**, 只查域声明的元数据:
+
+      - 'objectives' 里**已声明**的量: 校验落在 [domain.min, domain.max](若声明);
+      - 'objectives' 里**未声明**的量: 记为 coverage gap(有效域未知, 如实露), 不判成败
+        —— 诚实暴露"契约没覆盖到它", 而不是擅自通过.
+
+    返回 (ok, gaps): ok=False 当存在有效域违反; coverage gap 只在 gaps 里区分标注.
+    """
+    if not isinstance(quantities, dict):
+        return True, []
+    gaps: list[str] = []
+    any_violation = False
+    for key, val in (objectives or {}).items():
+        meta = quantities.get(key)
+        if meta is None:
+            gaps.append(f"{key}:未声明(量纲/有效域未知)")
+            continue
+        dom = meta.get("domain")
+        if not isinstance(dom, dict):
+            continue
+        lo = dom.get("min")
+        hi = dom.get("max")
+        if lo is not None and val < lo:
+            gaps.append(f"{key}={val}<{lo}(违反有效域下界)")
+            any_violation = True
+        elif hi is not None and val > hi:
+            gaps.append(f"{key}={val}>{hi}(违反有效域上界)")
+            any_violation = True
+    return (not any_violation, gaps)
+
+
+__all__ = ["strict_objectives", "validate_scientific_contract"]

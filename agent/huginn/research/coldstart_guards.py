@@ -122,6 +122,17 @@ DOMAIN_PROFILES: dict[str, dict[str, Any]] = {
         "code_retry_budget": 1,
         "cfg_aliases": {},
         "probes": [],
+        # 科学契约工件(HEP §2609.00107 启发): 每个 objectives 量声明 量纲(unit) + 有效域(domain).
+        # 是**域数据**, 可整块卸载/替换(compile_domain_guards 透出); 共享验证器不吃硬编码键.
+        "scientific_contract": {
+            "quantities": {
+                "x_star":    {"unit": "count", "domain": {"min": 0.0}},
+                "y_star":    {"unit": "count", "domain": {"min": 0.0}},
+                "trace":     {"unit": "1",     "domain": None},
+                "period_est": {"unit": "time", "domain": {"min": 0.0}},
+                "final_prey": {"unit": "count", "domain": {"min": 0.0}},
+            }
+        },
         "note": ("群体生态捕食-被捕食(Lotka-Volterra): 平衡点 Jacobian 稳定性 + "
                  "数值积分振荡周期, 与凝聚态/固体力学零族(held-out 泛化域)"),
     },
@@ -133,6 +144,7 @@ _DEFAULTS: dict[str, Any] = {
     "imports_extra": [],
     "code_retry_budget": 2,
     "cfg_aliases": {},
+    "scientific_contract": {},
     "probes": [],
     "note": "",
 }
@@ -164,6 +176,7 @@ def compile_domain_guards(domain: str) -> dict[str, Any]:
         "schema_contract": {strict: bool, coerce_numeric_dict: bool},
         "code_retry_budget": int,
         "cfg_aliases": {alias: target},   # 域级 cfg 键别名(书生成码沙箱注入依据)
+        "scientific_contract": {quantities: {key: {unit, domain}}},  # 机器可读科学契约工件
         "probes": [str],
         "prompt_guards": [str],     # 注入成文 system prompt 的软提示块
         "note": str,
@@ -193,6 +206,7 @@ def compile_domain_guards(domain: str) -> dict[str, Any]:
         "schema_contract": {"strict": False, "coerce_numeric_dict": True},
         "code_retry_budget": retry,
         "cfg_aliases": dict(pf["cfg_aliases"]),
+        "scientific_contract": dict(pf["scientific_contract"] or {}),
         "probes": list(pf["probes"]),
         "prompt_guards": prompt_guards,
         "note": pf["note"],

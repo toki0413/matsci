@@ -266,6 +266,29 @@ Dundurs 界面参数、Weibull 弱链…)，才能驱动深研？这看似"负�
   所以它验证的是"接口约束能被陌生域遵守 + harness 不偷偷补偏方"，而非"agent 权重被更新"。
   那条界线仍在 §4.3：真正让 agent 变强的学习(RLVR→GRPO)归外部训练器，不在 agent 推理路径内。
 
+### 4.7 机器可读科学契约工件(量纲/有效域, 域数据, 可卸载)
+
+回应"要不要建立更全面的契约"(对标 DeepSeek Harness / Oh My Pi / 2026 HEP agent 文献)。
+2026 证据把"契约"拆成两种：DeepSeek Harness(2026-08，dsh，Cordis 微内核)教的是
+**没有特权核心、一切可插拔可撤销**，Oh My Pi 教的是工具/接口的**结构性确定性**；而
+HEP agent harness 论文(arXiv 2609.00107，2026-09)给出**科学 agent 的契约正解**：
+机器可读科学契约须声明每个操作的"约定/假设/有效域"。据此，我们**不多铺 schema**，而是
+落成**可卸载的域数据工件**：
+
+- **契约即数据，非共享代码**：`DOMAIN_PROFILES` 新增 `scientific_contract.quantities`
+  (量→{unit, domain})，`compile_domain_guards` 透出。验证器 `external_validator.
+  validate_scientific_contract` **不持任何具体键名**，只消费域声明 —— 未声明域契约即空，
+  可整块卸载/替换(DeepSeek Harness 无特权核之形神)。以 ecology(held-out)为样例，全部
+  objectives 落进声明有效域，**零 violation + 零 coverage gap**。
+- **契约能与产出分歧(自洽 bug 治愈剂, 语义层)**：伪造 `period_est=-1`(越出 `min=0`
+  有效域)被直接拒；未声明的量如实露 `coverage gap`(有效域未知)，不擅自通过与不诚实掩盖。
+  这从 schema 层顺延到**科学语义层** —— 门禁不只查"是不是干净容器"，还查"数值是否落在
+  声明的有效域内"。
+- **诚实边界**：这只证明"接口约束(量纲/有效域)可被陌生域遵守、验证器不吃硬编码"；
+  隐含的`unit`只是标注，未做严格的单位代数推导(那是后续，且不构成当前 claim)。根治
+  "跨域手调"的 JIT-Agent(2026-09，arXiv 2608.25593，harness 关联智力本身可训练)是
+  外部 harness 生成器，拒绝进 agent 推理路径 —— 同 §4.3 界线。
+
 ---
 
 ## 5. 可迁移性与复用路径(这份品味不只在断裂力学成立)

@@ -26,7 +26,7 @@ from pathlib import Path
 
 from huginn.research.code_lab import _alias_cfg
 from huginn.research.coldstart_guards import compile_domain_guards
-from huginn.research.external_validator import strict_objectives
+from huginn.research.external_validator import strict_objectives, validate_scientific_contract
 
 _ROOT = Path(__file__).resolve().parents[1]  # agent/
 _EXDIR = Path(__file__).resolve().parents[2] / "examples"
@@ -316,3 +316,52 @@ def test_insample_strict_contract_still_honest_with_external_validator():
     assert _RESULT["per_domain"]["rigidity"]["stages"]["contract_wrapper"] is False
     # reuse_score 仍在已知带 gap 的正常区间(不是刷成 1.0)
     assert 0.75 <= _RESULT["reuse_score"] < 1.0
+
+
+# ═══════════════ D: 机器可读科学契约工件(量纲/有效域, 域数据, 可卸载) ═══════════════
+
+def _eco_quantities():
+    """ecology 域声明的科学契约(compile_domain_guards 透出的机器可读工件)."""
+    return compile_domain_guards("ecology_dynamics")["scientific_contract"]["quantities"]
+
+
+def test_scientific_contract_is_machine_readable_domain_data():
+    """科学契约是从**域声明数据**透出(compile_domain_guards), 不在共享验证器里硬编码.
+
+    验证器 `validate_scientific_contract` 不持任何具体键名 —— 契约在域数据里, 可整块
+    卸载: 未声明域的 compiled contract 为空 dict(可逆/可卸载工件, DeepSeek Harness 无特权核形神).
+    """
+    contract = compile_domain_guards("ecology_dynamics")["scientific_contract"]
+    q = contract["quantities"]
+    assert q["period_est"]["unit"] == "time"
+    assert q["period_est"]["domain"]["min"] == 0.0
+    # 未声明 scientific_contract 的域(如 rigidity): 默认空, 工件可逆可卸载
+    assert compile_domain_guards("rigidity")["scientific_contract"] == {}
+
+
+def test_scientific_contract_validates_heldout_domain():
+    """held-out 域真实物体对象**全部落在其声明的有效域内**(零 violation + 零 coverage gap).
+
+    若 ecology 的数值越出契约有效域, 契约必须能咬住 —— 这是"契约能分歧于产出"在科学
+    语义层的落地(不只 schema 层).
+    """
+    quant = _eco_quantities()
+    for r in _eco_results():                      # 真实数值实验
+        ok, gaps = validate_scientific_contract(r["objectives"], quant)
+        assert ok, (r["objectives"], gaps)         # 无有效域违反
+        assert not gaps, gaps                      # 零 coverage gap(所有量都声明过)
+
+
+def test_scientific_contract_can_disagree_on_domain_violation():
+    """契约能**分歧/咬出**域外数值(自洽 bug 的治愈剂): 有效域外直接拒; 未声明量露 gap."""
+    quant = _eco_quantities()
+    # 伪造 period_est 为负(违反 min=0 有效域) → 契约拒不通过
+    fake = {"x_star": 0.6, "period_est": -1.0}
+    ok, gaps = validate_scientific_contract(fake, quant)
+    assert ok is False
+    assert any("period_est" in g and "下界" in g for g in gaps)
+    # 未声明量(契约没覆盖) → 不判成败, 但如实露 coverage gap
+    unknown = {"mystery_coef": 5.0}
+    ok, gaps = validate_scientific_contract(unknown, quant)
+    assert ok is True
+    assert any("mystery_coef" in g and "未声明" in g for g in gaps)
