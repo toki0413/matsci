@@ -113,7 +113,12 @@ def _try_author_code(client, model: str, next_open: str, cycle: int):
         "物理(不是瞎编), dict 里每个值必须是真实计算数值(不要字符串)。输出裸代码(不要解释), "
         "代码必须含 def run(cfg)。"
     )
-    _AUTHOR_MAX_RETRY = 1
+    # 写码重试预算: 冷启动守卫收款 (compile_domain_guards) 为准, 兜底 1 —— 不再就地硬编码.
+    try:
+        from huginn.research.coldstart_guards import compile_domain_guards
+        _AUTHOR_MAX_RETRY = max(0, int(compile_domain_guards("quantum_critical").get("code_retry_budget") or 1))
+    except Exception:  # noqa: BLE001
+        _AUTHOR_MAX_RETRY = 1
     res: dict | None = None
     last_err = ""
     code = ""
@@ -133,7 +138,13 @@ def _try_author_code(client, model: str, next_open: str, cycle: int):
             break
         code = extract_code(code) if not code.strip().startswith("def run") else code
         cfg = {"T": 300.0, "strain": 0.0, "imaterial": 0}   # 泛用 cfg, 书生自取所需键
-        res, err = sandbox_run(code, cfg)
+        # 冷启动守卫: 域级 import 白名单增量注入本次 code_lab 沙箱 (仅本次调用生效).
+        try:
+            from huginn.research.coldstart_guards import compile_domain_guards
+            _wle = tuple(compile_domain_guards("quantum_critical").get("imports_whitelist_extra") or ())
+        except Exception:  # noqa: BLE001 — 守卫取不到则不带增量, 不阻断
+            _wle = ()
+        res, err = sandbox_run(code, cfg, imports_whitelist_extra=_wle)
         if res is not None:
             break
         last_err = err or "代码执行失败"

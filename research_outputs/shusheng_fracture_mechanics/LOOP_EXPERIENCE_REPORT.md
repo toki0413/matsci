@@ -172,6 +172,28 @@ Dundurs 界面参数、Weibull 弱链…)，才能驱动深研？这看似"负�
 
 ---
 
+### 4.3 架构红线：agent 不构建模型权重(研究 agent 机制/泛化的定位边界)
+
+对照外部项目(Code-as-World / VibeWorlding-Gym 源码级)后定下的边界，明确本项目**不追求
+"agent 让模型变强"，而专注"agent 机制本身能否跨域复用"**：
+
+- **权重归外部**：agent(书生+harness)在运行中**不访问、也不应访问**底层模型权重。它产出
+  的是决策轨迹、工具返回、门禁/验证器 reward 等**输入**；权重的更新(如 GRPO θ←θ+lr·∇J)
+  只能由**外部训练器**基于这些轨迹/reward 完成。VibeWorlding 的 agent 同样不碰权重——
+  它只产出 final_map+reward，权重由其 verl/GRPO 训练器改，两者靠数据管道(其 FileRPC +
+  broker 桥)隔离。
+- **泛化是主线且须可证伪**：核心命题 = "**同一套 huginn 机制零改动搬到陌生域**"。不能停在
+  "跑通 3 个域"的口头断言，要用可证伪数值量化(跨域零改动复用度)。
+- **中立与诚实优先**：不引入训练绑定，守住模型无关 + `--dry` 确定性 + 门禁零伪造这三条护城河。
+  训练(若未来要做)只作为外挂在数据层的可选后端，永远不内联进 agent 推理路径。
+
+> 附带教训(来自源码级复核)：top 项目的 paper/blog 架构图 ≠ 开源仓库实现。Code-as-World
+> 的开源仓库只含**单轮 batch 评估**(evaluation.py)与**确定性仿真执行**(simulation.py)，
+> 并无其所宣称的"iterative agentic discovery loop"。判断外部方法能否借鉴，须**读源码**，
+> 不能只信架构图/文档。
+
+---
+
 ## 5. 可迁移性与复用路径(这份品味不只在断裂力学成立)
 
 - **跨域复用**：taste taxonomy(`PARADOX / ASSUMPTION_FAIL / SCALE_BREAK`…)自带非断裂类比例子

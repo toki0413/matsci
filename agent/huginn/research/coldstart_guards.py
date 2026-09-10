@@ -95,8 +95,9 @@ DOMAIN_PROFILES: dict[str, dict[str, Any]] = {
         "deps": ["numpy", "scipy"],
         "imports_extra": [],
         "code_retry_budget": 1,   # 倾斜: 解析+数值扫描主导, 书生成码低频(与 fracture 同理)
-        "probes": ["probe_qc_landau", "probe_qc_critical", "probe_qc_phase",
-                   "probe_qc_universality"],
+        # 探针面 = 通用工具面(dict 逃生口 scipy 仪器 + 书生成码 probe_*), 不再预置物理别名;
+        # 成文时出具域无关通用仪器(qc_integrate/root/minimize/curvefit/ode), 不写物理探针.
+        "probes": [],
         "note": ("应变耦合量子相变: 序参量 Landau-Ginzburg + 临界指数/普适类/"
                  "相图拓扑/材料谱系, 多尺度耦合, 与固体力学零族(泛化验证)"),
     },

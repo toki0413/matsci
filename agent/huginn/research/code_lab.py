@@ -96,11 +96,31 @@ def _call_with_timeout(fn, arg: dict, timeout: float = SAFE_TIMEOUT_S):
     return out[0]
 
 
-def _load_namespace(code: str, mem_cap: int = SAFE_MEM_CAP) -> dict:
-    """在安全沙箱里执行代码, 返回定义出的命名空间 (run/probe_*)."""
-    from huginn.security.code_act_sandbox import exec_with_mem_cap, make_safe_builtins
+def _load_namespace(code: str, mem_cap: int = SAFE_MEM_CAP,
+                    imports_whitelist_extra: tuple[str, ...] = ()) -> dict:
+    """在安全沙箱里执行代码, 返回定义出的命名空间 (run/probe_*).
+
+    ``imports_whitelist_extra``: 域级 import 白名单增量(冷启动守卫的
+    imports_whitelist_extra 注入点), 只在本次调用里并入安全白名单 —— 诚实红线:
+    仅"放行良性的该域科学计算依赖", 绝不放宽 __import__ 本身或加任何 IO/网络模块.
+    """
+    from huginn.security.code_act_sandbox import exec_with_mem_cap, make_safe_builtins, safe_import
+    import builtins as _bi
     import numpy as np
     ns: dict = {"__builtins__": make_safe_builtins(), "np": np}
+    if imports_whitelist_extra:
+        extras = set(imports_whitelist_extra)
+
+        def _domain_import(name, globals_=None, locals_=None, fromlist=(), level=0):
+            # 域级白名单增量仅在基础 safe_import 拒绝后兜底放行 —— 不绕过其安全逻辑.
+            try:
+                return safe_import(name, globals_, locals_, fromlist, level)
+            except ImportError:
+                if name.split(".")[0] in extras:
+                    return _bi.__import__(name, globals_, locals_, fromlist, level)
+                raise
+        ns["__builtins__"] = dict(ns["__builtins__"])
+        ns["__builtins__"]["__import__"] = _domain_import
     exec_with_mem_cap(code, ns, mem_cap)
     return ns
 
@@ -200,8 +220,12 @@ def _alias_cfg(cfg: dict) -> dict:
 
 
 def sandbox_run(code: str, cfg: dict, *, mem_cap: int = SAFE_MEM_CAP,
-                timeout: float = SAFE_TIMEOUT_S) -> tuple[dict | None, str | None]:
-    """执行书生写的实验代码: 返回 (结果 dict 或 None, 错误原因或 None)."""
+                timeout: float = SAFE_TIMEOUT_S,
+                imports_whitelist_extra: tuple[str, ...] = ()) -> tuple[dict | None, str | None]:
+    """执行书生写的实验代码: 返回 (结果 dict 或 None, 错误原因或 None).
+
+    ``imports_whitelist_extra``: 冷启动守卫的域级 import 白名单增量, 仅该次调用生效.
+    """
     if not code.strip():
         return None, "空代码"
     # 无显示主机的 matplotlib: 强制 Agg 后端, 避免 pyplot 因无 DISPLAY 崩 —
@@ -210,7 +234,8 @@ def sandbox_run(code: str, cfg: dict, *, mem_cap: int = SAFE_MEM_CAP,
     _os.environ.setdefault("MPLBACKEND", "Agg")
     cfg = _alias_cfg(cfg)
     try:
-        ns = _load_namespace(code, mem_cap)
+        ns = _load_namespace(code, mem_cap,
+                             imports_whitelist_extra=imports_whitelist_extra)
         run_fn = ns.get("run")
         if not callable(run_fn):
             return None, "未找到 def run(cfg) 入口"
