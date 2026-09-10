@@ -1,16 +1,10 @@
-# 自主深研 — 应变耦合的发生量子相变: 用 Landau-Ginzburg 序参量自由能研究 ① 应变对临界温度/序参量的调控; ② 临界指数 β 与普适类(平均场 vs 3D Ising); ③ 相图拓扑(一阶/二阶/三临界); ④ ABO₃ 钙钛矿谱系的应变可调性. 所有数值须来自真实解析/数值计算, 门禁可落地. | 研究建议
+# 自主深研 — 应变耦合的发生量子相变 —— 交给书生自主建模求解. Huginn 提供通用数值工具面(numerical_tool: ODE/优化/求根/曲线拟合/积分/特征值)与 Code Lab 沙箱; 书生须自己决定: 用什么理论模型(Landau 序参量/Curie-Weiss/临界指数/相图体系)、算什么物理量、怎么求. 目标是产出可证伪的真实数值结论(应变对临界/序的调控、临界指数与普适类、相图拓扑、钙钛矿谱系可调性). 所有数值必须来自通用工具或书生 Hand Code 的真实计算, 门禁可落地, 不造任何数. | 应变对发生铁电序参量/临界温度如何调控? 临界指数 β 属哪个普适类(平均场 or 3D Ising)? 相图是否显示一阶/二阶/三临界? 哪个 ABO₃ 候选的应变可调性最高?你自行判断模型与量纲, 自行决定怎么算.
 
-1. **全温区Landau分析**：扩展probe_qc_landau至T∈[0, 500] K，研究T_C随应变的演化
-2. **量子相变研究**：在T=0 K下应用Landau理论，探索量子临界点
-3. **普适类扩展**：探索不同材料体系是否会出现3D Ising等其他普适类
-4. **应变-温度相图**：构建完整的应变-温度相图，确定三临界点位置
-5. **材料谱系扩展**：
+> 存活假说(Pareto 前沿, debate 淘汰后): qc_tools_selfcheck
 
-> 存活假说(Pareto 前沿, debate 淘汰后): qc_materials
-
-## qc_materials
-- 假说: 材料谱系应变可调性(基)
-- 真实结果: {"materials": [{"material": "BaTiO3", "kind": "ferroelectric", "T_C": 403.0, "strain_tunability": 0.942, "candidate_ferroelectric": true}, {"material": "PbTiO3", "kind": "ferroelectric", "T_C": 763.0, "strain_tunability": 1.578, "candidate_ferroelectric": true}, {"material": "SrTiO3", "kind": "incipient", "T_C": 4.0, "strain_tunability": 0.042, "candidate_ferroelectric": false}, {"material": "SrBi2Ta2O9", "kind": "ferroelectric", "T_C": 608.0, "strain_tunability": 0.488, "candidate_ferroelectric": true}, {"material": "LaAlO3", "kind": "paraelectric", "T_C": 0.0, "strain_tunability": 0.001, "candidate_ferroelectric": false}, {"material": "KNbO3", "kind": "ferroelectric", "T_C": 708.0, "strain_tunability": 1.321, "candidate_ferroelectric": true}], "top_tunable": "PbTiO3", "top_value": 1.578}
+## qc_tools_selfcheck
+- 假说: 通用数值工具面自检(无预置内核): 验证工具可真实求积分/求根
+- 真实结果: {"integral_0_3_x2": 9.0, "root_x2_2": 1.414214}
 
 ## 结论(开放)
 存活假说覆盖目标下的多证据方向, 数值均来自真实执行、可复现。

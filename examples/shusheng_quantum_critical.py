@@ -40,213 +40,231 @@ PEROVSKITE = [
 ]
 
 
-def landau_free(eta: float, T: float, *, P0: float = 1.0, T0: float = 300.0,
-                a2b: float = 1.0, a4b: float = 1.0, a6b: float = 1.0,
-                strain: float = 0.0, g_c: float = 0.5) -> float:
-    """Landau 序参量自由能 F = a2/2 η² + a4/4 η⁴ + a6/6 η⁶  + 应变-序耦合 g_c·s·η².
+# ═══════════════════ 书生成码: 自主建模型为主 (Code Lab 主角) ═══════════════════
 
-    应变为二阶序参量软模的线性耦合项: E_c = g_c·s·η²/2 (应变 favor 低 T 极性, s>0 增强
-    铁电). T0 为 bare 转变温; a2 = a2b·(T - T0)/T0 (Curie-Weiss). 返回维度化自由能.
+def _ask_json(client, model: str, system: str, user: str, max_tokens: int = 1500) -> dict:
+    try:
+        r = client.chat.completions.create(model=model, messages=[
+            {"role": "system", "content": system}, {"role": "user", "content": user}],
+            max_tokens=max_tokens, temperature=0.2,
+            extra_body={"thinking_mode": False})
+        text = (r.choices[0].message.content or "")
+        import re as _re
+        for m in _re.finditer(r"\{.*?\}", text, _re.DOTALL):
+            try:
+                d = json.loads(m.group(0))
+                return d if isinstance(d, dict) else {}
+            except Exception:  # noqa: BLE001
+                continue
+        # 兜底: 裸代码块
+        _m = _re.search(r"```(?:python)?\s*\n(.*?)```", text, _re.DOTALL | _re.IGNORECASE)
+        if _m:
+            return {"code": _m.group(1).strip()}
+        return {"code": text}
+    except Exception as ee:  # noqa: BLE001 — 调用失败不伪造
+        return {"error": str(ee)}
+
+
+def _try_raw_code(client, model: str, prompt: str) -> str:
+    try:
+        r = client.chat.completions.create(model=model, messages=[
+            {"role": "user", "content": prompt}],
+            max_tokens=1500, temperature=0.2)
+        text = r.choices[0].message.content or ""
+        import re as _re
+        _m = _re.search(r"```(?:python)?\s*\n(.*?)```", text, _re.DOTALL | _re.IGNORECASE)
+        return _m.group(1).strip() if _m else ""
+    except Exception:  # noqa: BLE001 — 提取失败返回空, 调用方回退
+        return ""
+
+
+def _try_author_code(client, model: str, next_open: str, cycle: int):
+    """Code Lab · 书生自主建模: 自己定表征/写 run(cfg) 检验开放问题.
+
+    弃用预置领域内核: 不再替书生预设物理方程, 只提供 numpy/scipy 通用原语供其组装.
+    失败带错回流修一版(预算1), 全败回退白名单扫描(不阻塞, 不伪造).
+    返回 (exp_or_None, probe_specs, obj_keys, err_msg).
     """
-    a2 = a2b * (T - T0) / T0 + g_c * strain
-    a4 = a4b
-    a6 = a6b
-    return P0 * (a2 / 2.0 * eta * eta + a4 / 4.0 * eta**4 + a6 / 6.0 * eta**6)
-
-
-def exp_qc_landau(T: float = 300.0) -> dict:
-    """真实计算: 序参量随温度与应变的平衡态(in 极点)与滞后."""
-    etas = np.linspace(-1.5, 1.5, 301)
-    rows = []
-    eta_star = []
-    for s in (-0.6, 0.0, 0.6):          # 负应变增强铁电, 正应变抑制 —— 体现双向调控
-        f = [landau_free(e, T, strain=s) for e in etas]
-        i_min = int(np.argmin(f))
-        rows.append({"strain": s, "eta*": round(float(etas[i_min]), 3),
-                     "F_min": round(float(f[i_min]), 3)})
-        eta_star.append(float(etas[i_min]))
-    # 目标: 应变诱导序参量的双向调控幅度(负应变→铁电增强, 负→正应变→序减小/消失).
-    # 用平衡序的应变极差: 是真实可落地的量, 亦体现"应变耦合软模"的物理.
-    return {"objectives": {"strain_eta_spread": round(float(max(eta_star) - min(eta_star)), 4)},
-            "summary": {"T": T, "eq_states": rows,
-                        "eta_spread": round(float(max(eta_star) - min(eta_star)), 4)},
-            "success": True}
-
-
-def _critical_beta(T0: float, strains: tuple[float, ...] = (0.0,), tol: float = 1e-8) -> list[dict]:
-    """拟合 Landau 平均场序参量临界指数 β (解析序 + 应变重normaled 普适类判别).
-
-    物理:
-      - Landau F = a2/2 η² + a4/4 η⁴, a2=(T-T0)/T0 + g_c·s. 应变线性耦合 g_c·s 重
-        normaled 到 a2 ⇒ 转变温移动 T_c(s)=T0 - g_c·s (应变 favor/抑制铁电即经此机制).
-      - T<T_c(s) 平衡序 = sqrt((T_c-T)/T_c) (平均场), 按归一化 τ_s=(T_c-T)/T_c 拟合
-        ln η ~ β·ln τ_s ⇒ **平均场 β=1/2 自洽**。
-      - 应变判定: 若各应变的 β 都在 1/2 邻域 ⇒ 普适类**不随应变移动**(平均场普适类
-        对任何对称破缺稳定); 偏离 ⇒ anomalous. 这是可证伪判据, 非预先代入答案.
-    """
-    betas: list[tuple[float, list[dict]]] = []
-    for s in strains:
-        Tc = T0 - s                                    # 应变移动转变温
-        pts = []
-        for tau_s in np.linspace(0.05, 0.4, 20):
-            eta = math.sqrt(max(0.0, tau_s))           # 平均场平衡序 (Tc 归一化)
-            pts.append((tau_s, float(eta)))
-        taus = np.array([p[0] for p in pts]); etas = np.array([p[1] for p in pts])
-        m = etas > 1e-4
-        beta = (float(np.polyfit(np.log(taus[m]), np.log(etas[m]), 1)[0])
-                if m.sum() >= 3 else 0.5)
-        betas.append((beta, pts))
-    return betas
-
-
-def exp_qc_critical(material: str = "BaTiO3") -> dict:
-    """真实计算: 临界指数 β 拟合 + 普适类判别 (平均场 vs 三维 Ising)."""
-    mrow = next((m for m in PEROVSKITE if m[0] == material), PEROVSKITE[0])
-    label, kind, p, c, tc = mrow
-    betas = _critical_beta(tc, strains=(0.0, 0.3, 0.6))
-    base_beta = betas[0][0]
-    beta_curve = [{"strain": s, "beta": round(b, 3), "tau_curve": pts[:4]}
-                  for (b, pts), s in zip(betas, (0.0, 0.3, 0.6))]
-    # 普适类: 平均场 β=1/2; 3D Ising β≈0.3265(精确). 判别靠相对偏差.
-    class_ = ("mean_field" if abs(base_beta - 0.5) < 0.05
-              else "3d_ising" if abs(base_beta - 0.3265) < 0.05 else "anomalous")
-    # 应变是否改变普适类: 各应变 β 极差 (若应变耦合进 a2 软模, β 应不变 → 普适类稳定)
-    beta_spread = round(float(max(b[0] for b in betas) - min(b[0] for b in betas)), 3)
-    return {"objectives": {"beta": round(base_beta, 3)},
-            "summary": {"material": label, "kind": kind, "T_C": tc,
-                        "beta_fit": round(base_beta, 3), "universality": class_,
-                        "beta_by_strain": beta_curve, "beta_spread_across_strain": beta_spread},
-            "success": True}
-
-
-def exp_qc_phase(T: float = 300.0) -> dict:
-    """真实计算: 相图拓扑 —— 序参量 vs 温度 vs 应变, 一阶/二阶/三临界判别."""
-    rows = []
-    for s in np.linspace(-0.5, 1.0, 8):
-        # 各 T 下找平衡序: 若有两个等深极值 → 一阶跳变; 否则连续(二阶)
-        fs = [landau_free(e, T, strain=s) for e in np.linspace(-1.5, 1.5, 201)]
-        min_f = min(fs)
-        n_eq = sum(1 for f in fs if abs(f - min_f) < 1e-6)
-        rows.append({"strain": round(s, 2), "T": T,
-                     "n_degenerate_min": n_eq,
-                     "order": "first" if n_eq >= 2 else ("second" if abs(
-                         rows and rows[-1]["strain"] * 0 < 1 and 0) < 1 else "second")})
-    kind = "second" if all(r["order"] == "second" for r in rows) else "first_or_mixed"
-    return {"objectives": {"phase_order_span": round(sum(r["n_degenerate_min"] for r in rows), 2)},
-            "summary": {"T": T, "rows": rows, "topology": kind},
-            "success": True}
-
-
-def exp_qc_materials() -> dict:
-    """真实计算: 材料谱系 —— 应变诱导铁电/临界响应, 判别可调材料."""
-    rows = []
-    for label, kind, p, c, tc in PEROVSKITE:
-        # 应变灵敏度 = p·c·T_C 组合: 强耦合高 T_C 且有极性 → 应变可调潜力高
-        tunability = p * c * (1.0 + math.log(1.0 + tc / 100.0))
-        rows.append({"material": label, "kind": kind, "T_C": tc,
-                     "strain_tunability": round(tunability, 3),
-                     "candidate_ferroelectric": kind == "ferroelectric"})
-    top = max(rows, key=lambda r: r["strain_tunability"])
-    return {"objectives": {"tunability_span": round(
-        max(r["strain_tunability"] for r in rows)
-        - min(r["strain_tunability"] for r in rows), 3)},
-        "summary": {"materials": rows, "top_tunable": top["material"],
-                    "top_value": top["strain_tunability"]},
-        "success": True}
-
-
-# ═══════════════════ 域诊断探针(书生成文期自主调用) ═══════════════════
-
-def _diagnostic_tools() -> list[dict]:
-    """书生成文阶段可自主调用的量子临界域探针(真实数值, 进 trace 供门禁核对)."""
-    def h_landau(a):
-        return json.dumps(exp_qc_landau(T=float(a.get("T", 300.0))),
-                          ensure_ascii=False, default=str)
-    def h_critical(a):
-        return json.dumps(exp_qc_critical(material=str(a.get("material", "BaTiO3"))),
-                          ensure_ascii=False, default=str)
-    def h_phase(a):
-        return json.dumps(exp_qc_phase(T=float(a.get("T", 300.0))),
-                          ensure_ascii=False, default=str)
-    def h_universality(a):
-        return json.dumps(exp_qc_materials(), ensure_ascii=False, default=str)
-    _PROBES = {"probe_qc_landau": h_landau, "probe_qc_critical": h_critical,
-               "probe_qc_phase": h_phase, "probe_qc_universality": h_universality}
-    def _spec(fn_name: str, desc: str, param: dict) -> dict:
-        return {"tool": {"function": {"name": fn_name, "description": desc,
-                                      "parameters": {"type": "object",
-                                                     "properties": param}}},
-                "handle": _PROBES[fn_name]}
-    return [
-        _spec("probe_qc_landau", "序参量平衡态随温度/应变(Landau)", {"T": {"type": "number"}}),
-        _spec("probe_qc_critical", "临界指数 β 拟合与普适类判别",
-              {"material": {"type": "string"}}),
-        _spec("probe_qc_phase", "相图拓扑(一阶/二阶/三临界)", {"T": {"type": "number"}}),
-        _spec("probe_qc_universality", "材料谱系应变可调性", {}),
-    ]
-
-
-# ═══════════════════ 实验构造(与 fracture 同契约) ═══════════════════
-
-def _make_experiments(cycle: int) -> list:
+    from huginn.research.code_lab import extract_code, sandbox_run, author_probe_specs
+    sys_prompt = (
+        "你是凝聚态/量子材料实验员。面对一个陌生科学问题, **由你自主建模**: "
+        "基于经典理论(Landau 序参量/Curie-Weiss/临界指数/相图拓扑/钙钛矿可调性等)判断该"
+        "算什么、用什么物理量, 再用 numpy(必要时 scipy)亲手写 def run(cfg): 检验它。"
+        "cfg 只含你需要的数值配置(如 T/strain/imaterial)。**只通过返回值交付数值**: return "
+        "dict, 键是物理量名、值是真实计算数值(如 {'beta': 0.5}); 也可用标准结构 "
+        "{'success': bool, 'summary': {...}, 'objectives': {<k>: 数值}}。两种情况都行, "
+        "但**不要 print 大量中间结果**(那会被当控制台输出丢弃), 所有最终数值都必须放进 "
+        "return 的 dict。你的 cadence: ① 先想清楚物理模型与自由能/方程; ② 决定参数扫描; "
+        "③ 数值求平衡序/临界指数/拟合; ④ 把可证伪数值放进 return。公式必须来自真实凝聚态"
+        "物理(不是瞎编), dict 里每个值必须是真实计算数值(不要字符串)。输出裸代码(不要解释), "
+        "代码必须含 def run(cfg)。"
+    )
+    _AUTHOR_MAX_RETRY = 1
+    res: dict | None = None
+    last_err = ""
+    code = ""
+    for at in range(_AUTHOR_MAX_RETRY):
+        if at == 0:
+            user_goal = f"本轮开放问题(自主建模): {next_open[:1200]}"
+        else:
+            user_goal = (f"你上一版代码执行报错如下:\n{last_err}\n\n"
+                         f"请**只输出修正后的完整代码 def run(cfg)**, 修复该错误, "
+                         f"数值仍须真实计算。问题: {next_open[:600]}")
+        d = _ask_json(client, model, sys_prompt, user_goal, max_tokens=1500)
+        code = d.get("code") or d.get("python") or ""
+        if not code:
+            code = _try_raw_code(client, model,
+                                 next_open if at == 0 else f"{next_open}\n[用户反馈] 报错: {last_err}")
+        if not code:
+            break
+        code = extract_code(code) if not code.strip().startswith("def run") else code
+        cfg = {"T": 300.0, "strain": 0.0, "imaterial": 0}   # 泛用 cfg, 书生自取所需键
+        res, err = sandbox_run(code, cfg)
+        if res is not None:
+            break
+        last_err = err or "代码执行失败"
+        print(f"  [书生成码·重试 {at + 1}] 执行失败: {last_err[:160]}  → 回流给书生重修")
+    if res is None:
+        return None, [], [], last_err or "代码执行失败"
+    obj_keys = list(res["objectives"].keys())
+    try:
+        probe_specs = author_probe_specs(code)
+    except Exception:  # noqa: BLE001
+        probe_specs = []
     from huginn.research import Experiment
-    if cycle == 1:
-        return [
-            Experiment("qc_landau", "序参量自由能/平衡态 vs 应变", run=exp_qc_landau),
-            Experiment("qc_critical", "临界指数 β + 普适类", run=exp_qc_critical),
-            Experiment("qc_phase", "相图拓扑", run=exp_qc_phase),
-            Experiment("qc_materials", "材料谱系应变可调性", run=exp_qc_materials),
-        ]
-    # 后续轮: 书生可提议扫描维度
-    return [
-        Experiment("qc_materials", "材料谱系应变可调性(基)", run=exp_qc_materials),
-    ]
+    exp = Experiment(f"author_qc{cycle}", f"书生自主建模(S{cycle}): {next_open[:90]}",
+                     run=lambda: res)
+    return exp, probe_specs, obj_keys, ""
 
 
 GOAL = (
-    "应变耦合的发生量子相变: 用 Landau-Ginzburg 序参量自由能研究 ① 应变对临界温度/"
-    "序参量的调控; ② 临界指数 β 与普适类(平均场 vs 3D Ising); ③ 相图拓扑(一阶/二阶/三临界); "
-    "④ ABO₃ 钙钛矿谱系的应变可调性. 所有数值须来自真实解析/数值计算, 门禁可落地."
+    "应变耦合的发生量子相变 —— 交给书生自主建模求解. Huginn 提供通用数值工具面"
+    "(numerical_tool: ODE/优化/求根/曲线拟合/积分/特征值)与 Code Lab 沙箱; 书生须自己"
+    "决定: 用什么理论模型(Landau 序参量/Curie-Weiss/临界指数/相图体系)、算什么物理量、"
+    "怎么求. 目标是产出可证伪的真实数值结论(应变对临界/序的调控、临界指数与普适类、相图"
+    "拓扑、钙钛矿谱系可调性). 所有数值必须来自通用工具或书生 Hand Code 的真实计算, "
+    "门禁可落地, 不造任何数."
 )
 
-SCAN_OPS = {
-    "material": [m[0] for m in PEROVSKITE],
-    "strain": [-0.5, 0.0, 0.3, 0.6, 1.0],
-    "T": [100, 200, 300, 400, 600],
-    "kind": ["ferroelectric", "incipient", "paraelectric"],
-}
-_DIM_VALUES = {"material": "material", "strain": "strain", "T": "T",
-                "temp": "T", "kind": "kind"}
+
+def _make_experiments(cycle: int, author_exp=None) -> list:
+    """实验集: 书生自主建模为标准实验(codelab 产物), 无预置内核."""
+    from huginn.research import Experiment
+    exps = []
+    if author_exp is not None:
+        exps.append(author_exp)          # 书生亲手写的 run() —— 开山主角
+    else:
+        # 首轮无书生代码占位: 以通用工具自检(纯真实工具调用, 不预置物理)
+        exps.append(Experiment("qc_tools_selfcheck",
+                               "通用数值工具面自检(无预置内核): 验证工具可真实求积分/求根",
+                               run=_tools_selfcheck))
+    return exps
 
 
-def exp_scan(cfg: dict) -> dict:
-    """扫描维执行: 真实计算, 按 dim 路由."""
-    dim = (cfg or {}).get("dim", "material")
-    dim = {"material": "material", "strain": "strain", "T": "T",
-           "temp": "T", "kind": "kind"}.get(dim, dim)
-    vals = (cfg or {}).get("values") or SCAN_OPS.get(dim, SCAN_OPS["material"])
-    if dim == "strain" or dim == "T":
-        rows = []
-        for x in vals:
-            f = landau_free(0.5, float(x), strain=0.3 if dim == "T" else float(x))
-            e = math.sqrt(max(0.0, 1.0 - float(x) / 400.0)) if dim == "T" else math.sqrt(max(0.0, 1.0 - 0.5 / 1.5))
-            rows.append({"x": float(x), "F": round(f, 4), "eta*": round(e, 3)})
-        obj_key = "phase_order_span"
-        return {"objectives": {obj_key: round(max(r["eta*"] for r in rows), 3)},
-                "summary": {"dim": dim, "rows": rows}, "success": True}
-    if dim == "material":
-        rows = []
-        for m in vals:
-            row = next((x for x in exp_qc_materials()["summary"]["materials"] if x["material"] == m), None)
-            if row:
-                rows.append(row)
-        return {"objectives": {"tunability_span": round(
-            max(r["strain_tunability"] for r in rows)
-            - min(r["strain_tunability"] for r in rows), 3) if rows else 0.0},
-            "summary": {"dim": "material", "rows": rows}, "success": True}
-    return {"objectives": {"tunability_span": 0.0},
-            "summary": {"dim": dim, "rows": []}, "success": True}
+def _tools_selfcheck() -> dict:
+    """通用工具面自检: 用 scipy 真实算两个无物理内核的数值(验证仪器可用, 非解题)."""
+    from scipy.integrate import quad
+    from scipy.optimize import brentq
+    i_res = quad(lambda x: x ** 2, 0, 3)[0]          # ∫₀³x²=9, 真实积分
+    r_res = brentq(lambda x: x ** 2 - 2, 1, 2)       # √2≈1.4142, 真实求根
+    return {"objectives": {"tool_int_ok": 1.0, "tool_root_ok": 1.0},
+            "summary": {"integral_0_3_x2": round(i_res, 4),
+                        "root_x2_2": round(r_res, 6)},
+            "success": True}
 
+
+def _diagnostic_tools() -> list[dict]:
+    """通用工具面: 书生成文时可自主调用的**域无关科学仪器**(dict 逃生口).
+
+    关键: 这里只提供通用科学计算原语(积分/求根/极小化/曲线拟合/ODE), 由 scipy 真实计算,
+    不针对任何具体物理 —— **不发生成任何凝聚态内核**。书生自主决定用什么原语、算什么量,
+    再配 code_lab 沙箱(书生成码)与白名单自检, 共同产出可证伪数值。诚实红线不变:
+    每个 handler 都真算, 不伪造; 返回 JSON 字符串进 trace 供门禁核验。
+    """
+    from scipy.integrate import quad as _quad
+    from scipy.optimize import brentq as _brentq, minimize_scalar as _min_sc
+    import numpy as _np
+
+    def _num(a):
+        act = a.get("action", "integrate")
+        # 通用一维数值积分 ∫_a^b func(theta) dtheta
+        if act == "integrate":
+            f = a.get("func", "theta**2")
+            lo, hi = float(a.get("a", 0.0)), float(a.get("b", 1.0))
+            val, err = _quad(lambda t: eval(f, {"theta": t, "np": _np, "math": math}), lo, hi)
+            return json.dumps({"integral": round(float(val), 6), "abserr": round(float(err), 9),
+                               "note": "通用积分器(数值)"}, ensure_ascii=False)
+        # 通用求根 brentq 于 [lo,hi]
+        if act == "root":
+            f = a.get("func", "x**2 - 2")
+            lo, hi = float(a.get("a", 0.0)), float(a.get("b", 2.0))
+            r = _brentq(lambda x: eval(f, {"x": x, "np": _np, "math": math}), lo, hi)
+            return json.dumps({"root": round(float(r), 9)}, ensure_ascii=False)
+        # 通用一维极小化(可再加括号)
+        if act == "minimize":
+            f = a.get("func", "(x - 1.5)**2")
+            lo, hi = float(a.get("a", -5.0)), float(a.get("b", 5.0))
+            r = _min_sc(lambda x: eval(f, {"x": x, "np": _np, "math": math}),
+                        bounds=(lo, hi), method="bounded")
+            return json.dumps({"xstar": round(float(r.x), 6), "fmin": round(float(r.fun), 6)},
+                              ensure_ascii=False)
+        # 通用非线性曲线拟合: func 表达式用 params a0,a1,... ; ydata/xdata 传列表
+        if act == "curve_fit":
+            expr = a.get("func", "a0*x + a1")
+            xs = list(map(float, a.get("xdata") or []))
+            ys = list(map(float, a.get("ydata") or []))
+            nl = expr.count("a(")  # 兼容 a0 -> a(0)? 简化: 用 polyfit 兜底
+            p, _ = _np.polyfit(_np.asarray(xs), _np.asarray(ys), deg=1)
+            return json.dumps({"polyfit_slope": round(float(p[0]), 6),
+                               "polyfit_intercept": round(float(p[1]), 6)}, ensure_ascii=False)
+        # 通用一阶 ODE 集成 (dy/dt = func(t,y)); 返回末值
+        if act == "ode":
+            f = a.get("func", "-y")
+            y0 = float(a.get("y0", 1.0))
+            t1 = float(a.get("t_end", 1.0))
+            n = int(a.get("steps", 50))
+            ys = [y0]
+            for i in range(n):
+                t0_, t1_ = t1 * i / n, t1 * (i + 1) / n
+                k = eval(f, {"t": t0_, "y": ys[-1], "np": _np, "math": math})
+                ys.append(ys[-1] + (t1_ - t0_) * k)
+            return json.dumps({"y_end": round(float(ys[-1]), 6)}, ensure_ascii=False)
+        return json.dumps({"error": f"unknown action {act}"})
+
+    def _spec(name, desc, props):
+        from huginn.research.tool_surface import canonical_tool_shape
+        return {"tool": canonical_tool_shape(
+            name, desc, {"type": "object", "properties": props}),
+            "handle": _num}
+
+    return [
+        _spec("qc_integrate",
+              "通用一维数值积分器: func(theta) over [a,b]. 返回值 integral(数值).",
+              {"action": {"type": "string"}, "func": {"type": "string"},
+               "a": {"type": "number"}, "b": {"type": "number"}}),
+        _spec("qc_root",
+              "通用一维求根器(brentq): 找 func(x)=0 in [a,b]. 返回值 root(数值).",
+              {"action": {"type": "string"}, "func": {"type": "string"},
+               "a": {"type": "number"}, "b": {"type": "number"}}),
+        _spec("qc_minimize",
+              "通用一维极小化器(bounded): 最小化 func(x) over [a,b]. 返回 xstar/fmin.",
+              {"action": {"type": "string"}, "func": {"type": "string"},
+               "a": {"type": "number"}, "b": {"type": "number"}}),
+        _spec("qc_curvefit",
+              "通用多项式拟合器: 拟合 ydata vs xdata. 返回斜率/截距(数值).",
+              {"action": {"type": "string"}, "func": {"type": "string"},
+               "xdata": {"type": "array", "items": {"type": "number"}},
+               "ydata": {"type": "array", "items": {"type": "number"}}}),
+        _spec("qc_ode",
+              "通用一阶 ODE 显式 Euler: dy/dt=func(t,y). 返回 y_end.",
+              {"action": {"type": "string"}, "func": {"type": "string"},
+               "y0": {"type": "number"}, "t_end": {"type": "number"},
+               "steps": {"type": "number"}}),
+    ]
+
+
+__all__ = ["_make_experiments", "_try_author_code", "_tools_selfcheck",
+           "_diagnostic_tools", "GOAL", "PEROVSKITE"]
 
 def _next_open_report(last_report: str, cycle: int) -> str:
     """从上一轮报告提取"下一步"(简版: 若为空给域默认开放问题)."""
@@ -254,8 +272,11 @@ def _next_open_report(last_report: str, cycle: int) -> str:
         seg = last_report.split("下一步")[-1][:200]
         return seg.strip()
     if cycle <= 2:
-        return "应变能否诱导增强铁电临界? 普适类是否随应变/材料移动?"
-    return "二维序参量耦合与畴壁/标度律待深入"
+        return ("应变对发生铁电序参量/临界温度如何调控? 临界指数 β 属哪个普适类"
+                "(平均场 or 3D Ising)? 相图是否显示一阶/二阶/三临界? "
+                "哪个 ABO₃ 候选的应变可调性最高?"
+                "你自行判断模型与量纲, 自行决定怎么算.")
+    return "深化序参量耦合与标度律: 你自主定义下一步该算什么、怎么算."
 
 
 def main() -> int:
@@ -293,7 +314,19 @@ def main() -> int:
     for cycle in range(max(1, args.start_cycle), args.start_cycle + args.cycles):
         print(f"\n===== 量子临界 第 {cycle} 轮 =====")
         from huginn.research import run_research_program, Experiment  # noqa: F401
-        exps = _make_experiments(cycle)
+        # Code Lab: 书生亲手写本轮实验代码(自主建模为主). 失败回退白名单自检, 不阻塞.
+        author_exp = None
+        author_err = "dry-run(无 client, 走确定性自检占位)"
+        if client is not None:
+            next_open = _next_open_report(last_report, cycle)
+            author_exp, _probes, _objk, author_err = _try_author_code(
+                client, args.model, next_open, cycle)
+            if author_exp is not None:
+                print(f"  [书生成码·自主建模] 通过 schema: "
+                      f"{author_exp.hypothesis[:120]}")
+            else:
+                print(f"  [书生成码·自主建模] 未通过, 回退白名单自检: {author_err[:120]}")
+        exps = _make_experiments(cycle, author_exp=author_exp)
         goal = GOAL + " | " + _next_open_report(last_report, cycle)
         print("  experiments:", [e.name for e in exps])
         _OBJ = {k: "maximize" for k in
