@@ -42,12 +42,26 @@ PEROVSKITE = [
 
 # ═══════════════════ 书生成码: 自主建模型为主 (Code Lab 主角) ═══════════════════
 
+def _llm_compat_kwargs(client) -> dict:
+    """端点感知的调用增量参数: 仅 Intern/书生端点(intern-ai.org.cn 或路径含 intern)才注入
+    extra_body={'thinking_mode': False}(InternLM 关思考流的专属字段); 标准 OpenAI 兼容端点
+    (GPT/DeepSeek 等)不接受该字段, 自动省略避免 400. 让同一段调用语义跨端点兼容 ——
+    换模型只换 client/base_url, 不替书生解题, 也不把 agent 锁死在某一个模型上."""
+    try:
+        base = str(getattr(client, "base_url", None) or "")
+    except Exception:  # noqa: BLE001 — 取不到 base_url 按通用端点处理
+        base = ""
+    if "intern-ai.org.cn" in base or "/intern" in base:
+        return {"extra_body": {"thinking_mode": False}}
+    return {}
+
+
 def _ask_json(client, model: str, system: str, user: str, max_tokens: int = 1500) -> dict:
     try:
         r = client.chat.completions.create(model=model, messages=[
             {"role": "system", "content": system}, {"role": "user", "content": user}],
             max_tokens=max_tokens, temperature=0.2,
-            extra_body={"thinking_mode": False})
+            **_llm_compat_kwargs(client))
         text = (r.choices[0].message.content or "")
         import re as _re
         for m in _re.finditer(r"\{.*?\}", text, _re.DOTALL):

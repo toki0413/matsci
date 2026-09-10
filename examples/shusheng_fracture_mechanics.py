@@ -583,11 +583,30 @@ def _diagnostic_tools():
 
 # ═══════════════════════ 书生自主环: 观察→提议→行动 ═══════════════════════
 
+def _llm_compat_kwargs(client) -> dict:
+    """端点感知的开源/专有模型调用增量参数.
+
+    仅当 client 指向 Intern/书生端点(intern-ai.org.cn 或路径含 intern)才注入
+    ``extra_body={"thinking_mode": False}`` —— 那是 InternLM OpenAPI 关闭思考流的专属字段,
+    标准 OpenAI 兼容端点(OpenAI/GPT/DeepSeek 等)不接受该自定义字段, 传了可能 400。
+    这套判断让**同一个 client 语义跨端点兼容**: 换模型只换 client/base_url, 调用面不用改,
+    不替书生解题, 也不把 agent 锁死在某一个模型上。
+    """
+    try:
+        ub = getattr(client, "base_url", None)
+        base = str(ub)
+    except Exception:  # noqa: BLE001 — 取不到 base_url 就按通用端点处理(不带思考流字段)
+        base = ""
+    if "intern-ai.org.cn" in base or "/intern" in base:
+        return {"extra_body": {"thinking_mode": False}}
+    return {}
+
+
 def _ask_json(client, model: str, system: str, user: str, max_tokens: int = 900) -> dict:
     try:
         r = client.chat.completions.create(
             model=model, max_tokens=max_tokens, temperature=0.2,
-            extra_body={"thinking_mode": False},
+            **_llm_compat_kwargs(client),
             messages=[{"role": "system", "content": system},
                       {"role": "user", "content": user}])
         text = r.choices[0].message.content or ""
@@ -981,7 +1000,7 @@ def _try_raw_code(client, model: str, next_open: str) -> str:
     try:
         r = client.chat.completions.create(
             model=model, max_tokens=1500, temperature=0.2,
-            extra_body={"thinking_mode": False},
+            **_llm_compat_kwargs(client),
             messages=[{"role": "user",
                        "content": "写一个 numpy 断裂力学数值实验函数 def run(cfg): 检验: "
                                   + next_open[:800] + "\n输出裸代码。"}])
@@ -1057,7 +1076,7 @@ def _sync_llm_create(client, model: str):
         try:
             r = client.chat.completions.create(
                 model=model, max_tokens=1800, temperature=0.3,
-                extra_body={"thinking_mode": False},
+                **_llm_compat_kwargs(client),
                 messages=[{"role": "user", "content": prompt}])
             return r.choices[0].message.content or ""
         except Exception:  # noqa: BLE001

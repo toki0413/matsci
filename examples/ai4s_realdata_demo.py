@@ -399,8 +399,15 @@ def main() -> int:
                 break
 
     def _gen() -> str:
-        return client.chat.completions.create(model=args.model, messages=messages, max_tokens=1800,
-                                              temperature=0.2, extra_body={"thinking_mode": False}).choices[0].message.content or ""
+        _kw = {}
+        try:
+            if "intern-ai.org.cn" in str(client.base_url):
+                _kw = {"extra_body": {"thinking_mode": False}}
+        except Exception:  # noqa: BLE001
+            _kw = {}
+        return client.chat.completions.create(model=args.model, messages=messages,
+                                              max_tokens=1800, temperature=0.2,
+                                              **_kw).choices[0].message.content or ""
 
     final = ""; verdict, ungrounded = "needs_grounding", []
     did_verify = any(t.startswith("`verify_predictions") for t in transcript)

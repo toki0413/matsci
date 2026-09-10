@@ -1274,12 +1274,26 @@ def _extract_next_open(report_text: str) -> str:
     return m.group(2).strip()[:2000]
 
 
+def _llm_compat_kwargs(client) -> dict:
+    """端点感知的调用增量参数: 仅 Intern/书生端点(intern-ai.org.cn 或路径含 intern)才带
+    extra_body={'thinking_mode': False}(InternLM OpenAPI 关思考流的专属字段), 标准 OpenAI
+    兼容端点(GPT/DeepSeek 等)不接受该字段, 自动省略避免 400. 让同一段调用语义跨端点兼容,
+    换模型只换 client/base_url, 调用面不动 —— agent 不为单一模型定制."""
+    try:
+        base = str(getattr(client, "base_url", None) or "")
+    except Exception:  # noqa: BLE001
+        base = ""
+    if "intern-ai.org.cn" in base or "/intern" in base:
+        return {"extra_body": {"thinking_mode": False}}
+    return {}
+
+
 def _ask_json(client, model: str, system: str, user: str, max_tokens: int = 900) -> dict:
     """让书生输出 JSON(解析失败/空返回 {}, 绝不阻塞主线)."""
     try:
         r = client.chat.completions.create(
             model=model, max_tokens=max_tokens, temperature=0.2,
-            extra_body={"thinking_mode": False},   # 关思考流: 否则 JSON 常被前置 thinking 污染
+            **_llm_compat_kwargs(client),   # 关思考流(仅 Intern 端点注入, 其余自动省略)
             messages=[{"role": "system", "content": system},
                       {"role": "user", "content": user}])
         text = r.choices[0].message.content or ""
@@ -1448,7 +1462,7 @@ def _try_author_code(client, model: str, next_open: str, cycle: int):
     def _ask_code(extra_ctx: str = "") -> str:
         r = client.chat.completions.create(
             model=model, max_tokens=6000, temperature=0.2,
-            extra_body={"thinking_mode": False},     # 关思考流, 防止模板引用混入提取
+            **_llm_compat_kwargs(client),     # 关思考流(仅 Intern 端点注入)
             messages=[{"role": "user",
                        "content": ("你是实验代码作者。基于开放问题, 用一个纯 numpy 的短函数 "
                                    "run(cfg) 做真实数值实验, 不能 IO/网络。签名与返回格式照抄模板"

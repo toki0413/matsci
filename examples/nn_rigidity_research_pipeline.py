@@ -177,12 +177,22 @@ def finalize(x1, x2, x3):
 3 讨论(饱和判据修正、C3 守卫、约束维数) / 4 结论与局限 / 5 下一步。
 输出 markdown。标注哪两个实验支持"判据应看 eps 而非 N"这一结论。
 """
+    def _compat_kwargs(cil):
+        """端点感知: 仅 Intern/书生端点才带 thinking_mode 字段, 通用端点自动省略(避免 400)."""
+        try:
+            base = str(getattr(cil, "base_url", None) or "")
+        except Exception:  # noqa: BLE001
+            base = ""
+        if "intern-ai.org.cn" in base or "/intern" in base:
+            return {"extra_body": {"thinking_mode": False}}
+        return {}
+
     client = OpenAI(api_key=key, base_url=os.environ.get(
         "INTERNLM_BASE_URL", "https://chat.intern-ai.org.cn/api/v1"))
     r = client.chat.completions.create(
         model=os.environ.get("INTERNLM_MODEL", "intern-s2-preview"),
         messages=[{"role": "user", "content": prompt}], max_tokens=2800, temperature=0.3,
-        extra_body={"thinking_mode": False})
+        **_compat_kwargs(client))
     report = r.choices[0].message.content or ""
 
     verify = grounding_verifier()
@@ -197,7 +207,7 @@ def finalize(x1, x2, x3):
         rr = client.chat.completions.create(
             model=os.environ.get("INTERNLM_MODEL", "intern-s2-preview"),
             messages=[{"role": "user", "content": prompt2}],
-            max_tokens=2800, temperature=0.2, extra_body={"thinking_mode": False})
+            max_tokens=2800, temperature=0.2, **_compat_kwargs(client))
         report = rr.choices[0].message.content or ""
 
     (OUT / "research_report.md").write_text(

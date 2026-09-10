@@ -70,12 +70,22 @@ def main() -> int:
     base = os.environ.get("INTERNLM_BASE_URL", "https://chat.intern-ai.org.cn/api/v1")
     client = OpenAI(api_key=key, base_url=base)
 
+    def _compat_kwargs(cil):
+        """端点感知: 仅 Intern/书生端点才带 thinking_mode 字段, 通用端点自动省略(避免 400)."""
+        try:
+            _base = str(getattr(cil, "base_url", None) or "")
+        except Exception:  # noqa: BLE001
+            _base = ""
+        if "intern-ai.org.cn" in _base or "/intern" in _base:
+            return {"extra_body": {"thinking_mode": False}}
+        return {}
+
     r = client.chat.completions.create(
         model=model,
         messages=[{"role": "user", "content": _PROMPT}],
         max_tokens=3000,
         temperature=0.3,
-        extra_body={"thinking_mode": False},
+        **_compat_kwargs(client),
     )
     text = r.choices[0].message.content or ""
 

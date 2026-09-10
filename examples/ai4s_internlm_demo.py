@@ -369,9 +369,15 @@ def main() -> int:
 
     # ── 结论证伪门禁：模型交报告 → 核对每个数值是否落在轨迹里 ──
     def _gen_final() -> str:
+        _kw = {}
+        try:
+            if "intern-ai.org.cn" in str(client.base_url):
+                _kw = {"extra_body": {"thinking_mode": False}}
+        except Exception:  # noqa: BLE001
+            _kw = {}
         return client.chat.completions.create(
             model=args.model, messages=messages, max_tokens=1800, temperature=0.2,
-            extra_body={"thinking_mode": False}).choices[0].message.content or ""
+            **_kw).choices[0].message.content or ""
 
     final = ""
     verdict_state, ungrounded = "needs_grounding", []
