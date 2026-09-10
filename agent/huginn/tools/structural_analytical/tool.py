@@ -14,6 +14,69 @@ from huginn.core_types import ToolContext, ToolResult
 from huginn.tools.base import HuginnTool, ToolProfile
 
 
+def _structural_dimensional_precheck(args: StructuralAnalyticalInput) -> dict:
+    """解析求解前的量纲自检(契约层, 非学习).
+
+    对每个 action 对应的一条解析解式子做静态度量(用 ``check_expression_dimensions``):
+      - beam_modal    ω ∝ β²√(EI/(ρAL⁴))    → 1/s
+      - beam_buckling P_cr = π²EI/(KL)²     → N
+      - plate_*       板弯曲刚度 D=E·h³/(12(1-ν²)) → N·m (仅量纲自检板类共用基元)
+      - shell_buckling σ_cl = E·h/(R√(3(1-ν²))) → Pa
+
+    输入字段带单位, 隐式假设 SI(P_a=Pa, ρ=kg/m³, I=m⁴, A=m², D_板折合 N·m)。
+    Returns: {"ok": bool, "checks": [dict], "error": str|None} —— ok=False 时 caller 硬拒。
+    量纲引擎不可用 → checks 为空 → 不阻断(如实走"量纲未知"诚实边界).
+    """
+    checks: list[dict] = []
+    try:
+        from huginn.research.external_validator import check_expression_dimensions
+    except Exception:  # noqa: BLE001
+        return {"ok": True, "checks": checks, "error": None}
+
+    beam = args.beam
+    sym_units = {
+        "E": "Pa", "rho": "kg/m3", "nu": "1",
+        "L": "m", "h": "m", "R": "m",
+        "I": "m4", "A": "m2", "a": "m", "b": "m",
+        "beta": "1",
+    }
+
+    if args.action == "beam_modal" and beam is not None:
+        checks.append({
+            "name": "beam_modal_frequency",
+            "expr": "beta**2 * sqrt(E * I / (rho * A * L**4))",
+            **check_expression_dimensions(
+                "beta**2 * sqrt(E * I / (rho * A * L**4))", sym_units, "1/s"),
+        })
+    elif args.action == "beam_buckling" and beam is not None:
+        checks.append({
+            "name": "beam_euler_buckling_load",
+            "expr": "pi**2 * E * I / L**2",
+            **check_expression_dimensions(
+                "pi**2 * E * I / (L**2)", sym_units, "N"),
+        })
+    elif args.action in ("plate_static", "plate_modal", "plate_buckling"):
+        # 板类共用: 弯曲刚度 D = E·h³/(12(1-ν²)), 量纲须为 N·m (M·L²·T⁻²·L).
+        checks.append({
+            "name": "plate_bending_stiffness",
+            "expr": "E * h**3 / (1 - nu**2)",
+            **check_expression_dimensions(
+                "E * h**3 / (1 - nu**2)", sym_units, "N*m"),
+        })
+    elif args.action == "shell_buckling":
+        # Donnell 轴向临界应力 σ_cl = E·h/(R·√(3(1-ν²))) → Pa
+        checks.append({
+            "name": "shell_axial_buckling_stress",
+            "expr": "E * h / (R * sqrt(3 * (1 - nu**2)))",
+            **check_expression_dimensions(
+                "E * h / (R * sqrt(3 * (1 - nu**2)))", sym_units, "Pa"),
+        })
+
+    hard_fail = any(c.get("ok") is False and c.get("error") for c in checks)
+    return {"ok": not hard_fail, "checks": checks,
+            "error": None if not hard_fail else "结构解析量纲自检未通过"}
+
+
 class BeamSpec(BaseModel):
     """等截面梁参数. SI 单位 (Pa, m, kg/m^3)."""
 
@@ -217,6 +280,15 @@ class StructuralAnalyticalTool(HuginnTool):
         self, args: StructuralAnalyticalInput, context: ToolContext
     ) -> ToolResult:
         try:
+            # 解析前的量纲自检(契约层, 非学习): 对当前 action 的解析式做静态度量.
+            pre = _structural_dimensional_precheck(args)
+            if not pre["ok"]:
+                return ToolResult(
+                    data={"precheck": pre["checks"]},
+                    success=False,
+                    error=pre["error"] or "结构解析量纲自检未通过",
+                )
+
             if args.action in ("beam_static", "beam_modal", "beam_buckling"):
                 from .beams import beam_buckling, beam_modal, beam_static
 

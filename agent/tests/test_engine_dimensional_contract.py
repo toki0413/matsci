@@ -252,3 +252,65 @@ def test_fem_precheck_ok_consistent():
     assert pre["ok"] is True
     bend = next(c for c in pre["checks"] if c["name"] == "bending_stiffness")
     assert bend["ok"] is True
+
+
+# ═══════════════ S6: structural_analytical 解析求解量纲自检 ═══════════════
+
+def test_structural_beam_modal_frequency_dimensional():
+    """梁模态频率 ω∝β²√(EI/(ρAL⁴)) → 1/s, 解析式量纲自洽."""
+    from huginn.tools.structural_analytical.tool import (
+        StructuralAnalyticalInput,
+        _structural_dimensional_precheck,
+    )
+
+    args = StructuralAnalyticalInput(
+        action="beam_modal",
+        beam={"youngs_modulus": 210e9, "poissons_ratio": 0.3,
+              "length": 1.0, "second_moment": 1e-8, "density": 7850, "area": 0.01},
+        boundary="simply_supported", n_modes=3,
+    )
+    pre = _structural_dimensional_precheck(args)
+    assert pre["ok"] is True
+    chk = next(c for c in pre["checks"] if c["name"] == "beam_modal_frequency")
+    assert chk["ok"] is True
+    assert chk["inferred"] == "T-1"
+
+
+def test_structural_beam_buckling_load_dimensional():
+    """Euler 屈曲临界载荷 P_cr=π²EI/L² → N, 解析式量纲自洽."""
+    from huginn.tools.structural_analytical.tool import (
+        StructuralAnalyticalInput,
+        _structural_dimensional_precheck,
+    )
+
+    args = StructuralAnalyticalInput(
+        action="beam_buckling",
+        beam={"youngs_modulus": 210e9, "poissons_ratio": 0.3,
+              "length": 2.0, "second_moment": 1e-8, "density": 7850, "area": 0.01},
+        boundary="simply_supported",
+    )
+    pre = _structural_dimensional_precheck(args)
+    assert pre["ok"] is True
+    chk = next(c for c in pre["checks"] if c["name"] == "beam_euler_buckling_load")
+    assert chk["ok"] is True
+    assert "T-2" in chk["inferred"]  # N = kg·m/s²
+
+
+def test_structural_shell_buckling_stress_dimensional():
+    """Donnell 轴向临界应力 σ_cl=E·h/(R√(3(1-ν²))) → Pa, 解析式量纲自洽."""
+    from huginn.tools.structural_analytical.tool import (
+        StructuralAnalyticalInput,
+        _structural_dimensional_precheck,
+    )
+
+    args = StructuralAnalyticalInput(
+        action="shell_buckling",
+        shell={"youngs_modulus": 70e9, "poissons_ratio": 0.33,
+               "radius": 0.5, "length": 1.0, "thickness": 0.002, "density": 2700},
+        theory="donnell", shell_load_type="axial",
+    )
+    pre = _structural_dimensional_precheck(args)
+    assert pre["ok"] is True
+    chk = next(c for c in pre["checks"] if c["name"] == "shell_axial_buckling_stress")
+    assert chk["ok"] is True
+    assert "M1" in chk["inferred"] and "L-1" in chk["inferred"]  # Pa = kg/(m·s²)

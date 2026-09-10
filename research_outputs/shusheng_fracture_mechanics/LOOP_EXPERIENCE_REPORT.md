@@ -389,10 +389,17 @@ HEP agent harness 论文(arXiv 2609.00107，2026-09)给出**科学 agent 的契�
     静力弯曲刚度 `D=E·h³/(1-ν²)` 与模态频率 `ω∝√(E/ρ)/L` 做解析解量纲自检(假定 SI)。FEM
     输入是裸数值/隐式 SI, 故用"假定 SI 单位映射+解析解表达式"对接契约层, 不改求解器/schema。
   - `test_engine_dimensional_contract.py` 扩至 15 项(Lean 5 + FEM/std 4)。
+- **S5c 引擎接线续(structural_analytical)**：把结构力学解析求解器也接入同一量纲契约层,
+  对其**解析解式子**做静态度量(仿 FEM 先例, 不改求解器/schema)。
+  `structural_analytical_tool._structural_dimensional_precheck` 在 call 求解前按 action 对
+  一条解析式跑 `check_expression_dimensions`(隐式 SI):
+  - beam_modal `ω∝β²√(EI/(ρAL⁴))` → 1/s; beam_buckling `P_cr=π²EI/L²` → N;
+  - plate_* 弯曲刚度 `D=E·h³/(1-ν²)` → N·m; shell_buckling Donnell `σ_cl=E·h/(R√(3(1-ν²)))` → Pa。
+  量纲引擎不可用 → 如实"量纲未知"不阻断。既有 15 项测试全绿, 新增 3 项量纲用例。
 - **引擎盘点(诚实, 非铺全)**：同主题的低风险引擎已接(dimensional/claim_grounding/law_model
-  /C-Space)；符号回归/Bourbaki/Lean(量纲前置)/FEM(物理合理性) 已接**量纲契约层**(S5，
-  学到的式子/待证方程/求解输入先过量纲自洽再归档)；`LearnableForwardModel` 属权重线, 不进
-  非学习契约路径。依赖补齐
+  /C-Space)；符号回归/Bourbaki/Lean(量纲前置)/FEM(物理合理性)/structural_analytical(解析式)
+  已接**量纲契约层**(S5，学到的式子/待证方程/求解输入先过量纲自洽再归档)；`LearnableForwardModel`
+  属权重线, 不进非学习契约路径。依赖补齐
   (sympy/pydantic/langchain-core/cryptography/pytest-cov/pytest-benchmark/pymatgen/paramiko
   /nbformat/Pillow/matplotlib/scikit-fem) 后, **收集阻塞清零**。全量 `9357 passed / 38 failed`, 其中
   失败均属**仓库既有**架构门禁/环境漂移(arch import 白名单、config 文档漂移、tool_profile
