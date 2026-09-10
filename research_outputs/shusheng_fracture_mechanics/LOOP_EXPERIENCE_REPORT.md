@@ -194,6 +194,24 @@ Dundurs 界面参数、Weibull 弱链…)，才能驱动深研？这看似"负�
 
 ---
 
+### 4.4 泛化基线实测：跨域零改动复用度(cross-domain reuse score)
+
+把"同一套机制零改动搬 N 域"从口头断言变成**可证伪数值**：`tests/test_cross_domain_reuse.py`
+用**同一个** harness 机制(严格契约包装 / objectives 提取 / 门禁可落地 / 多证据)驱动 3 个
+零族域(rigidity 自治轨迹式 / fracture 白名单扫描式 / quantum 通用工具面自检式)。
+
+- **当前基线 reuse_score = 0.9167**(11/12)。fracture、quantum_critical 四个机制 stage 全
+  满格；机制级 stage(objectives 提取/门禁可落地/多证据)在 3 域全部通过。
+- **唯一扣分项(诚实 gap)**：老域 **rigidity** 不遵守统一 `{success,summary,objectives}`
+  契约——它顶层 `import torch`, 返回裸数值 dict / 整数键逐族 dict(`exp_constraint_dimension`
+  返回 `{0:{...},1:{...},2:{...}}`)。harness 用 `_coerce_author_result` 在边界能宽容其部分
+  (X1 抽出 objectives), 但域自身不统一契约 → 严格包装 stage 只得 0 分。
+- **意义**：这不是"造一个假满分"的表演, 而是暴露了真实的待对齐清单——**零改动复用不是
+  无条件满格**, 老域/旧风格域需要做契约对齐(统一 `{summary,objectives}` 包装、扁平化
+  objectives)才能从 0.92 → 1.0。这正是"泛化能力"要量化的东西。
+
+---
+
 ## 5. 可迁移性与复用路径(这份品味不只在断裂力学成立)
 
 - **跨域复用**：taste taxonomy(`PARADOX / ASSUMPTION_FAIL / SCALE_BREAK`…)自带非断裂类比例子
