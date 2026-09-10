@@ -169,6 +169,8 @@ class CSpace:
             payload = {"law": model.law(), "predicted": pred.as_dict(), "card": card}
         else:
             payload = {"law": model.law(), "card": card}
+        # 域科学契约(量纲/有效域)随状态 Being 携带 —— "状态在场"自证其法律约束.
+        payload["scientific_contract"] = card.get("contract")
         # 具身可信: law 三件套在 → 可通过 reconcile 对账 → 可证伪
         b = self.register(being_id, "state", payload=payload,
                           source=card["truth_reference"], falsifiable=card["falsifiable"])

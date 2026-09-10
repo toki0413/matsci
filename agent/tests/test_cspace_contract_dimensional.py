@@ -109,3 +109,49 @@ def test_cross_quantity_dimensional_identity_catches_contract_typo():
     assert res["velocity"]["ok"] is False
     assert res["velocity"]["declared"] == "T1"          # 被误写成 time
     assert res["velocity"]["expected"] == "L1·T-1"      # 但理论上必须是 distance/time
+
+
+# ═══════════════ S4: law_model 卡片 ↔ C-Space 契约(自证法律一致) ═══════════════
+
+class _EcoLaw():
+    domain = "ecology_dynamics"
+
+    def predict(self, *a):
+        return type("P", (), {"as_dict": lambda self: {"x_star": 0.6, "period": 17.15}})()
+    def law(self): return "dx/dt=a·x−b·x·y; dy/dt=c·x·y−d·y"
+    def seed(self, *a): return None
+
+
+def test_world_model_card_carries_domain_contract():
+    """LawModel 治理卡片携带其域的科学契约(量纲/有效域)."""
+    from huginn.research.law_model import world_model_card
+    card = world_model_card(_EcoLaw())
+    assert card["domain"] == "ecology_dynamics"
+    assert card["contract"]["quantities"]["period_est"]["unit"] == "time"
+    # 未登记域 → 契约空, 不阻断
+    class NoDomain:
+        domain = "no_such_domain"
+        def predict(self, *a): return None
+        def law(self): return ""
+        def seed(self, *a): return None
+    assert world_model_card(NoDomain())["contract"] == {}
+
+
+def test_cspace_state_from_lawmodel_carries_contract_and_gates_itself():
+    """C-Space.add_state 从 LawModel 灌状态 → Being 自带契约; contract_gate 自证:
+    契约内 confirmed, 越域 self-rejected —— 不传显式 quantities 也有效."""
+    cs = CSpace()
+
+    def mk(obj):
+        b = cs.add_state("st", _EcoLaw(), state=obj)
+        b.payload["objectives"] = obj
+        b.falsifiable = False
+        return b
+
+    good = mk({"period_est": 17.15, "x_star": 0.6})
+    assert cb.promote_to_at_hand(cs, "st", corroborate=cb.contract_gate())["promoted"] is True
+    good.falsifiable = False
+
+    bad = mk({"period_est": -1.0, "x_star": 0.6})
+    r = cb.promote_to_at_hand(cs, "st", corroborate=cb.contract_gate())
+    assert r["promoted"] is False and bad.payload["scientific_contract"]["quantities"]["period_est"]["unit"] == "time"

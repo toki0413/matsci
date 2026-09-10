@@ -7,7 +7,6 @@ transolver package and are skipped when those aren't importable.
 """
 
 import asyncio
-import importlib.util
 import sys
 import tempfile
 import types
@@ -32,7 +31,21 @@ def _run(tool, args):
     return asyncio.run(tool.call(args, _ctx()))
 
 
-_TORCH_AVAILABLE = importlib.util.find_spec("torch") is not None
+def _torch_available() -> bool:
+    """torch 是否可导入.
+
+    Python 3.14 + torch 2.x 下 torch 触底加载后会把自身 ``__spec__`` 置 None,
+    这会导致 ``importlib.util.find_spec("torch")`` 抛 ``ValueError: torch.__spec__ is None``
+    (即便 torch 明明已装). 改用真正 import + try/except 探测, 既健壮又与语义一致.
+    """
+    try:
+        import torch  # noqa: F401
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+_TORCH_AVAILABLE = _torch_available()
 
 
 # ── metadata ────────────────────────────────────────────────────

@@ -290,16 +290,21 @@ def contract_gate(quantities: dict | None = None, *,
       - 越出域声明有效域 → 硬拒(保持 candidate / 记 rejected);
       - coverage gap(未声明量, 有效域未知)默认宽容(与 external_validator 一致),
         传 ``strict_coverage=True`` 可把"未声明"也计作不过;
-      - ``quantities`` 为空 → 视为无额外设限(缺省不挡).
+      - ``quantities`` 缺省时回退到 ``Being.payload["scientific_contract"]``
+        (``cspace.add_state`` 已把 LawModel 治理卡片的域契约挂上), 二者皆空 → 不设限.
     """
     def _gate(b: Being, cspace: CSpace) -> bool:
-        if not quantities:
-            return True
         from huginn.research.external_validator import validate_scientific_contract
         obj = (b.payload or {}).get(objectives_key)
         if not isinstance(obj, dict) or not obj:
             return False   # 状态 Being 必须携带 objectives 才能按契约判定
-        ok, gaps = validate_scientific_contract(obj, quantities)
+        # 契约优先用显式传的 quantities; 缺省则用状态 Being 自带契约(卡/工作区灌入).
+        q = quantities
+        if not q:
+            q = ((b.payload or {}).get("scientific_contract") or {}).get("quantities")
+        if not q:
+            return True   # 无任何契约声明 → 视为不设限
+        ok, gaps = validate_scientific_contract(obj, q)
         if not ok:
             return False   # 有效域违反 → 硬拒
         if strict_coverage and any("未声明" in g for g in gaps):

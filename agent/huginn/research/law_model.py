@@ -68,9 +68,12 @@ def world_model_card(model: "LawModel") -> dict:
       - 它的预告是否**可证伪**(falsifiable)—— 真相检验由"真实执行"经 reconcile 提供,
         不可证伪的预判不得冒充"世界知识"。
 
-    Returns: {"model", "domain", "worldview", "falsifiable", "truth_reference", "methods"}
+    Returns: {"model", "domain", "worldview", "falsifiable", "truth_reference",
+              "methods", "contract"}   —— contract 为该域 scientific_contract(若有):
+              让 LawModel 的治理卡片同时携带"域的量纲/有效域契约", CSpace 灌状态时按契约
+              门禁(可证伪且法律一致). 域未登记/不可用 → 空 dict, 不阻断.
     """
-    return {
+    card = {
         "model": type(model).__name__,
         "domain": getattr(model, "domain", ""),
         "worldview": getattr(model, "worldview", Worldview.PHYSICS_CAUSAL).value,
@@ -79,6 +82,17 @@ def world_model_card(model: "LawModel") -> dict:
         "truth_reference": "real_execution (reconcile 数值对账)",
         "methods": sorted(k for k in ("predict", "law", "seed") if hasattr(model, k)),
     }
+    # 域科学契约(量纲/有效域)挂上治理卡片: 公开 LawModel 声称的物理世界约束.
+    contract: dict[str, Any] = {}
+    try:
+        _domain = getattr(model, "domain", "")
+        if _domain:
+            from huginn.research.coldstart_guards import compile_domain_guards
+            contract = dict(compile_domain_guards(_domain).get("scientific_contract") or {})
+    except Exception:  # noqa: BLE001 — 域未登记/守卫不可用 → 契约留空, 不阻断
+        contract = {}
+    card["contract"] = contract
+    return card
 
 
 def world_model_inventory() -> list[dict]:

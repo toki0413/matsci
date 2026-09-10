@@ -178,6 +178,51 @@ def validate_derived_dimensions(quantities: dict, unit_map: dict | None = None) 
     return results
 
 
+def check_expression_dimensions(expr_str: str, symbol_units: dict, expected_unit: str) -> dict:
+    """对一条**数学表达式串**做量纲自检（契约层，符号回归/Bourbaki 可复用）。
+
+    - ``expr_str``: 如 ``"a * t**2"`` 或 ``"rho * V"`` —— 由 sympy 解析成表达式树;
+    - ``symbol_units``: ``{符号名: 单位标签或 SI 符号}``, 经 UnitRegistry 解析;
+    - ``expected_unit``: 该表达式应具有的量纲(标签或 SI 符号), 如 ``"energy"`` / ``"J"``.
+
+    返回 ``{"expr","inferred","expected","ok","error"}`` —— ok=False 且 error 非空表示
+    解析/量纲引擎不可用(如实报, 不硬判); ok=False 且无 error 表示真量的量纲不匹配
+    (如把 velocity 写成了 unit='time')。非学习; 纯规则; 是"学到的回归式/推导出的定律
+    先过量纲自洽再归档"的机械判据。
+    """
+    try:
+        import sympy as sp
+
+        from huginn.execution.dimensional_validator import (
+            DimensionalValidator,
+            registry,
+        )
+    except Exception as e:  # noqa: BLE001 — 引擎不可用 → 如实判不可用
+        return {"expr": expr_str, "ok": False, "inferred": None, "expected": None,
+                "error": f"dimensional engine unavailable: {str(e)[:60]}"}
+    try:
+        expr = sp.sympify(expr_str)
+    except Exception as e:  # noqa: BLE001
+        return {"expr": expr_str, "ok": False, "inferred": None, "expected": None,
+                "error": f"expr not parsable: {str(e)[:60]}"}
+    try:
+        v = DimensionalValidator()
+        inferred = v.infer_dimensions(expr, symbol_units)
+        # 目标量纲同样经契约 unit_map 解析(支持 'velocity'→'m/s' 等标签), 保持自洽.
+        expected = registry.get(_to_symbol(expected_unit))
+        ok = inferred == expected
+        return {
+            "expr": expr_str,
+            "inferred": inferred.dimension_signature,
+            "expected": expected.dimension_signature,
+            "ok": ok,
+            "error": "" if ok else "declared 量纲与推导结果不一致",
+        }
+    except Exception as e:  # noqa: BLE001
+        return {"expr": expr_str, "ok": False, "inferred": None, "expected": None,
+                "error": f"dimension inference failed: {str(e)[:60]}"}
+
+
 __all__ = ["strict_objectives", "validate_scientific_contract",
            "resolve_unit_dimension", "validate_declared_units",
-           "validate_derived_dimensions"]
+           "validate_derived_dimensions", "check_expression_dimensions"]

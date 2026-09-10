@@ -355,10 +355,37 @@ HEP agent harness 论文(arXiv 2609.00107，2026-09)给出**科学 agent 的契�
   新增 `dimensional_ready`(与依赖 `ready` 正交)。ecology 契约加 live 派生量
   `frequency=1/period_est`(dim=1/s=T-1) 演示；垃圾单位契约 → `dimensional.ok=False`。
   量纲预检从此**在冷启动就暴露契约笔误**，不必等数值阶段。
+- **S4 law_model 卡片 ↔ C-Space 契约**：`world_model_card` 现携带其域的
+  `scientific_contract`(懒查 compile_domain_guards，域未登记→空不阻断)；`cspace.add_state`
+  把该契约挂到状态 Being 的 `payload["scientific_contract"]`，`contract_gate` 缺省 quantity
+  时回退到 Being 自带契约。于是 **"状态在场"自证其法律约束**——从 LawModel 灌进工作区的
+  状态，越域即 self-rejected，不必每次显式传契约。
+- **依赖补齐**：装 sympy/pydantic/langchain-core/cryptography 后，先前挡收集的
+  `huginn.validation.__init__`(rag/bench) 侧测试全绿(`test_claim_grounding` 5、
+  `test_experiment_protocol_tool`、`test_revertible_effects`)。本线程验证器/claim_reward 侧
+  全非学习。
+- **S5 引擎接线(符号回归 & Bourbaki)**：把两条"独立能力工具"接到同一量纲契约层，仍是
+  非学习——`external_validator.check_expression_dimensions(expr, symbol_units, target_unit)`
+  供两引擎复用：sympy 解析表达式树 + `DimensionalValidator.infer_dimensions` 推断量纲，
+  与声明目标量纲 `registry.get(_to_symbol(target))` 对账(支持 `velocity→m/s` 标签)。接入点：
+  - `symbolic_regression_tool._constraint_check` 的 `dimensional_check` 从**语法空壳**改为
+    真量纲校验：读 `constraints['units']`(feature→unit)+`['target_unit']`，回归式自证量纲；
+    无完整单位声明 → 如实标 passed=False 而非硬判过；`test_symreg` 48 项保持绿。
+  - `bourbaki_tool._fallback_dimensional_analysis` 从裸 sympy 五基单位表换成契约层
+    `resolve_unit_dimension`，能解析复合单位(GPa / kg/m³)，未识别如实标 dimensional_match=False。
+  - 新增 `tests/test_engine_dimensional_contract.py` 9 项覆盖两引擎接线 + 契约层函数。
+  效果：**"学到的回归式/推导出的定律"在归档前先过量纲自洽门禁**，与 C-Space/冷启动共用
+  同一 UnitRegistry 判据——不额外引入依赖，不触碰 PSE/Lean 真实运行路径。
 - **引擎盘点(诚实, 非铺全)**：同主题的低风险引擎已接(dimensional/claim_grounding/law_model
-  /C-Space)；其余是独立的能力工具(符号回归/bourbaki/lean/FEM 等)，**刻意不全接**——强接会
-  过度工程 + 高回归面；`LearnableForwardModel` 属权重线, 不进非学习契约路径。pydantic 缺失
-  仍挡 `huginn.validation.__init__`(rag) 侧的测试收集, 与 sympy 无关, 非本次改动引入。
+  /C-Space)；符号回归/Bourbaki 已接**量纲契约层**(S5，学到的式子先过量纲自洽再归档)；
+  其余仍是独立能力工具(lean/FEM 等)，**刻意不全接**——强接会过度工程 + 高回归面；
+  `LearnableForwardModel` 属权重线, 不进非学习契约路径。依赖补齐
+  (sympy/pydantic/langchain-core/cryptography/pytest-cov/pytest-benchmark/pymatgen/paramiko
+  /nbformat/Pillow/matplotlib) 后, **收集阻塞清零**。全量 `9357 passed / 38 failed`, 其中
+  失败均属**仓库既有**架构门禁/环境漂移(arch import 白名单、config 文档漂移、tool_profile
+  基线、内存/收敛阈值、全量态 matplotlib RecursionError), 与本线程契约改动无关——契约相关
+  套件(`test_cspace_contract_dimensional`/`test_coldstart_dimensional_runtime`/`test_cspace_bridge`)
+  全绿。
 
 ---
 

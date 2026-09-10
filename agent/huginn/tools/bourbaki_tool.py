@@ -215,14 +215,14 @@ end
         )
 
     def _fallback_dimensional_analysis(self, domain: str, variables: Any) -> BourbakiResult:
-        """Check dimensional consistency using sympy."""
-        from sympy.physics.units import current, length, mass, temperature, time
+        """Check dimensional consistency using the contract-level UnitRegistry.
 
-        # Simple dimensional table
-        units = {
-            "mass": mass, "length": length, "time": time,
-            "current": current, "temperature": temperature,
-        }
+        由契约层 ``resolve_unit_dimension`` 解析每个变量的单位(支持复合单位如
+        GPa / m/s²), 而非旧版裸 sympy 的五基单位表。解析出合法量纲 → 记维度签名;
+        未识别 → 如实标 valid=False。非学习。
+        """
+        from huginn.research.external_validator import resolve_unit_dimension
+
         # variables can be a list of [name, unit, desc] tuples (from LLM)
         # or a dict of {name: unit} (from legacy parameters)
         if isinstance(variables, list):
@@ -237,14 +237,29 @@ end
         else:
             var_units = {}
 
-        recognized = all(v in units or v in {"dimensionless", "1"} for v in var_units.values())
+        resolved = {
+            name: resolve_unit_dimension(unit) for name, unit in var_units.items()
+        }
+        recognized = all(sig is not None for sig in resolved.values())
         return BourbakiResult(
             success=True,
             task="dimensional_analysis",
             domain=domain,
             dimensional_match=recognized,
             fallback=True,
-            message=f"Dimensional analysis: {len(var_units)} variables, all recognized: {recognized}",
+            data={
+                "variables": [
+                    {"name": name, "unit": var_units[name], "dimension": sig}
+                    for name, sig in resolved.items()
+                ],
+                "all_recognized": recognized,
+            },
+            message=(
+                f"Dimensional analysis: {len(var_units)} variables, "
+                f"all recognized: {recognized}. "
+                + ("Dimensions resolved via contract UnitRegistry." if recognized
+                   else "Some units unknown; resolve_unit_dimension returned None.")
+            ),
         )
 
     def _classify_pde_type(self, eq_str: str) -> str:
