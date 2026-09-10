@@ -935,18 +935,36 @@ def _try_author_code(client, model: str, next_open: str, cycle: int):
         "Dundurs 等), dict 里每个值必须是真实计算的数值(不要字符串填充)。输出裸代码"
         "(不要解释), 代码必须含 def run(cfg)。"
     )
-    d = _ask_json(client, model, sys_prompt,
-                  f"本轮开放问题: {next_open[:1000]}", max_tokens=1500)
-    code = d.get("code") or d.get("python") or ""
-    if not code:
-        code = _try_raw_code(client, model, next_open)
-    if not code:
-        return None, [], [], "书生未给出代码"
-    code = extract_code(code) if not code.strip().startswith("def run") else code
-    cfg = dict(_SCAN_DEFAULTS)
-    res, err = sandbox_run(code, cfg)
+    # agentic 重试: 书生成码失败(schema/IP 拦截/运行时 bug)时把真实 err 回流,
+    # 让它带错修一版, 最多 _AUTHOR_MAX_RETRY 次; 全败才回退白名单扫描(不阻塞).
+    _AUTHOR_MAX_RETRY = 2
+    res: dict | None = None
+    last_err = ""
+    code = ""
+    for at in range(_AUTHOR_MAX_RETRY):
+        if at == 0:
+            user_goal = f"本轮开放问题: {next_open[:1000]}"
+        else:
+            user_goal = (f"你上一版代码执行报错如下:\n{last_err}\n\n"
+                         f"请**只输出修正后的完整代码 def run(cfg)**, 修复该错误, "
+                         f"数值仍须真实计算。问题: {next_open[:600]}")
+        d = _ask_json(client, model, sys_prompt, user_goal, max_tokens=1500)
+        code = d.get("code") or d.get("python") or ""
+        if not code:
+            code = _try_raw_code(
+                client, model,
+                next_open if at == 0 else f"{next_open}\n[用户反馈] 你上一版代码报错: {last_err}")
+        if not code:
+            break
+        code = extract_code(code) if not code.strip().startswith("def run") else code
+        cfg = dict(_SCAN_DEFAULTS)
+        res, err = sandbox_run(code, cfg)
+        if res is not None:
+            break                     # 一次通过, 不再重试
+        last_err = err or "代码执行失败"
+        print(f"  [书生成码·重试 {at + 1}] 执行失败: {last_err[:160]}  → 回流给书生重修")
     if res is None:
-        return None, [], [], err or "代码执行失败"
+        return None, [], [], last_err or "代码执行失败"
     obj_keys = list(res["objectives"].keys())
     probe_specs = []
     try:

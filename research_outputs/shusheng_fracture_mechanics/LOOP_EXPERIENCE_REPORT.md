@@ -107,6 +107,32 @@ Huginn harness 层(保持中立、不偏袒模型)
 | ST 权重下载失败(镜像 401) | hf-mirror Xet 协议 401 | `HF_HUB_DISABLE_XET=1` 传统通道重下，`local_files_only` 直读快照 |
 | 批处理后台启动即崩 | nohup 环境丢了 numpy/scipy/openai | 逐个补齐到 `python` 解释器，`env` 前缀注入 API_KEY + HF 镜像再 nohup |
 | claim 门禁误报 `n_flaws 配置值未落地` | summary 混入配置参数被当成主张 | summary 只放结果标量(斜率/R²)，不放配置列表 |
+| course7 门禁 `needs_grounding`(-0.95) + S2/S3 数据全同 | `_dim_canon` 把 `vcR→barrier`，但 barrier 分支只用 ν 扫描 → 书生提的 vcR 假设空转、S2/S3 都落 nu | 为 vcR 建独立扫描维(真扫 v/cR∈[0.1..0.98] 的锐度)，补 `_DIM_VALUES`/`_dim_objective`；修复后门禁 `pass`、S1 单调锐度直接证伪"非单调"假设 |
+| 书生成码因缺 matplotlib 整体回退 | 沙箱环境未装 matplotlib | `pip install matplotlib`；沙箱前置 `MPLBACKEND=Agg` 防无头崩溃 |
+| 书生成码被拦"import typing 不在白名单" | `_ALLOWED_IMPORTS` 无纯类型标准库 | 两处白名单补 typing/typing_extensions/dataclasses/itertools/functools/collections/copy/decimal/fractions/operator(纯标准库无 IO/网络) |
+| 书生成码"必须返回 dict / 需要 summary"被拒 | 书生常 `return {"Kc_K0": 1.4142}` 裸数值 dict 而非标准包装 → 真实数值被丢 | `_coerce_author_result` 宽宥"裸数值 dict": 纯数值标量键→objectives、其余进 summary，success=True，**不合成任何数**；纯字符串/不可序列化仍拒 |
+| 书生成码运行时崩溃(KeyError:'materials' / SyntaxError) | 一二稿代码有 bug，被 schema 通过后自己执行失败 | `_AUTHOR_MAX_RETRY=2` agentic 重试: 失败时把真实 err(KeyError/SyntaxError/流程)回流给书生重修一版再执行，全败才回退白名单 |
+
+---
+
+## 6.5 方案2：书生成码"带错修错"agentic 重试(cycle16 后新增)
+
+书生成码的失败形态随修复逐层外移：依赖缺失 → import 白名单 → 返回契约(schema) → **代码本身的质量**。
+这一层不再是 harness 能修的路，而是模型生成能力面。为此给 `_try_author_code` 加 agentic 重试：
+
+```
+第1次: 书生写代码 → sandbox_run 执行
+  ├─ 成功 → 采纳(进入 objectives/Pareto/门禁)
+  └─ 失败 → 把真实 err(如 KeyError: 'materials' / SyntaxError: ...)
+          拼进下一轮 LLM user: "你上一版代码执行报错如下: {err}, 请只输出修正后的完整代码"
+第2次: 书生带错修一版(可选, _AUTHOR_MAX_RETRY=2) → 再跑
+全败 → 回退白名单扫描(不阻塞循环, 不伪造)
+```
+
+要点:
+- **只回流真实 err**, 不喂模型伪造的"建议"——书生自己根据错误修代码, harness 只做执行器。
+- **诚实边界不变**: 重试成功的数值仍是真实计算; 失败依然如实回退, 不因重试而放水 schema(IP/序列化/非 dict 依旧拒绝)。
+- 这本质是把 Code-as-World 的 `CompareAndDiagnose→Δ→局部修订` 从"世界假说"层平移到"书生的实验代码"层: 每一次 err 都是一次可验证的 Δ, 迭代到预算(2次)耗尽即停。
 
 ---
 
