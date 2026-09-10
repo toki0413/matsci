@@ -26,6 +26,7 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import math
+from pathlib import Path
 from typing import Any
 
 # 直接复用 claim_grounding.verify_claims 作溯源判定。为防止 `huginn.validation`
@@ -171,11 +172,24 @@ def grounded_accuracy_reward(
         return {"reward": g["grounding_score"], "grounding": g["verdict"], "detail": []}
 
     # 用 verify_claims 的数值分类, 保证只对"真实主张"计价 (忽略轮次编号/小节号).
+    # 注意: verify 返回的 matched/derived/unsubstantiated 已 round(3), 不能直接当键;
+    # 用 extract_numeric_claims 的原始数值对账 values(它是主张数值->真值映射),
+    # 再用 rounded 集合判断该主张是否溯源落地。
+    # 取原始主张数值: 直接从真实 claim_grounding 模块读 extract_numeric_claims(惰性同源),
+    # 避免裸 from ... import 触发包 __init__ 拉 langchain 重依赖。
+    _spec = importlib.util.spec_from_file_location(
+        "claim_grounding_cr", Path(__file__).resolve().parent / "claim_grounding.py"
+    )
+    _mod = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(_mod)
     res = _load_verify_claims()(final_text, tool_trace or [], allow_derived=allow_derived)
-    claims = {
-        c: (c in set(res["matched"]) or (allow_derived and c in set(res["derived"])))
-        for c in set(res["matched"]) | set(res["derived"]) | set(res["unsubstantiated"])
-    }
+    raw_claims = _mod.extract_numeric_claims(final_text)
+    rounded_matched = set(res["matched"]) or set()
+    rounded_ok = set(res["matched"]) | set(res["derived"])
+    claims: dict[float, bool] = {}
+    for c in raw_claims:
+        rc = round(c, 3)
+        grounded = rc in rounded_ok or c in rounded_matched
+        claims.setdefault(c, grounded)
     detail: list[dict[str, Any]] = []
     acc = 0.0
     n = 0
