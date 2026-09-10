@@ -105,12 +105,49 @@ def _load_namespace(code: str, mem_cap: int = SAFE_MEM_CAP) -> dict:
     return ns
 
 
+def _coerce_author_result(res: Any) -> tuple[Any, str | None]:
+    """把书生 run() 的裸返回宽容成标准结构, 但不伪造数值 (方案 A).
+
+    书生常直接 `return {"gain": 1.4142, "peak": 3.2}` 而非严格装进
+    {"success", "summary", "objectives"}。这些值是**真实计算数值**, 只因少了
+    包装而被拒、整体回退白名单 —— 造成自主数值被浪费。这里做"收尾宽容":
+      - 若返回顶层是 dict 且含**纯数值标量键**, 视为 objectives, sum组件为这些键的
+        副本(全部值真实), success=True —— 不做任何数值合成。
+      - 若已含 objectives/summary 则走原校验。
+    仍不接受的硬伤(非 dict / 值不可 JSON 序列化 / 纯字符串控制台输出)照旧拒绝。
+    """
+    import numpy as np
+    if not isinstance(res, dict):
+        return res, None  # 交给原 schema 校验报"必须返回 dict"
+    # 已是标准结构 → 走原校验.
+    if isinstance(res.get("objectives"), dict) and isinstance(res.get("summary"), dict):
+        return res, None
+    # 裸数值 dict 补包装: 只认能 float() 的标量键, 其余键原样丢进 summary(真实值在).
+    scalar_obj: dict[str, float] = {}
+    raw_sum: dict[str, Any] = {}
+    for k, v in res.items():
+        if k in ("objectives", "summary", "success"):
+            continue
+        if isinstance(v, (int, float, np.number)):
+            scalar_obj[str(k)] = float(v)
+        else:
+            raw_sum[str(k)] = v
+    if not scalar_obj:
+        return res, None  # 无任何数值标量键 → 非预期的控制台输出, 交原校验拒绝
+    return {
+        "success": True,
+        "objectives": scalar_obj,          # 全真实标量, 未合成
+        "summary": {"author_raw": res, **raw_sum},
+    }, None
+
+
 def _check_run_schema(res: Any) -> str | None:
     """run() 返回 schema 校验; 通过返回 None, 否则返回原因.
 
     诚实红线: 不伪造数值, 只对"收尾样式"宽容 —— success 缺失或缺 bool 包
     装时, 只要跑出非空数值 objectives 就视为计算成功(数值本身未变).
     真正的 schema 硬伤(非 dict/无数值/值不可序列化)照旧拒绝, 回退白名单.
+    注: sandbox_run 会先经 _coerce_author_result 把"裸数值 dict"补包装再调本校验.
     """
     import numpy as np
     if not isinstance(res, dict):
@@ -182,6 +219,7 @@ def sandbox_run(code: str, cfg: dict, *, mem_cap: int = SAFE_MEM_CAP,
         return None, str(te)
     except Exception as e:  # noqa: BLE001 — 执行异常如实记录
         return None, f"执行异常: {type(e).__name__}: {e}"
+    res, _ = _coerce_author_result(res)   # 宽容"裸数值 dict", 不伪造数值
     reason = _check_run_schema(res)
     if reason is not None:
         return None, reason

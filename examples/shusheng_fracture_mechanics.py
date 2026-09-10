@@ -924,14 +924,16 @@ def _try_author_code(client, model: str, next_open: str, cycle: int):
     from huginn.research.code_lab import extract_code, sandbox_run, author_probe_specs
     sys_prompt = (
         "你是断裂力学实验员。用 numpy(必要时 scipy)写一个真实物理数值实验函数 "
-        "def run(cfg): 检验给定的开放问题, 返回 {'success': bool, "
-        "'summary': {可复现数值轨迹: 全部为实数/list/str}, 'objectives': {<key>: 数值}}。"
-        "可用的断裂域白名单: cfg['pair']∈0..5(双材料对), cfg['material']∈0..9(材料), "
-        "cfg['flaw_idx']=a/a*倍数, cfg['n_flaws']∈{10..100000}, "
+        "def run(cfg): 检验给定的开放问题, 并**只通过返回值交付数值** —— return "
+        "一个 dict, 键是物理量名、值是该量的数值(如 {'Kc_K0': 1.4142}); 也可用标准结构 "
+        "{'success': bool, 'summary': {...}, 'objectives': {<k>: 数值}}。两种情况都行, "
+        "但**不要在 run() 里 print 大量中间结果**(那会被当控制台输出丢弃), 所有最终数值都"
+        "必须放进 return 的 dict。可用的断裂域白名单: cfg['pair']∈0..5(双材料对), "
+        "cfg['material']∈0..9(材料), cfg['flaw_idx']=a/a*倍数, cfg['n_flaws']∈{10..100000}, "
         "cfg['bridge_ratio']∈{0.05..0.9}, cfg['vcR']∈{0.1..0.98}, cfg['nu']∈{0.2,0.3,0.4}, "
         "cfg['kic_mat']∈0..5。公式必须来自经典断裂力学(Griffith/Rice-Dugdale/Freund/"
-        "Dundurs 等), objectives 每个值必须是真实计算的数值。输出裸代码(不要解释), "
-        "代码必须含 def run(cfg)。"
+        "Dundurs 等), dict 里每个值必须是真实计算的数值(不要字符串填充)。输出裸代码"
+        "(不要解释), 代码必须含 def run(cfg)。"
     )
     d = _ask_json(client, model, sys_prompt,
                   f"本轮开放问题: {next_open[:1000]}", max_tokens=1500)
