@@ -407,6 +407,31 @@ HEP agent harness 论文(arXiv 2609.00107，2026-09)给出**科学 agent 的契�
   套件(`test_cspace_contract_dimensional`/`test_coldstart_dimensional_runtime`/`test_cspace_bridge`)
   全绿。
 
+### 4.11 unit_tool 单轨化 + thermo_tool 接入量纲契约层(S5d)
+
+上轮盘点出与 FEM/Lean/结构解析等**共用同一条纬**的两处双轨残留，本轮收口，仍全部非学习：
+
+- **unit_tool 单轨化**：此前 `infer_dimension`/`check_dimension` 依赖 pint 的维度字符串，
+  与契约层 UnitRegistry 是**平行两套量纲系统**——同一物理量在两处判据可能不一致(双轨高熵源)。
+  现在 `_infer_dimension` 改走 `external_validator.check_expression_dimensions`(sympy + 契约层
+  UnitRegistry)，`check_dimension` 改走 `resolve_unit_dimension` + `_dim_matches`(维度标签→签名
+  子集判定)，量纲判断与符号回归/Bourbaki/Lean/FEM/结构解析**共用同一判据**。pint 仍在 convert/
+  unit_arithmetic 承担数值换算，但**量纲判定不归它**——判据单轨。
+  > 教训(工程)：中途加 `_DIM_LABEL_TO_DIMENSION` 映射时误把 dict 插到类体中断开缩进，
+  > 造成模块级 IndentationError 让 unit_tool 无法 import——先 `python -c import` 验证语法，
+  > 再改方法体。修复后新增 `check_dimension` 契约 registry 用例。
+- **thermo_tool 接入**：对标 structural_analytical，加 `_thermo_dimensional_precheck`，对四条
+  **固定热力学规律**跑 `check_expression_dimensions`(无用户输入可篡改)：`G=H−T·S`、
+  `F=E−T·S`、`Cv=Var(E)/(k_B·T²·N)`、`dG=−S·dT+V·dP`，签名分别自证 `J/mol · J/mol ·
+  J/(mol·K) · J/mol`。结果经 `_attach_thermo_checks` 附到每次成功查询的 `dimensional_checks`
+  字段——价值是**公式回归守卫**：实现一旦出现笔误/单位指针漂移，量纲自证先标红，而不静默
+  产出数值。与结构解析不同，这些是恒真定律，故**不硬门禁**（引擎不可用/离线只如实带出
+  不阻断查询）。
+- **全量回归**：`9392 passed / 213 skipped / 35 failed`；35 项失败均与本次无关(见上轮盘点，
+  仍属仓库既有架构门禁/环境漂移，如 dynamics_discovery numpy、packing_tool、plot/matplotlib、
+  tool_profile 基线)。新增用例(unit_tool 契约 registry `check_dimension` + thermo 四条恒等式 +
+  md_thermo 携带 dimensional_checks + 契约层抓"熵误标温度")全绿，`ruff check` 干净。
+
 ---
 
 ## 5. 可迁移性与复用路径(这份品味不只在断裂力学成立)

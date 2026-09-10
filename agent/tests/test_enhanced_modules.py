@@ -523,12 +523,11 @@ class TestUnitTool:
 
     @pytest.mark.asyncio
     async def test_infer_dimension_force(self, tool):
-        """infer_dimension on m*a should give a force dimension."""
-        try:
-            import pint  # noqa: F401
-        except ImportError:
-            pytest.skip("pint not installed")
+        """infer_dimension on m*a should give a force dimension (契约层单轨).
 
+        量纲推断已改走 contract 层 ``check_expression_dimensions`` (sympy +
+        UnitRegistry), 输出签名如 ``M1·L1·T-2``, 不再依赖 pint.
+        """
         result = await tool.call(
             {
                 "action": "infer_dimension",
@@ -537,11 +536,37 @@ class TestUnitTool:
             }
         )
         assert result.success, result.error
-        dim = result.data["result_dimension"]
-        # Force = mass * acceleration → [mass] * [length] / [time]^2
-        assert "length" in dim
-        assert "mass" in dim
-        assert "time" in dim
+        sig = result.data["result_dimension"]
+        parts = {p[0] for p in sig.split("·") if p}
+        # Force = mass * acceleration → M·L·T⁻²
+        assert "M" in parts
+        assert "L" in parts
+        assert "T" in parts
+
+    @pytest.mark.asyncio
+    async def test_check_dimension_contract_registry(self, tool):
+        """check_dimension 走契约 registry 解析单位量纲, 与声明维度标签比对. 非学习."""
+        # m/s 解析为 L1·T-1 → 属于 velocity, 不属于 pressure
+        ok = await tool.call(
+            {
+                "action": "check_dimension",
+                "from_unit": "m/s",
+                "dimension": "velocity",
+            }
+        )
+        assert ok.success, ok.error
+        assert ok.data["is_valid"] is True
+
+        bad = await tool.call(
+            {
+                "action": "check_dimension",
+                "from_unit": "m/s",
+                "dimension": "pressure",  # 维度标签与解析签名不符 → False
+            }
+        )
+        assert bad.success, bad.error
+        assert bad.data["is_valid"] is False
+        assert "dimension_signature" in bad.data
 
     @pytest.mark.asyncio
     async def test_unit_arithmetic_multiply(self, tool):

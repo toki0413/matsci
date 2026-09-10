@@ -314,3 +314,59 @@ def test_structural_shell_buckling_stress_dimensional():
     chk = next(c for c in pre["checks"] if c["name"] == "shell_axial_buckling_stress")
     assert chk["ok"] is True
     assert "M1" in chk["inferred"] and "L-1" in chk["inferred"]  # Pa = kg/(m·s²)
+
+
+# ═══════════════ S7: thermo_tool 核心热力学关系量纲自检 ═══════════════
+
+def test_thermo_precheck_four_thermodynamic_identities_consistent():
+    """G=H−T·S / F=E−T·S / Cv 涨落 / dG=−S·dT+V·dP 四条固定规律量纲自洽. 非学习."""
+    from huginn.tools.thermo_tool import ThermoTool
+
+    ok, checks = ThermoTool._thermo_dimensional_precheck()
+    assert ok is True
+    names = {c["name"] for c in checks}
+    assert names == {
+        "gibbs_identity", "helmholtz_free_energy",
+        "cv_fluctuation", "fundamental_relation",
+    }
+    # G / Helmholtz / 基本方程 → J/mol (M1·L2·T-2·N-1); Cv → J/(mol·K)
+    for name in ("gibbs_identity", "helmholtz_free_energy", "fundamental_relation"):
+        chk = next(c for c in checks if c["name"] == name)
+        assert chk["ok"] is True
+        assert chk["inferred"] == "M1·L2·T-2·N-1"
+    cv = next(c for c in checks if c["name"] == "cv_fluctuation")
+    assert cv["ok"] is True
+    assert cv["inferred"] == "M1·L2·T-2·Theta-1·N-1"
+
+
+async def test_thermo_md_thermo_result_carries_dimensional_checks():
+    """md_thermo 成功返回时, 输出携带 4 条热力学量纲自守条目(契约层接线)."""
+    from huginn.tools.thermo_tool import ThermoTool, ThermoToolInput
+
+    inp = ThermoToolInput(
+        action="md_thermo",
+        md_time_series={
+            "temperature": [300.0, 301.0, 299.5],
+            "kinetic_energy": [0.1, 0.102, 0.098],
+            "potential_energy": [0.2, 0.201, 0.199],
+        },
+        n_atoms=1,
+    )
+    res = await ThermoTool().call(inp, CTX)
+    assert res.success is True
+    checks = res.data["dimensional_checks"]
+    assert len(checks) == 4
+    assert all(c["ok"] for c in checks)
+
+
+def test_thermo_contract_layer_catches_drifted_entropy_unit():
+    """单位声明笔误(把熵 S 错误标成温度)会被契约层抓到, 不信口开河判过."""
+    from huginn.research.external_validator import check_expression_dimensions
+
+    # dG = −S·dT + V·dP, 但 S 误标为 'K' → 第一项量纲错 → 硬拒
+    out = check_expression_dimensions(
+        "-S*dT + V*dP",
+        {"S": "K", "dT": "K", "V": "m3/mol", "dP": "Pa"},
+        "J/mol",
+    )
+    assert out["ok"] is False
