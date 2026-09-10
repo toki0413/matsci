@@ -936,8 +936,9 @@ def _try_author_code(client, model: str, next_open: str, cycle: int):
         "(不要解释), 代码必须含 def run(cfg)。"
     )
     # agentic 重试: 书生成码失败(schema/IP 拦截/运行时 bug)时把真实 err 回流,
-    # 让它带错修一版, 最多 _AUTHOR_MAX_RETRY 次; 全败才回退白名单扫描(不阻塞).
-    _AUTHOR_MAX_RETRY = 2
+    # 让书生带错修一版。预算 1 次 —— 把 API 火力让给书生更擅长的数值工具
+    # (probe/扫描/闭式核验), 不在一处代码上死磕两轮。全败回退白名单扫描(不阻塞).
+    _AUTHOR_MAX_RETRY = 1
     res: dict | None = None
     last_err = ""
     code = ""
