@@ -1411,6 +1411,23 @@ def main() -> int:
     from huginn.research import run_research_program, grounding_verifier   # noqa: F401
     from huginn.research import Experiment                                   # noqa: F401
 
+    # ── 跨域冷启动守卫: 依赖预检 + 守卫清单(open 断裂域批次前自动编译) ──
+    # 把散落在 LOOP_EXPERIENCE_REPORT 的工程 root-cause 编译成机器可读守卫,
+    # 缺依赖/缺白名单 提前拦, 避免"书生成码缺 matplotlib 整轮回退"之类重演。
+    from huginn.research.coldstart_guards import (
+        compile_domain_guards, verify_domain_ready, to_markdown,
+    )
+    _guards = compile_domain_guards("fracture")          # 未登记域也能跑(继承跨域守卫)
+    _ready = verify_domain_ready(_guards)
+    if not _ready["ready"]:
+        print("error: 冷启动守卫依赖缺失: %s" % _ready["missing_deps"],
+              file=sys.stderr)
+        return 3                                         # 缺依赖即拒, 不进入主链路
+    print("== 冷启动守卫(fracture) ==")
+    print("  依赖预检: %s" % _guards["deps_check"])
+    print("  书生成码重试预算: %d  (倾斜: 火让给 scan/probe)" % _guards["code_retry_budget"])
+    print("  成文探针: %s" % (", ".join(_guards["probes"]) or "(无)"))
+
     client = None
     if not args.dry:
         key = os.environ.get("INTERNLM_API_KEY")
