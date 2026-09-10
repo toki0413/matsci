@@ -115,7 +115,7 @@ Huginn harness 层(保持中立、不偏袒模型)
 
 ---
 
-## 6.5 方案2：书生成码"带错修错"agentic 重试(cycle16 后新增)
+### 4.1 方案2/倾斜：书生成码"带错修错"agentic 重试 + 走书生擅长路径(cycle16-22 实证)
 
 书生成码的失败形态随修复逐层外移：依赖缺失 → import 白名单 → 返回契约(schema) → **代码本身的质量**。
 这一层不再是 harness 能修的路，而是模型生成能力面。为此给 `_try_author_code` 加 agentic 重试：
@@ -132,7 +132,19 @@ Huginn harness 层(保持中立、不偏袒模型)
 要点:
 - **只回流真实 err**, 不喂模型伪造的"建议"——书生自己根据错误修代码, harness 只做执行器。
 - **诚实边界不变**: 重试成功的数值仍是真实计算; 失败依然如实回退, 不因重试而放水 schema(IP/序列化/非 dict 依旧拒绝)。
-- 这本质是把 Code-as-World 的 `CompareAndDiagnose→Δ→局部修订` 从"世界假说"层平移到"书生的实验代码"层: 每一次 err 都是一次可验证的 Δ, 迭代到预算(2次)耗尽即停。
+- 这本质是把 Code-as-World 的 `CompareAndDiagnose→Δ→局部修订` 从"世界假说"层平移到"书生的实验代码"层: 每一次 err 都是一次可验证的 Δ, 迭代到预算(_AUTHOR_MAX_RETRY)耗尽即停。
+
+> **cycle17-22 实证(倾斜)"**：
+> - **重试预算调低**: `_AUTHOR_MAX_RETRY` 2→1, 书生成码失败一次即回退白名单扫描, 把 API
+>   火力让给书生更擅长的路径(scan/probe/闭式核验), 不在一处代码上死磕两轮。
+> - **失败形态漂移**: 6 轮观察到的 err 涵盖 `TypeError('float' not iterable)` / `KeyError('c1')`
+>   / `ValueError(Material 0 not in database)` / `SyntaxError(括号未闭合/f-string unterminated)`;
+>   书生成码全在重试 1 次后回退, 未恢复出可运行代码 —— 印证 **Intern-S2 当前能力画像**:
+>   数值实验设计/解读强, 手写可运行实验代码弱。
+> - **scan/probe 主导**: 倾斜后书生在 goal 显式引用 `probe_flaw(material)`/`probe_barrier(nu)`
+>   等探针核验开放问题, 扫描覆盖 nu/bridge/barrier/material/vcR, 门禁一贯 pass。
+> - **教训**: 别把模型往它不擅长的路径上硬推; harness 保持中立, 提供多条可证伪通道
+>   (scan/probe/Symbolic/code) 让模型选最顺手, 各通道数值都经 claim grounding 门禁。
 
 ---
 
