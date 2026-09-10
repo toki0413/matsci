@@ -84,6 +84,17 @@ _ALLOWED_IMPORTS = {
     "matplotlib",
     "ase",
     "pymatgen",
+    # 纯类型/数据容器标准库 (无 IO/网络, 与 code_act_sandbox 白名单保持一致)
+    "typing",
+    "typing_extensions",
+    "dataclasses",
+    "itertools",
+    "functools",
+    "collections",
+    "copy",
+    "decimal",
+    "fractions",
+    "operator",
 }
 
 # Blocked submodules — 白名单内的包也可能有危险子模块

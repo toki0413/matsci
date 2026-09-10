@@ -167,6 +167,10 @@ def sandbox_run(code: str, cfg: dict, *, mem_cap: int = SAFE_MEM_CAP,
     """执行书生写的实验代码: 返回 (结果 dict 或 None, 错误原因或 None)."""
     if not code.strip():
         return None, "空代码"
+    # 无显示主机的 matplotlib: 强制 Agg 后端, 避免 pyplot 因无 DISPLAY 崩 —
+    # 数值计算/存图照常走 Agg, 不依赖 GUI 头. (对已设 MPLBACKEND 的调用方生效)
+    import os as _os
+    _os.environ.setdefault("MPLBACKEND", "Agg")
     cfg = _alias_cfg(cfg)
     try:
         ns = _load_namespace(code, mem_cap)

@@ -42,6 +42,18 @@ _ALLOWED_IMPORTS = frozenset(
         "matplotlib",
         "ase",
         "pymatgen",
+        # 纯类型/数据容器标准库 (无 IO/网络, 书生数值代码常用, 补进白名单以提升
+        # 自主成码比例, 避免因 "import typing" 之类被拦而回退白名单扫描).
+        "typing",
+        "typing_extensions",
+        "dataclasses",
+        "itertools",
+        "functools",
+        "collections",
+        "copy",
+        "decimal",
+        "fractions",
+        "operator",
     }
 )
 
