@@ -376,12 +376,25 @@ HEP agent harness 论文(arXiv 2609.00107，2026-09)给出**科学 agent 的契�
   - 新增 `tests/test_engine_dimensional_contract.py` 9 项覆盖两引擎接线 + 契约层函数。
   效果：**"学到的回归式/推导出的定律"在归档前先过量纲自洽门禁**，与 C-Space/冷启动共用
   同一 UnitRegistry 判据——不额外引入依赖，不触碰 PSE/Lean 真实运行路径。
+- **S5b 引擎接线续(Lean & FEM)**：继续把表单证明器与数值求解器接入同一量纲契约层，仍非学习。
+  - `lean_tool` **auto_verify unified 量纲前置自检**：新增可选字段
+    `unit_symbols`/`expected_units`，`_pre_lean_dimensional_check` 在方程串交给 Lean 编译前
+    先过 `check_expression_dimensions`(支持等式对象 {lhs,rhs} 两侧分别查)。默认不提供单位→
+    空列表，完全不改变既有 Lean 编译路径(`test_lean`/`test_auto_pipeline` 保持绿)；提供的
+    话在结果 `symbolic_result["dimension_checks"]` 里记录量纲判定。修正了 `check_expression_dimensions`
+    的一个**通用坑**: sympify 会把大写 E/I 误判成欧拉数/虚数单位——现在把 symbol_units 键
+    强制注册为同名 Symbol, 弹性模量 E 不再退化成 dimensionless。
+  - `fem_tool` **求解前物理量纲/合理性自检**：`_fem_dimensional_precheck` 在 mesh/求解前跑
+    硬门槛——nu 无量纲须落 (-1,0.5) 物理域(规避病态刚度阵)、E/rho/厚度/几何尺寸>0、并对
+    静力弯曲刚度 `D=E·h³/(1-ν²)` 与模态频率 `ω∝√(E/ρ)/L` 做解析解量纲自检(假定 SI)。FEM
+    输入是裸数值/隐式 SI, 故用"假定 SI 单位映射+解析解表达式"对接契约层, 不改求解器/schema。
+  - `test_engine_dimensional_contract.py` 扩至 15 项(Lean 5 + FEM/std 4)。
 - **引擎盘点(诚实, 非铺全)**：同主题的低风险引擎已接(dimensional/claim_grounding/law_model
-  /C-Space)；符号回归/Bourbaki 已接**量纲契约层**(S5，学到的式子先过量纲自洽再归档)；
-  其余仍是独立能力工具(lean/FEM 等)，**刻意不全接**——强接会过度工程 + 高回归面；
-  `LearnableForwardModel` 属权重线, 不进非学习契约路径。依赖补齐
+  /C-Space)；符号回归/Bourbaki/Lean(量纲前置)/FEM(物理合理性) 已接**量纲契约层**(S5，
+  学到的式子/待证方程/求解输入先过量纲自洽再归档)；`LearnableForwardModel` 属权重线, 不进
+  非学习契约路径。依赖补齐
   (sympy/pydantic/langchain-core/cryptography/pytest-cov/pytest-benchmark/pymatgen/paramiko
-  /nbformat/Pillow/matplotlib) 后, **收集阻塞清零**。全量 `9357 passed / 38 failed`, 其中
+  /nbformat/Pillow/matplotlib/scikit-fem) 后, **收集阻塞清零**。全量 `9357 passed / 38 failed`, 其中
   失败均属**仓库既有**架构门禁/环境漂移(arch import 白名单、config 文档漂移、tool_profile
   基线、内存/收敛阈值、全量态 matplotlib RecursionError), 与本线程契约改动无关——契约相关
   套件(`test_cspace_contract_dimensional`/`test_coldstart_dimensional_runtime`/`test_cspace_bridge`)

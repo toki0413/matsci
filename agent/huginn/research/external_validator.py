@@ -201,7 +201,10 @@ def check_expression_dimensions(expr_str: str, symbol_units: dict, expected_unit
         return {"expr": expr_str, "ok": False, "inferred": None, "expected": None,
                 "error": f"dimensional engine unavailable: {str(e)[:60]}"}
     try:
-        expr = sp.sympify(expr_str)
+        # 把 symbol_units 的每个键强制注册为同名 Symbol —— 避免 sympify 误判大写的
+        # 内置常量(如 E→欧拉数、I→虚数单位), 否则带单位变量的量纲会退化成 dimensionless.
+        locals_ = {name: sp.Symbol(name) for name in (symbol_units or {})}
+        expr = sp.sympify(expr_str, locals=locals_)
     except Exception as e:  # noqa: BLE001
         return {"expr": expr_str, "ok": False, "inferred": None, "expected": None,
                 "error": f"expr not parsable: {str(e)[:60]}"}

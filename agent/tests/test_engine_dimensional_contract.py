@@ -152,3 +152,103 @@ def test_bourbaki_dimensional_analysis_unknown_unit_false():
     ))
     assert res.success is True
     assert res.data["dimensional_match"] is False
+
+
+# ═══════════════ S4: Lean auto_verify unified 量纲前置自检 ═══════════════
+
+def test_lean_pre_check_helper_dimensionally_consistent():
+    """equations 是字符串值, 提供 unit_symbols+expected_units → 生成量纲自检条目."""
+    from huginn.tools.lean_tool import _pre_lean_dimensional_check
+
+    symbolic = {"equations": {"energy": "0.5 * m * v**2"}}
+    checks = _pre_lean_dimensional_check(
+        symbolic, {"m": "kg", "v": "m/s"}, {"energy": "J"}
+    )
+    assert len(checks) == 1
+    assert checks[0]["name"] == "energy"
+    assert checks[0]["ok"] is True
+
+
+def test_lean_pre_check_helper_wrong_expected_defaults_not_fail():
+    """方程未声明 expected_units → 各自带 error, 不静默判过; 空 expected_units → 不启用."""
+    from huginn.tools.lean_tool import _pre_lean_dimensional_check
+
+    symbolic = {"equations": {"a": "m * v"}}
+    # expected_units 里没给方程 a 声明 → 记录 error 条目, 不静默通过
+    checks = _pre_lean_dimensional_check(symbolic, {"m": "kg", "v": "m/s"},
+                                         expected_units={"other": "J"})
+    assert checks and checks[0]["name"] == "a"
+    assert checks[0]["error"] == "no expected_units declared for this equation"
+    # 完全没提供 unit_symbols/expected_units → 空列表, 不阻断
+    assert _pre_lean_dimensional_check(symbolic, None, None) == []
+    assert _pre_lean_dimensional_check(symbolic, {"m": "kg"}, {}) == []
+
+
+def test_lean_pre_check_helper_eq_object_both_sides():
+    """等式对象 {lhs, rhs} → 两侧分别量纲自检."""
+    from huginn.tools.lean_tool import _pre_lean_dimensional_check
+
+    symbolic = {"equations": {"f": {"lhs": "E/rho", "rhs": "x/t"}}}
+    checks = _pre_lean_dimensional_check(
+        symbolic,
+        {"E": "N/m2", "rho": "kg/m3", "x": "m", "t": "s"},
+        {"f": "1/s"},
+    )
+    assert len(checks) == 2  # lhs + rhs
+    assert all(c["name"] in ("f.lhs", "f.rhs") for c in checks)
+
+
+def test_lean_auto_verify_unified_disabled_by_default_passthrough():
+    """不提供 unit_symbols/expected_units → dimension_checks 空, 行为不变(不破坏既有)."""
+    from huginn.tools.lean_tool import LeanToolInput, _pre_lean_dimensional_check
+
+    symbolic = {"equations": {"energy": "0.5 * m * v**2"}}
+    inp = LeanToolInput(action="auto_verify", auto_verify_action="unified",
+                        symbolic_result=dict(symbolic))
+    # 无显式单位 → 前置自检为空, 不往 symbolic_result 里塞 dimension_checks
+    d_checks = _pre_lean_dimensional_check(
+        inp.symbolic_result, inp.unit_symbols, inp.expected_units
+    )
+    assert d_checks == []
+
+
+# ═══════════════ S5: FEM 求解前量纲/合理性前置自检 ═══════════════
+
+def test_fem_precheck_rejects_illegal_poisson_ratio():
+    """nu 超 (-1, 0.5) 物理域 → ok=False (硬拒), 规避病态刚度阵."""
+    from huginn.tools.fem.tool import FEMInput, _fem_dimensional_precheck
+
+    args = FEMInput(action="static_linear", material={"E": 210e9, "nu": 0.9},
+                    dims={"L": 1.0, "H": 0.05},
+                    loads=[{"type": "point", "value": 100, "region": "right"}],
+                    boundary_conditions=[{"region": "left", "dofs": [0, 1], "value": 0}])
+    pre = _fem_dimensional_precheck(args)
+    assert pre["ok"] is False
+    assert any(c["name"] == "material.nu" for c in pre["checks"])
+
+
+def test_fem_precheck_rejects_nonpositive_e():
+    """E ≤ 0 → ok=False."""
+    from huginn.tools.fem.tool import FEMInput, _fem_dimensional_precheck
+
+    args = FEMInput(action="static_linear", material={"E": -5.0, "nu": 0.3},
+                    dims={"L": 1.0, "H": 0.05},
+                    loads=[{"type": "point", "value": 100, "region": "right"}],
+                    boundary_conditions=[{"region": "left", "dofs": [0, 1], "value": 0}])
+    assert _fem_dimensional_precheck(args)["ok"] is False
+
+
+def test_fem_precheck_ok_consistent():
+    """合法输入(标准悬臂梁) → 自检通过, 且静力弯曲刚度量纲自洽."""
+    import pytest
+    pytest.importorskip("skfem")
+    from huginn.tools.fem.tool import FEMInput, _fem_dimensional_precheck
+
+    args = FEMInput(action="static_linear", material={"E": 210e9, "nu": 0.3},
+                    dims={"L": 1.0, "H": 0.05},
+                    loads=[{"type": "point", "value": 100, "region": "right"}],
+                    boundary_conditions=[{"region": "left", "dofs": [0, 1], "value": 0}])
+    pre = _fem_dimensional_precheck(args)
+    assert pre["ok"] is True
+    bend = next(c for c in pre["checks"] if c["name"] == "bending_stiffness")
+    assert bend["ok"] is True
