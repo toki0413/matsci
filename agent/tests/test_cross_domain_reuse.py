@@ -26,6 +26,7 @@ from pathlib import Path
 
 from huginn.research.code_lab import _alias_cfg
 from huginn.research.coldstart_guards import compile_domain_guards
+from huginn.research.external_validator import strict_objectives
 
 _ROOT = Path(__file__).resolve().parents[1]  # agent/
 _EXDIR = Path(__file__).resolve().parents[2] / "examples"
@@ -56,11 +57,17 @@ _install_torch_stub()
 rig = _load(_EXDIR / "nn_rigidity_research_pipeline.py", "rig")
 frac = _load(_EXDIR / "shusheng_fracture_mechanics.py", "frac")
 qc = _load(_EXDIR / "shusheng_quantum_critical.py", "qc")
+eco = _load(_EXDIR / "shusheng_ecology_dynamics.py", "eco")
 
 
 def _contract_ok(res: dict) -> bool:
-    """统一结果契约: {success, summary:dict, objectives:{k:数值}}."""
-    return isinstance(res.get("summary"), dict) and bool(res.get("objectives"))
+    """统一结果契约: {success, summary:dict, objectives:{k:数值}}.
+
+    **外置验证器打分的 strict stage** —— 用 `external_validator.strict_objectives`
+    (零宽容、与 harness 宽容路径实现独立). 域输出若只靠 harness 代偿(裸 dict/int 键),
+    此判据如实记录不过; 它和 `_coerce_author_result` 能分歧, 这正是外置的意义.
+    """
+    return strict_objectives(res)[0]
 
 
 def _objectives_extract(res: dict) -> dict:
@@ -83,7 +90,7 @@ def _needs_bare_dict_coercion(res: dict) -> bool:
     return not (isinstance(res.get("objectives"), dict) and isinstance(res.get("summary"), dict))
 
 
-def measure_waivers() -> dict:
+def measure_waivers(domains: dict[str, object] | None = None) -> dict:
     """跨域"豁免清单"量化: 把跨域复用的隐性迁就/显式域足印都摊到台面上.
 
     harness_side_coercions : 该域结果里"需 harness 开裸 dict 宽容侧门"的次数(harness 迁就度,
@@ -92,8 +99,9 @@ def measure_waivers() -> dict:
                             现在显式待在域声明里, 不属于 shared harness —— A 的落点).
     n_declared_probes      : 该域自己注册的成文探针数(域知识, 同样归域).
     """
+    domains = domains or DOMAINS
     out: dict[str, dict] = {}
-    for name, producer in DOMAINS.items():
+    for name, producer in domains.items():
         results = producer()
         guards = compile_domain_guards(name)
         out[name] = {
@@ -119,21 +127,35 @@ def _qc_result() -> list[dict]:
     return [qc._tools_selfcheck()]
 
 
+def _eco_results() -> list[dict]:
+    """held-out 域生产者: 生态动力学(Lotka-Volterra), 返回 2 个真实数值实验."""
+    return [eco.exp_equilibrium_stability(), eco.exp_lotka_period()]
+
+
 DOMAINS = {
     "rigidity": _rig_results,
     "fracture": _frac_results,
     "quantum_critical": _qc_result,
 }
 
+# held-out 泛化域: 扣出、不并进 DOMAINS(不参与 in-sample 计分), 单独测量.
+HELD_OUT: dict[str, object] = {
+    "ecology_dynamics": _eco_results,
+}
 
-def measure_reuse() -> dict:
-    """跑统一机制 over 各域, 返回每域 stage 通过表 + reuse_score."""
+
+def measure_reuse(domains: dict[str, object] | None = None) -> dict:
+    """跑统一机制 over 各域, 返回每域 stage 通过表 + reuse_score.
+
+    ``domains`` 默认 DOMAINS(in-sample); 传 HELD_OUT 时单独算出扣出域的泛化分, 不混入.
+    """
+    domains = domains or DOMAINS
     per_domain = {}
-    for name, producer in DOMAINS.items():
+    for name, producer in domains.items():
         results = producer()
         assert results, f"{name}: 无实验结果"
         stages = {
-            "contract_wrapper": all(_contract_ok(r) for r in results),   # 严格 {summary,objectives} 包装
+            "contract_wrapper": all(_contract_ok(r) for r in results),   # 外置严格契约{summary,objectives}
             "objectives_nonempty": any(bool(_objectives_extract(r)) for r in results),  # harness 多态可解(≥1)
             "grounding_ready": any(bool(_objectives_extract(r)) for r in results),      # 门禁可落地(≥1)
             "multi_evidence": len(results) >= 1,
@@ -150,6 +172,9 @@ def measure_reuse() -> dict:
 
 _RESULT = measure_reuse()
 _WAIVERS = measure_waivers()
+# held-out 泛化基准: 扣出域不并入 in-sample, 单独算(即使失败也照记, 不掩盖).
+_HELDOUT = measure_reuse(HELD_OUT)
+_HELDOUT_WAIVERS = measure_waivers(HELD_OUT)
 
 
 def test_three_domains_all_loaded():
@@ -238,3 +263,56 @@ def test_domain_physical_aliases_live_in_domain_not_shared_harness():
     # 域级别名经 _alias_cfg 注入后依旧可用(数值源不变, 只补键别名)
     assert _alias_cfg({"bridge_ratio": 0.3},
                       extra_aliases=frag)["sigma_0"] == 0.3
+
+
+# ═══════════════ C: 外置验证器 —— 门禁与产出能"分歧" + held-out 真泛化 ═══════════════
+
+def test_external_validator_can_disagree_with_tolerance():
+    """外置验证器能和 harness 宽容路径**分歧**(否则它就不是外置).
+
+    裸数值 dict(rigidity 老风格): 宽容提取器 `_objectives_extract` 能抽出, harness 多态
+    列为可解; 但外置 `strict_objectives` 零宽容 → 拒绝。同一份输入, 两种判据结论相反,
+    正是"检查器不再复刻产出假设"的证据 —— 错误不再自洽隐藏.
+    """
+    bare = {"gamma": 0.5, "Tc": 400.0}
+    # 宽容路径可解
+    assert _objectives_extract(bare)
+    # 外置严格判据拒绝
+    ok, reason = strict_objectives(bare)
+    assert ok is False and reason
+    # 真正的统一容器则两者都过
+    boxed = {"success": True, "summary": {"s": 1.0}, "objectives": {"gamma": 0.5}}
+    assert _objectives_extract(boxed) and strict_objectives(boxed)[0]
+
+
+def test_heldout_domain_stays_out_of_insample_score():
+    """held-out 域不并进 in-sample 复用分(否则 in-sample 被"自己测过的域"掺水)."""
+    assert set(_RESULT["per_domain"]) == {"rigidity", "fracture", "quantum_critical"}
+    assert "ecology_dynamics" not in _RESULT["per_domain"]
+    assert _HELDOUT["n_domains"] == 1  # 只测扣出域本身
+
+
+def test_heldout_zero_edit_generalizes_strictly():
+    """第 4 个零族域(生态动力学)**零改动**过统一契约逆共性(外置严格判据 + 零 harness 迁就).
+
+    关键: 用外部 `strict_objectives`(而非宽容提取器)judge, 且 harness 对该域 0 次代偿
+    (harness_side_coercions == 0). 若 held-out 也零代偿通过, 泛化就不是"为同 3 域建的
+    机制的 in-sample 表演".
+    """
+    w = _HELDOUT_WAIVERS["ecology_dynamics"]
+    assert w["harness_side_coercions"] == 0, w
+    assert w["n_declared_cfg_aliases"] == 0, w   # 该域不借任何物理别名
+    sv = _HELDOUT["per_domain"]["ecology_dynamics"]
+    assert sv["stages"]["contract_wrapper"] is True     # 外置严格契约过
+    assert sv["stages"]["objectives_nonempty"] is True
+    assert sv["stages"]["multi_evidence"] is True       # 2 个真实实验
+    assert sv["n_experiments"] >= 2
+
+
+def test_insample_strict_contract_still_honest_with_external_validator():
+    """外置验证器下 in-sample 语义不变: fracture/quantum 严格过, rigidity 严格挂(裸 dict)."""
+    assert _RESULT["per_domain"]["fracture"]["stages"]["contract_wrapper"] is True
+    assert _RESULT["per_domain"]["quantum_critical"]["stages"]["contract_wrapper"] is True
+    assert _RESULT["per_domain"]["rigidity"]["stages"]["contract_wrapper"] is False
+    # reuse_score 仍在已知带 gap 的正常区间(不是刷成 1.0)
+    assert 0.75 <= _RESULT["reuse_score"] < 1.0

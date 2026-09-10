@@ -114,6 +114,17 @@ DOMAIN_PROFILES: dict[str, dict[str, Any]] = {
         "note": ("应变耦合量子相变: 序参量 Landau-Ginzburg + 临界指数/普适类/"
                  "相图拓扑/材料谱系, 多尺度耦合, 与固体力学零族(泛化验证)"),
     },
+    # held-out 泛化域: 生态动力学(Lotka-Volterra)。扣出、不并入 in-sample 复用计分,
+    # 只用同一机制零改动测其泛化。声明即数据, 不碰任何共享机制代码.
+    "ecology_dynamics": {
+        "deps": ["numpy", "scipy"],
+        "imports_extra": [],
+        "code_retry_budget": 1,
+        "cfg_aliases": {},
+        "probes": [],
+        "note": ("群体生态捕食-被捕食(Lotka-Volterra): 平衡点 Jacobian 稳定性 + "
+                 "数值积分振荡周期, 与凝聚态/固体力学零族(held-out 泛化域)"),
+    },
 }
 
 # 默认(未声明域)参数

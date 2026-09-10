@@ -237,6 +237,35 @@ Dundurs 界面参数、Weibull 弱链…)，才能驱动深研？这看似"负�
   - 意义：分数不再只数"通过/不通过"，而把"机制为够到某域背了多少代价"摊开——防止靠
     harness 代偿把跨域刷成假满分。
 
+### 4.6 外置验证器 + held-out 真泛化(泛化诊断落地的两步)
+
+之前 `reuse_score` 的判据复刻了 harness 自身的宽容提取术(`_objectives_extract` 注释
+明说继承 `_coerce_author_result`)，判定器和产出**共享同一套假设**，所以"反复出错"的
+错误常到真实边界才暴露。两处修正(全在 `pytest` 里落了断言):
+
+- **外置验证器**：新增 `huginn/research/external_validator.py` 的 `strict_objectives`——
+  **零宽容**，只认 `{summary: dict, objectives:{k: 纯数值}}`，不 import/不复用任何
+  harness 宽容实现。`contract_wrapper` stage 改由它打分。同一份裸 dict，宽容提取器
+  能解、外置判据拒绝——**检查器和产出能分歧**，错误不再自洽隐藏。in-sample 语义不变
+  (fracture/quantum 严格过，rigidity 严格挂，reuse_score 仍 0.9167)。
+- **held-out 泛化域**：扣出第 4 个**零族域** `examples/shusheng_ecology_dynamics.py`
+  (Lotka–Volterra 群体生态动力学，与固体力学/凝聚态零血缘，numpy/scipy 真算)，只加一行
+  `DOMAIN_PROFILES` 声明(守卫即数据，不碰共享机制)，用同一机制零改动单独测其泛化，
+  不并入 in-sample：
+
+  | 度量(外置严格判据) | ecology_dynamics (held-out) |
+  |---|---|
+  | harness_side_coercions | **0** |
+  | n_declared_cfg_aliases | **0** |
+  | n_declared_probes | **0** |
+  | staged 全过 + reuse_score | **1.0**(2 个真实实验) |
+
+  **意义(诚实措辞)**：held-out 1.0 不代表"agent 变强"，而是"机制契约可发现、可强制，
+  且一个新零族域**不需 harness 任何代偿**就零改动对齐"——泛化主线第一次有了**不掺
+  in-sample 的真数字**。诚实边界同样要写：ecology 模块是"扣出的新域"但由我按契约撰写，
+  所以它验证的是"接口约束能被陌生域遵守 + harness 不偷偷补偏方"，而非"agent 权重被更新"。
+  那条界线仍在 §4.3：真正让 agent 变强的学习(RLVR→GRPO)归外部训练器，不在 agent 推理路径内。
+
 ---
 
 ## 5. 可迁移性与复用路径(这份品味不只在断裂力学成立)
