@@ -309,6 +309,27 @@ HEP agent harness 论文(arXiv 2609.00107，2026-09)给出**科学 agent 的契�
 注意：`sympy` 依赖缺失导致 `huginn.validation.__init__`→`dimensional_validator` 的其它测试
 收集报 `ModuleNotFoundError`(既存环境缺口，非本次改动引入；本模块经文件级加载绕开 `__init__`)。
 
+### 4.9 运行时判官接线闭环 + held-out 回归护栏
+
+§4.8 让 `claim_reward.grounding_source_reward` 支持契约，但唯一部署调用方
+`experience_archive.replay` 没传 `quantities` —— 判官"溯源 AND 契约"只是"实现了"没"运行"。
+本轮(A+B)收口：
+
+- **A｜运行时接线**：`ExecutableExperience` 增加可选 `quantities`(域科学契约工件，可随
+  to_dict/from_dict 持久化，缺省由 replay 参数覆盖)；`replay` 把 `objectives(new_obj)+
+  quantities(eff_q)` 一并喂入 `grounding_source_reward`，reward 字典新增
+  `contract_verdict / contract_score / domain_violations`。实测：replay 接上契约后，
+  `period_est=-1.0` 虽溯源到轨迹(`grounded=1`)但越出 `min=0` 有效域 → `contract_verdict=
+  needs_grounding`，violations 暴露在部署路径的真实奖励里。**"检查器能与产出分歧"在真运行
+  路径落地，非测试 hack。**
+- **B｜held-out 回归护栏**：`test_heldout_generalization_baseline_must_not_regress` 把
+  ecology_dynamics 的**零改动泛化基线定成硬约束**——reuse 恒 ==1.0、harness 迁就恒 ==0、
+  contract_wrapper 必过、且永不入 in-sample。任何后续 harness 改动若悄悄重新引入代偿/破坏
+  该域零改动对齐，CI 直接红，防"泛化声明"随机制演化静默失效。
+
+诚实边界：这一轮仍全部非学习；`unit` 依旧是标注(量纲代数闭合需 sympy，列为后续)；改造对
+既有 `replay` 调用(不传 quantities)零回归。
+
 ---
 
 ## 5. 可迁移性与复用路径(这份品味不只在断裂力学成立)

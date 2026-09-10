@@ -318,6 +318,24 @@ def test_insample_strict_contract_still_honest_with_external_validator():
     assert 0.75 <= _RESULT["reuse_score"] < 1.0
 
 
+def test_heldout_generalization_baseline_must_not_regress():
+    """B·held-out 回归护栏: 零改动泛化基线是硬约束, 不是可退化的分数.
+
+    ecology_dynamics(第 4 零族域)必须保持 reuse==1.0 且 harness 迁就==0(外置严格判据,
+    零别名). 任何后续 harness 改动若悄悄重新引入代偿 / 破坏该域零改动对齐, 本测试直接红,
+    防止"泛化声明"随机制演化悄悄失效 —— 守护 §4.6 立的真数字.
+    """
+    w = _HELDOUT_WAIVERS["ecology_dynamics"]
+    sv = _HELDOUT["per_domain"]["ecology_dynamics"]
+    assert _HELDOUT["reuse_score"] == 1.0, (
+        f"held-out 泛化基线退化: {_HELDOUT['reuse_score']}\n"
+        "harness 改动破坏了零改动对齐 —— 回退或修复后再合并.\n"
+        f"stages={sv['stages']}, waivers={w}")
+    assert w["harness_side_coercions"] == 0
+    assert sv["stages"]["contract_wrapper"] is True
+    assert "ecology_dynamics" not in _RESULT["per_domain"]   # 依旧不入 in-sample
+
+
 # ═══════════════ D: 机器可读科学契约工件(量纲/有效域, 域数据, 可卸载) ═══════════════
 
 def _eco_quantities():

@@ -56,6 +56,7 @@ class ExecutableExperience:
         *,
         name: str = "",
         ts: str = "",
+        quantities: dict[str, Any] | None = None,
     ) -> None:
         self.name = name or f"exp_{uuid.uuid4().hex[:10]}"
         self.goal = goal
@@ -66,6 +67,8 @@ class ExecutableExperience:
         self.closed_form = closed_form
         self.ground_truth = ground_truth or {}  # 主张数值 -> 真值 (供 reward 对账)
         self.verdict = verdict
+        # 域科学契约工件(量纲/有效域): 由 compile_domain_guards 透出, replay 时可并入判官.
+        self.quantities = dict(quantities or {})
         self.ts = ts or datetime.now(timezone.utc).isoformat(timespec="seconds")
 
     # ---------- 序列化 ----------
@@ -81,6 +84,7 @@ class ExecutableExperience:
             "closed_form": self.closed_form,
             "ground_truth": {str(k): float(v) for k, v in self.ground_truth.items()},
             "verdict": self.verdict,
+            "quantities": dict(self.quantities),
             "ts": self.ts,
         }
 
@@ -97,6 +101,7 @@ class ExecutableExperience:
             verdict=d.get("verdict", "pass"),
             name=d.get("name", ""),
             ts=d.get("ts", ""),
+            quantities=d.get("quantities") or {},
         )
 
     # ---------- 可重放复验 ----------
@@ -105,6 +110,7 @@ class ExecutableExperience:
         runner: Callable[[dict[str, Any]], dict[str, Any]],
         *,
         reward_mode: str = "mra",
+        quantities: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """用同一 run 回调重跑本经验, 并用连续奖励复验真值命中.
 
@@ -113,6 +119,10 @@ class ExecutableExperience:
         取回归 runner 的 target 写进 objectives, 让 claim_reward 能对账. 无真值 → 只给
         溯源接地分(grounded), 不给 reward 数值(诚实, 不伪造).
 
+        ``quantities``(可选): 域科学契约(量纲/有效域), 缺省用本经验自带的. 提供时把判官
+        升级为"溯源 AND 契约"——即便数值溯源到轨迹, 越出有效域也会在 reward 里暴露
+        contract_verdict=needs_grounding(本轮 A 的接线点).
+
         Returns:
             {"reproduced": bool, "new_objectives": {...}, "reward": {grounded, accuracy, total} | None,
              "delta": {pairs, max_abs_err}}
@@ -120,6 +130,7 @@ class ExecutableExperience:
         cr = _load_claim_reward()
         res = runner(self.config)
         new_obj = {str(k): float(v) for k, v in (res.get("objectives") or {}).items()}
+        eff_q = quantities if quantities is not None else self.quantities
         # 1) 新旧一致性: 仅对两次真实执行都出现的量比较(缺项不判错).
         pairs = {}
         for k, v in new_obj.items():
@@ -142,7 +153,11 @@ class ExecutableExperience:
                 except (TypeError, ValueError):
                     continue
         if pred_to_truth:
-            gd = cr.grounding_source_reward(json.dumps(new_obj), [json.dumps(new_obj)])
+            # 融合判官: 溯源 AND (含 contract 时) 有效域 —— objectives+quantities 一并喂入.
+            gd = cr.grounding_source_reward(
+                json.dumps(new_obj), [json.dumps(new_obj)],
+                objectives=new_obj, quantities=eff_q,
+            )
             detail = cr.grounded_accuracy_reward(
                 json.dumps(new_obj), [json.dumps(new_obj)],
                 values=pred_to_truth, mode=reward_mode,
@@ -151,6 +166,9 @@ class ExecutableExperience:
                 "grounded": gd["grounding_score"],
                 "accuracy": detail["reward"],
                 "total": detail["reward"],  # grounded_accuracy_reward 已含溯源加权
+                "contract_verdict": gd.get("contract_verdict"),
+                "contract_score": gd.get("contract_score"),
+                "domain_violations": gd.get("domain_violations", []),
             }
         else:
             reward = None
