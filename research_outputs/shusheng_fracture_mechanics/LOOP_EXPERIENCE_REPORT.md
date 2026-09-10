@@ -330,6 +330,25 @@ HEP agent harness 论文(arXiv 2609.00107，2026-09)给出**科学 agent 的契�
 诚实边界：这一轮仍全部非学习；`unit` 依旧是标注(量纲代数闭合需 sympy，列为后续)；改造对
 既有 `replay` 调用(不传 quantities)零回归。
 
+### 4.10 C-Space 契约门禁 + 量纲代数闭合(接进"未接线"引擎)
+
+把科学契约从"文本门禁/归档判官"接到**活工作区**与**量纲引擎**：
+
+- **C-Space 状态门禁(S1)**：`cspace_bridge.contract_gate(quantities)` 走既有
+  `promote_to_at_hand(corroborate=...)` 钩子，把"状态在场"从文本溯源升级为
+  "可证伪且法律一致"——状态 Being 的 objectives 越出域科学契约有效域即 rejected，不进场
+  (实测：contract 内 confirmed=1、越域 rejected=1、唯一可引用集合只剩契约内的)。
+  不动 C-Space 内核，判据复用非学习 `validate_scientific_contract`。
+- **量纲代数闭合(S2)**：装 sympy 解锁既有 `execution/dimensional_validator`(Unit 代数/
+  UnitRegistry)。`external_validator.resolve_unit_dimension` 把 `scientific_contract.unit`
+  从字符串标注升级为**可注册量纲向量**(`time→T1`、`count→dimensionless`、`m/s→L1·T-1`)；
+  `validate_declared_units` 校验每个 unit 可解析，垃圾单位(`secods`)如实判 invalid。
+  量纲代数现在真正可用——不再是死代码。
+- **引擎盘点(诚实, 非铺全)**：同主题的低风险引擎已接(dimensional/claim_grounding/law_model
+  /C-Space)；其余是独立的能力工具(符号回归/bourbaki/lean/FEM 等)，**刻意不全接**——强接会
+  过度工程 + 高回归面；`LearnableForwardModel` 属权重线, 不进非学习契约路径。pydantic 缺失
+  仍挡 `huginn.validation.__init__`(rag) 侧的测试收集, 与 sympy 无关, 非本次改动引入。
+
 ---
 
 ## 5. 可迁移性与复用路径(这份品味不只在断裂力学成立)

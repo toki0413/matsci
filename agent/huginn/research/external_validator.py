@@ -85,4 +85,48 @@ def validate_scientific_contract(objectives: dict, quantities: dict) -> tuple[bo
     return (not any_violation, gaps)
 
 
-__all__ = ["strict_objectives", "validate_scientific_contract"]
+# 域科学契约 unit 标签 → dimensional registry 的 SI 符号 (量纲代数联结点).
+# 标签是为了科学 worker 可读; SI 符号交给 `physical_schema` / dimensional_validator 求维度.
+_DEFAULT_UNIT_MAP = {
+    "1": "1", "count": "1", "number": "1", "dimensionless": "1",
+    "time": "s", "length": "m", "mass": "kg", "temperature": "K",
+    "current": "A", "amount": "mol", "frequency": "1/s",
+    "velocity": "m/s", "speed": "m/s", "acceleration": "m/s^2",
+    "area": "m^2", "volume": "m^3", "energy": "J", "force": "N",
+    "pressure": "Pa", "power": "W",
+}
+
+
+def resolve_unit_dimension(unit: str, unit_map: dict | None = None) -> str | None:
+    """把科学契约的 unit 标签解析成 dimensional 维度签名(经 UnitRegistry).
+
+    - 标签经 ``unit_map``(默认 _DEFAULT_UNIT_MAP)映射到 SI 符号, 再经
+      ``dimensional_validator.registry`` 求维度签名(如 's'→'T1', 'm/s'→'L1·T-1');
+    - 无法解析/量纲引擎不可用 → 返回 None(调用方判为量纲未知, 不硬编).
+    这让 ``unit`` 从"字符串标注"变成"可注册的量纲向量", 不是裸字符串.
+    """
+    m = dict(unit_map or _DEFAULT_UNIT_MAP)
+    symbol = m.get(str(unit).strip(), str(unit).strip())
+    try:
+        from huginn.execution.dimensional_validator import registry
+        return registry.get(symbol).dimension_signature
+    except Exception:  # noqa: BLE001 — 量纲引擎不可用/不可解析 → 如实判未知
+        return None
+
+
+def validate_declared_units(quantities: dict, unit_map: dict | None = None) -> dict:
+    """对域科学契约声明的每个量, 校验其 ``unit`` 可注册为合法量纲.
+
+    返回 {quantity: {'unit', 'dimension_signature', 'valid'}} —— 让单位校验独立于
+    有效域范围检查(后者查数值落区, 这里查单位逐个是否是合法量纲). 非学习.
+    """
+    out: dict = {}
+    for name, meta in (quantities or {}).items():
+        unit = (meta or {}).get("unit") or ""
+        sig = resolve_unit_dimension(unit, unit_map)
+        out[name] = {"unit": unit, "dimension_signature": sig, "valid": sig is not None}
+    return out
+
+
+__all__ = ["strict_objectives", "validate_scientific_contract",
+           "resolve_unit_dimension", "validate_declared_units"]

@@ -276,6 +276,38 @@ def governance(cspace: CSpace) -> dict:
 # ── M3: 定量预判 reconcile 门禁 ─────────────────────────────────
 
 
+def contract_gate(quantities: dict | None = None, *,
+                  objectives_key: str = "objectives",
+                  strict_coverage: bool = False) -> Callable[[Being, CSpace], bool]:
+    """构造一个 corroborate 门禁: 状态 Being 的 objectives 只有落在**域科学契约**
+    (量纲/有效域) 内才 confirmed 进场.
+
+    走 :func:`promote_to_at_hand` 的既有 ``corroborate`` 钩子, **不动 C-Space 内核**:
+    C-Space 的"状态在场"从"文本溯源"升级为"可证伪且法律一致"。判定经
+    ``external_validator.validate_scientific_contract``(非学习、与 harness 独立)。
+
+      - ``Being.payload[objectives_key]`` 须为 {name: value}(状态数值);
+      - 越出域声明有效域 → 硬拒(保持 candidate / 记 rejected);
+      - coverage gap(未声明量, 有效域未知)默认宽容(与 external_validator 一致),
+        传 ``strict_coverage=True`` 可把"未声明"也计作不过;
+      - ``quantities`` 为空 → 视为无额外设限(缺省不挡).
+    """
+    def _gate(b: Being, cspace: CSpace) -> bool:
+        if not quantities:
+            return True
+        from huginn.research.external_validator import validate_scientific_contract
+        obj = (b.payload or {}).get(objectives_key)
+        if not isinstance(obj, dict) or not obj:
+            return False   # 状态 Being 必须携带 objectives 才能按契约判定
+        ok, gaps = validate_scientific_contract(obj, quantities)
+        if not ok:
+            return False   # 有效域违反 → 硬拒
+        if strict_coverage and any("未声明" in g for g in gaps):
+            return False
+        return True
+    return _gate
+
+
 def reconcile_estimate(actual: dict | float | None, *, tol: float = 0.03,
                        key: str = "value") -> Callable[[Being, CSpace], bool]:
     """构造一个 corroborate 门禁: 用真实执行 ``actual`` 对 pre_action 的 estimate
@@ -308,5 +340,6 @@ __all__ = [
     "DeliberationBeing", "PHASES",
     "enqueue_deliberation", "ingest_reasoning_trace", "ingest_from_memory",
     "promote_to_at_hand", "reject", "confirmed_at_hand", "governance",
+    "contract_gate",
     "reconcile_estimate",
 ]
