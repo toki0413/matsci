@@ -129,7 +129,9 @@ _SCAN_DEFAULTS = {"pair": 0, "material": 0, "flaw_idx": 2.0, "n_flaws": 100,
 _DIM_VALUES = {
     "pair": "pair", "material": "material", "flaw": "flaw", "n_flaws": "n_flaws",
     "bridge": "bridge_ratio", "barrier": "nu", "kic": "kic_mat",
-    "nu": "nu",  # 书生可能直接用白名单键名 nu 当 dim —— 归入 barrier 族
+    "nu": "nu",        # 书生可能直接用白名单键名 nu 当 dim —— 归入 barrier 族
+    "vcR": "vcR",      # F6 v/cR 独立扫描维 —— 与 barrier(nu) 分开, 消除维度串扰
+    "v_cR": "vcR",
 }
 
 # ═══════════════════════════════ 真实物理实验 ═══════════════════════════════
@@ -400,7 +402,8 @@ def exp_fracture_scan(cfg: dict, name: str) -> dict:
     # 统一映射到 exp_fracture_scan 的分支判据, 防止"bridge_ratio"落到兜底空扫描.
     _dim_canon = {"bridge_ratio": "bridge", "sigma0_sy": "bridge",
                   "sigma0_over_sy": "bridge",
-                  "poisson": "barrier", "vcR": "barrier", "v_cR": "barrier"}
+                  "poisson": "barrier", "nu": "barrier",
+                  "vcR": "vcR", "v_cR": "vcR", "v_over_cR": "vcR"}
     dim = _dim_canon.get(dim, dim)
     key = _DIM_VALUES.get(dim, dim)
     vals = (cfg or {}).get("values") or SCAN_OPS.get(key) or []
@@ -456,6 +459,28 @@ def exp_fracture_scan(cfg: dict, name: str) -> dict:
         peak = max(_bridge_gain(r) for r in vals)
         obj = {"kce_gain": round(float(peak - 1.0), 4)}
         return {"objectives": obj, "summary": {"dim": "bridge", "rows": rows},
+                "success": True}
+    if dim == "vcR":
+        # 书生 F6 假设的独立维度: 固定 ν, 扫描 v/cR∈[0.1..0.98] 的 Rose 能量通量
+        # g=k² 与局部锐度 -dln g/d(v/cR), 检验"随 vcR 增, 势垒是否单调变陡"。
+        # 与 barrier 分支的区别: barrier 扫 nu(势垒位置), 这里真扫 vcR(势垒局部形态),
+        # 消除"S2/S3 全同"的维度串扰。summary 键用报告散文同口径名, 避免 -0.95 未落地。
+        vs = [float(v) for v in vals] or [0.1, 0.25, 0.5, 0.7, 0.85, 0.9, 0.95, 0.98]
+        curve = []
+        for v in vs:
+            k = _rose_k(v)
+            curve.append({"v_div_cR": v, "k(v)": round(k, 4), "g=k^2": round(k * k, 4)})
+        # 局部锐度 -dln g/d(v/cR): 中心差分 (对最端部用单侧)
+        sharp = []
+        for i, v in enumerate(vs):
+            step = 0.02 * (max(vs) - min(vs)) or 0.02
+            hm = max(0.0, v - step / 2.0); hp = min(1.0, v + step / 2.0)
+            dln = math.log(_rose_k(hp) ** 2) - math.log(_rose_k(hm) ** 2)
+            sharp.append(round(-dln / step, 3))   # 报告散文 -dln g/d(v/cR) 同口径
+        obj = {"barrier_sharpness": round(max(sharp), 3)}
+        return {"objectives": obj,
+                "summary": {"dim": "vcR", "nu": 0.3, "rows": curve,
+                            "dln_g_d_vcR": sharp},
                 "success": True}
     if dim == "barrier" or dim == "nu":   # nu 是书生可能用的 barrier 别名
         rows = []
@@ -1343,6 +1368,7 @@ def _dim_objective(dim: str) -> str:
             "n_flaws": "weibull_fit", "bridge": "kce_gain",
             "bridge_ratio": "kce_gain",
             "barrier": "barrier_sharpness", "nu": "barrier_sharpness",
+            "vcR": "barrier_sharpness",   # vcR 分支返回 barrier_sharpness
             "kic": "kic_span"}.get(dim, "osc_span")  # 未知维兜底到 pair 族(不崩批)
 
 
@@ -1399,6 +1425,7 @@ def main() -> int:
             objectives = dict(_OBJ1)
             diagnostics = _diagnostic_tools()
         else:
+            diagnostics = _diagnostic_tools()
             next_open = _extract_next_open(last_report)
             if client is not None:
                 qs = _propose_next_open(client, args.model, last_report)
