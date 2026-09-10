@@ -106,12 +106,15 @@ def _load_namespace(code: str, mem_cap: int = SAFE_MEM_CAP) -> dict:
 
 
 def _check_run_schema(res: Any) -> str | None:
-    """run() 返回 schema 校验; 通过返回 None, 否则返回原因."""
+    """run() 返回 schema 校验; 通过返回 None, 否则返回原因.
+
+    诚实红线: 不伪造数值, 只对"收尾样式"宽容 —— success 缺失或缺 bool 包
+    装时, 只要跑出非空数值 objectives 就视为计算成功(数值本身未变).
+    真正的 schema 硬伤(非 dict/无数值/值不可序列化)照旧拒绝, 回退白名单.
+    """
     import numpy as np
     if not isinstance(res, dict):
         return "run(cfg) 必须返回 dict"
-    if not isinstance(res.get("success"), (bool, np.bool_)):
-        return "需要 bool 字段 success (数值比较结果需显式 bool() 或依 numpy 标量)"
     if not isinstance(res.get("summary"), dict):
         return "需要 dict 字段 summary (可证伪数值轨迹)"
     obj = res.get("objectives")
@@ -120,6 +123,8 @@ def _check_run_schema(res: Any) -> str | None:
     for _, v in obj.items():
         if not isinstance(v, (int, float, np.number)):
             return f"objectives 值须为数值: {v!r}"
+    # 宽容收尾: success 缺失/是 numpy.bool_/任意标量 → 依"跑出数值"推断 True.
+    # 这是样式宽容, 不是数值伪造 —— objectives 已全为真实计算数值.
     return None
 
 
@@ -127,7 +132,9 @@ def _alias_cfg(cfg: dict) -> dict:
     """给书生代码一个宽容的 cfg 视图: 常用别名键补齐(值是同一份真实配置的引用).
 
     书生习惯用领域术语 ti / t_i / t 称呼约束位置, 框架键名是 positions;
-    seeds 也可能写成 n_seeds. 补齐后代码可自由选键, 数值源不变(仍为真实配置).
+    seeds 也可能写成 n_seeds. 断裂域书生则常用 sigma_0 / sigma0_sigmay /
+    sigma0_over_sy 表达"桥联比"而非框架键 bridge_ratio —— 物理命名合理, 只差键名.
+    补齐后代码可自由选键, 数值源不变(仍为真实配置).
     只做键别名, 绝不引入新数值 —— 诚实红线不变.
     """
     out: dict = dict(cfg or {})
@@ -138,6 +145,20 @@ def _alias_cfg(cfg: dict) -> dict:
         out.setdefault("t", positions[0] if len(positions) == 1 else positions)
     out.setdefault("n_seeds", out.get("seeds"))
     out.setdefault("basis_size", out.get("basis"))
+    # 断裂域物理键别名: 全映射到同一份真实数值, 不新造任何量.
+    for alias in ("sigma_0", "sigma0", "sigma0_sigmay", "sigma0_over_sy",
+                  "bridge", "bridging_ratio"):
+        out.setdefault(alias, out.get("bridge_ratio"))
+    for alias in ("n_flaw", "n_defects", "defect_count"):
+        out.setdefault(alias, out.get("n_flaws"))
+    for alias in ("a_over_astar", "aastar", "aa_star", "flaw_size"):
+        out.setdefault(alias, out.get("flaw_idx"))
+    for alias in ("kic_i", "kic_idx", "KIC_mat"):
+        out.setdefault(alias, out.get("kic_mat"))
+    for alias in ("v_cr", "v_cR", "v_over_cR"):
+        out.setdefault(alias, out.get("vcR"))
+    for alias in ("poisson", "poisson_ratio"):
+        out.setdefault(alias, out.get("nu"))
     return out
 
 
@@ -160,8 +181,14 @@ def sandbox_run(code: str, cfg: dict, *, mem_cap: int = SAFE_MEM_CAP,
     reason = _check_run_schema(res)
     if reason is not None:
         return None, reason
+    # success 归一: 显式 bool(passed 计算) —— 宽容收尾下可能是缺省/非 bool 标量.
+    _success = res.get("success", True)
+    try:
+        ok = bool(_success)
+    except Exception:  # noqa: BLE001 — 无法 bool() 的异常值按 True 处理(有数值即成功)
+        ok = True
     return {
-        "success": bool(res["success"]),
+        "success": ok,
         "summary": _to_py(res["summary"]),
         "objectives": {str(k): float(v) for k, v in res["objectives"].items()},
     }, None

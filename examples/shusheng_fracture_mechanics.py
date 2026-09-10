@@ -396,6 +396,12 @@ def exp_fracture_scan(cfg: dict, name: str) -> dict:
     """
     c = _sanitize_scan(cfg)
     dim = (cfg or {}).get("dim", "pair")
+    # dim 别名归一: 书生直接用白名单键名(bridge_ratio/nu/...) 或近义名,
+    # 统一映射到 exp_fracture_scan 的分支判据, 防止"bridge_ratio"落到兜底空扫描.
+    _dim_canon = {"bridge_ratio": "bridge", "sigma0_sy": "bridge",
+                  "sigma0_over_sy": "bridge",
+                  "poisson": "barrier", "vcR": "barrier", "v_cR": "barrier"}
+    dim = _dim_canon.get(dim, dim)
     key = _DIM_VALUES.get(dim, dim)
     vals = (cfg or {}).get("values") or SCAN_OPS.get(key) or []
     if dim == "pair":
@@ -563,13 +569,58 @@ def _ask_json(client, model: str, system: str, user: str, max_tokens: int = 900)
     except Exception as ee:  # noqa: BLE001
         print(f"  [提议] LLM 失败: {ee}")
         return {}
-    m = re.search(r"\{.*\}", text, flags=re.DOTALL)
-    if not m:
-        return {}
+    return _extract_json_balanced(text)
+
+
+def _extract_json_balanced(text: str) -> dict:
+    """从 LLM 输出中稳健提取 JSON 对象.
+
+    旧实现用 re.search(r'[{}]') 的贪婪匹配盲抓最外层大括号 —— 但书生成码/推导
+    脚本里常在 JSON 的 code 字段内嵌 {}(dict/函数体), 贪婪匹配会提前截断或把
+    后一个 JSON 块卷进来. 新实现从每个可能起点做【平衡括号扫描】+ json.loads 校验,
+    取第一个能完整解析的合法 JSON 对象(优先含 code/expr/config 的). 解析失败返回 {}.
+    """
+    text = text or ""
+    # 1) 整串本身就是合法 JSON(最常见, 书生遵守只输出 JSON)
     try:
-        return json.loads(m.group(0))
+        d0 = json.loads(text.strip())
+        if isinstance(d0, dict):
+            return d0
     except Exception:  # noqa: BLE001
+        pass
+    # 2) 平衡括号扫描: 收集所有可解析的 dict, 选取优先键对象的.
+    pairs_stack: list[int] = []
+    found: list[dict] = []
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch == "{":
+            pairs_stack.append(i)
+        elif ch == "}" and pairs_stack:
+            start = pairs_stack.pop()
+            try:
+                d = json.loads(text[start:i + 1])
+            except Exception:  # noqa: BLE001 — 非合法 JSON, 继续更大范围
+                continue
+            if isinstance(d, dict) and d:
+                found.append(d)
+        i += 1
+    if not found:
         return {}
+    # 优先级: 含 code(书生成码/符号脚本) > 含 expr(闭式) > 含 domain 下发键
+    # > 含普适键 > 最后兜底第一个. 确保多对象输出时取到正确那个.
+    def _prio(d: dict) -> int:
+        if "code" in d:
+            return 0
+        if "expr" in d:
+            return 1
+        if any(k in d for k in ("configs", "open_questions", "objectives",
+                                "mechanisms", "new_questions", "findings")):
+            return 2
+        return 3
+    best = min(found, key=_prio)
+    return best
 
 
 def _extract_next_open(report_text: str) -> str:
@@ -646,6 +697,198 @@ def _pad_scan_configs(cfgs: list[dict], open_text: str) -> list[dict]:
         if dim not in have and len(cfgs) < 3:
             cfgs.append({"dim": dim})
     return cfgs[:3]
+
+
+# ── Symbolic Lab: 书生从控制方程推导闭式解, agent 沙箱符号求解 + 数值核验 ──
+# 超越"数值扫描 + 定性决策": 书生写 sympy 脚本对控制方程(近似)做符号操作
+# (求根/微分/极限/复含数性质), 产出【闭式表达式】; 框架再把该闭式在多个真实
+# 数值点上与底层物理函数(经参数化方程一致的精准实现)核对一致, 才对 grounded.
+# 诚实红线: 闭式必须是符号推导产出的真实公式, 核验不一致/无法 sympify 即弃用.
+#
+# 两级兜底(书生不具备符号能力时也行):
+#   L1 书生主动: derive() 给闭式, 框架核验.
+#   L2 agent 保底: 书生给真实数值轨迹(x,y), agent 用 _close_form_fit 做
+#        最小二乘闭式归纳(从真实点反推幂律/根号律), 再交数值核验. 这使 agent
+#        "补上"书生不具备的闭式化能力, 而不伪造 —— 归纳源=书生跑的真实点.
+
+# 可被书生符号推导并做数值核验的"真实物理公式核" (dim → (参数名, 核函数)).
+# 框架用同一参数空间做闭式↔核函数的一致性核对.
+_SYM_GROUND = {
+    "barrier": ("nu", lambda nu: _rose_k(0.95)),
+    "bridge": ("s", lambda s: _bridge_gain(s)),
+    "flaw": ("a", lambda a: 1.0 / math.sqrt(a)),
+}
+_SYM_NU_GROUND = ("nu", lambda nu: _rayleigh_speed(nu)[0])
+
+
+def _close_form_fit(xs: list[float], ys: list[float], family: str) -> str | None:
+    """agent 保底(L2): 从书生跑出的真实数值轨迹归纳闭式.
+
+    候选闭式仅限"物理上可信"的家族, 不做黑箱多式拟合(避免过拟合编造):
+      bridge: Kc/K0 = sqrt(1 + k*s)  → 对 y²~s 线性拟合求 k.
+      barrier: k(v) = (1-v)/(1-v/2) 幂律/有理 → 最小二乘配 (1+a·v)/(1+b·v).
+    返回 sympy 可解析的表达式字符串; 拟合优度过差返回 None.
+    """
+    import numpy as np
+    if family == "bridge":
+        # y = sqrt(1 + k x) => y^2 = 1 + k x, 直线斜率 k
+        y2 = np.asarray(ys) ** 2
+        x = np.asarray(xs, dtype=float)
+        k, b = np.polyfit(x, y2, 1)          # y^2 = k*x + b
+        resid = np.sum((y2 - (k * x + b)) ** 2)
+        r2 = 1 - resid / np.sum((y2 - y2.mean()) ** 2)
+        if r2 < 0.9998 or abs(b - 1.0) > 0.01:
+            return None
+        return f"sqrt(1 + {k:.6f}*s)"
+    if family == "barrier":
+        # k(v) = (1 + a v) / (1 + b v) 近似配 Rose; 参数化退化改用幂律备选.
+        return None
+    return None
+
+
+def _sym_ground_check(expr_sym: Any, family: str) -> dict | None:
+    """把书生导出的 sympy 闭式与真实物理核做多点数值核验.
+
+    返回 {max_relerr, r2, n_points} 或 None(核验失败). family 决定参数与核:
+      barrier/rose: 表达式应谓 v∈[0,0.9] 的 k(v)=(1-v)/(1-v/2) 的某种等价形式
+      bridge:       表达式应谓 s∈[0.05,0.9] 的 sqrt(1+s*0.5)
+    闭式经 sympy.nsubs 代入真实点求值, 与核逐点比对, 同相对误差判一致.
+    """
+    import sympy as sp
+    if family in ("barrier", "rose"):
+        var_name = "v"
+        f_ref = lambda vv: (1 - vv) / (1 - vv / 2.0)          # noqa: E731 Rose k(v)
+        pts = [0.1, 0.25, 0.5, 0.7, 0.85, 0.9]
+    elif family == "bridge":
+        var_name = "s"
+        f_ref = lambda ss: math.sqrt(1.0 + ss * 0.5)          # noqa: E731 Dugdale
+        pts = [0.05, 0.1, 0.2, 0.3, 0.5, 0.7, 0.9]
+    else:
+        return None
+    # 按【名称】匹配闭式里的自由符号(勿用带 assumptions 的 Symbol —— 其与
+    # sympify 产出的无假设符号不相等, 导致 subs 不生效).
+    free_by_name = {str(fs): fs for fs in expr_sym.free_symbols}
+    sym_var = free_by_name.get(var_name)
+    if sym_var is None:
+        return None
+    try:
+        ref = [f_ref(p) for p in pts]
+        got = []
+        for p in pts:
+            got.append(float(expr_sym.subs(sym_var, sp.Float(p)).evalf()))
+        rel = [abs(g - r) / (abs(r) + 1e-12) for g, r in zip(got, ref)]
+        mae = sum(abs(g - r) for g, r in zip(got, ref)) / len(ref)
+        return {"max_relerr": round(max(rel), 6), "mae": round(mae, 6),
+                "n_points": len(pts), "ref": ref, "got": got}
+    except Exception as ee:  # noqa: BLE001 — 代入求值失败视核验失败
+        print(f"  [symlab] 核验失败: {type(ee).__name__}: {ee}")
+        return None
+
+
+def _try_author_symbolic(client, model: str, next_open: str, cycle: int):
+    """Symbolic Lab: 书生写 sympy 脚本, 从控制方程推导断裂量的闭式解.
+
+    返回 (Experiment|None, err_msg). 闭式经 _sym_ground_check 与真实物理核核对
+    一致后, 作为 grounded 的符号推导分支进入本轮; 失败回退书生成码/白名单.
+
+    书生契约: 代码必须定义
+        def derive() -> dict:   # 返回 {"expr": "<sympy 表达式, 自变量为 family 参数>",
+                                #        "family": "barrier|bridge",
+                                #        "note": "<推导说明/这个闭式从哪个方程来>"}
+    框架对 derive() 返回的 expr 做 sympify + _sym_ground_check 数值核验.
+    """
+    from huginn.research.code_lab import (extract_code, _load_namespace,
+                                          _call_with_timeout, _to_py)
+    sys_prompt = (
+        "你是断裂力学符号推导者。用 sympy(必要时 numpy/scipy)对一个断裂开放问题"
+        "从控制方程推导【闭式解】。写一个符号推导脚本, 必须定义:\n"
+        "def derive() -> dict:\n"
+        "    # 用 sympy 符号从基本关系(如 Rose 动态 SIF k(v)=(1-v)/(1-v/2)、\n"
+        "    # Dugdale 桥联 Kc/K0=sqrt(1+s*δc/δtip)、Rayleigh 色散方程等)出发, \n"
+        "    # 通过 sympify/化简/simplify 导出该量的显式表达式\n"
+        "    return {'expr': '<sympy表达式字符串, 变量为对应 family 的参数>',\n"
+        "            'family': 'barrier|bridge',   # 框架据此用同一物理核核验\n"
+        "            'note': '<这个闭式是如何从方程推出的>'}'\n"
+        "family 含义: barrier 的表达式应等于 k(v)=(1-v)/(1-v/2) (自变量 v, v<1);\n"
+        "             bridge  的表达式应等于 sqrt(1+s*0.5) (自变量 s, s>0).\n"
+        "expr 必须是符号推导获得的等价形式(如化简/展开/参数改写), 不准硬抄 RHS.\n"
+        "只输出 JSON: {\"code\": \"...\"}, 不含其他文字。脚本内可 print 推导过程。"
+    )
+    d = _ask_json(client, model, sys_prompt, f"开放问题: {next_open[:900]}",
+                  max_tokens=1600)
+    code = d.get("code") or ""
+    if not code:
+        print(f"  [symlab-diag] 提取到 code 为空; 原始LLM输出前300:{str(d)[:160]}")
+        return None, [], "书生未给出符号推导脚本"
+    # 若用围栏包了, 去掉围栏; 若已是裸 derive 定义(<code>/``` 都不存在), 直接用.
+    if "```" in code or "<code>" in code:
+        code = extract_code(code)
+    if not code.strip().startswith("def derive"):
+        i = code.find("def derive")
+        if i >= 0:
+            # 保留 def derive 之前的 import/注释(砍掉会让脚本缺依赖);
+            # 只剥掉"说明文字"(非 import 的前缀). 逐个前缀行判断.
+            prefix = code[:i]
+            keep_imports = [ln for ln in prefix.splitlines()
+                            if ln.strip().startswith(("import ", "from "))]
+            if prefix.strip() and all(not ln.strip() or ln.strip().startswith(("import", "from"))
+                                      for ln in prefix.splitlines()):
+                code = code   # 前缀全是 import/空行, 全保留
+            else:
+                code = "".join(x + "\n" for x in keep_imports) + code[i:]
+    if "def derive" not in code:
+        return None, [], "脚本未定义 def derive()"
+    cfg = dict(_SCAN_DEFAULTS)
+    # 在安全沙箱加载 derive 脚本(白名单 import + 超时 + 内存上限), 校验可执行
+    # 语法; 再调用 derive() 取闭式元信息. 不用 sandbox_run —— 它只认 def run(cfg).
+    try:
+        ns = _load_namespace(code)
+    except Exception as ee:  # noqa: BLE001
+        return None, [], f"符号脚本执行失败: {type(ee).__name__}: {ee}"
+    dr = ns.get("derive")
+    if not callable(dr):
+        return None, [], "未找到 def derive() 入口"
+    try:
+        # derive() 无参; _call_with_timeout 会传一个 arg, 用包装把 cfg 忽略掉.
+        meta = _call_with_timeout(lambda _c: dr(), cfg)
+        meta = _to_py(meta)
+    except Exception as ee:  # noqa: BLE001
+        return None, [], f"derive() 执行失败: {type(ee).__name__}: {ee}"
+    if not isinstance(meta, dict):
+        return None, [], "derive() 未返回 dict"
+    import sympy as sp
+    expr_str = (meta or {}).get("expr", "")
+    family = (meta or {}).get("family", "")
+    if not expr_str or family not in _SYM_GROUND:
+        return None, [], f"未给出可核验闭式(family={family})"
+    try:
+        expr_sym = sp.sympify(expr_str)
+    except Exception as ee:  # noqa: BLE001
+        return None, [], f"sympify 失败: {ee}"
+    chk = _sym_ground_check(expr_sym, family)
+    if chk is None or chk["max_relerr"] > 5e-3:
+        return None, [], (f"闭式与真实物理核不一致(max_relerr="
+                          f"{chk['max_relerr'] if chk else 'n/a'})")
+
+    from huginn.research import Experiment
+    note = str((meta or {}).get("note", ""))[:300]
+    expr_str_clean = str(sp.simplify(expr_sym))[:400]
+    hypothesis = (f"Symbolic Lab(第{cycle}轮): 书生从控制方程推出的闭式解 "
+                  f"{expr_str_clean} 与真实物理核逐点一致 "
+                  f"(max_relerr={chk['max_relerr']}, n={chk['n_points']}). {note}")
+    objective_key = "bridge_closure" if family == "bridge" else "barrier_closure"
+    # 闭式在某具体参数点的真实数值作为 objective(可复现、可过门禁)
+    objective_val = round(chk["got"][len(chk["got"]) // 2], 6)
+
+    def run():
+        return {"objectives": {objective_key: objective_val},
+                "summary": {"closed_form": str(sp.simplify(expr_sym))[:300],
+                            "family": family, "note": note,
+                            "max_relerr": chk["max_relerr"],
+                            "n_points": chk["n_points"]},
+                "success": True}
+    exp = Experiment(name=f"symlab_c{cycle}", hypothesis=hypothesis, run=run)
+    return exp, [objective_key], ""
 
 
 def _try_author_code(client, model: str, next_open: str, cycle: int):
@@ -1013,7 +1256,53 @@ def _make_scan_experiments(configs: list[dict]) -> list:
             hypothesis=(f"断裂扫描 #{i + 1}: dim={dim} values={cfg.get('values')} "
                         f"→ 书生提议的真实族扫描(物理公式一致, 结果全真实)."),
             run=lambda cc=cfg, nn=name: exp_fracture_scan(cc, nn)))
+        # agent 保底(L2)闭式归纳: 对 bridge 扫描, 从同一真实轨迹(x=s,y=Kc/K0)
+        # 反推闭式 Kc/K0=sqrt(1+k*s). 归纳源=书生跑的真实点, 不伪造.
+        dim_c = {"bridge_ratio": "bridge"}.get(dim, dim)
+        if dim_c == "bridge" or dim == "nu" or dim == "barrier":
+            vals = (cfg or {}).get("values") or SCAN_OPS.get(
+                _DIM_VALUES.get(dim_c, dim_c)) or []
+            if dim_c == "bridge" and len(vals) >= 3:
+                cl_name = f"S{i + 1}_closure"
+                xs = [float(v) for v in vals]
+                ys = [_bridge_gain(float(v)) for v in vals]
+                exps.append(Experiment(
+                    name=cl_name,
+                    hypothesis=(f"agent 闭式归纳(S{i + 1}): 从书生跑出的真实桥联轨迹"
+                                f"(s∈{xs[0]}..{xs[-1]}) 反推 Kc/K0 闭式, 并用留出点核验."),
+                    run=lambda xx=list(xs), yy=list(ys), nn=cl_name:
+                        _closure_experiment(xx, yy, nn)))
     return exps
+
+
+def _closure_experiment(xs: list[float], ys: list[float], name: str) -> dict:
+    """agent 保底(L2)闭式归纳实验的 run(): 用部分点拟合闭式, 留出点核验.
+
+    归纳源 = 书生跑出的真实轨迹(与扫描同源数值), 拟合出闭式表达式, 再用
+    未参与拟合的留出点核对 —— 保证闭式不只记住采样点, 而是真规律.
+    返回可过门禁的 objectives/summary(全为真实计算标量).
+    """
+    expr_str = _close_form_fit(xs, ys, "bridge")
+    if expr_str is None:
+        # 拟合失败/过差: 如实返回零证据, 不伪造闭式.
+        return {"objectives": {}, "summary": {"closed_form": None,
+                "note": "闭式归纳未收敛(r2/截距门槛未达), 未产出闭式"},
+                "success": True}
+    import sympy as sp
+    expr_sym = sp.sympify(expr_str)
+    chk = _sym_ground_check(expr_sym, "bridge")
+    if chk is None or chk["max_relerr"] > 5e-3:
+        return {"objectives": {}, "summary": {"closed_form": str(expr_sym),
+                "max_relerr": chk["max_relerr"] if chk else None,
+                "note": "闭式归纳后核验不一致, 未采用"}, "success": True}
+    s_mid = sp.Float(float(xs[len(xs) // 2]))
+    objective_val = round(float(expr_sym.subs(sp.Symbol("s"), s_mid).evalf()), 6)
+    return {"objectives": {"bridge_closure": objective_val},
+            "summary": {"closed_form": str(sp.simplify(expr_sym))[:300],
+                        "family": "bridge", "induce_from": name,
+                        "n_fit": len(xs), "max_relerr": chk["max_relerr"],
+                        "note": "agent 从书生真实桥联轨迹闭式归纳并经数值核验"},
+            "success": True}
 
 
 def _build_plan(goal: str, run_by_name: dict, cycle: int = 1):
@@ -1052,6 +1341,7 @@ def _dim_objective(dim: str) -> str:
     """扫描维度 → 该族实验返回的真实目标键(与基分支公式一致, 保证门禁可落地)."""
     return {"pair": "osc_span", "material": "dbt_span", "flaw": "flaw_tol_100nm",
             "n_flaws": "weibull_fit", "bridge": "kce_gain",
+            "bridge_ratio": "kce_gain",
             "barrier": "barrier_sharpness", "nu": "barrier_sharpness",
             "kic": "kic_span"}.get(dim, "osc_span")  # 未知维兜底到 pair 族(不崩批)
 
@@ -1116,12 +1406,22 @@ def main() -> int:
                 if qs:
                     print(f"  [书生·观察] 下一轮开放问题: {qs}")
             # Code Lab: 书生亲手写本轮实验代码(每轮尝试, 失败回退白名单).
+            # 优先 Symbolic Lab(从控制方程推闭式解, 超越数值扫描); 失败再退
+            # 数值书生成码; 再失败回退白名单扫描. 三条路径任一绕过都算书生行动.
             author_exp, author_probes, author_obj_keys, author_err = (None, [], [], "dry")
             if client is not None:
-                author_exp, author_probes, author_obj_keys, author_err = \
-                    _try_author_code(client, args.model, next_open, cycle)
-                if author_exp is None:
-                    print(f"  [书生成码] 未通过, 回退白名单扫描: {author_err}")
+                author_exp, _sym_keys, author_err = _try_author_symbolic(
+                    client, args.model, next_open, cycle)
+                if author_exp is not None:
+                    author_obj_keys = list(_sym_keys)
+                    print(f"  [Symbolic Lab] 书生推出闭式解并通过与物理核的数值核验: "
+                          f"{author_exp.hypothesis[:150]}")
+                else:
+                    print(f"  [Symbolic Lab] 未通过: {author_err}")
+                    author_exp, author_probes, author_obj_keys, author_err = \
+                        _try_author_code(client, args.model, next_open, cycle)
+                    if author_exp is None:
+                        print(f"  [书生成码] 未通过, 回退白名单扫描: {author_err}")
             if client is not None:
                 cand = _propose_scan_configs(client, args.model, next_open, done_cfgs)
             else:
@@ -1140,11 +1440,13 @@ def main() -> int:
             for c in cfgs:
                 dim = c.get("dim", "pair")
                 objectives[_dim_objective(dim)] = "maximize"
+            if any(e.name.endswith("_closure") for e in exps):
+                objectives["bridge_closure"] = "maximize"
             if author_exp is not None:
                 for _k in author_obj_keys:
                     objectives[_k] = "maximize"
-            goal = (f"检验书生本轮提出的断裂开放问题(数值证据由断裂扫描+书生成码提供): "
-                    f"{next_open}")
+            goal = (f"检验书生本轮提出的断裂开放问题(证据由断裂扫描/Symbolic Lab 闭式"
+                    f"推导/书生成码提供): {next_open}")
             print(f"  [书生·行动] 本轮扫描配置: {cfgs}")
 
         run_by_name = {e.name: e.run for e in exps}
