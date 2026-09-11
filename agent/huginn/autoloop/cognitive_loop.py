@@ -3134,7 +3134,13 @@ Respond JSON only:
                     "structure_desc": _snapshot_structure_desc(cog),
                     # 桥 E: surprise + rule_hit 进 episodic shard, replay 可按信号检索,
                     # 不只按时间线性回溯. 缺失安全填 0.0 / "".
-                    "surprise": float(getattr(self, "_last_surprise", 0.0)),
+                    # surprise 用 per-domain 相对秩(_last_surprise_rel) — 单调于原始值,
+                    # 免绝对阈值; 未启用相对化时回退原始 _last_surprise.
+                    "surprise": float(
+                        getattr(self, "_last_surprise_rel", None)
+                        if getattr(self, "_last_surprise_rel", None) is not None
+                        else getattr(self, "_last_surprise", 0.0)
+                    ),
                     "rule_hit": getattr(self, "_last_rule_hit_id", "") or "",
                 }
                 state.iteration_history.append(_snapshot)

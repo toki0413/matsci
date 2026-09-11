@@ -600,6 +600,12 @@ HEP agent harness 论文(arXiv 2609.00107，2026-09)给出**科学 agent 的契�
   > predictor surprise **0.152** ≪ 语义 0.617 ≪ Jaccard 1.0 —— predictor 潜映射把 pred→actual 对齐更紧,
   > 是显著更好的排名信号。85 项既有回归全绿。
   >
+  > **per-domain 相对化(阶段2-A-2)**：新增 `_relative_surprise` —— 按域(`self.surprise_domain`, 缺省
+  > `global`)维护运行样本, 用经验分布秩把原始 surprise 映射到 **[0,1] 相对分数**(单调于原始值, 免绝对
+  > 阈值, 对小样本稳)。`prediction_error.surprise_rel` 与 `_last_surprise_rel` 供给 episodic/encounter_space
+  > (run_cognitive 的 episodic shard 改用相对秩), 原始 surprise 仍保留喂 feynman/tag/alignment 等既有阈值
+  > 消费者, 语义不变。回归 20 项全绿。
+  >
   > **目标级留出验证(新增 `scripts/eval_jepa_heldout.py`)**：语料按 `objective` 打标, 随机目标级拆分
   > (留出目标在训练里完全未见), 25% 留出 × 12 次: predictor 冻结前向重建 surprise = **0.243 ± 0.009**,
   > 优于"直接用 pred 取 actual"基线 0.374、远低于跨配转机 0.537, 且在留出目标上 12/12 次胜过基线;

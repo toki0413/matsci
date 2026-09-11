@@ -317,6 +317,13 @@ class EngineReflectMixin:
                 "surprise_std": round(robust["std"], 3),
                 "surprise_source": source,
             }
+            # per-domain 相对化(秩→[0,1])供 encounter_space / 探索排名; 单调于原始值.
+            try:
+                surprise_rel = self._relative_surprise(surprise)
+            except Exception:  # noqa: BLE001
+                surprise_rel = max(0.0, min(1.0, surprise))
+            results["prediction_error"]["surprise_rel"] = round(surprise_rel, 4)
+            self._last_surprise_rel = surprise_rel
             self._last_surprise = surprise
             self._surprise_history.append((surprise, robust["std"]))
 
@@ -1575,6 +1582,26 @@ class EngineReflectMixin:
         except Exception:  # noqa: BLE001 — 失败回落, 不阻塞
             logger.debug("[jepa-predictor] forward failed", exc_info=True)
             return None
+
+    # ── 阶段2-A-2: per-domain 相对 surprise (运行统计, 秩 → [0,1]) ──
+    # surprise 原始跨域方差大, 绝对阈值不稳. 这里按域维护运行样本, 用经验分布秩
+    # (rank/n) 把原始 surprise 映射到 [0,1] 的相对分数 —— 单调、免阈值、对小样本稳,
+    # 供 encounter_space / 探索排名用. 域键缺省 "global", 可设 self.surprise_domain.
+    def _relative_surprise(self, surprise: float) -> float:
+        try:
+            buckets = getattr(self, "_surprise_buckets", None)
+            if buckets is None:
+                buckets = {}
+                self._surprise_buckets = buckets
+            key = str(getattr(self, "surprise_domain", None) or "global")
+            hist = buckets.setdefault(key, [])
+            hist.append(float(surprise))
+            # 经验 CDF 秩: 当前值在已见样本(含自身)里的分数位置
+            le = sum(1 for x in hist if x <= float(surprise))
+            return max(0.0, min(1.0, le / len(hist)))
+        except Exception:  # noqa: BLE001 — 相对化失败不阻塞
+            logger.debug("[jepa] relative surprise failed", exc_info=True)
+            return max(0.0, min(1.0, float(surprise)))
 
     def _compute_surprise(self, prediction: str, actual: str) -> float:
         """JEPA 式预测误差: 预测文本 vs 实际文本的语义距离.
