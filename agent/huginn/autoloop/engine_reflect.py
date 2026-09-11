@@ -1391,11 +1391,50 @@ class EngineReflectMixin:
 
 
 
+    # ── 阶段1 (JEPA 式预测误差度量升级) ──────────────────────────────
+    # surprise 原用关键词 Jaccard, 无法捕捉"预测说了 energy, 实际出了 band gap"
+    # 这类概念相似。升级刻意**只**用冻结句向量 (共享 ST 单例) 的 cosine 距离,
+    # 不引入任何训练/权重更新, 贴合"非学习校验优先"。embeder 未加载时如实回落
+    # 原 Jaccard (见 _compute_surprise_robust)，不主动触发下载、不引硬依赖。
+
+    @staticmethod
+    def _cosine_distance(a: Any, b: Any) -> float:
+        """两向量余弦距离 = 1 - cos(夹角), 归一到 [0,1] (||a||=0 时当完全相同)."""
+        import numpy as np
+        va = np.asarray(a, dtype=np.float32).ravel()
+        vb = np.asarray(b, dtype=np.float32).ravel()
+        if va.size == 0 or vb.size == 0:
+            return 0.0
+        na = va / (np.linalg.norm(va) + 1e-12)
+        nb = vb / (np.linalg.norm(vb) + 1e-12)
+        return max(0.0, min(1.0, 1.0 - float(np.dot(na, nb))))
+
+    def _try_embed_text(self, text: str) -> Any:
+        """复用共享冻结 ST 单例编码单文本; 未加载/失败返回 None (绝不触发下载)."""
+        try:
+            from huginn.knowledge.store import _EmbeddingModel
+            st = getattr(_EmbeddingModel, "_st", None)
+            if st is None:
+                return None
+            vec = st.encode([text], normalize_embeddings=True)[0]
+            import numpy as np
+            return np.asarray(vec, dtype=np.float32)
+        except Exception:  # noqa: BLE001 — 语义不可用即回落 Jaccard, 不阻塞探索循环
+            return None
+
+    def _semantic_distance(self, prediction: str, actual: str) -> float | None:
+        """语义距离; embeder 不可用时返回 None (由调用方回落 Jaccard)."""
+        va = self._try_embed_text(prediction)
+        vb = self._try_embed_text(actual)
+        if va is None or vb is None:
+            return None
+        return self._cosine_distance(va, vb)
+
     def _compute_surprise(self, prediction: str, actual: str) -> float:
         """JEPA 式预测误差: 预测文本 vs 实际文本的语义距离.
 
-        ponytail: 用关键词 Jaccard 距离代替真正的嵌入余弦距离.
-        纯文本操作, 零依赖, 零 LLM 调用. 对于"预测说了 energy, 实际也出了
+        优先冻结句向量 cosine 距离 (语义相似), 语义不可用则回落关键词
+        Jaccard 距离. 纯文本操作, 零 LLM 调用. 对于"预测说了 energy, 实际也出了
         energy"这种常见场景已经够用. 升级路径: 用 sentence-transformers
         算 cosine distance, 或训练专门的 JEPA 编码器.
         """
@@ -1409,19 +1448,43 @@ class EngineReflectMixin:
     ) -> dict[str, float]:
         """分布鲁棒 surprise 估计.
 
-        对 keyword 提取做多种扰动 (不同 stopword 集 / n-gram / 阈值),
-        取 worst-case 作为决策依据. 这避免单一扰动下 surprise 被低估.
+        优先冻结句向量语义距离 (阶段1): 可捕捉"概念相近但用词不同"的预测误差;
+        语义不可用(embeder 未加载)时回落关键词 Jaccard 多扰动估计.
 
         返回 {mean, worst, std, point}:
-        - point: 原始 Jaccard 距离 (兼容旧逻辑)
-        - worst: 多扰动下的最大值 (决策用)
-        - mean: 多扰动平均值 (趋势分析用)
-        - std: 多扰动标准差 (置信度信号)
+        - point: 原始距离 (语义 cosine 或 Jaccard; 兼容旧逻辑)
+        - worst: 决策用上限 (语义在多文本形态下取最大; Jaccard 多扰动取最大)
+        - mean: 平均值 (趋势分析用)
+        - std: 标准差 (置信度信号)
         """
         if not prediction or not actual:
             return {"mean": 0.0, "worst": 0.0, "std": 0.0, "point": 0.0}
 
         import statistics
+
+        # 阶段1 fast-path: 冻结句向量 cosine 距离 (语义相似). None = embeder 不可用,
+        # 回落下方关键词 Jaccard 多扰动。对原始/归一化两种文本形态各算一次, 既保持
+        # {mean,worst,std} 契约, 也保留"分布鲁棒(取 worst)"的保守决策语义.
+        semantic = self._semantic_distance(prediction, actual)
+        if semantic is not None:
+            variants = [
+                v for v in (
+                    semantic,
+                    self._semantic_distance(
+                        prediction.strip().lower(), actual.strip().lower()
+                    ),
+                ) if v is not None
+            ]
+            vals = variants or [semantic]
+            if len(vals) == 1:
+                base = vals[0]
+                return {"mean": base, "worst": base, "std": 0.0, "point": base}
+            return {
+                "mean": statistics.mean(vals),
+                "worst": max(vals),
+                "std": statistics.stdev(vals) if len(vals) > 1 else 0.0,
+                "point": vals[0],
+            }
 
         # 扰动 1: 标准停用词集
         stop1 = {
