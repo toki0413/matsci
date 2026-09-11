@@ -330,6 +330,24 @@ class EngineControlMixin:
             state.pending_human_review = None
         return True
 
+    def _plan_missing_executable(self, plan: dict[str, Any]) -> bool:
+        """判定 plan 是否带"可直接运行的数值脚本"信号 (纯 advisory, 不阻断).
+
+        闭环教训 2026-09-11: 模型对 trivial 目标屡犯"换名归约/空断言" — plan
+        不含可执行片段就进 execute 空转, 却还能过 advisory 门。这里只做信号判定,
+        供 execute 分支写强 hint (不改变 gate 语义, checkpoint 仍是唯一硬卡).
+        判据: 已带 plan_formula 槽, 或 description 含 python 计算标记 → 可执行;
+        否则判定缺可执行片段。
+        """
+        if not isinstance(plan, dict):
+            return True
+        if plan.get("plan_formula"):
+            return False
+        desc = plan.get("description") or plan.get("plan") or ""
+        if not isinstance(desc, str) or not desc.strip():
+            return True
+        markers = ("import ", "print(", " = ", "np.", "math.")
+        return not any(m in desc for m in markers)
 
     async def _wait_if_checkpoint_pending(
         self, from_phase: str, to_phase: str, timeout: float = 600.0

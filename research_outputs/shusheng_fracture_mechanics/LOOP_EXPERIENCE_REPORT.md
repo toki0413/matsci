@@ -957,10 +957,18 @@ JEPA 降级后, 重新回 agent 主循环, 用 `run_cognitive` 驱动真实自�
 
 这不是"loop 成功解了题", 而是**守卫机制(claim grounding validate + CriticAgent + surprise 归零 +
 metacog 陷阱标记)成功拒绝了虚假成功**——loop 的自我验证层明确拒绝把不可评估的轮次当成功上报。
-对"不编造、不自欺"的主办方要求, 这是比漂亮数字更有价值的证据。同时暴露真实短板:
-**方法级可计算目标上, 模型当前更易"换名"而非"执行"**, 下一步应在 `execute` 相位加强
-"强制先落一个可执行数值脚本再进 validate"的硬门禁(而非软 advisory 放行), 才能把 trivial 目标
-也转化为真实工具证据。
+对"不编造、不自欺"的主办方要求, 这是比漂亮数字更有价值的证据; 同时暴露真实短板:
+**方法级可计算目标上, 模型当前更易"换名"而非"执行"**。
+
+**整改决策(与设计原则对齐)**: 起初提议"把 execute 硬门禁升级"(缺数值脚本就 block)——
+但那**违背分层 gate 原则**: 硬阻断的授权只属于显式 checkpoint(人机合作),
+harness 无权隐式/全局地武断定义"什么算证据"; 若为 trivial 目标强锁, 只会把
+"如实报告失败"偷换成"程序强制产出成功", 恰是自欺。故**撤销硬门禁**,
+改为**纯 advisory 强化**: 新增 `_plan_missing_executable()` 信号判定
+(plan 无 `plan_formula`/无 python 计算标记 → 判缺可执行片段), 在 execute 分支
+把强 hint 写进 `_speculator_hint`(下轮 decide/hypothesis 读到, 督促先落一段
+可执行的 python 数值片段再进 execute→validate), **不改变 gate 语义、不计 checkpoint**。
+这是把"让 agent 更有理由真执行"交给信号, 而不是用锁——原则的授权边界不被突破。
 
 > 待办/开放项：`audit.score_usage / governance.external_verify` 属软门禁非落地项；
 > 后续可把 taste taxonomy 固化为 Agent Skill 供任意域一键调用。

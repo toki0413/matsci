@@ -2348,6 +2348,17 @@ Respond JSON only:
                     # run_cognitive 路径完全失效. ponytail: check 失败不抛,
                     # 写 hint 让下轮 decide 看到, 当前 return None 跳过 execute.
                     _plan = cog["plan"]
+                    if self._plan_missing_executable(_plan):
+                        # 2026-09-11 闭环训: 模型对 trivial 目标屡犯"换名归约/空断言"——
+                        # plan 不含可执行数值片段就直接进 execute 空转 (tool_results 全 0),
+                        # 却还能过 advisory 门。按设计原则不硬阻断 (checkpoint 才该硬卡),
+                        # 只做强 hint (纯 advisory, 下轮 decide/hypothesis 读到, 督促补脚本)。
+                        self._speculator_hint += (
+                            "\n[advisory: execute] 当前 plan 未含可直接运行的数值脚本。"
+                            "请先产生一段可执行的 python 片段(import + 公式 + print 结果),"
+                            "在 plan 里落地并真实运行, 带回数值后再进 execute→validate。"
+                            "不要用 DIM/换名式重述代替计算。\n"
+                        )
                     if not self._check_budget(state.iteration, _plan):
                         # budget 拒: hint 已被 _check_budget 写, 这里不重复
                         return None
