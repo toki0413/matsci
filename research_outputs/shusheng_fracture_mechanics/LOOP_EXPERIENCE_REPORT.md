@@ -925,5 +925,42 @@ HEP agent harness 论文(arXiv 2609.00107，2026-09)给出**科学 agent 的契�
 2. **能力不绑定单模型(独立性)**：书生驱动、agent 中立，`--dry` 无 key 也能跑，跨域跨模型可复用。
 3. **把"提出好问题"做成可积累资产**：taste taxonomy + 语义品味库 = 让模型不仅会解问题，还会**像好科学家一样提出问题**，且随批次越积越强(44→104 条)。
 
+---
+
+## 7. 回到主循环后的长程闭环实跑(2026-09-11, 应力校核)
+
+JEPA 降级后, 重新回 agent 主循环, 用 `run_cognitive` 驱动真实自主闭环做 10+ 代长跑验证。
+目标选**方法级物理 objective**(轴向应力安全校核):
+
+> "A rod under axial load F=500 N, cross-section A=0.01 m^2, yield stress 250 MPa.
+>  Compute sigma=F/A, compare to yield, check PASS/FAIL."
+
+### 7.1 复现的一次驱动接线错误(自我教训)
+
+第一轮把 `argv[1]="12"` 当成了 objective(max_iter 本应是 12), 导致闭环拿到非查询目标
+`"12"`, 12 个 phase 全空转(`tool_results=0`), 审计触发 **G31: trajectory has 0 tool_calls
+— 可空转**。修正是把 objective 显式放 `argv[1]`、`max_iter=12` 放 `argv[2]` 重跑。教训: 驱动脚本
+**默认目标必须与参数位严格分离**, 空运转读出来要比"假成功"安全得多——审计护栏先于模型给出了红灯。
+
+### 7.2 第二轮(目标正确, 11 phase / 609.8s)结论
+
+- **工程答案(闭式, 独立于 loop)正确**: σ=F/A=500/0.01=5.0e4 Pa=0.05 MPa; 安全系数 n=250/0.05=5000; **PASS**。
+- **自主 loop 自身未达成目标**(`goal_achieved=false`): 全轮仅 1 次 `explore` 工具调用
+  (`n_explored=1, n_pruned=0, convergence="max_iterations reached"`), **从未真实计算 σ**;
+  validate 返回 `tests_passed=false / "no tests ran"`; CriticAgent 复核结论 **"not a valid result —
+  produced no evaluable evidence"**。
+- **Surprise score = 0.00**(相对秩归零): 结果完全在自身预期内, 无新结构。
+- **metacog 持续捕获"换名归约/空断言"陷阱**: 模型反复把目标重述成 `[DIM: defect]` 等标签
+  而非执行计算; 护栏逐段放行(非 checkpoint)但没能强制出真实数值。
+
+### 7.3 这一轮证明了什么(诚实一侧)
+
+这不是"loop 成功解了题", 而是**守卫机制(claim grounding validate + CriticAgent + surprise 归零 +
+metacog 陷阱标记)成功拒绝了虚假成功**——loop 的自我验证层明确拒绝把不可评估的轮次当成功上报。
+对"不编造、不自欺"的主办方要求, 这是比漂亮数字更有价值的证据。同时暴露真实短板:
+**方法级可计算目标上, 模型当前更易"换名"而非"执行"**, 下一步应在 `execute` 相位加强
+"强制先落一个可执行数值脚本再进 validate"的硬门禁(而非软 advisory 放行), 才能把 trivial 目标
+也转化为真实工具证据。
+
 > 待办/开放项：`audit.score_usage / governance.external_verify` 属软门禁非落地项；
 > 后续可把 taste taxonomy 固化为 Agent Skill 供任意域一键调用。
