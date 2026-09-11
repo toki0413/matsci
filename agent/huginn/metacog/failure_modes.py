@@ -226,7 +226,7 @@ class FailureModeRegistry:
         if not path.is_file():
             return
         try:
-            with path.open("r", encoding="utf-8") as f:
+            with path.open("r", encoding="utf-8", errors="replace") as f:
                 for line in f:
                     line = line.strip()
                     if not line:
@@ -237,7 +237,7 @@ class FailureModeRegistry:
                         self.observed_counts[mid] = (
                             self.observed_counts.get(mid, 0) + 1
                         )
-        except (OSError, json.JSONDecodeError):
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
             # 损坏的日志不阻断, 后续 append 会继续写
             pass
 

@@ -223,10 +223,16 @@ class EvolutionEngine:
 
     def _load_rules(self) -> None:
         with self._lock:
-            if self.rules_path.exists():
-                with self.rules_path.open("r", encoding="utf-8") as f:
+            if not self.rules_path.exists():
+                return
+            try:
+                with self.rules_path.open("r", encoding="utf-8", errors="replace") as f:
                     data = json.load(f)
                     self.rules = [EvolutionRule(**r) for r in data]
+            except (OSError, UnicodeDecodeError, ValueError):
+                # 损坏/非法编码的规则文件不阻断主循环: 保留当前已加载状态,
+                # 失败仅记日志, 避免因读取失败把规则集清空.
+                logger.warning("failed to load evolution rules (%s); keep current state", self.rules_path)
 
     def _save_rules(self) -> None:
         with self._lock, self.rules_path.open("w", encoding="utf-8") as f:
@@ -252,10 +258,14 @@ class EvolutionEngine:
         }
 
     def _load_skills(self) -> None:
-        if self.skills_path.exists():
-            with self.skills_path.open("r", encoding="utf-8") as f:
+        if not self.skills_path.exists():
+            return
+        try:
+            with self.skills_path.open("r", encoding="utf-8", errors="replace") as f:
                 data = json.load(f)
                 self.skills = [SkillTemplate(**s) for s in data]
+        except (OSError, UnicodeDecodeError, ValueError):
+            logger.warning("failed to load skills (%s); keep current state", self.skills_path)
 
     def _save_skills(self) -> None:
         with self._lock, self.skills_path.open("w", encoding="utf-8") as f:
