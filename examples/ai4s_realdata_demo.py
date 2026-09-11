@@ -425,7 +425,10 @@ def main() -> int:
         if not did_verify:
             reasons.append("还差可证伪验证: 必须先 predict_holdout, 再用 verify_predictions 回库与真实值对账")
         if g["verdict"] != "pass":
-            reasons.append(f"以下数值不在真实工具轨迹中、无法溯源: {g['unsubstantiated']}")
+            if g.get("gateway_unreachable"):
+                reasons.append("门禁网关不可达, 无法在线判证; 请先启动 huginn server 再重跑(当前不是数值溯源缺陷)")
+            else:
+                reasons.append(f"以下数值不在真实工具轨迹中、无法溯源: {g['unsubstantiated']}")
         if len(final.strip()) < 200:
             reasons.append("报告过于简短(空转嫌疑), 请按完整结构重写")
         if not reasons:

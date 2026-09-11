@@ -398,12 +398,16 @@ def main() -> int:
             verdict_state, ungrounded = "pass", []
             break
         ungrounded = g["unsubstantiated"]
-        # 自由但不得绕过门禁：请删除未落地主张或补跑工具溯源
-        messages.append({"role": "user", "content":
-            "门禁未通过：以下数值不在你的工具执行轨迹中、无法溯源: "
-            f"{ungrounded}。请删除这些未落地的主张（若要保留，先用对应工具获得真实值），"
-            "然后重写一份**完整研究报告**（研究问题/数据与方法/结果分析/结论与局限/"
-            "下一步实验），确保每个数值都能在工具轨迹中找到。"})
+        # 自由但不得绕过门禁: 区分"网关不可达"与真实"未落地主张", 不把存活失败误报成编造.
+        if g.get("gateway_unreachable"):
+            tip = ("门禁网关不可达, 无法在线判证数值溯源。请先启动 huginn server 并确认可达后"
+                   "再重跑, 避免把平台不可用误当成证据缺陷。")
+        else:
+            tip = ("门禁未通过：以下数值不在你的工具执行轨迹中、无法溯源: "
+                   f"{ungrounded}。请删除这些未落地的主张（若要保留，先用对应工具获得真实值），"
+                   "然后重写一份**完整研究报告**（研究问题/数据与方法/结果分析/结论与局限/"
+                   "下一步实验），确保每个数值都能在工具轨迹中找到。")
+        messages.append({"role": "user", "content": tip})
         messages.append({"role": "assistant", "content": final})
 
     report = outdir / "ai4s_open_research_report.md"

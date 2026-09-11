@@ -202,8 +202,12 @@ def finalize(x1, x2, x3):
         if g["verdict"] in ("pass", "grounded", "accept"):
             break
         _miss = g.get("unsubstantiated") or []
-        prompt2 = (f"门禁未通过: 以下数值不在实验轨迹中, 无法溯源: {_miss}。"
-                   "请删除或改用轨迹里的真实数值重写报告, 其余不变。")
+        if g.get("gateway_unreachable"):
+            prompt2 = ("门禁网关不可达, 无法在线判证数值溯源。请先启动 huginn server 并确认可达后"
+                       "再重跑, 避免把平台不可用误当成证据缺陷。")
+        else:
+            prompt2 = (f"门禁未通过: 以下数值不在实验轨迹中, 无法溯源: {_miss}。"
+                       "请删除或改用轨迹里的真实数值重写报告, 其余不变。")
         rr = client.chat.completions.create(
             model=os.environ.get("INTERNLM_MODEL", "intern-s2-preview"),
             messages=[{"role": "user", "content": prompt2}],

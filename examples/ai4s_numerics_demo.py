@@ -416,7 +416,10 @@ def main() -> int:
             if len(final) < 200:
                 reasons.append("报告过短或为空")
             if g["verdict"] != "pass":
-                reasons.append(f"未落地数值: {g['unsubstantiated']}")
+                if g.get("gateway_unreachable"):
+                    reasons.append("门禁网关不可达: 请先启动 huginn server 再重跑(不是数值溯源缺陷)")
+                else:
+                    reasons.append(f"未落地数值: {g['unsubstantiated']}")
             if not reasons:
                 verdict, ungrounded = "pass", []
                 break
