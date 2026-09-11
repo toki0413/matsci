@@ -1540,6 +1540,32 @@ class EngineReflectMixin:
                 or (get_runtime_home() / "corpus")
             )
             root.mkdir(parents=True, exist_ok=True)
+            # 防覆盖守卫 (事故教训 2026-09-11: 语料 159→9 无备份丢失):
+            # 每次写前把现有语料整体备份为 .bak (固定名覆盖式), 并检测规模骤降 —
+            # 当前行数远小于历史峰值时打 warning, 防静默截断/覆盖后无法恢复。
+            try:
+                _cf = root / "jepa_pairs.jsonl"
+                _peak_f = root / "jepa_pairs.peak"
+                _peak = 0
+                if _peak_f.exists():
+                    try:
+                        _peak = int(_peak_f.read_text(encoding="utf-8").strip() or 0)
+                    except Exception:  # noqa: BLE001
+                        _peak = 0
+                _n_cur = (
+                    len([l for l in _cf.read_text(encoding="utf-8", errors="replace").splitlines() if l.strip()])
+                    if _cf.exists() else 0
+                )
+                if _peak and _n_cur * 2 < _peak:
+                    logger.warning(
+                        "[jepa-corpus] 规模骤降! 当前 %d 行 << 历史峰值 %d 行, 可能被截断",
+                        _n_cur, _peak,
+                    )
+                if _cf.exists() and _cf.stat().st_size > 0:
+                    (root / "jepa_pairs.jsonl.bak").write_bytes(_cf.read_bytes())
+                _peak_f.write_text(str(max(_peak, _n_cur)), encoding="utf-8")
+            except Exception:  # noqa: BLE001
+                logger.debug("[jepa-corpus] backup guard failed", exc_info=True)
             # JEPA 方案① 结构化计划槽: 从 planner 暂存的槽落库; 先做防泄漏检测 —
             # 槽若把 actual 的结果码(答案)写进去了, 判泄漏丢弃该对(否则 prediction
             # 变 ground-truth, surprise 自证无信息量)。
