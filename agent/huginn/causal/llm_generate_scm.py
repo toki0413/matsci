@@ -25,7 +25,6 @@ LLM 生成流程:
 """
 from __future__ import annotations
 
-import ast
 import logging
 import math
 import re
@@ -45,45 +44,21 @@ logger = logging.getLogger(__name__)
 
 # ── 安全的方程表达式求值 ─────────────────────────────────────
 
-# 白名单函数 (LLM 方程里能用的)
-_SAFE_FUNCS: dict[str, Callable[..., float]] = {
-    "exp": math.exp,
-    "log": math.log,
-    "log10": math.log10,
-    "sqrt": math.sqrt,
-    "pow": math.pow,
-    "abs": abs,
-    "min": min,
-    "max": max,
-    "sin": math.sin,
-    "cos": math.cos,
-    "tan": math.tan,
-    "pi": lambda: math.pi,  # 常量当 0-参函数
-    "e": lambda: math.e,
-}
+# 统一实现: 与深研 HTTP 端点共用同一安全求值器 (见 huginn/research/safe_expr.py),
+# 消除两份平行 _safe_eval_expr. 因果方程额外注入物理常量 R.
+from huginn.research.safe_expr import safe_math_eval  # noqa: E402
 
-# 允许的 AST 节点类型 (白名单, 防 code injection)
-_SAFE_AST_NODES = (
-    ast.Expression, ast.BinOp, ast.UnaryOp, ast.Call,
-    ast.Name, ast.Constant, ast.Load,
-    ast.Add, ast.Sub, ast.Mult, ast.Div, ast.Pow, ast.Mod,
-    ast.USub, ast.UAdd,
-)
+_SCM_CONSTANTS = {"R": 8.314e-3}  # kJ/(mol·K), 供 Arrhenius 类方程
 
 
 def _safe_eval_expr(expr: str, variables: dict[str, float]) -> float:
     """安全求值数学表达式. 只允许白名单函数 + 变量.
 
     LLM 生成的方程表达式如 "A0 * exp(-Ea / (R * T))" 在此求值.
+    实现委托共享 ``safe_math_eval`` (手写 AST 遍历, 不 eval), R 经 constants 注入.
     """
     try:
-        tree = ast.parse(expr, mode="eval")
-        for node in ast.walk(tree):
-            if not isinstance(node, _SAFE_AST_NODES):
-                raise ValueError(f"不允许的 AST 节点: {type(node).__name__}")
-        # 编译 + 求值, 全局只给白名单函数
-        env: dict[str, Any] = {**_SAFE_FUNCS, **variables, "R": 8.314e-3}
-        return float(eval(compile(tree, "<expr>", "eval"), {"__builtins__": {}}, env))
+        return safe_math_eval(expr, variables, constants=_SCM_CONSTANTS)
     except Exception as exc:
         logger.debug("safe_eval failed for '%s': %s", expr, exc)
         raise
@@ -372,11 +347,11 @@ def _selfcheck() -> None:
     except (ValueError, NameError, SyntaxError):
         logger.debug("best-effort op failed", exc_info=True)
 
-    # 3. _safe_eval_expr 阻止赋值语句
+    # 3. _safe_eval_expr 阻止赋值语句 (统一求值器把不可解析统一抛 ValueError)
     try:
         _safe_eval_expr("x = 1", {})
         raise AssertionError("应拒绝赋值")
-    except SyntaxError:
+    except (SyntaxError, ValueError):
         logger.debug("best-effort op failed", exc_info=True)
 
     # 4. _build_equation_closure 返可调函数
