@@ -571,6 +571,23 @@ HEP agent harness 论文(arXiv 2609.00107，2026-09)给出**科学 agent 的契�
   > **暂不写进 `encounter_space` / `/flow` 运行阈值**, 待真实 plan→actual 配对语料积累后精标。
   > 依赖已登记于 pyproject `[all]`(sentence-transformers, 无需新增 extra); 语义路径 lazy import,
   > 未装回落 Jaccard, 不强依赖。
+  >
+  > **阶段2-0 真实语料落地(2026-09, 书生 InternLM)**：修复采集静默丢配对的根因——`_extract_text`
+  > 漏掉 execute 各 mode 主输出键(coder→`final_answer`/workflow→`outputs`·`stage_results`)，导致
+  > `actual` 抽空、配对在 `_record_jepa_pair` 守卫 `if not p or not a: return` 静默丢弃。补齐这些键
+  > + 递归容器兜底后，真实 InternLM(`intern-latest`→Intern-S2-Preview-397B, `chat.intern-ai.org.cn`)
+  > 产出 4 条真实 plan→actual 配对落 `{runtime_home}/corpus/jepa_pairs.jsonl`(摆周期×2/自由落体/弹簧周期)。
+  > 走代理 egress(HTTP(S)_PROXY=127.0.0.1:18080)流式调用; 直连被沙箱阻断。
+  >
+  > **语义重标定(真实语料, ST 语义)**：4 配对语义距离同配 mean=0.458 / p90=0.539, 跨配 mean=0.484 /
+  > p10=0.421 —— 配对可从 Jaccard 恒 1.0 塌缩解耦为 0.34–0.55 的连续语义值(阶段1方向在真实落地上成立),
+  > 但 **n=4 太小, 同/跨仍有重叠带**, 阈值仍未精标、不写运行阈值; ST 需继续积真实配对(任务级分离度
+  > 比文档级强)再标。
+  >
+  > **阶段2-A 离线 predictor 管线**：新增 `scripts/train_jepa_predictor.py` —— 冻结
+  > `paraphrase-multilingual-MiniLM-L12-v2` 编码器 + 单隐层 predictor, 用 `jepa_pairs.jsonl` 闭环演示
+  > 数据加载→冻结编码→训练(实际会随) →运行时冻结前向, 产物落 `{runtime_home}/models/jepa_predictor.json`。
+  > ⚠ 诚实边界: 4 样本不足以训泛化模型, 脚本仅证明管线; 真实训练须待语料积累到任务级、并留独立验证集。
 
 ---
 
