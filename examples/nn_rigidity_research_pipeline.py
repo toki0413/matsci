@@ -25,9 +25,10 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-_AGENT = Path(__file__).resolve().parents[1] / "agent"   # 项目根/agent
-if str(_AGENT) not in sys.path:
-    sys.path.insert(0, str(_AGENT))
+_HERE = Path(__file__).resolve().parent
+if str(_HERE) not in sys.path:
+    sys.path.insert(0, str(_HERE))   # 本地共享网关 (_gateway.py)
+from _gateway import ground  # ADR-0001 单网关 HTTP 门禁 (不 import huginn.*)
 
 OUT = Path(__file__).resolve().parent / "out" / "nn_rigidity_research"
 OUT.mkdir(parents=True, exist_ok=True)
@@ -157,7 +158,6 @@ def exp_constraint_dimension(N: int = 256):
 def finalize(x1, x2, x3):
     try:
         from openai import OpenAI
-        from huginn.research.program import grounding_verifier
     except Exception as e:
         print("missing dep:", e); sys.exit(1)
 
@@ -195,7 +195,7 @@ def finalize(x1, x2, x3):
         **_compat_kwargs(client))
     report = r.choices[0].message.content or ""
 
-    verify = grounding_verifier()
+    verify = lambda report, trace=None, **kw: ground(report, trace)
     for _ in range(2):
         g = verify(report, TRACE)
         print(f"\n[门禁] {g['verdict']}  unsubstantiated={g['unsubstantiated']}")

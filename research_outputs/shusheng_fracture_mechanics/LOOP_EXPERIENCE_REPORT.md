@@ -507,6 +507,23 @@ HEP agent harness 论文(arXiv 2609.00107，2026-09)给出**科学 agent 的契�
   表达式端点; 只有"纯数值目标函数 + 参数空间"或"单点业务函数(如门禁)"的深研可迁走并缩小
   白名单。这是机制性的解耦落点, 不是一次性全量迁移 —— 谁把业务表达成可过 HTTP 的形态,
   谁就能从清单移除。
+- **A 类批量迁移(共 4 个)与白名单缩到 10**：新增共享网关 `examples/_gateway.py`(仅标准库, 封装
+  `/v1/research/grounding` + `set_server`), 把 4 个**只依赖门禁**的示例统一改走 HTTP 并移除 import、
+  删白名单: `ai4s_numerics_demo`(上轮) + `ai4s_realdata_demo` / `ai4s_internlm_demo` /
+  `nn_rigidity_research_pipeline`。三者均验证无 agent path 可导入、不 import huginn.*。
+- **教训(A 分类常见的坑 —— 中转 import)**：`ai4s_hotjupiter_demo` 一开始被当成 A 类(它顶层
+  只 `from huginn.research import grounding_verifier`), 但迁移后运行时却崩: 它还
+  `import ai4s_backends`, 而 ai4s_backends 内部 `from huginn.research import Experiment` ——
+  **transitive 依赖没被 AST 直连扫描看见**。即便把 grounding 换成 HTTP, 它仍经 ai4s_backends
+  依赖 huginn, 且已无直连 import 就无法再留在白名单(R2a 会判 stale)。因此**回退** hotjupiter 的
+  迁移, 按 C 类整条保留登记。教训: 判"A 可迁"不能只看顶层 import, 必须看 run/依赖模块是否
+  transitively import huginn; 已无直连 huginn import 的条目无法再登记(会被门禁 R2a 强制删),
+  所以"半迁"(留一个直连)才是唯一可登记形态。
+- **B/C 类 migrate_to 改诚实(10 条)**：`run_program`/`grounding` **不暴露**
+  `diagnostic_tools/mutation_config/client/planner/world_model/code_lab/evolution/knowledge`, 因此
+  把仍直连的 10 条(backends/hotjupiter/arena/product/worldmodel/fullchain/evidence/
+  shusheng_workflow/shusheng_quantum/shusheng_ecology/shusheng_fracture)的 `migrate_to` 从谎称
+  "可走 run_program" 改为如实标注"需补端点 X, 保持登记"。
 - **教训(工程)**：Py3.14 移除了 `ast.Num`(统一 `ast.Constant`), 直接引用会 AttributeError;
   这是本机所有 `ast` 白名单求值器都要踩的兼容坑。
 

@@ -33,9 +33,13 @@ _DEFAULT_MODEL = "intern-s2-preview"
 OUT = Path(__file__).resolve().parent / "out"
 OUT.mkdir(parents=True, exist_ok=True)
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "agent"))   # 产品模块(huginn.*)
-from huginn.research import grounding_verifier  # noqa: E402   # 声明门禁唯一实现
-_verify = grounding_verifier()
+sys.path.insert(0, str(Path(__file__).resolve().parent))   # 本地共享网关 (_gateway.py)
+from _gateway import (
+    ground,  # ADR-0001 单网关 HTTP 门禁 (不 import huginn.*)
+    set_server,
+)
+
+_verify = lambda text, trace=None, **_kw: ground(text, trace)
 
 
 # ─────────────────────────── 1) 真实数据抓取 + 缓存 ─────────────────────
@@ -280,8 +284,10 @@ def main() -> int:
     ap.add_argument("--problem", required=True, choices=list(PROBLEMS))
     ap.add_argument("--model", default=_DEFAULT_MODEL)
     ap.add_argument("--base-url", default=None)
+    ap.add_argument("--server", default=None, help="Huginn HTTP 网关地址 (门禁出入口)")
     ap.add_argument("--seed", type=int, default=7)
     args = ap.parse_args()
+    set_server(args.server)
     key = os.environ.get("INTERNLM_API_KEY")
     if not key:
         print("error: INTERNLM_API_KEY not set", file=__import__("sys").stderr); return 2

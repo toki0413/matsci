@@ -32,15 +32,13 @@ import math
 import os
 import random
 import sys
-import time
 from pathlib import Path
 
 _BASE_URL = os.environ.get("INTERNLM_BASE_URL", "https://chat.intern-ai.org.cn/api/v1")
 _DEFAULT_MODEL = "intern-s2-preview"
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "agent"))   # 产品模块(huginn.*)
-from huginn.research import grounding_verifier  # noqa: E402   # 声明门禁唯一实现
-
+sys.path.insert(0, str(Path(__file__).resolve().parent))   # 本地共享网关 (_gateway.py)
+from _gateway import ground, set_server  # ADR-0001 单网关 HTTP 门禁
 
 # ── 开放问题库：稀疏含噪观测，噪声标准差 sigma 已知，规律未知 ─────
 _PROBLEMS = {
@@ -315,7 +313,9 @@ def main() -> int:
     ap.add_argument("--model", default=_DEFAULT_MODEL)
     ap.add_argument("--base-url", default=None)
     ap.add_argument("--outdir", default=str(Path(__file__).resolve().parent / "out"))
+    ap.add_argument("--server", default=None, help="Huginn HTTP 网关地址 (门禁出入口)")
     args = ap.parse_args()
+    set_server(args.server)
 
     key = os.environ.get("INTERNLM_API_KEY")
     if not key:
@@ -324,7 +324,7 @@ def main() -> int:
     from openai import OpenAI
     client = OpenAI(api_key=key, base_url=args.base_url or _BASE_URL)
     outdir = Path(args.outdir); outdir.mkdir(parents=True, exist_ok=True)
-    verify = grounding_verifier()
+    verify = lambda text, trace=None, **kw: ground(text, trace)
 
     messages: list[dict] = [{"role": "user", "content": _OPEN_GOAL}]
     trace: list[str] = []          # 工具执行轨迹(每条工具结果) → 门禁证据

@@ -92,64 +92,55 @@ ALLOWED_EXTERNAL_IMPORTS: dict[str, dict[str, str]] = {
         "migrate_to": "execution/verify",
     },
     # examples/ 深研展示入门 —— 保留登记的真因：
-    # 多数示例内嵌 domain 真实计算(自编探针/code_lab 沙箱/FEM/ODE 闭包), `run`
-    # 是本地闭包**无法过 HTTP**, 只能保持程序化直连。纯数值目标函数 + 参数空间的
-    # 深研可改走 HTTP 端点并移除本条目。
+    # 这些示例是**第一方深研演示**, 内嵌不可序列化的进程内机制(code_lab 沙箱 /
+    # LLM 长程编排 / 多智能体 / 数值求解器 / 语义 RAG), HTTP 的两个深研端点
+    # (run_program: 只收 objective_expr+params; grounding: 门禁) **不暴露**
+    # diagnostic_tools / mutation_config / client / planner / world_model / code_lab。
+    # 因此保持程序化直连登记, migrate_to 如实标注"解耦所需的端点", 不再谎称走
+    # run_program。能拆成纯公式/单点函数的子集可单独迁走并缩白名单。
     "examples/ai4s_backends.py": {
-        "reason": "canonical 深研程序化入口(load_backends/research seam)",
-        "migrate_to": "/v1/research/run_program (确定性深研 HTTP 端点)",
-    },
-    "examples/ai4s_realdata_demo.py": {
-        "reason": "canonical 深研程序化入口(run_research_program)",
-        "migrate_to": "/v1/research/run_program (确定性深研 HTTP 端点)",
-    },
-    "examples/ai4s_arena_demo.py": {
-        "reason": "canonical 深研程序化入口(run_research_program)",
-        "migrate_to": "/v1/research/run_program (确定性深研 HTTP 端点)",
-    },
-    "examples/ai4s_product_demo.py": {
-        "reason": "canonical 深研程序化入口(run_research_program)",
-        "migrate_to": "/v1/research/run_program (确定性深研 HTTP 端点)",
-    },
-    "examples/ai4s_internlm_demo.py": {
-        "reason": "canonical 深研程序化入口(run_research_program)",
-        "migrate_to": "/v1/research/run_program (确定性深研 HTTP 端点)",
+        "reason": "第一方深研后端库(GCM 仿真闭包 + diagnostic_tools handler)",
+        "migrate_to": "需补 code_lab/diagnostic 端点; 纯公式子集(exoplanet)可走 /v1/research/run_program",
     },
     "examples/ai4s_hotjupiter_demo.py": {
-        "reason": "canonical 深研程序化入口(run_research_program)",
-        "migrate_to": "/v1/research/run_program (确定性深研 HTTP 端点)",
+        "reason": "第一方深研(经 ai4s_backends 用 GCM 后端 + diagnostic_tools; ai4s_backends 自身依赖 huginn)",
+        "migrate_to": "需补数值求解/diagnostic 端点, 保持登记",
+    },
+    "examples/ai4s_arena_demo.py": {
+        "reason": "第一方深研(浅水-GCM 仿真闭包 run, 非表达式可算)",
+        "migrate_to": "需补数值求解端点(process内 GCM), 保持登记",
+    },
+    "examples/ai4s_product_demo.py": {
+        "reason": "第一方深研(diagnostic_tools/mutation_config/client 真机进化)",
+        "migrate_to": "需补 agent 会话+diagnostic 端点, 保持登记",
     },
     "examples/ai4s_worldmodel_demo.py": {
-        "reason": "canonical 深研程序化入口(law_model/science_team seam)",
-        "migrate_to": "/v1/research/run_program (确定性深研 HTTP 端点)",
+        "reason": "第一方深研(law_model 预言 + science_team 编排, 进程内)",
+        "migrate_to": "需补 world_model/多智能体会话端点, 保持登记",
     },
     "examples/ai4s_fullchain_demo.py": {
-        "reason": "canonical 深研程序化入口(program/planning/science_team seam)",
-        "migrate_to": "/v1/research/run_program (确定性深研 HTTP 端点)",
-    },
-    "examples/nn_rigidity_research_pipeline.py": {
-        "reason": "canonical 深研程序化入口(program seam, 跨域流水线)",
-        "migrate_to": "/v1/research/run_program (确定性深研 HTTP 端点)",
+        "reason": "第一方深研(planning/science_team 多智能体 DAG, 进程内)",
+        "migrate_to": "需补多智能体会话端点, 保持登记",
     },
     "examples/demo_evidence_chain.py": {
         "reason": "证据链 demo(读 literature/evidence 模块, 展示证据落链)",
-        "migrate_to": "huginn.tools API(无 HTTP 等价物)",
+        "migrate_to": "huginn.tools API(无 HTTP 等价物); 需补 literature 证据端点",
     },
     "examples/shusheng_huginn_workflow.py": {
-        "reason": "书生×Huginn 工作流(re split seam: program/planning/code_lab)",
-        "migrate_to": "/v1/research/run_program (确定性深研 HTTP 端点)",
+        "reason": "第一方深研(code_lab 沙箱 + planning + run_program 组合, 进程内)",
+        "migrate_to": "需补 code_lab 沙箱端点, 保持登记",
     },
     "examples/shusheng_quantum_critical.py": {
-        "reason": "书生量子临界跨域深研(program/code_lab/tool_surface seam)",
-        "migrate_to": "/v1/research/run_program (确定性深研 HTTP 端点)",
+        "reason": "第一方深研(code_lab/coldstart_guards/tool_surface, 进程内)",
+        "migrate_to": "需补 code_lab 端点, 保持登记",
     },
     "examples/shusheng_ecology_dynamics.py": {
-        "reason": "书生生态动力学 held-out 深研(program seam)",
-        "migrate_to": "/v1/research/run_program (确定性深研 HTTP 端点)",
+        "reason": "第一方深研(半纯公式半 scipy 求解器)",
+        "migrate_to": "equilibrium 纯公式可走 /v1/research/run_program; lotka 需 scipy 求解端点, 保持登记",
     },
     "examples/shusheng_fracture_mechanics.py": {
-        "reason": "书生断裂力学深研(program/code_lab/evolution/knowledge seam)",
-        "migrate_to": "/v1/research/run_program (确定性深研 HTTP 端点)",
+        "reason": "第一方深研(code_lab/evolution/knowledge/planning + LLM 长程)",
+        "migrate_to": "需补 code_lab+RAG+agent 会话端点, 保持登记",
     },
 }
 
