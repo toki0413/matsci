@@ -678,6 +678,19 @@ HEP agent harness 论文(arXiv 2609.00107，2026-09)给出**科学 agent 的契�
   > 样本从 50→87 逐批扩到下, predictor 的"优于基线 / 低转机 / 留出泛化 / 高可辨性"四条信号始终稳定,
   > 而绝对重建 ~0.32 稳定在编码不可还原的信息下限附近 —— 说明 predictor 已持续学到可迁移的 pred→actual
   > 潜空间偏移, 未因目标结构类型激增而退化。阶段2-B 绝对阈值精标仍须继续累积真实配对。
+  >
+  > **阶段2-B 阈值精标: 可证伪结论 —— 绝对阈值不可行, 相对秩是唯一稳健形式**：
+  > 新增 `scripts/calibrate_jepa_threshold.py`(全量)与 `calibrate_jepa_threshold_holdout.py`(目标级留出)做阈值分离分析。
+  > 把同配(pred→自配 actual, 应小)标 label0、跨配(pred→他配 actual, 应大)标 label1, 对阈值扫描 F1/Youden/AUC。
+  > 结果(87 条, 冻结 predictor 前向): **全量 AUC=0.5007, 目标级留出 mean AUC=0.5008**(8 次拆分
+  > 0.491–0.506), 且每拆 same_mean≈cross_mean(差 <0.001)。即同配与跨配的 surprise 分布**几乎完全重叠**, 任何
+  > 单阈值都无法同时"放行正确 + 拦截错配"(最优 F1 处 FPR=TPR=1, 即只用"全判异常"才能高捕获)。
+  > —— 这是一条**决定性负面证据**: 对当前 predictor, 绝对阈值判定不可用。
+  > 根因与 predictor 重建 theor 下限 ~0.32 一致: 数值/判据/多行 actual 经冻结 ST 编码后本就不可逐字还原,
+  > 所有前向 surprise 坍缩到同一窄区间, 跨配相对同配无显著增大, 故无分离带。
+  > **据此收口**: 阶段2-B 的"绝对阈值"目标不成立, 运行时保留 §4.15 的**相对秩** `_relative_surprise`(per-domain
+  > 经验秩→[0,1]) 作为唯一稳健的 surprise 消费方式, 继续供 explore 排名/encounter_space, 不当绝对门槛、更不冒充
+  > 可证伪数值预言。此为"先证值得做、再证做不到"的诚实闭环 —— 阈值本是分类器, 数据不给分离度, 就停手不硬造。
 
 ---
 
