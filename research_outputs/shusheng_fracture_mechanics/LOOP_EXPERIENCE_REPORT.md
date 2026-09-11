@@ -478,6 +478,29 @@ HEP agent harness 论文(arXiv 2609.00107，2026-09)给出**科学 agent 的契�
   agent 的"零泄漏"伪装成"线性泄漏"；③用 `gc.get_objects()` 过滤具体类型 + 计数,**别只看 tracemalloc
   汇总**(importlib/tracemalloc 自身常霸榜, 是噪声不是泄漏)。
 
+### 4.14 深研 HTTP/API 入口(ADR-0001 单网关注册的迁移目标落地)
+
+上轮 A 类收口里, `examples/*` 直连 `huginn.research.program` 被**如实登记**为 sanctioned 入口,
+`migrate_to` 写的是"无 HTTP 等价物"。本轮把等价物补上:
+
+- **新增 `POST /v1/research/run_program`**(`huginn/routes/deep_research.py`)：把 `run_research_program`
+  包成纯 JSON 端点。外部消费者零 `huginn.*` import 即可跑一条确定性深研, 拿回完整工件
+  (pareto_front / report / verdict / consolidated)。
+- **设计取舍 —— 闭包不过 HTTP**：`Experiment.run` 是 domain 本地闭包(自编探针/code_lab/FEM/ODE),
+  无法序列化。端点把实验建模成**声明的数值模型**: `objectives` 的每个表达式 + `params` 取值,
+  服务端用**受控 AST 数学求值器**计算(白名单: 数字/常量/算术/比较逻辑/math 函数/命名变量,
+  不 `exec`, 不碰属性/下标/import)。坏表达式在**请求时前置 dry-run 校验** → 立刻 400, 而
+  不是被 orchestrator 静默吞成 `explored=0` 的空成功(坑: 一旦闭包包装错误, 实验全被 skip,
+  端点会误报 200; 前置校验把配置错误变成大声的 4xx)。
+- **注册**: 进 `routes/__init__.py` 的 `ALL_ROUTERS`, 经 `/v1` 前缀暴露(实测 200/400 均通)。
+- **白名单 migrate_to 具体化**: 13 条深研条目的 `migrate_to` 从"无 HTTP 等价物"改为
+  `/v1/research/run_program` —— 迁移目标从谎言变事实。
+- **诚实边界(仍保留登记的真因)**：多数示例内嵌不可序列化的 domain 计算, **无法**换皮到
+  表达式端点; 只有"纯数值目标函数 + 参数空间"的深研可迁走并缩小白名单。这是机制性的解耦
+  落点, 不是一次性全量迁移 —— 谁把模型表达成表达式, 谁就能从清单移除。
+- **教训(工程)**：Py3.14 移除了 `ast.Num`(统一 `ast.Constant`), 直接引用会 AttributeError;
+  这是本机所有 `ast` 白名单求值器都要踩的兼容坑。
+
 ---
 
 ## 5. 可迁移性与复用路径(这份品味不只在断裂力学成立)

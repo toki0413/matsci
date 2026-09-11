@@ -91,49 +91,49 @@ ALLOWED_EXTERNAL_IMPORTS: dict[str, dict[str, str]] = {
         "reason": "FEA/CFD 集成验证，需读 workflows 模板；迁移后移除",
         "migrate_to": "execution/verify",
     },
-    # examples/ 深研展示入门 —— canonical 程序化入口（arch_cleanliness 强制它们走
-    # run_research_program / ScienceTeam / law_model seam），不是旁路直连：
-    # 完整深研运行（自编探针 + code_lab 沙箱 + Pareto）无 HTTP 端点等价物，
-    # 必须直接调用 programmatic API。见 test_arch_cleanliness.
+    # examples/ 深研展示入门 —— 保留登记的真因：
+    # 多数示例内嵌 domain 真实计算(自编探针/code_lab 沙箱/FEM/ODE 闭包), `run`
+    # 是本地闭包**无法过 HTTP**, 只能保持程序化直连。纯数值目标函数 + 参数空间的
+    # 深研可改走 HTTP 端点并移除本条目。
     "examples/ai4s_backends.py": {
         "reason": "canonical 深研程序化入口(load_backends/research seam)",
-        "migrate_to": "huginn.research programmatic API(无 HTTP 等价物)",
+        "migrate_to": "/v1/research/run_program (确定性深研 HTTP 端点)",
     },
     "examples/ai4s_numerics_demo.py": {
         "reason": "canonical 深研程序化入口(run_research_program)",
-        "migrate_to": "huginn.research programmatic API(无 HTTP 等价物)",
+        "migrate_to": "/v1/research/run_program (确定性深研 HTTP 端点)",
     },
     "examples/ai4s_realdata_demo.py": {
         "reason": "canonical 深研程序化入口(run_research_program)",
-        "migrate_to": "huginn.research programmatic API(无 HTTP 等价物)",
+        "migrate_to": "/v1/research/run_program (确定性深研 HTTP 端点)",
     },
     "examples/ai4s_arena_demo.py": {
         "reason": "canonical 深研程序化入口(run_research_program)",
-        "migrate_to": "huginn.research programmatic API(无 HTTP 等价物)",
+        "migrate_to": "/v1/research/run_program (确定性深研 HTTP 端点)",
     },
     "examples/ai4s_product_demo.py": {
         "reason": "canonical 深研程序化入口(run_research_program)",
-        "migrate_to": "huginn.research programmatic API(无 HTTP 等价物)",
+        "migrate_to": "/v1/research/run_program (确定性深研 HTTP 端点)",
     },
     "examples/ai4s_internlm_demo.py": {
         "reason": "canonical 深研程序化入口(run_research_program)",
-        "migrate_to": "huginn.research programmatic API(无 HTTP 等价物)",
+        "migrate_to": "/v1/research/run_program (确定性深研 HTTP 端点)",
     },
     "examples/ai4s_hotjupiter_demo.py": {
         "reason": "canonical 深研程序化入口(run_research_program)",
-        "migrate_to": "huginn.research programmatic API(无 HTTP 等价物)",
+        "migrate_to": "/v1/research/run_program (确定性深研 HTTP 端点)",
     },
     "examples/ai4s_worldmodel_demo.py": {
         "reason": "canonical 深研程序化入口(law_model/science_team seam)",
-        "migrate_to": "huginn.research programmatic API(无 HTTP 等价物)",
+        "migrate_to": "/v1/research/run_program (确定性深研 HTTP 端点)",
     },
     "examples/ai4s_fullchain_demo.py": {
         "reason": "canonical 深研程序化入口(program/planning/science_team seam)",
-        "migrate_to": "huginn.research programmatic API(无 HTTP 等价物)",
+        "migrate_to": "/v1/research/run_program (确定性深研 HTTP 端点)",
     },
     "examples/nn_rigidity_research_pipeline.py": {
         "reason": "canonical 深研程序化入口(program seam, 跨域流水线)",
-        "migrate_to": "huginn.research programmatic API(无 HTTP 等价物)",
+        "migrate_to": "/v1/research/run_program (确定性深研 HTTP 端点)",
     },
     "examples/demo_evidence_chain.py": {
         "reason": "证据链 demo(读 literature/evidence 模块, 展示证据落链)",
@@ -141,19 +141,19 @@ ALLOWED_EXTERNAL_IMPORTS: dict[str, dict[str, str]] = {
     },
     "examples/shusheng_huginn_workflow.py": {
         "reason": "书生×Huginn 工作流(re split seam: program/planning/code_lab)",
-        "migrate_to": "huginn.research programmatic API(无 HTTP 等价物)",
+        "migrate_to": "/v1/research/run_program (确定性深研 HTTP 端点)",
     },
     "examples/shusheng_quantum_critical.py": {
         "reason": "书生量子临界跨域深研(program/code_lab/tool_surface seam)",
-        "migrate_to": "huginn.research programmatic API(无 HTTP 等价物)",
+        "migrate_to": "/v1/research/run_program (确定性深研 HTTP 端点)",
     },
     "examples/shusheng_ecology_dynamics.py": {
         "reason": "书生生态动力学 held-out 深研(program seam)",
-        "migrate_to": "huginn.research programmatic API(无 HTTP 等价物)",
+        "migrate_to": "/v1/research/run_program (确定性深研 HTTP 端点)",
     },
     "examples/shusheng_fracture_mechanics.py": {
         "reason": "书生断裂力学深研(program/code_lab/evolution/knowledge seam)",
-        "migrate_to": "huginn.research programmatic API(无 HTTP 等价物)",
+        "migrate_to": "/v1/research/run_program (确定性深研 HTTP 端点)",
     },
 }
 
