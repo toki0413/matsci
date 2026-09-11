@@ -782,6 +782,17 @@ HEP agent harness 论文(arXiv 2609.00107，2026-09)给出**科学 agent 的契�
   > 数值平滑与标签分通道都没再提升 —— 下一步增益不应来自"往旁路拼通道", 而应换**能消费结构的架构**
   > (attention 对齐 / token 级字段槽), 而非简单 concat。
   >
+  > **Attention 对齐子实验(≈持平)**: 换**自注意力聚合**(单头 h=32/64): 每个预测 span 由同 prediction
+  > 其他 span 加权(只读预测内, 不看 actual)再经 MLP 回归, 给模型可学习的结构消费机制。结果 attention
+  > surprise **0.286/0.284 (h=32/64)**, 与逐 span 共享 MLP(0.285-0.287)持平、12/12 胜基线、低转机。
+  > **收窄到机制之上**: 在 span 表示下, 匹配机制(硬最近邻 vs 逐 span MLP vs 自注意力)、容量、数值平滑、
+  > 标签分通道都汇聚在 **0.28-0.31** 区间 —— 剩余下限由预测文本本身缺精确数值/多行还原信息决定, 非架构。
+  >
+  > **生产化(接入运行时)**: 把表现最佳的 base span predictor 用 `--persist` 落盘
+  > `{runtime_home}/models/jepa_span_predictor.json`(K=8, 768, 纯行切分); 运行时 `_predictor_surprise` 改为
+  > **优先 span 前向**(逐行 span → 掩码均值近邻真实 span), 缺则回落句子级; 均为同 `HUGINN_JEPA_EMBED_MODEL`
+  > 编码(训练=运行时一致), 不惊扰共享 RAG。真实语料冒烟: self<cross 全成立, 回归 67 passed/1 skipped。
+  >
   > **阶段2-B 阈值精标: 可证伪结论 —— 绝对阈值不可行, 相对秩是唯一稳健形式**：
   > 新增 `scripts/calibrate_jepa_threshold.py`(全量)与 `calibrate_jepa_threshold_holdout.py`(目标级留出)做阈值分离分析。
   > 把同配(pred→自配 actual, 应小)标 label0、跨配(pred→他配 actual, 应大)标 label1, 对阈值扫描 F1/Youden/AUC。

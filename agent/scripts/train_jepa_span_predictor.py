@@ -26,7 +26,7 @@ from pathlib import Path
 import numpy as np
 
 from huginn.utils.runtime import get_runtime_home
-from scripts.train_jepa_predictor import load_pairs, load_encoder
+from scripts.train_jepa_predictor import load_pairs, load_encoder, JEPA_EMBED_MODEL
 
 K = 8
 
@@ -113,7 +113,13 @@ def main() -> None:
     ap.add_argument("--holdout-frac", type=float, default=0.25)
     ap.add_argument("--canon", action="store_true", help="结构化数值规范化: 统一数字 token 格式")
     ap.add_argument("--fields", action="store_true", help="标签/单位字段分离: [整行|前缀|数值] 三通道")
+    ap.add_argument("--persist", action="store_true",
+                    help="把表现最佳的 base(纯行切分) span predictor 落盘供运行时接入")
     args = ap.parse_args()
+    if args.persist:
+        # 运行时接入接口按 base 表示实现, 持久化前强制回 base(canon/fields 另有研究价值, 不落盘)
+        args.canon = False
+        args.fields = False
 
     corpus = Path(args.corpus) if args.corpus else (get_runtime_home() / "corpus" / "jepa_pairs.jsonl")
     pairs = load_pairs(corpus)
@@ -237,6 +243,27 @@ def main() -> None:
     all_span = len(FA)
     print(f"[span-混淆] 全程: {self_confused}/{all_span} 预测span 最近真实span 来自别的 pair "
           f"({100*self_confused/max(1,all_span):.1f}%).  (句子级阶段2-C 时对抗样本 10/10 confused)")
+
+    if args.persist:
+        try:
+            import json
+            out = get_runtime_home() / "models" / "jepa_span_predictor.json"
+            out.parent.mkdir(parents=True, exist_ok=True)
+            T_full = np.array([_nearest_target(X[i], A[i], M[i], asl[i]) for i in range(n)])
+            pack = _train_mlp(X, T_full, M, d, steps=args.steps, seed=args.seed)
+            payload = {
+                "embed_model": JEPA_EMBED_MODEL,
+                "dim": int(d),
+                "K": int(K),
+                "mode": "span",
+                "num_objs": int(n),
+                "weights": {k: v.tolist() for k, v in pack.items()},
+                "note": "离线 span predictor(纯行切分 base). 运行时逐 span 前向 → 掩码均值近邻真实 span 距离.",
+            }
+            out.write_text(json.dumps(payload), encoding="utf-8")
+            print(f"[span-persist] 已落盘: {out} ({d} 维, K={K})")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[span-persist] 失败: {exc!r}")
 
 
 if __name__ == "__main__":

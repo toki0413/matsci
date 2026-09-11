@@ -1578,7 +1578,13 @@ class EngineReflectMixin:
         return cached
 
     def _predictor_surprise(self, prediction: str, actual: str) -> float | None:
-        """冻结 predictor 前向的潜空间 surprise. 任一环节不可用返回 None."""
+        """冻结 predictor 前向的潜空间 surprise. 任一环节不可用返回 None.
+
+        优先 span 级(阶段2-C-2 表现最佳, preserve 行级结构); 无 span predictor 时回落句子级.
+        """
+        s = self._span_predictor_surprise(prediction, actual)
+        if s is not None:
+            return s
         import numpy as np
 
         try:
@@ -1598,6 +1604,71 @@ class EngineReflectMixin:
         except Exception:  # noqa: BLE001 — 失败回落, 不阻塞
             logger.debug("[jepa-predictor] forward failed", exc_info=True)
             return None
+
+    def _load_span_predictor(self) -> dict | None:
+        """加载 span predictor 权重; 缺失/失败返回 None."""
+        import json as _json
+        import numpy as np
+
+        if hasattr(self, "_jepa_span_cache"):
+            return self._jepa_span_cache
+        cached: dict | None = None
+        try:
+            from huginn.utils.runtime import get_runtime_home
+            path = get_runtime_home() / "models" / "jepa_span_predictor.json"
+            if path.exists():
+                data = _json.loads(path.read_text(encoding="utf-8"))
+                cached = {
+                    "weights": {k: np.asarray(v, dtype=np.float64) for k, v in data["weights"].items()},
+                    "dim": int(data.get("dim", 0)),
+                }
+        except Exception:  # noqa: BLE001
+            logger.debug("[jepa-span-predictor] load failed", exc_info=True)
+            cached = None
+        self._jepa_span_cache = cached
+        return cached
+
+    def _span_surprise_from_vecs(self, pred_vecs, act_vecs, w) -> float | None:
+        """逐 span 前向 → 掩码均值(每预测 span 到最近真实 span 的距离)."""
+        import numpy as np
+
+        if not pred_vecs or not act_vecs:
+            return None
+        P = np.stack([v.astype(np.float64) for v in pred_vecs])
+        A = np.stack([v.astype(np.float64) for v in act_vecs])
+        H = np.tanh(P @ w["weights"]["W1"] + w["weights"]["b1"])
+        fwd = H @ w["weights"]["W2"] + w["weights"]["b2"]
+        d = []
+        for k in range(fwd.shape[0]):
+            d.append(min(self._cosine_distance(fwd[k], A[j]) for j in range(A.shape[0])))
+        return float(np.mean(d)) if d else None
+
+    def _span_predictor_surprise(self, prediction: str, actual: str) -> float | None:
+        """span 级 JEPA surprise: 逐行 span, 与训练端(train_jepa_span_predictor)一致."""
+        w = self._load_span_predictor()
+        if w is None:
+            return None
+        try:
+            pv = [v for v in self._span_embed_text(prediction) if v is not None]
+            av = [v for v in self._span_embed_text(actual) if v is not None]
+            return self._span_surprise_from_vecs(pv, av, w)
+        except Exception:  # noqa: BLE001
+            logger.debug("[jepa-span-predictor] forward failed", exc_info=True)
+            return None
+
+    def _span_embed_text(self, text: str) -> list:
+        """把文本按行切 span, 逐 span 用 JEPA 编码器嵌入; 失败项返回 None."""
+        try:
+            out = []
+            for line in text.splitlines():
+                s = line.strip()
+                if not s:
+                    continue
+                out.append(self._jepa_embed_text(s))
+            return out
+        except Exception:  # noqa: BLE001
+            logger.debug("[jepa-span-predictor] span embed failed", exc_info=True)
+            return []
 
     def _jepa_embedder(self):
         """按 HUGINN_JEPA_EMBED_MODEL 惰性加载 JEPA 编码器并缓存 (与训练端一致)."""
