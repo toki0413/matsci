@@ -457,6 +457,27 @@ HEP agent harness 论文(arXiv 2609.00107，2026-09)给出**科学 agent 的契�
   登记 each 为 sanctioned 入口。根治方向 = 给深研运行补 HTTP/API 入口, 逐步把示例从程序化直连迁走
   (本次不下场), 否则每新增一个示例都要再登记一次。
 
+### 4.13 内存泄漏深挖: 误报, 以及"夹具即泄漏源"的翻案
+
+`test_100_turn_memory_stable` 屡红(**>100MB/100轮**), 初步按"pydantic 消息对象滞留协程帧"
+思路用 tracemalloc + gc.referrers 追了半天, 最后发现是**测法把两件非泄漏事叠成了"泄漏"**:
+
+- **冷启动不是泄漏**：`tracemalloc.take_snapshot()` 在 agent 建好后、**首次对话前**取基线, 而
+  tiktoken/scipy/networkx/pydantic/importlib 的**惰性加载在一开头若干轮才发生**(empirically ≈118MB
+  一次性)。于是基线前移, 把进程基线当成了"增长"。隔离后稳态每 10 轮只涨 **0.18–0.23MB**(信号级
+  近零)。修法: 先暖机 6 轮吸收冷启动, 再取基线。
+- **测试夹具 `FakeLLM.calls` 才是"~283KB/轮"的真凶**：`_generate` 把**每轮完整增长的 messages 列表
+  永久 append** 进 `calls`; 消息对象是共享引用, 越往后每轮存的引用越多 → O(n²) 保留增长, 在
+  gc 下表现为"每轮 +330 个 BaseMessage"。**agent 自身容器(conversation_tree/memory/session)计数=0**。
+  修法: `calls` 有界化(保留最近 16 份, `call_count` 独立计数 **语义不变**), 45 项依赖 fixture 的测试
+  全绿。
+- **实证稳态**: 暖机 6 轮吸收冷启动后, 再跑 100 轮仅增长 **~1.8MB**(纯 agent 侧), 与 100MB 阈值
+  差两个数量级。真实稳态留驻远低于阈值 —— 不是泄漏, 是"没排除冷启动 + 夹具累积"的**误报**。
+- **教训(方法论)**：凡是"长程内存增长"先用这三步排错：①让 baseline 落在**稳态**(先暖机/先跑足
+  轮次再快照)；②**先隔离测试夹具**再看 agent 本体——夹具若把每轮上下文永久存着, 就会把
+  agent 的"零泄漏"伪装成"线性泄漏"；③用 `gc.get_objects()` 过滤具体类型 + 计数,**别只看 tracemalloc
+  汇总**(importlib/tracemalloc 自身常霸榜, 是噪声不是泄漏)。
+
 ---
 
 ## 5. 可迁移性与复用路径(这份品味不只在断裂力学成立)

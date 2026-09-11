@@ -34,7 +34,13 @@ from tests.fixtures.fake_llm import make_callable_llm  # noqa: E402
 
 @pytest.mark.asyncio
 async def test_100_turn_memory_stable(tmp_path):
-    """100 轮连续 chat, 内存增长应控制在 100MB 以内."""
+    """100 轮连续 chat, 稳态内存增长应控制在 100MB 以内.
+
+    测的是**稳态**泄漏, 不含一次性冷启动. 冷启动 (~118MB: tiktoken/scipy/
+    networkx/pydantic/importlib 惰性加载) 是进程基线, 不是泄漏 — 否则刚建好
+    agent 未对话就"增长"118MB, 永远过不了. 因此先暖机 6 轮吸收冷启动, 再取
+    snapshot 基线; 之后 100 轮的增长才是真实留驻 (实证 ~2MB).
+    """
     llm = make_callable_llm(lambda p: "ok", name="long100-llm")
     memory = MemoryManager(longterm=LongTermMemory(str(tmp_path / "memory.db")))
     agent = HuginnAgent(
@@ -43,6 +49,12 @@ async def test_100_turn_memory_stable(tmp_path):
         checkpointer_path=str(tmp_path / "checkpoint.sqlite"),
     )
 
+    # 暖机: 吸收惰性 import / 一次性模型构建, 使 baseline 反映稳态而非冷启动.
+    for i in range(6):
+        async for _ in agent.chat(f"warmup {i}", thread_id="long-100"):
+            pass
+
+    gc.collect()
     tracemalloc.start()
     snapshot_before = tracemalloc.take_snapshot()
 
@@ -52,6 +64,7 @@ async def test_100_turn_memory_stable(tmp_path):
         if i % 20 == 0:
             gc.collect()
 
+    gc.collect()
     snapshot_after = tracemalloc.take_snapshot()
     tracemalloc.stop()
 

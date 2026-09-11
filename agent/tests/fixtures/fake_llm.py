@@ -43,6 +43,12 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 # either a plain string or an AIMessage.
 PromptFn = Callable[[str], str | AIMessage]
 
+# 有界保留最近几次调用的 prompt 列表 (仅调试用, 实测只有 last_prompt 读 calls[-1]).
+# 之前 `calls` 永久 append, 长程测试里共享引用会 O(n²) 保留历史消息,
+# 被误判成"agent 每轮泄漏 ~283KB" (实为夹具自身); 512 份仍占 ~70MB 噪声.
+# call_count 用独立计数, 封顶只影响存留, 不影响总调用数语义.
+_MAX_CALLS = 16
+
 
 class FakeLLM(BaseChatModel):
     """Deterministic chat model for tests.
@@ -80,6 +86,7 @@ class FakeLLM(BaseChatModel):
         # pydantic's field validation — these are runtime-only attributes.
         object.__setattr__(self, "_func", func)
         object.__setattr__(self, "calls", [])
+        object.__setattr__(self, "_call_total", 0)
         object.__setattr__(self, "_lock", threading.Lock())
         object.__setattr__(self, "_index", 0)
         object.__setattr__(self, "_usage_override", usage)
@@ -89,7 +96,7 @@ class FakeLLM(BaseChatModel):
     @property
     def call_count(self) -> int:
         with object.__getattribute__(self, "_lock"):
-            return len(object.__getattribute__(self, "calls"))
+            return object.__getattribute__(self, "_call_total")
 
     @property
     def last_prompt(self) -> str:
@@ -107,6 +114,7 @@ class FakeLLM(BaseChatModel):
         """Clear call history and reset the scripted-response index."""
         with object.__getattribute__(self, "_lock"):
             object.__setattr__(self, "calls", [])
+            object.__setattr__(self, "_call_total", 0)
             object.__setattr__(self, "_index", 0)
 
     # ── BaseChatModel implementation ─────────────────────────
@@ -115,6 +123,11 @@ class FakeLLM(BaseChatModel):
         calls = object.__getattribute__(self, "calls")
         lock = object.__getattribute__(self, "_lock")
         with lock:
+            object.__setattr__(self, "_call_total",
+                               object.__getattribute__(self, "_call_total") + 1)
+            # 有界存留: 只保留最近 _MAX_CALLS 次, 防长程测试 O(n²) 保留历史引用.
+            if len(calls) >= _MAX_CALLS:
+                calls.pop(0)
             calls.append(messages)
         response = self._next_response(messages)
         return ChatResult(generations=[ChatGeneration(message=response)])
