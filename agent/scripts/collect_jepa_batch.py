@@ -85,6 +85,54 @@ OBJECTIVES = [
     ("thermal_flow_rate",
      "Heat conduction through a slab: Q/t = k A ΔT / d with k=0.8, A=2.0, ΔT=20, d=0.1. Predict the numeric heat flow rate in W.",
      "k=0.8; A=2.0; dT=20.0; d=0.1\nprint(f'Qdot={k*A*dT/d:.3f} W')\n"),
+    ("gravitational_potential_energy",
+     "A mass m=5.0 kg at height h=2.0 m in g=9.81 m/s² has potential energy U=m g h. Predict the numeric energy in joules.",
+     "m=5.0; g=9.81; h=2.0\nprint(f'U={m*g*h:.3f} J')\n"),
+    ("work_force_distance",
+     "A constant force F=10 N moves an object d=3.0 m along its direction, doing work W=F d. Predict the numeric work in joules.",
+     "F=10.0; d=3.0\nprint(f'W={F*d:.2f} J')\n"),
+    ("mechanical_power_Fv",
+     "A force F=20 N moves a body at constant speed v=5.0 m/s, so mechanical power P=F v. Predict the numeric power in watts.",
+     "F=20.0; v=5.0\nprint(f'P={F*v:.1f} W')\n"),
+    ("ohm_resistance",
+     "A resistor carrying I=0.3 A across V=9.0 V obeys Ohm's law V=I R. Predict the numeric resistance in ohms.",
+     "V=9.0; I=0.3\nprint(f'R={V/I:.2f} ohm')\n"),
+    ("capacitor_energy",
+     "A capacitor C=0.02 F charged to V=10 V stores energy U=0.5 C V². Predict the numeric energy in joules.",
+     "C=0.02; V=10.0\nprint(f'U={0.5*C*V*V:.4f} J')\n"),
+    ("hydrostatic_pressure",
+     "Hydrostatic pressure at depth h=10 m in water (ρ=1000 kg/m³, g=9.81) is P=ρ g h. Predict the numeric gauge pressure in Pa.",
+     "rho=1000.0; g=9.81; h=10.0\nprint(f'P={rho*g*h:.1f} Pa')\n"),
+    ("thermal_expansion",
+     "Thermal linear expansion ΔL=α L ΔT with α=1.2e-5, L=2.0, ΔT=50. Predict the numeric length change in m.",
+     "a=1.2e-5; L=2.0; dT=50.0\nprint(f'dL={a*L*dT:.6f} m')\n"),
+    ("sound_wavelength",
+     "Sound at speed v=343 m/s and frequency f=440 Hz has wavelength λ=v/f. Predict the numeric wavelength in m.",
+     "v=343.0; f=440.0\nprint(f'l={v/f:.4f} m')\n"),
+    ("projectile_time_aloft",
+     "A projectile launched upward at v0=15 m/s at angle 60° in g=9.81 m/s² returns to ground after t=2 v0 sinθ/g. Predict the numeric time in s.",
+     "import math\nv0=15.0; g=9.81; th=math.radians(60)\nprint(f't={2*v0*math.sin(th)/g:.4f} s')\n"),
+    ("pendulum_frequency",
+     "A pendulum of length L=0.5 m in g=9.81 m/s² has frequency f=1/(2π√(L/g)). Predict the numeric frequency in Hz.",
+     "import math\nL=0.5; g=9.81\nprint(f'f={1/(2*math.pi*math.sqrt(L/g)):.4f} Hz')\n"),
+    ("electric_field_parallel_plates",
+     "Electric field between plates with V=120 V separation d=0.02 m is E=V/d. Predict the numeric field in V/m.",
+     "V=120.0; d=0.02\nprint(f'E={V/d:.1f} V/m')\n"),
+    ("magnetic_force_qvB",
+     "A charge q=2 C at speed v=5 m/s perpendicular to B=0.3 T feels magnetic force F=q v B. Predict the numeric force in N.",
+     "q=2.0; v=5.0; B=0.3\nprint(f'F={q*v*B:.2f} N')\n"),
+    ("ideal_gas_volume",
+     "n=0.5 mol ideal gas at T=310 K and P=101325 Pa (R=8.314) has volume V=nRT/P. Predict the numeric volume in m³.",
+     "n=0.5; R=8.314; T=310.0; P=101325.0\nprint(f'V={n*R*T/P:.6f} m^3')\n"),
+    ("parallel_plate_capacitance",
+     "A parallel-plate capacitor with ε0=8.854e-12, A=0.01 m², d=0.001 m has C=ε0 A/d. Predict the numeric capacitance in F.",
+     "e0=8.854e-12; A=0.01; d=0.001\nprint(f'C={e0*A/d:.4e} F')\n"),
+    ("stress",
+     "A tensile force F=500 N over area A=0.01 m² produces normal stress σ=F/A. Predict the numeric stress in Pa.",
+     "F=500.0; A=0.01\nprint(f'sig={F/A:.1f} Pa')\n"),
+    ("gravitational_force",
+     "Two 1.0 kg masses 1.0 m apart attract with F=G m1 m2 /r², G=6.674e-11. Predict the numeric force in N.",
+     "G=6.674e-11; m1=1.0; m2=1.0; r=1.0\nprint(f'F={G*m1*m2/(r*r):.4e} N')\n"),
 ]
 
 
@@ -135,6 +183,8 @@ async def _main(args):
     objs = OBJECTIVES
     if args.index is not None:
         objs = [objs[args.index]]
+    elif args.start is not None:
+        objs = objs[args.start :]
     elif args.limit:
         objs = objs[: args.limit]
 
@@ -151,5 +201,6 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--index", type=int, default=None)
+    ap.add_argument("--start", type=int, default=None)
     a = ap.parse_args()
     asyncio.run(_main(a))
