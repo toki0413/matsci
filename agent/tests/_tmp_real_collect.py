@@ -16,6 +16,15 @@ from tests.test_autoloop_e2e import (
 
 @pytest.mark.asyncio
 async def test_real_intern_collect(tmp_path, monkeypatch):
+    import logging
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(levelname)s %(name)s %(message)s",
+        force=True,
+    )
+    for _lp in ("huginn.autoloop.engine_reflect",):
+        _L = logging.getLogger(_lp)
+        _L.setLevel(logging.DEBUG)
     assert os.environ.get("HUGINN_API_KEY"), "需要 HUGINN_API_KEY 等 HUGINN_* env"
     monkeypatch.setattr("huginn.autoloop.engine.AutoloopEngine._get_kb", lambda self: None)
     monkeypatch.setattr("huginn.autoloop.conjecture.get_kg", lambda *a, **kw: None)
@@ -45,7 +54,7 @@ async def test_real_intern_collect(tmp_path, monkeypatch):
                 "Verify the pendulum period T=2*pi*sqrt(L/g) at L=1.0 m, g=9.81 m/s^2; "
                 "predict T numerically BEFORE computing, then compute with numpy and report actual T."
             ),
-            max_iterations=4,
+            max_iterations=2,
             progressive_budget=False,
         )
     finally:
