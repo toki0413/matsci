@@ -1491,7 +1491,12 @@ class EngineReflectMixin:
         return self._cosine_distance(va, vb)
 
     def _record_jepa_pair(
-        self, prediction: str, actual: str, surprise: float, plan_id: str | None = None
+        self,
+        prediction: str,
+        actual: str,
+        surprise: float,
+        plan_id: str | None = None,
+        objective: str | None = None,
     ) -> None:
         """阶段2-0: 把 plan 预测 ↔ validate 实际 配对落盘成语料 (JSONL 追加).
 
@@ -1538,6 +1543,8 @@ class EngineReflectMixin:
                 "actual": a[:1000],
                 "surprise": round(float(surprise), 4),
             }
+            if objective:
+                record["objective"] = (objective or "").strip()[:200]
             with open(root / "jepa_pairs.jsonl", "a", encoding="utf-8") as f:
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
         except Exception:  # noqa: BLE001 — 采集层失败不影响探索循环

@@ -25,18 +25,47 @@ from scripts.collect_jepa_batch import OBJECTIVES
 _LEGACY = ["orig_pendulum", "orig_pendulum", "orig_freefall", "orig_spring"]
 
 
-def _tag_objectives(rows: list[dict]) -> None:
-    """按采集顺序补 objective 标签; 已带则跳过."""
-    if rows and all("objective" in r for r in rows):
-        return
-    for i, r in enumerate(rows):
-        if "objective" in r:
+def _content_objective_map() -> dict[str, str]:
+    """actual(目标真实计算输出) -> objective 名. 用每个目标自己的 compute 输出反查,
+    不受语料行顺序/缺口补采/重复行影响. 仅在确有缺失待回填时才运行."""
+    import subprocess
+    import sys
+    import tempfile
+
+    m: dict[str, str] = {}
+    for name, _hyp, src in OBJECTIVES:
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                f = Path(d) / "probe.py"
+                f.write_text(src, encoding="utf-8")
+                r = subprocess.run(
+                    [sys.executable, str(f)], capture_output=True, text=True, timeout=60
+                )
+                out = (r.stdout or r.stderr).strip()
+            if out and out not in m:
+                m[out] = name
+        except Exception:
             continue
-        if i < len(_LEGACY):
-            r["objective"] = _LEGACY[i]
-        else:
-            j = i - len(_LEGACY)
-            r["objective"] = OBJECTIVES[j][0] if j < len(OBJECTIVES) else f"extra_{i}"
+    return m
+
+
+def _tag_objectives(rows: list[dict]) -> None:
+    """补 objective 标签: 已带真实名跳过; 缺失/占位(extra_*/None)按目标真实输出反查回填.
+    不再按行位置硬映射(位置在缺口补采/legacy/重复行下会错位)."""
+    need = [
+        i
+        for i, r in enumerate(rows)
+        if not r.get("objective") or str(r["objective"]).startswith("extra_")
+    ]
+    if not need:
+        return
+    cmap = _content_objective_map()
+    for i in need:
+        got = cmap.get((rows[i].get("actual") or "").strip())
+        if got:
+            rows[i]["objective"] = got
+        elif "objective" not in rows[i]:
+            rows[i]["objective"] = None
 
 
 def _dist(a, b):

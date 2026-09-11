@@ -704,6 +704,14 @@ HEP agent harness 论文(arXiv 2609.00107，2026-09)给出**科学 agent 的契�
   > "优于基线 / 低转机 / 留出泛化 / 高可辨性"四信号始终稳定, 绝对重建 ~0.32 仍贴近冻结 ST 编码的不可还原信息下限,
   > 与第七批结论一致 —— 该 predictor 已持续学到可迁移的 pred→actual 潜空间偏移, 未因混合结构类型持续激增而退化。
   >
+  > **评估路径修复: objective 标签落盘一致性 + 内容驱动回填**：采集期 `objective` 并非由 `_record_jepa_pair` 落盘,
+  > 而是 `eval_jepa_heldout.py` 按**行位置**反推 OBJECTIVES 补标 —— 一旦语料行与 OBJECTIVES 非严格对齐(legacy 行、
+  > 缺口按 index 单采、重复样本)就错位, 产出 `extra_*` 占位符(此前 112 行里有 4 行 `extra_86/98/110/111`)。
+  > 修复: (1) `_record_jepa_pair` 增 `objective` 参数并落盘, `collect_jepa_batch._collect_one` 采集时直接带真实目标名(向后兼容);
+  > (2) `_tag_objectives` 弃位置映射, 改为按每个目标真实 compute 输出反查 `actual→目标名` 回填缺失/占位行。
+  > 回填后 112 行 `extra_*` 清零、无 None、108 个唯一目标(4 组为同目标双样本, 属正常)。目标级留出复验
+  > surprise = **0.324 ± 0.004**, 12/12 胜基线(0.375)、远低于转机(0.584), 可辨性 12/12 —— 结论未变, 但归因更可靠。
+  >
   > **阶段2-B 阈值精标: 可证伪结论 —— 绝对阈值不可行, 相对秩是唯一稳健形式**：
   > 新增 `scripts/calibrate_jepa_threshold.py`(全量)与 `calibrate_jepa_threshold_holdout.py`(目标级留出)做阈值分离分析。
   > 把同配(pred→自配 actual, 应小)标 label0、跨配(pred→他配 actual, 应大)标 label1, 对阈值扫描 F1/Youden/AUC。

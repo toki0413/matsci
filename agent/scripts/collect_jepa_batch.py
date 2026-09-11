@@ -388,7 +388,7 @@ async def _collect_one(eng, name, hyp, src):
         surprise = robust["worst"]
     except Exception:
         surprise = 1.0
-    eng._record_jepa_pair(pred, actual, surprise)
+    eng._record_jepa_pair(pred, actual, surprise, objective=name)
     print(f"RECORDED {name} surprise={surprise:.3f} actual={actual!r}", flush=True)
 
 
