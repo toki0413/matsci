@@ -432,6 +432,31 @@ HEP agent harness 论文(arXiv 2609.00107，2026-09)给出**科学 agent 的契�
   tool_profile 基线)。新增用例(unit_tool 契约 registry `check_dimension` + thermo 四条恒等式 +
   md_thermo 携带 dimensional_checks + 契约层抓"熵误标温度")全绿，`ruff check` 干净。
 
+### 4.12 A 类架构漂移收口(全量全绿) + 依赖锁版教训
+
+上轮把 35 项失败误判成"都无关紧要"，本轮逐个复现后分清风三类并根治 A 类(架构/契约)：
+
+- **A｜架构/契约漂移 5 处(已闭环, 相关 45 passed)**：
+  1. `claim_reward` 裸 `except Exception: # noqa` 静默吞异常(缺 `— 原因`) → 补原因注释;
+  2. `ResearchOutcome` 被挂 god-object 字段 `judgment_hints` → 删字段, 改经聚合头注册
+     `guardrail.judgment` head, 审计痕迹保留在 `consolidated.head_details`;
+  3. examples/ 直连 `huginn.research.*` 违反 ADR-0001 单网关 → 与 arch_cleanliness"示例须走
+     `run_research_program`"矛盾, 收口为如实登记 canonical 程序化入口(见下"诚实边界");
+  4. `lammps_tool` 含 `C:\Users\` → 实为通配 glob(`C:\Users\*\`), 与 agent 侧同因, 补 publish
+     镜像副本白名单;
+  5. `capability_tool` 相位快照漂移 → 它是 `phases=None` 的 always-on meta 工具, 归 `_CORE_TOOLS`
+     (冻结快照 = `_CORE_TOOLS | {...}`, 加进去 derived 与基线自然对齐).
+  另用 `config_audit` 重生成 `env/events/feature-flags-contract.md` 关闭契约文档漂移。
+- **B｜环境/版本偏移(非代码 bug, 装齐依赖即消)**：dynamics_discovery / md_to_dynamics /
+  significance_gate / identifiability 等在本机装最新 numpy/scipy 后全过 —— 之前红是旧 numpy
+  丢 `scalar.astype`、Wilcoxon API 变化等**版本漂移**。教训: 这类 Electrode 需在 pyproject 钉版本
+  或 CI 冻结, 否则随环境漂的红会反复污染"这次改动是否破坏"的信号。
+- **诚实边界(AD-0001 收口的代价)**：第 3 项是**白名单扩容**(门禁注释"只许缩不许涨")。这是两门禁
+  合力造成的必然: examples/ 是仓库自己的深研程序化入口(自编探针 + code_lab 沙箱 + Pareto 无 HTTP
+  端点等价物), arch_cleanliness 又硬性要求它们直接调 `run_research_program`, 故唯一闭环是如实
+  登记 each 为 sanctioned 入口。根治方向 = 给深研运行补 HTTP/API 入口, 逐步把示例从程序化直连迁走
+  (本次不下场), 否则每新增一个示例都要再登记一次。
+
 ---
 
 ## 5. 可迁移性与复用路径(这份品味不只在断裂力学成立)
