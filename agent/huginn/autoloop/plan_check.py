@@ -237,6 +237,7 @@ MODE: <coder|workflow|explore|skill>
 DESCRIPTION: <brief description of what to do>
 SKILL: <composite skill name, only if MODE is skill>
 PREDICTION: <what you expect the result to look like — be specific: "energy ~ -X eV", "converges in ~N steps", "band gap ~X eV". This prediction will be compared against actual results to measure surprise.>
+SLOTS: <OPTIONAL, only for method/numerical objectives where inputs are known BEFORE execution. List the given input params and the formula you will apply, e.g. "a=3; b=4; formula=RMS(a,b)". CRITICAL: only plan-time known GIVENS and the operation — NEVER write the predicted output value here. Leaking the answer here corrupts the surprise signal.>
 """,
                 ),
                 ("math", math_block),
@@ -386,6 +387,8 @@ PREDICTION: <what you expect the result to look like — be specific: "energy ~ 
         description = response.strip()
         skill_name = ""
         prediction = ""
+        _slots: list[dict] = []
+        _formula = ""
 
         for line in response.split("\n"):
             if line.startswith("MODE:"):
@@ -396,12 +399,24 @@ PREDICTION: <what you expect the result to look like — be specific: "energy ~ 
                 skill_name = line.replace("SKILL:", "").strip()
             elif line.startswith("PREDICTION:"):
                 prediction = line.replace("PREDICTION:", "").strip()
+            elif line.startswith("SLOTS:"):
+                try:
+                    from huginn.jepa_slots import parse_slots_line
+                    _slots, _formula = parse_slots_line(
+                        line.replace("SLOTS:", "", 1)
+                    )
+                except Exception:  # noqa: BLE001
+                    _slots, _formula = [], ""
 
         plan = {"mode": mode, "description": description}
         if skill_name:
             plan["skill"] = skill_name
         if prediction:
             plan["expected_prediction"] = prediction
+        if _slots:
+            plan["prediction_inputs"] = _slots
+        if _formula:
+            plan["plan_formula"] = _formula
         return plan
 
     # ── KRCL plan check (反向校验 + 闭环重生成) ─────────────────

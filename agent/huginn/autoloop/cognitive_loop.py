@@ -2327,6 +2327,22 @@ Respond JSON only:
                         or cog["plan"].get("description", "")
                         or ""
                     ).strip()
+                    # JEPA 方案① 结构化计划槽: 方法级目标的输入/公式以 PLAN_SLOTS 块
+                    # 追加到 prediction(现 span predictor 按行切 span 可消费), 暂存供
+                    # _record_jepa_pair 落库 + 泄漏检测。
+                    try:
+                        from huginn.jepa_slots import append_slots
+                        _inputs = cog["plan"].get("prediction_inputs") or []
+                        _formula = cog["plan"].get("plan_formula", "")
+                        if _inputs:
+                            self._current_prediction = append_slots(
+                                self._current_prediction, _inputs, _formula
+                            )
+                            self._jepa_plan_inputs = {
+                                "inputs": _inputs, "formula": _formula,
+                            }
+                    except Exception:  # noqa: BLE001 — 槽是增量, 失败不阻塞
+                        logger.debug("[jepa-slots] cog_loop slot append failed", exc_info=True)
                     # v10: 下沉 run() L1493+L1497 budget + gate 检查到 execute_fn.
                     # spec 漏列, 但没有这俩 check, budget tier / phase gate 在
                     # run_cognitive 路径完全失效. ponytail: check 失败不抛,

@@ -84,6 +84,21 @@ class EngineActMixin:
             (plan.get("expected_prediction") or plan.get("description") or "").strip()
         )
 
+        # JEPA 方案① 结构化计划槽: 把 plan 时已知的输入/公式以 PLAN_SLOTS 块追加到
+        # prediction 文本(现行 span predictor 按行切 span, 零改动消费), 并暂存槽
+        # 供 _record_jepa_pair 落库 + 泄漏检测。仅方法级目标会有 prediction_inputs。
+        try:
+            from huginn.jepa_slots import append_slots
+            _inputs = plan.get("prediction_inputs") or []
+            _formula = plan.get("plan_formula", "")
+            if _inputs:
+                self._current_prediction = append_slots(
+                    self._current_prediction, _inputs, _formula
+                )
+                self._jepa_plan_inputs = {"inputs": _inputs, "formula": _formula}
+        except Exception:  # noqa: BLE001 — 槽是增量, 失败不阻塞
+            logger.debug("[jepa-slots] engine_act slot append failed", exc_info=True)
+
         # 落 PlanStore: 创建 plan → cost 确认门 → confirm/reject
         plan_store = self._get_plan_store()
         if plan_store is None:

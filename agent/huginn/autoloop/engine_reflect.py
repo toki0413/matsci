@@ -1540,6 +1540,23 @@ class EngineReflectMixin:
                 or (get_runtime_home() / "corpus")
             )
             root.mkdir(parents=True, exist_ok=True)
+            # JEPA 方案① 结构化计划槽: 从 planner 暂存的槽落库; 先做防泄漏检测 —
+            # 槽若把 actual 的结果码(答案)写进去了, 判泄漏丢弃该对(否则 prediction
+            # 变 ground-truth, surprise 自证无信息量)。
+            try:
+                _si = getattr(self, "_jepa_plan_inputs", None) or {}
+                _slots = _si.get("inputs") or []
+                _formula = _si.get("formula", "")
+                if _slots:
+                    from huginn.jepa_slots import detect_leak
+                    if detect_leak(_slots, a):
+                        logger.debug(
+                            "[jepa-corpus] drop leaked pair (slot contains answer) pred=%r",
+                            p[:80],
+                        )
+                        return
+            except Exception:  # noqa: BLE001
+                _slots, _formula = [], ""
             record = {
                 "ts": _time.time(),
                 "plan_id": plan_id,
@@ -1547,6 +1564,10 @@ class EngineReflectMixin:
                 "actual": a[:1000],
                 "surprise": round(float(surprise), 4),
             }
+            if _slots:
+                record["prediction_inputs"] = _slots
+            if _formula:
+                record["plan_formula"] = _formula
             if objective:
                 record["objective"] = (objective or "").strip()[:200]
             with open(root / "jepa_pairs.jsonl", "a", encoding="utf-8") as f:

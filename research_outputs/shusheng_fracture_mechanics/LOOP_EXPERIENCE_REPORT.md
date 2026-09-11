@@ -840,6 +840,23 @@ HEP agent harness 论文(arXiv 2609.00107，2026-09)给出**科学 agent 的契�
   > 的既有边界); 透传给下游的量纲收口判定从 `source=="jepa_predictor"` 收紧为 `source.startswith("jepa_")`
   > (span/句子均走相对秩, 其余 jaccard/semantic 行为不变)。`surprise_source` 现可精确区分 span/sentence。
   > 已 `ast.parse` 校验语法; 复跑 span predictor 复核数全部与上述一致。
+  >
+  > **方案①-实现 + 诚实负面: 结构化计划槽不破 0.28 信息下限**：
+  > 按"输入侧富计划"方向落地最小闭环 —— 新增 `huginn/jepa_slots.py`(槽序列化
+  > `PLAN_SLOTS: a=3; b=4; formula=RMS(a,b)` + 防泄漏检测); planner(`plan_check._parse_plan`
+  > 解析 `SLOTS:`/`FORMULA:` 行, `engine_act`/`cognitive_loop` 把槽块追加到 prediction 并暂存);
+  > `_record_jepa_pair` 落库 `prediction_inputs`/`plan_formula` 字段并做泄漏检测(槽数值 ≈ actual
+  > 末位答案码 → 丢弃该对)。
+  > **验证(决定性负面)**: 对 9 个人工核过 given 的方法级目标做双通道 A/B——
+  > (a) 固定 134 训练 predictor, 喂 `原始 vs 原始+PLAN_SLOTS` 文本, surprise **0.2602→0.2643
+  > (d=+0.004, 1/9 胜)**; (b) **重训**槽版 predictor 于槽化语料, held-out surprise **0.282±0.003 vs
+  > 基 0.287** —— 无统计显著移动。
+  > **结论(修正原叙事)**: "prediction 缺字面数字"在本语料上**不成立** —— 运行时 prediction 文本
+  > 已很富(常含答案), 故追加规范槽是冗余文本, 不提供新信息, 也不降低 ~0.28。0.28 下限更接近
+  > **表征/信息处理上限**(冻结 mpnet + span-MLP 无法把文本中的数值转成 actual 的潜分布), 而非
+  > 文本级信息缺失。据此, 多补输入富文本这条路的**杠杆被本实验否证**; 更高杠杆方向转回
+  > ***表征侧**(数值感知编码 / 潜变量 y-predictor)或**诚实对比/排序目标**(相对秩已是消费端,
+  > 把它变成可训分离)。运行时槽采集保留(无害、仅方法级触发、带防泄漏), 但不再作为破 0.28 的路径。
 
 ---
 
