@@ -549,6 +549,12 @@ HEP agent harness 论文(arXiv 2609.00107，2026-09)给出**科学 agent 的契�
   失败静默不阻塞、按 plan_id 去重控量。
 
 > 一行边界：阶段1/2-0 全部非学习；future 的 predictor 训练只在离线 build 阶段，运行时只前向冻结——同 §4.3 界线。
+>
+> 阶段0工具：`scripts/calibrate_surprise_thresholds.py` —— 用**预置知识**(`knowledge/seed/*.md`)分块，
+> 构造同/跨主题配对比对语义距离分布，输出 surprise 的 `high/low` 建议阈值（供 encounter_space / `/flow`
+> 重标定）。自包含、离线、不 import huginn.*（不碰 ADR-0001 单网关门禁）；ST 不可用时回退词元 Jaccard
+> 并如实标注 `mode`。用法：有 ST 的环境 `python scripts/calibrate_surprise_thresholds.py --out threshold.json`。
+> 沙箱实测(Jaccard 兜底)同/跨主题均≈0.9+ 几乎不可分——印证"非语义距离对文档宏观配对无区分度"，阈值须 ST 语义下取。
 
 ---
 
