@@ -309,6 +309,10 @@ class EngineReflectMixin:
             self._last_surprise = surprise
             self._surprise_history.append((surprise, robust["std"]))
 
+            # 阶段2-0: 采集 plan 预测 ↔ validate 实际 配对语料 (供离线训练 predictor).
+            # 纯数据采集, 不训练不更新权重; 失败静默不阻塞探索循环.
+            self._record_jepa_pair(prediction, actual_text, surprise)
+
         # AV7: 最小努力下限硬阻断. _metacog_check_completion 已封装
         # families/live_components/UNEXPLORED 自白收集, 这里复用.
         # 不达标时: 强制 tests_passed=False → run loop L1616-1647 走失败分支;
@@ -1429,6 +1433,55 @@ class EngineReflectMixin:
         if va is None or vb is None:
             return None
         return self._cosine_distance(va, vb)
+
+    def _record_jepa_pair(
+        self, prediction: str, actual: str, surprise: float, plan_id: str | None = None
+    ) -> None:
+        """阶段2-0: 把 plan 预测 ↔ validate 实际 配对落盘成语料 (JSONL 追加).
+
+        供后续离线训练跨模态 predictor 的**数据底座**。纯数据采集, 不训练、
+        不更新任何模型权重, 贴合"非学习校验优先"。失败/不可用静默跳过,
+        绝不阻塞探索循环。
+
+        落盘: ``{runtime_home}/corpus/jepa_pairs.jsonl``; 目录可用环境变量
+        ``HUGINN_JEPA_CORPUS`` 覆盖。仅采集非空实际; 按 plan_id 去重(同计划首条),
+        防止一次 plan 多次 validate 无限刷。
+        """
+        try:
+            p = (prediction or "").strip()
+            a = (actual or "").strip()
+            if not p or not a:
+                return
+            if plan_id is None:
+                _plan = getattr(self, "_plan", None)
+                plan_id = _plan.get("plan_id") if isinstance(_plan, dict) else None
+            if plan_id:
+                seen = getattr(self, "_jepa_corpus_seen", None)
+                if seen is None:
+                    seen = set()
+                if plan_id in seen:
+                    return
+                seen.add(plan_id)
+                self._jepa_corpus_seen = seen
+            import time as _time
+            from pathlib import Path
+            from huginn.utils.runtime import get_runtime_home
+            root = Path(
+                os.environ.get("HUGINN_JEPA_CORPUS")
+                or (get_runtime_home() / "corpus")
+            )
+            root.mkdir(parents=True, exist_ok=True)
+            record = {
+                "ts": _time.time(),
+                "plan_id": plan_id,
+                "prediction": p[:1000],
+                "actual": a[:1000],
+                "surprise": round(float(surprise), 4),
+            }
+            with open(root / "jepa_pairs.jsonl", "a", encoding="utf-8") as f:
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        except Exception:  # noqa: BLE001 — 采集层失败不影响探索循环
+            logger.debug("[jepa-corpus] pair record failed", exc_info=True)
 
     def _compute_surprise(self, prediction: str, actual: str) -> float:
         """JEPA 式预测误差: 预测文本 vs 实际文本的语义距离.
