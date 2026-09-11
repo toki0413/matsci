@@ -75,6 +75,11 @@ class EngineActMixin:
         # 单 LLM 反向校验, 最多 1 次重试, 失败不阻塞 (标 warning 继续)
         plan = await self._plan_check_and_refine(plan, hypothesis, context)
 
+        # JEPA 阶段2-0: 把 plan 的 expected_prediction 同步为 JEPA prediction buffer,
+        # 使 AutoloopEngine 的 validate 阶段也能采集 plan→actual 配对 (与 cognitive_loop
+        # L2323 行为对齐). 无 expected_prediction 时保持空, validate 不采, 与原行为一致.
+        self._current_prediction = (plan.get("expected_prediction") or "").strip()
+
         # 落 PlanStore: 创建 plan → cost 确认门 → confirm/reject
         plan_store = self._get_plan_store()
         if plan_store is None:
