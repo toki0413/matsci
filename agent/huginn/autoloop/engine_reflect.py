@@ -308,24 +308,30 @@ class EngineReflectMixin:
             else:
                 surprise = robust["worst"]
                 source = "jaccard"
-            results["prediction_error"] = {
-                "predicted": prediction[:200],
-                "actual": actual_text[:200],
-                "surprise": round(surprise, 3),
-                "surprise_mean": round(robust["mean"], 3),
-                "surprise_worst": round(robust["worst"], 3),
-                "surprise_std": round(robust["std"], 3),
-                "surprise_source": source,
-            }
             # per-domain 相对化(秩→[0,1])供 encounter_space / 探索排名; 单调于原始值.
             try:
                 surprise_rel = self._relative_surprise(surprise)
             except Exception:  # noqa: BLE001
                 surprise_rel = max(0.0, min(1.0, surprise))
-            results["prediction_error"]["surprise_rel"] = round(surprise_rel, 4)
+            # 量纲收口 (阶段2-B): predictor 前向 surprise 坍缩在 ~0.2-0.45 (绝对阈值经证实不可分离),
+            # 与下游 legacy 阈值预期的 [0,1] (jaccard/semantic) 不同量纲, 直接透传会误触发/失效.
+            # 因此 predictor 激活时交给下游的 _last_surprise 一律用相对秩 surprise_rel ([0,1], 域归一),
+            # 原始前向值保留在 surprise_raw / surprise_abs 供审计; 其余 source 行为不变.
+            surprise_exposed = surprise_rel if source == "jepa_predictor" else surprise
+            results["prediction_error"] = {
+                "predicted": prediction[:200],
+                "actual": actual_text[:200],
+                "surprise": round(surprise_exposed, 3),
+                "surprise_mean": round(robust["mean"], 3),
+                "surprise_worst": round(robust["worst"], 3),
+                "surprise_std": round(robust["std"], 3),
+                "surprise_source": source,
+                "surprise_rel": round(surprise_rel, 4),
+                "surprise_abs": round(surprise, 4) if source == "jepa_predictor" else None,
+            }
             self._last_surprise_rel = surprise_rel
-            self._last_surprise = surprise
-            self._surprise_history.append((surprise, robust["std"]))
+            self._last_surprise = surprise_exposed
+            self._surprise_history.append((surprise_exposed, robust["std"]))
 
             # 阶段2-0: 采集 plan 预测 ↔ validate 实际 配对语料 (供离线训练 predictor).
             # 纯数据采集, 不训练不更新权重; 失败静默不阻塞探索循环.

@@ -691,6 +691,19 @@ HEP agent harness 论文(arXiv 2609.00107，2026-09)给出**科学 agent 的契�
   > **据此收口**: 阶段2-B 的"绝对阈值"目标不成立, 运行时保留 §4.15 的**相对秩** `_relative_surprise`(per-domain
   > 经验秩→[0,1]) 作为唯一稳健的 surprise 消费方式, 继续供 explore 排名/encounter_space, 不当绝对门槛、更不冒充
   > 可证伪数值预言。此为"先证值得做、再证做不到"的诚实闭环 —— 阈值本是分类器, 数据不给分离度, 就停手不硬造。
+  >
+  > **收口 review: 修复 predictor 激活导致的量纲漂移 bug**：上结论后对 JEPA 线做了只读审查, 发现一个真实风险——
+  > predictor 前向在运行时默认激活(predictor.json 存在即接管), 其 surprise 坍缩在 ~0.2-0.45 窄带, 而下游多处
+  > legacy 硬编码阈值(plan_check `>0.5`/`>0.9`、hypothesis_loop `>0.5`/`>0.6`、早停 `max(0.08,0.20-0.4·noise)`)
+  > 预期的是 jaccard 的 [0,1] 宽带量纲。predictor 值 <0.45 导致 `>0.9` 强制 explore **永不触发**(失效)、部分 >0.5
+  > 值又可能**误触发**、早停阈值上限 0.20 低于 predictor 前向常见值(可能误停)。量纲漂移会在运行时静默扭曲决策。
+  > **修复**(engine_reflect.py `_validate`)：当 `source=="jepa_predictor"` 时, 交给下游 `_last_surprise` 的一律用
+  > **相对秩 `surprise_rel`**([0,1], 域归一, 单调), 原始前向值保留在 `prediction_error.surprise_abs` 供审计;
+  > jaccard/semantic source 行为不变; `_record_jepa_pair` 采集仍存原始前向值。这样 predictor 激活时下游量与
+  > legacy 阈值兼容, 且正好兑现阶段2-B"相对秩才是信号"的结论。已跑 tests/test_cross_scale_invariance +
+  > test_lucid_prereqs = 67 passed/1 skipped; `_relative_surprise` 冒烟验证单调且域归一到 [0,1]。
+  > 诚实边界: 域桶按 `surprise_domain` 累积、不分 source, 冷启动时相对秩样本少会偏低区分度; 且 predictor 和
+  > jaccard 值混入同桶会污染秩 —— 这是既有的域桶设计边界, 不在本次修复范围, 留待未来(如需精确分域可分桶)。
 
 ---
 
