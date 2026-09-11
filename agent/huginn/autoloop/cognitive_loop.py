@@ -2320,7 +2320,13 @@ Respond JSON only:
                 if action == "execute":
                     if not cog["plan"]:
                         return None
-                    self._current_prediction = cog["plan"].get("expected_prediction", "")
+                    # JEPA 阶段2-0: prediction buffer，expected_prediction 缺失时
+                    # 兜底 description（真实模型常把数值预测写进描述）, 确保采集触发。
+                    self._current_prediction = (
+                        cog["plan"].get("expected_prediction")
+                        or cog["plan"].get("description", "")
+                        or ""
+                    ).strip()
                     # v10: 下沉 run() L1493+L1497 budget + gate 检查到 execute_fn.
                     # spec 漏列, 但没有这俩 check, budget tier / phase gate 在
                     # run_cognitive 路径完全失效. ponytail: check 失败不抛,

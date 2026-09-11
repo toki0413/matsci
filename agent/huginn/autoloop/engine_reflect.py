@@ -1368,30 +1368,62 @@ class EngineReflectMixin:
             return str(execution_result)
 
         parts: list[str] = []
+        # 顶层文本键 — 覆盖各 execute mode 的主输出:
+        # coder→final_answer / workflow→outputs·stage_results / 通用 result·message
         for key in (
             "summary",
             "description",
             "result_data",
             "output",
+            "outputs",
+            "result",
+            "final_answer",
+            "message",
+            "reason",
+            "tool_output",
             "error",
             "reasoning",
             "plan",
             "hypothesis",
         ):
             v = execution_result.get(key)
-            if v:
+            if v is None:
+                continue
+            if isinstance(v, (dict, list)):
+                EngineReflectMixin._append_container_text(v, parts)
+            else:
                 parts.append(str(v))
-        # 嵌套的 steps / tool_calls 里的文本也抽出来
-        for key in ("steps", "tool_calls", "actions"):
+        # 嵌套的 steps / tool_calls / actions / stage_results 里的文本也抽出来
+        for key in ("steps", "tool_calls", "actions", "stage_results"):
             items = execution_result.get(key)
             if isinstance(items, list):
                 for item in items:
                     if isinstance(item, dict):
-                        for sk in ("description", "output", "result", "error"):
+                        for sk in ("description", "output", "outputs", "result", "error"):
                             sv = item.get(sk)
-                            if sv:
+                            if sv is None:
+                                continue
+                            if isinstance(sv, (dict, list)):
+                                EngineReflectMixin._append_container_text(sv, parts)
+                            else:
                                 parts.append(str(sv))
         return " ".join(parts)
+
+    @staticmethod
+    def _append_container_text(value: Any, parts: list[str]) -> None:
+        """递归抽取 dict/list 容器里的文本叶子, 供 JEPA actual 抽取兜底."""
+        if isinstance(value, str):
+            if value.strip():
+                parts.append(value)
+            return
+        if isinstance(value, dict):
+            for v in value.values():
+                EngineReflectMixin._append_container_text(v, parts)
+        elif isinstance(value, list):
+            for v in value:
+                EngineReflectMixin._append_container_text(v, parts)
+        elif value is not None:
+            parts.append(str(value))
 
 
 
@@ -1451,6 +1483,10 @@ class EngineReflectMixin:
             p = (prediction or "").strip()
             a = (actual or "").strip()
             if not p or not a:
+                logger.debug(
+                    "[jepa-corpus] skip pair pred=%r actual=%r",
+                    bool(p), bool(a),
+                )
                 return
             if plan_id is None:
                 _plan = getattr(self, "_plan", None)

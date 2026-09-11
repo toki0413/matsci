@@ -77,8 +77,12 @@ class EngineActMixin:
 
         # JEPA 阶段2-0: 把 plan 的 expected_prediction 同步为 JEPA prediction buffer,
         # 使 AutoloopEngine 的 validate 阶段也能采集 plan→actual 配对 (与 cognitive_loop
-        # L2323 行为对齐). 无 expected_prediction 时保持空, validate 不采, 与原行为一致.
-        self._current_prediction = (plan.get("expected_prediction") or "").strip()
+        # L2323 行为对齐). 真实模型常把数值预测写进 description 而非结构化
+        # expected_prediction 键, 故缺失时兜底 description, 保证采集对真实输出触发;
+        # 两者皆空则保持空, validate 不采, 与原行为一致.
+        self._current_prediction = (
+            (plan.get("expected_prediction") or plan.get("description") or "").strip()
+        )
 
         # 落 PlanStore: 创建 plan → cost 确认门 → confirm/reject
         plan_store = self._get_plan_store()
