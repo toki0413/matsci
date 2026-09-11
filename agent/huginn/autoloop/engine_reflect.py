@@ -1585,8 +1585,11 @@ class EngineReflectMixin:
             w = self._load_jepa_predictor()
             if w is None:
                 return None
-            xe = self._try_embed_text(prediction)
-            ye = self._try_embed_text(actual)
+            # JEPA 前向用与训练一致的 JEPA 编码器 (可经 HUGINN_JEPA_EMBED_MODEL 覆盖),
+            # 不借用共享 RAG 的 EMBED_MODEL —— 防止训练(高容量 768)与运行时(MiniLM384)
+            # 维度/语义空间失配导致 predictor 静默失效.
+            xe = self._jepa_embed_text(prediction)
+            ye = self._jepa_embed_text(actual)
             if xe is None or ye is None:
                 return None
             h = np.tanh(xe @ w["W1"] + w["b1"])
@@ -1594,6 +1597,36 @@ class EngineReflectMixin:
             return self._cosine_distance(fwd, ye)
         except Exception:  # noqa: BLE001 — 失败回落, 不阻塞
             logger.debug("[jepa-predictor] forward failed", exc_info=True)
+            return None
+
+    def _jepa_embedder(self):
+        """按 HUGINN_JEPA_EMBED_MODEL 惰性加载 JEPA 编码器并缓存 (与训练端一致)."""
+        import os as _os
+
+        _model = _os.environ.get(
+            "HUGINN_JEPA_EMBED_MODEL",
+            "sentence-transformers/paraphrase-multilingual-mpnet-base-v2",
+        )
+        st = getattr(self, "_jepa_st", None)
+        if st is None:
+            _os.environ.setdefault("HF_HUB_OFFLINE", "1")
+            _os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+            from sentence_transformers import SentenceTransformer
+
+            st = SentenceTransformer(_model)
+            self._jepa_st = st
+        return st
+
+    def _jepa_embed_text(self, text: str):
+        """JEPA 编码器单文本嵌入; 失败返回 None."""
+        try:
+            import numpy as np
+
+            st = self._jepa_embedder()
+            v = st.encode([text], normalize_embeddings=True)[0]
+            return np.asarray(v, dtype=np.float32)
+        except Exception:  # noqa: BLE001 — 不可用即回落
+            logger.debug("[jepa-predictor] jepa embed failed", exc_info=True)
             return None
 
     # ── 阶段2-A-2: per-domain 相对 surprise (运行统计, 秩 → [0,1]) ──

@@ -23,6 +23,14 @@ import numpy as np
 
 from huginn.utils.runtime import get_runtime_home
 
+# JEPA 专属编码器 (与共享 RAG/taste 的 EMBED_MODEL 解耦). 可用 HUGINN_JEPA_EMBED_MODEL 覆盖.
+# 默认升级到更高容量多语言 mpnet(768) —— 相对 MiniLM-L12(384), 更大模型应改善短数值型
+# actual 的可辨识度 (阶段2-C 弱族实验的编码侧对照).
+JEPA_EMBED_MODEL = os.environ.get(
+    "HUGINN_JEPA_EMBED_MODEL",
+    "sentence-transformers/paraphrase-multilingual-mpnet-base-v2",
+)
+
 
 def load_pairs(path: Path) -> list[dict]:
     if not path.exists():
@@ -35,7 +43,7 @@ def load_encoder(offline: bool = True):
         os.environ.setdefault("HF_HUB_OFFLINE", "1")
         os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
     from sentence_transformers import SentenceTransformer
-    return SentenceTransformer("sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
+    return SentenceTransformer(JEPA_EMBED_MODEL)
 
 
 def semantic_dist_survey(predictor_pred: np.ndarray, actual: np.ndarray,
@@ -144,7 +152,7 @@ def main() -> None:
     out = (get_runtime_home() / "models" / "jepa_predictor.json")
     out.parent.mkdir(parents=True, exist_ok=True)
     payload = {
-        "embed_model": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+        "embed_model": JEPA_EMBED_MODEL,
         "dim": dim,
         "weights": {k: v.tolist() for k, v in pack.items()},
         "loss_history": losses,

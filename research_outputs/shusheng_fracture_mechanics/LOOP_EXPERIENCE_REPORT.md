@@ -736,6 +736,23 @@ HEP agent harness 论文(arXiv 2609.00107，2026-09)给出**科学 agent 的契�
   > 并喂回。上限仍是冻结 ST 编码的信息下限 ~0.32(相对秩可用, 绝对阈值不可用, 见阶段2-B)。下一步若要
   > 更强可辨性, 应换更高容量/更大长度保留的文本编码或 span-level predictor, 而非继续扩短数值样本量。
   >
+  > **编码器升级对照实验: 更高容量 (MiniLM-384 → mpnet-multilingual-768)**：
+  > 为检验"~0.32 绝对下限是否是 MiniLM 容量不足所致", 把 JEPA 编码器解耦为 `HUGINN_JEPA_EMBED_MODEL`
+  > (默认 `paraphrase-multilingual-mpnet-base-v2`, 768 维; 与共享 RAG 的 EMBED_MODEL 隔离, 不惊扰 taste 语义库),
+  > 训练/验证/分层统一读取; 运行时 `_predictor_surprise` 也改走同一 JEPA 编码器(不再借用共享 `_EmbeddingModel`),
+  > 保证落盘 predictor 与运行时维度/空间一致。下载经 hf-mirror + `HF_HUB_DISABLE_XET=1`(huggingface.co 443 被墙, 镜像 307 可达)。
+  >
+  > **结果(122 条, mpnet-768)**: 同配语义距离 0.374→**0.331**(更近), 跨配 p10 0.429(分离更开);
+  > 目标级留出重建 surprise = **0.324 ± 0.002**, 可辨性 **12/12**, 远低于转机 0.553。
+  > **关键证伪**: 直接用 pred 取 actual 的**基线大幅变强 0.376→0.329**(更高容量编码让 pred 本身就更贴 actual),
+  > 训练 predictor 相对该基线的胜率从 **12/12 收窄到 7/12**; 且重跑难度分层, 10/10 对抗样本仍 `confused=True`
+  > (短数值型 actual 互塌缩未被缓解)。
+  >
+  > **可证伪结论**: ~0.32 的绝对重建下限**不是** MiniLM 容量不足 —— 换 768 维 mpnet 没能击穿它, 反而把
+  > "pred 直接当 actual" 的基线拉得几乎与训练 predictor 一样好, predictor 的边际增量收窄。真正的信息瓶颈在
+  > 文本本身: 多行数值+判据型 actual 经任何固定句向量都无法被预测文本逐字还原, 只能提供相对排名信号。
+  > 这正面(!)回应了"换更高容量编码器能否破局"的假设 —— 容量升级改善原始语义贴近度, 但不改变"绝对阈值不可行、相对秩才稳健"的阶段2-B 结论。
+  >
   > **阶段2-B 阈值精标: 可证伪结论 —— 绝对阈值不可行, 相对秩是唯一稳健形式**：
   > 新增 `scripts/calibrate_jepa_threshold.py`(全量)与 `calibrate_jepa_threshold_holdout.py`(目标级留出)做阈值分离分析。
   > 把同配(pred→自配 actual, 应小)标 label0、跨配(pred→他配 actual, 应大)标 label1, 对阈值扫描 F1/Youden/AUC。
