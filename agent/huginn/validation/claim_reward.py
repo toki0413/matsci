@@ -53,7 +53,7 @@ def _load_verify_claims():
             _mod = importlib.util.module_from_spec(_spec)
             _spec.loader.exec_module(_mod)
             _verify_claims = _mod.verify_claims
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001 — 直接按文件加载仍失败(缺 importlib 依赖/文件不可读), 才落纯数值兜底
             _verify_claims = _fallback_verify_claims
     return _verify_claims
 

@@ -59,7 +59,8 @@ class ResearchOutcome:
     law_model_used: dict | None = None                 # (P2 遗存) 世界模型真用证据: predict 产物/是否参与决策 (真深思 D)
     plan_revision: dict | None = None                # (P2 遗存) 漏A: plan 修订门(新证据→显式复盘初始计划)审计
     grounding_audit: dict | None = None              # (P2 遗存) 漏C: "得分≠使用"(高分存活项是否真进最终报告)审计
-    judgment_hints: list = field(default_factory=list)  # 判断层·分级护栏: 本次注入的软提示(仅写进 prompt, 不参与 verify)
+    # 注意: 判断层·分级护栏的注入软提示不再挂成 god-object 字段, 而是经聚合头注册
+    # 为 `guardrail.judgment` head (见下) —— 遵守 P3 "新视角只许经聚合头"红线.
     consolidated: dict | None = None                   # 收敛聚合头(P1/P2): 现有治理头统一注册后的收敛视图.
                                                        # P3 起为唯一治理出口 —— 新视角只许在此注册, 不再加 out.* 字段.
 
@@ -302,6 +303,9 @@ def run_research_program(
         and bool(plan_summary.get("layers"))
     _replan_log: list[dict] = []
     _replan_checked = 0                          # 被门控评估过的后序实验数(审计计数)
+    # 判断层·分级护栏软提示的聚合头载体(非 god-object 字段): `_synthesize` 闭包往里写,
+    # 收敛聚合头据此注册 `guardrail.judgment` head. 仅记注入内容, 不进 verify.
+    _judgment_hints: list[str] = []
     _hypotheses = {e.name: e.hypothesis for e in experiments}
 
     def _replan_decision(name: str) -> dict | None:
@@ -615,7 +619,9 @@ def run_research_program(
                                    strictness=int(strictness))
             if _hs_block:
                 prompt += "\n" + _hs_block
-                out.judgment_hints = [
+                # 聚合头载体: 写进闭包列表(经 guardrail.judgment head 入 consolidated)——
+                # 不往 ResearchOutcome 挂字段(P3 红线: 新视角只许经聚合头)。
+                _judgment_hints[:] = [
                     h for h in _hs_block.split("\n") if h.startswith("- ")]
 
         def _one_attempt(msgs):
@@ -973,6 +979,21 @@ def run_research_program(
                 "learning.self_audit", "能力自省闭环(缺口→提案)",
                 EVIDENCE_UNOBSERVED, "unobserved",
                 detail="自省已接线但本 run 无审计产物", ref="capabilities/introspection"))
+        # guardrail.judgment —— 判断层·分级护栏软提示(注入 prompt 但不参与 verify).
+        # 建议级: 反映"强护栏下注入了几分提示", 供复核; 不具否决权, strictness=0 → 未启用.
+        # 不再往 ResearchOutcome 挂 judgment_hints 字段 —— 遵守 P3 新视角只许经聚合头.
+        if _judgment_hints:
+            heads.append(HeadResult(
+                "guardrail.judgment", "判断层·分级护栏(soft hints 注入 prompt)",
+                EVIDENCE_OBSERVED, "passed",
+                detail=f"注入 {len(_judgment_hints)} 条: " + "; ".join(_judgment_hints),
+                ref="out.consolidated.head_details"))
+        else:
+            heads.append(HeadResult(
+                "guardrail.judgment", "判断层·分级护栏(soft hints 注入 prompt)",
+                EVIDENCE_UNOBSERVED, "unobserved",
+                detail="strictness=0 或该 run 未触发护栏(零行为变化)",
+                ref="out.consolidated.head_details"))
 
         _replan_meta = {
             "enabled": _replan_enabled,
