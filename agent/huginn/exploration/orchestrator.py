@@ -132,7 +132,22 @@ class ExplorationOrchestrator:
                 if action.action_type == "terminate":
                     if iteration >= min_iterations:
                         terminate = True
-                        convergence_reason = action.reason
+                        # 优先"全部分支 resolved 且无新 action"的早停语义: 单分支/清空
+                        # 收敛时, Pareto 策略的 terminate("Pareto front converged") 会盖掉
+                        # 更精确的 resolved 原因 —— 这里按信息量最大者定 reason.
+                        _unresolved_now = [
+                            b for b in space.branches.values()
+                            if b.status in {BranchStatus.PENDING, BranchStatus.RUNNING}
+                        ]
+                        _has_new_actions = any(
+                            a.action_type in {"expand", "refine"} for a in actions
+                        )
+                        if not _unresolved_now and not _has_new_actions:
+                            convergence_reason = (
+                                "All branches resolved with no new actions"
+                            )
+                        else:
+                            convergence_reason = action.reason
                     break
                 elif action.action_type == "prune" and action.target_branch:
                     await self.lifecycle.prune_branch(
