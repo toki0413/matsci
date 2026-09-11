@@ -527,6 +527,29 @@ HEP agent harness 论文(arXiv 2609.00107，2026-09)给出**科学 agent 的契�
 - **教训(工程)**：Py3.14 移除了 `ast.Num`(统一 `ast.Constant`), 直接引用会 AttributeError;
   这是本机所有 `ast` 白名单求值器都要踩的兼容坑。
 
+### 4.15 引入联合嵌入预测(JEPA)：分阶段落地 + 非学习红线
+
+评估"要不要给 agent 引入 JEPA"后分阶段落地，全程守住 §4.3 的非学习红线（不更新权重）：
+当前库已有两代 JEPA 资产，不是从零谈——视觉 `visual_encoder` 是真 I-JEPA 冻结 backbone；autoloop
+的 `_compute_surprise` 是**文本空间**的 JEPA 式预测误差（plan 预测 vs validate 实际），但原是关键词 Jaccard。
+
+- **阶段1 ｜ surprise 度量升级（文本 JEPE 式 → 冻结句向量 cosine）**：
+  `engine_reflect` 新增 `_cosine_distance`/`_try_embed_text`/`_semantic_distance`，`_compute_surprise_robust`
+  加语义 fast-path——复用**已加载的冻结 ST 单例**算 `1-cos`；embeder 未加载时如实回落原 Jaccard
+  （不主动触发下载，CI/沙箱无 ST 时行为与旧版逐分支一致）。`{mean,worst,std,point}` 契约不变。
+  > 教训：升级只**复用已加载**的冻结编码器，不训练、不更新权重、不联网；语义距离分布与 Jaccard 不同
+  > （无关文本更贴近 1），下游阈值（encounter_space clip、/flow 的 high>0.6/low<0.3）需真实数据重标定，列后续。
+- **阶段2 形态成本评估 ｜ 三档决策**：A=离线跨模态 predictor（运行时冻结）/ B=标准 I-JEPA（EMA target
+  联合自监督）/ C=多模态对齐+检索（非预测）。结论：**B 触碰"非学习校验优先"红线且科学小数据自监督易过拟合，不做**；
+  A 是唯一切触及收益的上限，但先决是配对数据。还明确一条**可证伪边界**：JEPA 潜向量无单位，只能做
+  表示相似度/检索/motivation 信号，**绝不冒充** LawModel 的可证伪数值预言——两者必须隔离。
+- **阶段2-0 ｜ 配对数据采集层（先决，本轮落地）**：训练 predictor 前先有 plan→实际 配对语料，否则训练空转。
+  新增 `_record_jepa_pair`，在 validate 把 plan 预测 ↔ validate 实际（含 surprise）追加到
+  `{runtime_home}/corpus/jepa_pairs.jsonl`（`HUGINN_JEPA_CORPUS` 可覆盖）。纯数据采集、不碰权重、
+  失败静默不阻塞、按 plan_id 去重控量。
+
+> 一行边界：阶段1/2-0 全部非学习；future 的 predictor 训练只在离线 build 阶段，运行时只前向冻结——同 §4.3 界线。
+
 ---
 
 ## 5. 可迁移性与复用路径(这份品味不只在断裂力学成立)
