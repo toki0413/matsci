@@ -592,7 +592,15 @@ HEP agent harness 论文(arXiv 2609.00107，2026-09)给出**科学 agent 的契�
   > **阶段2-A 离线 predictor 管线**：新增 `scripts/train_jepa_predictor.py` —— 冻结
   > `paraphrase-multilingual-MiniLM-L12-v2` 编码器 + 单隐层 predictor, 用 `jepa_pairs.jsonl` 闭环演示
   > 数据加载→冻结编码→训练(实际会随) →运行时冻结前向, 产物落 `{runtime_home}/models/jepa_predictor.json`。
-  > ⚠ 诚实边界: 36 样本仍不足以训泛化模型, 脚本仅证明管线; 真实训练须待语料积累到任务级、并留独立验证集。
+  >
+  > **目标级留出验证(新增 `scripts/eval_jepa_heldout.py`)**：语料按 `objective` 打标, 随机目标级拆分
+  > (留出目标在训练里完全未见), 25% 留出 × 12 次: predictor 冻结前向重建 surprise = **0.243 ± 0.009**,
+  > 优于"直接用 pred 取 actual"基线 0.374、远低于跨配转机 0.537, 且在留出目标上 12/12 次胜过基线;
+  > 语义 surprise 可辨性: 留出目标 pred↔自身 actual 距离落进跨配 p10 以内 **12/12** 次。
+  > 结论: 语义 surprise 在未见目标上**仍是可辨的**(可作相对信号), predictor 学到 pred→actual 潜空间偏移
+  > 且**跨目标泛化**(未见目标重建≈全量 in-sample 0.234, 几乎不掉); 但重建均值 0.243 仍非零 ——
+  > 潜对齐不完美, 只宜作排名/相对动机信号, 不可当绝对阈值或冒充可证伪数值预言(隔离红线不变)。
+  > ⚠ 诚实边界: 36 样本仍不足以训出稳定绝对阈值; 此验证证明的是"信号有用 + 管线泛化", 非"阈值已成立"。
 
 ---
 
