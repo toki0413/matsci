@@ -99,10 +99,6 @@ ALLOWED_EXTERNAL_IMPORTS: dict[str, dict[str, str]] = {
         "reason": "canonical 深研程序化入口(load_backends/research seam)",
         "migrate_to": "/v1/research/run_program (确定性深研 HTTP 端点)",
     },
-    "examples/ai4s_numerics_demo.py": {
-        "reason": "canonical 深研程序化入口(run_research_program)",
-        "migrate_to": "/v1/research/run_program (确定性深研 HTTP 端点)",
-    },
     "examples/ai4s_realdata_demo.py": {
         "reason": "canonical 深研程序化入口(run_research_program)",
         "migrate_to": "/v1/research/run_program (确定性深研 HTTP 端点)",

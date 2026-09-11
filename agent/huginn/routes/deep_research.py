@@ -28,7 +28,7 @@ from dataclasses import asdict
 
 from fastapi import APIRouter, HTTPException
 
-from huginn.research.program import Experiment, run_research_program
+from huginn.research.program import Experiment, grounding_verifier, run_research_program
 
 logger = logging.getLogger(__name__)
 
@@ -288,3 +288,34 @@ async def run_program(body: dict) -> dict:
 
     result = asdict(out)
     return result
+
+
+@router.post("/grounding")
+async def grounding(body: dict) -> dict:
+    """声明门禁唯一实现的门禁 (claim_grounding) 经 HTTP 暴露。
+
+    让脚本/示例在**不 import huginn.validation** 时即可对成文报告做结论证伪:
+    ::
+
+        {"report": "…", "trace": ["tool1 -> …", …]}
+
+    返回 ``{"verdict": "pass"|"needs_grounding", "unsubstantiated": [...]}``。
+    等价物: ``huginn.research.grounding_verifier()(report, trace)``。
+    """
+    if not isinstance(body, dict):
+        raise _bad("body must be a JSON object")
+    report = body.get("report")
+    trace = body.get("trace")
+    if not isinstance(report, str):
+        raise _bad("report must be a string")
+    if trace is None:
+        trace = []
+    if not isinstance(trace, list) or not all(isinstance(t, str) for t in trace):
+        raise _bad("trace must be a list of strings")
+    try:
+        verify = grounding_verifier()
+        result = await asyncio.to_thread(verify, report, trace)
+    except Exception:
+        logger.exception("deep research grounding failed")
+        raise
+    return result or {"verdict": "needs_grounding", "unsubstantiated": []}

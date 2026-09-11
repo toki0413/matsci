@@ -495,9 +495,18 @@ HEP agent harness 论文(arXiv 2609.00107，2026-09)给出**科学 agent 的契�
 - **注册**: 进 `routes/__init__.py` 的 `ALL_ROUTERS`, 经 `/v1` 前缀暴露(实测 200/400 均通)。
 - **白名单 migrate_to 具体化**: 13 条深研条目的 `migrate_to` 从"无 HTTP 等价物"改为
   `/v1/research/run_program` —— 迁移目标从谎言变事实。
+- **门禁也过 HTTP —— 并真的缩掉一条白名单**：新增 `POST /v1/research/grounding`(结论证伪门禁
+  `grounding_verifier` 的 HTTP 等价物)。把 `examples/ai4s_numerics_demo.py` 唯一的 `huginn` 依赖
+  (grounding_verifier)换成走 HTTP 网关(标准库 urllib, 数值核心 numerics.py 留本地), **删除其
+  import**, 随即从 `ALLOWED_EXTERNAL_IMPORTS` **整条移除该条目** —— 门禁 R2a 的"已不再直连→必须删除"
+  首次被真实吃到。示例 `--dry` 仍离线可跑(报告确定性组装、门禁 pass)。
+  > 诚实边界(迁移的代价)：这改变了示例的**部署形态**——现在跑非 dry 路径需要一个在线的
+  > Huginn server(`--server` 默认 `127.0.0.1:8765`), 不再是"自给自足脚本"。这正是 ADR-0001
+  > 想要的"外部消费者走 API 而非 import"的姿态; 代价是脚本不再能脱机裸跑完整链路。
 - **诚实边界(仍保留登记的真因)**：多数示例内嵌不可序列化的 domain 计算, **无法**换皮到
-  表达式端点; 只有"纯数值目标函数 + 参数空间"的深研可迁走并缩小白名单。这是机制性的解耦
-  落点, 不是一次性全量迁移 —— 谁把模型表达成表达式, 谁就能从清单移除。
+  表达式端点; 只有"纯数值目标函数 + 参数空间"或"单点业务函数(如门禁)"的深研可迁走并缩小
+  白名单。这是机制性的解耦落点, 不是一次性全量迁移 —— 谁把业务表达成可过 HTTP 的形态,
+  谁就能从清单移除。
 - **教训(工程)**：Py3.14 移除了 `ast.Num`(统一 `ast.Constant`), 直接引用会 AttributeError;
   这是本机所有 `ast` 白名单求值器都要踩的兼容坑。
 

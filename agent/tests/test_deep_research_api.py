@@ -118,3 +118,34 @@ def test_run_program_validation(client):
         },
     )
     assert r.status_code == 400
+
+
+# ── 结论证伪门禁 HTTP 暴露 (ADR-0001 迁移目标, 等价 grounding_verifier) ──
+
+
+def test_grounding_endpoint(client):
+    from huginn.research.program import grounding_verifier as _dv
+
+    trace = ["convergence(fem_linear) -> {H1: 0.001, L2: 0.0001}",
+             "compare_methods -> {iga_better: true}"]
+    for report in (
+        "线性FEM在ne=8时H1误差为0.001, 二次IGA更高效。",
+        "本期结论: 材料强度为 42 GPa。",
+    ):
+        resp = client.post("/research/grounding", json={"report": report, "trace": trace})
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        assert isinstance(data.get("verdict"), str) and data["verdict"]
+        assert isinstance(data.get("unsubstantiated"), list)
+        # 门禁经 HTTP 代理的**决定性契约**: 与直调 grounding_verifier 完全一致,
+        # 不在此重复 claim_grounding 的精确证据语义 (那是 claim_grounding 自己的测试).
+        want = _dv()(report, trace)
+        assert data["verdict"] == want["verdict"]
+        assert data["unsubstantiated"] == want["unsubstantiated"]
+
+
+def test_grounding_validation(client):
+    assert client.post("/research/grounding", json={}).status_code == 400
+    assert client.post("/research/grounding", json={"report": 1}).status_code == 400
+    assert client.post("/research/grounding",
+                       json={"report": "x", "trace": "not-a-list"}).status_code == 400

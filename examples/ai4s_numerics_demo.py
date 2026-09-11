@@ -35,14 +35,39 @@ from pathlib import Path
 
 _BASE_URL = os.environ.get("INTERNLM_BASE_URL", "https://chat.intern-ai.org.cn/api/v1")
 _DEFAULT_MODEL = "intern-s2-preview"
+# ADR-0001: 结论证伪门禁经 Huginn HTTP 网关调用 (不再 import huginn.*).
+# 默认本地 server; 启动方式: python -m huginn.cli serve  (见仓库 DEPLOYMENT.md)
+_DEFAULT_SERVER = os.environ.get("HUGINN_SERVER_URL", "http://127.0.0.1:8765")
 OUT = Path(__file__).resolve().parent / "out"
 OUT.mkdir(parents=True, exist_ok=True)
 
 _HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(_HERE))
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "agent"))   # 产品模块(huginn.*)
+sys.path.insert(0, str(_HERE))   # 仅为本示例本地数值核心 (numerics.py)
 import numerics as nm  # noqa: E402
-from huginn.research import grounding_verifier  # noqa: E402   # 声明门禁唯一实现
+
+
+def _grounding_http(report: str, trace: list, base_url: str, allow_derived: bool = True) -> dict:
+    """经 Huginn HTTP 网关调声明门禁, 不 import huginn.validation.
+
+    等价物: ``huginn.research.grounding_verifier()(report, trace)``. 用标准库
+    urllib, 不新增业务依赖. 返回 {"verdict": ..., "unsubstantiated": [...]}.
+    """
+    import urllib.request
+
+    body = json.dumps({"report": report, "trace": list(trace or []),
+                       "allow_derived": allow_derived}).encode("utf-8")
+    req = urllib.request.Request(
+        base_url.rstrip("/") + "/v1/research/grounding",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except Exception as exc:  # noqa: BLE001 — 例如 server 未启动; 如实上报给模型/用户
+        print(f"[grounding] HTTP 门禁调用失败({exc}); 按 needs_grounding 处理", file=sys.stderr)
+        return {"verdict": "needs_grounding", "unsubstantiated": ["门禁不可达"]}
 
 METHODS = {"fem_linear": "线性拉格朗日有限元", "iga_p2": "二次 B 样条等几何分析(IGA)"}
 THEORY = {"fem_linear": {"H1": 1, "L2": 2}, "iga_p2": {"H1": 2, "L2": 3}}
@@ -171,6 +196,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--model", default=_DEFAULT_MODEL)
     ap.add_argument("--base-url", default=None)
+    ap.add_argument("--server", default=_DEFAULT_SERVER,
+                    help="Huginn HTTP 网关地址 (ADR-0001 门禁入口)")
     ap.add_argument("--dry", action="store_true", help="不开模型, 直接演示三层兜底的确定性补全+报告组装")
     ap.add_argument("--topic", choices=list(_TOPICS), default=None,
                     help="测试兜底链路时强制选题(默认留空=自主选题; 仅覆盖不干扰正常自主流程)")
@@ -180,7 +207,8 @@ def main() -> int:
         print("error: INTERNLM_API_KEY not set (或使用 --dry 演示兜底)", file=sys.stderr); return 2
     from openai import OpenAI
     client = OpenAI(api_key=key or "dry", base_url=args.base_url or _BASE_URL) if not args.dry else None
-    verify = grounding_verifier()
+    # ADR-0001: 结论证伪门禁改走 HTTP 网关 (不再 from huginn.research import grounding_verifier)
+    verify = lambda text, trace=None, _d=True: _grounding_http(text, trace, args.server, allow_derived=_d)
     state = {}  # 累积确定性状态, 供补全与报告组装
     state.setdefault("verifies", [])
     messages = [{"role": "user", "content": _GOAL}]
