@@ -6,7 +6,7 @@
 | 开关 | 默认 | 描述 | 旧 env 别名 | 消费点 |
 |---|---|---|---|---|
 | `bandit_mdp` | True | bandit MDP 决策 (HUGINN_BANDIT_MDP) | HUGINN_BANDIT_MDP | agent/bandit_controller.py:117 |
-| `belief_darwin` | True | 信念 Darwin 演化 (HUGINN_BELIEF_DARWIN) | HUGINN_BELIEF_DARWIN | autoloop/cognitive_loop.py:822, autoloop/cognitive_loop.py:931 |
+| `belief_darwin` | True | 信念 Darwin 演化 (HUGINN_BELIEF_DARWIN) | HUGINN_BELIEF_DARWIN | autoloop/cognitive_loop.py:824, autoloop/cognitive_loop.py:933 |
 | `belief_mode_switch` | True | 信念模式切换 (HUGINN_BELIEF_MODE_SWITCH) | HUGINN_BELIEF_MODE_SWITCH | task_reflector.py:297, task_reflector.py:39 |
 | `belief_update` | True | 信念更新管线 (HUGINN_BELIEF_UPDATE) | HUGINN_BELIEF_UPDATE | tools/subagent_tool.py:42 |
 | `clarification` | True | agent 主动向用户提问 | — | tools/clarification_tool.py:206 |
@@ -40,13 +40,13 @@
 | `privacy_redact` | False | 隐私级别: redact (脱敏后发云端) | — | privacy_guard.py:79 |
 | `privacy_redact_secrets` | True | 检测到密钥时脱敏 (HUGINN_PRIVACY_REDACT_SECRETS) | HUGINN_PRIVACY_REDACT_SECRETS | agent_config.py:181, tools/adapter.py:849 |
 | `prompt_cache_control` | True | prompt-cache control 注入 (HUGINN_PROMPT_CACHE_CONTROL) | HUGINN_PROMPT_CACHE_CONTROL | agent_config.py:108 |
-| `provenance` | True | 计算 provenance 快照 | — | provenance/_legacy.py:259, tools/base.py:325 |
+| `provenance` | True | 计算 provenance 快照 | — | provenance/_legacy.py:259, tools/base.py:367 |
 | `speculator` | True | 投机执行 (意图预测+工具预热) | — | agents/speculator.py:444 |
 | `system_health_auto_fix` | False | 监控异常后自动熔断工具 (默认关) | — | diagnostics/system_health.py:519 |
-| `system_health_monitor` | True | 系统资源监控 (CPU/内存/磁盘) | — | diagnostics/system_health.py:521, routes/config.py:892, tools/__init__.py:501 |
+| `system_health_monitor` | True | 系统资源监控 (CPU/内存/磁盘) | — | diagnostics/system_health.py:521, routes/config.py:892, tools/__init__.py:503 |
 | `task_tool_router` | True | task keyword → tool category 动态路由 (默认开, 无命中给 core 子集) | HUGINN_TASK_TOOL_ROUTER | agent/core.py:667, agent/streaming.py:1180 |
 | `telemetry` | True | 遥测采集 (HUGINN_TELEMETRY_ENABLED) | HUGINN_TELEMETRY_ENABLED | agent_config.py:197 |
-| `three_cabin` | False | 三舱模型 (HUGINN_USE_THREE_CABIN) | HUGINN_USE_THREE_CABIN | autoloop/cognitive_loop.py:2693 |
+| `three_cabin` | False | 三舱模型 (HUGINN_USE_THREE_CABIN) | HUGINN_USE_THREE_CABIN | autoloop/cognitive_loop.py:2695 |
 | `tool_call_router` | True | 重型工具 sanity check 路由 | — | agents/tool_call_router.py:123 |
 | `use_atomworld` | False | AtomWorld 环境 (HUGINN_USE_ATOMWORLD) | HUGINN_USE_ATOMWORLD | agent/code_act_loop.py:344, agent/code_act_loop.py:398 |
 | `use_cognitive_map` | False | 认知地图 (HUGINN_USE_COGNITIVE_MAP) | HUGINN_USE_COGNITIVE_MAP | agent/code_act_loop.py:355, agent/code_act_loop.py:417, runtime/engine_state.py:203 |

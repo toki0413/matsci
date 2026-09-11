@@ -119,6 +119,7 @@ _CORE_TOOLS: set[str] = {
     "numerical_tool",
     "skill",
     "tool_search",
+    "capability_tool",   # 能力集装箱(meta, phases=None 全阶段)：LLM 始终可见, 归核心基线
 }
 
 PHASE_TOOLS: dict[ResearchPhase, set[str] | None] = {}

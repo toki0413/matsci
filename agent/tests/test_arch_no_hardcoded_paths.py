@@ -47,6 +47,11 @@ ALLOWED_HARDCODED_MATCHES: dict[str, str] = {
     "agent/huginn/privacy_guard.py": "隐私检测正则，C:\\\\Users\\\\ 是特征模式，非硬编码路径",
     # LAMMPS 可执行文件的通配 glob 模式（C:\\Users\\*），非具体机器路径。
     "agent/huginn/tools/sim/lammps_tool.py": "LAMMPS 查找通配 glob (C:\\\\Users\\\\*)，非具体机器路径",
+    # publish/mcpb 镜像副本：与 agent 侧同一份 governed 源码的发布拷贝, 同一通配 glob, 非机器路径。
+    "publish/mcpb/capabilities-mcp/huginn/tools/sim/lammps_tool.py":
+        "LAMMPS 查找通配 glob 的发布镜像副本 (C:\\\\Users\\\\*)，非具体机器路径",
+    "publish/mcpb/workflows-mcp/huginn/tools/sim/lammps_tool.py":
+        "LAMMPS 查找通配 glob 的发布镜像副本 (C:\\\\Users\\\\*)，非具体机器路径",
     # 测试数据：验证编码/转义处理，非真实路径。
     "agent/tests/test_i18n_encoding.py": "测试数据 (C:\\\\Users\\\\test)，非真实路径",
     # WSL↔Windows 路径转换工具的单测：C:\\Users\\ 是输入/期望夹具 (
