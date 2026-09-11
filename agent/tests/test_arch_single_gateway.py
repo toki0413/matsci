@@ -98,6 +98,9 @@ ALLOWED_EXTERNAL_IMPORTS: dict[str, dict[str, str]] = {
     # diagnostic_tools / mutation_config / client / planner / world_model / code_lab。
     # 因此保持程序化直连登记, migrate_to 如实标注"解耦所需的端点", 不再谎称走
     # run_program。能拆成纯公式/单点函数的子集可单独迁走并缩白名单。
+    # 诚实边界: run_program 端点当前**尚无启用接入的迁移消费者**(只有自身测试),
+    # 是 ADR-0001 为纯公式示例预留的迁移门, 未在产线被走; 谁要正式迁走某条目,
+    # 须先让该示例真正改走 /v1/research/run_program 并改白名单此处。
     "examples/ai4s_backends.py": {
         "reason": "第一方深研后端库(GCM 仿真闭包 + diagnostic_tools handler)",
         "migrate_to": "需补 code_lab/diagnostic 端点; 纯公式子集(exoplanet)可走 /v1/research/run_program",
