@@ -818,6 +818,28 @@ HEP agent harness 论文(arXiv 2609.00107，2026-09)给出**科学 agent 的契�
   > test_lucid_prereqs = 67 passed/1 skipped; `_relative_surprise` 冒烟验证单调且域归一到 [0,1]。
   > 诚实边界: 域桶按 `surprise_domain` 累积、不分 source, 冷启动时相对秩样本少会偏低区分度; 且 predictor 和
   > jaccard 值混入同桶会污染秩 —— 这是既有的域桶设计边界, 不在本次修复范围, 留待未来(如需精确分域可分桶)。
+  >
+  > **更大语料复核 0.28 的稳定性(方案①)**: 补采 batch7-10 共 46 条混合结构/方法级目标(index 82-127:
+  > 矢量微积分, Jacobian 行列式, Lagrange 插值, 内积, 梯度下降/Newton-Raphson, 动量/引力结合能, RMS,
+  > log 积恒等式, Fibonacci-Cassini, Euler 公式, 勾股三元组, 质心, 方差分解, 抛体射程, 等比级数等), 语料
+  > **122→134** 对(判据数 130 目标)。`train_jepa_span_predictor.py` 同配(同一 mpnet-768, 同一种子/切分)重跑:
+  > span predictor 前向 surprise **mean=0.287 ±0.004**, 12/12 held-out 分制胜句子基线(0.327), 远低于转机(0.553),
+  > 逐留出样本上 span<句子基线 229/375。与 batch7 前(0.279±0.003)相比, **0.28 下限在更大语料上稳定成立**、
+  > 未见退化 —— 印证 `LOOP_EXPERIENCE_REPORT.md §4.15` 行级 span 把 pred→actual 压到的 ~0.28 不是小语料假象。
+  > span predictor 权重已对 134 对语料重训并 `--persist` 落盘(覆写 `{runtime_home}/models/jepa_span_predictor.json`,
+  > num_objs=134, dim=768)。
+  > 诚实边界: 全程配对混淆率(每个预测 span 的最近真实 span 是否属本 pair)随语料扩到 134 后升至 **99.3%** ——
+  > 因为真实 span 库越大, 硬最近邻跨配天然越高; 真正决策指标仍是**目标级 held-out 分制胜句子基线**(12/12),
+  > 混淆率数字本身不构成"信号坏了"的证据, 只提醒"最近邻匹配"与"分布区分"是两件事。
+  >
+  > **方案①-收口: span surprise 正式化为相对秩信号(区分 source)**: 按方案①, 把 span surprise 从"实验数字"
+  > 走成运行时正式信号 —— `_predictor_surprise` 由返回 `float|None` 改为返回 `(surprise, source)`,
+  > source ∈ {`jepa_span_predictor`(优先), `jepa_sentence_predictor`(回落)}; 调点 `_validate` 据此打独立标签;
+  > `_relative_surprise(surprise, source)` 的秩桶由 `global` 改为 `{domain}:{source}` —— span 与 句子 predictor
+  > 各在**自身分布内**算经验秩, 避免跨量纲(span~0.28 vs jaccard~[0,1])混桶污染(回应上节"混入同桶会污染秩"
+  > 的既有边界); 透传给下游的量纲收口判定从 `source=="jepa_predictor"` 收紧为 `source.startswith("jepa_")`
+  > (span/句子均走相对秩, 其余 jaccard/semantic 行为不变)。`surprise_source` 现可精确区分 span/sentence。
+  > 已 `ast.parse` 校验语法; 复跑 span predictor 复核数全部与上述一致。
 
 ---
 

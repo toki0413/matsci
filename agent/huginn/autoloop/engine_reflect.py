@@ -300,8 +300,7 @@ class EngineReflectMixin:
             # 阶段2-A: predictor 冻结前向作相对/排名信号; 缺失回落 robust.
             pred_surprise = self._predictor_surprise(prediction, actual_text)
             if pred_surprise is not None:
-                surprise = pred_surprise
-                source = "jepa_predictor"
+                surprise, source = pred_surprise
             elif self._semantic_distance(prediction, actual_text) is not None:
                 surprise = robust["worst"]
                 source = "semantic"
@@ -309,15 +308,18 @@ class EngineReflectMixin:
                 surprise = robust["worst"]
                 source = "jaccard"
             # per-domain 相对化(秩→[0,1])供 encounter_space / 探索排名; 单调于原始值.
+            # predictor 按 source(span/句子)分桶, span 秩在其自身分布内计算, 免跨信号量纲污染.
             try:
-                surprise_rel = self._relative_surprise(surprise)
+                surprise_rel = self._relative_surprise(surprise, source)
             except Exception:  # noqa: BLE001
                 surprise_rel = max(0.0, min(1.0, surprise))
             # 量纲收口 (阶段2-B): predictor 前向 surprise 坍缩在 ~0.2-0.45 (绝对阈值经证实不可分离),
             # 与下游 legacy 阈值预期的 [0,1] (jaccard/semantic) 不同量纲, 直接透传会误触发/失效.
             # 因此 predictor 激活时交给下游的 _last_surprise 一律用相对秩 surprise_rel ([0,1], 域归一),
             # 原始前向值保留在 surprise_raw / surprise_abs 供审计; 其余 source 行为不变.
-            surprise_exposed = surprise_rel if source == "jepa_predictor" else surprise
+            surprise_exposed = (
+                surprise_rel if source.startswith("jepa_") else surprise
+            )
             results["prediction_error"] = {
                 "predicted": prediction[:200],
                 "actual": actual_text[:200],
@@ -327,7 +329,9 @@ class EngineReflectMixin:
                 "surprise_std": round(robust["std"], 3),
                 "surprise_source": source,
                 "surprise_rel": round(surprise_rel, 4),
-                "surprise_abs": round(surprise, 4) if source == "jepa_predictor" else None,
+                "surprise_abs": (
+                    round(surprise, 4) if source.startswith("jepa_") else None
+                ),
             }
             self._last_surprise_rel = surprise_rel
             self._last_surprise = surprise_exposed
@@ -1577,14 +1581,16 @@ class EngineReflectMixin:
         self._jepa_predictor_cache = cached
         return cached
 
-    def _predictor_surprise(self, prediction: str, actual: str) -> float | None:
+    def _predictor_surprise(self, prediction: str, actual: str) -> tuple[float, str] | None:
         """冻结 predictor 前向的潜空间 surprise. 任一环节不可用返回 None.
 
-        优先 span 级(阶段2-C-2 表现最佳, preserve 行级结构); 无 span predictor 时回落句子级.
+        返回 (surprise, source) —— source 区分 span 级 与 句子级, 供下游分别走
+        相对秩 bucket 与审计。优先 span 级(阶段2-C-2 表现最佳, preserve 行级结构);
+        无 span predictor 时回落句子级。
         """
         s = self._span_predictor_surprise(prediction, actual)
         if s is not None:
-            return s
+            return (s, "jepa_span_predictor")
         import numpy as np
 
         try:
@@ -1600,7 +1606,7 @@ class EngineReflectMixin:
                 return None
             h = np.tanh(xe @ w["W1"] + w["b1"])
             fwd = h @ w["W2"] + w["b2"]
-            return self._cosine_distance(fwd, ye)
+            return (self._cosine_distance(fwd, ye), "jepa_sentence_predictor")
         except Exception:  # noqa: BLE001 — 失败回落, 不阻塞
             logger.debug("[jepa-predictor] forward failed", exc_info=True)
             return None
@@ -1704,13 +1710,16 @@ class EngineReflectMixin:
     # surprise 原始跨域方差大, 绝对阈值不稳. 这里按域维护运行样本, 用经验分布秩
     # (rank/n) 把原始 surprise 映射到 [0,1] 的相对分数 —— 单调、免阈值、对小样本稳,
     # 供 encounter_space / 探索排名用. 域键缺省 "global", 可设 self.surprise_domain.
-    def _relative_surprise(self, surprise: float) -> float:
+    def _relative_surprise(self, surprise: float, source: str = "global") -> float:
         try:
             buckets = getattr(self, "_surprise_buckets", None)
             if buckets is None:
                 buckets = {}
                 self._surprise_buckets = buckets
-            key = str(getattr(self, "surprise_domain", None) or "global")
+            domain = str(getattr(self, "surprise_domain", None) or "global")
+            # source 化桶: span / 句子 predictor 各自独立分布, 秩在自信号内计算,
+            # 避免跨量纲(span~0.28 vs jaccard~[0,1])互相错位.
+            key = f"{domain}:{source}"
             hist = buckets.setdefault(key, [])
             hist.append(float(surprise))
             # 经验 CDF 秩: 当前值在已见样本(含自身)里的分数位置
