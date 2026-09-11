@@ -297,7 +297,17 @@ class EngineReflectMixin:
         if prediction:
             actual_text = self._extract_text(execution_result)[:500]
             robust = self._compute_surprise_robust(prediction, actual_text)
-            surprise = robust["worst"]
+            # 阶段2-A: predictor 冻结前向作相对/排名信号; 缺失回落 robust.
+            pred_surprise = self._predictor_surprise(prediction, actual_text)
+            if pred_surprise is not None:
+                surprise = pred_surprise
+                source = "jepa_predictor"
+            elif self._semantic_distance(prediction, actual_text) is not None:
+                surprise = robust["worst"]
+                source = "semantic"
+            else:
+                surprise = robust["worst"]
+                source = "jaccard"
             results["prediction_error"] = {
                 "predicted": prediction[:200],
                 "actual": actual_text[:200],
@@ -305,6 +315,7 @@ class EngineReflectMixin:
                 "surprise_mean": round(robust["mean"], 3),
                 "surprise_worst": round(robust["worst"], 3),
                 "surprise_std": round(robust["std"], 3),
+                "surprise_source": source,
             }
             self._last_surprise = surprise
             self._surprise_history.append((surprise, robust["std"]))
@@ -1518,6 +1529,52 @@ class EngineReflectMixin:
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
         except Exception:  # noqa: BLE001 — 采集层失败不影响探索循环
             logger.debug("[jepa-corpus] pair record failed", exc_info=True)
+
+    # ── 阶段2-A 运行时接入: 冻结 predictor 前向作 surprise 排名信号 ──
+    # 离线训练产物 {runtime_home}/models/jepa_predictor.json 存在且可用时, 用它
+    # 计算 plan→actual 的潜空间预测误差 (1-cos(predictor(pred), actual)), 作为
+    # 探索动机的**相对/排名**信号. 只前向冻结, 不更新权重 (§4.3 红线). 缺失/失败
+    # 静默回落现有语义/Jaccard surprise, 绝不阻塞探索循环.
+    def _load_jepa_predictor(self) -> dict | None:
+        import json as _json
+        import numpy as np
+
+        if hasattr(self, "_jepa_predictor_cache"):
+            return self._jepa_predictor_cache
+        cached: dict | None = None
+        try:
+            from huginn.utils.runtime import get_runtime_home
+            path = get_runtime_home() / "models" / "jepa_predictor.json"
+            if path.exists():
+                data = _json.loads(path.read_text(encoding="utf-8"))
+                cached = {
+                    k: np.asarray(v, dtype=np.float64)
+                    for k, v in data["weights"].items()
+                }
+        except Exception:  # noqa: BLE001 — predictor 不可用即回落, 不阻塞
+            logger.debug("[jepa-predictor] load failed", exc_info=True)
+            cached = None
+        self._jepa_predictor_cache = cached
+        return cached
+
+    def _predictor_surprise(self, prediction: str, actual: str) -> float | None:
+        """冻结 predictor 前向的潜空间 surprise. 任一环节不可用返回 None."""
+        import numpy as np
+
+        try:
+            w = self._load_jepa_predictor()
+            if w is None:
+                return None
+            xe = self._try_embed_text(prediction)
+            ye = self._try_embed_text(actual)
+            if xe is None or ye is None:
+                return None
+            h = np.tanh(xe @ w["W1"] + w["b1"])
+            fwd = h @ w["W2"] + w["b2"]
+            return self._cosine_distance(fwd, ye)
+        except Exception:  # noqa: BLE001 — 失败回落, 不阻塞
+            logger.debug("[jepa-predictor] forward failed", exc_info=True)
+            return None
 
     def _compute_surprise(self, prediction: str, actual: str) -> float:
         """JEPA 式预测误差: 预测文本 vs 实际文本的语义距离.

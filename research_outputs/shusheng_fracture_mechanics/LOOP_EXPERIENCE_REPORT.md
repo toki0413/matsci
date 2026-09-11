@@ -593,6 +593,13 @@ HEP agent harness 论文(arXiv 2609.00107，2026-09)给出**科学 agent 的契�
   > `paraphrase-multilingual-MiniLM-L12-v2` 编码器 + 单隐层 predictor, 用 `jepa_pairs.jsonl` 闭环演示
   > 数据加载→冻结编码→训练(实际会随) →运行时冻结前向, 产物落 `{runtime_home}/models/jepa_predictor.json`。
   >
+  > **运行时接入(本期落地)**：`_validate` 的 JEPA 块改为优先用冻结 predictor 前向算 surprise
+  > (1−cos(predictor(φ(pred)), φ(actual)))，作探索动机的**相对/排名**信号, 并在
+  > `prediction_error.surprise_source` 标注 `jepa_predictor/semantic/jaccard`。产物缺失/失败静默回落现有
+  > 语义或 Jaccard, 不设绝对阈值、不更新权重(红线不变)。同一配对上实测:
+  > predictor surprise **0.152** ≪ 语义 0.617 ≪ Jaccard 1.0 —— predictor 潜映射把 pred→actual 对齐更紧,
+  > 是显著更好的排名信号。85 项既有回归全绿。
+  >
   > **目标级留出验证(新增 `scripts/eval_jepa_heldout.py`)**：语料按 `objective` 打标, 随机目标级拆分
   > (留出目标在训练里完全未见), 25% 留出 × 12 次: predictor 冻结前向重建 surprise = **0.243 ± 0.009**,
   > 优于"直接用 pred 取 actual"基线 0.374、远低于跨配转机 0.537, 且在留出目标上 12/12 次胜过基线;
