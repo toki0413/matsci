@@ -39,6 +39,14 @@ def _canon(text: str) -> str:
     return _NUM_RE.sub(lambda m: f"{float(m.group(0)):.6g}", text)
 
 
+def _field_pieces(span: str) -> tuple[str, str]:
+    """按第一处数值切分: 返回 (标签/单位前缀, 数值 token)。无数值 → (span, "")."""
+    m = _NUM_RE.search(span)
+    if m:
+        return span[: m.start()].strip(), m.group(0)
+    return span, ""
+
+
 def _dist(a, b):
     a = a / (np.linalg.norm(a) + 1e-12)
     b = b / (np.linalg.norm(b) + 1e-12)
@@ -104,6 +112,7 @@ def main() -> None:
     ap.add_argument("--splits", type=int, default=12)
     ap.add_argument("--holdout-frac", type=float, default=0.25)
     ap.add_argument("--canon", action="store_true", help="结构化数值规范化: 统一数字 token 格式")
+    ap.add_argument("--fields", action="store_true", help="标签/单位字段分离: [整行|前缀|数值] 三通道")
     args = ap.parse_args()
 
     corpus = Path(args.corpus) if args.corpus else (get_runtime_home() / "corpus" / "jepa_pairs.jsonl")
@@ -119,13 +128,35 @@ def main() -> None:
         pred_span_list = [[_canon(s) for s in r] for r in pred_span_list]
         act_span_list = [[_canon(s) for s in r] for r in act_span_list]
 
-    uniq = sorted({s for idx in range(n) for s in pred_span_list[idx] + act_span_list[idx]})
-    vs = enc.encode(uniq, normalize_embeddings=True)
-    emap = {s: np.asarray(v, dtype=np.float32) for s, v in zip(uniq, vs)}
+    DD = 3 * d if args.fields else d  # fields 模式: [整行 | 标签/单位前缀 | 数值 token] 三通道
+    # 需编码的文本单元集合: 整行 span; fields 模式下还含每行的标签前缀与数值 token
+    pieces = set()
+    for i in range(n):
+        for s in pred_span_list[i] + act_span_list[i]:
+            pieces.add(s)
+            if args.fields:
+                pf, num = _field_pieces(s)
+                if pf:
+                    pieces.add(pf)
+                if num:
+                    pieces.add(num)
+    pieces = sorted(pieces)
+    vs = enc.encode(pieces, normalize_embeddings=True)
+    emap = {s: np.asarray(v, dtype=np.float32) for s, v in zip(pieces, vs)}
 
-    X = np.stack([_padded([emap[s] for s in pred_span_list[i]], d) for i in range(n)])
-    A = np.stack([_padded([emap[s] for s in act_span_list[i]], d) for i in range(n)])
+    def _span_vec(s: str) -> np.ndarray:
+        v = emap[s]
+        if not args.fields:
+            return v
+        pf, num = _field_pieces(s)
+        ef = emap[pf] if pf else np.zeros(d, dtype=np.float32)
+        ev = emap[num] if num else np.zeros(d, dtype=np.float32)
+        return np.concatenate([v, ef, ev])
+
+    X = np.stack([_padded([_span_vec(s) for s in pred_span_list[i]], DD) for i in range(n)])
+    A = np.stack([_padded([_span_vec(s) for s in act_span_list[i]], DD) for i in range(n)])
     M = np.stack([np.concatenate([np.ones(min(len(pred_span_list[i]), K), bool), np.zeros(K - min(len(pred_span_list[i]), K), bool)]) for i in range(n)])
+    d = DD
 
     # 句子级对照基线 (同一预处理: canon 时同样规范化)
     _sp = [p["prediction"] for p in pairs]
@@ -179,27 +210,33 @@ def main() -> None:
     print(f"[span] 转机(跨配 chance): mean={sum(chance)/nv:.3f}")
     print(f"[span] 逐留出样本上 span<句子基线 次数: {win_sample}")
 
-    # 全程配对混淆诊断: 预测 span 前向的最近真实 span 是否来自本 pair
+    # 全程配对混淆诊断: 预测 span 前向的最近真实 span 是否来自本 pair (向量化)
     T_full = np.array([_nearest_target(X[i], A[i], M[i], asl[i]) for i in range(n)])
     pack_full = _train_mlp(X, T_full, M, d, steps=args.steps, seed=args.seed)
     fwdf = _fwd(pack_full, X)
-    self_confused, all_span = 0, 0
+    # 收集非掩码预测 span 与全部真实 span, 用矩阵乘法算最邻近
+    FA = []  # (all_span, d)
+    f_labels = []  # 每行对应 pair i
+    AA = []  # (all_real, d)
     for i in range(n):
         kk = min(asl[i], K)
         for k in range(K):
-            if not M[i][k] or kk == 0:
-                continue
-            all_span += 1
-            # 最近真实 span 的 (pair, j)
-            best = min(
-                ((_dist(fwdf[i, k], A[j][jj]), (j, jj))
-                 for j in range(n) for jj in range(min(asl[j], K))),
-                key=lambda t: t[0],
-            )
-            self_confused += best[1][0] != i
+            if M[i][k]:
+                FA.append(fwdf[i, k])
+                f_labels.append(i)
+        AA.extend(A[i][:kk])
+    F = np.stack(FA)
+    Ast = np.stack(AA)
+    Dmat = 1.0 - (F @ Ast.T) / (
+        (np.linalg.norm(F, axis=1, keepdims=True) + 1e-12) * (np.linalg.norm(Ast, axis=1, keepdims=True).T + 1e-12)
+    )
+    # 每真实 span 的来源 pair
+    a_owner = np.concatenate([[i] * min(asl[i], K) for i in range(n)])
+    nearest = np.argmin(Dmat, axis=1)
+    self_confused = int(np.sum(a_owner[nearest] != np.asarray(f_labels)))
+    all_span = len(FA)
     print(f"[span-混淆] 全程: {self_confused}/{all_span} 预测span 最近真实span 来自别的 pair "
-          f"({100*self_confused/max(1,all_span):.1f}%). 短数值型跨目标吸附为 {self_confused} 处."
-          f"\n   (对比: 句子级阶段2-C 时对抗样本 10/10 confused)")
+          f"({100*self_confused/max(1,all_span):.1f}%).  (句子级阶段2-C 时对抗样本 10/10 confused)")
 
 
 if __name__ == "__main__":
