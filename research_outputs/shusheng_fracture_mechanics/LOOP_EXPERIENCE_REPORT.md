@@ -555,6 +555,22 @@ HEP agent harness 论文(arXiv 2609.00107，2026-09)给出**科学 agent 的契�
 > 重标定）。自包含、离线、不 import huginn.*（不碰 ADR-0001 单网关门禁）；ST 不可用时回退词元 Jaccard
 > 并如实标注 `mode`。用法：有 ST 的环境 `python scripts/calibrate_surprise_thresholds.py --out threshold.json`。
 > 沙箱实测(Jaccard 兜底)同/跨主题均≈0.9+ 几乎不可分——印证"非语义距离对文档宏观配对无区分度"，阈值须 ST 语义下取。
+>
+> **真实语义标定结果(2026-09, 沙箱)**：装 `torch-cpu + sentence-transformers`，ST 权重
+> `paraphrase-multilingual-MiniLM-L12-v2` 经 **hf-mirror 镜像**下载(`HF_ENDPOINT=https://hf-mirror.com
+> + HF_HUB_DISABLE_XET=1`, 直连 huggingface.co 被 egress SSL 中断)，脚本跑出 `mode=semantic`：
+
+  | 配对 | Jaccard 兜底 | 语义(ST 384) |
+  |------|-------------|--------------|
+  | 同主题 mean | 0.916 | **0.519** |
+  | 跨主题 mean | 0.967 | **0.651** |
+  | 同 p90 / 跨 p10 | 0.975 / 0.937 | **0.699 / 0.495** |
+
+  > 结论: Jaccard 下同/跨几乎坍缩不可分; 语义下 0.52 vs 0.65 明确可分(阶段1方向成立)。
+  > 建议阈值 `low≈0.70 / high≈0.49` 仅作**初始参考**, 存在重叠带 —— 文档级配对标类不强,
+  > **暂不写进 `encounter_space` / `/flow` 运行阈值**, 待真实 plan→actual 配对语料积累后精标。
+  > 依赖已登记于 pyproject `[all]`(sentence-transformers, 无需新增 extra); 语义路径 lazy import,
+  > 未装回落 Jaccard, 不强依赖。
 
 ---
 
