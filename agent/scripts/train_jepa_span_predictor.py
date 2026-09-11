@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import statistics
 from collections import defaultdict
 from pathlib import Path
@@ -28,6 +29,14 @@ from huginn.utils.runtime import get_runtime_home
 from scripts.train_jepa_predictor import load_pairs, load_encoder
 
 K = 8
+
+_NUM_RE = re.compile(r"-?\d+\.\d+(?:[eE][+-]?\d+)?|-?\d+[eE][+-]?\d+")
+
+
+def _canon(text: str) -> str:
+    """把数字词元规范成统一 %g 格式, 消除 pred/actual 的数值格式噪声(1.0 vs 1.0000)。
+    只改数值 token, 不改标签/单位/判据文本 —— 结构化字段保持不变."""
+    return _NUM_RE.sub(lambda m: f"{float(m.group(0)):.6g}", text)
 
 
 def _dist(a, b):
@@ -94,6 +103,7 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--splits", type=int, default=12)
     ap.add_argument("--holdout-frac", type=float, default=0.25)
+    ap.add_argument("--canon", action="store_true", help="结构化数值规范化: 统一数字 token 格式")
     args = ap.parse_args()
 
     corpus = Path(args.corpus) if args.corpus else (get_runtime_home() / "corpus" / "jepa_pairs.jsonl")
@@ -105,6 +115,9 @@ def main() -> None:
     pred_span_list = [_spans(p["prediction"]) for p in pairs]
     act_span_list = [_spans(p["actual"]) for p in pairs]
     asl = [len(a) for a in act_span_list]  # 每 pair 真实 span 数
+    if args.canon:
+        pred_span_list = [[_canon(s) for s in r] for r in pred_span_list]
+        act_span_list = [[_canon(s) for s in r] for r in act_span_list]
 
     uniq = sorted({s for idx in range(n) for s in pred_span_list[idx] + act_span_list[idx]})
     vs = enc.encode(uniq, normalize_embeddings=True)
@@ -114,9 +127,14 @@ def main() -> None:
     A = np.stack([_padded([emap[s] for s in act_span_list[i]], d) for i in range(n)])
     M = np.stack([np.concatenate([np.ones(min(len(pred_span_list[i]), K), bool), np.zeros(K - min(len(pred_span_list[i]), K), bool)]) for i in range(n)])
 
-    # 句子级对照基线
-    sent_p = np.asarray(enc.encode([p["prediction"] for p in pairs], normalize_embeddings=True), dtype=np.float32)
-    sent_a = np.asarray(enc.encode([p["actual"] for p in pairs], normalize_embeddings=True), dtype=np.float32)
+    # 句子级对照基线 (同一预处理: canon 时同样规范化)
+    _sp = [p["prediction"] for p in pairs]
+    _sa = [p["actual"] for p in pairs]
+    if args.canon:
+        _sp = [_canon(t) for t in _sp]
+        _sa = [_canon(t) for t in _sa]
+    sent_p = np.asarray(enc.encode(_sp, normalize_embeddings=True), dtype=np.float32)
+    sent_a = np.asarray(enc.encode(_sa, normalize_embeddings=True), dtype=np.float32)
 
     objs = list({p.get("objective", f"o{i}") for i, p in enumerate(pairs)})
     by_obj = defaultdict(list)
