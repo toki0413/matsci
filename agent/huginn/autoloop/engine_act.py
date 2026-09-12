@@ -152,16 +152,67 @@ class EngineActMixin:
 
         return plan
 
+    def _is_deterministic_numeric(self, description: str) -> bool:
+        """启发式: 该项是否为"确定性数值计算"目标(供内建 probe 执行兜底).
+
+        平衡点落地: execute 只对这类明确可算的目标主动生成 probe, 不打扰开放探索任务。
+        保守: 需同时含 数字 + 计算/预测指令词 + 公式迹象, 缺一不触发。
+        """
+        import re as _re
+
+        if not isinstance(description, str) or not description.strip():
+            return False
+        d = description.strip()
+        if not _re.search(r"\d", d):
+            return False
+        if not any(v in d.lower() for v in ("compute", "calculate", "predict", "evaluate")):
+            return False
+        if not _re.search(r"[/^*+=()]", d):
+            return False
+        return True
+
+    async def _request_numeric_probe(self, description: str) -> str:
+        """平衡点·内建执行: 让 LLM 只产出能算出数值的纯 python, harness 负责运行取数.
+
+        不信任该代码的科学可信度(那是 validate/裁决层的事), 只确保"真跑通、打印了数字"。
+        返回可运行脚本; 失败/含危险调用 → 空串, 触发方回落原分派(不回归)。
+        """
+        import re as _re
+
+        prompt = (
+            "Given the following quantitative task, output ONLY a short, self-contained "
+            "python snippet (no explanation, no surrounding text) that computes the requested "
+            "numeric quantity and prints the final numeric value on stdout. Express the stated "
+            "physical/math relation exactly; do not fabricate values.\n\nTASK: " + description
+        )
+        try:
+            raw = await self._llm_chat(prompt, model=self.verification_model)
+        except Exception:
+            return ""
+        m = _re.search(r"```python\s*(.*?)```", raw, _re.S) or _re.search(
+            r"```\s*(.*?)```", raw, _re.S
+        )
+        code = (m.group(1) if m else raw).strip()
+        if not code:
+            return ""
+        # 安全边界: 拒绝对外部 shell/系统有副作用的危险调用
+        if _re.search(
+            r"\b(import\s+(os|sys|subprocess|builtins)|from\s+(os|sys|subprocess)|__import__|\beval\s*\(|\bexec\s*\()",
+            code,
+        ):
+            return ""
+        return code
+
     async def _execute(self, plan: dict[str, Any], context: dict[str, Any]) -> Any:
         """Execute the plan using the appropriate sub-engine."""
         mode = plan.get("mode", "coder")
         description = plan.get("description", "")
 
-        # 方案1·攻 execute (2026-09-11 A线根因后半段): 平面 plan 若已带"可运行的数值脚本片段"
-        # (如 plan 的 code/script/plan_code 字段或 description 里的 ```python 块), 就走
-        # 快速路径把它"真实执行"成数值证据, 而不是让 decide 分派到 explore(空转返回摘要)。
-        # 这正合 _is_closed_form_solved 的判定: 可执行→已执行→产出数字 = 诚实证据,
-        # 无法靠把 objective 抄进文本骗过(纯文本没有可执行片段)。plan 没有片段 → 走原分派, 不回归。
+        # 方案1·攻 execute (2026-09-11 A线根因后半段 + 平衡点落地):
+        # ① plan 已带"可运行数值脚本片段" → 直接真实执行成证据;
+        # ② plan 无片段但目标是"确定性数值计算" → harness 主动请求一段最小 probe 并运行,
+        #    让"产出执行证据"从模型的 privilege 变成 execute 的内建动作 (执行 on-code,
+        #    裁决仍由 validate 的诚实层负责)。两步都 parse 不到可执行片段 → 回落原分派, 不回归。
         try:
             _snip = self._extract_run_snippet(plan)
             if _snip:
@@ -185,8 +236,55 @@ class EngineActMixin:
                         "execute closed-form fast-path: plan 内含可运行数值片段, 已真实执行 → evidence"
                     )
                     return result
+            # 独立判定(不再 elif 受 _snip 分支干扰): plan 片段若没跑出数, 仍尝试 objective 探针.
+            if self._is_deterministic_numeric(description) or self._is_deterministic_numeric(
+                str(getattr(self, "_objective", "") or "")
+            ):
+                # 以可靠文本源为准: plan.description 在 run_cognitive 路径可能为空,
+                # 用 objective(确定性全文本)兜底判定并生成 probe。
+                _src = description if self._is_deterministic_numeric(description) else str(
+                    getattr(self, "_objective", "") or ""
+                )
+                _probe = await self._request_numeric_probe(_src)
+                if _probe:
+                    _cout = self._run_snippet_to_output(_probe)
+                    if _cout:
+                        result = {
+                            "mode": "probe_exec",
+                            "status": "completed",
+                            "success": True,
+                            "result": _cout.strip(),
+                            "script": _probe,
+                            "reproducible": True,
+                        }
+                        self._record_provenance("probe_exec", plan, result)
+                        self._last_execution_result = {
+                            "_tool_name": "probe_exec",
+                            "_tool_input": plan,
+                            "result": result,
+                        }
+                        logger.info(
+                            "execute builtin probe: 确定性数值目标 → harness 内建生成并执行 probe → evidence"
+                        )
+                        return result
         except Exception as exc:
-            logger.debug("execute closed-form fast-path failed (fall through)", exc_info=True)
+            logger.debug("execute builtin-probe fast-path failed (fall through)", exc_info=True)
+
+        # 非阻塞诊断(2026-09-11): real-loop 里 probe 屡不触发, 这里永久留一口子
+        # 记录判定输入, 便于定位为何没走内建执行(不等重跑才猜)。
+        try:
+            _det_desc = self._is_deterministic_numeric(description)
+            _det_obj = self._is_deterministic_numeric(str(getattr(self, "_objective", "") or ""))
+            if _det_desc or _det_obj:
+                logger.info(
+                    "[execute-probe] 判定到确定性目标但未产出探针证据: "
+                    "det_desc=%s det_obj=%s, desc[:40]=%r, obj[:40]=%r, _tool=%r",
+                    _det_desc, _det_obj,
+                    (description or "")[:40], (str(getattr(self, "_objective", "") or ""))[:40],
+                    plan.get("mode"),
+                )
+        except Exception:
+            pass
 
         # H4: toggle on 时从 PhaseRegistry 取 dispatch_table 替代 hardcode if/elif
         # ponytail: dispatch_table 存 [method_name, arg_mode], arg_mode 决定传
