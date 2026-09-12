@@ -187,7 +187,7 @@ class EngineActMixin:
         )
         try:
             raw = await self._llm_chat(prompt, model=self.verification_model)
-        except Exception:
+        except Exception:  # — LLM 不可用/超时则拿不到探针代码, 回落空探针, 不阻塞
             return ""
         m = _re.search(r"```python\s*(.*?)```", raw, _re.S) or _re.search(
             r"```\s*(.*?)```", raw, _re.S
@@ -283,7 +283,7 @@ class EngineActMixin:
                     (description or "")[:40], (str(getattr(self, "_objective", "") or ""))[:40],
                     plan.get("mode"),
                 )
-        except Exception:
+        except Exception:  # — execute 分流探针失败则继续走通用执行, 不阻断
             pass
 
         # H4: toggle on 时从 PhaseRegistry 取 dispatch_table 替代 hardcode if/elif

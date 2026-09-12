@@ -405,7 +405,7 @@ SLOTS: <OPTIONAL, only for method/numerical objectives where inputs are known BE
                     _slots, _formula = parse_slots_line(
                         line.replace("SLOTS:", "", 1)
                     )
-                except Exception:  # noqa: BLE001
+                except Exception:  # noqa: BLE001 — 槽解析失败回落空, 不阻塞计划落盘
                     _slots, _formula = [], ""
 
         plan = {"mode": mode, "description": description}

@@ -311,7 +311,7 @@ class EngineReflectMixin:
             # predictor 按 source(span/句子)分桶, span 秩在其自身分布内计算, 免跨信号量纲污染.
             try:
                 surprise_rel = self._relative_surprise(surprise, source)
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001 — 相对化失败回落原值域, 不阻塞探索
                 surprise_rel = max(0.0, min(1.0, surprise))
             # 量纲收口 (阶段2-B): predictor 前向 surprise 坍缩在 ~0.2-0.45 (绝对阈值经证实不可分离),
             # 与下游 legacy 阈值预期的 [0,1] (jaccard/semantic) 不同量纲, 直接透传会误触发/失效.
@@ -1031,7 +1031,7 @@ class EngineReflectMixin:
                     return ""
                 _out = _r.stdout or ""
                 return _out if _re.search(r"[-+]?\d+\.?\d*(?:e[-+]?\d+)?", _out) else ""
-        except Exception:
+        except Exception:  # — 子进程执行异常视为无数值证据, 回落空串, 不阻断
             return ""
 
     def _is_closed_form_solved(self, execution_result: Any) -> bool:
@@ -1639,7 +1639,7 @@ class EngineReflectMixin:
                 if _peak_f.exists():
                     try:
                         _peak = int(_peak_f.read_text(encoding="utf-8").strip() or 0)
-                    except Exception:  # noqa: BLE001
+                    except Exception:  # noqa: BLE001 — 峰值文件读取异常则从0回溯, 不阻塞
                         _peak = 0
                 _n_cur = (
                     len([l for l in _cf.read_text(encoding="utf-8", errors="replace").splitlines() if l.strip()])
@@ -1653,7 +1653,7 @@ class EngineReflectMixin:
                 if _cf.exists() and _cf.stat().st_size > 0:
                     (root / "jepa_pairs.jsonl.bak").write_bytes(_cf.read_bytes())
                 _peak_f.write_text(str(max(_peak, _n_cur)), encoding="utf-8")
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001 — 后备档/峰值写盘失败只降级, 不阻塞落库
                 logger.debug("[jepa-corpus] backup guard failed", exc_info=True)
             # JEPA 方案① 结构化计划槽: 从 planner 暂存的槽落库; 先做防泄漏检测 —
             # 槽若把 actual 的结果码(答案)写进去了, 判泄漏丢弃该对(否则 prediction
@@ -1670,7 +1670,7 @@ class EngineReflectMixin:
                             p[:80],
                         )
                         return
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001 — 槽/公式解析失败则回落空, 不阻塞落库
                 _slots, _formula = [], ""
             record = {
                 "ts": _time.time(),
@@ -1764,7 +1764,7 @@ class EngineReflectMixin:
                     "weights": {k: np.asarray(v, dtype=np.float64) for k, v in data["weights"].items()},
                     "dim": int(data.get("dim", 0)),
                 }
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001 — span predictor 权重载入失败回落 None, 不阻塞反射
             logger.debug("[jepa-span-predictor] load failed", exc_info=True)
             cached = None
         self._jepa_span_cache = cached
@@ -1794,7 +1794,7 @@ class EngineReflectMixin:
             pv = [v for v in self._span_embed_text(prediction) if v is not None]
             av = [v for v in self._span_embed_text(actual) if v is not None]
             return self._span_surprise_from_vecs(pv, av, w)
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001 — predictor 前向失败回落无匹, 不阻塞校验
             logger.debug("[jepa-span-predictor] forward failed", exc_info=True)
             return None
 
@@ -1808,7 +1808,7 @@ class EngineReflectMixin:
                     continue
                 out.append(self._jepa_embed_text(s))
             return out
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001 — span 嵌入失败回落空表, 不阻塞
             logger.debug("[jepa-span-predictor] span embed failed", exc_info=True)
             return []
 
