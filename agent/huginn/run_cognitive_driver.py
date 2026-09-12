@@ -35,7 +35,8 @@ def _summarize_result(r) -> dict:
 async def _main(objective: str, max_iterations: int) -> None:
     import os
     from pathlib import Path as P
-    ws = P("/tmp/huginn_autoloop_ws")
+    # 强机长期运行: 优先用持久目录(环境注入), 避免写 /tmp 被清
+    ws = P(os.environ.get("WORKSPACE_DIR", P("/tmp/huginn_autoloop_ws")))
     ws.mkdir(parents=True, exist_ok=True)
     eng = AutoloopEngine(workspace=str(ws), memory_manager=MemoryManager())
     result = await eng.run_cognitive(objective, max_iterations=max_iterations)
