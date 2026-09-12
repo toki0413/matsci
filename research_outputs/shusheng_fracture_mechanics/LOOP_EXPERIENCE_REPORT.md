@@ -971,4 +971,4 @@ harness 无权隐式/全局地武断定义"什么算证据"; 若为 trivial 目�
 这是把"让 agent 更有理由真执行"交给信号, 而不是用锁——原则的授权边界不被突破。
 
 > 待办/开放项：`audit.score_usage / governance.external_verify` 属软门禁非落地项；
-> 后续可把 taste taxonomy 固化为 Agent Skill 供任意域一键调用。
+> taste taxonomy 已固化：`/workspace/.trae/skills/taste-pose/SKILL.md`（跨域发问技能，可一键调用）。
