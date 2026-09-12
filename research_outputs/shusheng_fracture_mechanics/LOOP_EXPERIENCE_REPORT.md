@@ -1018,4 +1018,35 @@ phase 结果里真出现预期数值)——**它不是纯换名空转**。真正
 **A 线靶子修正**: 不再打"换名", 改打 **"把断言的答案升级成执行过的证据"**——前者模型过半已能做,
 后者 0/5。此为后续 A 线每一处改动的量化对比锚点。
 
+### 9.1 根因 + 两步落地 + 收口(2026-09-11, 执行层与裁决层解耦)
+
+**根因(代码可溯源)**: `validate` 的 `_metacog_check_completion`→`CompletionChecklist.is_complete`
+要求 `effort_floor_passed ∧ 无等价陷阱 ∧ 无否决 ∧ unexplored_count>=1`。对"收敛即对的闭式题",
+"无未探索项"恰是正确结果, 审计却把"没声明 open fronts"当成"过早收敛"硬判死——即使算对了也
+强制 `tests_passed=False`(基线 5/5 goal=False 的主因之一)。
+
+**落地① 裁决层分流(方案1)**: `engine_reflect._validate` 加"收敛类型分流"——闭式题若持有
+"真实执行过并打印数值"的脚本证据, 不再被 effort-floor 硬拦。配套 `_extract_run_snippet` /
+`_run_snippet_to_output` / `_is_closed_form_solved`: **必须 subprocess 真跑通并出数才算证据**,
+纯文本断言/抄 objective 无法骗过(单元验证: 真实脚本→True, 纯文本/None→False)。
+
+**落地② 执行层内建(平衡点)**: 认识到 coding runner 与 science agent 本是一前一后, 不应对立。
+`engine_act._execute` 加内建执行快速路径——对"确定性数值目标"(plan 带可运行片段, 或
+`_is_deterministic_numeric(objective)` 判定通过), 由 **harness 主动请求一段最小 probe 并运行**
+(`_request_numeric_probe` + `_run_snippet_to_output`), 让"产出执行证据"从模型的 privilege
+变成 execute 的内建动作; 模型无片段时按 objective 兜底判定。危险调用(os/sys/subprocess 等)
+被安全过滤拒用。**隔离单元验证通过**: 确定性目标 `_execute` → `probe_exec`/`50000.0` →
+validate 判 `is_closed_form_solved=True`。
+
+**live 单题重跑结果**: goal 仍 False (探针 0 命中)。metacog 显示循环内部其实算了
+`σ=500/0.01=50000 Pa`, 但**未把它落成可执行证据**, 又被 metacog 当作"换名"。剩余症结是
+"模型算得出却不上交成脚本证据 + execute 到 run_cognitive 的路由细节", 属高成本的纯模型/
+路由深坑。
+
+**收口决定(诚实)**: A 线执行步到此为止。离线可验证的**分层架构是对的**——执行 on-code、
+裁决 on-science; 机制已落地且隔离验证通过、不回归。但 **live 闭环里目标能否翻转 goal 未被确认**,
+继续无脑重跑只磨无值。这段的价值是精确结论:
+> **A 线病根不在 harness 拦错(已双向修复), 而在模型不把算出的答案落成可执行证据; harness
+> 能验证执行证据, 但不能无中生有地制造它。**
+
 > 备注: 原"待办/开放项"中 `audit.score_usage / governance.external_verify` 属软门禁非落地项, 保留为待办。
