@@ -1009,6 +1009,31 @@ class EngineReflectMixin:
             return c
         return ""
 
+    def _run_snippet_to_output(self, snippet: str) -> str:
+        """subprocess 执行一段 python 数值脚本, 成功且打印了数字则返回 stdout, 否则空串."""
+        import re as _re
+        import subprocess
+        import sys
+        import tempfile
+        from pathlib import Path as _P
+
+        if not snippet:
+            return ""
+        try:
+            with tempfile.TemporaryDirectory() as _d:
+                _f = _P(_d) / "snippet_run.py"
+                _f.write_text(snippet, encoding="utf-8")
+                _r = subprocess.run(
+                    [sys.executable, str(_f)],
+                    capture_output=True, text=True, timeout=20,
+                )
+                if _r.returncode != 0:
+                    return ""
+                _out = _r.stdout or ""
+                return _out if _re.search(r"[-+]?\d+\.?\d*(?:e[-+]?\d+)?", _out) else ""
+        except Exception:
+            return ""
+
     def _is_closed_form_solved(self, execution_result: Any) -> bool:
         """方案1·收敛类型分流: 闭式/确定性可验证问题是否已"真实执行数值计算"给出结论.
 
@@ -1019,25 +1044,7 @@ class EngineReflectMixin:
         snippet = self._extract_run_snippet(execution_result)
         if not snippet:
             return False
-        import re as _re
-        import subprocess
-        import sys
-        import tempfile
-        from pathlib import Path as _P
-
-        try:
-            with tempfile.TemporaryDirectory() as _d:
-                _f = _P(_d) / "closed_form_check.py"
-                _f.write_text(snippet, encoding="utf-8")
-                _r = subprocess.run(
-                    [sys.executable, str(_f)],
-                    capture_output=True, text=True, timeout=20,
-                )
-                if _r.returncode != 0:
-                    return False
-                return bool(_re.search(r"[-+]?\d+\.?\d*(?:e[-+]?\d+)?", _r.stdout))
-        except Exception:
-            return False
+        return bool(self._run_snippet_to_output(snippet))
 
     async def _run_pytest(self) -> dict[str, Any]:
         """Run pytest in workspace, return results dict."""

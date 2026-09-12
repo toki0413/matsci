@@ -157,6 +157,37 @@ class EngineActMixin:
         mode = plan.get("mode", "coder")
         description = plan.get("description", "")
 
+        # 方案1·攻 execute (2026-09-11 A线根因后半段): 平面 plan 若已带"可运行的数值脚本片段"
+        # (如 plan 的 code/script/plan_code 字段或 description 里的 ```python 块), 就走
+        # 快速路径把它"真实执行"成数值证据, 而不是让 decide 分派到 explore(空转返回摘要)。
+        # 这正合 _is_closed_form_solved 的判定: 可执行→已执行→产出数字 = 诚实证据,
+        # 无法靠把 objective 抄进文本骗过(纯文本没有可执行片段)。plan 没有片段 → 走原分派, 不回归。
+        try:
+            _snip = self._extract_run_snippet(plan)
+            if _snip:
+                _cout = self._run_snippet_to_output(_snip)
+                if _cout:
+                    result = {
+                        "mode": "closed_form_exec",
+                        "status": "completed",
+                        "success": True,
+                        "result": _cout.strip(),
+                        "script": _snip,
+                        "reproducible": True,
+                    }
+                    self._record_provenance("closed_form_exec", plan, result)
+                    self._last_execution_result = {
+                        "_tool_name": "closed_form_exec",
+                        "_tool_input": plan,
+                        "result": result,
+                    }
+                    logger.info(
+                        "execute closed-form fast-path: plan 内含可运行数值片段, 已真实执行 → evidence"
+                    )
+                    return result
+        except Exception as exc:
+            logger.debug("execute closed-form fast-path failed (fall through)", exc_info=True)
+
         # H4: toggle on 时从 PhaseRegistry 取 dispatch_table 替代 hardcode if/elif
         # ponytail: dispatch_table 存 [method_name, arg_mode], arg_mode 决定传
         # plan 还是 description (executor 签名不统一, 不改签名最小 diff).
