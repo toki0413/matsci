@@ -126,7 +126,7 @@ from huginn.autoloop.engine_perceive import EnginePerceiveMixin  # noqa: E402
 from huginn.autoloop.engine_reflect import EngineReflectMixin  # noqa: E402
 from huginn.autoloop.goal_scheduler import GoalScheduler  # noqa: E402
 from huginn.autoloop.hypothesis_loop import HypothesisMixin  # noqa: E402
-from huginn.autoloop.math_validation import MathValidationMixin  # noqa: E402
+from huginn.autoloop.math_validation import MathValidator  # noqa: E402
 from huginn.autoloop.phase_gate import (  # noqa: E402
     PhaseGateHook,
 )
@@ -274,7 +274,6 @@ class AutoloopEngine(
     EngineReflectMixin,
     EngineControlMixin,
     PlanCheckMixin,
-    MathValidationMixin,
     VisualInspectMixin,
     CognitiveLoopMixin,
     HypothesisMixin,
@@ -340,6 +339,10 @@ class AutoloopEngine(
         # 共享 MemoryManager: 由 agent/CLI 传入, 避免引擎私有实例和 agent 的
         # memory 隔离. 默认 None 时 new 一个, 保持向后兼容.
         self.memory = memory_manager or MemoryManager()
+        # 去 mixin 阶段1: MathValidationMixin → MathValidator 协作对象.
+        # engine_reflect.py:133/153 通过薄委托方法 _run_math_validation /
+        # _collect_math_evidence 走这里, 调用点零改动.
+        self._math_validator = MathValidator(self)
         self.kg = ProjectKnowledgeGraph(root=self.workspace)
         # 假设图: 跟踪 hypothesis 的 support/refute/derive 关系,
         # refute 时触发 RedTeam 审查 → 修正假设入队, 形成闭环
@@ -679,6 +682,26 @@ class AutoloopEngine(
         # P2-7: token/cost 硬刹车预算. 每次 LLM 调用后 update, 超硬上限抛 BudgetExhausted.
         # 默认 10M tokens / $50, 长任务/极限模式用 HUGINN_TOKEN_BUDGET / HUGINN_COST_BUDGET 覆盖.
         self._token_budget: TokenBudget = TokenBudget()
+
+    # ── 去 mixin 阶段1: MathValidator 薄委托 ────────────────────
+    # 原 MathValidationMixin 的 3 个方法下沉为 MathValidator 协作对象 (self._math_validator).
+    # 下面 3 个同名薄委托方法保留, 让既有 self.method() 调用点 (engine_reflect.py:133/153)
+    # 与外部引用零改动. 委托路径引擎状态经 duck-typed engine 由 validator 读取.
+
+    async def _run_math_validation(self, execution_result: Any) -> dict[str, Any]:
+        return await self._math_validator.run(execution_result)
+
+    async def _collect_math_evidence(
+        self, execution_result: Any, math_validation: dict
+    ) -> dict[str, Any]:
+        return await self._math_validator.collect_math_evidence(
+            execution_result, math_validation
+        )
+
+    def _verify_via_gp(self, hyp_id: str, validation: dict) -> dict:
+        return self._math_validator.verify_via_gp(
+            hyp_id, validation
+        )
 
     # ── H5-a: 模型选择 ────────────────────────────────────────────
     # 统一模型选择入口. 多模型配置 (config.models 非空) 时走 model_router

@@ -1,9 +1,12 @@
-"""MathValidationMixin - math_validation 方法族, 从 engine.py 下沉.
+"""MathValidator - math_validation 方法族, 从 engine.py 沉下来的独立协作对象.
 
-P2 slim-down: 3 个 math validation 方法从 engine.py 迁入, 定义为 mixin class.
-engine 通过多继承接入, 方法内通过 self 访问 engine 状态字段
-(_last_execution_result / workspace / settings) 和 engine 方法
-(_query_kb_reference).
+Engine 方法族去 mixin化 阶段1: 原 MathValidationMixin(387 行/3 方法) 改为普通类
+MathValidator. 引擎经组合持有 self._math_validator = MathValidator(self),
+保留同名薄委托方法 (_run_math_validation / _collect_math_evidence / _verify_via_gp)
+→ 既有 self.method() 调用点零改动. 不再靠多继承把认知中枢堆成 god-class.
+
+协作对象通过 duck-typed engine 访问引擎状态: engine.workspace / engine.settings /
+engine._query_kb_reference / engine._last_execution_result.
 """
 
 from __future__ import annotations
@@ -15,10 +18,28 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-class MathValidationMixin:
-    """math_validation 方法族. 通过 self 访问 engine 状态."""
+class MathValidator:
+    """math_validation 方法族协作对象. 构造收引擎, 经 self.engine 访问状态."""
 
-    async def _run_math_validation(self, execution_result: Any) -> dict[str, Any]:
+    def __init__(self, engine: Any) -> None:
+        self.engine = engine
+
+    @property
+    def workspace(self) -> Any:
+        return self.engine.workspace
+
+    @property
+    def settings(self) -> Any:
+        return self.engine.settings
+
+    def _query_kb_reference(self, equations: Any, lagrangian: Any) -> Any:
+        return self.engine._query_kb_reference(equations, lagrangian)
+
+    @property
+    def _last_execution_result(self) -> Any:
+        return getattr(self.engine, "_last_execution_result", None)
+
+    async def run(self, execution_result: Any) -> dict[str, Any]:
         """把执行结果里的数学结构抽出来, 用数学工具做形式化校验.
 
         三个独立子项, 互不影响:
@@ -127,7 +148,7 @@ class MathValidationMixin:
 
         return out
 
-    def _verify_via_gp(self, hyp_id: str, validation: dict) -> dict:
+    def verify_via_gp(self, hyp_id: str, validation: dict) -> dict:
         """循环B: 用 GP 数值验证做独立路径. 与符号演绎 (循环A) 基底正交.
 
         升级: fit + leave-one-out 风格 predict, 检查后验均值与实验值
@@ -139,7 +160,7 @@ class MathValidationMixin:
         对假设的 testable_prediction 做数值区间解析, 用 KL(GP_posterior
         || hypothesis_interval) 代替 ±2σ 检查.
         """
-        exec_res = getattr(self, "_last_execution_result", None)
+        exec_res = self._last_execution_result
         X = y = X_test = y_test = None
         for cand in (validation, exec_res if isinstance(exec_res, dict) else {}):
             X = cand.get("X") or cand.get("x_data") or cand.get("samples")
@@ -214,7 +235,7 @@ class MathValidationMixin:
         except Exception as e:
             return {"agrees": False, "reason": f"GP verify error: {e}"}
 
-    async def _collect_math_evidence(
+    async def collect_math_evidence(
         self, execution_result: Any, math_validation: dict
     ) -> dict[str, Any]:
         """从 execution_result + math_validation 抽 5 个数学证据 key,
