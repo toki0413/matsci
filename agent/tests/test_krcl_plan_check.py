@@ -24,6 +24,11 @@ def _make_engine(iteration: int = 35, workspace: Path | None = None):
     from huginn.autoloop.engine import AutoloopEngine
 
     eng = AutoloopEngine.__new__(AutoloopEngine)
+    # 属性桥 (engine.py SignalBridge) 对所有 SIGNAL_NAMES 字段读写都经 self.signals。
+    # __new__ 绕过 __init__, 必须先挂 signals 再写 _iteration 等环信号字段, 否则 AttributeError.
+    from huginn.autoloop.signals import EngineSignals
+
+    eng.signals = EngineSignals()
     eng._iteration = iteration
     eng._plan_check_history = []
     eng._plan_check_last_result = None
