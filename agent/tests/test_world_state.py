@@ -181,13 +181,13 @@ def test_module_reconcile_r_phys_folds_or_passthrough():
 
 def test_world_catalog_block_lists_registered_tools():
     """autoloop 注入: 世界模型注册表列出 ToolSpec 解析前向真值 (advisory, 零 LLM)."""
-    from huginn.autoloop.engine_observe import EngineObserveMixin
+    from huginn.autoloop.engine_observe import EngineObserve
     from huginn.security.tool_registry import registered_tools
 
-    class _Dummy(EngineObserveMixin):
+    class _Dummy(EngineObserve):
         pass
 
-    block = _Dummy()._build_world_catalog_block()
+    block = _Dummy(object())._build_world_catalog_block()
     assert "已注册解析世界模型" in block
     assert "ideal_gas" in block
     assert "observables=[p,T]" in block
@@ -196,12 +196,12 @@ def test_world_catalog_block_lists_registered_tools():
 
 def test_world_model_block_includes_catalog_when_no_memory():
     """无长程记忆时仍注入解析世界模型注册表, 不因缺相似历史而空转."""
-    from huginn.autoloop.engine_observe import EngineObserveMixin
+    from huginn.autoloop.engine_observe import EngineObserve
 
-    class _Dummy(EngineObserveMixin):
+    class _Dummy(EngineObserve):
         pass
 
-    block = _Dummy()._build_world_model_block("hypothesis test")
+    block = _Dummy(object())._build_world_model_block("hypothesis test")
     assert "已注册解析世界模型" in block
 
 
@@ -488,12 +488,12 @@ def test_tracker_observe_produces_bayesian_posterior():
 
 # ── token 瘦身: to_prompt 只带结论 ─────────────────────────────
 def _dummy_mixin():
-    from huginn.autoloop.engine_observe import EngineObserveMixin
+    from huginn.autoloop.engine_observe import EngineObserve
 
-    class _Dummy(EngineObserveMixin):
+    class _Dummy(EngineObserve):
         pass
 
-    return _Dummy()
+    return _Dummy(object())
 
 
 def test_snapshot_to_prompt_keeps_identifiable_and_diff():

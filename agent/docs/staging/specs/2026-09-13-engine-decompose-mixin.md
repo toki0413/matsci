@@ -48,7 +48,14 @@
   - `test_krcl_plan_check.py`: mock 边界从引擎移到 checker（`eng._plan_check` → `eng._plan_checker._plan_check`）——因 `_plan_check_and_refine` 是 PlanCheck 自身方法，引擎实例覆盖不再拦截内部同名步骤；`_make_engine` 挂 `_plan_checker` + checker 上 mock 持久化。
   - 附带修复（历史遗留）：`test_lucid_prereqs.py::_make_engine_with_graph` 与 `test_math_prompt_injection.py` fixture 用 `__new__` 绕过 `__init__` 却缺 `signals`，补 `engine.signals = EngineSignals()`（SignalBridge 前置依赖）。
   - 证据：`test_engine_decomposed.py` 阶段6 5 项 + `test_krcl_plan_check.py` 58 项 + `test_lucid_prereqs.py` plan-routing 类 + autoloop 回归无新增失败。
-- **后续阶段（各自横轮，逐个 PR）**：`EngineObserve`(1560)→`EngineReflect`(3469)→`HypothesisLoop`(2969)→`CognitiveLoop`(3591)。由小到大、状态写最少者优先。
+- **阶段7（本 spec 后续）**：`EngineObserveMixin` → `EngineObserve`。 ✅ 已落地（2026-09-13）
+  - 36 个 prompt 拼装 + 元认知方法 (含 `_build_hypothesis_prompt` / `_apply_block_patches` / `_trim_to_budget` / `_build_pmk_block` / metacog getters/checkers) 下沉为普通类 `EngineObserve(engine)` → 全属性转发 + own-method 覆写槽 `_OWN_ATTRS`。
+  - **类常量桥**：`_MATH_DEPTH_PROMPT_BLOCK` / `_PROMPT_BUDGET` / `_PROMPT_BUDGET_BY_PHASE` / `_IMAGINATION_PROMPT_BLOCK` 需保持 `AutoloopEngine._X` 类级访问与 plan_check 转发读取 → 在 engine 加同名字段引用观察对象类常量。
+  - **duck-typed 类方法兼容**：`trigger_isomorphic_anomaly_hypothesis` / `trigger_alignment_surprise_hypothesis` 被 `metacog/hypothesis_manifold`、`cli/rcb_cognition` 当纯类方法调用（传 stub engine，无 `_engine_observer`）→ 委托方法用 `getattr(self, "_engine_observer", None)`，缺时回退 `EngineObserve.<method>(self, ...)` 以维持 stub 兼容（两方法只读 `_hypothesize/_last_hypothesis/_last_raw_hypothesis`）。
+  - `engine.py`: 移出 base、`__init__` 加 `self._engine_observer = EngineObserve(self)`、保留 36 个薄委托方法 → 调用点 cognitive_loop/engine_reflect/hypothesis_loop/engine_act/plan_check 零改动。
+  - 测试迁移：`test_hypothesis_loop` TestTopologyPromptInjection 由 `object.__new__(EngineObserveMixin)` → `AutoloopEngine.__new__` + `_engine_observer`；`test_world_state` 由 `_Dummy()` → `_Dummy(object())`（stub engine，方法经 getattr default 走转发）。
+  - 证据：`test_engine_decomposed.py` 阶段7 5 项 + `test_world_state` + `test_hypothesis_loop` + `test_autoloop_engine/eventsourcing/phase_gate/cognitive` + arch 门禁全绿。
+- **后续阶段（各自横轮，逐个 PR）**：`EngineReflect`(3469)→`HypothesisLoop`(2969)→`CognitiveLoop`(3591)。由小到大、状态写最少者优先。
 
 ## contract（阶段1 接口）
 - 新 `huginn/autoloop/math_validation.py::MathValidator`：`__init__(self, engine)`（duck-typed，读 `engine.workspace/settings`、调 `engine._query_kb_reference`）；`async run(execution_result) -> dict`（等价原 `_run_math_validation`）。

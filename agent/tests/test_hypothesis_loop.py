@@ -639,9 +639,11 @@ class TestTopologyPromptInjection:
     """B/C 路径: _metacog_last_topology 信号回灌到 _build_hypothesis_prompt."""
 
     def test_topology_block_appears_when_signals_present(self):
-        from huginn.autoloop.engine_observe import EngineObserveMixin
+        from huginn.autoloop.engine import AutoloopEngine
+        from huginn.autoloop.engine_observe import EngineObserve
 
-        obj = object.__new__(EngineObserveMixin)
+        obj = AutoloopEngine.__new__(AutoloopEngine)
+        obj._engine_observer = EngineObserve(obj)
         obj._metacog_last_topology = {
             "h1": 0,
             "betti": (1, 1),
@@ -679,9 +681,11 @@ class TestTopologyPromptInjection:
         assert "H¹=0" in prompt
 
     def test_topology_block_empty_when_no_audit(self):
-        from huginn.autoloop.engine_observe import EngineObserveMixin
+        from huginn.autoloop.engine import AutoloopEngine
+        from huginn.autoloop.engine_observe import EngineObserve
 
-        obj = object.__new__(EngineObserveMixin)
+        obj = AutoloopEngine.__new__(AutoloopEngine)
+        obj._engine_observer = EngineObserve(obj)
         obj._metacog_last_topology = None
         import unittest.mock as _m
         obj._apply_block_patches = lambda blocks, phase: blocks

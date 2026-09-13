@@ -26,6 +26,11 @@ def engine() -> AutoloopEngine:
     from huginn.autoloop.plan_check import PlanCheck
 
     eng._plan_checker = PlanCheck(eng)  # type: ignore[attr-defined]
+    # 去 mixin 阶段7: EngineObserve 协作对象 — _build_hypothesis_prompt /
+    # _build_plan_prompt 的 block 辅助方法经引擎薄委托转发到它.
+    from huginn.autoloop.engine_observe import EngineObserve
+
+    eng._engine_observer = EngineObserve(eng)  # type: ignore[attr-defined]
     # 信号桥 (engine SignalBridge): _iteration 等环信号字段读写都经 self.signals,
     # __new__ 绕过 __init__ 需手动挂载, 否则 _iteration 赋值/读取报错.
     from huginn.autoloop.signals import EngineSignals

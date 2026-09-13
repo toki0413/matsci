@@ -117,7 +117,7 @@ def _autoloop_streaming_enabled() -> bool:
 from huginn.autoloop.cognitive_loop import CognitiveLoopMixin  # noqa: E402
 from huginn.autoloop.engine_act import EngineAct  # noqa: E402
 from huginn.autoloop.engine_control import EngineControl  # noqa: E402
-from huginn.autoloop.engine_observe import EngineObserveMixin  # noqa: E402
+from huginn.autoloop.engine_observe import EngineObserve  # noqa: E402
 
 # P3 slim-down: 5 个 engine_* mixin (perceive/observe/act/reflect/control) 把
 # AutoloopEngine 的方法族拆到独立模块. mixin 通过 self 访问 engine 状态,
@@ -268,7 +268,6 @@ def _extract_tests_passed(validation: Any) -> bool:
 
 
 class AutoloopEngine(
-    EngineObserveMixin,
     EngineReflectMixin,
     CognitiveLoopMixin,
     HypothesisMixin,
@@ -281,6 +280,13 @@ class AutoloopEngine(
     Method 分组 (P3 slim-down): perceive/observe/act/reflect/control 方法族
     已拆到 engine_*.py mixin 模块, 本文件保留 __init__ + 对齐数据 + 懒加载访问器.
     """
+
+    # 去 mixin 阶段7: EngineObserve 类常量桥 — 观察对象常量下沉后留引用,
+    # 保持 AutoloopEngine._X 类级访问 + plan_check 经转发读取均可用.
+    _PROMPT_BUDGET = EngineObserve._PROMPT_BUDGET
+    _PROMPT_BUDGET_BY_PHASE = EngineObserve._PROMPT_BUDGET_BY_PHASE
+    _MATH_DEPTH_PROMPT_BLOCK = EngineObserve._MATH_DEPTH_PROMPT_BLOCK
+    _IMAGINATION_PROMPT_BLOCK = EngineObserve._IMAGINATION_PROMPT_BLOCK
 
     def __init__(
         self,
@@ -347,6 +353,9 @@ class AutoloopEngine(
         # 去 mixin 阶段6: PlanCheck 协作对象. plan_check 方法族经薄委托,
         # 引擎字段/方法经 full 属性转发读写.
         self._plan_checker = PlanCheck(self)
+        # 去 mixin 阶段7: EngineObserve 协作对象. prompt 拼装 + 元认知方法族经薄委托,
+        # 引擎字段/方法经 full 属性转发读写.
+        self._engine_observer = EngineObserve(self)
         # 去 mixin 阶段2: EnginePerceive 协作对象. perceive 相关方法经薄委托走这里,
         # 引擎级共享缓存(_kb/_perception/_persona_manager)仍留在 engine, perceiver 经转发读写.
         self._engine_perceiver = EnginePerceive(self)
@@ -1099,6 +1108,142 @@ class AutoloopEngine(
         return await self._plan_checker._refine_plan(
             plan, check, hypothesis, context
         )
+
+    # ── 去 mixin 阶段7: EngineObserve 薄委托 ──────────────────────
+    # prompt 拼装 + 元认知方法族已下沉为 EngineObserve 协作对象 (self._engine_observer).
+    # 被 cognitive_loop / engine_reflect / hypothesis_loop / engine_act / plan_check
+    # 大量调用, 薄委托保留同名签名, 调用点零改动.
+
+    @staticmethod
+    def _compress_block(name: str, text: str, level: int) -> str:
+        return EngineObserve._compress_block(name, text, level)
+
+    def _scan_block_conflicts(self, blocks: list[tuple[str, str]]) -> str:
+        return self._engine_observer._scan_block_conflicts(blocks)
+
+    def _get_prompt_budget(self, phase: str | None) -> int:
+        return self._engine_observer._get_prompt_budget(phase)
+
+    @staticmethod
+    def _files_jaccard(a: list[str], b: list[str]) -> float:
+        return EngineObserve._files_jaccard(a, b)
+
+    def _is_related_chain(self, current_files: list[str], threshold: float = 0.3) -> bool:
+        return self._engine_observer._is_related_chain(current_files, threshold)
+
+    def _apply_block_patches(
+        self, blocks: list[tuple[str, str]], phase: str,
+    ) -> list[tuple[str, str]]:
+        return self._engine_observer._apply_block_patches(blocks, phase)
+
+    def _trim_to_budget(
+        self, blocks: list[tuple[str, str]], *, phase: str,
+    ) -> str:
+        return self._engine_observer._trim_to_budget(blocks, phase=phase)
+
+    def _persona_system_prompt(self, persona_name: str | None) -> str:
+        return self._engine_observer._persona_system_prompt(persona_name)
+
+    def _build_curiosity_block(self) -> str:
+        return self._engine_observer._build_curiosity_block()
+
+    def _build_world_model_block(self, hypothesis: str) -> str:
+        return self._engine_observer._build_world_model_block(hypothesis)
+
+    def _build_world_catalog_block(self, domains: set[str] | None = None) -> str:
+        return self._engine_observer._build_world_catalog_block(domains)
+
+    @staticmethod
+    def _matching_domains(hypothesis: str) -> set[str] | None:
+        return EngineObserve._matching_domains(hypothesis)
+
+    def _build_metacog_imagery_block(self, context: dict[str, Any]) -> str:
+        return self._engine_observer._build_metacog_imagery_block(context)
+
+    @staticmethod
+    def _imagery_value(v: Any) -> Any:
+        return EngineObserve._imagery_value(v)
+
+    def _pick_imagery_spec(self, context: dict[str, Any]) -> str:
+        return self._engine_observer._pick_imagery_spec(context)
+
+    def _build_skill_context_block(self) -> str:
+        return self._engine_observer._build_skill_context_block()
+
+    def _episodic_replay(self):
+        return self._engine_observer._episodic_replay()
+
+    def _build_episodic_replay_block(self, context: dict[str, Any]) -> str:
+        return self._engine_observer._build_episodic_replay_block(context)
+
+    def _build_pmk_block(self, context: dict[str, Any]) -> str:
+        return self._engine_observer._build_pmk_block(context)
+
+    def _format_pmk_fallback(self, pmk_state: dict, inconsistent: bool) -> str:
+        return self._engine_observer._format_pmk_fallback(pmk_state, inconsistent)
+
+    def _write_pmk_conflict_to_episodic(self, pmk_state: dict, reason: str):
+        return self._engine_observer._write_pmk_conflict_to_episodic(pmk_state, reason)
+
+    def _ensure_hypo_manifold(self, context: dict[str, Any]) -> Any:
+        return self._engine_observer._ensure_hypo_manifold(context)
+
+    def _build_hypothesis_prompt(self, context: dict[str, Any]) -> str:
+        return self._engine_observer._build_hypothesis_prompt(context)
+
+    def _get_metacog_auditor(self):
+        return self._engine_observer._get_metacog_auditor()
+
+    def _get_metacog_block_registry(self):
+        return self._engine_observer._get_metacog_block_registry()
+
+    def _get_metacog_method_registry(self):
+        return self._engine_observer._get_metacog_method_registry()
+
+    def _get_metacog_convergence_detector(self):
+        return self._engine_observer._get_metacog_convergence_detector()
+
+    def _get_metacog_completion_auditor(self):
+        return self._engine_observer._get_metacog_completion_auditor()
+
+    async def trigger_isomorphic_anomaly_hypothesis(
+        self, anomaly_pairs: list[tuple[str, str]],
+    ) -> list[str]:
+        obs = getattr(self, "_engine_observer", None)
+        if obs is not None:
+            return await obs.trigger_isomorphic_anomaly_hypothesis(anomaly_pairs)
+        # 兼容 duck-typed 类方法调用: 传 stub engine (无 _engine_observer).
+        return await EngineObserve.trigger_isomorphic_anomaly_hypothesis(
+            self, anomaly_pairs)
+
+    async def trigger_alignment_surprise_hypothesis(
+        self, surprise_findings: list[tuple[str, float]],
+    ) -> list[str]:
+        obs = getattr(self, "_engine_observer", None)
+        if obs is not None:
+            return await obs.trigger_alignment_surprise_hypothesis(surprise_findings)
+        # 兼容 duck-typed 类方法调用: 传 stub engine (无 _engine_observer).
+        return await EngineObserve.trigger_alignment_surprise_hypothesis(
+            self, surprise_findings)
+
+    def _metacog_check_effort_floor(self) -> tuple[bool, str]:
+        return self._engine_observer._metacog_check_effort_floor()
+
+    def _metacog_check_completion(self) -> tuple[bool, str]:
+        return self._engine_observer._metacog_check_completion()
+
+    def _metacog_check_topology_collapse(self) -> None:
+        self._engine_observer._metacog_check_topology_collapse()
+
+    def _metacog_component_representatives(self) -> list[str]:
+        return self._engine_observer._metacog_component_representatives()
+
+    def _metacog_dominant_family(self) -> str:
+        return self._engine_observer._metacog_dominant_family()
+
+    @staticmethod
+    def _extract_lucid_prereqs(raw: str) -> dict[str, str]:
+        return EngineObserve._extract_lucid_prereqs(raw)
 
     # ── H5-a: 模型选择 ────────────────────────────────────────────
     # 统一模型选择入口. 多模型配置 (config.models 非空) 时走 model_router

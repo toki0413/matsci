@@ -360,3 +360,71 @@ def test_plan_checker_override_plan_mode_forwards_state() -> None:
     eng._consecutive_failures = 5
     out = eng._override_plan_mode(dict(plan))
     assert out["mode"] == "explore"  # 连败 → 强制 explore
+
+
+# ===== 阶段7: EngineObserve =====
+
+def test_no_observe_mixin_in_bases() -> None:
+    from huginn.autoloop.engine import AutoloopEngine
+    from huginn.autoloop.engine_observe import EngineObserve
+
+    assert EngineObserve not in AutoloopEngine.__bases__, (
+        "AutoloopEngine 仍把 EngineObserve 当作基类 —— 去 mixin 阶段7 未完成"
+    )
+
+
+def test_observe_delegation_methods_still_present() -> None:
+    from huginn.autoloop.engine import AutoloopEngine
+
+    for name in (
+        "_build_hypothesis_prompt",
+        "_build_curiosity_block",
+        "_apply_block_patches",
+        "_trim_to_budget",
+        "_get_metacog_auditor",
+        "_metacog_check_completion",
+        "trigger_isomorphic_anomaly_hypothesis",
+        "_extract_lucid_prereqs",
+        "_persona_system_prompt",
+    ):
+        assert hasattr(AutoloopEngine, name), f"EngineObserve 委托方法 {name} 缺失"
+
+
+def test_engine_new_holds_observer() -> None:
+    from huginn.autoloop.engine import AutoloopEngine
+    from huginn.autoloop.engine_observe import EngineObserve
+
+    eng = AutoloopEngine.__new__(AutoloopEngine)
+    eng._engine_observer = EngineObserve(eng)
+    assert isinstance(eng._engine_observer, EngineObserve)
+
+
+def test_engine_observe_class_constants_bridged() -> None:
+    """类常量桥: AutoloopEngine 保留 _MATH_DEPTH_PROMPT_BLOCK 等类级访问."""
+    from huginn.autoloop.engine import AutoloopEngine
+    from huginn.autoloop.engine_observe import EngineObserve
+
+    for name in (
+        "_PROMPT_BUDGET",
+        "_PROMPT_BUDGET_BY_PHASE",
+        "_MATH_DEPTH_PROMPT_BLOCK",
+        "_IMAGINATION_PROMPT_BLOCK",
+    ):
+        assert getattr(AutoloopEngine, name) == getattr(EngineObserve, name), (
+            f"常量桥 {name} 不一致"
+        )
+
+
+def test_observe_static_and_instance_delegation() -> None:
+    """委托零参-静态方法真可调: _files_jaccard 纯函数经静态委托."""
+
+    def _engine() -> "AutoloopEngine":
+        from huginn.autoloop.engine import AutoloopEngine
+        from huginn.autoloop.engine_observe import EngineObserve
+
+        eng = AutoloopEngine.__new__(AutoloopEngine)
+        eng._engine_observer = EngineObserve(eng)
+        return eng
+
+    eng = _engine()
+    assert eng._files_jaccard(["a.py", "b.py"], ["a.py"]) == 1 / 2
