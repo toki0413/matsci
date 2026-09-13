@@ -34,16 +34,22 @@ _ROOT = os.path.dirname(os.path.abspath(os.path.dirname(__file__)))
 if "/workspace/agent" not in sys.path:
     sys.path.insert(0, "/workspace/agent")
 
-KEY = open("/tmp/intern_key").read().strip()
+KEY = os.environ.get("INTERN_KEY", open("/tmp/intern_key").read().strip())
 BASE = os.environ.get("INTERN_BASE", "https://chat.intern-ai.org.cn/api/v1")
 MODEL = os.environ.get("INTERN_MODEL", "intern-s1")
-MAX_TOKENS = int(os.environ.get("INTERN_MAX_TOKENS", "700"))
+MAX_TOKENS = int(os.environ.get("INTERN_MAX_TOKENS", "4000"))
 TEMP = float(os.environ.get("INTERN_TEMP", "0.9"))
+THINKING = os.environ.get("INTERN_THINKING", "1") == "1"
 
 
 def call_chat(system: str, user: str) -> str:
-    """调 Intern chat.completions(OpenAI 兼容, 走代理 env). 返回 assistant content."""
-    payload = json.dumps({
+    """调 Intern chat.completions(OpenAI 兼容, 走代理 env, 可开 thinking_mode).
+
+    thinking_mode=true 时书生的推理进独立通道, content 留最终回答;
+    因而 JSON 遵循率应显著提升(修掉此前 CoT 挤爆/截断问题)。
+    返回 assistant content 全文(含可能的 thinking 前缀, 解析时容错).
+    """
+    body = {
         "model": MODEL,
         "messages": [
             {"role": "system", "content": system},
@@ -51,16 +57,63 @@ def call_chat(system: str, user: str) -> str:
         ],
         "max_tokens": MAX_TOKENS,
         "temperature": TEMP,
-    }).encode()
+    }
+    if THINKING:
+        body["thinking_mode"] = True
+    payload = json.dumps(body).encode()
     req = urllib.request.Request(
         BASE.rstrip("/") + "/chat/completions",
         data=payload,
         headers={"Authorization": "Bearer " + KEY, "Content-Type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=240) as resp:
+    with urllib.request.urlopen(req, timeout=300) as resp:
         obj = json.loads(resp.read().decode())
-    return obj["choices"][0]["message"]["content"]
+    msg = obj["choices"][0]["message"]
+    # content 可能是 str; 若含独立 thinking 字段则忽略之, 只用 content
+    return msg.get("content") or msg.get("content_part") or ""
+
+
+def _last_json(text: str) -> dict | None:
+    """取文本中**最后一个**平衡 {...} 的字典(避开 thinking 叙事里首个 {})."""
+    depth = 0
+    start = -1
+    last = None
+    for i, ch in enumerate(text):
+        if ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}":
+            if depth > 0:
+                depth -= 1
+                if depth == 0 and start >= 0:
+                    try:
+                        last = json.loads(text[start:i + 1])
+                    except Exception:  # noqa: BLE001
+                        last = None
+    return last
+
+
+def _h_from_obj(obj: dict):
+    """从解析出的 dict 构造 Hypothesis(复刻 imagination 的字段校验)."""
+    from huginn.metacog.imagination import Hypothesis
+    desc = obj.get("new_description")
+    if not isinstance(desc, str) or not desc.strip():
+        return None
+    preds = obj.get("new_predictions")
+    if not isinstance(preds, dict) or not preds:
+        return None
+    try:
+        preds_clean = {str(k): float(v) for k, v in preds.items()}
+    except (TypeError, ValueError):
+        return None
+    try:
+        n_params = max(1, int(obj.get("new_n_params", 1)))
+    except (TypeError, ValueError):
+        n_params = 1
+    return Hypothesis(h_id="h_imagine_real", description=desc.strip(),
+                      predictions=preds_clean, n_params=n_params)
 
 
 def main():
@@ -83,7 +136,7 @@ def main():
     keys = ("conductivity", "mobility")
     records = []  # (transform, rep, predictions, description)
     transforms = ("algebraic", "topological", "order")
-    REPS = 4  # 每族采样, 判"单机制自发多源性"
+    REPS = int(os.environ.get("REPS", "3"))
     # 加固 JSON 约束, 抑制书生模型的自由推理(否则 JSON 被 CoT 挤到截断)
     _HARD_JSON = (
         "\nHARD RULES: Output ONLY a single, well-formed JSON object and nothing else. "
@@ -99,6 +152,9 @@ def main():
         for rep in range(REPS):
             text = call_chat(sys_t, usr_t)
             new_h = _parse_transform_response(text)
+            if new_h is None:  # thinking 叙事里首个 {} 误取 → 退回取最后一个 JSON
+                obj = _last_json(text)
+                new_h = _h_from_obj(obj) if obj else None
             if new_h is None:
                 print(f"[{tt:>9} rep={rep}] 解析失败 -> 跳过")
                 continue
