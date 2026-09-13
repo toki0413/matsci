@@ -9,7 +9,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from pathlib import Path
 
 import pytest
 
@@ -63,6 +63,7 @@ def test_rsi_uses_memory_not_prompt_field():
     import inspect
 
     from huginn.autoloop.engine import AutoloopEngine
+    from huginn.autoloop.engine_reflect import EngineReflect
 
     # __init__ 不应该有 _next_loop_directive 字段 (已迁到 memory)
     src_init = inspect.getsource(AutoloopEngine.__init__)
@@ -70,8 +71,10 @@ def test_rsi_uses_memory_not_prompt_field():
         "_next_loop_directive field should be removed — directive now goes to memory"
     )
 
-    # _generate_next_loop_directive 应该调 memory.remember
-    src_gen = inspect.getsource(AutoloopEngine._generate_next_loop_directive)
+    # _generate_next_loop_directive 应该调 memory.remember.
+    # 去 mixin 阶段8: 该方法已下沉为 EngineReflect 协作对象, 引擎上只剩薄委托,
+    # 所以源码断言要指向真实实现 (EngineReflect), 而不是引擎委托.
+    src_gen = inspect.getsource(EngineReflect._generate_next_loop_directive)
     assert "memory.remember" in src_gen or "self.memory.remember" in src_gen, (
         "_generate_next_loop_directive should write to memory.remember"
     )
@@ -89,19 +92,52 @@ def test_rsi_no_prompt_injection_in_main_loop():
     )
 
 
-@pytest.mark.asyncio
-async def test_generate_next_loop_directive_writes_memory():
-    """_generate_next_loop_directive 调 LLM 后把 directive 写入 memory.remember."""
+def _build_directive_engine(directive_fn):
+    """真实依赖构造: real EngineSignals(SignalBridge) + real MemoryManager + 真实
+    _llm_chat 适配器 (委托给一个真正可调用 directive_fn, 非 unittest.mock).
+
+    去 mixin 阶段8: _generate_next_loop_directive 已下沉为 EngineReflect 协作对象,
+    引擎 __new__ 绕过 __init__ 时需手动挂 real EngineSignals (SignalBridge 前置)."""
+    import tempfile
+
     from huginn.autoloop.engine import AutoloopEngine
+    from huginn.autoloop.engine_reflect import EngineReflect
+    from huginn.autoloop.signals import EngineSignals
+    from huginn.memory.manager import MemoryManager
 
     engine = AutoloopEngine.__new__(AutoloopEngine)
+    # 去 mixin 阶段8: _generate_next_loop_directive 是 EngineReflect 协作对象方法,
+    # 引擎对象 __new__ 绕过 __init__ 需手动挂 _engine_reflector.
+    engine._engine_reflector = EngineReflect(engine)
+    engine.signals = EngineSignals()
     engine._iteration = 3
-    engine._llm_chat = AsyncMock(return_value="Avoid RBF kernel, try Tanimoto next time.")
+    # 真实 _llm_chat 适配器: 委托给一个真正可调用 directive_fn (非 unittest.mock).
+    # EngineReflect._generate_next_loop_directive 经属性转发读到这个真实函数.
+    async def _llm_chat(prompt: str, **kw):
+        return directive_fn(prompt)
 
-    # mock memory.remember 捕获调用参数
-    remembered = []
-    engine.memory = MagicMock()
-    engine.memory.remember = lambda **kw: remembered.append(kw)
+    engine._llm_chat = _llm_chat
+    # 真实 long-term memory, 落临时 sqlite, 不污染 ~/.huginn.
+    tmpdir = Path(tempfile.mkdtemp(prefix="inkling-mem-"))
+    from huginn.memory.manager import MemoryConfig
+
+    engine.memory = MemoryManager(config=MemoryConfig(memory_dir=tmpdir))
+    return engine
+
+
+def _directive_memory_entries(engine):
+    """从真实 MemoryManager 读回 self_directive 类记忆."""
+    return engine.memory.recall("self_directive", category="self_directive", top_k=20)
+
+
+@pytest.mark.asyncio
+async def test_generate_next_loop_directive_writes_memory():
+    """_generate_next_loop_directive 调真实 LLM 后把 directive 写入真实 memory."""
+    from huginn.autoloop.engine import AutoloopEngine
+
+    engine = _build_directive_engine(
+        lambda prompt: "Avoid RBF kernel, try Tanimoto next time."
+    )
 
     await engine._generate_next_loop_directive(
         hypothesis="GP with RBF kernel will work",
@@ -110,27 +146,27 @@ async def test_generate_next_loop_directive_writes_memory():
         r_phys=0.2,
     )
 
-    assert len(remembered) == 1, "memory.remember should be called exactly once"
-    entry = remembered[0]
-    assert entry["category"] == "self_directive"
-    assert "rsi" in entry["tags"]
-    assert "Tanimoto" in entry["content"]
-    assert entry["tier"] == "mid"
+    entries = _directive_memory_entries(engine)
+    assert len(entries) >= 1, "self_directive should be stored in real memory"
+    top = entries[0]
+    assert top.get("category") == "self_directive"
+    tags = top.get("tags") or []
+    assert "rsi" in tags
+    assert "Tanimoto" in top.get("content", "")
+    assert top.get("tier") == "mid"
     # importance 跟 surprise 挂钩: surprise=0.8 → importance ≈ 0.5 + 0.32 = 0.82
-    assert entry["importance"] > 0.7, (
-        f"high surprise should boost importance, got {entry['importance']}"
+    assert top.get("importance", 0) > 0.7, (
+        f"high surprise should boost importance, got {top.get('importance')}"
     )
 
 
 @pytest.mark.asyncio
 async def test_generate_next_loop_directive_fails_silently():
-    """LLM call 失败时方法自身捕获异常, 不写 memory, 不抛."""
-    from huginn.autoloop.engine import AutoloopEngine
+    """真实 LLM 调用抛异常时方法自身捕获, 不写 memory, 不抛."""
+    def _boom(prompt: str):
+        raise RuntimeError("API down")
 
-    engine = AutoloopEngine.__new__(AutoloopEngine)
-    engine._iteration = 1
-    engine._llm_chat = AsyncMock(side_effect=RuntimeError("API down"))
-    engine.memory = MagicMock()
+    engine = _build_directive_engine(_boom)
 
     # 不应该抛
     try:
@@ -143,8 +179,11 @@ async def test_generate_next_loop_directive_fails_silently():
     except RuntimeError:
         pytest.fail("_generate_next_loop_directive should catch LLM errors internally")
 
-    # LLM 挂了, memory.remember 不应该被调
-    engine.memory.remember.assert_not_called()
+    # LLM 挂了, 真实 memory 里不该出现 self_directive
+    entries = _directive_memory_entries(engine)
+    assert not any(
+        "self-directive" in (e.get("content") or "") for e in entries
+    ), "LLM 失败时不应写 self_directive 记忆"
 
 
 # ── 3. Tool order randomization ─────────────────────────────────

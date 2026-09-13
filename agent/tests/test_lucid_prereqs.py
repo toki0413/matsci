@@ -63,7 +63,13 @@ class TestAttachLucidPrereqs:
     def _make_engine_with_graph(self):
         """轻量构造: 只装 hypothesis_graph, 不跑真实 init."""
         engine = object.__new__(AutoloopEngine)
-        from huginn.autoloop.hypothesis_loop import HypothesisGraph
+        from huginn.autoloop.hypothesis_loop import (
+            HypothesisGraph,
+            HypothesisLoop,
+        )
+        # 去 mixin 阶段9: _attach_lucid_prereqs 经引擎薄委托转发到 HypothesisLoop,
+        # object.__new__ 绕过 __init__ 需手动挂载.
+        engine._hypothesis_loop = HypothesisLoop(engine)
         engine.hypothesis_graph = HypothesisGraph()
         return engine
 
@@ -410,6 +416,11 @@ class TestRedteamClassification:
     def _make_engine_with_phase_gate(self, report=None):
         """构造带 phase_gate_hook 的 engine, reviewer_fn._last_report 可设."""
         engine = object.__new__(AutoloopEngine)
+        # 去 mixin 阶段9: _redteam_findings 经引擎薄委托转发到 HypothesisLoop,
+        # object.__new__ 绕过 __init__ 需手动挂载.
+        from huginn.autoloop.hypothesis_loop import HypothesisLoop
+
+        engine._hypothesis_loop = HypothesisLoop(engine)
 
         class _FakeReviewer:
             pass
@@ -449,12 +460,19 @@ class TestRedteamClassification:
     def test_redteam_findings_empty_when_no_reviewer(self):
         """phase_gate_hook.reviewer_fn 为 None → 返回空列表."""
         engine = object.__new__(AutoloopEngine)
+        # 去 mixin 阶段9: _redteam_findings 经引擎薄委托转发到 HypothesisLoop.
+        from huginn.autoloop.hypothesis_loop import HypothesisLoop
+
+        engine._hypothesis_loop = HypothesisLoop(engine)
         engine.phase_gate_hook = type("_FG", (), {"reviewer_fn": None})()
         assert engine._redteam_findings() == []
 
     def test_redteam_findings_empty_when_no_phase_gate(self):
         """phase_gate_hook 属性不存在 → 返回空列表 (不崩)."""
         engine = object.__new__(AutoloopEngine)
+        from huginn.autoloop.hypothesis_loop import HypothesisLoop
+
+        engine._hypothesis_loop = HypothesisLoop(engine)
         # 不设 phase_gate_hook
         assert engine._redteam_findings() == []
 
@@ -600,6 +618,9 @@ class TestCheckGateReviewer:
             }
             # 构造 engine: phase_gate_hook 是必需的
             engine = object.__new__(AutoloopEngine)
+            # 去 mixin 阶段5: _check_gate 经引擎薄委托转发到 EngineControl.
+            from huginn.autoloop.engine_control import EngineControl
+            engine._engine_controller = EngineControl(engine)
             engine.phase_gate_hook = PhaseGateHook()
             ok = engine._check_gate("plan", "execute", {"mode": "coder", "description": "x"})
             assert ok is True
@@ -624,6 +645,8 @@ class TestCheckGateReviewer:
             state.overrides.add(("plan", "execute"))
             # 不写 override_meta — 模拟老调用路径
             engine = object.__new__(AutoloopEngine)
+            from huginn.autoloop.engine_control import EngineControl
+            engine._engine_controller = EngineControl(engine)
             engine.phase_gate_hook = PhaseGateHook()
             ok = engine._check_gate("plan", "execute", {"mode": "coder", "description": "x"})
             assert ok is True

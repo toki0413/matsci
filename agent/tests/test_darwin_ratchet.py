@@ -19,6 +19,16 @@ from huginn.autoloop.hypothesis_loop import (
 def _make_engine():
     # 跳过 __init__ (会触发 get_model 报 ValueError), 只塞 _darwin_ratchet_check 需要的字段
     eng = AutoloopEngine.__new__(AutoloopEngine)
+    # 去 mixin 阶段10: _darwin_ratchet_check 已下沉为 CognitiveRunner 协作对象,
+    # __new__ 绕过 __init__ 需手动挂载 _cognitive_runner.
+    from huginn.autoloop.cognitive_loop import CognitiveRunner
+
+    eng._cognitive_runner = CognitiveRunner(eng)
+    # 信号桥 (engine SignalBridge): _darwin_*/_iteration/_should_stop 等环信号字段
+    # 读写都经 self.signals, __new__ 绕过 __init__ 需手动挂载.
+    from huginn.autoloop.signals import EngineSignals
+
+    eng.signals = EngineSignals()
     eng.hypothesis_graph = HypothesisGraph()
     eng._darwin_best_score = 0.0
     eng._darwin_stagnation = 0

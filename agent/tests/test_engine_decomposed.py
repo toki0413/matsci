@@ -494,3 +494,135 @@ def test_reflect_static_and_instance_delegation() -> None:
     assert eng._extract_text({"result": "hello world"}) == "hello world"
     # 全属性转发: reflector 方法可读引擎字段 (经 stub engine)
     assert isinstance(eng._engine_reflector._extract_text({"result": "x"}), str)
+
+
+# ===== 阶段9: HypothesisLoop =====
+
+def test_no_hypothesis_mixin_in_bases() -> None:
+    from huginn.autoloop.engine import AutoloopEngine
+    from huginn.autoloop.hypothesis_loop import HypothesisLoop
+
+    assert HypothesisLoop not in AutoloopEngine.__bases__, (
+        "AutoloopEngine 仍把 HypothesisLoop 当作基类 —— 去 mixin 阶段9 未完成"
+    )
+
+
+def test_hypothesis_delegation_methods_still_present() -> None:
+    from huginn.autoloop.engine import AutoloopEngine
+
+    for name in (
+        "_hypothesize",
+        "_hypothesize_via_branch_incubator",
+        "_classify_failure",
+        "_should_imaginate",
+        "_conjecture_hint",
+        "_symreg_hint",
+        "_evaluate_informativeness",
+        "_sync_simplicials_to_kg",
+        "_pick_hypothesis_persona",
+    ):
+        assert hasattr(AutoloopEngine, name), f"HypothesisLoop 委托方法 {name} 缺失"
+
+
+def test_engine_new_holds_hypothesis_loop() -> None:
+    from huginn.autoloop.engine import AutoloopEngine
+    from huginn.autoloop.hypothesis_loop import HypothesisLoop
+
+    eng = AutoloopEngine.__new__(AutoloopEngine)
+    eng._hypothesis_loop = HypothesisLoop(eng)
+    assert isinstance(eng._hypothesis_loop, HypothesisLoop)
+
+
+def test_hypothesis_loop_sync_simplicials_forwards() -> None:
+    """全属性转发: 方法真可调, 读引擎字段走转发 (无 kg → 静默降级不抛)."""
+    from huginn.autoloop.engine import AutoloopEngine
+    from huginn.autoloop.hypothesis_loop import HypothesisGraph, HypothesisLoop
+
+    eng = AutoloopEngine.__new__(AutoloopEngine)
+    eng.hypothesis_graph = HypothesisGraph()
+    eng.kg = None
+    eng._hypothesis_loop = HypothesisLoop(eng)
+    eng._sync_simplicials_to_kg()  # 无 kg → 不抛
+    assert isinstance(eng.hypothesis_graph, HypothesisGraph)
+
+
+# ===== 阶段10: CognitiveRunner =====
+
+def test_no_cognitive_mixin_in_bases() -> None:
+    from huginn.autoloop.cognitive_loop import CognitiveRunner
+    from huginn.autoloop.engine import AutoloopEngine
+
+    assert CognitiveRunner not in AutoloopEngine.__bases__, (
+        "AutoloopEngine 仍把 CognitiveRunner 当作基类 —— 去 mixin 阶段10 未完成"
+    )
+
+
+def test_cognitive_delegation_methods_still_present() -> None:
+    from huginn.autoloop.engine import AutoloopEngine
+
+    for name in (
+        "run_cognitive",
+        "_await_human_decision_via_inbox",
+        "_run_phase",
+        "_run_phase_async",
+        "_darwin_ratchet_check",
+        "_classify_stall",
+        "_emit_campaign",
+        "_prepare_run",
+        "_decide_next_action_llm",
+        "_build_decider_prompt",
+        "_is_action_legal",
+        "_finalize_run",
+        "_rollback_on_execute_failure",
+    ):
+        assert hasattr(AutoloopEngine, name), f"CognitiveRunner 委托方法 {name} 缺失"
+
+
+def test_cognitive_staticmethods_bridged() -> None:
+    """两个 @staticmethod 走类常量桥, 保持 AutoloopEngine._X 类级 unbound 访问."""
+    from huginn.autoloop.engine import AutoloopEngine
+
+    # 类级调用不传 self → 必须是 staticmethod 而非实例委托.
+    assert AutoloopEngine._extract_timeseries({"status": "ok"}) == []
+    assert isinstance(AutoloopEngine._snapshot_provenance_version(), int)
+
+
+def test_engine_new_holds_cognitive_runner() -> None:
+    from huginn.autoloop.cognitive_loop import CognitiveRunner
+    from huginn.autoloop.engine import AutoloopEngine
+
+    eng = AutoloopEngine.__new__(AutoloopEngine)
+    eng._cognitive_runner = CognitiveRunner(eng)
+    assert isinstance(eng._cognitive_runner, CognitiveRunner)
+
+
+def test_cognitive_runner_run_cognitive_signature_defaults() -> None:
+    """run_cognitive 委托保留 max_refines 参数与默认 8 (test_loop_inspired 依赖)."""
+    import inspect
+
+    from huginn.autoloop.engine import AutoloopEngine
+
+    sig = inspect.signature(AutoloopEngine.run_cognitive)
+    assert "max_refines" in sig.parameters
+    assert sig.parameters["max_refines"].default == 8
+
+
+def test_cognitive_runner_state_forwards_via_getattr() -> None:
+    """全属性转发: 读/写引擎状态字段走转发; 协作方法可调 (空图降级不抛)."""
+    from huginn.autoloop.cognitive_loop import CognitiveRunner
+    from huginn.autoloop.engine import AutoloopEngine
+    from huginn.autoloop.hypothesis_loop import HypothesisGraph
+    from huginn.autoloop.signals import EngineSignals
+
+    eng = AutoloopEngine.__new__(AutoloopEngine)
+    eng.signals = EngineSignals()
+    eng._iteration = 3
+    eng._should_stop = False
+    eng.hypothesis_graph = HypothesisGraph()
+    eng._cognitive_runner = CognitiveRunner(eng)
+
+    # 字段读转发到引擎
+    assert eng._cognitive_runner._iteration == 3
+    # 协作方法真可调 (空图 → 提前 return, 不抛)
+    eng._cognitive_runner._darwin_ratchet_check()
+    assert eng._cognitive_runner._should_stop is False
