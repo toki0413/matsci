@@ -428,3 +428,69 @@ def test_observe_static_and_instance_delegation() -> None:
 
     eng = _engine()
     assert eng._files_jaccard(["a.py", "b.py"], ["a.py"]) == 1 / 2
+
+
+# ===== 阶段8: EngineReflect =====
+
+def test_no_reflect_mixin_in_bases() -> None:
+    from huginn.autoloop.engine import AutoloopEngine
+    from huginn.autoloop.engine_reflect import EngineReflect
+
+    assert EngineReflect not in AutoloopEngine.__bases__, (
+        "AutoloopEngine 仍把 EngineReflect 当作基类 —— 去 mixin 阶段8 未完成"
+    )
+
+
+def test_reflect_delegation_methods_still_present() -> None:
+    from huginn.autoloop.engine import AutoloopEngine
+
+    for name in (
+        "_validate",
+        "_learn",
+        "_report",
+        "_literature_comparison",
+        "_generative_verify",
+        "_compute_surprise",
+        "_query_kb_reference",
+        "_blind_spot_pass",
+        "_feynman_learn",
+        "_extract_text",
+    ):
+        assert hasattr(AutoloopEngine, name), f"EngineReflect 委托方法 {name} 缺失"
+
+
+def test_engine_new_holds_reflector() -> None:
+    from huginn.autoloop.engine import AutoloopEngine
+    from huginn.autoloop.engine_reflect import EngineReflect
+
+    eng = AutoloopEngine.__new__(AutoloopEngine)
+    eng._engine_reflector = EngineReflect(eng)
+    assert isinstance(eng._engine_reflector, EngineReflect)
+
+
+def test_engine_reflect_class_constants_bridged() -> None:
+    """类常量桥: AutoloopEngine 保留 _FEYNMAN_PROMPT 等类级访问."""
+    from huginn.autoloop.engine import AutoloopEngine
+    from huginn.autoloop.engine_reflect import EngineReflect
+
+    for name in ("_FEYNMAN_PROMPT", "_BLIND_SPOT_PROMPT", "_NEXT_STEP_ADVISOR_PROMPT"):
+        assert getattr(AutoloopEngine, name) == getattr(EngineReflect, name), (
+            f"常量桥 {name} 不一致"
+        )
+
+
+def test_reflect_static_and_instance_delegation() -> None:
+    """委托-纯函数真可调: _extract_text static 经静态委托."""
+
+    def _engine() -> "AutoloopEngine":
+        from huginn.autoloop.engine import AutoloopEngine
+        from huginn.autoloop.engine_reflect import EngineReflect
+
+        eng = AutoloopEngine.__new__(AutoloopEngine)
+        eng._engine_reflector = EngineReflect(eng)
+        return eng
+
+    eng = _engine()
+    assert eng._extract_text({"result": "hello world"}) == "hello world"
+    # 全属性转发: reflector 方法可读引擎字段 (经 stub engine)
+    assert isinstance(eng._engine_reflector._extract_text({"result": "x"}), str)

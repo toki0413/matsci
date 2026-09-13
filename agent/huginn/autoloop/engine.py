@@ -123,7 +123,7 @@ from huginn.autoloop.engine_observe import EngineObserve  # noqa: E402
 # AutoloopEngine 的方法族拆到独立模块. mixin 通过 self 访问 engine 状态,
 # 对 engine.py 模块级符号用方法内 lazy import 避免 circular.
 from huginn.autoloop.engine_perceive import EnginePerceive  # noqa: E402
-from huginn.autoloop.engine_reflect import EngineReflectMixin  # noqa: E402
+from huginn.autoloop.engine_reflect import EngineReflect  # noqa: E402
 from huginn.autoloop.goal_scheduler import GoalScheduler  # noqa: E402
 from huginn.autoloop.hypothesis_loop import HypothesisMixin  # noqa: E402
 from huginn.autoloop.math_validation import MathValidator  # noqa: E402
@@ -268,7 +268,6 @@ def _extract_tests_passed(validation: Any) -> bool:
 
 
 class AutoloopEngine(
-    EngineReflectMixin,
     CognitiveLoopMixin,
     HypothesisMixin,
 ):
@@ -287,6 +286,11 @@ class AutoloopEngine(
     _PROMPT_BUDGET_BY_PHASE = EngineObserve._PROMPT_BUDGET_BY_PHASE
     _MATH_DEPTH_PROMPT_BLOCK = EngineObserve._MATH_DEPTH_PROMPT_BLOCK
     _IMAGINATION_PROMPT_BLOCK = EngineObserve._IMAGINATION_PROMPT_BLOCK
+    # 去 mixin 阶段8: EngineReflect 类常量桥 — 反思 prompt 下沉后留引用,
+    # 保持 AutoloopEngine._X 类级访问与 reflect 对象经转发读取均可用.
+    _FEYNMAN_PROMPT = EngineReflect._FEYNMAN_PROMPT
+    _BLIND_SPOT_PROMPT = EngineReflect._BLIND_SPOT_PROMPT
+    _NEXT_STEP_ADVISOR_PROMPT = EngineReflect._NEXT_STEP_ADVISOR_PROMPT
 
     def __init__(
         self,
@@ -356,6 +360,9 @@ class AutoloopEngine(
         # 去 mixin 阶段7: EngineObserve 协作对象. prompt 拼装 + 元认知方法族经薄委托,
         # 引擎字段/方法经 full 属性转发读写.
         self._engine_observer = EngineObserve(self)
+        # 去 mixin 阶段8: EngineReflect 协作对象. validate/learn/report 方法族经薄委托,
+        # 引擎字段/方法经 full 属性转发读写.
+        self._engine_reflector = EngineReflect(self)
         # 去 mixin 阶段2: EnginePerceive 协作对象. perceive 相关方法经薄委托走这里,
         # 引擎级共享缓存(_kb/_perception/_persona_manager)仍留在 engine, perceiver 经转发读写.
         self._engine_perceiver = EnginePerceive(self)
@@ -1244,6 +1251,222 @@ class AutoloopEngine(
     @staticmethod
     def _extract_lucid_prereqs(raw: str) -> dict[str, str]:
         return EngineObserve._extract_lucid_prereqs(raw)
+
+    # ── 去 mixin 阶段8: EngineReflect 薄委托 ──────────────────────
+    # validate/learn/report 方法族已下沉为 EngineReflect 协作对象 (self._engine_reflector).
+    # 被 cognitive_loop / engine_act / hypothesis_loop 大量调用, 薄委托保留同名签名, 调用点零改动.
+
+    async def _validate(self, execution_result: Any) -> dict[str, Any]:
+        return await self._engine_reflector._validate(execution_result)
+
+    async def _blind_reconstruct_verify(
+        self, execution_result: Any, results: dict[str, Any],
+    ) -> None:
+        await self._engine_reflector._blind_reconstruct_verify(execution_result, results)
+
+    async def _judge_derivation_consistency(
+        self, blind_derivation: str, orig_reasoning: str,
+    ) -> bool | None:
+        return await self._engine_reflector._judge_derivation_consistency(
+            blind_derivation, orig_reasoning)
+
+    async def _invert_failure_trace(
+        self, input_params: str, failed_result: str, failure_mode: str = "",
+    ) -> str:
+        return await self._engine_reflector._invert_failure_trace(
+            input_params, failed_result, failure_mode)
+
+    async def _abstract_skill_if_ready(self) -> None:
+        await self._engine_reflector._abstract_skill_if_ready()
+
+    async def _synthesize_self_goal_if_ready(self) -> None:
+        await self._engine_reflector._synthesize_self_goal_if_ready()
+
+    def _compute_verification_budget(
+        self, hypothesis_id: str, informativeness: float,
+    ) -> None:
+        self._engine_reflector._compute_verification_budget(
+            hypothesis_id, informativeness)
+
+    def _extract_run_snippet(self, execution_result: Any) -> str:
+        return self._engine_reflector._extract_run_snippet(execution_result)
+
+    def _run_snippet_to_output(self, snippet: str) -> str:
+        return self._engine_reflector._run_snippet_to_output(snippet)
+
+    def _is_closed_form_solved(self, execution_result: Any) -> bool:
+        return self._engine_reflector._is_closed_form_solved(execution_result)
+
+    async def _run_pytest(self) -> dict[str, Any]:
+        return await self._engine_reflector._run_pytest()
+
+    async def _run_benchmark(self) -> dict[str, Any]:
+        return await self._engine_reflector._run_benchmark()
+
+    async def _safe_emergent_complexity(
+        self, execution_result: Any, results: dict[str, Any],
+    ) -> None:
+        await self._engine_reflector._safe_emergent_complexity(execution_result, results)
+
+    async def _safe_literature_comparison(
+        self, execution_result: Any, results: dict[str, Any],
+    ) -> None:
+        await self._engine_reflector._safe_literature_comparison(execution_result, results)
+
+    async def _literature_comparison(self, execution_result: Any) -> dict[str, Any]:
+        return await self._engine_reflector._literature_comparison(execution_result)
+
+    @staticmethod
+    def _summarize_for_kb(execution_result: Any, results: dict[str, Any]) -> str:
+        return EngineReflect._summarize_for_kb(execution_result, results)
+
+    def _detect_thinking_collapse(
+        self, execution_result: Any,
+    ) -> dict[str, Any] | None:
+        return self._engine_reflector._detect_thinking_collapse(execution_result)
+
+    @staticmethod
+    def _find_tool_call_loops(execution_result: dict) -> list[dict[str, Any]]:
+        return EngineReflect._find_tool_call_loops(execution_result)
+
+    def _load_trajectory_action_history(self, limit: int = 20) -> list[list[str]]:
+        return self._engine_reflector._load_trajectory_action_history(limit)
+
+    def _check_stuck(self, action_history: list[str]) -> dict[str, Any] | None:
+        return self._engine_reflector._check_stuck(action_history)
+
+    @staticmethod
+    def _extract_text(execution_result: Any) -> str:
+        return EngineReflect._extract_text(execution_result)
+
+    @staticmethod
+    def _append_container_text(value: Any, parts: list[str]) -> None:
+        EngineReflect._append_container_text(value, parts)
+
+    @staticmethod
+    def _cosine_distance(a: Any, b: Any) -> float:
+        return EngineReflect._cosine_distance(a, b)
+
+    def _try_embed_text(self, text: str) -> Any:
+        return self._engine_reflector._try_embed_text(text)
+
+    def _semantic_distance(self, prediction: str, actual: str) -> float | None:
+        return self._engine_reflector._semantic_distance(prediction, actual)
+
+    def _record_jepa_pair(
+        self, prediction: str, actual: str, surprise: float,
+        plan_id: str | None = None, objective: str | None = None,
+    ) -> None:
+        self._engine_reflector._record_jepa_pair(
+            prediction, actual, surprise, plan_id=plan_id, objective=objective)
+
+    def _load_jepa_predictor(self) -> dict | None:
+        return self._engine_reflector._load_jepa_predictor()
+
+    def _predictor_surprise(
+        self, prediction: str, actual: str,
+    ) -> tuple[float, str] | None:
+        return self._engine_reflector._predictor_surprise(prediction, actual)
+
+    def _load_span_predictor(self) -> dict | None:
+        return self._engine_reflector._load_span_predictor()
+
+    def _span_surprise_from_vecs(self, pred_vecs, act_vecs, w) -> float | None:
+        return self._engine_reflector._span_surprise_from_vecs(pred_vecs, act_vecs, w)
+
+    def _span_predictor_surprise(self, prediction: str, actual: str) -> float | None:
+        return self._engine_reflector._span_predictor_surprise(prediction, actual)
+
+    def _span_embed_text(self, text: str) -> list:
+        return self._engine_reflector._span_embed_text(text)
+
+    def _jepa_embedder(self):
+        return self._engine_reflector._jepa_embedder()
+
+    def _jepa_embed_text(self, text: str):
+        return self._engine_reflector._jepa_embed_text(text)
+
+    def _relative_surprise(self, surprise: float, source: str = "global") -> float:
+        return self._engine_reflector._relative_surprise(surprise, source)
+
+    def _compute_surprise(self, prediction: str, actual: str) -> float:
+        return self._engine_reflector._compute_surprise(prediction, actual)
+
+    def _compute_surprise_robust(
+        self, prediction: str, actual: str,
+    ) -> dict[str, float]:
+        return self._engine_reflector._compute_surprise_robust(prediction, actual)
+
+    async def _generative_verify(
+        self, execution_result: Any, results: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        return await self._engine_reflector._generative_verify(execution_result, results)
+
+    @staticmethod
+    def _parse_verify_score(resp: str) -> tuple[float, str, float, str, str]:
+        return EngineReflect._parse_verify_score(resp)
+
+    def _query_kb_reference(
+        self, equations: str, lagrangian: str,
+    ) -> list[dict]:
+        return self._engine_reflector._query_kb_reference(equations, lagrangian)
+
+    @staticmethod
+    def _build_reviewer_prompt(
+        execution_result: Any, results: dict[str, Any], kb_text: str = "",
+    ) -> str:
+        return EngineReflect._build_reviewer_prompt(execution_result, results, kb_text)
+
+    async def _learn(
+        self, hypothesis: str, plan: dict[str, Any], validation: dict[str, Any],
+    ) -> dict[str, Any]:
+        return await self._engine_reflector._learn(hypothesis, plan, validation)
+
+    async def _generate_next_loop_directive(
+        self, hypothesis: str, plan: dict[str, Any], validation: dict[str, Any],
+        r_phys: Any,
+    ) -> None:
+        await self._engine_reflector._generate_next_loop_directive(
+            hypothesis, plan, validation, r_phys)
+
+    async def _report(
+        self, objective: str, phases: list[LoopPhase], total_time: float,
+    ) -> str | None:
+        return await self._engine_reflector._report(objective, phases, total_time)
+
+    async def _feynman_learn(
+        self, hypothesis: str, plan: dict[str, Any], validation: dict[str, Any],
+        r_phys: Any, context: dict[str, Any] | None = None,
+    ) -> None:
+        await self._engine_reflector._feynman_learn(
+            hypothesis, plan, validation, r_phys, context)
+
+    async def _blind_spot_pass(
+        self, context: dict[str, Any], objective: str,
+    ) -> list[dict[str, str]]:
+        return await self._engine_reflector._blind_spot_pass(context, objective)
+
+    def _has_post_task_signal(
+        self, state: Any, prev_outcome: str = "",
+    ) -> tuple[bool, str]:
+        return self._engine_reflector._has_post_task_signal(state, prev_outcome)
+
+    async def _advisor_post_task_recommend(
+        self, run_id: str, objective: str, cog: dict, state: Any,
+        prev_outcome: str = "",
+    ) -> None:
+        await self._engine_reflector._advisor_post_task_recommend(
+            run_id, objective, cog, state, prev_outcome)
+
+    @staticmethod
+    def _build_science_report_prompt(
+        report_data: dict[str, Any], kb_text: str = "", exec_summary: str = "",
+        visual_ctx: str = "", validation_summary: str = "",
+        hypothesis: str = "", surprise: float = 0.0,
+    ) -> str:
+        return EngineReflect._build_science_report_prompt(
+            report_data, kb_text, exec_summary, visual_ctx, validation_summary,
+            hypothesis, surprise)
 
     # ── H5-a: 模型选择 ────────────────────────────────────────────
     # 统一模型选择入口. 多模型配置 (config.models 非空) 时走 model_router

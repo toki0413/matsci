@@ -1,4 +1,4 @@
-"""EngineReflectMixin — AutoloopEngine 的 validate / learn / report 阶段方法族.
+"""EngineReflect — AutoloopEngine 的 validate / learn / report 阶段方法族协作对象.
 
 从 engine.py 拆出 (P3 slim-down 续). 包含:
 - _validate (结果校验: pytest/benchmark/literature comparison/surprise/generative verify)
@@ -6,11 +6,19 @@
 - _report (科学报告生成)
 - 各类校验辅助 (blind reconstruct/derivation consistency/failure trace inversion 等)
 
-通过 self 访问 engine 状态. 方法体原样搬迁, 不改逻辑.
+去 mixin 阶段8: 原 EngineReflectMixin(3469 行/49 方法) 改为普通类 EngineReflect。
+引擎经组合持有 self._engine_reflector = EngineReflect(self), 保留同名薄委托方法
+→ 既有 self.method() 调用点 (cognitive_loop / engine_act / plan_check) 零改动。
 
-设计原则 (ponytail):
+设计关键 (ponytail):
+- 方法体大量读写引擎状态(字段+方法) → 「全属性转发」: __getattr__ 把未定义属性
+  读转发到 engine, __setattr__ 转发写。字段/方法留引擎不复制。
+- own-method 覆写槽 _OWN_ATTRS: 对自身方法名赋值落本对象实例 dict(测试 mock),
+  其余名字(引擎状态字段)转发回引擎。
+- 防递归: __getattr__ 用 object.__getattribute__ 直达 engine 实例属性
+  (engine==self 的测试 mock 场景不递归); __setattr__ 在 engine is self 时直写实例 dict.
 - 对 engine.py 模块级符号用方法内 lazy import, 避免 circular
-- Mixin 不持有自己的状态, 全部走 self
+- 协作对象不额外持有业务状态 (除 engine 引用)
 """
 
 from __future__ import annotations
@@ -33,8 +41,87 @@ from huginn.utils.runtime import HUGINN_DIR_NAME
 logger = logging.getLogger(__name__)
 
 
-class EngineReflectMixin:
-    """validate / learn / report 阶段方法族. 通过 self 访问 engine 状态."""
+class EngineReflect:
+    """validate / learn / report 阶段方法族协作对象.
+
+    未定义的属性读写经 __getattr__/__setattr__ 转发到 self.engine —
+    引擎字段/方法不会被复制两份, 方法体零改动、行为完全等价.
+    """
+
+    def __init__(self, engine: Any) -> None:
+        object.__setattr__(self, "engine", engine)
+
+    def __getattr__(self, name: str) -> Any:
+        # object.__getattribute__ 直达 engine 实例属性, 避免 engine==self 时递归
+        return object.__getattribute__(self.engine, name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name == "engine":
+            object.__setattr__(self, name, value)
+            return
+        # 本对象自有的协作方法名: 赋值意图是覆写协作方法(如测试 mock _validate),
+        # 应落在本对象实例 dict 而非转发回引擎; 其余名字(引擎状态字段)转发回引擎.
+        if name in self._OWN_ATTRS:
+            object.__setattr__(self, name, value)
+            return
+        # engine==self (测试 mock) 直写实例 dict 避免转发自递归; 否则转发回引擎
+        if self.engine is self:
+            object.__setattr__(self, name, value)
+            return
+        setattr(self.engine, name, value)
+
+    #: EngineReflect 定义的协作方法名集合. 供 __setattr__ 判定"覆写自身方法" vs "写引擎状态".
+    _OWN_ATTRS: frozenset[str] = frozenset({
+        "_validate",
+        "_blind_reconstruct_verify",
+        "_judge_derivation_consistency",
+        "_invert_failure_trace",
+        "_abstract_skill_if_ready",
+        "_synthesize_self_goal_if_ready",
+        "_compute_verification_budget",
+        "_extract_run_snippet",
+        "_run_snippet_to_output",
+        "_is_closed_form_solved",
+        "_run_pytest",
+        "_run_benchmark",
+        "_safe_emergent_complexity",
+        "_safe_literature_comparison",
+        "_literature_comparison",
+        "_summarize_for_kb",
+        "_detect_thinking_collapse",
+        "_find_tool_call_loops",
+        "_load_trajectory_action_history",
+        "_check_stuck",
+        "_extract_text",
+        "_append_container_text",
+        "_cosine_distance",
+        "_try_embed_text",
+        "_semantic_distance",
+        "_record_jepa_pair",
+        "_load_jepa_predictor",
+        "_predictor_surprise",
+        "_load_span_predictor",
+        "_span_surprise_from_vecs",
+        "_span_predictor_surprise",
+        "_span_embed_text",
+        "_jepa_embedder",
+        "_jepa_embed_text",
+        "_relative_surprise",
+        "_compute_surprise",
+        "_compute_surprise_robust",
+        "_generative_verify",
+        "_parse_verify_score",
+        "_query_kb_reference",
+        "_build_reviewer_prompt",
+        "_learn",
+        "_generate_next_loop_directive",
+        "_report",
+        "_feynman_learn",
+        "_blind_spot_pass",
+        "_has_post_task_signal",
+        "_advisor_post_task_recommend",
+        "_build_science_report_prompt",
+    })
 
     _FEYNMAN_PROMPT = """You are studying your own research iteration using the Feynman Learning Method.The core principle: if you can't explain it in simple terms, you don't truly understand it.## Iteration Context- Hypothesis: {hypothesis}- Plan mode: {mode}- R_phys (physical reward): {r_phys}- Surprise: {surprise} (how much the actual result differed from prediction)- Validation summary: {validation}- Deviations from plan: {deviations}## Your TaskWrite TWO sections:### Simple ExplanationExplain what happened in this iteration as if teaching a newcomer who has basicmaterials science knowledge but no experience with computational tools.Focus on: What was the physical question? What did the calculation reveal?Why does the result make sense (or not)? Use analogies where helpful.If there were deviations from the plan, explain WHY the path changed.### Knowledge GapsList specific things you CANNOT confidently explain. Be honest — admittinggaps is the point of this exercise. Mark each gap:- [KU] for "known unknown" — you know you don't understand this- [UU] for "unknown unknown" — you didn't even think about this until nowExamples:- "[KU] I don't understand why the band gap changed non-monotonically with doping"- "[UU] I never considered that GaN has two polymorphs until the result came back"Output format (Markdown, no code blocks):## Simple Explanation...## Knowledge Gaps- [KU] gap 1- [UU] gap 2..."""
 
@@ -1507,7 +1594,7 @@ class EngineReflectMixin:
             if v is None:
                 continue
             if isinstance(v, (dict, list)):
-                EngineReflectMixin._append_container_text(v, parts)
+                EngineReflect._append_container_text(v, parts)
             else:
                 parts.append(str(v))
         # 嵌套的 steps / tool_calls / actions / stage_results 里的文本也抽出来
@@ -1521,7 +1608,7 @@ class EngineReflectMixin:
                             if sv is None:
                                 continue
                             if isinstance(sv, (dict, list)):
-                                EngineReflectMixin._append_container_text(sv, parts)
+                                EngineReflect._append_container_text(sv, parts)
                             else:
                                 parts.append(str(sv))
         return " ".join(parts)
@@ -1535,10 +1622,10 @@ class EngineReflectMixin:
             return
         if isinstance(value, dict):
             for v in value.values():
-                EngineReflectMixin._append_container_text(v, parts)
+                EngineReflect._append_container_text(v, parts)
         elif isinstance(value, list):
             for v in value:
-                EngineReflectMixin._append_container_text(v, parts)
+                EngineReflect._append_container_text(v, parts)
         elif value is not None:
             parts.append(str(value))
 

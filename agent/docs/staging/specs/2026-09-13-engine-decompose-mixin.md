@@ -55,7 +55,13 @@
   - `engine.py`: 移出 base、`__init__` 加 `self._engine_observer = EngineObserve(self)`、保留 36 个薄委托方法 → 调用点 cognitive_loop/engine_reflect/hypothesis_loop/engine_act/plan_check 零改动。
   - 测试迁移：`test_hypothesis_loop` TestTopologyPromptInjection 由 `object.__new__(EngineObserveMixin)` → `AutoloopEngine.__new__` + `_engine_observer`；`test_world_state` 由 `_Dummy()` → `_Dummy(object())`（stub engine，方法经 getattr default 走转发）。
   - 证据：`test_engine_decomposed.py` 阶段7 5 项 + `test_world_state` + `test_hypothesis_loop` + `test_autoloop_engine/eventsourcing/phase_gate/cognitive` + arch 门禁全绿。
-- **后续阶段（各自横轮，逐个 PR）**：`EngineReflect`(3469)→`HypothesisLoop`(2969)→`CognitiveLoop`(3591)。由小到大、状态写最少者优先。
+- **阶段8（本 spec 后续）**：`EngineReflectMixin` → `EngineReflect`。 ✅ 已落地（2026-09-13）
+  - 49 个 validate/learn/report 方法 (含 `_validate` / `_learn` / `_report` / `_literature_comparison` / `_generative_verify` / surprise 方法族) 下沉为普通类 `EngineReflect(engine)` → 全属性转发 + own-method 覆写槽 `_OWN_ATTRS`。
+  - **类常量桥**：`_FEYNMAN_PROMPT` / `_BLIND_SPOT_PROMPT` / `_NEXT_STEP_ADVISOR_PROMPT` 保持 `AutoloopEngine._X` 类级访问 → 在 engine 加同名字段引用。
+  - **内部类级引用改名**：`_append_container_text` 在实例方法内以 `EngineReflectMixin._append_container_text(...)` 类级调用（4 处）→ 同步改 `EngineReflect._...`。
+  - `engine.py`: 移出 base、`__init__` 加 `self._engine_reflector = EngineReflect(self)`、保留 49 个薄委托方法 → 调用点 cognitive_loop/engine_act/hypothesis_loop 零改动。
+  - 证据：`test_engine_decomposed.py` 阶段8 5 项 + `test_autoloop_engine` + `test_cognitive_engine` + `test_next_step_advisor` + `test_math_validation` + arch 门禁全绿。
+- **后续阶段（各自横轮，逐个 PR）**：`HypothesisLoop`(2969)→`CognitiveLoop`(3591)。由小到大、状态写最少者优先。
 
 ## contract（阶段1 接口）
 - 新 `huginn/autoloop/math_validation.py::MathValidator`：`__init__(self, engine)`（duck-typed，读 `engine.workspace/settings`、调 `engine._query_kb_reference`）；`async run(execution_result) -> dict`（等价原 `_run_math_validation`）。
