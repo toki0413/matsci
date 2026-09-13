@@ -86,6 +86,14 @@ def _cosine_distance(a, b) -> float:
     nb = vb / (np.linalg.norm(vb) + 1e-12)
     return float(max(0.0, min(1.0, 1.0 - float(np.dot(na, nb)))))
 
+def _embed_batch(encoder, texts):
+    """批量 encode 所有扰动文本 → (N, dim) 归一化向量阵."""
+    import numpy as np
+    vs = encoder.encode(list(texts), normalize_embeddings=True,
+                        batch_size=64, show_progress_bar=False)
+    return np.asarray(vs, dtype=np.float32)
+
+
 def surprise(prediction: str, actual: str, use_embedding: bool = False) -> dict:
     """copy engine Jaccard 回落路径; use_embedding=True 时优先语义 cosine."""
     if use_embedding:
@@ -148,9 +156,175 @@ def scan_surprise_curve(t_grid: int = 400, use_embedding: bool = False) -> dict:
     }
 
 
+# ── 不确定性指数 β 估计 (Chern–Markus): 二维参数空间 P_cross(δ) ~ δ^β ──
+# 之前只有 max_jump(2 个分辨率), 不能定形分/平滑。这里做真正的多尺度标度律:
+#   1. 二维扰动参数 (u,v), 在 [0,1]² 网格上生成预测文本 → 语义嵌入
+#   2. 定义两个自洽终态吸引域: CA=正确PASS文本, CB=FAIL域代表文本
+#   3. 归属 g = argmin( dist(pred,CA), dist(pred,CB) )  (无任意阈值)
+#   4. 对网格间距 δ 采样两点, 统计落入不同吸引域比例 P_cross(δ)
+#   5. 拟合 log P_cross ~ β·log δ → β<1 分形边界, β≈1 平滑边界
+# 对照(校验估计器): 光滑对照 g=u<0.5 应出 β≈1; 噪声对照 g=random 应出 β≈0。
+
+# 两个自洽终态吸引域中心文本
+_CA = _ACTUAL  # PASS 域(正确解
+_CB = "the applied shear stress is 9.99 MPa which is above the 5 MPa yield, so FAIL"
+
+# 近A域扰动词(把语义推向偏离但不翻域) / 远BI域扰动词(推向 FAIL 域)
+_NEAR_POOL = {"tensile", "0.05", "below"}      # ← 近 A 的错值
+_NEAR_DIST = {"tensile": "shear", "0.05": "0.06", "below": "just_below"}
+_FAR_POOL = {"PASS", "0.05", "250", "below", "MPa"}  # ← 翻到 FAIL，推向 CB
+_FAR_DIST = {"PASS": "FAIL", "0.05": "9.99", "250": "5", "below": "above", "MPa": "GPa"}
+
+
+def _disturb(indices, rng, dist, text_tokens, mask=None):
+    """把 text_tokens 中 indices 命中的 token 换成 dist 扰动."""
+    out = list(text_tokens)
+    for i in indices:
+        if mask is not None and not mask[i]:
+            continue
+        w = out[i]
+        out[i] = dist.get(w, w + "_x")
+    return out
+
+
+def gen_pred_text(u: float, v: float, seed: int = 11):
+    """二维扰动: u→近A域替换量, v→远B域替换量. 输出一条扰动预测文本."""
+    toks = _CA.split()
+    rng = __import__("random").Random(seed)
+    near_i = [i for i, w in enumerate(toks) if w in _NEAR_POOL]
+    far_i = [i for i, w in enumerate(toks) if w in _FAR_POOL]
+    # v 越高越向 B 翻; 真实语义上部分阈值位翻越.CA RNG 越大扰动越难预测
+    kn = int(u * len(near_i))
+    kf = int(v * len(far_i))
+    rng.shuffle(near_i)
+    rng.shuffle(far_i)
+    toks = _disturb(near_i[:kn], rng, _NEAR_DIST, toks)
+    toks = _disturb(far_i[:kf], rng, _FAR_DIST, toks)
+    return " ".join(toks)
+
+
+def _semantic_labels(grid_n: int) -> list[list[str]]:
+    """返回 [0,1]² 网格上逐点的扰动预测文本矩阵 (行序 v, 列序 u)."""
+    return [[gen_pred_text(u, v) for v in _u01(grid_n)] for u in _u01(grid_n)]
+
+
+def _u01(n):
+    return [i / (n - 1) if n > 1 else 0.5 for i in range(n)]
+
+
+def assign_labels_flat(e, ca_enc, cb_enc, grid_n):
+    """按最小语义距把每条预测指派到 CA 或 CB 吸引域, 返回 (grid_n,grid_n) 标签阵."""
+    import numpy as np
+    dA = 1.0 - np.dot(e, ca_enc)  # e:(N,d) 已归一; ca_enc:(d,)
+    dB = 1.0 - np.dot(e, cb_enc)
+    g = np.where(dA <= dB, 0, 1).reshape(grid_n, grid_n)
+    return g
+
+
+def _p_cross(g, grid_n, delta_frac, rng, samples=8000):
+    """在网格上采样相距δ处的点对, 返回被不同吸引域的占比 P_cross(δ)."""
+    d = max(1, int(round(delta_frac * (grid_n - 1))))
+    steps = [(-d, 0), (d, 0), (0, -d), (0, d), (d, d), (-d, d), (d, -d), (-d, -d)]
+    cnt = tot = 0
+    for _ in range(samples):
+        i = int(rng.integers(0, grid_n))
+        j = int(rng.integers(0, grid_n))
+        di, dj = rng.choice(steps)
+        i2, j2 = i + di, j + dj
+        if 0 <= i2 < grid_n and 0 <= j2 < grid_n:
+            tot += 1
+            if g[i, j] != g[i2, j2]:
+                cnt += 1
+    return cnt / tot if tot else 0.0
+
+
+def _fit_beta(deltas, pcs) -> dict:
+    """log P_cross ~ β log δ 线性拟合(忽略 P=0/1 饱和端点)."""
+    import math
+    import numpy as np
+    pts = [(math.log(d), math.log(max(p, 1e-9))) for d, p in zip(deltas, pcs)
+           if 0.0 < p < 1.0]
+    if len(pts) < 3:
+        return {"beta": float("nan"), "r2": float("nan"), "n_used": len(pts)}
+    xs = [x for x, _ in pts]
+    ys = [y for _, y in pts]
+    slope, intercept = np.polyfit(xs, ys, 1)
+    yhat = [slope * x + intercept for x in xs]
+    ss_res = sum((y - yh) ** 2 for y, yh in zip(ys, yhat))
+    ss_tot = sum((y - sum(ys) / len(ys)) ** 2 for y in ys)
+    r2 = 1.0 - ss_res / ss_tot if ss_tot else float("nan")
+    return {"beta": float(slope), "r2": float(r2), "n_used": len(pts)}
+
+
+DELTAS = [0.02, 0.04, 0.06, 0.08, 0.12, 0.16, 0.25, 0.33]
+
+
+def estimate_beta(grid_n: int = 110, seed: int = 3) -> dict:
+    """跑完整 β 估计: 真标签 + 光滑对照 + 噪声对照."""
+    import numpy as np
+    import random
+    enc = _get_st()
+    if enc is None:
+        return {"error": "需要 --embedding(ST 不可用)"}
+    texts_2d = _semantic_labels(grid_n)
+    flat = [t for row in texts_2d for t in row]
+    e = _embed_batch(enc, flat)
+    ca_v = _embed_batch(enc, [_CA])[0]
+    cb_v = _embed_batch(enc, [_CB])[0]
+    g_true = assign_labels_flat(e, ca_v, cb_v, grid_n)
+
+    # 光滑对照: 垂直边界 → β≈1
+    g_smooth = np.asarray([[0 if u < 0.5 else 1 for _ in _u01(grid_n)]
+                            for u in _u01(grid_n)], dtype=int)
+    # 噪声对照: 随机标签 → β≈0 (单 rng 递增, 不要每行重置 seed)
+    rng_noise = random.Random(seed)
+    g_noise = np.asarray(
+        [[rng_noise.randint(0, 1) for _ in _u01(grid_n)] for _ in _u01(grid_n)],
+        dtype=int,
+    )
+
+    out = {}
+    for name, gg in [("真实吸引域", g_true), ("光滑对照", g_smooth), ("噪声对照", g_noise)]:
+        rng = np.random.default_rng(seed)
+        pcs = [_p_cross(gg, grid_n, d, rng) for d in DELTAS]
+        fit = _fit_beta(DELTAS, pcs)
+        out[name] = {"deltas": DELTAS, "p_cross": pcs, **fit}
+    return {"grid_n": grid_n, **out}
+
+
 if __name__ == "__main__":
     import sys
     use_emb = "--embedding" in sys.argv
+
+    # ── β 估计(不确定性指数): 多尺度跨边界概率标度律 ──
+    if "--beta" in sys.argv:
+        if not use_emb:
+            print("β 估计需要 --embedding(ST 语义), 否则退化为词集离散无意义。")
+            sys.exit(1)
+        print("=" * 66)
+        print("不确定性指数 β 估计: P_cross(δ) ~ δ^β   (Chern–Markus)")
+        print("=" * 66)
+        res = estimate_beta()
+        if "error" in res:
+            print("错误:", res["error"])
+            sys.exit(2)
+        print(f"二维扰动网格 {res['grid_n']}×{res['grid_n']}  两点抽样 8000/δ\n")
+        for name, r in res.items():
+            if name == "grid_n":
+                continue
+            n_used = r.get("n_used", 0)
+            sign = ("分形边界" if r["beta"] < 0.85 else
+                    "平滑(β≈1)" if r["beta"] > 0.95 else "模糊")
+            print(f"  {name:<8}  β={r['beta']:+.3f}  R²={r['r2']:.3f}  "
+                  f"(拟合点 {n_used}/{len(DELTAS)})  → {sign}")
+        b = res.get("真实吸引域", {}).get("beta")
+        print("-" * 66)
+        if b is not None and b < 0.85:
+            print(f"  β={b:+.3f} < 1 → JEPA语义失败边界呈分形, 假说获得定量支持")
+        else:
+            print(f"  β={b if b is not None else float('nan'):+.3f} ≈ 1 → 边界平滑, 假说未获支持(非分形)")
+        sys.exit(0)
+
     mode = "语义cosine" if use_emb else "Jaccard回落"
     print("=" * 66)
     print(f"研究 A: JEPA surprise 当吸引域 —— 模式: {mode}")
