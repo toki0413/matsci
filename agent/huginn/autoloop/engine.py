@@ -122,7 +122,7 @@ from huginn.autoloop.engine_observe import EngineObserveMixin  # noqa: E402
 # P3 slim-down: 5 个 engine_* mixin (perceive/observe/act/reflect/control) 把
 # AutoloopEngine 的方法族拆到独立模块. mixin 通过 self 访问 engine 状态,
 # 对 engine.py 模块级符号用方法内 lazy import 避免 circular.
-from huginn.autoloop.engine_perceive import EnginePerceiveMixin  # noqa: E402
+from huginn.autoloop.engine_perceive import EnginePerceive  # noqa: E402
 from huginn.autoloop.engine_reflect import EngineReflectMixin  # noqa: E402
 from huginn.autoloop.goal_scheduler import GoalScheduler  # noqa: E402
 from huginn.autoloop.hypothesis_loop import HypothesisMixin  # noqa: E402
@@ -268,7 +268,6 @@ def _extract_tests_passed(validation: Any) -> bool:
 
 
 class AutoloopEngine(
-    EnginePerceiveMixin,
     EngineObserveMixin,
     EngineActMixin,
     EngineReflectMixin,
@@ -343,6 +342,9 @@ class AutoloopEngine(
         # engine_reflect.py:133/153 通过薄委托方法 _run_math_validation /
         # _collect_math_evidence 走这里, 调用点零改动.
         self._math_validator = MathValidator(self)
+        # 去 mixin 阶段2: EnginePerceive 协作对象. perceive 相关方法经薄委托走这里,
+        # 引擎级共享缓存(_kb/_perception/_persona_manager)仍留在 engine, perceiver 经转发读写.
+        self._engine_perceiver = EnginePerceive(self)
         self.kg = ProjectKnowledgeGraph(root=self.workspace)
         # 假设图: 跟踪 hypothesis 的 support/refute/derive 关系,
         # refute 时触发 RedTeam 审查 → 修正假设入队, 形成闭环
@@ -702,6 +704,55 @@ class AutoloopEngine(
         return self._math_validator.verify_via_gp(
             hyp_id, validation
         )
+
+    # ── 去 mixin 阶段2: EnginePerceive 薄委托 ────────────────────
+    # 被 plan_check / engine_observe / cognitive_loop / engine_reflect 大量调用的
+    # perceive 上下文构建方法族下沉为 EnginePerceive 协作对象 (self._engine_perceiver).
+    # 下面薄委托保留同名签名, 调用点零改动.
+
+    def _maybe_expire_inbox(self) -> None:
+        self._engine_perceiver._maybe_expire_inbox()
+
+    def _get_perception(self) -> Any:
+        return self._engine_perceiver._get_perception()
+
+    def _get_persona_manager(self) -> Any:
+        return self._engine_perceiver._get_persona_manager()
+
+    def _get_kb(self) -> Any:
+        return self._engine_perceiver._get_kb()
+
+    def _extract_search_query(self, context: dict[str, Any]) -> str:
+        return self._engine_perceiver._extract_search_query(context)
+
+    def _build_kb_text(self, query: str) -> str:
+        return self._engine_perceiver._build_kb_text(query)
+
+    def _build_kg_text(self, query: str) -> str:
+        return self._engine_perceiver._build_kg_text(query)
+
+    def _build_memory_text(self, query: str, since: str | None = None) -> str:
+        return self._engine_perceiver._build_memory_text(query, since)
+
+    def _build_pm_text(self) -> str:
+        return self._engine_perceiver._build_pm_text()
+
+    def _build_metacog_block(self, *, include_prospective: bool = True) -> str:
+        return self._engine_perceiver._build_metacog_block(
+            include_prospective=include_prospective
+        )
+
+    def _perceive(self) -> dict[str, Any] | None:
+        return self._engine_perceiver._perceive()
+
+    def _perceive_legacy(self) -> dict[str, Any] | None:
+        return self._engine_perceiver._perceive_legacy()
+
+    def _detect_kg_gaps(self, kg: Any, nodes: list[dict]) -> list[str]:
+        return self._engine_perceiver._detect_kg_gaps(kg, nodes)
+
+    def _ensure_target_chains(self) -> list:
+        return self._engine_perceiver._ensure_target_chains()
 
     # ── H5-a: 模型选择 ────────────────────────────────────────────
     # 统一模型选择入口. 多模型配置 (config.models 非空) 时走 model_router

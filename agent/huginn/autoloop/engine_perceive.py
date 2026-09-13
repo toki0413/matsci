@@ -1,12 +1,19 @@
-"""EnginePerceiveMixin — AutoloopEngine 的 perceive 阶段方法族.
+"""EnginePerceive — AutoloopEngine 的 perceive 阶段方法族协作对象.
 
 从 engine.py 拆出 (P3 slim-down 续). 包含 perceive 阶段实现 + 上下文构建
-辅助方法 (KB/KG/memory/PM/metacog block 拼装). 通过 self 访问 engine 状态.
+辅助方法 (KB/KG/memory/PM/metacog block 拼装).
 
-设计原则 (ponytail):
-- 方法体原样搬迁, 不改逻辑
+去 mixin 阶段2: 原 EnginePerceiveMixin(535 行/15 方法) 改为普通类 EnginePerceive。
+引擎经组合持有 self._engine_perceiver = EnginePerceive(self), 保留同名薄委托方法
+(_build_kb_text / _get_kb / _perceive 等) → 既有 self.method() 调用点零改动。
+不再靠多继承把认知中枢堆成 god-class。
+
+设计关键 (ponytail):
+- 方法体原样搬迁, 不改逻辑; 用 __getattr__/__setattr__ 把未定义属性读写转发到
+  底层 engine — 这样 _kb/_perception/_persona_manager 等引擎级共享缓存留在 engine,
+  缓存共享、行为完全等价, 避免在协作对象里复制一份状态造成漂移.
 - 对 engine.py 模块级符号 (helper 函数 / 常量) 用方法内 lazy import, 避免 circular
-- Mixin 不持有自己的状态, 全部走 self
+- 协作对象不额外持有业务状态 (除 _engine 引用), 全部经转发走 engine
 """
 
 from __future__ import annotations
@@ -20,8 +27,24 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-class EnginePerceiveMixin:
-    """perceive 阶段方法族: 感知工作区 + 上下文块拼装. 通过 self 访问 engine 状态."""
+class EnginePerceive:
+    """perceive 阶段方法族: 感知工作区 + 上下文块拼装.
+
+    未定义的属性读写经 __getattr__/__setattr__ 转发到 self._engine —
+    引擎共享缓存 (如 _kb/_perception/_persona_manager) 不会被复制两份.
+    """
+
+    def __init__(self, engine: Any) -> None:
+        object.__setattr__(self, "_engine", engine)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._engine, name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name == "_engine":
+            object.__setattr__(self, name, value)
+            return
+        setattr(self._engine, name, value)
 
     def _maybe_expire_inbox(self) -> None:
         """P2-5: 周期清理超时 pending inbox item, 防 unattended session 永久阻塞.

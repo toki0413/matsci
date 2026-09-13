@@ -3,7 +3,7 @@
 目标：把 `AutoloopEngine` 的多继承 mixin 方法族逐步拆成独立协作对象（组合 + 薄委托），消除 god-class。由小到大、状态写最少者优先，每个阶段独立验证（引擎测试 + arch 门禁）后再进下一个。
 
 - [x] M1: MathValidationMixin → MathValidator（387 行，3 方法）
-- [ ] M2: EnginePerceiveMixin → EnginePerceive（535 行）
+- [x] M2: EnginePerceiveMixin → EnginePerceive（535 行，15 方法）
 - [ ] M3: VisualInspectMixin → VisualInspect（636 行）
 - [ ] M4: EngineActMixin → EngineAct（926 行）
 - [ ] M5: EngineControlMixin → EngineControl（862 行）

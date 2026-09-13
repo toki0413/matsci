@@ -22,7 +22,12 @@
   - `MathValidator.__init__(self, engine)` duck-typed 读 `engine.workspace/settings`、调 `engine._query_kb_reference`、读 `engine._last_execution_result`；暴露 `async run(execution_result)`（=原 `_run_math_validation`）、`async collect_math_evidence(...)`、`def verify_via_gp(...)`。
   - `engine.py`: 移出 base 列表（MathValidator 不再继承）、`__init__` 加 `self._math_validator = MathValidator(self)`、保留 3 个薄委托方法 `_run_math_validation` / `_collect_math_evidence` / `_verify_via_gp` → 调用点 engine_reflect.py:133/153 零改动。
   - 证据：`tests/test_engine_decomposed.py` 5 项 + `test_math_validation.py` + `test_autoloop_engine.py` + arch 门禁全绿。
-- **后续阶段（各自横轮，逐个 PR）**：`EnginePerceive`(535)→`VisualInspect`(636)→`EngineAct`(926)→`EngineControl`(862)→`PlanCheck`(1169)→`EngineObserve`(1560)→`EngineReflect`(3469)→`HypothesisLoop`(2969)→`CognitiveLoop`(3591)。由小到大、状态写最少者优先。
+- **阶段2（本 spec 后续）**：`EnginePerceiveMixin` → `EnginePerceive`。 ✅ 已落地（2026-09-13）
+  - 15 个 perceive/上下文构建方法下沉为普通类 `EnginePerceive(engine)`。
+  - **属性转发**设计：`__getattr__`/`__setattr__` 把未定义属性读写转发到 engine → 方法体零改动、`_kb/_perception/_persona_manager` 等引擎级共享缓存留在 engine 不复制（缓存共享、行为完全等价）。
+  - `engine.py`: 移出 base 列表、`__init__` 加 `self._engine_perceiver = EnginePerceive(self)`、保留 13 个薄委托方法 → 调用点 plan_check/engine_observe/cognitive_loop/engine_reflect 零改动。
+  - 证据：`test_engine_decomposed.py` 阶段2 4 项 + `test_autoloop_engine.py` + arch 门禁全绿。
+- **后续阶段（各自横轮，逐个 PR）**：`VisualInspect`(636)→`EngineAct`(926)→`EngineControl`(862)→`PlanCheck`(1169)→`EngineObserve`(1560)→`EngineReflect`(3469)→`HypothesisLoop`(2969)→`CognitiveLoop`(3591)。由小到大、状态写最少者优先。
 
 ## contract（阶段1 接口）
 - 新 `huginn/autoloop/math_validation.py::MathValidator`：`__init__(self, engine)`（duck-typed，读 `engine.workspace/settings`、调 `engine._query_kb_reference`）；`async run(execution_result) -> dict`（等价原 `_run_math_validation`）。
