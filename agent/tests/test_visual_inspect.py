@@ -17,16 +17,20 @@ import pytest
 from PIL import Image
 
 from huginn.autoloop.visual_inspect import (
-    VisualInspectMixin,
+    VisualInspect,
     _histogram_correlation,
 )
 
 
-class _MockEngine(VisualInspectMixin):
+class _MockEngine(VisualInspect):
     def __init__(self, visual_ctx: str = "", img_b64: str = "") -> None:
-        self._last_visual_context = visual_ctx
-        self._visual_base64 = img_b64
-        self._last_visual_base64 = None
+        # 去 mixin: VisualInspect 是协作对象(引擎组合持有 + 只读转发)。测试子类
+        # 继承它, engine 指向自身, 字段经 object.__setattr__ 直写实例 dict,
+        # 避免 VisualInspect.__setattr__ 转发到 engine(self) 造成递归.
+        object.__setattr__(self, "engine", self)
+        object.__setattr__(self, "_last_visual_context", visual_ctx)
+        object.__setattr__(self, "_visual_base64", img_b64)
+        object.__setattr__(self, "_last_visual_base64", None)
 
 
 def _img_b64(arr) -> str:

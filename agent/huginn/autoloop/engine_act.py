@@ -786,8 +786,8 @@ Please modify the code to address this task."""
         except Exception as e:
             return {"mode": "skill", "success": False, "error": str(e)}
 
-    # P2 slim-down: visual_inspect 方法族已下沉到 VisualInspectMixin
-    # (visual_inspect.py). 见 class AutoloopEngine(..., VisualInspectMixin).
+    # P2 slim-down: visual_inspect 方法族已下沉到 VisualInspect 协作对象
+    # (visual_inspect.py). 引擎组合持有 self._visual_inspector, 经薄委托调用.
 
     async def _llm_chat(
         self,

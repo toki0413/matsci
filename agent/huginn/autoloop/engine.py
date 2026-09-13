@@ -131,7 +131,7 @@ from huginn.autoloop.phase_gate import (  # noqa: E402
     PhaseGateHook,
 )
 from huginn.autoloop.plan_check import PlanCheckMixin  # noqa: E402
-from huginn.autoloop.visual_inspect import VisualInspectMixin  # noqa: E402
+from huginn.autoloop.visual_inspect import VisualInspect  # noqa: E402
 from huginn.bench.runner import BenchmarkRunner  # noqa: F401, E402  # monkeypatch
 from huginn.coder.loop import CoderRunner  # noqa: E402
 from huginn.config import get_settings  # noqa: E402
@@ -273,7 +273,6 @@ class AutoloopEngine(
     EngineReflectMixin,
     EngineControlMixin,
     PlanCheckMixin,
-    VisualInspectMixin,
     CognitiveLoopMixin,
     HypothesisMixin,
 ):
@@ -345,6 +344,9 @@ class AutoloopEngine(
         # 去 mixin 阶段2: EnginePerceive 协作对象. perceive 相关方法经薄委托走这里,
         # 引擎级共享缓存(_kb/_perception/_persona_manager)仍留在 engine, perceiver 经转发读写.
         self._engine_perceiver = EnginePerceive(self)
+        # 去 mixin 阶段3: VisualInspect 协作对象. visual_inspect 方法经薄委托走这里,
+        # 只读引擎字段(_last_visual_context/_visual_base64/_last_visual_base64), 写经转发回引擎.
+        self._visual_inspector = VisualInspect(self)
         self.kg = ProjectKnowledgeGraph(root=self.workspace)
         # 假设图: 跟踪 hypothesis 的 support/refute/derive 关系,
         # refute 时触发 RedTeam 审查 → 修正假设入队, 形成闭环
@@ -753,6 +755,53 @@ class AutoloopEngine(
 
     def _ensure_target_chains(self) -> list:
         return self._engine_perceiver._ensure_target_chains()
+
+    # ── 去 mixin 阶段3: VisualInspect 薄委托 ────────────────────
+    # engine_act.py:337 / phase_spec 调 visual_inspect 方法族, 已下沉为 VisualInspect
+    # 协作对象 (self._visual_inspector). 薄委托保留同名签名, 调用点零改动.
+
+    async def _execute_visual_inspect(
+        self,
+        description: str,
+        context: dict[str, Any],
+        consistency_check: bool = False,
+    ) -> dict[str, Any]:
+        return await self._visual_inspector._execute_visual_inspect(
+            description, context, consistency_check=consistency_check
+        )
+
+    def _measure_nearest_primitive(
+        self, x: int, y: int, visual_ctx: str
+    ) -> dict[str, Any]:
+        return self._visual_inspector._measure_nearest_primitive(x, y, visual_ctx)
+
+    async def _annotate_visual_features(
+        self, description: str, visual_base64: str, visual_ctx: str
+    ) -> dict[str, Any]:
+        return await self._visual_inspector._annotate_visual_features(
+            description, visual_base64, visual_ctx
+        )
+
+    def _extract_text_visual_features(self, visual_ctx: str) -> dict[str, Any]:
+        return self._visual_inspector._extract_text_visual_features(visual_ctx)
+
+    def _compare_visual_data(
+        self, description: str, visual_ctx: str
+    ) -> dict[str, Any]:
+        return self._visual_inspector._compare_visual_data(description, visual_ctx)
+
+    async def _call_image_analysis_tool(
+        self,
+        image_bytes: bytes,
+        action: str,
+        parameters: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        return await self._visual_inspector._call_image_analysis_tool(
+            image_bytes, action, parameters
+        )
+
+    def _pick_image_action(self, description: str) -> str:
+        return self._visual_inspector._pick_image_action(description)
 
     # ── H5-a: 模型选择 ────────────────────────────────────────────
     # 统一模型选择入口. 多模型配置 (config.models 非空) 时走 model_router

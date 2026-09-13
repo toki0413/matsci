@@ -123,3 +123,63 @@ def test_engine_perceiver_forwards_state() -> None:
     assert isinstance(q, str)
     # 读转发: perceiver 上访问 engine 字段
     assert p.workspace == eng.workspace
+
+
+# ===== 阶段3: VisualInspect =====
+
+def test_no_visual_inspect_mixin_in_bases() -> None:
+    from huginn.autoloop.engine import AutoloopEngine
+    from huginn.autoloop.visual_inspect import VisualInspect
+
+    assert VisualInspect not in AutoloopEngine.__bases__, (
+        "AutoloopEngine 仍把 VisualInspect 当作基类 —— 去 mixin 阶段3 未完成"
+    )
+
+
+def test_visual_inspect_delegation_methods_still_present() -> None:
+    from huginn.autoloop.engine import AutoloopEngine
+
+    for name in (
+        "_execute_visual_inspect",
+        "_measure_nearest_primitive",
+        "_annotate_visual_features",
+        "_extract_text_visual_features",
+        "_compare_visual_data",
+        "_call_image_analysis_tool",
+        "_pick_image_action",
+    ):
+        assert hasattr(AutoloopEngine, name), f"VisualInspect 委托方法 {name} 缺失"
+
+
+def test_engine_new_holds_visual_inspector() -> None:
+    from huginn.autoloop.engine import AutoloopEngine
+    from huginn.autoloop.signals import EngineSignals
+    from huginn.autoloop.visual_inspect import VisualInspect
+
+    eng = AutoloopEngine.__new__(AutoloopEngine)
+    # 类级 SignalBridge property(_set) 会把被写字段转发到 self.signals, __new__ 前需挂
+    eng.signals = EngineSignals()
+    eng._last_visual_context = ""
+    eng._visual_base64 = ""
+    eng._last_visual_base64 = None
+    eng._visual_inspector = VisualInspect(eng)
+    assert isinstance(eng._visual_inspector, VisualInspect)
+
+
+async def test_engine_visual_inspector_reads_engine_field() -> None:
+    """只读转发: inspector 从引擎读到 _last_visual_context(空)", 委托方法等价可调."""
+    from huginn.autoloop.engine import AutoloopEngine
+    from huginn.autoloop.signals import EngineSignals
+    from huginn.autoloop.visual_inspect import VisualInspect
+
+    eng = AutoloopEngine.__new__(AutoloopEngine)
+    # 类级 SignalBridge property(_set) 会把被写字段转发到 self.signals, __new__ 前需挂
+    eng.signals = EngineSignals()
+    eng._last_visual_context = ""
+    eng._visual_base64 = ""
+    eng._last_visual_base64 = None
+    eng._visual_inspector = VisualInspect(eng)
+    # 无视觉数据 → 走 no-visual-data 分支, 委托方法真执行
+    res = await eng._execute_visual_inspect("zoom into region [0,0]-[10,10]", {})
+    assert res["success"] is False
+    assert "No visual data" in res["error"]

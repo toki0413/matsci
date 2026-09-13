@@ -1,10 +1,19 @@
-"""VisualInspectMixin - visual_inspect 方法族, 从 engine.py 下沉.
+"""VisualInspect — visual_inspect 方法族 协作对象, 从 engine.py 下沉.
 
-P2 slim-down: 5 个 visual inspect 方法从 engine.py 迁入, 定义为 mixin class.
-engine 通过多继承接入, 方法内通过 self 访问 engine 状态字段
-(_last_visual_context / _visual_base64) 和同级 visual 方法
-(_measure_nearest_primitive / _annotate_visual_features /
-_extract_text_visual_features / _compare_visual_data).
+P2 slim-down: 5 个 visual inspect 方法从 engine.py 迁入.
+去 mixin 阶段3: 原 VisualInspectMixin(636 行/6 方法) 改为普通类 VisualInspect。
+引擎经组合持有 self._visual_inspector = VisualInspect(self), 保留同名薄委托方法
+(_execute_visual_inspect / _measure_nearest_primitive / _annotate_visual_features /
+_extract_text_visual_features / _compare_visual_data) → 既有 self.method() 调用点
+(engine_act.py:337 / phase_spec) 零改动。不再靠多继承把认知中枢堆成 god-class。
+
+设计关键 (ponytail):
+- 方法体内只用引擎字段 (_last_visual_context / _visual_base64 / _last_visual_base64)
+  和同级方法 (self._measure_nearest_primitive ...), 不调用引擎方法 → 用「只读转发」:
+  __init__ 存 engine, __getattr__ 把未定义的私有字段读转发到 engine。这样:
+  引擎组合时方法读到引擎字段; 测试用子类继承 (__init__ 覆盖自设字段) 时读直接命中
+  实例字段, 两者都行为正确。写默认落实例, 不转发 (本方法族无"写回引擎缓存"需求).
+- 对 engine.py 模块级符号 (helper 函数 / 常量) 用方法内 lazy import, 避免 circular
 """
 
 from __future__ import annotations
@@ -40,8 +49,33 @@ def _histogram_correlation(img_bytes1: bytes, img_bytes2: bytes) -> float:
         return 0.0
 
 
-class VisualInspectMixin:
-    """visual_inspect 方法族. 通过 self 访问 engine 状态."""
+class VisualInspect:
+    """visual_inspect 方法族协作对象.
+
+    未定义的私有字段读经 __getattr__ 转发到 self.engine — 方法读到引擎状态。
+    写默认落实例 (本方法族不写引擎缓存), 测试继承子类也可自设字段.
+    """
+
+    def __init__(self, engine: Any) -> None:
+        object.__setattr__(self, "engine", engine)
+
+    def __getattr__(self, name: str) -> Any:
+        if name.startswith("_"):
+            # 用 object.__getattribute__ 直达 engine 实例属性, 避免 engine==self 时
+            # 递归触发本 __getattr__ (mock/selfcheck 场景 engine 指向自身).
+            return object.__getattribute__(self.engine, name)
+        raise AttributeError(name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name == "engine":
+            object.__setattr__(self, name, value)
+            return
+        # engine==self (测试 mock / selfcheck 场景) 时直写实例 dict, 避免转发递归;
+        # 否则转发到引擎, 让"清除陈旧 _last_visual_base64"等写回引擎保持一致.
+        if self.engine is self:
+            object.__setattr__(self, name, value)
+            return
+        setattr(self.engine, name, value)
 
     async def _call_image_analysis_tool(
         self,
@@ -585,10 +619,11 @@ def _selfcheck() -> None:
     Image.fromarray(img_arr).save(img_buf, format="PNG")
     img_b64 = b64.b64encode(img_buf.getvalue()).decode()
 
-    class _MockEngine(VisualInspectMixin):
+    class _MockEngine(VisualInspect):
         def __init__(self) -> None:
-            self._last_visual_context = ""
-            self._visual_base64 = img_b64
+            object.__setattr__(self, "engine", self)
+            object.__setattr__(self, "_last_visual_context", "")
+            object.__setattr__(self, "_visual_base64", img_b64)
 
     engine = _MockEngine()
     # 选区域 [0,0]-[60,60] (归一化坐标), 落在 200px 图上 → [0,0]-[12,12] 黑色区

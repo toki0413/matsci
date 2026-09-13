@@ -27,7 +27,12 @@
   - **属性转发**设计：`__getattr__`/`__setattr__` 把未定义属性读写转发到 engine → 方法体零改动、`_kb/_perception/_persona_manager` 等引擎级共享缓存留在 engine 不复制（缓存共享、行为完全等价）。
   - `engine.py`: 移出 base 列表、`__init__` 加 `self._engine_perceiver = EnginePerceive(self)`、保留 13 个薄委托方法 → 调用点 plan_check/engine_observe/cognitive_loop/engine_reflect 零改动。
   - 证据：`test_engine_decomposed.py` 阶段2 4 项 + `test_autoloop_engine.py` + arch 门禁全绿。
-- **后续阶段（各自横轮，逐个 PR）**：`VisualInspect`(636)→`EngineAct`(926)→`EngineControl`(862)→`PlanCheck`(1169)→`EngineObserve`(1560)→`EngineReflect`(3469)→`HypothesisLoop`(2969)→`CognitiveLoop`(3591)。由小到大、状态写最少者优先。
+- **阶段3（本 spec 后续）**：`VisualInspectMixin` → `VisualInspect`。 ✅ 已落地（2026-09-13）
+  - 6 个 visual_inspect 方法下沉为普通类 `VisualInspect(engine)`。方法体只用引擎字段(_last_visual_context/_visual_base64/_last_visual_base64)+同级方法、不调引擎方法 → **只读转发**: `__getattr__` 把未定义私有字段读转发到 engine(object.__getattribute__ 终止 engine==self 时递归); `__setattr__` engine!=self 转发到引擎(清除陈旧 base64 写回一致), engine==self(mock/selfcheck)直写实例避免递归.
+  - `engine.py`: 移出 base 列表、`__init__` 加 `self._visual_inspector = VisualInspect(self)`、保留 7 个薄委托方法 → 调用点 engine_act.py:337/phase_spec 零改动。gate 测试子类继承 mock 同步改 object.__setattr__。
+  - 证据：`test_engine_decomposed.py` 阶段3 4 项 + `test_visual_inspect.py` + `test_visual_inspect_gate.py` + autoloop/arch 全绿。
+- **附带修复（历史遗留）**：`tests/test_krcl_plan_check.py::_make_engine` 用 `__new__` 绕过 `__init__` 却未注入 `signals`, 触发类级 SignalBridge `_set` → AttributeError。补 `eng.signals = EngineSignals()` 后 58 failed → 58 passed（与 M3 一并落地）。
+- **后续阶段（各自横轮，逐个 PR）**：`EngineAct`(926)→`EngineControl`(862)→`PlanCheck`(1169)→`EngineObserve`(1560)→`EngineReflect`(3469)→`HypothesisLoop`(2969)→`CognitiveLoop`(3591)。由小到大、状态写最少者优先。
 
 ## contract（阶段1 接口）
 - 新 `huginn/autoloop/math_validation.py::MathValidator`：`__init__(self, engine)`（duck-typed，读 `engine.workspace/settings`、调 `engine._query_kb_reference`）；`async run(execution_result) -> dict`（等价原 `_run_math_validation`）。

@@ -13,14 +13,16 @@ import io as _io
 import numpy as np
 from PIL import Image
 
-from huginn.autoloop.visual_inspect import VisualInspectMixin
+from huginn.autoloop.visual_inspect import VisualInspect
 
 
-class _MockEngine(VisualInspectMixin):
+class _MockEngine(VisualInspect):
     def __init__(self, img_b64: str) -> None:
-        self._last_visual_context = ""
-        self._visual_base64 = img_b64
-        self._last_visual_base64 = None
+        # engine 指向自身, 字段经 object.__setattr__ 直写实例 dict (避免转发递归)
+        object.__setattr__(self, "engine", self)
+        object.__setattr__(self, "_last_visual_context", "")
+        object.__setattr__(self, "_visual_base64", img_b64)
+        object.__setattr__(self, "_last_visual_base64", None)
 
 
 def _img_b64(arr) -> str:
