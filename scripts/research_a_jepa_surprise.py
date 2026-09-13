@@ -49,15 +49,60 @@ def _jac(a, b):
     u = a | b
     return 1.0 - len(a & b) / len(u) if u else 0.0
 
-def surprise(prediction: str, actual: str) -> dict:
-    """复刻 _compute_surprise_robust 的 Jaccard 回落: 1 - jaccard = 语义距离."""
+
+# ── 连续语义 surprise: ST 可用→cosine, 否则回落 Jaccard ──────────
+import os as _os
+
+_ST_SINGLETON = [None]  # 缓存 ST 实例(避免逐点重建)
+
+def _get_st():
+    """优先用独立 ST 单例(本脚本自建缓存); 未装/失败则 None → 回落 Jaccard."""
+    if _ST_SINGLETON[0] is not None:
+        return _ST_SINGLETON[0]
+    try:
+        from sentence_transformers import SentenceTransformer
+        model = _os.environ.get("HUGINN_ST_MODEL", "paraphrase-multilingual-mpnet-base-v2").strip()
+        _ST_SINGLETON[0] = SentenceTransformer(model)
+        return _ST_SINGLETON[0]
+    except Exception:
+        _ST_SINGLETON[0] = None
+        return None
+
+def _embed(encoder, text):
+    try:
+        import numpy as np
+        v = encoder.encode([text], normalize_embeddings=True)[0]
+        return np.asarray(v, dtype=np.float32)
+    except Exception:
+        return None
+
+def _cosine_distance(a, b) -> float:
+    import numpy as np
+    va = np.asarray(a, dtype=np.float32).ravel()
+    vb = np.asarray(b, dtype=np.float32).ravel()
+    if va.size == 0 or vb.size == 0:
+        return 0.0
+    na = va / (np.linalg.norm(va) + 1e-12)
+    nb = vb / (np.linalg.norm(vb) + 1e-12)
+    return float(max(0.0, min(1.0, 1.0 - float(np.dot(na, nb)))))
+
+def surprise(prediction: str, actual: str, use_embedding: bool = False) -> dict:
+    """copy engine Jaccard 回落路径; use_embedding=True 时优先语义 cosine."""
+    if use_embedding:
+        enc = _get_st()
+        va, vb = (_embed(enc, prediction) if enc else None), \
+                 (_embed(enc, actual) if enc else None)
+        if va is not None and vb is not None:
+            d = _cosine_distance(va, vb)
+            return {"point": d, "mean": d, "worst": d, "semantic": True}
+    # 回落 Jaccard (同 engine)
     p1, a1 = _kw(prediction,_STOP1), _kw(actual,_STOP1)
     p2, a2 = _kw(prediction,_STOP2), _kw(actual,_STOP2)
     p3, a3 = _kw(prediction,_STOP1,min_len=5), _kw(actual,_STOP1,min_len=5)
     pb, ab = _bg(prediction), _bg(actual)
     est = [_jac(p1,a1), _jac(p2,a2), _jac(p3,a3),
            _jac(pb,ab) if pb or ab else 0.0]
-    return {"point": est[0], "mean": statistics.mean(est), "worst": max(est)}
+    return {"point": est[0], "mean": statistics.mean(est), "worst": max(est), "semantic": False}
 
 
 # ── 扰动轨迹: 预测文本沿语义偏离方向连续偏移 ───────────────────
@@ -87,41 +132,44 @@ def predict_at(t: float) -> str:
     return " ".join(out)
 
 
-def scan_surprise_curve(t_grid: int = 400) -> dict:
+def scan_surprise_curve(t_grid: int = 400, use_embedding: bool = False) -> dict:
     """扫 t 得 surprise 曲线, 测跳变度随分辨率缩小是否衰减."""
     ts = [i / t_grid for i in range(t_grid + 1)]
-    svals = [surprise(predict_at(t), _ACTUAL)["mean"] for t in ts]
-    # 最大相邻跳变 (delta = 1/t_grid)
+    svals = [surprise(predict_at(t), _ACTUAL, use_embedding=use_embedding)["mean"] for t in ts]
     max_jump = max(abs(svals[i] - svals[i-1]) for i in range(1, len(svals)))
-    # 用更粗分辨率重扫, 若 max_jump 不随分辨率下降而下降 → 存在不连续跳变(分形信号)
-    coarse = [surprise(predict_at(i/100), _ACTUAL)["mean"] for i in range(101)]
+    coarse = [surprise(predict_at(i/100), _ACTUAL, use_embedding=use_embedding)["mean"] for i in range(101)]
     coarse_jump = max(abs(coarse[i]-coarse[i-1]) for i in range(1, len(coarse)))
     return {
         "n_points": len(svals),
-        "max_jump_fine": max_jump,    # 细分辨率
-        "max_jump_coarse": coarse_jump,  # 粗分辨率
+        "max_jump_fine": max_jump,
+        "max_jump_coarse": coarse_jump,
         "jump_ratio": coarse_jump / max_jump if max_jump else float("inf"),
         "s_range": (min(svals), max(svals)),
     }
 
 
 if __name__ == "__main__":
+    import sys
+    use_emb = "--embedding" in sys.argv
+    mode = "语义cosine" if use_emb else "Jaccard回落"
     print("=" * 66)
-    print("研究 A: JEPA 连续 surprise 当吸引域 —— 测边界是否分形")
-    print("零 LLM: 复刻 _compute_surprise 的 Jaccard 回落路径")
+    print(f"研究 A: JEPA surprise 当吸引域 —— 模式: {mode}")
     print("=" * 66)
-    # 单点 sanity: 预测=实际 → surprise≈0
-    print("sanity 预测=实际:", round(surprise(_ACTUAL, _ACTUAL)["mean"], 3))
-    print("sanity 预测=完全偏离:", round(surprise("totally different answer yes", _ACTUAL)["mean"], 3))
+    # 单点 sanity
+    print("sanity 预测=实际:", round(surprise(_ACTUAL, _ACTUAL, use_embedding=use_emb)["mean"], 3))
+    print("sanity 完全偏离:", round(surprise("totally different answer yes nothing", _ACTUAL, use_embedding=use_emb)["mean"], 3))
 
-    r = scan_surprise_curve()
+    r = scan_surprise_curve(use_embedding=use_emb)
     print(f"\n扫描 surprise(t): {r['n_points']} 点")
     print(f"  surprise 范围: {r['s_range'][0]:.3f} ~ {r['s_range'][1]:.3f}")
     print(f"  细分辨率 max_jump = {r['max_jump_fine']:.3f}")
     print(f"  粗分辨率 max_jump = {r['max_jump_coarse']:.3f}")
-    # 关键判据: fine 分辨率 max_jump 明显 > 0, 说明"极微小扰动也导致 surprise 突变"
-    if r["max_jump_fine"] > 0.05:
-        print("  → 判据: 细分辨率仍有非零跳变 → 存在尖锐边界(分形信号), 需进一步估 β")
+    label = r["max_jump_fine"]>0 and r["jump_ratio"]>0.8
+    print(f"  jump_ratio(fine≈coarse? 不随分辨率衰减) = {r['jump_ratio']:.2f}")
+    if use_emb:
+        if r["max_jump_fine"]>0.05:
+            print(f"  → {mode}: 连续域仍有非零跳变且不衰减 → 倾向于存在 canvas 边界(分形信号)")
+        else:
+            print(f"  → {mode}: 连续域细分辨率跳变≈0 → 边界光滑, 非分形")
     else:
-        print("  → 判据: 细分辨率跳变≈0 → 边界光滑, 非分形")
-    print("  注: 这测的是'预测扰动 → surprise 跳变', 是真 agent 能采样的连续指纹。")
+        print(f"  → {mode}: 平台跳变 = Jaccard 词集离散伪影, 非真分形 (需 --embedding)")
