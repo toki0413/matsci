@@ -61,7 +61,19 @@
   - **内部类级引用改名**：`_append_container_text` 在实例方法内以 `EngineReflectMixin._append_container_text(...)` 类级调用（4 处）→ 同步改 `EngineReflect._...`。
   - `engine.py`: 移出 base、`__init__` 加 `self._engine_reflector = EngineReflect(self)`、保留 49 个薄委托方法 → 调用点 cognitive_loop/engine_act/hypothesis_loop 零改动。
   - 证据：`test_engine_decomposed.py` 阶段8 5 项 + `test_autoloop_engine` + `test_cognitive_engine` + `test_next_step_advisor` + `test_math_validation` + arch 门禁全绿。
-- **后续阶段（各自横轮，逐个 PR）**：`HypothesisLoop`(2969)→`CognitiveLoop`(3591)。由小到大、状态写最少者优先。
+- **阶段9（本 spec 后续）**：`HypothesisMixin` → `HypothesisLoop`。 ✅ 已落地（2026-09-13）
+  - 18 个 hypothesis 生成/管理方法 (含 `_hypothesize` / `_sync_simplicials_to_kg` / `_classify_failure` / `_redteam_findings` / metacog 审计方法族) 下沉为普通类 `HypothesisLoop(engine)` → 全属性转发 + own-method 覆写槽 `_OWN_ATTRS`。
+  - `engine.py`: 移出 base、`__init__` 加 `self._hypothesis_loop = HypothesisLoop(self)`、保留 18 个薄委托方法 → 调用点 cognitive_loop/engine_observe/hypothesis_manifold 零改动。
+  - **类级 unbound 调用兼容（坑）**：`_classify_failure` 唯一调用点 cognitive_loop 以 `AutoloopEngine._classify_failure(validation, redteam)` 类级调用（把 validation dict 当 self 传入），故委托改成 `@staticmethod` 直通 `HypothesisLoop._classify_failure(validation, cats)`，而不是实例方法。
+  - 测试迁移：`test_lucid_prereqs` 各 fixture 补挂 `_hypothesis_loop` / `_engine_controller`；`test_darwin_ratchet` fixture 补挂 `_hypothesis_loop`。
+- **阶段10（本 spec 后续）**：`CognitiveLoopMixin` → `CognitiveRunner`。 ✅ 已落地（2026-09-13）
+  - 21 个实例方法 main-loop 方法族 (含 `run_cognitive` / `_run_phase_async` / `_prepare_run` / `_finalize_run` / `_darwin_ratchet_check` / `_await_human_decision_via_inbox` / `_emit_campaign`) 下沉为普通类 `CognitiveRunner(engine)` → 全属性转发 + own-method 覆写槽 `_OWN_ATTRS`。
+  - **命名替换**：本模块已有编排抽象 `class CognitiveLoop`（rcb_runner/autoloop 的 4 钩子控制器），故 m10 不叫 CognitiveLoop 而叫 `CognitiveRunner` 避免同名冲突。
+  - **静态方法桥**：`_extract_timeseries` / `_snapshot_provenance_version` 两个 `@staticmethod` 不读 self，测试以 `AutoloopEngine._X(...)` 类级 unbound 调用 → engine 加类常量桥 `_extract_timeseries = CognitiveRunner._extract_timeseries` / `_snapshot_provenance_version = CognitiveRunner._snapshot_provenance_version`。
+  - `engine.py`: 移出 base（AutoloopEngine 现无任何基类）、`__init__` 加 `self._cognitive_runner = CognitiveRunner(self)`、保留 21 个薄委托方法 (含 `run_cognitive` 保留 `max_refines=8` 默认) → 调用点 engine_control / engine_reflect / plan_check + 对外入口零改动。
+  - 测试迁移：`test_darwin_ratchet` fixture 补挂 `_cognitive_runner`。
+  - 证据：`test_engine_decomposed.py` 阶段10 6 项 + `test_autoloop_budget/verify_4flags/cognitive_engine` + `test_darwin_ratchet` + e2e `run_cognitive` 路径全绿。
+- **后续阶段**：全部 10 个 mixin 均已拆完。剩余为统一清理（删桥/归档）可在阶段路线走完后统一评估。
 
 ## contract（阶段1 接口）
 - 新 `huginn/autoloop/math_validation.py::MathValidator`：`__init__(self, engine)`（duck-typed，读 `engine.workspace/settings`、调 `engine._query_kb_reference`）；`async run(execution_result) -> dict`（等价原 `_run_math_validation`）。

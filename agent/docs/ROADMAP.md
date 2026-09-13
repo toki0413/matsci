@@ -10,7 +10,7 @@
 - [x] M6: PlanCheckMixin → PlanCheck（1169 行，22 方法）
 - [x] M7: EngineObserveMixin → EngineObserve（1560 行）
 - [x] M8: EngineReflectMixin → EngineReflect（3469 行）
-- [ ] M9: HypothesisMixin → HypothesisLoop（2969 行）
-- [ ] M10: CognitiveLoopMixin → CognitiveLoop（3591 行）
+- [x] M9: HypothesisMixin → HypothesisLoop（2969 行）
+- [x] M10: CognitiveLoopMixin → CognitiveRunner（3591 行，命名替换避免与同模块编排类 CognitiveLoop 冲突）
 
 行数为拆分汇总实测量。每个里程碑定义与方法族契约见 `docs/staging/specs/2026-09-13-engine-decompose-mixin.md`。

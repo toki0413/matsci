@@ -549,9 +549,11 @@ class TestSimplicialSyncToKg:
     """A 路径: _simplicials 超图联合命题写回 ProjectKnowledgeGraph 成 hyperedge."""
 
     def _make_dummy(self, hypo_graph, kg):
-        from huginn.autoloop.hypothesis_loop import HypothesisMixin
+        from huginn.autoloop.engine import AutoloopEngine
+        from huginn.autoloop.hypothesis_loop import HypothesisLoop
 
-        dummy = object.__new__(HypothesisMixin)
+        dummy = AutoloopEngine.__new__(AutoloopEngine)
+        dummy._hypothesis_loop = HypothesisLoop(dummy)
         dummy.hypothesis_graph = hypo_graph
         dummy.kg = kg
         return dummy
@@ -605,13 +607,15 @@ class TestSimplicialSyncToKg:
 
     def test_sync_advisory_no_kg(self):
         """无 kg 时静默降级, 不抛异常."""
-        from huginn.autoloop.hypothesis_loop import HypothesisMixin
+        from huginn.autoloop.engine import AutoloopEngine
+        from huginn.autoloop.hypothesis_loop import HypothesisLoop
 
         g = HypothesisGraph()
         h1 = g.add_hypothesis("A")
         h2 = g.add_hypothesis("B")
         g._simplicials.add(frozenset({h1, h2}))
-        dummy = object.__new__(HypothesisMixin)
+        dummy = AutoloopEngine.__new__(AutoloopEngine)
+        dummy._hypothesis_loop = HypothesisLoop(dummy)
         dummy.hypothesis_graph = g
         dummy.kg = None
         # 不应抛异常

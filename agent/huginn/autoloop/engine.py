@@ -114,7 +114,7 @@ def _autoloop_streaming_enabled() -> bool:
     return _feature_flag("autoloop_streaming", True)
 
 
-from huginn.autoloop.cognitive_loop import CognitiveLoopMixin  # noqa: E402
+from huginn.autoloop.cognitive_loop import CognitiveRunner  # noqa: E402
 from huginn.autoloop.engine_act import EngineAct  # noqa: E402
 from huginn.autoloop.engine_control import EngineControl  # noqa: E402
 from huginn.autoloop.engine_observe import EngineObserve  # noqa: E402
@@ -125,7 +125,7 @@ from huginn.autoloop.engine_observe import EngineObserve  # noqa: E402
 from huginn.autoloop.engine_perceive import EnginePerceive  # noqa: E402
 from huginn.autoloop.engine_reflect import EngineReflect  # noqa: E402
 from huginn.autoloop.goal_scheduler import GoalScheduler  # noqa: E402
-from huginn.autoloop.hypothesis_loop import HypothesisMixin  # noqa: E402
+from huginn.autoloop.hypothesis_loop import HypothesisLoop  # noqa: E402
 from huginn.autoloop.math_validation import MathValidator  # noqa: E402
 from huginn.autoloop.phase_gate import (  # noqa: E402
     PhaseGateHook,
@@ -267,17 +267,15 @@ def _extract_tests_passed(validation: Any) -> bool:
 
 
 
-class AutoloopEngine(
-    CognitiveLoopMixin,
-    HypothesisMixin,
-):
+class AutoloopEngine:
     """Main autonomous loop engine.
 
     Orchestrates perception, hypothesis generation, planning, execution,
     validation, learning, and reporting into a single cohesive loop.
 
-    Method 分组 (P3 slim-down): perceive/observe/act/reflect/control 方法族
-    已拆到 engine_*.py mixin 模块, 本文件保留 __init__ + 对齐数据 + 懒加载访问器.
+    Method 分组 (P3 slim-down): perceive/observe/act/reflect/control/cognitive
+    方法族已拆到 engine_*.py / cognitive_loop.py 协作对象模块, 本文件保留 __init__
+    + 对齐数据 + 懒加载访问器 + 各协作对象的同名薄委托.
     """
 
     # 去 mixin 阶段7: EngineObserve 类常量桥 — 观察对象常量下沉后留引用,
@@ -291,6 +289,11 @@ class AutoloopEngine(
     _FEYNMAN_PROMPT = EngineReflect._FEYNMAN_PROMPT
     _BLIND_SPOT_PROMPT = EngineReflect._BLIND_SPOT_PROMPT
     _NEXT_STEP_ADVISOR_PROMPT = EngineReflect._NEXT_STEP_ADVISOR_PROMPT
+    # 去 mixin 阶段10: CognitiveRunner 静态方法桥 — 两个 @staticmethod 不读 self,
+    # 保持 AutoloopEngine._extract_timeseries / _snapshot_provenance_version 类级访问
+    # (test_temporal_p2p3 / provenance 路径以 unbound 形式调用).
+    _extract_timeseries = CognitiveRunner._extract_timeseries
+    _snapshot_provenance_version = CognitiveRunner._snapshot_provenance_version
 
     def __init__(
         self,
@@ -363,6 +366,13 @@ class AutoloopEngine(
         # 去 mixin 阶段8: EngineReflect 协作对象. validate/learn/report 方法族经薄委托,
         # 引擎字段/方法经 full 属性转发读写.
         self._engine_reflector = EngineReflect(self)
+        # 去 mixin 阶段9: HypothesisLoop 协作对象. hypothesis 生成/管理方法族经薄委托,
+        # 引擎字段/方法经 full 属性转发读写.
+        self._hypothesis_loop = HypothesisLoop(self)
+        # 去 mixin 阶段10: CognitiveRunner 协作对象. cognitive 主循环方法族
+        # (run_cognitive/_finalize_run/_darwin_ratchet_check 等)经薄委托,
+        # 引擎字段/方法经 full 属性转发读写.
+        self._cognitive_runner = CognitiveRunner(self)
         # 去 mixin 阶段2: EnginePerceive 协作对象. perceive 相关方法经薄委托走这里,
         # 引擎级共享缓存(_kb/_perception/_persona_manager)仍留在 engine, perceiver 经转发读写.
         self._engine_perceiver = EnginePerceive(self)
@@ -1467,6 +1477,200 @@ class AutoloopEngine(
         return EngineReflect._build_science_report_prompt(
             report_data, kb_text, exec_summary, visual_ctx, validation_summary,
             hypothesis, surprise)
+
+    # ── 去 mixin 阶段9: HypothesisLoop 薄委托 ─────────────────────
+    # hypothesis 生成/管理方法族已下沉为 HypothesisLoop 协作对象 (self._hypothesis_loop).
+    # 被 cognitive_loop / engine_observe / hypothesis_manifold 大量调用, 薄委托保留同名签名.
+
+    async def _hypothesize_via_branch_incubator(
+        self, context: dict[str, Any],
+    ) -> str | None:
+        return await self._hypothesis_loop._hypothesize_via_branch_incubator(context)
+
+    async def _hypothesize(self, context: dict[str, Any]) -> str | None:
+        return await self._hypothesis_loop._hypothesize(context)
+
+    def _record_backup_candidates(self, raw: str, selected: str) -> None:
+        self._hypothesis_loop._record_backup_candidates(raw, selected)
+
+    def _metacog_classify_family(self, hypothesis: str) -> str:
+        return self._hypothesis_loop._metacog_classify_family(hypothesis)
+
+    def _metacog_audit_hypothesis(
+        self, hypothesis: str, context: dict[str, Any],
+    ) -> None:
+        self._hypothesis_loop._metacog_audit_hypothesis(hypothesis, context)
+
+    def _metacog_topology_audit(
+        self, hypothesis: str, context: dict[str, Any],
+    ) -> None:
+        self._hypothesis_loop._metacog_topology_audit(hypothesis, context)
+
+    def _sync_simplicials_to_kg(self) -> None:
+        self._hypothesis_loop._sync_simplicials_to_kg()
+
+    def _choose_recovery_phase(
+        self, failure_type: str, validation: dict[str, Any],
+    ) -> str:
+        return self._hypothesis_loop._choose_recovery_phase(failure_type, validation)
+
+    # 原 _classify_failure 是 engine 上 `(self, redteam_cats)` 方法, 但唯一调用点
+    # cognitive_loop.run_cognitive 以「类级 unbound」调用 `AutoloopEngine.
+    # _classify_failure(validation, redteam)`, 把 validation dict 传进 self. 故
+    # 委托必须是 @staticmethod 直通 HypothesisLoop._classify_failure(validation, cats),
+    # 而不是实例方法 (实例方法会把 validation dict 当 self, 从而丢失 _hypothesis_loop).
+    @staticmethod
+    def _classify_failure(
+        validation: dict[str, Any], redteam_cats: list[str] | None = None,
+    ) -> str:
+        return HypothesisLoop._classify_failure(validation, redteam_cats)
+
+    def _redteam_findings(self) -> list[str]:
+        return self._hypothesis_loop._redteam_findings()
+
+    def _attach_lucid_prereqs(self, hyp_id: str) -> None:
+        self._hypothesis_loop._attach_lucid_prereqs(hyp_id)
+
+    def _should_imaginate(self) -> bool:
+        return self._hypothesis_loop._should_imaginate()
+
+    def _recent_failed_hypotheses(self, limit: int = 3) -> list[str]:
+        return self._hypothesis_loop._recent_failed_hypotheses(limit)
+
+    def _conjecture_hint(self, context: dict[str, Any]) -> str:
+        return self._hypothesis_loop._conjecture_hint(context)
+
+    async def _symreg_hint(self, context: dict[str, Any]) -> str:
+        return await self._hypothesis_loop._symreg_hint(context)
+
+    def _query_kb_known_forms(self, data: dict[str, Any]) -> str:
+        return self._hypothesis_loop._query_kb_known_forms(data)
+
+    def _pick_hypothesis_persona(self, context: dict[str, Any]) -> str:
+        return self._hypothesis_loop._pick_hypothesis_persona(context)
+
+    async def _evaluate_informativeness(self, hypothesis_id: str) -> dict[str, Any]:
+        return await self._hypothesis_loop._evaluate_informativeness(hypothesis_id)
+
+    # ── 去 mixin 阶段10: CognitiveRunner 薄委托 ───────────────────────
+    # cognitive 主循环方法族已下沉为 CognitiveRunner 协作对象 (self._cognitive_runner).
+    # 被 engine_control (挂起决策) / engine_reflect / plan_check 等内部调用 + 对外
+    # run_cognitive 入口大量引用, 薄委托保留同名签名, 调用点零改动.
+    # 两个 @staticmethod (_extract_timeseries/_snapshot_provenance_version) 走类常量桥,
+    # 不在此重复实例委托.
+
+    async def _await_human_decision_via_inbox(
+        self, reason: str, options: list[dict[str, Any]], step_id: int,
+    ) -> str | None:
+        return await self._cognitive_runner._await_human_decision_via_inbox(
+            reason, options, step_id,
+        )
+
+    def _run_phase(self, name: str, fn, *args):
+        return self._cognitive_runner._run_phase(name, fn, *args)
+
+    async def _run_phase_async(self, name: str, fn, *args):
+        return await self._cognitive_runner._run_phase_async(name, fn, *args)
+
+    def _render_report(self, data: dict[str, Any]) -> str:
+        return self._cognitive_runner._render_report(data)
+
+    def _git_commit_after_execute(self, plan: dict[str, Any], iteration: int) -> None:
+        self._cognitive_runner._git_commit_after_execute(plan, iteration)
+
+    def _darwin_ratchet_check(self) -> None:
+        self._cognitive_runner._darwin_ratchet_check()
+
+    def _classify_stall(self) -> str:
+        return self._cognitive_runner._classify_stall()
+
+    def _trigger_counterexample_hunt(self) -> None:
+        self._cognitive_runner._trigger_counterexample_hunt()
+
+    def _emit_campaign(self, event_type: str, data: dict) -> None:
+        self._cognitive_runner._emit_campaign(event_type, data)
+
+    def _prepare_run(
+        self, objective: str, progressive_budget: bool, goal: Any | None,
+    ) -> tuple[str, Any, Any]:
+        return self._cognitive_runner._prepare_run(
+            objective, progressive_budget, goal,
+        )
+
+    def _persist_failure_pattern(self, run_id: str) -> None:
+        self._cognitive_runner._persist_failure_pattern(run_id)
+
+    def _load_failure_pattern(self) -> str:
+        return self._cognitive_runner._load_failure_pattern()
+
+    def _persist_run_context(
+        self, run_id: str, objective: str, cog: dict, state: Any,
+    ) -> None:
+        self._cognitive_runner._persist_run_context(run_id, objective, cog, state)
+
+    def _load_prev_run_context(self) -> str:
+        return self._cognitive_runner._load_prev_run_context()
+
+    def _format_timeseries_context(self) -> str:
+        return self._cognitive_runner._format_timeseries_context()
+
+    async def _decide_next_action_llm(
+        self, state: Any, cog: dict, obs: dict,
+    ):
+        return await self._cognitive_runner._decide_next_action_llm(state, cog, obs)
+
+    def _build_decider_prompt(
+        self, state: Any, cog: dict, obs: dict,
+    ) -> str:
+        return self._cognitive_runner._build_decider_prompt(state, cog, obs)
+
+    def _is_action_legal(self, action: str, cog: dict) -> bool:
+        return self._cognitive_runner._is_action_legal(action, cog)
+
+    async def _finalize_run(
+        self,
+        objective: str,
+        phases: list[Any],
+        run_id: str,
+        provenance_record: Any,
+        run_collector: Any,
+        tracker: Any,
+        progress_task_id: str,
+        completed_steps: int,
+    ) -> Any:
+        return await self._cognitive_runner._finalize_run(
+            objective,
+            phases,
+            run_id,
+            provenance_record,
+            run_collector,
+            tracker,
+            progress_task_id,
+            completed_steps,
+        )
+
+    def _rollback_on_execute_failure(
+        self, state: Any, decision: Any, exc: BaseException,
+    ) -> None:
+        self._cognitive_runner._rollback_on_execute_failure(state, decision, exc)
+
+    async def run_cognitive(
+        self,
+        objective: str,
+        max_iterations: int = 50,
+        progressive_budget: bool = True,
+        goal: Any | None = None,
+        max_refines: int = 8,
+        timeout_seconds: float | None = None,
+    ) -> Any:
+        return await self._cognitive_runner.run_cognitive(
+            objective,
+            max_iterations,
+            progressive_budget,
+            goal,
+            max_refines,
+            timeout_seconds,
+        )
 
     # ── H5-a: 模型选择 ────────────────────────────────────────────
     # 统一模型选择入口. 多模型配置 (config.models 非空) 时走 model_router
