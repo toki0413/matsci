@@ -129,6 +129,19 @@ class ObservationArchive:
             "more": page_num + 1 < total_pages,
         }
 
+    def read_full(self, handle: str) -> dict[str, Any]:
+        """读取完整正文(不分页), 供 EvidenceReduced 回源密封等全量校验用."""
+        m = _HANDLE_RE.match(handle.strip())
+        if not m:
+            return {"found": False, "error": f"malformed handle: {handle!r}"}
+        path = self.dir / f"{m.group(1)}.txt"
+        if not path.is_file():
+            return {"found": False, "error": f"observation not found: {handle}"}
+        try:
+            return {"found": True, "text": path.read_text(encoding="utf-8")}
+        except OSError as e:
+            return {"found": False, "error": f"read failed: {e}"}
+
     def handle_for_body(self, body: str) -> tuple[str, Path]:
         """便捷入口: 归档正文, 返回 (handle, path)。"""
         return self.archive_body(body)

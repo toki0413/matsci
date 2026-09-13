@@ -97,7 +97,7 @@ def reduce_log_to_receipt(
 
 def _seal_receipt(receipt: Receipt, archive: ObservationArchive) -> bool:
     """seal: 只有当所有保留行都逐字出现在归档原文里才为真. 否则不再改 head/tail."""
-    body = archive.recall(receipt.handle)
+    body = archive.read_full(receipt.handle)  # 全量校验, 不依赖单页召回
     if not body["found"]:
         return False
     source = body["text"]

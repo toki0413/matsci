@@ -7,12 +7,14 @@
   - ``register_verifier(tool_name, contract)``: 为某变更工具注册"跟随验证"契约
     (支持精确名或前缀, 与 ``register_tool_keep_keys`` 同套路, opt-in 不污全局)。
   - ``verifier_for(tool_name)``: 查契约。
-  - ``fused_verify(tool_name, mutation_result, ctx)``: 有契约时, 在**同一调用**
-    里执行 verifier 工具并把结果折叠进变更结果(无契约返回 None, 不改变原结果)。
+  - ``enable_action_fusion()``: 总开关(默认关, 对齐 SoL-Pi "opt-in disabled by default").
+    开启后, dispatch 在变更工具成功后会调用 ``fused_verify`` 做同调用融合。
+  - ``fused_verify(tool_name, mutation_args, mutation_result, ctx)``: 有契约时,
+    在**同一调用**里执行 verifier 工具并把结果折叠进变更结果。
 
-设计约束: 纯本地注册 + 复用 ToolRegistry 分派执行, 不新增框架; verifier 执行
-失败返回 verified=False 而非 raise(不吞变更结果, 只是标记验证失败)。任何契约
-缺失/执行异常 → 静默 None, 完全不放宽/不阻塞原工具。
+设计约束: 纯本地注册 + 复用 ToolRegistry 分派执行, 不新增框架; **总开关默认 False**,
+不开 = 零运行时开销、行为与现状完全一致。verifier 执行失败返回 verified=False 而非
+raise(不吞变更结果, 只是标记验证失败)。任何契约缺失/执行异常 → 静默 None。
 """
 from __future__ import annotations
 
@@ -21,6 +23,20 @@ from dataclasses import dataclass, field
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# 总开关: 对齐 SoL-Pi "explicit opt-in, disabled by default"。开启后 dispatch_tool
+# 才对有契约的变更工具做"同调用跟随验证"。默认 False = 零行为变化。
+_action_fusion_enabled = False
+
+
+def enable_action_fusion() -> None:
+    """开启 Action Fusion(总开关)。此后有契约的变更工具会做同调用跟随验证。"""
+    global _action_fusion_enabled
+    _action_fusion_enabled = True
+
+
+def is_action_fusion_enabled() -> bool:
+    return _action_fusion_enabled
 
 
 @dataclass
@@ -35,14 +51,24 @@ class VerifierContract:
     verifier_tool: str
     args: dict[str, Any] = field(default_factory=dict)
 
-    def build_args(self, mutation_result: Any) -> dict[str, Any]:
-        """把 args 里的 ``$result.<dotpath>`` 占位符替换成本次变更结果里的值."""
-        if not mutation_result:
-            return dict(self.args)
+    def build_args(
+        self, mutation_args: Any, mutation_result: Any
+    ) -> dict[str, Any]:
+        """把 args 里的 ``$args.<field>``/``$result.<dotpath>`` 替换成实际值.
+
+        ``$args.`` 从变更工具**输入**取值(如 file_path/working_dir);
+        ``$result.`` 从变更工具**输出**取值(如回显的 path/新值)。
+        """
+        src = {"args": mutation_args, "result": mutation_result}
         out: dict[str, Any] = {}
         for k, v in self.args.items():
-            if isinstance(v, str) and v.startswith("$result."):
-                out[k] = _lookup_dotpath(mutation_result, v[len("$result."):])
+            if isinstance(v, str):
+                if v.startswith("$args."):
+                    out[k] = _lookup_dotpath(src, "args." + v[len("$args."):])
+                elif v.startswith("$result."):
+                    out[k] = _lookup_dotpath(src, "result." + v[len("$result."):])
+                else:
+                    out[k] = v
             else:
                 out[k] = v
         return out
@@ -111,17 +137,20 @@ def verifier_for(tool_name: str) -> VerifierContract | None:
 
 async def fused_verify(
     tool_name: str,
+    mutation_args: Any,
     mutation_result: Any,
     ctx: Any,
 ) -> dict[str, Any] | None:
-    """有契约时, 在**同一调用**里执行跟随验证并折叠结果.
+    """有契约且总开关开启时, 在**同一调用**里执行跟随验证并折叠结果.
 
     返回 dict 或 None:
-      - None  = 无契约 / 契约工具缺失 / 执行异常 (静默, 不变更原结果)
+      - None  = 总开关关 / 无契约 / 契约工具缺失 / 执行异常 (静默, 不变更原结果)
       - dict  = {"verifier_tool", "verified": bool, "detail": <验证结果>, "fused": True}
 
     不 raise: 验证失败不算致命, 交给上层决定是否保留变更。
     """
+    if not _action_fusion_enabled:
+        return None
     contract = _VERIFIERS.resolve(tool_name)
     if contract is None:
         return None
@@ -132,7 +161,7 @@ async def fused_verify(
         logger.debug("action_fusion: verifier tool %r absent", contract.verifier_tool)
         return None
     try:
-        vargs = contract.build_args(mutation_result)
+        vargs = contract.build_args(mutation_args, mutation_result)
         if not vargs:
             vargs = {}
         result = await vtool.call(vargs, ctx)
@@ -148,12 +177,37 @@ async def fused_verify(
     }
 
 
+def register_solpi_default_verifiers() -> None:
+    """注册 SoL-Pi Action Fusion 的**默认真实契约示例**(opt-in)。
+
+    这些契约只有开启总开关(enable_action_fusion)后才生效。示例:
+      - file_edit_tool / file_write_tool → 用 bash_tool 跑 ``python -m py_compile``
+        校验改动文件的语法(``$args.file_path``/``$args.working_dir`` 从变更输入取)。
+    安全说明: fused_verify 失败只记 verified=False, **永不修改变更结果本身**;
+    对非 .py 文件 py_compile 报错只标记验证失败, 不丢编辑。
+    """
+    register_verifier(
+        "file_edit_tool",
+        "bash_tool",
+        {"command": "python -m py_compile $args.file_path",
+         "working_dir": "$args.working_dir"},
+    )
+    register_verifier(
+        "file_write_tool",
+        "bash_tool",
+        {"command": "python -m py_compile $args.file_path",
+         "working_dir": "$args.working_dir"},
+    )
+
+
 def _selfcheck() -> None:
     import asyncio
     import types
 
     from huginn.core_types import ToolContext, ToolResult
     from huginn.tools.registry import ToolRegistry
+
+    enable_action_fusion()  # selfcheck 明确开启总开关
 
     async def call(self, args, ctx):
         return ToolResult(success=True, data={"validated": args})
@@ -166,10 +220,11 @@ def _selfcheck() -> None:
     try:
         ToolRegistry.register(fake_validate)
 
-        # 1. 精确名契约 + $result.path 替换
-        register_verifier("file_edit_tool", "fake_validate", {"path": "$result.path"})
+        # 1. 精确名契约 + $args.path 替换
+        register_verifier("file_edit_tool", "fake_validate", {"path": "$args.file_path"})
         ctx = ToolContext(session_id="selftest", workspace="/tmp", config=None)
-        r = asyncio.run(fused_verify("file_edit_tool", {"path": "/tmp/m.py"}, ctx))
+        r = asyncio.run(fused_verify("file_edit_tool", {"file_path": "/tmp/m.py"},
+                                     {"ok": 1}, ctx))
         assert r is not None and r["verified"] is True, r
         assert r["detail"]["validated"]["path"] == "/tmp/m.py", r
 
@@ -180,11 +235,16 @@ def _selfcheck() -> None:
 
         # 3. 未注册 → None
         assert verifier_for("ghost_tool") is None
-        assert asyncio.run(fused_verify("ghost_tool", {}, ctx)) is None
+        assert asyncio.run(fused_verify("ghost_tool", {}, {}, ctx)) is None
 
         # 4. 契约工具缺失 → None 不 raise
         register_verifier("only_reg", "missing_verifier_tool", {})
-        assert asyncio.run(fused_verify("only_reg", {}, ctx)) is None
+        assert asyncio.run(fused_verify("only_reg", {}, {}, ctx)) is None
+
+        # 5. 默认契约示例存在(file_write → bash py_compile)
+        register_solpi_default_verifiers()
+        assert verifier_for("file_write_tool") is not None
+        assert verifier_for("file_write_tool").verifier_tool == "bash_tool"
         print("OK action_fusion self-check passed (tool->verifier contract + fused verify)")
     finally:
         ToolRegistry.restore(snap)
