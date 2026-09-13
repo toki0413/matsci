@@ -1,14 +1,26 @@
-"""PlanCheckMixin - plan_check 方法族, 从 engine.py 下沉.
+"""PlanCheck — plan_check 方法族协作对象, 从 engine.py 下沉.
 
-P1 slim-down: 22 个 plan_check 方法从 engine.py 迁入, 定义为 mixin class.
-engine 通过多继承接入, 方法内通过 self 访问 engine 状态字段
-(_plan_check_patterns / _plan_check_history / _plan_check_warnings /
-_plan_check_last_result / _scene_tag_extra_keywords / _iteration / workspace)
-和 engine 方法 (_maybe_clarify / _llm_chat / _build_memory_text /
-_build_metacog_block / _build_hypothesis_prompt 等).
+P1 slim-down: 22 个 plan_check 方法从 engine.py 迁入. 原以 mixin class 多继承
+接入, 去 mixin 阶段6 改为普通类 PlanCheck, 引擎经组合持有 self._plan_checker
+= PlanCheck(self), 保留同名薄委托方法 → 既有 self.method() 调用点零改动.
 
-调用点: engine._prepare_run 调 _load_plan_check_patterns();
-engine._plan 调 _plan_check_and_refine().
+方法经转发访问 engine 状态 (self 未定义属性落回 engine):
+字段如 _plan_check_patterns / _plan_check_history / _plan_check_warnings /
+_plan_check_last_result / _scene_tag_extra_keywords / _iteration / workspace,
+方法如 _maybe_clarify / _llm_chat / _build_memory_text / _build_kb_text /
+_apply_block_patches / _trim_to_budget 等均转发到引擎.
+
+设计关键 (ponytail):
+- 方法体大量读写引擎状态(字段+方法) → 「全属性转发」: __getattr__ 把未定义
+  属性读转发到 engine, __setattr__ 转发写. 字段/方法留引擎不复制.
+- 防递归: __getattr__ 用 object.__getattribute__ 直达 engine 实例属性
+  (engine==self 的测试 mock 场景不递归); __setattr__ 在 engine is self 时直写
+  实例 dict.
+- 对 engine.py 模块级符号用方法内 lazy import (_get_math_signals), 避免 circular.
+- 协作对象不额外持有业务状态 (除 engine 引用).
+
+调用点: cognitive_loop 调 _load_plan_check_patterns(); engine_act._plan
+调 _build_plan_prompt / _parse_plan / _override_plan_mode / _plan_check_and_refine.
 """
 
 from __future__ import annotations
@@ -26,13 +38,65 @@ logger = logging.getLogger(__name__)
 
 
 def _get_math_signals():
-    """Delayed import to avoid circular dependency (engine imports PlanCheckMixin)."""
+    """Delayed import to avoid circular dependency (engine imports PlanCheck)."""
     from huginn.autoloop.engine import _MATH_SIGNALS
     return _MATH_SIGNALS
 
 
-class PlanCheckMixin:
-    """plan_check 方法族. 通过 self 访问 engine 状态."""
+class PlanCheck:
+    """plan_check 方法族协作对象.
+
+    未定义的属性读写经 __getattr__/__setattr__ 转发到 self.engine —
+    引擎字段/方法不会被复制两份, 方法体零改动、行为完全等价.
+    """
+
+    def __init__(self, engine: Any) -> None:
+        object.__setattr__(self, "engine", engine)
+
+    def __getattr__(self, name: str) -> Any:
+        # object.__getattribute__ 直达 engine 实例属性, 避免 engine==self 时递归
+        return object.__getattribute__(self.engine, name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name == "engine":
+            object.__setattr__(self, name, value)
+            return
+        # 本对象自有的协作方法名: 赋值意图是覆写协作方法(如测试 mock _plan_check),
+        # 应落在本对象实例 dict 而非转发回引擎; 其余名字(引擎状态字段)转发回引擎.
+        if name in self._OWN_ATTRS:
+            object.__setattr__(self, name, value)
+            return
+        # engine==self (测试 mock) 直写实例 dict 避免转发自递归; 否则转发回引擎
+        if self.engine is self:
+            object.__setattr__(self, name, value)
+            return
+        setattr(self.engine, name, value)
+
+    #: PlanCheck 定义的协作方法名集合. 供 __setattr__ 判定"覆写自身方法" vs "写引擎状态".
+    _OWN_ATTRS: frozenset[str] = frozenset({
+        "_build_subgoal_block",
+        "_build_plan_prompt",
+        "_plan_context_hint",
+        "_override_plan_mode",
+        "_log_plan_override",
+        "_parse_plan",
+        "_plan_check_and_refine",
+        "_maybe_trigger_plan_check_clarify",
+        "_plan_check_tier",
+        "_plan_check_complexity_thresholds",
+        "_plan_check_scene_tag",
+        "_discover_scene_tags",
+        "_plan_check_complexity",
+        "_plan_check_max_refines",
+        "_plan_check",
+        "_dimensional_pre_check",
+        "_build_plan_check_prompt",
+        "_record_plan_check_failure",
+        "_load_plan_check_patterns",
+        "_save_plan_check_patterns",
+        "_parse_plan_check",
+        "_refine_plan",
+    })
 
     def _build_subgoal_block(self) -> str:
         """从 agent 或 self 上读 sub_goals, 注入到 prompt."""

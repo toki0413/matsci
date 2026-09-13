@@ -22,6 +22,15 @@ def engine() -> AutoloopEngine:
       - self.workspace (str)
     """
     eng = AutoloopEngine.__new__(AutoloopEngine)
+    # 去 mixin 阶段6: PlanCheck 协作对象 — _build_plan_prompt 经引擎薄委托转发.
+    from huginn.autoloop.plan_check import PlanCheck
+
+    eng._plan_checker = PlanCheck(eng)  # type: ignore[attr-defined]
+    # 信号桥 (engine SignalBridge): _iteration 等环信号字段读写都经 self.signals,
+    # __new__ 绕过 __init__ 需手动挂载, 否则 _iteration 赋值/读取报错.
+    from huginn.autoloop.signals import EngineSignals
+
+    eng.signals = EngineSignals()
     eng._speculator_hint = None
     eng._kb = None
     eng.workspace = "."

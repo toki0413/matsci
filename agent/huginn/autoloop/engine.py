@@ -130,7 +130,7 @@ from huginn.autoloop.math_validation import MathValidator  # noqa: E402
 from huginn.autoloop.phase_gate import (  # noqa: E402
     PhaseGateHook,
 )
-from huginn.autoloop.plan_check import PlanCheckMixin  # noqa: E402
+from huginn.autoloop.plan_check import PlanCheck  # noqa: E402
 from huginn.autoloop.visual_inspect import VisualInspect  # noqa: E402
 from huginn.bench.runner import BenchmarkRunner  # noqa: F401, E402  # monkeypatch
 from huginn.coder.loop import CoderRunner  # noqa: E402
@@ -270,7 +270,6 @@ def _extract_tests_passed(validation: Any) -> bool:
 class AutoloopEngine(
     EngineObserveMixin,
     EngineReflectMixin,
-    PlanCheckMixin,
     CognitiveLoopMixin,
     HypothesisMixin,
 ):
@@ -345,6 +344,9 @@ class AutoloopEngine(
         # 去 mixin 阶段5: EngineControl 协作对象. 循环控制/checkpoint 方法族经薄委托,
         # 引擎字段/方法经 full 属性转发读写.
         self._engine_controller = EngineControl(self)
+        # 去 mixin 阶段6: PlanCheck 协作对象. plan_check 方法族经薄委托,
+        # 引擎字段/方法经 full 属性转发读写.
+        self._plan_checker = PlanCheck(self)
         # 去 mixin 阶段2: EnginePerceive 协作对象. perceive 相关方法经薄委托走这里,
         # 引擎级共享缓存(_kb/_perception/_persona_manager)仍留在 engine, perceiver 经转发读写.
         self._engine_perceiver = EnginePerceive(self)
@@ -975,6 +977,128 @@ class AutoloopEngine(
         self, plan: dict[str, Any], result: Any, context: dict[str, Any],
     ) -> None:
         self._engine_controller._log_deviation(plan, result, context)
+
+    # ── 去 mixin 阶段6: PlanCheck 薄委托 ────────────────────────
+    # plan_check 方法族已下沉为 PlanCheck 协作对象 (self._plan_checker).
+    # 被 engine_act._plan / cognitive_loop / engine_observe 大量调用,
+    # 薄委托保留同名签名, 调用点零改动.
+
+    def _build_plan_prompt(
+        self, hypothesis: str, context: dict[str, Any]
+    ) -> str:
+        return self._plan_checker._build_plan_prompt(hypothesis, context)
+
+    def _plan_context_hint(self) -> str:
+        return self._plan_checker._plan_context_hint()
+
+    def _override_plan_mode(
+        self, plan: dict[str, Any]
+    ) -> dict[str, Any]:
+        return self._plan_checker._override_plan_mode(plan)
+
+    def _log_plan_override(self, reason_code: str, reason_text: str) -> None:
+        self._plan_checker._log_plan_override(reason_code, reason_text)
+
+    def _parse_plan(self, response: str) -> dict[str, Any]:
+        return self._plan_checker._parse_plan(response)
+
+    async def _plan_check_and_refine(
+        self,
+        plan: dict[str, Any],
+        hypothesis: str,
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        return await self._plan_checker._plan_check_and_refine(
+            plan, hypothesis, context
+        )
+
+    async def _maybe_trigger_plan_check_clarify(
+        self,
+        scene: str,
+        reason: str,
+        plan: dict[str, Any],
+    ) -> None:
+        await self._plan_checker._maybe_trigger_plan_check_clarify(
+            scene, reason, plan
+        )
+
+    def _plan_check_tier(
+        self, plan: dict[str, Any] | None = None
+    ) -> str:
+        return self._plan_checker._plan_check_tier(plan)
+
+    def _plan_check_complexity_thresholds(
+        self, scene: str = ""
+    ) -> tuple[float, float]:
+        return self._plan_checker._plan_check_complexity_thresholds(scene)
+
+    def _plan_check_scene_tag(self, plan: dict[str, Any]) -> str:
+        return self._plan_checker._plan_check_scene_tag(plan)
+
+    def _discover_scene_tags(self) -> None:
+        self._plan_checker._discover_scene_tags()
+
+    def _plan_check_complexity(self, plan: dict[str, Any]) -> float:
+        return self._plan_checker._plan_check_complexity(plan)
+
+    def _plan_check_max_refines(
+        self, tier: str, scene: str = ""
+    ) -> int:
+        return self._plan_checker._plan_check_max_refines(tier, scene)
+
+    async def _plan_check(
+        self,
+        plan: dict[str, Any],
+        hypothesis: str,
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        return await self._plan_checker._plan_check(plan, hypothesis, context)
+
+    def _dimensional_pre_check(
+        self, plan: dict[str, Any], hypothesis: str
+    ) -> list[str]:
+        return self._plan_checker._dimensional_pre_check(plan, hypothesis)
+
+    def _build_plan_check_prompt(
+        self,
+        plan: dict[str, Any],
+        hypothesis: str,
+        context: dict[str, Any],
+    ) -> str:
+        return self._plan_checker._build_plan_check_prompt(
+            plan, hypothesis, context
+        )
+
+    def _record_plan_check_failure(
+        self,
+        plan: dict[str, Any],
+        check: dict[str, Any],
+        scene: str,
+    ) -> None:
+        self._plan_checker._record_plan_check_failure(plan, check, scene)
+
+    def _load_plan_check_patterns(self) -> None:
+        self._plan_checker._load_plan_check_patterns()
+
+    def _save_plan_check_patterns(self) -> None:
+        self._plan_checker._save_plan_check_patterns()
+
+    def _parse_plan_check(self, response: str) -> dict[str, Any]:
+        return self._plan_checker._parse_plan_check(response)
+
+    def _build_subgoal_block(self) -> str:
+        return self._plan_checker._build_subgoal_block()
+
+    async def _refine_plan(
+        self,
+        plan: dict[str, Any],
+        check: dict[str, Any],
+        hypothesis: str,
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        return await self._plan_checker._refine_plan(
+            plan, check, hypothesis, context
+        )
 
     # ── H5-a: 模型选择 ────────────────────────────────────────────
     # 统一模型选择入口. 多模型配置 (config.models 非空) 时走 model_router

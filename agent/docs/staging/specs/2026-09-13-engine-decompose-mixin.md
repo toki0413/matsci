@@ -41,7 +41,14 @@
   - `engine.py`: 移出 base、`__init__` 加 `self._engine_controller = EngineControl(self)`、保留 20 个薄委托方法 → 调用点 cognitive_loop/engine_act/plan_check/engine_reflect 零改动。
   - `test_budget_gui_approval.py` 由 `EngineControlMixin._maybe_run_budget_approval(engine)` → `EngineControl(engine)._...`, `_attach_budget_helpers/_human_decide_result` 同步改组合构造。
   - 证据：`test_engine_decomposed.py` 阶段5 4 项 + `test_budget_gui_approval.py` + autoloop/arch/krcl 全绿。
-- **后续阶段（各自横轮，逐个 PR）**：`PlanCheck`(1169)→`EngineObserve`(1560)→`EngineReflect`(3469)→`HypothesisLoop`(2969)→`CognitiveLoop`(3591)。由小到大、状态写最少者优先。
+- **阶段6（本 spec 后续）**：`PlanCheckMixin` → `PlanCheck`。 ✅ 已落地（2026-09-13）
+  - 22 个 plan_check/plan-prompt 方法下沉为普通类 `PlanCheck(engine)` → 全属性转发(__getattr__ 读转发 / __setattr__ 条件写), 字段/方法留引擎。
+  - **own-method 覆写槽**：PlanCheck 定义自身方法名集合 `_OWN_ATTRS`，`__setattr__` 命中该集合(如测试 mock `_plan_check`)时写入本对象实例 dict（而非转发回引擎）→ 协调器 `_plan_check_and_refine` 内部调同名步骤时能覆盖。`_plan_check_history/_last_result/warnings/patterns` 等引擎状态字段不在集合 → 仍转发回引擎。
+  - `engine.py`: 移出 base、`__init__` 加 `self._plan_checker = PlanCheck(self)`、保留 22 个薄委托方法 → 调用点 engine_act._plan / cognitive_loop / engine_observe 零改动。
+  - `test_krcl_plan_check.py`: mock 边界从引擎移到 checker（`eng._plan_check` → `eng._plan_checker._plan_check`）——因 `_plan_check_and_refine` 是 PlanCheck 自身方法，引擎实例覆盖不再拦截内部同名步骤；`_make_engine` 挂 `_plan_checker` + checker 上 mock 持久化。
+  - 附带修复（历史遗留）：`test_lucid_prereqs.py::_make_engine_with_graph` 与 `test_math_prompt_injection.py` fixture 用 `__new__` 绕过 `__init__` 却缺 `signals`，补 `engine.signals = EngineSignals()`（SignalBridge 前置依赖）。
+  - 证据：`test_engine_decomposed.py` 阶段6 5 项 + `test_krcl_plan_check.py` 58 项 + `test_lucid_prereqs.py` plan-routing 类 + autoloop 回归无新增失败。
+- **后续阶段（各自横轮，逐个 PR）**：`EngineObserve`(1560)→`EngineReflect`(3469)→`HypothesisLoop`(2969)→`CognitiveLoop`(3591)。由小到大、状态写最少者优先。
 
 ## contract（阶段1 接口）
 - 新 `huginn/autoloop/math_validation.py::MathValidator`：`__init__(self, engine)`（duck-typed，读 `engine.workspace/settings`、调 `engine._query_kb_reference`）；`async run(execution_result) -> dict`（等价原 `_run_math_validation`）。

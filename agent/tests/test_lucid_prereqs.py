@@ -191,6 +191,14 @@ class TestPlanContextRouting:
     def _make_engine_with_graph(self):
         from huginn.autoloop.hypothesis_loop import HypothesisGraph
         engine = object.__new__(AutoloopEngine)
+        # 去 mixin 阶段6: PlanCheck 协作对象 — _override_plan_mode/_plan_context_hint
+        # 经引擎薄委托转发到它, object.__new__ 绕过 __init__ 需手动挂载.
+        from huginn.autoloop.plan_check import PlanCheck
+        engine._plan_checker = PlanCheck(engine)
+        # 信号桥 (engine SignalBridge): _consecutive_failures/_refine_count 等
+        # 环信号字段读写都经 self.signals, object.__new__ 绕过 __init__ 需手动挂载.
+        from huginn.autoloop.signals import EngineSignals
+        engine.signals = EngineSignals()
         engine.hypothesis_graph = HypothesisGraph()
         engine._consecutive_failures = 0
         engine._refine_count = 0
@@ -460,6 +468,14 @@ class TestPlanOverrideAudit:
     def _make_engine_with_graph(self):
         from huginn.autoloop.hypothesis_loop import HypothesisGraph
         engine = object.__new__(AutoloopEngine)
+        # 去 mixin 阶段6: PlanCheck 协作对象 — _override_plan_mode/_plan_context_hint
+        # 经引擎薄委托转发到它, object.__new__ 绕过 __init__ 需手动挂载.
+        from huginn.autoloop.plan_check import PlanCheck
+        engine._plan_checker = PlanCheck(engine)
+        # 信号桥 (engine SignalBridge): _consecutive_failures/_refine_count 等
+        # 环信号字段读写都经 self.signals, object.__new__ 绕过 __init__ 需手动挂载.
+        from huginn.autoloop.signals import EngineSignals
+        engine.signals = EngineSignals()
         engine.hypothesis_graph = HypothesisGraph()
         engine._consecutive_failures = 0
         engine._refine_count = 0

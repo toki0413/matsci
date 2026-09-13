@@ -290,3 +290,73 @@ def test_engine_controller_plan_missing_executable() -> None:
     assert eng._plan_missing_executable(
         {"mode": "coder", "description": "import numpy as np; print(x)"}
     ) is False
+
+
+# ===== 阶段6: PlanCheck =====
+
+def test_no_plan_check_mixin_in_bases() -> None:
+    from huginn.autoloop.engine import AutoloopEngine
+    from huginn.autoloop.plan_check import PlanCheck
+
+    assert PlanCheck not in AutoloopEngine.__bases__, (
+        "AutoloopEngine 仍把 PlanCheck 当作基类 —— 去 mixin 阶段6 未完成"
+    )
+
+
+def test_plan_check_delegation_methods_still_present() -> None:
+    from huginn.autoloop.engine import AutoloopEngine
+
+    for name in (
+        "_build_plan_prompt",
+        "_parse_plan",
+        "_override_plan_mode",
+        "_plan_check_and_refine",
+        "_plan_check_tier",
+        "_plan_check_scene_tag",
+        "_refine_plan",
+        "_load_plan_check_patterns",
+        "_save_plan_check_patterns",
+        "_build_subgoal_block",
+    ):
+        assert hasattr(AutoloopEngine, name), f"PlanCheck 委托方法 {name} 缺失"
+
+
+def test_engine_new_holds_plan_checker() -> None:
+    from huginn.autoloop.engine import AutoloopEngine
+    from huginn.autoloop.plan_check import PlanCheck
+
+    eng = AutoloopEngine.__new__(AutoloopEngine)
+    eng._plan_checker = PlanCheck(eng)
+    assert isinstance(eng._plan_checker, PlanCheck)
+
+
+def test_plan_checker_parse_plan_check() -> None:
+    """全属性转发: checker 方法真可调, no-json 跳过不抛."""
+    from huginn.autoloop.engine import AutoloopEngine
+    from huginn.autoloop.plan_check import PlanCheck
+
+    eng = AutoloopEngine.__new__(AutoloopEngine)
+    eng._plan_checker = PlanCheck(eng)
+    # 无 JSON → is_valid=True (跳过, 不阻塞)
+    out = eng._parse_plan_check("no json here")
+    assert out.get("is_valid") is True
+
+
+def test_plan_checker_override_plan_mode_forwards_state() -> None:
+    """读引擎字段走转发: 连败 5 次 → coder 被硬路由成 explore."""
+    from huginn.autoloop.engine import AutoloopEngine
+    from huginn.autoloop.plan_check import PlanCheck
+    from huginn.autoloop.signals import EngineSignals
+
+    eng = AutoloopEngine.__new__(AutoloopEngine)
+    eng._plan_checker = PlanCheck(eng)
+    eng.signals = EngineSignals()  # _consecutive_failures/_last_surprise 是信号桥字段
+    eng._consecutive_failures = 0
+    eng._last_surprise = 0.0
+    eng._current_hyp_id_for_plan = None
+    plan = {"mode": "coder", "description": "fix bug"}
+    out = eng._override_plan_mode(dict(plan))
+    assert out["mode"] == "coder"  # 无信号 → 不覆盖
+    eng._consecutive_failures = 5
+    out = eng._override_plan_mode(dict(plan))
+    assert out["mode"] == "explore"  # 连败 → 强制 explore

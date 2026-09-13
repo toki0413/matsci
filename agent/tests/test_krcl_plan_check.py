@@ -24,6 +24,11 @@ def _make_engine(iteration: int = 35, workspace: Path | None = None):
     from huginn.autoloop.engine import AutoloopEngine
 
     eng = AutoloopEngine.__new__(AutoloopEngine)
+    # 去 mixin 阶段6: PlanCheck 协作对象 — 引擎薄委托经该对象转发,
+    # __new__ 绕过 __init__, 需手动挂载, 否则 eng._plan_check_* 委托报错.
+    from huginn.autoloop.plan_check import PlanCheck
+
+    eng._plan_checker = PlanCheck(eng)
     # 属性桥 (engine.py SignalBridge) 对所有 SIGNAL_NAMES 字段读写都经 self.signals。
     # __new__ 绕过 __init__, 必须先挂 signals 再写 _iteration 等环信号字段, 否则 AttributeError.
     from huginn.autoloop.signals import EngineSignals
@@ -38,8 +43,8 @@ def _make_engine(iteration: int = 35, workspace: Path | None = None):
     eng._speculator_hint = ""
     # 默认 mock 持久化和澄清, 测纯函数; 需要真持久化时传 workspace
     if workspace is None:
-        eng._save_plan_check_patterns = lambda: None  # type: ignore[assignment]
-        eng._load_plan_check_patterns = lambda: None  # type: ignore[assignment]
+        eng._plan_checker._save_plan_check_patterns = lambda: None  # type: ignore[assignment]
+        eng._plan_checker._load_plan_check_patterns = lambda: None  # type: ignore[assignment]
     else:
         eng.workspace = workspace
     # mock _maybe_clarify (真正的 LLM 澄清), _maybe_trigger_plan_check_clarify 走真逻辑
@@ -105,18 +110,18 @@ def test_parse_plan_check_no_closing_brace():
 def test_trivial_plan_skips_check():
     """description 太短 (<20 chars) 跳过校验, 不调 LLM."""
     eng = _make_engine()
-    eng._plan_check = AsyncMock()
+    eng._plan_checker._plan_check = AsyncMock()
     plan = {"mode": "coder", "description": "short"}  # 5 chars
     result = asyncio.run(eng._plan_check_and_refine(plan, "hypothesis", {}))
     assert result is plan  # 原样返回
-    eng._plan_check.assert_not_called()
+    eng._plan_checker._plan_check.assert_not_called()
     assert eng._plan_check_last_result is None
 
 
 def test_valid_plan_passes_first_try():
     """is_valid=True -> 直接返回, check 存引擎状态不塞 plan dict."""
     eng = _make_engine()
-    eng._plan_check = AsyncMock(
+    eng._plan_checker._plan_check = AsyncMock(
         return_value={
             "is_valid": True,
             "reason": "ok",
@@ -136,7 +141,7 @@ def test_valid_plan_passes_first_try():
 def test_invalid_plan_refines_once_then_gives_up():
     """light tier: 两次 is_valid=False -> 1 次 refine 后记 warning 不阻塞."""
     eng = _make_engine()  # iter=35, light tier, baseline max_refines=1
-    eng._plan_check = AsyncMock(
+    eng._plan_checker._plan_check = AsyncMock(
         return_value={
             "is_valid": False,
             "reason": "missing SCF",
@@ -144,18 +149,18 @@ def test_invalid_plan_refines_once_then_gives_up():
             "risks": [],
         }
     )
-    eng._refine_plan = AsyncMock(
+    eng._plan_checker._refine_plan = AsyncMock(
         return_value={
             "mode": "workflow",
             "description": "SCF then band",
         }
     )
-    eng._override_plan_mode = MagicMock(side_effect=lambda p: p)
+    eng._plan_checker._override_plan_mode = MagicMock(side_effect=lambda p: p)
     plan = {"mode": "coder", "description": "run band calculation directly"}
     result = asyncio.run(eng._plan_check_and_refine(plan, "calc band gap", {}))
     # 重试 1 次, 总共调 _plan_check 2 次
-    assert eng._plan_check.call_count == 2
-    assert eng._refine_plan.call_count == 1
+    assert eng._plan_checker._plan_check.call_count == 2
+    assert eng._plan_checker._refine_plan.call_count == 1
     # 不暴露: 不在 plan dict, 在引擎状态
     assert "plan_check" not in result
     assert "plan_check_warning" not in result
@@ -168,7 +173,7 @@ def test_invalid_plan_refines_once_then_gives_up():
 def test_llm_failure_returns_plan():
     """_plan_check 抛异常 -> 直接返回原 plan, 状态没更新."""
     eng = _make_engine()
-    eng._plan_check = AsyncMock(side_effect=Exception("LLM down"))
+    eng._plan_checker._plan_check = AsyncMock(side_effect=Exception("LLM down"))
     plan = {"mode": "coder", "description": "run SCF calculation on Si"}
     result = asyncio.run(eng._plan_check_and_refine(plan, "calc band gap", {}))
     assert result is plan
@@ -182,18 +187,18 @@ def test_llm_failure_returns_plan():
 def test_open_tier_skips_check():
     """iter 5 (open tier) 简单 plan 跳过反向校验, 不调 LLM."""
     eng = _make_engine(iteration=5)
-    eng._plan_check = AsyncMock()
+    eng._plan_checker._plan_check = AsyncMock()
     plan = {"mode": "coder", "description": "run some simple coding task"}
     result = asyncio.run(eng._plan_check_and_refine(plan, "h", {}))
     assert result is plan
-    eng._plan_check.assert_not_called()
+    eng._plan_checker._plan_check.assert_not_called()
     assert eng._plan_check_last_result is None
 
 
 def test_medium_tier_light_check_no_refine():
     """iter 20 (medium tier) 只校验不 refine, 失败直接记 warning."""
     eng = _make_engine(iteration=20)
-    eng._plan_check = AsyncMock(
+    eng._plan_checker._plan_check = AsyncMock(
         return_value={
             "is_valid": False,
             "reason": "missing SCF",
@@ -201,18 +206,18 @@ def test_medium_tier_light_check_no_refine():
             "risks": [],
         }
     )
-    eng._refine_plan = AsyncMock()  # medium baseline=0, 不应该被调
+    eng._plan_checker._refine_plan = AsyncMock()  # medium baseline=0, 不应该被调
     plan = {"mode": "coder", "description": "run band calculation on Si"}
     asyncio.run(eng._plan_check_and_refine(plan, "h", {}))
-    assert eng._plan_check.call_count == 1
-    eng._refine_plan.assert_not_called()
+    assert eng._plan_checker._plan_check.call_count == 1
+    eng._plan_checker._refine_plan.assert_not_called()
     assert eng._plan_check_last_result["is_valid"] is False
 
 
 def test_light_tier_full_closure():
     """iter 35 (light tier) 走完整闭环, 失败触发 refine."""
     eng = _make_engine(iteration=35)
-    eng._plan_check = AsyncMock(
+    eng._plan_checker._plan_check = AsyncMock(
         return_value={
             "is_valid": False,
             "reason": "missing SCF",
@@ -220,18 +225,18 @@ def test_light_tier_full_closure():
             "risks": [],
         }
     )
-    eng._refine_plan = AsyncMock(
+    eng._plan_checker._refine_plan = AsyncMock(
         return_value={
             "mode": "workflow",
             "description": "SCF then band calculation",
         }
     )
-    eng._override_plan_mode = MagicMock(side_effect=lambda p: p)
+    eng._plan_checker._override_plan_mode = MagicMock(side_effect=lambda p: p)
     plan = {"mode": "coder", "description": "run band calculation on Si"}
     asyncio.run(eng._plan_check_and_refine(plan, "h", {}))
     # baseline=1 -> 1 次 refine, 2 次 _plan_check
-    assert eng._plan_check.call_count == 2
-    assert eng._refine_plan.call_count == 1
+    assert eng._plan_checker._plan_check.call_count == 2
+    assert eng._plan_checker._refine_plan.call_count == 1
 
 
 # ── 复杂度感知 (plan 本身复杂度修正 tier) ─────────────────────
@@ -240,7 +245,7 @@ def test_light_tier_full_closure():
 def test_complex_plan_upgrades_open_to_medium():
     """open tier + 复杂 plan (workflow + 长 desc + prediction) -> 升级到 medium, 要校验."""
     eng = _make_engine(iteration=5)  # open tier
-    eng._plan_check = AsyncMock(
+    eng._plan_checker._plan_check = AsyncMock(
         return_value={
             "is_valid": True,
             "reason": "ok",
@@ -256,18 +261,18 @@ def test_complex_plan_upgrades_open_to_medium():
     }
     asyncio.run(eng._plan_check_and_refine(plan, "h", {}))
     # 复杂 plan 升级到 medium, 走校验
-    eng._plan_check.assert_called_once()
+    eng._plan_checker._plan_check.assert_called_once()
 
 
 def test_simple_plan_downgrades_light_to_skip():
     """light tier + 极简 plan (explore + 刚过 trivial 的短 desc) -> 降级到 skip, 不校验."""
     eng = _make_engine(iteration=35)  # light tier
-    eng._plan_check = AsyncMock()
+    eng._plan_checker._plan_check = AsyncMock()
     # 极简 plan: explore mode (0.1) + 20chars desc (0.12) = 0.22 < 0.25
     plan = {"mode": "explore", "description": "look around for stuff"}
     asyncio.run(eng._plan_check_and_refine(plan, "h", {}))
     # 简单 plan 降级到 skip, 不校验
-    eng._plan_check.assert_not_called()
+    eng._plan_checker._plan_check.assert_not_called()
 
 
 def test_plan_check_complexity_dimensions():
@@ -359,7 +364,7 @@ def test_adaptive_loosen_after_high_success():
     """
     eng = _make_engine(iteration=35)
     eng._plan_check_history = [{"is_valid": True, "scene_tag": "dft"} for _ in range(5)]
-    eng._plan_check = AsyncMock(
+    eng._plan_checker._plan_check = AsyncMock(
         return_value={
             "is_valid": False,
             "reason": "missing SCF",
@@ -367,11 +372,11 @@ def test_adaptive_loosen_after_high_success():
             "risks": [],
         }
     )
-    eng._refine_plan = AsyncMock()  # 放宽后不应该被调
+    eng._plan_checker._refine_plan = AsyncMock()  # 放宽后不应该被调
     plan = {"mode": "coder", "description": "run band calculation on Si"}
     asyncio.run(eng._plan_check_and_refine(plan, "h", {}))
-    assert eng._plan_check.call_count == 1  # 只校验一次
-    eng._refine_plan.assert_not_called()
+    assert eng._plan_checker._plan_check.call_count == 1  # 只校验一次
+    eng._plan_checker._refine_plan.assert_not_called()
 
 
 def test_adaptive_tighten_after_low_success():
@@ -384,7 +389,7 @@ def test_adaptive_tighten_after_low_success():
     eng._plan_check_history = [
         {"is_valid": False, "scene_tag": "dft"} for _ in range(5)
     ]
-    eng._plan_check = AsyncMock(
+    eng._plan_checker._plan_check = AsyncMock(
         return_value={
             "is_valid": False,
             "reason": "missing SCF",
@@ -398,11 +403,11 @@ def test_adaptive_tighten_after_low_success():
         refine_counter["n"] += 1
         return {"mode": "coder", "description": f"refined {refine_counter['n']}"}
 
-    eng._refine_plan = AsyncMock(side_effect=_fake_refine)
-    eng._override_plan_mode = MagicMock(side_effect=lambda p: p)
+    eng._plan_checker._refine_plan = AsyncMock(side_effect=_fake_refine)
+    eng._plan_checker._override_plan_mode = MagicMock(side_effect=lambda p: p)
     plan = {"mode": "coder", "description": "run band calculation on Si"}
     asyncio.run(eng._plan_check_and_refine(plan, "h", {}))
-    assert eng._plan_check.call_count == 3
+    assert eng._plan_checker._plan_check.call_count == 3
     assert refine_counter["n"] == 2
 
 
@@ -454,7 +459,7 @@ def test_history_window_caps_at_20():
     eng._plan_check_history = [
         {"is_valid": True, "scene_tag": "dft"} for _ in range(25)
     ]
-    eng._plan_check = AsyncMock(
+    eng._plan_checker._plan_check = AsyncMock(
         return_value={
             "is_valid": True,
             "reason": "ok",
@@ -472,7 +477,7 @@ def test_history_window_caps_at_20():
 def test_failure_recorded_to_patterns():
     """失败时记到 _plan_check_patterns, 带 scene_tag/reason/missing_steps."""
     eng = _make_engine(iteration=35)
-    eng._plan_check = AsyncMock(
+    eng._plan_checker._plan_check = AsyncMock(
         return_value={
             "is_valid": False,
             "reason": "missing SCF",
@@ -480,13 +485,13 @@ def test_failure_recorded_to_patterns():
             "risks": [],
         }
     )
-    eng._refine_plan = AsyncMock(
+    eng._plan_checker._refine_plan = AsyncMock(
         return_value={
             "mode": "workflow",
             "description": "SCF then band calculation",
         }
     )
-    eng._override_plan_mode = MagicMock(side_effect=lambda p: p)
+    eng._plan_checker._override_plan_mode = MagicMock(side_effect=lambda p: p)
     plan = {"mode": "coder", "description": "run band calculation on Si"}
     asyncio.run(eng._plan_check_and_refine(plan, "h", {}))
     # 失败 2 次 (baseline=1, refine 1 次), 记 2 条 patterns
@@ -502,7 +507,7 @@ def test_patterns_persisted_to_workspace_json(tmp_path: Path):
     """失败模式 dump 到 .huginn/plan_check_patterns.json, 跨 run 加载."""
     # 第一轮: 真持久化, 失败一次, dump 到文件
     eng1 = _make_engine(iteration=35, workspace=tmp_path)
-    eng1._plan_check = AsyncMock(
+    eng1._plan_checker._plan_check = AsyncMock(
         return_value={
             "is_valid": False,
             "reason": "missing SCF",
@@ -510,13 +515,13 @@ def test_patterns_persisted_to_workspace_json(tmp_path: Path):
             "risks": [],
         }
     )
-    eng1._refine_plan = AsyncMock(
+    eng1._plan_checker._refine_plan = AsyncMock(
         return_value={
             "mode": "workflow",
             "description": "SCF then band calculation",
         }
     )
-    eng1._override_plan_mode = MagicMock(side_effect=lambda p: p)
+    eng1._plan_checker._override_plan_mode = MagicMock(side_effect=lambda p: p)
     plan = {"mode": "coder", "description": "run band calculation on Si"}
     asyncio.run(eng1._plan_check_and_refine(plan, "h", {}))
 
@@ -528,7 +533,7 @@ def test_patterns_persisted_to_workspace_json(tmp_path: Path):
 
     # 第二轮: 新 engine, _load_plan_check_patterns 从文件加载
     eng2 = _make_engine(iteration=35, workspace=tmp_path)
-    eng2._load_plan_check_patterns()
+    eng2._plan_checker._load_plan_check_patterns()
     assert len(eng2._plan_check_patterns) == 2
     assert eng2._plan_check_patterns[0]["scene_tag"] == "dft"
 
@@ -560,7 +565,7 @@ def test_consecutive_failure_triggers_clarify():
         {"is_valid": False, "scene_tag": "dft"},
         {"is_valid": False, "scene_tag": "dft"},
     ]
-    eng._plan_check = AsyncMock(
+    eng._plan_checker._plan_check = AsyncMock(
         return_value={
             "is_valid": False,
             "reason": "missing SCF",
@@ -583,7 +588,7 @@ def test_other_scene_does_not_trigger_clarify():
         {"is_valid": False, "scene_tag": "other"},
         {"is_valid": False, "scene_tag": "other"},
     ]
-    eng._plan_check = AsyncMock(
+    eng._plan_checker._plan_check = AsyncMock(
         return_value={
             "is_valid": False,
             "reason": "bad",
@@ -607,7 +612,7 @@ def test_success_breaks_consecutive_failure_count():
         {"is_valid": False, "scene_tag": "dft"},
         {"is_valid": True, "scene_tag": "dft"},
     ]
-    eng._plan_check = AsyncMock(
+    eng._plan_checker._plan_check = AsyncMock(
         return_value={
             "is_valid": False,
             "reason": "missing SCF",
@@ -657,10 +662,10 @@ def test_refine_injects_success_few_shot():
     eng._parse_plan = MagicMock(
         return_value={"mode": "coder", "description": "refined"}
     )
-    eng._override_plan_mode = MagicMock(side_effect=lambda p: p)
+    eng._plan_checker._override_plan_mode = MagicMock(side_effect=lambda p: p)
     plan = {"mode": "coder", "description": "run band calculation on Si"}
     check = {"is_valid": False, "reason": "missing SCF", "missing_steps": ["SCF"]}
-    asyncio.run(eng._refine_plan(plan, check, "h", {}))
+    asyncio.run(eng._plan_checker._refine_plan(plan, check, "h", {}))
     # few-shot 注入了
     prompt = eng._llm_chat.call_args.args[0]
     assert "SCF then band" in prompt
@@ -676,10 +681,10 @@ def test_refine_no_success_history_uses_na():
     eng._parse_plan = MagicMock(
         return_value={"mode": "coder", "description": "refined"}
     )
-    eng._override_plan_mode = MagicMock(side_effect=lambda p: p)
+    eng._plan_checker._override_plan_mode = MagicMock(side_effect=lambda p: p)
     plan = {"mode": "coder", "description": "run band calculation on Si"}
     check = {"is_valid": False, "reason": "missing SCF", "missing_steps": ["SCF"]}
-    asyncio.run(eng._refine_plan(plan, check, "h", {}))
+    asyncio.run(eng._plan_checker._refine_plan(plan, check, "h", {}))
     prompt = eng._llm_chat.call_args.args[0]
     assert "N/A" in prompt
 
@@ -687,7 +692,7 @@ def test_refine_no_success_history_uses_na():
 def test_refine_success_snapshot_stored_on_pass():
     """plan_check 通过时存 plan_snapshot 到 history, 喂下次 refine few-shot."""
     eng = _make_engine(iteration=35)
-    eng._plan_check = AsyncMock(
+    eng._plan_checker._plan_check = AsyncMock(
         return_value={
             "is_valid": True,
             "reason": "ok",
@@ -862,7 +867,7 @@ def test_low_confidence_pass_forces_refine():
     light tier, baseline max_refines=1.
     """
     eng = _make_engine(iteration=35)
-    eng._plan_check = AsyncMock(
+    eng._plan_checker._plan_check = AsyncMock(
         return_value={
             "is_valid": True,
             "confidence": 0.3,
@@ -877,14 +882,14 @@ def test_low_confidence_pass_forces_refine():
         refine_counter["n"] += 1
         return {"mode": "coder", "description": f"refined {refine_counter['n']}"}
 
-    eng._refine_plan = AsyncMock(side_effect=_fake_refine)
-    eng._override_plan_mode = MagicMock(side_effect=lambda p: p)
+    eng._plan_checker._refine_plan = AsyncMock(side_effect=_fake_refine)
+    eng._plan_checker._override_plan_mode = MagicMock(side_effect=lambda p: p)
     plan = {"mode": "coder", "description": "run band calculation on Si"}
     asyncio.run(eng._plan_check_and_refine(plan, "h", {}))
     # 低置信通过, 强制 refine 1 次 (max_refines=1), 第二次通过也低置信但
     # attempt >= max_refines 直接返回
     assert refine_counter["n"] == 1
-    assert eng._plan_check.call_count == 2  # 第一次 + refine 后第二次
+    assert eng._plan_checker._plan_check.call_count == 2  # 第一次 + refine 后第二次
 
 
 def test_low_confidence_failure_skips_refine():
@@ -893,7 +898,7 @@ def test_low_confidence_failure_skips_refine():
     LLM 都没把握判断, refine 可能也是瞎改, 直接 warning + 澄清更靠谱.
     """
     eng = _make_engine(iteration=35)
-    eng._plan_check = AsyncMock(
+    eng._plan_checker._plan_check = AsyncMock(
         return_value={
             "is_valid": False,
             "confidence": 0.2,
@@ -902,18 +907,18 @@ def test_low_confidence_failure_skips_refine():
             "risks": [],
         }
     )
-    eng._refine_plan = AsyncMock()  # 不应该被调
+    eng._plan_checker._refine_plan = AsyncMock()  # 不应该被调
     plan = {"mode": "coder", "description": "run band calculation on Si"}
     asyncio.run(eng._plan_check_and_refine(plan, "h", {}))
-    eng._refine_plan.assert_not_called()
-    assert eng._plan_check.call_count == 1  # 只校验一次, 直接 warning
+    eng._plan_checker._refine_plan.assert_not_called()
+    assert eng._plan_checker._plan_check.call_count == 1  # 只校验一次, 直接 warning
     assert "low_conf=0.20" in eng._plan_check_warnings[-1]
 
 
 def test_high_confidence_pass_no_refine():
     """is_valid=True 且 confidence >= 0.5 -> 直接通过, 不 refine."""
     eng = _make_engine(iteration=35)
-    eng._plan_check = AsyncMock(
+    eng._plan_checker._plan_check = AsyncMock(
         return_value={
             "is_valid": True,
             "confidence": 0.9,
@@ -922,11 +927,11 @@ def test_high_confidence_pass_no_refine():
             "risks": [],
         }
     )
-    eng._refine_plan = AsyncMock()
+    eng._plan_checker._refine_plan = AsyncMock()
     plan = {"mode": "coder", "description": "run band calculation on Si"}
     asyncio.run(eng._plan_check_and_refine(plan, "h", {}))
-    eng._refine_plan.assert_not_called()
-    assert eng._plan_check.call_count == 1
+    eng._plan_checker._refine_plan.assert_not_called()
+    assert eng._plan_checker._plan_check.call_count == 1
 
 
 # ── 复杂度阈值自动校准 ───────────────────────────────────────

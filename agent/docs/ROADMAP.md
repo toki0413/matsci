@@ -7,7 +7,7 @@
 - [x] M3: VisualInspectMixin → VisualInspect（636 行，6 方法）
 - [x] M4: EngineActMixin → EngineAct（926 行，14 方法）
 - [x] M5: EngineControlMixin → EngineControl（862 行，20 方法）
-- [ ] M6: PlanCheckMixin → PlanCheck（1169 行）
+- [x] M6: PlanCheckMixin → PlanCheck（1169 行，22 方法）
 - [ ] M7: EngineObserveMixin → EngineObserve（1560 行）
 - [ ] M8: EngineReflectMixin → EngineReflect（3469 行）
 - [ ] M9: HypothesisMixin → HypothesisLoop（2969 行）
