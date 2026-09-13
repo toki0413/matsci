@@ -301,23 +301,35 @@ async def generate_patch(
     if r_phys is None or r_phys > 0.7:
         return None
     block_names = [name for name, _ in blocks]
-    prompt = (
-        "You are optimizing a research agent's prompt template. Based on the "
-        "last iteration's physical validation score and self-directive, "
-        "propose ONE block-level patch.\n\n"
-        f"Phase: {phase}\n"
-        f"Available blocks: {block_names}\n"
-        f"R_phys (last iter): {r_phys}\n"
-        f"Self-directive: {directive}\n\n"
-        "Output JSON only:\n"
-        '{"block_name": "<one of available>", '
-        '"op": "replace|prepend|append", '
-        '"new_text": "<new block content>"}\n'
-        "Rules:\n"
-        "- replace 'body' block: must preserve {context} or {hypothesis} placeholder\n"
-        "- new_text max 500 chars\n"
-        "- op=prepend/append preserves original block text"
-    )
+    # M-R1: 改进器 prompt 模板从 meta-improver 的 champion 取, 无 champion 回落默认.
+    # Lazy import 保证 toggle off 时零开销 + 无循环依赖 (meta_improver 不 import 本模块).
+    _improv_template = None
+    try:
+        from huginn.harness.meta_improver import MetaImprover
+        _mi = MetaImprover.get_instance()
+        _champ = _mi.champion_cfg()
+        _improv_template = _champ.improver_prompt if _champ else None
+    except Exception:
+        _improv_template = None
+    if not _improv_template:
+        from huginn.harness.meta_improver import DEFAULT_IMPROV_TEMPLATE
+        _improv_template = DEFAULT_IMPROV_TEMPLATE
+    try:
+        prompt = _improv_template.format(
+            phase=phase,
+            block_names=block_names,
+            r_phys=(f"{r_phys:.2f}" if r_phys is not None else "None"),
+            directive=directive or "",
+        )
+    except Exception:
+        logger.debug("improv template format failed; fallback default", exc_info=True)
+        from huginn.harness.meta_improver import DEFAULT_IMPROV_TEMPLATE
+        prompt = DEFAULT_IMPROV_TEMPLATE.format(
+            phase=phase,
+            block_names=block_names,
+            r_phys=(f"{r_phys:.2f}" if r_phys is not None else "None"),
+            directive=directive or "",
+        )
     try:
         response = await llm_chat_fn(prompt, task="summarize")
     except Exception:
@@ -355,6 +367,16 @@ async def generate_patch(
         directive_in=directive[:300],
     )
     PromptPatchStore.get_instance().add_patch(patch)
+    # M-R1: 成功产 patch 后喂给 meta-improver (进重放集 + 计数到阈值触发 maybe_propose).
+    # Lazy import, meta 层默认 off 时静默 no-op.
+    try:
+        from huginn.harness.meta_improver import MetaImprover
+
+        await MetaImprover.get_instance().note_generation(
+            phase, blocks, r_phys, directive, llm_chat_fn,
+        )
+    except Exception:
+        logger.debug("meta_improver note_generation failed", exc_info=True)
     return patch
 
 

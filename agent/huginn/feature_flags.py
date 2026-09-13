@@ -60,6 +60,7 @@ class FeatureFlags:
         "harness_joint_optimizer": False,     # 联合优化 (phase/block/params 协同)
         "harness_phase_evolve": False,        # 阶段规范演化
         "harness_prompt_patch": False,        # 提示补丁 (跨域提示增强)
+        "harness_meta_improver": False,       # M-R1: 递归 (meta-)improver — 改进器自身可演化+gate 验收
         # ---- v24 契约收敛 Round 1: 登记散落的裸 bool env (HUGINN_* = 0/1) ----
         # 这些变量之前在各模块 os.environ.get 裸读, 无统一 schema. 现纳入
         # FeatureFlags 统一登记: 默认值与裸读默认一致, 既可通过
