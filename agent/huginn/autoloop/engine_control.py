@@ -1,4 +1,4 @@
-"""EngineControlMixin — AutoloopEngine 的循环控制 + checkpoint 方法族.
+"""EngineControl — AutoloopEngine 的循环控制 + checkpoint 方法族 协作对象.
 
 从 engine.py 拆出 (P3 slim-down 续). 包含:
 - 循环控制: _check_gate / _check_budget / _drain_side_questions / stop
@@ -8,11 +8,18 @@
 - 事件总线: _get_event_bus / _dispatch_stage_event
 - 偏差日志: _log_deviation
 
-通过 self 访问 engine 状态. 方法体原样搬迁, 不改逻辑.
+去 mixin 阶段5: 原 EngineControlMixin(862 行/20 方法) 改为普通类 EngineControl。
+引擎经组合持有 self._engine_controller = EngineControl(self), 保留同名薄委托方法
+→ 既有 self.method() 调用点 (cognitive_loop / engine_act / plan_check / engine_reflect)
+零改动。不再靠多继承把认知中枢堆成 god-class。
 
-设计原则 (ponytail):
+设计关键 (ponytail):
+- 方法体大量读写引擎状态(字段+方法) → 「全属性转发」: __getattr__ 把未定义属性
+  读转发到 engine, __setattr__ 转发写。字段/方法留引擎不复制。
+- 防递归: __getattr__ 用 object.__getattribute__ 直达 engine 实例属性
+  (engine==self 的测试 mock 场景不递归); __setattr__ 在 engine is self 时直写实例 dict.
 - 对 engine.py 模块级符号用方法内 lazy import, 避免 circular
-- Mixin 不持有自己的状态, 全部走 self
+- 协作对象不额外持有业务状态 (除 engine 引用)
 """
 
 from __future__ import annotations
@@ -34,8 +41,29 @@ from huginn.utils.runtime import HUGINN_DIR_NAME
 logger = logging.getLogger(__name__)
 
 
-class EngineControlMixin:
-    """循环控制 + checkpoint 方法族. 通过 self 访问 engine 状态."""
+class EngineControl:
+    """循环控制 + checkpoint 方法族协作对象.
+
+    未定义的属性读写经 __getattr__/__setattr__ 转发到 self.engine —
+    引擎字段/方法不会被复制两份, 方法体零改动、行为完全等价.
+    """
+
+    def __init__(self, engine: Any) -> None:
+        object.__setattr__(self, "engine", engine)
+
+    def __getattr__(self, name: str) -> Any:
+        # object.__getattribute__ 直达 engine 实例属性, 避免 engine==self 时递归
+        return object.__getattribute__(self.engine, name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name == "engine":
+            object.__setattr__(self, name, value)
+            return
+        # engine==self (测试 mock) 直写实例 dict 避免转发自递归; 否则转发回引擎
+        if self.engine is self:
+            object.__setattr__(self, name, value)
+            return
+        setattr(self.engine, name, value)
 
     def _maybe_save_engine_state(
         self, *, force: bool = False, reason: str = "",

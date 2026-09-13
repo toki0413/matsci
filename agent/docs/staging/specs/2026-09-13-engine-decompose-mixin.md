@@ -36,7 +36,12 @@
   - 14 个 plan/execute/llm_chat 方法下沉为普通类 `EngineAct(engine)`。方法体大量读写引擎状态(字段+方法: _grill_active/_current_prediction/model/model_router) → **全属性转发**: `__getattr__` 把未定义属性读转发到 engine(object.__getattribute__ 防 engine==self 递归), `__setattr__` 转发写(engine is self 时直写实例防自递归)。字段/方法留引擎不复制。
   - `engine.py`: 移出 base 列表、`__init__` 加 `self._engine_actor = EngineAct(self)`、保留 14 个薄委托方法 → 调用点（_llm_chat 被 reflect/hypothesis/plan_check 共用, _execute 被 cognitive_loop, _execute_skill 被 skill_tool）零改动。
   - 证据：`test_engine_decomposed.py` 阶段4 4 项 + autoloop/arch/krcl 全绿。
-- **后续阶段（各自横轮，逐个 PR）**：`EngineControl`(862)→`PlanCheck`(1169)→`EngineObserve`(1560)→`EngineReflect`(3469)→`HypothesisLoop`(2969)→`CognitiveLoop`(3591)。由小到大、状态写最少者优先。
+- **阶段5（本 spec 后续）**：`EngineControlMixin` → `EngineControl`。 ✅ 已落地（2026-09-13）
+  - 20 个循环控制/checkpoint/状态持久化/澄清交互/事件总线方法下沉为普通类 `EngineControl(engine)` → 全属性转发(__getattr__ 读转发 / __setattr__ 条件写), 字段/方法留引擎。
+  - `engine.py`: 移出 base、`__init__` 加 `self._engine_controller = EngineControl(self)`、保留 20 个薄委托方法 → 调用点 cognitive_loop/engine_act/plan_check/engine_reflect 零改动。
+  - `test_budget_gui_approval.py` 由 `EngineControlMixin._maybe_run_budget_approval(engine)` → `EngineControl(engine)._...`, `_attach_budget_helpers/_human_decide_result` 同步改组合构造。
+  - 证据：`test_engine_decomposed.py` 阶段5 4 项 + `test_budget_gui_approval.py` + autoloop/arch/krcl 全绿。
+- **后续阶段（各自横轮，逐个 PR）**：`PlanCheck`(1169)→`EngineObserve`(1560)→`EngineReflect`(3469)→`HypothesisLoop`(2969)→`CognitiveLoop`(3591)。由小到大、状态写最少者优先。
 
 ## contract（阶段1 接口）
 - 新 `huginn/autoloop/math_validation.py::MathValidator`：`__init__(self, engine)`（duck-typed，读 `engine.workspace/settings`、调 `engine._query_kb_reference`）；`async run(execution_result) -> dict`（等价原 `_run_math_validation`）。

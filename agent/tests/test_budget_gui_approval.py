@@ -63,23 +63,21 @@ class _StubEngine(SimpleNamespace):
 
     _iteration = 3
     _await_human_decision_via_inbox = AsyncMock()
-    # 真实 engine 由 EngineControlMixin._build_budget_human_decide 挂载;
+    # 真实 engine 由 EngineControl._build_budget_human_decide 挂载;
     # 这里为此方法提供同样签名的替身, 供 _maybe_run 调用.
     _build_budget_human_decide = None
 
 
 def _attach_budget_helpers(engine: _StubEngine) -> None:
-    from huginn.autoloop.engine import AutoloopEngine
+    from huginn.autoloop.engine_control import EngineControl
 
-    engine._build_budget_human_decide = AutoloopEngine._build_budget_human_decide.__get__(
-        engine
-    )
+    engine._build_budget_human_decide = EngineControl(engine)._build_budget_human_decide
 
 
 def _human_decide_result(engine: _StubEngine) -> Callable[[str, str], Awaitable[bool]]:
-    from huginn.autoloop.engine import AutoloopEngine
+    from huginn.autoloop.engine_control import EngineControl
 
-    return AutoloopEngine._build_budget_human_decide(engine)
+    return EngineControl(engine)._build_budget_human_decide()
 
 
 def test_build_human_decide_maps_approve_answer():
@@ -116,7 +114,7 @@ def test_maybe_run_budget_approval_renews_on_gui_approve():
     engine._maybe_save_engine_state = lambda **kw: None
 
     with patch.dict("os.environ", {"HUGINN_BUDGET_APPROVAL": "gui"}):
-        asyncio.run(ec.EngineControlMixin._maybe_run_budget_approval(engine))
+        asyncio.run(ec.EngineControl(engine)._maybe_run_budget_approval())
     assert engine._token_budget.renewals_left() == engine._token_budget.max_renewals - 1
 
 
@@ -138,4 +136,4 @@ def test_maybe_run_budget_approval_aborts_on_gui_deny():
     with patch.dict("os.environ", {"HUGINN_BUDGET_APPROVAL": "gui"}), pytest.raises(
         BudgetExhausted
     ):
-        asyncio.run(ec.EngineControlMixin._maybe_run_budget_approval(engine))
+        asyncio.run(ec.EngineControl(engine)._maybe_run_budget_approval())

@@ -236,3 +236,57 @@ async def test_engine_actor_delegates_llm_chat() -> None:
     assert hasattr(eng, "_is_deterministic_numeric")
     assert eng._is_deterministic_numeric("compute peak of 3*x+1") is True
     assert eng._is_deterministic_numeric("just observe") is False
+
+
+# ===== 阶段5: EngineControl =====
+
+def test_no_control_mixin_in_bases() -> None:
+    from huginn.autoloop.engine import AutoloopEngine
+    from huginn.autoloop.engine_control import EngineControl
+
+    assert EngineControl not in AutoloopEngine.__bases__, (
+        "AutoloopEngine 仍把 EngineControl 当作基类 —— 去 mixin 阶段5 未完成"
+    )
+
+
+def test_control_delegation_methods_still_present() -> None:
+    from huginn.autoloop.engine import AutoloopEngine
+
+    for name in (
+        "_check_gate",
+        "_check_budget",
+        "_maybe_clarify",
+        "_maybe_save_engine_state",
+        "_dispatch_stage_event",
+        "_get_plan_store",
+        "_plan_missing_executable",
+        "stop",
+    ):
+        assert hasattr(AutoloopEngine, name), f"EngineControl 委托方法 {name} 缺失"
+
+
+def test_engine_new_holds_controller() -> None:
+    from huginn.autoloop.engine import AutoloopEngine
+    from huginn.autoloop.engine_control import EngineControl
+    from huginn.autoloop.signals import EngineSignals
+
+    eng = AutoloopEngine.__new__(AutoloopEngine)
+    eng.signals = EngineSignals()
+    eng._engine_controller = EngineControl(eng)
+    assert isinstance(eng._engine_controller, EngineControl)
+
+
+def test_engine_controller_plan_missing_executable() -> None:
+    """全属性转发: controller 方法真可调, 读引擎字段走转发."""
+    from huginn.autoloop.engine import AutoloopEngine
+    from huginn.autoloop.engine_control import EngineControl
+    from huginn.autoloop.signals import EngineSignals
+
+    eng = AutoloopEngine.__new__(AutoloopEngine)
+    eng.signals = EngineSignals()
+    eng._engine_controller = EngineControl(eng)
+    assert eng._plan_missing_executable({"mode": "", "description": ""}) is True
+    # description 带 import 计算标记 → 判定有可执行片段
+    assert eng._plan_missing_executable(
+        {"mode": "coder", "description": "import numpy as np; print(x)"}
+    ) is False

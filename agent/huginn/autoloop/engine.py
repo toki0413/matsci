@@ -116,7 +116,7 @@ def _autoloop_streaming_enabled() -> bool:
 
 from huginn.autoloop.cognitive_loop import CognitiveLoopMixin  # noqa: E402
 from huginn.autoloop.engine_act import EngineAct  # noqa: E402
-from huginn.autoloop.engine_control import EngineControlMixin  # noqa: E402
+from huginn.autoloop.engine_control import EngineControl  # noqa: E402
 from huginn.autoloop.engine_observe import EngineObserveMixin  # noqa: E402
 
 # P3 slim-down: 5 个 engine_* mixin (perceive/observe/act/reflect/control) 把
@@ -270,7 +270,6 @@ def _extract_tests_passed(validation: Any) -> bool:
 class AutoloopEngine(
     EngineObserveMixin,
     EngineReflectMixin,
-    EngineControlMixin,
     PlanCheckMixin,
     CognitiveLoopMixin,
     HypothesisMixin,
@@ -343,6 +342,9 @@ class AutoloopEngine(
         # 去 mixin 阶段4: EngineAct 协作对象. plan/execute/llm_chat 方法族经薄委托走这里,
         # 引擎字段/方法经 full 属性转发读写.
         self._engine_actor = EngineAct(self)
+        # 去 mixin 阶段5: EngineControl 协作对象. 循环控制/checkpoint 方法族经薄委托,
+        # 引擎字段/方法经 full 属性转发读写.
+        self._engine_controller = EngineControl(self)
         # 去 mixin 阶段2: EnginePerceive 协作对象. perceive 相关方法经薄委托走这里,
         # 引擎级共享缓存(_kb/_perception/_persona_manager)仍留在 engine, perceiver 经转发读写.
         self._engine_perceiver = EnginePerceive(self)
@@ -878,6 +880,101 @@ class AutoloopEngine(
         return await self._engine_actor._llm_chat(
             prompt, persona_name=persona_name, model=model, task=task
         )
+
+    # ── 去 mixin 阶段5: EngineControl 薄委托 ─────────────────────
+    # 循环控制/checkpoint/状态持久化/澄清交互/事件总线方法族已下沉为 EngineControl
+    # 协作对象 (self._engine_controller). 被 cognitive_loop / engine_act / plan_check /
+    # engine_reflect 大量调用, 薄委托保留同名签名, 调用点零改动.
+
+    def _maybe_save_engine_state(
+        self, *, force: bool = False, reason: str = "",
+    ) -> None:
+        self._engine_controller._maybe_save_engine_state(force=force, reason=reason)
+
+    async def _track_llm_usage(self, usage_meta) -> None:
+        await self._engine_controller._track_llm_usage(usage_meta)
+
+    async def _maybe_run_budget_approval(self) -> None:
+        await self._engine_controller._maybe_run_budget_approval()
+
+    def _build_budget_human_decide(self):
+        return self._engine_controller._build_budget_human_decide()
+
+    def _get_event_bus(self):
+        return self._engine_controller._get_event_bus()
+
+    async def _dispatch_stage_event(
+        self,
+        event_type: Any,
+        stage_name: str,
+        duration_sec: float = 0.0,
+        error: str | None = None,
+    ) -> None:
+        await self._engine_controller._dispatch_stage_event(
+            event_type, stage_name, duration_sec=duration_sec, error=error
+        )
+
+    def _check_gate(
+        self, from_phase: str, to_phase: str, evidence: dict[str, Any]
+    ) -> bool:
+        return self._engine_controller._check_gate(from_phase, to_phase, evidence)
+
+    def _plan_missing_executable(self, plan: dict[str, Any]) -> bool:
+        return self._engine_controller._plan_missing_executable(plan)
+
+    async def _wait_if_checkpoint_pending(
+        self, from_phase: str, to_phase: str, timeout: float = 600.0
+    ) -> None:
+        await self._engine_controller._wait_if_checkpoint_pending(
+            from_phase, to_phase, timeout=timeout
+        )
+
+    async def _publish_checkpoint_event(
+        self,
+        event_type: str,
+        from_phase: str,
+        to_phase: str,
+        is_hard: bool = False,
+    ) -> None:
+        await self._engine_controller._publish_checkpoint_event(
+            event_type, from_phase, to_phase, is_hard=is_hard
+        )
+
+    def _check_budget(self, iteration: int, plan: dict[str, Any]) -> bool:
+        return self._engine_controller._check_budget(iteration, plan)
+
+    async def _drain_side_questions(self) -> int:
+        return await self._engine_controller._drain_side_questions()
+
+    def _get_clarification_manager(self):
+        return self._engine_controller._get_clarification_manager()
+
+    def _get_plan_store(self):
+        return self._engine_controller._get_plan_store()
+
+    def _get_refine_model(self):
+        return self._engine_controller._get_refine_model()
+
+    async def _maybe_clarify(
+        self,
+        checkpoint: str,
+        phase_result: Any,
+        thread_id: str = "autoloop",
+    ) -> str | None:
+        return await self._engine_controller._maybe_clarify(
+            checkpoint, phase_result, thread_id=thread_id
+        )
+
+    def _distill_meta_trace(self, darwin_score: float, supported_ratio: float) -> None:
+        self._engine_controller._distill_meta_trace(darwin_score, supported_ratio)
+
+    def stop(self) -> None:
+        self._engine_controller.stop()
+
+    def _log_deviation(
+        self, plan: dict[str, Any], result: Any, context: dict[str, Any],
+    ) -> None:
+        self._engine_controller._log_deviation(plan, result, context)
 
     # ── H5-a: 模型选择 ────────────────────────────────────────────
     # 统一模型选择入口. 多模型配置 (config.models 非空) 时走 model_router
