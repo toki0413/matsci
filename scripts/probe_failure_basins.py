@@ -104,19 +104,8 @@ def _fit_beta(epss, fs) -> float:
 # 关键: 扰动是确定性连续函数(无 per-cell 随机抖动), 避免把噪声当分形。
 
 
-def _fp_int(fp: tuple[int, ...]) -> int:
-    """5 维 0/1 指纹 → 整数标签 (2^5 个可能吸引域)."""
-    return sum(b << i for i, b in enumerate(fp))
-
-
 def _decl_count(text: str) -> int:
     return sum(1 for ln in str(text).splitlines() if ln.strip().startswith("- "))
-
-
-def _decl(count: int) -> str:
-    if count <= 0:
-        return "已充分探索"
-    return "\n".join(f"- 未探索项{i}" for i in range(count))
 
 
 def _u01(n):
@@ -124,45 +113,77 @@ def _u01(n):
 
 
 def _labels_grid(base: dict, grid_n: int, agent: RealClassifierAgent) -> np.ndarray:
-    """在 [0,1]² 上逐点审计 → (grid_n,grid_n) int 指纹标签阵."""
-    g = np.empty((grid_n, grid_n), dtype=int)
+    """向量化: 指纹按其独立性分解为 u-工作量位 与 v-自白位 的组合.
+
+    fingerprint 位 = F(iteration(u), families(u), live(u), unexplored_count(v)):
+      bit0 努力达标   → 只依赖 u
+      bit1 等价陷阱   → 依赖字符串(网格内恒定)
+      bit2 缺自白     → 只依赖 v
+      bit3 对抗否决   → 恒定
+      bit4 完成(is_complete) → 耦合: 努力&非陷阱&非否决 & 自白≥1
+    故对唯一 u 调用一次 audit(读数 effort 位), 对唯一 v 分离计算自白位,
+    numpy 增广组合即可, 复杂度 O(grid_n) 而非 O(grid_n²).
+    """
     us, vs = _u01(grid_n), _u01(grid_n)
-    agent._rng = random.Random(0)  # audit 不接受随机位移, 无害固定
+    const_trap = False
+    const_veto = False
+    eff_passed = np.zeros(grid_n, dtype=bool)   # bit0 per u
     for i, u in enumerate(us):
-        for j, v in enumerate(vs):
-            c = agent._auditor.audit(
-                iteration=int(max(0, base["iteration"] + u * 8)),
-                families_explored=int(max(0, base["families_explored"] + u * 3)),
-                live_components=int(max(0, base["live_components"] + u * 2)),
-                total_iterations=base.get("total_iterations", 10),
-                candidate_finding=base.get("candidate_finding", ""),
-                original_problem=base.get("original_problem", ""),
-                reduction_chain=base.get("reduction_chain", ""),
-                unexplored_declaration=_decl(
-                    int(round(_decl_count(base.get("unexplored_declaration", "")) + v * 3))
-                ),
-            )
-            g[i, j] = _fp_int(_fingerprint(c))
+        c = agent._auditor.audit(
+            iteration=int(max(0, base["iteration"] + u * 8)),
+            families_explored=int(max(0, base["families_explored"] + u * 3)),
+            live_components=int(max(0, base["live_components"] + u * 2)),
+            total_iterations=base.get("total_iterations", 10),
+            candidate_finding=base.get("candidate_finding", ""),
+            original_problem=base.get("original_problem", ""),
+            reduction_chain=base.get("reduction_chain", ""),
+            unexplored_declaration="已充分探索",
+        )
+        eff_passed[i] = c.effort_floor_passed
+        const_trap = bool(c.equivalence_traps_remaining)
+        const_veto = bool(c.adversarial_veto)
+    base_n = _decl_count(base.get("unexplored_declaration", ""))
+    confess_bit = np.zeros(grid_n, dtype=bool)   # bit2 = 缺自白(1: 无条目) per v
+    for j, v in enumerate(vs):
+        n_self = int(max(0, round(base_n - v * 3)))  # 向下扰动: 自白条目减少→翻到0
+        confess_bit[j] = (n_self < 1)
+    # 增广组合 → (grid_n,grid_n) 指纹 int
+    # bit0 随u横扩, bit2 随v竖扩, bit1/bit3 常量
+    bit0 = eff_passed[:, None]
+    bit2 = confess_bit[None, :]
+    bit4 = bit0 & (not const_trap) & (not const_veto) & (~bit2)
+    g = (np.logical_not(bit0).astype(int) << 0) | (int(const_trap) << 1) \
+        | (bit2.astype(int) << 2) | (int(const_veto) << 3) | (bit4.astype(int) << 4)
     return g
 
 
 def _p_cross(g: np.ndarray, grid_n: int, delta_frac: float, rng, samples: int = 8000) -> float:
+    """向量化采样相距δ的点对, 统计落入不同指纹类别占比."""
     d = max(1, int(round(delta_frac * (grid_n - 1))))
-    steps = [(-d, 0), (d, 0), (0, -d), (0, d), (d, d), (-d, d), (d, -d), (-d, -d)]
-    cnt = tot = 0
-    for _ in range(samples):
-        i = int(rng.integers(0, grid_n))
-        j = int(rng.integers(0, grid_n))
-        di, dj = rng.choice(steps)
-        i2, j2 = i + di, j + dj
-        if 0 <= i2 < grid_n and 0 <= j2 < grid_n:
-            tot += 1
-            if g[i, j] != g[i2, j2]:
-                cnt += 1
-    return cnt / tot if tot else 0.0
+    steps = np.asarray([(-d, 0), (d, 0), (0, -d), (0, d),
+                        (d, d), (-d, d), (d, -d), (-d, -d)], dtype=int)
+    i = rng.integers(0, grid_n, size=samples)
+    j = rng.integers(0, grid_n, size=samples)
+    s = rng.integers(0, len(steps), size=samples)
+    i2 = i + steps[s, 0]
+    j2 = j + steps[s, 1]
+    ok = (i2 >= 0) & (i2 < grid_n) & (j2 >= 0) & (j2 < grid_n)
+    if not ok.any():
+        return 0.0
+    same = g[i[ok], j[ok]] == g[i2[ok], j2[ok]]
+    return float(1.0 - same.mean())
 
 
 DELTAS = [0.02, 0.04, 0.06, 0.08, 0.12, 0.16, 0.25, 0.33]
+D_FINE = [0.02, 0.03, 0.045, 0.06]     # 渐近细 δ 窗: 分解有限直边 vs 自相似
+D_COARSE = [0.12, 0.16, 0.22, 0.33]   # 粗 δ 窗
+
+
+def _slope_deltas(g: np.ndarray, grid_n: int, deltas, seed: int) -> float:
+    """对给定 δ 集合拟合局部斜率 β (分隔判定用)."""
+    rng = np.random.default_rng(seed)
+    pcs = [_p_cross(g, grid_n, d, rng) for d in deltas]
+    return _fit_beta_r2(deltas, pcs)["beta"]
 
 
 def _fit_beta_r2(deltas, pcs) -> dict:
@@ -200,6 +221,26 @@ def estimate_beta_2d(base: dict, grid_n: int = 150, seed: int = 3) -> dict:
         fit = _fit_beta_r2(DELTAS, pcs)
         out[name] = {**fit}
     return {"grid_n": grid_n, "beta": out["真实指纹吸引域"]["beta"], **out}
+
+
+def estimate_beta_scaled(base: dict, grid_ns=(80, 120, 160, 200, 260, 320),
+                         seed: int = 3) -> dict:
+    """深挖: 同一基态下随网格分辨率放大, 测 β 收敛 + 细/粗 δ 局部斜率.
+
+    判读:
+      β 随 grid_n 收敛到 1        → 纯量化伪影
+      β 稳定 <1 且细/粗斜率一致      → 自相似分形
+      β 稳定 <1 但细斜率→1/粗斜率→0  → 有限直边交叉网(非分形, 窗口混叠)
+    """
+    rows = {}
+    for gn in grid_ns:
+        agent = RealClassifierAgent()
+        g_true = _labels_grid(base, gn, agent)
+        r = estimate_beta_2d(base, grid_n=gn, seed=seed)
+        r["fine"] = _slope_deltas(g_true, gn, D_FINE, seed)
+        r["coarse"] = _slope_deltas(g_true, gn, D_COARSE, seed)
+        rows[gn] = r
+    return {"grid_ns": grid_ns, "by_resolution": rows}
 
 
 def probe_with_real_classifier(base: dict, epss=None, n_per_eps: int = 1200,
@@ -247,6 +288,44 @@ BASES = {
 
 if __name__ == "__main__":
     import sys
+
+    # ── 深挖: shallow 基态随网格分辨率放大, β 收敛行为 ──
+    if "--deepdive" in sys.argv:
+        print("=" * 68)
+        print("深挖 shallow —— 网格分辨率扫描 β 收敛性 + 细/粗δ 局部斜率")
+        print("分形=细/粗斜率一致且稳定<1; 有限交叉网=细→1粗→0; 收敛到1=量化伪影")
+        print("=" * 68)
+        base = BASES["shallow"]
+        res = estimate_beta_scaled(base)
+        print(f"\n基态[shallow]: iter={base['iteration']} fam={base['families_explored']} "
+              f"live={base['live_components']}\n")
+        print(f"  {'grid_n':>6}  {'总体β':>7} {'R²':>6}  {'细δβ':>7}  {'粗δβ':>7}")
+        for gn in res["grid_ns"]:
+            r = res["by_resolution"][gn]
+            print(f"  {gn:>6}  {r['beta']:>+7.3f} {r['真实指纹吸引域']['r2']:>6.3f}  "
+                  f"{r['fine']:>+7.3f}  {r['coarse']:>+7.3f}")
+        betas = [res["by_resolution"][gn]["beta"] for gn in res["grid_ns"]]
+        fines = [res["by_resolution"][gn]["fine"] for gn in res["grid_ns"]]
+        coarses = [res["by_resolution"][gn]["coarse"] for gn in res["grid_ns"]]
+        if all(math.isnan(b) for b in betas):
+            print("\n→ 所有分辨率下真实β=nan: 无边界可测")
+        else:
+            bs = [b for b in betas if not math.isnan(b)]
+            fs = [b for b in fines if not math.isnan(b)]
+            cs = [b for b in coarses if not math.isnan(b)]
+            drift = max(bs) - min(bs)
+            print(f"\n→ 真实β: min={min(bs):.3f} max={max(bs):.3f} 漂移={drift:+.3f} "
+                  f"末分辨率β={bs[-1]:+.3f}")
+            mean_f, mean_c = sum(fs) / len(fs), sum(cs) / len(cs)
+            spread = mean_c - mean_f
+            print(f"  细δβ均值={mean_f:+.3f}  粗δβ均值={mean_c:+.3f}  细粗差={spread:+.3f}")
+            if spread > 0.35 or mean_f > 0.9:
+                print("\n 判读: 细δ斜率→1、粗δ→0 → 有限直边交叉网, 非分形 (特征尺度过有限)")
+            elif drift < 0.1 and abs(spread) < 0.25 and max(bs) < 0.95:
+                print("\n 判读: β 稳定<1 且细/粗斜率接近 → 自相似分形信号(需更大δ窗确认)")
+            else:
+                print("\n 判读: 介于两者之间, 需更大分辨率或更宽δ窗确认")
+        sys.exit(0)
 
     # ── 双路交叉验证: 确定性 2D 晶格 β (同一协议, 与 research_a 对齐) ──
     if "--beta2d" in sys.argv:
