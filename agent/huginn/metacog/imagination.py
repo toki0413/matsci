@@ -163,9 +163,41 @@ def _parse_first_json(text: str) -> dict | None:
     return None
 
 
+_LOOSE_RESERVED = {"new_n_params", "new_description", "new_predictions", "transform_reason"}
+
+
+def _loose_transform_obj(text: str) -> dict | None:
+    """宽松兜底: 无完整 JSON 时, 用 text_to_json 的宽松 k:v 抓取重建对象.
+
+    兼容"思考+结果混排 / JSON 被截断 / 半 JSON"的输出 —— 对任意模型通用,
+    不依赖具体模型遵循 STRICT JSON(书生 s1 等遵循差时仍可救回).
+    只取到预测数字即视为可用; 完全没有预测 -> None.
+    """
+    try:
+        from huginn.metacog.text_to_json import loose_scalar_fields
+        flat = loose_scalar_fields(text)
+        if not flat:
+            return None
+        preds = {k: v for k, v in flat.items()
+                 if k not in _LOOSE_RESERVED and isinstance(v, (int, float))}
+        if not preds:
+            return None
+        desc = flat.get("new_description")
+        if not isinstance(desc, str) or not desc.strip():
+            desc = None
+        n_params = flat.get("new_n_params")
+        n_params = max(1, int(n_params)) if isinstance(n_params, (int, float)) else 1
+        return {"new_description": desc, "new_predictions": preds,
+                "new_n_params": n_params}
+    except Exception:  # noqa: BLE001 — 宽松兜底失败不阻塞, 由调用层升级
+        return None
+
+
 def _parse_transform_response(text: str) -> Hypothesis | None:
     """解析 LLM 变换输出 -> Hypothesis. 失败返回 None."""
     obj = _parse_first_json(text)
+    if obj is None:
+        obj = _loose_transform_obj(text)
     if obj is None:
         return None
     desc = obj.get("new_description")
