@@ -437,10 +437,74 @@ def _inject_failed_direction_lessons(
     )
 
 
-class CognitiveLoopMixin:
-    """cognitive loop 主循环方法族, 从 engine.py 下沉 (P3 slim-down). 通过 self 访问 engine 状态."""
+class CognitiveRunner:
+    """cognitive loop 主循环方法族协作对象, 从 engine.py 下沉 (P3 slim-down).
 
-    pass  # methods migrated from engine.py via P3 slim-down
+    去 mixin 阶段10: 原 CognitiveLoopMixin 改为普通类 CognitiveRunner. 命名刻意避开
+    本模块同名的编排抽象 ``class CognitiveLoop`` (rcb_runner/autoloop 的 4 钩子控制器)。
+    引擎经组合持有 self._cognitive_runner = CognitiveRunner(self), 保留同名薄委托方法
+    → 既有 self.method() 调用点 (engine_control/plan_check/engine_act/engine_reflect) 与
+    run_cognitive 入口零改动。
+
+    设计关键 (ponytail):
+    - 方法体大量读写引擎状态(字段+方法) → 「全属性转发」: __getattr__ 把未定义
+      属性读转发到 engine, __setattr__ 转发写。字段/方法留引擎不复制。
+    - own-method 覆写槽 _OWN_ATTRS: 对自身方法名赋值落本对象实例 dict(测试 mock),
+      其余名字(引擎状态字段)转发回引擎。
+    - 防递归: __getattr__ 用 object.__getattribute__ 直达 engine 实例属性
+      (engine==self 的测试 mock 场景不递归); __setattr__ 在 engine is self 时直写实例 dict.
+    - 两个 @staticmethod (_extract_timeseries/_snapshot_provenance_version) 不读 self,
+      引擎留类常量桥保持 AutoloopEngine._X 类级访问.
+    - 协作对象不额外持有业务状态 (除 engine 引用)
+    """
+
+    def __init__(self, engine: Any) -> None:
+        object.__setattr__(self, "engine", engine)
+
+    def __getattr__(self, name: str) -> Any:
+        # object.__getattribute__ 直达 engine 实例属性, 避免 engine==self 时递归
+        return object.__getattribute__(self.engine, name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name == "engine":
+            object.__setattr__(self, name, value)
+            return
+        # 本对象自有的协作方法名: 赋值意图是覆写协作方法(如测试 mock),
+        # 应落在本对象实例 dict 而非转发回引擎; 其余名字(引擎状态字段)转发回引擎.
+        if name in self._OWN_ATTRS:
+            object.__setattr__(self, name, value)
+            return
+        # engine==self (测试 mock) 直写实例 dict 避免转发自递归; 否则转发回引擎
+        if self.engine is self:
+            object.__setattr__(self, name, value)
+            return
+        setattr(self.engine, name, value)
+
+    #: CognitiveRunner 定义的协作方法名集合 (不含两个 @staticmethod, 它们不读 self).
+    #: 供 __setattr__ 判定"覆写自身方法" vs "写引擎状态".
+    _OWN_ATTRS: frozenset[str] = frozenset({
+        "_await_human_decision_via_inbox",
+        "_run_phase",
+        "_run_phase_async",
+        "_render_report",
+        "_git_commit_after_execute",
+        "_darwin_ratchet_check",
+        "_classify_stall",
+        "_trigger_counterexample_hunt",
+        "_emit_campaign",
+        "_prepare_run",
+        "_persist_failure_pattern",
+        "_load_failure_pattern",
+        "_persist_run_context",
+        "_load_prev_run_context",
+        "_format_timeseries_context",
+        "_decide_next_action_llm",
+        "_build_decider_prompt",
+        "_is_action_legal",
+        "_finalize_run",
+        "_rollback_on_execute_failure",
+        "run_cognitive",
+    })
 
     async def _await_human_decision_via_inbox(
         self, reason: str, options: list[dict], step_id: int

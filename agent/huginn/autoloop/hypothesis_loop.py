@@ -1886,10 +1886,69 @@ def _selfcheck_p0_durable_state() -> None:
         shutil.rmtree(_tmp, ignore_errors=True)
 
 
-class HypothesisMixin:
-    """hypothesis 生成/管理方法族, 从 engine.py 下沉 (P3 slim-down). 通过 self 访问 engine 状态."""
+class HypothesisLoop:
+    """hypothesis 生成/管理方法族协作对象, 从 engine.py 下沉 (P3 slim-down).
 
-    pass  # methods migrated from engine.py via P3 slim-down
+    去 mixin 阶段9: 原 HypothesisMixin(2969 行/18 方法) 改为普通类 HypothesisLoop。
+    引擎经组合持有 self._hypothesis_loop = HypothesisLoop(self), 保留同名薄委托
+    方法 → 既有 self.method() 调用点 (cognitive_loop / engine_observe /
+    hypothesis_manifold) 零改动。HypothesisGraph 仍是独立数据模型, 不受影响。
+
+    设计关键 (ponytail):
+    - 方法体大量读写引擎状态(字段+方法) → 「全属性转发」: __getattr__ 把未定义
+      属性读转发到 engine, __setattr__ 转发写。字段/方法留引擎不复制。
+    - own-method 覆写槽 _OWN_ATTRS: 对自身方法名赋值落本对象实例 dict(测试 mock),
+      其余名字(引擎状态字段)转发回引擎。
+    - 防递归: __getattr__ 用 object.__getattribute__ 直达 engine 实例属性
+      (engine==self 的测试 mock 场景不递归); __setattr__ 在 engine is self 时直写实例 dict.
+    - 对 engine.py 模块级符号用方法内 lazy import, 避免 circular
+    - 协作对象不额外持有业务状态 (除 engine 引用)
+    """
+
+    def __init__(self, engine: Any) -> None:
+        object.__setattr__(self, "engine", engine)
+
+    def __getattr__(self, name: str) -> Any:
+        # object.__getattribute__ 直达 engine 实例属性, 避免 engine==self 时递归
+        return object.__getattribute__(self.engine, name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name == "engine":
+            object.__setattr__(self, name, value)
+            return
+        # 本对象自有的协作方法名: 赋值意图是覆写协作方法(如测试 mock _hypothesize),
+        # 应落在本对象实例 dict 而非转发回引擎; 其余名字(引擎状态字段)转发回引擎.
+        if name in self._OWN_ATTRS:
+            object.__setattr__(self, name, value)
+            return
+        # engine==self (测试 mock) 直写实例 dict 避免转发自递归; 否则转发回引擎
+        if self.engine is self:
+            object.__setattr__(self, name, value)
+            return
+        setattr(self.engine, name, value)
+
+    #: HypothesisLoop 定义的协作方法名集合. 供 __setattr__ 判定"覆写自身方法" vs "写引擎状态".
+    _OWN_ATTRS: frozenset[str] = frozenset({
+        "_hypothesize_via_branch_incubator",
+        "_hypothesize",
+        "_record_backup_candidates",
+        "_metacog_classify_family",
+        "_metacog_audit_hypothesis",
+        "_metacog_topology_audit",
+        "_sync_simplicials_to_kg",
+        "_choose_recovery_phase",
+        "_classify_failure",
+        "_redteam_findings",
+        "_attach_lucid_prereqs",
+        "_should_imaginate",
+        "_recent_failed_hypotheses",
+        "_conjecture_hint",
+        "_symreg_hint",
+        "_query_kb_known_forms",
+        "_pick_hypothesis_persona",
+        "_evaluate_informativeness",
+    })
+
     async def _hypothesize_via_branch_incubator(
         self, context: dict[str, Any]
     ) -> str | None:
