@@ -21,6 +21,8 @@ import math
 import random
 from pathlib import Path
 
+import numpy as np
+
 # 真分类器
 from huginn.metacog.completion_auditor import CompletionAuditor
 
@@ -92,6 +94,114 @@ def _fit_beta(epss, fs) -> float:
     return (n * sxy - sx * sy) / denom if denom else float("nan")
 
 
+# ── 交叉验证版: 确定性 2D 晶格 Chern–Markus β (与 research_a 同一协议) ──
+# research_a 把语义 cosine 当终态; 这里把布尔 completion_auditor 指纹当终态,
+# 用尽对同一测量协议(P_cross(δ)~δ^β + 光滑/噪声对照)做双路交叉验证。
+#   1. 二维参数 (u,v)∈[0,1]² 确定性扰动审计输入(u→工作量, v→自白条目)
+#   2. 终态 = completion_auditor 的 5 维失败指纹 (int 编码)
+#   3. P_cross(δ): 网格上相距 δ 两点落入不同指纹类别比例
+#   4. 拟合 log P_cross ~ β log δ; 对照: 光滑→β≈1, 噪声→β≈0
+# 关键: 扰动是确定性连续函数(无 per-cell 随机抖动), 避免把噪声当分形。
+
+
+def _fp_int(fp: tuple[int, ...]) -> int:
+    """5 维 0/1 指纹 → 整数标签 (2^5 个可能吸引域)."""
+    return sum(b << i for i, b in enumerate(fp))
+
+
+def _decl_count(text: str) -> int:
+    return sum(1 for ln in str(text).splitlines() if ln.strip().startswith("- "))
+
+
+def _decl(count: int) -> str:
+    if count <= 0:
+        return "已充分探索"
+    return "\n".join(f"- 未探索项{i}" for i in range(count))
+
+
+def _u01(n):
+    return [i / (n - 1) if n > 1 else 0.5 for i in range(n)]
+
+
+def _labels_grid(base: dict, grid_n: int, agent: RealClassifierAgent) -> np.ndarray:
+    """在 [0,1]² 上逐点审计 → (grid_n,grid_n) int 指纹标签阵."""
+    g = np.empty((grid_n, grid_n), dtype=int)
+    us, vs = _u01(grid_n), _u01(grid_n)
+    agent._rng = random.Random(0)  # audit 不接受随机位移, 无害固定
+    for i, u in enumerate(us):
+        for j, v in enumerate(vs):
+            c = agent._auditor.audit(
+                iteration=int(max(0, base["iteration"] + u * 8)),
+                families_explored=int(max(0, base["families_explored"] + u * 3)),
+                live_components=int(max(0, base["live_components"] + u * 2)),
+                total_iterations=base.get("total_iterations", 10),
+                candidate_finding=base.get("candidate_finding", ""),
+                original_problem=base.get("original_problem", ""),
+                reduction_chain=base.get("reduction_chain", ""),
+                unexplored_declaration=_decl(
+                    int(round(_decl_count(base.get("unexplored_declaration", "")) + v * 3))
+                ),
+            )
+            g[i, j] = _fp_int(_fingerprint(c))
+    return g
+
+
+def _p_cross(g: np.ndarray, grid_n: int, delta_frac: float, rng, samples: int = 8000) -> float:
+    d = max(1, int(round(delta_frac * (grid_n - 1))))
+    steps = [(-d, 0), (d, 0), (0, -d), (0, d), (d, d), (-d, d), (d, -d), (-d, -d)]
+    cnt = tot = 0
+    for _ in range(samples):
+        i = int(rng.integers(0, grid_n))
+        j = int(rng.integers(0, grid_n))
+        di, dj = rng.choice(steps)
+        i2, j2 = i + di, j + dj
+        if 0 <= i2 < grid_n and 0 <= j2 < grid_n:
+            tot += 1
+            if g[i, j] != g[i2, j2]:
+                cnt += 1
+    return cnt / tot if tot else 0.0
+
+
+DELTAS = [0.02, 0.04, 0.06, 0.08, 0.12, 0.16, 0.25, 0.33]
+
+
+def _fit_beta_r2(deltas, pcs) -> dict:
+    pts = [(math.log(d), math.log(max(p, 1e-9))) for d, p in zip(deltas, pcs)
+           if 0.0 < p < 1.0]
+    if len(pts) < 3:
+        return {"beta": float("nan"), "r2": float("nan"), "n_used": len(pts)}
+    xs = [x for x, _ in pts]
+    ys = [y for _, y in pts]
+    slope, intercept = np.polyfit(xs, ys, 1)
+    yhat = [slope * x + intercept for x in xs]
+    ss_res = sum((y - yh) ** 2 for y, yh in zip(ys, yhat))
+    ss_tot = sum((y - sum(ys) / len(ys)) ** 2 for y in ys)
+    r2 = 1.0 - ss_res / ss_tot if ss_tot else float("nan")
+    return {"beta": float(slope), "r2": float(r2), "n_used": len(pts)}
+
+
+def estimate_beta_2d(base: dict, grid_n: int = 150, seed: int = 3) -> dict:
+    """对单个基态跑 2D 晶格 β: 真标签 + 光滑对照 + 噪声对照."""
+    agent = RealClassifierAgent()
+    g_true = _labels_grid(base, grid_n, agent)
+
+    g_smooth = np.asarray([[0 if u < 0.5 else 1 for _ in _u01(grid_n)]
+                           for u in _u01(grid_n)], dtype=int)
+    rng_noise = random.Random(seed)
+    g_noise = np.asarray(
+        [[rng_noise.randint(0, 1) for _ in _u01(grid_n)] for _ in _u01(grid_n)],
+        dtype=int,
+    )
+
+    out = {}
+    for name, gg in [("真实指纹吸引域", g_true), ("光滑对照", g_smooth), ("噪声对照", g_noise)]:
+        rng = np.random.default_rng(seed)
+        pcs = [_p_cross(gg, grid_n, d, rng) for d in DELTAS]
+        fit = _fit_beta_r2(DELTAS, pcs)
+        out[name] = {**fit}
+    return {"grid_n": grid_n, "beta": out["真实指纹吸引域"]["beta"], **out}
+
+
 def probe_with_real_classifier(base: dict, epss=None, n_per_eps: int = 1200,
                                seed: int = 1) -> dict:
     """扫 ε → 用真分类器估 f(ε) → 拟合 β."""
@@ -136,6 +246,38 @@ BASES = {
 
 
 if __name__ == "__main__":
+    import sys
+
+    # ── 双路交叉验证: 确定性 2D 晶格 β (同一协议, 与 research_a 对齐) ──
+    if "--beta2d" in sys.argv:
+        print("=" * 68)
+        print("布尔分类器交叉验证 —— 确定性 2D 晶格 P_cross(δ)~δ^β (Chern–Markus)")
+        print("同一测量协议, 与 research_a 语义余弦路对齐")
+        print("=" * 68)
+        for name in BASES:
+            r = estimate_beta_2d(BASES[name])
+            print(f"\n[{name}] 基态: iter={BASES[name]['iteration']} "
+                  f"fam={BASES[name]['families_explored']} "
+                  f"live={BASES[name]['live_components']}")
+            for k in ("真实指纹吸引域", "光滑对照", "噪声对照"):
+                item = r[k]
+                b_k, r2 = item["beta"], item["r2"]
+                if math.isnan(b_k):
+                    sign = "无边界(P_cross=0/指纹恒定)"
+                else:
+                    sign = ("分形" if b_k < 0.85 else
+                            "平滑(β≈1)" if b_k > 0.95 else "模糊")
+                print(f"  {k:<8} β={b_k if not math.isnan(b_k) else float('nan'):+.3f} "
+                      f"R²={'%.3f' % r2 if not math.isnan(r2) else '--'} "
+                      f"({item['n_used']}/{len(DELTAS)}点)  → {sign}")
+            b = r["beta"]
+            if math.isnan(b):
+                print(f"  → 布尔分类器该基态无失败边界可测(指纹对扰动恒定), 与语义路不可比")
+            else:
+                print(f"  → 布尔分类器 β={b:+.3f} "
+                      f"({'分形, 与语义路不一致' if b < 0.85 else '平滑, 与语义路一致(β≈1)'})")
+        sys.exit(0)
+
     print("=" * 68)
     print("probe_failure_basins 方案①b —— 用【真 completion_auditor】当失败分类器")
     print("零 LLM: 真分类逻辑 + 扰动重跑; 通完才上真数据")
