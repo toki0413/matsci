@@ -1,6 +1,7 @@
 # Recursive (Meta-)Improver — 让「改进器如何改进」也是可改进、可验收的对象
 
-> 状态：proposed。里程碑 M-R1（见 ROADMAP 独立轨道）。前置：harness H1 prompt_patch 已落地、significance/ood/adoption 门控已落地。本 spec 是 audit 后对「真正 RSI 缺口」的最小落地。
+> 状态：implemented ✅（M-R1 完成）。里程碑 M-R1（见 ROADMAP 独立轨道）。前置：harness H1 prompt_patch 已落地、significance/ood/adoption 门控已落地。本 spec 是 audit 后对「真正 RSI 缺口」的最小落地。
+> 验证（2026-09-13）：`meta_improver selfcheck 5/5`、`prompt_patch selfcheck 5/5`（零回归）、`tests/test_meta_improver.py 7 passed`、`autoloop engine / harness 全量 import OK`、note_generation 第 5 次触发自动 promote 闭环跑通。
 
 ## 动机（audit 结论）
 

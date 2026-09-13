@@ -21,6 +21,6 @@
 
 去 mixin 目标是消除 god-class；本轨道目标是补「递归自我改进」——在已落地的单层 harness 改进器（H1 prompt_patch 等）之上加一层 meta-improver，让「改进器自身如何改进」也可被改进、可被 gate 验收。与去 mixin 无依赖。
 
-- [ ] M-R1: Recursive (Meta-)Improver — 改进器自身的 improver_prompt/阈值成为可改进对象，复用 SignificanceGate / OODHoldout / AdoptionGate 做验收，仅 GREEN 才全局换用改进器配置（默认关）
+- [x] M-R1: Recursive (Meta-)Improver — 改进器自身的 improver_prompt/阈值成为可改进对象，复用 SignificanceGate / OODHoldout / AdoptionGate 做验收，仅 GREEN 才全局换用改进器配置（默认关）
 
 契约与环境见 `docs/staging/specs/2026-09-13-recursive-improver.md`。
