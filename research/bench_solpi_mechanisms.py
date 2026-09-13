@@ -8,7 +8,10 @@
     ``avg_validation_turn_tokens`` 估算, 标注为估算值。
   - ④ 报告"可折叠步数/保留步数"的计数, 不虚报 token(每步 size 不确定)。
 
-用法:  PYTHONPATH=/workspace/agent python3 research/bench_solpi_mechanisms.py
+用法:
+  PYTHONPATH=/workspace/agent python3 research/bench_solpi_mechanisms.py
+  PYTHONPATH=/workspace/agent python3 research/bench_solpi_mechanisms.py --log-theme lammps --mutations 4 --validation-turn-tokens 700
+  PYTHONPATH=/workspace/agent python3 research/bench_solpi_mechanisms.py --json
 """
 from __future__ import annotations
 
@@ -41,18 +44,23 @@ def _vasp_like_log() -> str:
     return "\n".join(lines)
 
 
-def _fmt_int(n: int) -> str:
-    return f"{n:,}"
+def _lammps_like_log() -> str:
+    """造一个超长 LAMMPS 风格日志(热力学步), 触发 offload/收据化."""
+    lines = [f"Step {i} Temp {300.0 + i * 0.1:.4f} Press {1.0 if i % 2 == 0 else 1.2:.4f}"
+             for i in range(12000)]
+    lines.append("ERROR: Bond atoms 12 13 missing at step 4999 (../bond.cpp:523)")
+    return "\n".join(lines)
 
 
-def main() -> None:
-    print("=" * 74)
-    print("SoL-Pi 四件套 token 节省 benchmark (机制级, 可复现)")
-    print("=" * 74)
+def _log_theme(name: str) -> str:
+    return _lammps_like_log() if name == "lammps" else _vasp_like_log()
 
-    log = _vasp_like_log()
+
+def run_bench(
+    log: str, *, mutations: int = 8, validation_turn_tokens: int = 900
+) -> dict:
+    """机制级 token 节省测算, 返回可复用 dict(供 --json / 测试复用)."""
     log_tok = _tok(log)
-    print(f"\n[基准] 超长 VASP 日志: {log_tok:,} tok\n")
 
     # ② ObservationPack
     archive = ObservationArchive("bench")
@@ -60,42 +68,81 @@ def main() -> None:
     first_page = archive.recall(handle, page=0, page_size=4000)
     preview_tok = _tok(first_page["text"])
     save2 = log_tok - preview_tok
-    print("机制② ObservationPack:")
-    print(f"  原始全量 = {_fmt_int(log_tok)} tok | 上下文只放句柄+首屏预览 = {_fmt_int(preview_tok)} tok")
-    print(f"  单次省 {_fmt_int(save2)} tok ({500 * save2 / max(1, log_tok):.1f}x 上下文减压) "
-          f"(handle={handle[:12]}... 可分页召回原始原文, 无丢字)\n")
 
     # ③ Evidence-Preserving Reducer
     rec = reduce_log_to_receipt(ObservationArchive("bench3"), log)
-    receipt_text = "\n".join([*rec.head, *rec.tail, *rec.quotes])
-    receipt_tok = _tok(receipt_text)
+    receipt_tok = _tok("\n".join([*rec.head, *rec.tail, *rec.quotes]))
     save3 = log_tok - receipt_tok
-    print("机制③ Evidence-Preserving Reducer:")
-    print(f"  原始日志 = {_fmt_int(log_tok)} tok | 收据(head/tail/引文, 逐字可回源) = {_fmt_int(receipt_tok)} tok | 省略 {rec.omitted} 行")
-    print(f"  单次省 {_fmt_int(save3)} tok | 收据 sealed={rec.sealed}(所有保留行逐字命中归档原文)\n")
 
-    # ④ Online Compact: 候选门控计数(不虚报 token, 给可折叠/保留数)
-    steps = [
-        _fake_step(f"s{i}", status="completed", has_evidence=True) for i in range(12)
-    ] + [
-        _fake_step(f"active{i}", status="in_progress", has_evidence=True) for i in range(3)
-    ]
+    # ④ Online Compact (计数)
+    steps = [_fake_step(f"s{i}", status="completed", has_evidence=True) for i in range(12)] + \
+            [_fake_step(f"active{i}", status="in_progress", has_evidence=True) for i in range(3)]
     cand = select_compact_candidates(steps)
     g = gate_compaction(steps, window_pct=70, cache_write_read_ratio=20)
-    print("机制④ Online Context Compact(候选驱动 + 经济/密封门控):")
-    print(f"  步骤 15: 可折叠(已验证+密封) {len(cand)} | 必须保留证据(未验证) {len(g['preserve_evidence'])}")
-    print(f"  should_compact={g['should_compact']} (候选驱动 + 窗口/缓存读写比门控通过)\n")
 
-    # ① Action Fusion: 每轮省一条验证工具往返(估算)
-    avg_validation_turn = 900  # 一条"改完→单独跑验证命令"的模型往返 prompt 估算
-    mutual = 8
-    print("机制① Action Fusion:")
-    print(f"  每次变更省 1 条验证工具往返(估算 {avg_validation_turn} tok/轮) × {mutual} 次变更")
-    print(f"  单会话累计省 {_fmt_int(avg_validation_turn * mutual)} tok (标注: 端到端需真 LLM 定价复核)\n")
+    # ① Action Fusion (估算折算)
+    save1 = validation_turn_tokens * mutations
+
+    return {
+        "log_theme_tok": log_tok,
+        "obs_raw_tok": log_tok,
+        "obs_first_page_tok": preview_tok,
+        "obs_save_tok": save2,
+        "obs_handle": handle[:12] + "...",
+        "receipt_tok": receipt_tok,
+        "receipt_save_tok": save3,
+        "receipt_sealed": rec.sealed,
+        "receipt_omitted_lines": rec.omitted,
+        "compact_total_steps": len(steps),
+        "compact_foldable": len(cand),
+        "compact_preserve": len(g["preserve_evidence"]),
+        "compact_should": g["should_compact"],
+        "fusion_save_tok": save1,
+        "fusion_mutations": mutations,
+        "total_save_tok_est": save2 + save3 + save1,
+    }
+
+
+def main(argv: list[str] | None = None) -> None:
+    import argparse
+    import json
+
+    ap = argparse.ArgumentParser(description="SoL-Pi 四件套 token 节省 benchmark")
+    ap.add_argument("--log-theme", choices=["vasp", "lammps"], default="vasp")
+    ap.add_argument("--mutations", type=int, default=8)
+    ap.add_argument("--validation-turn-tokens", type=int, default=900)
+    ap.add_argument("--json", action="store_true", help="输出机器可读 JSON")
+    args = ap.parse_args(argv)
+
+    log = _log_theme(args.log_theme)
+    r = run_bench(log, mutations=args.mutations,
+                  validation_turn_tokens=args.validation_turn_tokens)
+
+    if args.json:
+        print(json.dumps(r, ensure_ascii=False, indent=2))
+        return
 
     print("=" * 74)
-    print(f"四件套合计(代表性一轮): 省 ≈{_fmt_int(save2 + save3 + avg_validation_turn * mutual)} tok 未计②③首屏/收据重复召回")
-    print("注意: 二/四/三为机制级省量, 一为按估算轮次折算; 引用绝对数字前请在真 agent 轨迹上复核。")
+    print(f"SoL-Pi 四件套 token 节省 benchmark (机制级, {args.log_theme} 日志)")
+    print("=" * 74)
+    print(f"\n[基准] 日志 {r['log_theme_tok']:,} tok\n")
+
+    print("机制② ObservationPack:")
+    print(f"  原始全量 {r['obs_raw_tok']:,} tok | 上下文只放句柄+首屏 {r['obs_first_page_tok']:,} tok")
+    print(f"  单次省 {r['obs_save_tok']:,} tok (handle={r['obs_handle']} 可分页召回无丢字)\n")
+
+    print(f"机制③ Evidence-Preserving Reducer: 收据 {r['receipt_tok']:,} tok "
+          f"(省略 {r['receipt_omitted_lines']} 行, sealed={r['receipt_sealed']}) 单次省 {r['receipt_save_tok']:,} tok\n")
+
+    print(f"机制④ Online Context Compact: {r['compact_total_steps']} 步 → 可折叠 "
+          f"{r['compact_foldable']}(已验证+密封) / 必须保留证据 {r['compact_preserve']}, should_compact={r['compact_should']}\n")
+
+    print(f"机制① Action Fusion: {r['fusion_mutations']} 次变更 ×1 条验证往返 "
+          f"(={args.validation_turn_tokens} tok/轮, 估算) 省 {r['fusion_save_tok']:,} tok\n")
+
+    print("=" * 74)
+    print(f"四件套合计(代表一轮, 估算): 省 ≈{r['total_save_tok_est']:,} tok")
+    print("诚实边界: 二/三是机制级实测量, 一是估算折算(需真 LLM 定价复核), 四是计数。")
     print("=" * 74)
 
 

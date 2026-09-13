@@ -19,6 +19,7 @@ raise(不吞变更结果, 只是标记验证失败)。任何契约缺失/执行�
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -253,3 +254,26 @@ def _selfcheck() -> None:
 
 if __name__ == "__main__":
     _selfcheck()
+
+
+# ── 环境变量开关 (可靠复现/运维) ───────────────────────────────
+# HUGINN_SOLPI_ACTION_FUSION={1,true,yes,on} 时, 模块导入即开启总开关 + 注册默认
+# 契约。幂等、默认关; 不开不影响任何现有行为。测试里显式 enable 不受影响。
+_ENV_FLAG = "HUGINN_SOLPI_ACTION_FUSION"
+
+
+def _env_bool() -> bool:
+    return os.environ.get(_ENV_FLAG, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def configure_from_env() -> None:
+    """按环境变量开启(幂等). 仅当 HUGINN_SOLPI_ACTION_FUSION 开启时才生效."""
+    if _env_bool():
+        enable_action_fusion()
+        register_solpi_default_verifiers()
+
+
+# 延迟到调用时而不是模块导入, 避免与自 ___name__ selfcheck 的导入顺序纠缠。
+# 这里在 import 完成本模块.symbol 后就绪后才触发, 保证 register_solpi_default_verifiers 已定义。
+if _env_bool():
+    configure_from_env()
