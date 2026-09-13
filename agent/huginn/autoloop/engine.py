@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from huginn.autoloop.budget import TokenBudget
+from huginn.autoloop.signals import EngineSignals, SIGNAL_NAMES
 
 logger = logging.getLogger(__name__)
 
@@ -295,6 +296,9 @@ class AutoloopEngine(
     ):
         self.workspace = Path(workspace or ".").resolve()
         self.settings = get_settings()
+        # EngineSignals: 持有纯环信号字段的单一事实源; 名下属性桥 self._<field>
+        # 读/写都落到这里。必须先于任意 _init_* 分片, 因为分片里的自赋会经桥.
+        self.signals = EngineSignals()
         # BranchIncubator 用的 agent_factory, None 时 incubator 路径跳过.
         # 由 RCBench runner / CLI 在需要 N=3 隔离采样时注入.
         self._agent_factory = agent_factory
@@ -1021,3 +1025,22 @@ class AutoloopEngine(
 
             self._evolution = EvolutionEngine(logger=ExecutionLogger())
         return self._evolution
+
+
+# ── EngineSignals 属性桥 ─────────────────────────────────────────────
+# 把 SIGNAL_NAMES 里的每个纯环信号字段挂成类级 property, get/set 都落到
+# self.signals.<field>。这样既有 ~112 处 self._<field> 读点在迁移完成前仍返回
+# 原值(读从 signals 取, 写写进 signals), 行为零变化。字段名来自 signals.SIGNAL_NAMES
+# 单一事实源, 与持久化(runtime/engine_state)共用，避免字段名重复声明。
+def _signal_bridge(name: str):
+    def _get(self, _n: str = name):
+        return getattr(self.signals, _n)
+
+    def _set(self, value, _n: str = name):
+        setattr(self.signals, _n, value)
+
+    return property(_get, _set)
+
+
+for _signal_name in SIGNAL_NAMES:
+    setattr(AutoloopEngine, _signal_name, _signal_bridge(_signal_name))
