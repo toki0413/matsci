@@ -34,7 +34,9 @@ _ROOT = os.path.dirname(os.path.abspath(os.path.dirname(__file__)))
 if "/workspace/agent" not in sys.path:
     sys.path.insert(0, "/workspace/agent")
 
-KEY = os.environ.get("INTERN_KEY", open("/tmp/intern_key").read().strip())
+KEY = os.environ.get("INTERN_KEY")
+if not KEY:
+    KEY = open("/tmp/intern_key").read().strip()
 BASE = os.environ.get("INTERN_BASE", "https://chat.intern-ai.org.cn/api/v1")
 MODEL = os.environ.get("INTERN_MODEL", "intern-s1")
 MAX_TOKENS = int(os.environ.get("INTERN_MAX_TOKENS", "4000"))
