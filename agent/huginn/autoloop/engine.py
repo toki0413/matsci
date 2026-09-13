@@ -1,5 +1,8 @@
 """Autoloop Engine — the main autonomous loop for Huginn.
 
+strong-claim: 文中 JEPA surprise 是文本空间预测(非真嵌入 JEPA), Darwin ratchet 是
+启发式质量分(非真进化算法). 均以同名概念作工程隐喻, 非算法主张.
+
 Ties together exploration, coder, workflow, benchmark, and report
 into a single closed-loop ecosystem:
 

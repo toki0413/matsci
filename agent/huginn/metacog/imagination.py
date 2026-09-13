@@ -1,5 +1,8 @@
 """Imagination — 在 hypothesis manifold 上做 structure-preserving transformation.
 
+strong-claim: "Bourbaki 变换"是结构变换的工程隐喻, 非布尔巴基学派数学主张;
+fisher distance 是 prediction-disagreement 代理, 非真 Fisher metric.
+
 不是 pattern completion, 是 extrapolation: 把 hypothesis 的 Bourbaki mother
 structure (algebraic / topological / order) 做一次 group action / 拓扑变换 /
 偏序变换, 生成一个原 manifold 上不存在的 hypothesis. 跟 interpolation 的区别
