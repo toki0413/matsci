@@ -41,6 +41,7 @@ _CORE_MODULES = [
     ("huginn.tools.github_tool", "GithubTool"),
     ("huginn.tools.bourbaki_tool", "BourbakiTool"),
     ("huginn.tools.diff_tool", "DiffTool"),
+    ("huginn.tools.observation_pack", "RecallObservationTool"),
     ("huginn.tools.validate_tool", "ValidateTool"),
     ("huginn.tools.diagnose_tool", "DiagnoseTool"),
     ("huginn.tools.system_diagnostic_tool", "SystemDiagnosticTool"),

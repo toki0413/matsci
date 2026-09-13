@@ -819,6 +819,19 @@ class ToolAdapter:
                         "_artifact_path": artifact_path,
                         "_full_size_chars": len(serialized),
                     }
+                    # ObservationPack: 同时注册稳定句柄, 模型可 recall 精确原文分页.
+                    # 失败静默退化到纯预览(与 offload 同款 best-effort).
+                    try:
+                        from huginn.tools.observation_pack import handle_for_body
+
+                        sess = getattr(self, "_session_id", None) or getattr(
+                            getattr(self, "_agent_ref", None), "session_id", None
+                        )
+                        h = handle_for_body(serialized, session_id=sess)
+                        if h:
+                            data["_recall_handle"] = h
+                    except Exception:
+                        logger.debug("observation_pack handle failed (non-fatal)", exc_info=True)
             except Exception:
                 logger.debug("offload_tool_output failed (non-fatal)", exc_info=True)
 

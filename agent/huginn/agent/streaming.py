@@ -151,6 +151,32 @@ def _strip_dangling_tool_calls(messages: list) -> int:
     return n_stripped
 
 
+def _extract_plan_steps_for_compact(final_state: dict[str, Any] | None) -> list[Any]:
+    """从 final_state 里 duck-typed 抽取计划步骤, 供 OnlineCompact 门控(advisory).
+
+    纯 best-effort: 状态里可能有 ``steps`` / ``plan_steps`` / ``plan``(其下
+    ``steps`` 或 ``tasks``) 任一形态; 什么都不在就不对该轮做候选门控(返回空)。
+    不抛出: 找不到就静默返回空表。
+    """
+    if not final_state:
+        return []
+    candidates: list[Any] | None = None
+    for key in ("steps", "plan_steps", "tasks"):
+        val = final_state.get(key)
+        if isinstance(val, list):
+            candidates = val
+            break
+    if candidates is None:
+        plan = final_state.get("plan")
+        if isinstance(plan, dict):
+            for key in ("steps", "tasks"):
+                val = plan.get(key)
+                if isinstance(val, list):
+                    candidates = val
+                    break
+    return candidates or []
+
+
 def _c1_self_check() -> int:
     """C1 self-check: 验证 _strip_dangling_tool_calls 三场景.
 
@@ -706,6 +732,39 @@ class StreamingMixin:
             "Context usage %d%%, triggering auto-compact",
             before["used"],
         )
+
+        # SoL-Pi OnlineCompact 接线(④, 非侵入 fail-closed): 压缩前先做"候选驱动 +
+        # 经济/证据密封门控"。若能从状态里读到计划步骤, 只把已验证+已密封步骤当可压
+        # 候选, 未验证步骤标记 preserve_evidence 保留; 门控决策记入 turn_span 供审计。
+        # 纯 advisory: 异常/无步骤列表都不改变既有修剪行为。
+        try:
+            plan_steps = _extract_plan_steps_for_compact(final_state)
+            if plan_steps:
+                from huginn.autoloop.online_compact import gate_compaction
+
+                g = gate_compaction(
+                    plan_steps,
+                    window_pct=float(before["used"]),
+                    cache_write_read_ratio=float(
+                        getattr(
+                            getattr(self, "_session_state", None),
+                            "cache_write_read_ratio",
+                            12.5,
+                        )
+                        or 12.5
+                    ),
+                )
+                turn_span.metadata["compact_candidates"] = g["compact_candidates"]
+                turn_span.metadata["compact_preserve_evidence"] = g["preserve_evidence"]
+                if g["should_compact"]:
+                    logger.info(
+                        "online_compact: fold %d verified+sealed steps, preserve %d under-evidence",
+                        len(g["compact_candidates"]),
+                        len(g["preserve_evidence"]),
+                    )
+        except Exception as _exc:  # noqa: BLE001 — 门控是 advisory, 失败不拖垮压缩主路径
+            # 门控是 advisory, 任何失败都不该拖垮压缩主路径
+            logger.debug("online_compact gating skipped (advisory)", exc_info=True)
 
         pre_ctx = HookContext(
             tool_name="context_compact",
