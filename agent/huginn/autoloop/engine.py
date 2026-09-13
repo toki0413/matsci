@@ -115,7 +115,7 @@ def _autoloop_streaming_enabled() -> bool:
 
 
 from huginn.autoloop.cognitive_loop import CognitiveLoopMixin  # noqa: E402
-from huginn.autoloop.engine_act import EngineActMixin  # noqa: E402
+from huginn.autoloop.engine_act import EngineAct  # noqa: E402
 from huginn.autoloop.engine_control import EngineControlMixin  # noqa: E402
 from huginn.autoloop.engine_observe import EngineObserveMixin  # noqa: E402
 
@@ -269,7 +269,6 @@ def _extract_tests_passed(validation: Any) -> bool:
 
 class AutoloopEngine(
     EngineObserveMixin,
-    EngineActMixin,
     EngineReflectMixin,
     EngineControlMixin,
     PlanCheckMixin,
@@ -341,6 +340,9 @@ class AutoloopEngine(
         # engine_reflect.py:133/153 通过薄委托方法 _run_math_validation /
         # _collect_math_evidence 走这里, 调用点零改动.
         self._math_validator = MathValidator(self)
+        # 去 mixin 阶段4: EngineAct 协作对象. plan/execute/llm_chat 方法族经薄委托走这里,
+        # 引擎字段/方法经 full 属性转发读写.
+        self._engine_actor = EngineAct(self)
         # 去 mixin 阶段2: EnginePerceive 协作对象. perceive 相关方法经薄委托走这里,
         # 引擎级共享缓存(_kb/_perception/_persona_manager)仍留在 engine, perceiver 经转发读写.
         self._engine_perceiver = EnginePerceive(self)
@@ -802,6 +804,80 @@ class AutoloopEngine(
 
     def _pick_image_action(self, description: str) -> str:
         return self._visual_inspector._pick_image_action(description)
+
+    # ── 去 mixin 阶段4: EngineAct 薄委托 ────────────────────────
+    # plan/execute/llm_chat 方法族已下沉为 EngineAct 协作对象 (self._engine_actor).
+    # 被 multiple mixin 共用 (_llm_chat 被 reflect/hypothesis/plan_check 调,
+    # _execute 被 cognitive_loop 调, _execute_skill 被 skill_tool 调).
+    # 薄委托保留同名签名, 调用点零改动.
+
+    async def _plan(
+        self, hypothesis: str, context: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        return await self._engine_actor._plan(hypothesis, context)
+
+    def _is_deterministic_numeric(self, description: str) -> bool:
+        return self._engine_actor._is_deterministic_numeric(description)
+
+    async def _request_numeric_probe(self, description: str) -> str:
+        return await self._engine_actor._request_numeric_probe(description)
+
+    async def _execute(
+        self, plan: dict[str, Any], context: dict[str, Any]
+    ) -> Any:
+        return await self._engine_actor._execute(plan, context)
+
+    def _record_provenance(
+        self, tool_name: str, input_params: dict[str, Any], output: Any
+    ) -> None:
+        self._engine_actor._record_provenance(tool_name, input_params, output)
+
+    async def _try_evolved_fix(
+        self, mode: str, description: str, result: Any
+    ) -> Any:
+        return await self._engine_actor._try_evolved_fix(mode, description, result)
+
+    async def _execute_dynamic_workflow(
+        self, plan: dict[str, Any], context: dict[str, Any]
+    ) -> Any:
+        return await self._engine_actor._execute_dynamic_workflow(plan, context)
+
+    async def _execute_dynamic_workflow_bandit(
+        self, plan: dict[str, Any], context: dict[str, Any]
+    ) -> Any:
+        return await self._engine_actor._execute_dynamic_workflow_bandit(plan, context)
+
+    async def _execute_coder(self, description: str, context: dict[str, Any]) -> Any:
+        return await self._engine_actor._execute_coder(description, context)
+
+    def _classify_workflow_domain(self, description: str) -> str:
+        return self._engine_actor._classify_workflow_domain(description)
+
+    async def _execute_workflow(
+        self, description: str, context: dict[str, Any]
+    ) -> Any:
+        return await self._engine_actor._execute_workflow(description, context)
+
+    async def _execute_explore(
+        self, description: str, context: dict[str, Any]
+    ) -> Any:
+        return await self._engine_actor._execute_explore(description, context)
+
+    async def _execute_skill(
+        self, plan: dict[str, Any], context: dict[str, Any]
+    ) -> Any:
+        return await self._engine_actor._execute_skill(plan, context)
+
+    async def _llm_chat(
+        self,
+        prompt: str,
+        persona_name: str | None = None,
+        model: Any = None,
+        task: str | None = None,
+    ) -> str:
+        return await self._engine_actor._llm_chat(
+            prompt, persona_name=persona_name, model=model, task=task
+        )
 
     # ── H5-a: 模型选择 ────────────────────────────────────────────
     # 统一模型选择入口. 多模型配置 (config.models 非空) 时走 model_router

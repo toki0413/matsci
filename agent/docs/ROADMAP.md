@@ -5,7 +5,7 @@
 - [x] M1: MathValidationMixin → MathValidator（387 行，3 方法）
 - [x] M2: EnginePerceiveMixin → EnginePerceive（535 行，15 方法）
 - [x] M3: VisualInspectMixin → VisualInspect（636 行，6 方法）
-- [ ] M4: EngineActMixin → EngineAct（926 行）
+- [x] M4: EngineActMixin → EngineAct（926 行，14 方法）
 - [ ] M5: EngineControlMixin → EngineControl（862 行）
 - [ ] M6: PlanCheckMixin → PlanCheck（1169 行）
 - [ ] M7: EngineObserveMixin → EngineObserve（1560 行）

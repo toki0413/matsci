@@ -1,4 +1,4 @@
-"""EngineActMixin — AutoloopEngine 的 plan / execute 阶段方法族.
+"""EngineAct — AutoloopEngine 的 plan / execute 阶段方法族 协作对象.
 
 从 engine.py 拆出 (P3 slim-down 续). 包含:
 - _plan (假设 → 步骤, 含 PlanStore 落盘 + cost 确认门)
@@ -8,12 +8,20 @@
 - _record_provenance, _try_evolved_fix
 - _llm_chat (LLM 调用入口, 含 streaming + persona + thinking effort + GRILL 注入)
 
-通过 self 访问 engine 状态. 方法体原样搬迁, 不改逻辑.
+去 mixin 阶段4: 原 EngineActMixin(926 行/15 方法) 改为普通类 EngineAct。
+引擎经组合持有 self._engine_actor = EngineAct(self), 保留同名薄委托方法
+(_plan / _execute / _execute_coder / _llm_chat 等) → 既有 self.method() 调用点
+(多个 mixin 共用 _llm_chat) 零改动。不再靠多继承把认知中枢堆成 god-class。
 
-设计原则 (ponytail):
-- 对 engine.py 模块级符号 (_harness_workflow_evolution_enabled / _effort_to_prompt /
-  _PHASE_THINKING_EFFORT / _autoloop_streaming_enabled) 用方法内 lazy import, 避免 circular
-- Mixin 不持有自己的状态, 全部走 self
+设计关键 (ponytail):
+- 方法体大量读写引擎状态(字段+方法): _grill_active/_current_prediction/
+  model/model_router → 用「全属性转发」: __getattr__ 把未定义属性读转发到 engine,
+  __setattr__ 转发写。字段/方法与 M1-M3 一样留在引擎, 协作对象不复制状态。
+- 防递归: __getattr__ 用 object.__getattribute__ 直达 engine 实例属性
+  (engine==self 的 mock/selfcheck 场景不递归); __setattr__ 在 engine is self 时
+  直写实例 dict 避免转发自递归.
+- 对 engine.py 模块级符号 (helper 函数 / 常量) 用方法内 lazy import, 避免 circular
+- 协作对象不额外持有业务状态 (除 engine 引用), 全部经转发走 engine
 """
 
 from __future__ import annotations
@@ -28,8 +36,30 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-class EngineActMixin:
-    """plan / execute 阶段方法族. 通过 self 访问 engine 状态."""
+class EngineAct:
+    """plan / execute 阶段方法族协作对象.
+
+    未定义的属性读写经 __getattr__/__setattr__ 转发到 self.engine —
+    引擎字段/方法(如 _grill_active / _current_prediction / model / _llm_chat 等)
+    不会被复制两份, 方法体零改动、行为完全等价.
+    """
+
+    def __init__(self, engine: Any) -> None:
+        object.__setattr__(self, "engine", engine)
+
+    def __getattr__(self, name: str) -> Any:
+        # object.__getattribute__ 直达 engine 实例属性, 避免 engine==self 时递归
+        return object.__getattribute__(self.engine, name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name == "engine":
+            object.__setattr__(self, name, value)
+            return
+        # engine==self (mock/selfcheck) 直写实例 dict 避免转发自递归; 否则转发回引擎
+        if self.engine is self:
+            object.__setattr__(self, name, value)
+            return
+        setattr(self.engine, name, value)
 
     async def _plan(
         self, hypothesis: str, context: dict[str, Any]

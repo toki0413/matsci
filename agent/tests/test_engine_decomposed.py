@@ -183,3 +183,56 @@ async def test_engine_visual_inspector_reads_engine_field() -> None:
     res = await eng._execute_visual_inspect("zoom into region [0,0]-[10,10]", {})
     assert res["success"] is False
     assert "No visual data" in res["error"]
+
+
+# ===== 阶段4: EngineAct =====
+
+def test_no_act_mixin_in_bases() -> None:
+    from huginn.autoloop.engine import AutoloopEngine
+    from huginn.autoloop.engine_act import EngineAct
+
+    assert EngineAct not in AutoloopEngine.__bases__, (
+        "AutoloopEngine 仍把 EngineAct 当作基类 —— 去 mixin 阶段4 未完成"
+    )
+
+
+def test_act_delegation_methods_still_present() -> None:
+    from huginn.autoloop.engine import AutoloopEngine
+
+    for name in (
+        "_plan",
+        "_execute",
+        "_execute_coder",
+        "_execute_workflow",
+        "_execute_dynamic_workflow",
+        "_execute_skill",
+        "_llm_chat",
+    ):
+        assert hasattr(AutoloopEngine, name), f"EngineAct 委托方法 {name} 缺失"
+
+
+def test_engine_new_holds_actor() -> None:
+    from huginn.autoloop.engine import AutoloopEngine
+    from huginn.autoloop.engine_act import EngineAct
+    from huginn.autoloop.signals import EngineSignals
+
+    eng = AutoloopEngine.__new__(AutoloopEngine)
+    eng.signals = EngineSignals()
+    eng._engine_actor = EngineAct(eng)
+    assert isinstance(eng._engine_actor, EngineAct)
+
+
+async def test_engine_actor_delegates_llm_chat() -> None:
+    """全属性转发: actor 转发读引擎字段 + 委托方法真可调(经 stub 包一层)."""
+    from huginn.autoloop.engine import AutoloopEngine
+    from huginn.autoloop.engine_act import EngineAct
+    from huginn.autoloop.signals import EngineSignals
+
+    eng = AutoloopEngine.__new__(AutoloopEngine)
+    eng.signals = EngineSignals()
+    eng.verification_model = None
+    eng._engine_actor = EngineAct(eng)
+    # 委托方法确实绑定到引擎 (可调用, 内部经转发访问引擎字段)
+    assert hasattr(eng, "_is_deterministic_numeric")
+    assert eng._is_deterministic_numeric("compute peak of 3*x+1") is True
+    assert eng._is_deterministic_numeric("just observe") is False

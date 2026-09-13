@@ -32,7 +32,11 @@
   - `engine.py`: 移出 base 列表、`__init__` 加 `self._visual_inspector = VisualInspect(self)`、保留 7 个薄委托方法 → 调用点 engine_act.py:337/phase_spec 零改动。gate 测试子类继承 mock 同步改 object.__setattr__。
   - 证据：`test_engine_decomposed.py` 阶段3 4 项 + `test_visual_inspect.py` + `test_visual_inspect_gate.py` + autoloop/arch 全绿。
 - **附带修复（历史遗留）**：`tests/test_krcl_plan_check.py::_make_engine` 用 `__new__` 绕过 `__init__` 却未注入 `signals`, 触发类级 SignalBridge `_set` → AttributeError。补 `eng.signals = EngineSignals()` 后 58 failed → 58 passed（与 M3 一并落地）。
-- **后续阶段（各自横轮，逐个 PR）**：`EngineAct`(926)→`EngineControl`(862)→`PlanCheck`(1169)→`EngineObserve`(1560)→`EngineReflect`(3469)→`HypothesisLoop`(2969)→`CognitiveLoop`(3591)。由小到大、状态写最少者优先。
+- **阶段4（本 spec 后续）**：`EngineActMixin` → `EngineAct`。 ✅ 已落地（2026-09-13）
+  - 14 个 plan/execute/llm_chat 方法下沉为普通类 `EngineAct(engine)`。方法体大量读写引擎状态(字段+方法: _grill_active/_current_prediction/model/model_router) → **全属性转发**: `__getattr__` 把未定义属性读转发到 engine(object.__getattribute__ 防 engine==self 递归), `__setattr__` 转发写(engine is self 时直写实例防自递归)。字段/方法留引擎不复制。
+  - `engine.py`: 移出 base 列表、`__init__` 加 `self._engine_actor = EngineAct(self)`、保留 14 个薄委托方法 → 调用点（_llm_chat 被 reflect/hypothesis/plan_check 共用, _execute 被 cognitive_loop, _execute_skill 被 skill_tool）零改动。
+  - 证据：`test_engine_decomposed.py` 阶段4 4 项 + autoloop/arch/krcl 全绿。
+- **后续阶段（各自横轮，逐个 PR）**：`EngineControl`(862)→`PlanCheck`(1169)→`EngineObserve`(1560)→`EngineReflect`(3469)→`HypothesisLoop`(2969)→`CognitiveLoop`(3591)。由小到大、状态写最少者优先。
 
 ## contract（阶段1 接口）
 - 新 `huginn/autoloop/math_validation.py::MathValidator`：`__init__(self, engine)`（duck-typed，读 `engine.workspace/settings`、调 `engine._query_kb_reference`）；`async run(execution_result) -> dict`（等价原 `_run_math_validation`）。
