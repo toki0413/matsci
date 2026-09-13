@@ -103,6 +103,63 @@ def robust_chat(
 
 # ── self-check(注入假 raw_call, 不烧真实模型) ────────────────────
 
+# ── 桥接: 把 agent 现有的 langchain `model.invoke(messages)` 包装成 raw_call ──
+# 这样 adaptive_call 不需知道是哪个端点/模型, 直接接现有传输.
+# 关键降级点: 若 body 里带了 endpoint 不支持的额外参数(如 thinking_mode 对非推理
+# 类模型), langchain invoke 抛 TypeError -> 我们返回 400 -> robust_chat 判定该档
+# 不可用, 自动降到硬护栏档。无需 per-model 判断。
+
+
+def langchain_raw_call(model, *, resp_to_text=None, build_messages=None):
+    """把 langchain 模型包装成 raw_call(body)->(status,text).
+
+    body: {"messages":[{"role":"system|user","content":...}], "max_tokens",
+           ...其它 body 字段(extra 会原样透传 invoke)}
+    """
+    def _bm(s, u):
+        if build_messages:
+            return build_messages(s, u)
+        from huginn.metacog.step_evaluator import _build_messages
+        return _build_messages(s, u)
+
+    def _rt(r):
+        if resp_to_text:
+            return resp_to_text(r)
+        from huginn.metacog.step_evaluator import _resp_to_text
+        return _resp_to_text(r)
+
+    def raw_call(body):
+        sys_c = user_c = ""
+        for m in body.get("messages") or []:
+            r = m.get("role")
+            c = m.get("content", "") or ""
+            if r == "system":
+                sys_c = c
+            elif r == "user":
+                user_c = c
+        extra = {k: v for k, v in body.items() if k not in ("messages", "max_tokens")}
+        try:
+            msgs = _bm(sys_c, user_c)
+            resp = model.invoke(msgs, **extra) if extra else model.invoke(msgs)
+            return 200, _rt(resp)
+        except TypeError:
+            # 额外参数不被支持(如 thinking 字段对非推理模型) -> 视为该档不可用
+            return 400, "extra params unsupported"
+        except Exception as e:  # noqa: BLE001 — 传输异常, 交 robust_chat 判定
+            return 0, str(e)
+    return raw_call
+
+
+def robust_invoke(model, *, system, user, schema=None, extract=None,
+                  base_max_tokens: int = 2048, nextra=None):
+    """直接用现有 langchain 模型跑"遇错升级". 返回 robust_chat 的 dict."""
+    return robust_chat(
+        langchain_raw_call(model),
+        system=system, user=user, schema=schema, extract=extract,
+        base_max_tokens=base_max_tokens, nextra=nextra,
+    )
+
+
 def _selfcheck() -> None:
     schema = {"conductivity": float, "mobility": float}
 

@@ -126,13 +126,34 @@ def _build_falsifiability_prompt(h: Hypothesis) -> tuple[str, str]:
 
 # ---------- LLM 调用 + JSON 解析 ----------
 
-def _call_llm_sync(model: Any, sys_text: str, usr_text: str) -> str:
-    """sync LLM call. 失败抛异常, 由调用方降级. 跟 llm_likelihood 同款."""
-    from huginn.metacog.step_evaluator import _build_messages, _resp_to_text
-    messages = _build_messages(sys_text, usr_text)
-    if hasattr(model, "invoke"):
-        return _resp_to_text(model.invoke(messages))
-    raise ValueError("model has no sync invoke; ainvoke-only models not supported")
+def _call_llm_sync(
+    model: Any,
+    sys_text: str,
+    usr_text: str,
+    *,
+    schema: dict | None = None,
+    nextra: dict | None = None,
+) -> str:
+    """用"遇错升级"适配器调 LLM(模型无关), 返回成功文本.
+
+    失败抛异常, 由调用方降级. 不再 direct-invoke:
+      - plan[0] 带 nextra(如 thinking_mode) + 放宽 max_tokens;
+        端点不支持该字段(4xx/TypeError)自动跳到下一档, 不硬试
+      - plan[1] 去掉 nextra + 追加硬护栏 prompt, 逼模型输出干净 JSON
+    跟 llm_likelihood 同款调用语义(无 invoke 的 ainvoke-only 模型不支持).
+    """
+    from huginn.metacog.adaptive_call import robust_invoke
+    if not hasattr(model, "invoke"):
+        raise ValueError("model has no sync invoke; ainvoke-only models not supported")
+    res = robust_invoke(
+        model,
+        system=sys_text, user=usr_text, schema=schema or {}, nextra=nextra,
+    )
+    if not res["ok"] or not res["text"]:
+        raise ValueError(
+            f"LLM call failed (status={res['status']}, attempts={res['attempts']})"
+        )
+    return res["text"]
 
 
 def _parse_first_json(text: str) -> dict | None:
@@ -249,7 +270,8 @@ def check_falsifiability(h: Hypothesis, model: Any = None) -> bool:
         return bool(h.predictions)
     try:
         sys_text, usr_text = _build_falsifiability_prompt(h)
-        text = _call_llm_sync(model, sys_text, usr_text)
+        text = _call_llm_sync(model, sys_text, usr_text,
+                              schema={"falsifiable": bool})
         return _parse_falsifiability_response(text)
     except Exception as e:
         logger.warning("falsifiability_check_fallback: reason=%s, h=%s", e, h.h_id)
@@ -307,7 +329,8 @@ def imagine(
         return None
     try:
         sys_text, usr_text = _build_transform_prompt(hypothesis, transform_type)
-        text = _call_llm_sync(model, sys_text, usr_text)
+        text = _call_llm_sync(model, sys_text, usr_text,
+                              schema={"new_description": str, "new_n_params": int})
         new_h = _parse_transform_response(text)
         if new_h is None:
             logger.debug("imagine: transform response unparseable")
@@ -488,7 +511,8 @@ def imagine_from_blind_spot(
     parent_h = next(iter(manifold._hyp.values()))
     try:
         sys_text, usr_text = _build_blind_spot_prompt(parent_h, blind_spot)
-        text = _call_llm_sync(model, sys_text, usr_text)
+        text = _call_llm_sync(model, sys_text, usr_text,
+                              schema={"new_description": str, "new_n_params": int})
         new_h = _parse_transform_response(text)
         if new_h is None:
             logger.debug("imagine_from_blind_spot: response unparseable")
