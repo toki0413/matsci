@@ -230,11 +230,37 @@ cd /workspace && python3 scripts/research_imagination_basins.py
 对照：光滑 β≈1.13、噪声 β≈0.01。
 **判定**：λ≥1.5 时 β 陡降至与噪声同量级。**关键陷阱**：β→0 在数值上"很像分形"，但它在统计上与随机打标**不可区分**——因此不构成可证伪分形证据，如实标为"混沌纠缠(≈噪声)"，**禁止**宣称"发现分形"。
 
-### A.4 总判定
+### A.4 探针四（真）：真实 LLM 想象链集成（书生 s1 / DeepSeek）
 
-- 三条独立、方法同构的测量路（连续语义 / 布尔操作 / 想象末态）**均未给出可证伪的分形边界**。
+**目的**：把动机 B 的数值代理换成**真实模型**的 `imagine` 变换，测真实想象末态在数值/语义空间是否有多个自洽盆地。零训练，纯推理。
+
+**前置（诚实边界）**：真实 LLM 想象是**离散采样文本**，非连续参数网格 → 严格 P_cross(δ) 的 β **不可测**。因而这一击只测"是否存在多个可重复、分离的末态盆地"，是数值代理的互补。
+
+**书生 s1 集成（chat.intern-ai.org.cn，OpenAI 兼容 `thinking_mode`）**：
+- 原始 STRICT JSON：仅 **~10%** 解析成功——s1 在 JSON 前输出大段思维链（CoT），JSON 被 max_tokens 截断。
+- `thinking_mode=true`：简单 prompt 下思考进 `reasoning_content`、`content` 留干净 JSON；但对复杂 transform prompt **不稳定**（仍把 CoT 写进 content），需 `max_tokens=6000` + 取最后一个 JSON 兜底，升至 **~78%**。
+- 末态观察：多数采样坍缩到同一 (1.5, 150) 自洽模式（order 3/3），离群点无重复 → **强单盆地**。
+
+**DeepSeek 集成（api.deepseek.com/v1，deepseek-chat，无思考）**：
+- **9/9（100%）解析成功，无任何特殊处理** → 结构契约遵循远优于书生 s1（也证明"真实 LLM 想象必然集成失败"不成立，失败是 s1 特有，非普遍）。
+- 末态（conductivity, mobility）：continuous 分布在 **0.6–1.2 / 60–200**，各族数值**彼此重叠**（(0.8,80) 在 algebraic 与 topological 都出现）；**无任何稳定、可重复、分离的数值谷** → **单连续带**。
+- ⚠ **判据反思**：以 n=3 做 2-means inertia 误标所有族为"多盆地"——n=3 时 2-means 过度拟合（重合点使 inertia2→0），该判据不可信；真实证据在原始数值分布（单连续带）。
+
+**集成层与假说两种结论并存**：
+- 集成层：模型选择对"能否稳定捕获结构化想象末态"决定性（DeepSeek 100% vs 书生 s1 ~10–78%）。
+- 假说层：真实想象末态在数值上是单连续带（DeepSeek）或单盆地坍缩（书生），**均未出现稳定多吸引域**，与分形/多盆地预测相反。
+
+### A.5 总判定
+
+- 五条独立、方法同构的测量证据（连续语义 / 布尔操作 / 数值代理想象末态 / 真实书生想象 / 真实 DeepSeek 想象）**均未给出可证伪的分形边界或稳定多盆地**：
+  - 连续语义路 → 平滑（β≈0.98）；
+  - 布尔操作路 → 有限直边（细δ→1）；
+  - 数值代理 → 弱拉伸光滑、强拉伸与噪声不可分；
+  - 书生真实想象 → 单盆地坍缩；
+  - DeepSeek 真实想象 → 单连续带、各族数值重叠。
 - 机制层面结论：agent 的完成判定与 `imagine` 均为**单步/离散/规则**结构，**缺失分形盆地所需的动力学折叠 + 多个吸引子收敛**——借"混沌动力学的分形盆地"类比到 agent 是**模型错配**。
+- 集成层附加结论：能否稳定捕获"结构化想象末态"由模型选择决定（DeepSeek 100% vs 书生 s1 ~10–78%），并非"真实 LLM 想象"不可测。
 - **诚实收口**：假说被否决，不是测量做得不够，而是机制上不成立；且本流程演示了"为凑 β<1 而改系统 == 动机倒置"与"把 β→0 噪声当分形"两个必须拒绝的陷阱。
 
-**证据产物（脚本，均可复现）**：
-`scripts/research_a_jepa_surprise.py`（`--embedding --beta`）、`scripts/probe_failure_basins.py`（`--beta2d` / `--deepdive`）、`scripts/research_imagination_basins.py`。
+**证据产物（脚本，均可复现；`research_imagination_real.py` 走 env 读 key 且无明文）**：
+`scripts/research_a_jepa_surprise.py`（`--embedding --beta`）、`scripts/probe_failure_basins.py`（`--beta2d` / `--deepdive`）、`scripts/research_imagination_basins.py`、`scripts/research_imagination_real.py`（env 对接 OpenAI 兼容端点，已实测书生 s1 与 DeepSeek）。
