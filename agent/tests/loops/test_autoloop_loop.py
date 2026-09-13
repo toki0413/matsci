@@ -145,6 +145,11 @@ def _make_engine(tmp_path, fake_llm, monkeypatch):
     engine.progress_tracker = _DummyTracker()
     # v10: 关 LLM decider, 走规则版 (FakeLLM 响应按规则版顺序设计)
     engine._use_llm_decider = False
+    # 中性化 config 派生的 model_router (同 test_verify_4flags): 全量套件里
+    # 全局 config 缓存可能被喂成含 real provider 的 router, 导致 _llm_chat(
+    # task="planning") 路由到真实模型而非本测试注入的 FakeLLM, _plan 返 None
+    # → "缺 execute". 本测试意图是 FakeLLM 驱动所有阶段, 必须关掉路由.
+    engine.model_router = None
     engine._perceive = lambda: {
         "changed_files": ["diffusion_analysis.py"],
         "git_diff": "+def calc_diffusion(ca_si_ratio): ...",
