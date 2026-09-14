@@ -417,6 +417,18 @@ class VerifiableGate:
         entry["issues"] = issues
         self._executions.append(entry)
         self._save_exec()
+        # 数据驱动世界模型: 每次真实执行都喂给 LearnedWorldModel (dual-axis 第二根轴) —
+        # 从 agent 真实 state_after 学习"世界如何变换", 而非只依赖硬编码 FORWARD_EFFECTS.
+        if observed is not None:
+            try:
+                from huginn.security.world_model import PhysicalAction, learned_world_model
+                learned_world_model().learn(
+                    state_before,
+                    PhysicalAction(action_type, dict(params)),
+                    observed,
+                )
+            except Exception:
+                logger.debug("learned_world_model learn failed", exc_info=True)
         return {"valid": not issues, "issues": issues}
 
     def verify_recent_executions(self, k: int = 10) -> dict[str, Any]:

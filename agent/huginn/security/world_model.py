@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from typing import Any, Protocol
 
 
@@ -191,3 +192,113 @@ class ConstraintViolationError(Exception):
         self.action = action
         self.issues = issues
         super().__init__(f"物理约束违规 ({action.type}): " + "; ".join(issues))
+
+
+# ── 数据驱动前向世界模型 (dual-axis RSI 的"第二根轴"雏形) ────────────────────
+# 硬编码 FORWARD_EFFECTS 是"先验规则"; 本类让**前向预测**从 agent 真实执行数据
+# (state_before, action, state_after) 学习, 替代/补强静态规则. 校验约束不变
+# (物理不变量不该被学), 只学"世界如何变换"这一可学部分.
+_MIN_LEARN_SAMPLES = 3
+
+
+class LearnedWorldModel:
+    """数据驱动前向世界模型: 从真实执行观测学习每个动作类型对状态键的效应.
+
+    - ``learn(state_before, action, state_after)``: 累加 (新增键→sets, 数值键→delta 均值).
+    - ``predict(state_before, action)``: 应用已学效应的前向预测; 无模型/未知动作 → 原样拷贝.
+    - ``has_model(action_type)``: 是否学到足够样本 (>= ``_MIN_LEARN_SAMPLES``).
+    持久化到 ``.huginn/world_model/learned.json``, 供跨 session 复用.
+    """
+
+    def __init__(self, path: Any | None = None) -> None:
+        if path is None:
+            from pathlib import Path
+            from huginn.utils.runtime import get_runtime_home
+
+            path = Path(get_runtime_home()) / "world_model" / "learned.json"
+        self._path = path
+        # action_type -> {"sets": {key: val}, "deltas": {key: {"sum": float, "n": int}}, "count": n}
+        self._effects: dict[str, dict[str, Any]] = {}
+        self._load()
+
+    def _load(self) -> None:
+        with contextlib.suppress(Exception):
+            if self._path.exists():
+                import json
+
+                self._effects = json.loads(self._path.read_text(encoding="utf-8"))
+
+    def _save(self) -> None:
+        with contextlib.suppress(Exception):
+            import os
+
+            os.makedirs(self._path.parent, exist_ok=True)
+            import json
+
+            self._path.write_text(json.dumps(self._effects, ensure_ascii=False), encoding="utf-8")
+
+    @staticmethod
+    def _as_float(v: Any) -> float:
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def learn(self, state_before: dict[str, Any], action: PhysicalAction,
+              state_after: dict[str, Any]) -> None:
+        """学习一次真实转移: 新增键记入 sets, 数值键记入 delta 均值."""
+        eff = self._effects.setdefault(
+            action.type, {"sets": {}, "deltas": {}, "count": 0})
+        for k, v in state_after.items():
+            if k in state_before:
+                delta = self._as_float(v) - self._as_float(state_before[k])
+                if abs(delta) > 1e-9:
+                    d = eff["deltas"].setdefault(k, {"sum": 0.0, "n": 0})
+                    d["sum"] += delta
+                    d["n"] += 1
+            else:
+                # 新增键 (如 mixed/flag): 记录其出现值
+                eff["sets"][k] = bool(v) if isinstance(v, bool) else v
+        eff["count"] += 1
+        self._save()
+
+    def has_model(self, action_type: str) -> bool:
+        eff = self._effects.get(action_type)
+        return bool(eff and eff["count"] >= _MIN_LEARN_SAMPLES)
+
+    def predict(self, state_before: dict[str, Any], action: PhysicalAction) -> dict[str, Any]:
+        """前向预测. 无该动作模型 → 原样拷贝 (保守); 有 → 应用 sets + delta 均值."""
+        state = dict(state_before)
+        eff = self._effects.get(action.type)
+        if not eff or eff["count"] < _MIN_LEARN_SAMPLES:
+            return state
+        for k, v in eff["sets"].items():
+            state[k] = v
+        for k, d in eff["deltas"].items():
+            delta = d["sum"] / max(1, d["n"])
+            state[k] = self._as_float(state.get(k, 0.0)) + delta
+        for key in list(state.keys()):
+            if key not in state_before and key not in eff["sets"]:
+                state.pop(key, None)
+        return state
+
+    def snapshot(self) -> dict[str, Any]:
+        return {t: {"sets": dict(ef["sets"]),
+                    "deltas": {k: round(d["sum"] / max(1, d["n"]), 4)
+                               for k, d in ef["deltas"].items()},
+                    "count": ef["count"]}
+                for t, ef in self._effects.items()}
+
+
+_LEARNED_INSTANCE: LearnedWorldModel | None = None
+
+
+def learned_world_model(path: Any | None = None) -> LearnedWorldModel:
+    """Returns the shared data-driven forward world model (可注入 path 供测试隔离)."""
+    global _LEARNED_INSTANCE
+    if path is not None or _LEARNED_INSTANCE is None:
+        if path is not None:
+            _LEARNED_INSTANCE = LearnedWorldModel(path)
+        else:
+            _LEARNED_INSTANCE = LearnedWorldModel()
+    return _LEARNED_INSTANCE
