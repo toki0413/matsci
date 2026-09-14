@@ -421,3 +421,78 @@ def test_maybe_propose_uses_strategist(tmp_path: Path) -> None:
     meta._strategists["strat_c"] = s_champ
     meta._active_strategist_id = "strat_c"
     assert meta.strategist_prompt() == _META2_TPL
+
+
+# ── Task5: evaluate/promote_strategist 门控组合 (sig+OOD+复合不退化+死锁) ───
+def test_promote_strategist_green_and_reject(tmp_path: Path) -> None:
+    """好 strategist (显著+OOD+复合不退化) → promote; 差 strategist → 拒绝."""
+    from huginn.harness.meta_improver import (
+        MetaImprover, StrategistConfig, _register_strategist_compensator,
+    )
+    meta = _meta_on(tmp_path)
+    _register_strategist_compensator()
+    sg = SignificanceGate.get_instance()
+    ood = OODHoldoutValidator.get_instance()
+
+    # 好候选: 显著全正 + OOD 候选优于基线
+    for i in range(8):
+        sg.record_pair("strat_good", 0.3, 0.9, task_id=f"g{i}")
+    for i in range(24):
+        t = f"sg{i:02d}"
+        ood.record_outcome(ood._BASELINE_ID, t, 0.4)
+        ood.record_outcome("strat_good", t, 0.9)
+    meta._strategists["strat_good"] = StrategistConfig(config_id="strat_good", strategist_prompt="G")
+    # 复合: 上升 → 不退化
+    for i in range(4):
+        meta._tracker.record(epoch=i, config_id="x", quality=0.5 + 0.1 * i, fidelity=0.6,
+                             proposals_to_promotion=1, generations_to_promotion=3, win_rate=0.9)
+
+    ok = meta.maybe_promote_strategist("strat_good")
+    assert ok is True
+    assert meta.strategist_champion() is not None
+    assert meta.strategist_champion().config_id == "strat_good"
+
+    # 差候选: 无数据(不显著) → 拒绝, champion 不变
+    incumbent = meta.strategist_champion().config_id
+    meta._strategists["strat_bad"] = StrategistConfig(config_id="strat_bad", strategist_prompt="B")
+    assert meta.maybe_promote_strategist("strat_bad") is False
+    assert meta.strategist_champion().config_id == incumbent
+    # 死锁计数被标记 (连续拒 → in_deadlock)
+    assert meta._tracker._deadlock_n >= 1
+
+
+def test_strategist_would_degrade_blocks_promotion(tmp_path: Path) -> None:
+    """复合已退化 (当前质量低于含滞回带的基线) → 拒绝换件."""
+    from huginn.harness.meta_improver import (
+        MetaImprover, StrategistConfig, _register_strategist_compensator,
+    )
+    meta = _meta_on(tmp_path)
+    _register_strategist_compensator()
+    sg = SignificanceGate.get_instance()
+    ood = OODHoldoutValidator.get_instance()
+    for i in range(8):
+        sg.record_pair("cand", 0.3, 0.9, task_id=f"w{i}")
+    for i in range(24):
+        t = f"wd{i:02d}"
+        ood.record_outcome(ood._BASELINE_ID, t, 0.4)
+        ood.record_outcome("cand", t, 0.9)
+    meta._strategists["cand"] = StrategistConfig(config_id="cand", strategist_prompt="C")
+    # 复合: 下滑 → would_degrade True → 换件会被拒
+    for i in range(4):
+        meta._tracker.record(epoch=i, config_id="x", quality=0.9 - 0.2 * i, fidelity=0.6,
+                             proposals_to_promotion=1, generations_to_promotion=3, win_rate=0.9)
+    assert meta.maybe_promote_strategist("cand") is False
+    assert meta.strategist_champion() is None, "复合退化时不应 promote"
+
+
+def test_evaluate_strategist_trace(tmp_path: Path) -> None:
+    """evaluate_strategist 返回 sig+ood verdict 并写 trace."""
+    from huginn.harness.meta_improver import (
+        MetaImprover, StrategistConfig,
+    )
+    meta = _meta_on(tmp_path)
+    meta._strategists["s1"] = StrategistConfig(config_id="s1", strategist_prompt="S")
+    # 无数据 → 不 GREEN
+    r = asyncio.run(meta.evaluate_strategist("s1", None))
+    assert r["sig"] is False and r["ood"] is False
+    assert r["green"] is False

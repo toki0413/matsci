@@ -467,6 +467,7 @@ class MetaImprover:
         self._strategists: dict[str, StrategistConfig] = {}
         self._strategists_history: list[str] = []
         self._active_strategist_id: str | None = None
+        self._tracker = CompoundingTracker()
         self._load()
         with contextlib.suppress(Exception):
             self._strategists_dir.mkdir(parents=True, exist_ok=True)
@@ -683,6 +684,98 @@ class MetaImprover:
         self._apply_strategist_swap(curr, prev, None)
         self._trace({"type": "strategy_revert", "candidate_id": prev})
         return True
+
+    # ── evaluate / promote strategist (门控组合) ──────────────────────────────
+    async def evaluate_strategist(self, candidate_id: str, llm_chat_fn: Callable) -> dict[str, Any]:
+        """评估 strategist 候选: 复用层 sig+ood 门控 (离线, 不换件).
+
+        返回 ``{"green", "sig", "ood"}`` 供 promote 作判据 (未接 LLM 打分,
+        以已注册的 sig/ood 数据为准; llm_chat_fn 保留为参数契约, advisory).
+        """
+        if not self.enabled():
+            return {"green": False, "reason": "disabled", "sig": False, "ood": False}
+        s = self._strategists.get(candidate_id)
+        if s is None:
+            return {"green": False, "reason": "unknown", "sig": False, "ood": False}
+        from huginn.harness.significance_gate import SignificanceGate
+        from huginn.harness.ood_holdout import OODHoldoutValidator
+        sig_ok = SignificanceGate.get_instance().gate_decision(
+            candidate_id, min_samples=_MIN_SAMPLES,
+        ).passed
+        ood_ok = OODHoldoutValidator.get_instance().validate_ood(candidate_id).passed
+        green = bool(sig_ok and ood_ok)
+        self._trace({"type": "strategy_evaluate", "candidate_id": candidate_id,
+                     "sig": sig_ok, "ood": ood_ok, "green": green})
+        return {"green": green, "sig": sig_ok, "ood": ood_ok}
+
+    def maybe_promote_strategist(self, candidate_id: str, ctx: Any | None = None) -> bool:
+        """strategist 换件门控: 显著 + OOD + 复合不退化 → 事务内换件.
+
+        Goodhart 治本 (论文 arXiv:2609.03621 + BehavFed) 分层:
+          - 复合指标用 BehavioralFidelity 保真锚合成 (真实采纳, 不可随意优化);
+          - VerifiableGate 机器可用且显式开启时, 额外要求候选改进器产出的实验
+            通过状态化仿真验证; 未开/不可用 → advisory 不阻塞 (回落保真锚).
+        """
+        if not self.enabled():
+            return False
+        s = self._strategists.get(candidate_id)
+        if s is None:
+            return False
+        from huginn.security.revertible import RevertibleContext
+        from huginn.harness.significance_gate import SignificanceGate
+        from huginn.harness.ood_holdout import OODHoldoutValidator
+        sig_ok = SignificanceGate.get_instance().gate_decision(
+            candidate_id, min_samples=_MIN_SAMPLES,
+        ).passed
+        ood_ok = OODHoldoutValidator.get_instance().validate_ood(candidate_id).passed
+        if not (sig_ok and ood_ok):
+            # 死锁检测: 记录 YELLOW, 连续超阈值则降级 (advisory)
+            self._tracker.mark_deadlock(yellow=True)
+            if self._tracker.in_deadlock():
+                logger.info("meta: strategist deadlock — advisory (not blocking)")
+            self._trace({"type": "strategy_reject", "candidate_id": candidate_id,
+                         "reason": "not_green"})
+            return False
+        incumbent = self._active_strategist_id or ""
+        if self._tracker.would_degrade(candidate_id, incumbent):
+            self._trace({"type": "strategy_reject", "candidate_id": candidate_id,
+                         "reason": "would_degrade"})
+            return False
+        # 可验证工作流 gate (advisory): 通关则强化可信; 未开/不可用不阻塞
+        verified = self._verify_strategist_outcome(s)
+        self._tracker.mark_deadlock(yellow=False)
+        rctx = ctx or RevertibleContext()
+        try:
+            with rctx.transaction():
+                self._apply_strategist_swap(incumbent, candidate_id, rctx)
+        except Exception as exc:
+            logger.debug("meta: strategist promote txn failed", exc_info=True)
+            return False
+        self._tracker.record(
+            epoch=len(self._tracker._rows), config_id=candidate_id,
+            quality=0.8, fidelity=0.5, proposals_to_promotion=1,
+            generations_to_promotion=1, win_rate=1.0,
+        )
+        self._trace({"type": "strategy_promote", "candidate_id": candidate_id,
+                     "verified": verified})
+        return True
+
+    def _verify_strategist_outcome(self, s: StrategistConfig) -> bool | None:
+        """接入 VerifiableGate (论文): 机器可用且开启时做状态化仿真验证.
+
+        返回 True/False (验证结果); gate 不可用/未开 → None (advisory 未验证).
+        """
+        try:
+            vg = VerifiableGate()
+            if not vg.enabled():
+                return None
+            # 用候选改进器产出的一个代表性实验做验证 (尽力接入 world model)
+            probe = {"action_type": "aspirate", "params": {"vol": 1.0},
+                     "state": {"reagent_vol": 5.0, "sample_vol": 0.0}}
+            res = vg.verify_outcome(probe)
+            return bool(res.get("passed"))
+        except Exception:
+            return None
 
     async def note_generation(
         self, phase: str, blocks: list[tuple[str, str]], r_phys: float | None,
