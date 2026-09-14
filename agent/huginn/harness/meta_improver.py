@@ -84,6 +84,23 @@ _META_IMPROVE_TEMPLATE = (
 )
 
 
+# A1 level-1: meta² 固定模板 — 生成新的 strategist(改进策略) 候选. 只一层递归
+# (YAGNI 不再叠第三层). strategist 模板本身是「meta 提示模板」, 即未来被
+# maybe_propose 用作 .format(current_template=...) 的整体模板.
+_META2_IMPROVE_TEMPLATE = (
+    "You are the meta-strategist. The current 'strategist' template below is used "
+    "to propose improvements to the research agent's IMPROVER. Rewrite it so that "
+    "proposed improvers converge FASTER and are more directive-aligned.\n"
+    "----- CURRENT STRATEGIST TEMPLATE -----\n{current_strategist}\n"
+    "---------------------------------------\n"
+    "Respond with the rewritten strategist TEMPLATE ONLY. It must stay a template "
+    "that `maybe_propose` can instantiate via .format, so it MUST contain the "
+    "placeholder {{current_template}} (and may use {{n_proposals}}, {{n_promotions}}); "
+    "escape any other braces. Keep those placeholders intact.\n"
+    "Meta stats: promotions={n_promotions}, win_rate={win_rate}."
+)
+
+
 @dataclass
 class ImproverConfig:
     """一个可被采纳/回退的「改进器模板」+ 其门阈值."""
@@ -440,13 +457,19 @@ class MetaImprover:
         self._cfg_path = self._dir / "config.json"
         self._replay_path = self._dir / "replay.json"
         self._trace_path = self._dir / "meta_trace.jsonl"
+        self._strategists_dir = self._dir / "strategist"
         self._active_id: str | None = None
         self._history: list[str] = []
         self._promotions: int = 0
         self._candidates: dict[str, ImproverConfig] = {}
         self._replay: list[dict[str, Any]] = []
         self._propose_count = 0
+        self._strategists: dict[str, StrategistConfig] = {}
+        self._strategists_history: list[str] = []
+        self._active_strategist_id: str | None = None
         self._load()
+        with contextlib.suppress(Exception):
+            self._strategists_dir.mkdir(parents=True, exist_ok=True)
 
     # ── singleton ──────────────────────────────────────────────────────────
     @classmethod
@@ -465,6 +488,8 @@ class MetaImprover:
                 self._active_id = d.get("active_config_id")
                 self._history = d.get("history", [])
                 self._promotions = int(d.get("promotions", 0))
+                self._active_strategist_id = d.get("active_strategist_id")
+                self._strategists_history = d.get("strategists_history", [])
         with contextlib.suppress(Exception):
             if self._replay_path.exists():
                 self._replay = json.loads(self._replay_path.read_text(encoding="utf-8"))[: _REPLAY_MAX]
@@ -475,6 +500,13 @@ class MetaImprover:
                     self._candidates[c.config_id] = c
                 except Exception:
                     logger.debug("meta candidate load fail: %s", f, exc_info=True)
+        with contextlib.suppress(Exception):
+            for f in self._strategists_dir.glob("*.json"):
+                try:
+                    s = StrategistConfig.from_dict(json.loads(f.read_text(encoding="utf-8")))
+                    self._strategists[s.config_id] = s
+                except Exception:
+                    logger.debug("meta strategist load fail: %s", f, exc_info=True)
 
     def _save_cfg(self) -> None:
         with contextlib.suppress(Exception):
@@ -484,6 +516,8 @@ class MetaImprover:
                         "active_config_id": self._active_id,
                         "history": self._history,
                         "promotions": self._promotions,
+                        "active_strategist_id": self._active_strategist_id,
+                        "strategists_history": self._strategists_history,
                     },
                     ensure_ascii=False, indent=2,
                 ), encoding="utf-8"
@@ -499,6 +533,14 @@ class MetaImprover:
         with contextlib.suppress(Exception):
             (self._candidates_dir / f"{cfg.config_id}.json").write_text(
                 json.dumps(cfg.to_dict(), ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+
+    def _save_strategist(self, s: StrategistConfig) -> None:
+        with contextlib.suppress(Exception):
+            self._strategists_dir.mkdir(parents=True, exist_ok=True)
+            (self._strategists_dir / f"{s.config_id}.json").write_text(
+                json.dumps(s.to_dict(), ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
 
@@ -527,6 +569,64 @@ class MetaImprover:
     def current_template(self) -> str:
         champ = self.champion_cfg()
         return champ.improver_prompt if champ else DEFAULT_IMPROV_TEMPLATE
+
+    # ── strategist (level-1 递归层) ─────────────────────────────────────────
+    def strategist_champion(self) -> StrategistConfig | None:
+        """当前活跃 strategist (改进策略). 无则 None → maybe_propose 回落默认."""
+        if not self.enabled():
+            return None
+        s = self._strategists.get(self._active_strategist_id or "")
+        return s if s is not None and s.active else None
+
+    def strategist_prompt(self) -> str:
+        """strategist 模板: 有 champion 用之, 无则回落 _META_IMPROVE_TEMPLATE."""
+        champ = self.strategist_champion()
+        return champ.strategist_prompt if champ else _META_IMPROVE_TEMPLATE
+
+    async def maybe_propose_strategist(self, llm_chat_fn: Callable) -> str | None:
+        """meta² 固定模板生成一个新的 strategist(改进策略) 模板候选.
+
+        只一层递归 (A1 边界): strategist 自身的 meta³ 不改. 候选模板必须能被
+        maybe_propose 以 .format(current_template=...) 实例化, 否则作废.
+        """
+        if not self.enabled():
+            return None
+        cur = self.strategist_prompt()
+        p2 = _META2_IMPROVE_TEMPLATE.format(
+            current_strategist=cur,
+            n_promotions=self._promotions,
+            win_rate=self.compounding_trace()["meta_win_rate"],
+        )
+        try:
+            resp = await llm_chat_fn(p2, task="summarize")
+        except Exception:
+            logger.debug("meta propose_strategist LLM fail", exc_info=True)
+            return None
+        if not resp or not resp.strip():
+            return None
+        tpl = resp.strip()
+        if tpl.startswith("```"):
+            tpl = tpl.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+        if not tpl:
+            return None
+        # 模板必须是 maybe_propose 可实例化的 meta 模板: 保留 current_template 占位符
+        # (且能被 .format 解析, 无非受控 brace).
+        if "{current_template}" not in tpl:
+            self._trace({"type": "strategy_reject", "reason": "invalid_template"})
+            return None
+        try:
+            tpl.format(current_template="x", n_proposals=0, n_promotions=0)
+        except (KeyError, IndexError, ValueError):
+            self._trace({"type": "strategy_reject", "reason": "invalid_format"})
+            return None
+        s = StrategistConfig(
+            config_id=f"strat_{int(time.time() * 1000)}_{uuid.uuid4().hex[:6]}",
+            strategist_prompt=tpl,
+        )
+        self._strategists[s.config_id] = s
+        self._save_strategist(s)
+        self._trace({"type": "strategy_propose", "candidate_id": s.config_id})
+        return s.config_id
 
     async def note_generation(
         self, phase: str, blocks: list[tuple[str, str]], r_phys: float | None,
@@ -719,6 +819,9 @@ class MetaImprover:
             "n_candidates": n_candidates,
             "meta_win_rate": round(self._promotions / max(1, n_candidates), 3),
             "replay_size": len(self._replay),
+            "active_strategist_id": self._active_strategist_id,
+            "strategists_history": list(self._strategists_history),
+            "n_strategists": len(self._strategists),
         }
 
 

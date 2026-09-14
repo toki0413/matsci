@@ -39,6 +39,14 @@ BAD_TPL = (
     "R:{r_phys} D:{directive} Say nonsense, no JSON."
 )
 
+# 合法 strategist 候选模板: 是给 maybe_propose 的 .format 用的 meta 提示模板,
+# 需含 {current_template}/{n_proposals}/{n_promotions} 占位符.
+_META2_TPL = (
+    "You are the meta-strategist. Current improver template:\n"
+    "{current_template}\nPropose a better improver. n_proposals={n_proposals} "
+    "promotions={n_promotions}. Respond template ONLY."
+)
+
 
 HTuple = tuple["MetaImprover", Path]
 
@@ -321,3 +329,42 @@ def test_verifiable_gate_preconditions_and_constraints(tmp_path: Path) -> None:
     unknown = vg.verify_outcome({"action_type": "teleport", "params": {},
                                  "state": {"reagent_vol": 10.0}})
     assert unknown["passed"] is False, unknown
+
+
+# ── Task3: strategist 递归化 ─────────────────────────────────────────────────
+def test_strategist_fallback_and_propose(tmp_path: Path) -> None:
+    """无 strategist champion → strategist_prompt 回落默认; propose 出合法候选."""
+    from huginn.harness.meta_improver import (
+        MetaImprover, _META_IMPROVE_TEMPLATE,
+    )
+    meta = _meta_on(tmp_path)
+    assert meta.strategist_prompt() == _META_IMPROVE_TEMPLATE
+    assert meta.strategist_champion() is None
+
+    # meta² 固定模板生成新 strategist
+    async def fake(prompt: str, task: str = "summarize"):
+        return _META2_TPL
+
+    cid = asyncio.run(meta.maybe_propose_strategist(fake))
+    assert cid is not None
+    s = meta._strategists[cid]
+    assert s.strategist_prompt == _META2_TPL
+    assert not s.active
+    # 候选持久化
+    assert (meta._dir / "strategist" / f"{cid}.json").exists()
+    # compounding_trace 暴露 strategist 状态
+    tr = meta.compounding_trace()
+    assert tr["active_strategist_id"] is None
+    assert tr["n_strategists"] >= 1
+
+
+def test_strategist_invalid_template_rejected(tmp_path: Path) -> None:
+    """strategist 候选缺 current_template 占位符 → 拒绝."""
+    meta = _meta_on(tmp_path)
+
+    async def fake(prompt: str, task: str = "summarize"):
+        return "no placeholder at all"
+
+    cid = asyncio.run(meta.maybe_propose_strategist(fake))
+    assert cid is None
+    assert meta.compounding_trace()["n_strategists"] == 0
