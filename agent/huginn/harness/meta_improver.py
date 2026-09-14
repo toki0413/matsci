@@ -1195,7 +1195,20 @@ class MetaImprover:
             return None
 
     # ── A3: source 环 (运行时函数级自改源码, v0, harness_source_patch 门) ──────
-    _SOURCE_TARGET: tuple[str, str] = ("huginn.harness.meta_improver", "_PROPOSE_EVERY_N")
+    ## A3 自改目标白名单: agent 可自改的内部数值调参常量 (验证/可逆/默认关). 轮转选择,
+    ## 不再钉死在单一常量. 只含 meta_improver 自有调参, 不动逻辑/物理不变量.
+    _SOURCE_TARGETS: list[tuple[str, str]] = [
+        ("huginn.harness.meta_improver", "_PROPOSE_EVERY_N"),
+        ("huginn.harness.meta_improver", "_STRATEGIST_EVERY_N_PROPOSALS"),
+        ("huginn.harness.meta_improver", "_REPLAY_MAX"),
+    ]
+    # 兼容别名: 白名单首项, 供外部/测试引用.
+    _SOURCE_TARGET: tuple[str, str] = _SOURCE_TARGETS[0]
+
+    def _source_target(self) -> tuple[str, str]:
+        """当前 source 环的目标 (轮转): 按 _source_proposals 在白名单里选, 确定性覆盖多目标."""
+        ts = getattr(self, "_SOURCE_TARGETS", None) or [self._SOURCE_TARGET]
+        return ts[self._source_proposals % len(ts)]
 
     def source_enabled(self) -> bool:
         """A3 source 环: meta on + prompt_patch on + harness_source_patch 显式开."""
@@ -1210,7 +1223,8 @@ class MetaImprover:
         """
         if not self.source_enabled():
             return None
-        module, symbol = self._SOURCE_TARGET
+        # v0 目标: 在白名单里轮转自改内部调参常量 — 元程序意义清晰、运行时安全、可逆.
+        module, symbol = self._source_target()
         import huginn.harness.meta_improver as mi_mod
 
         cur = 0

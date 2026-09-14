@@ -68,9 +68,10 @@ def test_full_autoloop_engine_entry_smoke(tmp_path: Path) -> None:
         # directive 提示 → 真实 directive (让流程走到底)
         if "single concise directive" in prompt:
             return "focus on classical overlap methods"
-        # source 环提示 (harness_source_patch 开) → 一行符号赋值 (改自己的节奏常量)
+        # source 环提示 (harness_source_patch 开) → 一行符号赋值 (多目标轮转, 动态取目标)
         if "self-modifying" in prompt:
-            return "_PROPOSE_EVERY_N = 6"
+            current = MetaImprover.get_instance()._source_target()[1]
+            return f"{current} = 6"
         # improver 提示 (generate_patch) → 有效 patch JSON
         return '{"block_name": "mem", "op": "append", "new_text": "classical-focus-hint"}'
 
@@ -105,7 +106,10 @@ def test_full_autoloop_engine_entry_smoke(tmp_path: Path) -> None:
         # source 环被驱动 (harness_source_patch 开) → 至少登记一条 source patch
         assert sp.SourcePatchStore.get_instance().list_patches(), "source 环应被驱动"
     finally:
-        _mi_mod._PROPOSE_EVERY_N = orig_every  # 恢复被 source 环自改的值
+        # 恢复可能被 source 环自改的全部白名单目标常量 (多目标轮转)
+        _mi_mod._PROPOSE_EVERY_N = 5
+        _mi_mod._STRATEGIST_EVERY_N_PROPOSALS = 3
+        _mi_mod._REPLAY_MAX = 10
         sp._ORIGINALS.clear()
         sp.SourcePatchStore._instance = None
 

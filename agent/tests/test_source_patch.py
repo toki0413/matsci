@@ -56,7 +56,10 @@ def _restore_mech() -> None:
 
 
 def _restore_ring() -> None:
-    mi.__dict__[RING_SYMBOL] = _PROPOSE_EVERY_N
+    # 恢复全部 A3 白名单目标常量 (轮转可能 promote 改任一), 避免污染真实模块
+    mi.__dict__["_PROPOSE_EVERY_N"] = 5
+    mi.__dict__["_STRATEGIST_EVERY_N_PROPOSALS"] = 3
+    mi.__dict__["_REPLAY_MAX"] = 10
     sp._ORIGINALS.clear()
 
 
@@ -175,8 +178,9 @@ def test_note_generation_drives_source_ring(tmp_path: Path) -> None:
     """note_generation 每 _SOURCE_EVERY_N_GENERATIONS 代驱动一次 source 环 (生产入口)."""
     meta = _src_on(tmp_path, on_source=True)
     async def ring_llm(prompt: str, task: str = "summarize") -> str:
+        # 多目标轮转: 目标符号从当前 _source_target() 动态取, 保证任一目标都提议成功
         if "self-modifying" in prompt:
-            return f"{RING_SYMBOL} = 88"
+            return f"{meta._source_target()[1]} = 88"
         return '{"block_name": "mem", "op": "append", "new_text": "x"}'
 
     n = sp.__dict__[MECH_SYMBOL]  # 7 — source 环触发周期
