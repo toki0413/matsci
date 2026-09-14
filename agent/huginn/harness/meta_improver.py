@@ -630,6 +630,7 @@ class MetaImprover:
         self._rphys = RPhysTrack(path=self._dir / "rphys.json")
         self._compounding_path = self._dir / "compounding.json"
         self._strategy_proposals = 0
+        self._source_proposals = 0
         self._load()
         self._load_compounding()
         with contextlib.suppress(Exception):
@@ -1047,6 +1048,160 @@ class MetaImprover:
         except Exception:
             return None
 
+    # ── A3: source 环 (运行时函数级自改源码, v0, harness_source_patch 门) ──────
+    _SOURCE_TARGET: tuple[str, str] = ("huginn.harness.meta_improver", "_PROPOSE_EVERY_N")
+
+    def source_enabled(self) -> bool:
+        """A3 source 环: meta on + prompt_patch on + harness_source_patch 显式开."""
+        return self.enabled() and _harness_enabled("harness_source_patch")
+
+    async def maybe_propose_source(self, llm_chat_fn: Callable) -> str | None:
+        """给自己一个"改自己代码"的机会: 提议替换目标模块的某符号为新实现.
+
+        v0 目标固定为自调征件节奏常量 (``_PROPOSE_EVERY_N``) — 元程序意义清晰、
+        运行时安全、可逆. LLM 产出一行 ``<symbol> = N`` 赋值, 经 ``verify_source_patch``
+        语法/anchor/定义验证后才登记进 store. 返回 patch_id 或 None.
+        """
+        if not self.source_enabled():
+            return None
+        module, symbol = self._SOURCE_TARGET
+        import huginn.harness.meta_improver as mi_mod
+
+        cur = 0
+        with contextlib.suppress(Exception):
+            cur = int(getattr(mi_mod, symbol) or 0)
+        prompt = (
+            f"You are self-modifying your own source. Current {module}:{symbol} = {cur}\n"
+            f"Propose how often a generation should trigger one meta-proposal. "
+            f"Your answer must be EXACTLY ONE line:\n"
+            f"{symbol} = <positive integer>"
+        )
+        try:
+            resp = await llm_chat_fn(prompt, task="summarize")
+        except Exception:
+            logger.debug("source propose LLM fail", exc_info=True)
+            return None
+        if not resp or not resp.strip():
+            return None
+        line = resp.strip().splitlines()[0].strip()
+        if "=" not in line:
+            self._trace({"type": "source_reject", "reason": "no_assignment"})
+            return None
+        lhs = line.split("=", 1)[0].strip()
+        rhs = line.split("=", 1)[1].strip()
+        if lhs != symbol:
+            self._trace({"type": "source_reject", "reason": "bad_symbol"})
+            return None
+        try:
+            val = int(rhs)
+        except (TypeError, ValueError):
+            self._trace({"type": "source_reject", "reason": "not_int"})
+            return None
+        if val <= 0:
+            self._trace({"type": "source_reject", "reason": "non_positive"})
+            return None
+        from huginn.harness.source_patch import SourcePatch, verify_source_patch
+
+        patch = SourcePatch(
+            id=f"src_{int(time.time() * 1000)}_{uuid.uuid4().hex[:6]}",
+            module=module, symbol=symbol, new_code=f"{symbol} = {val}",
+        )
+        if not verify_source_patch(patch)["passed"]:
+            self._trace({"type": "source_reject", "reason": "verify_fail"})
+            return None
+        from huginn.harness.source_patch import SourcePatchStore
+
+        SourcePatchStore.get_instance().add_patch(patch)
+        self._trace({"type": "source_propose", "candidate_id": patch.id, "value": val})
+        return patch.id
+
+    async def evaluate_source(self, patch_id: str, llm_chat_fn: Callable) -> dict[str, Any]:
+        """评估 source 候选: verify 决定代理分并注册显著性配对.
+
+        有效补丁(candidate=1.0) vs 中性基准(0.5) → 显著 GREEN; 无效(0.1)→ 不显著.
+        真实 r_phys 仍未上行则 advisory 不硬拦 (rphys 硬闸由 maybe_promote_source 处置).
+        """
+        if not self.source_enabled():
+            return {"green": False, "reason": "disabled"}
+        from huginn.harness.source_patch import SourcePatchStore, verify_source_patch
+
+        patch = SourcePatchStore.get_instance().get(patch_id)
+        if patch is None:
+            return {"green": False, "reason": "unknown_patch"}
+        v = verify_source_patch(patch)
+        verified = bool(v["passed"])
+        from huginn.harness.significance_gate import SignificanceGate
+        from huginn.harness.ood_holdout import OODHoldoutValidator
+
+        sig = SignificanceGate.get_instance()
+        ood = OODHoldoutValidator.get_instance()
+        if not self._replay:
+            self._trace({"type": "source_evaluate", "candidate_id": patch_id,
+                         "verified": verified, "green": False, "n": 0})
+            return {"green": False, "verified": verified, "n": 0}
+        for probe in self._replay:
+            task = str(probe.get("probe_id") or probe.get("ts") or random.random())
+            sig.record_pair(patch_id, 0.5, 1.0 if verified else 0.1, task_id=task)
+            ood.record_outcome(ood._BASELINE_ID, task, 0.5)
+            ood.record_outcome(patch_id, task, 1.0 if verified else 0.1)
+        sig_ok = sig.gate_decision(patch_id, min_samples=_MIN_SAMPLES).passed
+        ood_ok = ood.validate_ood(patch_id).passed
+        green = bool(verified and sig_ok and ood_ok)
+        self._trace({"type": "source_evaluate", "candidate_id": patch_id,
+                     "verified": verified, "sig": sig_ok, "ood": ood_ok,
+                     "green": green, "n": len(self._replay)})
+        return {"green": green, "verified": verified, "sig": sig_ok,
+                "ood": ood_ok, "n": len(self._replay)}
+
+    def maybe_promote_source(self, patch_id: str, ctx: Any | None = None) -> bool:
+        """source 换件门控: verify + 显著 + OOD (+ rphys hard 可拦) → 事务内应用.
+
+        ``harness_source_patch`` 开启才可能真正应用 (monkeypatch, 可逆).
+        """
+        if not self.source_enabled():
+            return False
+        from huginn.harness.source_patch import (
+            SourcePatchStore, apply_source_patch, _register_source_compensator,
+        )
+
+        patch = SourcePatchStore.get_instance().get(patch_id)
+        if patch is None:
+            return False
+        from huginn.harness.significance_gate import SignificanceGate
+        from huginn.harness.ood_holdout import OODHoldoutValidator
+
+        sig_ok = SignificanceGate.get_instance().gate_decision(
+            patch_id, min_samples=_MIN_SAMPLES).passed
+        ood_ok = OODHoldoutValidator.get_instance().validate_ood(patch_id).passed
+        if not (sig_ok and ood_ok):
+            self._trace({"type": "source_reject", "candidate_id": patch_id,
+                         "reason": "not_green"})
+            return False
+        rp = self._rphys.verdict(patch_id)
+        if _harness_enabled("harness_rphys_gate") and rp["green"] is False:
+            self._trace({"type": "source_reject", "candidate_id": patch_id,
+                         "reason": "rphys_fail"})
+            return False
+        from huginn.security.revertible import RevertibleContext
+
+        rctx = ctx or RevertibleContext(
+            journal_path=self._dir / "revertible_journal.json"
+            if self._dir.exists() else None,
+        )
+        try:
+            _register_source_compensator()
+            with rctx.transaction():
+                ok = apply_source_patch(patch, rctx)
+        except Exception as exc:
+            logger.debug("source promote txn failed", exc_info=True)
+            return False
+        if not ok:
+            self._trace({"type": "source_reject", "candidate_id": patch_id,
+                         "reason": "apply_failed"})
+            return False
+        self._trace({"type": "source_promote", "candidate_id": patch_id})
+        return True
+
     # ── 空间可组合 (CoEffectRegistry) ────────────────────────────────────────
     def _coeffect_available(self) -> bool:
         """strategist 缺失/被 degrade → improvement_strategy 不可用."""
@@ -1146,6 +1301,17 @@ class MetaImprover:
                     if sid:
                         await self.evaluate_strategist(sid, llm_chat_fn)
                         self.maybe_promote_strategist(sid)
+            # A3: source 环驱动 (harness_source_patch 显式开才触发) — 每
+            # _SOURCE_EVERY_N_GENERATIONS 代给一次"改自己源码"的机会.
+            from huginn.harness.source_patch import _SOURCE_EVERY_N_GENERATIONS
+
+            self._source_proposals += 1
+            if self.source_enabled() and \
+                    self._source_proposals % _SOURCE_EVERY_N_GENERATIONS == 0:
+                spid = await self.maybe_propose_source(llm_chat_fn)
+                if spid:
+                    await self.evaluate_source(spid, llm_chat_fn)
+                    self.maybe_promote_source(spid)
         except Exception as exc:
             logger.debug("meta note_generation/maybe_propose failed", exc_info=True)
 

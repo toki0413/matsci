@@ -23,6 +23,7 @@
 
 - [x] M-R1: Recursive (Meta-)Improver — 改进器自身的 improver_prompt/阈值成为可改进对象，复用 SignificanceGate / OODHoldout / AdoptionGate 做验收，仅 GREEN 才全局换用改进器配置（默认关）
 - [x] A1: Recursive Compounding（strategist 可演化 + 复合护栏）— 在 M-R1 之上叠一层 strategist，让「改进器如何改进」也可被改进；用 CompoundingTracker 复合验收、BehavioralFidelity 保真锚、RPhysTrack 端到端真实 r_phys 归因验收（Mann-Whitney U 地面真值通道）治 Goodhart、VerifiableGate（结合 arXiv:2609.03621 可计算实验室表示）把换件锚到状态化仿真验证；死锁/滞回/随机化对照/RevertibleContext+CoEffectRegistry 时空可组合。默认关。
+- [x] A3: Direct self-source modification（运行时函数级自改源码 v0）— 第三道质变缺口：让 agent 改自己的实现而非只改提示。`huginn/harness/source_patch.py`：候选源码补丁经 compile+anchor+隔离定义三步验证后 monkeypatch 进目标模块 `__dict__`（运行时、不落盘、`RevertibleContext` 可逆、`harness_source_patch` 默认关）；MetaImprover 第三环 `maybe_propose/evaluate/promote_source` 接 sig+OOD+verify 门控，`note_generation` 周期性驱动（会话级自改自我节奏常量）。磁盘文件级自改写留 v1。
 
 契约与环境：
 - M-R1：`docs/staging/specs/2026-09-13-recursive-improver.md`
