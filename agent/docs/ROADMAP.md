@@ -22,5 +22,8 @@
 去 mixin 目标是消除 god-class；本轨道目标是补「递归自我改进」——在已落地的单层 harness 改进器（H1 prompt_patch 等）之上加一层 meta-improver，让「改进器自身如何改进」也可被改进、可被 gate 验收。与去 mixin 无依赖。
 
 - [x] M-R1: Recursive (Meta-)Improver — 改进器自身的 improver_prompt/阈值成为可改进对象，复用 SignificanceGate / OODHoldout / AdoptionGate 做验收，仅 GREEN 才全局换用改进器配置（默认关）
+- [x] A1: Recursive Compounding（strategist 可演化 + 复合护栏）— 在 M-R1 之上叠一层 strategist，让「改进器如何改进」也可被改进；用 CompoundingTracker 复合验收、BehavioralFidelity 保真锚治 Goodhart、VerifiableGate（结合 arXiv:2609.03621 可计算实验室表示）把换件锚到状态化仿真验证；死锁/滞回/随机化对照/RevertibleContext+CoEffectRegistry 时空可组合。默认关。
 
-契约与环境见 `docs/staging/specs/2026-09-13-recursive-improver.md`。
+契约与环境：
+- M-R1：`docs/staging/specs/2026-09-13-recursive-improver.md`
+- A1：`docs/staging/specs/2026-09-13-recursive-compounding-design.md`
