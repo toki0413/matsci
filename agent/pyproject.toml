@@ -68,7 +68,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0", "pytest-asyncio>=0.21", "pytest-benchmark>=4.0", "pytest-github-actions-annotate-failures>=0.2", "pytest-cov>=4.0", "pytest-xdist>=3.0", "hypothesis>=6.0", "black>=23.0", "memory-profiler>=0.60", "ruff>=0.4.0", "mypy>=1.5", "pre-commit>=3.0", "pip-audit>=2.7"]
+dev = ["pytest>=7.0", "pytest-asyncio>=0.21", "pytest-benchmark>=4.0", "pytest-github-actions-annotate-failures>=0.2", "pytest-cov>=4.0", "pytest-xdist>=3.0", "hypothesis>=6.0", "black>=23.0", "memory-profiler>=0.60", "ruff>=0.4.0", "mypy>=1.5", "pre-commit>=3.0", "pip-audit>=2.7",
+        # tests/ 全量收集 & 多维科学模块测试的科学栈依赖. 缺这些会导致 tests/ 大量
+        # 在收集期即 ModuleNotFoundError (dimension validator 需 sympy, doe_tool 需
+        # statsmodels, c2st/bench 需 scikit-learn, do-e 需 statsmodels, visualize 需
+        # matplotlib/pandas), 使全量回归红线失效. 与 [all] 归属不同: 这些是"测试可收集"
+        # 的最小集, 而非可选组件.
+        "pandas>=2.0", "scikit-learn>=1.3", "statsmodels>=0.14", "matplotlib>=3.7"]
 all = ["pymatgen>=2025.10.7", "ase>=3.22", "dscribe>=2.0", "paramiko>=5.0.0",
         # LSP 符号级编辑 (lsp_tool): 纯 Python 静态分析, 零外部进程, 沙箱安全.
         "jedi>=0.19",
