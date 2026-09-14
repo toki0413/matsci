@@ -628,6 +628,62 @@ class MetaImprover:
         self._trace({"type": "strategy_propose", "candidate_id": s.config_id})
         return s.config_id
 
+    def _persist_state_ref(self) -> dict[str, Any]:
+        """把 active_strategist_id 等现状以可序列化形式交由补偿器恢复.
+
+        只存纯数据 (不做 lambda/不可序列化引用), 以便 journal 可跨崩溃重放:
+        恢复时按 kind 的补偿器负责把状态写回发起方 (本模块见
+        ``_compensate_strategist_swap``).
+        """
+        return {
+            "active_strategist_id": self._active_strategist_id,
+            "strategists_history": list(self._strategists_history),
+        }
+
+    def _apply_strategist_swap(self, old: str, new: str, ctx: Any | None) -> None:
+        """执行 strategist 换件, 并把逆登记进 RevertibleContext (时间可组合).
+
+        - 更新 active 指向 + 每个候选的 active 标记 + 持久化.
+        - 换件成功后把旧 champion 追加进 strategies_history (供无 ctx 回退).
+        - ctx 存在时登记 ``strategist_swap`` 补偿逆; 崩溃后经 journal 重放恢复.
+        """
+        if old and old != new and old not in self._strategists_history:
+            self._strategists_history.append(old)
+        self._active_strategist_id = new
+        for s in self._strategists.values():
+            s.active = (s.config_id == new)
+            self._save_strategist(s)
+        self._save_cfg()
+        if ctx is not None:
+            try:
+                ctx.compensate("strategist_swap", {
+                    "old": old, "new": new,
+                    "store": self._persist_state_ref(),
+                })
+            except Exception as exc:
+                logger.debug("meta: strategist_swap compensate reg failed", exc_info=True)
+
+    def revert_strategist(self, ctx: Any | None = None) -> bool:
+        """复合退化时回退 strategist champion (时间可组合).
+
+        ``ctx`` 存在 → revert_all() 撤销本 scope 内所有累积逆 (含挟同的
+        git_commit / memory 副作用) 并恢复到上一 champion; 无 ``ctx`` → 直接
+        依据 strategies_history 回退到上一个 active.
+        """
+        if ctx is not None:
+            try:
+                ctx.revert_all()
+                return True
+            except Exception:
+                return False
+        prev = self._strategists_history[-1] if self._strategists_history else None
+        if prev is None:
+            return False
+        curr = self._active_strategist_id or ""
+        self._apply_strategist_swap(curr, prev, None)
+        self._trace({"type": "strategy_revert", "candidate_id": prev})
+        return True
+
     async def note_generation(
         self, phase: str, blocks: list[tuple[str, str]], r_phys: float | None,
         directive: str, llm_chat_fn: Callable[[str, str], Any],
@@ -661,15 +717,31 @@ class MetaImprover:
 
     # ── propose ────────────────────────────────────────────────────────────
     async def maybe_propose(self, llm_chat_fn: Callable) -> str | None:
-        """用 LLM 基于当前模板生成一个候选 improver 模板. 失败静默返回 None."""
+        """用 LLM 基于当前模板生成一个候选 improver 模板. 失败静默返回 None.
+
+        A1: 模板源改为 ``strategist_prompt()`` (有 champion 用其改进策略模板,
+        无则回落默认 ``_META_IMPROVE_TEMPLATE``) — 改进方式因此可被改进.
+        """
         if not self.enabled():
             return None
         current = self.current_template()
-        meta_prompt = _META_IMPROVE_TEMPLATE.format(
-            current_template=current,
-            n_proposals=len([c for c in self._candidates.values()]),
-            n_promotions=len(self._history),
-        )
+        n_proposals = len([c for c in self._candidates.values()])
+        n_promotions = len(self._history)
+        try:
+            meta_prompt = self.strategist_prompt().format(
+                current_template=current,
+                n_proposals=n_proposals,
+                n_promotions=n_promotions,
+            )
+        except (KeyError, IndexError, ValueError):
+            # strategist 模板无法被 maybe_propose 实例化 → 回落默认, 不阻塞
+            logger.debug("meta maybe_propose: strategist template format failed, fallback")
+            self._trace({"type": "strategy_fallback", "reason": "format_failed"})
+            meta_prompt = _META_IMPROVE_TEMPLATE.format(
+                current_template=current,
+                n_proposals=n_proposals,
+                n_promotions=n_promotions,
+            )
         try:
             resp = await llm_chat_fn(meta_prompt, task="summarize")
         except Exception:
@@ -827,6 +899,33 @@ class MetaImprover:
 
 def _mean(v: list[float]) -> float:
     return round(sum(v) / len(v), 3) if v else 0.0
+
+
+# ── strategist 换件补偿器 (时空可组合, 时间侧) ────────────────────────────────
+def _compensate_strategist_swap(payload: dict[str, Any]) -> None:
+    """撤销一次 strategist 换件: 恢复上一 active 指向. (由 register_compensator 注册)
+
+    进程内 revert_all 与崩溃后 journal 重放共用此补偿器. 只处理可序列化数据
+    (payload["old"]), 保证可跨崩溃.
+    """
+    old = payload.get("old")
+    if not old:
+        return
+    meta = MetaImprover.get_instance()
+    if meta is None:
+        return
+    meta._active_strategist_id = old
+    for s in meta._strategists.values():
+        s.active = (s.config_id == old)
+        meta._save_strategist(s)
+    meta._save_cfg()
+    logger.info("meta: strategist swap compensated back to %s", old)
+
+
+def _register_strategist_compensator() -> None:
+    from huginn.security.revertible import register_compensator
+
+    register_compensator("strategist_swap", _compensate_strategist_swap)
 
 
 def _selfcheck() -> None:

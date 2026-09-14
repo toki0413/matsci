@@ -368,3 +368,56 @@ def test_strategist_invalid_template_rejected(tmp_path: Path) -> None:
     cid = asyncio.run(meta.maybe_propose_strategist(fake))
     assert cid is None
     assert meta.compounding_trace()["n_strategists"] == 0
+
+
+# ── Task4: strategist 换件可逆补偿 (时空可组合) ─────────────────────────────
+def test_strategist_swap_revertible(tmp_path: Path) -> None:
+    """换件在 RevertibleContext 内; 复合护栏触发 revert_all → 恢复上一 champion."""
+    from huginn.harness.meta_improver import (
+        MetaImprover, StrategistConfig, _register_strategist_compensator,
+    )
+    from huginn.security.revertible import RevertibleContext
+
+    meta = _meta_on(tmp_path)
+    _register_strategist_compensator()
+
+    old = "s_old"
+    meta._strategists[old] = StrategistConfig(config_id=old, strategist_prompt="old X", active=True)
+    meta._active_strategist_id = old
+    new = "s_new"
+    meta._strategists[new] = StrategistConfig(config_id=new, strategist_prompt="new Y")
+
+    # 换件在事务内, 正常提交保留
+    ctx = RevertibleContext()
+    with ctx.transaction():
+        meta._apply_strategist_swap(old, new, ctx)
+    assert meta.strategist_champion().config_id == new
+
+    # 复合护栏触发 → revert_all 恢复上一 champion
+    ctx2 = RevertibleContext()
+    with ctx2.transaction():
+        meta._apply_strategist_swap(old, new, ctx2)
+    ctx2.revert_all()
+    assert meta.strategist_champion().config_id == old, "revert 应恢复上一 champion"
+
+def test_maybe_propose_uses_strategist(tmp_path: Path) -> None:
+    """maybe_propose 改用 strategist champion 的模板 (改进方式可被改进)."""
+    from huginn.harness.meta_improver import (
+        MetaImprover, StrategistConfig,
+    )
+    meta = _meta_on(tmp_path)
+
+    # 无 strategist → maybe_propose 用默认 meta 模板生成 improver 候选
+    improver_template = "Optimize agent phase:{phase} blocks:{block_names} r:{r_phys} d:{directive} patch JSON"
+    async def fake(prompt: str, task: str = "summarize"):
+        return improver_template
+    cid = asyncio.run(meta.maybe_propose(fake))
+    assert cid is not None, "应能走默认 meta 模板 propose improver"
+    assert meta._candidates[cid].improver_prompt == improver_template
+    assert mi._META_IMPROVE_TEMPLATE in meta.strategist_prompt()  # 无 champion 回落默认
+
+    # 有 strategist champion → strategist_prompt 用其模板
+    s_champ = StrategistConfig(config_id="strat_c", strategist_prompt=_META2_TPL, active=True)
+    meta._strategists["strat_c"] = s_champ
+    meta._active_strategist_id = "strat_c"
+    assert meta.strategist_prompt() == _META2_TPL
