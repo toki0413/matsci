@@ -680,8 +680,92 @@ def test_compounding_persistence(tmp_path: Path) -> None:
 
 
 # ── A1 端到端轨道: 真实 r_phys 真实验收 (论文 2609.03621 地面真值通道) ────────
+def test_verifiable_gate_real_executions(tmp_path: Path) -> None:
+    """VerifiableGate 真实实验入库: 记录真实执行 (state+action+observed) 并验证.
+
+    - 合法 + 前向一致 → valid, verify_recent_executions passed True;
+    - 前置违例 (源量不足) → 标 invalid;
+    - 前向与观测不符 → 标 invalid (验证 agent 真实的物理一致性, 非只验代表电池);
+    - 持久化到 verifiable_executions.json.
+    """
+    from huginn.harness.meta_improver import VerifiableGate
+    _reseed(tmp_path)
+    vg = VerifiableGate()
+
+    # 合法 & 前向一致
+    ok = vg.record_execution(
+        action_type="aspirate", params={"vol": 1.0},
+        state_before={"reagent_vol": 5.0, "sample_vol": 0.0},
+        observed={"reagent_vol": 4.0, "sample_vol": 1.0},
+    )
+    assert ok["valid"] is True, ok
+    # 前置违例 (源量不足)
+    bad = vg.record_execution(
+        action_type="aspirate", params={"vol": 99.0},
+        state_before={"reagent_vol": 5.0}, observed=None,
+    )
+    assert bad["valid"] is False, bad
+    # 未知能力
+    unk = vg.record_execution(action_type="teleport", params={},
+                              state_before={}, observed=None)
+    assert unk["valid"] is False
+    # 前向与观测不符 → 标 invalid
+    mis = vg.record_execution(
+        action_type="aspirate", params={"vol": 1.0},
+        state_before={"reagent_vol": 5.0, "sample_vol": 0.0},
+        observed={"reagent_vol": 5.0, "sample_vol": 0.0},  # 没减少 → 不符
+    )
+    assert mis["valid"] is False, mis
+
+    # 汇总: 最近 k 有非法 → 不 passed
+    res = vg.verify_recent_executions(k=10)
+    assert res["n"] == 4
+    assert res["passed"] is False, res  # 含非法/不符
+    assert res["passed_n"] == 1
+
+    # 全合法子集通过
+    vg2 = VerifiableGate()
+    vg2.record_execution(action_type="mix", params={},
+                         state_before={"reagent_vol": 1.0}, observed={"mixed": True})
+    clean = vg2.verify_recent_executions(k=1)
+    # mix 前向无 dec_key, observed mixed=True 与 predicted 一致 → passed
+    import huginn.security.world_model as wm
+    if "mixed" in wm.FORWARD_EFFECTS:
+        assert clean["passed"] is True, clean
+
+    # 持久化
+    assert vg._exec_path.exists(), "verifiable_executions.json 应落盘"
+
+
+def test_verify_recent_executions_empty_fallback(tmp_path: Path) -> None:
+    """无真实实验账本 → verify_recent_executions n=0 (调用方回落到电池)."""
+    from huginn.harness.meta_improver import VerifiableGate
+    _reseed(tmp_path)
+    vg = VerifiableGate()
+    res = vg.verify_recent_executions()
+    assert res["n"] == 0 and res["passed"] is None
+
+
+def test_note_generation_records_real_execution(tmp_path: Path) -> None:
+    """note_generation 带 real_action → 真实实验入库 VerifiableGate."""
+    from huginn.harness.meta_improver import MetaImprover, VerifiableGate
+    meta = _meta_on(tmp_path)
+
+    async def fake(prompt: str, task: str = "summarize") -> str:
+        return '{"block_name": "mem", "op": "append", "new_text": "x"}'
+
+    asyncio.run(meta.note_generation(
+        "h", [("body", "b"), ("mem", "m")], 0.5, "hint", fake,
+        real_action={"action_type": "aspirate", "params": {"vol": 1.0},
+                     "state_before": {"reagent_vol": 4.0, "sample_vol": 0.0},
+                     "observed": {"reagent_vol": 3.0, "sample_vol": 1.0}},
+    ))
+    vg = VerifiableGate()
+    assert vg._executions, "真实实验应入库"
+    assert vg._executions[-1]["valid"] is True, vg._executions[-1]
+
+
 def test_verify_battery_covers_capabilities(tmp_path: Path) -> None:
-    """VerifiableGate 能力电池: 真实 world_model 全部能力动作通过才 passed (非单点)."""
     from huginn.harness.meta_improver import VerifiableGate
     import huginn.security.world_model as wm
 

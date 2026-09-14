@@ -119,6 +119,7 @@ StrategistImprover (MetaImprover 内部扩展, 同单例)
 ## 真实数据接通（已落地，2026-09-14）
 
 - **VerifiableGate → 能力电池**：`_verify_strategist_outcome` 从单点 `aspirate` 探针升级为 `verify_battery`——对真实 `world_model` 的全部已知能力动作（`FORWARD_EFFECTS`：aspirate/dispense/mix/aliquot）做 `check_constraints` + `apply_forward` 状态化仿真，**全过才 passed**。gate 不可用/未开 → advisory None。
+- **VerifiableGate → 真实实验入库（2026-09-14 二段）**：`record_execution(action_type, params, state_before, observed)` 持久化 agent **真实执行**过的实验账本（`verifiable_executions.json`，LRU 100）；`verify_recent_executions` 校验"已知能力 + 约束合法 + 前向预测与观测一致"；`note_generation(real_action=...)` 提供注入点。`_verify_strategist_outcome` **优先验证真实实验账本**，无则回落电池——把验收从"验代表电池"升级为"验证真实产出的实验"（论文 2609.03621 的组合工作流代数）。
 - **RandomizedControl → 真实 r_phys 采样**：`maybe_promote_strategist` 的 ablation 仲裁改用 `_ablation_samples()`，从 `RPhysTrack` 已按 active 配置归因的真实 r_phys 里取 champion 臂（当前部署改进器）与 baseline 臂（`_base` 默认），取代此前只能靠 `override_pair` 注入的死分支。`HUGINN_META_ABLATION=1` 时读真实收集数据仲裁。
 4. 递归过深导致开销：A1 明确只一层，strategist 的 meta² 模板写死，绝不叠第三层。
 5. **不做**：直接自改源码（A3）、无限递归、让 strategist 自己递归改自己（留作后续轨道，先验证一层）。

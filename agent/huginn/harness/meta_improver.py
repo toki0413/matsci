@@ -345,6 +345,10 @@ class VerifiableGate:
 
     def __init__(self) -> None:
         self._current_state: dict[str, Any] = {}
+        # 真实实验账本: agent 实际执行过的 (state, action, observed). 跨 session 持久化.
+        self._exec_path = get_runtime_home() / "meta_improver" / "verifiable_executions.json"
+        self._executions: list[dict[str, Any]] = []
+        self._load_exec()
 
     def enabled(self) -> bool:
         return _harness_enabled("harness_verifiable_gate")
@@ -356,6 +360,78 @@ class VerifiableGate:
         ("mix", {}),
         ("aliquot", {"n": 1}),
     ]
+
+    # 真实实验账本 LRU 上限 — 抗无限增长.
+    _EXEC_MAX = 100
+
+    def _load_exec(self) -> None:
+        with contextlib.suppress(Exception):
+            if self._exec_path.exists():
+                self._executions = json.loads(
+                    self._exec_path.read_text(encoding="utf-8"))[-self._EXEC_MAX:]
+
+    def _save_exec(self) -> None:
+        with contextlib.suppress(Exception):
+            self._exec_path.parent.mkdir(parents=True, exist_ok=True)
+            self._exec_path.write_text(
+                json.dumps(self._executions[-self._EXEC_MAX:], ensure_ascii=False),
+                encoding="utf-8",
+            )
+
+    def record_execution(self, action_type: str, params: dict[str, Any],
+                         state_before: dict[str, Any],
+                         observed: dict[str, Any] | None = None,
+                         ts: float | None = None) -> dict[str, Any]:
+        """记录一次 agent **真实执行**过的实验 (state+action+observed) 并就地校验.
+
+        让"验证"面向 agent 真实产出的实验 (论文 2609.03621: 组合工作流代数), 而非
+        只验代表性电池. 校验结果随账本持久化, 供 ``verify_recent_executions`` 汇总.
+        """
+        import huginn.security.world_model as wm
+        from huginn.security.world_model import PhysicalAction
+
+        entry: dict[str, Any] = {
+            "action_type": action_type, "params": dict(params),
+            "state_before": dict(state_before),
+            "observed": dict(observed) if observed is not None else None,
+            "ts": ts if ts is not None else time.time(),
+        }
+        known = set(getattr(wm, "FORWARD_EFFECTS", {}))
+        issues: list[str] = []
+        if action_type not in known:
+            issues.append(f"unknown_capability:{action_type}")
+        else:
+            try:
+                action = PhysicalAction(action_type, dict(params))
+                issues = list(wm.check_constraints(state_before, action))
+                if observed is not None:
+                    predicted = wm.apply_forward(dict(state_before), action)
+                    # 前向预测必须与真实观测一致才通过 (验证 agent 实机的物理一致性)
+                    for k, v in observed.items():
+                        if abs(float(predicted.get(k, 0.0) or 0.0) - float(v or 0.0)) > 1e-6:
+                            issues.append(f"mismatch:{k}")
+                            break
+            except Exception as exc:
+                issues.append(f"world_model_error:{exc}")
+        entry["valid"] = not issues
+        entry["issues"] = issues
+        self._executions.append(entry)
+        self._save_exec()
+        return {"valid": not issues, "issues": issues}
+
+    def verify_recent_executions(self, k: int = 10) -> dict[str, Any]:
+        """汇总验证最近 k 次真实实验. 返回 {passed, n, passed_n, failures}.
+
+        无真实实验记录 → ``n=0`` (调用方回落电池). 全部合法/一致才 passed.
+        """
+        recent = self._executions[-k:]
+        if not recent:
+            return {"passed": None, "n": 0, "passed_n": 0, "failures": []}
+        failures = [f"#{i}:{';'.join(e['issues'])}"
+                    for i, e in enumerate(recent) if not e["valid"]]
+        passed_n = sum(1 for e in recent if e["valid"])
+        return {"passed": passed_n == len(recent), "n": len(recent),
+                "passed_n": passed_n, "failures": failures}
 
     def verify_battery(
         self, state: dict[str, Any] | None = None
@@ -1087,16 +1163,20 @@ class MetaImprover:
         return True
 
     def _verify_strategist_outcome(self, s: StrategistConfig) -> bool | None:
-        """接入 VerifiableGate (论文): 机器可用且开启时做状态化仿真**能力电池**验证.
+        """接入 VerifiableGate (论文): 机器可用且开启时做状态化仿真验证.
 
-        v0 从单点 aspirate 探针升级为对真实 world_model 的能力动作电池 (aspirate/
-        dispense/mix/aliquot) — 全过才 True, 任一违例 False. gate 不可用/未开 →
-        None (advisory 未验证).
+        优先验证 **agent 真实执行过的实验** (record_execution 账本) — 若账本有真实
+        实验, 用其是否全部合法/前向一致判定; 否则回落代表性能力电池. gate 不可用/
+        未开 → None (advisory 未验证).
         """
         try:
             vg = VerifiableGate()
             if not vg.enabled():
                 return None
+            real = vg.verify_recent_executions(k=10)
+            if real["n"]:  # 有真实实验入库 → 以真实产出为准
+                return bool(real["passed"])
+            # 无真实实验 → 能力电池兜底
             res = vg.verify_battery()
             return bool(res["passed"])
         except Exception:
@@ -1318,8 +1398,14 @@ class MetaImprover:
     async def note_generation(
         self, phase: str, blocks: list[tuple[str, str]], r_phys: float | None,
         directive: str, llm_chat_fn: Callable[[str, str], Any],
+        real_action: dict[str, Any] | None = None,
     ) -> None:
-        """H1 generate_patch 成功产 patch 后回调: 进重放集 + 攒计数到阈值触发 maybe_propose."""
+        """H1 generate_patch 成功产 patch 后回调: 进重放集 + 攒计数到阈值触发 maybe_propose.
+
+        ``real_action`` (可选): 本代 agent **真实执行**的实验 ``{"action_type", "params",
+        "state_before", "observed"}``. 存在则记入 ``VerifiableGate`` 真实实验账本,
+        让验收能面向真实产出的实验而非只验代表电池.
+        """
         if not self.enabled():
             return
         block_names = [n for n, _ in blocks]
@@ -1327,6 +1413,19 @@ class MetaImprover:
         # 改进器配置」— 是 LLM 代理分之外的地面真值通道 (论文 2609.03621).
         active_cfg = self.champion_cfg()
         self._rphys.record(active_cfg.config_id if active_cfg else "_base", r_phys)
+        # 真实实验入库: 验证面向 agent 真实执行的动作而非仅代表电池 (论文: 组合工作流).
+        if isinstance(real_action, dict) and real_action.get("action_type"):
+            try:
+                from huginn.harness.meta_improver import VerifiableGate
+                VerifiableGate().record_execution(
+                    action_type=str(real_action.get("action_type")),
+                    params=dict(real_action.get("params") or {}),
+                    state_before=dict(real_action.get("state_before") or {}),
+                    observed=(dict(real_action.get("observed"))
+                              if real_action.get("observed") is not None else None),
+                )
+            except Exception:
+                logger.debug("verifiable gate record_execution failed", exc_info=True)
         self._replay.append(
             {
                 "phase": phase,
