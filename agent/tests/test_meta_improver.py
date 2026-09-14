@@ -265,3 +265,59 @@ def test_compounding_tracker_math():
                    fidelity=0.6, proposals_to_promotion=2,
                    generations_to_promotion=5, win_rate=0.5)
     assert dec.would_degrade(new="n", incumbent="i") is True
+
+
+# ── 论文 arXiv:2609.03621: BehavioralFidelity 保真锚 + VerifiableGate 验证 ────
+def test_behavioral_fidelity_anchor_with_verified(tmp_path: Path) -> None:
+    """采纳保真锚: 真实采纳率作复合指标锚; 经状态化仿真验证的采纳上修保真."""
+    from huginn.harness.meta_improver import BehavioralFidelity
+
+    bf = BehavioralFidelity(path=tmp_path / "fidelity.json")
+    bf.record_acceptance("c2", accepted=True)
+    bf.record_acceptance("c2", accepted=False)
+    assert abs(bf.fidelity_score("c2") - 0.5) < 1e-9
+    hi = bf.anchor_in("c2", p_quality=0.8, p_fidelity=None)
+    assert abs(hi - 0.65) < 1e-9  # 0.5*0.8 + 0.5*0.5
+
+    # 论文: 经状态化仿真验证(verified=True)的采纳 → 保真上修
+    bf2 = BehavioralFidelity(path=tmp_path / "fidelity2.json")
+    bf2.record_acceptance("v1", accepted=True, verified=True)
+    bf2.record_acceptance("v1", accepted=True, verified=True)
+    assert bf2.fidelity_score("v1") == 1.0  # 全部采纳 + 全部验证 → 封顶可信
+    # 验证加分不越界: 全采纳但未验证 = 1.0; verified 不把分数推过采纳率主锚
+    bf3 = BehavioralFidelity(path=tmp_path / "fidelity3.json")
+    bf3.record_acceptance("p1", accepted=True, verified=False)
+    assert bf3.fidelity_score("p1") == 1.0
+    # 持久化
+    assert bf2._path.exists()
+    data = json.loads(bf2._path.read_text(encoding="utf-8"))
+    assert data["accepted"]["v1"] == 2
+
+
+def test_verifiable_gate_preconditions_and_constraints(tmp_path: Path) -> None:
+    """VerifiableGate(论文 2609.03621): 状态化仿真在派发前验证前置/约束.
+
+    - 合法操作(源量充足 + 无约束违例) → passed, 且前向传播对象变换.
+    - 前置不满足(源量不足) → 拦截, 返回违例列表.
+    - 未知/非法动作类型 → 不做无依据转移.
+    """
+    from huginn.harness.meta_improver import VerifiableGate
+
+    vg = VerifiableGate()
+    ok = vg.verify_outcome({"action_type": "aspirate", "params": {"vol": 3.0},
+                            "state": {"reagent_vol": 10.0, "sample_vol": 0.0}})
+    assert ok["passed"] is True, ok
+    assert ok["issues"] == []
+    assert abs(ok["new_state"]["reagent_vol"] - 7.0) < 1e-9, ok
+    assert abs(ok["new_state"]["sample_vol"] - 3.0) < 1e-9, ok
+
+    # 前置不满足 → 拦截
+    bad = vg.verify_outcome({"action_type": "aspirate", "params": {"vol": 99.0},
+                             "state": {"reagent_vol": 10.0, "sample_vol": 0.0}})
+    assert bad["passed"] is False, bad
+    assert bad["issues"], bad
+
+    # 未知动作 → 无依据转移, error 标记 (避免硬崩溃)
+    unknown = vg.verify_outcome({"action_type": "teleport", "params": {},
+                                 "state": {"reagent_vol": 10.0}})
+    assert unknown["passed"] is False, unknown

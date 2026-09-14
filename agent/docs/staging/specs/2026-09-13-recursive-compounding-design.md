@@ -30,9 +30,16 @@ CompoundingTracker                    # 复合验收（滚动窗口）
     stats() -> dict                   # {slope, cost_trend, window, best_quality, ongoing, deadlock_n}
 
 BehavioralFidelity  (#1 行为级奖励回流 — Goodhart 锚)
-    record_acceptance(candidate_id, accepted: bool)      # 真实 apply_patches 是否采纳
-    fidelity_score(candidate_id) -> float                 # 采纳率 ETF 平滑，作复合指标的保真锚
+    record_acceptance(candidate_id, accepted: bool, verified: bool | None = None, # 论文: 是否经状态化仿真验证
+                      ) -> None                                # verified=True → 变换类型化对象且前置/约束通过
+    fidelity_score(candidate_id) -> float                 # 采纳率(或验证率) ETF 平滑，作复合指标的保真锚
     anchor_in(candidate_id, p_quality, p_fidelity) -> float  # 加权合成: quality↔fidelity 平衡
+
+VerifiableGate  (#论文 2609.03621: 可计算实验室表示 → 可验证工作流)
+    # 策略候选被判"值得换件"当且仅当其改进器产出的实验/计划, 在状态化仿真下
+    # 验证通过: 变换了类型化研究对象、op 前置条件满足、不违反实验室约束.
+    verify_outcome(plan_or_experiment: dict) -> dict      # 尽力接入 world_model.apply_forward/check_constraints
+    enabled() -> bool                                     # 机器可用且显式开启才硬 gate; 否则 advisory(不阻塞)
 
 RandomizedControl  (#3 对照验收)
     run_pair(strategist_id, baseline_id, n=3) -> dict    # 随机化 + 真实 r_phys 差分
@@ -73,6 +80,7 @@ StrategistImprover (MetaImprover 内部扩展, 同单例)
 2. **死锁检测 + 滞回带**：strategist 连续 `deadlock_timeout=5` 次 YELLOW → 自动降 `min_samples` 或改 advisory（防"演化近惰性"）；`revert` 带 `hysteresis_band=0.03`，抑制代理分噪声下的 A→B→A 抖动。
 3. **随机化对照（RandomizedControl）**：显式评估（`HUGINN_META_ABLATION=1`）时，champion vs 固定 baseline 各跑 N=3，比较**真实 r_phys 差分**验收——比单点代理分可靠，作为疑虑时的仲裁手段。
 4. **Goodhart 抑制（保留真实结果子集）**：evaluate 用一份对 strategist **不可见的 holdout 真实结果子集**做最终判断；strategist 无法只优化可见代理分。
+5. **可验证工作流验收门控（VerifiableGate，结合论文 arXiv:2609.03621）**：把 strategist 换件锚定从"代理分+采纳率"再上一级到**可验证的研究状态变换**——候选只有当其改进器产出的实验/计划在状态化仿真（优先接 `world_model.apply_forward` / `check_constraints`）下**验证通过**（变换类型化研究对象 + 前置满足 + 不违反约束）才被换件。机器可用且显式开启时硬 gate；不可用/未开时 advisory（不阻塞推进，回落 BehavioralFidelity 锚）。这按该文主张，把验收从"优化标量代理"根治为"验证能力受限变换"，是 Goodhart 的最终闸。
 
 ## 验收（test）
 

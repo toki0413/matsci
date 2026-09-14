@@ -203,6 +203,177 @@ class CompoundingTracker:
                 "deadlock_n": self._deadlock_n, "is_compounding": self.is_compounding()}
 
 
+def _behavioral_fidelity_default_path() -> Any:
+    """BehavioralFidelity 默认持久化路径."""
+    from pathlib import Path
+    return Path(get_runtime_home()) / "meta_improver" / "fidelity.json"
+
+
+class BehavioralFidelity:
+    """行为级奖励回流 — Goodhart 保真锚 (spec #1).
+
+    用「真实 apply_patches 采纳率」作复合指标的保真锚, 并把**经状态化仿真验证
+    (论文 arXiv:2609.03621 verified=True)** 的采纳以验证率轻微上修并 clamp 到
+    [0,1] — 验证加成绝不 push 出可信上限 (治 Goodhart: 代理分会饱和, 真实行为
+    采纳是不可随意优化的保真锚). default-中性 0.5 无记录时回落.
+    """
+
+    path: Any = None
+
+    def __init__(self, path: Any | None = None) -> None:
+        self._path = path or _behavioral_fidelity_default_path()
+        self._accepted: dict[str, int] = {}
+        self._applied: dict[str, int] = {}
+        self._verified: dict[str, int] = {}
+        self._load()
+
+    def _load(self) -> None:
+        with contextlib.suppress(Exception):
+            if self._path.exists():
+                d = json.loads(self._path.read_text(encoding="utf-8"))
+                self._accepted = {k: int(v) for k, v in d.get("accepted", {}).items()}
+                self._applied = {k: int(v) for k, v in d.get("applied", {}).items()}
+                self._verified = {k: int(v) for k, v in d.get("verified", {}).items()}
+
+    def _save(self) -> None:
+        with contextlib.suppress(Exception):
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            self._path.write_text(
+                json.dumps(
+                    {"accepted": self._accepted, "applied": self._applied,
+                     "verified": self._verified},
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+    _MAX = 50
+
+    def record_acceptance(
+        self, candidate_id: str, accepted: bool,
+        verified: bool | None = None,
+    ) -> None:
+        """记录一次真实 apply_patches 采纳.
+
+        verified: 论文 arXiv:2609.03621 — 该采纳是否经状态化仿真验证通过
+        (前置满足 + 约束合法 + 对象变换). 单独记账, 不覆盖采纳率主锚.
+        """
+        self._applied[candidate_id] = self._applied.get(candidate_id, 0) + 1
+        if accepted:
+            self._accepted[candidate_id] = self._accepted.get(candidate_id, 0) + 1
+        if verified is not None:
+            self._verified[candidate_id] = self._verified.get(candidate_id, 0) + 1
+        if len(self._applied) > self._MAX:  # LRU 抗无限增长
+            for k in list(self._applied)[: len(self._applied) - self._MAX]:
+                self._applied.pop(k, None)
+                self._accepted.pop(k, None)
+                self._verified.pop(k, None)
+        self._save()
+
+    def fidelity_score(self, candidate_id: str) -> float:
+        """采纳率 ETF 平滑的保真锚; 经状态化仿真验证的采纳加权上修 (clamp [0,1])."""
+        a = self._applied.get(candidate_id, 0)
+        if a == 0:
+            return 0.5  # 未知 → 中性
+        rate = self._accepted.get(candidate_id, 0) / a
+        v = self._verified.get(candidate_id, 0)
+        # 验证加成: 被仿真验证过的采纳更可信, 但加力不超过采纳率本身 (往 1 收敛)
+        # verified=False 显式记录 → 视为"未验证", 不上修.
+        if v > 0:
+            # 只对 accepted 计验证, 避免"拒绝也被上修"
+            verified_accepted = min(v, self._accepted.get(candidate_id, 0))
+            rate = rate + 0.15 * (verified_accepted / a)
+        return max(0.0, min(1.0, rate))
+
+    def anchor_in(self, candidate_id: str, p_quality: float,
+                  p_fidelity: float | None = None) -> float:
+        """加权合成: quality ⊕ 真实采纳保真 (各 0.5)."""
+        f = p_fidelity if p_fidelity is not None else self.fidelity_score(candidate_id)
+        return 0.5 * p_quality + 0.5 * f
+
+    def snapshot(self) -> dict[str, Any]:
+        return {
+            "accepted": dict(self._accepted),
+            "applied": dict(self._applied),
+            "verified": dict(self._verified),
+        }
+
+
+class VerifiableGate:
+    """可验证工作流验收门控 — 论文 arXiv:2609.03621 (spec #5).
+
+    论文主张: 用「可计算实验室表示」(类型化研究对象 + 能力受限操作 + 组合工作流
+    代数) 建立 agent 推理与能力受限物理变换之间的通用计算接口, 并在**派发前**用
+    状态化仿真验证操作前置条件与实验室约束. 本类把 strategies/improver 换件验收
+    从「优化标量代理分」根治为「验证能力受限变换」:
+
+    - ``verify_outcome(plan)``: 尽力接入 ``huginn.security.world_model`` 的
+      ``apply_forward`` / ``check_constraints`` (模块级纯函数), 验证:
+        前置条件满足 + 变换类型化对象 + 不违反实验室约束. 通过 → True.
+    - ``enabled()``: 机器可用且显式开启 (``harness_verifiable_gate``) 才是硬 gate;
+      不可用/未开 → advisory (不阻塞推进, 回落 BehavioralFidelity 锚).
+    """
+
+    def __init__(self) -> None:
+        self._current_state: dict[str, Any] = {}
+
+    def enabled(self) -> bool:
+        return _harness_enabled("harness_verifiable_gate")
+
+    def _world_available(self) -> bool:
+        try:
+            import huginn.security.world_model as wm
+            return wm is not None
+        except Exception:
+            return False
+
+    def verify_outcome(self, plan_or_experiment: dict[str, Any]) -> dict[str, Any]:
+        """在状态化仿真下验证一个实验/计划.
+
+        plan 形态: ``{"state": {...}, "action": PhysicalAction}``  或
+                   ``{"state": {...}, "action_type": str, "params": {...}}``
+        返回: ``{"passed": bool, "new_state": dict|None, "error": str|None,
+                 "issues": list[str]}``. world_model 不可用 → passed=False,
+        不抛异常 (advisory caller 决定是否阻塞).
+        """
+        import huginn.security.world_model as wm
+
+        state = dict(self._current_state)
+        if isinstance(plan_or_experiment.get("state"), dict):
+            state = dict(plan_or_experiment["state"])
+        action = plan_or_experiment.get("action")
+        if isinstance(action, dict):
+            action = wm.PhysicalAction(
+                action.get("type", ""), dict(action.get("params") or {})
+            )
+        elif action is None:
+            action_type = plan_or_experiment.get("action_type")
+            if not action_type:
+                return {"passed": False, "new_state": None,
+                        "error": "no action in plan", "issues": ["missing_action"]}
+            action = wm.PhysicalAction(action_type, dict(plan_or_experiment.get("params") or {}))
+        try:
+            # 能力受限操作: 动作类型必须落在已知变换集内, 否则拒绝无依据转移
+            known = set(getattr(wm, "FORWARD_EFFECTS", {}))
+            if action.type not in known:
+                return {"passed": False, "new_state": None,
+                        "error": f"unknown_capability: {action.type}",
+                        "issues": [f"unknown_capability:{action.type}"]}
+            # 前置条件 + 实验室约束 (空 issues = 合法)
+            issues = wm.check_constraints(state, action)
+            if issues:
+                return {"passed": False, "new_state": None,
+                        "error": "; ".join(issues), "issues": issues}
+            # 传播类型化研究对象变换
+            new_state = wm.apply_forward(state, action)
+            self._current_state = dict(new_state)
+            return {"passed": True, "new_state": new_state,
+                    "error": None, "issues": []}
+        except Exception as exc:  # 世界模型内部故障 → advisory fail, 不硬崩
+            return {"passed": False, "new_state": None,
+                    "error": str(exc), "issues": ["world_model_error"]}
+
+
 def build_improver_prompt(
     template: str, phase: str, block_names: list[str], r_phys: float | None,
     directive: str,
