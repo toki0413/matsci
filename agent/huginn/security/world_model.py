@@ -302,3 +302,65 @@ def learned_world_model(path: Any | None = None) -> LearnedWorldModel:
         else:
             _LEARNED_INSTANCE = LearnedWorldModel()
     return _LEARNED_INSTANCE
+
+
+# ── 仿真世界 + 协调净评价器 (world-closure 目标域) ───────────────────────────
+# 给 RSI 干净跑一个"真实"目标域: agent 在 SimWorld 里执行动作, 世界返回真实观测,
+# 评价器根据真实状态产出 r_phys. 由此 RPhys 归因 / VerifiableGate 真实实验 /
+# LearnedWorldModel 学习 / RandomControl 采样 都对着真实世界产物闭合, 而非空转.
+
+
+class SimWorld:
+    """确定性液相传移仿真世界 + 协调净评价器.
+
+    - ``step(action)``: 应用"真实"转移效果 (与 FORWARD_EFFECTS 同构) 并返回观测.
+      含小幅确定性噪声, 让数据驱动世界模型必须从多次执行学习均值.
+    - ``r_phys()``: 协调净评价器 — 越接近目标态 (reagent 逼近 target) r_phys 越高.
+    - ``snapshot``/``reset``: 状态管理.
+    """
+
+    def __init__(self, target_reagent: float = 2.0, noise: float = 0.05,
+                 seed: int = 7) -> None:
+        import random
+
+        self._rng = random.Random(seed)
+        self.target_reagent = target_reagent
+        self.noise = noise
+        self.state: dict[str, float] = {"reagent_vol": 10.0, "sample_vol": 0.0,
+                                        "tube_vol": 0.0}
+        self._moves = 0
+
+    def step(self, action: PhysicalAction) -> dict[str, float]:
+        """执行动作并返回观测世界状态 (含噪声)."""
+        st = dict(self.state)
+        eff = FORWARD_EFFECTS.get(action.type)
+        if eff is not None:
+            dec_key, inc_key, vol_param = eff
+            v = self._as_maybe(action.params.get(vol_param, 0) or 0)
+            n = self._rng.uniform(-self.noise, self.noise)
+            if dec_key:
+                st[dec_key] = max(0.0, self._as_maybe(st.get(dec_key, 0.0)) - v)
+            if inc_key == "mixed":
+                st["mixed"] = True
+            elif inc_key == "aliquot_count":
+                st["aliquot_count"] = int(st.get("aliquot_count", 0)) + 1
+            elif inc_key:
+                st[inc_key] = self._as_maybe(st.get(inc_key, 0.0)) + v + n
+        self.state = st
+        self._moves += 1
+        return dict(st)
+
+    def r_phys(self) -> float:
+        """协调净评价器: 离目标态越近 r_phys 越高 (真实世界评分, 非代理)."""
+        err = abs(self._as_maybe(self.state.get("reagent_vol", 0.0)) - self.target_reagent)
+        return max(0.0, min(1.0, 1.0 - err / 10.0))
+
+    def snapshot(self) -> dict[str, float]:
+        return dict(self.state)
+
+    @staticmethod
+    def _as_maybe(v: Any) -> float:
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return 0.0
