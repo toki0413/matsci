@@ -42,6 +42,8 @@ logger = logging.getLogger(__name__)
 _REPLAY_MAX = 10
 # 每成功生成多少 patch 触发一次 maybe_propose.
 _PROPOSE_EVERY_N = 5
+# 每多少轮 level-0 提案触发一次 strategist 层提案 (递归环的生产驱动周期).
+_STRATEGIST_EVERY_N_PROPOSALS = 3
 # 显著性验收最小样本量 (和 SignificanceGate 默认同步).
 _MIN_SAMPLES = 5
 # r_phys 阈值扰动约束.
@@ -201,11 +203,20 @@ class CompoundingTracker:
         return True
 
     def would_degrade(self, new: str, incumbent: str) -> bool:
+        """换件是否会退化: 候选(new)最近质量显著低于历史上的最优质量
+        (incumbent 代表当前朝上的基线), 且复合不再上行 → 判定退化.
+
+        - ``new``: 候选 config 最近一次 record 的质量 (若未 record 过则无据,
+          用全局窗口末位作保守近似).
+        - ``incumbent``: 当前 champion id (仅作语义锚; 质量取窗口最优).
+        """
         ys = self._quality_series()
         if not ys:
             return False
         best = max(ys)
-        cur = ys[-1]
+        # 候选近期质量: 本配置最近行的质量, 否则取窗口末位 (保守).
+        new_qs = [r["quality"] for r in self._rows if r["config_id"] == new]
+        cur = new_qs[-1] if new_qs else ys[-1]
         return (cur < best - self.hysteresis_band) and not self.is_compounding()
 
     def mark_deadlock(self, yellow: bool) -> None:
@@ -403,6 +414,9 @@ class RandomizedControl:
 
     def __init__(self) -> None:
         self.override_pair: dict[str, Any] | None = None
+        # 真实 r_phys 采样 (由评估方注入; 空 = 未提供 → run_pair 中位差基于空 → 保守)
+        self.champion_r: list[float] = []
+        self.baseline_r: list[float] = []
 
     def enabled(self) -> bool:
         return os.environ.get("HUGINN_META_ABLATION", "").lower() in ("1", "true", "yes")
@@ -515,7 +529,11 @@ class MetaImprover:
         self._active_strategist_id: str | None = None
         self._tracker = CompoundingTracker()
         self._coeffect: Any = None
+        self._fidelity = BehavioralFidelity(path=self._dir / "fidelity.json")
+        self._compounding_path = self._dir / "compounding.json"
+        self._strategy_proposals = 0
         self._load()
+        self._load_compounding()
         with contextlib.suppress(Exception):
             self._strategists_dir.mkdir(parents=True, exist_ok=True)
 
@@ -590,6 +608,29 @@ class MetaImprover:
             (self._strategists_dir / f"{s.config_id}.json").write_text(
                 json.dumps(s.to_dict(), ensure_ascii=False, indent=2),
                 encoding="utf-8",
+            )
+
+    def _load_compounding(self) -> None:
+        """载入已持久化的复合追踪器窗口 (compounding.json, spec data shape)."""
+        with contextlib.suppress(Exception):
+            if self._compounding_path.exists():
+                d = json.loads(self._compounding_path.read_text(encoding="utf-8"))
+                rows = d.get("rows") or []
+                if rows:
+                    self._tracker._rows = [dict(r) for r in rows][-self._tracker.window:]
+                self._tracker._deadlock_n = int(d.get("deadlock_n", 0))
+
+    def _save_compounding(self) -> None:
+        """把复合追踪器窗口与死锁计数落盘 (compounding.json, spec data shape)."""
+        with contextlib.suppress(Exception):
+            self._dir.mkdir(parents=True, exist_ok=True)
+            data = {
+                "rows": self._tracker._rows,
+                "deadlock_n": self._tracker._deadlock_n,
+                **self._tracker.stats(),
+            }
+            self._compounding_path.write_text(
+                json.dumps(data, ensure_ascii=False), encoding="utf-8"
             )
 
     def _trace(self, entry: dict[str, Any]) -> None:
@@ -734,26 +775,94 @@ class MetaImprover:
 
     # ── evaluate / promote strategist (门控组合) ──────────────────────────────
     async def evaluate_strategist(self, candidate_id: str, llm_chat_fn: Callable) -> dict[str, Any]:
-        """评估 strategist 候选: 复用层 sig+ood 门控 (离线, 不换件).
+        """评估 strategist 候选并**真实记录** sig/ood 数据 (离线, 不换件).
 
-        返回 ``{"green", "sig", "ood"}`` 供 promote 作判据 (未接 LLM 打分,
-        以已注册的 sig/ood 数据为准; llm_chat_fn 保留为参数契约, advisory).
+        候选策略与基准 (默认 ``_META_IMPROVE_TEMPLATE``) 都是「改写 improver 模板」
+        的机制模板: 分别回填探针上下文后送 LLM 产 improver 模板, 再各自对冻结
+        重放集产 patch 打分, 配对记录进 SignificanceGate + OODHoldoutValidator
+        (HIGH-1 修复 — 让候选有真实数据可判).
+
+        返回 ``{"green", "sig", "ood", "base_mean", "cand_mean", "n"}``.
         """
         if not self.enabled():
-            return {"green": False, "reason": "disabled", "sig": False, "ood": False}
+            return {"green": False, "sig": False, "ood": False, "n": 0}
         s = self._strategists.get(candidate_id)
         if s is None:
-            return {"green": False, "reason": "unknown", "sig": False, "ood": False}
+            return {"green": False, "sig": False, "ood": False, "n": 0}
+        if not self._replay:
+            return {"green": False, "sig": False, "ood": False, "n": 0}
         from huginn.harness.significance_gate import SignificanceGate
         from huginn.harness.ood_holdout import OODHoldoutValidator
-        sig_ok = SignificanceGate.get_instance().gate_decision(
-            candidate_id, min_samples=_MIN_SAMPLES,
-        ).passed
-        ood_ok = OODHoldoutValidator.get_instance().validate_ood(candidate_id).passed
+        sig, ood = SignificanceGate.get_instance(), OODHoldoutValidator.get_instance()
+        base_scores: list[float] = []
+        cand_scores: list[float] = []
+        for probe in self._replay:
+            # 各产 improver 模板 (策略提示 → improver 模板)
+            base_tpl = await self._meta_prompt_to_improver(
+                _META_IMPROVE_TEMPLATE, probe, llm_chat_fn)
+            cand_tpl = await self._meta_prompt_to_improver(
+                s.strategist_prompt, probe, llm_chat_fn)
+            if base_tpl is None or cand_tpl is None:
+                continue
+            base_score = await self._score_improver_on_probe(
+                ImproverConfig(config_id="_base", improver_prompt=base_tpl), probe, llm_chat_fn)
+            cand_score = await self._score_improver_on_probe(
+                ImproverConfig(config_id=candidate_id, improver_prompt=cand_tpl), probe, llm_chat_fn)
+            if base_score is None or cand_score is None:
+                continue
+            base_scores.append(base_score)
+            cand_scores.append(cand_score)
+            task_id = str(probe.get("probe_id") or probe.get("ts") or random.random())
+            sig.record_pair(candidate_id, base_score, cand_score, task_id=task_id)
+            ood.record_outcome(ood._BASELINE_ID, task_id, base_score)
+            ood.record_outcome(candidate_id, task_id, cand_score)
+        sig_ok = sig.gate_decision(candidate_id, min_samples=_MIN_SAMPLES).passed
+        ood_ok = ood.validate_ood(candidate_id).passed
         green = bool(sig_ok and ood_ok)
         self._trace({"type": "strategy_evaluate", "candidate_id": candidate_id,
-                     "sig": sig_ok, "ood": ood_ok, "green": green})
-        return {"green": green, "sig": sig_ok, "ood": ood_ok}
+                     "sig": sig_ok, "ood": ood_ok, "green": green,
+                     "n": len(base_scores)})
+        return {"green": green, "sig": sig_ok, "ood": ood_ok,
+                "base_mean": _mean(base_scores), "cand_mean": _mean(cand_scores),
+                "n": len(base_scores)}
+
+    async def _meta_prompt_to_improver(
+        self, meta_tpl: str, probe: dict[str, Any], llm_chat_fn: Callable,
+    ) -> str | None:
+        """把 meta 提示模板回填探针上下文送 LLM, 期望它返回一个 improv 模板.
+
+        返回必须能被 build_improver_prompt 用 {phase}/{block_names}/{r_phys}/
+        {directive} 实例化 (即含四个占位符); 否则 None."""
+        try:
+            prompt = meta_tpl.format(
+                current_template=probe.get("improver_template") or DEFAULT_IMPROV_TEMPLATE,
+                n_proposals=len(self._candidates), n_promotions=len(self._history),
+                phase=probe.get("phase", ""),
+                block_names=", ".join(probe.get("block_names", [])),
+                r_phys=(f"{probe.get('r_phys', 0.0):.2f}" if probe.get("r_phys") is not None else "None"),
+                directive=probe.get("directive", ""),
+            )
+        except (KeyError, IndexError, ValueError):
+            return None
+        try:
+            resp = await llm_chat_fn(prompt, task="summarize")
+        except Exception:
+            return None
+        if not resp or not resp.strip():
+            return None
+        tpl = resp.strip()
+        if tpl.startswith("```"):
+            tpl = tpl.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+        for ph in ("{phase}", "{block_names}", "{r_phys}", "{directive}"):
+            if ph not in tpl:
+                return None
+        return tpl or None
+
+    async def _score_improver_on_probe(
+        self, cfg: ImproverConfig, probe: dict[str, Any], llm_chat_fn: Callable,
+    ) -> float | None:
+        """用 improver 模板在单个探针上产 patch 打分 (复用 _score_candidate)."""
+        return await self._score_candidate(cfg, probe, llm_chat_fn)
 
     def maybe_promote_strategist(self, candidate_id: str, ctx: Any | None = None) -> bool:
         """strategist 换件门控: 显著 + OOD + 复合不退化 → 事务内换件.
@@ -790,27 +899,37 @@ class MetaImprover:
             return False
         # 可验证工作流 gate (advisory): 通关则强化可信; 未开/不可用不阻塞
         verified = self._verify_strategist_outcome(s)
-        # 随机化对照仲裁 (HUGINN_META_ABLATION=1): champion 劣于 baseline → 拒绝
+        # 随机化对照仲裁 (HUGINN_META_ABLATION=1): 真实 r_phys 差分 champion 劣于
+        # baseline(或未提供对照) → 拒绝. 由 _randomized_control 注入真实样本.
         rc = _randomized_control()
-        if rc.enabled() and not rc.run_pair(champion_r=[], baseline_r=[])["champion_better"]:
-            self._trace({"type": "strategy_reject", "candidate_id": candidate_id,
-                         "reason": "ablation_champion_worse"})
-            return False
+        if rc.enabled():
+            pair = rc.run_pair(champion_r=rc.champion_r, baseline_r=rc.baseline_r)
+            if not pair["champion_better"]:
+                self._trace({"type": "strategy_reject", "candidate_id": candidate_id,
+                             "reason": "ablation_champion_worse"})
+                return False
         self._tracker.mark_deadlock(yellow=False)
-        rctx = ctx or RevertibleContext()
+        rctx = ctx or RevertibleContext(
+            journal_path=self._dir / "revertible_journal.json"
+            if (self._dir / "revertible_journal.json").parent.exists() else None,
+        )
         try:
+            _register_strategist_compensator()  # 确保生产已注册 (幂等)
             with rctx.transaction():
                 self._apply_strategist_swap(incumbent, candidate_id, rctx)
         except Exception as exc:
             logger.debug("meta: strategist promote txn failed", exc_info=True)
             return False
+        # 复合指标用 BehavioralFidelity 保真锚合成真实质量 (治 Goodhart, 非硬编码常数)
+        quality = self._fidelity.anchor_in(candidate_id, p_quality=0.8)
         self._tracker.record(
             epoch=len(self._tracker._rows), config_id=candidate_id,
-            quality=0.8, fidelity=0.5, proposals_to_promotion=1,
-            generations_to_promotion=1, win_rate=1.0,
+            quality=quality, fidelity=self._fidelity.fidelity_score(candidate_id),
+            proposals_to_promotion=1, generations_to_promotion=1, win_rate=1.0,
         )
+        self._save_compounding()
         self._trace({"type": "strategy_promote", "candidate_id": candidate_id,
-                     "verified": verified})
+                     "verified": verified, "quality": round(quality, 3)})
         return True
 
     def _verify_strategist_outcome(self, s: StrategistConfig) -> bool | None:
@@ -914,9 +1033,17 @@ class MetaImprover:
             if self._propose_count % _PROPOSE_EVERY_N == 0:
                 cid = await self.maybe_propose(llm_chat_fn)
                 # 闭环: 提案后立即离线评估并按 GREEN 换件 (默认关; 打开了才有 LLM 开销)
+                self._strategy_proposals += 1
                 if cid:
                     await self.evaluate(cid, llm_chat_fn)
                     self.maybe_promote(cid)
+                # 递归环驱动 (HIGH-3 修复): 每隔 N 次 level-0 提案触发一次
+                # strategist 层 提案→评估→换件, 让"改进方式可被改进"有生产入口.
+                if self._strategy_proposals % _STRATEGIST_EVERY_N_PROPOSALS == 0:
+                    sid = await self.maybe_propose_strategist(llm_chat_fn)
+                    if sid:
+                        await self.evaluate_strategist(sid, llm_chat_fn)
+                        self.maybe_promote_strategist(sid)
         except Exception as exc:
             logger.debug("meta note_generation/maybe_propose failed", exc_info=True)
 

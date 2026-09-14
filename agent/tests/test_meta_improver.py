@@ -584,3 +584,96 @@ def test_maybe_promote_gates_on_ablation(tmp_path: Path) -> None:
     finally:
         os.environ.pop("HUGINN_META_ABLATION", None)
         mi2._RC_INSTANCE = None
+
+
+# ── HIGH-1/3 修复验收: strategist 层端到端真实数据流 ─────────────────────────
+def test_strategist_ring_drives_production(tmp_path: Path) -> None:
+    """note_generation 驱动 strategist 递归环 (HIGH-3), evaluate_strategist 产
+    真实 sig/ood 数据 (HIGH-1) → 好策略 GREEN 换件."""
+
+    async def good_llm(prompt: str, task: str = "summarize") -> str:
+        # 区分三类提示:
+        # 1) "产出 improver 模板" 的 meta 提示 — 返回一个不同类型模板,
+        #    让候选策略产生的模板比默认的更能对齐 directive (打分更高).
+        # 2) "用 improver 模板产 patch" — 返回有效 JSON patch; 若当前 improver
+        #    模板指向 good(therefore cand)则 patch 含 directive 词→高分, 否则低分.
+        if prompt.startswith(mi._META2_IMPROVE_TEMPLATE[:40]):
+            # level-1 提案: 返回候选策略模板 (含 GOOD-STRATEGIST 标记 + 4 占位)
+            return "GOOD-STRATEGIST current_template={current_template} p={n_proposals} q={n_promotions}"
+        if prompt.startswith(mi._META_IMPROVE_TEMPLATE[:40]):
+            # 默认 meta 模板 → 差 improver 模板 (不含 phase 对齐词)
+            return "sloppy improver Phase:{phase} Blocks:{block_names} R:{r_phys} D:{directive} JSON only."
+        if "GOOD-STRATEGIST" in prompt:
+            # 候选策略模板 → 好 improver 模板 (对齐 direct)
+            return "careful improver Phase:{phase} Blocks:{block_names} R:{r_phys} D:{directive} focus-hint JSON only."
+        # 产 patch: 若 prompt 里含 directive 对齐词 focus-hint 说明是好 improver
+        return ('{"block_name": "mem", "op": "append", "new_text": "focus-hint"}'
+                if "focus-hint" in prompt else "not-json")
+
+    meta = _meta_on(tmp_path)
+    # 填重放集, 让 evaluate 有样本
+    for i in range(40):
+        meta._replay.append(
+            {"phase": "hypothesize", "block_names": ["body", "mem", "fail"],
+             "r_phys": 0.5, "directive": f"plain-directive {i}",
+             "ts": float(200 + i), "probe_id": f"ring_{i:02d}"}
+        )
+    meta._save_replay()
+
+    # 直接驱动一环: 提案→评估→换件
+    sid = asyncio.run(meta.maybe_propose_strategist(good_llm))
+    assert sid is not None, "strategist should propose"
+    r = asyncio.run(meta.evaluate_strategist(sid, good_llm))
+    # 记录的数据应让它进入 sig/ood 判定
+    assert r["sig"] is True and r["ood"] is True, f"应 GREEEN: {r}"
+    assert meta.maybe_promote_strategist(sid) is True
+    assert meta.strategist_champion() is not None, "换件后应有 champion"
+    assert meta.compounding_trace()["n_strategists"] >= 1
+
+
+def test_note_generation_triggers_strategist_ring(tmp_path: Path) -> None:
+    """note_generation 在多次 level-0 提案后触发 strategist 环 (有生产入口)."""
+    meta = _meta_on(tmp_path)
+
+    async def ring_llm(prompt: str, task: str = "summarize") -> str:
+        if prompt.startswith(mi._META2_IMPROVE_TEMPLATE[:40]):
+            return "my-strategist current_template={current_template} p={n_proposals} q={n_promotions}"
+        return '{"block_name": "mem", "op": "append", "new_text": "x"}'
+
+    # 每 _PROPOSE_EVERY_N=5 次 generation 触发一次 level-0; _STRATEGIST_EVERY_N=3
+    # 次 level-0 提案触发一次 strategist. 跑足 5*3=15 次 generation
+    n_before = meta.compounding_trace()["n_strategists"]
+    for i in range(16):
+        asyncio.run(meta.note_generation(
+            "hypothesize", [("body", "b"), ("mem", "m")], 0.5, f"hint {i}", ring_llm,
+        ))
+    assert meta.compounding_trace()["n_strategists"] > n_before, "strategist 环应被生产驱动"
+
+
+def test_compounding_persistence(tmp_path: Path) -> None:
+    """promote 后 compounding.json 落盘, reload 保留窗口 (spec data shape)."""
+    from huginn.harness.meta_improver import (
+        MetaImprover, StrategistConfig, _register_strategist_compensator,
+    )
+    meta = _meta_on(tmp_path)
+    _register_strategist_compensator()
+    sg = SignificanceGate.get_instance()
+    ood = OODHoldoutValidator.get_instance()
+    for i in range(8):
+        sg.record_pair("s_persist", 0.3, 0.9, task_id=f"p{i}")
+    for i in range(24):
+        t = f"ps{i:02d}"
+        ood.record_outcome(ood._BASELINE_ID, t, 0.4)
+        ood.record_outcome("s_persist", t, 0.9)
+    meta._strategists["s_persist"] = StrategistConfig(config_id="s_persist", strategist_prompt="P")
+    for i in range(4):
+        meta._tracker.record(epoch=i, config_id="x", quality=0.5 + 0.1 * i, fidelity=0.6,
+                             proposals_to_promotion=1, generations_to_promotion=3, win_rate=0.9)
+    assert meta.maybe_promote_strategist("s_persist") is True
+    assert meta._compounding_path.exists(), "compounding.json 应落盘"
+    data = json.loads(meta._compounding_path.read_text(encoding="utf-8"))
+    assert data["rows"], "compounding.json 应含窗口 rows"
+    # reload: 窗口保留
+    MetaImprover._instance = None
+    meta2 = MetaImprover.get_instance()
+    assert len(meta2._tracker._rows) >= 1, "reload 后复合窗口保留"
