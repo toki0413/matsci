@@ -54,12 +54,16 @@ StrategistImprover (MetaImprover 内部扩展, 同单例)
 - 复合退化即 `revert_strategist` 回上一 champion（元层级 darwin-ratchet），**带滞回带**（#2）防 A→B→A 抖动。
 - **死锁检测（#2）**：strategist 连续 `deadlock_timeout` 次 YELLOW（样本不足/不显著）→ 自动降级门槛（降 `min_samples`）或改 advisory，避免"演化近惰性"。
 - **随机化对照（#3）**：显式评估时（`HUGINN_META_ABLATION=1`）用 champion vs 固定 baseline 各跑 N 次，比较**真实 r_phys 差分**验收（比单点代理分可靠）。默认 off。
+- **时空可组合（Cordis，并入）**：
+  - **时间**：`maybe_promote_strategist` 在 `RevertibleContext.transaction()` 内执行；换件时 `ctx.compensate("strategist_swap", {old_cid, new_cid, store})` 并注册 `_compensate_strategist_swap`。复合护栏触发 → 对本 scope `revert_all()` LIFO 撤销 → 回滚到上一 champion，并**与同一 run 内其他副作用（git_commit / memory）扭结恢复**。该 op 可落 journal → `recover_from` 跨崩溃重放恢复正确 champion。
+  - **空间**：用 `CoEffectRegistry.declare` 声明依赖 `strategist(provides=improvement_strategy, requires=gate/fidelity)`、`improver(requires=improvement_strategy)`、`gate(provides=gate)`、`fidelity(provides=fidelity)`；strategist 缺失/被 degrade → improver 自动退化到默认模板（`degrade 不停跑无依据步骤`），与 `PhysicalWorkspace` 同一立场。
 
 ## data shape
 
 - `.huginn/harness/meta_improver/strategist/<id>.json`: `StrategistConfig.to_dict()` + `config.json` 记录 `{active_strategist_id, strategies_history}`。
 - `.huginn/harness/meta_improver/compounding.json`: `{window: [...], slope, cost_trend, best_quality, deadlock_n}`。
 - `.huginn/harness/meta_improver/fidelity.json`: `{candidate_id: {accepted, applied, fidelity_score}}`（BehavioralFidelity 采纳统计，LRU 上限 50）。
+- `.huginn/harness/meta_improver/revertible_journal.json`: strategist 换件的补偿逆（`OP_COMPENSATE`）journal，供 `recover_from` 跨崩溃重放。
 - `meta_trace.jsonl` 追加事件类型 `strategy_propose / strategy_evaluate / strategy_promote / strategy_revert / fidelity_accept`。
 - 注意：strategist 与 improver 两组 champion 独立持久化，互不覆盖；`strategist/` 与 `fidelity.json` 均设 LRU 上限防无限增长（#2 资源）。
 
@@ -82,6 +86,7 @@ StrategistImprover (MetaImprover 内部扩展, 同单例)
 6. **BehavioralFidelity 锚**：采纳率高则复合指标上修、低则下修；`fidelity.json` 持久化。
 7. **随机化对照**：`run_pair` 在寓真 r_phys 差分下判定 champion vs baseline（`HUGINN_META_ABLATION=1` 分支）。
 8. **Goodhart holdout**：strategist 看不到保留子集 → 不因可见代理分过度贴合。
+9. **时空可组合**：`maybe_promote_strategist` 在 `transaction()` 内；切换后在 `revert_all()` 下恢复上一 champion；`strategist_swap` 补偿器经 `compensate` 注册、journal 可重放；`CoEffectRegistry.declare` 使 improver 在 strategist 缺席时 `is_active=False` → 退化默认。
 
 ## failure modes / deferred
 
@@ -97,5 +102,6 @@ StrategistImprover (MetaImprover 内部扩展, 同单例)
 
 - `MetaImprover`（M-R1）：被扩展为 level-0（improver）与 level-1（strategist）两层，复用其 gate 数学。
 - `SignificanceGate` / `OODHoldoutValidator` / `AdoptionGate`：复用，不重写。
+- `RevertibleContext`（`huginn/security/revertible.py`）+ `CoEffectRegistry`（`huginn/security/coeffect.py`）：**时空可组合** —— strategist 换件做为可逆补偿效应（时间），strategist/improver/gate/fidelity 依赖图用 provides/requires 声明（空间）。不改 revertible/coeffect 本身，只是接入（同 `PhysicalWorkspace` 立场）。
 - `_enabled.py`：`harness_meta_improver` 开启后两层才生效（默认关）。
 - ROADMAP 独立轨道；设计文档 `2026-09-13-recursive-compounding-design.md`。
