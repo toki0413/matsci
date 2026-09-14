@@ -1224,10 +1224,49 @@ def _selfcheck() -> None:
     assert meta._trace_path.exists(), "meta_trace should be written"
     print(f"5. champion history + trace OK (promotions={tr['n_promotions']})")
 
+    # 6. 论文 arXiv:2609.03621 — VerifiableGate 状态化仿真 + BehavioralFidelity 锚
+    vg = mi.VerifiableGate()
+    okv = vg.verify_outcome({"action_type": "aspirate", "params": {"vol": 1.0},
+                             "state": {"reagent_vol": 5.0, "sample_vol": 0.0}})
+    assert okv["passed"] is True, okv
+    assert abs(okv["new_state"]["reagent_vol"] - 4.0) < 1e-9, okv
+    badv = vg.verify_outcome({"action_type": "aspirate", "params": {"vol": 99.0},
+                              "state": {"reagent_vol": 5.0}})
+    assert badv["passed"] is False and badv["issues"], badv
+    bf = mi.BehavioralFidelity(path=str(os_env.path.join(tmp, "fidelity.json"))
+                               if hasattr(os_env, "path") else tmp + "/fidelity.json")
+    bf.record_acceptance("bx", accepted=True)
+    bf.record_acceptance("bx", accepted=False)
+    assert abs(bf.fidelity_score("bx") - 0.5) < 1e-9
+    assert abs(bf.anchor_in("bx", p_quality=0.8) - 0.65) < 1e-9
+    print("6. VerifiableGate(论文) + BehavioralFidelity 锚 OK")
+
+    # 7. strategist 递归链: 默认回落 → propose 候选 → champion 激活与回落
+    assert meta.strategist_prompt(), "strategist fallback present"
+    # maybe_propose_strategist 的校验 .format 只给 current_template/n_proposals/
+    # n_promotions; 候选只含这些占位符才不会 KeyError.
+    _new_strat_tpl = ("strategize {current_template} p={n_proposals} "
+                      "prom={n_promotions}")
+
+    async def _strat_llm(prompt, task="summarize"):
+        if prompt.startswith(mi._META2_IMPROVE_TEMPLATE[:40]):
+            return _new_strat_tpl
+        return "not-json"
+
+    strat_id = asyncio.run(meta.maybe_propose_strategist(_strat_llm))
+    assert strat_id is not None, "strategist should propose (valid template)"
+    assert meta.compounding_trace()["n_strategists"] >= 1
+    # 候选模板能被 maybe_propose 用 .format 实例化 (改进方式可被改进)
+    tpl = meta._strategists[strat_id].strategist_prompt
+    assert "{current_template}" in tpl
+    # 激活策略得先通过 promote 门控; 这里只验证候选登记与回落路径
+    assert meta.strategist_champion() is None, "未 promote 前不应有 champion"
+    print("7. strategist 递归链候选 + 回落 OK")
+
     shutil.rmtree(tmp, ignore_errors=True)
     del os_env.environ["HUGINN_CACHE_DIR"]
     mi.MetaImprover._instance = None
-    print("\nM-R1 meta_improver selfcheck OK (5/5)")
+    print("\nM-R1 meta_improver selfcheck OK (7/7)")
 
 
 if __name__ == "__main__":
