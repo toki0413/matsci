@@ -677,3 +677,120 @@ def test_compounding_persistence(tmp_path: Path) -> None:
     MetaImprover._instance = None
     meta2 = MetaImprover.get_instance()
     assert len(meta2._tracker._rows) >= 1, "reload 后复合窗口保留"
+
+
+# ── A1 端到端轨道: 真实 r_phys 真实验收 (论文 2609.03621 地面真值通道) ────────
+def test_rphys_track_verdict_up() -> None:
+    """配置驱动时真实 r_phys 显著高于池 (其余配置) → rphys_green."""
+    from huginn.harness.meta_improver import RPhysTrack
+    tr = RPhysTrack(path=None)
+    # 目标配置 + 一个低频池配置 + 默认 baseline: 让池足够且明显更低
+    for v in (0.2, 0.2, 0.2):
+        tr.record("other", v)
+    for v in (0.8, 0.8, 0.8):
+        tr.record("good", v)
+    res = tr.verdict("good")
+    assert res["green"] is True, res
+    assert res["n"] == 3 and res["pool"] == 3
+    assert res["median_track"] > res["median_pool"]
+
+
+def test_rphys_track_verdict_down() -> None:
+    """配置驱动时真实 r_phys 不高于池 → 非 green (显著上行失败)."""
+    from huginn.harness.meta_improver import RPhysTrack
+    tr = RPhysTrack(path=None)
+    for v in (0.8, 0.8, 0.8):
+        tr.record("good_base", v)
+    for v in (0.2, 0.2, 0.2):
+        tr.record("bad", v)
+    res = tr.verdict("bad")
+    assert res["green"] is False, res
+
+
+def test_rphys_track_insufficient_advisory() -> None:
+    """样本不足 (<3 或 无池) → green=None (advisory 不阻塞, 回落代理分闸)."""
+    from huginn.harness.meta_improver import RPhysTrack
+    tr = RPhysTrack(path=None)
+    tr.record("solo", 0.8)
+    tr.record("solo", 0.8)
+    assert tr.verdict("solo")["green"] is None  # 无池
+    tr.record("pool", 0.5)
+    assert tr.verdict("solo")["green"] is None  # 自身 <3
+    assert tr.verdict("solo")["reason"] == "insufficient"
+
+
+def test_rphys_track_persistence(tmp_path: Path) -> None:
+    """rphys.json 落盘 + reload 保留真实代际序列."""
+    from huginn.harness.meta_improver import RPhysTrack
+    path = tmp_path / "rphys.json"
+    tr = RPhysTrack(path=path)
+    tr.record("good", 0.9)
+    tr.record("good", 0.95)
+    assert path.exists(), "rphys.json 应落盘"
+    tr2 = RPhysTrack(path=path)
+    assert tr2.series("good") == [0.9, 0.95]
+
+
+def test_note_generation_attributes_rphys(tmp_path: Path) -> None:
+    """note_generation 把真实 r_phys 归因到当时 active 改进器配置;
+    无 champion → 归因 _base. 供 evaluate/compounding_trace 地面真值通道使用."""
+    from huginn.harness.meta_improver import ImproverConfig, MetaImprover
+    meta = _meta_on(tmp_path)
+
+    async def fake(prompt: str, task: str = "summarize") -> str:
+        return '{"block_name": "mem", "op": "append", "new_text": "x"}'
+
+    # 无 champion → 归因 _base
+    asyncio.run(meta.note_generation("h", [("body", "b"), ("mem", "m")],
+                                     0.55, "hint", fake))
+    assert meta._rphys.series("_base") == [0.55], "无 champion 应归因 _base"
+    assert meta._rphys._path.exists(), "rphys.json 应写入"
+
+    # 有 active champion → 归因该 champion
+    champ = ImproverConfig(config_id="c1", improver_prompt="P", r_phys_gate=0.7)
+    champ.active = True
+    meta._candidates["c1"] = champ
+    meta._active_id = "c1"
+    asyncio.run(meta.note_generation("h", [("body", "b"), ("mem", "m")],
+                                     0.7, "hint", fake))
+    assert meta._rphys.series("c1") == [0.7], "应归因 active champion"
+    # 冷启动时 champion 可能未部署, 此时 verdict 为 advisory (None)
+    assert meta.compounding_trace()["rphys_active_verdict"]["green"] is None
+
+
+def test_maybe_promote_rphys_hard_gate(tmp_path: Path) -> None:
+    """harness_rphys_gate 开启 + 候选真实 r_phys 未显著上行 → 拒绝换件.
+
+    代理分 (sig+ood) 说好, 但真实物理验证分没跟上去 — 端到端地面真值拦下, 防
+    LLM 代理分 gaming (论文 2609.03621). 默认 off 时该闸不拦 (advisory).
+    """
+    from huginn.harness.meta_improver import ImproverConfig
+    meta = _meta_on(tmp_path)
+    _seed_green("rg")  # 代理分 GREEN (sig + OOD)
+    meta._candidates["rg"] = ImproverConfig(config_id="rg", improver_prompt=GOOD_TPL)
+    # 真实 r_phys: 候选显著低于池 → rphys 不可过
+    for v in (0.2, 0.2, 0.2):
+        meta._rphys.record("rg", v)
+    for v in (0.8, 0.8, 0.8):
+        meta._rphys.record("other", v)
+    geo = meta._rphys.verdict("rg")
+    assert geo["green"] is False, "候选真实 r_phys 应判定非上行"
+
+    # 默认 off → 硬闸不拦, 照常 promote (遵循 M-R1 代理分门控)
+    assert meta.maybe_promote("rg") is True, "advisory 默认不拦"
+
+    # 开启 harness_rphys_gate 后重新判定: 需先让该候选处于待 promote 态
+    _reseed(tmp_path)
+    meta2 = _meta_on(tmp_path)
+    mi._harness_enabled = lambda key, default=False: (
+        (key in ("harness_meta_improver", "harness_prompt_patch", "harness_rphys_gate"))
+        or default
+    )
+    _seed_green("rg2")
+    meta2._candidates["rg2"] = ImproverConfig(config_id="rg2", improver_prompt=GOOD_TPL)
+    for v in (0.2, 0.2, 0.2):
+        meta2._rphys.record("rg2", v)
+    for v in (0.8, 0.8, 0.8):
+        meta2._rphys.record("other", v)
+    assert meta2.maybe_promote("rg2") is False, "硬闸开启 + 真实 r_phys 未上行 → 拒绝"
+    assert meta2.champion_cfg() is None or meta2.champion_cfg().config_id != "rg2", "rg2 不应换件"

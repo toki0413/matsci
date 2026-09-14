@@ -439,6 +439,103 @@ class RandomizedControl:
                 "n_champ": len(champion_r), "n_base": len(baseline_r)}
 
 
+# A1 端到端轨道: 真实 r_phys 树配置至少 3 代才可判 (否则 advisory).
+_R_PHYS_TRACK_MIN = 3
+
+
+class RPhysTrack:
+    """端到端 r_phys 真实验收轨道 — Goodhart 的地面真值通道 (论文 2609.03621).
+
+    现状诚实声明: ``evaluate``/``evaluate_strategist`` 的分数是「产出 patch 的
+    有效性」**代理分** (``score_patch_output``), 由 LLM 离线打的, 不是真实 r_phys.
+    真实 r_phys (agent 实际物理验证分) 只被 ``note_generation`` 收到后丢进 replay,
+    从未被归因到驱动该次 patch 的改进器配置, 更未作为换件验收的真值.
+
+    本轨道把每次真实 r_phys 归因到「当时代际的 active 改进器配置」, 形成按配置的
+    真实 r_phys 代际序列, 再用**不成对两样本检验 (Mann-Whitney U, 单侧)** 判定:
+
+      H0: median(r_phys | config) <= median(r_phys | 其余配置池)
+      H1: 该配置驱动时 r_phys 显著高于其余配置 (尤指默认 baseline) 池
+
+    显著上行 + 样本充足 → ``rphys_green``。这就是把验收从「优化标量代理」根治到
+    「验证真实物理状态随该配置上行」的落点 — LLM 代理分可能被优化/gaming, 真实
+    r_phys 代际走向不可随意捏造。
+
+    不开不成对强配对: 各配置驱动的代数不同, 强配对会稀释样本; n>=3 才可判,
+    不足 → green=None (advisory 不阻塞, 回落既有代理分闸). 仅在显式开启
+    ``harness_rphys_gate`` 时才作硬闸.
+    """
+
+    _MIN = _R_PHYS_TRACK_MIN
+
+    def __init__(self, path: Any | None = None) -> None:
+        from pathlib import Path as _Path
+
+        self._path = path or (_Path(get_runtime_home()) / "meta_improver" / "rphys.json")
+        self._series: dict[str, list[float]] = {}  # config_id -> 真实 r_phys 代际序列
+        self._load()
+
+    def _load(self) -> None:
+        with contextlib.suppress(Exception):
+            if self._path.exists():
+                d = json.loads(self._path.read_text(encoding="utf-8"))
+                self._series = {k: [float(x) for x in v]
+                                for k, v in d.get("series", {}).items()}
+
+    def _save(self) -> None:
+        with contextlib.suppress(Exception):
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            self._path.write_text(
+                json.dumps({"series": self._series}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+
+    def record(self, config_id: str, r_phys: float | None) -> None:
+        """归因一次真实 r_phys 到驱动该代 patch 的改进器配置 (LRU 抗无限增长)."""
+        if r_phys is None:
+            return
+        self._series.setdefault(config_id, []).append(float(r_phys))
+        if len(self._series[config_id]) > _REPLAY_MAX:
+            self._series[config_id] = self._series[config_id][-_REPLAY_MAX:]
+        self._save()
+
+    def series(self, config_id: str) -> list[float]:
+        return list(self._series.get(config_id, []))
+
+    def _pool(self, config_id: str) -> list[float]:
+        """其余配置的真实 r_phys 池 (含默认 baseline 的实测)."""
+        pool: list[float] = []
+        for cid, vals in self._series.items():
+            if cid != config_id:
+                pool.extend(vals)
+        return pool
+
+    @staticmethod
+    def _median(v: list[float]) -> float:
+        import statistics
+
+        return statistics.median(v) if v else 0.0
+
+    def verdict(self, config_id: str, alpha: float = 0.05) -> dict[str, Any]:
+        """端到端 r_phys 验收判定.
+
+        返回 ``{"green", "n", "pool", "p", "median_track", "median_pool",
+        "reason"}``. ``green`` 为 None → 样本不足/不可判 (advisory 不阻塞).
+        """
+        xs = self.series(config_id)
+        ys = self._pool(config_id)
+        if len(xs) < self._MIN or not ys:
+            return {"green": None, "n": len(xs), "pool": len(ys),
+                    "p": None, "median_track": self._median(xs),
+                    "median_pool": self._median(ys), "reason": "insufficient"}
+        p = _mannwhitney_p_greater(xs, ys)
+        green = bool(p < alpha)
+        return {"green": green, "n": len(xs), "pool": len(ys),
+                "p": round(p, 4), "median_track": self._median(xs),
+                "median_pool": self._median(ys),
+                "reason": "significantly_higher" if green else "not_significant"}
+
+
 # 模块级 randomized-control 单例句柄 (测试可注入覆盖).
 _RC_INSTANCE: RandomizedControl | None = None
 
@@ -530,6 +627,7 @@ class MetaImprover:
         self._tracker = CompoundingTracker()
         self._coeffect: Any = None
         self._fidelity = BehavioralFidelity(path=self._dir / "fidelity.json")
+        self._rphys = RPhysTrack(path=self._dir / "rphys.json")
         self._compounding_path = self._dir / "compounding.json"
         self._strategy_proposals = 0
         self._load()
@@ -1016,6 +1114,10 @@ class MetaImprover:
         if not self.enabled():
             return
         block_names = [n for n, _ in blocks]
+        # 端到端 r_phys 真实验收: 把本次真实 r_phys 归因到「当时代际驱动该 patch 的
+        # 改进器配置」— 是 LLM 代理分之外的地面真值通道 (论文 2609.03621).
+        active_cfg = self.champion_cfg()
+        self._rphys.record(active_cfg.config_id if active_cfg else "_base", r_phys)
         self._replay.append(
             {
                 "phase": phase,
@@ -1176,6 +1278,11 @@ class MetaImprover:
             "green": green,
             "reason": "significant_and_ood" if green else "not_green",
         }
+        # 端到端 r_phys 真实验收 (advisory): 候选若是已部署过、攒到真实代际则
+        # 给出其真实 r_phys 上行判定 — 替换 LLM 代理分的最终地面真值通道.
+        rp = self._rphys.verdict(candidate_id)
+        result["rphys_green"] = rp["green"]
+        result["rphys_n"] = rp["n"]
         self._trace({"type": "evaluate", **result})
         return result
 
@@ -1195,6 +1302,15 @@ class MetaImprover:
         ood = OODHoldoutValidator.get_instance().validate_ood(candidate_id)
         if not ood.passed:
             self._trace({"type": "reject", "candidate_id": candidate_id, "reason": "ood_fail"})
+            return False
+        # 端到端 r_phys 真实验收 (论文 2609.03621): 显式开启 harness_rphys_gate 且
+        # 候选已部署攒到真实代际时, 真实 r_phys 未显著上行 → 拒绝换件. 默认 advisory
+        # (green=None 无据不拦), 仅在真实数据可判且硬闸开启时硬拦截 — 覆盖性地把
+        # 「LLM 代理分说好但真实物理验证分没跟上去」的候选挡在 champion 之外.
+        rp = self._rphys.verdict(candidate_id)
+        if _harness_enabled("harness_rphys_gate") and rp["green"] is False:
+            self._trace({"type": "reject", "candidate_id": candidate_id,
+                         "reason": "rphys_fail", "rphys_n": rp["n"]})
             return False
         # 提件: 旧 champion 冻结(deactivate), 新候选激活
         for c in self._candidates.values():
@@ -1226,11 +1342,65 @@ class MetaImprover:
             "active_strategist_id": self._active_strategist_id,
             "strategists_history": list(self._strategists_history),
             "n_strategists": len(self._strategists),
+            # 端到端 r_phys 真实验收: active 配置的真实上行判定 + 各配置真实代数
+            "rphys_active_verdict": self._rphys.verdict(self._active_id or "_base"),
+            "rphys_tracked_configs": len(self._rphys._series),
         }
 
 
 def _mean(v: list[float]) -> float:
     return round(sum(v) / len(v), 3) if v else 0.0
+
+
+def _mannwhitney_p_greater(xs: list[float], ys: list[float]) -> float:
+    """Mann-Whitney U 单侧 (更大) 的 p 值 — 纯 stdlib 正态近似, 不依赖 scipy.
+
+    秩统计 + tie 修正方差 + 连续修正. 用于 RPhysTrack 端到端验收: 判定一个配置
+    驱动时的真实 r_phys 是否显著高于其余配置池. 无 scipy 时照常用 (significance_gate
+    的 wilcoxon 才可选依赖 scipy, 此处不做同样依赖).
+    """
+    import math
+
+    if not xs or not ys:
+        return 1.0
+    n1, n2 = len(xs), len(ys)
+    n = n1 + n2
+    pooled = sorted([(v, 0) for v in xs] + [(v, 1) for v in ys])
+    # 平均秩 (处理并列)
+    rank_of: dict[tuple[float, int], float] = {}
+    i = 0
+    while i < n:
+        j = i
+        while j + 1 < n and pooled[j + 1][0] == pooled[i][0]:
+            j += 1
+        avg = (i + 1 + j + 1) / 2.0
+        for k in range(i, j + 1):
+            rank_of[pooled[k]] = avg
+        i = j + 1
+    r1 = sum(rank_of[(v, 0)] for v in xs)
+    u1 = r1 - n1 * (n1 + 1) / 2.0
+    mu = n1 * n2 / 2.0
+    # tie 修正
+    i = 0
+    tie_sum = 0.0
+    while i < n:
+        j = i
+        while j + 1 < n and pooled[j + 1][0] == pooled[i][0]:
+            j += 1
+        t = j - i + 1
+        tie_sum += t ** 3 - t
+        i = j + 1
+    if n > 1:
+        corrected = (n + 1) - tie_sum / (n * (n - 1))
+    else:
+        corrected = n + 1
+    var = n1 * n2 / 12.0 * corrected
+    if var <= 0.0:
+        var = n1 * n2 * (n + 1) / 12.0
+    sd = math.sqrt(max(var, 1e-9))
+    z = (u1 - mu - 0.5) / sd  # 连续修正, 趋保守
+    # P(Xs > Ys) 单侧: p = P(Z >= z) = 0.5 * erfc(z / sqrt(2))
+    return float(0.5 * math.erfc(z / math.sqrt(2.0)))
 
 
 # ── strategist 换件补偿器 (时空可组合, 时间侧) ────────────────────────────────
