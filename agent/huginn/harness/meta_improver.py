@@ -468,6 +468,7 @@ class MetaImprover:
         self._strategists_history: list[str] = []
         self._active_strategist_id: str | None = None
         self._tracker = CompoundingTracker()
+        self._coeffect: Any = None
         self._load()
         with contextlib.suppress(Exception):
             self._strategists_dir.mkdir(parents=True, exist_ok=True)
@@ -776,6 +777,65 @@ class MetaImprover:
             return bool(res.get("passed"))
         except Exception:
             return None
+
+    # ── 空间可组合 (CoEffectRegistry) ────────────────────────────────────────
+    def _coeffect_available(self) -> bool:
+        """strategist 缺失/被 degrade → improvement_strategy 不可用."""
+        return self.strategist_champion() is not None
+
+    def coeffect_registry(self) -> Any:
+        """空间可组合: 声明 strategist/improver/gate/fidelity 依赖图 (lazy).
+
+        与 PhysicalWorkspace 同一立场: 依赖缺失 → 组件失活而非硬崩.
+        暴露 ``update_availability(meta)`` 供运行时按现状刷新可用性.
+        """
+        if self._coeffect is None:
+            try:
+                from huginn.security.coeffect import CoEffectRegistry
+
+                reg = CoEffectRegistry()
+                reg.declare("strategist", provides={"improvement_strategy"},
+                            requires={"gate", "fidelity"})
+                reg.declare("improver", requires={"improvement_strategy"})
+                reg.declare("gate", provides={"gate"})
+                reg.declare("fidelity", provides={"fidelity"})
+
+                def update_availability(meta_: Any) -> None:
+                    try:
+                        reg.set_available("gate", meta_._harness_enabled_state())
+                        reg.set_available("fidelity", meta_._harness_enabled_state())
+                        reg.set_available("improvement_strategy",
+                                           meta_._coeffect_available())
+                    except Exception:
+                        pass
+
+                reg.update_availability = update_availability  # 动态注入 (测试/运行时)
+                update_availability(self)
+                self._coeffect = reg
+            except Exception as exc:
+                logger.debug("meta: coeffect registry init failed", exc_info=True)
+                self._coeffect = None
+        else:
+            try:
+                self._coeffect.update_availability(self)
+            except Exception:
+                pass
+        return self._coeffect
+
+    def _harness_enabled_state(self) -> bool:
+        return self.enabled()
+
+    def improver_active(self) -> bool:
+        """improver 可用性: strategist 缺失/被 degrade → False (退化默认模板)."""
+        reg = self.coeffect_registry()
+        if reg is None:
+            return True  # coeffect 不可用 → 不设闸, 保持 M-R1 行为
+        try:
+            if reg.is_available("improvement_strategy"):
+                return True
+            return bool(reg.is_active("improver"))
+        except Exception:
+            return True
 
     async def note_generation(
         self, phase: str, blocks: list[tuple[str, str]], r_phys: float | None,

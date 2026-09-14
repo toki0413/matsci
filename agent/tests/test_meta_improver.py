@@ -496,3 +496,33 @@ def test_evaluate_strategist_trace(tmp_path: Path) -> None:
     r = asyncio.run(meta.evaluate_strategist("s1", None))
     assert r["sig"] is False and r["ood"] is False
     assert r["green"] is False
+
+
+# ── Task6: CoEffectRegistry 空间可组合 (strategist 缺失 → improver 退化) ────
+def test_coeffect_degrade(tmp_path: Path) -> None:
+    """无 strategist champion → improver 空间依赖缺失 → improver_active False."""
+    from huginn.harness.meta_improver import MetaImprover
+    meta = _meta_on(tmp_path)
+    reg = meta.coeffect_registry()
+    assert reg is not None
+    reg.update_availability(meta)
+    # 无 gate(未开) + 无 strategist champion → improver 依赖缺失 → 失活
+    assert reg.is_active("improver") is False
+    assert reg.is_available("improvement_strategy") is False
+
+
+def test_coeffect_strategist_active_enables_improver(tmp_path: Path) -> None:
+    """有 strategist champion + gate enabled → improver 依赖满足 → active."""
+    from huginn.harness.meta_improver import (
+        MetaImprover, StrategistConfig, _register_strategist_compensator,
+    )
+    meta = _meta_on(tmp_path)
+    _register_strategist_compensator()
+    # 激活一个 strategist champion
+    meta._strategists["strat_act"] = StrategistConfig(
+        config_id="strat_act", strategist_prompt=_META2_TPL, active=True)
+    meta._active_strategist_id = "strat_act"
+    reg = meta.coeffect_registry()
+    reg.update_availability(meta)
+    assert reg.is_available("improvement_strategy") is True
+    assert reg.is_active("improver") is True
