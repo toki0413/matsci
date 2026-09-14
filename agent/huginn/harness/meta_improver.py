@@ -110,6 +110,99 @@ class ImproverConfig:
         )
 
 
+# Task 1 self-review: 两个新类均为纯数据/计算对象, 不依赖单例状态, 不改任何现有
+# 方法逻辑; 已由 TDD test_compounding_tracker_math 覆盖斜率/滞回/死锁边界.
+@dataclass
+class StrategistConfig:
+    """level-1: 生成改进器候选的"策略"模板."""
+    config_id: str
+    strategist_prompt: str
+    active: bool = False
+    created_at: float = field(default_factory=time.time)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> StrategistConfig:
+        return cls(
+            config_id=d["config_id"],
+            strategist_prompt=d.get("strategist_prompt", ""),
+            active=bool(d.get("active", False)),
+            created_at=float(d.get("created_at", time.time())),
+        )
+
+
+class CompoundingTracker:
+    """复合验收: 滚动窗口斜率 + 每次换件成本趋势 + 滞回带 + 死锁计数."""
+    def __init__(self, window: int = 8, slope_tolerance: float = -0.05,
+                 hysteresis_band: float = 0.03, deadlock_timeout: int = 5) -> None:
+        self.window = window
+        self.slope_tolerance = slope_tolerance
+        self.hysteresis_band = hysteresis_band
+        self.deadlock_timeout = deadlock_timeout
+        self._rows: list[dict[str, Any]] = []
+        self._deadlock_n = 0
+
+    def record(self, *, epoch: int, config_id: str, quality: float,
+               fidelity: float, proposals_to_promotion: int,
+               generations_to_promotion: int, win_rate: float) -> None:
+        self._rows.append({"epoch": epoch, "config_id": config_id, "quality": quality,
+                           "fidelity": fidelity, "proposals_to_promotion": proposals_to_promotion,
+                           "generations_to_promotion": generations_to_promotion, "win_rate": win_rate})
+        self._rows = self._rows[-self.window:]
+
+    def _quality_series(self) -> list[float]:
+        return [r["quality"] for r in self._rows]
+
+    def _slope(self) -> float:
+        ys = self._quality_series()
+        if len(ys) < 2:
+            return 0.0
+        xs = list(range(len(ys)))
+        n = len(xs)
+        xm, ym = sum(xs) / n, sum(ys) / n
+        num = sum((x - xm) * (y - ym) for x, y in zip(xs, ys))
+        den = sum((x - xm) ** 2 for x in xs)
+        return 0.0 if den == 0 else num / den
+
+    def _cost_trend(self) -> float:
+        if len(self._rows) < 4:
+            return 0.0
+        head = self._rows[:2]
+        tail = self._rows[-2:]
+        h = sum(r["proposals_to_promotion"] for r in head) / len(head)
+        t = sum(r["proposals_to_promotion"] for r in tail) / len(tail)
+        return t - h
+
+    def is_compounding(self) -> bool:
+        if self._slope() < self.slope_tolerance:
+            return False
+        if self._cost_trend() > 1.0:
+            return False
+        return True
+
+    def would_degrade(self, new: str, incumbent: str) -> bool:
+        ys = self._quality_series()
+        if not ys:
+            return False
+        best = max(ys)
+        cur = ys[-1]
+        return (cur < best - self.hysteresis_band) and not self.is_compounding()
+
+    def mark_deadlock(self, yellow: bool) -> None:
+        self._deadlock_n = self._deadlock_n + 1 if yellow else 0
+
+    def in_deadlock(self) -> bool:
+        return self._deadlock_n >= self.deadlock_timeout
+
+    def stats(self) -> dict[str, Any]:
+        return {"slope": round(self._slope(), 4), "cost_trend": round(self._cost_trend(), 4),
+                "window": len(self._rows),
+                "best_quality": max(self._quality_series()) if self._rows else 0.0,
+                "deadlock_n": self._deadlock_n, "is_compounding": self.is_compounding()}
+
+
 def build_improver_prompt(
     template: str, phase: str, block_names: list[str], r_phys: float | None,
     directive: str,

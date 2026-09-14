@@ -248,3 +248,20 @@ def test_trace_persistence_and_win_rate(tmp_path: Path) -> None:
     MetaImprover._instance = None
     meta2 = MetaImprover.get_instance()
     assert meta2.compounding_trace()["active_config_id"] == "promo"
+
+
+def test_compounding_tracker_math():
+    from huginn.harness.meta_improver import CompoundingTracker
+    tr = CompoundingTracker(window=4)
+    for i in range(4):
+        tr.record(epoch=i, config_id=f"c{i}", quality=0.5 + 0.1 * i,
+                  fidelity=0.6, proposals_to_promotion=2,
+                  generations_to_promotion=5, win_rate=0.5)
+    assert tr.is_compounding() is True
+    assert tr.stats()["slope"] > 0
+    dec = CompoundingTracker(window=4)
+    for i in range(4):
+        dec.record(epoch=i, config_id=f"d{i}", quality=0.9 - 0.2 * i,
+                   fidelity=0.6, proposals_to_promotion=2,
+                   generations_to_promotion=5, win_rate=0.5)
+    assert dec.would_degrade(new="n", incumbent="i") is True
