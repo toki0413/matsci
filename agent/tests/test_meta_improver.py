@@ -680,9 +680,75 @@ def test_compounding_persistence(tmp_path: Path) -> None:
 
 
 # ── A1 端到端轨道: 真实 r_phys 真实验收 (论文 2609.03621 地面真值通道) ────────
-def test_rphys_track_verdict_up() -> None:
+def test_verify_battery_covers_capabilities(tmp_path: Path) -> None:
+    """VerifiableGate 能力电池: 真实 world_model 全部能力动作通过才 passed (非单点)."""
+    from huginn.harness.meta_improver import VerifiableGate
+    import huginn.security.world_model as wm
+
+    vg = VerifiableGate()
+    # 电池应覆盖全部已知能力动作 (对齐 FORWARD_EFFECTS)
+    battery_types = {a for a, _ in vg._CAPABILITY_BATTERY}
+    assert battery_types == set(wm.FORWARD_EFFECTS), "电池应覆盖真实能力集"
+    res = vg.verify_battery({"reagent_vol": 10.0, "sample_vol": 3.0})
+    assert res["passed"] is True, res
+    assert res["total"] == len(vg._CAPABILITY_BATTERY)
+    assert res["passed_n"] == res["total"]
+    assert res["failures"] == []
+
+
+def test_ablation_reads_real_rphys_samples(tmp_path: Path) -> None:
+    """Ablation 端到端接通: HUGINN_META_ABLATION=1 时仲裁从 RPhysTrack 真实采样.
+
+    champion 臂真实 r_phys 低于 baseline 臂 → champion_better False → 拒换件
+    (之前只靠 override 注入, 现在读真实收集数据).
+    """
+    from huginn.harness.meta_improver import (
+        MetaImprover, StrategistConfig,
+    )
+    os.environ["HUGINN_META_ABLATION"] = "1"
+    try:
+        meta = _meta_on(tmp_path)
+        sg = SignificanceGate.get_instance()
+        ood = OODHoldoutValidator.get_instance()
+        for i in range(8):
+            sg.record_pair("cand", 0.3, 0.9, task_id=f"ab{i}")
+        for i in range(24):
+            t = f"ab{i:02d}"
+            ood.record_outcome(ood._BASELINE_ID, t, 0.4)
+            ood.record_outcome("cand", t, 0.9)
+        meta._strategists["cand"] = StrategistConfig(config_id="cand", strategist_prompt="C")
+        for i in range(4):
+            meta._tracker.record(epoch=i, config_id="x", quality=0.5 + 0.1 * i, fidelity=0.6,
+                                 proposals_to_promotion=1, generations_to_promotion=3, win_rate=0.9)
+        # abbation：给 active improver 一个 champion 并注入真实 r_phys (低) 与 _base (高)
+        from huginn.harness.meta_improver import ImproverConfig as _IC
+        champ = _IC(config_id="inc", improver_prompt="P", r_phys_gate=0.7)
+        champ.active = True
+        meta._candidates["inc"] = champ
+        meta._active_id = "inc"
+        for v in (0.30, 0.32, 0.34):
+            meta._rphys.record("inc", v)      # champion 臂: 低
+        for v in (0.80, 0.82, 0.84):
+            meta._rphys.record("_base", v)    # baseline 臂: 高
+        champ_r, base_r = meta._ablation_samples()
+        assert champ_r and base_r, "应读到真实采样 (非空注入)"
+        assert max(champ_r) < min(base_r), "安排 champion 低于 baseline"
+        # 不注入 override_pair: 仲裁应读真实数据, champion 劣 → 拒换件
+        from huginn.harness import meta_improver as mi2
+        mi2._RC_INSTANCE = None
+        ok = meta.maybe_promote_strategist("cand")
+        assert ok is False, "真实 r_phys 差分 champion 劣 → 应拒绝"
+        assert meta.strategist_champion() is None
+    finally:
+        os.environ.pop("HUGINN_META_ABLATION", None)
+        from huginn.harness import meta_improver as mi2
+        mi2._RC_INSTANCE = None
+
+
+def test_rphys_track_verdict_up(tmp_path: Path) -> None:
     """配置驱动时真实 r_phys 显著高于池 (其余配置) → rphys_green."""
     from huginn.harness.meta_improver import RPhysTrack
+    _reseed(tmp_path)  # 隔离默认 home 路径的 RPhysTrack, 避免跨用例 env 泄漏
     tr = RPhysTrack(path=None)
     # 目标配置 + 一个低频池配置 + 默认 baseline: 让池足够且明显更低
     for v in (0.2, 0.2, 0.2):
@@ -695,9 +761,10 @@ def test_rphys_track_verdict_up() -> None:
     assert res["median_track"] > res["median_pool"]
 
 
-def test_rphys_track_verdict_down() -> None:
+def test_rphys_track_verdict_down(tmp_path: Path) -> None:
     """配置驱动时真实 r_phys 不高于池 → 非 green (显著上行失败)."""
     from huginn.harness.meta_improver import RPhysTrack
+    _reseed(tmp_path)
     tr = RPhysTrack(path=None)
     for v in (0.8, 0.8, 0.8):
         tr.record("good_base", v)
@@ -707,9 +774,10 @@ def test_rphys_track_verdict_down() -> None:
     assert res["green"] is False, res
 
 
-def test_rphys_track_insufficient_advisory() -> None:
+def test_rphys_track_insufficient_advisory(tmp_path: Path) -> None:
     """样本不足 (<3 或 无池) → green=None (advisory 不阻塞, 回落代理分闸)."""
     from huginn.harness.meta_improver import RPhysTrack
+    _reseed(tmp_path)
     tr = RPhysTrack(path=None)
     tr.record("solo", 0.8)
     tr.record("solo", 0.8)

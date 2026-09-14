@@ -115,6 +115,11 @@ StrategistImprover (MetaImprover 内部扩展, 同单例)
 1. 二次滚动的样本稀释：strategist 层也要攒够 sig+OOD 样本 → 设定 `min_samples` 与窗口 W 平衡，样本不足即 YELLOW 不换件（不影响 level-0）。
 2. 复合指标噪声：用容差 + 中位数而非瞬时值；`is_compounding` 只判"不退化"，不苛求严格上升。仍不达 → 走死锁降级（#2）。
 3. Goodhart 残余：代理分 + 采纳回流 + holdout + 随机化对照共同缓解，并由 **RPhysTrack 端到端真实 r_phys 验收**（#6）提供最终地面真值通道——默认 advisory，`harness_rphys_gate` 开启即硬闸。仍残余的：真实 r_phys 也是下游 grader 可 gaming 的标量，根治需能力受限的实验室级验证（见 VerifiableGate 与后续改造）。
+
+## 真实数据接通（已落地，2026-09-14）
+
+- **VerifiableGate → 能力电池**：`_verify_strategist_outcome` 从单点 `aspirate` 探针升级为 `verify_battery`——对真实 `world_model` 的全部已知能力动作（`FORWARD_EFFECTS`：aspirate/dispense/mix/aliquot）做 `check_constraints` + `apply_forward` 状态化仿真，**全过才 passed**。gate 不可用/未开 → advisory None。
+- **RandomizedControl → 真实 r_phys 采样**：`maybe_promote_strategist` 的 ablation 仲裁改用 `_ablation_samples()`，从 `RPhysTrack` 已按 active 配置归因的真实 r_phys 里取 champion 臂（当前部署改进器）与 baseline 臂（`_base` 默认），取代此前只能靠 `override_pair` 注入的死分支。`HUGINN_META_ABLATION=1` 时读真实收集数据仲裁。
 4. 递归过深导致开销：A1 明确只一层，strategist 的 meta² 模板写死，绝不叠第三层。
 5. **不做**：直接自改源码（A3）、无限递归、让 strategist 自己递归改自己（留作后续轨道，先验证一层）。
 6. model 维度不纳入（沿用 H3 P8 限制）。

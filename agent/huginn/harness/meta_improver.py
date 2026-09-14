@@ -349,6 +349,51 @@ class VerifiableGate:
     def enabled(self) -> bool:
         return _harness_enabled("harness_verifiable_gate")
 
+    # 代表性能力动作电池: 对齐 world_model.FORWARD_EFFECTS 的真实能力集.
+    _CAPABILITY_BATTERY: list[tuple[str, dict[str, Any]]] = [
+        ("aspirate", {"vol": 1.0}),
+        ("dispense", {"vol": 1.0}),
+        ("mix", {}),
+        ("aliquot", {"n": 1}),
+    ]
+
+    def verify_battery(
+        self, state: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """对真实 world_model 验证一组能力动作电池 (非单点探针).
+
+        每个动作: 已知能力 + check_constraints 无违规 + apply_forward 可传播才计数.
+        返回 ``{"passed", "passed_n", "total", "failures"}``; 全部通过才 passed.
+        """
+        import huginn.security.world_model as wm
+        from huginn.security.world_model import PhysicalAction
+
+        base = dict(self._current_state)
+        if isinstance(state, dict) and state:
+            base = dict(state)
+        if not base:
+            base = {"reagent_vol": 10.0, "sample_vol": 3.0, "tube_vol": 0.0}
+        known = set(getattr(wm, "FORWARD_EFFECTS", {}))
+        passed_n = 0
+        failures: list[str] = []
+        for atype, params in self._CAPABILITY_BATTERY:
+            if atype not in known:
+                failures.append(f"unknown_capability:{atype}")
+                continue
+            action = PhysicalAction(atype, dict(params))
+            issues = wm.check_constraints(base, action)
+            if issues:
+                failures.append(f"{atype}:{';'.join(issues)}")
+                continue
+            try:
+                wm.apply_forward(base, action)
+                passed_n += 1
+            except Exception as exc:
+                failures.append(f"{atype}:{exc}")
+        return {"passed": passed_n == len(self._CAPABILITY_BATTERY) and not failures,
+                "passed_n": passed_n, "total": len(self._CAPABILITY_BATTERY),
+                "failures": failures}
+
     def _world_available(self) -> bool:
         try:
             import huginn.security.world_model as wm
@@ -851,12 +896,21 @@ class MetaImprover:
             except Exception as exc:
                 logger.debug("meta: strategist_swap compensate reg failed", exc_info=True)
 
+    def _ablation_samples(self) -> tuple[list[float], list[float]]:
+        """Ablation 双臂: (champion, baseline) 的真实 r_phys 采样.
+
+        champion 臂 = 当前部署改进器 (improver champion, 无则回落 strategist
+        champion) 的真实 r_phys 序列; baseline 臂 = 默认 ``_base`` 的真实序列.
+        RPhysTrack 已在 note_generation 按 active 配置归因真实 r_phys — 把此前
+        只靠 override 注入的仲裁改为读真实收集数据.
+        """
+        base = self._rphys.series("_base")
+        champ_id = self._active_id or self._active_strategist_id or ""
+        champ = self._rphys.series(champ_id) if champ_id else []
+        return champ, base
+
     def revert_strategist(self, ctx: Any | None = None) -> bool:
         """复合退化时回退 strategist champion (时间可组合).
-
-        ``ctx`` 存在 → revert_all() 撤销本 scope 内所有累积逆 (含挟同的
-        git_commit / memory 副作用) 并恢复到上一 champion; 无 ``ctx`` → 直接
-        依据 strategies_history 回退到上一个 active.
         """
         if ctx is not None:
             try:
@@ -999,10 +1053,11 @@ class MetaImprover:
         # 可验证工作流 gate (advisory): 通关则强化可信; 未开/不可用不阻塞
         verified = self._verify_strategist_outcome(s)
         # 随机化对照仲裁 (HUGINN_META_ABLATION=1): 真实 r_phys 差分 champion 劣于
-        # baseline(或未提供对照) → 拒绝. 由 _randomized_control 注入真实样本.
+        # baseline(或未提供对照) → 拒绝. 用 RPhysTrack 已收集的真实采样 (非空注入).
         rc = _randomized_control()
         if rc.enabled():
-            pair = rc.run_pair(champion_r=rc.champion_r, baseline_r=rc.baseline_r)
+            champ_r, base_r = self._ablation_samples()
+            pair = rc.run_pair(champion_r=champ_r, baseline_r=base_r)
             if not pair["champion_better"]:
                 self._trace({"type": "strategy_reject", "candidate_id": candidate_id,
                              "reason": "ablation_champion_worse"})
@@ -1032,19 +1087,18 @@ class MetaImprover:
         return True
 
     def _verify_strategist_outcome(self, s: StrategistConfig) -> bool | None:
-        """接入 VerifiableGate (论文): 机器可用且开启时做状态化仿真验证.
+        """接入 VerifiableGate (论文): 机器可用且开启时做状态化仿真**能力电池**验证.
 
-        返回 True/False (验证结果); gate 不可用/未开 → None (advisory 未验证).
+        v0 从单点 aspirate 探针升级为对真实 world_model 的能力动作电池 (aspirate/
+        dispense/mix/aliquot) — 全过才 True, 任一违例 False. gate 不可用/未开 →
+        None (advisory 未验证).
         """
         try:
             vg = VerifiableGate()
             if not vg.enabled():
                 return None
-            # 用候选改进器产出的一个代表性实验做验证 (尽力接入 world model)
-            probe = {"action_type": "aspirate", "params": {"vol": 1.0},
-                     "state": {"reagent_vol": 5.0, "sample_vol": 0.0}}
-            res = vg.verify_outcome(probe)
-            return bool(res.get("passed"))
+            res = vg.verify_battery()
+            return bool(res["passed"])
         except Exception:
             return None
 
