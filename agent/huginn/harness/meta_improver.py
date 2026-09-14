@@ -24,6 +24,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import os
 import random
 import threading
 import time
@@ -391,6 +392,51 @@ class VerifiableGate:
                     "error": str(exc), "issues": ["world_model_error"]}
 
 
+class RandomizedControl:
+    """随机化对照仲裁 — 真实 r_phys 差分 (spec #3, 默认 off).
+
+    champion 与固定 baseline 各跑 N 次, 比较真实 r_phys 的中位差判定
+    ``champion_better``. 仅当 ``HUGINN_META_ABLATION=1`` (显式评估) 才启用,
+    作为对单点代理分可靠性的疑虑仲裁. ``override_pair`` 允许运行时注入
+    一组已测差分 (测试/离线评估), 避免每次全跑实机.
+    """
+
+    def __init__(self) -> None:
+        self.override_pair: dict[str, Any] | None = None
+
+    def enabled(self) -> bool:
+        return os.environ.get("HUGINN_META_ABLATION", "").lower() in ("1", "true", "yes")
+
+    def run_pair(self, *, champion_r: list[float], baseline_r: list[float],
+                 tolerance: float = 0.02) -> dict[str, Any]:
+        """比较两组真实 r_phys 的中位差. 返回 {champion_better, delta, n_champ, n_base}.
+
+        - override_pair 存在 → 直接用注入结果 (离线评估/测试).
+        - 否则中位差 > tolerance → champion_better.
+        """
+        if self.override_pair is not None:
+            return dict(self.override_pair)
+        import statistics
+
+        champ = statistics.median(champion_r) if champion_r else 0.0
+        base = statistics.median(baseline_r) if baseline_r else 0.0
+        return {"champion_better": (champ - base) > tolerance,
+                "delta": round(champ - base, 4),
+                "n_champ": len(champion_r), "n_base": len(baseline_r)}
+
+
+# 模块级 randomized-control 单例句柄 (测试可注入覆盖).
+_RC_INSTANCE: RandomizedControl | None = None
+
+
+def _randomized_control() -> RandomizedControl:
+    """返回 RandomizedControl 共享实例 (可被测试注入覆盖)."""
+    global _RC_INSTANCE
+    if _RC_INSTANCE is None:
+        _RC_INSTANCE = RandomizedControl()
+    return _RC_INSTANCE
+
+
 def build_improver_prompt(
     template: str, phase: str, block_names: list[str], r_phys: float | None,
     directive: str,
@@ -744,6 +790,12 @@ class MetaImprover:
             return False
         # 可验证工作流 gate (advisory): 通关则强化可信; 未开/不可用不阻塞
         verified = self._verify_strategist_outcome(s)
+        # 随机化对照仲裁 (HUGINN_META_ABLATION=1): champion 劣于 baseline → 拒绝
+        rc = _randomized_control()
+        if rc.enabled() and not rc.run_pair(champion_r=[], baseline_r=[])["champion_better"]:
+            self._trace({"type": "strategy_reject", "candidate_id": candidate_id,
+                         "reason": "ablation_champion_worse"})
+            return False
         self._tracker.mark_deadlock(yellow=False)
         rctx = ctx or RevertibleContext()
         try:

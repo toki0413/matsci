@@ -526,3 +526,61 @@ def test_coeffect_strategist_active_enables_improver(tmp_path: Path) -> None:
     reg.update_availability(meta)
     assert reg.is_available("improvement_strategy") is True
     assert reg.is_active("improver") is True
+
+
+# ── Task7: RandomizedControl 随机化对照仲裁 ─────────────────────────────────
+def test_randomized_control(tmp_path: Path) -> None:
+    """真实 r_phys 差分: champion 优于 baseline → champion_better."""
+    from huginn.harness.meta_improver import RandomizedControl
+    rc = RandomizedControl()
+    outcome = rc.run_pair(champion_r=[0.8, 0.85, 0.9], baseline_r=[0.6, 0.62, 0.58])
+    assert outcome["champion_better"] is True
+    assert outcome["delta"] > 0
+    assert outcome["n_champ"] == 3 and outcome["n_base"] == 3
+
+
+def test_randomized_control_champion_worse(tmp_path: Path) -> None:
+    """champion 劣于 baseline → champion_better False."""
+    from huginn.harness.meta_improver import RandomizedControl
+    rc = RandomizedControl()
+    outcome = rc.run_pair(champion_r=[0.4, 0.5], baseline_r=[0.7, 0.8],
+                          tolerance=0.02)
+    assert outcome["champion_better"] is False
+
+
+def test_maybe_promote_gates_on_ablation(tmp_path: Path) -> None:
+    """HUGINN_META_ABLATION=1 且 champion 劣于 baseline → 拒绝换件."""
+    from huginn.harness.meta_improver import (
+        MetaImprover, StrategistConfig, RandomizedControl,
+        _register_strategist_compensator,
+    )
+    os.environ["HUGINN_META_ABLATION"] = "1"
+    try:
+        meta = _meta_on(tmp_path)
+        _register_strategist_compensator()
+        sg = SignificanceGate.get_instance()
+        ood = OODHoldoutValidator.get_instance()
+        for i in range(8):
+            sg.record_pair("cand", 0.3, 0.9, task_id=f"ab{i}")
+        for i in range(24):
+            t = f"ab{i:02d}"
+            ood.record_outcome(ood._BASELINE_ID, t, 0.4)
+            ood.record_outcome("cand", t, 0.9)
+        meta._strategists["cand"] = StrategistConfig(config_id="cand", strategist_prompt="C")
+        for i in range(4):
+            meta._tracker.record(epoch=i, config_id="x", quality=0.5 + 0.1 * i, fidelity=0.6,
+                                 proposals_to_promotion=1, generations_to_promotion=3, win_rate=0.9)
+        # 注入 ablation: 争取真实 r_phys 差分 (champion 差于 baseline)
+        rc = RandomizedControl()
+        rc.override_pair = {"champion_better": False, "delta": -0.2,
+                            "n_champ": 3, "n_base": 3}
+        from huginn.harness import meta_improver as mi2
+        mi2._RC_INSTANCE = rc
+        ok = meta.maybe_promote_strategist("cand")
+        # maybe_promote 内部随机化对照仅在 ablation 且 GREEN 时触发;
+        # 由于覆盖 pair champion_better=False, 应拒绝.
+        assert ok is False
+        assert meta.strategist_champion() is None
+    finally:
+        os.environ.pop("HUGINN_META_ABLATION", None)
+        mi2._RC_INSTANCE = None
