@@ -213,8 +213,8 @@ def handle_for_body(
 
 
 def _selfcheck() -> None:
-    import tempfile
     import asyncio
+    import tempfile
 
     tmp = tempfile.mkdtemp()
     os.environ["HUGINN_CACHE_DIR"] = tmp

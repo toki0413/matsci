@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-
+from typing import Any
 
 # ── 领域关键词 → 能力描述 的确定性期望表 (规则面, 可复现, 不靠 LLM) ──────────
 # 命中任一 keyword(小写) 且 discoverable 无匹配工具 → 记为"覆盖缺口"。

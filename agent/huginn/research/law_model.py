@@ -1,7 +1,7 @@
 """科学定律模型核心 (LawModel) —— 对标 世界模型/VLA/机器人分层规划, 以**数学定律**为
 规划与验证的载体. 科研级前向模型 + 可证伪验证.
 
-设计说明 (与既有实现的**关系**, 避免命名混淆): 
+设计说明 (与既有实现的**关系**, 避免命名混淆):
   仓库已有 security/world_state.py(ObsVector/StateEstimator/**ForwardPredictor** 前向
   投影, 服务 agent 控制环/奖励/记忆) 与 security/world_model.py(物理动作**逆生成器**,
   服务可逆撤销). 本模块不再叫 world_model/world_state 以免撞名, 改称 **LawModel**, 只
@@ -59,7 +59,7 @@ class Worldview(str, Enum):
     BEHAVIOR_POLICY = "behavior_policy"
 
 
-def world_model_card(model: "LawModel") -> dict:
+def world_model_card(model: LawModel) -> dict:
     """世界模型能力的治理卡片 (多元论 + 具身可信).
 
     回答两个治理问题:

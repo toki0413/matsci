@@ -19,15 +19,18 @@
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
 
+from huginn.research.law_model import (
+    LawAction,
+    LawModel,
+    LawState,
+    ModelBasedPlanner,
+    reconcile,
+)
 from huginn.research.planning import ResearchPlan, SubResearch, build_research_plan
 from huginn.research.program import grounding_verifier
-from huginn.research.law_model import (
-    LawAction, LawModel, LawState, ModelBasedPlanner, reconcile,
-)
-
 
 # ── 共享数据结构 (团队协作的公共契约) ─────────────────────────────
 
@@ -197,7 +200,7 @@ class ScienceTeam:
         # 1) 规划者: 需求拆解 + DAG 分层 (科学家只做被分派的层内子研究)
         plan = self.planner.act(goal, sub_research)
         self._log(self.planner.role, "plan",
-                  f"layers={[','.join(l) for l in plan.layers]} budget={plan.budget}")
+                  f"layers={[','.join(line) for line in plan.layers]} budget={plan.budget}")
         by_name = {s.name: s for s in sub_research}
 
         # 2) 科学家: 按拓扑分层并行执行 (同层 antichain 内独立)
@@ -291,10 +294,10 @@ class ModelBasedScienceTeam:
         evidences: list[Evidence] = []
         plan, execs, recons = [], [], []
         worker = 0
-        for obs in observations:
+        for worker, obs in enumerate(observations):
             init = self.model.seed(obs)                    # 感知: 读入观测 → 初始状态
             step = self.planner.best(init, actions)        # 定律预告 → 选动作
-            scientist = self.scientists[worker % len(self.scientists)]; worker += 1
+            scientist = self.scientists[worker % len(self.scientists)]
             actual = real_executor(init, step.action)      # 科学者: 真实执行(真相)
             rep = reconcile(step.predicted, actual, tol=self.tol,
                             metrics=self.metrics)  # 批判: 数学对账 (指标随域)

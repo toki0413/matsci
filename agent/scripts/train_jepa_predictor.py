@@ -35,7 +35,7 @@ JEPA_EMBED_MODEL = os.environ.get(
 def load_pairs(path: Path) -> list[dict]:
     if not path.exists():
         return []
-    return [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines() if l.strip()]
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
 def load_encoder(offline: bool = True):
@@ -116,7 +116,7 @@ def main() -> None:
         return
 
     enc = load_encoder()
-    _get_dim = getattr(enc, "get_embedding_dimension", None) or getattr(enc, "get_sentence_embedding_dimension")
+    _get_dim = getattr(enc, "get_embedding_dimension", None) or enc.get_sentence_embedding_dimension
     dim = int(_get_dim())
     pred_embs = enc.encode([p["prediction"] for p in pairs], normalize_embeddings=True)
     act_embs = enc.encode([p["actual"] for p in pairs], normalize_embeddings=True)
@@ -134,7 +134,6 @@ def main() -> None:
                                    steps=args.steps, seed=args.seed)
     print(f"[jepa] predictor 训练完成: 起始loss={losses[0]:.4f} 末loss={losses[-1]:.4f}")
     if losses:
-        import statistics
         print(f"[jepa] loss 末段均值={sum(losses[-20:])/len(losses[-20:]):.4f}")
 
     # 运行时冻结前向: 对每条真实预测投影到潜空间, 报告它能多近地还原 actual.
@@ -144,7 +143,7 @@ def main() -> None:
         b = b / (np.linalg.norm(b) + 1e-12)
         return float(1 - float(np.dot(a, b)))
     errs = [d(fwd[i], act_embs[i]) for i in range(len(pairs))]
-    print(f"[jepa] 冻结 predictor 前向重构 surprise: " +
+    print("[jepa] 冻结 predictor 前向重构 surprise: " +
           ", ".join(f"{e:.3f}" for e in errs) +
           f" (mean={np.mean(errs):.3f}, 理论下限即编码后不可还原的部分)")
 

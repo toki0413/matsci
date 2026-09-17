@@ -19,8 +19,9 @@ SubResearch 的 ``run`` 仍必须返回真实实验数值; planner 只是安排�
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 from huginn.agents.task_dag import TaskDAG
 from huginn.research.program import Experiment

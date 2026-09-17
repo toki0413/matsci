@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from huginn.autoloop.online_compact import (
-    gate_compaction,
-    compact_preserved_summary_delta,
-    select_compact_candidates,
-    _fake_step,
-)
 from huginn.agent.streaming import _extract_plan_steps_for_compact
+from huginn.autoloop.online_compact import (
+    _fake_step,
+    compact_preserved_summary_delta,
+    gate_compaction,
+    select_compact_candidates,
+)
 
 
 def test_candidates_only_verified_and_sealed() -> None:

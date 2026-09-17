@@ -30,7 +30,7 @@ from pathlib import Path
 import numpy as np
 
 from huginn.utils.runtime import get_runtime_home
-from scripts.train_jepa_predictor import load_pairs, load_encoder, JEPA_EMBED_MODEL
+from scripts.train_jepa_predictor import load_encoder, load_pairs
 
 K = 8          # 与 span predictor 一致的定长张量槽数
 U_SCALE = 24.0  # log10 量级归一上界 (覆盖 ~1e-12 .. 1e12)
@@ -188,7 +188,7 @@ def main() -> None:
         pack_n = _train_mlp(Xnum[tr], T, M[tr], d + dn, d, steps=args.steps,
                             seed=int(rng.integers(1, 1 << 30)))
 
-        def _surprise(pack, Xin):
+        def _surprise(pack, Xin, te=te):
             pm = []
             for i in te:
                 fwd = _fwd(pack, Xin[[i]])[0]

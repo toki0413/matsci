@@ -83,7 +83,7 @@ class EngineSignals:
         return out
 
     @classmethod
-    def from_snapshot(cls, d: dict[str, Any]) -> "EngineSignals":
+    def from_snapshot(cls, d: dict[str, Any]) -> EngineSignals:
         """从快照重建，容忍缺键(走默认值)与 set/tuple 的 JSON 变形."""
         obj = cls()
         for f in dataclasses.fields(cls):

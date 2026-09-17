@@ -15,8 +15,8 @@
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any, Protocol
+from dataclasses import dataclass
+from typing import Any
 
 # 默认经济门: 上下文占用(窗口压力)超过该值才考虑压缩
 _DEFAULT_WINDOW_GATE_PCT = 60

@@ -340,7 +340,7 @@ class ExportManager:
             for key, value in rec.items():
                 if key == "text":
                     continue
-                if isinstance(value, (dict, list)):
+                if isinstance(value, dict | list):
                     value = json.dumps(value, ensure_ascii=False, default=str)
                 lines.append(f"- **{key}**: {value}")
             lines.append("")
@@ -380,7 +380,7 @@ class ExportManager:
             for key, value in rec.items():
                 if key == "text":
                     continue
-                if isinstance(value, (dict, list)):
+                if isinstance(value, dict | list):
                     value = json.dumps(value, ensure_ascii=False, default=str)
                 lines.append(
                     f"<li><strong>{key}:</strong> {self._escape_html(str(value))}</li>"

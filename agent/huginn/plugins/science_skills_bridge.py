@@ -114,10 +114,7 @@ def _parse_frontmatter(text: str) -> dict[str, str]:
             key, _, val = stripped.partition(":")
             current_key = key.strip()
             val = val.strip()
-            if val and val != ">":
-                current_val_lines = [val]
-            else:
-                current_val_lines = []
+            current_val_lines = [val] if val and val != ">" else []
         else:
             current_val_lines.append(stripped)
 

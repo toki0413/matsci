@@ -28,8 +28,9 @@ import random
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 from huginn.utils.runtime import get_runtime_home
 
@@ -239,9 +240,8 @@ class MetaImprover:
             )
 
     def _trace(self, entry: dict[str, Any]) -> None:
-        with contextlib.suppress(Exception):
-            with self._trace_path.open("a", encoding="utf-8") as f:
-                f.write(json.dumps({**entry, "ts": time.time()}, ensure_ascii=False) + "\n")
+        with contextlib.suppress(Exception), self._trace_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps({**entry, "ts": time.time()}, ensure_ascii=False) + "\n")
 
     # ── enabled ──────────────────────────────────────────────────────────────
     def enabled(self) -> bool:
@@ -292,7 +292,7 @@ class MetaImprover:
                 if cid:
                     await self.evaluate(cid, llm_chat_fn)
                     self.maybe_promote(cid)
-        except Exception as exc:
+        except Exception:
             logger.debug("meta note_generation/maybe_propose failed", exc_info=True)
 
     # ── propose ────────────────────────────────────────────────────────────
@@ -303,7 +303,7 @@ class MetaImprover:
         current = self.current_template()
         meta_prompt = _META_IMPROVE_TEMPLATE.format(
             current_template=current,
-            n_proposals=len([c for c in self._candidates.values()]),
+            n_proposals=len(list(self._candidates.values())),
             n_promotions=len(self._history),
         )
         try:
@@ -384,16 +384,16 @@ class MetaImprover:
             base_scores.append(base)
             cand_scores.append(cand)
             task_id = probe.get("probe_id") or probe.get("ts") or str(random.random())
-            from huginn.harness.significance_gate import SignificanceGate
             from huginn.harness.ood_holdout import OODHoldoutValidator
+            from huginn.harness.significance_gate import SignificanceGate
             SignificanceGate.get_instance().record_pair(
                 candidate_id, base, cand, task_id=str(task_id),
             )
             OODHoldoutValidator.get_instance().record_outcome(OODHoldoutValidator._BASELINE_ID, str(task_id), base)
             OODHoldoutValidator.get_instance().record_outcome(candidate_id, str(task_id), cand)
         # 组合 == AdoptionGate 的 GREEN 条件: 显著 且 OOD 不退化
-        from huginn.harness.significance_gate import SignificanceGate
         from huginn.harness.ood_holdout import OODHoldoutValidator
+        from huginn.harness.significance_gate import SignificanceGate
         sig = SignificanceGate.get_instance().gate_decision(candidate_id, min_samples=_MIN_SAMPLES)
         ood = OODHoldoutValidator.get_instance().validate_ood(candidate_id)
         green = bool(sig.passed and ood.passed)
@@ -447,7 +447,7 @@ class MetaImprover:
 
     def compounding_trace(self) -> dict[str, Any]:
         """meta 赢率: GREEN 提升数 / 候选总数, + 换代历史. 供面板/审计."""
-        n_candidates = len([c for c in self._candidates.values()])
+        n_candidates = len(list(self._candidates.values()))
         return {
             "active_config_id": self._active_id,
             "history": self._history,

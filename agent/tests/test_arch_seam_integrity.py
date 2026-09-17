@@ -70,7 +70,7 @@ def test_core_types_kernel_has_no_business_imports() -> None:
     hits = _huginn_imports(path)
     assert not hits, (
         "core_types(最深共享内核) 不得 import 任何 huginn.* —— 反向依赖会把共享内核"
-        "绑到业务层/制造循环。请把该 import 移到非 kernel 模块。违规: %s" % hits
+        f"绑到业务层/制造循环。请把该 import 移到非 kernel 模块。违规: {hits}"
     )
 
 
@@ -81,5 +81,5 @@ def test_config_does_not_import_application_layers() -> None:
     bad = sorted(h for h in hits if h.startswith(tuple(_BUSINESS_LAYERS)))
     assert not bad, (
         "config(根配置) 反向依赖业务/应用层 —— 依赖方向颠倒(基建→业务=防线被破)。"
-        "config 只应依赖基建(_ALLOWED_INFRA)。违规: %s" % bad
+        f"config 只应依赖基建(_ALLOWED_INFRA)。违规: {bad}"
     )

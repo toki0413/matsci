@@ -19,10 +19,10 @@ from pathlib import Path
 
 import pytest
 
-from tests.fixtures.fake_llm import make_callable_llm
 from huginn.autoloop.engine import AutoloopEngine
 from huginn.autoloop.plan_store import PlanStore
 from huginn.memory.manager import MemoryConfig, MemoryManager
+from tests.fixtures.fake_llm import make_callable_llm
 
 _skip_ci_run_cognitive = os.environ.get("HUGINN_CI", "").lower() in ("1", "true", "yes")
 

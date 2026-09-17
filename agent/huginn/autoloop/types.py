@@ -110,7 +110,7 @@ def save_autoloop_snapshot(
             encoding="utf-8",
         )
         return path
-    except Exception as exc:
+    except Exception:  # 防御: 快照保存失败无碍主流程
         logger.debug("failed to save autoloop snapshot", exc_info=True)
         return None
 
@@ -128,6 +128,6 @@ def load_autoloop_snapshot(
         return None
     try:
         return json.loads(path.read_text(encoding="utf-8"))
-    except Exception as exc:
+    except Exception:  # 防御: 快照加载失败仅跳过恢复
         logger.debug("failed to load autoloop snapshot: %s", path, exc_info=True)
         return None

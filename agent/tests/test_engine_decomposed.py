@@ -4,9 +4,6 @@ from __future__ import annotations
 
 import asyncio
 
-import pytest
-
-
 # ===== 阶段1: MathValidator =====
 
 def test_no_math_mixin_in_bases() -> None:
@@ -418,7 +415,7 @@ def test_engine_observe_class_constants_bridged() -> None:
 def test_observe_static_and_instance_delegation() -> None:
     """委托零参-静态方法真可调: _files_jaccard 纯函数经静态委托."""
 
-    def _engine() -> "AutoloopEngine":
+    def _engine():  # -> AutoloopEngine (函数内导入, 见下)
         from huginn.autoloop.engine import AutoloopEngine
         from huginn.autoloop.engine_observe import EngineObserve
 
@@ -482,7 +479,7 @@ def test_engine_reflect_class_constants_bridged() -> None:
 def test_reflect_static_and_instance_delegation() -> None:
     """委托-纯函数真可调: _extract_text static 经静态委托."""
 
-    def _engine() -> "AutoloopEngine":
+    def _engine():  # -> AutoloopEngine (函数内导入, 见下)
         from huginn.autoloop.engine import AutoloopEngine
         from huginn.autoloop.engine_reflect import EngineReflect
 

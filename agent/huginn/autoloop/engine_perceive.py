@@ -64,7 +64,7 @@ class EnginePerceive:
                     "inbox expire_pending dropped %d timed-out items (iter=%d)",
                     expired, self._iteration,
                 )
-        except Exception as exc:
+        except Exception:  # 防御: 收件箱过期清理失败忽略
             logger.debug("_maybe_expire_inbox failed (non-fatal)", exc_info=True)
 
     def _get_perception(self):
@@ -79,7 +79,7 @@ class EnginePerceive:
 
                 self._perception = PerceptionLayer(self.workspace)
                 self._perception.start()
-            except Exception as exc:
+            except Exception:  # 防御: 尽力感知失败返回空
                 logger.debug("best-effort op failed", exc_info=True)
                 return None
         return self._perception
@@ -100,7 +100,7 @@ class EnginePerceive:
                 from huginn.knowledge.store import get_knowledge_base
 
                 self._kb = get_knowledge_base(str(self.workspace))
-            except Exception as exc:
+            except Exception:  # 防御: 尽力感知失败返回空
                 logger.debug("best-effort op failed", exc_info=True)
                 return None
         return self._kb
@@ -176,7 +176,7 @@ class EnginePerceive:
                 f"{body}\n"
                 "### End Domain Knowledge Context"
             )
-        except Exception as exc:
+        except Exception:  # 防御: 尽力拼接失败返回空
             logger.debug("best-effort op failed", exc_info=True)
             return ""
 
@@ -226,7 +226,7 @@ class EnginePerceive:
                 "### End Knowledge Graph Context"
                 f"{gap_block}"
             )
-        except Exception as exc:
+        except Exception:  # 防御: 尽力拼接失败返回空
             logger.debug("best-effort op failed", exc_info=True)
             return ""
 
@@ -269,7 +269,7 @@ class EnginePerceive:
                 if checked >= 3:
                     break
             return hints
-        except Exception as exc:
+        except Exception:  # 防御: 感知事件失败返回空
             return []
 
     def _build_memory_text(self, query: str, since: str | None = None) -> str:
@@ -288,7 +288,7 @@ class EnginePerceive:
                 text = mem.recall_for_prompt(query, max_entries=3, since=since)
                 if text and isinstance(text, str):
                     parts.append(text)
-            except Exception as exc:
+            except Exception:  # 防御: 记忆召回失败跳过
                 logger.debug("memory recall_for_prompt skipped", exc_info=True)
 
         # C4: meta_trace 注入 — engine 每轮 _distill_meta_trace 写 jsonl,
@@ -307,7 +307,7 @@ class EnginePerceive:
                     trace_text = load_meta_trace_text(str(ws), last_n=5)
                     if trace_text:
                         parts.append(trace_text)
-            except Exception as exc:
+            except Exception:  # 防御: 元轨迹注入失败跳过
                 logger.debug("meta_trace inject failed", exc_info=True)
 
         return "\n\n".join(parts) if parts else ""
@@ -339,7 +339,7 @@ class EnginePerceive:
                 try:
                     history = self._load_trajectory_action_history(limit=20)
                     self._traj_history = history
-                except Exception as exc:
+                except Exception:  # 防御: 尽力读取当前轨迹失败返回空
                     logger.debug("best-effort op failed", exc_info=True)
                     return ""
             if len(current) < 2 or not history:
@@ -367,7 +367,7 @@ class EnginePerceive:
                 f"### End Trajectory Match"
             )
             return advice
-        except Exception as exc:
+        except Exception:  # 防御: 轨迹匹配失败复位并返回空
             self._last_traj_match_doc_id = None
             self._last_traj_match_run_id = None
             return ""
@@ -399,7 +399,7 @@ class EnginePerceive:
                 return self._target_chains
             checklist = [{"mode": "A", "item": objective[:2000]}]
             self._target_chains = build_target_chains(checklist, kb, model, "") or []
-        except Exception as exc:
+        except Exception:  # 防御: 目标链构建失败用空表
             logger.debug("build_target_chains failed in autoloop", exc_info=True)
             self._target_chains = []
         return self._target_chains
@@ -425,7 +425,7 @@ class EnginePerceive:
                 tc_text = format_target_chain_text(tc, step)
                 if tc_text:
                     parts.append(tc_text)
-            except Exception as exc:
+            except Exception:  # 防御: 目标链格式化失败跳过
                 logger.debug("format_target_chain_text failed", exc_info=True)
 
         if include_prospective:
@@ -442,7 +442,7 @@ class EnginePerceive:
                         pro_text = _ctx.build_prospective_text(fired)
                         if pro_text:
                             parts.append(pro_text)
-                except Exception as exc:
+                except Exception:  # 防御: 前瞻注入失败跳过
                     logger.debug("prospective inject failed", exc_info=True)
 
         return "\n\n".join(p for p in parts if p)
@@ -460,7 +460,7 @@ class EnginePerceive:
             return self._perceive_legacy()
         try:
             snapshot = perception.get_snapshot()
-        except Exception as exc:
+        except Exception:  # 防御: 快照感知失败走回退感知
             return self._perceive_legacy()
         context = snapshot.to_context()
         if not snapshot.has_activity():
@@ -501,9 +501,9 @@ class EnginePerceive:
                     sig = hub.route("perception_converged", {"converged": True})
                     if sig is not None:
                         self._pending_signals.append(sig)
-            except Exception as exc:
+            except Exception:  # 防御: 感知信号构造失败不阻断
                 logger.debug("perception 信号构造失败, 不阻断 _perceive", exc_info=True)
-        except Exception as exc:
+        except Exception:  # 防御: 认知整合失败不阻断
             logger.debug("L3/L4 cognitive integration 失败", exc_info=True)
         return context
 
@@ -532,7 +532,7 @@ class EnginePerceive:
                     text=True,
                     timeout=10,
                 ).stdout
-        except Exception as exc:
+        except Exception:  # 防御: git差异收集失败不阻断
             logger.warning(
                 "error in _perceive_legacy: git diff collection failed", exc_info=True
             )
@@ -543,7 +543,7 @@ class EnginePerceive:
                     content = log_file.read_text(errors="ignore")
                     if "ERROR" in content or "FAIL" in content:
                         error_patterns.append(f"{log_file.name}: {content[:200]}")
-                except Exception as exc:
+                except Exception:  # 防御: 日志错误扫描失败不阻断
                     logger.warning(
                         "error in _perceive_legacy: log file error-pattern scan failed",
                         exc_info=True,

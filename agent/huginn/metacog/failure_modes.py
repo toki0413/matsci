@@ -77,7 +77,7 @@ def _flatten_to_text(obj: Any) -> str:
         return obj
     if isinstance(obj, dict):
         return " ".join(_flatten_to_text(v) for v in obj.values())
-    if isinstance(obj, (list, tuple)):
+    if isinstance(obj, list | tuple):
         return " ".join(_flatten_to_text(v) for v in obj)
     return str(obj)
 

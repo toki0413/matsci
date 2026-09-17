@@ -61,7 +61,7 @@ def _auto_detect_axes(
 
     H, W, _ = rgb.shape
     if axis_box and len(axis_box) == 4:
-        x_left, y_top, x_right, y_bottom = [int(v) for v in axis_box]
+        x_left, y_top, x_right, y_bottom = (int(v) for v in axis_box)
     else:
         x_left = int(W * 0.10)
         x_right = int(W * 0.95)
@@ -334,7 +334,7 @@ def plot_extract(args: ImageAnalysisInput) -> ToolResult:
     # 坐标轴像素范围, 不给就默认留 10% 边距
     axis_box = args.parameters.get("axis_box", None)
     if axis_box and len(axis_box) == 4:
-        x_left, y_top, x_right, y_bottom = [int(v) for v in axis_box]
+        x_left, y_top, x_right, y_bottom = (int(v) for v in axis_box)
     else:
         x_left = int(W * 0.10)
         x_right = int(W * 0.95)

@@ -1003,7 +1003,7 @@ class KnowledgeBase:
             # 上层传入的结构化元数据 (如 structure_info), 覆盖到每个 chunk
             if extra_metadata:
                 for k, v in extra_metadata.items():
-                    if isinstance(v, (list, dict)):
+                    if isinstance(v, list | dict):
                         meta[k] = json.dumps(v, ensure_ascii=False)
                     else:
                         meta[k] = str(v) if v is not None else ""
@@ -1078,7 +1078,7 @@ class KnowledgeBase:
             # 调用方传入的 metadata 覆盖自动生成的 (domain 除外, 让调用方也能指定)
             if metadata:
                 for k, v in metadata.items():
-                    if isinstance(v, (list, dict)):
+                    if isinstance(v, list | dict):
                         meta[k] = json.dumps(v, ensure_ascii=False)
                     else:
                         meta[k] = str(v) if v is not None else ""

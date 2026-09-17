@@ -17,8 +17,9 @@ from __future__ import annotations
 
 import importlib
 import inspect
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 # 可与 warp 对称的 kind 全集
 _KINDS = ("stages", "script", "research", "template")

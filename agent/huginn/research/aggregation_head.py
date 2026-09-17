@@ -304,7 +304,7 @@ def oracle_verify_consolidated(cons: dict) -> dict[str, Any]:
     if verdict == "pass" and grounding not in pass_set:
         reasons.append(f"verdict=pass 但 grounding={grounding}")
     return {
-        "verified": False if reasons else True,
+        "verified": not reasons,
         "reason": "；".join(reasons) or "确定性复核一致",
     }
 

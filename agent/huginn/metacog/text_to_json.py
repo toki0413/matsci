@@ -22,9 +22,11 @@
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import re
-from typing import Any, Callable, Dict, Optional
+from collections.abc import Callable
+from typing import Any
 
 # ── 1. 工具: 去围栏 / 找平衡 JSON ────────────────────────────────
 
@@ -65,7 +67,7 @@ def find_json_objects(text: str) -> list[dict]:
     return out
 
 
-def extract_json_object(text: str, prefer: str = "last") -> Optional[dict]:
+def extract_json_object(text: str, prefer: str = "last") -> dict | None:
     """从任意文本取出一个 JSON 对象 dict.
 
     prefer: "last" 取最后一个平衡对象(think 叙事在前、结果在后时更稳);
@@ -98,16 +100,14 @@ def loose_scalar_fields(text: str) -> dict:
     """宽松抓所有 'key: value' 对: 值优先解释为 number, 否则原始串."""
     out: dict[str, Any] = {}
     for key, num in _NUM_RE.findall(text):
-        try:
+        with contextlib.suppress(ValueError):
             out[key] = float(num)
-        except ValueError:
-            pass
     for key, val in _STR_RE.findall(text):
         out.setdefault(key, val)  # 字符串弱优先级, 数值优先
     return out
 
 
-def loose_json_like(text: str) -> Optional[dict]:
+def loose_json_like(text: str) -> dict | None:
     """若是'首个顶层对象被某些语言省略,但整体像JSON'的多行文本, 尝试整段补齐.
 
     保守启发: 文本以 { 开头、以 } 结尾, 但 json 失败时, 逐个字段抓并组装.
@@ -141,9 +141,9 @@ def _coerce(raw: str, desired: _TypeOrCallable) -> Any:
 
 def robust_extract(
     text: str,
-    schema: Dict[str, _TypeOrCallable],
+    schema: dict[str, _TypeOrCallable],
     prefer: str = "last",
-) -> Optional[dict]:
+) -> dict | None:
     """综合提取: JSON 对象优先; 无完整 JSON 时按 schema 宽松抓字段.
 
     Result 只对 schema 里能找到的字段生效; 一个字段都没有 -> None

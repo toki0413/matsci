@@ -120,10 +120,7 @@ class InverseDesignTool(HuginnTool):
         candidates = np.array(args.candidates)
         scores = np.array(args.scores)
 
-        if args.maximize:
-            ranked_idx = np.argsort(-scores)
-        else:
-            ranked_idx = np.argsort(scores)
+        ranked_idx = np.argsort(-scores) if args.maximize else np.argsort(scores)
 
         n = len(ranked_idx)
         top_k = min(10, n)

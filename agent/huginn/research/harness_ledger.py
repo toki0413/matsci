@@ -170,7 +170,7 @@ class HarnessLedger:
         rows = [e for e in self.entries if e.get("task_episode") == task_episode]
         # 只对数值字段聚合(fail-open: 缺这个字段/非数值的 run 不计入, 也让 count 暴露了覆盖率)
         metric = self._stats([v for e in rows
-                              if isinstance(v := self._metric(e, by), (int, float))])
+                              if isinstance(v := self._metric(e, by), int | float)])
 
         dims: dict[str, dict[str, Any]] = {}
         for dim in _DIMENSIONS:
@@ -181,7 +181,7 @@ class HarnessLedger:
                     if not isinstance(d, dict) or d.get("name") != dim:
                         continue
                     s = d.get("score")
-                    if isinstance(s, (int, float)):
+                    if isinstance(s, int | float):
                         scores.append(s)
                     ev = d.get("evidence")
                     if ev in _EVIDENCE_BITS:

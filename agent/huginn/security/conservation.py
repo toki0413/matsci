@@ -44,7 +44,7 @@ def _usable_forces(forces: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for atom in forces:
         vec = atom.get("force")
-        if not isinstance(vec, (list, tuple)) or len(vec) < 3:
+        if not isinstance(vec, list | tuple) or len(vec) < 3:
             continue
         try:
             fv = [float(x) for x in vec[:3]]
@@ -74,7 +74,7 @@ def _has_real_positions(forces: list[dict[str, Any]]) -> bool:
     """position 是否为真实坐标. pymatgen 路径给 [0,0,0] 占位, 视为无真实坐标."""
     for atom in _usable_forces(forces):
         pos = atom.get("position")
-        if not isinstance(pos, (list, tuple)) or len(pos) < 3:
+        if not isinstance(pos, list | tuple) or len(pos) < 3:
             continue
         try:
             if _norm([float(c) for c in pos[:3]]) > _TORQUE_PLACEHOLDER_TOL:
@@ -92,7 +92,7 @@ def net_torque(forces: list[dict[str, Any]]) -> float | None:
     for atom in _usable_forces(forces):
         pos = atom.get("position")
         f = atom.get("force")  # type: ignore[assignment]
-        if not isinstance(pos, (list, tuple)) or len(pos) < 3:
+        if not isinstance(pos, list | tuple) or len(pos) < 3:
             continue
         rx, ry, rz = (float(c) for c in pos[:3])
         fx, fy, fz = f[0], f[1], f[2]  # type: ignore[index]
@@ -236,7 +236,7 @@ def _max_position_scale(forces: list[dict[str, Any]]) -> float:
     m = 0.0
     for atom in _usable_forces(forces):
         pos = atom.get("position")
-        if not isinstance(pos, (list, tuple)) or len(pos) < 3:
+        if not isinstance(pos, list | tuple) or len(pos) < 3:
             continue
         try:
             m = max(m, _norm([float(c) for c in pos[:3]]))

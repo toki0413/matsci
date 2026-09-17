@@ -251,7 +251,7 @@ class GovernanceFacade:
         timestamp = time.time()
 
         # Snapshot context for potential rollback
-        ctx_snapshot = {k: v for k, v in context.items() if isinstance(v, (str, int, float, bool, list, dict))}
+        ctx_snapshot = {k: v for k, v in context.items() if isinstance(v, str | int | float | bool | list | dict)}
 
         logger.info(f"[gov] execute '{action_name}' (audit_id={audit_id}, user={user})")
 
@@ -360,7 +360,7 @@ class GovernanceFacade:
                     produced_by=action_name,
                     input_files=[v for v in ctx_snapshot.values() if isinstance(v, str)],
                     parameters={k: v for k, v in ctx_snapshot.items()
-                                if isinstance(v, (str, int, float, bool))},
+                                if isinstance(v, str | int | float | bool)},
                     key_properties=result if isinstance(result, dict) else {},
                     snapshot_step_id=audit_id,
                 )

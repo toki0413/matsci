@@ -226,7 +226,7 @@ def _safe_circuit_state(tool_name: str) -> str:
         from huginn.agents.circuit_breaker import CircuitBreaker
 
         return CircuitBreaker.shared().get_state(tool_name)
-    except Exception as exc:
+    except Exception:  # 防御: 熔断状态查询失败则视为closed
         return "closed"
 
 
@@ -236,5 +236,5 @@ def _iso_utc(ts: float) -> str:
         return datetime.fromtimestamp(ts, tz=UTC).isoformat(
             timespec="seconds"
         )
-    except Exception as exc:
+    except Exception:  # 防御: 时间戳转换失败则返回空串
         return ""

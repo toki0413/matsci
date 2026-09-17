@@ -4,7 +4,7 @@
 一个**自注意力聚合层**: 每个 span 由同 prediction 其他 span 加权(只读预测内结构, 不看 actual),
 再经 MLP 回归到最近的真实 span。注意力是可学习的结构消费机制。
 
-前向(单头, h 维): 
+前向(单头, h 维):
   Q=X@Wq, K=X@Wk, V=X@Wv;  attn=softmax(Q@Kt/sqrt(h), mask 掉非法的预测 span);
   Z=attn@V;  ref=X + Z@Wo(残差);  out=tanh(ref@W1+b1)@W2+b2
 损失/惊讶: 掩码均值 over 预测 span of dist(out, 最近真实 span)。
@@ -19,8 +19,8 @@ from pathlib import Path
 import numpy as np
 
 from huginn.utils.runtime import get_runtime_home
-from scripts.train_jepa_predictor import load_pairs, load_encoder
-from scripts.train_jepa_span_predictor import _spans, _padded, _dist, K
+from scripts.train_jepa_predictor import load_encoder, load_pairs
+from scripts.train_jepa_span_predictor import K, _dist, _padded, _spans
 
 
 def _softmax(x):
@@ -55,7 +55,6 @@ def _train(X, T, M, d, h, steps=200, lr=2e-3, seed=0):
         "W1": rng.standard_normal((d, 64)) * 0.02, "b1": np.zeros(64),
         "W2": rng.standard_normal((64, d)) * 0.02, "b2": np.zeros(d),
     }
-    n = X.shape[0]
     for _ in range(steps):
         out, (Q, Km, V, attn, Z, Zproj, ref, H) = _forward(X, M, P, d, h)
         cnt = np.clip(M.sum(axis=-1, keepdims=True), 1, None)

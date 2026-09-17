@@ -493,7 +493,7 @@ class TestJourney6SandboxExecution:
         assert resp.status_code == 200, f"list tools failed: {resp.text}"
         body = resp.json()
         # 工具列表应该是 dict 或 list
-        assert isinstance(body, (dict, list)), f"unexpected body: {body}"
+        assert isinstance(body, dict | list), f"unexpected body: {body}"
 
     def test_03_skills_endpoint(self, app_client, admin_token):
         """/skills 端点列出已注册技能."""

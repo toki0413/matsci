@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Iterable
+from collections.abc import Iterable
 
 # 候选自变量词表(target 里的"该不该扫对照"候选)。用宽泛匹配, 软, 不硬判。
 _VAR_TOKENS: list[tuple[str, str]] = [

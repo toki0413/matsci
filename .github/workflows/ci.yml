@@ -30,7 +30,9 @@ jobs:
       - name: Install ruff
         run: |
           python -m pip install --upgrade pip
-          pip install "ruff>=0.4.0"
+          # 与 pyproject.toml [optional-dependencies].dev 及 .pre-commit-config.yaml
+          # 对齐 (ruff==0.6.9)，消除门禁间版本漂移导致的规则集不一致。
+          pip install "ruff==0.6.9"
 
       - name: Run ruff check (gating)
         working-directory: agent

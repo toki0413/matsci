@@ -203,14 +203,14 @@ def _loose_transform_obj(text: str) -> dict | None:
         if not flat:
             return None
         preds = {k: v for k, v in flat.items()
-                 if k not in _LOOSE_RESERVED and isinstance(v, (int, float))}
+                 if k not in _LOOSE_RESERVED and isinstance(v, int | float)}
         if not preds:
             return None
         desc = flat.get("new_description")
         if not isinstance(desc, str) or not desc.strip():
             desc = None
         n_params = flat.get("new_n_params")
-        n_params = max(1, int(n_params)) if isinstance(n_params, (int, float)) else 1
+        n_params = max(1, int(n_params)) if isinstance(n_params, int | float) else 1
         return {"new_description": desc, "new_predictions": preds,
                 "new_n_params": n_params}
     except Exception:  # noqa: BLE001 — 宽松兜底失败不阻塞, 由调用层升级

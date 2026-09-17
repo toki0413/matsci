@@ -229,7 +229,7 @@ class JointBandit:
         out: dict[str, Any] = {}
         import random
         for k, v in defaults.items():
-            if isinstance(v, (int, float)) and not isinstance(v, bool):
+            if isinstance(v, int | float) and not isinstance(v, bool):
                 # 数值参数: ±10% 扰动
                 delta = v * 0.1 * random.choice([-1, 1])
                 if isinstance(v, int):

@@ -1236,7 +1236,7 @@ class DeliAutoResearch:
                         row = {
                             k: v
                             for k, v in props.items()
-                            if isinstance(v, (int, float))
+                            if isinstance(v, int | float)
                         }
                         if len(row) >= 2:
                             data_rows.append(row)
@@ -1280,7 +1280,7 @@ class DeliAutoResearch:
             for k in ("total_time_seconds", "phases_count",
                       "success", "goal_achieved"):
                 v = comp_entry.get(k)
-                if isinstance(v, (int, float)):
+                if isinstance(v, int | float):
                     row[k] = float(v)
             # phases_summary: list of {name, status} — 按 status 计数
             phases = comp_entry.get("phases_summary") or []
@@ -1297,7 +1297,7 @@ class DeliAutoResearch:
             gj = comp_entry.get("goal_judgment")
             if isinstance(gj, dict):
                 for k, v in gj.items():
-                    if isinstance(v, (int, float)):
+                    if isinstance(v, int | float):
                         col = "gj_" + re.sub(r"[^a-zA-Z0-9_]", "_", str(k))
                         row[col] = float(v)
             if len(row) >= 2:
@@ -1361,7 +1361,7 @@ class DeliAutoResearch:
             features: dict[str, list[float]] = {}
             for row in rows:
                 for k, v in row.items():
-                    if isinstance(v, (int, float)):
+                    if isinstance(v, int | float):
                         features.setdefault(k, []).append(float(v))
             if not features:
                 continue
@@ -1600,7 +1600,7 @@ class DeliAutoResearch:
             features: dict[str, list[float]] = {}
             for row in rows:
                 for k, v in row.items():
-                    if isinstance(v, (int, float)):
+                    if isinstance(v, int | float):
                         features.setdefault(k, []).append(float(v))
             if len(features) < 2:
                 return

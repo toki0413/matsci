@@ -130,7 +130,7 @@ def save_fingerprint(
                 ),
             )
             conn.commit()
-        except Exception as exc:
+        except Exception:  # 防御: 指纹写入失败仅记录继续
             logger.debug("save_fingerprint failed", exc_info=True)
         finally:
             conn.close()
@@ -155,7 +155,7 @@ def retrieve_fingerprint(
                 (domain, identifier),
             ).fetchone()
             return dict(row) if row else None
-        except Exception as exc:
+        except Exception:  # 防御: 指纹查询失败返回空
             logger.debug("best-effort op failed", exc_info=True)
             return None
         finally:
@@ -233,7 +233,7 @@ def extract_domain(url: str) -> str:
     try:
         parsed = urlparse(url)
         return parsed.netloc.lower()
-    except Exception as exc:
+    except Exception:  # 防御: URL 解析失败返回空域名
         logger.debug("best-effort op failed", exc_info=True)
         return ""
 

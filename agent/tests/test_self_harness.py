@@ -2,9 +2,9 @@
 from __future__ import annotations
 
 from huginn.research.harness import (
+    EVIDENCE_MISSING,
     EVIDENCE_OBSERVED,
     EVIDENCE_UNOBSERVED,
-    EVIDENCE_MISSING,
     HarnessReport,
     build_harness_report,
     make_task_episode_id,
@@ -41,7 +41,7 @@ def test_full_observed_run_gets_high_scores():
     )
     rep = build_harness_report("goal-x", out, agent="a", machine="m")
     assert rep.task_episode.startswith("ep-")
-    assert set(d.name for d in rep.dimensions) == {
+    assert {d.name for d in rep.dimensions} == {
         "task_understanding", "controlled_execution", "change_validation",
         "reliable_delivery", "learning_capture", "safety_authority",
     }

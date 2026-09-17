@@ -17,7 +17,8 @@ Pure function, 零网络/零 numpy; 失败返回 None + 原因(供诊断), 不�
 """
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, Optional, Tuple
+from collections.abc import Callable
+from typing import Any
 
 from huginn.metacog.text_to_json import robust_extract
 
@@ -30,7 +31,7 @@ _HARDEN = (
 
 
 def _mk_body(system: str, user: str, max_tokens: int,
-             extra: Optional[dict]) -> dict:
+             extra: dict | None) -> dict:
     body: dict[str, Any] = {
         "messages": [
             {"role": "system", "content": system},
@@ -44,15 +45,15 @@ def _mk_body(system: str, user: str, max_tokens: int,
 
 
 def robust_chat(
-    raw_call: Callable[[dict], Tuple[int, str]],
+    raw_call: Callable[[dict], tuple[int, str]],
     *,
     system: str,
     user: str,
-    schema: Dict[str, Any],
-    extract: Optional[Callable[[str, dict], Optional[dict]]] = None,
+    schema: dict[str, Any],
+    extract: Callable[[str, dict], dict | None] | None = None,
     base_max_tokens: int = 2048,
-    nextra: Optional[dict] = None,
-    harden_text: Optional[str] = None,
+    nextra: dict | None = None,
+    harden_text: str | None = None,
     max_attempts: int = 3,
 ) -> dict:
     """通用调用: 逐档试探, 任一档解析成功即返回; 全过则返回失败 + 原因.
@@ -69,7 +70,7 @@ def robust_chat(
                       "sys": system})
     plans.append({"extra": None, "harden": True, "mt": base_max_tokens,
                   "sys": system + harden_text})
-    # 若 nextra 成功但解析失败, 保留一次"去掉 nextra + 硬护栏"档(上面已含); 
+    # 若 nextra 成功但解析失败, 保留一次"去掉 nextra + 硬护栏"档(上面已含);
     # 若 user 上此外再把 nextra 重试会退化为 plan2, 故不额外重复.
 
     last_status: int = 0

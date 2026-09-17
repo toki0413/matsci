@@ -26,7 +26,7 @@ from pathlib import Path
 import numpy as np
 
 from huginn.utils.runtime import get_runtime_home
-from scripts.train_jepa_predictor import load_pairs, load_encoder, JEPA_EMBED_MODEL
+from scripts.train_jepa_predictor import JEPA_EMBED_MODEL, load_encoder, load_pairs
 
 K = 8
 

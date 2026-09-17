@@ -14,7 +14,6 @@ schema 必须来自 `huginn/research/tool_surface.resolve_diagnostic_tools` 这�
 """
 from __future__ import annotations
 
-import re
 import sys
 from pathlib import Path
 
@@ -66,7 +65,7 @@ def test_backend_diagnostic_tools_resolve_and_no_island_variant():
     """域后端 DIAGNOSTIC_TOOLS 的每条都能经解析器归一成规范形状."""
     sys.path.insert(0, str(_EXAMPLES))
     import ai4s_backends as ab
-    for domain, tools in ab.DIAGNOSTIC_TOOLS.items():
+    for _domain, tools in ab.DIAGNOSTIC_TOOLS.items():
         sch, handlers = resolve_diagnostic_tools(tools)
         assert len(sch) == len(tools) == len(handlers)
         for s in sch:

@@ -92,7 +92,6 @@ def shapley_values(predict: Callable[[dict[str, float]], float],
         others = [j for j in range(n) if j != i]
         for r in range(n):
             for s in combinations(others, r):
-                s_plus = s + (i,)
                 S_mask = 0
                 Sp_mask = 0
                 for idx in s:

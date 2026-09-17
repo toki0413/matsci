@@ -24,8 +24,13 @@ from typing import Any
 
 from huginn.capabilities.base import Capability, CapabilityResult
 from huginn.core_types import ToolContext
-from huginn.research.law_model import LawAction, LawModel, LawState, reconcile
-from huginn.research.law_model import world_model_card  # noqa: F401  (复用卡片, 供外部取)
+from huginn.research.law_model import (
+    LawAction,
+    LawModel,
+    LawState,
+    reconcile,
+    world_model_card,  # noqa: F401  (复用卡片, 供外部取)
+)
 
 # 对外 op 面的输入 schema (MCP / OpenAI function 形态), 让 host 知道怎么调.
 _INPUT_SCHEMA: dict[str, Any] = {

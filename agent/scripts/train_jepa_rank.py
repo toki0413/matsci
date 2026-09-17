@@ -21,7 +21,6 @@ actual 的相对秩排最前** —— 消费端本就吃相对秩, 这里把它�
 from __future__ import annotations
 
 import argparse
-import math
 import statistics
 from collections import defaultdict
 from pathlib import Path
@@ -29,12 +28,12 @@ from pathlib import Path
 import numpy as np
 
 from huginn.utils.runtime import get_runtime_home
-from scripts.train_jepa_predictor import load_pairs, load_encoder
+from scripts.train_jepa_predictor import load_encoder, load_pairs
 from scripts.train_jepa_span_predictor import _spans
 
 
 def _pool(text: str, enc) -> np.ndarray:
-    spans = [s for s in _spans(text)]
+    spans = list(_spans(text))
     if not spans:
         return np.zeros(enc.get_embedding_dimension(), dtype=np.float64)
     v = np.asarray(enc.encode(spans, normalize_embeddings=True), dtype=np.float64)
@@ -162,7 +161,7 @@ def main() -> None:
             # 分离带: 对未训, pos = dist(pbase, 自己的 actual), neg = 最近跨配(在 te 内)
             _a_self = acts[idx]
             sep_base_pos.append(_dist(pbase, _a_self))
-            negb = min((_dist(pbase, acts[j]) for j in range(len(acts)) if j != idx))
+            negb = min(_dist(pbase, acts[j]) for j in range(len(acts)) if j != idx)
             sep_base_neg.append(negb)
             # trained
             p_i = P_te[idx]
@@ -171,10 +170,9 @@ def main() -> None:
             if r_a == 1:
                 rank1_rank += 1
             sep_rank_pos.append(_dist(p_i, _a_self))
-            negr = min((_dist(p_i, acts[j]) for j in range(len(acts)) if j != idx))
+            negr = min(_dist(p_i, acts[j]) for j in range(len(acts)) if j != idx)
             sep_rank_neg.append(negr)
 
-    n = max(1, len(mrr_base))
     print(f"[rank] 目标级留出 {args.holdout_frac:.0%} ({n_ho}/{len(objs)}), {args.splits} 次, "
           f"steps={args.steps}, margin={args.margin}")
     print(f"[base] MRR={statistics.mean(mrr_base):.3f}  rank-1={100*rank1_base/tot:.1f}%  "

@@ -101,7 +101,7 @@ class EngineControl:
                     "engine_state saved (reason=%s, iter=%d, run_id=%s)",
                     reason, self._iteration, run_id,
                 )
-        except Exception as exc:
+        except Exception:  # 防御: 引擎状态保存失败非致命
             logger.warning(
                 "_maybe_save_engine_state failed (non-fatal)", exc_info=True,
             )
@@ -134,7 +134,7 @@ class EngineControl:
             # 超硬上限: 先保存进度 (可 resume), 再抛 — agent loop 优雅停止而非继续烧钱.
             self._maybe_save_engine_state(force=True, reason="budget_exhausted")
             raise
-        except Exception as exc:
+        except Exception:  # 防御: 令牌预算跟踪失败忽略
             logger.debug("token budget tracking failed (non-fatal)", exc_info=True)
 
     async def _maybe_run_budget_approval(self) -> None:
@@ -172,7 +172,7 @@ class EngineControl:
                 raise BudgetExhausted("budget renewal denied by user/limit")
         except BudgetExhausted:
             raise
-        except Exception as exc:
+        except Exception:  # 防御: 预算审批检查失败忽略
             logger.debug("budget approval check failed (non-fatal)", exc_info=True)
 
     def _build_budget_human_decide(self):
@@ -198,7 +198,7 @@ class EngineControl:
                     return False
                 low = str(answer).strip().lower()
                 return "approve" in low or low.startswith("y") or "批准" in str(answer)
-            except Exception as exc:
+            except Exception:  # 防御: 人工决策失败降级返回
                 logger.debug("budget human decide failed (non-fatal)", exc_info=True)
                 return False
         return _human_decide
@@ -212,7 +212,7 @@ class EngineControl:
             from huginn.plugins.event_bus import EventBus
 
             self._event_bus = EventBus()
-        except Exception as exc:
+        except Exception:  # 防御: 尽力获取组件失败返回空
             logger.debug("best-effort op failed", exc_info=True)
             return None
         return self._event_bus
@@ -250,7 +250,7 @@ class EngineControl:
                     event_type.name,
                     stage_name,
                 )
-        except Exception as exc:
+        except Exception:  # 防御: 阶段事件分发失败不阻断
             logger.warning(
                 "error in _dispatch_stage_event: bus.dispatch failed", exc_info=True
             )
@@ -466,7 +466,7 @@ class EngineControl:
                 },
             )
             await bus.dispatch(ev)
-        except Exception as exc:
+        except Exception:  # 防御: 检查点事件发布失败忽略
             logger.debug("checkpoint event publish failed", exc_info=True)
 
 
@@ -565,7 +565,7 @@ class EngineControl:
                     channel.respond(sq.id, answer)
                     answered += 1
                     logger.info("side answered %s: %s", sq.id, answer[:80])
-            except Exception as exc:
+            except Exception:  # 防御: 单项回答失败不影响主循环
                 # 单条失败不影响其他, 也不影响主 loop
                 logger.warning("side failed to answer %s", sq.id, exc_info=True)
         return answered
@@ -579,7 +579,7 @@ class EngineControl:
             from huginn.interaction.clarification import get_clarification_manager
 
             self._clarification_mgr = get_clarification_manager()
-        except Exception as exc:
+        except Exception:  # 防御: 尽力获取组件失败返回空
             logger.debug("best-effort op failed", exc_info=True)
             return None
         return self._clarification_mgr
@@ -593,7 +593,7 @@ class EngineControl:
             from huginn.autoloop.plan_store import PlanStore
 
             self._plan_store = PlanStore()
-        except Exception as exc:
+        except Exception:  # 防御: 尽力获取组件失败返回空
             logger.debug("best-effort op failed", exc_info=True)
             return None
         return self._plan_store
@@ -694,7 +694,7 @@ class EngineControl:
                 for _dim, _nodes in list(_clusters.items())[:3]:
                     if _dim != "unknown" and _nodes:
                         _directions.append(f"{_dim}: {_nodes[0].statement[:80]}")
-            except Exception as exc:
+            except Exception:  # 防御: 方向聚类失败跳过
                 logger.debug("cluster directions skipped", exc_info=True)
             # 不足 3 个时补 speculator predictions (首轮自然走这条)
             while len(_directions) < 3:
@@ -704,7 +704,7 @@ class EngineControl:
                         _directions.append(f"speculator: {str(_preds[len(_directions)])[:80]}")
                     else:
                         break
-                except Exception as exc:
+                except Exception:  # 防御: 尽力补方向失败停止补充
                     logger.debug("best-effort op failed", exc_info=True)
                     break
 
@@ -749,7 +749,7 @@ class EngineControl:
             if checkpoint == "hypothesize_align" and answer:
                 self._speculator_hint += f"\n[FDE 对齐] 用户方向: {answer[:200]}\n"
             return answer
-        except Exception as exc:
+        except Exception:  # 防御: 澄清失败返回空
             logger.warning("clarify %s failed", checkpoint, exc_info=True)
             return None
 
@@ -781,7 +781,7 @@ class EngineControl:
         try:
             for nd in self.hypothesis_graph.supported()[:3]:
                 evidence.append(str(nd.statement)[:150])
-        except Exception as exc:
+        except Exception:  # 防御: 支撑证据收集失败跳过
             logger.debug("supported evidence collect skipped", exc_info=True)
 
         artifacts: list[str] = []
@@ -816,7 +816,7 @@ class EngineControl:
             trace_path.parent.mkdir(parents=True, exist_ok=True)
             with trace_path.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-        except Exception as exc:
+        except Exception:  # 防御: 元轨迹写入失败忽略
             logger.debug("meta_trace write failed (non-fatal)", exc_info=True)
 
 

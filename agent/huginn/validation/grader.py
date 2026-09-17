@@ -146,10 +146,7 @@ class RedTeamGrader:
                 message="no findings",
             )
         # blocking -> 0, 每条发现扣 0.1
-        if report.has_blocking:
-            score = 0.0
-        else:
-            score = max(0.0, 1.0 - 0.1 * len(findings))
+        score = 0.0 if report.has_blocking else max(0.0, 1.0 - 0.1 * len(findings))
         checks = [
             {"severity": f.severity, "description": f.description}
             for f in findings

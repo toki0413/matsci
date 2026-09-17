@@ -155,7 +155,7 @@ class VinaTool(HuginnTool):
                 auditor = PhysicsAuditor()
                 audit = auditor.audit("vina_tool", "dock", poses, inp.model_dump())
                 poses["physics_audit"] = audit.to_dict()
-            except Exception as exc:
+            except Exception:  # 防御: 审计失败不阻断结果返回
                 logger.debug("audit failure can't block result delivery", exc_info=True)
 
             return ToolResult(data=poses)

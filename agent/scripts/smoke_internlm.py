@@ -101,7 +101,10 @@ def _exec_tool(tc) -> str:
         xs, ys = args["xs"], args["ys"]
         # 简单线性拟合 E_g(P) = a + b*P (P 单位 GPa).
         n = len(xs)
-        sx = sum(xs); sy = sum(ys); sxx = sum(x * x for x in xs); sxy = sum(x * y for x, y in zip(xs, ys))
+        sx = sum(xs)
+        sy = sum(ys)
+        sxx = sum(x * x for x in xs)
+        sxy = sum(x * y for x, y in zip(xs, ys))
         denom = n * sxx - sx * sx or 1.0
         b = (n * sxy - sx * sy) / denom
         a = (sy - b * sx) / n
@@ -116,7 +119,7 @@ def _run_loop(client_args: dict, model: str, verbose: bool = True) -> int:
     client = OpenAI(**client_args)
     messages: list[dict] = [{"role": "user", "content": _USER_GOAL}]
 
-    for turn in range(6):
+    for _turn in range(6):
         r = client.chat.completions.create(
             model=model, messages=messages, tools=_TOOLS,
             tool_choice="auto", max_tokens=1024, temperature=0.2,

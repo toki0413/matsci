@@ -79,7 +79,7 @@ def _find_model(host: str) -> str | None:
 
 def _encode_image(image_path: str | Path | bytes) -> str | None:
     """把图片转成 ollama 需要的 base64 字符串 (裸 bytes 不适用时返回 None)."""
-    if isinstance(image_path, (bytes, bytearray)):
+    if isinstance(image_path, bytes | bytearray):
         return base64.b64encode(bytes(image_path)).decode("ascii")
     try:
         return base64.b64encode(Path(image_path).read_bytes()).decode("ascii")

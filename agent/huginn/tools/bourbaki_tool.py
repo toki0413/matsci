@@ -83,10 +83,7 @@ class BourbakiTool(HuginnTool):
         return self._lean_available
 
     async def call(self, args: dict[str, Any], context: ToolContext) -> ToolResult:
-        if isinstance(args, BourbakiInput):
-            input_data = args
-        else:
-            input_data = BourbakiInput(**args)
+        input_data = args if isinstance(args, BourbakiInput) else BourbakiInput(**args)
         task = input_data.task or input_data.action
         domain = input_data.domain
         equations = input_data.equations
@@ -228,7 +225,7 @@ end
         if isinstance(variables, list):
             var_units = {}
             for v in variables:
-                if isinstance(v, (list, tuple)) and len(v) >= 2:
+                if isinstance(v, list | tuple) and len(v) >= 2:
                     var_units[str(v[0])] = str(v[1])
                 elif isinstance(v, dict) and "name" in v:
                     var_units[str(v["name"])] = str(v.get("unit", v.get("dimension", "")))

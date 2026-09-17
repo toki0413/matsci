@@ -211,10 +211,7 @@ async def interrupt_status(agent_id: str, thread_id: str = "default") -> dict[st
 async def list_clarifications(thread_id: str | None = None) -> dict[str, Any]:
     """列出待回答的提问. ?thread_id=xxx 只看某个会话的."""
     mgr = get_clarification_manager()
-    if thread_id:
-        questions = mgr.list_pending(thread_id)
-    else:
-        questions = mgr.list_all_pending()
+    questions = mgr.list_pending(thread_id) if thread_id else mgr.list_all_pending()
     return {"success": True, "count": len(questions), "questions": questions}
 
 
@@ -289,10 +286,7 @@ async def resolve_inbox_item(item_id: str, params: dict[str, Any]) -> dict[str, 
 async def list_tasks(active_only: bool = False) -> dict[str, Any]:
     """列出所有任务进度. ?active_only=true 只看未完成的."""
     tracker = get_progress_tracker()
-    if active_only:
-        tasks = tracker.list_active()
-    else:
-        tasks = tracker.list_all()
+    tasks = tracker.list_active() if active_only else tracker.list_all()
     return {"success": True, "count": len(tasks), "tasks": tasks}
 
 

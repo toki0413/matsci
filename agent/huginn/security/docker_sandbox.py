@@ -339,11 +339,11 @@ class DockerSandboxExecutor:
 
         success = (returncode == 0) and not deadline_expired
 
-        if isinstance(stdout_bytes, (bytes, bytearray)):
+        if isinstance(stdout_bytes, bytes | bytearray):
             stdout = bytes(stdout_bytes).decode("utf-8", errors="replace")
         else:
             stdout = str(stdout_bytes)
-        if isinstance(stderr_bytes, (bytes, bytearray)):
+        if isinstance(stderr_bytes, bytes | bytearray):
             stderr = bytes(stderr_bytes).decode("utf-8", errors="replace")
         else:
             stderr = str(stderr_bytes)

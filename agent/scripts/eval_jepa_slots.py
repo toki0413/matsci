@@ -22,9 +22,9 @@ from pathlib import Path
 
 import numpy as np
 
-from scripts.train_jepa_predictor import load_pairs, load_encoder
-from scripts.train_jepa_span_predictor import _spans, _dist
 from huginn.jepa_slots import append_slots, detect_leak
+from scripts.train_jepa_predictor import load_encoder, load_pairs
+from scripts.train_jepa_span_predictor import _dist, _spans
 
 MODEL = Path("/root/.huginn/models/jepa_span_predictor.json")
 
@@ -107,7 +107,8 @@ def main() -> None:
     if not orig_vals:
         print("无可用配对 (可能全部漏检). 退出.")
         return
-    o = float(np.mean(orig_vals)); s = float(np.mean(slot_vals))
+    o = float(np.mean(orig_vals))
+    s = float(np.mean(slot_vals))
     wins = sum(1 for r in rows if r[2] < r[1] - 1e-6)
     print(f"方法级 panel={len(orig_vals)} 对; 泄漏丢弃={leaked} 对")
     print(f"[A] 原始找槽: mean surprise = {o:.4f}")

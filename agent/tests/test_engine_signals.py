@@ -6,8 +6,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from huginn.autoloop.signals import EngineSignals
 
 
@@ -70,8 +68,6 @@ def test_property_bridge_preserves_reads():
 
 def test_engine_state_signals_persist(tmp_path):
     import os
-
-    from pathlib import Path
 
     from huginn.runtime import engine_state as es
 

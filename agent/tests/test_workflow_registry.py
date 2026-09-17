@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from huginn.workflows.registry import WorkflowRegistry, WorkflowPackage
+from huginn.workflows.registry import WorkflowPackage, WorkflowRegistry
 
 
 @pytest.fixture(autouse=True)

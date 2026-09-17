@@ -182,7 +182,7 @@ def _extract_walltime_seconds(params: dict[str, Any]) -> float | None:
     val = params.get("walltime")
     if val is None:
         return None
-    if isinstance(val, (int, float)):
+    if isinstance(val, int | float):
         return float(val)
     if isinstance(val, str):
         s = val.strip().lower()

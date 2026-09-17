@@ -64,9 +64,9 @@ def _to_py(v: Any) -> Any:
         return v.tolist()
     if isinstance(v, dict):
         return {str(k): _to_py(x) for k, x in v.items()}
-    if isinstance(v, (list, tuple)):
+    if isinstance(v, list | tuple):
         return [_to_py(x) for x in v]
-    if isinstance(v, (int, float, bool, str)) or v is None:
+    if isinstance(v, int | float | bool | str) or v is None:
         return v
     try:
         json.dumps(v)
@@ -104,9 +104,15 @@ def _load_namespace(code: str, mem_cap: int = SAFE_MEM_CAP,
     imports_whitelist_extra 注入点), 只在本次调用里并入安全白名单 —— 诚实红线:
     仅"放行良性的该域科学计算依赖", 绝不放宽 __import__ 本身或加任何 IO/网络模块.
     """
-    from huginn.security.code_act_sandbox import exec_with_mem_cap, make_safe_builtins, safe_import
     import builtins as _bi
+
     import numpy as np
+
+    from huginn.security.code_act_sandbox import (
+        exec_with_mem_cap,
+        make_safe_builtins,
+        safe_import,
+    )
     ns: dict = {"__builtins__": make_safe_builtins(), "np": np}
     if imports_whitelist_extra:
         extras = set(imports_whitelist_extra)
@@ -148,7 +154,7 @@ def _coerce_author_result(res: Any) -> tuple[Any, str | None]:
     for k, v in res.items():
         if k in ("objectives", "summary", "success"):
             continue
-        if isinstance(v, (int, float, np.number)):
+        if isinstance(v, int | float | np.number):
             scalar_obj[str(k)] = float(v)
         else:
             raw_sum[str(k)] = v
@@ -178,7 +184,7 @@ def _check_run_schema(res: Any) -> str | None:
     if not isinstance(obj, dict) or not obj:
         return "需要非空 dict 字段 objectives (每个值须为数值)"
     for _, v in obj.items():
-        if not isinstance(v, (int, float, np.number)):
+        if not isinstance(v, int | float | np.number):
             return f"objectives 值须为数值: {v!r}"
     # 宽容收尾: success 缺失/是 numpy.bool_/任意标量 → 依"跑出数值"推断 True.
     # 这是样式宽容, 不是数值伪造 —— objectives 已全为真实计算数值.

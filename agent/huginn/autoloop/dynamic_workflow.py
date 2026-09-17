@@ -193,22 +193,22 @@ def _serialize(obj: Any) -> Any:
     """Best-effort JSON-safe serialization for result outputs."""
     if obj is None:
         return None
-    if isinstance(obj, (str, int, float, bool)):
+    if isinstance(obj, str | int | float | bool):
         return obj
     if isinstance(obj, dict):
         return {str(k): _serialize(v) for k, v in obj.items()}
-    if isinstance(obj, (list, tuple)):
+    if isinstance(obj, list | tuple):
         return [_serialize(v) for v in obj]
     # ToolResult / dataclass / object → try dict, fall back to str
     if hasattr(obj, "to_dict"):
         try:
             return obj.to_dict()
-        except Exception as exc:
+        except Exception:  # 防御: 转字典失败沿用原对象
             logger.debug("to dict failed", exc_info=True)
     if hasattr(obj, "__dict__"):
         try:
             return {k: _serialize(v) for k, v in vars(obj).items() if not k.startswith("_")}
-        except Exception as exc:
+        except Exception:  # 防御: 序列化失败回落字符串
             logger.debug("serialize failed", exc_info=True)
     return str(obj)
 

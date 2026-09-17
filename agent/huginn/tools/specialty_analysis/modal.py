@@ -34,10 +34,7 @@ def modal_lanczos(args: Any) -> ToolResult:
         )
 
     # dense path 允许 n_modes <= n; sparse (eigsh) 要求 k < n
-    if n <= 200:
-        n_modes = min(args.num_modes, n)
-    else:
-        n_modes = min(args.num_modes, n - 1)
+    n_modes = min(args.num_modes, n) if n <= 200 else min(args.num_modes, n - 1)
     n_modes = max(n_modes, 1)
     shift = args.shift if args.shift is not None else 0.0
 

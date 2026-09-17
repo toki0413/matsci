@@ -181,21 +181,21 @@ def _render_scienceplots(
             if not data:
                 continue
             if chart_type == "line":
-                if isinstance(data[0], (list, tuple)) and len(data[0]) >= 2:
+                if isinstance(data[0], list | tuple) and len(data[0]) >= 2:
                     xs = [p[0] for p in data]
                     ys = [p[1] for p in data]
                     ax.plot(xs, ys, label=label, color=color, linewidth=2)
                 else:
                     ax.plot(data, label=label, color=color, linewidth=2)
             elif chart_type == "bar":
-                if isinstance(data[0], (list, tuple)) and len(data[0]) >= 2:
+                if isinstance(data[0], list | tuple) and len(data[0]) >= 2:
                     labels = [str(p[0]) for p in data]
                     values = [p[1] for p in data]
                     ax.bar(labels, values, label=label, color=color)
                 else:
                     ax.bar(range(len(data)), data, label=label, color=color)
             elif chart_type == "scatter":
-                if isinstance(data[0], (list, tuple)) and len(data[0]) >= 2:
+                if isinstance(data[0], list | tuple) and len(data[0]) >= 2:
                     xs = [p[0] for p in data]
                     ys = [p[1] for p in data]
                     ax.scatter(xs, ys, label=label, color=color, s=50)
@@ -268,7 +268,7 @@ def _render_flint(
         label = s.get("label", "series")
         data = s.get("data", [])
         for i, v in enumerate(data):
-            if isinstance(v, (list, tuple)) and len(v) >= 2:
+            if isinstance(v, list | tuple) and len(v) >= 2:
                 values.append({"x": v[0], "y": v[1], "series": label})
             else:
                 values.append({"x": i, "y": v, "series": label})

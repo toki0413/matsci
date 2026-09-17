@@ -229,7 +229,7 @@ class LammpsTool(HuginnTool):
             exe = shutil.which("lmp")
             if exe:
                 return exe
-        except Exception as exc:
+        except Exception:  # 防御: PATH 探测失败继续下一步查找
             logger.debug("suppressed in _find_lammps", exc_info=True)
 
         # Check common Windows locations (with glob for unicode paths)
@@ -343,7 +343,7 @@ class LammpsTool(HuginnTool):
                 analysis["provenance"] = capture(
                     "lammps_tool", args.model_dump(), output=dict(analysis)
                 ).to_dict()
-            except Exception as exc:
+            except Exception:  # 防御: 溯源记录失败不阻断分析结果
                 logger.debug("suppressed in estimate_cost", exc_info=True)
             # 轨迹里有 MSD, 提示 agent 用 GP 量化扩散系数的不确定性
             analysis["uq_hint"] = self._uq_hint()
@@ -492,7 +492,7 @@ class LammpsTool(HuginnTool):
                             ]
                             error = f"Physics audit found errors: {errs}"
                             soft_failure_msg = error
-                    except Exception as exc:
+                    except Exception:  # 防御: 审计异常不阻断重试流程
                         logger.debug("审计本身挂了不能阻塞结果", exc_info=True)
 
                 if error is None:
@@ -570,7 +570,7 @@ class LammpsTool(HuginnTool):
                         args.model_dump(),
                     )
                     data["physics_audit"] = audit_report.to_dict()
-                except Exception as exc:
+                except Exception:  # 防御: 审计失败不阻断结果返回
                     logger.debug("audit is best-effort, never block the result", exc_info=True)
 
             if autoheal_log:
@@ -584,7 +584,7 @@ class LammpsTool(HuginnTool):
                 data["provenance"] = capture(
                     "lammps_tool", args.model_dump(), output=dict(data)
                 ).to_dict()
-            except Exception as exc:
+            except Exception:  # 防御: 溯源失败不阻断结果返回
                 logger.debug("provenance 失败不能把计算结果带挂", exc_info=True)
 
             # 提示 agent 用 GP 拟合 MSD-vs-time, 量化扩散系数不确定性
@@ -1073,7 +1073,7 @@ class LammpsTool(HuginnTool):
                         params["neighbor"] = float(parts[1])
                     except ValueError:
                         params["neighbor"] = parts[1]
-        except Exception as exc:
+        except Exception:  # 防御: 参数解析失败返回空配置
             logger.debug("suppressed in _read_script_params", exc_info=True)
         return params
 
@@ -1103,7 +1103,7 @@ class LammpsTool(HuginnTool):
             )
             input_path.write_text(new_script, encoding="utf-8")
             return {"fixes": changed, "reasoning": reasoning}
-        except Exception as exc:
+        except Exception:  # 防御: 自动修复失败回退无修复
             logger.debug("best-effort op failed", exc_info=True)
             return None
 
@@ -1562,7 +1562,7 @@ class LammpsTool(HuginnTool):
 
             r_values = ((r_edges[:-1] + r_edges[1:]) / 2).tolist()
             return {"r": r_values, "g": g.tolist(), "bins": bins, "r_max": r_max}
-        except Exception as exc:
+        except Exception:  # 防御: RDF 计算失败返回空
             logger.debug("best-effort op failed", exc_info=True)
             return None
 
@@ -1615,7 +1615,7 @@ class LammpsTool(HuginnTool):
                     d["vacf_normalized"] = 0.0
 
             return vacf_data
-        except Exception as exc:
+        except Exception:  # 防御: VACF 计算失败返回空
             logger.debug("best-effort op failed", exc_info=True)
             return None
 
@@ -1651,7 +1651,7 @@ class LammpsTool(HuginnTool):
 
             d_gk = integral / 3.0
             return float(d_gk)
-        except Exception as exc:
+        except Exception:  # 防御: 扩散系数计算失败返回空
             logger.debug("best-effort op failed", exc_info=True)
             return None
 
@@ -1726,7 +1726,7 @@ class LammpsTool(HuginnTool):
                     "G_s": gs,
                 })
             return out
-        except Exception as exc:
+        except Exception:  # 防御: 关联函数计算失败返回空
             logger.debug("best-effort op failed", exc_info=True)
             return None
 
@@ -1797,7 +1797,7 @@ class LammpsTool(HuginnTool):
                     f_entry["F"].append(f_val)
                 out.append(f_entry)
             return out
-        except Exception as exc:
+        except Exception:  # 防御: 散射函数计算失败返回空
             logger.debug("best-effort op failed", exc_info=True)
             return None
 
@@ -1863,7 +1863,7 @@ class LammpsTool(HuginnTool):
                     data["provenance"] = capture(
                         "lammps_tool", args.model_dump(), output=dict(data)
                     ).to_dict()
-                except Exception as exc:
+                except Exception:  # 防御: DEM 溯源失败不阻断结果返回
                     logger.debug("DEM provenance failed", exc_info=True)
             else:
                 data["status"] = "failed"

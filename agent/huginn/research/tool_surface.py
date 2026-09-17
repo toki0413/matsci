@@ -14,7 +14,7 @@
 """
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 
 def canonical_tool_shape(name: str, description: str, parameters: dict | None = None) -> dict:
@@ -118,7 +118,7 @@ def resolve_diagnostic_tools(items, *, manage: dict | None = None) -> tuple[list
     """
     schemas: list[dict] = []
     handlers: dict[str, Callable[[dict], str]] = {}
-    registry_ok = _try_registry()
+    _try_registry()  # 旁路探测/预热 registry; 返回值仅作现状说明, 无用
     authorize = (manage or {}).get("authorize")
     audit = (manage or {}).get("audit")
     wrapped = (authorize is not None) or (audit is not None)
