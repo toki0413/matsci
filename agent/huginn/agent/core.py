@@ -289,7 +289,7 @@ class HuginnAgent(
             self._csm.attach_session_log(
                 SessionEventLog.open(self.thread_id, load=True)
             )
-        except Exception as exc:
+        except Exception:  # 防御: 会话事件日志加载失败则忽略, 不阻塞 agent
             logger.debug(
                 "best-effort op failed", exc_info=True
             )  # 无事件日志不阻塞 agent
@@ -302,7 +302,7 @@ class HuginnAgent(
                 from huginn.scheduling import AdmissionPolicy, ToolScheduler
 
                 self.scheduler = ToolScheduler(policy=AdmissionPolicy.from_env())
-            except Exception as exc:
+            except Exception:  # 防御: ToolScheduler 构造失败则置空, 后续懒加载兜底
                 self.scheduler = None
         self._agent_graph: Any | None = None
         self._tool_description_text: str | None = None
@@ -530,7 +530,7 @@ class HuginnAgent(
                     from huginn.cognitive_engine import TransitionSignal
 
                     csm.transition(TransitionSignal("user_confirmed", {"mode": mode}))
-                except Exception as exc:
+                except Exception:  # 防御: set_mode CSM 委托失败则忽略, state 保持原值
                     logger.debug("set_mode CSM delegation failed", exc_info=True)
 
     def get_mode(self) -> str:
@@ -679,7 +679,7 @@ class HuginnAgent(
                         # else: 交集空 → task router 误判, 保留原 tool_filter
                     else:
                         effective_filter = candidate_set
-            except Exception as exc:
+            except Exception:  # 防御: task_tool_router 异常则回退 tool_filter
                 logger.debug(
                     "task_tool_router failed, fallback to tool_filter",
                     exc_info=True,
@@ -754,7 +754,7 @@ class HuginnAgent(
                 csm = getattr(self, "_csm", None)
                 if csm is not None:
                     task = STATE_TO_MODEL_TASK.get(csm.state, task)
-            except Exception as exc:
+            except Exception:  # 防御: CSM state 未匹配则保留原 task
                 logger.debug(
                     "CSM state → model task mapping failed, fallback to original task",
                     exc_info=True,
@@ -774,7 +774,7 @@ class HuginnAgent(
             cheap = self.model_router.select("cheap", prefer_cheap=True)
             if cheap is not primary:
                 return cheap
-        except Exception as exc:
+        except Exception:  # 防御: 主备兜底模型选择失败则无备选
             logger.debug("pick main fallback model failed", exc_info=True)
         return None
 
@@ -801,7 +801,7 @@ class HuginnAgent(
         provenance = None
         try:
             provenance = ProvenanceRegistry.shared()
-        except Exception as exc:
+        except Exception:  # 防御: ProvenanceRegistry 不可用则 provenance 置空
             logger.debug("ProvenanceRegistry.shared() unavailable", exc_info=True)
         return Explainer(audit=getattr(self, "audit", None), provenance=provenance).explain(
             goal=goal, actor=actor, tool=tool, limit=limit
@@ -926,7 +926,7 @@ class HuginnAgent(
                                                 _weak_metrics.append(f"{_k}={_fv:.3f}")
                                         except (TypeError, ValueError):
                                             logger.debug("best-effort op failed", exc_info=True)
-                            except Exception as exc:
+                            except Exception:  # 防御: weak-metric 扫描失败则忽略
                                 logger.debug("weak-metric scan failed", exc_info=True)
                         if _weak_metrics:
                             _extra_hints.append(
@@ -973,9 +973,9 @@ class HuginnAgent(
                         _bandit_hint = EffortBandit.get_instance().build_hint()
                         if _bandit_hint:
                             patched = [SystemMessage(content=_bandit_hint)] + patched
-                    except Exception as exc:
+                    except Exception:  # 防御: bandit 提示注入失败则忽略
                         logger.debug("bandit effort hint failed", exc_info=True)
-                except Exception as exc:
+                except Exception:  # 防御: pre-model 提示注入失败则忽略
                     logger.debug("pre-model hint injection failed", exc_info=True)
                 return {"llm_input_messages": patched}
 
@@ -1046,7 +1046,7 @@ class HuginnAgent(
             purged = PrivacyGuard.shared().purge_session()
             if purged:
                 logger.info("purged %d ephemeral privacy entries", len(purged))
-        except Exception as exc:
+        except Exception:  # 防御: runtime 归档时隐私清理失败不阻塞关闭
             logger.warning("privacy purge failed", exc_info=True)
         self._exit_stack.close()
 

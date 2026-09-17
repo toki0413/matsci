@@ -48,7 +48,7 @@ class FixDanglingToolCallsMiddleware(AgentMiddleware):
             caps = get_model_capabilities(model_name)
             # vision=True → 保留; vision=False → 剥离; 未知名 → fail-closed 剥离
             return not caps.vision
-        except Exception as exc:
+        except Exception:  # 防御: 能力判定失败则 fail-closed 剥离
             logger.debug("best-effort op failed", exc_info=True)
             return True
 
@@ -106,11 +106,11 @@ class FixDanglingToolCallsMiddleware(AgentMiddleware):
                 try:
                     patched[_i] = _msg.model_copy(update={"content": _new_blocks})
                     _changed_blocks = True
-                except Exception as exc:
+                except Exception:  # 防御: model_copy 失败则回退直接改 content 后退出
                     try:
                         _msg.content = _new_blocks
                         _changed_blocks = True
-                    except Exception as exc:
+                    except Exception:  # 非致命: 直接改 content 也失败则忽略
                         logger.debug("message content patch failed", exc_info=True)
 
         # 再重建 list 保证 ToolMessage 紧跟 AIMessage(tool_calls), 同时补 orphan.
@@ -185,7 +185,7 @@ class FixDanglingToolCallsMiddleware(AgentMiddleware):
             if _b64:
                 try:
                     _raw = base64.b64decode(_b64)
-                except Exception as exc:
+                except Exception:  # 非致命: base64 解码失败则置空
                     logger.debug("best-effort op failed", exc_info=True)
                     _raw = None
                 if _raw is not None:
@@ -197,7 +197,7 @@ class FixDanglingToolCallsMiddleware(AgentMiddleware):
                             _tf.write(_raw)
                             image_path = _tf.name
                             _is_tmp = True
-                    except Exception as exc:
+                    except Exception:  # 非致命: 临时图片写盘失败则跳过
                         logger.debug("best-effort op failed", exc_info=True)
                         image_path = None
         # image_path block (非 OpenAI 标准, 但有些路径会塞): 直接取路径不解码
