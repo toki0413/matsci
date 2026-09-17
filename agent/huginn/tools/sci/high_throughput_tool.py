@@ -85,7 +85,7 @@ class HighThroughputTool(HuginnTool):
             )
         if args.space_type in ("random", "lhs"):
             for _key, vals in args.parameter_space.items():
-                if len(vals) != 2 or not all(isinstance(v, (int, float)) for v in vals):
+                if len(vals) != 2 or not all(isinstance(v, int | float) for v in vals):
                     return ValidationResult(
                         result=False,
                         message=f"{args.space_type} requires [min, max] numeric range for each parameter.",
