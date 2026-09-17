@@ -38,7 +38,7 @@ AU_M = 1.49597870700e11        # [m]
 SOLAR_MASS_KG = 1.98892e30
 
 
-class Worldview(str, Enum):
+class Worldview(str, Enum):  # noqa: UP042 — 刻意 str+Enum: 世界观谱系需可直接 JSON 序列化且保持==string比较
     """世界模型的世界观谱系 (多元论治理) —— 不同学科对『世界/状态/动力学』的不同刻画.
 
     '世界模型'不是边界明确的单一技术范式: 强化学习、生成模型、认知科学、具身智能、

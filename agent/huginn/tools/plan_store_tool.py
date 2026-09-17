@@ -17,13 +17,15 @@ actions:
 from __future__ import annotations
 
 import logging
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, Field
 
-from huginn.autoloop.plan_store import PlanStep, PlanStore
 from huginn.core_types import ToolContext, ToolResult, ValidationResult
 from huginn.tools.base import HuginnTool
+
+if TYPE_CHECKING:
+    from huginn.autoloop.plan_store import PlanStore
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +36,8 @@ _store_instance: PlanStore | None = None
 
 def _get_default_store() -> PlanStore:
     global _store_instance
+    from huginn.autoloop.plan_store import PlanStore
+
     if _store_instance is None:
         _store_instance = PlanStore()
     return _store_instance
@@ -114,6 +118,8 @@ class PlanStoreTool(HuginnTool):
         self, args: dict[str, Any], context: ToolContext | None = None
     ) -> ToolResult:
         input_data = PlanStoreInput(**args)
+        from huginn.autoloop.plan_store import PlanStep
+
         store = self._resolve_store()
 
         try:

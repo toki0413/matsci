@@ -131,8 +131,8 @@ def test_dependency_allowlist_blocks_unbounded_new_deps() -> None:
         "langgraph", "langgraph-checkpoint-sqlite", "deepagents", "click",
         "rich", "networkx", "numpy", "scipy", "sympy", "z3-solver", "aiohttp",
         "python-dotenv", "cryptography", "pyyaml", "toml", "mcp", "fastapi",
-        "uvicorn", "sse-starlette", "python-multipart", "httpx", "websockets",
-        "requests", "tenacity", "Pillow",
+        "uvicorn", "python-multipart", "httpx", "websockets",
+        "Pillow",
     }
 
     def _pkg(dep: str) -> str:

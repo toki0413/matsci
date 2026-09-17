@@ -83,10 +83,7 @@ def extract_prior(out: Any) -> dict[str, Any]:
 # 让"同一领域不同措辞"的共享实义词主导相似度(双文档语料下泛词 IDF 会失真,
 # 不剔除反而抬高独有功能词权重, 稀释主题信号).
 _STOPWORDS = frozenset(
-    "a an the and or of for to in on with at by from into about as be by over under "
-    "this that these those it its is are was were been being have has had do does did "
-    "we you they them their our your my me him her he she i will would can could "
-    "should may might must not no nor but if then than so such more most".split()
+    ["a", "an", "the", "and", "or", "of", "for", "to", "in", "on", "with", "at", "by", "from", "into", "about", "as", "be", "by", "over", "under", "this", "that", "these", "those", "it", "its", "is", "are", "was", "were", "been", "being", "have", "has", "had", "do", "does", "did", "we", "you", "they", "them", "their", "our", "your", "my", "me", "him", "her", "he", "she", "i", "will", "would", "can", "could", "should", "may", "might", "must", "not", "no", "nor", "but", "if", "then", "than", "so", "such", "more", "most"]
 )
 
 

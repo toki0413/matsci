@@ -60,8 +60,8 @@ def test_conflict_is_surfaced_not_averaged():
 
 
 def test_diversity_measures_head_collapse():
-    uniform = [HeadResult("h%d" % i, "h", EVIDENCE_OBSERVED, "passed") for i in range(4)]
-    diverse = [HeadResult("h%d" % i, "h", EVIDENCE_OBSERVED, o)
+    uniform = [HeadResult(f"h{i}", "h", EVIDENCE_OBSERVED, "passed") for i in range(4)]
+    diverse = [HeadResult(f"h{i}", "h", EVIDENCE_OBSERVED, o)
                for i, o in enumerate(("passed", "failed", "unobserved", "missing"))]
     assert consolidate(uniform).diversity == 0.25      # 全员同判 → 单文化雷达低
     assert consolidate(diverse).diversity == 1.0       # 高分化 → 防御塌缩
@@ -398,7 +398,7 @@ def test_pipeline_custom_verifier_is_respected():
 
 # ── 缺陷七: 过度建制审计(second system effect 反制) ─────────────────────
 def test_overbuild_detects_budget_exceeded():
-    heads = [HeadResult("h%d" % i, "h%d" % i, EVIDENCE_OBSERVED, "passed")
+    heads = [HeadResult(f"h{i}", f"h{i}", EVIDENCE_OBSERVED, "passed")
              for i in range(3)]
     c = consolidate(heads, head_budget=2)
     assert c.overbuild["verdict"] == "over_built"
@@ -407,7 +407,7 @@ def test_overbuild_detects_budget_exceeded():
 
 
 def test_overbuild_flat_budget_is_healthy():
-    heads = [HeadResult("h%d" % i, "h%d" % i, EVIDENCE_OBSERVED, "passed")
+    heads = [HeadResult(f"h{i}", f"h{i}", EVIDENCE_OBSERVED, "passed")
              for i in range(3)]
     c = consolidate(heads, head_budget=4)
     assert c.overbuild["verdict"] == "healthy"

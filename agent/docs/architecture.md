@@ -153,3 +153,25 @@ Objective → 分支生成 → 评估 → Pareto 剪枝 → 失败诊断/回溯 
 - 工具返回统一用 `ToolResult`；新增工具在 `huginn/tools/__init__.py` 登记。
 - I/O 密集操作优先 `async`。
 - 改动架构时同步更新 `docs/tech-spec.md` 与本文档。
+
+## 架构接缝台账（Seam Ledger）
+
+每条接缝列出：**定位** → **方向规则** → **守卫测试**。新增/改动边界时先在这里登记，
+否则下次没人能发现"缝被裸奔"。
+
+| 接缝 | 方向规则 | 守卫测试 |
+|---|---|---|
+| 最深共享内核 | `core_types.py` 不得 import 任何 `huginn.*` | `test_arch_seam_integrity.py` |
+| 根配置依赖 | `config.py` 只依赖基建白名单, 不得反依赖业务层 | `test_arch_seam_integrity.py` |
+| 计算层 vs 文献层 | `research/` 与 `academic/` 双向禁止串层 | `test_arch_cleanliness.py` |
+| 重编排 vs 工具 | `tools/` 不得在**模块顶层** import autoloop/agents/research/metacog/execution/evolution/exploration(须函数内懒加载) | `test_arch_tools_direction.py` |
+| 重编排 vs 数据层 | `rag/`(非 `*_tool.py`)、`memory/` 不得上探 tools/autoloop/agents/research/metacog/execution/evolution/exploration; `memory↔rag` 平级依赖允许 | `test_arch_rag_memory_seam.py` |
+| 可观测性旁路 | 任一 exporter 钩子抛操作性 `Exception` 不得冒泡给 agent 主链(fail-open, 不吞进程控制异常) | `test_telemetry_failopen.py` |
+| 深研入口唯一化 | 示例/展示必须走 `huginn.research`, 禁自动深研创建新平行管线 | `test_arch_cleanliness.py` |
+| 依赖白名单 | pyproject 顶层依赖必须显式登记; 删依赖须同步清白名单 | `test_arch_cleanliness.py` |
+| 配置迁移 | 版本 gaps 全覆盖、迁移幂等 | `test_arch_config_migration.py` |
+| 凭据网关 / 材料库 | 凭据不入前端配置、MP key 单向流 | `test_arch_credential_gateway.py` / `test_arch_mp_key_flow.py` / `test_arch_matdb_dep.py` |
+| 端点契约 / 单网关 | CLI 引用的后端端点必须存在; 外部消费者不得直接 import 业务包 | `test_arch_endpoint_contract.py` / `test_arch_single_gateway.py` |
+| MCP / 插件治理 | MCP 走单网关、插件 manifest 冻结 | `test_arch_mcp_governance.py` / `test_arch_mcp_json.py` / `test_arch_plugin_governance.py` |
+| 无硬编码路径 | 代码内不残留本机路径/机器 token | `test_arch_no_hardcoded_paths.py` |
+| 审计头聚合 | `ResearchOutcome` 字段冻结, 新视角必须注册进聚合头 | `test_arch_cleanliness.py` |
