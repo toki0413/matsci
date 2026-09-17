@@ -845,6 +845,19 @@ async def lifespan(app: FastAPI):
 
     await _shutdown_mcp()
 
+    # Flush any buffered OTLP/Telemetry traces before the process exits, so a
+    # configured observer (e.g. Langfuse) doesn't lose the final spans. No-op
+    # when no export endpoint is configured; never raises.
+    try:
+        from huginn.otel import get_default_exporter
+
+        exp = get_default_exporter()
+        if exp is not None:
+            exp.shutdown(block=False)
+            logger.info("[shutdown] telemetry OTLP exporter flushed")
+    except Exception as e:
+        logger.debug(f"[shutdown] telemetry exporter flush skipped: {e}")
+
     # Lock encrypted RAG vault: clear decrypted data from memory before
     # SQLite teardown so nothing leaks into closed-handle errors.
     try:

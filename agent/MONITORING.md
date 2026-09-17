@@ -157,6 +157,31 @@ Traced operations:
 
 ---
 
+## LLM/Trace Export (OTLP/HTTP → Langfuse / any OTel backend)
+
+Every agent turn, LLM call, and tool call is captured by the in-memory
+[`TelemetryCollector`](huginn/telemetry.py). When an OTLP endpoint is configured,
+each finished *root* span is shipped in the background (batched, non-blocking,
+fail-open) to that endpoint — including Langfuse's OpenTelemetry ingestion —
+so you can inspect traces, latencies, and exceptions without replaying files.
+
+Enable with env (all optional; if `HUGINN_OTEL_ENDPOINT` is unset, export is a
+no-op and no thread starts):
+
+| Env | Meaning | Example |
+|---|---|---|
+| `HUGINN_OTEL_ENDPOINT` | OTLP/HTTP traces URL | `https://cloud.langfuse.com/api/public/otel/v1/traces` |
+| `HUGINN_OTEL_HEADERS` | Extra HTTP headers (JSON) | `{"Authorization":"Basic <b64(pk:sk)>"}` for Langfuse |
+| `HUGINN_OTEL_SERVICE_NAME` | resource `service.name` | `huginn` (default) |
+| `HUGINN_OTEL_BATCH_SIZE` | Spans per flush batch | `32` (default) |
+| `HUGINN_OTEL_INTERVAL` | Background flush seconds | `5` (default) |
+
+The exporter implementation is `huginn/otel.py` (stdlib only, no
+`opentelemetry-sdk` dependency) and flushes remaining spans on server shutdown
+(`lifespan.py`). Tests: `tests/test_otel_exporter.py`.
+
+---
+
 ## Log Aggregation
 
 ### Fluent Bit Configuration
