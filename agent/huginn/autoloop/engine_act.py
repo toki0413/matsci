@@ -77,7 +77,7 @@ class EngineAct:
                 prompt, persona_name="default", task="planning"
             )
             plan = self._parse_plan(response)
-        except Exception as exc:
+        except Exception:  # 防御: 尽力操作失败返回空
             logger.debug("best-effort op failed", exc_info=True)
             return None
 
@@ -197,9 +197,7 @@ class EngineAct:
             return False
         if not any(v in d.lower() for v in ("compute", "calculate", "predict", "evaluate")):
             return False
-        if not _re.search(r"[/^*+=()]", d):
-            return False
-        return True
+        return _re.search("[/^*+=()]", d)
 
     async def _request_numeric_probe(self, description: str) -> str:
         """平衡点·内建执行: 让 LLM 只产出能算出数值的纯 python, harness 负责运行取数.
@@ -297,7 +295,7 @@ class EngineAct:
                             "execute builtin probe: 确定性数值目标 → harness 内建生成并执行 probe → evidence"
                         )
                         return result
-        except Exception as exc:
+        except Exception:  # 防御: 探针快路失败转入通用执行
             logger.debug("execute builtin-probe fast-path failed (fall through)", exc_info=True)
 
         # 非阻塞诊断(2026-09-11): real-loop 里 probe 屡不触发, 这里永久留一口子
@@ -403,7 +401,7 @@ class EngineAct:
             from huginn.provenance import capture
 
             record.add_snapshot(capture(tool_name, input_params, output=output))
-        except Exception as exc:
+        except Exception:  # 防御: 快照捕获失败不阻断记录
             logger.warning(
                 "error in _record_provenance: capture snapshot failed", exc_info=True
             )
@@ -433,7 +431,7 @@ class EngineAct:
                     logger.warning("evolved fix hit but no description, skipping")
                     return None
                 return await self._execute_workflow(patched_desc, {"_evolved_fix": True})
-        except Exception as exc:
+        except Exception:  # 防御: 启发式修复失败回退
             logger.warning(
                 "error in _try_evolved_fix: apply_heuristic_fix failed", exc_info=True
             )
@@ -527,7 +525,7 @@ class EngineAct:
                 raw_script = {}
         try:
             base_script = WorkflowScript.from_dict(raw_script)
-        except Exception as exc:
+        except Exception:  # 防御: 动态工作流失败返回失败态
             return {
                 "mode": "dynamic_workflow",
                 "success": False,
@@ -551,7 +549,7 @@ class EngineAct:
                 base_script=base_script,
                 llm_chat_fn=getattr(self, "_llm_chat", None),
             )
-        except Exception as exc:
+        except Exception:  # 防御: H2 变体生成失败用空集
             logger.debug("H2 generate_variants failed", exc_info=True)
             variants = []
         if not variants:
@@ -596,7 +594,7 @@ class EngineAct:
             archive = VariantArchive.get_instance()
             existing = archive.list_variants(obj_hash)
             novelty = compute_novelty(chosen.to_dict(), existing)
-        except Exception as exc:
+        except Exception:  # 防御: 新颖度计算失败取零
             logger.debug("best-effort op failed", exc_info=True)
             novelty = 0.0
 
@@ -856,7 +854,7 @@ Please modify the code to address this task."""
                     )
                     if routed is not None:
                         model = routed
-                except Exception as exc:
+                except Exception:  # 防御: 路由选择失败用回退模型
                     logger.debug(
                         "model router select failed — using fallback model",
                         exc_info=True,

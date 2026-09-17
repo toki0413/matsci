@@ -51,4 +51,4 @@ def test_empty_trace_all_claims_unsubstantiated():
 def test_small_integers_not_claims_by_default():
     # 无意义小整数不作为主张; 但带小数统计量会
     claims = extract_numeric_claims("模型取了 2 个点, 100 个样本, 每轮 3 步。")
-    assert all(abs(c) > 100 or "." not in ("%g" % c) for c in claims) or not claims
+    assert all(abs(c) > 100 or "." not in (f"{c:g}") for c in claims) or not claims

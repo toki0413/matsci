@@ -15,8 +15,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import math
-import os
 import re
 import sys
 from pathlib import Path
@@ -27,8 +25,8 @@ from huginn.memory.manager import MemoryManager
 
 def _run_py(src: str) -> str:
     import subprocess
-    from pathlib import Path as P
     import tempfile
+    from pathlib import Path as P
     with tempfile.TemporaryDirectory() as d:
         f = P(d) / "probe.py"
         f.write_text(src, encoding="utf-8")

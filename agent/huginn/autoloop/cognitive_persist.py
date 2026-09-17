@@ -82,7 +82,7 @@ def persist_run_context(
             importance=0.5,
             tier="mid",
         )
-    except Exception as exc:
+    except Exception:  # 防御: 上下文字段落盘失败可容忍
         logger.debug("run_context store failed (non-fatal)", exc_info=True)
 
 
@@ -100,7 +100,7 @@ def load_run_context(memory: Any) -> str:
             category="run_context",
             top_k=1,
         )
-    except Exception as exc:
+    except Exception:  # 防御: 尽力读取失败返回空串
         logger.debug("best-effort op failed", exc_info=True)
         return ""
     if not results:

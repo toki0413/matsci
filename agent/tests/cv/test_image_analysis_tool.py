@@ -34,7 +34,7 @@ def test_sem_analysis(cv_tool, tool_context, generate_synthetic_sem_image):
     # contrast / roughness stats are the core SEM outputs
     for key in ("contrast_mean", "contrast_std", "surface_roughness_rms", "edge_density"):
         assert key in m, f"missing {key}"
-        assert isinstance(m[key], (int, float))
+        assert isinstance(m[key], int | float)
     assert m["image_shape"] == [128, 128]
 
 

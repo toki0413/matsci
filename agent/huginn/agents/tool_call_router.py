@@ -122,7 +122,7 @@ class ToolCallRouter:
             from huginn.feature_flags import FeatureFlags
             if not FeatureFlags.shared().is_enabled("tool_call_router"):
                 return True, ""
-        except Exception as exc:
+        except Exception:  # 防御: 开关层异常不拦业务
             # flag 层挂了不能带挂业务, 继续走原逻辑
             logger.debug("best-effort op failed", exc_info=True)
 
@@ -149,7 +149,7 @@ class ToolCallRouter:
         with self._lock:
             attempted = set(self._attempted_light)
         ext = context.get("attempted_light") if context else None
-        if isinstance(ext, (list, tuple, set)):
+        if isinstance(ext, list | tuple | set):
             attempted.update(ext)
 
         if attempted:

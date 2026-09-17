@@ -20,11 +20,7 @@
 from __future__ import annotations
 
 import importlib
-import json
-import shutil
-from pathlib import Path
 from typing import Any
-
 
 # ═══════════════════ 跨域通用守卫类别(与具体域解耦) ═══════════════════
 
@@ -231,7 +227,8 @@ def _dimensional_precheck(scientific_contract: dict) -> dict:
     q = (scientific_contract or {}).get("quantities") or {}
     try:
         from huginn.research.external_validator import (
-            validate_declared_units, validate_derived_dimensions,
+            validate_declared_units,
+            validate_derived_dimensions,
         )
         decl = validate_declared_units(q)
         derived = validate_derived_dimensions(q)

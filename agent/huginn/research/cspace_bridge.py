@@ -307,9 +307,7 @@ def contract_gate(quantities: dict | None = None, *,
         ok, gaps = validate_scientific_contract(obj, q)
         if not ok:
             return False   # 有效域违反 → 硬拒
-        if strict_coverage and any("未声明" in g for g in gaps):
-            return False
-        return True
+        return not (strict_coverage and any("未声明" in g for g in gaps))
     return _gate
 
 

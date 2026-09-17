@@ -8,14 +8,13 @@ S2: ``external_validator.validate_declared_units`` 把 scientific_contract.unit 
 """
 from __future__ import annotations
 
-import importlib.util
-from pathlib import Path
-
-from huginn.research.cspace import CSpace
 from huginn.research import cspace_bridge as cb
 from huginn.research.coldstart_guards import compile_domain_guards
+from huginn.research.cspace import CSpace
 from huginn.research.external_validator import (
-    validate_declared_units, validate_derived_dimensions, resolve_unit_dimension,
+    resolve_unit_dimension,
+    validate_declared_units,
+    validate_derived_dimensions,
 )
 
 _QUANT = compile_domain_guards("ecology_dynamics")["scientific_contract"]["quantities"]
@@ -113,7 +112,7 @@ def test_cross_quantity_dimensional_identity_catches_contract_typo():
 
 # ═══════════════ S4: law_model 卡片 ↔ C-Space 契约(自证法律一致) ═══════════════
 
-class _EcoLaw():
+class _EcoLaw:
     domain = "ecology_dynamics"
 
     def predict(self, *a):

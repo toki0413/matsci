@@ -53,7 +53,7 @@ def _fenics_available(sandbox: SandboxExecutor) -> bool:
     except SandboxError:
         logger.debug("best-effort op failed", exc_info=True)
         return False
-    except Exception as exc:
+    except Exception:  # 防御: 环境检测失败视为不可用返回假
         logger.debug("best-effort op failed", exc_info=True)
         return False
 
@@ -159,7 +159,7 @@ class FenicsTool(HuginnTool):
                 auditor = PhysicsAuditor()
                 audit_report = auditor.audit("fenics_tool", "solve_pde", data, {})
                 data["physics_audit"] = audit_report.to_dict()
-            except Exception as exc:
+            except Exception:  # 防御: 审计失败不阻断结果返回
                 logger.debug("audit failure can't block result delivery", exc_info=True)
 
             return ToolResult(
@@ -315,7 +315,7 @@ class FenicsTool(HuginnTool):
                     diffs.append(float("nan"))
             except subprocess.TimeoutExpired:
                 diffs.append(float("nan"))
-            except Exception as exc:
+            except Exception:  # 防御: 收敛解析失败记 NaN 继续
                 diffs.append(float("nan"))
 
         valid = [d for d in diffs if d == d]
@@ -342,7 +342,7 @@ class FenicsTool(HuginnTool):
             auditor = PhysicsAuditor()
             audit_report = auditor.audit("fenics_tool", "convergence_check", data, {})
             data["physics_audit"] = audit_report.to_dict()
-        except Exception as exc:
+        except Exception:  # 防御: 审计失败不阻断结果返回
             logger.debug("audit failure can't block result delivery", exc_info=True)
 
         return ToolResult(data=data, success=True)

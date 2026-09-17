@@ -23,7 +23,8 @@ from pathlib import Path
 from typing import Any
 
 from huginn.autoloop.budget import TokenBudget
-from huginn.autoloop.signals import EngineSignals, SIGNAL_NAMES
+from huginn.autoloop.signals import SIGNAL_NAMES, EngineSignals
+from huginn.autoloop.types import LoopPhase
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,7 @@ def _feature_flag(name: str, default: bool) -> bool:
         cfg = get_config()
         ff = getattr(cfg, "feature_flags", None) or {}
         return bool(ff.get(name, default))
-    except Exception as exc:
+    except Exception:  # 防御: 尽力获取失败返回默认
         logger.debug("best-effort op failed", exc_info=True)
         return default
 
@@ -321,7 +322,7 @@ class AutoloopEngine:
             from huginn.autoloop.hypothesis_semantic import set_model_provider
 
             set_model_provider(lambda: self.model)
-        except Exception as exc:
+        except Exception:  # 防御: 语义提供方注入失败跳过
             logger.debug("hypothesis_semantic model provider inject skipped", exc_info=True)
         # H5-a: 从 config 的 ModelManager 挂 model_router, 让 _llm_chat 的
         # task 路由真正生效 (之前 getattr(self,"model_router",None) 恒 None,
@@ -335,7 +336,7 @@ class AutoloopEngine:
             _r = _cfg.build_agent_kwargs().get("model_router")
             if _r is not None:
                 self.model_router = _r
-        except Exception as exc:
+        except Exception:  # 防御: 模型路由构建失败跳过
             logger.debug("model_router build skipped (non-fatal)", exc_info=True)
         # Moonshine 三槽: verification 用独立 LLM 验证假设, 避免确认偏差.
         # 显式注入的 verification_model 优先; 未注入时默认走 select_model
@@ -395,7 +396,7 @@ class AutoloopEngine:
         # 失败非致命 (知识库空/损坏时图照常工作).
         try:
             self.hypothesis_graph.mount_knowledge()
-        except Exception as exc:
+        except Exception:  # 防御: 知识挂载失败不阻断
             logger.debug("mount_knowledge failed (non-fatal)", exc_info=True)
         self.report_tool = ReportTool()
 
@@ -633,7 +634,7 @@ class AutoloopEngine:
             try:
                 from huginn.runtime.engine_state import latest_run_id
                 _resume_id = latest_run_id(self.workspace)
-            except Exception as exc:
+            except Exception:  # 防御: 恢复上下文读取失败置空
                 logger.debug("best-effort op failed", exc_info=True)
                 _resume_id = None
         if _resume_id:
@@ -659,7 +660,7 @@ class AutoloopEngine:
                                     "restored autoloop phase from event projection: %s",
                                     projected["phase"],
                                 )
-                        except Exception as exc:
+                        except Exception:  # 防御: 事件投影恢复失败忽略
                             logger.debug(
                                 "autoloop event projection restore failed (non-fatal)",
                                 exc_info=True,
@@ -671,7 +672,7 @@ class AutoloopEngine:
                             )
                             if loaded_graph is not None:
                                 self.hypothesis_graph = loaded_graph
-                        except Exception as exc:
+                        except Exception:  # 防御: 假设图恢复失败忽略
                             logger.debug(
                                 "resume: hypothesis_graph.load failed (non-fatal)",
                                 exc_info=True,
@@ -686,7 +687,7 @@ class AutoloopEngine:
                             "resume requested but no snapshot for run_id=%s, "
                             "starting fresh", _resume_id,
                         )
-            except Exception as exc:
+            except Exception:  # 防御: 恢复状态失败新建会话
                 logger.warning(
                     "resume_from_state=%s failed, starting fresh",
                     _resume_id, exc_info=True,
@@ -1697,7 +1698,7 @@ class AutoloopEngine:
                         _m = router.select_band(classify_band(task))
                     if _m is not None:
                         return _m
-            except Exception as exc:
+            except Exception:  # 防御: 路由选带失败回退任务路由
                 logger.debug(
                     f"model_router band select({task!r},{band!r}) failed — "
                     "falling back to task routing",
@@ -1707,7 +1708,7 @@ class AutoloopEngine:
                 _m = router.select(task)
                 if _m is not None:
                     return _m
-            except Exception as exc:
+            except Exception:  # 防御: 路由选择失败用回退模型
                 logger.debug(
                     f"model_router.select({task!r}) failed — using fallback",
                     exc_info=True,
@@ -1738,7 +1739,7 @@ class AutoloopEngine:
                 path=path,
                 load=True,
             )
-        except Exception as exc:
+        except Exception:  # 防御: 事件日志打开失败置失败态
             logger.debug("autoloop event log open failed (non-fatal)", exc_info=True)
             self._event_log_failed = True
         return self._event_log
@@ -1759,7 +1760,7 @@ class AutoloopEngine:
                     "iteration": int(iteration),
                 },
             )
-        except Exception as exc:
+        except Exception:  # 防御: 阶段事件追加失败忽略
             logger.debug(
                 "autoloop phase event append failed (non-fatal)", exc_info=True,
             )
@@ -1784,7 +1785,7 @@ class AutoloopEngine:
                 state = engine.build(log, "autoloop")
                 if state.get("phase") or state.get("status"):
                     return state
-            except Exception as exc:
+            except Exception:  # 防御: 运行时状态读取失败忽略
                 logger.debug(
                     "autoloop runtime state read failed (non-fatal)", exc_info=True,
                 )
@@ -1811,7 +1812,7 @@ class AutoloopEngine:
                 from huginn.interaction.progress import get_progress_tracker
 
                 tracker = get_progress_tracker()
-            except Exception as exc:
+            except Exception:  # 防御: 进度器构造失败置空
                 tracker = None
         task_id = getattr(self, "_progress_task_id", None)
         if tracker is None or not task_id:
@@ -1828,7 +1829,7 @@ class AutoloopEngine:
                     "source": "event_projection",
                 },
             )
-        except Exception as exc:
+        except Exception:  # 防御: 进度发布失败忽略
             logger.debug(
                 "autoloop progress publish failed (non-fatal)", exc_info=True,
             )
@@ -1854,7 +1855,7 @@ class AutoloopEngine:
         if path.exists():
             try:
                 self._alignment_dataset = AlignmentDataset.load(path)
-            except Exception as exc:
+            except Exception:  # 防御: 对齐集加载失败新建
                 logger.warning(
                     "alignment_dataset load failed, starting fresh (non-fatal)",
                     exc_info=True,
@@ -1879,7 +1880,7 @@ class AutoloopEngine:
             path = self._alignment_dataset_path()
             path.parent.mkdir(parents=True, exist_ok=True)
             ds.save(path)
-        except Exception as exc:
+        except Exception:  # 防御: 对齐集保存失败忽略
             logger.warning(
                 "alignment_dataset save failed (non-fatal)", exc_info=True,
             )
@@ -1898,7 +1899,7 @@ class AutoloopEngine:
             if not _cm._MAPS:
                 return None
             return list(_cm._MAPS.values())[-1]
-        except Exception as exc:
+        except Exception:  # 防御: 尽力获取失败返回空
             logger.debug("best-effort op failed", exc_info=True)
             return None
 
@@ -1947,7 +1948,7 @@ class AutoloopEngine:
                 C = np.array(elastic_raw, dtype=float)
                 if C.shape == (6, 6):
                     elastic = ElasticTensor(C=C)
-            except Exception as exc:
+            except Exception:  # 防御: 弹性张量解析失败跳过
                 logger.debug(
                     "elastic_tensor parse failed, skipping elastic field",
                     exc_info=True,
@@ -1958,7 +1959,7 @@ class AutoloopEngine:
             try:
                 import numpy as np
                 phonon_arr = np.asarray(phonon, dtype=float)
-            except Exception as exc:
+            except Exception:  # 防御: 声子数组解析失败跳过
                 logger.debug("phonon array parse skipped", exc_info=True)
 
         return HapticPropertyLayer(
@@ -2005,7 +2006,7 @@ class AutoloopEngine:
                 "alignment pair collected: tool=%s iter=%d total=%d",
                 tool_name, getattr(self, "_iteration", 0), ds.count(),
             )
-        except Exception as exc:
+        except Exception:  # 防御: 对齐样本收集失败忽略
             logger.warning(
                 "alignment pair collection failed (non-fatal)", exc_info=True,
             )

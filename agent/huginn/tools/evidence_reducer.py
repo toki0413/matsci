@@ -101,10 +101,7 @@ def _seal_receipt(receipt: Receipt, archive: ObservationArchive) -> bool:
     if not body["found"]:
         return False
     source = body["text"]
-    for line in receipt.retained_lines():
-        if line and line not in source:
-            return False
-    return True
+    return all(not (line and line not in source) for line in receipt.retained_lines())
 
 
 def verify_receipt(receipt: Receipt, archive: ObservationArchive) -> bool:

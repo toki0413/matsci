@@ -54,7 +54,7 @@ def _text_of(value: Any, limit: int = 4000) -> str:
         return ""
     if isinstance(value, str):
         return value[:limit]
-    if isinstance(value, (dict, list)):
+    if isinstance(value, dict | list):
         try:
             import json
 

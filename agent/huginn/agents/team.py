@@ -180,7 +180,7 @@ class ModelTeam:
                     source="model_team",
                 )
             )
-        except Exception as exc:
+        except Exception:  # 防御: 团队事件发布失败则忽略
             logger.debug("team event publish failed: %s", event_type, exc_info=True)
 
     def assign(self, member: TeamMember) -> ModelTeam:
@@ -438,7 +438,7 @@ class ModelTeam:
                 for key in ("usage", "_usage", "token_usage", "_tokens"):
                     u = state.get(key) if isinstance(state, dict) else None
                     if isinstance(u, dict) and any(u.values()):
-                        usage.update({k: int(v) for k, v in u.items() if isinstance(v, (int, float))})
+                        usage.update({k: int(v) for k, v in u.items() if isinstance(v, int | float)})
         except Exception as exc:
             await self._publish("team.member.done", {
                 **base,
@@ -532,7 +532,7 @@ class ModelTeam:
                 text = parts[1].strip("json").strip()
         try:
             data = json.loads(text)
-        except Exception as exc:
+        except Exception:  # 防御: 计划解析失败则按无计划
             return []
         if not isinstance(data, list):
             return []
@@ -552,7 +552,7 @@ class ModelTeam:
                         ],
                     )
                 )
-            except Exception as exc:
+            except Exception:  # 防御: 步骤构造失败则跳过该步
                 logger.debug("best-effort op failed", exc_info=True)
                 continue
         return steps

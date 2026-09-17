@@ -305,7 +305,7 @@ def _apply_legacy_params_to_env(params: dict[str, Any]) -> None:
             continue
         if isinstance(val, bool):
             os.environ[env_name] = "true" if val else "false"
-        elif isinstance(val, (dict, list)):
+        elif isinstance(val, dict | list):
             os.environ[env_name] = json.dumps(val)
         else:
             os.environ[env_name] = str(val)

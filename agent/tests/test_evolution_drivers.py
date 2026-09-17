@@ -13,7 +13,11 @@ from __future__ import annotations
 import random
 
 from huginn.exploration.core import Branch, BranchStatus, ExplorationSpace
-from huginn.exploration.strategies import Action, MutationStrategy, ParetoPruningStrategy
+from huginn.exploration.strategies import (
+    Action,
+    MutationStrategy,
+    ParetoPruningStrategy,
+)
 from huginn.exploration.supervisor import SupervisorStrategy
 
 
@@ -146,7 +150,9 @@ def test_research_program_mounts_diagnostic_tools() -> None:
             def model_dump(s): return {"name": s.name, "arguments": s.arguments}
 
         class TC:
-            def __init__(s, n, a): s.id = "t1"; s.function = Func(n, a)
+            def __init__(s, n, a):
+                s.id = "t1"
+                s.function = Func(n, a)
             def model_dump(s): return {"id": "t1", "function": s.function.model_dump()}
 
         class M:
@@ -165,7 +171,8 @@ def test_research_program_mounts_diagnostic_tools() -> None:
                         "回溯。综合证据得出下阶段计划并如实标注所有数值均来自工具执行轨迹, 可复现可证伪。"
                         "这段正文足够长以满足报告长度门槛。")
                 return type("R", (), {"choices": [ch(M("<report>" + long + "</report>"))]})()
-        class Chat: completions = Co()
+        class Chat:
+            completions = Co()
         return type("Client", (), {"chat": Chat()})()
 
     exps = [Experiment("lin", "线性浅水",

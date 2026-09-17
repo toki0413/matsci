@@ -67,13 +67,13 @@ class TestToolAndSkillPanel:
         body = resp.json()
         # ToolRegistry may be empty if presets haven't loaded yet, but the
         # shape is always a list.
-        assert isinstance(body, (list, dict))
+        assert isinstance(body, list | dict)
 
     def test_list_skills(self):
         resp = client.get("/skills")
         assert resp.status_code < 500
         body = resp.json()
-        assert isinstance(body, (list, dict))
+        assert isinstance(body, list | dict)
 
     def test_get_skill_detail(self):
         # There's no /skills/{name} detail route today — the panel hits it

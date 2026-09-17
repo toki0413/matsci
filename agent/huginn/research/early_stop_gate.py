@@ -28,7 +28,7 @@ def _first_scalar(node: Any) -> float | None:
     """从任意结构取第一个可量标量(与 program/decision_gate/replan_gate 同语义)."""
     if isinstance(node, bool):
         return None
-    if isinstance(node, (int, float)):
+    if isinstance(node, int | float):
         return float(node)
     if isinstance(node, dict):
         for k in ("T_eq_K", "T", "score", "value", "y", "actual", "S_Wm2"):
@@ -40,7 +40,7 @@ def _first_scalar(node: Any) -> float | None:
             s = _first_scalar(v)
             if s is not None:
                 return s
-    elif isinstance(node, (list, tuple)):
+    elif isinstance(node, list | tuple):
         for v in node:
             s = _first_scalar(v)
             if s is not None:

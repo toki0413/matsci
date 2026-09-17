@@ -99,7 +99,7 @@ class TestPhaseStateMachineE2E:
         tools = pm.tool_filter()
         # Either None (no restriction) or a set
         if tools is not None:
-            assert isinstance(tools, (set, list, tuple))
+            assert isinstance(tools, set | list | tuple)
 
         # OPEN phase should return None (all tools)
         pm_open = PhaseManager(initial=ResearchPhase.OPEN)
@@ -338,7 +338,7 @@ class TestBeliefEntropyLongRun:
         # Check belief entropy if available
         if hasattr(agent, "_belief_entropy") or hasattr(agent, "_belief"):
             entropy = getattr(agent, "_belief_entropy", getattr(agent, "_belief", None))
-            if entropy is not None and isinstance(entropy, (int, float)):
+            if entropy is not None and isinstance(entropy, int | float):
                 assert 0.0 <= entropy <= 1.0, f"Entropy out of bounds: {entropy}"
 
     def test_belief_entropy_self_check(self):
@@ -415,7 +415,7 @@ def _b6_self_check() -> int:
     for _p in phases:
         if isinstance(_p.result, dict):
             _t = _p.result.get("tool_calls", 0)
-            if isinstance(_t, (int, float)):
+            if isinstance(_t, int | float):
                 _tc += int(_t)
     assert _tc == 5, f"expected 5 tool_calls, got {_tc}"
 

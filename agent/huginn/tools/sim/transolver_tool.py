@@ -166,7 +166,7 @@ class TransolverTool(HuginnTool):
                 if cls is not None:
                     self._model_cls = cls
                     return cls
-            except Exception as exc:
+            except Exception:  # 防御: 该候选导入失败尝试下一路径
                 logger.debug("best-effort op failed", exc_info=True)
                 continue
         return None
@@ -286,7 +286,7 @@ class TransolverTool(HuginnTool):
             auditor = PhysicsAuditor()
             audit_report = auditor.audit("transolver_tool", args.action, data, args.model_dump())
             data["physics_audit"] = audit_report.to_dict()
-        except Exception as exc:
+        except Exception:  # 防御: 审计失败不阻断结果返回
             logger.debug("audit failure can't block result delivery", exc_info=True)
 
         return ToolResult(data=data, success=True)
@@ -317,7 +317,7 @@ class TransolverTool(HuginnTool):
                 sd = state.get("model", state) if isinstance(state, dict) else state
                 model.load_state_dict(sd, strict=False)
                 warm_started = True
-            except Exception as exc:
+            except Exception:  # 防御: 载入失败继续从头训练
                 logger.debug("load failed", exc_info=True)
 
         try:
@@ -368,7 +368,7 @@ class TransolverTool(HuginnTool):
             auditor = PhysicsAuditor()
             audit_report = auditor.audit("transolver_tool", args.action, data, args.model_dump())
             data["physics_audit"] = audit_report.to_dict()
-        except Exception as exc:
+        except Exception:  # 防御: 审计失败不阻断结果返回
             logger.debug("audit failure can't block result delivery", exc_info=True)
 
         return ToolResult(data=data, success=True)

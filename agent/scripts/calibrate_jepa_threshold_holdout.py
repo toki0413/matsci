@@ -9,13 +9,12 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
-from pathlib import Path
 
 import numpy as np
+from train_jepa_predictor import load_encoder, load_pairs
 
 from huginn.utils.runtime import get_runtime_home
 
-from train_jepa_predictor import load_pairs, load_encoder
 
 def load_predictor_weights() -> dict:
     p = get_runtime_home() / "models" / "jepa_predictor.json"
@@ -23,7 +22,8 @@ def load_predictor_weights() -> dict:
     return {k: np.asarray(v, dtype=np.float64) for k, v in data["weights"].items()}
 
 def cd(a, b) -> float:
-    a = a / (np.linalg.norm(a) + 1e-12); b = b / (np.linalg.norm(b) + 1e-12)
+    a = a / (np.linalg.norm(a) + 1e-12)
+    b = b / (np.linalg.norm(b) + 1e-12)
     return float(1.0 - float(np.dot(a, b)))
 
 def forward(pred_emb, w) -> np.ndarray:
@@ -32,13 +32,16 @@ def forward(pred_emb, w) -> np.ndarray:
 
 def auc(s, c):
     rng = np.random.default_rng(0)
-    s = np.asarray(s, float); c = np.asarray(c, float)
+    s = np.asarray(s, float)
+    c = np.asarray(c, float)
     if len(s) * len(c) > 4_000_000:
         s = rng.choice(s, min(3000, len(s)), replace=False)
         c = rng.choice(c, min(3000, len(c)), replace=False)
-    pos = 0.0; ties = 0.0
+    pos = 0.0
+    ties = 0.0
     for x in s:
-        pos += float(np.sum(c > x)); ties += float(np.sum(c == x))
+        pos += float(np.sum(c > x))
+        ties += float(np.sum(c == x))
     return (pos + 0.5 * ties) / (len(s) * len(c))
 
 def main() -> None:

@@ -276,11 +276,11 @@ class ParameterSweep:
         all_keys = set()
         for r in results:
             if isinstance(r, dict):
-                all_keys.update(k for k, v in r.items() if isinstance(v, (int, float)))
+                all_keys.update(k for k, v in r.items() if isinstance(v, int | float))
 
         summary: dict[str, dict[str, float]] = {}
         for key in all_keys:
-            values = [r[key] for r in results if isinstance(r.get(key), (int, float))]
+            values = [r[key] for r in results if isinstance(r.get(key), int | float)]
             if values:
                 summary[key] = {
                     "min": min(values),
@@ -294,7 +294,7 @@ class ParameterSweep:
         for key in all_keys:
             values_with_params = [
                 (r[key], p) for r, p in zip(results, params)
-                if isinstance(r.get(key), (int, float))
+                if isinstance(r.get(key), int | float)
             ]
             if values_with_params:
                 best_val, best_params = max(values_with_params, key=lambda x: x[0])

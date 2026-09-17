@@ -70,7 +70,7 @@ GateStatus = Literal["pending", "approved", "blocked", "rejected"]
 
 def _has_external_source(obj: Any, _depth: int = 0) -> bool:
     """递归扫 dict/list 找 source_class=external_content. ponytail: 写死 depth=50 (实际 evidence 嵌套 < 10)."""
-    if _depth > 50 or not isinstance(obj, (dict, list, tuple)):
+    if _depth > 50 or not isinstance(obj, dict | list | tuple):
         return False
     if isinstance(obj, dict) and obj.get("source_class") == "external_content":
         return True
@@ -81,7 +81,7 @@ def _has_external_source(obj: Any, _depth: int = 0) -> bool:
 
 def _collect_source_classes(obj: Any, _depth: int = 0) -> list[str]:
     """递归收集所有 source_class 值. ponytail: depth=50 防异常深度."""
-    if _depth > 50 or not isinstance(obj, (dict, list, tuple)):
+    if _depth > 50 or not isinstance(obj, dict | list | tuple):
         return []
     found: list[str] = []
     if isinstance(obj, dict):
@@ -169,7 +169,7 @@ class PhaseGate:
             }
             with open(path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
-        except Exception as exc:
+        except Exception:  # 防御: 遥测写入失败跳过
             logger.debug("phase gate telemetry write skipped", exc_info=True)
 
     def to_dict(self) -> dict[str, Any]:
@@ -436,7 +436,7 @@ class MathEvidenceChecker:
                             else self._DUAL_NOT_COVERED_MASS
                         )
                         sources.append("dual_coverage")
-                except Exception as exc:
+                except Exception:  # 防御: 双覆盖检查失败跳过
                     logger.debug("dual_coverage check failed", exc_info=True)
 
         if not masses:
@@ -507,7 +507,7 @@ class PhaseGateHook:
         try:
             state = get_shared_phase_gate_state()
             return state.needs_human_checkpoint(from_phase, to_phase)
-        except Exception as exc:
+        except Exception:  # 防御: 校验异常返回失败
             logger.debug("best-effort op failed", exc_info=True)
             return False
 
@@ -582,7 +582,7 @@ class PhaseGateHook:
                         feedback=f"Math evidence blocked: {math_feedback}",
                         reviewer="math_checker",
                     )
-            except Exception as exc:
+            except Exception:  # 防御: 数值检查器异常降级放行
                 # math_checker 挂了不阻断, 降级放行
                 logger.debug("best-effort op failed", exc_info=True)
 
@@ -620,7 +620,7 @@ class PhaseGateHook:
                         feedback=f"Reviewer 拒绝: {reason}",
                         reviewer="reviewer",
                     )
-            except Exception as exc:
+            except Exception:  # 防御: 评审器异常则跳过
                 logger.debug("reviewer fn failed", exc_info=True)
 
         return PhaseGate(

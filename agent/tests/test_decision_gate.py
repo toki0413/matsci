@@ -12,7 +12,7 @@ from huginn.research.decision_gate import (
     select_decision_context,
 )
 from huginn.research.harness import EVIDENCE_OBSERVED, build_harness_report
-from huginn.research.program import Experiment, ResearchOutcome, run_research_program
+from huginn.research.program import ResearchOutcome, run_research_program
 
 
 # ── 漏A · plan 修订门 ─────────────────────────────────────────────────────

@@ -23,7 +23,7 @@ from typing import Any
 
 def _is_numeric_leaf(v: Any) -> bool:
     """纯数值叶: int/float, 排除 bool。用 (int, float) 而非 numbers.Real 以保持零依赖.*"""
-    return isinstance(v, (int, float)) and not isinstance(v, bool)
+    return isinstance(v, int | float) and not isinstance(v, bool)
 
 
 def strict_objectives(res: Any) -> tuple[bool, str]:

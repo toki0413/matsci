@@ -133,7 +133,6 @@ def _directive_memory_entries(engine):
 @pytest.mark.asyncio
 async def test_generate_next_loop_directive_writes_memory():
     """_generate_next_loop_directive 调真实 LLM 后把 directive 写入真实 memory."""
-    from huginn.autoloop.engine import AutoloopEngine
 
     engine = _build_directive_engine(
         lambda prompt: "Avoid RBF kernel, try Tanimoto next time."

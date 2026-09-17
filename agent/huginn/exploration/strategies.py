@@ -353,7 +353,7 @@ class AdaptiveGridStrategy(ExplorationStrategy):
         if not branch.objectives:
             return 0.5
         # Normalize objectives to [0,1] and average
-        vals = [v for v in branch.objectives.values() if isinstance(v, (int, float))]
+        vals = [v for v in branch.objectives.values() if isinstance(v, int | float)]
         if not vals:
             return 0.5
         # Simple sigmoid of average

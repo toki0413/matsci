@@ -418,7 +418,7 @@ class ReviewCommitteeTool(HuginnTool):
     def _extract_score_from_data(self, data: dict[str, Any]) -> int | None:
         """合成 JSON 里偶尔会塞 editor_score 字段, 兜底用一下."""
         score = data.get("editor_score")
-        if isinstance(score, (int, float)):
+        if isinstance(score, int | float):
             return int(score)
         return None
 

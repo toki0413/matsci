@@ -13,9 +13,9 @@
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import asdict
-from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 _SPEC = "huginn-share 1"
 _KINDS = ("capability", "workflow", "persona", "skill", "lean")

@@ -510,7 +510,7 @@ def test_mental_imagery_sketch_returns_bytes():
 
     # sketch 在无渲染后端时优雅返回空 bytes, 不抛
     out = sketch("a box")
-    assert isinstance(out, (bytes, bytearray))
+    assert isinstance(out, bytes | bytearray)
 
 
 # ── 27. method_registry ────────────────────────────────────────

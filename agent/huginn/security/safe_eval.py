@@ -14,7 +14,8 @@ import ast
 import operator
 import sys
 import warnings
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 
 class SafeEvalError(Exception):

@@ -110,7 +110,7 @@ class RAGTool(HuginnTool):
             if kb is not None:
                 self._kb = kb
                 return kb
-        except Exception as exc:
+        except Exception:  # 防御: 取 kb 失败回退空对象
             logger.debug("resolve kb failed", exc_info=True)
         return None
 

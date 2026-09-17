@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 def _dumps(payload: dict[str, Any]) -> str:
     try:
         return json.dumps(payload, ensure_ascii=False)
-    except Exception as exc:
+    except Exception:  # 防御: 读取失败返回占位 JSON
         return "{}"
 
 
@@ -34,7 +34,7 @@ def _loads(text: str) -> dict[str, Any]:
     try:
         data = json.loads(text)
         return data if isinstance(data, dict) else {}
-    except Exception as exc:
+    except Exception:  # 防御: 读取失败返回空字典
         return {}
 
 
@@ -74,7 +74,7 @@ class HypothesisEventStore:
             )
             conn.commit()
             self._db = conn
-        except Exception as exc:
+        except Exception:  # 防御: 事件存储不可用降级内存
             logger.debug("hypothesis event store unavailable (non-fatal)", exc_info=True)
             self._db = None
 
@@ -98,7 +98,7 @@ class HypothesisEventStore:
                  event.get("node_id") or "", payload),
             )
             self._db.commit()
-        except Exception as exc:
+        except Exception:  # 防御: 事件追加失败可忽略
             logger.debug("hypothesis event append failed (non-fatal)", exc_info=True)
 
     def load(self) -> list[dict[str, Any]]:
@@ -113,7 +113,7 @@ class HypothesisEventStore:
                 {"ts": ts, "event": ev, "node_id": nid, **_loads(payload)}
                 for ts, ev, nid, payload in rows
             ]
-        except Exception as exc:
+        except Exception:  # 防御: 事件加载失败返回空
             logger.debug("hypothesis event load failed (non-fatal)", exc_info=True)
             return []
 
@@ -131,7 +131,7 @@ class HypothesisEventStore:
                 {"ts": ts, "event": ev, "node_id": nid, **_loads(payload)}
                 for ts, ev, nid, payload in rows
             ]
-        except Exception as exc:
+        except Exception:  # 防御: 事件检索失败返回空
             logger.debug("hypothesis event search failed (non-fatal)", exc_info=True)
             return []
 

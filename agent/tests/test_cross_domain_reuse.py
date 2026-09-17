@@ -26,7 +26,10 @@ from pathlib import Path
 
 from huginn.research.code_lab import _alias_cfg
 from huginn.research.coldstart_guards import compile_domain_guards
-from huginn.research.external_validator import strict_objectives, validate_scientific_contract
+from huginn.research.external_validator import (
+    strict_objectives,
+    validate_scientific_contract,
+)
 
 _ROOT = Path(__file__).resolve().parents[1]  # agent/
 _EXDIR = Path(__file__).resolve().parents[2] / "examples"
@@ -43,7 +46,8 @@ def _install_torch_stub() -> None:
     """rigidity 模块顶层 `import torch` 仅为 exp_optimizer_finance 服务; 复用测试只调
     其 numpy 系实验(exp_eps_criterion/exp_constraint_dimension), 故注入最小 torch 桩
     以绕过 import, 保持测试轻量(不拉 torch)."""
-    import sys, types  # noqa: E401
+    import sys  # noqa: E401
+    import types
     torch = types.ModuleType("torch")
     nn = types.ModuleType("torch.nn")
     nn.Module = type("Module", (), {})
@@ -75,10 +79,10 @@ def _objectives_extract(res: dict) -> dict:
     dict 宽容"是 harness 对异构域输出的多态边界, 复用测试应与之同款(否则测的不是机制)."""
     if isinstance(res.get("objectives"), dict) and res.get("objectives"):
         return {k: v for k, v in res["objectives"].items()
-                if isinstance(v, (int, float)) and not isinstance(v, bool)}
+                if isinstance(v, int | float) and not isinstance(v, bool)}
     # 裸数值标量键 dict(rigidity 老风格): 视为 objectives 候选
     return {k: v for k, v in res.items()
-            if isinstance(v, (int, float)) and not isinstance(v, bool)}
+            if isinstance(v, int | float) and not isinstance(v, bool)}
 
 
 def _needs_bare_dict_coercion(res: dict) -> bool:

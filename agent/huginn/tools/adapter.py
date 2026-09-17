@@ -218,7 +218,7 @@ def _truncate_for_trajectory(value: Any) -> Any:
         return value
     if isinstance(value, dict):
         return {k: _truncate_for_trajectory(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, list | tuple):
         return [_truncate_for_trajectory(v) for v in value]
     return value
 

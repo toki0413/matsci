@@ -207,11 +207,11 @@ class _FakeTensor(list):
         return self
 
     def tolist(self):
-        return [list(x) if isinstance(x, (list, _FakeTensor)) else x for x in self]
+        return [list(x) if isinstance(x, list | _FakeTensor) else x for x in self]
 
     def item(self):
         data = self
-        while isinstance(data, (list, _FakeTensor)) and data:
+        while isinstance(data, list | _FakeTensor) and data:
             data = data[0]
         return float(data)
 

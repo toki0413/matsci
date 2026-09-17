@@ -243,7 +243,7 @@ class BeliefEntropy:
             probs = []
             for item in top_k:
                 lp = item.get("logprob", -100.0)
-                if isinstance(lp, (int, float)):
+                if isinstance(lp, int | float):
                     probs.append(math.exp(lp))
             if not probs:
                 continue

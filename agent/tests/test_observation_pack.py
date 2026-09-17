@@ -7,7 +7,11 @@ import tempfile
 
 import pytest
 
-from huginn.tools.observation_pack import ObservationArchive, RecallObservationTool, handle_for_body
+from huginn.tools.observation_pack import (
+    ObservationArchive,
+    RecallObservationTool,
+    handle_for_body,
+)
 
 
 @pytest.fixture()

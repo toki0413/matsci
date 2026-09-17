@@ -19,11 +19,11 @@
 from __future__ import annotations
 
 import json
-import time
 import uuid
-from datetime import datetime, timezone
+from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 EXPERIENCE_VERSION = 1
 
@@ -69,7 +69,7 @@ class ExecutableExperience:
         self.verdict = verdict
         # 域科学契约工件(量纲/有效域): 由 compile_domain_guards 透出, replay 时可并入判官.
         self.quantities = dict(quantities or {})
-        self.ts = ts or datetime.now(timezone.utc).isoformat(timespec="seconds")
+        self.ts = ts or datetime.now(UTC).isoformat(timespec="seconds")
 
     # ---------- 序列化 ----------
     def to_dict(self) -> dict[str, Any]:
@@ -89,7 +89,7 @@ class ExecutableExperience:
         }
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "ExecutableExperience":
+    def from_dict(cls, d: dict[str, Any]) -> ExecutableExperience:
         return cls(
             goal=d.get("goal", ""),
             dimension=d.get("dimension", ""),

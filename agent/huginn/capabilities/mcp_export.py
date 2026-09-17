@@ -169,9 +169,9 @@ class CapabilityMCPBackend:
 
 def _jsonable(obj: Any) -> Any:
     """尽力把能力结果规整成 JSON-safe 结构 (失败时回退成字符串)."""
-    if obj is None or isinstance(obj, (bool, int, float, str)):
+    if obj is None or isinstance(obj, bool | int | float | str):
         return obj
-    if isinstance(obj, (dict, list)):
+    if isinstance(obj, dict | list):
         return obj
     if hasattr(obj, "model_dump"):
         try:

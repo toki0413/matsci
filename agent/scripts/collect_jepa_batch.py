@@ -10,15 +10,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import os
 from pathlib import Path
 
 from huginn.autoloop.engine import AutoloopEngine
 from huginn.memory.manager import MemoryManager
-
-from tests.test_autoloop_e2e import _noop_maybe_clarify
-from tests.test_autoloop_e2e import _DummyTracker
+from tests.test_autoloop_e2e import _DummyTracker, _noop_maybe_clarify
 
 
 def _run_python(src: str) -> str:
@@ -546,8 +543,6 @@ OBJECTIVES = [
 
 
 async def _collect_one(eng, name, hyp, src):
-    import os
-    from pathlib import Path as P
     context = {
         "changed_files": ["probe.py"],
         "git_diff": "",
@@ -556,7 +551,7 @@ async def _collect_one(eng, name, hyp, src):
     }
     print(f"\n===== {name} =====", flush=True)
     try:
-        plan = await eng._plan(hyp, context)
+        await eng._plan(hyp, context)  # 仅触发规划副作用, 结果不在此脚本使用
     except Exception as exc:
         print(f"PLAN_ERROR {name}: {exc!r}", flush=True)
         return
@@ -575,7 +570,6 @@ async def _collect_one(eng, name, hyp, src):
 
 
 async def _main(args):
-    from huginn.autoloop.conjecture import get_kg
     import huginn.autoloop.conjecture as cj
     import huginn.autoloop.engine as _eng
     cj.get_kg = lambda *a, **kw: None
@@ -597,12 +591,12 @@ async def _main(args):
     elif args.limit:
         objs = objs[: args.limit]
 
-    for i, (name, hyp, src) in enumerate(objs):
+    for _i, (name, hyp, src) in enumerate(objs):
         await _collect_one(eng, name, hyp, src)
 
     out = Path(os.environ.get("HUGINN_JEPA_CORPUS")) if (os.environ.get("HUGINN_JEPA_CORPUS")) else (Path.home() / ".huginn" / "corpus")
     f = out / "jepa_pairs.jsonl"
-    n = len([l for l in f.read_text(encoding="utf-8").splitlines() if l.strip()]) if f.exists() else 0
+    n = len([line for line in f.read_text(encoding="utf-8").splitlines() if line.strip()]) if f.exists() else 0
     print(f"\n===== CORPUS now: {n} pairs @ {f} =====", flush=True)
 
 

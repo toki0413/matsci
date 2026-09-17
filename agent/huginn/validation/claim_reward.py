@@ -218,7 +218,8 @@ def grounded_accuracy_reward(
     _spec = importlib.util.spec_from_file_location(
         "claim_grounding_cr", Path(__file__).resolve().parent / "claim_grounding.py"
     )
-    _mod = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(_mod)
+    _mod = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(_mod)
     res = _load_verify_claims()(final_text, tool_trace or [], allow_derived=allow_derived)
     raw_claims = _mod.extract_numeric_claims(final_text)
     rounded_matched = set(res["matched"]) or set()
@@ -343,5 +344,4 @@ __all__ = [
     "idle_turn_penalty",
     "anti_hacking_reward",
     "reconcile_r_phys",
-    "MRA_THRESHOLDS",
 ]

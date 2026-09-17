@@ -147,10 +147,7 @@ def _build_posterior_guided_hint(
     if len(parts) >= 2:
         core = parts[0]
         remain = max_chars - len(core) - 2  # 2 for "\n\n"
-        if remain > 0:
-            out = core + "\n\n" + parts[1][:remain]
-        else:
-            out = core[:max_chars]
+        out = core + "\n\n" + parts[1][:remain] if remain > 0 else core[:max_chars]
     else:
         out = parts[0][:max_chars]
     return out

@@ -161,7 +161,7 @@ class ElmerTool(HuginnTool):
                 auditor = PhysicsAuditor()
                 audit_report = auditor.audit("elmer_tool", "solve_sif", data, {})
                 data["physics_audit"] = audit_report.to_dict()
-            except Exception as exc:
+            except Exception:  # 防御: 审计失败不阻断结果返回
                 logger.debug("audit failure can't block result delivery", exc_info=True)
 
             return ToolResult(

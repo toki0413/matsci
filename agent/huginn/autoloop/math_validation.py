@@ -299,7 +299,7 @@ class MathValidator:
                     evidence["dimensional_consistent"] = (
                         len(quantities) > 0 and not has_error
                     )
-            except Exception as exc:
+            except Exception:  # 防御: 量纲分析失败则该证据缺省
                 logger.warning(
                     "error in _collect_math_evidence: dimensional_analysis failed",
                     exc_info=True,
@@ -328,7 +328,7 @@ class MathValidator:
                         "expected": str(expected_class),
                         "actual": actual,
                     }
-            except Exception as exc:
+            except Exception:  # 防御: PDE 分类失败则该证据缺省
                 logger.warning(
                     "error in _collect_math_evidence: pde_classify failed",
                     exc_info=True,
@@ -369,7 +369,7 @@ class MathValidator:
                             "top_features": top,
                             "hypothesis_features": list(hypothesis_features),
                         }
-            except Exception as exc:
+            except Exception:  # 防御: Sobol 失败则该证据缺省
                 logger.warning(
                     "error in _collect_math_evidence: sobol_indices failed",
                     exc_info=True,
@@ -397,7 +397,7 @@ class MathValidator:
                         "all_passed": vr.data.get("all_passed", False),
                         "violations": vr.data.get("violations", []),
                     }
-            except Exception as exc:
+            except Exception:  # 防御: 约束校验失败则该证据缺省
                 logger.warning(
                     "error in _collect_math_evidence: constraint_check failed",
                     exc_info=True,

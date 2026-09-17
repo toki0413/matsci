@@ -179,7 +179,7 @@ class HierarchicalRetriever:
                 top_k=top_k,
                 filter_dict=targeted_filter if targeted_filter else None,
             )
-        except Exception as exc:
+        except Exception:  # 防御: 定向检索失败置空走全量
             targeted_results = []
 
         # Fallback search: general
@@ -189,7 +189,7 @@ class HierarchicalRetriever:
                 top_k=top_k,
                 filter_dict=filter_dict,
             )
-        except Exception as exc:
+        except Exception:  # 防御: 全量检索失败置空结果
             general_results = []
 
         # Deduplicate and merge

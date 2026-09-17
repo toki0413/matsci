@@ -92,8 +92,8 @@ def test_run_research_program_respects_planner():
 
 # ── 2) 科研团队分工 ───────────────────────────────────────────────
 def test_science_team_role_division_and_pareto_prune():
-    from huginn.research.science_team import ScienceTeam
     from huginn.research.planning import SubResearch
+    from huginn.research.science_team import ScienceTeam
 
     subs = [
         SubResearch("good", "强候选", _run(2.0)),
@@ -113,8 +113,8 @@ def test_science_team_role_division_and_pareto_prune():
 
 def test_science_team_scientists_parallel_across_dag_layers():
     """团队按规划 DAG 分层唤醒科学家; 串行层(依赖)不跨层提前执行."""
-    from huginn.research.science_team import ScienceTeam, ScientistAgent
     from huginn.research.planning import SubResearch
+    from huginn.research.science_team import ScienceTeam
 
     order: list[str] = []
 
@@ -151,7 +151,9 @@ def test_fullchain_demo_offline_smoke():
 def test_first_principles_world_model_predicts_law():
     """世界模型的 predict 与数学定律一致: T_eq 随 a_scale 增大而单调下降."""
     from huginn.research.law_model import (
-        FirstPrinciplesLawModel, LawAction, LawState,
+        FirstPrinciplesLawModel,
+        LawAction,
+        LawState,
     )
     wm = FirstPrinciplesLawModel(albedo=0.1)
     assert "T_eq" in wm.law() and "S" in wm.law()   # 数学定律(方程串)作为核心语言
@@ -164,7 +166,10 @@ def test_first_principles_world_model_predicts_law():
 def test_reconcile_flags_wrong_world_model_as_falsified():
     """预测 vs 真值对账: 定律不符 → 如实标 falsified(不覆盖偏差)."""
     from huginn.research.law_model import (
-        FirstPrinciplesLawModel, LawAction, LawState, reconcile,
+        FirstPrinciplesLawModel,
+        LawAction,
+        LawState,
+        reconcile,
     )
     wm = FirstPrinciplesLawModel(albedo=0.1)
     init = LawState({"a_AU": 1.0}, domain="exoplanet")
@@ -180,7 +185,10 @@ def test_reconcile_flags_wrong_world_model_as_falsified():
 def test_model_based_planner_ranks_actions_by_predicted_objective():
     """模型基规划: 按预测目标(minimize T_eq → 最大 a_scale)排候选动作."""
     from huginn.research.law_model import (
-        FirstPrinciplesLawModel, LawAction, LawState, ModelBasedPlanner,
+        FirstPrinciplesLawModel,
+        LawAction,
+        LawState,
+        ModelBasedPlanner,
     )
     wm = FirstPrinciplesLawModel(albedo=0.1)
     planner = ModelBasedPlanner(wm, objective="T_eq_K", sense="minimize")
@@ -197,8 +205,8 @@ def test_model_based_science_team_bears_and_falsifies_law():
     - 真实执行与定律一致 → borne_out=True, 进入结论并通过门禁;
     - 注入偏差执行(定律被破坏) → 如实 falsified 进 pruned, 不进结论.
     """
-    from huginn.research.science_team import ModelBasedScienceTeam
     from huginn.research.law_model import FirstPrinciplesLawModel, LawAction
+    from huginn.research.science_team import ModelBasedScienceTeam
 
     wm = FirstPrinciplesLawModel(albedo=0.1)
     team = ModelBasedScienceTeam(wm, objective="T_eq_K", sense="maximize",
@@ -231,7 +239,7 @@ def test_model_based_science_team_bears_and_falsifies_law():
 # ── 5) 第二类第一性原理域: 力学谐振子 (LawModel 域无关 + VLA 团队指标随域) ──
 def test_mechanics_law_model_predicts_omega_monotonicity():
     """力学域定律: ω=√(k/m)——刚度↑→ω↑, 质量↑→ω↓; 且 T=2π/ω 自洽."""
-    from huginn.research.law_model import MechanicsLawModel, LawAction, LawState
+    from huginn.research.law_model import LawAction, LawState, MechanicsLawModel
     wm = MechanicsLawModel()
     assert wm.domain == "mechanics"
     assert "T = 2π/ω" in wm.law() and "√(k/m)" in wm.law()
@@ -249,7 +257,10 @@ def test_mechanics_law_model_predicts_omega_monotonicity():
 def test_mechanics_reconcile_falsifies_perturbed_period():
     """力学域对账(显式传 metrics): 周期被放大 → 定律如实 falsified."""
     from huginn.research.law_model import (
-        MechanicsLawModel, LawAction, LawState, reconcile,
+        LawAction,
+        LawState,
+        MechanicsLawModel,
+        reconcile,
     )
     wm = MechanicsLawModel()
     init = LawState({"mass_kg": 1.0, "stiffness_Nm": 4.0}, domain="mechanics")
@@ -262,8 +273,8 @@ def test_mechanics_reconcile_falsifies_perturbed_period():
 
 def test_model_based_team_reconcile_metrics_follow_domain():
     """VLA 团队跨域复用: 力学域对账指标随域 (不再写死 exoplanet S/T_eq)."""
+    from huginn.research.law_model import LawAction, MechanicsLawModel
     from huginn.research.science_team import ModelBasedScienceTeam
-    from huginn.research.law_model import MechanicsLawModel, LawAction
 
     wm = MechanicsLawModel()
     obs = [{"name": "Osc-A", "mass_kg": 1.0, "stiffness_Nm": 4.0},
@@ -308,7 +319,9 @@ def _f_additive(inp):
 def test_interaction_order2_detects_joint_product():
     """order-2 Shapley 交互指数: 纯加性→0; 含 x1·x2 乘积项→非零(shortcut 探测)."""
     from huginn.research.interaction_explain import (
-        PAIR, interaction_primitives, pair_interactions,
+        PAIR,
+        interaction_primitives,
+        pair_interactions,
     )
     features, instance, baseline = _add_features()
     inter_f = pair_interactions(_f_additive, features, instance, baseline)
@@ -347,7 +360,10 @@ def test_equivalent_interaction_flags_spurious_interaction():
 
 def test_interaction_trace_is_json_and_grounding_ready():
     """交互基元可序列化成 grounding 证据 (可并入研究 trace)."""
-    from huginn.research.interaction_explain import interaction_primitives, interaction_trace
+    from huginn.research.interaction_explain import (
+        interaction_primitives,
+        interaction_trace,
+    )
     features, instance, baseline = _add_features()
     prim = interaction_primitives(_f_additive, features, instance, baseline)
     s = interaction_trace(prim)
@@ -387,13 +403,16 @@ def test_surrogate_law_alignment_is_structural_gate():
 def test_worldview_pluralism_card():
     """多元论落地: 每个世界模型能力声明 worldview + 治理卡片(可证伪/真相参照)."""
     from huginn.research.law_model import (
-        FirstPrinciplesLawModel, MechanicsLawModel, Worldview, world_model_card,
+        FirstPrinciplesLawModel,
+        MechanicsLawModel,
+        Worldview,
+        world_model_card,
     )
     w_fp = FirstPrinciplesLawModel()
     w_me = MechanicsLawModel()
     # 二者都是"物理-行动-因果"极 (LawModel 默认), 但域不同 → 卡片能区分
     for m in (w_fp, w_me):
-        assert getattr(m, "worldview") is Worldview.PHYSICS_CAUSAL
+        assert m.worldview is Worldview.PHYSICS_CAUSAL
         card = world_model_card(m)
         assert card["falsifiable"] is True, "定律模型须可证伪(reconcile 真相参照)"
         assert card["truth_reference"]  # 具身参照: 真实执行
@@ -426,6 +445,7 @@ def test_world_model_capability_rejects_unfalsifiable():
 def test_world_model_capability_ops_law_predict_reconcile():
     """能力 op 面: law(数学定律) / predict(预告=假说) / reconcile(对账可证伪)."""
     import asyncio
+
     from huginn.capabilities.world_model import WorldModelCapability
     from huginn.research.law_model import FirstPrinciplesLawModel
 
@@ -452,6 +472,7 @@ def test_world_model_capability_ops_law_predict_reconcile():
 def test_world_model_capability_mcp_surface():
     """世界模型能力进注册表 → MCP 码头可见、可调(默认 exoplanet 世界模型)."""
     import asyncio
+
     from huginn.capabilities.mcp_export import CapabilityMCPBackend
     from huginn.capabilities.registry import CapabilityRegistry
     from huginn.capabilities.world_model import register_world_model_capabilities

@@ -276,7 +276,7 @@ async def generate_scm_via_llm(
     for node_name, eq in equations.items():
         try:
             val = eq(test_values, 0.0)
-            if not isinstance(val, (int, float)) or not math.isfinite(val):
+            if not isinstance(val, int | float) or not math.isfinite(val):
                 errors.append(f"方程 {node_name} 返非有限数: {val}")
         except Exception as exc:
             errors.append(f"方程 {node_name} 调用失败: {exc}")

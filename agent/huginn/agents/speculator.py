@@ -447,7 +447,7 @@ def on_turn_start(user_msg: str, cache: Any | None = None) -> dict:
                 "prefetch_result": {"prefetched": [], "skipped": [], "errors": []},
                 "hint": "",
             }
-    except Exception as exc:
+    except Exception:  # 防御: 开关层异常不拦业务
         # flag 层挂了不能带挂业务, 继续走原逻辑
         logger.debug("best-effort op failed", exc_info=True)
 

@@ -5,7 +5,11 @@ dimensional.ok=False、verify_domain_ready 的 dimensional_ready=False, 不必�
 """
 from __future__ import annotations
 
-from huginn.research.coldstart_guards import compile_domain_guards, verify_domain_ready, _dimensional_precheck
+from huginn.research.coldstart_guards import (
+    _dimensional_precheck,
+    compile_domain_guards,
+    verify_domain_ready,
+)
 
 
 def test_runtime_compile_runs_dimensional_precheck_live():

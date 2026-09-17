@@ -184,7 +184,10 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["E741", "F841", "N806", "B905"]
+# 测试经常在 fixture/conftest 调整 sys.path 后再导入模块, E402 是固有模式; E741
+# (单字母 l/O/I 混淆)、N806 (局部命名)、B905 (zip strict)、N805 (首参非 self 的
+# 测试辅助/伪对象方法) 在测试里偏噪音.
+"tests/**" = ["E402", "E741", "F841", "N806", "B905", "N805"]
 "tests/test_openmm_tool.py" = ["N802"]  # 模拟 openmm 外部 API (getPlatformByName 等), 必须保 camelCase
 "tests/test_vina_tool.py" = ["N802"]   # 模拟 autodock vina API (EmbedMolecule 等), 必须保 camelCase
 "tests/_fakenp_plugin.py" = ["N801"]  # 模拟 numpy ndarray 类名, 刻意小写
@@ -195,6 +198,20 @@ ignore = [
 # science-skills 沉降脚本保留原风格: C401 set(x for x in ..) 与 N813(mda 惯用别名)
 # 不改写 1000+ 行科学计算代码; E402 是独立脚本在 sys.path 后导入模块的固有模式.
 "huginn/plugins/science-skills/skills/gromacs-solvation-environment/scripts/*.py" = ["C401", "E402", "N813"]
+# ast.NodeVisitor 契约方法名 (visit_* 必须 CamelCase 才被 AST 遍历派发), 不能改
+"huginn/coder/repo_map.py" = ["N802"]
+"huginn/coder/symbol_index.py" = ["N802"]
+# 模块别名 S = huginn.exploration.strategies (科学人惯用缩写); 改名会波及大量调用点
+"huginn/research/program.py" = ["N812"]
+# phase_recompute 的 affA/affB/affD 是拟合系数(科学符号), 全局作用域 naming 不作数
+"huginn/research/phase_recompute.py" = ["N816"]
+# 模块级别名 _P=Path / C=ConstantKernel: 惯用短别名, 保可读性
+"huginn/autoloop/engine_reflect.py" = ["N814"]
+"huginn/tools/sci/gp_tool.py" = ["N814"]
+# 演示/业务脚本里 `import Path as P` 是脚手架写法, 改名无收益
+"huginn/run_aline_baseline.py" = ["N817"]
+"huginn/run_cognitive_driver.py" = ["N817"]
+"scripts/collect_jepa_batch.py" = ["N817"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
