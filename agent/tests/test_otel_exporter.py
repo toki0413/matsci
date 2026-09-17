@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import urllib.error
 
 import pytest
 
@@ -94,6 +95,25 @@ def test_fail_open_on_network_error(monkeypatch):
     exp.emit(_build_span_tree())
     # Must not raise
     exp.flush()
+
+
+def test_http_error_warns_once_then_quiets(monkeypatch):
+    """A rejected POST (e.g. 401 from Langfuse) must fail-open but surface once."""
+    def _http_error(req, timeout=5.0):
+        raise urllib.error.HTTPError(req.full_url, 401, "Unauthorized", {}, None)
+
+    monkeypatch.setattr("huginn.otel.urllib.request.urlopen", _http_error)
+    exp = OtlpExporter(endpoint="http://localhost:9/", interval_seconds=1.0)
+
+    # First flush: no raise + the one-shot warning flag latches.
+    exp.emit(_build_span_tree())
+    exp.flush()
+    assert exp._warned_failure is True
+
+    # A second flush keeps failing open and stays quiet.
+    exp.emit(_build_span_tree())
+    exp.flush()
+    assert exp._warned_failure is True
 
 
 def test_default_exporter_is_none_when_unconfigured(monkeypatch):
