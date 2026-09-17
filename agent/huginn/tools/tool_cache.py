@@ -7,9 +7,9 @@
 
 from __future__ import annotations
 
-import asyncio
 import functools
 import hashlib
+import inspect
 import json
 import logging
 import os
@@ -341,7 +341,7 @@ def cacheable(
     """
 
     def decorator(func: Callable) -> Callable:
-        is_async = asyncio.iscoroutinefunction(func)
+        is_async = inspect.iscoroutinefunction(func)
         tname = tool_name or getattr(func, "__qualname__", "").split(".")[0]
 
         def _build_key(args: tuple, kwargs: dict) -> tuple | None:

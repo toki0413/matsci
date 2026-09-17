@@ -17,6 +17,7 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import inspect
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -140,7 +141,7 @@ class HighThroughputTool(HuginnTool):
                         payload = job.full_input
                         if hasattr(tool, "input_schema") and tool.input_schema is not None:
                             payload = tool.input_schema(**payload).model_dump()
-                        if asyncio.iscoroutinefunction(tool.call):
+                        if inspect.iscoroutinefunction(tool.call):
                             result = await tool.call(payload, context)
                         else:
                             result = tool.call(payload, context)
