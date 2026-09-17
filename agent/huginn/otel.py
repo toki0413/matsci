@@ -89,6 +89,8 @@ class OtlpExporter:
         self._closed = False
         self._worker_started = False
         self._worker: threading.Thread | None = None
+        self._warned_failure = False
+        logger.info("huginn OTLP trace export enabled -> %s", endpoint)
 
     # -- public API -----------------------------------------------------
 
@@ -134,8 +136,10 @@ class OtlpExporter:
                 if self._closed:
                     break
                 now_pending = list(self._pending)
-                # Only pop what we can carry; leave a small tail for the next tick.
-                take = self.batch_size if len(now_pending) > self.batch_size else len(now_pending)
+                # FIFO batch: carry at most ``batch_size`` per tick; anything
+                # beyond stays queued for the next tick. This caps per-request
+                # size without ever dropping spans.
+                take = min(self.batch_size, len(now_pending))
                 batch = now_pending[:take]
                 remain = now_pending[take:]
                 self._pending = deque(remain)
@@ -147,6 +151,9 @@ class OtlpExporter:
             time.sleep(self.interval)
 
     def _post_roots(self, roots: list[Any]) -> None:
+        # NOTE: urllib reads HTTP(S)_PROXY / ALL_PROXY from the environment
+        # automatically, so this works in proxied/corporate networks without any
+        # extra config.
         try:
             payload = self._encode(roots)
             req = urllib.request.Request(
@@ -157,8 +164,31 @@ class OtlpExporter:
             )
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                 resp.read()
-        except (urllib.error.URLError, OSError, ValueError, Exception) as exc:  # noqa: BLE001
-            logger.debug("huginn otel export failed (fail-open): %s", exc)
+        except urllib.error.HTTPError as exc:
+            # The endpoint answered but rejected the request — almost always an
+            # auth/config problem (e.g. missing/invalid HUGINN_OTEL_HEADERS,
+            # wrong path). Fail-open, but surface the status instead of hiding it.
+            self._note_failure(f"HTTP {exc.code}")
+        except Exception as exc:  # noqa: BLE001
+            # Network / TLS / encoding / parsing errors. Fail-open as well.
+            self._note_failure(f"{exc.__class__.__name__}: {exc}")
+
+    def _note_failure(self, detail: str) -> None:
+        """Warn once per exporter on the first dropped batch, then stay quiet.
+
+        The single non-raising failure gate keeps telemetry from ever breaking
+        the agent loop, while the one-shot warning tells operators *why* traces
+        stop flowing (e.g. "HTTP 401" = check the Langfuse key).
+        """
+        if not self._warned_failure:
+            self._warned_failure = True
+            logger.warning(
+                "huginn OTLP export failing (fail-open, traces dropped): %s. "
+                "Check HUGINN_OTEL_ENDPOINT and HUGINN_OTEL_HEADERS.",
+                detail,
+            )
+        else:
+            logger.debug("huginn OTLP export still failing (fail-open): %s", detail)
 
     def _encode(self, roots: list[Any]) -> dict[str, Any]:
         spans: list[dict[str, Any]] = []
@@ -183,6 +213,9 @@ class OtlpExporter:
         }
 
     def _append_span_tree(self, span: Any, parent_id: str | None, out: list[dict[str, Any]]) -> str:
+        # OTel expects 16-hex span ids and 32-hex trace ids. We derive them as
+        # stable hashes of the collector's internal uuid span ids so parent/child
+        # links and (per root) traces are consistent across one export batch.
         span_id = hashlib.sha256(span.span_id.encode("utf-8")).hexdigest()[:16]
         trace_id = hashlib.sha256(self._trace_key(span).encode("utf-8")).hexdigest()[:32]
         kind = _KIND_CLIENT if span.name in ("tool_call", "llm_call") else _KIND_INTERNAL
