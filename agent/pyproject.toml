@@ -57,12 +57,11 @@ dependencies = [
     # server
     "fastapi>=0.141",
     "uvicorn>=0.52",
-    "sse-starlette>=3.4.6",
+    # python-multipart 无直接 import — 它是 FastAPI Form/UploadFile 的多部分
+    # 表单后端, 由 routes/document.py 等文件上传路由间接必需, 不能删.
     "python-multipart>=0.0.6",
     "httpx>=0.25",
     "websockets>=12.0",
-    "requests>=2.32.0",
-    "tenacity>=8.0",
     # Pillow 下界对齐 Dependabot 修复版 12.3.0 (CVE 集中在 <12.3.0).
     "Pillow>=12.3.0",
 ]
