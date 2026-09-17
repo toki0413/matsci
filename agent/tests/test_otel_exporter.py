@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import threading
 import urllib.error
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
 
@@ -114,6 +116,51 @@ def test_http_error_warns_once_then_quiets(monkeypatch):
     exp.emit(_build_span_tree())
     exp.flush()
     assert exp._warned_failure is True
+
+
+def test_end_to_end_against_local_receiver():
+    """Full pipeline against a real local OTLP/HTTP receiver.
+
+    Proves the whole ingestion path end-to-end without external credentials:
+    collector -> OTLP JSON encode -> POST with the configured Authorization
+    header -> receiver decodes the resourceSpans structure -> 200.
+    """
+    received: dict = {}
+
+    class _OTLPHandler(BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802 (http.server method name)
+            n = int(self.headers.get("Content-Length") or 0)
+            received["auth"] = self.headers.get("Authorization")
+            received["path"] = self.path
+            received["body"] = self.rfile.read(n)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b"{}")
+
+        def log_message(self, *args):  # silence request logging
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), _OTLPHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        exp = OtlpExporter(
+            endpoint=f"http://127.0.0.1:{server.server_address[1]}/v1/traces",
+            headers={"Authorization": "Basic Zm9vOmJhcg=="},  # user:pass
+        )
+        exp.emit(_build_span_tree())
+        exp.flush()
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    # The Authorization header configured for Langfuse-style auth is transmitted.
+    assert received.get("auth") == "Basic Zm9vOmJhcg=="
+    assert received.get("path") == "/v1/traces"
+    body = json.loads(received["body"].decode("utf-8"))
+    spans = body["resourceSpans"][0]["scopeSpans"][0]["spans"]
+    assert {s["name"] for s in spans} == {"agent_turn", "tool_call"}
 
 
 def test_default_exporter_is_none_when_unconfigured(monkeypatch):
