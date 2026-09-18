@@ -59,6 +59,20 @@ class Worldview(str, Enum):  # noqa: UP042 — 刻意 str+Enum: 世界观谱系�
     BEHAVIOR_POLICY = "behavior_policy"
 
 
+def _worldview_value(wv: Any) -> str:
+    """归一化 worldview: 枚举取其 ``.value``, 字符串原样, None/未知回落 PHYSICS_CAUSAL.
+
+    外部后端 (如 tools/sim/pybullet_env) 不 import 本模块, 用字符串字面量标
+    世界观 —— 治理卡片需兼容"枚举或字符串"两种形态.
+    """
+    if wv is None:
+        return Worldview.PHYSICS_CAUSAL.value
+    if isinstance(wv, str):
+        return wv
+    v = getattr(wv, "value", None)
+    return v if v is not None else str(wv)
+
+
 def world_model_card(model: LawModel) -> dict:
     """世界模型能力的治理卡片 (多元论 + 具身可信).
 
@@ -76,7 +90,9 @@ def world_model_card(model: LawModel) -> dict:
     card = {
         "model": type(model).__name__,
         "domain": getattr(model, "domain", ""),
-        "worldview": getattr(model, "worldview", Worldview.PHYSICS_CAUSAL).value,
+        # worldview 可能是枚举或字符串 (外部后端如 pybullet_env 不 import 本模块,
+        # 用字符串字面量标世界观). 兼容两者: 枚举取其 .value, 字符串原样保留.
+        "worldview": _worldview_value(getattr(model, "worldview", None)),
         "falsifiable": (hasattr(model, "predict") and hasattr(model, "law")
                         and hasattr(model, "seed")),
         "truth_reference": "real_execution (reconcile 数值对账)",
@@ -109,6 +125,11 @@ def world_model_inventory() -> list[dict]:
     多元论治理的落法是: 用 ``worldview`` 把这三种"世界"**显式区别开**, 而不是熔成一团
     或悄悄让某个实现冒充全部。``available`` 为 best-effort(对应模块可导入即 True)。
 
+    另有第 4 条 **具身物理后端**(tools/sim/pybullet_tool): 用 PyBullet 刚体动力学真值
+    做 reconcile 对账的 ground truth —— 它的 worldview 同为 PHYSICS_CAUSAL, 但消费者是
+    "具身/机器人科研仿真"(非科研管线)。用延迟 import 检测可用性, 不反向 require tools
+    (pybullet 未装时照常标 unavailable, 不阻断主流程)。
+
     Returns: 每项的 {id, worldview, purpose, consumer, falsifiable, available}
     """
     spec = [
@@ -118,12 +139,20 @@ def world_model_inventory() -> list[dict]:
          "StateEstimator 状态估计 + LearnableForwardModel 从真实运行学 s' 转移", "沙箱主循环(奖励/记忆)", "huginn.security.world_state"),
         ("security.world_model", Worldview.PHYSICS_CAUSAL.value,
          "物理逆生成器 (infer_inverse 前向+逆向)", "可逆撤销控制环", "huginn.security.world_model"),
+        ("tools.sim.pybullet", Worldview.PHYSICS_CAUSAL.value,
+         "PyBullet 刚体动力学真值 rollout (具身 ground truth), 供 reconcile 对账", "具身/机器人科研仿真(pybullet_tool)", "huginn.tools.sim.pybullet_env"),
     ]
     entries: list[dict] = []
     for eid, worldview, purpose, consumer, modname in spec:
-        available = True
+        available = False
         try:
-            __import__(modname)
+            mod = __import__(modname, fromlist=["*"])
+            # 可选物理后端: 模块可导入 ≠ 后端可用. pybullet_env 内 try-import
+            # pybullet, 失败仅置 _PYBULLET_OK=False 不抛 —— 需显式读该标志.
+            if hasattr(mod, "_PYBULLET_OK"):
+                available = bool(mod._PYBULLET_OK)
+            else:
+                available = True  # 纯 Python 实现: 能导入即可用
         except Exception:  # noqa: BLE001 — 可选实现不可导入仅记录, 不阻断清册
             available = False
         entries.append({

@@ -38,8 +38,13 @@ class PyBulletToolInput(BaseModel):
     action: Literal["info", "predict", "reconcile", "reset"] = Field(default="info")
     scene: str = Field(
         default="cartpole",
-        description="内置场景名 (cartpole / free_fall) 或 domain 名",
+        description=(
+            "内置场景 (cartpole / free_fall / kuka_iiwa / humanoid) 或 domain 名; "
+            "kuka_iiwa/humanoid 为 URDF 多关节场景 (真刚体+关节动力学)."
+        ),
     )
+    # 显式注入外部 URDF (任意 *.urdf); 空 -> 用场景内置 URDF.
+    urdf_path: str = Field(default="", description="(可选) 外部 URDF 绝对路径")
     # predict / reconcile
     state: dict[str, float] = Field(default_factory=dict)
     action_cfg: dict[str, float] = Field(default_factory=dict)
@@ -130,10 +135,21 @@ class PyBulletTool(HuginnTool):
             }
         )
 
-    def _predict(self, d: PyBulletToolInput) -> ToolResult:
+    def _configure(self, d: PyBulletToolInput) -> PyBulletEnv:
+        """把工具入参落到 env 上 (场景/步数/URDF/GUI), 返回 env."""
         env = self._env
         assert env is not None
         env.use_scene(d.scene)
+        env.n_steps = d.n_steps
+        env.use_gui = d.use_gui
+        if d.urdf_path:
+            env.urdf_path = d.urdf_path
+        else:
+            env.urdf_path = None  # 未注入 → 回落场景内置 URDF
+        return env
+
+    def _predict(self, d: PyBulletToolInput) -> ToolResult:
+        env = self._configure(d)
         state = LawState(d.state or {})
         action = LawAction(d.action_cfg or {}, d.action_label)
         out = env.predict(state, action)
@@ -148,9 +164,7 @@ class PyBulletTool(HuginnTool):
         )
 
     def _reconcile(self, d: PyBulletToolInput) -> ToolResult:
-        env = self._env
-        assert env is not None
-        env.use_scene(d.scene)
+        env = self._configure(d)
         final = env.predict(
             LawState(d.state or {}), LawAction(d.action_cfg or {}, d.action_label)
         )
@@ -189,9 +203,7 @@ class PyBulletTool(HuginnTool):
         )
 
     def _reset(self, d: PyBulletToolInput) -> ToolResult:
-        env = self._env
-        assert env is not None
-        env.use_scene(d.scene)
+        env = self._configure(d)
         initial = env.seed(d.state or {})
         return ToolResult(
             data={
