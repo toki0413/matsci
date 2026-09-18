@@ -17,8 +17,11 @@
 """
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 # DSH trajectory: 会话事件 kind → 来源分类 (对标 DeepSeek Harness 的
 # "每个上下文注入都按来源可审计"). 消费已有的 huginn.events.session_log 事件流.
@@ -35,6 +38,7 @@ _TRAJECTORY_SOURCE: dict[str, str] = {
     "compaction": "context",
     "reset_boundary": "context",
     "file_hash_mismatch": "context",
+    "context_injection": "context",
 }
 
 
@@ -58,6 +62,8 @@ class AgentSession:
         self.agent = agent
         # thread_id 兜底: 优先用 agent 自带的 (若它持有会话线程).
         self.thread_id = getattr(agent, "thread_id", None) or thread_id
+        # P1 能力维度: 当前选中的 loop (None = 默认 langgraph agent.chat).
+        self._loop: Any | None = None
 
     # ── 构造 ───────────────────────────────────────────────────────
 
@@ -92,7 +98,9 @@ class AgentSession:
     def astream(
         self, message: str, *, thread_id: str | None = None
     ) -> AsyncIterator[dict[str, Any]]:
-        """流式事件 (async generator). 复用 HuginnAgent.chat 的事件流."""
+        """流式事件 (async generator). 优先当前选中 loop 能力, 否则走 agent.chat."""
+        if self._loop is not None:
+            return self._loop(self.agent, message, thread_id or self.thread_id)
         return self.agent.chat(message, thread_id or self.thread_id)
 
     def aprompt(
@@ -144,6 +152,49 @@ class AgentSession:
         self.agent.mode = "code_act" if on else "tool_call"
         return {"code_mode": bool(on), "agent_mode": self.agent.mode}
 
+    # ── 能力维度（P1）─────────────────────────────────────────────
+
+    def _ensure_capabilities(self) -> Any:
+        from huginn.capabilities.builtin import register_builtin_capabilities
+        from huginn.capabilities.registry import get_shared_capability_registry
+
+        register_builtin_capabilities()   # 幂等
+        return get_shared_capability_registry()
+
+    def set_loop(self, name: str) -> dict[str, Any]:
+        """热切换编排循环 (loop 能力维度): 支持内置 name=default/code_act 及
+        插件 mount 的 loop 能力. astream 随后的调用走该循环."""
+        reg = self._ensure_capabilities()
+        meta = reg.get("loop", name)
+        if meta is None:
+            raise ValueError(f"unknown loop capability {name!r}; available {reg.list_names('loop')}")
+        self._loop = meta.impl
+        return {"loop": name, "plugin": meta.plugin_name}
+
+    def loops(self) -> list[tuple[str, str]]:
+        return self._ensure_capabilities().list_names("loop")
+
+    def sysprompt_sections(self) -> list[dict[str, Any]]:
+        """装配插件贡献的系统提示 section (DSH `ctx.systemPrompt` 动态拼装).
+
+        每个注册的 ``sysprompt`` 能力贡献一段文本; 贡献的段也会以
+        ``sysprompt:<name>`` 来源落注入审计事件, 进 trajectory 按来源可查.
+        """
+        reg = self._ensure_capabilities()
+        sections: list[dict[str, Any]] = []
+        for meta in reg.list("sysprompt"):
+            try:
+                text = meta.impl({"thread_id": self.thread_id})
+            except Exception:  # noqa: BLE001 — 单个 section 失败不阻断装配
+                logger.debug("sysprompt capability %s failed", meta.name, exc_info=True)
+                continue
+            if not text:
+                continue
+            source = f"sysprompt:{meta.name}"
+            sections.append({"capability": meta.name, "source": source, "text": text})
+            self.inject(source, {"section_len": len(str(text))})
+        return sections
+
     def trajectory(
         self, *, leaf_id: str | None = None, log: Any | None = None
     ) -> dict[str, Any]:
@@ -158,7 +209,7 @@ class AgentSession:
         evs = log.events_on_path(leaf_id) if log is not None else []
         by_source: dict[str, list[Any]] = {}
         for e in evs:
-            src = _trajectory_source(e.kind if not isinstance(e, dict) else e.get("kind", ""))
+            src = self._event_source(e)
             by_source.setdefault(src, []).append(
                 e.to_dict() if hasattr(e, "to_dict") else e
             )
@@ -168,6 +219,27 @@ class AgentSession:
             "by_source": by_source,
             "events": [e.to_dict() if hasattr(e, "to_dict") else e for e in evs],
         }
+
+    @staticmethod
+    def _event_source(e: Any) -> str:
+        """事件来源: 优先取 ``payload.source`` (真注入来源), 回落 kind→source."""
+        if isinstance(e, dict):
+            payload = e.get("payload") or {}
+            kind = str(e.get("kind", ""))
+        else:
+            payload = getattr(e, "payload", None) or {}
+            kind = str(getattr(e, "kind", ""))
+        src = (payload or {}).get("source")
+        return str(src) if src else _trajectory_source(kind)
+
+    def inject(self, source: str, payload: dict[str, Any] | None = None) -> None:
+        """记录一次上下文注入到本会话轨迹 (DSH 按来源审计). fail-open, 不阻断."""
+        try:
+            from huginn.events.session_writer import record_injection
+
+            record_injection(self.thread_id, source, payload)
+        except Exception:  # noqa: BLE001 — trajectory 注入写失败不阻断主流程
+            return
 
     def _open_session_log(self) -> Any | None:
         try:
