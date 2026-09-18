@@ -107,6 +107,9 @@ db = ["mp-api>=0.12"]
 # (HUGINN_USE_RUST_SANDBOX=1 才启用), 按需安装。huginn-ext 尚未发布到公开 PyPI
 # 前, 从 GitHub Release 资产安装对应 python 版本 wheel 即可。
 rust = ["huginn-ext>=0.1"]
+# 具身/机器人科研仿真 (pybullet_tool / pybullet_env): 刚体动力学真值做世界模型对账.
+# 默认不装 (pybullet 是可选后端, 缺失时工具 fail-open), 按需 `pip install -e ".[embodied]"`.
+embodied = ["pybullet>=3.2"]
 
 [project.scripts]
 huginn-agent = "huginn.cli:main"
