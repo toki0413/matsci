@@ -6,6 +6,7 @@ import pytest
 
 from huginn.agent import HuginnAgent
 from huginn.models.registry import (
+    MODEL_CAPABILITIES,
     compact_threshold_for,
     get_model_capabilities,
 )
@@ -153,3 +154,19 @@ class TestCompactThresholdFor:
         caps = get_model_capabilities("minicpm5")
         assert caps.long_context_cost_mode == "quadratic"
         assert caps.context_window == 8192
+
+    def test_agent_class_models_have_context_window(self):
+        # 所有 tools=True 的 agent 类模型都应声明 context_window, 否则前缀模糊
+        # 匹配到空窗口会让 get_context_window 兜底、compact 阈值失真.
+        for name, caps in MODEL_CAPABILITIES.items():
+            if caps.tools:
+                assert caps.context_window > 0, f"{name} 缺 context_window"
+                assert (
+                    caps.long_context_cost_mode
+                    in {"linear", "constant", "hybrid", "quadratic"}
+                ), f"{name} cost_mode 非法"
+
+    def test_cloud_quadratic_models_stay_at_60(self):
+        # 全注意力云端模型维持既往 60% 早压, 不因窗口大而推迟.
+        for name in ("gpt-4o", "claude-3-5-sonnet", "gemini-2.5-pro", "qwen3-max"):
+            assert compact_threshold_for(name) == 60, name

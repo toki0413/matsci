@@ -290,112 +290,190 @@ class ModelCaps:
 MODEL_CAPABILITIES: dict[str, ModelCaps] = {
     # ── Anthropic ──────────────────────────────────────────────
     # Sonnet 5: "最强 agentic Sonnet", 200K, agent 编程 63.2%
+    # Claude 全注意力 (quadratic): 窗口大但长序列按 O(N²) 计 → 维持 60% 早压.
     "claude-sonnet-5": ModelCaps(
-        vision=True, tools=True, reasoning=True, streaming=True
+        vision=True, tools=True, reasoning=True, streaming=True,
+        context_window=1_000_000,
     ),
     "claude-opus-4-8": ModelCaps(
-        vision=True, tools=True, reasoning=True, streaming=True
+        vision=True, tools=True, reasoning=True, streaming=True,
+        context_window=1_000_000,
     ),
     "claude-sonnet-4-20250514": ModelCaps(
-        vision=True, tools=True, reasoning=True, streaming=True
+        vision=True, tools=True, reasoning=True, streaming=True,
+        context_window=200_000,
     ),
     "claude-sonnet-4-6": ModelCaps(
-        vision=True, tools=True, reasoning=True, streaming=True
+        vision=True, tools=True, reasoning=True, streaming=True,
+        context_window=200_000,
     ),
     "claude-3-5-sonnet-20241022": ModelCaps(
-        vision=True, tools=True, reasoning=False, streaming=True
+        vision=True, tools=True, reasoning=False, streaming=True,
+        context_window=200_000,
     ),
     "claude-3-5-sonnet": ModelCaps(
-        vision=True, tools=True, reasoning=False, streaming=True
+        vision=True, tools=True, reasoning=False, streaming=True,
+        context_window=200_000,
     ),
     "claude-3-opus": ModelCaps(
-        vision=True, tools=True, reasoning=False, streaming=True
+        vision=True, tools=True, reasoning=False, streaming=True,
+        context_window=200_000,
     ),
     "claude-3-haiku": ModelCaps(
-        vision=True, tools=True, reasoning=False, streaming=True
+        vision=True, tools=True, reasoning=False, streaming=True,
+        context_window=200_000,
     ),
     # ── OpenAI ─────────────────────────────────────────────────
     # GPT-5.6 (Sol/Terra/Luna, 2026-07): 1.5M context, native agent
-    "gpt-5.6": ModelCaps(vision=True, tools=True, reasoning=True, streaming=True),
-    "gpt-5.2": ModelCaps(vision=True, tools=True, reasoning=True, streaming=True),
-    "gpt-5": ModelCaps(vision=True, tools=True, reasoning=True, streaming=True),
-    "gpt-4o": ModelCaps(vision=True, tools=True, reasoning=False, streaming=True),
-    "gpt-4o-mini": ModelCaps(vision=True, tools=True, reasoning=False, streaming=True),
-    "gpt-4-turbo": ModelCaps(vision=True, tools=True, reasoning=False, streaming=True),
-    "gpt-4": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
+    # OpenAI 全注意力 (quadratic), 大窗但成本 O(N²) → 60% 早压.
+    "gpt-5.6": ModelCaps(
+        vision=True, tools=True, reasoning=True, streaming=True,
+        context_window=1_500_000,
+    ),
+    "gpt-5.2": ModelCaps(
+        vision=True, tools=True, reasoning=True, streaming=True,
+        context_window=1_000_000,
+    ),
+    "gpt-5": ModelCaps(
+        vision=True, tools=True, reasoning=True, streaming=True,
+        context_window=1_000_000,
+    ),
+    "gpt-4o": ModelCaps(
+        vision=True, tools=True, reasoning=False, streaming=True,
+        context_window=128_000,
+    ),
+    "gpt-4o-mini": ModelCaps(
+        vision=True, tools=True, reasoning=False, streaming=True,
+        context_window=128_000,
+    ),
+    "gpt-4-turbo": ModelCaps(
+        vision=True, tools=True, reasoning=False, streaming=True,
+        context_window=128_000,
+    ),
+    "gpt-4": ModelCaps(
+        vision=False, tools=True, reasoning=False, streaming=True,
+        context_window=32_000,
+    ),
     "gpt-3.5-turbo": ModelCaps(
-        vision=False, tools=True, reasoning=False, streaming=True
+        vision=False, tools=True, reasoning=False, streaming=True,
+        context_window=16_000,
     ),
     # o 系列推理模型 — 当前 API 版本均支持图像输入 + function calling + 流式
-    "o1": ModelCaps(vision=True, tools=True, reasoning=True, streaming=True),
-    "o3": ModelCaps(vision=True, tools=True, reasoning=True, streaming=True),
-    "o1-mini": ModelCaps(vision=False, tools=False, reasoning=True, streaming=False),
-    "o3-mini": ModelCaps(vision=False, tools=True, reasoning=True, streaming=False),
+    "o1": ModelCaps(
+        vision=True, tools=True, reasoning=True, streaming=True,
+        context_window=200_000,
+    ),
+    "o3": ModelCaps(
+        vision=True, tools=True, reasoning=True, streaming=True,
+        context_window=200_000,
+    ),
+    "o1-mini": ModelCaps(
+        vision=False, tools=False, reasoning=True, streaming=False,
+        context_window=128_000,
+    ),
+    "o3-mini": ModelCaps(
+        vision=False, tools=True, reasoning=True, streaming=False,
+        context_window=200_000,
+    ),
     # ── DeepSeek ───────────────────────────────────────────────
     # V4-Pro: MoE 1.6T/49B active, 1M context, multimodal
+    # DeepSeek 注意力含稀疏(观察 DSA 演进), 但主流智能体走 V4-Flash → 保守 quadratic.
     "deepseek-v4-pro": ModelCaps(
-        vision=True, tools=True, reasoning=True, streaming=True
+        vision=True, tools=True, reasoning=True, streaming=True,
+        context_window=1_000_000,
     ),
     "deepseek-v4-flash": ModelCaps(
-        vision=False, tools=True, reasoning=True, streaming=True
+        vision=False, tools=True, reasoning=True, streaming=True,
+        context_window=131_072,
     ),
     # V4-Flash-Vision-Exp: 在 flash 基础上额外接受图像输入 (实验版)
     "deepseek-v4-flash-vision-exp": ModelCaps(
-        vision=True, tools=True, reasoning=True, streaming=True
+        vision=True, tools=True, reasoning=True, streaming=True,
+        context_window=131_072,
     ),
     "deepseek-chat": ModelCaps(
-        vision=False, tools=True, reasoning=False, streaming=True
+        vision=False, tools=True, reasoning=False, streaming=True,
+        context_window=128_000,
     ),
     "deepseek-coder": ModelCaps(
-        vision=False, tools=True, reasoning=False, streaming=True
+        vision=False, tools=True, reasoning=False, streaming=True,
+        context_window=128_000,
     ),
     "deepseek-reasoner": ModelCaps(
-        vision=False, tools=False, reasoning=True, streaming=True
+        vision=False, tools=False, reasoning=True, streaming=True,
+        context_window=64_000,
     ),
     # ── Google Gemini ──────────────────────────────────────────
-    # Gemini 3.0 Pro (2025-11): 2M context, 强多模态
+    # Gemini 3.0 Pro (2025-11): 2M context, 强多模态 (全注意力 quadratic)
     "gemini-3.0-pro": ModelCaps(
-        vision=True, tools=True, reasoning=True, streaming=True
+        vision=True, tools=True, reasoning=True, streaming=True,
+        context_window=2_000_000,
     ),
     "gemini-3.0-flash": ModelCaps(
-        vision=True, tools=True, reasoning=False, streaming=True
+        vision=True, tools=True, reasoning=False, streaming=True,
+        context_window=1_000_000,
     ),
     "gemini-2.5-pro": ModelCaps(
-        vision=True, tools=True, reasoning=True, streaming=True
+        vision=True, tools=True, reasoning=True, streaming=True,
+        context_window=1_000_000,
     ),
     "gemini-2.0-flash": ModelCaps(
-        vision=True, tools=True, reasoning=False, streaming=True
+        vision=True, tools=True, reasoning=False, streaming=True,
+        context_window=1_000_000,
     ),
     "gemini-1.5-pro": ModelCaps(
-        vision=True, tools=True, reasoning=False, streaming=True
+        vision=True, tools=True, reasoning=False, streaming=True,
+        context_window=1_000_000,
     ),
     "gemini-1.5-flash": ModelCaps(
-        vision=True, tools=True, reasoning=False, streaming=True
+        vision=True, tools=True, reasoning=False, streaming=True,
+        context_window=1_000_000,
     ),
     # ── Qwen / 通义 (DashScope) ───────────────────────────────
-    "qwen-max": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
+    "qwen-max": ModelCaps(
+        vision=False, tools=True, reasoning=False, streaming=True,
+        context_window=32_000,
+    ),
     # qwen3-max 仍为纯文本; 原生多模态从 qwen3.5-plus 起
-    "qwen3-max": ModelCaps(vision=False, tools=True, reasoning=True, streaming=True),
-    "qwen3.5-plus": ModelCaps(vision=True, tools=True, reasoning=True, streaming=True),
+    "qwen3-max": ModelCaps(
+        vision=False, tools=True, reasoning=True, streaming=True,
+        context_window=131_072,
+    ),
+    "qwen3.5-plus": ModelCaps(
+        vision=True, tools=True, reasoning=True, streaming=True,
+        context_window=262_144,
+    ),
     "qwen3.6-max-preview": ModelCaps(
-        vision=False, tools=True, reasoning=True, streaming=True
+        vision=False, tools=True, reasoning=True, streaming=True,
+        context_window=262_144,
     ),
     "qwen3.6-flash": ModelCaps(
-        vision=True, tools=True, reasoning=False, streaming=True
+        vision=True, tools=True, reasoning=False, streaming=True,
+        context_window=262_144,
     ),
-    "qwen-long": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
-    "qwen2.5:14b": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
+    # qwen-long 专为超长文设计 (全注意力 long context), 窗口大 → 阈值可略降.
+    "qwen-long": ModelCaps(
+        vision=False, tools=True, reasoning=False, streaming=True,
+        context_window=1_000_000,
+    ),
+    "qwen2.5:14b": ModelCaps(
+        vision=False, tools=True, reasoning=False, streaming=True,
+        context_window=32_000,
+    ),
     # ── Moonshot / Kimi ───────────────────────────────────────
     # KDa 线性注意力 + 周期 Gated MLA: 长序列算力近线性, 固定状态 → 可晚压.
     # K3 (2.8T/104B active, 1M ctx) 见下.
     "moonshot-v1-8k": ModelCaps(
-        vision=False, tools=True, reasoning=False, streaming=True
+        vision=False, tools=True, reasoning=False, streaming=True,
+        context_window=8_192,
     ),
     "moonshot-v1-32k": ModelCaps(
-        vision=False, tools=True, reasoning=False, streaming=True
+        vision=False, tools=True, reasoning=False, streaming=True,
+        context_window=32_768,
     ),
     "moonshot-v1-128k": ModelCaps(
-        vision=False, tools=True, reasoning=False, streaming=True
+        vision=False, tools=True, reasoning=False, streaming=True,
+        context_window=131_072,
     ),
     "kimi-k2.5": ModelCaps(
         vision=True, tools=True, reasoning=True, streaming=True,
@@ -418,35 +496,67 @@ MODEL_CAPABILITIES: dict[str, ModelCaps] = {
         compact_threshold_pct=85,
     ),
     "kimi-k2-thinking": ModelCaps(
-        vision=False, tools=True, reasoning=True, streaming=True
+        vision=False, tools=True, reasoning=True, streaming=True,
+        context_window=262_144, long_context_cost_mode="linear",
+        compact_threshold_pct=75,
     ),
     "kimi-k2-turbo-preview": ModelCaps(
-        vision=False, tools=True, reasoning=False, streaming=True
+        vision=False, tools=True, reasoning=False, streaming=True,
+        context_window=262_144, long_context_cost_mode="linear",
+        compact_threshold_pct=75,
     ),
     # ── GLM (智谱) ────────────────────────────────────────────
     # GLM-4/5/4.7 文本系原生无视觉; 智谱视觉走独立 GLM-4.xV / GLM-5V 模型
-    "glm-4": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
-    "glm-4-flash": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
-    "glm-4.7": ModelCaps(vision=False, tools=True, reasoning=True, streaming=True),
-    "glm-4.7-flash": ModelCaps(
-        vision=False, tools=True, reasoning=False, streaming=True
+    "glm-4": ModelCaps(
+        vision=False, tools=True, reasoning=False, streaming=True,
+        context_window=128_000,
     ),
-    "glm-5": ModelCaps(vision=False, tools=True, reasoning=True, streaming=True),
-    "glm-5.1": ModelCaps(vision=False, tools=True, reasoning=True, streaming=True),
-    "glm-5.2": ModelCaps(vision=False, tools=True, reasoning=True, streaming=True),
+    "glm-4-flash": ModelCaps(
+        vision=False, tools=True, reasoning=False, streaming=True,
+        context_window=128_000,
+    ),
+    "glm-4.7": ModelCaps(
+        vision=False, tools=True, reasoning=True, streaming=True,
+        context_window=128_000,
+    ),
+    "glm-4.7-flash": ModelCaps(
+        vision=False, tools=True, reasoning=False, streaming=True,
+        context_window=128_000,
+    ),
+    "glm-5": ModelCaps(
+        vision=False, tools=True, reasoning=True, streaming=True,
+        context_window=200_000,
+    ),
+    "glm-5.1": ModelCaps(
+        vision=False, tools=True, reasoning=True, streaming=True,
+        context_window=200_000,
+    ),
+    "glm-5.2": ModelCaps(
+        vision=False, tools=True, reasoning=True, streaming=True,
+        context_window=262_144,
+    ),
     # ── MiniMax ───────────────────────────────────────────────
-    "MiniMax-M2.7": ModelCaps(vision=False, tools=True, reasoning=True, streaming=True),
+    "MiniMax-M2.7": ModelCaps(
+        vision=False, tools=True, reasoning=True, streaming=True,
+        context_window=1_000_000,
+    ),
     "MiniMax-M2.7-highspeed": ModelCaps(
-        vision=False, tools=True, reasoning=False, streaming=True
+        vision=False, tools=True, reasoning=False, streaming=True,
+        context_window=200_000,
     ),
     "MiniMax-M2.5": ModelCaps(
-        vision=False, tools=True, reasoning=False, streaming=True
+        vision=False, tools=True, reasoning=False, streaming=True,
+        context_window=200_000,
     ),
-    "MiniMax-M2": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
+    "MiniMax-M2": ModelCaps(
+        vision=False, tools=True, reasoning=False, streaming=True,
+        context_window=192_000,
+    ),
     # ── 讯飞星火 X2.5 端侧 (词元星火 2026-09) — 围绕智能体/代码/指令遵循优化
     # 4B 为主入口; 是否原生长链推理未知, 保守 reasoning=False (fail-closed).
     "spark-x2.5-4b": ModelCaps(
-        vision=False, tools=True, reasoning=False, streaming=True
+        vision=False, tools=True, reasoning=False, streaming=True,
+        context_window=32_000,
     ),
     # ── 本地多模态模型 (Ollama / vLLM / LM Studio) ────────────
     # vision=True 标记让 VisionRouter 走 NATIVE_LLM / BOTH 路径
@@ -484,37 +594,72 @@ MODEL_CAPABILITIES: dict[str, ModelCaps] = {
     # (无独立 reasoning_content), 拖后最终答案; 强推理任务建议走 harness 的
     # dedicated reasoning 逻辑或在 ingest 时剥离首段思考.
     "intern-s2-preview": ModelCaps(
-        vision=True, tools=True, reasoning=True, streaming=True
+        vision=True, tools=True, reasoning=True, streaming=True,
+        context_window=262_144,
     ),
     "intern-s1-pro": ModelCaps(
-        vision=True, tools=True, reasoning=True, streaming=True
+        vision=True, tools=True, reasoning=True, streaming=True,
+        context_window=262_144,
     ),
-    "intern-s1": ModelCaps(vision=False, tools=True, reasoning=True, streaming=True),
+    "intern-s1": ModelCaps(
+        vision=False, tools=True, reasoning=True, streaming=True,
+        context_window=262_144,
+    ),
     "intern-s1-mini": ModelCaps(
-        vision=False, tools=True, reasoning=True, streaming=True
+        vision=False, tools=True, reasoning=True, streaming=True,
+        context_window=131_072,
     ),
     # intern-latest: 书生 ChatAPI 通用最新模型, 支持 tool calling
     "intern-latest": ModelCaps(
-        vision=False, tools=True, reasoning=False, streaming=True
+        vision=False, tools=True, reasoning=False, streaming=True,
+        context_window=131_072,
     ),
-    "internlm3": ModelCaps(vision=False, tools=True, reasoning=True, streaming=True),
-    "internlm3.5": ModelCaps(vision=False, tools=True, reasoning=True, streaming=True),
+    "internlm3": ModelCaps(
+        vision=False, tools=True, reasoning=True, streaming=True,
+        context_window=131_072,
+    ),
+    "internlm3.5": ModelCaps(
+        vision=False, tools=True, reasoning=True, streaming=True,
+        context_window=131_072,
+    ),
     "internlm2.5": ModelCaps(
-        vision=False, tools=True, reasoning=False, streaming=True
+        vision=False, tools=True, reasoning=False, streaming=True,
+        context_window=131_072,
     ),
     "phi3.5-vision": ModelCaps(
         vision=True, tools=False, reasoning=False, streaming=True
     ),
     "pixtral": ModelCaps(vision=True, tools=False, reasoning=False, streaming=True),
     # ── 本地文本模型 ──────────────────────────────────────────
-    "qwen2.5": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
-    "qwen2": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
+    "qwen2.5": ModelCaps(
+        vision=False, tools=True, reasoning=False, streaming=True,
+        context_window=128_000,
+    ),
+    "qwen2": ModelCaps(
+        vision=False, tools=True, reasoning=False, streaming=True,
+        context_window=32_000,
+    ),
     # Qwen 3.8 是原生多模态基座 (2026-08 发布, 支持视觉理解)
-    "qwen3.8": ModelCaps(vision=True, tools=True, reasoning=True, streaming=True),
-    "llama3.1": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
-    "llama3": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
-    "deepseek-r1": ModelCaps(vision=False, tools=False, reasoning=True, streaming=True),
-    "deepseek-v3": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
+    "qwen3.8": ModelCaps(
+        vision=True, tools=True, reasoning=True, streaming=True,
+        context_window=131_072,
+    ),
+    "llama3.1": ModelCaps(
+        vision=False, tools=True, reasoning=False, streaming=True,
+        context_window=128_000,
+    ),
+    "llama3": ModelCaps(
+        vision=False, tools=True, reasoning=False, streaming=True,
+        context_window=8_192,
+    ),
+    "deepseek-r1": ModelCaps(
+        vision=False, tools=False, reasoning=True, streaming=True,
+        context_window=131_072,
+    ),
+    "deepseek-v3": ModelCaps(
+        vision=False, tools=True, reasoning=False, streaming=True,
+        context_window=131_072,
+    ),
 }
 
 
