@@ -116,3 +116,55 @@ def test_input_schema_roundtrip():
     d = PyBulletToolInput(action="reconcile", scene="free_fall", tol=0.01)
     assert d.scene == "free_fall"
     assert d.tol == 0.01
+
+
+def test_urdf_scenes_are_registered():
+    # S4 URDF 多场景库: kuka_iiwa / humanoid 需带 domain + law + urdf (真关节动力学).
+    for name in ("kuka_iiwa", "humanoid"):
+        assert name in SCENES, name
+        cfg = SCENES[name]
+        assert cfg["domain"].startswith("robotics")
+        assert cfg["law"]
+        assert cfg["urdf"]          # 内置 URDF 路径 (pybullet_data)
+
+
+def test_urdf_scene_rollout_returns_joint_ground_truth():
+    """URDF 机械臂 rollout 应返回可观测量向量 (关节角真值)."""
+    if not _HAS_PYB:
+        return
+    env = PyBulletEnv()
+    env.use_scene("kuka_iiwa")
+    fin = env.predict(env.seed({"state": {}}), LawAction({}))
+    assert fin.domain == "robotics.arm.kuka_iiwa"
+    assert len(fin.vector) >= 1      # 至少读到关节角 ground truth
+
+
+def test_urdf_path_injection_overrides_scene_urdf():
+    """显式 urdf_path 应覆盖场景内置 URDF; 缺失路径则 fail-open 抛 Unavailable."""
+    if not _HAS_PYB:
+        return
+    env = PyBulletEnv()
+    env.use_scene("kuka_iiwa")
+    env.urdf_path = "/nonexistent/robot.urdf"
+    try:
+        env.predict(env.seed({"state": {}}), LawAction({}))
+    except PyBulletUnavailable:
+        assert True
+    else:
+        raise AssertionError("expected PyBulletUnavailable for missing urdf_path")
+
+
+def test_cspace_add_state_bridges_lawmodel():
+    """S4 桥: PyBulletEnv 可经 CSpace.add_state 成为状态在场 (falsifiable card)."""
+    if not _HAS_PYB:
+        return
+    from huginn.research.cspace import CSpace
+    env = PyBulletEnv()
+    env.use_scene("free_fall")
+    c = CSpace()
+    b = c.add_state("embodied", env, state={"y": 10.0, "vy": 0.0}, action={})
+    assert b.kind == "state"
+    assert b.falsifiable is True        # law 三件套在 → 可 reconcile 对账
+    assert b.payload["law"]
+    assert b.payload["card"]["worldview"] == "physics_causal"
+    assert b.payload["card"]["falsifiable"] is True

@@ -29,6 +29,7 @@ Fail-open 约定:
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -74,6 +75,23 @@ SCENES: dict[str, dict[str, Any]] = {
         "observables": ("y", "vy"),
         "law": "y(t) = y0 + v0 t - ½ g t² ;  vy(t) = v0 - g t",
     },
+    # URDF 多关节场景库 —— 真正的刚体/关节动力学 (pybullet_data 内置 URDF), 用于科研 explore
+    # 的具身 ground truth. ``state`` 为关节角全向量 (加载后由关节序展开), ``observables``
+    # 按场景显式声明可测的子集. 复杂机器人可经 ``urdf_path`` 注入外部 URDF.
+    "kuka_iiwa": {
+        "domain": "robotics.arm.kuka_iiwa",
+        "state": tuple(f"j{i}" for i in range(7)),   # KUKA iiwa 7 关节角
+        "observables": tuple(f"j{i}" for i in range(7)),
+        "law": "关节构型 q 在重力 + 保持力矩下的动态:  M(q) q'' + C(q,q') q' + g(q) = τ",
+        "urdf": "kuka_iiwa/model.urdf",              # pybullet_data 内置 7R 机械臂
+    },
+    "humanoid": {
+        "domain": "robotics.humanoid",
+        "state": tuple(f"j{i}" for i in range(30)),
+        "observables": ("root_height",),             # 最可测单标量: 质心离地高度
+        "law": "双足在重力下由被动动力学 + 关节力矩维持平衡;  无控制座下必倒地(立不稳)",
+        "urdf": "humanoid/humanoid.urdf",            # pybullet_data 内置 30 关节双足
+    },
 }
 
 
@@ -91,6 +109,9 @@ class PyBulletEnv:
     timestep: float = 1.0 / 240.0
     use_gui: bool = False
     gravity: float = -9.81
+    # 外部注入的 URDF 路径 (任意 *.urdf). 优先级: action.config["urdf_path"] > self.urdf_path
+    # > scene["urdf"] (> 内置地理 pybullet_data). None -> 用场景的内置 URDF.
+    urdf_path: str | None = None
     # 注入的 pybullet 模块 (测试可注入 fake)。None -> 真实 pybullet 或抛 PyBulletUnavailable.
     _pb: Any = field(default=None, repr=False)
     available: bool = field(default=False, repr=False)
@@ -129,6 +150,10 @@ class PyBulletEnv:
         # 通用 fallback: 自由落体解析 (无关节, 直接用运动学)
         if "free_fall" in (scene.get("domain") or self.domain):
             return self._rollout_free_fall(state, action)
+        # URDF 多关节场景库: 场景声明了 urdf 或显式注入 urdf_path → 走真关节 rollout
+        urdf = action.config.get("urdf_path") or self.urdf_path or scene.get("urdf", "")
+        if urdf:
+            return self._rollout_urdf(pb, state, action, scene, urdf)
         raise PyBulletUnavailable(
             f"scene {self.domain!r} not supported (builtin: {sorted(SCENES)})"
         )
@@ -239,6 +264,72 @@ class PyBulletEnv:
             {"y": y0 + v0 * t - 0.5 * g * t * t, "vy": v0 - g * t},
             self.scene.get("domain", self.domain),
         )
+
+    def _rollout_urdf(self, pb, state: LawState, action: LawAction,
+                      scene: dict[str, Any], urdf: str) -> LawState:
+        """URDF 多关节场景 rollout: 载 plane + 机器人, 施加关节动作, 读末态关节角.
+
+        这是科研 explore 的**真物理 ground truth** —— 多刚体动力学 + 接触 + 关节,
+        不再是解析近似。``action.config`` 可选提供 ``joint_parameters`` (jointName->目标
+        力矩/位置) 传 ``setJointMotorControl``。urdf 路径异常/缺失 → 抛 PyBulletUnavailable
+        让上层 fail-open (偶发的内建模缺文件不阻断真场景).
+        """
+        mode = pb.GUI if self.use_gui else pb.DIRECT
+        try:
+            cid = pb.connect(mode)
+        except Exception as exc:  # noqa: BLE001 — 无显示(CI)下 GUI 连不上要能降级
+            if self.use_gui:
+                logger.warning("pybullet GUI connect failed, falling back DIRECT")
+                cid = pb.connect(pb.DIRECT)
+            else:
+                raise PyBulletUnavailable(f"pybullet connect failed: {exc}") from exc
+        try:
+            pb.setGravity(0, 0, self.gravity, physicsClientId=cid)
+            pb.setTimeStep(self.timestep, physicsClientId=cid)
+            # pybullet_data 作为内置 URDF 的搜索路径 (ur5/humanoid 等内置场景靠它定位)
+            try:
+                import pybullet_data as _pd
+                pb.setAdditionalSearchPath(
+                    os.path.join(os.path.dirname(_pd.__file__)), physicsClientId=cid
+                )
+            except Exception:  # noqa: BLE001 — 数据路径缺失仅记录, 不阻断显式 urdf_path
+                logger.warning("pybullet_data unavailable; explicit urdf_path only")
+            pb.loadURDF("plane.urdf", physicsClientId=cid)
+            try:
+                robot = pb.loadURDF(urdf, physicsClientId=cid)
+            except Exception as exc:  # noqa: BLE001 — URDF 缺失 → fail-open 报告即可
+                raise PyBulletUnavailable(f"urdf load failed ({urdf}): {exc}") from exc
+            controls = action.config.get("joint_parameters") or {}
+            for j in range(pb.getNumJoints(robot, physicsClientId=cid)):
+                info = pb.getJointInfo(robot, j, physicsClientId=cid)
+                name = info[1].decode()
+                if name not in controls:
+                    continue
+                params = controls[name]
+                v = float(params.get("target", 0.0) if isinstance(params, dict) else params)
+                pb.setJointMotorControl2(
+                    robot, j, pb.POSITION_CONTROL, targetPosition=v,
+                    force=float(params.get("force", 50.0)) if isinstance(params, dict) else 50.0,
+                    physicsClientId=cid,
+                )
+            for _ in range(self.n_steps):
+                pb.stepSimulation(physicsClientId=cid)
+            if getattr(self, "observable", None) or (scene.get("observables")):
+                # 机械臂/双足: 读显式可测关节角作为状态向量 (ground truth)
+                vec: dict[str, float] = {}
+                for j in range(pb.getNumJoints(robot, physicsClientId=cid)):
+                    try:
+                        info = pb.getJointInfo(robot, j, physicsClientId=cid)
+                        vec[info[1].decode()] = round(pb.getJointState(robot, j, physicsClientId=cid)[0], 6)
+                    except Exception:  # noqa: BLE001 — 个别关节读失败跳过, 不整场景崩
+                        continue
+                return LawState(vec, scene.get("domain", self.domain))
+            # 双足 humanoid: 最可测单标量 = 基座离地高度 (无控制必倒地 → 高度降)
+            root_pos, _ = pb.getBasePositionAndOrientation(robot, physicsClientId=cid)
+            return LawState({"root_height": float(root_pos[2])},
+                            scene.get("domain", self.domain))
+        finally:
+            pb.disconnect(cid)
 
 
 # 轻量 LawState / LawAction (避免 tools->research 反向依赖 research.law_model).
