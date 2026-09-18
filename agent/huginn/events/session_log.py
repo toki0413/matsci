@@ -47,6 +47,10 @@ EVENT_RESET_BOUNDARY = "reset_boundary"
 EVENT_FILE_HASH_MISMATCH = "file_hash_mismatch"
 EVENT_AUTOLOOP_PHASE = "autoloop_phase_change"  # H3: autoloop 引擎 phase 切换事件
 EVENT_CUSTOM = "custom"
+# DSH trajectory 对齐: 一次"上下文注入"事件 — 记录谁往模型上下文里塞了东西.
+# ``payload`` 约定携带 ``source``(注入来源, 如 context_builder.plan / plugin:xxx),
+# 使 trajectory 可按来源审计"模型到底看到了什么、谁塞的".
+EVENT_CONTEXT_INJECTION = "context_injection"
 
 SESSION_EVENT_KINDS: frozenset[str] = frozenset({
     EVENT_MESSAGE,
@@ -61,6 +65,7 @@ SESSION_EVENT_KINDS: frozenset[str] = frozenset({
     EVENT_RESET_BOUNDARY,
     EVENT_FILE_HASH_MISMATCH,
     EVENT_AUTOLOOP_PHASE,
+    EVENT_CONTEXT_INJECTION,
     EVENT_CUSTOM,
 })
 

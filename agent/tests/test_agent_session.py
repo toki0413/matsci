@@ -180,3 +180,39 @@ def test_trajectory_without_log_fails_open():
     tr = s.trajectory()   # 无真事件日志也应返回空结构, 不抛
     assert tr["count"] == 0
     assert tr["by_source"] == {}
+
+
+def test_trajectory_groups_by_payload_source_when_present():
+    """context_injection 事件优先按 payload.source 分组 (DSH 按来源审计)."""
+    stub = _StubAgent()
+
+    class FakeLog:
+        def events_on_path(self, leaf_id=None):
+            return [
+                {"kind": "context_injection", "payload": {"source": "context_builder.plan"}, "seq": 1},
+                {"kind": "context_injection", "payload": {"source": "plugin:kb"}, "seq": 2},
+                {"kind": "tool_call", "seq": 3},  # 无 payload.source → 回落 kind
+            ]
+
+    s = AgentSession.attach(stub)
+    tr = s.trajectory(log=FakeLog())
+    assert {k: len(v) for k, v in tr["by_source"].items()} == {
+        "context_builder.plan": 1, "plugin:kb": 1, "tools": 1,
+    }
+
+
+def test_session_writer_records_injection_by_source():
+    """写端 record_injection 落 context_injection 事件, payload 带 source."""
+    from huginn.events import session_writer as w
+    from huginn.events.session_log import EVENT_CONTEXT_INJECTION
+
+    log = w._log_for  # 内部缓存; 用独立 thread 避免碰撞
+    thread = "p0test_1"
+    w.record_injection(thread, "context_builder.plan", {"n_bytes": 42})
+    events = log(thread).events_on_path()
+    inj = [e for e in events if e.kind == EVENT_CONTEXT_INJECTION]
+    assert inj, "context_injection event should be written"
+    assert inj[-1].payload["source"] == "context_builder.plan"
+    assert inj[-1].payload.get("n_bytes") == 42
+    # 清掉测试 thread 缓存, 避免污染其它用例
+    w._logs.pop(thread, None)
