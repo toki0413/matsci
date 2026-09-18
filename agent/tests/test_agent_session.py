@@ -140,3 +140,43 @@ def test_context_manager_closes():
     with AgentSession.attach(stub) as s:
         assert s.agent is stub
     assert stub._closed is True
+
+
+# ── DSH 对齐: Code Mode + trajectory ─────────────────────────────
+
+def test_set_code_mode_toggles_agent_loop():
+    stub = _StubAgent()
+    stub.mode = "tool_call"
+    s = AgentSession.attach(stub)
+    assert s.set_code_mode(True) == {"code_mode": True, "agent_mode": "code_act"}
+    assert stub.mode == "code_act"
+    assert s.set_code_mode(False) == {"code_mode": False, "agent_mode": "tool_call"}
+
+
+def test_trajectory_groups_events_by_source():
+    stub = _StubAgent()
+
+    class FakeLog:
+        def events_on_path(self, leaf_id=None):
+            return [
+                {"kind": "tool_call", "seq": 1},
+                {"kind": "tool_result", "seq": 2},
+                {"kind": "reasoning", "seq": 3},
+                {"kind": "phase_change", "seq": 4},
+                {"kind": "unknown_kind", "seq": 5},
+            ]
+
+    s = AgentSession.attach(stub)
+    tr = s.trajectory(log=FakeLog())
+    assert tr["thread_id"] == "stub-thread"
+    assert tr["count"] == 5
+    assert {k: len(v) for k, v in tr["by_source"].items()} == {
+        "tools": 2, "model": 1, "governance": 1, "custom": 1,
+    }
+
+
+def test_trajectory_without_log_fails_open():
+    s = AgentSession.attach(_StubAgent())
+    tr = s.trajectory()   # 无真事件日志也应返回空结构, 不抛
+    assert tr["count"] == 0
+    assert tr["by_source"] == {}
