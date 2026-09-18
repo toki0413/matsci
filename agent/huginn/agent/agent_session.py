@@ -9,6 +9,8 @@
   - :meth:`astream`    流式事件 (async generator, 复用 ``chat``)
   - :meth:`mode`       切换 pi 极简内核 / 默认
   - :meth:`set_system_prompt`  换系统提示 (Pi 的 SYSTEM.md 控制)
+  - :meth:`set_code_mode`      开/关 Code Mode (DSH 的 PTC: 模型写代码编排多步工具)
+  - :meth:`trajectory`         按来源读取本次运行的可审计轨迹 (DSH 的 trajectory view)
   - :meth:`fork` / :meth:`rewind` / :meth:`branches`  会话树 (Pi 的 branch/replay)
 
 不新增任何中心机制, 零性能 / 零注册表改动。
@@ -17,6 +19,27 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from typing import Any
+
+# DSH trajectory: 会话事件 kind → 来源分类 (对标 DeepSeek Harness 的
+# "每个上下文注入都按来源可审计"). 消费已有的 huginn.events.session_log 事件流.
+_TRAJECTORY_SOURCE: dict[str, str] = {
+    "message": "model",
+    "reasoning": "model",
+    "model_change": "model",
+    "tool_call": "tools",
+    "tool_result": "tools",
+    "phase_change": "governance",
+    "cognitive_mode_change": "governance",
+    "branch_summary": "governance",
+    "autoloop_phase_change": "governance",
+    "compaction": "context",
+    "reset_boundary": "context",
+    "file_hash_mismatch": "context",
+}
+
+
+def _trajectory_source(kind: str) -> str:
+    return _TRAJECTORY_SOURCE.get(kind, "custom")
 
 
 class AgentSession:
@@ -112,6 +135,47 @@ class AgentSession:
     def branches(self) -> dict[str, Any]:
         """当前会话树的所有分支."""
         return self.agent.conversation_branches()
+
+    # ── DSH 对齐: Code Mode + trajectory 审计 ──────────────────────
+
+    def set_code_mode(self, on: bool) -> dict[str, Any]:
+        """开关 Code Mode (DSH 的 PTC): 模型写 Python 程序编排多步工具调用,
+        而非逐轮 JSON tool_call. 复用既有 code_act_loop, 纯透传."""
+        self.agent.mode = "code_act" if on else "tool_call"
+        return {"code_mode": bool(on), "agent_mode": self.agent.mode}
+
+    def trajectory(
+        self, *, leaf_id: str | None = None, log: Any | None = None
+    ) -> dict[str, Any]:
+        """读本次会话的可审计轨迹, 按来源分组 (DSH trajectory view).
+
+        数据来自既有的 append-only SessionEventLog (system prompts / 推理 /
+        tool_call|result / 阶段切换 / 压缩 等事件). ``log`` 可注入 (测试用假 log);
+        缺省打开本会话的事件日志, 无日志时 fail-open 返回空.
+        """
+        if log is None:
+            log = self._open_session_log()
+        evs = log.events_on_path(leaf_id) if log is not None else []
+        by_source: dict[str, list[Any]] = {}
+        for e in evs:
+            src = _trajectory_source(e.kind if not isinstance(e, dict) else e.get("kind", ""))
+            by_source.setdefault(src, []).append(
+                e.to_dict() if hasattr(e, "to_dict") else e
+            )
+        return {
+            "thread_id": self.thread_id,
+            "count": len(evs),
+            "by_source": by_source,
+            "events": [e.to_dict() if hasattr(e, "to_dict") else e for e in evs],
+        }
+
+    def _open_session_log(self) -> Any | None:
+        try:
+            from huginn.events.session_log import SessionEventLog
+
+            return SessionEventLog.open(self.thread_id, load=True)
+        except Exception:  # noqa: BLE001 — 事件日志不可用 → trajectory 返回空, 不阻断
+            return None
 
     # ── 生命周期 ───────────────────────────────────────────────────
 
