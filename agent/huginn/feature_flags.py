@@ -99,6 +99,9 @@ class FeatureFlags:
         "privacy_off": True,           # 不脱敏 (默认)
         "privacy_redact": False,       # 脱敏后发云端
         "privacy_local_only": False,   # 完全本地, 不发云端
+        # Pi 极简内核模式: 默认关. 开启后模型自写工具 (make_tool) 与模式切换
+        # (pi_mode_tool) 可用; 主动调 pi_mode_tool on 才真正隐藏工具可见面.
+        "pi_mode": False,              # Pi minimal-core mode (huginn/modes/pi.py)
     }
 
     # 旧裸读 env 变量名 → flag 名. 迁移 read 点后仍保留旧变量兼容:
