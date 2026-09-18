@@ -32,6 +32,7 @@ from huginn.llm_retry import (
     _is_transient_network,
     _jitter,
 )
+from huginn.models.registry import compact_threshold_for
 from huginn.pet import PetMood, get_pet_bus
 from huginn.phases import BudgetSpec, ResearchPhase
 from huginn.privacy import redact_secrets, scan_for_secrets
@@ -698,6 +699,18 @@ class StreamingMixin:
         if self._model_context_window <= 0:
             return None
 
+        # G34b/成本自适应: 按模型长上下文成本模式决定主动压缩阈值, 而非一刀切 60%.
+        # linear(KDA)/hybrid(SALA) 线性注意力骨架便宜, 过早压缩 = 用信息换本不必省的
+        # 算力 → 推迟; quadratic(旧全注意力) 维持既往 60%. 见 models.registry.compact_threshold_for.
+        model_name = (
+            getattr(self.model, "model_name", None)
+            or getattr(self.model, "model", "")
+            or ""
+        )
+        threshold = compact_threshold_for(str(model_name))
+        # 告警阈值 = 压缩阈值 - 10 (仅 log, 不动作), 禁止 < 0.
+        warn_pct = max(0, threshold - 10)
+
         # P0: 无条件 checkpointer 消息数上限兜底 — 不依赖 token usage / 上下文
         # 百分比. 长程任务消息条数可能无界增长 (即便每条 token 很小, 总量也常压
         # 在 token 预算内 → 纯 G34 不触发). 这里按条数硬上限收敛, 保证即使
@@ -717,20 +730,22 @@ class StreamingMixin:
 
         before = calculate_context_usage(usage, self._model_context_window)
 
-        # 50% warning — log only, no action
-        if before["used"] >= 50 and before["used"] < 60:
+        # 告警 (log only, no action) — used 落 [warn_pct, threshold)
+        if before["used"] >= warn_pct and before["used"] < threshold:
             logger.info(
-                "Context usage %d%%, approaching compaction threshold",
+                "Context usage %d%%, approaching compaction threshold %d%%",
                 before["used"],
+                threshold,
             )
             return None
 
-        if before["used"] <= 60:
+        if before["used"] <= threshold:
             return None
 
         logger.info(
-            "Context usage %d%%, triggering auto-compact",
+            "Context usage %d%%, triggering auto-compact (threshold %d%%)",
             before["used"],
+            threshold,
         )
 
         # SoL-Pi OnlineCompact 接线(④, 非侵入 fail-closed): 压缩前先做"候选驱动 +

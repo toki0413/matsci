@@ -265,6 +265,23 @@ class ModelCaps:
     structured_output: bool = False
     # parallel_tool_calls: model can return multiple tool_calls in one response
     parallel_tool_calls: bool = False
+    # 标称上下文窗口 (tokens). 0 = 未知, 由 get_context_window() 兜底.
+    # 与 context_manager.MODEL_CONTEXT_WINDOWS 解耦: 那里只管 compaction 的
+    # 窗口数值, 这里声明"这模型声称多大"供成本模式推理.
+    context_window: int = 0
+    # 长上下文成本模式 — 决定 harness 该多早主动压缩 (见 streaming._compact_threshold):
+    #   - "linear":  线性注意力 (SALA 之 Lightning / KDA), 长序列算力/显存近 O(N),
+    #                 骨架便宜, 过早压缩 = 用信息换本不必省的算力 → 压缩阈值应推迟
+    #   - "constant":线性注意力完全态 (固定大小循环状态), 序列再长 cost 不再涨 → 最晚压
+    #   - "hybrid":  稀疏+线性混合, 但物理可用仍受 KV/显存约束 (如 MiniCPM-SALA) → 适中
+    #   - "quadratic":纯全注意力 (旧 GPT/经典 Softmax) — 默认, 维持既往 60% 早压
+    # 未知模型回落 quadratic (fail-closed: 宁可早压不可爆窗).
+    long_context_cost_mode: Literal[
+        "linear", "constant", "hybrid", "quadratic"
+    ] = "quadratic"
+    # 该成本模式下 harness 主动压缩的触发阈值 (context 使用百分比, 0-100).
+    # None = 用全局默认 (quadratic→60 / linear|hybrid→由表). 保留可调性, 避免魔法数.
+    compact_threshold_pct: int | None = None
 
 
 # 已知模型能力表. 维护时按 provider 分组, 新增模型记得补一条.
@@ -369,6 +386,8 @@ MODEL_CAPABILITIES: dict[str, ModelCaps] = {
     "qwen-long": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
     "qwen2.5:14b": ModelCaps(vision=False, tools=True, reasoning=False, streaming=True),
     # ── Moonshot / Kimi ───────────────────────────────────────
+    # KDa 线性注意力 + 周期 Gated MLA: 长序列算力近线性, 固定状态 → 可晚压.
+    # K3 (2.8T/104B active, 1M ctx) 见下.
     "moonshot-v1-8k": ModelCaps(
         vision=False, tools=True, reasoning=False, streaming=True
     ),
@@ -378,9 +397,26 @@ MODEL_CAPABILITIES: dict[str, ModelCaps] = {
     "moonshot-v1-128k": ModelCaps(
         vision=False, tools=True, reasoning=False, streaming=True
     ),
-    "kimi-k2.5": ModelCaps(vision=True, tools=True, reasoning=True, streaming=True),
-    "kimi-k2.6": ModelCaps(vision=True, tools=True, reasoning=True, streaming=True),
-    "kimi-k2.7": ModelCaps(vision=True, tools=True, reasoning=True, streaming=True),
+    "kimi-k2.5": ModelCaps(
+        vision=True, tools=True, reasoning=True, streaming=True,
+        context_window=262_144, long_context_cost_mode="linear",
+        compact_threshold_pct=75,
+    ),
+    "kimi-k2.6": ModelCaps(
+        vision=True, tools=True, reasoning=True, streaming=True,
+        context_window=262_144, long_context_cost_mode="linear",
+        compact_threshold_pct=75,
+    ),
+    "kimi-k2.7": ModelCaps(
+        vision=True, tools=True, reasoning=True, streaming=True,
+        context_window=262_144, long_context_cost_mode="linear",
+        compact_threshold_pct=75,
+    ),
+    "kimi-k3": ModelCaps(
+        vision=True, tools=True, reasoning=True, streaming=True,
+        context_window=1_048_576, long_context_cost_mode="linear",
+        compact_threshold_pct=85,
+    ),
     "kimi-k2-thinking": ModelCaps(
         vision=False, tools=True, reasoning=True, streaming=True
     ),
@@ -429,6 +465,19 @@ MODEL_CAPABILITIES: dict[str, ModelCaps] = {
     "internvl2": ModelCaps(vision=True, tools=False, reasoning=False, streaming=True),
     "internvl": ModelCaps(vision=True, tools=False, reasoning=False, streaming=True),
     "mllama": ModelCaps(vision=True, tools=False, reasoning=False, streaming=True),
+    # ── MiniCPM 端侧 (OpenBMB/面壁) ──────────────────────────
+    # SALA 稀疏(25%)×线性(75%)混合: 线性层固定状态 + HyPE 解耦 → 长序列算力近线性.
+    # 物理可用仍受端侧 KV/显存约束 → hybrid (适中阈值而非最晚).
+    "minicpm-sala": ModelCaps(
+        vision=True, tools=True, reasoning=True, streaming=True,
+        context_window=262_144, long_context_cost_mode="hybrid",
+        compact_threshold_pct=75,
+    ),
+    # MiniCPM5: SFT→RL→OPD 蒸馏, 4K/8K 原生短窗 (端侧桌面), 走默认 60% 即可.
+    "minicpm5": ModelCaps(
+        vision=False, tools=True, reasoning=True, streaming=True,
+        context_window=8192, long_context_cost_mode="quadratic",
+    ),
     # ── 书生 InternLM (上海AI实验室) ──────────────────────────
     # Intern-S2-Preview (35B-A3B 科学多模态推理模型, 256K 上下文): 深度思考 +
     # 工具调用. 注意: ChatAPI 的 thinking_mode 会把思维链写进 content 字段
@@ -497,6 +546,40 @@ def get_model_capabilities(model_name: str) -> ModelCaps:
     if caps.tools and not caps.parallel_tool_calls:
         caps.parallel_tool_calls = True
     return caps
+
+
+#: 各成本模式默认的 harness 主动压缩阈值 (context 使用百分比)。
+#: quadratic(纯全注意力) 贵 → 早压; linear/constant 骨架便宜 → 推迟;
+#: hybrid(SALA) 适中。模型表里显式 compact_threshold_pct 优先。
+_DEFAULT_COMPACT_THRESHOLD_PCT: dict[str, int] = {
+    "quadratic": 60,
+    "hybrid": 75,
+    "linear": 80,
+    "constant": 90,
+}
+
+
+def compact_threshold_for(model_name: str) -> int:
+    """按模型成本模式返回 harness 主动压缩阈值 (context 使用百分比, 0-100)。
+
+    优先级:
+      1. ``HUGINN_COMPACT_THRESHOLD`` env 手动覆盖（全模型统一）
+      2. 能力表里该模型的 ``compact_threshold_pct``（精确/前缀匹配得净）
+      3. 成本模式默认 (见 ``_DEFAULT_COMPACT_THRESHOLD_PCT``)
+    未知模型 fail-closed 回落 quadratic→60, 维持既往行为不变。
+    """
+    env = os.environ.get("HUGINN_COMPACT_THRESHOLD")
+    if env is not None:
+        try:
+            v = int(env)
+            if 0 <= v <= 100:
+                return v
+        except ValueError:
+            logger.warning("HUGINN_COMPACT_THRESHOLD invalid: %r, ignored", env)
+    caps = get_model_capabilities(model_name)
+    if caps.compact_threshold_pct is not None:
+        return caps.compact_threshold_pct
+    return _DEFAULT_COMPACT_THRESHOLD_PCT.get(caps.long_context_cost_mode, 60)
 
 
 #: OpenAI-compatible domestic providers with default base URLs and env keys.
