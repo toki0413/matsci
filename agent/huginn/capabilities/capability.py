@@ -18,7 +18,10 @@ from dataclasses import dataclass
 from typing import Any
 
 # 已纳入 mount 的能力维度 (边界见 P1 设计: storage 已有内置, scheduling 本轮不做)
-DIMENSIONS: frozenset[str] = frozenset({"loop", "session", "storage", "sysprompt"})
+# fusion: KV-KV 语义融合通道 (C2C 范式), 声明本 harness 支持模型间的隐表示融合.
+#   - 注意: fusion 是"能力探针/接缝", 不默认加载任何投影网络 —— 语义融合需要本地
+#     模型 KV-Cache 访问权, 走 API 推理的默认链路拿不到, 由提供方按需挂载.
+DIMENSIONS: frozenset[str] = frozenset({"loop", "session", "storage", "sysprompt", "fusion"})
 
 _CAP_ATTR = "_huginn_capabilities"
 
