@@ -6,6 +6,8 @@
 - ``loop.default``    : 默认 langgraph 循环 (直接透传 agent.chat 事件流)
 - ``loop.code_act``   : CodeAct 循环 (模型写 Python 驱工具, 复用 code_act_loop)
 - ``sysprompt.builtin``: 演示插件贡献一段 prompt section
+- ``fusion.fused_kv`` : KV-KV 语义融合通道 (C2C 范式) 的探针; 默认如实报告不可用,
+                        由拥有本地模型 + projector 的运行环境按需覆盖挂载
 """
 from __future__ import annotations
 
@@ -43,6 +45,9 @@ def _mk(dimension: str, name: str, impl: Any) -> CapabilityMetadata:
 
 def register_builtin_capabilities() -> None:
     """注册内置能力到共享 registry (幂等: 同名覆盖)."""
+    from huginn.capabilities.fusion import register_fusion_capabilities
+
+    register_fusion_capabilities()
     reg = get_shared_capability_registry()
     reg.register(
         _mk("loop", "default", _loop_default),
