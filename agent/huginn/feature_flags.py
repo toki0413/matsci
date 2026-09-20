@@ -54,6 +54,9 @@ class FeatureFlags:
         # harness 实验性栅栏 (默认 off, 显式开启才生效). 见 huginn/harness/_enabled.py.
         # 开启方式: huginn.toml [feature_flags] 字段, 或环境变量 HUGINN_FEATURE_<NAME>=true.
         "harness_workflow_evolution": False,  # H2: variant bandit 演化回路
+        # 读端开关。真正启用 harness 门控需写端 HUGINN_HARNESS_GATES=1 + 读端
+        # HUGINN_FEATURE_HARNESS_<NAME>=true 一起在进程启动前设好 (FeatureFlags 单例
+        # 只在构造时读一次 env, 运行时设不生效)。advisory 语义: 门控只评分不拦截。
         "harness_ood_holdout": False,         # H6: OOD 留出验证 (防背题补丁)
         "harness_significance_gate": False,   # H5: 结果显著性门 (统计检验)
         "harness_adoption_gate": False,       # 严格 gate 模式: RED 不自动采纳 (默认 advisory, 只评分不拦)

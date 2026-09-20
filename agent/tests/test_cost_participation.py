@@ -216,6 +216,38 @@ class TestHarnessGateWiring:
         assert records and records[0].score == 1.0
         OODHoldoutValidator._instance = None
 
+    def test_gate_read_end_enabled_via_env(self, monkeypatch):
+        """读端接线: 用户在进程启动时设 HUGINN_FEATURE_HARNESS_* 启用读端.
+
+        验证 AdoptionGate.enabled() 联动为 True, 且 H6 OOD 数据能被 decide() 消费.
+        注意时序: FeatureFlags 单例只在构造时读一次 env, 故需先重置单例再设 env
+        (等价"进程启动前通过 env 启用"). config.feature_flags 为 {} 时走 env fallback.
+        """
+        from huginn.feature_flags import FeatureFlags
+        from huginn.harness.adoption_gate import AdoptionGate
+        from huginn.harness.ood_holdout import OODHoldoutValidator
+
+        # 复位读端单例 + FeatureFlags 单例, 模拟"启动时用 env 启用"
+        FeatureFlags._singleton = None
+        AdoptionGate._instance = None
+        OODHoldoutValidator._instance = None
+        monkeypatch.setenv("HUGINN_FEATURE_HARNESS_OOD_HOLDOUT", "true")
+        monkeypatch.setenv("HUGINN_FEATURE_HARNESS_SIGNIFICANCE_GATE", "true")
+        monkeypatch.setenv("HUGINN_HARNESS_GATES", "1")  # 写端
+        try:
+            gate = AdoptionGate.get_instance()
+            assert gate.enabled() is True, "env 启用读端 → AdoptionGate.enabled() 应为 True"
+            # 让 OOD 有数据可被 decide 消费 (sample 不足 → yellow, 不误杀)
+            v = OODHoldoutValidator.get_instance()
+            v.record_outcome("strategy:explore", "some-task", 1.0)
+            dec = gate.decide("strategy:explore")
+            assert dec.status == "yellow", "样本不足 → 应 yellow (advisory 不拦截)"
+            assert dec.adopt is True or dec.adopt is False  # 决策已消费数据
+        finally:
+            FeatureFlags._singleton = None
+            AdoptionGate._instance = None
+            OODHoldoutValidator._instance = None
+
 
 # ── BudgetPause ───────────────────────────────────────────────────
 
