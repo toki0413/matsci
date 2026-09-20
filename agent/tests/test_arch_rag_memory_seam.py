@@ -35,7 +35,7 @@ def _top_level_huginn_imports(path: pathlib.Path) -> list[str]:
             parent_map[id(child)] = parent
     hits: list[str] = []
     for node in ast.walk(tree):
-        if not isinstance(node, (ast.Import, ast.ImportFrom)):
+        if not isinstance(node, ast.Import | ast.ImportFrom):
             continue
         if not isinstance(parent_map.get(id(node)), ast.Module):
             continue

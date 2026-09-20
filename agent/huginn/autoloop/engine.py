@@ -1155,7 +1155,7 @@ class AutoloopEngine:
         return self._engine_observer._apply_block_patches(blocks, phase)
 
     def _trim_to_budget(
-        self, blocks: list[tuple[str, str]], *, phase: str,
+        self, blocks: list[tuple[str, str]], *, phase: str | None = None,
     ) -> str:
         return self._engine_observer._trim_to_budget(blocks, phase=phase)
 

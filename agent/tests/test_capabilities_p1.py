@@ -14,18 +14,18 @@ import pytest
 from huginn.agent.agent_session import AgentSession
 from huginn.capabilities.capability import capability
 from huginn.capabilities.registry import (
-    CapabilityRegistry,
+    CapabilityMountRegistry,
     get_shared_capability_registry,
 )
 
 
 @pytest.fixture(autouse=True)
 def _clean_caps():
-    """每用例清空共享 CapabilityRegistry, 隔离."""
-    snap = dict(CapabilityRegistry._caps)  # type: ignore[attr-defined]
-    CapabilityRegistry.clear()
+    """每用例清空共享 CapabilityMountRegistry, 隔离."""
+    snap = dict(CapabilityMountRegistry._caps)  # type: ignore[attr-defined]
+    CapabilityMountRegistry.clear()
     yield
-    CapabilityRegistry._caps = snap  # type: ignore[attr-defined]
+    CapabilityMountRegistry._caps = snap  # type: ignore[attr-defined]
 
 
 class _Stub:

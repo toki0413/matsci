@@ -120,6 +120,8 @@ _CORE_TOOLS: set[str] = {
     "skill",
     "tool_search",
     "capability_tool",   # 能力集装箱(meta, phases=None 全阶段)：LLM 始终可见, 归核心基线
+    "make_tool",         # Pi 自扩展原语(meta, phases=None)：模型缺啥随时自写工具, 始终可见
+    "pi_mode_tool",      # Pi 极简内核开关(meta, phases=None)：运行时精简工具可见面, 始终可见
 }
 
 PHASE_TOOLS: dict[ResearchPhase, set[str] | None] = {}

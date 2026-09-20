@@ -13,15 +13,15 @@ from __future__ import annotations
 import pytest
 
 from huginn.capabilities.capability import DIMENSIONS, capability
-from huginn.capabilities.registry import CapabilityRegistry
+from huginn.capabilities.registry import CapabilityMountRegistry
 
 
 @pytest.fixture(autouse=True)
 def _clean_caps():
-    snap = dict(CapabilityRegistry._caps)  # type: ignore[attr-defined]
-    CapabilityRegistry.clear()
+    snap = dict(CapabilityMountRegistry._caps)  # type: ignore[attr-defined]
+    CapabilityMountRegistry.clear()
     yield
-    CapabilityRegistry._caps = snap  # type: ignore[attr-defined]
+    CapabilityMountRegistry._caps = snap  # type: ignore[attr-defined]
 
 
 def test_fusion_dimension_registered_in_dims():
