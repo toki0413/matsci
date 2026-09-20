@@ -197,7 +197,7 @@ class EngineAct:
             return False
         if not any(v in d.lower() for v in ("compute", "calculate", "predict", "evaluate")):
             return False
-        return _re.search("[/^*+=()]", d)
+        return bool(_re.search("[/^*+=()]", d))
 
     async def _request_numeric_probe(self, description: str) -> str:
         """平衡点·内建执行: 让 LLM 只产出能算出数值的纯 python, harness 负责运行取数.
