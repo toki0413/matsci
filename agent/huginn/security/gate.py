@@ -184,3 +184,26 @@ def adoption_adapter(
         return ("pass" if adopted else "block", f"{decision.status}: {decision.reason}")
 
     return FuncGate(id="adoption_gate", requires=requires, evaluator=evaluator)
+
+
+def jev_adapter(
+    classify: Callable[[Any], tuple[str, str]],
+    requires: set[str],
+) -> FuncGate:
+    """把 JEV (System One) 软判断适配为统一门禁.
+
+    ``classify(ctx) -> (status, reason)``, status ∈ {"pass", "review", "block"}.
+    Huginn 门禁归一化只有 pass/block/skip, 因此这里把 **review 视为 pass**(advisory,
+    只提示不拦截) —— 与 AdoptionGate 的"软门控不误杀"哲学一致.
+
+    调用方负责: 用 :class:`huginn.runtime.jev.client.JevClient` 的 Noul 判定某工具
+    调用是否应放行, 并按 confidence 分档 (high→pass, mid→review, low→block).
+    建议由 ``jev_enabled("jev_guardrail")`` 控制开关, 失败时 classify 返回
+    ("pass", "...fail-open") 而非 throw, 绝不让 JEV 不可用拖垮 agent.
+    """
+
+    def evaluator(ctx: Any) -> tuple[str, str]:
+        status, reason = classify(ctx)
+        return ("pass" if status != "block" else "block", reason)
+
+    return FuncGate(id="jev_guardrail", requires=requires, evaluator=evaluator)

@@ -294,9 +294,20 @@ def compute_effective_subset(
     if not task_message or not available_tool_names:
         return []
     available_set = set(available_tool_names)
-    subset: set[str] = set(route_tools(task_message, available_tool_names))
+    keyword_hits = set(route_tools(task_message, available_tool_names))
+    subset: set[str] = set(keyword_hits)
     subset |= {t for t in CORE_TOOL_NAMES if t in available_set}
     subset |= {t for t in world_domain_tools(task_message) if t in available_set}
+    # 未知域补充: keyword 零命中时, 用 JEV 语义判断建议额外工具.
+    # 默认关 (jev_tool_router), 且受隐私外发闸约束; 失败/不可用 → 空, 不破坏现状.
+    if not keyword_hits:
+        try:
+            from huginn.runtime.jev.tool_router import jev_expand_subset
+
+            extra, _meta = jev_expand_subset(task_message, available_tool_names)
+            subset |= {t for t in extra if t in available_set}
+        except Exception:  # 防御: JEV 扩展异常则跳过, 回退纯规则子集
+            logger.debug("jev tool expansion failed, skipped", exc_info=True)
     return [t for t in subset if t in available_set]
 
 

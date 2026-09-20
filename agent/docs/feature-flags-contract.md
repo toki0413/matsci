@@ -30,6 +30,9 @@
 | `hypothesis_llm_semantic` | False | 假设维度/方法族/失败类型 LLM 语义判定 (P1#1, 默认关, 优雅降级) | — | — |
 | `ising_frontier` | True | Ising 前沿 (HUGINN_ISING_FRONTIER) | HUGINN_ISING_FRONTIER | autoloop/hypothesis_loop.py:1735, autoloop/hypothesis_loop.py:50 |
 | `ising_rerank` | True | Ising 重排 (HUGINN_ISING_RERANK) | HUGINN_ISING_RERANK | — |
+| `jev_enabled` | False | JEV (System One) 外部判断总开关 (实验性, 默认关; 受隐私外发闸约束) | — | — |
+| `jev_guardrail` | False | 工具调用放行初筛 deny/ask/allow (实验性, 默认关, advisory) | — | — |
+| `jev_tool_router` | False | 未知域工具子集用 JEV 并行 Noul 宽松补充 (实验性, 默认关, advisory) | — | — |
 | `json_logs` | True | JSON 结构化日志 (HUGINN_JSON_LOGS) | HUGINN_JSON_LOGS | utils/json_logging.py:122 |
 | `loop_detector` | True | 对话循环检测 | — | agent/streaming.py:1839 |
 | `memory_typing` | True | 记忆类型标注 (HUGINN_USE_MEMORY_TYPING) | HUGINN_USE_MEMORY_TYPING | memory/typing.py:52 |
@@ -37,9 +40,9 @@
 | `personalization` | True | 学习用户通信风格 | — | personalization/user_style.py:152, personalization/user_style.py:349 |
 | `pi_mode` | False |  | — | — |
 | `privacy_block_on_secrets` | False | 检测到密钥时阻断 (HUGINN_PRIVACY_BLOCK_ON_SECRETS) | HUGINN_PRIVACY_BLOCK_ON_SECRETS | agent_config.py:182 |
-| `privacy_local_only` | False | 隐私级别: local_only (完全本地) | — | privacy_guard.py:77 |
+| `privacy_local_only` | False | 隐私级别: local_only (完全本地) | — | privacy_guard.py:77, runtime/jev/_enabled.py:45 |
 | `privacy_off` | True | 隐私级别: off (不脱敏, 默认. 仅由 set_level 维护互斥, 外部设置无效) | — | — |
-| `privacy_redact` | False | 隐私级别: redact (脱敏后发云端) | — | privacy_guard.py:79 |
+| `privacy_redact` | False | 隐私级别: redact (脱敏后发云端) | — | privacy_guard.py:79, runtime/jev/_enabled.py:47 |
 | `privacy_redact_secrets` | True | 检测到密钥时脱敏 (HUGINN_PRIVACY_REDACT_SECRETS) | HUGINN_PRIVACY_REDACT_SECRETS | agent_config.py:181, tools/adapter.py:862 |
 | `prompt_cache_control` | True | prompt-cache control 注入 (HUGINN_PROMPT_CACHE_CONTROL) | HUGINN_PROMPT_CACHE_CONTROL | agent_config.py:108 |
 | `provenance` | True | 计算 provenance 快照 | — | provenance/_legacy.py:259, tools/base.py:367 |
@@ -54,4 +57,4 @@
 | `use_cognitive_map` | False | 认知地图 (HUGINN_USE_COGNITIVE_MAP) | HUGINN_USE_COGNITIVE_MAP | agent/code_act_loop.py:355, agent/code_act_loop.py:417, runtime/engine_state.py:212 |
 | `world_model` | True | 世界模型 (HUGINN_WORLD_MODEL) | HUGINN_WORLD_MODEL | autoloop/engine_observe.py:441 |
 
-共 48 个功能开关。
+共 51 个功能开关。

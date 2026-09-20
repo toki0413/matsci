@@ -105,6 +105,12 @@ class FeatureFlags:
         # Pi 极简内核模式: 默认关. 开启后模型自写工具 (make_tool) 与模式切换
         # (pi_mode_tool) 可用; 主动调 pi_mode_tool on 才真正隐藏工具可见面.
         "pi_mode": False,              # Pi minimal-core mode (huginn/modes/pi.py)
+        # ---- JEV (System One 外部决策) 接入, 实验栅栏, 默认全关 ----
+        # 除这里登记外, 首层硬闸是隐私外发 (huginn/runtime/jev/_enabled.py:
+        # privacy_local_only / privacy_redact 时整条链路短路). 消费点读 _flag_enabled.
+        "jev_enabled": False,          # JEV 总闸 (外部判断能力总开关)
+        "jev_tool_router": False,      # 未知域工具子集用 JEV 并行 Noul 宽松补充 (advisory)
+        "jev_guardrail": False,        # 工具调用放行初筛 (deny/ask/allow, advisory)
     }
 
     # 旧裸读 env 变量名 → flag 名. 迁移 read 点后仍保留旧变量兼容:
@@ -187,6 +193,9 @@ class FeatureFlags:
         "privacy_off": "隐私级别: off (不脱敏, 默认. 仅由 set_level 维护互斥, 外部设置无效)",
         "privacy_redact": "隐私级别: redact (脱敏后发云端)",
         "privacy_local_only": "隐私级别: local_only (完全本地)",
+        "jev_enabled": "JEV (System One) 外部判断总开关 (实验性, 默认关; 受隐私外发闸约束)",
+        "jev_tool_router": "未知域工具子集用 JEV 并行 Noul 宽松补充 (实验性, 默认关, advisory)",
+        "jev_guardrail": "工具调用放行初筛 deny/ask/allow (实验性, 默认关, advisory)",
     }
 
     _singleton_lock = threading.Lock()
