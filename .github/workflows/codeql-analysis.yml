@@ -1,0 +1,42 @@
+# CodeQL 显式 advanced setup —— python 分析路径裁剪, 根治 6h 超时。
+#
+# 背景: 仓库原用 GitHub 内置 default setup, 其工作流托管在 GitHub (id 指向
+# dynamic/github-code-scanning/codeql), 不读取仓库里的 codeql-config.yml,
+# 因此无法在仓库内裁剪分析范围。python 全量分析 (~3600 py 文件) 在共享
+# runner 上跑不完 6h 上限 → job 被取消。
+#
+# 本文件将该仓库切换为**显式 advanced setup**: 用 config-file 指向
+# .github/codeql/codeql-config.yml 的 paths 白名单, 把 python 分析聚焦到
+# agent/huginn + servers, 显著缩小扫描面。
+#
+# 启用后请在 GitHub UI (Settings → Code security → CodeQL) 停用或调整
+# 原 default setup, 避免两套 python 分析重复跑 (default 全量仍会超时)。
+name: "CodeQL"
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  analyze-python:
+    name: CodeQL Python
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Initialize CodeQL (python, config-scoped)
+        uses: github/codeql-action/init@v4
+        with:
+          # 只分析 python; 其余语言 (js/rust) 若需扫描由 default setup 另行处理.
+          languages: python
+          # 指向 paths 白名单配置, 控制扫描目录.
+          config-file: ./.github/codeql/codeql-config.yml
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v4

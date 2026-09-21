@@ -1,0 +1,27 @@
+# CodeQL 分析范围裁剪 —— 根治 python 分析 6h 超时。
+#
+# 背景: 本仓库原用 GitHub 内置 CodeQL **default setup** (工作流 id 指向
+# dynamic/github-code-scanning/codeql, 不在 .github/workflows 里), 其工作流
+# 托管在 GitHub, 不读取仓库根这个配置文件, 因此无法在仓库内裁剪扫描范围。
+# 通过配套的 .github/workflows/codeql-analysis.yml (显式 advanced setup),
+# 用 `config-file` 指向本文件的 paths 白名单, 把 python 分析聚焦到**产品代码**,
+# 排除测试/长跑套件等分析价值低但体积巨大的目录。
+#
+# 超时根因: python 全量分析会追踪仓库全部 py 文件 (~3600 个, 仅 agent/ 就达
+# 1600), 在共享 runner 上无法在 6h 上限内完成 → job 被取消。通过 paths 把
+# python 分析限定到 agent/huginn 与 servers 后, 扫描面骤减, 可在时限内跑完。
+name: "CodeQL config"
+
+# 仅对 python 语言设置 paths 白名单 (由 codeql-analysis.yml 的
+# init.config-file 加载); 该配置对引用它的所有语言生效, 故只对在该
+# workflow 里声明的 python 分析产生裁剪效果。
+paths:
+  - agent/huginn
+  # servers/ 下为独立 MCP 服务器 (自包含产品代码), 纳入安全分析。mat-db /
+  # math-anything / vision-pixel / jev-mcp 各自含真实或 mock 数据处理入口。
+  - servers
+
+# 显式排除已知的非产品代码路径 (即便位于白名单内也排除), 降低误扫与噪音。
+paths-ignore:
+  - "**/__pycache__/**"
+  - "**/node_modules/**"
