@@ -1,16 +1,13 @@
-# CodeQL 显式 advanced setup —— python 分析路径裁剪, 根治 6h 超时。
+# CodeQL 显式 advanced setup —— 缓解 python 分析超时。
 #
-# 背景: 仓库原用 GitHub 内置 default setup, 其工作流托管在 GitHub (id 指向
-# dynamic/github-code-scanning/codeql), 不读取仓库里的 codeql-config.yml,
-# 因此无法在仓库内裁剪分析范围。python 全量分析 (~3600 py 文件) 在共享
-# runner 上跑不完 6h 上限 → job 被取消。
+# 背景: 仓库原用 GitHub 内置 default setup (工作流托管在 GitHub), 其 python
+# 全量分析在共享 runner 上跑不完 6h 上限 → job 被取消。本文件切到显式
+# advanced setup: 用 config-file 指向 .github/codeql/codeql-config.yml 的
+# paths 白名单, 把 python 分析聚焦到 agent/huginn + servers。
 #
-# 本文件将该仓库切换为**显式 advanced setup**: 用 config-file 指向
-# .github/codeql/codeql-config.yml 的 paths 白名单, 把 python 分析聚焦到
-# agent/huginn + servers, 显著缩小扫描面。
-#
-# 启用后请在 GitHub UI (Settings → Code security → CodeQL) 停用或调整
-# 原 default setup, 避免两套 python 分析重复跑 (default 全量仍会超时)。
+# 实际影响 (2026-09 验证): python 数据流对 CodeQL 病态, 裁剪后仍近 6h; 净效果
+# 是让 default setup 的 python 让位 (约 13 分钟内自动取消, 不再满执勤超时),
+# 转移到一个非必填 check (超时不阻断 merge)。彻底去除见 config 注释。
 name: "CodeQL"
 
 on:
