@@ -1,0 +1,33 @@
+# CodeQL 分析范围裁剪 —— 缓解 python 分析超时。
+#
+# 背景: 本仓库原用 GitHub 内置 CodeQL **default setup** (其工作流托管在
+# GitHub, 不读取仓库根这个配置文件), 无法在仓库内裁剪扫描范围。通过配套的
+# .github/workflows/codeql-analysis.yml (显式 advanced setup) 的 config-file
+# 指向本文件, 把 python 分析聚焦到**产品代码**, 排除 tests/stress/benchmark
+# 等分析价值低但体积巨大的目录。
+#
+# 实际影响 (2026-09 验证): paths 裁剪后 python 分析仍接近 6h 上限 ——
+# agent/huginn 的 python 数据流对 CodeQL 是病态的 (重型三方依赖数据流爆炸),
+# 与扫描目录大小无关。因此: 本配置 + advanced workflow 的净效果是让 default
+# setup 的 python 全量分析让位 (GitHub 检测到自定义 python workflow 后自动
+# 取消 default python, 约 13 分钟内完成让位, 不再满执勤熬满 6h 再失败), 并把
+# 扫描转移到一个**非必填**的 CodeQL Python check (超时不阻断 PR merge)。
+#
+# 若要彻底去除 python CodeQL: 在 GitHub UI (Settings → Code security →
+# CodeQL) 从分析语言里移除 python, 保留 javascript/rust。python 安全由现有
+# bandit (SAST) + pip-audit (依赖审计) + gitleaks (密钥) 门禁覆盖。
+name: "CodeQL config"
+
+# 仅对 python 语言设置 paths 白名单 (由 codeql-analysis.yml 的
+# init.config-file 加载); 该配置对引用它的所有语言生效, 故只对在该
+# workflow 里声明的 python 分析产生裁剪效果。
+paths:
+  - agent/huginn
+  # servers/ 下为独立 MCP 服务器 (自包含产品代码), 纳入安全分析。mat-db /
+  # math-anything / vision-pixel / jev-mcp 各自含真实或 mock 数据处理入口。
+  - servers
+
+# 显式排除已知的非产品代码路径 (即便位于白名单内也排除), 降低误扫与噪音。
+paths-ignore:
+  - "**/__pycache__/**"
+  - "**/node_modules/**"

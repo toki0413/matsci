@@ -303,7 +303,7 @@ class QuantumEspressoTool(HuginnTool):
                             ]
                             error = f"Physics audit found errors: {errs}"
                             soft_failure_msg = error
-                    except Exception as exc:
+                    except Exception:  # 防御: 审计异常不阻断重试流程
                         logger.debug("审计本身挂了不能阻塞结果", exc_info=True)
 
             if error is None:
@@ -352,7 +352,7 @@ class QuantumEspressoTool(HuginnTool):
                     "qe_tool", args.calculation, parsed, args.model_dump()
                 )
                 data["physics_audit"] = audit_report.to_dict()
-            except Exception as exc:
+            except Exception:  # 防御: 审计失败不阻断结果返回
                 logger.debug("audit failure can't block result delivery", exc_info=True)
 
         return ToolResult(
@@ -373,7 +373,7 @@ class QuantumEspressoTool(HuginnTool):
         try:
             content = output_path.read_text(encoding="utf-8", errors="ignore")
             return content[-tail:]
-        except Exception as exc:
+        except Exception:  # 防御: 输出读取失败返回空文本
             logger.debug("best-effort op failed", exc_info=True)
             return ""
 
@@ -397,7 +397,7 @@ class QuantumEspressoTool(HuginnTool):
                 except ValueError:
                     logger.debug("best-effort op failed", exc_info=True)
                 params[k] = v
-        except Exception as exc:
+        except Exception:  # 防御: 参数读取失败返回空配置
             logger.debug("read input params failed", exc_info=True)
         return params
 
@@ -431,7 +431,7 @@ class QuantumEspressoTool(HuginnTool):
                     lines.insert(block_end, line_new)
                     block_end += 1
             input_path.write_text("\n".join(lines), encoding="utf-8")
-        except Exception as exc:
+        except Exception:  # 防御: 输入改写失败仅记录保留原样
             logger.warning("QE input autofix failed", exc_info=True)
 
     def _try_autofix(self, input_path: Path, error: str) -> dict[str, Any] | None:
@@ -449,7 +449,7 @@ class QuantumEspressoTool(HuginnTool):
                 return None
             self._apply_input_fixes(input_path, fixed)
             return {"fixes": fixed, "reasoning": reasoning}
-        except Exception as exc:
+        except Exception:  # 防御: 自动修复失败回退无修复
             logger.debug("best-effort op failed", exc_info=True)
             return None
 

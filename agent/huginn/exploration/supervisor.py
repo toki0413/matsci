@@ -17,10 +17,15 @@
 from __future__ import annotations
 
 import random
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from huginn.exploration.core import BranchStatus, ExplorationSpace
-from huginn.exploration.strategies import Action, ExplorationStrategy, ParetoPruningStrategy
+from huginn.exploration.strategies import (
+    Action,
+    ExplorationStrategy,
+    ParetoPruningStrategy,
+)
 
 
 class SupervisorStrategy(ExplorationStrategy):

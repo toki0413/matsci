@@ -120,11 +120,25 @@ class TelemetrySpan:
 
 
 class TelemetryCollector:
-    """In-memory collector for Huginn telemetry spans."""
+    """In-memory collector for Huginn telemetry spans.
 
-    def __init__(self) -> None:
+    When ``exporter`` is set, every finished *root* span is handed off to it in
+    the background (OTLP/HTTP by default; see ``huginn.otel``). Unless
+    ``HUGINN_OTEL_ENDPOINT`` is configured this is a no-op, so existing
+    callers are unaffected.
+    """
+
+    def __init__(self, exporter: Any | None = None) -> None:
         self._roots: list[TelemetrySpan] = []
         self._current_stack: list[TelemetrySpan] = []
+        if exporter is None:
+            try:
+                from huginn.otel import get_default_exporter
+
+                exporter = get_default_exporter()
+            except Exception:
+                exporter = None
+        self._exporter = exporter
 
     @contextmanager
     def span(
@@ -146,6 +160,28 @@ class TelemetryCollector:
         finally:
             span.finish()
             self._current_stack.pop()
+            # Root span finished → hand it to the exporter in the background.
+            if self._exporter is not None and not self._current_stack:
+                try:
+                    self._exporter.emit(span)
+                except Exception:
+                    logger.debug("telemetry exporter.emit failed (fail-open)", exc_info=True)
+
+    def flush(self) -> None:
+        """Synchronously drain any pending export batches. No-op if no exporter."""
+        if self._exporter is not None:
+            try:
+                self._exporter.flush()
+            except Exception:
+                logger.debug("telemetry exporter.flush failed (fail-open)", exc_info=True)
+
+    def shutdown(self, block: bool = False) -> None:
+        """Stop background export and flush remaining spans (best-effort)."""
+        if self._exporter is not None:
+            try:
+                self._exporter.shutdown(block=block)
+            except Exception:
+                logger.debug("telemetry exporter.shutdown failed (fail-open)", exc_info=True)
 
     def current_span(self) -> TelemetrySpan | None:
         """Return the currently active span, if any."""

@@ -99,7 +99,7 @@ def test_author_code_path_end_to_end():
     assert res["objectives"]["eta"] >= 0
     # 门禁可落地: objectives 是纯数值标量(非配置/列表/字符串)
     for v in res["objectives"].values():
-        assert isinstance(v, (int, float)) and not isinstance(v, bool)
+        assert isinstance(v, int | float) and not isinstance(v, bool)
 
 
 def test_author_code_contract_reachable_by_gate():
@@ -111,7 +111,7 @@ def test_author_code_contract_reachable_by_gate():
     assert isinstance(res.get("objectives"), dict) and res["objectives"]
     # 独立于 dom handler 的浅校验: 每条 objective 都能被 gate 溯源为真实标量
     traceable = {k: v for k, v in res["objectives"].items()
-                 if isinstance(v, (int, float)) and not isinstance(v, bool)}
+                 if isinstance(v, int | float) and not isinstance(v, bool)}
     assert set(traceable) == set(res["objectives"].keys())
 
 

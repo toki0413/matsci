@@ -873,7 +873,7 @@ LUCID review (mandatory after generating hypothesis):
                         f"- {v.get('dimension', '?')}/{v.get('hyp_type', '?')}: "
                         f"rate={v.get('rate', 0):.2f} (n={v.get('success', 0) + v.get('failure', 0)})"
                         for v in _sm.values()
-                        if isinstance(v.get("rate"), (int, float))
+                        if isinstance(v.get("rate"), int | float)
                         and v["rate"] < 0.4
                         and v.get("success", 0) + v.get("failure", 0) >= 3
                     ]

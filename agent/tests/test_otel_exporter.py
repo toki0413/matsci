@@ -1,0 +1,203 @@
+"""Tests for the minimal OTLP/HTTP trace exporter and its wiring."""
+
+from __future__ import annotations
+
+import json
+import threading
+import urllib.error
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+import pytest
+
+import huginn.otel as otel
+from huginn.otel import OtlpExporter, get_default_exporter
+from huginn.telemetry import TelemetryCollector, TelemetrySpan
+
+
+@pytest.fixture(autouse=True)
+def _clean_default_exporter():
+    otel.reset_default_exporter_for_tests()
+    yield
+    otel.reset_default_exporter_for_tests()
+
+
+def _build_span_tree() -> TelemetrySpan:
+    root = TelemetrySpan(name="agent_turn", metadata={"mode": "chat"})
+    tool = TelemetrySpan(name="tool_call", metadata={"tool": "bash_tool", "success": True})
+    tool.finish()
+    root.children.append(tool)
+    root.finish()
+    return root
+
+
+class _RecordingUrl:
+    def __init__(self) -> None:
+        self.requests: list[tuple[dict, bytes]] = []
+
+    def __call__(self, req, timeout=5.0):
+        data = req.data if isinstance(req.data, bytes) else b""
+        self.requests.append((dict(req.headers), data))
+        import io
+
+        return io.BytesIO(b"{}")
+
+
+def test_encode_otlp_json_structure(monkeypatch):
+    recorder = _RecordingUrl()
+    monkeypatch.setattr("huginn.otel.urllib.request.urlopen", recorder)
+    exp = OtlpExporter(endpoint="http://localhost:9/v1/traces", service_name="huginn")
+
+    exp.emit(_build_span_tree())
+    exp.flush()
+
+    assert len(recorder.requests) == 1
+    headers, payload = recorder.requests[0]
+    lowered = {k.lower(): v for k, v in headers.items()}
+    assert lowered.get("content-type", "").startswith("application/json")
+    body = json.loads(payload.decode("utf-8"))
+    rspans = body["resourceSpans"]
+    assert rspans[0]["resource"]["attributes"][0]["key"] == "service.name"
+    spans = rspans[0]["scopeSpans"][0]["spans"]
+    # root + one child
+    assert len(spans) == 2
+    by_name = {s["name"]: s for s in spans}
+    root, tool = by_name["agent_turn"], by_name["tool_call"]
+    assert root["kind"] == 2  # INTERNAL
+    assert tool["kind"] == 3  # CLIENT
+    assert tool["parentSpanId"] == root["spanId"]
+    assert root["parentSpanId"] == ""
+    # metadata serialized to attributes + status success
+    attrs = {a["key"]: a["value"] for a in tool["attributes"]}
+    assert attrs["tool"]["stringValue"] == "bash_tool"
+    assert tool["status"]["code"] == 0
+    assert int(tool["endTimeUnixNano"]) >= int(tool["startTimeUnixNano"])
+
+
+def test_error_status_when_failed(monkeypatch):
+    recorder = _RecordingUrl()
+    monkeypatch.setattr("huginn.otel.urllib.request.urlopen", recorder)
+    exp = OtlpExporter(endpoint="http://localhost:9/", interval_seconds=1.0)
+
+    root = TelemetrySpan(name="tool_call", metadata={"success": False})
+    root.finish()
+    exp.emit(root)
+    exp.flush()
+
+    body = json.loads(recorder.requests[0][1].decode("utf-8"))
+    span = body["resourceSpans"][0]["scopeSpans"][0]["spans"][0]
+    assert span["status"]["code"] == 2  # ERROR
+
+
+def test_fail_open_on_network_error(monkeypatch):
+    def _boom(req, timeout=5.0):
+        raise OSError("connection refused")
+
+    monkeypatch.setattr("huginn.otel.urllib.request.urlopen", _boom)
+    exp = OtlpExporter(endpoint="http://127.0.0.1:1/", interval_seconds=1.0)
+    exp.emit(_build_span_tree())
+    # Must not raise
+    exp.flush()
+
+
+def test_http_error_warns_once_then_quiets(monkeypatch):
+    """A rejected POST (e.g. 401 from Langfuse) must fail-open but surface once."""
+    def _http_error(req, timeout=5.0):
+        raise urllib.error.HTTPError(req.full_url, 401, "Unauthorized", {}, None)
+
+    monkeypatch.setattr("huginn.otel.urllib.request.urlopen", _http_error)
+    exp = OtlpExporter(endpoint="http://localhost:9/", interval_seconds=1.0)
+
+    # First flush: no raise + the one-shot warning flag latches.
+    exp.emit(_build_span_tree())
+    exp.flush()
+    assert exp._warned_failure is True
+
+    # A second flush keeps failing open and stays quiet.
+    exp.emit(_build_span_tree())
+    exp.flush()
+    assert exp._warned_failure is True
+
+
+def test_end_to_end_against_local_receiver():
+    """Full pipeline against a real local OTLP/HTTP receiver.
+
+    Proves the whole ingestion path end-to-end without external credentials:
+    collector -> OTLP JSON encode -> POST with the configured Authorization
+    header -> receiver decodes the resourceSpans structure -> 200.
+    """
+    received: dict = {}
+
+    class _OTLPHandler(BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802 (http.server method name)
+            n = int(self.headers.get("Content-Length") or 0)
+            received["auth"] = self.headers.get("Authorization")
+            received["path"] = self.path
+            received["body"] = self.rfile.read(n)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b"{}")
+
+        def log_message(self, *args):  # silence request logging
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), _OTLPHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        exp = OtlpExporter(
+            endpoint=f"http://127.0.0.1:{server.server_address[1]}/v1/traces",
+            headers={"Authorization": "Basic Zm9vOmJhcg=="},  # user:pass
+        )
+        exp.emit(_build_span_tree())
+        exp.flush()
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    # The Authorization header configured for Langfuse-style auth is transmitted.
+    assert received.get("auth") == "Basic Zm9vOmJhcg=="
+    assert received.get("path") == "/v1/traces"
+    body = json.loads(received["body"].decode("utf-8"))
+    spans = body["resourceSpans"][0]["scopeSpans"][0]["spans"]
+    assert {s["name"] for s in spans} == {"agent_turn", "tool_call"}
+
+
+def test_default_exporter_is_none_when_unconfigured(monkeypatch):
+    monkeypatch.delenv("HUGINN_OTEL_ENDPOINT", raising=False)
+    assert get_default_exporter() is None
+    # Unconfigured collector never exports / never spawns a thread.
+    collector = TelemetryCollector()
+    assert collector._exporter is None
+
+
+def test_default_exporter_from_env(monkeypatch):
+    monkeypatch.setenv("HUGINN_OTEL_ENDPOINT", "http://localhost:4318/v1/traces")
+    monkeypatch.setenv(
+        "HUGINN_OTEL_HEADERS", json.dumps({"Authorization": "Basic dGVzdDp0ZXN0"})
+    )
+    exp = get_default_exporter()
+    assert exp is not None
+    assert exp.headers.get("Authorization") == "Basic dGVzdDp0ZXN0"
+
+
+def test_collector_emits_root_to_exporter():
+    emitted: list[TelemetrySpan] = []
+
+    class FakeExporter:
+        def emit(self, root):
+            emitted.append(root)
+
+        def flush(self):
+            pass
+
+        def shutdown(self, block=False):
+            pass
+
+    collector = TelemetryCollector(exporter=FakeExporter())
+    with collector.span("agent_turn"), collector.span("inner"):
+        pass
+    # Only the root (after inner closes) is handed off.
+    assert len(emitted) == 1
+    assert emitted[0].name == "agent_turn"
+    assert len(emitted[0].children) == 1

@@ -54,6 +54,9 @@ class FeatureFlags:
         # harness 实验性栅栏 (默认 off, 显式开启才生效). 见 huginn/harness/_enabled.py.
         # 开启方式: huginn.toml [feature_flags] 字段, 或环境变量 HUGINN_FEATURE_<NAME>=true.
         "harness_workflow_evolution": False,  # H2: variant bandit 演化回路
+        # 读端开关。真正启用 harness 门控需写端 HUGINN_HARNESS_GATES=1 + 读端
+        # HUGINN_FEATURE_HARNESS_<NAME>=true 一起在进程启动前设好 (FeatureFlags 单例
+        # 只在构造时读一次 env, 运行时设不生效)。advisory 语义: 门控只评分不拦截。
         "harness_ood_holdout": False,         # H6: OOD 留出验证 (防背题补丁)
         "harness_significance_gate": False,   # H5: 结果显著性门 (统计检验)
         "harness_adoption_gate": False,       # 严格 gate 模式: RED 不自动采纳 (默认 advisory, 只评分不拦)
@@ -99,6 +102,15 @@ class FeatureFlags:
         "privacy_off": True,           # 不脱敏 (默认)
         "privacy_redact": False,       # 脱敏后发云端
         "privacy_local_only": False,   # 完全本地, 不发云端
+        # Pi 极简内核模式: 默认关. 开启后模型自写工具 (make_tool) 与模式切换
+        # (pi_mode_tool) 可用; 主动调 pi_mode_tool on 才真正隐藏工具可见面.
+        "pi_mode": False,              # Pi minimal-core mode (huginn/modes/pi.py)
+        # ---- JEV (System One 外部决策) 接入, 实验栅栏, 默认全关 ----
+        # 除这里登记外, 首层硬闸是隐私外发 (huginn/runtime/jev/_enabled.py:
+        # privacy_local_only / privacy_redact 时整条链路短路). 消费点读 _flag_enabled.
+        "jev_enabled": False,          # JEV 总闸 (外部判断能力总开关)
+        "jev_tool_router": False,      # 未知域工具子集用 JEV 并行 Noul 宽松补充 (advisory)
+        "jev_guardrail": False,        # 工具调用放行初筛 (deny/ask/allow, advisory)
     }
 
     # 旧裸读 env 变量名 → flag 名. 迁移 read 点后仍保留旧变量兼容:
@@ -181,6 +193,9 @@ class FeatureFlags:
         "privacy_off": "隐私级别: off (不脱敏, 默认. 仅由 set_level 维护互斥, 外部设置无效)",
         "privacy_redact": "隐私级别: redact (脱敏后发云端)",
         "privacy_local_only": "隐私级别: local_only (完全本地)",
+        "jev_enabled": "JEV (System One) 外部判断总开关 (实验性, 默认关; 受隐私外发闸约束)",
+        "jev_tool_router": "未知域工具子集用 JEV 并行 Noul 宽松补充 (实验性, 默认关, advisory)",
+        "jev_guardrail": "工具调用放行初筛 deny/ask/allow (实验性, 默认关, advisory)",
     }
 
     _singleton_lock = threading.Lock()

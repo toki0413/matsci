@@ -1,7 +1,7 @@
 """Huginn Research — 域无关的自主深研统一管线(产品能力).
 
 这不是参赛演示, 而是 Huginn 产品里的一条通用能力:
-给定一个研究目标, 自动完成 假说生成 → 真实实验执行 → Pareto 演化/淘汰 → 
+给定一个研究目标, 自动完成 假说生成 → 真实实验执行 → Pareto 演化/淘汰 →
 批判综合 → 声明门禁 → 兜底组装 的完整深研闭环.
 
 设计(对齐 2026 Co-Scientist / GPT-6 Astra / Fable 的 product-grade 做法):
@@ -14,12 +14,17 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import dataclasses
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from huginn.research.planning import ResearchPlan
 
 
 @dataclass
@@ -105,7 +110,7 @@ def _first_scalar(node: Any) -> float | None:
     """
     if isinstance(node, bool):
         return None
-    if isinstance(node, (int, float)):
+    if isinstance(node, int | float):
         return float(node)
     if isinstance(node, dict):
         for k in ("T_eq_K", "T", "score", "value", "y", "actual", "S_Wm2"):
@@ -117,7 +122,7 @@ def _first_scalar(node: Any) -> float | None:
             s = _first_scalar(v)
             if s is not None:
                 return s
-    elif isinstance(node, (list, tuple)):
+    elif isinstance(node, list | tuple):
         for v in node:
             s = _first_scalar(v)
             if s is not None:
@@ -167,7 +172,8 @@ def grounding_verifier() -> Callable[[str, list[str]], dict]:
             import importlib.util as util  # noqa: F401 — 文件级加载绕开 package 深层 import
             src = Path(__file__).resolve().parents[1] / "validation/claim_grounding.py"
             spec = util.spec_from_file_location("_cg", str(src))
-            mod = util.module_from_spec(spec); spec.loader.exec_module(mod)
+            mod = util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
             return mod.verify_claims(text, trace, allow_derived=True)
     return _v
 
@@ -193,7 +199,7 @@ def run_research_program(
     self_audit: Callable[[], list[str]] | None = None,  # 能力自省 §3: 返回需并入 trace 的可证伪工件(能力缺口提案)
     structural_audit: Callable[[list[dict], str], dict] | None = None,  # 结构闸门: (survivors, goal)->{"pass",...} 交互等效审计(张拳石/多元论治理)
     workspace: Any = None,  # C-Space 工作区: 若提供, 最终报告须经 workspace.broadcast 作为"在场断言"落地才成文
-    planner: Callable[[str], "ResearchPlan"] | None = None,  # 需求拆解/自主规划: goal->{experiments, max_parallel, plan_summary}
+    planner: Callable[[str], ResearchPlan] | None = None,  # 需求拆解/自主规划: goal->{experiments, max_parallel, plan_summary}
     harness_agent: str = "",          # Self-Harness 报告维度: agent 身份 (组织层账本聚合维度, 留空可)
     harness_machine: str = "",        # Self-Harness 报告维度: machine 身份 (留空可)
     world_model: Any = None,          # 世界模型(可选): predict(spec)->{predicted:{...}} 或 LawModel.
@@ -225,8 +231,8 @@ def run_research_program(
                                                 # 仅追加进成文 prompt, 不参与 verify —— 强模型不受锁.
 ) -> ResearchOutcome:
     """跑一条完整深研管线并返回结果."""
-    from huginn.exploration.orchestrator import ExplorationOrchestrator
     import huginn.exploration.strategies as S
+    from huginn.exploration.orchestrator import ExplorationOrchestrator
     from huginn.exploration.strategies import MutationStrategy
     from huginn.exploration.supervisor import SupervisorStrategy
 
@@ -516,10 +522,8 @@ def run_research_program(
     trace = _build_trace(cache)
     # 能力自省 §3: 把能力缺口提案的可证伪工件并入 trace, 使报告引用可被 grounding 门禁核实
     if self_audit is not None:
-        try:
+        with contextlib.suppress(Exception):
             trace += list(self_audit())
-        except Exception:  # noqa: BLE001 — 自省失败不阻断主流程
-            pass
     front = result.pareto_front or []
     out = ResearchOutcome(converred=result.convergence_reason,
                           explored=result.n_branches_explored,
@@ -697,7 +701,9 @@ def run_research_program(
                 final = m.group(1).strip()
             g = verify(final, trace)
             if g["verdict"] == "pass" and len(final.strip()) > 200:
-                verdict, ungrounded = "pass", []; out.report_source = "agent"; break
+                verdict, ungrounded = "pass", []
+                out.report_source = "agent"
+                break
             ungrounded = g["unsubstantiated"]
             msgs = [{"role": "user",
                      "content": f"未交付(未落地:{ungrounded})。请只用真实证据重写:\n" + prompt}]

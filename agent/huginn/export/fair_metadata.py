@@ -58,12 +58,12 @@ def _extract_variables(results: Any) -> list[dict[str, Any]]:
             "@type": "PropertyValue",
             "name": label,
         }
-        if isinstance(value, (int, float, str)):
+        if isinstance(value, int | float | str):
             entry["value"] = value
         elif isinstance(value, dict):
             # nested result dict — flatten one level
             for k2, v2 in value.items():
-                if isinstance(v2, (int, float, str)):
+                if isinstance(v2, int | float | str):
                     _add(f"{key}.{k2}", v2)
             return  # already added sub-keys
         variables.append(entry)

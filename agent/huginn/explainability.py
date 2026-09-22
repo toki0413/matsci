@@ -168,7 +168,7 @@ class Explainer:
 
 def _to_ts(t: Any) -> float:
     """把审计事件的时间戳 (ISO 字符串或 float) 归一化为 float."""
-    if isinstance(t, (int, float)):
+    if isinstance(t, int | float):
         return float(t)
     if isinstance(t, str):
         try:

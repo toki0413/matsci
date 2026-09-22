@@ -177,7 +177,7 @@ class RedTeamReviewer:
             if model_for_review is not None and not hasattr(model_for_review, "_mock_name"):
                 try:
                     findings.extend(self._llm_findings(from_phase, to_phase, evidence))
-                except Exception as exc:
+                except Exception:  # 防御: 扩展生成失败跳过
                     logger.debug("extend failed", exc_info=True)
             ds_note = ""
 
@@ -299,7 +299,7 @@ class RedTeamReviewer:
                         source_class="agent_generated",
                     ))
 
-        except Exception as exc:
+        except Exception:  # 防御: 拓扑扫描失败返回空
             logger.debug("topology_scan failed (non-fatal)", exc_info=True)
         return out
 
@@ -348,7 +348,7 @@ class RedTeamReviewer:
                     source_class="tool_output",
                 ))
             # holds=True 或 holds=None (unknown) 都不发 finding
-        except Exception as exc:
+        except Exception:  # 防御: 反例扫描失败返回空
             logger.debug("discrete_counterexample_scan failed (non-fatal)", exc_info=True)
         return out
 
@@ -433,7 +433,7 @@ class RedTeamReviewer:
                 return []
             try:
                 return self._llm_findings_with(from_phase, to_phase, evidence, critic)
-            except Exception as exc:
+            except Exception:  # 防御: 评审失败返回空
                 logger.debug("critic review failed", exc_info=True)
                 return []
 
@@ -455,7 +455,7 @@ class RedTeamReviewer:
                     per_critic.append(
                         self._llm_findings_with(from_phase, to_phase, evidence, c)
                     )
-                except Exception as exc:
+                except Exception:  # 防御: 单批评失败记空值
                     per_critic.append([])
 
         from huginn.autoloop.phase_gate import DempsterShaferCombiner

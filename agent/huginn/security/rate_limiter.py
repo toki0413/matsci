@@ -351,7 +351,7 @@ def _estimate_input_tokens(input: Any) -> int:
     """
     total_chars = 0
     # 拆开看, 可能是字符串、消息列表、prompt value 等
-    items = input if isinstance(input, (list, tuple)) else [input]
+    items = input if isinstance(input, list | tuple) else [input]
     for item in items:
         if item is None:
             continue

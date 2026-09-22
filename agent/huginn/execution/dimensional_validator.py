@@ -340,10 +340,7 @@ class UnitRegistry:
             op = tokens[pos]
             pos += 1
             right, pos = self._parse_power(tokens, pos)
-            if op == "/":
-                left = left / right
-            else:
-                left = left * right
+            left = left / right if op == "/" else left * right
         return left, pos
 
     def _parse_power(self, tokens: list[str], pos: int) -> tuple[Unit, int]:
@@ -466,7 +463,7 @@ class _DimInfer:
             # Note: SymPy uses sp.Tuple, not Python tuple, so check both
             var_counts: dict[sp.Symbol, int] = {}
             for v in expr.args[1:]:
-                if isinstance(v, (tuple, sp.Tuple)):
+                if isinstance(v, tuple | sp.Tuple):
                     sym, count = v[0], int(v[1])
                 elif isinstance(v, sp.Symbol):
                     sym, count = v, 1
@@ -480,7 +477,7 @@ class _DimInfer:
             return result
 
         # Applied undefined function: u(x) → look up "u" in symbol_units
-        if isinstance(expr, (sp.Function, sp.core.function.Application)):
+        if isinstance(expr, sp.Function | sp.core.function.Application):
             func_name = type(expr).__name__ if hasattr(type(expr), "__name__") else str(expr.func)
             if func_name in self._sym:
                 return self._sym[func_name]

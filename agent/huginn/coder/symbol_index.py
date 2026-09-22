@@ -131,14 +131,14 @@ class SymbolIndex:
         try:
             if path.stat().st_size > 2 * 1024 * 1024:
                 return True
-        except Exception as exc:
+        except Exception:  # 防御: 取不到大小则保守跳过该路径
             return True
         return False
 
     def _index_file(self, path: Path) -> IndexedFile | None:
         try:
             source = path.read_text(encoding="utf-8", errors="ignore")
-        except Exception as exc:
+        except Exception:  # 防御: 读取失败视为无索引返回空
             return None
 
         if path.suffix == ".py":

@@ -406,7 +406,7 @@ class HypothesisGraph:
         try:
             from huginn.routes.metrics import track_memory_rerank
             track_memory_rerank("ising", n)
-        except Exception as exc:
+        except Exception:  # 防御: 记忆重排指标失败跳过
             logger.debug("memory rerank metric skipped", exc_info=True)
 
         return [untested[i] for i in selected]
@@ -513,7 +513,7 @@ class HypothesisGraph:
         # P0: 同步写 PROVED.md durable state (context 压缩后可重读)
         try:
             self._append_proved(node_id, node.statement, evidence)
-        except Exception as exc:
+        except Exception:  # 防御: PROVED.md 追加失败忽略
             logger.debug("PROVED.md append failed", exc_info=True)
 
     def refute(self, node_id: str, evidence: dict[str, Any]) -> None:
@@ -541,7 +541,7 @@ class HypothesisGraph:
         # P0: 同步写 FAILED.md durable state (context 压缩后可重读)
         try:
             self._append_failed(node_id, node.statement, evidence)
-        except Exception as exc:
+        except Exception:  # 防御: FAILED.md 追加失败忽略
             logger.debug("FAILED.md append failed", exc_info=True)
 
     def supersede(self, node_id: str) -> None:
@@ -679,7 +679,7 @@ class HypothesisGraph:
                     )
                     if _backup and _backup != main_statement:
                         backup_statements.append(_backup)
-                except Exception as exc:
+                except Exception:  # 防御: 绑定失败回退模板
                     logger.debug("best-effort op failed", exc_info=True)  # not all model wrappers support bind
         else:
             main_statement = self._template_pivot(
@@ -711,7 +711,7 @@ class HypothesisGraph:
                         **self._nodes[_backup_id].evidence,
                         "candidate_role": "backup",
                     }
-            except Exception as exc:
+            except Exception:  # 防御: 备选生成失败不阻塞
                 logger.debug("best-effort op failed", exc_info=True)  # backup 失败不阻塞主候选
 
         # 交叉授粉延迟: pivot 跨分量需两端分量都成熟.
@@ -763,7 +763,7 @@ class HypothesisGraph:
                     )
                     if _child_id:
                         self._nodes[_child_id].sibling_group_id = _sibling_group
-            except Exception as exc:
+            except Exception:  # 防御: 交叉授粉失败忽略
                 logger.debug("v12 crossover after pivot failed (non-fatal)", exc_info=True)
 
         return new_id
@@ -804,7 +804,7 @@ class HypothesisGraph:
             text = resp.content if hasattr(resp, "content") else str(resp)
             stmt = text.strip().split("\n")[0].strip()
             stmt = stmt.lstrip("- *•").strip().strip('"\'')
-        except Exception as exc:
+        except Exception:  # 防御: 尽力生成失败返回空
             logger.debug("best-effort op failed", exc_info=True)
             return None
 
@@ -862,7 +862,7 @@ class HypothesisGraph:
             # 取第一行, 去掉引号和前缀
             line = text.strip().split("\n")[0].strip()
             return line.lstrip("- *•").strip().strip('"\'')
-        except Exception as exc:
+        except Exception:  # 防御: 转向失败回退模板
             return self._template_pivot(failed_statement, failed_statements)
 
     @staticmethod
@@ -1023,7 +1023,7 @@ class HypothesisGraph:
                 if e.from_id != e.to_id:
                     g.add_edge(e.from_id, e.to_id)
             return set(nx.articulation_points(g))
-        except Exception as exc:
+        except Exception:  # 防御: networkx 不可用降级启发
             # networkx 不可用时降级到启发式
             return {
                 e.from_id for e in self._edges
@@ -1110,7 +1110,7 @@ class HypothesisGraph:
             try:
                 from huginn.memory.longterm import load_stable_principles
                 principles = load_stable_principles()
-            except Exception as exc:
+            except Exception:  # 防御: 原则加载失败用空表
                 principles = []
         if rules is None:
             try:
@@ -1122,7 +1122,7 @@ class HypothesisGraph:
                     rules = _loaded if isinstance(_loaded, list) else []
                 else:
                     rules = []
-            except Exception as exc:
+            except Exception:  # 防御: 规则加载失败用空表
                 rules = []
 
         def _stable_id(text: str) -> str:
@@ -1404,7 +1404,7 @@ class HypothesisGraph:
         try:
             data = _json.loads(p.read_text(encoding="utf-8"))
             return cls.from_dict(data)
-        except Exception as exc:
+        except Exception:  # 防御: 图加载失败返回空
             logging.getLogger(__name__).warning(
                 "HypothesisGraph.load failed: %s", p, exc_info=True,
             )
@@ -1473,7 +1473,7 @@ class HypothesisGraph:
             except RuntimeError:
                 resp = asyncio.run(model.ainvoke(messages))
             return str(resp.content).strip()
-        except Exception as exc:
+        except Exception:  # 防御: 精炼失败回退模板
             return self._template_refine(original, findings)
 
 
@@ -1963,7 +1963,7 @@ class HypothesisLoop:
             return None
         try:
             from huginn.metacog.branch_incubator import BranchIncubator
-        except Exception as exc:
+        except Exception:  # 防御: 分支孵化导入失败回退主模型
             logger.warning(
                 "BranchIncubator import failed, fallback to main+hot_model",
                 exc_info=True,
@@ -1995,7 +1995,7 @@ class HypothesisLoop:
                 depth=int(os.environ.get("HUGINN_BRANCH_INCUBATOR_DEPTH", "1")),
                 width=2,
             )
-        except Exception as exc:
+        except Exception:  # 防御: 孵化轮失败回退主模型
             logger.warning(
                 "branch incubator run_round failed, fallback to main+hot_model",
                 exc_info=True,
@@ -2029,7 +2029,7 @@ class HypothesisLoop:
         ):
             try:
                 inc_hyp = await self._hypothesize_via_branch_incubator(context)
-            except Exception as exc:
+            except Exception:  # 防御: 孵化意外错误回退
                 logger.warning(
                     "branch incubator unexpected error, fallback",
                     exc_info=True,
@@ -2080,7 +2080,7 @@ class HypothesisLoop:
                     "repeating the same approach:\n"
                     f"{_revisit_lines}\n"
                 )
-        except Exception as exc:
+        except Exception:  # 防御: 演化推荐失败忽略
             logger.debug("evolution recommend failed (non-fatal)", exc_info=True)
         prompt = self._build_hypothesis_prompt(context)
         if symreg_hint:
@@ -2143,7 +2143,7 @@ class HypothesisLoop:
                     self._metacog_audit_hypothesis(self._last_hypothesis, context)
                     return self._last_hypothesis
             return None
-        except Exception as exc:
+        except Exception:  # 防御: 尽力生成失败返回空
             logger.debug("best-effort op failed", exc_info=True)
             return None
 
@@ -2183,7 +2183,7 @@ class HypothesisLoop:
                         "candidate_role": "backup",
                         "dim_conflict": _dim_conflict,
                     }
-        except Exception as exc:
+        except Exception:  # 防御: 备选记录失败忽略
             logger.debug("v11 _record_backup_candidates failed (non-fatal)", exc_info=True)
     def _metacog_classify_family(self, hypothesis: str) -> str:
         """廉价关键词分类: 把假设归到方法族.
@@ -2244,14 +2244,14 @@ class HypothesisLoop:
                     redirect.reason,
                     redirect.target_family,
                 )
-        except Exception as exc:
+        except Exception:  # 防御: 元认知审计失败不阻断
             logger.debug("metacog audit failed", exc_info=True)
         # P7: 同调/拓扑审计 — 把 sheaf H¹ + simplicial Betti + Hodge audit_topology
         # 三个 Open Problem 7.x 模块接进主循环. advisory, 任一失败都降级不阻断.
         # 之前这三块只活在 rcb_runner 评测路径和模块自检里, 从未评估过生产假设.
         try:
             self._metacog_topology_audit(hypothesis, context)
-        except Exception as exc:
+        except Exception:  # 防御: 拓扑审计失败不阻断
             logger.debug("metacog topology audit failed", exc_info=True)
 
     def _metacog_topology_audit(
@@ -2270,7 +2270,7 @@ class HypothesisLoop:
         try:
             nodes = self.hypothesis_graph.all_nodes()
             edges = self.hypothesis_graph.edges()
-        except Exception as exc:
+        except Exception:  # 防御: 无图则结束审计
             logger.debug("topology audit: no graph", exc_info=True)
             return
 
@@ -2285,7 +2285,7 @@ class HypothesisLoop:
             if support:
                 sheaf = build_sheaf_from_findings(core, support[:8])
                 result["h1"] = int(compute_H1(sheaf))
-        except Exception as exc:
+        except Exception:  # 防御: sheaf H1 失败忽略
             logger.debug("sheaf H1 failed (non-fatal)", exc_info=True)
 
         # ② simplicial Betti — 假设图拓扑复杂度. 节点=0-simplex, 边=1-simplex.
@@ -2302,7 +2302,7 @@ class HypothesisLoop:
                         )
                 betti = compute_exact_betti(simplices_l, max_dim=1)
                 result["betti"] = (int(betti.get(0, 0)), int(betti.get(1, 0)))
-        except Exception as exc:
+        except Exception:  # 防御: Betti 数失败忽略
             logger.debug("simplicial Betti failed (non-fatal)", exc_info=True)
 
         # ③ Hodge 拓扑等价审计 — 候选假设图 vs 目标问题证据网络.
@@ -2322,7 +2322,7 @@ class HypothesisLoop:
                     original_edges=[],
                 )
                 result["topo_verdict"] = verdict.verdict
-        except Exception as exc:
+        except Exception:  # 防御: Hodge 审计失败忽略
             logger.debug("Hodge topology audit failed (non-fatal)", exc_info=True)
 
         # ④ persistence landscape — 假设图在 evidence 特征空间的 cluster 结构.
@@ -2339,7 +2339,7 @@ class HypothesisLoop:
             from huginn.metacog.simplicial_homology import compute_persistent_homology
             feat_keys = sorted({
                 k for n in nodes
-                for k, v in n.evidence.items() if isinstance(v, (int, float))
+                for k, v in n.evidence.items() if isinstance(v, int | float)
             })
             if len(nodes) >= 3 and len(feat_keys) >= 1:
                 cloud = _np.array(
@@ -2358,7 +2358,7 @@ class HypothesisLoop:
                     "n_persistent_clusters": int(_n_persist),
                     "diagram_size": len(_diag),
                 }
-        except Exception as exc:
+        except Exception:  # 防御: 持续景观失败忽略
             logger.debug("persistence landscape failed (non-fatal)", exc_info=True)
 
         self._metacog_last_topology = result
@@ -2411,7 +2411,7 @@ class HypothesisLoop:
                     confidence=0.4,  # 联合命题置信度保守, 不压真实证据边
                     label="joint proposition: " + " ∧ ".join(labels),
                 )
-        except Exception as exc:
+        except Exception:  # 防御: 单纯形同步失败忽略
             logger.debug("sync simplicials to kg failed (non-fatal)", exc_info=True)
 
     def _choose_recovery_phase(self, failure_type: str, validation: dict[str, Any]) -> str:
@@ -2546,7 +2546,7 @@ class HypothesisLoop:
             if not report:
                 return []
             return [f.category for f in report.findings if f.severity == "high"]
-        except Exception as exc:
+        except Exception:  # 防御: 红队报告读取失败返回空
             return []
 
     def _attach_lucid_prereqs(self, hyp_id: str) -> None:
@@ -2572,7 +2572,7 @@ class HypothesisLoop:
                 rationale=f"LUCID necessary condition for {hyp_id}",
                 parent_id=hyp_id,
             )
-        except Exception as exc:
+        except Exception:  # 防御: 前置挂载失败忽略
             logger.debug("attach lucid prereqs failed", exc_info=True)
     def _should_imaginate(self) -> bool:
         """是否触发想象力模式. v7 G59: 认知热机转捩判据.
@@ -2595,7 +2595,7 @@ class HypothesisLoop:
                 # stable_principles 是 reflection mixin 的 list
                 sp = getattr(self, "stable_principles", None)
                 n_principles = len(sp) if sp else 0
-            except Exception as exc:
+            except Exception:  # 防御: 原则计数失败跳过
                 logger.debug("stable_principles count skipped", exc_info=True)
             sys_prompt_len = 0
             with contextlib.suppress(Exception):
@@ -2603,7 +2603,7 @@ class HypothesisLoop:
             eng.update_kinematics(n_ideas, n_principles + 1, sys_prompt_len)
             if eng.should_imaginate(getattr(self, "_iteration", 0)):
                 return True
-        except Exception as exc:
+        except Exception:  # 防御: 热机判断失败走旧逻辑
             logger.debug("heat_engine.should_imaginate failed, fallback to legacy", exc_info=True)
 
         # 回落: 旧触发逻辑 (surprise + refine_count)
@@ -2629,7 +2629,7 @@ class HypothesisLoop:
                 if _failed:
                     # 返回 hypothesis_text (三元组第一项)
                     return [h for h, _, _ in _failed if h]
-            except Exception as exc:
+            except Exception:  # 防御: 失败方向召回失败回退图
                 logger.debug(
                     "recall_failed_directions failed, fallback to hypothesis_graph",
                     exc_info=True,
@@ -2643,7 +2643,7 @@ class HypothesisLoop:
                 if n.status in ("refuted", "superseded")
             ]
             return failed[-limit:] if failed else []
-        except Exception as exc:
+        except Exception:  # 防御: 失败方向读取失败返回空
             return []
 
     def _conjecture_hint(self, context: dict[str, Any]) -> str:
@@ -2697,7 +2697,7 @@ class HypothesisLoop:
                                     f"{successful[0].get('original_problem')} -> "
                                     f"{successful[0].get('target_domain')}\n"
                                 )
-                except Exception as exc:
+                except Exception:  # 防御: 迁移历史查询失败继续
                     logger.warning(
                         "query_transfer_history failed, proceed without history",
                         exc_info=True,
@@ -2727,7 +2727,7 @@ class HypothesisLoop:
                 try:
                     from huginn.metacog.cognitive_heat_engine import get_heat_engine
                     get_heat_engine().record_work(float(_post_ideas - _pre_ideas))
-                except Exception as exc:
+                except Exception:  # 防御: 工作记录失败忽略
                     logger.debug("record_work failed (non-fatal)", exc_info=True)
             else:
                 result = gen.run(
@@ -2754,7 +2754,7 @@ class HypothesisLoop:
                         f"[functor: {src_cat.name}→{tgt_cat.name}] "
                         f"两域结构同构, 迁移前用 functor 对象/态射映射核对.\n"
                     )
-            except Exception as exc:
+            except Exception:  # 防御: 范畴函子记录失败忽略
                 logger.debug("category_functor note failed (non-fatal)", exc_info=True)
             # Prerequisite Inversion: 跨域类比不是直接用, 而是问"什么条件必须暗中获得满足"
             # 4 维反转防止结构错配 (Dream Layer v1.1 核心贡献)
@@ -2769,7 +2769,7 @@ class HypothesisLoop:
                 f"- Failure: If this analogy is wrong, what would the system look like instead?\n"
                 f"(Template-based analogy — verify conditions before adopting.)"
             )
-        except Exception as exc:
+        except Exception:  # 防御: 尽力生成失败返回空
             logger.debug("best-effort op failed", exc_info=True)
             return ""
 
@@ -2832,7 +2832,7 @@ class HypothesisLoop:
             if symreg_block and kb_forms:
                 return f"{kb_forms}\n{symreg_block}"
             return symreg_block or kb_forms
-        except Exception as exc:
+        except Exception:  # 防御: 符号回归失败回落已知表
             return kb_forms
     def _query_kb_known_forms(self, data: dict[str, Any]) -> str:
         """查 KB 拿已知公式形式 (Arrhenius / Brillouin / Langmuir 等) 作为
@@ -2863,7 +2863,7 @@ class HypothesisLoop:
                 + "\n".join(lines)
                 + "\n### End KB candidate forms"
             )
-        except Exception as exc:
+        except Exception:  # 防御: 尽力生成失败返回空
             logger.debug("best-effort op failed", exc_info=True)
             return ""
 
@@ -2904,7 +2904,7 @@ class HypothesisLoop:
                         _avg = sum(_scores) / len(_scores)
                         if _avg > 0.6:
                             return "reviewer"
-            except Exception as exc:
+            except Exception:  # 防御: 人物史召回失败跳过
                 logger.debug(
                     "recall_typed(persona_history) failed", exc_info=True,
                 )
@@ -2935,7 +2935,7 @@ class HypothesisLoop:
                     _best = max(_avg_scores, key=_avg_scores.get)
                     if _avg_scores[_best] > 0.5:
                         return _best
-        except Exception as exc:
+        except Exception:  # 防御: 人物用法召回失败跳过
             logger.debug("persona_use KG recall failed", exc_info=True)
 
         blob = json.dumps(context, ensure_ascii=False).lower()
@@ -2961,7 +2961,7 @@ class HypothesisLoop:
         }
         try:
             _node = self.hypothesis_graph._nodes.get(hypothesis_id)
-        except Exception as exc:
+        except Exception:  # 防御: 节点读取失败返回默认
             return _default
         if _node is None:
             return _default
@@ -2976,7 +2976,7 @@ class HypothesisLoop:
                     continue
                 if _n.status in ("supported", "refuted"):
                     _existing.append(_n.statement[:120])
-        except Exception as exc:
+        except Exception:  # 防御: 既有假设列表失败跳过
             logger.debug("existing hypothesis list skipped", exc_info=True)
         _existing_block = (
             "\n".join(f"- {s}" for s in _existing[:10]) or "(none)"
@@ -3008,7 +3008,7 @@ class HypothesisLoop:
                 "expected_informativeness": _nov * _ver,
                 "reason": str(_parsed.get("reason", "")),
             }
-        except Exception as exc:
+        except Exception:  # 防御: 信息量评估失败返回默认
             logger.debug("informativeness eval failed", exc_info=True)
             return _default
 

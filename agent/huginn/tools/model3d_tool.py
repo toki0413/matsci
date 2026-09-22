@@ -794,10 +794,7 @@ class Model3DTool(HuginnTool):
         # auto-detect from filename
         if fmt is None:
             fname = Path(path).name.upper()
-            if "XDATCAR" in fname:
-                fmt = "xdatcar"
-            else:
-                fmt = "md"
+            fmt = "xdatcar" if "XDATCAR" in fname else "md"
 
         if fmt == "xdatcar":
             from pymatgen.io.vasp.outputs import Xdatcar

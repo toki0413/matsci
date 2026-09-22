@@ -78,10 +78,7 @@ class VerifierContract:
 def _lookup_dotpath(obj: Any, dotpath: str, default: Any = None) -> Any:
     cur: Any = obj
     for part in dotpath.split("."):
-        if isinstance(cur, dict):
-            cur = cur.get(part)
-        else:
-            cur = getattr(cur, part, default)
+        cur = cur.get(part) if isinstance(cur, dict) else getattr(cur, part, default)
         if cur is None:
             return default
     return cur

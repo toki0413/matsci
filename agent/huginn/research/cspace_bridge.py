@@ -7,7 +7,7 @@
 
 职责:
   - :class:`DeliberationBeing`  复用 ``CSpace.Being``, 加派生字段 ``phase``;
-    id 稳定幂等 ``dt_ + sha1(origin+phase+claim)[:12]``。
+    id 稳定幂等 ``dt_ + sha256(origin+phase+claim)[:12]``。
   - :func:`enqueue_deliberation` / :func:`ingest_reasoning_trace`  批量把
     reasoning_trace 里的结构化记录灌成 candidate Being。
   - :func:`promote_to_at_hand`  门禁: 无证据证实的草稿永不确认在场。
@@ -47,10 +47,13 @@ class DeliberationBeing(Being):
 
 
 def _being_id(origin: str, phase: str, claim: str) -> str:
-    """稳定幂等 id: 'dt_' + sha1(origin+phase+claim)[:12] (同草稿重复想不撞车)."""
+    """稳定幂等 id: 'dt_' + sha256(origin+phase+claim)[:12] (同草稿重复想不撞车).
+
+    仅作确定性去重指纹, 非安全用途; sha256 避免 bandit B324 误报弱哈希.
+    """
     import hashlib
 
-    digest = hashlib.sha1(f"{origin}|{phase}|{claim}".encode()).hexdigest()[:12]
+    digest = hashlib.sha256(f"{origin}|{phase}|{claim}".encode()).hexdigest()[:12]
     return f"dt_{digest}"
 
 
@@ -307,9 +310,7 @@ def contract_gate(quantities: dict | None = None, *,
         ok, gaps = validate_scientific_contract(obj, q)
         if not ok:
             return False   # 有效域违反 → 硬拒
-        if strict_coverage and any("未声明" in g for g in gaps):
-            return False
-        return True
+        return not (strict_coverage and any("未声明" in g for g in gaps))
     return _gate
 
 

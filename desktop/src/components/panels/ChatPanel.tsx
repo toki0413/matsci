@@ -14,6 +14,7 @@ import MessageContent from '../MessageContent';
 import type { Message } from '../../hooks/useChatAndConnection';
 import type { HeatEngineHealth, ThinkingIntensity } from '../../types/domain';
 import type { DecisionPointPayload } from '../../types/ws';
+import PlanOutlineCard from '../../components/PlanOutlineCard';
 import type { ReconnectingWebSocket } from '../../lib/ws-client';
 
 const INLINE_COMMANDS = [
@@ -1536,6 +1537,23 @@ status: ${heatEngineHealth.status}${heatEngineHealth.warnings.length ? '\nwarnin
                       <Trash2 size={13} aria-hidden="true" />
                     </button>
                   </div>
+                )}
+                {/* Plan outline preview: OpenMAIC-style "see the outline, then approve" */}
+                {msg.isPlan && msg.planData?.steps?.length > 0 && (
+                  <PlanOutlineCard
+                    steps={msg.planData.steps}
+                    criteria={msg.planData.acceptance_criteria ?? []}
+                    tools={msg.planData.tools_needed ?? []}
+                    status={planExecState?.[msg.planId!] ?? null}
+                    confirmed={msg.planConfirmed}
+                    onRevise={() => {
+                      // Steer a new revision: focus the plan composer so the user's
+                      // next message is treated as an outline revision.
+                      setMode('plan');
+                      setInput('');
+                      setTimeout(() => textareaRef.current?.focus(), 0);
+                    }}
+                  />
                 )}
                 {/* Plan confirm/cancel buttons */}
                 {msg.isPlan && msg.planId && (

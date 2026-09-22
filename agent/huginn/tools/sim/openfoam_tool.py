@@ -786,7 +786,7 @@ boundaryField
                 "openfoam_tool", args.action, data, args.model_dump()
             )
             data["physics_audit"] = audit_report.to_dict()
-        except Exception as exc:
+        except Exception:  # 防御: 审计失败不阻断结果返回
             logger.debug("audit failure can't block result delivery", exc_info=True)
 
         return ToolResult(data=data, success=success)

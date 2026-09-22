@@ -17,18 +17,15 @@ import json
 import os
 from pathlib import Path
 
-import pytest
-
-import huginn.harness.prompt_patch as pp
 import huginn.harness.meta_improver as mi
-
+import huginn.harness.prompt_patch as pp
 from huginn.harness.meta_improver import (
     ImproverConfig,
     MetaImprover,
 )
+from huginn.harness.ood_holdout import OODHoldoutValidator
 from huginn.harness.prompt_patch import generate_patch
 from huginn.harness.significance_gate import SignificanceGate
-from huginn.harness.ood_holdout import OODHoldoutValidator
 
 GOOD_TPL = (
     "You are a careful improver. Phase:{phase} Blocks:{block_names} "

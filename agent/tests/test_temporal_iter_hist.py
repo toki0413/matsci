@@ -134,10 +134,7 @@ def _check_kb_since_filter():
     _wf = _args.kwargs.get("where")
     assert _wf is not None, "since 过滤应生成 where_filter"
     # 单条件时直接是 {created_at: {$gte: ...}}; 多条件时是 {$and: [...]}
-    if "$and" in _wf:
-        _conds = _wf["$and"]
-    else:
-        _conds = [_wf]
+    _conds = _wf.get("$and", [_wf])
     _has_gte = any(
         isinstance(c, dict) and "created_at" in c
         and isinstance(c["created_at"], dict) and "$gte" in c["created_at"]

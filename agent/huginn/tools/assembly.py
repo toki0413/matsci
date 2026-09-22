@@ -99,10 +99,7 @@ def collect_denied_tool_names(permission_rules: dict | None) -> set[str]:
         # 兼容两种 rule 形式：
         #   1) {"mode": "deny"} / {"mode": PermissionMode.DENY}
         #   2) 直接是 PermissionMode / 字符串（如 DEFAULT_PERMISSION_RULES 那种）
-        if isinstance(rule, dict):
-            mode_value = rule.get("mode")
-        else:
-            mode_value = rule
+        mode_value = rule.get("mode") if isinstance(rule, dict) else rule
         if _is_deny_mode(mode_value):
             denied.add(tool_name)
     return denied

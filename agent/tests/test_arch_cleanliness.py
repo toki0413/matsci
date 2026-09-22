@@ -68,7 +68,7 @@ def test_no_silent_catchall_except_in_owned() -> None:
                 offenders.append(f"{f.relative_to(_ROOT)}:{i}: {line.strip()}")
     assert not offenders, (
         "自研接缝存在静默 catch-all(未写 `— 原因`)。请补一句原因注释, 或改用 `as exc` "
-        f"并在身体内处理。违规:\n" + "\n".join(offenders))
+        "并在身体内处理。违规:\n" + "\n".join(offenders))
 
 
 def test_no_blanket_notimplemented_in_owned() -> None:
@@ -131,8 +131,8 @@ def test_dependency_allowlist_blocks_unbounded_new_deps() -> None:
         "langgraph", "langgraph-checkpoint-sqlite", "deepagents", "click",
         "rich", "networkx", "numpy", "scipy", "sympy", "z3-solver", "aiohttp",
         "python-dotenv", "cryptography", "pyyaml", "toml", "mcp", "fastapi",
-        "uvicorn", "sse-starlette", "python-multipart", "httpx", "websockets",
-        "requests", "tenacity", "Pillow",
+        "uvicorn", "python-multipart", "httpx", "websockets",
+        "Pillow",
     }
 
     def _pkg(dep: str) -> str:

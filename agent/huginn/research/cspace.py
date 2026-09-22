@@ -24,8 +24,9 @@ from __future__ import annotations
 import json
 import re
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 # 允许的 Being kind (在场通道)
 KINDS = ("concept", "state", "interaction")
@@ -75,17 +76,17 @@ class CSpace:
         self.assoc[b][a] = weight
 
     # ── control: 钉住 / 压制 ────────────────────────────────────
-    def pin(self, id: str) -> "CSpace":
+    def pin(self, id: str) -> CSpace:
         if id in self.beings:
             self.beings[id].pinned = True
         return self
 
-    def suppress(self, id: str) -> "CSpace":
+    def suppress(self, id: str) -> CSpace:
         if id in self.beings:
             self.beings[id].suppressed = True
         return self
 
-    def wake(self, id: str | None = None) -> "CSpace":
+    def wake(self, id: str | None = None) -> CSpace:
         """解除钉住/压制 (id 为 None 则全部重置)."""
         keys = [id] if id is not None else list(self.beings)
         for k in keys:

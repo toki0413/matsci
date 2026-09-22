@@ -6,11 +6,17 @@
 3. 统一视图: 输出能力清单 (含 sub_capabilities / degradation_chain), 供 LLM
    或上层编排器检索"想要哪个能力", 而非在 132 个碎片工具里迷失
 4. 保持可选: 不强制所有工具装箱 — 原子能力按需自动创建, 组合能力显式注册
+
+注: 本模块同时承载两条平行能力体系 (互不覆盖, 各自独立命名, 见下):
+  - ``CapabilityRegistry``        : 能力集装箱堆场 (既有, 供编排器/MCP 码头/CLI 使用)
+  - ``CapabilityMountRegistry``   : 能力维度 mount 注册表 (P1, 供 ``@capability`` 能力
+    维度声明使用) —— 新系统不再占用旧 ``CapabilityRegistry`` 的 API, 避免破坏既有契约.
 """
 
 from __future__ import annotations
 
 import threading
+from collections.abc import Iterable
 from typing import Any
 
 from huginn.capabilities.base import Capability, CapabilityResult
@@ -18,9 +24,18 @@ from huginn.capabilities.intents import AtomicCapability
 from huginn.core_types import ToolContext
 from huginn.tools.registry import ToolRegistry
 
+# 下面是两条平行体系的分界.
+# 1) 旧: 能力集装箱 CapabilityRegistry (既有接口, 保持 master 契约).
+# 2) 新: 能力维度 mount CapabilityMountRegistry (P1, 独立命名, 不覆盖旧类).
+#    两个都把"能力维度声明"装在专门类里, 语义清晰互不混淆.
+
 
 class CapabilityRegistry:
-    """能力寄存器。静态方法为主, 与 ToolRegistry 风格一致。"""
+    """能力寄存器。静态方法为主, 与 ToolRegistry 风格一致。
+
+    这是"能力规模 (集装箱)"体系: 每个能力是带 run() 契约的可执行单元
+    (原子/组合/外部), 按 name 注册, 支持统一视图与按名调用.
+    """
 
     _capabilities: dict[str, Capability] = {}
     _lock = threading.Lock()
@@ -157,3 +172,95 @@ class CapabilityRegistry:
 def register_capability(cap: Capability) -> Capability:
     """装饰器风格注册。"""
     return CapabilityRegistry.register(cap)
+
+
+# ────────────────────────────────────────────────────────────────────────
+# P1: 能力维度 mount 注册表 —— 独立类, 不覆盖上述 CapabilityRegistry.
+#   对标 Corside 的"一切皆插件", 但语义是**维度声明**: key = (dimension, name),
+#   支持按 plugin 整组卸载 (可逆 mount). 由 @capability 装饰的插件经
+#   loader 挂载; builtin / fusion 也走这里.
+# ────────────────────────────────────────────────────────────────────────
+
+from huginn.capabilities.capability import DIMENSIONS, CapabilityMetadata  # noqa: E402
+
+
+class CapabilityMountRegistry:
+    """维度 mount 注册表 (线程安全).
+
+    与 CapabilityRegistry (集装箱堆场) **平行**且独立:
+      - CapabilityRegistry 管"可执行能力单元"(run/manifest/scan_tool_registry);
+      - CapabilityMountRegistry 管"能力维度声明"(loop/session/storage/sysprompt/fusion),
+        按 (dimension, name) 组织, 供 AgentSession/loader 装配.
+    """
+
+    # (dimension, name) -> CapabilityMetadata
+    _caps: dict[tuple[str, str], CapabilityMetadata] = {}
+    _lock = threading.RLock()
+
+    @classmethod
+    def register(cls, *metas: CapabilityMetadata) -> None:
+        with cls._lock:
+            for m in metas:
+                if m.dimension not in DIMENSIONS:
+                    continue
+                cls._caps[(m.dimension, m.name)] = m
+
+    @classmethod
+    def register_iterable(cls, metas: Iterable[CapabilityMetadata]) -> None:
+        for m in list(metas):
+            cls.register(m)
+
+    @classmethod
+    def unregister_plugin(cls, plugin_name: str) -> int:
+        """卸载某插件提供的所有能力 (可逆 mount 的逆操作)."""
+        removed = 0
+        with cls._lock:
+            for key in [k for k, m in cls._caps.items() if m.plugin_name == plugin_name]:
+                del cls._caps[key]
+                removed += 1
+        return removed
+
+    @classmethod
+    def get(cls, dimension: str, name: str) -> CapabilityMetadata | None:
+        with cls._lock:
+            return cls._caps.get((dimension, name))
+
+    @classmethod
+    def list(cls, dimension: str | None = None) -> list[CapabilityMetadata]:
+        with cls._lock:
+            items = list(cls._caps.values())
+        if dimension is not None:
+            items = [m for m in items if m.dimension == dimension]
+        return sorted(items, key=lambda m: (m.dimension, m.name))
+
+    @classmethod
+    def list_names(cls, dimension: str | None = None) -> list[tuple[str, str]]:
+        return [(m.dimension, m.name) for m in cls.list(dimension)]
+
+    @classmethod
+    def clear(cls) -> None:
+        with cls._lock:
+            cls._caps.clear()
+
+
+# 进程级共享单例 — 与 CapabilityRegistry 共享同理: loader 注册到 A、
+# AgentSession 从 B 查会碰不上, 故都走同一共享实例.
+_shared_mount: CapabilityMountRegistry | None = None
+_shared_lock = threading.Lock()
+
+
+def get_shared_capability_registry() -> CapabilityMountRegistry:
+    global _shared_mount
+    if _shared_mount is None:
+        with _shared_lock:
+            if _shared_mount is None:
+                _shared_mount = CapabilityMountRegistry()
+    return _shared_mount
+
+
+__all__ = [
+    "CapabilityRegistry",
+    "CapabilityMountRegistry",
+    "get_shared_capability_registry",
+    "register_capability",
+]

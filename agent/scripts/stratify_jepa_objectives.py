@@ -13,8 +13,6 @@
 from __future__ import annotations
 
 import argparse
-import json
-import os
 from collections import defaultdict
 from pathlib import Path
 
@@ -22,9 +20,11 @@ import numpy as np
 
 from huginn.utils.runtime import get_runtime_home
 from scripts.train_jepa_predictor import (
-    load_pairs, load_encoder, train_predictor, forward_frozen,
+    forward_frozen,
+    load_encoder,
+    load_pairs,
+    train_predictor,
 )
-from scripts.collect_jepa_batch import OBJECTIVES
 
 
 def _dist(a, b):

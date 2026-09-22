@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import statistics
 from collections import defaultdict
 from pathlib import Path
@@ -19,8 +18,13 @@ from pathlib import Path
 import numpy as np
 
 from huginn.utils.runtime import get_runtime_home
-from scripts.train_jepa_predictor import load_pairs, load_encoder, train_predictor, forward_frozen
 from scripts.collect_jepa_batch import OBJECTIVES
+from scripts.train_jepa_predictor import (
+    forward_frozen,
+    load_encoder,
+    load_pairs,
+    train_predictor,
+)
 
 _LEGACY = ["orig_pendulum", "orig_pendulum", "orig_freefall", "orig_spring"]
 
@@ -98,7 +102,7 @@ def main() -> None:
     enc = load_encoder()
     all_pred = np.asarray(enc.encode([r["prediction"] for r in rows], normalize_embeddings=True), dtype=np.float64)
     all_act = np.asarray(enc.encode([r["actual"] for r in rows], normalize_embeddings=True), dtype=np.float64)
-    dim = int((getattr(enc, "get_embedding_dimension", None) or getattr(enc, "get_sentence_embedding_dimension"))())
+    dim = int((getattr(enc, "get_embedding_dimension", None) or enc.get_sentence_embedding_dimension)())
 
     rng = np.random.default_rng(args.seed)
     met, baseline, chance, win_pred, win_metric = [], [], [], 0, 0

@@ -82,7 +82,7 @@ class VectorStore:
             self._embedding_fn = DefaultEF()
             _ = self._embedding_fn(["test"])
             self._embedding_available = True
-        except Exception as exc:
+        except Exception:  # 防御: 初始化失败则标记嵌入不可用
             self._embedding_available = False
 
         return self._embedding_available
@@ -126,7 +126,7 @@ class VectorStore:
             result = ef(texts)
             VectorStore._embed_cache.set(cache_key, result)
             return result
-        except Exception as exc:
+        except Exception:  # 防御: 嵌入调用失败返回空缓存
             logger.debug("best-effort op failed", exc_info=True)
             return None
 
@@ -192,7 +192,7 @@ class VectorStore:
             logger.warning("vector_store ingest failed, rolling back %d ids", len(ids))
             try:
                 collection.delete(ids=ids)
-            except Exception as exc:
+            except Exception:  # 防御: 回滚删除失败仅记录不再抛
                 logger.warning("vector_store ingest rollback delete failed", exc_info=True)
             raise e
 
@@ -204,14 +204,14 @@ class VectorStore:
     ) -> list[tuple[int, float]] | None:
         try:
             from huginn_ext import top_k  # type: ignore[import-not-found]
-        except Exception as exc:
+        except Exception:  # 防御: 扩展缺失则降级返回空
             logger.debug("best-effort op failed", exc_info=True)
             return None
         if not embeddings:
             return None
         try:
             return top_k(query_embedding, embeddings, top_k)
-        except Exception as exc:
+        except Exception:  # 防御: 加速调用失败返回空转兜底
             logger.debug("best-effort op failed", exc_info=True)
             return None
 
@@ -264,7 +264,7 @@ class VectorStore:
                             }
                         )
                     return output[:top_k]
-            except Exception as exc:
+            except Exception:  # 防御: 原生查询失败降级全量匹配
                 logger.debug("ChromaDB 原生 query 失败, 降级到全量 top-k", exc_info=True)
 
             # Fallback: Rust-accelerated exact top-k over all stored embeddings.
@@ -302,7 +302,7 @@ class VectorStore:
                                 }
                             )
                         return output[:top_k]
-            except Exception as exc:
+            except Exception:  # 防御: 兜底全量匹配失败回退空结果
                 logger.debug("全量 top-k fallback 失败", exc_info=True)
 
             return []
@@ -508,7 +508,7 @@ class EncryptedVectorStore:
         try:
             cipher = self.vault.encrypt(text)
             return f"{self.ENCRYPTED_MARKER}{cipher.decode('utf-8')}"
-        except Exception as exc:
+        except Exception:  # 防御: 加密失败回退原文存储
             return text
 
     def _decrypt(self, text: str) -> str:
@@ -519,7 +519,7 @@ class EncryptedVectorStore:
         try:
             cipher = text[len(self.ENCRYPTED_MARKER) :].encode("utf-8")
             return self.vault.decrypt(cipher)
-        except Exception as exc:
+        except Exception:  # 防御: 解密失败回退返回原文
             return text
 
     def _encrypt_metadata(self, meta: dict[str, Any]) -> dict[str, Any]:

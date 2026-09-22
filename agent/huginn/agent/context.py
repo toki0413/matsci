@@ -87,7 +87,7 @@ class ContextMixin:
             )
             if _thinking:
                 base += "\n\n" + _thinking
-        except Exception as exc:
+        except Exception:  # 非致命: external_thinking 注入失败则跳过
             logger.debug("external_thinking injection skipped", exc_info=True)
         # Inject cached system context (date + git status) and project
         # context (.huginn.md / AGENTS.md). Computed once per session
@@ -107,7 +107,7 @@ class ContextMixin:
             agents_md = load_agents_md(str(workspace))
             if agents_md:
                 base = f"{base}\n\n# Project Memory\n{agents_md}"
-        except Exception as exc:
+        except Exception:  # 非致命: 项目上下文注入失败则跳过
             logger.debug("context injection skipped", exc_info=True)
         # User taste profile — session 级缓存, 只在首次调时读 JSON.
         # taste profile 只在用户填问卷时变, session 内稳定.
@@ -116,7 +116,7 @@ class ContextMixin:
             try:
                 from huginn.personalization import get_taste_directive
                 taste = get_taste_directive() or ""
-            except Exception as exc:
+            except Exception:  # 非致命: taste 注入失败则回落空串
                 logger.warning("taste profile injection failed", exc_info=True)
                 taste = ""
             self._cached_taste = taste
@@ -138,7 +138,7 @@ class ContextMixin:
                 ]:
                     if not any(_shutil.which(e) for e in _exes):
                         _missing.append(_name)
-            except Exception as exc:
+            except Exception:  # 非致命: 工具可用性探测失败则回落空
                 logger.debug("tool availability check failed", exc_info=True)
                 _missing = []
             self._cached_missing_backends = _missing
@@ -160,7 +160,7 @@ class ContextMixin:
             if _principles:
                 base += "\n\n## STABLE_PRINCIPLES\n"
                 base += "\n".join(f"- {p}" for p in _principles) + "\n"
-        except Exception as exc:
+        except Exception:  # 非致命: stable_principles 注入失败则跳过
             logger.debug("stable_principles injection skipped", exc_info=True)
 
         # ponytail: prompt_builder 当前只对 S7 自修改态有独特价值 (metacog_segment);
@@ -179,7 +179,7 @@ class ContextMixin:
                 built = _build_prompt(_mode, _phase, _metacog, self.system_prompt)
                 if built and len(built) > len(base) * 0.5:
                     return built
-            except Exception as exc:
+            except Exception:  # 非致命: prompt_builder 委托失败则回落 base
                 logger.debug("prompt_builder delegation failed, fallback to base", exc_info=True)
 
         # phase prefix 放末尾: 前面静态层稳定, DeepSeek context cache 命中前面,
@@ -266,7 +266,7 @@ class ContextMixin:
                 if beliefs:
                     avg_conf = sum(b.confidence for b in beliefs) / len(beliefs)
                     score += avg_conf * 0.5
-            except Exception as exc:
+            except Exception:  # 非致命: skill evolution 信念不可用则忽略
                 logger.debug("skill evolution beliefs unavailable", exc_info=True)
 
             scored.append((score, t))
@@ -292,13 +292,13 @@ class ContextMixin:
             for t in tools:
                 try:
                     name = t.name
-                except Exception as exc:
+                except Exception:  # 非致命: 取工具名出错则跳过该项
                     logger.debug("best-effort op failed", exc_info=True)
                     continue
                 if isinstance(name, str) and name:
                     names.add(name)
             return names
-        except Exception as exc:
+        except Exception:  # 防御: 工具名收集抛错则返回空集
             logger.warning("_tool_names_for_validation raised", exc_info=True)
             return set()
 

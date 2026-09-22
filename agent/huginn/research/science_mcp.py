@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import sys
 from pathlib import Path
 
@@ -30,14 +29,16 @@ def _science_tools() -> list[dict]:
     _EX = Path(__file__).resolve().parents[3] / "examples"
     if str(_EX) not in sys.path:
         sys.path.insert(0, str(_EX))
-    from shusheng_huginn_workflow import _diagnostic_tools  # type: ignore[import-not-found]
+    from shusheng_huginn_workflow import (
+        _diagnostic_tools,  # type: ignore[import-not-found]
+    )
     return _diagnostic_tools()
 
 
 def _ensure_registered() -> None:
     """把科学诊断工具注册进 ToolRegistry → CapabilityRegistry (幂等)."""
-    from huginn.research.tool_surface import register_diagnostic_tools
     from huginn.capabilities.registry import CapabilityRegistry
+    from huginn.research.tool_surface import register_diagnostic_tools
     register_diagnostic_tools(_science_tools())
     CapabilityRegistry.scan_tool_registry()
 

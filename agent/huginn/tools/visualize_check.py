@@ -54,13 +54,13 @@ def extract_figure_numeric(
         return {}
     out: dict[str, Any] = {}
     for k, v in data.items():
-        if isinstance(v, (int, float)) and not isinstance(v, bool):
+        if isinstance(v, int | float) and not isinstance(v, bool):
             out[k] = float(v)
         elif (
-            isinstance(v, (list, tuple))
+            isinstance(v, list | tuple)
             and v
             and all(
-                isinstance(x, (int, float)) and not isinstance(x, bool) for x in v
+                isinstance(x, int | float) and not isinstance(x, bool) for x in v
             )
         ):
             out[k] = [float(x) for x in v]
@@ -86,7 +86,7 @@ def check_figure_vs_expected(
         act = extracted.get(key)
         if act is None:
             continue
-        if isinstance(exp, (list, tuple)):
+        if isinstance(exp, list | tuple):
             if not isinstance(act, list) or len(exp) != len(act):
                 continue
             pairs = list(zip(exp, act))

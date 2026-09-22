@@ -128,7 +128,7 @@ def _perturb_args(args: dict[str, Any], tool: str | None = None) -> dict[str, An
         fn = _rule_for(tool, k)
         if fn is not None:
             out[k] = fn(v)
-        elif isinstance(v, (int, float)) and not isinstance(v, bool):
+        elif isinstance(v, int | float) and not isinstance(v, bool):
             out[k] = _perturb_numeric(v)
         else:
             out[k] = v
@@ -147,7 +147,7 @@ def _perturb_script(script: WorkflowScript) -> WorkflowScript:
                     select_workflow_params_for_stage,
                 )
                 new_args = select_workflow_params_for_stage(st.tool_name, st.args)
-            except Exception as exc:
+            except Exception:  # 防御: H3 不可用回退随机扰动
                 new_args = _perturb_args(st.args, st.tool_name)
         else:
             new_args = _perturb_args(st.args, st.tool_name)
@@ -187,7 +187,7 @@ async def _llm_generate_variants(
     )
     try:
         response = await llm_chat_fn(prompt, task="summarize")
-    except Exception as exc:
+    except Exception:  # 防御: LLM 失败返回空变体
         logger.debug("llm_generate_variants LLM fail", exc_info=True)
         return []
     if not (response and response.strip()):
@@ -197,7 +197,7 @@ async def _llm_generate_variants(
         txt = txt.split("\n", 1)[-1].rsplit("```", 1)[0]
     try:
         d = json.loads(txt)
-    except Exception as exc:
+    except Exception:  # 防御: JSON 解析失败返回空
         logger.debug("llm_generate_variants JSON parse fail: %s", txt[:200])
         return []
     variants_raw = d.get("variants", [])
@@ -207,7 +207,7 @@ async def _llm_generate_variants(
             continue
         try:
             out.append(WorkflowScript.from_dict(v))
-        except Exception as exc:
+        except Exception:  # 防御: 单条变体解析失败忽略
             logger.debug("llm variant parse fail", exc_info=True)
     return out[:n]
 

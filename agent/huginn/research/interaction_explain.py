@@ -80,7 +80,7 @@ def shapley_values(predict: Callable[[dict[str, float]], float],
                    instance: dict[str, float],
                    baseline: dict[str, float] | None = None) -> dict[str, float]:
     """order-1 Shapley 主效应: 每个特征的独立贡献 (其余特征 baseline)."""
-    base = baseline or {f: 0.0 for f in features}
+    base = baseline or dict.fromkeys(features, 0.0)
     n = len(features)
     if n == 0:
         return {}
@@ -92,7 +92,6 @@ def shapley_values(predict: Callable[[dict[str, float]], float],
         others = [j for j in range(n) if j != i]
         for r in range(n):
             for s in combinations(others, r):
-                s_plus = s + (i,)
                 S_mask = 0
                 Sp_mask = 0
                 for idx in s:
@@ -109,7 +108,7 @@ def pair_interactions(predict: Callable[[dict[str, float]], float],
                       instance: dict[str, float],
                       baseline: dict[str, float] | None = None) -> dict[tuple[str, str], float]:
     """order-2 Shapley 交互指数: (i,j) 联合是否贡献超出相加 (协同+/拮抗-)."""
-    base = baseline or {f: 0.0 for f in features}
+    base = baseline or dict.fromkeys(features, 0.0)
     n = len(features)
     if n < 2:
         return {}

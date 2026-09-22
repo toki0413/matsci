@@ -4,9 +4,6 @@ from __future__ import annotations
 
 import asyncio
 
-import pytest
-
-
 # ===== 阶段1: MathValidator =====
 
 def test_no_math_mixin_in_bases() -> None:
@@ -92,10 +89,16 @@ def test_perceive_delegation_methods_still_present() -> None:
         assert hasattr(AutoloopEngine, name), f"EnginePerceive 委托方法 {name} 缺失"
 
 
-def test_engine_new_holds_perceiver() -> None:
+def test_engine_new_holds_perceiver(monkeypatch) -> None:
     from huginn.autoloop.engine import AutoloopEngine
     from huginn.autoloop.engine_perceive import EnginePerceive
 
+    # 感知器委托下 KB 不可用 → None: EnginePerceive._get_kb 会惰性建真实 KB
+    # (CI 装了 chromadb 会成功建库, 甚至因初始化阻塞). 这里隔离该依赖, 让
+    # get_knowledge_base 返回 None, 以验证"KB 不可用时感知器不抛、返回 None"契约.
+    monkeypatch.setattr(
+        "huginn.knowledge.store.get_knowledge_base", lambda *a, **k: None
+    )
     eng = AutoloopEngine.__new__(AutoloopEngine)
     eng.workspace = "/tmp"
     eng._kb = None
@@ -418,7 +421,7 @@ def test_engine_observe_class_constants_bridged() -> None:
 def test_observe_static_and_instance_delegation() -> None:
     """委托零参-静态方法真可调: _files_jaccard 纯函数经静态委托."""
 
-    def _engine() -> "AutoloopEngine":
+    def _engine():  # -> AutoloopEngine (函数内导入, 见下)
         from huginn.autoloop.engine import AutoloopEngine
         from huginn.autoloop.engine_observe import EngineObserve
 
@@ -482,7 +485,7 @@ def test_engine_reflect_class_constants_bridged() -> None:
 def test_reflect_static_and_instance_delegation() -> None:
     """委托-纯函数真可调: _extract_text static 经静态委托."""
 
-    def _engine() -> "AutoloopEngine":
+    def _engine():  # -> AutoloopEngine (函数内导入, 见下)
         from huginn.autoloop.engine import AutoloopEngine
         from huginn.autoloop.engine_reflect import EngineReflect
 

@@ -86,11 +86,18 @@ def test_examples_import_unified_gate_only() -> None:
     relapsed: list[str] = []
     for fn in targets:
         src = (_EXAMPLES / fn).read_text(encoding="utf-8")
-        if "from huginn.research import grounding_verifier" not in src:
+        # ADR-0001 单网关门禁: examples 只从"统一入口"取门禁, 两种合法形式 —
+        #   1) 直接 import 产品唯一实现 (huginn.research.grounding_verifier);
+        #   2) 经共享 HTTP 网关 _gateway.py (等价于 grounding_verifier()(report, trace)).
+        unified = (
+            "from huginn.research import grounding_verifier" in src
+            or "from _gateway import" in src
+        )
+        if not unified:
             missing.append(fn)
         for bad in ("def _load_gate", "huginn.validation.claim_grounding",
                     "spec_from_file_location"):
             if bad in src:
                 relapsed.append(f"{fn}:{bad}")
-    assert not missing, f"缺统一门禁导入: {missing}"
+    assert not missing, f"缺统一门禁入口(_gateway 或 grounding_verifier): {missing}"
     assert not relapsed, f"检测到旧式就地加载: {relapsed}"

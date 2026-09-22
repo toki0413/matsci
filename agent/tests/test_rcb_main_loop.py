@@ -93,7 +93,7 @@ def test_directive_rejection_writes_entry(tmp_path: Path):
     assert entry["retry_count"] == 2
     assert entry["final_verdict"] == "fix_needed"
     assert entry["gap_type"] == "numeric_recompute"
-    assert isinstance(entry["ts"], (int, float))
+    assert isinstance(entry["ts"], int | float)
 
 
 def test_directive_rejection_appends(tmp_path: Path):

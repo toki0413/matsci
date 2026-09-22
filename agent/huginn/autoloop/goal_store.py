@@ -282,7 +282,7 @@ class GoalStore:
                     d = datetime.fromisoformat(u["discovered_at"])
                     r = datetime.fromisoformat(u["resolved_at"])
                     durations.append((r - d).total_seconds() / 3600)
-                except Exception as exc:
+                except Exception:  # 防御: 时长解析失败跳过该条
                     logger.debug("goal duration parse skipped", exc_info=True)
         durations.sort()
         median_h = durations[len(durations) // 2] if durations else None
@@ -355,7 +355,7 @@ class GoalStore:
                     start = start.replace(tzinfo=UTC)
                 elapsed = (datetime.now(UTC) - start).total_seconds()
                 return elapsed >= goal.wall_clock_budget_seconds
-            except Exception as exc:
+            except Exception:  # 防御: 尽力写操作失败降级返回
                 logger.debug("best-effort op failed", exc_info=True)
                 return False
 

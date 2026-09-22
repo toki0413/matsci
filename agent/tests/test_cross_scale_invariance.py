@@ -46,19 +46,22 @@ def test_phase_layer_surprise_feedback():
     hypothesize 的 persona 选择 (高 surprise → reviewer persona).
     """
     from huginn.autoloop.engine import AutoloopEngine
+    from huginn.autoloop.engine_reflect import EngineReflect
+    from huginn.autoloop.hypothesis_loop import HypothesisLoop
 
     # 用 hasattr 检查方法是否存在 (而非 inspect.getsource 源码字符串),
-    # 因为 engine 拆分为 mixin 后, 方法定义散布在各 engine_*.py 中.
+    # 因为 engine 拆分后, 方法定义散布在各 engine_*.py 中.
     assert hasattr(AutoloopEngine, "_compute_surprise"), "validate 缺少 surprise 计算"
     assert hasattr(AutoloopEngine, "_pick_hypothesis_persona"), \
         "缺少 _pick_hypothesis_persona 方法"
-    # _pick_hypothesis_persona 读取 surprise 决定 persona
-    pick_src = inspect.getsource(AutoloopEngine._pick_hypothesis_persona)
+    # 去 mixin 后, AutoloopEngine 只剩薄委托; surprise→persona 的真实实现在协作对象里.
+    # _pick_hypothesis_persona 读取 surprise 决定 persona (高 surprise → reviewer persona).
+    pick_src = inspect.getsource(HypothesisLoop._pick_hypothesis_persona)
     assert "surprise" in pick_src.lower(), \
         "_pick_hypothesis_persona 未使用 surprise 信号"
     # surprise 信号通过实例属性 _last_surprise 跨阶段传递,
-    # 在 _validate 中赋值, 在 _pick_hypothesis_persona 中读取.
-    validate_src = inspect.getsource(AutoloopEngine._validate)
+    # 在 EngineReflect._validate 中计算并赋值, 在 _pick_hypothesis_persona 中读取.
+    validate_src = inspect.getsource(EngineReflect._validate)
     assert "_last_surprise" in validate_src or "_compute_surprise" in validate_src, \
         "validate 未计算或存储 surprise 信号"
 

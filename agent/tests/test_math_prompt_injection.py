@@ -21,21 +21,28 @@ def engine() -> AutoloopEngine:
       - self._build_kb_text (returns "")
       - self.workspace (str)
     """
-    eng = AutoloopEngine.__new__(AutoloopEngine)
-    # 去 mixin 阶段6: PlanCheck 协作对象 — _build_plan_prompt 经引擎薄委托转发.
-    from huginn.autoloop.plan_check import PlanCheck
+    return _stub_engine()
 
-    eng._plan_checker = PlanCheck(eng)  # type: ignore[attr-defined]
-    # 去 mixin 阶段7: EngineObserve 协作对象 — _build_hypothesis_prompt /
-    # _build_plan_prompt 的 block 辅助方法经引擎薄委托转发到它.
+
+def _stub_engine() -> AutoloopEngine:
+    """__new__ 绕过 __init__ 的最小 stub 引擎.
+
+    去 mixin 后, _build_hypothesis_prompt/_build_plan_prompt 经引擎薄委托转发到协作对象
+    (_plan_checker/_engine_observer/_hypothesis_loop) 与感知器委托方法
+    (_extract_search_query/_build_kb_text/... → _engine_perceiver). 这里全部挂载;
+    感知器委托方法统一改为空返回, 隔离真实 ChromaDB/KG/memory/LLM 外部依赖.
+    """
     from huginn.autoloop.engine_observe import EngineObserve
-
-    eng._engine_observer = EngineObserve(eng)  # type: ignore[attr-defined]
-    # 信号桥 (engine SignalBridge): _iteration 等环信号字段读写都经 self.signals,
-    # __new__ 绕过 __init__ 需手动挂载, 否则 _iteration 赋值/读取报错.
+    from huginn.autoloop.plan_check import PlanCheck
     from huginn.autoloop.signals import EngineSignals
 
+    eng = AutoloopEngine.__new__(AutoloopEngine)
+    # 信号桥 (engine SignalBridge): _iteration 等环信号字段读写都经 self.signals,
+    # __new__ 绕过 __init__ 需手动挂载, 否则 _iteration 赋值/读取报错.
     eng.signals = EngineSignals()
+    # 去 mixin 阶段6/7: PlanCheck / EngineObserve 协作对象.
+    eng._plan_checker = PlanCheck(eng)  # type: ignore[attr-defined]
+    eng._engine_observer = EngineObserve(eng)  # type: ignore[attr-defined]
     eng._speculator_hint = None
     eng._kb = None
     eng.workspace = "."
@@ -49,9 +56,17 @@ def engine() -> AutoloopEngine:
     eng._mcmc_step_count = 0
     eng._mcmc_accept_count = 0
     eng._mcmc_chains = {}
-    # _build_kb_text 在 KB 未初始化时应返回空串 — 但若实现依赖 self._kb,
-    # 我们直接 monkeypatch 一个返回空串的版本以隔离 ChromaDB.
+    # 感知器委托方法 (引擎薄委托 → self._engine_perceiver) 改为空返回,
+    # 隔离 ChromaDB/LLM 依赖; _build_hypothesis_prompt/_build_plan_prompt 依赖之.
+    eng._extract_search_query = lambda context: ""  # type: ignore[method-assign]
     eng._build_kb_text = lambda query: ""  # type: ignore[method-assign]
+    eng._build_kg_text = lambda query: ""  # type: ignore[method-assign]
+    eng._build_memory_text = lambda query, since=None: ""  # type: ignore[method-assign]
+    eng._build_pm_text = lambda: ""  # type: ignore[method-assign]
+    eng._build_metacog_block = lambda *a, **k: ""  # type: ignore[method-assign]
+    # _build_hypothesis_prompt 末端调用 _should_imaginate (委托 → _hypothesis_loop);
+    # 本套件不关心想象力引导, 一置 False 免挂真实 loop / 免触发额外的 imagery 块.
+    eng._should_imaginate = lambda: False  # type: ignore[method-assign]
     return eng
 
 
@@ -191,21 +206,7 @@ class TestBlindSpotBlockWiring:
     """
 
     def _engine_with_memory(self, sm):
-        eng = AutoloopEngine.__new__(AutoloopEngine)
-        eng._speculator_hint = None
-        eng._kb = None
-        eng.workspace = "."
-        eng._iteration = 0
-        eng._hypo_manifold = None
-        eng._mcmc_current = None
-        eng._mcmc_rng = None
-        eng._mcmc_rng_state = None
-        eng._mcmc_cached_log_p = None
-        eng._mcmc_step_count = 0
-        eng._mcmc_accept_count = 0
-        eng._mcmc_chains = {}
-        eng._build_kb_text = lambda query: ""  # type: ignore[method-assign]
-
+        eng = _stub_engine()
         class _Longterm:
             def get_self_model(self):
                 return sm
@@ -241,20 +242,7 @@ class TestBlindSpotBlockWiring:
         assert "### Blind Spots" not in prompt
 
     def test_no_memory_no_block(self):
-        eng = AutoloopEngine.__new__(AutoloopEngine)
-        eng._speculator_hint = None
-        eng._kb = None
-        eng.workspace = "."
-        eng._iteration = 0
-        eng._hypo_manifold = None
-        eng._mcmc_current = None
-        eng._mcmc_rng = None
-        eng._mcmc_rng_state = None
-        eng._mcmc_cached_log_p = None
-        eng._mcmc_step_count = 0
-        eng._mcmc_accept_count = 0
-        eng._mcmc_chains = {}
-        eng._build_kb_text = lambda query: ""  # type: ignore[method-assign]
+        eng = _stub_engine()
         prompt = eng._build_hypothesis_prompt(context={"objective": "band gap"})
         assert "### Blind Spots" not in prompt
 

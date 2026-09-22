@@ -7,15 +7,15 @@
 
 | 段名 | priority | 注册位置 |
 |---|---|---|
-| persona | 10 | agent/prompt_builder.py:326 |
-| mode | 20 | agent/prompt_builder.py:327 |
-| phase | 30 | agent/prompt_builder.py:328 |
-| metacog | 40 | agent/prompt_builder.py:329 |
-| tools | 50 | agent/prompt_builder.py:330 |
-| multimodal | 55 | agent/prompt_builder.py:331 |
-| writing | 60 | agent/prompt_builder.py:332 |
-| thinking | 100 | agent/prompt_builder.py:334 |
-| safety | 200 | agent/prompt_builder.py:335 |
+| persona | 10 | agent/prompt_builder.py:325 |
+| mode | 20 | agent/prompt_builder.py:326 |
+| phase | 30 | agent/prompt_builder.py:327 |
+| metacog | 40 | agent/prompt_builder.py:328 |
+| tools | 50 | agent/prompt_builder.py:329 |
+| multimodal | 55 | agent/prompt_builder.py:330 |
+| writing | 60 | agent/prompt_builder.py:331 |
+| thinking | 100 | agent/prompt_builder.py:333 |
+| safety | 200 | agent/prompt_builder.py:334 |
 
 ### Compaction 策略 (形态 B)
 

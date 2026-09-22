@@ -21,17 +21,27 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "examples"))  # exa
 # huginn.capabilities.__init__ 会 eager 拉 pydantic(重栈); 本模块自身轻 —— 按文件路径加载,
 # 绕过重 __init__ (与既有 claim_grounding fallback 同一模式), 保证沙箱/轻量环境可测。
 import importlib.util as _ilu
+
 _spec = _ilu.spec_from_file_location(
     "_introspection", str(_SYS[1] / "huginn/capabilities/introspection.py"))
 _intro = _ilu.module_from_spec(_spec)
 sys.modules["_introspection"] = _intro  # 须在 exec_module **前** 注册, dataclass 装饰在模块体里执行
 _spec.loader.exec_module(_intro)
 from _introspection import (  # noqa: E402
-    confirm_proposal, create_proposal, diagnose_gaps, diagnose_surface,
-    evolution_run, propose_capabilities, reactivate_proposal, realize_proposal,
-    reject_proposal, rollback_realization, run_capability_self_audit,
+    confirm_proposal,
+    create_proposal,
+    diagnose_gaps,
+    diagnose_surface,
+    evolution_run,
+    propose_capabilities,
+    reactivate_proposal,
+    realize_proposal,
+    reject_proposal,
+    rollback_realization,
+    run_capability_self_audit,
     stage_to_trace,
 )
+
 from huginn.research.tool_surface import canonical_tool_shape  # noqa: E402
 
 
@@ -98,6 +108,7 @@ def test_s3_trace_artifacts_grounding():
 def test_end_to_end_self_audit_joins_trace():
     """run_research_program(self_audit=...) 把审计工件并入 trace, 门禁 pass. """
     import ai4s_backends as ab
+
     from huginn.research import run_research_program
 
     goal = "研究系外行星日晒与热木星平衡温度的深研"

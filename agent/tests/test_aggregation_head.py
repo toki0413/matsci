@@ -60,8 +60,8 @@ def test_conflict_is_surfaced_not_averaged():
 
 
 def test_diversity_measures_head_collapse():
-    uniform = [HeadResult("h%d" % i, "h", EVIDENCE_OBSERVED, "passed") for i in range(4)]
-    diverse = [HeadResult("h%d" % i, "h", EVIDENCE_OBSERVED, o)
+    uniform = [HeadResult(f"h{i}", "h", EVIDENCE_OBSERVED, "passed") for i in range(4)]
+    diverse = [HeadResult(f"h{i}", "h", EVIDENCE_OBSERVED, o)
                for i, o in enumerate(("passed", "failed", "unobserved", "missing"))]
     assert consolidate(uniform).diversity == 0.25      # 全员同判 → 单文化雷达低
     assert consolidate(diverse).diversity == 1.0       # 高分化 → 防御塌缩
@@ -398,7 +398,7 @@ def test_pipeline_custom_verifier_is_respected():
 
 # ── 缺陷七: 过度建制审计(second system effect 反制) ─────────────────────
 def test_overbuild_detects_budget_exceeded():
-    heads = [HeadResult("h%d" % i, "h%d" % i, EVIDENCE_OBSERVED, "passed")
+    heads = [HeadResult(f"h{i}", f"h{i}", EVIDENCE_OBSERVED, "passed")
              for i in range(3)]
     c = consolidate(heads, head_budget=2)
     assert c.overbuild["verdict"] == "over_built"
@@ -407,7 +407,7 @@ def test_overbuild_detects_budget_exceeded():
 
 
 def test_overbuild_flat_budget_is_healthy():
-    heads = [HeadResult("h%d" % i, "h%d" % i, EVIDENCE_OBSERVED, "passed")
+    heads = [HeadResult(f"h{i}", f"h{i}", EVIDENCE_OBSERVED, "passed")
              for i in range(3)]
     c = consolidate(heads, head_budget=4)
     assert c.overbuild["verdict"] == "healthy"
@@ -1016,7 +1016,7 @@ def test_pabc_combined_stress_wide_dag():
     def _wm(spec):
         return {"predicted": {"y": 200.0}}   # 固定预测: 可能触发 falsified 对账(压力面)
 
-    for round_i in range(3):
+    for _round_i in range(3):
         out = run_research_program(
             goal="pabc stress",
             experiments=list(plan.experiments),
@@ -1041,8 +1041,8 @@ def test_pabc_combined_stress_wide_dag():
         mut = [n for n in out.cache if "~mut" in n]
         assert all(n in out.cache for n in mut)
         # 报告与审计一致: P-B/P-C 段只在对应决策确实发生时出现
-        assert ("层间重规划(P-B)" in out.report) == ("replanned" == con["replan"]["verdict"])
-        assert ("证据驱动提前终止(P-C)" in out.report) == ("early_stopped" == con["early_stop"]["verdict"])
+        assert ("层间重规划(P-B)" in out.report) == (con["replan"]["verdict"] == "replanned")
+        assert ("证据驱动提前终止(P-C)" in out.report) == (con["early_stop"]["verdict"] == "early_stopped")
         # 每轮收敛: 至少一个存活假说来自真实执行
         assert out.pareto_front and all(e["name"] in out.cache for e in out.pareto_front)
 
@@ -1136,8 +1136,8 @@ def test_a1_early_stop_min_layers_parameterized():
 # ── 生产化 A2: 跨 run 稳定度先验 ─────────────────────────────────────────
 def test_a2_extract_prior_from_out():
     """从一次稳定终止的 run 提取可复用先验(纯函数)."""
-    from huginn.research.prior_store import extract_prior
     from huginn.research.planning import SubResearch, build_research_plan
+    from huginn.research.prior_store import extract_prior
 
     plan = build_research_plan(
         "a2 extract",
@@ -1161,8 +1161,8 @@ def test_a2_extract_prior_from_out():
 
 def test_a2_extract_prior_not_applicable_for_plain_run():
     """未启用早停的 run → 提取出不可用先验(诚实标 applicable=False)."""
-    from huginn.research.prior_store import extract_prior
     from huginn.research.planning import SubResearch, build_research_plan
+    from huginn.research.prior_store import extract_prior
 
     plan = build_research_plan(
         "a2 plain", [SubResearch("a", "sweep alpha metallic alloy", _run_(1.0))],
@@ -1467,7 +1467,10 @@ def test_replication_view_inconsistent_repeat():
 
 def test_replication_view_unobserved_when_single_run():
     """单次执行(无重复) → 视角未观测(不产生噪音)."""
-    from huginn.research.aggregation_head import build_replication_view, build_replication_head
+    from huginn.research.aggregation_head import (
+        build_replication_head,
+        build_replication_view,
+    )
 
     assert build_replication_view({"a": [{"score": 1.0}]}) is None
     head = build_replication_head({"a": [{"score": 1.0}]})

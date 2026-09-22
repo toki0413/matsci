@@ -433,7 +433,7 @@ class UnifiedEvaluator:
             ):
                 return self.from_grader(ctx)
             # list[GraderResult]: 逐个转换后聚合
-            if isinstance(ctx, (list, tuple)) and ctx:
+            if isinstance(ctx, list | tuple) and ctx:
                 results = [self.from_grader(g) for g in ctx]
                 return self._aggregate(results)
             # dict: GraderResult 的 dict 形式 or grader data dict
@@ -465,7 +465,7 @@ class UnifiedEvaluator:
             if hasattr(ctx, "on_track"):
                 return self.from_step_evaluator(ctx)
             # list[StepEvaluation]: 逐个转换后聚合
-            if isinstance(ctx, (list, tuple)) and ctx:
+            if isinstance(ctx, list | tuple) and ctx:
                 results = [self.from_step_evaluator(s) for s in ctx]
                 return self._aggregate(results)
             # dict: 已是评估结果 (含 on_track) 或 step 评估输入

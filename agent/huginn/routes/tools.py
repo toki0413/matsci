@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
+import inspect
 import json
 from typing import Any
 
@@ -64,7 +64,7 @@ async def call_tool(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
         agent_factory=get_agent_factory(),
         audit_logger=get_context().audit_logger,
     )
-    if asyncio.iscoroutinefunction(tool.call):
+    if inspect.iscoroutinefunction(tool.call):
         result = await tool.call(input_data.model_dump(), context)
     else:
         result = tool.call(input_data.model_dump(), context)

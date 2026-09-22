@@ -20,7 +20,7 @@ from huginn.utils.runtime import get_runtime_home
 def load_pairs(path: Path) -> list[dict]:
     if not path.exists():
         return []
-    return [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines() if l.strip()]
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
 def load_encoder(offline: bool = True):
@@ -65,7 +65,6 @@ def main() -> None:
 
     w = load_predictor_weights()
     enc = load_encoder()
-    dim = int(enc.get_sentence_embedding_dimension())
     pred_embs = np.asarray(enc.encode([p["prediction"] for p in pairs], normalize_embeddings=True), dtype=np.float64)
     act_embs = np.asarray(enc.encode([p["actual"] for p in pairs], normalize_embeddings=True), dtype=np.float64)
 
@@ -76,13 +75,13 @@ def main() -> None:
     # 反例: 跨配 (错配 => 距离大) — 每个 pred 对该批全体 other actual
     cross = np.array([cosine_distance(fwd[i], act_embs[j])
                       for i in range(len(pairs)) for j in range(len(pairs)) if i != j])
-    n_same = len(same); n_cross = len(cross)
+    n_same = len(same)
+    n_cross = len(cross)
     print(f"[t2b] same(n={n_same}) mean={same.mean():.3f} p10={np.percentile(same,10):.3f} p50={np.percentile(same,50):.3f} p90={np.percentile(same,90):.3f}")
     print(f"[t2b] cross(n={n_cross}) mean={cross.mean():.3f} p10={np.percentile(cross,10):.3f} p50={np.percentile(cross,50):.3f} p90={np.percentile(cross,90):.3f}")
 
     # AUC (Mann-Whitney U): P(跨配 > 同配)
     def auc(s, c):
-        import itertools
         # subsample if huge
         if len(s) * len(c) > 5_000_000:
             rng = np.random.default_rng(0)
@@ -116,7 +115,7 @@ def main() -> None:
         f1 = 2 * prec * tpr / max(1e-9, prec + tpr)
         youden = tpr - fpr
         if best is None or f1 > best["f1"]:
-            best = dict(tau=float(tau), f1=float(f1), tpr=float(tpr), fpr=float(fpr), prec=float(prec), youden=float(youden))
+            best = {"tau": float(tau), "f1": float(f1), "tpr": float(tpr), "fpr": float(fpr), "prec": float(prec), "youden": float(youden)}
     print(f"[t2b] 最优τ: surprise<={best['tau']:.4f} 判正常 (同配类); >={best['tau']:.4f} 判异常/错配")
     print(f"[t2b]   F1={best['f1']:.3f}  TPR={best['tpr']:.3f}  FPR={best['fpr']:.3f}  Precision={best['prec']:.3f}  Youden={best['youden']:.3f}")
     # 覆盖: 在同配里, 多少低于阈值(应为低误报); 在跨配里多少高于(应为高捕获)

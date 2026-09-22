@@ -5,6 +5,11 @@ from __future__ import annotations
 import pytest
 
 from huginn.agent import HuginnAgent
+from huginn.models.registry import (
+    MODEL_CAPABILITIES,
+    compact_threshold_for,
+    get_model_capabilities,
+)
 from huginn.models.router import ModelRouter, classify_band
 
 
@@ -110,3 +115,58 @@ class TestHuginnAgentRouter:
         agent = HuginnAgent()
         with pytest.raises(RuntimeError):
             agent.select_model("agent")
+
+
+class TestCompactThresholdFor:
+    """成本自适应压缩阈值 (G34b): 按模型长上下文成本模式决定主动压缩时机.
+
+    linear(KDA)/hybrid(SALA) 线性注意力骨架便宜 → 推迟压缩, 避免
+    '用信息换本不必省的算力'; quadratic(旧全注意力) 维持既往 60%.
+    """
+
+    def test_unknown_model_fails_closed_to_60(self):
+        assert compact_threshold_for("totally-unknown-model-xyz") == 60
+
+    def test_quadratic_stays_at_legacy_60(self):
+        assert compact_threshold_for("gpt-4o") == 60
+
+    def test_kda_linear_pushes_threshold_to_80(self):
+        # Kimi K2/K3 走 KDA 线性注意力: 默认 linear → 80
+        assert compact_threshold_for("kimi-k2.6") == 75
+        assert compact_threshold_for("kimi-k3") == 85
+
+    def test_sala_hybrid_mid_threshold(self):
+        # MiniCPM-SALA 稀疏×线性混合: hybrid → 75
+        assert compact_threshold_for("minicpm-sala") == 75
+
+    def test_env_override_takes_precedence(self, monkeypatch):
+        monkeypatch.setenv("HUGINN_COMPACT_THRESHOLD", "90")
+        assert compact_threshold_for("gpt-4o") == 90
+        assert compact_threshold_for("kimi-k3") == 90
+        monkeypatch.delenv("HUGINN_COMPACT_THRESHOLD")
+
+    def test_invalid_env_ignored(self, monkeypatch):
+        monkeypatch.setenv("HUGINN_COMPACT_THRESHOLD", "abc")
+        assert compact_threshold_for("kimi-k3") == 85
+        monkeypatch.delenv("HUGINN_COMPACT_THRESHOLD")
+
+    def test_minicpm5_short_window_is_quadratic(self):
+        caps = get_model_capabilities("minicpm5")
+        assert caps.long_context_cost_mode == "quadratic"
+        assert caps.context_window == 8192
+
+    def test_agent_class_models_have_context_window(self):
+        # 所有 tools=True 的 agent 类模型都应声明 context_window, 否则前缀模糊
+        # 匹配到空窗口会让 get_context_window 兜底、compact 阈值失真.
+        for name, caps in MODEL_CAPABILITIES.items():
+            if caps.tools:
+                assert caps.context_window > 0, f"{name} 缺 context_window"
+                assert (
+                    caps.long_context_cost_mode
+                    in {"linear", "constant", "hybrid", "quadratic"}
+                ), f"{name} cost_mode 非法"
+
+    def test_cloud_quadratic_models_stay_at_60(self):
+        # 全注意力云端模型维持既往 60% 早压, 不因窗口大而推迟.
+        for name in ("gpt-4o", "claude-3-5-sonnet", "gemini-2.5-pro", "qwen3-max"):
+            assert compact_threshold_for(name) == 60, name

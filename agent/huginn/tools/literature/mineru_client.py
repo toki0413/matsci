@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import requests
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -128,7 +128,7 @@ def submit_batch(
     if extra_formats:
         payload["extra_formats"] = extra_formats
 
-    r = requests.post(
+    r = httpx.post(
         f"{MINERU_BASE}/file-urls/batch",
         headers=_headers(token),
         json=payload,
@@ -152,7 +152,7 @@ def submit_batch(
         try:
             with open(spec.path, "rb") as fp:
                 # 文档明确说: 上传时无须设置 Content-Type
-                up = requests.put(url, data=fp, timeout=300)
+                up = httpx.put(url, content=fp, timeout=300)
             if up.status_code == 200:
                 info["uploaded"] = True
             else:
@@ -174,7 +174,7 @@ def query_batch(
         raise RuntimeError("MinerU API key 未配置")
     token = keys[0] if len(keys) == 1 else keys[int(time.time()) % len(keys)]
 
-    r = requests.get(
+    r = httpx.get(
         f"{MINERU_BASE}/extract-results/batch/{batch_id}",
         headers=_headers(token),
         timeout=60,
@@ -220,7 +220,7 @@ def download_and_extract(
 ) -> Path:
     """下载 zip 并解压到 target_dir/, 返回 target_dir."""
     target_dir.mkdir(parents=True, exist_ok=True)
-    r = requests.get(zip_url, timeout=300)
+    r = httpx.get(zip_url, timeout=300)
     r.raise_for_status()
     data = r.content
     if keep_zip:

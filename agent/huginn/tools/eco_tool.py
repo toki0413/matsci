@@ -112,10 +112,7 @@ class EcoTool(HuginnTool[EcoToolInput, EcoToolOutput]):
 
     async def call(self, args: EcoToolInput, context: ToolContext) -> ToolResult:
         # 兼容两种调用方: 直接传 Pydantic 模型, 或传 dict (对齐 ConfigDomainTool).
-        if isinstance(args, dict):
-            inp = EcoToolInput(**args)
-        else:
-            inp = args
+        inp = EcoToolInput(**args) if isinstance(args, dict) else args
         if inp.action == "skill_install":
             return self._skill_install(inp)
         if inp.action == "plugin_enable":

@@ -36,7 +36,7 @@ def make_task_episode_id(goal: str, salt: str = "") -> str:
     """
     slug = re.sub(r"[^0-9a-z_]+", "_", (goal or "task").lower()).strip("_") or "task"
     bucket = time.strftime("%Y%m%d", time.localtime())  # day 级桶 → 同任务当日稳定
-    seed = f"{slug}::{bucket}::{salt}".encode("utf-8")
+    seed = f"{slug}::{bucket}::{salt}".encode()
     return f"ep-{hashlib.sha256(seed).hexdigest()[:20]}"
 
 
@@ -125,7 +125,7 @@ class HarnessReport:
     dimensions: list[DimensionScore] = field(default_factory=list)
     overall: float = 0.0
 
-    def assess(self, out: Any, *, agent: str = "", machine: str = "") -> "HarnessReport":
+    def assess(self, out: Any, *, agent: str = "", machine: str = "") -> HarnessReport:
         """从 ResearchOutcome 提炼五维评分. 只复用 out 已记录的 gate 结果, 不重复计算.
 
         spec §1 映射表:

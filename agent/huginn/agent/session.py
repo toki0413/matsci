@@ -60,7 +60,7 @@ class SessionMixin:
                     "loaded last session context: %s...",
                     ctx["summary"][:100],
                 )
-        except Exception as exc:
+        except Exception:  # 非致命: 上次会话上下文加载失败则不恢复
             logger.debug("session continuity load failed", exc_info=True)
 
         try:
@@ -80,7 +80,7 @@ class SessionMixin:
                     objective[:80],
                     step_index,
                 )
-        except Exception as exc:
+        except Exception:  # 非致命: 活动计划加载失败则忽略
             logger.debug("active plan load failed", exc_info=True)
 
         # H2: 事件级恢复优先 — 若会话有事件日志且含 csm_state, 用事件投影重建
@@ -94,7 +94,7 @@ class SessionMixin:
                     "restored CSM from event log: %s",
                     self._csm.state.value,
                 )
-        except Exception as exc:
+        except Exception:  # 非致命: 事件日志 CSM 恢复失败则忽略
             logger.debug("event-log csm restore failed", exc_info=True)
 
         # 结构化 snapshot 恢复: 上面只恢复 summary / plan, 这里补 _mode / _csm / _phase /
@@ -141,7 +141,7 @@ class SessionMixin:
                     "restored session snapshot: mode=%s csm=%s phase=%s turns=%d",
                     self._mode, csm_state, phase, self._turn_count,
                 )
-        except Exception as exc:
+        except Exception:  # 非致命: 会话快照恢复失败则忽略
             logger.debug("session snapshot restore failed", exc_info=True)
 
     def _save_session_snapshot(self) -> None:
@@ -170,5 +170,5 @@ class SessionMixin:
                 "session_state": self._session_state.to_snapshot(),
             }
             self.memory.save_session_snapshot(snap)
-        except Exception as exc:
+        except Exception:  # 非致命: 快照落盘失败则忽略
             logger.debug("save_session_snapshot failed", exc_info=True)

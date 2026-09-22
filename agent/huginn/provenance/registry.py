@@ -433,7 +433,7 @@ class ProvenanceRegistry:
         if parameters:
             for k in ("seed", "random_seed", "rng_seed"):
                 v = parameters.get(k)
-                if v is not None and isinstance(v, (int, float)):
+                if v is not None and isinstance(v, int | float):
                     _seed = int(v)
                     break
 

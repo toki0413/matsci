@@ -252,7 +252,7 @@ def _handle_cost(agent: Any, console: Any) -> None:
     if cache_stats:
         console.print("[bold]Token 用量 (最近一次):[/bold]")
         for key, val in cache_stats.items():
-            if isinstance(val, (int, float)) and val:
+            if isinstance(val, int | float) and val:
                 console.print(f"  [cyan]{key:30s}[/cyan]  {val:,}")
 
 

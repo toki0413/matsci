@@ -9,6 +9,7 @@
 | `mat-db-mcp/` | `mat-db-mcp` | 材料数据库查询：Materials Project (MP)、AFLOW、NOMAD、OQMD、NIST 势。API 不可用时回退内置 mock 数据 |
 | `math-anything-mcp/` | `math-anything-mcp` | 数学语义：公式/变量抽取（LaTeX）、数学 diff（两个表达式等价性）、量纲分析、数值精度追踪 |
 | `vision-pixel-mcp/` | `vision-pixel-mcp` | 通用像素视觉（PIL/numpy，无 Node/tesseract）：裁剪、主色提取、逐像素 diff、洪泛抠图、SVG 矢量化、看图问答 |
+| `jev-mcp/` | `jev-mcp` | TypeSafe System One 决策模型（Noul/Choice/Score）暴露成 MCP 工具，返回带校准概率的类型化决策 |
 
 > 与 `huginn` 内置的 `image_analysis_tool`（材料 SEM/TEM/EDS 分析）互补；
 > `vision-pixel-mcp` 提供通用像素操作，`image_analysis_tool` 提供材料专用分析。
@@ -32,6 +33,8 @@ python mat-db-mcp/server.py --transport sse
 #           uvx --from matsci-math-anything-mcp math-anything-mcp
 # vision:   pip install matsci-vision-pixel-mcp
 #           uvx --from matsci-vision-pixel-mcp vision-pixel-mcp
+# jev:      pip install matsci-jev-mcp
+#           uvx --from matsci-jev-mcp jev-mcp
 ```
 
 各服务器依赖（`mcp` 客户端库、`PIL`/`numpy` 等）由 `agent` 的 Python 环境提供；
