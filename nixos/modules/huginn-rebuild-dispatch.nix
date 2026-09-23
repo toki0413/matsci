@@ -59,7 +59,7 @@ let
         # 输出落到 dispatchDir 供 status 摘要, 实时进度看 journalctl -u $unit.
         ${systemdRunBin} --collect --quiet --unit="$unit" \
           --property=KillMode=control-group -- \
-          ${bashBin} -c "export PATH=${dshPathEnv}; cd / && ${nixosRebuildBin} switch --show-trace > ${dispatchDir}/$unit.log 2>&1; echo \$? > ${dispatchDir}/$unit.status"
+          ${bashBin} -c "export PATH=${dshPathEnv}; cd / && ${nixosRebuildBin} switch --show-trace > ${dispatchDir}/$unit.log 2>&1; echo $? > ${dispatchDir}/$unit.status"
         echo "dispatch ok: $unit — 进展: journalctl -u $unit ; 摘要: ${dispatchDir}/$unit.log"
         ;;
 

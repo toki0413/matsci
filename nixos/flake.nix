@@ -29,11 +29,13 @@
       nixosModules = {
         huginn-agent = import ./modules/huginn-agent.nix;
         huginn-rebuild = import ./modules/huginn-rebuild-dispatch.nix;
-        # 一次全载: agent 服务 + 重建分发助手
+        huginn-nixos-cli = import ./modules/huginn-nixos-cli.nix;
+        # 一次全载: agent 服务 + 重建分发助手 + 只读诊断
         default = {
           imports = [
             self.nixosModules.huginn-agent
             self.nixosModules.huginn-rebuild
+            self.nixosModules.huginn-nixos-cli
           ];
         };
       };

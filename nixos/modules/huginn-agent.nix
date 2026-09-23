@@ -60,6 +60,15 @@ in
       description = "systemd EnvironmentFile (只放密钥, 如 DEEPSEEK_API_KEY). 权限建议 0600.";
     };
 
+    # job 路由 (对齐 dsh-nixos-shell): 只读诊断走 `huginn-nixos-cli` (无 sudo),
+    # 变更性操作 (nixos-rebuild / nixos apply) 一律走 `huginn-rebuild switch`
+    # (detached 瞬态单元 + root), 绝不让 agent 直接用 sudo bash -c 跑 nixos-rebuild.
+    nixosTools = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "把 NixOS 只读诊断 (huginn-nixos-cli) 与 detached 重建助手 (huginn-rebuild) 挂进服务 PATH, 并开启 NixOS job 路由约定.";
+    };
+
     user = lib.mkOption {
       type = lib.types.str;
       default = "huginn";
@@ -89,7 +98,11 @@ in
       wantedBy = [ "multi-user.target" ];
       after = [ "network.target" ];
 
-      path = with pkgs; [ python311 git gcc ];
+      path = (with pkgs; [ python311 git gcc ])
+        # NixOS 工具模式: 把系统 profile 命令 (huginn-nixos-cli / huginn-rebuild /
+        # systemctl / journalctl / nix) 暴露给服务, 便于 agent 走约定的只读诊断 /
+        # detached 变更路由.
+        ++ (lib.optionals cfg.nixosTools [ "/run/current-system/sw/bin" ]);
 
       # venv 自举 (only once): 复用仓库 deploy 脚本的同款依赖集, 幂等
       preStart = ''
