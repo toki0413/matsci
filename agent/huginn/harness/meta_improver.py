@@ -1,27 +1,36 @@
 """M-R1: Recursive (Meta-)Improver — 让「改进器如何改进」也是可改进、可验收的对象.
 
 单层改进器现状 (H1 prompt_patch):
-  generate_patch(phase, blocks, r_phys, directive, llm_chat_fn) 把一份硬编码的
-  improv`-ing` prompt 喂给 LLM, LLM 产出一个 prompt block patch. 这份 improver prompt
-  是函数内字面量, 不可被改进 → 单层、非递归.
+  generate_patch(phase, blocks, r_phys, directive, llm_chat_fn) 把一份 improver
+  prompt 喂给 LLM, LLM 产出一个 prompt block patch. 这份 improver prompt 若写死在
+  函数里就不可被改进 → 单层、非递归.
 
 本模块加一层 meta-improver (STOP 退化单步版):
   - 把「改进器 prompt 模板」提升为一等对象 ImproverConfig (champion active 才覆盖默认),
   - maybe_propose: LLM 基于「当前 improver 模板 + meta 统计」改写新模板 → 候选,
-  - evaluate: 用「冻结重放集」(最近 K 组 (phase, blocks, r_phys, directive)) 离线给
-    候选与前冠军打分 → 配对注册进 SignificanceGate + OODHoldout,
+  - select_generation_arm: 每轮产 patch 时选臂 — champion 在位走 champion (exploit);
+    无 champion 时以 _CANARY_P 概率让候选接管 (canary 探索臂), 否则 baseline,
+  - record_real_outcome: 真实迭代跑完把真实 r_phys 按「生成该 patch 的臂」回填进 ledger,
+  - evaluate: 用回填的真实 r_phys 注册进 SignificanceGate + OODHoldout (不再用离线
+    格式代理分),
   - promote: 仅 显著 + OOD 不退化 (即 AdoptionGate 的 GREEN) 才把候选设为 champion,
   - champion 换代旧配置冻结保留可回退; 门控永不删数据.
 
-验收代理分 (诚实声明): evaluate 的分数是「产出 patch 的有效性」代理, 不是真实 r_phys.
-真实收益由下游 apply_patches 对 patch 的 Beta 接受度兜底. 代理分只作首道闸.
+验收信号 (真实 r_phys, 诚实声明): evaluate 的分数是真实迭代的 r_phys, 按生成该 patch
+的臂 (champion / canary 候选 / baseline) 归因. 真实 A/B 无法在同一 task 上同时跑两臂,
+因此用确定性分桶把「同类任务」配对 (分桶思路与 OODHoldout 一致). 样本不足时不判定、
+不换件 — 宁可保持默认也不靠噪声换件.
+
+canary 的 explore 影响: 候选模板以 _CANARY_P 概率接管 patch 生成, 但其产出的 patch 仍需
+过 Beta 门 (α>=β, 即"无证据时可试一次") 才真正 apply, 因此对 explore 的扰动被 Beta 闸兜住.
 
 toggle: cfg.feature_flags.harness_meta_improver AND harness_prompt_patch 同时 on 才生效
-(默认全 off, 关闭时零行为变更 — generate_patch 回落硬编码模板).
+(默认全 off, 关闭时零行为变更 — generate_patch 回落默认模板).
 """
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import logging
 import random
@@ -38,14 +47,21 @@ from ._enabled import _harness_enabled
 
 logger = logging.getLogger(__name__)
 
-# 重放集容量 — evaluate 离线打分用; K=10 保证 sig(>=5) + OOD(train>=3, holdout>=3) 够量.
-_REPLAY_MAX = 10
 # 每成功生成多少 patch 触发一次 maybe_propose.
 _PROPOSE_EVERY_N = 5
 # 显著性验收最小样本量 (和 SignificanceGate 默认同步).
 _MIN_SAMPLES = 5
 # r_phys 阈值扰动约束.
 _R_PHYS_GATE_MIN, _R_PHYS_GATE_MAX = 0.5, 0.8
+# baseline 臂: 未覆盖默认模板时生成 patch 的臂 id.
+_BASELINE_ID = "__baseline__"
+# canary 探索概率: 无 champion 时让候选接管 patch 生成的比例.
+_CANARY_P = 0.3
+# 真实 r_phys ledger 容量 (环形, 超了丢最老).
+_REAL_OUTCOME_MAX = 500
+# 真实 r_phys 配对分桶数. 桶 = "同类任务"; OOD 的 train/holdout 切分在同一组桶键上做,
+# 16 桶下 holdout ~5 个, 满足 OOD min_per_split=3 且 sig 需要 >=5 对.
+_PAIR_BUCKETS = 16
 
 # 默认 improver prompt 模板 — 从 prompt_patch.generate_patch 原位迁出集中管理,
 # 保持 {phase}/{block_names}/{r_phys}/{directive} 四个占位符. champion 覆盖此模板.
@@ -128,37 +144,16 @@ def build_improver_prompt(
         return None
 
 
-def score_patch_output(
-    response: str, block_names: list[str], directive: str
-) -> float:
-    """给一次 improver 产出的 patch 打效性代理分 (0..1, 越高越好).
+def _bucket_of(task_id: str, n_buckets: int = _PAIR_BUCKETS) -> str:
+    """确定性任务分桶: 同一 task_id 永远落同一桶 (与 OODHoldout 分桶同思路).
 
-    诚实声明: 这是「有效性」代理分, 非真实 r_phys. 只作首道闸, 真实收益由
-    下游 apply_patches 的 Beta 接受度兜底.
+    真实 A/B 无法在同一 task 上跑两臂, 用桶把"同类任务"配对 — 桶键即配对键.
     """
-    if not response or not response.strip():
-        return 0.2
-    txt = response.strip()
-    if txt.startswith("```"):
-        txt = txt.split("\n", 1)[-1].rsplit("```", 1)[0]
-    try:
-        d = json.loads(txt)
-    except Exception:
-        return 0.1
-    block_name = d.get("block_name", "")
-    if block_name not in block_names:
-        return 0.3
-    new_text = str(d.get("new_text", "")).strip()
-    if not new_text:
-        return 0.2
-    # 有效 patch 基准 1.0; 若 patch 对齐了本次 self-directive 的可检索词,
-    # 每个 +0.15 (上限 +0.45), 不封顶到 1.0 — 这样"更能对齐 directive 的
-    # 改进器模板"能在代理分上胜过"通用但未对齐"的, 递归 evaluate 才能判优劣.
-    score = 1.0
-    for tok in (directive or "").split()[:5]:
-        if len(tok) > 3 and tok in new_text:
-            score = min(1.45, score + 0.15)
-    return score
+    h = int(
+        hashlib.md5(task_id.encode("utf-8"), usedforsecurity=False).hexdigest()[:8],
+        16,
+    )
+    return f"bucket_{h % n_buckets:02d}"
 
 
 class MetaImprover:
@@ -175,13 +170,17 @@ class MetaImprover:
             self._dir.mkdir(parents=True, exist_ok=True)
             self._candidates_dir.mkdir(parents=True, exist_ok=True)
         self._cfg_path = self._dir / "config.json"
-        self._replay_path = self._dir / "replay.json"
+        self._arm_ledger_path = self._dir / "arm_ledger.json"
+        self._real_outcomes_path = self._dir / "real_outcomes.json"
         self._trace_path = self._dir / "meta_trace.jsonl"
         self._active_id: str | None = None
         self._history: list[str] = []
         self._promotions: int = 0
         self._candidates: dict[str, ImproverConfig] = {}
-        self._replay: list[dict[str, Any]] = []
+        # patch_id → 生成该 patch 的臂 (champion config_id / 候选 id / _BASELINE_ID)
+        self._arm_by_patch: dict[str, str] = {}
+        # 真实迭代的 (arm, task, r_phys) 观测, 环形
+        self._real_outcomes: list[dict[str, Any]] = []
         self._propose_count = 0
         self._load()
 
@@ -203,8 +202,15 @@ class MetaImprover:
                 self._history = d.get("history", [])
                 self._promotions = int(d.get("promotions", 0))
         with contextlib.suppress(Exception):
-            if self._replay_path.exists():
-                self._replay = json.loads(self._replay_path.read_text(encoding="utf-8"))[: _REPLAY_MAX]
+            if self._arm_ledger_path.exists():
+                self._arm_by_patch = json.loads(
+                    self._arm_ledger_path.read_text(encoding="utf-8")
+                )
+        with contextlib.suppress(Exception):
+            if self._real_outcomes_path.exists():
+                self._real_outcomes = json.loads(
+                    self._real_outcomes_path.read_text(encoding="utf-8")
+                )[-_REAL_OUTCOME_MAX:]
         with contextlib.suppress(Exception):
             for f in self._candidates_dir.glob("*.json"):
                 try:
@@ -226,10 +232,16 @@ class MetaImprover:
                 ), encoding="utf-8"
             )
 
-    def _save_replay(self) -> None:
+    def _save_arm_ledger(self) -> None:
         with contextlib.suppress(Exception):
-            self._replay_path.write_text(
-                json.dumps(self._replay, ensure_ascii=False), encoding="utf-8"
+            self._arm_ledger_path.write_text(
+                json.dumps(self._arm_by_patch, ensure_ascii=False), encoding="utf-8"
+            )
+
+    def _save_real_outcomes(self) -> None:
+        with contextlib.suppress(Exception):
+            self._real_outcomes_path.write_text(
+                json.dumps(self._real_outcomes, ensure_ascii=False), encoding="utf-8"
             )
 
     def _save_candidate(self, cfg: ImproverConfig) -> None:
@@ -250,7 +262,7 @@ class MetaImprover:
             "harness_prompt_patch"
         )
 
-    # ── champion / replays ───────────────────────────────────────────────────
+    # ── champion / arm selection ─────────────────────────────────────────────
     def champion_cfg(self) -> ImproverConfig | None:
         """当前活跃 champion (config_id + active=True). 无则 None → 回落默认模板."""
         if not self.enabled():
@@ -260,38 +272,103 @@ class MetaImprover:
             return c
         return None
 
+    def candidate_ids(self) -> list[str]:
+        """全部候选 config_id. 供回填后逐个 evaluate (不含 champion 特判)."""
+        return list(self._candidates.keys())
+
     def current_template(self) -> str:
         champ = self.champion_cfg()
         return champ.improver_prompt if champ else DEFAULT_IMPROV_TEMPLATE
 
-    async def note_generation(
-        self, phase: str, blocks: list[tuple[str, str]], r_phys: float | None,
-        directive: str, llm_chat_fn: Callable[[str, str], Any],
-    ) -> None:
-        """H1 generate_patch 成功产 patch 后回调: 进重放集 + 攒计数到阈值触发 maybe_propose."""
+    def select_generation_arm(self) -> tuple[str, str]:
+        """选本轮生成 patch 的臂, 返回 (arm_id, template).
+
+        - champion 在位 → champion 臂 (exploit).
+        - 无 champion 且有候选 → 以 _CANARY_P 概率让最近提出的候选接管 (canary 探索臂),
+          否则 baseline 臂. 这样候选能在真实迭代里产 patch, 拿到真实 r_phys 归因.
+        - 未开启/无候选 → baseline 臂 + 默认模板 (零行为变更).
+        """
+        if not self.enabled():
+            return _BASELINE_ID, DEFAULT_IMPROV_TEMPLATE
+        champ = self.champion_cfg()
+        if champ is not None:
+            return champ.config_id, champ.improver_prompt
+        challengers = [c for c in self._candidates.values() if not c.active]
+        if challengers and random.random() < _CANARY_P:
+            cand = max(challengers, key=lambda c: c.created_at)
+            return cand.config_id, cand.improver_prompt
+        return _BASELINE_ID, DEFAULT_IMPROV_TEMPLATE
+
+    # ── real r_phys ledger ───────────────────────────────────────────────────
+    def record_patch_arm(self, patch_id: str, arm_id: str) -> None:
+        """记 patch → 生成臂. 供回填时把真实 r_phys 归因到臂."""
+        self._arm_by_patch[patch_id] = arm_id
+        if len(self._arm_by_patch) > _REAL_OUTCOME_MAX:
+            for k in list(self._arm_by_patch)[: len(self._arm_by_patch) - _REAL_OUTCOME_MAX]:
+                self._arm_by_patch.pop(k, None)
+        self._save_arm_ledger()
+
+    def arm_for_patch(self, patch_id: str) -> str | None:
+        return self._arm_by_patch.get(patch_id)
+
+    def record_real_outcome(self, arm_id: str, task_id: str, r_phys: float) -> None:
+        """把一次真实迭代的 r_phys 回填到某个臂. 未开启时 no-op."""
         if not self.enabled():
             return
-        block_names = [n for n, _ in blocks]
-        self._replay.append(
+        self._real_outcomes.append(
             {
-                "phase": phase,
-                "block_names": block_names,
-                "r_phys": (float(r_phys) if r_phys is not None else None),
-                "directive": directive or "",
+                "arm_id": arm_id,
+                "task_id": str(task_id),
+                "r_phys": float(r_phys),
                 "ts": time.time(),
             }
         )
-        self._replay = self._replay[-_REPLAY_MAX:]
-        self._save_replay()
-        self._trace({"type": "generation", "phase": phase})
+        self._real_outcomes = self._real_outcomes[-_REAL_OUTCOME_MAX:]
+        self._save_real_outcomes()
+        self._trace(
+            {"type": "real_outcome", "arm_id": arm_id, "r_phys": float(r_phys)}
+        )
+
+    def _real_observations(
+        self, candidate_id: str
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """取 baseline 臂与指定候选臂的真实观测 (candidate 臂即候选 config_id)."""
+        base = [o for o in self._real_outcomes if o.get("arm_id") == _BASELINE_ID]
+        cand = [o for o in self._real_outcomes if o.get("arm_id") == candidate_id]
+        return base, cand
+
+    def _bucket_pairs(
+        self, base: list[dict[str, Any]], cand: list[dict[str, Any]]
+    ) -> list[tuple[str, float, float]]:
+        """按任务桶配对: 同桶内 baseline 与候选的均值成对 (桶键即配对键)."""
+        base_by: dict[str, list[float]] = {}
+        cand_by: dict[str, list[float]] = {}
+        for o in base:
+            base_by.setdefault(_bucket_of(o["task_id"]), []).append(float(o["r_phys"]))
+        for o in cand:
+            cand_by.setdefault(_bucket_of(o["task_id"]), []).append(float(o["r_phys"]))
+        return [
+            (b, _mean(base_by[b]), _mean(cand_by[b]))
+            for b in sorted(set(base_by) & set(cand_by))
+        ]
+
+    async def note_generation(
+        self, phase: str, blocks: list[tuple[str, str]], r_phys: float | None,
+        directive: str, llm_chat_fn: Callable[[str, str], Any],
+        patch_id: str | None = None, arm_id: str | None = None,
+    ) -> None:
+        """H1 generate_patch 成功产 patch 后回调: 记 patch→臂 + 攒计数触发 maybe_propose."""
+        if not self.enabled():
+            return
+        if patch_id is not None and arm_id is not None:
+            self.record_patch_arm(patch_id, arm_id)
+        self._trace({"type": "generation", "phase": phase, "arm_id": arm_id})
         self._propose_count += 1
         try:
             if self._propose_count % _PROPOSE_EVERY_N == 0:
-                cid = await self.maybe_propose(llm_chat_fn)
-                # 闭环: 提案后立即离线评估并按 GREEN 换件 (默认关; 打开了才有 LLM 开销)
-                if cid:
-                    await self.evaluate(cid, llm_chat_fn)
-                    self.maybe_promote(cid)
+                await self.maybe_propose(llm_chat_fn)
+                # 不在此处 evaluate/promote: 换件要等真实 r_phys 回填攒够样本
+                # (engine_reflect 每轮回填后调 evaluate + maybe_promote).
         except Exception:
             logger.debug("meta note_generation/maybe_propose failed", exc_info=True)
 
@@ -342,66 +419,66 @@ class MetaImprover:
         return cfg.config_id
 
     # ── evaluate / promote ───────────────────────────────────────────────────
-    async def _score_candidate(
-        self, cfg: ImproverConfig, probe: dict[str, Any],
-        llm_chat_fn: Callable,
-    ) -> float | None:
-        """对某个改进器配置在某重放探针上的离线代理分. llm 失败/模板非法 → None."""
-        tpl = cfg.improver_prompt if cfg is not None else DEFAULT_IMPROV_TEMPLATE
-        prompt = build_improver_prompt(
-            tpl, probe["phase"], probe["block_names"],
-            probe.get("r_phys"), probe.get("directive", ""),
-        )
-        if prompt is None:
-            return None
-        try:
-            resp = await llm_chat_fn(prompt, task="summarize")
-        except Exception:
-            return None
-        return score_patch_output(resp or "", probe["block_names"], probe.get("directive", ""))
+    async def evaluate(self, candidate_id: str) -> dict[str, Any]:
+        """用回填的真实 r_phys 给候选 vs baseline 打分, 注册进显著性+OOD 门控.
 
-    async def evaluate(
-        self, candidate_id: str, llm_chat_fn: Callable,
-    ) -> dict[str, Any]:
-        """在冻结重放集上给候选 vs 当前基准打分, 注册进显著性+OOD 门控.
+        真实 A/B 无法在同一 task 上同时跑两臂, 故按任务桶配对 (见 _bucket_pairs).
+        样本不足 → 不判定、不换件 (宁可保持默认).
 
-        返回 {base_score, cand_score, scores_n, sig, ood, green}.
+        返回 {score_source, pairs_n, base_mean, cand_mean, sig_passed, ood_passed, green}.
         """
         if not self.enabled():
-            return {"green": False, "reason": "disabled"}
+            return {"green": False, "reason": "disabled", "score_source": "real_r_phys"}
         cfg = self._candidates.get(candidate_id)
         if cfg is None:
-            return {"green": False, "reason": "unknown_candidate"}
-        if not self._replay:
-            return {"green": False, "reason": "no_replay"}
-        base_scores: list[float] = []
-        cand_scores: list[float] = []
-        for probe in self._replay:
-            base = await self._score_candidate(None, probe, llm_chat_fn)
-            cand = await self._score_candidate(cfg, probe, llm_chat_fn)
-            if base is None or cand is None:
-                continue
-            base_scores.append(base)
-            cand_scores.append(cand)
-            task_id = probe.get("probe_id") or probe.get("ts") or str(random.random())
-            from huginn.harness.ood_holdout import OODHoldoutValidator
-            from huginn.harness.significance_gate import SignificanceGate
-            SignificanceGate.get_instance().record_pair(
-                candidate_id, base, cand, task_id=str(task_id),
-            )
-            OODHoldoutValidator.get_instance().record_outcome(OODHoldoutValidator._BASELINE_ID, str(task_id), base)
-            OODHoldoutValidator.get_instance().record_outcome(candidate_id, str(task_id), cand)
-        # 组合 == AdoptionGate 的 GREEN 条件: 显著 且 OOD 不退化
+            return {
+                "green": False,
+                "reason": "unknown_candidate",
+                "score_source": "real_r_phys",
+            }
+        base_obs, cand_obs = self._real_observations(candidate_id)
+        pairs = self._bucket_pairs(base_obs, cand_obs)
+        if len(pairs) < _MIN_SAMPLES:
+            result = {
+                "candidate_id": candidate_id,
+                "score_source": "real_r_phys",
+                "pairs_n": len(pairs),
+                "green": False,
+                "reason": f"insufficient_real_outcomes: {len(pairs)}/{_MIN_SAMPLES}",
+            }
+            self._trace({"type": "evaluate", **result})
+            return result
         from huginn.harness.ood_holdout import OODHoldoutValidator
         from huginn.harness.significance_gate import SignificanceGate
-        sig = SignificanceGate.get_instance().gate_decision(candidate_id, min_samples=_MIN_SAMPLES)
-        ood = OODHoldoutValidator.get_instance().validate_ood(candidate_id)
+        sig_gate = SignificanceGate.get_instance()
+        ood_gate = OODHoldoutValidator.get_instance()
+        # ledger 是唯一真源: 每次 evaluate 幂等重建 derived 视图 (清候选自身 + baseline),
+        # 否则每轮重复 record 会膨胀样本量, 让 Wilcoxon 假性显著 / OOD 记录无限增长.
+        sig_gate.clear(candidate_id)
+        ood_gate.clear(candidate_id)
+        ood_gate.clear(ood_gate._BASELINE_ID)
+        # baseline OOD 用 ledger 全部 baseline 观测 (与候选无关) → 重建幂等.
+        # 桶键与候选一致, 保证 train/holdout 切分在同一任务集上做.
+        for o in base_obs:
+            ood_gate.record_outcome(
+                ood_gate._BASELINE_ID, _bucket_of(o["task_id"]), float(o["r_phys"])
+            )
+        base_scores: list[float] = []
+        cand_scores: list[float] = []
+        for key, b, c in pairs:
+            sig_gate.record_pair(candidate_id, b, c, task_id=key)
+            ood_gate.record_outcome(candidate_id, key, c)
+            base_scores.append(b)
+            cand_scores.append(c)
+        sig = sig_gate.gate_decision(candidate_id, min_samples=_MIN_SAMPLES)
+        ood = ood_gate.validate_ood(candidate_id)
         green = bool(sig.passed and ood.passed)
         result = {
             "candidate_id": candidate_id,
+            "score_source": "real_r_phys",
+            "pairs_n": len(pairs),
             "base_mean": _mean(base_scores),
             "cand_mean": _mean(cand_scores),
-            "scores_n": len(base_scores),
             "sig_n": sig.n_samples,
             "sig_passed": sig.passed,
             "ood_passed": bool(ood.passed),
@@ -454,7 +531,7 @@ class MetaImprover:
             "n_promotions": self._promotions,
             "n_candidates": n_candidates,
             "meta_win_rate": round(self._promotions / max(1, n_candidates), 3),
-            "replay_size": len(self._replay),
+            "real_outcomes_n": len(self._real_outcomes),
         }
 
 
@@ -463,7 +540,7 @@ def _mean(v: list[float]) -> float:
 
 
 def _selfcheck() -> None:
-    """M-R1 selfcheck: off 零回归 + 好候选 GREEN 换件 + 差候选不换 + OOD 背题拦截."""
+    """M-R1 selfcheck: off 零回归 + canary 选臂 + 真实 r_phys 换件 + 差候选不换."""
     import asyncio
     import shutil
     import tempfile
@@ -478,16 +555,10 @@ def _selfcheck() -> None:
         True if key in ("harness_meta_improver", "harness_prompt_patch") else default
     )
 
-    # 重放集探针只在实际 evaluate 用的那个单例上填 (见 step 3, toggle 重置之后)
     blocks = [("body", "b {context}"), ("mem", "m"), ("fail", "f")]
 
-    # 假 LLM: 按 improver 模板内容返回, 让「好模板」产出有效 patch, 「默认/差模板」产出坏 patch
     async def fake_llm(prompt, task="summarize"):
-        if prompt.startswith(mi._META_IMPROVE_TEMPLATE[:40]):
-            return good_template
-        if "good-improver" in prompt:
-            return '{"block_name": "mem", "op": "append", "new_text": "focus hint"}'
-        return "not-json"
+        return "You are the improver. Phase:{phase} Blocks:{block_names} R:{r_phys} D:{directive}"
 
     good_template = (
         "Nice good-improver. Phase:{phase} Blocks:{block_names} R:{r_phys} D:{directive} "
@@ -497,66 +568,95 @@ def _selfcheck() -> None:
         "Bad improver. Phase:{phase} Blocks:{block_names} R:{r_phys} D:{directive}."
     )
 
-    meta = None  # 在 step 3 toggle 重置后重绑到当前单例
+    def seed_real(meta: mi.MetaImprover, candidate_id: str, base: float, cand: float) -> None:
+        """造真实回填数据: 16 桶都有两臂 → sig 配对 >=5 + OOD train/holdout 够量."""
+        for i in range(_PAIR_BUCKETS):
+            task = f"task_{i:03d}"
+            meta.record_real_outcome(mi._BASELINE_ID, task, base)
+            meta.record_real_outcome(candidate_id, task, cand)
 
-    # 1. 默认模板可实例化
-    p = mi.build_improver_prompt(mi.DEFAULT_IMPROV_TEMPLATE, "h", ["body"], 0.6, "")
+    # 1. 默认模板可实例化 + bucket 确定性
+    p = mi.build_improver_prompt(
+        mi.DEFAULT_IMPROV_TEMPLATE, "h", [n for n, _ in blocks], 0.6, ""
+    )
     assert p and "{phase}" not in p
-    print("1. default template instantiation OK")
+    assert mi._bucket_of("t1") == mi._bucket_of("t1")
+    print("1. default template + bucket determinism OK")
 
-    # 2. toggle off → champion None, note 不写 (replay 长度不变)
+    # 2. toggle off → champion None + select_generation_arm 回落 baseline + 不记 outcome
     mi._harness_enabled = lambda key, default=False: False
     mi.MetaImprover._instance = None
-    n_before = len(mi.MetaImprover.get_instance()._replay)
-    assert mi.MetaImprover.get_instance().champion_cfg() is None
-    asyncio.run(mi.MetaImprover.get_instance().note_generation("h", blocks, 0.5, "", fake_llm))
-    assert len(mi.MetaImprover.get_instance()._replay) == n_before, "off should not record"
-    print("2. toggle off → champion None + no record OK")
+    m_off = mi.MetaImprover.get_instance()
+    assert m_off.champion_cfg() is None
+    arm, tpl = m_off.select_generation_arm()
+    assert arm == mi._BASELINE_ID and tpl == mi.DEFAULT_IMPROV_TEMPLATE, (arm, tpl)
+    m_off.record_real_outcome(mi._BASELINE_ID, "t", 0.9)
+    assert len(m_off._real_outcomes) == 0, "off should not record real outcomes"
+    print("2. toggle off → baseline arm + no record OK")
     mi.MetaImprover._instance = None
     mi._harness_enabled = lambda key, default=False: (
         True if key in ("harness_meta_improver", "harness_prompt_patch") else default
     )
 
-    # 3. 候选 good → 显著 + OOD 通过 → promote
+    # 3. canary 选臂: 有候选时以 _CANARY_P 概率接管, 否则 baseline
     meta = mi.MetaImprover.get_instance()
-    # 给该单例填重放集探针: 8 个, 足够 sig(>=5) + ood(train/holdout >=3)
-    for i in range(8):
-        meta._replay.append(
-            {"phase": "hypothesize", "block_names": ["body", "mem", "fail"],
-             "r_phys": 0.5, "directive": f"hint {i}", "ts": float(100 + i),
-             "probe_id": f"probe_{i:02d}"}
-        )
+    meta._candidates["cand_a"] = mi.ImproverConfig(
+        config_id="cand_a", improver_prompt=good_template, r_phys_gate=0.7
+    )
+    _orig_random = mi.random.random
+    mi.random.random = lambda: 0.0  # < _CANARY_P → 命中 canary
+    arm_c, tpl_c = meta.select_generation_arm()
+    mi.random.random = lambda: 0.99  # > _CANARY_P → baseline
+    arm_b, _ = meta.select_generation_arm()
+    mi.random.random = _orig_random
+    assert arm_c == "cand_a" and "good-improver" in tpl_c, (arm_c, tpl_c)
+    assert arm_b == mi._BASELINE_ID, arm_b
+    print("3. canary arm selection OK")
+
+    # 4. patch → 臂记账 + 真实 r_phys 回填 → 显著 + OOD → promote
     cid = asyncio.run(meta.maybe_propose(fake_llm))
-    assert cid is not None, "good template should propose"
-    r = asyncio.run(meta.evaluate(cid, fake_llm))
-    assert r["green"], f"good candidate should be green: {r}"
+    assert cid is not None, "template should propose"
+    meta.record_patch_arm("patch_x", cid)
+    assert meta.arm_for_patch("patch_x") == cid
+    r0 = asyncio.run(meta.evaluate(cid))
+    assert not r0["green"] and r0["reason"].startswith("insufficient_real_outcomes"), r0
+    seed_real(meta, cid, base=0.3, cand=0.9)
+    r = asyncio.run(meta.evaluate(cid))
+    assert r["score_source"] == "real_r_phys" and r["green"], r
     assert meta.maybe_promote(cid) is True
     cc = meta.champion_cfg()
     assert cc is not None and cc.config_id == cid, "champion should switch"
-    print(f"3. good candidate GREEN promote OK (win_rate={meta.compounding_trace()['meta_win_rate']})")
+    print(f"4. real r_phys GREEN promote OK (pairs={r['pairs_n']})")
 
-    # 4. 差候选 → RED/YELLOW → 不换
+    # 5. 差候选 → 不换 + 换代历史/trace
     bad = mi.ImproverConfig(config_id="bad", improver_prompt=bad_template, r_phys_gate=0.7)
     meta._candidates["bad"] = bad
     meta._save_candidate(bad)
-    r2 = asyncio.run(meta.evaluate("bad", fake_llm))
-    if r2["green"]:
-        print("bad evaluated green unexpectedly (data-dependent); forcing model-level check")
+    seed_real(meta, "bad", base=0.9, cand=0.2)  # 候选显著更差
+    asyncio.run(meta.evaluate("bad"))
     champ_before = meta.champion_cfg().config_id
     assert meta.maybe_promote("bad") is False, "bad should not promote"
     assert meta.champion_cfg().config_id == champ_before, "champion unchanged"
-    print("4. bad candidate → no promote OK")
-
-    # 5. 换代历史 + trace
     tr = meta.compounding_trace()
     assert tr["n_promotions"] >= 1 and tr["active_config_id"] == cid
+    assert tr["real_outcomes_n"] > 0
     assert meta._trace_path.exists(), "meta_trace should be written"
-    print(f"5. champion history + trace OK (promotions={tr['n_promotions']})")
+    print(f"5. bad no-promote + history OK (promotions={tr['n_promotions']})")
+
+    # 6. evaluate 幂等: 重复跑不膨胀 sig 样本 (否则 Wilcoxon 假性显著)
+    from huginn.harness.significance_gate import SignificanceGate
+
+    _n1 = len(SignificanceGate.get_instance().get_pairs(cid))
+    asyncio.run(meta.evaluate(cid))
+    asyncio.run(meta.evaluate(cid))
+    _n2 = len(SignificanceGate.get_instance().get_pairs(cid))
+    assert _n1 == _n2 >= _MIN_SAMPLES, f"evaluate not idempotent: {_n1} -> {_n2}"
+    print(f"6. evaluate idempotent OK (pairs stay {_n2})")
 
     shutil.rmtree(tmp, ignore_errors=True)
     del os_env.environ["HUGINN_CACHE_DIR"]
     mi.MetaImprover._instance = None
-    print("\nM-R1 meta_improver selfcheck OK (5/5)")
+    print("\nM-R1 meta_improver selfcheck OK (6/6)")
 
 
 if __name__ == "__main__":
