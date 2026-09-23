@@ -45,6 +45,7 @@ _CORE_MODULES = [
     ("huginn.tools.validate_tool", "ValidateTool"),
     ("huginn.tools.diagnose_tool", "DiagnoseTool"),
     ("huginn.tools.system_diagnostic_tool", "SystemDiagnosticTool"),
+    ("huginn.tools.nixos_tool", "NixOSTool"),
     ("huginn.tools.extract_tool", "ExtractTool"),
     ("huginn.tools.job_tool", "JobTool"),
     ("huginn.tools.database_tool", "DatabaseTool"),
