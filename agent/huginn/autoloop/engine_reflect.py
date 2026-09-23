@@ -2293,11 +2293,17 @@ class EngineReflect:
 
 
     def _apply_strict_scope(self, r_phys: float | None) -> float | None:
-        """Anti-Hacking ① 折叠点: 越界改动 → 整轨奖励清零.
+        """Anti-Hacking 折叠点: 越界改动 → 整轨奖励清零 (两口径, 各自独立开关).
 
-        授权面 = 既有权限面 (沙箱硬底线 + path_rules, 见 permissions.py);
+        ① 合规口径 (flag `anti_hacking_reward`): 授权面 = 既有权限面 (沙箱硬底线 +
+           path_rules, 见 permissions.py); 改动命中 DENY 规则 (改 score.py 等评分
+           产物) → 清零. 抓"碰绝对禁区".
+        ② 意图口径 (flag `intent_scope_reward`): 授权面 = 本轮 plan 声明的目标集
+           (`_current_plan_target_files`, 来自 plan 的 FILES: 行); 改动落在声明集
+           之外 → 清零. 抓"plan 说改 A 实际偷偷改了 B"的偏离.
+
         改动文件面 = engine_act 缓存的 `_last_execution_files`。任一缺失
-        (flag off / 授权面不可用 / 无改动文件) → 原样返回 r_phys, 零行为变更。
+        (两 flag 都 off / 授权面不可用 / 无改动文件) → 原样返回 r_phys, 零行为变更。
 
         固定按 sandbox_mode=True 取硬底线: `_DEFAULT_SANDBOX_PATH_RULES` 列的
         正是评分产物 (score.py / evaluation/*.py / rubric.json), 对 anti-hacking
@@ -2312,33 +2318,58 @@ class EngineReflect:
         try:
             from huginn.feature_flags import FeatureFlags
 
-            if not FeatureFlags.shared().is_enabled("anti_hacking_reward"):
-                return r_phys
+            _ff = FeatureFlags.shared()
+            _s1 = _ff.is_enabled("anti_hacking_reward")
+            _s2 = _ff.is_enabled("intent_scope_reward")
         except Exception:  # 防御: 开关读不到就不折, 绝不误伤
             logger.debug("strict-scope: read flag failed", exc_info=True)
+            return r_phys
+        if not (_s1 or _s2):
             return r_phys
         changed = list(getattr(self, "_last_execution_files", None) or [])
         if not changed:
             return r_phys
         try:
             from huginn.validation.claim_reward import anti_hacking_reward
-            from huginn.validation.scope_authority import compute_authorized_ratio
-
-            res = compute_authorized_ratio(changed, sandbox_mode=True)
-            if res.get("source") == "unavailable":
-                return r_phys
-            adjusted = anti_hacking_reward(
-                float(r_phys), authorized_ratio=float(res["authorized_ratio"])
+            from huginn.validation.scope_authority import (
+                compute_authorized_ratio,
+                compute_intent_ratio,
             )
-            if adjusted != r_phys:
-                logger.info(
-                    "strict-scope: r_phys %.3f → %.3f (越界 %d/%d: %s)",
-                    r_phys,
-                    adjusted,
-                    len(res["violations"]),
-                    res["total"],
-                    res["violations"][:5],
-                )
+
+            adjusted = float(r_phys)
+            if _s1:
+                res = compute_authorized_ratio(changed, sandbox_mode=True)
+                if res.get("source") != "unavailable":
+                    adjusted = anti_hacking_reward(
+                        adjusted, authorized_ratio=float(res["authorized_ratio"])
+                    )
+                    if adjusted != r_phys:
+                        logger.info(
+                            "strict-scope(compliance): r_phys %.3f → %.3f "
+                            "(越界 %d/%d: %s)",
+                            r_phys,
+                            adjusted,
+                            len(res["violations"]),
+                            res["total"],
+                            res["violations"][:5],
+                        )
+            if _s2:
+                globs = list(getattr(self, "_current_plan_target_files", None) or [])
+                ires = compute_intent_ratio(changed, intent_globs=globs)
+                if ires.get("source") != "unavailable":
+                    adjusted = anti_hacking_reward(
+                        adjusted, authorized_ratio=float(ires["authorized_ratio"])
+                    )
+                    if adjusted != r_phys:
+                        logger.info(
+                            "strict-scope(intent): r_phys %.3f → %.3f "
+                            "(偏离 %d/%d: %s)",
+                            r_phys,
+                            adjusted,
+                            len(ires["violations"]),
+                            ires["total"],
+                            ires["violations"][:5],
+                        )
             return adjusted
         except Exception:  # 防御: 折入失败不影响主循环
             logger.debug("strict-scope fold failed", exc_info=True)

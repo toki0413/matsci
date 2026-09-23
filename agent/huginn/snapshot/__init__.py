@@ -14,11 +14,17 @@
     mgr = SnapshotManager()
     mgr.revert(step_id, Path("/path/to/ws"))
     mgr.unrevert(step_id, Path("/path/to/ws"))
+
+    # 3) 整层快照: 拍整棵工作区, 可一次性丢弃回到建层时状态
+    layer_id = mgr.create_layer(Path("/path/to/ws"), label="iter-7")
+    mgr.layer_diff(layer_id)          # 看看层后改了什么
+    mgr.discard_layer(layer_id)       # 整层丢弃
 """
 
 from huginn.snapshot.file_snapshot import (
     FilePatch,
     FileSnapshot,
+    LayerInfo,
     SnapshotManager,
 )
 from huginn.snapshot.integration import (
@@ -30,6 +36,7 @@ from huginn.snapshot.integration import (
 __all__ = [
     "FilePatch",
     "FileSnapshot",
+    "LayerInfo",
     "SnapshotManager",
     "register_snapshot_hooks",
     "snapshot_pre_hook",

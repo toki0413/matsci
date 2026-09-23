@@ -334,3 +334,73 @@ class TestStrictScopeFoldedIntoLearn:
 
     def test_clean_change_keeps_r_phys(self, engine: AutoloopEngine):
         assert self._learn_r_phys(engine, ["src/a.py"], 0.9) == 0.9
+
+
+class TestIntentScope:
+    """意图口径 (S2): plan 的 FILES: 行 → PlanStep.target_files → 偏离清零.
+
+    锁住整条接线: 解析 FILES: → 落 PlanStore/缓存 → _learn 折 r_phys.
+    """
+
+    def test_plan_parses_files_line_into_target_files(self, engine: AutoloopEngine):
+        _set_plan_response(
+            engine,
+            "MODE: coder\nDESCRIPTION: tweak x\nFILES: src/a.py, tests/test_a.py",
+        )
+        plan = asyncio.run(engine._plan("intent hypothesis", {}))
+
+        assert plan is not None
+        assert plan["target_files"] == ["src/a.py", "tests/test_a.py"]
+        persisted = engine._plan_store.get_plan(plan["plan_id"])
+        assert persisted is not None
+        assert persisted.steps[0].target_files == ["src/a.py", "tests/test_a.py"]
+        # 缓存到引擎, 供 _learn 的 _apply_strict_scope 读
+        assert engine._current_plan_target_files == ["src/a.py", "tests/test_a.py"]
+
+    def test_plan_without_files_line_declares_nothing(self, engine: AutoloopEngine):
+        _set_plan_response(engine, "MODE: coder\nDESCRIPTION: tweak x")
+        plan = asyncio.run(engine._plan("intent hypothesis", {}))
+
+        assert plan is not None
+        assert "target_files" not in plan
+        assert engine._current_plan_target_files == []
+
+    def _learn_r_phys(self, engine: AutoloopEngine, files: list[str], r_phys: float):
+        from huginn.feature_flags import FeatureFlags
+
+        ff = FeatureFlags.shared()
+        ff.enable("intent_scope_reward")
+        try:
+            engine._last_execution_files = files
+            _set_plan_response(
+                engine,
+                "MODE: coder\nDESCRIPTION: tweak x\nFILES: src/a.py",
+            )
+            plan = asyncio.run(engine._plan("intent hypothesis", {}))
+            asyncio.run(
+                engine._learn(
+                    "intent hypothesis",
+                    plan,
+                    {"r_phys": r_phys, "tests_passed": True},
+                )
+            )
+        finally:
+            ff.reset("intent_scope_reward")
+        recs = [
+            m.content
+            for m in engine.memory.session.messages
+            if isinstance(m.content, dict) and "hypothesis" in m.content
+        ]
+        assert recs, "_learn 应往 session memory 落一条迭代记录"
+        return recs[-1]["r_phys"]
+
+    def test_deviation_from_declared_scope_zeroes_r_phys(
+        self, engine: AutoloopEngine
+    ):
+        # plan 说改 src/a.py, 实际改了 src/b.py → 偏离 → 清零
+        assert self._learn_r_phys(engine, ["src/b.py"], 0.9) == 0.0
+
+    def test_change_inside_declared_scope_keeps_r_phys(
+        self, engine: AutoloopEngine
+    ):
+        assert self._learn_r_phys(engine, ["src/a.py"], 0.9) == 0.9

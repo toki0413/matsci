@@ -18,9 +18,10 @@
 论文 §6.5 里 AppArmor 挡的那类"去翻评分产物/日志找残留答案"—— 改 `score.py`
 正是 reward hacking 最典型的签名。
 
-口径 S2 (意图口径, 未实现): 授权集合 = 本轮 plan 声明的目标 globs。需要 plan
-增加文件级字段; 目前 `PlanStep` 只有 description/tool/parameters (见
-`huginn/autoloop/plan_store.py`), 无从表达, 故留作升级路径。
+口径 S2 (意图口径, `compute_intent_ratio`): 授权集合 = 本轮 plan 声明的目标
+globs (PlanStep.target_files)。改动落在声明集之外的即判越界 —— 这抓的是
+"plan 说改 A, 实际偷偷改了 B" 这类偏离, 与 S1 正交: S1 抓"碰了绝对禁区"
+(评分产物), S2 抓"偏离本轮意图". 两者独立开关, 可单独启用。
 
 零回归: 授权面为空 (未开 sandbox_mode 且无 path_rules) → `source="unavailable"`,
 ratio=1.0, 调用方据此 no-op; 无改动文件 → ratio=1.0。纯标准库/幂等/可单测。
@@ -40,6 +41,7 @@ logger = logging.getLogger(__name__)
 # 授权面不可用时的哨兵: 调用方看到它必须原样放行 r_phys, 不得改动.
 _SOURCE_UNAVAILABLE = "unavailable"
 _SOURCE_PERMISSIONS = "permissions.path_rules"
+_SOURCE_INTENT = "intent.target_files"
 
 # git porcelain 行首状态码: " M f" / "?? f" / "MM f" / "R  a -> b".
 # 只剥前导状态标记, 不碰裸路径 (裸路径首字符不在类里, 不会误伤).
@@ -165,4 +167,97 @@ def compute_authorized_ratio(
     }
 
 
-__all__ = ["compute_authorized_ratio"]
+def _normalize_globs(intent_globs: Sequence[Any] | None) -> list[str]:
+    """归一意图 globs: 去空白, 统一分隔符, 去重保序."""
+    seen: dict[str, None] = {}
+    for g in intent_globs or []:
+        s = str(g or "").strip().replace("\\", "/")
+        if s:
+            seen.setdefault(s, None)
+    return list(seen)
+
+
+def _intent_match(path: str, globs: Sequence[str]) -> bool:
+    """path 是否落在声明的意图集内.
+
+    支持三种声明形态 (都是 plan 里自然写出来的):
+      - 精确路径 "src/a.py"     → 全路径相等/fnmatch
+      - 通配 glob "src/*.py"    → 全路径 fnmatch
+      - 目录 "src/" 或 "src"    → 前缀匹配 (含子目录)
+    裸模式 (不含 "/") 才允许 basename 匹配, 让 "*.py" 生效, 同时不把
+    精确路径 "src/a.py" 误放宽成"任意目录下的 a.py"。
+    """
+    basename = Path(path).name
+    for g in globs:
+        if g.endswith("/"):
+            if path.startswith(g) or path == g.rstrip("/"):
+                return True
+            continue
+        if fnmatch.fnmatch(path, g):
+            return True
+        if "/" not in g and fnmatch.fnmatch(basename, g):
+            return True
+        # 声明为目录但没写尾斜杠: "src" → "src/a.py" (但不误配 "srcfoo/a.py")
+        if path.startswith(g + "/"):
+            return True
+    return False
+
+
+def compute_intent_ratio(
+    changed_files: Sequence[Any],
+    *,
+    intent_globs: Sequence[Any] | None = None,
+) -> dict[str, Any]:
+    """算意图口径 (S2) 的 authorized_ratio: 改动是否落在本轮 plan 声明集内.
+
+    Returns: {
+        "authorized_ratio": float,   # 无声明 (空 globs) → 恒 1.0 (no-op)
+        "violations": list[str],     # 落在声明集之外的改动路径
+        "total": int,
+        "in_scope": int,
+        "source": str,               # "unavailable" 时必须原样放行
+        "globs_n": int,
+    }
+
+    零回归: 未声明目标 (globs 为空) → source=unavailable, ratio=1.0, 调用方 no-op。
+    声明集存在但无改动文件 → ratio=1.0。
+    """
+    paths = [p for p in (_normalize(e) for e in (changed_files or [])) if p]
+    seen: dict[str, None] = {}
+    for p in paths:
+        seen.setdefault(p, None)
+    uniq = list(seen)
+
+    globs = _normalize_globs(intent_globs)
+    if not globs:
+        return {
+            "authorized_ratio": 1.0,
+            "violations": [],
+            "total": len(uniq),
+            "in_scope": len(uniq),
+            "source": _SOURCE_UNAVAILABLE,
+            "globs_n": 0,
+        }
+    if not uniq:
+        return {
+            "authorized_ratio": 1.0,
+            "violations": [],
+            "total": 0,
+            "in_scope": 0,
+            "source": _SOURCE_INTENT,
+            "globs_n": len(globs),
+        }
+
+    violations = [p for p in uniq if not _intent_match(p, globs)]
+    in_scope = len(uniq) - len(violations)
+    return {
+        "authorized_ratio": in_scope / len(uniq),
+        "violations": violations,
+        "total": len(uniq),
+        "in_scope": in_scope,
+        "source": _SOURCE_INTENT,
+        "globs_n": len(globs),
+    }
+
+
+__all__ = ["compute_authorized_ratio", "compute_intent_ratio"]

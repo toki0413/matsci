@@ -135,9 +135,10 @@ class TestSandboxExecutor:
 
         captured: dict = {}
 
-        def fake_make_preexec_fn(ro, rw, *, required=False):
+        def fake_make_preexec_fn(ro, rw, *, required=False, **kwargs):
             captured["ro"] = ro
             captured["rw"] = rw
+            captured.update(kwargs)
             return lambda: None  # 模拟 Landlock 可用
 
         monkeypatch.setattr(
@@ -178,7 +179,7 @@ class TestSandboxExecutor:
 
         monkeypatch.setattr(
             "huginn.security.landlock.make_preexec_fn",
-            lambda ro, rw, *, required=False: None,
+            lambda ro, rw, *, required=False, **kwargs: None,
         )
         calls: list[dict] = []
 
@@ -205,7 +206,7 @@ class TestSandboxExecutor:
         sentinel = lambda: None  # noqa: E731
         monkeypatch.setattr(
             "huginn.security.landlock.make_preexec_fn",
-            lambda ro, rw, *, required=False: (  # 不应被调用
+            lambda ro, rw, *, required=False, **kwargs: (  # 不应被调用
                 self._fail  # type: ignore[attr-defined]
             ),
         )
@@ -225,6 +226,120 @@ class TestSandboxExecutor:
         )
         assert calls
         assert calls[0]["preexec_fn"] is sentinel
+
+    # ── P1: 网络隔离 + 本地资源限制接线 ──────────────────────────────
+    def test_isolate_network_forwarded_to_preexec(self, monkeypatch):
+        """isolate_network=True → make_preexec_fn 收到 net_isolate=True 并注入."""
+        import sys
+        cfg = SandboxConfig(
+            strict_work_dir=True,
+            allowed_work_dirs={Path("/tmp")},
+            allowed_executables={"python", "python3"},
+            isolate_network=True,
+        )
+        sandbox = SandboxExecutor(cfg)
+        captured: dict = {}
+
+        def fake_make_preexec_fn(ro, rw, *, required=False, **kwargs):
+            captured["ro"], captured["rw"] = ro, rw
+            captured.update(kwargs)
+            return lambda: None
+
+        monkeypatch.setattr(
+            "huginn.security.landlock.make_preexec_fn", fake_make_preexec_fn
+        )
+        calls: list[dict] = []
+
+        def fake_subprocess_run(*args, **kwargs):
+            calls.append(kwargs)
+            return subprocess.CompletedProcess(args[0], 0, stdout="ok", stderr="")
+
+        monkeypatch.setattr(
+            "huginn.security.sandbox.subprocess.run", fake_subprocess_run
+        )
+        sandbox.run([sys.executable, "-c", "print('x')"], cwd="/tmp")
+
+        assert captured.get("net_isolate") is True
+        assert calls and callable(calls[0].get("preexec_fn"))
+
+    def test_net_isolation_without_scoped_dirs_uses_empty_fs(self, monkeypatch):
+        """只开网络隔离 (无 scoped dirs) → 仍注入 preexec, 但 FS 路径集为空."""
+        import sys
+        cfg = SandboxConfig(
+            strict_work_dir=False,
+            allowed_executables={"python", "python3"},
+            isolate_network=True,
+        )
+        sandbox = SandboxExecutor(cfg)
+        captured: dict = {}
+
+        def fake_make_preexec_fn(ro, rw, *, required=False, **kwargs):
+            captured["ro"], captured["rw"] = ro, rw
+            captured.update(kwargs)
+            return lambda: None
+
+        monkeypatch.setattr(
+            "huginn.security.landlock.make_preexec_fn", fake_make_preexec_fn
+        )
+        monkeypatch.setattr(
+            "huginn.security.sandbox.subprocess.run",
+            lambda *a, **k: subprocess.CompletedProcess(a[0], 0, stdout="ok", stderr=""),
+        )
+        sandbox.run([sys.executable, "-c", "print('x')"], cwd="/tmp")
+
+        assert captured.get("net_isolate") is True
+        assert captured.get("ro") == [] and captured.get("rw") == [], "net-only 不锁 FS"
+
+    def test_rlimits_built_and_forwarded(self, monkeypatch):
+        """max_cpu_seconds 等 → 组装成 RLIMIT 表并传给 make_preexec_fn."""
+        import resource
+        import sys
+        cfg = SandboxConfig(
+            strict_work_dir=True,
+            allowed_work_dirs={Path("/tmp")},
+            allowed_executables={"python", "python3"},
+            max_cpu_seconds=7,
+        )
+        sandbox = SandboxExecutor(cfg)
+        captured: dict = {}
+
+        def fake_make_preexec_fn(ro, rw, *, required=False, **kwargs):
+            captured.update(kwargs)
+            return lambda: None
+
+        monkeypatch.setattr(
+            "huginn.security.landlock.make_preexec_fn", fake_make_preexec_fn
+        )
+        monkeypatch.setattr(
+            "huginn.security.sandbox.subprocess.run",
+            lambda *a, **k: subprocess.CompletedProcess(a[0], 0, stdout="ok", stderr=""),
+        )
+        sandbox.run([sys.executable, "-c", "print('x')"], cwd="/tmp")
+
+        rl = captured.get("rlimits")
+        assert rl and rl.get(resource.RLIMIT_CPU) == (7, 12), rl
+
+    def test_no_confinement_kwargs_when_nothing_requested(self, monkeypatch):
+        """默认配置 (无 net / 无 rlimit / 无 scoped dirs) → 不注入 preexec (零回归)."""
+        import sys
+        cfg = SandboxConfig(
+            strict_work_dir=False,
+            allowed_executables={"python", "python3"},
+        )
+        sandbox = SandboxExecutor(cfg)
+        calls: list[dict] = []
+
+        def fake_subprocess_run(*args, **kwargs):
+            calls.append(kwargs)
+            return subprocess.CompletedProcess(args[0], 0, stdout="ok", stderr="")
+
+        monkeypatch.setattr(
+            "huginn.security.sandbox.subprocess.run", fake_subprocess_run
+        )
+        sandbox.run([sys.executable, "-c", "print('x')"], cwd="/tmp")
+
+        assert calls
+        assert "preexec_fn" not in calls[0]
 
     def test_hash_data(self):
         h1 = SandboxExecutor.hash_data("test")
