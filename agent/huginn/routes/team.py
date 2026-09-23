@@ -58,6 +58,25 @@ async def team_v2_members() -> dict[str, Any]:
         return {"success": False, "error": str(e)}
 
 
+@router.get("/team/v2/routing")
+async def team_v2_routing() -> dict[str, Any]:
+    """ModelCaps 路由决策的审计视图.
+
+    和 /team/v2/members 的区别: members 只给"谁承担哪个角色"的结果,
+    这里给"为什么是这个模型"的决策依据 —— 每个角色的硬性能力要求、
+    加分项、候选模型的能力快照与评分、落选原因 (missing_required).
+
+    只读, 不重新路由: 直接回放组建团队时留下的 trace, 与当前阵容一致.
+    decision 取值: single_model / id_match / capability_match / fallback / unfilled.
+    """
+    try:
+        team = _build_model_team()
+        audit = team.routing_audit()
+        return {"success": True, **audit}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 @router.post("/team/v2/plan")
 async def team_v2_plan(params: dict[str, Any]) -> dict[str, Any]:
     """只用 planner 成员生成执行计划, 不真正执行.

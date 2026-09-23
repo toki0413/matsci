@@ -155,10 +155,17 @@ class ModelTeam:
     tool_call), 前端通过 /events/stream 的 SSE 实时渲染子任务面板.
     """
 
-    def __init__(self, members: list[TeamMember]) -> None:
+    def __init__(
+        self,
+        members: list[TeamMember],
+        routing_trace: list[dict[str, Any]] | None = None,
+    ) -> None:
         self.members: dict[TeamRole, TeamMember] = {}
         for m in members:
             self.assign(m)
+        # 路由决策留痕 (可审计): 每个角色一条, 记下候选/评分/落选原因.
+        # 手工构造的 team 没有 trace, 审计面退化为空表而非报错.
+        self.routing_trace: list[dict[str, Any]] = list(routing_trace or [])
 
     # ── 实时事件 (子任务面板数据源) ─────────────────────────
 
@@ -223,12 +230,22 @@ class ModelTeam:
                 )
                 for role in TeamRole
             ]
-            return cls(members)
+            trace = [
+                _role_trace(
+                    role,
+                    decision="single_model",
+                    chosen_profile=p.id,
+                    chosen_model=model_name,
+                )
+                for role in TeamRole
+            ]
+            return cls(members, routing_trace=trace)
 
         # 多 profile: 先按 id 直接匹配角色, 剩下的按能力路由
         members: list[TeamMember] = []
         used_profiles: set[str] = set()
         assigned_roles: set[TeamRole] = set()
+        trace: list[dict[str, Any]] = []
 
         # 第一轮: profile.id 和角色名同名的直接绑定
         for p in profiles:
@@ -251,27 +268,55 @@ class ModelTeam:
             )
             used_profiles.add(p.id)
             assigned_roles.add(role)
+            trace.append(
+                _role_trace(
+                    role,
+                    decision="id_match",
+                    chosen_profile=p.id,
+                    chosen_model=model_name,
+                )
+            )
 
         # 第二轮: 剩余角色按能力从剩余 profile 中挑最合适的
         remaining_profiles = [p for p in profiles if p.id not in used_profiles]
         for role in TeamRole:
             if role in assigned_roles:
                 continue
+            # 候选集在决策时刻的快照 (后续 remove 会改变它, 审计要看当时的)
+            candidates = [_evaluate_profile(role, p, config) for p in remaining_profiles]
             best = _pick_best_profile(role, remaining_profiles, config)
             if best is None:
                 # 实在没人了, 从已分配的里面借一个 (planner 和 critic 不能同一个)
-                best = _pick_fallback_profile(role, members, assigned_roles)
-                if best is None:
+                borrowed = _pick_fallback_profile(role, members, assigned_roles)
+                if borrowed is None:
+                    trace.append(
+                        _role_trace(
+                            role,
+                            decision="unfilled",
+                            candidates=candidates,
+                            note="没有可用 profile, 该角色缺位",
+                        )
+                    )
                     continue
                 # 复用已有成员的 profile, 但起个新名字
                 members.append(
                     TeamMember(
-                        name=f"{role.value}-{best.profile_id}",
-                        profile_id=best.profile_id,
+                        name=f"{role.value}-{borrowed.profile_id}",
+                        profile_id=borrowed.profile_id,
                         role=role,
-                        model_name=best.model_name,
-                        caps=best.caps,
+                        model_name=borrowed.model_name,
+                        caps=borrowed.caps,
                         _config=config,
+                    )
+                )
+                trace.append(
+                    _role_trace(
+                        role,
+                        decision="fallback",
+                        chosen_profile=borrowed.profile_id,
+                        chosen_model=borrowed.model_name,
+                        candidates=candidates,
+                        note="无候选满足硬性能力要求, 借用已分配成员的 profile",
                     )
                 )
             else:
@@ -290,8 +335,17 @@ class ModelTeam:
                     )
                 )
                 remaining_profiles.remove(best)
+                trace.append(
+                    _role_trace(
+                        role,
+                        decision="capability_match",
+                        chosen_profile=best.id,
+                        chosen_model=model_name,
+                        candidates=candidates,
+                    )
+                )
 
-        return cls(members)
+        return cls(members, routing_trace=trace)
 
     # ── 运行 ──────────────────────────────────────────────
 
@@ -619,6 +673,19 @@ class ModelTeam:
             for m in self.members.values()
         ]
 
+    def routing_audit(self) -> dict[str, Any]:
+        """导出 ModelCaps 路由决策的可审计视图.
+
+        每行一个角色: 硬性能力要求 / 加分项 / 决策类型 / 选中模型 /
+        候选评估 (含落选原因 ``missing_required``). 只读, 不重新路由 ——
+        直接读组建团队时留下的 trace, 保证审计与实际阵容一致.
+        """
+        return {
+            "roles": list(self.routing_trace),
+            "count": len(self.routing_trace),
+            "decision_types": sorted({r["decision"] for r in self.routing_trace}),
+        }
+
     # ── Fusion 模式 ────────────────────────────────────────
 
     async def fusion_query(
@@ -843,6 +910,68 @@ def _resolve_model_name(config: Any, alias: str) -> str:
     return ""
 
 
+#: 参与能力评分的槽位 (与 ROLE_REQUIREMENTS 的语义一致).
+#: context_window / long_context_cost_mode 只做审计展示, 不进评分.
+_SCORED_CAPS = ("vision", "tools", "reasoning", "streaming")
+
+
+def _evaluate_profile(role: TeamRole, profile: Any, config: Any) -> dict[str, Any]:
+    """评估单个 profile 对某角色的能力匹配度 (可审计).
+
+    落选候选 ``passed=False`` 且 ``score=None``, 并列出 ``missing_required``,
+    前端/CLI 能一眼看出"为什么没选它". 评分口径与 _pick_best_profile 完全一致.
+    """
+    model_name = _resolve_model_name(config, profile.model_alias)
+    caps = get_model_capabilities(model_name) if model_name else ModelCaps()
+    required, bonus = ROLE_REQUIREMENTS.get(role, (set(), set()))
+    caps_dict = {c: getattr(caps, c) for c in _SCORED_CAPS}
+    missing = sorted(r for r in required if not caps_dict.get(r, False))
+    passed = not missing
+    score: float | None = None
+    if passed:
+        # 加分项 + 能力越全越好 (tiebreaker), 与 _pick_best_profile 同口径
+        score = sum(1.0 for b in bonus if caps_dict.get(b, False))
+        score += sum(caps_dict.values()) * 0.1
+    return {
+        "profile": profile.id,
+        "model": model_name,
+        "caps": {
+            **caps_dict,
+            "context_window": caps.context_window,
+            "long_context_cost_mode": caps.long_context_cost_mode,
+        },
+        "missing_required": missing,
+        "passed": passed,
+        "score": round(score, 3) if score is not None else None,
+    }
+
+
+def _role_trace(
+    role: TeamRole,
+    *,
+    decision: str,
+    chosen_profile: str | None = None,
+    chosen_model: str | None = None,
+    candidates: list[dict[str, Any]] | None = None,
+    note: str = "",
+) -> dict[str, Any]:
+    """给一个角色的路由决策留痕 (供 /team/v2/routing 审计).
+
+    ``decision`` ∈ {single_model, id_match, capability_match, fallback, unfilled}.
+    """
+    required, bonus = ROLE_REQUIREMENTS.get(role, (set(), set()))
+    return {
+        "role": role.value,
+        "decision": decision,
+        "required": sorted(required),
+        "bonus": sorted(bonus),
+        "chosen_profile": chosen_profile,
+        "chosen_model": chosen_model,
+        "candidates": list(candidates or []),
+        "note": note,
+    }
+
+
 def _pick_best_profile(
     role: TeamRole,
     profiles: list[Any],
@@ -851,28 +980,15 @@ def _pick_best_profile(
     """从候选 profile 中挑能力最匹配的那个."""
     if not profiles:
         return None
-    required, bonus = ROLE_REQUIREMENTS.get(role, (set(), set()))
-
     best = None
     best_score = -1.0
     for p in profiles:
-        model_name = _resolve_model_name(config, p.model_alias)
-        caps = get_model_capabilities(model_name) if model_name else ModelCaps()
-        caps_dict = {
-            "vision": caps.vision,
-            "tools": caps.tools,
-            "reasoning": caps.reasoning,
-            "streaming": caps.streaming,
-        }
+        ev = _evaluate_profile(role, p, config)
         # 必须满足的硬性要求
-        if not all(caps_dict.get(r, False) for r in required):
+        if not ev["passed"]:
             continue
-        # 加分项
-        score = sum(1.0 for b in bonus if caps_dict.get(b, False))
-        # 能力越全越好 (作为 tiebreaker)
-        score += sum(caps_dict.values()) * 0.1
-        if score > best_score:
-            best_score = score
+        if ev["score"] > best_score:
+            best_score = ev["score"]
             best = p
     return best
 

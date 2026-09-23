@@ -93,9 +93,13 @@ async def snapshot_pre_hook(ctx: HookContext) -> HookContext | None:
         return None
     try:
         ws = _resolve_workspace()
+        # 记下 thread_id 作为会话关联, 供 rewind 按用户消息锚点圈定作用域.
+        # 拿不到就传空串 (rewind 退化为按时间戳匹配).
+        session_id = str(ctx.metadata.get("thread_id") or "")
         step_id = SnapshotManager().track(
             ctx.tool_name, ws,
             watch_patterns=list(_watch_patterns) if _watch_patterns else None,
+            session_id=session_id,
         )
         _pending[_thread_key(ctx)] = step_id
         # 发布 snapshot.take 事件

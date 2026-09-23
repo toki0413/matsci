@@ -16,15 +16,18 @@ NixOS 宿主门禁: 本工具只在 NixOS 上可用 (`is_available()` 检查 /et
 from __future__ import annotations
 
 import asyncio
+import logging
 import shlex
 import shutil
 from pathlib import Path
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
 from huginn.core_types import ToolContext, ToolResult, ValidationResult
 from huginn.tools.base import HuginnTool
+
+logger = logging.getLogger(__name__)
 
 _READ_ONLY_ACTIONS = frozenset(
     {
@@ -187,8 +190,8 @@ def _is_nixos() -> bool:
     try:
         if Path("/etc/NIXOS").exists() or Path("/etc/NIXOS").is_file():
             return True
-    except Exception:
-        pass
+    except Exception:  # 探测失败不致命, 继续看 os-release
+        logger.debug("nixos_tool: 探测 /etc/NIXOS 失败", exc_info=True)
     try:
         text = Path("/etc/os-release").read_text(encoding="utf-8", errors="replace")
         return any(line.strip() == "ID=nixos" for line in text.splitlines())
@@ -212,7 +215,7 @@ async def _run(argv: list[str], timeout: float) -> tuple[int, str, str, bool]:
         out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         code = proc.returncode if proc.returncode is not None else -1
         return code, _clip(out), _clip(err), False
-    except asyncio.TimeoutError:
+    except TimeoutError:
         proc.kill()
         try:
             out, err = await proc.communicate()
