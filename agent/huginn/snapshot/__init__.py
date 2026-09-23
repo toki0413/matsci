@@ -14,6 +14,12 @@
     mgr = SnapshotManager()
     mgr.revert(step_id, Path("/path/to/ws"))
     mgr.unrevert(step_id, Path("/path/to/ws"))
+
+    # 3) 以"用户消息"为锚点回滚 (dry-run 先看影响清单)
+    from huginn.snapshot.rewind import list_anchors, plan_rewind, apply_rewind
+    anchors = list_anchors(thread_id)
+    impact = plan_rewind(thread_id, anchors[0])   # 只读
+    apply_rewind(thread_id, anchors[0])           # 真回滚
 """
 
 from huginn.snapshot.file_snapshot import (
@@ -26,11 +32,25 @@ from huginn.snapshot.integration import (
     snapshot_post_hook,
     snapshot_pre_hook,
 )
+from huginn.snapshot.rewind import (
+    FileImpact,
+    RewindAnchor,
+    RewindImpact,
+    apply_rewind,
+    list_anchors,
+    plan_rewind,
+)
 
 __all__ = [
+    "FileImpact",
     "FilePatch",
     "FileSnapshot",
+    "RewindAnchor",
+    "RewindImpact",
     "SnapshotManager",
+    "apply_rewind",
+    "list_anchors",
+    "plan_rewind",
     "register_snapshot_hooks",
     "snapshot_pre_hook",
     "snapshot_post_hook",

@@ -100,6 +100,54 @@ def team_list(ctx: CliContext) -> None:
     )
 
 
+@team.command("routing")
+@click.pass_obj
+def team_routing(ctx: CliContext) -> None:
+    """Show why each role got its model (ModelCaps routing audit)."""
+    from huginn.agents.team import ModelTeam
+
+    ds = get_design_system()
+    cfg = ctx.load_config()
+    audit = ModelTeam.from_config(cfg).routing_audit()
+
+    if not audit["roles"]:
+        ds.warning("No routing decisions. Configure multiple [[agents]] profiles in huginn.toml.")
+        ds.info("Run `huginn team list` to see the current roster.")
+        return
+
+    rows = []
+    for r in audit["roles"]:
+        if r["chosen_profile"]:
+            chosen = f"{r['chosen_profile']} → {r['chosen_model'] or '(none)'}"
+        else:
+            chosen = "(none)"
+        rows.append([
+            r["role"],
+            r["decision"],
+            chosen,
+            ", ".join(r["required"]) or "-",
+            ", ".join(r["bonus"]) or "-",
+        ])
+
+    ds.table(
+        title="Model Routing Audit",
+        headers=["Role", "Decision", "Chosen", "Required", "Bonus"],
+        rows=rows,
+    )
+
+    # 落选候选才是审计的重点: 说清楚它为什么没被选中
+    for r in audit["roles"]:
+        rejected = [c for c in r["candidates"] if not c["passed"]]
+        if not rejected:
+            continue
+        ds.info(f"[{r['role']}] rejected candidates:")
+        for c in rejected:
+            ds.info(
+                f"  {c['profile']} ({c['model'] or '?'}) "
+                f"missing: {', '.join(c['missing_required'])}"
+            )
+
+
 @team.command("run")
 @click.argument("task")
 @click.option(

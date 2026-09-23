@@ -7,6 +7,7 @@ use clap::{Parser, Subcommand};
 use colored::Colorize;
 use config::HuginnConfig;
 use dialoguer::{theme::ColorfulTheme, Input};
+use serde_json::Value;
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -105,9 +106,21 @@ enum HpcCommands {
 }
 
 #[derive(Subcommand, Debug)]
+enum TeamCommands {
+    /// Show why each role got its model (ModelCaps routing audit)
+    Routing,
+}
+
+#[derive(Subcommand, Debug)]
 enum Commands {
     /// Start interactive chat with the Agent
     Chat,
+
+    /// Multi-model team commands
+    Team {
+        #[command(subcommand)]
+        command: TeamCommands,
+    },
 
     /// Enter exploration mode to systematically search a design space
     Explore {
@@ -255,6 +268,20 @@ fn run() -> Result<()> {
             }
             let globals = collect_global_args(&cli, &workspace);
             delegate_to_python(&workspace, "chat", &globals, &[])
+        }
+        Commands::Team { ref command } => {
+            // ADR-0001: 新子命令只走 /v1/team/v2/routing HTTP 客户端, 不 spawn
+            // python 子进程 (委托清单只许缩不许涨)。后端没起来就明确报错。
+            if !http::backend_available() {
+                anyhow::bail!(
+                    "team routing 需要 huginn 后端在运行。请先 `huginn serve`，\
+                     或直接用 `python -m huginn.cli team routing`。"
+                );
+            }
+            let res = match command {
+                TeamCommands::Routing => http::routing_via_http()?,
+            };
+            print_routing_audit(&res)
         }
         Commands::Explore {
             ref objective,
@@ -672,6 +699,91 @@ fn cmd_tools() -> Result<()> {
             "".normal()
         };
         println!("  {} — {}{}", name.bold(), desc, ro);
+    }
+
+    Ok(())
+}
+
+/// 把 JSON 数组字段拼成逗号分隔字符串 (缺失/非数组 → 空串)。
+fn join_str_array(v: &Value, key: &str) -> String {
+    v[key]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .unwrap_or_default()
+}
+
+/// 渲染 ModelCaps 路由审计: 每角色一行, 落选候选附上缺失的硬性能力。
+fn print_routing_audit(res: &Value) -> Result<()> {
+    if !res["success"].as_bool().unwrap_or(false) {
+        let err = res["error"].as_str().unwrap_or("unknown error");
+        anyhow::bail!("后端路由审计失败: {err}");
+    }
+
+    let empty: Vec<Value> = Vec::new();
+    let roles = res["roles"].as_array().unwrap_or(&empty);
+    if roles.is_empty() {
+        println!(
+            "{}",
+            "No routing decisions (single-model config or no team configured).".dimmed()
+        );
+        return Ok(());
+    }
+
+    println!(
+        "{} {}",
+        "Model Routing Audit".bold().blue(),
+        format!("({} roles)", roles.len()).dimmed()
+    );
+    println!();
+
+    for r in roles {
+        let role = r["role"].as_str().unwrap_or("?");
+        let decision = r["decision"].as_str().unwrap_or("?");
+        let profile = r["chosen_profile"].as_str().unwrap_or("-");
+        let model = r["chosen_model"].as_str().unwrap_or("(none)");
+
+        let required = join_str_array(r, "required");
+        let bonus = join_str_array(r, "bonus");
+        let mut need: Vec<String> = Vec::new();
+        if !required.is_empty() {
+            need.push(format!("needs {required}"));
+        }
+        if !bonus.is_empty() {
+            need.push(format!("+{bonus}"));
+        }
+        let need = if need.is_empty() {
+            String::new()
+        } else {
+            format!("  {}", format!("[{}]", need.join(" ")).dimmed())
+        };
+
+        println!(
+            "  {} ({}) {} → {}{}",
+            role.bold(),
+            decision.dimmed(),
+            profile,
+            model.green(),
+            need
+        );
+
+        for c in r["candidates"].as_array().unwrap_or(&empty) {
+            let cp = c["profile"].as_str().unwrap_or("?");
+            let cm = c["model"].as_str().unwrap_or("?");
+            if c["passed"].as_bool().unwrap_or(false) {
+                println!("      {} {cp} ({cm}) score={}", "✓".green(), c["score"]);
+            } else {
+                println!(
+                    "      {} {cp} ({cm}) missing: {}",
+                    "✗".red(),
+                    join_str_array(c, "missing_required")
+                );
+            }
+        }
     }
 
     Ok(())

@@ -19,6 +19,7 @@ from huginn.routes.agents import router as agents_router
 from huginn.routes.auth import router as auth_router
 from huginn.routes.autoloop import router as autoloop_router
 from huginn.routes.bench import router as bench_router
+from huginn.routes.board import router as board_router
 from huginn.routes.bot import router as bot_router
 from huginn.routes.catalog import router as catalog_router
 from huginn.routes.checkpoints import router as checkpoints_router
@@ -113,6 +114,8 @@ ALL_ROUTERS = [
     mcp_router,
     catalog_router,
     threads_router,
+    # 任务看板 / 专家团画布: 从会话事件重建的子任务图 (只读投影)
+    board_router,
     # 待办清单: 前端面板与 agent todo 工具共用
     todos_router,
     users_router,

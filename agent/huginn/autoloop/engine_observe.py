@@ -252,7 +252,7 @@ LUCID review (mandatory after generating hypothesis):
     ) -> list[tuple[str, str]]:
         """H1: 在 _trim_to_budget 前应用 prompt patch.
 
-        apply_patches 内部按 Beta mean > 0.5 过滤 + 同名 block 取最高 Beta mean.
+        apply_patches 内部按 Beta mean >= 0.5 过滤 + 同名 block 取最高 Beta mean.
         这里重算一遍 by_block 拿到实际应用的 patch ids, 存到
         _last_applied_patches 供 _learn 更新 Beta. toggle off 或没 patch 时
         直接返回原 blocks (apply_patches 内部处理, 这里零开销).
@@ -282,7 +282,7 @@ LUCID review (mandatory after generating hypothesis):
             store = PromptPatchStore.get_instance()
             patches = [
                 p for p in store.list_patches(phase=phase)
-                if p.alpha / max(1, p.alpha + p.beta) > 0.5
+                if p.alpha / max(1, p.alpha + p.beta) >= 0.5
             ]
             by_block: dict[str, Any] = {}
             for p in patches:

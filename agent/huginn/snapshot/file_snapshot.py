@@ -63,6 +63,14 @@ _SKIP_DIRS: frozenset[str] = frozenset({
 # 单文件备份上限: 超过就不拷内容 (太大, 回滚也不现实). 哈希照记, patch 照报.
 _MAX_BACKUP_BYTES = 5 * 1024 * 1024  # 5 MiB
 
+# track() 等备份落盘的时长上限 (秒).
+# 备份线程保留 (Windows AV 扫 copyfile 可能卡几十秒), 但 track() 必须等它完成
+# 才返回 —— 否则工具一改文件, 备份线程拷到的就是"执行后"内容, revert/rewind
+# 会把错的内容当旧内容写回去. 慢工具 (仿真跑几分钟) 本来就不会输这个竞态,
+# 但快工具 (file_write_tool / code_tool / bash_tool) 必输. 超时不阻断,
+# 最坏退化成旧行为, 只告警.
+_BACKUP_JOIN_TIMEOUT = 30.0
+
 _PREVIEW_LEN = 500   # 内容预览截断长度, 跟 spec 对齐
 _MAX_SNAPSHOTS = 100  # FIFO 上限
 
@@ -203,6 +211,9 @@ class FileSnapshot:
     reverted: bool = False
     workspace: str = ""             # track 时的工作区, 回滚要回这里
     watch_patterns: list[str] = field(default_factory=list)
+    # 关联会话 id (thread_id), 供 rewind 按"用户消息锚点"精确圈定作用域.
+    # 老记录没有这个字段 → 空串, rewind 退化为按时间戳匹配 (见 snapshot/rewind.py).
+    session_id: str = ""
 
 
 def _snapshot_from_record(rec: dict) -> FileSnapshot:
@@ -213,6 +224,7 @@ def _snapshot_from_record(rec: dict) -> FileSnapshot:
         files=rec.get("files", {}),
         workspace=rec.get("workspace", ""),
         watch_patterns=rec.get("watch_patterns", []),
+        session_id=rec.get("session_id", ""),
     )
 
 
@@ -271,6 +283,7 @@ class SnapshotManager:
         tool_name: str,
         workspace: Path,
         watch_patterns: list[str] | None = None,
+        session_id: str = "",
     ) -> str:
         """工具执行前对工作区拍照, 返回 step_id.
 
@@ -278,8 +291,12 @@ class SnapshotManager:
         备份是 revert 的前提 —— patch 只报变化, 但回滚要的是旧内容,
         所以这里必须把执行前内容存下来 (只盯受 watch_patterns 限制的小集合,
         不是全盘拷). ponytail: 大于 5MiB 的文件跳过备份, 回滚时也跳过.
-        文件备份放到后台线程跑 (Windows AV 扫描 copyfile 会卡几十秒),
-        哈希计算留主线程 (revert 要用, 不能延迟).
+        哈希计算留主线程 (revert 要用, 不能延迟); 内容拷贝放后台线程
+        (Windows AV 扫描 copyfile 会卡几十秒), 但返回前会 join 等它落盘,
+        超时才放行 —— 详见 _BACKUP_JOIN_TIMEOUT.
+
+        ``session_id`` 记下这次拍照属于哪个会话, 供 rewind 按用户消息锚点圈定
+        作用域. 不传则为空串 (rewind 退化为按时间戳匹配).
         """
         ws = Path(workspace).resolve()
         patterns = tuple(watch_patterns) if watch_patterns else _DEFAULT_WATCH_PATTERNS
@@ -291,6 +308,7 @@ class SnapshotManager:
             timestamp=time.time(),
             workspace=str(ws),
             watch_patterns=list(patterns),
+            session_id=session_id,
         )
 
         files_dir = self._files_dir(step_id)
@@ -322,6 +340,15 @@ class SnapshotManager:
 
         t = threading.Thread(target=_do_backup, name=f"snap-backup-{step_id}", daemon=True)
         t.start()
+        # 等备份落盘再返回 —— 备份必须是"执行前"内容, 否则 revert/rewind 会把
+        # 工具刚写的内容当成旧内容还原回去 (快工具必输这个竞态, 见常量注释).
+        t.join(timeout=_BACKUP_JOIN_TIMEOUT)
+        if t.is_alive():
+            logger.warning(
+                "snapshot backup %s still running after %.0fs; "
+                "revert may restore stale content",
+                step_id, _BACKUP_JOIN_TIMEOUT,
+            )
         # 记住线程, patch() 里可以 join 确保备份完成再做 diff
         self._pending_backups: dict[str, threading.Thread] = getattr(self, "_pending_backups", {})
         self._pending_backups[step_id] = t
@@ -556,6 +583,7 @@ class SnapshotManager:
             "files": snap.files,
             "workspace": snap.workspace,
             "watch_patterns": snap.watch_patterns,
+            "session_id": snap.session_id,
         }
         with self._log_file().open("a", encoding="utf-8") as f:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")

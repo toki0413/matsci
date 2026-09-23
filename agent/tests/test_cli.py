@@ -13,6 +13,37 @@ from huginn.cli import cli
 from huginn.execution.remote_job_store import RemoteJobRecord, RemoteJobStore
 
 
+def _write_team_config(dir: Path) -> Path:
+    """写一份两模型两 profile 的配置, 用于触发能力路由。"""
+    cfg = dir / "huginn.toml"
+    cfg.write_text(
+        "\n".join(
+            [
+                "[[models]]",
+                'alias = "strong"',
+                'provider = "deepseek"',
+                'model = "claude-sonnet-5"',
+                "",
+                "[[models]]",
+                'alias = "codeonly"',
+                'provider = "deepseek"',
+                'model = "deepseek-coder"',
+                "",
+                "[[agents]]",
+                'id = "alpha"',
+                'model_alias = "strong"',
+                "",
+                "[[agents]]",
+                'id = "beta"',
+                'model_alias = "codeonly"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return cfg
+
+
 class TestCliCommands:
     def test_version(self):
         result = CliRunner().invoke(cli, ["version"])
@@ -33,6 +64,30 @@ class TestCliCommands:
         result = CliRunner().invoke(cli, ["model-list"])
         assert result.exit_code == 0
         assert "Configured Models" in result.output
+
+    def test_team_help_lists_routing(self, tmp_path: Path):
+        result = CliRunner().invoke(cli, ["-w", str(tmp_path), "team", "--help"])
+        assert result.exit_code == 0
+        assert "routing" in result.output
+
+    def test_team_routing_default_is_single_model(self, tmp_path: Path):
+        # 空工作区也会合成一个默认 lead profile, 所以退化为单模型路由,
+        # 每个角色都绑到 lead, 而不是"没有任何路由决策".
+        result = CliRunner().invoke(cli, ["-w", str(tmp_path), "team", "routing"])
+        assert result.exit_code == 0, result.output
+        assert "Model Routing Audit" in result.output
+        assert "single_model" in result.output
+
+    def test_team_routing_shows_audit(self, tmp_path: Path):
+        cfg = _write_team_config(tmp_path)
+        result = CliRunner().invoke(
+            cli, ["-w", str(tmp_path), "-c", str(cfg), "team", "routing"]
+        )
+        assert result.exit_code == 0
+        assert "Model Routing Audit" in result.output
+        # planner 走能力路由, 落选候选要说明缺什么能力
+        assert "capability_match" in result.output
+        assert "missing: reasoning" in result.output
 
     def test_help_lists_commands(self):
         result = CliRunner().invoke(cli, ["--help"])

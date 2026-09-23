@@ -76,6 +76,22 @@ pub fn list_tools_via_http() -> Result<Vec<(String, String, bool)>> {
     Ok(result)
 }
 
+/// 拉取多模型团队的路由审计 → GET /v1/team/v2/routing。
+///
+/// 返回每个角色的路由决策: 硬性能力要求 / 加分项 / 决策类型 / 选中模型 /
+/// 候选评估 (含落选原因)。只读投影，不触发实际路由。
+pub fn routing_via_http() -> Result<Value> {
+    let url = format!("{}/v1/team/v2/routing", base_url());
+    let body = ureq::get(&url)
+        .timeout(std::time::Duration::from_secs(10))
+        .call()
+        .with_context(|| format!("连接后端失败: {url}"))?
+        .into_string()
+        .context("读取后端 /v1/team/v2/routing 响应失败")?;
+    serde_json::from_str(&body)
+        .with_context(|| format!("后端 /v1/team/v2/routing 返回的不是 JSON: {body}"))
+}
+
 /// 通用 POST JSON 到后端 `/v1...` 端点，返回响应 JSON。
 fn post_json(path: &str, payload: Value, timeout_secs: u64) -> Result<Value> {
     let url = format!("{}{}", base_url(), path);

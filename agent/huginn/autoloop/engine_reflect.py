@@ -2472,6 +2472,37 @@ class EngineReflect:
         except Exception:  # 防御: 补丁贝塔更新失败忽略
             logger.debug("H1 patch Beta update failed", exc_info=True)
 
+        # M-R1: meta 层真实 r_phys 回填 — 把本轮真实 r_phys 归因到「生成该 patch 的臂」
+        # (champion / canary 候选 / baseline). 攒够样本后 evaluate, 仅 GREEN(显著+OOD)
+        # 才换 champion. task_id 用 _run_id: 同 run 内两臂共享一桶, 跨 run 累积 >=5 桶
+        # 才判定 — 保守, 样本不足宁可保持默认. toggle off 时 enabled() 为 False → no-op.
+        try:
+            from huginn.harness.meta_improver import MetaImprover
+
+            _mi = MetaImprover.get_instance()
+            if _mi.enabled() and r_phys is not None:
+                _applied_m = getattr(self, "_last_applied_patches", None)
+                _task_key = str(getattr(self, "_run_id", "") or "run_unknown")
+                _arms: set[str] = set()
+                if _applied_m:
+                    for _pid in _applied_m[1]:
+                        _arm = _mi.arm_for_patch(_pid)
+                        if _arm:
+                            _arms.add(_arm)
+                # 只把 r_phys 归因到本轮真正 apply 过 patch 的臂 (因果链完整).
+                for _arm in _arms:
+                    _mi.record_real_outcome(_arm, _task_key, float(r_phys))
+                if _arms:
+                    _champ = _mi.champion_cfg()
+                    for _cid in _mi.candidate_ids():
+                        if _champ is not None and _champ.config_id == _cid:
+                            continue
+                        _res = await _mi.evaluate(_cid)
+                        if _res.get("green") and _mi.maybe_promote(_cid):
+                            break
+        except Exception:  # 防御: meta 回填/换件失败不影响主循环
+            logger.debug("meta r_phys backfill failed", exc_info=True)
+
         # H3: 记录 (block_subset, workflow_params) 组合的 outcome 给 JointBandit.
         # block_subset 从 _last_hypothesis_blocks / _last_plan_blocks 拿 block 名;
         # workflow_params 留空 dict (reasoning-only 没 workflow stage 参数).
