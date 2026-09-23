@@ -191,7 +191,7 @@ def _specs_from_call(
     if isinstance(deps_raw, list):
         by_index: dict[str, list[str]] = {}
         for pair in deps_raw:
-            if isinstance(pair, (list, tuple)) and len(pair) == 2:
+            if isinstance(pair, list | tuple) and len(pair) == 2:
                 u, v = str(pair[0]), str(pair[1])
                 by_index.setdefault(v, []).append(u)
         for node in nodes:
