@@ -290,3 +290,47 @@ class TestPlanProgressStoredInMemory:
         assert active is not None, "_learn 应在真实 memory 里落一条 plan 进度"
         assert active["plan_id"] == plan["plan_id"]
         assert active["status"] == "executing"
+
+
+# ── Anti-Hacking ① 折进 _learn 的 r_phys ────────────────────────
+
+
+class TestStrictScopeFoldedIntoLearn:
+    """端到端: 越界改动 → _learn 落进 memory 的 r_phys 被清零.
+
+    单元层已在 test_scope_authority.py 锁住 `_apply_strict_scope` 的取值;
+    这里补"真被 _learn 调用到"的接线验证 —— 否则方法写了却没人调, 仍是死代码.
+    """
+
+    def _learn_r_phys(self, engine: AutoloopEngine, files: list[str], r_phys: float):
+        from huginn.feature_flags import FeatureFlags
+
+        ff = FeatureFlags.shared()
+        ff.enable("anti_hacking_reward")
+        try:
+            engine._last_execution_files = files
+            _set_plan_response(engine, "MODE: coder\nDESCRIPTION: tweak x")
+            plan = asyncio.run(engine._plan("strict-scope hypothesis", {}))
+            asyncio.run(
+                engine._learn(
+                    "strict-scope hypothesis",
+                    plan,
+                    {"r_phys": r_phys, "tests_passed": True},
+                )
+            )
+        finally:
+            ff.reset("anti_hacking_reward")
+        recs = [
+            m.content
+            for m in engine.memory.session.messages
+            if isinstance(m.content, dict) and "hypothesis" in m.content
+        ]
+        assert recs, "_learn 应往 session memory 落一条迭代记录"
+        return recs[-1]["r_phys"]
+
+    def test_out_of_scope_change_zeroes_r_phys(self, engine: AutoloopEngine):
+        # score.py 命中沙箱硬底线 → 整轨清零
+        assert self._learn_r_phys(engine, ["src/a.py", "score.py"], 0.9) == 0.0
+
+    def test_clean_change_keeps_r_phys(self, engine: AutoloopEngine):
+        assert self._learn_r_phys(engine, ["src/a.py"], 0.9) == 0.9

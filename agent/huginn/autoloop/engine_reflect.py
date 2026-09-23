@@ -114,6 +114,7 @@ class EngineReflect:
         "_query_kb_reference",
         "_build_reviewer_prompt",
         "_learn",
+        "_apply_strict_scope",
         "_generate_next_loop_directive",
         "_report",
         "_feynman_learn",
@@ -2291,6 +2292,58 @@ class EngineReflect:
 
 
 
+    def _apply_strict_scope(self, r_phys: float | None) -> float | None:
+        """Anti-Hacking ① 折叠点: 越界改动 → 整轨奖励清零.
+
+        授权面 = 既有权限面 (沙箱硬底线 + path_rules, 见 permissions.py);
+        改动文件面 = engine_act 缓存的 `_last_execution_files`。任一缺失
+        (flag off / 授权面不可用 / 无改动文件) → 原样返回 r_phys, 零行为变更。
+
+        固定按 sandbox_mode=True 取硬底线: `_DEFAULT_SANDBOX_PATH_RULES` 列的
+        正是评分产物 (score.py / evaluation/*.py / rubric.json), 对 anti-hacking
+        而言"评分产物不得改动"是无条件语义, 不要求用户先开 sandbox 模式。
+
+        语义是"整轨清零" (strict-scope), 故按累计改动面判定: 一旦本轮 run 里
+        碰过 DENY 路径, 后续轮次仍判越界 —— 与 claim_reward 的 strict-scope
+        设计一致, 不给"改完再改回来"留空子。
+        """
+        if r_phys is None:
+            return r_phys
+        try:
+            from huginn.feature_flags import FeatureFlags
+
+            if not FeatureFlags.shared().is_enabled("anti_hacking_reward"):
+                return r_phys
+        except Exception:  # 防御: 开关读不到就不折, 绝不误伤
+            logger.debug("strict-scope: read flag failed", exc_info=True)
+            return r_phys
+        changed = list(getattr(self, "_last_execution_files", None) or [])
+        if not changed:
+            return r_phys
+        try:
+            from huginn.validation.claim_reward import anti_hacking_reward
+            from huginn.validation.scope_authority import compute_authorized_ratio
+
+            res = compute_authorized_ratio(changed, sandbox_mode=True)
+            if res.get("source") == "unavailable":
+                return r_phys
+            adjusted = anti_hacking_reward(
+                float(r_phys), authorized_ratio=float(res["authorized_ratio"])
+            )
+            if adjusted != r_phys:
+                logger.info(
+                    "strict-scope: r_phys %.3f → %.3f (越界 %d/%d: %s)",
+                    r_phys,
+                    adjusted,
+                    len(res["violations"]),
+                    res["total"],
+                    res["violations"][:5],
+                )
+            return adjusted
+        except Exception:  # 防御: 折入失败不影响主循环
+            logger.debug("strict-scope fold failed", exc_info=True)
+            return r_phys
+
     async def _learn(
         self, hypothesis: str, plan: dict[str, Any], validation: dict[str, Any]
     ) -> dict[str, Any]:
@@ -2307,6 +2360,10 @@ class EngineReflect:
         _imp_default = get_phase_extra("_learn", "importance_default", 0.6)
         _imp_max = get_phase_extra("_learn", "importance_max", 0.9)
         r_phys = validation.get("r_phys") if isinstance(validation, dict) else None
+        # Anti-Hacking ①: 越界改动 → 整轨奖励清零。折在 r_phys 进入 memory /
+        # evolution 回流 / meta 层真实 r_phys 门控**之前**, 只改本方法用的局部
+        # r_phys, 不动 validation 里的原始值 (memory 留原始轨迹便于审计)。
+        r_phys = self._apply_strict_scope(r_phys)
 
         # Log to memory
         self.memory.add_message(

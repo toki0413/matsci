@@ -51,6 +51,11 @@ class FeatureFlags:
         # 显式开启后在 orchestrator 热路径按 (tool×target×actor×heavy) 判权 + 配额,
         # 关则不改变现有执行行为.
         "compute_policy": False,       # 计算路由目标维度策略 + 预算
+        # Anti-Hacking ①: 把 strict-scope 折进 _learn 用的 r_phys —— 本轮改动
+        # 命中沙箱硬底线/path_rules 的 DENY 规则 (改 score.py 等评分产物) 时整轨
+        # 奖励清零. 防 r_phys 被"刷分"污染, 进而污染 evolution 回流与 meta 层
+        # 真实 r_phys 门控. 默认关; 授权面为空/无改动文件时 no-op (零回归).
+        "anti_hacking_reward": False,  # strict-scope 越界清零 (默认关, 见 validation/scope_authority.py)
         # harness 实验性栅栏 (默认 off, 显式开启才生效). 见 huginn/harness/_enabled.py.
         # 开启方式: huginn.toml [feature_flags] 字段, 或环境变量 HUGINN_FEATURE_<NAME>=true.
         "harness_workflow_evolution": False,  # H2: variant bandit 演化回路
@@ -159,6 +164,7 @@ class FeatureFlags:
         "context_router": "P3 信息路径多样性稀疏化 (context_builder, 默认关)",
         "task_tool_router": "task keyword → tool category 动态路由 (默认开, 无命中给 core 子集)",
         "compute_policy": "M2 计算路由目标维度策略 + 预算 (默认关)",
+        "anti_hacking_reward": "Anti-Hacking ① strict-scope 越界清零, 折进 _learn 的 r_phys (默认关)",
         "harness_workflow_evolution": "H2 variant bandit 演化回路 (实验性, 默认关)",
         "harness_ood_holdout": "H6 OOD 留出验证, 防背题补丁 (实验性, 默认关)",
         "harness_significance_gate": "H5 结果显著性门, 统计检验 (实验性, 默认关)",
