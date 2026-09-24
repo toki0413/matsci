@@ -20,7 +20,7 @@
 | `HUGINN_AUDIT_SIGNING_KEY` | '' | security/audit.py:626 | — | external |
 | `HUGINN_AUTOLOOP_HUMAN_PAUSE` | 0 | autoloop/cognitive_loop.py:2895, autoloop/engine_reflect.py:3604 | — | external |
 | `HUGINN_AUTOLOOP_STREAMING` | 1 | autoloop/engine.py:113 | — | external |
-| `HUGINN_AUTO_APPROVE` | '' | config.py:769, server_core.py:612, tools/adapter.py:657, +2 处 | — | external |
+| `HUGINN_AUTO_APPROVE` | False | agent_config.py:183, config.py:769, server_core.py:612, +3 处 | — | external |
 | `HUGINN_AUTO_WAKE` | 1 | autoloop/engine.py:704 | — | external |
 | `HUGINN_BANDIT_Q_PATH` | '' | agent/bandit_controller.py:136 | cli/rcb_runner.py:66 | code-set |
 | `HUGINN_BASE_URL` | '' | config.py:692, config.py:715 | — | external |
@@ -60,6 +60,7 @@
 | `HUGINN_CORE_API_KEY` | '' | tools/literature/search_sources.py:737 | — | external |
 | `HUGINN_CORE_SUPPORT_PROTOCOL` | 1 | tools/bash_tool.py:258, tools/code_tool.py:126 | — | external |
 | `HUGINN_CORS_ORIGINS` | '' | lifespan.py:882 | — | external |
+| `HUGINN_CPU_HOUR_BUDGET` | '' | scheduling/scheduler.py:113 | — | external |
 | `HUGINN_CREDENTIAL_DB` | '' | security/credential_store.py:516 | — | external |
 | `HUGINN_CREDENTIAL_KEY_FILE` | '' | security/credential_store.py:98 | — | external |
 | `HUGINN_CSM_SUBSET_MODE` | '' | agent/reflection.py:368 | cli/causal_runner.py:162, cli/rcb_runner.py:64 | code-set |
@@ -98,6 +99,7 @@
 | `HUGINN_FS_READ_MAX_SIZE_BYTES` | str(_FS_READ_MAX_BYTES | routes/fs.py:203 | — | external |
 | `HUGINN_FTS_AUTO_REBUILD` | 1 | memory/longterm.py:361 | — | external |
 | `HUGINN_GOVERNANCE_DEFAULT_DECISION` | deny | governance.py:41 | — | external |
+| `HUGINN_GPU_HOUR_BUDGET` | '' | scheduling/scheduler.py:114 | — | external |
 | `HUGINN_HARD_CHECKPOINT_PHASES` | '' | autoloop/phase_gate.py:54 | — | external |
 | `HUGINN_HARNESS_GATES` | 0 | evolution/manager.py:35 | — | external |
 | `HUGINN_HEALTH_MONITOR` | 0 | tools/adapter.py:241 | cli/rcb_runner.py:99 | code-set |
@@ -138,6 +140,8 @@
 | `HUGINN_MAX_CONSECUTIVE_FAILURES` | 20 | autoloop/engine.py:441 | cli/rcb_runner.py:343 | code-set |
 | `HUGINN_MAX_CONTEXT_TOKENS` | '' | context_manager.py:119 | — | external |
 | `HUGINN_MAX_FAILURES_BY_TYPE` | '' | autoloop/engine.py:74 | — | external |
+| `HUGINN_MAX_HEAVY_CONCURRENT` | 2 | scheduling/scheduler.py:111 | — | external |
+| `HUGINN_MAX_LIGHT_CONCURRENT` | 8 | scheduling/scheduler.py:112 | — | external |
 | `HUGINN_MAX_PIVOTS` | 10 | autoloop/engine.py:469 | cli/rcb_runner.py:345 | code-set |
 | `HUGINN_MAX_REFINES` | 20 | autoloop/engine.py:464 | cli/rcb_runner.py:344 | code-set |
 | `HUGINN_MAX_TOKENS` | '' | config.py:876 | — | external |
@@ -228,6 +232,9 @@
 | `HUGINN_ROOT_MARKERS` | _DEFAULT_ROOT_MARKERS | agent/streaming.py:231 | cli/rcb_runner.py:89 | code-set |
 | `HUGINN_SANDBOX_BLOCKED_PATHS` | '' | permissions.py:286, validation/scope_authority.py:88 | cli/rcb_runner.py:83 | code-set |
 | `HUGINN_SANDBOX_ISOLATE_NETWORK` | '' | security/sandbox.py:46 | — | external |
+| `HUGINN_SANDBOX_MAX_CPU_SECONDS` | '' | security/sandbox.py:178 | — | external |
+| `HUGINN_SANDBOX_MAX_FILE_BYTES` | '' | security/sandbox.py:181 | — | external |
+| `HUGINN_SANDBOX_MAX_PROCESSES` | '' | security/sandbox.py:184 | — | external |
 | `HUGINN_SANDBOX_RELAX` | '' | security/sandbox.py:244 | — | external |
 | `HUGINN_SEARXNG_URL` | '' | tools/web_search_tool.py:290, tools/web_search_tool.py:461 | — | external |
 | `HUGINN_SECRET_BACKEND` | env | security/secrets.py:439 | — | external |
@@ -294,4 +301,4 @@
 | `HUGINN_WS_MAX_CONNECTIONS` | 50 | middleware/ws_governance.py:59 | — | external |
 | `HUGINN_WS_MAX_MSGS_PER_SEC` | 20 | middleware/ws_governance.py:60 | — | external |
 
-共 287 个环境变量。
+共 294 个环境变量。
