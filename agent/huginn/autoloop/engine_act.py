@@ -129,6 +129,11 @@ class EngineAct:
         except Exception:  # noqa: BLE001 — 槽是增量, 失败不阻塞
             logger.debug("[jepa-slots] engine_act slot append failed", exc_info=True)
 
+        # 意图口径 (S2) 输入: 缓存本轮 plan 声明的目标文件集, 供 _learn 的
+        # _apply_strict_scope 判"改动是否偏离本轮意图". 声明缺失 (LLM 未输出
+        # FILES:) → 空表 → 意图口径 no-op (零回归). 与合规口径 (S1) 独立开关.
+        self._current_plan_target_files = list(plan.get("target_files") or [])
+
         # 落 PlanStore: 创建 plan → cost 确认门 → confirm/reject
         plan_store = self._get_plan_store()
         if plan_store is None:
@@ -142,6 +147,7 @@ class EngineAct:
                     id="step_0",
                     description=plan.get("description", ""),
                     tool=plan.get("mode", ""),
+                    target_files=list(plan.get("target_files") or []),
                 )
             ]
             persisted = plan_store.create_plan(

@@ -79,25 +79,15 @@ def _seed_green(candidate_id: str, base: float = 0.4, cand: float = 0.9) -> None
         val.record_outcome(candidate_id, t, cand)
 
 
-async def _fake_good_default_bad(prompt: str, task: str = "summarize") -> str:
-    """default/sloppy 模板 -> 坏产出; careful 模板 -> 有效 patch."""
-    if "careful improver" in prompt:
-        return '{"block_name": "mem", "op": "append", "new_text": "focus-hint"}'
-    return "not-json-at-all"
-
-
-def _add_replay(meta: MetaImprover, n: int = 8) -> None:
+def _seed_real(
+    meta: MetaImprover, candidate_id: str, base: float = 0.4, cand: float = 0.9,
+    n: int = 16,
+) -> None:
+    """确定性真实 r_phys 回填: n 个 task 两臂都有观测 → sig 配对 + OOD 够量."""
     for i in range(n):
-        meta._replay.append(
-            {
-                "phase": "hypothesize",
-                "block_names": ["body", "mem", "fail"],
-                "r_phys": 0.5,
-                "directive": f"hint {i}",
-                "ts": float(100 + i),
-                "probe_id": f"probe_{i:02d}",
-            }
-        )
+        t = f"task_{i:03d}"
+        meta.record_real_outcome(mi._BASELINE_ID, t, base)
+        meta.record_real_outcome(candidate_id, t, cand)
 
 
 # ── 1/2 零回归: meta off 不覆盖默认模板 ─────────────────────────────────────
@@ -145,22 +135,54 @@ def test_champion_overrides_default_template(tmp_path: Path) -> None:
     assert "careful improver" in seen[0], "champion template should be used"
 
 
-# ── 3 evaluate 打分 ──────────────────────────────────────────────────────────
-def test_evaluate_scores_candidate_over_default(tmp_path: Path) -> None:
-    """evaluate 在 replay 上给候选打分并注册显著性配对 (cand > base)."""
+# ── 3 evaluate 用真实 r_phys 打分 ────────────────────────────────────────────
+def test_evaluate_uses_real_r_phys(tmp_path: Path) -> None:
+    """evaluate 用回填的真实 r_phys 给候选打分并注册显著性配对 (cand > base)."""
     meta = _meta_on(tmp_path)
-    _add_replay(meta)
+    meta._candidates["good"] = ImproverConfig(
+        config_id="good", improver_prompt=GOOD_TPL, r_phys_gate=0.7
+    )
 
-    cfg = ImproverConfig(config_id="good", improver_prompt=GOOD_TPL, r_phys_gate=0.7)
-    meta._candidates["good"] = cfg
+    # 样本不足 → 不判定、不换件
+    res0 = asyncio.run(meta.evaluate("good"))
+    assert not res0["green"], res0
+    assert res0["reason"].startswith("insufficient_real_outcomes"), res0
 
-    res = asyncio.run(meta.evaluate("good", _fake_good_default_bad))
-    assert res["scores_n"] == 8, res
+    _seed_real(meta, "good", base=0.4, cand=0.9)
+    res = asyncio.run(meta.evaluate("good"))
+    assert res["score_source"] == "real_r_phys", res
     assert res["cand_mean"] > res["base_mean"], res
+    assert res["green"], res
 
     sig = SignificanceGate.get_instance()
     pairs = sig.get_pairs("good")
-    assert len(pairs) >= 8, "sig pairs should be registered"
+    assert len(pairs) >= 5, "sig pairs should be registered"
+
+    # evaluate 幂等: 重复跑不膨胀样本 (否则 Wilcoxon 假性显著)
+    asyncio.run(meta.evaluate("good"))
+    assert len(sig.get_pairs("good")) == len(pairs), "evaluate must be idempotent"
+
+
+def test_canary_arm_and_patch_attribution(tmp_path: Path) -> None:
+    """canary 选臂: 有候选时以 _CANARY_P 概率接管; patch→臂记账可回查."""
+    meta = _meta_on(tmp_path)
+    meta._candidates["cand"] = ImproverConfig(
+        config_id="cand", improver_prompt=GOOD_TPL, r_phys_gate=0.7
+    )
+
+    orig = mi.random.random
+    mi.random.random = lambda: 0.0  # < _CANARY_P → canary 接管
+    arm, tpl = meta.select_generation_arm()
+    mi.random.random = lambda: 0.99  # > _CANARY_P → baseline
+    arm_b, tpl_b = meta.select_generation_arm()
+    mi.random.random = orig
+
+    assert arm == "cand" and "careful improver" in tpl, (arm, tpl)
+    assert arm_b == mi._BASELINE_ID and tpl_b == mi.DEFAULT_IMPROV_TEMPLATE, arm_b
+
+    meta.record_patch_arm("p1", arm)
+    assert meta.arm_for_patch("p1") == "cand"
+    assert meta.arm_for_patch("unknown") is None
 
 
 # ── 4 好候选 GREEN 提升 ──────────────────────────────────────────────────────

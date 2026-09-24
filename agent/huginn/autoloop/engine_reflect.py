@@ -114,6 +114,7 @@ class EngineReflect:
         "_query_kb_reference",
         "_build_reviewer_prompt",
         "_learn",
+        "_apply_strict_scope",
         "_generate_next_loop_directive",
         "_report",
         "_feynman_learn",
@@ -2291,6 +2292,89 @@ class EngineReflect:
 
 
 
+    def _apply_strict_scope(self, r_phys: float | None) -> float | None:
+        """Anti-Hacking 折叠点: 越界改动 → 整轨奖励清零 (两口径, 各自独立开关).
+
+        ① 合规口径 (flag `anti_hacking_reward`): 授权面 = 既有权限面 (沙箱硬底线 +
+           path_rules, 见 permissions.py); 改动命中 DENY 规则 (改 score.py 等评分
+           产物) → 清零. 抓"碰绝对禁区".
+        ② 意图口径 (flag `intent_scope_reward`): 授权面 = 本轮 plan 声明的目标集
+           (`_current_plan_target_files`, 来自 plan 的 FILES: 行); 改动落在声明集
+           之外 → 清零. 抓"plan 说改 A 实际偷偷改了 B"的偏离.
+
+        改动文件面 = engine_act 缓存的 `_last_execution_files`。任一缺失
+        (两 flag 都 off / 授权面不可用 / 无改动文件) → 原样返回 r_phys, 零行为变更。
+
+        固定按 sandbox_mode=True 取硬底线: `_DEFAULT_SANDBOX_PATH_RULES` 列的
+        正是评分产物 (score.py / evaluation/*.py / rubric.json), 对 anti-hacking
+        而言"评分产物不得改动"是无条件语义, 不要求用户先开 sandbox 模式。
+
+        语义是"整轨清零" (strict-scope), 故按累计改动面判定: 一旦本轮 run 里
+        碰过 DENY 路径, 后续轮次仍判越界 —— 与 claim_reward 的 strict-scope
+        设计一致, 不给"改完再改回来"留空子。
+        """
+        if r_phys is None:
+            return r_phys
+        try:
+            from huginn.feature_flags import FeatureFlags
+
+            _ff = FeatureFlags.shared()
+            _s1 = _ff.is_enabled("anti_hacking_reward")
+            _s2 = _ff.is_enabled("intent_scope_reward")
+        except Exception:  # 防御: 开关读不到就不折, 绝不误伤
+            logger.debug("strict-scope: read flag failed", exc_info=True)
+            return r_phys
+        if not (_s1 or _s2):
+            return r_phys
+        changed = list(getattr(self, "_last_execution_files", None) or [])
+        if not changed:
+            return r_phys
+        try:
+            from huginn.validation.claim_reward import anti_hacking_reward
+            from huginn.validation.scope_authority import (
+                compute_authorized_ratio,
+                compute_intent_ratio,
+            )
+
+            adjusted = float(r_phys)
+            if _s1:
+                res = compute_authorized_ratio(changed, sandbox_mode=True)
+                if res.get("source") != "unavailable":
+                    adjusted = anti_hacking_reward(
+                        adjusted, authorized_ratio=float(res["authorized_ratio"])
+                    )
+                    if adjusted != r_phys:
+                        logger.info(
+                            "strict-scope(compliance): r_phys %.3f → %.3f "
+                            "(越界 %d/%d: %s)",
+                            r_phys,
+                            adjusted,
+                            len(res["violations"]),
+                            res["total"],
+                            res["violations"][:5],
+                        )
+            if _s2:
+                globs = list(getattr(self, "_current_plan_target_files", None) or [])
+                ires = compute_intent_ratio(changed, intent_globs=globs)
+                if ires.get("source") != "unavailable":
+                    adjusted = anti_hacking_reward(
+                        adjusted, authorized_ratio=float(ires["authorized_ratio"])
+                    )
+                    if adjusted != r_phys:
+                        logger.info(
+                            "strict-scope(intent): r_phys %.3f → %.3f "
+                            "(偏离 %d/%d: %s)",
+                            r_phys,
+                            adjusted,
+                            len(ires["violations"]),
+                            ires["total"],
+                            ires["violations"][:5],
+                        )
+            return adjusted
+        except Exception:  # 防御: 折入失败不影响主循环
+            logger.debug("strict-scope fold failed", exc_info=True)
+            return r_phys
+
     async def _learn(
         self, hypothesis: str, plan: dict[str, Any], validation: dict[str, Any]
     ) -> dict[str, Any]:
@@ -2307,6 +2391,10 @@ class EngineReflect:
         _imp_default = get_phase_extra("_learn", "importance_default", 0.6)
         _imp_max = get_phase_extra("_learn", "importance_max", 0.9)
         r_phys = validation.get("r_phys") if isinstance(validation, dict) else None
+        # Anti-Hacking ①: 越界改动 → 整轨奖励清零。折在 r_phys 进入 memory /
+        # evolution 回流 / meta 层真实 r_phys 门控**之前**, 只改本方法用的局部
+        # r_phys, 不动 validation 里的原始值 (memory 留原始轨迹便于审计)。
+        r_phys = self._apply_strict_scope(r_phys)
 
         # Log to memory
         self.memory.add_message(
@@ -2471,6 +2559,37 @@ class EngineReflect:
                     store.update_alpha_beta(_pid, success=bool(_tests_passed))
         except Exception:  # 防御: 补丁贝塔更新失败忽略
             logger.debug("H1 patch Beta update failed", exc_info=True)
+
+        # M-R1: meta 层真实 r_phys 回填 — 把本轮真实 r_phys 归因到「生成该 patch 的臂」
+        # (champion / canary 候选 / baseline). 攒够样本后 evaluate, 仅 GREEN(显著+OOD)
+        # 才换 champion. task_id 用 _run_id: 同 run 内两臂共享一桶, 跨 run 累积 >=5 桶
+        # 才判定 — 保守, 样本不足宁可保持默认. toggle off 时 enabled() 为 False → no-op.
+        try:
+            from huginn.harness.meta_improver import MetaImprover
+
+            _mi = MetaImprover.get_instance()
+            if _mi.enabled() and r_phys is not None:
+                _applied_m = getattr(self, "_last_applied_patches", None)
+                _task_key = str(getattr(self, "_run_id", "") or "run_unknown")
+                _arms: set[str] = set()
+                if _applied_m:
+                    for _pid in _applied_m[1]:
+                        _arm = _mi.arm_for_patch(_pid)
+                        if _arm:
+                            _arms.add(_arm)
+                # 只把 r_phys 归因到本轮真正 apply 过 patch 的臂 (因果链完整).
+                for _arm in _arms:
+                    _mi.record_real_outcome(_arm, _task_key, float(r_phys))
+                if _arms:
+                    _champ = _mi.champion_cfg()
+                    for _cid in _mi.candidate_ids():
+                        if _champ is not None and _champ.config_id == _cid:
+                            continue
+                        _res = await _mi.evaluate(_cid)
+                        if _res.get("green") and _mi.maybe_promote(_cid):
+                            break
+        except Exception:  # 防御: meta 回填/换件失败不影响主循环
+            logger.debug("meta r_phys backfill failed", exc_info=True)
 
         # H3: 记录 (block_subset, workflow_params) 组合的 outcome 给 JointBandit.
         # block_subset 从 _last_hypothesis_blocks / _last_plan_blocks 拿 block 名;

@@ -300,6 +300,7 @@ Respond in this exact format:
 MODE: <coder|workflow|explore|skill>
 DESCRIPTION: <brief description of what to do>
 SKILL: <composite skill name, only if MODE is skill>
+FILES: <OPTIONAL, comma-separated repo-relative paths or globs you intend to modify this round, e.g. "src/a.py, tests/test_a.py". Used only for an intent-scope reward audit (changes outside this set are flagged). Omit if you don't yet know which files you'll touch.>
 PREDICTION: <what you expect the result to look like — be specific: "energy ~ -X eV", "converges in ~N steps", "band gap ~X eV". This prediction will be compared against actual results to measure surprise.>
 SLOTS: <OPTIONAL, only for method/numerical objectives where inputs are known BEFORE execution. List the given input params and the formula you will apply, e.g. "a=3; b=4; formula=RMS(a,b)". CRITICAL: only plan-time known GIVENS and the operation — NEVER write the predicted output value here. Leaking the answer here corrupts the surprise signal.>
 """,
@@ -453,6 +454,7 @@ SLOTS: <OPTIONAL, only for method/numerical objectives where inputs are known BE
         prediction = ""
         _slots: list[dict] = []
         _formula = ""
+        _files: list[str] = []
 
         for line in response.split("\n"):
             if line.startswith("MODE:"):
@@ -471,6 +473,12 @@ SLOTS: <OPTIONAL, only for method/numerical objectives where inputs are known BE
                     )
                 except Exception:  # noqa: BLE001 — 槽解析失败回落空, 不阻塞计划落盘
                     _slots, _formula = [], ""
+            elif line.startswith("FILES:"):
+                _files = [
+                    f.strip()
+                    for f in line.replace("FILES:", "", 1).replace(",", " ").split()
+                    if f.strip()
+                ]
 
         plan = {"mode": mode, "description": description}
         if skill_name:
@@ -481,6 +489,8 @@ SLOTS: <OPTIONAL, only for method/numerical objectives where inputs are known BE
             plan["prediction_inputs"] = _slots
         if _formula:
             plan["plan_formula"] = _formula
+        if _files:
+            plan["target_files"] = _files
         return plan
 
     # ── KRCL plan check (反向校验 + 闭环重生成) ─────────────────
