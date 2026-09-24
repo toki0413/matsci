@@ -97,6 +97,45 @@ def test_render_contains_sections():
     assert "发现汇总" in md
 
 
+# ──────────────────── 真实仓: 工作流面 ────────────────────
+
+
+def test_workflow_dispatch_matches_hardcoded_branches():
+    """登记面 (dispatch_table) 与执行面 (engine_act 硬编码分支) 必须穷尽一致.
+
+    防回归: 审计曾把 phase_spec `_selfcheck` 里的 `custom_mode` override fixture
+    误当契约, 假报"登记面有而执行面没有"。剥掉自测块后两者都应是 6 个真实 mode。
+    """
+    wf = ca.build_workflow_contract()
+    assert wf["branch_matches_dispatch"] is True
+    assert "custom_mode" not in wf["dispatch"]
+
+
+def test_workflow_planner_prompts_consistent():
+    """planner 多处 MODE 提示必须一致 (visual_inspect 曾在主 prompt 格式行漏列)。"""
+    wf = ca.build_workflow_contract()
+    assert wf["prompt_inconsistent"] is False
+    assert "visual_inspect" in wf["reachable_from_prompt"]
+
+
+def test_selftest_block_excluded_from_dispatch(tmp_path):
+    """自测块里的 mode fixture 不得计入登记面 (合成树验证剥块逻辑)。"""
+    _write(
+        tmp_path,
+        ca._EXEC_SPEC_REL,
+        'dispatch_table={\n    "coder": ["_execute_coder", "description"],\n}\n'
+        "def _selfcheck() -> None:\n"
+        '    reg.register_phase_override("_execute", {"dispatch_table": '
+        '{"ghost": ["_execute_explore", "description"]}})\n',
+    )
+    _write(tmp_path, ca._ENGINE_ACT_REL, 'if mode == "coder":\n    pass\n')
+    _write(tmp_path, ca._PLAN_CHECK_REL, "MODE: <coder>\n")
+
+    wf = ca.build_workflow_contract(tmp_path)
+    assert wf["dispatch"] == ["coder"]
+    assert "ghost" not in wf["dispatch"]
+
+
 # ──────────────────── 文档漂移 ────────────────────
 
 
