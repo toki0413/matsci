@@ -1,7 +1,7 @@
-# MECE 契约审计 (奖励面 + 授权面 + 工作流面 + 模式面 + 词汇面 + 工具面 + 钩子面 + 事件面 + SSE 消费面 + WS 消费面)
+# MECE 契约审计 (奖励面 + 授权面 + 工作流面 + 模式面 + 词汇面 + 工具面 + 钩子面 + 事件面 + SSE 消费面 + WS 消费面 + HTTP API 消费面)
 
 自动生成: `python -m huginn.cli.contract_audit --out docs/mece-audit.md`.
-以 MECE 两原则审计 agent 的**奖励面 / 授权面 / 工作流面 / 模式面 / 词汇面 / 工具面 / 钩子面 / 事件面 / SSE 消费面 / WS 消费面**: **collectively exhaustive** 抓「宣称维度零调用者 / 面之间的缺口」; **mutually exclusive** 抓「同轴惩罚叠加」「跨模块同名重复实现」「词表互不一致」「同名工具名多类声明」「事件常量撞值」「SSE 帧名挂错通道」「WS 帧名挂错端点」. 纯静态扫描, 只提示候选, 不判死.
+以 MECE 两原则审计 agent 的**奖励面 / 授权面 / 工作流面 / 模式面 / 词汇面 / 工具面 / 钩子面 / 事件面 / SSE 消费面 / WS 消费面 / HTTP API 消费面**: **collectively exhaustive** 抓「宣称维度零调用者 / 面之间的缺口」; **mutually exclusive** 抓「同轴惩罚叠加」「跨模块同名重复实现」「词表互不一致」「同名工具名多类声明」「事件常量撞值」「SSE 帧名挂错通道」「WS 帧名挂错端点」「HTTP 同 method+path 多模块注册」. 纯静态扫描, 只提示候选, 不判死.
 
 ## 奖励面: 宣称项 vs 调用者 (collectively exhaustive)
 
@@ -595,6 +595,236 @@ SSE 消费面只核单向 (后端发帧 → 前端 `addEventListener`), WebSocke
 
 诚实边界: 前端 TS 与后端 `send_json(变量)` 都只做**静态**扫描 —— 经变量透传的入站类型 (如 `_ws_send(dict(state))` 转发的 agent 循环类型化事件 `mode_banner` / `trust_update` / `budget_update` 等) 生产面**不可穷尽**, 故只提示不判死; 前端terminal/hpc 按字段 (`data`/`output`) 取值而非按 `type` 判别, 记作 field-probing; viewer3d 无桌面前端 (由外部客户端驱动), 其入站不判 phantom.
 
+## HTTP API 消费面: 后端路由注册面 vs 前端 api.* 调用面
+
+前八面核 agent 内部契约, SSE/WS 消费面核流式推送, 本面补齐**请求-响应**第三块传输拼图: 后端 `huginn/routes/*.py` 的 `@router.<method>("<path>")` 是**注册生产面**, 前端 `desktop/src` 的 `api.get/post/put/patch/del/getBlob/upload*/search(...)` 是**调用消费面**. 桌面只是 HTTP API 的**一个**消费者 (外部客户端 / CLI / 测试也调), 故**只把「前端 → 后端」方向当硬契约**: 前端调了后端没注册的路径 = 404 死链, 方法对不上 = 405. 匹配只看**实存端点** (挂进 `ALL_ROUTERS` 的模块), 未挂载模块的端点另在挂载面报, 不重复计.
+
+状态: `wired`=前端调用的方法与路径后端已注册; `method-mismatch`=路径已注册但无此方法 (405, 调用必失败); `no-source`=后端无此路径 (404 死链); `external`=绝对 URL / 非后端路径, 不计入
+
+端点: 后端注册 **362** 个 (实存 **362** 个; 另有 4 个 WebSocket 端点归 WS 消费面); 桌面调用命中 **142** 个; 前端调用点 **170** 处.
+
+### 前端调用点 (按状态)
+
+| 方法 | 路径 | 状态 | 位置 | 备注 |
+|---|---|---|---|---|
+| `GET` | `/transfer/download?path=${encodeURIComponent(path)}` | `method-mismatch` | `desktop/src/components/panels/FilesPanel.tsx:100` | 后端仅注册 POST (405) |
+| `GET` | `/provenance/recent?n=50` | `wired` | `desktop/src/App.tsx:342` |  |
+| `POST` | `/checkpoints` | `wired` | `desktop/src/App.tsx:352` |  |
+| `GET` | `/checkpoints/${cpId}/diff` | `wired` | `desktop/src/App.tsx:363` |  |
+| `POST` | `/checkpoints/${cpId}/accept` | `wired` | `desktop/src/App.tsx:373` |  |
+| `POST` | `/checkpoints/${cpId}/reject` | `wired` | `desktop/src/App.tsx:386` |  |
+| `GET` | `/side/pending` | `wired` | `desktop/src/App.tsx:525` |  |
+| `POST` | `/side` | `wired` | `desktop/src/App.tsx:535` |  |
+| `POST` | `/side` | `wired` | `desktop/src/App.tsx:546` |  |
+| `DELETE` | `/side` | `wired` | `desktop/src/App.tsx:557` |  |
+| `GET` | `/unified/models` | `wired` | `desktop/src/App.tsx:576` |  |
+| `POST` | `/unified/derive` | `wired` | `desktop/src/App.tsx:588` |  |
+| `POST` | `/unified/solve` | `wired` | `desktop/src/App.tsx:597` |  |
+| `POST` | `/unified/plot` | `wired` | `desktop/src/App.tsx:606` |  |
+| `GET` | `/workflows` | `wired` | `desktop/src/App.tsx:737` |  |
+| `POST` | `/pet/feed` | `wired` | `desktop/src/Pet.tsx:1354` |  |
+| `POST` | `/pet/pet` | `wired` | `desktop/src/Pet.tsx:1365` |  |
+| `GET` | `/v1/fs/search` | `wired` | `desktop/src/components/CommandPalette.tsx:50` |  |
+| `GET` | `/credentials?kind=ssh` | `wired` | `desktop/src/components/CredentialsPanel.tsx:101` |  |
+| `GET` | `/credentials?kind=llm` | `wired` | `desktop/src/components/CredentialsPanel.tsx:102` |  |
+| `GET` | `/credentials` | `wired` | `desktop/src/components/CredentialsPanel.tsx:103` |  |
+| `GET` | `/config/providers` | `wired` | `desktop/src/components/CredentialsPanel.tsx:119` |  |
+| `PUT` | `/credentials/${editing.id}` | `wired` | `desktop/src/components/CredentialsPanel.tsx:178` |  |
+| `POST` | `/credentials` | `wired` | `desktop/src/components/CredentialsPanel.tsx:179` |  |
+| `PUT` | `/credentials/${editing.id}` | `wired` | `desktop/src/components/CredentialsPanel.tsx:202` |  |
+| `POST` | `/credentials` | `wired` | `desktop/src/components/CredentialsPanel.tsx:203` |  |
+| `POST` | `/config/models/test` | `wired` | `desktop/src/components/CredentialsPanel.tsx:219` |  |
+| `DELETE` | `/credentials/${id}` | `wired` | `desktop/src/components/CredentialsPanel.tsx:240` |  |
+| `POST` | `/credentials/${id}/set-default` | `wired` | `desktop/src/components/CredentialsPanel.tsx:247` |  |
+| `POST` | `/credentials/${id}/test` | `wired` | `desktop/src/components/CredentialsPanel.tsx:256` |  |
+| `POST` | `/credentials/import-from-config` | `wired` | `desktop/src/components/CredentialsPanel.tsx:269` |  |
+| `POST` | `/credentials/${apiKeyForm.service}` | `wired` | `desktop/src/components/CredentialsPanel.tsx:569` |  |
+| `GET` | `/credentials/${s.service}/test` | `wired` | `desktop/src/components/CredentialsPanel.tsx:614` |  |
+| `DELETE` | `/credentials/${s.service}` | `wired` | `desktop/src/components/CredentialsPanel.tsx:636` |  |
+| `GET` | `/personas/${personaName}/emotion` | `wired` | `desktop/src/components/EmotionTracker.tsx:133` |  |
+| `GET` | `/metrics` | `wired` | `desktop/src/components/MetricsBar.tsx:78` |  |
+| `GET` | `/health` | `wired` | `desktop/src/components/MetricsBar.tsx:79` |  |
+| `GET` | `/memory?category=notebook&limit=200` | `wired` | `desktop/src/components/Notebook.tsx:103` |  |
+| `POST` | `/memory/search` | `wired` | `desktop/src/components/Notebook.tsx:128` |  |
+| `POST` | `/memory` | `wired` | `desktop/src/components/Notebook.tsx:180` |  |
+| `DELETE` | `/memory/${id}` | `wired` | `desktop/src/components/Notebook.tsx:198` |  |
+| `POST` | `/tools/materials_database_tool` | `wired` | `desktop/src/components/PeriodicTable.tsx:188` |  |
+| `GET` | `/personas` | `wired` | `desktop/src/components/PersonaManager.tsx:82` |  |
+| `GET` | `/personas/${encodeURIComponent(name)}` | `wired` | `desktop/src/components/PersonaManager.tsx:99` |  |
+| `POST` | `/personas/${encodeURIComponent(name)}/switch` | `wired` | `desktop/src/components/PersonaManager.tsx:125` |  |
+| `PATCH` | `/personas/${encodeURIComponent(name)}/default` | `wired` | `desktop/src/components/PersonaManager.tsx:135` |  |
+| `DELETE` | `/personas/${encodeURIComponent(name)}` | `wired` | `desktop/src/components/PersonaManager.tsx:150` |  |
+| `POST` | `/personas` | `wired` | `desktop/src/components/PersonaManager.tsx:168` |  |
+| `GET` | `/hpc/jobs` | `wired` | `desktop/src/components/RemoteJobsPanel.tsx:47` |  |
+| `POST` | `/hpc/jobs/${localId}/refresh` | `wired` | `desktop/src/components/RemoteJobsPanel.tsx:65` |  |
+| `POST` | `/hpc/jobs/${localId}/cancel` | `wired` | `desktop/src/components/RemoteJobsPanel.tsx:77` |  |
+| `GET` | `/tasks` | `wired` | `desktop/src/components/RuntimeStatusPanel.tsx:95` |  |
+| `GET` | `/inbox` | `wired` | `desktop/src/components/RuntimeStatusPanel.tsx:98` |  |
+| `GET` | `/autoloop/resumable` | `wired` | `desktop/src/components/RuntimeStatusPanel.tsx:101` |  |
+| `GET` | `/tool-economy` | `wired` | `desktop/src/components/RuntimeStatusPanel.tsx:102` |  |
+| `POST` | `/autoloop/resume` | `wired` | `desktop/src/components/RuntimeStatusPanel.tsx:133` |  |
+| `POST` | `/inbox/${encodeURIComponent(item.id)}/resolve` | `wired` | `desktop/src/components/RuntimeStatusPanel.tsx:150` |  |
+| `POST` | `/sandbox/execute` | `wired` | `desktop/src/components/SandboxPanel.tsx:222` |  |
+| `POST` | `/memory` | `wired` | `desktop/src/components/SaveToMemoryButton.tsx:46` |  |
+| `GET` | `/metrics` | `wired` | `desktop/src/components/StatusBar.tsx:59` |  |
+| `GET` | `/health` | `wired` | `desktop/src/components/StatusBar.tsx:60` |  |
+| `GET` | `/fs/branch` | `wired` | `desktop/src/components/StatusBar.tsx:86` |  |
+| `POST` | `/tools/structure_tool` | `wired` | `desktop/src/components/StructureViewer.tsx:235` |  |
+| `POST` | `/viewer3d/load` | `wired` | `desktop/src/components/StructureViewer.tsx:246` |  |
+| `GET` | `/workflows` | `wired` | `desktop/src/components/SweepDashboard.tsx:176` |  |
+| `POST` | `/workflows/execute` | `wired` | `desktop/src/components/SweepDashboard.tsx:270` |  |
+| `POST` | `/transfer/upload` | `wired` | `desktop/src/components/panels/ChatPanel.tsx:573` |  |
+| `GET` | `/events/recent?n=400` | `wired` | `desktop/src/components/panels/EventAuditPanel.tsx:55` |  |
+| `POST` | `/transfer/upload` | `wired` | `desktop/src/components/panels/FilesPanel.tsx:47` |  |
+| `GET` | `/transfer/browse?path=.` | `wired` | `desktop/src/components/panels/FilesPanel.tsx:63` |  |
+| `POST` | `/transfer/sync` | `wired` | `desktop/src/components/panels/FilesPanel.tsx:75` |  |
+| `GET` | `/projects` | `wired` | `desktop/src/components/panels/ResearchProjectPanel.tsx:60` |  |
+| `GET` | `/threads` | `wired` | `desktop/src/components/panels/ResearchProjectPanel.tsx:75` |  |
+| `GET` | `/knowledge` | `wired` | `desktop/src/components/panels/ResearchProjectPanel.tsx:76` |  |
+| `POST` | `/projects` | `wired` | `desktop/src/components/panels/ResearchProjectPanel.tsx:82` |  |
+| `DELETE` | `/projects/${pid}` | `wired` | `desktop/src/components/panels/ResearchProjectPanel.tsx:95` |  |
+| `PATCH` | `/projects/${selected.id}` | `wired` | `desktop/src/components/panels/ResearchProjectPanel.tsx:105` |  |
+| `PATCH` | `/projects/${selected.id}` | `wired` | `desktop/src/components/panels/ResearchProjectPanel.tsx:119` |  |
+| `POST` | `/projects/${selected.id}/threads` | `wired` | `desktop/src/components/panels/ResearchProjectPanel.tsx:130` |  |
+| `DELETE` | `/projects/${selected.id}/threads/${tid}` | `wired` | `desktop/src/components/panels/ResearchProjectPanel.tsx:142` |  |
+| `POST` | `/projects/${selected.id}/knowledge` | `wired` | `desktop/src/components/panels/ResearchProjectPanel.tsx:153` |  |
+| `DELETE` | `/projects/${selected.id}/knowledge/${docId}` | `wired` | `desktop/src/components/panels/ResearchProjectPanel.tsx:165` |  |
+| `GET` | `/config/local-models?${params.toString()}` | `wired` | `desktop/src/components/panels/SettingsPanel.tsx:49` |  |
+| `GET` | `/models/caps` | `wired` | `desktop/src/components/panels/SettingsPanel.tsx:407` |  |
+| `POST` | `/credentials` | `wired` | `desktop/src/components/panels/SettingsPanel.tsx:571` |  |
+| `POST` | `/pet/reset` | `wired` | `desktop/src/components/panels/SettingsPanel.tsx:1102` |  |
+| `POST` | `/config/encrypt` | `wired` | `desktop/src/components/panels/SettingsPanel.tsx:1157` |  |
+| `GET` | `/export/status` | `wired` | `desktop/src/components/panels/SettingsPanel.tsx:1210` |  |
+| `POST` | `/export/all` | `wired` | `desktop/src/components/panels/SettingsPanel.tsx:1240` |  |
+| `POST` | `/export/memory` | `wired` | `desktop/src/components/panels/SettingsPanel.tsx:1257` |  |
+| `POST` | `/export/knowledge` | `wired` | `desktop/src/components/panels/SettingsPanel.tsx:1274` |  |
+| `POST` | `/import/all` | `wired` | `desktop/src/components/panels/SettingsPanel.tsx:1303` |  |
+| `POST` | `/skills/execute` | `wired` | `desktop/src/components/panels/SkillsPanel.tsx:147` |  |
+| `GET` | `/v1/todos` | `wired` | `desktop/src/components/panels/TodoPanel.tsx:27` |  |
+| `PUT` | `/v1/todos` | `wired` | `desktop/src/components/panels/TodoPanel.tsx:48` |  |
+| `POST` | `/tools/${name}` | `wired` | `desktop/src/components/panels/ToolsPanel.tsx:151` |  |
+| `GET` | `/threads/${threadId}/messages` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:340` |  |
+| `GET` | `/threads/${threadId}/state` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:357` |  |
+| `GET` | `/threads?include_archived=${includeArchived ? "true" : "false"}` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:377` |  |
+| `POST` | `/threads` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:388` |  |
+| `PATCH` | `/threads/${id}` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:407` |  |
+| `DELETE` | `/threads/${id}` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:416` |  |
+| `POST` | `/threads/${id}/fork` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:431` |  |
+| `POST` | `/threads/${id}/archive` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:450` |  |
+| `POST` | `/threads/${id}/unarchive` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:463` |  |
+| `GET` | `/threads/${tid}/messages` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:1259` |  |
+| `GET` | `/tools` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:1319` |  |
+| `GET` | `/skills` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:1324` |  |
+| `GET` | `/personas` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:1332` |  |
+| `GET` | `/personas/${config.persona}/emotion` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:1354` |  |
+| `POST` | `/agents/default/interrupt` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:1493` |  |
+| `POST` | `/agents/default/interrupt` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:1518` |  |
+| `POST` | `/agents/default/interrupt` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:1530` |  |
+| `POST` | `/config` | `wired` | `desktop/src/hooks/useConfig.ts:60` |  |
+| `GET` | `/config/active-model` | `wired` | `desktop/src/hooks/useConfig.ts:179` |  |
+| `POST` | `/config/active-model` | `wired` | `desktop/src/hooks/useConfig.ts:195` |  |
+| `GET` | `/config/model-tier` | `wired` | `desktop/src/hooks/useConfig.ts:212` |  |
+| `POST` | `/config/model-tier` | `wired` | `desktop/src/hooks/useConfig.ts:225` |  |
+| `POST` | `/personas/${personaName}/switch` | `wired` | `desktop/src/hooks/useConfig.ts:245` |  |
+| `GET` | `/credentials?kind=llm` | `wired` | `desktop/src/hooks/useConfig.ts:261` |  |
+| `POST` | `/hpc/test` | `wired` | `desktop/src/hooks/useHPC.ts:31` |  |
+| `POST` | `/hpc/submit` | `wired` | `desktop/src/hooks/useHPC.ts:53` |  |
+| `POST` | `/hpc/status` | `wired` | `desktop/src/hooks/useHPC.ts:86` |  |
+| `GET` | `/threads/${threadId}/events${qs ? ` | `wired` | `desktop/src/hooks/useIncrementalMessages.ts:87` |  |
+| `GET` | `/knowledge` | `wired` | `desktop/src/hooks/useKnowledge.ts:42` |  |
+| `POST` | `/knowledge/upload` | `wired` | `desktop/src/hooks/useKnowledge.ts:57` |  |
+| `POST` | `/knowledge/query` | `wired` | `desktop/src/hooks/useKnowledge.ts:91` |  |
+| `POST` | `/document/parse` | `wired` | `desktop/src/hooks/useKnowledge.ts:115` |  |
+| `GET` | `/document/${docId}/graph` | `wired` | `desktop/src/hooks/useKnowledge.ts:141` |  |
+| `GET` | `/knowledge/${doc.doc_id}/chunks` | `wired` | `desktop/src/hooks/useKnowledge.ts:163` |  |
+| `GET` | `/knowledge/${docId}/images` | `wired` | `desktop/src/hooks/useKnowledge.ts:191` |  |
+| `POST` | `/knowledge/report` | `wired` | `desktop/src/hooks/useKnowledge.ts:206` |  |
+| `DELETE` | `/knowledge/${docId}` | `wired` | `desktop/src/hooks/useKnowledge.ts:253` |  |
+| `POST` | `/knowledge/query` | `wired` | `desktop/src/hooks/useKnowledge.ts:264` |  |
+| `POST` | `/knowledge/ingest-url` | `wired` | `desktop/src/hooks/useKnowledge.ts:279` |  |
+| `GET` | `/provenance/dag?n=50` | `wired` | `desktop/src/hooks/useKnowledge.ts:296` |  |
+| `GET` | `/memory?${params.toString()}` | `wired` | `desktop/src/hooks/useMemory.ts:38` |  |
+| `GET` | `/memory/stats` | `wired` | `desktop/src/hooks/useMemory.ts:54` |  |
+| `POST` | `/memory/search` | `wired` | `desktop/src/hooks/useMemory.ts:68` |  |
+| `POST` | `/memory` | `wired` | `desktop/src/hooks/useMemory.ts:87` |  |
+| `DELETE` | `/memory/${id}` | `wired` | `desktop/src/hooks/useMemory.ts:115` |  |
+| `PATCH` | `/memory/${id}` | `wired` | `desktop/src/hooks/useMemory.ts:127` |  |
+| `POST` | `/memory/promote/${id}` | `wired` | `desktop/src/hooks/useMemory.ts:143` |  |
+| `POST` | `/memory/prune` | `wired` | `desktop/src/hooks/useMemory.ts:159` |  |
+| `POST` | `/memory/sync-md` | `wired` | `desktop/src/hooks/useMemory.ts:172` |  |
+| `GET` | `/memory/layers` | `wired` | `desktop/src/hooks/useMemory.ts:188` |  |
+| `GET` | `/mcp/servers` | `wired` | `desktop/src/hooks/usePlugins.ts:24` |  |
+| `GET` | `/mcp/servers/discover` | `wired` | `desktop/src/hooks/usePlugins.ts:33` |  |
+| `POST` | `/mcp/servers/connect` | `wired` | `desktop/src/hooks/usePlugins.ts:43` |  |
+| `POST` | `/mcp/servers/${name}/disconnect` | `wired` | `desktop/src/hooks/usePlugins.ts:61` |  |
+| `POST` | `/mcp/servers/${name}/reconnect` | `wired` | `desktop/src/hooks/usePlugins.ts:78` |  |
+| `POST` | `/mcp/tools/${serverName}/call` | `wired` | `desktop/src/hooks/usePlugins.ts:91` |  |
+| `GET` | `/project-context` | `wired` | `desktop/src/hooks/useProject.ts:22` |  |
+| `POST` | `/project-context` | `wired` | `desktop/src/hooks/useProject.ts:34` |  |
+| `GET` | `/codebase` | `wired` | `desktop/src/hooks/useProject.ts:50` |  |
+| `POST` | `/codebase/index` | `wired` | `desktop/src/hooks/useProject.ts:60` |  |
+| `POST` | `/codebase/search` | `wired` | `desktop/src/hooks/useProject.ts:78` |  |
+| `POST` | `/team/v2/plan` | `wired` | `desktop/src/hooks/useTeam.ts:24` |  |
+| `POST` | `/team/plan` | `wired` | `desktop/src/hooks/useTeam.ts:31` |  |
+| `POST` | `/team/v2/run` | `wired` | `desktop/src/hooks/useTeam.ts:57` |  |
+| `POST` | `/team/run` | `wired` | `desktop/src/hooks/useTeam.ts:64` |  |
+| `POST` | `/team/v2/fusion` | `wired` | `desktop/src/hooks/useTeam.ts:90` |  |
+| `GET` | `/v1/fs/list` | `wired` | `desktop/src/hooks/useWorkspace.tsx:42` |  |
+| `GET` | `/v1/fs/read` | `wired` | `desktop/src/hooks/useWorkspace.tsx:72` |  |
+| `PUT` | `/v1/fs/write` | `wired` | `desktop/src/hooks/useWorkspace.tsx:125` |  |
+| `POST` | `/v1/fs/mkdir` | `wired` | `desktop/src/hooks/useWorkspace.tsx:137` |  |
+| `PUT` | `/v1/fs/rename` | `wired` | `desktop/src/hooks/useWorkspace.tsx:147` |  |
+| `DELETE` | `/v1/fs/delete` | `wired` | `desktop/src/hooks/useWorkspace.tsx:163` |  |
+| `POST` | `/v1/fs/open` | `wired` | `desktop/src/hooks/useWorkspace.tsx:177` |  |
+| `GET` | `/v1/fs/cwd` | `wired` | `desktop/src/hooks/useWorkspace.tsx:187` |  |
+
+### 前端调用无源 (404 死链) / 方法不符 (405)
+
+硬违例 —— 前端调用挂不上后端注册面. 逐条分诊: 未登记的落「待分诊」(回归测试会失败, 逼人工判定):
+
+- `GET /transfer/download?path=${encodeURIComponent(path)}` @ `desktop/src/components/panels/FilesPanel.tsx:100` — 后端仅注册 POST (405) — ⛔ 已确认缺陷 (待修): FilesPanel 下载按钮走 `api.getBlob` (= GET), 后端 `routes/transfer.py` 只注册 POST /transfer/download; 该面板整条 `/transfer/*` 线 (upload 发 multipart 而后端要 JSON body, browse/sync 缺 credential_id) 都按另一套契约写的, 修法需产品决策(后端补 GET 流式下载 vs 面板改走凭据) —— 已确认缺陷, 待修
+
+### 同一 method+path 被多个**已挂载**模块注册 (路由遮蔽)
+
+- 无 —— 每个 method+path 唯一注册.
+
+### 路由挂载面 (ALL_ROUTERS ↔ 各模块 APIRouter)
+
+- 已挂载: 58 个 router 变量
+- 未挂载: 无 —— 每个定义路由的模块都被 `ALL_ROUTERS` 挂上.
+
+### 桌面零调用的路由模块 (候选, 只算已挂载模块)
+
+以下 23 个模块的端点**全部**无桌面调用 —— HTTP API 面向外部客户端 / CLI / 测试, 零调用是**结构性常态**, 非缺陷; 列此仅供「哪些面桌面根本没接」参考:
+
+| 模块 | 端点数 |
+|---|---|
+| `huginn/routes/admin.py` | 2 |
+| `huginn/routes/advisor.py` | 3 |
+| `huginn/routes/auth.py` | 5 |
+| `huginn/routes/bench.py` | 2 |
+| `huginn/routes/bot.py` | 13 |
+| `huginn/routes/catalog.py` | 3 |
+| `huginn/routes/coder.py` | 1 |
+| `huginn/routes/data_dict.py` | 3 |
+| `huginn/routes/deep_research.py` | 2 |
+| `huginn/routes/diagnostics.py` | 4 |
+| `huginn/routes/eval.py` | 4 |
+| `huginn/routes/events.py` | 1 |
+| `huginn/routes/execution.py` | 3 |
+| `huginn/routes/kernel.py` | 5 |
+| `huginn/routes/kg.py` | 5 |
+| `huginn/routes/live_script.py` | 2 |
+| `huginn/routes/parameters.py` | 5 |
+| `huginn/routes/planner.py` | 6 |
+| `huginn/routes/search.py` | 1 |
+| `huginn/routes/system.py` | 1 |
+| `huginn/routes/tunnels.py` | 6 |
+| `huginn/routes/users.py` | 8 |
+| `huginn/routes/visual.py` | 4 |
+
+诚实边界: 前端只扫 `lib/api.ts` 的 `api.*` 包装 (裸 `fetch(...)` 与 EventSource 在别面); 路径里的 `${…}` 只保留静态前缀, 动态拼接的段不可穷尽; `getBlob(path, { method: … })` 的方法覆盖按调用实参里的 `method:` 字面量近似判定; **请求体形状 / 必填 query 参数不核** —— 如 `/transfer/upload` 前端发 multipart 而后端要 JSON body 这类「路径对、负载错」静态不可辨, 不在本面 (只报 404/405 这类路径+方法级硬违例).
+
 ## 发现汇总
 
 - 奖励项零调用者: reconcile_r_phys
@@ -644,3 +874,4 @@ SSE 消费面只核单向 (后端发帧 → 前端 `addEventListener`), WebSocke
 - 事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): team.member.tool
 - 事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): team.run.done
 - 事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): team.run.start
+- HTTP: 前端调用的方法与后端注册不符 (405): GET /transfer/download?path=${encodeURIComponent(path)} @ desktop/src/components/panels/FilesPanel.tsx:100 — 后端仅注册 POST (405); 已确认缺陷 (待修)

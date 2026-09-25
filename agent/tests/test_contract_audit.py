@@ -965,6 +965,181 @@ def test_ws_synthetic_declared_frame_is_dynamic(tmp_path):
     assert cons["mode_banner"]["status"] == "dynamic"
 
 
+# ──────────────────── 真实仓: HTTP API 消费面 ────────────────────
+
+
+def test_http_backend_registry_fully_mounted():
+    """真实仓: `ALL_ROUTERS` 挂全每个定义 APIRouter 的模块, 且无悬空别名."""
+    reg = ca.build_http_contract()["registration"]
+    assert reg["mounted"]
+    assert reg["unmounted"] == [], reg["unmounted"]
+    assert reg["dangling"] == []
+
+
+def test_http_ws_endpoints_excluded_from_http_face():
+    """WS 端点归 WS 消费面: 本面端点不得含 WEBSOCKET, 且如实计数."""
+    c = ca.build_http_contract()
+    assert c["ws_endpoint_count"] > 0
+    for ep in c["endpoints"]:
+        assert "WEBSOCKET" not in ep["methods"]
+
+
+def test_http_real_repo_every_call_is_wired_or_triaged():
+    """除已分诊硬违例外, 每个前端调用都命中后端注册的方法+路径."""
+    c = ca.build_http_contract()
+    bad = [x for x in c["calls"] if x["status"] not in {"wired", "external"}]
+    assert bad == c["hard_violations"]
+    assert c["hard_untriaged"] == [], c["hard_untriaged"]
+    for v in c["hard_violations"]:
+        assert v["triage"] in {"defect", "intentional"}
+        assert v["triage_reason"]
+    # 路由遮蔽是互斥违例, 真实仓目前无.
+    assert c["duplicates"] == []
+
+
+def test_http_confirmed_violations_registry_not_stale():
+    """分诊表登记的每条都必须仍是真实硬违例 —— 修好后要同步删登记."""
+    observed = {
+        (v["method"], v["path"].split("?")[0])
+        for v in ca.build_http_contract()["hard_violations"]
+    }
+    for key in ca._HTTP_CONFIRMED_VIOLATIONS:
+        assert key in observed, f"分诊表登记 {key} 已不再是硬违例, 请删除登记"
+
+
+def test_http_hard_violation_mark_labels_triage():
+    """分诊标注: 未登记 → 待分诊; 已登记 → 对应标签 + 理由."""
+    assert ca._http_triage("GET", "/nope/none") is None
+    assert "待分诊" in ca._http_violation_mark("GET", "/nope/none")
+    for (method, path), (label, _reason) in ca._HTTP_CONFIRMED_VIOLATIONS.items():
+        mark = ca._http_violation_mark(method, path)
+        assert "待分诊" not in mark
+        assert ca._HTTP_TRIAGE_DOC[label] in mark
+
+
+def test_http_render_sections_present():
+    md = ca.render_http_markdown(ca.build_http_contract())
+    assert "HTTP API 消费面" in md
+    assert "前端调用点 (按状态)" in md
+    assert "方法不符 (405)" in md
+    assert "路由挂载面" in md
+    assert "桌面零调用的路由模块" in md
+    assert "诚实边界" in md
+
+
+# ──────────────────── 合成树: HTTP API 消费面 ────────────────────
+
+
+def test_http_synthetic_404_and_405(tmp_path):
+    """合成树: wired / 404 死链 / 405 方法不符 / 绝对 URL 四态互斥."""
+    _write(
+        tmp_path,
+        "huginn/routes/thing.py",
+        "from fastapi import APIRouter\n"
+        'router = APIRouter(prefix="/thing")\n'
+        '@router.get("/list")\n'
+        "async def thing_list():\n"
+        "    return {}\n"
+        '@router.post("/save")\n'
+        "async def thing_save():\n"
+        "    return {}\n",
+    )
+    _write(
+        tmp_path,
+        "huginn/routes/__init__.py",
+        "from huginn.routes.thing import router as thing_router\n"
+        "ALL_ROUTERS = [thing_router]\n",
+    )
+    _write(
+        tmp_path,
+        "fe/a.ts",
+        "await api.get('/thing/list');\n"
+        "await api.post('/thing/list');\n"
+        "await api.get('/thing/ghost');\n"
+        "await api.get('https://cdn.example/x.json');\n",
+    )
+    c = ca.build_http_contract(tmp_path, tmp_path / "fe")
+    by = {(x["method"], x["path"]): x for x in c["calls"]}
+    assert by[("GET", "/thing/list")]["status"] == "wired"
+    assert by[("POST", "/thing/list")]["status"] == "method-mismatch"
+    assert by[("GET", "/thing/ghost")]["status"] == "no-source"
+    assert by[("GET", "https://cdn.example/x.json")]["status"] == "external"
+    eps = {ep["path"]: ep for ep in c["endpoints"]}
+    assert eps["/thing/list"]["called"] is True
+    assert eps["/thing/save"]["called"] is False
+    # 该模块有一个端点被调用 ⇒ 不进"桌面零调用模块".
+    assert c["zero_modules"] == []
+    # 两条硬违例都未登记 ⇒ 如实标"待分诊".
+    assert {v["triage"] for v in c["hard_violations"]} == {"untriaged"}
+    assert len(c["hard_untriaged"]) == 2
+
+
+def test_http_synthetic_duplicate_and_unmounted(tmp_path):
+    """合成树: 同 method+path 多模块注册 → 路由遮蔽; 未进 ALL_ROUTERS → 永不生效."""
+    for name in ("a", "b", "c"):
+        _write(
+            tmp_path,
+            f"huginn/routes/{name}.py",
+            "from fastapi import APIRouter\n"
+            "router = APIRouter()\n"
+            '@router.get("/dup")\n'
+            "async def dup():\n"
+            "    return {}\n",
+        )
+    _write(
+        tmp_path,
+        "huginn/routes/__init__.py",
+        "from huginn.routes.a import router as a_router\n"
+        "from huginn.routes.b import router as b_router\n"
+        "ALL_ROUTERS = [a_router, b_router]\n",
+    )
+    _write(tmp_path, "fe/a.ts", "await api.get('/dup');\n")
+    c = ca.build_http_contract(tmp_path, tmp_path / "fe")
+    assert c["duplicates"] == [
+        {
+            "method": "GET",
+            "path": "/dup",
+            "modules": ["huginn/routes/a.py", "huginn/routes/b.py"],
+        }
+    ]
+    assert c["registration"]["mounted"] == ["a.router", "b.router"]
+    assert c["registration"]["unmounted"] == ["c.router"]
+    assert c["registration"]["dangling"] == []
+
+
+def test_http_synthetic_dynamic_segments_and_method_override(tmp_path):
+    """合成树: `/v1` 前缀剥离、`${id}` ↔ `{uid}` 互配、query 截断、getBlob 方法覆盖."""
+    _write(
+        tmp_path,
+        "huginn/routes/user.py",
+        "from fastapi import APIRouter\n"
+        'router = APIRouter(prefix="/user")\n'
+        '@router.get("/{uid}/files")\n'
+        "async def files(uid: str):\n"
+        "    return {}\n"
+        '@router.post("/{uid}/save")\n'
+        "async def save(uid: str):\n"
+        "    return {}\n",
+    )
+    _write(
+        tmp_path,
+        "huginn/routes/__init__.py",
+        "from huginn.routes.user import router as user_router\n"
+        "ALL_ROUTERS = [user_router]\n",
+    )
+    _write(
+        tmp_path,
+        "fe/a.ts",
+        "await api.get(`/v1/user/${id}/files?x=1`);\n"
+        "await api.getBlob(`/user/${id}/save`, { method: 'POST' });\n",
+    )
+    c = ca.build_http_contract(tmp_path, tmp_path / "fe")
+    assert {x["status"] for x in c["calls"]} == {"wired"}
+    assert all(ep["called"] for ep in c["endpoints"])
+    assert c["hard_violations"] == []
+    assert c["zero_modules"] == []
+
+
 # ──────────────────── 文档漂移 ────────────────────
 
 
