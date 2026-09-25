@@ -2054,6 +2054,145 @@ def test_ws_ev_payload_synthetic_frame_not_in_channel_skipped(tmp_path):
     assert c["coverage"]["checked"] == 0
 
 
+# ──────────────────── HTTP 请求字段面 ────────────────────
+
+
+def test_http_field_real_repo_no_untriaged_violations():
+    """真实仓: 请求体字段的声明/读取/发送三面一致 (无待分诊违例)."""
+    c = ca.build_http_field_contract()
+    assert c["endpoint_count"] > 0
+    assert c["untriaged"] == [], c["untriaged"]
+    for v in c["violations"]:
+        assert v["triage"] in {"defect", "intentional"}
+        assert v["triage_reason"]
+    # 至少有一批字段可静态核对, 否则本面等于空转.
+    assert c["coverage"]["handler_checked"] > 0
+    assert c["coverage"]["dict_checked"] > 0
+
+
+def test_http_field_confirmed_registry_not_stale():
+    """分诊表登记的每条都必须仍是真实硬违例 —— 修好后要同步删登记."""
+    observed = {
+        (v["kind"], v["method"], v["endpoint"], v["field"])
+        for v in ca.build_http_field_contract()["violations"]
+    }
+    for key in ca._HTTP_FIELD_CONFIRMED:
+        assert key in observed, f"分诊表登记 {key} 已不再是硬违例, 请删除登记"
+
+
+def test_http_field_violation_mark_labels_triage():
+    """分诊标注: 未登记 → 待分诊; 已登记 → 对应标签 + 理由."""
+    assert ca._http_field_triage("handler-undeclared", "POST", "/nope/none", "f") is None
+    assert "待分诊" in ca._http_field_violation_mark(
+        "handler-undeclared", "POST", "/nope/none", "f"
+    )
+    for (kind, method, endpoint, field), (label, _reason) in ca._HTTP_FIELD_CONFIRMED.items():
+        mark = ca._http_field_violation_mark(kind, method, endpoint, field)
+        assert "待分诊" not in mark
+        assert ca._HTTP_FIELD_TRIAGE_DOC[label] in mark
+
+
+def test_http_field_render_sections_present():
+    md = ca.render_http_field_markdown(ca.build_http_field_contract())
+    assert "HTTP 请求字段面" in md
+    assert "违例类型" in md
+    assert "静态核对覆盖面" in md
+    assert "诚实边界" in md
+
+
+def _http_field_tree(tmp_path, backend: str, fe: str) -> None:
+    """合成树: routes/thing.py 声明模型+端点 / routes/__init__.py 挂载 / 前端调用."""
+    _write(tmp_path, "huginn/routes/thing.py", backend)
+    _write(
+        tmp_path,
+        "huginn/routes/__init__.py",
+        "from huginn.routes.thing import router as thing_router\n"
+        "ALL_ROUTERS = [thing_router]\n",
+    )
+    _write(tmp_path, "fe/a.ts", fe)
+
+
+def test_http_field_synthetic_handler_undeclared(tmp_path):
+    """合成树: handler 读 `body.secret` 而请求体模型未声明 → 硬违例 (AttributeError)."""
+    _http_field_tree(
+        tmp_path,
+        "from fastapi import APIRouter\n"
+        "from pydantic import BaseModel\n"
+        'router = APIRouter(prefix="/thing")\n'
+        "class SaveBody(BaseModel):\n"
+        "    name: str\n"
+        '    note: str = ""\n'
+        '@router.post("/save")\n'
+        "async def thing_save(body: SaveBody):\n"
+        "    return {'n': body.name, 's': body.secret}\n",
+        "await api.post('/thing/save', { name: 'a' });\n",
+    )
+    c = ca.build_http_field_contract(tmp_path, tmp_path / "fe")
+    got = [(v["kind"], v["method"], v["endpoint"], v["field"]) for v in c["violations"]]
+    assert got == [("handler-undeclared", "POST", "/thing/save", "secret")]
+    assert len(c["untriaged"]) == 1
+    assert c["coverage"]["handler_checked"] == 1
+
+
+def test_http_field_synthetic_fe_undeclared(tmp_path):
+    """合成树: 前端发模型未声明的 `bogus` 键 → 硬违例 (Pydantic 静默丢弃)."""
+    _http_field_tree(
+        tmp_path,
+        "from fastapi import APIRouter\n"
+        "from pydantic import BaseModel\n"
+        'router = APIRouter(prefix="/thing")\n'
+        "class SaveBody(BaseModel):\n"
+        "    name: str\n"
+        '    note: str = ""\n'
+        '@router.post("/save")\n'
+        "async def thing_save(body: SaveBody):\n"
+        "    return {'n': body.name}\n",
+        "await api.post('/thing/save', { name: 'a', bogus: 1 });\n",
+    )
+    c = ca.build_http_field_contract(tmp_path, tmp_path / "fe")
+    got = [(v["kind"], v["method"], v["endpoint"], v["field"]) for v in c["violations"]]
+    assert got == [("fe-undeclared", "POST", "/thing/save", "bogus")]
+    assert c["coverage"]["fe_checked"] == 1
+
+
+def test_http_field_synthetic_dict_key_unsent(tmp_path):
+    """合成树: body-dict 端点 handler 下标读键而前端调用从不发 → 硬违例 (KeyError)."""
+    _http_field_tree(
+        tmp_path,
+        "from fastapi import APIRouter\n"
+        'router = APIRouter(prefix="/thing")\n'
+        '@router.post("/raw")\n'
+        "async def thing_raw(body: dict):\n"
+        "    return {'x': body['must']}\n",
+        "await api.post('/thing/raw', { other: 1 });\n",
+    )
+    c = ca.build_http_field_contract(tmp_path, tmp_path / "fe")
+    got = [(v["kind"], v["method"], v["endpoint"], v["field"]) for v in c["violations"]]
+    assert got == [("dict-key-unsent", "POST", "/thing/raw", "must")]
+    assert c["coverage"]["dict_checked"] == 1
+
+
+def test_http_field_synthetic_extra_allow_skips_fe(tmp_path):
+    """合成树: 模型 `extra=allow` → 前端发送面开放 (不判 fe-undeclared), handler 读取照核."""
+    _http_field_tree(
+        tmp_path,
+        "from fastapi import APIRouter\n"
+        "from pydantic import BaseModel, ConfigDict\n"
+        'router = APIRouter(prefix="/thing")\n'
+        "class SaveBody(BaseModel):\n"
+        "    model_config = ConfigDict(extra='allow')\n"
+        "    name: str\n"
+        '@router.post("/save")\n'
+        "async def thing_save(body: SaveBody):\n"
+        "    return {'n': body.name}\n",
+        "await api.post('/thing/save', { name: 'a', bogus: 1 });\n",
+    )
+    c = ca.build_http_field_contract(tmp_path, tmp_path / "fe")
+    assert c["violations"] == []
+    assert c["rows"][0]["shape"] == "开放(extra=allow)"
+    assert c["coverage"]["fe_skipped"] == 1
+
+
 # ──────────────────── 文档漂移 ────────────────────
 
 

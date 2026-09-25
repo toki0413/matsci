@@ -1,7 +1,7 @@
-# MECE 契约审计 (奖励面 + 授权面 + 工作流面 + 模式面 + 词汇面 + 工具面 + 钩子面 + 事件面 + SSE 消费面 + WS 消费面 + HTTP API 消费面 + 请求负载面 + 响应结构面 + WS 请求负载面 + SSE 事件负载面 + WS 事件负载面)
+# MECE 契约审计 (奖励面 + 授权面 + 工作流面 + 模式面 + 词汇面 + 工具面 + 钩子面 + 事件面 + SSE 消费面 + WS 消费面 + HTTP API 消费面 + 请求负载面 + 响应结构面 + WS 请求负载面 + SSE 事件负载面 + WS 事件负载面 + HTTP 请求字段面)
 
 自动生成: `python -m huginn.cli.contract_audit --out docs/mece-audit.md`.
-以 MECE 两原则审计 agent 的**奖励面 / 授权面 / 工作流面 / 模式面 / 词汇面 / 工具面 / 钩子面 / 事件面 / SSE 消费面 / WS 消费面 / HTTP API 消费面 / 请求负载面 / 响应结构面 / WS 请求负载面 / SSE 事件负载面 / WS 事件负载面**: **collectively exhaustive** 抓「宣称维度零调用者 / 面之间的缺口」; **mutually exclusive** 抓「同轴惩罚叠加」「跨模块同名重复实现」「词表互不一致」「同名工具名多类声明」「事件常量撞值」「SSE 帧名挂错通道」「WS 帧名挂错端点」「HTTP 同 method+path 多模块注册」「前端漏发后端必填请求负载」「前端声明要读的响应字段后端从不返回」「WS 入站字段模型未声明」「前端读的 SSE 帧 payload 顶层字段后端从不发」「前端读的 WS 帧 payload 顶层字段后端从不发」. 纯静态扫描, 只提示候选, 不判死.
+以 MECE 两原则审计 agent 的**奖励面 / 授权面 / 工作流面 / 模式面 / 词汇面 / 工具面 / 钩子面 / 事件面 / SSE 消费面 / WS 消费面 / HTTP API 消费面 / 请求负载面 / 响应结构面 / WS 请求负载面 / SSE 事件负载面 / WS 事件负载面 / HTTP 请求字段面**: **collectively exhaustive** 抓「宣称维度零调用者 / 面之间的缺口」; **mutually exclusive** 抓「同轴惩罚叠加」「跨模块同名重复实现」「词表互不一致」「同名工具名多类声明」「事件常量撞值」「SSE 帧名挂错通道」「WS 帧名挂错端点」「HTTP 同 method+path 多模块注册」「前端漏发后端必填请求负载」「前端声明要读的响应字段后端从不返回」「WS 入站字段模型未声明」「前端读的 SSE 帧 payload 顶层字段后端从不发」「前端读的 WS 帧 payload 顶层字段后端从不发」「HTTP handler 读请求体模型未声明字段 / 前端发未声明键 / body-dict 下标读键而前端从不发」. 纯静态扫描, 只提示候选, 不判死.
 
 ## 奖励面: 宣称项 vs 调用者 (collectively exhaustive)
 
@@ -1065,6 +1065,185 @@ WS 消费面只核「帧名认不认」, WS 请求负载面只核「入站字段
 | 前端顶层字段读取 | 53 | 12 | 74 |
 
 诚实边界: 只读**字面量**形状 —— 后端帧经变量透传转发 (`_ws_send(dict(state))`) 或字面量含 `**` 展开 / 动态拼键时该帧记开放并跳过, 故违例是**下界** (可能漏报); 只核**顶层**键 (嵌套 `data.<对象>.<字段>` 的子形状由发布点决定, 不核); 只核 agent 通道 (前端唯一用 `WSMessage` 标注的通道, 其余通道按裸字段取值、无类型归因); 信封键 `type`(判别键) 与 `thread_id`(`_ws_send` 统一注入) 不算各帧 payload; 前端经**别名**中转后的字段读取 (如 `const x = data.obj; x.field`) 只归因到直接读取的变量; 反向 (后端发前端没读) 不是违例.
+
+## HTTP 请求字段面: 请求体字段 声明(模型) / 读取(handler) / 发送(前端) 三面一致
+
+请求负载面只核「前端漏发后端必填」(422); 本面再往里一层核**字段级声明一致性**: 请求体 Pydantic 模型的声明字段 = 权威面, handler 内 `body.<字段>` / `body["字段"]` 读取 = 读取面, 前端 `api.*` 调用实参的 body 键 = 发送面。硬方向: handler 读模型未声明字段 (AttributeError) / 前端发模型未声明键 (Pydantic 静默丢弃) / body-dict 端点 handler 下标读键而前端调用从不发 (KeyError)。反向不判违例, 只列候选。
+
+违例类型: `handler-undeclared`=body-model 端点 handler 读 `body.<字段>` 而模型未声明 ⇒ AttributeError (死端点); `fe-undeclared`=body-model 端点前端发的 body 键模型未声明 ⇒ Pydantic 静默丢弃 (前端以为传了); `dict-key-unsent`=body-dict 端点 handler 下标读 `body["键"]` 而该端点前端调用从不发此键 ⇒ KeyError
+
+请求体端点: **135** 处; 违例: **0** 条.
+
+### body-model 端点: 声明字段 vs handler 读取 vs 前端发送
+
+| 端点 | 方法 | 模型 | 声明字段 | handler 读取 | 前端发送键 | 形状 |
+|---|---|---|---|---|---|---|
+| `/auth/login` | `POST` | `LoginRequest` | `api_key`, `password`, `username` | `api_key`, `username` | — | 封闭 |
+| `/auth/token` | `POST` | `TokenRequest` | `api_key`, `grant_type` | `api_key`, `grant_type` | — | 封闭 |
+| `/autoloop/start` | `POST` | `AutoloopStartRequest` | `max_iterations`, `objective` | `max_iterations`, `objective` | — | 封闭 |
+| `/data/validate` | `POST` | `ValidateRequest` | `data`, `type_name` | `data`, `type_name` | — | 封闭 |
+| `/export/all` | `POST` | `ExportParams` | `format`, `include` | `format`, `include` | — | 封闭 |
+| `/export/knowledge` | `POST` | `ExportParams` | `format`, `include` | `format` | — | 封闭 |
+| `/export/memory` | `POST` | `ExportParams` | `format`, `include` | `format` | — | 封闭 |
+| `/kernel/session` | `POST` | `CreateSessionRequest` | `kernel_name`, `timeout` | `kernel_name`, `timeout` | — | 封闭 |
+| `/kernel/{session_id}/execute` | `POST` | `ExecuteRequest` | `code`, `silent` | `code`, `silent` | — | 封闭 |
+| `/kg/query` | `POST` | `GraphQueryRequest` | `depth`, `seed`, `top_k` | `depth`, `seed`, `top_k` | — | 封闭 |
+| `/knowledge/ingest-url` | `POST` | `UrlIngestRequest` | `url` | `url` | `url` | 封闭 |
+| `/knowledge/query` | `POST` | `KnowledgeQuery` | `query`, `top_k` | `query`, `top_k` | `query`, `top_k` | 封闭 |
+| `/knowledge/report` | `POST` | `ReportRequest` | `doc_ids`, `title` | `doc_ids`, `title` | `doc_ids`, `title` | 封闭 |
+| `/live/execute` | `POST` | `ScriptRequest` | `script`, `timeout`, `variables` | `script`, `timeout`, `variables` | — | 封闭 |
+| `/parameters/set` | `POST` | `ParamSetRequest` | `name`, `value` | `name`, `value` | — | 封闭 |
+| `/projects` | `POST` | `CreateProject` | `description`, `instructions`, `title` | `description`, `instructions`, `title` | `description`, `instructions`, `title` | 封闭 |
+| `/projects/{pid}` | `PATCH` | `UpdateProject` | `description`, `instructions`, `search_scope`, `title` | — | `instructions`, `search_scope` | 封闭 |
+| `/projects/{pid}/knowledge` | `POST` | `AttachDoc` | `doc_id` | `doc_id` | `doc_id` | 封闭 |
+| `/projects/{pid}/threads` | `POST` | `AttachThread` | `thread_id` | `thread_id` | `thread_id` | 封闭 |
+| `/todos` | `PUT` | `TodoPayload` | `todos` | `todos` | `todos` | 封闭 |
+| `/transfer/download` | `POST` | `TransferRequest` | `credential_id`, `host`, `local_path`, `port`, `remote_path`, `username` | `local_path`, `remote_path` | — | 封闭 |
+| `/transfer/sync` | `POST` | `SyncRequest` | `credential_id`, `delete`, `exclude_patterns`, `include_patterns`, `local_dir`, `remote_dir` | `delete`, `exclude_patterns`, `include_patterns`, `local_dir`, `remote_dir` | `credential_id`, `local_dir`, `remote_dir` | 封闭 |
+| `/transfer/upload` | `POST` | `TransferRequest` | `credential_id`, `host`, `local_path`, `port`, `remote_path`, `username` | `local_path`, `remote_path` | — | 封闭 |
+| `/tunnels` | `POST` | `TunnelCreate` | `auto_reconnect`, `bind_address`, `credential_id`, `keepalive_interval`, `local_port`, `name`, `remote_host`, `remote_port`, `ssh_host`, `ssh_port`, `ssh_user`, `tunnel_type` | — | — | 封闭 |
+| `/viewer3d/load` | `POST` | `LoadRequest` | `content`, `file_path`, `format` | `content`, `file_path`, `format` | `content`, `format` | 封闭 |
+| `/viewer3d/trajectory` | `POST` | `TrajectoryRequest` | `content`, `file_path`, `format` | `content`, `file_path`, `format` | — | 封闭 |
+
+### body-dict 端点: handler 下标读键 vs 前端发送键 (仅列可核对的)
+
+| 端点 | 方法 | handler 下标读键 | 前端发送键 | 形状 |
+|---|---|---|---|---|
+| `/admin/maintenance` | `POST` | — | — | 开放(无前端调用) |
+| `/advisor/recommend` | `POST` | — | — | 开放(无前端调用) |
+| `/agents/{agent_id}/chat` | `POST` | — | — | 开放(无前端调用) |
+| `/agents/{agent_id}/chat/stream` | `POST` | — | — | 开放(无前端调用) |
+| `/agents/{agent_id}/clarifications/resolve` | `POST` | — | — | 开放(无前端调用) |
+| `/agents/{agent_id}/interrupt` | `POST` | — | `thread_id`, `type` | 封闭 |
+| `/analyze/dynamics` | `POST` | — | — | 开放(无前端调用) |
+| `/analyze/sindy` | `POST` | — | — | 开放(无前端调用) |
+| `/analyze/spectral` | `POST` | — | — | 开放(无前端调用) |
+| `/analyze/symmetry` | `POST` | — | — | 开放(无前端调用) |
+| `/analyze/tda` | `POST` | — | — | 开放(无前端调用) |
+| `/bench/run` | `POST` | — | — | 开放(无前端调用) |
+| `/bot/config` | `PUT` | — | — | 开放(无前端调用) |
+| `/bot/wechat/config` | `PUT` | — | — | 开放(无前端调用) |
+| `/catalog/{entry_id}` | `PATCH` | — | — | 开放(无前端调用) |
+| `/checkpoints` | `POST` | — | `path` | 封闭 |
+| `/clarifications/{question_id}/resolve` | `POST` | — | — | 开放(无前端调用) |
+| `/codebase/search` | `POST` | — | `query`, `top_k` | 封闭 |
+| `/coder` | `POST` | — | — | 开放(无前端调用) |
+| `/config` | `POST` | — | — | 开放(调用含展开) |
+| `/config/active-model` | `POST` | — | `alias` | 封闭 |
+| `/config/decrypt` | `POST` | — | — | 开放(无前端调用) |
+| `/config/encrypt` | `POST` | — | `password`, `path` | 封闭 |
+| `/config/features/{feature}` | `POST` | `enabled` | — | 开放(无前端调用) |
+| `/config/model-tier` | `POST` | — | `tier` | 封闭 |
+| `/config/models` | `POST` | — | — | 开放(无前端调用) |
+| `/config/models/test` | `POST` | — | `alias`, `api_key`, `base_url`, `enabled`, `model`, `provider`, `temperature` | 封闭 |
+| `/config/models/{alias}` | `PUT` | `api_key` | — | 开放(无前端调用) |
+| `/config/privacy/level` | `POST` | — | — | 开放(无前端调用) |
+| `/config/privacy/tags` | `POST` | — | — | 开放(无前端调用) |
+| `/credentials` | `POST` | — | — | 开放(调用含展开) |
+| `/credentials/{cid}` | `PUT` | — | — | 开放(调用含展开) |
+| `/credentials/{service}` | `POST` | — | — | 开放(无前端调用) |
+| `/diagnose` | `POST` | — | — | 开放(无前端调用) |
+| `/eval/analyze` | `POST` | — | — | 开放(无前端调用) |
+| `/eval/run` | `POST` | — | — | 开放(无前端调用) |
+| `/evolve/run` | `POST` | — | — | 开放(无前端调用) |
+| `/execute` | `POST` | — | — | 开放(无前端调用) |
+| `/explore` | `POST` | — | — | 开放(无前端调用) |
+| `/fs/mkdir` | `POST` | — | `path` | 封闭 |
+| `/fs/open` | `POST` | — | `path` | 封闭 |
+| `/fs/rename` | `PUT` | — | `new`, `path` | 封闭 |
+| `/fs/write` | `PUT` | — | `content`, `path` | 封闭 |
+| `/hpc/estimate-walltime` | `POST` | — | — | 开放(无前端调用) |
+| `/hpc/jobs/{local_id}/cancel` | `POST` | — | — | 开放(无前端调用) |
+| `/hpc/jobs/{local_id}/refresh` | `POST` | — | — | 开放(无前端调用) |
+| `/hpc/status` | `POST` | — | `host`, `job_id`, `key_path`, `scheduler`, `username` | 封闭 |
+| `/hpc/submit` | `POST` | — | `command`, `host`, `job_name`, `key_path`, `nodes`, `ntasks_per_node`, `queue`, `scheduler`, `username`, `walltime` | 封闭 |
+| `/hpc/test` | `POST` | — | `host`, `key_path`, `scheduler`, `username` | 封闭 |
+| `/inbox/{item_id}/resolve` | `POST` | — | `resolution` | 封闭 |
+| `/mcp/connect/batch` | `POST` | — | — | 开放(无前端调用) |
+| `/mcp/prompts/{name}/get` | `POST` | — | — | 开放(无前端调用) |
+| `/mcp/resources/subscribe` | `POST` | — | — | 开放(无前端调用) |
+| `/mcp/servers/connect` | `POST` | — | — | 开放(调用含展开) |
+| `/mcp/tools/{tool_name}/call` | `POST` | — | `arguments`, `tool_name` | 封闭 |
+| `/memory` | `POST` | `content` | — | 开放(调用含展开) |
+| `/memory/lint` | `POST` | — | — | 开放(无前端调用) |
+| `/memory/maintenance` | `POST` | — | — | 开放(无前端调用) |
+| `/memory/promote/{memory_id}` | `POST` | — | — | 开放(无前端调用) |
+| `/memory/prune` | `POST` | — | — | 开放(无前端调用) |
+| `/memory/search` | `POST` | — | `category`, `query`, `tier`, `top_k` | 封闭 |
+| `/memory/typed` | `POST` | `content`, `memory_type`, `topic` | — | 开放(无前端调用) |
+| `/memory/{memory_id}` | `PATCH` | — | — | 开放(调用含展开) |
+| `/onebot/v11/event` | `POST` | — | — | 开放(无前端调用) |
+| `/orchestrate` | `POST` | — | — | 开放(无前端调用) |
+| `/personalization/style/feedback` | `POST` | — | — | 开放(无前端调用) |
+| `/personas` | `POST` | `name` | `begin_dialogs`, `description`, `mood_dialogs`, `name`, `system_prompt`, `variables`, `when_to_use` | 封闭 |
+| `/personas/from-template` | `POST` | — | — | 开放(无前端调用) |
+| `/personas/import` | `POST` | — | — | 开放(无前端调用) |
+| `/personas/match` | `POST` | — | — | 开放(无前端调用) |
+| `/personas/{name}` | `PUT` | — | — | 开放(无前端调用) |
+| `/personas/{name}/switch` | `POST` | — | — | 封闭 |
+| `/pet/accessory` | `POST` | — | — | 开放(无前端调用) |
+| `/pet/configure` | `POST` | — | — | 开放(无前端调用) |
+| `/plan` | `POST` | — | — | 开放(无前端调用) |
+| `/plan/propose` | `POST` | — | — | 开放(无前端调用) |
+| `/plan/{plan_id}/confirm` | `POST` | — | — | 开放(无前端调用) |
+| `/plan/{plan_id}/reject` | `POST` | — | — | 开放(无前端调用) |
+| `/project-context` | `POST` | — | `content` | 封闭 |
+| `/research/grounding` | `POST` | — | — | 开放(无前端调用) |
+| `/research/run_program` | `POST` | — | — | 开放(无前端调用) |
+| `/sandbox/execute` | `POST` | — | `code` | 封闭 |
+| `/side` | `POST` | — | `answer`, `id`, `question` | 封闭 |
+| `/skills/execute` | `POST` | — | `args`, `skill` | 封闭 |
+| `/swarm/run` | `POST` | — | — | 开放(无前端调用) |
+| `/team/plan` | `POST` | — | `objective` | 封闭 |
+| `/team/run` | `POST` | — | `objective` | 封闭 |
+| `/team/v2/fusion` | `POST` | — | `query`, `rounds` | 封闭 |
+| `/team/v2/plan` | `POST` | — | `objective` | 封闭 |
+| `/team/v2/plans` | `POST` | — | — | 开放(无前端调用) |
+| `/team/v2/plans/{plan_id}/execute` | `POST` | — | — | 开放(无前端调用) |
+| `/team/v2/plans/{plan_id}/reject` | `POST` | — | — | 开放(无前端调用) |
+| `/team/v2/run` | `POST` | — | `objective` | 封闭 |
+| `/threads` | `POST` | — | `title` | 封闭 |
+| `/threads/{thread_id}` | `PATCH` | — | `label` | 封闭 |
+| `/threads/{thread_id}/event-branch` | `POST` | — | — | 开放(无前端调用) |
+| `/threads/{thread_id}/fork` | `POST` | — | — | 开放(无前端调用) |
+| `/threads/{thread_id}/switch-branch` | `POST` | — | — | 开放(无前端调用) |
+| `/tools/{tool_name}` | `POST` | — | — | 开放(调用含展开) |
+| `/unified/derive` | `POST` | — | `input`, `model` | 封闭 |
+| `/unified/plot` | `POST` | — | `model`, `solution` | 封闭 |
+| `/unified/solve` | `POST` | — | `derived`, `input`, `model` | 封闭 |
+| `/users` | `POST` | — | — | 开放(无前端调用) |
+| `/users/{user_id}` | `PATCH` | — | — | 开放(无前端调用) |
+| `/viz/dos` | `POST` | — | — | 开放(无前端调用) |
+| `/viz/persistence` | `POST` | — | — | 开放(无前端调用) |
+| `/viz/phase` | `POST` | — | — | 开放(无前端调用) |
+| `/viz/sindy` | `POST` | — | — | 开放(无前端调用) |
+| `/workflows/execute` | `POST` | — | `args`, `template` | 封闭 |
+
+### 违例 (硬)
+
+- 无 —— 请求体字段的声明/读取/发送三面一致.
+
+### 候选: handler 读了而前端调用从不发 (反向不判违例)
+
+- `POST /transfer/sync` → 读 `delete` (模型 `SyncRequest`) @ `agent/huginn/routes/transfer.py:246`
+- `POST /transfer/sync` → 读 `exclude_patterns` (模型 `SyncRequest`) @ `agent/huginn/routes/transfer.py:246`
+- `POST /transfer/sync` → 读 `include_patterns` (模型 `SyncRequest`) @ `agent/huginn/routes/transfer.py:246`
+- `POST /viewer3d/load` → 读 `file_path` (模型 `LoadRequest`) @ `agent/huginn/routes/viewer3d.py:462`
+
+### 候选: 模型声明却既无 handler 读取也零前端发送 (宣称无人接)
+
+- `PATCH /projects/{pid}` → `description` (模型 `UpdateProject`) @ `agent/huginn/routes/research_project.py:135`
+- `PATCH /projects/{pid}` → `title` (模型 `UpdateProject`) @ `agent/huginn/routes/research_project.py:135`
+
+### 静态核对覆盖面 (读不出形状即跳过, 不猜)
+
+| 维度 | 已核对 | 跳过 |
+|---|---|---|
+| body-model handler 读取 | 26 | 0 |
+| body-model 前端发送 | 12 | 0 |
+| body-dict 下标读键 | 34 | 75 |
+
+诚实边界: 请求体类型静态解析不到 (跨模块 / 别名) 的端点跳过 (下界, 可能漏报); `extra=allow` 的模型发送面开放、跳过; body-dict 端点须有 ≥1 个**唯一命中**且 body 静态可辨的前端调用才核 (外部客户端 / 动态段并列命中 / 调用含展开均跳过); `body.get("k")` 的缺省 None 是**有意**可选语义, 不计入下标读; handler 经别名或 `**body` / 迭代读取 (如 `for k in body`) 无法逐字段归因, 跳过 (漏报); 反向(handler 读了前端从不发 / 模型声明无人接管) 不是违例, 只列候选.
 
 ## 发现汇总
 

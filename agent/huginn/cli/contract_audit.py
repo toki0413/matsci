@@ -6480,6 +6480,544 @@ def render_ws_ev_payload_markdown(contract: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
+# 第十七面: HTTP 请求字段面 — 端点请求体字段 声明/读取/发送 三面一致
+# ---------------------------------------------------------------------------
+
+# Pydantic BaseModel 的内建属性/方法 (非字段): `body.model_dump()` 类调用不算字段读取.
+_HTTP_FIELD_PYDANTIC_ATTRS = frozenset(
+    {
+        "model_dump",
+        "model_dump_json",
+        "model_validate",
+        "model_validate_json",
+        "model_copy",
+        "model_fields",
+        "model_config",
+        "model_extra",
+        "model_fields_set",
+        "model_construct",
+        "model_post_init",
+        "dict",
+        "json",
+        "copy",
+        "parse_obj",
+        "parse_raw",
+        "schema",
+        "schema_json",
+        "construct",
+        "update_forward_refs",
+        "validate",
+    }
+)
+
+_HTTP_FIELD_KIND_DOC = {
+    "handler-undeclared": (
+        "body-model 端点 handler 读 `body.<字段>` 而模型未声明 ⇒ AttributeError (死端点)"
+    ),
+    "fe-undeclared": (
+        "body-model 端点前端发的 body 键模型未声明 ⇒ Pydantic 静默丢弃 (前端以为传了)"
+    ),
+    "dict-key-unsent": (
+        'body-dict 端点 handler 下标读 `body["键"]` 而该端点前端调用从不发此键 ⇒ KeyError'
+    ),
+}
+
+_HTTP_FIELD_TRIAGE_DOC = {
+    "defect": "已确认缺陷 (待修)",
+    "intentional": "已确认有意",
+}
+
+# 已确认分诊表. 键 (类型, 方法, 端点, 字段) → (标签, 理由); 未登记即"待分诊",
+# 回归测试会失败 (逼逐条人工判定). 空表 = 当前请求体字段都合契约.
+_HTTP_FIELD_CONFIRMED: dict[tuple[str, str, str, str], tuple[str, str]] = {}
+
+
+def _http_field_triage(
+    kind: str, method: str, endpoint: str, field: str
+) -> tuple[str, str] | None:
+    """请求字段违例分诊: 返回 (标签, 理由); 未登记则 None (待人工确认)."""
+    return _HTTP_FIELD_CONFIRMED.get((kind, method.upper(), endpoint, field))
+
+
+def _http_field_violation_mark(kind: str, method: str, endpoint: str, field: str) -> str:
+    tri = _http_field_triage(kind, method, endpoint, field)
+    if tri is None:
+        return " — ⚠ 待分诊"
+    doc = _HTTP_FIELD_TRIAGE_DOC[tri[0]]
+    return f" — {'⛔' if tri[0] == 'defect' else '✅'} {doc}: {tri[1]}"
+
+
+_HTTP_FIELD_EXTRA_ALLOW_RE = re.compile(r"extra\s*=\s*[\"']allow[\"']")
+
+
+def _http_field_own_fields(cls: ast.ClassDef) -> set[str]:
+    """类自身声明的注解字段 (不含继承)."""
+    return {
+        s.target.id
+        for s in cls.body
+        if isinstance(s, ast.AnnAssign) and isinstance(s.target, ast.Name)
+    }
+
+
+def _http_field_models(root: Path) -> tuple[dict[str, set[str]], set[str]]:
+    """全仓 Pydantic 模型名 → **全部**声明字段 (含继承链 fixpoint); 及 extra=allow 模型.
+
+    与请求负载面的 `_payload_models` (只取**必填**字段) 不同: 本面核「读/发未声明」,
+    需要模型的完整字段面, 故单列。`extra=allow` 的模型收到未知键不会丢, 其发送面开放。
+    """
+    classes: dict[str, ast.ClassDef] = {}
+    for py in _iter_py(root):
+        if "/tests/" in py.as_posix():
+            continue
+        tree = _parse(py)
+        if tree is None:
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef):
+                classes.setdefault(node.name, node)
+    models: dict[str, set[str]] = {}
+    changed = True
+    while changed:
+        changed = False
+        for name, cls in classes.items():
+            if name in models:
+                continue
+            bases = {ast.unparse(b).split("[")[0].strip() for b in cls.bases}
+            if not (bases & _PAYLOAD_MODEL_BASES) and not (bases & set(models)):
+                continue
+            fields = _http_field_own_fields(cls)
+            for b in bases:
+                if b in models:
+                    fields |= models[b]
+            models[name] = fields
+            changed = True
+    extra_allow = {
+        name
+        for name, cls in classes.items()
+        if _HTTP_FIELD_EXTRA_ALLOW_RE.search(ast.unparse(cls))
+    }
+    return models, extra_allow
+
+
+def _http_field_body_reads(node: ast.FunctionDef | ast.AsyncFunctionDef, param: str) -> tuple[set[str], set[str]]:
+    """handler 自身子树里对 body 变量的读取: (属性读取集, 字面下标读取集).
+
+    只收 `body.<f>` 与 `body["f"]` 两种直读; `body.get("f")` 归 `.get` (下标面不含,
+    因其缺省返回 None 是**有意**的可选语义); 嵌套 def/lambda 内不计 (`_resp_own_walk`)。
+    """
+    attrs: set[str] = set()
+    keys: set[str] = set()
+    for n in _resp_own_walk(node):
+        if (
+            isinstance(n, ast.Attribute)
+            and isinstance(n.value, ast.Name)
+            and n.value.id == param
+        ):
+            attrs.add(n.attr)
+        elif (
+            isinstance(n, ast.Subscript)
+            and isinstance(n.value, ast.Name)
+            and n.value.id == param
+            and isinstance(n.slice, ast.Constant)
+            and isinstance(n.slice.value, str)
+        ):
+            keys.add(n.slice.value)
+    return attrs, keys
+
+
+def _http_field_endpoints(root: Path, models: dict[str, set[str]]) -> list[dict]:
+    """已挂载路由里请求体为 Pydantic 模型 / 裸 dict 的端点 + handler 对 body 的读取面."""
+    out: list[dict] = []
+    rdir = root / _HTTP_ROUTES_DIR
+    if not rdir.is_dir():
+        return out
+    for py in sorted(rdir.glob("*.py")):
+        if py.name == "__init__.py":
+            continue
+        tree = _parse(py)
+        if tree is None:
+            continue
+        prefixes = _http_router_prefixes(tree)
+        if not prefixes:
+            continue
+        for node in tree.body:
+            if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            for dec in node.decorator_list:
+                parsed = _http_route_decorator(dec, prefixes)
+                if parsed is None:
+                    continue
+                methods, path, _var = parsed
+                if "WEBSOCKET" in methods:
+                    continue
+                for p in _payload_handler_params(node, path):
+                    kind = _payload_classify(p, models)
+                    if kind not in ("body-model", "body-dict"):
+                        continue
+                    attrs, keys = _http_field_body_reads(node, p["name"])
+                    out.append(
+                        {
+                            "rel": _display(root, py),
+                            "line": node.lineno,
+                            "methods": methods,
+                            "path": path,
+                            "param": p["name"],
+                            "kind": kind,
+                            "model": _payload_base_ann(p["ann"]) if kind == "body-model" else "",
+                            "attrs": sorted(attrs),
+                            "keys": sorted(keys),
+                        }
+                    )
+                    break
+                break
+    return out
+
+
+def _http_field_sends(frontend: Path, live: list[dict]) -> dict[tuple[str, str], dict]:
+    """端点 → 前端调用的 body 形状: {keys 并集, sites 逐调用点, unknown}.
+
+    只归因**唯一命中**端点的调用: 动态段并列命中多个端点即跳过 (不猜); 调用实参数是
+    变量 / 含 `...` 展开时该调用点记 unknown (键集只是下界, 不据此判违例).
+    """
+    out: dict[tuple[str, str], dict] = defaultdict(
+        lambda: {"keys": set(), "sites": [], "unknown": False}
+    )
+    for c in _payload_scan_frontend(frontend):
+        if not c["has_body"]:
+            continue
+        segs = _http_fe_segments(c["path"])
+        if segs is None:
+            continue
+        eps = [
+            ep
+            for ep in live
+            if c["method"] in ep["methods"] and _http_path_match(segs, ep["segments"])
+        ]
+        if len(eps) != 1:
+            continue
+        rec = out[(c["method"], eps[0]["path"])]
+        rec["keys"] |= set(c["body_keys"])
+        rec["unknown"] = rec["unknown"] or c["body_unknown"]
+        rec["sites"].append(
+            {
+                "rel": c["rel"],
+                "line": c["line"],
+                "keys": c["body_keys"],
+                "unknown": c["body_unknown"],
+            }
+        )
+    return out
+
+
+def build_http_field_contract(
+    root: Path | None = None, frontend: Path | None = None
+) -> dict:
+    """HTTP 请求字段面: 端点请求体字段 声明(模型) / 读取(handler) / 发送(前端) 三面一致.
+
+    权威面三处: 请求体 Pydantic 模型的**声明字段**; handler 内 `body.<字段>` /
+    `body["字段"]` 读取; 前端 `api.*` 调用实参的 body 键. 硬方向:
+      - `handler-undeclared`: body-model 端点 handler 读模型未声明字段 ⇒ AttributeError;
+      - `fe-undeclared`: body-model 端点前端发的键模型未声明 ⇒ Pydantic 静默丢弃;
+      - `dict-key-unsent`: body-dict 端点 handler 下标读键而前端调用从不发 ⇒ KeyError.
+    反向 (handler 读了前端从不发 / 模型声明却无人接管) 不是违例, 只列候选。请求负载面
+    只核「前端漏发后端必填」(422), 本面核字段级声明一致性, 与之互补。
+    """
+    root = root or _REPO
+    frontend = frontend if frontend is not None else root.parent / "desktop" / "src"
+    models, extra_allow = _http_field_models(root)
+    endpoints = _http_field_endpoints(root, models)
+    live = _payload_live_endpoints(root)
+    sends = _http_field_sends(frontend, live)
+
+    violations: list[dict] = []
+    cand_read_unsent: list[dict] = []
+    cand_unread_unsent: list[dict] = []
+    cov = {
+        "handler_checked": 0,
+        "handler_skipped": 0,
+        "fe_checked": 0,
+        "fe_skipped": 0,
+        "dict_checked": 0,
+        "dict_skipped": 0,
+    }
+    rows: list[dict] = []
+
+    for e in endpoints:
+        key = None
+        for m in e["methods"]:
+            if (m, e["path"]) in sends:
+                key = (m, e["path"])
+                break
+        rec = sends.get(key) if key is not None else None
+        method = key[0] if key is not None else (e["methods"][0] if e["methods"] else "")
+        attrs = set(e["attrs"]) - _HTTP_FIELD_PYDANTIC_ATTRS
+        row = {
+            "rel": e["rel"],
+            "line": e["line"],
+            "method": method,
+            "endpoint": e["path"],
+            "kind": e["kind"],
+            "model": e["model"],
+            "declared": [],
+            "read": [],
+            "sent": [],
+            "shape": "封闭",
+        }
+        if e["kind"] == "body-model":
+            declared = models.get(e["model"])
+            if declared is None:
+                cov["handler_skipped"] += 1
+                row["shape"] = "开放(模型解析不到)"
+            else:
+                open_model = e["model"] in extra_allow
+                row["declared"] = sorted(declared)
+                row["read"] = sorted(attrs & declared)
+                if open_model:
+                    row["shape"] = "开放(extra=allow)"
+                # (1) handler 读模型未声明字段 (读面与 extra 配置无关, 照核).
+                cov["handler_checked"] += 1
+                for f in sorted(attrs - declared):
+                    violations.append(
+                        {
+                            "kind": "handler-undeclared",
+                            "method": method,
+                            "endpoint": e["path"],
+                            "field": f,
+                            "model": e["model"],
+                            "rel": e["rel"],
+                            "line": e["line"],
+                            "detail": f"handler 读 `{e['param']}.{f}` 而模型 "
+                            f"`{e['model']}` 未声明",
+                        }
+                    )
+                # (2) 前端发模型未声明键 + 反向候选.
+                if rec is not None:
+                    row["sent"] = sorted(rec["keys"])
+                    if open_model:
+                        cov["fe_skipped"] += len(rec["sites"])
+                    else:
+                        for site in rec["sites"]:
+                            if site["unknown"]:
+                                cov["fe_skipped"] += 1
+                                continue
+                            cov["fe_checked"] += 1
+                            for f in sorted(set(site["keys"]) - declared):
+                                violations.append(
+                                    {
+                                        "kind": "fe-undeclared",
+                                        "method": method,
+                                        "endpoint": e["path"],
+                                        "field": f,
+                                        "model": e["model"],
+                                        "rel": site["rel"],
+                                        "line": site["line"],
+                                        "detail": f"前端发 body 键 `{f}` 而模型 "
+                                        f"`{e['model']}` 未声明 (静默丢弃)",
+                                    }
+                                )
+                    if not open_model and not rec["unknown"]:
+                        sent = rec["keys"]
+                        for f in sorted((attrs & declared) - sent):
+                            cand_read_unsent.append(
+                                {
+                                    "method": method,
+                                    "endpoint": e["path"],
+                                    "field": f,
+                                    "model": e["model"],
+                                    "rel": e["rel"],
+                                    "line": e["line"],
+                                }
+                            )
+                        for f in sorted(declared - attrs - sent):
+                            cand_unread_unsent.append(
+                                {
+                                    "method": method,
+                                    "endpoint": e["path"],
+                                    "field": f,
+                                    "model": e["model"],
+                                    "rel": e["rel"],
+                                    "line": e["line"],
+                                }
+                            )
+        else:  # body-dict: 无声明面, 只核「下标读键 vs 前端发送键」
+            row["read"] = sorted(e["keys"])
+            if rec is None or rec["unknown"]:
+                cov["dict_skipped"] += 1
+                row["shape"] = "开放(无前端调用)" if rec is None else "开放(调用含展开)"
+            else:
+                cov["dict_checked"] += 1
+                sent = rec["keys"]
+                row["sent"] = sorted(sent)
+                for k in sorted(set(e["keys"]) - sent):
+                    violations.append(
+                        {
+                            "kind": "dict-key-unsent",
+                            "method": method,
+                            "endpoint": e["path"],
+                            "field": k,
+                            "model": "",
+                            "rel": e["rel"],
+                            "line": e["line"],
+                            "detail": f'handler 下标读 `{e["param"]}["{k}"]` 而该端点'
+                            "前端调用从不发此键",
+                        }
+                    )
+        rows.append(row)
+
+    for v in violations:
+        tri = _http_field_triage(v["kind"], v["method"], v["endpoint"], v["field"])
+        v["triage"] = tri[0] if tri else "untriaged"
+        v["triage_reason"] = tri[1] if tri else ""
+
+    kinds = Counter(v["kind"] for v in violations)
+    return {
+        "frontend": str(frontend),
+        "endpoint_count": len(endpoints),
+        "model_count": len(models),
+        "rows": rows,
+        "violations": violations,
+        "untriaged": [v for v in violations if v["triage"] == "untriaged"],
+        "kind_counts": dict(sorted(kinds.items())),
+        "coverage": cov,
+        "candidates_read_unsent": cand_read_unsent,
+        "candidates_unread_unsent": cand_unread_unsent,
+    }
+
+
+def render_http_field_markdown(contract: dict) -> str:
+    lines: list[str] = []
+    lines.append(
+        "## HTTP 请求字段面: 请求体字段 声明(模型) / 读取(handler) / 发送(前端) 三面一致"
+    )
+    lines.append("")
+    lines.append(
+        "请求负载面只核「前端漏发后端必填」(422); 本面再往里一层核**字段级声明一致性**: "
+        "请求体 Pydantic 模型的声明字段 = 权威面, handler 内 `body.<字段>` / `body[\"字段\"]` "
+        "读取 = 读取面, 前端 `api.*` 调用实参的 body 键 = 发送面。硬方向: handler 读模型"
+        "未声明字段 (AttributeError) / 前端发模型未声明键 (Pydantic 静默丢弃) / body-dict "
+        "端点 handler 下标读键而前端调用从不发 (KeyError)。反向不判违例, 只列候选。"
+    )
+    lines.append("")
+    lines.append(
+        "违例类型: " + "; ".join(f"`{k}`={v}" for k, v in _HTTP_FIELD_KIND_DOC.items())
+    )
+    lines.append("")
+    counts = (
+        "  " + ", ".join(f"`{k}`×{n}" for k, n in contract["kind_counts"].items())
+        if contract["kind_counts"]
+        else ""
+    )
+    lines.append(
+        f"请求体端点: **{contract['endpoint_count']}** 处; 违例: "
+        f"**{len(contract['violations'])}** 条.{counts}"
+    )
+    lines.append("")
+
+    model_rows = [r for r in contract["rows"] if r["kind"] == "body-model"]
+    lines.append("### body-model 端点: 声明字段 vs handler 读取 vs 前端发送")
+    lines.append("")
+    lines.append("| 端点 | 方法 | 模型 | 声明字段 | handler 读取 | 前端发送键 | 形状 |")
+    lines.append("|---|---|---|---|---|---|---|")
+    for r in sorted(model_rows, key=lambda x: (x["endpoint"], x["method"])):
+        decl = ", ".join(f"`{f}`" for f in r["declared"]) or "—"
+        read = ", ".join(f"`{f}`" for f in r["read"]) or "—"
+        sent = ", ".join(f"`{f}`" for f in r["sent"]) or "—"
+        lines.append(
+            f"| `{r['endpoint']}` | `{r['method']}` | `{r['model']}` | {decl} | "
+            f"{read} | {sent} | {r['shape']} |"
+        )
+    lines.append("")
+
+    dict_rows = [r for r in contract["rows"] if r["kind"] == "body-dict"]
+    lines.append("### body-dict 端点: handler 下标读键 vs 前端发送键 (仅列可核对的)")
+    lines.append("")
+    if dict_rows:
+        lines.append("| 端点 | 方法 | handler 下标读键 | 前端发送键 | 形状 |")
+        lines.append("|---|---|---|---|---|")
+        for r in sorted(dict_rows, key=lambda x: (x["endpoint"], x["method"])):
+            read = ", ".join(f"`{f}`" for f in r["read"]) or "—"
+            sent = ", ".join(f"`{f}`" for f in r["sent"]) or "—"
+            lines.append(
+                f"| `{r['endpoint']}` | `{r['method']}` | {read} | {sent} | {r['shape']} |"
+            )
+    else:
+        lines.append("- 无.")
+    lines.append("")
+
+    lines.append("### 违例 (硬)")
+    lines.append("")
+    if contract["violations"]:
+        lines.append(
+            "硬违例 —— 逐条分诊, 未登记的落「待分诊」(回归测试会失败, 逼人工判定):"
+        )
+        lines.append("")
+        for v in sorted(
+            contract["violations"],
+            key=lambda x: (x["kind"], x["method"], x["endpoint"], x["field"], x["rel"], x["line"]),
+        ):
+            lines.append(
+                f"- `[{v['kind']}]` `{v['method']} {v['endpoint']}` → `{v['field']}` "
+                f"@ `{v['rel']}:{v['line']}` — {v['detail']}"
+                + _http_field_violation_mark(
+                    v["kind"], v["method"], v["endpoint"], v["field"]
+                )
+            )
+    else:
+        lines.append("- 无 —— 请求体字段的声明/读取/发送三面一致.")
+    lines.append("")
+
+    lines.append("### 候选: handler 读了而前端调用从不发 (反向不判违例)")
+    lines.append("")
+    if contract["candidates_read_unsent"]:
+        for c in sorted(
+            contract["candidates_read_unsent"],
+            key=lambda x: (x["method"], x["endpoint"], x["field"]),
+        ):
+            lines.append(
+                f"- `{c['method']} {c['endpoint']}` → 读 `{c['field']}` (模型 `{c['model']}`) "
+                f"@ `{c['rel']}:{c['line']}`"
+            )
+    else:
+        lines.append("- 无.")
+    lines.append("")
+
+    lines.append("### 候选: 模型声明却既无 handler 读取也零前端发送 (宣称无人接)")
+    lines.append("")
+    if contract["candidates_unread_unsent"]:
+        for c in sorted(
+            contract["candidates_unread_unsent"],
+            key=lambda x: (x["method"], x["endpoint"], x["field"]),
+        ):
+            lines.append(
+                f"- `{c['method']} {c['endpoint']}` → `{c['field']}` (模型 `{c['model']}`) "
+                f"@ `{c['rel']}:{c['line']}`"
+            )
+    else:
+        lines.append("- 无.")
+    lines.append("")
+
+    lines.append("### 静态核对覆盖面 (读不出形状即跳过, 不猜)")
+    lines.append("")
+    lines.append("| 维度 | 已核对 | 跳过 |")
+    lines.append("|---|---|---|")
+    cov = contract["coverage"]
+    lines.append(f"| body-model handler 读取 | {cov['handler_checked']} | {cov['handler_skipped']} |")
+    lines.append(f"| body-model 前端发送 | {cov['fe_checked']} | {cov['fe_skipped']} |")
+    lines.append(f"| body-dict 下标读键 | {cov['dict_checked']} | {cov['dict_skipped']} |")
+    lines.append("")
+    lines.append(
+        "诚实边界: 请求体类型静态解析不到 (跨模块 / 别名) 的端点跳过 (下界, 可能漏报); "
+        "`extra=allow` 的模型发送面开放、跳过; body-dict 端点须有 ≥1 个**唯一命中**且 body "
+        "静态可辨的前端调用才核 (外部客户端 / 动态段并列命中 / 调用含展开均跳过); "
+        '`body.get("k")` 的缺省 None 是**有意**可选语义, 不计入下标读; handler 经别名或 '
+        "`**body` / 迭代读取 (如 `for k in body`) 无法逐字段归因, 跳过 (漏报); 反向"
+        "(handler 读了前端从不发 / 模型声明无人接管) 不是违例, 只列候选."
+    )
+    lines.append("")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # 组合 + 门禁
 # ---------------------------------------------------------------------------
 
@@ -6502,6 +7040,7 @@ def build_mece_snapshot(root: Path | None = None) -> dict:
         "ws_payload": build_ws_payload_contract(root),
         "sse_payload": build_sse_payload_contract(root),
         "ws_ev_payload": build_ws_ev_payload_contract(root),
+        "http_field": build_http_field_contract(root),
     }
 
 
@@ -6729,13 +7268,25 @@ def find_issues(snap: dict) -> list[str]:
             f"({_WS_EV_PAYLOAD_KIND_DOC[v['kind']]}): {v['channel']}/{v['frame']} → "
             f"`data.{v['field']}` @ {v['rel']}:{v['line']};{mark}"
         )
+    hf = snap["http_field"]
+    for v in hf["violations"]:
+        mark = (
+            " 待分诊"
+            if v["triage"] == "untriaged"
+            else " " + _HTTP_FIELD_TRIAGE_DOC[v["triage"]]
+        )
+        issues.append(
+            f"HTTP 请求字段: {_HTTP_FIELD_KIND_DOC[v['kind']]}: "
+            f"{v['method']} {v['endpoint']} → `{v['field']}` @ "
+            f"{v['rel']}:{v['line']} — {v['detail']};{mark}"
+        )
     return issues
 
 
 def render_mece_markdown(snap: dict) -> str:
     lines: list[str] = []
     lines.append(
-        "# MECE 契约审计 (奖励面 + 授权面 + 工作流面 + 模式面 + 词汇面 + 工具面 + 钩子面 + 事件面 + SSE 消费面 + WS 消费面 + HTTP API 消费面 + 请求负载面 + 响应结构面 + WS 请求负载面 + SSE 事件负载面 + WS 事件负载面)"
+        "# MECE 契约审计 (奖励面 + 授权面 + 工作流面 + 模式面 + 词汇面 + 工具面 + 钩子面 + 事件面 + SSE 消费面 + WS 消费面 + HTTP API 消费面 + 请求负载面 + 响应结构面 + WS 请求负载面 + SSE 事件负载面 + WS 事件负载面 + HTTP 请求字段面)"
     )
     lines.append("")
     lines.append(
@@ -6744,13 +7295,15 @@ def render_mece_markdown(snap: dict) -> str:
     lines.append(
         "以 MECE 两原则审计 agent 的**奖励面 / 授权面 / 工作流面 / 模式面 / "
         "词汇面 / 工具面 / 钩子面 / 事件面 / SSE 消费面 / WS 消费面 / HTTP API 消费面 / "
-        "请求负载面 / 响应结构面 / WS 请求负载面 / SSE 事件负载面 / WS 事件负载面**: "
+        "请求负载面 / 响应结构面 / WS 请求负载面 / SSE 事件负载面 / WS 事件负载面 / "
+        "HTTP 请求字段面**: "
         "**collectively exhaustive** 抓「宣称维度零调用者 / "
         "面之间的缺口」; **mutually exclusive** 抓「同轴惩罚叠加」「跨模块同名重复实现」「词表互不一致」"
         "「同名工具名多类声明」「事件常量撞值」「SSE 帧名挂错通道」「WS 帧名挂错端点」"
         "「HTTP 同 method+path 多模块注册」「前端漏发后端必填请求负载」"
         "「前端声明要读的响应字段后端从不返回」「WS 入站字段模型未声明」"
-        "「前端读的 SSE 帧 payload 顶层字段后端从不发」「前端读的 WS 帧 payload 顶层字段后端从不发」. 纯静态扫描, "
+        "「前端读的 SSE 帧 payload 顶层字段后端从不发」「前端读的 WS 帧 payload 顶层字段后端从不发」"
+        "「HTTP handler 读请求体模型未声明字段 / 前端发未声明键 / body-dict 下标读键而前端从不发」. 纯静态扫描, "
         "只提示候选, 不判死."
     )
     lines.append("")
@@ -6770,6 +7323,7 @@ def render_mece_markdown(snap: dict) -> str:
     lines.append(render_ws_payload_markdown(snap["ws_payload"]))
     lines.append(render_sse_payload_markdown(snap["sse_payload"]))
     lines.append(render_ws_ev_payload_markdown(snap["ws_ev_payload"]))
+    lines.append(render_http_field_markdown(snap["http_field"]))
     issues = find_issues(snap)
     lines.append("## 发现汇总")
     lines.append("")
@@ -6800,6 +7354,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--ws-payload", action="store_true", help="只看 WS 请求负载面")
     parser.add_argument("--sse-payload", action="store_true", help="只看 SSE 事件负载面")
     parser.add_argument("--ws-ev-payload", action="store_true", help="只看 WS 事件负载面")
+    parser.add_argument("--http-field", action="store_true", help="只看 HTTP 请求字段面")
     parser.add_argument("--json", action="store_true", help="输出 JSON 快照")
     parser.add_argument("--check", action="store_true", help="有 MECE 发现时 exit 1")
     parser.add_argument("--out", type=str, default="", help="写 markdown 到文件")
@@ -6833,6 +7388,11 @@ def main(argv: list[str] | None = None) -> int:
             args.ws_ev_payload,
             build_ws_ev_payload_contract,
             render_ws_ev_payload_markdown,
+        ),
+        "http_field": (
+            args.http_field,
+            build_http_field_contract,
+            render_http_field_markdown,
         ),
     }
     selected = [k for k, (on, _b, _r) in surfaces.items() if on]
