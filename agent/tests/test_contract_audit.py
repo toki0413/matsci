@@ -607,6 +607,196 @@ def test_event_synthetic_collision_and_all_types_gaps(tmp_path):
     assert c["unresolved_members"] == ["GHOST"]
 
 
+# ──────────────────── 真实仓: SSE 消费面 ────────────────────
+
+
+def test_sse_real_repo_listeners_all_resolved():
+    """真实仓每个 `addEventListener` 帧监听都归位: 要么 wired, 要么 DOM (external).
+
+    防回归: 帧名只在**发它的那条 EventSource** 上才命中, 故监听点必须按通道核;
+    出现 `channel-mismatch` / `no-source` 即前端挂在永不触发的通道上.
+    """
+    c = ca.build_sse_contract()
+    assert c["listeners"]  # 非空, 否则下面的全量断言空转
+    for s in c["listeners"]:
+        assert s["status"] in {"wired", "external"}, (s["frame"], s["status"])
+        if s["status"] == "external":
+            assert s["channel"] is None
+
+
+def test_sse_real_repo_channels_and_bus_producers():
+    """event_bus 通道帧名面 = 总线生产发布的事件值面 (穷尽); progress 取字面帧名."""
+    c = ca.build_sse_contract()
+    frames = c["channels"]["event_bus"]["frames"]
+    assert frames == sorted(set(frames))  # 无重复
+    published = {
+        e["value"] for e in ca.build_event_contract()["events"] if e["prod_publish"]
+    }
+    # 已声明且有生产发布的事件, 必须都在 event_bus 通道帧名面里.
+    assert published <= set(frames)
+    # 未登记常量但已生产发布的团队事件族, 也应出现在帧名面 (事件面报的候选).
+    assert {"team.run.start", "team.run.done", "campaign.retry"} <= set(frames)
+    # progress 通道取 `interaction/progress.py` 的字面 `event:` 行.
+    assert c["channels"]["progress"]["frames"] == ["campaign", "heartbeat", "snapshot", "update"]
+    # pet 通道只发无名帧, 无命名帧.
+    assert c["channels"]["pet"]["frames"] == []
+
+
+def test_sse_real_repo_progress_listeners_wired():
+    """autoloop 三条命名帧 (snapshot/update/campaign) 必须挂在 progress 通道上.
+
+    历史缺陷: 前端曾用 `es.onmessage` 收 autoloop, 后端却发命名帧 ⇒ 永不触发.
+    """
+    by = {(s["frame"], s["channel"]): s["status"] for s in ca.build_sse_contract()["listeners"]}
+    for frame in ("snapshot", "update", "campaign"):
+        assert by[(frame, "progress")] == "wired", frame
+
+
+def test_sse_real_repo_payload_sources_classified():
+    """前端 payload 字段匹配的事件名要能溯源到生产面, 且无静态不可见 (unknown)."""
+    c = ca.build_sse_contract()
+    by = {(p["value"], p["channel"]): p["source"] for p in c["payloads"]}
+    # campaign 帧族的 payload 经 `campaign` 帧隧道 (progress 通道) 进来, 但值本身由总线发布.
+    assert by[("heat_engine.health", "progress")] == "bus"
+    # plan.* 只在 `emit_campaign_event(event_type="…")` 处静态可见.
+    assert by[("plan.exec_start", "progress")] == "campaign"
+    assert by[("team.run.start", "event_bus")] == "bus"
+    assert not any(p["source"] == "unknown" for p in c["payloads"])
+
+
+def test_sse_real_repo_no_hard_violations_in_find_issues():
+    """真实仓无监听挂错通道 / 监听无源帧 —— 发现汇总里不应出现 SSE 硬违例."""
+    joined = "\n".join(ca.find_issues(ca.build_mece_snapshot()))
+    assert "SSE: 监听挂错通道" not in joined
+    assert "SSE: 监听的后端无此帧名" not in joined
+
+
+def test_sse_render_sections_present():
+    md = ca.render_sse_markdown(ca.build_sse_contract())
+    assert "SSE 消费面" in md
+    assert "前端帧监听" in md
+    assert "生产帧名零前端监听" in md
+    assert "前端 payload 字段匹配的事件名" in md
+    assert "诚实边界" in md
+
+
+# ──────────────────── 合成树: SSE 消费面 ────────────────────
+
+
+def _sse_backend(tmp_path, frames: str, extra: str = "") -> None:
+    """合成后端: progress 字面帧名 + 事件类型声明 + 一个总线发布点."""
+    _write(tmp_path, ca._SSE_FRAME_MODULE, frames)
+    _write(
+        tmp_path,
+        ca._EVENTS_MODULE,
+        'TOOL_CALL = "tool.call"\nALL = "*"\nALL_TYPES = frozenset({TOOL_CALL})\n',
+    )
+    _write(
+        tmp_path,
+        "huginn/pub.py",
+        "from huginn.events.event_types import TOOL_CALL\n"
+        "def go(bus):\n"
+        "    bus.publish_event(TOOL_CALL, {})\n"
+        + extra,
+    )
+
+
+def test_sse_synthetic_channel_attribution_and_status(tmp_path):
+    """合成树: 帧监听按通道归属, 四态 (wired/mismatch/no-source/external) 互斥."""
+    _sse_backend(tmp_path, 'A = "event: update"\nB = "event: heartbeat"\n')
+    _write(
+        tmp_path,
+        "fe/app.ts",
+        "const es = new EventSource(`${API_BASE}/tasks/stream`);\n"
+        "const onUpdate = (e: MessageEvent) => {\n"
+        "  const t = JSON.parse(e.data);\n"
+        "};\n"
+        'es.addEventListener("update", onUpdate);\n'
+        'es.addEventListener("tool.call", onUpdate);\n'
+        'es.addEventListener("ghost.void", onUpdate);\n'
+        'window.addEventListener("keydown", onUpdate);\n',
+    )
+    c = ca.build_sse_contract(tmp_path, tmp_path / "fe")
+    assert c["channels"]["progress"]["frames"] == ["heartbeat", "update"]
+    assert c["channels"]["event_bus"]["frames"] == ["tool.call"]
+    by = {s["frame"]: s for s in c["listeners"]}
+    assert by["update"]["status"] == "wired"
+    assert by["update"]["channel"] == "progress"
+    # tool.call 是 event_bus 通道的帧名, 挂在 progress 通道上 ⇒ 永不触发.
+    assert by["tool.call"]["status"] == "channel-mismatch"
+    assert "event_bus" in by["tool.call"]["note"]
+    assert by["ghost.void"]["status"] == "no-source"
+    assert by["keydown"]["status"] == "external"
+    assert by["keydown"]["channel"] is None
+
+
+def test_sse_synthetic_array_literal_frames(tmp_path):
+    """合成树: `[\"a.b\", \"c.d\"].forEach((ev) => es.addEventListener(ev, h))` 两帧都归属该通道."""
+    _sse_backend(tmp_path, "")
+    _write(
+        tmp_path,
+        "fe/bus.ts",
+        "const es = new EventSource(`${API_BASE}/events/stream`);\n"
+        "const handleX = (e: MessageEvent) => {\n"
+        "  const t = JSON.parse(e.data);\n"
+        "};\n"
+        '["tool.call", "ghost.void"]\n'
+        "  .forEach((ev) => es.addEventListener(ev, handleX));\n",
+    )
+    c = ca.build_sse_contract(tmp_path, tmp_path / "fe")
+    by = {s["frame"]: s for s in c["listeners"]}
+    assert by["tool.call"]["status"] == "wired"
+    assert by["tool.call"]["channel"] == "event_bus"
+    assert by["ghost.void"]["status"] == "no-source"
+
+
+def test_sse_synthetic_payload_sources_and_zero_consumer(tmp_path):
+    """合成树: payload 事件名四源 (bus/campaign/declared/unknown) + 零监听帧按 payload 消费标记."""
+    _sse_backend(
+        tmp_path,
+        'A = "event: heartbeat"\n',
+        extra=(
+            "def emit(bus):\n"
+            "    bus.emit_campaign_event(event_type=\"plan.exec_start\")\n"
+        ),
+    )
+    _write(
+        tmp_path,
+        ca._EVENTS_MODULE,
+        'TOOL_CALL = "tool.call"\n'
+        'DECISION_POINT = "decision.point"\n'
+        'ALL = "*"\n'
+        "ALL_TYPES = frozenset({TOOL_CALL, DECISION_POINT})\n",
+    )
+    _write(
+        tmp_path,
+        "fe/bus.ts",
+        "const es = new EventSource(`${API_BASE}/events/stream`);\n"
+        "const handleBus = (e: MessageEvent) => {\n"
+        "  const t = JSON.parse(e.data);\n"
+        '  if (t.type === "tool.call") { }\n'
+        '  else if (t.type === "decision.point") { }\n'
+        '  else if (t.type === "plan.exec_start") { }\n'
+        '  else if (t.type === "mystery.void") { }\n'
+        "};\n"
+        'es.addEventListener("ghost.void", handleBus);\n',
+    )
+    c = ca.build_sse_contract(tmp_path, tmp_path / "fe")
+    by = {(p["value"], p["channel"]): p["source"] for p in c["payloads"]}
+    assert by[("tool.call", "event_bus")] == "bus"
+    assert by[("plan.exec_start", "event_bus")] == "campaign"
+    assert by[("decision.point", "event_bus")] == "declared"
+    assert by[("mystery.void", "event_bus")] == "unknown"
+    assert "plan.exec_start" in c["campaign_literals"]
+    zero = {(z["channel"], z["frame"]): z["via_payload"] for z in c["zero_consumer"]}
+    # tool.call 有生产发布但无帧监听 —— 只在 payload 字段里被匹配.
+    assert zero[("event_bus", "tool.call")] is True
+    # heartbeat 既无帧监听也无 payload 匹配.
+    assert zero[("progress", "heartbeat")] is False
+    # 未生产发布的常量不进零监听候选 (它压根没帧).
+    assert ("event_bus", "decision.point") not in zero
+
+
 # ──────────────────── 文档漂移 ────────────────────
 
 
