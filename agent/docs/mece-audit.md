@@ -215,7 +215,7 @@
 | 允许表 | 位置 | 条目 | 命中注册名 | 命名空间 | 状态 | 外部消费 | 死项 | 别名 |
 |---|---|---|---|---|---|---|---|---|
 | `READ_ONLY_TOOLS` | `huginn/permissions.py:43` | 3 | 3 | registry | `wired` | 1 | 0 | 0 |
-| `WRITE_EXEC_TOOLS` | `huginn/permissions.py:49` | 8 | 8 | registry | `dead` | 0 | 0 | 0 |
+| `WRITE_EXEC_TOOLS` | `huginn/permissions.py:50` | 8 | 8 | registry | `wired` | 1 | 0 | 0 |
 | `_CORE_TOOLS` | `huginn/phases.py:109` | 15 | 15 | registry | `internal-only` | 0 | 0 | 0 |
 | `_EDIT_TOOLS` | `huginn/server_core.py:96` | 2 | 2 | registry | `wired` | 1 | 0 | 0 |
 | `_EXPENSIVE_TOOLS` | `huginn/research_budget.py:24` | 8 | 8 | registry | `internal-only` | 0 | 0 | 0 |
