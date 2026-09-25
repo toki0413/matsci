@@ -797,6 +797,150 @@ def test_sse_synthetic_payload_sources_and_zero_consumer(tmp_path):
     assert ("event_bus", "decision.point") not in zero
 
 
+# ──────────────────── 真实仓: WS 消费面 ────────────────────
+
+
+def test_ws_registry_parsed_from_annotated_assignment():
+    """回归: `_MESSAGE_HANDLERS: dict[str, Any] = {…}` 是带注解赋值.
+
+    只按 `ast.Assign` 解析会读空注册表, 把全部前端入站类型误报 unhandled.
+    """
+    keys = set(ca._ws_registry_keys(_REPO))
+    assert {"user_input", "plan_confirm", "approval_response", "guide"} <= keys
+    inbound = ca._ws_inbound_types(_REPO)["agent"]
+    for k in ("user_input", "plan_confirm", "approval_response"):
+        assert k in inbound
+
+
+def test_ws_server_frames_include_variable_assigned_frame():
+    """回归: 帧名先赋给变量再发送 (`tool_result_msg = {…}` 后 `_ws_send(tool_result_msg)`).
+
+    只扫 send 实参字面量会漏掉它, 误判前端 case "tool_result" 无源.
+    """
+    frames = ca._ws_server_frames(_REPO)["agent"]["frames"]
+    assert "tool_result" in frames
+    assert "text_delta" in frames
+
+
+def test_ws_real_repo_consumers_all_resolved():
+    """真实仓: 每个前端 WS type 判别都归属到通道, 且无一挂到不发的帧名上."""
+    c = ca.build_ws_contract()
+    assert c["consumers"], "应扫到 agent 通道的 type 判别点"
+    assert not [x for x in c["consumers"] if x["status"] == "no-source"]
+    assert not [x for x in c["consumers"] if x["channel"] is None]
+    assert {x["status"] for x in c["consumers"]} <= {"wired", "dynamic"}
+
+
+def test_ws_real_repo_sends_all_handled():
+    """真实仓: 前端发送的入站类型均被后端分发表认."""
+    c = ca.build_ws_contract()
+    assert c["sends"]
+    assert not [x for x in c["sends"] if x["status"] == "unhandled"]
+
+
+def test_ws_non_type_switch_not_mistaken_for_frames():
+    """回归: Pet.tsx 的 `switch (mood)` 用同样 case 标签, 但不是 WS 帧名.
+
+    真实仓判别点不得出现 `thinking` / `happy` / `levelup` 等宠物心情.
+    """
+    frames = {x["frame"] for x in ca.build_ws_contract()["consumers"]}
+    assert frames.isdisjoint({"thinking", "happy", "levelup", "hungry", "eating"})
+
+
+def test_ws_sse_and_search_type_checks_not_mistaken():
+    """回归: SSE 的 `data.type === "heartbeat"` 与搜索结果的 `result.type === "thread"`.
+
+    这些 `.type` 判别不以 WSMessage 标注变量为对象, 不得进 WS 判别面.
+    """
+    frames = {x["frame"] for x in ca.build_ws_contract()["consumers"]}
+    assert frames.isdisjoint({"heartbeat", "state", "event", "thread", "memory", "knowledge"})
+
+
+def test_ws_real_repo_no_hard_violations_in_find_issues():
+    """真实仓无挂错帧名 / 未认入站类型 —— 发现汇总里不应出现 WS 硬违例."""
+    joined = "\n".join(ca.find_issues(ca.build_mece_snapshot()))
+    assert "WS: 前端 type 判别的后端不发此帧名" not in joined
+    assert "WS: 前端发送的入站类型后端分发面不认" not in joined
+
+
+def test_ws_render_sections_present():
+    md = ca.render_ws_markdown(ca.build_ws_contract())
+    assert "WS 消费面" in md
+    assert "生产帧名 × 前端判别" in md
+    assert "前端 server→client 判别点" in md
+    assert "前端 client→server 发送点" in md
+    assert "诚实边界" in md
+
+
+# ──────────────────── 合成树: WS 消费面 ────────────────────
+
+
+def test_ws_synthetic_channel_and_status(tmp_path):
+    """合成树: 双向四态 (wired/no-source · handled/unhandled) 与通道归属."""
+    _write(
+        tmp_path,
+        ca._WS_REGISTRY_REL,
+        "from typing import Any\n"
+        "_MESSAGE_HANDLERS: dict[str, Any] = {\n"
+        '    "user_input": h,\n'
+        '    "plan_confirm": h,\n'
+        "}\n\n"
+        "async def go(websocket):\n"
+        '    await websocket.send_json({"type": "welcome"})\n',
+    )
+    _write(
+        tmp_path,
+        "fe/chat.ts",
+        'const url = "/ws/agent";\n'
+        "const handle = (data: WSMessage) => {\n"
+        "  switch (data.type) {\n"
+        '    case "welcome": break;\n'
+        '    case "ghost": break;\n'
+        "  }\n"
+        '  ws.send(JSON.stringify({ type: "user_input" }));\n'
+        '  ws.send(JSON.stringify({ type: "nope" }));\n'
+        "};\n",
+    )
+    c = ca.build_ws_contract(tmp_path, tmp_path / "fe")
+    assert c["channels"]["agent"]["frames"] == ["welcome"]
+    cons = {x["frame"]: x for x in c["consumers"]}
+    assert cons["welcome"]["status"] == "wired"
+    assert cons["welcome"]["channel"] == "agent"
+    # ghost 不属于该通道生产面, 也不在 WSMessage 声明里 ⇒ 永不命中.
+    assert cons["ghost"]["status"] == "no-source"
+    sends = {x["frame"]: x for x in c["sends"]}
+    assert sends["user_input"]["status"] == "handled"
+    assert sends["nope"]["status"] == "unhandled"
+
+
+def test_ws_synthetic_declared_frame_is_dynamic(tmp_path):
+    """合成树: 已声明但只在后端变量透传转发的帧记为 dynamic (候选), 不判死."""
+    _write(
+        tmp_path,
+        ca._WS_REGISTRY_REL,
+        "async def go(websocket, state):\n"
+        "    await websocket.send_json(dict(state))\n",
+    )
+    _write(
+        tmp_path,
+        "fe/types/ws.ts",
+        'export type WSMessage = { type: "mode_banner" } | { type: "text_delta" };\n',
+    )
+    _write(
+        tmp_path,
+        "fe/chat.ts",
+        'const url = "/ws/agent";\n'
+        "const handle = (data: WSMessage) => {\n"
+        "  switch (data.type) {\n"
+        '    case "mode_banner": break;\n'
+        "  }\n"
+        "};\n",
+    )
+    c = ca.build_ws_contract(tmp_path, tmp_path / "fe")
+    cons = {x["frame"]: x for x in c["consumers"]}
+    assert cons["mode_banner"]["status"] == "dynamic"
+
+
 # ──────────────────── 文档漂移 ────────────────────
 
 

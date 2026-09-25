@@ -9,8 +9,8 @@
   - **collectively exhaustive 违例**: 宣称的维度零调用者 (declared but unwired).
   - **mutually exclusive 违例**: 同名跨模块重复实现 / 同一惩罚轴上叠两项.
 
-审计九面: **奖励面 / 授权面 / 工作流面 / 模式面 / 词汇面 / 工具面 / 钩子面 / 事件面 /
-SSE 消费面**. 后七面是本工具从奖励系统外延到"agent 自身怎么跑"的同类审计:
+审计十面: **奖励面 / 授权面 / 工作流面 / 模式面 / 词汇面 / 工具面 / 钩子面 / 事件面 /
+SSE 消费面 / WS 消费面**. 后八面是本工具从奖励系统外延到"agent 自身怎么跑"的同类审计:
 
   - **工作流面**: 执行 mode 分发面 (`phase_spec.dispatch_table` ↔ `engine_act`
     硬编码分支 ↔ planner 提示教的 MODE 候选) 三者是否穷尽一致.
@@ -42,6 +42,13 @@ SSE 消费面**. 后七面是本工具从奖励系统外延到"agent 自身怎�
     `pet` 只发无名帧) ↔ **消费面** (前端 `desktop/src` 的 `new EventSource(url)` +
     `addEventListener(<帧名>)`). 帧名只在**发它的那条 EventSource** 上才可能命中,
     故监听挂错通道 = "永不触发"; 生产了却零前端监听 = "宣称了却没人接".
+  - **WS 消费面**: SSE 消费面只核单向 (后端发帧 → 前端 `addEventListener`), 但
+    WebSocket 是**双向**的. 本面按**端点通道** (`agent` / `terminal` / `viewer3d` /
+    `hpc`) 核两向: **server→client 生产面** (`send_json({"type": …})` 字面量 +
+    三元赋值) ↔ **前端判别面** (`switch (data.type)` / `.type === …`, 仅 `agent`
+    按 type 判别); **client→server 生产面** (前端 `send({type: …})`) ↔ **后端分发面**
+    (`_MESSAGE_HANDLERS` registry + 分发比较). 前端 case 挂到不发该帧名的端点 =
+    "永不触发"; 前端发了后端分发表不认的入站类型 = "回 error 帧".
 
 本工具只做**静态扫描 + 少量运行时读取**并**提示候选**, 不判死: "同轴/同名/词表
 不一致"是可疑信号, 是否真缺陷需人工判定 (例如 efficiency_discount 按"首次全对
@@ -49,7 +56,7 @@ SSE 消费面**. 后七面是本工具从奖励系统外延到"agent 自身怎�
 fusion 模式经 set_mode('research') 复用 CSM S3 是**有意设计**, 非漏接).
 
 用法:
-    python -m huginn.cli.contract_audit                  # 打印九面审计
+    python -m huginn.cli.contract_audit                  # 打印十面审计
     python -m huginn.cli.contract_audit --reward         # 只看奖励面
     python -m huginn.cli.contract_audit --scope          # 只看授权面
     python -m huginn.cli.contract_audit --workflow       # 只看工作流面
@@ -59,6 +66,7 @@ fusion 模式经 set_mode('research') 复用 CSM S3 是**有意设计**, 非漏�
     python -m huginn.cli.contract_audit --hooks          # 只看钩子面
     python -m huginn.cli.contract_audit --events         # 只看事件面
     python -m huginn.cli.contract_audit --sse            # 只看 SSE 消费面
+    python -m huginn.cli.contract_audit --ws             # 只看 WS 消费面
     python -m huginn.cli.contract_audit --json           # 机器可读快照
     python -m huginn.cli.contract_audit --check          # 有发现则 exit 1 (供 CI 门禁)
     python -m huginn.cli.contract_audit --out docs/mece-audit.md
@@ -2627,6 +2635,505 @@ def render_sse_markdown(contract: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
+# WS 消费面: 后端 WS 帧名 ↔ 前端 WebSocket 客户端判别 (按端点通道)
+# ---------------------------------------------------------------------------
+
+# 已知 WS 通道 (URL 片段 → 通道名). 每个端点自带一套帧名词表, 帧名只在该
+# 通道上才有意义.
+_WS_CHANNELS: dict[str, str] = {
+    "/ws/agent": "agent",
+    "/ws/terminal": "terminal",
+    "/ws/viewer3d": "viewer3d",
+    "/ws/hpc/jobs": "hpc",
+}
+# 各通道后端生产模块 (server→client 帧的 `"type": "…"` 字面量来源).
+_WS_BACKEND_MODULES: dict[str, tuple[str, ...]] = {
+    "agent": ("huginn/routes/ws.py", "huginn/routes/ws_helpers.py"),
+    "terminal": ("huginn/routes/terminal.py",),
+    "viewer3d": ("huginn/routes/viewer3d.py",),
+    "hpc": ("huginn/routes/hpc.py",),
+}
+# 前端只对 agent 通道按 `type` 显式判别 (`switch (data.type)` / `.type === …`);
+# terminal/hpc 前端只按字段 (data/output) 取值, 不看 type —— 记作 field-probing,
+# 不逐帧判"零判别" (诚实边界).
+_WS_TYPED_CHANNELS = frozenset({"agent"})
+# 前端文件 → 通道线索 (URL 片段或该通道专属 ws ref). URL 片段优先, ref 兜底
+# (跨文件传 ref, 如 ChatPanel 用父组件传入的 wsClientRef).
+_WS_FE_REF_HINTS: dict[str, tuple[str, ...]] = {
+    "agent": ("wsClientRef", "petWsRef"),
+}
+# 共享传输层 (ReconnectingWebSocket) 的心跳 ping 打到 agent 端点.
+_WS_TRANSPORT_REL = "lib/ws-client.ts"
+# 声明面: 前端 `WSMessage` 判别联合 (server→client 帧的 TS 契约).
+_WS_DECL_SUFFIX = "types/ws.ts"
+# agent 通道 client→server 权威分发表 (handler registry).
+_WS_REGISTRY_REL = "huginn/routes/ws.py"
+_WS_REGISTRY_VAR = "_MESSAGE_HANDLERS"
+# 本地发送包装函数 (名字节点形式的 send sink), 与 send_json/send_text 同列.
+_WS_SEND_WRAPPERS = frozenset({"_ws_send"})
+
+_WS_TERNARY_RE = re.compile(
+    r'=\s*["\']([a-z][a-z0-9_]*)["\']\s+if\s+[^\n]+?\s+else\s+["\']([a-z][a-z0-9_]*)["\']'
+)
+# 前端 server→client 判别: `case "lit":` (须在 `switch (<wsVar>.type)` 块内) 与
+# `<wsVar>.type === "lit"`. `wsVar` 限定为**标注了 WSMessage 的变量** —— 否则
+# `switch (mood)` / `result.type === "thread"` / SSE 的 `data.type === "heartbeat"`
+# 都会被误当 WS 帧名. 点号型 (embedding.download.* / team.*) 是 SSE payload, 不进.
+_FE_WS_CASE_RE = re.compile(r'case\s+["\']([a-z][a-z0-9_]*)["\']\s*:')
+_FE_WS_EQ_RE = re.compile(
+    r'\b(\w+)\.type\s*!?={2,3}\s*["\']([a-z][a-z0-9_]*)["\']'
+)
+# `switch (<expr>) {` 头; 判别式须恰为 `<wsVar>.type`.
+_FE_SWITCH_TYPE_HEAD_RE = re.compile(r'switch\s*\(([^)]*)\)\s*\{')
+# WS 帧变量标注: `(data: WSMessage)`.
+_FE_WS_MSG_VAR_RE = re.compile(r'\b(\w+)\s*:\s*WSMessage\b')
+# 前端 client→server 生产: payload 式 JSON.stringify 与内联 `.send({…})`.
+_FE_WS_SEND_STR_RE = re.compile(
+    r'JSON\.stringify\(\s*\{\s*["\']?type["\']?\s*:\s*["\']([a-z][a-z0-9_]*)["\']', re.S
+)
+_FE_WS_SEND_INLINE_RE = re.compile(
+    r'\.send\(\s*\{\s*["\']?type["\']?\s*:\s*["\']([a-z][a-z0-9_]*)["\']'
+)
+# 后端 client→server 消费: 分发比较 (`mtype == "…"` / `…get("type") == "…"`).
+_WS_INBOUND_CMP_RE = re.compile(
+    r'(?:\bmtype\b|\bmsg_type\b|get\(\s*["\']type["\']\s*\)'
+    r'|\[\s*["\']type["\']\s*\])\s*==\s*["\']([a-z][a-z0-9_]*)["\']'
+)
+# 声明面: TS 判别联合的 `type: "lit"`.
+_WS_DECL_TYPE_RE = re.compile(r'type\s*:\s*["\']([a-z][a-z0-9_]*)["\']')
+
+_WS_STATUS_DOC = {
+    "wired": "后端该通道确实发此帧名, 前端有 type 判别",
+    "dynamic": "已声明帧, 后端经变量透传转发 (静态生产面不可穷尽, 只提示)",
+    "no-source": "后端该通道不发此帧名, 且未声明 (前端 case 永不命中)",
+    "handled": "后端该通道分发表认此入站类型",
+    "unhandled": "后端该通道分发面无此入站类型 (回 error 帧)",
+    "field-probing": "前端只按字段取值, 不按 type 判别 (不计入)",
+}
+
+
+def _ws_line_of(text: str, pos: int) -> int:
+    return text.count("\n", 0, pos) + 1
+
+
+def _ws_dict_type_literal(node: ast.Dict) -> str | None:
+    """取字典字面量里 `"type": "…"` 的字符串常量值."""
+    for k, v in zip(node.keys, node.values):
+        if (
+            isinstance(k, ast.Constant)
+            and k.value == "type"
+            and isinstance(v, ast.Constant)
+            and isinstance(v.value, str)
+        ):
+            return v.value
+    return None
+
+
+def _ws_arg_type_literal(arg: ast.AST) -> str | None:
+    """从 send 实参里取 `type` 字面量; 支持 `{…}` / `json.dumps({…})` / `dict({…})`.
+
+    实参是变量 (`_ws_send(dict(state))` / `_ws_send(msg)`) 时返回 None —— 那类
+    透传不静态可辨, 由调用方计为 dynamic.
+    """
+    node = arg
+    if isinstance(node, ast.Call):
+        f = node.func
+        unwrap = (isinstance(f, ast.Attribute) and f.attr == "dumps") or (
+            isinstance(f, ast.Name) and f.id == "dict"
+        )
+        if unwrap and node.args:
+            node = node.args[0]
+    if not isinstance(node, ast.Dict):
+        return None
+    return _ws_dict_type_literal(node)
+
+
+def _ws_server_frames(root: Path) -> dict[str, dict]:
+    """各 WS 通道的 server→client 帧名生产面 (AST 扫 send 实参 + 三元字面量).
+
+    send sink: `websocket.send_json` / `send_text` 与本地包装 `_ws_send`. 参数是
+    字典字面量 (或 `json.dumps({…})`) 才静态可辨; 变量透传 (如 `_ws_send(dict(
+    state))` 把 agent 循环 yield 的类型化事件转发) 计为动态, 不在此穷尽.
+    """
+    out: dict[str, dict] = {}
+    for ch, mods in _WS_BACKEND_MODULES.items():
+        names: set[str] = set()
+        dynamic = 0
+        for rel in mods:
+            tree = _parse(root / rel)
+            if tree is None:
+                continue
+            for node in ast.walk(tree):
+                # 帧名生产: 这些 WS 路由模块里的 `{"type": "…"}` 字典字面量都是
+                # 该通道的 server→client 帧 —— 无论直接作 send 实参, 还是先赋给
+                # 变量 (`tool_result_msg = {…}`) 再 `_ws_send(tool_result_msg)`.
+                if isinstance(node, ast.Dict):
+                    lit = _ws_dict_type_literal(node)
+                    if lit is not None:
+                        names.add(lit)
+                    continue
+                if not isinstance(node, ast.Call):
+                    continue
+                f = node.func
+                is_send = (
+                    isinstance(f, ast.Attribute) and f.attr in ("send_json", "send_text")
+                ) or (isinstance(f, ast.Name) and f.id in _WS_SEND_WRAPPERS)
+                if not is_send:
+                    continue
+                if not node.args or _ws_arg_type_literal(node.args[0]) is None:
+                    dynamic += 1
+            # `msg_type = "a" if … else "b"` 也静态可辨.
+            for m in _WS_TERNARY_RE.finditer(_read(root, rel)):
+                names.add(m.group(1))
+                names.add(m.group(2))
+        out[ch] = {"frames": sorted(names), "dynamic": dynamic}
+    return out
+
+
+def _ws_registry_keys(root: Path) -> list[str]:
+    """`_MESSAGE_HANDLERS` 的键 = agent 通道 client→server 权威分发面.
+
+    注册表是**带注解**的赋值 (`_MESSAGE_HANDLERS: dict[str, Any] = {…}`), 须按
+    `ast.AnnAssign` 解析; 只查 `ast.Assign` 会读空并误报全部入站类型 unhandled.
+    """
+    tree = _parse(root / _WS_REGISTRY_REL)
+    if tree is None:
+        return []
+    for node in ast.walk(tree):
+        targets: list[ast.expr]
+        if isinstance(node, ast.Assign):
+            targets = list(node.targets)
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+        else:
+            continue
+        if not any(
+            isinstance(t, ast.Name) and t.id == _WS_REGISTRY_VAR for t in targets
+        ):
+            continue
+        if isinstance(node.value, ast.Dict):
+            return [
+                k.value
+                for k in node.value.keys
+                if isinstance(k, ast.Constant) and isinstance(k.value, str)
+            ]
+    return []
+
+
+def _ws_inbound_types(root: Path) -> dict[str, list[str]]:
+    """各通道后端消费的 client→server 类型 (registry + 分发比较)."""
+    out: dict[str, list[str]] = {ch: [] for ch in _WS_CHANNELS.values()}
+    out["agent"] = sorted(set(_ws_registry_keys(root)))
+    for ch, mods in _WS_BACKEND_MODULES.items():
+        found = set(out[ch])
+        for rel in mods:
+            found.update(_WS_INBOUND_CMP_RE.findall(_read(root, rel)))
+        out[ch] = sorted(found)
+    return out
+
+
+def _ws_file_channel(rel: str, text: str) -> str | None:
+    """前端文件归属通道: URL 片段优先, 专属 ref 兜底, 传输层归 agent."""
+    hits = [ch for frag, ch in _WS_CHANNELS.items() if frag in text]
+    if len(hits) == 1:
+        return hits[0]
+    if not hits:
+        ref = [ch for ch, hints in _WS_FE_REF_HINTS.items() if any(h in text for h in hints)]
+        if len(ref) == 1:
+            return ref[0]
+        if rel.endswith(_WS_TRANSPORT_REL):
+            return "agent"
+    return None
+
+
+def _skip_ts_string(text: str, i: int) -> int:
+    """跳过从 `i` 起的 TS 字符串字面量, 返回结束后的下标 (含未闭合兜底)."""
+    quote = text[i]
+    i += 1
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if c == "\\":
+            i += 2
+            continue
+        if c == quote:
+            return i + 1
+        if c == "\n" and quote != "`":
+            return i
+        i += 1
+    return i
+
+
+def _fe_switch_type_cases(text: str, ws_vars: set[str]) -> list[tuple[str, int]]:
+    """仅取 `switch (<wsVar>.type) { … }` 块内的 `case "lit":`.
+
+    `case "lit":` 单独看是歧义的 —— Pet.tsx 的 `switch (mood)` 也用同样的
+    标签 (`case "thinking":`), 但那是宠物心情而非 WS 帧名. 只有判别式恰为
+    **标注了 WSMessage 的变量** 的 `.type` 才计入.
+    """
+    out: list[tuple[str, int]] = []
+    for m in _FE_SWITCH_TYPE_HEAD_RE.finditer(text):
+        var = re.fullmatch(r'\s*(\w+)\.type\s*', m.group(1))
+        if var is None or var.group(1) not in ws_vars:
+            continue
+        start = m.end() - 1  # 指向 `{`
+        depth = 0
+        i = start
+        n = len(text)
+        while i < n:
+            c = text[i]
+            if c in "\"'`":
+                i = _skip_ts_string(text, i)
+                continue
+            if c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+                if depth == 0:
+                    break
+            i += 1
+        body = text[start : i + 1]
+        for cm in _FE_WS_CASE_RE.finditer(body):
+            out.append((cm.group(1), _ws_line_of(text, start + cm.start())))
+    return out
+
+
+def _ws_scan_frontend(frontend: Path) -> dict:
+    """扫前端 `.ts`/`.tsx`: server→client 判别点与 client→server 发送点 (带通道归属)."""
+    consumers: list[dict] = []
+    sends: list[dict] = []
+    if not frontend.is_dir():
+        return {"consumers": consumers, "sends": sends}
+    for p in sorted(frontend.rglob("*")):
+        if not p.is_file() or p.suffix not in (".ts", ".tsx"):
+            continue
+        rel = _display(frontend, p)
+        if rel.endswith(".spec.ts") or rel.endswith(_WS_DECL_SUFFIX):
+            continue
+        try:
+            text = p.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        ch = _ws_file_channel(rel, text)
+        ws_vars = set(_FE_WS_MSG_VAR_RE.findall(text))
+        for frame, line in _fe_switch_type_cases(text, ws_vars):
+            consumers.append({"rel": rel, "line": line, "channel": ch, "frame": frame})
+        for i, ln in enumerate(text.splitlines()):
+            for m in _FE_WS_EQ_RE.finditer(ln):
+                if m.group(1) not in ws_vars:
+                    continue
+                consumers.append(
+                    {"rel": rel, "line": i + 1, "channel": ch, "frame": m.group(2)}
+                )
+        seen: set[tuple[str, int]] = set()
+        for rx in (_FE_WS_SEND_STR_RE, _FE_WS_SEND_INLINE_RE):
+            for m in rx.finditer(text):
+                line = _ws_line_of(text, m.start())
+                key = (m.group(1), line)
+                if key in seen:
+                    continue
+                seen.add(key)
+                sends.append({"rel": rel, "line": line, "channel": ch, "frame": m.group(1)})
+    return {"consumers": consumers, "sends": sends}
+
+
+def build_ws_contract(root: Path | None = None, frontend: Path | None = None) -> dict:
+    """WS 消费面: 后端 WS 帧名生产面 ↔ 前端 WebSocket 客户端判别面 (按端点通道)."""
+    root = root or _REPO
+    frontend = frontend if frontend is not None else root.parent / "desktop" / "src"
+    produced = _ws_server_frames(root)
+    inbound = _ws_inbound_types(root)
+    decl_path = frontend / _WS_DECL_SUFFIX
+    declared: set[str] = set()
+    if decl_path.is_file():
+        declared = set(_WS_DECL_TYPE_RE.findall(decl_path.read_text(encoding="utf-8", errors="replace")))
+    scan = _ws_scan_frontend(frontend)
+
+    channel_out: dict[str, dict] = {}
+    for frag, ch in _WS_CHANNELS.items():
+        channel_out[ch] = {
+            "url": frag,
+            "typed": ch in _WS_TYPED_CHANNELS,
+            "frames": produced[ch]["frames"],
+            "dynamic_sends": produced[ch]["dynamic"],
+            "inbound": inbound[ch],
+        }
+
+    agent_frames = produced["agent"]["frames"]
+    consumed = {c["frame"] for c in scan["consumers"] if c["channel"] == "agent"}
+    server_frames = [
+        {"frame": f, "declared": f in declared, "consumed": f in consumed}
+        for f in agent_frames
+    ]
+    zero_consumer = [f for f in agent_frames if f not in consumed]
+    undeclared = [f for f in agent_frames if f not in declared]
+    declared_only = sorted(declared - set(agent_frames) - consumed)
+
+    consumers: list[dict] = []
+    for c in scan["consumers"]:
+        ch = c["channel"]
+        pool = set(produced.get(ch, {}).get("frames", [])) if ch else set()
+        if ch is None:
+            status, note = "external", "非 WS 通道判别, 不计入"
+        elif not channel_out[ch]["typed"]:
+            status, note = "field-probing", "该通道前端按字段取值, 不按 type 判别"
+        elif c["frame"] in pool:
+            status, note = "wired", ""
+        elif ch in _WS_TYPED_CHANNELS and c["frame"] in declared:
+            status, note = "dynamic", "已声明帧, 后端经变量透传转发 (静态生产面不可穷尽)"
+        else:
+            status, note = "no-source", "后端该通道不发此帧名"
+        consumers.append({**c, "status": status, "note": note})
+
+    sends: list[dict] = []
+    for s in scan["sends"]:
+        ch = s["channel"]
+        if ch is None:
+            status, note = "external", "非 WS 通道发送, 不计入"
+        else:
+            ok = set(inbound.get(ch, []))
+            if ch in _WS_TYPED_CHANNELS:
+                ok |= set(_ws_registry_keys(root))
+            if s["frame"] in ok:
+                status, note = "handled", ""
+            else:
+                status, note = "unhandled", "后端该通道分发面无此入站类型 (回 error 帧)"
+        sends.append({**s, "status": status, "note": note})
+
+    fe_sends: dict[str, set[str]] = defaultdict(set)
+    for s in scan["sends"]:
+        if s["channel"]:
+            fe_sends[s["channel"]].add(s["frame"])
+    has_fe = {c["channel"] for c in scan["consumers"]} | set(fe_sends)
+    phantom: list[dict] = []
+    for ch, keys in inbound.items():
+        if ch not in has_fe:
+            continue  # 无前端消费者 (如 viewer3d 由外部客户端驱动), 不判
+        for k in keys:
+            if k not in fe_sends.get(ch, set()):
+                phantom.append({"channel": ch, "frame": k})
+
+    return {
+        "frontend": str(frontend),
+        "channels": channel_out,
+        "declared": sorted(declared),
+        "server_frames": server_frames,
+        "consumers": consumers,
+        "sends": sends,
+        "zero_consumer": zero_consumer,
+        "undeclared": undeclared,
+        "declared_only": declared_only,
+        "phantom_inbound": phantom,
+    }
+
+
+def render_ws_markdown(contract: dict) -> str:
+    lines: list[str] = []
+    lines.append("## WS 消费面: 后端 WS 帧名生产面 vs 前端 WebSocket 判别面")
+    lines.append("")
+    lines.append(
+        "SSE 消费面只核单向 (后端发帧 → 前端 `addEventListener`), WebSocket 是**双向**"
+        "的: 后端 `send_json({\"type\": …})` 发帧前端 `switch (data.type)` 收, 前端"
+        "`send({type: …})` 发请求后端分发表收. 本面按**端点通道** `agent`(`/ws/agent`, "
+        "唯一按 `type` 判别的通道) / `terminal` / `viewer3d` / `hpc` 分列: 帧名只在"
+        "**发它的那条 WS 上**才可能命中, 故挂在别处 = 永不触发."
+    )
+    lines.append("")
+    lines.append("状态: " + "; ".join(f"`{k}`={v}" for k, v in _WS_STATUS_DOC.items()))
+    lines.append("")
+    lines.append("| 通道 | URL 片段 | type 判别 | 生产帧名 | 入站类型 |")
+    lines.append("|---|---|---|---|---|")
+    for ch, v in contract["channels"].items():
+        typed = "是" if v["typed"] else "否 (field-probing)"
+        frames = ", ".join(f"`{f}`" for f in v["frames"]) or "—"
+        inbound = ", ".join(f"`{f}`" for f in v["inbound"]) or "—"
+        lines.append(f"| `{ch}` | `{v['url']}` | {typed} | {frames} | {inbound} |")
+    lines.append("")
+
+    lines.append("### 生产帧名 × 前端判别 (agent 通道)")
+    lines.append("")
+    lines.append("| 帧名 | 已声明 (WSMessage) | 前端有 type 判别 |")
+    lines.append("|---|---|---|")
+    for f in contract["server_frames"]:
+        lines.append(
+            f"| `{f['frame']}` | {'是' if f['declared'] else '否'} "
+            f"| {'是' if f['consumed'] else '否'} |"
+        )
+    lines.append("")
+
+    lines.append("### 前端 server→client 判别点")
+    lines.append("")
+    lines.append("| 帧名 | 通道 | 状态 | 位置 | 备注 |")
+    lines.append("|---|---|---|---|---|")
+    for s in sorted(contract["consumers"], key=lambda x: (x["status"], x["rel"], x["line"])):
+        ch = f"`{s['channel']}`" if s["channel"] else "—"
+        lines.append(
+            f"| `{s['frame']}` | {ch} | `{s['status']}` | `{s['rel']}:{s['line']}` "
+            f"| {s['note']} |"
+        )
+    lines.append("")
+
+    lines.append("### 前端 client→server 发送点")
+    lines.append("")
+    lines.append("| 类型 | 通道 | 状态 | 位置 | 备注 |")
+    lines.append("|---|---|---|---|---|")
+    for s in sorted(contract["sends"], key=lambda x: (x["status"], x["rel"], x["line"])):
+        ch = f"`{s['channel']}`" if s["channel"] else "—"
+        lines.append(
+            f"| `{s['frame']}` | {ch} | `{s['status']}` | `{s['rel']}:{s['line']}` "
+            f"| {s['note']} |"
+        )
+    lines.append("")
+
+    lines.append("### 生产帧名零前端判别 (候选)")
+    lines.append("")
+    zero = contract["zero_consumer"]
+    if zero:
+        for f in zero:
+            lines.append(f"- `agent` / `{f}`")
+    else:
+        lines.append("- 无 —— 每个生产帧名都有前端 type 判别.")
+    lines.append("")
+
+    lines.append("### 未进 WSMessage 判别联合的生产帧 (候选登记)")
+    lines.append("")
+    und = contract["undeclared"]
+    if und:
+        for f in und:
+            lines.append(f"- `agent` / `{f}`")
+    else:
+        lines.append("- 无")
+    lines.append("")
+
+    lines.append("### 已声明但既非生产帧也非入站请求 (候选)")
+    lines.append("")
+    if contract["declared_only"]:
+        for f in contract["declared_only"]:
+            lines.append(f"- `{f}`")
+    else:
+        lines.append("- 无")
+    lines.append("")
+
+    lines.append("### 入站类型无前端发送者 (候选)")
+    lines.append("")
+    if contract["phantom_inbound"]:
+        for z in contract["phantom_inbound"]:
+            lines.append(f"- `{z['channel']}` / `{z['frame']}`")
+    else:
+        lines.append("- 无")
+    lines.append("")
+    lines.append(
+        "诚实边界: 前端 TS 与后端 `send_json(变量)` 都只做**静态**扫描 —— 经变量透传的"
+        "入站类型 (如 `_ws_send(dict(state))` 转发的 agent 循环类型化事件 `mode_banner` / "
+        "`trust_update` / `budget_update` 等) 生产面**不可穷尽**, 故只提示不判死; 前端"
+        "terminal/hpc 按字段 (`data`/`output`) 取值而非按 `type` 判别, 记作 field-probing;"
+        " viewer3d 无桌面前端 (由外部客户端驱动), 其入站不判 phantom."
+    )
+    lines.append("")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # 组合 + 门禁
 # ---------------------------------------------------------------------------
 
@@ -2642,6 +3149,7 @@ def build_mece_snapshot(root: Path | None = None) -> dict:
         "hooks": build_hook_contract(root),
         "events": build_event_contract(root),
         "sse": build_sse_contract(root),
+        "ws": build_ws_contract(root),
     }
 
 
@@ -2764,13 +3272,26 @@ def find_issues(snap: dict) -> list[str]:
                 f"SSE: 监听的后端无此帧名 (三通道都不发): {s['frame']} "
                 f"@ {s['rel']}:{s['line']}"
             )
+    ws = snap["ws"]
+    for s in ws["consumers"]:
+        if s["status"] == "no-source":
+            issues.append(
+                f"WS: 前端 type 判别的后端不发此帧名 (该通道 case 永不命中): {s['frame']} "
+                f"@ {s['rel']}:{s['line']} — 通道 {s['channel']}"
+            )
+    for s in ws["sends"]:
+        if s["status"] == "unhandled":
+            issues.append(
+                f"WS: 前端发送的入站类型后端分发面不认 (回 error 帧): {s['frame']} "
+                f"@ {s['rel']}:{s['line']} — 通道 {s['channel']}"
+            )
     return issues
 
 
 def render_mece_markdown(snap: dict) -> str:
     lines: list[str] = []
     lines.append(
-        "# MECE 契约审计 (奖励面 + 授权面 + 工作流面 + 模式面 + 词汇面 + 工具面 + 钩子面 + 事件面 + SSE 消费面)"
+        "# MECE 契约审计 (奖励面 + 授权面 + 工作流面 + 模式面 + 词汇面 + 工具面 + 钩子面 + 事件面 + SSE 消费面 + WS 消费面)"
     )
     lines.append("")
     lines.append(
@@ -2778,9 +3299,9 @@ def render_mece_markdown(snap: dict) -> str:
     )
     lines.append(
         "以 MECE 两原则审计 agent 的**奖励面 / 授权面 / 工作流面 / 模式面 / "
-        "词汇面 / 工具面 / 钩子面 / 事件面 / SSE 消费面**: **collectively exhaustive** 抓「宣称维度零调用者 / "
+        "词汇面 / 工具面 / 钩子面 / 事件面 / SSE 消费面 / WS 消费面**: **collectively exhaustive** 抓「宣称维度零调用者 / "
         "面之间的缺口」; **mutually exclusive** 抓「同轴惩罚叠加」「跨模块同名重复实现」「词表互不一致」"
-        "「同名工具名多类声明」「事件常量撞值」「SSE 帧名挂错通道」. 纯静态扫描, 只提示候选, 不判死."
+        "「同名工具名多类声明」「事件常量撞值」「SSE 帧名挂错通道」「WS 帧名挂错端点」. 纯静态扫描, 只提示候选, 不判死."
     )
     lines.append("")
     lines.append(render_reward_markdown(snap["reward"]))
@@ -2792,6 +3313,7 @@ def render_mece_markdown(snap: dict) -> str:
     lines.append(render_hook_markdown(snap["hooks"]))
     lines.append(render_event_markdown(snap["events"]))
     lines.append(render_sse_markdown(snap["sse"]))
+    lines.append(render_ws_markdown(snap["ws"]))
     issues = find_issues(snap)
     lines.append("## 发现汇总")
     lines.append("")
@@ -2815,6 +3337,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--hooks", action="store_true", help="只看钩子面")
     parser.add_argument("--events", action="store_true", help="只看事件面")
     parser.add_argument("--sse", action="store_true", help="只看 SSE 消费面")
+    parser.add_argument("--ws", action="store_true", help="只看 WS 消费面")
     parser.add_argument("--json", action="store_true", help="输出 JSON 快照")
     parser.add_argument("--check", action="store_true", help="有 MECE 发现时 exit 1")
     parser.add_argument("--out", type=str, default="", help="写 markdown 到文件")
@@ -2830,6 +3353,7 @@ def main(argv: list[str] | None = None) -> int:
         "hooks": (args.hooks, build_hook_contract, render_hook_markdown),
         "events": (args.events, build_event_contract, render_event_markdown),
         "sse": (args.sse, build_sse_contract, render_sse_markdown),
+        "ws": (args.ws, build_ws_contract, render_ws_markdown),
     }
     selected = [k for k, (on, _b, _r) in surfaces.items() if on]
     if len(selected) == 1:
