@@ -1,7 +1,7 @@
-# MECE 契约审计 (奖励面 + 授权面 + 工作流面 + 模式面 + 词汇面 + 工具面 + 钩子面 + 事件面 + SSE 消费面 + WS 消费面 + HTTP API 消费面 + 请求负载面 + 响应结构面 + WS 请求负载面)
+# MECE 契约审计 (奖励面 + 授权面 + 工作流面 + 模式面 + 词汇面 + 工具面 + 钩子面 + 事件面 + SSE 消费面 + WS 消费面 + HTTP API 消费面 + 请求负载面 + 响应结构面 + WS 请求负载面 + SSE 事件负载面)
 
 自动生成: `python -m huginn.cli.contract_audit --out docs/mece-audit.md`.
-以 MECE 两原则审计 agent 的**奖励面 / 授权面 / 工作流面 / 模式面 / 词汇面 / 工具面 / 钩子面 / 事件面 / SSE 消费面 / WS 消费面 / HTTP API 消费面 / 请求负载面 / 响应结构面 / WS 请求负载面**: **collectively exhaustive** 抓「宣称维度零调用者 / 面之间的缺口」; **mutually exclusive** 抓「同轴惩罚叠加」「跨模块同名重复实现」「词表互不一致」「同名工具名多类声明」「事件常量撞值」「SSE 帧名挂错通道」「WS 帧名挂错端点」「HTTP 同 method+path 多模块注册」「前端漏发后端必填请求负载」「前端声明要读的响应字段后端从不返回」「WS 入站字段模型未声明」. 纯静态扫描, 只提示候选, 不判死.
+以 MECE 两原则审计 agent 的**奖励面 / 授权面 / 工作流面 / 模式面 / 词汇面 / 工具面 / 钩子面 / 事件面 / SSE 消费面 / WS 消费面 / HTTP API 消费面 / 请求负载面 / 响应结构面 / WS 请求负载面 / SSE 事件负载面**: **collectively exhaustive** 抓「宣称维度零调用者 / 面之间的缺口」; **mutually exclusive** 抓「同轴惩罚叠加」「跨模块同名重复实现」「词表互不一致」「同名工具名多类声明」「事件常量撞值」「SSE 帧名挂错通道」「WS 帧名挂错端点」「HTTP 同 method+path 多模块注册」「前端漏发后端必填请求负载」「前端声明要读的响应字段后端从不返回」「WS 入站字段模型未声明」「前端读的 SSE 帧 payload 顶层字段后端从不发」. 纯静态扫描, 只提示候选, 不判死.
 
 ## 奖励面: 宣称项 vs 调用者 (collectively exhaustive)
 
@@ -911,6 +911,90 @@ WS 消费面只核「入站 `type` 认不认」（认了但字段发错照样坏
 | 前端发送对象字段 | 14 | 0 |
 
 诚实边界: 只读**字面量**形状 —— handler 经 `getattr(msg, …)` / 变量间接读取, 或前端发送对象含 `...` 展开 / `type` 非字面量时该处记 unknown 并跳过, 故违例是**下界** (可能漏报); 只核 agent 通道 (terminal/hpc/viewer3d 的入站负载走原始 dict, 不受 `WSMessage` 约束); 别名 `message`(→`content`) 与分发键 `type` 不算未声明; 反向 (模型声明了但 handler 未读 / 前端未发) 不是违例.
+
+## SSE 事件负载面: 后端帧 payload 顶层键 vs 前端 JSON.parse(e.data) 顶层读取
+
+SSE 消费面只核「帧名认不认」(监听挂没挂对 EventSource); 本面再往里一层, 核**帧 payload 的顶层键**。权威面是后端发帧处 `json.dumps(<expr>)` 的 `<expr>` 形状 —— `progress` 通道取 `interaction/progress.py` 的 `to_dict()` / campaign `evt` 字面, `event_bus` 通道取 `AgentEvent.to_sse()` 的固定信封。硬方向: **前端在该帧处理函数里读 `t.<字段>` 而后端该帧 payload 从不发此顶层字段** ⇒ 恒 `undefined` (静默坏). 反向(后端发了前端没读) 不是违例, 只列候选。只核**顶层**键: `t.data.<字段>` 的嵌套子形状由各事件发布点决定, 静态不可穷尽, 跳过.
+
+违例类型: `read-undeclared`=前端读 `t.<字段>` 而后端该帧 payload 从不发此顶层字段 (恒 undefined, 静默坏)
+
+前端 SSE payload 顶层读取点: **43** 处; 违例: **0** 条.
+
+### 各通道帧 payload 顶层键 (权威面)
+
+| 通道 | 帧名 | payload 顶层键 | 形状 | 前端读取字段 |
+|---|---|---|---|---|
+| `progress` | `campaign` | `_kind`, `completed_at`, `current_label`, `current_step`, `data`, `description`, `engine_kind`, `error`, `eta_seconds`, `event`, `metadata`, `percentage`, `stage_labels`, `started_at`, `status`, `task_id`, `timeout_seconds`, `total_steps`, `ts`, `updated_at` | 封闭 | `_kind`, `data`, `event`, `task_id`, `ts` |
+| `progress` | `heartbeat` | `ts` | 封闭 | — |
+| `progress` | `snapshot` | `completed_at`, `current_label`, `current_step`, `description`, `engine_kind`, `error`, `eta_seconds`, `metadata`, `percentage`, `stage_labels`, `started_at`, `status`, `task_id`, `timeout_seconds`, `total_steps`, `updated_at` | 封闭 | `current_label`, `engine_kind`, `percentage`, `status` |
+| `progress` | `update` | `_kind`, `completed_at`, `current_label`, `current_step`, `data`, `description`, `engine_kind`, `error`, `eta_seconds`, `event`, `metadata`, `percentage`, `stage_labels`, `started_at`, `status`, `task_id`, `timeout_seconds`, `total_steps`, `ts`, `updated_at` | 封闭 | `current_label`, `engine_kind`, `percentage`, `status` |
+| `event_bus` | `agent.step.retrying` | `data`, `source`, `thread_id`, `ts`, `type` | 封闭 | — |
+| `event_bus` | `campaign.budget_exhausted` | `data`, `source`, `thread_id`, `ts`, `type` | 封闭 | — |
+| `event_bus` | `campaign.hypothesis` | `data`, `source`, `thread_id`, `ts`, `type` | 封闭 | — |
+| `event_bus` | `campaign.iteration` | `data`, `source`, `thread_id`, `ts`, `type` | 封闭 | — |
+| `event_bus` | `campaign.refine` | `data`, `source`, `thread_id`, `ts`, `type` | 封闭 | — |
+| `event_bus` | `campaign.retry` | `data`, `source`, `thread_id`, `ts`, `type` | 封闭 | — |
+| `event_bus` | `campaign.suspect` | `data`, `source`, `thread_id`, `ts`, `type` | 封闭 | — |
+| `event_bus` | `cognitive.csm.transition` | `data`, `source`, `thread_id`, `ts`, `type` | 封闭 | — |
+| `event_bus` | `compact.end` | `data`, `source`, `thread_id`, `ts`, `type` | 封闭 | — |
+| `event_bus` | `compact.start` | `data`, `source`, `thread_id`, `ts`, `type` | 封闭 | — |
+| `event_bus` | `context.overflow` | `data`, `source`, `thread_id`, `ts`, `type` | 封闭 | — |
+| `event_bus` | `cost.narrative` | `data`, `source`, `thread_id`, `ts`, `type` | 封闭 | `data` |
+| `event_bus` | `decision.point` | `data`, `source`, `thread_id`, `ts`, `type` | 封闭 | `data` |
+| `event_bus` | `embedding.download.done` | `data`, `source`, `thread_id`, `ts`, `type` | 封闭 | `data`, `type` |
+| `event_bus` | `embedding.download.error` | `data`, `source`, `thread_id`, `ts`, `type` | 封闭 | `data`, `type` |
+| `event_bus` | `embedding.download.progress` | `data`, `source`, `thread_id`, `ts`, `type` | 封闭 | `data`, `type` |
+| `event_bus` | `embedding.download.start` | `data`, `source`, `thread_id`, `ts`, `type` | 封闭 | `data`, `type` |
+| `event_bus` | `event_bus.dropped` | `data`, `source`, `thread_id`, `ts`, `type` | 封闭 | — |
+| `event_bus` | `heat_engine.health` | `data`, `source`, `thread_id`, `ts`, `type` | 封闭 | — |
+| `event_bus` | `llm.response` | `data`, `source`, `thread_id`, `ts`, `type` | 封闭 | — |
+| `event_bus` | `pet.mood` | `data`, `source`, `thread_id`, `ts`, `type` | 封闭 | — |
+| `event_bus` | `pipeline.stage_change` | `data`, `source`, `thread_id`, `ts`, `type` | 封闭 | — |
+| `event_bus` | `pipeline.suggest` | `data`, `source`, `thread_id`, `ts`, `type` | 封闭 | — |
+| `event_bus` | `quality.check` | `data`, `source`, `thread_id`, `ts`, `type` | 封闭 | — |
+| `event_bus` | `session.end` | `data`, `source`, `thread_id`, `ts`, `type` | 封闭 | — |
+| `event_bus` | `session.start` | `data`, `source`, `thread_id`, `ts`, `type` | 封闭 | — |
+| `event_bus` | `snapshot.revert` | `data`, `source`, `thread_id`, `ts`, `type` | 封闭 | — |
+| `event_bus` | `snapshot.take` | `data`, `source`, `thread_id`, `ts`, `type` | 封闭 | — |
+| `event_bus` | `team.batch.start` | `data`, `source`, `thread_id`, `ts`, `type` | 封闭 | `data`, `type` |
+| `event_bus` | `team.member.done` | `data`, `source`, `thread_id`, `ts`, `type` | 封闭 | `data`, `type` |
+| `event_bus` | `team.member.start` | `data`, `source`, `thread_id`, `ts`, `type` | 封闭 | `data`, `type` |
+| `event_bus` | `team.member.tool` | `data`, `source`, `thread_id`, `ts`, `type` | 封闭 | `data`, `type` |
+| `event_bus` | `team.run.done` | `data`, `source`, `thread_id`, `ts`, `type` | 封闭 | `data`, `type` |
+| `event_bus` | `team.run.start` | `data`, `source`, `thread_id`, `ts`, `type` | 封闭 | `data`, `type` |
+| `event_bus` | `tool.blocked` | `data`, `source`, `thread_id`, `ts`, `type` | 封闭 | — |
+| `event_bus` | `tool.call` | `data`, `source`, `thread_id`, `ts`, `type` | 封闭 | — |
+| `event_bus` | `tool.error` | `data`, `source`, `thread_id`, `ts`, `type` | 封闭 | — |
+| `event_bus` | `tool.result` | `data`, `source`, `thread_id`, `ts`, `type` | 封闭 | — |
+
+### 违例 (硬: 前端读的顶层字段后端从不发)
+
+- 无 —— 前端读的每个顶层字段, 后端该帧都发.
+
+### payload 顶层键零前端读取 (候选, 反向不判违例)
+
+- `progress` / `completed_at`
+- `progress` / `current_step`
+- `progress` / `description`
+- `progress` / `error`
+- `progress` / `eta_seconds`
+- `progress` / `metadata`
+- `progress` / `stage_labels`
+- `progress` / `started_at`
+- `progress` / `timeout_seconds`
+- `progress` / `total_steps`
+- `progress` / `updated_at`
+- `event_bus` / `source`
+- `event_bus` / `thread_id`
+- `event_bus` / `ts`
+
+### 静态核对覆盖面 (读不出形状即跳过, 不猜)
+
+| 维度 | 已核对 | 跳过 (帧不属该通道) | 跳过 (形状开放) |
+|---|---|---|---|
+| 前端顶层字段读取 | 41 | 2 | 0 |
+
+诚实边界: 只读**字面量**形状 —— 后端 payload 经变量间接构造 (`**` 展开 / 动态拼键) 或前端 `t` 经中转/解构读取时该处记开放并跳过, 故违例是**下界** (可能漏报); 只核帧 payload 的**顶层**键 (嵌套 `t.data.<字段>` 的子形状由发布点决定, 不核); `t` 须为 `JSON.parse(e.data)` 直接赋值才归因; 帧名不属该通道时跳过 (该帧名本身已由 SSE 消费面报通道不匹配); 反向 (后端发前端没读) 不是违例. 只覆盖 `progress` / `event_bus` 两条命名帧通道 (`pet` 通道全为无名帧).
 
 ## 发现汇总
 

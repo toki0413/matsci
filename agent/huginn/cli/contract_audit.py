@@ -70,6 +70,11 @@ SSE 消费面 / WS 消费面 / HTTP API 消费面 / 请求负载面 / 响应结�
     入站消息的**负载字段**, 权威是 `WSMessage` Pydantic 模型. 两向硬违例: 后端 handler
     读 `msg.<X>` 而模型未声明 `X` (AttributeError 死帧) / 前端发该 type 时带了模型未
     声明字段 (被静默丢弃). 只核 agent 通道 (其余通道入站负载走原始 dict).
+  - **SSE 事件负载面**: SSE 消费面只核「帧名认不认」, 本面再往里一层核帧 payload 的
+    **顶层键**, 权威是后端发帧处 `json.dumps(<expr>)` 的 `<expr>` 形状 (`progress` 取
+    `to_dict()` / campaign `evt`, `event_bus` 取 `AgentEvent.to_sse()` 信封). 硬方向:
+    前端在该帧处理函数里读 `t.<X>` 而后端该帧 payload 从不发此顶层字段 (恒 undefined).
+    只核顶层键 (`t.data.<X>` 的嵌套子形状由发布点决定, 不核).
 
 本工具只做**静态扫描 + 少量运行时读取**并**提示候选**, 不判死: "同轴/同名/词表
 不一致"是可疑信号, 是否真缺陷需人工判定 (例如 efficiency_discount 按"首次全对
@@ -77,7 +82,7 @@ SSE 消费面 / WS 消费面 / HTTP API 消费面 / 请求负载面 / 响应结�
 fusion 模式经 set_mode('research') 复用 CSM S3 是**有意设计**, 非漏接).
 
 用法:
-    python -m huginn.cli.contract_audit                  # 打印十四面审计
+    python -m huginn.cli.contract_audit                  # 打印十五面审计
     python -m huginn.cli.contract_audit --reward         # 只看奖励面
     python -m huginn.cli.contract_audit --scope          # 只看授权面
     python -m huginn.cli.contract_audit --workflow       # 只看工作流面
@@ -92,6 +97,7 @@ fusion 模式经 set_mode('research') 复用 CSM S3 是**有意设计**, 非漏�
     python -m huginn.cli.contract_audit --payload        # 只看请求负载面
     python -m huginn.cli.contract_audit --response       # 只看响应结构面
     python -m huginn.cli.contract_audit --ws-payload     # 只看 WS 请求负载面
+    python -m huginn.cli.contract_audit --sse-payload    # 只看 SSE 事件负载面
     python -m huginn.cli.contract_audit --json           # 机器可读快照
     python -m huginn.cli.contract_audit --check          # 有发现则 exit 1 (供 CI 门禁)
     python -m huginn.cli.contract_audit --out docs/mece-audit.md
@@ -2654,6 +2660,516 @@ def render_sse_markdown(contract: dict) -> str:
         "`case …:` / `=== …`), 不做 TS 语法分析 —— 经变量中转的帧名、`es.onmessage` 的无名帧、"
         "动态拼接的通道 URL 都解析不到; campaign payload 里 `f\"campaign.{name}\"` 这类动态名"
         "同样不可穷尽, 故 `unknown` 只提示不判死."
+    )
+    lines.append("")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# SSE 事件负载面: 后端帧 payload 顶层键 ↔ 前端 JSON.parse(e.data) 顶层读取
+# ---------------------------------------------------------------------------
+
+# event_bus 通道 payload = `AgentEvent.to_sse()` 的固定信封 (字面 dict, 封闭).
+_SSE_PAYLOAD_EVENT_BUS_MODULE = "huginn/events/event_bus.py"
+_SSE_PAYLOAD_TO_SSE = "to_sse"
+# 前端: `const t = JSON.parse(e.data)` → 顶层 `t.<字段>` 读取; 内联事件处理函数.
+_FE_JSON_PARSE = re.compile(r"(\w+)\s*=\s*JSON\.parse\(\s*(\w+)\.data\s*\)")
+_FE_FIELD_READ = re.compile(r"\b(\w+)\s*\??\.\s*([A-Za-z_$][\w$]*)")
+_FE_LISTEN_INLINE_HANDLER = re.compile(
+    r"(\w+)\.addEventListener\(\s*[\"']([^\"']+)[\"']\s*,\s*\(\s*\w+\s*:\s*MessageEvent\s*\)\s*=>\s*\{"
+)
+
+_SSE_PAYLOAD_KIND_DOC = {
+    "read-undeclared": (
+        "前端读 `t.<字段>` 而后端该帧 payload 从不发此顶层字段 (恒 undefined, 静默坏)"
+    )
+}
+
+_SSE_PAYLOAD_TRIAGE_DOC = {
+    "defect": "已确认缺陷 (待修)",
+    "intentional": "已确认有意",
+}
+
+# 已确认分诊表. 键 (通道, 帧名, 字段) → (标签, 理由); 未登记即"待分诊",
+# 回归测试会失败 (逼逐条人工判定). 空表 = 当前前端读的顶层字段都合契约.
+_SSE_PAYLOAD_CONFIRMED: dict[tuple[str, str, str], tuple[str, str]] = {}
+
+
+def _sse_payload_triage(channel: str, frame: str, field: str) -> tuple[str, str] | None:
+    """SSE 负载违例分诊: 返回 (标签, 理由); 未登记则 None (待人工确认)."""
+    return _SSE_PAYLOAD_CONFIRMED.get((channel, frame, field))
+
+
+def _sse_payload_violation_mark(channel: str, frame: str, field: str) -> str:
+    tri = _sse_payload_triage(channel, frame, field)
+    if tri is None:
+        return " — ⚠ 待分诊"
+    doc = _SSE_PAYLOAD_TRIAGE_DOC[tri[0]]
+    return f" — {'⛔' if tri[0] == 'defect' else '✅'} {doc}: {tri[1]}"
+
+
+def _dict_literal_keys(node: ast.AST | None) -> set[str] | None:
+    """`ast.Dict` 顶层字面键集; 含 `**` 展开或非常量键 → None (开放形状)."""
+    if not isinstance(node, ast.Dict):
+        return None
+    keys: set[str] = set()
+    for k in node.keys:
+        if k is None or not (isinstance(k, ast.Constant) and isinstance(k.value, str)):
+            return None
+        keys.add(k.value)
+    return keys
+
+
+def _func_return_dict_keys(tree: ast.AST, name: str) -> set[str] | None:
+    """同模块函数 `name` 顶层 `return {…}` 的字面键集 (无则 None)."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name == name:
+            for stmt in node.body:
+                if isinstance(stmt, ast.Return):
+                    return _dict_literal_keys(stmt.value)
+    return None
+
+
+def _func_local_dict_keys(tree: ast.AST, func: str, var: str) -> set[str] | None:
+    """函数 `func` 里 `var = {…}` 的字面键集 (无则 None)."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name == func:
+            for sub in ast.walk(node):
+                if (
+                    isinstance(sub, ast.Assign)
+                    and isinstance(sub.targets[0], ast.Name)
+                    and sub.targets[0].id == var
+                ):
+                    return _dict_literal_keys(sub.value)
+    return None
+
+
+def _sse_yield_frame_expr(value: ast.AST) -> tuple[str | None, ast.AST | None]:
+    """SSE yield 的 f-string → (帧名, `json.dumps(<expr>)` 的 data 表达式)."""
+    if not isinstance(value, ast.JoinedStr):
+        return None, None
+    prefix = ""
+    data_expr: ast.AST | None = None
+    for part in value.values:
+        if isinstance(part, ast.Constant) and isinstance(part.value, str):
+            prefix += part.value
+        elif isinstance(part, ast.FormattedValue):
+            call = part.value
+            if (
+                isinstance(call, ast.Call)
+                and isinstance(call.func, ast.Attribute)
+                and call.func.attr == "dumps"
+                and call.args
+            ):
+                data_expr = call.args[0]
+    m = re.search(r"event:\s*([A-Za-z_][\w.]*)", prefix)
+    return (m.group(1) if m else None), data_expr
+
+
+def _sse_for_bound_shape(
+    func: ast.AST, name: str, task_keys: set[str] | None, queue_keys: set[str] | None
+) -> set[str] | None:
+    """`for <name> in <iter>` 的绑定形状: 任务清单 → 任务形状; 事件队列 → 队列形状."""
+    for node in ast.walk(func):
+        if (
+            isinstance(node, ast.For)
+            and isinstance(node.target, ast.Name)
+            and node.target.id == name
+        ):
+            it = node.iter
+            if (
+                isinstance(it, ast.Call)
+                and isinstance(it.func, ast.Attribute)
+                and it.func.attr in {"list_all", "list_active"}
+            ):
+                return task_keys
+            if isinstance(it, ast.Name | ast.Subscript):
+                return queue_keys
+            return None
+    return None
+
+
+def _sse_progress_shapes(root: Path) -> dict[str, dict]:
+    """progress 通道帧名 → payload 形状 {keys, closed} (解析 `_SSE_FRAME_MODULE`).
+
+    `snapshot` 取 `list_all()` → `to_dict()` 字面键; `update`/`campaign` 取
+    `_events` 队列的混合形状 (`to_dict()` ∪ campaign `evt`, 由 `_kind` 分支择一,
+    静态不细分故取并集 —— 安全下界); `heartbeat` 取自身字面 dict.
+    """
+    tree = _parse(root / _SSE_FRAME_MODULE)
+    if tree is None:
+        return {}
+    task_keys = _func_return_dict_keys(tree, "to_dict")
+    campaign_keys = _func_local_dict_keys(tree, "emit_campaign_event", "evt")
+    # 队列写入形状: `self._events.append(<expr>)` —— to_dict() 或 campaign evt.
+    queue_parts: list[set[str]] = []
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "append"
+            and isinstance(node.func.value, ast.Attribute)
+            and node.func.value.attr == "_events"
+            and node.args
+        ):
+            a = node.args[0]
+            if (
+                isinstance(a, ast.Call)
+                and isinstance(a.func, ast.Attribute)
+                and a.func.attr == "to_dict"
+                and task_keys
+            ):
+                queue_parts.append(task_keys)
+            elif isinstance(a, ast.Name) and a.id == "evt" and campaign_keys:
+                queue_parts.append(campaign_keys)
+    queue_keys = set().union(*queue_parts) if queue_parts else None
+
+    shapes: dict[str, dict] = {}
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+            and node.name == "to_event_stream"
+        ):
+            continue
+        for sub in ast.walk(node):
+            if not isinstance(sub, ast.Yield):
+                continue
+            frame, expr = _sse_yield_frame_expr(sub.value)
+            if frame is None:
+                continue
+            ks = _dict_literal_keys(expr)
+            if ks is not None:
+                shapes[frame] = {"keys": ks, "closed": True}
+                continue
+            keys = (
+                _sse_for_bound_shape(node, expr.id, task_keys, queue_keys)
+                if isinstance(expr, ast.Name)
+                else None
+            )
+            if keys is not None:
+                shapes[frame] = {"keys": keys, "closed": True}
+            else:
+                shapes[frame] = {"keys": set(), "closed": False}
+    return shapes
+
+
+def _sse_event_bus_shape(root: Path) -> set[str] | None:
+    """event_bus 通道 payload 信封 = `AgentEvent.to_sse()` 的 `payload = {…}` 字面键."""
+    tree = _parse(root / _SSE_PAYLOAD_EVENT_BUS_MODULE)
+    if tree is None:
+        return None
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+            and node.name == _SSE_PAYLOAD_TO_SSE
+        ):
+            for sub in ast.walk(node):
+                if (
+                    isinstance(sub, ast.Assign)
+                    and isinstance(sub.targets[0], ast.Name)
+                    and sub.targets[0].id == "payload"
+                ):
+                    return _dict_literal_keys(sub.value)
+    return None
+
+
+def _sse_payload_reads(frontend: Path) -> list[dict]:
+    """扫前端 SSE 处理函数里的 `t.<字段>` 顶层读取 (t = `JSON.parse(e.data)` 结果)."""
+    reads: list[dict] = []
+    if not frontend.is_dir():
+        return reads
+    chan_keys = sorted(_SSE_CHANNELS, key=len, reverse=True)
+    for p in sorted(frontend.rglob("*")):
+        if not p.is_file() or p.suffix not in (".ts", ".tsx"):
+            continue
+        try:
+            text = p.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        rel = _display(frontend, p)
+        lines = text.splitlines()
+
+        assigns: list[tuple[int, str, str | None]] = []
+        for i, ln in enumerate(lines):
+            m = _FE_ES_ASSIGN.search(ln)
+            if m:
+                arg = m.group(2)
+                ch = next((_SSE_CHANNELS[k] for k in chan_keys if k in arg), None)
+                assigns.append((i, m.group(1), ch))
+
+        # 闭包按默认参数绑定当轮局部 (B023: 循环内定义且引用循环变量).
+        def chan_of(
+            var: str, idx: int, _assigns: list[tuple[int, str, str | None]] = assigns
+        ) -> str | None:
+            found = None
+            for ai, av, ac in _assigns:
+                if av == var and ai <= idx:
+                    found = ac
+            return found
+
+        def emit(
+            body: str,
+            base_line: int,
+            frames: list[str],
+            ch: str | None,
+            _rel: str = rel,
+        ) -> None:
+            pm = _FE_JSON_PARSE.search(body)
+            if pm is None:
+                return
+            var = pm.group(1)
+            for fm in _FE_FIELD_READ.finditer(body):
+                if fm.group(1) != var:
+                    continue
+                ln_no = base_line + body.count("\n", 0, fm.start())
+                for fr in frames:
+                    reads.append(
+                        {
+                            "rel": _rel,
+                            "line": ln_no,
+                            "channel": ch,
+                            "frame": fr,
+                            "field": fm.group(2),
+                        }
+                    )
+
+        # 具名处理函数: addEventListener(<帧名>, <handler>) → handler → 帧/通道
+        reg: dict[str, list[tuple[str, str | None]]] = {}
+        for i, ln in enumerate(lines):
+            m = _FE_LISTEN.search(ln)
+            if m:
+                reg.setdefault(m.group(3), []).append((m.group(2), chan_of(m.group(1), i)))
+                continue
+            m2 = _FE_LISTEN_IDENT.search(ln)
+            if m2:
+                var, handler = m2.group(1), m2.group(3)
+                # `[ "a.b", "c.d" ].forEach((ev) => es.addEventListener(ev, h))`:
+                # 帧名在上一行的数组字面量里, 通道取 forEach 那一行的事件源.
+                for j in range(i - 1, max(-1, i - 6), -1):
+                    am = _FE_ARRAY.match(lines[j])
+                    if am:
+                        for s in _FE_STR.findall(am.group(1)):
+                            reg.setdefault(handler, []).append((s, chan_of(var, i)))
+                        break
+
+        for m in _FE_HANDLER.finditer(text):
+            handler = m.group(1)
+            if handler not in reg:
+                continue
+            brace = m.end() - 1
+            end = _ws_ts_brace_end(text, brace)
+            if text[end - 1] != "}":
+                continue
+            frames: list[str] = []
+            for fr, _c in reg[handler]:
+                if fr not in frames:
+                    frames.append(fr)
+            emit(
+                text[brace + 1 : end - 1],
+                text.count("\n", 0, brace + 1) + 1,
+                frames,
+                reg[handler][0][1],
+            )
+
+        # 内联处理函数: es.addEventListener("帧名", (e: MessageEvent) => { … })
+        for m in _FE_LISTEN_INLINE_HANDLER.finditer(text):
+            var, frame = m.group(1), m.group(2)
+            brace = m.end() - 1
+            end = _ws_ts_brace_end(text, brace)
+            if text[end - 1] != "}":
+                continue
+            emit(
+                text[brace + 1 : end - 1],
+                text.count("\n", 0, brace + 1) + 1,
+                [frame],
+                chan_of(var, text.count("\n", 0, m.start())),
+            )
+    return reads
+
+
+def build_sse_payload_contract(
+    root: Path | None = None, frontend: Path | None = None
+) -> dict:
+    """SSE 事件负载面: 后端帧 payload 顶层键 ↔ 前端 `JSON.parse(e.data)` 顶层读取.
+
+    硬方向: 前端在该帧处理函数里读 `t.<字段>` 而后端该帧 payload 从不发此顶层字段
+    (恒 undefined). 反向 (后端发前端没读) 不是违例, 只列候选. 只核**顶层**键;
+    `t.data.<字段>` 的嵌套子形状由发布点决定, 静态不可穷尽, 跳过.
+    """
+    root = root or _REPO
+    frontend = frontend if frontend is not None else root.parent / "desktop" / "src"
+    emitters = _sse_frame_emitters(root)
+    channels: dict[str, dict[str, dict]] = {}
+    progress = _sse_progress_shapes(root)
+    if progress:
+        channels["progress"] = progress
+    eb_keys = _sse_event_bus_shape(root)
+    channels["event_bus"] = {
+        f: {"keys": eb_keys if eb_keys is not None else set(), "closed": eb_keys is not None}
+        for f in emitters.get("event_bus", [])
+    }
+
+    reads = _sse_payload_reads(frontend)
+    violations: list[dict] = []
+    checked = skip_frame = skip_shape = 0
+    read_fields: dict[tuple[str, str], set[str]] = defaultdict(set)
+    for r in reads:
+        ch, frame, field = r["channel"], r["frame"], r["field"]
+        frames = channels.get(ch, {})
+        if frame not in frames:
+            # 帧不属该通道 (该帧名本身已由 SSE 消费面报通道不匹配) → payload 面无权威.
+            skip_frame += 1
+            continue
+        info = frames[frame]
+        read_fields[(ch, frame)].add(field)
+        if not info["closed"]:
+            skip_shape += 1
+            continue
+        checked += 1
+        if field in info["keys"]:
+            continue
+        violations.append(
+            {
+                "kind": "read-undeclared",
+                "channel": ch,
+                "frame": frame,
+                "field": field,
+                "detail": f"前端在 `{frame}` 处理函数里读 `t.{field}`",
+                "rel": r["rel"],
+                "line": r["line"],
+            }
+        )
+
+    for v in violations:
+        tri = _sse_payload_triage(v["channel"], v["frame"], v["field"])
+        v["triage"] = tri[0] if tri else "untriaged"
+        v["triage_reason"] = tri[1] if tri else ""
+
+    zero_read: list[dict] = []
+    for ch, frames in channels.items():
+        closed_keys: set[str] = set()
+        read_keys: set[str] = set()
+        for frame, info in frames.items():
+            if info["closed"]:
+                closed_keys |= info["keys"]
+            read_keys |= read_fields.get((ch, frame), set())
+        for k in sorted(closed_keys - read_keys):
+            zero_read.append({"channel": ch, "field": k})
+
+    kinds = Counter(v["kind"] for v in violations)
+    return {
+        "frontend": str(frontend),
+        "channels": {
+            ch: {
+                f: {"keys": sorted(i["keys"]), "closed": i["closed"]}
+                for f, i in sorted(frames.items())
+            }
+            for ch, frames in channels.items()
+        },
+        "frame_reads": {
+            ch: {frame: sorted(read_fields.get((ch, frame), set())) for frame in frames}
+            for ch, frames in channels.items()
+        },
+        "read_count": len(reads),
+        "coverage": {"checked": checked, "skip_frame": skip_frame, "skip_shape": skip_shape},
+        "violations": violations,
+        "untriaged": [v for v in violations if v["triage"] == "untriaged"],
+        "kind_counts": dict(sorted(kinds.items())),
+        "zero_read": zero_read,
+    }
+
+
+def render_sse_payload_markdown(contract: dict) -> str:
+    lines: list[str] = []
+    lines.append(
+        "## SSE 事件负载面: 后端帧 payload 顶层键 vs 前端 JSON.parse(e.data) 顶层读取"
+    )
+    lines.append("")
+    lines.append(
+        "SSE 消费面只核「帧名认不认」(监听挂没挂对 EventSource); 本面再往里一层, 核**帧 "
+        "payload 的顶层键**。权威面是后端发帧处 `json.dumps(<expr>)` 的 `<expr>` 形状 —— "
+        "`progress` 通道取 `interaction/progress.py` 的 `to_dict()` / campaign `evt` 字面, "
+        "`event_bus` 通道取 `AgentEvent.to_sse()` 的固定信封。硬方向: **前端在该帧处理函数里读 "
+        "`t.<字段>` 而后端该帧 payload 从不发此顶层字段** ⇒ 恒 `undefined` (静默坏). 反向"
+        "(后端发了前端没读) 不是违例, 只列候选。只核**顶层**键: `t.data.<字段>` 的嵌套子形状由"
+        "各事件发布点决定, 静态不可穷尽, 跳过."
+    )
+    lines.append("")
+    lines.append(
+        "违例类型: " + "; ".join(f"`{k}`={v}" for k, v in _SSE_PAYLOAD_KIND_DOC.items())
+    )
+    lines.append("")
+    counts = (
+        "  " + ", ".join(f"`{k}`×{n}" for k, n in contract["kind_counts"].items())
+        if contract["kind_counts"]
+        else ""
+    )
+    lines.append(
+        f"前端 SSE payload 顶层读取点: **{contract['read_count']}** 处; 违例: "
+        f"**{len(contract['violations'])}** 条.{counts}"
+    )
+    lines.append("")
+
+    lines.append("### 各通道帧 payload 顶层键 (权威面)")
+    lines.append("")
+    lines.append("| 通道 | 帧名 | payload 顶层键 | 形状 | 前端读取字段 |")
+    lines.append("|---|---|---|---|---|")
+    for ch, frames in contract["channels"].items():
+        fr = contract["frame_reads"].get(ch, {})
+        for frame in sorted(frames):
+            info = frames[frame]
+            keys = ", ".join(f"`{k}`" for k in info["keys"]) or "—"
+            shape = "封闭" if info["closed"] else "开放(读不出)"
+            rd = ", ".join(f"`{f}`" for f in fr.get(frame, [])) or "—"
+            lines.append(f"| `{ch}` | `{frame}` | {keys} | {shape} | {rd} |")
+    lines.append("")
+
+    lines.append("### 违例 (硬: 前端读的顶层字段后端从不发)")
+    lines.append("")
+    if contract["violations"]:
+        lines.append(
+            "硬违例 —— 前端读 `t.<字段>` 而后端该帧 payload 无此顶层键 (恒 undefined). "
+            "逐条分诊, 未登记的落「待分诊」(回归测试会失败, 逼人工判定):"
+        )
+        lines.append("")
+        for v in sorted(
+            contract["violations"],
+            key=lambda x: (x["channel"], x["frame"], x["field"], x["rel"], x["line"]),
+        ):
+            lines.append(
+                f"- `[{v['kind']}]` `{v['channel']}/{v['frame']}.{v['field']}` "
+                f"@ `{v['rel']}:{v['line']}` — {v['detail']}"
+                + _sse_payload_violation_mark(v["channel"], v["frame"], v["field"])
+            )
+    else:
+        lines.append("- 无 —— 前端读的每个顶层字段, 后端该帧都发.")
+    lines.append("")
+
+    lines.append("### payload 顶层键零前端读取 (候选, 反向不判违例)")
+    lines.append("")
+    if contract["zero_read"]:
+        for z in contract["zero_read"]:
+            lines.append(f"- `{z['channel']}` / `{z['field']}`")
+    else:
+        lines.append("- 无.")
+    lines.append("")
+
+    lines.append("### 静态核对覆盖面 (读不出形状即跳过, 不猜)")
+    lines.append("")
+    lines.append("| 维度 | 已核对 | 跳过 (帧不属该通道) | 跳过 (形状开放) |")
+    lines.append("|---|---|---|---|")
+    cov = contract["coverage"]
+    lines.append(
+        f"| 前端顶层字段读取 | {cov['checked']} | {cov['skip_frame']} | {cov['skip_shape']} |"
+    )
+    lines.append("")
+    lines.append(
+        "诚实边界: 只读**字面量**形状 —— 后端 payload 经变量间接构造 (`**` 展开 / 动态拼键) 或"
+        "前端 `t` 经中转/解构读取时该处记开放并跳过, 故违例是**下界** (可能漏报); 只核帧 payload "
+        "的**顶层**键 (嵌套 `t.data.<字段>` 的子形状由发布点决定, 不核); `t` 须为 "
+        "`JSON.parse(e.data)` 直接赋值才归因; 帧名不属该通道时跳过 (该帧名本身已由 SSE 消费面报"
+        "通道不匹配); 反向 (后端发前端没读) 不是违例. 只覆盖 `progress` / `event_bus` 两条命名帧"
+        "通道 (`pet` 通道全为无名帧)."
     )
     lines.append("")
     return "\n".join(lines)
@@ -5600,6 +6116,7 @@ def build_mece_snapshot(root: Path | None = None) -> dict:
         "payload": build_payload_contract(root),
         "response": build_response_contract(root),
         "ws_payload": build_ws_payload_contract(root),
+        "sse_payload": build_sse_payload_contract(root),
     }
 
 
@@ -5803,13 +6320,25 @@ def find_issues(snap: dict) -> list[str]:
         issues.append(
             f"WS 负载: WSMessage 声明字段既无 handler 读取也零前端发送 (宣称却无人接): {f}"
         )
+    sp = snap["sse_payload"]
+    for v in sp["violations"]:
+        mark = (
+            " 待分诊"
+            if v["triage"] == "untriaged"
+            else " " + _SSE_PAYLOAD_TRIAGE_DOC[v["triage"]]
+        )
+        issues.append(
+            f"SSE 负载: 前端读的帧 payload 顶层字段后端从不发 "
+            f"({_SSE_PAYLOAD_KIND_DOC[v['kind']]}): {v['channel']}/{v['frame']} → "
+            f"`t.{v['field']}` @ {v['rel']}:{v['line']};{mark}"
+        )
     return issues
 
 
 def render_mece_markdown(snap: dict) -> str:
     lines: list[str] = []
     lines.append(
-        "# MECE 契约审计 (奖励面 + 授权面 + 工作流面 + 模式面 + 词汇面 + 工具面 + 钩子面 + 事件面 + SSE 消费面 + WS 消费面 + HTTP API 消费面 + 请求负载面 + 响应结构面 + WS 请求负载面)"
+        "# MECE 契约审计 (奖励面 + 授权面 + 工作流面 + 模式面 + 词汇面 + 工具面 + 钩子面 + 事件面 + SSE 消费面 + WS 消费面 + HTTP API 消费面 + 请求负载面 + 响应结构面 + WS 请求负载面 + SSE 事件负载面)"
     )
     lines.append("")
     lines.append(
@@ -5818,12 +6347,13 @@ def render_mece_markdown(snap: dict) -> str:
     lines.append(
         "以 MECE 两原则审计 agent 的**奖励面 / 授权面 / 工作流面 / 模式面 / "
         "词汇面 / 工具面 / 钩子面 / 事件面 / SSE 消费面 / WS 消费面 / HTTP API 消费面 / "
-        "请求负载面 / 响应结构面 / WS 请求负载面**: "
+        "请求负载面 / 响应结构面 / WS 请求负载面 / SSE 事件负载面**: "
         "**collectively exhaustive** 抓「宣称维度零调用者 / "
         "面之间的缺口」; **mutually exclusive** 抓「同轴惩罚叠加」「跨模块同名重复实现」「词表互不一致」"
         "「同名工具名多类声明」「事件常量撞值」「SSE 帧名挂错通道」「WS 帧名挂错端点」"
         "「HTTP 同 method+path 多模块注册」「前端漏发后端必填请求负载」"
-        "「前端声明要读的响应字段后端从不返回」「WS 入站字段模型未声明」. 纯静态扫描, "
+        "「前端声明要读的响应字段后端从不返回」「WS 入站字段模型未声明」"
+        "「前端读的 SSE 帧 payload 顶层字段后端从不发」. 纯静态扫描, "
         "只提示候选, 不判死."
     )
     lines.append("")
@@ -5841,6 +6371,7 @@ def render_mece_markdown(snap: dict) -> str:
     lines.append(render_payload_markdown(snap["payload"]))
     lines.append(render_response_markdown(snap["response"]))
     lines.append(render_ws_payload_markdown(snap["ws_payload"]))
+    lines.append(render_sse_payload_markdown(snap["sse_payload"]))
     issues = find_issues(snap)
     lines.append("## 发现汇总")
     lines.append("")
@@ -5869,6 +6400,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--payload", action="store_true", help="只看请求负载面")
     parser.add_argument("--response", action="store_true", help="只看响应结构面")
     parser.add_argument("--ws-payload", action="store_true", help="只看 WS 请求负载面")
+    parser.add_argument("--sse-payload", action="store_true", help="只看 SSE 事件负载面")
     parser.add_argument("--json", action="store_true", help="输出 JSON 快照")
     parser.add_argument("--check", action="store_true", help="有 MECE 发现时 exit 1")
     parser.add_argument("--out", type=str, default="", help="写 markdown 到文件")
@@ -5892,6 +6424,11 @@ def main(argv: list[str] | None = None) -> int:
             args.ws_payload,
             build_ws_payload_contract,
             render_ws_payload_markdown,
+        ),
+        "sse_payload": (
+            args.sse_payload,
+            build_sse_payload_contract,
+            render_sse_payload_markdown,
         ),
     }
     selected = [k for k, (on, _b, _r) in surfaces.items() if on]
