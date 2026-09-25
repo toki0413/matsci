@@ -45,7 +45,8 @@ READ_ONLY_TOOLS: frozenset[str] = frozenset({
 })
 
 # Write / exec tool names — 显式标记, SSE 路径下不 auto_approve.
-# 未列在 READ_ONLY_TOOLS 里的工具默认就返回 False, 这个集合留着做可观测性 / 未来显式校验.
+# 与 READ_ONLY_TOOLS 一起被 `routes/interaction.py::chat_stream` 消费:
+# 对两张表的并集按 `is_read_only_tool` 分类 —— 只读放行, 其余强制 ASK.
 WRITE_EXEC_TOOLS: frozenset[str] = frozenset({
     "file_write_tool", "file_edit_tool", "multi_edit_tool", "notebook_edit_tool",
     "bash_tool", "code_tool",

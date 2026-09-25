@@ -11,10 +11,13 @@
 
 from huginn.core_types import PermissionMode, RiskLevel
 from huginn.permissions import (
+    READ_ONLY_TOOLS,
+    WRITE_EXEC_TOOLS,
     PermissionChecker,
     PermissionConfig,
     StandingRulesStore,
     get_standing_rules_store,
+    is_read_only_tool,
     reset_standing_rules_store,
     reset_trust,
 )
@@ -171,3 +174,38 @@ def test_standing_rule_singleton_reset():
     assert store.list_rules("s1")
     reset_standing_rules_store()
     assert not get_standing_rules_store().list_rules("s1")
+
+
+# ── SSE/sidecar 只读策略面 (READ_ONLY_TOOLS / WRITE_EXEC_TOOLS) ───
+def test_read_only_tools_are_registered_names():
+    """只读表必须是注册名, 不能是 `read_file`/`ls`/`cat`/`search` 这类短名.
+
+    短名与注册表对不上 ⇒ SSE 路径 `set_mode` 永不命中, 只读工具实际仍走 ASK.
+    """
+    assert len(READ_ONLY_TOOLS) == 3
+    for name in ("file_read_tool", "grep", "glob"):
+        assert name in READ_ONLY_TOOLS
+    for short in ("read_file", "ls", "cat", "search", "list_dir"):
+        assert short not in READ_ONLY_TOOLS
+
+
+def test_read_only_and_write_exec_are_disjoint():
+    """两张表按 `is_read_only_tool` 分类, 交集非空会让写/执行工具被误放行."""
+    assert not (READ_ONLY_TOOLS & WRITE_EXEC_TOOLS)
+    for name in READ_ONLY_TOOLS | WRITE_EXEC_TOOLS:
+        assert is_read_only_tool(name) is (name in READ_ONLY_TOOLS)
+
+
+def test_sse_read_only_policy_modes():
+    """SSE 策略: 只读工具 AUTO, 写/执行工具 ASK, 危险工具仍 DENY."""
+    cfg = PermissionConfig()
+    for name in READ_ONLY_TOOLS | WRITE_EXEC_TOOLS:
+        mode = PermissionMode.AUTO if is_read_only_tool(name) else PermissionMode.ASK
+        cfg.set_mode(name, mode)
+
+    for name in READ_ONLY_TOOLS:
+        assert cfg.get_mode(name) == PermissionMode.AUTO
+    for name in WRITE_EXEC_TOOLS:
+        assert cfg.get_mode(name) == PermissionMode.ASK
+    # 危险底线不受该策略影响 (set_mode 只覆盖名单内的名字)
+    assert cfg.get_mode("file_delete_tool") == PermissionMode.DENY
