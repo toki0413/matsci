@@ -567,21 +567,18 @@ export function ChatPanel(props: ChatPanelProps) {
         };
         reader.readAsText(file);
       } else {
-        // Binary file — actually upload to backend and notify
+        // Binary file — hand it to the workspace so the agent can read it by path.
+        const marker = `[Uploading ${file.name} (${(file.size / 1024).toFixed(1)} KB)…]`;
         try {
-          setInput((prev) => prev + `\n\n[Uploading ${file.name} (${(file.size / 1024).toFixed(1)} KB)…]`);
-          const result = await api.uploadWithProgress<{ success?: boolean; path?: string; error?: string }>(
-            '/transfer/upload', file,
+          setInput((prev) => prev + `\n\n${marker}`);
+          const result = await api.uploadWithProgress<{ path: string; name: string; size: number }>(
+            '/v1/fs/upload', file,
           );
-          if (result.success) {
-            toast.success(`Uploaded ${file.name}`);
-            setInput((prev) => prev.replace(`[Uploading ${file.name}…`, `[Attached: ${file.name}]`));
-          } else {
-            toast.error(`Upload failed: ${result.error}`);
-            setInput((prev) => prev.replace(`[Uploading ${file.name} (${(file.size / 1024).toFixed(1)} KB)…`, `[Upload failed: ${file.name}]`));
-          }
+          toast.success(`Uploaded ${file.name}`);
+          setInput((prev) => prev.replace(marker, `[Attached: ${result.path}]`));
         } catch (err: any) {
           toast.error(`Upload failed: ${err.message}`);
+          setInput((prev) => prev.replace(marker, `[Upload failed: ${file.name}]`));
         }
       }
     }
