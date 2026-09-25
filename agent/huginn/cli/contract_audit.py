@@ -3760,6 +3760,644 @@ def render_http_markdown(contract: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
+# 请求负载面: 前端调用实参形状 ↔ 后端模型必填字段 / query 参数
+# ---------------------------------------------------------------------------
+#
+# HTTP 消费面只核「路径 + 方法」挂不挂得上 (404/405); 本面再往里一层, 核**同一个
+# 命中端点的请求负载对不对**: 后端签名里的必填 query 参数 / 必填请求体 / Pydantic
+# 模型必填字段 / Form·File 字段, 前端这次调用到底发了没有. 静态只能辨「字面量能读
+# 出形状」的调用, 读到变量/模板即记 unknown 并跳过 (不猜).
+#
+# 硬契约方向同 HTTP 面: 只把「前端 → 后端」当硬违例 (漏必填 ⇒ 422). 反向「后端有
+# 可选字段前端没发」不是违例.
+
+# 后端特殊参数类型: FastAPI 直接注入, 既不是 query 也不是 body.
+_PAYLOAD_SPECIAL_ANN = {
+    "Request",
+    "Response",
+    "WebSocket",
+    "BackgroundTasks",
+    "HTTPConnection",
+}
+# Pydantic 模型基类 (含继承链, 用 fixpoint 解析).
+_PAYLOAD_MODEL_BASES = {"BaseModel", "BaseSettings"}
+# api.* 里走 multipart 的包装 (文件/表单上传).
+_PAYLOAD_MULTIPART_VERBS = {"upload", "uploadWithProgress", "uploadStream"}
+# FastAPI 里带 `...` 默认 = "必填" (ast.unparse(File(...)) == "File(...)").
+_PAYLOAD_REQUIRED_DEFAULTS = {
+    "File(...)",
+    "Form(...)",
+    "Query(...)",
+    "Body(...)",
+    "Header(...)",
+    "Path(...)",
+    "Cookie(...)",
+}
+
+_PAYLOAD_KIND_DOC = {
+    "missing-query": "后端必填 query 参数前端未传 (422)",
+    "missing-body": "后端必填请求体前端未发 (422)",
+    "missing-body-field": "后端模型必填字段前端未含 (422)",
+    "shape-mismatch": "前后端请求载体形状不符 (JSON ↔ multipart, 422)",
+    "missing-form-field": "后端必填 Form/File 字段前端未含 (422)",
+}
+
+# 已确认硬违例分诊表. 键 (类型, 方法, 去 query 前端路径) → (标签, 理由); 未登记即
+# "待分诊", 回归测试会失败 (逼逐条人工判定). 空表 = 当前每个命中端点的调用负载都合契约.
+_PAYLOAD_CONFIRMED_VIOLATIONS: dict[tuple[str, str, str], tuple[str, str]] = {}
+
+_PAYLOAD_TRIAGE_DOC = {
+    "defect": "已确认缺陷 (待修)",
+    "intentional": "已确认有意",
+}
+
+
+def _payload_triage(kind: str, method: str, path: str) -> tuple[str, str] | None:
+    """负载违例分诊: 返回 (标签, 理由); 未登记则 None (待人工确认)."""
+    return _PAYLOAD_CONFIRMED_VIOLATIONS.get(
+        (kind, method.upper(), path.split("?")[0])
+    )
+
+
+def _payload_violation_mark(kind: str, method: str, path: str) -> str:
+    tri = _payload_triage(kind, method, path)
+    if tri is None:
+        return " — ⚠ 待分诊"
+    doc = _PAYLOAD_TRIAGE_DOC[tri[0]]
+    return f" — {'⛔' if tri[0] == 'defect' else '✅'} {doc}: {tri[1]}"
+
+
+def _payload_required_fields(cls: ast.ClassDef) -> set[str]:
+    """Pydantic 模型的必填字段名 —— 无默认 / 默认是 `...` 即必填.
+
+    `Field(...)`: 位置实参里有 `...` ⇒ 必填; 有位置实参但非 `...` ⇒ 有默认
+    (`Field(None, …)`、`Field("auto", …)`); 无位置实参且无 `default` /
+    `default_factory` 关键字 ⇒ 必填.
+    """
+    req: set[str] = set()
+    for stmt in cls.body:
+        if not (isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name)):
+            continue
+        v = stmt.value
+        if v is None or (isinstance(v, ast.Constant) and v.value is Ellipsis):
+            req.add(stmt.target.id)
+        elif (
+            isinstance(v, ast.Call)
+            and isinstance(v.func, ast.Name)
+            and v.func.id == "Field"
+        ):
+            has_ellipsis = any(
+                isinstance(a, ast.Constant) and a.value is Ellipsis for a in v.args
+            )
+            has_default_kw = any(
+                k.arg in ("default", "default_factory") for k in v.keywords
+            )
+            if has_ellipsis or (not v.args and not has_default_kw):
+                req.add(stmt.target.id)
+    return req
+
+
+def _payload_models(root: Path) -> dict[str, set[str]]:
+    """全仓 Pydantic 模型名 → 必填字段集 (继承链 fixpoint 解析)."""
+    classes: dict[str, ast.ClassDef] = {}
+    for py in _iter_py(root):
+        if "/tests/" in py.as_posix():
+            continue
+        tree = _parse(py)
+        if tree is None:
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef):
+                classes.setdefault(node.name, node)
+    models: dict[str, set[str]] = {}
+    changed = True
+    while changed:
+        changed = False
+        for name, cls in classes.items():
+            if name in models:
+                continue
+            bases = {ast.unparse(b).split("[")[0].strip() for b in cls.bases}
+            if not (bases & _PAYLOAD_MODEL_BASES) and not (bases & set(models)):
+                continue
+            models[name] = _payload_required_fields(cls)
+            changed = True
+    return models
+
+
+def _payload_base_ann(ann: str) -> str:
+    """注解取基名: `dict[str, Any] | None` → `dict`, `LoadRequest` → `LoadRequest`."""
+    return ann.split("[")[0].split("|")[0].strip()
+
+
+def _payload_is_required(default: str | None) -> bool:
+    """FastAPI 参数必填性: 无默认, 或默认是 `File(...)`/`Query(...)` 这类省略号标记."""
+    if default is None:
+        return True
+    return default in _PAYLOAD_REQUIRED_DEFAULTS
+
+
+def _payload_classify(param: dict, models: dict[str, set[str]]) -> str:
+    """后端参数归类: query / path / body-model / body-dict / form / file / special."""
+    ann = param["ann"].strip()
+    dfl = (param["default"] or "").strip()
+    if "Depends" in dfl:
+        return "depends"
+    base = _payload_base_ann(ann)
+    if base in _PAYLOAD_SPECIAL_ANN:
+        return "special"
+    if "UploadFile" in ann or dfl.startswith("File("):
+        return "file"
+    if dfl.startswith("Form("):
+        return "form"
+    if base in ("dict", "Dict") or re.match(r"dict\s*\[", ann):
+        return "body-dict"
+    if base in models:
+        return "body-model"
+    if param["is_path"]:
+        return "path"
+    return "query"
+
+
+def _payload_handler_params(node: ast.FunctionDef | ast.AsyncFunctionDef, path: str) -> list[dict]:
+    """处理函数签名 → 参数表 (路径参数带 `is_path`, FastAPI 注入类型留给分类)."""
+    path_names = {seg[1:-1] for seg in re.findall(r"\{[^}]+\}", path)}
+    params: list[dict] = []
+    pos = [*node.args.posonlyargs, *node.args.args]
+    defaults = [None] * (len(pos) - len(node.args.defaults)) + list(node.args.defaults)
+    for a, d in zip(pos, defaults):
+        if a.arg in ("self", "cls"):
+            continue
+        params.append(
+            {
+                "name": a.arg,
+                "ann": ast.unparse(a.annotation) if a.annotation is not None else "",
+                "default": ast.unparse(d) if d is not None else None,
+                "is_path": a.arg in path_names,
+            }
+        )
+    for a, d in zip(node.args.kwonlyargs, node.args.kw_defaults):
+        params.append(
+            {
+                "name": a.arg,
+                "ann": ast.unparse(a.annotation) if a.annotation is not None else "",
+                "default": ast.unparse(d) if d is not None else None,
+                "is_path": a.arg in path_names,
+            }
+        )
+    return params
+
+
+def _payload_handlers(root: Path) -> dict[tuple[str, str], list[dict]]:
+    """(方法, 完整路径) → 处理函数参数表; 供负载核对查后端签名."""
+    out: dict[tuple[str, str], list[dict]] = {}
+    rdir = root / _HTTP_ROUTES_DIR
+    if not rdir.is_dir():
+        return out
+    for py in sorted(rdir.glob("*.py")):
+        if py.name == "__init__.py":
+            continue
+        tree = _parse(py)
+        if tree is None:
+            continue
+        prefixes = _http_router_prefixes(tree)
+        if not prefixes:
+            continue
+        for node in tree.body:
+            if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            for dec in node.decorator_list:
+                parsed = _http_route_decorator(dec, prefixes)
+                if parsed is None:
+                    continue
+                methods, path, _var = parsed
+                if "WEBSOCKET" in methods:
+                    continue
+                params = _payload_handler_params(node, path)
+                for m in methods:
+                    out[(m, path)] = params
+    return out
+
+
+def _payload_split_args(inner: str) -> list[str]:
+    """按顶层逗号切分调用实参 (跳过字符串字面量, 尊重括号嵌套)."""
+    out: list[str] = []
+    depth = 0
+    start = 0
+    i = 0
+    n = len(inner)
+    while i < n:
+        c = inner[i]
+        if c in "\"'`":
+            i = _skip_ts_string(inner, i)
+            continue
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+        elif c == "," and depth == 0:
+            out.append(inner[start:i])
+            start = i + 1
+        i += 1
+    tail = inner[start:]
+    if tail.strip():
+        out.append(tail)
+    return out
+
+
+def _payload_obj_keys(expr: str) -> tuple[set[str], bool]:
+    """对象字面量 → (顶层键集, 是否含不可静态解析的部分); 非字面量即 unknown."""
+    s = expr.strip()
+    if not (s.startswith("{") and s.endswith("}")):
+        return set(), True
+    keys: set[str] = set()
+    for part in _payload_split_args(s[1:-1]):
+        p = part.strip()
+        if not p:
+            continue
+        if p.startswith("..."):
+            return keys, True
+        m = re.match(r"""([A-Za-z_$][\w$]*|['"][^'"]+['"])\s*:""", p)
+        if m:
+            keys.add(m.group(1).strip("'\""))
+        elif re.fullmatch(r"[A-Za-z_$][\w$]*", p):
+            keys.add(p)
+        else:
+            return keys, True
+    return keys, False
+
+
+def _payload_params_keys(expr: str) -> tuple[set[str], bool]:
+    """`new URLSearchParams({...})` → 键集; 其他形式 (变量/模板) 记 unknown."""
+    m = re.match(r"new\s+URLSearchParams\s*\((.*)\)\s*$", expr.strip(), re.S)
+    if not m:
+        return set(), True
+    return _payload_obj_keys(m.group(1).strip())
+
+
+def _payload_opt_params(opt: str) -> tuple[set[str], bool]:
+    """请求选项对象字面量 → `params` 值的 query 名集.
+
+    只解析顶层 `params: <URLSearchParams(...)>` 这一项; 选项不是对象字面量、或缺
+    `params` / 值读不出形状, 都记 unknown (跳过该维度, 不猜).
+    """
+    s = opt.strip()
+    if not (s.startswith("{") and s.endswith("}")):
+        return set(), True
+    for part in _payload_split_args(s[1:-1]):
+        m = re.match(r"\s*params\s*:\s*(.*)$", part, re.S)
+        if m:
+            return _payload_params_keys(m.group(1).strip())
+    return set(), False
+
+
+def _payload_query_names(raw: str) -> tuple[set[str], bool]:
+    """路径字面量的 query → 参数名集. 值可含 `${}` (名仍可辨); 整段动态则 unknown."""
+    if "?" not in raw:
+        return set(), False
+    names: set[str] = set()
+    unknown = False
+    for part in raw.split("?", 1)[1].split("&"):
+        if not part:
+            continue
+        if "${" in part:
+            head = part.split("${", 1)[0]
+            if "=" in head:
+                names.add(head.split("=", 1)[0].strip())
+            else:
+                unknown = True
+        elif "=" in part:
+            names.add(part.split("=", 1)[0].strip())
+        else:
+            unknown = True
+    return {n for n in names if n}, unknown
+
+
+def _payload_scan_frontend(frontend: Path) -> list[dict]:
+    """扫前端 `api.*` 调用点 → 每个调用的负载形状 (query 名 / body 键 / multipart 字段).
+
+    与 HTTP 面同一套定位逻辑, 额外读实参: 读得出字面量形状就记集合, 读到变量或模板
+    就置 unknown (不猜, 后续核对跳过该维度).
+    """
+    calls: list[dict] = []
+    if not frontend.is_dir():
+        return calls
+    for p in sorted(frontend.rglob("*")):
+        if not p.is_file() or p.suffix not in (".ts", ".tsx"):
+            continue
+        rel = _display(frontend, p)
+        if rel.endswith(".spec.ts") or rel.endswith(".spec.tsx"):
+            continue
+        try:
+            text = p.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for m in _HTTP_CALL_RE.finditer(text):
+            verb = m.group(1)
+            j = m.end()
+            if j < len(text) and text[j] == "<":
+                j = _http_skip_generics(text, j)
+            while j < len(text) and text[j] in " \t\n":
+                j += 1
+            if j >= len(text) or text[j] != "(":
+                continue
+            args = _payload_split_args(text[j + 1 : _http_call_args_end(text, j)])
+            raw = args[0].strip() if args else ""
+            if raw and raw[0] in "\"'`":
+                raw = raw[1:-1]
+            query, query_unknown = _payload_query_names(raw)
+            body_keys: set[str] = set()
+            body_unknown = False
+            has_body = False
+            fields: set[str] = set()
+            fields_unknown = True
+            if verb in ("post", "put", "patch"):
+                if len(args) >= 2 and args[1].strip():
+                    has_body = True
+                    body_keys, body_unknown = _payload_obj_keys(args[1])
+                opt_i = 2
+            elif verb in ("get", "del", "getBlob"):
+                opt_i = 1
+            elif verb == "search":
+                query = {"query", "limit", "sources"}
+                opt_i = None
+            elif verb in _PAYLOAD_MULTIPART_VERBS:
+                opt_i = 1
+                if verb == "uploadStream":
+                    fields, fields_unknown = {"file"}, False
+                elif verb == "uploadWithProgress" and len(args) >= 4:
+                    fields, fields_unknown = _payload_obj_keys(args[3])
+                    fields |= {"file"}  # 三个上传包装都固定 append("file", file)
+            else:
+                opt_i = 1
+            if opt_i is not None and len(args) > opt_i:
+                pk, pu = _payload_opt_params(args[opt_i])
+                query |= pk
+                query_unknown = query_unknown or pu
+            method = _HTTP_VERB_METHOD.get(verb, verb.upper())
+            override = _HTTP_METHOD_OVERRIDE_RE.search("".join(args))
+            if override:
+                method = override.group(1).upper()
+            calls.append(
+                {
+                    "rel": rel,
+                    "line": text.count("\n", 0, m.start()) + 1,
+                    "verb": verb,
+                    "method": method,
+                    "path": raw,
+                    "query": sorted(query),
+                    "query_unknown": query_unknown,
+                    "body_keys": sorted(body_keys),
+                    "body_unknown": body_unknown,
+                    "has_body": has_body,
+                    "fields": sorted(fields),
+                    "fields_unknown": fields_unknown,
+                }
+            )
+    return calls
+
+
+def _payload_live_endpoints(root: Path) -> list[dict]:
+    """已挂进 `ALL_ROUTERS` 的 HTTP 端点 (未挂载模块的端点根本不在 app 上)."""
+    mounted_pairs = set(_http_registry(root)["mounted_pairs"])
+    out: list[dict] = []
+    for r in _http_backend_routes(root):
+        if "WEBSOCKET" in r["methods"]:
+            continue
+        if (Path(r["rel"]).stem, r["router"]) not in mounted_pairs:
+            continue
+        out.append(
+            {
+                "methods": r["methods"],
+                "path": r["path"],
+                "rel": r["rel"],
+                "segments": _http_route_segments(r["path"]),
+            }
+        )
+    return out
+
+
+def _payload_violations_for(
+    c: dict, end_path: str, params: list[dict], models: dict[str, set[str]], stats: dict
+) -> list[dict]:
+    """一次命中端点的调用 → 负载硬违例列表 (仅「前端漏发后端必填」方向)."""
+    out: list[dict] = []
+
+    def viol(kind: str, detail: str, model: str = "") -> None:
+        out.append(
+            {
+                "kind": kind,
+                "method": c["method"],
+                "path": c["path"],
+                "endpoint": end_path,
+                "rel": c["rel"],
+                "line": c["line"],
+                "model": model,
+                "detail": detail,
+            }
+        )
+
+    kinds = [(p["name"], _payload_classify(p, models), p) for p in params]
+    req_query = [
+        n for n, k, p in kinds if k == "query" and _payload_is_required(p["default"])
+    ]
+    form_names = {n for n, k, _ in kinds if k in ("file", "form")}
+    req_form = [
+        n
+        for n, k, p in kinds
+        if k in ("file", "form") and _payload_is_required(p["default"])
+    ]
+    body_model = next((p for _n, k, p in kinds if k == "body-model"), None)
+    body_dict = next((p for _n, k, p in kinds if k == "body-dict"), None)
+    multipart = c["verb"] in _PAYLOAD_MULTIPART_VERBS
+    json_body = c["method"] in ("POST", "PUT", "PATCH") and not multipart
+
+    # (1) 必填 query 参数未传
+    if req_query:
+        if c["query_unknown"]:
+            stats["query_skipped"] += 1
+        else:
+            stats["query_checked"] += 1
+            miss = [n for n in req_query if n not in set(c["query"])]
+            if miss:
+                viol("missing-query", f"后端必填 query 未传: {', '.join(miss)}")
+    # (2) 请求载体形状不符 (JSON ↔ multipart)
+    if multipart and not form_names:
+        viol("shape-mismatch", "前端走 multipart 上传, 后端无 Form/File 参数")
+    if json_body and c["has_body"] and form_names and not body_model and not body_dict:
+        viol("shape-mismatch", "前端发 JSON body, 后端只收 Form/File")
+    # (3) 必填请求体整体缺失
+    body_param = body_model or body_dict
+    if (
+        body_param is not None
+        and json_body
+        and _payload_is_required(body_param["default"])
+        and not c["has_body"]
+    ):
+        viol(
+            "missing-body",
+            f"后端必填请求体 `{body_param['name']}` 未发",
+            model=_payload_base_ann(body_model["ann"]) if body_model else "",
+        )
+    # (4) 模型必填字段未含
+    if body_model is not None and c["has_body"]:
+        if c["body_unknown"]:
+            stats["body_skipped"] += 1
+        else:
+            stats["body_checked"] += 1
+            mname = _payload_base_ann(body_model["ann"])
+            miss = sorted(
+                n for n in models.get(mname, set()) if n not in set(c["body_keys"])
+            )
+            if miss:
+                viol(
+                    "missing-body-field",
+                    f"模型 `{mname}` 必填字段未含: {', '.join(miss)}",
+                    model=mname,
+                )
+    # (5) multipart 必填 Form/File 字段未含
+    if multipart and req_form and not c["fields_unknown"]:
+        stats["form_checked"] += 1
+        miss = [n for n in req_form if n not in set(c["fields"])]
+        if miss:
+            viol("missing-form-field", f"未含必填表单/文件字段: {', '.join(miss)}")
+    return out
+
+
+def build_payload_contract(root: Path | None = None, frontend: Path | None = None) -> dict:
+    """请求负载面: 前端调用实参形状 ↔ 后端签名必填项.
+
+    HTTP 面核路径/方法挂不挂得上; 本面在**已命中的端点**上核负载: 后端必填的 query
+    参数 / 请求体 / Pydantic 模型必填字段 / Form·File 字段, 前端这次调用发了没有.
+    只报「前端漏发后端必填」(422); 读到变量/模板即记 unknown 跳过该维度.
+    """
+    root = root or _REPO
+    frontend = frontend if frontend is not None else root.parent / "desktop" / "src"
+    models = _payload_models(root)
+    handlers = _payload_handlers(root)
+    live = _payload_live_endpoints(root)
+    calls = _payload_scan_frontend(frontend)
+
+    stats = {
+        "wired": 0,
+        "query_checked": 0,
+        "query_skipped": 0,
+        "body_checked": 0,
+        "body_skipped": 0,
+        "form_checked": 0,
+    }
+    violations: list[dict] = []
+    for c in calls:
+        segs = _http_fe_segments(c["path"])
+        if segs is None:
+            continue
+        eps = [
+            ep
+            for ep in live
+            if c["method"] in ep["methods"] and _http_path_match(segs, ep["segments"])
+        ]
+        if not eps:
+            continue
+        ep = eps[0]
+        stats["wired"] += 1
+        params = handlers.get((c["method"], ep["path"]), [])
+        violations.extend(_payload_violations_for(c, ep["path"], params, models, stats))
+
+    for v in violations:
+        tri = _payload_triage(v["kind"], v["method"], v["path"])
+        v["triage"] = tri[0] if tri else "untriaged"
+        v["triage_reason"] = tri[1] if tri else ""
+
+    kinds = Counter(v["kind"] for v in violations)
+    return {
+        "frontend": str(frontend),
+        "call_count": len(calls),
+        "wired_call_count": stats["wired"],
+        "model_count": len(models),
+        "violations": violations,
+        "untriaged": [v for v in violations if v["triage"] == "untriaged"],
+        "kind_counts": dict(sorted(kinds.items())),
+        "coverage": {
+            "query_checked": stats["query_checked"],
+            "query_skipped": stats["query_skipped"],
+            "body_checked": stats["body_checked"],
+            "body_skipped": stats["body_skipped"],
+            "form_checked": stats["form_checked"],
+        },
+    }
+
+
+def render_payload_markdown(contract: dict) -> str:
+    lines: list[str] = []
+    lines.append("## 请求负载面: 前端调用实参形状 vs 后端签名必填项")
+    lines.append("")
+    lines.append(
+        "HTTP 消费面核「路径 + 方法」挂不挂得上 (404/405); 本面再往里一层, 核**已命中"
+        "端点**上的请求负载: 后端 `@router.<method>` 处理函数签名里的必填 query 参数 / "
+        "必填请求体 / Pydantic 模型必填字段 / `Form · File` 字段, 前端这次 `api.*` 调用"
+        "到底发了没有. 硬契约方向同 HTTP 面 —— 只把「前端漏发后端必填」当违例 (422 死负载);"
+        "「后端有可选字段前端没发」不是违例."
+    )
+    lines.append("")
+    lines.append(
+        "违例类型: " + "; ".join(f"`{k}`={v}" for k, v in _PAYLOAD_KIND_DOC.items())
+    )
+    lines.append("")
+    cov = contract["coverage"]
+    lines.append(
+        f"覆盖: 命中端点的调用 **{contract['wired_call_count']}** 处 (共 "
+        f"{contract['call_count']} 个 `api.*` 调用点); 后端模型 **{contract['model_count']}** "
+        f"个; 可静态核对 —— query {cov['query_checked']} / body {cov['body_checked']} / "
+        f"multipart {cov['form_checked']} 处."
+    )
+    counts = (
+        "  " + ", ".join(f"`{k}`×{n}" for k, n in contract["kind_counts"].items())
+        if contract["kind_counts"]
+        else ""
+    )
+    lines.append(f"违例: **{len(contract['violations'])}** 条.{counts}")
+    lines.append("")
+
+    lines.append("### 违例 (前端漏发后端必填)")
+    lines.append("")
+    if contract["violations"]:
+        lines.append(
+            "硬违例 —— 后端必填项前端没发, 请求必 422. 逐条分诊: 未登记的落「待分诊」"
+            "(回归测试会失败, 逼人工判定):"
+        )
+        lines.append("")
+        for v in sorted(
+            contract["violations"],
+            key=lambda x: (x["kind"], x["method"], x["path"], x["rel"], x["line"]),
+        ):
+            lines.append(
+                f"- `[{v['kind']}]` `{v['method']} {v['path']}` → 后端 `{v['endpoint']}` "
+                f"@ `{v['rel']}:{v['line']}` — {v['detail']}"
+                + _payload_violation_mark(v["kind"], v["method"], v["path"])
+            )
+    else:
+        lines.append("- 无 —— 每个命中端点的调用, 静态可辨的负载都满足后端必填项.")
+    lines.append("")
+
+    lines.append("### 静态核对覆盖面 (读不出形状即跳过, 不猜)")
+    lines.append("")
+    lines.append("| 维度 | 已核对 | 跳过 (变量/模板/未知形状) |")
+    lines.append("|---|---|---|")
+    lines.append(f"| 必填 query 参数 | {cov['query_checked']} | {cov['query_skipped']} |")
+    lines.append(f"| 必填模型字段 | {cov['body_checked']} | {cov['body_skipped']} |")
+    lines.append(f"| multipart 必填字段 | {cov['form_checked']} | — |")
+    lines.append("")
+    lines.append(
+        "诚实边界: 只读**字面量**形状 —— body 传变量、`params` 传变量、路径 query 整段"
+        "动态时该维度记 unknown 并跳过, 故违例是**下界** (可能漏报); 后端 `dict` 请求体"
+        "无字段约束只核「发没发」; 模型必填性按 Pydantic 默认值 / `Field(...)` 静态判定, "
+        "`model_config` 与 `Field` 的 `validate_*` 细粒度约束不核; 反向 (前端多发字段、"
+        "后端可选字段缺失) 不是违例."
+    )
+    lines.append("")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # 组合 + 门禁
 # ---------------------------------------------------------------------------
 
@@ -3777,6 +4415,7 @@ def build_mece_snapshot(root: Path | None = None) -> dict:
         "sse": build_sse_contract(root),
         "ws": build_ws_contract(root),
         "http": build_http_contract(root),
+        "payload": build_payload_contract(root),
     }
 
 
@@ -3935,13 +4574,21 @@ def find_issues(snap: dict) -> list[str]:
             f"HTTP: 同一 {d['method']} {d['path']} 被多模块注册 (路由遮蔽): "
             f"{', '.join(d['modules'])}"
         )
+    payload = snap["payload"]
+    for v in payload["violations"]:
+        mark = " 待分诊" if v["triage"] == "untriaged" else " " + _PAYLOAD_TRIAGE_DOC[v["triage"]]
+        issues.append(
+            f"负载: 前端漏发后端必填 ({_PAYLOAD_KIND_DOC[v['kind']]}): "
+            f"{v['method']} {v['path']} → 后端 {v['endpoint']} @ "
+            f"{v['rel']}:{v['line']} — {v['detail']};{mark}"
+        )
     return issues
 
 
 def render_mece_markdown(snap: dict) -> str:
     lines: list[str] = []
     lines.append(
-        "# MECE 契约审计 (奖励面 + 授权面 + 工作流面 + 模式面 + 词汇面 + 工具面 + 钩子面 + 事件面 + SSE 消费面 + WS 消费面 + HTTP API 消费面)"
+        "# MECE 契约审计 (奖励面 + 授权面 + 工作流面 + 模式面 + 词汇面 + 工具面 + 钩子面 + 事件面 + SSE 消费面 + WS 消费面 + HTTP API 消费面 + 请求负载面)"
     )
     lines.append("")
     lines.append(
@@ -3949,11 +4596,12 @@ def render_mece_markdown(snap: dict) -> str:
     )
     lines.append(
         "以 MECE 两原则审计 agent 的**奖励面 / 授权面 / 工作流面 / 模式面 / "
-        "词汇面 / 工具面 / 钩子面 / 事件面 / SSE 消费面 / WS 消费面 / HTTP API 消费面**: "
+        "词汇面 / 工具面 / 钩子面 / 事件面 / SSE 消费面 / WS 消费面 / HTTP API 消费面 / "
+        "请求负载面**: "
         "**collectively exhaustive** 抓「宣称维度零调用者 / "
         "面之间的缺口」; **mutually exclusive** 抓「同轴惩罚叠加」「跨模块同名重复实现」「词表互不一致」"
         "「同名工具名多类声明」「事件常量撞值」「SSE 帧名挂错通道」「WS 帧名挂错端点」"
-        "「HTTP 同 method+path 多模块注册」. 纯静态扫描, 只提示候选, 不判死."
+        "「HTTP 同 method+path 多模块注册」「前端漏发后端必填请求负载」. 纯静态扫描, 只提示候选, 不判死."
     )
     lines.append("")
     lines.append(render_reward_markdown(snap["reward"]))
@@ -3967,6 +4615,7 @@ def render_mece_markdown(snap: dict) -> str:
     lines.append(render_sse_markdown(snap["sse"]))
     lines.append(render_ws_markdown(snap["ws"]))
     lines.append(render_http_markdown(snap["http"]))
+    lines.append(render_payload_markdown(snap["payload"]))
     issues = find_issues(snap)
     lines.append("## 发现汇总")
     lines.append("")
@@ -3992,6 +4641,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--sse", action="store_true", help="只看 SSE 消费面")
     parser.add_argument("--ws", action="store_true", help="只看 WS 消费面")
     parser.add_argument("--http", action="store_true", help="只看 HTTP API 消费面")
+    parser.add_argument("--payload", action="store_true", help="只看请求负载面")
     parser.add_argument("--json", action="store_true", help="输出 JSON 快照")
     parser.add_argument("--check", action="store_true", help="有 MECE 发现时 exit 1")
     parser.add_argument("--out", type=str, default="", help="写 markdown 到文件")
@@ -4009,6 +4659,7 @@ def main(argv: list[str] | None = None) -> int:
         "sse": (args.sse, build_sse_contract, render_sse_markdown),
         "ws": (args.ws, build_ws_contract, render_ws_markdown),
         "http": (args.http, build_http_contract, render_http_markdown),
+        "payload": (args.payload, build_payload_contract, render_payload_markdown),
     }
     selected = [k for k, (on, _b, _r) in surfaces.items() if on]
     if len(selected) == 1:

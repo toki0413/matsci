@@ -1140,6 +1140,132 @@ def test_http_synthetic_dynamic_segments_and_method_override(tmp_path):
     assert c["zero_modules"] == []
 
 
+# ──────────────────── 请求负载面 ────────────────────
+
+
+def test_payload_real_repo_no_untriaged_violations():
+    """真实仓: 每个命中端点的调用, 静态可辨的负载都满足后端必填 (无待分诊)."""
+    c = ca.build_payload_contract()
+    assert c["wired_call_count"] > 0
+    assert c["model_count"] > 0
+    assert c["untriaged"] == [], c["untriaged"]
+    for v in c["violations"]:
+        assert v["triage"] in {"defect", "intentional"}
+        assert v["triage_reason"]
+    # 三个维度至少各自有可静态核对的样本, 否则本面等于空转.
+    assert c["coverage"]["body_checked"] > 0
+    assert c["coverage"]["query_checked"] > 0
+    assert c["coverage"]["form_checked"] > 0
+
+
+def test_payload_confirmed_violations_registry_not_stale():
+    """分诊表登记的每条都必须仍是真实硬违例 —— 修好后要同步删登记."""
+    observed = {
+        (v["kind"], v["method"], v["path"].split("?")[0])
+        for v in ca.build_payload_contract()["violations"]
+    }
+    for key in ca._PAYLOAD_CONFIRMED_VIOLATIONS:
+        assert key in observed, f"分诊表登记 {key} 已不再是硬违例, 请删除登记"
+
+
+def test_payload_violation_mark_labels_triage():
+    """分诊标注: 未登记 → 待分诊; 已登记 → 对应标签 + 理由."""
+    assert ca._payload_triage("missing-query", "GET", "/nope/none") is None
+    assert "待分诊" in ca._payload_violation_mark("missing-query", "GET", "/nope/none")
+    for (kind, method, path), (label, _reason) in ca._PAYLOAD_CONFIRMED_VIOLATIONS.items():
+        mark = ca._payload_violation_mark(kind, method, path)
+        assert "待分诊" not in mark
+        assert ca._PAYLOAD_TRIAGE_DOC[label] in mark
+
+
+def test_payload_render_sections_present():
+    md = ca.render_payload_markdown(ca.build_payload_contract())
+    assert "请求负载面" in md
+    assert "违例类型" in md
+    assert "静态核对覆盖面" in md
+    assert "诚实边界" in md
+
+
+def test_payload_synthetic_missing_query_and_body_field(tmp_path):
+    """合成树: 必填 query 未传 / 模型必填字段未含 → 硬违例, 未登记即待分诊."""
+    _write(
+        tmp_path,
+        "huginn/routes/thing.py",
+        "from fastapi import APIRouter\n"
+        "from pydantic import BaseModel\n"
+        'router = APIRouter(prefix="/thing")\n'
+        "class SaveBody(BaseModel):\n"
+        "    name: str\n"
+        '    note: str = ""\n'
+        '@router.get("/list")\n'
+        "async def thing_list(tag: str):\n"
+        "    return {}\n"
+        '@router.post("/save")\n'
+        "async def thing_save(body: SaveBody):\n"
+        "    return {}\n",
+    )
+    _write(
+        tmp_path,
+        "huginn/routes/__init__.py",
+        "from huginn.routes.thing import router as thing_router\n"
+        "ALL_ROUTERS = [thing_router]\n",
+    )
+    _write(
+        tmp_path,
+        "fe/a.ts",
+        "await api.get('/thing/list');\n"
+        "await api.get('/thing/list', { params: new URLSearchParams({ tag: 'x' }) });\n"
+        "await api.post('/thing/save', { name: 'a' });\n"
+        "await api.post('/thing/save', { note: 'b' });\n",
+    )
+    c = ca.build_payload_contract(tmp_path, tmp_path / "fe")
+    got = {(v["kind"], v["detail"]) for v in c["violations"]}
+    assert ("missing-query", "后端必填 query 未传: tag") in got
+    assert any(k == "missing-body-field" and "name" in d for k, d in got)
+    # 必填齐全的那两条调用不得误报.
+    assert len(c["violations"]) == 2
+    assert len(c["untriaged"]) == 2
+    # URLSearchParams 字面量必须被解析出来 (否则 query 维度空转).
+    assert c["coverage"]["query_checked"] == 2
+    assert c["coverage"]["body_checked"] == 2
+
+
+def test_payload_synthetic_shape_and_form(tmp_path):
+    """合成树: JSON↔multipart 形状不符 / multipart 必填 Form 字段未含."""
+    _write(
+        tmp_path,
+        "huginn/routes/up.py",
+        "from fastapi import APIRouter, File, Form, UploadFile\n"
+        "from pydantic import BaseModel\n"
+        'router = APIRouter(prefix="/up")\n'
+        "class Body(BaseModel):\n"
+        "    name: str\n"
+        '@router.post("/json")\n'
+        "async def up_json(body: Body):\n"
+        "    return {}\n"
+        '@router.post("/form")\n'
+        "async def up_form(credential_id: str = Form(...), file: UploadFile = File(...)):\n"
+        "    return {}\n",
+    )
+    _write(
+        tmp_path,
+        "huginn/routes/__init__.py",
+        "from huginn.routes.up import router as up_router\n"
+        "ALL_ROUTERS = [up_router]\n",
+    )
+    _write(
+        tmp_path,
+        "fe/a.ts",
+        "await api.post('/up/form', { credential_id: 'x' });\n"
+        "await api.uploadWithProgress('/up/form', file, cb, {});\n"
+        "await api.uploadStream('/up/json', file);\n",
+    )
+    c = ca.build_payload_contract(tmp_path, tmp_path / "fe")
+    kinds = sorted(v["kind"] for v in c["violations"])
+    assert kinds == ["missing-form-field", "shape-mismatch", "shape-mismatch"]
+    assert len(c["untriaged"]) == 3
+
+
 # ──────────────────── 文档漂移 ────────────────────
 
 
