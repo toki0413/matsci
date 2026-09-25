@@ -1760,6 +1760,161 @@ def test_ws_payload_synthetic_spread_send_is_unknown(tmp_path):
     assert c["violations"] == []
 
 
+# ──────────────────── SSE 事件负载面 ────────────────────
+
+
+def test_sse_payload_real_repo_no_untriaged_violations():
+    """真实仓: 前端读的帧 payload 顶层字段都在后端发帧形状里 (无待分诊)."""
+    c = ca.build_sse_payload_contract()
+    assert c["read_count"] > 0
+    assert c["coverage"]["checked"] > 0
+    assert c["untriaged"] == [], c["untriaged"]
+    for v in c["violations"]:
+        assert v["triage"] in {"defect", "intentional"}
+        assert v["triage_reason"]
+
+
+def test_sse_payload_confirmed_registry_not_stale():
+    """分诊表登记的每条都必须仍是真实硬违例 —— 修好后要同步删登记."""
+    observed = {
+        (v["channel"], v["frame"], v["field"])
+        for v in ca.build_sse_payload_contract()["violations"]
+    }
+    for key in ca._SSE_PAYLOAD_CONFIRMED:
+        assert key in observed, f"分诊表登记 {key} 已不再是硬违例, 请删除登记"
+
+
+def test_sse_payload_violation_mark_labels_triage():
+    """分诊标注: 未登记 → 待分诊; 已登记 → 对应标签 + 理由."""
+    assert ca._sse_payload_triage("event_bus", "tool.call", "nope") is None
+    assert "待分诊" in ca._sse_payload_violation_mark("event_bus", "tool.call", "nope")
+    for (ch, frame, field), (label, _reason) in ca._SSE_PAYLOAD_CONFIRMED.items():
+        mark = ca._sse_payload_violation_mark(ch, frame, field)
+        assert "待分诊" not in mark
+        assert ca._SSE_PAYLOAD_TRIAGE_DOC[label] in mark
+
+
+def test_sse_payload_render_sections_present():
+    md = ca.render_sse_payload_markdown(ca.build_sse_payload_contract())
+    assert "SSE 事件负载面" in md
+    assert "违例类型" in md
+    assert "静态核对覆盖面" in md
+    assert "诚实边界" in md
+
+
+def _sse_payload_backend(tmp_path, payload_body: str) -> None:
+    """合成后端: 总线 to_sse 信封 (`payload = {…}`) + 事件声明 + 一个发布点."""
+    _sse_backend(tmp_path, "")
+    _write(
+        tmp_path,
+        ca._SSE_PAYLOAD_EVENT_BUS_MODULE,
+        "class AgentEvent:\n"
+        "    def to_sse(self):\n"
+        "        payload = {\n"
+        + payload_body
+        + "        }\n"
+        "        return payload\n",
+    )
+
+
+def test_sse_payload_synthetic_read_undeclared(tmp_path):
+    """合成树: 前端读 `t.bogus` 而 event_bus 信封无此顶层键 → 硬违例 (恒 undefined)."""
+    _sse_payload_backend(
+        tmp_path,
+        '            "type": self.type,\n            "data": self.data,\n',
+    )
+    _write(
+        tmp_path,
+        "fe/app.ts",
+        "const es = new EventSource(`${API_BASE}/events/stream`);\n"
+        "const handle = (e: MessageEvent) => {\n"
+        "  const t = JSON.parse(e.data);\n"
+        "  if (t.bogus) { }\n"
+        "};\n"
+        'es.addEventListener("tool.call", handle);\n',
+    )
+    c = ca.build_sse_payload_contract(tmp_path, tmp_path / "fe")
+    assert c["channels"]["event_bus"]["tool.call"] == {
+        "keys": ["data", "type"],
+        "closed": True,
+    }
+    assert c["frame_reads"]["event_bus"]["tool.call"] == ["bogus"]
+    got = [(v["kind"], v["channel"], v["frame"], v["field"]) for v in c["violations"]]
+    assert got == [("read-undeclared", "event_bus", "tool.call", "bogus")]
+    assert len(c["untriaged"]) == 1
+
+
+def test_sse_payload_synthetic_declared_field_ok(tmp_path):
+    """合成树: 前端读的顶层字段都在信封里 → 无违例, 且该帧记前端读取字段."""
+    _sse_payload_backend(
+        tmp_path,
+        '            "type": self.type,\n            "data": self.data,\n',
+    )
+    _write(
+        tmp_path,
+        "fe/app.ts",
+        "const es = new EventSource(`${API_BASE}/events/stream`);\n"
+        "const handle = (e: MessageEvent) => {\n"
+        "  const t = JSON.parse(e.data);\n"
+        "  if (t.type === \"tool.call\") { use(t.data); }\n"
+        "};\n"
+        'es.addEventListener("tool.call", handle);\n',
+    )
+    c = ca.build_sse_payload_contract(tmp_path, tmp_path / "fe")
+    assert c["violations"] == []
+    assert c["frame_reads"]["event_bus"]["tool.call"] == ["data", "type"]
+
+
+def test_sse_payload_synthetic_shape_open_skipped(tmp_path):
+    """合成树: 信封经变量间接构造 (无字面 `payload = {…}`) → 形状开放, 跳过不猜."""
+    _sse_backend(tmp_path, "")
+    _write(
+        tmp_path,
+        ca._SSE_PAYLOAD_EVENT_BUS_MODULE,
+        "class AgentEvent:\n"
+        "    def to_sse(self):\n"
+        "        payload = build_envelope(self)\n"
+        "        return payload\n",
+    )
+    _write(
+        tmp_path,
+        "fe/app.ts",
+        "const es = new EventSource(`${API_BASE}/events/stream`);\n"
+        "const handle = (e: MessageEvent) => {\n"
+        "  const t = JSON.parse(e.data);\n"
+        "  if (t.mystery) { }\n"
+        "};\n"
+        'es.addEventListener("tool.call", handle);\n',
+    )
+    c = ca.build_sse_payload_contract(tmp_path, tmp_path / "fe")
+    assert c["channels"]["event_bus"]["tool.call"]["closed"] is False
+    assert c["violations"] == []
+    assert c["coverage"]["skip_shape"] == 1
+    assert c["coverage"]["checked"] == 0
+
+
+def test_sse_payload_synthetic_frame_not_in_channel_skipped(tmp_path):
+    """合成树: 帧名不属该通道 (幽灵帧) → payload 面无权威, 跳过错开 (消费面另报)."""
+    _sse_payload_backend(
+        tmp_path,
+        '            "type": self.type,\n            "data": self.data,\n',
+    )
+    _write(
+        tmp_path,
+        "fe/app.ts",
+        "const es = new EventSource(`${API_BASE}/events/stream`);\n"
+        "const handle = (e: MessageEvent) => {\n"
+        "  const t = JSON.parse(e.data);\n"
+        "  if (t.ghost) { }\n"
+        "};\n"
+        'es.addEventListener("ghost.void", handle);\n',
+    )
+    c = ca.build_sse_payload_contract(tmp_path, tmp_path / "fe")
+    assert c["violations"] == []
+    assert c["coverage"]["skip_frame"] == 1
+    assert c["coverage"]["checked"] == 0
+
+
 # ──────────────────── 文档漂移 ────────────────────
 
 
