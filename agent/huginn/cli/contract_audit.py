@@ -1297,10 +1297,15 @@ def _tool_consumers(
             continue
         for nm in by_rel.get(rel, ()):
             ln = def_line[(rel, nm)]
-            if any(
-                isinstance(n, ast.Name) and n.id == nm and n.lineno != ln
+            # 引用可以是裸名 (`A_TOOLS`) 也可以是属性 (`self._ALWAYS_ON_TOOLS`) ——
+            # 只看 ast.Name 会把类属性风格的白名单误判成零引用死表.
+            refs = [
+                n
                 for n in ast.walk(tree)
-            ):
+                if (isinstance(n, ast.Name) and n.id == nm)
+                or (isinstance(n, ast.Attribute) and n.attr == nm)
+            ]
+            if any(n.lineno != ln for n in refs):
                 internal.add((rel, nm))
         if _is_test(rel):
             continue
@@ -1368,7 +1373,11 @@ def build_tool_contract(root: Path | None = None) -> dict:
         # 连真死项一起吞掉 —— 故要求"连别名对应都没有"才算外部.
         aliases = [v for v in raw_dead if _tool_alias(v, registered)]
         external = not matched and not aliases
-        if external:
+        # 工具名从不含空格; 表里出现空格条目 (如 `"quantum espresso"`) ⇒ 这是
+        # prompt 关键词表 (匹配用户输入文本), 不是工具名白名单, 不做死项判定.
+        prose = any(" " in v for v in vals)
+        no_judge = external or prose
+        if no_judge:
             aliases = []
         covered.update(matched)
         n = consumers.get((s["rel"], s["name"]), 0)
@@ -1379,9 +1388,11 @@ def build_tool_contract(root: Path | None = None) -> dict:
                 "line": s["line"],
                 "size": len(vals),
                 "matched": len(matched),
-                "namespace": "external" if external else "registry",
+                "namespace": "keywords"
+                if prose
+                else ("external" if external else "registry"),
                 "aliases": aliases,
-                "phantoms": [] if external else [v for v in raw_dead if v not in aliases],
+                "phantoms": [] if no_judge else [v for v in raw_dead if v not in aliases],
                 "consumers": n,
                 "status": "wired"
                 if n
@@ -1408,8 +1419,9 @@ def render_tool_markdown(contract: dict) -> str:
         f"注册声明面: `tools/__init__.py` 注册清单 {contract['spec_count']} 条 → 全仓 "
         f"HuginnTool 子类声明的工具名 {contract['registry_size']} 个. 允许面: 全仓工具名"
         f"白名单 {len(contract['allowlists'])} 张. **死项** = 白名单里无同名工具声明的条目 "
-        "(永不命中), **别名** = 裸名↔`_tool` 对应项 (非死项). 与工具名零重叠的白名单整表"
-        "判为**外部命名空间** (MCP 外部工具名等), 不参与死项判定."
+        "(永不命中), **别名** = 裸名↔`_tool` 对应项 (非死项). 两类表不做死项判定: "
+        "与工具名零重叠的**外部命名空间** (MCP 外部工具名等), 以及含空格条目的 "
+        "**关键词表** (匹配用户 prompt 文本, 不是工具名)."
     )
     lines.append("")
     lines.append("| 允许表 | 位置 | 条目 | 命中注册名 | 命名空间 | 状态 | 外部消费 | 死项 | 别名 |")
@@ -1430,6 +1442,15 @@ def render_tool_markdown(contract: dict) -> str:
         + (
             ", ".join(
                 f"`{a['name']}`" for a in contract["allowlists"] if a["namespace"] == "external"
+            )
+            or "— 无"
+        )
+    )
+    lines.append(
+        "- 关键词表 (含空格条目, 匹配 prompt 文本, 不判死项): "
+        + (
+            ", ".join(
+                f"`{a['name']}`" for a in contract["allowlists"] if a["namespace"] == "keywords"
             )
             or "— 无"
         )

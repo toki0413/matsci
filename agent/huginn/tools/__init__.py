@@ -111,6 +111,7 @@ _OPTIONAL_MODULES = [
     ("huginn.tools.specialty_analysis.tool", "SpecialtyAnalysisTool"),
     ("huginn.tools.fem_tool", "FEMTool"),
     ("huginn.tools.sim.transolver_tool", "TransolverTool"),
+    ("huginn.tools.sim.pybullet_tool", "PyBulletTool"),
     ("huginn.tools.sim.mechanical_tool", "MechanicalTool"),
     ("huginn.tools.sim.convergence_test_tool", "ConvergenceTestTool"),
     ("huginn.tools.sim.resolve_executable_tool", "ResolveExecutableTool"),
