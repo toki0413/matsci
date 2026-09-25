@@ -2711,6 +2711,46 @@ _WS_STATUS_DOC = {
     "field-probing": "前端只按字段取值, 不按 type 判别 (不计入)",
 }
 
+# 已确认**有意**的 WS 候选 (非缺陷). 键 (kind, channel, frame) → 确认理由.
+# kind: `zero-consumer` 生产帧零前端判别 / `undeclared` 生产帧未进 WSMessage 联合 /
+# `declared-only` 已声明但非生产非判别 / `phantom-inbound` 入站类型无前端发送者.
+# 审计仍**列出**候选, 但标注"已确认有意"; 未登记的候选落在"待确认" —— 新出现的
+# 候选会失败回归测试 (逼人工分诊).
+_WS_CONFIRMED_INTENTIONAL: dict[tuple[str, str, str], str] = {
+    ("zero-consumer", "agent", "decision_resolved"): (
+        "决策点裁决的 ack 帧; 前端乐观清空 pendingDecisionPoint, 不消费它"
+    ),
+    ("undeclared", "agent", "decision_resolved"): (
+        "同一 ack 帧, 前端不消费故未进 WSMessage 联合 (与 zero-consumer 同源)"
+    ),
+    ("declared-only", "agent", "plan_confirm"): (
+        "WSMessage 联合把双向帧并在一起; 它是 client→server 请求帧"
+    ),
+    ("declared-only", "agent", "clarification_response"): (
+        "WSMessage 联合把双向帧并在一起; 它是 client→server 请求帧"
+    ),
+    ("phantom-inbound", "agent", "explore_start"): (
+        "探索编排入口; 面向非桌面客户端 (仓库内无发送者), 保留为公开 WS API"
+    ),
+    ("phantom-inbound", "terminal", "resize"): (
+        "终端尺寸同步; 桌面用普通输入框 (无 xterm fit), 面向外部客户端"
+    ),
+    ("phantom-inbound", "terminal", "signal"): (
+        "终端信号 (Ctrl-C 等); 桌面未启用, 面向外部客户端"
+    ),
+}
+
+
+def _ws_triage(kind: str, channel: str, frame: str) -> str | None:
+    """候选分诊: 返回确认理由, 未登记则 None (待人工确认)."""
+    return _WS_CONFIRMED_INTENTIONAL.get((kind, channel, frame))
+
+
+def _ws_candidate_line(label: str, kind: str, channel: str, frame: str) -> str:
+    reason = _ws_triage(kind, channel, frame)
+    mark = f" — ✅ 已确认有意: {reason}" if reason else " — ⚠ 待确认"
+    return f"- {label}{mark}"
+
 
 def _ws_line_of(text: str, pos: int) -> int:
     return text.count("\n", 0, pos) + 1
@@ -3090,7 +3130,7 @@ def render_ws_markdown(contract: dict) -> str:
     zero = contract["zero_consumer"]
     if zero:
         for f in zero:
-            lines.append(f"- `agent` / `{f}`")
+            lines.append(_ws_candidate_line(f"`agent` / `{f}`", "zero-consumer", "agent", f))
     else:
         lines.append("- 无 —— 每个生产帧名都有前端 type 判别.")
     lines.append("")
@@ -3100,7 +3140,7 @@ def render_ws_markdown(contract: dict) -> str:
     und = contract["undeclared"]
     if und:
         for f in und:
-            lines.append(f"- `agent` / `{f}`")
+            lines.append(_ws_candidate_line(f"`agent` / `{f}`", "undeclared", "agent", f))
     else:
         lines.append("- 无")
     lines.append("")
@@ -3109,7 +3149,7 @@ def render_ws_markdown(contract: dict) -> str:
     lines.append("")
     if contract["declared_only"]:
         for f in contract["declared_only"]:
-            lines.append(f"- `{f}`")
+            lines.append(_ws_candidate_line(f"`{f}`", "declared-only", "agent", f))
     else:
         lines.append("- 无")
     lines.append("")
@@ -3118,7 +3158,14 @@ def render_ws_markdown(contract: dict) -> str:
     lines.append("")
     if contract["phantom_inbound"]:
         for z in contract["phantom_inbound"]:
-            lines.append(f"- `{z['channel']}` / `{z['frame']}`")
+            lines.append(
+                _ws_candidate_line(
+                    f"`{z['channel']}` / `{z['frame']}`",
+                    "phantom-inbound",
+                    z["channel"],
+                    z["frame"],
+                )
+            )
     else:
         lines.append("- 无")
     lines.append("")

@@ -869,7 +869,31 @@ def test_ws_render_sections_present():
     assert "生产帧名 × 前端判别" in md
     assert "前端 server→client 判别点" in md
     assert "前端 client→server 发送点" in md
+    assert "已确认有意" in md
     assert "诚实边界" in md
+
+
+def test_ws_candidates_all_triaged():
+    """每个 WS 候选都须在 `_WS_CONFIRMED_INTENTIONAL` 分诊为"已确认有意".
+
+    候选是三分类信号, 不是硬违例 —— 但必须逐条确认它是缺陷还是有意的公开
+    API/声明面产物. 新出现的未分诊候选即失败, 逼人工落地判定.
+    """
+    c = ca.build_ws_contract()
+    untriaged = []
+    for f in c["zero_consumer"]:
+        if ca._ws_triage("zero-consumer", "agent", f) is None:
+            untriaged.append(("zero-consumer", "agent", f))
+    for f in c["undeclared"]:
+        if ca._ws_triage("undeclared", "agent", f) is None:
+            untriaged.append(("undeclared", "agent", f))
+    for f in c["declared_only"]:
+        if ca._ws_triage("declared-only", "agent", f) is None:
+            untriaged.append(("declared-only", "agent", f))
+    for z in c["phantom_inbound"]:
+        if ca._ws_triage("phantom-inbound", z["channel"], z["frame"]) is None:
+            untriaged.append(("phantom-inbound", z["channel"], z["frame"]))
+    assert not untriaged, f"未分诊的 WS 候选: {untriaged}"
 
 
 # ──────────────────── 合成树: WS 消费面 ────────────────────

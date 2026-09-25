@@ -576,22 +576,22 @@ SSE 消费面只核单向 (后端发帧 → 前端 `addEventListener`), WebSocke
 
 ### 生产帧名零前端判别 (候选)
 
-- `agent` / `decision_resolved`
+- `agent` / `decision_resolved` — ✅ 已确认有意: 决策点裁决的 ack 帧; 前端乐观清空 pendingDecisionPoint, 不消费它
 
 ### 未进 WSMessage 判别联合的生产帧 (候选登记)
 
-- `agent` / `decision_resolved`
+- `agent` / `decision_resolved` — ✅ 已确认有意: 同一 ack 帧, 前端不消费故未进 WSMessage 联合 (与 zero-consumer 同源)
 
 ### 已声明但既非生产帧也非入站请求 (候选)
 
-- `clarification_response`
-- `plan_confirm`
+- `clarification_response` — ✅ 已确认有意: WSMessage 联合把双向帧并在一起; 它是 client→server 请求帧
+- `plan_confirm` — ✅ 已确认有意: WSMessage 联合把双向帧并在一起; 它是 client→server 请求帧
 
 ### 入站类型无前端发送者 (候选)
 
-- `agent` / `explore_start`
-- `terminal` / `resize`
-- `terminal` / `signal`
+- `agent` / `explore_start` — ✅ 已确认有意: 探索编排入口; 面向非桌面客户端 (仓库内无发送者), 保留为公开 WS API
+- `terminal` / `resize` — ✅ 已确认有意: 终端尺寸同步; 桌面用普通输入框 (无 xterm fit), 面向外部客户端
+- `terminal` / `signal` — ✅ 已确认有意: 终端信号 (Ctrl-C 等); 桌面未启用, 面向外部客户端
 
 诚实边界: 前端 TS 与后端 `send_json(变量)` 都只做**静态**扫描 —— 经变量透传的入站类型 (如 `_ws_send(dict(state))` 转发的 agent 循环类型化事件 `mode_banner` / `trust_update` / `budget_update` 等) 生产面**不可穷尽**, 故只提示不判死; 前端terminal/hpc 按字段 (`data`/`output`) 取值而非按 `type` 判别, 记作 field-probing; viewer3d 无桌面前端 (由外部客户端驱动), 其入站不判 phantom.
 
