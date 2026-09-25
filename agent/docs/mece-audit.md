@@ -1,7 +1,7 @@
-# MECE 契约审计 (奖励面 + 授权面 + 工作流面 + 模式面 + 词汇面 + 工具面 + 钩子面 + 事件面 + SSE 消费面)
+# MECE 契约审计 (奖励面 + 授权面 + 工作流面 + 模式面 + 词汇面 + 工具面 + 钩子面 + 事件面 + SSE 消费面 + WS 消费面)
 
 自动生成: `python -m huginn.cli.contract_audit --out docs/mece-audit.md`.
-以 MECE 两原则审计 agent 的**奖励面 / 授权面 / 工作流面 / 模式面 / 词汇面 / 工具面 / 钩子面 / 事件面 / SSE 消费面**: **collectively exhaustive** 抓「宣称维度零调用者 / 面之间的缺口」; **mutually exclusive** 抓「同轴惩罚叠加」「跨模块同名重复实现」「词表互不一致」「同名工具名多类声明」「事件常量撞值」「SSE 帧名挂错通道」. 纯静态扫描, 只提示候选, 不判死.
+以 MECE 两原则审计 agent 的**奖励面 / 授权面 / 工作流面 / 模式面 / 词汇面 / 工具面 / 钩子面 / 事件面 / SSE 消费面 / WS 消费面**: **collectively exhaustive** 抓「宣称维度零调用者 / 面之间的缺口」; **mutually exclusive** 抓「同轴惩罚叠加」「跨模块同名重复实现」「词表互不一致」「同名工具名多类声明」「事件常量撞值」「SSE 帧名挂错通道」「WS 帧名挂错端点」. 纯静态扫描, 只提示候选, 不判死.
 
 ## 奖励面: 宣称项 vs 调用者 (collectively exhaustive)
 
@@ -461,6 +461,139 @@
 生产面取值: `bus` = 总线生产发布 (双通道之一); `campaign` = `emit_campaign_event(event_type="…")` 静态可见的字面量; `declared` = 已声明常量但未观测到生产发布; `unknown` = 静态不可见 (如 `f"campaign.{name}"` 动态拼接).
 
 诚实边界: 前端是 TS, 本工具只做**行级**匹配 (`new EventSource` / `addEventListener` / `case …:` / `=== …`), 不做 TS 语法分析 —— 经变量中转的帧名、`es.onmessage` 的无名帧、动态拼接的通道 URL 都解析不到; campaign payload 里 `f"campaign.{name}"` 这类动态名同样不可穷尽, 故 `unknown` 只提示不判死.
+
+## WS 消费面: 后端 WS 帧名生产面 vs 前端 WebSocket 判别面
+
+SSE 消费面只核单向 (后端发帧 → 前端 `addEventListener`), WebSocket 是**双向**的: 后端 `send_json({"type": …})` 发帧前端 `switch (data.type)` 收, 前端`send({type: …})` 发请求后端分发表收. 本面按**端点通道** `agent`(`/ws/agent`, 唯一按 `type` 判别的通道) / `terminal` / `viewer3d` / `hpc` 分列: 帧名只在**发它的那条 WS 上**才可能命中, 故挂在别处 = 永不触发.
+
+状态: `wired`=后端该通道确实发此帧名, 前端有 type 判别; `dynamic`=已声明帧, 后端经变量透传转发 (静态生产面不可穷尽, 只提示); `no-source`=后端该通道不发此帧名, 且未声明 (前端 case 永不命中); `handled`=后端该通道分发表认此入站类型; `unhandled`=后端该通道分发面无此入站类型 (回 error 帧); `field-probing`=前端只按字段取值, 不按 type 判别 (不计入)
+
+| 通道 | URL 片段 | type 判别 | 生产帧名 | 入站类型 |
+|---|---|---|---|---|
+| `agent` | `/ws/agent` | 是 | `approval_request`, `auto_approve_set`, `auto_checkpoint`, `citations`, `clarification_request`, `context_compacted`, `decision_resolved`, `done`, `error`, `exploration_result`, `governance`, `guide_ack`, `hook_warning`, `pet_update`, `ping`, `plan`, `plan_result`, `pong`, `reasoning_delta`, `sediment`, `side_question_pending`, `suggest_mode_set`, `task_progress`, `text_delta`, `tool_auto_approved`, `tool_call`, `tool_result` | `approval_response`, `clarification_response`, `decision_response`, `explore_start`, `guide`, `ping`, `plan_confirm`, `pong`, `set_auto_approve`, `set_suggest_mode`, `suggest_response`, `user_input` |
+| `terminal` | `/ws/terminal` | 否 (field-probing) | `closed`, `error`, `output`, `ready` | `input`, `resize`, `signal` |
+| `viewer3d` | `/ws/viewer3d` | 否 (field-probing) | `error`, `force_ack`, `frame`, `paused`, `pong`, `resumed`, `structure` | `force`, `hello`, `pause`, `ping`, `resume` |
+| `hpc` | `/ws/hpc/jobs` | 否 (field-probing) | `done`, `error`, `info`, `output`, `status` | — |
+
+### 生产帧名 × 前端判别 (agent 通道)
+
+| 帧名 | 已声明 (WSMessage) | 前端有 type 判别 |
+|---|---|---|
+| `approval_request` | 是 | 是 |
+| `auto_approve_set` | 是 | 是 |
+| `auto_checkpoint` | 是 | 是 |
+| `citations` | 是 | 是 |
+| `clarification_request` | 是 | 是 |
+| `context_compacted` | 是 | 是 |
+| `decision_resolved` | 否 | 否 |
+| `done` | 是 | 是 |
+| `error` | 是 | 是 |
+| `exploration_result` | 是 | 是 |
+| `governance` | 是 | 是 |
+| `guide_ack` | 是 | 是 |
+| `hook_warning` | 是 | 是 |
+| `pet_update` | 是 | 是 |
+| `ping` | 是 | 是 |
+| `plan` | 是 | 是 |
+| `plan_result` | 是 | 是 |
+| `pong` | 是 | 是 |
+| `reasoning_delta` | 是 | 是 |
+| `sediment` | 是 | 是 |
+| `side_question_pending` | 是 | 是 |
+| `suggest_mode_set` | 是 | 是 |
+| `task_progress` | 是 | 是 |
+| `text_delta` | 是 | 是 |
+| `tool_auto_approved` | 是 | 是 |
+| `tool_call` | 是 | 是 |
+| `tool_result` | 是 | 是 |
+
+### 前端 server→client 判别点
+
+| 帧名 | 通道 | 状态 | 位置 | 备注 |
+|---|---|---|---|---|
+| `mode_banner` | `agent` | `dynamic` | `desktop/src/hooks/useChatAndConnection.ts:919` | 已声明帧, 后端经变量透传转发 (静态生产面不可穷尽) |
+| `trust_update` | `agent` | `dynamic` | `desktop/src/hooks/useChatAndConnection.ts:930` | 已声明帧, 后端经变量透传转发 (静态生产面不可穷尽) |
+| `budget_update` | `agent` | `dynamic` | `desktop/src/hooks/useChatAndConnection.ts:934` | 已声明帧, 后端经变量透传转发 (静态生产面不可穷尽) |
+| `budget_escalation` | `agent` | `dynamic` | `desktop/src/hooks/useChatAndConnection.ts:938` | 已声明帧, 后端经变量透传转发 (静态生产面不可穷尽) |
+| `suggest_code` | `agent` | `dynamic` | `desktop/src/hooks/useChatAndConnection.ts:942` | 已声明帧, 后端经变量透传转发 (静态生产面不可穷尽) |
+| `risk_threshold` | `agent` | `dynamic` | `desktop/src/hooks/useChatAndConnection.ts:955` | 已声明帧, 后端经变量透传转发 (静态生产面不可穷尽) |
+| `text_delta` | `agent` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:671` |  |
+| `reasoning_delta` | `agent` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:681` |  |
+| `done` | `agent` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:685` |  |
+| `error` | `agent` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:685` |  |
+| `error` | `agent` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:691` |  |
+| `tool_call` | `agent` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:696` |  |
+| `tool_result` | `agent` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:708` |  |
+| `task_progress` | `agent` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:722` |  |
+| `plan` | `agent` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:731` |  |
+| `citations` | `agent` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:731` |  |
+| `reasoning_delta` | `agent` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:744` |  |
+| `text_delta` | `agent` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:749` |  |
+| `done` | `agent` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:755` |  |
+| `error` | `agent` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:775` |  |
+| `tool_call` | `agent` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:788` |  |
+| `tool_result` | `agent` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:803` |  |
+| `auto_checkpoint` | `agent` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:820` |  |
+| `exploration_result` | `agent` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:823` |  |
+| `pong` | `agent` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:836` |  |
+| `guide_ack` | `agent` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:838` |  |
+| `context_compacted` | `agent` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:842` |  |
+| `plan` | `agent` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:857` |  |
+| `plan_result` | `agent` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:881` |  |
+| `clarification_request` | `agent` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:893` |  |
+| `suggest_mode_set` | `agent` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:951` |  |
+| `side_question_pending` | `agent` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:959` |  |
+| `citations` | `agent` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:974` |  |
+| `task_progress` | `agent` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:991` |  |
+| `sediment` | `agent` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:1150` |  |
+| `approval_request` | `agent` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:1162` |  |
+| `tool_auto_approved` | `agent` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:1173` |  |
+| `auto_approve_set` | `agent` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:1177` |  |
+| `hook_warning` | `agent` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:1180` |  |
+| `ping` | `agent` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:1190` |  |
+| `pet_update` | `agent` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:1195` |  |
+| `governance` | `agent` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:1204` |  |
+
+### 前端 client→server 发送点
+
+| 类型 | 通道 | 状态 | 位置 | 备注 |
+|---|---|---|---|---|
+| `approval_response` | `agent` | `handled` | `desktop/src/Pet.tsx:1253` |  |
+| `plan_confirm` | `agent` | `handled` | `desktop/src/components/panels/ChatPanel.tsx:1584` |  |
+| `plan_confirm` | `agent` | `handled` | `desktop/src/components/panels/ChatPanel.tsx:1602` |  |
+| `input` | `terminal` | `handled` | `desktop/src/components/panels/TerminalPanel.tsx:57` |  |
+| `pong` | `agent` | `handled` | `desktop/src/hooks/useChatAndConnection.ts:1192` |  |
+| `user_input` | `agent` | `handled` | `desktop/src/hooks/useChatAndConnection.ts:1405` |  |
+| `guide` | `agent` | `handled` | `desktop/src/hooks/useChatAndConnection.ts:1437` |  |
+| `user_input` | `agent` | `handled` | `desktop/src/hooks/useChatAndConnection.ts:1477` |  |
+| `clarification_response` | `agent` | `handled` | `desktop/src/hooks/useChatAndConnection.ts:1542` |  |
+| `approval_response` | `agent` | `handled` | `desktop/src/hooks/useChatAndConnection.ts:1562` |  |
+| `set_auto_approve` | `agent` | `handled` | `desktop/src/hooks/useChatAndConnection.ts:1574` |  |
+| `set_suggest_mode` | `agent` | `handled` | `desktop/src/hooks/useChatAndConnection.ts:1585` |  |
+| `suggest_response` | `agent` | `handled` | `desktop/src/hooks/useChatAndConnection.ts:1596` |  |
+| `decision_response` | `agent` | `handled` | `desktop/src/hooks/useChatAndConnection.ts:1611` |  |
+| `ping` | `agent` | `handled` | `desktop/src/lib/ws-client.ts:258` |  |
+
+### 生产帧名零前端判别 (候选)
+
+- `agent` / `decision_resolved`
+
+### 未进 WSMessage 判别联合的生产帧 (候选登记)
+
+- `agent` / `decision_resolved`
+
+### 已声明但既非生产帧也非入站请求 (候选)
+
+- `clarification_response`
+- `plan_confirm`
+
+### 入站类型无前端发送者 (候选)
+
+- `agent` / `explore_start`
+- `terminal` / `resize`
+- `terminal` / `signal`
+
+诚实边界: 前端 TS 与后端 `send_json(变量)` 都只做**静态**扫描 —— 经变量透传的入站类型 (如 `_ws_send(dict(state))` 转发的 agent 循环类型化事件 `mode_banner` / `trust_update` / `budget_update` 等) 生产面**不可穷尽**, 故只提示不判死; 前端terminal/hpc 按字段 (`data`/`output`) 取值而非按 `type` 判别, 记作 field-probing; viewer3d 无桌面前端 (由外部客户端驱动), 其入站不判 phantom.
 
 ## 发现汇总
 
