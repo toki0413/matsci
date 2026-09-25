@@ -9,8 +9,9 @@
   - **collectively exhaustive 违例**: 宣称的维度零调用者 (declared but unwired).
   - **mutually exclusive 违例**: 同名跨模块重复实现 / 同一惩罚轴上叠两项.
 
-审计十面: **奖励面 / 授权面 / 工作流面 / 模式面 / 词汇面 / 工具面 / 钩子面 / 事件面 /
-SSE 消费面 / WS 消费面**. 后八面是本工具从奖励系统外延到"agent 自身怎么跑"的同类审计:
+审计十一面: **奖励面 / 授权面 / 工作流面 / 模式面 / 词汇面 / 工具面 / 钩子面 / 事件面 /
+SSE 消费面 / WS 消费面 / HTTP API 消费面**. 后九面是本工具从奖励系统外延到"agent 自身
+怎么跑"的同类审计:
 
   - **工作流面**: 执行 mode 分发面 (`phase_spec.dispatch_table` ↔ `engine_act`
     硬编码分支 ↔ planner 提示教的 MODE 候选) 三者是否穷尽一致.
@@ -49,6 +50,13 @@ SSE 消费面 / WS 消费面**. 后八面是本工具从奖励系统外延到"ag
     按 type 判别); **client→server 生产面** (前端 `send({type: …})`) ↔ **后端分发面**
     (`_MESSAGE_HANDLERS` registry + 分发比较). 前端 case 挂到不发该帧名的端点 =
     "永不触发"; 前端发了后端分发表不认的入站类型 = "回 error 帧".
+  - **HTTP API 消费面**: SSE/WS 消费面核的是**流式推送**, 本面补齐**请求-响应**第三块
+    传输拼图: **注册生产面** (`huginn/routes/*.py` 的 `@router.<method>(<path>)` 装饰器)
+    ↔ **调用消费面** (前端 `api.get/post/put/patch/del/getBlob/upload*/search(...)`).
+    桌面只是 HTTP API 的**一个**消费者 (外部客户端 / CLI / 测试也调), 故只把
+    "前端 → 后端"当硬契约: 前端调了后端没注册的路径 = 404 死链, 方法对不上 = 405;
+    反向"后端注册但桌面零调用"按模块聚合列候选 (结构性常态). 另核路由挂载面
+    (`ALL_ROUTERS` ↔ 各模块 `APIRouter`) 与同 method+path 多模块注册 (路由遮蔽).
 
 本工具只做**静态扫描 + 少量运行时读取**并**提示候选**, 不判死: "同轴/同名/词表
 不一致"是可疑信号, 是否真缺陷需人工判定 (例如 efficiency_discount 按"首次全对
@@ -56,7 +64,7 @@ SSE 消费面 / WS 消费面**. 后八面是本工具从奖励系统外延到"ag
 fusion 模式经 set_mode('research') 复用 CSM S3 是**有意设计**, 非漏接).
 
 用法:
-    python -m huginn.cli.contract_audit                  # 打印十面审计
+    python -m huginn.cli.contract_audit                  # 打印十一面审计
     python -m huginn.cli.contract_audit --reward         # 只看奖励面
     python -m huginn.cli.contract_audit --scope          # 只看授权面
     python -m huginn.cli.contract_audit --workflow       # 只看工作流面
@@ -67,6 +75,7 @@ fusion 模式经 set_mode('research') 复用 CSM S3 是**有意设计**, 非漏�
     python -m huginn.cli.contract_audit --events         # 只看事件面
     python -m huginn.cli.contract_audit --sse            # 只看 SSE 消费面
     python -m huginn.cli.contract_audit --ws             # 只看 WS 消费面
+    python -m huginn.cli.contract_audit --http           # 只看 HTTP API 消费面
     python -m huginn.cli.contract_audit --json           # 机器可读快照
     python -m huginn.cli.contract_audit --check          # 有发现则 exit 1 (供 CI 门禁)
     python -m huginn.cli.contract_audit --out docs/mece-audit.md
@@ -3181,6 +3190,583 @@ def render_ws_markdown(contract: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
+# HTTP API 消费面: 后端路由注册面 ↔ 前端 api.* 调用面
+# ---------------------------------------------------------------------------
+
+# 后端路由定义目录 (每个模块一个 APIRouter) 与权威挂载点 (`ALL_ROUTERS`).
+_HTTP_ROUTES_DIR = "huginn/routes"
+_HTTP_REGISTRY_REL = "huginn/routes/__init__.py"
+_HTTP_REGISTRY_VAR = "ALL_ROUTERS"
+# 装饰器属性 → HTTP 方法 (`websocket` 端点归 WS 消费面, 不进本面).
+_HTTP_METHOD_ATTRS: dict[str, str] = {
+    "get": "GET",
+    "post": "POST",
+    "put": "PUT",
+    "patch": "PATCH",
+    "delete": "DELETE",
+}
+# 前端调用包装 (`lib/api.ts` 的 `api.*`).
+_HTTP_CALL_RE = re.compile(
+    r"\bapi\s*\.\s*(get|post|put|patch|del|getBlob|upload|uploadWithProgress"
+    r"|uploadStream|search)\b"
+)
+# 包装动词 → HTTP 方法 (`upload*` 走 multipart POST, `getBlob` 走 GET).
+_HTTP_VERB_METHOD: dict[str, str] = {
+    "get": "GET",
+    "post": "POST",
+    "put": "PUT",
+    "patch": "PATCH",
+    "del": "DELETE",
+    "getBlob": "GET",
+    "upload": "POST",
+    "uploadWithProgress": "POST",
+    "uploadStream": "POST",
+    "search": "GET",
+}
+# `getBlob(path, { method: "POST" })` 会在 options 里覆盖方法.
+_HTTP_METHOD_OVERRIDE_RE = re.compile(r"method\s*:\s*[\"'](\w+)[\"']")
+# `api.search(query, …)` 是固定端点的语法糖 (见 lib/api.ts).
+_HTTP_SEARCH_PATH = "/search/global"
+
+_HTTP_STATUS_DOC = {
+    "wired": "前端调用的方法与路径后端已注册",
+    "method-mismatch": "路径已注册但无此方法 (405, 调用必失败)",
+    "no-source": "后端无此路径 (404 死链)",
+    "external": "绝对 URL / 非后端路径, 不计入",
+}
+
+# 已确认**硬违例** (前端调用挂不上后端注册面) 的分诊. 键 (方法, 去 query 路径) →
+# (标签, 理由); 标签 `defect` 已确认缺陷待修 / `intentional` 已确认有意.
+# 硬违例不是候选 —— 未登记即"待分诊", 回归测试会失败 (逼逐条人工判定).
+_HTTP_CONFIRMED_VIOLATIONS: dict[tuple[str, str], tuple[str, str]] = {
+    ("GET", "/transfer/download"): (
+        "defect",
+        "FilesPanel 下载按钮走 `api.getBlob` (= GET), 后端 `routes/transfer.py` 只注册 "
+        "POST /transfer/download; 该面板整条 `/transfer/*` 线 (upload 发 multipart 而后端"
+        "要 JSON body, browse/sync 缺 credential_id) 都按另一套契约写的, 修法需产品决策"
+        "(后端补 GET 流式下载 vs 面板改走凭据) —— 已确认缺陷, 待修",
+    ),
+}
+
+_HTTP_TRIAGE_DOC = {
+    "defect": "已确认缺陷 (待修)",
+    "intentional": "已确认有意",
+}
+
+
+def _http_triage(method: str, path: str) -> tuple[str, str] | None:
+    """硬违例分诊: 返回 (标签, 理由); 未登记则 None (待人工确认)."""
+    return _HTTP_CONFIRMED_VIOLATIONS.get((method.upper(), path.split("?")[0]))
+
+
+def _http_violation_mark(method: str, path: str) -> str:
+    tri = _http_triage(method, path)
+    if tri is None:
+        return " — ⚠ 待分诊"
+    return f" — {'⛔' if tri[0] == 'defect' else '✅'} {_HTTP_TRIAGE_DOC[tri[0]]}: {tri[1]}"
+
+
+def _http_skip_generics(text: str, i: int) -> int:
+    """跳过 TS 泛型实参 `<…>` (含箭头返回类型里的 `=>`), 返回 `>` 之后的下标."""
+    depth = 0
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if c == "<":
+            depth += 1
+        elif c == ">":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        i += 1
+    return i
+
+
+def _http_call_args_end(text: str, open_idx: int) -> int:
+    """从 `(` 起找配对的 `)` (跳过字符串字面量); 未闭合则返回文末."""
+    depth = 0
+    i = open_idx
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if c in "\"'`":
+            i = _skip_ts_string(text, i)
+            continue
+        if c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    return n
+
+
+def _http_router_prefixes(tree: ast.Module) -> dict[str, str]:
+    """模块级 `<name> = APIRouter(prefix=…, …)` → {变量名: 路径前缀}."""
+    out: dict[str, str] = {}
+    for node in tree.body:
+        if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Call):
+            continue
+        f = node.value.func
+        if not (isinstance(f, ast.Name) and f.id == "APIRouter"):
+            continue
+        prefix = ""
+        for kw in node.value.keywords:
+            if (
+                kw.arg == "prefix"
+                and isinstance(kw.value, ast.Constant)
+                and isinstance(kw.value.value, str)
+            ):
+                prefix = kw.value.value
+        for t in node.targets:
+            if isinstance(t, ast.Name):
+                out[t.id] = prefix
+    return out
+
+
+def _http_route_decorator(
+    dec: ast.expr, prefixes: dict[str, str]
+) -> tuple[list[str], str, str] | None:
+    """路由装饰器 → (方法列表, 完整路径, router 变量名); 非路由装饰器返回 None."""
+    if not isinstance(dec, ast.Call) or not isinstance(dec.func, ast.Attribute):
+        return None
+    f = dec.func
+    if not isinstance(f.value, ast.Name) or f.value.id not in prefixes:
+        return None
+    if not dec.args:
+        return None
+    arg0 = dec.args[0]
+    if not (isinstance(arg0, ast.Constant) and isinstance(arg0.value, str)):
+        return None
+    path = prefixes[f.value.id] + arg0.value
+    if f.attr == "api_route":
+        methods = [
+            e.value
+            for kw in dec.keywords
+            if kw.arg == "methods" and isinstance(kw.value, ast.List | ast.Tuple)
+            for e in kw.value.elts
+            if isinstance(e, ast.Constant) and isinstance(e.value, str)
+        ]
+    elif f.attr == "websocket":
+        methods = ["WEBSOCKET"]
+    else:
+        only = _HTTP_METHOD_ATTRS.get(f.attr)
+        if only is None:
+            return None
+        methods = [only]
+    return sorted({m.upper() for m in methods}), path, f.value.id
+
+
+def _http_backend_routes(root: Path) -> list[dict]:
+    """扫 `huginn/routes/*.py` 的路由装饰器 → 后端端点生产面.
+
+    `@router.<method>("<path>")` 与 `@<var>.api_route("<path>", methods=[…])` 都
+    登记; `@<var>.websocket(…)` 归 WS 消费面, 仍返回 (带 `WEBSOCKET` 方法) 以便
+    核它是否被 `ALL_ROUTERS` 挂上. 前缀取自模块级 `APIRouter(prefix=…)`.
+    """
+    routes: list[dict] = []
+    rdir = root / _HTTP_ROUTES_DIR
+    if not rdir.is_dir():
+        return routes
+    for py in sorted(rdir.glob("*.py")):
+        if py.name == "__init__.py":
+            continue
+        tree = _parse(py)
+        if tree is None:
+            continue
+        prefixes = _http_router_prefixes(tree)
+        if not prefixes:
+            continue
+        rel = py.relative_to(root).as_posix()
+        for node in tree.body:
+            if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            for dec in node.decorator_list:
+                parsed = _http_route_decorator(dec, prefixes)
+                if parsed is None:
+                    continue
+                methods, path, var = parsed
+                routes.append(
+                    {
+                        "methods": methods,
+                        "path": path,
+                        "rel": rel,
+                        "handler": node.name,
+                        "router": var,
+                    }
+                )
+    return routes
+
+
+def _http_registry(root: Path) -> dict:
+    """`routes/__init__.py` 的挂载面: import 别名 → (模块, 变量名) ↔ `ALL_ROUTERS`."""
+    tree = _parse(root / _HTTP_REGISTRY_REL)
+    if tree is None:
+        return {"mounted": [], "mounted_pairs": [], "dangling": []}
+    imports: dict[str, tuple[str, str]] = {}
+    for node in ast.walk(tree):
+        mod = getattr(node, "module", None)
+        if isinstance(node, ast.ImportFrom) and mod and mod.startswith("huginn.routes."):
+            stem = mod.rsplit(".", 1)[-1]
+            for a in node.names:
+                imports[a.asname or a.name] = (stem, a.name)
+    aliases: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(
+            isinstance(t, ast.Name) and t.id == _HTTP_REGISTRY_VAR for t in node.targets
+        ):
+            continue
+        if isinstance(node.value, ast.List):
+            aliases = [e.id for e in node.value.elts if isinstance(e, ast.Name)]
+    pairs = [imports[a] for a in aliases if a in imports]
+    return {
+        "mounted": sorted(f"{m}.{n}" for m, n in pairs),
+        "mounted_pairs": pairs,
+        "dangling": sorted(a for a in aliases if a not in imports),
+    }
+
+
+def _http_scan_frontend(frontend: Path) -> list[dict]:
+    """扫前端 `api.*` 调用点 → (动词, 方法, 路径字面量, 位置).
+
+    只有 `api.get/post/…` 包装计入; 裸 `fetch(...)` 与 `EventSource` 不在本面.
+    方法取包装默认值, 但调用实参里出现 `method: "…"` 时以它为准
+    (`getBlob(path, { method: "POST" })` 的实际方法就是 POST).
+    """
+    calls: list[dict] = []
+    if not frontend.is_dir():
+        return calls
+    for p in sorted(frontend.rglob("*")):
+        if not p.is_file() or p.suffix not in (".ts", ".tsx"):
+            continue
+        rel = _display(frontend, p)
+        if rel.endswith(".spec.ts") or rel.endswith(".spec.tsx"):
+            continue
+        try:
+            text = p.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for m in _HTTP_CALL_RE.finditer(text):
+            verb = m.group(1)
+            j = m.end()
+            if j < len(text) and text[j] == "<":
+                j = _http_skip_generics(text, j)
+            while j < len(text) and text[j] in " \t\n":
+                j += 1
+            if j >= len(text) or text[j] != "(":
+                continue
+            k = j + 1
+            while k < len(text) and text[k] in " \t\n":
+                k += 1
+            if k >= len(text) or text[k] not in "\"'`":
+                continue
+            quote = text[k]
+            end = _skip_ts_string(text, k)
+            closed = end > k + 1 and text[end - 1] == quote
+            raw = text[k + 1 : end - 1 if closed else end]
+            args = text[j : _http_call_args_end(text, j) + 1]
+            override = _HTTP_METHOD_OVERRIDE_RE.search(args)
+            method = (
+                override.group(1).upper()
+                if override
+                else _HTTP_VERB_METHOD.get(verb, verb.upper())
+            )
+            calls.append(
+                {
+                    "rel": rel,
+                    "line": text.count("\n", 0, m.start()) + 1,
+                    "verb": verb,
+                    "method": method,
+                    "path": _HTTP_SEARCH_PATH if verb == "search" else raw,
+                }
+            )
+    return calls
+
+
+def _http_fe_segments(path: str) -> tuple[tuple[str, str], ...] | None:
+    """前端路径 → 段序列 (`p`=动态段, `s`=静态段); 非后端路径返回 None.
+
+    query string 截掉; `/v1` 版本前缀剥离 (后端在 `/v1` 与根路径双挂载, 前端两者
+    都用); 整段 `${x}` → 动态段; `events${qs}` 这类"静态前缀 + 动态后缀"取静态
+    前缀 (后缀是 query 拼接, 不是路径段).
+    """
+    p = path.split("?")[0]
+    if p.startswith("/v1/"):
+        p = p[3:]
+    elif p == "/v1":
+        p = "/"
+    if not p.startswith("/"):
+        return None
+    out: list[tuple[str, str]] = []
+    for seg in p.split("/"):
+        if not seg:
+            continue
+        k = seg.find("${")
+        if k == 0 or seg.startswith(":"):
+            out.append(("p", ""))
+        elif k > 0:
+            out.append(("s", seg[:k]))
+        else:
+            out.append(("s", seg))
+    return tuple(out)
+
+
+def _http_route_segments(path: str) -> tuple[tuple[str, str], ...]:
+    """后端路径模板 → 段序列 (`{param}` → 动态段)."""
+    return tuple(
+        ("p", seg) if seg.startswith("{") else ("s", seg)
+        for seg in path.split("?")[0].split("/")
+        if seg
+    )
+
+
+def _http_path_match(
+    fe: tuple[tuple[str, str], ...], be: tuple[tuple[str, str], ...]
+) -> bool:
+    """段数相同且逐段相容 (后端动态段或前端动态段都可通配)."""
+    if len(fe) != len(be):
+        return False
+    for (fk, fv), (bk, bv) in zip(fe, be):
+        if bk == "p" or fk == "p":
+            continue
+        if fv != bv:
+            return False
+    return True
+
+
+def build_http_contract(root: Path | None = None, frontend: Path | None = None) -> dict:
+    """HTTP API 消费面: 后端路由注册面 ↔ 前端 `api.*` 调用面.
+
+    只把「前端 → 后端」方向当硬契约 (前端调了后端没注册的路径/方法 = 404/405);
+    反向「后端注册但桌面零调用」结构性存在 (HTTP API 面向外部客户端/CLI/测试),
+    只按模块聚合列出候选.
+    """
+    root = root or _REPO
+    frontend = frontend if frontend is not None else root.parent / "desktop" / "src"
+    all_routes = _http_backend_routes(root)
+    http_routes = [r for r in all_routes if "WEBSOCKET" not in r["methods"]]
+    registry = _http_registry(root)
+    scan = _http_scan_frontend(frontend)
+
+    mounted_pairs = set(registry["mounted_pairs"])
+    endpoints: list[dict] = [
+        {
+            "methods": r["methods"],
+            "path": r["path"],
+            "rel": r["rel"],
+            "handler": r["handler"],
+            "router": r["router"],
+            # 未挂进 `ALL_ROUTERS` 的模块, 其端点根本不在 app 上 —— 只有已挂载
+            # 端点才可能被前端命中, 故调用匹配 / 遮蔽 / 零调用都只算「实存面」.
+            "mounted": (Path(r["rel"]).stem, r["router"]) in mounted_pairs,
+            "segments": _http_route_segments(r["path"]),
+            "called": False,
+        }
+        for r in http_routes
+    ]
+    live = [ep for ep in endpoints if ep["mounted"]]
+
+    calls: list[dict] = []
+    for c in scan:
+        segs = _http_fe_segments(c["path"])
+        if segs is None:
+            calls.append(
+                {
+                    **c,
+                    "status": "external",
+                    "note": "绝对 URL, 不计入",
+                    "backend_methods": [],
+                }
+            )
+            continue
+        backend_methods: set[str] = set()
+        for ep in live:
+            if not _http_path_match(segs, ep["segments"]):
+                continue
+            backend_methods |= set(ep["methods"])
+            if c["method"] in ep["methods"]:
+                ep["called"] = True
+        if not backend_methods:
+            status, note = "no-source", "后端无此路径 (404 死链)"
+        elif c["method"] in backend_methods:
+            status, note = "wired", ""
+        else:
+            status = "method-mismatch"
+            note = f"后端仅注册 {'/'.join(sorted(backend_methods))} (405)"
+        calls.append(
+            {**c, "status": status, "note": note, "backend_methods": sorted(backend_methods)}
+        )
+
+    by_module: dict[str, dict] = defaultdict(lambda: {"total": 0, "called": 0})
+    for ep in live:
+        slot = by_module[ep["rel"]]
+        slot["total"] += 1
+        if ep["called"]:
+            slot["called"] += 1
+    zero_modules = sorted(
+        (
+            {"rel": rel, **counts}
+            for rel, counts in by_module.items()
+            if counts["called"] == 0
+        ),
+        key=lambda x: x["rel"],
+    )
+
+    dup: dict[tuple[str, str], set[str]] = defaultdict(set)
+    for ep in live:
+        for m in ep["methods"]:
+            dup[(m, ep["path"])].add(ep["rel"])
+    duplicates = sorted(
+        (
+            {"method": k[0], "path": k[1], "modules": sorted(v)}
+            for k, v in dup.items()
+            if len(v) > 1
+        ),
+        key=lambda d: (d["path"], d["method"]),
+    )
+
+    defined_pairs = {(Path(r["rel"]).stem, r["router"]) for r in all_routes}
+    unmounted = sorted(
+        f"{mod}.{var}" for mod, var in defined_pairs - set(registry["mounted_pairs"])
+    )
+
+    # 硬违例 (前端调用挂不上后端注册面) 逐条分诊: 未登记的即"待人工确认".
+    hard = [c for c in calls if c["status"] in ("no-source", "method-mismatch")]
+    for c in hard:
+        tri = _http_triage(c["method"], c["path"])
+        c["triage"] = tri[0] if tri else "untriaged"
+        c["triage_reason"] = tri[1] if tri else ""
+
+    return {
+        "frontend": str(frontend),
+        "endpoints": endpoints,
+        "calls": calls,
+        "dead_links": [c for c in calls if c["status"] == "no-source"],
+        "method_mismatches": [c for c in calls if c["status"] == "method-mismatch"],
+        "hard_violations": hard,
+        "hard_untriaged": [c for c in hard if c["triage"] == "untriaged"],
+        "duplicates": duplicates,
+        "registration": {
+            "mounted": registry["mounted"],
+            "unmounted": unmounted,
+            "dangling": registry["dangling"],
+        },
+        "zero_modules": zero_modules,
+        "endpoint_count": len(endpoints),
+        "live_endpoint_count": len(live),
+        "called_endpoint_count": sum(1 for ep in live if ep["called"]),
+        "ws_endpoint_count": len(all_routes) - len(http_routes),
+    }
+
+
+def render_http_markdown(contract: dict) -> str:
+    lines: list[str] = []
+    lines.append("## HTTP API 消费面: 后端路由注册面 vs 前端 api.* 调用面")
+    lines.append("")
+    lines.append(
+        "前八面核 agent 内部契约, SSE/WS 消费面核流式推送, 本面补齐**请求-响应**第三块"
+        "传输拼图: 后端 `huginn/routes/*.py` 的 `@router.<method>(\"<path>\")` 是**注册"
+        "生产面**, 前端 `desktop/src` 的 `api.get/post/put/patch/del/getBlob/upload*/"
+        "search(...)` 是**调用消费面**. 桌面只是 HTTP API 的**一个**消费者 (外部客户端 / "
+        "CLI / 测试也调), 故**只把「前端 → 后端」方向当硬契约**: 前端调了后端没注册的"
+        "路径 = 404 死链, 方法对不上 = 405. 匹配只看**实存端点** (挂进 `ALL_ROUTERS` "
+        "的模块), 未挂载模块的端点另在挂载面报, 不重复计."
+    )
+    lines.append("")
+    lines.append("状态: " + "; ".join(f"`{k}`={v}" for k, v in _HTTP_STATUS_DOC.items()))
+    lines.append("")
+    lines.append(
+        f"端点: 后端注册 **{contract['endpoint_count']}** 个 (实存 "
+        f"**{contract['live_endpoint_count']}** 个; 另有 {contract['ws_endpoint_count']} 个 "
+        f"WebSocket 端点归 WS 消费面); 桌面调用命中 **{contract['called_endpoint_count']}** "
+        f"个; 前端调用点 **{len(contract['calls'])}** 处."
+    )
+    lines.append("")
+
+    lines.append("### 前端调用点 (按状态)")
+    lines.append("")
+    lines.append("| 方法 | 路径 | 状态 | 位置 | 备注 |")
+    lines.append("|---|---|---|---|---|")
+    for c in sorted(contract["calls"], key=lambda x: (x["status"], x["rel"], x["line"])):
+        lines.append(
+            f"| `{c['method']}` | `{c['path']}` | `{c['status']}` "
+            f"| `{c['rel']}:{c['line']}` | {c['note']} |"
+        )
+    lines.append("")
+
+    lines.append("### 前端调用无源 (404 死链) / 方法不符 (405)")
+    lines.append("")
+    hard = contract["dead_links"] + contract["method_mismatches"]
+    if hard:
+        lines.append(
+            "硬违例 —— 前端调用挂不上后端注册面. 逐条分诊: 未登记的落「待分诊」"
+            "(回归测试会失败, 逼人工判定):"
+        )
+        lines.append("")
+        for c in hard:
+            lines.append(
+                f"- `{c['method']} {c['path']}` @ `{c['rel']}:{c['line']}` — {c['note']}"
+                + _http_violation_mark(c["method"], c["path"])
+            )
+    else:
+        lines.append("- 无 —— 每个前端调用都命中后端已注册的方法+路径.")
+    lines.append("")
+
+    lines.append("### 同一 method+path 被多个**已挂载**模块注册 (路由遮蔽)")
+    lines.append("")
+    if contract["duplicates"]:
+        for d in contract["duplicates"]:
+            mods = ", ".join(f"`{m}`" for m in d["modules"])
+            lines.append(f"- `{d['method']} {d['path']}` ← {mods}")
+    else:
+        lines.append("- 无 —— 每个 method+path 唯一注册.")
+    lines.append("")
+
+    reg = contract["registration"]
+    lines.append("### 路由挂载面 (ALL_ROUTERS ↔ 各模块 APIRouter)")
+    lines.append("")
+    lines.append(f"- 已挂载: {len(reg['mounted'])} 个 router 变量")
+    if reg["unmounted"]:
+        for name in reg["unmounted"]:
+            lines.append(f"- ⚠ 定义了 APIRouter 却未挂载 (整模块端点永不生效): `{name}`")
+    else:
+        lines.append("- 未挂载: 无 —— 每个定义路由的模块都被 `ALL_ROUTERS` 挂上.")
+    for name in reg["dangling"]:
+        lines.append(f"- ⚠ `ALL_ROUTERS` 引用了未 import 的别名: `{name}`")
+    lines.append("")
+
+    lines.append("### 桌面零调用的路由模块 (候选, 只算已挂载模块)")
+    lines.append("")
+    zm = contract["zero_modules"]
+    if zm:
+        lines.append(
+            f"以下 {len(zm)} 个模块的端点**全部**无桌面调用 —— HTTP API 面向外部客户端 / "
+            "CLI / 测试, 零调用是**结构性常态**, 非缺陷; 列此仅供「哪些面桌面根本没接」参考:"
+        )
+        lines.append("")
+        lines.append("| 模块 | 端点数 |")
+        lines.append("|---|---|")
+        for m in zm:
+            lines.append(f"| `{m['rel']}` | {m['total']} |")
+    else:
+        lines.append("- 无 —— 每个路由模块都至少有一个端点被桌面调用.")
+    lines.append("")
+    lines.append(
+        "诚实边界: 前端只扫 `lib/api.ts` 的 `api.*` 包装 (裸 `fetch(...)` 与 EventSource "
+        "在别面); 路径里的 `${…}` 只保留静态前缀, 动态拼接的段不可穷尽; "
+        "`getBlob(path, { method: … })` 的方法覆盖按调用实参里的 `method:` 字面量近似判定;"
+        " **请求体形状 / 必填 query 参数不核** —— 如 `/transfer/upload` 前端发 multipart "
+        "而后端要 JSON body 这类「路径对、负载错」静态不可辨, 不在本面 (只报 404/405 这类"
+        "路径+方法级硬违例)."
+    )
+    lines.append("")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # 组合 + 门禁
 # ---------------------------------------------------------------------------
 
@@ -3197,6 +3783,7 @@ def build_mece_snapshot(root: Path | None = None) -> dict:
         "events": build_event_contract(root),
         "sse": build_sse_contract(root),
         "ws": build_ws_contract(root),
+        "http": build_http_contract(root),
     }
 
 
@@ -3332,13 +3919,36 @@ def find_issues(snap: dict) -> list[str]:
                 f"WS: 前端发送的入站类型后端分发面不认 (回 error 帧): {s['frame']} "
                 f"@ {s['rel']}:{s['line']} — 通道 {s['channel']}"
             )
+    http = snap["http"]
+    _http_issue = {
+        "no-source": "HTTP: 前端调用的路径后端未注册 (404 死链): ",
+        "method-mismatch": "HTTP: 前端调用的方法与后端注册不符 (405): ",
+    }
+    for c in http["hard_violations"]:
+        if c["triage"] == "untriaged":
+            mark = " 待分诊"
+        else:
+            mark = " " + _HTTP_TRIAGE_DOC[c["triage"]]
+        issues.append(
+            f"{_http_issue[c['status']]}{c['method']} {c['path']} @ "
+            f"{c['rel']}:{c['line']} — {c['note']};{mark}"
+        )
+    for name in http["registration"]["unmounted"]:
+        issues.append(f"HTTP: 定义了 APIRouter 却未挂进 ALL_ROUTERS (端点永不生效): {name}")
+    for name in http["registration"]["dangling"]:
+        issues.append(f"HTTP: ALL_ROUTERS 引用了未 import 的别名: {name}")
+    for d in http["duplicates"]:
+        issues.append(
+            f"HTTP: 同一 {d['method']} {d['path']} 被多模块注册 (路由遮蔽): "
+            f"{', '.join(d['modules'])}"
+        )
     return issues
 
 
 def render_mece_markdown(snap: dict) -> str:
     lines: list[str] = []
     lines.append(
-        "# MECE 契约审计 (奖励面 + 授权面 + 工作流面 + 模式面 + 词汇面 + 工具面 + 钩子面 + 事件面 + SSE 消费面 + WS 消费面)"
+        "# MECE 契约审计 (奖励面 + 授权面 + 工作流面 + 模式面 + 词汇面 + 工具面 + 钩子面 + 事件面 + SSE 消费面 + WS 消费面 + HTTP API 消费面)"
     )
     lines.append("")
     lines.append(
@@ -3346,9 +3956,11 @@ def render_mece_markdown(snap: dict) -> str:
     )
     lines.append(
         "以 MECE 两原则审计 agent 的**奖励面 / 授权面 / 工作流面 / 模式面 / "
-        "词汇面 / 工具面 / 钩子面 / 事件面 / SSE 消费面 / WS 消费面**: **collectively exhaustive** 抓「宣称维度零调用者 / "
+        "词汇面 / 工具面 / 钩子面 / 事件面 / SSE 消费面 / WS 消费面 / HTTP API 消费面**: "
+        "**collectively exhaustive** 抓「宣称维度零调用者 / "
         "面之间的缺口」; **mutually exclusive** 抓「同轴惩罚叠加」「跨模块同名重复实现」「词表互不一致」"
-        "「同名工具名多类声明」「事件常量撞值」「SSE 帧名挂错通道」「WS 帧名挂错端点」. 纯静态扫描, 只提示候选, 不判死."
+        "「同名工具名多类声明」「事件常量撞值」「SSE 帧名挂错通道」「WS 帧名挂错端点」"
+        "「HTTP 同 method+path 多模块注册」. 纯静态扫描, 只提示候选, 不判死."
     )
     lines.append("")
     lines.append(render_reward_markdown(snap["reward"]))
@@ -3361,6 +3973,7 @@ def render_mece_markdown(snap: dict) -> str:
     lines.append(render_event_markdown(snap["events"]))
     lines.append(render_sse_markdown(snap["sse"]))
     lines.append(render_ws_markdown(snap["ws"]))
+    lines.append(render_http_markdown(snap["http"]))
     issues = find_issues(snap)
     lines.append("## 发现汇总")
     lines.append("")
@@ -3385,6 +3998,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--events", action="store_true", help="只看事件面")
     parser.add_argument("--sse", action="store_true", help="只看 SSE 消费面")
     parser.add_argument("--ws", action="store_true", help="只看 WS 消费面")
+    parser.add_argument("--http", action="store_true", help="只看 HTTP API 消费面")
     parser.add_argument("--json", action="store_true", help="输出 JSON 快照")
     parser.add_argument("--check", action="store_true", help="有 MECE 发现时 exit 1")
     parser.add_argument("--out", type=str, default="", help="写 markdown 到文件")
@@ -3401,6 +4015,7 @@ def main(argv: list[str] | None = None) -> int:
         "events": (args.events, build_event_contract, render_event_markdown),
         "sse": (args.sse, build_sse_contract, render_sse_markdown),
         "ws": (args.ws, build_ws_contract, render_ws_markdown),
+        "http": (args.http, build_http_contract, render_http_markdown),
     }
     selected = [k for k, (on, _b, _r) in surfaces.items() if on]
     if len(selected) == 1:
