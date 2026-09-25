@@ -296,6 +296,123 @@ def test_tool_synthetic_cross_module_consumer_marks_wired(tmp_path):
     assert by["B_TOOLS"]["status"] == "dead"
 
 
+# ──────────────────── 真实仓: 钩子面 ────────────────────
+
+
+_REQUIRED_HOOK_EVENTS = {
+    "PRE_TOOL_USE",
+    "POST_TOOL_USE",
+    "SESSION_START",
+    "SESSION_END",
+    "STOP",
+    "SUBAGENT_STOP",
+    "PRE_COMPACT",
+    "POST_COMPACT",
+    "USER_PROMPT_SUBMIT",
+    "POST_TOOL_USE_FAILURE",
+}
+_HOOK_WIRED = {"PRE_TOOL_USE", "POST_TOOL_USE", "STOP", "USER_PROMPT_SUBMIT"}
+
+
+def test_hook_declaration_face_exhaustive_and_mutex():
+    """声明面 `ALL_EVENTS` 与事件常量定义面双向一致, 且值两两不同 (无撞值)."""
+    c = ca.build_hook_contract()
+    by = {e["const"]: e for e in c["events"]}
+    assert set(by) >= _REQUIRED_HOOK_EVENTS
+    assert c["collisions"] == []
+    assert c["not_in_all_events"] == []
+    assert c["unresolved_members"] == []
+
+
+def test_hook_wired_events_have_trigger_and_consumer():
+    by = {e["const"]: e for e in ca.build_hook_contract()["events"]}
+    for k in _HOOK_WIRED:
+        assert by[k]["status"] == "wired"
+        assert by[k]["prod_trigger"] > 0 and by[k]["prod_register"] > 0
+
+
+def test_hook_trigger_only_events_flagged():
+    """6 个事件有触发点却零注册 —— 扩展点候选 (对偶于奖励面「宣称项零调用者」).
+
+    回归锚点: `run_post` 补发的 `POST_TOOL_USE_FAILURE` 触发点在定义文件自身, 归属
+    须把 `hooks/__init__.py` 的本地常量算进去, 否则会被漏成 `dead`.
+    """
+    by = {e["const"]: e for e in ca.build_hook_contract()["events"]}
+    for k in _REQUIRED_HOOK_EVENTS - _HOOK_WIRED:
+        assert by[k]["status"] == "trigger-only"
+        assert by[k]["prod_trigger"] > 0 and by[k]["prod_register"] == 0
+    # 该触发点自带 `if self._callbacks[...]` 守卫: 零注册 ⇒ 分支恒不执行.
+    assert "守卫" in by["POST_TOOL_USE_FAILURE"]["note"]
+
+
+def test_hook_find_issues_reports_trigger_only():
+    joined = "\n".join(ca.find_issues(ca.build_mece_snapshot()))
+    assert "钩子: 事件有生产触发点但零生产注册" in joined
+    assert "POST_TOOL_USE_FAILURE" in joined
+
+
+def test_hook_render_sections_present():
+    md = ca.render_hook_markdown(ca.build_hook_contract())
+    assert "钩子面" in md
+    assert "互斥违例" in md
+    assert "声明缺口" in md
+    # 无绕过常量的字面量.
+    assert "无绕过常量的字面量" in md
+
+
+def test_hook_synthetic_same_name_event_not_borrowed(tmp_path):
+    """合成树: 别模块同名的点分事件不得算作钩子事件引用 (归属须模块限定).
+
+    `events/event_types.SESSION_START = "session.start"` 与钩子的 `"session_start"`
+    同名不同值 —— 裸同名扫描会把它的注册点借给钩子面, 误报 wired.
+    """
+    _write(
+        tmp_path,
+        ca._HOOKS_MODULE,
+        'PRE_TOOL_USE = "pre_tool_use"\n'
+        'SESSION_START = "session_start"\n'
+        'ALL_EVENTS = (PRE_TOOL_USE, SESSION_START,)\n',
+    )
+    _write(
+        tmp_path,
+        "huginn/elsewhere.py",
+        'SESSION_START = "session.start"\n',
+    )
+    _write(
+        tmp_path,
+        "huginn/user.py",
+        "from huginn.elsewhere import SESSION_START\n"
+        "def f(hm):\n    hm.register(SESSION_START, cb)\n",
+    )
+    by = {e["const"]: e for e in ca.build_hook_contract(tmp_path)["events"]}
+    assert by["SESSION_START"]["prod_register"] == 0
+    assert by["SESSION_START"]["status"] == "dead"
+    assert by["PRE_TOOL_USE"]["status"] == "dead"
+
+
+def test_hook_synthetic_trigger_and_literal(tmp_path):
+    """合成树: 模块限定解析触发点 (`from huginn.hooks import …`) + 字面量接线告警."""
+    _write(
+        tmp_path,
+        ca._HOOKS_MODULE,
+        'PRE_TOOL_USE = "pre_tool_use"\n'
+        'SESSION_START = "session_start"\n'
+        'ALL_EVENTS = (PRE_TOOL_USE, SESSION_START,)\n',
+    )
+    _write(
+        tmp_path,
+        "huginn/runner.py",
+        "from huginn.hooks import SESSION_START\n"
+        "async def go(hm):\n    await hm.trigger(SESSION_START, ctx)\n"
+        'def bad(hm):\n    hm.register("pre_tool_use", cb)\n',
+    )
+    c = ca.build_hook_contract(tmp_path)
+    by = {e["const"]: e for e in c["events"]}
+    assert by["SESSION_START"]["prod_trigger"] == 1
+    assert by["SESSION_START"]["status"] == "trigger-only"
+    assert any(w["value"] == "pre_tool_use" for w in c["literal_wiring"])
+
+
 # ──────────────────── 文档漂移 ────────────────────
 
 

@@ -9,8 +9,8 @@
   - **collectively exhaustive 违例**: 宣称的维度零调用者 (declared but unwired).
   - **mutually exclusive 违例**: 同名跨模块重复实现 / 同一惩罚轴上叠两项.
 
-审计六面: **奖励面 / 授权面 / 工作流面 / 模式面 / 词汇面 / 工具面**. 后四面是本工具
-从奖励系统外延到"agent 自身怎么跑"的同类审计:
+审计七面: **奖励面 / 授权面 / 工作流面 / 模式面 / 词汇面 / 工具面 / 钩子面**. 后五面
+是本工具从奖励系统外延到"agent 自身怎么跑"的同类审计:
 
   - **工作流面**: 执行 mode 分发面 (`phase_spec.dispatch_table` ↔ `engine_act`
     硬编码分支 ↔ planner 提示教的 MODE 候选) 三者是否穷尽一致.
@@ -26,6 +26,10 @@
     (`*_TOOLS` / `*_TOOL_NAMES` / `PRIMITIVES` 白名单) 是否对得上: 清单引用了静态
     解析不到的类、同一工具名被多类声明、白名单列了永不命中的死项 (无同名注册工具)
     —— 与奖励面"宣称项零调用者"同型.
+  - **钩子面**: `HookManager` 的**事件契约** —— **声明面** (`hooks/__init__.py` 的
+    事件常量 + `ALL_EVENTS` 权威清单) ↔ **触发面** (`trigger()` / `run_pre` /
+    `run_post`) ↔ **注册面** (`register()` / `register_hook()`). 宣称的事件若零
+    触发 = "声明了但永不发生"; 零注册 = "会触发但没人接" (对偶于奖励面"宣称项零调用者").
 
 本工具只做**静态扫描 + 少量运行时读取**并**提示候选**, 不判死: "同轴/同名/词表
 不一致"是可疑信号, 是否真缺陷需人工判定 (例如 efficiency_discount 按"首次全对
@@ -33,13 +37,14 @@
 fusion 模式经 set_mode('research') 复用 CSM S3 是**有意设计**, 非漏接).
 
 用法:
-    python -m huginn.cli.contract_audit                  # 打印六面审计
+    python -m huginn.cli.contract_audit                  # 打印七面审计
     python -m huginn.cli.contract_audit --reward         # 只看奖励面
     python -m huginn.cli.contract_audit --scope          # 只看授权面
     python -m huginn.cli.contract_audit --workflow       # 只看工作流面
     python -m huginn.cli.contract_audit --modes          # 只看模式面
     python -m huginn.cli.contract_audit --vocab          # 只看词汇面
     python -m huginn.cli.contract_audit --tools          # 只看工具面
+    python -m huginn.cli.contract_audit --hooks          # 只看钩子面
     python -m huginn.cli.contract_audit --json           # 机器可读快照
     python -m huginn.cli.contract_audit --check          # 有发现则 exit 1 (供 CI 门禁)
     python -m huginn.cli.contract_audit --out docs/mece-audit.md
@@ -1497,6 +1502,338 @@ def render_tool_markdown(contract: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
+# 钩子面: 事件声明面 vs 触发面 vs 注册面
+# ---------------------------------------------------------------------------
+#
+# 前六面审"奖励/授权/工作流/模式/词汇/工具", 这一面审 HookManager 的**事件契约**:
+#
+#   - **声明面**: `hooks/__init__.py` 的事件常量 (`PRE_TOOL_USE = "pre_tool_use"` …)
+#     + `ALL_EVENTS` 元组. `ALL_EVENTS` 是唯一权威清单 —— `register()` 据此校验
+#     (未知名直接 `ValueError`), `__init__` 据此预建 `_callbacks` 键, 故它同时是
+#     "允许面"与"穷尽面".
+#   - **触发面**: 全仓 `trigger(EVENT, …)` / `_trigger_hook(EVENT, …)`, 以及
+#     `run_pre()`(≡ `PRE_TOOL_USE`) / `run_post()`(≡ `POST_TOOL_USE`) —— 这两个方法名
+#     全仓只 HookManager 定义, 故可直接按名映射到事件.
+#   - **注册面**: 全仓 `register(EVENT, …)` / `register_hook(EVENT, …)`.
+#
+# MECE 两原则落到钩子:
+#   - **collectively exhaustive**: 声明的事件必须**既有触发点又有消费者**. 任一为
+#     零即缺口 —— 零触发 = "声明了但永不发生"; 零注册 = "会触发但没人接" (对偶于
+#     奖励面"宣称项零调用者"). 均拿生产代码 (排除 tests/) 判定.
+#   - **mutually exclusive**: 事件常量**值两两不同** —— 撞值会让 `register` 把钩子
+#     挂到错误的既有事件上. 另记一条来自实现的**非对称**: `register` 对未知名抛错,
+#     而 `trigger` 走 `self._callbacks.get(event, [])` 静默吞掉未知名 —— 拼错的事件
+#     会变成空触发而不报错, 故触发点须用常量. 字面量里**只有值与已知事件相同的**
+#     才可判定为钩子接线 (其它 `register("vasp", …)` 类调用属于别的注册表, 无法从
+#     静态上区分, 故不报 —— 见下方 render 的诚实边界).
+#
+# 归属口径: 事件引用按**模块限定**解析 —— 只认 `from huginn.hooks import <CONST>`
+# (含 `as` 别名) 与 `<hooksmod>.<CONST>` (hooksmod 已绑定到 huginn.hooks), 不认裸
+# 同名 —— 否则 `events/event_types.py` 里同名的 `SESSION_START = "session.start"`
+# (点分事件值) 会被误算成钩子事件引用.
+
+_HOOKS_MODULE = "huginn/hooks/__init__.py"
+# 无事件实参、但语义等价某事件的 HookManager 方法 → 事件常量名.
+_HOOK_METHOD_EVENTS = {"run_pre": "PRE_TOOL_USE", "run_post": "POST_TOOL_USE"}
+_HOOK_REGISTER_METHODS = frozenset({"register", "register_hook"})
+_HOOK_TRIGGER_METHODS = frozenset({"trigger", "_trigger_hook"})
+# 事件常量名 → 人工判读备注 (工具只做机械计数, 语义备注单独列, 同 _PENALTY_AXES 风格).
+_HOOK_EVENT_NOTES = {
+    "POST_TOOL_USE_FAILURE": (
+        "触发点自带 `if self._callbacks[POST_TOOL_USE_FAILURE]` 守卫 —— 零注册 ⇒ "
+        "该分支恒不执行, 是可证死的触发点"
+    ),
+}
+# 事件常量形如 `UPPER_SNAKE = "lower_snake"`; 值须为小写蛇形串 (排除 ALL_EVENTS 元组).
+_HOOK_EVENT_VALUE_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+
+
+def _hook_declarations(root: Path) -> dict:
+    """读声明面: 事件常量 (名→值)、`ALL_EVENTS` 成员、以及两侧缺口."""
+    tree = _parse(root / _HOOKS_MODULE)
+    if tree is None:
+        return {"consts": {}, "members": [], "not_in_all": [], "unresolved_members": []}
+    consts: dict[str, str] = {}
+    members: list[str] = []
+    for node in tree.body:
+        name: str | None = None
+        value: ast.AST | None = None
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+        ):
+            name, value = node.targets[0].id, node.value
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            name, value = node.target.id, node.value
+        if name is None:
+            continue
+        if name == "ALL_EVENTS" and isinstance(value, ast.Tuple):
+            members = [e.id for e in value.elts if isinstance(e, ast.Name)]
+        elif (
+            name.isupper()
+            and isinstance(value, ast.Constant)
+            and isinstance(value.value, str)
+            and _HOOK_EVENT_VALUE_RE.match(value.value)
+        ):
+            consts[name] = value.value
+    not_in_all = sorted(c for c in consts if c not in members)
+    unresolved_members = sorted(m for m in members if m not in consts)
+    return {
+        "consts": consts,
+        "members": members,
+        "not_in_all": not_in_all,
+        "unresolved_members": unresolved_members,
+    }
+
+
+def _resolve_hook_event(
+    arg: ast.AST, direct: dict[str, str], mod_aliases: set[str], decl: dict[str, str]
+) -> str | None:
+    """把触发/注册的首参解析成事件值. 只认模块限定的两种写法 (见上方归属口径)."""
+    if isinstance(arg, ast.Name) and arg.id in direct:
+        return decl.get(direct[arg.id])
+    if (
+        isinstance(arg, ast.Attribute)
+        and isinstance(arg.value, ast.Name)
+        and arg.value.id in mod_aliases
+    ):
+        return decl.get(arg.attr)
+    return None
+
+
+def _hook_wiring(root: Path) -> dict[str, dict[str, list[str]]]:
+    """扫触发/注册点, 按事件值归集 prod/test 位置."""
+    decl = _hook_declarations(root)["consts"]
+    out: dict[str, dict[str, list[str]]] = {
+        v: {"prod_trigger": [], "prod_register": [], "test_trigger": [], "test_register": []}
+        for v in decl.values()
+    }
+    for py in _iter_py(root):
+        rel = py.relative_to(root).as_posix()
+        tree = _parse(py)
+        if tree is None:
+            continue
+        # 模块内解析: 事件常量本地名 → 常量名; 以及绑到 huginn.hooks 的模块别名.
+        # 定义文件自身 (`hooks/__init__.py`) 里常量是本地定义而非 import, 故预置
+        # 自身常量表 —— 否则 `trigger(POST_TOOL_USE_FAILURE, …)` 这类自触发漏计.
+        direct: dict[str, str] = (
+            {name: name for name in decl} if rel == _HOOKS_MODULE else {}
+        )
+        mod_aliases: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                mod = _resolve_relative(rel, node.level, node.module or "")
+                for a in node.names:
+                    if mod == "huginn.hooks":
+                        direct[a.asname or a.name] = a.name
+                    elif f"{mod}.{a.name}" == "huginn.hooks":
+                        mod_aliases.add(a.asname or a.name)
+            elif isinstance(node, ast.Import):
+                for a in node.names:
+                    if a.name == "huginn.hooks":
+                        mod_aliases.add(a.asname or "hooks")
+
+        bucket = "test" if _is_test(rel) else "prod"
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            fn = node.func
+            method = (
+                fn.attr
+                if isinstance(fn, ast.Attribute)
+                else (fn.id if isinstance(fn, ast.Name) else None)
+            )
+            if method is None:
+                continue
+            if method in _HOOK_METHOD_EVENTS:
+                val = decl.get(_HOOK_METHOD_EVENTS[method])
+                kind = "trigger"
+            elif method in _HOOK_REGISTER_METHODS:
+                val = _resolve_hook_event(node.args[0], direct, mod_aliases, decl) if node.args else None
+                kind = "register"
+            elif method in _HOOK_TRIGGER_METHODS:
+                val = _resolve_hook_event(node.args[0], direct, mod_aliases, decl) if node.args else None
+                kind = "trigger"
+            else:
+                continue
+            if val is None or val not in out:
+                continue
+            out[val][f"{bucket}_{kind}"].append(f"{rel}:{node.lineno}")
+    return out
+
+
+def _hook_literal_wiring(root: Path) -> list[dict]:
+    """触发/注册首参用了**字符串字面量且值等于已知事件**的调用点.
+
+    只报"字面量值 = 已知事件值" —— 这类可确证是钩子接线却绕过了常量. 未知名的
+    字面量无法与其它注册表 (`register("vasp", …)`) 区分, 故不报.
+    """
+    values = set(_hook_declarations(root)["consts"].values())
+    out: list[dict] = []
+    methods = _HOOK_REGISTER_METHODS | _HOOK_TRIGGER_METHODS
+    for py in _iter_py(root):
+        rel = py.relative_to(root).as_posix()
+        tree = _parse(py)
+        if tree is None:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or not node.args:
+                continue
+            fn = node.func
+            method = (
+                fn.attr
+                if isinstance(fn, ast.Attribute)
+                else (fn.id if isinstance(fn, ast.Name) else None)
+            )
+            if method not in methods:
+                continue
+            a0 = node.args[0]
+            if isinstance(a0, ast.Constant) and isinstance(a0.value, str) and a0.value in values:
+                out.append({"rel": rel, "line": node.lineno, "method": method, "value": a0.value})
+    return out
+
+
+def build_hook_contract(root: Path | None = None) -> dict:
+    """钩子面: 事件声明面 ↔ 触发面 ↔ 注册面是否穷尽一致."""
+    root = root or _REPO
+    decl = _hook_declarations(root)
+    wiring = _hook_wiring(root)
+
+    events: list[dict] = []
+    for const in decl["members"]:
+        value = decl["consts"].get(const, "")
+        w = wiring.get(value, {})
+        prod_t, prod_r = len(w.get("prod_trigger", [])), len(w.get("prod_register", []))
+        test_t, test_r = len(w.get("test_trigger", [])), len(w.get("test_register", []))
+        if prod_t and prod_r:
+            status = "wired"
+        elif prod_t:
+            status = "trigger-only"
+        elif prod_r:
+            status = "register-only"
+        else:
+            status = "dead"
+        events.append(
+            {
+                "const": const,
+                "value": value,
+                "prod_trigger": prod_t,
+                "prod_register": prod_r,
+                "test_trigger": test_t,
+                "test_register": test_r,
+                "status": status,
+                "note": _HOOK_EVENT_NOTES.get(const)
+                or ("触发点存在但无注册消费者 —— 扩展点候选" if status == "trigger-only" else ""),
+                "trigger_sites": w.get("prod_trigger", []),
+                "register_sites": w.get("prod_register", []),
+            }
+        )
+
+    collisions: list[dict] = []
+    by_value: dict[str, list[str]] = defaultdict(list)
+    for const, value in decl["consts"].items():
+        by_value[value].append(const)
+    for value, consts in sorted(by_value.items()):
+        if len(consts) > 1:
+            collisions.append({"value": value, "consts": sorted(consts)})
+
+    return {
+        "module": _HOOKS_MODULE,
+        "events": events,
+        "collisions": collisions,
+        "not_in_all_events": decl["not_in_all"],
+        "unresolved_members": decl["unresolved_members"],
+        "literal_wiring": _hook_literal_wiring(root),
+    }
+
+
+_HOOK_STATUS_DOC = {
+    "wired": "有触发点且有消费者",
+    "trigger-only": "有触发点但零注册 (触发无人接)",
+    "register-only": "有注册但零生产触发",
+    "dead": "声明零触发且零注册",
+}
+
+
+def render_hook_markdown(contract: dict) -> str:
+    lines: list[str] = []
+    lines.append("## 钩子面: 事件声明面 vs 触发面 vs 注册面")
+    lines.append("")
+    lines.append(
+        f"声明面: `{contract['module']}` 的 {len(contract['events'])} 个事件"
+        "(`ALL_EVENTS` 权威清单). 触发面: `trigger()` / `_trigger_hook()` / "
+        "`run_pre()`(≡`pre_tool_use`) / `run_post()`(≡`post_tool_use`). 注册面: "
+        "`register()` / `register_hook()`. `trigger-only` = 会触发但零消费者 "
+        "(对偶于奖励面「宣称项零调用者」); `dead` = 声明了却零触发零注册."
+    )
+    lines.append("")
+    lines.append("状态: " + "; ".join(f"`{k}`={v}" for k, v in _HOOK_STATUS_DOC.items()))
+    lines.append("")
+    lines.append("| 事件常量 | 值 | 生产触发 | 生产注册 | 测试触发 | 测试注册 | 状态 | 备注 |")
+    lines.append("|---|---|---|---|---|---|---|---|")
+    for e in contract["events"]:
+        lines.append(
+            f"| `{e['const']}` | `{e['value']}` | {e['prod_trigger']} | {e['prod_register']} "
+            f"| {e['test_trigger']} | {e['test_register']} | `{e['status']}` | {e['note']} |"
+        )
+    lines.append("")
+
+    lines.append("### 触发点 / 注册点明细")
+    lines.append("")
+    lines.append("| 事件常量 | 生产触发点 | 生产注册点 |")
+    lines.append("|---|---|---|")
+    for e in contract["events"]:
+        trig = ", ".join(f"`{s}`" for s in e["trigger_sites"]) or "—"
+        reg = ", ".join(f"`{s}`" for s in e["register_sites"]) or "—"
+        lines.append(f"| `{e['const']}` | {trig} | {reg} |")
+    lines.append("")
+
+    lines.append("### 互斥违例 (mutually exclusive)")
+    lines.append("")
+    if contract["collisions"]:
+        for c in contract["collisions"]:
+            lines.append(
+                f"- ⚠️ 事件常量撞值 `{c['value']}`: "
+                + ", ".join(f"`{n}`" for n in c["consts"])
+            )
+    else:
+        lines.append("- 事件常量值两两不同 —— 无撞值.")
+    if contract["literal_wiring"]:
+        for w in contract["literal_wiring"]:
+            lines.append(
+                f"- ⚠️ 触发/注册用字面量而非常量: `{w['value']}` @ "
+                f"`{w['rel']}:{w['line']}` ({w['method']})"
+            )
+    else:
+        lines.append("- 触发/注册均用事件常量, 无绕过常量的字面量.")
+    lines.append("")
+
+    lines.append("### 声明缺口")
+    lines.append("")
+    if contract["not_in_all_events"]:
+        lines.append(
+            "- ⚠️ 常量声明了却不在 `ALL_EVENTS` (register 无法校验): "
+            + ", ".join(f"`{c}`" for c in contract["not_in_all_events"])
+        )
+    if contract["unresolved_members"]:
+        lines.append(
+            "- ⚠️ `ALL_EVENTS` 成员无对应常量定义: "
+            + ", ".join(f"`{c}`" for c in contract["unresolved_members"])
+        )
+    if not contract["not_in_all_events"] and not contract["unresolved_members"]:
+        lines.append("- `ALL_EVENTS` 与事件常量定义面双向一致.")
+    lines.append("")
+    lines.append(
+        "诚实边界: 未知名字面量 (`register(\"vasp\", …)` 这类别的注册表) 无法静态"
+        "区分, 故不计入互斥违例; 但实现层 `trigger` 用 `_callbacks.get(event, [])` "
+        "静默吞掉未知名 —— 字面量拼错会变空触发而不报错, 这是触发点须用常量的理由."
+    )
+    lines.append("")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # 组合 + 门禁
 # ---------------------------------------------------------------------------
 
@@ -1509,6 +1846,7 @@ def build_mece_snapshot(root: Path | None = None) -> dict:
         "modes": build_mode_contract(root),
         "vocabulary": build_vocabulary_contract(root),
         "tools": build_tool_contract(root),
+        "hooks": build_hook_contract(root),
     }
 
 
@@ -1573,21 +1911,43 @@ def find_issues(snap: dict) -> list[str]:
         issues.append(
             f"工具: 允许表死项 (无同名注册工具, 永不命中): {a['name']} @ {a['rel']} → {preview}"
         )
+    hk = snap["hooks"]
+    _hook_issue = {
+        "trigger-only": "钩子: 事件有生产触发点但零生产注册 (触发无人接): ",
+        "register-only": "钩子: 事件有注册但零生产触发: ",
+        "dead": "钩子: 事件声明零触发零注册: ",
+    }
+    for e in hk["events"]:
+        prefix = _hook_issue.get(e["status"])
+        if prefix:
+            issues.append(prefix + e["const"])
+    for c in hk["collisions"]:
+        issues.append(
+            f"钩子: 事件常量撞值 {c['value']}: {', '.join(c['consts'])}"
+        )
+    for name in hk["not_in_all_events"]:
+        issues.append(f"钩子: 事件常量未登记进 ALL_EVENTS: {name}")
+    for name in hk["unresolved_members"]:
+        issues.append(f"钩子: ALL_EVENTS 成员无常量定义: {name}")
+    for w in hk["literal_wiring"]:
+        issues.append(
+            f"钩子: 触发/注册用字面量而非常量: {w['value']} @ {w['rel']}:{w['line']}"
+        )
     return issues
 
 
 def render_mece_markdown(snap: dict) -> str:
     lines: list[str] = []
-    lines.append("# MECE 契约审计 (奖励面 + 授权面 + 工作流面 + 模式面 + 词汇面 + 工具面)")
+    lines.append("# MECE 契约审计 (奖励面 + 授权面 + 工作流面 + 模式面 + 词汇面 + 工具面 + 钩子面)")
     lines.append("")
     lines.append(
         "自动生成: `python -m huginn.cli.contract_audit --out docs/mece-audit.md`."
     )
     lines.append(
         "以 MECE 两原则审计 agent 的**奖励面 / 授权面 / 工作流面 / 模式面 / 词汇面 / "
-        "工具面**: **collectively exhaustive** 抓「宣称维度零调用者 / 面之间的缺口」; "
+        "工具面 / 钩子面**: **collectively exhaustive** 抓「宣称维度零调用者 / 面之间的缺口」; "
         "**mutually exclusive** 抓「同轴惩罚叠加」「跨模块同名重复实现」「词表互不一致」"
-        "「同名工具名多类声明」. 纯静态扫描, 只提示候选, 不判死."
+        "「同名工具名多类声明」「事件常量撞值」. 纯静态扫描, 只提示候选, 不判死."
     )
     lines.append("")
     lines.append(render_reward_markdown(snap["reward"]))
@@ -1596,6 +1956,7 @@ def render_mece_markdown(snap: dict) -> str:
     lines.append(render_mode_markdown(snap["modes"]))
     lines.append(render_vocabulary_markdown(snap["vocabulary"]))
     lines.append(render_tool_markdown(snap["tools"]))
+    lines.append(render_hook_markdown(snap["hooks"]))
     issues = find_issues(snap)
     lines.append("## 发现汇总")
     lines.append("")
@@ -1616,6 +1977,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--modes", action="store_true", help="只看模式面")
     parser.add_argument("--vocab", action="store_true", help="只看词汇面")
     parser.add_argument("--tools", action="store_true", help="只看工具面")
+    parser.add_argument("--hooks", action="store_true", help="只看钩子面")
     parser.add_argument("--json", action="store_true", help="输出 JSON 快照")
     parser.add_argument("--check", action="store_true", help="有 MECE 发现时 exit 1")
     parser.add_argument("--out", type=str, default="", help="写 markdown 到文件")
@@ -1628,6 +1990,7 @@ def main(argv: list[str] | None = None) -> int:
         "modes": (args.modes, build_mode_contract, render_mode_markdown),
         "vocabulary": (args.vocab, build_vocabulary_contract, render_vocabulary_markdown),
         "tools": (args.tools, build_tool_contract, render_tool_markdown),
+        "hooks": (args.hooks, build_hook_contract, render_hook_markdown),
     }
     selected = [k for k, (on, _b, _r) in surfaces.items() if on]
     if len(selected) == 1:
