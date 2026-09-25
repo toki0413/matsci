@@ -1,7 +1,7 @@
-# MECE 契约审计 (奖励面 + 授权面 + 工作流面 + 模式面 + 词汇面 + 工具面 + 钩子面 + 事件面 + SSE 消费面 + WS 消费面 + HTTP API 消费面)
+# MECE 契约审计 (奖励面 + 授权面 + 工作流面 + 模式面 + 词汇面 + 工具面 + 钩子面 + 事件面 + SSE 消费面 + WS 消费面 + HTTP API 消费面 + 请求负载面)
 
 自动生成: `python -m huginn.cli.contract_audit --out docs/mece-audit.md`.
-以 MECE 两原则审计 agent 的**奖励面 / 授权面 / 工作流面 / 模式面 / 词汇面 / 工具面 / 钩子面 / 事件面 / SSE 消费面 / WS 消费面 / HTTP API 消费面**: **collectively exhaustive** 抓「宣称维度零调用者 / 面之间的缺口」; **mutually exclusive** 抓「同轴惩罚叠加」「跨模块同名重复实现」「词表互不一致」「同名工具名多类声明」「事件常量撞值」「SSE 帧名挂错通道」「WS 帧名挂错端点」「HTTP 同 method+path 多模块注册」. 纯静态扫描, 只提示候选, 不判死.
+以 MECE 两原则审计 agent 的**奖励面 / 授权面 / 工作流面 / 模式面 / 词汇面 / 工具面 / 钩子面 / 事件面 / SSE 消费面 / WS 消费面 / HTTP API 消费面 / 请求负载面**: **collectively exhaustive** 抓「宣称维度零调用者 / 面之间的缺口」; **mutually exclusive** 抓「同轴惩罚叠加」「跨模块同名重复实现」「词表互不一致」「同名工具名多类声明」「事件常量撞值」「SSE 帧名挂错通道」「WS 帧名挂错端点」「HTTP 同 method+path 多模块注册」「前端漏发后端必填请求负载」. 纯静态扫描, 只提示候选, 不判死.
 
 ## 奖励面: 宣称项 vs 调用者 (collectively exhaustive)
 
@@ -823,6 +823,29 @@ SSE 消费面只核单向 (后端发帧 → 前端 `addEventListener`), WebSocke
 | `huginn/routes/visual.py` | 4 |
 
 诚实边界: 前端只扫 `lib/api.ts` 的 `api.*` 包装 (裸 `fetch(...)` 与 EventSource 在别面); 路径里的 `${…}` 只保留静态前缀, 动态拼接的段不可穷尽; `getBlob(path, { method: … })` 的方法覆盖按调用实参里的 `method:` 字面量近似判定; **请求体形状 / 必填 query 参数不核** —— 前端发 multipart 而后端要 JSON body、漏传必填 query 参数这类「路径对、负载错」静态不可辨, 不在本面 (只报 404/405 这类路径+方法级硬违例).
+
+## 请求负载面: 前端调用实参形状 vs 后端签名必填项
+
+HTTP 消费面核「路径 + 方法」挂不挂得上 (404/405); 本面再往里一层, 核**已命中端点**上的请求负载: 后端 `@router.<method>` 处理函数签名里的必填 query 参数 / 必填请求体 / Pydantic 模型必填字段 / `Form · File` 字段, 前端这次 `api.*` 调用到底发了没有. 硬契约方向同 HTTP 面 —— 只把「前端漏发后端必填」当违例 (422 死负载);「后端有可选字段前端没发」不是违例.
+
+违例类型: `missing-query`=后端必填 query 参数前端未传 (422); `missing-body`=后端必填请求体前端未发 (422); `missing-body-field`=后端模型必填字段前端未含 (422); `shape-mismatch`=前后端请求载体形状不符 (JSON ↔ multipart, 422); `missing-form-field`=后端必填 Form/File 字段前端未含 (422)
+
+覆盖: 命中端点的调用 **171** 处 (共 177 个 `api.*` 调用点); 后端模型 **236** 个; 可静态核对 —— query 2 / body 12 / multipart 2 处.
+违例: **0** 条.
+
+### 违例 (前端漏发后端必填)
+
+- 无 —— 每个命中端点的调用, 静态可辨的负载都满足后端必填项.
+
+### 静态核对覆盖面 (读不出形状即跳过, 不猜)
+
+| 维度 | 已核对 | 跳过 (变量/模板/未知形状) |
+|---|---|---|
+| 必填 query 参数 | 2 | 2 |
+| 必填模型字段 | 12 | 0 |
+| multipart 必填字段 | 2 | — |
+
+诚实边界: 只读**字面量**形状 —— body 传变量、`params` 传变量、路径 query 整段动态时该维度记 unknown 并跳过, 故违例是**下界** (可能漏报); 后端 `dict` 请求体无字段约束只核「发没发」; 模型必填性按 Pydantic 默认值 / `Field(...)` 静态判定, `model_config` 与 `Field` 的 `validate_*` 细粒度约束不核; 反向 (前端多发字段、后端可选字段缺失) 不是违例.
 
 ## 发现汇总
 
