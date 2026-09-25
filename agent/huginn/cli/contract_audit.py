@@ -3238,15 +3238,8 @@ _HTTP_STATUS_DOC = {
 # 已确认**硬违例** (前端调用挂不上后端注册面) 的分诊. 键 (方法, 去 query 路径) →
 # (标签, 理由); 标签 `defect` 已确认缺陷待修 / `intentional` 已确认有意.
 # 硬违例不是候选 —— 未登记即"待分诊", 回归测试会失败 (逼逐条人工判定).
-_HTTP_CONFIRMED_VIOLATIONS: dict[tuple[str, str], tuple[str, str]] = {
-    ("GET", "/transfer/download"): (
-        "defect",
-        "FilesPanel 下载按钮走 `api.getBlob` (= GET), 后端 `routes/transfer.py` 只注册 "
-        "POST /transfer/download; 该面板整条 `/transfer/*` 线 (upload 发 multipart 而后端"
-        "要 JSON body, browse/sync 缺 credential_id) 都按另一套契约写的, 修法需产品决策"
-        "(后端补 GET 流式下载 vs 面板改走凭据) —— 已确认缺陷, 待修",
-    ),
-}
+# 空表 = 当前每个前端调用都命中后端注册面; 新增硬违例必须先分诊再登记.
+_HTTP_CONFIRMED_VIOLATIONS: dict[tuple[str, str], tuple[str, str]] = {}
 
 _HTTP_TRIAGE_DOC = {
     "defect": "已确认缺陷 (待修)",
@@ -3758,8 +3751,8 @@ def render_http_markdown(contract: dict) -> str:
         "诚实边界: 前端只扫 `lib/api.ts` 的 `api.*` 包装 (裸 `fetch(...)` 与 EventSource "
         "在别面); 路径里的 `${…}` 只保留静态前缀, 动态拼接的段不可穷尽; "
         "`getBlob(path, { method: … })` 的方法覆盖按调用实参里的 `method:` 字面量近似判定;"
-        " **请求体形状 / 必填 query 参数不核** —— 如 `/transfer/upload` 前端发 multipart "
-        "而后端要 JSON body 这类「路径对、负载错」静态不可辨, 不在本面 (只报 404/405 这类"
+        " **请求体形状 / 必填 query 参数不核** —— 前端发 multipart 而后端要 JSON body、"
+        "漏传必填 query 参数这类「路径对、负载错」静态不可辨, 不在本面 (只报 404/405 这类"
         "路径+方法级硬违例)."
     )
     lines.append("")
