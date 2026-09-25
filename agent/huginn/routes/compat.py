@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import os
 import tempfile
+import time
 from typing import Any
 
 import numpy as np
@@ -52,10 +53,12 @@ async def sandbox_execute(params: dict[str, Any]) -> dict[str, Any]:
                     max_output_bytes=10 * 1024 * 1024,
                 )
             )
+            started = time.perf_counter()
             sb_result = sandbox.run(
                 ["python", tmp_path],
                 timeout=min(float(timeout), 300.0),
             )
+            elapsed = time.perf_counter() - started
             result = sb_result
 
             return {
@@ -63,6 +66,7 @@ async def sandbox_execute(params: dict[str, Any]) -> dict[str, Any]:
                 "stdout": result.stdout,
                 "stderr": result.stderr,
                 "returncode": result.returncode,
+                "execution_time": round(elapsed, 4),
             }
         finally:
             with contextlib.suppress(OSError):

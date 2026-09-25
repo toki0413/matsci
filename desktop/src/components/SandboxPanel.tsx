@@ -9,7 +9,6 @@ import { api } from '../lib/api';
 interface ExecutionResult {
   stdout: string;
   stderr: string;
-  return_value: any;
   execution_time: number;
 }
 
@@ -235,7 +234,6 @@ export default function SandboxPanel({ API_BASE: _API_BASE }: { API_BASE: string
       setOutput({
         stdout: '',
         stderr: err.message ?? String(err),
-        return_value: null,
         execution_time: 0,
       });
       setHistory((h) => [
@@ -297,20 +295,6 @@ export default function SandboxPanel({ API_BASE: _API_BASE }: { API_BASE: string
             className="max-w-full rounded border border-[var(--border,#d5cfc6)]"
           />
         ))}
-
-        {/* return_value */}
-        {output.return_value !== null && output.return_value !== undefined && (
-          <div className="rounded border border-[var(--border,#d5cfc6)] bg-[var(--bg-tertiary,#e8e2d9)] p-3">
-            <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-[var(--text-muted,#9a9590)]">
-              {t('sandbox.returnValue')}
-            </span>
-            <pre className="whitespace-pre-wrap break-words text-[var(--success,#6b9e8a)]">
-              {typeof output.return_value === 'object'
-                ? JSON.stringify(output.return_value, null, 2)
-                : String(output.return_value)}
-            </pre>
-          </div>
-        )}
 
         {/* stderr */}
         {stderrCleaned && (

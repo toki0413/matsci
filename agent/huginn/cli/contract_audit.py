@@ -3530,6 +3530,29 @@ def _http_path_match(
     return True
 
 
+def _http_pick_endpoint(
+    fe: tuple[tuple[str, str], ...], method: str, live: list[dict]
+) -> dict | None:
+    """唯一最贴合的已挂载端点; 无法唯一判定则 None.
+
+    动态段通配会让 `/personas/{name}` 同时命中 `/personas/templates`。按「强位置」
+    (静态对静态 / 动态对动态) 计数取最高分; 出现并列即认定歧义, 返回 None (不猜,
+    免把后端形状对错端点)。
+    """
+    best: dict | None = None
+    best_score = -1
+    tie = False
+    for ep in live:
+        if method not in ep["methods"] or not _http_path_match(fe, ep["segments"]):
+            continue
+        score = sum(1 for (fk, fv), (bk, _bv) in zip(fe, ep["segments"]) if fk == bk)
+        if score > best_score:
+            best, best_score, tie = ep, score, False
+        elif score == best_score:
+            tie = True
+    return None if tie else best
+
+
 def build_http_contract(root: Path | None = None, frontend: Path | None = None) -> dict:
     """HTTP API 消费面: 后端路由注册面 ↔ 前端 `api.*` 调用面.
 
@@ -4398,6 +4421,520 @@ def render_payload_markdown(contract: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
+# 响应结构面: 后端 return 形状 ↔ 前端声明消费的响应字段
+# ---------------------------------------------------------------------------
+# 请求负载面核「前端发的后端要不要求」; 本面反向核「后端返的前端读不读得到」。硬契约
+# 方向: 前端**声明**要读的响应字段 (api.* 的 TS 泛型实参) 后端处理函数**从不返回**
+# (return 字面量里没有, 且形状封闭) ⇒ 该字段恒 undefined (静默坏)。反向「后端返回了
+# 前端没读的字段」不是违例 (响应本就可冗余).
+
+# TS 响应类型里的字段声明: `name?: T` / `name: T` / `name(...)` / `'a-b': T`.
+_RESP_FIELD_RE = re.compile(r"""([A-Za-z_$][\w$]*|['"][^'"]+['"])\s*\??\s*[:(]""")
+# 非对象的 TS 响应类型 (标量/无形状) —— 与「对象字段」核对无关.
+_RESP_NON_OBJECT = {
+    "any",
+    "void",
+    "string",
+    "number",
+    "boolean",
+    "unknown",
+    "null",
+    "undefined",
+    "Record",
+}
+# 前端类型声明 (`interface Foo {…}` / `type Foo = {…}`).
+_RESP_TYPE_DECL_RE = re.compile(
+    r"(?:^|\n)\s*(?:export\s+)?(?:declare\s+)?(?:interface|type)\s+([A-Za-z_$][\w$]*)"
+)
+
+_RESP_KIND_DOC = {
+    "missing-field": "前端声明的响应字段后端从不返回 (恒 undefined)",
+}
+
+# 已确认硬违例分诊表. 键 (类型, 方法, 去 query 前端路径) → (标签, 理由); 未登记即
+# "待分诊", 回归测试会失败. 空表 = 当前每个命中端点声明的响应字段都在后端 return 里.
+_RESP_CONFIRMED_VIOLATIONS: dict[tuple[str, str, str], tuple[str, str]] = {}
+
+_RESP_TRIAGE_DOC = {
+    "defect": "已确认缺陷 (待修)",
+    "intentional": "已确认有意",
+}
+
+
+def _resp_triage(kind: str, method: str, path: str) -> tuple[str, str] | None:
+    """响应结构违例分诊: 返回 (标签, 理由); 未登记则 None (待人工确认)."""
+    return _RESP_CONFIRMED_VIOLATIONS.get((kind, method.upper(), path.split("?")[0]))
+
+
+def _resp_violation_mark(kind: str, method: str, path: str) -> str:
+    tri = _resp_triage(kind, method, path)
+    if tri is None:
+        return " — ⚠ 待分诊"
+    return f" — {'⛔' if tri[0] == 'defect' else '✅'} {_RESP_TRIAGE_DOC[tri[0]]}: {tri[1]}"
+
+
+def _resp_split_members(inner: str) -> list[str]:
+    """按顶层 `,` / `;` 切分 TS 类型成员 (跳过字符串字面量, 尊重括号/泛型嵌套).
+
+    TS 对象类型成员分隔符是 `;` / `,` / 换行, 与 JS 对象字面量的逗号不同, 故不能复用
+    `_payload_split_args`. 嵌套 `{…}` / `(…)` / `Record<…>` 里的 `,` `;` 不切.
+    `<` 只在非 `<=` 时计入, `>` 只在非 `=>` 时配对, 避免把箭头函数类型误当泛型.
+    """
+    out: list[str] = []
+    depth = 0
+    start = 0
+    i = 0
+    n = len(inner)
+    while i < n:
+        c = inner[i]
+        if c in "\"'`":
+            i = _skip_ts_string(inner, i)
+            continue
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+        elif c == "<" and inner[i - 1 : i] != "=" and inner[i + 1 : i + 2] != "=":
+            depth += 1
+        elif c == ">" and inner[i - 1 : i] != "=":
+            depth -= 1
+        elif c in ",;" and depth == 0:
+            out.append(inner[start:i])
+            start = i + 1
+        i += 1
+    tail = inner[start:]
+    if tail.strip():
+        out.append(tail)
+    return out
+
+
+def _resp_type_keys(expr: str) -> tuple[set[str], bool]:
+    """TS 响应类型表达式 → (顶层字段名集, 是否开放/读不出).
+
+    `{ a?: T; b: U }` → 字段集; `X[]` / 标量 / 交叉含 `Record` / index signature /
+    `&` 拼接 → 记开放 (有读不出的键, 跳过该维度). 只认字面量对象类型, 不猜.
+    """
+    s = expr.strip()
+    if not s or s.endswith("[]") or s in _RESP_NON_OBJECT:
+        return set(), True
+    if not (s.startswith("{") and s.endswith("}")):
+        return set(), True
+    keys: set[str] = set()
+    for part in _resp_split_members(s[1:-1]):
+        p = part.strip()
+        if not p:
+            continue
+        if p.startswith("["):  # index signature → 有额外键
+            return keys, True
+        m = _RESP_FIELD_RE.match(p)
+        if m:
+            keys.add(m.group(1).strip("'\""))
+        else:
+            return keys, True
+    return keys, False
+
+
+def _resp_brace_end(text: str, open_idx: int) -> int:
+    """从 `{` 起找配对的 `}` (跳过字符串与模板字面量); 未闭合返回文末."""
+    depth = 0
+    i = open_idx
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if c in "\"'`":
+            i = _skip_ts_string(text, i)
+            continue
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    return n
+
+
+def _resp_frontend_types(frontend: Path) -> dict[str, tuple[set[str], bool]]:
+    """前端 `interface Foo {…}` / `type Foo = {…}` → {名: (字段集, 开放)}."""
+    out: dict[str, tuple[set[str], bool]] = {}
+    if not frontend.is_dir():
+        return out
+    for p in sorted(frontend.rglob("*")):
+        if not p.is_file() or p.suffix not in (".ts", ".tsx"):
+            continue
+        try:
+            text = p.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for m in _RESP_TYPE_DECL_RE.finditer(text):
+            name = m.group(1)
+            if name in out:
+                continue
+            head_end = text.find("{", m.end())
+            if head_end < 0:
+                continue
+            # `interface Foo extends Bar {…}` / `type Foo = Bar & {…}`: 继承面读不出 ⇒ 开放.
+            head = text[m.end() : head_end]
+            if "extends" in head or "&" in head:
+                out[name] = set(), True
+                continue
+            body_end = _resp_brace_end(text, head_end)
+            out[name] = _resp_type_keys(text[head_end : body_end + 1])
+    return out
+
+
+def _resp_model_fields(cls: ast.ClassDef) -> set[str]:
+    """Pydantic 模型的**全部**字段名 (必填 + 可选), 供 response_model 取响应键."""
+    return {
+        stmt.target.id
+        for stmt in cls.body
+        if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name)
+    }
+
+
+def _resp_local_models(tree: ast.Module) -> dict[str, ast.ClassDef]:
+    """同模块内定义的 Pydantic 模型 → {名: ClassDef} (跨模块引用读不出, 留空)."""
+    return {
+        node.name: node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ClassDef)
+        and any(
+            _payload_base_ann(ast.unparse(b)) in _PAYLOAD_MODEL_BASES for b in node.bases
+        )
+    }
+
+
+def _resp_response_model(
+    dec: ast.expr, local_models: dict[str, ast.ClassDef]
+) -> tuple[set[str], bool] | None:
+    """装饰器 `response_model=X` → 响应键; 无该 kwargs 返回 None, 引不到模型则空+开放."""
+    if not isinstance(dec, ast.Call):
+        return None
+    for kw in dec.keywords:
+        if kw.arg != "response_model":
+            continue
+        base = _payload_base_ann(ast.unparse(kw.value))
+        cls = local_models.get(base)
+        if cls is None:
+            return set(), True
+        return _resp_model_fields(cls), False
+    return None
+
+
+def _resp_merge_return(
+    value: ast.expr | None,
+    keys: set[str],
+    local_models: dict[str, ast.ClassDef],
+) -> bool:
+    """单个 return → 并入 keys, 返回该 return 是否「开放」(读不出确切键)."""
+    if value is None:  # 裸 return (响应 null) ⇒ 字段可能缺失
+        return True
+    if isinstance(value, ast.Dict):
+        open_ = False
+        for k in value.keys:
+            if k is None:  # `**x` 展开 ⇒ 有额外键
+                open_ = True
+            elif isinstance(k, ast.Constant) and isinstance(k.value, str):
+                keys.add(k.value)
+            else:
+                open_ = True
+        return open_
+    if isinstance(value, ast.Call):
+        fn = value.func
+        name = fn.id if isinstance(fn, ast.Name) else None
+        cls = local_models.get(name) if name else None
+        if cls is not None:
+            keys |= _resp_model_fields(cls)
+            return False
+    return True
+
+
+def _resp_handler_keys(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+    local_models: dict[str, ast.ClassDef],
+    prefixes: dict[str, str],
+) -> tuple[set[str], bool]:
+    """处理函数 → (响应顶层键集, 是否封闭).
+
+    `response_model=X` 优先 (FastAPI 按模型序列化, 与 return 字面量无关); 否则取函数体
+    内所有 `return` 的并集。任一 return 读不出确切键 (变量/Response/`**`) 即不封闭。
+    """
+    for dec in node.decorator_list:
+        rm = _resp_response_model(dec, local_models)
+        if rm is not None:
+            return rm
+    keys: set[str] = set()
+    open_ = False
+    seen = False
+    for n in ast.walk(node):
+        if isinstance(n, ast.Return):
+            seen = True
+            open_ = _resp_merge_return(n.value, keys, local_models) or open_
+    return keys, (seen and not open_)
+
+
+def _resp_backend_shapes(root: Path) -> dict[tuple[str, str], dict]:
+    """已挂载端点的响应形状: (方法, 路径) → {keys, closed, rel, handler}."""
+    out: dict[tuple[str, str], dict] = {}
+    mounted_pairs = set(_http_registry(root)["mounted_pairs"])
+    rdir = root / _HTTP_ROUTES_DIR
+    if not rdir.is_dir():
+        return out
+    for py in sorted(rdir.glob("*.py")):
+        if py.name == "__init__.py":
+            continue
+        tree = _parse(py)
+        if tree is None:
+            continue
+        prefixes = _http_router_prefixes(tree)
+        if not prefixes:
+            continue
+        rel = py.relative_to(root).as_posix()
+        local_models = _resp_local_models(tree)
+        for node in tree.body:
+            if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            for dec in node.decorator_list:
+                parsed = _http_route_decorator(dec, prefixes)
+                if parsed is None:
+                    continue
+                methods, path, var = parsed
+                if "WEBSOCKET" in methods:
+                    continue
+                if (Path(rel).stem, var) not in mounted_pairs:
+                    continue
+                keys, closed = _resp_handler_keys(node, local_models, prefixes)
+                for m in methods:
+                    out[(m, path)] = {
+                        "keys": keys,
+                        "closed": closed,
+                        "rel": rel,
+                        "handler": node.name,
+                    }
+    return out
+
+
+def _resp_scan_frontend(
+    frontend: Path, types: dict[str, tuple[set[str], bool]]
+) -> list[dict]:
+    """扫前端 `api.*` 调用点 → 声明的响应字段形状.
+
+    泛型实参 `api.get<{…}>` 是前端**声明**的响应契约: 字面量对象类型取字段集, 具名类型
+    经前端 `interface`/`type` 解析; `<any>` / 数组 / 交叉含 `Record` / 无泛型 ⇒ 记开放
+    (跳过该维度, 不猜)。
+    """
+    calls: list[dict] = []
+    if not frontend.is_dir():
+        return calls
+    for p in sorted(frontend.rglob("*")):
+        if not p.is_file() or p.suffix not in (".ts", ".tsx"):
+            continue
+        rel = _display(frontend, p)
+        if rel.endswith(".spec.ts") or rel.endswith(".spec.tsx"):
+            continue
+        try:
+            text = p.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for m in _HTTP_CALL_RE.finditer(text):
+            verb = m.group(1)
+            j = m.end()
+            generic = ""
+            if j < len(text) and text[j] == "<":
+                k = _http_skip_generics(text, j)
+                generic = text[j + 1 : k - 1].strip()
+                j = k
+            while j < len(text) and text[j] in " \t\n":
+                j += 1
+            if j >= len(text) or text[j] != "(":
+                continue
+            args = _payload_split_args(text[j + 1 : _http_call_args_end(text, j)])
+            raw = args[0].strip() if args else ""
+            if raw and raw[0] in "\"'`":
+                raw = raw[1:-1]
+            declared, declared_open = _resp_declared(generic, types)
+            method = _HTTP_VERB_METHOD.get(verb, verb.upper())
+            override = _HTTP_METHOD_OVERRIDE_RE.search("".join(args))
+            if override:
+                method = override.group(1).upper()
+            calls.append(
+                {
+                    "rel": rel,
+                    "line": text.count("\n", 0, m.start()) + 1,
+                    "method": method,
+                    "path": raw,
+                    "declared": sorted(declared),
+                    "declared_open": declared_open,
+                }
+            )
+    return calls
+
+
+def _resp_declared(
+    generic: str, types: dict[str, tuple[set[str], bool]]
+) -> tuple[set[str], bool]:
+    """泛型实参 → (声明字段集, 是否开放). 具名类型查前端声明表."""
+    if not generic:
+        return set(), True
+    keys, open_ = _resp_type_keys(generic)
+    if open_ and not keys and generic in types:
+        return types[generic]
+    return keys, open_
+
+
+def build_response_contract(
+    root: Path | None = None, frontend: Path | None = None
+) -> dict:
+    """响应结构面: 后端 return 形状 ↔ 前端声明的响应字段.
+
+    只报「前端声明要读的字段, 后端从不返回」这一硬方向 (静默 undefined); 后端形状
+    开放 (return 变量 / `**` / Response 对象 / 引不到的 response_model) 或前端声明开放
+    (`<any>` / 数组 / `Record` 交叉 / 无泛型) 时该维度跳过, 不猜。路径歧义 (动态段同时
+    命中多个端点且强位置并列) 一律跳过。
+    """
+    root = root or _REPO
+    frontend = frontend if frontend is not None else root.parent / "desktop" / "src"
+    shapes = _resp_backend_shapes(root)
+    live = _payload_live_endpoints(root)
+    types = _resp_frontend_types(frontend)
+    calls = _resp_scan_frontend(frontend, types)
+
+    stats = {"wired": 0, "checked": 0, "skip_shape": 0, "skip_decl": 0, "skip_ambiguous": 0}
+    violations: list[dict] = []
+    for c in calls:
+        segs = _http_fe_segments(c["path"])
+        if segs is None:
+            continue
+        ep = _http_pick_endpoint(segs, c["method"], live)
+        if ep is None:
+            if any(
+                c["method"] in e["methods"] and _http_path_match(segs, e["segments"])
+                for e in live
+            ):
+                stats["skip_ambiguous"] += 1
+            continue
+        shape = shapes.get((c["method"], ep["path"]))
+        if shape is None:
+            continue
+        stats["wired"] += 1
+        if not shape["closed"]:
+            stats["skip_shape"] += 1
+            continue
+        if c["declared_open"]:
+            stats["skip_decl"] += 1
+            continue
+        stats["checked"] += 1
+        missing = sorted(set(c["declared"]) - shape["keys"])
+        if missing:
+            violations.append(
+                {
+                    "kind": "missing-field",
+                    "method": c["method"],
+                    "path": c["path"],
+                    "endpoint": ep["path"],
+                    "rel": c["rel"],
+                    "line": c["line"],
+                    "declared": c["declared"],
+                    "produced": sorted(shape["keys"]),
+                    "missing": missing,
+                }
+            )
+
+    for v in violations:
+        tri = _resp_triage(v["kind"], v["method"], v["path"])
+        v["triage"] = tri[0] if tri else "untriaged"
+        v["triage_reason"] = tri[1] if tri else ""
+
+    kinds = Counter(v["kind"] for v in violations)
+    return {
+        "frontend": str(frontend),
+        "call_count": len(calls),
+        "wired_call_count": stats["wired"],
+        "type_count": len(types),
+        "violations": violations,
+        "untriaged": [v for v in violations if v["triage"] == "untriaged"],
+        "kind_counts": dict(sorted(kinds.items())),
+        "coverage": {
+            "checked": stats["checked"],
+            "skip_shape": stats["skip_shape"],
+            "skip_decl": stats["skip_decl"],
+            "skip_ambiguous": stats["skip_ambiguous"],
+        },
+    }
+
+
+def render_response_markdown(contract: dict) -> str:
+    lines: list[str] = []
+    lines.append("## 响应结构面: 后端 return 形状 vs 前端声明的响应字段")
+    lines.append("")
+    lines.append(
+        "请求负载面核「前端发的后端要不要求」; 本面反向核「后端返的前端读不读得到」。"
+        "前端 `api.*<T>` 的泛型实参 `T` 是**声明的响应契约**: 对象类型的每个字段, 后端"
+        "处理函数的 `return` 字面量 / `response_model` 里到底有没有。硬方向 —— 只把"
+        "「前端声明要读的字段后端从不返回」(恒 undefined, 静默坏) 当违例; 「后端返回了"
+        "前端没读的字段」不是违例 (响应本就可冗余)。"
+    )
+    lines.append("")
+    lines.append(
+        "违例类型: " + "; ".join(f"`{k}`={v}" for k, v in _RESP_KIND_DOC.items())
+    )
+    lines.append("")
+    cov = contract["coverage"]
+    lines.append(
+        f"覆盖: 命中端点的调用 **{contract['wired_call_count']}** 处 (共 "
+        f"{contract['call_count']} 个 `api.*` 调用点); 前端类型 **{contract['type_count']}** "
+        f"个; 可静态核对 **{cov['checked']}** 处."
+    )
+    counts = (
+        "  " + ", ".join(f"`{k}`×{n}" for k, n in contract["kind_counts"].items())
+        if contract["kind_counts"]
+        else ""
+    )
+    lines.append(f"违例: **{len(contract['violations'])}** 条.{counts}")
+    lines.append("")
+
+    lines.append("### 违例 (前端声明要读, 后端从不返回)")
+    lines.append("")
+    if contract["violations"]:
+        lines.append(
+            "硬违例 —— 前端声明/读取的字段后端 return 里没有, 运行时恒 undefined。逐条"
+            "分诊: 未登记的落「待分诊」(回归测试会失败, 逼人工判定):"
+        )
+        lines.append("")
+        for v in sorted(
+            contract["violations"],
+            key=lambda x: (x["method"], x["path"], x["rel"], x["line"]),
+        ):
+            lines.append(
+                f"- `[{v['kind']}]` `{v['method']} {v['path']}` → 后端 `{v['endpoint']}` "
+                f"@ `{v['rel']}:{v['line']}` — 缺字段 {', '.join(f'`{f}`' for f in v['missing'])}; "
+                f"后端实际返回 {', '.join(f'`{k}`' for k in v['produced']) or '(无)'}"
+                + _resp_violation_mark(v["kind"], v["method"], v["path"])
+            )
+    else:
+        lines.append("- 无 —— 每个命中端点声明要读的字段, 后端 return 里都有.")
+    lines.append("")
+
+    lines.append("### 静态核对覆盖面 (读不出形状即跳过, 不猜)")
+    lines.append("")
+    lines.append("| 维度 | 已核对 | 跳过 (形状开放/读不出) |")
+    lines.append("|---|---|---|")
+    lines.append(f"| 后端响应形状封闭 | {cov['checked']} | {cov['skip_shape']} |")
+    lines.append(f"| 前端声明可解析 | {cov['checked']} | {cov['skip_decl']} |")
+    lines.append(f"| 路径唯一命中 | — | {cov['skip_ambiguous']} (歧义跳过) |")
+    lines.append("")
+    lines.append(
+        "诚实边界: 只读**字面量**形状 —— 后端 `return` 传变量 / `**` 展开 / `Response`"
+        "对象 / 引不到的 `response_model` 即记开放并跳过, 故违例是**下界** (可能漏报); "
+        "前端泛型为 `<any>` / 数组 / `Record` 交叉 / 无泛型时该维度跳过; 类型解析只认同仓"
+        "`interface`/`type` 字面量对象, `extends` / `&` 拼接一律记开放; 路径动态段同时命中"
+        "多个端点且强位置并列时跳过 (不猜端点); 反向 (后端返回前端没读的字段) 不是违例."
+    )
+    lines.append("")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # 组合 + 门禁
 # ---------------------------------------------------------------------------
 
@@ -4416,6 +4953,7 @@ def build_mece_snapshot(root: Path | None = None) -> dict:
         "ws": build_ws_contract(root),
         "http": build_http_contract(root),
         "payload": build_payload_contract(root),
+        "response": build_response_contract(root),
     }
 
 
@@ -4582,13 +5120,26 @@ def find_issues(snap: dict) -> list[str]:
             f"{v['method']} {v['path']} → 后端 {v['endpoint']} @ "
             f"{v['rel']}:{v['line']} — {v['detail']};{mark}"
         )
+    resp = snap["response"]
+    for v in resp["violations"]:
+        mark = (
+            " 待分诊"
+            if v["triage"] == "untriaged"
+            else " " + _RESP_TRIAGE_DOC[v["triage"]]
+        )
+        issues.append(
+            f"响应: 前端声明要读的响应字段后端从不返回 "
+            f"({_RESP_KIND_DOC[v['kind']]}): {v['method']} {v['path']} → 后端 "
+            f"{v['endpoint']} @ {v['rel']}:{v['line']} — 缺 "
+            f"{', '.join(v['missing'])};{mark}"
+        )
     return issues
 
 
 def render_mece_markdown(snap: dict) -> str:
     lines: list[str] = []
     lines.append(
-        "# MECE 契约审计 (奖励面 + 授权面 + 工作流面 + 模式面 + 词汇面 + 工具面 + 钩子面 + 事件面 + SSE 消费面 + WS 消费面 + HTTP API 消费面 + 请求负载面)"
+        "# MECE 契约审计 (奖励面 + 授权面 + 工作流面 + 模式面 + 词汇面 + 工具面 + 钩子面 + 事件面 + SSE 消费面 + WS 消费面 + HTTP API 消费面 + 请求负载面 + 响应结构面)"
     )
     lines.append("")
     lines.append(
@@ -4597,11 +5148,12 @@ def render_mece_markdown(snap: dict) -> str:
     lines.append(
         "以 MECE 两原则审计 agent 的**奖励面 / 授权面 / 工作流面 / 模式面 / "
         "词汇面 / 工具面 / 钩子面 / 事件面 / SSE 消费面 / WS 消费面 / HTTP API 消费面 / "
-        "请求负载面**: "
+        "请求负载面 / 响应结构面**: "
         "**collectively exhaustive** 抓「宣称维度零调用者 / "
         "面之间的缺口」; **mutually exclusive** 抓「同轴惩罚叠加」「跨模块同名重复实现」「词表互不一致」"
         "「同名工具名多类声明」「事件常量撞值」「SSE 帧名挂错通道」「WS 帧名挂错端点」"
-        "「HTTP 同 method+path 多模块注册」「前端漏发后端必填请求负载」. 纯静态扫描, 只提示候选, 不判死."
+        "「HTTP 同 method+path 多模块注册」「前端漏发后端必填请求负载」"
+        "「前端声明要读的响应字段后端从不返回」. 纯静态扫描, 只提示候选, 不判死."
     )
     lines.append("")
     lines.append(render_reward_markdown(snap["reward"]))
@@ -4616,6 +5168,7 @@ def render_mece_markdown(snap: dict) -> str:
     lines.append(render_ws_markdown(snap["ws"]))
     lines.append(render_http_markdown(snap["http"]))
     lines.append(render_payload_markdown(snap["payload"]))
+    lines.append(render_response_markdown(snap["response"]))
     issues = find_issues(snap)
     lines.append("## 发现汇总")
     lines.append("")
@@ -4642,6 +5195,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--ws", action="store_true", help="只看 WS 消费面")
     parser.add_argument("--http", action="store_true", help="只看 HTTP API 消费面")
     parser.add_argument("--payload", action="store_true", help="只看请求负载面")
+    parser.add_argument("--response", action="store_true", help="只看响应结构面")
     parser.add_argument("--json", action="store_true", help="输出 JSON 快照")
     parser.add_argument("--check", action="store_true", help="有 MECE 发现时 exit 1")
     parser.add_argument("--out", type=str, default="", help="写 markdown 到文件")
@@ -4660,6 +5214,7 @@ def main(argv: list[str] | None = None) -> int:
         "ws": (args.ws, build_ws_contract, render_ws_markdown),
         "http": (args.http, build_http_contract, render_http_markdown),
         "payload": (args.payload, build_payload_contract, render_payload_markdown),
+        "response": (args.response, build_response_contract, render_response_markdown),
     }
     selected = [k for k, (on, _b, _r) in surfaces.items() if on]
     if len(selected) == 1:

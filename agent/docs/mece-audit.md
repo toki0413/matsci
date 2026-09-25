@@ -1,7 +1,7 @@
-# MECE 契约审计 (奖励面 + 授权面 + 工作流面 + 模式面 + 词汇面 + 工具面 + 钩子面 + 事件面 + SSE 消费面 + WS 消费面 + HTTP API 消费面 + 请求负载面)
+# MECE 契约审计 (奖励面 + 授权面 + 工作流面 + 模式面 + 词汇面 + 工具面 + 钩子面 + 事件面 + SSE 消费面 + WS 消费面 + HTTP API 消费面 + 请求负载面 + 响应结构面)
 
 自动生成: `python -m huginn.cli.contract_audit --out docs/mece-audit.md`.
-以 MECE 两原则审计 agent 的**奖励面 / 授权面 / 工作流面 / 模式面 / 词汇面 / 工具面 / 钩子面 / 事件面 / SSE 消费面 / WS 消费面 / HTTP API 消费面 / 请求负载面**: **collectively exhaustive** 抓「宣称维度零调用者 / 面之间的缺口」; **mutually exclusive** 抓「同轴惩罚叠加」「跨模块同名重复实现」「词表互不一致」「同名工具名多类声明」「事件常量撞值」「SSE 帧名挂错通道」「WS 帧名挂错端点」「HTTP 同 method+path 多模块注册」「前端漏发后端必填请求负载」. 纯静态扫描, 只提示候选, 不判死.
+以 MECE 两原则审计 agent 的**奖励面 / 授权面 / 工作流面 / 模式面 / 词汇面 / 工具面 / 钩子面 / 事件面 / SSE 消费面 / WS 消费面 / HTTP API 消费面 / 请求负载面 / 响应结构面**: **collectively exhaustive** 抓「宣称维度零调用者 / 面之间的缺口」; **mutually exclusive** 抓「同轴惩罚叠加」「跨模块同名重复实现」「词表互不一致」「同名工具名多类声明」「事件常量撞值」「SSE 帧名挂错通道」「WS 帧名挂错端点」「HTTP 同 method+path 多模块注册」「前端漏发后端必填请求负载」「前端声明要读的响应字段后端从不返回」. 纯静态扫描, 只提示候选, 不判死.
 
 ## 奖励面: 宣称项 vs 调用者 (collectively exhaustive)
 
@@ -376,13 +376,13 @@
 |---|---|---|---|---|
 | `mousemove` | — | `external` | `desktop/src/App.tsx:189` | 非 SSE 通道 (DOM 事件), 不计入 |
 | `mouseup` | — | `external` | `desktop/src/App.tsx:190` | 非 SSE 通道 (DOM 事件), 不计入 |
-| `keydown` | — | `external` | `desktop/src/App.tsx:1104` | 非 SSE 通道 (DOM 事件), 不计入 |
-| `resize` | — | `external` | `desktop/src/App.tsx:1113` | 非 SSE 通道 (DOM 事件), 不计入 |
+| `keydown` | — | `external` | `desktop/src/App.tsx:1110` | 非 SSE 通道 (DOM 事件), 不计入 |
+| `resize` | — | `external` | `desktop/src/App.tsx:1119` | 非 SSE 通道 (DOM 事件), 不计入 |
 | `storage` | — | `external` | `desktop/src/Pet.tsx:773` | 非 SSE 通道 (DOM 事件), 不计入 |
 | `pointermove` | — | `external` | `desktop/src/Pet.tsx:1070` | 非 SSE 通道 (DOM 事件), 不计入 |
 | `keydown` | — | `external` | `desktop/src/Pet.tsx:1071` | 非 SSE 通道 (DOM 事件), 不计入 |
 | `keydown` | — | `external` | `desktop/src/components/Modal.tsx:30` | 非 SSE 通道 (DOM 事件), 不计入 |
-| `mousedown` | — | `external` | `desktop/src/components/SandboxPanel.tsx:194` | 非 SSE 通道 (DOM 事件), 不计入 |
+| `mousedown` | — | `external` | `desktop/src/components/SandboxPanel.tsx:193` | 非 SSE 通道 (DOM 事件), 不计入 |
 | `mousedown` | — | `external` | `desktop/src/components/SaveToMemoryButton.tsx:38` | 非 SSE 通道 (DOM 事件), 不计入 |
 | `click` | — | `external` | `desktop/src/components/panels/ChatPanel.tsx:488` | 非 SSE 通道 (DOM 事件), 不计入 |
 | `click` | — | `external` | `desktop/src/components/panels/ThreadsPanel.tsx:46` | 非 SSE 通道 (DOM 事件), 不计入 |
@@ -618,9 +618,9 @@ SSE 消费面只核单向 (后端发帧 → 前端 `addEventListener`), WebSocke
 | `DELETE` | `/side` | `wired` | `desktop/src/App.tsx:557` |  |
 | `GET` | `/unified/models` | `wired` | `desktop/src/App.tsx:576` |  |
 | `POST` | `/unified/derive` | `wired` | `desktop/src/App.tsx:588` |  |
-| `POST` | `/unified/solve` | `wired` | `desktop/src/App.tsx:597` |  |
-| `POST` | `/unified/plot` | `wired` | `desktop/src/App.tsx:606` |  |
-| `GET` | `/workflows` | `wired` | `desktop/src/App.tsx:737` |  |
+| `POST` | `/unified/solve` | `wired` | `desktop/src/App.tsx:601` |  |
+| `POST` | `/unified/plot` | `wired` | `desktop/src/App.tsx:610` |  |
+| `GET` | `/workflows` | `wired` | `desktop/src/App.tsx:743` |  |
 | `POST` | `/pet/feed` | `wired` | `desktop/src/Pet.tsx:1354` |  |
 | `POST` | `/pet/pet` | `wired` | `desktop/src/Pet.tsx:1365` |  |
 | `GET` | `/v1/fs/search` | `wired` | `desktop/src/components/CommandPalette.tsx:50` |  |
@@ -637,9 +637,9 @@ SSE 消费面只核单向 (后端发帧 → 前端 `addEventListener`), WebSocke
 | `POST` | `/credentials/${id}/set-default` | `wired` | `desktop/src/components/CredentialsPanel.tsx:247` |  |
 | `POST` | `/credentials/${id}/test` | `wired` | `desktop/src/components/CredentialsPanel.tsx:256` |  |
 | `POST` | `/credentials/import-from-config` | `wired` | `desktop/src/components/CredentialsPanel.tsx:269` |  |
-| `POST` | `/credentials/${apiKeyForm.service}` | `wired` | `desktop/src/components/CredentialsPanel.tsx:569` |  |
-| `GET` | `/credentials/${s.service}/test` | `wired` | `desktop/src/components/CredentialsPanel.tsx:614` |  |
-| `DELETE` | `/credentials/${s.service}` | `wired` | `desktop/src/components/CredentialsPanel.tsx:636` |  |
+| `POST` | `/credentials/${apiKeyForm.service}` | `wired` | `desktop/src/components/CredentialsPanel.tsx:565` |  |
+| `GET` | `/credentials/${s.service}/test` | `wired` | `desktop/src/components/CredentialsPanel.tsx:610` |  |
+| `DELETE` | `/credentials/${s.service}` | `wired` | `desktop/src/components/CredentialsPanel.tsx:632` |  |
 | `GET` | `/personas/${personaName}/emotion` | `wired` | `desktop/src/components/EmotionTracker.tsx:133` |  |
 | `GET` | `/metrics` | `wired` | `desktop/src/components/MetricsBar.tsx:78` |  |
 | `GET` | `/health` | `wired` | `desktop/src/components/MetricsBar.tsx:79` |  |
@@ -663,7 +663,7 @@ SSE 消费面只核单向 (后端发帧 → 前端 `addEventListener`), WebSocke
 | `GET` | `/tool-economy` | `wired` | `desktop/src/components/RuntimeStatusPanel.tsx:102` |  |
 | `POST` | `/autoloop/resume` | `wired` | `desktop/src/components/RuntimeStatusPanel.tsx:133` |  |
 | `POST` | `/inbox/${encodeURIComponent(item.id)}/resolve` | `wired` | `desktop/src/components/RuntimeStatusPanel.tsx:150` |  |
-| `POST` | `/sandbox/execute` | `wired` | `desktop/src/components/SandboxPanel.tsx:222` |  |
+| `POST` | `/sandbox/execute` | `wired` | `desktop/src/components/SandboxPanel.tsx:221` |  |
 | `POST` | `/memory` | `wired` | `desktop/src/components/SaveToMemoryButton.tsx:46` |  |
 | `GET` | `/metrics` | `wired` | `desktop/src/components/StatusBar.tsx:59` |  |
 | `GET` | `/health` | `wired` | `desktop/src/components/StatusBar.tsx:60` |  |
@@ -766,10 +766,10 @@ SSE 消费面只核单向 (后端发帧 → 前端 `addEventListener`), WebSocke
 | `POST` | `/codebase/index` | `wired` | `desktop/src/hooks/useProject.ts:60` |  |
 | `POST` | `/codebase/search` | `wired` | `desktop/src/hooks/useProject.ts:78` |  |
 | `POST` | `/team/v2/plan` | `wired` | `desktop/src/hooks/useTeam.ts:24` |  |
-| `POST` | `/team/plan` | `wired` | `desktop/src/hooks/useTeam.ts:31` |  |
-| `POST` | `/team/v2/run` | `wired` | `desktop/src/hooks/useTeam.ts:57` |  |
-| `POST` | `/team/run` | `wired` | `desktop/src/hooks/useTeam.ts:64` |  |
-| `POST` | `/team/v2/fusion` | `wired` | `desktop/src/hooks/useTeam.ts:90` |  |
+| `POST` | `/team/plan` | `wired` | `desktop/src/hooks/useTeam.ts:35` |  |
+| `POST` | `/team/v2/run` | `wired` | `desktop/src/hooks/useTeam.ts:59` |  |
+| `POST` | `/team/run` | `wired` | `desktop/src/hooks/useTeam.ts:66` |  |
+| `POST` | `/team/v2/fusion` | `wired` | `desktop/src/hooks/useTeam.ts:92` |  |
 | `GET` | `/v1/fs/list` | `wired` | `desktop/src/hooks/useWorkspace.tsx:42` |  |
 | `GET` | `/v1/fs/read` | `wired` | `desktop/src/hooks/useWorkspace.tsx:72` |  |
 | `PUT` | `/v1/fs/write` | `wired` | `desktop/src/hooks/useWorkspace.tsx:125` |  |
@@ -846,6 +846,29 @@ HTTP 消费面核「路径 + 方法」挂不挂得上 (404/405); 本面再往里
 | multipart 必填字段 | 2 | — |
 
 诚实边界: 只读**字面量**形状 —— body 传变量、`params` 传变量、路径 query 整段动态时该维度记 unknown 并跳过, 故违例是**下界** (可能漏报); 后端 `dict` 请求体无字段约束只核「发没发」; 模型必填性按 Pydantic 默认值 / `Field(...)` 静态判定, `model_config` 与 `Field` 的 `validate_*` 细粒度约束不核; 反向 (前端多发字段、后端可选字段缺失) 不是违例.
+
+## 响应结构面: 后端 return 形状 vs 前端声明的响应字段
+
+请求负载面核「前端发的后端要不要求」; 本面反向核「后端返的前端读不读得到」。前端 `api.*<T>` 的泛型实参 `T` 是**声明的响应契约**: 对象类型的每个字段, 后端处理函数的 `return` 字面量 / `response_model` 里到底有没有。硬方向 —— 只把「前端声明要读的字段后端从不返回」(恒 undefined, 静默坏) 当违例; 「后端返回了前端没读的字段」不是违例 (响应本就可冗余)。
+
+违例类型: `missing-field`=前端声明的响应字段后端从不返回 (恒 undefined)
+
+覆盖: 命中端点的调用 **171** 处 (共 177 个 `api.*` 调用点); 前端类型 **166** 个; 可静态核对 **78** 处.
+违例: **0** 条.
+
+### 违例 (前端声明要读, 后端从不返回)
+
+- 无 —— 每个命中端点声明要读的字段, 后端 return 里都有.
+
+### 静态核对覆盖面 (读不出形状即跳过, 不猜)
+
+| 维度 | 已核对 | 跳过 (形状开放/读不出) |
+|---|---|---|
+| 后端响应形状封闭 | 78 | 40 |
+| 前端声明可解析 | 78 | 53 |
+| 路径唯一命中 | — | 0 (歧义跳过) |
+
+诚实边界: 只读**字面量**形状 —— 后端 `return` 传变量 / `**` 展开 / `Response`对象 / 引不到的 `response_model` 即记开放并跳过, 故违例是**下界** (可能漏报); 前端泛型为 `<any>` / 数组 / `Record` 交叉 / 无泛型时该维度跳过; 类型解析只认同仓`interface`/`type` 字面量对象, `extends` / `&` 拼接一律记开放; 路径动态段同时命中多个端点且强位置并列时跳过 (不猜端点); 反向 (后端返回前端没读的字段) 不是违例.
 
 ## 发现汇总
 
