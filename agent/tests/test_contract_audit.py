@@ -1266,6 +1266,169 @@ def test_payload_synthetic_shape_and_form(tmp_path):
     assert len(c["untriaged"]) == 3
 
 
+# ──────────────────── 响应结构面 ────────────────────
+
+
+def test_response_real_repo_no_untriaged_violations():
+    """真实仓: 前端 `api.*<T>` 声明要读的响应字段都命中端点后端 return 里有 (无待分诊)."""
+    c = ca.build_response_contract()
+    assert c["call_count"] > 0
+    assert c["wired_call_count"] > 0
+    assert c["type_count"] > 0
+    assert c["untriaged"] == [], c["untriaged"]
+    for v in c["violations"]:
+        assert v["triage"] in {"defect", "intentional"}
+        assert v["triage_reason"]
+    # 至少有一批声明可静态核对, 否则本面等于空转.
+    assert c["coverage"]["checked"] > 0
+
+
+def test_response_confirmed_violations_registry_not_stale():
+    """分诊表登记的每条都必须仍是真实硬违例 —— 修好后要同步删登记."""
+    observed = {
+        (v["kind"], v["method"], v["path"].split("?")[0])
+        for v in ca.build_response_contract()["violations"]
+    }
+    for key in ca._RESP_CONFIRMED_VIOLATIONS:
+        assert key in observed, f"分诊表登记 {key} 已不再是硬违例, 请删除登记"
+
+
+def test_response_violation_mark_labels_triage():
+    """分诊标注: 未登记 → 待分诊; 已登记 → 对应标签 + 理由."""
+    assert ca._resp_triage("missing-field", "GET", "/nope/none") is None
+    assert "待分诊" in ca._resp_violation_mark("missing-field", "GET", "/nope/none")
+    for (kind, method, path), (label, _reason) in ca._RESP_CONFIRMED_VIOLATIONS.items():
+        mark = ca._resp_violation_mark(kind, method, path)
+        assert "待分诊" not in mark
+        assert ca._RESP_TRIAGE_DOC[label] in mark
+
+
+def test_response_type_keys_parses_members_and_generics():
+    """TS 类型成员按 `;`/`,` 切; `Record<…>` 泛型里的逗号不得误切; `=>` 不得误当泛型."""
+    assert ca._resp_type_keys("{ a?: string; b?: number }") == ({"a", "b"}, False)
+    assert ca._resp_type_keys("{ x?: Record<string, number>; y?: string }") == (
+        {"x", "y"},
+        False,
+    )
+    assert ca._resp_type_keys("{ cb?: () => void; z: string }") == ({"cb", "z"}, False)
+    assert ca._resp_type_keys("{ data: { a: number; b: number }; ok: boolean }") == (
+        {"data", "ok"},
+        False,
+    )
+    # 数组 / 标量 / 交叉 / index signature 一律开放 (读不出确切键).
+    assert ca._resp_type_keys("Foo[]") == (set(), True)
+    assert ca._resp_type_keys("any") == (set(), True)
+    assert ca._resp_type_keys("{ a: string } & Bar") == (set(), True)
+    assert ca._resp_type_keys("{ [k: string]: number }") == (set(), True)
+
+
+def test_response_render_sections_present():
+    md = ca.render_response_markdown(ca.build_response_contract())
+    assert "响应结构面" in md
+    assert "违例类型" in md
+    assert "静态核对覆盖面" in md
+    assert "诚实边界" in md
+
+
+def test_response_synthetic_missing_field_detected(tmp_path):
+    """合成树: 前端声明 `derived` 但后端 return 无此键 → 硬违例, 未登记即待分诊."""
+    _write(
+        tmp_path,
+        "huginn/routes/thing.py",
+        "from fastapi import APIRouter\n"
+        'router = APIRouter(prefix="/thing")\n'
+        '@router.post("/derive")\n'
+        "async def thing_derive():\n"
+        '    return {"success": True, "equations": {"a": "b"}}\n',
+    )
+    _write(
+        tmp_path,
+        "huginn/routes/__init__.py",
+        "from huginn.routes.thing import router as thing_router\n"
+        "ALL_ROUTERS = [thing_router]\n",
+    )
+    _write(tmp_path, "fe/a.ts", "await api.post<{ derived?: string }>('/thing/derive', {});\n")
+    c = ca.build_response_contract(tmp_path, tmp_path / "fe")
+    assert len(c["violations"]) == 1
+    v = c["violations"][0]
+    assert v["kind"] == "missing-field"
+    assert v["endpoint"] == "/thing/derive"
+    assert v["missing"] == ["derived"]
+    assert sorted(v["produced"]) == ["equations", "success"]
+    assert v["triage"] == "untriaged"
+    assert len(c["untriaged"]) == 1
+
+
+def test_response_synthetic_named_type_and_open_shape(tmp_path):
+    """合成树: 具名 interface 解析出字段 (命中即无违例); 后端 return 变量 → 开放跳过."""
+    _write(
+        tmp_path,
+        "huginn/routes/thing.py",
+        "from fastapi import APIRouter\n"
+        'router = APIRouter(prefix="/thing")\n'
+        '@router.get("/ok")\n'
+        "async def thing_ok():\n"
+        '    return {"a": 1, "b": "x"}\n'
+        '@router.get("/open")\n'
+        "async def thing_open():\n"
+        "    return _payload()\n",
+    )
+    _write(
+        tmp_path,
+        "huginn/routes/__init__.py",
+        "from huginn.routes.thing import router as thing_router\n"
+        "ALL_ROUTERS = [thing_router]\n",
+    )
+    _write(
+        tmp_path,
+        "fe/a.ts",
+        "interface Thing { a?: number; b?: string }\n"
+        "const one = await api.get<Thing>('/thing/ok');\n"
+        "await api.get<{ c?: number }>('/thing/open');\n",
+    )
+    c = ca.build_response_contract(tmp_path, tmp_path / "fe")
+    assert c["violations"] == []
+    assert c["type_count"] == 1
+    assert c["coverage"]["checked"] == 1
+    assert c["coverage"]["skip_shape"] == 1
+
+
+def test_response_synthetic_open_declaration_and_ambiguity(tmp_path):
+    """合成树: `<any>` 声明跳过; 动态段并列命中多端点 → 歧义跳过 (不猜端点)."""
+    _write(
+        tmp_path,
+        "huginn/routes/thing.py",
+        "from fastapi import APIRouter\n"
+        'router = APIRouter(prefix="/thing")\n'
+        '@router.get("/any")\n'
+        "async def thing_any():\n"
+        '    return {"a": 1}\n'
+        '@router.get("/{x}/one")\n'
+        "async def thing_one():\n"
+        '    return {"p": 1}\n'
+        '@router.get("/{y}/one")\n'
+        "async def thing_two():\n"
+        '    return {"q": 2}\n',
+    )
+    _write(
+        tmp_path,
+        "huginn/routes/__init__.py",
+        "from huginn.routes.thing import router as thing_router\n"
+        "ALL_ROUTERS = [thing_router]\n",
+    )
+    _write(
+        tmp_path,
+        "fe/a.ts",
+        "await api.get<any>('/thing/any');\n"
+        "await api.get<{ p?: number }>('/thing/z/one');\n",
+    )
+    c = ca.build_response_contract(tmp_path, tmp_path / "fe")
+    # `<any>` 声明开放 → 跳过 (不误报); 动态段并列 → 歧义跳过.
+    assert c["violations"] == []
+    assert c["coverage"]["skip_decl"] == 1
+    assert c["coverage"]["skip_ambiguous"] == 1
+
+
 # ──────────────────── 文档漂移 ────────────────────
 
 

@@ -1207,13 +1207,13 @@ export function SettingsPanel(props: SettingsPanelProps) {
               <button
                 onClick={async () => {
                   try {
-                    const data = await api.get<{ available?: Record<string, boolean> }>("/export/status");
+                    const data = await api.get<{ status?: Record<string, { available?: boolean }> }>("/export/status");
                     const el = document.getElementById("export-status");
-                    if (el && data.available) {
+                    if (el && data.status) {
                       // 用 textContent 代替 innerHTML, 避免 XSS
                       el.innerHTML = "";
-                      Object.entries(data.available)
-                        .filter(([, v]) => v)
+                      Object.entries(data.status)
+                        .filter(([, v]) => v?.available)
                         .forEach(([k]) => {
                           const div = document.createElement("div");
                           div.textContent = `✓ ${k}`;

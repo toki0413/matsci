@@ -35,14 +35,14 @@ export function useMemory() {
       if (memoryFilter.tier) params.set('tier', memoryFilter.tier);
       const limit = loadMore ? memories.length + 100 : 100;
       params.set('limit', String(limit));
-      const data = await api.get<{ entries?: MemoryEntry[]; total?: number }>(`/memory?${params.toString()}`);
+      const data = await api.get<{ entries?: MemoryEntry[] }>(`/memory?${params.toString()}`);
       const newEntries = data.entries || [];
       if (loadMore) {
         setMemories(prev => [...prev, ...newEntries.slice(prev.length)]);
       } else {
         setMemories(newEntries);
       }
-      setMemoryHasMore((data.total ?? 0) > newEntries.length);
+      setMemoryHasMore(newEntries.length >= limit);
       setMemoriesLoading(false);
     } catch (e: any) {
       setMemoryMsg(`Load failed: ${e.message}`);
