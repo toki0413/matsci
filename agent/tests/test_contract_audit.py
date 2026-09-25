@@ -136,6 +136,154 @@ def test_selftest_block_excluded_from_dispatch(tmp_path):
     assert "ghost" not in wf["dispatch"]
 
 
+# ──────────────────── 词汇面 ────────────────────
+
+
+def test_vocab_private_all_caps_names_are_declared():
+    """回归: 带下划线前缀的全大写词表名 (`_KINDS`/`_NEGATIVE_WORDS`) 也算声明枚举.
+
+    旧正则 `^[A-Z][A-Z0-9_]*$` 拒首字符 `_`, 把私有词表误判为函数内局部临时集合,
+    整面漏报 (闭集簇 108 → 159)。小写局部元组 (`required`) 仍不算声明。
+    """
+    assert ca._VOCAB_ALL_CAPS_RE.match("_KINDS")
+    assert ca._VOCAB_ALL_CAPS_RE.match("_NEGATIVE_WORDS")
+    assert not ca._VOCAB_ALL_CAPS_RE.match("required")
+
+
+def test_vocab_mapping_roundtrip_loss_detected():
+    """非单射 + 声明了反向表 ⇒ 往返丢信息: `AUTOLOOP_TO_PHASE` 把 learn·validate
+    共像到 `ResearchPhase.VALIDATION`, `PHASE_TO_AUTOLOOP` 反向只能还原一个。"""
+    maps = {m["name"]: m for m in ca.build_vocabulary_contract()["mappings"]}
+    m = maps["AUTOLOOP_TO_PHASE"]
+    assert m["injective"] is False
+    assert m["reverse_present"] is True
+    assert len(m["collisions"]) == 1
+
+
+def test_vocab_memory_type_drift_detected():
+    """同名跨模块定义且值域不等: `memory/types.py::MemoryType` 是 `typing.py` 的子集
+    (前者缺 cross_domain_transfer 等 5 词) —— mutually exclusive 的"词表漂移"。"""
+    c = ca.build_vocabulary_contract()
+    dups = {d["name"]: d for d in c["duplicate_defs"]}
+    assert dups["class MemoryType"]["same_values"] is False
+    assert any(
+        {m["name"] for m in d["members"]} == {"class MemoryType"} for d in c["divergence"]
+    )
+
+
+def test_vocab_render_contains_mapping_and_collision_tables():
+    md = ca.render_vocabulary_markdown(ca.build_vocabulary_contract())
+    assert "词汇面" in md
+    assert "未登记撞名" in md
+    assert "AUTOLOOP_TO_PHASE" in md
+
+
+def test_vocab_local_tuple_not_treated_as_vocabulary(tmp_path):
+    """合成树: 函数内同名局部元组不算词表, 模块级全大写元组才算 (旧版把
+    `required = ("location", ...)` 误报成跨模块同名定义)。"""
+    _write(tmp_path, "huginn/a.py", 'def f():\n    required = ("a", "b", "c")\n')
+    _write(tmp_path, "huginn/b.py", 'def g():\n    required = ("x", "y", "z")\n')
+    _write(tmp_path, "huginn/c.py", 'KINDS = ("alpha", "beta", "gamma")\n')
+    _write(tmp_path, "huginn/d.py", 'KINDS = ("delta", "epsilon", "zeta")\n')
+
+    names = {d["name"] for d in ca.build_vocabulary_contract(tmp_path)["duplicate_defs"]}
+    assert "KINDS" in names
+    assert "required" not in names
+
+
+# ──────────────────── 真实仓: 工具面 ────────────────────
+
+
+def test_tool_registry_specs_all_resolve():
+    """注册清单 `_CORE_MODULES`/`_OPTIONAL_MODULES` 引用的类必须静态可解析.
+
+    解析不到 ⇒ 该工具根本没注册成功 (import 名或类名写错).
+    """
+    c = ca.build_tool_contract()
+    assert c["unresolved_specs"] == []
+    assert c["spec_count"] > 100
+
+
+def test_tool_registry_names_unique():
+    """同名工具名由多类声明 ⇒ 注册表里后者覆盖前者 (静默丢工具)."""
+    assert ca.build_tool_contract()["duplicate_names"] == []
+
+
+def test_tool_allowlist_true_dead_items_detected():
+    """`READ_ONLY_TOOLS` 用短名 (`read_file`/`list_dir`), 注册名却是 `file_read_tool`.
+
+    死项 ⇒ `set_mode` 永不命中, sidecar 的 auto_approve 对该读工具失效 —— 真实缺陷.
+    """
+    by = {a["name"]: a for a in ca.build_tool_contract()["allowlists"]}
+    ro = by["READ_ONLY_TOOLS"]
+    assert ro["namespace"] == "registry"
+    assert "read_file" in ro["phantoms"]
+    assert "list_dir" in ro["phantoms"]
+
+
+def test_tool_allowlist_bare_name_alias_not_dead():
+    """裸名↔`_tool` 别名算别名不算死项 (`_DFT_MD_TOOLS` 的 `vasp`↔`vasp_tool`)."""
+    by = {a["name"]: a for a in ca.build_tool_contract()["allowlists"]}
+    dft = by["_DFT_MD_TOOLS"]
+    assert "vasp" in dft["aliases"]
+    assert "vasp" not in dft["phantoms"]
+
+
+def test_tool_external_namespace_not_flagged_dead():
+    """与注册名零重叠的白名单 (MCP 外部工具名) 整表判外部命名空间, 不报死项."""
+    by = {a["name"]: a for a in ca.build_tool_contract()["allowlists"]}
+    mcp = by["_HIGH_VALUE_MCP_TOOLS"]
+    assert mcp["namespace"] == "external"
+    assert mcp["phantoms"] == []
+    assert mcp["aliases"] == []
+
+
+def test_tool_unregistered_class_reported():
+    """声明了 `name` 却不在注册清单的类要被报出来 (宣称未注册)."""
+    assert "PyBulletTool" in ca.build_tool_contract()["unregistered_classes"]
+
+
+def test_tool_render_and_issues_contain_sections():
+    md = ca.render_tool_markdown(ca.build_tool_contract())
+    assert "工具面" in md
+    assert "死项" in md
+    assert "注册声明缺口" in md
+    assert "允许表死项" in "\n".join(ca.find_issues(ca.build_mece_snapshot()))
+
+
+def test_tool_synthetic_alias_phantom_and_external(tmp_path):
+    """合成树: 别名/真死项/外部命名空间三类互不混淆."""
+    _write(
+        tmp_path,
+        "huginn/tools/vasp_tool.py",
+        'class VaspTool(HuginnTool):\n    name = "vasp_tool"\n',
+    )
+    _write(
+        tmp_path,
+        "huginn/allow.py",
+        'A_TOOLS = {"vasp", "ghost_tool"}\nB_TOOLS = {"mcp_a", "mcp_b"}\n',
+    )
+    by = {a["name"]: a for a in ca.build_tool_contract(tmp_path)["allowlists"]}
+    assert "vasp" in by["A_TOOLS"]["aliases"]  # vasp ↔ vasp_tool
+    assert "ghost_tool" in by["A_TOOLS"]["phantoms"]  # 真死项
+    assert by["B_TOOLS"]["namespace"] == "external"  # 零重叠 → 外部命名空间
+    assert by["B_TOOLS"]["phantoms"] == []
+
+
+def test_tool_synthetic_cross_module_consumer_marks_wired(tmp_path):
+    """合成树: 别的模块 import 白名单 ⇒ wired; 仅定义文件内引用 ⇒ internal-only."""
+    _write(
+        tmp_path,
+        "huginn/tools/vasp_tool.py",
+        'class VaspTool(HuginnTool):\n    name = "vasp_tool"\n',
+    )
+    _write(tmp_path, "huginn/allow.py", 'A_TOOLS = {"vasp_tool"}\nB_TOOLS = {"vasp_tool"}\n')
+    _write(tmp_path, "huginn/consumer.py", "from huginn.allow import A_TOOLS\nX = A_TOOLS\n")
+    by = {a["name"]: a for a in ca.build_tool_contract(tmp_path)["allowlists"]}
+    assert by["A_TOOLS"]["status"] == "wired"
+    assert by["B_TOOLS"]["status"] == "dead"
+
+
 # ──────────────────── 文档漂移 ────────────────────
 
 
