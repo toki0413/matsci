@@ -1,0 +1,630 @@
+{
+ "channels": {
+  "event_bus": {
+   "agent.step.retrying": {
+    "closed": true,
+    "keys": [
+     "data",
+     "source",
+     "thread_id",
+     "ts",
+     "type"
+    ]
+   },
+   "campaign.budget_exhausted": {
+    "closed": true,
+    "keys": [
+     "data",
+     "source",
+     "thread_id",
+     "ts",
+     "type"
+    ]
+   },
+   "campaign.hypothesis": {
+    "closed": true,
+    "keys": [
+     "data",
+     "source",
+     "thread_id",
+     "ts",
+     "type"
+    ]
+   },
+   "campaign.iteration": {
+    "closed": true,
+    "keys": [
+     "data",
+     "source",
+     "thread_id",
+     "ts",
+     "type"
+    ]
+   },
+   "campaign.refine": {
+    "closed": true,
+    "keys": [
+     "data",
+     "source",
+     "thread_id",
+     "ts",
+     "type"
+    ]
+   },
+   "campaign.retry": {
+    "closed": true,
+    "keys": [
+     "data",
+     "source",
+     "thread_id",
+     "ts",
+     "type"
+    ]
+   },
+   "campaign.suspect": {
+    "closed": true,
+    "keys": [
+     "data",
+     "source",
+     "thread_id",
+     "ts",
+     "type"
+    ]
+   },
+   "cognitive.csm.transition": {
+    "closed": true,
+    "keys": [
+     "data",
+     "source",
+     "thread_id",
+     "ts",
+     "type"
+    ]
+   },
+   "compact.end": {
+    "closed": true,
+    "keys": [
+     "data",
+     "source",
+     "thread_id",
+     "ts",
+     "type"
+    ]
+   },
+   "compact.start": {
+    "closed": true,
+    "keys": [
+     "data",
+     "source",
+     "thread_id",
+     "ts",
+     "type"
+    ]
+   },
+   "context.overflow": {
+    "closed": true,
+    "keys": [
+     "data",
+     "source",
+     "thread_id",
+     "ts",
+     "type"
+    ]
+   },
+   "cost.narrative": {
+    "closed": true,
+    "keys": [
+     "data",
+     "source",
+     "thread_id",
+     "ts",
+     "type"
+    ]
+   },
+   "decision.point": {
+    "closed": true,
+    "keys": [
+     "data",
+     "source",
+     "thread_id",
+     "ts",
+     "type"
+    ]
+   },
+   "embedding.download.done": {
+    "closed": true,
+    "keys": [
+     "data",
+     "source",
+     "thread_id",
+     "ts",
+     "type"
+    ]
+   },
+   "embedding.download.error": {
+    "closed": true,
+    "keys": [
+     "data",
+     "source",
+     "thread_id",
+     "ts",
+     "type"
+    ]
+   },
+   "embedding.download.progress": {
+    "closed": true,
+    "keys": [
+     "data",
+     "source",
+     "thread_id",
+     "ts",
+     "type"
+    ]
+   },
+   "embedding.download.start": {
+    "closed": true,
+    "keys": [
+     "data",
+     "source",
+     "thread_id",
+     "ts",
+     "type"
+    ]
+   },
+   "event_bus.dropped": {
+    "closed": true,
+    "keys": [
+     "data",
+     "source",
+     "thread_id",
+     "ts",
+     "type"
+    ]
+   },
+   "heat_engine.health": {
+    "closed": true,
+    "keys": [
+     "data",
+     "source",
+     "thread_id",
+     "ts",
+     "type"
+    ]
+   },
+   "llm.response": {
+    "closed": true,
+    "keys": [
+     "data",
+     "source",
+     "thread_id",
+     "ts",
+     "type"
+    ]
+   },
+   "pet.mood": {
+    "closed": true,
+    "keys": [
+     "data",
+     "source",
+     "thread_id",
+     "ts",
+     "type"
+    ]
+   },
+   "pipeline.stage_change": {
+    "closed": true,
+    "keys": [
+     "data",
+     "source",
+     "thread_id",
+     "ts",
+     "type"
+    ]
+   },
+   "pipeline.suggest": {
+    "closed": true,
+    "keys": [
+     "data",
+     "source",
+     "thread_id",
+     "ts",
+     "type"
+    ]
+   },
+   "quality.check": {
+    "closed": true,
+    "keys": [
+     "data",
+     "source",
+     "thread_id",
+     "ts",
+     "type"
+    ]
+   },
+   "session.end": {
+    "closed": true,
+    "keys": [
+     "data",
+     "source",
+     "thread_id",
+     "ts",
+     "type"
+    ]
+   },
+   "session.start": {
+    "closed": true,
+    "keys": [
+     "data",
+     "source",
+     "thread_id",
+     "ts",
+     "type"
+    ]
+   },
+   "snapshot.revert": {
+    "closed": true,
+    "keys": [
+     "data",
+     "source",
+     "thread_id",
+     "ts",
+     "type"
+    ]
+   },
+   "snapshot.take": {
+    "closed": true,
+    "keys": [
+     "data",
+     "source",
+     "thread_id",
+     "ts",
+     "type"
+    ]
+   },
+   "team.batch.start": {
+    "closed": true,
+    "keys": [
+     "data",
+     "source",
+     "thread_id",
+     "ts",
+     "type"
+    ]
+   },
+   "team.member.done": {
+    "closed": true,
+    "keys": [
+     "data",
+     "source",
+     "thread_id",
+     "ts",
+     "type"
+    ]
+   },
+   "team.member.start": {
+    "closed": true,
+    "keys": [
+     "data",
+     "source",
+     "thread_id",
+     "ts",
+     "type"
+    ]
+   },
+   "team.member.tool": {
+    "closed": true,
+    "keys": [
+     "data",
+     "source",
+     "thread_id",
+     "ts",
+     "type"
+    ]
+   },
+   "team.run.done": {
+    "closed": true,
+    "keys": [
+     "data",
+     "source",
+     "thread_id",
+     "ts",
+     "type"
+    ]
+   },
+   "team.run.start": {
+    "closed": true,
+    "keys": [
+     "data",
+     "source",
+     "thread_id",
+     "ts",
+     "type"
+    ]
+   },
+   "tool.blocked": {
+    "closed": true,
+    "keys": [
+     "data",
+     "source",
+     "thread_id",
+     "ts",
+     "type"
+    ]
+   },
+   "tool.call": {
+    "closed": true,
+    "keys": [
+     "data",
+     "source",
+     "thread_id",
+     "ts",
+     "type"
+    ]
+   },
+   "tool.error": {
+    "closed": true,
+    "keys": [
+     "data",
+     "source",
+     "thread_id",
+     "ts",
+     "type"
+    ]
+   },
+   "tool.result": {
+    "closed": true,
+    "keys": [
+     "data",
+     "source",
+     "thread_id",
+     "ts",
+     "type"
+    ]
+   }
+  },
+  "progress": {
+   "campaign": {
+    "closed": true,
+    "keys": [
+     "_kind",
+     "completed_at",
+     "current_label",
+     "current_step",
+     "data",
+     "description",
+     "engine_kind",
+     "error",
+     "eta_seconds",
+     "event",
+     "metadata",
+     "percentage",
+     "stage_labels",
+     "started_at",
+     "status",
+     "task_id",
+     "timeout_seconds",
+     "total_steps",
+     "ts",
+     "updated_at"
+    ]
+   },
+   "heartbeat": {
+    "closed": true,
+    "keys": [
+     "ts"
+    ]
+   },
+   "snapshot": {
+    "closed": true,
+    "keys": [
+     "completed_at",
+     "current_label",
+     "current_step",
+     "description",
+     "engine_kind",
+     "error",
+     "eta_seconds",
+     "metadata",
+     "percentage",
+     "stage_labels",
+     "started_at",
+     "status",
+     "task_id",
+     "timeout_seconds",
+     "total_steps",
+     "updated_at"
+    ]
+   },
+   "update": {
+    "closed": true,
+    "keys": [
+     "_kind",
+     "completed_at",
+     "current_label",
+     "current_step",
+     "data",
+     "description",
+     "engine_kind",
+     "error",
+     "eta_seconds",
+     "event",
+     "metadata",
+     "percentage",
+     "stage_labels",
+     "started_at",
+     "status",
+     "task_id",
+     "timeout_seconds",
+     "total_steps",
+     "ts",
+     "updated_at"
+    ]
+   }
+  }
+ },
+ "coverage": {
+  "checked": 41,
+  "skip_frame": 2,
+  "skip_shape": 0
+ },
+ "frame_reads": {
+  "event_bus": {
+   "agent.step.retrying": [],
+   "campaign.budget_exhausted": [],
+   "campaign.hypothesis": [],
+   "campaign.iteration": [],
+   "campaign.refine": [],
+   "campaign.retry": [],
+   "campaign.suspect": [],
+   "cognitive.csm.transition": [],
+   "compact.end": [],
+   "compact.start": [],
+   "context.overflow": [],
+   "cost.narrative": [
+    "data"
+   ],
+   "decision.point": [
+    "data"
+   ],
+   "embedding.download.done": [
+    "data",
+    "type"
+   ],
+   "embedding.download.error": [
+    "data",
+    "type"
+   ],
+   "embedding.download.progress": [
+    "data",
+    "type"
+   ],
+   "embedding.download.start": [
+    "data",
+    "type"
+   ],
+   "event_bus.dropped": [],
+   "heat_engine.health": [],
+   "llm.response": [],
+   "pet.mood": [],
+   "pipeline.stage_change": [],
+   "pipeline.suggest": [],
+   "quality.check": [],
+   "session.end": [],
+   "session.start": [],
+   "snapshot.revert": [],
+   "snapshot.take": [],
+   "team.batch.start": [
+    "data",
+    "type"
+   ],
+   "team.member.done": [
+    "data",
+    "type"
+   ],
+   "team.member.start": [
+    "data",
+    "type"
+   ],
+   "team.member.tool": [
+    "data",
+    "type"
+   ],
+   "team.run.done": [
+    "data",
+    "type"
+   ],
+   "team.run.start": [
+    "data",
+    "type"
+   ],
+   "tool.blocked": [],
+   "tool.call": [],
+   "tool.error": [],
+   "tool.result": []
+  },
+  "progress": {
+   "campaign": [
+    "_kind",
+    "data",
+    "event",
+    "task_id",
+    "ts"
+   ],
+   "heartbeat": [],
+   "snapshot": [
+    "current_label",
+    "engine_kind",
+    "percentage",
+    "status"
+   ],
+   "update": [
+    "current_label",
+    "engine_kind",
+    "percentage",
+    "status"
+   ]
+  }
+ },
+ "kind_counts": {},
+ "read_count": 43,
+ "untriaged": [],
+ "violations": [],
+ "zero_read": [
+  {
+   "channel": "progress",
+   "field": "completed_at"
+  },
+  {
+   "channel": "progress",
+   "field": "current_step"
+  },
+  {
+   "channel": "progress",
+   "field": "description"
+  },
+  {
+   "channel": "progress",
+   "field": "error"
+  },
+  {
+   "channel": "progress",
+   "field": "eta_seconds"
+  },
+  {
+   "channel": "progress",
+   "field": "metadata"
+  },
+  {
+   "channel": "progress",
+   "field": "stage_labels"
+  },
+  {
+   "channel": "progress",
+   "field": "started_at"
+  },
+  {
+   "channel": "progress",
+   "field": "timeout_seconds"
+  },
+  {
+   "channel": "progress",
+   "field": "total_steps"
+  },
+  {
+   "channel": "progress",
+   "field": "updated_at"
+  },
+  {
+   "channel": "event_bus",
+   "field": "source"
+  },
+  {
+   "channel": "event_bus",
+   "field": "thread_id"
+  },
+  {
+   "channel": "event_bus",
+   "field": "ts"
+  }
+ ]
+}

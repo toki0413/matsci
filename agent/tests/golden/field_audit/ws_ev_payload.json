@@ -1,0 +1,369 @@
+{
+ "channels": {
+  "agent": {
+   "approval_request": {
+    "closed": false,
+    "keys": []
+   },
+   "auto_approve_set": {
+    "closed": true,
+    "keys": [
+     "enabled",
+     "scope"
+    ]
+   },
+   "auto_checkpoint": {
+    "closed": true,
+    "keys": [
+     "base",
+     "files",
+     "id"
+    ]
+   },
+   "citations": {
+    "closed": true,
+    "keys": [
+     "sources"
+    ]
+   },
+   "clarification_request": {
+    "closed": true,
+    "keys": [
+     "questions"
+    ]
+   },
+   "context_compacted": {
+    "closed": true,
+    "keys": [
+     "after_pct",
+     "before_pct"
+    ]
+   },
+   "decision_resolved": {
+    "closed": true,
+    "keys": [
+     "id",
+     "status"
+    ]
+   },
+   "done": {
+    "closed": true,
+    "keys": []
+   },
+   "error": {
+    "closed": true,
+    "keys": [
+     "error"
+    ]
+   },
+   "exploration_result": {
+    "closed": true,
+    "keys": [
+     "data"
+    ]
+   },
+   "governance": {
+    "closed": true,
+    "keys": [
+     "action_name",
+     "allowed",
+     "audit_id",
+     "category",
+     "predictability",
+     "reasons",
+     "requires_approval",
+     "risk_level",
+     "rollback_available",
+     "status",
+     "verification_message",
+     "verification_passed"
+    ]
+   },
+   "guide_ack": {
+    "closed": true,
+    "keys": [
+     "error",
+     "stored"
+    ]
+   },
+   "hook_warning": {
+    "closed": true,
+    "keys": [
+     "tool_name",
+     "warnings"
+    ]
+   },
+   "pet_update": {
+    "closed": true,
+    "keys": [
+     "active_tasks",
+     "happiness",
+     "hunger",
+     "level",
+     "message",
+     "mood",
+     "xp"
+    ]
+   },
+   "ping": {
+    "closed": true,
+    "keys": [
+     "ts"
+    ]
+   },
+   "plan": {
+    "closed": true,
+    "keys": [
+     "plan",
+     "plan_id"
+    ]
+   },
+   "plan_result": {
+    "closed": true,
+    "keys": [
+     "all_passed",
+     "criteria",
+     "plan_id"
+    ]
+   },
+   "pong": {
+    "closed": true,
+    "keys": []
+   },
+   "reasoning_delta": {
+    "closed": true,
+    "keys": [
+     "text"
+    ]
+   },
+   "sediment": {
+    "closed": true,
+    "keys": [
+     "kind",
+     "preview",
+     "stored"
+    ]
+   },
+   "side_question_pending": {
+    "closed": true,
+    "keys": [
+     "created_at",
+     "question",
+     "question_id"
+    ]
+   },
+   "suggest_mode_set": {
+    "closed": true,
+    "keys": [
+     "enabled",
+     "scope"
+    ]
+   },
+   "task_progress": {
+    "closed": false,
+    "keys": []
+   },
+   "text_delta": {
+    "closed": true,
+    "keys": [
+     "text"
+    ]
+   },
+   "tool_auto_approved": {
+    "closed": false,
+    "keys": []
+   },
+   "tool_call": {
+    "closed": true,
+    "keys": [
+     "args",
+     "id",
+     "name"
+    ]
+   },
+   "tool_result": {
+    "closed": true,
+    "keys": [
+     "content",
+     "id"
+    ]
+   }
+  }
+ },
+ "coverage": {
+  "checked": 53,
+  "skip_frame": 12,
+  "skip_shape": 74
+ },
+ "frame_reads": {
+  "agent": {
+   "approval_request": [
+    "dangerous",
+    "reason",
+    "request_id",
+    "tool_name"
+   ],
+   "auto_approve_set": [
+    "enabled"
+   ],
+   "auto_checkpoint": [
+    "base",
+    "files",
+    "id"
+   ],
+   "citations": [
+    "sources"
+   ],
+   "clarification_request": [
+    "questions"
+   ],
+   "context_compacted": [
+    "after_pct",
+    "before_pct"
+   ],
+   "decision_resolved": [],
+   "done": [],
+   "error": [
+    "error"
+   ],
+   "exploration_result": [
+    "data"
+   ],
+   "governance": [],
+   "guide_ack": [
+    "stored"
+   ],
+   "hook_warning": [
+    "tool_name",
+    "warnings"
+   ],
+   "pet_update": [
+    "happiness",
+    "hunger",
+    "level",
+    "mood",
+    "xp"
+   ],
+   "ping": [],
+   "plan": [
+    "plan",
+    "plan_id"
+   ],
+   "plan_result": [
+    "all_passed",
+    "criteria"
+   ],
+   "pong": [],
+   "reasoning_delta": [
+    "text"
+   ],
+   "sediment": [
+    "kind",
+    "preview",
+    "stored"
+   ],
+   "side_question_pending": [
+    "question",
+    "question_id"
+   ],
+   "suggest_mode_set": [
+    "enabled"
+   ],
+   "task_progress": [
+    "completed",
+    "detail",
+    "job_id",
+    "message",
+    "pipeline",
+    "progress_pct",
+    "stage",
+    "stage_index",
+    "stage_label",
+    "status",
+    "task_type",
+    "topic",
+    "total",
+    "total_stages"
+   ],
+   "text_delta": [
+    "text"
+   ],
+   "tool_auto_approved": [],
+   "tool_call": [
+    "args",
+    "id",
+    "name"
+   ],
+   "tool_result": [
+    "content",
+    "id"
+   ]
+  }
+ },
+ "kind_counts": {},
+ "read_count": 139,
+ "untriaged": [],
+ "violations": [],
+ "zero_read": [
+  {
+   "channel": "agent",
+   "field": "action_name"
+  },
+  {
+   "channel": "agent",
+   "field": "active_tasks"
+  },
+  {
+   "channel": "agent",
+   "field": "allowed"
+  },
+  {
+   "channel": "agent",
+   "field": "audit_id"
+  },
+  {
+   "channel": "agent",
+   "field": "category"
+  },
+  {
+   "channel": "agent",
+   "field": "created_at"
+  },
+  {
+   "channel": "agent",
+   "field": "predictability"
+  },
+  {
+   "channel": "agent",
+   "field": "reasons"
+  },
+  {
+   "channel": "agent",
+   "field": "requires_approval"
+  },
+  {
+   "channel": "agent",
+   "field": "risk_level"
+  },
+  {
+   "channel": "agent",
+   "field": "rollback_available"
+  },
+  {
+   "channel": "agent",
+   "field": "scope"
+  },
+  {
+   "channel": "agent",
+   "field": "ts"
+  },
+  {
+   "channel": "agent",
+   "field": "verification_message"
+  },
+  {
+   "channel": "agent",
+   "field": "verification_passed"
+  }
+ ]
+}

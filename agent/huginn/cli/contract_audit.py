@@ -112,6 +112,7 @@ import json
 import re
 import sys
 from collections import Counter, defaultdict
+from collections.abc import Iterator
 from pathlib import Path
 
 # 包根 (huginn/) 与仓根 (agent/, 含 tests/). 模块路径统一相对仓根, 便于把
@@ -2674,7 +2675,8 @@ _SSE_PAYLOAD_EVENT_BUS_MODULE = "huginn/events/event_bus.py"
 _SSE_PAYLOAD_TO_SSE = "to_sse"
 # 前端: `const t = JSON.parse(e.data)` → 顶层 `t.<字段>` 读取; 内联事件处理函数.
 _FE_JSON_PARSE = re.compile(r"(\w+)\s*=\s*JSON\.parse\(\s*(\w+)\.data\s*\)")
-_FE_FIELD_READ = re.compile(r"\b(\w+)\s*\??\.\s*([A-Za-z_$][\w$]*)")
+# 前端 `<var>.<字段>` 顶层读取 (可带 `?.`); 组1=变量, 组2=字段. SSE 与 WS 事件负载面共用.
+_FE_DOT_FIELD_READ = re.compile(r"\b(\w+)\s*\??\.\s*([A-Za-z_$][\w$]*)")
 _FE_LISTEN_INLINE_HANDLER = re.compile(
     r"(\w+)\.addEventListener\(\s*[\"']([^\"']+)[\"']\s*,\s*\(\s*\w+\s*:\s*MessageEvent\s*\)\s*=>\s*\{"
 )
@@ -2873,20 +2875,70 @@ def _sse_event_bus_shape(root: Path) -> set[str] | None:
     return None
 
 
-def _sse_payload_reads(frontend: Path) -> list[dict]:
-    """扫前端 SSE 处理函数里的 `t.<字段>` 顶层读取 (t = `JSON.parse(e.data)` 结果)."""
-    reads: list[dict] = []
+def _fe_ts_files(
+    frontend: Path, skip_suffixes: tuple[str, ...] = ()
+) -> Iterator[tuple[Path, str, str]]:
+    """遍历前端 `.ts`/`.tsx` → `(path, rel, text)`; `rel` 以 `skip_suffixes` 结尾则跳过.
+
+    统一前端扫描取材规则 (后缀过滤 / `rel` 归属 / 读失败容错), 供 SSE 事件负载面与
+    WS 事件负载面共用.
+    """
     if not frontend.is_dir():
-        return reads
-    chan_keys = sorted(_SSE_CHANNELS, key=len, reverse=True)
+        return
     for p in sorted(frontend.rglob("*")):
         if not p.is_file() or p.suffix not in (".ts", ".tsx"):
+            continue
+        rel = _display(frontend, p)
+        if skip_suffixes and rel.endswith(skip_suffixes):
             continue
         try:
             text = p.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        rel = _display(frontend, p)
+        yield p, rel, text
+
+
+def _fe_field_read_rows(
+    *,
+    rel: str,
+    channel: str | None,
+    frames: list[str],
+    body: str,
+    base_line: int,
+    readable: frozenset[str],
+    skip_fields: frozenset[str] = frozenset(),
+) -> list[dict]:
+    """`body` 内 `readable.<字段>` 顶层读取 → 行记录 (字段外层 × 帧内层, 保序).
+
+    `base_line` 为 `body` 首行行号 (1 基), 行内偏移经 `body.count("\\n")` 折算.
+    SSE 事件负载面与 WS 事件负载面共用.
+    """
+    rows: list[dict] = []
+    for fm in _FE_DOT_FIELD_READ.finditer(body):
+        if fm.group(1) not in readable:
+            continue
+        field = fm.group(2)
+        if field in skip_fields:
+            continue
+        ln_no = base_line + body.count("\n", 0, fm.start())
+        for fr in frames:
+            rows.append(
+                {
+                    "rel": rel,
+                    "line": ln_no,
+                    "channel": channel,
+                    "frame": fr,
+                    "field": field,
+                }
+            )
+    return rows
+
+
+def _sse_payload_reads(frontend: Path) -> list[dict]:
+    """扫前端 SSE 处理函数里的 `t.<字段>` 顶层读取 (t = `JSON.parse(e.data)` 结果)."""
+    reads: list[dict] = []
+    chan_keys = sorted(_SSE_CHANNELS, key=len, reverse=True)
+    for _p, rel, text in _fe_ts_files(frontend):
         lines = text.splitlines()
 
         assigns: list[tuple[int, str, str | None]] = []
@@ -2917,21 +2969,16 @@ def _sse_payload_reads(frontend: Path) -> list[dict]:
             pm = _FE_JSON_PARSE.search(body)
             if pm is None:
                 return
-            var = pm.group(1)
-            for fm in _FE_FIELD_READ.finditer(body):
-                if fm.group(1) != var:
-                    continue
-                ln_no = base_line + body.count("\n", 0, fm.start())
-                for fr in frames:
-                    reads.append(
-                        {
-                            "rel": _rel,
-                            "line": ln_no,
-                            "channel": ch,
-                            "frame": fr,
-                            "field": fm.group(2),
-                        }
-                    )
+            reads.extend(
+                _fe_field_read_rows(
+                    rel=_rel,
+                    channel=ch,
+                    frames=frames,
+                    body=body,
+                    base_line=base_line,
+                    readable=frozenset({pm.group(1)}),
+                )
+            )
 
         # 具名处理函数: addEventListener(<帧名>, <handler>) → handler → 帧/通道
         reg: dict[str, list[tuple[str, str | None]]] = {}
@@ -6177,7 +6224,6 @@ def _ws_ev_payload_shapes(root: Path) -> dict[str, dict[str, dict]]:
 
 _FE_AS_ANY_RE = re.compile(r"\(\s*(\w+)\s+as\s+any\s*\)")
 _FE_TS_VAR_ALIAS_RE = re.compile(r"\b(?:const|let|var)\s+(\w+)\s*=\s*(\w+)\s*;")
-_WS_EV_FIELD_READ = re.compile(r"\b(\w+)\s*\??\.\s*([A-Za-z_$][\w$]*)")
 
 
 def _skip_balanced_paren(text: str, i: int) -> int:
@@ -6258,18 +6304,9 @@ def _fe_ws_if_segments(text: str, ws_vars: set[str]) -> list[tuple[str, str, int
 def _ws_ev_payload_reads(frontend: Path) -> list[dict]:
     """扫前端 `.ts`/`.tsx`: WS `type` 分支内的 `data.<字段>` 顶层读取 (带通道归属)."""
     reads: list[dict] = []
-    if not frontend.is_dir():
-        return reads
-    for p in sorted(frontend.rglob("*")):
-        if not p.is_file() or p.suffix not in (".ts", ".tsx"):
-            continue
-        rel = _display(frontend, p)
-        if rel.endswith(".spec.ts") or rel.endswith(_WS_DECL_SUFFIX):
-            continue
-        try:
-            text = p.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
+    for _p, rel, text in _fe_ts_files(
+        frontend, skip_suffixes=(".spec.ts", _WS_DECL_SUFFIX)
+    ):
         ws_vars = set(_FE_WS_MSG_VAR_RE.findall(text))
         if not ws_vars:
             continue
@@ -6281,22 +6318,17 @@ def _ws_ev_payload_reads(frontend: Path) -> list[dict]:
                 readable.add(am.group(1))
         segments = _fe_ws_case_segments(text, ws_vars) + _fe_ws_if_segments(text, ws_vars)
         for frame, body, base_line in segments:
-            norm = _FE_AS_ANY_RE.sub(r"\1", body)
-            for fm in _WS_EV_FIELD_READ.finditer(norm):
-                if fm.group(1) not in readable:
-                    continue
-                field = fm.group(2)
-                if field in _WS_EV_PAYLOAD_ENVELOPE:
-                    continue
-                reads.append(
-                    {
-                        "rel": rel,
-                        "line": base_line + norm.count("\n", 0, fm.start()),
-                        "channel": ch,
-                        "frame": frame,
-                        "field": field,
-                    }
+            reads.extend(
+                _fe_field_read_rows(
+                    rel=rel,
+                    channel=ch,
+                    frames=[frame],
+                    body=_FE_AS_ANY_RE.sub(r"\1", body),
+                    base_line=base_line,
+                    readable=frozenset(readable),
+                    skip_fields=_WS_EV_PAYLOAD_ENVELOPE,
                 )
+            )
     return reads
 
 
