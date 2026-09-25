@@ -6096,6 +6096,390 @@ def render_ws_payload_markdown(contract: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
+# WS 事件负载面: 后端 server→client 帧 payload 顶层键 ↔ 前端 type 分支字段读取
+# ---------------------------------------------------------------------------
+
+# 只核 agent 通道: 只有它在前端用 `WSMessage` 标注 (`(data: WSMessage) => …`),
+# 其余通道 (terminal/hpc/viewer3d) 前端按裸字段取值、无类型标注, 帧 wise 不可靠归因.
+_WS_EV_PAYLOAD_CHANNELS = frozenset({"agent"})
+# 信封键: `type` 是判别键 (帧名, 已由 WS 消费面核); `_ws_send` 统一为每帧注入
+# `thread_id` 供前端按线程路由 (见 ws_helpers.py), 故二者不属各帧 payload 形状.
+_WS_EV_PAYLOAD_ENVELOPE = frozenset({"type", "thread_id"})
+
+_WS_EV_PAYLOAD_KIND_DOC = {
+    "read-undeclared": (
+        "前端在某 type 分支读 `data.<字段>` 而后端该帧 payload 从不发此顶层键 (恒 undefined)"
+    )
+}
+
+_WS_EV_PAYLOAD_TRIAGE_DOC = {
+    "defect": "已确认缺陷 (待修)",
+    "intentional": "已确认有意",
+}
+
+# 已确认分诊表. 键 (通道, 帧名, 字段) → (标签, 理由); 未登记即"待分诊",
+# 回归测试会失败 (逼逐条人工判定). 空表 = 当前前端读的顶层字段都合契约.
+_WS_EV_PAYLOAD_CONFIRMED: dict[tuple[str, str, str], tuple[str, str]] = {}
+
+
+def _ws_ev_payload_triage(channel: str, frame: str, field: str) -> tuple[str, str] | None:
+    """WS 事件负载违例分诊: 返回 (标签, 理由); 未登记则 None (待人工确认)."""
+    return _WS_EV_PAYLOAD_CONFIRMED.get((channel, frame, field))
+
+
+def _ws_ev_payload_violation_mark(channel: str, frame: str, field: str) -> str:
+    tri = _ws_ev_payload_triage(channel, frame, field)
+    if tri is None:
+        return " — ⚠ 待分诊"
+    doc = _WS_EV_PAYLOAD_TRIAGE_DOC[tri[0]]
+    return f" — {'⛔' if tri[0] == 'defect' else '✅'} {doc}: {tri[1]}"
+
+
+def _ws_ev_payload_shapes(root: Path) -> dict[str, dict[str, dict]]:
+    """各通道 server→client 帧 payload 顶层键形状: {帧名: {keys, closed}}.
+
+    权威是后端 WS 路由模块里 `{"type": "…", …}` 字典字面量的**其余顶层键**;
+    同帧名在多个字面量出现时取并集 (安全下界). 帧名仅经变量透传 (无字面量)
+    或字面量含 `**` 展开 / 非常量键 → 形状开放 (closed=False).
+    """
+    produced = _ws_server_frames(root)
+    out: dict[str, dict[str, dict]] = {}
+    for ch in _WS_EV_PAYLOAD_CHANNELS:
+        present: set[str] = set()
+        closed_ok: dict[str, bool] = {}
+        keys: dict[str, set[str]] = defaultdict(set)
+        for rel in _WS_BACKEND_MODULES.get(ch, ()):
+            tree = _parse(root / rel)
+            if tree is None:
+                continue
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Dict):
+                    continue
+                lit = _ws_dict_type_literal(node)
+                if lit is None:
+                    continue
+                present.add(lit)
+                top = _dict_literal_keys(node)
+                if top is None:
+                    closed_ok[lit] = False
+                    continue
+                closed_ok.setdefault(lit, True)
+                keys[lit] |= top
+        frames: dict[str, dict] = {}
+        for f in produced.get(ch, {}).get("frames", []):
+            if f in present and closed_ok.get(f, False):
+                frames[f] = {"keys": keys[f] - _WS_EV_PAYLOAD_ENVELOPE, "closed": True}
+            else:
+                frames[f] = {"keys": set(), "closed": False}
+        out[ch] = frames
+    return out
+
+
+_FE_AS_ANY_RE = re.compile(r"\(\s*(\w+)\s+as\s+any\s*\)")
+_FE_TS_VAR_ALIAS_RE = re.compile(r"\b(?:const|let|var)\s+(\w+)\s*=\s*(\w+)\s*;")
+_WS_EV_FIELD_READ = re.compile(r"\b(\w+)\s*\??\.\s*([A-Za-z_$][\w$]*)")
+
+
+def _skip_balanced_paren(text: str, i: int) -> int:
+    """`text[i] == '('` → 匹配闭括号后的下标 (尊重字符串/嵌套); 未闭合返回 n."""
+    depth = 0
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if c in "\"'`":
+            i = _skip_ts_string(text, i)
+            continue
+        if c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        i += 1
+    return n
+
+
+def _fe_ws_case_segments(text: str, ws_vars: set[str]) -> list[tuple[str, str, int]]:
+    """`switch (<wsVar>.type) { case "lit": … }` 每段 → (帧名, body, body 起始行)."""
+    out: list[tuple[str, str, int]] = []
+    for m in _FE_SWITCH_TYPE_HEAD_RE.finditer(text):
+        vm = re.fullmatch(r"\s*(\w+)\.type\s*", m.group(1))
+        if vm is None or vm.group(1) not in ws_vars:
+            continue
+        start = m.end() - 1  # 指向 `{`
+        end = _ws_ts_brace_end(text, start)
+        inner = text[start + 1 : end - 1]
+        marks = [
+            (cm.group(1), cm.start(), cm.end()) for cm in _FE_WS_CASE_RE.finditer(inner)
+        ]
+        for idx, (frame, _cs, ce) in enumerate(marks):
+            seg_end = marks[idx + 1][1] if idx + 1 < len(marks) else len(inner)
+            out.append((frame, inner[ce:seg_end], _ws_line_of(text, start + 1 + ce)))
+    return out
+
+
+def _fe_ws_if_segments(text: str, ws_vars: set[str]) -> list[tuple[str, str, int]]:
+    """`if (<wsVar>.type === "a" [|| …]) { … }` 块 → 每帧 (帧名, body, body 起始行).
+
+    仅接受**纯 type 比较的析取式** (如 `data.type === "done" || data.type === "error"`);
+    含其它子表达式的条件 (线程路由等) 不归属任何帧.
+    """
+    out: list[tuple[str, str, int]] = []
+    for m in re.finditer(r"\bif\s*\(", text):
+        i = m.end() - 1
+        j = _skip_balanced_paren(text, i)
+        cond = text[i + 1 : j - 1]
+        frames: list[str] = []
+        ok = bool(cond.strip())
+        for part in cond.split("||"):
+            pm = re.fullmatch(
+                r'\s*(\w+)\.type\s*===?\s*["\']([a-z][a-z0-9_]*)["\']\s*', part
+            )
+            if pm is None or pm.group(1) not in ws_vars:
+                ok = False
+                break
+            frames.append(pm.group(2))
+        if not ok or not frames:
+            continue
+        k = j
+        n = len(text)
+        while k < n and text[k] in " \t\n":
+            k += 1
+        if k >= n or text[k] != "{":
+            continue
+        end = _ws_ts_brace_end(text, k)
+        body = text[k + 1 : end - 1]
+        line = _ws_line_of(text, k + 1)
+        for fr in frames:
+            out.append((fr, body, line))
+    return out
+
+
+def _ws_ev_payload_reads(frontend: Path) -> list[dict]:
+    """扫前端 `.ts`/`.tsx`: WS `type` 分支内的 `data.<字段>` 顶层读取 (带通道归属)."""
+    reads: list[dict] = []
+    if not frontend.is_dir():
+        return reads
+    for p in sorted(frontend.rglob("*")):
+        if not p.is_file() or p.suffix not in (".ts", ".tsx"):
+            continue
+        rel = _display(frontend, p)
+        if rel.endswith(".spec.ts") or rel.endswith(_WS_DECL_SUFFIX):
+            continue
+        try:
+            text = p.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        ws_vars = set(_FE_WS_MSG_VAR_RE.findall(text))
+        if not ws_vars:
+            continue
+        ch = _ws_file_channel(rel, text)
+        # `const tp = data;` 之类的同值别名也计入可读变量 (task_progress 分支用此式).
+        readable = set(ws_vars)
+        for am in _FE_TS_VAR_ALIAS_RE.finditer(text):
+            if am.group(2) in ws_vars:
+                readable.add(am.group(1))
+        segments = _fe_ws_case_segments(text, ws_vars) + _fe_ws_if_segments(text, ws_vars)
+        for frame, body, base_line in segments:
+            norm = _FE_AS_ANY_RE.sub(r"\1", body)
+            for fm in _WS_EV_FIELD_READ.finditer(norm):
+                if fm.group(1) not in readable:
+                    continue
+                field = fm.group(2)
+                if field in _WS_EV_PAYLOAD_ENVELOPE:
+                    continue
+                reads.append(
+                    {
+                        "rel": rel,
+                        "line": base_line + norm.count("\n", 0, fm.start()),
+                        "channel": ch,
+                        "frame": frame,
+                        "field": field,
+                    }
+                )
+    return reads
+
+
+def build_ws_ev_payload_contract(
+    root: Path | None = None, frontend: Path | None = None
+) -> dict:
+    """WS 事件负载面: 后端 server→client 帧 payload 顶层键 ↔ 前端 type 分支字段读取.
+
+    硬方向: 前端在某帧的 type 分支里读 `data.<字段>` 而后端该帧 payload 从不发此
+    顶层键 (恒 undefined, 静默坏). 反向 (后端发了前端没读) 不是违例, 只列候选.
+    只核**顶层**键; 嵌套 `data.<对象>.<字段>` 的子形状由发布点决定, 跳过. 只核
+    agent 通道 (前端唯一用 `WSMessage` 标注的通道).
+    """
+    root = root or _REPO
+    frontend = frontend if frontend is not None else root.parent / "desktop" / "src"
+    shapes = _ws_ev_payload_shapes(root)
+    reads = _ws_ev_payload_reads(frontend)
+    violations: list[dict] = []
+    checked = skip_frame = skip_shape = 0
+    read_fields: dict[tuple[str, str], set[str]] = defaultdict(set)
+    for r in reads:
+        ch, frame, field = r["channel"], r["frame"], r["field"]
+        frames = shapes.get(ch, {}) if ch else {}
+        if frame not in frames:
+            # 帧名不属该通道 (或通道未归属) → payload 面无权威 (帧名本身由消费面核).
+            skip_frame += 1
+            continue
+        info = frames[frame]
+        read_fields[(ch, frame)].add(field)
+        if not info["closed"]:
+            skip_shape += 1
+            continue
+        checked += 1
+        if field in info["keys"]:
+            continue
+        violations.append(
+            {
+                "kind": "read-undeclared",
+                "channel": ch,
+                "frame": frame,
+                "field": field,
+                "detail": f"前端在 `{frame}` 分支里读 `data.{field}`",
+                "rel": r["rel"],
+                "line": r["line"],
+            }
+        )
+
+    for v in violations:
+        tri = _ws_ev_payload_triage(v["channel"], v["frame"], v["field"])
+        v["triage"] = tri[0] if tri else "untriaged"
+        v["triage_reason"] = tri[1] if tri else ""
+
+    zero_read: list[dict] = []
+    for ch, frames in shapes.items():
+        closed_keys: set[str] = set()
+        read_keys: set[str] = set()
+        for frame, info in frames.items():
+            if info["closed"]:
+                closed_keys |= info["keys"]
+            read_keys |= read_fields.get((ch, frame), set())
+        for k in sorted(closed_keys - read_keys):
+            zero_read.append({"channel": ch, "field": k})
+
+    kinds = Counter(v["kind"] for v in violations)
+    return {
+        "frontend": str(frontend),
+        "channels": {
+            ch: {
+                f: {"keys": sorted(i["keys"]), "closed": i["closed"]}
+                for f, i in sorted(frames.items())
+            }
+            for ch, frames in shapes.items()
+        },
+        "frame_reads": {
+            ch: {frame: sorted(read_fields.get((ch, frame), set())) for frame in frames}
+            for ch, frames in shapes.items()
+        },
+        "read_count": len(reads),
+        "coverage": {"checked": checked, "skip_frame": skip_frame, "skip_shape": skip_shape},
+        "violations": violations,
+        "untriaged": [v for v in violations if v["triage"] == "untriaged"],
+        "kind_counts": dict(sorted(kinds.items())),
+        "zero_read": zero_read,
+    }
+
+
+def render_ws_ev_payload_markdown(contract: dict) -> str:
+    lines: list[str] = []
+    lines.append(
+        "## WS 事件负载面: 后端 server→client 帧 payload 顶层键 vs 前端 type 分支字段读取"
+    )
+    lines.append("")
+    lines.append(
+        "WS 消费面只核「帧名认不认」, WS 请求负载面只核「入站字段」; 本面再核**出站帧 "
+        "payload 的顶层键**。权威面是后端 WS 路由模块里 `{\"type\": \"…\", …}` 字典字面量的"
+        "其余顶层键 (同帧名多字面量取并集)。硬方向: **前端在某帧的 type 分支里读 "
+        "`data.<字段>` 而后端该帧 payload 从不发此顶层键** ⇒ 恒 `undefined` (静默坏)。反向"
+        "(后端发了前端没读) 不是违例, 只列候选。只核**顶层**键: 嵌套 "
+        "`data.<对象>.<字段>` 的子形状由发布点决定, 跳过。"
+    )
+    lines.append("")
+    lines.append(
+        "违例类型: " + "; ".join(f"`{k}`={v}" for k, v in _WS_EV_PAYLOAD_KIND_DOC.items())
+    )
+    lines.append("")
+    counts = (
+        "  " + ", ".join(f"`{k}`×{n}" for k, n in contract["kind_counts"].items())
+        if contract["kind_counts"]
+        else ""
+    )
+    lines.append(
+        f"前端 WS type 分支顶层字段读取点: **{contract['read_count']}** 处; 违例: "
+        f"**{len(contract['violations'])}** 条.{counts}"
+    )
+    lines.append("")
+
+    lines.append("### 各帧 payload 顶层键 (权威面)")
+    lines.append("")
+    lines.append("| 通道 | 帧名 | payload 顶层键 | 形状 | 前端读取字段 |")
+    lines.append("|---|---|---|---|---|")
+    for ch, frames in contract["channels"].items():
+        fr = contract["frame_reads"].get(ch, {})
+        for frame in sorted(frames):
+            info = frames[frame]
+            keys = ", ".join(f"`{k}`" for k in info["keys"]) or "—"
+            shape = "封闭" if info["closed"] else "开放(读不出)"
+            rd = ", ".join(f"`{f}`" for f in fr.get(frame, [])) or "—"
+            lines.append(f"| `{ch}` | `{frame}` | {keys} | {shape} | {rd} |")
+    lines.append("")
+
+    lines.append("### 违例 (硬: 前端读的顶层字段后端从不发)")
+    lines.append("")
+    if contract["violations"]:
+        lines.append(
+            "硬违例 —— 前端读 `data.<字段>` 而后端该帧 payload 无此顶层键 (恒 undefined). "
+            "逐条分诊, 未登记的落「待分诊」(回归测试会失败, 逼人工判定):"
+        )
+        lines.append("")
+        for v in sorted(
+            contract["violations"],
+            key=lambda x: (x["channel"], x["frame"], x["field"], x["rel"], x["line"]),
+        ):
+            lines.append(
+                f"- `[{v['kind']}]` `{v['channel']}/{v['frame']}.{v['field']}` "
+                f"@ `{v['rel']}:{v['line']}` — {v['detail']}"
+                + _ws_ev_payload_violation_mark(v["channel"], v["frame"], v["field"])
+            )
+    else:
+        lines.append("- 无 —— 前端读的每个顶层字段, 后端该帧都发.")
+    lines.append("")
+
+    lines.append("### payload 顶层键零前端读取 (候选, 反向不判违例)")
+    lines.append("")
+    if contract["zero_read"]:
+        for z in contract["zero_read"]:
+            lines.append(f"- `{z['channel']}` / `{z['field']}`")
+    else:
+        lines.append("- 无.")
+    lines.append("")
+
+    lines.append("### 静态核对覆盖面 (读不出形状即跳过, 不猜)")
+    lines.append("")
+    lines.append("| 维度 | 已核对 | 跳过 (帧不属该通道) | 跳过 (形状开放) |")
+    lines.append("|---|---|---|---|")
+    cov = contract["coverage"]
+    lines.append(
+        f"| 前端顶层字段读取 | {cov['checked']} | {cov['skip_frame']} | {cov['skip_shape']} |"
+    )
+    lines.append("")
+    lines.append(
+        "诚实边界: 只读**字面量**形状 —— 后端帧经变量透传转发 (`_ws_send(dict(state))`) 或"
+        "字面量含 `**` 展开 / 动态拼键时该帧记开放并跳过, 故违例是**下界** (可能漏报); 只核"
+        "**顶层**键 (嵌套 `data.<对象>.<字段>` 的子形状由发布点决定, 不核); 只核 agent "
+        "通道 (前端唯一用 `WSMessage` 标注的通道, 其余通道按裸字段取值、无类型归因); 信封键 "
+        "`type`(判别键) 与 `thread_id`(`_ws_send` 统一注入) 不算各帧 payload; 前端经**别名**"
+        "中转后的字段读取 (如 `const x = data.obj; x.field`) 只归因到直接读取的变量; 反向 "
+        "(后端发前端没读) 不是违例."
+    )
+    lines.append("")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # 组合 + 门禁
 # ---------------------------------------------------------------------------
 
@@ -6117,6 +6501,7 @@ def build_mece_snapshot(root: Path | None = None) -> dict:
         "response": build_response_contract(root),
         "ws_payload": build_ws_payload_contract(root),
         "sse_payload": build_sse_payload_contract(root),
+        "ws_ev_payload": build_ws_ev_payload_contract(root),
     }
 
 
@@ -6332,13 +6717,25 @@ def find_issues(snap: dict) -> list[str]:
             f"({_SSE_PAYLOAD_KIND_DOC[v['kind']]}): {v['channel']}/{v['frame']} → "
             f"`t.{v['field']}` @ {v['rel']}:{v['line']};{mark}"
         )
+    wep = snap["ws_ev_payload"]
+    for v in wep["violations"]:
+        mark = (
+            " 待分诊"
+            if v["triage"] == "untriaged"
+            else " " + _WS_EV_PAYLOAD_TRIAGE_DOC[v["triage"]]
+        )
+        issues.append(
+            f"WS 事件负载: 前端读的帧 payload 顶层字段后端从不发 "
+            f"({_WS_EV_PAYLOAD_KIND_DOC[v['kind']]}): {v['channel']}/{v['frame']} → "
+            f"`data.{v['field']}` @ {v['rel']}:{v['line']};{mark}"
+        )
     return issues
 
 
 def render_mece_markdown(snap: dict) -> str:
     lines: list[str] = []
     lines.append(
-        "# MECE 契约审计 (奖励面 + 授权面 + 工作流面 + 模式面 + 词汇面 + 工具面 + 钩子面 + 事件面 + SSE 消费面 + WS 消费面 + HTTP API 消费面 + 请求负载面 + 响应结构面 + WS 请求负载面 + SSE 事件负载面)"
+        "# MECE 契约审计 (奖励面 + 授权面 + 工作流面 + 模式面 + 词汇面 + 工具面 + 钩子面 + 事件面 + SSE 消费面 + WS 消费面 + HTTP API 消费面 + 请求负载面 + 响应结构面 + WS 请求负载面 + SSE 事件负载面 + WS 事件负载面)"
     )
     lines.append("")
     lines.append(
@@ -6347,13 +6744,13 @@ def render_mece_markdown(snap: dict) -> str:
     lines.append(
         "以 MECE 两原则审计 agent 的**奖励面 / 授权面 / 工作流面 / 模式面 / "
         "词汇面 / 工具面 / 钩子面 / 事件面 / SSE 消费面 / WS 消费面 / HTTP API 消费面 / "
-        "请求负载面 / 响应结构面 / WS 请求负载面 / SSE 事件负载面**: "
+        "请求负载面 / 响应结构面 / WS 请求负载面 / SSE 事件负载面 / WS 事件负载面**: "
         "**collectively exhaustive** 抓「宣称维度零调用者 / "
         "面之间的缺口」; **mutually exclusive** 抓「同轴惩罚叠加」「跨模块同名重复实现」「词表互不一致」"
         "「同名工具名多类声明」「事件常量撞值」「SSE 帧名挂错通道」「WS 帧名挂错端点」"
         "「HTTP 同 method+path 多模块注册」「前端漏发后端必填请求负载」"
         "「前端声明要读的响应字段后端从不返回」「WS 入站字段模型未声明」"
-        "「前端读的 SSE 帧 payload 顶层字段后端从不发」. 纯静态扫描, "
+        "「前端读的 SSE 帧 payload 顶层字段后端从不发」「前端读的 WS 帧 payload 顶层字段后端从不发」. 纯静态扫描, "
         "只提示候选, 不判死."
     )
     lines.append("")
@@ -6372,6 +6769,7 @@ def render_mece_markdown(snap: dict) -> str:
     lines.append(render_response_markdown(snap["response"]))
     lines.append(render_ws_payload_markdown(snap["ws_payload"]))
     lines.append(render_sse_payload_markdown(snap["sse_payload"]))
+    lines.append(render_ws_ev_payload_markdown(snap["ws_ev_payload"]))
     issues = find_issues(snap)
     lines.append("## 发现汇总")
     lines.append("")
@@ -6401,6 +6799,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--response", action="store_true", help="只看响应结构面")
     parser.add_argument("--ws-payload", action="store_true", help="只看 WS 请求负载面")
     parser.add_argument("--sse-payload", action="store_true", help="只看 SSE 事件负载面")
+    parser.add_argument("--ws-ev-payload", action="store_true", help="只看 WS 事件负载面")
     parser.add_argument("--json", action="store_true", help="输出 JSON 快照")
     parser.add_argument("--check", action="store_true", help="有 MECE 发现时 exit 1")
     parser.add_argument("--out", type=str, default="", help="写 markdown 到文件")
@@ -6429,6 +6828,11 @@ def main(argv: list[str] | None = None) -> int:
             args.sse_payload,
             build_sse_payload_contract,
             render_sse_payload_markdown,
+        ),
+        "ws_ev_payload": (
+            args.ws_ev_payload,
+            build_ws_ev_payload_contract,
+            render_ws_ev_payload_markdown,
         ),
     }
     selected = [k for k, (on, _b, _r) in surfaces.items() if on]
