@@ -1,7 +1,7 @@
-# MECE 契约审计 (奖励面 + 授权面 + 工作流面 + 模式面 + 词汇面 + 工具面)
+# MECE 契约审计 (奖励面 + 授权面 + 工作流面 + 模式面 + 词汇面 + 工具面 + 钩子面)
 
 自动生成: `python -m huginn.cli.contract_audit --out docs/mece-audit.md`.
-以 MECE 两原则审计 agent 的**奖励面 / 授权面 / 工作流面 / 模式面 / 词汇面 / 工具面**: **collectively exhaustive** 抓「宣称维度零调用者 / 面之间的缺口」; **mutually exclusive** 抓「同轴惩罚叠加」「跨模块同名重复实现」「词表互不一致」「同名工具名多类声明」. 纯静态扫描, 只提示候选, 不判死.
+以 MECE 两原则审计 agent 的**奖励面 / 授权面 / 工作流面 / 模式面 / 词汇面 / 工具面 / 钩子面**: **collectively exhaustive** 抓「宣称维度零调用者 / 面之间的缺口」; **mutually exclusive** 抓「同轴惩罚叠加」「跨模块同名重复实现」「词表互不一致」「同名工具名多类声明」「事件常量撞值」. 纯静态扫描, 只提示候选, 不判死.
 
 ## 奖励面: 宣称项 vs 调用者 (collectively exhaustive)
 
@@ -253,6 +253,51 @@
 
 - 注册清单引用的类均静态可解析。
 
+## 钩子面: 事件声明面 vs 触发面 vs 注册面
+
+声明面: `huginn/hooks/__init__.py` 的 10 个事件(`ALL_EVENTS` 权威清单). 触发面: `trigger()` / `_trigger_hook()` / `run_pre()`(≡`pre_tool_use`) / `run_post()`(≡`post_tool_use`). 注册面: `register()` / `register_hook()`. `trigger-only` = 会触发但零消费者 (对偶于奖励面「宣称项零调用者」); `dead` = 声明了却零触发零注册.
+
+状态: `wired`=有触发点且有消费者; `trigger-only`=有触发点但零注册 (触发无人接); `register-only`=有注册但零生产触发; `dead`=声明零触发且零注册
+
+| 事件常量 | 值 | 生产触发 | 生产注册 | 测试触发 | 测试注册 | 状态 | 备注 |
+|---|---|---|---|---|---|---|---|
+| `PRE_TOOL_USE` | `pre_tool_use` | 2 | 5 | 1 | 0 | `wired` |  |
+| `POST_TOOL_USE` | `post_tool_use` | 3 | 31 | 1 | 0 | `wired` |  |
+| `SESSION_START` | `session_start` | 1 | 0 | 0 | 0 | `trigger-only` | 触发点存在但无注册消费者 —— 扩展点候选 |
+| `SESSION_END` | `session_end` | 1 | 0 | 0 | 0 | `trigger-only` | 触发点存在但无注册消费者 —— 扩展点候选 |
+| `STOP` | `stop` | 1 | 1 | 0 | 0 | `wired` |  |
+| `SUBAGENT_STOP` | `subagent_stop` | 1 | 0 | 0 | 0 | `trigger-only` | 触发点存在但无注册消费者 —— 扩展点候选 |
+| `PRE_COMPACT` | `pre_compact` | 1 | 0 | 0 | 0 | `trigger-only` | 触发点存在但无注册消费者 —— 扩展点候选 |
+| `POST_COMPACT` | `post_compact` | 1 | 0 | 0 | 0 | `trigger-only` | 触发点存在但无注册消费者 —— 扩展点候选 |
+| `USER_PROMPT_SUBMIT` | `user_prompt_submit` | 1 | 3 | 0 | 0 | `wired` |  |
+| `POST_TOOL_USE_FAILURE` | `post_tool_use_failure` | 1 | 0 | 0 | 0 | `trigger-only` | 触发点自带 `if self._callbacks[POST_TOOL_USE_FAILURE]` 守卫 —— 零注册 ⇒ 该分支恒不执行, 是可证死的触发点 |
+
+### 触发点 / 注册点明细
+
+| 事件常量 | 生产触发点 | 生产注册点 |
+|---|---|---|
+| `PRE_TOOL_USE` | `huginn/agent/callbacks.py:61`, `huginn/events/unified_bus.py:212` | `huginn/snapshot/integration.py:152`, `huginn/agents/factory.py:339`, `huginn/hooks/browser_gate_hook.py:78`, `huginn/hooks/physical_precheck.py:329`, `huginn/hooks/research_safety_hook.py:51` |
+| `POST_TOOL_USE` | `huginn/agent/callbacks.py:113`, `huginn/agent/callbacks.py:100`, `huginn/events/unified_bus.py:255` | `huginn/snapshot/integration.py:153`, `huginn/agents/factory.py:295`, `huginn/agents/factory.py:301`, `huginn/agents/factory.py:313`, `huginn/hooks/science_hooks.py:744`, `huginn/hooks/science_hooks.py:745`, `huginn/hooks/science_hooks.py:750`, `huginn/hooks/science_hooks.py:751`, `huginn/hooks/science_hooks.py:753`, `huginn/hooks/science_hooks.py:755`, `huginn/hooks/science_hooks.py:756`, `huginn/hooks/science_hooks.py:758`, `huginn/hooks/science_hooks.py:759`, `huginn/hooks/science_hooks.py:760`, `huginn/hooks/science_hooks.py:761`, `huginn/hooks/science_hooks.py:762`, `huginn/hooks/science_hooks.py:763`, `huginn/hooks/science_hooks.py:764`, `huginn/hooks/science_hooks.py:765`, `huginn/hooks/science_hooks.py:766`, `huginn/hooks/science_hooks.py:748`, `huginn/hooks/science_hooks.py:771`, `huginn/hooks/science_hooks.py:778`, `huginn/hooks/science_hooks.py:785`, `huginn/hooks/science_hooks.py:795`, `huginn/hooks/science_hooks.py:796`, `huginn/hooks/science_hooks.py:804`, `huginn/hooks/science_hooks.py:805`, `huginn/hooks/science_hooks.py:835`, `huginn/hooks/science_hooks.py:864`, `huginn/hooks/unit_check.py:265` |
+| `SESSION_START` | `huginn/events/unified_bus.py:138` | — |
+| `SESSION_END` | `huginn/events/unified_bus.py:169` | — |
+| `STOP` | `huginn/events/unified_bus.py:199` | `huginn/hooks/science_hooks.py:843` |
+| `SUBAGENT_STOP` | `huginn/agents/subagent.py:373` | — |
+| `PRE_COMPACT` | `huginn/agent/streaming.py:793` | — |
+| `POST_COMPACT` | `huginn/events/unified_bus.py:365` | — |
+| `USER_PROMPT_SUBMIT` | `huginn/agent/streaming.py:1511` | `huginn/agents/factory.py:322`, `huginn/agents/factory.py:327`, `huginn/agents/factory.py:332` |
+| `POST_TOOL_USE_FAILURE` | `huginn/hooks/__init__.py:280` | — |
+
+### 互斥违例 (mutually exclusive)
+
+- 事件常量值两两不同 —— 无撞值.
+- 触发/注册均用事件常量, 无绕过常量的字面量.
+
+### 声明缺口
+
+- `ALL_EVENTS` 与事件常量定义面双向一致.
+
+诚实边界: 未知名字面量 (`register("vasp", …)` 这类别的注册表) 无法静态区分, 故不计入互斥违例; 但实现层 `trigger` 用 `_callbacks.get(event, [])` 静默吞掉未知名 —— 字面量拼错会变空触发而不报错, 这是触发点须用常量的理由.
+
 ## 发现汇总
 
 - 奖励项零调用者: reconcile_r_phys
@@ -279,3 +324,9 @@
 - 词汇: 词表漂移 (簇 73, 并集 10 词): huginn/memory/types.py::class MemoryType, huginn/memory/typing.py::class MemoryType
 - 词汇: 词表漂移 (簇 135, 并集 4 词): huginn/tools/visualize_gate.py::RERENDERABLE, huginn/tools/visualize_gate.py::_SEVERITY
 - 词汇: 映射往返丢信息: AUTOLOOP_TO_PHASE 共像 [ResearchPhase.VALIDATION←["'validate'", "'learn'"]] 且有反向表 PHASE_TO_AUTOLOOP
+- 钩子: 事件有生产触发点但零生产注册 (触发无人接): SESSION_START
+- 钩子: 事件有生产触发点但零生产注册 (触发无人接): SESSION_END
+- 钩子: 事件有生产触发点但零生产注册 (触发无人接): SUBAGENT_STOP
+- 钩子: 事件有生产触发点但零生产注册 (触发无人接): PRE_COMPACT
+- 钩子: 事件有生产触发点但零生产注册 (触发无人接): POST_COMPACT
+- 钩子: 事件有生产触发点但零生产注册 (触发无人接): POST_TOOL_USE_FAILURE
