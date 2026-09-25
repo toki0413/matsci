@@ -559,8 +559,8 @@ SSE 消费面只核单向 (后端发帧 → 前端 `addEventListener`), WebSocke
 | 类型 | 通道 | 状态 | 位置 | 备注 |
 |---|---|---|---|---|
 | `approval_response` | `agent` | `handled` | `desktop/src/Pet.tsx:1253` |  |
-| `plan_confirm` | `agent` | `handled` | `desktop/src/components/panels/ChatPanel.tsx:1584` |  |
-| `plan_confirm` | `agent` | `handled` | `desktop/src/components/panels/ChatPanel.tsx:1602` |  |
+| `plan_confirm` | `agent` | `handled` | `desktop/src/components/panels/ChatPanel.tsx:1581` |  |
+| `plan_confirm` | `agent` | `handled` | `desktop/src/components/panels/ChatPanel.tsx:1599` |  |
 | `input` | `terminal` | `handled` | `desktop/src/components/panels/TerminalPanel.tsx:57` |  |
 | `pong` | `agent` | `handled` | `desktop/src/hooks/useChatAndConnection.ts:1192` |  |
 | `user_input` | `agent` | `handled` | `desktop/src/hooks/useChatAndConnection.ts:1405` |  |
@@ -601,13 +601,12 @@ SSE 消费面只核单向 (后端发帧 → 前端 `addEventListener`), WebSocke
 
 状态: `wired`=前端调用的方法与路径后端已注册; `method-mismatch`=路径已注册但无此方法 (405, 调用必失败); `no-source`=后端无此路径 (404 死链); `external`=绝对 URL / 非后端路径, 不计入
 
-端点: 后端注册 **362** 个 (实存 **362** 个; 另有 4 个 WebSocket 端点归 WS 消费面); 桌面调用命中 **142** 个; 前端调用点 **170** 处.
+端点: 后端注册 **365** 个 (实存 **365** 个; 另有 4 个 WebSocket 端点归 WS 消费面); 桌面调用命中 **146** 个; 前端调用点 **171** 处.
 
 ### 前端调用点 (按状态)
 
 | 方法 | 路径 | 状态 | 位置 | 备注 |
 |---|---|---|---|---|
-| `GET` | `/transfer/download?path=${encodeURIComponent(path)}` | `method-mismatch` | `desktop/src/components/panels/FilesPanel.tsx:100` | 后端仅注册 POST (405) |
 | `GET` | `/provenance/recent?n=50` | `wired` | `desktop/src/App.tsx:342` |  |
 | `POST` | `/checkpoints` | `wired` | `desktop/src/App.tsx:352` |  |
 | `GET` | `/checkpoints/${cpId}/diff` | `wired` | `desktop/src/App.tsx:363` |  |
@@ -673,11 +672,13 @@ SSE 消费面只核单向 (后端发帧 → 前端 `addEventListener`), WebSocke
 | `POST` | `/viewer3d/load` | `wired` | `desktop/src/components/StructureViewer.tsx:246` |  |
 | `GET` | `/workflows` | `wired` | `desktop/src/components/SweepDashboard.tsx:176` |  |
 | `POST` | `/workflows/execute` | `wired` | `desktop/src/components/SweepDashboard.tsx:270` |  |
-| `POST` | `/transfer/upload` | `wired` | `desktop/src/components/panels/ChatPanel.tsx:573` |  |
+| `POST` | `/v1/fs/upload` | `wired` | `desktop/src/components/panels/ChatPanel.tsx:574` |  |
 | `GET` | `/events/recent?n=400` | `wired` | `desktop/src/components/panels/EventAuditPanel.tsx:55` |  |
-| `POST` | `/transfer/upload` | `wired` | `desktop/src/components/panels/FilesPanel.tsx:47` |  |
-| `GET` | `/transfer/browse?path=.` | `wired` | `desktop/src/components/panels/FilesPanel.tsx:63` |  |
-| `POST` | `/transfer/sync` | `wired` | `desktop/src/components/panels/FilesPanel.tsx:75` |  |
+| `GET` | `/credentials/defaults` | `wired` | `desktop/src/components/panels/FilesPanel.tsx:48` |  |
+| `POST` | `/transfer/web/upload` | `wired` | `desktop/src/components/panels/FilesPanel.tsx:65` |  |
+| `GET` | `/transfer/browse?${params}` | `wired` | `desktop/src/components/panels/FilesPanel.tsx:88` |  |
+| `POST` | `/transfer/sync` | `wired` | `desktop/src/components/panels/FilesPanel.tsx:102` |  |
+| `GET` | `/transfer/web/download?${params}` | `wired` | `desktop/src/components/panels/FilesPanel.tsx:133` |  |
 | `GET` | `/projects` | `wired` | `desktop/src/components/panels/ResearchProjectPanel.tsx:60` |  |
 | `GET` | `/threads` | `wired` | `desktop/src/components/panels/ResearchProjectPanel.tsx:75` |  |
 | `GET` | `/knowledge` | `wired` | `desktop/src/components/panels/ResearchProjectPanel.tsx:76` |  |
@@ -780,9 +781,7 @@ SSE 消费面只核单向 (后端发帧 → 前端 `addEventListener`), WebSocke
 
 ### 前端调用无源 (404 死链) / 方法不符 (405)
 
-硬违例 —— 前端调用挂不上后端注册面. 逐条分诊: 未登记的落「待分诊」(回归测试会失败, 逼人工判定):
-
-- `GET /transfer/download?path=${encodeURIComponent(path)}` @ `desktop/src/components/panels/FilesPanel.tsx:100` — 后端仅注册 POST (405) — ⛔ 已确认缺陷 (待修): FilesPanel 下载按钮走 `api.getBlob` (= GET), 后端 `routes/transfer.py` 只注册 POST /transfer/download; 该面板整条 `/transfer/*` 线 (upload 发 multipart 而后端要 JSON body, browse/sync 缺 credential_id) 都按另一套契约写的, 修法需产品决策(后端补 GET 流式下载 vs 面板改走凭据) —— 已确认缺陷, 待修
+- 无 —— 每个前端调用都命中后端已注册的方法+路径.
 
 ### 同一 method+path 被多个**已挂载**模块注册 (路由遮蔽)
 
@@ -823,7 +822,7 @@ SSE 消费面只核单向 (后端发帧 → 前端 `addEventListener`), WebSocke
 | `huginn/routes/users.py` | 8 |
 | `huginn/routes/visual.py` | 4 |
 
-诚实边界: 前端只扫 `lib/api.ts` 的 `api.*` 包装 (裸 `fetch(...)` 与 EventSource 在别面); 路径里的 `${…}` 只保留静态前缀, 动态拼接的段不可穷尽; `getBlob(path, { method: … })` 的方法覆盖按调用实参里的 `method:` 字面量近似判定; **请求体形状 / 必填 query 参数不核** —— 如 `/transfer/upload` 前端发 multipart 而后端要 JSON body 这类「路径对、负载错」静态不可辨, 不在本面 (只报 404/405 这类路径+方法级硬违例).
+诚实边界: 前端只扫 `lib/api.ts` 的 `api.*` 包装 (裸 `fetch(...)` 与 EventSource 在别面); 路径里的 `${…}` 只保留静态前缀, 动态拼接的段不可穷尽; `getBlob(path, { method: … })` 的方法覆盖按调用实参里的 `method:` 字面量近似判定; **请求体形状 / 必填 query 参数不核** —— 前端发 multipart 而后端要 JSON body、漏传必填 query 参数这类「路径对、负载错」静态不可辨, 不在本面 (只报 404/405 这类路径+方法级硬违例).
 
 ## 发现汇总
 
@@ -874,4 +873,3 @@ SSE 消费面只核单向 (后端发帧 → 前端 `addEventListener`), WebSocke
 - 事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): team.member.tool
 - 事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): team.run.done
 - 事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): team.run.start
-- HTTP: 前端调用的方法与后端注册不符 (405): GET /transfer/download?path=${encodeURIComponent(path)} @ desktop/src/components/panels/FilesPanel.tsx:100 — 后端仅注册 POST (405); 已确认缺陷 (待修)

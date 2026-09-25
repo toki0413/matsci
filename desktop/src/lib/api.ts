@@ -147,9 +147,13 @@ export const api = {
     path: string,
     file: File,
     onProgress?: (loaded: number, total: number) => void,
+    fields?: Record<string, string>,
   ): Promise<T> => {
     const form = new FormData();
     form.append("file", file);
+    if (fields) {
+      for (const [k, v] of Object.entries(fields)) form.append(k, v);
+    }
     return new Promise<T>((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhr.open("POST", `${getApiBase()}${path}`);
