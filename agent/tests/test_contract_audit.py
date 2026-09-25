@@ -1915,6 +1915,145 @@ def test_sse_payload_synthetic_frame_not_in_channel_skipped(tmp_path):
     assert c["coverage"]["checked"] == 0
 
 
+# ──────────────────── WS 事件负载面 ────────────────────
+
+
+def test_ws_ev_payload_real_repo_no_untriaged_violations():
+    """真实仓: 前端各 type 分支读的顶层字段后端该帧都发 (无待分诊)."""
+    c = ca.build_ws_ev_payload_contract()
+    assert c["read_count"] > 0
+    assert c["coverage"]["checked"] > 0
+    assert c["untriaged"] == [], c["untriaged"]
+    for v in c["violations"]:
+        assert v["triage"] in {"defect", "intentional"}
+        assert v["triage_reason"]
+
+
+def test_ws_ev_payload_confirmed_registry_not_stale():
+    """分诊表登记的每条都必须仍是真实硬违例 —— 修好后要同步删登记."""
+    observed = {
+        (v["channel"], v["frame"], v["field"])
+        for v in ca.build_ws_ev_payload_contract()["violations"]
+    }
+    for key in ca._WS_EV_PAYLOAD_CONFIRMED:
+        assert key in observed, f"分诊表登记 {key} 已不再是硬违例, 请删除登记"
+
+
+def test_ws_ev_payload_violation_mark_labels_triage():
+    """分诊标注: 未登记 → 待分诊; 已登记 → 对应标签 + 理由."""
+    assert ca._ws_ev_payload_triage("agent", "text_delta", "nope") is None
+    assert "待分诊" in ca._ws_ev_payload_violation_mark("agent", "text_delta", "nope")
+    for (ch, frame, field), (label, _reason) in ca._WS_EV_PAYLOAD_CONFIRMED.items():
+        mark = ca._ws_ev_payload_violation_mark(ch, frame, field)
+        assert "待分诊" not in mark
+        assert ca._WS_EV_PAYLOAD_TRIAGE_DOC[label] in mark
+
+
+def test_ws_ev_payload_render_sections_present():
+    md = ca.render_ws_ev_payload_markdown(ca.build_ws_ev_payload_contract())
+    assert "WS 事件负载面" in md
+    assert "违例类型" in md
+    assert "静态核对覆盖面" in md
+    assert "诚实边界" in md
+
+
+def _ws_ev_payload_backend(tmp_path, ws_src: str) -> None:
+    """合成后端: agent 通道 WS 路由模块 (server→client 帧字面量来源)."""
+    _write(tmp_path, ca._WS_BACKEND_MODULES["agent"][0], ws_src)
+
+
+def _ws_ev_frontend(reads: str, frame: str = "text_delta") -> str:
+    """合成前端: WSMessage 标注的变量 + `switch (data.type)` 分支内读取."""
+    return (
+        'const url = "/ws/agent";\n'
+        "const onMsg = (data: WSMessage) => {\n"
+        "  switch (data.type) {\n"
+        f'    case "{frame}":\n'
+        f"      {reads}\n"
+        "      break;\n"
+        "  }\n"
+        "};\n"
+    )
+
+
+def test_ws_ev_payload_synthetic_read_undeclared(tmp_path):
+    """合成树: 前端读 `data.bogus` 而后端该帧不发此顶层键 → 硬违例 (恒 undefined)."""
+    _ws_ev_payload_backend(
+        tmp_path,
+        "async def _send(ws):\n"
+        '    await _ws_send({"type": "text_delta", "text": "hi"})\n',
+    )
+    _write(tmp_path, "fe/chat.ts", _ws_ev_frontend("use(data.bogus);"))
+    c = ca.build_ws_ev_payload_contract(tmp_path, tmp_path / "fe")
+    assert c["channels"]["agent"]["text_delta"] == {"keys": ["text"], "closed": True}
+    assert c["frame_reads"]["agent"]["text_delta"] == ["bogus"]
+    got = [(v["kind"], v["channel"], v["frame"], v["field"]) for v in c["violations"]]
+    assert got == [("read-undeclared", "agent", "text_delta", "bogus")]
+    assert len(c["untriaged"]) == 1
+    # 后端发了 `text` 前端不读 → 只列候选, 不判违例.
+    assert c["zero_read"] == [{"channel": "agent", "field": "text"}]
+
+
+def test_ws_ev_payload_synthetic_declared_field_ok(tmp_path):
+    """合成树: 前端读的顶层字段都在该帧 payload 里 → 无违例."""
+    _ws_ev_payload_backend(
+        tmp_path,
+        "async def _send(ws):\n"
+        '    await _ws_send({"type": "text_delta", "text": "hi"})\n',
+    )
+    _write(tmp_path, "fe/chat.ts", _ws_ev_frontend("use(data.text);"))
+    c = ca.build_ws_ev_payload_contract(tmp_path, tmp_path / "fe")
+    assert c["violations"] == []
+    assert c["frame_reads"]["agent"]["text_delta"] == ["text"]
+    assert c["zero_read"] == []
+
+
+def test_ws_ev_payload_synthetic_envelope_keys_not_read(tmp_path):
+    """信封键 (`type` 判别键 / `thread_id` 注入) 不属各帧 payload, 不计入读取."""
+    _ws_ev_payload_backend(
+        tmp_path,
+        "async def _send(ws):\n"
+        '    await _ws_send({"type": "text_delta", "text": "hi"})\n',
+    )
+    _write(
+        tmp_path,
+        "fe/chat.ts",
+        _ws_ev_frontend("use(data.type, data.thread_id, data.text);"),
+    )
+    c = ca.build_ws_ev_payload_contract(tmp_path, tmp_path / "fe")
+    assert c["frame_reads"]["agent"]["text_delta"] == ["text"]
+    assert c["violations"] == []
+
+
+def test_ws_ev_payload_synthetic_shape_open_skipped(tmp_path):
+    """合成树: 帧字面量含 `**` 展开 → 键集不可穷尽, 记开放并跳过不猜."""
+    _ws_ev_payload_backend(
+        tmp_path,
+        "async def _send(ws, extra):\n"
+        '    await _ws_send({"type": "text_delta", **extra})\n',
+    )
+    _write(tmp_path, "fe/chat.ts", _ws_ev_frontend("use(data.mystery);"))
+    c = ca.build_ws_ev_payload_contract(tmp_path, tmp_path / "fe")
+    assert c["channels"]["agent"]["text_delta"]["closed"] is False
+    assert c["violations"] == []
+    assert c["coverage"]["skip_shape"] == 1
+    assert c["coverage"]["checked"] == 0
+
+
+def test_ws_ev_payload_synthetic_frame_not_in_channel_skipped(tmp_path):
+    """合成树: 帧名不属该通道 (幽灵帧) → payload 面无权威, 跳过错开 (消费面另报)."""
+    _ws_ev_payload_backend(
+        tmp_path,
+        "async def _send(ws):\n"
+        '    await _ws_send({"type": "text_delta", "text": "hi"})\n',
+    )
+    _write(tmp_path, "fe/chat.ts", _ws_ev_frontend("use(data.ghostfield);", frame="ghost"))
+    c = ca.build_ws_ev_payload_contract(tmp_path, tmp_path / "fe")
+    assert c["violations"] == []
+    assert c["coverage"]["skip_frame"] == 1
+    assert c["coverage"]["checked"] == 0
+
+
 # ──────────────────── 文档漂移 ────────────────────
 
 

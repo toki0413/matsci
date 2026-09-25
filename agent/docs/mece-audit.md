@@ -1,7 +1,7 @@
-# MECE 契约审计 (奖励面 + 授权面 + 工作流面 + 模式面 + 词汇面 + 工具面 + 钩子面 + 事件面 + SSE 消费面 + WS 消费面 + HTTP API 消费面 + 请求负载面 + 响应结构面 + WS 请求负载面 + SSE 事件负载面)
+# MECE 契约审计 (奖励面 + 授权面 + 工作流面 + 模式面 + 词汇面 + 工具面 + 钩子面 + 事件面 + SSE 消费面 + WS 消费面 + HTTP API 消费面 + 请求负载面 + 响应结构面 + WS 请求负载面 + SSE 事件负载面 + WS 事件负载面)
 
 自动生成: `python -m huginn.cli.contract_audit --out docs/mece-audit.md`.
-以 MECE 两原则审计 agent 的**奖励面 / 授权面 / 工作流面 / 模式面 / 词汇面 / 工具面 / 钩子面 / 事件面 / SSE 消费面 / WS 消费面 / HTTP API 消费面 / 请求负载面 / 响应结构面 / WS 请求负载面 / SSE 事件负载面**: **collectively exhaustive** 抓「宣称维度零调用者 / 面之间的缺口」; **mutually exclusive** 抓「同轴惩罚叠加」「跨模块同名重复实现」「词表互不一致」「同名工具名多类声明」「事件常量撞值」「SSE 帧名挂错通道」「WS 帧名挂错端点」「HTTP 同 method+path 多模块注册」「前端漏发后端必填请求负载」「前端声明要读的响应字段后端从不返回」「WS 入站字段模型未声明」「前端读的 SSE 帧 payload 顶层字段后端从不发」. 纯静态扫描, 只提示候选, 不判死.
+以 MECE 两原则审计 agent 的**奖励面 / 授权面 / 工作流面 / 模式面 / 词汇面 / 工具面 / 钩子面 / 事件面 / SSE 消费面 / WS 消费面 / HTTP API 消费面 / 请求负载面 / 响应结构面 / WS 请求负载面 / SSE 事件负载面 / WS 事件负载面**: **collectively exhaustive** 抓「宣称维度零调用者 / 面之间的缺口」; **mutually exclusive** 抓「同轴惩罚叠加」「跨模块同名重复实现」「词表互不一致」「同名工具名多类声明」「事件常量撞值」「SSE 帧名挂错通道」「WS 帧名挂错端点」「HTTP 同 method+path 多模块注册」「前端漏发后端必填请求负载」「前端声明要读的响应字段后端从不返回」「WS 入站字段模型未声明」「前端读的 SSE 帧 payload 顶层字段后端从不发」「前端读的 WS 帧 payload 顶层字段后端从不发」. 纯静态扫描, 只提示候选, 不判死.
 
 ## 奖励面: 宣称项 vs 调用者 (collectively exhaustive)
 
@@ -995,6 +995,76 @@ SSE 消费面只核「帧名认不认」(监听挂没挂对 EventSource); 本面
 | 前端顶层字段读取 | 41 | 2 | 0 |
 
 诚实边界: 只读**字面量**形状 —— 后端 payload 经变量间接构造 (`**` 展开 / 动态拼键) 或前端 `t` 经中转/解构读取时该处记开放并跳过, 故违例是**下界** (可能漏报); 只核帧 payload 的**顶层**键 (嵌套 `t.data.<字段>` 的子形状由发布点决定, 不核); `t` 须为 `JSON.parse(e.data)` 直接赋值才归因; 帧名不属该通道时跳过 (该帧名本身已由 SSE 消费面报通道不匹配); 反向 (后端发前端没读) 不是违例. 只覆盖 `progress` / `event_bus` 两条命名帧通道 (`pet` 通道全为无名帧).
+
+## WS 事件负载面: 后端 server→client 帧 payload 顶层键 vs 前端 type 分支字段读取
+
+WS 消费面只核「帧名认不认」, WS 请求负载面只核「入站字段」; 本面再核**出站帧 payload 的顶层键**。权威面是后端 WS 路由模块里 `{"type": "…", …}` 字典字面量的其余顶层键 (同帧名多字面量取并集)。硬方向: **前端在某帧的 type 分支里读 `data.<字段>` 而后端该帧 payload 从不发此顶层键** ⇒ 恒 `undefined` (静默坏)。反向(后端发了前端没读) 不是违例, 只列候选。只核**顶层**键: 嵌套 `data.<对象>.<字段>` 的子形状由发布点决定, 跳过。
+
+违例类型: `read-undeclared`=前端在某 type 分支读 `data.<字段>` 而后端该帧 payload 从不发此顶层键 (恒 undefined)
+
+前端 WS type 分支顶层字段读取点: **139** 处; 违例: **0** 条.
+
+### 各帧 payload 顶层键 (权威面)
+
+| 通道 | 帧名 | payload 顶层键 | 形状 | 前端读取字段 |
+|---|---|---|---|---|
+| `agent` | `approval_request` | — | 开放(读不出) | `dangerous`, `reason`, `request_id`, `tool_name` |
+| `agent` | `auto_approve_set` | `enabled`, `scope` | 封闭 | `enabled` |
+| `agent` | `auto_checkpoint` | `base`, `files`, `id` | 封闭 | `base`, `files`, `id` |
+| `agent` | `citations` | `sources` | 封闭 | `sources` |
+| `agent` | `clarification_request` | `questions` | 封闭 | `questions` |
+| `agent` | `context_compacted` | `after_pct`, `before_pct` | 封闭 | `after_pct`, `before_pct` |
+| `agent` | `decision_resolved` | `id`, `status` | 封闭 | — |
+| `agent` | `done` | — | 封闭 | — |
+| `agent` | `error` | `error` | 封闭 | `error` |
+| `agent` | `exploration_result` | `data` | 封闭 | `data` |
+| `agent` | `governance` | `action_name`, `allowed`, `audit_id`, `category`, `predictability`, `reasons`, `requires_approval`, `risk_level`, `rollback_available`, `status`, `verification_message`, `verification_passed` | 封闭 | — |
+| `agent` | `guide_ack` | `error`, `stored` | 封闭 | `stored` |
+| `agent` | `hook_warning` | `tool_name`, `warnings` | 封闭 | `tool_name`, `warnings` |
+| `agent` | `pet_update` | `active_tasks`, `happiness`, `hunger`, `level`, `message`, `mood`, `xp` | 封闭 | `happiness`, `hunger`, `level`, `mood`, `xp` |
+| `agent` | `ping` | `ts` | 封闭 | — |
+| `agent` | `plan` | `plan`, `plan_id` | 封闭 | `plan`, `plan_id` |
+| `agent` | `plan_result` | `all_passed`, `criteria`, `plan_id` | 封闭 | `all_passed`, `criteria` |
+| `agent` | `pong` | — | 封闭 | — |
+| `agent` | `reasoning_delta` | `text` | 封闭 | `text` |
+| `agent` | `sediment` | `kind`, `preview`, `stored` | 封闭 | `kind`, `preview`, `stored` |
+| `agent` | `side_question_pending` | `created_at`, `question`, `question_id` | 封闭 | `question`, `question_id` |
+| `agent` | `suggest_mode_set` | `enabled`, `scope` | 封闭 | `enabled` |
+| `agent` | `task_progress` | — | 开放(读不出) | `completed`, `detail`, `job_id`, `message`, `pipeline`, `progress_pct`, `stage`, `stage_index`, `stage_label`, `status`, `task_type`, `topic`, `total`, `total_stages` |
+| `agent` | `text_delta` | `text` | 封闭 | `text` |
+| `agent` | `tool_auto_approved` | — | 开放(读不出) | — |
+| `agent` | `tool_call` | `args`, `id`, `name` | 封闭 | `args`, `id`, `name` |
+| `agent` | `tool_result` | `content`, `id` | 封闭 | `content`, `id` |
+
+### 违例 (硬: 前端读的顶层字段后端从不发)
+
+- 无 —— 前端读的每个顶层字段, 后端该帧都发.
+
+### payload 顶层键零前端读取 (候选, 反向不判违例)
+
+- `agent` / `action_name`
+- `agent` / `active_tasks`
+- `agent` / `allowed`
+- `agent` / `audit_id`
+- `agent` / `category`
+- `agent` / `created_at`
+- `agent` / `predictability`
+- `agent` / `reasons`
+- `agent` / `requires_approval`
+- `agent` / `risk_level`
+- `agent` / `rollback_available`
+- `agent` / `scope`
+- `agent` / `ts`
+- `agent` / `verification_message`
+- `agent` / `verification_passed`
+
+### 静态核对覆盖面 (读不出形状即跳过, 不猜)
+
+| 维度 | 已核对 | 跳过 (帧不属该通道) | 跳过 (形状开放) |
+|---|---|---|---|
+| 前端顶层字段读取 | 53 | 12 | 74 |
+
+诚实边界: 只读**字面量**形状 —— 后端帧经变量透传转发 (`_ws_send(dict(state))`) 或字面量含 `**` 展开 / 动态拼键时该帧记开放并跳过, 故违例是**下界** (可能漏报); 只核**顶层**键 (嵌套 `data.<对象>.<字段>` 的子形状由发布点决定, 不核); 只核 agent 通道 (前端唯一用 `WSMessage` 标注的通道, 其余通道按裸字段取值、无类型归因); 信封键 `type`(判别键) 与 `thread_id`(`_ws_send` 统一注入) 不算各帧 payload; 前端经**别名**中转后的字段读取 (如 `const x = data.obj; x.field`) 只归因到直接读取的变量; 反向 (后端发前端没读) 不是违例.
 
 ## 发现汇总
 
