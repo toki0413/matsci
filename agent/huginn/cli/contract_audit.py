@@ -9,7 +9,7 @@
   - **collectively exhaustive 违例**: 宣称的维度零调用者 (declared but unwired).
   - **mutually exclusive 违例**: 同名跨模块重复实现 / 同一惩罚轴上叠两项.
 
-审计七面: **奖励面 / 授权面 / 工作流面 / 模式面 / 词汇面 / 工具面 / 钩子面**. 后五面
+审计八面: **奖励面 / 授权面 / 工作流面 / 模式面 / 词汇面 / 工具面 / 钩子面 / 事件面**. 后六面
 是本工具从奖励系统外延到"agent 自身怎么跑"的同类审计:
 
   - **工作流面**: 执行 mode 分发面 (`phase_spec.dispatch_table` ↔ `engine_act`
@@ -30,6 +30,12 @@
     事件常量 + `ALL_EVENTS` 权威清单) ↔ **触发面** (`trigger()` / `run_pre` /
     `run_post`) ↔ **注册面** (`register()` / `register_hook()`). 宣称的事件若零
     触发 = "声明了但永不发生"; 零注册 = "会触发但没人接" (对偶于奖励面"宣称项零调用者").
+  - **事件面**: 内部 `EventBus` 的**点分事件类型契约** —— **声明面**
+    (`events/event_types.py` 的常量 + `ALL_TYPES` 非穷尽清单) ↔ **发布面**
+    (`AgentEvent(type=…)` / 内部 `_publish` / `publish_event` / `_emit_campaign`) ↔
+    **订阅面** (`EventBus.subscribe`, 含 `ALL` 通配与 `for X in <集合>` 反解). 声明
+    类型零发布 = "声明了却永不发生"; 发布/订阅了却未声明的类型 (如 `campaign.retry`)
+    是跨模块孤立的字符串契约, 最该补常量.
 
 本工具只做**静态扫描 + 少量运行时读取**并**提示候选**, 不判死: "同轴/同名/词表
 不一致"是可疑信号, 是否真缺陷需人工判定 (例如 efficiency_discount 按"首次全对
@@ -37,7 +43,7 @@
 fusion 模式经 set_mode('research') 复用 CSM S3 是**有意设计**, 非漏接).
 
 用法:
-    python -m huginn.cli.contract_audit                  # 打印七面审计
+    python -m huginn.cli.contract_audit                  # 打印八面审计
     python -m huginn.cli.contract_audit --reward         # 只看奖励面
     python -m huginn.cli.contract_audit --scope          # 只看授权面
     python -m huginn.cli.contract_audit --workflow       # 只看工作流面
@@ -45,6 +51,7 @@ fusion 模式经 set_mode('research') 复用 CSM S3 是**有意设计**, 非漏�
     python -m huginn.cli.contract_audit --vocab          # 只看词汇面
     python -m huginn.cli.contract_audit --tools          # 只看工具面
     python -m huginn.cli.contract_audit --hooks          # 只看钩子面
+    python -m huginn.cli.contract_audit --events         # 只看事件面
     python -m huginn.cli.contract_audit --json           # 机器可读快照
     python -m huginn.cli.contract_audit --check          # 有发现则 exit 1 (供 CI 门禁)
     python -m huginn.cli.contract_audit --out docs/mece-audit.md
@@ -1834,6 +1841,478 @@ def render_hook_markdown(contract: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
+# 事件面: 事件类型声明面 vs 发布面 vs 订阅面 (内部 EventBus)
+# ---------------------------------------------------------------------------
+#
+# 钩子面审 HookManager 的**无点分**字符串事件 (register 强校验, 静默 trigger);
+# 这一面审**内部 EventBus** 的**点分**事件类型 (`events/event_types.py` 的
+# `TOOL_CALL = "tool.call"` …):
+#
+#   - **声明面**: `event_types.py` 的点分常量 + `ALL_TYPES` frozenset (自述
+#     "非穷尽, 仅辅助排错", 不做校验) + `ALL = "*"` 通配.
+#   - **发布面**: `AgentEvent(type=…)`、内部 `_publish` / `_publish_internal(_sync)` /
+#     `publish_generic_sync` / `publish_event(_sync)` / `_emit_campaign`, 以及首参
+#     字面量等于已声明值的本地 emit 包装 (`_emit("snapshot.take", …)`).
+#   - **订阅面**: `EventBus.subscribe(<类型>, cb)`. 首参可为常量、等值字面量、`ALL`
+#     通配 (audit log 全量订阅), 或 `for X in <常量集合>` 的循环变量 (反解集合元素).
+#
+# MECE 两原则落到事件:
+#   - **collectively exhaustive**: 声明的事件类型须有**生产发布点** —— 零发布即
+#     "声明了却永不发生" (对偶钩子面). 另记发布/订阅了却**未声明**的类型: `ALL_TYPES`
+#     自述允许非穷尽, 故按"候选登记"报, 不判死; 其中既发布又订阅的 (如
+#     `campaign.retry`/`campaign.suspect`) 是跨模块孤立的字符串契约, 最该补常量.
+#   - **mutually exclusive**: 类型常量值两两不同 (撞值会让订阅者收到错类型);
+#     `ALL_TYPES` 与常量定义面双向一致.
+#
+# 归属口径同钩子面: 只认 `from huginn.events.event_types import <CONST>` (含别名) 与
+# `<mod>.<CONST>` (mod 绑定到 event_types), 不认裸同名. 定义文件自身预置本地常量表.
+#
+# 诚实边界: `EventBus.publish` **不校验**类型 (与钩子面 `register` 抛错相反), 任意
+# 点分字符串都能发, 故"未声明发布"只能提示、无法判错; 订阅若走变量/前缀匹配等间接
+# 形式, 静态解析不到, 不计入.
+
+_EVENTS_MODULE = "huginn/events/event_types.py"
+# 事件值形如 `group.name` (至少一段点分, 小写蛇形); 排除 `ALL = "*"`.
+_EVENT_VALUE_RE = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$")
+# 已知发布入口 (按方法名); 另有"首参字面量 = 已声明值"的启发式兜本地 emit 包装.
+_EVENT_PUBLISH_CALLS = frozenset({
+    "AgentEvent",
+    "_publish",
+    "_publish_internal",
+    "_publish_internal_sync",
+    "publish_generic_sync",
+    "publish_event",
+    "publish_event_sync",
+    "_emit_campaign",
+})
+_EVENT_SUBSCRIBE_CALLS = frozenset({"subscribe"})
+_EVENT_ALL_CONST = "ALL"
+
+
+def _event_declarations(root: Path) -> dict:
+    """读声明面: 点分事件常量 (名→值)、`ALL_TYPES` 成员、以及两侧缺口."""
+    tree = _parse(root / _EVENTS_MODULE)
+    if tree is None:
+        return {
+            "consts": {},
+            "members": [],
+            "not_in_all_types": [],
+            "unresolved_members": [],
+        }
+    consts: dict[str, str] = {}
+    members: list[str] = []
+    for node in tree.body:
+        name: str | None = None
+        value: ast.AST | None = None
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+        ):
+            name, value = node.targets[0].id, node.value
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            name, value = node.target.id, node.value
+        if name is None:
+            continue
+        if (
+            name == "ALL_TYPES"
+            and isinstance(value, ast.Call)
+            and isinstance(value.func, ast.Name)
+            and value.func.id == "frozenset"
+            and value.args
+            and isinstance(value.args[0], ast.Set)
+        ):
+            members = [e.id for e in value.args[0].elts if isinstance(e, ast.Name)]
+        elif (
+            name.isupper()
+            and name != _EVENT_ALL_CONST
+            and isinstance(value, ast.Constant)
+            and isinstance(value.value, str)
+            and _EVENT_VALUE_RE.match(value.value)
+        ):
+            consts[name] = value.value
+    not_in_all_types = sorted(c for c in consts if c not in members)
+    unresolved_members = sorted(m for m in members if m not in consts)
+    return {
+        "consts": consts,
+        "members": members,
+        "not_in_all_types": not_in_all_types,
+        "unresolved_members": unresolved_members,
+    }
+
+
+def _event_bindings(
+    tree: ast.Module, rel: str, decl: dict[str, str]
+) -> tuple[dict[str, str], set[str]]:
+    """模块内解析: 事件常量本地名 → 常量名; 及绑到 event_types 的模块别名."""
+    direct: dict[str, str] = (
+        {name: name for name in decl} if rel == _EVENTS_MODULE else {}
+    )
+    mod_aliases: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            mod = _resolve_relative(rel, node.level, node.module or "")
+            for a in node.names:
+                if mod == "huginn.events.event_types":
+                    direct[a.asname or a.name] = a.name
+                elif f"{mod}.{a.name}" == "huginn.events.event_types":
+                    mod_aliases.add(a.asname or a.name)
+        elif isinstance(node, ast.Import):
+            for a in node.names:
+                if a.name == "huginn.events.event_types":
+                    mod_aliases.add(a.asname or "event_types")
+    return direct, mod_aliases
+
+
+def _event_container_elts(value: ast.AST) -> list[ast.AST] | None:
+    """取元组/列表/集合字面量的元素; `frozenset({…})` 等包装也拆开."""
+    if isinstance(value, ast.Tuple | ast.List | ast.Set):
+        return list(value.elts)
+    if (
+        isinstance(value, ast.Call)
+        and isinstance(value.func, ast.Name)
+        and value.func.id in {"frozenset", "set", "list", "tuple"}
+        and value.args
+        and isinstance(value.args[0], ast.Tuple | ast.List | ast.Set)
+    ):
+        return list(value.args[0].elts)
+    return None
+
+
+def _resolve_event_type(
+    arg: ast.AST, direct: dict[str, str], mod_aliases: set[str], decl: dict[str, str]
+) -> tuple[str | None, str | None]:
+    """把发布/订阅首参解析成 (常量名|None, 值|None). 字面量 → (None, 原始串)."""
+    if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+        return None, arg.value
+    if isinstance(arg, ast.Name) and arg.id in direct:
+        name = direct[arg.id]
+        return name, decl.get(name)
+    if (
+        isinstance(arg, ast.Attribute)
+        and isinstance(arg.value, ast.Name)
+        and arg.value.id in mod_aliases
+    ):
+        return arg.attr, decl.get(arg.attr)
+    return None, None
+
+
+def _event_collections(
+    tree: ast.Module, direct: dict[str, str], mod_aliases: set[str], decl: dict[str, str]
+) -> dict[str, set[str]]:
+    """收集 `X = (<事件值>, …)` (含 `frozenset({…})`) —— 供 for 循环变量反解."""
+    colls: dict[str, set[str]] = {}
+    for node in ast.walk(tree):
+        name: str | None = None
+        value: ast.AST | None = None
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+        ):
+            name, value = node.targets[0].id, node.value
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            name, value = node.target.id, node.value
+        if name is None or value is None:
+            continue
+        elts = _event_container_elts(value)
+        if elts is None:
+            continue
+        vals: set[str] = set()
+        for e in elts:
+            _n, v = _resolve_event_type(e, direct, mod_aliases, decl)
+            if v is not None and _EVENT_VALUE_RE.match(v):
+                vals.add(v)
+        if vals:
+            colls[name] = vals
+    return colls
+
+
+def _event_loop_vars(
+    tree: ast.Module,
+    colls: dict[str, set[str]],
+    direct: dict[str, str],
+    mod_aliases: set[str],
+    decl: dict[str, str],
+) -> dict[str, set[str]]:
+    """`for X in <常量集合>` 的 X → 该集合的事件值集合 (反解动态订阅)."""
+    loop_vars: dict[str, set[str]] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.For) or not isinstance(node.target, ast.Name):
+            continue
+        it = node.iter
+        vals: set[str] = set()
+        if isinstance(it, ast.Name) and it.id in colls:
+            vals = set(colls[it.id])
+        else:
+            elts = _event_container_elts(it)
+            if elts is not None:
+                for e in elts:
+                    _n, v = _resolve_event_type(e, direct, mod_aliases, decl)
+                    if v is not None and _EVENT_VALUE_RE.match(v):
+                        vals.add(v)
+        if vals:
+            loop_vars.setdefault(node.target.id, set()).update(vals)
+    return loop_vars
+
+
+def _event_arg_values(
+    arg: ast.AST,
+    direct: dict[str, str],
+    mod_aliases: set[str],
+    decl: dict[str, str],
+    loop_vars: dict[str, set[str]],
+) -> tuple[set[str], str | None]:
+    """解析发布/订阅首参 → (事件值集合, 通配标记). 未解析返回 (set(), None)."""
+    if isinstance(arg, ast.Name) and arg.id in loop_vars and arg.id not in direct:
+        return set(loop_vars[arg.id]), None
+    if isinstance(arg, ast.Constant) and arg.value == "*":
+        return set(), _EVENT_ALL_CONST
+    name, value = _resolve_event_type(arg, direct, mod_aliases, decl)
+    if name == _EVENT_ALL_CONST:
+        return set(), _EVENT_ALL_CONST
+    if value is not None and _EVENT_VALUE_RE.match(value):
+        return {value}, None
+    return set(), None
+
+
+def _event_type_kwarg(call: ast.Call) -> ast.AST | None:
+    """取 `AgentEvent(type=…)` 的 type 值, 退化为首位置参."""
+    for kw in call.keywords:
+        if kw.arg == "type":
+            return kw.value
+    return call.args[0] if call.args else None
+
+
+def _event_wiring(root: Path) -> dict:
+    """扫发布/订阅点, 按事件值归集 prod/test 位置."""
+    decl = _event_declarations(root)["consts"]
+    declared_values = set(decl.values())
+    wiring: dict[str, dict[str, list[str]]] = {}
+    wildcard: list[str] = []
+    for py in _iter_py(root):
+        rel = py.relative_to(root).as_posix()
+        tree = _parse(py)
+        if tree is None:
+            continue
+        direct, mod_aliases = _event_bindings(tree, rel, decl)
+        colls = _event_collections(tree, direct, mod_aliases, decl)
+        loop_vars = _event_loop_vars(tree, colls, direct, mod_aliases, decl)
+        bucket = "test" if _is_test(rel) else "prod"
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            fn = node.func
+            method = (
+                fn.attr
+                if isinstance(fn, ast.Attribute)
+                else (fn.id if isinstance(fn, ast.Name) else None)
+            )
+            if method is None:
+                continue
+            arg: ast.AST | None = None
+            kind: str | None = None
+            if method in _EVENT_SUBSCRIBE_CALLS:
+                if not node.args:
+                    continue
+                kind, arg = "subscribe", node.args[0]
+            elif method == "AgentEvent":
+                kind, arg = "publish", _event_type_kwarg(node)
+            elif method in _EVENT_PUBLISH_CALLS:
+                kind, arg = "publish", (node.args[0] if node.args else None)
+            elif (
+                node.args
+                and isinstance(node.args[0], ast.Constant)
+                and isinstance(node.args[0].value, str)
+                and node.args[0].value in declared_values
+            ):
+                # 启发式: 首参字面量 = 已声明值 ⇒ 本地 emit 包装 (`_emit("snapshot.take", …)`).
+                kind, arg = "publish", node.args[0]
+            if arg is None or kind is None:
+                continue
+            values, wild = _event_arg_values(arg, direct, mod_aliases, decl, loop_vars)
+            if wild is not None:
+                if kind == "subscribe":
+                    wildcard.append(f"{rel}:{node.lineno}")
+                continue
+            for v in values:
+                rec = wiring.setdefault(
+                    v,
+                    {
+                        "prod_publish": [],
+                        "prod_subscribe": [],
+                        "test_publish": [],
+                        "test_subscribe": [],
+                    },
+                )
+                rec[f"{bucket}_{kind}"].append(f"{rel}:{node.lineno}")
+    return {
+        "wiring": wiring,
+        "declared_values": declared_values,
+        "wildcard_subscribers": sorted(wildcard),
+    }
+
+
+def build_event_contract(root: Path | None = None) -> dict:
+    """事件面: 事件类型声明面 ↔ 发布面 ↔ 订阅面是否穷尽一致."""
+    root = root or _REPO
+    decl = _event_declarations(root)
+    scan = _event_wiring(root)
+    wiring = scan["wiring"]
+    declared_values = scan["declared_values"]
+
+    events: list[dict] = []
+    for const in decl["members"]:
+        value = decl["consts"].get(const, "")
+        w = wiring.get(value, {})
+        prod_p = len(w.get("prod_publish", []))
+        prod_s = len(w.get("prod_subscribe", []))
+        test_p = len(w.get("test_publish", []))
+        test_s = len(w.get("test_subscribe", []))
+        if prod_p:
+            status = "published"
+            note = "" if prod_s else "仅发布, 无 `.subscribe` 消费者 (外部 SSE 按字符串匹配)"
+        elif prod_s:
+            status = "subscribed-only"
+            note = "有 `.subscribe` 却零生产发布 —— 订阅永不发生"
+        else:
+            status = "dead"
+            note = "声明了却零生产发布零订阅"
+        events.append(
+            {
+                "const": const,
+                "value": value,
+                "prod_publish": prod_p,
+                "prod_subscribe": prod_s,
+                "test_publish": test_p,
+                "test_subscribe": test_s,
+                "status": status,
+                "note": note,
+                "publish_sites": w.get("prod_publish", []),
+                "subscribe_sites": w.get("prod_subscribe", []),
+            }
+        )
+
+    collisions: list[dict] = []
+    by_value: dict[str, list[str]] = defaultdict(list)
+    for const, value in decl["consts"].items():
+        by_value[value].append(const)
+    for value, consts in sorted(by_value.items()):
+        if len(consts) > 1:
+            collisions.append({"value": value, "consts": sorted(consts)})
+
+    undeclared: list[dict] = []
+    for value in sorted(v for v in wiring if v not in declared_values):
+        w = wiring[value]
+        if not (w["prod_publish"] or w["prod_subscribe"]):
+            continue
+        undeclared.append(
+            {
+                "value": value,
+                "prod_publish": len(w["prod_publish"]),
+                "prod_subscribe": len(w["prod_subscribe"]),
+                "test_publish": len(w["test_publish"]),
+                "test_subscribe": len(w["test_subscribe"]),
+                "publish_sites": w["prod_publish"],
+                "subscribe_sites": w["prod_subscribe"],
+            }
+        )
+
+    return {
+        "module": _EVENTS_MODULE,
+        "events": events,
+        "collisions": collisions,
+        "not_in_all_types": decl["not_in_all_types"],
+        "unresolved_members": decl["unresolved_members"],
+        "undeclared": undeclared,
+        "wildcard_subscribers": scan["wildcard_subscribers"],
+    }
+
+
+_EVENT_STATUS_DOC = {
+    "published": "有生产发布点",
+    "subscribed-only": "有订阅但零生产发布 (订阅永不发生)",
+    "dead": "声明零发布零订阅",
+}
+
+
+def render_event_markdown(contract: dict) -> str:
+    lines: list[str] = []
+    lines.append("## 事件面: 事件类型声明面 vs 发布面 vs 订阅面")
+    lines.append("")
+    lines.append(
+        f"声明面: `{contract['module']}` 的 {len(contract['events'])} 个点分事件类型"
+        "(`ALL_TYPES` 为自述非穷尽的辅助清单). 发布面: `AgentEvent(type=…)` / 内部 "
+        "`_publish(_internal)` / `publish_generic_sync` / `publish_event` / `_emit_campaign`. "
+        "订阅面: `EventBus.subscribe(<类型>, cb)` (含 `ALL` 通配与 `for X in <集合>` 反解). "
+        "`subscribed-only` = 订阅了却零发布 (订阅永不发生); `dead` = 声明了却零发布零订阅."
+    )
+    lines.append("")
+    lines.append("状态: " + "; ".join(f"`{k}`={v}" for k, v in _EVENT_STATUS_DOC.items()))
+    lines.append("")
+    lines.append("| 事件常量 | 值 | 生产发布 | 生产订阅 | 测试发布 | 测试订阅 | 状态 | 备注 |")
+    lines.append("|---|---|---|---|---|---|---|---|")
+    for e in contract["events"]:
+        lines.append(
+            f"| `{e['const']}` | `{e['value']}` | {e['prod_publish']} | {e['prod_subscribe']} "
+            f"| {e['test_publish']} | {e['test_subscribe']} | `{e['status']}` | {e['note']} |"
+        )
+    lines.append("")
+
+    lines.append("### 未声明类型 (发布/订阅了却无常量)")
+    lines.append("")
+    if contract["undeclared"]:
+        lines.append("| 事件值 | 生产发布 | 生产订阅 | 发布点 | 订阅点 |")
+        lines.append("|---|---|---|---|---|")
+        for u in contract["undeclared"]:
+            pub = ", ".join(f"`{s}`" for s in u["publish_sites"]) or "—"
+            sub = ", ".join(f"`{s}`" for s in u["subscribe_sites"]) or "—"
+            lines.append(
+                f"| `{u['value']}` | {u['prod_publish']} | {u['prod_subscribe']} | {pub} | {sub} |"
+            )
+    else:
+        lines.append("- 无 —— 发布/订阅的类型均已登记为常量.")
+    lines.append("")
+
+    lines.append("### 互斥违例 + 声明缺口 (mutually exclusive)")
+    lines.append("")
+    if contract["collisions"]:
+        for c in contract["collisions"]:
+            lines.append(
+                f"- ⚠️ 事件类型常量撞值 `{c['value']}`: "
+                + ", ".join(f"`{n}`" for n in c["consts"])
+            )
+    else:
+        lines.append("- 事件类型常量值两两不同 —— 无撞值.")
+    if contract["not_in_all_types"]:
+        lines.append(
+            "- ⚠️ 常量声明了却不在 `ALL_TYPES`: "
+            + ", ".join(f"`{c}`" for c in contract["not_in_all_types"])
+        )
+    if contract["unresolved_members"]:
+        lines.append(
+            "- ⚠️ `ALL_TYPES` 成员无对应常量定义: "
+            + ", ".join(f"`{c}`" for c in contract["unresolved_members"])
+        )
+    if not contract["not_in_all_types"] and not contract["unresolved_members"]:
+        lines.append("- `ALL_TYPES` 与事件类型常量定义面双向一致.")
+    wildcard = contract["wildcard_subscribers"]
+    if wildcard:
+        lines.append(
+            "- `ALL` 通配订阅 (收全量, 覆盖上表所有类型): "
+            + ", ".join(f"`{s}`" for s in wildcard)
+        )
+    lines.append("")
+    lines.append(
+        "诚实边界: `EventBus.publish` **不校验**类型 (与钩子面 `register` 抛错相反), "
+        "任意点分字符串都能发, 故「未声明发布」只作候选提示; 订阅走变量/前缀匹配等间接"
+        "形式时静态解析不到, 不计入."
+    )
+    lines.append("")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # 组合 + 门禁
 # ---------------------------------------------------------------------------
 
@@ -1847,6 +2326,7 @@ def build_mece_snapshot(root: Path | None = None) -> dict:
         "vocabulary": build_vocabulary_contract(root),
         "tools": build_tool_contract(root),
         "hooks": build_hook_contract(root),
+        "events": build_event_contract(root),
     }
 
 
@@ -1933,19 +2413,43 @@ def find_issues(snap: dict) -> list[str]:
         issues.append(
             f"钩子: 触发/注册用字面量而非常量: {w['value']} @ {w['rel']}:{w['line']}"
         )
+    ev = snap["events"]
+    _event_issue = {
+        "subscribed-only": "事件: 类型有 .subscribe 却零生产发布 (订阅永不发生): ",
+        "dead": "事件: 类型声明零生产发布零订阅: ",
+    }
+    for e in ev["events"]:
+        prefix = _event_issue.get(e["status"])
+        if prefix:
+            issues.append(prefix + e["const"])
+    for c in ev["collisions"]:
+        issues.append(f"事件: 类型常量撞值 {c['value']}: {', '.join(c['consts'])}")
+    for name in ev["not_in_all_types"]:
+        issues.append(f"事件: 类型常量未登记进 ALL_TYPES: {name}")
+    for name in ev["unresolved_members"]:
+        issues.append(f"事件: ALL_TYPES 成员无常量定义: {name}")
+    for u in ev["undeclared"]:
+        used = []
+        if u["prod_publish"]:
+            used.append("发布")
+        if u["prod_subscribe"]:
+            used.append("订阅")
+        issues.append(
+            f"事件: {'+'.join(used)}了未声明类型 (设计允许非穷尽, 候选登记): {u['value']}"
+        )
     return issues
 
 
 def render_mece_markdown(snap: dict) -> str:
     lines: list[str] = []
-    lines.append("# MECE 契约审计 (奖励面 + 授权面 + 工作流面 + 模式面 + 词汇面 + 工具面 + 钩子面)")
+    lines.append("# MECE 契约审计 (奖励面 + 授权面 + 工作流面 + 模式面 + 词汇面 + 工具面 + 钩子面 + 事件面)")
     lines.append("")
     lines.append(
         "自动生成: `python -m huginn.cli.contract_audit --out docs/mece-audit.md`."
     )
     lines.append(
-        "以 MECE 两原则审计 agent 的**奖励面 / 授权面 / 工作流面 / 模式面 / 词汇面 / "
-        "工具面 / 钩子面**: **collectively exhaustive** 抓「宣称维度零调用者 / 面之间的缺口」; "
+        "以 MECE 两原则审计 agent 的**奖励面 / 授权面 / 工作流面 / 模式面 / "
+        "词汇面 / 工具面 / 钩子面 / 事件面**: **collectively exhaustive** 抓「宣称维度零调用者 / 面之间的缺口」; "
         "**mutually exclusive** 抓「同轴惩罚叠加」「跨模块同名重复实现」「词表互不一致」"
         "「同名工具名多类声明」「事件常量撞值」. 纯静态扫描, 只提示候选, 不判死."
     )
@@ -1957,6 +2461,7 @@ def render_mece_markdown(snap: dict) -> str:
     lines.append(render_vocabulary_markdown(snap["vocabulary"]))
     lines.append(render_tool_markdown(snap["tools"]))
     lines.append(render_hook_markdown(snap["hooks"]))
+    lines.append(render_event_markdown(snap["events"]))
     issues = find_issues(snap)
     lines.append("## 发现汇总")
     lines.append("")
@@ -1978,6 +2483,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--vocab", action="store_true", help="只看词汇面")
     parser.add_argument("--tools", action="store_true", help="只看工具面")
     parser.add_argument("--hooks", action="store_true", help="只看钩子面")
+    parser.add_argument("--events", action="store_true", help="只看事件面")
     parser.add_argument("--json", action="store_true", help="输出 JSON 快照")
     parser.add_argument("--check", action="store_true", help="有 MECE 发现时 exit 1")
     parser.add_argument("--out", type=str, default="", help="写 markdown 到文件")
@@ -1991,6 +2497,7 @@ def main(argv: list[str] | None = None) -> int:
         "vocabulary": (args.vocab, build_vocabulary_contract, render_vocabulary_markdown),
         "tools": (args.tools, build_tool_contract, render_tool_markdown),
         "hooks": (args.hooks, build_hook_contract, render_hook_markdown),
+        "events": (args.events, build_event_contract, render_event_markdown),
     }
     selected = [k for k, (on, _b, _r) in surfaces.items() if on]
     if len(selected) == 1:

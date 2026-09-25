@@ -1,7 +1,7 @@
-# MECE 契约审计 (奖励面 + 授权面 + 工作流面 + 模式面 + 词汇面 + 工具面 + 钩子面)
+# MECE 契约审计 (奖励面 + 授权面 + 工作流面 + 模式面 + 词汇面 + 工具面 + 钩子面 + 事件面)
 
 自动生成: `python -m huginn.cli.contract_audit --out docs/mece-audit.md`.
-以 MECE 两原则审计 agent 的**奖励面 / 授权面 / 工作流面 / 模式面 / 词汇面 / 工具面 / 钩子面**: **collectively exhaustive** 抓「宣称维度零调用者 / 面之间的缺口」; **mutually exclusive** 抓「同轴惩罚叠加」「跨模块同名重复实现」「词表互不一致」「同名工具名多类声明」「事件常量撞值」. 纯静态扫描, 只提示候选, 不判死.
+以 MECE 两原则审计 agent 的**奖励面 / 授权面 / 工作流面 / 模式面 / 词汇面 / 工具面 / 钩子面 / 事件面**: **collectively exhaustive** 抓「宣称维度零调用者 / 面之间的缺口」; **mutually exclusive** 抓「同轴惩罚叠加」「跨模块同名重复实现」「词表互不一致」「同名工具名多类声明」「事件常量撞值」. 纯静态扫描, 只提示候选, 不判死.
 
 ## 奖励面: 宣称项 vs 调用者 (collectively exhaustive)
 
@@ -298,6 +298,66 @@
 
 诚实边界: 未知名字面量 (`register("vasp", …)` 这类别的注册表) 无法静态区分, 故不计入互斥违例; 但实现层 `trigger` 用 `_callbacks.get(event, [])` 静默吞掉未知名 —— 字面量拼错会变空触发而不报错, 这是触发点须用常量的理由.
 
+## 事件面: 事件类型声明面 vs 发布面 vs 订阅面
+
+声明面: `huginn/events/event_types.py` 的 21 个点分事件类型(`ALL_TYPES` 为自述非穷尽的辅助清单). 发布面: `AgentEvent(type=…)` / 内部 `_publish(_internal)` / `publish_generic_sync` / `publish_event` / `_emit_campaign`. 订阅面: `EventBus.subscribe(<类型>, cb)` (含 `ALL` 通配与 `for X in <集合>` 反解). `subscribed-only` = 订阅了却零发布 (订阅永不发生); `dead` = 声明了却零发布零订阅.
+
+状态: `published`=有生产发布点; `subscribed-only`=有订阅但零生产发布 (订阅永不发生); `dead`=声明零发布零订阅
+
+| 事件常量 | 值 | 生产发布 | 生产订阅 | 测试发布 | 测试订阅 | 状态 | 备注 |
+|---|---|---|---|---|---|---|---|
+| `TOOL_CALL` | `tool.call` | 4 | 1 | 0 | 0 | `published` |  |
+| `TOOL_RESULT` | `tool.result` | 2 | 1 | 0 | 0 | `published` |  |
+| `TOOL_ERROR` | `tool.error` | 1 | 1 | 0 | 0 | `published` |  |
+| `TOOL_BLOCKED` | `tool.blocked` | 1 | 1 | 0 | 0 | `published` |  |
+| `COMPACT_START` | `compact.start` | 1 | 0 | 0 | 0 | `published` | 仅发布, 无 `.subscribe` 消费者 (外部 SSE 按字符串匹配) |
+| `COMPACT_END` | `compact.end` | 1 | 0 | 0 | 0 | `published` | 仅发布, 无 `.subscribe` 消费者 (外部 SSE 按字符串匹配) |
+| `CONTEXT_OVERFLOW` | `context.overflow` | 1 | 0 | 0 | 0 | `published` | 仅发布, 无 `.subscribe` 消费者 (外部 SSE 按字符串匹配) |
+| `PIPELINE_SUGGEST` | `pipeline.suggest` | 1 | 0 | 0 | 0 | `published` | 仅发布, 无 `.subscribe` 消费者 (外部 SSE 按字符串匹配) |
+| `PIPELINE_STAGE_CHANGE` | `pipeline.stage_change` | 1 | 0 | 0 | 0 | `published` | 仅发布, 无 `.subscribe` 消费者 (外部 SSE 按字符串匹配) |
+| `CAMPAIGN_ITERATION` | `campaign.iteration` | 2 | 1 | 0 | 0 | `published` |  |
+| `CAMPAIGN_REFINE` | `campaign.refine` | 1 | 1 | 0 | 0 | `published` |  |
+| `CAMPAIGN_HYPOTHESIS` | `campaign.hypothesis` | 1 | 1 | 0 | 0 | `published` |  |
+| `SNAPSHOT_TAKE` | `snapshot.take` | 1 | 0 | 0 | 0 | `published` | 仅发布, 无 `.subscribe` 消费者 (外部 SSE 按字符串匹配) |
+| `SNAPSHOT_REVERT` | `snapshot.revert` | 1 | 0 | 0 | 0 | `published` | 仅发布, 无 `.subscribe` 消费者 (外部 SSE 按字符串匹配) |
+| `QUALITY_CHECK` | `quality.check` | 1 | 1 | 0 | 0 | `published` |  |
+| `HEAT_ENGINE_HEALTH` | `heat_engine.health` | 1 | 0 | 0 | 0 | `published` | 仅发布, 无 `.subscribe` 消费者 (外部 SSE 按字符串匹配) |
+| `SESSION_START` | `session.start` | 1 | 0 | 0 | 0 | `published` | 仅发布, 无 `.subscribe` 消费者 (外部 SSE 按字符串匹配) |
+| `SESSION_END` | `session.end` | 1 | 0 | 0 | 0 | `published` | 仅发布, 无 `.subscribe` 消费者 (外部 SSE 按字符串匹配) |
+| `DECISION_POINT` | `decision.point` | 1 | 0 | 0 | 0 | `published` | 仅发布, 无 `.subscribe` 消费者 (外部 SSE 按字符串匹配) |
+| `COST_NARRATIVE` | `cost.narrative` | 1 | 0 | 0 | 0 | `published` | 仅发布, 无 `.subscribe` 消费者 (外部 SSE 按字符串匹配) |
+| `STEP_RETRY` | `agent.step.retrying` | 2 | 1 | 0 | 0 | `published` |  |
+
+### 未声明类型 (发布/订阅了却无常量)
+
+| 事件值 | 生产发布 | 生产订阅 | 发布点 | 订阅点 |
+|---|---|---|---|---|
+| `campaign.budget_exhausted` | 1 | 0 | `huginn/autoloop/cognitive_loop.py:2124` | — |
+| `campaign.retry` | 1 | 1 | `huginn/autoloop/cognitive_loop.py:2483` | `huginn/events/audit_log.py:571` |
+| `campaign.suspect` | 1 | 1 | `huginn/autoloop/cognitive_loop.py:2503` | `huginn/events/audit_log.py:571` |
+| `cognitive.csm.transition` | 2 | 0 | `huginn/cognitive_engine.py:513`, `huginn/events/unified_bus.py:337` | — |
+| `embedding.download.done` | 1 | 0 | `huginn/knowledge/store.py:159` | — |
+| `embedding.download.error` | 3 | 0 | `huginn/knowledge/store.py:153`, `huginn/knowledge/store.py:163`, `huginn/knowledge/store.py:261` | — |
+| `embedding.download.progress` | 1 | 0 | `huginn/knowledge/store.py:130` | — |
+| `embedding.download.start` | 1 | 0 | `huginn/knowledge/store.py:135` | — |
+| `event_bus.dropped` | 1 | 0 | `huginn/events/event_bus.py:154` | — |
+| `llm.response` | 1 | 0 | `huginn/events/unified_bus.py:280` | — |
+| `pet.mood` | 1 | 0 | `huginn/events/unified_bus.py:322` | — |
+| `team.batch.start` | 1 | 0 | `huginn/agents/team.py:490` | — |
+| `team.member.done` | 2 | 0 | `huginn/agents/team.py:452`, `huginn/agents/team.py:443` | — |
+| `team.member.start` | 1 | 0 | `huginn/agents/team.py:403` | — |
+| `team.member.tool` | 1 | 0 | `huginn/agents/team.py:430` | — |
+| `team.run.done` | 1 | 0 | `huginn/agents/team.py:352` | — |
+| `team.run.start` | 2 | 0 | `huginn/agents/team.py:313`, `huginn/agents/team.py:690` | — |
+
+### 互斥违例 + 声明缺口 (mutually exclusive)
+
+- 事件类型常量值两两不同 —— 无撞值.
+- `ALL_TYPES` 与事件类型常量定义面双向一致.
+- `ALL` 通配订阅 (收全量, 覆盖上表所有类型): `huginn/events/audit_log.py:501`
+
+诚实边界: `EventBus.publish` **不校验**类型 (与钩子面 `register` 抛错相反), 任意点分字符串都能发, 故「未声明发布」只作候选提示; 订阅走变量/前缀匹配等间接形式时静态解析不到, 不计入.
+
 ## 发现汇总
 
 - 奖励项零调用者: reconcile_r_phys
@@ -330,3 +390,20 @@
 - 钩子: 事件有生产触发点但零生产注册 (触发无人接): PRE_COMPACT
 - 钩子: 事件有生产触发点但零生产注册 (触发无人接): POST_COMPACT
 - 钩子: 事件有生产触发点但零生产注册 (触发无人接): POST_TOOL_USE_FAILURE
+- 事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): campaign.budget_exhausted
+- 事件: 发布+订阅了未声明类型 (设计允许非穷尽, 候选登记): campaign.retry
+- 事件: 发布+订阅了未声明类型 (设计允许非穷尽, 候选登记): campaign.suspect
+- 事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): cognitive.csm.transition
+- 事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): embedding.download.done
+- 事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): embedding.download.error
+- 事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): embedding.download.progress
+- 事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): embedding.download.start
+- 事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): event_bus.dropped
+- 事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): llm.response
+- 事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): pet.mood
+- 事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): team.batch.start
+- 事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): team.member.done
+- 事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): team.member.start
+- 事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): team.member.tool
+- 事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): team.run.done
+- 事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): team.run.start

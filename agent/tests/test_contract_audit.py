@@ -413,6 +413,200 @@ def test_hook_synthetic_trigger_and_literal(tmp_path):
     assert any(w["value"] == "pre_tool_use" for w in c["literal_wiring"])
 
 
+# ──────────────────── 真实仓: 事件面 ────────────────────
+
+
+_EVENT_REQUIRED = {
+    "TOOL_CALL",
+    "TOOL_RESULT",
+    "TOOL_ERROR",
+    "TOOL_BLOCKED",
+    "COMPACT_START",
+    "COMPACT_END",
+    "CONTEXT_OVERFLOW",
+    "PIPELINE_SUGGEST",
+    "PIPELINE_STAGE_CHANGE",
+    "CAMPAIGN_ITERATION",
+    "CAMPAIGN_REFINE",
+    "CAMPAIGN_HYPOTHESIS",
+    "SNAPSHOT_TAKE",
+    "SNAPSHOT_REVERT",
+    "QUALITY_CHECK",
+    "HEAT_ENGINE_HEALTH",
+    "SESSION_START",
+    "SESSION_END",
+    "DECISION_POINT",
+    "COST_NARRATIVE",
+    "STEP_RETRY",
+}
+
+
+def test_event_declaration_face_exhaustive_and_mutex():
+    """声明面 (点分常量定义) 与 `ALL_TYPES` 辅助清单双向一致, 且值两两不同."""
+    c = ca.build_event_contract()
+    by = {e["const"]: e for e in c["events"]}
+    assert set(by) >= _EVENT_REQUIRED
+    assert c["collisions"] == []
+    assert c["not_in_all_types"] == []
+    assert c["unresolved_members"] == []
+
+
+def test_event_declared_types_all_have_producers():
+    """collectively exhaustive: 21 个声明类型全部有生产发布点 — 无孤儿类型.
+
+    与钩子面 (6 个 trigger-only) 相反: 事件面的声明清单是"已投产"清单, 不藏扩展点.
+    """
+    events = ca.build_event_contract()["events"]
+    assert events  # 非空, 否则下面的全量断言空转
+    for e in events:
+        assert e["prod_publish"] > 0, f"{e['const']} ({e['value']}) 零生产发布"
+    assert {e["status"] for e in events} == {"published"}
+
+
+def test_event_declared_subscribers_from_loop_reverse_resolved():
+    """`for evt_type in ("campaign.iteration", …)` 里的字面量元组要被反解成订阅点.
+
+    audit_log.install_campaign_subscriber 用循环订阅, 静态解析若不做循环变量
+    反解, 这四个已声明类型会被误判成"仅发布无消费者".
+    """
+    by = {e["const"]: e for e in ca.build_event_contract()["events"]}
+    for k in ("CAMPAIGN_ITERATION", "CAMPAIGN_HYPOTHESIS", "CAMPAIGN_REFINE", "QUALITY_CHECK"):
+        assert by[k]["prod_subscribe"] == 1, k
+        assert any(s.startswith("huginn/events/audit_log.py") for s in by[k]["subscribe_sites"])
+
+
+def test_event_undeclared_publishers_surfaced():
+    """发布/订阅了却无常量的类型作为候选缺口列出 (设计允许 `ALL_TYPES` 非穷尽)."""
+    c = ca.build_event_contract()
+    by = {u["value"]: u for u in c["undeclared"]}
+    # 团队协作事件族整族未登记常量 (只发不收).
+    for v in ("team.run.start", "team.run.done", "team.member.start", "embedding.download.start"):
+        assert by[v]["prod_publish"] > 0, v
+        assert by[v]["prod_subscribe"] == 0, v
+    # campaign.retry: 未登记常量, 但被 audit_log 的 `for` 循环订阅反解命中 (发+收两侧).
+    assert by["campaign.retry"]["prod_publish"] > 0
+    assert by["campaign.retry"]["prod_subscribe"] > 0
+    assert any(
+        s.startswith("huginn/events/audit_log.py") for s in by["campaign.retry"]["subscribe_sites"]
+    )
+
+
+def test_event_wildcard_subscriber_detected():
+    """`bus.subscribe(ALL, cb)` 是收全量的通配订阅, 单列不摊进每行计数."""
+    c = ca.build_event_contract()
+    assert any(s.startswith("huginn/events/audit_log.py") for s in c["wildcard_subscribers"])
+    assert c["wildcard_subscribers"] == sorted(c["wildcard_subscribers"])
+
+
+def test_event_find_issues_reports_undeclared():
+    joined = "\n".join(ca.find_issues(ca.build_mece_snapshot()))
+    assert "事件: 发布了未声明类型" in joined
+    assert "team.run.start" in joined
+    # 声明面已收敛: 不报死项/订阅孤儿.
+    assert "事件: 类型声明零生产发布零订阅" not in joined
+    assert "事件: 类型有 .subscribe 却零生产发布" not in joined
+
+
+def test_event_render_sections_present():
+    md = ca.render_event_markdown(ca.build_event_contract())
+    assert "事件面" in md
+    assert "未声明类型" in md
+    assert "互斥违例 + 声明缺口" in md
+    assert "诚实边界" in md
+
+
+# ──────────────────── 合成树: 事件面 ────────────────────
+
+
+def test_event_synthetic_status_classification(tmp_path):
+    """合成树: published / subscribed-only / dead 三态互斥分类."""
+    _write(
+        tmp_path,
+        ca._EVENTS_MODULE,
+        'TOOL_CALL = "tool.call"\n'
+        'SESSION_START = "session.start"\n'
+        'GHOST = "ghost.void"\n'
+        'ALL = "*"\n'
+        "ALL_TYPES = frozenset({TOOL_CALL, SESSION_START, GHOST})\n",
+    )
+    _write(
+        tmp_path,
+        "huginn/consumer.py",
+        "from huginn.events.event_types import TOOL_CALL, SESSION_START\n"
+        "def go(bus, cb):\n"
+        "    bus.publish_event(TOOL_CALL, {})\n"
+        "    bus.subscribe(TOOL_CALL, cb)\n"
+        "    bus.subscribe(SESSION_START, cb)\n",
+    )
+    by = {e["const"]: e for e in ca.build_event_contract(tmp_path)["events"]}
+    assert by["TOOL_CALL"]["status"] == "published"
+    assert by["SESSION_START"]["status"] == "subscribed-only"
+    assert by["GHOST"]["status"] == "dead"
+
+
+def test_event_synthetic_loop_var_and_literal_undeclared(tmp_path):
+    """合成树: `for t in <常量集合>` 反解订阅 + 字面量发布归入未声明候选."""
+    _write(
+        tmp_path,
+        ca._EVENTS_MODULE,
+        'TOOL_CALL = "tool.call"\nALL = "*"\nALL_TYPES = frozenset({TOOL_CALL})\n',
+    )
+    _write(
+        tmp_path,
+        "huginn/sub.py",
+        "from huginn.events.event_types import TOOL_CALL\n"
+        "_WATCHED = (TOOL_CALL,)\n"
+        "def wire(bus, cb):\n"
+        "    for t in _WATCHED:\n"
+        "        bus.subscribe(t, cb)\n"
+        '    bus.publish_generic_sync("zeta.new", {})\n',
+    )
+    c = ca.build_event_contract(tmp_path)
+    by = {e["const"]: e for e in c["events"]}
+    assert by["TOOL_CALL"]["prod_subscribe"] == 1
+    assert by["TOOL_CALL"]["status"] == "subscribed-only"
+    und = {u["value"]: u for u in c["undeclared"]}
+    assert und["zeta.new"]["prod_publish"] == 1
+
+
+def test_event_synthetic_module_alias_and_wildcard(tmp_path):
+    """合成树: `import huginn.events.event_types as et` 的 `et.X` 归属, 及 `ALL` 通配."""
+    _write(
+        tmp_path,
+        ca._EVENTS_MODULE,
+        'TOOL_CALL = "tool.call"\nALL = "*"\nALL_TYPES = frozenset({TOOL_CALL})\n',
+    )
+    _write(
+        tmp_path,
+        "huginn/wire.py",
+        "import huginn.events.event_types as et\n"
+        "def go(bus, cb):\n"
+        "    bus.subscribe(et.TOOL_CALL, cb)\n"
+        "    bus.subscribe(et.ALL, cb)\n",
+    )
+    c = ca.build_event_contract(tmp_path)
+    by = {e["const"]: e for e in c["events"]}
+    assert by["TOOL_CALL"]["prod_subscribe"] == 1
+    assert any(s.startswith("huginn/wire.py") for s in c["wildcard_subscribers"])
+
+
+def test_event_synthetic_collision_and_all_types_gaps(tmp_path):
+    """合成树: 撞值 (mutually exclusive 违例) 与 `ALL_TYPES` 两侧缺口的三个方向."""
+    _write(
+        tmp_path,
+        ca._EVENTS_MODULE,
+        'A = "dup.value"\n'
+        'B = "dup.value"\n'
+        'C = "only.here"\n'
+        'ALL = "*"\n'
+        "ALL_TYPES = frozenset({A, B, GHOST})\n",
+    )
+    c = ca.build_event_contract(tmp_path)
+    assert c["collisions"] == [{"value": "dup.value", "consts": ["A", "B"]}]
+    assert c["not_in_all_types"] == ["C"]
+    assert c["unresolved_members"] == ["GHOST"]
+
+
 # ──────────────────── 文档漂移 ────────────────────
 
 
