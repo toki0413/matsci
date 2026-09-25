@@ -1,7 +1,7 @@
-# MECE 契约审计 (奖励面 + 授权面 + 工作流面 + 模式面 + 词汇面 + 工具面 + 钩子面 + 事件面)
+# MECE 契约审计 (奖励面 + 授权面 + 工作流面 + 模式面 + 词汇面 + 工具面 + 钩子面 + 事件面 + SSE 消费面)
 
 自动生成: `python -m huginn.cli.contract_audit --out docs/mece-audit.md`.
-以 MECE 两原则审计 agent 的**奖励面 / 授权面 / 工作流面 / 模式面 / 词汇面 / 工具面 / 钩子面 / 事件面**: **collectively exhaustive** 抓「宣称维度零调用者 / 面之间的缺口」; **mutually exclusive** 抓「同轴惩罚叠加」「跨模块同名重复实现」「词表互不一致」「同名工具名多类声明」「事件常量撞值」. 纯静态扫描, 只提示候选, 不判死.
+以 MECE 两原则审计 agent 的**奖励面 / 授权面 / 工作流面 / 模式面 / 词汇面 / 工具面 / 钩子面 / 事件面 / SSE 消费面**: **collectively exhaustive** 抓「宣称维度零调用者 / 面之间的缺口」; **mutually exclusive** 抓「同轴惩罚叠加」「跨模块同名重复实现」「词表互不一致」「同名工具名多类声明」「事件常量撞值」「SSE 帧名挂错通道」. 纯静态扫描, 只提示候选, 不判死.
 
 ## 奖励面: 宣称项 vs 调用者 (collectively exhaustive)
 
@@ -357,6 +357,110 @@
 - `ALL` 通配订阅 (收全量, 覆盖上表所有类型): `huginn/events/audit_log.py:501`
 
 诚实边界: `EventBus.publish` **不校验**类型 (与钩子面 `register` 抛错相反), 任意点分字符串都能发, 故「未声明发布」只作候选提示; 订阅走变量/前缀匹配等间接形式时静态解析不到, 不计入.
+
+## SSE 消费面: 后端帧名生产面 vs 前端 EventSource 监听面
+
+后端有三条 SSE 通道, 帧名 (`event:` 行) 只在**发它的那条 EventSource** 上才可能被 `addEventListener(<帧名>)` 命中 —— 所以监听必须**按通道**核: `progress`(`/tasks/stream`, 帧名来自 `interaction/progress.py` 的字面 `event:` 行), `event_bus` (`/events/stream`, 帧名 = `AgentEvent.to_sse()` 写入的事件类型值), `pet` (`/events`, 只发无名帧, 无命名帧).
+
+状态: `wired`=该通道确实发此帧名; `channel-mismatch`=帧名存在但走别的通道 (监听挂错 EventSource, 永不触发); `no-source`=后端任何 SSE 通道都不发此帧名; `external`=非 SSE 通道 (window/document 等 DOM 事件), 不计入
+
+| 通道 | URL 片段 | 生产帧名 |
+|---|---|---|
+| `progress` | `progress` | `campaign`, `heartbeat`, `snapshot`, `update` |
+| `event_bus` | `event_bus` | `agent.step.retrying`, `campaign.budget_exhausted`, `campaign.hypothesis`, `campaign.iteration`, `campaign.refine`, `campaign.retry`, `campaign.suspect`, `cognitive.csm.transition`, `compact.end`, `compact.start`, `context.overflow`, `cost.narrative`, `decision.point`, `embedding.download.done`, `embedding.download.error`, `embedding.download.progress`, `embedding.download.start`, `event_bus.dropped`, `heat_engine.health`, `llm.response`, `pet.mood`, `pipeline.stage_change`, `pipeline.suggest`, `quality.check`, `session.end`, `session.start`, `snapshot.revert`, `snapshot.take`, `team.batch.start`, `team.member.done`, `team.member.start`, `team.member.tool`, `team.run.done`, `team.run.start`, `tool.blocked`, `tool.call`, `tool.error`, `tool.result` |
+| `pet` | `pet` | — (无名帧) |
+
+### 前端帧监听 (按通道归属)
+
+| 帧名 | 通道 | 状态 | 位置 | 备注 |
+|---|---|---|---|---|
+| `mousemove` | — | `external` | `desktop/src/App.tsx:189` | 非 SSE 通道 (DOM 事件), 不计入 |
+| `mouseup` | — | `external` | `desktop/src/App.tsx:190` | 非 SSE 通道 (DOM 事件), 不计入 |
+| `keydown` | — | `external` | `desktop/src/App.tsx:1104` | 非 SSE 通道 (DOM 事件), 不计入 |
+| `resize` | — | `external` | `desktop/src/App.tsx:1113` | 非 SSE 通道 (DOM 事件), 不计入 |
+| `storage` | — | `external` | `desktop/src/Pet.tsx:773` | 非 SSE 通道 (DOM 事件), 不计入 |
+| `pointermove` | — | `external` | `desktop/src/Pet.tsx:1070` | 非 SSE 通道 (DOM 事件), 不计入 |
+| `keydown` | — | `external` | `desktop/src/Pet.tsx:1071` | 非 SSE 通道 (DOM 事件), 不计入 |
+| `keydown` | — | `external` | `desktop/src/components/Modal.tsx:30` | 非 SSE 通道 (DOM 事件), 不计入 |
+| `mousedown` | — | `external` | `desktop/src/components/SandboxPanel.tsx:194` | 非 SSE 通道 (DOM 事件), 不计入 |
+| `mousedown` | — | `external` | `desktop/src/components/SaveToMemoryButton.tsx:38` | 非 SSE 通道 (DOM 事件), 不计入 |
+| `click` | — | `external` | `desktop/src/components/panels/ChatPanel.tsx:488` | 非 SSE 通道 (DOM 事件), 不计入 |
+| `click` | — | `external` | `desktop/src/components/panels/ThreadsPanel.tsx:46` | 非 SSE 通道 (DOM 事件), 不计入 |
+| `visibilitychange` | — | `external` | `desktop/src/hooks/useChatAndConnection.ts:1300` | 非 SSE 通道 (DOM 事件), 不计入 |
+| `keydown` | — | `external` | `desktop/src/hooks/useFocusTrap.ts:70` | 非 SSE 通道 (DOM 事件), 不计入 |
+| `change` | — | `external` | `desktop/src/hooks/useTheme.ts:45` | 非 SSE 通道 (DOM 事件), 不计入 |
+| `snapshot` | `progress` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:1670` |  |
+| `update` | `progress` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:1671` |  |
+| `campaign` | `progress` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:1672` |  |
+| `embedding.download.start` | `event_bus` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:1745` |  |
+| `embedding.download.progress` | `event_bus` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:1745` |  |
+| `embedding.download.done` | `event_bus` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:1745` |  |
+| `embedding.download.error` | `event_bus` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:1745` |  |
+| `team.run.start` | `event_bus` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:1807` |  |
+| `team.run.done` | `event_bus` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:1807` |  |
+| `team.batch.start` | `event_bus` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:1807` |  |
+| `team.member.start` | `event_bus` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:1807` |  |
+| `team.member.tool` | `event_bus` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:1807` |  |
+| `team.member.done` | `event_bus` | `wired` | `desktop/src/hooks/useChatAndConnection.ts:1807` |  |
+
+### 生产帧名零前端监听 (候选)
+
+- `progress` / `heartbeat`
+- `event_bus` / `agent.step.retrying`
+- `event_bus` / `campaign.budget_exhausted`
+- `event_bus` / `campaign.hypothesis` (经 payload 字段消费)
+- `event_bus` / `campaign.iteration` (经 payload 字段消费)
+- `event_bus` / `campaign.refine` (经 payload 字段消费)
+- `event_bus` / `campaign.retry` (经 payload 字段消费)
+- `event_bus` / `campaign.suspect` (经 payload 字段消费)
+- `event_bus` / `cognitive.csm.transition`
+- `event_bus` / `compact.end`
+- `event_bus` / `compact.start`
+- `event_bus` / `context.overflow`
+- `event_bus` / `cost.narrative`
+- `event_bus` / `decision.point`
+- `event_bus` / `event_bus.dropped`
+- `event_bus` / `heat_engine.health` (经 payload 字段消费)
+- `event_bus` / `llm.response`
+- `event_bus` / `pet.mood`
+- `event_bus` / `pipeline.stage_change`
+- `event_bus` / `pipeline.suggest`
+- `event_bus` / `quality.check`
+- `event_bus` / `session.end`
+- `event_bus` / `session.start`
+- `event_bus` / `snapshot.revert`
+- `event_bus` / `snapshot.take`
+- `event_bus` / `tool.blocked`
+- `event_bus` / `tool.call`
+- `event_bus` / `tool.error`
+- `event_bus` / `tool.result`
+
+### 前端 payload 字段匹配的事件名
+
+| 事件名 | 消费通道 | 生产面 | 位置 |
+|---|---|---|---|
+| `campaign.iteration` | — | `bus` | `desktop/src/components/IterationTimeline.tsx:57` |
+| `campaign.hypothesis` | — | `bus` | `desktop/src/components/IterationTimeline.tsx:66` |
+| `campaign.retry` | — | `bus` | `desktop/src/components/IterationTimeline.tsx:69` |
+| `campaign.suspect` | — | `bus` | `desktop/src/components/IterationTimeline.tsx:73` |
+| `campaign.refine` | — | `bus` | `desktop/src/components/IterationTimeline.tsx:77` |
+| `heat_engine.health` | `progress` | `bus` | `desktop/src/hooks/useChatAndConnection.ts:1644` |
+| `plan.exec_start` | `progress` | `campaign` | `desktop/src/hooks/useChatAndConnection.ts:1659` |
+| `plan.exec_complete` | `progress` | `campaign` | `desktop/src/hooks/useChatAndConnection.ts:1661` |
+| `embedding.download.start` | `event_bus` | `bus` | `desktop/src/hooks/useChatAndConnection.ts:1722` |
+| `embedding.download.progress` | `event_bus` | `bus` | `desktop/src/hooks/useChatAndConnection.ts:1725` |
+| `embedding.download.done` | `event_bus` | `bus` | `desktop/src/hooks/useChatAndConnection.ts:1728` |
+| `embedding.download.error` | `event_bus` | `bus` | `desktop/src/hooks/useChatAndConnection.ts:1735` |
+| `team.run.start` | `event_bus` | `bus` | `desktop/src/hooks/useChatAndConnection.ts:1761` |
+| `team.batch.start` | `event_bus` | `bus` | `desktop/src/hooks/useChatAndConnection.ts:1764` |
+| `team.member.start` | `event_bus` | `bus` | `desktop/src/hooks/useChatAndConnection.ts:1773` |
+| `team.member.tool` | `event_bus` | `bus` | `desktop/src/hooks/useChatAndConnection.ts:1780` |
+| `team.member.done` | `event_bus` | `bus` | `desktop/src/hooks/useChatAndConnection.ts:1788` |
+| `team.run.done` | `event_bus` | `bus` | `desktop/src/hooks/useChatAndConnection.ts:1797` |
+
+生产面取值: `bus` = 总线生产发布 (双通道之一); `campaign` = `emit_campaign_event(event_type="…")` 静态可见的字面量; `declared` = 已声明常量但未观测到生产发布; `unknown` = 静态不可见 (如 `f"campaign.{name}"` 动态拼接).
+
+诚实边界: 前端是 TS, 本工具只做**行级**匹配 (`new EventSource` / `addEventListener` / `case …:` / `=== …`), 不做 TS 语法分析 —— 经变量中转的帧名、`es.onmessage` 的无名帧、动态拼接的通道 URL 都解析不到; campaign payload 里 `f"campaign.{name}"` 这类动态名同样不可穷尽, 故 `unknown` 只提示不判死.
 
 ## 发现汇总
 

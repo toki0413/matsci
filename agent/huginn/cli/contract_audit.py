@@ -9,8 +9,8 @@
   - **collectively exhaustive 违例**: 宣称的维度零调用者 (declared but unwired).
   - **mutually exclusive 违例**: 同名跨模块重复实现 / 同一惩罚轴上叠两项.
 
-审计八面: **奖励面 / 授权面 / 工作流面 / 模式面 / 词汇面 / 工具面 / 钩子面 / 事件面**. 后六面
-是本工具从奖励系统外延到"agent 自身怎么跑"的同类审计:
+审计九面: **奖励面 / 授权面 / 工作流面 / 模式面 / 词汇面 / 工具面 / 钩子面 / 事件面 /
+SSE 消费面**. 后七面是本工具从奖励系统外延到"agent 自身怎么跑"的同类审计:
 
   - **工作流面**: 执行 mode 分发面 (`phase_spec.dispatch_table` ↔ `engine_act`
     硬编码分支 ↔ planner 提示教的 MODE 候选) 三者是否穷尽一致.
@@ -36,6 +36,12 @@
     **订阅面** (`EventBus.subscribe`, 含 `ALL` 通配与 `for X in <集合>` 反解). 声明
     类型零发布 = "声明了却永不发生"; 发布/订阅了却未声明的类型 (如 `campaign.retry`)
     是跨模块孤立的字符串契约, 最该补常量.
+  - **SSE 消费面**: 事件面查到"事件总线发布了"就为止, 但**发布了不等于被前端消费**.
+    本面下潜一层核**通道归属**: **生产面** (三条 SSE 通道的帧名 —— `progress` 取
+    `interaction/progress.py` 的字面 `event:` 行, `event_bus` 取总线生产发布的事件值,
+    `pet` 只发无名帧) ↔ **消费面** (前端 `desktop/src` 的 `new EventSource(url)` +
+    `addEventListener(<帧名>)`). 帧名只在**发它的那条 EventSource** 上才可能命中,
+    故监听挂错通道 = "永不触发"; 生产了却零前端监听 = "宣称了却没人接".
 
 本工具只做**静态扫描 + 少量运行时读取**并**提示候选**, 不判死: "同轴/同名/词表
 不一致"是可疑信号, 是否真缺陷需人工判定 (例如 efficiency_discount 按"首次全对
@@ -43,7 +49,7 @@
 fusion 模式经 set_mode('research') 复用 CSM S3 是**有意设计**, 非漏接).
 
 用法:
-    python -m huginn.cli.contract_audit                  # 打印八面审计
+    python -m huginn.cli.contract_audit                  # 打印九面审计
     python -m huginn.cli.contract_audit --reward         # 只看奖励面
     python -m huginn.cli.contract_audit --scope          # 只看授权面
     python -m huginn.cli.contract_audit --workflow       # 只看工作流面
@@ -52,6 +58,7 @@ fusion 模式经 set_mode('research') 复用 CSM S3 是**有意设计**, 非漏�
     python -m huginn.cli.contract_audit --tools          # 只看工具面
     python -m huginn.cli.contract_audit --hooks          # 只看钩子面
     python -m huginn.cli.contract_audit --events         # 只看事件面
+    python -m huginn.cli.contract_audit --sse            # 只看 SSE 消费面
     python -m huginn.cli.contract_audit --json           # 机器可读快照
     python -m huginn.cli.contract_audit --check          # 有发现则 exit 1 (供 CI 门禁)
     python -m huginn.cli.contract_audit --out docs/mece-audit.md
@@ -2313,6 +2320,313 @@ def render_event_markdown(contract: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
+# SSE 消费面: 后端帧名 ↔ 前端 EventSource 监听 (按通道归属)
+# ---------------------------------------------------------------------------
+
+# 前端源码根: 默认取仓根的兄弟目录 `desktop/src` (agent/ 与 desktop/ 平级).
+_FRONTEND_REL = "desktop/src"
+# 已知 SSE 通道 (URL 片段 → 通道名). 通道 = 哪条 EventSource, 帧名只在发它的
+# 那条 EventSource 上才可能被 `addEventListener` 命中.
+_SSE_CHANNELS: dict[str, str] = {
+    "/tasks/stream": "progress",
+    "/events/stream": "event_bus",
+    "/events": "pet",
+}
+# progress 通道的帧名 = 该模块字面 `f"event: <name>"`; event_bus 通道的帧名 =
+# 总线生产发布的事件值 (`AgentEvent.to_sse` 写成 `event: <type>`); pet 通道只发
+# 无名帧 (`data:` 无 `event:`), 故无命名帧.
+_SSE_FRAME_MODULE = "huginn/interaction/progress.py"
+_SSE_FRAME_RE = re.compile(r'event:\s*([a-zA-Z_][\w.]*)')
+# campaign 通道 payload 事件名的一部分静态可见: `emit_campaign_event(event_type="…")`.
+_SSE_CAMPAIGN_EMIT_RE = re.compile(r'event_type\s*=\s*["\']([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*)["\']')
+
+# 前端行级模式. 无 TS 解析器, 只做确定性行匹配 (边界见文档"诚实边界").
+_FE_ES_ASSIGN = re.compile(r"(\w+)\s*=\s*new\s+EventSource\(\s*(.+)$")
+_FE_LISTEN = re.compile(r"(\w+)\.addEventListener\(\s*[\"']([^\"']+)[\"']\s*,\s*(\w+)")
+_FE_LISTEN_IDENT = re.compile(r"(\w+)\.addEventListener\(\s*(\w+)\s*,\s*(\w+)")
+_FE_HANDLER = re.compile(r"const\s+(\w+)\s*=\s*\(\s*\w+\s*:\s*MessageEvent\s*\)\s*=>\s*\{")
+_FE_ARRAY = re.compile(r"^\s*\[(.+)\]\s*$")
+_FE_STR = re.compile(r"[\"']([^\"']+)[\"']")
+_FE_PAYLOAD = re.compile(r"(?:case\s+|===?\s*)[\"']([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+)[\"']")
+
+_SSE_STATUS_DOC = {
+    "wired": "该通道确实发此帧名",
+    "channel-mismatch": "帧名存在但走别的通道 (监听挂错 EventSource, 永不触发)",
+    "no-source": "后端任何 SSE 通道都不发此帧名",
+    "external": "非 SSE 通道 (window/document 等 DOM 事件), 不计入",
+}
+
+
+def _display(frontend: Path, p: Path) -> str:
+    """前端文件路径尽量相对仓根父目录显示 (desktop/src/…), 否则退化为相对前端根."""
+    try:
+        return p.relative_to(_REPO.parent).as_posix()
+    except ValueError:
+        return p.relative_to(frontend).as_posix()
+
+
+def _scan_ts_source(rel: str, lines: list[str]) -> tuple[list[dict], list[dict]]:
+    """行级扫一个 TS/TSX 源文件 → (帧监听点, payload 匹配点).
+
+    归属链: 帧监听 → 所在 `EventSource` 变量的最近一次 `new EventSource(url)`;
+    payload 字面量 → 所在 `(e: MessageEvent) => {}` 处理函数 → 该函数注册处的事件源.
+    """
+    chan_keys = sorted(_SSE_CHANNELS, key=len, reverse=True)
+    assigns: list[tuple[int, str, str | None]] = []
+    for i, ln in enumerate(lines):
+        m = _FE_ES_ASSIGN.search(ln)
+        if m:
+            arg = m.group(2)
+            ch = next((_SSE_CHANNELS[k] for k in chan_keys if k in arg), None)
+            assigns.append((i, m.group(1), ch))
+
+    def chan_of(var: str, idx: int) -> str | None:
+        found = None
+        for ai, av, ac in assigns:
+            if av == var and ai <= idx:
+                found = ac
+        return found
+
+    frames: list[dict] = []
+    regs: list[tuple[int, str, str | None]] = []
+    for i, ln in enumerate(lines):
+        m = _FE_LISTEN.search(ln)
+        if m:
+            var, frame, handler = m.group(1), m.group(2), m.group(3)
+            frames.append(
+                {
+                    "rel": rel,
+                    "line": i + 1,
+                    "var": var,
+                    "frame": frame,
+                    "channel": chan_of(var, i),
+                }
+            )
+            regs.append((i, var, handler))
+            continue
+        m2 = _FE_LISTEN_IDENT.search(ln)
+        if m2:
+            var, handler = m2.group(1), m2.group(3)
+            # `[ "a.b", "c.d" ].forEach((ev) => es.addEventListener(ev, h))`:
+            # 帧名在上一行的数组字面量里, 通道取 forEach 那一行的事件源.
+            for j in range(i - 1, max(-1, i - 6), -1):
+                am = _FE_ARRAY.match(lines[j])
+                if am:
+                    for s in _FE_STR.findall(am.group(1)):
+                        frames.append(
+                            {
+                                "rel": rel,
+                                "line": j + 1,
+                                "var": var,
+                                "frame": s,
+                                "channel": chan_of(var, i),
+                            }
+                        )
+                    break
+            regs.append((i, var, handler))
+
+    handlers = [
+        (i, m.group(1)) for i, ln in enumerate(lines) if (m := _FE_HANDLER.search(ln))
+    ]
+
+    def handler_at(idx: int) -> str | None:
+        found = None
+        for hi, hn in handlers:
+            if hi <= idx:
+                found = hn
+        return found
+
+    def chan_of_handler(name: str) -> str | None:
+        for ri, rv, rh in regs:
+            if rh == name:
+                return chan_of(rv, ri)
+        return None
+
+    payloads: list[dict] = []
+    for i, ln in enumerate(lines):
+        for m in _FE_PAYLOAD.finditer(ln):
+            h = handler_at(i)
+            payloads.append(
+                {
+                    "rel": rel,
+                    "line": i + 1,
+                    "value": m.group(1),
+                    "channel": chan_of_handler(h) if h else None,
+                }
+            )
+    return frames, payloads
+
+
+def _frontend_listen_sites(frontend: Path) -> dict:
+    """扫前端 `.ts`/`.tsx`: 帧监听点与 payload 匹配点 (带通道归属)."""
+    frames: list[dict] = []
+    payloads: list[dict] = []
+    if not frontend.is_dir():
+        return {"frames": frames, "payloads": payloads}
+    for p in sorted(frontend.rglob("*")):
+        if not p.is_file() or p.suffix not in (".ts", ".tsx"):
+            continue
+        try:
+            lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        f, pl = _scan_ts_source(_display(frontend, p), lines)
+        frames.extend(f)
+        payloads.extend(pl)
+    return {"frames": frames, "payloads": payloads}
+
+
+def _sse_frame_emitters(root: Path) -> dict[str, list[str]]:
+    """各 SSE 通道的帧名生产面 (progress 取字面帧名, event_bus 取总线发布值)."""
+    out: dict[str, list[str]] = {name: [] for name in _SSE_CHANNELS.values()}
+    out["progress"] = sorted(set(_SSE_FRAME_RE.findall(_read(root, _SSE_FRAME_MODULE))))
+    wiring = _event_wiring(root)["wiring"]
+    out["event_bus"] = sorted(v for v, w in wiring.items() if w["prod_publish"])
+    return out
+
+
+def _campaign_payload_literals(root: Path) -> set[str]:
+    """`event_type="…"` 字面量 → campaign 通道 payload 事件名 (静态可见的部分)."""
+    vals: set[str] = set()
+    for py in _iter_py(root):
+        src = py.read_text(encoding="utf-8", errors="replace")
+        vals.update(_SSE_CAMPAIGN_EMIT_RE.findall(src))
+    return vals
+
+
+def build_sse_contract(root: Path | None = None, frontend: Path | None = None) -> dict:
+    """SSE 消费面: 后端帧名生产面 ↔ 前端 EventSource 监听消费面 (按通道归属)."""
+    root = root or _REPO
+    frontend = frontend if frontend is not None else root.parent / "desktop" / "src"
+    emitters = _sse_frame_emitters(root)
+    all_frames = {f for fs in emitters.values() for f in fs}
+    declared = set(_event_declarations(root)["consts"].values())
+    campaign = _campaign_payload_literals(root)
+    scan = _frontend_listen_sites(frontend)
+
+    listeners: list[dict] = []
+    for site in scan["frames"]:
+        ch, frame = site["channel"], site["frame"]
+        if ch is None:
+            status, note = "external", "非 SSE 通道 (DOM 事件), 不计入"
+        elif frame in set(emitters.get(ch, [])):
+            status, note = "wired", ""
+        elif frame in all_frames:
+            others = sorted(k for k, v in emitters.items() if k != ch and frame in v)
+            status = "channel-mismatch"
+            note = f"此通道不发该帧名, 实际由 {'/'.join(others)} 通道发出"
+        else:
+            status, note = "no-source", "后端任何 SSE 通道都不发此帧名"
+        listeners.append({**site, "status": status, "note": note})
+
+    consumed = {s["frame"] for s in scan["frames"] if s["channel"] is not None}
+    payload_values = {p["value"] for p in scan["payloads"]}
+    zero_consumer: list[dict] = []
+    for ch in _SSE_CHANNELS.values():
+        for f in emitters[ch]:
+            if f in consumed:
+                continue
+            zero_consumer.append(
+                {"channel": ch, "frame": f, "via_payload": f in payload_values}
+            )
+
+    payloads: list[dict] = []
+    for p in scan["payloads"]:
+        v = p["value"]
+        if v in emitters["event_bus"]:
+            source = "bus"
+        elif v in campaign:
+            source = "campaign"
+        elif v in declared:
+            source = "declared"
+        else:
+            source = "unknown"
+        payloads.append({**p, "source": source})
+
+    return {
+        "frontend": str(frontend),
+        "channels": {k: {"url": k, "frames": emitters[k]} for k in _SSE_CHANNELS.values()},
+        "listeners": listeners,
+        "zero_consumer": zero_consumer,
+        "payloads": payloads,
+        "campaign_literals": sorted(campaign),
+    }
+
+
+def render_sse_markdown(contract: dict) -> str:
+    lines: list[str] = []
+    lines.append("## SSE 消费面: 后端帧名生产面 vs 前端 EventSource 监听面")
+    lines.append("")
+    lines.append(
+        "后端有三条 SSE 通道, 帧名 (`event:` 行) 只在**发它的那条 EventSource** 上才可能"
+        "被 `addEventListener(<帧名>)` 命中 —— 所以监听必须**按通道**核: `progress`"
+        "(`/tasks/stream`, 帧名来自 `interaction/progress.py` 的字面 `event:` 行), "
+        "`event_bus` (`/events/stream`, 帧名 = `AgentEvent.to_sse()` 写入的事件类型值), "
+        "`pet` (`/events`, 只发无名帧, 无命名帧)."
+    )
+    lines.append("")
+    lines.append("状态: " + "; ".join(f"`{k}`={v}" for k, v in _SSE_STATUS_DOC.items()))
+    lines.append("")
+    lines.append("| 通道 | URL 片段 | 生产帧名 |")
+    lines.append("|---|---|---|")
+    for k, v in contract["channels"].items():
+        frames = ", ".join(f"`{f}`" for f in v["frames"]) or "— (无名帧)"
+        lines.append(f"| `{k}` | `{v['url']}` | {frames} |")
+    lines.append("")
+
+    lines.append("### 前端帧监听 (按通道归属)")
+    lines.append("")
+    lines.append("| 帧名 | 通道 | 状态 | 位置 | 备注 |")
+    lines.append("|---|---|---|---|---|")
+    for s in sorted(contract["listeners"], key=lambda x: (x["status"], x["rel"], x["line"])):
+        ch = f"`{s['channel']}`" if s["channel"] else "—"
+        lines.append(
+            f"| `{s['frame']}` | {ch} | `{s['status']}` | `{s['rel']}:{s['line']}` "
+            f"| {s['note']} |"
+        )
+    lines.append("")
+
+    lines.append("### 生产帧名零前端监听 (候选)")
+    lines.append("")
+    zero = contract["zero_consumer"]
+    if zero:
+        for z in zero:
+            tail = " (经 payload 字段消费)" if z["via_payload"] else ""
+            lines.append(f"- `{z['channel']}` / `{z['frame']}`{tail}")
+    else:
+        lines.append("- 无 —— 每个生产帧名都有前端监听.")
+    lines.append("")
+
+    lines.append("### 前端 payload 字段匹配的事件名")
+    lines.append("")
+    if contract["payloads"]:
+        lines.append("| 事件名 | 消费通道 | 生产面 | 位置 |")
+        lines.append("|---|---|---|---|")
+        for p in contract["payloads"]:
+            ch = f"`{p['channel']}`" if p["channel"] else "—"
+            lines.append(
+                f"| `{p['value']}` | {ch} | `{p['source']}` | `{p['rel']}:{p['line']}` |"
+            )
+    else:
+        lines.append("- 无")
+    lines.append("")
+    lines.append(
+        "生产面取值: `bus` = 总线生产发布 (双通道之一); `campaign` = "
+        "`emit_campaign_event(event_type=\"…\")` 静态可见的字面量; `declared` = 已声明常量但未"
+        "观测到生产发布; `unknown` = 静态不可见 (如 `f\"campaign.{name}\"` 动态拼接)."
+    )
+    lines.append("")
+    lines.append(
+        "诚实边界: 前端是 TS, 本工具只做**行级**匹配 (`new EventSource` / `addEventListener` / "
+        "`case …:` / `=== …`), 不做 TS 语法分析 —— 经变量中转的帧名、`es.onmessage` 的无名帧、"
+        "动态拼接的通道 URL 都解析不到; campaign payload 里 `f\"campaign.{name}\"` 这类动态名"
+        "同样不可穷尽, 故 `unknown` 只提示不判死."
+    )
+    lines.append("")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # 组合 + 门禁
 # ---------------------------------------------------------------------------
 
@@ -2327,6 +2641,7 @@ def build_mece_snapshot(root: Path | None = None) -> dict:
         "tools": build_tool_contract(root),
         "hooks": build_hook_contract(root),
         "events": build_event_contract(root),
+        "sse": build_sse_contract(root),
     }
 
 
@@ -2437,21 +2752,35 @@ def find_issues(snap: dict) -> list[str]:
         issues.append(
             f"事件: {'+'.join(used)}了未声明类型 (设计允许非穷尽, 候选登记): {u['value']}"
         )
+    sse = snap["sse"]
+    for s in sse["listeners"]:
+        if s["status"] == "channel-mismatch":
+            issues.append(
+                f"SSE: 监听挂错通道 (该 EventSource 不发此帧名, 永不触发): {s['frame']} "
+                f"@ {s['rel']}:{s['line']} — {s['note']}"
+            )
+        elif s["status"] == "no-source":
+            issues.append(
+                f"SSE: 监听的后端无此帧名 (三通道都不发): {s['frame']} "
+                f"@ {s['rel']}:{s['line']}"
+            )
     return issues
 
 
 def render_mece_markdown(snap: dict) -> str:
     lines: list[str] = []
-    lines.append("# MECE 契约审计 (奖励面 + 授权面 + 工作流面 + 模式面 + 词汇面 + 工具面 + 钩子面 + 事件面)")
+    lines.append(
+        "# MECE 契约审计 (奖励面 + 授权面 + 工作流面 + 模式面 + 词汇面 + 工具面 + 钩子面 + 事件面 + SSE 消费面)"
+    )
     lines.append("")
     lines.append(
         "自动生成: `python -m huginn.cli.contract_audit --out docs/mece-audit.md`."
     )
     lines.append(
         "以 MECE 两原则审计 agent 的**奖励面 / 授权面 / 工作流面 / 模式面 / "
-        "词汇面 / 工具面 / 钩子面 / 事件面**: **collectively exhaustive** 抓「宣称维度零调用者 / 面之间的缺口」; "
-        "**mutually exclusive** 抓「同轴惩罚叠加」「跨模块同名重复实现」「词表互不一致」"
-        "「同名工具名多类声明」「事件常量撞值」. 纯静态扫描, 只提示候选, 不判死."
+        "词汇面 / 工具面 / 钩子面 / 事件面 / SSE 消费面**: **collectively exhaustive** 抓「宣称维度零调用者 / "
+        "面之间的缺口」; **mutually exclusive** 抓「同轴惩罚叠加」「跨模块同名重复实现」「词表互不一致」"
+        "「同名工具名多类声明」「事件常量撞值」「SSE 帧名挂错通道」. 纯静态扫描, 只提示候选, 不判死."
     )
     lines.append("")
     lines.append(render_reward_markdown(snap["reward"]))
@@ -2462,6 +2791,7 @@ def render_mece_markdown(snap: dict) -> str:
     lines.append(render_tool_markdown(snap["tools"]))
     lines.append(render_hook_markdown(snap["hooks"]))
     lines.append(render_event_markdown(snap["events"]))
+    lines.append(render_sse_markdown(snap["sse"]))
     issues = find_issues(snap)
     lines.append("## 发现汇总")
     lines.append("")
@@ -2484,6 +2814,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--tools", action="store_true", help="只看工具面")
     parser.add_argument("--hooks", action="store_true", help="只看钩子面")
     parser.add_argument("--events", action="store_true", help="只看事件面")
+    parser.add_argument("--sse", action="store_true", help="只看 SSE 消费面")
     parser.add_argument("--json", action="store_true", help="输出 JSON 快照")
     parser.add_argument("--check", action="store_true", help="有 MECE 发现时 exit 1")
     parser.add_argument("--out", type=str, default="", help="写 markdown 到文件")
@@ -2498,6 +2829,7 @@ def main(argv: list[str] | None = None) -> int:
         "tools": (args.tools, build_tool_contract, render_tool_markdown),
         "hooks": (args.hooks, build_hook_contract, render_hook_markdown),
         "events": (args.events, build_event_contract, render_event_markdown),
+        "sse": (args.sse, build_sse_contract, render_sse_markdown),
     }
     selected = [k for k, (on, _b, _r) in surfaces.items() if on]
     if len(selected) == 1:
