@@ -9,9 +9,9 @@
   - **collectively exhaustive 违例**: 宣称的维度零调用者 (declared but unwired).
   - **mutually exclusive 违例**: 同名跨模块重复实现 / 同一惩罚轴上叠两项.
 
-审计十一面: **奖励面 / 授权面 / 工作流面 / 模式面 / 词汇面 / 工具面 / 钩子面 / 事件面 /
-SSE 消费面 / WS 消费面 / HTTP API 消费面**. 后九面是本工具从奖励系统外延到"agent 自身
-怎么跑"的同类审计:
+审计十四面: **奖励面 / 授权面 / 工作流面 / 模式面 / 词汇面 / 工具面 / 钩子面 / 事件面 /
+SSE 消费面 / WS 消费面 / HTTP API 消费面 / 请求负载面 / 响应结构面 / WS 请求负载面**.
+后十二面是本工具从奖励系统外延到"agent 自身怎么跑"的同类审计:
 
   - **工作流面**: 执行 mode 分发面 (`phase_spec.dispatch_table` ↔ `engine_act`
     硬编码分支 ↔ planner 提示教的 MODE 候选) 三者是否穷尽一致.
@@ -57,6 +57,19 @@ SSE 消费面 / WS 消费面 / HTTP API 消费面**. 后九面是本工具从奖
     "前端 → 后端"当硬契约: 前端调了后端没注册的路径 = 404 死链, 方法对不上 = 405;
     反向"后端注册但桌面零调用"按模块聚合列候选 (结构性常态). 另核路由挂载面
     (`ALL_ROUTERS` ↔ 各模块 `APIRouter`) 与同 method+path 多模块注册 (路由遮蔽).
+  - **请求负载面**: HTTP 消费面核「路径 + 方法」挂不挂得上 (404/405), 本面在**已命中
+    端点**上核负载: 后端签名里的必填 query / 必填请求体 / Pydantic 模型必填字段 /
+    `Form · File` 字段 ↔ 前端这次 `api.*` 调用发的实参. 只把「前端漏发后端必填」当
+    违例 (422 死负载); 反向 (可选字段没发) 不是违例.
+  - **响应结构面**: 请求负载面核「前端发的后端要不要求」, 本面反向核「后端返的前端读
+    不读得到」: 前端 `api.*<T>` 泛型声明的响应字段 ↔ 后端处理函数 `return` 字面量 /
+    `response_model` 实际返回字段. 只把「前端声明要读的字段后端从不返回」当违例
+    (恒 undefined, 静默坏); 独有形状解析: 忽略嵌套 `def`/`lambda` 的 return、递归解析
+    同模块 helper、识别 `if err: return err` 真值守卫排除 null 分支.
+  - **WS 请求负载面**: WS 消费面只核「入站 `type` 认不认」, 本面再往里一层核 agent 通道
+    入站消息的**负载字段**, 权威是 `WSMessage` Pydantic 模型. 两向硬违例: 后端 handler
+    读 `msg.<X>` 而模型未声明 `X` (AttributeError 死帧) / 前端发该 type 时带了模型未
+    声明字段 (被静默丢弃). 只核 agent 通道 (其余通道入站负载走原始 dict).
 
 本工具只做**静态扫描 + 少量运行时读取**并**提示候选**, 不判死: "同轴/同名/词表
 不一致"是可疑信号, 是否真缺陷需人工判定 (例如 efficiency_discount 按"首次全对
@@ -64,7 +77,7 @@ SSE 消费面 / WS 消费面 / HTTP API 消费面**. 后九面是本工具从奖
 fusion 模式经 set_mode('research') 复用 CSM S3 是**有意设计**, 非漏接).
 
 用法:
-    python -m huginn.cli.contract_audit                  # 打印十一面审计
+    python -m huginn.cli.contract_audit                  # 打印十四面审计
     python -m huginn.cli.contract_audit --reward         # 只看奖励面
     python -m huginn.cli.contract_audit --scope          # 只看授权面
     python -m huginn.cli.contract_audit --workflow       # 只看工作流面
@@ -76,6 +89,9 @@ fusion 模式经 set_mode('research') 复用 CSM S3 是**有意设计**, 非漏�
     python -m huginn.cli.contract_audit --sse            # 只看 SSE 消费面
     python -m huginn.cli.contract_audit --ws             # 只看 WS 消费面
     python -m huginn.cli.contract_audit --http           # 只看 HTTP API 消费面
+    python -m huginn.cli.contract_audit --payload        # 只看请求负载面
+    python -m huginn.cli.contract_audit --response       # 只看响应结构面
+    python -m huginn.cli.contract_audit --ws-payload     # 只看 WS 请求负载面
     python -m huginn.cli.contract_audit --json           # 机器可读快照
     python -m huginn.cli.contract_audit --check          # 有发现则 exit 1 (供 CI 门禁)
     python -m huginn.cli.contract_audit --out docs/mece-audit.md
@@ -5090,6 +5106,480 @@ def render_response_markdown(contract: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
+# WS 请求负载面: WSMessage 声明字段 ↔ 后端 handler 读取面 ↔ 前端发送面
+# ---------------------------------------------------------------------------
+# WS 消费面只核「入站 type 认不认」; 本面再往里一层核 agent 通道入站消息的**负载
+# 字段**。权威是 `WSMessage` Pydantic 模型 (schemas.py 自述: "every field a handler
+# consumes must be declared here to stay in sync"), 两个硬方向:
+#   1. 后端 handler 读 `msg.<X>` 而 `WSMessage` 未声明 `X` ⇒ Pydantic BaseModel
+#      AttributeError (该入站消息必崩, 回 error 帧).
+#   2. 前端发该 type 时带了 `WSMessage` 未声明的字段 ⇒ 被 Pydantic 静默丢弃 (客户端
+#      以为发了, 后端读到默认值, 功能静默失效).
+# 反向 (模型声明了 handler 未读 / 前端未发) 不是违例 —— 模型面向全部 WS 客户端 (含
+# 外部客户端), 冗余声明是诚实的. 只核 agent 通道: terminal/hpc/viewer3d 的入站负载
+# 走原始 dict, 不受 `WSMessage` 约束.
+
+_WS_PAYLOAD_SCHEMA_REL = "huginn/routes/schemas.py"
+_WS_PAYLOAD_MODEL = "WSMessage"
+# `_accept_message_field` 把前端发来的 `message` 归一成 `content`: 有意接纳的别名,
+# 不算"未声明字段".
+_WS_PAYLOAD_ALIASES = frozenset({"message"})
+# 分发键: ws.py 从原始 dict 取 `type` (非 `msg.type`), 不参与"声明却零读取"判定.
+_WS_PAYLOAD_ENVELOPE = frozenset({"type"})
+
+_WS_PAYLOAD_KIND_DOC = {
+    "handler-undeclared": "后端 handler 读 `msg.<字段>` 而 WSMessage 未声明 (AttributeError 死帧)",
+    "fe-undeclared": "前端发送的字段 WSMessage 未声明 (被 Pydantic 静默丢弃)",
+}
+
+# 已确认分诊表. 键 (类型, 入站 type, 字段名) → (标签, 理由); 未登记即"待分诊",
+# 回归测试会失败 (逼逐条人工判定). 空表 = 当前入站负载字段都合契约.
+_WS_PAYLOAD_CONFIRMED: dict[tuple[str, str, str], tuple[str, str]] = {}
+
+_WS_PAYLOAD_TRIAGE_DOC = {
+    "defect": "已确认缺陷 (待修)",
+    "intentional": "已确认有意",
+}
+
+
+def _ws_payload_triage(kind: str, mtype: str, field: str) -> tuple[str, str] | None:
+    """WS 负载违例分诊: 返回 (标签, 理由); 未登记则 None (待人工确认)."""
+    return _WS_PAYLOAD_CONFIRMED.get((kind, mtype, field))
+
+
+def _ws_payload_violation_mark(kind: str, mtype: str, field: str) -> str:
+    tri = _ws_payload_triage(kind, mtype, field)
+    if tri is None:
+        return " — ⚠ 待分诊"
+    doc = _WS_PAYLOAD_TRIAGE_DOC[tri[0]]
+    return f" — {'⛔' if tri[0] == 'defect' else '✅'} {doc}: {tri[1]}"
+
+
+def _ws_payload_model_fields(root: Path) -> set[str]:
+    """`WSMessage` 声明的字段集 (本面的权威面)."""
+    tree = _parse(root / _WS_PAYLOAD_SCHEMA_REL)
+    if tree is None:
+        return set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and node.name == _WS_PAYLOAD_MODEL:
+            return {
+                s.target.id
+                for s in node.body
+                if isinstance(s, ast.AnnAssign) and isinstance(s.target, ast.Name)
+            }
+    return set()
+
+
+def _ws_handler_registry(root: Path) -> dict[str, str]:
+    """agent 通道 `_MESSAGE_HANDLERS`: 入站 type → handler 函数名."""
+    tree = _parse(root / _WS_REGISTRY_REL)
+    if tree is None:
+        return {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.AnnAssign):
+            target, value = node.target, node.value
+        elif isinstance(node, ast.Assign):
+            names = [t for t in node.targets if isinstance(t, ast.Name)]
+            target, value = (names[0] if names else None), node.value
+        else:
+            continue
+        if not (isinstance(target, ast.Name) and target.id == _WS_REGISTRY_VAR):
+            continue
+        if not isinstance(value, ast.Dict):
+            continue
+        out: dict[str, str] = {}
+        for k, v in zip(value.keys, value.values):
+            if (
+                isinstance(k, ast.Constant)
+                and isinstance(k.value, str)
+                and isinstance(v, ast.Name)
+            ):
+                out[k.value] = v.id
+        return out
+    return {}
+
+
+def _ws_payload_handlers(root: Path) -> dict[str, dict]:
+    """入站 type → handler 读取的 `msg.<字段>` 面 (含定义位置, 供核对).
+
+    handler 定义按名在全仓解析 (排除 tests/); 取 `msg` 形参上的属性读取。嵌套闭包
+    里的 `msg.<X>` 也算 handler 的消费 (确属该入站路径), 故用 `ast.walk` 下潜。
+    """
+    reg = _ws_handler_registry(root)
+    defs: dict[str, tuple[ast.FunctionDef | ast.AsyncFunctionDef, str]] = {}
+    for py in _iter_py(root):
+        if "/tests/" in py.as_posix():
+            continue
+        tree = _parse(py)
+        if tree is None:
+            continue
+        rel = py.relative_to(root).as_posix()
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+                and node.name not in defs
+            ):
+                defs[node.name] = (node, rel)
+    out: dict[str, dict] = {}
+    for mtype, hname in reg.items():
+        hit = defs.get(hname)
+        if hit is None:
+            out[mtype] = {
+                "handler": hname,
+                "fields": {},
+                "resolved": False,
+                "rel": "",
+                "line": 0,
+            }
+            continue
+        node, rel = hit
+        params = [a.arg for a in node.args.args]
+        msgp = "msg" if "msg" in params else (params[1] if len(params) > 1 else "msg")
+        fields: dict[str, int] = {}
+        for n in ast.walk(node):
+            if (
+                isinstance(n, ast.Attribute)
+                and isinstance(n.value, ast.Name)
+                and n.value.id == msgp
+            ):
+                fields.setdefault(n.attr, n.lineno)
+        out[mtype] = {
+            "handler": hname,
+            "fields": fields,
+            "resolved": True,
+            "rel": rel,
+            "line": node.lineno,
+        }
+    return out
+
+
+def _ws_ts_brace_end(text: str, i: int) -> int:
+    """`text[i] == '{'` → 匹配闭括号后的下标 (尊重字符串/嵌套); 未闭合返回 n."""
+    depth = 0
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if c in "\"'`":
+            i = _skip_ts_string(text, i)
+            continue
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        i += 1
+    return n
+
+
+def _ws_top_split(inner: str) -> list[str]:
+    """按顶层 `,` 切分对象字面量内容 (尊重字符串与 `{}`/`()`/`[]` 嵌套)."""
+    parts: list[str] = []
+    depth = 0
+    start = 0
+    i = 0
+    n = len(inner)
+    while i < n:
+        c = inner[i]
+        if c in "\"'`":
+            i = _skip_ts_string(inner, i)
+            continue
+        if c in "{[(":
+            depth += 1
+        elif c in "}])":
+            depth -= 1
+        elif c == "," and depth == 0:
+            parts.append(inner[start:i])
+            start = i + 1
+        i += 1
+    parts.append(inner[start:])
+    return parts
+
+
+_WS_OBJ_KEY_RE = re.compile(r'^["\']?([A-Za-z_$][\w$]*)["\']?\s*:')
+_WS_OBJ_TYPE_RE = re.compile(r'^["\']?type["\']?\s*:\s*["\']([a-z][a-z0-9_]*)["\']')
+_WS_OBJ_SHORTHAND_RE = re.compile(r'^([A-Za-z_$][\w$]*)$')
+
+
+def _ws_obj_fields(inner: str) -> tuple[set[str], str | None, bool]:
+    """对象字面量内容 → (顶层键集, `type` 字面量, 是否有展开/读不出的成员)."""
+    keys: set[str] = set()
+    typ: str | None = None
+    unknown = False
+    for part in _ws_top_split(inner):
+        s = part.strip()
+        if not s:
+            continue
+        if s.startswith("..."):
+            unknown = True
+            continue
+        m = _WS_OBJ_KEY_RE.match(s)
+        if m:
+            key = m.group(1)
+            keys.add(key)
+            if key == "type":
+                vm = _WS_OBJ_TYPE_RE.match(s)
+                if vm:
+                    typ = vm.group(1)
+            continue
+        sh = _WS_OBJ_SHORTHAND_RE.match(s)
+        if sh:
+            keys.add(sh.group(1))
+        else:
+            unknown = True
+    return keys, typ, unknown
+
+
+_WS_SEND_OBJ_RE = re.compile(r"(?:JSON\.stringify|\.send)\s*\(\s*\{")
+
+
+def _ws_payload_scan_sends(frontend: Path) -> list[dict]:
+    """扫前端 WS 发送对象字面量 → (通道, 入站 type, 键集, 是否有展开).
+
+    只读字面量形状: `{ type: "user_input", content, thread_id }`; 对象含 `...` 展开
+    或成员读不出时记 unknown (键集仍是下界). type 非字面量则记 None (不可归属).
+    """
+    sends: list[dict] = []
+    if not frontend.is_dir():
+        return sends
+    for p in sorted(frontend.rglob("*")):
+        if not p.is_file() or p.suffix not in (".ts", ".tsx"):
+            continue
+        rel = _display(frontend, p)
+        if (
+            rel.endswith(".spec.ts")
+            or rel.endswith(".spec.tsx")
+            or rel.endswith(_WS_DECL_SUFFIX)
+        ):
+            continue
+        try:
+            text = p.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        ch = _ws_file_channel(rel, text)
+        for m in _WS_SEND_OBJ_RE.finditer(text):
+            brace = text.find("{", m.start())
+            if brace < 0:
+                continue
+            end = _ws_ts_brace_end(text, brace)
+            if end <= brace + 1 or text[end - 1] != "}":
+                continue
+            keys, typ, unknown = _ws_obj_fields(text[brace + 1 : end - 1])
+            sends.append(
+                {
+                    "rel": rel,
+                    "line": text.count("\n", 0, m.start()) + 1,
+                    "channel": ch,
+                    "type": typ,
+                    "keys": sorted(keys),
+                    "unknown": unknown,
+                }
+            )
+    return sends
+
+
+def build_ws_payload_contract(
+    root: Path | None = None, frontend: Path | None = None
+) -> dict:
+    """WS 请求负载面: `WSMessage` 声明字段 ↔ 后端 handler 读取面 ↔ 前端发送面.
+
+    硬方向两向: handler 读未声明字段 (AttributeError) / 前端发未声明字段 (静默丢弃).
+    只核 agent 通道 (受 `WSMessage` 约束); 前端 type 非字面量或读不出键即跳过该处。
+    """
+    root = root or _REPO
+    frontend = frontend if frontend is not None else root.parent / "desktop" / "src"
+    model_fields = _ws_payload_model_fields(root)
+    handlers = _ws_payload_handlers(root)
+    inbound = set(_ws_inbound_types(root).get("agent", []))
+    sends = _ws_payload_scan_sends(frontend)
+    declared = model_fields | _WS_PAYLOAD_ALIASES
+
+    violations: list[dict] = []
+    # 方向 1: handler 读 `msg.<X>` 而模型未声明 X.
+    resolved = 0
+    for mtype in sorted(handlers):
+        h = handlers[mtype]
+        if not h["resolved"]:
+            continue
+        resolved += 1
+        for f in sorted(h["fields"]):
+            if f in declared:
+                continue
+            violations.append(
+                {
+                    "kind": "handler-undeclared",
+                    "type": mtype,
+                    "field": f,
+                    "detail": f"handler `{h['handler']}` 读 `msg.{f}`",
+                    "rel": h["rel"],
+                    "line": h["fields"][f],
+                }
+            )
+
+    # 方向 2: 前端发已知入站 type 时带模型未声明字段.
+    agent_sends = [s for s in sends if s["channel"] == "agent"]
+    sends_static = 0
+    sends_unknown = 0
+    sends_unattributed = 0
+    sent_fields: set[str] = set()
+    for s in agent_sends:
+        if s["type"] not in inbound:
+            sends_unattributed += 1
+            continue
+        sent_fields |= set(s["keys"])
+        if s["unknown"]:
+            sends_unknown += 1
+        else:
+            sends_static += 1
+        for f in s["keys"]:
+            if f in declared or f in _WS_PAYLOAD_ENVELOPE:
+                continue
+            violations.append(
+                {
+                    "kind": "fe-undeclared",
+                    "type": s["type"],
+                    "field": f,
+                    "detail": f"前端发送 `{s['type']}` 带了 `{f}`",
+                    "rel": s["rel"],
+                    "line": s["line"],
+                }
+            )
+
+    for v in violations:
+        tri = _ws_payload_triage(v["kind"], v["type"], v["field"])
+        v["triage"] = tri[0] if tri else "untriaged"
+        v["triage_reason"] = tri[1] if tri else ""
+
+    read_fields = {f for h in handlers.values() if h["resolved"] for f in h["fields"]}
+    dead_fields = sorted(
+        f
+        for f in model_fields - _WS_PAYLOAD_ENVELOPE
+        if f not in read_fields and f not in sent_fields
+    )
+    unresolved = sorted(
+        m for m, h in handlers.items() if not h["resolved"]
+    )
+    kinds = Counter(v["kind"] for v in violations)
+    return {
+        "frontend": str(frontend),
+        "model_fields": sorted(model_fields),
+        "handler_count": len(handlers),
+        "handlers_resolved": resolved,
+        "handlers_unresolved": unresolved,
+        "handler_fields": {m: sorted(h["fields"]) for m, h in handlers.items()},
+        "send_count": len(sends),
+        "agent_send_count": len(agent_sends),
+        "sends_static": sends_static,
+        "sends_unknown": sends_unknown,
+        "sends_unattributed": sends_unattributed,
+        "violations": violations,
+        "untriaged": [v for v in violations if v["triage"] == "untriaged"],
+        "kind_counts": dict(sorted(kinds.items())),
+        "dead_fields": dead_fields,
+    }
+
+
+def render_ws_payload_markdown(contract: dict) -> str:
+    lines: list[str] = []
+    lines.append("## WS 请求负载面: WSMessage 声明字段 vs 后端 handler 读取面 vs 前端发送面")
+    lines.append("")
+    lines.append(
+        "WS 消费面只核「入站 `type` 认不认」（认了但字段发错照样坏）; 本面再往里一层, "
+        "核 agent 通道入站消息的**负载字段**。权威是 `WSMessage` Pydantic 模型 "
+        "(`schemas.py` 自述: handler 消费的每个字段都必须在此声明才不失同步)。两个硬"
+        "方向: **后端 handler 读 `msg.<X>` 而 `WSMessage` 未声明 `X`** ⇒ Pydantic "
+        "`BaseModel` 抛 `AttributeError`（该入站消息必崩, 回 error 帧）; **前端发该 "
+        "`type` 时带了 `WSMessage` 未声明的字段** ⇒ 被 Pydantic 静默丢弃（客户端以为"
+        "发了, 后端读默认值, 功能静默失效）。反向（模型声明了 handler 未读 / 前端未发）"
+        "不是违例 —— 模型面向全部 WS 客户端（含外部客户端）."
+    )
+    lines.append("")
+    lines.append(
+        "违例类型: " + "; ".join(f"`{k}`={v}" for k, v in _WS_PAYLOAD_KIND_DOC.items())
+    )
+    lines.append("")
+    mf = contract["model_fields"]
+    lines.append(
+        f"权威面: `{_WS_PAYLOAD_MODEL}` 声明 **{len(mf)}** 字段; agent 入站 type "
+        f"**{contract['handler_count']}** 个 (解析到 handler 定义 {contract['handlers_resolved']} 个); "
+        f"前端 agent 发送点 **{contract['agent_send_count']}** 处 (type 已知 {contract['sends_static'] + contract['sends_unknown']}, "
+        f"其中含展开/读不出 {contract['sends_unknown']}; type 非字面量/不在分发面 {contract['sends_unattributed']})."
+    )
+    counts = (
+        "  " + ", ".join(f"`{k}`×{n}" for k, n in contract["kind_counts"].items())
+        if contract["kind_counts"]
+        else ""
+    )
+    lines.append(f"违例: **{len(contract['violations'])}** 条.{counts}")
+    lines.append("")
+
+    lines.append("### 违例 (硬: 后端读未声明字段 / 前端发未声明字段)")
+    lines.append("")
+    if contract["violations"]:
+        lines.append(
+            "硬违例 —— handler 读模型未声明字段必 `AttributeError`; 前端发模型未声明字段"
+            "必被静默丢弃. 逐条分诊: 未登记的落「待分诊」(回归测试会失败, 逼人工判定):"
+        )
+        lines.append("")
+        for v in sorted(
+            contract["violations"],
+            key=lambda x: (x["kind"], x["type"], x["field"], x["rel"], x["line"]),
+        ):
+            lines.append(
+                f"- `[{v['kind']}]` `{v['type']}.{v['field']}` @ `{v['rel']}:{v['line']}` "
+                f"— {v['detail']}" + _ws_payload_violation_mark(v["kind"], v["type"], v["field"])
+            )
+    else:
+        lines.append("- 无 —— handler 读的字段都在 `WSMessage` 里, 前端发的字段也都认得.")
+    lines.append("")
+
+    lines.append("### 声明却无人接 (WSMessage 字段零 handler 读取且零前端发送)")
+    lines.append("")
+    if contract["dead_fields"]:
+        for f in contract["dead_fields"]:
+            lines.append(f"- `{f}`")
+    else:
+        lines.append("- 无.")
+    lines.append("")
+
+    lines.append("### 各入站 type 的 handler 读取字段")
+    lines.append("")
+    lines.append("| 入站 type | handler | 读取字段 | 解析 |")
+    lines.append("|---|---|---|---|")
+    hf = contract["handler_fields"]
+    for mtype in sorted(hf):
+        fields = hf[mtype]
+        ok = "✅" if fields or mtype not in contract["handlers_unresolved"] else "⚠"
+        lines.append(
+            f"| `{mtype}` | {', '.join(f'`{f}`' for f in fields) or '(无)'} | "
+            f"{len(fields)} | {ok} |"
+        )
+    lines.append("")
+
+    lines.append("### 静态核对覆盖面 (读不出形状即跳过, 不猜)")
+    lines.append("")
+    lines.append("| 维度 | 已核对 | 跳过 (读不出) |")
+    lines.append("|---|---|---|")
+    lines.append(
+        f"| 后端 handler 定义解析 | {contract['handlers_resolved']} | "
+        f"{len(contract['handlers_unresolved'])} |"
+    )
+    lines.append(
+        f"| 前端发送对象字段 | {contract['sends_static']} | {contract['sends_unknown']} |"
+    )
+    lines.append("")
+    lines.append(
+        "诚实边界: 只读**字面量**形状 —— handler 经 `getattr(msg, …)` / 变量间接读取, 或"
+        "前端发送对象含 `...` 展开 / `type` 非字面量时该处记 unknown 并跳过, 故违例是"
+        "**下界** (可能漏报); 只核 agent 通道 (terminal/hpc/viewer3d 的入站负载走原始 "
+        "dict, 不受 `WSMessage` 约束); 别名 `message`(→`content`) 与分发键 `type` 不算"
+        "未声明; 反向 (模型声明了但 handler 未读 / 前端未发) 不是违例."
+    )
+    lines.append("")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # 组合 + 门禁
 # ---------------------------------------------------------------------------
 
@@ -5109,6 +5599,7 @@ def build_mece_snapshot(root: Path | None = None) -> dict:
         "http": build_http_contract(root),
         "payload": build_payload_contract(root),
         "response": build_response_contract(root),
+        "ws_payload": build_ws_payload_contract(root),
     }
 
 
@@ -5288,13 +5779,37 @@ def find_issues(snap: dict) -> list[str]:
             f"{v['endpoint']} @ {v['rel']}:{v['line']} — 缺 "
             f"{', '.join(v['missing'])};{mark}"
         )
+    wsp = snap["ws_payload"]
+    _wsp_issue = {
+        "handler-undeclared": (
+            "WS 负载: 后端 handler 读 `msg.<字段>` 而 WSMessage 未声明 "
+            "(AttributeError 死帧): "
+        ),
+        "fe-undeclared": (
+            "WS 负载: 前端发送的字段 WSMessage 未声明 (被 Pydantic 静默丢弃): "
+        ),
+    }
+    for v in wsp["violations"]:
+        mark = (
+            " 待分诊"
+            if v["triage"] == "untriaged"
+            else " " + _WS_PAYLOAD_TRIAGE_DOC[v["triage"]]
+        )
+        issues.append(
+            f"{_wsp_issue[v['kind']]}{v['type']}.{v['field']} @ "
+            f"{v['rel']}:{v['line']} — {v['detail']};{mark}"
+        )
+    for f in wsp["dead_fields"]:
+        issues.append(
+            f"WS 负载: WSMessage 声明字段既无 handler 读取也零前端发送 (宣称却无人接): {f}"
+        )
     return issues
 
 
 def render_mece_markdown(snap: dict) -> str:
     lines: list[str] = []
     lines.append(
-        "# MECE 契约审计 (奖励面 + 授权面 + 工作流面 + 模式面 + 词汇面 + 工具面 + 钩子面 + 事件面 + SSE 消费面 + WS 消费面 + HTTP API 消费面 + 请求负载面 + 响应结构面)"
+        "# MECE 契约审计 (奖励面 + 授权面 + 工作流面 + 模式面 + 词汇面 + 工具面 + 钩子面 + 事件面 + SSE 消费面 + WS 消费面 + HTTP API 消费面 + 请求负载面 + 响应结构面 + WS 请求负载面)"
     )
     lines.append("")
     lines.append(
@@ -5303,12 +5818,13 @@ def render_mece_markdown(snap: dict) -> str:
     lines.append(
         "以 MECE 两原则审计 agent 的**奖励面 / 授权面 / 工作流面 / 模式面 / "
         "词汇面 / 工具面 / 钩子面 / 事件面 / SSE 消费面 / WS 消费面 / HTTP API 消费面 / "
-        "请求负载面 / 响应结构面**: "
+        "请求负载面 / 响应结构面 / WS 请求负载面**: "
         "**collectively exhaustive** 抓「宣称维度零调用者 / "
         "面之间的缺口」; **mutually exclusive** 抓「同轴惩罚叠加」「跨模块同名重复实现」「词表互不一致」"
         "「同名工具名多类声明」「事件常量撞值」「SSE 帧名挂错通道」「WS 帧名挂错端点」"
         "「HTTP 同 method+path 多模块注册」「前端漏发后端必填请求负载」"
-        "「前端声明要读的响应字段后端从不返回」. 纯静态扫描, 只提示候选, 不判死."
+        "「前端声明要读的响应字段后端从不返回」「WS 入站字段模型未声明」. 纯静态扫描, "
+        "只提示候选, 不判死."
     )
     lines.append("")
     lines.append(render_reward_markdown(snap["reward"]))
@@ -5324,6 +5840,7 @@ def render_mece_markdown(snap: dict) -> str:
     lines.append(render_http_markdown(snap["http"]))
     lines.append(render_payload_markdown(snap["payload"]))
     lines.append(render_response_markdown(snap["response"]))
+    lines.append(render_ws_payload_markdown(snap["ws_payload"]))
     issues = find_issues(snap)
     lines.append("## 发现汇总")
     lines.append("")
@@ -5351,6 +5868,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--http", action="store_true", help="只看 HTTP API 消费面")
     parser.add_argument("--payload", action="store_true", help="只看请求负载面")
     parser.add_argument("--response", action="store_true", help="只看响应结构面")
+    parser.add_argument("--ws-payload", action="store_true", help="只看 WS 请求负载面")
     parser.add_argument("--json", action="store_true", help="输出 JSON 快照")
     parser.add_argument("--check", action="store_true", help="有 MECE 发现时 exit 1")
     parser.add_argument("--out", type=str, default="", help="写 markdown 到文件")
@@ -5370,6 +5888,11 @@ def main(argv: list[str] | None = None) -> int:
         "http": (args.http, build_http_contract, render_http_markdown),
         "payload": (args.payload, build_payload_contract, render_payload_markdown),
         "response": (args.response, build_response_contract, render_response_markdown),
+        "ws_payload": (
+            args.ws_payload,
+            build_ws_payload_contract,
+            render_ws_payload_markdown,
+        ),
     }
     selected = [k for k, (on, _b, _r) in surfaces.items() if on]
     if len(selected) == 1:

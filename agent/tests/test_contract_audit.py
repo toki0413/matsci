@@ -1601,6 +1601,165 @@ def test_response_real_repo_refinements_close_known_endpoints():
     assert "success" in load["keys"]
 
 
+# ──────────────────── WS 请求负载面 ────────────────────
+
+
+def test_ws_payload_real_repo_no_untriaged_violations():
+    """真实仓: handler 读的字段都在 WSMessage 里, 前端发的字段也都认得 (无待分诊)."""
+    c = ca.build_ws_payload_contract()
+    assert c["handler_count"] > 0
+    assert c["handlers_resolved"] == c["handler_count"]
+    assert c["untriaged"] == [], c["untriaged"]
+    for v in c["violations"]:
+        assert v["triage"] in {"defect", "intentional"}
+        assert v["triage_reason"]
+    # 两个方向至少各自有可静态核对的样本, 否则本面等于空转.
+    assert c["handlers_resolved"] > 0
+    assert c["sends_static"] > 0
+
+
+def test_ws_payload_confirmed_registry_not_stale():
+    """分诊表登记的每条都必须仍是真实硬违例 —— 修好后要同步删登记."""
+    observed = {
+        (v["kind"], v["type"], v["field"])
+        for v in ca.build_ws_payload_contract()["violations"]
+    }
+    for key in ca._WS_PAYLOAD_CONFIRMED:
+        assert key in observed, f"分诊表登记 {key} 已不再是硬违例, 请删除登记"
+
+
+def test_ws_payload_violation_mark_labels_triage():
+    """分诊标注: 未登记 → 待分诊; 已登记 → 对应标签 + 理由."""
+    assert ca._ws_payload_triage("handler-undeclared", "user_input", "nope") is None
+    assert "待分诊" in ca._ws_payload_violation_mark(
+        "handler-undeclared", "user_input", "nope"
+    )
+    for (kind, mtype, field), (label, _reason) in ca._WS_PAYLOAD_CONFIRMED.items():
+        mark = ca._ws_payload_violation_mark(kind, mtype, field)
+        assert "待分诊" not in mark
+        assert ca._WS_PAYLOAD_TRIAGE_DOC[label] in mark
+
+
+def test_ws_payload_render_sections_present():
+    md = ca.render_ws_payload_markdown(ca.build_ws_payload_contract())
+    assert "WS 请求负载面" in md
+    assert "违例类型" in md
+    assert "静态核对覆盖面" in md
+    assert "诚实边界" in md
+
+
+_WS_PAYLOAD_SCHEMA_SRC = (
+    "from pydantic import BaseModel\n"
+    "\n"
+    "\n"
+    "class WSMessage(BaseModel):\n"
+    '    type: str = "user_input"\n'
+    '    content: str = ""\n'
+)
+
+
+def _ws_payload_tree(tmp_path, handlers_src: str, fe_src: str) -> None:
+    """合成 WS 负载树: schemas.py 声明 WSMessage / ws.py 注册表+handler / 前端发送."""
+    _write(tmp_path, ca._WS_PAYLOAD_SCHEMA_REL, _WS_PAYLOAD_SCHEMA_SRC)
+    _write(tmp_path, ca._WS_REGISTRY_REL, handlers_src)
+    _write(tmp_path, "fe/chat.ts", fe_src)
+
+
+def test_ws_payload_synthetic_handler_undeclared(tmp_path):
+    """合成树: handler 读 `msg.secret` 而 WSMessage 未声明 → 硬违例 (AttributeError)."""
+    _ws_payload_tree(
+        tmp_path,
+        "_MESSAGE_HANDLERS: dict = {\n"
+        '    "user_input": _handle_user_input,\n'
+        "}\n"
+        "async def _handle_user_input(websocket, msg, ctx):\n"
+        "    return await do(msg.secret)\n",
+        'const url = "/ws/agent";\n',
+    )
+    c = ca.build_ws_payload_contract(tmp_path, tmp_path / "fe")
+    got = [(v["kind"], v["type"], v["field"]) for v in c["violations"]]
+    assert got == [("handler-undeclared", "user_input", "secret")]
+    assert len(c["untriaged"]) == 1
+    assert c["handlers_resolved"] == 1
+
+
+def test_ws_payload_synthetic_fe_undeclared(tmp_path):
+    """合成树: 前端发 `user_input` 带了 WSMessage 未声明的 `bogus` → 硬违例 (静默丢弃)."""
+    _ws_payload_tree(
+        tmp_path,
+        "_MESSAGE_HANDLERS: dict = {\n"
+        '    "user_input": _handle_user_input,\n'
+        "}\n"
+        "async def _handle_user_input(websocket, msg, ctx):\n"
+        "    return await do(msg.content)\n",
+        'const url = "/ws/agent";\n'
+        'ws.send(JSON.stringify({ type: "user_input", content: "hi", bogus: 1 }));\n',
+    )
+    c = ca.build_ws_payload_contract(tmp_path, tmp_path / "fe")
+    got = [(v["kind"], v["type"], v["field"]) for v in c["violations"]]
+    assert got == [("fe-undeclared", "user_input", "bogus")]
+    assert c["agent_send_count"] == 1
+    assert c["sends_static"] == 1
+    assert c["sends_unknown"] == 0
+
+
+def test_ws_payload_synthetic_dead_field_and_unattributed(tmp_path):
+    """合成树: 声明却无人接的字段入 dead_fields; 前端发未知 type 记 unattributed (跳过)."""
+    _write(
+        tmp_path,
+        ca._WS_PAYLOAD_SCHEMA_REL,
+        "from pydantic import BaseModel\n"
+        "\n"
+        "\n"
+        "class WSMessage(BaseModel):\n"
+        '    type: str = "user_input"\n'
+        '    content: str = ""\n'
+        "    orphan: str | None = None\n",
+    )
+    _write(
+        tmp_path,
+        ca._WS_REGISTRY_REL,
+        "_MESSAGE_HANDLERS: dict = {\n"
+        '    "user_input": _handle_user_input,\n'
+        "}\n"
+        "async def _handle_user_input(websocket, msg, ctx):\n"
+        "    return await do(msg.content)\n",
+    )
+    _write(
+        tmp_path,
+        "fe/chat.ts",
+        'const url = "/ws/agent";\n'
+        'ws.send(JSON.stringify({ type: "user_input", content: "hi" }));\n'
+        'ws.send(JSON.stringify({ type: "ghost", orphan: 1 }));\n',
+    )
+    c = ca.build_ws_payload_contract(tmp_path, tmp_path / "fe")
+    # orphan 零 handler 读取且其唯一前端出现处 type 不在分发面 → 仍记"无人接".
+    assert c["dead_fields"] == ["orphan"]
+    assert c["agent_send_count"] == 2
+    assert c["sends_unattributed"] == 1
+    assert c["sends_static"] == 1
+    assert c["violations"] == []
+
+
+def test_ws_payload_synthetic_spread_send_is_unknown(tmp_path):
+    """合成树: 前端发送对象含 `...` 展开 → 该处记 unknown (键集为下界, 不据此判违例)."""
+    _ws_payload_tree(
+        tmp_path,
+        "_MESSAGE_HANDLERS: dict = {\n"
+        '    "user_input": _handle_user_input,\n'
+        "}\n"
+        "async def _handle_user_input(websocket, msg, ctx):\n"
+        "    return await do(msg.content)\n",
+        'const url = "/ws/agent";\n'
+        'ws.send(JSON.stringify({ type: "user_input", ...extra, content: "x" }));\n',
+    )
+    c = ca.build_ws_payload_contract(tmp_path, tmp_path / "fe")
+    assert c["sends_unknown"] == 1
+    assert c["sends_static"] == 0
+    # 展开只使键集成下界, 已读到的键都在声明面 → 不误报.
+    assert c["violations"] == []
+
+
 # ──────────────────── 文档漂移 ────────────────────
 
 
