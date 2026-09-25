@@ -472,9 +472,9 @@ async def load_structure(req: LoadRequest) -> dict[str, Any]:
         try:
             p.relative_to(workspace)
         except ValueError:
-            return {"error": "file_path must be within workspace"}
+            return {"success": False, "error": "file_path must be within workspace"}
         if not p.exists():
-            return {"error": f"file not found: {req.file_path}"}
+            return {"success": False, "error": f"file not found: {req.file_path}"}
         text = p.read_text(encoding="utf-8", errors="replace")
         if req.format != "auto":
             fmt = req.format
@@ -482,14 +482,15 @@ async def load_structure(req: LoadRequest) -> dict[str, Any]:
             suf = p.suffix.lower().lstrip(".")
             fmt = {"vasp": "poscar", "poscar": "poscar", "cif": "cif"}.get(suf, "xyz")
     else:
-        return {"error": "either file_path or content must be provided"}
+        return {"success": False, "error": "either file_path or content must be provided"}
 
     try:
         result = _parse_structure(text, fmt)
+        result["success"] = True
         return result
     except Exception as e:
         logger.exception("failed to parse structure")
-        return {"error": f"parse failed: {e}"}
+        return {"success": False, "error": f"parse failed: {e}"}
 
 
 @router.post("/trajectory", dependencies=[Depends(require_api_key)])

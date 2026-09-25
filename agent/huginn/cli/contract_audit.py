@@ -4621,56 +4621,210 @@ def _resp_response_model(
     return None
 
 
-def _resp_merge_return(
-    value: ast.expr | None,
-    keys: set[str],
-    local_models: dict[str, ast.ClassDef],
-) -> bool:
-    """单个 return → 并入 keys, 返回该 return 是否「开放」(读不出确切键)."""
-    if value is None:  # 裸 return (响应 null) ⇒ 字段可能缺失
-        return True
-    if isinstance(value, ast.Dict):
-        open_ = False
-        for k in value.keys:
-            if k is None:  # `**x` 展开 ⇒ 有额外键
-                open_ = True
-            elif isinstance(k, ast.Constant) and isinstance(k.value, str):
-                keys.add(k.value)
-            else:
-                open_ = True
-        return open_
-    if isinstance(value, ast.Call):
-        fn = value.func
-        name = fn.id if isinstance(fn, ast.Name) else None
-        cls = local_models.get(name) if name else None
-        if cls is not None:
-            keys |= _resp_model_fields(cls)
-            return False
-    return True
+def _resp_own_walk(node: ast.AST):
+    """遍历函数**自身**语法子树, 不下潜嵌套 def/lambda.
 
-
-def _resp_handler_keys(
-    node: ast.FunctionDef | ast.AsyncFunctionDef,
-    local_models: dict[str, ast.ClassDef],
-    prefixes: dict[str, str],
-) -> tuple[set[str], bool]:
-    """处理函数 → (响应顶层键集, 是否封闭).
-
-    `response_model=X` 优先 (FastAPI 按模型序列化, 与 return 字面量无关); 否则取函数体
-    内所有 `return` 的并集。任一 return 读不出确切键 (变量/Response/`**`) 即不封闭。
+    嵌套 helper 的 `return` 属于该 helper, 不是端点的响应形状 —— `ast.walk` 会误收
+    (如 `/transfer/web/upload` 的 `return (dest, expanded)`)。
     """
-    for dec in node.decorator_list:
-        rm = _resp_response_model(dec, local_models)
-        if rm is not None:
-            return rm
-    keys: set[str] = set()
-    open_ = False
-    seen = False
-    for n in ast.walk(node):
-        if isinstance(n, ast.Return):
+    stack = [node]
+    while stack:
+        n = stack.pop()
+        yield n
+        for child in ast.iter_child_nodes(n):
+            if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda):
+                continue
+            stack.append(child)
+
+
+def _resp_return_guarded(node: ast.AST, ret: ast.Return, name: str) -> bool:
+    """`return name` 是否被 `if name:` / `if name is not None:` 包裹.
+
+    真值守卫排除该变量的 null 分支: `err = _check_thread_owner(...); if err: return err`
+    里 `err` 可能为 None, 但这里只会走到「err 为真」的分支。
+    """
+    parents: dict[int, ast.AST] = {}
+    for n in _resp_own_walk(node):
+        for child in ast.iter_child_nodes(n):
+            parents[id(child)] = n
+    cur: ast.AST | None = ret
+    while cur is not None and id(cur) in parents:
+        par = parents[id(cur)]
+        if isinstance(par, ast.If):
+            test = ast.unparse(par.test).strip()
+            if test == name or test == f"{name} is not None":
+                return True
+        cur = par
+    return False
+
+
+class _RespShapeResolver:
+    """单文件内的响应形状解析 (保守下界).
+
+    在「字面量 return 并集」之上再解析两类可静态推导的来源:
+      - **同模块 helper**: `return f(...)` / `return await f(...)`, `f` 是本文件模块级
+        函数 ⇒ 递归取其 return 并集 (带环保护, 环 ⇒ 开放)。跨模块一律不解析。
+      - **局部变量**: `err = helper(...); if err: return err` ⇒ 真值守卫排除 null 分支;
+        `result["k"] = …` (常量键) 记入键集, 但 `.update()` / 增广赋值 / 非常量键等
+        读不出的改写 ⇒ 开放。
+
+    读到确切键才判封闭; 任一 return 读不出即开放 (宁可不闭, 不可错闭)。
+    """
+
+    def __init__(self, tree: ast.Module, local_models: dict[str, ast.ClassDef]):
+        self._funcs = {
+            n.name: n
+            for n in tree.body
+            if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)
+        }
+        self._models = local_models
+        self._memo: dict[str, tuple[set[str], bool, bool]] = {}
+        self._busy: set[str] = set()
+
+    def handler(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> tuple[set[str], bool]:
+        """端点函数 → (响应顶层键集, 是否封闭)."""
+        for dec in node.decorator_list:
+            rm = _resp_response_model(dec, self._models)
+            if rm is not None:
+                return rm
+        keys: set[str] = set()
+        open_ = False
+        seen = False
+        for n in _resp_own_walk(node):
+            if not isinstance(n, ast.Return):
+                continue
             seen = True
-            open_ = _resp_merge_return(n.value, keys, local_models) or open_
-    return keys, (seen and not open_)
+            k, o, mn = self._return(n, node)
+            keys |= k
+            open_ = open_ or o or mn  # 非守卫的 null 可能 ⇒ 开放 (字段可能缺失)
+        return keys, (seen and not open_)
+
+    def _return(
+        self, ret: ast.Return, scope: ast.AST
+    ) -> tuple[set[str], bool, bool]:
+        """单个 return → (键集, 是否开放, 是否可能为 null)."""
+        if (
+            isinstance(ret.value, ast.Name)
+            and _resp_return_guarded(scope, ret, ret.value.id)
+        ):
+            keys, open_, _none = self._var(ret.value.id, scope)
+            return keys, open_, False
+        return self._value(ret.value, scope)
+
+    def _value(self, expr: ast.expr | None, scope: ast.AST) -> tuple[set[str], bool, bool]:
+        if expr is None or (isinstance(expr, ast.Constant) and expr.value is None):
+            return set(), False, True  # 裸 return / `return None` (响应 null) ⇒ 字段可能缺失
+        if isinstance(expr, ast.Dict):
+            keys: set[str] = set()
+            open_ = False
+            for k in expr.keys:
+                if k is None:  # `**x` 展开 ⇒ 有额外键
+                    open_ = True
+                elif isinstance(k, ast.Constant) and isinstance(k.value, str):
+                    keys.add(k.value)
+                else:
+                    open_ = True
+            return keys, open_, False
+        if isinstance(expr, ast.Await):
+            return self._value(expr.value, scope)
+        if isinstance(expr, ast.Call):
+            fn = expr.func
+            name = fn.id if isinstance(fn, ast.Name) else None
+            if name and name in self._funcs:
+                return self._func(name)
+            cls = self._models.get(name) if name else None
+            if cls is not None:
+                return _resp_model_fields(cls), False, False
+            return set(), True, False
+        if isinstance(expr, ast.Name):
+            return self._var(expr.id, scope)
+        return set(), True, False
+
+    def _var(self, name: str, scope: ast.AST) -> tuple[set[str], bool, bool]:
+        keys: set[str] = set()
+        open_ = False
+        may_none = False
+        found = False
+        for n in _resp_own_walk(scope):
+            if isinstance(n, ast.Assign):
+                for t in n.targets:
+                    if isinstance(t, ast.Name) and t.id == name:
+                        found = True
+                        k, o, mn = self._value(n.value, scope)
+                        keys |= k
+                        open_ = open_ or o
+                        may_none = may_none or mn
+                    elif (
+                        isinstance(t, ast.Subscript)
+                        and isinstance(t.value, ast.Name)
+                        and t.value.id == name
+                    ):
+                        if (
+                            isinstance(t.slice, ast.Constant)
+                            and isinstance(t.slice.value, str)
+                        ):
+                            keys.add(t.slice.value)
+                        else:
+                            open_ = True
+                        found = True
+            elif (
+                isinstance(n, ast.AnnAssign)
+                and isinstance(n.target, ast.Name)
+                and n.target.id == name
+            ):
+                found = True
+                k, o, mn = self._value(n.value, scope)
+                keys |= k
+                open_ = open_ or o
+                may_none = may_none or mn
+            elif isinstance(n, ast.AugAssign) and (
+                isinstance(n.target, ast.Subscript)
+                and isinstance(n.target.value, ast.Name)
+                and n.target.value.id == name
+            ):
+                found = True
+                if isinstance(n.target.slice, ast.Constant) and isinstance(
+                    n.target.slice.value, str
+                ):
+                    keys.add(n.target.slice.value)
+                else:
+                    open_ = True
+            elif (
+                isinstance(n, ast.Call)
+                and isinstance(n.func, ast.Attribute)
+                and isinstance(n.func.value, ast.Name)
+                and n.func.value.id == name
+            ):
+                # `name.update(...)` 等读不出的改写 ⇒ 开放
+                found = True
+                open_ = True
+        if not found:
+            return set(), True, False
+        return keys, (open_ or not keys), may_none
+
+    def _func(self, name: str) -> tuple[set[str], bool, bool]:
+        if name in self._busy:  # 环 ⇒ 保守开放
+            return set(), True, False
+        if name in self._memo:
+            return self._memo[name]
+        node = self._funcs[name]
+        self._busy.add(name)
+        keys: set[str] = set()
+        open_ = False
+        may_none = False
+        seen = False
+        for n in _resp_own_walk(node):
+            if not isinstance(n, ast.Return):
+                continue
+            seen = True
+            k, o, mn = self._return(n, node)
+            keys |= k
+            open_ = open_ or o
+            may_none = may_none or mn
+        self._busy.discard(name)
+        res = (keys, (open_ or not seen or not keys), may_none)
+        self._memo[name] = res
+        return res
 
 
 def _resp_backend_shapes(root: Path) -> dict[tuple[str, str], dict]:
@@ -4691,6 +4845,7 @@ def _resp_backend_shapes(root: Path) -> dict[tuple[str, str], dict]:
             continue
         rel = py.relative_to(root).as_posix()
         local_models = _resp_local_models(tree)
+        resolver = _RespShapeResolver(tree, local_models)
         for node in tree.body:
             if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
                 continue
@@ -4703,7 +4858,7 @@ def _resp_backend_shapes(root: Path) -> dict[tuple[str, str], dict]:
                     continue
                 if (Path(rel).stem, var) not in mounted_pairs:
                     continue
-                keys, closed = _resp_handler_keys(node, local_models, prefixes)
+                keys, closed = resolver.handler(node)
                 for m in methods:
                     out[(m, path)] = {
                         "keys": keys,

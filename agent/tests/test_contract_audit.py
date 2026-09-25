@@ -1429,6 +1429,178 @@ def test_response_synthetic_open_declaration_and_ambiguity(tmp_path):
     assert c["coverage"]["skip_ambiguous"] == 1
 
 
+def test_response_synthetic_same_module_helper_closes(tmp_path):
+    """合成树: `return _shape()` 中 helper 是同模块函数 → 递归取形状, 可核对出缺字段."""
+    _write(
+        tmp_path,
+        "huginn/routes/thing.py",
+        "from fastapi import APIRouter\n"
+        'router = APIRouter(prefix="/thing")\n'
+        "def _shape():\n"
+        '    return {"a": 1, "b": 2}\n'
+        '@router.get("/derived")\n'
+        "async def thing_derived():\n"
+        "    return _shape()\n",
+    )
+    _write(
+        tmp_path,
+        "huginn/routes/__init__.py",
+        "from huginn.routes.thing import router as thing_router\n"
+        "ALL_ROUTERS = [thing_router]\n",
+    )
+    _write(tmp_path, "fe/a.ts", "await api.get<{ a?: number; c?: number }>('/thing/derived');\n")
+    c = ca.build_response_contract(tmp_path, tmp_path / "fe")
+    assert c["coverage"]["skip_shape"] == 0
+    assert len(c["violations"]) == 1
+    v = c["violations"][0]
+    assert v["missing"] == ["c"]
+    assert v["produced"] == ["a", "b"]
+
+
+def test_response_synthetic_guarded_return_excludes_null(tmp_path):
+    """合成树: `if err: return err` 排除 helper 的 null 分支 → 封闭; 无守卫版本仍开放."""
+    _write(
+        tmp_path,
+        "huginn/routes/thing.py",
+        "from fastapi import APIRouter\n"
+        'router = APIRouter(prefix="/thing")\n'
+        "def _check(x):\n"
+        "    if x:\n"
+        "        return None\n"
+        '    return {"error": "e"}\n'
+        '@router.get("/guard")\n'
+        "async def thing_guard(x: int = 0):\n"
+        "    err = _check(x)\n"
+        "    if err:\n"
+        "        return err\n"
+        '    return {"ok": True}\n'
+        '@router.get("/noguard")\n'
+        "async def thing_noguard(x: int = 0):\n"
+        "    err = _check(x)\n"
+        "    return err\n",
+    )
+    _write(
+        tmp_path,
+        "huginn/routes/__init__.py",
+        "from huginn.routes.thing import router as thing_router\n"
+        "ALL_ROUTERS = [thing_router]\n",
+    )
+    _write(
+        tmp_path,
+        "fe/a.ts",
+        "await api.get<{ ok?: boolean }>('/thing/guard');\n"
+        "await api.get<{ error?: string }>('/thing/noguard');\n",
+    )
+    c = ca.build_response_contract(tmp_path, tmp_path / "fe")
+    # /guard 已核对 (ok/error 齐备); /noguard 的 `err` 可能为 null → 开放跳过.
+    assert c["violations"] == []
+    assert c["coverage"]["checked"] == 1
+    assert c["coverage"]["skip_shape"] == 1
+
+
+def test_response_synthetic_nested_def_return_ignored(tmp_path):
+    """合成树: 嵌套 def 的 `return (1, 2)` 不属于端点响应, 不得使其开放."""
+    _write(
+        tmp_path,
+        "huginn/routes/thing.py",
+        "from fastapi import APIRouter\n"
+        'router = APIRouter(prefix="/thing")\n'
+        '@router.get("/nested")\n'
+        "async def thing_nested():\n"
+        "    def _inner():\n"
+        "        return (1, 2)\n"
+        "    _inner()\n"
+        '    return {"a": 1}\n',
+    )
+    _write(
+        tmp_path,
+        "huginn/routes/__init__.py",
+        "from huginn.routes.thing import router as thing_router\n"
+        "ALL_ROUTERS = [thing_router]\n",
+    )
+    _write(tmp_path, "fe/a.ts", "await api.get<{ a?: number }>('/thing/nested');\n")
+    c = ca.build_response_contract(tmp_path, tmp_path / "fe")
+    assert c["violations"] == []
+    assert c["coverage"]["skip_shape"] == 0
+    assert c["coverage"]["checked"] == 1
+
+
+def test_response_synthetic_helper_cycle_stays_open(tmp_path):
+    """合成树: helper 互递归 (环) → 保守开放, 且不得死循环."""
+    _write(
+        tmp_path,
+        "huginn/routes/thing.py",
+        "from fastapi import APIRouter\n"
+        'router = APIRouter(prefix="/thing")\n'
+        "def _a():\n"
+        "    return _b()\n"
+        "def _b():\n"
+        "    return _a()\n"
+        '@router.get("/cyc")\n'
+        "async def thing_cyc():\n"
+        "    return _a()\n",
+    )
+    _write(
+        tmp_path,
+        "huginn/routes/__init__.py",
+        "from huginn.routes.thing import router as thing_router\n"
+        "ALL_ROUTERS = [thing_router]\n",
+    )
+    _write(tmp_path, "fe/a.ts", "await api.get<{ a?: number }>('/thing/cyc');\n")
+    c = ca.build_response_contract(tmp_path, tmp_path / "fe")
+    assert c["violations"] == []
+    assert c["coverage"]["skip_shape"] == 1
+
+
+def test_response_synthetic_subscript_writes(tmp_path):
+    """合成树: `result={}; result["k"]=…` (常量键) 记入键集; `.update()` 等读不出 ⇒ 开放."""
+    _write(
+        tmp_path,
+        "huginn/routes/thing.py",
+        "from fastapi import APIRouter\n"
+        'router = APIRouter(prefix="/thing")\n'
+        '@router.get("/sub")\n'
+        "async def thing_sub():\n"
+        "    result = {}\n"
+        '    result["a"] = 1\n'
+        "    return result\n"
+        '@router.get("/upd")\n'
+        "async def thing_upd():\n"
+        "    result = {}\n"
+        '    result.update({"b": 2})\n'
+        "    return result\n",
+    )
+    _write(
+        tmp_path,
+        "huginn/routes/__init__.py",
+        "from huginn.routes.thing import router as thing_router\n"
+        "ALL_ROUTERS = [thing_router]\n",
+    )
+    _write(
+        tmp_path,
+        "fe/a.ts",
+        "await api.get<{ a?: number }>('/thing/sub');\n"
+        "await api.get<{ b?: number }>('/thing/upd');\n",
+    )
+    c = ca.build_response_contract(tmp_path, tmp_path / "fe")
+    assert c["violations"] == []
+    assert c["coverage"]["checked"] == 1  # /sub 已核对
+    assert c["coverage"]["skip_shape"] == 1  # /upd 读不出改写 ⇒ 开放
+
+
+def test_response_real_repo_refinements_close_known_endpoints():
+    """真实仓不变量: 三处精化后这些端点由开放转封闭 (防解析能力回退)."""
+    shapes = ca._resp_backend_shapes(_REPO)
+    assert shapes[("GET", "/health")]["closed"] is True
+    assert {"model_pool", "mcp_servers"} <= shapes[("GET", "/health")]["keys"]
+    assert shapes[("POST", "/transfer/web/upload")]["closed"] is True
+    assert shapes[("GET", "/memory/layers")]["closed"] is True
+    assert shapes[("DELETE", "/threads/{thread_id}")]["closed"] is True
+    load = shapes[("POST", "/viewer3d/load")]
+    assert load["closed"] is True
+    assert "success" in load["keys"]
+
+
 # ──────────────────── 文档漂移 ────────────────────
 
 
