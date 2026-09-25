@@ -19,10 +19,12 @@ _DEFAULT_MAX_EXPENSIVE_CALLS = 10
 # 达到此比例时发出警告
 _WARN_THRESHOLD_RATIO = 0.8
 
+# 工具名用**注册名**; 早期写的 `autoloop_tool` 无对应工具, 永不命中已移除
+# (autoloop 是 engine/mode, 不是 tool).
 _EXPENSIVE_TOOLS = frozenset({
     "vasp_tool", "lammps_tool", "cp2k_tool", "qe_tool",
     "gaussian_tool", "orca_tool", "gromacs_tool",
-    "transolver_tool", "autoloop_tool",
+    "transolver_tool",
 })
 
 

@@ -180,9 +180,10 @@ def _make_ws_approval_callback(
     approval_response handler is the workaround — the user sees the
     denial, reviews it, and approves; the original turn re-runs.
     """
+    # 用**注册名**: `file_delete_tool`/`terminal_tool` 无对应注册工具, 永不命中已删
+    # (MECE 审计记的死项); 删除能力实际走 bash_tool 的 rm.
     _DANGEROUS_TOOLS = frozenset({
-        "bash_tool", "file_edit_tool", "multi_edit_tool",
-        "file_delete_tool", "git_tool", "terminal_tool",
+        "bash_tool", "file_edit_tool", "multi_edit_tool", "git_tool",
     })
 
     _auto = session_auto_approve if session_auto_approve is not None else {"enabled": True}
