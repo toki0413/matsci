@@ -209,16 +209,24 @@ def test_tool_registry_names_unique():
     assert ca.build_tool_contract()["duplicate_names"] == []
 
 
-def test_tool_allowlist_true_dead_items_detected():
-    """`READ_ONLY_TOOLS` 用短名 (`read_file`/`list_dir`), 注册名却是 `file_read_tool`.
+def test_tool_allowlists_have_no_dead_items():
+    """真实允许面已无死项 — `READ_ONLY_TOOLS` 的短名 (`read_file`/`list_dir`) 等已改回
+    注册名 (`file_read_tool`/`grep`/`glob`).
 
-    死项 ⇒ `set_mode` 永不命中, sidecar 的 auto_approve 对该读工具失效 —— 真实缺陷.
+    死项 ⇒ `set_mode` 永不命中, sidecar 的 auto_approve 对该读工具失效 —— 曾是真实缺陷.
     """
-    by = {a["name"]: a for a in ca.build_tool_contract()["allowlists"]}
+    c = ca.build_tool_contract()
+    by = {a["name"]: a for a in c["allowlists"]}
     ro = by["READ_ONLY_TOOLS"]
     assert ro["namespace"] == "registry"
-    assert "read_file" in ro["phantoms"]
-    assert "list_dir" in ro["phantoms"]
+    assert ro["phantoms"] == []
+    assert ro["matched"] == ro["size"]
+    offenders = {
+        f"{a['rel']}::{a['name']}": a["phantoms"]
+        for a in c["allowlists"]
+        if a["namespace"] == "registry" and a["phantoms"]
+    }
+    assert offenders == {}
 
 
 def test_tool_allowlist_bare_name_alias_not_dead():
@@ -238,17 +246,21 @@ def test_tool_external_namespace_not_flagged_dead():
     assert mcp["aliases"] == []
 
 
-def test_tool_unregistered_class_reported():
-    """声明了 `name` 却不在注册清单的类要被报出来 (宣称未注册)."""
-    assert "PyBulletTool" in ca.build_tool_contract()["unregistered_classes"]
+def test_tool_declared_classes_all_registered():
+    """声明了 `name` 的 HuginnTool 子类都要在注册清单里 (宣称即注册).
+
+    回归: `PyBulletTool` 曾声明 `name` 却不在 `_OPTIONAL_MODULES`, 工具永不进注册表.
+    """
+    assert ca.build_tool_contract()["unregistered_classes"] == []
 
 
-def test_tool_render_and_issues_contain_sections():
+def test_tool_render_sections_present():
     md = ca.render_tool_markdown(ca.build_tool_contract())
     assert "工具面" in md
     assert "死项" in md
     assert "注册声明缺口" in md
-    assert "允许表死项" in "\n".join(ca.find_issues(ca.build_mece_snapshot()))
+    # 允许面已收敛: find_issues 不再报工具面死项.
+    assert "允许表死项" not in "\n".join(ca.find_issues(ca.build_mece_snapshot()))
 
 
 def test_tool_synthetic_alias_phantom_and_external(tmp_path):

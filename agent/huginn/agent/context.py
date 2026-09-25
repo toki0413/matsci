@@ -22,9 +22,11 @@ class ContextMixin:
     }
 
     # Tools that stay visible regardless of query relevance.
+    # 用**注册名**: 早期写的 `memory_tool`/`search_tool`/`knowledge_search` 与注册表
+    # 对不上, 检索时这几个"常驻"工具其实没常驻 (MECE 审计记的允许表死项).
     _ALWAYS_ON_TOOLS: set[str] = {
-        "memory_tool", "knowledge_search", "structure_tool",
-        "periodic_table_tool", "search_tool",
+        "remember", "recall", "rag_tool",
+        "structure_tool", "web_search_tool",
     }
 
     # Above this tool count, switch to query-aware retrieval.
