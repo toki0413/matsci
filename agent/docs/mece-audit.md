@@ -1,7 +1,7 @@
-# MECE 契约审计 (奖励面 + 授权面 + 工作流面 + 模式面 + 词汇面 + 工具面 + 钩子面 + 事件面 + SSE 消费面 + WS 消费面 + HTTP API 消费面 + 请求负载面 + 响应结构面)
+# MECE 契约审计 (奖励面 + 授权面 + 工作流面 + 模式面 + 词汇面 + 工具面 + 钩子面 + 事件面 + SSE 消费面 + WS 消费面 + HTTP API 消费面 + 请求负载面 + 响应结构面 + WS 请求负载面)
 
 自动生成: `python -m huginn.cli.contract_audit --out docs/mece-audit.md`.
-以 MECE 两原则审计 agent 的**奖励面 / 授权面 / 工作流面 / 模式面 / 词汇面 / 工具面 / 钩子面 / 事件面 / SSE 消费面 / WS 消费面 / HTTP API 消费面 / 请求负载面 / 响应结构面**: **collectively exhaustive** 抓「宣称维度零调用者 / 面之间的缺口」; **mutually exclusive** 抓「同轴惩罚叠加」「跨模块同名重复实现」「词表互不一致」「同名工具名多类声明」「事件常量撞值」「SSE 帧名挂错通道」「WS 帧名挂错端点」「HTTP 同 method+path 多模块注册」「前端漏发后端必填请求负载」「前端声明要读的响应字段后端从不返回」. 纯静态扫描, 只提示候选, 不判死.
+以 MECE 两原则审计 agent 的**奖励面 / 授权面 / 工作流面 / 模式面 / 词汇面 / 工具面 / 钩子面 / 事件面 / SSE 消费面 / WS 消费面 / HTTP API 消费面 / 请求负载面 / 响应结构面 / WS 请求负载面**: **collectively exhaustive** 抓「宣称维度零调用者 / 面之间的缺口」; **mutually exclusive** 抓「同轴惩罚叠加」「跨模块同名重复实现」「词表互不一致」「同名工具名多类声明」「事件常量撞值」「SSE 帧名挂错通道」「WS 帧名挂错端点」「HTTP 同 method+path 多模块注册」「前端漏发后端必填请求负载」「前端声明要读的响应字段后端从不返回」「WS 入站字段模型未声明」. 纯静态扫描, 只提示候选, 不判死.
 
 ## 奖励面: 宣称项 vs 调用者 (collectively exhaustive)
 
@@ -853,7 +853,7 @@ HTTP 消费面核「路径 + 方法」挂不挂得上 (404/405); 本面再往里
 
 违例类型: `missing-field`=前端声明的响应字段后端从不返回 (恒 undefined)
 
-覆盖: 命中端点的调用 **171** 处 (共 177 个 `api.*` 调用点); 前端类型 **166** 个; 可静态核对 **78** 处.
+覆盖: 命中端点的调用 **171** 处 (共 177 个 `api.*` 调用点); 前端类型 **166** 个; 可静态核对 **86** 处.
 违例: **0** 条.
 
 ### 违例 (前端声明要读, 后端从不返回)
@@ -864,11 +864,53 @@ HTTP 消费面核「路径 + 方法」挂不挂得上 (404/405); 本面再往里
 
 | 维度 | 已核对 | 跳过 (形状开放/读不出) |
 |---|---|---|
-| 后端响应形状封闭 | 78 | 40 |
-| 前端声明可解析 | 78 | 53 |
+| 后端响应形状封闭 | 86 | 24 |
+| 前端声明可解析 | 86 | 61 |
 | 路径唯一命中 | — | 0 (歧义跳过) |
 
 诚实边界: 只读**字面量**形状 —— 后端 `return` 传变量 / `**` 展开 / `Response`对象 / 引不到的 `response_model` 即记开放并跳过, 故违例是**下界** (可能漏报); 前端泛型为 `<any>` / 数组 / `Record` 交叉 / 无泛型时该维度跳过; 类型解析只认同仓`interface`/`type` 字面量对象, `extends` / `&` 拼接一律记开放; 路径动态段同时命中多个端点且强位置并列时跳过 (不猜端点); 反向 (后端返回前端没读的字段) 不是违例.
+
+## WS 请求负载面: WSMessage 声明字段 vs 后端 handler 读取面 vs 前端发送面
+
+WS 消费面只核「入站 `type` 认不认」（认了但字段发错照样坏）; 本面再往里一层, 核 agent 通道入站消息的**负载字段**。权威是 `WSMessage` Pydantic 模型 (`schemas.py` 自述: handler 消费的每个字段都必须在此声明才不失同步)。两个硬方向: **后端 handler 读 `msg.<X>` 而 `WSMessage` 未声明 `X`** ⇒ Pydantic `BaseModel` 抛 `AttributeError`（该入站消息必崩, 回 error 帧）; **前端发该 `type` 时带了 `WSMessage` 未声明的字段** ⇒ 被 Pydantic 静默丢弃（客户端以为发了, 后端读默认值, 功能静默失效）。反向（模型声明了 handler 未读 / 前端未发）不是违例 —— 模型面向全部 WS 客户端（含外部客户端）.
+
+违例类型: `handler-undeclared`=后端 handler 读 `msg.<字段>` 而 WSMessage 未声明 (AttributeError 死帧); `fe-undeclared`=前端发送的字段 WSMessage 未声明 (被 Pydantic 静默丢弃)
+
+权威面: `WSMessage` 声明 **20** 字段; agent 入站 type **11** 个 (解析到 handler 定义 11 个); 前端 agent 发送点 **16** 处 (type 已知 14, 其中含展开/读不出 0; type 非字面量/不在分发面 2).
+违例: **0** 条.
+
+### 违例 (硬: 后端读未声明字段 / 前端发未声明字段)
+
+- 无 —— handler 读的字段都在 `WSMessage` 里, 前端发的字段也都认得.
+
+### 声明却无人接 (WSMessage 字段零 handler 读取且零前端发送)
+
+- 无.
+
+### 各入站 type 的 handler 读取字段
+
+| 入站 type | handler | 读取字段 | 解析 |
+|---|---|---|---|
+| `approval_response` | `approved`, `request_id` | 2 | ✅ |
+| `clarification_response` | `answer`, `question_id`, `thread_id` | 3 | ✅ |
+| `decision_response` | `decision`, `decision_point_id`, `option` | 3 | ✅ |
+| `explore_start` | `config`, `content` | 2 | ✅ |
+| `guide` | `content`, `thread_id` | 2 | ✅ |
+| `ping` | (无) | 0 | ✅ |
+| `plan_confirm` | `confirmed`, `edited_plan`, `plan_id` | 3 | ✅ |
+| `set_auto_approve` | `enabled` | 1 | ✅ |
+| `set_suggest_mode` | `enabled`, `thread_id` | 2 | ✅ |
+| `suggest_response` | `action`, `edited_code`, `thread_id` | 3 | ✅ |
+| `user_input` | `content`, `max_tokens`, `persona`, `thinking`, `thread_id` | 5 | ✅ |
+
+### 静态核对覆盖面 (读不出形状即跳过, 不猜)
+
+| 维度 | 已核对 | 跳过 (读不出) |
+|---|---|---|
+| 后端 handler 定义解析 | 11 | 0 |
+| 前端发送对象字段 | 14 | 0 |
+
+诚实边界: 只读**字面量**形状 —— handler 经 `getattr(msg, …)` / 变量间接读取, 或前端发送对象含 `...` 展开 / `type` 非字面量时该处记 unknown 并跳过, 故违例是**下界** (可能漏报); 只核 agent 通道 (terminal/hpc/viewer3d 的入站负载走原始 dict, 不受 `WSMessage` 约束); 别名 `message`(→`content`) 与分发键 `type` 不算未声明; 反向 (模型声明了但 handler 未读 / 前端未发) 不是违例.
 
 ## 发现汇总
 
