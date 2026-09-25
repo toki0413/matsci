@@ -9,7 +9,11 @@
 
 from __future__ import annotations
 
+import json
+import os
 import pathlib
+
+import pytest
 
 from huginn.cli import contract_audit as ca
 
@@ -2191,6 +2195,51 @@ def test_http_field_synthetic_extra_allow_skips_fe(tmp_path):
     assert c["violations"] == []
     assert c["rows"][0]["shape"] == "开放(extra=allow)"
     assert c["coverage"]["fe_skipped"] == 1
+
+
+# ──────────────────── 字段级面 contract 黄金快照 (重构护栏) ────────────────────
+
+# B-lite 去重重构的护栏: 锁住五面 contract 的**内部结构** (violations/coverage/
+# rows/channels/候选 等, 含 markdown 未渲染的键). markdown 层已由 doc-drift 守卫;
+# 这里补的是契约字典层, 使"抽引擎/去重"必须**行为逐字不变**.
+_FIELD_AUDIT_GOLDEN = _REPO / "tests" / "golden" / "field_audit"
+_FIELD_AUDIT_FACES = {
+    "response": ca.build_response_contract,
+    "ws_payload": ca.build_ws_payload_contract,
+    "sse_payload": ca.build_sse_payload_contract,
+    "ws_ev_payload": ca.build_ws_ev_payload_contract,
+    "http_field": ca.build_http_field_contract,
+}
+
+
+def _field_audit_canonical(contract: dict) -> str:
+    """契约 → 规范化 JSON: 剔机器相关字段 (`frontend` 绝对路径), 键排序, 便于逐字比对."""
+    data = {k: v for k, v in contract.items() if k != "frontend"}
+    return json.dumps(data, ensure_ascii=False, sort_keys=True, indent=1) + "\n"
+
+
+@pytest.mark.parametrize("face", sorted(_FIELD_AUDIT_FACES))
+def test_field_audit_golden_parity(face):
+    """字段级审计面 contract 与黄金快照逐字一致 (B-lite 重构护栏).
+
+    有意变更 (仓变更/审计增强) 时重新生成, 并与合入 diff 一起评审:
+
+        HUGINN_REGEN_FIELD_GOLDEN=1 pytest tests/test_contract_audit.py -k golden_parity
+
+    与 doc-drift 同为"可重生成快照"性质, 非永久不变量.
+    """
+    path = _FIELD_AUDIT_GOLDEN / f"{face}.json"
+    got = _field_audit_canonical(_FIELD_AUDIT_FACES[face]())
+    if os.environ.get("HUGINN_REGEN_FIELD_GOLDEN"):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(got, encoding="utf-8")
+        return
+    assert path.exists(), f"缺 golden 快照: {path}"
+    want = path.read_text(encoding="utf-8")
+    assert got == want, (
+        f"{face} 契约与 golden 漂移. 若为有意变更, 重新生成并评审 diff: "
+        "HUGINN_REGEN_FIELD_GOLDEN=1 pytest tests/test_contract_audit.py -k golden_parity"
+    )
 
 
 # ──────────────────── 文档漂移 ────────────────────
