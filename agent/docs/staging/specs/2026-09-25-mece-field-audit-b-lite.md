@@ -2,7 +2,7 @@
 
 **日期**: 2026-09-25
 **milestone**: 未定（待评审后再挂）
-**状态**: **已实施（裁剪）** —— 第 1 步（golden parity 护栏）、第 2.5 步（reads 共同抽取）、第 5 步（汇总视图）已落地；第 2 步裁剪为「只抽 15/16 近重复面」，第 3/4/6 步未做（见 §实施记录）
+**状态**: **已落地** —— 第 1/2（裁剪为 15/16 近重复面）/2.5/4/5/6 步已落地；第 3 步（14/17 迁移）明确不做（见 §实施记录）
 **前置**: 第十三～十七面（响应结构 / WS 请求负载 / SSE 事件负载 / WS 事件负载 / HTTP 请求字段）已各自落地。
 
 ---
@@ -152,11 +152,11 @@ def build_boundary(spec: BoundarySpec, root: Path | None, frontend: Path | None)
 3. **迁移 14/17**：多方向面改用多个 `Check` + 面特有 `extra/render_*`，跑 parity。
 4. **去重分诊三联**：抽 `_TriageTrio`（每个仍传自己的文案表），保持每面公开符号名不变（外部测试/文档引用 `_HTTP_FIELD_CONFIRMED` 等，需保留别名）。
 5. **加汇总视图**：`render_field_rollup_markdown` + INDEX/文档登记。
-6. **冻结门禁**：把 `python -m huginn.cli.contract_audit --check` 挂 CI（见 §门禁），**之后不再加面**。
+6. **冻结门禁**：把 `contract_audit --check --baseline …`（棘轮门）挂 CI（见 §门禁），**之后不再加面**。
 
 ---
 
-## 实施记录（2026-09-25 收口）
+## 实施记录（2026-09-26 收口）
 
 | 步 | 状态 | 落点 |
 |---|---|---|
@@ -164,28 +164,37 @@ def build_boundary(spec: BoundarySpec, root: Path | None, frontend: Path | None)
 | 2 抽引擎原语 | **裁剪** ⚠ | 仅抽第十五/十六面（逐字近重复的一对）→ `_frame_payload_contract`，两个 `build_*` 降为薄适配层。**未**做 `Shape/Obs/Check/BoundarySpec/_run_check` 全量原语，**未**并入 13/14/17 |
 | 2.5 reads 共同抽取 | ✅ | `_fe_ts_files` / `_fe_field_read_rows`，供 `_sse_payload_reads` 与 `_ws_ev_payload_reads` 共用 |
 | 3 迁移 14/17 | ❌ 未做 | 多方向面仍各自成文（多方向 + 面特有 `extra`，归一化收益低于复杂度） |
-| 4 去重分诊三联 | ❌ 未做 | 各面 `KIND_DOC` / `TRIAGE_DOC` / `_*_CONFIRMED` / `_*_triage` / `_*_violation_mark` 仍逐面保留 |
+| 4 去重分诊三联 | ✅ | `_TriageTrio`（`kind_doc` + `key` + `vargs`）统一七面的查表 / `stamp` / `mark`；各面只传键构造函数，面文案仍逐字差异化。全部公开符号（`_X_KIND_DOC` / `_X_TRIAGE_DOC` / `_X_CONFIRMED*` / `_X_triage` / `_X_violation_mark`）保留为指向实例成员的别名，外部引用不变 |
 | 5 加汇总视图 | ✅ | `render_field_rollup_markdown` + `_ROLLUP_*` 常量；插入 `render_mece_markdown` 字段级面章节之前 |
-| 6 冻结门禁 | ❌ 未做 | `--check` 已存在；**未**挂 CI |
+| 6 冻结门禁 | ✅ | CI 挂 `--check --baseline tests/golden/mece_findings_baseline.txt`（棘轮门，见 §门禁）；`--update-baseline` 重生成基线 |
 
 **第 2 步裁剪原因（实测）**：设计期的 `_run_check` 假定**每字段一条违例**，但第十三面（响应结构）实为**每端点一条**（违例体带 `declared`/`produced`/`missing` 列表），且把端点解析与歧义跳过编进了主循环 —— 与 15/16 只是"看起来同构"，强行并入需要给引擎加"按单元聚合"与"面特有门控"两个变体，接口反而比现状更宽。第十五/十六面才是真正的逐字孪生（仅解析器、文案、分诊表三处不同），故只抽这一对：净 −38 行，行为由 golden parity 逐字兜底。收益诚实地有上限：解析器才是各面代码量主体。
 
-**后续可选**（未批准，未做）：第 3/4 步（14/17 迁移、分诊三联归一）与第 6 步（`--check` 挂 CI）。
+**后续可选**（未批准，未做）：仅剩第 3 步（14/17 多方向面并入引擎）。
 
 ---
 
 ## 验证（如何知道没改坏）
 
 - **parity**：第 1 步 golden JSON 是硬闸——重构后每面 contract 必须**逐字段相等**（含 `violations` 的 kind/key/field/rel/line、`coverage`、面特有字段）。任一不等即回滚该面。
-- **文档守卫**：既有 `test_mece_audit_doc_not_drifted`（见 `tests/test_contract_audit.py:2199`）要求 `docs/mece-audit.md` == `render_mece_markdown(build_mece_snapshot())`；重构后重新生成并人工 diff，确认**只有排序/格式**变化（若语义无变，diff 应为空或纯汇总新增）。
-- **回归**：`pytest tests/test_contract_audit.py`（现 128 passed）须全绿；`ruff check` 零告警。
+- **文档守卫**：既有 `test_mece_audit_doc_not_drifted`（见 `tests/test_contract_audit.py:2199`）要求 `docs/mece-audit.md` == `render_mece_markdown(build_mece_snapshot())`；重构后重新生成并人工 diff，确认**只有排序/格式**变化（若语义无变，diff 应为空或纯汇总新增）。收口时该用例在 HEAD 上即**预存失败**（文档停留旧源码的词汇/工具/钩子站点集），已重生成补齐（54 ± 行，字段级面章节与「发现汇总」逐字不变）。
+- **回归**：`pytest tests/test_contract_audit.py`（现 **137 passed**）须全绿；`ruff check` 零告警。
+- **棘轮门**：`contract_audit --update-baseline` 生成/刷新 `tests/golden/mece_findings_baseline.txt`（47 项）；`--check --baseline` 对基线内项 exit 0、对基线外新发现 exit 1（已手测：删基线一条 → 只报该条）。
 - **合成树覆盖**：五面均有合成树用例（handler-undeclared / fe-undeclared / dict-key-unsent / extra=allow / 形状开放跳过 等），迁移后必须原样通过。
 
 ---
 
 ## 门禁（C 的落点）
 
-`contract_audit --check` **已存在**（`huginn/cli/contract_audit.py:7359`，`main()` 末段）：`find_issues(snap)` 非空即 `exit 1`，口径是**任一 MECE 发现**（比"仅 untriaged"更宽，含待分诊、跨模块同名、词表漂移等）。C 的落点是把这条**既有**门挂进 CI 作为"接线契约不许退化"的回归门，**无需新增代码**。各面既有的 `test_*_real_repo_no_untriaged_violations`（`tests/test_contract_audit.py` 六处）是同语义的**测试门**；`--check` 只是把同一判据提到**流程门**，便于 PR 阶段拦截。
+`contract_audit --check` 原有口径是**任一 MECE 发现**即 `exit 1`（`find_issues(snap)` 非空）。实测该口径在真实仓返回 **47 项**，且多为「同轴惩罚 / 跨模块同名 / 词表漂移」类**候选登记**（工具自述"只提示不判死"，`test_find_issues_reports_expected_categories` 等**断言其存在**）—— 故「零发现」硬门**不可行**。落点改为**棘轮门（ratchet）**：
+
+- `--baseline FILE`：`--check --baseline …` 只对**基线外的新发现** `exit 1`；基线内既有项不拦。修好旧项**无需**改基线（基线里多余条目被忽略）。
+- `--update-baseline`：把当前发现重生成到基线（缺省 `tests/golden/mece_findings_baseline.txt`）。
+- 无 `--baseline` 时 `--check` 行为**不变**（绝对门，有发现即失败），向后兼容。
+- CI（`.github/workflows/ci.yml`）挂 `python -m huginn.cli.contract_audit --check --baseline tests/golden/mece_findings_baseline.txt`，置于重型套件之前的 guard 段；测试侧同义门 `test_findings_baseline_covers_current_findings`。
+- 字段级接线契约另由各面 `test_*_real_repo_no_untriaged_violations`（六处）在主 pytest job 把关；二者互补 —— 前者拦**全轴新增**（含待分诊、跨模块同名、词表漂移），后者守**字段级不变量**。
+
+> 诚实说明：设计期判断"无需新增代码"（假定零发现），实测**证伪** —— 47 项既有候选登记使绝对门不可用，故必须引入基线 artifact 与棘轮语义。
 
 ---
 
@@ -221,4 +230,4 @@ def build_boundary(spec: BoundarySpec, root: Path | None, frontend: Path | None)
 1. **先落 golden parity 护栏** —— 接受，已落地（第 1 步）。
 2. 第 2.5 步（`sse/ws_ev` reads 共同抽取）—— 做，已落地（`_fe_ts_files` / `_fe_field_read_rows`）。
 3. 汇总视图关系标签 **R1–R4 + R0 兜底** —— 接受，已落地（`_ROLLUP_*`）。
-4. 第 2 步范围 —— 裁剪为「只抽 15/16 近重复面」；第 3/4 步与第 6 步未批准、未做。
+4. 第 2 步范围 —— 裁剪为「只抽 15/16 近重复面」；第 4 步（分诊三联归一）与第 6 步（棘轮门挂 CI）后续落地，第 3 步（14/17 迁移）明确不做。
