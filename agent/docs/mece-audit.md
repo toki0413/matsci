@@ -18,7 +18,6 @@
 | `efficiency_discount` | 0 | 0 | 1 | `internal-only` | 仅模块内被组合调用 (经 anti_hacking_reward 等) |
 | `idle_turn_penalty` | 0 | 0 | 1 | `internal-only` | 仅模块内被组合调用 (经 anti_hacking_reward 等) |
 | `anti_hacking_reward` | 1 | 0 | 0 | `wired` |  |
-| `reconcile_r_phys` | 0 | 0 | 0 | `dead` | 零调用者 —— 宣称但未接线; 同名跨模块, 归属已按模块限定隔离 |
 
 ### 惩罚轴重叠 (mutually exclusive)
 
@@ -29,9 +28,7 @@
 
 ### 跨模块同名 (mutually exclusive)
 
-| 名称 | 其它模块也定义 |
-|---|---|
-| `reconcile_r_phys` | `huginn/security/world_state.py` |
+— 无跨模块同名定义。
 
 ## 授权面: 口径源 vs 消费点
 
@@ -84,7 +81,7 @@
 
 ## 词汇面: 值域词表雷达 (系统枚举 + 自动聚类)
 
-系统枚举**值域词表** (闭集枚举: `Literal`/Enum/`frozenset`/全大写元组) 共 265 站点, 按值域 Jaccard 重叠自动聚成 240 簇 (其中闭集簇 156). 三类结构性违例: 同名跨模块定义 / 未登记撞名 / 映射非单射.
+系统枚举**值域词表** (闭集枚举: `Literal`/Enum/`frozenset`/全大写元组) 共 264 站点, 按值域 Jaccard 重叠自动聚成 240 簇 (其中闭集簇 156). 三类结构性违例: 同名跨模块定义 / 未登记撞名 / 映射非单射.
 
 ### 同名跨模块定义 (mutually exclusive)
 
@@ -92,7 +89,6 @@
 |---|---|---|
 | `KINDS` | ⚠️ 异 | `huginn/evolution/semantic_distiller.py:39`(4), `huginn/research/cspace.py:32`(3), `huginn/catalog/models.py:20`(7) |
 | `Severity` | ⚠️ 异 | `huginn/metacog/failure_modes.py:27`(3), `huginn/execution/physics_auditor.py:24`(3) |
-| `_ALLOWED_IMPORTS` | ⚠️ 异 | `huginn/security/script_runner.py:74`(22), `huginn/security/code_act_sandbox.py:32`(21) |
 | `_DEFAULT_MCP_ALLOWED_COMMANDS` | ✅ 同 | `huginn/mcp_client.py:67`(5), `huginn/config.py:316`(5) |
 | `_EXPENSIVE_TOOLS` | ✅ 同 | `huginn/research_budget.py:24`(8), `huginn/hooks/research_safety_hook.py:18`(8) |
 | `_KINDS` | ⚠️ 异 | `huginn/share.py:21`(5), `huginn/workflows/registry.py:25`(4) |
@@ -193,9 +189,6 @@
 - 簇 73 (并集 4 词):
   - `huginn/tools/visualize_gate.py:22` RERENDERABLE 缺 `duplicate`
   - `huginn/tools/visualize_gate.py:29` _SEVERITY
-- 簇 90 (并集 8 词):
-  - `huginn/lean/conjecture_library.py:36` _PROOF_ALLOWED_MODULES 缺 `numpy`, `pandas`, `scipy`
-  - `huginn/bench/task_synthesizer.py:28` _JUDGE_ALLOWED_MODULES
 - 簇 137 (并集 10 词):
   - `huginn/memory/types.py:12` class MemoryType 缺 `cross_domain_transfer`, `failed_direction`, `iteration_result`, `persona_history`, `stable_principle`
   - `huginn/memory/typing.py:28` class MemoryType
@@ -1291,9 +1284,7 @@ WS 消费面只核「帧名认不认」, WS 请求负载面只核「入站字段
 
 ## 发现汇总
 
-- 奖励项零调用者: reconcile_r_phys
 - 同轴惩罚候选 (轮次): efficiency_discount, idle_turn_penalty
-- 跨模块同名: reconcile_r_phys @ huginn/security/world_state.py
 - 工作流 mode 未在 planner 提示暴露: dynamic_workflow
 - 模式有 prompt 段却无 set_mode 生产者: code
 - 模式有 prompt 段却无 set_mode 生产者: extreme
@@ -1302,7 +1293,6 @@ WS 消费面只核「帧名认不认」, WS 请求负载面只核「入站字段
 - 模式: 各来源词表互相不一致
 - 词汇: 同名跨模块定义值域不一致: KINDS @ huginn/evolution/semantic_distiller.py:39, huginn/research/cspace.py:32, huginn/catalog/models.py:20
 - 词汇: 同名跨模块定义值域不一致: Severity @ huginn/metacog/failure_modes.py:27, huginn/execution/physics_auditor.py:24
-- 词汇: 同名跨模块定义值域不一致: _ALLOWED_IMPORTS @ huginn/security/script_runner.py:74, huginn/security/code_act_sandbox.py:32
 - 词汇: 同名跨模块定义值域不一致: _KINDS @ huginn/share.py:21, huginn/workflows/registry.py:25
 - 词汇: 同名跨模块定义值域不一致: _NEGATIVE_WORDS @ huginn/persona_emotion.py:147, huginn/tools/design/gap_analysis_tool.py:30
 - 词汇: 同名跨模块定义值域不一致: _READ_ACTIONS @ huginn/tools/git_tool.py:85, huginn/tools/github_tool.py:55
@@ -1312,7 +1302,6 @@ WS 消费面只核「帧名认不认」, WS 请求负载面只核「入站字段
 - 词汇: 词表漂移 (簇 18, 并集 5 词): huginn/config.py::ContainerRuntimeLiteral, huginn/security/container_executor.py::_VALID_RUNTIMES
 - 词汇: 词表漂移 (簇 22, 并集 8 词): huginn/research_budget.py::_EXPENSIVE_TOOLS, huginn/hooks/research_safety_hook.py::_EXPENSIVE_TOOLS, huginn/agent/context.py::_EXPENSIVE_TOOL_NAMES
 - 词汇: 词表漂移 (簇 73, 并集 4 词): huginn/tools/visualize_gate.py::RERENDERABLE, huginn/tools/visualize_gate.py::_SEVERITY
-- 词汇: 词表漂移 (簇 90, 并集 8 词): huginn/lean/conjecture_library.py::_PROOF_ALLOWED_MODULES, huginn/bench/task_synthesizer.py::_JUDGE_ALLOWED_MODULES
 - 词汇: 词表漂移 (簇 137, 并集 10 词): huginn/memory/types.py::class MemoryType, huginn/memory/typing.py::class MemoryType
 - 词汇: 映射往返丢信息: AUTOLOOP_TO_PHASE 共像 [ResearchPhase.VALIDATION←["'validate'", "'learn'"]] 且有反向表 PHASE_TO_AUTOLOOP
 - 钩子: 事件有生产触发点但零生产注册 (触发无人接): SESSION_START

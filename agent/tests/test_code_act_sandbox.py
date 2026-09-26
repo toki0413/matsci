@@ -29,20 +29,20 @@ def _patch_import(monkeypatch, targets: set[str]) -> None:
 # ── filter_tools_for_code_act ────────────────────────────────────────────
 
 def test_filter_by_name_list():
-    names = ["hpc_client", "math_tool", "bash_tool", "rag_tool", "code_tool"]
+    names = ["rag_tool", "math_tool", "bash_tool", "code_tool"]
     out = cas.filter_tools_for_code_act(names)
-    assert out == ["math_tool", "rag_tool"]
+    assert out == ["rag_tool", "math_tool"]
 
 
 def test_filter_by_tuple_list():
-    items = [("hpc_client", object()), ("math_tool", object()), ("code_tool", object())]
+    items = [("bash_tool", object()), ("math_tool", object()), ("code_tool", object())]
     out = cas.filter_tools_for_code_act(items)
     assert len(out) == 1
     assert out[0][0] == "math_tool"
 
 
 def test_filter_all_blocked():
-    assert cas.filter_tools_for_code_act(["bash_tool", "shell_tool", "container_exec"]) == []
+    assert cas.filter_tools_for_code_act(["bash_tool", "code_tool"]) == []
 
 
 def test_filter_empty():

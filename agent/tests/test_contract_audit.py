@@ -2,7 +2,7 @@
 
 两类断言:
   - **真实仓上的不变量**: 奖励面/授权面的接线状态与 MECE 违例是可复现的事实
-    (如 `reconcile_r_phys` 零调用者 + 跨模块同名), 编码在这里防回归.
+    (如"奖励面已无零调用者/跨模块同名"), 编码在这里防回归.
   - **合成树上的归属性**: 用临时仓验证"模块限定扫描"能隔离同名 —— 裸同名调用
     归属给别的模块, 不污染本模块的公开面 (这是本工具相对裸名计数的关键修正).
 """
@@ -34,7 +34,6 @@ def test_reward_surface_lists_all_declared_terms():
         "efficiency_discount",
         "idle_turn_penalty",
         "anti_hacking_reward",
-        "reconcile_r_phys",
     } <= names
 
 
@@ -49,15 +48,16 @@ def test_reward_status_classification():
     assert by["numeric_accuracy_reward"]["status"] == "internal-only"
 
 
-def test_reconcile_r_phys_not_borrowed_from_sibling_module():
-    """关键正确性: claim_reward.reconcile_r_phys 不得"借"走 world_state 同名的调用点.
+def test_reward_surface_has_no_dead_or_duplicated_terms():
+    """真实仓不变量: 奖励面已无零调用者 / 跨模块同名.
 
-    裸名扫描会把 security/world_state.py 的生产调用算到 claim_reward 头上, 误报
-    wired. 模块限定归属后, claim_reward 侧的 prod 必须为 0.
+    `reconcile_r_phys` 死重复实现 (claim_reward 侧) 已清, 权威实现只在
+    `security/world_state.py`. 模块限定归属性由合成树用例
+    `test_module_qualified_attribution_isolates_same_name` 覆盖.
     """
-    by = {t["name"]: t for t in ca.build_reward_contract()["terms"]}
-    assert by["reconcile_r_phys"]["prod"] == 0
-    assert by["reconcile_r_phys"]["status"] == "dead"
+    c = ca.build_reward_contract()
+    assert all(t["status"] != "dead" for t in c["terms"])
+    assert c["cross_module_dupes"] == []
 
 
 def test_penalty_axis_overlap_detected():
@@ -68,9 +68,12 @@ def test_penalty_axis_overlap_detected():
 
 
 def test_cross_module_duplicate_flagged():
-    dupes = {d["name"]: d for d in ca.build_reward_contract()["cross_module_dupes"]}
-    assert "reconcile_r_phys" in dupes
-    assert "huginn/security/world_state.py" in dupes["reconcile_r_phys"]["modules"]
+    """跨模块同名探测能力由合成树用例锁定 (真实仓奖励面已无同名):
+
+    见 `test_module_qualified_attribution_isolates_same_name` 对 `cross_module_dupes`
+    的断言; 此处只锁真实仓不变量.
+    """
+    assert ca.build_reward_contract()["cross_module_dupes"] == []
 
 
 # ──────────────────── 真实仓: 授权面 ────────────────────
@@ -89,9 +92,9 @@ def test_scope_sources_and_flags():
 def test_find_issues_reports_expected_categories():
     issues = ca.find_issues(ca.build_mece_snapshot())
     joined = "\n".join(issues)
-    assert "reconcile_r_phys" in joined
     assert "同轴惩罚候选" in joined
-    assert "跨模块同名" in joined
+    assert "词汇: 词表漂移" in joined
+    assert "钩子: 事件有生产触发点但零生产注册" in joined
 
 
 def test_render_contains_sections():

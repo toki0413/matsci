@@ -28,13 +28,15 @@ from typing import Any
 # 工具, 表项永不命中已被 MECE 审计记为死项, 故删 (真要有这类工具再加回来).
 _BLOCKED_TOOLS = frozenset({"bash_tool", "code_tool"})
 
-# import 白名单. 科研计算常用栈, 不含 os/sys/subprocess/socket 等危险模块.
+# import 白名单 (唯一权威定义: security/script_runner.py 直接引用本常量, 不再各留副本).
+# 科研计算常用栈, 不含 os/sys/subprocess/socket 等危险模块; time 无 IO/网络/子进程副作用.
 _ALLOWED_IMPORTS = frozenset(
     {
         "math",
         "statistics",
         "json",
         "re",
+        "time",
         "numpy",
         "pandas",
         "sympy",

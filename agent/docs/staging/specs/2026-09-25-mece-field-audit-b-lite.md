@@ -225,6 +225,8 @@ def build_boundary(spec: BoundarySpec, root: Path | None, frontend: Path | None)
 
 **分诊小结**：47 项中 `accepted` 44 项（事件 17 + 钩子 6 + 奖励/模式/工作流 7 + 词汇 14），`defect (low)` 3 项（`reconcile_r_phys` 死重复实现 / `_ALLOWED_IMPORTS` 漂移 / 簇 90 注释失真），另簇 22 记为可合重复副本。**无高危**，故冻结为基线安全；3 项低危漂移可另开小 PR 清理（清理后无需动基线，棘轮门忽略多余条目）。
 
+**修复落地（2026-09-26）**：3 项低危漂移已清 —— `claim_reward.reconcile_r_phys` 删除（权威实现仅存 `security/world_state.py`）、`_ALLOWED_IMPORTS` 抽单一权威（`script_runner.py` 直接引用 `code_act_sandbox.py` 常量，补齐 `time` 后两端一致）、`_PROOF_ALLOWED_MODULES` 补齐 `numpy/pandas/scipy` 与 `_JUDGE_ALLOWED_MODULES` 逐字对齐。棘轮门零新增（旧条目被忽略），`docs/mece-audit.md` 已重生成，对应 4 项发现从发现汇总中消失。
+
 ---
 
 ## 诚实边界 / 本设计**不**统一的部分

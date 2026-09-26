@@ -2,8 +2,9 @@
 
 为什么需要: `config_audit` 登记"有哪些配置面 / 注册面", 但不检查"宣称了却没人
 接". 历史上 anti_hacking 三件套曾是**定义了但零调用者**的死代码 (见
-`validation/scope_authority.py` 自述), 而奖励系统里 `reconcile_r_phys` 在
-`claim_reward` 与 `security/world_state` 各有一份实现 —— 这类"宣称 vs 接线"缺口
+`validation/scope_authority.py` 自述), 而奖励系统里 `reconcile_r_phys` 也曾在
+`claim_reward` 与 `security/world_state` 各留一份重复实现 (后者为权威, 前者已删)
+—— 这类"宣称 vs 接线"缺口
 与"同一概念两份实现"正是 MECE 要抓的两类违例:
 
   - **collectively exhaustive 违例**: 宣称的维度零调用者 (declared but unwired).
@@ -252,9 +253,9 @@ def _scan_surface(
     """按**模块限定**扫描公开面符号的引用点, 归属到 prod / test / internal.
 
     只认 `from <module> import <name>` 与 `<alias>.<name>` (alias 已绑定到
-    <module>), 不认裸同名 —— 否则 `claim_reward.reconcile_r_phys` 会被
-    `security/world_state.py` 的同名函数的调用点"借"走, 误报为 wired (这正是
-    跨模块同名要实现隔离的场景).
+    <module>), 不认裸同名 —— 否则兄弟模块同名函数的调用点会被"借"走, 误报为
+    wired (这正是跨模块同名要实现隔离的场景, 合成树用例见
+    `test_module_qualified_attribution_isolates_same_name`).
 
     动态加载兜底: 有的消费者用 `spec_from_file_location("...", .../"claim_reward.py")`
     把本模块按文件路径加载再以局部名调用 (`experience_archive.py` 即如此), 静态
