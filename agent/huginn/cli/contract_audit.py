@@ -100,6 +100,9 @@ fusion 模式经 set_mode('research') 复用 CSM S3 是**有意设计**, 非漏�
     python -m huginn.cli.contract_audit --sse-payload    # 只看 SSE 事件负载面
     python -m huginn.cli.contract_audit --json           # 机器可读快照
     python -m huginn.cli.contract_audit --check          # 有发现则 exit 1 (供 CI 门禁)
+    python -m huginn.cli.contract_audit --check --baseline tests/golden/mece_findings_baseline.txt
+                                                         # 棘轮: 只对基线外的新发现 exit 1
+    python -m huginn.cli.contract_audit --update-baseline  # 重生成发现基线
     python -m huginn.cli.contract_audit --out docs/mece-audit.md
 """
 
@@ -7156,6 +7159,22 @@ def build_mece_snapshot(root: Path | None = None) -> dict:
     }
 
 
+# 发现基线: `--check` 的棘轮 (ratchet) 基线. 仓内既有 47 项发现多为「同轴/同名/
+# 词表不一致」类**候选登记** (工具自述"只提示不判死"), 且测试断言其存在 —— 故
+# 「零发现」门不可行. 冻结当前集合为基线, 只对**基线外的新发现** exit 1; 修好旧项
+# 无需改基线 (基线里多余的条目被忽略).
+_MECE_FINDINGS_BASELINE = _REPO / "tests" / "golden" / "mece_findings_baseline.txt"
+
+
+def _load_findings_baseline(path: Path) -> set[str]:
+    """读发现基线 (一行一条, 空行忽略). 文件不存在 → 空集 (退化为「有发现即失败」)."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return set()
+    return {ln.strip() for ln in text.splitlines() if ln.strip()}
+
+
 def find_issues(snap: dict) -> list[str]:
     """汇总 MECE 违例 (供 --check). 只报客观事实, 语义判定留人工."""
     issues: list[str] = []
@@ -7476,6 +7495,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--http-field", action="store_true", help="只看 HTTP 请求字段面")
     parser.add_argument("--json", action="store_true", help="输出 JSON 快照")
     parser.add_argument("--check", action="store_true", help="有 MECE 发现时 exit 1")
+    parser.add_argument(
+        "--baseline",
+        type=str,
+        default="",
+        help="发现基线文件: 配 --check 时只对基线外的新发现 exit 1 (棘轮门)",
+    )
+    parser.add_argument(
+        "--update-baseline",
+        action="store_true",
+        help="把当前发现写入 --baseline (缺省 tests/golden/mece_findings_baseline.txt)",
+    )
     parser.add_argument("--out", type=str, default="", help="写 markdown 到文件")
     args = parser.parse_args(argv)
 
@@ -7524,6 +7554,17 @@ def main(argv: list[str] | None = None) -> int:
         data_obj = snap
         md = render_mece_markdown(snap)
 
+    if args.update_baseline or args.check:
+        snap = data_obj if "reward" in data_obj else build_mece_snapshot()
+        issues = find_issues(snap)
+
+    if args.update_baseline:
+        path = Path(args.baseline) if args.baseline else _MECE_FINDINGS_BASELINE
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("\n".join(sorted(issues)) + "\n", encoding="utf-8")
+        print(f"wrote mece findings baseline ({len(issues)} 项) -> {path}")
+        return 0
+
     if args.json:
         json.dump(data_obj, sys.stdout, ensure_ascii=False, indent=2)
         print()
@@ -7536,9 +7577,19 @@ def main(argv: list[str] | None = None) -> int:
         print(md)
 
     if args.check:
-        snap = data_obj if "reward" in data_obj else build_mece_snapshot()
-        issues = find_issues(snap)
-        if issues:
+        # 有 --baseline: 棘轮门 (只拦基线外的新发现); 无: 绝对门 (有发现即失败).
+        if args.baseline:
+            base = _load_findings_baseline(Path(args.baseline))
+            new = [i for i in issues if i not in base]
+            if new:
+                print(
+                    f"\nMECE 审计新增发现 {len(new)} 项 (基线 {len(base)} 项):",
+                    file=sys.stderr,
+                )
+                for i in new:
+                    print(f"  - {i}", file=sys.stderr)
+                return 1
+        elif issues:
             print(f"\nMECE 审计发现 {len(issues)} 项:", file=sys.stderr)
             for i in issues:
                 print(f"  - {i}", file=sys.stderr)

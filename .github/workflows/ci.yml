@@ -148,6 +148,15 @@ jobs:
         working-directory: agent
         run: python -m pytest tests/test_arch_credential_gateway.py -q -o addopts=""
 
+      # 接线契约回归门 (棘轮): contract_audit 的既有发现多为「候选登记」
+      # (同轴惩罚/跨模块同名/词表漂移 — 工具自述"只提示不判死", 测试断言其存在),
+      # 故「零发现」门不可行。按基线冻结当前 47 项, 只拦**基线外的新发现** ——
+      # 新面/新字段漏接线在 PR 阶段即红; 修好旧项无需改基线 (多余条目被忽略)。
+      # 重生成基线: python -m huginn.cli.contract_audit --update-baseline
+      - name: MECE wiring-contract guard (ratchet)
+        working-directory: agent
+        run: python -m huginn.cli.contract_audit --check --baseline tests/golden/mece_findings_baseline.txt
+
       - name: Run full test suite
         env:
           HUGINN_RATE_LIMIT_ENABLED: "false"
