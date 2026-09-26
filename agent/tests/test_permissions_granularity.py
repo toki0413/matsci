@@ -16,6 +16,7 @@ from huginn.permissions import (
     PermissionChecker,
     PermissionConfig,
     StandingRulesStore,
+    apply_sse_read_only_policy,
     get_standing_rules_store,
     is_read_only_tool,
     reset_standing_rules_store,
@@ -197,11 +198,13 @@ def test_read_only_and_write_exec_are_disjoint():
 
 
 def test_sse_read_only_policy_modes():
-    """SSE 策略: 只读工具 AUTO, 写/执行工具 ASK, 危险工具仍 DENY."""
+    """SSE 策略真接线: 只读工具 AUTO, 写/执行工具 ASK, 危险工具仍 DENY.
+
+    直接调用生产用的 `apply_sse_read_only_policy` (而非在测试里复刻同一段循环),
+    才能发现 sidecar 路径的策略接线回归.
+    """
     cfg = PermissionConfig()
-    for name in READ_ONLY_TOOLS | WRITE_EXEC_TOOLS:
-        mode = PermissionMode.AUTO if is_read_only_tool(name) else PermissionMode.ASK
-        cfg.set_mode(name, mode)
+    apply_sse_read_only_policy(cfg)
 
     for name in READ_ONLY_TOOLS:
         assert cfg.get_mode(name) == PermissionMode.AUTO

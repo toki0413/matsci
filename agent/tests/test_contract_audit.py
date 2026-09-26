@@ -2234,6 +2234,11 @@ def test_field_audit_golden_parity(face):
     path = _FIELD_AUDIT_GOLDEN / f"{face}.json"
     got = _field_audit_canonical(_FIELD_AUDIT_FACES[face]())
     if os.environ.get("HUGINN_REGEN_FIELD_GOLDEN"):
+        # 防 CI 误设: 若 CI 环境启用该变量, 测试会"重写快照后静默 return",
+        # golden 守卫退化成空操作并把漂移直接写进黄金文件, 故 CI 下直接判失败.
+        assert not os.environ.get("CI"), (
+            "HUGINN_REGEN_FIELD_GOLDEN 不得在 CI 启用 (会自动改写黄金文件掩盖漂移)"
+        )
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(got, encoding="utf-8")
         return

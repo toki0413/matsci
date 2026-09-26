@@ -62,6 +62,21 @@ def is_read_only_tool(tool_name: str) -> bool:
     """
     return tool_name in READ_ONLY_TOOLS
 
+
+def apply_sse_read_only_policy(config: PermissionConfig) -> None:
+    """SSE / sidecar 只读策略: 只读工具直放 (AUTO), 写/执行工具强制 ASK.
+
+    名单与判定取自本模块单一来源 (READ_ONLY_TOOLS / WRITE_EXEC_TOOLS /
+    is_read_only_tool), 调用方不再各自硬编码工具名. 抽成独立函数是为了让单测
+    直接验证**真实接线**, 而不是在测试里复刻同一段循环. 危险命令模式检查仍在
+    `adapter._check_permission` 里生效 (如 `rm -rf /`), 不受此策略影响.
+    """
+    for tool_name in READ_ONLY_TOOLS | WRITE_EXEC_TOOLS:
+        config.set_mode(
+            tool_name,
+            PermissionMode.AUTO if is_read_only_tool(tool_name) else PermissionMode.ASK,
+        )
+
 # Default permission rules for material science tools
 # Note: science_* tools (science-skills bridge) are auto-approved via wildcard
 # prefix matching in PermissionConfig.get_mode() — no entries needed here.

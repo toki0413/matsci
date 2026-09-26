@@ -10,9 +10,10 @@
   - **collectively exhaustive 违例**: 宣称的维度零调用者 (declared but unwired).
   - **mutually exclusive 违例**: 同名跨模块重复实现 / 同一惩罚轴上叠两项.
 
-审计十四面: **奖励面 / 授权面 / 工作流面 / 模式面 / 词汇面 / 工具面 / 钩子面 / 事件面 /
-SSE 消费面 / WS 消费面 / HTTP API 消费面 / 请求负载面 / 响应结构面 / WS 请求负载面**.
-后十二面是本工具从奖励系统外延到"agent 自身怎么跑"的同类审计:
+审计十七面: **奖励面 / 授权面 / 工作流面 / 模式面 / 词汇面 / 工具面 / 钩子面 / 事件面 /
+SSE 消费面 / WS 消费面 / HTTP API 消费面 / 请求负载面 / 响应结构面 / WS 请求负载面 /
+SSE 事件负载面 / WS 事件负载面 / HTTP 请求字段面**.
+后十五面是本工具从奖励系统外延到"agent 自身怎么跑"的同类审计:
 
   - **工作流面**: 执行 mode 分发面 (`phase_spec.dispatch_table` ↔ `engine_act`
     硬编码分支 ↔ planner 提示教的 MODE 候选) 三者是否穷尽一致.
@@ -76,6 +77,12 @@ SSE 消费面 / WS 消费面 / HTTP API 消费面 / 请求负载面 / 响应结�
     `to_dict()` / campaign `evt`, `event_bus` 取 `AgentEvent.to_sse()` 信封). 硬方向:
     前端在该帧处理函数里读 `t.<X>` 而后端该帧 payload 从不发此顶层字段 (恒 undefined).
     只核顶层键 (`t.data.<X>` 的嵌套子形状由发布点决定, 不核).
+  - **WS 事件负载面**: 与 SSE 事件负载面同构, 但对象是 WebSocket 帧: 后端
+    `send_json({...})` 的顶层键 ↔ 前端 `ws.onmessage` 里按 `data.type` 分派后读的
+    `data.<X>`. 仍只核顶层键与 agent 端点.
+  - **HTTP 请求字段面**: 请求负载面核库调用实参, 本面核**字面量路径**上的字段级契约:
+    前端 `api.*(...)` 泛型与后端处理函数读的 `body`/`query` 字段是否对得上 (覆盖
+    请求负载面漏掉的、后端用 dict 取字段而非 Pydantic 的端点).
 
 本工具只做**静态扫描 + 少量运行时读取**并**提示候选**, 不判死: "同轴/同名/词表
 不一致"是可疑信号, 是否真缺陷需人工判定 (例如 efficiency_discount 按"首次全对
@@ -83,7 +90,7 @@ SSE 消费面 / WS 消费面 / HTTP API 消费面 / 请求负载面 / 响应结�
 fusion 模式经 set_mode('research') 复用 CSM S3 是**有意设计**, 非漏接).
 
 用法:
-    python -m huginn.cli.contract_audit                  # 打印十五面审计
+    python -m huginn.cli.contract_audit                  # 打印十七面审计
     python -m huginn.cli.contract_audit --reward         # 只看奖励面
     python -m huginn.cli.contract_audit --scope          # 只看授权面
     python -m huginn.cli.contract_audit --workflow       # 只看工作流面
@@ -99,6 +106,8 @@ fusion 模式经 set_mode('research') 复用 CSM S3 是**有意设计**, 非漏�
     python -m huginn.cli.contract_audit --response       # 只看响应结构面
     python -m huginn.cli.contract_audit --ws-payload     # 只看 WS 请求负载面
     python -m huginn.cli.contract_audit --sse-payload    # 只看 SSE 事件负载面
+    python -m huginn.cli.contract_audit --ws-ev-payload  # 只看 WS 事件负载面
+    python -m huginn.cli.contract_audit --http-field     # 只看 HTTP 请求字段面
     python -m huginn.cli.contract_audit --json           # 机器可读快照
     python -m huginn.cli.contract_audit --check          # 有发现则 exit 1 (供 CI 门禁)
     python -m huginn.cli.contract_audit --check --baseline tests/golden/mece_findings_baseline.txt
@@ -144,7 +153,10 @@ _FLAG_IS_ENABLED = re.compile(r'is_enabled\(\s*["\']([a-z0-9_]+)["\']\s*\)')
 
 
 def _iter_py(root: Path):
-    for py in root.rglob("*.py"):
+    # 排序遍历: 未排序的 rglob 顺序取决于文件系统 readdir, 会让词汇簇编号 / 文档
+    # 生成物 / 基线串在换机或换目录后产出不同结果 —— 直接威胁 doc-drift 门与
+    # `--check --baseline` 棘轮门的逐字比对. 固定为字典序, 保证跨机确定.
+    for py in sorted(root.rglob("*.py")):
         if "__pycache__" in str(py) or py.resolve() == _SELF:
             continue
         yield py
@@ -221,29 +233,47 @@ def _dotted(rel: str) -> str:
     return rel[:-3].replace("/", ".")
 
 
-def _module_bindings(tree: ast.Module, target: str) -> tuple[set[str], set[str]]:
+def _attr_dotted(node: ast.AST) -> str | None:
+    """把纯属性链还原成点分名 (`a.b.c` → "a.b.c"); 根不是 Name 则返回 None."""
+    parts: list[str] = []
+    cur = node
+    while isinstance(cur, ast.Attribute):
+        parts.append(cur.attr)
+        cur = cur.value
+    if isinstance(cur, ast.Name):
+        parts.append(cur.id)
+        return ".".join(reversed(parts))
+    return None
+
+
+def _module_bindings(tree: ast.Module, target: str, rel: str) -> tuple[set[str], set[str]]:
     """模块级绑定: (直接 from-import 的符号名, 指向 target 模块的本地别名).
 
     覆盖两种真实写法:
       - `from huginn.validation.claim_reward import anti_hacking_reward` → direct
-      - `from huginn.validation import claim_reward as cr` / `import ... as cr` → alias
+      - `from .claim_reward import X` (相对导入, 按 rel 解析绝对名) → direct
+      - `from huginn.validation import claim_reward as cr` → alias `cr`
+      - `import huginn.validation.claim_reward as cr` → alias `cr`
+      - `import huginn.validation.claim_reward` (无 as) → alias 记全点分名,
+        消费点写 `huginn.validation.claim_reward.X` 时按属性链匹配.
     """
     direct: set[str] = set()
     aliases: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
-            mod = node.module or ""
+            mod = _resolve_relative(rel, node.level, node.module or "")
             for a in node.names:
-                if mod == target:
-                    # `from <target> import N` —— N 是 target 自己的符号.
-                    direct.add(a.name)
-                elif f"{mod}.{a.name}" == target:
+                if f"{mod}.{a.name}" == target:
                     # `from <pkg> import <target 末段> [as A]` —— 把子模块绑到别名.
                     aliases.add(a.asname or a.name)
+                elif mod == target:
+                    # `from <target> import N` —— N 是 target 自己的符号.
+                    direct.add(a.name)
         elif isinstance(node, ast.Import):
             for a in node.names:
                 if a.name == target:
-                    aliases.add(a.asname or a.name.split(".")[-1])
+                    # `import <target> [as A]` —— 无 as 时记全点分名, 供属性链匹配.
+                    aliases.add(a.asname or a.name)
     return direct, aliases
 
 
@@ -259,8 +289,9 @@ def _scan_surface(
 
     动态加载兜底: 有的消费者用 `spec_from_file_location("...", .../"claim_reward.py")`
     把本模块按文件路径加载再以局部名调用 (`experience_archive.py` 即如此), 静态
-    import 抓不到. 若某文件源码里出现本模块**文件名**字符串, 则把该文件内任意
-    `<x>.<公开名>` 属性访问都记作生产引用.
+    import 抓不到. 若某文件源码同时含本模块**文件名**字符串与 `spec_from_file_location`
+    (真按路径动态加载的信号), 才把该文件内任意 `<x>.<公开名>` 属性访问记作生产引用
+    —— 仅凭文件名子串会把注释/文档里提到模块名的文件误认成消费者.
     """
     target = _dotted(rel)
     base = Path(rel).name
@@ -279,22 +310,19 @@ def _scan_surface(
             continue
         frel = py.relative_to(root).as_posix()
         bucket = "internal" if frel == rel else ("test" if _is_test(frel) else "prod")
-        direct, aliases = _module_bindings(tree, target)
-        dyn = base in text  # 动态按文件路径加载本模块的兜底信号
+        direct, aliases = _module_bindings(tree, target, frel)
+        # 动态按文件路径加载本模块的兜底信号: 文件名 + spec_from_file_location 同时出现.
+        dyn = base in text and "spec_from_file_location" in text
         hits: set[str] = {n for n in name_set if n in direct}
         if aliases or dyn:
             for node in ast.walk(tree):
-                if (
-                    isinstance(node, ast.Attribute)
-                    and node.attr in name_set
-                    and (
-                        dyn
-                        or (
-                            isinstance(node.value, ast.Name)
-                            and node.value.id in aliases
-                        )
-                    )
-                ):
+                if not (isinstance(node, ast.Attribute) and node.attr in name_set):
+                    continue
+                if dyn:
+                    hits.add(node.attr)
+                    continue
+                dotted = _attr_dotted(node)
+                if dotted and any(dotted == f"{al}.{node.attr}" for al in aliases):
                     hits.add(node.attr)
         if bucket == "internal":
             # 定义文件内: 裸引用即本模块自身的调用点 (无歧义).
@@ -1029,27 +1057,33 @@ def build_vocabulary_contract(root: Path | None = None) -> dict:
 
     # 3. 簇内分歧 (同簇成员值域不等: 子集/超集漂移).
     divergence: list[dict] = []
-    for ci, comp in enumerate(closed):
+    for comp in closed:
         if len(comp) < 2:
             continue
         sets = {frozenset(sites[i]["values"]) for i in comp}
         if len(sets) == 1:
             continue
         union = set().union(*[set(sites[i]["values"]) for i in comp])
+        members = sorted(
+            (
+                {
+                    "rel": sites[i]["rel"],
+                    "line": sites[i]["line"],
+                    "name": sites[i]["name"],
+                    "extra": sorted(set(sites[i]["values"]) - union),
+                    "missing": sorted(union - set(sites[i]["values"])),
+                }
+                for i in comp
+            ),
+            key=lambda m: (m["rel"], m["line"], m["name"]),
+        )
+        # 簇标识用**成员站点**而非 enumerate 位置下标: 下标会随无关簇的增删整体重排,
+        # 让基线串/文档生成物无谓漂移.
         divergence.append(
             {
-                "cluster": ci,
+                "cluster": f"{members[0]['rel']}::{members[0]['name']}",
                 "union": sorted(union),
-                "members": [
-                    {
-                        "rel": sites[i]["rel"],
-                        "line": sites[i]["line"],
-                        "name": sites[i]["name"],
-                        "extra": sorted(set(sites[i]["values"]) - union),
-                        "missing": sorted(union - set(sites[i]["values"])),
-                    }
-                    for i in comp
-                ],
+                "members": members,
             }
         )
 
@@ -1058,8 +1092,11 @@ def build_vocabulary_contract(root: Path | None = None) -> dict:
     map_reports: list[dict] = []
     for m in mappings:
         vals = list(m["entries"].values())
-        a, b = m["name"].split("_TO_")
-        reverse = f"{b}_TO_{a}"
+        # 只处理标准 `<A>_TO_<B>` 两段名; `A_TO_B_TO_C` 之类的多段名不猜反向表名,
+        # 避免 split 解包 ValueError 直接崩掉整个词汇面.
+        parts = m["name"].split("_TO_")
+        a, b = (parts[0], parts[1]) if len(parts) == 2 else (None, None)
+        reverse = f"{b}_TO_{a}" if a is not None else m["name"]
         coll: dict[str, list[str]] = defaultdict(list)
         for k, v in m["entries"].items():
             coll[v].append(k)
@@ -2533,7 +2570,10 @@ def _campaign_payload_literals(root: Path) -> set[str]:
     """`event_type="…"` 字面量 → campaign 通道 payload 事件名 (静态可见的部分)."""
     vals: set[str] = set()
     for py in _iter_py(root):
-        src = py.read_text(encoding="utf-8", errors="replace")
+        try:
+            src = py.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
         vals.update(_SSE_CAMPAIGN_EMIT_RE.findall(src))
     return vals
 
@@ -7138,7 +7178,10 @@ def render_field_rollup_markdown(snap: dict) -> str:
     return "\n".join(lines)
 
 
+@functools.cache
 def build_mece_snapshot(root: Path | None = None) -> dict:
+    # 缓存: 全量快照要遍历整仓 (~75s), CLI 只调一次, 但测试里多处重复调用 ——
+    # 进程内按 root 缓存, 避免同一快照被重算几十次拖慢 CI. 测试都只读不修改快照.
     return {
         "reward": build_reward_contract(root),
         "scope": build_scope_contract(root),
@@ -7562,7 +7605,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.update_baseline:
         path = Path(args.baseline) if args.baseline else _MECE_FINDINGS_BASELINE
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("\n".join(sorted(issues)) + "\n", encoding="utf-8")
+        text = "\n".join(sorted(issues))
+        path.write_text(text + "\n" if text else "", encoding="utf-8")
         print(f"wrote mece findings baseline ({len(issues)} 项) -> {path}")
         return 0
 
@@ -7582,6 +7626,18 @@ def main(argv: list[str] | None = None) -> int:
         if args.baseline:
             base = _load_findings_baseline(Path(args.baseline))
             new = [i for i in issues if i not in base]
+            stale = sorted(base - set(issues))
+            # 棘轮只拦新增, 旧项被**静默忽略**是设计 (修好旧项无需改基线). 但陈旧条目
+            # 会让"已修缺陷被重新引入"不再报警 (串已在基线里) —— 故只在 stderr 提示
+            # 陈旧条数, 提示重跑 --update-baseline, 不改退出码.
+            if stale:
+                print(
+                    f"\nMECE 漂移提示: 基线含 {len(stale)} 项已不存在的陈旧条目, "
+                    f"建议重跑 --update-baseline 以恢复棘轮灵敏度:",
+                    file=sys.stderr,
+                )
+                for i in stale:
+                    print(f"  ~ {i}", file=sys.stderr)
             if new:
                 print(
                     f"\nMECE 审计新增发现 {len(new)} 项 (基线 {len(base)} 项):",
