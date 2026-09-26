@@ -1,0 +1,136 @@
+{
+  "config": {
+    "kind": "hism",
+    "widths": [
+      8,
+      16,
+      32,
+      64
+    ],
+    "ns": [
+      1,
+      2
+    ],
+    "seeds": 2,
+    "colloc": 64,
+    "adam_steps": 5000,
+    "jobs": 3,
+    "tag": "main"
+  },
+  "anchor": "u''=-cos(8pi x), u*=cos(8pi x)/(8pi)^2+0.3x-0.2 (2 DOF, 频率同 hi 但 forcing 归一)",
+  "thresholds": {
+    "vtr_gate": 1e-10,
+    "vho_cut": 1e-08,
+    "basis": "mean_squared"
+  },
+  "rows": [
+    {
+      "w": 8,
+      "n": 1,
+      "pass_frac": 0.5,
+      "v_tr_med": 2.0660801730042796e-09,
+      "v_ho_med_all": 0.4204933525641432,
+      "v_ho_med_good": 0.3493733115939139,
+      "res_ho_rms_good": 1.0092376785792106e-05,
+      "val_ho_rms_good": 0.5910780925495868
+    },
+    {
+      "w": 8,
+      "n": 2,
+      "pass_frac": 0.0,
+      "v_tr_med": 8.645282831028047e-10,
+      "v_ho_med_all": 1.040336260888986e-09,
+      "v_ho_med_good": NaN,
+      "res_ho_rms_good": NaN,
+      "val_ho_rms_good": NaN
+    },
+    {
+      "w": 16,
+      "n": 1,
+      "pass_frac": 0.0,
+      "v_tr_med": 3.6726567044646387e-10,
+      "v_ho_med_all": 0.8258873713631911,
+      "v_ho_med_good": NaN,
+      "res_ho_rms_good": NaN,
+      "val_ho_rms_good": NaN
+    },
+    {
+      "w": 16,
+      "n": 2,
+      "pass_frac": 0.0,
+      "v_tr_med": 2.777461549457606e-09,
+      "v_ho_med_all": 3.057675667600481e-09,
+      "v_ho_med_good": NaN,
+      "res_ho_rms_good": NaN,
+      "val_ho_rms_good": NaN
+    },
+    {
+      "w": 32,
+      "n": 1,
+      "pass_frac": 0.5,
+      "v_tr_med": 2.559798282916708e-09,
+      "v_ho_med_all": 1.1073684155170986,
+      "v_ho_med_good": 1.032580950040414,
+      "res_ho_rms_good": 1.0139463250109185e-05,
+      "val_ho_rms_good": 1.0161599037246083
+    },
+    {
+      "w": 32,
+      "n": 2,
+      "pass_frac": 0.0,
+      "v_tr_med": 1.4903152087626618e-10,
+      "v_ho_med_all": 2.350348192565886e-10,
+      "v_ho_med_good": NaN,
+      "res_ho_rms_good": NaN,
+      "val_ho_rms_good": NaN
+    },
+    {
+      "w": 64,
+      "n": 1,
+      "pass_frac": 0.0,
+      "v_tr_med": 4.257829072415961e-09,
+      "v_ho_med_all": 1.9101992669739039,
+      "v_ho_med_good": NaN,
+      "res_ho_rms_good": NaN,
+      "val_ho_rms_good": NaN
+    },
+    {
+      "w": 64,
+      "n": 2,
+      "pass_frac": 0.0,
+      "v_tr_med": 1.581043632381283e-10,
+      "v_ho_med_all": 1.788520165450254e-10,
+      "v_ho_med_good": NaN,
+      "res_ho_rms_good": NaN,
+      "val_ho_rms_good": NaN
+    }
+  ],
+  "N_c": {
+    "all": {
+      "8": 2,
+      "16": 2,
+      "32": 2,
+      "64": 2
+    },
+    "good": {
+      "8": null,
+      "16": null,
+      "32": null,
+      "64": null
+    }
+  },
+  "fit": {
+    "全部种子": {
+      "beta": 0.0,
+      "r2": 1.0,
+      "k": 4
+    },
+    "仅合规种子": {
+      "beta": null,
+      "r2": null,
+      "k": 0
+    }
+  },
+  "verdict": "H1: 饱和点与容量无关 -> N_c 是解的性质, 探针站得住",
+  "elapsed_s": 1445.857831954956
+}
