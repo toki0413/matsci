@@ -1,0 +1,67 @@
+{
+  "config": {
+    "kind": "hi",
+    "widths": [
+      8
+    ],
+    "ns": [
+      1,
+      2
+    ],
+    "seeds": 1,
+    "colloc": 64,
+    "adam_steps": 5000,
+    "jobs": 2,
+    "tag": "smoke"
+  },
+  "anchor": "u''=-(8pi)^2 cos(8pi x), u*=cos(8pi x)+0.3x-0.2 (2 DOF, 高频表达瓶颈对照)",
+  "thresholds": {
+    "vtr_gate": 1e-10,
+    "vho_cut": 1e-08,
+    "basis": "mean_squared"
+  },
+  "rows": [
+    {
+      "w": 8,
+      "n": 1,
+      "pass_frac": 0.0,
+      "v_tr_med": 0.0004898818677189188,
+      "v_ho_med_all": 63.83275428554111,
+      "v_ho_med_good": NaN,
+      "res_ho_rms_good": NaN,
+      "val_ho_rms_good": NaN
+    },
+    {
+      "w": 8,
+      "n": 2,
+      "pass_frac": 0.0,
+      "v_tr_med": 0.0054170425280339034,
+      "v_ho_med_all": 0.006533794658464834,
+      "v_ho_med_good": NaN,
+      "res_ho_rms_good": NaN,
+      "val_ho_rms_good": NaN
+    }
+  ],
+  "N_c": {
+    "all": {
+      "8": null
+    },
+    "good": {
+      "8": null
+    }
+  },
+  "fit": {
+    "全部种子": {
+      "beta": null,
+      "r2": null,
+      "k": 0
+    },
+    "仅合规种子": {
+      "beta": null,
+      "r2": null,
+      "k": 0
+    }
+  },
+  "verdict": "无法判定: 有效 N_c 点不足 (大量配置无饱和)",
+  "elapsed_s": 137.50449991226196
+}

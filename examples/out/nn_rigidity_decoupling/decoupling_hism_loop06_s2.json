@@ -1,0 +1,177 @@
+{
+  "config": {
+    "kind": "hism",
+    "widths": [
+      8,
+      16,
+      32,
+      64
+    ],
+    "ns": [
+      2,
+      3,
+      4
+    ],
+    "seeds": 1,
+    "colloc": 64,
+    "adam_steps": 5000,
+    "jobs": 3,
+    "tag": "loop06_s2"
+  },
+  "anchor": "u''=-cos(8pi x), u*=cos(8pi x)/(8pi)^2+0.3x-0.2 (2 DOF, 频率同 hi 但 forcing 归一)",
+  "thresholds": {
+    "vtr_gate": 1e-10,
+    "vho_cut": 1e-08,
+    "basis": "mean_squared"
+  },
+  "rows": [
+    {
+      "w": 8,
+      "n": 2,
+      "pass_frac": 0.0,
+      "v_tr_med": 1.3263586956658848e-09,
+      "v_ho_med_all": 1.5578503994229436e-09,
+      "v_ho_med_good": NaN,
+      "res_ho_rms_good": NaN,
+      "val_ho_rms_good": NaN
+    },
+    {
+      "w": 8,
+      "n": 3,
+      "pass_frac": 0.0,
+      "v_tr_med": 2.067623848382876e-09,
+      "v_ho_med_all": 2.3046873072675656e-09,
+      "v_ho_med_good": NaN,
+      "res_ho_rms_good": NaN,
+      "val_ho_rms_good": NaN
+    },
+    {
+      "w": 8,
+      "n": 4,
+      "pass_frac": 0.0,
+      "v_tr_med": 1.1587813326799752e-09,
+      "v_ho_med_all": 1.4729094757916682e-09,
+      "v_ho_med_good": NaN,
+      "res_ho_rms_good": NaN,
+      "val_ho_rms_good": NaN
+    },
+    {
+      "w": 16,
+      "n": 2,
+      "pass_frac": 0.0,
+      "v_tr_med": 4.6462098497711876e-09,
+      "v_ho_med_all": 5.064182513206978e-09,
+      "v_ho_med_good": NaN,
+      "res_ho_rms_good": NaN,
+      "val_ho_rms_good": NaN
+    },
+    {
+      "w": 16,
+      "n": 3,
+      "pass_frac": 0.0,
+      "v_tr_med": 1.0535316080366165e-08,
+      "v_ho_med_all": 1.0959266960709414e-08,
+      "v_ho_med_good": NaN,
+      "res_ho_rms_good": NaN,
+      "val_ho_rms_good": NaN
+    },
+    {
+      "w": 16,
+      "n": 4,
+      "pass_frac": 0.0,
+      "v_tr_med": 3.3563950620098406e-10,
+      "v_ho_med_all": 4.066143710596356e-10,
+      "v_ho_med_good": NaN,
+      "res_ho_rms_good": NaN,
+      "val_ho_rms_good": NaN
+    },
+    {
+      "w": 32,
+      "n": 2,
+      "pass_frac": 0.0,
+      "v_tr_med": 1.1839965005676704e-10,
+      "v_ho_med_all": 2.2564347856210367e-10,
+      "v_ho_med_good": NaN,
+      "res_ho_rms_good": NaN,
+      "val_ho_rms_good": NaN
+    },
+    {
+      "w": 32,
+      "n": 3,
+      "pass_frac": 1.0,
+      "v_tr_med": 7.739967109252923e-11,
+      "v_ho_med_all": 1.0321292050170167e-10,
+      "v_ho_med_good": 1.0321292050170167e-10,
+      "res_ho_rms_good": 1.0159295526357662e-05,
+      "val_ho_rms_good": 4.0434018238191113e-08
+    },
+    {
+      "w": 32,
+      "n": 4,
+      "pass_frac": 1.0,
+      "v_tr_med": 9.055784904337049e-12,
+      "v_ho_med_all": 1.596989834327653e-11,
+      "v_ho_med_good": 1.596989834327653e-11,
+      "res_ho_rms_good": 3.996235481765363e-06,
+      "val_ho_rms_good": 5.635211504159655e-10
+    },
+    {
+      "w": 64,
+      "n": 2,
+      "pass_frac": 0.0,
+      "v_tr_med": 1.0430487771652778e-10,
+      "v_ho_med_all": 1.0899366632503422e-10,
+      "v_ho_med_good": NaN,
+      "res_ho_rms_good": NaN,
+      "val_ho_rms_good": NaN
+    },
+    {
+      "w": 64,
+      "n": 3,
+      "pass_frac": 0.0,
+      "v_tr_med": 2.9962958728455383e-10,
+      "v_ho_med_all": 3.627735119225757e-10,
+      "v_ho_med_good": NaN,
+      "res_ho_rms_good": NaN,
+      "val_ho_rms_good": NaN
+    },
+    {
+      "w": 64,
+      "n": 4,
+      "pass_frac": 0.0,
+      "v_tr_med": 3.2772364128270304e-09,
+      "v_ho_med_all": 3.4246867830013924e-09,
+      "v_ho_med_good": NaN,
+      "res_ho_rms_good": NaN,
+      "val_ho_rms_good": NaN
+    }
+  ],
+  "N_c": {
+    "all": {
+      "8": 2,
+      "16": 4,
+      "32": 2,
+      "64": 2
+    },
+    "good": {
+      "8": null,
+      "16": null,
+      "32": 3,
+      "64": null
+    }
+  },
+  "fit": {
+    "全部种子": {
+      "beta": -0.09999999999999999,
+      "r2": 0.06666666666666654,
+      "k": 4
+    },
+    "仅合规种子": {
+      "beta": null,
+      "r2": null,
+      "k": 1
+    }
+  },
+  "verdict": "H1: 饱和点与容量无关 -> N_c 是解的性质, 探针站得住",
+  "elapsed_s": 1123.5759799480438
+}

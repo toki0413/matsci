@@ -1,0 +1,85 @@
+{
+ "agent_send_count": 16,
+ "dead_fields": [],
+ "handler_count": 11,
+ "handler_fields": {
+  "approval_response": [
+   "approved",
+   "request_id"
+  ],
+  "clarification_response": [
+   "answer",
+   "question_id",
+   "thread_id"
+  ],
+  "decision_response": [
+   "decision",
+   "decision_point_id",
+   "option"
+  ],
+  "explore_start": [
+   "config",
+   "content"
+  ],
+  "guide": [
+   "content",
+   "thread_id"
+  ],
+  "ping": [],
+  "plan_confirm": [
+   "confirmed",
+   "edited_plan",
+   "plan_id"
+  ],
+  "set_auto_approve": [
+   "enabled"
+  ],
+  "set_suggest_mode": [
+   "enabled",
+   "thread_id"
+  ],
+  "suggest_response": [
+   "action",
+   "edited_code",
+   "thread_id"
+  ],
+  "user_input": [
+   "content",
+   "max_tokens",
+   "persona",
+   "thinking",
+   "thread_id"
+  ]
+ },
+ "handlers_resolved": 11,
+ "handlers_unresolved": [],
+ "kind_counts": {},
+ "model_fields": [
+  "action",
+  "answer",
+  "approved",
+  "config",
+  "confirmed",
+  "content",
+  "decision",
+  "decision_point_id",
+  "edited_code",
+  "edited_plan",
+  "enabled",
+  "max_tokens",
+  "option",
+  "persona",
+  "plan_id",
+  "question_id",
+  "request_id",
+  "thinking",
+  "thread_id",
+  "type"
+ ],
+ "send_count": 24,
+ "sends_static": 14,
+ "sends_unattributed": 2,
+ "sends_unknown": 0,
+ "untriaged": [],
+ "violations": []
+}

@@ -239,6 +239,12 @@ async def test_engine_actor_delegates_llm_chat() -> None:
     assert hasattr(eng, "_is_deterministic_numeric")
     assert eng._is_deterministic_numeric("compute peak of 3*x+1") is True
     assert eng._is_deterministic_numeric("just observe") is False
+    # 中文数值目标同样要认 (autoloop 的真实 objective 多为中文), 否则内建
+    # probe 执行路径永不触发 -> execute 落到 explore 空转
+    assert eng._is_deterministic_numeric(
+        "训练小 MLP 拟合 N 个点值约束, 在 128 点留出集统计均方违规, 求 N_c"
+    ) is True
+    assert eng._is_deterministic_numeric("复核这个结论是否正确") is False
 
 
 # ===== 阶段5: EngineControl =====

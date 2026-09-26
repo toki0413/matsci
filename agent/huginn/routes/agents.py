@@ -451,7 +451,7 @@ async def delete_persona(name: str) -> dict[str, Any]:
 
 
 @router.post("/personas/{name}/switch")
-async def switch_persona(name: str, params: dict[str, Any]) -> dict[str, Any]:
+async def switch_persona(name: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
     """Switch the active persona for the current chat session."""
     from huginn.persona_emotion import EmotionTracker
     from huginn.personas import PersonaManager

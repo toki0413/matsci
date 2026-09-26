@@ -206,6 +206,10 @@ class TestPersonaEndpointsFastAPI:
         data = response.json()
         assert data["success"] is True
         assert data["persona"] == "default"
+        # 前端 PersonaManager 不带 body 调用, 不得因必填请求体 422.
+        no_body = client.post("/personas/default/switch")
+        assert no_body.status_code == 200
+        assert no_body.json()["success"] is True
 
     def test_delete_persona(self, client):
         client.post(

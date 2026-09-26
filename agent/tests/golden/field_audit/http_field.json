@@ -1,0 +1,2019 @@
+{
+ "candidates_read_unsent": [
+  {
+   "endpoint": "/transfer/sync",
+   "field": "delete",
+   "line": 246,
+   "method": "POST",
+   "model": "SyncRequest",
+   "rel": "agent/huginn/routes/transfer.py"
+  },
+  {
+   "endpoint": "/transfer/sync",
+   "field": "exclude_patterns",
+   "line": 246,
+   "method": "POST",
+   "model": "SyncRequest",
+   "rel": "agent/huginn/routes/transfer.py"
+  },
+  {
+   "endpoint": "/transfer/sync",
+   "field": "include_patterns",
+   "line": 246,
+   "method": "POST",
+   "model": "SyncRequest",
+   "rel": "agent/huginn/routes/transfer.py"
+  },
+  {
+   "endpoint": "/viewer3d/load",
+   "field": "file_path",
+   "line": 462,
+   "method": "POST",
+   "model": "LoadRequest",
+   "rel": "agent/huginn/routes/viewer3d.py"
+  }
+ ],
+ "candidates_unread_unsent": [
+  {
+   "endpoint": "/projects/{pid}",
+   "field": "description",
+   "line": 135,
+   "method": "PATCH",
+   "model": "UpdateProject",
+   "rel": "agent/huginn/routes/research_project.py"
+  },
+  {
+   "endpoint": "/projects/{pid}",
+   "field": "title",
+   "line": 135,
+   "method": "PATCH",
+   "model": "UpdateProject",
+   "rel": "agent/huginn/routes/research_project.py"
+  }
+ ],
+ "coverage": {
+  "dict_checked": 34,
+  "dict_skipped": 75,
+  "fe_checked": 12,
+  "fe_skipped": 0,
+  "handler_checked": 26,
+  "handler_skipped": 0
+ },
+ "endpoint_count": 135,
+ "kind_counts": {},
+ "model_count": 236,
+ "rows": [
+  {
+   "declared": [],
+   "endpoint": "/admin/maintenance",
+   "kind": "body-dict",
+   "line": 26,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/admin.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/advisor/recommend",
+   "kind": "body-dict",
+   "line": 42,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/advisor.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/agents/{agent_id}/chat",
+   "kind": "body-dict",
+   "line": 67,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/agents.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/personas/from-template",
+   "kind": "body-dict",
+   "line": 285,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/agents.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/personas/import",
+   "kind": "body-dict",
+   "line": 308,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/agents.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/personas/{name}",
+   "kind": "body-dict",
+   "line": 350,
+   "method": "PUT",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/agents.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/personas",
+   "kind": "body-dict",
+   "line": 376,
+   "method": "POST",
+   "model": "",
+   "read": [
+    "name"
+   ],
+   "rel": "agent/huginn/routes/agents.py",
+   "sent": [
+    "begin_dialogs",
+    "description",
+    "mood_dialogs",
+    "name",
+    "system_prompt",
+    "variables",
+    "when_to_use"
+   ],
+   "shape": "封闭"
+  },
+  {
+   "declared": [],
+   "endpoint": "/personas/match",
+   "kind": "body-dict",
+   "line": 398,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/agents.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/personas/{name}/switch",
+   "kind": "body-dict",
+   "line": 454,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/agents.py",
+   "sent": [],
+   "shape": "封闭"
+  },
+  {
+   "declared": [],
+   "endpoint": "/orchestrate",
+   "kind": "body-dict",
+   "line": 500,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/agents.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/swarm/run",
+   "kind": "body-dict",
+   "line": 574,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/agents.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/personalization/style/feedback",
+   "kind": "body-dict",
+   "line": 635,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/agents.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [
+    "api_key",
+    "password",
+    "username"
+   ],
+   "endpoint": "/auth/login",
+   "kind": "body-model",
+   "line": 155,
+   "method": "POST",
+   "model": "LoginRequest",
+   "read": [
+    "api_key",
+    "username"
+   ],
+   "rel": "agent/huginn/routes/auth.py",
+   "sent": [],
+   "shape": "封闭"
+  },
+  {
+   "declared": [
+    "api_key",
+    "grant_type"
+   ],
+   "endpoint": "/auth/token",
+   "kind": "body-model",
+   "line": 181,
+   "method": "POST",
+   "model": "TokenRequest",
+   "read": [
+    "api_key",
+    "grant_type"
+   ],
+   "rel": "agent/huginn/routes/auth.py",
+   "sent": [],
+   "shape": "封闭"
+  },
+  {
+   "declared": [
+    "max_iterations",
+    "objective"
+   ],
+   "endpoint": "/autoloop/start",
+   "kind": "body-model",
+   "line": 78,
+   "method": "POST",
+   "model": "AutoloopStartRequest",
+   "read": [
+    "max_iterations",
+    "objective"
+   ],
+   "rel": "agent/huginn/routes/autoloop.py",
+   "sent": [],
+   "shape": "封闭"
+  },
+  {
+   "declared": [],
+   "endpoint": "/bench/run",
+   "kind": "body-dict",
+   "line": 17,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/bench.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/evolve/run",
+   "kind": "body-dict",
+   "line": 64,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/bench.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/bot/config",
+   "kind": "body-dict",
+   "line": 116,
+   "method": "PUT",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/bot.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/onebot/v11/event",
+   "kind": "body-dict",
+   "line": 158,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/bot.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/bot/wechat/config",
+   "kind": "body-dict",
+   "line": 239,
+   "method": "PUT",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/bot.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/catalog/{entry_id}",
+   "kind": "body-dict",
+   "line": 43,
+   "method": "PATCH",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/catalog.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/checkpoints",
+   "kind": "body-dict",
+   "line": 64,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/checkpoints.py",
+   "sent": [
+    "path"
+   ],
+   "shape": "封闭"
+  },
+  {
+   "declared": [],
+   "endpoint": "/codebase/search",
+   "kind": "body-dict",
+   "line": 45,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/codebase.py",
+   "sent": [
+    "query",
+    "top_k"
+   ],
+   "shape": "封闭"
+  },
+  {
+   "declared": [],
+   "endpoint": "/coder",
+   "kind": "body-dict",
+   "line": 16,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/coder.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/sandbox/execute",
+   "kind": "body-dict",
+   "line": 23,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/compat.py",
+   "sent": [
+    "code"
+   ],
+   "shape": "封闭"
+  },
+  {
+   "declared": [],
+   "endpoint": "/analyze/symmetry",
+   "kind": "body-dict",
+   "line": 84,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/compat.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/analyze/spectral",
+   "kind": "body-dict",
+   "line": 175,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/compat.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/analyze/dynamics",
+   "kind": "body-dict",
+   "line": 214,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/compat.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/analyze/tda",
+   "kind": "body-dict",
+   "line": 268,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/compat.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/analyze/sindy",
+   "kind": "body-dict",
+   "line": 317,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/compat.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/viz/dos",
+   "kind": "body-dict",
+   "line": 406,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/compat.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/viz/phase",
+   "kind": "body-dict",
+   "line": 441,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/compat.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/viz/persistence",
+   "kind": "body-dict",
+   "line": 467,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/compat.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/viz/sindy",
+   "kind": "body-dict",
+   "line": 499,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/compat.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/config",
+   "kind": "body-dict",
+   "line": 221,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/config.py",
+   "sent": [],
+   "shape": "开放(调用含展开)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/config/models",
+   "kind": "body-dict",
+   "line": 331,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/config.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/config/models/{alias}",
+   "kind": "body-dict",
+   "line": 359,
+   "method": "PUT",
+   "model": "",
+   "read": [
+    "api_key"
+   ],
+   "rel": "agent/huginn/routes/config.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/config/models/test",
+   "kind": "body-dict",
+   "line": 416,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/config.py",
+   "sent": [
+    "alias",
+    "api_key",
+    "base_url",
+    "enabled",
+    "model",
+    "provider",
+    "temperature"
+   ],
+   "shape": "封闭"
+  },
+  {
+   "declared": [],
+   "endpoint": "/config/active-model",
+   "kind": "body-dict",
+   "line": 600,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/config.py",
+   "sent": [
+    "alias"
+   ],
+   "shape": "封闭"
+  },
+  {
+   "declared": [],
+   "endpoint": "/config/encrypt",
+   "kind": "body-dict",
+   "line": 681,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/config.py",
+   "sent": [
+    "password",
+    "path"
+   ],
+   "shape": "封闭"
+  },
+  {
+   "declared": [],
+   "endpoint": "/config/decrypt",
+   "kind": "body-dict",
+   "line": 709,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/config.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/config/features/{feature}",
+   "kind": "body-dict",
+   "line": 766,
+   "method": "POST",
+   "model": "",
+   "read": [
+    "enabled"
+   ],
+   "rel": "agent/huginn/routes/config.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/config/model-tier",
+   "kind": "body-dict",
+   "line": 841,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/config.py",
+   "sent": [
+    "tier"
+   ],
+   "shape": "封闭"
+  },
+  {
+   "declared": [],
+   "endpoint": "/config/privacy/tags",
+   "kind": "body-dict",
+   "line": 966,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/config.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/config/privacy/level",
+   "kind": "body-dict",
+   "line": 990,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/config.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/credentials",
+   "kind": "body-dict",
+   "line": 97,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/credentials.py",
+   "sent": [],
+   "shape": "开放(调用含展开)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/credentials/{cid}",
+   "kind": "body-dict",
+   "line": 126,
+   "method": "PUT",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/credentials.py",
+   "sent": [],
+   "shape": "开放(调用含展开)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/credentials/{service}",
+   "kind": "body-dict",
+   "line": 386,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/credentials.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [
+    "data",
+    "type_name"
+   ],
+   "endpoint": "/data/validate",
+   "kind": "body-model",
+   "line": 70,
+   "method": "POST",
+   "model": "ValidateRequest",
+   "read": [
+    "data",
+    "type_name"
+   ],
+   "rel": "agent/huginn/routes/data_dict.py",
+   "sent": [],
+   "shape": "封闭"
+  },
+  {
+   "declared": [],
+   "endpoint": "/research/run_program",
+   "kind": "body-dict",
+   "line": 138,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/deep_research.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/research/grounding",
+   "kind": "body-dict",
+   "line": 202,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/deep_research.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/eval/run",
+   "kind": "body-dict",
+   "line": 49,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/eval.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/eval/analyze",
+   "kind": "body-dict",
+   "line": 270,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/eval.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/execute",
+   "kind": "body-dict",
+   "line": 44,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/execution.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/explore",
+   "kind": "body-dict",
+   "line": 69,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/execution.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/diagnose",
+   "kind": "body-dict",
+   "line": 109,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/execution.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [
+    "format",
+    "include"
+   ],
+   "endpoint": "/export/all",
+   "kind": "body-model",
+   "line": 54,
+   "method": "POST",
+   "model": "ExportParams",
+   "read": [
+    "format",
+    "include"
+   ],
+   "rel": "agent/huginn/routes/export_share.py",
+   "sent": [],
+   "shape": "封闭"
+  },
+  {
+   "declared": [
+    "format",
+    "include"
+   ],
+   "endpoint": "/export/memory",
+   "kind": "body-model",
+   "line": 82,
+   "method": "POST",
+   "model": "ExportParams",
+   "read": [
+    "format"
+   ],
+   "rel": "agent/huginn/routes/export_share.py",
+   "sent": [],
+   "shape": "封闭"
+  },
+  {
+   "declared": [
+    "format",
+    "include"
+   ],
+   "endpoint": "/export/knowledge",
+   "kind": "body-model",
+   "line": 112,
+   "method": "POST",
+   "model": "ExportParams",
+   "read": [
+    "format"
+   ],
+   "rel": "agent/huginn/routes/export_share.py",
+   "sent": [],
+   "shape": "封闭"
+  },
+  {
+   "declared": [],
+   "endpoint": "/fs/write",
+   "kind": "body-dict",
+   "line": 228,
+   "method": "PUT",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/fs.py",
+   "sent": [
+    "content",
+    "path"
+   ],
+   "shape": "封闭"
+  },
+  {
+   "declared": [],
+   "endpoint": "/fs/mkdir",
+   "kind": "body-dict",
+   "line": 302,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/fs.py",
+   "sent": [
+    "path"
+   ],
+   "shape": "封闭"
+  },
+  {
+   "declared": [],
+   "endpoint": "/fs/rename",
+   "kind": "body-dict",
+   "line": 316,
+   "method": "PUT",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/fs.py",
+   "sent": [
+    "new",
+    "path"
+   ],
+   "shape": "封闭"
+  },
+  {
+   "declared": [],
+   "endpoint": "/fs/open",
+   "kind": "body-dict",
+   "line": 353,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/fs.py",
+   "sent": [
+    "path"
+   ],
+   "shape": "封闭"
+  },
+  {
+   "declared": [],
+   "endpoint": "/hpc/test",
+   "kind": "body-dict",
+   "line": 90,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/hpc.py",
+   "sent": [
+    "host",
+    "key_path",
+    "scheduler",
+    "username"
+   ],
+   "shape": "封闭"
+  },
+  {
+   "declared": [],
+   "endpoint": "/hpc/submit",
+   "kind": "body-dict",
+   "line": 116,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/hpc.py",
+   "sent": [
+    "command",
+    "host",
+    "job_name",
+    "key_path",
+    "nodes",
+    "ntasks_per_node",
+    "queue",
+    "scheduler",
+    "username",
+    "walltime"
+   ],
+   "shape": "封闭"
+  },
+  {
+   "declared": [],
+   "endpoint": "/hpc/estimate-walltime",
+   "kind": "body-dict",
+   "line": 230,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/hpc.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/hpc/jobs/{local_id}/refresh",
+   "kind": "body-dict",
+   "line": 349,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/hpc.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/hpc/jobs/{local_id}/cancel",
+   "kind": "body-dict",
+   "line": 382,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/hpc.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/hpc/status",
+   "kind": "body-dict",
+   "line": 414,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/hpc.py",
+   "sent": [
+    "host",
+    "job_id",
+    "key_path",
+    "scheduler",
+    "username"
+   ],
+   "shape": "封闭"
+  },
+  {
+   "declared": [],
+   "endpoint": "/agents/{agent_id}/chat/stream",
+   "kind": "body-dict",
+   "line": 45,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/interaction.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/agents/{agent_id}/interrupt",
+   "kind": "body-dict",
+   "line": 173,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/interaction.py",
+   "sent": [
+    "thread_id",
+    "type"
+   ],
+   "shape": "封闭"
+  },
+  {
+   "declared": [],
+   "endpoint": "/clarifications/{question_id}/resolve",
+   "kind": "body-dict",
+   "line": 220,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/interaction.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/agents/{agent_id}/clarifications/resolve",
+   "kind": "body-dict",
+   "line": 233,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/interaction.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/inbox/{item_id}/resolve",
+   "kind": "body-dict",
+   "line": 269,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/interaction.py",
+   "sent": [
+    "resolution"
+   ],
+   "shape": "封闭"
+  },
+  {
+   "declared": [
+    "kernel_name",
+    "timeout"
+   ],
+   "endpoint": "/kernel/session",
+   "kind": "body-model",
+   "line": 60,
+   "method": "POST",
+   "model": "CreateSessionRequest",
+   "read": [
+    "kernel_name",
+    "timeout"
+   ],
+   "rel": "agent/huginn/routes/kernel.py",
+   "sent": [],
+   "shape": "封闭"
+  },
+  {
+   "declared": [
+    "code",
+    "silent"
+   ],
+   "endpoint": "/kernel/{session_id}/execute",
+   "kind": "body-model",
+   "line": 77,
+   "method": "POST",
+   "model": "ExecuteRequest",
+   "read": [
+    "code",
+    "silent"
+   ],
+   "rel": "agent/huginn/routes/kernel.py",
+   "sent": [],
+   "shape": "封闭"
+  },
+  {
+   "declared": [
+    "depth",
+    "seed",
+    "top_k"
+   ],
+   "endpoint": "/kg/query",
+   "kind": "body-model",
+   "line": 111,
+   "method": "POST",
+   "model": "GraphQueryRequest",
+   "read": [
+    "depth",
+    "seed",
+    "top_k"
+   ],
+   "rel": "agent/huginn/routes/kg.py",
+   "sent": [],
+   "shape": "封闭"
+  },
+  {
+   "declared": [
+    "url"
+   ],
+   "endpoint": "/knowledge/ingest-url",
+   "kind": "body-model",
+   "line": 223,
+   "method": "POST",
+   "model": "UrlIngestRequest",
+   "read": [
+    "url"
+   ],
+   "rel": "agent/huginn/routes/knowledge.py",
+   "sent": [
+    "url"
+   ],
+   "shape": "封闭"
+  },
+  {
+   "declared": [
+    "doc_ids",
+    "title"
+   ],
+   "endpoint": "/knowledge/report",
+   "kind": "body-model",
+   "line": 395,
+   "method": "POST",
+   "model": "ReportRequest",
+   "read": [
+    "doc_ids",
+    "title"
+   ],
+   "rel": "agent/huginn/routes/knowledge.py",
+   "sent": [
+    "doc_ids",
+    "title"
+   ],
+   "shape": "封闭"
+  },
+  {
+   "declared": [
+    "query",
+    "top_k"
+   ],
+   "endpoint": "/knowledge/query",
+   "kind": "body-model",
+   "line": 502,
+   "method": "POST",
+   "model": "KnowledgeQuery",
+   "read": [
+    "query",
+    "top_k"
+   ],
+   "rel": "agent/huginn/routes/knowledge.py",
+   "sent": [
+    "query",
+    "top_k"
+   ],
+   "shape": "封闭"
+  },
+  {
+   "declared": [
+    "script",
+    "timeout",
+    "variables"
+   ],
+   "endpoint": "/live/execute",
+   "kind": "body-model",
+   "line": 31,
+   "method": "POST",
+   "model": "ScriptRequest",
+   "read": [
+    "script",
+    "timeout",
+    "variables"
+   ],
+   "rel": "agent/huginn/routes/live_script.py",
+   "sent": [],
+   "shape": "封闭"
+  },
+  {
+   "declared": [],
+   "endpoint": "/mcp/servers/connect",
+   "kind": "body-dict",
+   "line": 62,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/mcp.py",
+   "sent": [],
+   "shape": "开放(调用含展开)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/mcp/tools/{tool_name}/call",
+   "kind": "body-dict",
+   "line": 199,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/mcp.py",
+   "sent": [
+    "arguments",
+    "tool_name"
+   ],
+   "shape": "封闭"
+  },
+  {
+   "declared": [],
+   "endpoint": "/mcp/connect/batch",
+   "kind": "body-dict",
+   "line": 219,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/mcp.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/mcp/prompts/{name}/get",
+   "kind": "body-dict",
+   "line": 281,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/mcp.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/mcp/resources/subscribe",
+   "kind": "body-dict",
+   "line": 300,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/mcp.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/memory/search",
+   "kind": "body-dict",
+   "line": 53,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/memory.py",
+   "sent": [
+    "category",
+    "query",
+    "tier",
+    "top_k"
+   ],
+   "shape": "封闭"
+  },
+  {
+   "declared": [],
+   "endpoint": "/memory",
+   "kind": "body-dict",
+   "line": 83,
+   "method": "POST",
+   "model": "",
+   "read": [
+    "content"
+   ],
+   "rel": "agent/huginn/routes/memory.py",
+   "sent": [],
+   "shape": "开放(调用含展开)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/memory/{memory_id}",
+   "kind": "body-dict",
+   "line": 100,
+   "method": "PATCH",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/memory.py",
+   "sent": [],
+   "shape": "开放(调用含展开)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/memory/promote/{memory_id}",
+   "kind": "body-dict",
+   "line": 128,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/memory.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/memory/prune",
+   "kind": "body-dict",
+   "line": 143,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/memory.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/memory/maintenance",
+   "kind": "body-dict",
+   "line": 384,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/memory.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/memory/lint",
+   "kind": "body-dict",
+   "line": 401,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/memory.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/memory/typed",
+   "kind": "body-dict",
+   "line": 439,
+   "method": "POST",
+   "model": "",
+   "read": [
+    "content",
+    "memory_type",
+    "topic"
+   ],
+   "rel": "agent/huginn/routes/memory.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [
+    "name",
+    "value"
+   ],
+   "endpoint": "/parameters/set",
+   "kind": "body-model",
+   "line": 50,
+   "method": "POST",
+   "model": "ParamSetRequest",
+   "read": [
+    "name",
+    "value"
+   ],
+   "rel": "agent/huginn/routes/parameters.py",
+   "sent": [],
+   "shape": "封闭"
+  },
+  {
+   "declared": [],
+   "endpoint": "/pet/accessory",
+   "kind": "body-dict",
+   "line": 38,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/pet.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/pet/configure",
+   "kind": "body-dict",
+   "line": 55,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/pet.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/plan",
+   "kind": "body-dict",
+   "line": 20,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/planner.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/plan/propose",
+   "kind": "body-dict",
+   "line": 67,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/planner.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/plan/{plan_id}/confirm",
+   "kind": "body-dict",
+   "line": 122,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/planner.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/plan/{plan_id}/reject",
+   "kind": "body-dict",
+   "line": 139,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/planner.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/project-context",
+   "kind": "body-dict",
+   "line": 33,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/project.py",
+   "sent": [
+    "content"
+   ],
+   "shape": "封闭"
+  },
+  {
+   "declared": [
+    "description",
+    "instructions",
+    "title"
+   ],
+   "endpoint": "/projects",
+   "kind": "body-model",
+   "line": 104,
+   "method": "POST",
+   "model": "CreateProject",
+   "read": [
+    "description",
+    "instructions",
+    "title"
+   ],
+   "rel": "agent/huginn/routes/research_project.py",
+   "sent": [
+    "description",
+    "instructions",
+    "title"
+   ],
+   "shape": "封闭"
+  },
+  {
+   "declared": [
+    "description",
+    "instructions",
+    "search_scope",
+    "title"
+   ],
+   "endpoint": "/projects/{pid}",
+   "kind": "body-model",
+   "line": 135,
+   "method": "PATCH",
+   "model": "UpdateProject",
+   "read": [],
+   "rel": "agent/huginn/routes/research_project.py",
+   "sent": [
+    "instructions",
+    "search_scope"
+   ],
+   "shape": "封闭"
+  },
+  {
+   "declared": [
+    "thread_id"
+   ],
+   "endpoint": "/projects/{pid}/threads",
+   "kind": "body-model",
+   "line": 162,
+   "method": "POST",
+   "model": "AttachThread",
+   "read": [
+    "thread_id"
+   ],
+   "rel": "agent/huginn/routes/research_project.py",
+   "sent": [
+    "thread_id"
+   ],
+   "shape": "封闭"
+  },
+  {
+   "declared": [
+    "doc_id"
+   ],
+   "endpoint": "/projects/{pid}/knowledge",
+   "kind": "body-model",
+   "line": 196,
+   "method": "POST",
+   "model": "AttachDoc",
+   "read": [
+    "doc_id"
+   ],
+   "rel": "agent/huginn/routes/research_project.py",
+   "sent": [
+    "doc_id"
+   ],
+   "shape": "封闭"
+  },
+  {
+   "declared": [],
+   "endpoint": "/side",
+   "kind": "body-dict",
+   "line": 27,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/side.py",
+   "sent": [
+    "answer",
+    "id",
+    "question"
+   ],
+   "shape": "封闭"
+  },
+  {
+   "declared": [],
+   "endpoint": "/skills/execute",
+   "kind": "body-dict",
+   "line": 52,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/skills.py",
+   "sent": [
+    "args",
+    "skill"
+   ],
+   "shape": "封闭"
+  },
+  {
+   "declared": [],
+   "endpoint": "/team/v2/plan",
+   "kind": "body-dict",
+   "line": 62,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/team.py",
+   "sent": [
+    "objective"
+   ],
+   "shape": "封闭"
+  },
+  {
+   "declared": [],
+   "endpoint": "/team/v2/run",
+   "kind": "body-dict",
+   "line": 110,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/team.py",
+   "sent": [
+    "objective"
+   ],
+   "shape": "封闭"
+  },
+  {
+   "declared": [],
+   "endpoint": "/team/v2/plans",
+   "kind": "body-dict",
+   "line": 153,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/team.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/team/v2/plans/{plan_id}/reject",
+   "kind": "body-dict",
+   "line": 212,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/team.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/team/v2/plans/{plan_id}/execute",
+   "kind": "body-dict",
+   "line": 227,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/team.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/team/v2/fusion",
+   "kind": "body-dict",
+   "line": 276,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/team.py",
+   "sent": [
+    "query",
+    "rounds"
+   ],
+   "shape": "封闭"
+  },
+  {
+   "declared": [],
+   "endpoint": "/team/plan",
+   "kind": "body-dict",
+   "line": 378,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/team.py",
+   "sent": [
+    "objective"
+   ],
+   "shape": "封闭"
+  },
+  {
+   "declared": [],
+   "endpoint": "/team/run",
+   "kind": "body-dict",
+   "line": 404,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/team.py",
+   "sent": [
+    "objective"
+   ],
+   "shape": "封闭"
+  },
+  {
+   "declared": [],
+   "endpoint": "/threads",
+   "kind": "body-dict",
+   "line": 77,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/threads.py",
+   "sent": [
+    "title"
+   ],
+   "shape": "封闭"
+  },
+  {
+   "declared": [],
+   "endpoint": "/threads/{thread_id}",
+   "kind": "body-dict",
+   "line": 220,
+   "method": "PATCH",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/threads.py",
+   "sent": [
+    "label"
+   ],
+   "shape": "封闭"
+  },
+  {
+   "declared": [],
+   "endpoint": "/threads/{thread_id}/fork",
+   "kind": "body-dict",
+   "line": 271,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/threads.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/threads/{thread_id}/switch-branch",
+   "kind": "body-dict",
+   "line": 307,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/threads.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/threads/{thread_id}/event-branch",
+   "kind": "body-dict",
+   "line": 329,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/threads.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [
+    "todos"
+   ],
+   "endpoint": "/todos",
+   "kind": "body-model",
+   "line": 35,
+   "method": "PUT",
+   "model": "TodoPayload",
+   "read": [
+    "todos"
+   ],
+   "rel": "agent/huginn/routes/todos.py",
+   "sent": [
+    "todos"
+   ],
+   "shape": "封闭"
+  },
+  {
+   "declared": [],
+   "endpoint": "/tools/{tool_name}",
+   "kind": "body-dict",
+   "line": 30,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/tools.py",
+   "sent": [],
+   "shape": "开放(调用含展开)"
+  },
+  {
+   "declared": [
+    "credential_id",
+    "host",
+    "local_path",
+    "port",
+    "remote_path",
+    "username"
+   ],
+   "endpoint": "/transfer/upload",
+   "kind": "body-model",
+   "line": 111,
+   "method": "POST",
+   "model": "TransferRequest",
+   "read": [
+    "local_path",
+    "remote_path"
+   ],
+   "rel": "agent/huginn/routes/transfer.py",
+   "sent": [],
+   "shape": "封闭"
+  },
+  {
+   "declared": [
+    "credential_id",
+    "host",
+    "local_path",
+    "port",
+    "remote_path",
+    "username"
+   ],
+   "endpoint": "/transfer/download",
+   "kind": "body-model",
+   "line": 151,
+   "method": "POST",
+   "model": "TransferRequest",
+   "read": [
+    "local_path",
+    "remote_path"
+   ],
+   "rel": "agent/huginn/routes/transfer.py",
+   "sent": [],
+   "shape": "封闭"
+  },
+  {
+   "declared": [
+    "credential_id",
+    "delete",
+    "exclude_patterns",
+    "include_patterns",
+    "local_dir",
+    "remote_dir"
+   ],
+   "endpoint": "/transfer/sync",
+   "kind": "body-model",
+   "line": 246,
+   "method": "POST",
+   "model": "SyncRequest",
+   "read": [
+    "delete",
+    "exclude_patterns",
+    "include_patterns",
+    "local_dir",
+    "remote_dir"
+   ],
+   "rel": "agent/huginn/routes/transfer.py",
+   "sent": [
+    "credential_id",
+    "local_dir",
+    "remote_dir"
+   ],
+   "shape": "封闭"
+  },
+  {
+   "declared": [
+    "auto_reconnect",
+    "bind_address",
+    "credential_id",
+    "keepalive_interval",
+    "local_port",
+    "name",
+    "remote_host",
+    "remote_port",
+    "ssh_host",
+    "ssh_port",
+    "ssh_user",
+    "tunnel_type"
+   ],
+   "endpoint": "/tunnels",
+   "kind": "body-model",
+   "line": 682,
+   "method": "POST",
+   "model": "TunnelCreate",
+   "read": [],
+   "rel": "agent/huginn/routes/tunnels.py",
+   "sent": [],
+   "shape": "封闭"
+  },
+  {
+   "declared": [],
+   "endpoint": "/unified/derive",
+   "kind": "body-dict",
+   "line": 26,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/unified.py",
+   "sent": [
+    "input",
+    "model"
+   ],
+   "shape": "封闭"
+  },
+  {
+   "declared": [],
+   "endpoint": "/unified/solve",
+   "kind": "body-dict",
+   "line": 50,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/unified.py",
+   "sent": [
+    "derived",
+    "input",
+    "model"
+   ],
+   "shape": "封闭"
+  },
+  {
+   "declared": [],
+   "endpoint": "/unified/plot",
+   "kind": "body-dict",
+   "line": 71,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/unified.py",
+   "sent": [
+    "model",
+    "solution"
+   ],
+   "shape": "封闭"
+  },
+  {
+   "declared": [],
+   "endpoint": "/users",
+   "kind": "body-dict",
+   "line": 58,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/users.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [],
+   "endpoint": "/users/{user_id}",
+   "kind": "body-dict",
+   "line": 99,
+   "method": "PATCH",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/users.py",
+   "sent": [],
+   "shape": "开放(无前端调用)"
+  },
+  {
+   "declared": [
+    "content",
+    "file_path",
+    "format"
+   ],
+   "endpoint": "/viewer3d/load",
+   "kind": "body-model",
+   "line": 462,
+   "method": "POST",
+   "model": "LoadRequest",
+   "read": [
+    "content",
+    "file_path",
+    "format"
+   ],
+   "rel": "agent/huginn/routes/viewer3d.py",
+   "sent": [
+    "content",
+    "format"
+   ],
+   "shape": "封闭"
+  },
+  {
+   "declared": [
+    "content",
+    "file_path",
+    "format"
+   ],
+   "endpoint": "/viewer3d/trajectory",
+   "kind": "body-model",
+   "line": 497,
+   "method": "POST",
+   "model": "TrajectoryRequest",
+   "read": [
+    "content",
+    "file_path",
+    "format"
+   ],
+   "rel": "agent/huginn/routes/viewer3d.py",
+   "sent": [],
+   "shape": "封闭"
+  },
+  {
+   "declared": [],
+   "endpoint": "/workflows/execute",
+   "kind": "body-dict",
+   "line": 26,
+   "method": "POST",
+   "model": "",
+   "read": [],
+   "rel": "agent/huginn/routes/workflows.py",
+   "sent": [
+    "args",
+    "template"
+   ],
+   "shape": "封闭"
+  }
+ ],
+ "untriaged": [],
+ "violations": []
+}

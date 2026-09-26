@@ -1,0 +1,43 @@
+事件: 发布+订阅了未声明类型 (设计允许非穷尽, 候选登记): campaign.retry
+事件: 发布+订阅了未声明类型 (设计允许非穷尽, 候选登记): campaign.suspect
+事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): campaign.budget_exhausted
+事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): cognitive.csm.transition
+事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): embedding.download.done
+事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): embedding.download.error
+事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): embedding.download.progress
+事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): embedding.download.start
+事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): event_bus.dropped
+事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): llm.response
+事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): pet.mood
+事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): team.batch.start
+事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): team.member.done
+事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): team.member.start
+事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): team.member.tool
+事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): team.run.done
+事件: 发布了未声明类型 (设计允许非穷尽, 候选登记): team.run.start
+同轴惩罚候选 (轮次): efficiency_discount, idle_turn_penalty
+工作流 mode 未在 planner 提示暴露: dynamic_workflow
+模式: 各来源词表互相不一致
+模式有 prompt 段却无 set_mode 生产者: code
+模式有 prompt 段却无 set_mode 生产者: extreme
+模式有 prompt 段却无 set_mode 生产者: fusion
+模式被 set_mode 却无 prompt 段: plan
+词汇: 同名跨模块定义值域不一致: KINDS @ huginn/catalog/models.py:20, huginn/evolution/semantic_distiller.py:39, huginn/research/cspace.py:32
+词汇: 同名跨模块定义值域不一致: Severity @ huginn/execution/physics_auditor.py:24, huginn/metacog/failure_modes.py:27
+词汇: 同名跨模块定义值域不一致: _KINDS @ huginn/share.py:21, huginn/workflows/registry.py:25
+词汇: 同名跨模块定义值域不一致: _NEGATIVE_WORDS @ huginn/persona_emotion.py:147, huginn/tools/design/gap_analysis_tool.py:30
+词汇: 同名跨模块定义值域不一致: _READ_ACTIONS @ huginn/tools/git_tool.py:85, huginn/tools/github_tool.py:55
+词汇: 映射往返丢信息: AUTOLOOP_TO_PHASE 共像 [ResearchPhase.VALIDATION←["'validate'", "'learn'"]] 且有反向表 PHASE_TO_AUTOLOOP
+词汇: 词表漂移 (簇 huginn/agent/context.py::_EXPENSIVE_TOOL_NAMES, 并集 8 词): huginn/agent/context.py::_EXPENSIVE_TOOL_NAMES, huginn/hooks/research_safety_hook.py::_EXPENSIVE_TOOLS, huginn/research_budget.py::_EXPENSIVE_TOOLS
+词汇: 词表漂移 (簇 huginn/config.py::ContainerRuntimeLiteral, 并集 5 词): huginn/config.py::ContainerRuntimeLiteral, huginn/security/container_executor.py::_VALID_RUNTIMES
+词汇: 词表漂移 (簇 huginn/config.py::ThinkingIntensity, 并集 6 词): huginn/config.py::ThinkingIntensity, huginn/core_types.py::class RiskLevel, huginn/ontology/actions.py::class RiskLevel
+词汇: 词表漂移 (簇 huginn/core_types.py::class BudgetDecision, 并集 4 词): huginn/core_types.py::class BudgetDecision, huginn/security/policy_engine.py::_VALID_ACTIONS
+词汇: 词表漂移 (簇 huginn/events/audit_log.py::_SECRET_KEYS, 并集 12 词): huginn/events/audit_log.py::_SECRET_KEYS, huginn/mcp_client.py::_SENSITIVE_CONFIG_KEYS
+词汇: 词表漂移 (簇 huginn/memory/types.py::class MemoryType, 并集 10 词): huginn/memory/types.py::class MemoryType, huginn/memory/typing.py::class MemoryType
+词汇: 词表漂移 (簇 huginn/tools/visualize_gate.py::RERENDERABLE, 并集 4 词): huginn/tools/visualize_gate.py::RERENDERABLE, huginn/tools/visualize_gate.py::_SEVERITY
+钩子: 事件有生产触发点但零生产注册 (触发无人接): POST_COMPACT
+钩子: 事件有生产触发点但零生产注册 (触发无人接): POST_TOOL_USE_FAILURE
+钩子: 事件有生产触发点但零生产注册 (触发无人接): PRE_COMPACT
+钩子: 事件有生产触发点但零生产注册 (触发无人接): SESSION_END
+钩子: 事件有生产触发点但零生产注册 (触发无人接): SESSION_START
+钩子: 事件有生产触发点但零生产注册 (触发无人接): SUBAGENT_STOP

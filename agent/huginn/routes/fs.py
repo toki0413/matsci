@@ -17,15 +17,21 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 # WSL ↔ Windows 路径转换: fs_read/fs_list/fs_open 在收到 Windows 或 \\wsl$ UNC
 # 路径时先在 WSL 侧归一, 再走既有的 resolve/安全校验。纯函数, 不依赖 wsl 命令。
 from huginn.utils import wslpath
+from huginn.utils.runtime import HUGINN_DIR_NAME
 
 router = APIRouter(tags=["fs"])
 
 logger = logging.getLogger(__name__)
+
+# 附件上传上限 (与 export_share 的导入上限同量级): 分块读并累计, 超限即中止并
+# 删掉半截文件, 避免把内存/磁盘吃满.
+_UPLOAD_MAX_BYTES = 500 * 1024 * 1024
+_UPLOAD_CHUNK_BYTES = 1024 * 1024
 
 # 系统敏感目录（迁移自 Tauri `is_in_system_sensitive`）。大小写不敏感的包含匹配。
 _SYSTEM_SENSITIVE = (
@@ -232,6 +238,64 @@ async def fs_write(params: dict[str, Any]) -> dict[str, Any]:
     except OSError as e:
         raise HTTPException(status_code=400, detail=f"写入文件失败: {e}") from e
     return {"path": str(target)}
+
+
+@router.post("/fs/upload")
+async def fs_upload(
+    file: UploadFile = File(...), dir: str = Form("")
+) -> dict[str, Any]:
+    """把浏览器上传的二进制落到工作区（前端拖拽附件等场景）。
+
+    落点: 传了 `dir` 就写进该目录，否则默认 `<cwd>/.huginn/uploads/` ——
+    附件不散落到项目根，避免覆盖同名源码；`.huginn/` 是既有的工作区私有目录
+    约定。文件名只取 basename（挡住路径穿越），同名时做 `a-1.png` 式避让，
+    不覆盖已有文件。
+    """
+    name = Path(file.filename or "").name.strip()
+    if not name or name in (".", ".."):
+        raise HTTPException(status_code=400, detail="缺少合法的上传文件名")
+    if dir:
+        target_dir = _safe_resolve(dir)
+        if target_dir.exists() and not target_dir.is_dir():
+            raise HTTPException(status_code=400, detail=f"不是目录: {dir}")
+    else:
+        target_dir = _safe_resolve(str(Path.cwd())) / HUGINN_DIR_NAME / "uploads"
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        raise HTTPException(status_code=400, detail=f"创建目录失败: {e}") from e
+
+    dest = _unique_dest(target_dir, name)
+    written = 0
+    try:
+        with dest.open("wb") as out:
+            while chunk := await file.read(_UPLOAD_CHUNK_BYTES):
+                written += len(chunk)
+                if written > _UPLOAD_MAX_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"文件过大: 超过上限 {_UPLOAD_MAX_BYTES} bytes",
+                    )
+                out.write(chunk)
+    except HTTPException:
+        dest.unlink(missing_ok=True)
+        raise
+    except OSError as e:
+        dest.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail=f"写入文件失败: {e}") from e
+    return {"path": str(dest), "name": dest.name, "size": written}
+
+
+def _unique_dest(directory: Path, name: str) -> Path:
+    """同名避让: `a.png` → `a-1.png` → `a-2.png` …"""
+    dest = directory / name
+    if not dest.exists():
+        return dest
+    for i in range(1, 1000):
+        cand = directory / f"{dest.stem}-{i}{dest.suffix}"
+        if not cand.exists():
+            return cand
+    raise HTTPException(status_code=409, detail=f"同名文件过多: {name}")
 
 
 @router.post("/fs/mkdir")

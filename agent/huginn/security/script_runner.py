@@ -9,6 +9,8 @@ import traceback
 from dataclasses import dataclass
 from typing import Any
 
+from huginn.security.code_act_sandbox import _ALLOWED_IMPORTS
+
 
 @dataclass
 class ScriptResult:
@@ -69,33 +71,9 @@ _SAFE_BUILTINS = {
     "None",
 }
 
-# 白名单 import (迁移自 CodeAct, G22): 只允许这些模块
-# 任何不在白名单的 import 直接拒绝, 比黑名单更安全
-_ALLOWED_IMPORTS = {
-    "math",
-    "statistics",
-    "json",
-    "re",
-    "time",
-    "numpy",
-    "pandas",
-    "sympy",
-    "scipy",
-    "matplotlib",
-    "ase",
-    "pymatgen",
-    # 纯类型/数据容器标准库 (无 IO/网络, 与 code_act_sandbox 白名单保持一致)
-    "typing",
-    "typing_extensions",
-    "dataclasses",
-    "itertools",
-    "functools",
-    "collections",
-    "copy",
-    "decimal",
-    "fractions",
-    "operator",
-}
+# 白名单 import (迁移自 CodeAct, G22): 只允许这些模块.
+# 任何不在白名单的 import 直接拒绝, 比黑名单更安全.
+# 权威定义在 security/code_act_sandbox.py (见文件顶部 import), 此处不再留第二份副本.
 
 # Blocked submodules — 白名单内的包也可能有危险子模块
 # (e.g. numpy.ctypeslib 暴露 ctypes 能力), 单独拦截

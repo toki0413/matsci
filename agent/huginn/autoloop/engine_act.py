@@ -188,11 +188,23 @@ class EngineAct:
 
         return plan
 
+    #: 计算/预测指令词 (英文 + 中文). autoloop 的真实 objective 多为中文
+    #: ("写并运行…统计均方违规, 求 N_c(w)…拟合 beta"), 只认英文动词会让内建
+    #: 执行路径永不触发 → execute 落到 explore 空转, report 再拿现编数字当证据.
+    _NUMERIC_VERBS = (
+        "compute", "calculate", "predict", "evaluate",
+        "计算", "求解", "算出", "核算", "拟合", "统计", "测量", "预测", "评估",
+    )
+    #: 公式/数值迹象 (中文侧). 中文目标常无 ASCII 运算符, 但这些词已足以
+    #: 说明是定量任务 (与英文侧 `[/^*+=()]` 等价).
+    _FORMULA_HINTS = ("拟合", "均方", "误差", "斜率", "阈值", "方差", "相关系数")
+
     def _is_deterministic_numeric(self, description: str) -> bool:
         """启发式: 该项是否为"确定性数值计算"目标(供内建 probe 执行兜底).
 
         平衡点落地: execute 只对这类明确可算的目标主动生成 probe, 不打扰开放探索任务。
         保守: 需同时含 数字 + 计算/预测指令词 + 公式迹象, 缺一不触发。
+        中英双语: 中文动词/中文数学词同样算命中, 否则中文 objective 永远走不到内建执行。
         """
         import re as _re
 
@@ -201,9 +213,10 @@ class EngineAct:
         d = description.strip()
         if not _re.search(r"\d", d):
             return False
-        if not any(v in d.lower() for v in ("compute", "calculate", "predict", "evaluate")):
+        low = d.lower()
+        if not any(v in low for v in self._NUMERIC_VERBS):
             return False
-        return bool(_re.search("[/^*+=()]", d))
+        return bool(_re.search("[/^*+=()]", d)) or any(h in d for h in self._FORMULA_HINTS)
 
     async def _request_numeric_probe(self, description: str) -> str:
         """平衡点·内建执行: 让 LLM 只产出能算出数值的纯 python, harness 负责运行取数.
@@ -356,6 +369,29 @@ class EngineAct:
         elif mode == "explore":
             # Use ExplorationOrchestrator to search design space
             result = await self._execute_explore(description, context)
+            # 空转兜底: 未注册设计空间时 explore 只回一个 0-branch 空 pod
+            # (0.0s, n_explored=0, 无 result) — 无证据却有"成功"外形, report 遂把
+            # LLM 现编的数字当 Results 写出去. 目标是"确定性数值计算"(中英动词都认)
+            # 时回落 coder 真写码真执行 (Write+Bash), 不空转.
+            if (
+                isinstance(result, dict)
+                and (
+                    result.get("success") is False
+                    or (
+                        not result.get("result")
+                        and int(result.get("n_explored", 0) or 0) == 0
+                    )
+                )
+                and (
+                    self._is_deterministic_numeric(description)
+                    or self._is_deterministic_numeric(
+                        str(getattr(self, "_objective", "") or "")
+                    )
+                )
+            ):
+                logger.info("explore 空转 (无证据) → 回落 coder 真实执行")
+                result = await self._execute_coder(description, context)
+                mode = "coder"
         elif mode == "skill":
             # Run a pre-built composite skill pipeline
             result = await self._execute_skill(plan, context)

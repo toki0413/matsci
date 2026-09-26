@@ -32,9 +32,9 @@ logger = logging.getLogger(__name__)
 # 跟 Lean 的 sorry/admit 同义, 但在 Python proof script 里查.
 _SORRY_MARKERS = ("sorry", "admit", "by_contradiction_tactic", "exact sorry")
 
-# proof_script 白名单 import — 跟 task_synthesizer 的 _JUDGE_ALLOWED_MODULES 一致.
+# proof_script 白名单 import — 与 task_synthesizer 的 _JUDGE_ALLOWED_MODULES 逐字一致.
 _PROOF_ALLOWED_MODULES = frozenset({
-    "sympy", "math", "re", "statistics", "json",
+    "math", "statistics", "json", "re", "numpy", "pandas", "sympy", "scipy",
 })
 
 
