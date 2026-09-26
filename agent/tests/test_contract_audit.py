@@ -2265,6 +2265,149 @@ def test_mece_audit_doc_referenced_in_index():
     assert "mece-audit.md" in index
 
 
+# ──────────────────── 字段级面汇总视图 (B-lite 一次确认) ────────────────────
+
+# 六面各一条代表性违例 + payload 一条未归类 kind, 验证汇总「无遗漏 + 关系归属」.
+# 形状 = 面 → 违例列表 (测试里包成 snapshot 的 `{face: {"violations": [...]}}`).
+_ROLLUP_SAMPLE: dict[str, list[dict]] = {
+    "payload": [
+        {
+            "kind": "missing-query",
+            "method": "GET",
+            "path": "/a",
+            "rel": "r.py",
+            "line": 1,
+            "detail": "后端必填 query 未传: q",
+            "triage": "untriaged",
+        },
+        {
+            "kind": "shape-mismatch",
+            "method": "POST",
+            "path": "/b",
+            "rel": "r.py",
+            "line": 2,
+            "detail": "载体形状不符",
+            "triage": "untriaged",
+        },
+    ],
+    "response": [
+        {
+            "kind": "missing-field",
+            "method": "GET",
+            "path": "/c",
+            "rel": "r.py",
+            "line": 3,
+            "missing": ["success"],
+            "triage": "untriaged",
+        }
+    ],
+    "ws_payload": [
+        {
+            "kind": "handler-undeclared",
+            "type": "agent",
+            "field": "f1",
+            "rel": "r.py",
+            "line": 4,
+            "detail": "handler 读 msg.f1",
+            "triage": "untriaged",
+        },
+        {
+            "kind": "fe-undeclared",
+            "type": "agent",
+            "field": "f2",
+            "rel": "r.py",
+            "line": 5,
+            "detail": "前端发 agent 带了 f2",
+            "triage": "untriaged",
+        },
+    ],
+    "sse_payload": [
+        {
+            "kind": "read-undeclared",
+            "channel": "progress",
+            "frame": "update",
+            "field": "p",
+            "rel": "r.py",
+            "line": 6,
+            "detail": "前端读 t.p",
+            "triage": "untriaged",
+        }
+    ],
+    "ws_ev_payload": [
+        {
+            "kind": "read-undeclared",
+            "channel": "agent",
+            "frame": "text_delta",
+            "field": "q",
+            "rel": "r.py",
+            "line": 7,
+            "detail": "前端读 data.q",
+            "triage": "untriaged",
+        }
+    ],
+    "http_field": [
+        {
+            "kind": "handler-undeclared",
+            "method": "POST",
+            "endpoint": "/d",
+            "field": "g",
+            "rel": "r.py",
+            "line": 8,
+            "detail": "handler 读 g",
+            "triage": "untriaged",
+        },
+        {
+            "kind": "fe-undeclared",
+            "method": "POST",
+            "endpoint": "/d",
+            "field": "h",
+            "rel": "r.py",
+            "line": 9,
+            "detail": "前端发 h",
+            "triage": "untriaged",
+        },
+        {
+            "kind": "dict-key-unsent",
+            "method": "POST",
+            "endpoint": "/e",
+            "field": "i",
+            "rel": "r.py",
+            "line": 10,
+            "detail": "下标读 i",
+            "triage": "untriaged",
+        },
+    ],
+}
+
+
+def _rollup_snap() -> dict:
+    """`_ROLLUP_SAMPLE` (面 → 违例列表) → 汇总视图要的 snapshot 形状."""
+    return {face: {"violations": vs} for face, vs in _ROLLUP_SAMPLE.items()}
+
+
+def test_field_rollup_covers_every_field_face_violation():
+    """汇总视图不遗漏任何字段级违例, 且把所有 kind 归到 R1–R4 / R0."""
+    md = ca.render_field_rollup_markdown(_rollup_snap())
+    every = [(f, v) for f, vs in _ROLLUP_SAMPLE.items() for v in vs]
+    for face, v in every:
+        locate = ca._rollup_site(face, v)
+        assert locate in md, f"汇总漏了地点: {face} {locate}"
+    assert md.count("⚠ 待分诊") == len(every)
+    # 未归类 kind 落 R0 (面特有), 保证不丢.
+    assert "#### R0 " in md
+    assert "shape-mismatch" in md
+
+
+def test_field_rollup_relation_membership():
+    """关系归属: R1 收五面「消费⊆权威」; shape-mismatch 不入 R3 而落 R0."""
+    r1 = {f for (f, _k), r in ca._ROLLUP_KIND_REL.items() if r == "R1"}
+    assert r1 == {"response", "sse_payload", "ws_ev_payload", "ws_payload", "http_field"}
+    md = ca.render_field_rollup_markdown(_rollup_snap())
+    r3_section = md.split("#### R3 ", 1)[1].split("#### R4 ", 1)[0]
+    assert "missing-query" in r3_section
+    assert "shape-mismatch" not in r3_section
+
+
 # ──────────────────── 合成树: 模块限定归属 ────────────────────
 
 

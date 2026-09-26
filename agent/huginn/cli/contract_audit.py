@@ -7053,6 +7053,143 @@ def render_http_field_markdown(contract: dict) -> str:
 # 组合 + 门禁
 # ---------------------------------------------------------------------------
 
+# 字段级面汇总 (B-lite): 六面是**同一个不变量**「边界两侧字段集包含」的不同传输切片
+# (响应体 / WS 入站 / SSE 帧 / WS 出站帧 / HTTP body). 按**角色关系**而非传输归并,
+# 供一次人工确认; 只读各面 `violations`, 不新增判定、不改违例身份.
+_ROLLUP_FACES: tuple[tuple[str, str], ...] = (
+    ("payload", "请求负载面"),
+    ("response", "响应结构面"),
+    ("ws_payload", "WS 请求负载面"),
+    ("sse_payload", "SSE 事件负载面"),
+    ("ws_ev_payload", "WS 事件负载面"),
+    ("http_field", "HTTP 请求字段面"),
+)
+_ROLLUP_FACE_LABEL = dict(_ROLLUP_FACES)
+
+_ROLLUP_REL_ORDER: tuple[str, ...] = ("R1", "R2", "R3", "R4", "R0")
+
+_ROLLUP_REL_DOC: dict[str, str] = {
+    "R1": "消费⊆权威 —— 读/下标取用的字段, 权威 (模型 / 后端生产) 必须声明",
+    "R2": "生产⊆权威 —— 生产方发出的字段, 权威必须声明",
+    "R3": "权威必填⊆送达 —— 权威标必填的字段, 生产方必须送达",
+    "R4": "下游下标读⊆上游发送 —— body-dict 端点下标读的键, 上游调用必须发",
+    "R0": "其他 —— 非字段包含关系 (面特有, 留在面内确认)",
+}
+
+# (面, kind) → 关系. **未登记**的 kind 落 R0, 保证没有违例被本汇总遗漏.
+_ROLLUP_KIND_REL: dict[tuple[str, str], str] = {
+    ("response", "missing-field"): "R1",
+    ("sse_payload", "read-undeclared"): "R1",
+    ("ws_ev_payload", "read-undeclared"): "R1",
+    ("ws_payload", "handler-undeclared"): "R1",
+    ("http_field", "handler-undeclared"): "R1",
+    ("ws_payload", "fe-undeclared"): "R2",
+    ("http_field", "fe-undeclared"): "R2",
+    ("payload", "missing-query"): "R3",
+    ("payload", "missing-body"): "R3",
+    ("payload", "missing-body-field"): "R3",
+    ("payload", "missing-form-field"): "R3",
+    ("http_field", "dict-key-unsent"): "R4",
+}
+
+
+def _rollup_site(face: str, v: dict) -> str:
+    """违例 → 地点串 (各面身份字段不同)."""
+    if face in ("payload", "response"):
+        return f"{v['method']} {v['path']}"
+    if face == "ws_payload":
+        return f"{v['type']}.{v['field']}"
+    if face in ("sse_payload", "ws_ev_payload"):
+        return f"{v['channel']}/{v['frame']}.{v['field']}"
+    return f"{v['method']} {v['endpoint']}.{v['field']}"
+
+
+def _rollup_note(face: str, v: dict) -> str:
+    """违例 → 说明串 (`response` 无 `detail`, 由其 `missing` 拼)."""
+    if face == "response":
+        return f"前端声明读 `{', '.join(v['missing'])}` 而后端从不返回"
+    return v.get("detail", "")
+
+
+def _rollup_mark(v: dict) -> str:
+    """违例 → 分诊盖章 (沿用面内已盖的 `triage` / `triage_reason`)."""
+    tri = v.get("triage")
+    if tri == "untriaged":
+        return " — ⚠ 待分诊"
+    if not tri:
+        return ""
+    return f" — {'⛔' if tri == 'defect' else '✅'} {v.get('triage_reason', '')}"
+
+
+def render_field_rollup_markdown(snap: dict) -> str:
+    """字段级面汇总: 六面违例按角色关系 R1–R4 归并, 缺漏再下钻到各面章节."""
+    counts: dict[tuple[str, str], int] = defaultdict(int)
+    untri: dict[tuple[str, str], int] = defaultdict(int)
+    by_rel: dict[str, list[tuple[str, dict]]] = defaultdict(list)
+    order = {k: i for i, (k, _l) in enumerate(_ROLLUP_FACES)}
+    for face, _label in _ROLLUP_FACES:
+        for v in snap[face]["violations"]:
+            rel = _ROLLUP_KIND_REL.get((face, v["kind"]), "R0")
+            counts[(rel, face)] += 1
+            if v.get("triage") == "untriaged":
+                untri[(rel, face)] += 1
+            by_rel[rel].append((face, v))
+    applicable = {(rel, face) for (face, _k), rel in _ROLLUP_KIND_REL.items()}
+    # R0 是兜底桶 (每个面都可能有未归类 kind), 不存在"不适用"单元.
+    applicable |= {("R0", face) for face, _label in _ROLLUP_FACES}
+
+    lines: list[str] = []
+    lines.append("## 字段级面汇总: 按角色关系分组 (一次确认)")
+    lines.append("")
+    lines.append(
+        "请求负载面 / 响应结构面 / WS 请求负载面 / SSE 事件负载面 / WS 事件负载面 / HTTP "
+        "请求字段面是**同一个不变量**「边界两侧字段集包含」的不同传输切片. 下表按**角色"
+        "关系**而非传输归并: 先过这一张矩阵, 缺漏再下钻到各面章节. 本视图只读各面 "
+        "`violations`, 不新增判定、不改违例身份."
+    )
+    lines.append("")
+    lines.append("关系图例:")
+    lines.append("")
+    for rel in _ROLLUP_REL_ORDER:
+        lines.append(f"- **{rel}** {_ROLLUP_REL_DOC[rel]}")
+    lines.append("")
+    header = " | ".join(lbl for _k, lbl in _ROLLUP_FACES)
+    lines.append(f"| 关系 | {header} | 合计 |")
+    lines.append("|---" * (len(_ROLLUP_FACES) + 2) + "|")
+    for rel in _ROLLUP_REL_ORDER:
+        cells: list[str] = []
+        total = 0
+        for face, _label in _ROLLUP_FACES:
+            n = counts.get((rel, face), 0)
+            total += n
+            if (rel, face) not in applicable:
+                cells.append("·")
+                continue
+            u = untri.get((rel, face), 0)
+            cells.append(f"{n}" + (f" (⚠{u})" if u else ""))
+        lines.append(f"| **{rel}** | " + " | ".join(cells) + f" | {total} |")
+    lines.append("")
+    lines.append("### 违例地点 (按关系; ⚠ = 待分诊, 回归测试会失败)")
+    lines.append("")
+    for rel in _ROLLUP_REL_ORDER:
+        items = sorted(
+            by_rel.get(rel, []), key=lambda fv: (order[fv[0]], fv[1].get("line", 0))
+        )
+        lines.append(f"#### {rel} {_ROLLUP_REL_DOC[rel]}")
+        lines.append("")
+        if not items:
+            lines.append("- 无.")
+            lines.append("")
+            continue
+        for face, v in items:
+            lines.append(
+                f"- `[{v['kind']}]` `{_ROLLUP_FACE_LABEL[face]}` "
+                f"`{_rollup_site(face, v)}` @ `{v['rel']}:{v['line']}` — "
+                f"{_rollup_note(face, v)}{_rollup_mark(v)}"
+            )
+        lines.append("")
+    return "\n".join(lines)
+
 
 def build_mece_snapshot(root: Path | None = None) -> dict:
     return {
@@ -7339,6 +7476,12 @@ def render_mece_markdown(snap: dict) -> str:
         "只提示候选, 不判死."
     )
     lines.append("")
+    lines.append(
+        "字段级六面 (请求负载 / 响应结构 / WS 请求负载 / SSE 事件负载 / WS 事件负载 / HTTP "
+        "请求字段) 另有一张按**角色关系**归并的汇总, 见下「字段级面汇总」—— 先过那张矩阵, "
+        "缺漏再下钻到各面章节."
+    )
+    lines.append("")
     lines.append(render_reward_markdown(snap["reward"]))
     lines.append(render_scope_markdown(snap["scope"]))
     lines.append(render_workflow_markdown(snap["workflow"]))
@@ -7350,6 +7493,7 @@ def render_mece_markdown(snap: dict) -> str:
     lines.append(render_sse_markdown(snap["sse"]))
     lines.append(render_ws_markdown(snap["ws"]))
     lines.append(render_http_markdown(snap["http"]))
+    lines.append(render_field_rollup_markdown(snap))
     lines.append(render_payload_markdown(snap["payload"]))
     lines.append(render_response_markdown(snap["response"]))
     lines.append(render_ws_payload_markdown(snap["ws_payload"]))
