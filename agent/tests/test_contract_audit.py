@@ -2242,6 +2242,41 @@ def test_field_audit_golden_parity(face):
     )
 
 
+# ──────────────────── 发现基线棘轮门 (CI 接线契约回归) ────────────────────
+
+# CI 步 `contract_audit --check --baseline tests/golden/mece_findings_baseline.txt`
+# 的测试侧同义门. 仓内既有发现多为「候选登记」(工具自述"只提示不判死", 且
+# test_find_issues_reports_expected_categories 断言其存在), 零发现门不可行, 故冻结
+# 为基线只拦**新增**; 修好旧项无需改基线 (多余条目被忽略).
+_MECE_FINDINGS_BASELINE = _REPO / "tests" / "golden" / "mece_findings_baseline.txt"
+
+
+def test_findings_baseline_covers_current_findings():
+    """当前发现 ⊆ 基线: 基线外的新发现即失败 (接线契约退化).
+
+    确为设计允许的新候选 (非漏接线) 才重生成基线, 并在 PR 里评审 diff:
+
+        python -m huginn.cli.contract_audit --update-baseline
+    """
+    assert _MECE_FINDINGS_BASELINE.exists(), f"缺发现基线: {_MECE_FINDINGS_BASELINE}"
+    base = ca._load_findings_baseline(_MECE_FINDINGS_BASELINE)
+    new = [i for i in ca.find_issues(ca.build_mece_snapshot()) if i not in base]
+    assert not new, (
+        "MECE 审计出现基线外的新发现 (接线契约可能退化):\n  "
+        + "\n  ".join(new)
+        + "\n若确为设计允许的新候选, 重生成基线并评审 diff: "
+        "`python -m huginn.cli.contract_audit --update-baseline`"
+    )
+
+
+def test_load_findings_baseline_normalizes_lines(tmp_path):
+    """基线读取: 去空白/略空行; 文件不存在 → 空集 (退化为「有发现即失败」)."""
+    p = tmp_path / "b.txt"
+    p.write_text("a\n\n  b  \n", encoding="utf-8")
+    assert ca._load_findings_baseline(p) == {"a", "b"}
+    assert ca._load_findings_baseline(tmp_path / "missing.txt") == set()
+
+
 # ──────────────────── 文档漂移 ────────────────────
 
 
