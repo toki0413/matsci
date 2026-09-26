@@ -92,6 +92,15 @@ def _anchor(kind: str):
         u_star = lambda t: torch.cos(8 * _PI * t) / C + 0.3 * t - 0.2
         f = lambda t: -torch.cos(8 * _PI * t)
         desc = "u''=-cos(8pi x), u*=cos(8pi x)/(8pi)^2+0.3x-0.2 (2 DOF, 频率同 hi 但 forcing 归一)"
+    elif kind == "fat":
+        # **真胖对照臂**: PDE 仍为 u''=2 (解空间 {x^2+ax+b}, 2 DOF), 但 N 个点值约束
+        # 全部落在同一点 x=0.5 -> 约束秩恒为 1, **不随 N 增长** -> 'a' 永远自由,
+        # V_ho = a^2 * mean((x-0.5)^2) 恒为 O(1), 对任何 N / 任何 w 都不饱和.
+        # 这是"解空间确实胖(连续族未被约束切掉)"的极简解析实现, 与 poly 只差约束点位置.
+        # 用它检验: 判据在**真胖**时是否真的给出 N_c=None (阴性对照 / 探针灵敏度).
+        u_star = lambda t: t * t + 0.3 * t - 0.2
+        f = lambda t: torch.full_like(t, 2.0)
+        desc = "u''=2, u*=x^2+0.3x-0.2; N 个点值约束全在 x=0.5 (秩恒1, 'a'恒自由) -> 真胖"
     else:
         raise ValueError(kind)
     return u_star, f, desc
@@ -119,7 +128,14 @@ def _colloc(m: int) -> torch.Tensor:
     return torch.linspace(0.0, 1.0, m).reshape(-1, 1)
 
 
-def _train_pts(n: int) -> torch.Tensor:
+def _train_pts(n: int, kind: str = "poly") -> torch.Tensor:
+    """训练点值约束的位置.
+
+    默认均匀铺在 [0,1]; ``fat`` 锚点把它们**全部堆在 x=0.5**, 使约束秩恒为 1,
+    从而让解族的自由参数 'a' 不随 N 被切掉 (真胖对照).
+    """
+    if kind == "fat":
+        return torch.full((n, 1), 0.5)
     return torch.linspace(0.0, 1.0, n).reshape(-1, 1)
 
 
@@ -148,7 +164,7 @@ def solve(kind: str, w: int, n: int, seed: int, *,
     net = MLP(w)
 
     tc = _colloc(m_colloc)
-    tp = _train_pts(n)
+    tp = _train_pts(n, kind)
     yp = u_star(tp.squeeze(-1))
     th = _holdout()
     yh = u_star(th.squeeze(-1))
@@ -262,7 +278,7 @@ def _task(args):
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--kind", default="poly", choices=["poly", "osc", "hi", "hism"])
+    ap.add_argument("--kind", default="poly", choices=["poly", "osc", "hi", "hism", "fat"])
     ap.add_argument("--widths", type=int, nargs="+", default=[8, 16, 32, 64, 128])
     ap.add_argument("--ns", type=int, nargs="+", default=[2, 3, 4, 6, 8, 16, 32, 64])
     ap.add_argument("--seeds", type=int, default=5)

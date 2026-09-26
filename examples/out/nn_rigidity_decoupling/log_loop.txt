@@ -1,0 +1,14 @@
+
+===== 第 1/4 轮 · 请书生决策 =====
+      书生判断: 已有证据链完整：fat（真胖）给 N_c=None 证明判据有灵敏度；hism 与 hi 对照证明失败来自数值尺度而非解空间性质；poly 在 pass_frac=100% 下 beta=0 且 N_c=2 与宽度无关。唯一缺失是 osc（中等频率刚性问题）的独立复现，以确认 beta=0 不是 poly 特例。当前预算允许跑 osc 补齐这一环。
+      action=run reason=osc 是中等频率刚性解，若同样给出 N_c 不随 w 增长（beta≈0），则排除 poly 的偶然性，确立'刚性→N_c 饱和且与容量无关'的普适性，可收束结论。
+      $ /workspace/examples/nn_rigidity_decoupling.py --kind osc --widths 8 16 32 --ns 2 4 --seeds 2 --adam-steps 5000 --jobs 3 --tag loop01
+      -> 本轮完成: N_c={'8': 2, '16': 2, '32': 2} 裁决=H1: 饱和点与容量无关 -> N_c 是解的性质, 探针站得住
+
+===== 第 2/4 轮 · 请书生决策 =====
+      书生判断: 已有证据链完整：poly（低频刚性）、hism（高频归一化刚性）、osc（中频刚性）均给出 beta≈0，H1 成立；fat 真胖对照给出 N_c=None，判据有灵敏度；hi 与 hism 对照证明失败来自数值尺度而非解的性质。唯一缺憾是 pass_frac 未达 100%，但合规种子子集同样给出 beta≈0，结论稳健。
+      action=conclude reason=关键对照已齐备，无需再跑实验。
+
+== 循环结束 ==
+逐轮记录 -> /workspace/research_outputs/shusheng_nn_rigidity_probe/loop_transcript.md
+最终裁决 -> /workspace/research_outputs/shusheng_nn_rigidity_probe/loop_verdict.md
