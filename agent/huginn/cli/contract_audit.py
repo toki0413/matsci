@@ -112,7 +112,7 @@ import json
 import re
 import sys
 from collections import Counter, defaultdict
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 # 包根 (huginn/) 与仓根 (agent/, 含 tests/). 模块路径统一相对仓根, 便于把
@@ -3034,29 +3034,23 @@ def _sse_payload_reads(frontend: Path) -> list[dict]:
     return reads
 
 
-def build_sse_payload_contract(
-    root: Path | None = None, frontend: Path | None = None
+def _frame_payload_contract(
+    channels: dict[str, dict[str, dict]],
+    reads: list[dict],
+    triage: Callable[[str, str, str], tuple[str, str] | None],
+    detail_tmpl: str,
+    frontend: Path,
 ) -> dict:
-    """SSE 事件负载面: 后端帧 payload 顶层键 ↔ 前端 `JSON.parse(e.data)` 顶层读取.
+    """帧键控 payload 面共用装配: 前端顶层字段读取 ⊄ 后端帧 payload 顶层键.
 
-    硬方向: 前端在该帧处理函数里读 `t.<字段>` 而后端该帧 payload 从不发此顶层字段
-    (恒 undefined). 反向 (后端发前端没读) 不是违例, 只列候选. 只核**顶层**键;
-    `t.data.<字段>` 的嵌套子形状由发布点决定, 静态不可穷尽, 跳过.
+    第十五面 (SSE 事件负载) 与第十六面 (WS 事件负载) 判定与留痕逐字同构, 差异只在
+    解析器 (面内各自调用)、违例文案与分诊表, 故共用此装配:
+
+    `channels`: 通道 → 帧 → `{"keys": set, "closed": bool}` (权威面);
+    `reads`: 前端读取点 `{channel, frame, field, rel, line}`;
+    `detail_tmpl`: 违例文案, 以 `frame` / `field` 格式化 (两面逐字不同);
+    `triage`: 面分诊表查询 `(channel, frame, field) -> (status, reason) | None`.
     """
-    root = root or _REPO
-    frontend = frontend if frontend is not None else root.parent / "desktop" / "src"
-    emitters = _sse_frame_emitters(root)
-    channels: dict[str, dict[str, dict]] = {}
-    progress = _sse_progress_shapes(root)
-    if progress:
-        channels["progress"] = progress
-    eb_keys = _sse_event_bus_shape(root)
-    channels["event_bus"] = {
-        f: {"keys": eb_keys if eb_keys is not None else set(), "closed": eb_keys is not None}
-        for f in emitters.get("event_bus", [])
-    }
-
-    reads = _sse_payload_reads(frontend)
     violations: list[dict] = []
     checked = skip_frame = skip_shape = 0
     read_fields: dict[tuple[str, str], set[str]] = defaultdict(set)
@@ -3064,7 +3058,7 @@ def build_sse_payload_contract(
         ch, frame, field = r["channel"], r["frame"], r["field"]
         frames = channels.get(ch, {})
         if frame not in frames:
-            # 帧不属该通道 (该帧名本身已由 SSE 消费面报通道不匹配) → payload 面无权威.
+            # 帧不属该通道 (该帧名本身已由消费面报通道不匹配) → payload 面无权威.
             skip_frame += 1
             continue
         info = frames[frame]
@@ -3081,14 +3075,14 @@ def build_sse_payload_contract(
                 "channel": ch,
                 "frame": frame,
                 "field": field,
-                "detail": f"前端在 `{frame}` 处理函数里读 `t.{field}`",
+                "detail": detail_tmpl.format(frame=frame, field=field),
                 "rel": r["rel"],
                 "line": r["line"],
             }
         )
 
     for v in violations:
-        tri = _sse_payload_triage(v["channel"], v["frame"], v["field"])
+        tri = triage(v["channel"], v["frame"], v["field"])
         v["triage"] = tri[0] if tri else "untriaged"
         v["triage_reason"] = tri[1] if tri else ""
 
@@ -3124,6 +3118,36 @@ def build_sse_payload_contract(
         "kind_counts": dict(sorted(kinds.items())),
         "zero_read": zero_read,
     }
+
+
+def build_sse_payload_contract(
+    root: Path | None = None, frontend: Path | None = None
+) -> dict:
+    """SSE 事件负载面: 后端帧 payload 顶层键 ↔ 前端 `JSON.parse(e.data)` 顶层读取.
+
+    硬方向: 前端在该帧处理函数里读 `t.<字段>` 而后端该帧 payload 从不发此顶层字段
+    (恒 undefined). 反向 (后端发前端没读) 不是违例, 只列候选. 只核**顶层**键;
+    `t.data.<字段>` 的嵌套子形状由发布点决定, 静态不可穷尽, 跳过.
+    """
+    root = root or _REPO
+    frontend = frontend if frontend is not None else root.parent / "desktop" / "src"
+    emitters = _sse_frame_emitters(root)
+    channels: dict[str, dict[str, dict]] = {}
+    progress = _sse_progress_shapes(root)
+    if progress:
+        channels["progress"] = progress
+    eb_keys = _sse_event_bus_shape(root)
+    channels["event_bus"] = {
+        f: {"keys": eb_keys if eb_keys is not None else set(), "closed": eb_keys is not None}
+        for f in emitters.get("event_bus", [])
+    }
+    return _frame_payload_contract(
+        channels,
+        _sse_payload_reads(frontend),
+        _sse_payload_triage,
+        "前端在 `{frame}` 处理函数里读 `t.{field}`",
+        frontend,
+    )
 
 
 def render_sse_payload_markdown(contract: dict) -> str:
@@ -6344,75 +6368,13 @@ def build_ws_ev_payload_contract(
     """
     root = root or _REPO
     frontend = frontend if frontend is not None else root.parent / "desktop" / "src"
-    shapes = _ws_ev_payload_shapes(root)
-    reads = _ws_ev_payload_reads(frontend)
-    violations: list[dict] = []
-    checked = skip_frame = skip_shape = 0
-    read_fields: dict[tuple[str, str], set[str]] = defaultdict(set)
-    for r in reads:
-        ch, frame, field = r["channel"], r["frame"], r["field"]
-        frames = shapes.get(ch, {}) if ch else {}
-        if frame not in frames:
-            # 帧名不属该通道 (或通道未归属) → payload 面无权威 (帧名本身由消费面核).
-            skip_frame += 1
-            continue
-        info = frames[frame]
-        read_fields[(ch, frame)].add(field)
-        if not info["closed"]:
-            skip_shape += 1
-            continue
-        checked += 1
-        if field in info["keys"]:
-            continue
-        violations.append(
-            {
-                "kind": "read-undeclared",
-                "channel": ch,
-                "frame": frame,
-                "field": field,
-                "detail": f"前端在 `{frame}` 分支里读 `data.{field}`",
-                "rel": r["rel"],
-                "line": r["line"],
-            }
-        )
-
-    for v in violations:
-        tri = _ws_ev_payload_triage(v["channel"], v["frame"], v["field"])
-        v["triage"] = tri[0] if tri else "untriaged"
-        v["triage_reason"] = tri[1] if tri else ""
-
-    zero_read: list[dict] = []
-    for ch, frames in shapes.items():
-        closed_keys: set[str] = set()
-        read_keys: set[str] = set()
-        for frame, info in frames.items():
-            if info["closed"]:
-                closed_keys |= info["keys"]
-            read_keys |= read_fields.get((ch, frame), set())
-        for k in sorted(closed_keys - read_keys):
-            zero_read.append({"channel": ch, "field": k})
-
-    kinds = Counter(v["kind"] for v in violations)
-    return {
-        "frontend": str(frontend),
-        "channels": {
-            ch: {
-                f: {"keys": sorted(i["keys"]), "closed": i["closed"]}
-                for f, i in sorted(frames.items())
-            }
-            for ch, frames in shapes.items()
-        },
-        "frame_reads": {
-            ch: {frame: sorted(read_fields.get((ch, frame), set())) for frame in frames}
-            for ch, frames in shapes.items()
-        },
-        "read_count": len(reads),
-        "coverage": {"checked": checked, "skip_frame": skip_frame, "skip_shape": skip_shape},
-        "violations": violations,
-        "untriaged": [v for v in violations if v["triage"] == "untriaged"],
-        "kind_counts": dict(sorted(kinds.items())),
-        "zero_read": zero_read,
-    }
+    return _frame_payload_contract(
+        _ws_ev_payload_shapes(root),
+        _ws_ev_payload_reads(frontend),
+        _ws_ev_payload_triage,
+        "前端在 `{frame}` 分支里读 `data.{field}`",
+        frontend,
+    )
 
 
 def render_ws_ev_payload_markdown(contract: dict) -> str:
