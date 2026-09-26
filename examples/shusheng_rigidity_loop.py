@@ -39,16 +39,20 @@ EXP = EXAMPLES / "nn_rigidity_decoupling.py"
 OUTDIR = EXAMPLES / "out" / "nn_rigidity_decoupling"
 REPORT_DIR = ROOT / "research_outputs" / "shusheng_nn_rigidity_probe"
 
-# ── 预算硬约束: 书生只能在框内选. 成本按宽度加权 (宽网络更贵), 保证单轮可跑完 ──
+# ── 预算: 软限制 + 撞顶自动续投 (对齐 Huginn 的 HUGINN_BUDGET_APPROVAL=auto 语义) ──
+# 书生在框内自由选; 请求一旦冲破当前上限, 自动续投 ×RENEW_FACTOR, 最多 MAX_RENEWALS 次;
+# 续投额度用尽后仍是硬刹车 (不无头烧钱). 成本按宽度加权: w=8->1, 32->2, 64->4, 128->8, 256->16.
 ALLOWED_KINDS = ["poly", "osc", "hi", "hism", "fat"]
-ALLOWED_WIDTHS = [4, 8, 16, 32, 64, 128]
-ALLOWED_NS = [1, 2, 3, 4, 8, 16]
-ALLOWED_ADAM = [2000, 3000, 4000, 5000]
-MAX_TASKS = 20
-MAX_WIDTHS = 5
-MAX_NS = 5
-MAX_SEEDS = 3
-COST_CAP = 24
+ALLOWED_WIDTHS = [4, 8, 16, 32, 64, 128, 256]
+ALLOWED_NS = [1, 2, 3, 4, 6, 8, 16, 32]
+ALLOWED_ADAM = [2000, 3000, 4000, 5000, 8000, 12000]
+SOFT_TASKS = 48      # 软限制: 初始任务数上限
+SOFT_COST = 64       # 软限制: 初始加权成本上限
+RENEW_FACTOR = 1.5   # 撞顶后每次续投的放大系数 (与 Huginn 一致)
+MAX_RENEWALS = 3     # 最多自动续投次数 (防无头无限烧钱, 与 Huginn 默认一致)
+MAX_WIDTHS = 7
+MAX_NS = 8
+MAX_SEEDS = 5
 MIN_NS = 3      # ns 不得被砍到 3 以下 (否则无法检验"不再回升", N_c 不可信)
 MIN_WIDTHS = 2  # widths 不得被砍到 2 以下 (至少要能拟合一条斜率)
 JOBS = 3
@@ -151,14 +155,17 @@ def render_evidence(recs: list[dict]) -> str:
     return "\n".join(out)
 
 
-def render_budget(recs: list[dict]) -> str:
+def render_budget(recs: list[dict], caps: dict) -> str:
     done = "\n".join(
         f"  - kind={r['kind']} widths={r['widths']} ns={r['ns']} seeds={r['seeds']} adam={r['adam_steps']}"
         for r in recs
     ) or "  (无)"
     return f"""本机 3 核. 单轮资源上限 (双重约束, 必须同时满足):
-- 训练任务数 len(widths)*len(ns)*seeds <= {MAX_TASKS}
-- 加权成本 sum_任务 max(1, w//16) <= {COST_CAP}   (w=8 记 1, w=32 记 2, w=64 记 4, w=128 记 8)
+- 训练任务数 len(widths)*len(ns)*seeds <= {caps['tasks']}
+- 加权成本 sum_任务 max(1, w//16) <= {caps['cost']}   (w=8 记 1, w=32 记 2, w=64 记 4, w=128 记 8, w=256 记 16)
+软限制初值 tasks={SOFT_TASKS} cost={SOFT_COST}; 请求撞顶会**自动续投** ×{RENEW_FACTOR} (最多 {MAX_RENEWALS} 次),
+已用 {MAX_RENEWALS - caps['renewals_left']}/{MAX_RENEWALS}, 剩余 {caps['renewals_left']} 次; 续投用尽才是硬刹车.
+=> 想要更大的网格可以直接提, 不必为省预算自我压缩; 真撞硬刹车时我会把额度反馈给你重规划.
 
 你只能选:
 - kind ∈ {ALLOWED_KINDS}
@@ -241,7 +248,7 @@ def _extract_json(text: str) -> dict | None:
 
 
 # ── 决策校验/夹紧 ─────────────────────────────────────────────────────────
-def _clamp_run(run: dict) -> tuple[dict | None, list[str]]:
+def _clamp_run(run: dict, caps: dict) -> tuple[dict | None, list[str]]:
     notes = []
     if not isinstance(run, dict):
         return None, ["run 字段缺失或非对象"]
@@ -272,29 +279,43 @@ def _clamp_run(run: dict) -> tuple[dict | None, list[str]]:
         near = min(ALLOWED_ADAM, key=lambda a: abs(a - adam))
         notes.append(f"adam_steps={adam} 不在允许集合, 取最近值 {near}")
         adam = near
-    # 资源夹紧: 依次削减 ns -> seeds -> widths; 保持科学有效性 (ns>=MIN_NS, widths>=MIN_WIDTHS);
-    # 若削到地板仍超预算, 直接拒绝并把预算反馈给书生, 让它自己重规划 (不替它改设计).
+
     def _tot(ws_, ns_, sd_):
         return len(ws_) * len(ns_) * sd_, sum(_cost(w) for w in ws_) * len(ns_) * sd_
 
+    # 撞顶自动续投 (软限制 -> 硬刹车之间, 对齐 Huginn auto 语义): 请求冲破当前上限就 ×3/2 续投,
+    # 最多 MAX_RENEWALS 次, 额度跨轮持久. 目的是**不替书生削网格**——它想跑就让它跑.
+    while True:
+        t, c = _tot(ws, ns, seeds)
+        if (t <= caps["tasks"] and c <= caps["cost"]) or caps["renewals_left"] <= 0:
+            break
+        caps["tasks"] = caps["tasks"] * 3 // 2
+        caps["cost"] = caps["cost"] * 3 // 2
+        caps["renewals_left"] -= 1
+        notes.append(f"请求撞顶 -> 自动续投: tasks<={caps['tasks']} cost<={caps['cost']} "
+                     f"(剩余续投 {caps['renewals_left']}/{MAX_RENEWALS})")
+
     def _over(ws_, ns_, sd_):
         t, c = _tot(ws_, ns_, sd_)
-        return t > MAX_TASKS or c > COST_CAP
+        return t > caps["tasks"] or c > caps["cost"]
 
+    # 续投额度用尽后才回落: 依次削减 ns -> seeds -> widths, 保持科学有效性 (ns>=MIN_NS, widths>=MIN_WIDTHS);
+    # 若削到地板仍超预算, 直接拒绝并把预算反馈给书生, 让它自己重规划 (不替它改设计).
     while _over(ws, ns, seeds) and len(ns) > MIN_NS:
         ns = ns[:-1]
-        notes.append(f"资源超上限, 砍 ns -> {ns}")
+        notes.append(f"续投额度用尽仍超上限, 砍 ns -> {ns}")
     while _over(ws, ns, seeds) and seeds > 1:
         seeds -= 1
-        notes.append(f"资源仍超上限, 砍 seeds -> {seeds}")
+        notes.append(f"续投额度用尽仍超上限, 砍 seeds -> {seeds}")
     while _over(ws, ns, seeds) and len(ws) > MIN_WIDTHS:
         ws = ws[:-1]
-        notes.append(f"资源仍超上限, 砍 widths -> {ws}")
+        notes.append(f"续投额度用尽仍超上限, 砍 widths -> {ws}")
     if _over(ws, ns, seeds):
         t, c = _tot(ws, ns, seeds)
         return None, notes + [
-            f"请求超预算且削到地板后仍不够 (tasks={t}>{MAX_TASKS} 或 cost={c}>{COST_CAP}); "
-            f"请减小网格: 例如减少 widths 个数或把最大宽度从 128 降到 64/32, 再提交"]
+            f"请求超硬刹车且削到地板后仍不够 (tasks={t}>{caps['tasks']} 或 cost={c}>{caps['cost']}); "
+            f"续投额度已用尽 ({MAX_RENEWALS}/{MAX_RENEWALS}); "
+            f"请减小网格: 例如减少 widths 个数或把最大宽度从 256 降到 128/64, 再提交"]
     return {"kind": kind, "widths": ws, "ns": ns, "seeds": seeds, "adam_steps": adam}, notes
 
 
@@ -339,8 +360,8 @@ def _rec_from_json(d: dict, tag: str, source: str) -> dict:
 def main() -> int:
     import argparse
     ap = argparse.ArgumentParser()
-    ap.add_argument("--rounds", type=int, default=6, help="书生最多自主决策几轮")
-    ap.add_argument("--budget-s", type=float, default=7200.0, help="循环墙钟预算(秒)")
+    ap.add_argument("--rounds", type=int, default=10, help="书生最多自主决策几轮")
+    ap.add_argument("--budget-s", type=float, default=21600.0, help="循环墙钟预算(秒)")
     ap.add_argument("--session", default="", help="产物文件名后缀, 避免覆盖历次循环记录")
     ap.add_argument("--model", default=os.environ.get("INTERNLM_MODEL", "intern-s2"))
     ap.add_argument("--base", default=os.environ.get("INTERNLM_BASE_URL",
@@ -361,6 +382,8 @@ def main() -> int:
                   f"> 模型: 书生 `{args.model}` @ `{args.base}`",
                   f"> 起跑时已有证据: {len(recs)} 份 JSON", ""]
     state = {"model": args.model, "rounds": [], "started": time.time()}
+    caps = {"tasks": SOFT_TASKS, "cost": SOFT_COST, "renewals_left": MAX_RENEWALS}
+    state["caps"] = caps
     t_start = time.time()
     verdict_text, conclusion = None, None
     last_decision = None
@@ -380,7 +403,7 @@ def main() -> int:
 """ + "\n".join(f"- {k}: {v}" for k, v in _ANCHORS.items()) + f"""
 
 【本轮你可用的预算与约束】
-{render_budget(recs)}
+{render_budget(recs, caps)}
 {f'''【上一轮你的决定】
 - action={last_decision.get('action')}  run={last_decision.get('run')}
 - 你的理由: {last_decision.get('reason')}
@@ -434,7 +457,7 @@ def main() -> int:
             state["rounds"].append({"round": rd, "decision": dec})
             break
 
-        cfg, notes = _clamp_run(dec.get("run") or {})
+        cfg, notes = _clamp_run(dec.get("run") or {}, caps)
         last_decision = dec
         if cfg is None:
             note = "配置被拒: " + "; ".join(notes)

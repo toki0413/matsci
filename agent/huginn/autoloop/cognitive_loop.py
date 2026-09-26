@@ -2106,7 +2106,14 @@ Respond JSON only:
                 from huginn.autoloop.goal_store import get_goal_store
 
                 _gs = get_goal_store()
-                _active_goal = _gs.get_active()
+                # 只认本 run 自己的 goal (按 id 取回 store 内同一对象, 保证 increment
+                # 与 is_budget_exhausted 同源). 全局 get_active() 按插入序返回**第一个**
+                # active: 跨 run 残留的旧 goal 一旦 iteration 超上限, 就会在首轮 observe
+                # 被误判"预算耗尽" → should_stop, 整轮 0 工具调用空转. 取不到本 run 的
+                # goal (无 -s 的纯 objective run) 才退回全局 active.
+                _active_goal = (
+                    _gs.get_goal(goal.id) if goal is not None else None
+                ) or _gs.get_active()
                 if _active_goal:
                     _gs.increment_iteration(_active_goal.id)
                     if GoalScheduler.is_budget_exhausted(_active_goal):
