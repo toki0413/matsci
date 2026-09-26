@@ -196,6 +196,35 @@ def build_boundary(spec: BoundarySpec, root: Path | None, frontend: Path | None)
 
 > 诚实说明：设计期判断"无需新增代码"（假定零发现），实测**证伪** —— 47 项既有候选登记使绝对门不可用，故必须引入基线 artifact 与棘轮语义。
 
+### 基线分诊（47 项，2026-09-26）
+
+对冻结进基线的 47 项逐条取证。**结论：无高危真缺陷**；3 项低危真漂移 + 1 处逐字重复副本（建议清理）；其余为工具自述"只提示不判死"的设计允许候选登记。判定口径：`defect`=与源码自述/接线意图矛盾、可修的客观不一致；`accepted`=注释/结构已表明为有意设计或不同用途；`unknown`=需人工决策但低危。
+
+| 组 · 项 | 判定 | 证据（rel:line） | 理由 |
+|---|---|---|---|
+| 事件面 · 17 项未声明类型：`campaign.budget_exhausted` `campaign.retry` `campaign.suspect` `cognitive.csm.transition` `embedding.download.{start,progress,done,error}` `event_bus.dropped` `llm.response` `pet.mood` `team.{run.start,run.done,member.start,member.tool,member.done,batch.start}` | accepted | `events/event_types.py:69-82`；`cli/contract_audit.py:1909-1922`；`docs/mece-audit.md:335-353` | `ALL_TYPES` 自述 "Not exhaustive … just helps catch typos"；`EventBus.publish` 不校验、类型是点分字符串且外部订阅按前缀匹配，未声明≠缺陷。`campaign.retry/suspect` 已被 `events/audit_log.py:556,571` 订阅（接线正常）。可选增强：把 campaign.*/team.* 补进 `ALL_TYPES` 以恢复 typo 检查 |
+| 钩子面 · 6 项 trigger-only：`SESSION_START` `SESSION_END` `SUBAGENT_STOP` `PRE_COMPACT` `POST_COMPACT` `POST_TOOL_USE_FAILURE` | accepted | `hooks/__init__.py:30-55`；触发点 `events/unified_bus.py:138,169,345`、`agents/subagent.py:354-375`；生产零注册（仅 `tests/`） | HookManager 是**注入式扩展点**（`hooks/__init__.py:1-16` 明言"对齐 Claude Code"），仓内无消费者属设计。`POST_TOOL_USE_FAILURE` 另见 `cli/contract_audit.py:1598-1603`：触发点带 `if self._callbacks[...]` 守卫，零注册⇒分支恒不执行（可证死），但仍是扩展点语义 |
+| 奖励面 · 同轴惩罚候选：`efficiency_discount, idle_turn_penalty` | accepted | `validation/claim_reward.py:271-296`；`cli/contract_audit.py:80-82` | 工具自述"同属轮次轴但语义有别"：前者按**首次全对轮次**打折、后者按**达成后多余轮次**扣分，可同时合理生效，非重复计数 |
+| 奖励面 · 零调用者：`reconcile_r_phys` | **defect (low)** | `validation/claim_reward.py:321-335` vs `security/world_state.py:752-767` | `claim_reward` 侧第二实现零生产调用者，且**与单一权威实现漂移**：`world_state` 用 `graft*base+(1-graft)*world_reward`（参数名 `graft`），`claim_reward` 用 `(1-world_weight)*base+world_weight*world_reward`（参数名 `world_weight`，系数语义相反），且 `authorized_ratio` 参数从未使用。建议删除或改为对 `world_state` 的 re-export |
+| 奖励面 · 跨模块同名：`reconcile_r_phys @ security/world_state.py` | **defect (low)** | 同上 | 同一条的两副面孔：同名 + 第二实现已漂移 |
+| 工作流面 · mode 未在 planner 提示暴露：`dynamic_workflow` | accepted | `harness/phase_spec.py:73`；`autoloop/engine_act.py:353-355` | 该 mode 由 plan dict 的 `mode` **结构驱动**（A5 并行 subtask 脚本），非用户可见提示词路径，无需在 planner 提示中教 |
+| 模式面 · 有 prompt 段却无 `set_mode` 生产者：`code` `extreme` `fusion` | accepted | `agent/core.py:322,448`；`cli/contract_audit.py:82` | `fusion` 工具自述"经 `set_mode('research')` 复用 CSM S3 是**有意设计**"；`code`/`extreme` 经实例属性/`_mode` 设置、非 `set_mode()`，审计只扫 `set_mode()` 属口径限制，非缺口 |
+| 模式面 · 被 `set_mode` 却无 prompt 段：`plan` | accepted | `routes/ws_helpers.py:951,962` | `plan` 走 **phase 层**提示而非 mode 段；`prompt_builder.mode_segment` 对未知模式返回空属预期 |
+| 模式面 · 各来源词表互相不一致 | accepted | `cli/contract_audit.py:635-700` | 六来源（session 白名单 / `critique._VALID_MODES` / `_LONG_HORIZON_MODES` / task_state 注释 / prompt / `set_mode`）本是**不同用途的子集**，非全集；不一致为真但属语义分层 |
+| 词汇面 · 同名跨模块值域不一致：`KINDS` `Severity` `_KINDS` `_NEGATIVE_WORDS` `_READ_ACTIONS` | accepted | `evolution/semantic_distiller.py:39` / `research/cspace.py:32` / `catalog/models.py:20`；`metacog/failure_modes.py:27` / `execution/physics_auditor.py:24`；`share.py:21` / `workflows/registry.py:25`；`persona_emotion.py:147` / `tools/design/gap_analysis_tool.py:30`；`tools/git_tool.py:85` / `tools/github_tool.py:55` | 五组均是**互不相关的域**复用同名符号（知识类型 / 失败严重度 / 资产类型 / 情感词 / git vs github 动作），值域不同属正确 |
+| 词汇面 · 同名值域不一致：`_ALLOWED_IMPORTS` | **defect (low)** | `security/script_runner.py:74-98` vs `security/code_act_sandbox.py:32-57` | 两沙箱导入白名单**本应一致**（`script_runner.py:87` 注释自称"与 code_act_sandbox 白名单保持一致"），但 `script_runner` 独有 `"time"`；抽单一权威或补齐/删除 |
+| 词汇面 · 映射往返丢信息：`AUTOLOOP_TO_PHASE` | accepted | `phases.py:313-326` | `learn` 与 `validate` 同映 `VALIDATION` 有意为之（注释"learn is post-validation reflection"），反向表显式排除 `learn` 并把 `VALIDATION→validate` 固定，多对一已明示 |
+| 词汇面 · 词表漂移 簇 11 | accepted | `core_types.py:29` / `ontology/actions.py:41` / `config.py:29` | `core_types.RiskLevel` 注释注明"对齐 ontology.actions.RiskLevel 的粒度"（5 档一致）；`ThinkingIntensity`（low/medium/high/max）是**无关域**，仅词面重合致误聚 |
+| 词汇面 · 词表漂移 簇 12 | accepted | `core_types.py:46` vs `security/policy_engine.py:46` | 预算决策（allow/warn/deny）vs 安全策略动作（allow/deny/ask），不同域；共享 allow/deny 属巧合 |
+| 词汇面 · 词表漂移 簇 137 | accepted | `memory/types.py:12-23` vs `memory/typing.py:28-42` | `typing.py` 明示"扩展到 10 值…现有 5 跟 types.py 保持值一致"——超集关系、基 5 值逐字相同，有意扩展 |
+| 词汇面 · 词表漂移 簇 18 | accepted | `config.py:59-61` vs `security/container_executor.py:80` | 差异仅 `"none"`：config 侧 `none`=禁用容器，executor 侧只接受真实 runtime，语义分工 |
+| 词汇面 · 词表漂移 簇 22 | accepted（重复副本, low） | `research_budget.py:24-28` / `hooks/research_safety_hook.py:18-22` / `agent/context.py:20-22` | 前两处 8 项**逐字相同**（纯重复，可抽单一源）；`context._EXPENSIVE_TOOL_NAMES` 仅 4 项、用途是工具列表裁剪，非同一语义 |
+| 词汇面 · 词表漂移 簇 4 | accepted | `mcp_client.py:107-111` vs `events/audit_log.py:233-236` | 脱敏汇不同（MCP 配置 vs 审计记录）；差异 `authorization/cookie/raw` 反映各自域，非漂移 |
+| 词汇面 · 词表漂移 簇 73 | accepted | `tools/visualize_gate.py:22,29` | 同文件不同用途（可重渲染 gap 集 vs 严重度排序），非同一词表 |
+| 词汇面 · 词表漂移 簇 90 | **defect (low)** | `lean/conjecture_library.py:35-38` vs `bench/task_synthesizer.py:28-30` | `conjecture_library.py:35` 注释自称"跟 task_synthesizer 的 `_JUDGE_ALLOWED_MODULES` 一致"，实际缺 `numpy/pandas/scipy`——注释失真；对齐两者或改注释 |
+
+**分诊小结**：47 项中 `accepted` 44 项（事件 17 + 钩子 6 + 奖励/模式/工作流 7 + 词汇 14），`defect (low)` 3 项（`reconcile_r_phys` 死重复实现 / `_ALLOWED_IMPORTS` 漂移 / 簇 90 注释失真），另簇 22 记为可合重复副本。**无高危**，故冻结为基线安全；3 项低危漂移可另开小 PR 清理（清理后无需动基线，棘轮门忽略多余条目）。
+
 ---
 
 ## 诚实边界 / 本设计**不**统一的部分
