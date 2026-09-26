@@ -11,12 +11,12 @@
 
 用法:
     export INTERNLM_API_KEY=<书生 token>
-    python examples/shusheng_rigidity_loop.py --rounds 4 --budget-s 5400
+    python examples/shusheng_rigidity_loop.py --rounds 6 --budget-s 7200 --session s2
 
 产物 (research_outputs/shusheng_nn_rigidity_probe/):
-    loop_transcript.md   逐轮: 书生判断 + 它选的配置 + 该轮实测表 + 书生的理由
-    loop_verdict.md      书生最终裁决 (原文)
-    loop_state.json      机器可读的全过程状态
+    loop_transcript<sfx>.md   逐轮: 书生判断 + 它选的配置 + 该轮实测表 + 书生的理由
+    loop_verdict<sfx>.md      书生最终裁决 (原文)
+    loop_state<sfx>.json      机器可读的全过程状态
 """
 from __future__ import annotations
 
@@ -39,23 +39,33 @@ EXP = EXAMPLES / "nn_rigidity_decoupling.py"
 OUTDIR = EXAMPLES / "out" / "nn_rigidity_decoupling"
 REPORT_DIR = ROOT / "research_outputs" / "shusheng_nn_rigidity_probe"
 
-# ── 预算硬约束: 书生只能在框内选, 保证单轮几十分钟内可跑完 ──────────────────
+# ── 预算硬约束: 书生只能在框内选. 成本按宽度加权 (宽网络更贵), 保证单轮可跑完 ──
 ALLOWED_KINDS = ["poly", "osc", "hi", "hism", "fat"]
-ALLOWED_WIDTHS = [4, 8, 16, 32]
-ALLOWED_NS = [1, 2, 3, 4, 8]
+ALLOWED_WIDTHS = [4, 8, 16, 32, 64, 128]
+ALLOWED_NS = [1, 2, 3, 4, 8, 16]
 ALLOWED_ADAM = [2000, 3000, 4000, 5000]
-MAX_TASKS = 12
-MAX_WIDTHS = 3
-MAX_NS = 4
-MAX_SEEDS = 2
+MAX_TASKS = 20
+MAX_WIDTHS = 5
+MAX_NS = 5
+MAX_SEEDS = 3
+COST_CAP = 24
+MIN_NS = 3      # ns 不得被砍到 3 以下 (否则无法检验"不再回升", N_c 不可信)
+MIN_WIDTHS = 2  # widths 不得被砍到 2 以下 (至少要能拟合一条斜率)
 JOBS = 3
 
+
+def _cost(w: int) -> int:
+    """单任务成本代理: 宽度越大越贵 (w=8->1, w=32->2, w=64->4, w=128->8)."""
+    return max(1, w // 16)
+
+
+# 锚点: 只给**结构事实** (ODE / 解空间维数 / 约束点位置 / 残差量纲). 不下判断, 不预设结论.
 _ANCHORS = {
-    "poly": "u''=2, u*=x^2+0.3x-0.2. 解空间 {x^2+ax+b} 2 自由度; N>=2 个**相异**点约束 -> 唯一(刚性). 曲率小/forcing O(1), 优化最容易.",
-    "osc": "u''=-(2pi)^2 cos(2pi x), u*=cos(2pi x)+0.3x-0.2. 同样 2 自由度 -> N>=2 刚性. 中等频率.",
-    "hi": "u''=-(8pi)^2 cos(8pi x), u*=cos(8pi x)+0.3x-0.2. 同样 2 自由度 -> N>=2 刚性. 高频 **且 forcing 量纲巨大 (|f|~632)**, 已知会让优化崩溃.",
-    "hism": "u''=-cos(8pi x), u*=cos(8pi x)/(8pi)^2+0.3x-0.2. 与 hi 同频同自由度, 但 forcing 归一为 O(1). 用于分离'数值尺度'与'高频表达'两个混淆.",
-    "fat": "u''=2, u*=x^2+0.3x-0.2, 但 N 个点值约束**全部堆在 x=0.5** -> 约束秩恒为 1, 自由参数 a 永不消失 -> V_ho 恒 O(1), 任何 N/w 都不饱和. **真胖(非唯一)阴性对照**.",
+    "poly": "ODE u''=2; 解空间 {x^2+ax+b}, 2 维; N 个点值约束取 [0,1] 上 N 个相异点; 残差量纲 |f|=2.",
+    "osc": "ODE u''=-(2pi)^2 cos(2pi x); 解空间 {cos(2pi x)+ax+b}, 2 维; 约束点同上(相异); |f|max≈39.5.",
+    "hi": "ODE u''=-(8pi)^2 cos(8pi x); 解空间 {cos(8pi x)+ax+b}, 2 维; 约束点同上(相异); |f|max≈632.",
+    "hism": "ODE u''=-cos(8pi x); 解空间 {cos(8pi x)/(8pi)^2+ax+b}, 2 维; 约束点同上(相异); |f|max=1. 与 hi 同频, 仅 forcing 尺度不同.",
+    "fat": "ODE u''=2; 解空间 {x^2+ax+b}, 2 维; 但 N 个点值约束**全部落在同一点 x=0.5**; |f|=2.",
 }
 
 _QUESTION = """神经网络的"泛化行为"能否作为 bootstrap 解空间刚性的探针?
@@ -63,25 +73,19 @@ _QUESTION = """神经网络的"泛化行为"能否作为 bootstrap 解空间刚�
 若解空间高维/连续(隧穿振幅), 同样的小模型应泛化失败. 于是问:
 "唯一性是否成立"这个纯数学问题, 能否变成"多大容量的模型能在留出集上零违规"这个可测量量?"""
 
-_CRITERIA = """实验器给出的确定性判据 (你据此判读, 不可改动定义):
+_CRITERIA = """实验器给出的确定性判据 (协议定义, 不可改动, 你据此判读):
 - 观测量: 在**未参与训练**的 128 个留出中点上测 V_ho = 均方( (u''-f)^2 + (u-u*)^2 ).
-- pass_frac: 该 (w,N) 下 V_tr < 1e-10 的种子占比. pass_frac=100% 才说明优化管道真的收敛,
-  此时 V_ho 才可信; pass_frac=0 时该配置的 V_ho 无意义(优化没到位, 不是解的性质).
+- pass_frac: 该 (w,N) 下 V_tr < 1e-10 的种子占比. 它只反映优化管道是否收敛, 与解空间维数无关.
 - N_c(w) = 最小的 N, 使得所有 N'>=N 都有 V_ho < 1e-8; 若无此 N 则 N_c=None.
 - 拟合 N_c(w) ~ w^beta:
-    beta≈0 (|beta|<0.15)                  -> H1: 饱和点是**解的性质**, 探针站得住;
-    beta>0.3 且 R²>0.85                   -> H2: 饱和点是**模型记忆容量/归纳偏置**, 探针被驳回;
-    介于两者                              -> 灰区;
-    N_c 大量为 None (无饱和)              -> "无法判定" (第三类结果).
+    |beta|<0.15                  -> H1: 饱和点是解的性质;
+    beta>0.3 且 R²>0.85          -> H2: 饱和点是模型记忆容量/归纳偏置;
+    介于两者                     -> 灰区;
+    N_c 大量为 None              -> 无法判定 (第三类结果).
 
-已知的混淆/红队意见 (你必须据此警惕):
-1. 优化可达性: 优化不足会伪装成"解太胖"(假胖) -> 必须看 pass_frac.
-2. 架构表达瓶颈/数值尺度: 高频或大 forcing 会让刚性问题的 V_tr 也下不去, 从而伪装成"胖".
-   注意 'hi' 与 'hism' 的对照正是为分离这一点而设.
-3. 阈值敏感: V_tr 门槛(1e-10)严于 V_ho 判据(1e-8), 出现"N_c(全部种子) 有限 而 N_c(合规种子)=None"
-   这类翻转时, 结论取决于用哪套阈值.
-4. "真胖"阴性对照 'fat' 用于确认判据在非唯一时确实给 N_c=None (即判据有灵敏度, 不是永远报 None).
-5. 本机只有 3 核: 过参数化大区 (w>=256) 与 N>=16 暂不可及, 这是当前证据的硬边界."""
+参考(非指令): 上游红队阶段是你自己此前的输出, 其中列过若干"会使结论翻转的混淆"以及一个最小决定性
+实验设计. 是否仍成立、要不要把这些对照做掉、做到什么程度算够, 由你在循环里自行决定. 本脚本不替你
+选实验, 也不替你下结论."""
 
 
 # ── 证据收集与压缩 ────────────────────────────────────────────────────────
@@ -152,13 +156,18 @@ def render_budget(recs: list[dict]) -> str:
         f"  - kind={r['kind']} widths={r['widths']} ns={r['ns']} seeds={r['seeds']} adam={r['adam_steps']}"
         for r in recs
     ) or "  (无)"
-    return f"""本机 3 核, 单轮必须控制在 {MAX_TASKS} 个训练任务以内. 你只能选:
+    return f"""本机 3 核. 单轮资源上限 (双重约束, 必须同时满足):
+- 训练任务数 len(widths)*len(ns)*seeds <= {MAX_TASKS}
+- 加权成本 sum_任务 max(1, w//16) <= {COST_CAP}   (w=8 记 1, w=32 记 2, w=64 记 4, w=128 记 8)
+
+你只能选:
 - kind ∈ {ALLOWED_KINDS}
 - widths ⊆ {ALLOWED_WIDTHS}, 最多 {MAX_WIDTHS} 个
 - ns ⊆ {ALLOWED_NS}, 最多 {MAX_NS} 个
 - seeds ∈ 1..{MAX_SEEDS}
 - adam_steps ∈ {ALLOWED_ADAM}
-- 约束: len(widths)*len(ns)*seeds <= {MAX_TASKS}
+越界会被自动削减: 依次砍 ns(不低于 {MIN_NS} 个) -> seeds(不低于 1) -> widths(不低于 {MIN_WIDTHS} 个);
+若削到地板仍超预算, 该轮会被**拒绝**并把预算反馈给你重规划. 削减/拒绝都会在下一轮告知你.
 
 **已跑过的配置 (签名 kind|widths|ns|seeds|adam, 不得重复)**:
 {done}"""
@@ -263,15 +272,29 @@ def _clamp_run(run: dict) -> tuple[dict | None, list[str]]:
         near = min(ALLOWED_ADAM, key=lambda a: abs(a - adam))
         notes.append(f"adam_steps={adam} 不在允许集合, 取最近值 {near}")
         adam = near
-    # 任务量夹紧: 超预算则先砍 ns 再砍 widths
-    while len(ws) * len(ns) * seeds > MAX_TASKS and len(ns) > 1:
+    # 资源夹紧: 依次削减 ns -> seeds -> widths; 保持科学有效性 (ns>=MIN_NS, widths>=MIN_WIDTHS);
+    # 若削到地板仍超预算, 直接拒绝并把预算反馈给书生, 让它自己重规划 (不替它改设计).
+    def _tot(ws_, ns_, sd_):
+        return len(ws_) * len(ns_) * sd_, sum(_cost(w) for w in ws_) * len(ns_) * sd_
+
+    def _over(ws_, ns_, sd_):
+        t, c = _tot(ws_, ns_, sd_)
+        return t > MAX_TASKS or c > COST_CAP
+
+    while _over(ws, ns, seeds) and len(ns) > MIN_NS:
         ns = ns[:-1]
-        notes.append(f"任务量超预算, 砍 ns -> {ns}")
-    while len(ws) * len(ns) * seeds > MAX_TASKS and len(ws) > 1:
+        notes.append(f"资源超上限, 砍 ns -> {ns}")
+    while _over(ws, ns, seeds) and seeds > 1:
+        seeds -= 1
+        notes.append(f"资源仍超上限, 砍 seeds -> {seeds}")
+    while _over(ws, ns, seeds) and len(ws) > MIN_WIDTHS:
         ws = ws[:-1]
-        notes.append(f"任务量仍超预算, 砍 widths -> {ws}")
-    if len(ws) * len(ns) * seeds > MAX_TASKS:
-        return None, notes + ["夹紧后仍超预算"]
+        notes.append(f"资源仍超上限, 砍 widths -> {ws}")
+    if _over(ws, ns, seeds):
+        t, c = _tot(ws, ns, seeds)
+        return None, notes + [
+            f"请求超预算且削到地板后仍不够 (tasks={t}>{MAX_TASKS} 或 cost={c}>{COST_CAP}); "
+            f"请减小网格: 例如减少 widths 个数或把最大宽度从 128 降到 64/32, 再提交"]
     return {"kind": kind, "widths": ws, "ns": ns, "seeds": seeds, "adam_steps": adam}, notes
 
 
@@ -316,12 +339,14 @@ def _rec_from_json(d: dict, tag: str, source: str) -> dict:
 def main() -> int:
     import argparse
     ap = argparse.ArgumentParser()
-    ap.add_argument("--rounds", type=int, default=4, help="书生最多自主决策几轮")
-    ap.add_argument("--budget-s", type=float, default=5400.0, help="循环墙钟预算(秒)")
+    ap.add_argument("--rounds", type=int, default=6, help="书生最多自主决策几轮")
+    ap.add_argument("--budget-s", type=float, default=7200.0, help="循环墙钟预算(秒)")
+    ap.add_argument("--session", default="", help="产物文件名后缀, 避免覆盖历次循环记录")
     ap.add_argument("--model", default=os.environ.get("INTERNLM_MODEL", "intern-s2"))
     ap.add_argument("--base", default=os.environ.get("INTERNLM_BASE_URL",
                                                      "https://chat.intern-ai.org.cn/api/v1"))
     args = ap.parse_args()
+    sfx = f"_{args.session}" if args.session else ""
 
     key = os.environ.get("INTERNLM_API_KEY")
     if not key:
@@ -365,10 +390,9 @@ def main() -> int:
 {render_evidence(recs)}
 
 【你的任务】
-你是**主研者**. 基于上面的证据自主决定下一步:
-- 若还缺关键对照 (例如: 真胖对照 fat 是否给 N_c=None、hi 与 hism 的对照是否证明失败来自数值尺度、
-  pass_frac 是否 100%、beta 是否真的恒为 0、灰区是否需要更细网格), 选 action="run" 并给出配置;
-- 若证据已足以回答原始问题, 选 action="conclude".
+你是**主研者**, 也是唯一决策者. 基于上面的证据自主决定下一步:
+- action="run": 继续做实验, 给出你选的配置 (用哪个锚点、扫哪些宽度与约束数、要不要做对照, 由你定);
+- action="conclude": 你认为证据已足以回答原始问题, 现在结题.
 
 **只输出一个 JSON 对象**, 不要任何解释性前后文. schema:
 {{
@@ -426,7 +450,7 @@ def main() -> int:
             state["rounds"].append({"round": rd, "decision": dec, "rejected": ["duplicate"]})
             continue
 
-        tag = f"loop{rd:02d}"
+        tag = f"loop{rd:02d}{sfx}"
         transcript += [f"**执行配置**: `kind={cfg['kind']} widths={cfg['widths']} "
                        f"ns={cfg['ns']} seeds={cfg['seeds']} adam={cfg['adam_steps']}`", ""]
         if notes:
@@ -447,7 +471,7 @@ def main() -> int:
                                            ("kind", "widths", "ns", "seeds", "adam_steps",
                                             "N_c", "fit", "verdict", "elapsed_s", "file")}})
         print(f"      -> 本轮完成: N_c={rec['N_c'].get('all')} 裁决={rec['verdict']}")
-        (REPORT_DIR / "loop_state.json").write_text(
+        (REPORT_DIR / f"loop_state{sfx}.json").write_text(
             json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
 
     # 未结题 -> 强制要一次最终裁决
@@ -472,7 +496,7 @@ def main() -> int:
         conclusion = _extract_json(raw) or {"conclusion": raw}
         transcript += ["# 最终裁决 (预算结束, 书生被迫结题)", "", f"```json\n{raw}\n```", ""]
 
-    (REPORT_DIR / "loop_transcript.md").write_text("\n".join(transcript), encoding="utf-8")
+    (REPORT_DIR / f"loop_transcript{sfx}.md").write_text("\n".join(transcript), encoding="utf-8")
     md = ["# 书生自主循环 · 最终裁决", "",
           f"> 书生 `{args.model}` 在读入 {len(recs)} 份实验证据后作出, 未经本地改写.", "",
           "## 裁决 (原文)", "", "```", verdict_text or "(无)", "```", "",
@@ -482,13 +506,13 @@ def main() -> int:
           f"- answer_to_question: {conclusion.get('answer_to_question')}",
           f"- strongest_dissent: {conclusion.get('strongest_dissent')}",
           f"- remaining_uncertainty: {conclusion.get('remaining_uncertainty')}", ""]
-    (REPORT_DIR / "loop_verdict.md").write_text("\n".join(md), encoding="utf-8")
+    (REPORT_DIR / f"loop_verdict{sfx}.md").write_text("\n".join(md), encoding="utf-8")
     state["finished"] = time.time()
-    (REPORT_DIR / "loop_state.json").write_text(
+    (REPORT_DIR / f"loop_state{sfx}.json").write_text(
         json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"\n== 循环结束 ==")
-    print(f"逐轮记录 -> {(REPORT_DIR / 'loop_transcript.md').resolve()}")
-    print(f"最终裁决 -> {(REPORT_DIR / 'loop_verdict.md').resolve()}")
+    print(f"逐轮记录 -> {(REPORT_DIR / f'loop_transcript{sfx}.md').resolve()}")
+    print(f"最终裁决 -> {(REPORT_DIR / f'loop_verdict{sfx}.md').resolve()}")
     return 0
 
 
