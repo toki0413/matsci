@@ -380,6 +380,20 @@ SLOTS: <OPTIONAL, only for method/numerical objectives where inputs are known BE
         升级: campaign 队列状态 (queue 满则 workflow 批量验证).
         """
         current_mode = plan.get("mode", "coder")
+        # 写码类目标: execute 得有"手". explore 模式只有注册了设计空间才真跑, 否则
+        # 秒回一个空 pod (0.0s, 无 script 无数值), 而 report 照旧把 LLM 现编的数字
+        # 当"Results"写出去. 目标/plan 明确要求"写并运行代码"时钉死 coder
+        # (Write+Bash 真执行真取数), 不让 explore 接管.
+        if current_mode != "coder" and self._asks_to_write_and_run_code(plan):
+            _orig_mode = current_mode
+            plan["mode"] = "coder"
+            current_mode = "coder"
+            plan["override_reason"] = "code_task_force_coder"
+            plan["description"] = (
+                f"[auto-routed: 写码目标需真实执行] {plan.get('description', '')}"
+            )
+            logger.info("override mode %s→coder: 目标要求写并运行代码", _orig_mode)
+            self._log_plan_override("code_task_force_coder", "目标要求写并运行代码")
         # 割点节点: 强制非 coder mode
         try:
             current_hyp = getattr(self, "_current_hyp_id_for_plan", None)
@@ -419,6 +433,25 @@ SLOTS: <OPTIONAL, only for method/numerical objectives where inputs are known BE
             logger.info("override mode →explore: %s", reason)
             self._log_plan_override("force_explore", reason)
         return plan
+
+    # 强标记: 明确"写并运行代码"的措辞. 不用裸 "python"/"代码" 防误伤
+    # (workflow/explore 目标里出现 python 很常见, 不该被强行改道).
+    _CODE_TASK_MARKERS = (
+        "写并运行", "编写并运行", "写代码", "编写代码", "运行代码", "现写",
+        "写脚本", "写一个脚本", "写个脚本", "python 脚本", "python脚本",
+        "write and run", "write a script", "run the code", "write code and run",
+    )
+
+    def _asks_to_write_and_run_code(self, plan: dict[str, Any]) -> bool:
+        """目标/plan 是否明确要求"写并运行代码"."""
+        blob = " ".join(
+            str(x)
+            for x in (
+                getattr(self, "_objective", "") or "",
+                plan.get("description", "") or "",
+            )
+        ).lower()
+        return any(m in blob for m in self._CODE_TASK_MARKERS)
 
     def _log_plan_override(self, reason_code: str, reason_text: str) -> None:
         """把 mode 覆盖记到 PhaseGateState.history, 补审计缺口.

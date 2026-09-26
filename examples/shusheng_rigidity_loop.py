@@ -46,10 +46,10 @@ ALLOWED_KINDS = ["poly", "osc", "hi", "hism", "fat"]
 ALLOWED_WIDTHS = [4, 8, 16, 32, 64, 128, 256]
 ALLOWED_NS = [1, 2, 3, 4, 6, 8, 16, 32]
 ALLOWED_ADAM = [2000, 3000, 4000, 5000, 8000, 12000]
-SOFT_TASKS = 48      # 软限制: 初始任务数上限
-SOFT_COST = 64       # 软限制: 初始加权成本上限
+SOFT_TASKS = 96      # 软限制: 初始任务数上限
+SOFT_COST = 128      # 软限制: 初始加权成本上限
 RENEW_FACTOR = 1.5   # 撞顶后每次续投的放大系数 (与 Huginn 一致)
-MAX_RENEWALS = 3     # 最多自动续投次数 (防无头无限烧钱, 与 Huginn 默认一致)
+MAX_RENEWALS = 6     # 最多自动续投次数 (对齐 HUGINN_BUDGET_MAX_RENEWALS=6)
 MAX_WIDTHS = 7
 MAX_NS = 8
 MAX_SEEDS = 5
@@ -58,9 +58,16 @@ MIN_WIDTHS = 2  # widths 不得被砍到 2 以下 (至少要能拟合一条斜�
 JOBS = 3
 
 
-def _cost(w: int) -> int:
-    """单任务成本代理: 宽度越大越贵 (w=8->1, w=32->2, w=64->4, w=128->8)."""
-    return max(1, w // 16)
+#: adam 档 -> 成本倍率. 步数拉满但宽度小的网格不能显得便宜 (实际更慢).
+_ADAM_COST = {2000: 1, 3000: 1, 4000: 1, 5000: 1, 8000: 2, 12000: 3}
+
+
+def _cost(w: int, adam: int = 5000) -> int:
+    """单任务成本代理: 宽度与训练步数都计入.
+
+    宽度 (w=8->1, 32->2, 64->4, 128->8) × adam 倍率 (>=8000 再 ×2, 12000 再 ×3).
+    """
+    return max(1, w // 16) * _ADAM_COST.get(adam, 1)
 
 
 # 锚点: 只给**结构事实** (ODE / 解空间维数 / 约束点位置 / 残差量纲). 不下判断, 不预设结论.
@@ -162,7 +169,7 @@ def render_budget(recs: list[dict], caps: dict) -> str:
     ) or "  (无)"
     return f"""本机 3 核. 单轮资源上限 (双重约束, 必须同时满足):
 - 训练任务数 len(widths)*len(ns)*seeds <= {caps['tasks']}
-- 加权成本 sum_任务 max(1, w//16) <= {caps['cost']}   (w=8 记 1, w=32 记 2, w=64 记 4, w=128 记 8, w=256 记 16)
+- 加权成本 sum_任务 max(1, w//16)*adam倍率 <= {caps['cost']}   (w=8记1/32记2/64记4/128记8/256记16; adam>=8000 再×2, 12000 再×3)
 软限制初值 tasks={SOFT_TASKS} cost={SOFT_COST}; 请求撞顶会**自动续投** ×{RENEW_FACTOR} (最多 {MAX_RENEWALS} 次),
 已用 {MAX_RENEWALS - caps['renewals_left']}/{MAX_RENEWALS}, 剩余 {caps['renewals_left']} 次; 续投用尽才是硬刹车.
 => 想要更大的网格可以直接提, 不必为省预算自我压缩; 真撞硬刹车时我会把额度反馈给你重规划.
@@ -281,7 +288,7 @@ def _clamp_run(run: dict, caps: dict) -> tuple[dict | None, list[str]]:
         adam = near
 
     def _tot(ws_, ns_, sd_):
-        return len(ws_) * len(ns_) * sd_, sum(_cost(w) for w in ws_) * len(ns_) * sd_
+        return len(ws_) * len(ns_) * sd_, sum(_cost(w, adam) for w in ws_) * len(ns_) * sd_
 
     # 撞顶自动续投 (软限制 -> 硬刹车之间, 对齐 Huginn auto 语义): 请求冲破当前上限就 ×3/2 续投,
     # 最多 MAX_RENEWALS 次, 额度跨轮持久. 目的是**不替书生削网格**——它想跑就让它跑.
