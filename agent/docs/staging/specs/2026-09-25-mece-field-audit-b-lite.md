@@ -2,7 +2,7 @@
 
 **日期**: 2026-09-25
 **milestone**: 未定（待评审后再挂）
-**状态**: 设计稿（**未实施**）
+**状态**: **已实施（裁剪）** —— 第 1 步（golden parity 护栏）、第 2.5 步（reads 共同抽取）、第 5 步（汇总视图）已落地；第 2 步裁剪为「只抽 15/16 近重复面」，第 3/4/6 步未做（见 §实施记录）
 **前置**: 第十三～十七面（响应结构 / WS 请求负载 / SSE 事件负载 / WS 事件负载 / HTTP 请求字段）已各自落地。
 
 ---
@@ -156,6 +156,24 @@ def build_boundary(spec: BoundarySpec, root: Path | None, frontend: Path | None)
 
 ---
 
+## 实施记录（2026-09-25 收口）
+
+| 步 | 状态 | 落点 |
+|---|---|---|
+| 1 冻结黄金快照 | ✅ | `tests/golden/field_audit/{response,ws_payload,sse_payload,ws_ev_payload,http_field}.json` + `test_field_audit_golden_parity`（`HUGINN_REGEN_FIELD_GOLDEN=1` 重生成） |
+| 2 抽引擎原语 | **裁剪** ⚠ | 仅抽第十五/十六面（逐字近重复的一对）→ `_frame_payload_contract`，两个 `build_*` 降为薄适配层。**未**做 `Shape/Obs/Check/BoundarySpec/_run_check` 全量原语，**未**并入 13/14/17 |
+| 2.5 reads 共同抽取 | ✅ | `_fe_ts_files` / `_fe_field_read_rows`，供 `_sse_payload_reads` 与 `_ws_ev_payload_reads` 共用 |
+| 3 迁移 14/17 | ❌ 未做 | 多方向面仍各自成文（多方向 + 面特有 `extra`，归一化收益低于复杂度） |
+| 4 去重分诊三联 | ❌ 未做 | 各面 `KIND_DOC` / `TRIAGE_DOC` / `_*_CONFIRMED` / `_*_triage` / `_*_violation_mark` 仍逐面保留 |
+| 5 加汇总视图 | ✅ | `render_field_rollup_markdown` + `_ROLLUP_*` 常量；插入 `render_mece_markdown` 字段级面章节之前 |
+| 6 冻结门禁 | ❌ 未做 | `--check` 已存在；**未**挂 CI |
+
+**第 2 步裁剪原因（实测）**：设计期的 `_run_check` 假定**每字段一条违例**，但第十三面（响应结构）实为**每端点一条**（违例体带 `declared`/`produced`/`missing` 列表），且把端点解析与歧义跳过编进了主循环 —— 与 15/16 只是"看起来同构"，强行并入需要给引擎加"按单元聚合"与"面特有门控"两个变体，接口反而比现状更宽。第十五/十六面才是真正的逐字孪生（仅解析器、文案、分诊表三处不同），故只抽这一对：净 −38 行，行为由 golden parity 逐字兜底。收益诚实地有上限：解析器才是各面代码量主体。
+
+**后续可选**（未批准，未做）：第 3/4 步（14/17 迁移、分诊三联归一）与第 6 步（`--check` 挂 CI）。
+
+---
+
 ## 验证（如何知道没改坏）
 
 - **parity**：第 1 步 golden JSON 是硬闸——重构后每面 contract 必须**逐字段相等**（含 `violations` 的 kind/key/field/rel/line、`coverage`、面特有字段）。任一不等即回滚该面。
@@ -198,8 +216,9 @@ def build_boundary(spec: BoundarySpec, root: Path | None, frontend: Path | None)
 
 ---
 
-## 待评审确认点
+## 评审结论
 
-1. 是否接受**先落 golden parity 护栏**（第 1 步，零产品改动）作为前置。
-2. 第 2.5 步（`sse/ws_ev` reads 共同抽取）做**可选**，还是一律不动。
-3. 汇总视图的**关系标签**（R1–R4）命名是否合适——它是给人确认用的"人话轴"，命名可调。
+1. **先落 golden parity 护栏** —— 接受，已落地（第 1 步）。
+2. 第 2.5 步（`sse/ws_ev` reads 共同抽取）—— 做，已落地（`_fe_ts_files` / `_fe_field_read_rows`）。
+3. 汇总视图关系标签 **R1–R4 + R0 兜底** —— 接受，已落地（`_ROLLUP_*`）。
+4. 第 2 步范围 —— 裁剪为「只抽 15/16 近重复面」；第 3/4 步与第 6 步未批准、未做。
