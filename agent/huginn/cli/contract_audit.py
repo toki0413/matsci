@@ -2667,6 +2667,62 @@ def render_sse_markdown(contract: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
+# 共用: 分诊三联 (违例类型文案 + 已确认分诊表 + 盖章/标注)
+# ---------------------------------------------------------------------------
+
+# 分诊标签的统一文案. 各面共用同一套标签 (defect / intentional), 故只有一份.
+_TRIAGE_LABEL_DOC: dict[str, str] = {
+    "defect": "已确认缺陷 (待修)",
+    "intentional": "已确认有意",
+}
+
+
+class _TriageTrio:
+    """一面一套的「违例类型文案 + 已确认分诊表 + 键构造」三联.
+
+    各面的 `kind_doc` 是领域文案, 必须逐字差异化 (保留); 但 `triage()` 查表、
+    `mark()` 标注、`stamp()` 逐条落章的**形状**逐面同构 —— 差异只在"键怎么拼"
+    (如 HTTP 要 `method.upper()` + 去 query), 故收在这里. 各面仍各自持有公开符号
+    (`_X_KIND_DOC` / `_X_TRIAGE_DOC` / `_X_CONFIRMED*` / `_X_triage` /
+    `_X_violation_mark`), 由别名指向本对象的成员.
+
+    `key(*args)`: 分诊键构造 (各面不同);
+    `vargs`: 从违例字典按键取参的字段名, **顺序须与 `key` 的位置参数一致** (供 `stamp`).
+    """
+
+    def __init__(
+        self,
+        kind_doc: dict[str, str],
+        key: Callable[..., tuple],
+        vargs: tuple[str, ...],
+    ) -> None:
+        self.kind_doc = kind_doc
+        #: 已确认分诊表: 键 → (标签, 理由). 未登记即"待分诊", 回归测试会失败.
+        self.confirmed: dict[tuple, tuple[str, str]] = {}
+        self.triage_doc = _TRIAGE_LABEL_DOC
+        self._key = key
+        self._vargs = vargs
+
+    def triage(self, *args) -> tuple[str, str] | None:
+        """查表: 返回 (标签, 理由); 未登记则 None (待人工确认)."""
+        return self.confirmed.get(self._key(*args))
+
+    def stamp(self, violations: list[dict]) -> None:
+        """逐条落章: 命中写 defect/intentional + 理由, 未登记写 untriaged."""
+        for v in violations:
+            tri = self.triage(*(v[k] for k in self._vargs))
+            v["triage"] = tri[0] if tri else "untriaged"
+            v["triage_reason"] = tri[1] if tri else ""
+
+    def mark(self, *args) -> str:
+        """违例行的分诊标注: ` — ⛔/✅ 标签: 理由`, 未登记则 ` — ⚠ 待分诊`."""
+        tri = self.triage(*args)
+        if tri is None:
+            return " — ⚠ 待分诊"
+        return f" — {'⛔' if tri[0] == 'defect' else '✅'} {self.triage_doc[tri[0]]}: {tri[1]}"
+
+
+# ---------------------------------------------------------------------------
 # SSE 事件负载面: 后端帧 payload 顶层键 ↔ 前端 JSON.parse(e.data) 顶层读取
 # ---------------------------------------------------------------------------
 
@@ -2687,27 +2743,19 @@ _SSE_PAYLOAD_KIND_DOC = {
     )
 }
 
-_SSE_PAYLOAD_TRIAGE_DOC = {
-    "defect": "已确认缺陷 (待修)",
-    "intentional": "已确认有意",
-}
-
-# 已确认分诊表. 键 (通道, 帧名, 字段) → (标签, 理由); 未登记即"待分诊",
-# 回归测试会失败 (逼逐条人工判定). 空表 = 当前前端读的顶层字段都合契约.
-_SSE_PAYLOAD_CONFIRMED: dict[tuple[str, str, str], tuple[str, str]] = {}
-
-
-def _sse_payload_triage(channel: str, frame: str, field: str) -> tuple[str, str] | None:
-    """SSE 负载违例分诊: 返回 (标签, 理由); 未登记则 None (待人工确认)."""
-    return _SSE_PAYLOAD_CONFIRMED.get((channel, frame, field))
-
-
-def _sse_payload_violation_mark(channel: str, frame: str, field: str) -> str:
-    tri = _sse_payload_triage(channel, frame, field)
-    if tri is None:
-        return " — ⚠ 待分诊"
-    doc = _SSE_PAYLOAD_TRIAGE_DOC[tri[0]]
-    return f" — {'⛔' if tri[0] == 'defect' else '✅'} {doc}: {tri[1]}"
+# 分诊三联. 键 (通道, 帧名, 字段) → (标签, 理由); 未登记即"待分诊", 回归测试
+# 会失败 (逼逐条人工判定). 空表 = 当前前端读的顶层字段都合契约.
+# 公开符号 (`_SSE_PAYLOAD_TRIAGE_DOC` / `_SSE_PAYLOAD_CONFIRMED` /
+# `_sse_payload_triage` / `_sse_payload_violation_mark`) 保留为别名, 外部引用不变.
+_SSE_PAYLOAD_TRIAGE = _TriageTrio(
+    _SSE_PAYLOAD_KIND_DOC,
+    lambda channel, frame, field: (channel, frame, field),
+    ("channel", "frame", "field"),
+)
+_SSE_PAYLOAD_TRIAGE_DOC = _SSE_PAYLOAD_TRIAGE.triage_doc
+_SSE_PAYLOAD_CONFIRMED = _SSE_PAYLOAD_TRIAGE.confirmed
+_sse_payload_triage = _SSE_PAYLOAD_TRIAGE.triage
+_sse_payload_violation_mark = _SSE_PAYLOAD_TRIAGE.mark
 
 
 def _dict_literal_keys(node: ast.AST | None) -> set[str] | None:
@@ -3037,7 +3085,7 @@ def _sse_payload_reads(frontend: Path) -> list[dict]:
 def _frame_payload_contract(
     channels: dict[str, dict[str, dict]],
     reads: list[dict],
-    triage: Callable[[str, str, str], tuple[str, str] | None],
+    trio: _TriageTrio,
     detail_tmpl: str,
     frontend: Path,
 ) -> dict:
@@ -3049,7 +3097,7 @@ def _frame_payload_contract(
     `channels`: 通道 → 帧 → `{"keys": set, "closed": bool}` (权威面);
     `reads`: 前端读取点 `{channel, frame, field, rel, line}`;
     `detail_tmpl`: 违例文案, 以 `frame` / `field` 格式化 (两面逐字不同);
-    `triage`: 面分诊表查询 `(channel, frame, field) -> (status, reason) | None`.
+    `trio`: 面分诊三联 (键构造与 `(channel, frame, field)` 一致).
     """
     violations: list[dict] = []
     checked = skip_frame = skip_shape = 0
@@ -3081,10 +3129,7 @@ def _frame_payload_contract(
             }
         )
 
-    for v in violations:
-        tri = triage(v["channel"], v["frame"], v["field"])
-        v["triage"] = tri[0] if tri else "untriaged"
-        v["triage_reason"] = tri[1] if tri else ""
+    trio.stamp(violations)
 
     zero_read: list[dict] = []
     for ch, frames in channels.items():
@@ -3144,7 +3189,7 @@ def build_sse_payload_contract(
     return _frame_payload_contract(
         channels,
         _sse_payload_reads(frontend),
-        _sse_payload_triage,
+        _SSE_PAYLOAD_TRIAGE,
         "前端在 `{frame}` 处理函数里读 `t.{field}`",
         frontend,
     )
@@ -3842,24 +3887,18 @@ _HTTP_STATUS_DOC = {
 # (标签, 理由); 标签 `defect` 已确认缺陷待修 / `intentional` 已确认有意.
 # 硬违例不是候选 —— 未登记即"待分诊", 回归测试会失败 (逼逐条人工判定).
 # 空表 = 当前每个前端调用都命中后端注册面; 新增硬违例必须先分诊再登记.
-_HTTP_CONFIRMED_VIOLATIONS: dict[tuple[str, str], tuple[str, str]] = {}
-
-_HTTP_TRIAGE_DOC = {
-    "defect": "已确认缺陷 (待修)",
-    "intentional": "已确认有意",
-}
-
-
-def _http_triage(method: str, path: str) -> tuple[str, str] | None:
-    """硬违例分诊: 返回 (标签, 理由); 未登记则 None (待人工确认)."""
-    return _HTTP_CONFIRMED_VIOLATIONS.get((method.upper(), path.split("?")[0]))
-
-
-def _http_violation_mark(method: str, path: str) -> str:
-    tri = _http_triage(method, path)
-    if tri is None:
-        return " — ⚠ 待分诊"
-    return f" — {'⛔' if tri[0] == 'defect' else '✅'} {_HTTP_TRIAGE_DOC[tri[0]]}: {tri[1]}"
+# 本面无违例类型文案 (状态文案在 `find_issues` 的面内说明里), 故 `kind_doc` 留空.
+# 公开符号 (`_HTTP_TRIAGE_DOC` / `_HTTP_CONFIRMED_VIOLATIONS` / `_http_triage` /
+# `_http_violation_mark`) 保留为别名, 外部引用不变.
+_HTTP_TRIAGE = _TriageTrio(
+    {},
+    lambda method, path: (method.upper(), path.split("?")[0]),
+    ("method", "path"),
+)
+_HTTP_TRIAGE_DOC = _HTTP_TRIAGE.triage_doc
+_HTTP_CONFIRMED_VIOLATIONS = _HTTP_TRIAGE.confirmed
+_http_triage = _HTTP_TRIAGE.triage
+_http_violation_mark = _HTTP_TRIAGE.mark
 
 
 def _http_skip_generics(text: str, i: int) -> int:
@@ -4254,10 +4293,7 @@ def build_http_contract(root: Path | None = None, frontend: Path | None = None) 
 
     # 硬违例 (前端调用挂不上后端注册面) 逐条分诊: 未登记的即"待人工确认".
     hard = [c for c in calls if c["status"] in ("no-source", "method-mismatch")]
-    for c in hard:
-        tri = _http_triage(c["method"], c["path"])
-        c["triage"] = tri[0] if tri else "untriaged"
-        c["triage_reason"] = tri[1] if tri else ""
+    _HTTP_TRIAGE.stamp(hard)
 
     return {
         "frontend": str(frontend),
@@ -4428,29 +4464,19 @@ _PAYLOAD_KIND_DOC = {
     "missing-form-field": "后端必填 Form/File 字段前端未含 (422)",
 }
 
-# 已确认硬违例分诊表. 键 (类型, 方法, 去 query 前端路径) → (标签, 理由); 未登记即
-# "待分诊", 回归测试会失败 (逼逐条人工判定). 空表 = 当前每个命中端点的调用负载都合契约.
-_PAYLOAD_CONFIRMED_VIOLATIONS: dict[tuple[str, str, str], tuple[str, str]] = {}
-
-_PAYLOAD_TRIAGE_DOC = {
-    "defect": "已确认缺陷 (待修)",
-    "intentional": "已确认有意",
-}
-
-
-def _payload_triage(kind: str, method: str, path: str) -> tuple[str, str] | None:
-    """负载违例分诊: 返回 (标签, 理由); 未登记则 None (待人工确认)."""
-    return _PAYLOAD_CONFIRMED_VIOLATIONS.get(
-        (kind, method.upper(), path.split("?")[0])
-    )
-
-
-def _payload_violation_mark(kind: str, method: str, path: str) -> str:
-    tri = _payload_triage(kind, method, path)
-    if tri is None:
-        return " — ⚠ 待分诊"
-    doc = _PAYLOAD_TRIAGE_DOC[tri[0]]
-    return f" — {'⛔' if tri[0] == 'defect' else '✅'} {doc}: {tri[1]}"
+# 分诊三联. 键 (类型, 方法, 去 query 前端路径) → (标签, 理由); 未登记即"待分诊",
+# 回归测试会失败 (逼逐条人工判定). 空表 = 当前每个命中端点的调用负载都合契约.
+# 公开符号 (`_PAYLOAD_TRIAGE_DOC` / `_PAYLOAD_CONFIRMED_VIOLATIONS` / `_payload_triage` /
+# `_payload_violation_mark`) 保留为别名, 外部引用不变.
+_PAYLOAD_TRIAGE = _TriageTrio(
+    _PAYLOAD_KIND_DOC,
+    lambda kind, method, path: (kind, method.upper(), path.split("?")[0]),
+    ("kind", "method", "path"),
+)
+_PAYLOAD_TRIAGE_DOC = _PAYLOAD_TRIAGE.triage_doc
+_PAYLOAD_CONFIRMED_VIOLATIONS = _PAYLOAD_TRIAGE.confirmed
+_payload_triage = _PAYLOAD_TRIAGE.triage
+_payload_violation_mark = _PAYLOAD_TRIAGE.mark
 
 
 def _payload_required_fields(cls: ast.ClassDef) -> set[str]:
@@ -4928,10 +4954,7 @@ def build_payload_contract(root: Path | None = None, frontend: Path | None = Non
         params = handlers.get((c["method"], ep["path"]), [])
         violations.extend(_payload_violations_for(c, ep["path"], params, models, stats))
 
-    for v in violations:
-        tri = _payload_triage(v["kind"], v["method"], v["path"])
-        v["triage"] = tri[0] if tri else "untriaged"
-        v["triage_reason"] = tri[1] if tri else ""
+    _PAYLOAD_TRIAGE.stamp(violations)
 
     kinds = Counter(v["kind"] for v in violations)
     return {
@@ -5054,26 +5077,19 @@ _RESP_KIND_DOC = {
     "missing-field": "前端声明的响应字段后端从不返回 (恒 undefined)",
 }
 
-# 已确认硬违例分诊表. 键 (类型, 方法, 去 query 前端路径) → (标签, 理由); 未登记即
-# "待分诊", 回归测试会失败. 空表 = 当前每个命中端点声明的响应字段都在后端 return 里.
-_RESP_CONFIRMED_VIOLATIONS: dict[tuple[str, str, str], tuple[str, str]] = {}
-
-_RESP_TRIAGE_DOC = {
-    "defect": "已确认缺陷 (待修)",
-    "intentional": "已确认有意",
-}
-
-
-def _resp_triage(kind: str, method: str, path: str) -> tuple[str, str] | None:
-    """响应结构违例分诊: 返回 (标签, 理由); 未登记则 None (待人工确认)."""
-    return _RESP_CONFIRMED_VIOLATIONS.get((kind, method.upper(), path.split("?")[0]))
-
-
-def _resp_violation_mark(kind: str, method: str, path: str) -> str:
-    tri = _resp_triage(kind, method, path)
-    if tri is None:
-        return " — ⚠ 待分诊"
-    return f" — {'⛔' if tri[0] == 'defect' else '✅'} {_RESP_TRIAGE_DOC[tri[0]]}: {tri[1]}"
+# 分诊三联. 键 (类型, 方法, 去 query 前端路径) → (标签, 理由); 未登记即"待分诊",
+# 回归测试会失败. 空表 = 当前每个命中端点声明的响应字段都在后端 return 里.
+# 公开符号 (`_RESP_TRIAGE_DOC` / `_RESP_CONFIRMED_VIOLATIONS` / `_resp_triage` /
+# `_resp_violation_mark`) 保留为别名, 外部引用不变.
+_RESP_TRIAGE = _TriageTrio(
+    _RESP_KIND_DOC,
+    lambda kind, method, path: (kind, method.upper(), path.split("?")[0]),
+    ("kind", "method", "path"),
+)
+_RESP_TRIAGE_DOC = _RESP_TRIAGE.triage_doc
+_RESP_CONFIRMED_VIOLATIONS = _RESP_TRIAGE.confirmed
+_resp_triage = _RESP_TRIAGE.triage
+_resp_violation_mark = _RESP_TRIAGE.mark
 
 
 def _resp_split_members(inner: str) -> list[str]:
@@ -5598,10 +5614,7 @@ def build_response_contract(
                 }
             )
 
-    for v in violations:
-        tri = _resp_triage(v["kind"], v["method"], v["path"])
-        v["triage"] = tri[0] if tri else "untriaged"
-        v["triage_reason"] = tri[1] if tri else ""
+    _RESP_TRIAGE.stamp(violations)
 
     kinds = Counter(v["kind"] for v in violations)
     return {
@@ -5719,27 +5732,19 @@ _WS_PAYLOAD_KIND_DOC = {
     "fe-undeclared": "前端发送的字段 WSMessage 未声明 (被 Pydantic 静默丢弃)",
 }
 
-# 已确认分诊表. 键 (类型, 入站 type, 字段名) → (标签, 理由); 未登记即"待分诊",
+# 分诊三联. 键 (类型, 入站 type, 字段名) → (标签, 理由); 未登记即"待分诊",
 # 回归测试会失败 (逼逐条人工判定). 空表 = 当前入站负载字段都合契约.
-_WS_PAYLOAD_CONFIRMED: dict[tuple[str, str, str], tuple[str, str]] = {}
-
-_WS_PAYLOAD_TRIAGE_DOC = {
-    "defect": "已确认缺陷 (待修)",
-    "intentional": "已确认有意",
-}
-
-
-def _ws_payload_triage(kind: str, mtype: str, field: str) -> tuple[str, str] | None:
-    """WS 负载违例分诊: 返回 (标签, 理由); 未登记则 None (待人工确认)."""
-    return _WS_PAYLOAD_CONFIRMED.get((kind, mtype, field))
-
-
-def _ws_payload_violation_mark(kind: str, mtype: str, field: str) -> str:
-    tri = _ws_payload_triage(kind, mtype, field)
-    if tri is None:
-        return " — ⚠ 待分诊"
-    doc = _WS_PAYLOAD_TRIAGE_DOC[tri[0]]
-    return f" — {'⛔' if tri[0] == 'defect' else '✅'} {doc}: {tri[1]}"
+# 公开符号 (`_WS_PAYLOAD_TRIAGE_DOC` / `_WS_PAYLOAD_CONFIRMED` / `_ws_payload_triage` /
+# `_ws_payload_violation_mark`) 保留为别名, 外部引用不变.
+_WS_PAYLOAD_TRIAGE = _TriageTrio(
+    _WS_PAYLOAD_KIND_DOC,
+    lambda kind, mtype, field: (kind, mtype, field),
+    ("kind", "type", "field"),
+)
+_WS_PAYLOAD_TRIAGE_DOC = _WS_PAYLOAD_TRIAGE.triage_doc
+_WS_PAYLOAD_CONFIRMED = _WS_PAYLOAD_TRIAGE.confirmed
+_ws_payload_triage = _WS_PAYLOAD_TRIAGE.triage
+_ws_payload_violation_mark = _WS_PAYLOAD_TRIAGE.mark
 
 
 def _ws_payload_model_fields(root: Path) -> set[str]:
@@ -6032,10 +6037,7 @@ def build_ws_payload_contract(
                 }
             )
 
-    for v in violations:
-        tri = _ws_payload_triage(v["kind"], v["type"], v["field"])
-        v["triage"] = tri[0] if tri else "untriaged"
-        v["triage_reason"] = tri[1] if tri else ""
+    _WS_PAYLOAD_TRIAGE.stamp(violations)
 
     read_fields = {f for h in handlers.values() if h["resolved"] for f in h["fields"]}
     dead_fields = sorted(
@@ -6183,27 +6185,19 @@ _WS_EV_PAYLOAD_KIND_DOC = {
     )
 }
 
-_WS_EV_PAYLOAD_TRIAGE_DOC = {
-    "defect": "已确认缺陷 (待修)",
-    "intentional": "已确认有意",
-}
-
-# 已确认分诊表. 键 (通道, 帧名, 字段) → (标签, 理由); 未登记即"待分诊",
-# 回归测试会失败 (逼逐条人工判定). 空表 = 当前前端读的顶层字段都合契约.
-_WS_EV_PAYLOAD_CONFIRMED: dict[tuple[str, str, str], tuple[str, str]] = {}
-
-
-def _ws_ev_payload_triage(channel: str, frame: str, field: str) -> tuple[str, str] | None:
-    """WS 事件负载违例分诊: 返回 (标签, 理由); 未登记则 None (待人工确认)."""
-    return _WS_EV_PAYLOAD_CONFIRMED.get((channel, frame, field))
-
-
-def _ws_ev_payload_violation_mark(channel: str, frame: str, field: str) -> str:
-    tri = _ws_ev_payload_triage(channel, frame, field)
-    if tri is None:
-        return " — ⚠ 待分诊"
-    doc = _WS_EV_PAYLOAD_TRIAGE_DOC[tri[0]]
-    return f" — {'⛔' if tri[0] == 'defect' else '✅'} {doc}: {tri[1]}"
+# 分诊三联. 键 (通道, 帧名, 字段) → (标签, 理由); 未登记即"待分诊", 回归测试
+# 会失败 (逼逐条人工判定). 空表 = 当前前端读的顶层字段都合契约.
+# 公开符号 (`_WS_EV_PAYLOAD_TRIAGE_DOC` / `_WS_EV_PAYLOAD_CONFIRMED` /
+# `_ws_ev_payload_triage` / `_ws_ev_payload_violation_mark`) 保留为别名, 外部引用不变.
+_WS_EV_PAYLOAD_TRIAGE = _TriageTrio(
+    _WS_EV_PAYLOAD_KIND_DOC,
+    lambda channel, frame, field: (channel, frame, field),
+    ("channel", "frame", "field"),
+)
+_WS_EV_PAYLOAD_TRIAGE_DOC = _WS_EV_PAYLOAD_TRIAGE.triage_doc
+_WS_EV_PAYLOAD_CONFIRMED = _WS_EV_PAYLOAD_TRIAGE.confirmed
+_ws_ev_payload_triage = _WS_EV_PAYLOAD_TRIAGE.triage
+_ws_ev_payload_violation_mark = _WS_EV_PAYLOAD_TRIAGE.mark
 
 
 def _ws_ev_payload_shapes(root: Path) -> dict[str, dict[str, dict]]:
@@ -6371,7 +6365,7 @@ def build_ws_ev_payload_contract(
     return _frame_payload_contract(
         _ws_ev_payload_shapes(root),
         _ws_ev_payload_reads(frontend),
-        _ws_ev_payload_triage,
+        _WS_EV_PAYLOAD_TRIAGE,
         "前端在 `{frame}` 分支里读 `data.{field}`",
         frontend,
     )
@@ -6516,29 +6510,19 @@ _HTTP_FIELD_KIND_DOC = {
     ),
 }
 
-_HTTP_FIELD_TRIAGE_DOC = {
-    "defect": "已确认缺陷 (待修)",
-    "intentional": "已确认有意",
-}
-
-# 已确认分诊表. 键 (类型, 方法, 端点, 字段) → (标签, 理由); 未登记即"待分诊",
-# 回归测试会失败 (逼逐条人工判定). 空表 = 当前请求体字段都合契约.
-_HTTP_FIELD_CONFIRMED: dict[tuple[str, str, str, str], tuple[str, str]] = {}
-
-
-def _http_field_triage(
-    kind: str, method: str, endpoint: str, field: str
-) -> tuple[str, str] | None:
-    """请求字段违例分诊: 返回 (标签, 理由); 未登记则 None (待人工确认)."""
-    return _HTTP_FIELD_CONFIRMED.get((kind, method.upper(), endpoint, field))
-
-
-def _http_field_violation_mark(kind: str, method: str, endpoint: str, field: str) -> str:
-    tri = _http_field_triage(kind, method, endpoint, field)
-    if tri is None:
-        return " — ⚠ 待分诊"
-    doc = _HTTP_FIELD_TRIAGE_DOC[tri[0]]
-    return f" — {'⛔' if tri[0] == 'defect' else '✅'} {doc}: {tri[1]}"
+# 分诊三联. 键 (类型, 方法, 端点, 字段) → (标签, 理由); 未登记即"待分诊", 回归测试
+# 会失败 (逼逐条人工判定). 空表 = 当前请求体字段都合契约.
+# 公开符号 (`_HTTP_FIELD_TRIAGE_DOC` / `_HTTP_FIELD_CONFIRMED` / `_http_field_triage` /
+# `_http_field_violation_mark`) 保留为别名, 外部引用不变.
+_HTTP_FIELD_TRIAGE = _TriageTrio(
+    _HTTP_FIELD_KIND_DOC,
+    lambda kind, method, endpoint, field: (kind, method.upper(), endpoint, field),
+    ("kind", "method", "endpoint", "field"),
+)
+_HTTP_FIELD_TRIAGE_DOC = _HTTP_FIELD_TRIAGE.triage_doc
+_HTTP_FIELD_CONFIRMED = _HTTP_FIELD_TRIAGE.confirmed
+_http_field_triage = _HTTP_FIELD_TRIAGE.triage
+_http_field_violation_mark = _HTTP_FIELD_TRIAGE.mark
 
 
 _HTTP_FIELD_EXTRA_ALLOW_RE = re.compile(r"extra\s*=\s*[\"']allow[\"']")
@@ -6858,10 +6842,7 @@ def build_http_field_contract(
                     )
         rows.append(row)
 
-    for v in violations:
-        tri = _http_field_triage(v["kind"], v["method"], v["endpoint"], v["field"])
-        v["triage"] = tri[0] if tri else "untriaged"
-        v["triage_reason"] = tri[1] if tri else ""
+    _HTTP_FIELD_TRIAGE.stamp(violations)
 
     kinds = Counter(v["kind"] for v in violations)
     return {
