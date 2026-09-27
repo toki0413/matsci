@@ -42,7 +42,7 @@ REPORT_DIR = ROOT / "research_outputs" / "shusheng_nn_rigidity_probe"
 # ── 预算: 软限制 + 撞顶自动续投 (对齐 Huginn 的 HUGINN_BUDGET_APPROVAL=auto 语义) ──
 # 书生在框内自由选; 请求一旦冲破当前上限, 自动续投 ×RENEW_FACTOR, 最多 MAX_RENEWALS 次;
 # 续投额度用尽后仍是硬刹车 (不无头烧钱). 成本按宽度加权: w=8->1, 32->2, 64->4, 128->8, 256->16.
-ALLOWED_KINDS = ["poly", "osc", "hi", "hism", "fat"]
+ALLOWED_KINDS = ["poly", "osc", "hi", "hism", "fat", "vz"]
 ALLOWED_WIDTHS = [4, 8, 16, 32, 64, 128, 256]
 ALLOWED_NS = [1, 2, 3, 4, 6, 8, 16, 32]
 ALLOWED_ADAM = [2000, 3000, 4000, 5000, 8000, 12000]
@@ -83,6 +83,7 @@ _ANCHORS = {
     "hi": "ODE u''=-(8pi)^2 cos(8pi x); 解空间 {cos(8pi x)+ax+b}, 2 维; 约束点同上(相异); |f|max≈632.",
     "hism": "ODE u''=-cos(8pi x); 解空间 {cos(8pi x)/(8pi)^2+ax+b}, 2 维; 约束点同上(相异); |f|max=1. 与 hi 同频, 仅 forcing 尺度不同.",
     "fat": "ODE u''=2; 解空间 {x^2+ax+b}, 2 维; 但 N 个点值约束**全部落在同一点 x=0.5**; |f|=2.",
+    "vz": "ODE u''=2; 解析边条件 u'(0)=0.3 固定, 解族 {x^2+0.3x+b}, **1 维**; N 个点值约束取 [0,1] 上 N 个相异点; |f|=2. 与 poly 只差一个解析边条件, 是 Veneziano(唯一性)1 维解空间的直接对照: 若探针成立, 其 N_c 应比 poly 小 (预期 1) 且与 w 无关.",
 }
 
 _QUESTION = """神经网络的"泛化行为"能否作为 bootstrap 解空间刚性的探针?

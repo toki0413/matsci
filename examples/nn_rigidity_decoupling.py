@@ -4,6 +4,8 @@
     u''(x) = f(x)  on [0,1]
     poly: u*(x) = x^2 + 0.3x - 0.2   -> 解空间 { x^2 + ax + b }, 2 维自由 (a,b)
     加 N 个点值约束 -> 当 N>=2 且点一般 -> a,b 唯一 -> 解空间塌成 0 维 (刚性)
+    vz:   与 poly 同 ODE, 但固定解析边条件 u'(0)=0.3 -> 解族 { x^2 + 0.3x + b }, 1 维;
+    加 N 个点值约束 -> 当 N>=1 -> b 唯一 -> 0 维 (Veneziano 唯一性情形的直接对照臂).
 
 为什么不用 u''+u=0:
     该齐次方程存在平凡解 u≡0, PINN 会坍缩到 u≈0 的真实局部极小 (实测 loss 恒为
@@ -98,6 +100,15 @@ def _anchor(kind: str):
         u_star = lambda t: torch.cos(8 * _PI * t) / C + 0.3 * t - 0.2
         f = lambda t: -torch.cos(8 * _PI * t)
         desc = "u''=-cos(8pi x), u*=cos(8pi x)/(8pi)^2+0.3x-0.2 (2 DOF, 频率同 hi 但 forcing 归一)"
+    elif kind == "vz":
+        # **Veneziano 唯一性对照臂**: 与 poly 同一 ODE (u''=2), 但额外固定 u'(0)=0.3
+        # (解析边条件), 把 2 维解族 {x^2+ax+b} 中的斜率 a 钉死 -> 解族 {x^2+0.3x+b}
+        # 只剩 1 维. 于是**一条**点值约束即可唯一确定 b -> 预期 N_c=1 (且与 w 无关).
+        # 这是原问题里"解空间 1 维(近唯一)"的直接对照: 与 poly 唯一的差别就是这个边条件,
+        # 用它检验探针能否分辨 1 维与 2 维解空间, 而不仅是"能否分辨刚性/胖".
+        u_star = lambda t: t * t + 0.3 * t - 0.2
+        f = lambda t: torch.full_like(t, 2.0)
+        desc = "u''=2, 解析边条件 u'(0)=0.3 固定, u*=x^2+0.3x-0.2, 解族 {x^2+0.3x+b} (1 DOF, Veneziano 对照)"
     elif kind == "fat":
         # **真胖对照臂**: PDE 仍为 u''=2 (解空间 {x^2+ax+b}, 2 DOF), 但 N 个点值约束
         # 全部落在同一点 x=0.5 -> 约束秩恒为 1, **不随 N 增长** -> 'a' 永远自由,
@@ -159,6 +170,23 @@ def _d2(net: MLP, t: torch.Tensor, create_graph: bool) -> torch.Tensor:
     return d2U
 
 
+def _d1(net: MLP, t: torch.Tensor, create_graph: bool) -> torch.Tensor:
+    tt = t.clone().requires_grad_(True)
+    U = net(tt)
+    return torch.autograd.grad(U, tt, torch.ones_like(U), create_graph=create_graph)[0]
+
+
+def _bc(kind: str):
+    """锚点的**解析边条件** (问题定义的一部分, 不计入 N): 返回 ``(x0, u'(x0))`` 或 None.
+
+    ``vz`` 用它把 u''=f 的 2 维解族 {u_p + ax + b} 中的斜率钉死, 使解族降为 1 维,
+    模拟 Veneziano 唯一性: 解空间 1 维, 一条点值约束即唯一. 其余锚点无此条件.
+    """
+    if kind == "vz":
+        return (0.0, 0.3)
+    return None
+
+
 # ── 单次求解 ───────────────────────────────────────────────────────────────
 def solve(kind: str, w: int, n: int, seed: int, *,
           m_colloc: int = 64, adam_steps: int = ADAM_STEPS,
@@ -177,6 +205,10 @@ def solve(kind: str, w: int, n: int, seed: int, *,
     fc = f(tc)
     fh = f(th)
 
+    # 解析边条件 (问题定义的一部分, 不计入 N): 目前仅 vz 有, 用于把解族降维到 1 维.
+    bc = _bc(kind)
+    xb = torch.tensor([[bc[0]]], dtype=torch.float64) if bc is not None else None
+
     # 残差归一尺度: "forcing" 时除以 forcing 的 RMS, 使 loss/观测量尺度无关.
     fscale = 1.0
     if res_scale == "forcing":
@@ -188,7 +220,10 @@ def solve(kind: str, w: int, n: int, seed: int, *,
         return (_d2(net, tc, True) - fc) / fscale
 
     def loss() -> torch.Tensor:
-        return res_tr().pow(2).mean() + (net(tp) - yp).pow(2).mean()
+        L = res_tr().pow(2).mean() + (net(tp) - yp).pow(2).mean()
+        if xb is not None:
+            L = L + (_d1(net, xb, True) - bc[1]).pow(2).mean()
+        return L
 
     # 阶段 1: Adam
     opt = torch.optim.Adam(net.parameters(), lr=adam_lr)
@@ -236,13 +271,18 @@ def solve(kind: str, w: int, n: int, seed: int, *,
     res_ho_v = ((_d2(net, th, False) - fh) / fscale).detach()
     v_ho_v = (net(th) - yh).detach()
 
-    v_tr = float(res_tr_v.pow(2).mean() + v_tr_v.pow(2).mean())
+    bc_viol = 0.0
+    if xb is not None:
+        bc_viol = float((_d1(net, xb, False) - bc[1]).pow(2).mean())
+
+    v_tr = float(res_tr_v.pow(2).mean() + v_tr_v.pow(2).mean()) + bc_viol
     v_ho = float(res_ho_v.pow(2).mean() + v_ho_v.pow(2).mean())
     return {
         "kind": kind, "w": w, "n": n, "seed": seed,
         "v_tr": v_tr, "v_ho": v_ho,
         "res_ho_rms": float(res_ho_v.pow(2).mean().sqrt()),
         "val_ho_rms": float(v_ho_v.pow(2).mean().sqrt()),
+        "bc_viol": bc_viol,
         "converged": converged, "res_scale": res_scale, "fscale": fscale,
     }
 
@@ -291,7 +331,7 @@ def _task(args):
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--kind", default="poly", choices=["poly", "osc", "hi", "hism", "fat"])
+    ap.add_argument("--kind", default="poly", choices=["poly", "osc", "hi", "hism", "fat", "vz"])
     ap.add_argument("--widths", type=int, nargs="+", default=[8, 16, 32, 64, 128])
     ap.add_argument("--ns", type=int, nargs="+", default=[2, 3, 4, 6, 8, 16, 32, 64])
     ap.add_argument("--seeds", type=int, default=5)
@@ -339,6 +379,7 @@ def main() -> int:
                 "v_ho_med_good": _median([r["v_ho"] for r in good]) if good else float("nan"),
                 "res_ho_rms_good": _median([r["res_ho_rms"] for r in good]) if good else float("nan"),
                 "val_ho_rms_good": _median([r["val_ho_rms"] for r in good]) if good else float("nan"),
+                "bc_viol_med": _median([r.get("bc_viol", 0.0) for r in vs]),
             })
 
     print("=" * 104)
