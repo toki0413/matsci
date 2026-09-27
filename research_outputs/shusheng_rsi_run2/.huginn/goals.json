@@ -4,10 +4,10 @@
       "id": "goal_676593a8",
       "text": "验证：神经网络的泛化行为能否作为 bootstrap 解空间刚性的探针",
       "sub_goals": [],
-      "iteration": 3,
+      "iteration": 8,
       "status": "active",
       "created_at": "2026-09-27T12:01:02.689094+00:00",
-      "updated_at": "2026-09-27T12:03:09.529708+00:00",
+      "updated_at": "2026-09-27T12:03:49.792165+00:00",
       "session_id": "",
       "metadata": {},
       "unknowns": [
@@ -50,9 +50,49 @@
           "discovered_at": "2026-09-27T12:01:06.520807+00:00",
           "resolved_at": null,
           "iteration": 1
+        },
+        {
+          "id": "unk_63ae6e31",
+          "text": "The assumption that neural network generalization behavior directly reflects bootstrap solution space rigidity may oversimplify the relationship between model capacity and theoretical constraints.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-27T12:03:26.343578+00:00",
+          "resolved_at": null,
+          "iteration": 5
+        },
+        {
+          "id": "unk_03972db8",
+          "text": "Training dynamics such as optimization path dependence or local minima could influence generalization independently of underlying structural rigidity.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-27T12:03:26.344781+00:00",
+          "resolved_at": null,
+          "iteration": 5
+        },
+        {
+          "id": "unk_e1e12074",
+          "text": "Lack of ground-truth solutions from analytical or high-fidelity methods makes it difficult to validate whether observed generalization trends truly probe rigidity.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-27T12:03:26.345433+00:00",
+          "resolved_at": null,
+          "iteration": 5
+        },
+        {
+          "id": "unk_39d84db1",
+          "text": "Boundary conditions like network width/depth extremes or noise levels might induce phase-like transitions in generalization not captured by current experimental design.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-27T12:03:26.346028+00:00",
+          "resolved_at": null,
+          "iteration": 5
+        },
+        {
+          "id": "unk_245221db",
+          "text": "The mapping between neural function spaces and bootstrap solution manifolds lacks formal justification — architectural choices may inadvertently bias the probe.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-27T12:03:26.346609+00:00",
+          "resolved_at": null,
+          "iteration": 5
         }
       ],
-      "unknowns_discovered": 5,
+      "unknowns_discovered": 10,
       "unknowns_resolved": 0,
       "objective": "验证：神经网络的泛化行为能否作为 bootstrap 解空间刚性的探针",
       "success_criteria": [
