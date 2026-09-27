@@ -179,6 +179,37 @@ def _to_py(v: Any) -> Any:
         return f"<{type(v).__name__}:{str(v)[:80]}>"
 
 
+def strip_abort_statements(code: str) -> str:
+    """删掉书生代码里的 assert 语句 (确定性去断言, 命题无关).
+
+    契约要求"把真实数值(含不理想的结果)return 出来由上层裁决, 不许 assert/raise
+    中断"; 但模型常无视 (反复出现 ``AssertionError: Anchor failed: ...`` 把整轮
+    实验打断、拿不到任何证据). assert 只在失败时中断执行, 摘除它**不改变任何数值
+    结果** —— 只是保证不理想的结果也能如实 return. 语法不合法则原样返回, 交沙箱
+    如实报语法错误走自修复; 代码里没有 assert 时零开销直返 (不做无谓 AST 往返).
+    """
+    if not code or "assert" not in code:
+        return code
+    import ast
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return code
+    if not any(isinstance(n, ast.Assert) for n in ast.walk(tree)):
+        return code
+
+    class _DropAssert(ast.NodeTransformer):
+        def visit_Assert(self, node):  # noqa: N802 — ast 访问器命名
+            return None
+
+    tree = _DropAssert().visit(tree)
+    ast.fix_missing_locations(tree)
+    try:
+        return ast.unparse(tree)
+    except Exception:  # noqa: BLE001 — 反解析失败即原样返回, 不阻塞
+        return code
+
+
 def _call_with_timeout(fn, arg: dict, timeout: float = SAFE_TIMEOUT_S):
     """超时容器: 死循环/卡死的代码不会拖死整个管线."""
     out: list = [None]
@@ -217,6 +248,7 @@ def _load_namespace(code: str, mem_cap: int = SAFE_MEM_CAP,
         make_safe_builtins,
         safe_import,
     )
+    code = strip_abort_statements(code)   # 强制"不 assert 中断"契约 (命题无关)
     ns: dict = {"__builtins__": make_safe_builtins(), "np": np}
     if imports_whitelist_extra:
         extras = set(imports_whitelist_extra)
