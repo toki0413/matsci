@@ -4,10 +4,10 @@
       "id": "goal_db3f43f5",
       "text": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。测量 N_c(w) 随 w 的趋势：\n- 不增（小容量即可零违规）→ 支持刚性（唯一性/低维）；\n- 递增（样本越多越装不下）→ 支持胖（高维/连续族）。\n\n研究对象只能是小型前馈网络本身。硬性边界：严禁把本命题替换或“换名归约”为材料、化学、玻璃、合金、离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【零违规判据·统一口径（务必遵守）】\n- 零违规 = 在未参与训练的留出约束点上，最大绝对误差 ≤ 1e-3。\n- 训练误差只需“足够小”（例如 ≤1e-4）即可，**不要额外加 train_err < 1e-6 这类过严门槛**——它会把本来可达的宽度也判成失败，制造伪“不可达”。\n- 所有报告数值必须是有限数（禁止 inf / nan / None）：某行若达不到零违规，就如实报该行真实的（有限）留出误差，不要写 inf。\n\n【第 0 步·零违规可达性 bootstrap（必须先做，否则整轮无效）】\n在测 N_c(w) 之前，先证明“零违规在本实验里是可达的”：构造一个足够容易的子问题（例如低维线性/低维唯一解约束族 + 足够宽的网络），让某个 (w, 宽度, 种子) 组合训练后对留出点达到零违规，并把这个“可达锚点”的数值（宽度、训练误差、留出误差）如实打印出来。\n- 若在最大宽度下仍无法零违规，先调优化器/起点/训练规模再重做；此时不得报 N_c(w)，也不得把“未收敛的低值”当作刚性证据。\n\n【实验设计·可复现数值实验】\n1) 真的训练网络：用 scipy.optimize.minimize(method='L-BFGS-B') 最小化训练集 MSE 去找能零违规的最小宽度；手写 numpy 梯度下降通常收敛不到 1e-3，不要用它当主优化器。\n2) 多起点：每个宽度用 ≥3 个随机起点各优化一次取最优，避免优化器落到局部极小、把可达宽度误判为不可达。\n3) 宽度扫描要留足上限，并保证扫描范围内确实存在零违规的宽度（由第 0 步保证可达）；若整段扫描全部触顶，说明实验无效，必须改约束族或提高上限后重做。\n4) 趋势判据必须区分“非增”与“递减”：全相等应报“持平(flat)”，不是 decreasing。报告必须给出真实 N_c(w) 数值表，以及每行的训练误差 / 留出误差（都是有限数）。\n5) 至少 3 个随机种子，报告 N_c(w) 的均值±标准差，并说明约束族的构造依据（低维/刚性与高维/胖各对应什么解析 ground truth）。\n\n【Code Lab 可跑性约束（脚本必须满足，否则跑不通）】\n- import numpy as np；可用 scipy.optimize（白名单内，鼓励使用）。\n- 必须提供 def run(cfg): ...，返回 {\"success\": bool, \"summary\": {...}, \"objectives\": {name: finite float}}。\n- 把网络全部参数 ravel 后 np.concatenate 成一维向量 p 交给 minimize；换宽度 h 时参数个数会变，必须按该 h 重新 reshape 切回权重矩阵再前向。\n- 随机数一律用 np.random.default_rng(seed)（不要用已被移除的 rng.randn，也不要用 rng.zeros/rng.ones——建数组用 np.zeros/np.ones）。\n- 网格/训练规模要能在沙箱超时内跑完：先用小规模跑通第 0 步，再放大到完整扫描。\n- objectives 每个值必须是有限 float；跑不通就如实报告失败与报错，绝不编造数字。\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差的数值、以及 N_c(w) 的数值与趋势。",
       "sub_goals": [],
-      "iteration": 3,
+      "iteration": 8,
       "status": "active",
       "created_at": "2026-09-27T16:51:03.479207+00:00",
-      "updated_at": "2026-09-27T16:52:26.449887+00:00",
+      "updated_at": "2026-09-27T16:58:51.606836+00:00",
       "session_id": "",
       "metadata": {},
       "unknowns": [
@@ -50,9 +50,49 @@
           "discovered_at": "2026-09-27T16:51:05.892401+00:00",
           "resolved_at": null,
           "iteration": 1
+        },
+        {
+          "id": "unk_8cb83a7f",
+          "text": "The proposed metric N_c(w) assumes that zero violation on test points implies generalization, but small networks may overfit training constraints while failing to capture true solution structure.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-27T16:57:52.757316+00:00",
+          "resolved_at": null,
+          "iteration": 5
+        },
+        {
+          "id": "unk_2082d393",
+          "text": "Finding the minimal width N_c(w) for which zero violation is achievable requires solving a non-convex optimization problem; local minima may lead to underestimated capacity needs.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-27T16:57:52.758363+00:00",
+          "resolved_at": null,
+          "iteration": 5
+        },
+        {
+          "id": "unk_902cba72",
+          "text": "No theoretical or empirical baseline exists for how N_c(w) should behave under rigidity vs. flexibility — without ground truth, trend interpretation is ambiguous.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-27T16:57:52.759021+00:00",
+          "resolved_at": null,
+          "iteration": 5
+        },
+        {
+          "id": "unk_f3481540",
+          "text": "As w increases, the constraint set may become inconsistent (no function satisfies all), causing N_c(w) to diverge artificially rather than reflect solution space geometry.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-27T16:57:52.759627+00:00",
+          "resolved_at": null,
+          "iteration": 5
+        },
+        {
+          "id": "unk_f65db586",
+          "text": "Small feedforward networks have limited representational power by design; observed trends may reflect architectural bias rather than intrinsic properties of the solution space.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-27T16:57:52.760238+00:00",
+          "resolved_at": null,
+          "iteration": 5
         }
       ],
-      "unknowns_discovered": 5,
+      "unknowns_discovered": 10,
       "unknowns_resolved": 0,
       "objective": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。测量 N_c(w) 随 w 的趋势：\n- 不增（小容量即可零违规）→ 支持刚性（唯一性/低维）；\n- 递增（样本越多越装不下）→ 支持胖（高维/连续族）。\n\n研究对象只能是小型前馈网络本身。硬性边界：严禁把本命题替换或“换名归约”为材料、化学、玻璃、合金、离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【零违规判据·统一口径（务必遵守）】\n- 零违规 = 在未参与训练的留出约束点上，最大绝对误差 ≤ 1e-3。\n- 训练误差只需“足够小”（例如 ≤1e-4）即可，**不要额外加 train_err < 1e-6 这类过严门槛**——它会把本来可达的宽度也判成失败，制造伪“不可达”。\n- 所有报告数值必须是有限数（禁止 inf / nan / None）：某行若达不到零违规，就如实报该行真实的（有限）留出误差，不要写 inf。\n\n【第 0 步·零违规可达性 bootstrap（必须先做，否则整轮无效）】\n在测 N_c(w) 之前，先证明“零违规在本实验里是可达的”：构造一个足够容易的子问题（例如低维线性/低维唯一解约束族 + 足够宽的网络），让某个 (w, 宽度, 种子) 组合训练后对留出点达到零违规，并把这个“可达锚点”的数值（宽度、训练误差、留出误差）如实打印出来。\n- 若在最大宽度下仍无法零违规，先调优化器/起点/训练规模再重做；此时不得报 N_c(w)，也不得把“未收敛的低值”当作刚性证据。\n\n【实验设计·可复现数值实验】\n1) 真的训练网络：用 scipy.optimize.minimize(method='L-BFGS-B') 最小化训练集 MSE 去找能零违规的最小宽度；手写 numpy 梯度下降通常收敛不到 1e-3，不要用它当主优化器。\n2) 多起点：每个宽度用 ≥3 个随机起点各优化一次取最优，避免优化器落到局部极小、把可达宽度误判为不可达。\n3) 宽度扫描要留足上限，并保证扫描范围内确实存在零违规的宽度（由第 0 步保证可达）；若整段扫描全部触顶，说明实验无效，必须改约束族或提高上限后重做。\n4) 趋势判据必须区分“非增”与“递减”：全相等应报“持平(flat)”，不是 decreasing。报告必须给出真实 N_c(w) 数值表，以及每行的训练误差 / 留出误差（都是有限数）。\n5) 至少 3 个随机种子，报告 N_c(w) 的均值±标准差，并说明约束族的构造依据（低维/刚性与高维/胖各对应什么解析 ground truth）。\n\n【Code Lab 可跑性约束（脚本必须满足，否则跑不通）】\n- import numpy as np；可用 scipy.optimize（白名单内，鼓励使用）。\n- 必须提供 def run(cfg): ...，返回 {\"success\": bool, \"summary\": {...}, \"objectives\": {name: finite float}}。\n- 把网络全部参数 ravel 后 np.concatenate 成一维向量 p 交给 minimize；换宽度 h 时参数个数会变，必须按该 h 重新 reshape 切回权重矩阵再前向。\n- 随机数一律用 np.random.default_rng(seed)（不要用已被移除的 rng.randn，也不要用 rng.zeros/rng.ones——建数组用 np.zeros/np.ones）。\n- 网格/训练规模要能在沙箱超时内跑完：先用小规模跑通第 0 步，再放大到完整扫描。\n- objectives 每个值必须是有限 float；跑不通就如实报告失败与报错，绝不编造数字。\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差的数值、以及 N_c(w) 的数值与趋势。",
       "success_criteria": [
