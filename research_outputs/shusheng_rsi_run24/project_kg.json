@@ -1,0 +1,100 @@
+{
+  "directed": true,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "label": "[DIM: optimization] The apparent flatness of N_c(w) for rigid families is an opt",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-27T17:48:04.775970",
+      "last_seen": "2026-09-27T17:48:04.775970",
+      "mentions": 1,
+      "iteration": 5,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family (linear), N_c(w) should remain flat or decrease as w increases (small capacity suffices). For the fat family (sinusoidal), N_c(w) should increase as w increases (more capacity nee",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: optimization] The apparent flatness of N_c(w) for rigid families is an opt"
+    },
+    {
+      "label": "plan_coder_iter5",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T17:48:04.776014",
+      "last_seen": "2026-09-27T17:48:04.776014",
+      "mentions": 1,
+      "id": "Method:plan_coder_iter5"
+    },
+    {
+      "label": "pass_iter5",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T17:48:04.776027",
+      "last_seen": "2026-09-27T17:48:04.776027",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter5"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-27T17:48:04.776037",
+      "last_seen": "2026-09-27T17:48:04.776037",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: optimization] The apparent flatness of N_c(w) for rigid families is an opt",
+        "Method:plan_coder_iter5",
+        "Fact:pass_iter5"
+      ],
+      "iteration": 5,
+      "id": "he_experiment_pipeline_f6deaeea"
+    },
+    {
+      "label": "reviewer_iter5",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-27T17:48:04.776164",
+      "last_seen": "2026-09-27T17:48:04.776164",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "66dbcecda8c2f12b",
+      "r_phys": 1.0,
+      "iteration": 5,
+      "id": "persona_use:reviewer_iter5"
+    }
+  ],
+  "links": [
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: optimization] The apparent flatness of N_c(w) for rigid families is an opt",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T17:48:04.776037",
+      "last_seen": "2026-09-27T17:48:04.776037",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_f6deaeea"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_coder_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T17:48:04.776037",
+      "last_seen": "2026-09-27T17:48:04.776037",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_f6deaeea"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T17:48:04.776037",
+      "last_seen": "2026-09-27T17:48:04.776037",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_f6deaeea"
+    }
+  ]
+}
