@@ -442,6 +442,8 @@ def main() -> int:
     ap.add_argument("--round-timeout-s", type=float, default=1800.0,
                     help="单轮实验墙钟上限(秒), 超时该轮作废并反馈给书生")
     ap.add_argument("--session", default="", help="产物文件名后缀, 避免覆盖历次循环记录")
+    ap.add_argument("--fresh", action="store_true",
+                    help="忽略既有 state 从零重跑; 默认自动续跑 (环境重置后接着上次继续)")
     ap.add_argument("--model", default=os.environ.get("INTERNLM_MODEL", "intern-s2"))
     ap.add_argument("--base", default=os.environ.get("INTERNLM_BASE_URL",
                                                      "https://chat.intern-ai.org.cn/api/v1"))
@@ -459,18 +461,67 @@ def main() -> int:
 
     recs = load_evidence()
     sigs = {_evidence_sig(r) for r in recs}
-    transcript = ["# 书生自主循环 · 逐轮记录", "",
-                  f"> 模型: 书生 `{args.model}` @ `{args.base}`",
-                  f"> 起跑时已有证据: {len(recs)} 份 JSON", ""]
-    state = {"model": args.model, "rounds": [], "started": time.time()}
-    caps = {"tasks": SOFT_TASKS, "cost": SOFT_COST, "renewals_left": MAX_RENEWALS}
-    state["caps"] = caps
-    fails: list[dict] = []   # 已失败的配置 (含原因), 回传给书生避免原样重试
-    timeout_sigs: set = set()  # 因超时作废的配置签名; 原样重试必然再超时, 直接拦截
-    t_start = time.time()
+
+    state_path = REPORT_DIR / f"loop_state{sfx}.json"
+    trans_path = REPORT_DIR / f"loop_transcript{sfx}.md"
+    resume_state = None
+    if state_path.exists() and not args.fresh:
+        try:
+            resume_state = json.loads(state_path.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001 — 坏 state 不阻断, 退回全新
+            resume_state = None
+        if isinstance(resume_state, dict) and resume_state.get("finished"):
+            resume_state = None   # 已完结的 run 不续跑
+
+    def _cfsig(cfg: dict) -> tuple:
+        return (cfg["kind"], tuple(cfg["widths"]), tuple(cfg["ns"]), cfg["seeds"],
+                cfg["adam_steps"], cfg.get("res_scale") or "none")
+
+    fails: list[dict] = []      # 已失败的配置 (含原因), 回传给书生避免原样重试
+    timeout_sigs: set = set()   # 因超时作废的配置签名; 原样重试必然再超时, 直接拦截
     verdict_text, conclusion = None, None
-    last_decision = None
-    note = ""
+
+    if resume_state is not None:
+        # ── 续跑: 从既有 state 恢复 (环境重置后接着上次, 不从 0 重来) ──
+        state = resume_state
+        caps = state.get("caps") or {"tasks": SOFT_TASKS, "cost": SOFT_COST,
+                                     "renewals_left": MAX_RENEWALS}
+        state["caps"] = caps
+        for r in state.get("rounds", []):
+            cfg = r.get("config")
+            if not cfg:
+                continue
+            if r.get("exec_error"):
+                note = r.get("exec_note") or ""
+                fails.append({**{k: cfg.get(k) for k in
+                                 ("kind", "widths", "ns", "seeds", "adam_steps", "res_scale")},
+                              "why": note})
+                if note.startswith("超时作废"):
+                    timeout_sigs.add(_cfsig(cfg))
+        # 成功配置并入 sigs, 避免续跑后重复
+        for r in state.get("rounds", []):
+            if r.get("config") and not r.get("exec_error"):
+                sigs.add(_cfsig(r["config"]))
+        rd_start = max((r.get("round", 0) for r in state.get("rounds", [])), default=0) + 1
+        t_start = state.get("started", time.time())
+        last_decision = next((r["decision"] for r in reversed(state.get("rounds", []))
+                              if r.get("decision")), None)
+        note = "（环境重置后续跑）"
+        head = trans_path.read_text(encoding="utf-8").split("\n") if trans_path.exists() else []
+        transcript = head + ["", f"--- 环境重置后续跑, 从第 {rd_start} 轮继续 ---", ""]
+        print(f"[resume] 承接 session{sfx}: 已完成 {rd_start - 1} 轮, "
+              f"caps={caps}, 续跑 from round {rd_start}", flush=True)
+    else:
+        transcript = ["# 书生自主循环 · 逐轮记录", "",
+                      f"> 模型: 书生 `{args.model}` @ `{args.base}`",
+                      f"> 起跑时已有证据: {len(recs)} 份 JSON", ""]
+        state = {"model": args.model, "rounds": [], "started": time.time()}
+        caps = {"tasks": SOFT_TASKS, "cost": SOFT_COST, "renewals_left": MAX_RENEWALS}
+        state["caps"] = caps
+        rd_start = 1
+        t_start = time.time()
+        last_decision = None
+        note = ""
 
     def _flush() -> None:
         """把当前 transcript/state 立刻落盘.
@@ -485,7 +536,7 @@ def main() -> int:
         (REPORT_DIR / f"loop_state{sfx}.json").write_text(
             json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    for rd in range(1, args.rounds + 1):
+    for rd in range(rd_start, args.rounds + 1):
         if time.time() - t_start > args.budget_s:
             note = "墙钟预算耗尽"
             break
