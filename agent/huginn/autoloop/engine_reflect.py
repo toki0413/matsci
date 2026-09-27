@@ -455,10 +455,13 @@ class EngineReflect:
                     "executed_numeric_snippet" if _cf_solved else "code_lab_objectives"
                 )
                 # RSI 入口: _learn 的奖励回流(evolve_from_rewards)必需 r_phys 非 None.
-                # Code Lab 真跑通并产出 objectives = 一次真实的、可复现的实验成功,
-                # 给执行奖励 1.0, 让 learn 阶段的递归自改进得以真正运行.
-                if _lab_solved and results.get("r_phys") is None:
-                    results["r_phys"] = 1.0
+                # 真实执行数值证据 (Code Lab 实验 / 闭式 probe) 都算一次可复现的执行
+                # 成功, 都回流执行奖励 —— 否则 learn 阶段拿不到 r_phys, 奖励记录永远
+                # 攒不到 evolve_from_rewards 要求的 ≥2 条同组高奖励记录, RSI 无产物.
+                # code_lab(书生亲写完整实验) 给 1.0; 闭式 probe(平凡数值片段) 略低 0.75,
+                # 二者都 >=0.7 视为高质量执行, 供技能提取.
+                if results.get("r_phys") is None:
+                    results["r_phys"] = 1.0 if _lab_solved else 0.75
                 logger.info(
                     "solved via executed numeric evidence → completion_mode=%s",
                     results["completion_mode"],

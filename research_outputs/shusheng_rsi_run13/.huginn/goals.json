@@ -1,0 +1,69 @@
+{
+  "goals": [
+    {
+      "id": "goal_6523b227",
+      "text": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。测量 N_c(w) 随 w 的趋势：\n- 不增（小容量即可零违规）→ 支持刚性（唯一性/低维）；\n- 递增（样本越多越装不下）→ 支持胖（高维/连续族）。\n\n研究对象只能是小型前馈网络本身。硬性边界：严禁把本命题替换或“换名归约”为材料、化学、玻璃、合金、离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【第 0 步·零违规可达性 bootstrap（必须先做，否则整轮无效）】\n在测 N_c(w) 之前，先证明“零违规在本实验里是可达的”：构造一个足够容易的子问题（例如低维线性可分/低维唯一解约束族 + 足够宽的网络 + 足够多训练步 + 合适的学习率），让某个 (w, 宽度, 种子) 组合训练后对留出点达到零违规（阈值可取留出违规 ≤1e-3 或直接判 0 个误分类点），并把这个“可达锚点”的数值（宽度、训练步、训练违规、留出违规）如实打印出来。\n- 若在最大宽度、最大训练步下仍无法零违规，说明实验设置有问题（欠训练 / 阈值太严 / 任务不可分），必须调整后重做；此时不得报 N_c(w)，更不得把“未收敛的低值”当作刚性证据。\n- 上一轮实验的失败正是：所有 w 都停在约 3.125% 违规、从未零违规，却把 N_c 报成“持平”——那是“没收敛”，不是“刚性”。这次必须显式通过第 0 步排除这一伪结果。\n\n【实验设计·可复现数值实验】\n1) 真的训练网络：用梯度下降/明确优化器迭代更新权重去寻找能零违规的最小宽度；不允许只做随机初始化后检查“随机网络是否恰好分类正确”。\n2) 宽度扫描要留足上限，并保证扫描范围内确实存在零违规的宽度（由第 0 步保证可达）；若整段扫描全部触顶，说明实验无效，必须改约束族或提高上限后重做——不得把触顶值当作 N_c(w)。\n3) 趋势判据必须区分“非增”与“递减”：全相等应报“持平(flat)”，不是 decreasing。报告必须给出真实 N_c(w) 数值表，以及每个 w 的训练违规/留出违规数值。\n4) 至少 3 个随机种子，报告 N_c(w) 的均值±标准差，并说明约束族的构造依据（低维/刚性与高维/胖各对应什么解析 ground truth）。\n\n【Code Lab 可跑性约束（脚本必须满足，否则跑不通）】\n- 只写 `import numpy as np`（及等价的科学计算白名单库），纯数值计算，禁止文件 IO / 网络 / 绘图；\n- 必须提供 `def run(cfg): ...`，返回 `{\"success\": bool, \"summary\": {...}, \"objectives\": {name: float}}`；\n- 网格/训练规模要能在沙箱超时内跑完：宽度扫描点数、训练步数、种子数的总计算量要控制住，先用小规模跑通第 0 步，再放大到完整扫描；\n- 随机数一律用 `np.random.default_rng(seed)`（不要用已被移除的 `rng.randn`）；\n- 跑不通就如实报告失败与报错，绝不编造数字。\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描/网格设置、训练与留出违规的数值、以及 N_c(w) 的数值与趋势。",
+      "sub_goals": [],
+      "iteration": 3,
+      "status": "active",
+      "created_at": "2026-09-27T15:02:46.981967+00:00",
+      "updated_at": "2026-09-27T15:04:07.409617+00:00",
+      "session_id": "",
+      "metadata": {},
+      "unknowns": [
+        {
+          "id": "unk_1346215b",
+          "text": "The assumption that network capacity (hidden layer width) is a sufficient and accurate proxy for solution space dimensionality may be oversimplified; deeper networks with fewer parameters can sometimes represent higher-dimensional manifolds than wider shallow ones, violating the N_c(w) metric’s validity.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-27T15:02:49.772565+00:00",
+          "resolved_at": null,
+          "iteration": 1
+        },
+        {
+          "id": "unk_d750a455",
+          "text": "Optimization landscapes of small feedforward networks are highly non-convex and prone to local minima; observed “zero violation” success may reflect optimization failure rather than true existence of a solution, biasing N_c(w) upward artificially.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-27T15:02:49.773680+00:00",
+          "resolved_at": null,
+          "iteration": 1
+        },
+        {
+          "id": "unk_fa63f833",
+          "text": "The distribution and geometry of constraint samples w are not specified—if they lie in a low-dimensional manifold or are linearly separable, even trivial networks may achieve zero violation, falsely suggesting rigidity regardless of actual solution space structure.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-27T15:02:49.774342+00:00",
+          "resolved_at": null,
+          "iteration": 1
+        },
+        {
+          "id": "unk_9a9a5d2c",
+          "text": "The definition of “zero violation” on out-of-sample constraints lacks precision—does it mean exact equality? Within epsilon? Under what norm? Ambiguity here could lead to misclassification of rigidity vs. fatness depending on tolerance thresholds.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-27T15:02:49.774938+00:00",
+          "resolved_at": null,
+          "iteration": 1
+        },
+        {
+          "id": "unk_93ea69c8",
+          "text": "As w increases beyond the number of network parameters, the system becomes overdetermined; however, small networks may still interpolate due to implicit regularization during training, masking true solution space dimensionality and misleading N_c(w) trends.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-27T15:02:49.775525+00:00",
+          "resolved_at": null,
+          "iteration": 1
+        }
+      ],
+      "unknowns_discovered": 5,
+      "unknowns_resolved": 0,
+      "objective": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。测量 N_c(w) 随 w 的趋势：\n- 不增（小容量即可零违规）→ 支持刚性（唯一性/低维）；\n- 递增（样本越多越装不下）→ 支持胖（高维/连续族）。\n\n研究对象只能是小型前馈网络本身。硬性边界：严禁把本命题替换或“换名归约”为材料、化学、玻璃、合金、离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【第 0 步·零违规可达性 bootstrap（必须先做，否则整轮无效）】\n在测 N_c(w) 之前，先证明“零违规在本实验里是可达的”：构造一个足够容易的子问题（例如低维线性可分/低维唯一解约束族 + 足够宽的网络 + 足够多训练步 + 合适的学习率），让某个 (w, 宽度, 种子) 组合训练后对留出点达到零违规（阈值可取留出违规 ≤1e-3 或直接判 0 个误分类点），并把这个“可达锚点”的数值（宽度、训练步、训练违规、留出违规）如实打印出来。\n- 若在最大宽度、最大训练步下仍无法零违规，说明实验设置有问题（欠训练 / 阈值太严 / 任务不可分），必须调整后重做；此时不得报 N_c(w)，更不得把“未收敛的低值”当作刚性证据。\n- 上一轮实验的失败正是：所有 w 都停在约 3.125% 违规、从未零违规，却把 N_c 报成“持平”——那是“没收敛”，不是“刚性”。这次必须显式通过第 0 步排除这一伪结果。\n\n【实验设计·可复现数值实验】\n1) 真的训练网络：用梯度下降/明确优化器迭代更新权重去寻找能零违规的最小宽度；不允许只做随机初始化后检查“随机网络是否恰好分类正确”。\n2) 宽度扫描要留足上限，并保证扫描范围内确实存在零违规的宽度（由第 0 步保证可达）；若整段扫描全部触顶，说明实验无效，必须改约束族或提高上限后重做——不得把触顶值当作 N_c(w)。\n3) 趋势判据必须区分“非增”与“递减”：全相等应报“持平(flat)”，不是 decreasing。报告必须给出真实 N_c(w) 数值表，以及每个 w 的训练违规/留出违规数值。\n4) 至少 3 个随机种子，报告 N_c(w) 的均值±标准差，并说明约束族的构造依据（低维/刚性与高维/胖各对应什么解析 ground truth）。\n\n【Code Lab 可跑性约束（脚本必须满足，否则跑不通）】\n- 只写 `import numpy as np`（及等价的科学计算白名单库），纯数值计算，禁止文件 IO / 网络 / 绘图；\n- 必须提供 `def run(cfg): ...`，返回 `{\"success\": bool, \"summary\": {...}, \"objectives\": {name: float}}`；\n- 网格/训练规模要能在沙箱超时内跑完：宽度扫描点数、训练步数、种子数的总计算量要控制住，先用小规模跑通第 0 步，再放大到完整扫描；\n- 随机数一律用 `np.random.default_rng(seed)`（不要用已被移除的 `rng.randn`）；\n- 跑不通就如实报告失败与报错，绝不编造数字。\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描/网格设置、训练与留出违规的数值、以及 N_c(w) 的数值与趋势。",
+      "success_criteria": [
+        "tests_passed"
+      ],
+      "max_iterations": 24,
+      "completed_at": null,
+      "completion_condition": null,
+      "wall_clock_budget_seconds": 0.0,
+      "started_at": "",
+      "origin": "user"
+    }
+  ]
+}
