@@ -73,8 +73,8 @@ strict_work_dir=True but allowed_work_dirs empty — path scoping inactive. Set 
 │                                                                              │
 │ 【第 0 步·零违规可达性 bootstrap（必须先做，否则整轮无效）】                 │
 │ 在测 N_c(w)                                                                  │
-│ 之前，先证明“零违规在本实验里是可达的”：构造一个足够容易的子问题（例如低维线 │
-│ 性/低维唯一解约束族 + 足够宽的网络），让某个 (w, 宽度, 种子)                 │
+│ 之前，先证明“零违规在本实验里是可达的”：构造一个足够容易的子问题（低维唯一解 │
+│ 约束族 + 足够宽的网络），让某个 (w, 宽度, 种子)                              │
 │ 组合训练后对留出点达到零违规，并把这个“可达锚点”的数值（宽度、训练误差、留出 │
 │ 误差）如实打印出来。                                                         │
 │ - 若在最大宽度下仍无法零违规，先调优化器/起点/训练规模再重做；此时不得报     │
@@ -107,6 +107,10 @@ strict_work_dir=True but allowed_work_dirs empty — path scoping inactive. Set 
 │ 源，已验证在本环境里必错。                                                   │
 │ - family 返回 dict {'X','y','Xv','yv'}：X/y 是 w 个**训练**约束点，Xv/yv     │
 │ 是**留出**约束点；X/y/Xv/yv 一律用 .reshape(-1, 1) 升成 (N,1)。              │
+│ - **标签形状硬约束**：y/yv 必须是 (N,1)。`(N,)` 与 `(N,1)` 相加会广播成      │
+│ `(N,N)`——这是个**静默伪结果**陷阱：误差会退化成常数级假值而不报错。脚手架现  │
+│ 已硬校验标签形状，非 (N,1) 直接失败。请一律先建一维数组再 `.reshape(-1,      │
+│ 1)`。                                                                        │
 │ - **留出集必须真的留出**：Xv 的输入点不能与 X                                │
 │ 的任何训练点重合（否则“留出误差”=训练误差，N_c 判据失效；脚手架会判          │
 │ trend='invalid_heldout' 并在 warnings 里报重叠比例）。Xv                     │
@@ -116,126 +120,42 @@ strict_work_dir=True but allowed_work_dirs empty — path scoping inactive. Set 
 │ - 不要用 assert / raise 中断执行：把测到的真实数值（含不理想的结果）全部     │
 │ return，由上层裁决。                                                         │
 │                                                                              │
+│ 【上一轮(run27)的伪结果诊断·本轮必须避免（这是验收硬项）】                   │
+│ run27 的两族设计是无效的，两个根因都要避免：                                 │
+│ 1) **fat 族的标签犯了广播 bug**：`y = X[:,0] +                               │
+│ rng.standard_normal((w,1))*0.0` 得到的是 (w,w) 而不是 (w,1)，导致 fat        │
+│ 的留出误差被钉在 ~0.51（其实是形状错配的假值，与网络容量无关）。→            │
+│ 本轮标签必须是货真价实的 (N,1)。                                             │
+│ 2) **rigid/fat 不是真正对立的两族**：run27 里 rigid 是 y=x²、fat 退化成      │
+│ y=x，二者都是平凡的 1 维目标，任何小网络都能拟合，无法体现“刚 vs 胖”的差别。 │
+│    本轮要求给出**真正互斥的解析 ground truth**：                             │
+│    - rigid =                                                                 │
+│ 低维/唯一解族：有限样本足以确定函数，小容量网络可以对**留出点**零违规；      │
+│    - fat = 高维/连续族：有限 w                                               │
+│ 个样本在**留出点**上留下真实歧义（例如目标含远多于 w                         │
+│ 个独立自由度/高频成分），使得**扫描范围内没有任何宽度**能在留出点零违规——这  │
+│ 不是 bug，而是“胖”的真实签名；若你构造的 fat 在小宽度就能零违规，说明 fat    │
+│ 族太容易被拟合，构造不当，需重做。                                           │
+│    报告必须同时给出 rigid 与 fat 两族的 N_c(w)（fat 允许全为                 │
+│ None，但要如实、明确地说明“扫描上限 h=64                                     │
+│ 内不可达”，并给出其有限留出误差数值）。                                      │
+│                                                                              │
+│ 【报告纪律（硬项）】                                                         │
+│ - 报告里每一条结论都必须能被 objectives / N_c                                │
+│ 表里的真实数值支持；**禁止**把与数值矛盾的趋势写成结论（run27 把真实为 2,2,8 │
+│ 的 rigid N_c 报成了“flat at 2”）。                                           │
+│ -                                                                            │
+│ 训练误差列与留出误差列必须是各自独立测得的真实数值，**不得**把留出误差原样复 │
+│ 制到训练误差列。                                                             │
+│ - 报告正文不得引入材料/化学/晶界等类比框架；研究对象限定为小型前馈网络本身。 │
+│                                                                              │
 │ 所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差的数值 │
 │ 、以及 N_c(w) 的数值与趋势。                                                 │
 │ Max iterations: 24                                                           │
 ╰──────────────────────────────────────────────────────────────────────────────╯
 [cache-debug] model=Intern-S2-Preview-35B stats_keys=['model_provider', 'finish_reason', 'model_name']
 FTS5 stale: MATCH 'runid' = 0, rebuilding index
-metacog: 假设可能为换名归约 (trap=, target=将'解空间刚性'这一数学/机器学习概念直接替换为材料科学中的'defect'（缺陷）术语，未建立两者之间的数学映射或物理机制联系。): [DIM: defect]
-plan_check failed (tier=medium, scene=workflow, max_refines=0): The plan describes a numerical optimization procedure (capacity_scan with L-BFGS-B) to analyze the dimensionality of a constraint family, but the hypothesis [DIM: defect] in materials science typically refers to identifying, characterizing, or modeling point/line/surface defects in materials (e.g., vacancies, dislocations, grain boundaries). The described plan appears to be a machine learning or constraint satisfaction analysis unrelated to defect characterization. There is a fundamental mismatch between the hypothesis (defect analysis) and the proposed methodology (constraint family capacity analysis).
-[exec-route] mode='skill' desc[:80]='Execute the capacity_scan skill for the [DIM: defect] hypothesis by implementing' obj_len=1992 is_exp_desc=True is_exp_obj=True is_det_desc=False
-[code-lab-author] raw_len=745 extracted_len=730 prompt_len=4154
+metacog: 假设可能为换名归约 (trap=, target=线性约束系统的代数刚性): [DIM: structure] The solution space of a linear constraint system is uniquely rigid (dimension 0), s
+[exec-route] mode='coder' desc[:80]='Implement the rigid constraint family function for the numerical experiment. The' obj_len=2999 is_exp_desc=True is_exp_obj=True is_det_desc=True
+[code-lab-author] raw_len=775 extracted_len=760 prompt_len=5355
 [code-lab-run] res_none=False success=True nobj=36 reason=''
-[validate] mode='code_lab' success=True nobj=36 cf=False lab=True
-FTS5 stale: MATCH 'runid' = 0, rebuilding index
-metacog: 假设可能为换名归约 (trap=, target=材料科学中的晶界位移场刚性（几何锁定导致低维流形）): [DIM: structure] The solution space for atomic displacement fields near a grain boundary exhibits a 
-[exec-route] mode='explore' desc[:80]='[auto-routed: surprise=1.00] Execute the capacity_scan composite skill to test t' obj_len=1992 is_exp_desc=True is_exp_obj=True is_det_desc=False
-[code-lab-author] raw_len=643 extracted_len=628 prompt_len=4154
-[code-lab-run] res_none=False success=True nobj=36 reason=''
-[validate] mode='code_lab' success=True nobj=36 cf=False lab=True
-FTS5 stale: MATCH 'runid' = 0, rebuilding index
-metacog: 假设可能为换名归约 (trap=, target=原命题中的'解空间刚性'（解空间的维数/唯一性）被直接重命名为'Mathematical Structure of Constraints'（约束结构的数学结构），但并未提供新的物理机制或数学推导来解释为什么小型前馈网络的泛化行为（通过 N_c(w) 趋势衡量）能够作为该刚性的探针。): ** [DIM: Mathematical Structure of Constraints]
-plan_check failed (tier=medium, scene=md, max_refines=0): The plan is described as 'explore' but lacks the critical component of being executable. The user explicitly warned in the 'Known Failure Patterns' that the current plan does not contain a directly runnable numerical script. It describes methodology (scipy.optimize.minimize, L-BFGS-B, multi-seed) but provides no actual code, formulas, or implementation details to run. Without a concrete Python snippet to execute, the hypothesis cannot be validated numerically, and the plan remains theoretical rather than actionable.
-[exec-route] mode='explore' desc[:80]='The hypothesis tests whether network capacity N_c(w) trends flat (rigid solution' obj_len=1992 is_exp_desc=True is_exp_obj=True is_det_desc=False
-[code-lab-author] raw_len=688 extracted_len=673 prompt_len=4154
-[code-lab-run] res_none=False success=True nobj=36 reason=''
-error in _parse_verify_score: JSON parse failed, falling back to regex
-Traceback (most recent call last):
-  File "/workspace/agent/huginn/autoloop/engine_reflect.py", line 2259, in _parse_verify_score
-    data = json.loads(resp.strip())
-  File "/root/.pyenv/versions/3.14.7/lib/python3.14/json/__init__.py", line 352, in loads
-    return _default_decoder.decode(s)
-           ~~~~~~~~~~~~~~~~~~~~~~~^^^
-  File "/root/.pyenv/versions/3.14.7/lib/python3.14/json/decoder.py", line 345, in decode
-    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
-               ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
-  File "/root/.pyenv/versions/3.14.7/lib/python3.14/json/decoder.py", line 363, in raw_decode
-    raise JSONDecodeError("Expecting value", s, err.value) from None
-json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
-[validate] mode='code_lab' success=True nobj=36 cf=False lab=True
-FTS5 stale: MATCH 'runid' = 0, rebuilding index
-metacog: 假设可能为换名归约 (trap=, target=小型前馈网络容量 N_c(w) 随样本数 w 的变化趋势与解空间刚性（低维/唯一 vs 高维/连续族）之间的等价映射): ".
-plan_check failed low-conf (tier=medium, scene=md, conf=0.10): Plan is described as 'explore' but lacks a critical executable component. It describes methodology (scipy.optimize.minimize, L-BFGS-B, constraint families) but provides no actual Python code, formulas, or implementation details to run. Without a concrete runnable snippet, the hypothesis cannot be validated numerically, and the plan remains theoretical. This directly matches the 'Known Failure Patterns' and 'Historical Failures' warnings about missing executable numerical scripts.
-[exec-route] mode='explore' desc[:80]='[auto-routed: surprise=1.00] Implement the family function that generates rigid ' obj_len=1992 is_exp_desc=True is_exp_obj=True is_det_desc=False
-[code-lab-author] raw_len=685 extracted_len=670 prompt_len=4154
-[code-lab-run] res_none=False success=True nobj=36 reason=''
-error in _parse_verify_score: JSON parse failed, falling back to regex
-Traceback (most recent call last):
-  File "/workspace/agent/huginn/autoloop/engine_reflect.py", line 2259, in _parse_verify_score
-    data = json.loads(resp.strip())
-  File "/root/.pyenv/versions/3.14.7/lib/python3.14/json/__init__.py", line 352, in loads
-    return _default_decoder.decode(s)
-           ~~~~~~~~~~~~~~~~~~~~~~~^^^
-  File "/root/.pyenv/versions/3.14.7/lib/python3.14/json/decoder.py", line 345, in decode
-    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
-               ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
-  File "/root/.pyenv/versions/3.14.7/lib/python3.14/json/decoder.py", line 363, in raw_decode
-    raise JSONDecodeError("Expecting value", s, err.value) from None
-json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
-[validate] mode='code_lab' success=True nobj=36 cf=False lab=True
-FTS5 stale: MATCH 'runid' = 0, rebuilding index
-metacog: 假设可能为换名归约 (trap=, target=材料科学中的晶界位移场刚性问题): [DIM: structure] The solution space for atomic displacement fields near a grain boundary exhibits a 
-plan_check failed low-conf (tier=medium, scene=other, conf=0.20): The plan describes a high-level theoretical exploration (MODE: explore) but lacks executable code or specific numerical methods. It references undefined frameworks ('capacity_scan', 'N_c(w) trends') without implementation details. The hypothesis requires measuring dimensionality reduction in atomic displacement fields, but the plan proposes a generic ML capacity scan without connecting it to grain boundary physics or displacement field analysis. This mirrors the 'low emergent complexity' failure mode where no concrete computation is provided.
-[exec-route] mode='explore' desc[:80]='The hypothesis involves a mathematical structure (dimensionality of solution spa' obj_len=1992 is_exp_desc=True is_exp_obj=True is_det_desc=True
-[code-lab-author] raw_len=715 extracted_len=700 prompt_len=4154
-[code-lab-run] res_none=False success=True nobj=36 reason=''
-error in _parse_verify_score: JSON parse failed, falling back to regex
-Traceback (most recent call last):
-  File "/workspace/agent/huginn/autoloop/engine_reflect.py", line 2259, in _parse_verify_score
-    data = json.loads(resp.strip())
-  File "/root/.pyenv/versions/3.14.7/lib/python3.14/json/__init__.py", line 352, in loads
-    return _default_decoder.decode(s)
-           ~~~~~~~~~~~~~~~~~~~~~~~^^^
-  File "/root/.pyenv/versions/3.14.7/lib/python3.14/json/decoder.py", line 345, in decode
-    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
-               ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
-  File "/root/.pyenv/versions/3.14.7/lib/python3.14/json/decoder.py", line 363, in raw_decode
-    raise JSONDecodeError("Expecting value", s, err.value) from None
-json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
-[validate] mode='code_lab' success=True nobj=36 cf=False lab=True
-G31: trajectory has 0 tool_calls for non-query objective '【研究命题·纯机器学习/数学】
-
-解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。
-
-核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空' — autoloop may be空转 (audit 06 F1)
-╭─────────────────────────────────── Result ───────────────────────────────────╮
-│ Loop Complete                                                                │
-│ Run ID: loop_a1dcffbf                                                        │
-│ Success: Yes                                                                 │
-│ Total time: 395.8s                                                           │
-│ Report:                                                                      │
-│ /workspace/research_outputs/shusheng_rsi_run27/huginn_autoloop_report_loop_7 │
-│ 6380490.md                                                                   │
-│ Snapshot:                                                                    │
-│ /workspace/research_outputs/shusheng_rsi_run27/.huginn/autoloop_results/ba9e │
-│ 9cd2.json                                                                    │
-╰──────────────────────────────────────────────────────────────────────────────╯
-
-Phase Summary:
-  completed    hypothesize     (14.3s)
-  completed    plan            (5.8s)
-  completed    execute         (26.0s)
-  completed    validate        (8.5s)
-  completed    learn           (3.4s)
-  completed    hypothesize     (8.5s)
-  completed    plan            (2.9s)
-  completed    execute         (19.8s)
-  completed    validate        (9.8s)
-  completed    learn           (4.1s)
-  completed    hypothesize     (14.1s)
-  completed    plan            (6.6s)
-  completed    execute         (26.7s)
-  completed    validate        (11.5s)
-  completed    learn           (2.5s)
-  completed    hypothesize     (63.5s)
-  completed    plan            (5.5s)
-  completed    execute         (17.1s)
-  completed    validate        (9.1s)
-  completed    learn           (4.5s)
-  completed    hypothesize     (8.1s)
-  completed    plan            (6.0s)
-  completed    execute         (12.6s)
-  completed    validate        (8.6s)
-  completed    report          (9.2s)
-⠴ Running autonomous loop...

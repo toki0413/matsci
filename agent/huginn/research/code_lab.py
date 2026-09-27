@@ -82,6 +82,10 @@ ARRAY_SHAPE_HINT = (
     "- 随机数: rng = np.random.default_rng(seed); 用 rng.standard_normal(n)/rng.uniform(...)"
     "(Generator **没有** randn/rand/random_sample)。\n"
     "- 建数组只用 np.zeros/np.ones/np.full/np.eye/np.array/np.linspace。\n"
+    "- **广播陷阱**: (N,) 与 (N,1) 相加会变成 (N,N)! 例如 "
+    "`X[:,0] + rng.standard_normal((w,1))` 得到 (w,w) 而非 (w,1)。"
+    "标签务必写成 (N,1): 先 `x = <一维数组>` 再 `x.reshape(-1, 1)`, 不要拿 (N,) 与 (N,1) 混算。"
+    "脚手架会检查标签形状, 非 (N,1) 直接报错。\n"
     "- 不要在 family 里做任何矩阵乘/训练; 只负责返回约束点数据。\n"
 )
 
@@ -173,6 +177,33 @@ def _overlap_fraction(X, Xv):
     return float(hit) / float(Xv.shape[0])
 
 
+def _check_label_shapes(X, y, Xv, yv, kind, w):
+    """标签形状守卫: y/yv 必须是 (N,1), 行数分别匹配 X/Xv.
+
+    捕获最常见的**静默伪结果**来源 —— 广播 bug. 例如
+    ``X[:, 0] + rng.standard_normal((w, 1)) * 0.0``: 左边 (w,) 与右边 (w,1)
+    相加会广播成 (w,w) 而非 (w,1). 这种 y 与 (N,1) 预测再广播成 (N,N), 使
+    "误差"退化成常数级伪值(如 ~0.5), 却**不抛任何异常**, 直接污染整张 N_c 表
+    (run27 的 fat 臂 heldout≈0.51 恒不变, 正是此坑). 故在此显式抬高错误,
+    让上层修复循环把精确形状问题回灌给作者, 而不是产出伪证据.
+    """
+    import numpy as np
+
+    for nm, xx, yy in (("y", X, y), ("yv", Xv, yv)):
+        if yy.ndim != 2 or yy.shape[1] != 1:
+            raise ValueError(
+                "%s w=%d: 标签 %s 形状应为 (N,1), 实为 %s —— 多半是广播 bug "
+                "( (N,) 与 (N,1) 相加会变成 (N,N) ); 请用 .reshape(-1, 1) 逐列构造标签."
+                % (kind, int(w), nm, tuple(yy.shape))
+            )
+        if yy.shape[0] != xx.shape[0]:
+            raise ValueError(
+                "%s w=%d: 标签 %s 行数 %d 与输入 %s 行数 %d 不一致."
+                % (kind, int(w), nm, yy.shape[0],
+                   "X" if nm == "y" else "Xv", xx.shape[0])
+            )
+
+
 def capacity_scan(family, kinds=("rigid", "fat"), ws=(5, 10, 20),
                   widths=(2, 4, 8, 16, 32, 64), seeds=3,
                   tr_tol=3e-4, ho_tol=1e-3, seed=0):
@@ -216,7 +247,9 @@ def capacity_scan(family, kinds=("rigid", "fat"), ws=(5, 10, 20),
             yv = out[3] if len(out) > 3 else y
         else:
             raise ValueError("family 须返回 dict(X,y,Xv,yv) 或 (X,y[,Xv,yv])")
-        return _as_2d(X), _as_2d(y), _as_2d(Xv), _as_2d(yv)
+        X, y, Xv, yv = _as_2d(X), _as_2d(y), _as_2d(Xv), _as_2d(yv)
+        _check_label_shapes(X, y, Xv, yv, kind, w)
+        return X, y, Xv, yv
 
     summary = {"rows": {}, "Nc": {}, "trend": {}, "anchor": None,
                "heldout_overlap": {}, "warnings": []}
