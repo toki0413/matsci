@@ -98,3 +98,7 @@ FTS5 stale: MATCH 'runid' = 0, rebuilding index
 FTS5 stale: MATCH 'runid' = 0, rebuilding index
 FTS5 stale: MATCH 'runid' = 0, rebuilding index
 metacog: 假设可能为换名归约 (trap=, target=原始问题中关于小型前馈网络泛化行为作为解空间刚性探针的命题，即通过测量 N_c(w) 随样本数 w 的趋势来判断解空间是刚性（低维/唯一）还是胖（高维/连续族）。): [DIM: structure] The solution space of small feedforward networks interpolating analytic constraints
+FTS5 stale: MATCH 'runid' = 0, rebuilding index
+FTS5 stale: MATCH 'runid' = 0, rebuilding index
+FTS5 stale: MATCH 'runid' = 0, rebuilding index
+metacog: 假设可能为换名归约 (trap=, target=将'解空间刚性'的数学定义替换为'容量曲线相变'的术语，但未提供真实数值实验证据): [DIM: structure] The capacity curve $N_c(w)$ exhibits a phase transition at a critical sample width 
