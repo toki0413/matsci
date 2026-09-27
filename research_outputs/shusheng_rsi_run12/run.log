@@ -47,7 +47,7 @@ Tool huginn.tools.bench_infra.plot_tool registered but its deps are missing — 
 Tool huginn.tools.bench_infra.c2st_tool registered but its deps are missing — capability degraded: sklearn
 FTS5 stale: MATCH 'runid' = 0, rebuilding index
 strict_work_dir=True but allowed_work_dirs empty — path scoping inactive. Set allowed_work_dirs or HUGINN_WORKSPACE to enable.
-Created goal: goal_b3b96a7b
+Created goal: goal_3bff7e81
   criteria: ['tests_passed']
 ╭────────────────────────────────── Starting ──────────────────────────────────╮
 │ Autoloop                                                                     │
@@ -56,60 +56,38 @@ Created goal: goal_b3b96a7b
 │ 解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = │
 │ 胖。                                                                         │
 │                                                                              │
-│ 核心问题：神经网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？          │
-│ 具体地，在给定一族抽象约束下，令 w = 约束样本数，N_c(w) =                    │
+│ 核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？      │
+│ 令 w = 约束样本数，N_c(w) =                                                  │
 │ 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量） │
-│ 。请测量 N_c(w) 随 w 的变化趋势：                                            │
-│ - 若 N_c(w) 随 w 增大而不增（小容量即可零违规）→                             │
-│ 支持解空间刚性（唯一性/低维）。                                              │
-│ - 若 N_c(w) 随 w 增大而增大（样本越多越装不下）→                             │
-│ 支持解空间胖（高维/连续族）。                                                │
+│ 。测量 N_c(w) 随 w 的趋势：                                                  │
+│ - 不增（小容量即可零违规）→ 支持刚性（唯一性/低维）；                        │
+│ - 递增（样本越多越装不下）→ 支持胖（高维/连续族）。                          │
 │                                                                              │
-│ 研究对象只能是小型前馈神经网络本身。硬性边界：严禁把本命题替换或“换名归约”为 │
-│ 材料、化学、玻璃、合金、离子导电等任何物理体系；也不要用别的领域类比来回答。 │
+│ 研究对象只能是小型前馈网络本身。硬性边界：严禁把本命题替换或“换名归约”为材料 │
+│ 、化学、玻璃、合金、离子导电等任何物理体系，也不要用别的领域类比回答。       │
+│                                                                              │
+│ 【验收要求（必须逐条满足，否则该轮实验无效）】                               │
+│ 1)                                                                           │
+│ 真的训练网络：用梯度下降/明确优化器迭代更新权重去寻找能零违规的最小宽度；不  │
+│ 允许只做随机初始化后检查“随机网络是否恰好分类正确”（那测的是随机中奖率，不是 │
+│ 容量）。                                                                     │
+│ 2) 宽度扫描要留足上限且保证范围内能找到零违规；若整段扫描全部触顶（例如所有  │
+│ w                                                                            │
+│ 都取到上限值），说明实验无效，必须改约束族或提高上限后重做——不得把“触顶值”当 │
+│ 作 N_c(w)。                                                                  │
+│ 3) 趋势判据必须区分“非增”与“递减”：全相等应报“持平(flat)”，不是              │
+│ decreasing。报告必须给出真实 N_c(w) 数值表，以及每个 w                       │
+│ 的训练违规/留出违规数值。                                                    │
+│ 4) 至少 3 个随机种子，报告 N_c(w)                                            │
+│ 的均值±标准差，并说明约束族的构造依据（低维/刚性与高维/胖各对应什么解析      │
+│ ground truth）。                                                             │
+│                                                                              │
 │ 所有结论必须来自真实运行的可复现数值实验：给出扫描/网格设置、训练与留出违规  │
 │ 的数值、以及 N_c(w)                                                          │
-│ 的数值与趋势。实验脚本必须能真实跑通；若跑不通，如实报告失败与报错，绝不编造 │
-│ 数字。                                                                       │
-│ Max iterations: 10                                                           │
+│ 的数值与趋势。脚本必须能真实跑通；跑不通就如实报告失败与报错，绝不编造数字。 │
+│ Max iterations: 14                                                           │
 ╰──────────────────────────────────────────────────────────────────────────────╯
 [cache-debug] model=Intern-S2-Preview-35B stats_keys=['model_provider', 'finish_reason', 'model_name']
 empty required_results for target_1 — fallback
 FTS5 stale: MATCH 'runid' = 0, rebuilding index
-metacog: 假设可能为换名归约 (trap=, target=将'解空间刚性'这一抽象数学概念，通过'神经网络容量随样本数变化'这一具体指标进行重新表述。): ".
-FTS5 stale: MATCH 'runid' = 0, rebuilding index
-FTS5 stale: MATCH 'runid' = 0, rebuilding index
-FTS5 stale: MATCH 'runid' = 0, rebuilding index
-metacog: 假设可能为换名归约 (trap=, target=原始问题中关于解空间刚性（低维/唯一）与胖（高维/连续族）的定义及通过 N_c(w) 趋势进行判定的核心逻辑。): [DIM: STRUCTURE] If the constraint manifold has low intrinsic dimensionality, N_c(w) will remain con
-FTS5 stale: MATCH 'runid' = 0, rebuilding index
-FTS5 stale: MATCH 'runid' = 0, rebuilding index
-G31: trajectory has 0 tool_calls for non-query objective '【研究命题·纯机器学习/数学】
-
-解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。
-
-核心问题：神经网络的“泛化行为”能否作为 bootstrap 解空间刚' — autoloop may be空转 (audit 06 F1)
-╭─────────────────────────────────── Result ───────────────────────────────────╮
-│ Loop Complete                                                                │
-│ Run ID: loop_733fe3d3                                                        │
-│ Success: Yes                                                                 │
-│ Total time: 183.4s                                                           │
-│ Report:                                                                      │
-│ /workspace/research_outputs/shusheng_rsi_run11/huginn_autoloop_report_loop_9 │
-│ ffecb08.md                                                                   │
-│ Snapshot:                                                                    │
-│ /workspace/research_outputs/shusheng_rsi_run11/.huginn/autoloop_results/7a38 │
-│ be14.json                                                                    │
-╰──────────────────────────────────────────────────────────────────────────────╯
-
-Phase Summary:
-  completed    hypothesize     (55.0s)
-  completed    plan            (3.2s)
-  completed    execute         (9.9s)
-  completed    validate        (8.2s)
-  completed    learn           (4.4s)
-  completed    hypothesize     (11.8s)
-  completed    plan            (3.0s)
-  completed    execute         (4.1s)
-  completed    validate        (9.1s)
-  completed    report          (8.1s)
-⠏ Running autonomous loop...
+metacog: 假设可能为换名归约 (trap=, target=原始问题中关于小型前馈网络解空间刚性（低维/唯一）与泛化行为（胖/高维）的实证检验命题。): [DIM: structure] The dimension of the solution space for small feedforward networks interpolating an
