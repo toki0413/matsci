@@ -371,6 +371,20 @@ class EngineAct:
         """Execute the plan using the appropriate sub-engine."""
         mode = plan.get("mode", "coder")
         description = plan.get("description", "")
+        import os as _osd
+        if _osd.environ.get("HUGINN_EXEC_ROUTE_DEBUG"):
+            try:
+                _obj = str(getattr(self, "_objective", "") or "")
+                logger.warning(
+                    "[exec-route] mode=%r desc[:80]=%r obj_len=%d "
+                    "is_exp_desc=%s is_exp_obj=%s is_det_desc=%s",
+                    mode, (description or "")[:80], len(_obj),
+                    self._is_code_experiment(description),
+                    self._is_code_experiment(_obj),
+                    self._is_deterministic_numeric(description),
+                )
+            except Exception:
+                pass
 
         # 方案1·攻 execute (2026-09-11 A线根因后半段 + 平衡点落地):
         # ① plan 已带"可运行数值脚本片段" → 直接真实执行成证据;

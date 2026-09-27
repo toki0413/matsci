@@ -66,6 +66,70 @@
       "r_phys": 1.0,
       "iteration": 5,
       "id": "persona_use:dft_expert_iter5"
+    },
+    {
+      "label": "[DIM: topological] The solution space exhibits a phase transition at $w \\approx ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-27T17:27:17.783677",
+      "last_seen": "2026-09-27T17:27:17.783677",
+      "mentions": 1,
+      "iteration": 10,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid (linear) family, N_c(w) will remain constant or flat as w increases, indicating low-dimensional solution space. For the fat (nonlinear) family, N_c(w) will increase with w, indicating hi",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: topological] The solution space exhibits a phase transition at $w \\approx"
+    },
+    {
+      "label": "plan_explore_iter10",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T17:27:17.783715",
+      "last_seen": "2026-09-27T17:27:17.783715",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter10"
+    },
+    {
+      "label": "pass_iter10",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T17:27:17.783724",
+      "last_seen": "2026-09-27T17:27:17.783724",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter10"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-27T17:27:17.783733",
+      "last_seen": "2026-09-27T17:27:17.783733",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: topological] The solution space exhibits a phase transition at $w \\approx",
+        "Method:plan_explore_iter10",
+        "Fact:pass_iter10"
+      ],
+      "iteration": 10,
+      "id": "he_experiment_pipeline_f4adc5c6"
+    },
+    {
+      "label": "reviewer_iter10",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-27T17:27:17.783825",
+      "last_seen": "2026-09-27T17:27:17.783825",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "35bd6fd823d4ad04",
+      "r_phys": 1.0,
+      "iteration": 10,
+      "id": "persona_use:reviewer_iter10"
     }
   ],
   "links": [
@@ -95,6 +159,33 @@
       "last_seen": "2026-09-27T17:26:09.095375",
       "mentions": 1,
       "target": "he_experiment_pipeline_e2efd497"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: topological] The solution space exhibits a phase transition at $w \\approx",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T17:27:17.783733",
+      "last_seen": "2026-09-27T17:27:17.783733",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_f4adc5c6"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T17:27:17.783733",
+      "last_seen": "2026-09-27T17:27:17.783733",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_f4adc5c6"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T17:27:17.783733",
+      "last_seen": "2026-09-27T17:27:17.783733",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_f4adc5c6"
     }
   ]
 }
