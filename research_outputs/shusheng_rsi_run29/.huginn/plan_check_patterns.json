@@ -1,0 +1,14 @@
+[
+  {
+    "scene_tag": "other",
+    "reason": "The plan fundamentally misinterprets the hypothesis. The hypothesis posits that N_c(w) will INCREASE as the solution space becomes a topological bottleneck (narrower geometry causing resolution failure). The plan predicts N_c(w) will remain FLAT, which directly contradicts the hypothesis mechanism. Furthermore, the plan uses a trivial linear constraint (y=x) which lacks the geometric complexity required to test a 'topological bottleneck'.",
+    "missing_steps": [
+      "Correct the prediction: N_c(w) should increase with w, not remain flat.",
+      "Define the rigid family constraint with sufficient geometric complexity to create a bottleneck (e.g., a thin manifold or narrow channel), not a simple 1D subspace.",
+      "Verify the mechanism: The hypothesis claims N_c increases due to the network's inability to resolve thin geometry, not due to fundamental DoF changes. The plan must demonstrate this resolution failure.",
+      "Address the 'hidden_assumption' failure mode from history: Ensure the model is not just fitting training points but capturing the true function structure."
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the rigid family constraint function for the numerical experiment. The hypothesis concerns a linear constraint family creating a topological bottleneck, so we de"
+  }
+]
