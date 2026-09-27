@@ -72,13 +72,16 @@ strict_work_dir=True but allowed_work_dirs empty — path scoping inactive. Set 
 │ None）：某行若达不到零违规，就如实报该行真实的（有限）留出误差，不要写 inf。 │
 │                                                                              │
 │ 【第 0 步·零违规可达性 bootstrap（必须先做，否则整轮无效）】                 │
-│ 在测 N_c(w)                                                                  │
-│ 之前，先证明“零违规在本实验里是可达的”：构造一个足够容易的子问题（低维唯一解 │
-│ 约束族 + 足够宽的网络），让某个 (w, 宽度, 种子)                              │
+│ 在测 N_c(w) 之前，先证明“零违规在本实验里是可达的”：让某个 (w, 宽度, 种子)   │
 │ 组合训练后对留出点达到零违规，并把这个“可达锚点”的数值（宽度、训练误差、留出 │
 │ 误差）如实打印出来。                                                         │
 │ - 若在最大宽度下仍无法零违规，先调优化器/起点/训练规模再重做；此时不得报     │
 │ N_c(w)，也不得把“未收敛的低值”当作刚性证据。                                 │
+│ - **阈值标定（防噪底抖动）**：若留出误差的达标水平恰好压在 1e-3              │
+│ 判据附近（不同宽度在 1e-3 两侧来回跳），说明 N_c                             │
+│ 是被优化器噪底而非真容量决定的。此时应把“零违规”阈值按 anchor                │
+│ 可达误差标定（例如 ho_tol = max(1e-3,                                        │
+│ 3×anchor_heldout)），并交代所用阈值；否则 N_c(w) 的抖动不构成任何趋势证据。  │
 │                                                                              │
 │ 【实验设计·可复现数值实验】                                                  │
 │ 1) 真的训练网络：用 scipy.optimize.minimize(method='L-BFGS-B') 最小化训练集  │
@@ -98,7 +101,8 @@ strict_work_dir=True but allowed_work_dirs empty — path scoping inactive. Set 
 │                                                                              │
 │ 【Code Lab 脚本契约（脚本必须满足，否则跑不通）】                            │
 │ - 沙箱**已内置完整数值管线** capacity_scan(family, ...)：训练（两层 tanh +   │
-│ L-BFGS-B 多起点）/宽度扫描/零违规判据/N_c 汇总 都由它完成。                  │
+│ L-BFGS-B 多起点）/宽度扫描/零违规判据/N_c 汇总 都由它完成；也可传入          │
+│ ho_tol/tr_tol 覆盖默认阈值。                                                 │
 │ - 你**只需实现 family(kind, w, seed) 这一个函数**（定义 rigid/fat            │
 │ 各自的约束族数据，这是真正需要你决策的科学部分），run(cfg) 原样 `return      │
 │ capacity_scan(family, seed=...)`。                                           │
@@ -108,46 +112,37 @@ strict_work_dir=True but allowed_work_dirs empty — path scoping inactive. Set 
 │ - family 返回 dict {'X','y','Xv','yv'}：X/y 是 w 个**训练**约束点，Xv/yv     │
 │ 是**留出**约束点；X/y/Xv/yv 一律用 .reshape(-1, 1) 升成 (N,1)。              │
 │ - **标签形状硬约束**：y/yv 必须是 (N,1)。`(N,)` 与 `(N,1)` 相加会广播成      │
-│ `(N,N)`——这是个**静默伪结果**陷阱：误差会退化成常数级假值而不报错。脚手架现  │
-│ 已硬校验标签形状，非 (N,1) 直接失败。请一律先建一维数组再 `.reshape(-1,      │
-│ 1)`。                                                                        │
+│ `(N,N)`——这是**静默伪结果**陷阱，误差会退化成常数级假值而不报错。脚手架已硬  │
+│ 校验标签形状，非 (N,1) 直接失败。请一律先建一维数组再 `.reshape(-1, 1)`。    │
 │ - **留出集必须真的留出**：Xv 的输入点不能与 X                                │
 │ 的任何训练点重合（否则“留出误差”=训练误差，N_c 判据失效；脚手架会判          │
 │ trend='invalid_heldout' 并在 warnings 里报重叠比例）。Xv                     │
-│ 请用不同的网格或不同采样点。                                                 │
+│ 请用不同的网格或不同采样点（注意别用同一区间上含端点重合的网格）。           │
 │ - 随机数用 rng = np.random.default_rng(seed)；Generator **没有** randn，用   │
 │ rng.standard_normal(n)。                                                     │
 │ - 不要用 assert / raise 中断执行：把测到的真实数值（含不理想的结果）全部     │
 │ return，由上层裁决。                                                         │
 │                                                                              │
-│ 【上一轮(run27)的伪结果诊断·本轮必须避免（这是验收硬项）】                   │
-│ run27 的两族设计是无效的，两个根因都要避免：                                 │
-│ 1) **fat 族的标签犯了广播 bug**：`y = X[:,0] +                               │
-│ rng.standard_normal((w,1))*0.0` 得到的是 (w,w) 而不是 (w,1)，导致 fat        │
-│ 的留出误差被钉在 ~0.51（其实是形状错配的假值，与网络容量无关）。→            │
-│ 本轮标签必须是货真价实的 (N,1)。                                             │
-│ 2) **rigid/fat 不是真正对立的两族**：run27 里 rigid 是 y=x²、fat 退化成      │
-│ y=x，二者都是平凡的 1 维目标，任何小网络都能拟合，无法体现“刚 vs 胖”的差别。 │
-│    本轮要求给出**真正互斥的解析 ground truth**：                             │
-│    - rigid =                                                                 │
-│ 低维/唯一解族：有限样本足以确定函数，小容量网络可以对**留出点**零违规；      │
-│    - fat = 高维/连续族：有限 w                                               │
-│ 个样本在**留出点**上留下真实歧义（例如目标含远多于 w                         │
-│ 个独立自由度/高频成分），使得**扫描范围内没有任何宽度**能在留出点零违规——这  │
-│ 不是 bug，而是“胖”的真实签名；若你构造的 fat 在小宽度就能零违规，说明 fat    │
-│ 族太容易被拟合，构造不当，需重做。                                           │
-│    报告必须同时给出 rigid 与 fat 两族的 N_c(w)（fat 允许全为                 │
-│ None，但要如实、明确地说明“扫描上限 h=64                                     │
-│ 内不可达”，并给出其有限留出误差数值）。                                      │
-│                                                                              │
-│ 【报告纪律（硬项）】                                                         │
-│ - 报告里每一条结论都必须能被 objectives / N_c                                │
-│ 表里的真实数值支持；**禁止**把与数值矛盾的趋势写成结论（run27 把真实为 2,2,8 │
-│ 的 rigid N_c 报成了“flat at 2”）。                                           │
-│ -                                                                            │
-│ 训练误差列与留出误差列必须是各自独立测得的真实数值，**不得**把留出误差原样复 │
-│ 制到训练误差列。                                                             │
-│ - 报告正文不得引入材料/化学/晶界等类比框架；研究对象限定为小型前馈网络本身。 │
+│ 【前两轮(run27/run28)的伪结果诊断·本轮必须避免（硬项）】                     │
+│ 1) run27：fat 族标签犯广播 bug（`X[:,0] + standard_normal((w,1))*0.0` →      │
+│ (w,w)），留出误差被钉在 ~0.51 的假值。→ 已由形状硬校验拦截。                 │
+│ 2) run28：形状已修正，但**两族的科学构造仍无效**：                           │
+│    - fat 族用了与 x 无关的 **i.i.d. 纯噪声标签**（`xv*0.0 +                  │
+│ standard_normal((200,1))`）。纯噪声确实“任何宽度都无法零违规”，但这让“刚 vs  │
+│ 胖”退化成“可学 vs 不可学”的同义反复：fat 的 N_c(w) 全为 None，**测不到“随 w  │
+│ 递增”这一判别性趋势**，因此无法验证命题。                                    │
+│    - **本轮要求**：fat 必须是 **x                                            │
+│ 的、高维但可部分学习的函数族**（自由度远大于                                 │
+│ w，使有限样本在留出点上留下真实歧义），其留出违规来自**欠定/欠拟合**，而不是 │
+│ 标签与输入无关的随机性。若构造得当，应能在扫描内观察到“小容量留下较大留出违  │
+│ 规、且需要更大容量才能压到阈值”的行为，从而让 N_c(w) 可测。                  │
+│    - rigid 族用了 0 参数的固定函数（sin(pi x)），其宽度-2                    │
+│ 网络的近似误差恰好压在 1e-3 判据附近，导致 N_c 在 1e-3 两侧抖动（run28 得    │
+│ Nc=[None,2,4]）。→ 本轮按上面的“阈值标定”条目处理，或在报告里明确承认该族    │
+│ N_c 处于噪底、不构成趋势证据。                                               │
+│ 3) **报告纪律**：每一条结论都必须能被 objectives / N_c                       │
+│ 表里的真实数值支持；禁止把与数值矛盾的趋势写成结论；训练误差列与留出误差列必 │
+│ 须各自独立测得，不得互相复制；正文不得引入材料/化学/晶界等类比框架。         │
 │                                                                              │
 │ 所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差的数值 │
 │ 、以及 N_c(w) 的数值与趋势。                                                 │
@@ -155,82 +150,7 @@ strict_work_dir=True but allowed_work_dirs empty — path scoping inactive. Set 
 ╰──────────────────────────────────────────────────────────────────────────────╯
 [cache-debug] model=Intern-S2-Preview-35B stats_keys=['model_provider', 'finish_reason', 'model_name']
 FTS5 stale: MATCH 'runid' = 0, rebuilding index
-metacog: 假设可能为换名归约 (trap=, target=线性约束系统的代数刚性): [DIM: structure] The solution space of a linear constraint system is uniquely rigid (dimension 0), s
-[exec-route] mode='coder' desc[:80]='Implement the rigid constraint family function for the numerical experiment. The' obj_len=2999 is_exp_desc=True is_exp_obj=True is_det_desc=True
-[code-lab-author] raw_len=775 extracted_len=760 prompt_len=5355
+metacog: 假设可能为换名归约 (trap=, target=将'解空间刚性'的数学定义（满足解析约束的函数集合的维数）通过'非线性超越约束族'和'流形维度'的术语进行重新表述，本质上是对原命题中'刚性=低维/唯一，胖=高维/连续族'这一核心定义的等价换名，未引入新的物理机制或可验证的数学差异。): [DIM: structure] The non‑linear transcendental constraint family offers the best balance of testabil
+[exec-route] mode='coder' desc[:80]='Implement the two constraint families (rigid and fat) for the bootstrap probe ex' obj_len=3110 is_exp_desc=True is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=879 extracted_len=864 prompt_len=5466
 [code-lab-run] res_none=False success=True nobj=36 reason=''
-[validate] mode='code_lab' success=True nobj=36 cf=False lab=True
-FTS5 stale: MATCH 'runid' = 0, rebuilding index
-metacog: 假设可能为换名归约 (trap=, target=线性约束系统的刚性 (Linear Constraint System Rigidity)): [DIM: structure] The solution space of a linear constraint system is uniquely rigid (dimension 0), s
-[exec-route] mode='explore' desc[:80]='[auto-routed: surprise=1.00] Implement the rigid constraint family (linear syste' obj_len=2999 is_exp_desc=True is_exp_obj=True is_det_desc=False
-[code-lab-author] raw_len=753 extracted_len=738 prompt_len=5355
-[code-lab-run] res_none=False success=True nobj=36 reason=''
-[validate] mode='code_lab' success=True nobj=36 cf=False lab=True
-FTS5 stale: MATCH 'runid' = 0, rebuilding index
-metacog: 假设可能为换名归约 (trap=, target=原始问题中的刚性（Rigid）与胖（Fat）二分法): [DIM: structure] The solution space of a non-linear transcendental constraint system (e.g., trigonom
-plan_check failed (tier=medium, scene=other, max_refines=0): The plan is fundamentally flawed because it describes a high-level conceptual investigation ('implement the capacity_scan framework') without providing the necessary executable code or numerical methodology to test the hypothesis. The 'known failure modes' explicitly warn against this exact behavior: 'current plan does not contain directly runnable numerical script'. Without concrete mathematical definitions of $N_c(w)$, the transcendental constraint system, and the network architecture, the prediction remains an untestable assertion rather than a scientific claim.
-[exec-route] mode='explore' desc[:80]='The hypothesis posits that non-linear transcendental constraint systems exhibit ' obj_len=2999 is_exp_desc=True is_exp_obj=True is_det_desc=False
-[code-lab-author] raw_len=827 extracted_len=812 prompt_len=5355
-[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: operands could not be broadcast together with shapes (5,1) (10,1) '
-[code-lab-author] raw_len=906 extracted_len=891 prompt_len=6608
-[code-lab-run] res_none=False success=True nobj=36 reason=''
-[validate] mode='code_lab' success=True nobj=36 cf=False lab=True
-FTS5 stale: MATCH 'runid' = 0, rebuilding index
-metacog: 假设可能为换名归约 (trap=, target=将原问题中的'小型前馈网络泛化行为'替换为'transport equation解空间刚性'，本质上是用物理术语（transport equation, diffusion, advection, dominant modes）重命名了原问题中的数学概念（rigid/fat solution spaces, bootstrap probe, N_c(w) trend），未提供新的数学机制或数值证据。): [DIM: transport] The solution space of a transport equation (e.g., diffusion or advection) exhibits 
-plan_check failed low-conf (tier=medium, scene=other, conf=0.10): The plan is purely conceptual ('Implement the family function...') and contains no executable code, mathematical definition of N_c(w), or numerical methodology. It directly violates the 'known failure mode' requirement to provide a runnable Python script with formula and print result. The prediction is untestable without concrete implementation.
-[exec-route] mode='explore' desc[:80]='[auto-routed: surprise=1.00] Implement the family function for the transport hyp' obj_len=2999 is_exp_desc=True is_exp_obj=True is_det_desc=False
-[code-lab-author] raw_len=950 extracted_len=935 prompt_len=5355
-[code-lab-run] res_none=False success=True nobj=36 reason=''
-[validate] mode='code_lab' success=True nobj=36 cf=False lab=True
-FTS5 stale: MATCH 'runid' = 0, rebuilding index
-metacog: 假设可能为换名归约 (trap=, target=线性约束系统的刚性（Linear Constraint System Rigidity）): [DIM: structure] The solution space of a linear constraint system is uniquely rigid (dimension 0), s
-plan_check failed low-conf (tier=medium, scene=workflow, conf=0.15): Plan is invalid because it lacks a directly executable Python script as required by the failure mode guidelines. The plan only describes an exploratory workflow without implementing the necessary numerical validation (import + formula + print result). Without concrete computational evidence, it cannot verify the rigidity hypothesis or produce the required N_c(w) data to compare against the prediction.
-[exec-route] mode='explore' desc[:80]='The hypothesis claims N_c(w) should be flat (rigid solution space) given prior i' obj_len=2999 is_exp_desc=True is_exp_obj=True is_det_desc=True
-[code-lab-author] raw_len=730 extracted_len=716 prompt_len=5355
-[code-lab-run] res_none=False success=True nobj=36 reason=''
-[validate] mode='code_lab' success=True nobj=36 cf=False lab=True
-G31: trajectory has 0 tool_calls for non-query objective '【研究命题·纯机器学习/数学】
-
-解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。
-
-核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空' — autoloop may be空转 (audit 06 F1)
-╭─────────────────────────────────── Result ───────────────────────────────────╮
-│ Loop Complete                                                                │
-│ Run ID: loop_ca2b8e62                                                        │
-│ Success: Yes                                                                 │
-│ Total time: 383.6s                                                           │
-│ Report:                                                                      │
-│ /workspace/research_outputs/shusheng_rsi_run28/huginn_autoloop_report_loop_5 │
-│ 16f60fb.md                                                                   │
-│ Snapshot:                                                                    │
-│ /workspace/research_outputs/shusheng_rsi_run28/.huginn/autoloop_results/eeec │
-│ 17fb.json                                                                    │
-╰──────────────────────────────────────────────────────────────────────────────╯
-
-Phase Summary:
-  completed    hypothesize     (12.7s)
-  completed    plan            (2.9s)
-  completed    execute         (29.0s)
-  completed    validate        (10.3s)
-  completed    learn           (4.4s)
-  completed    hypothesize     (9.9s)
-  completed    plan            (3.3s)
-  completed    execute         (15.2s)
-  completed    validate        (9.9s)
-  completed    learn           (4.6s)
-  completed    hypothesize     (14.6s)
-  completed    plan            (6.5s)
-  completed    execute         (50.8s)
-  completed    validate        (8.3s)
-  completed    learn           (3.9s)
-  completed    hypothesize     (10.1s)
-  completed    plan            (4.8s)
-  completed    execute         (20.5s)
-  completed    validate        (8.4s)
-  completed    learn           (4.0s)
-  completed    hypothesize     (8.7s)
-  completed    plan            (5.6s)
-  completed    execute         (28.1s)
-  completed    validate        (10.1s)
-  completed    report          (7.8s)
-⠇ Running autonomous loop...

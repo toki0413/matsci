@@ -1,0 +1,34 @@
+{
+  "plans": [
+    {
+      "id": "plan_be144317",
+      "objective": "[DIM: structure] The non‑linear transcendental constraint family offers the best balance of testability (Jacobian rank can be computed numerically) and novelty (curved manifolds challenge network capacity more than linear subspaces). It also aligns with the bootstrap probe objective: if the underlying solution manifold is low‑dimensional, N_c(w) should stay flat; if the manifold dimension grows with w, N_c(w) should increase. This hypothesis can be expressed as a set of analytic equations (e.g., sin(π x_i) = y_i, exp(x_i) = y_i) whose solution dimension is known a priori, providing a clear ground truth for comparison.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Implement the two constraint families (rigid and fat) for the bootstrap probe experiment. The rigid family uses low-dimensional linear constraints (y = x) with a known 0-dimensional solution space. The fat family uses the nonlinear transcendental constraint sin(πx_i) = y_i with a known 1-dimensional solution space. Both families will feed into the existing capacity_scan infrastructure to test whether N_c(w) remains flat (rigid) or increases (fat) with w. This is a pure numerical experiment with no DFT/MD/physical materials components, consistent with the target chain's requirement to stay in the ML/math domain.",
+          "tool": "coder",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "family.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-27T18:32:59.228431+00:00",
+      "confirmed_at": "2026-09-27T18:32:59.229543+00:00",
+      "completed_at": "2026-09-27T18:33:25.471345+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "coder",
+        "source": "autoloop"
+      }
+    }
+  ]
+}
