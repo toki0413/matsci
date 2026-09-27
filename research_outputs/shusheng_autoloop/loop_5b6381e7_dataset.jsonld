@@ -1,0 +1,43 @@
+{
+  "@context": "https://schema.org/",
+  "@type": "Dataset",
+  "name": "HuginnAgent Research Output: loop_5b6381e7",
+  "description": "验证解空间刚性探针的可行性",
+  "creator": {
+    "@type": "Organization",
+    "name": "HuginnAgent"
+  },
+  "dateCreated": "2026-09-27T10:41:16.246789+00:00",
+  "license": "https://creativecommons.org/licenses/by/4.0/",
+  "keywords": [
+    "materials science",
+    "computational",
+    "agent-generated"
+  ],
+  "isAccessibleForFree": true,
+  "variableMeasured": [],
+  "measurementTechnique": "Automated computational workflow via HuginnAgent",
+  "wasGeneratedBy": {
+    "@type": "ResearchAction",
+    "name": "HuginnAgent run loop_5b6381e7",
+    "description": "验证解空间刚性探针的可行性",
+    "instrument": "/workspace/research_outputs/shusheng_autoloop/.huginn/trajectories/loop_5b6381e7.json",
+    "object": "/workspace/research_outputs/shusheng_autoloop/.huginn/provenance.jsonl",
+    "startTime": "2026-09-27T10:39:46.677221",
+    "endTime": "2026-09-27T10:41:16.242152"
+  },
+  "distribution": [
+    {
+      "@type": "DataDownload",
+      "encodingFormat": "text/markdown",
+      "contentUrl": "file:///workspace/research_outputs/shusheng_autoloop/huginn_autoloop_report_loop_b01fee2a.md",
+      "name": "Research Report"
+    },
+    {
+      "@type": "DataDownload",
+      "encodingFormat": "application/json",
+      "contentUrl": "file:///workspace/research_outputs/shusheng_autoloop/.huginn/trajectories/loop_5b6381e7.json",
+      "name": "Execution Trajectory"
+    }
+  ]
+}

@@ -971,6 +971,16 @@ def _create_openai_compatible(
     if max_tokens is not None:
         kwargs["max_tokens"] = max_tokens
     _apply_thinking_kwargs(provider, model, kwargs, thinking, max_tokens)
+    if provider == "internlm":
+        # 书生 ChatAPI 的 thinking_mode 把思维链直接写进 content 字段(无独立
+        # reasoning_content). 通用 agent/autoloop 路径按 content 解析答复, 思考流会
+        # 先吃满 max_tokens 再耗尽预算 → 正文为空("agent produced no answer").
+        # 与 research/program.py 的门禁路径保持一致: 默认关思考流, 只有显式
+        # thinking 参数才开. (ChatAPI 默认开 thinking_mode, 故必须显式关.)
+        _want_think = bool(thinking) and thinking != "off"
+        _eb = dict(kwargs.get("extra_body") or {})
+        _eb.setdefault("thinking_mode", _want_think)
+        kwargs["extra_body"] = _eb
     kwargs["request_timeout"] = _llm_request_timeout()
     return ChatOpenAI(**_with_usage_cb(kwargs))
 

@@ -1,0 +1,79 @@
+{
+  "@context": "https://schema.org/",
+  "@type": "Dataset",
+  "name": "HuginnAgent Research Output: loop_1f0e3d99",
+  "description": "验证解空间刚性探针的可行性",
+  "creator": {
+    "@type": "Organization",
+    "name": "HuginnAgent"
+  },
+  "dateCreated": "2026-09-27T10:45:11.959901+00:00",
+  "license": "https://creativecommons.org/licenses/by/4.0/",
+  "keywords": [
+    "materials science",
+    "computational",
+    "agent-generated"
+  ],
+  "isAccessibleForFree": true,
+  "variableMeasured": [
+    {
+      "@type": "PropertyValue",
+      "name": "changed_files"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "git_diff",
+      "value": ""
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "error_patterns"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "browser_state"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "terminal_active",
+      "value": false
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "timestamp",
+      "value": "2026-09-27T10:43:47"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "recommended_actions"
+    },
+    {
+      "@type": "PropertyValue",
+      "name": "blind_spots"
+    }
+  ],
+  "measurementTechnique": "Automated computational workflow via HuginnAgent",
+  "wasGeneratedBy": {
+    "@type": "ResearchAction",
+    "name": "HuginnAgent run loop_1f0e3d99",
+    "description": "验证解空间刚性探针的可行性",
+    "instrument": "/workspace/research_outputs/shusheng_autoloop2/.huginn/trajectories/loop_1f0e3d99.json",
+    "object": "/workspace/research_outputs/shusheng_autoloop2/.huginn/provenance.jsonl",
+    "startTime": "2026-09-27T10:42:22.442664",
+    "endTime": "2026-09-27T10:45:11.957824"
+  },
+  "distribution": [
+    {
+      "@type": "DataDownload",
+      "encodingFormat": "text/markdown",
+      "contentUrl": "file:///workspace/research_outputs/shusheng_autoloop2/huginn_autoloop_report_loop_d838283e.md",
+      "name": "Research Report"
+    },
+    {
+      "@type": "DataDownload",
+      "encodingFormat": "application/json",
+      "contentUrl": "file:///workspace/research_outputs/shusheng_autoloop2/.huginn/trajectories/loop_1f0e3d99.json",
+      "name": "Execution Trajectory"
+    }
+  ]
+}
