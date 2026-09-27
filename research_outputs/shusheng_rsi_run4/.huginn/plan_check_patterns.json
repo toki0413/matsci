@@ -1,0 +1,15 @@
+[
+  {
+    "scene_tag": "workflow",
+    "reason": "The plan fails the MODE classification: the task requires a mathematical derivation or symbolic analysis of solution space rigidity, but the plan proposes a numerical ML experiment ('skill' mode). The hypothesis concerns abstract constraints and solution space properties (rigid vs. fat), which are structural/mathematical questions, not empirical ML capacity tests. Using neural networks as a probe introduces approximation errors and does not directly address the mathematical structure of the solution space. Additionally, the PREDICTION is based on unverified assumptions about N_c(w) trends without a theoretical basis, and the approach violates the 'Zero Intrusion' principle by not addressing the core mathematical structure first.",
+    "missing_steps": [
+      "Identify the mathematical structure of the constraint system (e.g., algebraic variety, manifold dimension)",
+      "Determine if the solution space is defined by polynomial equations, inequalities, or other constraints",
+      "Apply symbolic methods (e.g., Gröbner bases, dimension counting) to analyze solution space rigidity",
+      "If numerical methods are needed, use exact arithmetic or validated numerics rather than standard neural networks",
+      "Define 'rigid' and 'fat' in precise mathematical terms (e.g., dimension of solution manifold, number of free parameters)"
+    ],
+    "mode": "skill",
+    "description": "Execute a pure ML/math skill pipeline to test the hypothesis on solution space rigidity using neural networks. Define abstract constraints, vary sample size w, measure minimal hidden layer width N_c(w"
+  }
+]

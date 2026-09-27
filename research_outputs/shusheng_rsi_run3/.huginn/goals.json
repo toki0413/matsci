@@ -4,10 +4,10 @@
       "id": "goal_a680c078",
       "text": "验证：神经网络的泛化行为能否作为 bootstrap 解空间刚性的探针。这是纯数学/机器学习命题，研究对象就是小型前馈神经网络本身，严禁替换为材料、化学或玻璃体系。待测关系：在给定抽象约束族下，小容量网络见过有限约束样本后，在未参与训练的留出约束点上是否零违规，以及该临界模型容量随网络容量如何变化。请用可复现的数值实验给出证据。",
       "sub_goals": [],
-      "iteration": 8,
+      "iteration": 12,
       "status": "active",
       "created_at": "2026-09-27T12:08:19.200649+00:00",
-      "updated_at": "2026-09-27T12:11:59.811470+00:00",
+      "updated_at": "2026-09-27T12:12:26.569800+00:00",
       "session_id": "",
       "metadata": {},
       "unknowns": [
@@ -90,9 +90,49 @@
           "discovered_at": "2026-09-27T12:10:37.759004+00:00",
           "resolved_at": null,
           "iteration": 5
+        },
+        {
+          "id": "unk_b6fa1f2a",
+          "text": "The abstract constraint family used for training may not capture the full complexity of real-world generalization scenarios, leading to an overly optimistic assessment of the network's robustness.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-27T12:12:14.242328+00:00",
+          "resolved_at": null,
+          "iteration": 10
+        },
+        {
+          "id": "unk_d90ce2a9",
+          "text": "The choice of optimization algorithm and hyperparameters (e.g., learning rate, batch size) could significantly affect the training dynamics and final model performance, potentially skewing results.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-27T12:12:14.243522+00:00",
+          "resolved_at": null,
+          "iteration": 10
+        },
+        {
+          "id": "unk_a11b7374",
+          "text": "The limited size of the training dataset might not adequately represent the underlying distribution, causing the model to perform poorly on unseen data points that lie outside the training domain.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-27T12:12:14.244161+00:00",
+          "resolved_at": null,
+          "iteration": 10
+        },
+        {
+          "id": "unk_84f5c39a",
+          "text": "Extreme values or rare cases in the input space might be poorly handled by the network, especially if they are underrepresented in the training set, leading to unexpected failures during testing.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-27T12:12:14.246923+00:00",
+          "resolved_at": null,
+          "iteration": 10
+        },
+        {
+          "id": "unk_d160e1fa",
+          "text": "The architecture of the small feedforward network itself might have inherent limitations that prevent it from learning complex relationships, thus affecting its ability to generalize effectively.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-27T12:12:14.251087+00:00",
+          "resolved_at": null,
+          "iteration": 10
         }
       ],
-      "unknowns_discovered": 10,
+      "unknowns_discovered": 15,
       "unknowns_resolved": 0,
       "objective": "验证：神经网络的泛化行为能否作为 bootstrap 解空间刚性的探针。这是纯数学/机器学习命题，研究对象就是小型前馈神经网络本身，严禁替换为材料、化学或玻璃体系。待测关系：在给定抽象约束族下，小容量网络见过有限约束样本后，在未参与训练的留出约束点上是否零违规，以及该临界模型容量随网络容量如何变化。请用可复现的数值实验给出证据。",
       "success_criteria": [
