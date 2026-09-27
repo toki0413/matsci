@@ -4,10 +4,10 @@
       "id": "goal_676593a8",
       "text": "验证：神经网络的泛化行为能否作为 bootstrap 解空间刚性的探针",
       "sub_goals": [],
-      "iteration": 8,
+      "iteration": 12,
       "status": "active",
       "created_at": "2026-09-27T12:01:02.689094+00:00",
-      "updated_at": "2026-09-27T12:03:49.792165+00:00",
+      "updated_at": "2026-09-27T12:04:17.654259+00:00",
       "session_id": "",
       "metadata": {},
       "unknowns": [
@@ -90,9 +90,49 @@
           "discovered_at": "2026-09-27T12:03:26.346609+00:00",
           "resolved_at": null,
           "iteration": 5
+        },
+        {
+          "id": "unk_78aac773",
+          "text": "Neural networks may not capture the underlying physical principles governing bootstrap solutions, leading to incorrect generalization behavior.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-27T12:04:03.736122+00:00",
+          "resolved_at": null,
+          "iteration": 10
+        },
+        {
+          "id": "unk_6f7fb2fc",
+          "text": "The training process might suffer from local minima, resulting in a suboptimal model that does not accurately represent the true solution space.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-27T12:04:03.737550+00:00",
+          "resolved_at": null,
+          "iteration": 10
+        },
+        {
+          "id": "unk_725d5811",
+          "text": "Insufficient or biased training data could lead to poor generalization, especially in regions of the solution space that are underrepresented.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-27T12:04:03.738330+00:00",
+          "resolved_at": null,
+          "iteration": 10
+        },
+        {
+          "id": "unk_09c0aeca",
+          "text": "The model might fail to generalize well at extreme values of parameters (e.g., very high or low temperatures, pressures) if such cases are not included in the training data.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-27T12:04:03.739066+00:00",
+          "resolved_at": null,
+          "iteration": 10
+        },
+        {
+          "id": "unk_4dbfbfd1",
+          "text": "The architecture of the neural network might be too simple to capture complex relationships in the bootstrap solution space, leading to oversimplification and loss of critical details.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-27T12:04:03.739786+00:00",
+          "resolved_at": null,
+          "iteration": 10
         }
       ],
-      "unknowns_discovered": 10,
+      "unknowns_discovered": 15,
       "unknowns_resolved": 0,
       "objective": "验证：神经网络的泛化行为能否作为 bootstrap 解空间刚性的探针",
       "success_criteria": [
