@@ -362,7 +362,8 @@ class EngineAct:
             max_repairs + 1, last_err,
         )
         # 诊断: 把最后一版(仍失败的)书生代码落日志, 便于对症改 harness/提示, 不伪造证据.
-        logger.info("code_lab 最后一版书生代码:\n%s", code[:2000])
+        # 用 warning 级: 默认 root logger 无 handler, info 级看不到失败代码.
+        logger.warning("code_lab 最后一版书生代码:\n%s", code[:2000])
         return {"mode": "code_lab", "status": "failed", "success": False,
                 "error": f"Code Lab 执行未通过沙箱校验: {last_err}", "script": code}
 
