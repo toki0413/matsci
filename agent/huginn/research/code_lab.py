@@ -71,7 +71,8 @@ def probe_author_probe(cfg):
 OPTIMIZER_HINT = (
     "优化器(重要): 手写 numpy 梯度下降常常收敛不到小误差 → **优先用 scipy.optimize**。\n"
     "更省事: 沙箱**已内置两个命题无关原语**, 直接用它们即可完成'训练+前向', "
-    "不必手搓参数打包/L-BFGS-B/形状(那正是反复 shape bug 的根源):\n"
+    "不必手搓参数打包/L-BFGS-B/形状(那正是反复 shape bug 的根源)。"
+    "**不要在代码里重新定义 mlp_fit/mlp_predict/_as_2d**——重定义会被自动剥除并按内置版本执行:\n"
     "- `model = mlp_fit(X, y, h, seeds=3, seed=0)` → 训练一个隐藏层宽 h 的两层 tanh 网络, "
     "只最小化 X/y 上的训练 MSE, 返回可序列化 model(含最优参数); X/y 一维或二维都行, 内部自动升维对齐。\n"
     "- `pred = mlp_predict(model, X2)` → 用 model 对 X2 前向, 返回 (N,1) 预测, 和 mlp_fit 形状严格一致。\n"
@@ -291,6 +292,44 @@ def strip_abort_statements(code: str) -> str:
         return code
 
 
+#: 沙箱注入的命题无关原语名. 书生若顶层重定义同名函数会**覆盖**注入的正确实现
+#: (反复出现: 它想自己拿参数就重写一版, 且切片/形状写错 → 整轮跑不通). 这些
+#: 原语的定义即契约, 重定义只可能引入 bug、不可能带来科学自由度(约束族/扫描/
+#: 判据都在 run() 里, 与原语无关), 故确定性剥除顶层重定义, 保留注入版本.
+BUILTIN_PRIMITIVE_NAMES = ("mlp_fit", "mlp_predict", "_as_2d")
+
+
+def strip_primitive_redefinitions(code: str) -> str:
+    """剥掉书生对沙箱内置原语(mlp_fit/mlp_predict/_as_2d)的顶层重定义.
+
+    只在**顶层**定义时剥除(嵌套闭包同名不影响模块级绑定); 摘除的是"对已验证
+    原语的重复实现", 不改变书生对约束族/扫描/判据的任何决策, 也不改任何数值
+    语义. 语法不合法/无重定义时原样直返(零开销).
+    """
+    if not code or not any(n in code for n in BUILTIN_PRIMITIVE_NAMES):
+        return code
+    import ast
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return code
+    kept = [
+        n for n in tree.body
+        if not (
+            isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)
+            and n.name in BUILTIN_PRIMITIVE_NAMES
+        )
+    ]
+    if len(kept) == len(tree.body):
+        return code
+    tree.body = kept
+    ast.fix_missing_locations(tree)
+    try:
+        return ast.unparse(tree)
+    except Exception:  # noqa: BLE001 — 反解析失败即原样返回, 不阻塞
+        return code
+
+
 def _call_with_timeout(fn, arg: dict, timeout: float = SAFE_TIMEOUT_S):
     """超时容器: 死循环/卡死的代码不会拖死整个管线."""
     out: list = [None]
@@ -330,6 +369,7 @@ def _load_namespace(code: str, mem_cap: int = SAFE_MEM_CAP,
         safe_import,
     )
     code = strip_abort_statements(code)   # 强制"不 assert 中断"契约 (命题无关)
+    code = strip_primitive_redefinitions(code)  # 剥除对内置原语的重定义(用注入版)
     # 注入命题无关的数值原语: 参数打包/L-BFGS-B/多起点/形状对齐已下沉, 书生
     # 直接 mlp_fit/mlp_predict 即可, 不必手搓这套样板(反复 shape bug 的根源).
     ns: dict = {
