@@ -91,3 +91,10 @@ Created goal: goal_3bff7e81
 empty required_results for target_1 — fallback
 FTS5 stale: MATCH 'runid' = 0, rebuilding index
 metacog: 假设可能为换名归约 (trap=, target=原始问题中关于小型前馈网络解空间刚性（低维/唯一）与泛化行为（胖/高维）的实证检验命题。): [DIM: structure] The dimension of the solution space for small feedforward networks interpolating an
+FTS5 stale: MATCH 'runid' = 0, rebuilding index
+FTS5 stale: MATCH 'runid' = 0, rebuilding index
+epistemic_gap: 结论有证据支撑, 但建议补一句不确定性/适用边界说明, 明确估计误差与尚未验证的假设.
+FTS5 stale: MATCH 'runid' = 0, rebuilding index
+FTS5 stale: MATCH 'runid' = 0, rebuilding index
+FTS5 stale: MATCH 'runid' = 0, rebuilding index
+metacog: 假设可能为换名归约 (trap=, target=原始问题中关于小型前馈网络泛化行为作为解空间刚性探针的命题，即通过测量 N_c(w) 随样本数 w 的趋势来判断解空间是刚性（低维/唯一）还是胖（高维/连续族）。): [DIM: structure] The solution space of small feedforward networks interpolating analytic constraints
