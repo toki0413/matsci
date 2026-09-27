@@ -22,5 +22,17 @@
     ],
     "mode": "explore",
     "description": "The hypothesis tests whether network capacity N_c(w) trends flat (rigid solution space) or increasing (fat solution space) as constraint count w increases. Given the previous high surprise (1.0), we n"
+  },
+  {
+    "scene_tag": "md",
+    "reason": "Plan is described as 'explore' but lacks a critical executable component. It describes methodology (scipy.optimize.minimize, L-BFGS-B, constraint families) but provides no actual Python code, formulas, or implementation details to run. Without a concrete runnable snippet, the hypothesis cannot be validated numerically, and the plan remains theoretical. This directly matches the 'Known Failure Patterns' and 'Historical Failures' warnings about missing executable numerical scripts.",
+    "missing_steps": [
+      "Provide a runnable Python code snippet that implements the core mathematical structure (constraint counting, capacity measurement, optimization with L-BFGS-B)",
+      "Include import statements, formula definitions, and print statements to output actual numerical results",
+      "Define explicitly what N_c(w) measures (e.g., number of solutions, solution space volume, constraint satisfaction count)",
+      "Execute the code to generate actual numerical data before proceeding to validation"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function that generates rigid and fat constraint families for the capacity scan experiment. The rigid family will be a linear constraint system (uniqu"
   }
 ]

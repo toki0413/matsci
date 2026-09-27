@@ -130,6 +130,70 @@
       "r_phys": 1.0,
       "iteration": 10,
       "id": "persona_use:reviewer_iter10"
+    },
+    {
+      "label": "** [DIM: Mathematical Structure of Constraints]",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-27T18:11:42.510911",
+      "last_seen": "2026-09-27T18:11:42.510911",
+      "mentions": 1,
+      "iteration": 15,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family (linear constraints), N_c(w) should be flat (constant small width, e.g., N_c ≈ 4-8) because the solution space is unique/low-dimensional. For the fat family (continuous family wit",
+      "persona": "reviewer",
+      "id": "experiment:** [DIM: Mathematical Structure of Constraints]"
+    },
+    {
+      "label": "plan_explore_iter15",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T18:11:42.510951",
+      "last_seen": "2026-09-27T18:11:42.510951",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter15"
+    },
+    {
+      "label": "pass_iter15",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T18:11:42.510963",
+      "last_seen": "2026-09-27T18:11:42.510963",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter15"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-27T18:11:42.510972",
+      "last_seen": "2026-09-27T18:11:42.510972",
+      "mentions": 1,
+      "members": [
+        "experiment:** [DIM: Mathematical Structure of Constraints]",
+        "Method:plan_explore_iter15",
+        "Fact:pass_iter15"
+      ],
+      "iteration": 15,
+      "id": "he_experiment_pipeline_8e7a013d"
+    },
+    {
+      "label": "reviewer_iter15",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-27T18:11:42.511053",
+      "last_seen": "2026-09-27T18:11:42.511053",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "668ba1e3f1ab41f7",
+      "r_phys": 1.0,
+      "iteration": 15,
+      "id": "persona_use:reviewer_iter15"
     }
   ],
   "links": [
@@ -186,6 +250,33 @@
       "last_seen": "2026-09-27T18:10:32.739218",
       "mentions": 1,
       "target": "he_experiment_pipeline_5b3dc5fe"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:** [DIM: Mathematical Structure of Constraints]",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T18:11:42.510972",
+      "last_seen": "2026-09-27T18:11:42.510972",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8e7a013d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T18:11:42.510972",
+      "last_seen": "2026-09-27T18:11:42.510972",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8e7a013d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T18:11:42.510972",
+      "last_seen": "2026-09-27T18:11:42.510972",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8e7a013d"
     }
   ]
 }
