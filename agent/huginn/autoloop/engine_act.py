@@ -325,7 +325,9 @@ class EngineAct:
         更多依赖(仍受沙箱白名单约束). 失败返回 success=False, 由 validate 层裁决.
         沙箱真报错时把报错回灌书生重写 (命题无关·通用修 bug), 最多 N 轮自修复.
         """
-        goal = description or str(getattr(self, "_objective", "") or "")
+        # 优先用研究目标(全文本, 命题无关的真问题), plan 步骤只作兜底 —— plan 描述
+        # 常带 "FILES:/SKILL:" 之类执行噪声, 不适合喂给"实验作者"提示.
+        goal = str(getattr(self, "_objective", "") or "") or description
         code = await self._request_code_lab_experiment(goal)
         if not code:
             return {"mode": "code_lab", "status": "failed", "success": False,
@@ -389,7 +391,31 @@ class EngineAct:
                         "execute closed-form fast-path: plan 内含可运行数值片段, 已真实执行 → evidence"
                     )
                     return result
-            # 独立判定(不再 elif 受 _snip 分支干扰): plan 片段若没跑出数, 仍尝试 objective 探针.
+            # 方案2·接 Code Lab (2026-09-27 割裂感根因): 目标是"计算实验类"时, 让书生
+            # **亲手写**一段 run(cfg) 实验代码, 在 Code Lab 安全沙箱真跑 → 结构化
+            # objectives 作证据. 与闭式 probe 分层: 闭式只认平凡数值片段, 这里认开放
+            # 实验意图(训练/扫描/探针...), 允更长时/更多依赖. 命题无关: 只按目标的实验
+            # 意图词触发, 不绑定任何具体命题. 失败即回落原分派, 不回归.
+            # 顺序: 实验意图优先于平凡 probe —— 否则描述里的 "predict"/"(1)" 会让
+            # _is_deterministic_numeric 先命中, 把真实验目标塞进"抄一段闭式"的窄路,
+            # probe 跑不出数就再落到 coder 空转 (2026-09-27 run7 实测: 0 tool_calls).
+            # 二者级联(if 而非 elif): Code Lab 失败仍可退到 probe, 不互相遮蔽.
+            if self._is_code_experiment(description) or self._is_code_experiment(
+                str(getattr(self, "_objective", "") or "")
+            ):
+                _lab = await self._execute_code_lab(description, context)
+                if _lab.get("success"):
+                    self._record_provenance("code_lab", plan, _lab)
+                    self._last_execution_result = {
+                        "_tool_name": "code_lab",
+                        "_tool_input": plan,
+                        "result": _lab,
+                    }
+                    logger.info(
+                        "execute code_lab fast-path: 书生亲写实验 → Code Lab 沙箱真跑 → evidence"
+                    )
+                    return _lab
+            # 独立判定: plan 片段若没跑出数, 仍尝试 objective 探针(平凡确定性数值).
             if self._is_deterministic_numeric(description) or self._is_deterministic_numeric(
                 str(getattr(self, "_objective", "") or "")
             ):
@@ -420,26 +446,6 @@ class EngineAct:
                             "execute builtin probe: 确定性数值目标 → harness 内建生成并执行 probe → evidence"
                         )
                         return result
-            # 方案2·接 Code Lab (2026-09-27 割裂感根因): 目标是"计算实验类"时, 让书生
-            # **亲手写**一段 run(cfg) 实验代码, 在 Code Lab 安全沙箱真跑 → 结构化
-            # objectives 作证据. 与闭式 probe 分层: 闭式只认平凡数值片段, 这里认开放
-            # 实验意图(训练/扫描/探针...), 允更长时/更多依赖. 命题无关: 只按目标的实验
-            # 意图词触发, 不绑定任何具体命题. 失败即回落原分派, 不回归.
-            elif self._is_code_experiment(description) or self._is_code_experiment(
-                str(getattr(self, "_objective", "") or "")
-            ):
-                _lab = await self._execute_code_lab(description, context)
-                if _lab.get("success"):
-                    self._record_provenance("code_lab", plan, _lab)
-                    self._last_execution_result = {
-                        "_tool_name": "code_lab",
-                        "_tool_input": plan,
-                        "result": _lab,
-                    }
-                    logger.info(
-                        "execute code_lab fast-path: 书生亲写实验 → Code Lab 沙箱真跑 → evidence"
-                    )
-                    return _lab
         except Exception:  # 防御: 探针快路失败转入通用执行
             logger.debug("execute builtin-probe fast-path failed (fall through)", exc_info=True)
 
