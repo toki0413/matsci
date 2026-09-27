@@ -10,5 +10,18 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the rigid family constraint function for the numerical experiment. The hypothesis concerns a linear constraint family creating a topological bottleneck, so we de"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan fundamentally misinterprets the hypothesis mechanism. The hypothesis posits that N_c(w) should INCREASE as geometry becomes narrower (topological bottleneck/resolution failure), but the plan explicitly predicts N_c(w) will remain FLAT or behave unexpectedly without testing the core mechanism. It uses a trivial linear constraint (y=x) which lacks geometric complexity to create a bottleneck, failing to test the topological argument. The plan also misses the critical step of verifying model function form against sin(pi*x) to prevent overfitting artifacts.",
+    "missing_steps": [
+      "Correct prediction to N_c(w) should increase with decreasing width (bottleneck effect)",
+      "Define rigid family constraint with geometric complexity (thin manifold/narrow channel) not simple linear subspace",
+      "Add point-wise error analysis between model prediction and sin(pi*x) to verify true function learning",
+      "Implement scaffold-aware split to prevent structural leakage between training/test sets",
+      "Verify mechanism shows network resolution failure in thin geometry, not just DoF changes"
+    ],
+    "mode": "explore",
+    "description": "The hypothesis \"DIM: structure\" relates to whether the solution space of a constraint family is rigid (low-dimensional) or fat (high-dimensional). The previous iterations (5, 10, 15) all show \"surpris"
   }
 ]
