@@ -57,6 +57,11 @@ MIN_NS = 3      # ns 不得被砍到 3 以下 (否则无法检验"不再回升",
 MIN_WIDTHS = 2  # widths 不得被砍到 2 以下 (至少要能拟合一条斜率)
 JOBS = 3
 
+#: 单轮实验的**真实墙钟上限** (秒). 环境会周期性重启并杀掉后台进程, 单轮跑太久会连
+#: 一轮都留不下; 超时即记为该轮失败 (不产出证据), 下一轮把这条反馈给书生。
+#: 这不是成本代理, 是物理时间约束 —— 与上面的任务/成本软限制相互独立。
+ROUND_TIMEOUT_S = 1800.0
+
 
 #: adam 档 -> 成本倍率. 步数拉满但宽度小的网格不能显得便宜 (实际更慢).
 _ADAM_COST = {2000: 1, 3000: 1, 4000: 1, 5000: 1, 8000: 2, 12000: 3}
@@ -173,6 +178,8 @@ def render_budget(recs: list[dict], caps: dict) -> str:
 软限制初值 tasks={SOFT_TASKS} cost={SOFT_COST}; 请求撞顶会**自动续投** ×{RENEW_FACTOR} (最多 {MAX_RENEWALS} 次),
 已用 {MAX_RENEWALS - caps['renewals_left']}/{MAX_RENEWALS}, 剩余 {caps['renewals_left']} 次; 续投用尽才是硬刹车.
 => 想要更大的网格可以直接提, 不必为省预算自我压缩; 真撞硬刹车时我会把额度反馈给你重规划.
+另有一条独立的**物理时间约束**: 单轮实验墙钟上限 {ROUND_TIMEOUT_S:.0f} 秒, 超时该轮作废、
+不出证据 (网格过大或 adam 过高会撞这条), 下一轮会告知你. 它不受软限制/续投影响.
 
 你只能选:
 - kind ∈ {ALLOWED_KINDS}
@@ -337,7 +344,13 @@ def run_experiment(cfg: dict, tag: str) -> dict | None:
            "--tag", tag]
     print(f"      $ {' '.join(cmd[1:])}", flush=True)
     t0 = time.time()
-    p = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True)
+    try:
+        p = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True,
+                           timeout=ROUND_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        print(f"      !! 单轮超过墙钟上限 {ROUND_TIMEOUT_S:.0f}s, 本轮作废 "
+              f"(网格过大或 adam 过高); 请缩小网格重提", file=sys.stderr)
+        return None
     if p.returncode != 0:
         print(f"      !! 实验失败 rc={p.returncode}\n{p.stderr[-1500:]}", file=sys.stderr)
         return None
@@ -369,11 +382,15 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--rounds", type=int, default=10, help="书生最多自主决策几轮")
     ap.add_argument("--budget-s", type=float, default=21600.0, help="循环墙钟预算(秒)")
+    ap.add_argument("--round-timeout-s", type=float, default=1800.0,
+                    help="单轮实验墙钟上限(秒), 超时该轮作废并反馈给书生")
     ap.add_argument("--session", default="", help="产物文件名后缀, 避免覆盖历次循环记录")
     ap.add_argument("--model", default=os.environ.get("INTERNLM_MODEL", "intern-s2"))
     ap.add_argument("--base", default=os.environ.get("INTERNLM_BASE_URL",
                                                      "https://chat.intern-ai.org.cn/api/v1"))
     args = ap.parse_args()
+    global ROUND_TIMEOUT_S
+    ROUND_TIMEOUT_S = args.round_timeout_s
     sfx = f"_{args.session}" if args.session else ""
 
     key = os.environ.get("INTERNLM_API_KEY")
