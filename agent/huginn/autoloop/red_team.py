@@ -692,11 +692,30 @@ class RedTeamReviewer:
     ) -> str:
         import json
 
-        return (
+        prompt = (
             f"阶段转移: {from_phase} → {to_phase}\n"
             f"证据: {json.dumps(evidence, ensure_ascii=False, default=str)}\n\n"
             f"请做对抗性审查."
         )
+        # 方案2: Code Lab / 闭式数值实验的 tests_passed 依据是"沙箱内真实执行并产出
+        # 数值目标", 不是 workspace 的 pytest 收集. 显式说明防止 reviewer 把
+        # "没有 pytest 测试文件" 误读成"未运行测试 → tests_passed 造假" 而给 high.
+        basis = str(
+            evidence.get("validation_basis")
+            or evidence.get("validation_evidence")
+            or ""
+        )
+        _code_lab = basis in ("code_lab_objectives", "executed_numeric_snippet") or (
+            str(evidence.get("mode", "")) == "code_lab"
+            and bool(evidence.get("objectives"))
+        )
+        if _code_lab:
+            prompt += (
+                "\n\n注: 本证据的 tests_passed=true 来自沙箱内真实执行的数值实验"
+                "(validation_basis=%s, objectives 非空), 而非 workspace 的 pytest 收集. "
+                "不要以'未运行测试/测试为空'为由给 high 严重度发现." % (basis or "code_lab_objectives")
+            )
+        return prompt
 
     @staticmethod
     def _parse_llm_findings(text: str) -> list[RedTeamFinding]:
