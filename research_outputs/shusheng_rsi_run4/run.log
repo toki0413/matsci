@@ -78,3 +78,9 @@ empty required_results for target_1 — fallback
 FTS5 stale: MATCH 'runid' = 0, rebuilding index
 metacog: 假设可能为换名归约 (trap=, target=将原命题中关于'解空间刚性'与'泛化行为'的数学/机器学习问题，替换为'基于上下文的假设生成'这一自然语言处理任务。): '." It does not ask me to run the experiment *now*. It asks for hypotheses *based on* the context.
 plan_check failed low-conf (tier=medium, scene=workflow, conf=0.15): The plan fails the MODE classification: the task requires a mathematical derivation or symbolic analysis of solution space rigidity, but the plan proposes a numerical ML experiment ('skill' mode). The hypothesis concerns abstract constraints and solution space properties (rigid vs. fat), which are structural/mathematical questions, not empirical ML capacity tests. Using neural networks as a probe introduces approximation errors and does not directly address the mathematical structure of the solution space. Additionally, the PREDICTION is based on unverified assumptions about N_c(w) trends without a theoretical basis, and the approach violates the 'Zero Intrusion' principle by not addressing the core mathematical structure first.
+FTS5 stale: MATCH 'runid' = 0, rebuilding index
+FTS5 stale: MATCH 'runid' = 0, rebuilding index
+FTS5 stale: MATCH 'runid' = 0, rebuilding index
+FTS5 stale: MATCH 'runid' = 0, rebuilding index
+FTS5 stale: MATCH 'runid' = 0, rebuilding index
+metacog: 假设可能为换名归约 (trap=, target=将'解空间刚性'这一抽象的几何/拓扑性质，通过'激活函数的组成（composition）'这一具体实现细节进行表述换名。): [DIM: composition] The hypothesis regarding the composition of activation functions (e.g., mixture o
