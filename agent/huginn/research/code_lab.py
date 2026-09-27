@@ -69,6 +69,8 @@ FAMILY_CONTRACT_HINT = (
     "已被验证在本环境里必错。\n"
     "- family 返回 dict {'X','y','Xv','yv'}: X/y 是 w 个**训练**约束点, "
     "Xv/yv 是**留出**约束点(未参与训练); 只想给一组时可省略 Xv/yv(回落到 X/y)。\n"
+    "- **留出集必须真的留出**: Xv 里的输入点不能与 X 重合(否则'留出误差'=训练误差, "
+    "整个 N_c 判据失效, 脚手架会判 trend='invalid_heldout')。Xv 用不同网格/不同采样点。\n"
     "- kind 取 'rigid'/'fat' 两族, 由你定义其解析 ground truth: "
     "刚性 = 低维/唯一解的约束族; 肥 = 高维/连续族的约束族。用 kind 分支返回各自数据。\n"
 )
@@ -152,6 +154,25 @@ def mlp_predict(model, X):
     return np.tanh(X @ W1 + b1) @ W2 + b2
 
 
+def _overlap_fraction(X, Xv):
+    """Xv 中有多少比例的点与训练点 X 重合 (留出集有效性守卫).
+
+    完全重合(返回 1.0)意味着"留出误差"就是训练误差, 零违规判据失效 —— 正是
+    run25 伪结果的来源. 用四舍五入后的行元组做集合比对, 与维度无关.
+    """
+    import numpy as np
+
+    X = _as_2d(X)
+    Xv = _as_2d(Xv)
+    if Xv.shape[0] == 0:
+        return 0.0
+    if X.shape[0] == 0:
+        return 0.0
+    rows = {tuple(np.round(r, 9)) for r in X}
+    hit = sum(1 for r in Xv if tuple(np.round(r, 9)) in rows)
+    return float(hit) / float(Xv.shape[0])
+
+
 def capacity_scan(family, kinds=("rigid", "fat"), ws=(5, 10, 20),
                   widths=(2, 4, 8, 16, 32, 64), seeds=3,
                   tr_tol=3e-4, ho_tol=1e-3, seed=0):
@@ -175,7 +196,10 @@ def capacity_scan(family, kinds=("rigid", "fat"), ws=(5, 10, 20),
         summary['rows'][kind_w{w}_h{h}] = {'train_err','heldout_err'}  (全为有限数)
         summary['Nc'][kind][w] = 最小零违规宽度 h 或 None(该 w 在扫描内不可达)
         summary['trend'][kind] = 'flat'|'increasing'|'decreasing'|'mixed'|'inconclusive'
+                               |'invalid_heldout'(留出集与训练集重合, 结果无效)
         summary['anchor'] = 全局留出误差最小的 (kind,w,h) 锚点 —— 证明零违规可达
+        summary['heldout_overlap'][kind_w{w}] = Xv 与 X 的重合比例 (0 才有效)
+        summary['warnings'] = 留出集重叠等有效性告警文本
         objectives['neg_heldout_<kind>_w<w>_h<h>'] = -heldout_max_err (越大越好)
     不伪造: 达不到零违规的行如实报其有限留出误差, Nc 记 None, 绝不写 inf.
     """
@@ -194,12 +218,25 @@ def capacity_scan(family, kinds=("rigid", "fat"), ws=(5, 10, 20),
             raise ValueError("family 须返回 dict(X,y,Xv,yv) 或 (X,y[,Xv,yv])")
         return _as_2d(X), _as_2d(y), _as_2d(Xv), _as_2d(yv)
 
-    summary = {"rows": {}, "Nc": {}, "trend": {}, "anchor": None}
+    summary = {"rows": {}, "Nc": {}, "trend": {}, "anchor": None,
+               "heldout_overlap": {}, "warnings": []}
     objectives = {}
     for kind in kinds:
         nc: dict = {}
+        _fully_overlapping = False
         for w in ws:
             datasets = [_one(kind, w, s) for s in range(int(seeds))]
+            # 留出集有效性守卫: 若 Xv 与训练点 X 重合, "留出误差"其实是训练误差,
+            # 零违规判据形同虚设 —— run25 的伪结果(heldout==train)正源于此.
+            _ov = max(_overlap_fraction(X, Xv) for (X, y, Xv, yv) in datasets)
+            if _ov > 0.0:
+                summary["heldout_overlap"]["%s_w%d" % (kind, int(w))] = round(_ov, 4)
+                summary["warnings"].append(
+                    "留出集与训练集重叠%s: %s w=%d (留出误差无效)"
+                    % ("(完全重合)" if _ov >= 1.0 else "", kind, int(w))
+                )
+                if _ov >= 1.0:
+                    _fully_overlapping = True
             best_h = None
             for h in widths:
                 ho_best = float("inf")
@@ -222,7 +259,10 @@ def capacity_scan(family, kinds=("rigid", "fat"), ws=(5, 10, 20),
             nc[int(w)] = best_h
         summary["Nc"][kind] = nc
         vals = [v for v in nc.values() if v is not None]
-        if len(vals) < 2:
+        if _fully_overlapping:
+            # 留出集 == 训练集: 所谓零违规只是插值训练点, 趋势无科学意义.
+            summary["trend"][kind] = "invalid_heldout"
+        elif len(vals) < 2:
             summary["trend"][kind] = "inconclusive"
         elif len(set(vals)) == 1:
             summary["trend"][kind] = "flat"

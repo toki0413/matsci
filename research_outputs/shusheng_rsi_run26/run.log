@@ -47,8 +47,6 @@ Tool huginn.tools.bench_infra.plot_tool registered but its deps are missing — 
 Tool huginn.tools.bench_infra.c2st_tool registered but its deps are missing — capability degraded: sklearn
 FTS5 stale: MATCH 'runid' = 0, rebuilding index
 strict_work_dir=True but allowed_work_dirs empty — path scoping inactive. Set allowed_work_dirs or HUGINN_WORKSPACE to enable.
-Created goal: goal_913b135c
-  criteria: ['tests_passed']
 ╭────────────────────────────────── Starting ──────────────────────────────────╮
 │ Autoloop                                                                     │
 │ Objective: 【研究命题·纯机器学习/数学】                                      │
@@ -109,6 +107,10 @@ Created goal: goal_913b135c
 │ 源，已验证在本环境里必错。                                                   │
 │ - family 返回 dict {'X','y','Xv','yv'}：X/y 是 w 个**训练**约束点，Xv/yv     │
 │ 是**留出**约束点；X/y/Xv/yv 一律用 .reshape(-1, 1) 升成 (N,1)。              │
+│ - **留出集必须真的留出**：Xv 的输入点不能与 X                                │
+│ 的任何训练点重合（否则“留出误差”=训练误差，N_c 判据失效；脚手架会判          │
+│ trend='invalid_heldout' 并在 warnings 里报重叠比例）。Xv                     │
+│ 请用不同的网格或不同采样点。                                                 │
 │ - 随机数用 rng = np.random.default_rng(seed)；Generator **没有** randn，用   │
 │ rng.standard_normal(n)。                                                     │
 │ - 不要用 assert / raise 中断执行：把测到的真实数值（含不理想的结果）全部     │
@@ -119,77 +121,9 @@ Created goal: goal_913b135c
 │ Max iterations: 24                                                           │
 ╰──────────────────────────────────────────────────────────────────────────────╯
 [cache-debug] model=Intern-S2-Preview-35B stats_keys=['model_provider', 'finish_reason', 'model_name']
+empty required_results for target_1 — fallback
 FTS5 stale: MATCH 'runid' = 0, rebuilding index
-[exec-route] mode='coder' desc[:80]='Implement the `family` function to define the rigid constraint family (linear fu' obj_len=1863 is_exp_desc=True is_exp_obj=True is_det_desc=False
-[code-lab-author] raw_len=1216 extracted_len=1201 prompt_len=3916
+metacog: 假设可能为换名归约 (trap=, target=将'解空间刚性'这一数学性质问题，通过'优化器陷入局部极小'这一数值实验现象进行表述换名，未触及解空间本身的几何或拓扑结构。): [DIM: optimization] The apparent flatness of N_c(w) for rigid families is an optimization artifact: 
+[exec-route] mode='coder' desc[:80]='Implement the `family` function to define rigid (linear) and fat (quadratic) con' obj_len=1992 is_exp_desc=True is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=1160 extracted_len=1145 prompt_len=4154
 [code-lab-run] res_none=False success=True nobj=36 reason=''
-error in _parse_verify_score: JSON parse failed, falling back to regex
-Traceback (most recent call last):
-  File "/workspace/agent/huginn/autoloop/engine_reflect.py", line 2253, in _parse_verify_score
-    data = json.loads(resp.strip())
-  File "/root/.pyenv/versions/3.14.7/lib/python3.14/json/__init__.py", line 352, in loads
-    return _default_decoder.decode(s)
-           ~~~~~~~~~~~~~~~~~~~~~~~^^^
-  File "/root/.pyenv/versions/3.14.7/lib/python3.14/json/decoder.py", line 345, in decode
-    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
-               ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
-  File "/root/.pyenv/versions/3.14.7/lib/python3.14/json/decoder.py", line 363, in raw_decode
-    raise JSONDecodeError("Expecting value", s, err.value) from None
-json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
-[validate] mode='code_lab' success=True nobj=36 cf=False lab=True
-FTS5 stale: MATCH 'runid' = 0, rebuilding index
-FTS5 stale: MATCH 'runid' = 0, rebuilding index
-FTS5 stale: MATCH 'runid' = 0, rebuilding index
-metacog: 假设可能为换名归约 (trap=, target=实验方法缺陷（优化器/多起点/宽度上限不足）导致刚性族 N_c(w) 被误判为递增，而非解空间刚性本身的性质): [DIM: optimization] The apparent flatness of N_c(w) for rigid families is an optimization artifact: 
-[exec-route] mode='explore' desc[:80]='The current hypothesis is that the apparent flatness of N_c(w) for rigid familie' obj_len=1863 is_exp_desc=True is_exp_obj=True is_det_desc=False
-[code-lab-author] raw_len=1192 extracted_len=1177 prompt_len=3916
-[code-lab-run] res_none=False success=True nobj=36 reason=''
-error in _parse_verify_score: JSON parse failed, falling back to regex
-Traceback (most recent call last):
-  File "/workspace/agent/huginn/autoloop/engine_reflect.py", line 2253, in _parse_verify_score
-    data = json.loads(resp.strip())
-  File "/root/.pyenv/versions/3.14.7/lib/python3.14/json/__init__.py", line 352, in loads
-    return _default_decoder.decode(s)
-           ~~~~~~~~~~~~~~~~~~~~~~~^^^
-  File "/root/.pyenv/versions/3.14.7/lib/python3.14/json/decoder.py", line 345, in decode
-    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
-               ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
-  File "/root/.pyenv/versions/3.14.7/lib/python3.14/json/decoder.py", line 363, in raw_decode
-    raise JSONDecodeError("Expecting value", s, err.value) from None
-json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
-[validate] mode='code_lab' success=True nobj=36 cf=False lab=True
-FTS5 stale: MATCH 'runid' = 0, rebuilding index
-FTS5 stale: MATCH 'runid' = 0, rebuilding index
-G2 stuck: action 序列陷入周期 (period=5), 强制 pivot. 最近 10 步: ['execute', 'validate', 'learn', 'hypothesize', 'plan', 'execute', 'validate', 'learn']
-G2 stuck: action 序列陷入周期 (period=5), 强制 pivot. 最近 11 步: ['validate', 'learn', 'hypothesize', 'plan', 'execute', 'validate', 'learn', 'pivot']
-G2 stuck: action 序列陷入周期 (period=5), 强制 pivot. 最近 12 步: ['learn', 'hypothesize', 'plan', 'execute', 'validate', 'learn', 'pivot', 'stop']
-G31: trajectory has 0 tool_calls for non-query objective '【研究命题·纯机器学习/数学】
-
-解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。
-
-核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空' — autoloop may be空转 (audit 06 F1)
-╭─────────────────────────────────── Result ───────────────────────────────────╮
-│ Loop Complete                                                                │
-│ Run ID: loop_0add0ce3                                                        │
-│ Success: Yes                                                                 │
-│ Total time: 178.1s                                                           │
-│ Report:                                                                      │
-│ /workspace/research_outputs/shusheng_rsi_run25/huginn_autoloop_report_loop_1 │
-│ 0de401b.md                                                                   │
-│ Snapshot:                                                                    │
-│ /workspace/research_outputs/shusheng_rsi_run25/.huginn/autoloop_results/753b │
-│ d886.json                                                                    │
-╰──────────────────────────────────────────────────────────────────────────────╯
-
-Phase Summary:
-  completed    hypothesize     (12.3s)
-  completed    plan            (3.2s)
-  completed    execute         (13.6s)
-  completed    validate        (7.1s)
-  completed    hypothesize     (9.8s)
-  completed    plan            (3.3s)
-  completed    execute         (25.6s)
-  completed    validate        (7.5s)
-  completed    learn           (4.3s)
-  completed    report          (9.7s)
-⠦ Running autonomous loop...

@@ -2556,13 +2556,20 @@ class EngineReflect:
         if r_phys is not None:
             try:
                 evolution = self._get_evolution()
-                # 记录本次迭代的 reward, 供 evolve_from_rewards 消费
+                # 记录本次迭代的 reward, 供 evolve_from_rewards 消费.
+                # 必须带上 calculation_type/software: evolve_from_rewards 按
+                # f"{calculation_type}_{software}" 分组, 不传则全部落到
+                # "unknown_general" 组, 同组去重后只会产出唯一一个退化技能
+                # ("Unknown High-Reward Workflow"), RSI 产物失去意义.
+                _mode = plan.get("mode") or "autoloop"
                 evolution.logger.log_tool_call(
                     session_id=f"loop_{self._iteration}",
-                    tool_name=plan.get("mode", "unknown"),
+                    tool_name=_mode,
                     tool_input={"hypothesis": hypothesis, "plan": plan},
                     result=validation,
                     reward=r_phys,
+                    calculation_type=_mode,
+                    software="autoloop",
                 )
                 reward_result = evolution.evolve_from_rewards()
                 n_skills = len(reward_result["high_reward_skills"])
