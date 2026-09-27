@@ -77,3 +77,9 @@ Created goal: goal_7975ff26
 empty required_results for target_1 — fallback
 FTS5 stale: MATCH 'runid' = 0, rebuilding index
 metacog: 假设可能为换名归约 (trap=, target=候选发现将原始问题中的核心测量指标 N_c(w)（最小网络容量）替换为了对假设的定性选择（Structure vs Defect），并未提供具体的数值实验、扫描设置或 N_c(w) 的测量数据。它本质上是在讨论如何设计实验，而非执行实验或提供关于解空间刚性的数学/机器学习证据。): ". The most testable is likely the Structure one (directly varying width and constraints). The Novel
+FTS5 stale: MATCH 'runid' = 0, rebuilding index
+FTS5 stale: MATCH 'runid' = 0, rebuilding index
+FTS5 stale: MATCH 'runid' = 0, rebuilding index
+FTS5 stale: MATCH 'runid' = 0, rebuilding index
+FTS5 stale: MATCH 'runid' = 0, rebuilding index
+metacog: 假设可能为换名归约 (trap=, target=原始问题中关于解空间刚性（解空间维数/唯一性）与泛化行为（N_c(w)随样本数w的变化）的因果联系。): ** [DIM: defect (optimization landscape)]
