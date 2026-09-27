@@ -127,3 +127,9 @@ plan_check failed (tier=medium, scene=workflow, max_refines=0): The plan describ
 [exec-route] mode='skill' desc[:80]='Execute the capacity_scan skill for the [DIM: defect] hypothesis by implementing' obj_len=1992 is_exp_desc=True is_exp_obj=True is_det_desc=False
 [code-lab-author] raw_len=745 extracted_len=730 prompt_len=4154
 [code-lab-run] res_none=False success=True nobj=36 reason=''
+[validate] mode='code_lab' success=True nobj=36 cf=False lab=True
+FTS5 stale: MATCH 'runid' = 0, rebuilding index
+metacog: 假设可能为换名归约 (trap=, target=材料科学中的晶界位移场刚性（几何锁定导致低维流形）): [DIM: structure] The solution space for atomic displacement fields near a grain boundary exhibits a 
+[exec-route] mode='explore' desc[:80]='[auto-routed: surprise=1.00] Execute the capacity_scan composite skill to test t' obj_len=1992 is_exp_desc=True is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=643 extracted_len=628 prompt_len=4154
+[code-lab-run] res_none=False success=True nobj=36 reason=''
