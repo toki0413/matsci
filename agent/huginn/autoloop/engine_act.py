@@ -2,7 +2,7 @@
 
 从 engine.py 拆出 (P3 slim-down 续). 包含:
 - _plan (假设 → 步骤, 含 PlanStore 落盘 + cost 确认门)
-- _execute (按 mode 分派到 coder/workflow/explore/skill/visual_inspect)
+- _execute (按 mode 分派到 coder/workflow/explore/code_lab/skill/visual_inspect)
 - _execute_coder / _execute_workflow / _execute_explore / _execute_skill
 - _execute_dynamic_workflow (A5 并行 subtask) + _execute_dynamic_workflow_bandit (H2)
 - _record_provenance, _try_evolved_fix
@@ -250,6 +250,94 @@ class EngineAct:
             return ""
         return code
 
+    # 计算实验意图词 (命题无关): 目标是"要真跑一段数值实验/仿真/训练/扫描"的,
+    # 就让书生在 Code Lab 亲手写并真跑, 而不是只产出一段抄来的闭式或空转.
+    _CODE_EXPERIMENT_HINTS = (
+        "实验", "仿真", "模拟", "训练", "扫描", "网格", "留出", "泛化",
+        "探针", "基准", "收敛", "灵敏度",
+        "experiment", "simulat", "train", "scan", "sweep", "generaliz",
+        "held-out", "holdout", "probe", "benchmark", "convergence",
+    )
+
+    def _is_code_experiment(self, text: str) -> bool:
+        """启发式: 该项是否为"需书生亲手写代码真跑的计算实验"目标 (命题无关).
+
+        与 ``_is_deterministic_numeric``(平凡闭式) 互补: 这里指开放的计算实验 ——
+        多步数值流程(训练/扫描/网格/统计), 该进 Code Lab 沙箱真跑, 而不是抄一段
+        闭式公式糊过去. 只认"实验意图"词, 不绑定任何具体命题; 中英双语.
+        """
+        if not isinstance(text, str) or not text.strip():
+            return False
+        low = text.lower()
+        return any(h in low for h in self._CODE_EXPERIMENT_HINTS)
+
+    async def _request_code_lab_experiment(
+        self, goal: str, guards: dict[str, Any] | None = None
+    ) -> str:
+        """平衡点·内建执行: 让书生亲手写一段 Code Lab ``run(cfg)`` 实验代码.
+
+        命题无关: 提示词来自 ``code_lab.build_author_prompt`` 的单一契约. 这里只取
+        代码, 不评科学可信度(那是 validate/裁决层的事). 失败返回空串 → 回落原分派.
+        """
+        from huginn.research.code_lab import build_author_prompt, extract_code
+
+        guard_block = "\n".join(
+            f"- {g}" for g in ((guards or {}).get("prompt_guards") or [])[:8]
+        )
+        prompt = build_author_prompt(goal, guard_block=guard_block)
+        try:
+            raw = await self._llm_chat(prompt, model=self.verification_model)
+        except Exception:  # — LLM 不可用/超时 → 拿不到实验代码, 回落, 不阻塞
+            return ""
+        return extract_code(raw or "")
+
+    def _run_code_lab(
+        self, code: str, guards: dict[str, Any] | None = None
+    ) -> dict[str, Any] | None:
+        """在 Code Lab 安全沙箱真跑书生的实验代码; 无证据返回 None(不伪造)."""
+        import os as _os
+
+        from huginn.research.code_lab import sandbox_run
+
+        timeout = float(_os.environ.get("HUGINN_CODELAB_TIMEOUT_S", "600"))
+        extra = tuple((guards or {}).get("imports_whitelist_extra") or ())
+        aliases = (guards or {}).get("cfg_aliases") or None
+        res, reason = sandbox_run(
+            code, {"seed": 0}, timeout=timeout,
+            imports_whitelist_extra=extra, cfg_aliases=aliases,
+        )
+        if res is None:
+            logger.info("code_lab 执行未产出证据(不伪造, 回落原分派): %s", reason)
+            return None
+        return res
+
+    async def _execute_code_lab(
+        self, description: str, context: dict[str, Any]
+    ) -> dict[str, Any]:
+        """mode=code_lab: 书生亲写一段计算实验 → Code Lab 沙箱真跑 → 证据.
+
+        与闭式 probe 分层: 闭式只认平凡数值片段; 这里认"实验意图"并允许更长时/
+        更多依赖(仍受沙箱白名单约束). 失败返回 success=False, 由 validate 层裁决.
+        """
+        goal = description or str(getattr(self, "_objective", "") or "")
+        code = await self._request_code_lab_experiment(goal)
+        if not code:
+            return {"mode": "code_lab", "status": "failed", "success": False,
+                    "error": "书生未产出可解析的实验代码"}
+        res = self._run_code_lab(code)
+        if res is None:
+            return {"mode": "code_lab", "status": "failed", "success": False,
+                    "error": "Code Lab 执行未通过沙箱校验", "script": code}
+        return {
+            "mode": "code_lab",
+            "status": "completed",
+            "success": bool(res.get("success", True)),
+            "result": res.get("summary", {}),
+            "objectives": res.get("objectives", {}),
+            "script": code,
+            "reproducible": True,
+        }
+
     async def _execute(self, plan: dict[str, Any], context: dict[str, Any]) -> Any:
         """Execute the plan using the appropriate sub-engine."""
         mode = plan.get("mode", "coder")
@@ -314,6 +402,26 @@ class EngineAct:
                             "execute builtin probe: 确定性数值目标 → harness 内建生成并执行 probe → evidence"
                         )
                         return result
+            # 方案2·接 Code Lab (2026-09-27 割裂感根因): 目标是"计算实验类"时, 让书生
+            # **亲手写**一段 run(cfg) 实验代码, 在 Code Lab 安全沙箱真跑 → 结构化
+            # objectives 作证据. 与闭式 probe 分层: 闭式只认平凡数值片段, 这里认开放
+            # 实验意图(训练/扫描/探针...), 允更长时/更多依赖. 命题无关: 只按目标的实验
+            # 意图词触发, 不绑定任何具体命题. 失败即回落原分派, 不回归.
+            elif self._is_code_experiment(description) or self._is_code_experiment(
+                str(getattr(self, "_objective", "") or "")
+            ):
+                _lab = await self._execute_code_lab(description, context)
+                if _lab.get("success"):
+                    self._record_provenance("code_lab", plan, _lab)
+                    self._last_execution_result = {
+                        "_tool_name": "code_lab",
+                        "_tool_input": plan,
+                        "result": _lab,
+                    }
+                    logger.info(
+                        "execute code_lab fast-path: 书生亲写实验 → Code Lab 沙箱真跑 → evidence"
+                    )
+                    return _lab
         except Exception:  # 防御: 探针快路失败转入通用执行
             logger.debug("execute builtin-probe fast-path failed (fall through)", exc_info=True)
 
@@ -392,6 +500,9 @@ class EngineAct:
                 logger.info("explore 空转 (无证据) → 回落 coder 真实执行")
                 result = await self._execute_coder(description, context)
                 mode = "coder"
+        elif mode == "code_lab":
+            # 书生亲写一段计算实验 → Code Lab 安全沙箱真跑 → 结构化证据.
+            result = await self._execute_code_lab(description, context)
         elif mode == "skill":
             # Run a pre-built composite skill pipeline
             result = await self._execute_skill(plan, context)

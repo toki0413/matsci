@@ -59,3 +59,27 @@ FTS5 stale: MATCH 'runid' = 0, rebuilding index
 FTS5 stale: MATCH 'runid' = 0, rebuilding index
 FTS5 stale: MATCH 'runid' = 0, rebuilding index
 metacog: 假设可能为换名归约 (trap=, target=验证解空间刚性探针的可行性): ".
+G31: trajectory has 0 tool_calls for non-query objective '验证解空间刚性探针的可行性' — autoloop may be空转 (audit 06 F1)
+╭─────────────────────────────────── Result ───────────────────────────────────╮
+│ Loop Complete                                                                │
+│ Run ID: loop_9b18a9ec                                                        │
+│ Success: Yes                                                                 │
+│ Total time: 180.5s                                                           │
+│ Report:                                                                      │
+│ /workspace/research_outputs/shusheng_autoloop3/huginn_autoloop_report_loop_5 │
+│ 6a46ac1.md                                                                   │
+│ Snapshot:                                                                    │
+│ /workspace/research_outputs/shusheng_autoloop3/.huginn/autoloop_results/d01d │
+│ 360f.json                                                                    │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+Phase Summary:
+  completed    hypothesize     (47.8s)
+  completed    plan            (2.5s)
+  completed    execute         (0.0s)
+  completed    validate        (7.4s)
+  completed    hypothesize     (47.9s)
+  completed    plan            (3.2s)
+  completed    execute         (0.0s)
+  completed    report          (5.6s)
+⠙ Running autonomous loop...

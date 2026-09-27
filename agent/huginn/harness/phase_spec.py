@@ -72,6 +72,7 @@ _PHASE_BASELINE: dict[str, PhaseSpec] = {
             "workflow": ["_execute_workflow", "description"],
             "dynamic_workflow": ["_execute_dynamic_workflow", "plan"],
             "explore": ["_execute_explore", "description"],
+            "code_lab": ["_execute_code_lab", "description"],
             "skill": ["_execute_skill", "plan"],
             "visual_inspect": ["_execute_visual_inspect", "description"],
         },

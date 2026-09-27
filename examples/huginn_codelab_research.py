@@ -31,19 +31,6 @@ if str(_AGENT) not in sys.path:
 
 _OUT = Path(__file__).resolve().parents[1] / "research_outputs" / "shusheng_huginn_native"
 
-_AUTHOR_TEMPLATE = (
-    "import numpy as np\n"
-    "def run(cfg):\n"
-    "    seed = int(cfg.get('seed', 0))\n"
-    "    rng = np.random.default_rng(seed)\n"
-    "    # ... 你的真实数值实验逻辑(纯 numpy) ...\n"
-    "    return {\"success\": True,\n"
-    "            \"summary\": {\"computed\": True},\n"
-    "            \"objectives\": {\"score\": 0.0}}\n"
-    "def probe_author_probe(cfg):\n"
-    "    return {\"note\": \"可选诊断探针; 成文期可自主调用\"}"
-)
-
 
 def _llm_compat_kwargs(client) -> dict:
     """仅 Intern/书生端点注入 extra_body={'thinking_mode': False}(关思考流).
@@ -77,23 +64,15 @@ def _author_code(client, model: str, goal: str, guards: dict, cycle: int):
     失败即回退(不伪造): (None, [], [], 原因).
     """
     from huginn.research import Experiment
-    from huginn.research.code_lab import author_probe_specs, extract_code, sandbox_run
+    from huginn.research.code_lab import (
+        author_probe_specs,
+        build_author_prompt,
+        extract_code,
+        sandbox_run,
+    )
 
     guard_block = "\n".join(f"- {g}" for g in (guards.get("prompt_guards") or [])[:8])
-    base_prompt = (
-        "你是实验代码作者。用一段纯 numpy 的短函数 run(cfg) 做真实数值实验, 推进下面的研究目标。\n"
-        "硬约束: 禁止 IO/网络/读写文件; 不要 try/except、不要 class、不要嵌套函数; "
-        "单行 <= 88 字符; 每个 for/if/def 后紧跟缩进 4 空格; 结尾必须有 return。\n"
-        "cfg 是 dict(可能只含 seed); 读参数请写 cfg.get('x', 默认值), 其余实验参数直接写在代码里。"
-        "严禁把 cfg 整体解包成多个变量。\n"
-        "只实现 <=30 行核心计算。返回 {\"success\": True, \"summary\": {可证伪中间量}, "
-        "\"objectives\": {\"指标名\": 数值}}; objectives 每个值须为 float, 越大越支持你要验证的结论。\n"
-        "可选: 再写 1 个 probe_<name>(cfg) 返回 dict 作为诊断探针。\n"
-        + (("参考冷启动守卫(软提示):\n" + guard_block + "\n") if guard_block else "")
-        + "模板:\n" + _AUTHOR_TEMPLATE +
-        "\n只输出 <code>...</code> 内的**完整可用代码**, 不要任何多余文字。\n\n研究目标:\n"
-        + goal[:1500]
-    )
+    base_prompt = build_author_prompt(goal, guard_block=guard_block)
     cfg = {"seed": 0}
     extra = tuple(guards.get("imports_whitelist_extra") or ())
     aliases = guards.get("cfg_aliases") or None

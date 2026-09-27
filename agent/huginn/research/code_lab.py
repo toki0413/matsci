@@ -28,6 +28,45 @@ from typing import Any
 SAFE_MEM_CAP = 512 * 1024 * 1024      # 512MB 峰值 (tracemalloc 监控)
 SAFE_TIMEOUT_S = 30.0                 # run()/probe 单次调用超时
 
+# 书生写码的默认模板 + 提示词唯一出处: 让 autoloop 的 execute 内建动作与
+# examples 的自主循环共用同一份契约, 避免两套 author 提示各自漂移.
+AUTHOR_TEMPLATE = (
+    "import numpy as np\n"
+    "def run(cfg):\n"
+    "    seed = int(cfg.get('seed', 0))\n"
+    "    rng = np.random.default_rng(seed)\n"
+    "    # ... 你的真实数值实验逻辑(纯 numpy) ...\n"
+    "    return {\"success\": True,\n"
+    "            \"summary\": {\"computed\": True},\n"
+    "            \"objectives\": {\"score\": 0.0}}\n"
+    "def probe_author_probe(cfg):\n"
+    "    return {\"note\": \"可选诊断探针; 成文期可自主调用\"}"
+)
+
+
+def build_author_prompt(goal: str, *, guard_block: str = "",
+                        template: str = AUTHOR_TEMPLATE) -> str:
+    """构造"让书生在 Code Lab 亲手写一轮实验"的作者提示 (命题无关).
+
+    单一出处: autoloop 的 execute 内建动作与 examples 自主循环都调本函数, 契约
+    (纯 numpy、<=30 行、返回 objectives) 只维护一份. ``goal`` 由外部传入 —— 只给
+    方向, 不绑定任何具体命题; ``guard_block`` 是可选的冷启动守卫软提示.
+    """
+    return (
+        "你是实验代码作者。用一段纯 numpy 的短函数 run(cfg) 做真实数值实验, 推进下面的研究目标。\n"
+        "硬约束: 禁止 IO/网络/读写文件; 不要 try/except、不要 class、不要嵌套函数; "
+        "单行 <= 88 字符; 每个 for/if/def 后紧跟缩进 4 空格; 结尾必须有 return。\n"
+        "cfg 是 dict(可能只含 seed); 读参数请写 cfg.get('x', 默认值), 其余实验参数直接写在代码里。"
+        "严禁把 cfg 整体解包成多个变量。\n"
+        "只实现 <=30 行核心计算。返回 {\"success\": True, \"summary\": {可证伪中间量}, "
+        "\"objectives\": {\"指标名\": 数值}}; objectives 每个值须为 float, 越大越支持你要验证的结论。\n"
+        "可选: 再写 1 个 probe_<name>(cfg) 返回 dict 作为诊断探针。\n"
+        + (("参考冷启动守卫(软提示):\n" + guard_block + "\n") if guard_block else "")
+        + "模板:\n" + template +
+        "\n只输出 <code>...</code> 内的**完整可用代码**, 不要任何多余文字。\n\n研究目标:\n"
+        + goal[:1500]
+    )
+
 
 def extract_code(text: str) -> str:
     """从 LLM 输出里提取实验代码块(兼容 <code>/```python```/裸 def), 从后往前取.
