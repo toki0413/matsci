@@ -23,5 +23,17 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the family function for the transport hypothesis (advection-diffusion linear constraint family with w samples) and run the capacity scan to measure N_c(w) trend."
+  },
+  {
+    "scene_tag": "workflow",
+    "reason": "Plan is invalid because it lacks a directly executable Python script as required by the failure mode guidelines. The plan only describes an exploratory workflow without implementing the necessary numerical validation (import + formula + print result). Without concrete computational evidence, it cannot verify the rigidity hypothesis or produce the required N_c(w) data to compare against the prediction.",
+    "missing_steps": [
+      "Generate an executable Python script that defines the constraint system and computes N_c(w) across varying w values",
+      "Implement the rigidity test by calculating solution space dimension (e.g., via null space rank) or capacity growth trend",
+      "Print quantitative results showing whether N_c(w) is flat (dimension 0) or increasing (higher dimension)",
+      "Include numerical validation before proceeding to execute→validate phase"
+    ],
+    "mode": "explore",
+    "description": "The hypothesis claims N_c(w) should be flat (rigid solution space) given prior iteration 20, but the current system reports a surprise score of 1.0 (worst case), indicating the prediction failed. This"
   }
 ]
