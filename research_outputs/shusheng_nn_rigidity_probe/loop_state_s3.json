@@ -1,6 +1,98 @@
 {
   "model": "intern-s2",
-  "rounds": [],
+  "rounds": [
+    {
+      "round": 1,
+      "decision": {
+        "thought": "现有证据在 poly/osc/hism（forcing 幅度 O(1)~40）上稳定给出 beta≈0，支持 H1；但 hi（|f|~632）在 none 口径下全面优化失败，forcing 口径仅 w=64 一个点饱和，无法跨 w 拟合 beta。核心混淆未排除：大 forcing 幅度下是解空间刚性被破坏，还是 Adam 梯度失稳导致的假阴性？需要 hi 在 forcing 口径下补齐宽度网格。",
+        "action": "run",
+        "run": {
+          "kind": "hi",
+          "widths": [
+            8,
+            16,
+            32,
+            64,
+            128
+          ],
+          "ns": [
+            2,
+            4,
+            8
+          ],
+          "seeds": 2,
+          "adam_steps": 8000,
+          "res_scale": "forcing"
+        },
+        "reason": "hi 在 forcing 口径下只有 w=32,64 的零星数据，不足以拟合 N_c(w)~w^beta。补齐 8~128 宽度、用归一化口径消除梯度失稳、8000 步确保收敛，可直接判定大 forcing 下 beta 是否仍为 0，从而区分解的性质与优化假象。",
+        "conclude": {}
+      },
+      "config": {
+        "kind": "hi",
+        "widths": [
+          8,
+          16,
+          32,
+          64,
+          128
+        ],
+        "ns": [
+          2,
+          4,
+          8
+        ],
+        "seeds": 2,
+        "adam_steps": 8000,
+        "res_scale": "forcing"
+      },
+      "exec_error": true,
+      "exec_note": "超时作废: 单轮超过墙钟上限 1500s (本网格 30 个任务, adam=8000, 最大宽度=128). 这不是成本问题而是物理时间上限, 原样重试必然再超时; 请缩小网格 (减 widths 个数 / 降最大宽度 / 降 adam / 减 seeds) 到能在 1500s 内跑完, 或换更轻的锚点."
+    },
+    {
+      "round": 2,
+      "decision": {
+        "thought": "现有证据在 poly、osc、hism 三个锚点上均给出 H1（beta≈0），即 N_c 与宽度无关，支持探针站得住；但 hi 锚点因 forcing 幅值过大，原尺度下全部无法收敛，forcing 口径仅零星数据，尚缺完整宽度扫描。若 hi 在归一化口径下仍得 beta≈0，则跨尺度鲁棒性成立；若 beta 显著非零，则大 forcing 下优化动力学可能污染判据。需补 hi 的 forcing 完整扫描。",
+        "action": "run",
+        "run": {
+          "kind": "hi",
+          "widths": [
+            8,
+            16,
+            32,
+            64
+          ],
+          "ns": [
+            2,
+            4,
+            8
+          ],
+          "seeds": 2,
+          "adam_steps": 5000,
+          "res_scale": "forcing"
+        },
+        "reason": "hi 是唯一尚未在 forcing 口径下完成宽度扫描的锚点。用 8~64 宽度、2/4/8 约束、2 种子、5000 步可在墙钟内跑完，给出 N_c(w) 斜率，判定大 forcing 下是否仍为 H1，从而闭合跨尺度鲁棒性证据链。"
+      },
+      "config": {
+        "kind": "hi",
+        "widths": [
+          8,
+          16,
+          32,
+          64
+        ],
+        "ns": [
+          2,
+          4,
+          8
+        ],
+        "seeds": 2,
+        "adam_steps": 5000,
+        "res_scale": "forcing"
+      },
+      "exec_error": true,
+      "exec_note": "超时作废: 单轮超过墙钟上限 1500s (本网格 24 个任务, adam=5000, 最大宽度=64). 这不是成本问题而是物理时间上限, 原样重试必然再超时; 请缩小网格 (减 widths 个数 / 降最大宽度 / 降 adam / 减 seeds) 到能在 1500s 内跑完, 或换更轻的锚点."
+    }
+  ],
   "started": 1790491232.3072145,
   "caps": {
     "tasks": 144,
