@@ -1,0 +1,100 @@
+{
+  "directed": true,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "label": "[DIM: topological] The solution space exhibits a phase transition at $w \\approx ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-27T17:38:39.211358",
+      "last_seen": "2026-09-27T17:38:39.211358",
+      "mentions": 1,
+      "iteration": 5,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Rigid family: Anchor point (width 64, $w=30$) achieves train_err $\\approx 5 \\times 10^{-5}$, val_err $\\approx 8 \\times 10^{-4}$. $N_c(w)$ table shows flat trend (constant $\\approx 6$) for $w \\in [5, 3",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: topological] The solution space exhibits a phase transition at $w \\approx"
+    },
+    {
+      "label": "plan_coder_iter5",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T17:38:39.211403",
+      "last_seen": "2026-09-27T17:38:39.211403",
+      "mentions": 1,
+      "id": "Method:plan_coder_iter5"
+    },
+    {
+      "label": "pass_iter5",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T17:38:39.211417",
+      "last_seen": "2026-09-27T17:38:39.211417",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter5"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-27T17:38:39.211427",
+      "last_seen": "2026-09-27T17:38:39.211427",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: topological] The solution space exhibits a phase transition at $w \\approx",
+        "Method:plan_coder_iter5",
+        "Fact:pass_iter5"
+      ],
+      "iteration": 5,
+      "id": "he_experiment_pipeline_de5cf244"
+    },
+    {
+      "label": "reviewer_iter5",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-27T17:38:39.211554",
+      "last_seen": "2026-09-27T17:38:39.211554",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "539f19894a92f026",
+      "r_phys": 1.0,
+      "iteration": 5,
+      "id": "persona_use:reviewer_iter5"
+    }
+  ],
+  "links": [
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: topological] The solution space exhibits a phase transition at $w \\approx",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T17:38:39.211427",
+      "last_seen": "2026-09-27T17:38:39.211427",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_de5cf244"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_coder_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T17:38:39.211427",
+      "last_seen": "2026-09-27T17:38:39.211427",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_de5cf244"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T17:38:39.211427",
+      "last_seen": "2026-09-27T17:38:39.211427",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_de5cf244"
+    }
+  ]
+}
