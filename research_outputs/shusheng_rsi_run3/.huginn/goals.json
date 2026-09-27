@@ -4,10 +4,10 @@
       "id": "goal_a680c078",
       "text": "验证：神经网络的泛化行为能否作为 bootstrap 解空间刚性的探针。这是纯数学/机器学习命题，研究对象就是小型前馈神经网络本身，严禁替换为材料、化学或玻璃体系。待测关系：在给定抽象约束族下，小容量网络见过有限约束样本后，在未参与训练的留出约束点上是否零违规，以及该临界模型容量随网络容量如何变化。请用可复现的数值实验给出证据。",
       "sub_goals": [],
-      "iteration": 3,
+      "iteration": 8,
       "status": "active",
       "created_at": "2026-09-27T12:08:19.200649+00:00",
-      "updated_at": "2026-09-27T12:10:22.350913+00:00",
+      "updated_at": "2026-09-27T12:11:59.811470+00:00",
       "session_id": "",
       "metadata": {},
       "unknowns": [
@@ -50,9 +50,49 @@
           "discovered_at": "2026-09-27T12:08:21.643400+00:00",
           "resolved_at": null,
           "iteration": 1
+        },
+        {
+          "id": "unk_2243fb9c",
+          "text": "The assumption that small feedforward networks are sufficient to probe bootstrap space rigidity may oversimplify the topological complexity of the constraint manifold; deeper or recurrent architectures might reveal different generalization behavior.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-27T12:10:37.755348+00:00",
+          "resolved_at": null,
+          "iteration": 5
+        },
+        {
+          "id": "unk_fee8ec45",
+          "text": "Training convergence is not guaranteed for all random initializations or learning rates; non-convergent trials could falsely suggest zero violations or mask true capacity limits.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-27T12:10:37.756671+00:00",
+          "resolved_at": null,
+          "iteration": 5
+        },
+        {
+          "id": "unk_458758a9",
+          "text": "The abstract constraint family must be explicitly defined and sampled uniformly; biased or sparse sampling may create illusions of generalization where none exists.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-27T12:10:37.757626+00:00",
+          "resolved_at": null,
+          "iteration": 5
+        },
+        {
+          "id": "unk_09e9608b",
+          "text": "The critical model capacity may depend critically on the ratio of constraints to parameters—this scaling law may not be monotonic or smooth across network widths.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-27T12:10:37.758323+00:00",
+          "resolved_at": null,
+          "iteration": 5
+        },
+        {
+          "id": "unk_c139dda5",
+          "text": "Activation function choice (e.g., ReLU vs. tanh) introduces non-differentiable or saturating regions that could artificially restrict or expand effective hypothesis space, affecting bootstrap rigidity measurements.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-27T12:10:37.759004+00:00",
+          "resolved_at": null,
+          "iteration": 5
         }
       ],
-      "unknowns_discovered": 5,
+      "unknowns_discovered": 10,
       "unknowns_resolved": 0,
       "objective": "验证：神经网络的泛化行为能否作为 bootstrap 解空间刚性的探针。这是纯数学/机器学习命题，研究对象就是小型前馈神经网络本身，严禁替换为材料、化学或玻璃体系。待测关系：在给定抽象约束族下，小容量网络见过有限约束样本后，在未参与训练的留出约束点上是否零违规，以及该临界模型容量随网络容量如何变化。请用可复现的数值实验给出证据。",
       "success_criteria": [

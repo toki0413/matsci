@@ -29,6 +29,37 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_5fe76d56",
+      "objective": "[DIM: composition] The Ca/Si/Al/O stoichiometry governs ion mobility in glass through a percolation threshold where modifier cations form connected pathways; specifically, Ca concentration above 15 mol% triggers a sharp increase in conductivity due to the emergence of long-range Ca-O-Ca networks.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Validate the hypothesis regarding Ca/Si/Al/O glass conductivity by running a Molecular Dynamics (MD) simulation pipeline to compute ion mobility and conductivity as a function of Ca concentration, specifically testing the percolation threshold at 15 mol%. The workflow includes: (1) generating glass structures with varying Ca content (5-25 mol%) via melt-quench MD, (2) running NVT production runs to collect ion trajectories, (3) calculating mean squared displacement (MSD) and conductivity using the Einstein relation, and (4) analyzing the Ca-O-Ca network connectivity to identify percolation thresholds. This requires careful equilibration and convergence checks before property calculation.",
+          "tool": "workflow",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "workflows/glass_conductivity_workflow.md",
+            "configs/ca_si_al_o_glass.yaml"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-27T12:10:59.708045+00:00",
+      "confirmed_at": "2026-09-27T12:11:59.808406+00:00",
+      "completed_at": "2026-09-27T12:12:02.757687+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "workflow",
+        "source": "autoloop"
+      }
     }
   ]
 }
