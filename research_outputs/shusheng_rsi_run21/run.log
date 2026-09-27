@@ -122,3 +122,7 @@ Created goal: goal_5691f33e
 empty required_results for target_1 — fallback
 FTS5 stale: MATCH 'runid' = 0, rebuilding index
 metacog: 假设可能为换名归约 (trap=, target=原始问题中关于小型前馈网络'泛化行为'作为bootstrap解空间刚性探针的命题): '."
+FTS5 stale: MATCH 'runid' = 0, rebuilding index
+FTS5 stale: MATCH 'runid' = 0, rebuilding index
+FTS5 stale: MATCH 'runid' = 0, rebuilding index
+metacog: 假设可能为换名归约 (trap=, target=原始问题中的刚性/胖解空间探针实验): [DIM: topological] The solution space exhibits a phase transition at $w \approx 2d$ (where $d$ is in
