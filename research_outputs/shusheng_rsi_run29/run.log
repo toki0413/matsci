@@ -185,3 +185,61 @@ plan_check failed low-conf (tier=medium, scene=other, conf=0.20): The plan funda
 [code-lab-run] res_none=True success=None nobj=0 reason='执行异常: IndexError: index 10 is out of bounds for axis 0 with size 10'
 [code-lab-author] raw_len=801 extracted_len=786 prompt_len=6684
 [code-lab-run] res_none=False success=True nobj=36 reason=''
+error in _parse_verify_score: JSON parse failed, falling back to regex
+Traceback (most recent call last):
+  File "/workspace/agent/huginn/autoloop/engine_reflect.py", line 2259, in _parse_verify_score
+    data = json.loads(resp.strip())
+  File "/root/.pyenv/versions/3.14.7/lib/python3.14/json/__init__.py", line 352, in loads
+    return _default_decoder.decode(s)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^
+  File "/root/.pyenv/versions/3.14.7/lib/python3.14/json/decoder.py", line 345, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+               ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.pyenv/versions/3.14.7/lib/python3.14/json/decoder.py", line 363, in raw_decode
+    raise JSONDecodeError("Expecting value", s, err.value) from None
+json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+[validate] mode='code_lab' success=True nobj=36 cf=False lab=True
+G31: trajectory has 0 tool_calls for non-query objective '【研究命题·纯机器学习/数学】
+
+解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。
+
+核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空' — autoloop may be空转 (audit 06 F1)
+╭─────────────────────────────────── Result ───────────────────────────────────╮
+│ Loop Complete                                                                │
+│ Run ID: loop_5ffe4856                                                        │
+│ Success: Yes                                                                 │
+│ Total time: 418.6s                                                           │
+│ Report:                                                                      │
+│ /workspace/research_outputs/shusheng_rsi_run29/huginn_autoloop_report_loop_7 │
+│ 7a7ffd1.md                                                                   │
+│ Snapshot:                                                                    │
+│ /workspace/research_outputs/shusheng_rsi_run29/.huginn/autoloop_results/e221 │
+│ 4d5e.json                                                                    │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+Phase Summary:
+  completed    hypothesize     (17.6s)
+  completed    plan            (2.6s)
+  completed    execute         (26.2s)
+  completed    validate        (9.6s)
+  completed    learn           (6.1s)
+  completed    hypothesize     (8.2s)
+  completed    plan            (3.4s)
+  completed    execute         (29.4s)
+  completed    validate        (8.1s)
+  completed    hypothesize     (17.1s)
+  completed    plan            (6.0s)
+  completed    execute         (29.3s)
+  completed    validate        (10.5s)
+  completed    learn           (4.9s)
+  completed    hypothesize     (11.8s)
+  completed    plan            (6.9s)
+  completed    execute         (40.4s)
+  completed    validate        (11.2s)
+  completed    learn           (4.1s)
+  completed    hypothesize     (15.1s)
+  completed    plan            (5.0s)
+  completed    execute         (36.8s)
+  completed    validate        (11.8s)
+  completed    report          (10.2s)
+⠙ Running autonomous loop...
