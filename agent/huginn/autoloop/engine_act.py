@@ -293,9 +293,19 @@ class EngineAct:
         )
         try:
             raw = await self._llm_chat(prompt, model=self.verification_model)
-        except Exception:  # — LLM 不可用/超时 → 拿不到实验代码, 回落, 不阻塞
+        except Exception as e:  # — LLM 不可用/超时 → 拿不到实验代码, 回落, 不阻塞
+            import os as _ose
+            if _ose.environ.get("HUGINN_EXEC_ROUTE_DEBUG"):
+                logger.warning("[code-lab-author] LLM 调用失败: %r", e)
             return ""
-        return extract_code(raw or "")
+        code = extract_code(raw or "")
+        import os as _ose
+        if _ose.environ.get("HUGINN_EXEC_ROUTE_DEBUG"):
+            logger.warning(
+                "[code-lab-author] raw_len=%d extracted_len=%d prompt_len=%d",
+                len(raw or ""), len(code), len(prompt),
+            )
+        return code
 
     def _run_code_lab(
         self, code: str, guards: dict[str, Any] | None = None
@@ -332,6 +342,10 @@ class EngineAct:
         goal = str(getattr(self, "_objective", "") or "") or description
         code = await self._request_code_lab_experiment(goal)
         if not code:
+            import os as _ose
+            if _ose.environ.get("HUGINN_EXEC_ROUTE_DEBUG"):
+                logger.warning("[code-lab] 未产出可解析实验代码 → 回落; goal[:80]=%r",
+                               goal[:80])
             return {"mode": "code_lab", "status": "failed", "success": False,
                     "error": "书生未产出可解析的实验代码"}
         import os as _os
