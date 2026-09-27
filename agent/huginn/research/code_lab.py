@@ -38,63 +38,49 @@ AUTHOR_TEMPLATE = """\
 import numpy as np
 
 
+def family(kind, w, seed):
+    # ===== 你只改这个函数: 定义"刚(rigid)/肥(fat)"各自对应的约束族 =====
+    # kind: 族名('rigid' 或 'fat'); w: 训练约束点数; seed: 随机种子
+    # 返回 dict {'X','y','Xv','yv'}: X/y 是 w 个训练约束点, Xv/yv 是留出约束点。
+    # 下面是一个示例(低维正弦族), 请按你的解析 ground truth 替换。
+    rng = np.random.default_rng(seed)
+    X = np.linspace(0.0, 1.0, w).reshape(-1, 1)
+    y = np.sin(np.pi * X)
+    Xv = np.linspace(0.0, 1.0, 200).reshape(-1, 1)
+    yv = np.sin(np.pi * Xv)
+    return {'X': X, 'y': y, 'Xv': Xv, 'yv': yv}
+
+
 def run(cfg):
+    # 已由脚手架提供: 训练/多起点/宽度扫描/零违规判据/N_c 汇总都在 capacity_scan 里。
+    # **不要改这个函数, 也不要把训练/优化代码写进来** —— 否则会重蹈手搓 numpy 的错。
     seed = int(cfg.get('seed', 0))
-    ws = [5, 10, 20]
-    widths = [2, 4, 8, 16, 32]
-    anchor = None
-    summary = {}
-    objectives = {}
-    for w in ws:
-        X = np.linspace(0.0, 1.0, w).reshape(-1, 1)
-        y = np.sin(np.pi * X)
-        Xv = np.linspace(0.0, 1.0, 200).reshape(-1, 1)
-        yv = np.sin(np.pi * Xv)
-        for h in widths:
-            model = mlp_fit(X, y, h, seeds=3, seed=seed + 1000 * w + 10 * h)
-            tr = float(np.max(np.abs(mlp_predict(model, X) - y)))
-            ho = float(np.max(np.abs(mlp_predict(model, Xv) - yv)))
-            if anchor is None or ho < anchor['heldout_err']:
-                anchor = {'w': w, 'h': h, 'train_err': tr, 'heldout_err': ho}
-            summary['w%d_h%d' % (w, h)] = {'train_err': tr, 'heldout_err': ho}
-            objectives['neg_heldout_w%d_h%d' % (w, h)] = -ho
-    summary['anchor'] = anchor
-    return {'success': True, 'summary': summary, 'objectives': objectives}
-
-
-def probe_author_probe(cfg):
-    return {'note': '可选诊断探针; 成文期可自主调用'}
+    return capacity_scan(family, seed=seed)
 """
 
-#: 优化器硬提示: 只靠手写梯度下降常收敛不到小误差, 让书生优先用 scipy.optimize,
-#: 把"容量扫描 + 零违规"变成可跑通的数值实验. 只讲"怎么优化对", 不绑定命题.
-OPTIMIZER_HINT = (
-    "优化器(重要): 手写 numpy 梯度下降常常收敛不到小误差 → **优先用 scipy.optimize**。\n"
-    "更省事: 沙箱**已内置两个命题无关原语**, 直接用它们即可完成'训练+前向', "
-    "不必手搓参数打包/L-BFGS-B/形状(那正是反复 shape bug 的根源)。"
-    "**不要在代码里重新定义 mlp_fit/mlp_predict/_as_2d**——重定义会被自动剥除并按内置版本执行:\n"
-    "- `model = mlp_fit(X, y, h, seeds=3, seed=0)` → 训练一个隐藏层宽 h 的两层 tanh 网络, "
-    "只最小化 X/y 上的训练 MSE, 返回可序列化 model(含最优参数); X/y 一维或二维都行, 内部自动升维对齐。\n"
-    "- `pred = mlp_predict(model, X2)` → 用 model 对 X2 前向, 返回 (N,1) 预测, 和 mlp_fit 形状严格一致。\n"
-    "  换宽度只需改 h 再调一次 mlp_fit; 扫描/判据/约束族仍由你自定。\n"
-    "若确需自定义优化: from scipy.optimize import minimize; 把该宽度下全部网络参数 ravel 后 "
-    "np.concatenate 成一维 p。\n"
-    "- 写闭包 def loss(p): ... 返回标量(如训练集 MSE); minimize(loss, p0, method='L-BFGS-B', "
-    "options={'maxiter': 20000}), 解在 res.x。\n"
-    "- 换宽度 h 时参数个数随 h 变, 必须按该 h 重新 reshape 切回权重矩阵再前向。\n"
-    "- 单个起点可能卡住, 可用多个种子/起点各跑一次取最好(仍只报告真实数值)。\n"
+#: 分工硬提示: 训练/扫描/判据/汇总已由沙箱内置 capacity_scan 提供, 书生只写
+#: family(科学决策部分). 只讲"分工与契约", 不绑定任何具体命题.
+FAMILY_CONTRACT_HINT = (
+    "分工(极重要): 沙箱**已内置完整数值管线** capacity_scan(family, ...) —— 训练"
+    "(两层 tanh 网络 + L-BFGS-B 多起点)/宽度扫描/零违规判据/N_c 汇总 都由它完成。\n"
+    "**你只需实现 family(kind, w, seed) 这一个函数**(这是真正需要你决策的科学部分), "
+    "并让 run(cfg) 原样 `return capacity_scan(family, seed=...)`。"
+    "**绝对不要**把训练/优化/参数打包/前向写进代码 —— 那正是反复 shape bug 的根源, "
+    "已被验证在本环境里必错。\n"
+    "- family 返回 dict {'X','y','Xv','yv'}: X/y 是 w 个**训练**约束点, "
+    "Xv/yv 是**留出**约束点(未参与训练); 只想给一组时可省略 Xv/yv(回落到 X/y)。\n"
+    "- kind 取 'rigid'/'fat' 两族, 由你定义其解析 ground truth: "
+    "刚性 = 低维/唯一解的约束族; 肥 = 高维/连续族的约束族。用 kind 分支返回各自数据。\n"
 )
 
-#: 形状纪律硬提示: 广播/矩阵乘形状不匹配是书生写 numpy 失败的首要原因, 单独成块
-#: 常驻提示词. 只讲"怎么写对 numpy", 不绑定任何具体命题.
-SHAPE_DISCIPLINE = (
-    "形状纪律(极重要): 广播/矩阵乘形状不匹配是最常见失败, 每次矩阵运算前先想清形状。\n"
-    "- 建数组只用 np.zeros/np.ones/np.full/np.eye/np.array; **Generator 没有 zeros/ones/randn/rand**。\n"
-    "- 两层网络: X:(N,d_in), W1:(d_in,h), b1:(h,), H=tanh(X@W1+b1):(N,h), W2:(h,1), b2:(1,), "
-    "out=H@W2+b2:(N,1); 标签 y 也必须是 (N,1) (用 .reshape(-1,1))。\n"
-    "- 任何 (out - y)、损失、梯度: 两个操作数形状必须完全一致(都用 (N,1)); "
-    "若出现 (N,h) 与 (N,) 相减, 说明输出层没做或标签没升维。\n"
-    "- 扫描/循环里每换一个宽度 h, W1/W2 形状随之变化, 必须重新按该 h 建数组。\n"
+#: 数组纪律硬提示: family 里建数组的常见坑. 只讲"怎么建数组", 不绑定命题.
+ARRAY_SHAPE_HINT = (
+    "数组纪律: X/y/Xv/yv 用二维 (N,1) —— 建完用 .reshape(-1, 1) 升维; "
+    "np.linspace/np.array 直接用。\n"
+    "- 随机数: rng = np.random.default_rng(seed); 用 rng.standard_normal(n)/rng.uniform(...)"
+    "(Generator **没有** randn/rand/random_sample)。\n"
+    "- 建数组只用 np.zeros/np.ones/np.full/np.eye/np.array/np.linspace。\n"
+    "- 不要在 family 里做任何矩阵乘/训练; 只负责返回约束点数据。\n"
 )
 
 
@@ -166,6 +152,89 @@ def mlp_predict(model, X):
     return np.tanh(X @ W1 + b1) @ W2 + b2
 
 
+def capacity_scan(family, kinds=("rigid", "fat"), ws=(5, 10, 20),
+                  widths=(2, 4, 8, 16, 32, 64), seeds=3,
+                  tr_tol=3e-4, ho_tol=1e-3, seed=0):
+    """命题无关的容量扫描脚手架 (harness 侧已验证的数值管线).
+
+    把"训练/多起点/宽度扫描/零违规判据/N_c 汇总"这些最容易手搓出错的样板下沉为
+    已验证原语; **科学决策仍由调用方写 family 提供** —— 即"刚/肥"各自对应什么
+    约束族(解析 ground truth), 由 family 决定. 这样书生只写他真正该决策的部分.
+
+    family(kind, w, seed) -> dict 或 tuple:
+        - dict  {'X','y','Xv','yv'}: 训练约束点 (w 个) 与留出约束点 (M 个);
+        - tuple (X, y, Xv, yv) 或 (X, y): 缺省 Xv/yv 回落到 X/y.
+        X/y 一维或二维均可(内部自动升维到 (N,1) 对齐).
+    kinds: 要比较的族名(默认 'rigid'/'fat'); ws: 约束点数; widths: 隐藏层宽度;
+    seeds: 每个 (kind,w,h) 的独立起点数; tr_tol/ho_tol: 训练/留出误差门限.
+    tr_tol 只需"足够小"(默认 3e-4, 仅用于确认网络真的拟合上了, 避免优化器没收敛
+    却被记成"可达"); ho_tol=1e-3 才是"零违规"的判据, 过严的 tr_tol 会把本来可达
+    的宽度误判成 None(伪不可达), 故刻意留松.
+
+    返回 {"success", "summary", "objectives"}:
+        summary['rows'][kind_w{w}_h{h}] = {'train_err','heldout_err'}  (全为有限数)
+        summary['Nc'][kind][w] = 最小零违规宽度 h 或 None(该 w 在扫描内不可达)
+        summary['trend'][kind] = 'flat'|'increasing'|'decreasing'|'mixed'|'inconclusive'
+        summary['anchor'] = 全局留出误差最小的 (kind,w,h) 锚点 —— 证明零违规可达
+        objectives['neg_heldout_<kind>_w<w>_h<h>'] = -heldout_max_err (越大越好)
+    不伪造: 达不到零违规的行如实报其有限留出误差, Nc 记 None, 绝不写 inf.
+    """
+    import numpy as np
+
+    def _one(kind, w, s):
+        out = family(kind, int(w), int(s))
+        if isinstance(out, dict):
+            X, y = out["X"], out["y"]
+            Xv, yv = out.get("Xv", X), out.get("yv", y)
+        elif isinstance(out, (tuple, list)) and len(out) >= 2:
+            X, y = out[0], out[1]
+            Xv = out[2] if len(out) > 2 else X
+            yv = out[3] if len(out) > 3 else y
+        else:
+            raise ValueError("family 须返回 dict(X,y,Xv,yv) 或 (X,y[,Xv,yv])")
+        return _as_2d(X), _as_2d(y), _as_2d(Xv), _as_2d(yv)
+
+    summary = {"rows": {}, "Nc": {}, "trend": {}, "anchor": None}
+    objectives = {}
+    for kind in kinds:
+        nc: dict = {}
+        for w in ws:
+            datasets = [_one(kind, w, s) for s in range(int(seeds))]
+            best_h = None
+            for h in widths:
+                ho_best = float("inf")
+                tr_best = float("inf")
+                for s, (X, y, Xv, yv) in enumerate(datasets):
+                    m = mlp_fit(X, y, int(h), seeds=1,
+                                seed=int(seed) + 1000 * int(w) + 10 * int(h) + s)
+                    tr = float(np.max(np.abs(mlp_predict(m, X) - y)))
+                    ho = float(np.max(np.abs(mlp_predict(m, Xv) - yv)))
+                    if ho < ho_best:
+                        ho_best, tr_best = ho, tr
+                key = "%s_w%d_h%d" % (kind, int(w), int(h))
+                summary["rows"][key] = {"train_err": tr_best, "heldout_err": ho_best}
+                objectives["neg_heldout_" + key] = -ho_best
+                if best_h is None and ho_best <= ho_tol and tr_best <= tr_tol:
+                    best_h = int(h)
+                if summary["anchor"] is None or ho_best < summary["anchor"]["heldout_err"]:
+                    summary["anchor"] = {"kind": kind, "w": int(w), "h": int(h),
+                                         "train_err": tr_best, "heldout_err": ho_best}
+            nc[int(w)] = best_h
+        summary["Nc"][kind] = nc
+        vals = [v for v in nc.values() if v is not None]
+        if len(vals) < 2:
+            summary["trend"][kind] = "inconclusive"
+        elif len(set(vals)) == 1:
+            summary["trend"][kind] = "flat"
+        elif all(b >= a for a, b in zip(vals, vals[1:])):
+            summary["trend"][kind] = "increasing"
+        elif all(b <= a for a, b in zip(vals, vals[1:])):
+            summary["trend"][kind] = "decreasing"
+        else:
+            summary["trend"][kind] = "mixed"
+    return {"success": True, "summary": summary, "objectives": objectives}
+
+
 def build_author_prompt(goal: str, *, guard_block: str = "",
                         template: str = AUTHOR_TEMPLATE,
                         repair_hint: str = "", prev_code: str = "") -> str:
@@ -178,39 +247,31 @@ def build_author_prompt(goal: str, *, guard_block: str = "",
     不绑定任何命题).
     """
     return (
-        "你是实验代码作者。用 numpy(+可选 scipy.optimize) 写一段短函数 run(cfg) 做真实数值实验, 推进下面的研究目标。\n"
+        "你是实验代码作者。请写一段 Python 实验脚本推进下面的研究目标。\n"
         "硬约束: 禁止 IO/网络/读写文件; 不要 try/except、不要 class; "
-        "允许为优化器写 1 个闭包损失函数 def loss(p): ...。"
         "**不要用 assert / raise 判定实验成败**(会中断执行、拿不到任何证据): "
         "把测到的真实数值(含不理想的结果)全部放进 summary/objectives 里 return, 由上层裁决。"
-        "**最优值/累加器一律用 float('inf') 或 1e9 初始化, 绝不用 None**"
-        "(``best = None`` 再 ``if x < best`` 会 TypeError: '<' not supported ... NoneType)。"
         "单行 <= 88 字符; 每个 for/if/def 后紧跟缩进 4 空格; 结尾必须有 return。\n"
         "cfg 是 dict(可能只含 seed); 读参数请写 cfg.get('x', 默认值), 其余实验参数直接写在代码里。"
         "严禁把 cfg 整体解包成多个变量。\n"
-        "numpy 只用公共 API: 随机数用 np.random.default_rng(seed) 的 standard_normal/normal/uniform "
-        "(Generator **没有** randn/rand/random_sample, 不要用); 需要种子固定时全程用该 rng。\n"
-        + OPTIMIZER_HINT
-        + SHAPE_DISCIPLINE +
-        "只实现 <=50 行核心计算。返回 {\"success\": True, \"summary\": {可证伪中间量}, "
-        "\"objectives\": {\"指标名\": 数值}}; objectives 每个值须为 float, 越大越支持你要验证的结论。\n"
-        "可选: 再写 1 个 probe_<name>(cfg) 返回 dict 作为诊断探针。\n"
+        + FAMILY_CONTRACT_HINT
+        + ARRAY_SHAPE_HINT
         + (("参考冷启动守卫(软提示):\n" + guard_block + "\n") if guard_block else "")
         + (("上一轮该代码在沙箱真实执行报错如下, 请据此改正后重写:\n"
-           "常见原因(对症改): (a) 手写梯度下降收敛不到 → 改用 scipy.optimize.minimize('L-BFGS-B') "
-           "并多起点; (b) 训练误差门槛过严(如 train_err<1e-6) → 只看留出误差≤1e-3, 训练误差放宽到≤1e-4; "
-           "(c) 形状不匹配(matmul/广播) → 每次矩阵乘前把两个操作数的形状写成注释核对, "
-           "按当前宽度 h 重新 reshape 切回权重; (d) assert/raise 中断执行 → 删掉断言, 直接 return 真实数值; "
-           "(e) TypeError 里涉及 NoneType → 把 best/累加器改成 float('inf')/0.0 初始化, "
-           "不要拿 None 参与比较或算术。\n"
+           "对症改(极常见): (a) NameError/未定义名 → 只调用沙箱**内置**的 family/capacity_scan/"
+           "mlp_fit/mlp_predict, 不要自己重写训练管线; "
+           "(b) 形状不匹配(matmul/广播/concatenate) → family 返回的 X/y/Xv/yv 一律 .reshape(-1, 1); "
+           "(c) Generator 没有 randn → 用 rng.standard_normal(n); "
+           "(d) assert/raise 中断执行 → 删掉断言直接 return 真实数值。\n"
            "报错原文:\n" + repair_hint[:800] + "\n"
            + (("你上一版失败的代码(请在其基础上做**最小改动**修正它, 保留其余已正确的部分, "
                "不要凭空重写):\n" + prev_code[:2500] + "\n") if prev_code else "")
            if repair_hint else ""))
-        + "**优先直接采用下面这份已跑通的模板作骨架**(参数打包/L-BFGS-B/多起点都已正确), "
-        "只改约束族、扫描范围与指标名, 不要重写已工作的优化部分:\n"
+        + "**必须直接采用下面这份已跑通的模板作为完整脚本骨架**: "
+        "你**只改 family(kind, w, seed) 这一个函数**(定义 rigid/fat 各自的约束族数据), "
+        "run(cfg) 原样 `return capacity_scan(family, seed=...)` 不改。\n"
         + template +
-        "\n只输出 <code>...</code> 内的**完整可用代码**(即模板结构 + 你的改动), 不要任何多余文字。\n\n研究目标:\n"
+        "\n只输出 <code>...</code> 内的**完整可用代码**(即模板 + 你对 family 的改动), 不要任何多余文字。\n\n研究目标:\n"
         + goal[:4000]
     )
 
@@ -296,7 +357,7 @@ def strip_abort_statements(code: str) -> str:
 #: (反复出现: 它想自己拿参数就重写一版, 且切片/形状写错 → 整轮跑不通). 这些
 #: 原语的定义即契约, 重定义只可能引入 bug、不可能带来科学自由度(约束族/扫描/
 #: 判据都在 run() 里, 与原语无关), 故确定性剥除顶层重定义, 保留注入版本.
-BUILTIN_PRIMITIVE_NAMES = ("mlp_fit", "mlp_predict", "_as_2d")
+BUILTIN_PRIMITIVE_NAMES = ("mlp_fit", "mlp_predict", "_as_2d", "capacity_scan")
 
 
 def strip_primitive_redefinitions(code: str) -> str:
@@ -378,6 +439,7 @@ def _load_namespace(code: str, mem_cap: int = SAFE_MEM_CAP,
         "mlp_fit": mlp_fit,
         "mlp_predict": mlp_predict,
         "_as_2d": _as_2d,
+        "capacity_scan": capacity_scan,
     }
     if imports_whitelist_extra:
         extras = set(imports_whitelist_extra)
