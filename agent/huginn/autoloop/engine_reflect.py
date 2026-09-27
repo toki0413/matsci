@@ -1560,20 +1560,26 @@ class EngineReflect:
             return None
 
         # M3: 周期检测 (在当前 run 内)
-        try:
-            if is_stuck(action_history, min_cycle_len=2, min_repeats=2):
-                cycle = detect_cycle(action_history, min_cycle_len=2, min_repeats=2)
-                lam = cycle[1] if cycle else 0
-                return {
-                    "type": "cycle",
-                    "period": lam,
-                    "advice": (
-                        f"action 序列陷入周期 (period={lam}), 强制 pivot. "
-                        f"最近 {len(action_history)} 步: {action_history[-8:]}"
-                    ),
-                }
-        except Exception:  # 防御: 周期检测失败忽略
-            logger.debug("G2 cycle_detect failed (non-fatal)", exc_info=True)
+        # 规则版定序器本来就是确定性周期序列 (hyp→plan→execute→validate→learn→循环),
+        # 这个周期是设计语义, 不是"卡住". 若对它强制 pivot, 会触发
+        # CognitiveLoop 的 "no hyp to pivot from" → 每轮 2 个 cycle 就早停,
+        # 使同一 run 攒不到 ≥2 条 learn 奖励 (RSI 因此无产物). 故规则版下跳过周期重定向;
+        # 历史轨迹 prefix 匹配 (M2, 只注入 hint) 仍保留.
+        if getattr(self, "_use_llm_decider", True):
+            try:
+                if is_stuck(action_history, min_cycle_len=2, min_repeats=2):
+                    cycle = detect_cycle(action_history, min_cycle_len=2, min_repeats=2)
+                    lam = cycle[1] if cycle else 0
+                    return {
+                        "type": "cycle",
+                        "period": lam,
+                        "advice": (
+                            f"action 序列陷入周期 (period={lam}), 强制 pivot. "
+                            f"最近 {len(action_history)} 步: {action_history[-8:]}"
+                        ),
+                    }
+            except Exception:  # 防御: 周期检测失败忽略
+                logger.debug("G2 cycle_detect failed (non-fatal)", exc_info=True)
 
         # M2: 历史轨迹 prefix 匹配 (跨 run)
         try:
@@ -2557,19 +2563,18 @@ class EngineReflect:
             try:
                 evolution = self._get_evolution()
                 # 记录本次迭代的 reward, 供 evolve_from_rewards 消费.
-                # 必须带上 calculation_type/software: evolve_from_rewards 按
-                # f"{calculation_type}_{software}" 分组, 不传则全部落到
-                # "unknown_general" 组, 同组去重后只会产出唯一一个退化技能
-                # ("Unknown High-Reward Workflow"), RSI 产物失去意义.
-                _mode = plan.get("mode") or "autoloop"
+                # 分组键必须"稳定": evolve_from_rewards 按 f"{calc}_{soft}" 分组,
+                # 同一组需 ≥2 条高奖励记录才产出技能. 不能用 plan['mode'](coder/
+                # explore/code_lab 随机漂移, 会把同 run 的记录切进单条组 → 永不产出),
+                # 也不能留空(全归 unknown_general, 产出的技能名退化且被同组去重).
                 evolution.logger.log_tool_call(
                     session_id=f"loop_{self._iteration}",
-                    tool_name=_mode,
+                    tool_name=plan.get("mode", "unknown"),
                     tool_input={"hypothesis": hypothesis, "plan": plan},
                     result=validation,
                     reward=r_phys,
-                    calculation_type=_mode,
-                    software="autoloop",
+                    calculation_type="autoloop",
+                    software="huginn",
                 )
                 reward_result = evolution.evolve_from_rewards()
                 n_skills = len(reward_result["high_reward_skills"])
