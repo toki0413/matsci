@@ -443,6 +443,13 @@ class EngineReflect:
         try:
             _cf_solved = self._is_closed_form_solved(execution_result)
             _lab_solved = self._is_code_lab_solved(execution_result)
+            import os as _osv
+            if _osv.environ.get("HUGINN_EXEC_ROUTE_DEBUG"):
+                _mode = execution_result.get("mode") if isinstance(execution_result, dict) else type(execution_result).__name__
+                _succ = execution_result.get("success") if isinstance(execution_result, dict) else None
+                _nobj = len(execution_result.get("objectives", {}) or {}) if isinstance(execution_result, dict) else -1
+                logger.warning("[validate] mode=%r success=%r nobj=%d cf=%s lab=%s",
+                               _mode, _succ, _nobj, _cf_solved, _lab_solved)
             if _cf_solved or _lab_solved:
                 results["completion_mode"] = "closed_form" if _cf_solved else "code_lab"
                 results["effort_floor_passed"] = True
