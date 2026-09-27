@@ -30,43 +30,62 @@ SAFE_TIMEOUT_S = 30.0                 # run()/probe 单次调用超时
 
 # 书生写码的默认模板 + 提示词唯一出处: 让 autoloop 的 execute 内建动作与
 # examples 的自主循环共用同一份契约, 避免两套 author 提示各自漂移.
-AUTHOR_TEMPLATE = (
-    "import numpy as np\n"
-    "from scipy.optimize import minimize\n"
-    "\n"
-    "def run(cfg):\n"
-    "    seed = int(cfg.get('seed', 0))\n"
-    "    rng = np.random.default_rng(seed)\n"
-    "    X = rng.uniform(0.0, 1.0, (10, 1))\n"
-    "    y = np.sin(np.pi * X)\n"
-    "    Xv = np.linspace(0.0, 1.0, 25).reshape(-1, 1)\n"
-    "    yv = np.sin(np.pi * Xv)\n"
-    "    best = 1e9\n"
-    "    for h in [2, 4, 8, 16]:\n"
-    "        def loss(p, h=h):\n"
-    "            W1 = p[:h].reshape(1, h)\n"
-    "            b1 = p[h:2 * h].reshape(1, h)\n"
-    "            W2 = p[2 * h:3 * h].reshape(h, 1)\n"
-    "            b2 = p[3 * h:3 * h + 1].reshape(1, 1)\n"
-    "            out = np.tanh(X @ W1 + b1) @ W2 + b2\n"
-    "            return float(np.mean((out - y) ** 2))\n"
-    "        p0 = rng.standard_normal(3 * h + 1)\n"
-    "        res = minimize(loss, p0, method='L-BFGS-B',\n"
-    "                       options={'maxiter': 20000})\n"
-    "        W1 = res.x[:h].reshape(1, h)\n"
-    "        b1 = res.x[h:2 * h].reshape(1, h)\n"
-    "        W2 = res.x[2 * h:3 * h].reshape(h, 1)\n"
-    "        b2 = res.x[3 * h:3 * h + 1].reshape(1, 1)\n"
-    "        e = float(np.max(np.abs(np.tanh(Xv @ W1 + b1) @ W2 + b2 - yv)))\n"
-    "        if e < best:\n"
-    "            best = e\n"
-    "    return {\"success\": True,\n"
-    "            \"summary\": {\"best_val_err\": best},\n"
-    "            \"objectives\": {\"min_val_err\": -best}}\n"
-    "\n"
-    "def probe_author_probe(cfg):\n"
-    "    return {\"note\": \"可选诊断探针; 成文期可自主调用\"}"
-)
+# 这是一份**可直接跑通**的"容量扫描"骨架: 多起点 + L-BFGS-B + 每宽度最优
+# 训练/留出最大误差 + objectives 表. 书生按自己的约束族改前几行即可, 不必重写
+# 参数打包/优化器逻辑 (那正是反复出 bug 的地方). 用 float('inf') 初始化最优值,
+# 不用 None —— 避免 "'<' not supported between int and NoneType".
+AUTHOR_TEMPLATE = """\
+import numpy as np
+from scipy.optimize import minimize
+
+
+def run(cfg):
+    seed = int(cfg.get('seed', 0))
+    ws = [5, 10, 20]
+    widths = [2, 4, 8, 16, 32]
+    summary = {}
+    objectives = {}
+    for w in ws:
+        X = np.linspace(0.0, 1.0, w).reshape(-1, 1)
+        y = np.sin(np.pi * X)
+        Xv = np.linspace(0.0, 1.0, 200).reshape(-1, 1)
+        yv = np.sin(np.pi * Xv)
+        for h in widths:
+            best_ho = float('inf')
+            best_tr = float('inf')
+            for s in range(3):
+                rng = np.random.default_rng(seed + 1000 * w + 10 * h + s)
+                p0 = rng.standard_normal(3 * h + 1) * 0.5
+
+                def loss(p, h=h, X=X, y=y):
+                    W1 = p[:h].reshape(1, h)
+                    b1 = p[h:2 * h].reshape(1, h)
+                    W2 = p[2 * h:3 * h].reshape(h, 1)
+                    b2 = p[3 * h:3 * h + 1].reshape(1, 1)
+                    out = np.tanh(X @ W1 + b1) @ W2 + b2
+                    return float(np.mean((out - y) ** 2))
+
+                res = minimize(loss, p0, method='L-BFGS-B',
+                               options={'maxiter': 20000})
+                p = res.x
+                W1 = p[:h].reshape(1, h)
+                b1 = p[h:2 * h].reshape(1, h)
+                W2 = p[2 * h:3 * h].reshape(h, 1)
+                b2 = p[3 * h:3 * h + 1].reshape(1, 1)
+                tr = float(np.max(np.abs(np.tanh(X @ W1 + b1) @ W2 + b2 - y)))
+                ho = float(np.max(np.abs(np.tanh(Xv @ W1 + b1) @ W2 + b2 - yv)))
+                if ho < best_ho:
+                    best_ho = ho
+                    best_tr = tr
+            summary['w%d_h%d' % (w, h)] = {'train_err': best_tr,
+                                          'heldout_err': best_ho}
+            objectives['neg_heldout_w%d_h%d' % (w, h)] = -best_ho
+    return {'success': True, 'summary': summary, 'objectives': objectives}
+
+
+def probe_author_probe(cfg):
+    return {'note': '可选诊断探针; 成文期可自主调用'}
+"""
 
 #: 优化器硬提示: 只靠手写梯度下降常收敛不到小误差, 让书生优先用 scipy.optimize,
 #: 把"容量扫描 + 零违规"变成可跑通的数值实验. 只讲"怎么优化对", 不绑定命题.
@@ -109,6 +128,8 @@ def build_author_prompt(goal: str, *, guard_block: str = "",
         "允许为优化器写 1 个闭包损失函数 def loss(p): ...。"
         "**不要用 assert / raise 判定实验成败**(会中断执行、拿不到任何证据): "
         "把测到的真实数值(含不理想的结果)全部放进 summary/objectives 里 return, 由上层裁决。"
+        "**最优值/累加器一律用 float('inf') 或 1e9 初始化, 绝不用 None**"
+        "(``best = None`` 再 ``if x < best`` 会 TypeError: '<' not supported ... NoneType)。"
         "单行 <= 88 字符; 每个 for/if/def 后紧跟缩进 4 空格; 结尾必须有 return。\n"
         "cfg 是 dict(可能只含 seed); 读参数请写 cfg.get('x', 默认值), 其余实验参数直接写在代码里。"
         "严禁把 cfg 整体解包成多个变量。\n"
