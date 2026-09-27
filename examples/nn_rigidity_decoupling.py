@@ -60,6 +60,12 @@ VTR_GATE = 1e-10   # 优化充分性门槛: 训练均方违规须低于此值, �
 VHO_CUT = 1e-8     # 留出均方违规"零违规"阈值 (报告 §D 原值), 用于定义 N_c
 ADAM_STEPS = 5000
 ADAM_LR = 1e-3
+#: 残差口径. "none" = 原尺度 (残差平方直接进 loss/观测量, 与前序证据一致);
+#: "forcing" = 把残差按 forcing 的 RMS 归一 (尺度无关口径). 对 hi 这类 |f|~632 的
+#: 大幅度锚点, 原尺度会让 Adam(固定 lr) 梯度失稳 -> 假阴性; 归一后 loss 回到 O(1),
+#: 与同频的 hism 可比. 默认 none, 不扰动 poly/osc/hism 的既有证据.
+RES_SCALE = "none"
+_RES_SCALES = ("none", "forcing")
 
 
 # ── 问题锚点 ───────────────────────────────────────────────────────────────
@@ -157,7 +163,7 @@ def _d2(net: MLP, t: torch.Tensor, create_graph: bool) -> torch.Tensor:
 def solve(kind: str, w: int, n: int, seed: int, *,
           m_colloc: int = 64, adam_steps: int = ADAM_STEPS,
           adam_lr: float = ADAM_LR, lbfgs_rounds: int = 3,
-          lbfgs_maxiter: int = 4000) -> dict:
+          lbfgs_maxiter: int = 4000, res_scale: str = RES_SCALE) -> dict:
     torch.set_num_threads(1)
     u_star, f, _ = _anchor(kind)
     torch.manual_seed(seed)
@@ -171,8 +177,15 @@ def solve(kind: str, w: int, n: int, seed: int, *,
     fc = f(tc)
     fh = f(th)
 
+    # 残差归一尺度: "forcing" 时除以 forcing 的 RMS, 使 loss/观测量尺度无关.
+    fscale = 1.0
+    if res_scale == "forcing":
+        fscale = float(fc.pow(2).mean().sqrt())
+        if not math.isfinite(fscale) or fscale <= 0:
+            fscale = 1.0
+
     def res_tr() -> torch.Tensor:
-        return _d2(net, tc, True) - fc
+        return (_d2(net, tc, True) - fc) / fscale
 
     def loss() -> torch.Tensor:
         return res_tr().pow(2).mean() + (net(tp) - yp).pow(2).mean()
@@ -218,9 +231,9 @@ def solve(kind: str, w: int, n: int, seed: int, *,
             p.copy_(torch.tensor(x[m:m + k], dtype=torch.float64).reshape(p.shape))
             m += k
 
-    res_tr_v = (_d2(net, tc, False) - fc).detach()
+    res_tr_v = ((_d2(net, tc, False) - fc) / fscale).detach()
     v_tr_v = (net(tp) - yp).detach()
-    res_ho_v = (_d2(net, th, False) - fh).detach()
+    res_ho_v = ((_d2(net, th, False) - fh) / fscale).detach()
     v_ho_v = (net(th) - yh).detach()
 
     v_tr = float(res_tr_v.pow(2).mean() + v_tr_v.pow(2).mean())
@@ -230,7 +243,7 @@ def solve(kind: str, w: int, n: int, seed: int, *,
         "v_tr": v_tr, "v_ho": v_ho,
         "res_ho_rms": float(res_ho_v.pow(2).mean().sqrt()),
         "val_ho_rms": float(v_ho_v.pow(2).mean().sqrt()),
-        "converged": converged,
+        "converged": converged, "res_scale": res_scale, "fscale": fscale,
     }
 
 
@@ -285,18 +298,21 @@ def main() -> int:
     ap.add_argument("--colloc", type=int, default=64)
     ap.add_argument("--adam-steps", type=int, default=ADAM_STEPS)
     ap.add_argument("--jobs", type=int, default=3)
+    ap.add_argument("--res-scale", default=RES_SCALE, choices=list(_RES_SCALES),
+                    help="残差口径: none=原尺度(默认); forcing=按 forcing RMS 归一(尺度无关, 用于 hi 类大幅值)")
     ap.add_argument("--tag", default="")
     args = ap.parse_args()
 
     _, _, desc = _anchor(args.kind)
     print(f"锚点: {desc}")
     print(f"网格: w={args.widths}  N={args.ns}  seeds={args.seeds}  "
-          f"colloc={args.colloc}  adam={args.adam_steps}  jobs={args.jobs}")
-    print(f"门槛: V_tr < {VTR_GATE:.0e} (均方)  |  N_c 判据: V_ho < {VHO_CUT:.0e} (均方)")
+          f"colloc={args.colloc}  adam={args.adam_steps}  jobs={args.jobs}  res_scale={args.res_scale}")
+    print(f"门槛: V_tr < {VTR_GATE:.0e} (均方)  |  N_c 判据: V_ho < {VHO_CUT:.0e} (均方)"
+          + ("  [残差已按 RMS(f) 归一]" if args.res_scale == "forcing" else ""))
     print("=" * 104, flush=True)
 
     tasks = [dict(kind=args.kind, w=w, n=n, seed=s, m_colloc=args.colloc,
-                  adam_steps=args.adam_steps)
+                  adam_steps=args.adam_steps, res_scale=args.res_scale)
              for w in args.widths for n in args.ns for s in range(args.seeds)]
 
     t0 = time.time()
@@ -371,7 +387,8 @@ def main() -> int:
     out = _OUT / f"decoupling_{args.kind}{('_' + args.tag) if args.tag else ''}.json"
     out.write_text(json.dumps({
         "config": vars(args), "anchor": desc,
-        "thresholds": {"vtr_gate": VTR_GATE, "vho_cut": VHO_CUT, "basis": "mean_squared"},
+        "thresholds": {"vtr_gate": VTR_GATE, "vho_cut": VHO_CUT, "basis": "mean_squared",
+                       "res_scale": args.res_scale},
         "rows": rows,
         "N_c": {"all": dict(zip(map(str, args.widths), ncs)),
                 "good": dict(zip(map(str, args.widths), ncs_good))},

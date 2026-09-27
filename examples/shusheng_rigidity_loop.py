@@ -46,6 +46,7 @@ ALLOWED_KINDS = ["poly", "osc", "hi", "hism", "fat"]
 ALLOWED_WIDTHS = [4, 8, 16, 32, 64, 128, 256]
 ALLOWED_NS = [1, 2, 3, 4, 6, 8, 16, 32]
 ALLOWED_ADAM = [2000, 3000, 4000, 5000, 8000, 12000]
+ALLOWED_RES_SCALE = ["none", "forcing"]  # 残差口径: none=原尺度; forcing=按 RMS(f) 归一(尺度无关)
 SOFT_TASKS = 96      # 软限制: 初始任务数上限
 SOFT_COST = 128      # 软限制: 初始加权成本上限
 RENEW_FACTOR = 1.5   # 撞顶后每次续投的放大系数 (与 Huginn 一致)
@@ -99,6 +100,14 @@ _CRITERIA = """实验器给出的确定性判据 (协议定义, 不可改动, �
     介于两者                     -> 灰区;
     N_c 大量为 None              -> 无法判定 (第三类结果).
 
+可选口径 `res_scale` (残差尺度, 默认 none):
+- none: 残差按**原尺度**进 V_tr/V_ho 与 loss. 与前序证据口径一致.
+- forcing: 残差除以 forcing 的 RMS(f) 后再进 V_tr/V_ho 与 loss, 即**尺度无关口径**.
+  用途: 对 |f| 很大的锚点 (如 hi, |f|~632), 原尺度会让 Adam(固定 lr) 梯度失稳, 造成
+  "优化不收敛"的假阴性 (V_tr 停在 1e-4~1e5, 绝对门 1e-10 够不着). 归一后 loss 回到 O(1),
+  与同频的 hism 可比. 同一锚点内 beta 是在同一口径下跨 w 拟合, 口径不改变斜率解读.
+  注意: forcing 口径下 V_tr/V_ho 的绝对数值与 none 口径不可直接比.
+
 参考(非指令): 上游红队阶段是你自己此前的输出, 其中列过若干"会使结论翻转的混淆"以及一个最小决定性
 实验设计. 是否仍成立、要不要把这些对照做掉、做到什么程度算够, 由你在循环里自行决定. 本脚本不替你
 选实验, 也不替你下结论."""
@@ -130,6 +139,7 @@ def load_evidence() -> list[dict]:
             "ns": cfg.get("ns"),
             "seeds": cfg.get("seeds"),
             "adam_steps": cfg.get("adam_steps"),
+            "res_scale": cfg.get("res_scale") or "none",
             "rows": d.get("rows", []),
             "N_c": d.get("N_c", {}),
             "fit": d.get("fit", {}),
@@ -142,7 +152,7 @@ def load_evidence() -> list[dict]:
 
 def _evidence_sig(r: dict) -> tuple:
     return (r["kind"], tuple(r.get("widths") or []), tuple(r.get("ns") or []),
-            r.get("seeds"), r.get("adam_steps"))
+            r.get("seeds"), r.get("adam_steps"), r.get("res_scale") or "none")
 
 
 def render_evidence(recs: list[dict]) -> str:
@@ -152,7 +162,8 @@ def render_evidence(recs: list[dict]) -> str:
     for r in recs:
         out.append(f"\n### {r['file']}  [锚点 {r['kind']}, 来源 {r['source']}]")
         out.append(f"锚点含义: {_ANCHORS.get(r['kind'], '?')}")
-        out.append(f"网格: w={r['widths']} N={r['ns']} seeds={r['seeds']} adam={r['adam_steps']}")
+        out.append(f"网格: w={r['widths']} N={r['ns']} seeds={r['seeds']} adam={r['adam_steps']} "
+                   f"res_scale={r.get('res_scale') or 'none'}")
         out.append("  w   N | pass | log10 V_tr | log10 V_ho(all)")
         for row in r["rows"]:
             out.append(f"  {row['w']:>3} {row['n']:>3} | {row['pass_frac']:>4.0%} | "
@@ -169,12 +180,13 @@ def render_evidence(recs: list[dict]) -> str:
 
 def render_budget(recs: list[dict], caps: dict, fails: list[dict] | None = None) -> str:
     done = "\n".join(
-        f"  - kind={r['kind']} widths={r['widths']} ns={r['ns']} seeds={r['seeds']} adam={r['adam_steps']}"
+        f"  - kind={r['kind']} widths={r['widths']} ns={r['ns']} seeds={r['seeds']} "
+        f"adam={r['adam_steps']} res_scale={r.get('res_scale') or 'none'}"
         for r in recs
     ) or "  (无)"
     failed = "\n".join(
         f"  - kind={f['kind']} widths={f['widths']} ns={f['ns']} seeds={f['seeds']} "
-        f"adam={f['adam_steps']}  [上一轮失败: {f['why']}]"
+        f"adam={f['adam_steps']} res_scale={f.get('res_scale') or 'none'}  [上一轮失败: {f['why']}]"
         for f in (fails or [])
     )
     return f"""本机 3 核. 单轮资源上限 (双重约束, 必须同时满足):
@@ -192,10 +204,11 @@ def render_budget(recs: list[dict], caps: dict, fails: list[dict] | None = None)
 - ns ⊆ {ALLOWED_NS}, 最多 {MAX_NS} 个
 - seeds ∈ 1..{MAX_SEEDS}
 - adam_steps ∈ {ALLOWED_ADAM}
+- res_scale ∈ {ALLOWED_RES_SCALE}   (none=原尺度; forcing=残差按 RMS(f) 归一的尺度无关口径)
 越界会被自动削减: 依次砍 ns(不低于 {MIN_NS} 个) -> seeds(不低于 1) -> widths(不低于 {MIN_WIDTHS} 个);
 若削到地板仍超预算, 该轮会被**拒绝**并把预算反馈给你重规划. 削减/拒绝都会在下一轮告知你.
 
-**已跑过的配置 (签名 kind|widths|ns|seeds|adam, 不得重复)**:
+**已跑过的配置 (签名 kind|widths|ns|seeds|adam|res_scale, 不得重复)**:
 {done}{f'''
 **已失败的配置 (不要原样重试, 失败原因见括号; 请改网格)**:
 {failed}''' if failed else ''}"""
@@ -317,6 +330,10 @@ def _clamp_run(run: dict, caps: dict) -> tuple[dict | None, list[str]]:
         near = min(ALLOWED_ADAM, key=lambda a: abs(a - adam))
         notes.append(f"adam_steps={adam} 不在允许集合, 取最近值 {near}")
         adam = near
+    res_scale = run.get("res_scale") or "none"
+    if res_scale not in ALLOWED_RES_SCALE:
+        notes.append(f"res_scale={res_scale} 非法, 取 none")
+        res_scale = "none"
 
     def _tot(ws_, ns_, sd_):
         return len(ws_) * len(ns_) * sd_, sum(_cost(w, adam) for w in ws_) * len(ns_) * sd_
@@ -354,7 +371,8 @@ def _clamp_run(run: dict, caps: dict) -> tuple[dict | None, list[str]]:
             f"请求超硬刹车且削到地板后仍不够 (tasks={t}>{caps['tasks']} 或 cost={c}>{caps['cost']}); "
             f"续投额度已用尽 ({MAX_RENEWALS}/{MAX_RENEWALS}); "
             f"请减小网格: 例如减少 widths 个数或把最大宽度从 256 降到 128/64, 再提交"]
-    return {"kind": kind, "widths": ws, "ns": ns, "seeds": seeds, "adam_steps": adam}, notes
+    return {"kind": kind, "widths": ws, "ns": ns, "seeds": seeds, "adam_steps": adam,
+            "res_scale": res_scale}, notes
 
 
 def run_experiment(cfg: dict, tag: str) -> tuple[dict | None, str]:
@@ -369,6 +387,7 @@ def run_experiment(cfg: dict, tag: str) -> tuple[dict | None, str]:
            "--ns", *map(str, cfg["ns"]),
            "--seeds", str(cfg["seeds"]),
            "--adam-steps", str(cfg["adam_steps"]),
+           "--res-scale", str(cfg.get("res_scale") or "none"),
            "--jobs", str(JOBS),
            "--tag", tag]
     print(f"      $ {' '.join(cmd[1:])}", flush=True)
@@ -407,6 +426,7 @@ def _rec_from_json(d: dict, tag: str, source: str) -> dict:
         "kind": cfg.get("kind"), "tag": tag,
         "widths": cfg.get("widths"), "ns": cfg.get("ns"),
         "seeds": cfg.get("seeds"), "adam_steps": cfg.get("adam_steps"),
+        "res_scale": cfg.get("res_scale") or "none",
         "rows": d.get("rows", []), "N_c": d.get("N_c", {}), "fit": d.get("fit", {}),
         "verdict": d.get("verdict", ""), "elapsed_s": d.get("elapsed_s"),
         "source": source,
@@ -452,6 +472,19 @@ def main() -> int:
     last_decision = None
     note = ""
 
+    def _flush() -> None:
+        """把当前 transcript/state 立刻落盘.
+
+        环境会周期性重置并杀进程; 若只在"轮成功/跑到结尾"才写盘, 一轮被半路杀掉就
+        全丢 (连书生的决策都不留). 这里在**每轮决策后、每次拒绝/失败后**都立刻落盘,
+        使重置最多只丢正在跑的那一轮的实验本身.
+        """
+        REPORT_DIR.mkdir(parents=True, exist_ok=True)
+        (REPORT_DIR / f"loop_transcript{sfx}.md").write_text(
+            "\n".join(transcript), encoding="utf-8")
+        (REPORT_DIR / f"loop_state{sfx}.json").write_text(
+            json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+
     for rd in range(1, args.rounds + 1):
         if time.time() - t_start > args.budget_s:
             note = "墙钟预算耗尽"
@@ -484,7 +517,8 @@ def main() -> int:
 {{
   "thought": "你读证据后的判断, 中文, <=200字",
   "action": "run" 或 "conclude",
-  "run": {{"kind": "...", "widths": [..], "ns": [..], "seeds": N, "adam_steps": N}},
+  "run": {{"kind": "...", "widths": [..], "ns": [..], "seeds": N, "adam_steps": N, \
+"res_scale": "none" 或 "forcing"}},
   "reason": "这一步为什么能推进判别, 中文, <=120字",
   "conclude": {{"verdict": "接受/有条件接受/驳回", "conclusion": "你的最终结论, 中文", \
 "answer_to_question": "对原始问题的一句话回答", "strongest_dissent": "最强反方理由", \
@@ -499,6 +533,7 @@ def main() -> int:
             transcript += [f"## 第 {rd} 轮 · 解析失败", "", "```", raw[:2000], "```", ""]
             print(f"      !! {note}", file=sys.stderr)
             state["rounds"].append({"round": rd, "error": "json_parse", "raw": raw[:4000]})
+            _flush()
             continue
 
         action = dec.get("action")
@@ -518,6 +553,7 @@ def main() -> int:
                            f"- answer_to_question: {conclusion.get('answer_to_question')}",
                            f"- strongest_dissent: {conclusion.get('strongest_dissent')}", ""]
             state["rounds"].append({"round": rd, "decision": dec, "conclusion": conclusion})
+            _flush()
             break
 
         cfg, notes = _clamp_run(dec.get("run") or {}, caps)
@@ -527,13 +563,16 @@ def main() -> int:
             print(f"      !! {note}", file=sys.stderr)
             transcript += [f"**配置被拒**: {note}", ""]
             state["rounds"].append({"round": rd, "decision": dec, "rejected": notes})
+            _flush()
             continue
-        sig = (cfg["kind"], tuple(cfg["widths"]), tuple(cfg["ns"]), cfg["seeds"], cfg["adam_steps"])
+        sig = (cfg["kind"], tuple(cfg["widths"]), tuple(cfg["ns"]), cfg["seeds"],
+               cfg["adam_steps"], cfg["res_scale"])
         if sig in sigs:
             note = f"配置与已跑过的重复, 已拒绝: {sig}"
             print(f"      !! {note}", file=sys.stderr)
             transcript += [f"**配置重复, 已拒绝**: `{sig}`", ""]
             state["rounds"].append({"round": rd, "decision": dec, "rejected": ["duplicate"]})
+            _flush()
             continue
         if sig in timeout_sigs:
             note = (f"该配置上一轮已超时作废, 原样重试必然再超时, 已拦截: {sig}; "
@@ -541,13 +580,16 @@ def main() -> int:
             print(f"      !! {note}", file=sys.stderr)
             transcript += [f"**配置已被超时拦截, 拒绝原样重试**: `{sig}`", ""]
             state["rounds"].append({"round": rd, "decision": dec, "rejected": ["timeout_repeat"]})
+            _flush()
             continue
 
         tag = f"loop{rd:02d}{sfx}"
         transcript += [f"**执行配置**: `kind={cfg['kind']} widths={cfg['widths']} "
-                       f"ns={cfg['ns']} seeds={cfg['seeds']} adam={cfg['adam_steps']}`", ""]
+                       f"ns={cfg['ns']} seeds={cfg['seeds']} adam={cfg['adam_steps']} "
+                       f"res_scale={cfg['res_scale']}`", ""]
         if notes:
             transcript += [f"(校验备注: {'; '.join(notes)})", ""]
+        _flush()   # 决策已定 -> 先落盘, 即便接下来实验被重置杀掉也不丢这一轮决策
         d, err = run_experiment(cfg, tag)
         if d is None:
             note = err or "实验执行失败, 未产出结果"
@@ -555,9 +597,11 @@ def main() -> int:
                 timeout_sigs.add(sig)   # 原样重试必然再超时, 下轮直接拦截
             transcript += [f"**实验失败**: {note}", ""]
             fails.append({"kind": cfg["kind"], "widths": cfg["widths"], "ns": cfg["ns"],
-                          "seeds": cfg["seeds"], "adam_steps": cfg["adam_steps"], "why": note})
-            state["rounds"].append({"round": rd, "decision": dec, "exec_error": True,
-                                    "exec_note": note})
+                          "seeds": cfg["seeds"], "adam_steps": cfg["adam_steps"],
+                          "res_scale": cfg["res_scale"], "why": note})
+            state["rounds"].append({"round": rd, "decision": dec, "config": cfg,
+                                    "exec_error": True, "exec_note": note})
+            _flush()
             continue
         rec = _rec_from_json(d, tag, "本轮")
         recs.append(rec)
@@ -567,10 +611,10 @@ def main() -> int:
         state["rounds"].append({"round": rd, "decision": dec, "config": cfg,
                                 "record": {k: rec[k] for k in
                                            ("kind", "widths", "ns", "seeds", "adam_steps",
-                                            "N_c", "fit", "verdict", "elapsed_s", "file")}})
+                                            "res_scale", "N_c", "fit", "verdict",
+                                            "elapsed_s", "file")}})
         print(f"      -> 本轮完成: N_c={rec['N_c'].get('all')} 裁决={rec['verdict']}")
-        (REPORT_DIR / f"loop_state{sfx}.json").write_text(
-            json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+        _flush()
 
     # 未结题 -> 强制要一次最终裁决
     if conclusion is None:
