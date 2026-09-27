@@ -66,6 +66,70 @@
       "r_phys": 1.0,
       "iteration": 5,
       "id": "persona_use:reviewer_iter5"
+    },
+    {
+      "label": "[DIM: structure] The solution space for atomic displacement fields near a grain ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-27T18:10:32.739155",
+      "last_seen": "2026-09-27T18:10:32.739155",
+      "mentions": 1,
+      "iteration": 10,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The rigid family (linear constraints) will show flat N_c(w) (e.g., N_c(w)=2 for all w≥2) with training error ≤1e-4 and validation error ≤1e-3 at minimal width; the fat family (sinusoidal with free par",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The solution space for atomic displacement fields near a grain"
+    },
+    {
+      "label": "plan_explore_iter10",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T18:10:32.739199",
+      "last_seen": "2026-09-27T18:10:32.739199",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter10"
+    },
+    {
+      "label": "pass_iter10",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T18:10:32.739209",
+      "last_seen": "2026-09-27T18:10:32.739209",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter10"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-27T18:10:32.739218",
+      "last_seen": "2026-09-27T18:10:32.739218",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The solution space for atomic displacement fields near a grain",
+        "Method:plan_explore_iter10",
+        "Fact:pass_iter10"
+      ],
+      "iteration": 10,
+      "id": "he_experiment_pipeline_5b3dc5fe"
+    },
+    {
+      "label": "reviewer_iter10",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-27T18:10:32.739309",
+      "last_seen": "2026-09-27T18:10:32.739309",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "0cb4692fa5e0aa61",
+      "r_phys": 1.0,
+      "iteration": 10,
+      "id": "persona_use:reviewer_iter10"
     }
   ],
   "links": [
@@ -95,6 +159,33 @@
       "last_seen": "2026-09-27T18:09:39.395391",
       "mentions": 1,
       "target": "he_experiment_pipeline_8d8a1813"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The solution space for atomic displacement fields near a grain",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T18:10:32.739218",
+      "last_seen": "2026-09-27T18:10:32.739218",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5b3dc5fe"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T18:10:32.739218",
+      "last_seen": "2026-09-27T18:10:32.739218",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5b3dc5fe"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-09-27T18:10:32.739218",
+      "last_seen": "2026-09-27T18:10:32.739218",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5b3dc5fe"
     }
   ]
 }

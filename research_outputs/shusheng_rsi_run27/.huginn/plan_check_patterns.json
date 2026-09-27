@@ -10,5 +10,17 @@
     ],
     "mode": "skill",
     "description": "Execute the capacity_scan skill for the [DIM: defect] hypothesis by implementing the `family` function to construct a \"fat\" constraint family (high-dimensional continuous solution space) and running t"
+  },
+  {
+    "scene_tag": "md",
+    "reason": "The plan is described as 'explore' but lacks the critical component of being executable. The user explicitly warned in the 'Known Failure Patterns' that the current plan does not contain a directly runnable numerical script. It describes methodology (scipy.optimize.minimize, L-BFGS-B, multi-seed) but provides no actual code, formulas, or implementation details to run. Without a concrete Python snippet to execute, the hypothesis cannot be validated numerically, and the plan remains theoretical rather than actionable.",
+    "missing_steps": [
+      "Provide a runnable Python code snippet that implements the core mathematical structure (constraint counting, capacity measurement, optimization with L-BFGS-B)",
+      "Include import statements, formula definitions, and a print statement to output results",
+      "Execute the code to generate actual numerical data before proceeding to validation",
+      "Define what N_c(w) measures explicitly (e.g., number of solutions, solution space volume, constraint satisfaction count)"
+    ],
+    "mode": "explore",
+    "description": "The hypothesis tests whether network capacity N_c(w) trends flat (rigid solution space) or increasing (fat solution space) as constraint count w increases. Given the previous high surprise (1.0), we n"
   }
 ]
