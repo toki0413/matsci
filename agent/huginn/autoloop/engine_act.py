@@ -323,6 +323,12 @@ class EngineAct:
             code, {"seed": 0}, timeout=timeout,
             imports_whitelist_extra=extra, cfg_aliases=aliases,
         )
+        import os as _osd
+        if _osd.environ.get("HUGINN_EXEC_ROUTE_DEBUG"):
+            _ok = None if res is None else res.get("success")
+            _nobj = 0 if res is None else len(res.get("objectives", {}) or {})
+            logger.warning("[code-lab-run] res_none=%s success=%s nobj=%d reason=%r",
+                           res is None, _ok, _nobj, (reason or "")[:200])
         if res is None:
             logger.info("code_lab 执行未产出证据(不伪造, 回落原分派): %s", reason)
             return None, reason or "执行未产出证据"
