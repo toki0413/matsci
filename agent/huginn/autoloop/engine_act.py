@@ -355,6 +355,10 @@ class EngineAct:
                 if not repaired:
                     break
                 code = repaired
+        logger.warning(
+            "code_lab 沙箱执行经 %d 轮修复仍未产出证据(不伪造): %s",
+            max_repairs + 1, last_err,
+        )
         return {"mode": "code_lab", "status": "failed", "success": False,
                 "error": f"Code Lab 执行未通过沙箱校验: {last_err}", "script": code}
 

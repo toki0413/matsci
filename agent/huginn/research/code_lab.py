@@ -32,16 +32,63 @@ SAFE_TIMEOUT_S = 30.0                 # run()/probe 单次调用超时
 # examples 的自主循环共用同一份契约, 避免两套 author 提示各自漂移.
 AUTHOR_TEMPLATE = (
     "import numpy as np\n"
+    "from scipy.optimize import minimize\n"
+    "\n"
     "def run(cfg):\n"
     "    seed = int(cfg.get('seed', 0))\n"
     "    rng = np.random.default_rng(seed)\n"
-    "    x = rng.standard_normal((64, 2))\n"
-    "    # ... 你的真实数值实验逻辑(纯 numpy) ...\n"
+    "    X = rng.uniform(0.0, 1.0, (10, 1))\n"
+    "    y = np.sin(np.pi * X)\n"
+    "    Xv = np.linspace(0.0, 1.0, 25).reshape(-1, 1)\n"
+    "    yv = np.sin(np.pi * Xv)\n"
+    "    best = 1e9\n"
+    "    for h in [2, 4, 8, 16]:\n"
+    "        def loss(p, h=h):\n"
+    "            W1 = p[:h].reshape(1, h)\n"
+    "            b1 = p[h:2 * h].reshape(1, h)\n"
+    "            W2 = p[2 * h:3 * h].reshape(h, 1)\n"
+    "            b2 = p[3 * h:3 * h + 1].reshape(1, 1)\n"
+    "            out = np.tanh(X @ W1 + b1) @ W2 + b2\n"
+    "            return float(np.mean((out - y) ** 2))\n"
+    "        p0 = rng.standard_normal(3 * h + 1)\n"
+    "        res = minimize(loss, p0, method='L-BFGS-B',\n"
+    "                       options={'maxiter': 20000})\n"
+    "        W1 = res.x[:h].reshape(1, h)\n"
+    "        b1 = res.x[h:2 * h].reshape(1, h)\n"
+    "        W2 = res.x[2 * h:3 * h].reshape(h, 1)\n"
+    "        b2 = res.x[3 * h:3 * h + 1].reshape(1, 1)\n"
+    "        e = float(np.max(np.abs(np.tanh(Xv @ W1 + b1) @ W2 + b2 - yv)))\n"
+    "        if e < best:\n"
+    "            best = e\n"
     "    return {\"success\": True,\n"
-    "            \"summary\": {\"computed\": True},\n"
-    "            \"objectives\": {\"score\": 0.0}}\n"
+    "            \"summary\": {\"best_val_err\": best},\n"
+    "            \"objectives\": {\"min_val_err\": -best}}\n"
+    "\n"
     "def probe_author_probe(cfg):\n"
     "    return {\"note\": \"可选诊断探针; 成文期可自主调用\"}"
+)
+
+#: 优化器硬提示: 只靠手写梯度下降常收敛不到小误差, 让书生优先用 scipy.optimize,
+#: 把"容量扫描 + 零违规"变成可跑通的数值实验. 只讲"怎么优化对", 不绑定命题.
+OPTIMIZER_HINT = (
+    "优化器(重要): 手写 numpy 梯度下降常常收敛不到小误差 → **优先用 scipy.optimize**。\n"
+    "- from scipy.optimize import minimize; 把该宽度下全部网络参数 ravel 后 np.concatenate 成一维 p。\n"
+    "- 写闭包 def loss(p): ... 返回标量(如训练集 MSE); minimize(loss, p0, method='L-BFGS-B', "
+    "options={'maxiter': 20000}), 解在 res.x。\n"
+    "- 换宽度 h 时参数个数随 h 变, 必须按该 h 重新 reshape 切回权重矩阵再前向。\n"
+    "- 单个起点可能卡住, 可用多个种子/起点各跑一次取最好(仍只报告真实数值)。\n"
+)
+
+#: 形状纪律硬提示: 广播/矩阵乘形状不匹配是书生写 numpy 失败的首要原因, 单独成块
+#: 常驻提示词. 只讲"怎么写对 numpy", 不绑定任何具体命题.
+SHAPE_DISCIPLINE = (
+    "形状纪律(极重要): 广播/矩阵乘形状不匹配是最常见失败, 每次矩阵运算前先想清形状。\n"
+    "- 建数组只用 np.zeros/np.ones/np.full/np.eye/np.array; **Generator 没有 zeros/ones/randn/rand**。\n"
+    "- 两层网络: X:(N,d_in), W1:(d_in,h), b1:(h,), H=tanh(X@W1+b1):(N,h), W2:(h,1), b2:(1,), "
+    "out=H@W2+b2:(N,1); 标签 y 也必须是 (N,1) (用 .reshape(-1,1))。\n"
+    "- 任何 (out - y)、损失、梯度: 两个操作数形状必须完全一致(都用 (N,1)); "
+    "若出现 (N,h) 与 (N,) 相减, 说明输出层没做或标签没升维。\n"
+    "- 扫描/循环里每换一个宽度 h, W1/W2 形状随之变化, 必须重新按该 h 建数组。\n"
 )
 
 
@@ -57,18 +104,28 @@ def build_author_prompt(goal: str, *, guard_block: str = "",
     不绑定任何命题).
     """
     return (
-        "你是实验代码作者。用一段纯 numpy 的短函数 run(cfg) 做真实数值实验, 推进下面的研究目标。\n"
-        "硬约束: 禁止 IO/网络/读写文件; 不要 try/except、不要 class、不要嵌套函数; "
+        "你是实验代码作者。用 numpy(+可选 scipy.optimize) 写一段短函数 run(cfg) 做真实数值实验, 推进下面的研究目标。\n"
+        "硬约束: 禁止 IO/网络/读写文件; 不要 try/except、不要 class; "
+        "允许为优化器写 1 个闭包损失函数 def loss(p): ...。"
+        "**不要用 assert / raise 判定实验成败**(会中断执行、拿不到任何证据): "
+        "把测到的真实数值(含不理想的结果)全部放进 summary/objectives 里 return, 由上层裁决。"
         "单行 <= 88 字符; 每个 for/if/def 后紧跟缩进 4 空格; 结尾必须有 return。\n"
         "cfg 是 dict(可能只含 seed); 读参数请写 cfg.get('x', 默认值), 其余实验参数直接写在代码里。"
         "严禁把 cfg 整体解包成多个变量。\n"
         "numpy 只用公共 API: 随机数用 np.random.default_rng(seed) 的 standard_normal/normal/uniform "
         "(Generator **没有** randn/rand/random_sample, 不要用); 需要种子固定时全程用该 rng。\n"
-        "只实现 <=30 行核心计算。返回 {\"success\": True, \"summary\": {可证伪中间量}, "
+        + OPTIMIZER_HINT
+        + SHAPE_DISCIPLINE +
+        "只实现 <=50 行核心计算。返回 {\"success\": True, \"summary\": {可证伪中间量}, "
         "\"objectives\": {\"指标名\": 数值}}; objectives 每个值须为 float, 越大越支持你要验证的结论。\n"
         "可选: 再写 1 个 probe_<name>(cfg) 返回 dict 作为诊断探针。\n"
         + (("参考冷启动守卫(软提示):\n" + guard_block + "\n") if guard_block else "")
-        + (("上一轮该代码在沙箱真实执行报错如下, 请据此改正后重写:\n" + repair_hint[:800] + "\n")
+        + (("上一轮该代码在沙箱真实执行报错如下, 请据此改正后重写:\n"
+           "常见原因(对症改): (a) 手写梯度下降收敛不到 → 改用 scipy.optimize.minimize('L-BFGS-B') "
+           "并多起点; (b) 训练误差门槛过严(如 train_err<1e-6) → 只看留出误差≤1e-3, 训练误差放宽到≤1e-4; "
+           "(c) 形状不匹配 → 按当前宽度 h 重新 reshape 切回权重; "
+           "(d) assert/raise 中断执行 → 删掉断言, 直接 return 真实数值。\n"
+           + repair_hint[:800] + "\n")
            if repair_hint else "")
         + "模板:\n" + template +
         "\n只输出 <code>...</code> 内的**完整可用代码**, 不要任何多余文字。\n\n研究目标:\n"
