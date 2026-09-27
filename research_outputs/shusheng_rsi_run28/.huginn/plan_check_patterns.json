@@ -1,0 +1,14 @@
+[
+  {
+    "scene_tag": "other",
+    "reason": "The plan is fundamentally flawed because it describes a high-level conceptual investigation ('implement the capacity_scan framework') without providing the necessary executable code or numerical methodology to test the hypothesis. The 'known failure modes' explicitly warn against this exact behavior: 'current plan does not contain directly runnable numerical script'. Without concrete mathematical definitions of $N_c(w)$, the transcendental constraint system, and the network architecture, the prediction remains an untestable assertion rather than a scientific claim.",
+    "missing_steps": [
+      "Define the mathematical formulation of the non-linear transcendental constraint system (e.g., specific equations involving sin(wx) = y)",
+      "Define the metric $N_c(w)$ (network capacity) clearly—whether it refers to width, depth, number of parameters, or topological complexity",
+      "Provide executable Python code that constructs the system, scans width $w$, measures capacity $N_c(w)$, and produces numerical results",
+      "Include a baseline linear case for comparison as described in the anchor"
+    ],
+    "mode": "explore",
+    "description": "The hypothesis posits that non-linear transcendental constraint systems exhibit \"intermediate rigidity\" where $N_c(w)$ trends flat for small $w$ but increases for large $w$. This is a direct contrast "
+  }
+]
