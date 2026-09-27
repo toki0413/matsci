@@ -114,3 +114,9 @@ Created goal: goal_6523b227
 [cache-debug] model=Intern-S2-Preview-35B stats_keys=['model_provider', 'finish_reason', 'model_name']
 FTS5 stale: MATCH 'runid' = 0, rebuilding index
 metacog: 假设可能为换名归约 (trap=, target=原始问题中关于小型前馈网络泛化行为作为解空间刚性探针的假设，即通过测量 N_c(w) 随 w 的趋势来判断解空间是刚性还是胖。): [DIM: structure] The solution space of small feedforward networks interpolating analytic constraints
+FTS5 stale: MATCH 'runid' = 0, rebuilding index
+FTS5 stale: MATCH 'runid' = 0, rebuilding index
+FTS5 stale: MATCH 'runid' = 0, rebuilding index
+FTS5 stale: MATCH 'runid' = 0, rebuilding index
+FTS5 stale: MATCH 'runid' = 0, rebuilding index
+metacog: 假设可能为换名归约 (trap=, target=将'解空间刚性'（低维/唯一 vs 高维/连续族）重新表述为'Hessian秩变化导致的几何分岔', 未提供新的可验证机制或实验证据): [DIM: structure] The phase transition in N_c(w) occurs at a critical constraint density w_c where th
