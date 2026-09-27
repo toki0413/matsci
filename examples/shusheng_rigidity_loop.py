@@ -167,11 +167,16 @@ def render_evidence(recs: list[dict]) -> str:
     return "\n".join(out)
 
 
-def render_budget(recs: list[dict], caps: dict) -> str:
+def render_budget(recs: list[dict], caps: dict, fails: list[dict] | None = None) -> str:
     done = "\n".join(
         f"  - kind={r['kind']} widths={r['widths']} ns={r['ns']} seeds={r['seeds']} adam={r['adam_steps']}"
         for r in recs
     ) or "  (无)"
+    failed = "\n".join(
+        f"  - kind={f['kind']} widths={f['widths']} ns={f['ns']} seeds={f['seeds']} "
+        f"adam={f['adam_steps']}  [上一轮失败: {f['why']}]"
+        for f in (fails or [])
+    )
     return f"""本机 3 核. 单轮资源上限 (双重约束, 必须同时满足):
 - 训练任务数 len(widths)*len(ns)*seeds <= {caps['tasks']}
 - 加权成本 sum_任务 max(1, w//16)*adam倍率 <= {caps['cost']}   (w=8记1/32记2/64记4/128记8/256记16; adam>=8000 再×2, 12000 再×3)
@@ -191,7 +196,9 @@ def render_budget(recs: list[dict], caps: dict) -> str:
 若削到地板仍超预算, 该轮会被**拒绝**并把预算反馈给你重规划. 削减/拒绝都会在下一轮告知你.
 
 **已跑过的配置 (签名 kind|widths|ns|seeds|adam, 不得重复)**:
-{done}"""
+{done}{f'''
+**已失败的配置 (不要原样重试, 失败原因见括号; 请改网格)**:
+{failed}''' if failed else ''}"""
 
 
 # ── 书生调用 ──────────────────────────────────────────────────────────────
@@ -262,6 +269,23 @@ def _extract_json(text: str) -> dict | None:
 
 
 # ── 决策校验/夹紧 ─────────────────────────────────────────────────────────
+_VERDICT_FIELDS = ("verdict", "conclusion", "answer_to_question",
+                   "strongest_dissent", "remaining_uncertainty")
+
+
+def _extract_conclusion(dec: dict) -> dict:
+    """取出裁决字段, 兼容两种写法.
+
+    书生有时把裁决**平铺**在顶层 (``{"verdict": ...}``), 有时按 schema 嵌进
+    ``{"conclude": {...}}``; 之前只读嵌套写法, 导致结构化字段全 None. 这里两种都收.
+    """
+    nested = dec.get("conclude") if isinstance(dec, dict) else None
+    if isinstance(nested, dict) and any(nested.get(k) is not None for k in _VERDICT_FIELDS):
+        return nested
+    flat = {k: dec.get(k) for k in _VERDICT_FIELDS if isinstance(dec, dict) and dec.get(k) is not None}
+    return flat or (nested if isinstance(nested, dict) else {})
+
+
 def _clamp_run(run: dict, caps: dict) -> tuple[dict | None, list[str]]:
     notes = []
     if not isinstance(run, dict):
@@ -333,7 +357,12 @@ def _clamp_run(run: dict, caps: dict) -> tuple[dict | None, list[str]]:
     return {"kind": kind, "widths": ws, "ns": ns, "seeds": seeds, "adam_steps": adam}, notes
 
 
-def run_experiment(cfg: dict, tag: str) -> dict | None:
+def run_experiment(cfg: dict, tag: str) -> tuple[dict | None, str]:
+    """跑一组实验.
+
+    返回 ``(结果, 失败原因)``: 成功时第二个元素为 "", 失败时为**给书生看的**具体原因
+    (超时 / rc / 缺产物), 让书生下一轮能据此改网格, 而不是原样重试.
+    """
     cmd = [sys.executable, str(EXP),
            "--kind", cfg["kind"],
            "--widths", *map(str, cfg["widths"]),
@@ -348,19 +377,27 @@ def run_experiment(cfg: dict, tag: str) -> dict | None:
         p = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True,
                            timeout=ROUND_TIMEOUT_S)
     except subprocess.TimeoutExpired:
-        print(f"      !! 单轮超过墙钟上限 {ROUND_TIMEOUT_S:.0f}s, 本轮作废 "
-              f"(网格过大或 adam 过高); 请缩小网格重提", file=sys.stderr)
-        return None
+        ntask = len(cfg["widths"]) * len(cfg["ns"]) * cfg["seeds"]
+        msg = (f"超时作废: 单轮超过墙钟上限 {ROUND_TIMEOUT_S:.0f}s (本网格 {ntask} 个任务, "
+               f"adam={cfg['adam_steps']}, 最大宽度={max(cfg['widths'])}). "
+               f"这不是成本问题而是物理时间上限, 原样重试必然再超时; "
+               f"请缩小网格 (减 widths 个数 / 降最大宽度 / 降 adam / 减 seeds) 到能在 "
+               f"{ROUND_TIMEOUT_S:.0f}s 内跑完, 或换更轻的锚点.")
+        print(f"      !! {msg}", file=sys.stderr)
+        return None, msg
     if p.returncode != 0:
-        print(f"      !! 实验失败 rc={p.returncode}\n{p.stderr[-1500:]}", file=sys.stderr)
-        return None
+        msg = (f"实验进程非零退出 rc={p.returncode} (非超时, 疑似代码/依赖错误): "
+               f"{p.stderr[-400:]}")
+        print(f"      !! {msg}", file=sys.stderr)
+        return None, msg
     out = OUTDIR / f"decoupling_{cfg['kind']}_{tag}.json"
     if not out.exists():
-        print(f"      !! 未找到预期产物 {out}", file=sys.stderr)
-        return None
+        msg = f"跑到结束但未找到预期产物 {out}"
+        print(f"      !! {msg}", file=sys.stderr)
+        return None, msg
     d = json.loads(out.read_text(encoding="utf-8"))
     d["_wall_s"] = time.time() - t0
-    return d
+    return d, ""
 
 
 def _rec_from_json(d: dict, tag: str, source: str) -> dict:
@@ -408,6 +445,8 @@ def main() -> int:
     state = {"model": args.model, "rounds": [], "started": time.time()}
     caps = {"tasks": SOFT_TASKS, "cost": SOFT_COST, "renewals_left": MAX_RENEWALS}
     state["caps"] = caps
+    fails: list[dict] = []   # 已失败的配置 (含原因), 回传给书生避免原样重试
+    timeout_sigs: set = set()  # 因超时作废的配置签名; 原样重试必然再超时, 直接拦截
     t_start = time.time()
     verdict_text, conclusion = None, None
     last_decision = None
@@ -427,7 +466,7 @@ def main() -> int:
 """ + "\n".join(f"- {k}: {v}" for k, v in _ANCHORS.items()) + f"""
 
 【本轮你可用的预算与约束】
-{render_budget(recs, caps)}
+{render_budget(recs, caps, fails)}
 {f'''【上一轮你的决定】
 - action={last_decision.get('action')}  run={last_decision.get('run')}
 - 你的理由: {last_decision.get('reason')}
@@ -471,14 +510,14 @@ def main() -> int:
                        f"**理由**: {dec.get('reason')}", ""]
 
         if action == "conclude":
-            conclusion = dec.get("conclude") or {}
+            conclusion = _extract_conclusion(dec)
             verdict_text = raw
             transcript += ["**书生宣布结题**, 裁决如下:", "",
                            f"- verdict: {conclusion.get('verdict')}",
                            f"- conclusion: {conclusion.get('conclusion')}",
                            f"- answer_to_question: {conclusion.get('answer_to_question')}",
                            f"- strongest_dissent: {conclusion.get('strongest_dissent')}", ""]
-            state["rounds"].append({"round": rd, "decision": dec})
+            state["rounds"].append({"round": rd, "decision": dec, "conclusion": conclusion})
             break
 
         cfg, notes = _clamp_run(dec.get("run") or {}, caps)
@@ -496,17 +535,29 @@ def main() -> int:
             transcript += [f"**配置重复, 已拒绝**: `{sig}`", ""]
             state["rounds"].append({"round": rd, "decision": dec, "rejected": ["duplicate"]})
             continue
+        if sig in timeout_sigs:
+            note = (f"该配置上一轮已超时作废, 原样重试必然再超时, 已拦截: {sig}; "
+                    f"请改成更小的网格 (减 widths/降 adam/减 seeds) 再提交")
+            print(f"      !! {note}", file=sys.stderr)
+            transcript += [f"**配置已被超时拦截, 拒绝原样重试**: `{sig}`", ""]
+            state["rounds"].append({"round": rd, "decision": dec, "rejected": ["timeout_repeat"]})
+            continue
 
         tag = f"loop{rd:02d}{sfx}"
         transcript += [f"**执行配置**: `kind={cfg['kind']} widths={cfg['widths']} "
                        f"ns={cfg['ns']} seeds={cfg['seeds']} adam={cfg['adam_steps']}`", ""]
         if notes:
             transcript += [f"(校验备注: {'; '.join(notes)})", ""]
-        d = run_experiment(cfg, tag)
+        d, err = run_experiment(cfg, tag)
         if d is None:
-            note = "实验执行失败, 未产出结果"
+            note = err or "实验执行失败, 未产出结果"
+            if note.startswith("超时作废"):
+                timeout_sigs.add(sig)   # 原样重试必然再超时, 下轮直接拦截
             transcript += [f"**实验失败**: {note}", ""]
-            state["rounds"].append({"round": rd, "decision": dec, "exec_error": True})
+            fails.append({"kind": cfg["kind"], "widths": cfg["widths"], "ns": cfg["ns"],
+                          "seeds": cfg["seeds"], "adam_steps": cfg["adam_steps"], "why": note})
+            state["rounds"].append({"round": rd, "decision": dec, "exec_error": True,
+                                    "exec_note": note})
             continue
         rec = _rec_from_json(d, tag, "本轮")
         recs.append(rec)
@@ -540,7 +591,7 @@ def main() -> int:
 """
         raw = _ask(client, args.model, prompt, max_tokens=2200)
         verdict_text = raw
-        conclusion = _extract_json(raw) or {"conclusion": raw}
+        conclusion = _extract_conclusion(_extract_json(raw) or {}) or {"conclusion": raw}
         transcript += ["# 最终裁决 (预算结束, 书生被迫结题)", "", f"```json\n{raw}\n```", ""]
 
     (REPORT_DIR / f"loop_transcript{sfx}.md").write_text("\n".join(transcript), encoding="utf-8")
