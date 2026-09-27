@@ -2541,6 +2541,13 @@ Respond JSON only:
                         )
                         if _exec.get("objectives"):
                             _gate_evidence["objectives"] = _exec["objectives"]
+                        # 带上真实执行物: 书生亲写的实验脚本 + 沙箱返回的 summary,
+                        # 让 reviewer 能看到"断言/逻辑/产出"而非只有 tests_passed 裸布尔,
+                        # 避免因"看不到测试内容"再误否 (截断控 prompt 体积).
+                        if _exec.get("script"):
+                            _gate_evidence["executed_script"] = str(_exec["script"])[:3000]
+                        if _exec.get("result"):
+                            _gate_evidence["sandbox_result"] = _exec["result"]
                         _gate_evidence.pop("reviewer_critique", None)
                     if isinstance(_exec.get("physics_audit"), dict):
                         _gate_evidence["physics_audit"] = _exec["physics_audit"]
