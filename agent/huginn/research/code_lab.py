@@ -113,7 +113,7 @@ SHAPE_DISCIPLINE = (
 
 def build_author_prompt(goal: str, *, guard_block: str = "",
                         template: str = AUTHOR_TEMPLATE,
-                        repair_hint: str = "") -> str:
+                        repair_hint: str = "", prev_code: str = "") -> str:
     """构造"让书生在 Code Lab 亲手写一轮实验"的作者提示 (命题无关).
 
     单一出处: autoloop 的 execute 内建动作与 examples 自主循环都调本函数, 契约
@@ -144,13 +144,19 @@ def build_author_prompt(goal: str, *, guard_block: str = "",
         + (("上一轮该代码在沙箱真实执行报错如下, 请据此改正后重写:\n"
            "常见原因(对症改): (a) 手写梯度下降收敛不到 → 改用 scipy.optimize.minimize('L-BFGS-B') "
            "并多起点; (b) 训练误差门槛过严(如 train_err<1e-6) → 只看留出误差≤1e-3, 训练误差放宽到≤1e-4; "
-           "(c) 形状不匹配 → 按当前宽度 h 重新 reshape 切回权重; "
-           "(d) assert/raise 中断执行 → 删掉断言, 直接 return 真实数值。\n"
-           + repair_hint[:800] + "\n")
-           if repair_hint else "")
-        + "模板:\n" + template +
-        "\n只输出 <code>...</code> 内的**完整可用代码**, 不要任何多余文字。\n\n研究目标:\n"
-        + goal[:1500]
+           "(c) 形状不匹配(matmul/广播) → 每次矩阵乘前把两个操作数的形状写成注释核对, "
+           "按当前宽度 h 重新 reshape 切回权重; (d) assert/raise 中断执行 → 删掉断言, 直接 return 真实数值; "
+           "(e) TypeError 里涉及 NoneType → 把 best/累加器改成 float('inf')/0.0 初始化, "
+           "不要拿 None 参与比较或算术。\n"
+           "报错原文:\n" + repair_hint[:800] + "\n"
+           + (("你上一版失败的代码(请在其基础上做**最小改动**修正它, 保留其余已正确的部分, "
+               "不要凭空重写):\n" + prev_code[:2500] + "\n") if prev_code else "")
+           if repair_hint else ""))
+        + "**优先直接采用下面这份已跑通的模板作骨架**(参数打包/L-BFGS-B/多起点都已正确), "
+        "只改约束族、扫描范围与指标名, 不要重写已工作的优化部分:\n"
+        + template +
+        "\n只输出 <code>...</code> 内的**完整可用代码**(即模板结构 + 你的改动), 不要任何多余文字。\n\n研究目标:\n"
+        + goal[:4000]
     )
 
 

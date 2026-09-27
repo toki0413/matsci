@@ -273,13 +273,14 @@ class EngineAct:
 
     async def _request_code_lab_experiment(
         self, goal: str, guards: dict[str, Any] | None = None,
-        repair_hint: str = "",
+        repair_hint: str = "", prev_code: str = "",
     ) -> str:
         """平衡点·内建执行: 让书生亲手写一段 Code Lab ``run(cfg)`` 实验代码.
 
         命题无关: 提示词来自 ``code_lab.build_author_prompt`` 的单一契约. 这里只取
         代码, 不评科学可信度(那是 validate/裁决层的事). 失败返回空串 → 回落原分派.
-        ``repair_hint`` 非空时把沙箱真实报错回灌, 让书生自己改对 (通用修 bug).
+        ``repair_hint`` 非空时把沙箱真实报错回灌, 并附上 ``prev_code``(上一版失败
+        代码), 让书生在此基础上做**最小改动**修 bug, 而不是凭空重写再犯同一个错.
         """
         from huginn.research.code_lab import build_author_prompt, extract_code
 
@@ -287,7 +288,8 @@ class EngineAct:
             f"- {g}" for g in ((guards or {}).get("prompt_guards") or [])[:8]
         )
         prompt = build_author_prompt(
-            goal, guard_block=guard_block, repair_hint=repair_hint
+            goal, guard_block=guard_block, repair_hint=repair_hint,
+            prev_code=prev_code,
         )
         try:
             raw = await self._llm_chat(prompt, model=self.verification_model)
@@ -333,7 +335,7 @@ class EngineAct:
             return {"mode": "code_lab", "status": "failed", "success": False,
                     "error": "书生未产出可解析的实验代码"}
         import os as _os
-        max_repairs = int(_os.environ.get("HUGINN_CODELAB_REPAIR_ATTEMPTS", "2"))
+        max_repairs = int(_os.environ.get("HUGINN_CODELAB_REPAIR_ATTEMPTS", "3"))
         last_err = ""
         for attempt in range(max_repairs + 1):
             res, reason = self._run_code_lab(code)
@@ -350,7 +352,7 @@ class EngineAct:
             last_err = reason
             if attempt < max_repairs:
                 repaired = await self._request_code_lab_experiment(
-                    goal, repair_hint=last_err
+                    goal, repair_hint=last_err, prev_code=code
                 )
                 if not repaired:
                     break
@@ -359,6 +361,8 @@ class EngineAct:
             "code_lab 沙箱执行经 %d 轮修复仍未产出证据(不伪造): %s",
             max_repairs + 1, last_err,
         )
+        # 诊断: 把最后一版(仍失败的)书生代码落日志, 便于对症改 harness/提示, 不伪造证据.
+        logger.info("code_lab 最后一版书生代码:\n%s", code[:2000])
         return {"mode": "code_lab", "status": "failed", "success": False,
                 "error": f"Code Lab 执行未通过沙箱校验: {last_err}", "script": code}
 
