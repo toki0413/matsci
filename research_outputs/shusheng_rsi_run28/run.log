@@ -174,3 +174,10 @@ plan_check failed (tier=medium, scene=other, max_refines=0): The plan is fundame
 [code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: operands could not be broadcast together with shapes (5,1) (10,1) '
 [code-lab-author] raw_len=906 extracted_len=891 prompt_len=6608
 [code-lab-run] res_none=False success=True nobj=36 reason=''
+[validate] mode='code_lab' success=True nobj=36 cf=False lab=True
+FTS5 stale: MATCH 'runid' = 0, rebuilding index
+metacog: 假设可能为换名归约 (trap=, target=将原问题中的'小型前馈网络泛化行为'替换为'transport equation解空间刚性'，本质上是用物理术语（transport equation, diffusion, advection, dominant modes）重命名了原问题中的数学概念（rigid/fat solution spaces, bootstrap probe, N_c(w) trend），未提供新的数学机制或数值证据。): [DIM: transport] The solution space of a transport equation (e.g., diffusion or advection) exhibits 
+plan_check failed low-conf (tier=medium, scene=other, conf=0.10): The plan is purely conceptual ('Implement the family function...') and contains no executable code, mathematical definition of N_c(w), or numerical methodology. It directly violates the 'known failure mode' requirement to provide a runnable Python script with formula and print result. The prediction is untestable without concrete implementation.
+[exec-route] mode='explore' desc[:80]='[auto-routed: surprise=1.00] Implement the family function for the transport hyp' obj_len=2999 is_exp_desc=True is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=950 extracted_len=935 prompt_len=5355
+[code-lab-run] res_none=False success=True nobj=36 reason=''
