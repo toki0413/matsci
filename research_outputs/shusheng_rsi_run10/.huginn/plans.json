@@ -29,6 +29,36 @@
         "mode": "coder",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_5edb32a1",
+      "objective": "[NEW] Geometric Rigidity (The saturation hypothesis). This is the most novel as it challenges the standard \"capacity must grow with data\" intuition and directly tests the core research proposition of \"solution space rigidity.\" It offers a clear falsifiable signature (saturation vs. growth).",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] The hypothesis requires running numerical experiments on small feedforward networks to measure N_c(w) (minimum hidden layer width for zero violation) as a function of constraint count w. I need to create a Python script that: (1) defines abstract constraints (e.g., functional equations or interpolation conditions), (2) sweeps w from small to large, (3) for each w finds the minimum network width N_c that achieves zero violation on held-out constraints, (4) records the trend of N_c(w). This is a pure ML/math experiment per the constraints. The script must be self-contained, runnable, and output numerical results for analysis.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "/workspace/research_outputs/shusheng_rsi_run10/geometric_rigidity_experiment.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-27T13:58:16.373516+00:00",
+      "confirmed_at": "2026-09-27T13:58:16.374464+00:00",
+      "completed_at": "2026-09-27T13:58:20.100700+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
