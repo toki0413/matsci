@@ -55,3 +55,7 @@ strict_work_dir=True but allowed_work_dirs empty — path scoping inactive. Set 
 [cache-debug] model=Intern-S2-Preview-35B stats_keys=['model_provider', 'finish_reason', 'model_name']
 FTS5 stale: MATCH 'runid' = 0, rebuilding index
 metacog: 假设可能为换名归约 (trap=, target=验证解空间刚性探针的可行性): [DIM: composition] The effective rigidity of the solution space is composition-dependent, where spec
+FTS5 stale: MATCH 'runid' = 0, rebuilding index
+FTS5 stale: MATCH 'runid' = 0, rebuilding index
+FTS5 stale: MATCH 'runid' = 0, rebuilding index
+metacog: 假设可能为换名归约 (trap=, target=验证解空间刚性探针的可行性): ".
