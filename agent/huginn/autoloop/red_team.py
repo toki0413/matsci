@@ -42,17 +42,6 @@ _REVIEW_TRANSITIONS: set[tuple[str, str]] = {
 }
 
 
-# Code Lab 真跑通 (沙箱内真实执行并产出 objectives) 时, LLM critic 常把
-# "没有 pytest 断言 / 覆盖率 / 测试用例内容" 误判为 high 阻断项 —— 因为数值实验
-# 天然没有 workspace 的 pytest 收集. 这会挡住 validate→learn, 使 RSI 无法触发.
-# 当证据已带真实执行物 (executed_script / sandbox_result / objectives) 时,
-# 把这一类 high 误判降为 low. 其它方法论 high (数据泄漏/单位/物理) 不受影响.
-_CODELAB_FALSE_BLOCK_KEYWORDS: tuple[str, ...] = (
-    "未运行测试", "测试为空", "未提供测试", "没有测试", "无测试",
-    "测试用例", "断言", "覆盖率", "虚假通过", "coverage", "pytest",
-)
-
-
 # ── data structures ──────────────────────────────────────────────────────────
 
 
@@ -176,21 +165,27 @@ class RedTeamReviewer:
         else:
             findings = []
 
-        # 多 critic 并行 + DS 合成 (如果配置了 critic_models)
+        # LLM 对抗发现单独收集, 与规则/领域/物理发现分开 —— 供下方 validate→learn
+        # 的 advisory 降级 (只降 LLM 主观发现, 硬性发现仍阻断).
+        llm_findings: list[RedTeamFinding] = []
         if self._critic_models:
+            # 多 critic 并行 + DS 合成 (如果配置了 critic_models)
             critic_findings, ds_note = self._multi_critic_review(
                 from_phase, to_phase, evidence
             )
-            findings.extend(critic_findings)
+            llm_findings.extend(critic_findings)
         else:
             # 单 critic 路径 (向后兼容)
             model_for_review = self._critic_model or self._model
             if model_for_review is not None and not hasattr(model_for_review, "_mock_name"):
                 try:
-                    findings.extend(self._llm_findings(from_phase, to_phase, evidence))
+                    llm_findings.extend(
+                        self._llm_findings(from_phase, to_phase, evidence)
+                    )
                 except Exception:  # 防御: 扩展生成失败跳过
                     logger.debug("extend failed", exc_info=True)
             ds_note = ""
+        findings.extend(llm_findings)
 
         # 领域失败模式扫描 (材料科学具体陷阱: 数据泄漏 / 单位混乱 / 对称性 / ...)
         findings.extend(self._domain_failure_scan(evidence))
@@ -204,10 +199,14 @@ class RedTeamReviewer:
         # 文献共识扫描: multi_review 产出的 high_conf claims 与假设对齐检查
         findings.extend(self._literature_consensus_check(evidence))
 
-        # Code Lab 误判降级: 真跑通的数值实验证据上, 把"看不到测试内容/断言/
-        # 覆盖率/虚假通过"类 high 误判降为 low —— 否则 LLM critic 的随机性会挡住
-        # validate→learn, 使 RSI 无法触发. 其它方法论 high 不受影响.
-        self._downgrade_codelab_false_blockers(findings, evidence)
+        # validate→learn: LLM 对抗发现降为 advisory (high→medium), 只作警告回灌下轮.
+        # RedTeam 的 prompt 明确要求"假设证据有错, 找最可能失败的点", 同模型自审
+        # 几乎必然产出 high —— 若硬阻断, validate→learn 永不放行, learn/RSI 永不触发.
+        # 对齐 phase_gate 既有 "warnings first, option to force proceed" 哲学:
+        # 只降 LLM 主观发现; 规则 (tests_passed=False) / 领域失败模式 / 物理 oracle
+        # 的 high 仍硬阻断.
+        if transition == ("validate", "learn"):
+            self._make_llm_findings_advisory(llm_findings)
 
         summary = self._build_summary(findings, transition)
         if ds_note:
@@ -656,35 +655,21 @@ class RedTeamReviewer:
 
         return findings
 
-    def _downgrade_codelab_false_blockers(
-        self, findings: list[RedTeamFinding], evidence: dict[str, Any]
+    def _make_llm_findings_advisory(
+        self, llm_findings: list[RedTeamFinding]
     ) -> None:
-        """把 Code Lab 真跑通证据上的"看不到测试内容"类 high 误判降为 low.
+        """把 LLM 生成的对抗发现从阻断项降为 advisory (high→medium).
 
-        仅当 evidence 带真实执行物时生效 (mode=code_lab 且 objectives/executed_script
-        非空), 就地修改 findings 的 severity. 这样 validate→learn 不会被 LLM critic
-        对"数值实验没有 pytest 断言/覆盖率"的随机误判挡住, RSI 得以触发.
-        数据泄漏/单位/物理等其它方法论 high 不在关键词表内, 仍可正常阻断.
+        只就地修改传入的 LLM 发现列表; 规则/领域失败模式/物理 oracle 的发现不在
+        此列, 仍可 hard-block. 这样 validate→learn 不会被对抗性同模型自审的随机
+        high 发现永久堵死, learn/RSI 得以运行, 而警示仍回灌下一轮 prompt.
         """
-        _ex = evidence.get("execution_result")
-        _ex = _ex if isinstance(_ex, dict) else {}
-        _is_lab = (
-            str(evidence.get("mode", "")) == "code_lab"
-            and bool(evidence.get("objectives") or evidence.get("executed_script"))
-        ) or (
-            str(_ex.get("mode", "")) == "code_lab"
-            and bool(_ex.get("objectives") or _ex.get("script"))
-        )
-        if not _is_lab:
-            return
-        for f in findings:
-            if f.severity == "high" and any(
-                k in f.description for k in _CODELAB_FALSE_BLOCK_KEYWORDS
-            ):
-                f.severity = "low"
+        for f in llm_findings:
+            if f.severity == "high":
+                f.severity = "medium"
                 f.mitigation = (
                     (f.mitigation + " ") if f.mitigation else ""
-                ) + "[已在 executed_script/sandbox_result 提供执行物, 降级为非阻断]"
+                ) + "[LLM 对抗发现, validate→learn 阶段降为 advisory 警告]"
 
     # ── LLM 增强 ────────────────────────────────────────────────────
 
