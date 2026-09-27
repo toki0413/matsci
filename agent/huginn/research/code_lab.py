@@ -36,13 +36,13 @@ SAFE_TIMEOUT_S = 30.0                 # run()/probe 单次调用超时
 # 不用 None —— 避免 "'<' not supported between int and NoneType".
 AUTHOR_TEMPLATE = """\
 import numpy as np
-from scipy.optimize import minimize
 
 
 def run(cfg):
     seed = int(cfg.get('seed', 0))
     ws = [5, 10, 20]
     widths = [2, 4, 8, 16, 32]
+    anchor = None
     summary = {}
     objectives = {}
     for w in ws:
@@ -51,35 +51,14 @@ def run(cfg):
         Xv = np.linspace(0.0, 1.0, 200).reshape(-1, 1)
         yv = np.sin(np.pi * Xv)
         for h in widths:
-            best_ho = float('inf')
-            best_tr = float('inf')
-            for s in range(3):
-                rng = np.random.default_rng(seed + 1000 * w + 10 * h + s)
-                p0 = rng.standard_normal(3 * h + 1) * 0.5
-
-                def loss(p, h=h, X=X, y=y):
-                    W1 = p[:h].reshape(1, h)
-                    b1 = p[h:2 * h].reshape(1, h)
-                    W2 = p[2 * h:3 * h].reshape(h, 1)
-                    b2 = p[3 * h:3 * h + 1].reshape(1, 1)
-                    out = np.tanh(X @ W1 + b1) @ W2 + b2
-                    return float(np.mean((out - y) ** 2))
-
-                res = minimize(loss, p0, method='L-BFGS-B',
-                               options={'maxiter': 20000})
-                p = res.x
-                W1 = p[:h].reshape(1, h)
-                b1 = p[h:2 * h].reshape(1, h)
-                W2 = p[2 * h:3 * h].reshape(h, 1)
-                b2 = p[3 * h:3 * h + 1].reshape(1, 1)
-                tr = float(np.max(np.abs(np.tanh(X @ W1 + b1) @ W2 + b2 - y)))
-                ho = float(np.max(np.abs(np.tanh(Xv @ W1 + b1) @ W2 + b2 - yv)))
-                if ho < best_ho:
-                    best_ho = ho
-                    best_tr = tr
-            summary['w%d_h%d' % (w, h)] = {'train_err': best_tr,
-                                          'heldout_err': best_ho}
-            objectives['neg_heldout_w%d_h%d' % (w, h)] = -best_ho
+            model = mlp_fit(X, y, h, seeds=3, seed=seed + 1000 * w + 10 * h)
+            tr = float(np.max(np.abs(mlp_predict(model, X) - y)))
+            ho = float(np.max(np.abs(mlp_predict(model, Xv) - yv)))
+            if anchor is None or ho < anchor['heldout_err']:
+                anchor = {'w': w, 'h': h, 'train_err': tr, 'heldout_err': ho}
+            summary['w%d_h%d' % (w, h)] = {'train_err': tr, 'heldout_err': ho}
+            objectives['neg_heldout_w%d_h%d' % (w, h)] = -ho
+    summary['anchor'] = anchor
     return {'success': True, 'summary': summary, 'objectives': objectives}
 
 
@@ -91,7 +70,14 @@ def probe_author_probe(cfg):
 #: 把"容量扫描 + 零违规"变成可跑通的数值实验. 只讲"怎么优化对", 不绑定命题.
 OPTIMIZER_HINT = (
     "优化器(重要): 手写 numpy 梯度下降常常收敛不到小误差 → **优先用 scipy.optimize**。\n"
-    "- from scipy.optimize import minimize; 把该宽度下全部网络参数 ravel 后 np.concatenate 成一维 p。\n"
+    "更省事: 沙箱**已内置两个命题无关原语**, 直接用它们即可完成'训练+前向', "
+    "不必手搓参数打包/L-BFGS-B/形状(那正是反复 shape bug 的根源):\n"
+    "- `model = mlp_fit(X, y, h, seeds=3, seed=0)` → 训练一个隐藏层宽 h 的两层 tanh 网络, "
+    "只最小化 X/y 上的训练 MSE, 返回可序列化 model(含最优参数); X/y 一维或二维都行, 内部自动升维对齐。\n"
+    "- `pred = mlp_predict(model, X2)` → 用 model 对 X2 前向, 返回 (N,1) 预测, 和 mlp_fit 形状严格一致。\n"
+    "  换宽度只需改 h 再调一次 mlp_fit; 扫描/判据/约束族仍由你自定。\n"
+    "若确需自定义优化: from scipy.optimize import minimize; 把该宽度下全部网络参数 ravel 后 "
+    "np.concatenate 成一维 p。\n"
     "- 写闭包 def loss(p): ... 返回标量(如训练集 MSE); minimize(loss, p0, method='L-BFGS-B', "
     "options={'maxiter': 20000}), 解在 res.x。\n"
     "- 换宽度 h 时参数个数随 h 变, 必须按该 h 重新 reshape 切回权重矩阵再前向。\n"
@@ -109,6 +95,74 @@ SHAPE_DISCIPLINE = (
     "若出现 (N,h) 与 (N,) 相减, 说明输出层没做或标签没升维。\n"
     "- 扫描/循环里每换一个宽度 h, W1/W2 形状随之变化, 必须重新按该 h 建数组。\n"
 )
+
+
+def _as_2d(a):
+    """把 1-D 输入变 (N,1); 已是 2-D 则原样 —— 形状对齐原语."""
+    import numpy as np
+    a = np.asarray(a, dtype=float)
+    return a.reshape(-1, 1) if a.ndim == 1 else a
+
+
+def mlp_fit(X, y, h, seeds=3, maxiter=20000, seed=0):
+    """通用两层 tanh 函数拟合器: L-BFGS-B 多起点, 返回最小训练 MSE 的参数.
+
+    命题无关的数值原语 —— 只封装"参数打包 / L-BFGS-B / 多起点 / 形状对齐"这类
+    最容易写错的样板, 不编码任何科学假设(约束族/扫描/判据仍由调用方自定). 反复
+    出现的 ``matmul: ... size 5 is different from 1`` 正是手搓这套打包/前向造成,
+    故把它下沉为已验证原语.
+
+    X:(N,d) 或 (N,), y:(N,1) 或 (N,); h=隐藏层宽度; seeds=起点数.
+    返回 dict(params 列表, h, d, train_mse) —— 可 JSON 序列化, 交给 mlp_predict 前向.
+    """
+    import numpy as np
+    from scipy.optimize import minimize
+
+    X = _as_2d(X)
+    y = _as_2d(y)
+    h = int(h)
+    d = int(X.shape[1])
+    n = d * h + h + h + 1
+
+    def unpack(p):
+        i = 0
+        W1 = p[i:i + d * h].reshape(d, h); i += d * h
+        b1 = p[i:i + h]; i += h
+        W2 = p[i:i + h].reshape(h, 1); i += h
+        b2 = p[i:i + 1].reshape(1, 1)
+        return W1, b1, W2, b2
+
+    def loss(p):
+        W1, b1, W2, b2 = unpack(p)
+        out = np.tanh(X @ W1 + b1) @ W2 + b2
+        return float(np.mean((out - y) ** 2))
+
+    best_fun = float('inf')
+    best_p = None
+    for s in range(int(seeds)):
+        rng = np.random.default_rng(int(seed) + 101 * s + 7 * h + d)
+        p0 = rng.standard_normal(n) * 0.5
+        res = minimize(loss, p0, method='L-BFGS-B',
+                       options={'maxiter': int(maxiter)})
+        if float(res.fun) < best_fun:
+            best_fun = float(res.fun)
+            best_p = res.x
+    return {'params': best_p.tolist(), 'h': h, 'd': d, 'train_mse': best_fun}
+
+
+def mlp_predict(model, X):
+    """用 mlp_fit 的返回对 X 前向, 返回 (N,1) 预测 —— 形状与 mlp_fit 严格一致."""
+    import numpy as np
+    X = _as_2d(X)
+    p = np.asarray(model['params'], dtype=float)
+    h = int(model['h'])
+    d = int(model['d'])
+    i = 0
+    W1 = p[i:i + d * h].reshape(d, h); i += d * h
+    b1 = p[i:i + h]; i += h
+    W2 = p[i:i + h].reshape(h, 1); i += h
+    b2 = p[i:i + 1].reshape(1, 1)
+    return np.tanh(X @ W1 + b1) @ W2 + b2
 
 
 def build_author_prompt(goal: str, *, guard_block: str = "",
@@ -276,7 +330,15 @@ def _load_namespace(code: str, mem_cap: int = SAFE_MEM_CAP,
         safe_import,
     )
     code = strip_abort_statements(code)   # 强制"不 assert 中断"契约 (命题无关)
-    ns: dict = {"__builtins__": make_safe_builtins(), "np": np}
+    # 注入命题无关的数值原语: 参数打包/L-BFGS-B/多起点/形状对齐已下沉, 书生
+    # 直接 mlp_fit/mlp_predict 即可, 不必手搓这套样板(反复 shape bug 的根源).
+    ns: dict = {
+        "__builtins__": make_safe_builtins(),
+        "np": np,
+        "mlp_fit": mlp_fit,
+        "mlp_predict": mlp_predict,
+        "_as_2d": _as_2d,
+    }
     if imports_whitelist_extra:
         extras = set(imports_whitelist_extra)
 
