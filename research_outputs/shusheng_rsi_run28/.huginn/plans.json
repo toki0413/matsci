@@ -29,6 +29,44 @@
         "mode": "coder",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_a58b058a",
+      "objective": "[DIM: structure] The solution space of a linear constraint system is uniquely rigid (dimension 0), so N_c(w) should remain flat as w increases because the network only needs to learn a single target function.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the rigid constraint family (linear system with unique solution) and fat constraint family (linear system with infinite solutions) in the `family` function. Construct the rigid family as a system where w constraints uniquely determine the coefficients (e.g., w points on a line for a linear function), and the fat family as an underdetermined system (e.g., w constraints on a high-degree polynomial with many degrees of freedom). Ensure label shapes are (N,1), held-out sets are non-overlapping, and the zero-violation anchor is established at maximum width before N_c(w) scanning.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "family_function.py",
+            "(to",
+            "be",
+            "created/modified",
+            "within",
+            "the",
+            "existing",
+            "codebase",
+            "structure)"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-27T18:26:03.998628+00:00",
+      "confirmed_at": "2026-09-27T18:26:03.999867+00:00",
+      "completed_at": "2026-09-27T18:26:19.169721+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
