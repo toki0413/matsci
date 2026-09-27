@@ -272,19 +272,23 @@ class EngineAct:
         return any(h in low for h in self._CODE_EXPERIMENT_HINTS)
 
     async def _request_code_lab_experiment(
-        self, goal: str, guards: dict[str, Any] | None = None
+        self, goal: str, guards: dict[str, Any] | None = None,
+        repair_hint: str = "",
     ) -> str:
         """平衡点·内建执行: 让书生亲手写一段 Code Lab ``run(cfg)`` 实验代码.
 
         命题无关: 提示词来自 ``code_lab.build_author_prompt`` 的单一契约. 这里只取
         代码, 不评科学可信度(那是 validate/裁决层的事). 失败返回空串 → 回落原分派.
+        ``repair_hint`` 非空时把沙箱真实报错回灌, 让书生自己改对 (通用修 bug).
         """
         from huginn.research.code_lab import build_author_prompt, extract_code
 
         guard_block = "\n".join(
             f"- {g}" for g in ((guards or {}).get("prompt_guards") or [])[:8]
         )
-        prompt = build_author_prompt(goal, guard_block=guard_block)
+        prompt = build_author_prompt(
+            goal, guard_block=guard_block, repair_hint=repair_hint
+        )
         try:
             raw = await self._llm_chat(prompt, model=self.verification_model)
         except Exception:  # — LLM 不可用/超时 → 拿不到实验代码, 回落, 不阻塞
@@ -293,8 +297,9 @@ class EngineAct:
 
     def _run_code_lab(
         self, code: str, guards: dict[str, Any] | None = None
-    ) -> dict[str, Any] | None:
-        """在 Code Lab 安全沙箱真跑书生的实验代码; 无证据返回 None(不伪造)."""
+    ) -> tuple[dict[str, Any] | None, str]:
+        """在 Code Lab 安全沙箱真跑书生的实验代码; 无证据返回 (None, 原因).
+        返回原因让上层能把真实报错回灌书生重写 (自修复), 不伪造."""
         import os as _os
 
         from huginn.research.code_lab import sandbox_run
@@ -308,8 +313,8 @@ class EngineAct:
         )
         if res is None:
             logger.info("code_lab 执行未产出证据(不伪造, 回落原分派): %s", reason)
-            return None
-        return res
+            return None, reason or "执行未产出证据"
+        return res, ""
 
     async def _execute_code_lab(
         self, description: str, context: dict[str, Any]
@@ -318,25 +323,38 @@ class EngineAct:
 
         与闭式 probe 分层: 闭式只认平凡数值片段; 这里认"实验意图"并允许更长时/
         更多依赖(仍受沙箱白名单约束). 失败返回 success=False, 由 validate 层裁决.
+        沙箱真报错时把报错回灌书生重写 (命题无关·通用修 bug), 最多 N 轮自修复.
         """
         goal = description or str(getattr(self, "_objective", "") or "")
         code = await self._request_code_lab_experiment(goal)
         if not code:
             return {"mode": "code_lab", "status": "failed", "success": False,
                     "error": "书生未产出可解析的实验代码"}
-        res = self._run_code_lab(code)
-        if res is None:
-            return {"mode": "code_lab", "status": "failed", "success": False,
-                    "error": "Code Lab 执行未通过沙箱校验", "script": code}
-        return {
-            "mode": "code_lab",
-            "status": "completed",
-            "success": bool(res.get("success", True)),
-            "result": res.get("summary", {}),
-            "objectives": res.get("objectives", {}),
-            "script": code,
-            "reproducible": True,
-        }
+        import os as _os
+        max_repairs = int(_os.environ.get("HUGINN_CODELAB_REPAIR_ATTEMPTS", "2"))
+        last_err = ""
+        for attempt in range(max_repairs + 1):
+            res, reason = self._run_code_lab(code)
+            if res is not None:
+                return {
+                    "mode": "code_lab",
+                    "status": "completed",
+                    "success": bool(res.get("success", True)),
+                    "result": res.get("summary", {}),
+                    "objectives": res.get("objectives", {}),
+                    "script": code,
+                    "reproducible": True,
+                }
+            last_err = reason
+            if attempt < max_repairs:
+                repaired = await self._request_code_lab_experiment(
+                    goal, repair_hint=last_err
+                )
+                if not repaired:
+                    break
+                code = repaired
+        return {"mode": "code_lab", "status": "failed", "success": False,
+                "error": f"Code Lab 执行未通过沙箱校验: {last_err}", "script": code}
 
     async def _execute(self, plan: dict[str, Any], context: dict[str, Any]) -> Any:
         """Execute the plan using the appropriate sub-engine."""

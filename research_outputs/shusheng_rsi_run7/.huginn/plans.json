@@ -1,0 +1,32 @@
+{
+  "plans": [
+    {
+      "id": "plan_7a9f2b8d",
+      "objective": "...",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Create a Python script that implements the bootstrap rigidity probe using small feedforward networks. The script will: (1) generate a family of abstract constraints (e.g., polynomial interpolation or functional inequalities), (2) sweep constraint sample counts w, (3) for each w, find the minimal hidden layer width N_c(w) that achieves zero violation on held-out points, (4) record N_c(w) vs w trend and train/holdout violation metrics. Files to modify: none (new script). Prediction: The script will run without errors and produce a table of N_c(w) values; if the underlying constraint set is rigid, N_c(w) will plateau or decrease as w increases; if the solution space is fat, N_c(w) will increase with w. SKILL: None (custom ML experiment). FILES: rigidity_probe.py",
+          "tool": "coder",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-27T13:17:58.046896+00:00",
+      "confirmed_at": "2026-09-27T13:17:58.047866+00:00",
+      "completed_at": "2026-09-27T13:19:01.575867+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "coder",
+        "source": "autoloop"
+      }
+    }
+  ]
+}

@@ -166,6 +166,8 @@ class PhaseGate:
                 "status": self.status,
                 "missing": self.missing_evidence,
                 "reviewer": self.reviewer,
+                # feedback 让遥测能定位 review/math 否决的具体原因 (截断防膨胀)
+                "feedback": (self.feedback or "")[:500],
             }
             with open(path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
