@@ -77,3 +77,10 @@ Created goal: goal_1bf2052d
 empty required_results for target_1 — fallback
 FTS5 stale: MATCH 'runid' = 0, rebuilding index
 metacog: 假设可能为换名归约 (trap=, target=原始问题中关于'解空间刚性'与'泛化行为'的探针关系，被重新表述为'约束几何（Constraint Geometry）的可测试性'。): Hypothesis 2 (Constraint Geometry) is the most testable and novel because it allows for controlled e
+FTS5 stale: MATCH 'runid' = 0, rebuilding index
+FTS5 stale: MATCH 'runid' = 0, rebuilding index
+epistemic_gap: 结论有证据支撑, 但建议补一句不确定性/适用边界说明, 明确估计误差与尚未验证的假设.
+FTS5 stale: MATCH 'runid' = 0, rebuilding index
+FTS5 stale: MATCH 'runid' = 0, rebuilding index
+FTS5 stale: MATCH 'runid' = 0, rebuilding index
+metacog: 假设可能为换名归约 (trap=, target=将'解空间刚性'（低维/唯一）这一概念替换为'拓扑刚性（一阶同调消失）'，本质上是用代数拓扑的语言重新表述了原有的几何/集合论定义，并未提供关于 N_c(w) 随 w 变化趋势的实质性新证据或机制解释。): [DIM: structure] The solution space of the constraint system exhibits topological rigidity (vanishin
