@@ -160,3 +160,23 @@ plan_check failed low-conf (tier=medium, scene=md, conf=0.10): Plan is described
 [exec-route] mode='explore' desc[:80]='[auto-routed: surprise=1.00] Implement the family function that generates rigid ' obj_len=1992 is_exp_desc=True is_exp_obj=True is_det_desc=False
 [code-lab-author] raw_len=685 extracted_len=670 prompt_len=4154
 [code-lab-run] res_none=False success=True nobj=36 reason=''
+error in _parse_verify_score: JSON parse failed, falling back to regex
+Traceback (most recent call last):
+  File "/workspace/agent/huginn/autoloop/engine_reflect.py", line 2259, in _parse_verify_score
+    data = json.loads(resp.strip())
+  File "/root/.pyenv/versions/3.14.7/lib/python3.14/json/__init__.py", line 352, in loads
+    return _default_decoder.decode(s)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^
+  File "/root/.pyenv/versions/3.14.7/lib/python3.14/json/decoder.py", line 345, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+               ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.pyenv/versions/3.14.7/lib/python3.14/json/decoder.py", line 363, in raw_decode
+    raise JSONDecodeError("Expecting value", s, err.value) from None
+json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+[validate] mode='code_lab' success=True nobj=36 cf=False lab=True
+FTS5 stale: MATCH 'runid' = 0, rebuilding index
+metacog: 假设可能为换名归约 (trap=, target=材料科学中的晶界位移场刚性问题): [DIM: structure] The solution space for atomic displacement fields near a grain boundary exhibits a 
+plan_check failed low-conf (tier=medium, scene=other, conf=0.20): The plan describes a high-level theoretical exploration (MODE: explore) but lacks executable code or specific numerical methods. It references undefined frameworks ('capacity_scan', 'N_c(w) trends') without implementation details. The hypothesis requires measuring dimensionality reduction in atomic displacement fields, but the plan proposes a generic ML capacity scan without connecting it to grain boundary physics or displacement field analysis. This mirrors the 'low emergent complexity' failure mode where no concrete computation is provided.
+[exec-route] mode='explore' desc[:80]='The hypothesis involves a mathematical structure (dimensionality of solution spa' obj_len=1992 is_exp_desc=True is_exp_obj=True is_det_desc=True
+[code-lab-author] raw_len=715 extracted_len=700 prompt_len=4154
+[code-lab-run] res_none=False success=True nobj=36 reason=''

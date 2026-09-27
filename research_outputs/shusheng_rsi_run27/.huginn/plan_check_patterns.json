@@ -34,5 +34,18 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the family function that generates rigid and fat constraint families for the capacity scan experiment. The rigid family will be a linear constraint system (uniqu"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan describes a high-level theoretical exploration (MODE: explore) but lacks executable code or specific numerical methods. It references undefined frameworks ('capacity_scan', 'N_c(w) trends') without implementation details. The hypothesis requires measuring dimensionality reduction in atomic displacement fields, but the plan proposes a generic ML capacity scan without connecting it to grain boundary physics or displacement field analysis. This mirrors the 'low emergent complexity' failure mode where no concrete computation is provided.",
+    "missing_steps": [
+      "Implement concrete Python code defining grain boundary atomic displacement fields",
+      "Define mathematical structure for dimensionality measurement (e.g., PCA on displacement vectors, kernel methods)",
+      "Specify constraint families (rigid vs fat) in terms of physical grain boundary conditions",
+      "Include actual optimization code (L-BFGS-B) with measurable N_c(w) computation",
+      "Add validation against known grain boundary physics benchmarks"
+    ],
+    "mode": "explore",
+    "description": "The hypothesis involves a mathematical structure (dimensionality of solution space) rather than a physical simulation. The context indicates a previous prediction failure (surprise=1.0) and the target"
   }
 ]
