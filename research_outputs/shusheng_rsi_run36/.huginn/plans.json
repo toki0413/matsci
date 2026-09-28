@@ -437,6 +437,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_2a7ae902",
+      "objective": "** [DIM: Solution Space Geometry]",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Implement the solution space geometry hypothesis test using mathematically correct families: (1) Rigid family = linear ODE dy/dx = λy with Dirichlet BC yielding a 1D solution space, verified symbolically via `symbolic_math_tool` to confirm dimension=1; (2) Fat family = Burgers' equation u_t + u u_x = ν u_xx with stochastic initial conditions sampled from a Sobolev space H^1, generating an infinite-dimensional chaotic solution manifold. Define capacity_scan as network width scaling from 10^2 to 10^4 neurons, measuring validation loss plateauing at the solution space dimension (rigid: plateau at ~10 params; fat: slow decay reflecting infinite dimensionality). Ensure y/yv normalized to O(1), shapes (N,1), and Xv disjoint from X. Use `symbolic_math_tool` to verify the rigid family's ODE solution space dimension before training, and validate against the hypothesis that fat families require capacity proportional to solution space dimension while rigid families saturate at low capacity.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-28T13:39:00.595612+00:00",
+      "confirmed_at": "2026-09-28T13:39:00.596749+00:00",
+      "completed_at": "2026-09-28T13:39:20.252567+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
