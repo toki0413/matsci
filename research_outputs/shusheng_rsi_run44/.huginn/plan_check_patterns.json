@@ -585,5 +585,22 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid family (low-dimensional trigonometric basis) and fat family (high-dimensional random polynomial basis) following the Code Lab"
+  },
+  {
+    "scene_tag": "auto_family",
+    "reason": "The plan is invalid for multiple critical reasons. First, it uses 'explore' mode which is inappropriate for concrete computational verification tasks requiring implementation. Second, the DESCRIPTION lacks essential implementation details including specific grid resolutions, basis function formulas (Chebyshev/trigonometric expressions), scaling procedures, and optimization parameters. Third, it fails to explicitly define the fat family as x-dependent (not i.i.d. noise), risking the exact same failure as run28. Fourth, it doesn't address the scaling issues that caused run29 (~1e9 scale problems). Fifth, the PREDICTION is not verifiable without concrete numerical methods and measurement procedures. The plan essentially repeats all the historical failure patterns identified in the scene history.",
+    "missing_steps": [
+      "Switch from 'explore' mode to 'coder' or 'workflow' mode for concrete computations",
+      "Define concrete grid resolution (e.g., N=500) and explicit basis function formulas (Chebyshev/trigonometric expressions)",
+      "Explicitly define fat family as x-dependent high-dimensional functions (not i.i.d. noise) to avoid run28 failure",
+      "Specify scaling for fat family basis to prevent ~1e9 scale issues with O(1) normalization (run29 failure)",
+      "Establish clear training and held-out error measurement procedures with separate metrics to avoid data leakage",
+      "Define N_c(w) calculation methodology (e.g., SVD rank with tolerance 1e-6) with clear thresholds",
+      "Define concrete L-BFGS-B optimization setup with specific iteration limits and parameters",
+      "Implement comparative optimization strategy to distinguish optimization failure from function space limitations",
+      "Add dimensional pre-checks and scale normalization procedures"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the rigid (low-dimensional linear span) and fat (high-dimensional nonlinear) function families as the `family` function for the capacity scan. Ensure y/yv are no"
   }
 ]
