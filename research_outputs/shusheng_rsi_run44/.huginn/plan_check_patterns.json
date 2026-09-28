@@ -121,5 +121,18 @@
     ],
     "mode": "explore",
     "description": "Re-evaluate the problem context (H^1=3, β_0=23, surprise=1.0) using topology and PDE structures aligned with natural science domains. Hypothesize that the geometry relates to spatial phase transitions"
+  },
+  {
+    "scene_tag": "auto_family",
+    "reason": "The plan fundamentally violates the system prompt's core identity: I am a natural-science research agent (physics/chemistry/materials/earth sciences), not a general-purpose mathematical or machine learning researcher. The hypothesis involves abstract function space geometry (rigid vs. fat families, N_c(w) capacity), which falls outside the defined mathematical structures in the prompt (spectral theory, variational principles, PDEs, etc.). The plan uses 'explore' mode incorrectly—it should be 'coder' or 'workflow' for concrete computations. Crucially, it lacks all required numerical setup (grid size, basis functions, error metrics, N_c(w) calculation method), violating the 'report discipline' and 'convergence awareness' principles. It also repeats the 'tool mismatch' error from historical failures by attempting to use non-existent tools (TDA, Lean, PyTorch) without justification or fallback. The prediction is untestable without concrete implementation details.",
+    "missing_steps": [
+      "Clarify if this problem maps to any natural-science instance (e.g., spectral theory for basis functions, variational principles for N_c(w)).",
+      "If within domain, define concrete tools (e.g., symbolic_math_tool for polynomial bases, numerical_tool for capacity estimation).",
+      "Specify numerical setup: grid resolution, basis function definitions, training/validation split, N_c(w) computation method (e.g., SVD rank, effective dimension).",
+      "Ensure dimensional consistency and scale normalization (O(1) scale) as per historical failure #3.",
+      "Implement rigorous error measurement: separate training and holdout errors, avoid data leakage."
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function for the rigid family (low-degree polynomial) and fat family (high-degree random polynomial) with proper data normalization and shape constrai"
   }
 ]
