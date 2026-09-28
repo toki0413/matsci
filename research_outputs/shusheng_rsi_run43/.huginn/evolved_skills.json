@@ -126,9 +126,9 @@
       }
     ],
     "required_tools": [
+      "coder",
       "explore",
-      "skill",
-      "coder"
+      "skill"
     ],
     "source_session": "loop_5",
     "extraction_confidence": 0.9,
