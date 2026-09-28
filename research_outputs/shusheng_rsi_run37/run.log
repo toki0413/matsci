@@ -156,3 +156,7 @@ TypeError: '<' not supported between instances of 'SkillTemplate' and 'SkillTemp
 [exec-route] mode='explore' desc[:80]='[auto-routed: surprise=1.00] Implement the `family` function for the rigid polyn' obj_len=2462 is_exp_desc=True is_exp_obj=True is_det_desc=False
 [code-lab-author] raw_len=868 extracted_len=853 prompt_len=5379
 [code-lab-run] res_none=False success=True nobj=36 reason=''
+[validate] mode='code_lab' success=True nobj=36 cf=False lab=True
+[exec-route] mode='explore' desc[:80]='[auto-routed: surprise=1.00] Implement the `family` function for the rigid polyn' obj_len=2462 is_exp_desc=True is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=940 extracted_len=925 prompt_len=5379
+[code-lab-run] res_none=False success=True nobj=36 reason=''
