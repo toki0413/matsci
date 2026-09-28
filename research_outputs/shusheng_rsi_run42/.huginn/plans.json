@@ -29,6 +29,36 @@
         "mode": "coder",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_47386f27",
+      "objective": "[DIM: structure] The zero-violation threshold $N_c(w)$ is determined by the intrinsic dimension of the constraint manifold rather than the number of samples $w$; for rigid families, $N_c$ remains constant as $w$ increases because the solution space is a low-dimensional affine subspace.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the `family` function for rigid and fat polynomial constraint sets with proper (N,1) reshaping, O(1) normalization, and held-out point separation. This enables the capacity_scan to evaluate N_c(w) trends. The implementation will define: (1) Rigid family: 5th-order polynomial with unique solution from w≥6 constraints; (2) Fat family: 20-term random polynomial with continuous solution space. Both will normalize y/yv by std to ensure the 1e-3 zero-violation criterion is meaningful.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "/workspace/research_outputs/shusheng_rsi_run42/.huginn/goals.json"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-28T16:05:51.646158+00:00",
+      "confirmed_at": "2026-09-28T16:05:51.647362+00:00",
+      "completed_at": "2026-09-28T16:06:10.223791+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
