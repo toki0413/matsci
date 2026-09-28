@@ -1186,10 +1186,10 @@ class CognitiveRunner:
             f"Construct a specific scenario / parameter set where this hypothesis "
             f"would fail. If found, refute and pivot to a corrected hypothesis."
         )
-        # _speculator_hint 会被 _build_hypothesis_prompt 读取注入
-        self._speculator_hint = (
-            (getattr(self, "_speculator_hint", "") or "") + "\n" + _hint
-        )
+        # _speculator_hint 会被 _build_hypothesis_prompt 读取注入.
+        # 注意: 该 directive 在本方法末尾才 append, 因为 prompt 侧只保留尾部
+        # [-500:], 若先 append 会被后续的 failure traces / verifier weakness
+        # 顶出窗口 → 反例搜索指令到不了 LLM.
         # Task 4: 拉历史 failure trace exemplar 给 LLM 参考.
         # 复用 recall_failed_directions; 只挑 reason 含 [FAILURE TRACE]/[BREAK POINT]
         # 标记的 (Task 3 反推产物), 旧数据 (简短 error 串) 跳过 — 没推理链, 当 exemplar
@@ -1245,6 +1245,11 @@ class CognitiveRunner:
                     )
         except Exception:  # 防御: 验证器弱点提示失败忽略
             logger.debug("verifier weakness hint failed", exc_info=True)
+        # 关键 directive 最后 append: prompt 侧只保留尾部 [-500:], 落在最尾部
+        # 才能保证反例搜索指令一定进入下一轮 hypothesize 的 prompt.
+        self._speculator_hint = (
+            (getattr(self, "_speculator_hint", "") or "") + "\n" + _hint
+        )
         logger.info("P2 counterexample hunt triggered, hint injected")
     def _emit_campaign(self, event_type: str, data: dict) -> None:
         """发布 campaign.* 事件到 EventBus + SSE 流, fire-and-forget.

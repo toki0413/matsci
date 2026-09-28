@@ -884,12 +884,17 @@ LUCID review (mandatory after generating hypothesis):
         # 由 _apply_block_patches 和下方 math_block 共同消费.
         self._related_chain = self._is_related_chain(context.get("changed_files", []))
         # 投机执行 hint: 基于历史预测的下一步意图, 注入给 LLM 参考
-        # 预测只是 hint, LLM 可以无视, 不强制. 截断到 500 字符防止无界增长
-        # — _speculator_hint 有 5 处 append, 不截断 20 轮后可能数 KB.
+        # 预测只是 hint, LLM 可以无视, 不强制. 截断防止无界增长
+        # — _speculator_hint 有 30+ 处 append, 且每 run 只在启动时 reset 一次,
+        # 长程跑会累积到数 KB.
+        # 关键: 取**尾部** [-500:] 而非首部 [:500]. 所有纠偏指令
+        # (反例搜索 _trigger_counterexample_hunt / [强制重定向] 换名归约升级)
+        # 都是 append 到尾部 —— 取首部等于把"最新、最该被执行的纠偏"最先丢掉,
+        # 这正是"检测到了但不行动"的根因: 信号生成了却从没进 prompt.
         hint_block = ""
         if self._speculator_hint:
             hint_block = (
-                f"\nSpeculator hint (advisory, may be ignored): {self._speculator_hint[:500]}\n"
+                f"\nSpeculator hint (advisory, may be ignored): {self._speculator_hint[-500:]}\n"
                 "想返回时必须输出 UNEXPLORED: 块, 列出至少 3 个未探索的方向 "
                 "(方法族/等价性陷阱/连通分量/缺口).\n"
             )
