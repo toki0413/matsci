@@ -100,5 +100,32 @@
     ],
     "mode": "explore",
     "description": "Implement the polynomial family functions (rigid and fat) with proper O(1) normalization and non-overlapping held-out sets. Run capacity scans for both families across w values and seeds to compute N_"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "该计划虽然设计了对比实验（刚性 vs 胖多项式），但完全未触及假设的核心数学结构——代数流形验证。历史失败明确指出，仅做容量扫描（N_c(w)）而缺乏代数结构定义（理想生成元）、谱分析（Hessian特征值间隙）和流形维度度量，无法证明刚性多项式族是低维代数流形。计划遗漏了最关键的数学验证步骤。",
+    "missing_steps": [
+      "定义刚性多项式族的显式代数结构（多项式约束方程、理想生成元）",
+      "实现损失函数/Hessian的谱分析，计算特征值分布与特征值间隙以量化流形维度",
+      "定义fat族的具体x相关函数形式（避免纯噪声），并验证其高维性",
+      "构建解空间维度度量（如有效自由度、奇异值衰减）以证明与网络宽度无关",
+      "实施函数空间中低维流形结构的验证方法（如投影误差分析）"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function for two algebraic manifolds: a rigid low-dimensional polynomial family (≤5 basis terms, deterministically determined by w points) and a fat h"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan is invalid because it describes a theoretical/algebraic investigation (defining ideals, computing Jacobians, analyzing Hessian spectra) rather than a 'coder' or 'workflow' plan that produces executable code or a runnable pipeline to generate the required numerical data (N_c(w) values, training/leave-out errors). The hypothesis requires empirical verification of N_c(w) trends which this plan does not address. Furthermore, it repeats the historical failure of focusing on algebraic structure while ignoring the necessary numerical experiments to validate the capacity threshold and manifold dimension in function space.",
+    "missing_steps": [
+      "Generate executable code (e.g., Python script) to define the rigid polynomial family and compute its algebraic dimension numerically (e.g., via Gröbner basis or numerical rank of constraint Jacobian).",
+      "Implement the 'fat' polynomial family as x-dependent, high-dimensional functions (avoiding i.i.d. noise) with structured correlation.",
+      "Run numerical experiments to measure effective degrees of freedom via SVD decay of the feature matrix and projection error onto the rigid manifold.",
+      "Perform spectral analysis of the Hessian/loss landscape to quantify the low-dimensional manifold (eigenvalue gap) numerically.",
+      "Execute capacity scans to obtain N_c(w) values with independent training and leave-out error measurements, ensuring results align with the hypothesis (flat or decreasing N_c(w)).",
+      "Validate that the solution space dimension is independent of network width through numerical experiments."
+    ],
+    "mode": "explore",
+    "description": "Implement rigorous algebraic structure validation for the rigid polynomial family. Explicitly define the ideal generators $I$ via polynomial constraints (e.g., monomial basis truncation), compute the "
   }
 ]
