@@ -10,5 +10,17 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the family function for the rigid exponential family (∂ₓf = λf) and fat polynomial family to test the bootstrap capacity scan. Ensure data is normalized to O(1) "
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan is classified as 'explore' but describes a computational validation task requiring executable code (coder mode). It lacks the necessary Python implementation to compute N_c(w), normalize data, or verify the hypothesis. Without concrete numerical output, the prediction remains unverified and the plan cannot achieve the hypothesis.",
+    "missing_steps": [
+      "Generate executable Python script implementing the rigid exponential family (∂ₓf = λf) and fat polynomial family",
+      "Include data normalization (O(1) std) and held-out set separation logic in the code",
+      "Run the script to obtain numerical N_c(w) values for verification",
+      "Compare computed N_c(w) against hypothesis requirements (finite/flat for rigid family)"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid family (exponential family from PDE ∂_x f = λ f) and fat family (high-degree polynomial), ensuring data is normalized to O(1)"
   }
 ]

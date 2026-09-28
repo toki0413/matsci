@@ -71,10 +71,10 @@
       "label": "[DIM: structure] The rigid family corresponds to a first-order linear PDE $\\part",
       "type": "experiment",
       "source": "autoloop",
-      "confidence": 1.0,
+      "confidence": 0.99,
       "created_at": "2026-09-28T11:44:22.937103",
-      "last_seen": "2026-09-28T11:44:22.937103",
-      "mentions": 1,
+      "last_seen": "2026-09-28T11:45:22.595830",
+      "mentions": 2,
       "iteration": 10,
       "r_phys": 1.0,
       "surprise": 1.0,
@@ -130,6 +130,55 @@
       "r_phys": 1.0,
       "iteration": 10,
       "id": "persona_use:reviewer_iter10"
+    },
+    {
+      "label": "plan_explore_iter15",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T11:45:22.595859",
+      "last_seen": "2026-09-28T11:45:22.595859",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter15"
+    },
+    {
+      "label": "pass_iter15",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T11:45:22.595881",
+      "last_seen": "2026-09-28T11:45:22.595881",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter15"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T11:45:22.595892",
+      "last_seen": "2026-09-28T11:45:22.595892",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid family corresponds to a first-order linear PDE $\\part",
+        "Method:plan_explore_iter15",
+        "Fact:pass_iter15"
+      ],
+      "iteration": 15,
+      "id": "he_experiment_pipeline_e1a446e7"
+    },
+    {
+      "label": "reviewer_iter15",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T11:45:22.595971",
+      "last_seen": "2026-09-28T11:45:22.595971",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "d837493ea1593d67",
+      "r_phys": 1.0,
+      "iteration": 15,
+      "id": "persona_use:reviewer_iter15"
     }
   ],
   "links": [
@@ -171,6 +220,15 @@
     },
     {
       "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid family corresponds to a first-order linear PDE $\\part",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T11:45:22.595892",
+      "last_seen": "2026-09-28T11:45:22.595892",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e1a446e7"
+    },
+    {
+      "relation": "member_of",
       "source": "Method:plan_explore_iter10",
       "confidence": 0.5,
       "created_at": "2026-09-28T11:44:22.937163",
@@ -186,6 +244,24 @@
       "last_seen": "2026-09-28T11:44:22.937163",
       "mentions": 1,
       "target": "he_experiment_pipeline_a1436e6d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T11:45:22.595892",
+      "last_seen": "2026-09-28T11:45:22.595892",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e1a446e7"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T11:45:22.595892",
+      "last_seen": "2026-09-28T11:45:22.595892",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e1a446e7"
     }
   ]
 }
