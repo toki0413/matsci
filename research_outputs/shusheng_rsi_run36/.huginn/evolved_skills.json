@@ -80,8 +80,8 @@
       "label",
       "plan",
       "prediction",
-      "function",
-      "solution"
+      "solution",
+      "function"
     ],
     "workflow_steps": [
       {
