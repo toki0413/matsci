@@ -179,6 +179,70 @@
       "r_phys": 1.0,
       "iteration": 15,
       "id": "persona_use:reviewer_iter15"
+    },
+    {
+      "label": "**",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T15:12:36.750166",
+      "last_seen": "2026-09-28T15:12:36.750166",
+      "mentions": 1,
+      "iteration": 20,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Rigid family: N_c(w) will be finite (h=2~8) and flat/decreasing across w values; fat family: all w will show trend='unreachable' with heldout_err > 1e3 at h=64. Anchor point for rigid: w=10, h=8, seed",
+      "persona": "reviewer",
+      "id": "experiment:**"
+    },
+    {
+      "label": "plan_explore_iter20",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:12:36.750205",
+      "last_seen": "2026-09-28T15:12:36.750205",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter20"
+    },
+    {
+      "label": "pass_iter20",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:12:36.750214",
+      "last_seen": "2026-09-28T15:12:36.750214",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter20"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T15:12:36.750224",
+      "last_seen": "2026-09-28T15:12:36.750224",
+      "mentions": 1,
+      "members": [
+        "experiment:**",
+        "Method:plan_explore_iter20",
+        "Fact:pass_iter20"
+      ],
+      "iteration": 20,
+      "id": "he_experiment_pipeline_7cee00ef"
+    },
+    {
+      "label": "reviewer_iter20",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T15:12:36.750307",
+      "last_seen": "2026-09-28T15:12:36.750307",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "a5b92332431ea895",
+      "r_phys": 1.0,
+      "iteration": 20,
+      "id": "persona_use:reviewer_iter20"
     }
   ],
   "links": [
@@ -262,6 +326,33 @@
       "last_seen": "2026-09-28T15:11:28.126507",
       "mentions": 1,
       "target": "he_experiment_pipeline_d375cc4"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:**",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:12:36.750224",
+      "last_seen": "2026-09-28T15:12:36.750224",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_7cee00ef"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:12:36.750224",
+      "last_seen": "2026-09-28T15:12:36.750224",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_7cee00ef"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:12:36.750224",
+      "last_seen": "2026-09-28T15:12:36.750224",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_7cee00ef"
     }
   ]
 }

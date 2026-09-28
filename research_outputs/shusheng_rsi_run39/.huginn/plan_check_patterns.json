@@ -23,5 +23,18 @@
     ],
     "mode": "explore",
     "description": "Implement two function families (rigid: quadratic polynomial f(x)=ax²+bx+c; fat: 20-term Chebyshev polynomial) with proper O(1) normalization and non-overlapping held-out sets. Run capacity scan to ve"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan is overly vague and lacks critical mathematical definitions required to execute the hypothesis test. It does not specify the explicit functional forms of the 'rigid' and 'fat' polynomial families, nor does it define the capacity_scan procedure, the 'zero violation' metric, or how N_c is quantified. This ambiguity directly replicates the historical failures identified in the '同场景历史失败' section (e.g., ill-defined function families, missing N_c quantification). Without these details, the experiment cannot be run, reproduced, or validated against the hypothesis.",
+    "missing_steps": [
+      "Define explicit analytic form of the rigid polynomial family (e.g., low-degree polynomial with fixed coefficients)",
+      "Define explicit analytic form of the fat polynomial family (high-dimensional basis with x-dependence, not i.i.d. noise)",
+      "Specify the exact method for computing N_c(w), including the zero-violation metric and held-out error calculation",
+      "Detail the capacity_scan procedure: how train_err and heldout_err are independently measured, and how N_c(w) is extracted from the scan",
+      "Specify scaling/normalization scheme to avoid scale issues (e.g., ~1e9) as seen in run29"
+    ],
+    "mode": "explore",
+    "description": "The current hypothesis (rigid polynomial family exhibits finite N_c that is flat/decreasing across w) shows a surprise of 1.0, indicating a significant discrepancy between prediction and actual result"
   }
 ]
