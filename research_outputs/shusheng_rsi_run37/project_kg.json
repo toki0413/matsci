@@ -1162,6 +1162,70 @@
       "r_phys": 1.0,
       "iteration": 100,
       "id": "persona_use:reviewer_iter100"
+    },
+    {
+      "label": "'.\"",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:19:32.320095",
+      "last_seen": "2026-09-28T14:19:32.320095",
+      "mentions": 1,
+      "iteration": 105,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Rigid family will achieve low validation error due to proper capacity match; fat family will exhibit early violation (small N_c) due to overparameterization despite scaling, confirming capacity limits",
+      "persona": "reviewer",
+      "id": "experiment:'.\""
+    },
+    {
+      "label": "plan_explore_iter105",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:19:32.320134",
+      "last_seen": "2026-09-28T14:19:32.320134",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter105"
+    },
+    {
+      "label": "pass_iter105",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:19:32.320144",
+      "last_seen": "2026-09-28T14:19:32.320144",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter105"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T14:19:32.320154",
+      "last_seen": "2026-09-28T14:19:32.320154",
+      "mentions": 1,
+      "members": [
+        "experiment:'.\"",
+        "Method:plan_explore_iter105",
+        "Fact:pass_iter105"
+      ],
+      "iteration": 105,
+      "id": "he_experiment_pipeline_5ba0562f"
+    },
+    {
+      "label": "reviewer_iter105",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:19:32.320236",
+      "last_seen": "2026-09-28T14:19:32.320236",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "04d2dc578f2ff627",
+      "r_phys": 1.0,
+      "iteration": 105,
+      "id": "persona_use:reviewer_iter105"
     }
   ],
   "links": [
@@ -1704,6 +1768,33 @@
       "last_seen": "2026-09-28T14:17:55.745100",
       "mentions": 1,
       "target": "he_experiment_pipeline_998718f2"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:'.\"",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:19:32.320154",
+      "last_seen": "2026-09-28T14:19:32.320154",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5ba0562f"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter105",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:19:32.320154",
+      "last_seen": "2026-09-28T14:19:32.320154",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5ba0562f"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter105",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:19:32.320154",
+      "last_seen": "2026-09-28T14:19:32.320154",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5ba0562f"
     }
   ]
 }
