@@ -34,5 +34,17 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the `family` function for two distinct function families: (1) a linear rigid family satisfying f''(x)=0 (f(x)=ax+b) and (2) a fat family using a high-order polyn"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan is invalid because it uses a finite-dimensional polynomial basis for the 'fat family', which contradicts the core hypothesis requirement of an infinite-dimensional solution space from the nonlinear transport equation with stochastic initial conditions. This matches the historical failure pattern where polynomial approximation fails to capture chaotic solution branching and infinite dimensionality. Additionally, the plan does not specify how to handle the nonlinear transport equation or stochastic initial conditions, which are critical for validating the hypothesis.",
+    "missing_steps": [
+      "Implement the actual nonlinear transport equation (e.g., Burgers' equation or similar) instead of using a polynomial basis",
+      "Include stochastic initial condition sampling to capture chaotic solution branching",
+      "Use appropriate function spaces (e.g., Sobolev spaces) rather than finite-dimensional polynomial bases for the fat family",
+      "Ensure the fat family truly reflects infinite-dimensional nature as specified in the hypothesis"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family(kind, w, seed) function to generate data for the rigid family (f'(x)=c, affine solutions) and fat family (high-degree polynomial basis with no analyti"
   }
 ]
