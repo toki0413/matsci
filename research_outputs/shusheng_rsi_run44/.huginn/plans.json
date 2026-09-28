@@ -1052,6 +1052,36 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_18c3146f",
+      "objective": "[DIM: structure] The rigid family is defined by a linear PDE constraint (e.g., ∂_t u + v·∇u = 0 with fixed v), which reduces its effective dimension to O(1) independent of w, whereas the fat family has no such constraint and thus requires N_c(w) ∝ w to achieve zero violation.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid family (linear PDE-constrained solution: u(x) = v·x) and fat family (high-dimensional polynomial with large dynamic range). Ensure y/yv are normalized to O(1) std, X and Xv are disjoint, and labels are (N,1) shaped. This enables the capacity_scan to properly evaluate N_c(w) trends.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "/workspace/research_outputs/shusheng_rsi_run44/family.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-28T17:31:27.762271+00:00",
+      "confirmed_at": "2026-09-28T17:31:27.764107+00:00",
+      "completed_at": "2026-09-28T17:31:47.856179+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
