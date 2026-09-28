@@ -505,5 +505,32 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement rigorous capacity_scan experiment with explicit mathematical specifications: (1) Define polynomial families with controlled dimensionality — rigid family: f(x) ="
+  },
+  {
+    "scene_tag": "workflow",
+    "reason": "The plan has a fundamental MODE mismatch: it is labeled 'explore' but explicitly describes code implementation tasks ('Implement rigid polynomial family', 'configure capacity_scan', 'apply scaling discipline'), which requires 'coder' mode. The DESCRIPTION lacks critical mathematical definitions (explicit relationship between N and w, explicit polynomial families), and fails to address key issues from previous failures (run28 noise degeneracy, run29 magnitude issues). The prediction is not verifiable without the proper implementation.",
+    "missing_steps": [
+      "Change MODE from 'explore' to 'coder' since this is a code implementation task",
+      "Define explicit mathematical structure of rigid polynomial constraint family (basis functions, degree, relationship between N and w)",
+      "Define explicit mathematical structure of fat polynomial constraint family as high-dimensional function of x (not noise) with dimensionality >> w",
+      "Implement capacity_scan tool configuration with training/hold-out error metrics to compute N_c(w) with clear termination criteria for 'zero violation'",
+      "Implement scaling discipline to normalize polynomial outputs to O(1) magnitude to prevent run29-style magnitude issues",
+      "Specify capacity_scan tool configuration with clear termination criteria for 'zero violation' and independent training/hold-out error measurement"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function for the polynomial rigidity hypothesis. Define two families: (1) a \"rigid\" family of low-degree polynomials (degree ≤ 5) with w constraint po"
+  },
+  {
+    "scene_tag": "workflow",
+    "reason": "The plan has a critical MODE mismatch: it is labeled as 'explore' but explicitly describes code implementation tasks (defining families, implementing capacity_scan, configuring scaling) which strictly requires 'coder' mode per system instructions. Additionally, the DESCRIPTION lacks essential mathematical definitions including the explicit relationship between output dimension N and network width w, proper specification of the fat polynomial family as a function of x (not noise), and capacity_scan configuration details. This directly repeats documented historical failure patterns from the scene history.",
+    "missing_steps": [
+      "Change MODE from 'explore' to 'coder' since this is a code implementation task",
+      "Define explicit mathematical relationship between output dimension N (number of constraints) and network width w",
+      "Specify fat polynomial family f(x) as a function of x with high dimensionality >> w (not noise) to avoid degeneracy to noise",
+      "Implement capacity_scan tool configuration with training/hold-out error metrics to compute N_c(w) with clear termination criteria for 'zero violation'",
+      "Implement scaling discipline to constrain polynomial outputs to O(1) magnitude to prevent magnitude issues"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Define two explicit polynomial families: (1) Rigid family: P(x) = sum_{k=0}^{min(5,d)} a_k x^k with w constraint points where N ≥ w+1, ensuring N_c finite; (2) Fat family:"
   }
 ]

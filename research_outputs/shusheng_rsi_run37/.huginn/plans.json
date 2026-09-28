@@ -723,6 +723,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_be87605d",
+      "objective": "[DIM: structure] The solution space rigidity of the polynomial families is determined by the algebraic degree of the constraint manifold, where rigid families correspond to low-degree polynomials (degree ≤ 5) that satisfy the capacity scan threshold (N_c finite) and fat families correspond to high-degree polynomials (degree > 10) that exceed the network's representational capacity (N_c = unreachable).",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Define two explicit polynomial families: (1) Rigid family: P(x) = sum_{k=0}^{min(5,d)} a_k x^k with w constraint points where N ≥ w+1, ensuring N_c finite; (2) Fat family: P(x) = sum_{k=0}^{>10} a_k x^k with dimensionality >> w, ensuring N_c unreachable. Implement capacity_scan with training/hold-out error metrics, termination criteria for zero violation, and scaling discipline to normalize outputs to O(1) magnitude (divide by std) to prevent run29-style magnitude issues. Ensure X and Xv are non-overlapping.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-28T14:24:24.484764+00:00",
+      "confirmed_at": "2026-09-28T14:24:24.486552+00:00",
+      "completed_at": "2026-09-28T14:24:44.211531+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
