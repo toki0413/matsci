@@ -1295,6 +1295,11 @@ before proposing numerical experiments.
 
 Hypothesis:""",
                 ),
+                # hint 提到 body 之后: _trim_to_budget 从列表尾部往回裁剪,
+                # 原先把 hint 放最后 → 预算紧张时首先被截断/删除, 换名归约的
+                # 强制重定向提示 (见 hypothesis_loop._metacog_audit_hypothesis)
+                # 根本到不了 LLM. 提到高优先级位, 保证纠偏信息不被裁掉.
+                ("hint", hint_block),
                 ("git_log", git_log_block),
                 ("fail", fail_block),
                 ("imagination", imagination_block),
@@ -1314,7 +1319,6 @@ Hypothesis:""",
                 ("topo", topo_block),
                 ("blind_spot", blind_spot_block),
                 ("skill", self._build_skill_context_block()),
-                ("hint", hint_block),
             ],
             "hypothesize",
         )
