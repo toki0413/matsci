@@ -1,0 +1,16 @@
+[
+  {
+    "scene_tag": "workflow",
+    "reason": "Plan fails to address the core hypothesis about boundary-layer transport effects. The proposed rigid family (f(x)=x) is a trivial linear function that cannot exhibit the non-uniform sampling density or boundary-layer concentration effects described in the hypothesis. The plan tests whether the rigid family achieves zero violation, which is irrelevant to testing transport-dominated error mechanisms. Additionally, the plan lacks executable code as required by the known failure patterns, and the prediction about N_c(w) being finite is unrelated to the transport hypothesis.",
+    "missing_steps": [
+      "Implement a model that can capture boundary-layer transport effects (e.g., a neural network with appropriate architecture)",
+      "Design an experiment with non-uniform sampling density near training-set edges",
+      "Include a diffusive regularization term in the loss function as hypothesized",
+      "Create executable Python code that implements the experiment and produces measurable results",
+      "Analyze error distribution spatially to identify concentration near boundaries",
+      "Compare error distribution with and without diffusive regularization"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the rigid family function for the capacity_scan pipeline. The rigid family should be a linear function f(x)=x (as per iteration 10 context) with properly normali"
+  }
+]
