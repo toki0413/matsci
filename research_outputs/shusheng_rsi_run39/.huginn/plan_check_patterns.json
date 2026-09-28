@@ -10,5 +10,18 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the `family` function for two polynomial families: a rigid polynomial family (low-dimensional solution space, e.g., a specific analytic form with few degrees of "
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan fails to define the explicit mathematical forms of the 'rigid' and 'fat' function families, which is critical for reproducibility and validity. It also lacks a precise definition of the capacity_scan procedure, how N_c(w) is quantified, and how 'zero violation' is measured on held-out constraints. Without these, the experiment cannot be executed or validated, and it risks falling into the historical failure modes (e.g., using i.i.d. noise or ill-scaled polynomials). Additionally, the prediction relies on unverified assumptions about error thresholds and trends without specifying the numerical methodology.",
+    "missing_steps": [
+      "Define explicit analytic form of the rigid polynomial family (e.g., f(x) = ax²+bx+c with fixed coefficients or parameterized range)",
+      "Define explicit analytic form of the fat polynomial family (20-term Chebyshev with x-dependence, not i.i.d. noise)",
+      "Specify the exact method for computing N_c(w), including the zero-violation metric and held-out error calculation",
+      "Detail the capacity_scan procedure: how train_err and heldout_err are independently measured, and how N_c(w) is extracted from the scan",
+      "Specify scaling/normalization scheme for the 20-term Chebyshev to avoid ~1e9 scale issues as in run29"
+    ],
+    "mode": "explore",
+    "description": "Implement two function families (rigid: quadratic polynomial f(x)=ax²+bx+c; fat: 20-term Chebyshev polynomial) with proper O(1) normalization and non-overlapping held-out sets. Run capacity scan to ve"
   }
 ]
