@@ -1803,6 +1803,18 @@ Respond JSON only:
             from huginn.evaluation.goal_judge import GoalJudge
 
             final_output = str(report_phase.result or "")
+            # report_phase.result 是报告文件**路径**(_report 返回 str(report_path),
+            # 同 report_path 字段用法). GoalJudge 要的是报告**正文**, 否则判官只看到
+            # 一串路径 → 误判"无数值证据". 是文件就读入正文, 否则按原样当文本.
+            if final_output:
+                try:
+                    from pathlib import Path as _Path
+
+                    _rp = _Path(final_output)
+                    if _rp.is_file():
+                        final_output = _rp.read_text(encoding="utf-8")
+                except OSError:
+                    logger.debug("read report for judge failed", exc_info=True)
             judge = GoalJudge(llm=self.verification_model or self.model)
             goal_judgment = judge.judge(
                 objective=objective,
