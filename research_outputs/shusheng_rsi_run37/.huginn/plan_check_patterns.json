@@ -1,18 +1,5 @@
 [
   {
-    "scene_tag": "workflow",
-    "reason": "The plan is invalid due to a fundamental MODE mismatch: it is labeled 'explore' but explicitly describes code implementation tasks ('Implement rigid polynomial family', 'configure capacity_scan', 'apply scaling discipline'), which requires 'coder' mode. It also lacks critical mathematical definitions (explicit relationship between N and w), fails to specify the fat polynomial family as a non-noise high-dimensional function of x (risking run28's noise degeneracy), and omits capacity_scan termination criteria and scaling discipline (risking run29's magnitude issues).",
-    "missing_steps": [
-      "Change MODE from 'explore' to 'coder' since this is a code implementation task",
-      "Define explicit mathematical relationship between output dimension N (number of constraints) and network width w",
-      "Specify fat polynomial family f(x) as a function of x with high dimensionality >> w (not noise) to avoid degeneracy to noise (run28 failure)",
-      "Implement capacity_scan tool configuration with training/hold-out error metrics to compute N_c(w) with clear termination criteria for 'zero violation'",
-      "Implement scaling discipline to constrain polynomial outputs to O(1) magnitude to prevent magnitude issues (run29 failure)"
-    ],
-    "mode": "explore",
-    "description": "[auto-routed: surprise=1.00] Implement `rigid_polynomial_family` as a finite-dimensional linear subspace (basis functions of degree d ≤ w, output dimension N = d+1, w=8) and `fat_polynomial_family` as"
-  },
-  {
     "scene_tag": "other",
     "reason": "The plan is fundamentally flawed due to a critical MODE mismatch (labeled 'explore' but describes code implementation requiring 'coder' mode). Additionally, the DESCRIPTION lacks the explicit mathematical definition of the relationship between output dimension N and network width w, which is essential for computing N_c(w). It also fails to specify the fat polynomial family as a non-noise high-dimensional function of x (risking the degeneracy to noise failure from run28) and omits capacity_scan configuration details with clear termination criteria for 'zero violation' and scaling discipline to prevent magnitude issues (run29 failure).",
     "missing_steps": [
@@ -663,5 +650,19 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid polynomial family as required by the capacity_scan workflow. The function will generate training and held-out constraint poin"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan has a critical MODE mismatch: it is labeled 'explore' but describes code implementation tasks that strictly require 'coder' mode. Additionally, the DESCRIPTION lacks essential mathematical definitions and implementation details required to avoid documented historical failure patterns, including missing explicit relationship between N and w, undefined fat polynomial family f(x), unspecified capacity_scan configuration, and missing scaling details. The plan also fails to address the previous run's failure where fat polynomial was incorrectly defined as x-independent noise.",
+    "missing_steps": [
+      "Fix top-level MODE from 'explore' to 'coder' to match code implementation task type",
+      "Define explicit mathematical relationship between output dimension N (number of constraints) and network width w",
+      "Specify exact fat polynomial family f(x) as a function of x with high dimensionality >> w (not noise)",
+      "Implement capacity_scan tool configuration with training/hold-out error metrics to compute N_c(w) with clear termination criteria",
+      "Add explicit scaling implementation details to ensure O(1) normalization of polynomial outputs",
+      "Specify exact termination criteria for N_c(w) calculation with clear 'zero violation' definition (≤1e-3)"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the polynomial function families (rigid and fat) in `family(kind, w, seed)` with proper normalization, ensuring outputs are (N,1) shaped, y/yv standardized to O("
   }
 ]

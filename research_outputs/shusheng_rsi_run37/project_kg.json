@@ -2293,10 +2293,10 @@
       "label": "[DIM: structure] The rigid polynomial family exhibits a finite capacity threshol",
       "type": "experiment",
       "source": "autoloop",
-      "confidence": 1.0,
+      "confidence": 0.99,
       "created_at": "2026-09-28T14:42:05.425109",
-      "last_seen": "2026-09-28T14:42:05.425109",
-      "mentions": 1,
+      "last_seen": "2026-09-28T14:43:08.605676",
+      "mentions": 2,
       "iteration": 200,
       "r_phys": 1.0,
       "surprise": 1.0,
@@ -2352,6 +2352,55 @@
       "r_phys": 1.0,
       "iteration": 200,
       "id": "persona_use:reviewer_iter200"
+    },
+    {
+      "label": "plan_explore_iter205",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:43:08.605702",
+      "last_seen": "2026-09-28T14:43:08.605702",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter205"
+    },
+    {
+      "label": "pass_iter205",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:43:08.605724",
+      "last_seen": "2026-09-28T14:43:08.605724",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter205"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T14:43:08.605735",
+      "last_seen": "2026-09-28T14:43:08.605735",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid polynomial family exhibits a finite capacity threshol",
+        "Method:plan_explore_iter205",
+        "Fact:pass_iter205"
+      ],
+      "iteration": 205,
+      "id": "he_experiment_pipeline_e0680a38"
+    },
+    {
+      "label": "reviewer_iter205",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:43:08.605819",
+      "last_seen": "2026-09-28T14:43:08.605819",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "1a141737dc113b57",
+      "r_phys": 1.0,
+      "iteration": 205,
+      "id": "persona_use:reviewer_iter205"
     }
   ],
   "links": [
@@ -3419,6 +3468,15 @@
     },
     {
       "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid polynomial family exhibits a finite capacity threshol",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:43:08.605735",
+      "last_seen": "2026-09-28T14:43:08.605735",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e0680a38"
+    },
+    {
+      "relation": "member_of",
       "source": "Method:plan_explore_iter200",
       "confidence": 0.5,
       "created_at": "2026-09-28T14:42:05.425168",
@@ -3434,6 +3492,24 @@
       "last_seen": "2026-09-28T14:42:05.425168",
       "mentions": 1,
       "target": "he_experiment_pipeline_7611930d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter205",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:43:08.605735",
+      "last_seen": "2026-09-28T14:43:08.605735",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e0680a38"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter205",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:43:08.605735",
+      "last_seen": "2026-09-28T14:43:08.605735",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e0680a38"
     }
   ]
 }
