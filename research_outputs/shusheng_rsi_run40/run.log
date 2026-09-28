@@ -249,3 +249,9 @@ plan_check failed low-conf (tier=light, scene=other, conf=0.10): The plan fundam
 [exec-route] mode='explore' desc[:80]='[auto-routed: surprise=1.00] Implement the `family` function for the rigid and f' obj_len=2462 is_exp_desc=True is_exp_obj=True is_det_desc=False
 [code-lab-author] raw_len=1031 extracted_len=1016 prompt_len=5379
 [code-lab-run] res_none=False success=True nobj=36 reason=''
+[validate] mode='code_lab' success=True nobj=36 cf=False lab=True
+metacog: 假设可能为换名归约 (trap=, target=刚性族与胖族的解空间维数差异（即刚性=低维/唯一，胖族=高维/连续族）): [Structure] The rigid polynomial family (linear) admits a solution space of dimension 1 (unique up t
+plan_check failed low-conf (tier=light, scene=other, conf=0.15): The plan proposes using an MLP neural network for regression, which fundamentally misunderstands the mathematical structure of the hypothesis. The hypothesis is about solution space dimensionality under linear constraints (rigid 1D vs. fat infinite-dimensional), which is a linear algebra problem. An MLP is a universal approximator that will overfit both families, failing to distinguish between 1D and infinite-dimensional solution spaces. This repeats the exact failure modes identified in historical failures (run28, run29). The plan lacks critical implementation details including using direct linear algebra solver instead of MLP, proper capacity definition N_c as maximum points exactly satisfied, and independent error measurement protocols.
+[exec-route] mode='explore' desc[:80]='Construct constraint matrix A from point evaluations of the rigid family f(x)=x ' obj_len=2462 is_exp_desc=True is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=1021 extracted_len=1006 prompt_len=5379
+[code-lab-run] res_none=False success=True nobj=36 reason=''

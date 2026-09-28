@@ -199,5 +199,37 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid and fat function families as specified in the protocol. The rigid family will be the linear function f(x)=x, and the fat fami"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan fundamentally misunderstands the mathematical structure of the hypothesis. The hypothesis concerns solution space dimensionality under linear constraints (rigid 1D vs fat infinite-dimensional), which is a linear algebra problem. The plan incorrectly proposes using an MLP neural network for regression, which is a universal approximator that will overfit both families, failing to distinguish between 1D and infinite-dimensional solution spaces. This repeats the exact failure modes identified in the historical failures (run28, run29). The plan lacks critical implementation details including explicit normalization procedures, training/holdout protocols, and independent measurement methods.",
+    "missing_steps": [
+      "Replace MLP regression with direct linear algebra solver: construct constraint matrix A from point evaluations, solve A*c=y for coefficients c",
+      "For rigid family f(x)=x, verify system is overdetermined for N>1 points and only solvable if points lie exactly on the line (dimension 1 up to scaling)",
+      "For fat family f(x)=(2x-1)^19, verify any set of N points can be interpolated by degree-19 polynomial (infinite-dimensional solution space)",
+      "Define explicit normalization procedure for fat polynomial targets (e.g., y_scaled = (y/max(|y|))*normalization_factor)",
+      "Specify exact training/holdout data generation protocol including seed, N, and tensor shape verification",
+      "Detail independent measurement protocol for training vs holdout errors (not copying values)",
+      "Use exact arithmetic or high-precision floating point for (2x-1)^19 to avoid numerical issues with large coefficients",
+      "Define capacity N_c as maximum number of points exactly satisfied, not MLP validation loss"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function for the rigid (linear) and fat (highly oscillatory) polynomial families, ensuring y/yv are normalized to O(1) by dividing by their standard d"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan proposes using an MLP neural network for regression, which fundamentally misunderstands the mathematical structure of the hypothesis. The hypothesis is about solution space dimensionality under linear constraints (rigid 1D vs. fat infinite-dimensional), which is a linear algebra problem. An MLP is a universal approximator that will overfit both families, failing to distinguish between 1D and infinite-dimensional solution spaces. This repeats the exact failure modes identified in historical failures (run28, run29). The plan lacks critical implementation details including using direct linear algebra solver instead of MLP, proper capacity definition N_c as maximum points exactly satisfied, and independent error measurement protocols.",
+    "missing_steps": [
+      "Replace MLP regression with direct linear algebra solver: construct constraint matrix A from point evaluations, solve A*c=y for coefficients c",
+      "For rigid family f(x)=x, verify system is overdetermined for N>1 points and only solvable if points lie exactly on the line (dimension 1 up to scaling)",
+      "For fat family f(x)=(2x-1)^19, verify any set of N points can be interpolated by degree-19 polynomial (infinite-dimensional solution space)",
+      "Use exact arithmetic or high-precision floating point for (2x-1)^19 to avoid numerical issues with large coefficients",
+      "Define capacity N_c as maximum number of points exactly satisfied, not MLP validation loss",
+      "Define explicit normalization procedure for fat polynomial targets (e.g., y_scaled = (y/max(|y|))*normalization_factor)",
+      "Specify exact training/holdout data generation protocol including seed, N, and tensor shape verification",
+      "Detail independent measurement protocol for training vs holdout errors (not copying values)"
+    ],
+    "mode": "explore",
+    "description": "Construct constraint matrix A from point evaluations of the rigid family f(x)=x (1D solution space) and fat family f(x)=(2x-1)^19 (high-dimensional solution space), solve for coefficients using direct"
   }
 ]
