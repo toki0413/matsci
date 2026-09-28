@@ -691,6 +691,70 @@
       "r_phys": 1.0,
       "iteration": 55,
       "id": "persona_use:reviewer_iter55"
+    },
+    {
+      "label": "[DIM: structure] The rigid constraint family exhibits zero violation because it ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:36:30.134797",
+      "last_seen": "2026-09-28T13:36:30.134797",
+      "mentions": 1,
+      "iteration": 60,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Rigid family will achieve zero violation at width h ≤ 8 with training error ≤ 1e-4 and held-out error ≤ 1e-3, showing flat N_c(w) trend across w values. Fat family will show trend='unreachable' with a",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid constraint family exhibits zero violation because it"
+    },
+    {
+      "label": "plan_explore_iter60",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:36:30.134836",
+      "last_seen": "2026-09-28T13:36:30.134836",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter60"
+    },
+    {
+      "label": "pass_iter60",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:36:30.134845",
+      "last_seen": "2026-09-28T13:36:30.134845",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter60"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T13:36:30.134854",
+      "last_seen": "2026-09-28T13:36:30.134854",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid constraint family exhibits zero violation because it",
+        "Method:plan_explore_iter60",
+        "Fact:pass_iter60"
+      ],
+      "iteration": 60,
+      "id": "he_experiment_pipeline_5fc028c9"
+    },
+    {
+      "label": "reviewer_iter60",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:36:30.134958",
+      "last_seen": "2026-09-28T13:36:30.134958",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "ac20ca525b7f8e18",
+      "r_phys": 1.0,
+      "iteration": 60,
+      "id": "persona_use:reviewer_iter60"
     }
   ],
   "links": [
@@ -990,6 +1054,33 @@
       "last_seen": "2026-09-28T13:35:29.089849",
       "mentions": 1,
       "target": "he_experiment_pipeline_712f322d"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid constraint family exhibits zero violation because it",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:36:30.134854",
+      "last_seen": "2026-09-28T13:36:30.134854",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5fc028c9"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter60",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:36:30.134854",
+      "last_seen": "2026-09-28T13:36:30.134854",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5fc028c9"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter60",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:36:30.134854",
+      "last_seen": "2026-09-28T13:36:30.134854",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5fc028c9"
     }
   ]
 }
