@@ -632,6 +632,36 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_d0bb0f57",
+      "objective": "[DIM: Function Space Geometry] The rigid family's zero-violation capacity $N_c(w)$ is finite and flat because its constraint manifold is a low-dimensional linear subspace (dim $\\ll w$), allowing small-width networks to project onto it; conversely, the fat family's unreachability stems from a high-dimensional manifold that requires network width to scale with $w$ to capture all degrees of freedom, exceeding the $h=64$ scan limit.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid and fat function spaces as specified in the hypothesis. The rigid family will be a low-dimensional linear subspace (e.g., a 3-dimensional space spanned by {1, x, x²}) ensuring finite N_c, while the fat family will be a high-dimensional manifold (e.g., a 20-dimensional polynomial space) expected to be unreachable at h=64. Ensure output shapes are (N,1), y/yv are normalized to O(1), and Xv does not overlap with X. This enables the capacity_scan tool to evaluate N_c(w) trends.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "family_implementation.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-28T17:16:06.420589+00:00",
+      "confirmed_at": "2026-09-28T17:16:06.422166+00:00",
+      "completed_at": "2026-09-28T17:16:28.558960+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
