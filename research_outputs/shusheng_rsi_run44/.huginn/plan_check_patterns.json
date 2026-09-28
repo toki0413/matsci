@@ -366,5 +366,36 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the rigid and fat function families in the required family() function format, ensuring y/yv are normalized to O(1) scale, X and Xv are non-overlapping (N,1) shap"
+  },
+  {
+    "scene_tag": "auto_family",
+    "reason": "The plan uses 'explore' mode which is explicitly inappropriate for a concrete computational verification task per the system prompt (should be 'coder' or 'workflow' mode). It lacks concrete implementation details including specific grid resolutions, basis function definitions, numerical methods, and N_c(w) calculation methodology. It repeats historical failures by not addressing dimensional pre-checks, scale normalization, and proper error measurement procedures.",
+    "missing_steps": [
+      "Switch from 'explore' mode to 'coder' or 'workflow' mode for concrete computations",
+      "Define concrete numerical methods with specific grid resolutions, basis function definitions, and sampling parameters",
+      "Establish clear training and holdout error measurement procedures with separate metrics to avoid data leakage",
+      "Define N_c(w) calculation methodology (e.g., SVD rank, effective dimension) with clear thresholds",
+      "Address dimensional pre-check warnings and ensure dimensional consistency/scale normalization (O(1) scale)",
+      "Define concrete L-BFGS-B optimization setup with specific iteration limits and parameters",
+      "Implement comparative optimization strategy to distinguish optimization failure from function space limitations",
+      "Provide concrete numerical methods with specific grid resolutions, basis function definitions, and sampling parameters"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family` function for two analytical function families (rigid and fat) with proper normalization and non-overlapping held-out sets, then execute the capacity"
+  },
+  {
+    "scene_tag": "auto_family",
+    "reason": "The plan is invalid due to multiple critical failures. First, the MODE is incorrectly set to 'explore' (which is for open-ended discovery) rather than 'coder' or 'workflow' as required for structured verification tasks. Second, the DESCRIPTION fails to address the critical 'fat family' constraint from history—it does not explicitly specify that the fat family must be x-dependent (not i.i.d. noise), risking the run28 failure mode. Third, it lacks explicit band/w scaling instructions to prevent ill-conditioning issues like those in run29 (~1e9 scale). Fourth, it doesn't specify concrete numerical methods (grid sizes, basis definitions, error metrics) or N_c(w) calculation methodology. Finally, it repeats the historical error of treating an abstract ML problem without mapping it to a natural-science instance (spectral theory/variational principle).",
+    "missing_steps": [
+      "Change MODE from 'explore' to 'coder' or 'workflow'",
+      "Explicitly define fat family as x-dependent high-dimensional functions (not i.i.d. noise)",
+      "Specify scaling for fat family basis to prevent ~1e9 scale issues",
+      "Define concrete numerical methods (grid resolutions, basis function definitions)",
+      "Establish independent training and held-out error measurement procedures",
+      "Define N_c(w) calculation methodology with SVD threshold",
+      "Map hypothesis to natural-science instance (spectral theory for basis functions)"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement two analytical function families (rigid: truncated Fourier series; fat: polynomial basis) with proper normalization and non-overlapping held-out sets. Execute ca"
   }
 ]

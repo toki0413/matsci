@@ -1621,6 +1621,70 @@
       "r_phys": 1.0,
       "iteration": 130,
       "id": "persona_use:reviewer_iter130"
+    },
+    {
+      "label": "[DIM: Mathematical Structure] The rigid function family corresponds to a linear ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T17:22:13.738976",
+      "last_seen": "2026-09-28T17:22:13.738976",
+      "mentions": 1,
+      "iteration": 135,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Rigid family will show finite N_c (e.g., h=4~8) at small w values with flat/decreasing trend as w increases; fat family will show trend='unreachable' (no width h≤64 achieves zero-violation) with heldo",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: Mathematical Structure] The rigid function family corresponds to a linear"
+    },
+    {
+      "label": "plan_explore_iter135",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:22:13.739020",
+      "last_seen": "2026-09-28T17:22:13.739020",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter135"
+    },
+    {
+      "label": "pass_iter135",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:22:13.739029",
+      "last_seen": "2026-09-28T17:22:13.739029",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter135"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T17:22:13.739040",
+      "last_seen": "2026-09-28T17:22:13.739040",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: Mathematical Structure] The rigid function family corresponds to a linear",
+        "Method:plan_explore_iter135",
+        "Fact:pass_iter135"
+      ],
+      "iteration": 135,
+      "id": "he_experiment_pipeline_5e3ca36d"
+    },
+    {
+      "label": "reviewer_iter135",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T17:22:13.739121",
+      "last_seen": "2026-09-28T17:22:13.739121",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "161b44b4a00fd783",
+      "r_phys": 1.0,
+      "iteration": 135,
+      "id": "persona_use:reviewer_iter135"
     }
   ],
   "links": [
@@ -2325,6 +2389,33 @@
       "last_seen": "2026-09-28T17:21:12.715730",
       "mentions": 1,
       "target": "he_experiment_pipeline_e734bf40"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: Mathematical Structure] The rigid function family corresponds to a linear",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:22:13.739040",
+      "last_seen": "2026-09-28T17:22:13.739040",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5e3ca36d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter135",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:22:13.739040",
+      "last_seen": "2026-09-28T17:22:13.739040",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5e3ca36d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter135",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:22:13.739040",
+      "last_seen": "2026-09-28T17:22:13.739040",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5e3ca36d"
     }
   ]
 }
