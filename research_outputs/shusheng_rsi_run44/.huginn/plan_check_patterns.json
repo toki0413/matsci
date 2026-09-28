@@ -430,5 +430,37 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the rigid and fat family functions as specified. For the rigid family, use the low-dimensional linear span (e.g., linear combination of basis functions) that sho"
+  },
+  {
+    "scene_tag": "auto_family",
+    "reason": "The plan uses 'explore' mode which is inappropriate for concrete computational verification tasks (should be 'coder' or 'workflow' mode). It lacks concrete implementation details like grid resolutions, basis function definitions, N_c(w) methodology, and optimization parameters. The DESCRIPTION does not explicitly specify that the fat family must be x-dependent (not i.i.d. noise), risking the run28 failure mode. It also lacks explicit scaling instructions to prevent ~1e9 scale issues like in run29. The PREDICTION is not verifiable without concrete numerical methods and measurement procedures.",
+    "missing_steps": [
+      "Switch from 'explore' mode to 'coder' or 'workflow' mode for concrete computations",
+      "Define concrete methods with specific grid resolutions, basis function definitions, and sampling parameters",
+      "Explicitly define fat family as x-dependent high-dimensional functions (not i.i.d. noise) to avoid run28 failure",
+      "Specify scaling for fat family basis to prevent ~1e9 scale issues (run29 failure)",
+      "Establish clear training and held-out error measurement procedures with separate metrics to avoid data leakage",
+      "Define N_c(w) calculation methodology (e.g., SVD rank, effective dimension) with clear thresholds",
+      "Define concrete optimization setup with specific iteration limits and parameters",
+      "Implement comparative optimization strategy to distinguish optimization failure from function space limitations"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family` function for rigid and fat families according to the protocol. Ensure y/yv are normalized to O(1) scale, Xv does not overlap with X, and output shap"
+  },
+  {
+    "scene_tag": "auto_family",
+    "reason": "The plan uses 'explore' mode which is inappropriate for concrete computational verification tasks. The DESCRIPTION lacks critical implementation details: specific basis function definitions (trigonometric/Chebyshev formulas not given), explicit scaling procedures to prevent overflow, and concrete L-BFGS-B optimization parameters. It does not explicitly specify that the fat family must be x-dependent (not i.i.d. noise), risking the run28 failure mode. The PREDICTION is not verifiable without concrete numerical methods and measurement procedures. The plan also fails to address dimensional pre-checks, scale normalization (O(1) scale), and proper error measurement procedures as required by historical failure patterns.",
+    "missing_steps": [
+      "Switch from 'explore' mode to 'coder' or 'workflow' mode for concrete computations",
+      "Define concrete numerical methods with specific grid resolutions (N=500) and basis function definitions (formulas for trigonometric/Chebyshev bases)",
+      "Explicitly define fat family as x-dependent high-dimensional functions (not i.i.d. noise) to avoid run28 failure",
+      "Specify scaling for fat family basis to prevent ~1e9 scale issues (run29 failure)",
+      "Establish clear training and held-out error measurement procedures with separate metrics to avoid data leakage",
+      "Define N_c(w) calculation methodology (e.g., SVD rank with tolerance 1e-6) with clear thresholds",
+      "Define concrete L-BFGS-B optimization setup with specific iteration limits and parameters",
+      "Implement comparative optimization strategy to distinguish optimization failure from function space limitations"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family functions for rigid (trigonometric basis, 3D) and fat (Chebyshev polynomial basis, degree 8, x-dependent) families with explicit normalization to O(1)"
   }
 ]

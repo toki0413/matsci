@@ -1813,6 +1813,70 @@
       "r_phys": 1.0,
       "iteration": 145,
       "id": "persona_use:reviewer_iter145"
+    },
+    {
+      "label": "[DIM: Numerical Stability] The apparent \"unreachable\" behavior in fat families a",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T17:25:15.617689",
+      "last_seen": "2026-09-28T17:25:15.617689",
+      "mentions": 1,
+      "iteration": 150,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family, N_c(w) will be small (h=2~8) and flat/decreasing across w, with zero violation achieved at small widths. For the fat family, N_c(w) will be 'unreachable' (no width h≤64 achieves",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: Numerical Stability] The apparent \"unreachable\" behavior in fat families a"
+    },
+    {
+      "label": "plan_explore_iter150",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:25:15.617731",
+      "last_seen": "2026-09-28T17:25:15.617731",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter150"
+    },
+    {
+      "label": "pass_iter150",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:25:15.617740",
+      "last_seen": "2026-09-28T17:25:15.617740",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter150"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T17:25:15.617750",
+      "last_seen": "2026-09-28T17:25:15.617750",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: Numerical Stability] The apparent \"unreachable\" behavior in fat families a",
+        "Method:plan_explore_iter150",
+        "Fact:pass_iter150"
+      ],
+      "iteration": 150,
+      "id": "he_experiment_pipeline_fe7e6eca"
+    },
+    {
+      "label": "reviewer_iter150",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T17:25:15.617825",
+      "last_seen": "2026-09-28T17:25:15.617825",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "8f20a5c05ce2b394",
+      "r_phys": 1.0,
+      "iteration": 150,
+      "id": "persona_use:reviewer_iter150"
     }
   ],
   "links": [
@@ -2598,6 +2662,33 @@
       "last_seen": "2026-09-28T17:24:13.804814",
       "mentions": 1,
       "target": "he_experiment_pipeline_9ba6c0f4"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: Numerical Stability] The apparent \"unreachable\" behavior in fat families a",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:25:15.617750",
+      "last_seen": "2026-09-28T17:25:15.617750",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_fe7e6eca"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter150",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:25:15.617750",
+      "last_seen": "2026-09-28T17:25:15.617750",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_fe7e6eca"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter150",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:25:15.617750",
+      "last_seen": "2026-09-28T17:25:15.617750",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_fe7e6eca"
     }
   ]
 }
