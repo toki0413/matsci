@@ -130,6 +130,70 @@
       "r_phys": 1.0,
       "iteration": 10,
       "id": "persona_use:reviewer_iter10"
+    },
+    {
+      "label": "[DIM: Functional Space Structure] The rigid family corresponds to a finite-dimen",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T16:54:08.384778",
+      "last_seen": "2026-09-28T16:54:08.384778",
+      "mentions": 1,
+      "iteration": 15,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family, N_c(w) should be finite and small (h=2~8) with training error ≤1e-4 and validation error ≤1e-3. For the fat family, all widths up to h=64 should show violation >1e-3 (unreachable",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: Functional Space Structure] The rigid family corresponds to a finite-dimen"
+    },
+    {
+      "label": "plan_explore_iter15",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:54:08.384819",
+      "last_seen": "2026-09-28T16:54:08.384819",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter15"
+    },
+    {
+      "label": "pass_iter15",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:54:08.384831",
+      "last_seen": "2026-09-28T16:54:08.384831",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter15"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T16:54:08.384840",
+      "last_seen": "2026-09-28T16:54:08.384840",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: Functional Space Structure] The rigid family corresponds to a finite-dimen",
+        "Method:plan_explore_iter15",
+        "Fact:pass_iter15"
+      ],
+      "iteration": 15,
+      "id": "he_experiment_pipeline_536f66c4"
+    },
+    {
+      "label": "reviewer_iter15",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T16:54:08.384916",
+      "last_seen": "2026-09-28T16:54:08.384916",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "ef47992866a6d802",
+      "r_phys": 1.0,
+      "iteration": 15,
+      "id": "persona_use:reviewer_iter15"
     }
   ],
   "links": [
@@ -186,6 +250,33 @@
       "last_seen": "2026-09-28T16:53:12.184485",
       "mentions": 1,
       "target": "he_experiment_pipeline_15ef41fb"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: Functional Space Structure] The rigid family corresponds to a finite-dimen",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:54:08.384840",
+      "last_seen": "2026-09-28T16:54:08.384840",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_536f66c4"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:54:08.384840",
+      "last_seen": "2026-09-28T16:54:08.384840",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_536f66c4"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:54:08.384840",
+      "last_seen": "2026-09-28T16:54:08.384840",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_536f66c4"
     }
   ]
 }
