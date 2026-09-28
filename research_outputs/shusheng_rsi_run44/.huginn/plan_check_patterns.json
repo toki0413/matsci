@@ -250,5 +250,31 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid and fat function spaces as specified in the hypothesis. The rigid family will be a low-dimensional linear subspace (e.g., a 3"
+  },
+  {
+    "scene_tag": "auto_rigid",
+    "reason": "The plan correctly identifies the MODE (explore) and DESCRIPTION covers key normalization requirements (y/yv O(1), non-overlapping Xv/X), but it fails to address the critical 'fat family' definition constraint from history: it does not explicitly specify that the fat family must be x-dependent (not i.i.d. noise) to avoid the run28 failure mode. Additionally, it lacks explicit band/w scaling instructions to prevent the run29 ill-conditioning issue (high-degree polynomials with ~1e9 scale). Without these, the experiment risks repeating past failures where the fat family becomes 'unlearnable' due to noise or scaling issues rather than demonstrating the hypothesized dimensionality behavior.",
+    "missing_steps": [
+      "Define fat family as x-dependent high-dimensional functions (e.g., Fourier basis with fixed frequencies but varying amplitudes) to avoid i.i.d. noise pitfall (run28)",
+      "Explicitly specify scaling for fat family basis to prevent ill-conditioning (avoid ~1e9 scale as in run29)",
+      "Include N_c(w) calculation methodology in DESCRIPTION to verify the bounded/flat dimension claim",
+      "Specify validation metrics (training error, held-out error) with independent measurement procedures as per reporting discipline"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the rigid and fat function families as specified, ensuring y/yv are normalized to O(1) scale, Xv and X do not overlap, and outputs are (N,1) shaped. This is requ"
+  },
+  {
+    "scene_tag": "auto_rigid",
+    "reason": "The plan fails the system prompt's core identity requirement: it treats an abstract machine learning problem (function space geometry, N_c(w) capacity) without mapping it to a natural-science instance (spectral theory, variational principle). It uses 'explore' mode which is inappropriate for a structured verification task; should use 'coder' or 'workflow'. The description lacks concrete numerical setup (grid size, basis definitions, error metrics) and repeats historical failures by not addressing dimensional pre-checks and scale normalization.",
+    "missing_steps": [
+      "Map the hypothesis to a natural-science instance (e.g., spectral theory for basis functions)",
+      "Switch from 'explore' mode to 'coder' or 'workflow' mode",
+      "Define concrete numerical methods with specific grid resolutions and basis function definitions",
+      "Establish clear training and holdout error measurement procedures with separate metrics",
+      "Define N_c(w) calculation methodology with specific SVD threshold and expected trends",
+      "Address dimensional pre-check warnings and ensure O(1) scale normalization"
+    ],
+    "mode": "explore",
+    "description": "Implement rigid and fat function families with x-dependent basis functions (Fourier basis with fixed frequencies but varying amplitudes) to avoid i.i.d. noise pitfall. Explicitly scale fat family basi"
   }
 ]

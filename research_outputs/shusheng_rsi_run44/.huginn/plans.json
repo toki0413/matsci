@@ -662,6 +662,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_c130ce46",
+      "objective": "[DIM: function space geometry] The rigid family is a low-dimensional linear span of fixed basis functions (e.g., $w$ trigonometric terms with fixed frequencies), so its solution space dimension $N_c(w)$ remains bounded and flat across $w$; this matches the observed zero-violation anchor at $w=5, h=2$ and explains why the fat family (high-degree polynomials) fails to converge due to ill-conditioned basis scaling.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Implement rigid and fat function families with x-dependent basis functions (Fourier basis with fixed frequencies but varying amplitudes) to avoid i.i.d. noise pitfall. Explicitly scale fat family basis to prevent ill-conditioning (target O(1) scale). Compute N_c(w) using singular value decay threshold (1e-6) to verify bounded/flat dimension claim. Calculate training error and held-out error separately with independent data splits to validate convergence behavior.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-28T17:17:10.355690+00:00",
+      "confirmed_at": "2026-09-28T17:17:10.357122+00:00",
+      "completed_at": "2026-09-28T17:17:34.933187+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
