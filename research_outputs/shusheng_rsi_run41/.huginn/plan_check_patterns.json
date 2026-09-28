@@ -1,0 +1,14 @@
+[
+  {
+    "scene_tag": "other",
+    "reason": "The plan correctly identifies the mathematical structure (transport vs higher-order ODE) and the testing methodology (N_c(w) scan). However, it fails to address the critical risk of 'fat family' degeneracy mentioned in the known failure patterns. Specifically, the description only says 'higher-order ODE (e.g., v ∂_x v = f(x))' without specifying how to ensure this family has 'functional freedom ≫ w' and is 'x-dependent with high-dimensional but partially learnable structure'. If f(x) is chosen poorly (e.g., constant or trivial), the fat family could collapse to a learnable trivial case, making the comparison invalid. The plan also lacks explicit details on how to generate the Xv dataset and ensure no overlap with X, which is critical for the validation error metric.",
+    "missing_steps": [
+      "Specify exact functional form for fat family that guarantees functional freedom >> w while being x-dependent (e.g., v ∂_x v = sin(kx) + ε·random(x) with high k)",
+      "Define explicit procedure for generating Xv with no overlap with X",
+      "Include dimensionality analysis showing fat family degrees of freedom >> w for tested w values",
+      "Add normalization check for both families before training to ensure y/yv are O(1)"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid family (transport equation solution: constant along characteristics) and fat family (higher-order ODE: e.g., $v \\partial_x v "
+  }
+]

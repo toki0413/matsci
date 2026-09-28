@@ -130,6 +130,70 @@
       "r_phys": 1.0,
       "iteration": 10,
       "id": "persona_use:reviewer_iter10"
+    },
+    {
+      "label": "[DIM: Transport Equation] The rigid family corresponds to functions that satisfy",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T15:37:35.259424",
+      "last_seen": "2026-09-28T15:37:35.259424",
+      "mentions": 1,
+      "iteration": 15,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the transport equation (constant function) rigid family, N_c will be very small (h=1 or 2) and flat across w values. Training error will be ≤1e-4 and held-out error ≤1e-3 at these small widths. Th",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: Transport Equation] The rigid family corresponds to functions that satisfy"
+    },
+    {
+      "label": "plan_explore_iter15",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:37:35.259465",
+      "last_seen": "2026-09-28T15:37:35.259465",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter15"
+    },
+    {
+      "label": "pass_iter15",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:37:35.259477",
+      "last_seen": "2026-09-28T15:37:35.259477",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter15"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T15:37:35.259485",
+      "last_seen": "2026-09-28T15:37:35.259485",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: Transport Equation] The rigid family corresponds to functions that satisfy",
+        "Method:plan_explore_iter15",
+        "Fact:pass_iter15"
+      ],
+      "iteration": 15,
+      "id": "he_experiment_pipeline_d6f86283"
+    },
+    {
+      "label": "reviewer_iter15",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T15:37:35.259567",
+      "last_seen": "2026-09-28T15:37:35.259567",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "d60d7859c1725eae",
+      "r_phys": 1.0,
+      "iteration": 15,
+      "id": "persona_use:reviewer_iter15"
     }
   ],
   "links": [
@@ -186,6 +250,33 @@
       "last_seen": "2026-09-28T15:36:33.565499",
       "mentions": 1,
       "target": "he_experiment_pipeline_bd6da353"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: Transport Equation] The rigid family corresponds to functions that satisfy",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:37:35.259485",
+      "last_seen": "2026-09-28T15:37:35.259485",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d6f86283"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:37:35.259485",
+      "last_seen": "2026-09-28T15:37:35.259485",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d6f86283"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:37:35.259485",
+      "last_seen": "2026-09-28T15:37:35.259485",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d6f86283"
     }
   ]
 }
