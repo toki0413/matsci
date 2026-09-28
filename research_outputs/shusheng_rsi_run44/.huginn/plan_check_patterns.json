@@ -189,5 +189,21 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the rigid and fat function families for the capacity scan. Define the rigid family as a linear span of trigonometric basis functions (e.g., sin(x), cos(2x)) and "
+  },
+  {
+    "scene_tag": "auto_family",
+    "reason": "The plan uses 'explore' mode which is inappropriate for a structured computational verification task. It lacks concrete implementation details, specific tool parameters, and a clear path for generating the required numerical evidence (training/holdout error values, N_c(w) trends). It fails to define how N_c(w) will be computed, what tools will be used, or the exact numerical setup, violating the 'report discipline' and 'convergence awareness' principles. It also repeats historical failures by not addressing dimensional pre-check warnings and lacking a clear dimensional analysis for the mathematical structures.",
+    "missing_steps": [
+      "Switch from 'explore' mode to 'coder' or 'workflow' mode for concrete computations",
+      "Specify exact tool parameters for symbolic_math_tool or numerical_tool",
+      "Define concrete numerical methods with specific grid resolutions, basis sets, or sampling parameters",
+      "Establish clear training and holdout error measurement procedures",
+      "Define the N_c(w) calculation methodology and expected trends",
+      "Address the dimensional pre-check warnings for the mathematical structures",
+      "Ensure dimensional consistency and scale normalization (O(1) scale) as per historical failure #3",
+      "Implement rigorous error measurement: separate training and holdout errors, avoid data leakage"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the rigid family function using a low-dimensional linear span of fixed basis functions (e.g., cos(πx) with w=5) and the fat family using a high-dimensional nonli"
   }
 ]

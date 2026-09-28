@@ -1060,6 +1060,70 @@
       "r_phys": 1.0,
       "iteration": 85,
       "id": "persona_use:reviewer_iter85"
+    },
+    {
+      "label": "** [DIM: Spectral Frequency Content]",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T17:12:32.161105",
+      "last_seen": "2026-09-28T17:12:32.161105",
+      "mentions": 1,
+      "iteration": 90,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The rigid family will achieve zero violation (max abs error ≤ 1e-3) at a small width (N_c ≈ 4-8) that remains flat as w increases. The fat family will show unreachable trend (N_c = ∞) with high held-o",
+      "persona": "reviewer",
+      "id": "experiment:** [DIM: Spectral Frequency Content]"
+    },
+    {
+      "label": "plan_explore_iter90",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:12:32.161148",
+      "last_seen": "2026-09-28T17:12:32.161148",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter90"
+    },
+    {
+      "label": "pass_iter90",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:12:32.161158",
+      "last_seen": "2026-09-28T17:12:32.161158",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter90"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T17:12:32.161173",
+      "last_seen": "2026-09-28T17:12:32.161173",
+      "mentions": 1,
+      "members": [
+        "experiment:** [DIM: Spectral Frequency Content]",
+        "Method:plan_explore_iter90",
+        "Fact:pass_iter90"
+      ],
+      "iteration": 90,
+      "id": "he_experiment_pipeline_2372a02"
+    },
+    {
+      "label": "reviewer_iter90",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T17:12:32.161251",
+      "last_seen": "2026-09-28T17:12:32.161251",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "d31ce6d93e280c98",
+      "r_phys": 1.0,
+      "iteration": 90,
+      "id": "persona_use:reviewer_iter90"
     }
   ],
   "links": [
@@ -1521,6 +1585,33 @@
       "last_seen": "2026-09-28T17:11:32.638269",
       "mentions": 1,
       "target": "he_experiment_pipeline_de754146"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:** [DIM: Spectral Frequency Content]",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:12:32.161173",
+      "last_seen": "2026-09-28T17:12:32.161173",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2372a02"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter90",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:12:32.161173",
+      "last_seen": "2026-09-28T17:12:32.161173",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2372a02"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter90",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:12:32.161173",
+      "last_seen": "2026-09-28T17:12:32.161173",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2372a02"
     }
   ]
 }
