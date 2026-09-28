@@ -342,20 +342,20 @@
       "label": "plan_explore_iter30",
       "type": "Method",
       "source": "autoloop",
-      "confidence": 0.55,
+      "confidence": 0.6000000000000001,
       "created_at": "2026-09-28T15:40:35.764233",
-      "last_seen": "2026-09-28T16:11:03.857650",
-      "mentions": 2,
+      "last_seen": "2026-09-28T16:22:33.282102",
+      "mentions": 3,
       "id": "Method:plan_explore_iter30"
     },
     {
       "label": "pass_iter30",
       "type": "Fact",
       "source": "autoloop",
-      "confidence": 0.55,
+      "confidence": 0.6000000000000001,
       "created_at": "2026-09-28T15:40:35.764246",
-      "last_seen": "2026-09-28T16:11:03.857663",
-      "mentions": 2,
+      "last_seen": "2026-09-28T16:22:33.282115",
+      "mentions": 3,
       "surprise": 1.0,
       "id": "Fact:pass_iter30"
     },
@@ -379,8 +379,8 @@
       "source": "autoloop",
       "confidence": 0.99,
       "created_at": "2026-09-28T15:40:35.764338",
-      "last_seen": "2026-09-28T16:11:03.857757",
-      "mentions": 2,
+      "last_seen": "2026-09-28T16:22:33.282205",
+      "mentions": 3,
       "persona": "reviewer",
       "context_hash": "2a408f5566c3306e",
       "r_phys": 1.0,
@@ -406,20 +406,20 @@
       "label": "plan_explore_iter35",
       "type": "Method",
       "source": "autoloop",
-      "confidence": 0.55,
+      "confidence": 0.6000000000000001,
       "created_at": "2026-09-28T15:41:16.475366",
-      "last_seen": "2026-09-28T16:11:40.674724",
-      "mentions": 2,
+      "last_seen": "2026-09-28T16:23:10.006177",
+      "mentions": 3,
       "id": "Method:plan_explore_iter35"
     },
     {
       "label": "pass_iter35",
       "type": "Fact",
       "source": "autoloop",
-      "confidence": 0.55,
+      "confidence": 0.6000000000000001,
       "created_at": "2026-09-28T15:41:16.475378",
-      "last_seen": "2026-09-28T16:11:40.674737",
-      "mentions": 2,
+      "last_seen": "2026-09-28T16:23:10.006190",
+      "mentions": 3,
       "surprise": 1.0,
       "id": "Fact:pass_iter35"
     },
@@ -443,8 +443,8 @@
       "source": "autoloop",
       "confidence": 0.99,
       "created_at": "2026-09-28T15:41:16.475474",
-      "last_seen": "2026-09-28T16:11:40.674828",
-      "mentions": 2,
+      "last_seen": "2026-09-28T16:23:10.006281",
+      "mentions": 3,
       "persona": "reviewer",
       "context_hash": "af79cb12787483e5",
       "r_phys": 1.0,
@@ -470,20 +470,20 @@
       "label": "plan_explore_iter40",
       "type": "Method",
       "source": "autoloop",
-      "confidence": 0.55,
+      "confidence": 0.6000000000000001,
       "created_at": "2026-09-28T15:41:58.910038",
-      "last_seen": "2026-09-28T16:12:51.194859",
-      "mentions": 2,
+      "last_seen": "2026-09-28T16:23:47.889199",
+      "mentions": 3,
       "id": "Method:plan_explore_iter40"
     },
     {
       "label": "pass_iter40",
       "type": "Fact",
       "source": "autoloop",
-      "confidence": 0.55,
+      "confidence": 0.6000000000000001,
       "created_at": "2026-09-28T15:41:58.910047",
-      "last_seen": "2026-09-28T16:12:51.194886",
-      "mentions": 2,
+      "last_seen": "2026-09-28T16:23:47.889211",
+      "mentions": 3,
       "surprise": 1.0,
       "id": "Fact:pass_iter40"
     },
@@ -507,8 +507,8 @@
       "source": "autoloop",
       "confidence": 0.99,
       "created_at": "2026-09-28T15:41:58.910140",
-      "last_seen": "2026-09-28T16:12:51.194990",
-      "mentions": 2,
+      "last_seen": "2026-09-28T16:23:47.889335",
+      "mentions": 3,
       "persona": "reviewer",
       "context_hash": "120c1d9f89f08d33",
       "r_phys": 1.0,
@@ -534,20 +534,20 @@
       "label": "plan_explore_iter45",
       "type": "Method",
       "source": "autoloop",
-      "confidence": 0.55,
+      "confidence": 0.6000000000000001,
       "created_at": "2026-09-28T15:42:37.097478",
-      "last_seen": "2026-09-28T16:13:40.497507",
-      "mentions": 2,
+      "last_seen": "2026-09-28T16:24:24.008922",
+      "mentions": 3,
       "id": "Method:plan_explore_iter45"
     },
     {
       "label": "pass_iter45",
       "type": "Fact",
       "source": "autoloop",
-      "confidence": 0.55,
+      "confidence": 0.6000000000000001,
       "created_at": "2026-09-28T15:42:37.097492",
-      "last_seen": "2026-09-28T16:13:40.497516",
-      "mentions": 2,
+      "last_seen": "2026-09-28T16:24:24.008936",
+      "mentions": 3,
       "surprise": 1.0,
       "id": "Fact:pass_iter45"
     },
@@ -571,8 +571,8 @@
       "source": "autoloop",
       "confidence": 0.99,
       "created_at": "2026-09-28T15:42:37.097624",
-      "last_seen": "2026-09-28T16:13:40.497612",
-      "mentions": 2,
+      "last_seen": "2026-09-28T16:24:24.009031",
+      "mentions": 3,
       "persona": "reviewer",
       "context_hash": "13741c7b215149c5",
       "r_phys": 1.0,
@@ -583,20 +583,20 @@
       "label": "plan_explore_iter50",
       "type": "Method",
       "source": "autoloop",
-      "confidence": 0.5,
+      "confidence": 0.55,
       "created_at": "2026-09-28T15:43:32.543087",
-      "last_seen": "2026-09-28T15:43:32.543087",
-      "mentions": 1,
+      "last_seen": "2026-09-28T16:25:07.494691",
+      "mentions": 2,
       "id": "Method:plan_explore_iter50"
     },
     {
       "label": "pass_iter50",
       "type": "Fact",
       "source": "autoloop",
-      "confidence": 0.5,
+      "confidence": 0.55,
       "created_at": "2026-09-28T15:43:32.543107",
-      "last_seen": "2026-09-28T15:43:32.543107",
-      "mentions": 1,
+      "last_seen": "2026-09-28T16:25:07.494705",
+      "mentions": 2,
       "surprise": 1.0,
       "id": "Fact:pass_iter50"
     },
@@ -618,10 +618,10 @@
       "label": "reviewer_iter50",
       "type": "persona_use",
       "source": "autoloop",
-      "confidence": 1.0,
+      "confidence": 0.99,
       "created_at": "2026-09-28T15:43:32.543209",
-      "last_seen": "2026-09-28T15:43:32.543209",
-      "mentions": 1,
+      "last_seen": "2026-09-28T16:25:07.494795",
+      "mentions": 2,
       "persona": "reviewer",
       "context_hash": "eb0985cc36772ae5",
       "r_phys": 1.0,
@@ -1003,6 +1003,136 @@
       ],
       "iteration": 25,
       "id": "he_experiment_pipeline_ca480184"
+    },
+    {
+      "label": "[DIM: structure] The rigid family corresponds to functions expressible in a fixe",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T16:22:33.282063",
+      "last_seen": "2026-09-28T16:22:33.282063",
+      "mentions": 1,
+      "iteration": 30,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family at w=10, h=4, seed=0: train_err ≈ 5e-5, holdout_err ≈ 8e-4 (within 1e-3), confirming finite N_c. For the fat family at w=10, h=64, all seeds: holdout_err > 1e-3 (e.g., ~0.15), mar",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid family corresponds to functions expressible in a fixe"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T16:22:33.282122",
+      "last_seen": "2026-09-28T16:22:33.282122",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid family corresponds to functions expressible in a fixe",
+        "Method:plan_explore_iter30",
+        "Fact:pass_iter30"
+      ],
+      "iteration": 30,
+      "id": "he_experiment_pipeline_a780432a"
+    },
+    {
+      "label": "[DIM: transport] The rigid family corresponds to solutions of a first-order line",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 0.99,
+      "created_at": "2026-09-28T16:23:10.006140",
+      "last_seen": "2026-09-28T16:23:47.889164",
+      "mentions": 2,
+      "iteration": 35,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The family function will return X, y, Xv, yv with y/yv normalized to std ~ O(1), enabling the capacity_scan to properly evaluate zero-violation thresholds. For the rigid family (polynomial of degree 3",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: transport] The rigid family corresponds to solutions of a first-order line"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T16:23:10.006197",
+      "last_seen": "2026-09-28T16:23:10.006197",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: transport] The rigid family corresponds to solutions of a first-order line",
+        "Method:plan_explore_iter35",
+        "Fact:pass_iter35"
+      ],
+      "iteration": 35,
+      "id": "he_experiment_pipeline_f5c7cb07"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T16:23:47.889220",
+      "last_seen": "2026-09-28T16:23:47.889220",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: transport] The rigid family corresponds to solutions of a first-order line",
+        "Method:plan_explore_iter40",
+        "Fact:pass_iter40"
+      ],
+      "iteration": 40,
+      "id": "he_experiment_pipeline_2711379a"
+    },
+    {
+      "label": "[DIM: structure] The rigid family consists of functions expressible as a linear ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T16:24:24.008884",
+      "last_seen": "2026-09-28T16:24:24.008884",
+      "mentions": 1,
+      "iteration": 45,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family, N_c(w) will be small (h=2~8) and flat across w values with holdout_err ≤ 1e-3. For the fat family, all widths up to h=64 will fail to achieve holdout_err ≤ 1e-3, marking it as 'u",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid family consists of functions expressible as a linear"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T16:24:24.008943",
+      "last_seen": "2026-09-28T16:24:24.008943",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid family consists of functions expressible as a linear",
+        "Method:plan_explore_iter45",
+        "Fact:pass_iter45"
+      ],
+      "iteration": 45,
+      "id": "he_experiment_pipeline_6eb93dd1"
+    },
+    {
+      "label": "** [DIM: transport] The rigid family functions satisfy a linear hyperbolic trans",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T16:25:07.494654",
+      "last_seen": "2026-09-28T16:25:07.494654",
+      "mentions": 1,
+      "iteration": 50,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family, N_c(w) will be finite (h=2~8) and flat across w values; for the fat family, N_c(w) will be 'unreachable' for all w (h≤64). The zero-violation condition (holdout_err ≤1e3) will be",
+      "persona": "reviewer",
+      "id": "experiment:** [DIM: transport] The rigid family functions satisfy a linear hyperbolic trans"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T16:25:07.494712",
+      "last_seen": "2026-09-28T16:25:07.494712",
+      "mentions": 1,
+      "members": [
+        "experiment:** [DIM: transport] The rigid family functions satisfy a linear hyperbolic trans",
+        "Method:plan_explore_iter50",
+        "Fact:pass_iter50"
+      ],
+      "iteration": 50,
+      "id": "he_experiment_pipeline_14dba5a5"
     }
   ],
   "links": [
@@ -1350,6 +1480,15 @@
     },
     {
       "relation": "member_of",
+      "source": "Method:plan_explore_iter30",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:22:33.282122",
+      "last_seen": "2026-09-28T16:22:33.282122",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a780432a"
+    },
+    {
+      "relation": "member_of",
       "confidence": 0.5,
       "created_at": "2026-09-28T15:40:35.764254",
       "last_seen": "2026-09-28T15:40:35.764254",
@@ -1365,6 +1504,15 @@
       "mentions": 1,
       "source": "Fact:pass_iter30",
       "target": "he_experiment_pipeline_aa9dbb4c"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter30",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:22:33.282122",
+      "last_seen": "2026-09-28T16:22:33.282122",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a780432a"
     },
     {
       "relation": "member_of",
@@ -1395,6 +1543,15 @@
     },
     {
       "relation": "member_of",
+      "source": "Method:plan_explore_iter35",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:23:10.006197",
+      "last_seen": "2026-09-28T16:23:10.006197",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_f5c7cb07"
+    },
+    {
+      "relation": "member_of",
       "confidence": 0.5,
       "created_at": "2026-09-28T15:41:16.475387",
       "last_seen": "2026-09-28T15:41:16.475387",
@@ -1410,6 +1567,15 @@
       "mentions": 1,
       "source": "Fact:pass_iter35",
       "target": "he_experiment_pipeline_8d02af54"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter35",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:23:10.006197",
+      "last_seen": "2026-09-28T16:23:10.006197",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_f5c7cb07"
     },
     {
       "relation": "member_of",
@@ -1440,6 +1606,15 @@
     },
     {
       "relation": "member_of",
+      "source": "Method:plan_explore_iter40",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:23:47.889220",
+      "last_seen": "2026-09-28T16:23:47.889220",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2711379a"
+    },
+    {
+      "relation": "member_of",
       "confidence": 0.5,
       "created_at": "2026-09-28T15:41:58.910056",
       "last_seen": "2026-09-28T15:41:58.910056",
@@ -1458,6 +1633,15 @@
     },
     {
       "relation": "member_of",
+      "source": "Fact:pass_iter40",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:23:47.889220",
+      "last_seen": "2026-09-28T16:23:47.889220",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2711379a"
+    },
+    {
+      "relation": "member_of",
       "confidence": 0.5,
       "created_at": "2026-09-28T15:42:37.097511",
       "last_seen": "2026-09-28T15:42:37.097511",
@@ -1494,6 +1678,15 @@
     },
     {
       "relation": "member_of",
+      "source": "Method:plan_explore_iter45",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:24:24.008943",
+      "last_seen": "2026-09-28T16:24:24.008943",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_6eb93dd1"
+    },
+    {
+      "relation": "member_of",
       "confidence": 0.5,
       "created_at": "2026-09-28T15:42:37.097511",
       "last_seen": "2026-09-28T15:42:37.097511",
@@ -1509,6 +1702,15 @@
       "mentions": 1,
       "source": "Fact:pass_iter45",
       "target": "he_experiment_pipeline_d09952dd"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter45",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:24:24.008943",
+      "last_seen": "2026-09-28T16:24:24.008943",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_6eb93dd1"
     },
     {
       "relation": "member_of",
@@ -1521,12 +1723,30 @@
     },
     {
       "relation": "member_of",
+      "source": "Method:plan_explore_iter50",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:25:07.494712",
+      "last_seen": "2026-09-28T16:25:07.494712",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_14dba5a5"
+    },
+    {
+      "relation": "member_of",
       "confidence": 0.5,
       "created_at": "2026-09-28T15:43:32.543117",
       "last_seen": "2026-09-28T15:43:32.543117",
       "mentions": 1,
       "source": "Fact:pass_iter50",
       "target": "he_experiment_pipeline_f390d093"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter50",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:25:07.494712",
+      "last_seen": "2026-09-28T16:25:07.494712",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_14dba5a5"
     },
     {
       "relation": "member_of",
@@ -1653,6 +1873,51 @@
       "last_seen": "2026-09-28T16:21:28.523607",
       "mentions": 1,
       "target": "he_experiment_pipeline_ca480184"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid family corresponds to functions expressible in a fixe",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:22:33.282122",
+      "last_seen": "2026-09-28T16:22:33.282122",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a780432a"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: transport] The rigid family corresponds to solutions of a first-order line",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:23:10.006197",
+      "last_seen": "2026-09-28T16:23:10.006197",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_f5c7cb07"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: transport] The rigid family corresponds to solutions of a first-order line",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:23:47.889220",
+      "last_seen": "2026-09-28T16:23:47.889220",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2711379a"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid family consists of functions expressible as a linear",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:24:24.008943",
+      "last_seen": "2026-09-28T16:24:24.008943",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_6eb93dd1"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:** [DIM: transport] The rigid family functions satisfy a linear hyperbolic trans",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:25:07.494712",
+      "last_seen": "2026-09-28T16:25:07.494712",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_14dba5a5"
     }
   ]
 }

@@ -37,5 +37,76 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the `family` function for two test families: (1) a rigid family of low-degree polynomials (degree ≤3) with normalization to O(1) scale, ensuring a finite N_c(w) "
+  },
+  {
+    "scene_tag": "other",
+    "reason": "该plan未能解决历史失败中的核心问题：它没有定义具体的PDE结构（线性输运方程 vs 非线性双曲方程），也没有实现特征曲线追踪或非唯一性检验。仅通过泛化误差和容量扫描无法验证hypothesis中关于数学结构（characteristic curves, transport PDE vs hyperbolic PDE）的根本差异。这重复了run28和run29的错误模式：用机器学习性能指标替代了数学结构的验证。",
+    "missing_steps": [
+      "定义rigid家族满足的具体一阶线性输运PDE（如u_x + c*u_y = 0）",
+      "定义fat家族满足的具体非线性双曲PDE（如Burgers方程u_t + u*u_x = 0）",
+      "实现特征曲线追踪以验证rigid家族的特性曲线是固定的",
+      "实现非唯一性检验（如检查Jacobian奇异或同一边界条件多解）",
+      "添加谱分析或特征曲线分析以确认两族的PDE性质",
+      "确保fat家族是x相关的函数且由非线性PDE定义，而非随机高维多项式"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function to generate rigid and fat families with properly normalized outputs (std ~ O(1)) and non-overlapping training/holdout sets. This addresses th"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan fundamentally misaligns with the hypothesis by using generic polynomial families instead of explicitly defined PDE-based families (linear transport vs. nonlinear hyperbolic). It fails to verify the core mathematical structure (characteristic curves, transport invariance, solution uniqueness) required by the hypothesis, repeating the exact failure modes documented in 'run28' and 'run29'. The PREDICTION only checks ML generalization error (N_c(w), train_err, holdout_err) which cannot distinguish between function families based on their PDE properties.",
+    "missing_steps": [
+      "Define specific first-order linear transport PDE for rigid family (e.g., u_x + c*u_y = 0 with fixed c)",
+      "Define specific nonlinear hyperbolic PDE for fat family (e.g., Burgers' equation u_t + u*u_x = 0)",
+      "Implement characteristic curve tracing for both families to verify fixed vs. time-dependent characteristics",
+      "Test for solution non-uniqueness in fat family (check Jacobian singularities or multiple solutions for same boundary conditions)",
+      "Add spectral analysis or direct PDE residual verification to confirm the mathematical structure of both families",
+      "Ensure fat family is explicitly x-dependent and defined by a nonlinear PDE, not random high-dimensional polynomials"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid and fat families according to the hypothesis. The rigid family will be constructed as solutions to a first-order linear trans"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan fundamentally misaligns with the hypothesis by using generic polynomial families (Chebyshev vs random high-degree) instead of explicitly defined PDE-based families (linear transport vs nonlinear hyperbolic). It fails to verify the core mathematical structure (characteristic curves, transport invariance, solution uniqueness) required by the hypothesis, repeating the exact failure modes documented in 'run28' and 'run29'. The PREDICTION only checks ML generalization error (N_c(w), train_err, holdout_err) which cannot distinguish between function families based on their PDE properties.",
+    "missing_steps": [
+      "Define specific first-order linear transport PDE for rigid family (e.g., u_x + c*u_y = 0 with fixed c)",
+      "Define specific nonlinear hyperbolic PDE for fat family (e.g., Burgers' equation u_t + u*u_x = 0)",
+      "Implement characteristic curve tracing for both families to verify fixed vs. time-dependent characteristics",
+      "Test for solution non-uniqueness in fat family (check Jacobian singularities or multiple solutions for same boundary conditions)",
+      "Add spectral analysis or direct PDE residual verification to confirm the mathematical structure of both families",
+      "Ensure fat family is explicitly x-dependent and defined by a nonlinear PDE, not random high-dimensional polynomials"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family` function for both the rigid family (Chebyshev polynomials of degree ≤ d with fixed basis) and the fat family (random high-degree polynomial) to test"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan fundamentally misaligns with the hypothesis by using generic polynomial families (Chebyshev vs random high-degree) instead of explicitly defined PDE-based families (linear transport vs nonlinear hyperbolic). It fails to verify the core mathematical structure (characteristic curves, transport invariance, solution uniqueness) required by the hypothesis, repeating the exact failure modes documented in 'run28' and 'run29'. The PREDICTION only checks ML generalization error (N_c(w), train_err, holdout_err) which cannot distinguish between function families based on their PDE properties.",
+    "missing_steps": [
+      "Define specific first-order linear transport PDE for rigid family (e.g., u_x + c*u_y = 0 with fixed c)",
+      "Define specific nonlinear hyperbolic PDE for fat family (e.g., Burgers' equation u_t + u*u_x = 0)",
+      "Implement characteristic curve tracing for both families to verify fixed vs. time-dependent characteristics",
+      "Test for solution non-uniqueness in fat family (check Jacobian singularities or multiple solutions for same boundary conditions)",
+      "Add spectral analysis or direct PDE residual verification to confirm the mathematical structure of both families",
+      "Ensure fat family is explicitly x-dependent and defined by a nonlinear PDE, not random high-dimensional polynomials"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family(kind, w, seed)` function to generate training and held-out constraint points for the rigid family (linear combination of fixed basis functions) and t"
+  },
+  {
+    "scene_tag": "workflow",
+    "reason": "Plan fails on multiple levels: 1) Mode 'explore' is mismatched with the task type — this is a verification/identification task requiring code implementation and benchmarking, not open-ended exploration. 2) The description does not address the core hypothesis about PDE structure (hyperbolic vs elliptic, characteristic curves, diffusive regularization) — it only discusses function families and capacity scans without linking them to the mathematical structure of transport equations. 3) No explicit connection is made between the 'rigid/fat' families and the specific PDE forms mentioned in the hypothesis. 4) The plan risks repeating run29's error by using high-order polynomials without proper scaling, which could lead to numerical instability. 5) Missing critical steps: no definition of the transport PDE itself, no method to extract characteristic curves, no verification of hyperbolic/elliptic classification, no diffusive regularization implementation.",
+    "missing_steps": [
+      "Define the specific linear hyperbolic transport PDE for rigid family with fixed characteristic curves",
+      "Define the nonlinear elliptic PDE with diffusive regularization for fat family",
+      "Implement characteristic curve extraction method for hyperbolic PDE",
+      "Implement elliptic PDE solver with diffusive regularization term",
+      "Establish quantitative metrics for comparing solution space rigidity vs diffusiveness",
+      "Add dimensional analysis to verify PDE structure matches hypothesis",
+      "Include validation against known analytical solutions for both PDE types"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid and fat families as specified, ensuring y/yv are (N,1) shaped, normalized to O(1), and Xv does not overlap with X. The rigid "
   }
 ]
