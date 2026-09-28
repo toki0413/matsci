@@ -10,5 +10,17 @@
     ],
     "mode": "explore",
     "description": "Implement the rigid family (linear functions f(x)=ax+b) and a high-dimensional fat family in the family function. Run capacity scans for both families across w values to validate that the rigid family"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan is in MODE: explore but lacks executable Python code. The DESCRIPTION only describes the intent to implement functions without providing the actual numerical computation script (import + formula + print). According to the known failure mode and the advisory, this is a critical omission — previous iterations failed because plans lacked direct numerical execution. The plan must include concrete code to compute N_c(w) and heldout error to be validated. Without this, the PREDICTION cannot be verified numerically.",
+    "missing_steps": [
+      "Provide executable Python code implementing the rigid family (linear PDE f''(x)=0) and fat family (high-degree polynomials)",
+      "Define capacity scan metric N_c(w) and heldout error computation in code",
+      "Include actual numerical output or validation script to confirm zero violation at h≤8 for rigid family",
+      "Ensure normalization of target values is explicitly handled in code"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid and fat families, ensuring proper normalization (y/yv to O(1)), correct output shapes (N,1), non-overlapping held-out sets, a"
   }
 ]
