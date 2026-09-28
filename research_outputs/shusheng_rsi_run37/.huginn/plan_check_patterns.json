@@ -1,19 +1,6 @@
 [
   {
     "scene_tag": "other",
-    "reason": "The plan is fundamentally invalid due to a MODE mismatch (labeled 'explore' but describes code implementation requiring 'coder' mode). It also lacks critical mathematical definitions required to validate the hypothesis, specifically the explicit relationship between output dimension N and network width w, which is essential for computing N_c(w). The plan fails to sufficiently specify the fat polynomial family f(x) as a high-dimensional function of x (not noise), risking degeneracy to noise failure from run28. It omits capacity_scan configuration details with clear termination criteria and scaling discipline to prevent magnitude issues seen in run29.",
-    "missing_steps": [
-      "Change MODE from 'explore' to 'coder' since this is a code implementation task",
-      "Define explicit mathematical relationship between output dimension N (number of constraints) and network width w, which is essential for computing N_c(w)",
-      "Specify fat polynomial family f(x) as a function of x with high dimensionality >> w (not noise) to avoid degeneracy to noise (run28 failure)",
-      "Implement capacity_scan tool configuration with training/hold-out error metrics to compute N_c(w) with clear termination criteria for 'zero violation'",
-      "Implement scaling discipline to constrain polynomial outputs to O(1) magnitude to prevent magnitude issues (run29 failure)"
-    ],
-    "mode": "explore",
-    "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid polynomial constraint family (degree ≤ 2) to satisfy the bootstrap requirement of demonstrating zero heldout error at small n"
-  },
-  {
-    "scene_tag": "other",
     "reason": "The plan is fundamentally invalid due to a MODE mismatch (labeled 'explore' but describes code implementation requiring 'coder' mode). Additionally, it fails to explicitly define the mathematical relationship between N and w, specify the fat polynomial family f(x) as a non-noise high-dimensional function of x, and lacks capacity_scan configuration details with termination criteria for zero violation, risking the historical failures from run28 and run29.",
     "missing_steps": [
       "Change MODE from 'explore' to 'coder' since this is a code implementation task",
@@ -658,5 +645,19 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement rigid/fat polynomial families in `rigid_fat_family.py` with explicit math definitions: rigid family f(x) = sum_{i=1}^N a_i x^{2i-1} (N constraints, odd powers on"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan has a critical MODE mismatch: it is labeled 'explore' but describes code implementation tasks which strictly require 'coder' mode per system instructions. The DESCRIPTION lacks essential mathematical definitions including the explicit relationship between output dimension N and network width w, proper specification of the fat polynomial family as a function of x (not noise), capacity_scan tool configuration details, and scaling implementation details. These omissions exactly replicate the documented historical failure patterns from previous runs.",
+    "missing_steps": [
+      "Fix top-level MODE from 'explore' to 'coder' to match the code implementation task type",
+      "Define explicit mathematical relationship between output dimension N (number of constraints) and network width w",
+      "Specify exact fat polynomial family f(x) as a function of x with high dimensionality >> w (not noise)",
+      "Implement capacity_scan tool configuration with training/hold-out error metrics to compute N_c(w) with clear termination criteria",
+      "Add explicit scaling implementation details to ensure O(1) normalization of polynomial outputs",
+      "Specify exact termination criteria for N_c(w) calculation with clear 'zero violation' definition (≤1e-3)"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function for the rigid polynomial family (low-dimensional linear subspace) and fat polynomial family (high-dimensional random subspace) with proper O("
   }
 ]

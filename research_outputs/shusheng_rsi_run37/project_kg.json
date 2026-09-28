@@ -2096,6 +2096,70 @@
       "r_phys": 1.0,
       "iteration": 180,
       "id": "persona_use:reviewer_iter180"
+    },
+    {
+      "label": "[DIM: structure (implementation topology)] The rigid polynomial family exhibits ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:38:59.476392",
+      "last_seen": "2026-09-28T14:38:59.476392",
+      "mentions": 1,
+      "iteration": 185,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Rigid polynomial family will exhibit finite N_c(w) plateauing at small network widths (h=2-8) due to low-dimensional algebraic structure invariant under sample augmentation. Fat polynomial family will",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure (implementation topology)] The rigid polynomial family exhibits"
+    },
+    {
+      "label": "plan_explore_iter185",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:38:59.476431",
+      "last_seen": "2026-09-28T14:38:59.476431",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter185"
+    },
+    {
+      "label": "pass_iter185",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:38:59.476441",
+      "last_seen": "2026-09-28T14:38:59.476441",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter185"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T14:38:59.476450",
+      "last_seen": "2026-09-28T14:38:59.476450",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure (implementation topology)] The rigid polynomial family exhibits",
+        "Method:plan_explore_iter185",
+        "Fact:pass_iter185"
+      ],
+      "iteration": 185,
+      "id": "he_experiment_pipeline_8385c5ff"
+    },
+    {
+      "label": "reviewer_iter185",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:38:59.476533",
+      "last_seen": "2026-09-28T14:38:59.476533",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "2fb69b218e87b61a",
+      "r_phys": 1.0,
+      "iteration": 185,
+      "id": "persona_use:reviewer_iter185"
     }
   ],
   "links": [
@@ -3070,6 +3134,33 @@
       "last_seen": "2026-09-28T14:37:44.041529",
       "mentions": 1,
       "target": "he_experiment_pipeline_dd38571a"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure (implementation topology)] The rigid polynomial family exhibits",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:38:59.476450",
+      "last_seen": "2026-09-28T14:38:59.476450",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8385c5ff"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter185",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:38:59.476450",
+      "last_seen": "2026-09-28T14:38:59.476450",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8385c5ff"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter185",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:38:59.476450",
+      "last_seen": "2026-09-28T14:38:59.476450",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8385c5ff"
     }
   ]
 }
