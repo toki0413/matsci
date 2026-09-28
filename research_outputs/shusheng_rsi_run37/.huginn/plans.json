@@ -346,6 +346,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_72bbca78",
+      "objective": "[DIM: structure] The rigid polynomial constraint family corresponds to a finite-dimensional linear subspace in function space, whose dimension is combinatorially bounded by $\\binom{w+d-1}{d}$ for degree $d$; thus, a two-layer tanh network with width $h \\leq \\dim(\\mathcal{M})$ can exactly interpolate the constraints, yielding zero heldout error.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement rigid polynomial constraint family (degree ≤ 2) with explicit dimension formula N = binom(w+1, 2) = w(w+1)/2, define fat polynomial family f(x) = ∑_{k=1}^{M} a_k x^k with M >> w (e.g., M=19) using deterministic coefficients to avoid noise degeneracy, configure capacity_scan with training/hold-out error metrics and termination criteria at zero violation, and apply scaling discipline to constrain polynomial outputs to O(1) magnitude.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-28T14:07:06.983958+00:00",
+      "confirmed_at": "2026-09-28T14:07:06.985045+00:00",
+      "completed_at": "2026-09-28T14:07:29.314906+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
