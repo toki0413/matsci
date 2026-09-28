@@ -623,5 +623,19 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] 好的，根据您提供的反馈和历史失败模式，我对之前的 Plan 进行了重构。主要修正点包括：将 MODE 从 `explore` 修正为 `coder`，明确了数学结构定义（刚性 vs 脂肪族的多项式约束关系），指定了具体的归一化缩放策略以及容量扫描的具体终止逻辑。\n\n以下是重新生成的 Plan：\n\n```json\n{\n  \"MODE\": \"c"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan fundamentally fails to address the critical MODE mismatch identified in historical failures. While the DESCRIPTION mentions switching to 'coder' mode, the top-level metadata still shows MODE as 'explore'. This creates a critical mode mismatch that will likely cause the system to misinterpret the code implementation task. Additionally, the plan lacks explicit mathematical definitions for the relationship between output dimension N and network width w, specific termination criteria for N_c(w) calculation, and detailed scaling implementation details required to prevent magnitude issues. These omissions directly repeat documented historical failure patterns.",
+    "missing_steps": [
+      "Fix top-level MODE from 'explore' to 'coder' to match the code implementation task type",
+      "Define explicit mathematical relationship between output dimension N (number of constraints) and network width w",
+      "Specify exact termination criteria for N_c(w) calculation with clear 'zero violation' definition",
+      "Clarify capacity_scan tool configuration for independent measurement of train and val_err",
+      "Add explicit scaling implementation details to ensure O(1) normalization of polynomial outputs",
+      "Specify the fat polynomial family f(x) as a function of x with high dimensionality >> w (not noise)"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family` function for two polynomial constraint families (rigid: low-degree polynomial with analytic solution; fat: high-degree oscillatory polynomial) that "
   }
 ]
