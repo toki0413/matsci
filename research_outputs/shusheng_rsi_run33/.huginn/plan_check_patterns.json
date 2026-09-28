@@ -12,5 +12,16 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the rigid family function for the capacity_scan pipeline. The rigid family should be a linear function f(x)=x (as per iteration 10 context) with properly normali"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan describes a high-level approach (MODE: explore) but lacks concrete executable code, which is required per the 'known failure patterns' and 'task' instructions. Without a runnable Python snippet to generate actual numerical results (e.g., N_c(w) values, error metrics), the hypothesis cannot be validated. The prediction is qualitative ('yielding finite N_c(w) values') rather than quantitative and verifiable.",
+    "missing_steps": [
+      "Generate a concrete Python script implementing the rigid family (f(x)=ax+b) and fat family with proper normalization, training/validation splits, and capacity_scan logic.",
+      "Execute the script to produce numerical outputs (train_err, heldout_err, N_c(w) trends) for comparison against the hypothesis.",
+      "Validate results against expected bounds (e.g., heldout_err ≤1e-3 for rigid family at h≤8)."
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the rigid family (linear functions f(x)=ax+b) and fat family (high-oscillation polynomials) with proper normalization and shape constraints. Ensure X/y/Xv/yv are"
   }
 ]

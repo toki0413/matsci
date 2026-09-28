@@ -130,6 +130,70 @@
       "r_phys": 1.0,
       "iteration": 10,
       "id": "persona_use:reviewer_iter10"
+    },
+    {
+      "label": "[DIM: transport] The heldout error of the rigid family is dominated by boundary-",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T11:59:30.908901",
+      "last_seen": "2026-09-28T11:59:30.908901",
+      "mentions": 1,
+      "iteration": 15,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The rigid family will achieve heldout_err ≤1e-3 at small widths (h=2~8) with train_err ≤1e-4, confirming the rigid family hypothesis. N_c(w) will be finite and flat/decreasing as w increases.\nPLAN_SLO",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: transport] The heldout error of the rigid family is dominated by boundary-"
+    },
+    {
+      "label": "plan_explore_iter15",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T11:59:30.908943",
+      "last_seen": "2026-09-28T11:59:30.908943",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter15"
+    },
+    {
+      "label": "pass_iter15",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T11:59:30.908956",
+      "last_seen": "2026-09-28T11:59:30.908956",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter15"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T11:59:30.908966",
+      "last_seen": "2026-09-28T11:59:30.908966",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: transport] The heldout error of the rigid family is dominated by boundary-",
+        "Method:plan_explore_iter15",
+        "Fact:pass_iter15"
+      ],
+      "iteration": 15,
+      "id": "he_experiment_pipeline_195849ef"
+    },
+    {
+      "label": "reviewer_iter15",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T11:59:30.909042",
+      "last_seen": "2026-09-28T11:59:30.909042",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "0a0b6ac63e1e7c17",
+      "r_phys": 1.0,
+      "iteration": 15,
+      "id": "persona_use:reviewer_iter15"
     }
   ],
   "links": [
@@ -186,6 +250,33 @@
       "last_seen": "2026-09-28T11:56:39.411744",
       "mentions": 1,
       "target": "he_experiment_pipeline_4a89a527"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: transport] The heldout error of the rigid family is dominated by boundary-",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T11:59:30.908966",
+      "last_seen": "2026-09-28T11:59:30.908966",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_195849ef"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T11:59:30.908966",
+      "last_seen": "2026-09-28T11:59:30.908966",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_195849ef"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T11:59:30.908966",
+      "last_seen": "2026-09-28T11:59:30.908966",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_195849ef"
     }
   ]
 }
