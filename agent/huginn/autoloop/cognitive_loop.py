@@ -1813,6 +1813,12 @@ Respond JSON only:
                     _rp = _Path(final_output)
                     if _rp.is_file():
                         final_output = _rp.read_text(encoding="utf-8")
+                        # 报告文件开头是 autoloop 头部(内嵌完整 objective + 阶段表,
+                        # ~3.5k 字), 会挤掉判官的窗口; objective 已在 prompt 里另给,
+                        # 这里只取正文(从 "## Research Report" 起).
+                        _cut = final_output.find("## Research Report")
+                        if _cut > 0:
+                            final_output = final_output[_cut:]
                 except OSError:
                     logger.debug("read report for judge failed", exc_info=True)
             judge = GoalJudge(llm=self.verification_model or self.model)
