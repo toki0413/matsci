@@ -1,0 +1,14 @@
+[
+  {
+    "scene_tag": "other",
+    "reason": "The plan describes an exploration strategy ('MODE: explore') but lacks executable code as required by the 'known failure pattern' (historical failure for this scenario). The description is high-level and does not include the necessary Python implementation (import + formula + print results) to verify N_c(w) behavior. Without concrete numerical output, the prediction cannot be validated.",
+    "missing_steps": [
+      "Generate executable Python script implementing the rigid exponential family (∂ₓf = λf) and fat polynomial family",
+      "Include data normalization and held-out point separation logic in the code",
+      "Run the script to obtain numerical N_c(w) values for verification",
+      "Compare computed N_c(w) against hypothesis requirements (finite/flat for rigid family)"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function for the rigid exponential family (∂ₓf = λf) and fat polynomial family to test the bootstrap capacity scan. Ensure data is normalized to O(1) "
+  }
+]
