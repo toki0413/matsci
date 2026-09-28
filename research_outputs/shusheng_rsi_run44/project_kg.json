@@ -627,6 +627,70 @@
       "r_phys": 1.0,
       "iteration": 50,
       "id": "persona_use:reviewer_iter50"
+    },
+    {
+      "label": "[DIM: Structural Representation] The rigid family corresponds to a low-dimension",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T17:02:17.518833",
+      "last_seen": "2026-09-28T17:02:17.518833",
+      "mentions": 1,
+      "iteration": 55,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The rigid family will achieve zero violation (max abs error ≤ 1e-3) at small widths (h=2~8) with flat N_c(w) trend. The fat family will show unreachable trend (N_c = ∞) at h=64 with violation error >>",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: Structural Representation] The rigid family corresponds to a low-dimension"
+    },
+    {
+      "label": "plan_explore_iter55",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:02:17.518892",
+      "last_seen": "2026-09-28T17:02:17.518892",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter55"
+    },
+    {
+      "label": "pass_iter55",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:02:17.518903",
+      "last_seen": "2026-09-28T17:02:17.518903",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter55"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T17:02:17.518913",
+      "last_seen": "2026-09-28T17:02:17.518913",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: Structural Representation] The rigid family corresponds to a low-dimension",
+        "Method:plan_explore_iter55",
+        "Fact:pass_iter55"
+      ],
+      "iteration": 55,
+      "id": "he_experiment_pipeline_86bce1e1"
+    },
+    {
+      "label": "reviewer_iter55",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T17:02:17.518990",
+      "last_seen": "2026-09-28T17:02:17.518990",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "34fa70370aa06a12",
+      "r_phys": 1.0,
+      "iteration": 55,
+      "id": "persona_use:reviewer_iter55"
     }
   ],
   "links": [
@@ -899,6 +963,33 @@
       "last_seen": "2026-09-28T17:01:17.611440",
       "mentions": 1,
       "target": "he_experiment_pipeline_f62c3910"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: Structural Representation] The rigid family corresponds to a low-dimension",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:02:17.518913",
+      "last_seen": "2026-09-28T17:02:17.518913",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_86bce1e1"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter55",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:02:17.518913",
+      "last_seen": "2026-09-28T17:02:17.518913",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_86bce1e1"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter55",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:02:17.518913",
+      "last_seen": "2026-09-28T17:02:17.518913",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_86bce1e1"
     }
   ]
 }
