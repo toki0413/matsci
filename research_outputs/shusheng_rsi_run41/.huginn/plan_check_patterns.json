@@ -10,5 +10,17 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid family (transport equation solution: constant along characteristics) and fat family (higher-order ODE: e.g., $v \\partial_x v "
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan fails to address the critical 'fat family' degeneracy risk highlighted in the historical failures. Specifically, it does not define the functional form for the fat family (e.g., ensuring it is x-dependent with high-dimensional but partially learnable structure with degrees of freedom >> w). Without a properly defined fat family that contrasts with the rigid transport equation family, the comparison becomes invalid (reducing to 'learnable vs unlearnable' as in run28). The plan also lacks explicit details on validation set generation to ensure no overlap with training data, which is crucial for the error metric.",
+    "missing_steps": [
+      "Define explicit functional form for fat family that guarantees functional freedom >> w while being x-dependent (e.g., v ∂_x v = sin(kx) + ε·random(x) with high k)",
+      "Define explicit procedure for generating Xv with no overlap with X to ensure independent validation error measurement",
+      "Include dimensionality analysis showing fat family degrees of freedom >> w for tested w values",
+      "Add normalization check for both families before training to ensure y/yv are O(1)"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function for the rigid family (first-order linear transport equation solution space) that generates training/holdout points with O(1) normalized value"
   }
 ]

@@ -124,6 +124,36 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_df8dedb6",
+      "objective": "[DIM: composition] The rigid family corresponds to functions whose solution space is governed by a first-order linear transport equation (constant velocity), implying a 1D manifold of solutions that remains finite-dimensional as w increases.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the family function for the rigid family (first-order linear transport equation solution space) that generates training/holdout points with O(1) normalized values. The function will return X, y, Xv, yv as (N,1) arrays, ensuring y/yv are normalized by their standard deviation to satisfy the 1e3 absolute error criterion. This enables the capacity_scan to test whether N_c(w) remains finite and flat/decreasing as w increases.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "family.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-28T15:38:59.278250+00:00",
+      "confirmed_at": "2026-09-28T15:38:59.279340+00:00",
+      "completed_at": "2026-09-28T15:39:19.432428+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
