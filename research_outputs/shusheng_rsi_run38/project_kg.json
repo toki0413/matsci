@@ -759,6 +759,70 @@
       "r_phys": 1.0,
       "iteration": 65,
       "id": "persona_use:reviewer_iter65"
+    },
+    {
+      "label": "[DIM: structure] The rigid polynomial family's zero-violation capacity threshold",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T15:04:55.854893",
+      "last_seen": "2026-09-28T15:04:55.854893",
+      "mentions": 1,
+      "iteration": 70,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family (e.g., 3-term polynomial), at w=10, h=8, seed=0 the held-out max absolute error will be ≤1e-3 (anchor point confirmed). N_c(w) will be finite (e.g., h≤8) and trend will be flat/de",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid polynomial family's zero-violation capacity threshold"
+    },
+    {
+      "label": "plan_explore_iter70",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:04:55.854933",
+      "last_seen": "2026-09-28T15:04:55.854933",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter70"
+    },
+    {
+      "label": "pass_iter70",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:04:55.854943",
+      "last_seen": "2026-09-28T15:04:55.854943",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter70"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T15:04:55.854951",
+      "last_seen": "2026-09-28T15:04:55.854951",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid polynomial family's zero-violation capacity threshold",
+        "Method:plan_explore_iter70",
+        "Fact:pass_iter70"
+      ],
+      "iteration": 70,
+      "id": "he_experiment_pipeline_1764419a"
+    },
+    {
+      "label": "reviewer_iter70",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T15:04:55.855032",
+      "last_seen": "2026-09-28T15:04:55.855032",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "ffaae4f0a85e133a",
+      "r_phys": 1.0,
+      "iteration": 70,
+      "id": "persona_use:reviewer_iter70"
     }
   ],
   "links": [
@@ -1112,6 +1176,33 @@
       "last_seen": "2026-09-28T15:03:54.362260",
       "mentions": 1,
       "target": "he_experiment_pipeline_f9467178"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid polynomial family's zero-violation capacity threshold",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:04:55.854951",
+      "last_seen": "2026-09-28T15:04:55.854951",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_1764419a"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter70",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:04:55.854951",
+      "last_seen": "2026-09-28T15:04:55.854951",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_1764419a"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter70",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:04:55.854951",
+      "last_seen": "2026-09-28T15:04:55.854951",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_1764419a"
     }
   ]
 }

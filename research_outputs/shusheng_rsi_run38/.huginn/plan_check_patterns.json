@@ -157,5 +157,21 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the rigid polynomial family function `family(kind, w, seed)` that generates training and held-out constraint points with normalized outputs (std ≈ 1). The family"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan is an 'exploration' mode that only implements data generation for a capacity scan. It completely fails to address the core mathematical structure of the hypothesis: proving the rigid polynomial family is a low-dimensional algebraic manifold. The plan omits critical required steps including defining the algebraic structure (polynomial constraints, ideal generators), implementing spectral analysis (Hessian eigenvalue gap), and verifying the dimension bound. It repeats the historical failure of focusing only on capacity scans without algebraic and spectral analyses, which cannot validate the hypothesis that N_c(w) is determined by algebraic independence rather than topological invariants.",
+    "missing_steps": [
+      "Define explicit algebraic structure of rigid polynomial family (polynomial constraints, ideal generators)",
+      "Implement spectral analysis of loss landscape/Hessian to measure eigenvalue distribution and gap",
+      "Specify concrete criteria for fat family being x-dependent and high-dimensional (avoid i.i.d. noise)",
+      "Include metrics for solution space dimension independence from network width",
+      "Define validation methodology for low-dimensional manifold structure in function space",
+      "Generate executable code to define rigid polynomial family and compute its algebraic dimension numerically",
+      "Run numerical experiments to measure effective degrees of freedom via SVD decay of feature matrix",
+      "Execute capacity scans with independent training and leave-out error measurements"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function to return training and held-out data for rigid (low-dimensional polynomial) and fat (high-dimensional random polynomial) families, ensuring y"
   }
 ]
