@@ -387,6 +387,37 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_6272e427",
+      "objective": "[DIM: structure] The rigid polynomial family corresponds to a low-dimensional algebraic manifold in function space where the solution space dimension is bounded by the number of constraints w, implying a finite capacity threshold N_c(w) that remains sub-linear or flat as w increases.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the rigid polynomial family function for the capacity_scan experiment. The rigid family should be a low-dimensional algebraic manifold (e.g., a 3-parameter polynomial family like a + b*x + c*x^2) where w constraints uniquely determine the coefficients. This will allow us to test if N_c(w) remains finite and flat as w increases, distinguishing it from the \"fat\" family. Need to write the family(kind, w, seed) function that returns normalized X, y, Xv, yv arrays with proper (N,1) shape.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "/workspace/research_outputs/shusheng_rsi_run38/.huginn/hypothesis_graph_loop_4e655174.json",
+            "/workspace/research_outputs/shusheng_rsi_run38/.huginn/engine_state/loop_4e655174.json"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-28T15:03:14.242167+00:00",
+      "confirmed_at": "2026-09-28T15:03:14.243298+00:00",
+      "completed_at": "2026-09-28T15:03:36.819843+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

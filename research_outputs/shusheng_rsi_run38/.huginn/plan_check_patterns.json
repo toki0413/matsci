@@ -127,5 +127,22 @@
     ],
     "mode": "explore",
     "description": "Implement rigorous algebraic structure validation for the rigid polynomial family. Explicitly define the ideal generators $I$ via polynomial constraints (e.g., monomial basis truncation), compute the "
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan is structured as an 'exploration' but only implements the data generation part of a capacity scan (N_c(w)). It completely fails to address the core mathematical structure of the hypothesis: proving the rigid polynomial family is a low-dimensional algebraic manifold. The plan omits critical required steps including defining the algebraic structure (polynomial constraints, ideal generators), implementing spectral analysis (Hessian eigenvalue gap), and verifying the dimension bound. This directly repeats the '同场景历史失败' patterns where plans focusing only on capacity scans without algebraic and spectral analyses cannot validate the hypothesis.",
+    "missing_steps": [
+      "Define explicit algebraic structure of rigid polynomial family (polynomial constraints, ideal generators)",
+      "Implement spectral analysis of loss landscape/Hessian to measure eigenvalue distribution and gap",
+      "Specify concrete criteria for fat family being x-dependent and high-dimensional (avoid i.i.d. noise)",
+      "Include metrics for solution space dimension independence from network width",
+      "Define validation methodology for low-dimensional manifold structure in function space",
+      "Generate executable code to define rigid polynomial family and compute its algebraic dimension numerically",
+      "Implement 'fat' polynomial family as x-dependent, high-dimensional functions with structured correlation",
+      "Run numerical experiments to measure effective degrees of freedom via SVD decay of feature matrix",
+      "Execute capacity scans with independent training and leave-out error measurements"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the rigid polynomial family function for the capacity_scan experiment. The rigid family should be a low-dimensional algebraic manifold (e.g., a 3-parameter polyn"
   }
 ]

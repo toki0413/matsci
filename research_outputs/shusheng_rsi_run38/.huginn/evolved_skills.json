@@ -80,8 +80,8 @@
       "label",
       "polynomial",
       "plan",
-      "prediction",
-      "explore"
+      "explore",
+      "prediction"
     ],
     "workflow_steps": [
       {
