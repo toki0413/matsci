@@ -1114,6 +1114,36 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_170fd5b4",
+      "objective": "[DIM: structural constraint] The rigid family is defined by a low-dimensional linear span of fixed basis functions (e.g., trigonometric or polynomial), where N_c(w) remains small and flat or decreasing as w increases, reflecting the intrinsic low dimensionality of the solution space. | pro: Most directly testable within the bootstrap framework; aligns with the core objective of probing solution space rigidity via network capacity; allows clear distinction between rigid (low N_c) and fat (unreachable) families. con: Requires careful construction of the rigid family to ensure it is truly low-dimensional and not inadvertently high-dimensional due to basis selection. |",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid family (low-dimensional trigonometric basis) and fat family (high-dimensional random polynomial basis) following the Code Lab script contract. Ensure outputs are normalized to O(1), Xv and X do not overlap, and labels have shape (N,1). The rigid family will use a fixed basis (e.g., sin(w*x)) with low intrinsic dimensionality, while the fat family will use high-degree random polynomials to represent high dimensionality.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "family.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-28T17:33:28.042324+00:00",
+      "confirmed_at": "2026-09-28T17:33:28.044230+00:00",
+      "completed_at": "2026-09-28T17:33:48.231957+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

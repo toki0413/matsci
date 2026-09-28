@@ -569,5 +569,21 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the `rigid_family` and `fat_family` functions as required by the capacity_scan framework, ensuring y/yv are normalized to O(1) magnitude and that Xv does not ove"
+  },
+  {
+    "scene_tag": "auto_family",
+    "reason": "Plan uses 'explore' mode which is inappropriate for concrete computational verification tasks as per historical failure patterns. DESCRIPTION lacks critical implementation details: specific basis function formulas, grid resolutions, scaling procedures, and optimization parameters. The plan explicitly risks running into the exact same failures as run28 (fat family being i.i.d. noise) and run29 (scale issues with high-degree polynomials) without addressing these concerns. PREDICTION is not verifiable without concrete numerical methods and measurement procedures.",
+    "missing_steps": [
+      "Switch from 'explore' mode to 'coder' or 'workflow' mode for concrete computations",
+      "Define concrete grid resolution (e.g., N=500) and explicit basis function formulas (Chebyshev/trigonometric expressions)",
+      "Explicitly define fat family as x-dependent high-dimensional functions (not i.i.d. noise) to avoid run28 failure",
+      "Specify scaling for fat family basis to prevent ~1e9 scale issues with O(1) normalization (run29 failure)",
+      "Establish clear training and held-out error measurement procedures with separate metrics to avoid data leakage",
+      "Define N_c(w) calculation methodology (e.g., SVD rank with tolerance 1e-6) with clear thresholds",
+      "Define concrete L-BFGS-B optimization setup with specific iteration limits and parameters",
+      "Implement comparative optimization strategy to distinguish optimization failure from function space limitations"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid family (low-dimensional trigonometric basis) and fat family (high-dimensional random polynomial basis) following the Code Lab"
   }
 ]

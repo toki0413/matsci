@@ -2231,6 +2231,70 @@
       "r_phys": 1.0,
       "iteration": 180,
       "id": "persona_use:reviewer_iter180"
+    },
+    {
+      "label": "[DIM: structural constraint] The rigid family is defined by a linear PDE constra",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T17:33:06.526119",
+      "last_seen": "2026-09-28T17:33:06.526119",
+      "mentions": 1,
+      "iteration": 185,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family, N_c(w) will be finite (h ≤ 8) and flat/decreasing across w, with zero-violation achieved at specific width/w/seed combinations. For the fat family, N_c will be unreachable (trend",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structural constraint] The rigid family is defined by a linear PDE constra"
+    },
+    {
+      "label": "plan_explore_iter185",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:33:06.526159",
+      "last_seen": "2026-09-28T17:33:06.526159",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter185"
+    },
+    {
+      "label": "pass_iter185",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:33:06.526169",
+      "last_seen": "2026-09-28T17:33:06.526169",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter185"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T17:33:06.526179",
+      "last_seen": "2026-09-28T17:33:06.526179",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structural constraint] The rigid family is defined by a linear PDE constra",
+        "Method:plan_explore_iter185",
+        "Fact:pass_iter185"
+      ],
+      "iteration": 185,
+      "id": "he_experiment_pipeline_c7d6b6f0"
+    },
+    {
+      "label": "reviewer_iter185",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T17:33:06.526253",
+      "last_seen": "2026-09-28T17:33:06.526253",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "c8532fbd2975e437",
+      "r_phys": 1.0,
+      "iteration": 185,
+      "id": "persona_use:reviewer_iter185"
     }
   ],
   "links": [
@@ -3205,6 +3269,33 @@
       "last_seen": "2026-09-28T17:32:05.305578",
       "mentions": 1,
       "target": "he_experiment_pipeline_e36a933f"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structural constraint] The rigid family is defined by a linear PDE constra",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:33:06.526179",
+      "last_seen": "2026-09-28T17:33:06.526179",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c7d6b6f0"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter185",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:33:06.526179",
+      "last_seen": "2026-09-28T17:33:06.526179",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c7d6b6f0"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter185",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:33:06.526179",
+      "last_seen": "2026-09-28T17:33:06.526179",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c7d6b6f0"
     }
   ]
 }
