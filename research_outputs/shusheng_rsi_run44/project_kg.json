@@ -691,6 +691,70 @@
       "r_phys": 1.0,
       "iteration": 55,
       "id": "persona_use:reviewer_iter55"
+    },
+    {
+      "label": "[DIM: Mathematical Structure / Topology]",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T17:03:13.765517",
+      "last_seen": "2026-09-28T17:03:13.765517",
+      "mentions": 1,
+      "iteration": 60,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "If the topology hypothesis is correct, the family with gluing constraints will achieve zero violation at small h (2-8) and N_c will remain flat as w increases, unlike the polynomial or ODE hypotheses",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: Mathematical Structure / Topology]"
+    },
+    {
+      "label": "plan_explore_iter60",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:03:13.765557",
+      "last_seen": "2026-09-28T17:03:13.765557",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter60"
+    },
+    {
+      "label": "pass_iter60",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:03:13.765566",
+      "last_seen": "2026-09-28T17:03:13.765566",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter60"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T17:03:13.765576",
+      "last_seen": "2026-09-28T17:03:13.765576",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: Mathematical Structure / Topology]",
+        "Method:plan_explore_iter60",
+        "Fact:pass_iter60"
+      ],
+      "iteration": 60,
+      "id": "he_experiment_pipeline_e172dfa7"
+    },
+    {
+      "label": "reviewer_iter60",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T17:03:13.765653",
+      "last_seen": "2026-09-28T17:03:13.765653",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "59cb91f29a4b2f77",
+      "r_phys": 1.0,
+      "iteration": 60,
+      "id": "persona_use:reviewer_iter60"
     }
   ],
   "links": [
@@ -990,6 +1054,33 @@
       "last_seen": "2026-09-28T17:02:17.518913",
       "mentions": 1,
       "target": "he_experiment_pipeline_86bce1e1"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: Mathematical Structure / Topology]",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:03:13.765576",
+      "last_seen": "2026-09-28T17:03:13.765576",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e172dfa7"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter60",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:03:13.765576",
+      "last_seen": "2026-09-28T17:03:13.765576",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e172dfa7"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter60",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:03:13.765576",
+      "last_seen": "2026-09-28T17:03:13.765576",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e172dfa7"
     }
   ]
 }
