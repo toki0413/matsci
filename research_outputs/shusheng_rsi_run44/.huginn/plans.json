@@ -29,6 +29,41 @@
         "mode": "coder",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_d2b1f9c7",
+      "objective": "[DIM: Functional Space Structure] The rigid family is defined by a finite-dimensional linear span of fixed basis functions (e.g., polynomials of degree ≤ 5), while the fat family corresponds to an infinite-dimensional function class with unbounded complexity (e.g., a stochastic process or non-parametric regression space).",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid family (polynomials of degree ≤ 5) and fat family (stochastic/non-parametric class with unbounded complexity) to test the hypothesis on bootstrap solution space rigidity. The function must return normalized training/holdout data with (N,1) shapes, ensuring y/yv are scaled to O(1) to validate the ≤1e-3 error criterion. This enables the capacity_scan workflow to determine N_c(w) trends.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "family_impl.py",
+            "(new",
+            "file",
+            "containing",
+            "family",
+            "function)"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-28T16:52:37.820641+00:00",
+      "confirmed_at": "2026-09-28T16:52:37.821797+00:00",
+      "completed_at": "2026-09-28T16:52:56.913095+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
