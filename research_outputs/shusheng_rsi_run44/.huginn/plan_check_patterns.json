@@ -670,5 +670,17 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid family (low-dimensional linear span, e.g., trigonometric basis with 3 coefficients) and fat family (high-dimensional, non-con"
+  },
+  {
+    "scene_tag": "workflow",
+    "reason": "Plan is invalid because it fails to explicitly define the functional form of the fat family as x-dependent with proper scaling, risking a repeat of historical failure run29 (scale explosion ~1e9). The plan mentions 'high-degree polynomial basis' but does not specify orthogonalization (e.g., Legendre) or normalization to ensure values remain bounded (|f(x)| < 10), which is critical for numerical stability and valid N_c(w) comparison. Without explicit x-dependence and scaling control, the fat family may degenerate to noise or overflow, making the 'unreachable' trend meaningless. Additionally, the plan lacks a verification step to confirm the fat family is not x-independent noise before execution, violating the core requirement to compare two distinct x-dependent function classes.",
+    "missing_steps": [
+      "Define explicit functional form for fat family (e.g., orthogonal Legendre polynomials of degree >> w) to ensure x-dependence and numerical stability",
+      "Add normalization step to ensure fat family values remain bounded (|f(x)| < 10) across the domain",
+      "Include verification step to confirm fat family is x-dependent before width scan",
+      "Specify exact metric for 'functional overcapacity' (e.g., condition number threshold or gradient norm saturation) to quantify N_c(w)"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Run the capacity scan bootstrap workflow for rigid and fat families to compute N_c(w) trends. First, implement the family function for the rigid family (low-dimensional tr"
   }
 ]

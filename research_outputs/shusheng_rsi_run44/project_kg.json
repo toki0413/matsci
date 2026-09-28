@@ -2570,6 +2570,70 @@
       "r_phys": 1.0,
       "iteration": 210,
       "id": "persona_use:reviewer_iter210"
+    },
+    {
+      "label": "[DIM: Structural Constraint] The rigid family corresponds to a low-dimensional l",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T17:40:53.565089",
+      "last_seen": "2026-09-28T17:40:53.565089",
+      "mentions": 1,
+      "iteration": 215,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The rigid family will achieve zero violation (max abs error ≤ 1e-3) at small widths (h ≤ 8) with flat N_c(w) trend; the fat family will show unreachable trend at h=64 with finite but large held-out er",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: Structural Constraint] The rigid family corresponds to a low-dimensional l"
+    },
+    {
+      "label": "plan_explore_iter215",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:40:53.565133",
+      "last_seen": "2026-09-28T17:40:53.565133",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter215"
+    },
+    {
+      "label": "pass_iter215",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:40:53.565143",
+      "last_seen": "2026-09-28T17:40:53.565143",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter215"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T17:40:53.565152",
+      "last_seen": "2026-09-28T17:40:53.565152",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: Structural Constraint] The rigid family corresponds to a low-dimensional l",
+        "Method:plan_explore_iter215",
+        "Fact:pass_iter215"
+      ],
+      "iteration": 215,
+      "id": "he_experiment_pipeline_cddd32d2"
+    },
+    {
+      "label": "reviewer_iter215",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T17:40:53.565232",
+      "last_seen": "2026-09-28T17:40:53.565232",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "25bcd51266d52571",
+      "r_phys": 1.0,
+      "iteration": 215,
+      "id": "persona_use:reviewer_iter215"
     }
   ],
   "links": [
@@ -3706,6 +3770,33 @@
       "last_seen": "2026-09-28T17:39:07.507659",
       "mentions": 1,
       "target": "he_experiment_pipeline_7154c3bc"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: Structural Constraint] The rigid family corresponds to a low-dimensional l",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:40:53.565152",
+      "last_seen": "2026-09-28T17:40:53.565152",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_cddd32d2"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter215",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:40:53.565152",
+      "last_seen": "2026-09-28T17:40:53.565152",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_cddd32d2"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter215",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:40:53.565152",
+      "last_seen": "2026-09-28T17:40:53.565152",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_cddd32d2"
     }
   ]
 }
