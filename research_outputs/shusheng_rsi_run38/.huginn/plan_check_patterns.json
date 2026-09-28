@@ -10,5 +10,18 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the rigid polynomial family function as specified, ensuring low-dimensional algebraic structure (≤5 terms), proper normalization (std ≲ 10), non-overlapping trai"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan fails to address the core mathematical structure of the hypothesis. The hypothesis concerns 'rigid polynomial family' as a low-dimensional algebraic manifold with bounded solution space dimension, but the plan's DESCRIPTION only focuses on implementation details (normalized outputs, deterministic solvability) without defining the algebraic manifold structure or proving dimension bounds. Crucially, it completely omits the spectral analysis required to verify the manifold properties (Hessian spectral gap, eigenvalue ratios), which was explicitly identified as a missing step in the historical failure patterns. The PREDICTION about N_c(w) trends is a tangential metric that doesn't directly validate the manifold dimension claim.",
+    "missing_steps": [
+      "Define the explicit algebraic structure of the rigid polynomial family (polynomial constraints, ideal generators)",
+      "Implement spectral analysis of the loss landscape/Hessian to measure eigenvalue distribution and gap",
+      "Specify concrete criteria for the fat family being x-dependent and high-dimensional (avoid i.i.d. noise)",
+      "Include metrics for solution space dimension independence from network width",
+      "Define validation methodology for low-dimensional manifold structure in function space"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the rigid polynomial family function in `family.py` that returns low-dimensional polynomial constraints with normalized outputs (std ≲ 10), ensuring the solution"
   }
 ]
