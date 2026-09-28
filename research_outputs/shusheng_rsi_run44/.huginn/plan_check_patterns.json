@@ -1,0 +1,75 @@
+[
+  {
+    "scene_tag": "other",
+    "reason": "The plan is fundamentally invalid because it attempts to test a hypothesis about function space geometry (rigid vs. fat families) using a MODE of 'explore' without specifying the concrete mathematical structure or algorithm to be implemented. The DESCRIPTION mentions 'Implement the family function' but provides no details on the basis functions, the constraint matrix construction, or how N_c is computed. This is a high-cost exploration without a clear mathematical target, risking the 'blind retry' fallacy. Furthermore, the PREDICTION relies on unverified assumptions about convergence behavior (e.g., zero violation at h=2~8) without establishing a baseline or validation protocol against literature benchmarks.",
+    "missing_steps": [
+      "Define the exact mathematical formulation of the rigid family (e.g., specific polynomial/trig basis) and fat family (e.g., neural net width w vs. function space dimension)",
+      "Specify the algorithm for computing N_c (e.g., rank of constraint matrix, PCA threshold)",
+      "Include a benchmark lookup against known approximation theory results (e.g., Kolmogorov width bounds) before simulation",
+      "Clarify the training objective and violation metric (e.g., L2 error, max norm) with units",
+      "Add a dimensional check to ensure y/yv std normalization is physically meaningful"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function for the rigid and fat function spaces according to the hypothesis, ensuring proper normalization (y/yv std ≲ 10), non-overlapping training/he"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan is fundamentally invalid because it attempts to test a hypothesis about function space geometry (rigid vs. fat families) using a MODE of 'explore' without specifying the concrete mathematical structure or algorithm to be implemented. The DESCRIPTION mentions 'Implement the family function' but provides no details on the basis functions, the constraint matrix construction, or how N_c is computed. This is a high-cost exploration without a clear mathematical target, risking the 'blind retry' fallacy. Furthermore, the PREDICTION relies on unverified assumptions about convergence behavior (e.g., zero violation at h=2~8) without establishing a baseline or validation protocol against literature benchmarks.",
+    "missing_steps": [
+      "Define the exact mathematical formulation of the rigid family (e.g., specific polynomial/trig basis) and fat family (e.g., neural net width w vs. function space dimension)",
+      "Specify the algorithm for computing N_c (e.g., rank of constraint matrix, PCA threshold)",
+      "Include a benchmark lookup against known approximation theory results (e.g., Kolmogorov width bounds) before simulation",
+      "Clarify the training objective and violation metric (e.g., L2 error, max norm) with units",
+      "Add a dimensional check to ensure y/yv std normalization is physically meaningful"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid family (low-dimensional linear span of trigonometric polynomials) and fat family (high-degree polynomial) to test the bootstr"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan uses MODE='explore' which is inappropriate for a well-defined mathematical verification task requiring concrete implementation details. While the DESCRIPTION attempts to address the x-dependence requirement (fixing previous failures), it still lacks critical specifications: exact mathematical formulation of basis functions, algorithm for computing N_c, training objective definition, and violation metric specification. The PREDICTION is unverified and lacks benchmark alignment against approximation theory results. This matches the historical failure patterns of being fundamentally invalid due to lack of concrete mathematical structure.",
+    "missing_steps": [
+      "Define exact mathematical formulation of rigid family (specific basis functions with dimensions)",
+      "Define exact mathematical formulation of fat family (structure, dimensionality vs w)",
+      "Specify algorithm for computing N_c (constraint matrix rank? PCA threshold?)",
+      "Define training objective and violation metric with units (L2 error? max norm?)",
+      "Include benchmark lookup against Kolmogorov width bounds or approximation theory",
+      "Implement dimensional check for y/yv normalization",
+      "Switch from MODE='explore' to MODE='coder' for concrete implementation"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the rigid and fat family functions for the capacity scan experiment. The rigid family will be a low-dimensional linear span (e.g., 5 basis functions) with x-depe"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan uses MODE='explore' which is fundamentally inappropriate for a verification task requiring concrete implementation details. The DESCRIPTION is still too vague — it mentions 'Implement rigorous mathematical definitions' but does not specify the exact basis functions, constraint matrix construction, PCA threshold algorithm, training objective, or violation metric with units. This matches the historical failure pattern of being 'fundamentally invalid due to lack of concrete mathematical structure'. The PREDICTION is unverified and lacks benchmark alignment against approximation theory results. It also fails to specify how N_c(w) is computed or validated against Kolmogorov width bounds.",
+    "missing_steps": [
+      "Switch MODE from 'explore' to 'coder' for concrete implementation",
+      "Define exact mathematical formulation of rigid family (specific basis functions with dimensions)",
+      "Define exact mathematical formulation of fat family (structure, dimensionality vs w)",
+      "Specify algorithm for computing N_c (constraint matrix rank? PCA threshold?)",
+      "Define training objective and violation metric with units (L2 error? max norm?)",
+      "Include benchmark lookup against Kolmogorov width bounds or approximation theory",
+      "Implement dimensional check for y/yv normalization",
+      "Specify scanning range for w and h parameters"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement rigorous mathematical definitions for rigid and fat function families with explicit x-dependence, compute capacity N_c via rank of constraint matrix with PCA thr"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan uses MODE='explore' which is fundamentally inappropriate for a verification task requiring concrete mathematical implementation. The DESCRIPTION lacks critical specifications: exact mathematical formulation of basis functions, algorithm for computing N_c, training objective definition, and violation metric specification. It repeats the same historical failure patterns identified in the scene history—vague implementation without concrete mathematical structure. The PREDICTION is unverified and lacks benchmark alignment against approximation theory results. Before implementing code, the plan must define the exact mathematical formulation, specify how N_c is computed, and include benchmark lookup against Kolmogorov width bounds.",
+    "missing_steps": [
+      "Switch MODE from 'explore' to 'coder' for concrete implementation",
+      "Define exact mathematical formulation of rigid family (specific basis functions with dimensions)",
+      "Define exact mathematical formulation of fat family (structure, dimensionality vs w)",
+      "Specify algorithm for computing N_c (constraint matrix rank? PCA threshold?)",
+      "Define training objective and violation metric with units (L2 error? max norm?)",
+      "Include benchmark lookup against Kolmogorov width bounds or approximation theory",
+      "Implement dimensional check for y/yv normalization",
+      "Specify scanning range for w and h parameters"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function for the rigid family (linear span of fixed basis functions like low-degree polynomials/trigonometric functions) and fat family (high-dimensio"
+  }
+]
