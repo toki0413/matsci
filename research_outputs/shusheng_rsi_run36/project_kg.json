@@ -1011,6 +1011,70 @@
       "r_phys": 1.0,
       "iteration": 80,
       "id": "persona_use:reviewer_iter80"
+    },
+    {
+      "label": "[DIM: structure] The rigid constraint family (polynomial degree ≤ 2) exhibits a ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:43:30.394165",
+      "last_seen": "2026-09-28T13:43:30.394165",
+      "mentions": 1,
+      "iteration": 85,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Rigid family will show constant $N_c \\approx 5$ as $w$ increases (1-50) due to finite-dimensional solution space; fat family will show increasing $N_c$ with $w$ due to infinite-dimensional chaotic beh",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid constraint family (polynomial degree ≤ 2) exhibits a"
+    },
+    {
+      "label": "plan_explore_iter85",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:43:30.394205",
+      "last_seen": "2026-09-28T13:43:30.394205",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter85"
+    },
+    {
+      "label": "pass_iter85",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:43:30.394215",
+      "last_seen": "2026-09-28T13:43:30.394215",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter85"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T13:43:30.394224",
+      "last_seen": "2026-09-28T13:43:30.394224",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid constraint family (polynomial degree ≤ 2) exhibits a",
+        "Method:plan_explore_iter85",
+        "Fact:pass_iter85"
+      ],
+      "iteration": 85,
+      "id": "he_experiment_pipeline_e10386d0"
+    },
+    {
+      "label": "reviewer_iter85",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:43:30.394305",
+      "last_seen": "2026-09-28T13:43:30.394305",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "204cabea0ca8ac58",
+      "r_phys": 1.0,
+      "iteration": 85,
+      "id": "persona_use:reviewer_iter85"
     }
   ],
   "links": [
@@ -1445,6 +1509,33 @@
       "last_seen": "2026-09-28T13:42:14.148641",
       "mentions": 1,
       "target": "he_experiment_pipeline_e2433ae8"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid constraint family (polynomial degree ≤ 2) exhibits a",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:43:30.394224",
+      "last_seen": "2026-09-28T13:43:30.394224",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e10386d0"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter85",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:43:30.394224",
+      "last_seen": "2026-09-28T13:43:30.394224",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e10386d0"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter85",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:43:30.394224",
+      "last_seen": "2026-09-28T13:43:30.394224",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e10386d0"
     }
   ]
 }

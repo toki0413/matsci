@@ -564,6 +564,36 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_2983e21b",
+      "objective": "[DIM: structure] The rigid constraint family (polynomial degree ≤ 2) defines a finite-dimensional solution space that exhibits a flat or decreasing trend in minimum network width $N_c(w)$ as the number of constraints $w$ increases, indicating a bounded solution space.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid polynomial constraint family (degree ≤ 2) and the fat polynomial constraint family (degree 19). Ensure `y` and `yv` are normalized to O(1) (divide by std) to satisfy the 1e-3 zero-violation criterion. Return data as (N,1) arrays with non-overlapping training/holdout sets. This provides the required ground truth data for the capacity scan to test the hypothesis about solution space rigidity.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "family.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-28T13:43:51.967373+00:00",
+      "confirmed_at": "2026-09-28T13:43:51.968855+00:00",
+      "completed_at": "2026-09-28T13:44:10.832579+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
