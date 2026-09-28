@@ -46,5 +46,18 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the family(kind, w, seed) function to generate data for the rigid family (f'(x)=c, affine solutions) and fat family (high-degree polynomial basis with no analyti"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan fails to address the core hypothesis requirements. The hypothesis explicitly states the 'fat family' arises from a nonlinear transport equation with stochastic initial conditions (infinite-dimensional solution space), but the plan vaguely describes implementing a 'higher-order functional constraint' without specifying the transport equation or stochastic sampling. This directly contradicts the historical failure patterns where polynomial/finite-dimensional bases failed to capture the true infinite-dimensional nature and chaotic solution branching. The plan also lacks specific implementation details for the nonlinear transport equation and stochastic initial conditions, which are critical for validating the hypothesis.",
+    "missing_steps": [
+      "Implement the actual nonlinear transport equation (e.g., Burgers' equation) instead of a generic functional constraint",
+      "Include stochastic sampling of initial conditions to capture chaotic solution branching",
+      "Use appropriate function spaces (e.g., Sobolev spaces) rather than finite-dimensional polynomial bases for the fat family",
+      "Specify exact mathematical formulations for both rigid and fat families matching the hypothesis requirements",
+      "Define concrete implementation details for the capacity_scan methodology"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family(kind, w, seed) function for the rigid and fat families as specified in the hypothesis. For the rigid family, implement the linear ODE f'(x)=c (affine "
   }
 ]
