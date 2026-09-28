@@ -1,0 +1,100 @@
+{
+  "directed": true,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "label": "[DIM: structure] The thermal expansion coefficient of ZrW2O7 exhibits negative v",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T15:09:31.576270",
+      "last_seen": "2026-09-28T15:09:31.576270",
+      "mentions": 1,
+      "iteration": 5,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The family function will return dictionaries with keys 'X', 'y', 'Xv', 'yv', each containing arrays of shape (N, 1) where N is the number of samples. The 'y' and 'yv' values will be normalized to have",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The thermal expansion coefficient of ZrW2O7 exhibits negative v"
+    },
+    {
+      "label": "plan_coder_iter5",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:09:31.576326",
+      "last_seen": "2026-09-28T15:09:31.576326",
+      "mentions": 1,
+      "id": "Method:plan_coder_iter5"
+    },
+    {
+      "label": "pass_iter5",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:09:31.576347",
+      "last_seen": "2026-09-28T15:09:31.576347",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter5"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T15:09:31.576361",
+      "last_seen": "2026-09-28T15:09:31.576361",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The thermal expansion coefficient of ZrW2O7 exhibits negative v",
+        "Method:plan_coder_iter5",
+        "Fact:pass_iter5"
+      ],
+      "iteration": 5,
+      "id": "he_experiment_pipeline_9583f65d"
+    },
+    {
+      "label": "reviewer_iter5",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T15:09:31.576527",
+      "last_seen": "2026-09-28T15:09:31.576527",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "ff1f0e83e1cf251b",
+      "r_phys": 1.0,
+      "iteration": 5,
+      "id": "persona_use:reviewer_iter5"
+    }
+  ],
+  "links": [
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The thermal expansion coefficient of ZrW2O7 exhibits negative v",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:09:31.576361",
+      "last_seen": "2026-09-28T15:09:31.576361",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_9583f65d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_coder_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:09:31.576361",
+      "last_seen": "2026-09-28T15:09:31.576361",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_9583f65d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:09:31.576361",
+      "last_seen": "2026-09-28T15:09:31.576361",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_9583f65d"
+    }
+  ]
+}
