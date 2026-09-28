@@ -2988,6 +2988,70 @@
       "r_phys": 1.0,
       "iteration": 245,
       "id": "persona_use:reviewer_iter245"
+    },
+    {
+      "label": "[DIM: Mathematical Structure] The rigid family should be defined by a system of ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T17:47:55.298044",
+      "last_seen": "2026-09-28T17:47:55.298044",
+      "mentions": 1,
+      "iteration": 250,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The rigid family (harmonic polynomials) should achieve zero violation (max abs error ≤ 1e-3) at small network widths (h=2~8) with flat or decreasing N_c(w) trend, while the fat family (high-degree pol",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: Mathematical Structure] The rigid family should be defined by a system of"
+    },
+    {
+      "label": "plan_explore_iter250",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:47:55.298085",
+      "last_seen": "2026-09-28T17:47:55.298085",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter250"
+    },
+    {
+      "label": "pass_iter250",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:47:55.298095",
+      "last_seen": "2026-09-28T17:47:55.298095",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter250"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T17:47:55.298104",
+      "last_seen": "2026-09-28T17:47:55.298104",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: Mathematical Structure] The rigid family should be defined by a system of",
+        "Method:plan_explore_iter250",
+        "Fact:pass_iter250"
+      ],
+      "iteration": 250,
+      "id": "he_experiment_pipeline_aacb72f5"
+    },
+    {
+      "label": "reviewer_iter250",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T17:47:55.298181",
+      "last_seen": "2026-09-28T17:47:55.298181",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "3131a82f5f8b90f0",
+      "r_phys": 1.0,
+      "iteration": 250,
+      "id": "persona_use:reviewer_iter250"
     }
   ],
   "links": [
@@ -4313,6 +4377,33 @@
       "last_seen": "2026-09-28T17:46:55.442258",
       "mentions": 1,
       "target": "he_experiment_pipeline_4d644d90"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: Mathematical Structure] The rigid family should be defined by a system of",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:47:55.298104",
+      "last_seen": "2026-09-28T17:47:55.298104",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_aacb72f5"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter250",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:47:55.298104",
+      "last_seen": "2026-09-28T17:47:55.298104",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_aacb72f5"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter250",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:47:55.298104",
+      "last_seen": "2026-09-28T17:47:55.298104",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_aacb72f5"
     }
   ]
 }
