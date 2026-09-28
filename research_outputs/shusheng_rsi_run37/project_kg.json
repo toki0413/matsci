@@ -1408,10 +1408,10 @@
       "label": "[DIM: structure] The solution space rigidity of the polynomial families is deter",
       "type": "experiment",
       "source": "autoloop",
-      "confidence": 1.0,
+      "confidence": 0.99,
       "created_at": "2026-09-28T14:24:58.785604",
-      "last_seen": "2026-09-28T14:24:58.785604",
-      "mentions": 1,
+      "last_seen": "2026-09-28T14:26:00.018519",
+      "mentions": 2,
       "iteration": 125,
       "r_phys": 1.0,
       "surprise": 1.0,
@@ -1467,6 +1467,55 @@
       "r_phys": 1.0,
       "iteration": 125,
       "id": "persona_use:reviewer_iter125"
+    },
+    {
+      "label": "plan_explore_iter130",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:26:00.018544",
+      "last_seen": "2026-09-28T14:26:00.018544",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter130"
+    },
+    {
+      "label": "pass_iter130",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:26:00.018566",
+      "last_seen": "2026-09-28T14:26:00.018566",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter130"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T14:26:00.018576",
+      "last_seen": "2026-09-28T14:26:00.018576",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The solution space rigidity of the polynomial families is deter",
+        "Method:plan_explore_iter130",
+        "Fact:pass_iter130"
+      ],
+      "iteration": 130,
+      "id": "he_experiment_pipeline_8cf33bbc"
+    },
+    {
+      "label": "reviewer_iter130",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:26:00.018656",
+      "last_seen": "2026-09-28T14:26:00.018656",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "49193a84bd82e212",
+      "r_phys": 1.0,
+      "iteration": 130,
+      "id": "persona_use:reviewer_iter130"
     }
   ],
   "links": [
@@ -2129,6 +2178,15 @@
     },
     {
       "relation": "member_of",
+      "source": "experiment:[DIM: structure] The solution space rigidity of the polynomial families is deter",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:26:00.018576",
+      "last_seen": "2026-09-28T14:26:00.018576",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8cf33bbc"
+    },
+    {
+      "relation": "member_of",
       "source": "Method:plan_explore_iter125",
       "confidence": 0.5,
       "created_at": "2026-09-28T14:24:58.785662",
@@ -2144,6 +2202,24 @@
       "last_seen": "2026-09-28T14:24:58.785662",
       "mentions": 1,
       "target": "he_experiment_pipeline_9ba28a90"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter130",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:26:00.018576",
+      "last_seen": "2026-09-28T14:26:00.018576",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8cf33bbc"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter130",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:26:00.018576",
+      "last_seen": "2026-09-28T14:26:00.018576",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8cf33bbc"
     }
   ]
 }
