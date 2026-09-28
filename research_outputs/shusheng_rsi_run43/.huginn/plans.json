@@ -784,6 +784,43 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_da095d3c",
+      "objective": "[DIM: structure] The rigid family consists of functions expressible as a linear combination of a fixed, finite set of basis functions (e.g., a low-dimensional polynomial or trigonometric subspace), such that the solution space dimension is bounded independently of the number of constraints $w$, leading to a finite $N_c(w)$ that remains flat or decreases as $w$ increases.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the rigid family (low-degree polynomial/trigonometric subspace) and fat family (high-degree random polynomial) in `family(kind, w, seed)` with proper normalization (y/yv std ≲10), ensure Xv/X non-overlap, and return (N,1) shaped arrays. This enables the capacity_scan to correctly evaluate N_c(w) trends for rigidity classification.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "family_function.py",
+            "(or",
+            "the",
+            "module",
+            "containing",
+            "family(kind",
+            "w",
+            "seed))"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-28T16:39:58.424175+00:00",
+      "confirmed_at": "2026-09-28T16:39:58.425779+00:00",
+      "completed_at": "2026-09-28T16:40:17.008521+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
