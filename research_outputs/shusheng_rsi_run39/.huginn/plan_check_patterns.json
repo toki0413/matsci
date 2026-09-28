@@ -1,0 +1,14 @@
+[
+  {
+    "scene_tag": "other",
+    "reason": "The plan lacks critical implementation details required to test the hypothesis. Specifically, it does not specify the functional form of the 'rigid' family (which must be a specific analytic form with few degrees of freedom) nor the exact 'fat' family (high-dimensional but learnable, not i.i.d. noise). Without these definitions, the experiment cannot be run or reproduced. Additionally, the plan mentions 'capacity_scan' but does not define how the minimum width $N_c$ is quantified or how the 'zero violation' condition is measured. This ambiguity makes the prediction unverified and the experimental setup incomplete.",
+    "missing_steps": [
+      "Define the explicit mathematical form of the rigid polynomial family (e.g., specific low-degree analytic function) to ensure it has a low-dimensional solution space.",
+      "Define the explicit mathematical form of the fat polynomial family (high-dimensional basis but learnable, not i.i.d. noise) to ensure it contrasts properly with the rigid family.",
+      "Specify the exact method for calculating the minimum network width $N_c$ and the 'zero violation' metric on held-out constraints.",
+      "Detail the capacity_scan procedure, including how training and hold-out errors are independently measured and how $N_c(w)$ is extracted."
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family` function for two polynomial families: a rigid polynomial family (low-dimensional solution space, e.g., a specific analytic form with few degrees of "
+  }
+]
