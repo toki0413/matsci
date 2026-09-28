@@ -2796,6 +2796,70 @@
       "r_phys": 1.0,
       "iteration": 230,
       "id": "persona_use:reviewer_iter230"
+    },
+    {
+      "label": "[DIM: Mathematical Structure] The rigid family corresponds to the unique minimiz",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T17:44:56.820535",
+      "last_seen": "2026-09-28T17:44:56.820535",
+      "mentions": 1,
+      "iteration": 235,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The rigid family will achieve zero violation (max abs error ≤ 1e-3) at small width h=2~4 with training error ≤1e-4, and N_c(w) will be flat or decreasing as w increases. The fat family will be unreach",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: Mathematical Structure] The rigid family corresponds to the unique minimiz"
+    },
+    {
+      "label": "plan_explore_iter235",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:44:56.820578",
+      "last_seen": "2026-09-28T17:44:56.820578",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter235"
+    },
+    {
+      "label": "pass_iter235",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:44:56.820588",
+      "last_seen": "2026-09-28T17:44:56.820588",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter235"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T17:44:56.820597",
+      "last_seen": "2026-09-28T17:44:56.820597",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: Mathematical Structure] The rigid family corresponds to the unique minimiz",
+        "Method:plan_explore_iter235",
+        "Fact:pass_iter235"
+      ],
+      "iteration": 235,
+      "id": "he_experiment_pipeline_4ad81c36"
+    },
+    {
+      "label": "reviewer_iter235",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T17:44:56.820673",
+      "last_seen": "2026-09-28T17:44:56.820673",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "27c076fd1b6dab41",
+      "r_phys": 1.0,
+      "iteration": 235,
+      "id": "persona_use:reviewer_iter235"
     }
   ],
   "links": [
@@ -4040,6 +4104,33 @@
       "last_seen": "2026-09-28T17:43:59.602559",
       "mentions": 1,
       "target": "he_experiment_pipeline_c36d5c5c"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: Mathematical Structure] The rigid family corresponds to the unique minimiz",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:44:56.820597",
+      "last_seen": "2026-09-28T17:44:56.820597",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4ad81c36"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter235",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:44:56.820597",
+      "last_seen": "2026-09-28T17:44:56.820597",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4ad81c36"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter235",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:44:56.820597",
+      "last_seen": "2026-09-28T17:44:56.820597",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4ad81c36"
     }
   ]
 }
