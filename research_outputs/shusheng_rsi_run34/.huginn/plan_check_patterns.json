@@ -1,0 +1,14 @@
+[
+  {
+    "scene_tag": "other",
+    "reason": "Plan uses MODE: explore but DESCRIPTION lacks executable code — it only describes intent to implement and run scans without providing actual Python script to compute N_c(w) or heldout error. Per known failure mode, this is a critical omission: previous iterations failed because plans lacked direct numerical execution. The plan must include concrete code (import, formula, print) to be validated.",
+    "missing_steps": [
+      "Provide executable Python code implementing linear family (f(x)=ax+b) and fat family",
+      "Define capacity scan metric N_c(w) and heldout error computation",
+      "Include actual numerical output or validation script to confirm zero violation at h≤8 for rigid family",
+      "Ensure normalization of target values is explicitly handled in code"
+    ],
+    "mode": "explore",
+    "description": "Implement the rigid family (linear functions f(x)=ax+b) and a high-dimensional fat family in the family function. Run capacity scans for both families across w values to validate that the rigid family"
+  }
+]
