@@ -59,5 +59,72 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the family(kind, w, seed) function for the rigid and fat families as specified in the hypothesis. For the rigid family, implement the linear ODE f'(x)=c (affine "
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan fundamentally misrepresents the 'fat family' as a high-dimensional polynomial function, directly contradicting the hypothesis which requires the fat family to arise from a nonlinear transport equation with stochastic initial conditions (infinite-dimensional solution space). This matches the documented 'same-scene historical failures' where polynomial bases failed to capture true infinite dimensionality and chaotic branching. Additionally, the plan uses a linear ODE for the rigid family but the hypothesis context appears to involve nonlinear transport equations, creating a mismatch in the core mathematical structure.",
+    "missing_steps": [
+      "Implement actual nonlinear transport equation (e.g., Burgers' equation) instead of generic functional constraints",
+      "Include stochastic initial condition sampling to capture chaotic solution branching",
+      "Use appropriate function spaces (e.g., Sobolev spaces) rather than finite-dimensional polynomial bases for fat family",
+      "Specify exact mathematical formulations matching hypothesis requirements for both rigid and fat families",
+      "Define concrete capacity_scan methodology aligned with infinite-dimensional solution space requirements"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function for the rigid and fat solution spaces, normalize y/yv to O(1) scale, run capacity_scan for w values ensuring the rigid family is determinable"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan misrepresents the 'fat family' as a high-degree polynomial constraint, directly contradicting the hypothesis which requires the fat family to arise from a nonlinear transport equation with stochastic initial conditions (infinite-dimensional solution space). This matches documented historical failures where polynomial bases failed to capture true infinite dimensionality. The plan also lacks specific implementation details for the nonlinear transport equation, stochastic sampling, and appropriate function spaces.",
+    "missing_steps": [
+      "Implement actual nonlinear transport equation (e.g., Burgers' equation) instead of generic functional constraints",
+      "Include stochastic sampling of initial conditions to capture chaotic solution branching",
+      "Use appropriate function spaces (e.g., Sobolev spaces) rather than finite-dimensional polynomial bases for fat family",
+      "Specify exact mathematical formulations for both rigid and fat families matching the hypothesis requirements",
+      "Define concrete capacity_scan methodology aligned with infinite-dimensional solution space requirements"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid family (linear ODE constraint $f'(x)=c$) and fat family (high-degree polynomial constraint), ensuring y/yv are normalized to "
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan fundamentally misrepresents the 'fat family' as a high-degree polynomial, directly contradicting the hypothesis which requires the fat family to arise from a nonlinear transport equation with stochastic initial conditions (infinite-dimensional solution space). This matches documented 'same-scene historical failures' where polynomial bases failed to capture true infinite dimensionality and chaotic branching. The plan also lacks specific implementation details for the nonlinear transport equation, stochastic sampling, and appropriate function spaces.",
+    "missing_steps": [
+      "Implement actual nonlinear transport equation (e.g., Burgers' equation) instead of generic functional constraints",
+      "Include stochastic sampling of initial conditions to capture chaotic solution branching",
+      "Use appropriate function spaces (e.g., Sobolev spaces) rather than finite-dimensional polynomial bases for fat family",
+      "Specify exact mathematical formulations for both rigid and fat families matching hypothesis requirements",
+      "Define concrete capacity_scan methodology aligned with infinite-dimensional solution space requirements"
+    ],
+    "mode": "explore",
+    "description": "Implement the `family` function for the rigid constraint family (linear ODE f'(x)=c, solution y = c*x + d) and the fat family (high-degree polynomial), ensuring y/yv are normalized to O(1) and Xv/X ar"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan fundamentally misrepresents the mathematical structure of both families. The hypothesis requires the 'fat family' to arise from a nonlinear transport equation (e.g., Burgers') with stochastic initial conditions (infinite-dimensional chaotic solution space), but the plan uses a finite-dimensional polynomial space (high-dimensional but not infinite/chaotic). This matches documented historical failures where polynomial bases failed to capture true infinite dimensionality. The rigid family is oversimplified as a generic linear ODE without specifying the specific boundary conditions and constraints that yield dimension 1. The plan also lacks concrete implementation details for the transport equation and stochastic sampling.",
+    "missing_steps": [
+      "Implement actual nonlinear transport equation (e.g., Burgers' equation) for the fat family",
+      "Include stochastic sampling of initial conditions to capture chaotic solution branching",
+      "Use appropriate function spaces (e.g., Sobolev spaces) rather than finite-dimensional polynomial bases for fat family",
+      "Specify exact mathematical formulations matching hypothesis requirements for both rigid and fat families",
+      "Define concrete capacity_scan methodology aligned with infinite-dimensional solution space requirements",
+      "Verify the rigid constraint family's solution space dimension symbolically before training"
+    ],
+    "mode": "explore",
+    "description": "Implement the rigid constraint family (linear ODE solution space) and fat family (high-dimensional polynomial space) as functions matching the required signature, ensuring y/yv are normalized to O(1) "
+  },
+  {
+    "scene_tag": "other",
+    "reason": "该plan与历史失败模式中的关键错误完全一致：将'fat family'错误地建模为有限维多项式空间（高维但非无限维），而假设要求fat family必须来源于非线性输运方程（如Burgers方程）与随机初值条件构成的无限维混沌解空间。同时rigid family未指定具体边界条件和约束导致维度不明确，且缺乏对解空间维度的符号验证。DESCRIPTION未包含实现非线性方程、随机采样、Sobolev空间等必要数学结构，无法支撑假设验证。",
+    "missing_steps": [
+      "明确rigid family的线性ODE具体形式（如y'' + y = 0）及边界条件，用symbolic_math_tool验证解空间维度为有限",
+      "实现fat family的非线性输运方程（如Burgers方程：u_t + u u_x = ν u_xx），而非多项式约束",
+      "对fat family引入随机初值条件采样，体现无限维混沌分支特性",
+      "使用Sobolev函数空间定义约束，而非有限维多项式基",
+      "在capacity_scan前验证rigid family约束矩阵的秩与解空间维度的一致性",
+      "避免使用与x无关的噪声或平凡函数（如x²/恒等），确保rigid与fat形成真正对立"
+    ],
+    "mode": "explore",
+    "description": "Implement the rigid and fat constraint families as Python functions, execute capacity_scan across widths h=2-64 with multiple seeds, and analyze N_c(w) trends to verify if the rigid family exhibits fl"
   }
 ]

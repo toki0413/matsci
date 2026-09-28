@@ -79,9 +79,9 @@
       "rigid",
       "label",
       "plan",
+      "linear",
       "prediction",
-      "function",
-      "linear"
+      "function"
     ],
     "workflow_steps": [
       {

@@ -322,6 +322,326 @@
       "r_phys": 1.0,
       "iteration": 25,
       "id": "persona_use:reviewer_iter25"
+    },
+    {
+      "label": "[DIM: composition] The rigid family corresponds to a linear ODE $f'(x) = c$ (aff",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:31:43.556797",
+      "last_seen": "2026-09-28T13:31:43.556797",
+      "mentions": 1,
+      "iteration": 30,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family, N_c(w) will be small (h=2~8) and flat/decreasing as w increases, with specific anchor points showing training error ≤1e-4 and validation error ≤1e-3. For the fat family, all widt",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: composition] The rigid family corresponds to a linear ODE $f'(x) = c$ (aff"
+    },
+    {
+      "label": "plan_explore_iter30",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:31:43.556835",
+      "last_seen": "2026-09-28T13:31:43.556835",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter30"
+    },
+    {
+      "label": "pass_iter30",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:31:43.556846",
+      "last_seen": "2026-09-28T13:31:43.556846",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter30"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T13:31:43.556854",
+      "last_seen": "2026-09-28T13:31:43.556854",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: composition] The rigid family corresponds to a linear ODE $f'(x) = c$ (aff",
+        "Method:plan_explore_iter30",
+        "Fact:pass_iter30"
+      ],
+      "iteration": 30,
+      "id": "he_experiment_pipeline_9df55194"
+    },
+    {
+      "label": "reviewer_iter30",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:31:43.556935",
+      "last_seen": "2026-09-28T13:31:43.556935",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "8409f871317fe7a5",
+      "r_phys": 1.0,
+      "iteration": 30,
+      "id": "persona_use:reviewer_iter30"
+    },
+    {
+      "label": "[DIM: structure] The \"rigid\" solution space corresponds to functions satisfying ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:32:22.324182",
+      "last_seen": "2026-09-28T13:32:22.324182",
+      "mentions": 1,
+      "iteration": 35,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Rigid family will show finite N_c (h≤8) with flat/decreasing trend as w increases, while fat family will show unreachable (N_c = ∞) across all h≤64. Held-out errors for rigid will be ≤1e-3 at anchor w",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The \"rigid\" solution space corresponds to functions satisfying"
+    },
+    {
+      "label": "plan_explore_iter35",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:32:22.324223",
+      "last_seen": "2026-09-28T13:32:22.324223",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter35"
+    },
+    {
+      "label": "pass_iter35",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:32:22.324232",
+      "last_seen": "2026-09-28T13:32:22.324232",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter35"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T13:32:22.324240",
+      "last_seen": "2026-09-28T13:32:22.324240",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The \"rigid\" solution space corresponds to functions satisfying",
+        "Method:plan_explore_iter35",
+        "Fact:pass_iter35"
+      ],
+      "iteration": 35,
+      "id": "he_experiment_pipeline_4631e7da"
+    },
+    {
+      "label": "reviewer_iter35",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:32:22.324321",
+      "last_seen": "2026-09-28T13:32:22.324321",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "d8840423f413b77d",
+      "r_phys": 1.0,
+      "iteration": 35,
+      "id": "persona_use:reviewer_iter35"
+    },
+    {
+      "label": "[DIM: structure] The rigid family corresponds to a linear ODE constraint $f'(x) ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:33:02.100716",
+      "last_seen": "2026-09-28T13:33:02.100716",
+      "mentions": 1,
+      "iteration": 40,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family, N_c(w) will be a small finite integer (e.g., h=2 or 4) that remains flat or decreases as w increases, with max validation error ≤1e-3 at the anchor width. For the fat family, N_c",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid family corresponds to a linear ODE constraint $f'(x)"
+    },
+    {
+      "label": "plan_explore_iter40",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:33:02.100757",
+      "last_seen": "2026-09-28T13:33:02.100757",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter40"
+    },
+    {
+      "label": "pass_iter40",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:33:02.100765",
+      "last_seen": "2026-09-28T13:33:02.100765",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter40"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T13:33:02.100774",
+      "last_seen": "2026-09-28T13:33:02.100774",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid family corresponds to a linear ODE constraint $f'(x)",
+        "Method:plan_explore_iter40",
+        "Fact:pass_iter40"
+      ],
+      "iteration": 40,
+      "id": "he_experiment_pipeline_4a02775f"
+    },
+    {
+      "label": "reviewer_iter40",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:33:02.100853",
+      "last_seen": "2026-09-28T13:33:02.100853",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "54ab3f97079dc976",
+      "r_phys": 1.0,
+      "iteration": 40,
+      "id": "persona_use:reviewer_iter40"
+    },
+    {
+      "label": "[DIM: structure] The rigid constraint family corresponds to a linear ODE solutio",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:33:38.421321",
+      "last_seen": "2026-09-28T13:33:38.421321",
+      "mentions": 1,
+      "iteration": 45,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Rigid family will achieve ≤1e-3 validation error at width h=2~4 for all w, with N_c(w) flat or decreasing; fat family will have validation error >1e-3 at all widths up to h=64, marked as 'unreachable'",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid constraint family corresponds to a linear ODE solutio"
+    },
+    {
+      "label": "plan_explore_iter45",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:33:38.421361",
+      "last_seen": "2026-09-28T13:33:38.421361",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter45"
+    },
+    {
+      "label": "pass_iter45",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:33:38.421371",
+      "last_seen": "2026-09-28T13:33:38.421371",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter45"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T13:33:38.421384",
+      "last_seen": "2026-09-28T13:33:38.421384",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid constraint family corresponds to a linear ODE solutio",
+        "Method:plan_explore_iter45",
+        "Fact:pass_iter45"
+      ],
+      "iteration": 45,
+      "id": "he_experiment_pipeline_ed04ac84"
+    },
+    {
+      "label": "reviewer_iter45",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:33:38.421469",
+      "last_seen": "2026-09-28T13:33:38.421469",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "0b1f795e7d83bcae",
+      "r_phys": 1.0,
+      "iteration": 45,
+      "id": "persona_use:reviewer_iter45"
+    },
+    {
+      "label": "** [DIM: structure] **Hypothesis:** The solution space of the \"rigid\" constraint",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:34:34.503087",
+      "last_seen": "2026-09-28T13:34:34.503087",
+      "mentions": 1,
+      "iteration": 50,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Rigid family will achieve validation error ≤1e-3 at width h=2~4 (e.g., h=2 with train_err ~1e-5 and val_err ~5e-4), N_c(w) will be flat (~2) across w=5,10,20; fat family will have val_err >1e-3 at all",
+      "persona": "reviewer",
+      "id": "experiment:** [DIM: structure] **Hypothesis:** The solution space of the \"rigid\" constraint"
+    },
+    {
+      "label": "plan_explore_iter50",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:34:34.503127",
+      "last_seen": "2026-09-28T13:34:34.503127",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter50"
+    },
+    {
+      "label": "pass_iter50",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:34:34.503135",
+      "last_seen": "2026-09-28T13:34:34.503135",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter50"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T13:34:34.503144",
+      "last_seen": "2026-09-28T13:34:34.503144",
+      "mentions": 1,
+      "members": [
+        "experiment:** [DIM: structure] **Hypothesis:** The solution space of the \"rigid\" constraint",
+        "Method:plan_explore_iter50",
+        "Fact:pass_iter50"
+      ],
+      "iteration": 50,
+      "id": "he_experiment_pipeline_bc25025e"
+    },
+    {
+      "label": "reviewer_iter50",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:34:34.503227",
+      "last_seen": "2026-09-28T13:34:34.503227",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "89932392f47d8bf4",
+      "r_phys": 1.0,
+      "iteration": 50,
+      "id": "persona_use:reviewer_iter50"
     }
   ],
   "links": [
@@ -459,6 +779,141 @@
       "last_seen": "2026-09-28T13:30:40.117568",
       "mentions": 1,
       "target": "he_experiment_pipeline_36b30741"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: composition] The rigid family corresponds to a linear ODE $f'(x) = c$ (aff",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:31:43.556854",
+      "last_seen": "2026-09-28T13:31:43.556854",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_9df55194"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter30",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:31:43.556854",
+      "last_seen": "2026-09-28T13:31:43.556854",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_9df55194"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter30",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:31:43.556854",
+      "last_seen": "2026-09-28T13:31:43.556854",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_9df55194"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The \"rigid\" solution space corresponds to functions satisfying",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:32:22.324240",
+      "last_seen": "2026-09-28T13:32:22.324240",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4631e7da"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter35",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:32:22.324240",
+      "last_seen": "2026-09-28T13:32:22.324240",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4631e7da"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter35",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:32:22.324240",
+      "last_seen": "2026-09-28T13:32:22.324240",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4631e7da"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid family corresponds to a linear ODE constraint $f'(x)",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:33:02.100774",
+      "last_seen": "2026-09-28T13:33:02.100774",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4a02775f"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter40",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:33:02.100774",
+      "last_seen": "2026-09-28T13:33:02.100774",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4a02775f"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter40",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:33:02.100774",
+      "last_seen": "2026-09-28T13:33:02.100774",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4a02775f"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid constraint family corresponds to a linear ODE solutio",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:33:38.421384",
+      "last_seen": "2026-09-28T13:33:38.421384",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ed04ac84"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter45",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:33:38.421384",
+      "last_seen": "2026-09-28T13:33:38.421384",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ed04ac84"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter45",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:33:38.421384",
+      "last_seen": "2026-09-28T13:33:38.421384",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ed04ac84"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:** [DIM: structure] **Hypothesis:** The solution space of the \"rigid\" constraint",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:34:34.503144",
+      "last_seen": "2026-09-28T13:34:34.503144",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_bc25025e"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter50",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:34:34.503144",
+      "last_seen": "2026-09-28T13:34:34.503144",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_bc25025e"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter50",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:34:34.503144",
+      "last_seen": "2026-09-28T13:34:34.503144",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_bc25025e"
     }
   ]
 }
