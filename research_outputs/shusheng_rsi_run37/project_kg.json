@@ -2032,6 +2032,70 @@
       "r_phys": 1.0,
       "iteration": 175,
       "id": "persona_use:reviewer_iter175"
+    },
+    {
+      "label": "** **[DIM: structure (implementation topology)]**",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:37:44.041471",
+      "last_seen": "2026-09-28T14:37:44.041471",
+      "mentions": 1,
+      "iteration": 180,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family with w=10, h=4, seed=0, I expect train_err ~1e-5 and val_err ~5e-4 (within 1e-3 threshold). For the fat family with w=10, all h≤64 will yield val_err > 1e-3 with trend='unreachabl",
+      "persona": "reviewer",
+      "id": "experiment:** **[DIM: structure (implementation topology)]**"
+    },
+    {
+      "label": "plan_explore_iter180",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:37:44.041508",
+      "last_seen": "2026-09-28T14:37:44.041508",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter180"
+    },
+    {
+      "label": "pass_iter180",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:37:44.041519",
+      "last_seen": "2026-09-28T14:37:44.041519",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter180"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T14:37:44.041529",
+      "last_seen": "2026-09-28T14:37:44.041529",
+      "mentions": 1,
+      "members": [
+        "experiment:** **[DIM: structure (implementation topology)]**",
+        "Method:plan_explore_iter180",
+        "Fact:pass_iter180"
+      ],
+      "iteration": 180,
+      "id": "he_experiment_pipeline_dd38571a"
+    },
+    {
+      "label": "reviewer_iter180",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:37:44.041610",
+      "last_seen": "2026-09-28T14:37:44.041610",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "dc98c648392d19ba",
+      "r_phys": 1.0,
+      "iteration": 180,
+      "id": "persona_use:reviewer_iter180"
     }
   ],
   "links": [
@@ -2979,6 +3043,33 @@
       "last_seen": "2026-09-28T14:36:41.313071",
       "mentions": 1,
       "target": "he_experiment_pipeline_27126400"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:** **[DIM: structure (implementation topology)]**",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:37:44.041529",
+      "last_seen": "2026-09-28T14:37:44.041529",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_dd38571a"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter180",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:37:44.041529",
+      "last_seen": "2026-09-28T14:37:44.041529",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_dd38571a"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter180",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:37:44.041529",
+      "last_seen": "2026-09-28T14:37:44.041529",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_dd38571a"
     }
   ]
 }
