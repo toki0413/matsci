@@ -219,5 +219,18 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement `rigid_polynomial_family` as a finite-dimensional linear subspace (basis functions of degree d ≤ w, output dimension N = d+1, w=8) and `fat_polynomial_family` as"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan is fundamentally flawed due to a critical MODE mismatch (labeled 'explore' but describes code implementation requiring 'coder' mode). Additionally, the DESCRIPTION lacks the explicit mathematical definition of the relationship between output dimension N and network width w, which is essential for computing N_c(w). It also fails to specify the fat polynomial family as a non-noise high-dimensional function of x (risking the degeneracy to noise failure from run28) and omits capacity_scan configuration details with clear termination criteria for 'zero violation' and scaling discipline to prevent magnitude issues (run29 failure).",
+    "missing_steps": [
+      "Change MODE from 'explore' to 'coder' since this is a code implementation task",
+      "Define explicit mathematical relationship between output dimension N (number of constraints) and network width w, which is essential for computing N_c(w)",
+      "Specify fat polynomial family f(x) as a function of x with high dimensionality >> w (not noise) to avoid degeneracy to noise (run28 failure)",
+      "Implement capacity_scan tool configuration with training/hold-out error metrics to compute N_c(w) with clear termination criteria for 'zero violation'",
+      "Implement scaling discipline to constrain polynomial outputs to O(1) magnitude to prevent magnitude issues (run29 failure)"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the rigid polynomial constraint family and the fat polynomial family as functions returning (X, y, Xv, yv) with (N,1) shapes, O(1) normalized outputs, and non-ov"
   }
 ]
