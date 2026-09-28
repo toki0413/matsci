@@ -695,6 +695,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_26dbeb8c",
+      "objective": "** [DIM: defect] The generalization failure in \"fat\" families is caused by topological defects (local minima or saddle points) in the loss landscape that become more frequent as the constraint count $w$ increases, effectively trapping the optimizer (L-BFGS-B) before reaching the zero-violation solution, rather than an inherent inability of the network capacity to represent the solution.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement rigorous capacity_scan experiment with explicit mathematical specifications: (1) Define polynomial families with controlled dimensionality — rigid family: f(x) = a0 + a1 x + a2 x^2 (3 params), fat family: f(x) = sum_{i=1}^{M} c_i * basis_i(x) where M >> w (e.g., M=100, w≤20) with orthonormal basis to prevent noise degeneracy; (2) Establish N-w relationship: N = w constraints for capacity_scan; (3) Apply scaling discipline: normalize polynomial outputs to O(1) via f_scaled(x) = f(x) / max(|f(x)|) or affine scaling to [-1,1]; (4) Configure capacity_scan with training/hold-out error metrics, termination at zero violation (constraint violation < 1e-6), and record N_c(w) as critical capacity; (5) Use L-BFGS-B optimizer with proper bounds and monitoring for topological defects (saddle points/local minima). Expected result: N_c(w) should scale linearly with w for rigid family and super-linearly for fat family, with violation landscape showing clear topographical barriers at high w.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "executing",
+      "auto_confirm": false,
+      "created_at": "2026-09-28T14:23:17.604832+00:00",
+      "confirmed_at": "2026-09-28T14:23:17.606427+00:00",
+      "completed_at": null,
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
