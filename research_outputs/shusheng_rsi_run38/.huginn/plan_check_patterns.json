@@ -23,5 +23,18 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the rigid polynomial family function in `family.py` that returns low-dimensional polynomial constraints with normalized outputs (std ≲ 10), ensuring the solution"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan focuses on implementing polynomial families and a capacity scan (N_c(w)) but fundamentally fails to address the core hypothesis about the 'rigid polynomial family' as a low-dimensional algebraic manifold. Specifically, it omits the required spectral analysis (Hessian eigenvalue gap) and algebraic structure verification (ideal generators, dimension bounds) which are explicitly mandated by the hypothesis and identified as critical missing steps in the historical failure patterns. The PREDICTION about N_c(w) trends is tangential to the main claim and does not validate the manifold dimension property.",
+    "missing_steps": [
+      "Define explicit algebraic structure of rigid polynomial family (polynomial constraints, ideal generators)",
+      "Implement spectral analysis of loss landscape/Hessian to measure eigenvalue distribution and gap",
+      "Specify concrete criteria for fat family being x-dependent and high-dimensional (avoid i.i.d. noise)",
+      "Include metrics for solution space dimension independence from network width",
+      "Define validation methodology for low-dimensional manifold structure in function space"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function for the rigid polynomial family (≤5 terms) and fat polynomial family (20 random terms) as required by the capacity_scan protocol. Ensure outp"
   }
 ]
