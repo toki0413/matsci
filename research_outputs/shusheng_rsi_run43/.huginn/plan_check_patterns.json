@@ -222,5 +222,18 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid family (linear combination of fixed basis functions) and fat family (high-dimensional random polynomial) to enable the capaci"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan fundamentally misaligns with the hypothesis. The hypothesis defines 'rigid' and 'fat' families in the context of PDE-based mathematical structures (linear transport vs nonlinear hyperbolic PDEs with time-dependent characteristics), but the plan proposes generic ML function families (polynomials) without any PDE definitions, characteristic curve tracing, or spectral analysis. This repeats documented failure modes from run28 and run29 where analysis was reduced to generic ML generalization rather than structural verification. The plan lacks the necessary mathematical structure to verify the PDE-based distinction between rigid and fat families.",
+    "missing_steps": [
+      "Define specific first-order linear transport PDE for rigid family (e.g., ∂_t u + v·∇u = 0 with fixed velocity field)",
+      "Define specific nonlinear hyperbolic PDE for fat family (e.g., Burgers' equation with time-dependent characteristics)",
+      "Implement characteristic curve tracing for both families to verify fixed vs. time-dependent characteristics",
+      "Test for solution non-uniqueness in fat family (check Jacobian singularities or multiple solutions)",
+      "Add spectral analysis or direct PDE residual verification to confirm mathematical structure of both families"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function to generate training/holdout data for rigid (degree-ℓ polynomials) and fat (random high-degree polynomials) families, ensuring y/yv are norma"
   }
 ]
