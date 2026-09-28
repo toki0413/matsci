@@ -419,3 +419,9 @@ plan_check failed low-conf (tier=light, scene=workflow, conf=0.10): The plan has
 [exec-route] mode='explore' desc[:80]='[auto-routed: surprise=1.00] Define two explicit polynomial families: (1) Rigid ' obj_len=2462 is_exp_desc=True is_exp_obj=True is_det_desc=False
 [code-lab-author] raw_len=1062 extracted_len=1047 prompt_len=5379
 [code-lab-run] res_none=False success=True nobj=36 reason=''
+[validate] mode='code_lab' success=True nobj=36 cf=False lab=True
+metacog: 假设可能为换名归约 (trap=, target=刚性族与胖族的定义（刚性=有限小N_c，胖=unreachable）): [DIM: structure] The solution space rigidity of the polynomial families is determined by the algebra
+plan_check failed low-conf (tier=light, scene=other, conf=0.00): The plan is critically invalid due to a fundamental MODE mismatch. It is labeled as 'explore' but explicitly describes code implementation tasks (implementing functions, configuring tools, running scans) which strictly requires 'coder' mode per system instructions. Additionally, the plan lacks critical mathematical definitions including the explicit relationship between output dimension N and network width w, proper specification of the fat polynomial family (must be x-dependent high-dimensional function, not noise), capacity_scan configuration details, and scaling discipline to prevent magnitude issues. These are exactly the documented historical failure patterns from the scene history that have been repeated.
+[exec-route] mode='explore' desc[:80]='[auto-routed: surprise=1.00] Implement the two polynomial families (rigid: low-d' obj_len=2462 is_exp_desc=True is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=940 extracted_len=925 prompt_len=5379
+[code-lab-run] res_none=False success=True nobj=36 reason=''

@@ -532,5 +532,18 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Define two explicit polynomial families: (1) Rigid family: P(x) = sum_{k=0}^{min(5,d)} a_k x^k with w constraint points where N ≥ w+1, ensuring N_c finite; (2) Fat family:"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan is critically invalid due to a fundamental MODE mismatch. It is labeled as 'explore' but explicitly describes code implementation tasks (implementing functions, configuring tools, running scans) which strictly requires 'coder' mode per system instructions. Additionally, the plan lacks critical mathematical definitions including the explicit relationship between output dimension N and network width w, proper specification of the fat polynomial family (must be x-dependent high-dimensional function, not noise), capacity_scan configuration details, and scaling discipline to prevent magnitude issues. These are exactly the documented historical failure patterns from the scene history that have been repeated.",
+    "missing_steps": [
+      "Change MODE from 'explore' to 'coder' since this is a code implementation task",
+      "Define explicit mathematical relationship between output dimension N (number of constraints) and network width w",
+      "Specify fat polynomial family f(x) as a function of x with high dimensionality >> w (not noise) to avoid degeneracy to noise",
+      "Implement capacity_scan tool configuration with training/hold-out error metrics to compute N_c(w) with clear termination criteria for 'zero violation'",
+      "Implement scaling discipline to constrain polynomial outputs to O(1) magnitude to prevent magnitude issues"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the two polynomial families (rigid: low-degree constrained; fat: high-degree random) with proper O(1) normalization, ensuring X/y/Xv/yv are (N,1) shaped and held"
   }
 ]
