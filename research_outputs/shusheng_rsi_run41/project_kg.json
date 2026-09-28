@@ -1,0 +1,100 @@
+{
+  "directed": true,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "label": "<DIM: Composition/Function Class> | **Rationale:** This is the most testable and",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T15:35:36.200183",
+      "last_seen": "2026-09-28T15:35:36.200183",
+      "mentions": 1,
+      "iteration": 5,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family (f(x)=ax+b), N_c should be finite (e.g., h=2-4) with validation error ≤1e-3 across w=10,20,30 and multiple seeds. For the fat family (high-degree polynomial), all widths up to h=6",
+      "persona": "reviewer",
+      "id": "experiment:<DIM: Composition/Function Class> | **Rationale:** This is the most testable and"
+    },
+    {
+      "label": "plan_coder_iter5",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:35:36.200228",
+      "last_seen": "2026-09-28T15:35:36.200228",
+      "mentions": 1,
+      "id": "Method:plan_coder_iter5"
+    },
+    {
+      "label": "pass_iter5",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:35:36.200242",
+      "last_seen": "2026-09-28T15:35:36.200242",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter5"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T15:35:36.200253",
+      "last_seen": "2026-09-28T15:35:36.200253",
+      "mentions": 1,
+      "members": [
+        "experiment:<DIM: Composition/Function Class> | **Rationale:** This is the most testable and",
+        "Method:plan_coder_iter5",
+        "Fact:pass_iter5"
+      ],
+      "iteration": 5,
+      "id": "he_experiment_pipeline_162041bd"
+    },
+    {
+      "label": "reviewer_iter5",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T15:35:36.200382",
+      "last_seen": "2026-09-28T15:35:36.200382",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "04bd22fe74a0f33b",
+      "r_phys": 1.0,
+      "iteration": 5,
+      "id": "persona_use:reviewer_iter5"
+    }
+  ],
+  "links": [
+    {
+      "relation": "member_of",
+      "source": "experiment:<DIM: Composition/Function Class> | **Rationale:** This is the most testable and",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:35:36.200253",
+      "last_seen": "2026-09-28T15:35:36.200253",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_162041bd"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_coder_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:35:36.200253",
+      "last_seen": "2026-09-28T15:35:36.200253",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_162041bd"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:35:36.200253",
+      "last_seen": "2026-09-28T15:35:36.200253",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_162041bd"
+    }
+  ]
+}
