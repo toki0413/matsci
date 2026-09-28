@@ -125,6 +125,37 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_230ed0a0",
+      "objective": "[DIM: transport] The generalization error of small two-layer networks on constrained polynomial approximation follows a diffusion-like process in width-space, where the critical width $N_c$ emerges as a percolation threshold for information flow across the hidden layer. | This hypothesis is most testable: error vs. width can be fit to a diffusion model, and the \"percolation threshold\" concept is falsifiable via monotonicity checks. It is novel because it reframes the problem in terms of transport rather than static capacity, offering a new perspective on why $N_c$ behaves differently for rigid vs. fat families. The other hypotheses are more speculative (structure) or less directly linked to the observed data (defect).",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Execute the capacity scan for rigid (linear f(x)=x) and fat (polynomial (2x-1)^19, normalized) families across w=[10,20,50,100] and width h=2..64 with 3 seeds. Ensure y/yv are normalized to O(1) by dividing by std, verify Xv and X do not overlap, and output training error, validation error, and N_c(w). Validate that rigid family achieves zero violation (max abs error ≤1e-3) at small h (≤8) with flat/decreasing N_c trend, while fat family remains unreachable at h=64. Use symbolic_math_tool to confirm polynomial basis normalization and spectral properties before running.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "family.py",
+            "run.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-28T15:20:07.473763+00:00",
+      "confirmed_at": "2026-09-28T15:20:07.475053+00:00",
+      "completed_at": "2026-09-28T15:20:27.348745+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

@@ -179,6 +179,70 @@
       "r_phys": 1.0,
       "iteration": 15,
       "id": "persona_use:reviewer_iter15"
+    },
+    {
+      "label": "[DIM: structure] The rigid polynomial family (linear f(x)=x) admits a finite cri",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T15:19:40.970020",
+      "last_seen": "2026-09-28T15:19:40.970020",
+      "mentions": 1,
+      "iteration": 20,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The rigid family will achieve zero violation (max abs error ≤ 1e-3) at small widths (N_c ≈ 2-8) with flat N_c(w) trend across w=[10,20,50,100], while the fat family will remain unreachable (error > 1e",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid polynomial family (linear f(x)=x) admits a finite cri"
+    },
+    {
+      "label": "plan_explore_iter20",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:19:40.970057",
+      "last_seen": "2026-09-28T15:19:40.970057",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter20"
+    },
+    {
+      "label": "pass_iter20",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:19:40.970066",
+      "last_seen": "2026-09-28T15:19:40.970066",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter20"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T15:19:40.970074",
+      "last_seen": "2026-09-28T15:19:40.970074",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid polynomial family (linear f(x)=x) admits a finite cri",
+        "Method:plan_explore_iter20",
+        "Fact:pass_iter20"
+      ],
+      "iteration": 20,
+      "id": "he_experiment_pipeline_7a30722"
+    },
+    {
+      "label": "reviewer_iter20",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T15:19:40.970160",
+      "last_seen": "2026-09-28T15:19:40.970160",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "fc0e26521ada02e5",
+      "r_phys": 1.0,
+      "iteration": 20,
+      "id": "persona_use:reviewer_iter20"
     }
   ],
   "links": [
@@ -262,6 +326,33 @@
       "last_seen": "2026-09-28T15:18:41.477648",
       "mentions": 1,
       "target": "he_experiment_pipeline_866205ed"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid polynomial family (linear f(x)=x) admits a finite cri",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:19:40.970074",
+      "last_seen": "2026-09-28T15:19:40.970074",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_7a30722"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:19:40.970074",
+      "last_seen": "2026-09-28T15:19:40.970074",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_7a30722"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:19:40.970074",
+      "last_seen": "2026-09-28T15:19:40.970074",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_7a30722"
     }
   ]
 }
