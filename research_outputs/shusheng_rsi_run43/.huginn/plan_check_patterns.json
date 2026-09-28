@@ -192,5 +192,20 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the `family` function for two function families: (1) Rigid family: low-dimensional linear subspace (e.g., fixed basis expansion with dimension independent of con"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "Plan fails to align with the hypothesis's core mathematical structure (PDE-based transport invariance). It proposes generic ML capacity_scan on arbitrary function families instead of defining specific linear transport PDE for rigid family and nonlinear hyperbolic PDE for fat family. This repeats documented failure modes (run28, run29) where analysis was reduced to generic ML generalization rather than structural verification. The plan lacks characteristic curve tracing, solution non-uniqueness testing, and spectral analysis required to validate the PDE-based distinction between rigid and fat families.",
+    "missing_steps": [
+      "Define specific first-order linear transport PDE for rigid family (e.g., ∂_t u + v·∇u = 0 with fixed velocity field)",
+      "Define specific nonlinear hyperbolic PDE for fat family (e.g., Burgers' equation with time-dependent characteristics)",
+      "Implement characteristic curve tracing to verify fixed vs. time-dependent characteristics between families",
+      "Test for solution non-uniqueness in fat family (check Jacobian singularities or multiple solutions for same boundary conditions)",
+      "Add spectral analysis or direct PDE residual verification to confirm mathematical structure of both families",
+      "Ensure fat family is explicitly x-dependent and defined by nonlinear PDE, not random high-dimensional polynomials",
+      "Verify characteristic points w along trajectories for rigid family uniqueness"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family` function to generate training and held-out constraint points for the rigid family (linear advection solution) and fat family (violating transport in"
   }
 ]

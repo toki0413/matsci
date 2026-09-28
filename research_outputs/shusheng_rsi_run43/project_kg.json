@@ -1502,6 +1502,70 @@
       "r_phys": 1.0,
       "iteration": 80,
       "id": "persona_use:reviewer_iter80"
+    },
+    {
+      "label": "[DIM: Structure] The rigid family corresponds to functions lying in a low-dimens",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T16:32:29.357762",
+      "last_seen": "2026-09-28T16:32:29.357762",
+      "mentions": 1,
+      "iteration": 85,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family, N_c(w) will be a small finite value (e.g., h=2~8) that remains flat or decreases as w increases, satisfying holdout_err ≤1e-3 and train_err ≤1e-4. For the fat family, N_c(w) will",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: Structure] The rigid family corresponds to functions lying in a low-dimens"
+    },
+    {
+      "label": "plan_explore_iter85",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:32:29.357800",
+      "last_seen": "2026-09-28T16:32:29.357800",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter85"
+    },
+    {
+      "label": "pass_iter85",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:32:29.357809",
+      "last_seen": "2026-09-28T16:32:29.357809",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter85"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T16:32:29.357818",
+      "last_seen": "2026-09-28T16:32:29.357818",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: Structure] The rigid family corresponds to functions lying in a low-dimens",
+        "Method:plan_explore_iter85",
+        "Fact:pass_iter85"
+      ],
+      "iteration": 85,
+      "id": "he_experiment_pipeline_cee8eb0c"
+    },
+    {
+      "label": "reviewer_iter85",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T16:32:29.357916",
+      "last_seen": "2026-09-28T16:32:29.357916",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "afba8b2fac4bbac3",
+      "r_phys": 1.0,
+      "iteration": 85,
+      "id": "persona_use:reviewer_iter85"
     }
   ],
   "links": [
@@ -2449,6 +2513,33 @@
       "last_seen": "2026-09-28T16:31:09.995400",
       "mentions": 1,
       "target": "he_experiment_pipeline_4397e3e9"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: Structure] The rigid family corresponds to functions lying in a low-dimens",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:32:29.357818",
+      "last_seen": "2026-09-28T16:32:29.357818",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_cee8eb0c"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter85",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:32:29.357818",
+      "last_seen": "2026-09-28T16:32:29.357818",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_cee8eb0c"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter85",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:32:29.357818",
+      "last_seen": "2026-09-28T16:32:29.357818",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_cee8eb0c"
     }
   ]
 }
