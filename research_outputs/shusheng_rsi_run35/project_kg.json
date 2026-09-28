@@ -130,6 +130,70 @@
       "r_phys": 1.0,
       "iteration": 10,
       "id": "persona_use:reviewer_iter10"
+    },
+    {
+      "label": "[DIM: structure/geometric] The generalization failure of the \"fat\" family is not",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:09:18.914459",
+      "last_seen": "2026-09-28T13:09:18.914459",
+      "mentions": 1,
+      "iteration": 15,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The rigid family will achieve zero violation (heldout_err ≤ 1e-3) at small widths (h ≤ 8) with flat N_c(w) trend; the fat family will show heldout_err > 1e-3 even at h=64 with trend='unreachable'. Anc",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure/geometric] The generalization failure of the \"fat\" family is not"
+    },
+    {
+      "label": "plan_explore_iter15",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:09:18.914501",
+      "last_seen": "2026-09-28T13:09:18.914501",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter15"
+    },
+    {
+      "label": "pass_iter15",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:09:18.914512",
+      "last_seen": "2026-09-28T13:09:18.914512",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter15"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T13:09:18.914521",
+      "last_seen": "2026-09-28T13:09:18.914521",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure/geometric] The generalization failure of the \"fat\" family is not",
+        "Method:plan_explore_iter15",
+        "Fact:pass_iter15"
+      ],
+      "iteration": 15,
+      "id": "he_experiment_pipeline_6e8c7cb6"
+    },
+    {
+      "label": "reviewer_iter15",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:09:18.914604",
+      "last_seen": "2026-09-28T13:09:18.914604",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "2e80fa1ca8731491",
+      "r_phys": 1.0,
+      "iteration": 15,
+      "id": "persona_use:reviewer_iter15"
     }
   ],
   "links": [
@@ -186,6 +250,33 @@
       "last_seen": "2026-09-28T13:08:16.818401",
       "mentions": 1,
       "target": "he_experiment_pipeline_8290ff57"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure/geometric] The generalization failure of the \"fat\" family is not",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:09:18.914521",
+      "last_seen": "2026-09-28T13:09:18.914521",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_6e8c7cb6"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:09:18.914521",
+      "last_seen": "2026-09-28T13:09:18.914521",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_6e8c7cb6"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:09:18.914521",
+      "last_seen": "2026-09-28T13:09:18.914521",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_6e8c7cb6"
     }
   ]
 }
