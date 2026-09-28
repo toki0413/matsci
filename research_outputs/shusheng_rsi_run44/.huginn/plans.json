@@ -600,6 +600,38 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_03603a1a",
+      "objective": "[DIM: Function Space Geometry] The rigid family's solvability arises from its intrinsic low-dimensional linear span (e.g., fixed trigonometric basis), making it learnable with minimal capacity (N_c finite and flat in w). | pro: Directly addresses the core \"rigid vs. fat\" definition; aligns with iteration 100's surprise=1.0 and run44's successful w=5 anchor point. con: Requires explicit basis construction; if the basis is ill-chosen (e.g., cos(πx) with w=5), it becomes underdetermined. |",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the rigid family (fixed trigonometric basis) and fat family (random polynomial basis) with proper data normalization (std ≲ 1) to ensure the 1e-3 zero-violation criterion is meaningful. Ensure X/Xv shapes are (N,1) and held-out points are non-overlapping. This addresses the past failure where large dynamic ranges made the error threshold impossible to satisfy. The family function will return the required dictionary for the existing capacity_scan pipeline.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "/workspace/research_outputs/shusheng_rsi_run44/.huginn/hypothesis_graph_loop_98429ea6.json",
+            "(family",
+            "implementation)"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-28T17:15:07.498389+00:00",
+      "confirmed_at": "2026-09-28T17:15:07.500135+00:00",
+      "completed_at": "2026-09-28T17:15:26.545353+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
