@@ -11,5 +11,16 @@
     ],
     "mode": "skill",
     "description": "Implement the family function for two constraint families (rigid linear PDE and fat random polynomial), perform capacity scans with width h=2..64 across multiple seeds, verify the rigid anchor at low "
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan proposes to use a high-dimensional polynomial basis (e.g., Chebyshev) to approximate the solution of the nonlinear transport equation. However, the hypothesis specifically states that the fat constraint family arises from the nonlinear transport equation with stochastic initial conditions, producing an infinite-dimensional solution space. Using a polynomial basis approximation may not capture the infinite-dimensional nature and chaotic solution branching as described in the hypothesis. Additionally, the plan does not address the stochastic initial conditions which are crucial for the chaotic behavior.",
+    "missing_steps": [
+      "Implement the nonlinear transport equation with stochastic initial conditions directly rather than using a polynomial basis approximation",
+      "Ensure the solution space is truly infinite-dimensional by using appropriate function spaces (e.g., Sobolev spaces) rather than finite-dimensional polynomial bases",
+      "Include stochastic sampling of initial conditions to capture the chaotic solution branching"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family` function for the two constraint families (rigid and fat) as specified by the hypothesis. The rigid family should be affine functions $f(x) = ax+b$ ("
   }
 ]
