@@ -2279,6 +2279,21 @@ class HypothesisLoop:
                     verdict.reduction_target,
                     hypothesis[:100],
                 )
+                # 连续换名归约计数: advisory 不阻断当前假设, 但连续 N 轮都是同一
+                # 命题的换名改写 = 方法层停滞 → 复用已有反例搜索 (设 _force_imaginate
+                # + 注入 counterexample hint) 逼下一轮换方向. 此前该 verdict 只写进
+                # _metacog_last_audit 而无人消费, 长程跑必然退化成原地重述.
+                _rename_streak = getattr(self, "_rename_streak", 0) + 1
+                self._rename_streak = _rename_streak
+                if _rename_streak >= 3:
+                    logger.info(
+                        "renamed-reduction %d× consecutive: trigger counterexample hunt",
+                        _rename_streak,
+                    )
+                    self._rename_streak = 0
+                    self._trigger_counterexample_hunt()
+            else:
+                self._rename_streak = 0
 
             # 收敛度监控: 某族过热时记日志
             redirect = registry.suggest_redirect()
