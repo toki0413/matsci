@@ -2924,6 +2924,70 @@
       "r_phys": 1.0,
       "iteration": 240,
       "id": "persona_use:reviewer_iter240"
+    },
+    {
+      "label": "[DIM: Optimization Landscape]",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T17:46:55.442197",
+      "last_seen": "2026-09-28T17:46:55.442197",
+      "mentions": 1,
+      "iteration": 245,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The rigid family (linear span of low-degree polynomials/trigonometric functions) will achieve zero violation at small width (h≤8) with training error ≤1e-4 and heldout error ≤1e-3. The fat family (non",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: Optimization Landscape]"
+    },
+    {
+      "label": "plan_explore_iter245",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:46:55.442239",
+      "last_seen": "2026-09-28T17:46:55.442239",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter245"
+    },
+    {
+      "label": "pass_iter245",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:46:55.442249",
+      "last_seen": "2026-09-28T17:46:55.442249",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter245"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T17:46:55.442258",
+      "last_seen": "2026-09-28T17:46:55.442258",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: Optimization Landscape]",
+        "Method:plan_explore_iter245",
+        "Fact:pass_iter245"
+      ],
+      "iteration": 245,
+      "id": "he_experiment_pipeline_4d644d90"
+    },
+    {
+      "label": "reviewer_iter245",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T17:46:55.442335",
+      "last_seen": "2026-09-28T17:46:55.442335",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "a9b9739e6d6f76c1",
+      "r_phys": 1.0,
+      "iteration": 245,
+      "id": "persona_use:reviewer_iter245"
     }
   ],
   "links": [
@@ -4222,6 +4286,33 @@
       "last_seen": "2026-09-28T17:45:56.503882",
       "mentions": 1,
       "target": "he_experiment_pipeline_dda49ca5"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: Optimization Landscape]",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:46:55.442258",
+      "last_seen": "2026-09-28T17:46:55.442258",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4d644d90"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter245",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:46:55.442258",
+      "last_seen": "2026-09-28T17:46:55.442258",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4d644d90"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter245",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:46:55.442258",
+      "last_seen": "2026-09-28T17:46:55.442258",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4d644d90"
     }
   ]
 }
