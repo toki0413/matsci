@@ -196,6 +196,169 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_9b9471dd",
+      "objective": "[DIM: structure] The rigid polynomial family forms a low-dimensional algebraic manifold in function space, where the solution space dimension is bounded by the number of analytic constraints (e.g., ≤5 terms), yielding a finite capacity threshold N_c(w) that remains flat or decreases as w increases. | pro: Most testable given the target's explicit focus on algebraic structure; directly maps to the \"rigid family\" definition; requires only width-scan validation. con: None significant. |",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the rigid polynomial family function that returns normalized training/holdout constraint points for the bootstrap rigidity test. The family must produce a low-dimensional algebraic manifold (≤5 analytic constraints) with O(1) normalized outputs to satisfy the ≤1e3 zero-violation criterion. Ensure Xv is non-overlapping with X, y/yv have shape (N,1), and std(y) ≲ 10. This is the core file modification needed to run the capacity scan and verify N_c(w) behavior.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "/workspace/research_outputs/shusheng_rsi_run38/.huginn/family_rigid.py"
+          ]
+        }
+      ],
+      "status": "executing",
+      "auto_confirm": false,
+      "created_at": "2026-09-28T14:57:39.861420+00:00",
+      "confirmed_at": "2026-09-28T14:57:39.862568+00:00",
+      "completed_at": null,
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
+    },
+    {
+      "id": "plan_d4192770",
+      "objective": "[DIM: transport] The propagation of constraint information from the training set to the held-out set in the rigid polynomial family follows a 1D advection-diffusion equation $\\partial_t u = D \\partial_{xx} u - v \\partial_x u$, where the \"diffusivity\" $D$ scales inversely with polynomial degree and the \"advection velocity\" $v$ is determined by the spectral gap of the Hessian at initialization.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the rigid and fat polynomial family functions to return normalized training/holdout sets (X, y, Xv, yv) with (N,1) shapes, no overlap, and O(1) scaling. This enables the capacity_scan workflow to test the advection-diffusion hypothesis about constraint propagation in polynomial families. The family function will be called by the existing run(cfg) script.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "family.py"
+          ]
+        }
+      ],
+      "status": "executing",
+      "auto_confirm": false,
+      "created_at": "2026-09-28T14:58:26.208094+00:00",
+      "confirmed_at": "2026-09-28T14:58:26.209236+00:00",
+      "completed_at": null,
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
+    },
+    {
+      "id": "plan_e90a63e5",
+      "objective": "** [DIM: structure] The rigid polynomial family is defined by a low-dimensional algebraic manifold (≤5 terms) in function space, where the solution space is uniquely determined by w ≤ N constraints, yielding a finite capacity threshold N_c(w) that remains flat or decreases as w increases.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the family function for the rigid polynomial family (low-dimensional algebraic manifold with ≤5 terms) and the fat polynomial family (high-dimensional, ~20 terms). Ensure labels y and yv are normalized to O(1) scale (std ≲ 10) and have shape (N,1). Verify zero violation (max abs error ≤ 1e-3) is achievable for the rigid family with finite capacity N_c(w), while the fat family remains unreachable (N_c = ∞) within h=64. Use two hidden layer tanh networks with L-BFGS-B optimization as per the capacity_scan framework.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "family.py",
+            "(or",
+            "the",
+            "module",
+            "containing",
+            "the",
+            "family",
+            "function)"
+          ]
+        }
+      ],
+      "status": "executing",
+      "auto_confirm": false,
+      "created_at": "2026-09-28T14:59:09.945598+00:00",
+      "confirmed_at": "2026-09-28T14:59:09.946711+00:00",
+      "completed_at": null,
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
+    },
+    {
+      "id": "plan_875614b5",
+      "objective": "[DIM: structure] The rigid polynomial family defines a low-dimensional algebraic manifold in function space where the capacity threshold $N_c(w)$ is determined by the codimension of the manifold, remaining invariant to $w$ once $w$ exceeds the manifold dimension.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the family function to define the rigid polynomial family (low-dimensional algebraic manifold) and fat polynomial family (high-dimensional) with proper data normalization, shape constraints, and non-overlapping training/heldout sets. This is required to test the hypothesis about capacity threshold N_c(w) and manifold codimension.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "family.py"
+          ]
+        }
+      ],
+      "status": "executing",
+      "auto_confirm": false,
+      "created_at": "2026-09-28T15:00:33.253366+00:00",
+      "confirmed_at": "2026-09-28T15:00:33.254472+00:00",
+      "completed_at": null,
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
+    },
+    {
+      "id": "plan_2531e113",
+      "objective": "[DIM: structure] The rigid polynomial family defines a low-dimensional algebraic manifold in function space where the capacity threshold $N_c(w)$ is invariant to the number of constraints $w$ because the solution space is uniquely determined by a small basis (≤5 terms), yielding a flat $N_c(w)$ trend.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Implement the polynomial family functions (rigid and fat) with proper O(1) normalization and non-overlapping held-out sets. Run capacity scans for both families across w values and seeds to compute N_c(w) and determine if the rigid family exhibits flat/decreasing trend (rigid) or fat family is unreachable (fat).",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "family.py",
+            "(new",
+            "file",
+            "containing",
+            "the",
+            "family",
+            "implementation)"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-28T15:01:06.291733+00:00",
+      "confirmed_at": "2026-09-28T15:01:06.293104+00:00",
+      "completed_at": "2026-09-28T15:01:25.317711+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
