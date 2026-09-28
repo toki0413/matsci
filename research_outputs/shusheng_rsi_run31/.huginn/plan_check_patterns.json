@@ -1,0 +1,15 @@
+[
+  {
+    "scene_tag": "other",
+    "reason": "The plan's MODE is 'explore' which matches the exploratory nature of the hypothesis. However, the DESCRIPTION and PREDICTION are fundamentally misaligned with the hypothesis. The hypothesis concerns a 'rigid solution space' corresponding to functions satisfying linear homogeneous PDEs (like f''(x)=0) that enforce analytic continuity and reduce DOFs to a finite-dimensional subspace. The plan focuses on implementing a 'family' function for linear functions and a 'fat family' for high-degree polynomials with O(1) normalization, but this does not address the core mathematical structure of the hypothesis — specifically, the PDE constraint and the resulting finite-dimensional subspace. The plan treats it as a capacity scan test rather than verifying the PDE-induced rigidity. Additionally, there is no mention of verifying the PDE structure, checking analytic continuity, or demonstrating the reduction to a finite-dimensional subspace. The prediction about N_c(w) trends is also not directly testable against the hypothesis without a clear mapping between N_c and the solution space dimensionality.",
+    "missing_steps": [
+      "Clarify the mathematical definition of the 'rigid solution space' in terms of the PDE constraint and its implications for function continuity and DOF reduction.",
+      "Define how the 'family' and 'fat' families relate to the PDE constraint and ensure they properly represent the solution space.",
+      "Include verification steps to confirm that the implemented functions satisfy the PDE (e.g., f''(x)=0) and exhibit analytic continuity.",
+      "Demonstrate that the solution space is indeed finite-dimensional and spanned by low-order polynomials, possibly through a basis analysis.",
+      "Specify how N_c(w) is defined and how it relates to the dimensionality of the solution space, ensuring the hypothesis can be tested quantitatively."
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid polynomial family satisfying $f''(x)=0$ (linear functions) and the fat family for high-degree polynomials. Ensure proper O(1)"
+  }
+]

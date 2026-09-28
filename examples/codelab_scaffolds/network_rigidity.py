@@ -109,11 +109,11 @@ def poly_basis(X, n):
     return x[:, None] ** powers[None, :]       # (N,1) ** (1,n) → (N,n)
 
 
-def mlp_fit(X, y, h, seeds=3, maxiter=20000, seed=0):
-    """通用两层 tanh 函数拟合器: L-BFGS-B 多起点, 返回最小训练 MSE 的参数.
+def mlp_fit(X, y, h, seeds=3, maxiter=3000, maxfun=30000, seed=0):
+    """通用两层 tanh 函数拟合器: L-BFGS-B(解析梯度) 多起点, 返回最小训练 MSE 的参数.
 
-    命题无关的数值原语 —— 只封装"参数打包 / L-BFGS-B / 多起点 / 形状对齐"这类
-    最容易写错的样板, 不编码任何科学假设(约束族/扫描/判据仍由调用方自定).
+    命题无关的数值原语 —— 只封装"参数打包 / L-BFGS-B / 多起点 / 形状对齐 / 解析
+    梯度"这类最容易写错的样板, 不编码任何科学假设(约束族/扫描/判据仍由调用方自定).
 
     X:(N,d) 或 (N,), y:(N,1) 或 (N,); h=隐藏层宽度; seeds=起点数.
     返回 dict(params 列表, h, d, train_mse, scaler) —— 可 JSON 序列化.
@@ -124,6 +124,7 @@ def mlp_fit(X, y, h, seeds=3, maxiter=20000, seed=0):
     y = _as_2d(y)
     h = int(h)
     d = int(X.shape[1])
+    N = int(X.shape[0])
     n = d * h + h + h + 1
 
     def unpack(p):
@@ -147,13 +148,35 @@ def mlp_fit(X, y, h, seeds=3, maxiter=20000, seed=0):
         out = np.tanh(Xn @ W1 + b1) @ W2 + b2
         return float(np.mean((out - yn) ** 2))
 
+    def grad(p):
+        """解析梯度 (反向传播): 每次迭代 1 次求值, 替代有限差分的 (n+1) 次."""
+        W1, b1, W2, b2 = unpack(p)
+        H = np.tanh(Xn @ W1 + b1)                 # (N,h)
+        g = 2.0 * (H @ W2 + b2 - yn) / N          # dL/dout (N,1)
+        gW2 = H.T @ g                             # (h,1)
+        gb2 = g.sum(0)                            # (1,)
+        gA = (g @ W2.T) * (1.0 - H ** 2)          # dL/dA (N,h)
+        gW1 = Xn.T @ gA                           # (d,h)
+        gb1 = gA.sum(0)                           # (h,)
+        o = np.empty(n)
+        i = 0
+        o[i:i + d * h] = gW1.reshape(-1); i += d * h
+        o[i:i + h] = gb1; i += h
+        o[i:i + h] = gW2.reshape(-1); i += h
+        o[i:i + 1] = gb2
+        return o
+
     best_fun = float('inf')
     best_p = None
+    # 容差: 默认 gtol=1e-5 会让小网络在 ~1e-4 量级"假收敛"停机, 把本可达的刚性族
+    # 误判成不可达(实测: 收紧到 1e-10 后 h=2 即可零违规). ftol/gtol 取"够紧但不极端"
+    # —— 极端的 1e-15 只会让不可拟合的胖族跑满迭代, 白白拖垮整张扫描(超过沙箱超时).
+    opts = {'maxiter': int(maxiter), 'ftol': 1e-14, 'gtol': 1e-10,
+            'maxfun': int(maxfun)}
     for s in range(int(seeds)):
         rng = np.random.default_rng(int(seed) + 101 * s + 7 * h + d)
         p0 = rng.standard_normal(n) * 0.5
-        res = minimize(loss, p0, method='L-BFGS-B',
-                       options={'maxiter': int(maxiter)})
+        res = minimize(loss, p0, jac=grad, method='L-BFGS-B', options=opts)
         if float(res.fun) < best_fun:
             best_fun = float(res.fun)
             best_p = res.x
@@ -222,7 +245,7 @@ def _check_label_shapes(X, y, Xv, yv, kind, w):
 
 
 def capacity_scan(family, kinds=("rigid", "fat"), ws=(5, 10, 20),
-                  widths=(2, 4, 8, 16, 32, 64), seeds=3,
+                  widths=(2, 4, 8, 16, 32, 64), seeds=3, fit_starts=2,
                   tr_tol=3e-4, ho_tol=1e-3, seed=0):
     """命题无关的容量扫描脚手架 (harness 侧已验证的数值管线).
 
@@ -235,7 +258,9 @@ def capacity_scan(family, kinds=("rigid", "fat"), ws=(5, 10, 20),
         - tuple (X, y, Xv, yv) 或 (X, y): 缺省 Xv/yv 回落到 X/y.
         X/y 一维或二维均可(内部自动升维到 (N,1) 对齐).
     kinds: 要比较的族名(默认 'rigid'/'fat'); ws: 约束点数; widths: 隐藏层宽度;
-    seeds: 每个 (kind,w,h) 的独立起点数; tr_tol/ho_tol: 训练/留出误差门限.
+    seeds: 每个 w 的**数据**随机重抽次数(取各次里最好的留出误差);
+    fit_starts: 每个 (kind,w,h) 的**优化器**起点数(默认 3, 抗局部极小);
+    tr_tol/ho_tol: 训练/留出误差门限.
     tr_tol 只需"足够小"(默认 3e-4, 仅用于确认网络真的拟合上了, 避免优化器没收敛
     却被记成"可达"); ho_tol=1e-3 才是"零违规"的判据。
 
@@ -291,7 +316,7 @@ def capacity_scan(family, kinds=("rigid", "fat"), ws=(5, 10, 20),
                 ho_best = float("inf")
                 tr_best = float("inf")
                 for s, (X, y, Xv, yv) in enumerate(datasets):
-                    m = mlp_fit(X, y, int(h), seeds=1,
+                    m = mlp_fit(X, y, int(h), seeds=int(fit_starts),
                                 seed=int(seed) + 1000 * int(w) + 10 * int(h) + s)
                     tr = float(np.max(np.abs(mlp_predict(m, X) - y)))
                     ho = float(np.max(np.abs(mlp_predict(m, Xv) - yv)))
