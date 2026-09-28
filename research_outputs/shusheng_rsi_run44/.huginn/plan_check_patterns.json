@@ -175,5 +175,19 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement concrete numerical verification for rigid vs. fat function spaces using polynomial basis sets with proper normalization. First, define rigid family as degree ≤4 "
+  },
+  {
+    "scene_tag": "auto_family",
+    "reason": "The plan fundamentally violates the system prompt's core identity as a natural-science research agent. The hypothesis involves abstract function space geometry (rigid vs. fat families, N_c(w) capacity) which falls outside the defined mathematical structures (spectral theory, variational principles, PDEs, etc.) relevant to physics, chemistry, materials, etc. The plan incorrectly uses 'explore' mode instead of 'coder' or 'workflow' for concrete computations. It lacks all required numerical setup (grid size, basis functions, error metrics, N_c(w) calculation method), violating 'report discipline' and 'convergence awareness'. The plan repeats historical failures by attempting to use non-existent tools without justification and lacks dimensional pre-checks.",
+    "missing_steps": [
+      "Clarify if this problem maps to any natural-science instance (e.g., spectral theory for basis functions)",
+      "If within domain, define concrete tools (e.g., symbolic_math_tool for polynomial bases, numerical_tool for capacity estimation)",
+      "Specify numerical setup: grid resolution, basis function definitions, training/validation split, N_c(w) computation method",
+      "Ensure dimensional consistency and scale normalization (O(1) scale) as per historical failure #3",
+      "Implement rigorous error measurement: separate training and holdout errors, avoid data leakage",
+      "Switch from 'explore' mode to 'coder' or 'workflow' mode for concrete computations"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the rigid and fat function families for the capacity scan. Define the rigid family as a linear span of trigonometric basis functions (e.g., sin(x), cos(2x)) and "
   }
 ]
