@@ -366,6 +366,41 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_4bafbeb0",
+      "objective": "[DIM: structure] The rigid constraint family exhibits zero violation because it corresponds to a linear subspace of functions (e.g., polynomials of degree ≤ d) that are exactly representable by a two-layer tanh network with width h ≥ d+1, yielding a flat N_c(w) trend. This hypothesis is the most testable and novel as it directly links the network's architectural capacity to the intrinsic dimensionality of the solution space, offering a clear mathematical structure (linear subspace) that can be verified through symbolic regression or PDE analysis. It is grounded in the domain knowledge of function approximation and avoids overcomplicating with physics or stochasticity, making it easier to validate through controlled experiments.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Test the hypothesis that the rigid constraint family (polynomial space of degree ≤ d) corresponds to a linear subspace exactly representable by a two-layer tanh network with width h ≥ d+1, yielding a flat N_c(w) trend. Implement the family function with polynomial constraints, ensure proper normalization (y/yv std ≲ 10), and run capacity scan with h from 2 to 64, multiple seeds, and verify zero-violation anchor at h ≤ 8. Compare with fat family (random polynomial basis) to confirm unreachable N_c(w) trend.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "family.py",
+            "(implement",
+            "family(kind",
+            "w",
+            "seed)",
+            "function)"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-28T13:35:52.521309+00:00",
+      "confirmed_at": "2026-09-28T13:35:52.522380+00:00",
+      "completed_at": "2026-09-28T13:36:11.425908+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
