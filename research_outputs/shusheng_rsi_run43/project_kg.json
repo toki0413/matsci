@@ -1317,8 +1317,8 @@
       "source": "autoloop",
       "confidence": 0.99,
       "created_at": "2026-09-28T16:29:06.474460",
-      "last_seen": "2026-09-28T16:34:27.089251",
-      "mentions": 2,
+      "last_seen": "2026-09-28T16:38:35.169138",
+      "mentions": 3,
       "iteration": 70,
       "r_phys": 1.0,
       "surprise": 1.0,
@@ -1856,6 +1856,55 @@
       "r_phys": 1.0,
       "iteration": 110,
       "id": "persona_use:reviewer_iter110"
+    },
+    {
+      "label": "plan_explore_iter115",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:38:35.169167",
+      "last_seen": "2026-09-28T16:38:35.169167",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter115"
+    },
+    {
+      "label": "pass_iter115",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:38:35.169190",
+      "last_seen": "2026-09-28T16:38:35.169190",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter115"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T16:38:35.169202",
+      "last_seen": "2026-09-28T16:38:35.169202",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid family corresponds to functions expressible as a line",
+        "Method:plan_explore_iter115",
+        "Fact:pass_iter115"
+      ],
+      "iteration": 115,
+      "id": "he_experiment_pipeline_129dec3f"
+    },
+    {
+      "label": "reviewer_iter115",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T16:38:35.169297",
+      "last_seen": "2026-09-28T16:38:35.169297",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "fabc2bdc7cd51421",
+      "r_phys": 1.0,
+      "iteration": 115,
+      "id": "persona_use:reviewer_iter115"
     }
   ],
   "links": [
@@ -2752,6 +2801,15 @@
     },
     {
       "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid family corresponds to functions expressible as a line",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:38:35.169202",
+      "last_seen": "2026-09-28T16:38:35.169202",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_129dec3f"
+    },
+    {
+      "relation": "member_of",
       "source": "Method:plan_explore_iter70",
       "confidence": 0.5,
       "created_at": "2026-09-28T16:29:06.474518",
@@ -2965,6 +3023,24 @@
       "last_seen": "2026-09-28T16:37:37.729492",
       "mentions": 1,
       "target": "he_experiment_pipeline_8c2ec796"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter115",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:38:35.169202",
+      "last_seen": "2026-09-28T16:38:35.169202",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_129dec3f"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter115",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:38:35.169202",
+      "last_seen": "2026-09-28T16:38:35.169202",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_129dec3f"
     }
   ]
 }
