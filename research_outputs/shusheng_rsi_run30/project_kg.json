@@ -1,0 +1,191 @@
+{
+  "directed": true,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "label": "[DIM: composition] The solution space of rigid constraint families is invariant ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T03:32:46.540112",
+      "last_seen": "2026-09-28T03:32:46.540112",
+      "mentions": 1,
+      "iteration": 5,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the linear family, N_c(w) will be found to be a small finite number (e.g., h=2 to 8) that remains flat or decreases as w increases, with training error ≤ 1e-4 and held-out error ≤ 1e-3. For the fa",
+      "persona": "dft_expert",
+      "id": "experiment:[DIM: composition] The solution space of rigid constraint families is invariant"
+    },
+    {
+      "label": "plan_coder_iter5",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T03:32:46.540149",
+      "last_seen": "2026-09-28T03:32:46.540149",
+      "mentions": 1,
+      "id": "Method:plan_coder_iter5"
+    },
+    {
+      "label": "pass_iter5",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T03:32:46.540163",
+      "last_seen": "2026-09-28T03:32:46.540163",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter5"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T03:32:46.540172",
+      "last_seen": "2026-09-28T03:32:46.540172",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: composition] The solution space of rigid constraint families is invariant",
+        "Method:plan_coder_iter5",
+        "Fact:pass_iter5"
+      ],
+      "iteration": 5,
+      "id": "he_experiment_pipeline_c645e9b3"
+    },
+    {
+      "label": "dft_expert_iter5",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T03:32:46.540276",
+      "last_seen": "2026-09-28T03:32:46.540276",
+      "mentions": 1,
+      "persona": "dft_expert",
+      "context_hash": "1a02f9c6dc79392c",
+      "r_phys": 1.0,
+      "iteration": 5,
+      "id": "persona_use:dft_expert_iter5"
+    },
+    {
+      "label": "** [DIM: structure] The rigidity of the solution space is fundamentally determin",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T03:34:56.712513",
+      "last_seen": "2026-09-28T03:34:56.712513",
+      "mentions": 1,
+      "iteration": 15,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the linear family, N_c(w) will be a small finite number (e.g., h=2~4) and remain flat or decrease as w increases. For the polynomial family, no width up to h=64 will achieve zero violation (max ab",
+      "persona": "reviewer",
+      "id": "experiment:** [DIM: structure] The rigidity of the solution space is fundamentally determin"
+    },
+    {
+      "label": "plan_explore_iter15",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T03:34:56.712546",
+      "last_seen": "2026-09-28T03:34:56.712546",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter15"
+    },
+    {
+      "label": "pass_iter15",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T03:34:56.712555",
+      "last_seen": "2026-09-28T03:34:56.712555",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter15"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T03:34:56.712563",
+      "last_seen": "2026-09-28T03:34:56.712563",
+      "mentions": 1,
+      "members": [
+        "experiment:** [DIM: structure] The rigidity of the solution space is fundamentally determin",
+        "Method:plan_explore_iter15",
+        "Fact:pass_iter15"
+      ],
+      "iteration": 15,
+      "id": "he_experiment_pipeline_e828d5f7"
+    },
+    {
+      "label": "reviewer_iter15",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T03:34:56.712630",
+      "last_seen": "2026-09-28T03:34:56.712630",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "0ba067d6fd9b2edd",
+      "r_phys": 1.0,
+      "iteration": 15,
+      "id": "persona_use:reviewer_iter15"
+    }
+  ],
+  "links": [
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: composition] The solution space of rigid constraint families is invariant",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T03:32:46.540172",
+      "last_seen": "2026-09-28T03:32:46.540172",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c645e9b3"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_coder_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T03:32:46.540172",
+      "last_seen": "2026-09-28T03:32:46.540172",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c645e9b3"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T03:32:46.540172",
+      "last_seen": "2026-09-28T03:32:46.540172",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c645e9b3"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:** [DIM: structure] The rigidity of the solution space is fundamentally determin",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T03:34:56.712563",
+      "last_seen": "2026-09-28T03:34:56.712563",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e828d5f7"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T03:34:56.712563",
+      "last_seen": "2026-09-28T03:34:56.712563",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e828d5f7"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T03:34:56.712563",
+      "last_seen": "2026-09-28T03:34:56.712563",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e828d5f7"
+    }
+  ]
+}

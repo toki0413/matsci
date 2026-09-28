@@ -125,10 +125,23 @@ def mlp_fit(X, y, h, seeds=3, maxiter=20000, seed=0):
         b2 = p[i:i + 1].reshape(1, 1)
         return W1, b1, W2, b2
 
+    # 输入/输出标定 (缩放), 使 tanh 网络能逼近一般光滑函数:
+    #  - X 缩到 [-1,1]: 否则 tanh 在 X 远超 |1| 处饱和, L-BFGS-B 无法在宽 X 上
+    #    插值任意函数 (run29 的 rigid 用 x∈[-1,1] 且 cos(pi x) 却拟合不出 ——
+    #    正是范围标定问题).
+    #  - y 缩到 [-1,1]: 否则 L-BFGS-B 的默认步长/梯度尺度被 y 的绝对量级主导,
+    #    大 |y| 目标难以收敛到 1e-3 (run29 fat 的 ~1e7 更是如此).
+    # 两个标定在预测侧必须原样反转 (mlp_predict 里同样处理), 保证返回的
+    # 误差是原始尺度上的真实误差.
+    Xm, Xs = X.mean(0), X.std(0) + 1e-9
+    Xn = (X - Xm) / Xs
+    ym, ys = float(y.mean()), float(y.std()) + 1e-9
+    yn = (y - ym) / ys
+
     def loss(p):
         W1, b1, W2, b2 = unpack(p)
-        out = np.tanh(X @ W1 + b1) @ W2 + b2
-        return float(np.mean((out - y) ** 2))
+        out = np.tanh(Xn @ W1 + b1) @ W2 + b2
+        return float(np.mean((out - yn) ** 2))
 
     best_fun = float('inf')
     best_p = None
@@ -140,7 +153,9 @@ def mlp_fit(X, y, h, seeds=3, maxiter=20000, seed=0):
         if float(res.fun) < best_fun:
             best_fun = float(res.fun)
             best_p = res.x
-    return {'params': best_p.tolist(), 'h': h, 'd': d, 'train_mse': best_fun}
+    return {'params': best_p.tolist(), 'h': h, 'd': d, 'train_mse': best_fun,
+            'scaler': {'Xm': Xm.tolist(), 'Xs': Xs.tolist(),
+                       'ym': ym, 'ys': ys}}
 
 
 def mlp_predict(model, X):
@@ -150,12 +165,18 @@ def mlp_predict(model, X):
     p = np.asarray(model['params'], dtype=float)
     h = int(model['h'])
     d = int(model['d'])
+    sc = model.get('scaler')
+    if sc is not None:   # 还原 mlp_fit 的输入/输出标定, 使误差落在原始尺度
+        X = (X - np.asarray(sc['Xm'], dtype=float)) / np.asarray(sc['Xs'], dtype=float)
     i = 0
     W1 = p[i:i + d * h].reshape(d, h); i += d * h
     b1 = p[i:i + h]; i += h
     W2 = p[i:i + h].reshape(h, 1); i += h
     b2 = p[i:i + 1].reshape(1, 1)
-    return np.tanh(X @ W1 + b1) @ W2 + b2
+    out = np.tanh(X @ W1 + b1) @ W2 + b2
+    if sc is not None:
+        out = out * float(sc['ys']) + float(sc['ym'])
+    return out
 
 
 def _overlap_fraction(X, Xv):
@@ -227,6 +248,7 @@ def capacity_scan(family, kinds=("rigid", "fat"), ws=(5, 10, 20),
         summary['rows'][kind_w{w}_h{h}] = {'train_err','heldout_err'}  (全为有限数)
         summary['Nc'][kind][w] = 最小零违规宽度 h 或 None(该 w 在扫描内不可达)
         summary['trend'][kind] = 'flat'|'increasing'|'decreasing'|'mixed'|'inconclusive'
+                               |'unreachable'(扫描内无宽度零违规 = 胖的签名)
                                |'invalid_heldout'(留出集与训练集重合, 结果无效)
         summary['anchor'] = 全局留出误差最小的 (kind,w,h) 锚点 —— 证明零违规可达
         summary['heldout_overlap'][kind_w{w}] = Xv 与 X 的重合比例 (0 才有效)
@@ -295,6 +317,12 @@ def capacity_scan(family, kinds=("rigid", "fat"), ws=(5, 10, 20),
         if _fully_overlapping:
             # 留出集 == 训练集: 所谓零违规只是插值训练点, 趋势无科学意义.
             summary["trend"][kind] = "invalid_heldout"
+        elif not vals:
+            # 扫描内任何宽度都达不到零违规 —— 这是"胖"(解空间高维/连续族)的
+            # 判别签名: 有限样本装不下, N_c = ∞. 与"inconclusive"(样本太少、
+            # 测不出趋势) 区分开. 注: 刚性族若也标 unreachable, 说明第 0 步
+            # 可达性 bootstrap 没过, 该轮无效 (由报告层裁决).
+            summary["trend"][kind] = "unreachable"
         elif len(vals) < 2:
             summary["trend"][kind] = "inconclusive"
         elif len(set(vals)) == 1:
