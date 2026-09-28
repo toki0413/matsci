@@ -804,6 +804,28 @@ class CognitiveRunner:
         except Exception:  # 防御: git 不可用时报空差异
             logger.debug("best-effort op failed", exc_info=True)  # no git repo or git unavailable — not our problem
 
+    def _long_horizon_keep_going(self) -> bool:
+        """长程探索模式: 有 active goal 且挂钟预算未耗尽时, 非目标类早停让位.
+
+        科研多为长程探索, 假设质量分/信念方差这类"启发式收敛"不应在目标未达成
+        时终止整个 run. 需要 HUGINN_PERSISTENT_GOAL_MODE=1, 且存在 active goal
+        且 goal.wall_clock_budget_seconds>0 且 started_at 已设且未超时. 任一不满足
+        → False, 完全保持原早停语义 (向后兼容).
+        """
+        if os.environ.get("HUGINN_PERSISTENT_GOAL_MODE", "0") != "1":
+            return False
+        try:
+            from huginn.autoloop.goal_store import get_goal_store
+
+            _gs = get_goal_store()
+            _ag = _gs.get_active()
+            if _ag is None:
+                return False
+            return not _gs.wall_clock_expired(_ag.id)
+        except Exception:  # 防御: 检查失败退回原早停语义
+            logger.debug("long-horizon keep-going check failed", exc_info=True)
+            return False
+
     def _darwin_ratchet_check(self) -> None:
         """Darwin ratchet: 算假设质量分, 只保留改进, 连续低增益 → early stop.
 
@@ -955,40 +977,22 @@ class CognitiveRunner:
                 )
                 self._darwin_stagnation = 0
                 self._trigger_counterexample_hunt()
-            else:
-                # P5 (chaoxu 启发): persistent goal mode — stagnation 分类为 stop
-                # 时, 如果开了 HUGINN_PERSISTENT_GOAL_MODE 且有 active goal 且
-                # 挂钟预算未耗尽, 不 early stop, 重置 stagnation 继续.
-                # 无 active goal 或挂钟耗尽才真 stop.
-                _persistent = (
-                    os.environ.get("HUGINN_PERSISTENT_GOAL_MODE", "0") == "1"
+            elif self._long_horizon_keep_going():
+                # 长程探索: 有 active goal 且挂钟预算未耗尽 → 不 early stop, 重置
+                # stagnation 继续推进, 直到目标达成 (F2/F17/arbiter) 或预算耗尽.
+                logger.info(
+                    "darwin ratchet: stagnation %d → stop, but long-horizon goal "
+                    "(wall_clock not expired), reset & continue",
+                    self._darwin_stagnation,
                 )
-                _wall_expired = False
-                _has_active_goal = False
-                if _persistent:
-                    try:
-                        from huginn.autoloop.goal_store import get_goal_store
-                        _gs = get_goal_store()
-                        _ag = _gs.get_active()
-                        if _ag is not None:
-                            _has_active_goal = True
-                            _wall_expired = _gs.wall_clock_expired(_ag.id)
-                    except Exception:  # 防御: 墙钟检查失败忽略
-                        logger.debug("P5 wall_clock check failed", exc_info=True)
-                if _persistent and _has_active_goal and not _wall_expired:
-                    logger.info(
-                        "darwin ratchet: stagnation %d → stop, but persistent goal "
-                        "mode on + wall_clock not expired, reset & continue",
-                        self._darwin_stagnation,
-                    )
-                    self._darwin_stagnation = 0
-                else:
-                    logger.info(
-                        "darwin ratchet: stagnation %d rounds (Δ<0.5), best=%.2f, early stop",
-                        self._darwin_stagnation,
-                        self._darwin_best_score,
-                    )
-                    self._should_stop = True
+                self._darwin_stagnation = 0
+            else:
+                logger.info(
+                    "darwin ratchet: stagnation %d rounds (Δ<0.5), best=%.2f, early stop",
+                    self._darwin_stagnation,
+                    self._darwin_best_score,
+                )
+                self._should_stop = True
 
         # P2-6 belief: σ² 收敛也作为 stop 信号. σ² < 0.1 = belief 不确定性低,
         # 后续观测不会显著改变 μ, 边际信息收益递减. 跟 stagnation 互补:
@@ -998,11 +1002,19 @@ class CognitiveRunner:
             and self._darwin_belief_sigma2 < 0.1
             and self._iteration > 2
         ):
-            logger.info(
-                "darwin ratchet: belief converged σ²=%.4f μ=%.2f, early stop",
-                self._darwin_belief_sigma2, self._darwin_belief_mu,
-            )
-            self._should_stop = True
+            if self._long_horizon_keep_going():
+                # 长程探索: 信念收敛不终止 run, 继续推进直到目标达成/预算耗尽.
+                logger.info(
+                    "darwin ratchet: belief converged σ²=%.4f μ=%.2f, "
+                    "long-horizon goal → continue",
+                    self._darwin_belief_sigma2, self._darwin_belief_mu,
+                )
+            else:
+                logger.info(
+                    "darwin ratchet: belief converged σ²=%.4f μ=%.2f, early stop",
+                    self._darwin_belief_sigma2, self._darwin_belief_mu,
+                )
+                self._should_stop = True
 
         # v7 Meta-Trace: 每轮蒸馏成结构化科研要点, 对标 Oxelra Meta-Trace.
         # 目标: 长任务不靠完整 transcript, 用结构化要点保持 context 密度.
@@ -3224,11 +3236,19 @@ Respond JSON only:
                                     (self._speculator_hint + f"\n[completion audit] {_why}").strip()
                                 )
                             else:
-                                logger.info(
-                                    "v10 surprise converged < %.2f (noise=%.2f), stop",
-                                    _thr, _avg_noise,
-                                )
-                                state.should_stop = True
+                                if self._long_horizon_keep_going():
+                                    # 长程探索: surprise 收敛不终止 run.
+                                    logger.info(
+                                        "v10 surprise converged < %.2f (noise=%.2f), "
+                                        "long-horizon goal → continue",
+                                        _thr, _avg_noise,
+                                    )
+                                else:
+                                    logger.info(
+                                        "v10 surprise converged < %.2f (noise=%.2f), stop",
+                                        _thr, _avg_noise,
+                                    )
+                                    state.should_stop = True
                     except Exception:  # 防御: 意外早停失败忽略
                         logger.debug("v10 F4 surprise early-stop failed (non-fatal)", exc_info=True)
 

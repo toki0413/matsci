@@ -34,6 +34,44 @@ if TYPE_CHECKING:
 MAX_RULES = 100
 _CONFIDENCE_FLOOR = 0.3
 
+# 自动提取技能的触发词必须来自"执行内容", 不能只用 calc_type / software 这类
+# 平台泛标签. 否则技能建好即废: get_relevant_skills(hypothesis) 拿假设文本去
+# 匹配触发词, 假设里永远不含 "autoloop"/"huginn", score 恒为 0 → 技能永不被
+# 检索 → RSI 产物无法回流进后续迭代 (长程循环里表现最明显).
+_RE_KEYWORD_TOKEN = re.compile(r"[A-Za-z][A-Za-z\-]{3,}")
+_KEYWORD_STOPWORDS = frozenset(
+    {
+        "the", "and", "for", "with", "that", "this", "from", "are", "was",
+        "were", "which", "where", "into", "such", "using", "based", "must",
+        "should", "would", "could", "have", "has", "had", "not", "but", "all",
+        "any", "can", "will", "then", "than", "each", "more", "most", "some",
+        "only", "also", "over", "under", "between", "within", "when", "while",
+        "their", "there", "these", "those", "they", "them", "its", "about",
+        "after", "before", "because", "been", "being", "does", "doing", "done",
+        "and", "the", "yes", "none", "true", "false",
+    }
+)
+
+
+def _content_keywords(records: list[Any], limit: int = 8) -> list[str]:
+    """从高奖励执行的 tool_input 文本里抽显著词, 作为技能触发词.
+
+    平台无关: 只依赖 tool_input 的字符串/结构内容, 不绑定任何具体命题.
+    """
+    counts: dict[str, int] = {}
+    for r in records:
+        ti = getattr(r, "tool_input", None) or {}
+        if not isinstance(ti, dict):
+            continue
+        for v in ti.values():
+            text = v if isinstance(v, str) else json.dumps(v, ensure_ascii=False, default=str)
+            for tok in _RE_KEYWORD_TOKEN.findall(text.lower()):
+                if tok in _KEYWORD_STOPWORDS:
+                    continue
+                counts[tok] = counts.get(tok, 0) + 1
+    ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    return [tok for tok, _ in ranked[:limit]]
+
 # ── 元技能规则阈值 (HiSME: 从技能有效性与复用性反馈学习"如何维护技能") ──
 # record_invocation 把运行时 usage/success 写进 metadata['evolution'],
 # evaluate_meta_skill_rules 读回并施加这些规则, 反哺技能库维护决策.
@@ -424,11 +462,16 @@ class EvolutionEngine:
 
             # Extract common workflow pattern
             tools_used = list({r.tool_name for r in records})
+            # 同 evolve_from_rewards: 触发词必须带执行内容显著词, 否则技能检索不到.
+            _kw: list[str] = []
+            for _k in [calc_type, software, *_content_keywords(records)]:
+                if _k and _k not in _kw:
+                    _kw.append(_k)
             skill = SkillTemplate(
                 skill_id=f"skill_{key}_{int(time.time() * 1000)}",
                 name=f"{calc_type.title()} Workflow ({software})",
                 description=f"Auto-extracted workflow for {calc_type} using {software}",
-                trigger_keywords=[calc_type, software],
+                trigger_keywords=_kw,
                 workflow_steps=[
                     {"tool": r.tool_name, "input_keys": list(r.tool_input.keys())}
                     for r in records[:5]
@@ -599,6 +642,11 @@ class EvolutionEngine:
             records.sort(key=lambda r: r.reward, reverse=True)
             tools_used = list({r.tool_name for r in records})
             avg_reward = sum(r.reward for r in records) / len(records)
+            # 触发词 = 平台标签 (保留, 供分组/去重) + 执行内容显著词 (供真实检索命中).
+            _kw: list[str] = []
+            for _k in [calc_type, software, *_content_keywords(records)]:
+                if _k and _k not in _kw:
+                    _kw.append(_k)
             steps = [
                 {
                     "tool": r.tool_name,
@@ -627,6 +675,7 @@ class EvolutionEngine:
             if twin is not None:
                 twin.workflow_steps = steps
                 twin.required_tools = tools_used
+                twin.trigger_keywords = _kw
                 twin.description = (
                     f"Auto-refreshed from R_phys>=0.7 executions, "
                     f"avg reward {avg_reward:.2f}"
@@ -639,7 +688,7 @@ class EvolutionEngine:
                 skill_id=f"skill_reward_{key}_{int(time.time() * 1000)}",
                 name=f"{calc_type.title()} High-Reward Workflow ({software})",
                 description=f"Auto-extracted from R_phys>=0.7 executions, avg reward {avg_reward:.2f}",
-                trigger_keywords=[calc_type, software],
+                trigger_keywords=_kw,
                 workflow_steps=steps,
                 required_tools=tools_used,
                 source_session=records[0].session_id,

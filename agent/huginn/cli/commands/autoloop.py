@@ -8,6 +8,7 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import os
 from typing import Any
 
 import click
@@ -59,6 +60,16 @@ from huginn.cli.context import CliContext
     multiple=True,
     help="Success criterion (keyword that must appear in validation output). Repeatable: -s foo -s bar",
 )
+@click.option(
+    "--wall-clock-budget",
+    "wall_clock_budget",
+    default=0,
+    type=int,
+    help="Long-horizon mode: wall-clock budget in SECONDS. >0 creates a persistent "
+    "goal and enables persistent-goal mode, so heuristic early-stops (darwin "
+    "stagnation / belief / surprise convergence) defer until the budget is spent "
+    "or the -i iteration cap is reached.",
+)
 @click.pass_obj
 def autoloop(
     obj: CliContext,
@@ -69,6 +80,7 @@ def autoloop(
     no_progressive_budget: bool,
     goal_id: str | None,
     success_criteria: tuple[str, ...],
+    wall_clock_budget: int,
 ) -> None:
     """Run the autonomous closed-loop engine.
 
@@ -139,16 +151,35 @@ def autoloop(
         if not objective:
             objective = goal.objective
         console.print(f"[blue]Resuming goal:[/blue] {goal.id} ({goal.objective})")
-    elif success_criteria and objective:
+    elif objective and (success_criteria or wall_clock_budget > 0):
         goal = scheduler.create_goal(
             objective=objective,
             success_criteria=list(success_criteria),
             max_iterations=iterations,
         )
-        console.print(
-            f"[blue]Created goal:[/blue] {goal.id}\n"
-            f"  criteria: {list(success_criteria)}"
-        )
+        if wall_clock_budget > 0:
+            # 长程探索: 目标挂上挂钟预算并置 active, 同时打开持久目标模式.
+            # 这样 darwin/belief/surprise 这类启发式早停在预算未耗尽时不再终止
+            # 整个 run, 循环自主推进到目标达成或预算/迭代上限耗尽.
+            from huginn.utils.common import now_iso
+
+            scheduler.update_goal(
+                goal.id,
+                wall_clock_budget_seconds=float(wall_clock_budget),
+                started_at=now_iso(),
+                status="active",
+            )
+            os.environ["HUGINN_PERSISTENT_GOAL_MODE"] = "1"
+            console.print(
+                f"[blue]Long-horizon goal:[/blue] {goal.id}\n"
+                f"  wall-clock budget: {wall_clock_budget}s, "
+                f"iteration cap: {iterations}"
+            )
+        else:
+            console.print(
+                f"[blue]Created goal:[/blue] {goal.id}\n"
+                f"  criteria: {list(success_criteria)}"
+            )
     engine._goal_scheduler = scheduler
 
     if watch:
