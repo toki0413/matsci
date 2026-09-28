@@ -908,7 +908,8 @@ class CognitiveRunner:
         elif _d_nodes > 0:
             self._novelty_starved = 0
         if getattr(self, "_novelty_starved", 0) >= 3:
-            logger.info(
+            # warning 级: 根 logger 过滤 INFO, info 会被静默吞掉 (同 [exec-route] 做法).
+            logger.warning(
                 "novelty starved %d× (only rejected/duplicate hypotheses): "
                 "trigger counterexample hunt",
                 self._novelty_starved,

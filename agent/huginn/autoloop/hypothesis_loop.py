@@ -2286,7 +2286,9 @@ class HypothesisLoop:
                 _rename_streak = getattr(self, "_rename_streak", 0) + 1
                 self._rename_streak = _rename_streak
                 if _rename_streak >= 3:
-                    logger.info(
+                    # warning 级: 根 logger 过滤 INFO, 用 info 会被静默吞掉,
+                    # 这些"循环改变方向"的事件必须可审计 (见 [exec-route] 同款做法).
+                    logger.warning(
                         "renamed-reduction %d× consecutive: trigger counterexample hunt",
                         _rename_streak,
                     )
