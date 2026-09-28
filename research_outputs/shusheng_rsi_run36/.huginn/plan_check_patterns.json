@@ -1,0 +1,15 @@
+[
+  {
+    "scene_tag": "skill",
+    "reason": "The plan describes an abstract 'family function' for constraint families (rigid linear PDE vs fat random polynomial) but fails to specify the mathematical structure (grammar) or concrete instance (sentence) required by the KRCL framework. It lacks explicit definitions of 'width h', 'N_c(w)', and the 'rigid anchor', making the hypothesis untestable. Furthermore, the prediction assumes specific outcomes (zero violation, unreachable trends) without addressing the dimensional pre-check warning or providing a concrete computational setup, risking the same pitfalls as previous runs (e.g., ill-defined function families).",
+    "missing_steps": [
+      "Define the mathematical structure (e.g., variational problem, spectral constraint) underlying the 'rigid' and 'fat' families",
+      "Specify the exact form of the linear PDE and polynomial functions, including domain, boundary conditions, and dimensionality",
+      "Clarify the definition of 'width h' and 'N_c(w)' in terms of model capacity or constraint count",
+      "Include a dimensional analysis or scaling check to ensure consistency with the 'scale discipline'",
+      "Provide a concrete implementation plan or code snippet to validate the predictions"
+    ],
+    "mode": "skill",
+    "description": "Implement the family function for two constraint families (rigid linear PDE and fat random polynomial), perform capacity scans with width h=2..64 across multiple seeds, verify the rigid anchor at low "
+  }
+]

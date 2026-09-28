@@ -826,6 +826,43 @@ class CognitiveRunner:
             logger.debug("long-horizon keep-going check failed", exc_info=True)
             return False
 
+    def _long_horizon_iteration_cap(self, goal: Goal | None, max_iterations: int) -> int:
+        """长程探索: 依据 goal 的挂钟预算抬高步数上限.
+
+        背景: CognitiveLoop.run 里 ``state.iteration`` 是**步**(每步一个 action),
+        一个完整 hypothesize→plan→execute→validate→learn 循环约 5 步, 所以
+        ``-i 30`` 只够 ~6 轮就撞顶进 report. 科研多为长程探索, 需要循环能自主推进
+        到目标达成或挂钟耗尽, 因此当 HUGINN_PERSISTENT_GOAL_MODE=1 且 goal 挂了
+        wall_clock_budget 时, 把步数上限抬到"预算 / 10s 每步"(仅作安全上界), 并同步
+        抬高 goal.max_iterations — 否则 observe 的 is_budget_exhausted 会先于挂钟撞顶.
+
+        真正的终止交给 (a) 目标达成 F2/F17, (b) observe 每步查 wall_clock_expired.
+        """
+        if os.environ.get("HUGINN_PERSISTENT_GOAL_MODE", "0") != "1":
+            return max_iterations
+        try:
+            from huginn.autoloop.goal_store import GoalStore
+
+            # 现读文件, 避免单例拿到"建 goal 之前"的陈旧快照.
+            _gs = GoalStore()
+            _g = (_gs.get_goal(goal.id) if goal is not None else None) or _gs.get_active()
+            if _g is None or _g.wall_clock_budget_seconds <= 0 or not _g.started_at:
+                return max_iterations
+            _cap = max(max_iterations, int(_g.wall_clock_budget_seconds / 10.0))
+            if _g.max_iterations < _cap:
+                try:
+                    _gs.update_goal(_g.id, max_iterations=_cap)
+                except Exception:  # 防御: 抬高 goal 上限失败忽略
+                    logger.debug("raise goal max_iterations failed", exc_info=True)
+            logger.info(
+                "long-horizon iteration cap: %d → %d (wall_clock=%.0fs)",
+                max_iterations, _cap, _g.wall_clock_budget_seconds,
+            )
+            return _cap
+        except Exception:  # 防御: 反推失败退回原上限 (保持向后兼容)
+            logger.debug("long-horizon iteration cap failed", exc_info=True)
+            return max_iterations
+
     def _darwin_ratchet_check(self) -> None:
         """Darwin ratchet: 算假设质量分, 只保留改进, 连续低增益 → early stop.
 
@@ -2046,6 +2083,10 @@ Respond JSON only:
 
         self._max_refines = max_refines
         self._refine_count = 0
+        # 长程探索: 有挂钟预算时, 步数上限不再由 -i 决定(否则约 5 轮即撞顶),
+        # 改为按预算反推的宽松上界; 真正的终止由目标达成 (F2/F17) 或 observe 每步
+        # 查 wall_clock_expired 控制. -i 退化为"至少多少步"的下限.
+        max_iterations = self._long_horizon_iteration_cap(goal, max_iterations)
         self._max_iterations = max_iterations
         # AV2: 每次新 run 重置元认知护航状态 (避免跨 run 串味)
         self._evals_history = []
@@ -2146,7 +2187,46 @@ Respond JSON only:
                 ) or _gs.get_active()
                 if _active_goal:
                     _gs.increment_iteration(_active_goal.id)
-                    if GoalScheduler.is_budget_exhausted(_active_goal):
+                    # 长程探索: 挂钟预算是硬终止器 — 耗尽即停 (启发式早停已在
+                    # _long_horizon_keep_going 让位给挂钟). 步数上限已被
+                    # _long_horizon_iteration_cap 抬高, 所以这里才是真正的收口.
+                    if (
+                        os.environ.get("HUGINN_PERSISTENT_GOAL_MODE", "0") == "1"
+                        and _gs.wall_clock_expired(_active_goal.id)
+                    ):
+                        logger.info(
+                            "v10 long-horizon wall-clock expired: %s (%.0fs), stop",
+                            _active_goal.id, _active_goal.wall_clock_budget_seconds,
+                        )
+                        try:
+                            _gs.complete(_active_goal.id)
+                        except Exception:  # 防御: 收口失败忽略
+                            logger.debug("complete on wall-clock failed", exc_info=True)
+                        self._emit_campaign(
+                            "campaign.budget_exhausted",
+                            {
+                                "iteration": state.iteration,
+                                "goal_id": _active_goal.id,
+                                "budget": _active_goal.wall_clock_budget_seconds,
+                                "used": state.iteration,
+                                "reason": "wall_clock",
+                            },
+                        )
+                        state.should_stop = True
+                        return {
+                            "context_summary": "",
+                            "redirect_reason": state.redirect_reason,
+                            "iteration": state.iteration,
+                            "last_action": state.last_action,
+                            "budget_exhausted": True,
+                        }
+                    if (
+                        GoalScheduler.is_budget_exhausted(_active_goal)
+                        # 长程探索: 步数预算让位给挂钟 — 上限已在
+                        # _long_horizon_iteration_cap 抬高(且单例可能持有抬升前的
+                        # 陈旧 max_iterations, 这里索性不参与判定).
+                        and os.environ.get("HUGINN_PERSISTENT_GOAL_MODE", "0") != "1"
+                    ):
                         logger.info(
                             "v10 goal budget exhausted: iter=%d max=%d, failing %s",
                             _active_goal.iteration, _active_goal.max_iterations, _active_goal.id,
