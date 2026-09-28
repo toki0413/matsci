@@ -602,5 +602,22 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the rigid (low-dimensional linear span) and fat (high-dimensional nonlinear) function families as the `family` function for the capacity scan. Ensure y/yv are no"
+  },
+  {
+    "scene_tag": "auto_family",
+    "reason": "The plan uses 'explore' mode which is inappropriate for concrete computational verification tasks. It lacks critical implementation details: specific grid resolutions, explicit basis function formulas, scaling procedures, optimization parameters, and concrete N_c(w) calculation methodology. It fails to explicitly define the fat family as x-dependent (risking run28 failure) and doesn't address scaling issues that caused run29 (~1e9 scale problems). The prediction is not verifiable without concrete numerical methods.",
+    "missing_steps": [
+      "Switch from 'explore' mode to 'coder' or 'workflow' mode for concrete computations",
+      "Define concrete grid resolution (e.g., N=500) and explicit basis function formulas (Chebyshev/trigonometric expressions)",
+      "Explicitly define fat family as x-dependent high-dimensional functions (not i.i.d. noise) to avoid run28 failure",
+      "Specify scaling for fat family basis to prevent ~1e9 scale issues with O(1) normalization (run29 failure)",
+      "Establish clear training and held-out error measurement procedures with separate metrics to avoid data leakage",
+      "Define N_c(w) calculation methodology (e.g., SVD rank with tolerance 1e-6) with clear thresholds",
+      "Define concrete L-BFGS-B optimization setup with specific iteration limits and parameters",
+      "Implement comparative optimization strategy to distinguish optimization failure from function space limitations",
+      "Add dimensional pre-checks and scale normalization procedures"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the rigid family (low-dimensional trigonometric basis) and fat family (high-dimensional polynomial basis) functions as required by the capacity_scan framework. T"
   }
 ]
