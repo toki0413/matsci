@@ -306,5 +306,19 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Map function space rigidity to spectral theory (linear algebra structure). Implement trigonometric basis family (rigid) and polynomial basis family (fat) with proper O(1) "
+  },
+  {
+    "scene_tag": "auto_family",
+    "reason": "The plan is fundamentally invalid because it uses 'explore' mode for a concrete computational verification task, which should be 'coder' or 'workflow' mode per the system prompt. It fails to address the core hypothesis about L-BFGS-B optimization failure vs. function space properties. The plan focuses solely on normalization without addressing the actual optimization question (iterations, stochastic optimizers). It repeats historical failures by lacking concrete implementation details, specific numerical methods, and verifiable predictions. The hypothesis is about optimization behavior, but the plan only addresses scaling issues.",
+    "missing_steps": [
+      "Switch from 'explore' mode to 'coder' or 'workflow' mode for concrete computation",
+      "Define concrete L-BFGS-B optimization setup with specific iteration limits and parameters",
+      "Implement comparative optimization strategy (L-BFGS-B with more iterations vs. stochastic optimizer)",
+      "Define N_c(w) calculation methodology (e.g., SVD rank, effective dimension) with clear thresholds",
+      "Establish separate train/holdout error measurement procedures to avoid data leakage",
+      "Include comparative experiments to distinguish optimization failure from function space limitations"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the rigid family function with properly normalized outputs (y/yv std ≲ 1) to ensure the heldout error threshold of ≤1e-3 is physically meaningful. This addresses"
   }
 ]
