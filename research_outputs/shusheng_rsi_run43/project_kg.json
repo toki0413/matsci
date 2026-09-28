@@ -2131,6 +2131,70 @@
       "r_phys": 1.0,
       "iteration": 135,
       "id": "persona_use:reviewer_iter135"
+    },
+    {
+      "label": "[DIM: transport] The rigid family corresponds to solutions of a linear transport",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T16:43:41.243982",
+      "last_seen": "2026-09-28T16:43:41.243982",
+      "mentions": 1,
+      "iteration": 140,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Rigid family will show fixed characteristic curves with unique solutions, while fat family will exhibit time-dependent characteristics with potential solution non-uniqueness; PDE residuals will be nea",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: transport] The rigid family corresponds to solutions of a linear transport"
+    },
+    {
+      "label": "plan_explore_iter140",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:43:41.244021",
+      "last_seen": "2026-09-28T16:43:41.244021",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter140"
+    },
+    {
+      "label": "pass_iter140",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:43:41.244031",
+      "last_seen": "2026-09-28T16:43:41.244031",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter140"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T16:43:41.244039",
+      "last_seen": "2026-09-28T16:43:41.244039",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: transport] The rigid family corresponds to solutions of a linear transport",
+        "Method:plan_explore_iter140",
+        "Fact:pass_iter140"
+      ],
+      "iteration": 140,
+      "id": "he_experiment_pipeline_bd563218"
+    },
+    {
+      "label": "reviewer_iter140",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T16:43:41.244134",
+      "last_seen": "2026-09-28T16:43:41.244134",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "eb8a6339d32a57d5",
+      "r_phys": 1.0,
+      "iteration": 140,
+      "id": "persona_use:reviewer_iter140"
     }
   ],
   "links": [
@@ -3375,6 +3439,33 @@
       "last_seen": "2026-09-28T16:42:37.391693",
       "mentions": 1,
       "target": "he_experiment_pipeline_ab77d60"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: transport] The rigid family corresponds to solutions of a linear transport",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:43:41.244039",
+      "last_seen": "2026-09-28T16:43:41.244039",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_bd563218"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter140",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:43:41.244039",
+      "last_seen": "2026-09-28T16:43:41.244039",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_bd563218"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter140",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:43:41.244039",
+      "last_seen": "2026-09-28T16:43:41.244039",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_bd563218"
     }
   ]
 }
