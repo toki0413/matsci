@@ -150,5 +150,19 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid family (trigonometric modes) and fat family (random polynomials) with proper O(1) normalization, ensuring (N,1) shape and non"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan fundamentally misaligns with the hypothesis by using generic polynomial families (low-dimensional analytic vs. high-dimensional random polynomial) instead of explicitly defined PDE-based families. The hypothesis concerns the mathematical structure of 'rigid families' as finite-dimensional linear subspaces arising from PDE constraints (like linear transport equations with fixed characteristics), while 'fat families' arise from nonlinear PDEs with time-dependent characteristics and potential non-uniqueness. The plan repeats the exact failure modes documented in 'run28' and 'run29' where the analysis was reduced to generic ML generalization rather than structural verification. The PREDICTION only checks ML generalization error which cannot distinguish between function families based on their PDE properties.",
+    "missing_steps": [
+      "Define specific first-order linear transport PDE for rigid family (e.g., u_x + c*u_y = 0 with fixed c)",
+      "Define specific nonlinear hyperbolic PDE for fat family (e.g., Burgers' equation u_t + u*u_x = 0)",
+      "Implement characteristic curve tracing for both families to verify fixed vs. time-dependent characteristics",
+      "Test for solution non-uniqueness in fat family (check Jacobian singularities or multiple solutions for same boundary conditions)",
+      "Add spectral analysis or direct PDE residual verification to confirm the mathematical structure of both families",
+      "Ensure fat family is explicitly x-dependent and defined by a nonlinear PDE, not random high-dimensional polynomials"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family(kind, w, seed) function for the rigid and fat function families as specified in the hypothesis, ensuring proper normalization of y/yv to O(1), correct"
   }
 ]

@@ -1310,6 +1310,70 @@
       "r_phys": 1.0,
       "iteration": 65,
       "id": "persona_use:reviewer_iter65"
+    },
+    {
+      "label": "[DIM: structure] The rigid family corresponds to functions expressible as a line",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T16:29:06.474460",
+      "last_seen": "2026-09-28T16:29:06.474460",
+      "mentions": 1,
+      "iteration": 70,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Rigid family will achieve holdout_err ≤ 1e-3 at width h=4-8 (finite N_c), while fat family will show holdout_err > 1e-3 at h=64 (unreachable). Training errors will be ≤ 1e-4 for both.\nPLAN_SLOTS: kind",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid family corresponds to functions expressible as a line"
+    },
+    {
+      "label": "plan_explore_iter70",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:29:06.474500",
+      "last_seen": "2026-09-28T16:29:06.474500",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter70"
+    },
+    {
+      "label": "pass_iter70",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:29:06.474510",
+      "last_seen": "2026-09-28T16:29:06.474510",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter70"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T16:29:06.474518",
+      "last_seen": "2026-09-28T16:29:06.474518",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid family corresponds to functions expressible as a line",
+        "Method:plan_explore_iter70",
+        "Fact:pass_iter70"
+      ],
+      "iteration": 70,
+      "id": "he_experiment_pipeline_d6530b3a"
+    },
+    {
+      "label": "reviewer_iter70",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T16:29:06.474605",
+      "last_seen": "2026-09-28T16:29:06.474605",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "cad201d434fbf292",
+      "r_phys": 1.0,
+      "iteration": 70,
+      "id": "persona_use:reviewer_iter70"
     }
   ],
   "links": [
@@ -2176,6 +2240,33 @@
       "last_seen": "2026-09-28T16:28:01.043231",
       "mentions": 1,
       "target": "he_experiment_pipeline_f930e830"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid family corresponds to functions expressible as a line",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:29:06.474518",
+      "last_seen": "2026-09-28T16:29:06.474518",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d6530b3a"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter70",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:29:06.474518",
+      "last_seen": "2026-09-28T16:29:06.474518",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d6530b3a"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter70",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:29:06.474518",
+      "last_seen": "2026-09-28T16:29:06.474518",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d6530b3a"
     }
   ]
 }
