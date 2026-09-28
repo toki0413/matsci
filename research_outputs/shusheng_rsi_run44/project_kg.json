@@ -258,6 +258,70 @@
       "r_phys": 1.0,
       "iteration": 20,
       "id": "persona_use:reviewer_iter20"
+    },
+    {
+      "label": "[DIM: Functional Space Geometry] The rigid family is defined by a low-dimensiona",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T16:56:04.045368",
+      "last_seen": "2026-09-28T16:56:04.045368",
+      "mentions": 1,
+      "iteration": 25,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The rigid family will produce finite N_c values (h=2-8) with flat or decreasing N_c(w) trend, and holdout errors ≤1e-3 at those widths. Training errors will be ≤1e-4. The fat family will show unreacha",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: Functional Space Geometry] The rigid family is defined by a low-dimensiona"
+    },
+    {
+      "label": "plan_explore_iter25",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:56:04.045408",
+      "last_seen": "2026-09-28T16:56:04.045408",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter25"
+    },
+    {
+      "label": "pass_iter25",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:56:04.045423",
+      "last_seen": "2026-09-28T16:56:04.045423",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter25"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T16:56:04.045432",
+      "last_seen": "2026-09-28T16:56:04.045432",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: Functional Space Geometry] The rigid family is defined by a low-dimensiona",
+        "Method:plan_explore_iter25",
+        "Fact:pass_iter25"
+      ],
+      "iteration": 25,
+      "id": "he_experiment_pipeline_fedd0197"
+    },
+    {
+      "label": "reviewer_iter25",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T16:56:04.045507",
+      "last_seen": "2026-09-28T16:56:04.045507",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "150e5bd2cb7fa7e7",
+      "r_phys": 1.0,
+      "iteration": 25,
+      "id": "persona_use:reviewer_iter25"
     }
   ],
   "links": [
@@ -368,6 +432,33 @@
       "last_seen": "2026-09-28T16:55:08.263187",
       "mentions": 1,
       "target": "he_experiment_pipeline_c886c2d5"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: Functional Space Geometry] The rigid family is defined by a low-dimensiona",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:56:04.045432",
+      "last_seen": "2026-09-28T16:56:04.045432",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_fedd0197"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:56:04.045432",
+      "last_seen": "2026-09-28T16:56:04.045432",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_fedd0197"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:56:04.045432",
+      "last_seen": "2026-09-28T16:56:04.045432",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_fedd0197"
     }
   ]
 }
