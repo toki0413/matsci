@@ -646,6 +646,70 @@
       "r_phys": 1.0,
       "iteration": 55,
       "id": "persona_use:reviewer_iter55"
+    },
+    {
+      "label": "[DIM: structure] The rigid polynomial family (linear f(x)=x) admits a solution s",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T15:27:32.020296",
+      "last_seen": "2026-09-28T15:27:32.020296",
+      "mentions": 1,
+      "iteration": 60,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid linear family, N_c(w) will be finite (likely h=2 or h=4) and flat or decreasing as w increases; anchor point at w=10, h=8, seed=0 will show training error ≤1e-4 and held-out error ≤1e-3.",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid polynomial family (linear f(x)=x) admits a solution s"
+    },
+    {
+      "label": "plan_explore_iter60",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:27:32.020336",
+      "last_seen": "2026-09-28T15:27:32.020336",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter60"
+    },
+    {
+      "label": "pass_iter60",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:27:32.020345",
+      "last_seen": "2026-09-28T15:27:32.020345",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter60"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T15:27:32.020354",
+      "last_seen": "2026-09-28T15:27:32.020354",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid polynomial family (linear f(x)=x) admits a solution s",
+        "Method:plan_explore_iter60",
+        "Fact:pass_iter60"
+      ],
+      "iteration": 60,
+      "id": "he_experiment_pipeline_45d5547f"
+    },
+    {
+      "label": "reviewer_iter60",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T15:27:32.020436",
+      "last_seen": "2026-09-28T15:27:32.020436",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "37694a058bc226ae",
+      "r_phys": 1.0,
+      "iteration": 60,
+      "id": "persona_use:reviewer_iter60"
     }
   ],
   "links": [
@@ -945,6 +1009,33 @@
       "last_seen": "2026-09-28T15:26:32.180890",
       "mentions": 1,
       "target": "he_experiment_pipeline_93d12e40"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid polynomial family (linear f(x)=x) admits a solution s",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:27:32.020354",
+      "last_seen": "2026-09-28T15:27:32.020354",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_45d5547f"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter60",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:27:32.020354",
+      "last_seen": "2026-09-28T15:27:32.020354",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_45d5547f"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter60",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:27:32.020354",
+      "last_seen": "2026-09-28T15:27:32.020354",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_45d5547f"
     }
   ]
 }

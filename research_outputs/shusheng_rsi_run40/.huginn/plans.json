@@ -371,6 +371,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_5119b158",
+      "objective": "** [DIM: structure] The rigid polynomial family (linear f(x)=x) admits a solution space of intrinsic dimension 1, which corresponds to a unique solution up to scaling; this low-dimensional manifold is exactly representable by a two-layer tanh network with width h ≥ 2, yielding a finite and flat N_c(w) trend.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Construct constraint matrix A from N point evaluations for both polynomial families. For rigid family f(x)=x, solve A*c=y with exact arithmetic to verify overdetermined system (N>1) yields only trivial solutions requiring points on line (dimension 1 up to scaling). For fat family f(x)=(2x-1)^19, use high-precision arithmetic to verify any N points can be interpolated (infinite-dimensional solution space). Define normalization as y_scaled = y / max(|y|) for O(1) magnitude. Capacity N_c defined as maximum number of points exactly satisfied. Independent error measured via holdout set with fixed seed, N=50 points, shape (N,1). Verify tanh network with width h≥2 can represent 1D manifold with finite flat N_c(w) trend.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-28T15:28:11.101955+00:00",
+      "confirmed_at": "2026-09-28T15:28:11.103133+00:00",
+      "completed_at": "2026-09-28T15:28:30.617215+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
