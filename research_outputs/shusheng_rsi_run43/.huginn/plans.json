@@ -851,6 +851,36 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_07622026",
+      "objective": "[DIM: structure] The rigid family corresponds to functions expressible in a fixed low-dimensional basis (e.g., degree ≤ 3 polynomials), while the fat family requires a growing basis with w, leading to N_c(w) increasing superlinearly or diverging. | pro: This aligns with the \"structure\" dimension and provides a clear mathematical distinction between rigid (fixed basis) and fat (growing basis) families. It also allows for a straightforward implementation of the family function and capacity scan. con: The distinction may be too simple and may not capture the complexity of the problem. Additionally, the basis choice may affect the results, making it difficult to generalize. |",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the `family` function that generates training and held-out constraint points for two function families: (1) \"rigid\" — low-dimensional basis (e.g., degree ≤ 3 polynomials), and (2) \"fat\" — high-dimensional growing basis (e.g., random high-degree polynomials or random Fourier modes). Ensure outputs are normalized to O(1) dynamic range, y/yv have shape (N,1), X and Xv are non-overlapping, and the function integrates cleanly with the existing capacity_scan workflow. This addresses the missing anchor points, N_c(w) table, and normalization requirements from prior iterations.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "src/family.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-28T16:41:59.381592+00:00",
+      "confirmed_at": "2026-09-28T16:41:59.383342+00:00",
+      "completed_at": "2026-09-28T16:42:22.317386+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

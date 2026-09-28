@@ -324,5 +324,20 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid and fat families with proper normalization to O(1) scale, ensuring (N,1) shape for y/yv, non-overlapping train/holdout sets, "
+  },
+  {
+    "scene_tag": "workflow",
+    "reason": "The plan uses MODE 'explore' which is mismatched for a verification/identification task requiring concrete implementation and benchmarking against PDE structures. It fails to address the core hypothesis about hyperbolic vs elliptic PDEs, characteristic curves, and diffusive regularization. The plan treats the problem as a function family capacity scan without connecting to the mathematical structure of transport equations (linear hyperbolic transport PDE for rigid, nonlinear elliptic with diffusive regularization for fat). This repeats the 'same scene historical failures' identified in the prompt.",
+    "missing_steps": [
+      "Define the specific linear hyperbolic transport PDE for rigid family with fixed characteristic curves",
+      "Define the nonlinear elliptic PDE with diffusive regularization for fat family",
+      "Implement characteristic curve extraction method for hyperbolic PDE",
+      "Implement elliptic PDE solver with diffusive regularization term",
+      "Establish quantitative metrics for comparing solution space rigidity vs diffusiveness",
+      "Add dimensional analysis to verify PDE structure matches hypothesis",
+      "Include validation against known analytical solutions for both PDE types"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family` function that generates training and held-out constraint points for two function families: (1) \"rigid\" — low-dimensional basis (e.g., degree ≤ 3 pol"
   }
 ]

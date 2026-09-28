@@ -494,6 +494,55 @@ class EngineReflect:
         except Exception:  # 防御: 努力下限检查失败忽略
             logger.debug("AV7 effort floor check in _validate failed", exc_info=True)
 
+        # 通用防停滞: "重复实验"检测 (命题无关).
+        # 现象: 沙箱对每次 code_lab 都用固定 seed (sandbox_run 传 {"seed": 0}),
+        # 且"实验作者"提示恒为研究目标全文 —— 当局势僵持时 LLM 极易反复产出
+        # 同一段 family 代码, 于是 code_lab 的输出 (objectives/summary) 逐轮完全一致.
+        # 但 _is_code_lab_solved 只要求 objectives 非空, 每轮都被判 "已解决",
+        # 循环因而拿不到任何"没进展"的反馈 → 空转 (书生自觉在推进, 实际原地重跑).
+        # 这里只比较执行结果的**内容指纹**, 不解读语义, 因此对任何命题通用.
+        # 命中即注入强纠偏提示 (取尾部 [-500:], 保证进下一轮 prompt).
+        try:
+            _fp_src = ""
+            if isinstance(execution_result, dict):
+                _objs = execution_result.get("objectives")
+                _sum = execution_result.get("summary")
+                if _objs is not None or _sum is not None:
+                    _fp_src = json.dumps(
+                        {"o": _objs, "s": _sum}, sort_keys=True, default=str,
+                    )
+            _fp = (
+                hashlib.sha1(_fp_src.encode("utf-8", "ignore")).hexdigest()
+                if _fp_src
+                else ""
+            )
+            _prev_fp = getattr(self, "_prev_exec_fingerprint", "")
+            if _fp and _fp == _prev_fp:
+                self._repeat_exec_streak = (
+                    getattr(self, "_repeat_exec_streak", 0) + 1
+                )
+                results["repeat_execution"] = True
+                _rep_hint = (
+                    f"[重复实验] 本轮真实执行的结果指纹与上轮完全相同 "
+                    f"(streak={self._repeat_exec_streak}): 你在重复同一个实验, "
+                    "本轮并未推进研究. 下一轮必须改变 family/约束族/扫描设置, "
+                    "或直接据此给出最终数值结论, 不要再重跑同一配置."
+                )
+                self._speculator_hint = (
+                    (self._speculator_hint + "\n" + _rep_hint).strip()
+                    if self._speculator_hint
+                    else _rep_hint
+                )
+                logger.warning(
+                    "repeat execution detected (streak=%d): inject pivot hint",
+                    self._repeat_exec_streak,
+                )
+            else:
+                self._repeat_exec_streak = 0
+            self._prev_exec_fingerprint = _fp
+        except Exception:  # 防御: 重复实验检测失败不阻断主循环
+            logger.debug("repeat-execution check failed", exc_info=True)
+
         # H2: bandit 记录 variant outcome (r_phys + efficiency + novelty 都算出后)
         # 只对 dynamic_workflow bandit 路径生效 (execution_result 带 _variant_id)
         if isinstance(execution_result, dict) and execution_result.get("_variant_id"):
