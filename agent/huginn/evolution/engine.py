@@ -882,7 +882,7 @@ class EvolutionEngine:
             score = sum(1 for kw in skill.trigger_keywords if kw.lower() in query_lower)
             if score > 0:
                 scored.append((score, skill))
-        scored.sort(reverse=True)
+        scored.sort(key=lambda item: item[0], reverse=True)
         return [s for _, s in scored[:5]]
 
     def get_prompt_patches(self) -> list[str]:

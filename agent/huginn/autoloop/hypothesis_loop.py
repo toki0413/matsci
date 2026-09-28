@@ -143,6 +143,34 @@ def _extract_dimension(statement: str) -> str:
     return _classify_dimension(statement)
 
 
+# ── 实质内容 / 重复守卫 ──────────────────────────────────────────────────────
+# LLM 偶发把 markdown 强调符 / 裸 [DIM: ...] 标签当成假设陈述输出. 这类空壳
+# (run37: 193 节点里 154 个 statement 是 "**" 或仅 DIM 标签) 只灌 frontier 不含
+# 可检验内容, 且会跨轮反复入图 → 图膨胀但无信息. 在 add_hypothesis 入口统一拦截,
+# 一处覆盖主路径 / backup / crossover / pivot 全部生产者.
+_DIM_TAG_RE = re.compile(r"\[DIM:[^\]]*\]", re.IGNORECASE)
+_NON_SUBSTANTIVE_RE = re.compile(
+    r"[*_`>#~\[\](){}|:;,.!?\"'“”‘’、，。；：！？·\s\-—–]+"
+)
+_WORD_CHAR_RE = re.compile(r"[0-9A-Za-z\u4e00-\u9fff]")
+
+
+def _is_substantive_statement(statement: str, min_chars: int = 4) -> bool:
+    """去掉 markdown / [DIM: ...] 标签 / 标点后, 是否仍有足够的实质字符."""
+    if not statement:
+        return False
+    _t = _DIM_TAG_RE.sub(" ", statement)
+    _t = _NON_SUBSTANTIVE_RE.sub("", _t)
+    return len(_WORD_CHAR_RE.findall(_t)) >= min_chars
+
+
+def _statement_key(statement: str) -> str:
+    """归一化语句指纹 (去标签/标点/空白 + 小写), 用于精确重复判定."""
+    _t = _DIM_TAG_RE.sub(" ", statement or "")
+    _t = _NON_SUBSTANTIVE_RE.sub("", _t)
+    return _t.lower()
+
+
 # ── graph ────────────────────────────────────────────────────────────────────
 
 
@@ -170,6 +198,9 @@ class HypothesisGraph:
         # dual_covered 命中时自动注册. 满足 downward closure: 任意 1-子集 (节点本身) 也在图里.
         # ponytail: 用 frozenset 模拟, 不引入新依赖. 升级: SimplicialComplex (gudhi/TopoNetX) 当 >2-ary 关系变常见.
         self._simplicials: set[frozenset[str]] = set()
+        # 被守卫拒绝的入图尝试计数 (非实质陈述 / 精确重复). 供上层判断"新颖性枯竭":
+        # 连续多轮只产出重复/空壳 → 应触发 pivot/反例搜索, 而非原地重述.
+        self._rejected_adds: int = 0
         # ponytail: in-memory event log 为主, 段升级 P1#3: 有 workspace 时同写
         # SQLite+FTS5 (hypothesis_events.py), 支持跨进程 resume/replay/搜索.
         # P0: workspace 路径用于写 FAILED.md / PROVED.md durable state 文件.
@@ -225,6 +256,19 @@ class HypothesisGraph:
         """新增假设节点, 返回 node id. parent_id 非空时自动加 derive 边."""
         if not statement.strip():
             raise HypothesisGraphError("假设陈述不能为空")
+        # 实质内容守卫: "**" / 仅 [DIM: ...] 标签 / 纯符号 → 返回 None (同交叉授粉
+        # 拒绝语义), 调用方按 falsy 处理. 阻止空壳节点灌满 frontier.
+        if not _is_substantive_statement(statement):
+            self._rejected_adds += 1
+            logger.info("add_hypothesis 拒绝非实质陈述: %r", statement[:60])
+            return None
+        # 精确重复守卫: 归一化后完全相同的陈述不再入图 (跨轮反复重述同一命题
+        # 只会膨胀图). 修正/pivot/crossover 产出的陈述不同, 不受影响.
+        _key = _statement_key(statement)
+        if any(_statement_key(_n.statement) == _key for _n in self._nodes.values()):
+            self._rejected_adds += 1
+            logger.info("add_hypothesis 拒绝重复陈述: %r", statement[:60])
+            return None
         # 先查 parent 再加节点, 避免失败时留下孤儿节点
         if parent_id is not None:
             self._check_node(parent_id)

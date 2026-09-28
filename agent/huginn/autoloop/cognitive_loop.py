@@ -893,6 +893,29 @@ class CognitiveRunner:
 
         supported = graph.supported()
         n = len(all_nodes)
+
+        # 新颖性枯竭检测: 连续多轮"只有被守卫拒绝的入图尝试、图零增长" = 假设生成
+        # 在原地重述 (run37 症状: Darwin 卡死 / 假设重复 15 次 / 空壳节点). 这属于
+        # 方法层面的停滞 → 触发反例搜索换方向, 而不是继续重述同一抽象命题.
+        _prev_n = getattr(self, "_novelty_prev_nodes", n)
+        _prev_rej = getattr(self, "_novelty_prev_rejected", graph._rejected_adds)
+        _d_nodes = n - _prev_n
+        _d_rej = graph._rejected_adds - _prev_rej
+        self._novelty_prev_nodes = n
+        self._novelty_prev_rejected = graph._rejected_adds
+        if _d_nodes <= 0 and _d_rej > 0:
+            self._novelty_starved = getattr(self, "_novelty_starved", 0) + 1
+        elif _d_nodes > 0:
+            self._novelty_starved = 0
+        if getattr(self, "_novelty_starved", 0) >= 3:
+            logger.info(
+                "novelty starved %d× (only rejected/duplicate hypotheses): "
+                "trigger counterexample hunt",
+                self._novelty_starved,
+            )
+            self._novelty_starved = 0
+            self._trigger_counterexample_hunt()
+
         supported_ratio = len(supported) / n
 
         testable = sum(
