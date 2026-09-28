@@ -894,8 +894,8 @@
       "source": "autoloop",
       "confidence": 0.99,
       "created_at": "2026-09-28T14:12:59.311488",
-      "last_seen": "2026-09-28T14:14:07.632639",
-      "mentions": 2,
+      "last_seen": "2026-09-28T14:15:46.900092",
+      "mentions": 3,
       "iteration": 80,
       "r_phys": 1.0,
       "surprise": 1.0,
@@ -1000,6 +1000,55 @@
       "r_phys": 1.0,
       "iteration": 85,
       "id": "persona_use:reviewer_iter85"
+    },
+    {
+      "label": "plan_explore_iter90",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:15:46.900116",
+      "last_seen": "2026-09-28T14:15:46.900116",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter90"
+    },
+    {
+      "label": "pass_iter90",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:15:46.900138",
+      "last_seen": "2026-09-28T14:15:46.900138",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter90"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T14:15:46.900149",
+      "last_seen": "2026-09-28T14:15:46.900149",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid polynomial constraint family corresponds to a low-dim",
+        "Method:plan_explore_iter90",
+        "Fact:pass_iter90"
+      ],
+      "iteration": 90,
+      "id": "he_experiment_pipeline_3215987c"
+    },
+    {
+      "label": "reviewer_iter90",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:15:46.900232",
+      "last_seen": "2026-09-28T14:15:46.900232",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "2e6e0c6bb76939ec",
+      "r_phys": 1.0,
+      "iteration": 90,
+      "id": "persona_use:reviewer_iter90"
     }
   ],
   "links": [
@@ -1428,6 +1477,15 @@
     },
     {
       "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid polynomial constraint family corresponds to a low-dim",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:15:46.900149",
+      "last_seen": "2026-09-28T14:15:46.900149",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_3215987c"
+    },
+    {
+      "relation": "member_of",
       "source": "Method:plan_explore_iter80",
       "confidence": 0.5,
       "created_at": "2026-09-28T14:12:59.311544",
@@ -1461,6 +1519,24 @@
       "last_seen": "2026-09-28T14:14:07.632695",
       "mentions": 1,
       "target": "he_experiment_pipeline_289260fb"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter90",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:15:46.900149",
+      "last_seen": "2026-09-28T14:15:46.900149",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_3215987c"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter90",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:15:46.900149",
+      "last_seen": "2026-09-28T14:15:46.900149",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_3215987c"
     }
   ]
 }
