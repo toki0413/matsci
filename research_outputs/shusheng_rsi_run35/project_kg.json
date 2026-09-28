@@ -66,6 +66,70 @@
       "r_phys": 1.0,
       "iteration": 5,
       "id": "persona_use:reviewer_iter5"
+    },
+    {
+      "label": "[DIM: structure] The rigid family corresponds to functions satisfying a first-or",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:08:16.818339",
+      "last_seen": "2026-09-28T13:08:16.818339",
+      "mentions": 1,
+      "iteration": 10,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The rigid family will be identified as a linear PDE (e.g., f''(x)=0 or f'(x)=c) with low-dimensional solution space, achieving zero violation at h ≤ 8 for sufficient w. The fat family will be a high-f",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid family corresponds to functions satisfying a first-or"
+    },
+    {
+      "label": "plan_explore_iter10",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:08:16.818382",
+      "last_seen": "2026-09-28T13:08:16.818382",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter10"
+    },
+    {
+      "label": "pass_iter10",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:08:16.818392",
+      "last_seen": "2026-09-28T13:08:16.818392",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter10"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T13:08:16.818401",
+      "last_seen": "2026-09-28T13:08:16.818401",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid family corresponds to functions satisfying a first-or",
+        "Method:plan_explore_iter10",
+        "Fact:pass_iter10"
+      ],
+      "iteration": 10,
+      "id": "he_experiment_pipeline_8290ff57"
+    },
+    {
+      "label": "reviewer_iter10",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:08:16.818486",
+      "last_seen": "2026-09-28T13:08:16.818486",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "e24c012ad914df39",
+      "r_phys": 1.0,
+      "iteration": 10,
+      "id": "persona_use:reviewer_iter10"
     }
   ],
   "links": [
@@ -95,6 +159,33 @@
       "last_seen": "2026-09-28T13:07:19.195687",
       "mentions": 1,
       "target": "he_experiment_pipeline_a27c5d6b"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid family corresponds to functions satisfying a first-or",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:08:16.818401",
+      "last_seen": "2026-09-28T13:08:16.818401",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8290ff57"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:08:16.818401",
+      "last_seen": "2026-09-28T13:08:16.818401",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8290ff57"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:08:16.818401",
+      "last_seen": "2026-09-28T13:08:16.818401",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8290ff57"
     }
   ]
 }
