@@ -66,6 +66,70 @@
       "r_phys": 1.0,
       "iteration": 5,
       "id": "persona_use:reviewer_iter5"
+    },
+    {
+      "label": "[DIM: structure] The rigid polynomial family exhibits a finite critical width $N",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T15:17:43.424020",
+      "last_seen": "2026-09-28T15:17:43.424020",
+      "mentions": 1,
+      "iteration": 10,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The rigid family will achieve zero violation (max abs error ≤1e-3 on held-out points) at small width N_c (e.g., h=2~8) that is flat or decreasing with w, while the fat family will be unreachable (no w",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid polynomial family exhibits a finite critical width $N"
+    },
+    {
+      "label": "plan_explore_iter10",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:17:43.424061",
+      "last_seen": "2026-09-28T15:17:43.424061",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter10"
+    },
+    {
+      "label": "pass_iter10",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:17:43.424071",
+      "last_seen": "2026-09-28T15:17:43.424071",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter10"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T15:17:43.424080",
+      "last_seen": "2026-09-28T15:17:43.424080",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid polynomial family exhibits a finite critical width $N",
+        "Method:plan_explore_iter10",
+        "Fact:pass_iter10"
+      ],
+      "iteration": 10,
+      "id": "he_experiment_pipeline_4e29941e"
+    },
+    {
+      "label": "reviewer_iter10",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T15:17:43.424167",
+      "last_seen": "2026-09-28T15:17:43.424167",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "a4ba2e1dc02f3498",
+      "r_phys": 1.0,
+      "iteration": 10,
+      "id": "persona_use:reviewer_iter10"
     }
   ],
   "links": [
@@ -95,6 +159,33 @@
       "last_seen": "2026-09-28T15:16:39.503422",
       "mentions": 1,
       "target": "he_experiment_pipeline_13a3e263"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid polynomial family exhibits a finite critical width $N",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:17:43.424080",
+      "last_seen": "2026-09-28T15:17:43.424080",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4e29941e"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:17:43.424080",
+      "last_seen": "2026-09-28T15:17:43.424080",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4e29941e"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:17:43.424080",
+      "last_seen": "2026-09-28T15:17:43.424080",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4e29941e"
     }
   ]
 }
