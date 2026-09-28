@@ -1233,8 +1233,8 @@
       "source": "autoloop",
       "confidence": 0.99,
       "created_at": "2026-09-28T14:21:37.440339",
-      "last_seen": "2026-09-28T14:22:41.984844",
-      "mentions": 2,
+      "last_seen": "2026-09-28T14:32:27.704132",
+      "mentions": 3,
       "iteration": 110,
       "r_phys": 1.0,
       "surprise": 1.0,
@@ -1742,6 +1742,55 @@
       "r_phys": 1.0,
       "iteration": 150,
       "id": "persona_use:reviewer_iter150"
+    },
+    {
+      "label": "plan_explore_iter155",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:32:27.704158",
+      "last_seen": "2026-09-28T14:32:27.704158",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter155"
+    },
+    {
+      "label": "pass_iter155",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:32:27.704180",
+      "last_seen": "2026-09-28T14:32:27.704180",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter155"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T14:32:27.704190",
+      "last_seen": "2026-09-28T14:32:27.704190",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid polynomial family corresponds to a low-dimensional al",
+        "Method:plan_explore_iter155",
+        "Fact:pass_iter155"
+      ],
+      "iteration": 155,
+      "id": "he_experiment_pipeline_e7646b2d"
+    },
+    {
+      "label": "reviewer_iter155",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:32:27.704272",
+      "last_seen": "2026-09-28T14:32:27.704272",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "0700b57f79cd13af",
+      "r_phys": 1.0,
+      "iteration": 155,
+      "id": "persona_use:reviewer_iter155"
     }
   ],
   "links": [
@@ -2332,6 +2381,15 @@
     },
     {
       "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid polynomial family corresponds to a low-dimensional al",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:32:27.704190",
+      "last_seen": "2026-09-28T14:32:27.704190",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e7646b2d"
+    },
+    {
+      "relation": "member_of",
       "source": "Method:plan_explore_iter110",
       "confidence": 0.5,
       "created_at": "2026-09-28T14:21:37.440396",
@@ -2554,6 +2612,24 @@
       "last_seen": "2026-09-28T14:31:23.239032",
       "mentions": 1,
       "target": "he_experiment_pipeline_dbea23ea"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter155",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:32:27.704190",
+      "last_seen": "2026-09-28T14:32:27.704190",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e7646b2d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter155",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:32:27.704190",
+      "last_seen": "2026-09-28T14:32:27.704190",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e7646b2d"
     }
   ]
 }
