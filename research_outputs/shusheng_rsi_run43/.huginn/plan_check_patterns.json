@@ -429,5 +429,20 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid family (linear transport PDE solutions: u(t,x) = f(x - v*t) with low-degree polynomial f) and fat family (high-degree random "
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan proposes implementing 'rigid' and 'fat' families using generic PDE solutions (linear transport and Burgers' equation) without defining specific PDEs, implementing characteristic curve tracing, or conducting spectral/PDE residual verification. This directly repeats the documented 'run28' and 'run29' failure modes where analysis was reduced to generic ML generalization rather than structural verification. The hypothesis requires explicit mathematical structure verification via characteristic curve tracing and PDE analysis, which the plan lacks. The plan also fails to address the specific requirements mentioned in the historical failures about ensuring the fat family is x-dependent and defined by nonlinear PDE, not random high-dimensional polynomials.",
+    "missing_steps": [
+      "Define specific first-order linear transport PDE for rigid family (e.g., ∂_t u + v·∇u = 0 with fixed velocity field)",
+      "Define specific nonlinear hyperbolic PDE for fat family (e.g., Burgers' equation with time-dependent characteristics)",
+      "Implement characteristic curve tracing to verify fixed vs. time-dependent characteristics between families",
+      "Test for solution non-uniqueness in fat family (check Jacobian singularities or multiple solutions for same boundary conditions)",
+      "Add spectral analysis or direct PDE residual verification to confirm mathematical structure of both families",
+      "Ensure fat family is explicitly x-dependent and defined by nonlinear PDE, not random high-dimensional polynomials",
+      "Verify characteristic points w along trajectories for rigid family uniqueness"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function for the rigid and fat families as specified in the hypothesis. Ensure y/yv are normalized to O(1) magnitude and shaped (N,1). The rigid famil"
   }
 ]
