@@ -397,5 +397,23 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement two analytical function families (rigid: truncated Fourier series; fat: polynomial basis) with proper normalization and non-overlapping held-out sets. Execute ca"
+  },
+  {
+    "scene_tag": "auto_family",
+    "reason": "The plan uses 'explore' mode which is inappropriate for concrete computational verification tasks per the system prompt (should be 'coder' or 'workflow' mode). It lacks concrete implementation details including specific grid resolutions, basis function definitions, numerical methods, and N_c(w) calculation methodology. It fails to address the critical 'fat family' constraint from history—explicitly specifying that the fat family must be x-dependent (not i.i.d. noise) to avoid the run28 failure mode. It also lacks explicit band/w scaling instructions to prevent ill-conditioning issues like those in run29 (~1e9 scale). The plan repeats historical failures by not addressing dimensional pre-checks, scale normalization, and proper error measurement procedures.",
+    "missing_steps": [
+      "Switch from 'explore' mode to 'coder' or 'workflow' mode for concrete computations",
+      "Define concrete numerical methods with specific grid resolutions, basis function definitions, and sampling parameters",
+      "Establish clear training and holdout error measurement procedures with separate metrics to avoid data leakage",
+      "Define N_c(w) calculation methodology (e.g., SVD rank, effective dimension) with clear thresholds",
+      "Address dimensional pre-check warnings and ensure dimensional consistency/scale normalization (O(1) scale)",
+      "Define concrete L-BFGS-B optimization setup with specific iteration limits and parameters",
+      "Implement comparative optimization strategy to distinguish optimization failure from function space limitations",
+      "Explicitly define fat family as x-dependent high-dimensional functions (not i.i.d. noise)",
+      "Specify scaling for fat family basis to prevent ~1e9 scale issues",
+      "Map hypothesis to natural-science instance (spectral theory for basis functions)"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the rigid and fat family functions to test the hypothesis about solution space rigidity. The rigid family will be defined by linear PDE constraints (e.g., ∂_x u "
   }
 ]

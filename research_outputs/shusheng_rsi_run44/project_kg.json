@@ -1685,6 +1685,70 @@
       "r_phys": 1.0,
       "iteration": 135,
       "id": "persona_use:reviewer_iter135"
+    },
+    {
+      "label": "[DIM: Computational Architecture]",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T17:23:16.433097",
+      "last_seen": "2026-09-28T17:23:16.433097",
+      "mentions": 1,
+      "iteration": 140,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will show distinct scaling behavior between rigid and fat families, with the zero-violation criterion achievable for N_c above critical thresholds.",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: Computational Architecture]"
+    },
+    {
+      "label": "plan_explore_iter140",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:23:16.433138",
+      "last_seen": "2026-09-28T17:23:16.433138",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter140"
+    },
+    {
+      "label": "pass_iter140",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:23:16.433149",
+      "last_seen": "2026-09-28T17:23:16.433149",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter140"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T17:23:16.433159",
+      "last_seen": "2026-09-28T17:23:16.433159",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: Computational Architecture]",
+        "Method:plan_explore_iter140",
+        "Fact:pass_iter140"
+      ],
+      "iteration": 140,
+      "id": "he_experiment_pipeline_106da30d"
+    },
+    {
+      "label": "reviewer_iter140",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T17:23:16.433234",
+      "last_seen": "2026-09-28T17:23:16.433234",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "df0c5909e9c3419a",
+      "r_phys": 1.0,
+      "iteration": 140,
+      "id": "persona_use:reviewer_iter140"
     }
   ],
   "links": [
@@ -2416,6 +2480,33 @@
       "last_seen": "2026-09-28T17:22:13.739040",
       "mentions": 1,
       "target": "he_experiment_pipeline_5e3ca36d"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: Computational Architecture]",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:23:16.433159",
+      "last_seen": "2026-09-28T17:23:16.433159",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_106da30d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter140",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:23:16.433159",
+      "last_seen": "2026-09-28T17:23:16.433159",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_106da30d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter140",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:23:16.433159",
+      "last_seen": "2026-09-28T17:23:16.433159",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_106da30d"
     }
   ]
 }
