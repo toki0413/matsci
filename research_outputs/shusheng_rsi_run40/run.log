@@ -211,3 +211,21 @@ plan_check failed low-conf (tier=light, scene=other, conf=0.10): The plan fundam
 [exec-route] mode='explore' desc[:80]='Construct constraint matrix A from N point evaluations for both polynomial famil' obj_len=2462 is_exp_desc=True is_exp_obj=True is_det_desc=False
 [code-lab-author] raw_len=1083 extracted_len=1069 prompt_len=5379
 [code-lab-run] res_none=False success=True nobj=36 reason=''
+error in _parse_verify_score: JSON parse failed, falling back to regex
+Traceback (most recent call last):
+  File "/workspace/agent/huginn/autoloop/engine_reflect.py", line 2259, in _parse_verify_score
+    data = json.loads(resp.strip())
+  File "/root/.pyenv/versions/3.14.7/lib/python3.14/json/__init__.py", line 352, in loads
+    return _default_decoder.decode(s)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^
+  File "/root/.pyenv/versions/3.14.7/lib/python3.14/json/decoder.py", line 345, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+               ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.pyenv/versions/3.14.7/lib/python3.14/json/decoder.py", line 363, in raw_decode
+    raise JSONDecodeError("Expecting value", s, err.value) from None
+json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+[validate] mode='code_lab' success=True nobj=36 cf=False lab=True
+metacog: 假设可能为换名归约 (trap=, target=刚性/胖族的 N_c(w) 行为描述（即刚性族 N_c 为小常数、胖族 N_c 不可达）): [DIM: transport] The generalization error of the constrained approximation problem follows a diffusi
+[exec-route] mode='explore' desc[:80]='Implement direct linear algebra solver to construct constraint matrix A from poi' obj_len=2462 is_exp_desc=True is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=866 extracted_len=851 prompt_len=5379
+[code-lab-run] res_none=False success=True nobj=36 reason=''
