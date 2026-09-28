@@ -243,6 +243,70 @@
       "r_phys": 1.0,
       "iteration": 20,
       "id": "persona_use:reviewer_iter20"
+    },
+    {
+      "label": "[DIM: transport] The generalization error of small two-layer networks on constra",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T15:20:45.639945",
+      "last_seen": "2026-09-28T15:20:45.639945",
+      "mentions": 1,
+      "iteration": 25,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Rigid family: N_c(w) ≈ 4-8 for all w, training error ≤1e-4, validation error ≤1e-3 at anchor (w=10, h=8, seed=0). Fat family: validation error remains >1e-3 at h=64 for all w, trend='unreachable'. Nor",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: transport] The generalization error of small two-layer networks on constra"
+    },
+    {
+      "label": "plan_explore_iter25",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:20:45.639984",
+      "last_seen": "2026-09-28T15:20:45.639984",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter25"
+    },
+    {
+      "label": "pass_iter25",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:20:45.639993",
+      "last_seen": "2026-09-28T15:20:45.639993",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter25"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T15:20:45.640004",
+      "last_seen": "2026-09-28T15:20:45.640004",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: transport] The generalization error of small two-layer networks on constra",
+        "Method:plan_explore_iter25",
+        "Fact:pass_iter25"
+      ],
+      "iteration": 25,
+      "id": "he_experiment_pipeline_8c056819"
+    },
+    {
+      "label": "reviewer_iter25",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T15:20:45.640086",
+      "last_seen": "2026-09-28T15:20:45.640086",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "123826eafc3b7f85",
+      "r_phys": 1.0,
+      "iteration": 25,
+      "id": "persona_use:reviewer_iter25"
     }
   ],
   "links": [
@@ -353,6 +417,33 @@
       "last_seen": "2026-09-28T15:19:40.970074",
       "mentions": 1,
       "target": "he_experiment_pipeline_7a30722"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: transport] The generalization error of small two-layer networks on constra",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:20:45.640004",
+      "last_seen": "2026-09-28T15:20:45.640004",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8c056819"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:20:45.640004",
+      "last_seen": "2026-09-28T15:20:45.640004",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8c056819"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:20:45.640004",
+      "last_seen": "2026-09-28T15:20:45.640004",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8c056819"
     }
   ]
 }

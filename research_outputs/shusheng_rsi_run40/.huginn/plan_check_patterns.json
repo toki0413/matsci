@@ -1,0 +1,14 @@
+[
+  {
+    "scene_tag": "other",
+    "reason": "Plan description does not address the critical scaling issue (run29 failure: high-order polynomial leading to ~1e9 scale causing absolute criterion failure). The plan mentions normalization but lacks specific details on handling the large magnitude of (2x-1)^19 which requires scaling the target y/yv by the standard deviation to prevent numerical instability and ensure the 1e-3 threshold is meaningful. Without this, the 'fat polynomial' result will be dominated by scale rather than intrinsic solution-space dimension.",
+    "missing_steps": [
+      "Implement explicit scaling for fat polynomial targets: y_scaled = (y / max(|y|)) * normalization_factor to bring values to O(1) range",
+      "Define specific normalization procedure (e.g., divide by std of training y) to ensure both families operate on comparable scales",
+      "Verify that the holdout error metric uses relative error or scaled error to be invariant to function magnitude",
+      "Add dimension check to ensure output shape is (N,1) as required"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function for the rigid linear (f(x)=x) and fat polynomial (f(x)=(2x-1)^19) families, ensuring proper normalization (y/yv divided by std), correct (N,1"
+  }
+]
