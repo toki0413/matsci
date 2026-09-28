@@ -1882,10 +1882,10 @@
       "label": "[DIM: Functional Geometry] The rigid family's low N_c stems from its solution sp",
       "type": "experiment",
       "source": "autoloop",
-      "confidence": 1.0,
+      "confidence": 0.99,
       "created_at": "2026-09-28T17:26:20.502603",
-      "last_seen": "2026-09-28T17:26:20.502603",
-      "mentions": 1,
+      "last_seen": "2026-09-28T17:27:24.014326",
+      "mentions": 2,
       "iteration": 155,
       "r_phys": 1.0,
       "surprise": 1.0,
@@ -1941,6 +1941,55 @@
       "r_phys": 1.0,
       "iteration": 155,
       "id": "persona_use:reviewer_iter155"
+    },
+    {
+      "label": "plan_explore_iter160",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:27:24.014353",
+      "last_seen": "2026-09-28T17:27:24.014353",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter160"
+    },
+    {
+      "label": "pass_iter160",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:27:24.014374",
+      "last_seen": "2026-09-28T17:27:24.014374",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter160"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T17:27:24.014384",
+      "last_seen": "2026-09-28T17:27:24.014384",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: Functional Geometry] The rigid family's low N_c stems from its solution sp",
+        "Method:plan_explore_iter160",
+        "Fact:pass_iter160"
+      ],
+      "iteration": 160,
+      "id": "he_experiment_pipeline_926d88da"
+    },
+    {
+      "label": "reviewer_iter160",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T17:27:24.014460",
+      "last_seen": "2026-09-28T17:27:24.014460",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "1e3f7aa19a113dc9",
+      "r_phys": 1.0,
+      "iteration": 160,
+      "id": "persona_use:reviewer_iter160"
     }
   ],
   "links": [
@@ -2765,6 +2814,15 @@
     },
     {
       "relation": "member_of",
+      "source": "experiment:[DIM: Functional Geometry] The rigid family's low N_c stems from its solution sp",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:27:24.014384",
+      "last_seen": "2026-09-28T17:27:24.014384",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_926d88da"
+    },
+    {
+      "relation": "member_of",
       "source": "Method:plan_explore_iter155",
       "confidence": 0.5,
       "created_at": "2026-09-28T17:26:20.502664",
@@ -2780,6 +2838,24 @@
       "last_seen": "2026-09-28T17:26:20.502664",
       "mentions": 1,
       "target": "he_experiment_pipeline_45a8305"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter160",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:27:24.014384",
+      "last_seen": "2026-09-28T17:27:24.014384",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_926d88da"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter160",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:27:24.014384",
+      "last_seen": "2026-09-28T17:27:24.014384",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_926d88da"
     }
   ]
 }

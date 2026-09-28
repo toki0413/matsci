@@ -478,5 +478,29 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the rigid and fat family functions according to the corrected experimental protocol. The rigid family will use a low-dimensional solution space (3 points define "
+  },
+  {
+    "scene_tag": "workflow",
+    "reason": "Plan is invalid because it repeats the exact same fatal error as run28 (historical failure): the fat family is not specified to be a function of x. The plan states to probe rigidity but defines fat as 'x-independent pure noise' (implied by the context of avoiding run28's specific failure while the plan description remains ambiguous about x-dependence). Without explicit x-dependence (e.g., high-dimensional polynomials or functions of x), the comparison collapses to 'learnable vs unlearnable noise' rather than the intended 'rigid vs fat functional structure' hypothesis. This violates the core requirement to compare two distinct function classes, making the prediction of 'unreachable' trend for fat trivial and meaningless.",
+    "missing_steps": [
+      "Explicitly define fat family as high-dimensional functions of x (e.g., polynomials with degree >> w) with proper scaling to avoid the run29 error (scale ~1e9)",
+      "Specify exact functional forms for both rigid and fat families before execution to ensure they are x-dependent and properly normalized",
+      "Add step to verify the fat family is not x-independent noise before starting width scan"
+    ],
+    "mode": "explore",
+    "description": "Investigate the functional space structure hypothesis by implementing the capacity_scan workflow to probe rigidity of the rigid family vs. fat family. First, verify the rigid family achieves zero viol"
+  },
+  {
+    "scene_tag": "workflow",
+    "reason": "The plan is invalid because it explicitly defines the 'fat family' as high-degree polynomials (degree=2w+1) which, despite being x-dependent, fails the critical scaling requirement mentioned in historical failure run29. The plan mentions scaling to unit variance but does not guarantee that the high-degree polynomials will not explode to ~1e9 scales (as in run29) due to the nature of high-degree polynomials on bounded domains without specific orthogonalization or normalization (e.g., Legendre polynomials). Furthermore, the plan does not specify how the x-dependence will be verified or how the functional overcapacity will be measured, making the 'unreachable trend' prediction unquantifiable.",
+    "missing_steps": [
+      "Define specific orthogonal basis for fat family (e.g., Legendre polynomials) to ensure numerical stability and proper scaling",
+      "Add explicit normalization step to ensure fat family values remain within reasonable bounds (e.g., |f(x)| < 10) across the domain",
+      "Specify exact metric for 'functional overcapacity' (e.g., condition number of design matrix, or gradient norm saturation threshold)",
+      "Include verification step that fat family is not x-independent noise before width scan",
+      "Define precise N_c(w) metric (e.g., critical width where validation error diverges)"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Define explicit x-dependent functional families: rigid family as fixed trigonometric basis with width-limited terms (e.g., sin(kx), cos(kx) for k≤w), and fat family as hig"
   }
 ]
