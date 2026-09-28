@@ -150,20 +150,20 @@
       "label": "plan_explore_iter15",
       "type": "Method",
       "source": "autoloop",
-      "confidence": 0.55,
+      "confidence": 0.6000000000000001,
       "created_at": "2026-09-28T15:37:35.259465",
-      "last_seen": "2026-09-28T16:07:24.554992",
-      "mentions": 2,
+      "last_seen": "2026-09-28T16:19:20.413652",
+      "mentions": 3,
       "id": "Method:plan_explore_iter15"
     },
     {
       "label": "pass_iter15",
       "type": "Fact",
       "source": "autoloop",
-      "confidence": 0.55,
+      "confidence": 0.6000000000000001,
       "created_at": "2026-09-28T15:37:35.259477",
-      "last_seen": "2026-09-28T16:07:24.555003",
-      "mentions": 2,
+      "last_seen": "2026-09-28T16:19:20.413668",
+      "mentions": 3,
       "surprise": 1.0,
       "id": "Fact:pass_iter15"
     },
@@ -187,8 +187,8 @@
       "source": "autoloop",
       "confidence": 0.99,
       "created_at": "2026-09-28T15:37:35.259567",
-      "last_seen": "2026-09-28T16:07:24.555093",
-      "mentions": 2,
+      "last_seen": "2026-09-28T16:19:20.413761",
+      "mentions": 3,
       "persona": "reviewer",
       "context_hash": "d60d7859c1725eae",
       "r_phys": 1.0,
@@ -916,6 +916,35 @@
       ],
       "iteration": 10,
       "id": "he_experiment_pipeline_867dd25b"
+    },
+    {
+      "label": "** [DIM: structure] The rigid family corresponds to functions that satisfy a spe",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T16:19:20.413615",
+      "last_seen": "2026-09-28T16:19:20.413615",
+      "mentions": 1,
+      "iteration": 15,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The rigid family will achieve holdout_err ≤ 1e-3 at small widths (h=2-8) with flat N_c(w) trend, while the fat family will be unreachable (N_c = ∞) across all h ≤ 64. Normalization will ensure holdout",
+      "persona": "reviewer",
+      "id": "experiment:** [DIM: structure] The rigid family corresponds to functions that satisfy a spe"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T16:19:20.413675",
+      "last_seen": "2026-09-28T16:19:20.413675",
+      "mentions": 1,
+      "members": [
+        "experiment:** [DIM: structure] The rigid family corresponds to functions that satisfy a spe",
+        "Method:plan_explore_iter15",
+        "Fact:pass_iter15"
+      ],
+      "iteration": 15,
+      "id": "he_experiment_pipeline_7c0c6bf9"
     }
   ],
   "links": [
@@ -1074,6 +1103,15 @@
     },
     {
       "relation": "member_of",
+      "source": "Method:plan_explore_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:19:20.413675",
+      "last_seen": "2026-09-28T16:19:20.413675",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_7c0c6bf9"
+    },
+    {
+      "relation": "member_of",
       "confidence": 0.5,
       "created_at": "2026-09-28T15:37:35.259485",
       "last_seen": "2026-09-28T15:37:35.259485",
@@ -1089,6 +1127,15 @@
       "mentions": 1,
       "source": "Fact:pass_iter15",
       "target": "he_experiment_pipeline_3c18be85"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:19:20.413675",
+      "last_seen": "2026-09-28T16:19:20.413675",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_7c0c6bf9"
     },
     {
       "relation": "member_of",
@@ -1485,6 +1532,15 @@
       "last_seen": "2026-09-28T16:18:20.533292",
       "mentions": 1,
       "target": "he_experiment_pipeline_867dd25b"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:** [DIM: structure] The rigid family corresponds to functions that satisfy a spe",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:19:20.413675",
+      "last_seen": "2026-09-28T16:19:20.413675",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_7c0c6bf9"
     }
   ]
 }

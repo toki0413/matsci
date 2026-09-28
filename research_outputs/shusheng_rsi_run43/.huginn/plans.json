@@ -94,6 +94,36 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_b5b36656",
+      "objective": "[DIM: transport] The rigid family corresponds to functions that satisfy a first-order linear transport PDE with constant characteristics (e.g., ∂ₓf = 0 or ∂ₓf + c∂ᵧf = 0), making them uniquely determined by w samples along characteristic curves, while the fat family satisfies a nonlinear hyperbolic PDE with non-unique solutions even at high w.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the family function to generate training/holdout data for the rigid (first-order transport PDE, e.g., f(x,y)=g(y)) and fat (nonlinear hyperbolic, e.g., f(x,y)=sin(xy) + random polynomial) families. Ensure y/yv are normalized to O(1) and shaped (N,1), with non-overlapping X/Xv. This enables the capacity scan to verify rigidity (finite N_c at small h) vs. fatness (unreachable at h≤64).",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "family.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-28T16:19:42.855082+00:00",
+      "confirmed_at": "2026-09-28T16:19:42.856099+00:00",
+      "completed_at": "2026-09-28T16:20:03.063725+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

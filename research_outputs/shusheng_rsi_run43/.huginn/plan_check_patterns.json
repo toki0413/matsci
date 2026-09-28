@@ -1,0 +1,13 @@
+[
+  {
+    "scene_tag": "other",
+    "reason": "The plan's DESCRIPTION defines the 'fat' family as a nonlinear hyperbolic PDE (e.g., sin(xy) + random polynomial), but the PREDICTION only checks generalization error (holdout_err) against a width threshold. This fails to verify the hypothesis, which requires proving the function satisfies a nonlinear hyperbolic PDE with non-unique solutions. Checking error rates alone cannot distinguish between a 'fat' function and any other complex function; it does not confirm the underlying PDE structure or non-uniqueness as required by the hypothesis.",
+    "missing_steps": [
+      "Define the specific nonlinear hyperbolic PDE for the fat family (e.g., Burgers' equation or similar) and verify the generated function satisfies it.",
+      "Implement a test for solution non-uniqueness (e.g., check if multiple solutions exist for the same boundary conditions or if the Jacobian becomes singular).",
+      "Add a spectral analysis or characteristic curve tracing to confirm the transport nature of the rigid family and the hyperbolic nature of the fat family."
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function to generate training/holdout data for the rigid (first-order transport PDE, e.g., f(x,y)=g(y)) and fat (nonlinear hyperbolic, e.g., f(x,y)=si"
+  }
+]
