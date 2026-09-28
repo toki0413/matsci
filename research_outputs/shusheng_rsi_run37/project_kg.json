@@ -1840,6 +1840,70 @@
       "r_phys": 1.0,
       "iteration": 160,
       "id": "persona_use:reviewer_iter160"
+    },
+    {
+      "label": "[DIM: structure] The zero-violation capability $N_c(w)$ is bounded by the algebr",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:34:40.280608",
+      "last_seen": "2026-09-28T14:34:40.280608",
+      "mentions": 1,
+      "iteration": 165,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "[auto-routed: surprise=1.00] Based on the feedback, I need to correct the MODE mismatch, provide precise mathematical definitions, and specify the implementation details for the capacity_scan tool.\n\n`",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The zero-violation capability $N_c(w)$ is bounded by the algebr"
+    },
+    {
+      "label": "plan_explore_iter165",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:34:40.280649",
+      "last_seen": "2026-09-28T14:34:40.280649",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter165"
+    },
+    {
+      "label": "pass_iter165",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:34:40.280659",
+      "last_seen": "2026-09-28T14:34:40.280659",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter165"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T14:34:40.280668",
+      "last_seen": "2026-09-28T14:34:40.280668",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The zero-violation capability $N_c(w)$ is bounded by the algebr",
+        "Method:plan_explore_iter165",
+        "Fact:pass_iter165"
+      ],
+      "iteration": 165,
+      "id": "he_experiment_pipeline_84859aa2"
+    },
+    {
+      "label": "reviewer_iter165",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:34:40.280748",
+      "last_seen": "2026-09-28T14:34:40.280748",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "0b1615924005fb5f",
+      "r_phys": 1.0,
+      "iteration": 165,
+      "id": "persona_use:reviewer_iter165"
     }
   ],
   "links": [
@@ -2706,6 +2770,33 @@
       "last_seen": "2026-09-28T14:33:33.828103",
       "mentions": 1,
       "target": "he_experiment_pipeline_1ffaf071"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The zero-violation capability $N_c(w)$ is bounded by the algebr",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:34:40.280668",
+      "last_seen": "2026-09-28T14:34:40.280668",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_84859aa2"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter165",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:34:40.280668",
+      "last_seen": "2026-09-28T14:34:40.280668",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_84859aa2"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter165",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:34:40.280668",
+      "last_seen": "2026-09-28T14:34:40.280668",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_84859aa2"
     }
   ]
 }
