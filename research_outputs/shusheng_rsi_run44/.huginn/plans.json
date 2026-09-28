@@ -690,6 +690,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_220ac2a4",
+      "objective": "** [DIM: Statistical/Information-Theoretic Capacity]",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Map function space rigidity to spectral theory (linear algebra structure). Implement trigonometric basis family (rigid) and polynomial basis family (fat) with proper O(1) normalization. Compute training/holdout errors on a fixed grid, calculate N_c via SVD effective rank, and verify finite N_c for rigid family vs. diverging N_c for fat family as w increases.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-28T17:18:22.296566+00:00",
+      "confirmed_at": "2026-09-28T17:18:22.298019+00:00",
+      "completed_at": "2026-09-28T17:18:44.566280+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

@@ -276,5 +276,35 @@
     ],
     "mode": "explore",
     "description": "Implement rigid and fat function families with x-dependent basis functions (Fourier basis with fixed frequencies but varying amplitudes) to avoid i.i.d. noise pitfall. Explicitly scale fat family basi"
+  },
+  {
+    "scene_tag": "auto_family",
+    "reason": "The plan uses 'explore' mode which is inappropriate for a structured computational verification task; it should be 'coder' or 'workflow' mode. The hypothesis about function space geometry does not clearly map to any natural-science instance (physics/chemistry/materials) as required by the system prompt. The plan lacks concrete implementation details, specific tool parameters, grid resolutions, basis definitions, and clear numerical methods. It repeats historical failures by not addressing dimensional pre-checks, scale normalization, and proper error measurement. The prediction is not verifiable as it lacks specific numerical methods and expected trends.",
+    "missing_steps": [
+      "Switch from 'explore' mode to 'coder' or 'workflow' mode for concrete computations",
+      "Clarify if the hypothesis maps to any natural-science instance (e.g., spectral theory for basis functions, variational principles for capacity)",
+      "Define concrete numerical methods with specific grid resolutions, basis function definitions, and sampling parameters",
+      "Establish clear training and holdout error measurement procedures with separate metrics",
+      "Define the N_c(w) calculation methodology (e.g., SVD rank, effective dimension) and expected trends",
+      "Address dimensional pre-check warnings and ensure dimensional consistency/scale normalization (O(1) scale) as per historical failure #3",
+      "Implement rigorous error measurement avoiding data leakage between training and holdout sets"
+    ],
+    "mode": "explore",
+    "description": "The hypothesis involves a statistical/information-theoretic capacity problem about function space rigidity. Previous attempts (iteration 115) showed a surprise of 1.0, indicating the prediction was in"
+  },
+  {
+    "scene_tag": "auto_family",
+    "reason": "Plan uses 'explore' mode which is inappropriate for a structured computational verification task; it should be 'coder' or 'workflow' mode. The hypothesis about function space geometry does not clearly map to any natural-science instance (physics/chemistry/materials) as required by the system prompt. The plan lacks concrete implementation details, specific tool parameters, grid resolutions, basis definitions, and clear numerical methods. It repeats historical failures by not addressing dimensional pre-checks, scale normalization, and proper error measurement. The prediction is not verifiable as it lacks specific numerical methods and expected trends.",
+    "missing_steps": [
+      "Switch from 'explore' mode to 'coder' or 'workflow' mode for concrete computations",
+      "Clarify if the hypothesis maps to any natural-science instance (e.g., spectral theory for basis functions, variational principles for capacity)",
+      "Define concrete numerical methods with specific grid resolutions, basis function definitions, and sampling parameters",
+      "Establish clear training and holdout error measurement procedures with separate metrics",
+      "Define the N_c(w) calculation methodology (e.g., SVD rank, effective dimension) and expected trends",
+      "Address dimensional pre-check warnings and ensure dimensional consistency/scale normalization (O(1) scale) as per historical failure #3",
+      "Implement rigorous error measurement avoiding data leakage between training and holdout sets"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Map function space rigidity to spectral theory (linear algebra structure). Implement trigonometric basis family (rigid) and polynomial basis family (fat) with proper O(1) "
   }
 ]

@@ -1365,6 +1365,70 @@
       "r_phys": 1.0,
       "iteration": 110,
       "id": "persona_use:reviewer_iter110"
+    },
+    {
+      "label": "[DIM: function space geometry] The rigid family is a low-dimensional linear span",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T17:17:49.815497",
+      "last_seen": "2026-09-28T17:17:49.815497",
+      "mentions": 1,
+      "iteration": 115,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Rigid family will show flat N_c(w) across w values with zero violation at w=5, h=2. Fat family will exhibit unbounded N_c(w) growth and convergence failure due to ill-conditioning, matching the hypoth",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: function space geometry] The rigid family is a low-dimensional linear span"
+    },
+    {
+      "label": "plan_explore_iter115",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:17:49.815538",
+      "last_seen": "2026-09-28T17:17:49.815538",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter115"
+    },
+    {
+      "label": "pass_iter115",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:17:49.815548",
+      "last_seen": "2026-09-28T17:17:49.815548",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter115"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T17:17:49.815557",
+      "last_seen": "2026-09-28T17:17:49.815557",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: function space geometry] The rigid family is a low-dimensional linear span",
+        "Method:plan_explore_iter115",
+        "Fact:pass_iter115"
+      ],
+      "iteration": 115,
+      "id": "he_experiment_pipeline_8229b3b4"
+    },
+    {
+      "label": "reviewer_iter115",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T17:17:49.815633",
+      "last_seen": "2026-09-28T17:17:49.815633",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "733bc79c57a8a995",
+      "r_phys": 1.0,
+      "iteration": 115,
+      "id": "persona_use:reviewer_iter115"
     }
   ],
   "links": [
@@ -1961,6 +2025,33 @@
       "last_seen": "2026-09-28T17:16:44.918363",
       "mentions": 1,
       "target": "he_experiment_pipeline_af36a244"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: function space geometry] The rigid family is a low-dimensional linear span",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:17:49.815557",
+      "last_seen": "2026-09-28T17:17:49.815557",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8229b3b4"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter115",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:17:49.815557",
+      "last_seen": "2026-09-28T17:17:49.815557",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8229b3b4"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter115",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:17:49.815557",
+      "last_seen": "2026-09-28T17:17:49.815557",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8229b3b4"
     }
   ]
 }
