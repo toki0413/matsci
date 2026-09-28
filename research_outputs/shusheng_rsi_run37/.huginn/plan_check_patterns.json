@@ -232,5 +232,18 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the rigid polynomial constraint family and the fat polynomial family as functions returning (X, y, Xv, yv) with (N,1) shapes, O(1) normalized outputs, and non-ov"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan is fundamentally invalid due to a critical MODE mismatch. It is labeled 'explore' but explicitly describes code implementation tasks ('Implement rigid polynomial constraint family', 'configure capacity_scan') which strictly requires 'coder' mode according to the system instructions. Additionally, the DESCRIPTION lacks critical mathematical definitions required to validate the hypothesis, specifically the explicit relationship between output dimension N (number of constraints) and network width w, and fails to specify the fat polynomial family f(x) as a non-noise high-dimensional function of x, risking the degeneracy to noise failure from run28. It also omits capacity_scan configuration details with clear termination criteria for 'zero violation' and scaling discipline to prevent magnitude issues seen in run29.",
+    "missing_steps": [
+      "Change MODE from 'explore' to 'coder' since this is a code implementation task",
+      "Define explicit mathematical relationship between output dimension N (number of constraints) and network width w",
+      "Specify fat polynomial family f(x) as a function of x with high dimensionality >> w (not noise) to avoid degeneracy to noise (run28 failure)",
+      "Implement capacity_scan tool configuration with training/hold-out error metrics to compute N_c(w) with clear termination criteria for 'zero violation'",
+      "Implement scaling discipline to constrain polynomial outputs to O(1) magnitude to prevent magnitude issues (run29 failure)"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the rigid polynomial constraint family function with proper normalization (std ≲ 10) and (N,1) shaped outputs. This requires modifying the family function to ret"
   }
 ]
