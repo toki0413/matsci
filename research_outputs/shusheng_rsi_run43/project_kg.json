@@ -86,20 +86,20 @@
       "label": "plan_explore_iter10",
       "type": "Method",
       "source": "autoloop",
-      "confidence": 0.55,
+      "confidence": 0.6000000000000001,
       "created_at": "2026-09-28T15:36:33.565480",
-      "last_seen": "2026-09-28T16:06:26.176778",
-      "mentions": 2,
+      "last_seen": "2026-09-28T16:18:20.533266",
+      "mentions": 3,
       "id": "Method:plan_explore_iter10"
     },
     {
       "label": "pass_iter10",
       "type": "Fact",
       "source": "autoloop",
-      "confidence": 0.55,
+      "confidence": 0.6000000000000001,
       "created_at": "2026-09-28T15:36:33.565489",
-      "last_seen": "2026-09-28T16:06:26.176791",
-      "mentions": 2,
+      "last_seen": "2026-09-28T16:18:20.533283",
+      "mentions": 3,
       "surprise": 1.0,
       "id": "Fact:pass_iter10"
     },
@@ -123,8 +123,8 @@
       "source": "autoloop",
       "confidence": 0.99,
       "created_at": "2026-09-28T15:36:33.565585",
-      "last_seen": "2026-09-28T16:06:26.176885",
-      "mentions": 2,
+      "last_seen": "2026-09-28T16:18:20.533379",
+      "mentions": 3,
       "persona": "reviewer",
       "context_hash": "bb37b8bddb3df2db",
       "r_phys": 1.0,
@@ -887,6 +887,35 @@
       ],
       "iteration": 5,
       "id": "he_experiment_pipeline_87147dde"
+    },
+    {
+      "label": "** [DIM: structure] The rigid family corresponds to functions whose graph lies o",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T16:18:20.533221",
+      "last_seen": "2026-09-28T16:18:20.533221",
+      "mentions": 1,
+      "iteration": 10,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The rigid family will achieve holdout_err ≤ 1e3 with small network widths (h=2-8) and flat/decreasing N_c(w) trend. The fat family will be unreachable (N_c = ∞) across all widths h≤64, showing holdout",
+      "persona": "reviewer",
+      "id": "experiment:** [DIM: structure] The rigid family corresponds to functions whose graph lies o"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T16:18:20.533292",
+      "last_seen": "2026-09-28T16:18:20.533292",
+      "mentions": 1,
+      "members": [
+        "experiment:** [DIM: structure] The rigid family corresponds to functions whose graph lies o",
+        "Method:plan_explore_iter10",
+        "Fact:pass_iter10"
+      ],
+      "iteration": 10,
+      "id": "he_experiment_pipeline_867dd25b"
     }
   ],
   "links": [
@@ -982,6 +1011,15 @@
     },
     {
       "relation": "member_of",
+      "source": "Method:plan_explore_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:18:20.533292",
+      "last_seen": "2026-09-28T16:18:20.533292",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_867dd25b"
+    },
+    {
+      "relation": "member_of",
       "confidence": 0.5,
       "created_at": "2026-09-28T15:36:33.565499",
       "last_seen": "2026-09-28T15:36:33.565499",
@@ -997,6 +1035,15 @@
       "mentions": 1,
       "source": "Fact:pass_iter10",
       "target": "he_experiment_pipeline_1505290d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:18:20.533292",
+      "last_seen": "2026-09-28T16:18:20.533292",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_867dd25b"
     },
     {
       "relation": "member_of",
@@ -1429,6 +1476,15 @@
       "last_seen": "2026-09-28T16:17:18.769532",
       "mentions": 1,
       "target": "he_experiment_pipeline_87147dde"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:** [DIM: structure] The rigid family corresponds to functions whose graph lies o",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:18:20.533292",
+      "last_seen": "2026-09-28T16:18:20.533292",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_867dd25b"
     }
   ]
 }
