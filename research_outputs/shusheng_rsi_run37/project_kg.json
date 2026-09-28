@@ -1580,6 +1580,70 @@
       "r_phys": 1.0,
       "iteration": 135,
       "id": "persona_use:reviewer_iter135"
+    },
+    {
+      "label": "[DIM: structure] The rigidity of the polynomial solution space is determined by ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:28:38.377471",
+      "last_seen": "2026-09-28T14:28:38.377471",
+      "mentions": 1,
+      "iteration": 140,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Rigid families exhibit finite N_c(w) that remains flat or decreasing with increasing width w; high-dimensional fat families exhibit N_c = ∞ (unreachable within scanned width range h ≤ 64) due to high",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigidity of the polynomial solution space is determined by"
+    },
+    {
+      "label": "plan_explore_iter140",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:28:38.377511",
+      "last_seen": "2026-09-28T14:28:38.377511",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter140"
+    },
+    {
+      "label": "pass_iter140",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:28:38.377522",
+      "last_seen": "2026-09-28T14:28:38.377522",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter140"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T14:28:38.377531",
+      "last_seen": "2026-09-28T14:28:38.377531",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigidity of the polynomial solution space is determined by",
+        "Method:plan_explore_iter140",
+        "Fact:pass_iter140"
+      ],
+      "iteration": 140,
+      "id": "he_experiment_pipeline_c7a5386"
+    },
+    {
+      "label": "reviewer_iter140",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:28:38.377615",
+      "last_seen": "2026-09-28T14:28:38.377615",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "b95910b94c42fff4",
+      "r_phys": 1.0,
+      "iteration": 140,
+      "id": "persona_use:reviewer_iter140"
     }
   ],
   "links": [
@@ -2311,6 +2375,33 @@
       "last_seen": "2026-09-28T14:27:01.095810",
       "mentions": 1,
       "target": "he_experiment_pipeline_71c49a45"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigidity of the polynomial solution space is determined by",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:28:38.377531",
+      "last_seen": "2026-09-28T14:28:38.377531",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c7a5386"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter140",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:28:38.377531",
+      "last_seen": "2026-09-28T14:28:38.377531",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c7a5386"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter140",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:28:38.377531",
+      "last_seen": "2026-09-28T14:28:38.377531",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c7a5386"
     }
   ]
 }
