@@ -908,6 +908,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_44c34922",
+      "objective": "[DIM: structure] The rigid polynomial family corresponds to a low-dimensional algebraic manifold whose constraint rank scales linearly with sample count w, yielding a bounded capacity N_c(w) that saturates at small network widths (h≤8).",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the rigid polynomial family f(x) ∈ ℝ^N with N = w (constraint count), degree d=3, and w linear constraints on coefficients. Normalize outputs to O(1) std via scaling factor S = 1/σ(y). Implement capacity_scan with training/hold-out error metrics, termination criterion = max(val_err, train_err) ≤ 1e3, and seeds [0,1,2]. Compare against fat family f(x) = Σ_{k=1}^{M} a_k x^k with M >> w (M=50, w=5) to verify N_c(w) saturation at h≤8.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-28T14:31:49.788373+00:00",
+      "confirmed_at": "2026-09-28T14:31:49.790085+00:00",
+      "completed_at": "2026-09-28T14:32:08.115484+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
