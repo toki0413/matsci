@@ -307,6 +307,296 @@
       "r_phys": 1.0,
       "iteration": 25,
       "id": "persona_use:reviewer_iter25"
+    },
+    {
+      "label": "[DIM: structure] The rigid linear polynomial family f(x)=x possesses an intrinsi",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T15:21:47.077453",
+      "last_seen": "2026-09-28T15:21:47.077453",
+      "mentions": 1,
+      "iteration": 30,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The rigid family will achieve zero violation (holdout error ≤1e-3) at small widths (h≤8) across all w values, while the fat family will show holdout errors >1e-3 even at h=64 (unreachable). Training e",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid linear polynomial family f(x)=x possesses an intrinsi"
+    },
+    {
+      "label": "plan_explore_iter30",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:21:47.077495",
+      "last_seen": "2026-09-28T15:21:47.077495",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter30"
+    },
+    {
+      "label": "pass_iter30",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:21:47.077505",
+      "last_seen": "2026-09-28T15:21:47.077505",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter30"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T15:21:47.077516",
+      "last_seen": "2026-09-28T15:21:47.077516",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid linear polynomial family f(x)=x possesses an intrinsi",
+        "Method:plan_explore_iter30",
+        "Fact:pass_iter30"
+      ],
+      "iteration": 30,
+      "id": "he_experiment_pipeline_37ae046f"
+    },
+    {
+      "label": "reviewer_iter30",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T15:21:47.077599",
+      "last_seen": "2026-09-28T15:21:47.077599",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "4e538872047e02d1",
+      "r_phys": 1.0,
+      "iteration": 30,
+      "id": "persona_use:reviewer_iter30"
+    },
+    {
+      "label": "[DIM: structure] The rigid linear polynomial family $f(x)=x$ admits a solution s",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 0.99,
+      "created_at": "2026-09-28T15:22:32.075379",
+      "last_seen": "2026-09-28T15:24:51.332378",
+      "mentions": 3,
+      "iteration": 35,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Rigid family achieves zero training error and holdout error ≤1e-3 at h=2 (dim=1 solution space); fat family requires h≥32 to approach holdout error ≤1e-3 due to high-dimensional solution space; normal",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid linear polynomial family $f(x)=x$ admits a solution s"
+    },
+    {
+      "label": "plan_explore_iter35",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:22:32.075421",
+      "last_seen": "2026-09-28T15:22:32.075421",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter35"
+    },
+    {
+      "label": "pass_iter35",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:22:32.075430",
+      "last_seen": "2026-09-28T15:22:32.075430",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter35"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T15:22:32.075440",
+      "last_seen": "2026-09-28T15:22:32.075440",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid linear polynomial family $f(x)=x$ admits a solution s",
+        "Method:plan_explore_iter35",
+        "Fact:pass_iter35"
+      ],
+      "iteration": 35,
+      "id": "he_experiment_pipeline_b19e3766"
+    },
+    {
+      "label": "reviewer_iter35",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T15:22:32.075527",
+      "last_seen": "2026-09-28T15:22:32.075527",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "e8b660618ad0c1f4",
+      "r_phys": 1.0,
+      "iteration": 35,
+      "id": "persona_use:reviewer_iter35"
+    },
+    {
+      "label": "plan_explore_iter40",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:23:22.160499",
+      "last_seen": "2026-09-28T15:23:22.160499",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter40"
+    },
+    {
+      "label": "pass_iter40",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:23:22.160519",
+      "last_seen": "2026-09-28T15:23:22.160519",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter40"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T15:23:22.160529",
+      "last_seen": "2026-09-28T15:23:22.160529",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid linear polynomial family $f(x)=x$ admits a solution s",
+        "Method:plan_explore_iter40",
+        "Fact:pass_iter40"
+      ],
+      "iteration": 40,
+      "id": "he_experiment_pipeline_c08a03d9"
+    },
+    {
+      "label": "reviewer_iter40",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T15:23:22.160613",
+      "last_seen": "2026-09-28T15:23:22.160613",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "ffb3b17e7d6f0da5",
+      "r_phys": 1.0,
+      "iteration": 40,
+      "id": "persona_use:reviewer_iter40"
+    },
+    {
+      "label": "plan_explore_iter45",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:24:51.332406",
+      "last_seen": "2026-09-28T15:24:51.332406",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter45"
+    },
+    {
+      "label": "pass_iter45",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:24:51.332427",
+      "last_seen": "2026-09-28T15:24:51.332427",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter45"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T15:24:51.332437",
+      "last_seen": "2026-09-28T15:24:51.332437",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid linear polynomial family $f(x)=x$ admits a solution s",
+        "Method:plan_explore_iter45",
+        "Fact:pass_iter45"
+      ],
+      "iteration": 45,
+      "id": "he_experiment_pipeline_e8573804"
+    },
+    {
+      "label": "reviewer_iter45",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T15:24:51.332525",
+      "last_seen": "2026-09-28T15:24:51.332525",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "c9de6b51be4874ec",
+      "r_phys": 1.0,
+      "iteration": 45,
+      "id": "persona_use:reviewer_iter45"
+    },
+    {
+      "label": "[DIM: structure] The rigid polynomial family (linear $f(x)=x$) admits a solution",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T15:25:32.649082",
+      "last_seen": "2026-09-28T15:25:32.649082",
+      "mentions": 1,
+      "iteration": 50,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The rigid family will achieve zero violation (max abs error ≤1e-3) at small widths (N_c ≈ 2-8) across w values, while the fat family will remain unreachable (error >>1e-3) even at h=64, confirming the",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid polynomial family (linear $f(x)=x$) admits a solution"
+    },
+    {
+      "label": "plan_explore_iter50",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:25:32.649125",
+      "last_seen": "2026-09-28T15:25:32.649125",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter50"
+    },
+    {
+      "label": "pass_iter50",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:25:32.649134",
+      "last_seen": "2026-09-28T15:25:32.649134",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter50"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T15:25:32.649143",
+      "last_seen": "2026-09-28T15:25:32.649143",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid polynomial family (linear $f(x)=x$) admits a solution",
+        "Method:plan_explore_iter50",
+        "Fact:pass_iter50"
+      ],
+      "iteration": 50,
+      "id": "he_experiment_pipeline_167bac0c"
+    },
+    {
+      "label": "reviewer_iter50",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T15:25:32.649224",
+      "last_seen": "2026-09-28T15:25:32.649224",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "768182b2cb2ec443",
+      "r_phys": 1.0,
+      "iteration": 50,
+      "id": "persona_use:reviewer_iter50"
     }
   ],
   "links": [
@@ -444,6 +734,141 @@
       "last_seen": "2026-09-28T15:20:45.640004",
       "mentions": 1,
       "target": "he_experiment_pipeline_8c056819"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid linear polynomial family f(x)=x possesses an intrinsi",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:21:47.077516",
+      "last_seen": "2026-09-28T15:21:47.077516",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_37ae046f"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter30",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:21:47.077516",
+      "last_seen": "2026-09-28T15:21:47.077516",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_37ae046f"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter30",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:21:47.077516",
+      "last_seen": "2026-09-28T15:21:47.077516",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_37ae046f"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid linear polynomial family $f(x)=x$ admits a solution s",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:22:32.075440",
+      "last_seen": "2026-09-28T15:22:32.075440",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b19e3766"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid linear polynomial family $f(x)=x$ admits a solution s",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:23:22.160529",
+      "last_seen": "2026-09-28T15:23:22.160529",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c08a03d9"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid linear polynomial family $f(x)=x$ admits a solution s",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:24:51.332437",
+      "last_seen": "2026-09-28T15:24:51.332437",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e8573804"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter35",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:22:32.075440",
+      "last_seen": "2026-09-28T15:22:32.075440",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b19e3766"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter35",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:22:32.075440",
+      "last_seen": "2026-09-28T15:22:32.075440",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b19e3766"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter40",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:23:22.160529",
+      "last_seen": "2026-09-28T15:23:22.160529",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c08a03d9"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter40",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:23:22.160529",
+      "last_seen": "2026-09-28T15:23:22.160529",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c08a03d9"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter45",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:24:51.332437",
+      "last_seen": "2026-09-28T15:24:51.332437",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e8573804"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter45",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:24:51.332437",
+      "last_seen": "2026-09-28T15:24:51.332437",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e8573804"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid polynomial family (linear $f(x)=x$) admits a solution",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:25:32.649143",
+      "last_seen": "2026-09-28T15:25:32.649143",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_167bac0c"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter50",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:25:32.649143",
+      "last_seen": "2026-09-28T15:25:32.649143",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_167bac0c"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter50",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:25:32.649143",
+      "last_seen": "2026-09-28T15:25:32.649143",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_167bac0c"
     }
   ]
 }
