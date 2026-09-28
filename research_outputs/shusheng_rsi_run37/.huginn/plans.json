@@ -667,6 +667,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_f4d6f005",
+      "objective": "[DIM: structure] The rigid polynomial family corresponds to a low-dimensional algebraic manifold with finite VC dimension, where the solution space is uniquely determined by a small number of constraints, leading to a bounded capacity N_c(w) that remains flat or decreases as w increases.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the `rigid_polynomial_family` function that returns normalized constraint sets (X, y, Xv, yv) with explicit mathematical structure: f(x) = sum_{i=1}^{D} a_i x^i where D >> w (high-dimensional polynomial family on bounded interval [-1,1]), with deterministic constraints exactly solvable by small-width networks (h=2~8). Define N_c(w) as the maximum number of constraints that can be satisfied with zero violation (error < 1e-3), ensuring y/yv are O(1) scaled. Configure capacity_scan to compute N_c(w) across varying widths w with clear termination criteria based on zero-violation threshold and training/hold-out error metrics.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-28T14:22:03.992916+00:00",
+      "confirmed_at": "2026-09-28T14:22:03.994409+00:00",
+      "completed_at": "2026-09-28T14:22:23.831727+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
