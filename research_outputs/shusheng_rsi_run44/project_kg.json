@@ -1749,6 +1749,70 @@
       "r_phys": 1.0,
       "iteration": 140,
       "id": "persona_use:reviewer_iter140"
+    },
+    {
+      "label": "[DIM: Mathematical Structure] The rigid family is defined by a system of linear ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T17:24:13.804756",
+      "last_seen": "2026-09-28T17:24:13.804756",
+      "mentions": 1,
+      "iteration": 145,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The rigid family will achieve zero violation at small widths (h=2~8) with N_c flat or decreasing as w increases. The fat family will show unreachable trend (any width up to h=64 fails to achieve zero",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: Mathematical Structure] The rigid family is defined by a system of linear"
+    },
+    {
+      "label": "plan_explore_iter145",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:24:13.804795",
+      "last_seen": "2026-09-28T17:24:13.804795",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter145"
+    },
+    {
+      "label": "pass_iter145",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:24:13.804805",
+      "last_seen": "2026-09-28T17:24:13.804805",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter145"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T17:24:13.804814",
+      "last_seen": "2026-09-28T17:24:13.804814",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: Mathematical Structure] The rigid family is defined by a system of linear",
+        "Method:plan_explore_iter145",
+        "Fact:pass_iter145"
+      ],
+      "iteration": 145,
+      "id": "he_experiment_pipeline_9ba6c0f4"
+    },
+    {
+      "label": "reviewer_iter145",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T17:24:13.804888",
+      "last_seen": "2026-09-28T17:24:13.804888",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "0751ad8f9864e4bd",
+      "r_phys": 1.0,
+      "iteration": 145,
+      "id": "persona_use:reviewer_iter145"
     }
   ],
   "links": [
@@ -2507,6 +2571,33 @@
       "last_seen": "2026-09-28T17:23:16.433159",
       "mentions": 1,
       "target": "he_experiment_pipeline_106da30d"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: Mathematical Structure] The rigid family is defined by a system of linear",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:24:13.804814",
+      "last_seen": "2026-09-28T17:24:13.804814",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_9ba6c0f4"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter145",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:24:13.804814",
+      "last_seen": "2026-09-28T17:24:13.804814",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_9ba6c0f4"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter145",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:24:13.804814",
+      "last_seen": "2026-09-28T17:24:13.804814",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_9ba6c0f4"
     }
   ]
 }
