@@ -2279,21 +2279,64 @@ class HypothesisLoop:
                     verdict.reduction_target,
                     hypothesis[:100],
                 )
-                # 连续换名归约计数: advisory 不阻断当前假设, 但连续 N 轮都是同一
-                # 命题的换名改写 = 方法层停滞 → 复用已有反例搜索 (设 _force_imaginate
-                # + 注入 counterexample hint) 逼下一轮换方向. 此前该 verdict 只写进
-                # _metacog_last_audit 而无人消费, 长程跑必然退化成原地重述.
+                # 连续换名归约计数: advisory 不阻断当前假设, 但连续多轮都是同一
+                # 命题的换名改写 = 方法层停滞, 必须换方向. 两级升级:
+                #   streak == 3 → 软提示 (反例搜索: _force_imaginate + hint)
+                #   streak >= 5 → 软提示已 fire 仍换名 → 硬动作: block 主导方法族
+                #                + 强制重定向 + 复位想象闩锁 (不再只塞 hint).
+                # 此前该 verdict 只写进 _metacog_last_audit 而无人消费, 长程跑必然退化.
                 _rename_streak = getattr(self, "_rename_streak", 0) + 1
                 self._rename_streak = _rename_streak
-                if _rename_streak >= 3:
+                if _rename_streak == 3:
                     # warning 级: 根 logger 过滤 INFO, 用 info 会被静默吞掉,
                     # 这些"循环改变方向"的事件必须可审计 (见 [exec-route] 同款做法).
                     logger.warning(
                         "renamed-reduction %d× consecutive: trigger counterexample hunt",
                         _rename_streak,
                     )
-                    self._rename_streak = 0
                     self._trigger_counterexample_hunt()
+                elif _rename_streak >= 5:
+                    logger.warning(
+                        "renamed-reduction %d× consecutive: escalate — block dominant "
+                        "family + force redirect",
+                        _rename_streak,
+                    )
+                    self._rename_streak = 0
+                    # 复位软闩锁: _force_imaginate 此前只被置 True 从不复位, 触发了
+                    # 也是永久常开; 复位后它才是"针对性一次 nudge".
+                    self._force_imaginate = False
+                    # 硬动作 1: 把主导方法族标 blocked, 由阻塞-重启协议拒绝再入族.
+                    try:
+                        _dom = self._metacog_dominant_family()
+                        if _dom:
+                            self._get_metacog_block_registry().block(
+                                method_family=_dom,
+                                block_reason=(
+                                    f"连续换名归约 {_rename_streak} 次: 主导方法族"
+                                    f"已饱和, 强制换族"
+                                ),
+                            )
+                    except Exception:  # 防御: block 失败不阻断审计
+                        logger.debug("block dominant family skipped", exc_info=True)
+                    # 硬动作 2: 把已算好却只被打印的 suggest_redirect 结果写进下轮提示.
+                    try:
+                        _redirect = self._get_metacog_method_registry().suggest_redirect()
+                        if _redirect is not None:
+                            _rd_hint = (
+                                f"[强制重定向] 连续换名归约 {_rename_streak} 次, "
+                                f"转向方法族 {_redirect.target_family}: {_redirect.reason}"
+                            )
+                        else:
+                            _rd_hint = (
+                                f"[强制重定向] 连续换名归约 {_rename_streak} 次: "
+                                f"放弃当前方法族, 换一个族重新出发"
+                            )
+                        self._speculator_hint = (
+                            (getattr(self, "_speculator_hint", "") or "")
+                            + "\n" + _rd_hint
+                        )
+                    except Exception:  # 防御: 重定向提示失败不阻断审计
+                        logger.debug("force redirect hint skipped", exc_info=True)
             else:
                 self._rename_streak = 0
 
