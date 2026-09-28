@@ -330,6 +330,47 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_dd561603",
+      "objective": "[DIM: structure] The rigid polynomial family (linear f(x)=x) admits a solution space of intrinsic dimension 1, which corresponds to a unique solution up to scaling; this structural rigidity implies that N_c(w) remains finite and flat as w increases, because the constraint manifold is already fully determined by minimal samples.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the family(kind, w, seed) function for two function families: (1) rigid linear family f(x)=x, and (2) fat high-oscillation polynomial f(x)=(2x-1)^19 (normalized to O(1) scale). Ensure training/holdout points are non-overlapping, y/yv are shaped (N,1), and values are normalized by std so |y| ~ O(1) for the zero-violence criterion (≤1e3) to be meaningful. This addresses the missing normalization and anchor point from the previous iteration's failure.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "family_function.py",
+            "(or",
+            "equivalent",
+            "in",
+            "the",
+            "code",
+            "lab",
+            "workspace",
+            "where",
+            "run",
+            "expects",
+            "it)"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-28T15:26:54.620156+00:00",
+      "confirmed_at": "2026-09-28T15:26:54.621288+00:00",
+      "completed_at": "2026-09-28T15:27:16.632982+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
