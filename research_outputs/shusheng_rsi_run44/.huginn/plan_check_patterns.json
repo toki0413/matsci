@@ -10,19 +10,6 @@
       "Add a dimensional check to ensure y/yv std normalization is physically meaningful"
     ],
     "mode": "explore",
-    "description": "[auto-routed: surprise=1.00] Implement the family function for the rigid and fat function spaces according to the hypothesis, ensuring proper normalization (y/yv std ≲ 10), non-overlapping training/he"
-  },
-  {
-    "scene_tag": "other",
-    "reason": "The plan is fundamentally invalid because it attempts to test a hypothesis about function space geometry (rigid vs. fat families) using a MODE of 'explore' without specifying the concrete mathematical structure or algorithm to be implemented. The DESCRIPTION mentions 'Implement the family function' but provides no details on the basis functions, the constraint matrix construction, or how N_c is computed. This is a high-cost exploration without a clear mathematical target, risking the 'blind retry' fallacy. Furthermore, the PREDICTION relies on unverified assumptions about convergence behavior (e.g., zero violation at h=2~8) without establishing a baseline or validation protocol against literature benchmarks.",
-    "missing_steps": [
-      "Define the exact mathematical formulation of the rigid family (e.g., specific polynomial/trig basis) and fat family (e.g., neural net width w vs. function space dimension)",
-      "Specify the algorithm for computing N_c (e.g., rank of constraint matrix, PCA threshold)",
-      "Include a benchmark lookup against known approximation theory results (e.g., Kolmogorov width bounds) before simulation",
-      "Clarify the training objective and violation metric (e.g., L2 error, max norm) with units",
-      "Add a dimensional check to ensure y/yv std normalization is physically meaningful"
-    ],
-    "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid family (low-dimensional linear span of trigonometric polynomials) and fat family (high-degree polynomial) to test the bootstr"
   },
   {
@@ -750,5 +737,22 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the family function for the rigid and fat function families according to the protocol requirements. The rigid family will be a low-dimensional function (e.g., li"
+  },
+  {
+    "scene_tag": "auto_family",
+    "reason": "The plan uses 'explore' mode which is inappropriate for this concrete computational verification task requiring implementation (coder/workflow mode). It lacks critical implementation details: no grid resolution, explicit basis function formulas, scaling procedures, optimization parameters, or N_c(w) calculation methodology. This directly reproduces historical failures (run28 and run29) including the risk of fat family being i.i.d. noise and scale issues with high-degree polynomials. The PREDICTION is not verifiable without concrete numerical methods and measurement procedures.",
+    "missing_steps": [
+      "Switch from 'explore' mode to 'coder' or 'workflow' mode for concrete computations",
+      "Define concrete grid resolution (e.g., N=500) and explicit basis function formulas (Chebyshev/trigonometric expressions)",
+      "Explicitly define fat family as x-dependent high-dimensional functions (not i.i.d. noise) to avoid run28 failure",
+      "Specify scaling for fat family basis to prevent ~1e9 scale issues with O(1) normalization (run29 failure)",
+      "Establish clear training and held-out error measurement procedures with separate metrics to avoid data leakage",
+      "Define N_c(w) calculation methodology (e.g., SVD rank with tolerance 1e-6) with clear thresholds",
+      "Define concrete L-BFGS-B optimization setup with specific iteration limits and parameters",
+      "Implement comparative optimization strategy to distinguish optimization failure from function space limitations",
+      "Add dimensional pre-checks and scale normalization procedures"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function for the rigid (linear subspace) and fat (nonlinear manifold) families according to the mathematical structure definition. Ensure output norma"
   }
 ]
