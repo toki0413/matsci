@@ -35,5 +35,85 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid family (low-degree polynomial constraints) with proper data generation, normalization to O(1), and held-out points. This is t"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan focuses exclusively on implementing the rigid family (second-order ODE) but completely omits the definition and implementation of the 'fat family' required for comparison. The hypothesis requires contrasting the behavior of the rigid family against a fat family to validate the claim about N_c(w) behavior. Without a properly defined fat family (with degrees of freedom >> w, x-dependent, partially learnable), the comparison degenerates to a trivial case as seen in historical failures (run28). The plan also lacks explicit details on validation set generation (Xv) to ensure no overlap with training data, and does not specify normalization procedures.",
+    "missing_steps": [
+      "Define explicit functional form for fat family that guarantees functional freedom >> w while being x-dependent",
+      "Implement validation set generation procedure ensuring no overlap with X",
+      "Add normalization check for both families to ensure y/yv are O(1)",
+      "Include dimensionality analysis showing fat family degrees of freedom >> w for tested w values",
+      "Establish comparative framework between rigid and fat families for N_c(w) analysis"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function for the rigid family (second-order linear ODE constant coefficients) to return normalized training and held-out constraint points. Ensure y/y"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan is invalid because it fundamentally fails to address the core requirement of the hypothesis: comparing a 'rigid' family against a 'fat' family to validate the N_c(w) behavior. The plan focuses solely on symbolic regression for the rigid family while completely omitting the definition and implementation of the 'fat' family, which is essential for the hypothesis. This directly repeats the historical failures (run28, run29) where the fat family was either i.i.d. noise or incorrectly defined, causing the comparison to degenerate to trivial learnability.",
+    "missing_steps": [
+      "Define explicit functional form for fat family that guarantees functional freedom >> w while being x-dependent (e.g., high-dimensional x-dependent function with degrees of freedom >> w)",
+      "Implement validation set generation procedure ensuring no overlap between X and Xv to ensure independent error measurement",
+      "Add normalization check for both families to ensure y/yv are O(1) before training",
+      "Include dimensionality analysis showing fat family degrees of freedom >> w for tested w values",
+      "Establish comparative framework between rigid and fat families for N_c(w) analysis with proper training and held-out error measurement"
+    ],
+    "mode": "explore",
+    "description": "The previous hypothesis (second-order ODE) yielded surprise=1.0, indicating the rigid family is not a simple constant-coefficient ODE solution space. Given the knowledge graph shows conflicting \"DIM: "
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan focuses solely on implementing the 'rigid family' via the ODE but completely omits the definition and implementation of the 'fat family', which is essential for the hypothesis. The hypothesis requires contrasting the behavior of the rigid family against a fat family to validate the claim about N_c(w) behavior. Without a properly defined fat family, the comparison degenerates to a trivial case, repeating historical failures (run28, run29). The plan also lacks explicit details on validation set generation and normalization procedures for both families.",
+    "missing_steps": [
+      "Define explicit functional form for fat family (e.g., high-dimensional x-dependent function with degrees of freedom >> w)",
+      "Implement validation set generation procedure ensuring no overlap with X",
+      "Add normalization check for both families to ensure y/yv are O(1)",
+      "Include dimensionality analysis showing fat family degrees of freedom >> w for tested w values",
+      "Establish comparative framework between rigid and fat families for N_c(w) analysis"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family` function to define the \"rigid family\" as solutions to the second-order linear ODE $(2z-1)y'' + \\alpha y' + \\beta y = 0$. The function will generate "
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan focuses exclusively on implementing the rigid family while completely omitting the definition and implementation of the fat family, which is essential for the hypothesis validation. The hypothesis requires contrasting the behavior of the rigid family against a fat family to validate the claim about N_c(w) behavior. Without a properly defined fat family (with degrees of freedom >> w, x-dependent, partially learnable), the comparison degenerates to a trivial case, repeating historical failures (run28, run29). The plan also lacks explicit details on validation set generation, normalization procedures, and dimensionality analysis for both families.",
+    "missing_steps": [
+      "Define explicit functional form for fat family that guarantees functional freedom >> w while being x-dependent (e.g., high-dimensional x-dependent function with degrees of freedom >> w)",
+      "Implement validation set generation procedure ensuring no overlap between X and Xv to ensure independent error measurement",
+      "Add normalization check for both families to ensure y/yv are O(1) before training",
+      "Include dimensionality analysis showing fat family degrees of freedom >> w for tested w values",
+      "Establish comparative framework between rigid and fat families for N_c(w) analysis with proper training and held-out error measurement"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family(kind, w, seed)` function to generate training and held-out constraint points for the rigid family (solutions to $(2z-1)y'' + \\alpha y' + \\beta y = 0$"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan is fundamentally incomplete and repeats historical failures (run28, run29). It describes an 'explore' mode but fails to implement the 'fat family' — the hypothesis requires a comparative analysis between a rigid family (ODE solutions) and a fat family (high-dimensional x-dependent functions with degrees of freedom >> w). The DESCRIPTION explicitly mentions defining both families but provides no functional form, implementation details, or dimensionality analysis for the fat family. Without a properly defined fat family, the comparison degenerates to a trivial case. The plan also lacks explicit validation set generation procedures, normalization checks, and concrete N_c(w) analysis framework.",
+    "missing_steps": [
+      "Define explicit functional form for fat family that guarantees functional freedom >> w while being x-dependent (e.g., high-dimensional x-dependent function with degrees of freedom >> w)",
+      "Implement validation set generation procedure ensuring no overlap between X and Xv to ensure independent error measurement",
+      "Add normalization check for both families to ensure y/yv are O(1) before training",
+      "Include dimensionality analysis showing fat family degrees of freedom >> w for tested w values",
+      "Establish comparative framework between rigid and fat families for N_c(w) analysis with proper training and held-out error measurement",
+      "Specify concrete w values and N_c(w) scan parameters"
+    ],
+    "mode": "explore",
+    "description": "Implement the comparative framework by defining both the rigid family (solutions to $(2z-1)y'' + \\alpha y' + \\beta y = 0$) and a fat family (high-dimensional x-dependent functions with degrees of free"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan is fundamentally incomplete as it describes an 'explore' mode that claims to implement both 'rigid' and 'fat' families, but the DESCRIPTION only details the rigid family implementation. The critical 'fat family' (high-dimensional x-dependent function with degrees of freedom >> w) is not defined with a specific functional form, which would cause the comparison to degenerate into a trivial case, repeating historical failures (run28, run29). The plan also lacks explicit validation set generation procedures, normalization checks, and concrete N_c(w) analysis framework.",
+    "missing_steps": [
+      "Define explicit functional form for fat family (e.g., high-dimensional x-dependent function with degrees of freedom >> w)",
+      "Implement validation set generation procedure ensuring no overlap between X and Xv",
+      "Add normalization check for both families to ensure y/yv are O(1)",
+      "Include dimensionality analysis showing fat family degrees of freedom >> w for tested w values",
+      "Establish comparative framework between rigid and fat families for N_c(w) analysis",
+      "Specify concrete w values and N_c(w) scan parameters"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family(kind, w, seed) function to generate training and held-out constraint data for the rigid (second-order linear ODE solution) and fat (high-degree polyno"
   }
 ]
