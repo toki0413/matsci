@@ -23,5 +23,19 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid family (transport PDE solutions: linear functions along characteristics) and fat family (high-dimensional random polynomial f"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan fundamentally misaligns with the hypothesis. The hypothesis requires verifying a PDE structure (rigid = linear transport, fat = nonlinear hyperbolic), but the DESCRIPTION only defines polynomial families (degree ≤3 vs random 20-term polynomials). This is a regression to the 'run28' failure mode where the fat family becomes 'learnable vs unlearnable' noise rather than testing PDE/non-uniqueness properties. The PREDICTION only checks generalization error (holdout_err), which cannot verify characteristic curves, solution uniqueness, or the transport PDE structure required by the hypothesis. Missing critical steps: defining the specific transport PDE for rigid family, defining the nonlinear hyperbolic PDE for fat family, implementing characteristic curve tracing, and testing solution non-uniqueness.",
+    "missing_steps": [
+      "Define the specific first-order linear transport PDE for the rigid family (e.g., u_x + c*u_y = 0)",
+      "Define the specific nonlinear hyperbolic PDE for the fat family (e.g., Burgers' equation or similar)",
+      "Implement characteristic curve tracing for both families to verify the PDE structure",
+      "Test for solution non-uniqueness in the fat family (multiple solutions for same boundary conditions or singular Jacobian)",
+      "Add spectral analysis or characteristic curve analysis to confirm PDE nature of both families",
+      "Ensure fat family is explicitly x-dependent and defined by a nonlinear PDE, not just random high-dimensional polynomials"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family` function for two test families: (1) a rigid family of low-degree polynomials (degree ≤3) with normalization to O(1) scale, ensuring a finite N_c(w) "
   }
 ]

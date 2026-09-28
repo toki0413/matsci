@@ -278,20 +278,20 @@
       "label": "plan_explore_iter25",
       "type": "Method",
       "source": "autoloop",
-      "confidence": 0.55,
+      "confidence": 0.6000000000000001,
       "created_at": "2026-09-28T15:39:36.283183",
-      "last_seen": "2026-09-28T16:09:21.067902",
-      "mentions": 2,
+      "last_seen": "2026-09-28T16:21:28.523586",
+      "mentions": 3,
       "id": "Method:plan_explore_iter25"
     },
     {
       "label": "pass_iter25",
       "type": "Fact",
       "source": "autoloop",
-      "confidence": 0.55,
+      "confidence": 0.6000000000000001,
       "created_at": "2026-09-28T15:39:36.283194",
-      "last_seen": "2026-09-28T16:09:21.067913",
-      "mentions": 2,
+      "last_seen": "2026-09-28T16:21:28.523600",
+      "mentions": 3,
       "surprise": 1.0,
       "id": "Fact:pass_iter25"
     },
@@ -315,8 +315,8 @@
       "source": "autoloop",
       "confidence": 0.99,
       "created_at": "2026-09-28T15:39:36.283286",
-      "last_seen": "2026-09-28T16:09:21.068007",
-      "mentions": 2,
+      "last_seen": "2026-09-28T16:21:28.523697",
+      "mentions": 3,
       "persona": "reviewer",
       "context_hash": "d31fcb230dda4209",
       "r_phys": 1.0,
@@ -974,6 +974,35 @@
       ],
       "iteration": 20,
       "id": "he_experiment_pipeline_14d535a0"
+    },
+    {
+      "label": "[DIM: transport] The rigid family corresponds to functions satisfying a first-or",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T16:21:28.523541",
+      "last_seen": "2026-09-28T16:21:28.523541",
+      "mentions": 1,
+      "iteration": 25,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family, N_c(w) should be finite and small (h=2-8) with holdout_err ≤1e-3 and train_err ≤1e-4, and N_c should be flat or decreasing with w. For the fat family, N_c should be 'unreachable'",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: transport] The rigid family corresponds to functions satisfying a first-or"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T16:21:28.523607",
+      "last_seen": "2026-09-28T16:21:28.523607",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: transport] The rigid family corresponds to functions satisfying a first-or",
+        "Method:plan_explore_iter25",
+        "Fact:pass_iter25"
+      ],
+      "iteration": 25,
+      "id": "he_experiment_pipeline_ca480184"
     }
   ],
   "links": [
@@ -1258,6 +1287,15 @@
     },
     {
       "relation": "member_of",
+      "source": "Method:plan_explore_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:21:28.523607",
+      "last_seen": "2026-09-28T16:21:28.523607",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ca480184"
+    },
+    {
+      "relation": "member_of",
       "confidence": 0.5,
       "created_at": "2026-09-28T15:39:36.283203",
       "last_seen": "2026-09-28T15:39:36.283203",
@@ -1273,6 +1311,15 @@
       "mentions": 1,
       "source": "Fact:pass_iter25",
       "target": "he_experiment_pipeline_e1aa9d8d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:21:28.523607",
+      "last_seen": "2026-09-28T16:21:28.523607",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ca480184"
     },
     {
       "relation": "member_of",
@@ -1597,6 +1644,15 @@
       "last_seen": "2026-09-28T16:20:20.378291",
       "mentions": 1,
       "target": "he_experiment_pipeline_14d535a0"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: transport] The rigid family corresponds to functions satisfying a first-or",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:21:28.523607",
+      "last_seen": "2026-09-28T16:21:28.523607",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ca480184"
     }
   ]
 }
