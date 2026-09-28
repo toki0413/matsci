@@ -361,5 +361,19 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Execute the machine learning capacity_scan skill to test the rigid vs. fat function families. First verify the rigid family (linear functions f(x)=ax+b) achieves zero viol"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan fundamentally misrepresents the mathematical structure by implementing BOTH families as finite-dimensional polynomial spaces. The hypothesis requires a contrast between a rigid (finite-dimensional) family and a fat (infinite-dimensional) family. The DESCRIPTION explicitly mentions 'polynomial family' for the rigid constraint family but fails to specify an infinite-dimensional implementation for the fat family (e.g., Burgers' equation with stochastic initial conditions). This matches the documented historical failures (run28, run29) where both families were incorrectly treated as finite-dimensional, causing the 'rigid vs fat' distinction to degenerate into 'learnable vs unlearnable'. Without an infinite-dimensional fat family, the capacity_scan cannot meaningfully test the hypothesis about N_c(w) behavior differences between finite and infinite-dimensional solution spaces.",
+    "missing_steps": [
+      "Implement fat family using nonlinear transport equation (e.g., Burgers' equation: u_t + u u_x = ν u_xx) with stochastic initial conditions to capture true infinite dimensionality",
+      "Use appropriate function spaces (e.g., Sobolev spaces) rather than finite-dimensional polynomial bases for fat family",
+      "Specify exact mathematical formulations for both rigid and fat families matching hypothesis requirements",
+      "Verify rigid constraint family's solution space dimension symbolically before training using symbolic_math_tool",
+      "Define concrete capacity_scan methodology aligned with infinite-dimensional solution space requirements",
+      "Include proper boundary conditions and symbolic verification for rigid family solution space dimension"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the polynomial family function for the rigid constraint family (degree ≤ 2) that satisfies the hypothesis requirements. This involves writing the family(kind, w,"
   }
 ]
