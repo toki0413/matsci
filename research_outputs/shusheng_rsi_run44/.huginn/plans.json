@@ -572,6 +572,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_49a671a9",
+      "objective": "**[DIM: Function Space Geometry]**",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Map function space geometry to spectral theory (linear algebra structure) to analyze basis capacity. Implement trigonometric (rigid) and polynomial (fat) basis families on [0,2π] with N=1000 grid points. Apply proper L2 normalization (y/yv_std ≲ 1) and split data into 80% train / 20% holdout to prevent leakage. Compute N_c(w) via SVD rank decay (effective dimension) and measure max absolute error on holdout. Validate against theoretical capacity bounds (e.g., polynomial degree vs. spectral decay rate).",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-28T17:14:09.075857+00:00",
+      "confirmed_at": "2026-09-28T17:14:09.077801+00:00",
+      "completed_at": "2026-09-28T17:14:29.060149+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

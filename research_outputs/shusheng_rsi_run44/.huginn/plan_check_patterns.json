@@ -205,5 +205,35 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the rigid family function using a low-dimensional linear span of fixed basis functions (e.g., cos(πx) with w=5) and the fat family using a high-dimensional nonli"
+  },
+  {
+    "scene_tag": "auto_family",
+    "reason": "The plan fundamentally violates the system prompt's core identity as a natural-science research agent (physics/chemistry/materials/etc.). It attempts to solve an abstract mathematical machine learning problem (function space geometry, N_c(w) capacity) rather than a natural-science instance of a mathematical structure. The 'explore' mode is inappropriate for this computational task; it should be 'coder' or 'workflow'. The plan lacks all necessary numerical setup (grid size, basis definitions, error metrics, N_c(w) calculation method) and repeats historical failures by not addressing dimensional pre-checks, scale normalization, and proper error measurement. It also fails to map the hypothesis to any natural-science instance (e.g., spectral theory for basis functions).",
+    "missing_steps": [
+      "Clarify if the hypothesis maps to any natural-science instance (e.g., spectral theory for basis functions, variational principles for capacity)",
+      "Switch from 'explore' mode to 'coder' or 'workflow' mode for concrete computations",
+      "Define concrete numerical methods with specific grid resolutions, basis function definitions, and sampling parameters",
+      "Establish clear training and holdout error measurement procedures with separate metrics",
+      "Define the N_c(w) calculation methodology (e.g., SVD rank, effective dimension) and expected trends",
+      "Address dimensional pre-check warnings and ensure dimensional consistency/scale normalization (O(1) scale) as per historical failure #3",
+      "Implement rigorous error measurement avoiding data leakage between training and holdout sets"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function for the rigid family (low-dimensional trigonometric basis) and fat family (high-degree polynomial basis) according to the specification, incl"
+  },
+  {
+    "scene_tag": "auto_family",
+    "reason": "The plan uses 'explore' mode which is inappropriate for a structured computational verification task; it should be 'coder' or 'workflow' mode. The hypothesis about function space geometry does not clearly map to any natural-science instance (physics/chemistry/materials) as required by the system prompt. The plan lacks concrete implementation details, specific tool parameters, and clear numerical setup. It repeats historical failures by not addressing dimensional pre-checks, scale normalization, and proper error measurement. The prediction is not verifiable as it lacks specific numerical methods and expected trends.",
+    "missing_steps": [
+      "Switch from 'explore' mode to 'coder' or 'workflow' mode for concrete computations",
+      "Clarify if the hypothesis maps to any natural-science instance (e.g., spectral theory for basis functions, variational principles for capacity)",
+      "Define concrete numerical methods with specific grid resolutions, basis function definitions, and sampling parameters",
+      "Establish clear training and holdout error measurement procedures with separate metrics",
+      "Define the N_c(w) calculation methodology (e.g., SVD rank, effective dimension) and expected trends",
+      "Address dimensional pre-check warnings and ensure dimensional consistency/scale normalization (O(1) scale) as per historical failure #3",
+      "Implement rigorous error measurement avoiding data leakage between training and holdout sets"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Map the function space geometry problem to spectral theory (linear algebra structure) for basis analysis. Implement the rigid (trigonometric) and fat (polynomial) family f"
   }
 ]
