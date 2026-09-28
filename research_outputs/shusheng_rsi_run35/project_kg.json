@@ -258,6 +258,70 @@
       "r_phys": 1.0,
       "iteration": 20,
       "id": "persona_use:reviewer_iter20"
+    },
+    {
+      "label": "[DIM: structure] The rigid family corresponds to functions satisfying a second-o",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:11:28.238641",
+      "last_seen": "2026-09-28T13:11:28.238641",
+      "mentions": 1,
+      "iteration": 25,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family, N_c(w) will be finite and small (≤8) across w={5,10,20,50,100}, with heldout_err ≤1e-3 at minimal width. For the fat family, all widths up to h=64 will yield heldout_err >1e-3, c",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid family corresponds to functions satisfying a second-o"
+    },
+    {
+      "label": "plan_explore_iter25",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:11:28.238688",
+      "last_seen": "2026-09-28T13:11:28.238688",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter25"
+    },
+    {
+      "label": "pass_iter25",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:11:28.238700",
+      "last_seen": "2026-09-28T13:11:28.238700",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter25"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T13:11:28.238710",
+      "last_seen": "2026-09-28T13:11:28.238710",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid family corresponds to functions satisfying a second-o",
+        "Method:plan_explore_iter25",
+        "Fact:pass_iter25"
+      ],
+      "iteration": 25,
+      "id": "he_experiment_pipeline_45866596"
+    },
+    {
+      "label": "reviewer_iter25",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:11:28.238794",
+      "last_seen": "2026-09-28T13:11:28.238794",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "848e16638c574c65",
+      "r_phys": 1.0,
+      "iteration": 25,
+      "id": "persona_use:reviewer_iter25"
     }
   ],
   "links": [
@@ -368,6 +432,33 @@
       "last_seen": "2026-09-28T13:10:19.424227",
       "mentions": 1,
       "target": "he_experiment_pipeline_2fd9bc1f"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid family corresponds to functions satisfying a second-o",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:11:28.238710",
+      "last_seen": "2026-09-28T13:11:28.238710",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_45866596"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:11:28.238710",
+      "last_seen": "2026-09-28T13:11:28.238710",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_45866596"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:11:28.238710",
+      "last_seen": "2026-09-28T13:11:28.238710",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_45866596"
     }
   ]
 }
