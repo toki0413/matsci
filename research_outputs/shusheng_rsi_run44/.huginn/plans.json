@@ -1368,6 +1368,36 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_e91d4e65",
+      "objective": "[DIM: Structural Constraint] The rigid family is defined by a low-dimensional linear span of fixed basis functions (e.g., trigonometric or polynomial), ensuring finite N_c(w) that is flat or decreasing in w, while the fat family is a high-dimensional function class (e.g., high-degree polynomials or complex oscillatory functions) where N_c(w) remains unreachable (infinite) within the scanned width range (h ≤ 64). | This hypothesis is the most testable within the current framework, as it directly leverages the existing capacity scan methodology and provides clear, quantifiable predictions (N_c(w) trends). It also aligns with the domain's focus on function space rigidity and avoids speculative claims about optimization landscapes or emergent phenomena that would require more complex validation. The necessary condition is that the rigid family's basis functions must be explicitly defined and normalized to O(1) to satisfy the scale discipline; the hidden assumption is that the network's inductive bias does not artificially constrain the solution space; a falsifiable test is that if the rigid family yields N_c(w) > 64 for all w or shows increasing trends, the hypothesis is refuted.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid and fat families as required by the capacity_scan framework. The rigid family will be a low-dimensional linear span (e.g., linear combination of fixed trigonometric or polynomial basis functions), and the fat family will be a high-dimensional function class (e.g., high-degree polynomial or complex oscillatory functions). Ensure y and yv are normalized to O(1) scale, Xv does not overlap with X, and all outputs are properly shaped (N,1). This enables the capacity scan to proceed and validate the hypothesis about N_c(w) trends.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "[family.py]"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-28T17:43:23.038573+00:00",
+      "confirmed_at": "2026-09-28T17:43:23.040688+00:00",
+      "completed_at": "2026-09-28T17:43:41.766681+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

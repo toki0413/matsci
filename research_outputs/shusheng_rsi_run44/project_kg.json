@@ -2683,6 +2683,70 @@
       "r_phys": 1.0,
       "iteration": 220,
       "id": "persona_use:reviewer_iter220"
+    },
+    {
+      "label": "[DIM: Structural Constraint] The rigid family is defined by a low-dimensional li",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T17:42:57.597207",
+      "last_seen": "2026-09-28T17:42:57.597207",
+      "mentions": 1,
+      "iteration": 225,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family, N_c(w) will be finite (e.g., h=2~8) and flat or decreasing as w increases, with max abs error on held-out points ≤1e-3. For the fat family, N_c(w) will be unreachable (trend='unr",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: Structural Constraint] The rigid family is defined by a low-dimensional li"
+    },
+    {
+      "label": "plan_explore_iter225",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:42:57.597257",
+      "last_seen": "2026-09-28T17:42:57.597257",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter225"
+    },
+    {
+      "label": "pass_iter225",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:42:57.597271",
+      "last_seen": "2026-09-28T17:42:57.597271",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter225"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T17:42:57.597285",
+      "last_seen": "2026-09-28T17:42:57.597285",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: Structural Constraint] The rigid family is defined by a low-dimensional li",
+        "Method:plan_explore_iter225",
+        "Fact:pass_iter225"
+      ],
+      "iteration": 225,
+      "id": "he_experiment_pipeline_9bcb324c"
+    },
+    {
+      "label": "reviewer_iter225",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T17:42:57.597384",
+      "last_seen": "2026-09-28T17:42:57.597384",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "f8cb9eb54f5f7500",
+      "r_phys": 1.0,
+      "iteration": 225,
+      "id": "persona_use:reviewer_iter225"
     }
   ],
   "links": [
@@ -3873,6 +3937,33 @@
       "last_seen": "2026-09-28T17:41:53.196174",
       "mentions": 1,
       "target": "he_experiment_pipeline_ab475793"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: Structural Constraint] The rigid family is defined by a low-dimensional li",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:42:57.597285",
+      "last_seen": "2026-09-28T17:42:57.597285",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_9bcb324c"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter225",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:42:57.597285",
+      "last_seen": "2026-09-28T17:42:57.597285",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_9bcb324c"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter225",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:42:57.597285",
+      "last_seen": "2026-09-28T17:42:57.597285",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_9bcb324c"
     }
   ]
 }
