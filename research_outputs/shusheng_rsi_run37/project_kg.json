@@ -130,6 +130,70 @@
       "r_phys": 1.0,
       "iteration": 10,
       "id": "persona_use:reviewer_iter10"
+    },
+    {
+      "label": "[DIM: structure] The rigid polynomial constraint family (degree ≤ 2) is inherent",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:59:19.464608",
+      "last_seen": "2026-09-28T13:59:19.464608",
+      "mentions": 1,
+      "iteration": 15,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For rigid family (degree ≤ 2), N_c(w) will be a small finite integer (e.g., h=2 to h=8) that remains flat or decreases as w increases, with held-out error ≤ 1e-3 at those widths. For fat family, all h",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid polynomial constraint family (degree ≤ 2) is inherent"
+    },
+    {
+      "label": "plan_explore_iter15",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:59:19.464652",
+      "last_seen": "2026-09-28T13:59:19.464652",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter15"
+    },
+    {
+      "label": "pass_iter15",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:59:19.464663",
+      "last_seen": "2026-09-28T13:59:19.464663",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter15"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T13:59:19.464673",
+      "last_seen": "2026-09-28T13:59:19.464673",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid polynomial constraint family (degree ≤ 2) is inherent",
+        "Method:plan_explore_iter15",
+        "Fact:pass_iter15"
+      ],
+      "iteration": 15,
+      "id": "he_experiment_pipeline_d4df36"
+    },
+    {
+      "label": "reviewer_iter15",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:59:19.464762",
+      "last_seen": "2026-09-28T13:59:19.464762",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "870a6c546097ea9f",
+      "r_phys": 1.0,
+      "iteration": 15,
+      "id": "persona_use:reviewer_iter15"
     }
   ],
   "links": [
@@ -186,6 +250,33 @@
       "last_seen": "2026-09-28T13:58:20.408830",
       "mentions": 1,
       "target": "he_experiment_pipeline_e2403b7a"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid polynomial constraint family (degree ≤ 2) is inherent",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:59:19.464673",
+      "last_seen": "2026-09-28T13:59:19.464673",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d4df36"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:59:19.464673",
+      "last_seen": "2026-09-28T13:59:19.464673",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d4df36"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:59:19.464673",
+      "last_seen": "2026-09-28T13:59:19.464673",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d4df36"
     }
   ]
 }
