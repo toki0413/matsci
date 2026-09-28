@@ -108,5 +108,19 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid and fat families as specified, ensuring y/yv are (N,1) shaped, normalized to O(1), and Xv does not overlap with X. The rigid "
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan fundamentally misaligns with the hypothesis by using generic function families instead of explicitly defined PDE-based families. It fails to verify the core mathematical structure (characteristic curves, transport invariance, solution uniqueness) required by the hypothesis, repeating the exact failure modes documented in 'run28' and 'run29'. The PREDICTION only checks ML generalization error (N_c(w), train_err, holdout_err) which cannot distinguish between function families based on their PDE properties.",
+    "missing_steps": [
+      "Define specific first-order linear transport PDE for rigid family (e.g., u_x + c*u_y = 0 with fixed c)",
+      "Define specific nonlinear hyperbolic PDE for fat family (e.g., Burgers' equation u_t + u*u_x = 0)",
+      "Implement characteristic curve tracing for both families to verify fixed vs. time-dependent characteristics",
+      "Test for solution non-uniqueness in fat family (check Jacobian singularities or multiple solutions for same boundary conditions)",
+      "Add spectral analysis or direct PDE residual verification to confirm the mathematical structure of both families",
+      "Ensure fat family is explicitly x-dependent and defined by a nonlinear PDE, not random high-dimensional polynomials"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function for the rigid and fat function families according to the hypothesis and protocol. The rigid family corresponds to functions satisfying a line"
   }
 ]
