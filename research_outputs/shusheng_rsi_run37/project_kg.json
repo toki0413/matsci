@@ -1904,6 +1904,70 @@
       "r_phys": 1.0,
       "iteration": 165,
       "id": "persona_use:reviewer_iter165"
+    },
+    {
+      "label": "[DIM: structure] The zero-violation capacity N_c(w) is bounded by the algebraic ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:35:36.889242",
+      "last_seen": "2026-09-28T14:35:36.889242",
+      "mentions": 1,
+      "iteration": 170,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Rigid family will show N_c(w) ≤ 8 with flat/decreasing trend across w values; fat family will show trend='unreachable' (no width ≤64 achieves zero violation). Both families will have training error ≤1",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The zero-violation capacity N_c(w) is bounded by the algebraic"
+    },
+    {
+      "label": "plan_explore_iter170",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:35:36.889281",
+      "last_seen": "2026-09-28T14:35:36.889281",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter170"
+    },
+    {
+      "label": "pass_iter170",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:35:36.889291",
+      "last_seen": "2026-09-28T14:35:36.889291",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter170"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T14:35:36.889302",
+      "last_seen": "2026-09-28T14:35:36.889302",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The zero-violation capacity N_c(w) is bounded by the algebraic",
+        "Method:plan_explore_iter170",
+        "Fact:pass_iter170"
+      ],
+      "iteration": 170,
+      "id": "he_experiment_pipeline_d4277199"
+    },
+    {
+      "label": "reviewer_iter170",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:35:36.889387",
+      "last_seen": "2026-09-28T14:35:36.889387",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "f11e2c0fc386de62",
+      "r_phys": 1.0,
+      "iteration": 170,
+      "id": "persona_use:reviewer_iter170"
     }
   ],
   "links": [
@@ -2797,6 +2861,33 @@
       "last_seen": "2026-09-28T14:34:40.280668",
       "mentions": 1,
       "target": "he_experiment_pipeline_84859aa2"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The zero-violation capacity N_c(w) is bounded by the algebraic",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:35:36.889302",
+      "last_seen": "2026-09-28T14:35:36.889302",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d4277199"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter170",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:35:36.889302",
+      "last_seen": "2026-09-28T14:35:36.889302",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d4277199"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter170",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:35:36.889302",
+      "last_seen": "2026-09-28T14:35:36.889302",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d4277199"
     }
   ]
 }
