@@ -11,5 +11,18 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the `family` function for two polynomial constraint families: (1) rigid family — low-degree polynomial (degree ≤ 2) with analytically low-dimensional solution ma"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan fails to address critical dimensional consistency issues explicitly highlighted in the '同场景历史失败' section. Specifically: (1) The DESCRIPTION does not specify how the output dimension N (number of constraints) relates to the network width w, which is essential for defining N_c(w); (2) The fat polynomial family is not defined as a function of x with high dimensionality >> w, risking degeneracy to noise as in run28; (3) No explicit implementation details are provided for how N_c(w) is computed from training/hold-out errors or how the capacity_scan tool is configured; (4) The plan lacks scaling discipline to prevent magnitude issues seen in run29 (e.g., ~1e9 scale from high-degree polynomials). Without these clarifications, the experiment cannot properly test whether N_c(w) is bounded and independent of w.",
+    "missing_steps": [
+      "Define explicit relationship between output dimension N and network width w",
+      "Specify fat polynomial family form f(x) with dimension >> w (not noise)",
+      "Detail capacity_scan implementation and N_c(w) computation method",
+      "Implement scaling discipline to avoid extreme magnitude issues",
+      "Define rigid family parameterization that maintains low-dimensional manifold under width scaling"
+    ],
+    "mode": "explore",
+    "description": "Implement the rigid polynomial constraint family (degree ≤ 2) in the `family` function, perform capacity scan with width h ∈ [2, 64] for w = {10, 20, 50} using 3 random seeds, compute N_c(w) as the mi"
   }
 ]
