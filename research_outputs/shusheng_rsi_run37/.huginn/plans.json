@@ -1216,6 +1216,42 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_c49505f8",
+      "objective": "[DIM: structure] The rigid polynomial family exhibits a finite capacity threshold $N_c(w)$ that is invariant to the number of constraints $w$ due to the low-dimensional manifold of the solution space; specifically, $N_c(w) \\approx O(1)$ for $w \\le 8$, reflecting the algebraic degree of freedom rather than data density.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid polynomial family as required by the capacity_scan workflow. The function will generate training and held-out constraint points for a low-dimensional polynomial family, ensuring labels are normalized to O(1) and shapes are (N,1). This is the first step to verify the rigidity anchor (finite N_c) and test the hypothesis.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "family.py",
+            "(new",
+            "file",
+            "containing",
+            "the",
+            "family",
+            "function)"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-28T14:42:27.830590+00:00",
+      "confirmed_at": "2026-09-28T14:42:27.832537+00:00",
+      "completed_at": "2026-09-28T14:42:47.707867+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
