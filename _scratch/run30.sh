@@ -18,6 +18,9 @@ export HUGINN_COGNITIVE_LLM_DECIDER=0
 export HUGINN_CODELAB_TIMEOUT_S=900
 export HUGINN_EXEC_ROUTE_DEBUG=1
 export PYTHONPATH=/workspace/agent
+# 任务脚手架 = 命题资产(非平台内核): NN 容量扫描的模板/提示/原语都在这里,
+# 平台内核 code_lab 不再内置任何领域原语.
+export HUGINN_CODELAB_SCAFFOLD=/workspace/examples/codelab_scaffolds/network_rigidity.py
 
 cd /workspace/research_outputs/shusheng_rsi_run30
 exec python3 -m huginn.cli.main autoloop "$(cat objective.txt)" -i 24

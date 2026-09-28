@@ -57,11 +57,13 @@ def _extract_next_open(report_text: str) -> str:
     return (report_text or "").strip()[-900:]
 
 
-def _author_code(client, model: str, goal: str, guards: dict, cycle: int):
+def _author_code(client, model: str, goal: str, guards: dict, cycle: int,
+                 scaffold=None):
     """书生在 Code Lab 亲手写本轮实验代码 → 沙箱试跑校验.
 
     返回 (Experiment|None, probe_specs, objectives_keys, err).
     失败即回退(不伪造): (None, [], [], 原因).
+    ``scaffold``: 任务脚手架(命题资产); 不给即平台命题无关的默认骨架.
     """
     from huginn.research import Experiment
     from huginn.research.code_lab import (
@@ -72,7 +74,7 @@ def _author_code(client, model: str, goal: str, guards: dict, cycle: int):
     )
 
     guard_block = "\n".join(f"- {g}" for g in (guards.get("prompt_guards") or [])[:8])
-    base_prompt = build_author_prompt(goal, guard_block=guard_block)
+    base_prompt = build_author_prompt(goal, scaffold=scaffold, guard_block=guard_block)
     cfg = {"seed": 0}
     extra = tuple(guards.get("imports_whitelist_extra") or ())
     aliases = guards.get("cfg_aliases") or None
@@ -91,7 +93,7 @@ def _author_code(client, model: str, goal: str, guards: dict, cycle: int):
     if not code.strip():
         return None, [], [], "书生未输出可解析的 <code> 块"
     res, reason = sandbox_run(code, dict(cfg), imports_whitelist_extra=extra,
-                              cfg_aliases=aliases)
+                              cfg_aliases=aliases, scaffold=scaffold)
     budget = max(0, int(guards.get("code_retry_budget") or 0))
     for _ in range(budget):
         if reason is None:
@@ -105,7 +107,7 @@ def _author_code(client, model: str, goal: str, guards: dict, cycle: int):
             break
         code = fixed
         res, reason = sandbox_run(code, dict(cfg), imports_whitelist_extra=extra,
-                                  cfg_aliases=aliases)
+                                  cfg_aliases=aliases, scaffold=scaffold)
     if reason or res is None:
         return None, [], [], f"CodeLab 校验失败: {reason}"
     name = f"author_c{cycle}"
@@ -113,11 +115,12 @@ def _author_code(client, model: str, goal: str, guards: dict, cycle: int):
         name=name,
         hypothesis=(f"书生亲手编写的实验代码(Code Lab): 针对目标 '{goal[:60]}' "
                     f"自研数值实验, 沙箱真实执行, 数值进 trace 过门禁."),
-        run=lambda cc=code, cg=dict(cfg), ex=extra, al=aliases:
-            sandbox_run(cc, cg, imports_whitelist_extra=ex, cfg_aliases=al)[0]
+        run=lambda cc=code, cg=dict(cfg), ex=extra, al=aliases, sc=scaffold:
+            sandbox_run(cc, cg, imports_whitelist_extra=ex, cfg_aliases=al,
+                        scaffold=sc)[0]
             or {"success": False, "summary": {"error": "author run failed"}, "objectives": {}},
     )
-    probes = author_probe_specs(code)
+    probes = author_probe_specs(code, scaffold=scaffold)
     print(f"  [书生成码] 分支 {name} 校验通过, 探针 ×{len(probes)}, "
           f"objectives_keys={sorted(res['objectives'])}")
     return exp, probes, sorted(res["objectives"]), ""
@@ -135,12 +138,16 @@ def main() -> int:
     ap.add_argument("--base-url", default=os.environ.get(
         "INTERNLM_BASE_URL", "https://chat.intern-ai.org.cn/api/v1"))
     ap.add_argument("--session", default="run", help="产物文件名后缀")
+    ap.add_argument("--scaffold", default=os.environ.get("HUGINN_CODELAB_SCAFFOLD", ""),
+                    help="任务脚手架(.py 路径或模块名); 不给即命题无关默认骨架")
     args = ap.parse_args()
 
     from huginn.research import grounding_verifier, run_research_program
     from huginn.research.coldstart_guards import compile_domain_guards, verify_domain_ready
     from huginn.research.planning import SubResearch, build_research_plan
 
+    from huginn.research.code_lab import load_scaffold
+    scaffold = load_scaffold(args.scaffold)
     guards = compile_domain_guards(args.domain) if args.domain else {}
     if guards:
         ready = verify_domain_ready(guards)
@@ -172,7 +179,8 @@ def main() -> int:
             nxt = _extract_next_open(last_report)
             if nxt:
                 goal = (f"{args.objective}\n\n【上一轮报告的开放问题/局限(优先推进)】\n{nxt[:1200]}")
-        exp, probes, obj_keys, err = _author_code(client, args.model, goal, guards, cycle)
+        exp, probes, obj_keys, err = _author_code(client, args.model, goal, guards, cycle,
+                                                  scaffold=scaffold)
         transcript += [f"## 第 {cycle} 轮 · 书生成码", ""]
         if exp is None:
             note = f"书生成码未通过, 本轮无真实证据, 停止(不伪造): {err}"

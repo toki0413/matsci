@@ -20,333 +20,104 @@ open/globals/locals) + safe_import 白名单 (numpy/scipy/sympy/math/json/...)
 """
 from __future__ import annotations
 
+import importlib
+import importlib.util
 import json
 import re
 import threading
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 SAFE_MEM_CAP = 512 * 1024 * 1024      # 512MB 峰值 (tracemalloc 监控)
 SAFE_TIMEOUT_S = 30.0                 # run()/probe 单次调用超时
 
-# 书生写码的默认模板 + 提示词唯一出处: 让 autoloop 的 execute 内建动作与
-# examples 的自主循环共用同一份契约, 避免两套 author 提示各自漂移.
-# 这是一份**可直接跑通**的"容量扫描"骨架: 多起点 + L-BFGS-B + 每宽度最优
-# 训练/留出最大误差 + objectives 表. 书生按自己的约束族改前几行即可, 不必重写
-# 参数打包/优化器逻辑 (那正是反复出 bug 的地方). 用 float('inf') 初始化最优值,
-# 不用 None —— 避免 "'<' not supported between int and NoneType".
-AUTHOR_TEMPLATE = """\
+# 平台默认(命题无关)的 run(cfg) 骨架: 只固定输入/输出契约, 不含任何领域原语、
+# 约束族或判据。领域脚手架属于**任务资产**, 经 Scaffold/load_scaffold 装配 ——
+# 平台内核不替任何命题长出专用代码 (低熵红线: 通用骨架不为单个命题累积例外)。
+DEFAULT_TEMPLATE = """\
 import numpy as np
 
 
-def family(kind, w, seed):
-    # ===== 你只改这个函数: 定义"刚(rigid)/肥(fat)"各自对应的约束族 =====
-    # kind: 族名('rigid' 或 'fat'); w: 训练约束点数; seed: 随机种子
-    # 返回 dict {'X','y','Xv','yv'}: X/y 是 w 个训练约束点, Xv/yv 是留出约束点。
-    # 下面是一个示例(低维正弦族), 请按你的解析 ground truth 替换。
-    rng = np.random.default_rng(seed)
-    X = np.linspace(0.0, 1.0, w).reshape(-1, 1)
-    y = np.sin(np.pi * X)
-    Xv = np.linspace(0.0, 1.0, 200).reshape(-1, 1)
-    yv = np.sin(np.pi * Xv)
-    return {'X': X, 'y': y, 'Xv': Xv, 'yv': yv}
-
-
 def run(cfg):
-    # 已由脚手架提供: 训练/多起点/宽度扫描/零违规判据/N_c 汇总都在 capacity_scan 里。
-    # **不要改这个函数, 也不要把训练/优化代码写进来** —— 否则会重蹈手搓 numpy 的错。
+    # 你的实验入口: 读参数用 cfg.get('x', 默认值), 不要整体解包 cfg.
     seed = int(cfg.get('seed', 0))
-    return capacity_scan(family, seed=seed)
+    # ... 你的数值实验 ...
+    return {"success": True,
+            "summary": {"note": "可证伪的数值轨迹"},
+            "objectives": {"score": 0.0}}   # 每个值须为数值
 """
 
-#: 分工硬提示: 训练/扫描/判据/汇总已由沙箱内置 capacity_scan 提供, 书生只写
-#: family(科学决策部分). 只讲"分工与契约", 不绑定任何具体命题.
-FAMILY_CONTRACT_HINT = (
-    "分工(极重要): 沙箱**已内置完整数值管线** capacity_scan(family, ...) —— 训练"
-    "(两层 tanh 网络 + L-BFGS-B 多起点)/宽度扫描/零违规判据/N_c 汇总 都由它完成。\n"
-    "**你只需实现 family(kind, w, seed) 这一个函数**(这是真正需要你决策的科学部分), "
-    "并让 run(cfg) 原样 `return capacity_scan(family, seed=...)`。"
-    "**绝对不要**把训练/优化/参数打包/前向写进代码 —— 那正是反复 shape bug 的根源, "
-    "已被验证在本环境里必错。\n"
-    "- family 返回 dict {'X','y','Xv','yv'}: X/y 是 w 个**训练**约束点, "
-    "Xv/yv 是**留出**约束点(未参与训练); 只想给一组时可省略 Xv/yv(回落到 X/y)。\n"
-    "- **留出集必须真的留出**: Xv 里的输入点不能与 X 重合(否则'留出误差'=训练误差, "
-    "整个 N_c 判据失效, 脚手架会判 trend='invalid_heldout')。Xv 用不同网格/不同采样点。\n"
-    "- kind 取 'rigid'/'fat' 两族, 由你定义其解析 ground truth: "
-    "刚性 = 低维/唯一解的约束族; 肥 = 高维/连续族的约束族。用 kind 分支返回各自数据。\n"
-)
 
-#: 数组纪律硬提示: family 里建数组的常见坑. 只讲"怎么建数组", 不绑定命题.
-ARRAY_SHAPE_HINT = (
-    "数组纪律: X/y/Xv/yv 用二维 (N,1) —— 建完用 .reshape(-1, 1) 升维; "
-    "np.linspace/np.array 直接用。\n"
-    "- 随机数: rng = np.random.default_rng(seed); 用 rng.standard_normal(n)/rng.uniform(...)"
-    "(Generator **没有** randn/rand/random_sample)。\n"
-    "- 建数组只用 np.zeros/np.ones/np.full/np.eye/np.array/np.linspace。\n"
-    "- **广播陷阱**: (N,) 与 (N,1) 相加会变成 (N,N)! 例如 "
-    "`X[:,0] + rng.standard_normal((w,1))` 得到 (w,w) 而非 (w,1)。"
-    "标签务必写成 (N,1): 先 `x = <一维数组>` 再 `x.reshape(-1, 1)`, 不要拿 (N,) 与 (N,1) 混算。"
-    "脚手架会检查标签形状, 非 (N,1) 直接报错。\n"
-    "- 不要在 family 里做任何矩阵乘/训练; 只负责返回约束点数据。\n"
-)
+@dataclass
+class Scaffold:
+    """任务脚手架: 某命题自带、经 load_scaffold 注入沙箱的实验资产.
 
-
-def _as_2d(a):
-    """把 1-D 输入变 (N,1); 已是 2-D 则原样 —— 形状对齐原语."""
-    import numpy as np
-    a = np.asarray(a, dtype=float)
-    return a.reshape(-1, 1) if a.ndim == 1 else a
-
-
-def mlp_fit(X, y, h, seeds=3, maxiter=20000, seed=0):
-    """通用两层 tanh 函数拟合器: L-BFGS-B 多起点, 返回最小训练 MSE 的参数.
-
-    命题无关的数值原语 —— 只封装"参数打包 / L-BFGS-B / 多起点 / 形状对齐"这类
-    最容易写错的样板, 不编码任何科学假设(约束族/扫描/判据仍由调用方自定). 反复
-    出现的 ``matmul: ... size 5 is different from 1`` 正是手搓这套打包/前向造成,
-    故把它下沉为已验证原语.
-
-    X:(N,d) 或 (N,), y:(N,1) 或 (N,); h=隐藏层宽度; seeds=起点数.
-    返回 dict(params 列表, h, d, train_mse) —— 可 JSON 序列化, 交给 mlp_predict 前向.
+    平台内核(本模块)只提供**注入点**与契约, 不内置任何领域原语. 命题把自己的
+    模板(TEMPLATE)、提示(HINTS)、原语(PRIMITIVES)放进一个独立模块, autoloop/
+    示例按需装配 —— 这样"谁定义原语"这件事本身是通用的, 平台不会为单个命题
+    长出专用代码.
     """
-    import numpy as np
-    from scipy.optimize import minimize
 
-    X = _as_2d(X)
-    y = _as_2d(y)
-    h = int(h)
-    d = int(X.shape[1])
-    n = d * h + h + h + 1
-
-    def unpack(p):
-        i = 0
-        W1 = p[i:i + d * h].reshape(d, h); i += d * h
-        b1 = p[i:i + h]; i += h
-        W2 = p[i:i + h].reshape(h, 1); i += h
-        b2 = p[i:i + 1].reshape(1, 1)
-        return W1, b1, W2, b2
-
-    # 输入/输出标定 (缩放), 使 tanh 网络能逼近一般光滑函数:
-    #  - X 缩到 [-1,1]: 否则 tanh 在 X 远超 |1| 处饱和, L-BFGS-B 无法在宽 X 上
-    #    插值任意函数 (run29 的 rigid 用 x∈[-1,1] 且 cos(pi x) 却拟合不出 ——
-    #    正是范围标定问题).
-    #  - y 缩到 [-1,1]: 否则 L-BFGS-B 的默认步长/梯度尺度被 y 的绝对量级主导,
-    #    大 |y| 目标难以收敛到 1e-3 (run29 fat 的 ~1e7 更是如此).
-    # 两个标定在预测侧必须原样反转 (mlp_predict 里同样处理), 保证返回的
-    # 误差是原始尺度上的真实误差.
-    Xm, Xs = X.mean(0), X.std(0) + 1e-9
-    Xn = (X - Xm) / Xs
-    ym, ys = float(y.mean()), float(y.std()) + 1e-9
-    yn = (y - ym) / ys
-
-    def loss(p):
-        W1, b1, W2, b2 = unpack(p)
-        out = np.tanh(Xn @ W1 + b1) @ W2 + b2
-        return float(np.mean((out - yn) ** 2))
-
-    best_fun = float('inf')
-    best_p = None
-    for s in range(int(seeds)):
-        rng = np.random.default_rng(int(seed) + 101 * s + 7 * h + d)
-        p0 = rng.standard_normal(n) * 0.5
-        res = minimize(loss, p0, method='L-BFGS-B',
-                       options={'maxiter': int(maxiter)})
-        if float(res.fun) < best_fun:
-            best_fun = float(res.fun)
-            best_p = res.x
-    return {'params': best_p.tolist(), 'h': h, 'd': d, 'train_mse': best_fun,
-            'scaler': {'Xm': Xm.tolist(), 'Xs': Xs.tolist(),
-                       'ym': ym, 'ys': ys}}
+    name: str = ""
+    template: str = ""
+    hints: str = ""
+    primitives: dict[str, Any] = field(default_factory=dict)
+    primitive_names: tuple[str, ...] = ()
 
 
-def mlp_predict(model, X):
-    """用 mlp_fit 的返回对 X 前向, 返回 (N,1) 预测 —— 形状与 mlp_fit 严格一致."""
-    import numpy as np
-    X = _as_2d(X)
-    p = np.asarray(model['params'], dtype=float)
-    h = int(model['h'])
-    d = int(model['d'])
-    sc = model.get('scaler')
-    if sc is not None:   # 还原 mlp_fit 的输入/输出标定, 使误差落在原始尺度
-        X = (X - np.asarray(sc['Xm'], dtype=float)) / np.asarray(sc['Xs'], dtype=float)
-    i = 0
-    W1 = p[i:i + d * h].reshape(d, h); i += d * h
-    b1 = p[i:i + h]; i += h
-    W2 = p[i:i + h].reshape(h, 1); i += h
-    b2 = p[i:i + 1].reshape(1, 1)
-    out = np.tanh(X @ W1 + b1) @ W2 + b2
-    if sc is not None:
-        out = out * float(sc['ys']) + float(sc['ym'])
-    return out
+def load_scaffold(source: Any) -> Scaffold | None:
+    """把外部任务脚手架装配成 Scaffold. ``source`` 支持:
 
-
-def _overlap_fraction(X, Xv):
-    """Xv 中有多少比例的点与训练点 X 重合 (留出集有效性守卫).
-
-    完全重合(返回 1.0)意味着"留出误差"就是训练误差, 零违规判据失效 —— 正是
-    run25 伪结果的来源. 用四舍五入后的行元组做集合比对, 与维度无关.
+      - None / "" / Scaffold: 原样返回 (无脚手架 → 平台走命题无关默认);
+      - "...py" 文件路径 或 "pkg.mod" 模块名: 加载模块, 读约定字段
+        ``NAME`` / ``TEMPLATE`` / ``HINTS`` / ``PRIMITIVE_NAMES``, 并调用
+        ``primitives()`` 取要注入沙箱的原语表.
     """
-    import numpy as np
-
-    X = _as_2d(X)
-    Xv = _as_2d(Xv)
-    if Xv.shape[0] == 0:
-        return 0.0
-    if X.shape[0] == 0:
-        return 0.0
-    rows = {tuple(np.round(r, 9)) for r in X}
-    hit = sum(1 for r in Xv if tuple(np.round(r, 9)) in rows)
-    return float(hit) / float(Xv.shape[0])
-
-
-def _check_label_shapes(X, y, Xv, yv, kind, w):
-    """标签形状守卫: y/yv 必须是 (N,1), 行数分别匹配 X/Xv.
-
-    捕获最常见的**静默伪结果**来源 —— 广播 bug. 例如
-    ``X[:, 0] + rng.standard_normal((w, 1)) * 0.0``: 左边 (w,) 与右边 (w,1)
-    相加会广播成 (w,w) 而非 (w,1). 这种 y 与 (N,1) 预测再广播成 (N,N), 使
-    "误差"退化成常数级伪值(如 ~0.5), 却**不抛任何异常**, 直接污染整张 N_c 表
-    (run27 的 fat 臂 heldout≈0.51 恒不变, 正是此坑). 故在此显式抬高错误,
-    让上层修复循环把精确形状问题回灌给作者, 而不是产出伪证据.
-    """
-    import numpy as np
-
-    for nm, xx, yy in (("y", X, y), ("yv", Xv, yv)):
-        if yy.ndim != 2 or yy.shape[1] != 1:
-            raise ValueError(
-                "%s w=%d: 标签 %s 形状应为 (N,1), 实为 %s —— 多半是广播 bug "
-                "( (N,) 与 (N,1) 相加会变成 (N,N) ); 请用 .reshape(-1, 1) 逐列构造标签."
-                % (kind, int(w), nm, tuple(yy.shape))
-            )
-        if yy.shape[0] != xx.shape[0]:
-            raise ValueError(
-                "%s w=%d: 标签 %s 行数 %d 与输入 %s 行数 %d 不一致."
-                % (kind, int(w), nm, yy.shape[0],
-                   "X" if nm == "y" else "Xv", xx.shape[0])
-            )
-
-
-def capacity_scan(family, kinds=("rigid", "fat"), ws=(5, 10, 20),
-                  widths=(2, 4, 8, 16, 32, 64), seeds=3,
-                  tr_tol=3e-4, ho_tol=1e-3, seed=0):
-    """命题无关的容量扫描脚手架 (harness 侧已验证的数值管线).
-
-    把"训练/多起点/宽度扫描/零违规判据/N_c 汇总"这些最容易手搓出错的样板下沉为
-    已验证原语; **科学决策仍由调用方写 family 提供** —— 即"刚/肥"各自对应什么
-    约束族(解析 ground truth), 由 family 决定. 这样书生只写他真正该决策的部分.
-
-    family(kind, w, seed) -> dict 或 tuple:
-        - dict  {'X','y','Xv','yv'}: 训练约束点 (w 个) 与留出约束点 (M 个);
-        - tuple (X, y, Xv, yv) 或 (X, y): 缺省 Xv/yv 回落到 X/y.
-        X/y 一维或二维均可(内部自动升维到 (N,1) 对齐).
-    kinds: 要比较的族名(默认 'rigid'/'fat'); ws: 约束点数; widths: 隐藏层宽度;
-    seeds: 每个 (kind,w,h) 的独立起点数; tr_tol/ho_tol: 训练/留出误差门限.
-    tr_tol 只需"足够小"(默认 3e-4, 仅用于确认网络真的拟合上了, 避免优化器没收敛
-    却被记成"可达"); ho_tol=1e-3 才是"零违规"的判据, 过严的 tr_tol 会把本来可达
-    的宽度误判成 None(伪不可达), 故刻意留松.
-
-    返回 {"success", "summary", "objectives"}:
-        summary['rows'][kind_w{w}_h{h}] = {'train_err','heldout_err'}  (全为有限数)
-        summary['Nc'][kind][w] = 最小零违规宽度 h 或 None(该 w 在扫描内不可达)
-        summary['trend'][kind] = 'flat'|'increasing'|'decreasing'|'mixed'|'inconclusive'
-                               |'unreachable'(扫描内无宽度零违规 = 胖的签名)
-                               |'invalid_heldout'(留出集与训练集重合, 结果无效)
-        summary['anchor'] = 全局留出误差最小的 (kind,w,h) 锚点 —— 证明零违规可达
-        summary['heldout_overlap'][kind_w{w}] = Xv 与 X 的重合比例 (0 才有效)
-        summary['warnings'] = 留出集重叠等有效性告警文本
-        objectives['neg_heldout_<kind>_w<w>_h<h>'] = -heldout_max_err (越大越好)
-    不伪造: 达不到零违规的行如实报其有限留出误差, Nc 记 None, 绝不写 inf.
-    """
-    import numpy as np
-
-    def _one(kind, w, s):
-        out = family(kind, int(w), int(s))
-        if isinstance(out, dict):
-            X, y = out["X"], out["y"]
-            Xv, yv = out.get("Xv", X), out.get("yv", y)
-        elif isinstance(out, (tuple, list)) and len(out) >= 2:
-            X, y = out[0], out[1]
-            Xv = out[2] if len(out) > 2 else X
-            yv = out[3] if len(out) > 3 else y
+    if source is None or source == "":
+        return None
+    if isinstance(source, Scaffold):
+        return source
+    mod = source
+    if isinstance(source, str | Path):
+        p = Path(str(source))
+        if p.suffix == ".py":
+            spec = importlib.util.spec_from_file_location(
+                "huginn_codelab_scaffold_" + p.stem, p)
+            if spec is None or spec.loader is None:
+                raise ImportError(f"无法加载脚手架文件: {p}")
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
         else:
-            raise ValueError("family 须返回 dict(X,y,Xv,yv) 或 (X,y[,Xv,yv])")
-        X, y, Xv, yv = _as_2d(X), _as_2d(y), _as_2d(Xv), _as_2d(yv)
-        _check_label_shapes(X, y, Xv, yv, kind, w)
-        return X, y, Xv, yv
-
-    summary = {"rows": {}, "Nc": {}, "trend": {}, "anchor": None,
-               "heldout_overlap": {}, "warnings": []}
-    objectives = {}
-    for kind in kinds:
-        nc: dict = {}
-        _fully_overlapping = False
-        for w in ws:
-            datasets = [_one(kind, w, s) for s in range(int(seeds))]
-            # 留出集有效性守卫: 若 Xv 与训练点 X 重合, "留出误差"其实是训练误差,
-            # 零违规判据形同虚设 —— run25 的伪结果(heldout==train)正源于此.
-            _ov = max(_overlap_fraction(X, Xv) for (X, y, Xv, yv) in datasets)
-            if _ov > 0.0:
-                summary["heldout_overlap"]["%s_w%d" % (kind, int(w))] = round(_ov, 4)
-                summary["warnings"].append(
-                    "留出集与训练集重叠%s: %s w=%d (留出误差无效)"
-                    % ("(完全重合)" if _ov >= 1.0 else "", kind, int(w))
-                )
-                if _ov >= 1.0:
-                    _fully_overlapping = True
-            best_h = None
-            for h in widths:
-                ho_best = float("inf")
-                tr_best = float("inf")
-                for s, (X, y, Xv, yv) in enumerate(datasets):
-                    m = mlp_fit(X, y, int(h), seeds=1,
-                                seed=int(seed) + 1000 * int(w) + 10 * int(h) + s)
-                    tr = float(np.max(np.abs(mlp_predict(m, X) - y)))
-                    ho = float(np.max(np.abs(mlp_predict(m, Xv) - yv)))
-                    if ho < ho_best:
-                        ho_best, tr_best = ho, tr
-                key = "%s_w%d_h%d" % (kind, int(w), int(h))
-                summary["rows"][key] = {"train_err": tr_best, "heldout_err": ho_best}
-                objectives["neg_heldout_" + key] = -ho_best
-                if best_h is None and ho_best <= ho_tol and tr_best <= tr_tol:
-                    best_h = int(h)
-                if summary["anchor"] is None or ho_best < summary["anchor"]["heldout_err"]:
-                    summary["anchor"] = {"kind": kind, "w": int(w), "h": int(h),
-                                         "train_err": tr_best, "heldout_err": ho_best}
-            nc[int(w)] = best_h
-        summary["Nc"][kind] = nc
-        vals = [v for v in nc.values() if v is not None]
-        if _fully_overlapping:
-            # 留出集 == 训练集: 所谓零违规只是插值训练点, 趋势无科学意义.
-            summary["trend"][kind] = "invalid_heldout"
-        elif not vals:
-            # 扫描内任何宽度都达不到零违规 —— 这是"胖"(解空间高维/连续族)的
-            # 判别签名: 有限样本装不下, N_c = ∞. 与"inconclusive"(样本太少、
-            # 测不出趋势) 区分开. 注: 刚性族若也标 unreachable, 说明第 0 步
-            # 可达性 bootstrap 没过, 该轮无效 (由报告层裁决).
-            summary["trend"][kind] = "unreachable"
-        elif len(vals) < 2:
-            summary["trend"][kind] = "inconclusive"
-        elif len(set(vals)) == 1:
-            summary["trend"][kind] = "flat"
-        elif all(b >= a for a, b in zip(vals, vals[1:])):
-            summary["trend"][kind] = "increasing"
-        elif all(b <= a for a, b in zip(vals, vals[1:])):
-            summary["trend"][kind] = "decreasing"
-        else:
-            summary["trend"][kind] = "mixed"
-    return {"success": True, "summary": summary, "objectives": objectives}
+            mod = importlib.import_module(str(source))
+    prims = getattr(mod, "primitives", None)
+    prims = dict(prims() if callable(prims) else (prims or {}))
+    names = tuple(getattr(mod, "PRIMITIVE_NAMES", ()) or tuple(prims))
+    return Scaffold(
+        name=str(getattr(mod, "NAME", "") or ""),
+        template=str(getattr(mod, "TEMPLATE", "") or ""),
+        hints=str(getattr(mod, "HINTS", "") or ""),
+        primitives=prims,
+        primitive_names=names,
+    )
 
 
-def build_author_prompt(goal: str, *, guard_block: str = "",
-                        template: str = AUTHOR_TEMPLATE,
+def build_author_prompt(goal: str, *, scaffold: Scaffold | None = None,
+                        guard_block: str = "",
                         repair_hint: str = "", prev_code: str = "") -> str:
     """构造"让书生在 Code Lab 亲手写一轮实验"的作者提示 (命题无关).
 
-    单一出处: autoloop 的 execute 内建动作与 examples 自主循环都调本函数, 契约
-    (纯 numpy、<=30 行、返回 objectives) 只维护一份. ``goal`` 由外部传入 —— 只给
-    方向, 不绑定任何具体命题; ``guard_block`` 是可选的冷启动守卫软提示.
-    ``repair_hint`` 非空时把上一轮沙箱真实报错回灌, 让书生自己改对 (通用修 bug,
-    不绑定任何命题).
+    单一出处: autoloop 的 execute 内建动作与 examples 自主循环都调本函数, 通用
+    契约(纯 numpy、返回 objectives、不 assert)只维护一份. ``goal`` 由外部传入 ——
+    只给方向, 不绑定任何具体命题. 领域相关的模板/提示由 ``scaffold``(任务资产)
+    注入; 不给 scaffold 时就是一份无领域耦合的默认骨架.
+    ``repair_hint`` 非空时把上一轮沙箱真实报错回灌, 让书生自己改对 (通用修 bug).
     """
+    template = (scaffold.template if scaffold and scaffold.template
+                else DEFAULT_TEMPLATE)
+    builtin_ref = ("、".join(scaffold.primitive_names)
+                   if scaffold and scaffold.primitive_names
+                   else "沙箱内置的数值工具")
     return (
         "你是实验代码作者。请写一段 Python 实验脚本推进下面的研究目标。\n"
         "硬约束: 禁止 IO/网络/读写文件; 不要 try/except、不要 class; "
@@ -355,24 +126,21 @@ def build_author_prompt(goal: str, *, guard_block: str = "",
         "单行 <= 88 字符; 每个 for/if/def 后紧跟缩进 4 空格; 结尾必须有 return。\n"
         "cfg 是 dict(可能只含 seed); 读参数请写 cfg.get('x', 默认值), 其余实验参数直接写在代码里。"
         "严禁把 cfg 整体解包成多个变量。\n"
-        + FAMILY_CONTRACT_HINT
-        + ARRAY_SHAPE_HINT
+        + (scaffold.hints if scaffold and scaffold.hints else "")
         + (("参考冷启动守卫(软提示):\n" + guard_block + "\n") if guard_block else "")
         + (("上一轮该代码在沙箱真实执行报错如下, 请据此改正后重写:\n"
-           "对症改(极常见): (a) NameError/未定义名 → 只调用沙箱**内置**的 family/capacity_scan/"
-           "mlp_fit/mlp_predict, 不要自己重写训练管线; "
-           "(b) 形状不匹配(matmul/广播/concatenate) → family 返回的 X/y/Xv/yv 一律 .reshape(-1, 1); "
+           "对症改(极常见): (a) NameError/未定义名 → 只调用沙箱**内置**的 "
+           + builtin_ref + ", 不要自己重写已有工具; "
+           "(b) 形状不匹配(matmul/广播/concatenate) → 数组一律 .reshape(-1, 1) 对齐二维; "
            "(c) Generator 没有 randn → 用 rng.standard_normal(n); "
            "(d) assert/raise 中断执行 → 删掉断言直接 return 真实数值。\n"
            "报错原文:\n" + repair_hint[:800] + "\n"
            + (("你上一版失败的代码(请在其基础上做**最小改动**修正它, 保留其余已正确的部分, "
                "不要凭空重写):\n" + prev_code[:2500] + "\n") if prev_code else "")
            if repair_hint else ""))
-        + "**必须直接采用下面这份已跑通的模板作为完整脚本骨架**: "
-        "你**只改 family(kind, w, seed) 这一个函数**(定义 rigid/fat 各自的约束族数据), "
-        "run(cfg) 原样 `return capacity_scan(family, seed=...)` 不改。\n"
+        + "**必须直接采用下面这份模板作为完整脚本骨架**: "
         + template +
-        "\n只输出 <code>...</code> 内的**完整可用代码**(即模板 + 你对 family 的改动), 不要任何多余文字。\n\n研究目标:\n"
+        "\n只输出 <code>...</code> 内的**完整可用代码**(即模板 + 你的改动), 不要任何多余文字。\n\n研究目标:\n"
         + goal[:4000]
     )
 
@@ -454,21 +222,17 @@ def strip_abort_statements(code: str) -> str:
         return code
 
 
-#: 沙箱注入的命题无关原语名. 书生若顶层重定义同名函数会**覆盖**注入的正确实现
-#: (反复出现: 它想自己拿参数就重写一版, 且切片/形状写错 → 整轮跑不通). 这些
-#: 原语的定义即契约, 重定义只可能引入 bug、不可能带来科学自由度(约束族/扫描/
-#: 判据都在 run() 里, 与原语无关), 故确定性剥除顶层重定义, 保留注入版本.
-BUILTIN_PRIMITIVE_NAMES = ("mlp_fit", "mlp_predict", "_as_2d", "capacity_scan")
+def strip_primitive_redefinitions(code: str,
+                                  primitive_names: tuple[str, ...] = ()) -> str:
+    """剥掉书生对沙箱注入原语(脚手架 PRIMITIVE_NAMES)的顶层重定义.
 
-
-def strip_primitive_redefinitions(code: str) -> str:
-    """剥掉书生对沙箱内置原语(mlp_fit/mlp_predict/_as_2d)的顶层重定义.
-
-    只在**顶层**定义时剥除(嵌套闭包同名不影响模块级绑定); 摘除的是"对已验证
-    原语的重复实现", 不改变书生对约束族/扫描/判据的任何决策, 也不改任何数值
-    语义. 语法不合法/无重定义时原样直返(零开销).
+    书生若顶层重定义同名函数会**覆盖**注入的正确实现 (反复出现: 它想自己拿参数
+    就重写一版, 且切片/形状写错 → 整轮跑不通). 这些原语的定义即契约, 重定义只
+    可能引入 bug、不可能带来科学自由度, 故确定性剥除顶层重定义, 保留注入版本.
+    只在**顶层**定义时剥除(嵌套闭包同名不影响模块级绑定); 不改变任何数值语义.
+    无脚手架/无重定义时原样直返(零开销).
     """
-    if not code or not any(n in code for n in BUILTIN_PRIMITIVE_NAMES):
+    if not code or not primitive_names or not any(n in code for n in primitive_names):
         return code
     import ast
     try:
@@ -479,7 +243,7 @@ def strip_primitive_redefinitions(code: str) -> str:
         n for n in tree.body
         if not (
             isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)
-            and n.name in BUILTIN_PRIMITIVE_NAMES
+            and n.name in primitive_names
         )
     ]
     if len(kept) == len(tree.body):
@@ -514,12 +278,14 @@ def _call_with_timeout(fn, arg: dict, timeout: float = SAFE_TIMEOUT_S):
 
 
 def _load_namespace(code: str, mem_cap: int = SAFE_MEM_CAP,
-                    imports_whitelist_extra: tuple[str, ...] = ()) -> dict:
+                    imports_whitelist_extra: tuple[str, ...] = (),
+                    scaffold: Scaffold | None = None) -> dict:
     """在安全沙箱里执行代码, 返回定义出的命名空间 (run/probe_*).
 
     ``imports_whitelist_extra``: 域级 import 白名单增量(冷启动守卫的
     imports_whitelist_extra 注入点), 只在本次调用里并入安全白名单 —— 诚实红线:
     仅"放行良性的该域科学计算依赖", 绝不放宽 __import__ 本身或加任何 IO/网络模块.
+    ``scaffold``: 任务脚手架; 仅注入它声明的原语(命题无关内核不内置任何领域原语).
     """
     import builtins as _bi
 
@@ -531,17 +297,16 @@ def _load_namespace(code: str, mem_cap: int = SAFE_MEM_CAP,
         safe_import,
     )
     code = strip_abort_statements(code)   # 强制"不 assert 中断"契约 (命题无关)
-    code = strip_primitive_redefinitions(code)  # 剥除对内置原语的重定义(用注入版)
-    # 注入命题无关的数值原语: 参数打包/L-BFGS-B/多起点/形状对齐已下沉, 书生
-    # 直接 mlp_fit/mlp_predict 即可, 不必手搓这套样板(反复 shape bug 的根源).
+    if scaffold and scaffold.primitive_names:
+        # 剥除对脚手架原语的顶层重定义(用注入版), 避免书生重写引入 bug.
+        code = strip_primitive_redefinitions(code, scaffold.primitive_names)
+    # 只注入平台基座(np) — 领域原语全部来自 scaffold, 内核不内置任何命题专用工具.
     ns: dict = {
         "__builtins__": make_safe_builtins(),
         "np": np,
-        "mlp_fit": mlp_fit,
-        "mlp_predict": mlp_predict,
-        "_as_2d": _as_2d,
-        "capacity_scan": capacity_scan,
     }
+    if scaffold:
+        ns.update(scaffold.primitives)
     if imports_whitelist_extra:
         extras = set(imports_whitelist_extra)
 
@@ -646,12 +411,14 @@ def _alias_cfg(cfg: dict, extra_aliases: dict | None = None) -> dict:
 def sandbox_run(code: str, cfg: dict, *, mem_cap: int = SAFE_MEM_CAP,
                 timeout: float = SAFE_TIMEOUT_S,
                 imports_whitelist_extra: tuple[str, ...] = (),
-                cfg_aliases: dict | None = None) -> tuple[dict | None, str | None]:
+                cfg_aliases: dict | None = None,
+                scaffold: Scaffold | None = None) -> tuple[dict | None, str | None]:
     """执行书生写的实验代码: 返回 (结果 dict 或 None, 错误原因或 None).
 
     ``imports_whitelist_extra``: 冷启动守卫的域级 import 白名单增量, 仅该次调用生效.
     ``cfg_aliases``: 冷启动守卫的域级 cfg 键别名(compile_domain_guards 的 cfg_aliases),
     ``_alias_cfg`` 据此补齐别名, 域专用别名不进通用 harness.
+    ``scaffold``: 任务脚手架; 其声明的原语注入沙箱(不给则只有 np 基座).
     """
     if not code.strip():
         return None, "空代码"
@@ -662,7 +429,8 @@ def sandbox_run(code: str, cfg: dict, *, mem_cap: int = SAFE_MEM_CAP,
     cfg = _alias_cfg(cfg, extra_aliases=cfg_aliases)
     try:
         ns = _load_namespace(code, mem_cap,
-                             imports_whitelist_extra=imports_whitelist_extra)
+                             imports_whitelist_extra=imports_whitelist_extra,
+                             scaffold=scaffold)
         run_fn = ns.get("run")
         if not callable(run_fn):
             return None, "未找到 def run(cfg) 入口"
@@ -688,14 +456,15 @@ def sandbox_run(code: str, cfg: dict, *, mem_cap: int = SAFE_MEM_CAP,
     }, None
 
 
-def author_probe_specs(code: str) -> list[dict]:
+def author_probe_specs(code: str, scaffold: Scaffold | None = None) -> list[dict]:
     """把书生代码里的 probe_<name>(cfg) 自动注册为诊断工具 (全权探针面).
 
     返回 [{tool: {function: {name, description, parameters}}, handle}].
-    单条注册失败不影响整体 —— 成文期由工具面统一兜底.
+    单条注册失败不影响整体 —— 成文期由工具面统一兜底. ``scaffold`` 用于在注册
+    探针时复现与执行侧一致的命名空间(注入同样的原语).
     """
     try:
-        ns = _load_namespace(code)
+        ns = _load_namespace(code, scaffold=scaffold)
     except Exception:  # noqa: BLE001 — 探针注册失败即跳过, 不阻塞
         return []
     specs: list[dict] = []

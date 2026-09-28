@@ -282,14 +282,21 @@ class EngineAct:
         ``repair_hint`` 非空时把沙箱真实报错回灌, 并附上 ``prev_code``(上一版失败
         代码), 让书生在此基础上做**最小改动**修 bug, 而不是凭空重写再犯同一个错.
         """
-        from huginn.research.code_lab import build_author_prompt, extract_code
+        from huginn.research.code_lab import (
+            build_author_prompt,
+            extract_code,
+            load_scaffold,
+        )
 
         guard_block = "\n".join(
             f"- {g}" for g in ((guards or {}).get("prompt_guards") or [])[:8]
         )
+        # 任务脚手架由环境变量声明(命题资产, 非平台内核): 不给就是命题无关的默认骨架.
+        import os as _osc
+        scaffold = load_scaffold(_osc.environ.get("HUGINN_CODELAB_SCAFFOLD", ""))
         prompt = build_author_prompt(
-            goal, guard_block=guard_block, repair_hint=repair_hint,
-            prev_code=prev_code,
+            goal, scaffold=scaffold, guard_block=guard_block,
+            repair_hint=repair_hint, prev_code=prev_code,
         )
         try:
             raw = await self._llm_chat(prompt, model=self.verification_model)
@@ -314,14 +321,16 @@ class EngineAct:
         返回原因让上层能把真实报错回灌书生重写 (自修复), 不伪造."""
         import os as _os
 
-        from huginn.research.code_lab import sandbox_run
+        from huginn.research.code_lab import load_scaffold, sandbox_run
 
         timeout = float(_os.environ.get("HUGINN_CODELAB_TIMEOUT_S", "600"))
         extra = tuple((guards or {}).get("imports_whitelist_extra") or ())
         aliases = (guards or {}).get("cfg_aliases") or None
+        scaffold = load_scaffold(_os.environ.get("HUGINN_CODELAB_SCAFFOLD", ""))
         res, reason = sandbox_run(
             code, {"seed": 0}, timeout=timeout,
             imports_whitelist_extra=extra, cfg_aliases=aliases,
+            scaffold=scaffold,
         )
         import os as _osd
         if _osd.environ.get("HUGINN_EXEC_ROUTE_DEBUG"):
