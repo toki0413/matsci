@@ -1008,10 +1008,10 @@
       "label": "[DIM: structure] The rigid family corresponds to functions expressible in a fixe",
       "type": "experiment",
       "source": "autoloop",
-      "confidence": 1.0,
+      "confidence": 0.99,
       "created_at": "2026-09-28T16:22:33.282063",
-      "last_seen": "2026-09-28T16:22:33.282063",
-      "mentions": 1,
+      "last_seen": "2026-09-28T16:35:26.746905",
+      "mentions": 2,
       "iteration": 30,
       "r_phys": 1.0,
       "surprise": 1.0,
@@ -1679,6 +1679,55 @@
       "r_phys": 1.0,
       "iteration": 95,
       "id": "persona_use:reviewer_iter95"
+    },
+    {
+      "label": "plan_explore_iter100",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:35:26.746936",
+      "last_seen": "2026-09-28T16:35:26.746936",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter100"
+    },
+    {
+      "label": "pass_iter100",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:35:26.746959",
+      "last_seen": "2026-09-28T16:35:26.746959",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter100"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T16:35:26.746970",
+      "last_seen": "2026-09-28T16:35:26.746970",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid family corresponds to functions expressible in a fixe",
+        "Method:plan_explore_iter100",
+        "Fact:pass_iter100"
+      ],
+      "iteration": 100,
+      "id": "he_experiment_pipeline_31a505fe"
+    },
+    {
+      "label": "reviewer_iter100",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T16:35:26.747060",
+      "last_seen": "2026-09-28T16:35:26.747060",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "9e5afe5dcf147d17",
+      "r_phys": 1.0,
+      "iteration": 100,
+      "id": "persona_use:reviewer_iter100"
     }
   ],
   "links": [
@@ -2431,6 +2480,15 @@
     },
     {
       "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid family corresponds to functions expressible in a fixe",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:35:26.746970",
+      "last_seen": "2026-09-28T16:35:26.746970",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_31a505fe"
+    },
+    {
+      "relation": "member_of",
       "source": "experiment:[DIM: transport] The rigid family corresponds to solutions of a first-order line",
       "confidence": 0.5,
       "created_at": "2026-09-28T16:23:10.006197",
@@ -2707,6 +2765,24 @@
       "last_seen": "2026-09-28T16:34:27.089309",
       "mentions": 1,
       "target": "he_experiment_pipeline_f4d2f28e"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter100",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:35:26.746970",
+      "last_seen": "2026-09-28T16:35:26.746970",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_31a505fe"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter100",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:35:26.746970",
+      "last_seen": "2026-09-28T16:35:26.746970",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_31a505fe"
     }
   ]
 }

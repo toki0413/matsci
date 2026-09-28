@@ -235,5 +235,20 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the family function to generate training/holdout data for rigid (degree-ℓ polynomials) and fat (random high-degree polynomials) families, ensuring y/yv are norma"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan proposes a generic ML capacity scan on arbitrary function families instead of implementing the PDE-based mathematical structure required by the hypothesis. It fails to define the linear transport equation (∂_t u + v·∇u = 0) for the rigid family or the nonlinear Burgers' equation for the fat family. Crucially, it lacks characteristic curve tracing, solution non-uniqueness testing, spectral analysis, and PDE residual verification — all essential to validate the structural distinction between rigid (finite-dimensional, fixed characteristics) and fat (high-dimensional, time-dependent characteristics) families. This repeats documented failure modes (run28, run29) where analysis was reduced to generic ML generalization rather than structural verification.",
+    "missing_steps": [
+      "Define specific first-order linear transport PDE for rigid family with fixed velocity field v",
+      "Define specific nonlinear hyperbolic PDE (Burgers' equation) for fat family with viscosity term",
+      "Implement characteristic curve tracing to verify fixed vs. time-dependent characteristics between families",
+      "Test for solution non-uniqueness in fat family (check Jacobian singularities or multiple solutions for same boundary conditions)",
+      "Add spectral analysis or direct PDE residual verification to confirm mathematical structure of both families",
+      "Ensure fat family is explicitly x-dependent and defined by nonlinear PDE, not random high-dimensional polynomials",
+      "Verify characteristic points w along trajectories for rigid family uniqueness"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family` function for rigid (linear transport) and fat (Burgers) families that generates training and held-out constraint points with normalized outputs (std"
   }
 ]

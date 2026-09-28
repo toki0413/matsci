@@ -638,6 +638,38 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_9cc36964",
+      "objective": "[DIM: transport] The rigid family consists of solutions to a first-order linear transport equation (∂_t u + v·∇u = 0) where characteristics constrain the solution manifold to be finite-dimensional, while the fat family corresponds to solutions of a nonlinear PDE (e.g., Burgers' equation u_t + u u_x = ν u_xx) where shock formation and viscosity create a high-dimensional solution space.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the `family` function for rigid (linear transport) and fat (Burgers) families that generates training and held-out constraint points with normalized outputs (std ~ O(1)), ensuring correct (N,1) shapes and no overlap between X and Xv. Then run the capacity scan to compute N_c(w) for both families across w=5,10,20,50 and seeds, verifying the rigid family reaches zero violation (holdout_err ≤1e-3) at small widths while the fat family remains unreachable within h≤64.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "/workspace/research_outputs/shusheng_rsi_run43/.huginn/hypothesis_graph_loop_2758fd58.json",
+            "/workspace/research_outputs/shusheng_rsi_run43/.huginn/goals.json",
+            "/workspace/research_outputs/shusheng_rsi_run43/.huginn/engine_state/loop_2758fd58.json"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-28T16:35:52.833436+00:00",
+      "confirmed_at": "2026-09-28T16:35:52.835147+00:00",
+      "completed_at": "2026-09-28T16:36:11.721709+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
