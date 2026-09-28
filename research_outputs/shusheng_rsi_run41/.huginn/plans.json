@@ -154,6 +154,36 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_d83a0a90",
+      "objective": "[DIM: Composition/Function Class] The rigid family is defined by low-degree polynomial constraints (e.g., linear or quadratic), which possess a finite-dimensional solution space that can be exactly represented by small-width networks, yielding finite N_c(w) that is flat or decreasing with w.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid family (low-degree polynomial constraints) with proper data generation, normalization to O(1), and held-out points. This is the core code needed to test the hypothesis about N_c(w) behavior. The implementation must follow the strict API requirements (dictionary with X, y, Xv, yv as (N,1), no overlapping points, normalization).",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "family.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-28T15:40:00.142400+00:00",
+      "confirmed_at": "2026-09-28T15:40:00.143448+00:00",
+      "completed_at": "2026-09-28T15:40:19.268208+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

@@ -22,5 +22,18 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the family function for the rigid family (first-order linear transport equation solution space) that generates training/holdout points with O(1) normalized value"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan focuses solely on implementing the 'rigid family' (low-degree polynomial constraints) but completely omits the definition and implementation of the 'fat family' required for comparison. The hypothesis requires contrasting the behavior of the rigid family against a fat family to validate the claim about N_c(w) behavior. Without a properly defined fat family (with degrees of freedom >> w, x-dependent, partially learnable), the comparison degenerates to a trivial case as seen in historical failures (run28). The plan also lacks explicit details on validation set generation (Xv) to ensure no overlap with training data, and does not specify normalization procedures.",
+    "missing_steps": [
+      "Define explicit functional form for fat family (e.g., high-dimensional x-dependent function with degrees of freedom >> w)",
+      "Implement validation set generation procedure ensuring no overlap with X",
+      "Add normalization check for both families to ensure y/yv are O(1)",
+      "Include dimensionality analysis showing fat family degrees of freedom >> w for tested w values",
+      "Establish comparative framework between rigid and fat families for N_c(w) analysis"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid family (low-degree polynomial constraints) with proper data generation, normalization to O(1), and held-out points. This is t"
   }
 ]
