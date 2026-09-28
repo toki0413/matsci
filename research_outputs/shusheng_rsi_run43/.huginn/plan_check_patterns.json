@@ -136,5 +136,19 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the family(kind, w, seed) function to generate training and held-out data for the rigid and fat families. For the rigid family, use a Chebyshev polynomial of low"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan fundamentally misaligns with the hypothesis by using generic function families (trigonometric modes vs random polynomials) instead of explicitly defined PDE-based families. The hypothesis concerns the mathematical structure of 'rigid families' as finite-dimensional linear subspaces arising from PDE constraints (like linear transport equations with fixed characteristics), not just low-dimensional function approximation. The plan fails to address the core structural distinction: rigid families should be defined by linear PDEs with fixed characteristics, while fat families should be defined by nonlinear PDEs (e.g., Burgers' equation) with time-dependent characteristics and potential non-uniqueness. This repeats the exact failure modes documented in 'run28' and 'run29' where the analysis was reduced to generic ML generalization rather than structural verification.",
+    "missing_steps": [
+      "Define specific first-order linear transport PDE for rigid family (e.g., u_x + c*u_y = 0 with fixed c)",
+      "Define specific nonlinear hyperbolic PDE for fat family (e.g., Burgers' equation u_t + u*u_x = 0)",
+      "Implement characteristic curve tracing for both families to verify fixed vs. time-dependent characteristics",
+      "Test for solution non-uniqueness in fat family (check Jacobian singularities or multiple solutions for same boundary conditions)",
+      "Add spectral analysis or direct PDE residual verification to confirm the mathematical structure of both families",
+      "Ensure fat family is explicitly x-dependent and defined by a nonlinear PDE, not random high-dimensional polynomials"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid family (trigonometric modes) and fat family (random polynomials) with proper O(1) normalization, ensuring (N,1) shape and non"
   }
 ]

@@ -1246,6 +1246,70 @@
       "r_phys": 1.0,
       "iteration": 60,
       "id": "persona_use:reviewer_iter60"
+    },
+    {
+      "label": "[DIM: structure] The rigid family functions are restricted to a finite-dimension",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T16:28:01.043170",
+      "last_seen": "2026-09-28T16:28:01.043170",
+      "mentions": 1,
+      "iteration": 65,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family, expect to find a width h in [2,8] where holdout_err ≤ 1e-3 and train_err ≤ 1e-4. For the fat family, expect to find that even at h=64, holdout_err > 1e-3 for all seeds, marking i",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid family functions are restricted to a finite-dimension"
+    },
+    {
+      "label": "plan_explore_iter65",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:28:01.043213",
+      "last_seen": "2026-09-28T16:28:01.043213",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter65"
+    },
+    {
+      "label": "pass_iter65",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:28:01.043222",
+      "last_seen": "2026-09-28T16:28:01.043222",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter65"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T16:28:01.043231",
+      "last_seen": "2026-09-28T16:28:01.043231",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid family functions are restricted to a finite-dimension",
+        "Method:plan_explore_iter65",
+        "Fact:pass_iter65"
+      ],
+      "iteration": 65,
+      "id": "he_experiment_pipeline_f930e830"
+    },
+    {
+      "label": "reviewer_iter65",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T16:28:01.043320",
+      "last_seen": "2026-09-28T16:28:01.043320",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "2c9bfea99d54d5a6",
+      "r_phys": 1.0,
+      "iteration": 65,
+      "id": "persona_use:reviewer_iter65"
     }
   ],
   "links": [
@@ -2085,6 +2149,33 @@
       "last_seen": "2026-09-28T16:27:02.393141",
       "mentions": 1,
       "target": "he_experiment_pipeline_f163e570"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid family functions are restricted to a finite-dimension",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:28:01.043231",
+      "last_seen": "2026-09-28T16:28:01.043231",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_f930e830"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter65",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:28:01.043231",
+      "last_seen": "2026-09-28T16:28:01.043231",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_f930e830"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter65",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:28:01.043231",
+      "last_seen": "2026-09-28T16:28:01.043231",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_f930e830"
     }
   ]
 }
