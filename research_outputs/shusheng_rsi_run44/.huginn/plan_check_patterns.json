@@ -1,22 +1,6 @@
 [
   {
     "scene_tag": "other",
-    "reason": "The plan uses MODE='explore' which is fundamentally inappropriate for a verification task requiring concrete implementation details. The DESCRIPTION is still too vague — it mentions 'Implement rigorous mathematical definitions' but does not specify the exact basis functions, constraint matrix construction, PCA threshold algorithm, training objective, or violation metric with units. This matches the historical failure pattern of being 'fundamentally invalid due to lack of concrete mathematical structure'. The PREDICTION is unverified and lacks benchmark alignment against approximation theory results. It also fails to specify how N_c(w) is computed or validated against Kolmogorov width bounds.",
-    "missing_steps": [
-      "Switch MODE from 'explore' to 'coder' for concrete implementation",
-      "Define exact mathematical formulation of rigid family (specific basis functions with dimensions)",
-      "Define exact mathematical formulation of fat family (structure, dimensionality vs w)",
-      "Specify algorithm for computing N_c (constraint matrix rank? PCA threshold?)",
-      "Define training objective and violation metric with units (L2 error? max norm?)",
-      "Include benchmark lookup against Kolmogorov width bounds or approximation theory",
-      "Implement dimensional check for y/yv normalization",
-      "Specify scanning range for w and h parameters"
-    ],
-    "mode": "explore",
-    "description": "[auto-routed: surprise=1.00] Implement rigorous mathematical definitions for rigid and fat function families with explicit x-dependence, compute capacity N_c via rank of constraint matrix with PCA thr"
-  },
-  {
-    "scene_tag": "other",
     "reason": "The plan uses MODE='explore' which is fundamentally inappropriate for a verification task requiring concrete mathematical implementation. The DESCRIPTION lacks critical specifications: exact mathematical formulation of basis functions, algorithm for computing N_c, training objective definition, and violation metric specification. It repeats the same historical failure patterns identified in the scene history—vague implementation without concrete mathematical structure. The PREDICTION is unverified and lacks benchmark alignment against approximation theory results. Before implementing code, the plan must define the exact mathematical formulation, specify how N_c is computed, and include benchmark lookup against Kolmogorov width bounds.",
     "missing_steps": [
       "Switch MODE from 'explore' to 'coder' for concrete implementation",
@@ -760,5 +744,22 @@
     ],
     "mode": "explore",
     "description": "The hypothesis attributes generalization failure to multimodal loss landscapes and L-BFGS-B local minima. However, prior knowledge (iter 250, run27) indicates the rigid family should achieve zero viol"
+  },
+  {
+    "scene_tag": "auto_family",
+    "reason": "The plan is in 'explore' mode which is inappropriate for a concrete computational verification task requiring implementation (coder/workflow mode). It lacks critical implementation details: no grid resolution, explicit basis function formulas, scaling procedures, optimization parameters, or N_c(w) calculation methodology. This directly reproduces historical failures (run28 and run29) including the risk of fat family being i.i.d. noise and scale issues with high-degree polynomials. The PREDICTION is not verifiable without concrete numerical methods and measurement procedures.",
+    "missing_steps": [
+      "Switch from 'explore' mode to 'coder' or 'workflow' mode for concrete computations",
+      "Define concrete grid resolution (e.g., N=500) and explicit basis function formulas (harmonic polynomials degree ≤ 3)",
+      "Explicitly define fat family as x-dependent high-dimensional functions (not i.i.d. noise) to avoid run28 failure",
+      "Specify scaling for fat family basis to prevent ~1e9 scale issues with O(1) normalization (run29 failure)",
+      "Establish clear training and held-out error measurement procedures with separate metrics to avoid data leakage",
+      "Define N_c(w) calculation methodology (e.g., SVD rank with tolerance 1e-6) with clear thresholds",
+      "Define concrete L-BFGS-B optimization setup with specific iteration limits and parameters",
+      "Implement comparative optimization strategy to distinguish optimization failure from function space limitations",
+      "Add dimensional pre-checks and scale normalization procedures"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid and fat families as specified in the hypothesis, ensuring proper output shape (N,1), held-out set separation, and O(1) normal"
   }
 ]

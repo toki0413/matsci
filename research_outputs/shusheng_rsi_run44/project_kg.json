@@ -3052,6 +3052,70 @@
       "r_phys": 1.0,
       "iteration": 250,
       "id": "persona_use:reviewer_iter250"
+    },
+    {
+      "label": "** [DIM: Optimization Landscape] The rigid family's failure to achieve zero viol",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T17:49:40.519079",
+      "last_seen": "2026-09-28T17:49:40.519079",
+      "mentions": 1,
+      "iteration": 255,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family (low-dimensional linear span), I expect to find a finite N_c (e.g., h=4~8) where max held-out error ≤ 1e-3, with training error ≤ 1e-4. For the fat family (high-dimensional), I ex",
+      "persona": "reviewer",
+      "id": "experiment:** [DIM: Optimization Landscape] The rigid family's failure to achieve zero viol"
+    },
+    {
+      "label": "plan_explore_iter255",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:49:40.519122",
+      "last_seen": "2026-09-28T17:49:40.519122",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter255"
+    },
+    {
+      "label": "pass_iter255",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:49:40.519135",
+      "last_seen": "2026-09-28T17:49:40.519135",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter255"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T17:49:40.519148",
+      "last_seen": "2026-09-28T17:49:40.519148",
+      "mentions": 1,
+      "members": [
+        "experiment:** [DIM: Optimization Landscape] The rigid family's failure to achieve zero viol",
+        "Method:plan_explore_iter255",
+        "Fact:pass_iter255"
+      ],
+      "iteration": 255,
+      "id": "he_experiment_pipeline_a1d53f3"
+    },
+    {
+      "label": "reviewer_iter255",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T17:49:40.519225",
+      "last_seen": "2026-09-28T17:49:40.519225",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "114451421677c9c6",
+      "r_phys": 1.0,
+      "iteration": 255,
+      "id": "persona_use:reviewer_iter255"
     }
   ],
   "links": [
@@ -4404,6 +4468,33 @@
       "last_seen": "2026-09-28T17:47:55.298104",
       "mentions": 1,
       "target": "he_experiment_pipeline_aacb72f5"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:** [DIM: Optimization Landscape] The rigid family's failure to achieve zero viol",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:49:40.519148",
+      "last_seen": "2026-09-28T17:49:40.519148",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a1d53f3"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter255",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:49:40.519148",
+      "last_seen": "2026-09-28T17:49:40.519148",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a1d53f3"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter255",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:49:40.519148",
+      "last_seen": "2026-09-28T17:49:40.519148",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a1d53f3"
     }
   ]
 }
