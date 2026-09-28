@@ -1,0 +1,100 @@
+{
+  "directed": true,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "label": "**[DIM: structure]**",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:25:37.446305",
+      "last_seen": "2026-09-28T13:25:37.446305",
+      "mentions": 1,
+      "iteration": 5,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Rigid family (f''(x)=0) will achieve zero violation at width h=2-4 (anchor), with N_c(w) remaining constant or decreasing as w increases; Fat family (random polynomial) will show trend='unreachable' f",
+      "persona": "reviewer",
+      "id": "experiment:**[DIM: structure]**"
+    },
+    {
+      "label": "plan_skill_iter5",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:25:37.446348",
+      "last_seen": "2026-09-28T13:25:37.446348",
+      "mentions": 1,
+      "id": "Method:plan_skill_iter5"
+    },
+    {
+      "label": "pass_iter5",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:25:37.446362",
+      "last_seen": "2026-09-28T13:25:37.446362",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter5"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T13:25:37.446372",
+      "last_seen": "2026-09-28T13:25:37.446372",
+      "mentions": 1,
+      "members": [
+        "experiment:**[DIM: structure]**",
+        "Method:plan_skill_iter5",
+        "Fact:pass_iter5"
+      ],
+      "iteration": 5,
+      "id": "he_experiment_pipeline_7f69a8ad"
+    },
+    {
+      "label": "reviewer_iter5",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:25:37.446503",
+      "last_seen": "2026-09-28T13:25:37.446503",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "1aefd1ead681a092",
+      "r_phys": 1.0,
+      "iteration": 5,
+      "id": "persona_use:reviewer_iter5"
+    }
+  ],
+  "links": [
+    {
+      "relation": "member_of",
+      "source": "experiment:**[DIM: structure]**",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:25:37.446372",
+      "last_seen": "2026-09-28T13:25:37.446372",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_7f69a8ad"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_skill_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:25:37.446372",
+      "last_seen": "2026-09-28T13:25:37.446372",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_7f69a8ad"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:25:37.446372",
+      "last_seen": "2026-09-28T13:25:37.446372",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_7f69a8ad"
+    }
+  ]
+}
