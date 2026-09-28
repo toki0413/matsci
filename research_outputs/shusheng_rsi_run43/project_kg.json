@@ -1728,6 +1728,70 @@
       "r_phys": 1.0,
       "iteration": 100,
       "id": "persona_use:reviewer_iter100"
+    },
+    {
+      "label": "[DIM: transport] The rigid family consists of solutions to a first-order linear ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T16:36:28.592845",
+      "last_seen": "2026-09-28T16:36:28.592845",
+      "mentions": 1,
+      "iteration": 105,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family, N_c(w) will be small (e.g., h=2~8) and flat/decreasing across w, with holdout_err ≤1e-3 and train_err ≤1e-4. For the fat family, all widths h≤64 will fail the zero-violation crit",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: transport] The rigid family consists of solutions to a first-order linear"
+    },
+    {
+      "label": "plan_explore_iter105",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:36:28.592886",
+      "last_seen": "2026-09-28T16:36:28.592886",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter105"
+    },
+    {
+      "label": "pass_iter105",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:36:28.592896",
+      "last_seen": "2026-09-28T16:36:28.592896",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter105"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T16:36:28.592905",
+      "last_seen": "2026-09-28T16:36:28.592905",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: transport] The rigid family consists of solutions to a first-order linear",
+        "Method:plan_explore_iter105",
+        "Fact:pass_iter105"
+      ],
+      "iteration": 105,
+      "id": "he_experiment_pipeline_8c33646"
+    },
+    {
+      "label": "reviewer_iter105",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T16:36:28.592987",
+      "last_seen": "2026-09-28T16:36:28.592987",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "edee9d6bddd8fd7c",
+      "r_phys": 1.0,
+      "iteration": 105,
+      "id": "persona_use:reviewer_iter105"
     }
   ],
   "links": [
@@ -2783,6 +2847,33 @@
       "last_seen": "2026-09-28T16:35:26.746970",
       "mentions": 1,
       "target": "he_experiment_pipeline_31a505fe"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: transport] The rigid family consists of solutions to a first-order linear",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:36:28.592905",
+      "last_seen": "2026-09-28T16:36:28.592905",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8c33646"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter105",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:36:28.592905",
+      "last_seen": "2026-09-28T16:36:28.592905",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8c33646"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter105",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:36:28.592905",
+      "last_seen": "2026-09-28T16:36:28.592905",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8c33646"
     }
   ]
 }
