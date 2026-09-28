@@ -194,6 +194,70 @@
       "r_phys": 1.0,
       "iteration": 15,
       "id": "persona_use:reviewer_iter15"
+    },
+    {
+      "label": "[DIM: structure] The rigid family corresponds to solutions of a second-order lin",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:10:19.424172",
+      "last_seen": "2026-09-28T13:10:19.424172",
+      "mentions": 1,
+      "iteration": 20,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Rigid family: anchor at h_min=4, train_err≈1e-5, heldout_err≈5e-4; N_c(w) table shows h_min=4 for all w≥5 (flat trend). Fat family: at h=64, heldout_err≈2e-3 to 5e-3 across seeds, trend='unreachable'.",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid family corresponds to solutions of a second-order lin"
+    },
+    {
+      "label": "plan_explore_iter20",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:10:19.424210",
+      "last_seen": "2026-09-28T13:10:19.424210",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter20"
+    },
+    {
+      "label": "pass_iter20",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:10:19.424219",
+      "last_seen": "2026-09-28T13:10:19.424219",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter20"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T13:10:19.424227",
+      "last_seen": "2026-09-28T13:10:19.424227",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid family corresponds to solutions of a second-order lin",
+        "Method:plan_explore_iter20",
+        "Fact:pass_iter20"
+      ],
+      "iteration": 20,
+      "id": "he_experiment_pipeline_2fd9bc1f"
+    },
+    {
+      "label": "reviewer_iter20",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:10:19.424305",
+      "last_seen": "2026-09-28T13:10:19.424305",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "e533d4b87c267aee",
+      "r_phys": 1.0,
+      "iteration": 20,
+      "id": "persona_use:reviewer_iter20"
     }
   ],
   "links": [
@@ -277,6 +341,33 @@
       "last_seen": "2026-09-28T13:09:18.914521",
       "mentions": 1,
       "target": "he_experiment_pipeline_6e8c7cb6"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid family corresponds to solutions of a second-order lin",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:10:19.424227",
+      "last_seen": "2026-09-28T13:10:19.424227",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2fd9bc1f"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:10:19.424227",
+      "last_seen": "2026-09-28T13:10:19.424227",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2fd9bc1f"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:10:19.424227",
+      "last_seen": "2026-09-28T13:10:19.424227",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2fd9bc1f"
     }
   ]
 }

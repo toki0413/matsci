@@ -130,6 +130,37 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_c7cf9ac7",
+      "objective": "[DIM: structure] The rigid family corresponds to functions satisfying a second-order linear ODE with constant coefficients $f''(x) = \\lambda f(x)$ (exponential/oscillatory solutions), where $\\lambda$ is a fixed parameter, while the fat family corresponds to functions satisfying a nonlinear ODE $f'(x) = g(f(x))$ with $g$ unknown.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the family(kind, w, seed) function to generate training and held-out constraint sets for the rigid family (second-order linear ODE solution) and fat family (nonlinear ODE), with proper normalization (std ≲ 10) and (N,1) shape. This enables the capacity_scan workflow to probe solution space rigidity via neural network capacity.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "family_function.py",
+            "(new)"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-28T13:10:46.179714+00:00",
+      "confirmed_at": "2026-09-28T13:10:46.180945+00:00",
+      "completed_at": "2026-09-28T13:11:09.254033+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
