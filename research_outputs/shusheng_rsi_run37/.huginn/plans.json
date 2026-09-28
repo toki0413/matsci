@@ -1158,6 +1158,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_eb347717",
+      "objective": "[DIM: structure] The rigid polynomial family exhibits a finite $N_c$ plateau invariant to $w$ because its solution space is a linear manifold of dimension $d \\ll w$, making the capacity bottleneck determined by the manifold's intrinsic geometry rather than the number of constraints.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement capacity_scan framework with rigid polynomial family (cubic, O(1) parameters) and fat polynomial family (high-dimensional, coefficients dependent on x, dim >> w). Define explicit N(w) relationship, implement O(1) normalization for y/yv, configure capacity_scan with training/hold-out error metrics, and set termination criteria with zero violation definition (≤1e-3). Validate against theoretical prediction that rigid family exhibits finite N_c plateau invariant to w.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-28T14:40:28.292845+00:00",
+      "confirmed_at": "2026-09-28T14:40:28.294899+00:00",
+      "completed_at": "2026-09-28T14:40:47.229833+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

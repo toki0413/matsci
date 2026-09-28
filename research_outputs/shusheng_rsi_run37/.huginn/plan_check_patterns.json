@@ -1,43 +1,5 @@
 [
   {
-    "scene_tag": "other",
-    "reason": "The plan is fundamentally invalid due to a MODE mismatch (labeled 'explore' but describes code implementation requiring 'coder' mode). Additionally, it fails to explicitly define the mathematical relationship between N and w, specify the fat polynomial family f(x) as a non-noise high-dimensional function of x, and lacks capacity_scan configuration details with termination criteria for zero violation, risking the historical failures from run28 and run29.",
-    "missing_steps": [
-      "Change MODE from 'explore' to 'coder' since this is a code implementation task",
-      "Define explicit mathematical relationship between output dimension N (number of constraints) and network width w",
-      "Specify fat polynomial family f(x) as a function of x with high dimensionality >> w (not noise) to avoid degeneracy to noise (run28 failure)",
-      "Implement capacity_scan tool configuration with training/hold-out error metrics to compute N_c(w) with clear termination criteria for 'zero violation'",
-      "Implement scaling discipline to constrain polynomial outputs to O(1) magnitude to prevent magnitude issues (run29 failure)"
-    ],
-    "mode": "explore",
-    "description": "[auto-routed: surprise=1.00] Implement the rigid polynomial constraint family (degree ≤ 2) with explicit mathematical relationship between output dimension N and network width w, ensuring N = binom(w+"
-  },
-  {
-    "scene_tag": "other",
-    "reason": "The plan is fundamentally invalid due to a MODE mismatch: it is labeled as 'explore' but explicitly describes code implementation ('Implement rigid polynomial constraint family', 'configure capacity_scan', 'apply scaling discipline') which requires 'coder' mode. Additionally, the DESCRIPTION lacks critical mathematical definitions required to validate the hypothesis, specifically the explicit relationship between output dimension N and network width w. It fails to sufficiently specify the fat polynomial family f(x) as a high-dimensional function of x (not noise), risking the degeneracy to noise failure from run28. It omits capacity_scan configuration details with clear termination criteria and scaling discipline to prevent magnitude issues seen in run29.",
-    "missing_steps": [
-      "Change MODE from 'explore' to 'coder' since this is a code implementation task",
-      "Define explicit mathematical relationship between output dimension N (number of constraints) and network width w",
-      "Specify fat polynomial family f(x) as a function of x with high dimensionality >> w (not noise) to avoid degeneracy to noise (run28 failure)",
-      "Implement capacity_scan tool configuration with training/hold-out error metrics to compute N_c(w) with clear termination criteria for 'zero violation'",
-      "Implement scaling discipline to constrain polynomial outputs to O(1) magnitude to prevent magnitude issues (run29 failure)"
-    ],
-    "mode": "explore",
-    "description": "[auto-routed: surprise=1.00] Implement rigid polynomial constraint family (degree ≤ 2) with explicit dimension formula N = binom(w+1, 2) = w(w+1)/2, define fat polynomial family f(x) = ∑_{k=1}^{M} a_k"
-  },
-  {
-    "scene_tag": "workflow",
-    "reason": "The plan describes implementing a constraint family function `family(kind, w, seed)` but does not specify the mathematical structure or polynomial basis for the 'rigid polynomial constraint family'. Without defining the specific polynomial form (e.g., degree, basis functions), the function cannot be implemented correctly. Additionally, the plan lacks explicit validation steps to check if the solution space dimension N_c(w) is indeed invariant and small (≤8) across different w values, which is the core of the hypothesis. The prediction assumes success without addressing how N_c(w) will be measured or verified.",
-    "missing_steps": [
-      "Define the mathematical structure of the rigid polynomial constraint family (basis functions, degree, etc.)",
-      "Implement a method to compute or estimate N_c(w) for different w values",
-      "Add validation steps to verify that N_c(w) is invariant and small (≤8) across tested w",
-      "Ensure the polynomial family is distinct from the fat family to avoid the 'learnable vs unlearnable' pitfall"
-    ],
-    "mode": "explore",
-    "description": "[auto-routed: surprise=1.00] Implement the rigid polynomial constraint family function `family(kind, w, seed)` that returns normalized training and held-out constraint points (X, y, Xv, yv) with shape"
-  },
-  {
     "scene_tag": "workflow",
     "reason": "The plan is fundamentally invalid due to a MODE mismatch. The plan is labeled as 'explore' but explicitly describes code implementation tasks ('Implement rigid polynomial constraint family', 'configure capacity_scan', 'apply scaling discipline') which requires 'coder' mode. Additionally, the DESCRIPTION lacks critical mathematical definitions required to validate the hypothesis, specifically the explicit relationship between output dimension N (number of constraints) and network width w. It fails to sufficiently specify the fat polynomial family f(x) as a high-dimensional function of x (not noise), risking the degeneracy to noise failure from run28. It omits capacity_scan configuration details with clear termination criteria and scaling discipline to prevent magnitude issues seen in run29.",
     "missing_steps": [
@@ -659,5 +621,47 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the family function for the rigid polynomial family (low-dimensional linear subspace) and fat polynomial family (high-dimensional random subspace) with proper O("
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan is invalid due to a critical MODE mismatch: it is labeled as 'explore' but describes code implementation tasks that strictly require 'coder' mode per system instructions. Additionally, the DESCRIPTION lacks essential mathematical definitions and implementation details that replicate documented historical failure patterns (e.g., missing explicit relationship between N and w, undefined fat polynomial family f(x), unspecified capacity_scan configuration, and missing scaling details). The plan also fails to address the previous run's failure where fat polynomial was incorrectly defined as x-independent noise.",
+    "missing_steps": [
+      "Fix top-level MODE from 'explore' to 'coder' to match code implementation task type",
+      "Define explicit mathematical relationship between output dimension N (number of constraints) and network width w",
+      "Specify exact fat polynomial family f(x) as a function of x with high dimensionality >> w (not noise)",
+      "Implement capacity_scan tool configuration with training/hold-out error metrics to compute N_c(w) with clear termination criteria",
+      "Add explicit scaling implementation details to ensure O(1) normalization of polynomial outputs",
+      "Specify exact termination criteria for N_c(w) calculation with clear 'zero violation' definition (≤1e-3)"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function for rigid polynomial and fat polynomial families in the capacity scan framework. The rigid family will be a low-dimensional polynomial (e.g.,"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan has a critical MODE mismatch: it is labeled 'explore' but describes code implementation tasks that strictly require 'coder' mode per system instructions. The DESCRIPTION lacks essential mathematical definitions including the explicit relationship between output dimension N and network width w, proper specification of the fat polynomial family as a function of x (not noise), capacity_scan tool configuration details, and scaling implementation details. These omissions exactly replicate the documented historical failure patterns from previous runs.",
+    "missing_steps": [
+      "Fix top-level MODE from 'explore' to 'coder' to match the code implementation task type",
+      "Define explicit mathematical relationship between output dimension N (number of constraints) and network width w",
+      "Specify exact fat polynomial family f(x) as a function of x with high dimensionality >> w (not noise)",
+      "Implement capacity_scan tool configuration with training/hold-out error metrics to compute N_c(w) with clear termination criteria",
+      "Add explicit scaling implementation details to ensure O(1) normalization of polynomial outputs",
+      "Specify exact termination criteria for N_c(w) calculation with clear 'zero violation' definition (≤1e-3)"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the capacity scan framework with rigorously defined polynomial families. Define the rigid family as a low-degree polynomial (e.g., cubic with O(1) parameters) an"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan has a critical MODE mismatch: it is labeled 'explore' but describes code implementation tasks that strictly require 'coder' mode per system instructions. Additionally, the DESCRIPTION lacks essential mathematical definitions and implementation details that replicate documented historical failure patterns (e.g., missing explicit relationship between N and w, undefined fat polynomial family f(x), unspecified capacity_scan configuration, and missing scaling details). The plan also fails to address the previous run's failure where fat polynomial was incorrectly defined as x-independent noise.",
+    "missing_steps": [
+      "Fix top-level MODE from 'explore' to 'coder' to match the code implementation task type",
+      "Define explicit mathematical relationship between output dimension N (number of constraints) and network width w",
+      "Specify exact fat polynomial family f(x) as a function of x with high dimensionality >> w (not noise)",
+      "Implement capacity_scan tool configuration with training/hold-out error metrics to compute N_c(w) with clear termination criteria",
+      "Add explicit scaling implementation details to ensure O(1) normalization of polynomial outputs",
+      "Specify exact termination criteria for N_c(w) calculation with clear 'zero violation' definition (≤1e-3)"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement capacity_scan framework with rigid polynomial family (cubic, O(1) parameters) and fat polynomial family (high-dimensional, coefficients dependent on x, dim >> w)"
   }
 ]
