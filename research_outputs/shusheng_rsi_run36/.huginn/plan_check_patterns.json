@@ -210,5 +210,46 @@
     ],
     "mode": "explore",
     "description": "The hypothesis claims the rigid constraint family (polynomial degree ≤ 2) achieves zero-holdout error at small network widths (N_c ≤ 8). However, the previous iteration (iter 75) showed a surprise sco"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan fundamentally misrepresents the mathematical structure of both constraint families as required by the hypothesis. The hypothesis requires the 'fat family' to arise from an infinite-dimensional chaotic solution space (e.g., nonlinear transport equation with stochastic initial conditions), but the plan uses a finite-dimensional polynomial space. This matches documented historical failures where polynomial bases failed to capture true infinite dimensionality. Additionally, the rigid family lacks specified boundary conditions and symbolic verification of solution space dimension, which is critical for establishing the finite-dimensional solution space claim.",
+    "missing_steps": [
+      "Implement actual nonlinear transport equation (e.g., Burgers' equation: u_t + u u_x = ν u_xx) for the fat family",
+      "Include stochastic sampling of initial conditions to capture chaotic solution branching",
+      "Use appropriate function spaces (e.g., Sobolev spaces) rather than finite-dimensional polynomial bases for fat family",
+      "Specify exact mathematical formulations for both rigid and fat families matching hypothesis requirements (rigid: linear ODE with specific BCs yielding dimension 1; fat: nonlinear transport with stochastic ICs)",
+      "Verify rigid constraint family's solution space dimension symbolically before training using symbolic_math_tool",
+      "Define concrete capacity_scan methodology aligned with infinite-dimensional solution space requirements"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family` function to generate polynomial constraint datasets for two families: (1) a rigid family (quadratic polynomial space with ≤2 constraints, solvable w"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan correctly identifies the need for a nonlinear transport equation (Burgers') for the fat family, but the rigid family definition is critically incomplete. It mentions 'linear ODE with BCs' but fails to specify the exact equation or boundary conditions needed for symbolic verification of dimension-1 solution space. The plan also lacks concrete methodology for the capacity_scan (network architecture, training procedure, violation calculation), making the prediction unverifiable. Historical failures show that vague mathematical formulations lead to invalid comparisons between families.",
+    "missing_steps": [
+      "Specify exact linear ODE and boundary conditions for rigid family to enable symbolic dimension verification",
+      "Define capacity_scan methodology: network architecture, training procedure, loss function, and violation calculation metric",
+      "Define concrete sampling strategy for stochastic initial conditions in Burgers' equation",
+      "Specify function space details for Sobolev space sampling in fat family",
+      "Define training and validation split methodology for independent error measurement"
+    ],
+    "mode": "explore",
+    "description": "Implement a rigorous validation framework for the hypothesis that rigid polynomial constraint families (degree ≤ 2) exhibit finite-dimensional solution spaces with constant/decreasing N_c as w increas"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan fundamentally misrepresents the mathematical structure of both constraint families as required by the hypothesis. The hypothesis requires the 'fat family' to arise from an infinite-dimensional chaotic solution space (e.g., nonlinear transport equation with stochastic initial conditions), but the plan uses a finite-dimensional polynomial space. This matches documented historical failures where polynomial bases failed to capture true infinite dimensionality. Additionally, the rigid family lacks specified boundary conditions and symbolic verification of solution space dimension, which is critical for establishing the finite-dimensional solution space claim.",
+    "missing_steps": [
+      "Implement actual nonlinear transport equation (e.g., Burgers' equation: u_t + u u_x = ν u_xx) for the fat family",
+      "Include stochastic sampling of initial conditions to capture chaotic solution branching",
+      "Use appropriate function spaces (e.g., Sobolev spaces) rather than finite-dimensional polynomial bases for fat family",
+      "Specify exact mathematical formulations matching hypothesis requirements for both rigid and fat families (rigid: linear ODE with specific BCs yielding dimension 1; fat: nonlinear transport with stochastic ICs)",
+      "Verify rigid constraint family's solution space dimension symbolically before training using symbolic_math_tool",
+      "Define concrete capacity_scan methodology aligned with infinite-dimensional solution space requirements"
+    ],
+    "mode": "explore",
+    "description": "Refined validation framework addressing feedback: (1) Rigid family defined as linear ODE $d^2y/dx^2 = 0$ with BCs $y(0)=0, y(1)=1$, verified via symbolic_math_tool to yield dimension-1 solution space "
   }
 ]
