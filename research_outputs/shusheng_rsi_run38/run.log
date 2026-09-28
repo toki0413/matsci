@@ -127,3 +127,8 @@ metacog: 假设可能为换名归约 (trap=, target=刚性族 = 低维函数空�
 [exec-route] mode='coder' desc[:80]='Implement the `family` function for two polynomial families (rigid and fat) that' obj_len=2462 is_exp_desc=True is_exp_obj=True is_det_desc=False
 [code-lab-author] raw_len=964 extracted_len=949 prompt_len=5379
 [code-lab-run] res_none=False success=True nobj=36 reason=''
+[validate] mode='code_lab' success=True nobj=36 cf=False lab=True
+metacog: 假设可能为换名归约 (trap=, target=刚性族（Rigid Family）的定义性特征：低维/唯一解空间): [DIM: composition] The rigid polynomial family is defined by a sparse, low-dimensional algebraic str
+[exec-route] mode='explore' desc[:80]='[auto-routed: surprise=1.00] Implement the `family` function for the rigid polyn' obj_len=2462 is_exp_desc=True is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=1032 extracted_len=1017 prompt_len=5379
+[code-lab-run] res_none=False success=True nobj=36 reason=''
