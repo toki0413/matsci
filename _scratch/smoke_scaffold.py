@@ -24,7 +24,8 @@ for kind in ("rigid", "fat"):
 # 2) 小网格跑通 capacity_scan (含 fat 分支, 之前必炸的分支)
 res = mod.capacity_scan(family, ws=(5, 10), widths=(4, 16), seeds=1)
 print("success:", res["success"])
-print("trend:", res["trend"])
-print("Nc:", res["Nc"])
-for k, v in res["rows"].items():
+summ = res["summary"]
+print("trend:", summ["trend"])
+print("Nc:", summ["Nc"])
+for k, v in summ["rows"].items():
     print("  ", k, "tr=%.2e ho=%.2e" % (v["train_err"], v["heldout_err"]))
