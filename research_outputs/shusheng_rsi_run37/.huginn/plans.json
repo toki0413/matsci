@@ -497,6 +497,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_b4933fd4",
+      "objective": "[DIM: structure] The rigid polynomial constraint family corresponds to a low-dimensional linear subspace of functions that can be exactly represented with minimal network capacity (small N_c), while the fat family spans a high-dimensional space requiring unbounded capacity (N_c = ∞) to satisfy constraints.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Define rigid polynomial family as low-dimensional linear subspace (e.g., linear polynomial with N = w+1 constraints) and fat family as high-dimensional polynomial function of x (degree >> w) to avoid noise degeneracy. Implement capacity_scan tool with training/hold-out error metrics, O(1) scaling discipline, and clear termination criteria for 'zero violation' to compute N_c(w).",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-28T14:13:32.589609+00:00",
+      "confirmed_at": "2026-09-28T14:13:32.590977+00:00",
+      "completed_at": "2026-09-28T14:13:51.213080+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
