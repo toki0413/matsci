@@ -150,20 +150,20 @@
       "label": "plan_explore_iter15",
       "type": "Method",
       "source": "autoloop",
-      "confidence": 0.5,
+      "confidence": 0.55,
       "created_at": "2026-09-28T15:37:35.259465",
-      "last_seen": "2026-09-28T15:37:35.259465",
-      "mentions": 1,
+      "last_seen": "2026-09-28T16:07:24.554992",
+      "mentions": 2,
       "id": "Method:plan_explore_iter15"
     },
     {
       "label": "pass_iter15",
       "type": "Fact",
       "source": "autoloop",
-      "confidence": 0.5,
+      "confidence": 0.55,
       "created_at": "2026-09-28T15:37:35.259477",
-      "last_seen": "2026-09-28T15:37:35.259477",
-      "mentions": 1,
+      "last_seen": "2026-09-28T16:07:24.555003",
+      "mentions": 2,
       "surprise": 1.0,
       "id": "Fact:pass_iter15"
     },
@@ -185,10 +185,10 @@
       "label": "reviewer_iter15",
       "type": "persona_use",
       "source": "autoloop",
-      "confidence": 1.0,
+      "confidence": 0.99,
       "created_at": "2026-09-28T15:37:35.259567",
-      "last_seen": "2026-09-28T15:37:35.259567",
-      "mentions": 1,
+      "last_seen": "2026-09-28T16:07:24.555093",
+      "mentions": 2,
       "persona": "reviewer",
       "context_hash": "d60d7859c1725eae",
       "r_phys": 1.0,
@@ -685,6 +685,35 @@
       ],
       "iteration": 10,
       "id": "he_experiment_pipeline_1505290d"
+    },
+    {
+      "label": "[DIM: structure] The zero-violation threshold $N_c(w)$ for the Rigid family is d",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T16:07:24.554956",
+      "last_seen": "2026-09-28T16:07:24.554956",
+      "mentions": 1,
+      "iteration": 15,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family, N_c(w) will be a small finite number (approximately 4-8) that remains flat or slightly decreases as w increases from 10 to 100. For the fat family, all widths up to h=64 will fai",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The zero-violation threshold $N_c(w)$ for the Rigid family is d"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T16:07:24.555010",
+      "last_seen": "2026-09-28T16:07:24.555010",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The zero-violation threshold $N_c(w)$ for the Rigid family is d",
+        "Method:plan_explore_iter15",
+        "Fact:pass_iter15"
+      ],
+      "iteration": 15,
+      "id": "he_experiment_pipeline_3c18be85"
     }
   ],
   "links": [
@@ -798,12 +827,30 @@
     },
     {
       "relation": "member_of",
+      "source": "Method:plan_explore_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:07:24.555010",
+      "last_seen": "2026-09-28T16:07:24.555010",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_3c18be85"
+    },
+    {
+      "relation": "member_of",
       "confidence": 0.5,
       "created_at": "2026-09-28T15:37:35.259485",
       "last_seen": "2026-09-28T15:37:35.259485",
       "mentions": 1,
       "source": "Fact:pass_iter15",
       "target": "he_experiment_pipeline_d6f86283"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:07:24.555010",
+      "last_seen": "2026-09-28T16:07:24.555010",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_3c18be85"
     },
     {
       "relation": "member_of",
@@ -1011,6 +1058,15 @@
       "last_seen": "2026-09-28T16:06:26.176799",
       "mentions": 1,
       "target": "he_experiment_pipeline_1505290d"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The zero-violation threshold $N_c(w)$ for the Rigid family is d",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:07:24.555010",
+      "last_seen": "2026-09-28T16:07:24.555010",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_3c18be85"
     }
   ]
 }
