@@ -552,5 +552,22 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid family (linear PDE-constrained solution: u(x) = v·x) and fat family (high-dimensional polynomial with large dynamic range). E"
+  },
+  {
+    "scene_tag": "auto_family",
+    "reason": "The plan uses 'explore' mode which is inappropriate for concrete computational verification tasks requiring implementation. The DESCRIPTION lacks critical implementation details: specific grid resolutions, basis function formulas (Chebyshev/trigonometric), explicit scaling procedures to prevent overflow, and concrete optimization parameters. It does not explicitly define the fat family as x-dependent (risking run28 failure where it degenerates to i.i.d. noise) or specify scaling for the fat family (risking run29 failure with ~1e9 scale issues). The PREDICTION is not verifiable without concrete numerical methods and measurement procedures.",
+    "missing_steps": [
+      "Switch from 'explore' mode to 'coder' or 'workflow' mode for concrete computations",
+      "Define concrete grid resolution (e.g., N=500) and basis function formulas (explicit Chebyshev/trigonometric expressions)",
+      "Explicitly define fat family as x-dependent high-dimensional functions (not i.i.d. noise) to avoid run28 failure",
+      "Specify scaling for fat family basis to prevent ~1e9 scale issues (run29 failure) with O(1) normalization",
+      "Establish clear training and held-out error measurement procedures with separate metrics to avoid data leakage",
+      "Define N_c(w) calculation methodology (e.g., SVD rank with tolerance 1e-6) with clear thresholds",
+      "Define concrete L-BFGS-B optimization setup with specific iteration limits and parameters",
+      "Implement comparative optimization strategy to distinguish optimization failure from function space limitations",
+      "Add dimensional pre-checks and scale normalization procedures"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `rigid_family` and `fat_family` functions as required by the capacity_scan framework, ensuring y/yv are normalized to O(1) magnitude and that Xv does not ove"
   }
 ]
