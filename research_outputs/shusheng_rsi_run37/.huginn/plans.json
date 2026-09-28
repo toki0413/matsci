@@ -583,6 +583,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_7a71e749",
+      "objective": "[DIM: structure] The rigid polynomial constraint family corresponds to a linear subspace of functions with finite dimensionality, where the minimum network width $h$ required to satisfy all constraints remains bounded (flat or decreasing) as the number of constraints $w$ increases, reflecting the intrinsic low-dimensional manifold of the solution space.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement capacity_scan for rigid polynomial constraint family with explicit linear subspace structure: (1) Define fat polynomial family f(x) = sum_{i=0}^{d} a_i x^i where d = 2*w + 1 (high dimensionality relative to constraints), ensuring finite-dimensional linear subspace; (2) Establish N(w) = w constraints via evaluation at distinct points x_1,...,x_w to form linear system A*a = b where A is Vandermonde matrix; (3) Implement scaling discipline: f_scaled(x) = (f(x) - μ)/σ with μ, σ computed from training data distribution; (4) Configure capacity_scan with training error (MSE on constrained points) and hold-out error (MSE on disjoint points), zero-violation termination when both errors < ε=1e-3; (5) Ensure held-out points are strictly disjoint from training points to prevent data leakage, with N_c(w) computed as minimum width w achieving zero violation.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-28T14:17:18.603539+00:00",
+      "confirmed_at": "2026-09-28T14:17:18.604874+00:00",
+      "completed_at": "2026-09-28T14:17:39.521289+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
