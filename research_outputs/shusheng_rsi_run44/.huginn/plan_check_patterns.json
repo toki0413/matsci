@@ -95,5 +95,31 @@
     ],
     "mode": "explore",
     "description": "Re-evaluate the hypothesis using topological data analysis (TDA) tools aligned with the context's H^1=3 and β_0=23 constraints. Construct the constraint manifold from the rigid family's affine subspac"
+  },
+  {
+    "scene_tag": "auto_family",
+    "reason": "This plan falls outside the defined domain of the natural-science research agent (physics/chemistry/materials/earth sciences) and lacks access to required tooling for abstract function space geometry or machine learning experiments (no symbolic math or neural network libraries available). It repeats the 'tool mismatch' error from historical failures without proposing a viable alternative path. The hypothesis requires mathematical exploration capabilities that are not part of the agent's toolkit.",
+    "missing_steps": [
+      "Identify if this function space geometry problem falls within the agent's defined domain (physics/chemistry/materials/earth sciences)",
+      "If outside domain, request clarification or transfer to appropriate tooling/symbolic math environment",
+      "Define concrete numerical methods for testing affine subspace properties and dimensionality reduction if within domain",
+      "Establish validation against literature benchmarks for function space geometry",
+      "Provide specific experimental setup: function definitions, basis functions, grid discretization, training/validation splits"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid family (low-dimensional linear span) and fat family (high-dimensional random polynomial) as specified, ensuring proper normal"
+  },
+  {
+    "scene_tag": "auto_family",
+    "reason": "The plan is invalid because it uses the 'explore' mode which is typically for open-ended scientific inquiry, but the task appears to be a structured computational problem requiring specific tool execution (coder/workflow mode). The hypothesis involves specific mathematical parameters (H^1=3, β_0=23) that require concrete numerical validation rather than topological speculation. The plan lacks concrete implementation details, specific tool parameters, and a clear path to generating the required numerical evidence (training/holdout error values, N_c(w) trends) that the failure modes emphasize as essential.",
+    "missing_steps": [
+      "Specify exact tool parameters for symbolic_math_tool and sci.tda_tool",
+      "Define concrete numerical methods with specific grid resolutions, basis sets, or sampling parameters",
+      "Establish clear training and holdout error measurement procedures",
+      "Define the N_c(w) calculation methodology and expected trends",
+      "Address the dimensional pre-check warnings if any apply to the mathematical structures being used"
+    ],
+    "mode": "explore",
+    "description": "Re-evaluate the problem context (H^1=3, β_0=23, surprise=1.0) using topology and PDE structures aligned with natural science domains. Hypothesize that the geometry relates to spatial phase transitions"
   }
 ]
