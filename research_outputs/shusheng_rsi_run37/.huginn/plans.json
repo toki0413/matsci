@@ -822,6 +822,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_7b9443a8",
+      "objective": "[DIM: structure] The rigidity of the polynomial solution space is determined by the algebraic degree of the constraint manifold; low-dimensional (rigid) families exhibit finite N_c that remains flat or decreasing with increasing sample count w, while high-dimensional (fat) families show N_c = ∞ (unreachable) within the scanned width range (h ≤ 64).",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement PolynomialRigidityScanner class defining rigid (low-degree poly, degree d ≈ w/2) and fat (high-degree poly, degree D=10 >> w) families. Explicitly define constraint count N (scanned 1 to 64) independent of width w. Enforce scaling discipline: normalize input x ∈ [-1, 1] and outputs to O(1) magnitude to prevent overflow. Configure capacity_scan using L-BFGS-B optimization with termination criteria: constraint error < 1e-6 AND hold-out max abs error < 1e-3. Compute N_c(w) as minimum N satisfying criteria.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-28T14:27:59.538057+00:00",
+      "confirmed_at": "2026-09-28T14:27:59.539759+00:00",
+      "completed_at": "2026-09-28T14:28:22.064817+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
