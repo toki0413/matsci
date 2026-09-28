@@ -661,6 +661,70 @@
       "r_phys": 1.0,
       "iteration": 55,
       "id": "persona_use:reviewer_iter55"
+    },
+    {
+      "label": "[DIM: structure] The rigid polynomial constraint family corresponds to a finite-",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:07:49.272601",
+      "last_seen": "2026-09-28T14:07:49.272601",
+      "mentions": 1,
+      "iteration": 60,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The two-layer tanh network with width w ≥ N_c will achieve zero holdout error on the rigid polynomial constraints, with N_c approximately equal to binom(w+1, 2), and the fat polynomial family will mai",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid polynomial constraint family corresponds to a finite-"
+    },
+    {
+      "label": "plan_explore_iter60",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:07:49.272640",
+      "last_seen": "2026-09-28T14:07:49.272640",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter60"
+    },
+    {
+      "label": "pass_iter60",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:07:49.272649",
+      "last_seen": "2026-09-28T14:07:49.272649",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter60"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T14:07:49.272659",
+      "last_seen": "2026-09-28T14:07:49.272659",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid polynomial constraint family corresponds to a finite-",
+        "Method:plan_explore_iter60",
+        "Fact:pass_iter60"
+      ],
+      "iteration": 60,
+      "id": "he_experiment_pipeline_bf329c92"
+    },
+    {
+      "label": "reviewer_iter60",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:07:49.272740",
+      "last_seen": "2026-09-28T14:07:49.272740",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "4968f91d684b3fa6",
+      "r_phys": 1.0,
+      "iteration": 60,
+      "id": "persona_use:reviewer_iter60"
     }
   ],
   "links": [
@@ -960,6 +1024,33 @@
       "last_seen": "2026-09-28T14:06:30.792755",
       "mentions": 1,
       "target": "he_experiment_pipeline_6b1e1077"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid polynomial constraint family corresponds to a finite-",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:07:49.272659",
+      "last_seen": "2026-09-28T14:07:49.272659",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_bf329c92"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter60",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:07:49.272659",
+      "last_seen": "2026-09-28T14:07:49.272659",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_bf329c92"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter60",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:07:49.272659",
+      "last_seen": "2026-09-28T14:07:49.272659",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_bf329c92"
     }
   ]
 }
