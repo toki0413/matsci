@@ -144,5 +144,18 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the rigid polynomial family function for the capacity_scan experiment. The rigid family should be a low-dimensional algebraic manifold (e.g., a 3-parameter polyn"
+  },
+  {
+    "scene_tag": "workflow",
+    "reason": "The plan implements a workflow step (data generation) that defines the rigid and fat polynomial families but fails to execute the critical measurements required to validate the hypothesis. Specifically, it lacks the computation of the Betti number β₀ of the constraint manifold, the measurement of zero-violation capacity N_c(w) as a function of sampling density w, and the analysis of topological connectivity invariance. Without these, the hypothesis cannot be verified.",
+    "missing_steps": [
+      "Implement computation of the Betti number β₀ for the constraint manifold of the rigid polynomial family",
+      "Implement measurement of N_c(w) across varying sampling densities w to test linear scaling with β₀",
+      "Verify invariance of topological connectivity under sampling density changes",
+      "Execute training dynamics and record constraint information propagation u(x,t) to analyze spectral properties",
+      "Conduct comparative analysis between rigid and fat families to isolate topological effects from learnability"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the rigid polynomial family function `family(kind, w, seed)` that generates training and held-out constraint points with normalized outputs (std ≈ 1). The family"
   }
 ]
