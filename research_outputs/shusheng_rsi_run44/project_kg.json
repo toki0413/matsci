@@ -1990,6 +1990,70 @@
       "r_phys": 1.0,
       "iteration": 160,
       "id": "persona_use:reviewer_iter160"
+    },
+    {
+      "label": "** [DIM: Functional Structure]",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T17:28:33.174157",
+      "last_seen": "2026-09-28T17:28:33.174157",
+      "mentions": 1,
+      "iteration": 165,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "[auto-routed: surprise=1.00] Define explicit x-dependent functional families: rigid family as fixed trigonometric basis with width-limited terms (e.g., sin(kx), cos(kx) for k≤w), and fat family as hig",
+      "persona": "reviewer",
+      "id": "experiment:** [DIM: Functional Structure]"
+    },
+    {
+      "label": "plan_explore_iter165",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:28:33.174202",
+      "last_seen": "2026-09-28T17:28:33.174202",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter165"
+    },
+    {
+      "label": "pass_iter165",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:28:33.174211",
+      "last_seen": "2026-09-28T17:28:33.174211",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter165"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T17:28:33.174220",
+      "last_seen": "2026-09-28T17:28:33.174220",
+      "mentions": 1,
+      "members": [
+        "experiment:** [DIM: Functional Structure]",
+        "Method:plan_explore_iter165",
+        "Fact:pass_iter165"
+      ],
+      "iteration": 165,
+      "id": "he_experiment_pipeline_d6b25b8e"
+    },
+    {
+      "label": "reviewer_iter165",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T17:28:33.174300",
+      "last_seen": "2026-09-28T17:28:33.174300",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "73661b6cb1aba9a0",
+      "r_phys": 1.0,
+      "iteration": 165,
+      "id": "persona_use:reviewer_iter165"
     }
   ],
   "links": [
@@ -2856,6 +2920,33 @@
       "last_seen": "2026-09-28T17:27:24.014384",
       "mentions": 1,
       "target": "he_experiment_pipeline_926d88da"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:** [DIM: Functional Structure]",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:28:33.174220",
+      "last_seen": "2026-09-28T17:28:33.174220",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d6b25b8e"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter165",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:28:33.174220",
+      "last_seen": "2026-09-28T17:28:33.174220",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d6b25b8e"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter165",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:28:33.174220",
+      "last_seen": "2026-09-28T17:28:33.174220",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d6b25b8e"
     }
   ]
 }
