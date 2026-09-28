@@ -1,0 +1,100 @@
+{
+  "directed": true,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "label": "[DIM: composition] The rigid polynomial family exhibits a low-dimensional soluti",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T15:16:39.503354",
+      "last_seen": "2026-09-28T15:16:39.503354",
+      "mentions": 1,
+      "iteration": 5,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The rigid family will achieve zero violation (max abs error ≤1e3) at small widths (N_c ≤ 8) with flat or decreasing trend as w increases, while the fat family will remain unreachable (N_c = ∞) at h=64",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: composition] The rigid polynomial family exhibits a low-dimensional soluti"
+    },
+    {
+      "label": "plan_coder_iter5",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:16:39.503398",
+      "last_seen": "2026-09-28T15:16:39.503398",
+      "mentions": 1,
+      "id": "Method:plan_coder_iter5"
+    },
+    {
+      "label": "pass_iter5",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:16:39.503412",
+      "last_seen": "2026-09-28T15:16:39.503412",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter5"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T15:16:39.503422",
+      "last_seen": "2026-09-28T15:16:39.503422",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: composition] The rigid polynomial family exhibits a low-dimensional soluti",
+        "Method:plan_coder_iter5",
+        "Fact:pass_iter5"
+      ],
+      "iteration": 5,
+      "id": "he_experiment_pipeline_13a3e263"
+    },
+    {
+      "label": "reviewer_iter5",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T15:16:39.503544",
+      "last_seen": "2026-09-28T15:16:39.503544",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "128ae88afdae6bf4",
+      "r_phys": 1.0,
+      "iteration": 5,
+      "id": "persona_use:reviewer_iter5"
+    }
+  ],
+  "links": [
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: composition] The rigid polynomial family exhibits a low-dimensional soluti",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:16:39.503422",
+      "last_seen": "2026-09-28T15:16:39.503422",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_13a3e263"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_coder_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:16:39.503422",
+      "last_seen": "2026-09-28T15:16:39.503422",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_13a3e263"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T15:16:39.503422",
+      "last_seen": "2026-09-28T15:16:39.503422",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_13a3e263"
+    }
+  ]
+}

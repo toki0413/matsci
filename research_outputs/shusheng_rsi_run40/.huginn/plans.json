@@ -29,6 +29,36 @@
         "mode": "coder",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_52eb24cd",
+      "objective": "[DIM: structure] The rigid polynomial family exhibits a finite critical width $N_c$ that is invariant with respect to the number of training constraints $w$, indicating a low-dimensional solution space where the network capacity is determined by the intrinsic dimensionality of the function class rather than the data density.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the `family(kind, w, seed)` function that generates training and held-out constraint points for two function classes: (1) rigid family (linear function f(x)=x, low-dimensional solution space) and (2) fat family (high-oscillation polynomial f(x)=(2x-1)^19, high-dimensional). Ensure y and yv are normalized to O(1) scale by dividing by std, shapes are (N,1), and held-out points Xv do not overlap with training points X. This addresses the missing anchor data and enables the capacity scan to determine N_c(w).",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "family.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-28T15:16:59.750947+00:00",
+      "confirmed_at": "2026-09-28T15:16:59.752169+00:00",
+      "completed_at": "2026-09-28T15:17:21.307537+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
