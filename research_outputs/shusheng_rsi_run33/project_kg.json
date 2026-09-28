@@ -1,0 +1,100 @@
+{
+  "directed": true,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "label": "[DIM: structure] The rigid family is defined by the linear PDE $f''(x) = 0$ (lin",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T11:55:15.378636",
+      "last_seen": "2026-09-28T11:55:15.378636",
+      "mentions": 1,
+      "iteration": 5,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The rigid family will achieve zero violation (heldout_err ≤ 1e-3) with small network widths (h=2~8) across all w values, demonstrating rigidity. The fat family will show heldout_err > 1e-3 for all h ≤",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid family is defined by the linear PDE $f''(x) = 0$ (lin"
+    },
+    {
+      "label": "plan_coder_iter5",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T11:55:15.378679",
+      "last_seen": "2026-09-28T11:55:15.378679",
+      "mentions": 1,
+      "id": "Method:plan_coder_iter5"
+    },
+    {
+      "label": "pass_iter5",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T11:55:15.378694",
+      "last_seen": "2026-09-28T11:55:15.378694",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter5"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T11:55:15.378705",
+      "last_seen": "2026-09-28T11:55:15.378705",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid family is defined by the linear PDE $f''(x) = 0$ (lin",
+        "Method:plan_coder_iter5",
+        "Fact:pass_iter5"
+      ],
+      "iteration": 5,
+      "id": "he_experiment_pipeline_a434c6ac"
+    },
+    {
+      "label": "reviewer_iter5",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T11:55:15.378833",
+      "last_seen": "2026-09-28T11:55:15.378833",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "2847ab29cc192eed",
+      "r_phys": 1.0,
+      "iteration": 5,
+      "id": "persona_use:reviewer_iter5"
+    }
+  ],
+  "links": [
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid family is defined by the linear PDE $f''(x) = 0$ (lin",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T11:55:15.378705",
+      "last_seen": "2026-09-28T11:55:15.378705",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a434c6ac"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_coder_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T11:55:15.378705",
+      "last_seen": "2026-09-28T11:55:15.378705",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a434c6ac"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T11:55:15.378705",
+      "last_seen": "2026-09-28T11:55:15.378705",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a434c6ac"
+    }
+  ]
+}
