@@ -725,6 +725,70 @@
       "r_phys": 1.0,
       "iteration": 60,
       "id": "persona_use:reviewer_iter60"
+    },
+    {
+      "label": "[DIM: structure] The rigid polynomial constraint family defines a finite-dimensi",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:08:53.624061",
+      "last_seen": "2026-09-28T14:08:53.624061",
+      "mentions": 1,
+      "iteration": 65,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Define the rigid polynomial constraint family as a linear subspace spanned by a fixed basis of monomials of degree ≤ d (e.g., d=3, basis size 10) with N_c(w) = dim(span) = constant ≤ 8. Implement `fam",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid polynomial constraint family defines a finite-dimensi"
+    },
+    {
+      "label": "plan_explore_iter65",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:08:53.624102",
+      "last_seen": "2026-09-28T14:08:53.624102",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter65"
+    },
+    {
+      "label": "pass_iter65",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:08:53.624112",
+      "last_seen": "2026-09-28T14:08:53.624112",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter65"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T14:08:53.624121",
+      "last_seen": "2026-09-28T14:08:53.624121",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid polynomial constraint family defines a finite-dimensi",
+        "Method:plan_explore_iter65",
+        "Fact:pass_iter65"
+      ],
+      "iteration": 65,
+      "id": "he_experiment_pipeline_bcc0609e"
+    },
+    {
+      "label": "reviewer_iter65",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:08:53.624202",
+      "last_seen": "2026-09-28T14:08:53.624202",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "4b9072dc3d12c06d",
+      "r_phys": 1.0,
+      "iteration": 65,
+      "id": "persona_use:reviewer_iter65"
     }
   ],
   "links": [
@@ -1051,6 +1115,33 @@
       "last_seen": "2026-09-28T14:07:49.272659",
       "mentions": 1,
       "target": "he_experiment_pipeline_bf329c92"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid polynomial constraint family defines a finite-dimensi",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:08:53.624121",
+      "last_seen": "2026-09-28T14:08:53.624121",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_bcc0609e"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter65",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:08:53.624121",
+      "last_seen": "2026-09-28T14:08:53.624121",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_bcc0609e"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter65",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:08:53.624121",
+      "last_seen": "2026-09-28T14:08:53.624121",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_bcc0609e"
     }
   ]
 }

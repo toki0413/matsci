@@ -192,5 +192,32 @@
     ],
     "mode": "explore",
     "description": "Define the rigid polynomial constraint family as a linear subspace spanned by a fixed basis of monomials of degree ≤ d (e.g., d=3, basis size 10) with N_c(w) = dim(span) = constant ≤ 8. Implement `fam"
+  },
+  {
+    "scene_tag": "workflow",
+    "reason": "The plan has a fundamental MODE mismatch: it is labeled 'explore' but describes code implementation tasks requiring 'coder' mode. The DESCRIPTION lacks critical mathematical definitions for the rigid and fat polynomial constraint families (specifically basis functions, degree, and the relationship between output dimension N and network width w), which is essential for testing the hypothesis about generalization bounds. The plan fails to address the key issues from previous failures (run28 and run29) including proper scaling and ensuring the fat family is x-dependent rather than noise. It also lacks explicit validation steps to verify N_c(w) invariance and small dimension.",
+    "missing_steps": [
+      "Change MODE from 'explore' to 'coder' since this is a code implementation task",
+      "Define explicit mathematical structure of rigid polynomial constraint family (basis functions, degree, relationship between N and w)",
+      "Define explicit mathematical structure of fat polynomial constraint family as high-dimensional function of x (not noise) with dimensionality >> w",
+      "Implement method to compute/estimate N_c(w) for different w values with verification of invariance",
+      "Add scaling discipline to normalize polynomial outputs to O(1) magnitude to prevent run29-style magnitude issues",
+      "Specify capacity_scan tool configuration with clear termination criteria for 'zero violation' and independent training/hold-out error measurement"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid polynomial constraint family (finite-dimensional linear subspace) and the fat polynomial constraint family (high-dimensional/"
+  },
+  {
+    "scene_tag": "workflow",
+    "reason": "The plan is invalid due to a fundamental MODE mismatch: it is labeled 'explore' but explicitly describes code implementation tasks ('Implement rigid polynomial family', 'configure capacity_scan', 'apply scaling discipline'), which requires 'coder' mode. It also lacks critical mathematical definitions (explicit relationship between N and w), fails to specify the fat polynomial family as a non-noise high-dimensional function of x (risking run28's noise degeneracy), and omits capacity_scan termination criteria and scaling discipline (risking run29's magnitude issues).",
+    "missing_steps": [
+      "Change MODE from 'explore' to 'coder' since this is a code implementation task",
+      "Define explicit mathematical relationship between output dimension N (number of constraints) and network width w",
+      "Specify fat polynomial family f(x) as a function of x with high dimensionality >> w (not noise) to avoid degeneracy to noise (run28 failure)",
+      "Implement capacity_scan tool configuration with training/hold-out error metrics to compute N_c(w) with clear termination criteria for 'zero violation'",
+      "Implement scaling discipline to constrain polynomial outputs to O(1) magnitude to prevent magnitude issues (run29 failure)"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement `rigid_polynomial_family` as a finite-dimensional linear subspace (basis functions of degree d ≤ w, output dimension N = d+1, w=8) and `fat_polynomial_family` as"
   }
 ]

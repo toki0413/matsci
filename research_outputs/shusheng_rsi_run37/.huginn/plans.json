@@ -402,6 +402,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_502b4d6f",
+      "objective": "[DIM: structure] The rigid polynomial constraint family defines a finite-dimensional linear subspace of functions; its generalization capacity is bounded by the intrinsic dimension of the subspace, so small network widths (h ≤ 8) suffice to achieve zero violation on held-out points, while the fat family, being high-dimensional or non-compact, requires unbounded capacity and thus shows unreachable trend.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement `rigid_polynomial_family` as a finite-dimensional linear subspace (basis functions of degree d ≤ w, output dimension N = d+1, w=8) and `fat_polynomial_family` as a high-dimensional x-dependent function (degree d >> w, N = d+1, d=100) with proper normalization to O(1) scale. Implement `compute_Nc(w)` to estimate the capacity metric and verify its invariance for the rigid family. Configure `capacity_scan` with termination criteria: zero violation on held-out points (1e-3 threshold) for the rigid family and unbounded capacity for the fat family. Ensure non-overlapping training/hold-out sets and proper N-shaped (N,1) outputs.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-28T14:10:26.255277+00:00",
+      "confirmed_at": "2026-09-28T14:10:26.256986+00:00",
+      "completed_at": "2026-09-28T14:10:45.448005+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

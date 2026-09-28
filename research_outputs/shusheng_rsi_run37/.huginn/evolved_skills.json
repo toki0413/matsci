@@ -75,12 +75,12 @@
       "autoloop",
       "huginn",
       "family",
-      "value",
       "rigid",
+      "value",
       "label",
       "plan",
-      "prediction",
       "polynomial",
+      "prediction",
       "function"
     ],
     "workflow_steps": [
