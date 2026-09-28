@@ -9,5 +9,19 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the family function to generate training/holdout data for the rigid (first-order transport PDE, e.g., f(x,y)=g(y)) and fat (nonlinear hyperbolic, e.g., f(x,y)=si"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan describes a machine learning experiment about function families (rigid vs fat) but fails to address the core hypothesis about transport PDEs and characteristic curves. The hypothesis requires verifying that solutions satisfy a first-order linear transport PDE with constant coefficients, which involves checking PDE structure, characteristic curves, and solution uniqueness/non-uniqueness. The proposed plan only checks generalization error rates (holdout_err/train_err) and N_c(w) values, which cannot verify the underlying mathematical structure or PDE properties. This matches the 'historical failure' pattern where checking error rates alone cannot distinguish between function families based on their PDE structure.",
+    "missing_steps": [
+      "Define specific transport PDE for rigid family (e.g., u_x + c*u_y = 0) and verify solutions satisfy it",
+      "Implement characteristic curve tracing to demonstrate rigid family solutions are determined by data along characteristics",
+      "Define fat family with explicit violation of transport conservation structure (e.g., nonlinear hyperbolic PDE)",
+      "Test for solution non-uniqueness in fat family (multiple solutions for same boundary conditions or singular Jacobian)",
+      "Add spectral analysis or characteristic curve analysis to confirm PDE nature of both families",
+      "Ensure fat family is x-dependent (not pure noise) and properly scaled to avoid numerical issues"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid family (transport PDE solutions: linear functions along characteristics) and fat family (high-dimensional random polynomial f"
   }
 ]

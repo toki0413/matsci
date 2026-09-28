@@ -214,20 +214,20 @@
       "label": "plan_explore_iter20",
       "type": "Method",
       "source": "autoloop",
-      "confidence": 0.55,
+      "confidence": 0.6000000000000001,
       "created_at": "2026-09-28T15:38:39.373204",
-      "last_seen": "2026-09-28T16:08:22.848971",
-      "mentions": 2,
+      "last_seen": "2026-09-28T16:20:20.378273",
+      "mentions": 3,
       "id": "Method:plan_explore_iter20"
     },
     {
       "label": "pass_iter20",
       "type": "Fact",
       "source": "autoloop",
-      "confidence": 0.55,
+      "confidence": 0.6000000000000001,
       "created_at": "2026-09-28T15:38:39.373217",
-      "last_seen": "2026-09-28T16:08:22.848985",
-      "mentions": 2,
+      "last_seen": "2026-09-28T16:20:20.378284",
+      "mentions": 3,
       "surprise": 1.0,
       "id": "Fact:pass_iter20"
     },
@@ -251,8 +251,8 @@
       "source": "autoloop",
       "confidence": 0.99,
       "created_at": "2026-09-28T15:38:39.373337",
-      "last_seen": "2026-09-28T16:08:22.849088",
-      "mentions": 2,
+      "last_seen": "2026-09-28T16:20:20.378374",
+      "mentions": 3,
       "persona": "reviewer",
       "context_hash": "7a7b2db60c4cd250",
       "r_phys": 1.0,
@@ -945,6 +945,35 @@
       ],
       "iteration": 15,
       "id": "he_experiment_pipeline_7c0c6bf9"
+    },
+    {
+      "label": "[DIM: transport] The rigid family corresponds to functions that satisfy a first-",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T16:20:20.378235",
+      "last_seen": "2026-09-28T16:20:20.378235",
+      "mentions": 1,
+      "iteration": 20,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family, N_c(w) will be finite and flat/decreasing (e.g., h=2-8) across w=5,10,20,50, with holdout_err ≤1e-3 and train_err ≤1e-4 at the anchor width. For the fat family, all widths h≤64 w",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: transport] The rigid family corresponds to functions that satisfy a first-"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T16:20:20.378291",
+      "last_seen": "2026-09-28T16:20:20.378291",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: transport] The rigid family corresponds to functions that satisfy a first-",
+        "Method:plan_explore_iter20",
+        "Fact:pass_iter20"
+      ],
+      "iteration": 20,
+      "id": "he_experiment_pipeline_14d535a0"
     }
   ],
   "links": [
@@ -1166,6 +1195,15 @@
     },
     {
       "relation": "member_of",
+      "source": "Method:plan_explore_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:20:20.378291",
+      "last_seen": "2026-09-28T16:20:20.378291",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_14d535a0"
+    },
+    {
+      "relation": "member_of",
       "confidence": 0.5,
       "created_at": "2026-09-28T15:38:39.373229",
       "last_seen": "2026-09-28T15:38:39.373229",
@@ -1181,6 +1219,15 @@
       "mentions": 1,
       "source": "Fact:pass_iter20",
       "target": "he_experiment_pipeline_37ff1a65"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:20:20.378291",
+      "last_seen": "2026-09-28T16:20:20.378291",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_14d535a0"
     },
     {
       "relation": "member_of",
@@ -1541,6 +1588,15 @@
       "last_seen": "2026-09-28T16:19:20.413675",
       "mentions": 1,
       "target": "he_experiment_pipeline_7c0c6bf9"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: transport] The rigid family corresponds to functions that satisfy a first-",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T16:20:20.378291",
+      "last_seen": "2026-09-28T16:20:20.378291",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_14d535a0"
     }
   ]
 }
