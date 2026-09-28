@@ -2224,6 +2224,70 @@
       "r_phys": 1.0,
       "iteration": 190,
       "id": "persona_use:reviewer_iter190"
+    },
+    {
+      "label": "[DIM: structure] The rigid polynomial family exhibits a finite $N_c$ plateau inv",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:41:03.697790",
+      "last_seen": "2026-09-28T14:41:03.697790",
+      "mentions": 1,
+      "iteration": 195,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Rigid family shows N_c plateau independent of w due to low-dimensional linear manifold structure; fat family shows N_c scaling with w. Numerical instability avoided through proper scaling. Zero violat",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid polynomial family exhibits a finite $N_c$ plateau inv"
+    },
+    {
+      "label": "plan_explore_iter195",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:41:03.697832",
+      "last_seen": "2026-09-28T14:41:03.697832",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter195"
+    },
+    {
+      "label": "pass_iter195",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:41:03.697842",
+      "last_seen": "2026-09-28T14:41:03.697842",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter195"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T14:41:03.697852",
+      "last_seen": "2026-09-28T14:41:03.697852",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid polynomial family exhibits a finite $N_c$ plateau inv",
+        "Method:plan_explore_iter195",
+        "Fact:pass_iter195"
+      ],
+      "iteration": 195,
+      "id": "he_experiment_pipeline_23d149aa"
+    },
+    {
+      "label": "reviewer_iter195",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T14:41:03.697953",
+      "last_seen": "2026-09-28T14:41:03.697953",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "92665af53c79e1fe",
+      "r_phys": 1.0,
+      "iteration": 195,
+      "id": "persona_use:reviewer_iter195"
     }
   ],
   "links": [
@@ -3252,6 +3316,33 @@
       "last_seen": "2026-09-28T14:39:56.624262",
       "mentions": 1,
       "target": "he_experiment_pipeline_971daf6d"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid polynomial family exhibits a finite $N_c$ plateau inv",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:41:03.697852",
+      "last_seen": "2026-09-28T14:41:03.697852",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_23d149aa"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter195",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:41:03.697852",
+      "last_seen": "2026-09-28T14:41:03.697852",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_23d149aa"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter195",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T14:41:03.697852",
+      "last_seen": "2026-09-28T14:41:03.697852",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_23d149aa"
     }
   ]
 }
