@@ -2302,8 +2302,8 @@
       "source": "autoloop",
       "confidence": 0.99,
       "created_at": "2026-09-28T17:34:06.463024",
-      "last_seen": "2026-09-28T17:35:03.848063",
-      "mentions": 2,
+      "last_seen": "2026-09-28T17:36:05.304531",
+      "mentions": 3,
       "iteration": 190,
       "r_phys": 1.0,
       "surprise": 1.0,
@@ -2408,6 +2408,55 @@
       "r_phys": 1.0,
       "iteration": 195,
       "id": "persona_use:reviewer_iter195"
+    },
+    {
+      "label": "plan_explore_iter200",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:36:05.304560",
+      "last_seen": "2026-09-28T17:36:05.304560",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter200"
+    },
+    {
+      "label": "pass_iter200",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:36:05.304586",
+      "last_seen": "2026-09-28T17:36:05.304586",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter200"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T17:36:05.304600",
+      "last_seen": "2026-09-28T17:36:05.304600",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structural constraint] The rigid family is defined by a low-dimensional li",
+        "Method:plan_explore_iter200",
+        "Fact:pass_iter200"
+      ],
+      "iteration": 200,
+      "id": "he_experiment_pipeline_9d870fae"
+    },
+    {
+      "label": "reviewer_iter200",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T17:36:05.304687",
+      "last_seen": "2026-09-28T17:36:05.304687",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "b587340def017a16",
+      "r_phys": 1.0,
+      "iteration": 200,
+      "id": "persona_use:reviewer_iter200"
     }
   ],
   "links": [
@@ -3430,6 +3479,15 @@
     },
     {
       "relation": "member_of",
+      "source": "experiment:[DIM: structural constraint] The rigid family is defined by a low-dimensional li",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:36:05.304600",
+      "last_seen": "2026-09-28T17:36:05.304600",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_9d870fae"
+    },
+    {
+      "relation": "member_of",
       "source": "Method:plan_explore_iter190",
       "confidence": 0.5,
       "created_at": "2026-09-28T17:34:06.463083",
@@ -3463,6 +3521,24 @@
       "last_seen": "2026-09-28T17:35:03.848132",
       "mentions": 1,
       "target": "he_experiment_pipeline_12cb863"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter200",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:36:05.304600",
+      "last_seen": "2026-09-28T17:36:05.304600",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_9d870fae"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter200",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:36:05.304600",
+      "last_seen": "2026-09-28T17:36:05.304600",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_9d870fae"
     }
   ]
 }
