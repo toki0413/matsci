@@ -31,12 +31,27 @@ def family(kind, w, seed):
     # ===== 你只改这个函数: 定义"刚(rigid)/肥(fat)"各自对应的约束族 =====
     # kind: 族名('rigid' 或 'fat'); w: 训练约束点数; seed: 随机种子
     # 返回 dict {'X','y','Xv','yv'}: X/y 是 w 个训练约束点, Xv/yv 是留出约束点。
-    # 下面是一个示例(低维正弦族), 请按你的解析 ground truth 替换。
+    # 下面是**两个可跑通的示例**, 请按你的解析 ground truth 替换函数形式/系数。
     rng = np.random.default_rng(seed)
-    X = np.linspace(0.0, 1.0, w).reshape(-1, 1)
-    y = np.sin(np.pi * X)
-    Xv = np.linspace(0.0, 1.0, 200).reshape(-1, 1)
-    yv = np.sin(np.pi * Xv)
+    if kind == 'rigid':
+        # 示例(刚性): 低维解析族, 由该族唯一确定 —— 这里 y = sin(pi x)
+        X = np.linspace(0.05, 0.95, w).reshape(-1, 1)
+        y = np.sin(np.pi * X)
+        Xv = np.linspace(0.02, 0.98, 200).reshape(-1, 1)
+        yv = np.sin(np.pi * Xv)
+    else:
+        # 示例(肥): 高维连续族 —— n 项随机多项式, 自由度 n 远大于 w, 且是 x 的函数
+        n = 20
+        coeffs = rng.standard_normal(n)          # (n,) 一维; 不要 reshape 成 (n,1)
+        X = rng.uniform(0.05, 0.95, (w, 1))      # (w,1)
+        y = (poly_basis(X, n) @ coeffs).reshape(-1, 1)      # (w,1); 用原语别手搓
+        Xv = rng.uniform(0.02, 0.98, (200, 1))
+        yv = (poly_basis(Xv, n) @ coeffs).reshape(-1, 1)    # (200,1)
+        # 用**固定稠密网格**定标(与 w 无关, 稳定), 让 y/yv 同尺度且 O(1)
+        grid = np.linspace(0.02, 0.98, 400).reshape(-1, 1)
+        s = float(np.std(poly_basis(grid, n) @ coeffs)) + 1e-9
+        y = y / s
+        yv = yv / s
     return {'X': X, 'y': y, 'Xv': Xv, 'yv': yv}
 
 
@@ -62,20 +77,35 @@ HINTS = (
     "整个 N_c 判据失效, 脚手架会判 trend='invalid_heldout')。Xv 用不同网格/不同采样点。\n"
     "- kind 取 'rigid'/'fat' 两族, 由你定义其解析 ground truth: "
     "刚性 = 低维/唯一解的约束族; 肥 = 高维/连续族的约束族。用 kind 分支返回各自数据。\n"
-    "- 数组纪律: X/y/Xv/yv 用二维 (N,1) —— 建完用 .reshape(-1, 1) 升维; "
-    "随机数用 rng = np.random.default_rng(seed) 后 rng.standard_normal(n)/rng.uniform(...)"
-    "(Generator **没有** randn/rand); **广播陷阱**: (N,) 与 (N,1) 相加会变成 (N,N), "
-    "所以标签务必先构造一维数组再 .reshape(-1, 1)。\n"
+    "- **只有最终的 X/y/Xv/yv 才需要是 (N,1)**(建完用 .reshape(-1, 1)); "
+    "**幂次/系数这类中间量保持一维 (n,)**: 如 `coeffs = rng.standard_normal(n)` 后 "
+    "`poly_basis(X, n) @ coeffs`。**不要把 np.arange(n)/coeffs 再 reshape 成 (n,1)** —— "
+    "(w,1) 与 (n,1) 做幂/乘会广播失败(报 shapes (w,1)/(n,1)), 这是本环境反复踩的坑。\n"
+    "- 多项式/幂基直接用原语 `poly_basis(X, n)`(返回 (N,n), 列是 1,x,...,x^(n-1)), "
+    "再 `@ coeffs` 得 (N,1); **不要手搓** `x ** np.arange(n)` 之类的广播。\n"
+    "- 目标量级必须 O(1): 构造完把 y 与 yv 除以**同一个** std(y)(同一尺度)再报误差。\n"
 )
 
 #: 沙箱注入的原语名. 书生若顶层重定义同名函数会覆盖注入的正确实现, 故会确定性剥除.
-PRIMITIVE_NAMES = ("mlp_fit", "mlp_predict", "_as_2d", "capacity_scan")
+PRIMITIVE_NAMES = ("mlp_fit", "mlp_predict", "_as_2d", "poly_basis", "capacity_scan")
 
 
 def _as_2d(a):
     """把 1-D 输入变 (N,1); 已是 2-D 则原样 —— 形状对齐原语."""
     a = np.asarray(a, dtype=float)
     return a.reshape(-1, 1) if a.ndim == 1 else a
+
+
+def poly_basis(X, n):
+    """多项式幂基 [1, x, x^2, ..., x^(n-1)]: X 一维或 (N,d)(取第 0 列) → (N, n).
+
+    命题无关的形状原语: 内部把 x 压成一维再外积, 从根上避免
+    ``(N,1) ** (n,1)`` 的广播陷阱 (反复出现的 shapes (w,1)/(n,1) 报错)。
+    """
+    X = _as_2d(X)
+    x = X[:, 0]                                # (N,)
+    powers = np.arange(int(n))                 # (n,)
+    return x[:, None] ** powers[None, :]       # (N,1) ** (1,n) → (N,n)
 
 
 def mlp_fit(X, y, h, seeds=3, maxiter=20000, seed=0):
@@ -302,5 +332,6 @@ def primitives() -> dict:
         "mlp_fit": mlp_fit,
         "mlp_predict": mlp_predict,
         "_as_2d": _as_2d,
+        "poly_basis": poly_basis,
         "capacity_scan": capacity_scan,
     }

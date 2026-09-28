@@ -184,3 +184,55 @@ def family(kind, w, seed):
 def run(cfg):
     seed = int(cfg.get('seed', 0))
     return capacity_scan(family, seed=seed)
+[validate] mode='explore' success=None nobj=0 cf=False lab=False
+metacog: 假设可能为换名归约 (trap=, target=将'解空间刚性'（由解析约束定义的函数集合维数）重新表述为'优化算法的轨迹限制'（L-BFGS-B的记忆限制导致的低维子空间搜索）。): [DIM: Transport] The observed rigidity is a kinetic artifact of the optimization transport mechanism
+[exec-route] mode='coder' desc[:80]='Implement the `family` function for the rigid solution space (analytic functions' obj_len=2462 is_exp_desc=True is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=1210 extracted_len=1195 prompt_len=4422
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: operands could not be broadcast together with shapes (5,1) (10,1) '
+[code-lab-author] raw_len=1261 extracted_len=1246 prompt_len=6044
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: operands could not be broadcast together with shapes (5,1) (10,1) '
+[code-lab-author] raw_len=1375 extracted_len=1360 prompt_len=6095
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: operands could not be broadcast together with shapes (5,1) (10,1) '
+[code-lab-author] raw_len=1375 extracted_len=1360 prompt_len=6209
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: operands could not be broadcast together with shapes (5,1) (10,1) '
+code_lab 沙箱执行经 4 轮修复仍未产出证据(不伪造): 执行异常: ValueError: operands could not be broadcast together with shapes (5,1) (10,1) 
+code_lab 最后一版书生代码:
+import numpy as np
+
+
+def family(kind, w, seed):
+    rng = np.random.default_rng(seed)
+    if kind == 'rigid':
+        # 刚性族：线性函数 y = 2x + 0.5，w=2 即唯一确定，解空间维数 0
+        X = rng.uniform(0.0, 1.0, (w, 1))
+        y = 2.0 * X + 0.5
+        Xv = np.linspace(0.1, 0.9, 100).reshape(-1, 1)
+        yv = 2.0 * Xv + 0.5
+        # 归一化到 O(1) 量级
+        y = (y - y.mean()) / y.std()
+        yv = (yv - yv.mean()) / yv.std()
+    elif kind == 'fat':
+        # 肥族：10 项正交多项式组合，系数空间高维，解空间连续
+        X = rng.uniform(0.0, 1.0, (w, 1))
+        coeffs = rng.standard_normal(10)
+        powers = np.arange(10)
+        z = 2 * X - 1
+        y = np.sum(coeffs * z ** powers.reshape(-1, 1), axis=0).reshape(-1, 1)
+        Xv = rng.uniform(0.2, 0.8, (100, 1))
+        zv = 2 * Xv - 1
+        yv = np.sum(coeffs * zv ** powers.reshape(-1, 1), axis=0).reshape(-1, 1)
+        # 归一化到 O(1) 量级
+        y = (y - y.mean()) / y.std()
+        yv = (yv - yv.mean()) / yv.std()
+    else:
+        # 不中断，返回空值由上层处理
+        return {'X': np.zeros((w, 1)), 'y': np.zeros((w, 1)),
+                'Xv': np.zeros((100, 1)), 'yv': np.zeros((100, 1))}
+    return {'X': X, 'y': y, 'Xv': Xv, 'yv': yv}
+
+
+def run(cfg):
+    # 已由脚手架提供: 训练/多起点/宽度扫描/零违规判据/N_c 汇总都在 capacity_scan 里。
+    # **不要改这个函数, 也不要把训练/优化代码写进来** —— 否则会重蹈手搓 numpy 的错。
+    seed = int(cfg.get('seed', 0))
+    return capacity_scan(family, seed=seed)
