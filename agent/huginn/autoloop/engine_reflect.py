@@ -2577,15 +2577,32 @@ class EngineReflect:
                     software="huginn",
                 )
                 reward_result = evolution.evolve_from_rewards()
-                n_skills = len(reward_result["high_reward_skills"])
-                n_patches = len(reward_result["low_reward_patches"])
-                if n_skills or n_patches:
+                n_skills = len(reward_result.get("high_reward_skills", []))
+                n_refreshed = len(reward_result.get("refreshed_skills", []))
+                n_patches = len(reward_result.get("low_reward_patches", []))
+                if n_skills or n_refreshed or n_patches:
                     logger.info(
-                        "reward evolution: +%d skills, +%d patches (R_phys=%.2f)",
+                        "reward evolution: +%d skills, ~%d refreshed, +%d patches "
+                        "(R_phys=%.2f)",
                         n_skills,
+                        n_refreshed,
                         n_patches,
                         r_phys,
                     )
+                # 可观测: 进化产物默认只落全局 ~/.huginn/logs/, 另镜像一份到本轮
+                # workspace/.huginn/ 便于逐轮观察 RSI 产出. 失败不阻塞主循环.
+                try:
+                    import shutil
+                    from pathlib import Path as _P
+
+                    _dest = self.workspace / ".huginn"
+                    _dest.mkdir(parents=True, exist_ok=True)
+                    for _src in (evolution.skills_path, evolution.rules_path):
+                        _sp = _P(_src)
+                        if _sp.is_file():
+                            shutil.copy2(_sp, _dest / _sp.name)
+                except Exception:
+                    logger.debug("mirror evolution artifacts failed", exc_info=True)
             except Exception as e:
                 logger.warning("reward evolution failed: %s", e)
 

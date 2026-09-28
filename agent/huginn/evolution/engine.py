@@ -573,9 +573,14 @@ class EvolutionEngine:
         """
         rewarded = [r for r in self.logger._tool_calls if r.reward is not None]
         if not rewarded:
-            return {"high_reward_skills": [], "low_reward_patches": []}
+            return {
+                "high_reward_skills": [],
+                "refreshed_skills": [],
+                "low_reward_patches": [],
+            }
 
         new_skills: list[SkillTemplate] = []
+        refreshed_skills: list[SkillTemplate] = []
         new_rules: list[EvolutionRule] = []
 
         # 高奖励记录: 提取为可复用技能 (R_phys >= 0.7 视为高质量执行)
@@ -590,30 +595,52 @@ class EvolutionEngine:
             if len(records) < 2:
                 continue
             calc_type, software = key.rsplit("_", 1)
-            existing = [
-                s
-                for s in self.skills
-                if calc_type in s.trigger_keywords or software in s.trigger_keywords
-            ]
-            if existing:
-                continue
             # 按 reward 降序, 取 top 记录提取 workflow
             records.sort(key=lambda r: r.reward, reverse=True)
             tools_used = list({r.tool_name for r in records})
             avg_reward = sum(r.reward for r in records) / len(records)
+            steps = [
+                {
+                    "tool": r.tool_name,
+                    "input_keys": list(r.tool_input.keys()),
+                    "reward": r.reward,
+                }
+                for r in records[:5]
+            ]
+            # 去重按"工作流内容签名"(同组内工具集相同 = 同一技能), 不再只按组名.
+            # 之前按组名去重: 首条技能一旦存在, 该组此后永久 continue → RSI 一次性
+            # 冻结(每轮照记奖励却再不产出). 现在: 签名相同 → 原地刷新(不增殖);
+            # 签名不同 = 真正的新工作流 → 允许新增.
+            same_group = [
+                s
+                for s in self.skills
+                if calc_type in s.trigger_keywords or software in s.trigger_keywords
+            ]
+            twin = next(
+                (
+                    s
+                    for s in same_group
+                    if frozenset(s.required_tools) == frozenset(tools_used)
+                ),
+                None,
+            )
+            if twin is not None:
+                twin.workflow_steps = steps
+                twin.required_tools = tools_used
+                twin.description = (
+                    f"Auto-refreshed from R_phys>=0.7 executions, "
+                    f"avg reward {avg_reward:.2f}"
+                )
+                twin.extraction_confidence = min(0.5 + avg_reward * 0.4, 0.95)
+                twin.source_session = records[0].session_id
+                refreshed_skills.append(twin)
+                continue
             skill = SkillTemplate(
                 skill_id=f"skill_reward_{key}_{int(time.time() * 1000)}",
                 name=f"{calc_type.title()} High-Reward Workflow ({software})",
                 description=f"Auto-extracted from R_phys>=0.7 executions, avg reward {avg_reward:.2f}",
                 trigger_keywords=[calc_type, software],
-                workflow_steps=[
-                    {
-                        "tool": r.tool_name,
-                        "input_keys": list(r.tool_input.keys()),
-                        "reward": r.reward,
-                    }
-                    for r in records[:5]
-                ],
+                workflow_steps=steps,
                 required_tools=tools_used,
                 source_session=records[0].session_id,
                 extraction_confidence=min(0.5 + avg_reward * 0.4, 0.95),
@@ -650,13 +677,14 @@ class EvolutionEngine:
                 self.rules.append(rule)
                 new_rules.append(rule)
 
-        if new_skills:
+        if new_skills or refreshed_skills:
             self._save_skills()
         if new_rules:
             self._prune_rules()
             self._save_rules()
         return {
             "high_reward_skills": [self._skill_to_dict(s) for s in new_skills],
+            "refreshed_skills": [self._skill_to_dict(s) for s in refreshed_skills],
             "low_reward_patches": [self._rule_to_dict(r) for r in new_rules],
         }
 
