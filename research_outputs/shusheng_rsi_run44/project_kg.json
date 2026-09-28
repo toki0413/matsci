@@ -1557,6 +1557,70 @@
       "r_phys": 1.0,
       "iteration": 125,
       "id": "persona_use:reviewer_iter125"
+    },
+    {
+      "label": "[DIM: Mathematical Structure] The rigid family is defined by a linear subspace o",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T17:21:12.715672",
+      "last_seen": "2026-09-28T17:21:12.715672",
+      "mentions": 1,
+      "iteration": 130,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Rigid family: $N_c(3) \\leq 10^{-3}$ heldout error; Fat family: heldout error $> 10^{-2}$ for all $h \\leq 64$. Control: SGD fails on fat family similarly to L-BFGS-B, confirming structural limitation n",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: Mathematical Structure] The rigid family is defined by a linear subspace o"
+    },
+    {
+      "label": "plan_explore_iter130",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:21:12.715712",
+      "last_seen": "2026-09-28T17:21:12.715712",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter130"
+    },
+    {
+      "label": "pass_iter130",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:21:12.715722",
+      "last_seen": "2026-09-28T17:21:12.715722",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter130"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T17:21:12.715730",
+      "last_seen": "2026-09-28T17:21:12.715730",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: Mathematical Structure] The rigid family is defined by a linear subspace o",
+        "Method:plan_explore_iter130",
+        "Fact:pass_iter130"
+      ],
+      "iteration": 130,
+      "id": "he_experiment_pipeline_e734bf40"
+    },
+    {
+      "label": "reviewer_iter130",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T17:21:12.715807",
+      "last_seen": "2026-09-28T17:21:12.715807",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "34e731325384cbb5",
+      "r_phys": 1.0,
+      "iteration": 130,
+      "id": "persona_use:reviewer_iter130"
     }
   ],
   "links": [
@@ -2234,6 +2298,33 @@
       "last_seen": "2026-09-28T17:20:08.757156",
       "mentions": 1,
       "target": "he_experiment_pipeline_44a77a81"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: Mathematical Structure] The rigid family is defined by a linear subspace o",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:21:12.715730",
+      "last_seen": "2026-09-28T17:21:12.715730",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e734bf40"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter130",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:21:12.715730",
+      "last_seen": "2026-09-28T17:21:12.715730",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e734bf40"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter130",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:21:12.715730",
+      "last_seen": "2026-09-28T17:21:12.715730",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e734bf40"
     }
   ]
 }
