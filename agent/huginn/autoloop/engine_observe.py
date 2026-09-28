@@ -1273,19 +1273,22 @@ LUCID review (mandatory after generating hypothesis):
             [
                 (
                     "body",
-                    f"""You are an autonomous material science research agent.
+                    # 平台不得绑定具体命题: 原先此处硬编码 "material science
+                    # research agent" + 材料维度表 (composition/temperature/
+                    # defect/structure/transport) + "优先写成 PDE/变分/守恒律".
+                    # 任何非材料命题 (如纯数学/机器学习) 都会被这条提示强行拽进
+                    # 材料/PDE 语言 → 生成与目标无关的假设 (见 run43: 31 条假设
+                    # 全部落在材料 5 维度, plan_check 连续判 misalign).
+                    # 改为领域无关: 维度由命题自身推导, 结构由命题自然语言描述.
+                    f"""You are an autonomous scientific research agent.
 
 Perceived context:
 {json.dumps(context, indent=2, ensure_ascii=False)[:2000]}
 
 Generate 3 divergent candidate hypotheses. Each MUST be grounded in a
-DIFFERENT assumption dimension. Pick dimensions from this list (or propose
-a new one tagged [NEW]):
-- composition (Ca/Si/Al/O ratio, doping, alloy)
-- temperature (thermal dependence, phase transition)
-- defect (vacancy, dislocation, interface)
-- structure (crystal symmetry, lattice parameter)
-- transport (diffusion, conductivity, mobility)
+DIFFERENT assumption dimension. Do NOT use a fixed taxonomy — derive the
+3 dimensions from THIS research objective's own domain (use the perceived
+context above), and give each a short label:
 
 Format each candidate as:
 [DIM: <dimension>] <statement> | pro: ... | con: ...
@@ -1294,9 +1297,9 @@ After listing 3, select the most testable+novel one after "SELECTED:".
 The 3 candidates must NOT be variations of each other — if two share the
 same dimension, the second is invalid and must be replaced.
 Ground it in the domain knowledge context above when relevant.
-Prefer hypotheses that can be expressed as governing PDEs, variational
-principles, or conservation laws; identify the mathematical structure
-before proposing numerical experiments.
+Identify whatever structure — mathematical, computational, or empirical —
+makes the hypothesis testable, expressed in the idiom natural to the
+objective's domain, before proposing experiments.
 
 Hypothesis:""",
                 ),
