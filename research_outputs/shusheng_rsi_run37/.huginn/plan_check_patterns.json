@@ -1,0 +1,15 @@
+[
+  {
+    "scene_tag": "other",
+    "reason": "Plan fails to address critical dimensional consistency issues. The hypothesis concerns N_c(w) (capacity vs width), but the plan's DESCRIPTION describes a function family returning (N,1) shape without specifying how N relates to network width w or how capacity is measured. Previous failures (run28, run29) show that without properly scaling the problem with w and ensuring the fat family depends on x (not noise), the comparison is invalid. The plan also lacks explicit implementation details for the capacity_scan tool and doesn't specify how N_c(w) will be computed from the described setup.",
+    "missing_steps": [
+      "Define how N (number of constraints) scales with network width w",
+      "Specify the exact form of the fat family polynomial that depends on x (not noise) with dimension >> w",
+      "Clarify how N_c(w) will be computed from training/hold-out errors",
+      "Ensure the rigid family maintains low-dimensional manifold under width scaling",
+      "Implement proper scaling discipline to avoid ~1e9 magnitude issues from high-degree polynomials"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family` function for two polynomial constraint families: (1) rigid family — low-degree polynomial (degree ≤ 2) with analytically low-dimensional solution ma"
+  }
+]
