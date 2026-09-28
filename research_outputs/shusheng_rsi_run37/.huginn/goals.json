@@ -16,12 +16,23 @@
         "[Feynman unknown_unknown] How does the “e-Plan mode: explore-R_phys” directive translate into actionable steps in the workflow? Is it a meta-strategy for navigating uncertainty, or a specific algorithmic phase?",
         "[Feynman known_unknown] I don’t fully understand why the generative verification scored zero despite passing all structural tests — possibly because the output lacked interpretive narrative, not because the math was wrong.",
         "[Feynman unknown_unknown] I didn’t consider whether the skipped benchmarks might relate to edge cases in constraint satisfaction over non-uniform width regimes — something that could emerge if we tested beyond current bounds.",
-        "[Feynman known_unknown] The exact mechanism linking polynomial degree to manifold dimensionality isn’t clear to me — I can cite results but couldn’t derive the scaling law from first principles during this run."
+        "[Feynman known_unknown] The exact mechanism linking polynomial degree to manifold dimensionality isn’t clear to me — I can cite results but couldn’t derive the scaling law from first principles during this run.",
+        "[Feynman known_unknown] I don’t fully understand how the constraint density affects convergence behavior in high-dimensional polynomial spaces — especially when constraints are correlated or degenerate.",
+        "[Feynman unknown_unknown] I never considered whether symmetry breaking in the constraint set could induce hidden bifurcations in the solution manifold that aren’t captured by dimension counting alone.",
+        "[Feynman known_unknown] I don’t understand how the dimension of the solution manifold remains invariant with increasing constraint count $w$, especially when each new constraint should theoretically reduce degrees of freedom—unless the constraints are redundant or structured in a special way (e.g., lying in a low-dimensional subspace). Why would adding more quadratic constraints not shrink the solution space further?",
+        "[Feynman unknown_unknown] I never considered whether the “rigid polynomial constraint family” implies a specific basis or coordinate system that preserves manifold dimension under constraint addition—this structural property may be key to why $N_c(w)$ stays constant, but I haven’t explored the linear algebra behind constraint redundancy vs. independence in polynomial spaces.",
+        "[Feynman known_unknown] I’m unclear on why the generative verification failed so completely—was it due to lack of symbolic reasoning, absence of traceable steps, or inability to validate numerical outputs against theoretical expectations? The system may have solved the problem numerically but lacked interpretability, which is central to the Feynman method.",
+        "[Feynman known_unknown] I don’t understand how “un- Plan mode: explore-R_phys” translates into actual computational steps—is this a sampling strategy, a reward-weighted search, or something else? The term isn’t defined or contextualized.",
+        "[Feynman unknown_unknown] I never considered that the “rigid polynomial constraint family” might have hidden degeneracies or singularities as w increases—could the manifold dimension suddenly jump at some critical w due to emergent symmetry breaking? This wasn’t flagged in any benchmark or validation field.",
+        "[Feynman known_unknown] I don’t fully understand why the generative verification scored 0.0 — was it due to lack of interpretability in the raw output format, or was there an actual mismatch between predicted and observed behavior?",
+        "[Feynman unknown_unknown] I hadn’t considered whether the skipped benchmarks relate to edge cases in polynomial rigidity that weren’t covered by the current theoretical framework — now I’m wondering if those reveal hidden nonlinearities not captured by the linear subspace assumption.",
+        "[Feynman known_unknown] I don’t understand why the generative verification scored 0.0 — was it due to missing reasoning in the output, or a deeper issue with how constraints are encoded and verified?",
+        "[Feynman unknown_unknown] I never considered that the simulation environment might not have been initialized before the test run, which would explain why no tests executed at all."
       ],
-      "iteration": 28,
+      "iteration": 53,
       "status": "active",
       "created_at": "2026-09-28T13:54:49.671889+00:00",
-      "updated_at": "2026-09-28T14:01:44.984026+00:00",
+      "updated_at": "2026-09-28T14:05:55.110303+00:00",
       "session_id": "",
       "metadata": {},
       "unknowns": [
@@ -368,9 +379,297 @@
           "discovered_at": "2026-09-28T14:01:29.056772+00:00",
           "resolved_at": null,
           "iteration": 25
+        },
+        {
+          "id": "unk_70a7ea93",
+          "text": "The definition of \"zero violation\" on held-out constraints is ambiguous—without a precise tolerance metric or validation protocol, N_c(w) may not be reproducible or comparable across experiments.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-28T14:02:16.484352+00:00",
+          "resolved_at": null,
+          "iteration": 30
+        },
+        {
+          "id": "unk_7d8a4a3a",
+          "text": "Training small networks to achieve zero violation on out-of-sample points may suffer from optimization traps (e.g., local minima), making observed N_c(w) reflect solver limitations rather than intrinsic solution space rigidity.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-28T14:02:16.485908+00:00",
+          "resolved_at": null,
+          "iteration": 30
+        },
+        {
+          "id": "unk_1d51051c",
+          "text": "No information is provided on the distribution, noise level, or analytic form of the constraints w; if constraints are ill-conditioned or degenerate, N_c(w) trends could be misleading.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-28T14:02:16.486905+00:00",
+          "resolved_at": null,
+          "iteration": 30
+        },
+        {
+          "id": "unk_96ad8be1",
+          "text": "The assumption that hidden layer width h is the sole relevant capacity measure ignores depth, activation functions, and initialization schemes, which may critically affect expressivity and generalization.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-28T14:02:16.489448+00:00",
+          "resolved_at": null,
+          "iteration": 30
+        },
+        {
+          "id": "unk_c6d95fef",
+          "text": "The scan range h=2~8 may be too narrow to capture asymptotic behavior; if true rigidity requires h > 8, the classification as “rigid” could be premature or incorrect.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-28T14:02:16.492437+00:00",
+          "resolved_at": null,
+          "iteration": 30
+        },
+        {
+          "id": "unk_673c22ee",
+          "text": "I don’t fully understand how the constraint density affects convergence behavior in high-dimensional polynomial spaces — especially when constraints are correlated or degenerate.",
+          "type": "known_unknown",
+          "discovered_at": "2026-09-28T14:02:28.428250+00:00",
+          "resolved_at": null,
+          "iteration": 30
+        },
+        {
+          "id": "unk_cc17022b",
+          "text": "I never considered whether symmetry breaking in the constraint set could induce hidden bifurcations in the solution manifold that aren’t captured by dimension counting alone.",
+          "type": "unknown_unknown",
+          "discovered_at": "2026-09-28T14:02:28.430108+00:00",
+          "resolved_at": null,
+          "iteration": 30
+        },
+        {
+          "id": "unk_0450366a",
+          "text": "The definition of \"rigidity\" via minimal network capacity N_c(w) assumes that zero violation on held-out constraints implies generalization, but may overlook overfitting to the specific constraint manifold or lack of robustness under distributional shift.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-28T14:03:00.673819+00:00",
+          "resolved_at": null,
+          "iteration": 35
+        },
+        {
+          "id": "unk_8845329f",
+          "text": "The scan over hidden layer widths (h=2–8) may miss critical transitions if the true N_c lies beyond this range; also, training convergence for small networks can be non-convex and optimizer-dependent, risking false minima in N_c estimation.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-28T14:03:00.675399+00:00",
+          "resolved_at": null,
+          "iteration": 35
+        },
+        {
+          "id": "unk_9a6b4644",
+          "text": "The analysis relies entirely on synthetic or idealized analytical constraints — no empirical validation against real-world data distributions is considered, which may reveal different rigidity/fatness behavior due to noise, sparsity, or correlation structure.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-28T14:03:00.676340+00:00",
+          "resolved_at": null,
+          "iteration": 35
+        },
+        {
+          "id": "unk_e18e9607",
+          "text": "The model assumes feedforward architecture with fixed activation functions and depth; varying depth or using residual connections could drastically alter N_c(w), making the current scope potentially unrepresentative of broader MLP behavior.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-28T14:03:00.677222+00:00",
+          "resolved_at": null,
+          "iteration": 35
+        },
+        {
+          "id": "unk_0ef69d4a",
+          "text": "The concept of “solution space rigidity” as a function of constraint count w ignores potential phase transitions in the loss landscape (e.g., from underparametrized to overparametrized regimes) that may not be captured by N_c alone.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-28T14:03:00.678150+00:00",
+          "resolved_at": null,
+          "iteration": 35
+        },
+        {
+          "id": "unk_8352c049",
+          "text": "I don’t understand how the dimension of the solution manifold remains invariant with increasing constraint count $w$, especially when each new constraint should theoretically reduce degrees of freedom—unless the constraints are redundant or structured in a special way (e.g., lying in a low-dimensional subspace). Why would adding more quadratic constraints not shrink the solution space further?",
+          "type": "known_unknown",
+          "discovered_at": "2026-09-28T14:03:10.562811+00:00",
+          "resolved_at": null,
+          "iteration": 35
+        },
+        {
+          "id": "unk_62ac1405",
+          "text": "I never considered whether the “rigid polynomial constraint family” implies a specific basis or coordinate system that preserves manifold dimension under constraint addition—this structural property may be key to why $N_c(w)$ stays constant, but I haven’t explored the linear algebra behind constraint redundancy vs. independence in polynomial spaces.",
+          "type": "unknown_unknown",
+          "discovered_at": "2026-09-28T14:03:10.564752+00:00",
+          "resolved_at": null,
+          "iteration": 35
+        },
+        {
+          "id": "unk_c11f9a0b",
+          "text": "I’m unclear on why the generative verification failed so completely—was it due to lack of symbolic reasoning, absence of traceable steps, or inability to validate numerical outputs against theoretical expectations? The system may have solved the problem numerically but lacked interpretability, which is central to the Feynman method.",
+          "type": "known_unknown",
+          "discovered_at": "2026-09-28T14:03:10.566620+00:00",
+          "resolved_at": null,
+          "iteration": 35
+        },
+        {
+          "id": "unk_30ae61a2",
+          "text": "The definition of \"zero violation\" on held-out constraints may be ambiguous — without a tolerance threshold or error metric, it's unclear what constitutes acceptable deviation, potentially inflating perceived rigidity.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-28T14:03:53.854691+00:00",
+          "resolved_at": null,
+          "iteration": 40
+        },
+        {
+          "id": "unk_16d7ff2c",
+          "text": "The minimization of N_c(w) over network width may get stuck in local minima due to non-convex optimization landscapes in small networks, leading to underestimation of required capacity.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-28T14:03:53.856376+00:00",
+          "resolved_at": null,
+          "iteration": 40
+        },
+        {
+          "id": "unk_fe18bb77",
+          "text": "No information is given about the distribution or condition number of the analytical constraints; ill-conditioned or sparse constraint sets could artificially reduce observed N_c, misrepresenting true rigidity.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-28T14:03:53.857458+00:00",
+          "resolved_at": null,
+          "iteration": 40
+        },
+        {
+          "id": "unk_87ed26c5",
+          "text": "The scan range h=2~8 may exclude critical phase transitions in solution space topology (e.g., bifurcation points) that occur at higher widths, missing the transition from rigid to fat behavior.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-28T14:03:53.858473+00:00",
+          "resolved_at": null,
+          "iteration": 40
+        },
+        {
+          "id": "unk_74f686b7",
+          "text": "The model assumes hidden layer width alone governs capacity, but depth, activation functions, and initialization also affect expressiveness — omitting them risks conflating architectural choices with intrinsic solution space properties.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-28T14:03:53.859474+00:00",
+          "resolved_at": null,
+          "iteration": 40
+        },
+        {
+          "id": "unk_f0352731",
+          "text": "I don’t understand how “un- Plan mode: explore-R_phys” translates into actual computational steps—is this a sampling strategy, a reward-weighted search, or something else? The term isn’t defined or contextualized.",
+          "type": "known_unknown",
+          "discovered_at": "2026-09-28T14:04:05.819187+00:00",
+          "resolved_at": null,
+          "iteration": 40
+        },
+        {
+          "id": "unk_c5e3b924",
+          "text": "I never considered that the “rigid polynomial constraint family” might have hidden degeneracies or singularities as w increases—could the manifold dimension suddenly jump at some critical w due to emergent symmetry breaking? This wasn’t flagged in any benchmark or validation field.",
+          "type": "unknown_unknown",
+          "discovered_at": "2026-09-28T14:04:05.821193+00:00",
+          "resolved_at": null,
+          "iteration": 40
+        },
+        {
+          "id": "unk_6877e0bf",
+          "text": "The definition of \"zero violation\" on out-of-sample constraints may be too strict or ambiguous — does it mean exact zero loss, or within a tolerance? This affects N_c(w) measurement and rigidity classification.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-28T14:04:34.990037+00:00",
+          "resolved_at": null,
+          "iteration": 45
+        },
+        {
+          "id": "unk_4a6e1677",
+          "text": "Optimization landscapes for small networks can have many local minima; reported N_c(w) might reflect optimization failure rather than inherent representational capacity.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-28T14:04:34.991667+00:00",
+          "resolved_at": null,
+          "iteration": 45
+        },
+        {
+          "id": "unk_a1393bb4",
+          "text": "No mention of constraint distribution — if constraints are adversarially placed or sparse, N_c(w) may not reflect generalization but overfitting to outliers.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-28T14:04:34.992727+00:00",
+          "resolved_at": null,
+          "iteration": 45
+        },
+        {
+          "id": "unk_b25f3867",
+          "text": "Assuming width alone measures capacity ignores depth, activation function, and initialization — two networks with same h may have vastly different representational power.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-28T14:04:34.995328+00:00",
+          "resolved_at": null,
+          "iteration": 45
+        },
+        {
+          "id": "unk_86c91d03",
+          "text": "Flat/decreasing N_c(w) trend could arise from architectural saturation (e.g., width > expressivity threshold), not true solution space rigidity.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-28T14:04:34.996354+00:00",
+          "resolved_at": null,
+          "iteration": 45
+        },
+        {
+          "id": "unk_6953681f",
+          "text": "I don’t fully understand why the generative verification scored 0.0 — was it due to lack of interpretability in the raw output format, or was there an actual mismatch between predicted and observed behavior?",
+          "type": "known_unknown",
+          "discovered_at": "2026-09-28T14:04:43.708172+00:00",
+          "resolved_at": null,
+          "iteration": 45
+        },
+        {
+          "id": "unk_ed2d0029",
+          "text": "I hadn’t considered whether the skipped benchmarks relate to edge cases in polynomial rigidity that weren’t covered by the current theoretical framework — now I’m wondering if those reveal hidden nonlinearities not captured by the linear subspace assumption.",
+          "type": "unknown_unknown",
+          "discovered_at": "2026-09-28T14:04:43.710549+00:00",
+          "resolved_at": null,
+          "iteration": 45
+        },
+        {
+          "id": "unk_0dde762f",
+          "text": "The definition of \"zero violation\" on hold-out constraints is ambiguous—whether it refers to exact satisfaction (e.g., residual < ε) or probabilistic compliance could drastically affect N_c(w) estimation and rigidity classification.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-28T14:05:14.161227+00:00",
+          "resolved_at": null,
+          "iteration": 50
+        },
+        {
+          "id": "unk_f58a3958",
+          "text": "Gradient-based optimization in small networks may converge to local minima that satisfy training constraints but fail to generalize, leading to overestimated N_c(w) due to non-global solutions.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-28T14:05:14.163021+00:00",
+          "resolved_at": null,
+          "iteration": 50
+        },
+        {
+          "id": "unk_984c28d1",
+          "text": "No consideration of constraint distribution geometry; if constraints are collinear or degenerate in input space, N_c(w) may appear artificially low without reflecting true solution space rigidity.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-28T14:05:14.164254+00:00",
+          "resolved_at": null,
+          "iteration": 50
+        },
+        {
+          "id": "unk_c720c249",
+          "text": "Assumes hidden width h is the sole capacity metric—depth, activation function type, or skip connections could compensate for small h, invalidating the rigidity判据 based solely on width.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-28T14:05:14.165399+00:00",
+          "resolved_at": null,
+          "iteration": 50
+        },
+        {
+          "id": "unk_d3d5565c",
+          "text": "For w → 0 or w exceeding network expressivity limits, N_c(w) may become undefined or spike discontinuously, breaking the assumed flat/decreasing trend required for rigidity classification.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-28T14:05:14.166524+00:00",
+          "resolved_at": null,
+          "iteration": 50
+        },
+        {
+          "id": "unk_3a10758b",
+          "text": "I don’t understand why the generative verification scored 0.0 — was it due to missing reasoning in the output, or a deeper issue with how constraints are encoded and verified?",
+          "type": "known_unknown",
+          "discovered_at": "2026-09-28T14:05:22.628542+00:00",
+          "resolved_at": null,
+          "iteration": 50
+        },
+        {
+          "id": "unk_082ba933",
+          "text": "I never considered that the simulation environment might not have been initialized before the test run, which would explain why no tests executed at all.",
+          "type": "unknown_unknown",
+          "discovered_at": "2026-09-28T14:05:22.630781+00:00",
+          "resolved_at": null,
+          "iteration": 50
         }
       ],
-      "unknowns_discovered": 43,
+      "unknowns_discovered": 79,
       "unknowns_resolved": 0,
       "objective": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【判别口径·本轮已定（务必按此判定，别再自创）】\n- 刚性族：在扫描范围内**存在**较小的有限 N_c（例如 h=2~8 即可零违规），且 N_c 不随 w 增长（趋势为 flat 或 decreasing）。必须给出可达锚点。\n- 胖族：在扫描上限（h=64）内**任何宽度都达不到零违规**，即 N_c = ∞（脚手架会标 trend='unreachable'）。**这就是“胖”的判别签名**，不需要、也不要强行去找“N_c 递增”。\n- 因此本轮的判别结论是二值的：刚性=有限小 N_c；胖=unreachable（不可达）。\n\n研究对象只能是小型前馈网络本身。硬性边界：严禁把本命题替换或“换名归约”为材料、化学、玻璃、合金、离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【零违规判据·统一口径】\n- 零违规 = 在未参与训练的留出约束点上，最大绝对误差 ≤ 1e-3。\n- 训练误差只需“足够小”（≤1e-4 量级）即可，**不要加 train_err < 1e-6 这类过严门槛**（会把可达宽度误判为失败）。\n- 所有报告数值必须是有限数（禁止 inf / nan / None）；达不到零违规的行如实报其真实（有限）留出误差。\n\n【尺度纪律·本轮新增硬项（否则绝对判据失效）】\n- **y 与 yv 的数值量级必须归一到 O(1)**（例如 std ≲ 10）。绝对判据“≤1e-3”只有在目标 O(1) 时才有意义：run29 的 fat 用 20 项随机多项式，基 (2z-1)^19 取值到 ~1e9，导致“1e-3”在 ~1e9 尺度上根本不可能，判定直接失效。\n- 若你的族本质带大动态范围，请先对 y 做显式归一（如除以自身 std），并在报告里说明归一方式 —— 但留出误差仍要在**同一归一尺度**上报告。\n\n【第 0 步·刚性可达性 bootstrap（必须先做）】\n先证明“刚性族在本实验里零违规可达”：让某个 (w, 宽度, 种子) 组合训练后对留出点达到 ≤1e-3，并如实打印锚点数值（宽度、训练误差、留出误差）。\n- 若刚性族在最大宽度下仍不可达，说明约束族构造不当（例如 w 太小导致 5 个点无法确定函数、或阈值不可达），先改构造再重做；此时不得报结论。\n\n【实验设计】\n1) 真的训练网络：沙箱已内置 capacity_scan（两层 tanh + L-BFGS-B 多起点），你只需写 family。\n2) 宽度扫描上限 h=64；刚性族必须在这段内出现有限 N_c。\n3) 至少 3 个随机种子，报告 N_c(w) 的数值与趋势，并说明两族的解析 ground truth。\n4) w 的取值要让“刚性族能被有限样本确定”这件事成立：w 太小（如 5）时，光滑函数在训练点之间仍有大量候选，留出误差会偏大 —— 这是真实的“欠定”，请如实报告，并保证在较大 w 上刚性族确实可达零违规。\n\n【Code Lab 脚本契约】\n- 你**只需实现 family(kind, w, seed) 这一个函数**；run(cfg) 原样 `return capacity_scan(family, seed=...)`，可传 ho_tol/tr_tol 覆盖默认阈值。\n- **不要改 run 函数，也不要把训练/优化/参数打包/前向传播写进代码**。\n- family 返回 dict {'X','y','Xv','yv'}：X/y 是 w 个**训练**约束点，Xv/yv 是**留出**约束点；一律 `.reshape(-1, 1)` 成 (N,1)。\n- **标签形状硬约束**：y/yv 必须是 (N,1)。`(N,)` 与 `(N,1)` 相加会广播成 `(N,N)`——静默伪结果陷阱，脚手架已硬校验。\n- **留出集必须真的留出**：Xv 的输入点不得与 X 的训练点重合（脚手架会判 invalid_heldout 并报重叠比例）；别用含端点重合的同一网格。\n- 随机数用 rng = np.random.default_rng(seed)；Generator 没有 randn，用 rng.standard_normal(n)。\n- 不要用 assert / raise 中断执行：把真实数值全部 return，由上层裁决。\n\n【前几轮伪结果诊断·本轮必须避免】\n1) run27：fat 标签广播 bug（→(w,w)），留出误差被钉在 ~0.51 假值。已由形状硬校验拦截。\n2) run28：fat 用与 x 无关的 **i.i.d. 纯噪声**，让“刚 vs 胖”退化成“可学 vs 不可学”，且目标是 x²/恒等这类平凡 1 维函数，两族不对立。→ 本轮 fat 必须是 **x 的、高维但可部分学习** 的函数族（自由度 ≫ w），不得是与 x 无关的噪声。\n3) run29：rigid 用 cos(πx) 但 w=5 欠定（留出 ~4e-2，不可达）；fat 用高阶多项式导致 ~1e9 尺度，绝对判据失效。→ 本轮按上面的“尺度纪律”和“第 0 步”处理。\n4) **报告纪律**：结论必须被 objectives / N_c 表里的真实数值支持；不得把与数值矛盾的趋势写成结论；训练误差列与留出误差列必须各自独立测得，不得互相复制；正文不得引入材料/化学/晶界等类比框架。\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
       "success_criteria": [],

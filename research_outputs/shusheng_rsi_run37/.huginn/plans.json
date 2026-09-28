@@ -193,6 +193,159 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_dc07e6c2",
+      "objective": "[DIM: structure] The rigid polynomial constraint family (degree ≤ 2) defines a finite-dimensional solution manifold whose dimension is invariant with respect to the number of constraints $w$, meaning the minimum network width $N_c(w)$ required for zero violation remains a small, constant integer (e.g., $h \\in [2, 8]$) as $w$ increases.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the rigid polynomial constraint family (degree ≤ 2) function in the family module, ensuring outputs are normalized to O(1) magnitude and properly shaped as (N,1). This will enable testing the hypothesis that N_c(w) remains a small finite integer as w increases.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "src/family.py"
+          ]
+        }
+      ],
+      "status": "executing",
+      "auto_confirm": false,
+      "created_at": "2026-09-28T14:02:48.998381+00:00",
+      "confirmed_at": "2026-09-28T14:02:48.999561+00:00",
+      "completed_at": null,
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
+    },
+    {
+      "id": "plan_16e4f611",
+      "objective": "[DIM: structure] The rigid polynomial constraint family (degree ≤ 2) defines a finite-dimensional solution manifold with dimension proportional to the number of independent symmetry-invariant monomials; hence, the required network width $N_c$ remains bounded and flat as $w$ increases, because the underlying PDE structure (linear second-order elliptic operator on a symmetric domain) admits a low-rank basis representation.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Implement the rigid polynomial constraint family (degree ≤ 2) and fat polynomial constraint family (degree 19) with explicit mathematical definitions. For the rigid family, define output dimension N as the number of independent symmetry-invariant monomials (N = 6 for 2D, N = 10 for 3D), ensuring N is independent of network width w. Normalize outputs to std ≲ 10 to prevent magnitude issues. Configure capacity_scan to compute N_c(w) as the minimum width where training error and hold-out error both reach zero violation (max absolute error ≤ 1e-3). Test w ∈ {10, 20, 50} with 3 seeds each to verify the flat trend of N_c(w) as w increases.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "executing",
+      "auto_confirm": false,
+      "created_at": "2026-09-28T14:03:40.610216+00:00",
+      "confirmed_at": "2026-09-28T14:03:40.611229+00:00",
+      "completed_at": null,
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
+    },
+    {
+      "id": "plan_aecc5a4e",
+      "objective": "[DIM: structure] The solution manifold of the rigid polynomial family is a linear subspace of dimension $d = \\binom{2+n}{n}$ in the function space, and thus the minimal network width $h$ required to represent it should scale linearly with $d$, not with $w$, leading to a flat $N_c(w)$ trend.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the rigid polynomial family function for the capacity_scan framework. The function must generate training and held-out constraint points for degree-≤2 polynomials in n dimensions, with y/yv normalized to O(1) scale (std ≲ 10), and return properly shaped (N,1) arrays. This addresses the missing \"rigid anchor\" and \"N_c(w) trend\" required to test the hypothesis that minimal network width scales linearly with manifold dimension d.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "/workspace/research_outputs/shusheng_rsi_run37/.huginn/hypothesis_graph_loop_20940505.json"
+          ]
+        }
+      ],
+      "status": "executing",
+      "auto_confirm": false,
+      "created_at": "2026-09-28T14:04:24.916857+00:00",
+      "confirmed_at": "2026-09-28T14:04:24.917863+00:00",
+      "completed_at": null,
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
+    },
+    {
+      "id": "plan_c40bf92b",
+      "objective": "[DIM: structure] The rigid polynomial constraint family exhibits a solution manifold dimension that scales as $d = \\binom{2+n}{n}$, where $n$ is the polynomial degree; therefore, the network width required to achieve zero violation ($N_c$) should be proportional to this dimension rather than the number of constraints $w$.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the rigid polynomial constraint family in `family(kind, w, seed)` function. The family should generate training and held-out points for polynomials of degree n with dimension d = binom(2+n, n). Need to ensure y/yv are normalized to O(1) scale and shapes are (N,1). Also need to verify the rigid family can achieve zero violation (N_c finite) at small widths as a prerequisite before testing the scaling hypothesis.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "family.py",
+            "(or",
+            "equivalent",
+            "where",
+            "family",
+            "function",
+            "is",
+            "defined)"
+          ]
+        }
+      ],
+      "status": "executing",
+      "auto_confirm": false,
+      "created_at": "2026-09-28T14:05:03.162090+00:00",
+      "confirmed_at": "2026-09-28T14:05:03.163209+00:00",
+      "completed_at": null,
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
+    },
+    {
+      "id": "plan_b5ab944f",
+      "objective": "[DIM: structure] The rigid polynomial constraint family exhibits a solution manifold dimension that scales as $d = \\binom{w+d_{\\text{poly}}}{d_{\\text{poly}}}$, where $w$ is the number of constraints and $d_{\\text{poly}}$ is the polynomial degree; this geometric rigidity implies that finite-width neural networks can achieve zero heldout violation when $h \\geq d$, as the network capacity matches the intrinsic degrees of freedom of the function space.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement rigid and fat polynomial constraint families with explicit mathematical definitions. Define rigid family as quadratic polynomials (d_poly=2) with output dimension N = binom(w+2,2) and fat family as high-degree polynomials (d_poly=19) with N = binom(w+19,19). Ensure fat family is constructed as a deterministic function of x (not noise) to avoid degeneracy. Implement capacity_scan tool to compute N_c(w) with hold-out error metric and termination criterion: max absolute validation error < 10^-6. Apply scaling discipline to constrain all outputs to unit variance.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-28T14:05:55.106398+00:00",
+      "confirmed_at": "2026-09-28T14:05:55.107519+00:00",
+      "completed_at": "2026-09-28T14:06:14.158043+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
