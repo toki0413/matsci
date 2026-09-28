@@ -73,6 +73,36 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_afa106fd",
+      "objective": "[DIM: structure] The rigid polynomial family corresponds to a low-dimensional algebraic manifold in function space with bounded curvature, implying that the Hessian of the loss landscape exhibits a sharp spectral gap between dominant and subdominant eigenvalues during training.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the rigid polynomial family function as specified, ensuring low-dimensional algebraic structure (≤5 terms), proper normalization (std ≲ 10), non-overlapping training/heldout sets, and correct (N,1) output shapes. This enables the capacity scan to determine N_c(w) and test the hypothesis about spectral gaps in the loss landscape.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "family.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-28T14:53:46.778954+00:00",
+      "confirmed_at": "2026-09-28T14:53:46.779848+00:00",
+      "completed_at": "2026-09-28T14:54:05.819673+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

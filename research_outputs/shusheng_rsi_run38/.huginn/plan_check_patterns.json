@@ -1,0 +1,14 @@
+[
+  {
+    "scene_tag": "other",
+    "reason": "The plan uses MODE: explore which is appropriate for hypothesis testing, but it lacks a concrete methodology for measuring the spectral gap in the loss landscape. The hypothesis specifically concerns the Hessian's spectral properties during training, yet the plan only describes implementing the polynomial family and capacity scan (N_c(w)) without specifying how to compute/analyze the Hessian eigenvalues. Additionally, the plan does not address how to ensure the fat family is 'x-dependent, high-dimensional but partially learnable' as required by historical failure patterns.",
+    "missing_steps": [
+      "Specify methodology for computing/analyzing Hessian eigenvalues during training to verify the spectral gap claim",
+      "Define concrete criteria for the fat family being x-dependent and high-dimensional (avoiding i.i.d. noise failure mode)",
+      "Include spectral gap measurement metrics (e.g., ratio of dominant to subdominant eigenvalues) in the experimental design",
+      "Ensure proper initialization and optimization settings that would reveal loss landscape geometry"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the rigid polynomial family function as specified, ensuring low-dimensional algebraic structure (≤5 terms), proper normalization (std ≲ 10), non-overlapping trai"
+  }
+]
