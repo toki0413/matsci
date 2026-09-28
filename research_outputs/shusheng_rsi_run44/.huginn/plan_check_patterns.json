@@ -320,5 +320,35 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the rigid family function with properly normalized outputs (y/yv std ≲ 1) to ensure the heldout error threshold of ≤1e-3 is physically meaningful. This addresses"
+  },
+  {
+    "scene_tag": "auto_family",
+    "reason": "The plan uses 'explore' mode which is explicitly inappropriate for a concrete computational verification task per the system prompt (should be 'coder' or 'workflow'). It lacks concrete implementation details, specific numerical methods, and verifiable predictions as highlighted in historical failures. While the DESCRIPTION attempts to address some normalization issues, it fails to define the actual optimization methodology (L-BFGS-B parameters, iterations), N_c(w) calculation methodology, or provide concrete grid/basis definitions needed for reproducibility. The hypothesis about mathematical structure (linear vs nonlinear function spaces) could map to spectral theory/variations principles but isn't properly instantiated with natural-science context.",
+    "missing_steps": [
+      "Switch from 'explore' mode to 'coder' or 'workflow' mode",
+      "Define concrete L-BFGS-B optimization setup with specific iteration limits and parameters",
+      "Implement comparative optimization strategy (L-BFGS-B with more iterations vs. stochastic optimizer)",
+      "Define N_c(w) calculation methodology (e.g., SVD rank, effective dimension) with clear thresholds",
+      "Establish separate train/holdout error measurement procedures to avoid data leakage",
+      "Include comparative experiments to distinguish optimization failure from function space limitations",
+      "Provide concrete numerical methods with specific grid resolutions, basis function definitions, and sampling parameters"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the rigid and fat function space families as required by the hypothesis. The rigid family will be a low-dimensional linear span (trigonometric basis with m=3) to"
+  },
+  {
+    "scene_tag": "auto_family",
+    "reason": "The plan uses 'explore' mode which is inappropriate for a concrete computational verification task (should be 'coder' or 'workflow' mode per system prompt). It lacks concrete implementation details including specific grid resolutions, basis function definitions, numerical methods, and N_c(w) calculation methodology. The hypothesis about mathematical structure doesn't properly map to natural-science instances with proper context. It repeats historical failures by not addressing dimensional pre-checks, scale normalization, and proper error measurement procedures.",
+    "missing_steps": [
+      "Switch from 'explore' mode to 'coder' or 'workflow' mode for concrete computations",
+      "Define concrete numerical methods with specific grid resolutions, basis function definitions, and sampling parameters",
+      "Establish clear training and holdout error measurement procedures with separate metrics to avoid data leakage",
+      "Define N_c(w) calculation methodology (e.g., SVD rank, effective dimension) with clear thresholds",
+      "Address dimensional pre-check warnings and ensure dimensional consistency/scale normalization (O(1) scale)",
+      "Define concrete L-BFGS-B optimization setup with specific iteration limits and parameters",
+      "Implement comparative optimization strategy to distinguish optimization failure from function space limitations"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement comparative verification of rigid vs. fat function spaces using spectral theory and variational principles. Rigid family: linear trigonometric span $u(x) = \\sum_"
   }
 ]

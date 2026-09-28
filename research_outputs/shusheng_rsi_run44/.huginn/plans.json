@@ -748,6 +748,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_d403a33f",
+      "objective": "[DIM: Mathematical Structure] The rigid family is defined by a linear subspace of functions spanned a fixed basis (e.g., trigonometric or polynomial), while the fat family corresponds to a nonlinear manifold where constraints cannot be satisfied by any finite-width network within the scanned capacity range. | This hypothesis is the most testable and novel because it directly leverages the problem's mathematical framework (linear vs. nonlinear function spaces) to predict N_c(w) behavior: rigid families should exhibit flat/decreasing N_c(w) due to low intrinsic dimensionality, while fat families will show unreachability. It avoids over-reliance on numerical artifacts (optimization/noise) and instead focuses on the core structural distinction. Necessary condition: The rigid family must be explicitly constructed as a linear span (e.g., $ \\text{span}\\{ \\sin(k\\pi x), \\cos(k\\pi x) \\}_{k=1}^m $) with $ m \\ll w $. Hidden assumption: The loss landscape for the rigid family is convex or nearly convex (ensuring L-BFGS-B can find global minima), which may not hold if basis functions are poorly conditioned. Falsifiable test: If the rigid family is replaced with a nonlinear manifold (e.g., $ u(x) = a \\sin(b x) $ with $ a,b $ as learnable parameters), heldout error should remain high even at large $ h $, confirming the necessity of linearity for rigidity.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement comparative verification of rigid vs. fat function spaces using spectral theory and variational principles. Rigid family: linear trigonometric span $u(x) = \\sum_{k=1}^m c_k \\sin(k\\pi x)$ with $m=3$, $h \\in [2,8]$. Fat family: nonlinear manifold $u(x) = a \\sin(b x)$ with learnable $a,b$. Optimization: L-BFGS-B with maxiter=1000, ftol=1e-12, xatol=1e-12. Holdout validation: disjoint $X_v$, normalized outputs ($\\sigma \\lesssim 1$). $N_c(w)$ defined as minimal width achieving heldout error $< 10^{-3}$. Include control experiment: polynomial basis (fat) with L-BFGS-B vs. SGD to distinguish optimization failure from manifold limitations. Anchor prediction: rigid family achieves error $< 10^{-3}$ at $h=3$; fat family remains $> 10^{-2}$ even at $h=64$.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-28T17:20:35.755277+00:00",
+      "confirmed_at": "2026-09-28T17:20:35.756796+00:00",
+      "completed_at": "2026-09-28T17:20:55.436368+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

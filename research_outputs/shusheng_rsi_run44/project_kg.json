@@ -1493,6 +1493,70 @@
       "r_phys": 1.0,
       "iteration": 120,
       "id": "persona_use:reviewer_iter120"
+    },
+    {
+      "label": "[DIM: Numerical/Algorithmic] The unbounded heldout error in the rigid family (h=",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T17:20:08.757091",
+      "last_seen": "2026-09-28T17:20:08.757091",
+      "mentions": 1,
+      "iteration": 125,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The normalized rigid family will achieve heldout error ≤1e-3 at small widths (h=2-8), demonstrating finite N_c. The heldout error will be comparable to train error (~1e-10), confirming the previous hi",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: Numerical/Algorithmic] The unbounded heldout error in the rigid family (h="
+    },
+    {
+      "label": "plan_explore_iter125",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:20:08.757135",
+      "last_seen": "2026-09-28T17:20:08.757135",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter125"
+    },
+    {
+      "label": "pass_iter125",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:20:08.757146",
+      "last_seen": "2026-09-28T17:20:08.757146",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter125"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T17:20:08.757156",
+      "last_seen": "2026-09-28T17:20:08.757156",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: Numerical/Algorithmic] The unbounded heldout error in the rigid family (h=",
+        "Method:plan_explore_iter125",
+        "Fact:pass_iter125"
+      ],
+      "iteration": 125,
+      "id": "he_experiment_pipeline_44a77a81"
+    },
+    {
+      "label": "reviewer_iter125",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T17:20:08.757235",
+      "last_seen": "2026-09-28T17:20:08.757235",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "bf3fe373d2ca299d",
+      "r_phys": 1.0,
+      "iteration": 125,
+      "id": "persona_use:reviewer_iter125"
     }
   ],
   "links": [
@@ -2143,6 +2207,33 @@
       "last_seen": "2026-09-28T17:19:02.816842",
       "mentions": 1,
       "target": "he_experiment_pipeline_645dd517"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: Numerical/Algorithmic] The unbounded heldout error in the rigid family (h=",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:20:08.757156",
+      "last_seen": "2026-09-28T17:20:08.757156",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_44a77a81"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter125",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:20:08.757156",
+      "last_seen": "2026-09-28T17:20:08.757156",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_44a77a81"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter125",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T17:20:08.757156",
+      "last_seen": "2026-09-28T17:20:08.757156",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_44a77a81"
     }
   ]
 }
