@@ -265,5 +265,19 @@
     ],
     "mode": "explore",
     "description": "Re-examine the experimental setup and data generation for the rigid and fat families to identify why the previous prediction had a surprise of 1.0 (worst possible). Specifically, verify that the rigid"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "该计划完全错误地理解了假设的数学结构。假设要求的是基于PDE（偏微分方程）的刚性族与胖族区别（线性输运方程vs双曲方程特征曲线），但该计划却试图用通用ML函数族（多项式）来实现容量扫描，这直接重复了run28和run29的失败模式。计划没有定义任何PDE、特征曲线追踪、谱分析或PDE残差验证，完全偏离了假设要求的数学结构。",
+    "missing_steps": [
+      "定义刚性族的线性输运PDE（如∂_t u + v·∇u = 0，固定速度场v）",
+      "定义胖族的双曲PDE（如Burgers方程，具有时间依赖性特征）",
+      "实现特征曲线追踪以验证刚性族固定特征与胖族时间依赖特征的区别",
+      "测试胖族解的非唯一性（检查雅可比奇异性或相同边界条件的多解）",
+      "添加谱分析或直接PDE残差验证来确认两个族的数学结构",
+      "确保胖族是显式的x依赖函数族，由非线性PDE定义，而非随机高维多项式"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family` function that generates training and held-out constraint points for rigid and fat function families, ensuring proper normalization, shape, and non-o"
   }
 ]
