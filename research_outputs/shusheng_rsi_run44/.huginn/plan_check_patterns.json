@@ -462,5 +462,21 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the family functions for rigid (trigonometric basis, 3D) and fat (Chebyshev polynomial basis, degree 8, x-dependent) families with explicit normalization to O(1)"
+  },
+  {
+    "scene_tag": "auto_family",
+    "reason": "The plan uses 'explore' mode which is inappropriate for concrete computational verification tasks (should be 'coder' or 'workflow'). It lacks critical implementation details: specific grid resolutions, basis function definitions (trigonometric/Chebyshev formulas not given), explicit scaling procedures to prevent overflow, and concrete L-BFGS-B optimization parameters. It does not explicitly specify that the fat family must be x-dependent (not i.i.d. noise), risking the run28 failure mode. The PREDICTION is not verifiable without concrete numerical methods and measurement procedures. The plan also fails to address dimensional pre-checks, scale normalization (O(1) scale), and proper error measurement procedures as required by historical failure patterns.",
+    "missing_steps": [
+      "Switch from 'explore' mode to 'coder' or 'workflow' mode for concrete computations",
+      "Define concrete numerical methods with specific grid resolutions (N=500) and basis function definitions (formulas for trigonometric/Chebyshev bases)",
+      "Explicitly define fat family as x-dependent high-dimensional functions (not i.i.d. noise) to avoid run28 failure",
+      "Specify scaling for fat family basis to prevent ~1e9 scale issues (run29 failure)",
+      "Establish clear training and held-out error measurement procedures with separate metrics to avoid data leakage",
+      "Define N_c(w) calculation methodology (e.g., SVD rank with tolerance 1e-6) with clear thresholds",
+      "Define concrete L-BFGS-B optimization setup with specific iteration limits and parameters",
+      "Implement comparative optimization strategy to distinguish optimization failure from function space limitations"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the rigid and fat family functions according to the corrected experimental protocol. The rigid family will use a low-dimensional solution space (3 points define "
   }
 ]
