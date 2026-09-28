@@ -1082,8 +1082,8 @@
       "source": "autoloop",
       "confidence": 0.99,
       "created_at": "2026-09-28T13:44:27.806945",
-      "last_seen": "2026-09-28T13:47:37.095990",
-      "mentions": 4,
+      "last_seen": "2026-09-28T13:48:38.044790",
+      "mentions": 5,
       "iteration": 90,
       "r_phys": 1.0,
       "surprise": 1.0,
@@ -1286,6 +1286,55 @@
       "r_phys": 1.0,
       "iteration": 105,
       "id": "persona_use:reviewer_iter105"
+    },
+    {
+      "label": "plan_explore_iter110",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:48:38.044818",
+      "last_seen": "2026-09-28T13:48:38.044818",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter110"
+    },
+    {
+      "label": "pass_iter110",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:48:38.044839",
+      "last_seen": "2026-09-28T13:48:38.044839",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter110"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-28T13:48:38.044849",
+      "last_seen": "2026-09-28T13:48:38.044849",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid constraint family (polynomial degree ≤ 2) defines a f",
+        "Method:plan_explore_iter110",
+        "Fact:pass_iter110"
+      ],
+      "iteration": 110,
+      "id": "he_experiment_pipeline_64132cb0"
+    },
+    {
+      "label": "reviewer_iter110",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-28T13:48:38.044934",
+      "last_seen": "2026-09-28T13:48:38.044934",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "da406bd89928c5e4",
+      "r_phys": 1.0,
+      "iteration": 110,
+      "id": "persona_use:reviewer_iter110"
     }
   ],
   "links": [
@@ -1786,6 +1835,15 @@
     },
     {
       "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid constraint family (polynomial degree ≤ 2) defines a f",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:48:38.044849",
+      "last_seen": "2026-09-28T13:48:38.044849",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_64132cb0"
+    },
+    {
+      "relation": "member_of",
       "source": "Method:plan_explore_iter90",
       "confidence": 0.5,
       "created_at": "2026-09-28T13:44:27.807012",
@@ -1855,6 +1913,24 @@
       "last_seen": "2026-09-28T13:47:37.096048",
       "mentions": 1,
       "target": "he_experiment_pipeline_1debbd67"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter110",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:48:38.044849",
+      "last_seen": "2026-09-28T13:48:38.044849",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_64132cb0"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter110",
+      "confidence": 0.5,
+      "created_at": "2026-09-28T13:48:38.044849",
+      "last_seen": "2026-09-28T13:48:38.044849",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_64132cb0"
     }
   ]
 }
