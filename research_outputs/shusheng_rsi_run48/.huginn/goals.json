@@ -9,12 +9,15 @@
         "[Feynman known_unknown] I don't fully understand the mathematical derivation behind the variance decay rate $ O(w^{-1}) $ for the rigid family. While the result aligns with intuition, the precise steps leading to this conclusion are not entirely clear to me.",
         "[Feynman unknown_unknown] I did not initially consider the impact of specific hyperparameter choices in the rigid and fat families on their error distributions. This aspect could provide deeper insights into why the observed behaviors occur.",
         "[Feynman known_unknown] I don’t fully understand how the VC dimension bound translates concretely into a minimal width requirement for zero constraint violation — especially in finite-sample, real-world settings where generalization matters more than pure expressivity.",
-        "[Feynman unknown_unknown] I didn’t consider that the lack of test execution might stem from a silent failure in the validation framework (e.g., unregistered test cases, skipped benchmarks due to environment issues), which could mask whether the hypothesis is even testable under current conditions."
+        "[Feynman unknown_unknown] I didn’t consider that the lack of test execution might stem from a silent failure in the validation framework (e.g., unregistered test cases, skipped benchmarks due to environment issues), which could mask whether the hypothesis is even testable under current conditions.",
+        "[Feynman known_unknown] I don’t understand what “zero-violation probability” specifically measures in this context — is it a statistical likelihood over configurations? A quantum fidelity metric? Without knowing the definition, I can’t interpret the trend.",
+        "[Feynman unknown_unknown] I never considered that the validation system might reject outputs purely for lack of narrative reasoning — even if the numbers were correct — until now. I assumed correctness of values was sufficient; I didn’t anticipate that explanatory coherence is part of the pass/fail criteria.",
+        "[Feynman known_unknown] The term “effective degrees of freedom” is used in the hypothesis, but I’m unsure how it’s quantified or why it differs between rigid and fat families in this model. Is it tied to dimensionality of parameter space? Number of free variables in wavefunctions?"
       ],
-      "iteration": 18,
+      "iteration": 23,
       "status": "active",
       "created_at": "2026-09-29T08:22:00.817058+00:00",
-      "updated_at": "2026-09-29T08:27:17.702174+00:00",
+      "updated_at": "2026-09-29T08:28:21.809484+00:00",
       "session_id": "",
       "metadata": {},
       "unknowns": [
@@ -225,9 +228,73 @@
           "discovered_at": "2026-09-29T08:26:54.391418+00:00",
           "resolved_at": null,
           "iteration": 15
+        },
+        {
+          "id": "unk_5fecb880",
+          "text": "The binary definition of rigidity (\"low N_c\" vs \"N_c unreachable\") may oversimplify continuous transitions in solution space; small changes in w or tolerance could cause abrupt jumps in observed N_c, making the \"rigid/fat\" classification sensitive to arbitrary thresholds.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-29T08:27:50.873260+00:00",
+          "resolved_at": null,
+          "iteration": 20
+        },
+        {
+          "id": "unk_e06ce491",
+          "text": "Optimization landscape for small networks may have many local minima; N_c(w) measured via gradient-based training might not reflect the true minimal width achieving zero error due to poor convergence or initialization sensitivity.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-29T08:27:50.874677+00:00",
+          "resolved_at": null,
+          "iteration": 20
+        },
+        {
+          "id": "unk_3d718bd8",
+          "text": "No ground-truth analytical constraints are specified — if synthetic constraints are used, their structure (e.g., smoothness, symmetry) may artificially induce or mask rigidity, limiting generalizability.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-29T08:27:50.875487+00:00",
+          "resolved_at": null,
+          "iteration": 20
+        },
+        {
+          "id": "unk_b4bd0b4f",
+          "text": "For very small w (e.g., w=1), even width-1 networks might trivially satisfy zero error, creating a false impression of rigidity; similarly, overparameterized regimes may hide underlying non-rigidity.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-29T08:27:50.876243+00:00",
+          "resolved_at": null,
+          "iteration": 20
+        },
+        {
+          "id": "unk_c2454b3e",
+          "text": "The assumption that hidden layer width alone captures \"network capacity\" ignores depth, activation functions, and weight initialization — these can significantly affect representational power independently of width.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-29T08:27:50.876993+00:00",
+          "resolved_at": null,
+          "iteration": 20
+        },
+        {
+          "id": "unk_af898102",
+          "text": "I don’t understand what “zero-violation probability” specifically measures in this context — is it a statistical likelihood over configurations? A quantum fidelity metric? Without knowing the definition, I can’t interpret the trend.",
+          "type": "known_unknown",
+          "discovered_at": "2026-09-29T08:28:02.345489+00:00",
+          "resolved_at": null,
+          "iteration": 20
+        },
+        {
+          "id": "unk_1c4b93f9",
+          "text": "I never considered that the validation system might reject outputs purely for lack of narrative reasoning — even if the numbers were correct — until now. I assumed correctness of values was sufficient; I didn’t anticipate that explanatory coherence is part of the pass/fail criteria.",
+          "type": "unknown_unknown",
+          "discovered_at": "2026-09-29T08:28:02.347122+00:00",
+          "resolved_at": null,
+          "iteration": 20
+        },
+        {
+          "id": "unk_0f942260",
+          "text": "The term “effective degrees of freedom” is used in the hypothesis, but I’m unsure how it’s quantified or why it differs between rigid and fat families in this model. Is it tied to dimensionality of parameter space? Number of free variables in wavefunctions?",
+          "type": "known_unknown",
+          "discovered_at": "2026-09-29T08:28:02.348704+00:00",
+          "resolved_at": null,
+          "iteration": 20
         }
       ],
-      "unknowns_discovered": 26,
+      "unknowns_discovered": 34,
       "unknowns_resolved": 0,
       "objective": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【唯一硬性口径（不可更改，其余全由你决定）】\n- 零违规 = 留出约束点上的最大绝对误差 ≤ 1e-3。\n- 刚性 = 扫描范围内存在较小的有限 N_c（且 N_c 不随 w 增长）；胖 = 扫描上限内任何宽度都达不到零违规（N_c 不可达）。判别是二值的。\n- 所有报告数值必须是有限数（禁止 inf/nan/None）。\n- 研究对象只能是小型前馈网络本身。严禁把本命题替换或“换名归约”为材料/化学/玻璃/合金/离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【实验的族、样本、扫描、脚本如何设计，以及如何证明“刚性可达”，由你自己决定并给出理由。】\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
       "success_criteria": [],

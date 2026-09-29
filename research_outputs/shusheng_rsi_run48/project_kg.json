@@ -194,6 +194,70 @@
       "r_phys": 1.0,
       "iteration": 15,
       "id": "persona_use:reviewer_iter15"
+    },
+    {
+      "label": "[DIM: measure] The zero-violation probability for the rigid family converges to ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T08:27:57.502221",
+      "last_seen": "2026-09-29T08:27:57.502221",
+      "mentions": 1,
+      "iteration": 20,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family, N_c(w) will remain bounded (O(1)) as w increases, while for the fat family, N_c(w) will grow linearly or superlinearly with w, reflecting the difference in effective degrees of f",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: measure] The zero-violation probability for the rigid family converges to"
+    },
+    {
+      "label": "plan_explore_iter20",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:27:57.502257",
+      "last_seen": "2026-09-29T08:27:57.502257",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter20"
+    },
+    {
+      "label": "pass_iter20",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:27:57.502266",
+      "last_seen": "2026-09-29T08:27:57.502266",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter20"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T08:27:57.502274",
+      "last_seen": "2026-09-29T08:27:57.502274",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: measure] The zero-violation probability for the rigid family converges to",
+        "Method:plan_explore_iter20",
+        "Fact:pass_iter20"
+      ],
+      "iteration": 20,
+      "id": "he_experiment_pipeline_c1c60454"
+    },
+    {
+      "label": "reviewer_iter20",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T08:27:57.502348",
+      "last_seen": "2026-09-29T08:27:57.502348",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "d3e9635ed6a01a92",
+      "r_phys": 1.0,
+      "iteration": 20,
+      "id": "persona_use:reviewer_iter20"
     }
   ],
   "links": [
@@ -277,6 +341,33 @@
       "last_seen": "2026-09-29T08:26:49.787067",
       "mentions": 1,
       "target": "he_experiment_pipeline_597a4a47"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: measure] The zero-violation probability for the rigid family converges to",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:27:57.502274",
+      "last_seen": "2026-09-29T08:27:57.502274",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c1c60454"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:27:57.502274",
+      "last_seen": "2026-09-29T08:27:57.502274",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c1c60454"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:27:57.502274",
+      "last_seen": "2026-09-29T08:27:57.502274",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c1c60454"
     }
   ]
 }

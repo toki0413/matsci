@@ -116,6 +116,38 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_32faa53e",
+      "objective": "[DIM: computation]**",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Design and run a numerical experiment to test the hypothesis that small two-layer tanh networks exhibit \"rigid\" solution spaces for analytic constraints. Specifically: (1) Define a family of analytic constraints (e.g., polynomial identities or differential equations) that constrain function values at w points; (2) Sweep hidden layer width N ∈ [2, 16] and constraint count w ∈ {5, 10, 20, 50}; (3) For each (w, N) pair, train a two-layer tanh network to minimize loss on w training points, then evaluate max absolute error on a held-out set of validation points; (4) Define N_c(w) as the minimal N achieving max error ≤ 1e-3 on validation points; (5) Determine rigidity: if N_c(w) is small and finite across w, the solution space is rigid; if N_c(w) exceeds scan limit or grows with w, it is \"fat\". Use symbolic_math_tool to verify constraint consistency and numerical_tool to run training loops with convergence monitoring.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "src/rigidity_scan.py",
+            "src/constraint_defs.py",
+            "src/evaluate_rigidity.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T08:28:21.805099+00:00",
+      "confirmed_at": "2026-09-29T08:28:21.806645+00:00",
+      "completed_at": "2026-09-29T08:30:21.730283+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
