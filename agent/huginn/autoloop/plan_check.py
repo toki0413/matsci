@@ -25,6 +25,7 @@ _apply_block_patches / _trim_to_budget 等均转发到引擎.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -295,6 +296,16 @@ If a step is missing, add it to DESCRIPTION.
 When the hypothesis involves a PDE / variational principle / curved
 geometry, consider the symbolic_math_tool actions listed in the math
 depth block above — but numerical solvers are equally valid.
+
+Alignment gate (plan_check will reject the plan if this fails):
+- Name the exact quantity / structure / assertion the hypothesis makes, and point to
+  the step in DESCRIPTION that measures or computes THAT thing.
+- A numeric scan (capacity / error / scaling) only tests a claim that is itself numeric.
+  If the hypothesis asserts something else (topological / algebraic / existence /
+  uniqueness), either pick a MODE + workflow that computes that object symbolically, or
+  restate the hypothesis to a numerically testable form that the plan actually implements.
+- Never reuse a previous round's DESCRIPTION when the hypothesis has changed. A plan that
+  ignores the current hypothesis is invalid even if the code runs and returns numbers.
 
 Respond in this exact format:
 MODE: <coder|workflow|explore|skill|visual_inspect>
@@ -611,24 +622,19 @@ SLOTS: <OPTIONAL, only for method/numerical objectives where inputs are known BE
                 )
             else:
                 # 失败: 记到 patterns (跨 run 持久化, 喂下次 prompt)
-                self._record_plan_check_failure(plan, check, scene)
-                # confidence 分级: 低置信失败 (<0.3) 跳过 refine, LLM 都没把握
-                # 判断, refine 可能也是瞎改, 直接 warning + 触发澄清更靠谱.
+                self._record_plan_check_failure(plan, check, scene, hypothesis)
                 confidence = float(check.get("confidence", 0.8))
+                # is_valid=False 是明确的「plan 达不成 hypothesis」信号, 必须重建.
+                # 原实现 conf<0.3 直接 `return plan` → 把不匹配的 plan 原样放行,
+                # misalign 永不纠正 (run45: 45/45 plan_check 全失败, 零次 refine;
+                # 每轮都在执行同一个 capacity scan, 而假设已漂到拓扑命题).
+                # 现改为: 低置信只降级记 warning (checker 自己没把握), 仍然走 refine,
+                # 直到 attempt 用尽才放行.
                 if confidence < 0.3:
-                    reason = check.get("reason", "unknown")
                     self._plan_check_warnings.append(
-                        f"[{scene}] {reason} (low_conf={confidence:.2f})"
+                        f"[{scene}] {check.get('reason', 'unknown')} "
+                        f"(low_conf={confidence:.2f})"
                     )
-                    logger.warning(
-                        "plan_check failed low-conf (tier=%s, scene=%s, conf=%.2f): %s",
-                        tier,
-                        scene,
-                        confidence,
-                        reason,
-                    )
-                    await self._maybe_trigger_plan_check_clarify(scene, reason, plan)
-                    return plan
                 if attempt >= max_refines:
                     reason = check.get("reason", "unknown")
                     self._plan_check_warnings.append(f"[{scene}] {reason}")
@@ -759,6 +765,17 @@ SLOTS: <OPTIONAL, only for method/numerical objectives where inputs are known BE
         if success_rate <= 0.2:
             return (0.6, 0.35)
         return (0.7, 0.25)
+
+    @staticmethod
+    def _hyp_key(hypothesis: str) -> str:
+        """假设指纹: 归一化后取 md5 前 12 位, 用于把"历史失败"限定在同一假设.
+
+        scene_tag 太粗 (capacity scan / 拓扑 / 上同调 plan 全落 "other"), 单靠
+        scene 过滤会让 checker 把上一个假设的失败判定当成当前 plan 的"已知坑",
+        反复回灌同一结论 (run45 的自我污染死循环). 按假设指纹隔离即断链.
+        """
+        norm = re.sub(r"\s+", " ", (hypothesis or "").strip().lower())
+        return hashlib.md5(norm.encode("utf-8")).hexdigest()[:12]
 
     def _plan_check_scene_tag(self, plan: dict[str, Any]) -> str:
         """从 plan 抽场景标签, 给失败模式记忆和分桶自适应用.
@@ -1056,13 +1073,29 @@ SLOTS: <OPTIONAL, only for method/numerical objectives where inputs are known BE
         failure_modes = context.get("failure_modes", "")
         if not failure_modes and self._speculator_hint:
             failure_modes = self._speculator_hint[-500:]
-        # 同场景历史失败模式 (跨 run 积累, 最近 3 条) — 让 LLM 重点避开
+        # 同假设历史失败模式 (最近 3 条, reason 去重) — 让 LLM 重点避开.
+        # 旧版只按 scene_tag 抽, 而 scene="other" 是万能桶 (capacity scan /
+        # 拓扑 / 上同调 plan 全落这里), 于是 checker 把自己上一轮的判定当"已知
+        # 坑"原样回灌, 锁死结论 (run45 46/46 全失败的自我污染). 现按假设指纹
+        # 隔离 + reason 去重: 只喂真正同一假设下、且互不重复的失败信息.
         scene = self._plan_check_scene_tag(plan)
-        similar = [
+        hyp_key = self._hyp_key(hypothesis)
+        same_hyp = [
             p
             for p in getattr(self, "_plan_check_patterns", [])
-            if p.get("scene_tag") == scene
-        ][-3:]
+            if p.get("scene_tag") == scene and p.get("hyp_key") == hyp_key
+        ]
+        seen_reasons: set[str] = set()
+        similar: list[dict[str, Any]] = []
+        for p in reversed(same_hyp):
+            r = str(p.get("reason") or "")[:120]
+            if r in seen_reasons:
+                continue
+            seen_reasons.add(r)
+            similar.append(p)
+            if len(similar) >= 3:
+                break
+        similar.reverse()
         if similar:
             similar_text = "\n".join(
                 f"- {p['reason']} (缺: {', '.join(p.get('missing_steps', [])) or 'N/A'})"
@@ -1114,6 +1147,7 @@ PREDICTION: {plan.get('expected_prediction', 'N/A')}
         plan: dict[str, Any],
         check: dict[str, Any],
         scene: str,
+        hypothesis: str = "",
     ) -> None:
         """失败模式记到 patterns, 跨 run 持久化给下次注入 prompt.
 
@@ -1124,6 +1158,7 @@ PREDICTION: {plan.get('expected_prediction', 'N/A')}
         self._plan_check_patterns.append(
             {
                 "scene_tag": scene,
+                "hyp_key": self._hyp_key(hypothesis),
                 "reason": check.get("reason", "unknown"),
                 "missing_steps": check.get("missing_steps", []),
                 "mode": plan.get("mode", ""),
