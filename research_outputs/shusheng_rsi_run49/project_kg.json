@@ -258,6 +258,70 @@
       "r_phys": 1.0,
       "iteration": 20,
       "id": "persona_use:reviewer_iter20"
+    },
+    {
+      "label": "[DIM: geometry]** The solution space of the constraint system admits a low-dimen",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T08:53:10.185583",
+      "last_seen": "2026-09-29T08:53:10.185583",
+      "mentions": 1,
+      "iteration": 25,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The minimal network width $N_c(w)$ will exhibit logarithmic scaling with constraint sampling density $w$, i.e., $N_c(w) \\sim O(\\log w)$, reflecting the manifold's intrinsic dimension (2) rather than a",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: geometry]** The solution space of the constraint system admits a low-dimen"
+    },
+    {
+      "label": "plan_explore_iter25",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:53:10.185620",
+      "last_seen": "2026-09-29T08:53:10.185620",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter25"
+    },
+    {
+      "label": "pass_iter25",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:53:10.185631",
+      "last_seen": "2026-09-29T08:53:10.185631",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter25"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T08:53:10.185640",
+      "last_seen": "2026-09-29T08:53:10.185640",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: geometry]** The solution space of the constraint system admits a low-dimen",
+        "Method:plan_explore_iter25",
+        "Fact:pass_iter25"
+      ],
+      "iteration": 25,
+      "id": "he_experiment_pipeline_91a717c5"
+    },
+    {
+      "label": "reviewer_iter25",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T08:53:10.185714",
+      "last_seen": "2026-09-29T08:53:10.185714",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "0557d49e080c2a01",
+      "r_phys": 1.0,
+      "iteration": 25,
+      "id": "persona_use:reviewer_iter25"
     }
   ],
   "links": [
@@ -368,6 +432,33 @@
       "last_seen": "2026-09-29T08:51:59.906736",
       "mentions": 1,
       "target": "he_experiment_pipeline_b3d9c935"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: geometry]** The solution space of the constraint system admits a low-dimen",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:53:10.185640",
+      "last_seen": "2026-09-29T08:53:10.185640",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_91a717c5"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:53:10.185640",
+      "last_seen": "2026-09-29T08:53:10.185640",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_91a717c5"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:53:10.185640",
+      "last_seen": "2026-09-29T08:53:10.185640",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_91a717c5"
     }
   ]
 }
