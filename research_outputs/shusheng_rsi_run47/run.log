@@ -436,3 +436,11 @@ metacog: 假设可能为换名归约 (trap=, target=刚性族与胖族的定义�
 [exec-route] mode='explore' desc[:80]='[auto-routed: surprise=1.00] Implement the `family` function for the rigid and f' obj_len=2462 is_exp_desc=True is_exp_obj=True is_det_desc=True
 [code-lab-author] raw_len=866 extracted_len=851 prompt_len=5379
 [code-lab-run] res_none=False success=True nobj=36 reason=''
+[validate] mode='code_lab' success=True nobj=36 cf=False lab=True
+repeat execution detected (streak=2): inject pivot hint
+metacog: 假设可能为换名归约 (trap=, target=刚性族与胖族的定义（基于 N_c(w) 的可达性）): [DIM: measure]**
+renamed-reduction 5× consecutive: escalate — block dominant family + force redirect
+plan_check failed (tier=light, scene=auto_family, max_refines=1): The plan is fundamentally invalid because the hypothesis '[DIM: measure]' is completely undefined and lacks any mathematical object, target dimension type (fractal, embedding, Hausdorff), or data specification. Without a concrete target, the proposed 'box-counting' or 'correlation integral' methods cannot be meaningfully applied. The plan attempts to execute an exploration without first defining the core variables required for dimension estimation.
+[exec-route] mode='explore' desc[:80]='[auto-routed: surprise=1.00] Implement a dimension measurement workflow for the ' obj_len=2462 is_exp_desc=True is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=940 extracted_len=925 prompt_len=5379
+[code-lab-run] res_none=False success=True nobj=36 reason=''

@@ -333,5 +333,31 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement symbolic analysis to define the rigid family as a linear subspace with dimension d_rigid = w-1, prove that w constraints uniquely determine the function in this "
+  },
+  {
+    "scene_tag": "auto_family",
+    "hyp_key": "e3d5fe7a6b80",
+    "reason": "The plan fails to address the hypothesis which is '[DIM: measure]' — a dimension measurement task. The plan describes implementing function families for capacity scanning (likely for machine learning capacity measurement), which does not directly measure a dimension as requested. The plan is mismatched with the hypothesis target.",
+    "missing_steps": [
+      "Clarify what dimension needs to be measured (e.g., Hausdorff dimension, fractal dimension, embedding dimension, etc.)",
+      "Define the mathematical object or data set for which dimension should be measured",
+      "Select appropriate dimension estimation method (e.g., box-counting, correlation dimension, etc.)",
+      "Implement proper dimension measurement procedure with validation against known benchmarks"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function for two function classes: (1) rigid family — a low-dimensional analytic function (e.g., linear combination of a few basis functions) uniquely"
+  },
+  {
+    "scene_tag": "auto_family",
+    "hyp_key": "e3d5fe7a6b80",
+    "reason": "The plan is fundamentally invalid because the hypothesis '[DIM: measure]' is completely undefined and lacks any mathematical object, target dimension type (fractal, embedding, Hausdorff), or data specification. Without a concrete target, the proposed 'box-counting' or 'correlation integral' methods cannot be meaningfully applied. The plan attempts to execute an exploration without first defining the core variables required for dimension estimation.",
+    "missing_steps": [
+      "Define the specific mathematical object or dataset for dimension measurement (e.g., specific manifold, attractor, or data structure)",
+      "Specify the type of dimension to be measured (fractal, embedding, Hausdorff, correlation, etc.)",
+      "Clarify the hypothesis context and objectives that require dimension measurement",
+      "Establish validation benchmarks with known ground-truth dimensions relevant to the defined object"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement a dimension measurement workflow for the hypothesis '[DIM: measure]'. First, clarify the target dimension (e.g., fractal, embedding, or Hausdorff) and the mathem"
   }
 ]
