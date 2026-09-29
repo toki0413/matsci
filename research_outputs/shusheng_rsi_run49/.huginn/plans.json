@@ -121,6 +121,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_61a09df0",
+      "objective": "[DIM: geometry]** The solution space of the constraint system admits a low-dimensional manifold structure such that the minimal network width $N_c(w)$ required for zero violation scales logarithmically with the number of constraints $w$, reflecting the intrinsic dimensionality of the manifold rather than the ambient dimension.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] This workflow tests the logarithmic scaling hypothesis by reformulating the constraint system to respect the low-dimensional manifold geometry. Steps: (1) Generate a 2D torus manifold embedded in 3D ambient space using intrinsic coordinates $(\\theta, \\phi) \\in [0, 2\\pi]^2$; (2) Define the constraint system as the two intrinsic embedding equations $f_1(x) = 0, f_2(x) = 0$ that define the torus surface (fixed geometry, independent of $w$); (3) Sample $w$ distinct points uniformly on the manifold to form a training set (no interpolation required); (4) Train MLPs to minimize the residual norm $\\sum_{j=1}^2 \\|f_j(x_{pred})\\|^2$; (5) Measure zero violation as the max projection error $\\max_{x \\in \\text{test}} \\text{dist}(x, \\text{Manifold}) \\le 10^{-3}$; (6) Determine $N_c(w)$ as the minimal width achieving this threshold on held-out test points and fit the scaling law. This isolates the intrinsic dimensionality (2) from ambient dimension (3) and sampling density ($w$).",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T08:52:33.484123+00:00",
+      "confirmed_at": "2026-09-29T08:52:33.485337+00:00",
+      "completed_at": "2026-09-29T08:52:54.873993+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

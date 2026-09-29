@@ -194,6 +194,70 @@
       "r_phys": 1.0,
       "iteration": 15,
       "id": "persona_use:reviewer_iter15"
+    },
+    {
+      "label": "[DIM: structure] The solution space of the constraint system admits a low-dimens",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T08:51:59.906683",
+      "last_seen": "2026-09-29T08:51:59.906683",
+      "mentions": 1,
+      "iteration": 20,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For low-dimensional (rigid) constraints, $N_c(w)$ will plateau or grow sublinearly (e.g., $N_c \\leq 50$ for $w$ up to 1000), with validation max error $\\leq 1e^{-3}$. For high-dimensional (fat) constr",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The solution space of the constraint system admits a low-dimens"
+    },
+    {
+      "label": "plan_explore_iter20",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:51:59.906719",
+      "last_seen": "2026-09-29T08:51:59.906719",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter20"
+    },
+    {
+      "label": "pass_iter20",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:51:59.906727",
+      "last_seen": "2026-09-29T08:51:59.906727",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter20"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T08:51:59.906736",
+      "last_seen": "2026-09-29T08:51:59.906736",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The solution space of the constraint system admits a low-dimens",
+        "Method:plan_explore_iter20",
+        "Fact:pass_iter20"
+      ],
+      "iteration": 20,
+      "id": "he_experiment_pipeline_b3d9c935"
+    },
+    {
+      "label": "reviewer_iter20",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T08:51:59.906805",
+      "last_seen": "2026-09-29T08:51:59.906805",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "9f64ffd049d637e4",
+      "r_phys": 1.0,
+      "iteration": 20,
+      "id": "persona_use:reviewer_iter20"
     }
   ],
   "links": [
@@ -277,6 +341,33 @@
       "last_seen": "2026-09-29T08:50:54.257144",
       "mentions": 1,
       "target": "he_experiment_pipeline_a9bbd42d"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The solution space of the constraint system admits a low-dimens",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:51:59.906736",
+      "last_seen": "2026-09-29T08:51:59.906736",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b3d9c935"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:51:59.906736",
+      "last_seen": "2026-09-29T08:51:59.906736",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b3d9c935"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:51:59.906736",
+      "last_seen": "2026-09-29T08:51:59.906736",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b3d9c935"
     }
   ]
 }

@@ -26,5 +26,17 @@
     ],
     "mode": "coder",
     "description": "Implement a numerical experiment in Python to test the hypothesis that $N_c(w)$ (minimum width for zero violation) is non-decreasing in $w$ for rigid families and diverges for fat families. Define rig"
+  },
+  {
+    "scene_tag": "workflow",
+    "hyp_key": "264414453472",
+    "reason": "The plan's critical flaw lies in the definition of the constraint system. Defining constraints as $f_i(x) = 0$ (distance functions) for each sample point essentially requires the network to interpolate the entire ambient space rather than learn the low-dimensional manifold geometry. This formulation creates a high-dimensional interpolation problem (ambient dimension 3) rather than a manifold learning problem, making logarithmic scaling impossible regardless of the manifold's intrinsic dimension. This is a structural hypothesis testing error, not a parameter choice issue.",
+    "missing_steps": [
+      "Reformulate the constraint system to respect the manifold structure: define constraints as $f_j(x) = 0$ where $f_j$ are intrinsic manifold equations (e.g., embedding functions defining the torus) rather than point-wise distance constraints.",
+      "Define zero violation relative to manifold projection error: error should measure distance from predicted $x$ to the manifold, not distance to specific constraint points.",
+      "Ensure the constraint system's ambient complexity does not scale with $w$; the number of independent constraints should be fixed (intrinsic dimension) while $w$ represents sampling density."
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] This workflow tests the hypothesis that the minimal network width $N_c(w)$ scales logarithmically with constraint count $w$ by constructing a synthetic constraint system w"
   }
 ]
