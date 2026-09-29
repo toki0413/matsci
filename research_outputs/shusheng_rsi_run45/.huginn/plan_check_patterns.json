@@ -716,5 +716,19 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the `family(kind, w, seed)` function to generate training and held-out constraint points for the rigid (linear) and fat (high-degree polynomial) families. Ensure"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The hypothesis requires verifying sheaf cohomology properties (H¹ ≠ 0) of locally linear functions — an algebraic topology problem requiring symbolic computation of Čech complexes or derived category methods. The proposed plan uses 'explore' mode with a capacity scan measuring N_c(w) and held-out error, which addresses neither topological structure nor sheaf cohomology requirements. This repeats the exact historical failures documented in the scene history where MODE=explore was inappropriate for a structural verification task. The plan lacks critical mathematical setup: defining the sheaf of locally linear functions, base manifold, transition functions, and cohomology computation framework.",
+    "missing_steps": [
+      "Switch MODE from explore to coder/workflow for concrete implementation",
+      "Define the mathematical structure: specify the base manifold, the sheaf of locally linear functions, and the cohomology computation framework (e.g., Čech cohomology or derived functor approach)",
+      "Clarify the relationship between the rigid linear family and the sheaf structure — how does the family induce or relate to the sheaf?",
+      "Implement appropriate sheaf cohomology tools (e.g., symbolic computation of Čech complexes, spectral sequences, or derived category methods)",
+      "Establish the contrast between rigid and fat families at the sheaf level, not just at the level of point cloud topology",
+      "Include mathematical validation steps: check exactness of sequences, compute explicit cohomology groups, verify non-triviality via obstruction theory"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family` function to generate training and held-out constraint sets for the rigid family (linear function) and fat family (20th-degree polynomial), ensuring "
   }
 ]

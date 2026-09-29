@@ -1239,6 +1239,36 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_2d8f43de",
+      "objective": "[DIM: geometry] The solution space of the rigid linear family forms a **2-dimensional affine manifold** in the parameter space, and the generalization error is governed by the distance from the learned weights to this manifold. Networks with insufficient width (h < N_c) cannot \"reach\" the manifold, leading to large held-out errors, while networks with sufficient width can project onto it, achieving zero violation.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the `family` function to generate training and held-out constraint sets for the rigid family (linear function) and fat family (20th-degree polynomial), ensuring outputs are properly shaped (N,1), non-overlapping, and normalized to O(1) scale. This enables the capacity_scan tool to evaluate N_c and verify the hypothesis about the 2-dimensional affine manifold solution space and generalization error behavior.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "family.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T04:19:38.490286+00:00",
+      "confirmed_at": "2026-09-29T04:19:38.492056+00:00",
+      "completed_at": "2026-09-29T04:19:59.601518+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
