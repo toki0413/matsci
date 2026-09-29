@@ -322,5 +322,22 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the family function for rigid (linear) and fat (high-degree polynomial) function spaces, ensuring y/yv are (N,1) shaped, non-overlapping held-out sets, normalize"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan fundamentally misaligns with the hypothesis. The hypothesis concerns topological/structural properties (H1 groups, affine manifold geometry, spectral gap analysis of Hessian) in function space, but the plan only implements a capacity scan measuring N_c(w) and held-out error. This repeats the exact historical failure pattern where TDA was omitted despite being explicitly required in all three scene=other failure entries. The plan focuses on error metrics rather than computing homology groups, analyzing weight manifold geometry, or verifying the affine manifold structure as required by the hypothesis.",
+    "missing_steps": [
+      "Define weight manifold geometry and parameterization for both rigid and fat families in function space (not just parameter space)",
+      "Implement topological data analysis (persistent homology) to compute H1 groups of the solution space manifold",
+      "Specify filtration method (e.g., Vietoris-Rips) for homology computation on function space geometry",
+      "Verify that rigid family forms a 2D affine manifold through geometric analysis in function space",
+      "Confirm solution space invariance under translation and scaling algebraically",
+      "Compute Hessian at initialization and analyze its spectral gap in function space",
+      "Add continuous interpolation path testing between training and held-out solutions in function space",
+      "Implement gradient flow dynamics for both families and analyze convergence properties",
+      "Analyze infinite width limit behavior of the rigid linear family and verify first-order linear transport equation"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function for the linear rigid family and polynomial fat family, ensuring y/yv are normalized to O(1) and shaped (N,1). This will provide the anchor po"
   }
 ]
