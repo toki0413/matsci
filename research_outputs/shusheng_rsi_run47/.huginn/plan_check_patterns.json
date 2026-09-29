@@ -305,5 +305,33 @@
     ],
     "mode": "explore",
     "description": "Implement rigid (low-dim polynomial, x-dependent) and fat (high-dim random polynomial, x-dependent) function families with O(1) normalization. Train both using gradient descent (lr=1e-3, 1000 steps) w"
+  },
+  {
+    "scene_tag": "auto_family",
+    "hyp_key": "1e36d8a07de3",
+    "reason": "The plan specifies an 'explore' mode to implement function families, but the hypothesis is a theoretical mathematical claim about vector space dimension and network representation capacity (N_c(w) ≤ O(1)). This requires a 'coder' or 'verify' mode to perform symbolic analysis or formal proof, not just empirical implementation. The plan lacks the necessary theoretical framework to rigorously establish the dimension d_rigid = w-1 or prove the N_c bound. Additionally, the plan does not specify how N_c(w) will be measured or computed, which is critical for testing the hypothesis.",
+    "missing_steps": [
+      "Define the mathematical structure of the rigid family explicitly (e.g., define the basis functions and constraint matrix)",
+      "Derive the dimension d_rigid = w-1 analytically using linear algebra or function space theory",
+      "Formulate the two-layer network architecture and prove its capacity to represent the exact solution",
+      "Define N_c(w) precisely and establish the bound N_c(w) ≤ O(1) theoretically before numerical validation",
+      "Specify the constraint mechanism (how w constraints uniquely determine the function)"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function for the rigid family (low-dimensional linear subspace) and fat family (high-dimensional unconstrained function space) with proper normalizati"
+  },
+  {
+    "scene_tag": "auto_family",
+    "hyp_key": "1e36d8a07de3",
+    "reason": "The plan uses 'explore' mode for a theoretical mathematical claim, but the hypothesis requires rigorous symbolic analysis or formal proof (matching 'coder' or 'verify' mode). The DESCRIPTION lacks explicit definition of the rigid family's basis functions, constraint matrix, and how N_c(w) is measured. It also fails to specify the two-layer network architecture and proof of capacity. This mirrors the historical failure where the plan lacked the necessary theoretical framework to rigorously establish dimension or prove the bound.",
+    "missing_steps": [
+      "Define the rigid family explicitly (basis functions, constraint matrix)",
+      "Derive d_rigid = w-1 analytically using linear algebra/function space theory",
+      "Formulate two-layer network architecture and prove representation capacity",
+      "Define N_c(w) precisely and establish theoretical bound before numerical validation",
+      "Specify constraint mechanism (how w constraints uniquely determine function)"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement symbolic analysis to define the rigid family as a linear subspace with dimension d_rigid = w-1, prove that w constraints uniquely determine the function in this "
   }
 ]

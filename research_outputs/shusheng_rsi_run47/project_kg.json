@@ -2227,6 +2227,70 @@
       "r_phys": 1.0,
       "iteration": 175,
       "id": "persona_use:reviewer_iter175"
+    },
+    {
+      "label": "` followed by the hypothesis and LUCID.",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T08:03:13.547029",
+      "last_seen": "2026-09-29T08:03:13.547029",
+      "mentions": 1,
+      "iteration": 180,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Rigid family will achieve N_c ≤ 8 (flat trend) with training error ~1e-4 and held-out error ≤1e-3 at minimal width; Fat family will show trend='unreachable' with held-out error >1e-3 across all widths",
+      "persona": "reviewer",
+      "id": "experiment:` followed by the hypothesis and LUCID."
+    },
+    {
+      "label": "plan_explore_iter180",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:03:13.547063",
+      "last_seen": "2026-09-29T08:03:13.547063",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter180"
+    },
+    {
+      "label": "pass_iter180",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:03:13.547072",
+      "last_seen": "2026-09-29T08:03:13.547072",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter180"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T08:03:13.547080",
+      "last_seen": "2026-09-29T08:03:13.547080",
+      "mentions": 1,
+      "members": [
+        "experiment:` followed by the hypothesis and LUCID.",
+        "Method:plan_explore_iter180",
+        "Fact:pass_iter180"
+      ],
+      "iteration": 180,
+      "id": "he_experiment_pipeline_af030fbd"
+    },
+    {
+      "label": "reviewer_iter180",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T08:03:13.547146",
+      "last_seen": "2026-09-29T08:03:13.547146",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "7ad387428df82789",
+      "r_phys": 1.0,
+      "iteration": 180,
+      "id": "persona_use:reviewer_iter180"
     }
   ],
   "links": [
@@ -3174,6 +3238,33 @@
       "last_seen": "2026-09-29T08:01:45.489619",
       "mentions": 1,
       "target": "he_experiment_pipeline_8f18b679"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:` followed by the hypothesis and LUCID.",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:03:13.547080",
+      "last_seen": "2026-09-29T08:03:13.547080",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_af030fbd"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter180",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:03:13.547080",
+      "last_seen": "2026-09-29T08:03:13.547080",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_af030fbd"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter180",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:03:13.547080",
+      "last_seen": "2026-09-29T08:03:13.547080",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_af030fbd"
     }
   ]
 }
