@@ -138,3 +138,9 @@ metacog: 假设可能为换名归约 (trap=, target=原始命题中关于小型�
 [exec-route] mode='explore' desc[:80]='Design a numerical experiment to test the hypothesis that small feedforward netw' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
 [code-lab-author] raw_len=1091 extracted_len=1076 prompt_len=3149
 [code-lab-run] res_none=False success=True nobj=36 reason=''
+[validate] mode='code_lab' success=True nobj=36 cf=False lab=True
+metacog: 假设可能为换名归约 (trap=, target=将'解空间刚性'（N_c(w)的有限性与w的关系）重新表述为'随机初始化网络满足约束的概率随样本数w的幂律衰减'。): [DIM: measure] The probability that a randomly initialized small network satisfies w analytical cons
+plan_check failed (tier=light, scene=auto_numerical, max_refines=1): The plan's MODE (explore) is appropriate, but the DESCRIPTION is fundamentally flawed due to a conceptual misunderstanding of the hypothesis. The plan attempts to find a network width N_c(w) that satisfies constraints, whereas the hypothesis asks for the probability P(w) that a *randomly initialized* network satisfies constraints. This is a critical methodological error: N_c(w) measures the capacity needed to satisfy constraints (a solvability/rigidity question), while P(w) measures the likelihood of satisfying constraints with a fixed architecture (a geometric/probabilistic question). The prediction formula α ≈ (n-w)/n is also dimensionally inconsistent (probability cannot be negative) and theoretically unsupported. The plan also fails to specify the exact form of the 'analytical constraints' (polynomial equations), which is essential for reproducibility.
+[exec-route] mode='explore' desc[:80]='Design a numerical experiment to test the hypothesis that the probability of a r' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=True
+[code-lab-author] raw_len=1068 extracted_len=1053 prompt_len=3149
+[code-lab-run] res_none=False success=True nobj=36 reason=''

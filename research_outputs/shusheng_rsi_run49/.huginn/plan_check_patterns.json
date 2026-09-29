@@ -38,5 +38,32 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] This workflow tests the hypothesis that the minimal network width $N_c(w)$ scales logarithmically with constraint count $w$ by constructing a synthetic constraint system w"
+  },
+  {
+    "scene_tag": "auto_numerical",
+    "hyp_key": "23527d5c0a99",
+    "reason": "The plan's MODE (explore) is appropriate for a numerical experiment, but the DESCRIPTION fails to specify the critical methodological details required to validate the hypothesis. Specifically, it does not define the 'analytical constraints' (e.g., activation functions, specific equations), the network architecture (layers, activation functions), or the initialization method. Without these, the prediction of a power-law decay cannot be verified numerically. It also lacks a concrete definition of how 'N_c(w)' (rigidity) will be measured and linked to the exponent α in the power law.",
+    "missing_steps": [
+      "Define the specific analytical constraints (e.g., specific polynomial equations, activation function properties) that the network must satisfy.",
+      "Specify the small network architecture (number of layers, width, activation functions) and initialization scheme (e.g., Xavier, He).",
+      "Define the precise procedure for determining N_c(w) and how it relates to the power-law exponent α.",
+      "Detail the training/validation split and the exact criteria for 'zero violation' (max absolute error <= 1e-3)."
+    ],
+    "mode": "explore",
+    "description": "Design a numerical experiment to test the hypothesis that the probability of a randomly initialized small network satisfying w analytical constraints decays as a power law in w. We will:"
+  },
+  {
+    "scene_tag": "auto_numerical",
+    "hyp_key": "23527d5c0a99",
+    "reason": "The plan's MODE (explore) is appropriate, but the DESCRIPTION is fundamentally flawed due to a conceptual misunderstanding of the hypothesis. The plan attempts to find a network width N_c(w) that satisfies constraints, whereas the hypothesis asks for the probability P(w) that a *randomly initialized* network satisfies constraints. This is a critical methodological error: N_c(w) measures the capacity needed to satisfy constraints (a solvability/rigidity question), while P(w) measures the likelihood of satisfying constraints with a fixed architecture (a geometric/probabilistic question). The prediction formula α ≈ (n-w)/n is also dimensionally inconsistent (probability cannot be negative) and theoretically unsupported. The plan also fails to specify the exact form of the 'analytical constraints' (polynomial equations), which is essential for reproducibility.",
+    "missing_steps": [
+      "Clarify the exact definition of 'analytical constraints' (specific polynomial equations and their coefficients)",
+      "Correct the experimental design: fix network architecture (width n) and measure success probability P(w) over multiple random initializations for varying constraint counts w, rather than finding minimal width N_c(w)",
+      "Revise the prediction to align with the actual hypothesis (power law decay of P(w) with exponent related to parameter-to-constraint ratio)",
+      "Define the range of w (constraint count) and n (network width) to be tested",
+      "Specify the number of random initializations per w to estimate P(w) with statistical significance"
+    ],
+    "mode": "explore",
+    "description": "Design a numerical experiment to test the hypothesis that the probability of a randomly initialized small network satisfying w analytical constraints decays as a power law in w. We will define the net"
   }
 ]
