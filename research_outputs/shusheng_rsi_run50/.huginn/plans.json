@@ -175,6 +175,122 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_ce1aed4c",
+      "objective": "** [DIM: measure] The minimal width $N_c(w)$ required for zero violation scales with the information-theoretic capacity (VC dimension or Rademacher complexity) of the network family, such that $N_c(w) \\approx \\mathcal{O}(w \\log w)$ is a necessary condition for generalization, rather than a fixed threshold.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Design a numerical experiment to test the hypothesis that the minimal network width $N_c(w)$ for zero-violation generalization scales as $\\mathcal{O}(w \\log w)$ with the number of constraints $w$. This corrected plan addresses the previous feedback by aligning the prediction with the logarithmic scaling hypothesis, justifying the error tolerance choice, and selecting an appropriate target function family.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "executing",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T12:34:19.699308+00:00",
+      "confirmed_at": "2026-09-29T12:34:19.700303+00:00",
+      "completed_at": null,
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
+    },
+    {
+      "id": "plan_a6f7f34d",
+      "objective": "[DIM: structure] The minimal width $N_c(w)$ required for zero violation is determined by the algebraic rank of the feature matrix induced by the network activation functions at the constraint points; specifically, $N_c(w) \\ge \\text{rank}(\\Phi)$ where $\\Phi_{ij} = \\phi(w \\cdot x_j + b_i)$, and rigidity occurs when the feature vectors span the target space.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "We will test the hypothesis that zero-violation capacity $N_c(w)$ is determined by the algebraic rank of the feature matrix $\\Phi_{ij} = \\phi(w \\cdot x_j + b_i)$ using direct linear algebra, bypassing optimization. For fixed constraint points $x_j$ and target values $y$, we will compute $\\Phi$ for ReLU networks with varying hidden widths $N$. For each $N$, we will compute $\\text{rank}(\\Phi)$ via SVD and verify if the system $\\Phi a = y$ has an exact solution by checking $\\text{rank}(\\Phi) = \\text{rank}([\\Phi, y])$. The minimal $N$ where this holds is the empirical $N_c(w)$. We will repeat for multiple random $w$ samples to assess whether $N_c(w)$ is rigid (independent of $w$) and compare against the theoretical prediction that $N_c(w) \\ge \\text{rank}(\\Phi)$.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "executing",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T12:35:15.530585+00:00",
+      "confirmed_at": "2026-09-29T12:35:15.531861+00:00",
+      "completed_at": null,
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
+    },
+    {
+      "id": "plan_40ba70ae",
+      "objective": "[DIM: structure] The minimal width $N_c(w)$ required for zero violation is determined by the algebraic rank of the feature matrix formed by the network's activation patterns at the constraint points, where $N_c(w) = \\lceil w / d \\rceil$ for effective feature dimension $d$.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement a rigorous numerical experiment to test the hypothesis that minimal width N_c(w) for zero violation is determined by the algebraic rank of the activation matrix at constraint points, with N_c(w) = ⌈w/d⌉. This requires: (1) defining a constraint function and generating w constraint points; (2) training small feedforward networks of varying width N; (3) computing the activation matrix rank at constraint points; (4) measuring maximum absolute error on held-out points; (5) identifying the minimal N achieving max error ≤ 1e-3; (6) comparing empirical N_c(w) against ⌈w/d⌉ where d is the effective feature dimension (rank of activation matrix). The script will perform this for multiple w values and report trends, confirming or refuting the rank-based prediction.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "/workspace/research_outputs/shusheng_rsi_run50/experiments/test_n_c_rank.py"
+          ]
+        }
+      ],
+      "status": "executing",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T12:35:52.136251+00:00",
+      "confirmed_at": "2026-09-29T12:35:52.137851+00:00",
+      "completed_at": null,
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
+    },
+    {
+      "id": "plan_579bdd6f",
+      "objective": "[DIM: dynamics] The zero-violation capacity $N_c(w)$ follows a phase transition governed by a critical constraint density $\\rho_c = w/H$, where $N_c$ jumps from sub-linear (rigid) to divergent (fat) as $\\rho$ exceeds $\\rho_c$. This is analogous to a percolation transition in the loss landscape, where the global minimum becomes inaccessible to gradient descent as constraints saturate the network's degrees of freedom.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Design a systematic numerical experiment to test the hypothesis that $N_c(w)$ undergoes a phase transition at $\\rho_c = w/H$. 1. Define a target function with known algebraic rank (e.g., polynomial interpolation or a trigonometric series) to establish a ground-truth \"rigid\" regime where $N_c(w)$ is small and finite. 2. Implement a sweep over constraint counts $w$ and hidden layer widths $N$. For each $(w, N)$, train a small feedforward network to satisfy constraints with max absolute error $\\le 10^{-3}$ on held-out points. 3. Determine $N_c(w)$ as the minimum $N$ achieving zero violation for each $w$. 4. Plot $N_c(w)$ vs $w$ and check for the predicted scaling behavior (sub-linear/rigid vs divergent/fat) relative to the capacity limit $H$. 5. Compare results against the algebraic rank lower bound to validate the rigidity claim.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "(none)"
+          ]
+        }
+      ],
+      "status": "executing",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T12:36:33.257431+00:00",
+      "confirmed_at": "2026-09-29T12:36:33.258836+00:00",
+      "completed_at": null,
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

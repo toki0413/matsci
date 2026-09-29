@@ -347,7 +347,10 @@ def _verdict(a: dict) -> list[str]:
     ifr = a["input_frozen"]
     if ifr["prompt_frozen"]:
         out.append(f"输入冻结: prompt_len 恒定 {list(ifr['prompt_len_values'])} → 同一问题反复问")
-    if ifr["goal_frozen"]:
+    elif ifr["goal_frozen"] and not ifr["prompt_len_values"]:
+        # obj_len 恒定**只在没有作者 prompt 采样时**才算冻结证据: 研究目标本就恒定,
+        # 作者每轮真实输入是 prompt_len (v11 反冻结后随迭代变化 ⇒ 非冻结). 否则会
+        # 把健康 run 误报为"输入冻结"(run50 实测: prompt_len 变动, obj_len 恒 509).
         out.append(f"输入冻结: obj_len 恒定 {list(ifr['obj_len_values'])} → 计划描述不变")
     if ifr["surprise_saturated"]:
         out.append(f"路由信号死: surprise 恒定 {list(ifr['surprise_values'])} → 路由退化为恒同一条")

@@ -241,6 +241,247 @@
       "r_phys": 1.0,
       "iteration": 25,
       "id": "persona_use:reviewer_iter25"
+    },
+    {
+      "label": "[DIM: structure] The minimal width $N_c(w)$ for zero-violation generalization is",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T12:33:46.553959",
+      "last_seen": "2026-09-29T12:33:46.553959",
+      "mentions": 1,
+      "iteration": 30,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The minimal width $N_c(w)$ will satisfy $N_c(w) \\ge \\text{rank}(A)$, and rigidity will manifest as a sharp increase in training error when $\\text{rank}(A) \\approx w$ for fixed $N$.",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The minimal width $N_c(w)$ for zero-violation generalization is"
+    },
+    {
+      "label": "plan_explore_iter30",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T12:33:46.554016",
+      "last_seen": "2026-09-29T12:33:46.554016",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter30"
+    },
+    {
+      "label": "pass_iter30",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T12:33:46.554026",
+      "last_seen": "2026-09-29T12:33:46.554026",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter30"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T12:33:46.554036",
+      "last_seen": "2026-09-29T12:33:46.554036",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The minimal width $N_c(w)$ for zero-violation generalization is",
+        "Method:plan_explore_iter30",
+        "Fact:pass_iter30"
+      ],
+      "iteration": 30,
+      "id": "he_experiment_pipeline_71778f1b"
+    },
+    {
+      "label": "reviewer_iter30",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T12:33:46.554110",
+      "last_seen": "2026-09-29T12:33:46.554110",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "5a079f31194885af",
+      "r_phys": 1.0,
+      "iteration": 30,
+      "id": "persona_use:reviewer_iter30"
+    },
+    {
+      "label": "** [DIM: measure] The minimal width $N_c(w)$ required for zero violation scales ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T12:34:34.545815",
+      "last_seen": "2026-09-29T12:34:34.545815",
+      "mentions": 1,
+      "iteration": 35,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The minimal width $N_c(w)$ will exhibit super-linear scaling with $w$, showing slope > 1 in log-log plots that increases slightly with $w$, consistent with $\\mathcal{O}(w \\log w)$ behavior rather than",
+      "persona": "reviewer",
+      "id": "experiment:** [DIM: measure] The minimal width $N_c(w)$ required for zero violation scales"
+    },
+    {
+      "label": "plan_explore_iter35",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T12:34:34.545848",
+      "last_seen": "2026-09-29T12:34:34.545848",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter35"
+    },
+    {
+      "label": "pass_iter35",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T12:34:34.545857",
+      "last_seen": "2026-09-29T12:34:34.545857",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter35"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T12:34:34.545868",
+      "last_seen": "2026-09-29T12:34:34.545868",
+      "mentions": 1,
+      "members": [
+        "experiment:** [DIM: measure] The minimal width $N_c(w)$ required for zero violation scales",
+        "Method:plan_explore_iter35",
+        "Fact:pass_iter35"
+      ],
+      "iteration": 35,
+      "id": "he_experiment_pipeline_2e00302d"
+    },
+    {
+      "label": "reviewer_iter35",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T12:34:34.545989",
+      "last_seen": "2026-09-29T12:34:34.545989",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "1f30523fb58fbc71",
+      "r_phys": 1.0,
+      "iteration": 35,
+      "id": "persona_use:reviewer_iter35"
+    },
+    {
+      "label": "[DIM: structure] The minimal width $N_c(w)$ required for zero violation is deter",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 0.99,
+      "created_at": "2026-09-29T12:35:31.555022",
+      "last_seen": "2026-09-29T12:36:10.695239",
+      "mentions": 2,
+      "iteration": 40,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The empirical $N_c(w)$ will match the rank of the feature matrix for sufficiently large $N$, and will be independent of $w$ (rigidity), confirming that zero-violation capacity is determined by algebra",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The minimal width $N_c(w)$ required for zero violation is deter"
+    },
+    {
+      "label": "plan_explore_iter40",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T12:35:31.555057",
+      "last_seen": "2026-09-29T12:35:31.555057",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter40"
+    },
+    {
+      "label": "pass_iter40",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T12:35:31.555067",
+      "last_seen": "2026-09-29T12:35:31.555067",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter40"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T12:35:31.555076",
+      "last_seen": "2026-09-29T12:35:31.555076",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The minimal width $N_c(w)$ required for zero violation is deter",
+        "Method:plan_explore_iter40",
+        "Fact:pass_iter40"
+      ],
+      "iteration": 40,
+      "id": "he_experiment_pipeline_a03fe0cc"
+    },
+    {
+      "label": "reviewer_iter40",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T12:35:31.555149",
+      "last_seen": "2026-09-29T12:35:31.555149",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "921f0aa27c9681ae",
+      "r_phys": 1.0,
+      "iteration": 40,
+      "id": "persona_use:reviewer_iter40"
+    },
+    {
+      "label": "plan_explore_iter45",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T12:36:10.695275",
+      "last_seen": "2026-09-29T12:36:10.695275",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter45"
+    },
+    {
+      "label": "pass_iter45",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T12:36:10.695296",
+      "last_seen": "2026-09-29T12:36:10.695296",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter45"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T12:36:10.695306",
+      "last_seen": "2026-09-29T12:36:10.695306",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The minimal width $N_c(w)$ required for zero violation is deter",
+        "Method:plan_explore_iter45",
+        "Fact:pass_iter45"
+      ],
+      "iteration": 45,
+      "id": "he_experiment_pipeline_e2e150ba"
+    },
+    {
+      "label": "reviewer_iter45",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T12:36:10.695384",
+      "last_seen": "2026-09-29T12:36:10.695384",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "6ea4ff553a238a0f",
+      "r_phys": 1.0,
+      "iteration": 45,
+      "id": "persona_use:reviewer_iter45"
     }
   ],
   "links": [
@@ -351,6 +592,114 @@
       "last_seen": "2026-09-29T12:32:22.176025",
       "mentions": 1,
       "target": "he_experiment_pipeline_ef70a765"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The minimal width $N_c(w)$ for zero-violation generalization is",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T12:33:46.554036",
+      "last_seen": "2026-09-29T12:33:46.554036",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_71778f1b"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter30",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T12:33:46.554036",
+      "last_seen": "2026-09-29T12:33:46.554036",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_71778f1b"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter30",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T12:33:46.554036",
+      "last_seen": "2026-09-29T12:33:46.554036",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_71778f1b"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:** [DIM: measure] The minimal width $N_c(w)$ required for zero violation scales",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T12:34:34.545868",
+      "last_seen": "2026-09-29T12:34:34.545868",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2e00302d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter35",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T12:34:34.545868",
+      "last_seen": "2026-09-29T12:34:34.545868",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2e00302d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter35",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T12:34:34.545868",
+      "last_seen": "2026-09-29T12:34:34.545868",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2e00302d"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The minimal width $N_c(w)$ required for zero violation is deter",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T12:35:31.555076",
+      "last_seen": "2026-09-29T12:35:31.555076",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a03fe0cc"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The minimal width $N_c(w)$ required for zero violation is deter",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T12:36:10.695306",
+      "last_seen": "2026-09-29T12:36:10.695306",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e2e150ba"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter40",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T12:35:31.555076",
+      "last_seen": "2026-09-29T12:35:31.555076",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a03fe0cc"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter40",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T12:35:31.555076",
+      "last_seen": "2026-09-29T12:35:31.555076",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a03fe0cc"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter45",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T12:36:10.695306",
+      "last_seen": "2026-09-29T12:36:10.695306",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e2e150ba"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter45",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T12:36:10.695306",
+      "last_seen": "2026-09-29T12:36:10.695306",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e2e150ba"
     }
   ]
 }

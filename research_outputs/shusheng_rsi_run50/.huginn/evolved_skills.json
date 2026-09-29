@@ -79,8 +79,8 @@
       "rigid",
       "label",
       "plan",
-      "error",
       "constraint",
+      "error",
       "constraints"
     ],
     "workflow_steps": [

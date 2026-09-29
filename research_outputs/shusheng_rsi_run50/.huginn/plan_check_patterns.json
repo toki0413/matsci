@@ -42,5 +42,73 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement a Python script that performs a width-scan of small fully-connected neural networks to measure the minimal width $N_c(w)$ for zero-violation generalization. The "
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "a02a41ce9062",
+    "reason": "The plan's hypothesis claims $N_c(w) \\approx \\mathcal{O}(w \\log w)$, but the prediction explicitly expects a slope near 1 (linear scaling) in a log-log plot of $N_c(w)$ vs. $w$. Linear scaling ($\\mathcal{O}(w)$) contradicts the $\\mathcal{O}(w \\log w)$ hypothesis being tested. Furthermore, the plan uses a fixed threshold of $10^{-3}$ for zero-violation, but the hypothesis specifically addresses the scaling of the *minimal width* required for generalization, which is not clearly linked to the chosen error tolerance in the prediction logic.",
+    "missing_steps": [
+      "Align the prediction with the hypothesis: The expected slope should reflect $\\mathcal{O}(w \\log w)$ behavior, not linear scaling.",
+      "Justify the choice of error tolerance ($10^{-3}$) in the context of the hypothesis's generalization bounds.",
+      "Ensure the target function family's complexity matches the information-theoretic capacity assumptions (VC dimension/Rademacher complexity) underlying the hypothesis."
+    ],
+    "mode": "explore",
+    "description": "Design and execute a numerical experiment to test the hypothesis that the minimal network width $N_c(w)$ for zero-violation generalization scales as $\\mathcal{O}(w \\log w)$ with the number of constrai"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "a02a41ce9062",
+    "reason": "The plan's prediction explicitly expects a slope near 1 (linear scaling) in a log-log plot of N_c(w) vs. w, which contradicts the O(w log w) hypothesis being tested. This is a critical mismatch that would prevent the experiment from validating the intended hypothesis. Additionally, the error tolerance justification is missing, and the target function family complexity hasn't been aligned with VC dimension/Rademacher complexity assumptions.",
+    "missing_steps": [
+      "Align prediction with O(w log w) scaling (slope > 1 in log-log plot)",
+      "Justify the choice of error tolerance (1e-3) in context of generalization bounds",
+      "Select target function family with complexity matching VC dimension/Rademacher complexity assumptions",
+      "Ensure the experiment design can distinguish between O(w) and O(w log w) scaling"
+    ],
+    "mode": "explore",
+    "description": "Design a numerical experiment to test the hypothesis that the minimal network width $N_c(w)$ for zero-violation generalization scales as $\\mathcal{O}(w \\log w)$ with the number of constraints $w$. Thi"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "e9f566433c4e",
+    "reason": "The plan is fundamentally flawed because it attempts to test a theoretical hypothesis about the minimal width for zero violation using a numerical experiment with optimization (PyTorch training). The hypothesis states that N_c(w) is determined by the algebraic rank of the feature matrix, which is a deterministic property of the network architecture and constraint points. However, the proposed experiment uses gradient-based optimization to find a network that fits the data, which introduces many confounding factors (learning rate, initialization, optimization landscape, etc.) that make it impossible to isolate the effect of the feature matrix rank. The experiment cannot cleanly test whether N_c(w) >= rank(Phi) because the training process might fail to find a solution even if one exists, or might find a solution with fewer neurons than the rank suggests due to the optimization path.",
+    "missing_steps": [
+      "Replace the PyTorch training approach with a direct computation of the feature matrix rank for given widths and constraint points.",
+      "For each width N, compute the rank of Phi (which is at most N) and check if there exists a solution to Phi * a = y (where y are target values) with zero error.",
+      "The minimal N for which rank(Phi) equals the dimension of the target space (or the number of constraints) would be the theoretical N_c(w).",
+      "This approach directly tests the algebraic rank condition without the noise of optimization."
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement a numerical experiment to test the hypothesis that $N_c(w) \\ge \\text{rank}(\\Phi)$ for small feedforward networks. Generate synthetic constraint functions (polyno"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "e9f566433c4e",
+    "reason": "The plan attempts to test the hypothesis using gradient-based optimization (PyTorch training), which introduces confounding factors (learning rate, initialization, optimization landscape) that prevent isolating the algebraic rank effect. The hypothesis is about a deterministic property of the feature matrix, but the plan uses a stochastic optimization approach that cannot cleanly test whether N_c(w) >= rank(Phi). The historical failure explicitly identified this flaw and recommended replacing optimization with direct rank computation.",
+    "missing_steps": [
+      "Replace PyTorch optimization with direct computation of feature matrix rank for given widths",
+      "For each width N, compute rank(Phi) directly using linear algebra (e.g., SVD or QR decomposition)",
+      "Check if the linear system Phi * a = y has an exact solution by verifying if y is in the column space of Phi (via rank(Phi) == rank([Phi, y]))",
+      "Determine minimal N where rank(Phi) equals the number of constraints (target space dimension)",
+      "Run multiple random w samples to assess rigidity (finite N_c independent of w)",
+      "Report empirical N_c(w) values and compare against theoretical rank predictions"
+    ],
+    "mode": "explore",
+    "description": "We will test the hypothesis that zero-violation capacity $N_c(w)$ is determined by the algebraic rank of the feature matrix $A_{ij} = \\phi_j(x_i)$. For a fixed set of constraint points and target valu"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "e9f566433c4e",
+    "reason": "The plan is fundamentally flawed because it describes using gradient-based optimization (PyTorch training) to find network weights that satisfy constraints. The hypothesis is about a deterministic algebraic property (the rank of the feature matrix), but optimization introduces confounding factors (learning rate, initialization, convergence criteria, local minima) that make it impossible to isolate the rank effect. The historical failure explicitly warned against this approach and recommended replacing optimization with direct linear algebra computation of the feature matrix rank.",
+    "missing_steps": [
+      "Replace PyTorch optimization with direct computation of feature matrix rank Φ for each width N",
+      "Compute rank(Φ) via SVD or QR decomposition for fixed constraint points x_j and random w",
+      "Check if linear system Φa = y has an exact solution by verifying rank(Φ) == rank([Φ, y])",
+      "Determine minimal N where rank(Φ) equals the number of constraints (or target space dimension)",
+      "Run multiple random w samples to assess rigidity (finite N_c independent of w) using direct rank computation",
+      "Report empirical N_c(w) values and compare against theoretical rank predictions without optimization noise"
+    ],
+    "mode": "explore",
+    "description": "We will test the hypothesis that zero-violation capacity $N_c(w)$ is determined by the algebraic rank of the feature matrix $\\Phi_{ij} = \\phi(w \\cdot x_j + b_i)$ using direct linear algebra, bypassing"
   }
 ]
