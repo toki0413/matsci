@@ -1,34 +1,6 @@
 [
   {
     "scene_tag": "other",
-    "reason": "The plan correctly identifies the mathematical structure (topology of weight manifolds, persistent homology) and specifies the MODE as 'explore'. However, it fails to specify the concrete implementation details required to execute the topological analysis. Crucially, it lacks the specific code or tool calls needed to compute persistent homology on the sampled manifolds, which is the core requirement to verify H1 groups. The historical failures explicitly note that previous plans focused only on error metrics without computing homology structures; this plan describes the topological approach but does not demonstrate how to actually compute H1 (e.g., no specification of sampling strategy, filtration method, or homology computation tool). It also lacks the necessary numerical verification steps (N_c(w) values, specific error measurements) required by the report discipline.",
-    "missing_steps": [
-      "Specify the exact method for sampling points from the weight manifolds",
-      "Define the filtration method for persistent homology computation",
-      "Specify the tool/library for computing homology groups (e.g., GUDHI, Ripser, Dionysus)",
-      "Include concrete implementation for computing and comparing H1 groups",
-      "Add steps for continuous interpolation path testing between training and held-out solutions",
-      "Include explicit verification that the fat polynomial family is x-dependent and partially learnable"
-    ],
-    "mode": "explore",
-    "description": "Define the weight manifold geometry for rigid (linear) and fat (polynomial) families, parameterize them with normalized weights, compute their first homology groups H1 via persistent homology on sampl"
-  },
-  {
-    "scene_tag": "other",
-    "reason": "The plan is completely empty (DESCRIPTION: 'PREDICTION: N/A') and provides no concrete methodology for computing homology groups. While the MODE 'explore' is technically appropriate for an open-ended topological analysis, the plan fails to specify any implementation details. It repeats the critical error of previous failed runs by not defining how to compute H1 (sampling strategy, filtration method, or homology computation tool). Without these specifications, the plan cannot verify the topological obstruction hypothesis.",
-    "missing_steps": [
-      "Define weight manifold geometry and parameterization for linear rigid family and fat polynomial family",
-      "Specify sampling strategy for weight manifolds (e.g., random sampling of parameters)",
-      "Define filtration method for persistent homology computation (e.g., Vietoris-Rips)",
-      "Specify homology computation tool/library (e.g., GUDHI, Ripser, Dionysus)",
-      "Implement continuous interpolation paths between training minima and held-out solutions",
-      "Add explicit verification that fat polynomial family is x-dependent and partially learnable"
-    ],
-    "mode": "explore",
-    "description": ""
-  },
-  {
-    "scene_tag": "other",
     "reason": "The plan focuses on implementing function families and running a capacity scan to measure generalization error, but the hypothesis requires topological analysis of the weight manifolds (specifically computing the first homology group H1). The historical failures explicitly note that previous plans failed by focusing only on error metrics instead of computing homology structures. This plan repeats that critical error by not including any topological data analysis (TDA), persistent homology computation, or manifold geometry characterization. While the plan addresses some practical implementation details (normalization, shape constraints), it misses the core mathematical structure required to test the hypothesis about non-monotonic dependence due to topological obstructions.",
     "missing_steps": [
       "Define weight manifold geometry and parameterization for both linear rigid family and fat polynomial family",
@@ -739,5 +711,33 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the family function for the two function families (rigid: linear function f(x)=ax+b; fat: 20th-degree polynomial f(x)=Σ c_i (2x-1)^i) with proper normalization ("
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan fundamentally mismatches the hypothesis: the hypothesis requires symbolic algebraic topology computation (Čech cohomology of sheaves on S¹), but the plan uses 'explore' mode with numerical ML capacity scans (N_c(w), validation error). This repeats the documented historical failure of using ML metrics to verify topological invariants. The plan does not define the base manifold, sheaf structure, or Čech complex computation framework, and uses inappropriate ML metrics instead of topological invariants.",
+    "missing_steps": [
+      "Switch MODE from explore to coder/workflow for symbolic implementation",
+      "Define the mathematical structure precisely: specify base manifold (e.g., S¹), sheaf of locally linear functions, and Čech complex construction framework",
+      "Specify transition functions between the two overlapping charts on S¹",
+      "Implement symbolic cohomology computation using appropriate tools (Lean/SageMath/Mathematica) rather than numerical regression",
+      "Establish exactness verification steps and obstruction theory methodology",
+      "Remove all ML capacity metrics (N_c, VC dimension) as they are irrelevant to topological invariants"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid (linear) and fat (degree-20 polynomial) function families as specified in the protocol. The implementation will generate trai"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan fundamentally misaligns with the hypothesis. The hypothesis requires symbolic algebraic topology computation (Čech cohomology of sheaves on S¹), but the plan uses 'explore' mode with numerical ML capacity scans (N_c(w), validation error). This repeats the documented historical failure of using ML metrics to verify topological invariants. The plan does not define the base manifold, sheaf structure, or Čech complex computation framework, and uses inappropriate ML metrics instead of topological invariants.",
+    "missing_steps": [
+      "Switch MODE from explore to coder/workflow for symbolic implementation",
+      "Define the mathematical structure precisely: specify base manifold S¹, sheaf of locally linear functions, and Čech complex construction framework",
+      "Specify transition functions between the two overlapping charts on S¹",
+      "Implement symbolic cohomology computation using appropriate tools (Lean/SageMath/Mathematica) rather than numerical regression",
+      "Establish exactness verification steps and obstruction theory methodology",
+      "Remove all ML capacity metrics (N_c, VC dimension) as they are irrelevant to topological invariants"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement symbolic Čech cohomology computation for sheaves on S¹. Define base manifold S¹ with two overlapping charts U_0, U_1, construct the sheaf of locally linear funct"
   }
 ]
