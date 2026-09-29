@@ -2287,6 +2287,12 @@ class HypothesisLoop:
                 # 此前该 verdict 只写进 _metacog_last_audit 而无人消费, 长程跑必然退化.
                 _rename_streak = getattr(self, "_rename_streak", 0) + 1
                 self._rename_streak = _rename_streak
+                # v11 进展不变量 (假设层入口): 单调"换名债务" — 每次判为换名归约 +1,
+                # **只在真进展(非换名)时归零**; 下面的 3/5 streak 阶梯是 soft 升级
+                # (提示/重定向) 且会自复位, 债务与其解耦, 由 cognitive_loop 唯一消费
+                # 为终止出口. 于是 run47/49 那种"换名→提示→重定向→归零"闭环无法再
+                # 无限打转 —— 无进展轮必然被债务累积逼到终止.
+                self._rename_debt = getattr(self, "_rename_debt", 0) + 1
                 if _rename_streak == 3:
                     # warning 级: 根 logger 过滤 INFO, 用 info 会被静默吞掉,
                     # 这些"循环改变方向"的事件必须可审计 (见 [exec-route] 同款做法).
@@ -2339,6 +2345,9 @@ class HypothesisLoop:
                         logger.debug("force redirect hint skipped", exc_info=True)
             else:
                 self._rename_streak = 0
+                # v11 进展不变量: 真进展 (非换名) ⇒ 债务归零. 债务只在**这一处**归零,
+                # 而 3/5 阶梯的 _rename_streak=0 不复位债务 —— 两者解耦, 闭环断链.
+                self._rename_debt = 0
 
             # 收敛度监控: 某族过热时记日志
             redirect = registry.suggest_redirect()

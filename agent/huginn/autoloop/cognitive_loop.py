@@ -69,6 +69,11 @@ logger = logging.getLogger(__name__)
 _MAX_ACTION_HIST = int(os.environ.get("HUGINN_ACTION_HIST_MAX", "1000"))
 # 迭代历史栈上限: 50 轮足够回溯一个完整 autoresearch run 的试错路径
 _MAX_ITER_HIST = int(os.environ.get("HUGINN_ITER_HIST_MAX", "50"))
+# v11 进展不变量阈值: 假设层单调"换名债务" (只在真进展时归零) 越过此值 ⇒ 结题停止.
+# 换名 soft 阶梯在 streak 3/5 触发 (hunt / 重定向) 并**自复位**, 是闭环的根源;
+# 债务与之解耦, 只由真进展归零, 唯一消费者是下面的终止出口. 取 8 > 5 保证 soft
+# 动作至少各 fire 一次后才终止, 不给"提示→重定向→归零"无限打转留口子.
+_RENAME_DEBT_LIMIT = int(os.environ.get("HUGINN_RENAME_DEBT_LIMIT", "8"))
 
 
 @dataclass
@@ -1305,6 +1310,9 @@ class CognitiveRunner:
 
         self._iteration = 0
         self._should_stop = False
+        # v11 进展不变量: 换名债务随 run 重置 (跨 run 无进展记忆无意义).
+        self._rename_debt = 0
+        self._rename_streak = 0
         self._consecutive_failures = 0
         # F-borrow: 分类计数器随 run 重置 (跨 run 失败模式记忆没意义, 误导自适应).
         self._consecutive_failures_by_type = {}
@@ -3391,6 +3399,30 @@ Respond JSON only:
                             "v10 F5 exec-convergence stop failed (non-fatal)",
                             exc_info=True,
                         )
+
+                # v11: 进展不变量 → 唯一终止出口 (假设层).
+                # 把散装守卫收敛成"无进展 ⇒ 必须终止"的单一控制流: 换名 soft 阶梯
+                # (streak 3/5 → hunt/重定向) 会自复位形成闭环 (run47/49), 但
+                # _rename_debt 是**单调**的, 只在真进展时归零, 且唯一消费者是本出口.
+                # 关键: **不**用 _metacog_check_completion 做否决. 该审计在
+                #   equivalence_traps_remaining 非空时必然 is_complete=False → 返回
+                #   "阻断"(别停). 而换名债务正是"存在等价性陷阱"的同义证据 —— 用它
+                #   否决本出口在逻辑上自相矛盾, 出口永不触发. 无进展是**硬证据**,
+                #   继续跑纯属浪费, 故这里只把审计理由记为 advisory, 仍硬性终止.
+                if not state.should_stop:
+                    _debt = int(getattr(self, "_rename_debt", 0) or 0)
+                    if _debt >= _RENAME_DEBT_LIMIT:
+                        _blk, _why = self._metacog_check_completion()
+                        if _blk:
+                            logger.info(
+                                "v11 rename-debt stop (advisory audit: %s)", _why,
+                            )
+                        logger.warning(
+                            "v11 rename debt=%d (monotone, reset-proof) over limit=%d "
+                            "→ conclude+stop",
+                            _debt, _RENAME_DEBT_LIMIT,
+                        )
+                        state.should_stop = True
 
                 # v10-F3: darwin_ratchet — 对齐 run() L2003-2004.
                 # 内部判 stagnation >= 5 设 self._should_stop; 这里同步到 state.

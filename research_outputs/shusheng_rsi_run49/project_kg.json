@@ -2638,6 +2638,70 @@
       "r_phys": 1.0,
       "iteration": 225,
       "id": "persona_use:reviewer_iter225"
+    },
+    {
+      "label": "[DIM: optimization] The minimal width $N_c(w)$ required for zero violation exhib",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T09:45:00.689547",
+      "last_seen": "2026-09-29T09:45:00.689547",
+      "mentions": 1,
+      "iteration": 230,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The scan will reveal a sharp transition in N_c(w) at ρ_c ≈ w/H, where below ρ_c, N_c(w) remains small and bounded (rigid regime), while above ρ_c, N_c(w) grows rapidly or becomes unattainable (non-con",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: optimization] The minimal width $N_c(w)$ required for zero violation exhib"
+    },
+    {
+      "label": "plan_explore_iter230",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:45:00.689598",
+      "last_seen": "2026-09-29T09:45:00.689598",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter230"
+    },
+    {
+      "label": "pass_iter230",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:45:00.689608",
+      "last_seen": "2026-09-29T09:45:00.689608",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter230"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T09:45:00.689619",
+      "last_seen": "2026-09-29T09:45:00.689619",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: optimization] The minimal width $N_c(w)$ required for zero violation exhib",
+        "Method:plan_explore_iter230",
+        "Fact:pass_iter230"
+      ],
+      "iteration": 230,
+      "id": "he_experiment_pipeline_9d4ab65a"
+    },
+    {
+      "label": "reviewer_iter230",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T09:45:00.689718",
+      "last_seen": "2026-09-29T09:45:00.689718",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "d3d3e4cb78351a94",
+      "r_phys": 1.0,
+      "iteration": 230,
+      "id": "persona_use:reviewer_iter230"
     }
   ],
   "links": [
@@ -3828,6 +3892,33 @@
       "last_seen": "2026-09-29T09:43:35.778064",
       "mentions": 1,
       "target": "he_experiment_pipeline_87a65a00"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: optimization] The minimal width $N_c(w)$ required for zero violation exhib",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:45:00.689619",
+      "last_seen": "2026-09-29T09:45:00.689619",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_9d4ab65a"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter230",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:45:00.689619",
+      "last_seen": "2026-09-29T09:45:00.689619",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_9d4ab65a"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter230",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:45:00.689619",
+      "last_seen": "2026-09-29T09:45:00.689619",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_9d4ab65a"
     }
   ]
 }

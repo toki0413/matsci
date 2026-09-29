@@ -566,5 +566,33 @@
     ],
     "mode": "explore",
     "description": "We will numerically test the hypothesis that the solution space of a ReLU constraint system is rigid (low-dimensional) when the active constraint graph forms a spanning tree. Steps: (1) Construct synt"
+  },
+  {
+    "scene_tag": "auto_numerical",
+    "hyp_key": "1af15f7bf5d2",
+    "reason": "The plan is invalid because it predicts a fat regime (N_c(w) grows with w), which by definition means the hypothesis (rigid/low-dimensional structure) cannot be validated or falsified by this experiment. If N_c(w) is unbounded or exceeds scan limits, the hypothesis is not tested — it is merely rejected by design. Additionally, the plan lacks critical details: no definition of 'constraints' (e.g., point evaluations, functional equations?), no specification of ReLU architecture depth/activation, no training procedure (optimizer, loss, epochs), and no justification for why small networks are sufficient probes of solution-space geometry. The hypothesis requires demonstrating a bounded basis size d ≪ w; the plan instead assumes failure without exploring whether such a basis exists.",
+    "missing_steps": [
+      "Define the constraint system explicitly (e.g., ReLU network satisfying w point-wise inequalities/equalities)",
+      "Specify network architecture (layers, width, activation) and training protocol (loss, optimizer, convergence criterion)",
+      "Clarify how N_c(w) is computed: is it the minimum width over multiple random initializations? Is zero-violation guaranteed or probabilistic?",
+      "Include a baseline or theoretical prediction for N_c(w) based on known results (e.g., Kolmogorov width of ReLU networks)",
+      "Plan for multiple random seeds to ensure statistical robustness of N_c(w) estimation"
+    ],
+    "mode": "explore",
+    "description": "Design and execute a numerical experiment to test the hypothesis that the solution space of ReLU constraints is rigid (low-dimensional). Specifically, scan the minimal network width N_c(w) required to"
+  },
+  {
+    "scene_tag": "auto_numerical",
+    "hyp_key": "1af15f7bf5d2",
+    "reason": "The plan is fundamentally invalid because it defines the constraint system as a ReLU network satisfying w point-wise equalities, but it does not specify how the constraints (x_i, y_i) are generated. The hypothesis tests whether the solution space admits a low-dimensional linear structure, which depends critically on the nature of the constraints. If the constraints are random or unstructured (as implied by 'random noise' in the prediction), the hypothesis is trivially falsified by design, not tested. The plan lacks a concrete constraint generation mechanism that could potentially reveal a low-dimensional basis (e.g., constraints sampled from a low-dimensional manifold, or constraints derived from a small basis of functions). Without this, the experiment cannot distinguish between a 'rigid' space due to intrinsic structure versus a 'fat' space due to randomness.",
+    "missing_steps": [
+      "Explicitly define the constraint generation mechanism (e.g., sample x_i from a low-dimensional manifold, or define y_i as evaluations of a low-dimensional basis function).",
+      "Specify the exact ReLU architecture (number of layers, width, activation functions) and training protocol (loss function, optimizer, convergence criterion, early stopping).",
+      "Define how N_c(w) is computed: is it the minimum width over multiple random initializations? Is zero-violation guaranteed or probabilistic? The plan must specify a deterministic or statistically robust method to find the minimal width.",
+      "Include a theoretical baseline or prediction for N_c(w) based on known results (e.g., Kolmogorov width of ReLU networks) to compare against numerical results.",
+      "Justify why small networks are sufficient probes of solution-space geometry, or provide evidence from prior work linking network width to solution-space dimensionality."
+    ],
+    "mode": "explore",
+    "description": "Define the constraint system as a ReLU network $f(x; \\theta)$ satisfying $w$ point-wise equalities $f(x_i) = y_i$ for $(x_i, y_i) \\in \\mathbb{R}^d \\times \\mathbb{R}$. Design a numerical experiment to "
   }
 ]
