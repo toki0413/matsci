@@ -75,13 +75,13 @@
       "autoloop",
       "huginn",
       "family",
-      "rigid",
       "value",
+      "rigid",
       "label",
       "plan",
       "error",
-      "prediction",
-      "constraint"
+      "constraints",
+      "prediction"
     ],
     "workflow_steps": [
       {
