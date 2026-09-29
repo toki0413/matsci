@@ -581,7 +581,10 @@ SLOTS: <OPTIONAL, only for method/numerical objectives where inputs are known BE
             return plan
         scene = self._plan_check_scene_tag(plan)
         max_refines = self._plan_check_max_refines(tier, scene)
-        for attempt in range(max_refines + 1):
+        attempt = 0
+        # 用 while 而非 for range(max_refines+1): 失败时可能需要临时抬高预算
+        # (见下), for 的 range 在进入循环时就固定了, 抬了也无效.
+        while attempt <= max_refines:
             try:
                 check = await self._plan_check(plan, hypothesis, context)
             except Exception as e:
@@ -635,7 +638,8 @@ SLOTS: <OPTIONAL, only for method/numerical objectives where inputs are known BE
                         f"[{scene}] {check.get('reason', 'unknown')} "
                         f"(low_conf={confidence:.2f})"
                     )
-                if attempt >= max_refines:
+                # 预算耗尽且已重建过至少一次 -> 放行
+                if attempt >= max_refines and attempt >= 1:
                     reason = check.get("reason", "unknown")
                     self._plan_check_warnings.append(f"[{scene}] {reason}")
                     logger.warning(
@@ -652,6 +656,12 @@ SLOTS: <OPTIONAL, only for method/numerical objectives where inputs are known BE
                         plan,
                     )
                     return plan
+                if attempt >= max_refines:
+                    # 自适应的 ewma 放宽会把 max_refines 压到 0 (bucket 多数
+                    # 通过时 baseline-1), 首次失败就被放行 → 明知达不成
+                    # hypothesis 的 plan 原样执行 (run45/46: misalign 永不纠正).
+                    # 首次失败时强制给一次重建预算, 通过路径不受影响.
+                    max_refines += 1
             logger.info(
                 "plan_check refining (attempt %d, tier=%s, scene=%s, conf=%.2f): %s",
                 attempt,
@@ -661,6 +671,7 @@ SLOTS: <OPTIONAL, only for method/numerical objectives where inputs are known BE
                 check.get("reason"),
             )
             plan = await self._refine_plan(plan, check, hypothesis, context)
+            attempt += 1
         return plan
 
     async def _maybe_trigger_plan_check_clarify(
