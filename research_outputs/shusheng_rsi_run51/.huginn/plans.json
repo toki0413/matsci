@@ -120,6 +120,37 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_9728e5a9",
+      "objective": "[DIM: geometry] The function space of solutions to w constraints forms a manifold in the space of continuous functions; N_c(w) corresponds to the minimal width such that the network's feature map can locally embed this manifold without topological obstruction.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "We will design a numerical experiment to test the hypothesis that the solution space to a set of constraints forms a manifold, and that the minimal network width $N_c(w)$ required to achieve zero-violation (max abs error ≤ 1e-3 on held-out constraints) scales with the \"rigidity\" of this space. We will generate a family of constraint sets (e.g., polynomial interpolation, differential equation residuals, or manifold embedding tasks), train small feedforward networks of varying widths, and measure the transition from \"fat\" (no width achieves zero-violation) to \"rigid\" (a finite small width suffices). We will sweep $w$ (number of constraints) and $N$ (hidden width), record training/validation errors, and extract $N_c(w)$ as the minimal width satisfying the zero-violation criterion. We will analyze whether $N_c(w)$ saturates or grows with $w$, and compare to the theoretical expectation of a sharp transition.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "src/experiment_rigidity.py",
+            "src/evaluate_manifold.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T13:02:48.030305+00:00",
+      "confirmed_at": "2026-09-29T13:02:48.031779+00:00",
+      "completed_at": "2026-09-29T13:02:59.930638+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
