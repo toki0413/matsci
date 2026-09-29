@@ -293,5 +293,32 @@
     ],
     "mode": "explore",
     "description": "We will mathematically formulate the constraint satisfaction problem for ReLU networks as a semidefinite program (SDP) using the Neural Tangent Kernel (NTK) framework. First, we will analytically deri"
+  },
+  {
+    "scene_tag": "workflow",
+    "hyp_key": "7cd6f9c8c77e",
+    "reason": "The plan is fundamentally invalid because it uses synthetic 'constraint datasets' (samples from a target function) rather than hard constraints (e.g., $f(x_i) = y_i$) required to define 'zero-violation capacity'. In the proposed setup, any sufficiently wide MLP can achieve arbitrarily low error on a finite set of points by interpolation, meaning 'zero-violation' (error ≤ 1e-3) will likely be achieved at the smallest width (N=2) for all w, resulting in a flat N_c(w) curve with no phase transition. The hypothesis relies on the existence of a fat regime where zero-violation is impossible, which cannot be generated with soft regression targets.",
+    "missing_steps": [
+      "Define hard constraints (e.g., equality constraints $f(x_i) = y_i$) rather than soft regression samples.",
+      "Ensure the hypothesis of a phase transition (rigid vs. fat regimes) is physically/mathematically possible by using constraints that create an underdetermined or overconstrained system depending on w and N.",
+      "Validate that the 'fat regime' (where no width N achieves zero violation) is reachable within the search space."
+    ],
+    "mode": "workflow",
+    "description": "Generate synthetic constraint datasets for a target function f(x)=sin(2πx) on [0,1] using w samples. Implement a small MLP with ReLU activations and sweep hidden width N from 2 to 50. For each w, trai"
+  },
+  {
+    "scene_tag": "workflow",
+    "hyp_key": "7cd6f9c8c77e",
+    "reason": "The plan is fundamentally invalid because it uses a 'workflow' mode to describe a numerical pipeline that requires actual code execution and training runs (not just a workflow description). The plan lacks concrete implementation details, training hyperparameters, optimization methods, and convergence criteria. It also fails to address how to properly define and compute the 'zero-violation capacity' N_c(w) with the required precision (≤1e-3 error). The proposed approach of 'solving feasibility via constrained optimization' is vague and doesn't specify the actual algorithm or solver to be used. Additionally, there's no clear strategy for distinguishing between the 'rigid' and 'fat' regimes with the required binary decision criterion.",
+    "missing_steps": [
+      "Specify the exact optimization algorithm for constrained minimization (e.g., SQP, interior-point, etc.)",
+      "Define training hyperparameters (learning rate, batch size, epochs, optimizer)",
+      "Detail the method for computing N_c(w) systematically across different widths N",
+      "Include validation procedure for convergence and error thresholds",
+      "Implement proper error analysis and statistical validation for phase transition detection",
+      "Add code implementation details for the ReLU MLP architecture and constraint handling"
+    ],
+    "mode": "workflow",
+    "description": "Construct a numerical pipeline to compute N_c(w) for ReLU networks across varying constraint counts w. Steps: (1) Define hard constraints f(x_i)=y_i with y_i sampled from sin(2πx) plus structured nois"
   }
 ]
