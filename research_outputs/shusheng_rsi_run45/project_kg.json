@@ -642,6 +642,68 @@
       "r_phys": 1.0,
       "iteration": 50,
       "id": "persona_use:reviewer_iter50"
+    },
+    {
+      "label": "[DIM: dynamics]",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:42:35.513085",
+      "last_seen": "2026-09-29T03:42:35.513085",
+      "mentions": 1,
+      "iteration": 55,
+      "r_phys": 1.0,
+      "persona": "reviewer",
+      "id": "experiment:[DIM: dynamics]"
+    },
+    {
+      "label": "plan_explore_iter55",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:42:35.513120",
+      "last_seen": "2026-09-29T03:42:35.513120",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter55"
+    },
+    {
+      "label": "pass_iter55",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:42:35.513129",
+      "last_seen": "2026-09-29T03:42:35.513129",
+      "mentions": 1,
+      "surprise": 0,
+      "id": "Fact:pass_iter55"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T03:42:35.513137",
+      "last_seen": "2026-09-29T03:42:35.513137",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: dynamics]",
+        "Method:plan_explore_iter55",
+        "Fact:pass_iter55"
+      ],
+      "iteration": 55,
+      "id": "he_experiment_pipeline_75436824"
+    },
+    {
+      "label": "reviewer_iter55",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:42:35.513206",
+      "last_seen": "2026-09-29T03:42:35.513206",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "1bbf7b81cd9bc0d1",
+      "r_phys": 1.0,
+      "iteration": 55,
+      "id": "persona_use:reviewer_iter55"
     }
   ],
   "links": [
@@ -914,6 +976,33 @@
       "last_seen": "2026-09-29T03:41:23.087619",
       "mentions": 1,
       "target": "he_experiment_pipeline_efdf4ee9"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: dynamics]",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:42:35.513137",
+      "last_seen": "2026-09-29T03:42:35.513137",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_75436824"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter55",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:42:35.513137",
+      "last_seen": "2026-09-29T03:42:35.513137",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_75436824"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter55",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:42:35.513137",
+      "last_seen": "2026-09-29T03:42:35.513137",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_75436824"
     }
   ]
 }

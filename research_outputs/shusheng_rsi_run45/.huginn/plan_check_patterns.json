@@ -154,5 +154,33 @@
     ],
     "mode": "explore",
     "description": ""
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan focuses on implementing function families and running a capacity scan to measure generalization error, but the hypothesis requires topological analysis of the weight manifolds (specifically computing the first homology group H1). The historical failures explicitly note that previous plans failed by focusing only on error metrics instead of computing homology structures. This plan repeats that critical error by not including any topological data analysis (TDA), persistent homology computation, or manifold geometry characterization. While the plan addresses some practical implementation details (normalization, shape constraints), it misses the core mathematical structure required to test the hypothesis about non-monotonic dependence due to topological obstructions.",
+    "missing_steps": [
+      "Define weight manifold geometry and parameterization for both linear rigid family and fat polynomial family",
+      "Specify sampling strategy for weight manifolds (e.g., random sampling of parameters)",
+      "Define filtration method for persistent homology computation (e.g., Vietoris-Rips)",
+      "Specify homology computation tool/library (e.g., GUDHI, Ripser, Dionysus)",
+      "Implement computation and comparison of H1 groups between rigid and fat manifolds",
+      "Add continuous interpolation path testing between training and held-out solutions",
+      "Include explicit verification that fat polynomial family is x-dependent and partially learnable"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid (linear) and fat (high-degree polynomial) function families, ensuring y/yv are normalized to O(1) magnitude, shapes are (N,1)"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan is fundamentally misaligned with the hypothesis. The hypothesis tests a specific sampling artifact (non-monotonic held-out error vs. w due to grid alignment), which requires empirical measurement of error curves across held-out grids. The proposed TDA workflow analyzes topological obstructions (H1 Betti numbers) of weight manifolds, which addresses structural properties of the families, not the sampling dynamics or held-out grid resolution effects. It fails to implement the core test: scanning w and held-out grids to observe error non-monotonicity. Additionally, it lacks explicit functional forms and w scaling as required by historical failures.",
+    "missing_steps": [
+      "Define explicit functional forms for rigid (e.g., constrained linear f(x)=ax+b) and fat (e.g., structured high-degree polynomials) families",
+      "Implement held-out error scan over w with multiple held-out grid resolutions to test non-monotonicity",
+      "Ensure w is sufficiently large (w >> 1) to keep errors in statistical noise regime per dimensional pre-check",
+      "Measure and report training vs. held-out errors independently as required by reporting discipline",
+      "Correlate observed non-monotonicity with sampling density and grid alignment, not topological features"
+    ],
+    "mode": "explore",
+    "description": "Implement topological data analysis (TDA) workflow to compute first homology groups (H1) for rigid (linear) and fat (high-degree polynomial) weight manifolds. Parameterize families by weights, sample "
   }
 ]
