@@ -137,5 +137,19 @@
     ],
     "mode": "explore",
     "description": "Implement the capacity_scan framework with mathematically rigorous definitions: (1) Define N_c(w) as the minimum sample size required for ε-approximation within δ confidence, computed via empirical Ra"
+  },
+  {
+    "scene_tag": "auto_family",
+    "hyp_key": "497226afd9e5",
+    "reason": "The plan is invalid because it does not address the core hypothesis regarding heavy-tailed distributions and infinite variance. Specifically, the plan only tests N_c(w) trends (finite vs. unreachable) and absolute error thresholds, but fails to: (1) implement the required 'small w' condition to observe the heavy-tailed regime, (2) measure the held-out error distribution across many seeds to verify infinite variance (requires large seed count, not just 3), and (3) explicitly test the non-monotonic behavior of N_c(w) predicted by the hypothesis. Instead, it replicates the 'rigid vs. fat' classification failure pattern from run28 by focusing on learnability rather than distributional properties.",
+    "missing_steps": [
+      "Define polynomial evaluation points and network width w to be small enough to induce heavy-tailed error distributions (e.g., w << N_c)",
+      "Increase random seed count from 3 to a sufficiently large number (e.g., >1000) to statistically verify infinite variance",
+      "Measure and analyze the full distribution of held-out errors (histograms, tail indices, moment calculations) rather than just thresholded error values",
+      "Explicitly test for non-monotonic N_c(w) behavior by varying w continuously or with finer granularity",
+      "Ensure fat family function is x-dependent with high effective dimension (not noise) but still partially learnable to avoid trivial classification"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function for the rigid family (polynomial evaluation points with finite-dimensional solution space) and fat family (random high-degree polynomial with"
   }
 ]
