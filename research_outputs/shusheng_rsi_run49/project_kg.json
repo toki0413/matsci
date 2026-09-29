@@ -789,6 +789,70 @@
       "r_phys": 1.0,
       "iteration": 65,
       "id": "persona_use:reviewer_iter65"
+    },
+    {
+      "label": "[DIM: measure] The minimal network width $N_c(w)$ required to achieve zero viola",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T09:04:09.287862",
+      "last_seen": "2026-09-29T09:04:09.287862",
+      "mentions": 1,
+      "iteration": 70,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "$N_c(w)$ will exhibit logarithmic growth (or sub-linear) for small-to-moderate $w$, plateauing at a finite value if the solution space is rigid, or growing faster (e.g., polynomial) if the space is fa",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: measure] The minimal network width $N_c(w)$ required to achieve zero viola"
+    },
+    {
+      "label": "plan_explore_iter70",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:04:09.287899",
+      "last_seen": "2026-09-29T09:04:09.287899",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter70"
+    },
+    {
+      "label": "pass_iter70",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:04:09.287908",
+      "last_seen": "2026-09-29T09:04:09.287908",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter70"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T09:04:09.287917",
+      "last_seen": "2026-09-29T09:04:09.287917",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: measure] The minimal network width $N_c(w)$ required to achieve zero viola",
+        "Method:plan_explore_iter70",
+        "Fact:pass_iter70"
+      ],
+      "iteration": 70,
+      "id": "he_experiment_pipeline_67b9f569"
+    },
+    {
+      "label": "reviewer_iter70",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T09:04:09.287986",
+      "last_seen": "2026-09-29T09:04:09.287986",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "3efafef823bebcbf",
+      "r_phys": 1.0,
+      "iteration": 70,
+      "id": "persona_use:reviewer_iter70"
     }
   ],
   "links": [
@@ -1142,6 +1206,33 @@
       "last_seen": "2026-09-29T09:03:08.117303",
       "mentions": 1,
       "target": "he_experiment_pipeline_49a70c34"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: measure] The minimal network width $N_c(w)$ required to achieve zero viola",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:04:09.287917",
+      "last_seen": "2026-09-29T09:04:09.287917",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_67b9f569"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter70",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:04:09.287917",
+      "last_seen": "2026-09-29T09:04:09.287917",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_67b9f569"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter70",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:04:09.287917",
+      "last_seen": "2026-09-29T09:04:09.287917",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_67b9f569"
     }
   ]
 }

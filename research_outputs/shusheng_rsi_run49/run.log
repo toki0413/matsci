@@ -156,3 +156,14 @@ metacog: 假设可能为换名归约 (trap=, target=原始问题中关于解空�
 [exec-route] mode='explore' desc[:80]='Design a numerical experiment to test the hypothesis that the minimal network wi' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
 [code-lab-author] raw_len=1247 extracted_len=1233 prompt_len=3149
 [code-lab-run] res_none=False success=True nobj=36 reason=''
+[validate] mode='code_lab' success=True nobj=36 cf=False lab=True
+metacog: 假设可能为换名归约 (trap=, target=将'解空间刚性'的数值探测问题替换为计算复杂度理论中的NP-hard判定问题，但未提供与刚性/胖的二值判别相关的任何可计算或可观测的数值证据。): [DIM: computation] The decision problem "Does a width-$H$ network satisfy $w$ constraints with error
+renamed-reduction 5× consecutive: escalate — block dominant family + force redirect
+plan_check failed (tier=light, scene=auto_numerical, max_refines=1): The plan is fundamentally misaligned with the hypothesis. The hypothesis concerns a theoretical decision problem about NP-hardness in ReLU networks, but the proposed plan is an empirical finite-size study of scaling laws. While scaling studies are interesting, they cannot prove NP-hardness (a complexity-theoretic claim) or establish that N_c must grow super-linearly/infeasible as a general property. The plan treats a theoretical hardness question as if it were an empirical observation task, which is a category error. Additionally, the plan lacks details on how to actually test the decision problem or hardness reduction.
+[exec-route] mode='explore' desc[:80]='Reframe the investigation as an empirical finite-size study of the scaling of mi' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=1209 extracted_len=1194 prompt_len=3149
+[code-lab-run] res_none=True success=None nobj=0 reason="执行异常: AttributeError: module 'numpy' has no attribute 'poly_basis'"
+[code-lab-author] raw_len=1869 extracted_len=1854 prompt_len=4763
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 10)'
+[code-lab-author] raw_len=959 extracted_len=944 prompt_len=5513
+[code-lab-run] res_none=False success=True nobj=36 reason=''

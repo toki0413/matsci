@@ -94,5 +94,32 @@
     ],
     "mode": "explore",
     "description": "Generate a controlled symbolic/numerical analysis to test the hypothesis that the minimal network width N_c(w) for zero violation on w linear constraints is non-decreasing. Steps: (1) Construct random"
+  },
+  {
+    "scene_tag": "auto_numerical",
+    "hyp_key": "346693e0f86f",
+    "reason": "Plan fails to address the core hypothesis: it proposes a numerical experiment to observe scaling behavior, but the hypothesis is a theoretical NP-hardness claim about computational complexity. Numerical experiments cannot prove or disprove NP-hardness (which is a worst-case asymptotic property), only observe finite-size effects. The plan misidentifies the task type: this is a theoretical/computational complexity question, not an empirical exploration. Additionally, the plan lacks concrete implementation details (e.g., how to generate constraints, define 'width-H' precisely, or verify hardness).",
+    "missing_steps": [
+      "Clarify whether the hypothesis requires a theoretical proof or empirical evidence; if empirical, reframe as 'empirical observation of super-linear scaling in finite regimes'",
+      "Define 'width-H' precisely (e.g., total parameters? hidden units?) and constraint generation method (random linear? adversarial?)",
+      "Specify optimization algorithm, convergence criteria, and how to handle infeasibility (e.g., max iterations, early stopping)",
+      "Include a control case: verify that for w < parameters, N_c remains sub-linear as predicted"
+    ],
+    "mode": "explore",
+    "description": "Conduct a systematic numerical experiment to characterize the scaling of $N_c(w)$ (minimal width for zero violation) against $w$ (number of constraints). Define the constraint set as a linear system o"
+  },
+  {
+    "scene_tag": "auto_numerical",
+    "hyp_key": "346693e0f86f",
+    "reason": "The plan is fundamentally misaligned with the hypothesis. The hypothesis concerns a theoretical decision problem about NP-hardness in ReLU networks, but the proposed plan is an empirical finite-size study of scaling laws. While scaling studies are interesting, they cannot prove NP-hardness (a complexity-theoretic claim) or establish that N_c must grow super-linearly/infeasible as a general property. The plan treats a theoretical hardness question as if it were an empirical observation task, which is a category error. Additionally, the plan lacks details on how to actually test the decision problem or hardness reduction.",
+    "missing_steps": [
+      "Clarify that the hypothesis is a theoretical complexity claim (NP-hardness), not an empirical scaling observation",
+      "Define the decision problem formally: input = width-H network, constraints w, error threshold 1e-3; output = yes/no",
+      "Propose a reduction from a known NP-complete problem (e.g., 3-SAT, subset sum) to the constraint satisfaction problem for ReLU networks",
+      "If empirical: design experiments that actually test feasibility of satisfying constraints, not just error minimization",
+      "Include theoretical analysis of parameter count vs constraint count relationship in two-layer ReLU networks"
+    ],
+    "mode": "explore",
+    "description": "Reframe the investigation as an empirical finite-size study of the scaling of minimal network width $N_c(w)$ versus constraint count $w$. Define 'width-H' as the number of hidden units in a two-layer "
   }
 ]

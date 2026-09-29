@@ -418,6 +418,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_11187de4",
+      "objective": "[DIM: computation] The decision problem \"Does a width-$H$ network satisfy $w$ constraints with error $\\leq 10^{-3}$?\" is NP-hard for ReLU networks when $w$ exceeds the number of free parameters, implying $N_c(w)$ must grow super-linearly or become infeasible (fat) as $w$ increases beyond a threshold.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Reframe the investigation as an empirical finite-size study of the scaling of minimal network width $N_c(w)$ versus constraint count $w$. Define 'width-H' as the number of hidden units in a two-layer ReLU network. Generate constraints via random linear systems (for the sub-linear regime) and adversarial sets (for the fat regime). Use a standard SGD optimizer with early stopping to find the minimal width where validation error $\\leq 10^{-3}$. Control by verifying sub-linear scaling when $w <$ parameters to establish a baseline before testing the super-linear/infeasible threshold.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T09:04:36.359776+00:00",
+      "confirmed_at": "2026-09-29T09:04:36.360984+00:00",
+      "completed_at": "2026-09-29T09:05:00.481350+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
