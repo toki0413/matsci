@@ -88,12 +88,15 @@
         "[Feynman unknown_unknown] I never considered that the test framework might require a specific narrative or interpretive layer before accepting numerical output — I assumed raw results would be evaluated on their own merits.",
         "[Feynman known_unknown] I don’t understand why the test output shows “no tests ran” despite `tests_passed: true` — is this a reporting bug, or were tests implicitly assumed satisfied?",
         "[Feynman unknown_unknown] I never considered whether the constraint satisfaction metric is computed on training data only, which would explain why held-out constraints aren’t actually evaluated — undermining the phase transition claim.",
-        "[Feynman known_unknown] I’m unclear on how the critical density $\\rho_c$ was estimated — was it fitted, simulated, or derived analytically? Without that, the phase transition feels asserted rather than observed."
+        "[Feynman known_unknown] I’m unclear on how the critical density $\\rho_c$ was estimated — was it fitted, simulated, or derived analytically? Without that, the phase transition feels asserted rather than observed.",
+        "[Feynman known_unknown] I don't fully understand why the benchmark tests showed \"passed: 0, failed: 0, skipped: 2\" when constraints were actually satisfied - this discrepancy needs clarification on test execution methodology",
+        "[Feynman unknown_unknown] I hadn't considered how different activation functions beyond ReLU might affect the piecewise-linear inequality structure and its geometric interpretation",
+        "[Feynman known_unknown] The exact mechanism behind why spanning trees create particularly rigid solution spaces compared to other graph topologies requires deeper geometric investigation"
       ],
-      "iteration": 203,
+      "iteration": 208,
       "status": "active",
       "created_at": "2026-09-29T08:46:00.615433+00:00",
-      "updated_at": "2026-09-29T09:38:01.379905+00:00",
+      "updated_at": "2026-09-29T09:39:04.567632+00:00",
       "session_id": "",
       "metadata": {},
       "unknowns": [
@@ -2416,9 +2419,73 @@
           "discovered_at": "2026-09-29T09:37:37.161950+00:00",
           "resolved_at": null,
           "iteration": 200
+        },
+        {
+          "id": "unk_7f7dd1b3",
+          "text": "将“泛化行为”作为解空间刚性的探针本身存在因果倒置风险——刚性是约束系统的内在几何属性，而泛化能力受优化算法、初始化、正则化等训练动态影响，二者未必直接对应。",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-29T09:38:32.558092+00:00",
+          "resolved_at": null,
+          "iteration": 205
+        },
+        {
+          "id": "unk_fa99a9b8",
+          "text": "“零违规”判定依赖数值误差≤1e-3，但深层网络训练中的梯度消失/爆炸、局部极小点可能导致即使理论可解也无法收敛到满足该精度的解，误判为“胖”。",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-29T09:38:32.945556+00:00",
+          "resolved_at": null,
+          "iteration": 205
+        },
+        {
+          "id": "unk_6dc525bd",
+          "text": "当约束点w增加但分布稀疏或共线时，N_c(w)可能不增长，但这不代表解空间刚性，而是约束信息冗余不足导致的假阳性刚性判断。",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-29T09:38:33.027781+00:00",
+          "resolved_at": null,
+          "iteration": 205
+        },
+        {
+          "id": "unk_18ff7672",
+          "text": "未指定约束样本的生成机制（如是否来自同一解析函数、是否有噪声），若样本非独立同分布或存在系统性偏差，N_c(w)趋势将失去泛化意义。",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-29T09:38:33.032236+00:00",
+          "resolved_at": null,
+          "iteration": 205
+        },
+        {
+          "id": "unk_4b6d6c96",
+          "text": "前馈网络宽度作为容量度量忽略了深度、激活函数类型、初始化方案等因素对表达能力的影响，单一维度扫描可能遗漏关键相变点。",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-29T09:38:33.516172+00:00",
+          "resolved_at": null,
+          "iteration": 205
+        },
+        {
+          "id": "unk_cd9c599f",
+          "text": "I don't fully understand why the benchmark tests showed \"passed: 0, failed: 0, skipped: 2\" when constraints were actually satisfied - this discrepancy needs clarification on test execution methodology",
+          "type": "known_unknown",
+          "discovered_at": "2026-09-29T09:38:42.253853+00:00",
+          "resolved_at": null,
+          "iteration": 205
+        },
+        {
+          "id": "unk_6556b510",
+          "text": "I hadn't considered how different activation functions beyond ReLU might affect the piecewise-linear inequality structure and its geometric interpretation",
+          "type": "unknown_unknown",
+          "discovered_at": "2026-09-29T09:38:42.259247+00:00",
+          "resolved_at": null,
+          "iteration": 205
+        },
+        {
+          "id": "unk_bd875642",
+          "text": "The exact mechanism behind why spanning trees create particularly rigid solution spaces compared to other graph topologies requires deeper geometric investigation",
+          "type": "known_unknown",
+          "discovered_at": "2026-09-29T09:38:42.264463+00:00",
+          "resolved_at": null,
+          "iteration": 205
         }
       ],
-      "unknowns_discovered": 290,
+      "unknowns_discovered": 298,
       "unknowns_resolved": 0,
       "objective": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【唯一硬性口径（不可更改，其余全由你决定）】\n- 零违规 = 留出约束点上的最大绝对误差 ≤ 1e-3。\n- 刚性 = 扫描范围内存在较小的有限 N_c（且 N_c 不随 w 增长）；胖 = 扫描上限内任何宽度都达不到零违规（N_c 不可达）。判别是二值的。\n- 所有报告数值必须是有限数（禁止 inf/nan/None）。\n- 研究对象只能是小型前馈网络本身。严禁把本命题替换或“换名归约”为材料/化学/玻璃/合金/离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【实验的族、样本、扫描、脚本如何设计，以及如何证明“刚性可达”，由你自己决定并给出理由。】\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
       "success_criteria": [],

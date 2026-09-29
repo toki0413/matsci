@@ -1209,6 +1209,37 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_d7e83fa1",
+      "objective": "[DIM: measure] The minimal network width $N_c(w)$ required to achieve zero violation on held-out constraints follows a heavy-tailed distribution across random constraint sets, with the median $N_c(w)$ growing sublinearly in $w$ (e.g., $N_c(w) \\sim \\log w$) for $w \\leq H^2$, due to the concentration of measure in high-dimensional ReLU solution spaces.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement a numerical experiment to test the hypothesis that the minimal network width N_c(w) for zero violation (max abs error ≤ 1e-3 on held-out constraints) follows a heavy-tailed distribution with sublinear growth (N_c(w) ~ log w) for w ≤ H^2. We will generate random constraint sets, train small ReLU networks of varying widths, measure the minimal width achieving zero violation on held-out data, and analyze the distribution of N_c(w) across multiple random constraint samples. This requires: (1) generating random constraint sets with w samples, (2) training ReLU networks with hidden widths from 1 to H, (3) evaluating zero violation on held-out constraints, (4) recording N_c(w) for each constraint set, and (5) analyzing the distribution and scaling behavior. We'll use a fixed architecture (single hidden layer, ReLU activation) and ensure all results are finite numbers.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "src/relu_constraint_experiment.py",
+            "experiments/relu_width_scan.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T09:39:04.288357+00:00",
+      "confirmed_at": "2026-09-29T09:39:04.561788+00:00",
+      "completed_at": "2026-09-29T09:39:25.518926+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
