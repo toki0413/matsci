@@ -770,6 +770,39 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_b7325fe0",
+      "objective": "[DIM: computation] The capacity complexity N_c(w) for the rigid family satisfies N_c(w) = ⌈log₂(w)⌉ + O(1), reflecting the information-theoretic minimum number of bits needed to encode w constraints, while the fat family requires N_c(w) = Ω(w^k) for some k > 0 due to high-degree polynomial representation.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the `family` function to generate training/holdout constraints for rigid (linear subspace) and fat (high-degree polynomial) families. The rigid family uses a linear constraint matrix with dimension w-1 (unique solution), while the fat family uses a 20-term random polynomial with high dynamic range. Include y/yv normalization by std to ensure O(1) scale for the 1e-3 zero-violation criterion. Return X, y, Xv, yv as (N,1) arrays with non-overlapping holdout points.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "family.py",
+            "(new",
+            "or",
+            "modified)"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T07:50:03.966950+00:00",
+      "confirmed_at": "2026-09-29T07:50:03.968881+00:00",
+      "completed_at": "2026-09-29T07:50:23.523103+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
