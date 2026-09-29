@@ -565,5 +565,21 @@
     ],
     "mode": "explore",
     "description": "The hypothesis is about whether small feedforward networks can probe bootstrap solution space rigidity via zero-violation generalization on two function classes (rigid linear vs. fat high-degree polyn"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan fundamentally misaligns with the hypothesis. The hypothesis requires verifying geometric/topological properties of solution spaces (H1 groups, affine manifold dimension, Gaussian curvature, Hessian spectral gap) in function space, but the plan only implements a capacity scan measuring N_c(w) and held-out error. This repeats the historical failures explicitly listed in the scene history. Additionally, MODE=explore is inappropriate for a structural verification task requiring concrete code implementation; it should be switched to coder/workflow mode. The plan also fails to address the critical missing steps: topological data analysis, manifold geometry definition in function space, filtration method specification, and continuous interpolation path testing.",
+    "missing_steps": [
+      "Switch MODE from explore to coder/workflow for concrete implementation",
+      "Implement topological data analysis (persistent homology) to compute H1 groups of solution space manifolds",
+      "Define weight manifold geometry and parameterization in function space (not just parameter space)",
+      "Specify filtration method (e.g., Vietoris-Rips) for homology computation on function space geometry",
+      "Verify rigid family forms 2D affine manifold through geometric analysis in function space",
+      "Compute Hessian at initialization and analyze spectral gap in function space",
+      "Analyze Gaussian curvature of fat polynomial family manifold",
+      "Implement continuous interpolation path testing between training and held-out solutions in function space"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function for the rigid linear family and fat polynomial family to generate training and validation sets with proper normalization and shape constraint"
   }
 ]
