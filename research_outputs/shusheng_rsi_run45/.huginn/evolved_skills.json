@@ -8,12 +8,12 @@
       "huginn",
       "family",
       "value",
-      "linear",
       "rigid",
+      "linear",
       "label",
       "polynomial",
       "plan",
-      "function"
+      "explore"
     ],
     "workflow_steps": [
       {

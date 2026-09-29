@@ -386,5 +386,35 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the rigid family (linear function f(x)=ax+b) and fat family (20th-degree polynomial with random coefficients) in the family function, ensuring output normalizati"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan fundamentally misaligns with the hypothesis. The hypothesis requires analyzing topological/structural properties in function space (H1 groups, affine manifold geometry, spectral gap analysis), but the proposed plan only implements a capacity scan measuring N_c(w) and held-out error. This repeats the exact historical failure patterns where TDA was omitted and the focus was on error metrics rather than computing homology groups, analyzing weight manifold geometry, or verifying the affine manifold structure as required by the hypothesis. The plan does not implement persistent homology, compute Hessian spectral gaps, or verify the 2D affine manifold structure.",
+    "missing_steps": [
+      "Define weight manifold geometry and parameterization for both rigid and fat families in function space (not just parameter space)",
+      "Implement topological data analysis (persistent homology) to compute H1 groups of the solution space manifold",
+      "Specify filtration method (e.g., Vietoris-Rips) for homology computation on function space geometry",
+      "Verify that rigid family forms a 2D affine manifold through geometric analysis in function space",
+      "Confirm solution space invariance under translation and scaling algebraically",
+      "Compute Hessian at initialization and analyze its spectral gap in function space",
+      "Add continuous interpolation path testing between training and held-out solutions in function space",
+      "Implement gradient flow dynamics for both families and analyze convergence properties"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid linear family and fat polynomial family, ensuring output shapes are (N,1), no overlap between training and held-out sets, and"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan incorrectly uses MODE=explore for a structural verification task that requires concrete computation (coder/workflow). While the DESCRIPTION lists appropriate topological/geometric tools (persistent homology, affine manifold verification, Hessian spectral gap), it lacks concrete implementation details, specific parameter settings, and verification metrics. Crucially, it fails to address the critical failure mode identified in history: the fat polynomial family must be x-dependent (not pure noise) with appropriate scaling. The plan also lacks explicit validation against the hypothesis's specific claims about H1 groups, combinatorial explosion, and affine manifold invariance.",
+    "missing_steps": [
+      "Define explicit x-dependent function forms for both rigid and fat families with appropriate scaling (avoid noise-only fat family)",
+      "Specify concrete parameter ranges, discretization schemes, and computational budget for each analysis step",
+      "Include explicit verification metrics for H1 group computation and affine manifold dimensionality",
+      "Add validation against the specific hypothesis claims about combinatorial local minima and solution space invariance",
+      "Implement proper error handling and convergence criteria for topological analysis",
+      "Include pre-computation steps for constructing the solution space manifold before homology analysis"
+    ],
+    "mode": "explore",
+    "description": "Implement topological and geometric analysis for both families: (1) parameterize the rigid family f(x)=ax+b as a 2D affine manifold in function space, verify invariance under weight translation algebr"
   }
 ]
