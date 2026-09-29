@@ -3375,30 +3375,25 @@ Respond JSON only:
                 # 打转, 已无新信息 (run47 的"无收敛出口"空转正是这种).
                 # 与 F4 surprise 的本质区别: surprise 是**启发式**收敛(可能只是噪声小),
                 # 故长程模式让位给挂钟; 而执行指纹收敛是**硬证据**(字面重复同一实验),
-                # 继续跑纯属浪费 —— 无论长程与否都应结题. audit 不阻断才算数,
-                # 防误伤"结果少但假设图仍在生长"的正常探索.
+                # 继续跑纯属浪费 —— 无论长程与否都应结题.
+                # v11 修正: 原用 _metacog_check_completion 做否决是错的 —— 该审计在
+                #   equivalence_traps_remaining 非空/努力下限未过/无 UNEXPLORED 自白时
+                #   必然 is_complete=False → 返回"阻断(别停)". 而"字面重复同一实验"的
+                #   空转恰是这些条件高发场景, 于是出口**永不触发** (run47/49 的
+                #   可终止出口=0). 执行指纹收敛是硬证据, 故改为**硬终止**, 完成审计
+                #   仅作 advisory 记录, 不再能否决.
                 if not state.should_stop and getattr(self, "_exec_converged", False):
-                    try:
-                        _fp_hist = getattr(self, "_exec_fp_history", None)
-                        _uniq = len(set(_fp_hist)) if _fp_hist else 0
-                        _blk, _why = self._metacog_check_completion()
-                        if _blk:
-                            logger.info("v10 exec-convergence audit blocked: %s", _why)
-                            self._speculator_hint = (
-                                (self._speculator_hint + f"\n[completion audit] {_why}").strip()
-                            )
-                        else:
-                            logger.warning(
-                                "v10 exec convergence (unique fingerprints=%d over "
-                                "window, no new info) → conclude+stop",
-                                _uniq,
-                            )
-                            state.should_stop = True
-                    except Exception:  # 防御: 收敛结题失败忽略
-                        logger.debug(
-                            "v10 F5 exec-convergence stop failed (non-fatal)",
-                            exc_info=True,
-                        )
+                    _fp_hist = getattr(self, "_exec_fp_history", None)
+                    _uniq = len(set(_fp_hist)) if _fp_hist else 0
+                    _blk, _why = self._metacog_check_completion()
+                    if _blk:
+                        logger.info("v10 exec-convergence stop (advisory audit: %s)", _why)
+                    logger.warning(
+                        "v10 exec convergence (unique fingerprints=%d over window, "
+                        "no new info) → conclude+stop",
+                        _uniq,
+                    )
+                    state.should_stop = True
 
                 # v11: 进展不变量 → 唯一终止出口 (假设层).
                 # 把散装守卫收敛成"无进展 ⇒ 必须终止"的单一控制流: 换名 soft 阶梯
