@@ -421,5 +421,36 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Systematic computational verification of phase transition in ReLU network verification complexity as function of constraint count w. Steps: 1) Define explicit constraint s"
+  },
+  {
+    "scene_tag": "dft",
+    "hyp_key": "73d9aa2a9e80",
+    "reason": "The plan contains a critical logical error in the zero-violation threshold. The hypothesis requires max absolute error ≤ 1e-3, but the DESCRIPTION incorrectly states 1e3 (one thousand), which is physically meaningless for this context and would invalidate the entire experiment. This is a fundamental specification error that would produce garbage results. Additionally, the plan lacks concrete details on constraint generation method, network architecture specifics, training procedure, and validation methodology which are essential for reproducibility.",
+    "missing_steps": [
+      "Correct the zero-violation threshold from 1e3 to 1e-3 in the DESCRIPTION",
+      "Specify the exact constraint generation mechanism (linear vs nonlinear target function)",
+      "Define the network architecture details (activation functions, initialization, depth)",
+      "Outline the training procedure (optimization algorithm, loss function, convergence criteria)",
+      "Specify the constraint distribution parameters for variance analysis",
+      "Define the scan bounds for width N and constraint density ρ"
+    ],
+    "mode": "explore",
+    "description": "Design a systematic scan to test the phase-transition hypothesis: fix d_in (input dimension), vary w (constraint count) to sweep ρ = w/d_in, and for each w scan hidden width N to find minimal N_c(w) a"
+  },
+  {
+    "scene_tag": "dft",
+    "hyp_key": "73d9aa2a9e80",
+    "reason": "The plan contains a critical logical error in the zero-violation threshold. The hypothesis requires max absolute error ≤ 1e-3, but the DESCRIPTION incorrectly states 1e3 (one thousand), which is physically meaningless for this context and would invalidate the entire experiment. Additionally, the plan lacks concrete details on constraint generation method, network architecture specifics, training procedure, and validation methodology which are essential for reproducibility. The plan also doesn't clearly define how to handle the case where N_c is unreachable within scan bounds.",
+    "missing_steps": [
+      "Correct the zero-violation threshold from 1e3 to 1e-3 in the DESCRIPTION",
+      "Specify the exact constraint generation mechanism (linear vs nonlinear target function)",
+      "Define the network architecture details (activation functions, initialization, depth)",
+      "Outline the training procedure (optimization algorithm, loss function, convergence criteria)",
+      "Specify the constraint distribution parameters for variance analysis",
+      "Define the scan bounds for width N and constraint density ρ",
+      "Define how to handle cases where N_c is unreachable within scan bounds"
+    ],
+    "mode": "explore",
+    "description": "Systematic scan to test phase-transition hypothesis in constraint density ρ = w/d_in. Fix input dimension d_in = 10, vary constraint count w from 1 to 1000 to sweep ρ ∈ [0.01, 100]. For each w, scan h"
   }
 ]

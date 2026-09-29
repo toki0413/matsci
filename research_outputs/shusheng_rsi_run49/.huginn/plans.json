@@ -853,6 +853,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_526911a6",
+      "objective": "[DIM: measure] The minimal width $N_c(w)$ required for zero violation exhibits a phase transition at a critical constraint density $\\rho_c = w/d_{\\text{in}}$, where below $\\rho_c$ the solution space is rigid (finite $N_c$) and above $\\rho_c$ it becomes fat (no $N_c$ reachable within scan bounds), with transition sharpness governed by the variance of the constraint distribution.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Systematic scan to test phase-transition hypothesis in constraint density ρ = w/d_in. Fix input dimension d_in = 10, vary constraint count w from 1 to 1000 to sweep ρ ∈ [0.01, 100]. For each w, scan hidden width N from 1 to 500 to find minimal N_c(w) achieving zero violation (max absolute error ≤ 1e-3 on held-out constraints). Use ReLU networks with 1 hidden layer, He initialization, and train via Adam (lr=1e-3, max epochs=1000, early stopping on held-out set). Generate constraints via linear constraints (Ax=b) and nonlinear target (sin(x)) with Gaussian (σ=1) and uniform distributions to analyze transition sharpness. Report N_c(w) values, transition location at ρ_c, and variance-governed sharpness.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T09:25:20.609508+00:00",
+      "confirmed_at": "2026-09-29T09:25:20.611165+00:00",
+      "completed_at": "2026-09-29T09:25:36.515822+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
