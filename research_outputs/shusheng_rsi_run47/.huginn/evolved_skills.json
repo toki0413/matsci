@@ -7,13 +7,13 @@
       "autoloop",
       "huginn",
       "family",
-      "value",
       "rigid",
+      "value",
       "label",
       "function",
       "prediction",
       "plan",
-      "explore"
+      "linear"
     ],
     "workflow_steps": [
       {
