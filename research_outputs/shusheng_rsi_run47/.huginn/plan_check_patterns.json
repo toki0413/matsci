@@ -11,5 +11,35 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the rigid family using orthogonal polynomials (Legendre) with linear constraints, ensuring y/yv are normalized to O(1) and Xv/X are disjoint. This is the prerequ"
+  },
+  {
+    "scene_tag": "dft",
+    "hyp_key": "e9b617b02963",
+    "reason": "The plan is invalid because it proposes a 'coder' task (implementing functions) but is labeled as 'explore' mode. Furthermore, the description lacks critical mathematical definitions for the 'rigid' and 'fat' families (e.g., specific basis functions, constraint manifolds, and target function form) required to test the sub-Gaussian vs. heavy-tailed hypothesis. Without these, the numerical experiment cannot be executed or validated. Additionally, the plan does not address the previously noted failure modes regarding scale normalization and the independence of training/held-out error measurements.",
+    "missing_steps": [
+      "Define the specific mathematical forms of the rigid and fat families (constraint equations, basis functions, target function f(x))",
+      "Specify the learning algorithm and loss function used to generate the errors",
+      "Ensure the fat family is x-dependent and high-dimensional (degrees of freedom >> w) to avoid the 'noise vs signal' pitfall",
+      "Implement scale normalization to prevent magnitude-based failure (like run29)",
+      "Clearly define how N_c(w) is calculated and what constitutes a 'valid' width h",
+      "Separate the implementation step (coder) from the analysis step (explorer)"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family(kind, w, seed) function that generates training and held-out constraint points for the rigid and fat families, with proper O(1) normalization of outpu"
+  },
+  {
+    "scene_tag": "dft",
+    "hyp_key": "e9b617b02963",
+    "reason": "The plan is invalid for multiple fundamental reasons. First, the MODE is set to 'explore' but the DESCRIPTION describes a 'coder' task (implementing a constrained family generation module), which is a mismatch. Second, the DESCRIPTION lacks the specific mathematical definitions required to execute the experiment (specific basis functions, constraint manifold equations, target function form, learning algorithm, loss function). Third, the plan repeats the historical failure of not properly separating implementation from analysis. Fourth, it does not address how to specifically measure and validate the sub-Gaussian vs heavy-tailed tail distributions (e.g., what specific statistical tests or metrics will be used to verify the O(1/w) variance decay and divergent higher moments).",
+    "missing_steps": [
+      "Define specific mathematical forms for rigid and fat families (constraint equations, basis functions)",
+      "Specify target function f(x) for the learning task",
+      "Define learning algorithm and loss function",
+      "Specify statistical tests/metrics to validate sub-Gaussian vs heavy-tailed distributions",
+      "Separate implementation (coder) from analysis (explorer) modes",
+      "Define N_c(w) calculation method and valid width criteria"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the constrained family generation module with mathematically defined rigid and fat families. The rigid family will use a low-dimensional algebraic constraint man"
   }
 ]

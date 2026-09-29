@@ -243,6 +243,70 @@
       "r_phys": 1.0,
       "iteration": 20,
       "id": "persona_use:reviewer_iter20"
+    },
+    {
+      "label": "[DIM: geometry] The rigid family functions reside on a low-dimensional algebraic",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T07:29:09.014516",
+      "last_seen": "2026-09-29T07:29:09.014516",
+      "mentions": 1,
+      "iteration": 25,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Rigid family will achieve zero violation (max held-out error ≤ 1e-3) at small widths (h=2~8) with flat/decreasing N_c(w) trend. Fat family will show max held-out error > 1e-3 for all h≤64 across all s",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: geometry] The rigid family functions reside on a low-dimensional algebraic"
+    },
+    {
+      "label": "plan_explore_iter25",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:29:09.014552",
+      "last_seen": "2026-09-29T07:29:09.014552",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter25"
+    },
+    {
+      "label": "pass_iter25",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:29:09.014562",
+      "last_seen": "2026-09-29T07:29:09.014562",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter25"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T07:29:09.014573",
+      "last_seen": "2026-09-29T07:29:09.014573",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: geometry] The rigid family functions reside on a low-dimensional algebraic",
+        "Method:plan_explore_iter25",
+        "Fact:pass_iter25"
+      ],
+      "iteration": 25,
+      "id": "he_experiment_pipeline_5e816b21"
+    },
+    {
+      "label": "reviewer_iter25",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T07:29:09.014641",
+      "last_seen": "2026-09-29T07:29:09.014641",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "f7ed1fcac6dcd2fe",
+      "r_phys": 1.0,
+      "iteration": 25,
+      "id": "persona_use:reviewer_iter25"
     }
   ],
   "links": [
@@ -353,6 +417,33 @@
       "last_seen": "2026-09-29T07:28:06.953219",
       "mentions": 1,
       "target": "he_experiment_pipeline_759e55e"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: geometry] The rigid family functions reside on a low-dimensional algebraic",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:29:09.014573",
+      "last_seen": "2026-09-29T07:29:09.014573",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5e816b21"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:29:09.014573",
+      "last_seen": "2026-09-29T07:29:09.014573",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5e816b21"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:29:09.014573",
+      "last_seen": "2026-09-29T07:29:09.014573",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5e816b21"
     }
   ]
 }
