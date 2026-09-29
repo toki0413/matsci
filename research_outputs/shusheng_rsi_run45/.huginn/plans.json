@@ -119,6 +119,36 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_4f1be158",
+      "objective": "[DIM: computation] The approximation complexity of the fat polynomial family scales super-linearly with its degree such that the required network width to achieve zero violation grows exponentially with the number of training constraints, while the rigid family's linear structure allows for a constant-width network to achieve zero violation regardless of the number of constraints.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the family(kind, w, seed) function for the rigid (linear) and fat (high-degree polynomial) function families. Ensure training and held-out points are disjoint, shapes are (N,1), and labels are normalized to O(1) magnitude (std ≲ 10) to make the 1e-3 zero-violation criterion valid. Return X, y, Xv, yv dictionaries.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "/workspace/research_outputs/shusheng_rsi_run45/.huginn/hypothesis_graph_loop_3612fab2.json"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T03:35:27.125612+00:00",
+      "confirmed_at": "2026-09-29T03:35:27.126545+00:00",
+      "completed_at": "2026-09-29T03:35:47.078936+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

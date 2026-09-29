@@ -194,6 +194,70 @@
       "r_phys": 1.0,
       "iteration": 15,
       "id": "persona_use:reviewer_iter15"
+    },
+    {
+      "label": "[DIM: measure] The held-out error of the rigid family converges to zero at rate ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:35:05.826714",
+      "last_seen": "2026-09-29T03:35:05.826714",
+      "mentions": 1,
+      "iteration": 20,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The linear family will achieve validation error ≤1e-3 at h=2 with flat/decreasing N_c(w) as w increases, while the fat polynomial family will show val_err >1e-3 for all h≤64 (trend='unreachable'), con",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: measure] The held-out error of the rigid family converges to zero at rate"
+    },
+    {
+      "label": "plan_explore_iter20",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:35:05.826747",
+      "last_seen": "2026-09-29T03:35:05.826747",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter20"
+    },
+    {
+      "label": "pass_iter20",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:35:05.826756",
+      "last_seen": "2026-09-29T03:35:05.826756",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter20"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T03:35:05.826763",
+      "last_seen": "2026-09-29T03:35:05.826763",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: measure] The held-out error of the rigid family converges to zero at rate",
+        "Method:plan_explore_iter20",
+        "Fact:pass_iter20"
+      ],
+      "iteration": 20,
+      "id": "he_experiment_pipeline_16f0f22c"
+    },
+    {
+      "label": "reviewer_iter20",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:35:05.826833",
+      "last_seen": "2026-09-29T03:35:05.826833",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "5c4e16ac2341e01e",
+      "r_phys": 1.0,
+      "iteration": 20,
+      "id": "persona_use:reviewer_iter20"
     }
   ],
   "links": [
@@ -277,6 +341,33 @@
       "last_seen": "2026-09-29T03:33:34.715920",
       "mentions": 1,
       "target": "he_experiment_pipeline_c268b972"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: measure] The held-out error of the rigid family converges to zero at rate",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:35:05.826763",
+      "last_seen": "2026-09-29T03:35:05.826763",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_16f0f22c"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:35:05.826763",
+      "last_seen": "2026-09-29T03:35:05.826763",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_16f0f22c"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:35:05.826763",
+      "last_seen": "2026-09-29T03:35:05.826763",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_16f0f22c"
     }
   ]
 }

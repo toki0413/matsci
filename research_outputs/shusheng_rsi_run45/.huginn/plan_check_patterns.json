@@ -23,5 +23,18 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the family function for linear (rigid) and fat polynomial families with proper normalization to O(1) scale, ensuring output shapes are (N,1) and held-out points "
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan attempts to validate a topological hypothesis (non-vanishing first homology group H1 in weight manifolds) using only a capacity scan measuring generalization error. As explicitly noted in the '同场景历史失败', generalization error alone does not prove topological non-triviality. The plan misses the critical step of computing/estimating homology structures via persistent homology or loop sampling, and fails to compare the weight manifold geometry of the rigid vs. fat families. While the plan addresses some past failure modes (noise, scaling), it fundamentally misinterprets the hypothesis as a capacity problem rather than a topological obstruction problem.",
+    "missing_steps": [
+      "Define the weight manifold geometry and parameterization for the fat polynomial family",
+      "Compute or estimate the first homology group H1 of the weight manifold using TDA or loop sampling",
+      "Compare with the rigid affine manifold's contractibility (trivial H1)",
+      "Establish a continuous interpolation path between training minima and held-out solutions to test feasibility under topological constraints",
+      "Explicitly verify that the fat polynomial family is x-dependent and high-dimensional but partially learnable (not noise)"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family(kind, w, seed) function for the rigid (linear) and fat (high-degree polynomial) function families. Ensure training and held-out points are disjoint, s"
   }
 ]
