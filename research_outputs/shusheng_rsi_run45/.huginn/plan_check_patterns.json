@@ -597,5 +597,21 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the family function for the rigid linear family and fat polynomial family following the specified protocol. The linear family should return f(x)=ax+b with parame"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan uses MODE=explore and focuses on empirical capacity scans (N_c(w)), which fundamentally misaligns with the hypothesis requiring verification of geometric/topological structure (H1 groups, affine manifold dimension, Gaussian curvature, Hessian spectral gap) in function space. This repeats the exact historical failures documented in the scene history, where topological analysis was omitted and MODE=explore was inappropriate for a structural verification task.",
+    "missing_steps": [
+      "Switch MODE from explore to coder/workflow for concrete implementation",
+      "Implement topological data analysis (persistent homology) to compute H1 groups of solution space manifolds",
+      "Define weight manifold geometry and parameterization in function space (not just parameter space)",
+      "Specify filtration method (e.g., Vietoris-Rips) for homology computation on function space geometry",
+      "Verify rigid family forms 2D affine manifold through geometric analysis in function space",
+      "Compute Hessian at initialization and analyze spectral gap in function space",
+      "Analyze Gaussian curvature of fat polynomial family manifold",
+      "Implement continuous interpolation path testing between training and held-out solutions in function space"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function for the linear (rigid) and fat polynomial families. The linear family returns f(x)=ax+b with slope/intercept from the seed; the fat family re"
   }
 ]
