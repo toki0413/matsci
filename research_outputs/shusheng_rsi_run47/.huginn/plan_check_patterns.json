@@ -151,5 +151,21 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the family function for the rigid family (polynomial evaluation points with finite-dimensional solution space) and fat family (random high-degree polynomial with"
+  },
+  {
+    "scene_tag": "auto_family",
+    "hyp_key": "3313543265ff",
+    "reason": "The plan proposes an exploratory investigation into the geometric properties of function spaces (rigid vs. fat families) to test a hypothesis about generalization via manifold curvature. While the mathematical framing is sound, the plan lacks concrete implementation details, validation metrics, and a clear path to quantifying curvature or manifold dimensionality. It does not specify how N_c(w) will be computed, how curvature will be estimated, or how the 'low-dimensional' vs. 'high-dimensional' claim will be verified numerically. Furthermore, it risks repeating past failures by not ensuring the fat family is x-dependent and properly scaled, and by not defining clear numerical benchmarks for 'stable' vs. 'unstable' generalization. The prediction is too vague to be directly falsifiable or verifiable with the stated criteria.",
+    "missing_steps": [
+      "Define explicit mathematical forms for rigid and fat families (e.g., low-rank vs. high-rank function classes) with controlled degrees of freedom.",
+      "Specify how N_c(w) is computed (e.g., via capacity scaling, VC dimension proxy, or effective rank of Hessian).",
+      "Define a quantitative measure of manifold curvature (e.g., Gaussian curvature of the loss landscape, or norm of the second derivative of the function class).",
+      "Establish a clear numerical threshold for 'stable' vs. 'unstable' generalization (e.g., variance of held-out error over random initializations).",
+      "Include a validation step to confirm that the fat family is x-dependent and not degenerate (i.i.d. noise).",
+      "Ensure normalization of y, yv, X, Xv is consistent with the 1e-3 error criterion (e.g., std ≲ 1, not ≲ 10).",
+      "Specify the sampling strategy for w and h, and how the scan over these parameters will be conducted."
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function for the rigid and fat families according to the specified constraints. For the rigid family, define a low-dimensional analytic function (e.g."
   }
 ]
