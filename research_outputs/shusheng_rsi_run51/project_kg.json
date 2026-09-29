@@ -71,10 +71,10 @@
       "label": "[DIM: structure] The minimal width $N_c(w)$ is determined by the algebraic rank ",
       "type": "experiment",
       "source": "autoloop",
-      "confidence": 1.0,
+      "confidence": 0.99,
       "created_at": "2026-09-29T13:00:56.298008",
-      "last_seen": "2026-09-29T13:00:56.298008",
-      "mentions": 1,
+      "last_seen": "2026-09-29T13:04:57.501260",
+      "mentions": 2,
       "iteration": 15,
       "r_phys": 1.0,
       "surprise": 1.0,
@@ -258,6 +258,119 @@
       "r_phys": 1.0,
       "iteration": 25,
       "id": "persona_use:reviewer_iter25"
+    },
+    {
+      "label": "[DIM: optimization] The minimal width $N_c(w)$ is determined by the condition nu",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T13:04:19.795756",
+      "last_seen": "2026-09-29T13:04:19.795756",
+      "mentions": 1,
+      "iteration": 30,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "A monotonic increasing relationship will be observed between $N_c(w)$ and the Hessian condition number $\\kappa$, with the scaling exponent $\\alpha$ consistent with theoretical bounds for ill-condition",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: optimization] The minimal width $N_c(w)$ is determined by the condition nu"
+    },
+    {
+      "label": "plan_explore_iter30",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T13:04:19.795796",
+      "last_seen": "2026-09-29T13:04:19.795796",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter30"
+    },
+    {
+      "label": "pass_iter30",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T13:04:19.795807",
+      "last_seen": "2026-09-29T13:04:19.795807",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter30"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T13:04:19.795816",
+      "last_seen": "2026-09-29T13:04:19.795816",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: optimization] The minimal width $N_c(w)$ is determined by the condition nu",
+        "Method:plan_explore_iter30",
+        "Fact:pass_iter30"
+      ],
+      "iteration": 30,
+      "id": "he_experiment_pipeline_3588b6ec"
+    },
+    {
+      "label": "reviewer_iter30",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T13:04:19.795885",
+      "last_seen": "2026-09-29T13:04:19.795885",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "f74618150c04bb93",
+      "r_phys": 1.0,
+      "iteration": 30,
+      "id": "persona_use:reviewer_iter30"
+    },
+    {
+      "label": "plan_explore_iter35",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T13:04:57.501291",
+      "last_seen": "2026-09-29T13:04:57.501291",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter35"
+    },
+    {
+      "label": "pass_iter35",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T13:04:57.501311",
+      "last_seen": "2026-09-29T13:04:57.501311",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter35"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T13:04:57.501322",
+      "last_seen": "2026-09-29T13:04:57.501322",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The minimal width $N_c(w)$ is determined by the algebraic rank",
+        "Method:plan_explore_iter35",
+        "Fact:pass_iter35"
+      ],
+      "iteration": 35,
+      "id": "he_experiment_pipeline_e23dc62c"
+    },
+    {
+      "label": "reviewer_iter35",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T13:04:57.501394",
+      "last_seen": "2026-09-29T13:04:57.501394",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "e31bdca5b8d7e489",
+      "r_phys": 1.0,
+      "iteration": 35,
+      "id": "persona_use:reviewer_iter35"
     }
   ],
   "links": [
@@ -296,6 +409,15 @@
       "last_seen": "2026-09-29T13:00:56.298067",
       "mentions": 1,
       "target": "he_experiment_pipeline_447b0414"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The minimal width $N_c(w)$ is determined by the algebraic rank",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T13:04:57.501322",
+      "last_seen": "2026-09-29T13:04:57.501322",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e23dc62c"
     },
     {
       "relation": "member_of",
@@ -368,6 +490,51 @@
       "last_seen": "2026-09-29T13:03:17.440540",
       "mentions": 1,
       "target": "he_experiment_pipeline_b4484101"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: optimization] The minimal width $N_c(w)$ is determined by the condition nu",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T13:04:19.795816",
+      "last_seen": "2026-09-29T13:04:19.795816",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_3588b6ec"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter30",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T13:04:19.795816",
+      "last_seen": "2026-09-29T13:04:19.795816",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_3588b6ec"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter30",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T13:04:19.795816",
+      "last_seen": "2026-09-29T13:04:19.795816",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_3588b6ec"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter35",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T13:04:57.501322",
+      "last_seen": "2026-09-29T13:04:57.501322",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e23dc62c"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter35",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T13:04:57.501322",
+      "last_seen": "2026-09-29T13:04:57.501322",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e23dc62c"
     }
   ]
 }

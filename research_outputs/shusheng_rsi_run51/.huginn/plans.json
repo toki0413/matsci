@@ -179,6 +179,69 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_047766bf",
+      "objective": "[DIM: structure] The minimal width $N_c(w)$ is determined by the algebraic rank of the constraint matrix formed by the $w$ sample points in the neural tangent kernel (NTK) feature space, where zero-violation corresponds to the existence of a solution in the column space of the kernel matrix. | pro: This hypothesis leverages well-established theory of overparameterized networks and kernel methods, providing a clear algebraic criterion for feasibility. con: It assumes the network operates in the NTK regime, which may not hold for small widths or finite training iterations. |",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "This hypothesis is about neural network capacity and algebraic rank in function space, not a physical/materials problem. Therefore, no DFT/MD/Materials skills apply. Instead, I will design a numerical experiment to test the relationship between constraint count $w$, network width $N$, and zero-violation feasibility. I will use a symbolic regression / sensitivity analysis approach to explore the parameter space and identify the minimal width $N_c(w)$ that satisfies the zero-violation condition (max absolute error ≤ 1e-3 on held-out constraints). The plan involves: (1) generating a set of analytical constraint functions; (2) training small feedforward networks with varying widths; (3) measuring violation on held-out points; (4) determining $N_c(w)$ for each $w$; and (5) assessing whether $N_c$ remains bounded (rigid) or grows unbounded (fat) as $w$ increases. This directly tests the algebraic rank hypothesis in the NTK regime.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "src/ntk_capacity_scan.py",
+            "src/constraint_generation.py",
+            "src/evaluation.py"
+          ]
+        }
+      ],
+      "status": "executing",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T13:04:40.960015+00:00",
+      "confirmed_at": "2026-09-29T13:04:40.961138+00:00",
+      "completed_at": null,
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
+    },
+    {
+      "id": "plan_a9301557",
+      "objective": "[DIM: computation] The minimal width $N_c(w)$ is bounded by the Kolmogorov–Zurbenko (KZ) filtering complexity of the constraint manifold, where $N_c(w) \\leq O(\\log w \\cdot \\text{poly}(d))$ if and only if the constraint set admits a low-dimensional neural tangent kernel (NTK) representation; otherwise $N_c(w)$ diverges superlinearly.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Design a numerical experiment to test the hypothesis that the minimal network width $N_c(w)$ exhibits a phase transition (rigid vs. fat) as a function of constraint count $w$. We will generate synthetic constraint functions (analytic or algebraic) with known solution-space geometry, train small MLPs on $w$ points, and scan hidden widths to find the minimum $N_c(w)$ achieving zero violation (max error $\\le 10^{-3}$). The goal is to determine if $N_c(w)$ remains bounded (rigid) or diverges (fat) as $w$ increases, and whether this correlates with manifold dimensionality or NTK complexity. We will use multiple constraint families (low-rank linear, nonlinear manifold, high-curvature) to probe the \"if and only if\" claim about low-dimensional NTK representation.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "experiments/ml_capacity_scan.py",
+            "experiments/ntk_analysis.py"
+          ]
+        }
+      ],
+      "status": "executing",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T13:05:20.368923+00:00",
+      "confirmed_at": "2026-09-29T13:05:20.370443+00:00",
+      "completed_at": null,
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
