@@ -1,0 +1,32 @@
+[
+  {
+    "scene_tag": "other",
+    "hyp_key": "f55497335b4b",
+    "reason": "The plan lacks critical details required for a valid numerical experiment. Specifically, it fails to define the hypothesis function (the constraint relationship between inputs and outputs), the input data distribution (which is essential for determining the constraint density ρ=w/N), and the specific network architecture (activation functions, depth). Without these, the 'phase transition' cannot be meaningfully computed or validated. Additionally, the plan does not specify how the 'connected basin' or 'disconnected' nature of the minima is measured or verified, which is central to the hypothesis.",
+    "missing_steps": [
+      "Define the specific mathematical constraint function f(x) = 0 that the network must satisfy exactly (zero-violation).",
+      "Specify the input data distribution and method for generating samples to calculate ρ=w/N.",
+      "Define the exact neural network architecture (activation functions, depth, initialization scheme).",
+      "Specify the metric or method for determining the connectivity of the global minima basin, as this is the core of the phase transition claim.",
+      "Define the scanning procedure for N (width) and w (constraints) including ranges and step sizes."
+    ],
+    "mode": "explore",
+    "description": "Design and execute a numerical experiment to test the phase transition hypothesis for minimal network width $N_c(w)$."
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "f55497335b4b",
+    "reason": "The plan is fundamentally invalid because it proposes to solve a system of linear equations Wx = b using a ReLU network, which is mathematically impossible for exact zero-violation satisfaction. ReLU networks are piecewise linear and cannot represent arbitrary linear mappings exactly. The hypothesis concerns 'zero-violation generalization' on unseen constraints, but the plan defines constraints as linear equations that the network must satisfy exactly, which is a different problem entirely. Additionally, the plan lacks critical details: no specific constraint function f(x)=0 is defined, no method for measuring basin connectivity is specified, and the connection between the linear system and the neural network capacity is unclear. This repeats the exact failure modes identified in the historical failures.",
+    "missing_steps": [
+      "Define the specific mathematical constraint function f(x,y)=0 that the network must satisfy exactly (zero-violation)",
+      "Clarify whether constraints are input-output pairs (x_i, y_i) or functional constraints",
+      "Define how 'zero-violation' is measured on unseen constraints (not just training data)",
+      "Specify the exact metric for measuring basin connectivity in weight space",
+      "Provide a method to verify global minima (not just near-zero loss)",
+      "Define the scanning procedure for determining N_c(w) as the minimum width achieving zero-violation",
+      "Address the mathematical impossibility of using ReLU networks to solve linear systems exactly"
+    ],
+    "mode": "explore",
+    "description": "We will test the hypothesis that zero-violation capacity $N_c(w)$ exhibits a phase transition at critical constraint density $\\rho_c = w/N$ by designing a rigorous numerical experiment on small ReLU n"
+  }
+]

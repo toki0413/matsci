@@ -69,10 +69,10 @@
       "label": "[DIM: structure] The zero-violation capacity $N_c(w)$ is determined by the algeb",
       "type": "experiment",
       "source": "autoloop",
-      "confidence": 1.0,
+      "confidence": 0.99,
       "created_at": "2026-09-29T12:30:20.781968",
-      "last_seen": "2026-09-29T12:30:20.781968",
-      "mentions": 1,
+      "last_seen": "2026-09-29T12:31:16.386073",
+      "mentions": 2,
       "iteration": 15,
       "r_phys": 1.0,
       "surprise": 1.0,
@@ -128,6 +128,55 @@
       "r_phys": 1.0,
       "iteration": 15,
       "id": "persona_use:reviewer_iter15"
+    },
+    {
+      "label": "plan_explore_iter20",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T12:31:16.386109",
+      "last_seen": "2026-09-29T12:31:16.386109",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter20"
+    },
+    {
+      "label": "pass_iter20",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T12:31:16.386135",
+      "last_seen": "2026-09-29T12:31:16.386135",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter20"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T12:31:16.386148",
+      "last_seen": "2026-09-29T12:31:16.386148",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The zero-violation capacity $N_c(w)$ is determined by the algeb",
+        "Method:plan_explore_iter20",
+        "Fact:pass_iter20"
+      ],
+      "iteration": 20,
+      "id": "he_experiment_pipeline_87870cde"
+    },
+    {
+      "label": "reviewer_iter20",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T12:31:16.386248",
+      "last_seen": "2026-09-29T12:31:16.386248",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "2052ea7e8ccc4fda",
+      "r_phys": 1.0,
+      "iteration": 20,
+      "id": "persona_use:reviewer_iter20"
     }
   ],
   "links": [
@@ -169,6 +218,15 @@
     },
     {
       "relation": "member_of",
+      "source": "experiment:[DIM: structure] The zero-violation capacity $N_c(w)$ is determined by the algeb",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T12:31:16.386148",
+      "last_seen": "2026-09-29T12:31:16.386148",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_87870cde"
+    },
+    {
+      "relation": "member_of",
       "source": "Method:plan_explore_iter15",
       "confidence": 0.5,
       "created_at": "2026-09-29T12:30:20.782023",
@@ -184,6 +242,24 @@
       "last_seen": "2026-09-29T12:30:20.782023",
       "mentions": 1,
       "target": "he_experiment_pipeline_ed9a6a9e"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T12:31:16.386148",
+      "last_seen": "2026-09-29T12:31:16.386148",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_87870cde"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T12:31:16.386148",
+      "last_seen": "2026-09-29T12:31:16.386148",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_87870cde"
     }
   ]
 }
