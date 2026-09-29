@@ -2461,6 +2461,70 @@
       "r_phys": 1.0,
       "iteration": 210,
       "id": "persona_use:reviewer_iter210"
+    },
+    {
+      "label": "[DIM: structure] The constraint satisfaction problem for ReLU networks with w li",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T09:40:42.208890",
+      "last_seen": "2026-09-29T09:40:42.208890",
+      "mentions": 1,
+      "iteration": 215,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) values will be finite and bounded by w for all tested w, supporting the \"rigid\" hypothesis. Expected trend: N_c(w) ≈ w or slightly less, with no increase beyond w as w grows.\nPLAN_SLOTS: w_valu",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The constraint satisfaction problem for ReLU networks with w li"
+    },
+    {
+      "label": "plan_explore_iter215",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:40:42.208932",
+      "last_seen": "2026-09-29T09:40:42.208932",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter215"
+    },
+    {
+      "label": "pass_iter215",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:40:42.208942",
+      "last_seen": "2026-09-29T09:40:42.208942",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter215"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T09:40:42.208951",
+      "last_seen": "2026-09-29T09:40:42.208951",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The constraint satisfaction problem for ReLU networks with w li",
+        "Method:plan_explore_iter215",
+        "Fact:pass_iter215"
+      ],
+      "iteration": 215,
+      "id": "he_experiment_pipeline_357b7b6d"
+    },
+    {
+      "label": "reviewer_iter215",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T09:40:42.209027",
+      "last_seen": "2026-09-29T09:40:42.209027",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "77f6672a716dde4d",
+      "r_phys": 1.0,
+      "iteration": 215,
+      "id": "persona_use:reviewer_iter215"
     }
   ],
   "links": [
@@ -3570,6 +3634,33 @@
       "last_seen": "2026-09-29T09:39:49.061750",
       "mentions": 1,
       "target": "he_experiment_pipeline_3afe1535"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The constraint satisfaction problem for ReLU networks with w li",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:40:42.208951",
+      "last_seen": "2026-09-29T09:40:42.208951",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_357b7b6d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter215",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:40:42.208951",
+      "last_seen": "2026-09-29T09:40:42.208951",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_357b7b6d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter215",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:40:42.208951",
+      "last_seen": "2026-09-29T09:40:42.208951",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_357b7b6d"
     }
   ]
 }
