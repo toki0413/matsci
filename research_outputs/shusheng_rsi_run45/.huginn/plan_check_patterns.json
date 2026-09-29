@@ -182,5 +182,18 @@
     ],
     "mode": "explore",
     "description": "Implement topological data analysis (TDA) workflow to compute first homology groups (H1) for rigid (linear) and fat (high-degree polynomial) weight manifolds. Parameterize families by weights, sample "
+  },
+  {
+    "scene_tag": "workflow",
+    "reason": "The plan is invalid due to critical scaling and methodological violations. Specifically, the hypothesis requires the held-out error variance to scale inversely with w (1/w), but the plan uses w=2 (implied by h=2 parameters), resulting in O(0.5) variance—orders of magnitude larger than the 1e-3 threshold required for statistical significance. This makes the chi-squared test meaningless. Additionally, the plan lacks explicit functional forms for the rigid linear and fat polynomial families, risking the 'fat polynomial as noise' pitfall from historical failures. It also omits necessary steps like specifying held-out set size, normalization scheme details, and chi-squared distribution checks (Q-Q plots, KS tests) required for valid inference.",
+    "missing_steps": [
+      "Define explicit functional forms for rigid linear family (e.g., f(x)=ax+b with a^2+b^2=1 constraint) and fat polynomial family (e.g., 20th-order basis with specific normalization)",
+      "Ensure w is sufficiently large (e.g., w>>1) to achieve variance 1/w in statistical noise regime",
+      "Specify held-out set size matching degrees of freedom for chi-squared test",
+      "Verify normalization scheme preserves variance scaling with w",
+      "Add explicit chi-squared distribution fit checks (Q-Q plots, Kolmogorov-Smirnov test)"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid linear family (affine functions f(x)=ax+b) and fat polynomial family (20th-order basis) with proper (N,1) reshaping, O(1) nor"
   }
 ]

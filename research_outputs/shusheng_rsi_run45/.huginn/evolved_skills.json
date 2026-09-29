@@ -12,8 +12,8 @@
       "linear",
       "label",
       "polynomial",
-      "plan",
-      "function"
+      "held-out",
+      "plan"
     ],
     "workflow_steps": [
       {

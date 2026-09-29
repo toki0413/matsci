@@ -704,6 +704,70 @@
       "r_phys": 1.0,
       "iteration": 55,
       "id": "persona_use:reviewer_iter55"
+    },
+    {
+      "label": "[DIM: measure] The held-out error of the rigid family exhibits a non-monotonic d",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:43:42.672275",
+      "last_seen": "2026-09-29T03:43:42.672275",
+      "mentions": 1,
+      "iteration": 60,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Implement topological data analysis (TDA) workflow to compute first homology groups (H1) for rigid (linear) and fat (high-degree polynomial) weight manifolds. Parameterize families by weights, sample",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: measure] The held-out error of the rigid family exhibits a non-monotonic d"
+    },
+    {
+      "label": "plan_explore_iter60",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:43:42.672311",
+      "last_seen": "2026-09-29T03:43:42.672311",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter60"
+    },
+    {
+      "label": "pass_iter60",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:43:42.672320",
+      "last_seen": "2026-09-29T03:43:42.672320",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter60"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T03:43:42.672331",
+      "last_seen": "2026-09-29T03:43:42.672331",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: measure] The held-out error of the rigid family exhibits a non-monotonic d",
+        "Method:plan_explore_iter60",
+        "Fact:pass_iter60"
+      ],
+      "iteration": 60,
+      "id": "he_experiment_pipeline_8ae8f6bc"
+    },
+    {
+      "label": "reviewer_iter60",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:43:42.672402",
+      "last_seen": "2026-09-29T03:43:42.672402",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "0a827dc9683b3f7d",
+      "r_phys": 1.0,
+      "iteration": 60,
+      "id": "persona_use:reviewer_iter60"
     }
   ],
   "links": [
@@ -1003,6 +1067,33 @@
       "last_seen": "2026-09-29T03:42:35.513137",
       "mentions": 1,
       "target": "he_experiment_pipeline_75436824"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: measure] The held-out error of the rigid family exhibits a non-monotonic d",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:43:42.672331",
+      "last_seen": "2026-09-29T03:43:42.672331",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8ae8f6bc"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter60",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:43:42.672331",
+      "last_seen": "2026-09-29T03:43:42.672331",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8ae8f6bc"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter60",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:43:42.672331",
+      "last_seen": "2026-09-29T03:43:42.672331",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8ae8f6bc"
     }
   ]
 }
