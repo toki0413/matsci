@@ -41,5 +41,45 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the constrained family generation module with mathematically defined rigid and fat families. The rigid family will use a low-dimensional algebraic constraint man"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "aea76898f58a",
+    "reason": "The plan contains a fundamental mathematical error that makes the hypothesis untestable as stated. It proposes using a fixed linear subspace of dimension d=2 (basis functions (2x-1)^(j-1) for j=1,2) for the rigid family. However, the hypothesis specifically states that the rigid family's dimension d must be ≤ w (the width parameter), and N_c(w) should remain bounded as w increases. With d fixed at 2 regardless of w, the rigid family does not scale with w as required by the hypothesis, making the comparison invalid. Additionally, the prediction claims 'zero violation' which is mathematically impossible for interpolation with non-overlapping points in a linear subspace.",
+    "missing_steps": [
+      "Correct the rigid family definition: the basis dimension d must depend on w (d ≤ w), not fixed at d=2",
+      "Ensure the rigid family has dimension that scales with w to properly test the hypothesis about N_c(w) boundedness",
+      "Revise prediction to reflect realistic interpolation error bounds rather than claiming 'zero violation'"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the rigid family function in /workspace/research_outputs/shusheng_rsi_run47/family.py using a linear subspace with basis functions φ_j(x) = (2x-1)^(j-1) for j=1,"
+  },
+  {
+    "scene_tag": "auto_family",
+    "hyp_key": "6671cd4e50db",
+    "reason": "The plan is invalid because it does not address the critical failure mode from run29 regarding scale sensitivity. The hypothesis concerns N_c(w) being a small constant independent of w, but run29 showed that for w=5, a cos(πx) basis failed due to being underdetermined and having ~4e-2 error. The plan proposes a 'polynomial space of dimension 2-3' without specifying whether it is adapted to the target function or properly normalized. Without ensuring the rigid family can actually represent the target function (avoiding the 'underdetermined' trap), the anchor point verification and width scan will likely yield invalid results. Additionally, the plan lacks explicit steps for verifying the 'linear subspace' structure mathematically before numerical testing.",
+    "missing_steps": [
+      "Define the rigid family basis functions explicitly and verify they can represent the target function (e.g., via projection error or rank check)",
+      "Implement normalization/conditioning to prevent scale-induced errors (addressing run29's high-order polynomial scale issue)",
+      "Verify the linear subspace dimensionality symbolically before numerical scan",
+      "Add a validation step for the anchor point that checks both training and held-out error independently"
+    ],
+    "mode": "explore",
+    "description": "First, construct the rigid family as a low-dimensional linear subspace (e.g., a polynomial space of dimension 2-3) and verify the \"anchor point\" — a (w, h, seed) combination where the held-out error i"
+  },
+  {
+    "scene_tag": "auto_family",
+    "hyp_key": "6671cd4e50db",
+    "reason": "该plan在多个关键维度上存在缺陷：1) 缺少对h和w的具体数值范围定义，无法验证预测；2) 未明确说明rigid和fat家族的数学定义及实现方式；3) 未指定如何计算N_c(w)和'violation'；4) 未考虑之前失败模式中的问题（如函数尺度、x依赖性等）；5) 预测过于理想化（zero violation at small h），缺乏对实际困难的考量。",
+    "missing_steps": [
+      "明确定义rigid和fat家族的数学形式和参数空间",
+      "指定h和w的具体取值范围及扫描策略",
+      "定义'violation'的量化计算方法和阈值",
+      "说明N_c(w)的具体计算流程",
+      "处理之前失败模式中提到的尺度问题和x依赖性问题",
+      "设计独立的训练集和留出集验证方案"
+    ],
+    "mode": "explore",
+    "description": ""
   }
 ]

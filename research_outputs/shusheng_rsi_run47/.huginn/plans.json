@@ -191,6 +191,152 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_9759788f",
+      "objective": "[DIM: structure] The rigid family forms a linear subspace of dimension $d \\le w$ in function space, where the constraint matrix $\\Phi_{ij} = \\phi_j(x_i)$ has full rank, ensuring a unique interpolant; thus N_c(w) remains bounded by a constant independent of w as the solution space is algebraically constrained.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Implement the rigid family as a linear subspace with dimension d = min(w, 5) (saturating at w=5 to test boundedness), using basis functions φ_j(x) = T_{j-1}(x) (Chebyshev polynomials) for j=1,...,d, ensuring the constraint matrix Φ_ij = φ_j(x_i) has full rank. The family returns normalized y/yv values (divided by std) to maintain O(1) magnitude. X/y serves as training constraints and Xv/yv as held-out constraints (non-overlapping points). This tests whether N_c(w) remains bounded by a small finite value (≤8) as w increases, indicating rigidity, with the prediction that violation count will saturate as d reaches 5.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "executing",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T07:30:45.144062+00:00",
+      "confirmed_at": "2026-09-29T07:30:45.145418+00:00",
+      "completed_at": null,
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
+    },
+    {
+      "id": "plan_8986ad99",
+      "objective": "[DIM: structure] The rigid family defines a linear subspace of dimension $d \\le w$ in function space, where the constraint matrix $\\Phi_{ij} = \\phi_j(x_i)$ has full column rank, ensuring a unique solution for coefficients $c$ via $\\Phi c = y$. This algebraic structure guarantees that once $w$ constraints are satisfied, the solution is uniquely determined across all test points, explaining the observed flat $N_c(w)$ trend. | pro: Directly explains the bootstrap success with small widths; aligns with the linear algebra interpretation of rigid constraints. con: Requires verifying the rank condition of the constraint matrix; may not capture non-linear interactions in the fat family. |",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the `family` function for two function classes: (1) rigid family = low-dimensional polynomial subspace of dimension $d \\le w$ with normalized outputs (std $\\lesssim 10$), ensuring unique solution via full-rank Vandermonde matrix; (2) fat family = high-degree random polynomial with large dynamic range, normalized to O(1) to ensure valid 1e-3 zero-violation criterion. Ensure X/y/Xv/yv are (N,1) shaped, Xv disjoint from X, and use `np.random.default_rng(seed).standard_normal` for randomness. This enables the capacity scan to compute $N_c(w)$ trends and test the linear subspace hypothesis.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "family.py"
+          ]
+        }
+      ],
+      "status": "executing",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T07:31:20.626004+00:00",
+      "confirmed_at": "2026-09-29T07:31:20.627186+00:00",
+      "completed_at": null,
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
+    },
+    {
+      "id": "plan_cc72d4ed",
+      "objective": "[DIM: measure] The generalization gap for the rigid family is governed by the Rademacher complexity of the hypothesis class, which scales as O(√(d/w)) where d is the intrinsic dimension of the solution space; thus, for fixed d, held-out error should decay as w increases.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the family function for the rigid and fat hypothesis classes, ensuring proper normalization of labels to O(1) and correct output shapes (N,1). The rigid family will be a low-dimensional subspace (e.g., low-degree polynomial) that should achieve zero violation at small widths, while the fat family will be a high-dimensional space (e.g., high-degree random polynomial) that should be unreachable within width h=64. This addresses the core hypothesis about Rademacher complexity scaling and generalization gap.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "/workspace/research_outputs/shusheng_rsi_run47/.huginn/engine_state/loop_23fe22db.json"
+          ]
+        }
+      ],
+      "status": "executing",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T07:31:58.531822+00:00",
+      "confirmed_at": "2026-09-29T07:31:58.533497+00:00",
+      "completed_at": null,
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
+    },
+    {
+      "id": "plan_7e5dd213",
+      "objective": "[DIM: structure] The rigid family constitutes a linear subspace of dimension exactly $w$ in the function space, such that the solution space is uniquely determined by $w$ points, making $N_c(w)$ a small constant independent of $w$ (e.g., $N_c \\le 8$ for $w \\in [5, 20]$). | pro: Directly grounded in the definition of rigidity as a low-dimensional solution space; aligns with the requirement that $N_c$ should be flat or decreasing; provides a clear, testable prediction for $N_c(w)$. con: Does not explain why the rigid family might fail to achieve zero violation at small $w$ (as seen in run29 with $w=5$) if it is truly a linear subspace. |",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "executing",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T07:32:42.218561+00:00",
+      "confirmed_at": "2026-09-29T07:32:42.219756+00:00",
+      "completed_at": null,
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
+    },
+    {
+      "id": "plan_ba7fc3a4",
+      "objective": "**[DIM: computation]**",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the `family` function to generate constraint sets for the \"rigid\" and \"fat\" families as defined by the hypothesis. For the rigid family (e.g., low-degree polynomial or trigonometric functions), ensure the output is uniquely determined by w samples (N_c finite). For the fat family (e.g., high-degree random polynomial or high-frequency oscillation), ensure the output has infinite degrees of freedom within the constraint space (N_c = unreachable). Apply the required O(1) normalization to y and yv (divide by std) to make the 1e-3 threshold meaningful. Ensure X/y/Xv/yv are reshaped to (N,1) and Xv does not overlap X. This code enables the capacity_scan workflow to compute N_c(w) and verify the hypothesis.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "/workspace/research_outputs/shusheng_rsi_run47/family.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T07:33:22.118163+00:00",
+      "confirmed_at": "2026-09-29T07:33:22.119405+00:00",
+      "completed_at": "2026-09-29T07:33:42.908841+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
