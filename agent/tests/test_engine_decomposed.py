@@ -247,6 +247,43 @@ async def test_engine_actor_delegates_llm_chat() -> None:
     assert eng._is_deterministic_numeric("复核这个结论是否正确") is False
 
 
+def test_build_codelab_focus_unfreezes_author_input() -> None:
+    """v11 反冻结: 作者提示的 focus 随'当前假设 + 本轮步骤'变化, 不再逐轮恒同.
+
+    run47 实测作者提示 prompt_len 恒 5379 → 同一问题反复问、执行输出恒同、零新证据.
+    focus 取随迭代演进的可变文本, 让提示解冻; 无可用文本时返空串(退回旧路径).
+    """
+    from huginn.autoloop.engine_act import EngineAct
+
+    class _StubEngine:
+        _objective = "恒定研究目标"
+        _last_hypothesis = ""
+
+    eng = _StubEngine()
+    act = EngineAct(eng)
+    # 无假设无步骤 → 空 focus (向后兼容, 行为退回旧路径)
+    assert act._build_codelab_focus("") == ""
+    # 有假设/步骤 → focus 非空, 且随内容演进 (解冻)
+    eng._last_hypothesis = "H1: 约束密度升高会降低容量 N_c"
+    f1 = act._build_codelab_focus("扫描宽度 w=10")
+    eng._last_hypothesis = "H2: 改用 fat 约束族后 N_c 不可达"
+    f2 = act._build_codelab_focus("扫描宽度 w=20")
+    assert f1 and f2 and f1 != f2
+    assert "H1" in f1 and "w=10" in f1
+
+
+def test_build_author_prompt_focus_changes_prompt() -> None:
+    """focus 非空 → 作者提示随之变化, 恒定 goal 不再产出逐字节相同的 prompt."""
+    from huginn.research.code_lab import build_author_prompt
+
+    goal = "恒定研究目标"
+    p_plain = build_author_prompt(goal)
+    p_a = build_author_prompt(goal, focus="假设 A")
+    p_b = build_author_prompt(goal, focus="假设 B")
+    assert "假设 A" in p_a
+    assert p_a != p_plain and p_a != p_b
+
+
 # ===== 阶段5: EngineControl =====
 
 def test_no_control_mixin_in_bases() -> None:

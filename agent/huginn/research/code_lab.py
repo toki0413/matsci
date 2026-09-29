@@ -104,7 +104,8 @@ def load_scaffold(source: Any) -> Scaffold | None:
 
 def build_author_prompt(goal: str, *, scaffold: Scaffold | None = None,
                         guard_block: str = "",
-                        repair_hint: str = "", prev_code: str = "") -> str:
+                        repair_hint: str = "", prev_code: str = "",
+                        focus: str = "") -> str:
     """构造"让书生在 Code Lab 亲手写一轮实验"的作者提示 (命题无关).
 
     单一出处: autoloop 的 execute 内建动作与 examples 自主循环都调本函数, 通用
@@ -112,6 +113,9 @@ def build_author_prompt(goal: str, *, scaffold: Scaffold | None = None,
     只给方向, 不绑定任何具体命题. 领域相关的模板/提示由 ``scaffold``(任务资产)
     注入; 不给 scaffold 时就是一份无领域耦合的默认骨架.
     ``repair_hint`` 非空时把上一轮沙箱真实报错回灌, 让书生自己改对 (通用修 bug).
+    ``focus`` 是**本轮可变**的聚焦文本(当前假设 + 本轮实验步骤). ``goal`` 常是恒定
+    的研究目标, 若只喂 goal, 提示每轮逐字节相同 → 同一问题反复问、执行输出恒同、
+    零新证据 (run47 实测 prompt_len 恒 5379). 带上 focus 后提示随迭代演进.
     """
     template = (scaffold.template if scaffold and scaffold.template
                 else DEFAULT_TEMPLATE)
@@ -142,6 +146,8 @@ def build_author_prompt(goal: str, *, scaffold: Scaffold | None = None,
         + template +
         "\n只输出 <code>...</code> 内的**完整可用代码**(即模板 + 你的改动), 不要任何多余文字。\n\n研究目标:\n"
         + goal[:4000]
+        + (("\n\n本轮聚焦(只推进下面这一条的具体实验, 不要重复整个研究目标):\n"
+            + focus[:1200]) if focus else "")
     )
 
 

@@ -9,11 +9,13 @@
     from huginn.research.code_lab import load_scaffold
     scaffold = load_scaffold("/abs/path/to/network_rigidity.py")
     build_author_prompt(goal, scaffold=scaffold)   # 提示自带 family 契约
-    sandbox_run(code, cfg, scaffold=scaffold)      # 沙箱注入 mlp_fit/capacity_scan
+    sandbox_run(code, cfg, scaffold=scaffold)      # 沙箱注入 mlp_fit/mlp_predict
 
-分工: "训练/多起点/宽度扫描/零违规判据/N_c 汇总"已由本文件的 ``capacity_scan``
-下沉为已验证原语; 书生只写 ``family(kind, w, seed)`` 这一真正需要科学决策的
-约束族函数。
+分工 (v11 彻底解绑): 本文件**只提供命题无关的基础数值工具**(mlp_fit/mlp_predict/
+poly_basis/_as_2d), 不再托管任何数值管线。**扫描参数、训练、零违规判据、N_c 汇总
+全部由书生自己实现** —— 早期版本把"扫描/判据/聚合"下沉为 ``capacity_scan`` 原语,
+结果科学决策被架空: 每轮 ``run`` 都返回同 36 个 objectives, 输入信息恒定, 循环
+空转 (run47/48 实测)。解绑后, 书生的实验设计空间不再被提前解掉。
 """
 from __future__ import annotations
 
@@ -21,8 +23,9 @@ import numpy as np
 
 NAME = "network_rigidity"
 
-#: 可直接跑通的"容量扫描"骨架: 书生按自己的约束族改 family 即可, 不必重写
-#: 参数打包/优化器逻辑 (那正是反复出 bug 的地方).
+#: 极简骨架: 只固定 family 契约与 run(cfg) 的输入/输出形状, **不含任何扫描/
+#: 判据/聚合实现** —— 那正是本轮实验需要书生自己设计的科学内容. 占位实现是
+#: 一份"必须整体替换"的退化数据(两族无区分度), 用于逼迫书生写出真实约束族.
 TEMPLATE = """\
 import numpy as np
 
@@ -33,13 +36,13 @@ def family(kind, w, seed):
     # 返回 dict {'X','y','Xv','yv'}: X/y 是 w 个训练约束点, Xv/yv 是留出约束点。
     #
     # 这是本题的**科学决策部分**, 脚手架**不提供任何现成族** —— 你必须自己推导
-    # 两族的解析 ground truth, 再让 capacity_scan 的 N_c(w) 趋势去检验它:
+    # 两族的解析 ground truth:
     #   rigid(刚): 低维、由该族唯一确定; 少量样本应能定死它, 从而泛化到留出集
     #              (期望 N_c(w) 有限且小)。
     #   fat(肥):   高维/连续族; 有限样本钉不死, 小网络应泛化失败
-    #              (期望 N_c(w) 在扫描宽度内不可达 = trend 'unreachable')。
-    # 下面这段占位实现返回**无方差**的退化数据(两族一样, 没有区分度), 脚手架会
-    # 直接判为无效族并回灌——**它不是示例答案, 必须整体替换**为你设计的真实族。
+    #              (期望 N_c(w) 在扫描宽度内不可达)。
+    # 下面这段占位实现返回**无方差**的退化数据(两族一样, 没有区分度), 它不是
+    # 示例答案, **必须整体替换**为你设计的真实族。
     rng = np.random.default_rng(seed)
     X = np.linspace(0.05, 0.95, w).reshape(-1, 1)
     Xv = np.linspace(0.02, 0.98, 200).reshape(-1, 1)
@@ -49,25 +52,36 @@ def family(kind, w, seed):
 
 
 def run(cfg):
-    # 已由脚手架提供: 训练/多起点/宽度扫描/零违规判据/N_c 汇总都在 capacity_scan 里。
-    # **不要改这个函数, 也不要把训练/优化代码写进来** —— 否则会重蹈手搓 numpy 的错。
+    # ===== 你必须自己实现完整实验逻辑 (无现成管线可调) =====
+    # 1. 选扫描参数 (约束点数 w、隐藏层宽度 h 的集合等);
+    # 2. 对每个 (kind, w, h): 调 family 取数据, 用 mlp_fit(X, y, h, seeds=3)
+    #    训练, 再用 mlp_predict(model, Xv) 评估留出误差;
+    # 3. 判定"零违规"(留出最大绝对误差 <= 1e-3), 得到每个 (kind, w) 的最小
+    #    零违规宽度 N_c (扫描内都达不到则记 None);
+    # 4. 把数值结果组织成 summary, 并把可比较的数值放进 objectives。
     seed = int(cfg.get('seed', 0))
-    return capacity_scan(family, seed=seed)
+    # ... 你的实验代码 ...
+    return {'success': True, 'summary': {'note': '待实现'},
+            'objectives': {'score': 0.0}}
 """
 
-#: 分工硬提示: 训练/扫描/判据/汇总已由沙箱内置 capacity_scan 提供, 书生只写
-#: family(科学决策部分). 只讲"分工与契约", 不绑定任何具体命题.
+#: 分工硬提示: 沙箱只给基础数值工具(训练/预测/形状/幂基), **扫描/判据/汇总由
+#: 书生自己实现**. 只讲"契约与坑", 不绑定任何具体命题.
 HINTS = (
-    "分工(极重要): 沙箱**已内置完整数值管线** capacity_scan(family, ...) —— 训练"
-    "(两层 tanh 网络 + L-BFGS-B 多起点)/宽度扫描/零违规判据/N_c 汇总 都由它完成。\n"
-    "**你只需实现 family(kind, w, seed) 这一个函数**(这是真正需要你决策的科学部分), "
-    "并让 run(cfg) 原样 `return capacity_scan(family, seed=...)`。"
-    "**绝对不要**把训练/优化/参数打包/前向写进代码 —— 那正是反复 shape bug 的根源, "
-    "已被验证在本环境里必错。\n"
+    "分工(极重要): 沙箱**只内置基础数值工具**: mlp_fit(训练网络)/mlp_predict(预测)/"
+    "poly_basis(多项式基)/_as_2d(形状对齐)。**没有现成的扫描/判据/汇总管线** —— "
+    "你必须自己实现完整实验逻辑: 选扫描参数、训练网络、评估留出误差、判定零违规、"
+    "求每个 (kind,w) 的最小零违规宽度 N_c, 并把数值结果放进 summary/objectives。\n"
+    "- 零违规 = 留出约束点上的最大绝对误差 <= 1e-3 (口径固定, 不可更改)。\n"
+    "- 刚性 = 扫描范围内存在较小的有限 N_c(且不随 w 增长); "
+    "胖 = 扫描上限内任何宽度都达不到零违规(N_c 不可达)。判别是二值的。\n"
+    "- 所有报告数值必须是有限数 (禁止 inf/nan/None)。\n"
+    "- 训练用 mlp_fit(X, y, h, seeds=3)(两层 tanh 网络 + L-BFGS-B 多起点), "
+    "预测用 mlp_predict(model, Xv); 返回的 model 可直接复用, 不要自己手搓前向。\n"
     "- family 返回 dict {'X','y','Xv','yv'}: X/y 是 w 个**训练**约束点, "
     "Xv/yv 是**留出**约束点(未参与训练); 只想给一组时可省略 Xv/yv(回落到 X/y)。\n"
-    "- **留出集必须真的留出**: Xv 里的输入点不能与 X 重合(否则'留出误差'=训练误差, "
-    "整个 N_c 判据失效, 脚手架会判 trend='invalid_heldout')。Xv 用不同网格/不同采样点。\n"
+    "- **留出集必须真的留出**: Xv 里的输入点不能与 X 重合, 否则'留出误差'=训练误差, "
+    "N_c 判据失效。Xv 用不同网格/不同采样点。\n"
     "- kind 取 'rigid'/'fat' 两族, 由你定义其解析 ground truth: "
     "刚性 = 低维/唯一解的约束族; 肥 = 高维/连续族的约束族。用 kind 分支返回各自数据。\n"
     "- **只有最终的 X/y/Xv/yv 才需要是 (N,1)**(建完用 .reshape(-1, 1)); "
@@ -81,7 +95,7 @@ HINTS = (
 )
 
 #: 沙箱注入的原语名. 书生若顶层重定义同名函数会覆盖注入的正确实现, 故会确定性剥除.
-PRIMITIVE_NAMES = ("mlp_fit", "mlp_predict", "_as_2d", "poly_basis", "capacity_scan")
+PRIMITIVE_NAMES = ("mlp_fit", "mlp_predict", "_as_2d", "poly_basis")
 
 
 def _as_2d(a):
@@ -198,169 +212,15 @@ def mlp_predict(model, X):
     return out
 
 
-def _overlap_fraction(X, Xv):
-    """Xv 中有多少比例的点与训练点 X 重合 (留出集有效性守卫).
-
-    完全重合(返回 1.0)意味着"留出误差"就是训练误差, 零违规判据失效。用四舍五入
-    后的行元组做集合比对, 与维度无关。
-    """
-    X = _as_2d(X)
-    Xv = _as_2d(Xv)
-    if Xv.shape[0] == 0 or X.shape[0] == 0:
-        return 0.0
-    rows = {tuple(np.round(r, 9)) for r in X}
-    hit = sum(1 for r in Xv if tuple(np.round(r, 9)) in rows)
-    return float(hit) / float(Xv.shape[0])
-
-
-def _check_label_shapes(X, y, Xv, yv, kind, w):
-    """标签形状守卫: y/yv 必须是 (N,1), 行数分别匹配 X/Xv.
-
-    捕获最常见的**静默伪结果**来源 —— 广播 bug. 例如
-    ``X[:, 0] + rng.standard_normal((w, 1)) * 0.0``: 左边 (w,) 与右边 (w,1)
-    相加会广播成 (w,w) 而非 (w,1). 这种 y 与 (N,1) 预测再广播成 (N,N), 使
-    "误差"退化成常数级伪值, 却不抛任何异常, 直接污染整张 N_c 表。故在此显式
-    抬高错误, 让上层修复循环把精确形状问题回灌给作者, 而不是产出伪证据。
-    """
-    for nm, xx, yy in (("y", X, y), ("yv", Xv, yv)):
-        if yy.ndim != 2 or yy.shape[1] != 1:
-            raise ValueError(
-                "%s w=%d: 标签 %s 形状应为 (N,1), 实为 %s —— 多半是广播 bug "
-                "( (N,) 与 (N,1) 相加会变成 (N,N) ); 请用 .reshape(-1, 1) 逐列构造标签."
-                % (kind, int(w), nm, tuple(yy.shape))
-            )
-        if yy.shape[0] != xx.shape[0]:
-            raise ValueError(
-                "%s w=%d: 标签 %s 行数 %d 与输入 %s 行数 %d 不一致."
-                % (kind, int(w), nm, yy.shape[0],
-                   "X" if nm == "y" else "Xv", xx.shape[0])
-            )
-
-
-def capacity_scan(family, kinds=("rigid", "fat"), ws=(5, 10, 20),
-                  widths=(2, 4, 8, 16, 32, 64), seeds=3, fit_starts=2,
-                  tr_tol=3e-4, ho_tol=1e-3, seed=0):
-    """命题无关的容量扫描脚手架 (harness 侧已验证的数值管线).
-
-    把"训练/多起点/宽度扫描/零违规判据/N_c 汇总"这些最容易手搓出错的样板下沉为
-    已验证原语; **科学决策仍由调用方写 family 提供** —— 即"刚/肥"各自对应什么
-    约束族(解析 ground truth), 由 family 决定。
-
-    family(kind, w, seed) -> dict 或 tuple:
-        - dict  {'X','y','Xv','yv'}: 训练约束点 (w 个) 与留出约束点 (M 个);
-        - tuple (X, y, Xv, yv) 或 (X, y): 缺省 Xv/yv 回落到 X/y.
-        X/y 一维或二维均可(内部自动升维到 (N,1) 对齐).
-    kinds: 要比较的族名(默认 'rigid'/'fat'); ws: 约束点数; widths: 隐藏层宽度;
-    seeds: 每个 w 的**数据**随机重抽次数(取各次里最好的留出误差);
-    fit_starts: 每个 (kind,w,h) 的**优化器**起点数(默认 3, 抗局部极小);
-    tr_tol/ho_tol: 训练/留出误差门限.
-    tr_tol 只需"足够小"(默认 3e-4, 仅用于确认网络真的拟合上了, 避免优化器没收敛
-    却被记成"可达"); ho_tol=1e-3 才是"零违规"的判据。
-
-    返回 {"success", "summary", "objectives"}:
-        summary['rows'][kind_w{w}_h{h}] = {'train_err','heldout_err'}  (全为有限数)
-        summary['Nc'][kind][w] = 最小零违规宽度 h 或 None(该 w 在扫描内不可达)
-        summary['trend'][kind] = 'flat'|'increasing'|'decreasing'|'mixed'|'inconclusive'
-                               |'unreachable'(扫描内无宽度零违规 = 胖的签名)
-                               |'invalid_heldout'(留出集与训练集重合, 结果无效)
-        summary['anchor'] = 全局留出误差最小的 (kind,w,h) 锚点
-        summary['heldout_overlap'][kind_w{w}] = Xv 与 X 的重合比例 (0 才有效)
-        summary['warnings'] = 留出集重叠等有效性告警文本
-        objectives['neg_heldout_<kind>_w<w>_h<h>'] = -heldout_max_err (越大越好)
-    不伪造: 达不到零违规的行如实报其有限留出误差, Nc 记 None, 绝不写 inf.
-    """
-
-    def _one(kind, w, s):
-        out = family(kind, int(w), int(s))
-        if isinstance(out, dict):
-            X, y = out["X"], out["y"]
-            Xv, yv = out.get("Xv", X), out.get("yv", y)
-        elif isinstance(out, (tuple, list)) and len(out) >= 2:
-            X, y = out[0], out[1]
-            Xv = out[2] if len(out) > 2 else X
-            yv = out[3] if len(out) > 3 else y
-        else:
-            raise ValueError("family 须返回 dict(X,y,Xv,yv) 或 (X,y[,Xv,yv])")
-        X, y, Xv, yv = _as_2d(X), _as_2d(y), _as_2d(Xv), _as_2d(yv)
-        _check_label_shapes(X, y, Xv, yv, kind, w)
-        # 退化族守卫: 标签近常数(无方差) = 该族不含任何约束信息, 拟合"零违规"是
-        # 平凡真, 会伪造出"刚性=可泛化"的假结论。占位实现(全 0 标签)正落在这里,
-        # 抬错回灌作者, 逼其写出真正的约束族, 而不是产出伪证据(不伪造红线)。
-        if float(np.std(y)) < 1e-9 and float(np.std(yv)) < 1e-9:
-            raise ValueError(
-                "%s w=%d: 标签无方差(近常数) —— 这不是有效约束族, 无法支撑"
-                "'刚性/胖'的容量判别. 请把你的 family 实现为真正的解析约束族"
-                "(rigid=低维唯一确定族, fat=高维连续族), 两族须有区分度."
-                % (kind, int(w))
-            )
-        return X, y, Xv, yv
-
-    summary = {"rows": {}, "Nc": {}, "trend": {}, "anchor": None,
-               "heldout_overlap": {}, "warnings": []}
-    objectives = {}
-    for kind in kinds:
-        nc: dict = {}
-        _fully_overlapping = False
-        for w in ws:
-            datasets = [_one(kind, w, s) for s in range(int(seeds))]
-            # 留出集有效性守卫: 若 Xv 与训练点 X 重合, "留出误差"其实是训练误差,
-            # 零违规判据形同虚设。
-            _ov = max(_overlap_fraction(X, Xv) for (X, y, Xv, yv) in datasets)
-            if _ov > 0.0:
-                summary["heldout_overlap"]["%s_w%d" % (kind, int(w))] = round(_ov, 4)
-                summary["warnings"].append(
-                    "留出集与训练集重叠%s: %s w=%d (留出误差无效)"
-                    % ("(完全重合)" if _ov >= 1.0 else "", kind, int(w))
-                )
-                if _ov >= 1.0:
-                    _fully_overlapping = True
-            best_h = None
-            for h in widths:
-                ho_best = float("inf")
-                tr_best = float("inf")
-                for s, (X, y, Xv, yv) in enumerate(datasets):
-                    m = mlp_fit(X, y, int(h), seeds=int(fit_starts),
-                                seed=int(seed) + 1000 * int(w) + 10 * int(h) + s)
-                    tr = float(np.max(np.abs(mlp_predict(m, X) - y)))
-                    ho = float(np.max(np.abs(mlp_predict(m, Xv) - yv)))
-                    if ho < ho_best:
-                        ho_best, tr_best = ho, tr
-                key = "%s_w%d_h%d" % (kind, int(w), int(h))
-                summary["rows"][key] = {"train_err": tr_best, "heldout_err": ho_best}
-                objectives["neg_heldout_" + key] = -ho_best
-                if best_h is None and ho_best <= ho_tol and tr_best <= tr_tol:
-                    best_h = int(h)
-                if summary["anchor"] is None or ho_best < summary["anchor"]["heldout_err"]:
-                    summary["anchor"] = {"kind": kind, "w": int(w), "h": int(h),
-                                         "train_err": tr_best, "heldout_err": ho_best}
-            nc[int(w)] = best_h
-        summary["Nc"][kind] = nc
-        vals = [v for v in nc.values() if v is not None]
-        if _fully_overlapping:
-            summary["trend"][kind] = "invalid_heldout"
-        elif not vals:
-            # 扫描内任何宽度都达不到零违规 —— "胖"(解空间高维/连续族)的判别签名:
-            # 有限样本装不下, N_c = ∞。与"inconclusive"(样本太少、测不出趋势)区分开。
-            summary["trend"][kind] = "unreachable"
-        elif len(vals) < 2:
-            summary["trend"][kind] = "inconclusive"
-        elif len(set(vals)) == 1:
-            summary["trend"][kind] = "flat"
-        elif all(b >= a for a, b in zip(vals, vals[1:])):
-            summary["trend"][kind] = "increasing"
-        elif all(b <= a for a, b in zip(vals, vals[1:])):
-            summary["trend"][kind] = "decreasing"
-        else:
-            summary["trend"][kind] = "mixed"
-    return {"success": True, "summary": summary, "objectives": objectives}
-
-
 def primitives() -> dict:
-    """返回注入沙箱的原语表 (键 = 书生代码可直接调用的名字)."""
+    """返回注入沙箱的原语表 (键 = 书生代码可直接调用的名字).
+
+    v11 彻底解绑: 只注入**基础数值工具**(训练/预测/形状/幂基), 不再注入任何
+    扫描/判据/汇总管线 —— 那些是书生本轮要自己设计的科学内容。
+    """
     return {
         "mlp_fit": mlp_fit,
         "mlp_predict": mlp_predict,
         "_as_2d": _as_2d,
         "poly_basis": poly_basis,
-        "capacity_scan": capacity_scan,
     }

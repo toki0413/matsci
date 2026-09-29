@@ -273,7 +273,7 @@ class EngineAct:
 
     async def _request_code_lab_experiment(
         self, goal: str, guards: dict[str, Any] | None = None,
-        repair_hint: str = "", prev_code: str = "",
+        repair_hint: str = "", prev_code: str = "", focus: str = "",
     ) -> str:
         """平衡点·内建执行: 让书生亲手写一段 Code Lab ``run(cfg)`` 实验代码.
 
@@ -281,6 +281,8 @@ class EngineAct:
         代码, 不评科学可信度(那是 validate/裁决层的事). 失败返回空串 → 回落原分派.
         ``repair_hint`` 非空时把沙箱真实报错回灌, 并附上 ``prev_code``(上一版失败
         代码), 让书生在此基础上做**最小改动**修 bug, 而不是凭空重写再犯同一个错.
+        ``focus`` 是本轮可变的聚焦文本(见 ``_build_codelab_focus``), 防止作者提示
+        因只喂恒定 goal 而逐字节冻结.
         """
         from huginn.research.code_lab import (
             build_author_prompt,
@@ -296,7 +298,7 @@ class EngineAct:
         scaffold = load_scaffold(_osc.environ.get("HUGINN_CODELAB_SCAFFOLD", ""))
         prompt = build_author_prompt(
             goal, scaffold=scaffold, guard_block=guard_block,
-            repair_hint=repair_hint, prev_code=prev_code,
+            repair_hint=repair_hint, prev_code=prev_code, focus=focus,
         )
         try:
             raw = await self._llm_chat(prompt, model=self.verification_model)
@@ -343,6 +345,24 @@ class EngineAct:
             return None, reason or "执行未产出证据"
         return res, ""
 
+    def _build_codelab_focus(self, description: str) -> str:
+        """v11 反冻结: 给作者 prompt 注入**本轮可变**的聚焦文本.
+
+        作者提示若只喂恒定 ``_objective``(研究总目标), 每轮逐字节相同 → 同一问题
+        被反复问, 执行输出恒同(run47 实测 prompt_len 恒 5379, nobj 恒 36), 执行层
+        零新信息. 这里把随迭代演进的当前假设(``_last_hypothesis``)与本轮实验步骤
+        (plan ``description``)并进来, prompt 遂不再冻结. 无可用文本时返空串, 行为
+        退回旧路径(向后兼容).
+        """
+        parts: list[str] = []
+        _hyp = str(getattr(self, "_last_hypothesis", "") or "").strip()
+        if _hyp:
+            parts.append(f"当前待检验假设: {_hyp[:600]}")
+        _step = (description or "").strip()
+        if _step and _step not in _hyp:
+            parts.append(f"本轮实验步骤: {_step[:600]}")
+        return "\n".join(parts)
+
     async def _execute_code_lab(
         self, description: str, context: dict[str, Any]
     ) -> dict[str, Any]:
@@ -355,7 +375,9 @@ class EngineAct:
         # 优先用研究目标(全文本, 命题无关的真问题), plan 步骤只作兜底 —— plan 描述
         # 常带 "FILES:/SKILL:" 之类执行噪声, 不适合喂给"实验作者"提示.
         goal = str(getattr(self, "_objective", "") or "") or description
-        code = await self._request_code_lab_experiment(goal)
+        # v11 反冻结: goal 恒定时作者提示逐字节冻结, 用本轮可变 focus 解冻.
+        focus = self._build_codelab_focus(description)
+        code = await self._request_code_lab_experiment(goal, focus=focus)
         if not code:
             import os as _ose
             if _ose.environ.get("HUGINN_EXEC_ROUTE_DEBUG"):
@@ -381,7 +403,7 @@ class EngineAct:
             last_err = reason
             if attempt < max_repairs:
                 repaired = await self._request_code_lab_experiment(
-                    goal, repair_hint=last_err, prev_code=code
+                    goal, repair_hint=last_err, prev_code=code, focus=focus
                 )
                 if not repaired:
                     break
