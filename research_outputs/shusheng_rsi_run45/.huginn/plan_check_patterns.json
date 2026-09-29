@@ -462,5 +462,21 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the family function for two function classes: (1) rigid family = linear function f(x)=ax+b (with constraints ensuring identifiability), (2) fat family = high-deg"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan fundamentally misaligns with the hypothesis. The hypothesis requires verifying geometric properties of solution spaces (H1 groups, affine manifold dimension, Gaussian curvature, Hessian spectral gap), but the plan only implements a capacity scan measuring N_c(w) and held-out error. This is a repeat of historical failures where topological/geometric analysis was omitted in favor of simple error metrics. The MODE=explore is inappropriate for a structural verification task requiring concrete code implementation.",
+    "missing_steps": [
+      "Implement topological data analysis (persistent homology) to compute H1 groups of solution space manifolds",
+      "Define weight manifold geometry and parameterization in function space (not just parameter space)",
+      "Specify filtration method (e.g., Vietoris-Rips) for homology computation on function space geometry",
+      "Verify rigid family forms 2D affine manifold through geometric analysis in function space",
+      "Compute Hessian at initialization and analyze spectral gap in function space",
+      "Analyze Gaussian curvature of fat polynomial family manifold",
+      "Implement continuous interpolation path testing between training and held-out solutions in function space",
+      "Switch MODE from explore to coder/workflow for concrete implementation"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function for rigid (linear) and fat (20th-degree polynomial) hypothesis classes with proper O(1) normalization, ensuring X/y and Xv/yv shapes are (N,1"
   }
 ]
