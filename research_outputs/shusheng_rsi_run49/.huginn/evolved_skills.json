@@ -81,7 +81,7 @@
       "plan",
       "error",
       "constraints",
-      "prediction"
+      "constraint"
     ],
     "workflow_steps": [
       {
