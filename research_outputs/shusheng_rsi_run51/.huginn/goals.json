@@ -3,11 +3,14 @@
     {
       "id": "goal_88710bea",
       "text": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【唯一硬性口径（不可更改，其余全由你决定）】\n- 零违规 = 留出约束点上的最大绝对误差 ≤ 1e-3。\n- 刚性 = 扫描范围内存在较小的有限 N_c（且 N_c 不随 w 增长）；胖 = 扫描上限内任何宽度都达不到零违规（N_c 不可达）。判别是二值的。\n- 所有报告数值必须是有限数（禁止 inf/nan/None）。\n- 研究对象只能是小型前馈网络本身。严禁把本命题替换或“换名归约”为材料/化学/玻璃/合金/离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【实验的族、样本、扫描、脚本如何设计，以及如何证明“刚性可达”，由你自己决定并给出理由。】\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
-      "sub_goals": [],
-      "iteration": 8,
+      "sub_goals": [
+        "[Feynman known_unknown] I don’t understand exactly how the tail probability of the empirical risk distribution quantitatively determines $N_c(w)$ — is there a formal link between quantiles of risk distributions and minimal width thresholds?",
+        "[Feynman unknown_unknown] I never considered whether correlations between initializations (due to shared architecture or data structure) might violate the independence assumption underlying $1 - (1-p)^w$, potentially skewing predicted scaling behavior."
+      ],
+      "iteration": 13,
       "status": "active",
       "created_at": "2026-09-29T12:55:26.711312+00:00",
-      "updated_at": "2026-09-29T12:59:17.042630+00:00",
+      "updated_at": "2026-09-29T13:00:19.271001+00:00",
       "session_id": "",
       "metadata": {},
       "unknowns": [
@@ -90,9 +93,65 @@
           "discovered_at": "2026-09-29T12:58:59.895526+00:00",
           "resolved_at": null,
           "iteration": 5
+        },
+        {
+          "id": "unk_cfbe71f6",
+          "text": "The definition of \"rigid\" relies on N_c(w) being finite and small within a scanned range, but if the scanning range is too narrow or misaligned with the true transition point, it may falsely classify a system as \"fat\" when rigidity exists at larger capacities not explored.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-29T12:59:50.502320+00:00",
+          "resolved_at": null,
+          "iteration": 10
+        },
+        {
+          "id": "unk_d38d1d62",
+          "text": "Zero-violation tolerance (≤1e-3) may be numerically unattainable due to floating-point precision limits or optimization landscape flatness near solutions, causing false negatives in N_c estimation even when theoretically possible.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-29T12:59:50.503372+00:00",
+          "resolved_at": null,
+          "iteration": 10
+        },
+        {
+          "id": "unk_b048ef6e",
+          "text": "The training and validation constraint sets may not be representative of the full function space; if they lack diversity or are biased toward low-complexity regions, N_c(w) estimates will not reflect generalizable rigidity.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-29T12:59:50.504056+00:00",
+          "resolved_at": null,
+          "iteration": 10
+        },
+        {
+          "id": "unk_c0a91548",
+          "text": "The assumption that hidden layer width alone captures network capacity ignores other architectural factors (e.g., depth, activation functions, skip connections), which could significantly affect solvability and thus misattribute rigidity to width alone.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-29T12:59:50.504706+00:00",
+          "resolved_at": null,
+          "iteration": 10
+        },
+        {
+          "id": "unk_2ab6d965",
+          "text": "In degenerate regimes (e.g., w=0 or w=1), N_c(w) may be undefined or trivially zero, breaking the scaling behavior needed to infer rigidity; these boundary cases must be excluded or handled separately to avoid misleading conclusions.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-29T12:59:50.505335+00:00",
+          "resolved_at": null,
+          "iteration": 10
+        },
+        {
+          "id": "unk_b7e7b6b1",
+          "text": "I don’t understand exactly how the tail probability of the empirical risk distribution quantitatively determines $N_c(w)$ — is there a formal link between quantiles of risk distributions and minimal width thresholds?",
+          "type": "known_unknown",
+          "discovered_at": "2026-09-29T13:00:01.052400+00:00",
+          "resolved_at": null,
+          "iteration": 10
+        },
+        {
+          "id": "unk_40f8c920",
+          "text": "I never considered whether correlations between initializations (due to shared architecture or data structure) might violate the independence assumption underlying $1 - (1-p)^w$, potentially skewing predicted scaling behavior.",
+          "type": "unknown_unknown",
+          "discovered_at": "2026-09-29T13:00:01.054031+00:00",
+          "resolved_at": null,
+          "iteration": 10
         }
       ],
-      "unknowns_discovered": 10,
+      "unknowns_discovered": 17,
       "unknowns_resolved": 0,
       "objective": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【唯一硬性口径（不可更改，其余全由你决定）】\n- 零违规 = 留出约束点上的最大绝对误差 ≤ 1e-3。\n- 刚性 = 扫描范围内存在较小的有限 N_c（且 N_c 不随 w 增长）；胖 = 扫描上限内任何宽度都达不到零违规（N_c 不可达）。判别是二值的。\n- 所有报告数值必须是有限数（禁止 inf/nan/None）。\n- 研究对象只能是小型前馈网络本身。严禁把本命题替换或“换名归约”为材料/化学/玻璃/合金/离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【实验的族、样本、扫描、脚本如何设计，以及如何证明“刚性可达”，由你自己决定并给出理由。】\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
       "success_criteria": [],

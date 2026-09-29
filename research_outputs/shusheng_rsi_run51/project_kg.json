@@ -1,0 +1,100 @@
+{
+  "directed": true,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "label": "[DIM: measure] The minimal width $N_c(w)$ is governed by the tail probability of",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T12:59:57.542823",
+      "last_seen": "2026-09-29T12:59:57.542823",
+      "mentions": 1,
+      "iteration": 10,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For a fixed constraint set size w, the minimal width N_c(w) will be finite and bounded (indicating solution space rigidity). Specifically, N_c(w) will remain small (e.g., < 50) as w increases, and the",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: measure] The minimal width $N_c(w)$ is governed by the tail probability of"
+    },
+    {
+      "label": "plan_explore_iter10",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T12:59:57.542872",
+      "last_seen": "2026-09-29T12:59:57.542872",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter10"
+    },
+    {
+      "label": "pass_iter10",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T12:59:57.542887",
+      "last_seen": "2026-09-29T12:59:57.542887",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter10"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T12:59:57.542897",
+      "last_seen": "2026-09-29T12:59:57.542897",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: measure] The minimal width $N_c(w)$ is governed by the tail probability of",
+        "Method:plan_explore_iter10",
+        "Fact:pass_iter10"
+      ],
+      "iteration": 10,
+      "id": "he_experiment_pipeline_16af8205"
+    },
+    {
+      "label": "reviewer_iter10",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T12:59:57.542977",
+      "last_seen": "2026-09-29T12:59:57.542977",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "d3806257fb711130",
+      "r_phys": 1.0,
+      "iteration": 10,
+      "id": "persona_use:reviewer_iter10"
+    }
+  ],
+  "links": [
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: measure] The minimal width $N_c(w)$ is governed by the tail probability of",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T12:59:57.542897",
+      "last_seen": "2026-09-29T12:59:57.542897",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_16af8205"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T12:59:57.542897",
+      "last_seen": "2026-09-29T12:59:57.542897",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_16af8205"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T12:59:57.542897",
+      "last_seen": "2026-09-29T12:59:57.542897",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_16af8205"
+    }
+  ]
+}
