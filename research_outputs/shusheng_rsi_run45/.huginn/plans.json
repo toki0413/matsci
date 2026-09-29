@@ -957,6 +957,44 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_ae993227",
+      "objective": "[DIM: structure] The rigid linear family forms a **2-dimensional affine manifold** in function space, invariant under translation and scaling symmetries, while the fat polynomial family forms a **high-dimensional non-convex manifold** with no continuous symmetry group, making its solution space topologically distinct.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the rigid linear family and fat polynomial family functions as required by the capacity_scan framework. The rigid family uses a linear function f(x)=ax+b (2 parameters) with X in [0,1], y normalized to O(1), and Xv disjoint from X. The fat family uses a 20th-order polynomial in Legendre basis (20+ parameters) with random coefficients, also normalized. Both must return (N,1) shaped arrays with no overlapping train/holdout points. This enables the bootstrap test: rigid should achieve N_c < 64 (zero violation at small width), while fat should be unreachable (val_err > 1e-3 for all h≤64), confirming the hypothesis about manifold dimensionality and symmetry.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "family.py",
+            "(new",
+            "file",
+            "or",
+            "module",
+            "containing",
+            "the",
+            "family",
+            "function)"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T04:09:23.124083+00:00",
+      "confirmed_at": "2026-09-29T04:09:23.125608+00:00",
+      "completed_at": "2026-09-29T04:09:41.835903+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

@@ -533,5 +533,21 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Generate synthetic linear data f(x)=ax+b+ε with ε∼N(0,σ²), define rigid linear family with affine dimension=2 and fat polynomial family (degree≥3), increase training point"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "该计划与假设的核心数学结构严重不匹配。假设要求验证解空间的几何/拓扑结构（仿射流形维数、H1群、高斯曲率、谱间隙等），但计划仅执行容量扫描（N_c(w)和验证误差），属于典型的‘同场景历史失败’。此外，MODE=explore不适合需要代码实现的结构性验证任务，应切换为coder/workflow模式。",
+    "missing_steps": [
+      "将MODE从explore切换为coder/workflow以进行代码实现",
+      "在函数空间中定义刚性族和胖族的权重流形几何与参数化（而非仅参数空间）",
+      "实施拓扑数据分析（持久同调）计算解空间流形的H1群",
+      "指定过滤方法（如Vietoris-Rips）用于函数空间几何的同调计算",
+      "通过几何分析验证刚性族形成2D仿射流形",
+      "计算Hessian在初始化时的谱间隙",
+      "分析胖多项式族流形的高斯曲率",
+      "在函数空间中实现训练与解之间的连续插值路径测试"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the rigid linear family and fat polynomial family functions as required by the capacity_scan framework. The rigid family uses a linear function f(x)=ax+b (2 para"
   }
 ]

@@ -1905,6 +1905,70 @@
       "r_phys": 1.0,
       "iteration": 150,
       "id": "persona_use:reviewer_iter150"
+    },
+    {
+      "label": "[DIM: measure] The held-out error of the rigid linear family follows a **χ²-dist",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T04:09:00.219324",
+      "last_seen": "2026-09-29T04:09:00.219324",
+      "mentions": 1,
+      "iteration": 155,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The rigid linear family's held-out MSE will follow χ²(198) distribution with mean≈198 and variance≈396 (normalized), with KS test p-value>0.05 confirming consistency. The fat polynomial family will sh",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: measure] The held-out error of the rigid linear family follows a **χ²-dist"
+    },
+    {
+      "label": "plan_explore_iter155",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:09:00.219364",
+      "last_seen": "2026-09-29T04:09:00.219364",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter155"
+    },
+    {
+      "label": "pass_iter155",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:09:00.219374",
+      "last_seen": "2026-09-29T04:09:00.219374",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter155"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T04:09:00.219384",
+      "last_seen": "2026-09-29T04:09:00.219384",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: measure] The held-out error of the rigid linear family follows a **χ²-dist",
+        "Method:plan_explore_iter155",
+        "Fact:pass_iter155"
+      ],
+      "iteration": 155,
+      "id": "he_experiment_pipeline_d25be0c9"
+    },
+    {
+      "label": "reviewer_iter155",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T04:09:00.219462",
+      "last_seen": "2026-09-29T04:09:00.219462",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "6ad1dcbf1f774b13",
+      "r_phys": 1.0,
+      "iteration": 155,
+      "id": "persona_use:reviewer_iter155"
     }
   ],
   "links": [
@@ -2717,6 +2781,33 @@
       "last_seen": "2026-09-29T04:06:42.383447",
       "mentions": 1,
       "target": "he_experiment_pipeline_bdffd45c"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: measure] The held-out error of the rigid linear family follows a **χ²-dist",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:09:00.219384",
+      "last_seen": "2026-09-29T04:09:00.219384",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d25be0c9"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter155",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:09:00.219384",
+      "last_seen": "2026-09-29T04:09:00.219384",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d25be0c9"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter155",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:09:00.219384",
+      "last_seen": "2026-09-29T04:09:00.219384",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d25be0c9"
     }
   ]
 }
