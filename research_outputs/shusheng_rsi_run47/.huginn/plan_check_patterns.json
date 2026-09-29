@@ -109,5 +109,33 @@
     ],
     "mode": "explore",
     "description": "Implement the rigid family as a linear subspace of polynomials of degree ≤ k (with k explicitly set to w-1 to ensure unique Vandermonde determination) using O(1) normalized basis functions x^j / j! fo"
+  },
+  {
+    "scene_tag": "auto_family",
+    "hyp_key": "495b1e3bee4b",
+    "reason": "The plan fails to address the core mathematical structure of the hypothesis (capacity complexity N_c(w) vs. constraint scaling). It treats the problem as a generic ML coding task rather than a function-space geometry/computational capacity analysis. Specifically, it doesn't define how N_c(w) will be measured, what 'capacity' means in this context, or how to compute the bound O(log w) vs. superlinear growth. The prediction is vague ('zero violation', 'unreachable') without specifying the metrics or thresholds for N_c(w). It also doesn't specify how the hypothesis about information-theoretic bounds will be tested quantitatively.",
+    "missing_steps": [
+      "Define N_c(w) metric explicitly (e.g., VC dimension, Rademacher complexity, or sample complexity threshold)",
+      "Specify the mathematical form of the information-theoretic bound to test",
+      "Define the constraint scaling relationship (how w relates to function space dimension)",
+      "Establish quantitative thresholds for 'flat/decreasing' vs 'superlinear/unreachable' N_c(w)",
+      "Include theoretical baseline comparison (expected O(log w) behavior for rigid family)"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the rigid and fat family functions as required by the capacity_scan framework. The rigid family should be a low-dimensional function space (e.g., linear or quadr"
+  },
+  {
+    "scene_tag": "auto_family",
+    "hyp_key": "495b1e3bee4b",
+    "reason": "The plan correctly identifies the mathematical structure (function space geometry/computational capacity) and MODE (explore) matches the task. However, it fails to specify how N_c(w) will be numerically computed and measured. It describes theoretical bounds but doesn't define the empirical procedure to extract N_c(w) values from training/validation/test splits. The prediction is vague about what specific metrics will be calculated (training error, validation error, Rademacher complexity values). It also doesn't address the specific failure modes about scale normalization and independent error measurement. Without a clear computational protocol for measuring N_c(w), the plan cannot produce the required quantitative thresholds to verify the hypothesis.",
+    "missing_steps": [
+      "Define explicit numerical procedure for computing N_c(w) from empirical data",
+      "Specify exact measurement protocol for training vs. validation errors (must be independent)",
+      "Define the specific algorithm to determine when approximation threshold ε is achieved within confidence δ",
+      "Include scale normalization procedure to handle the 'scale discipline' warning about avoiding 1e9 magnitude issues",
+      "Specify how to extract quantitative N_c(w) values from the experiment for the required table output"
+    ],
+    "mode": "explore",
+    "description": "Implement the capacity_scan framework with mathematically rigorous definitions: (1) Define N_c(w) as the minimum sample size required for ε-approximation within δ confidence, computed via empirical Ra"
   }
 ]
