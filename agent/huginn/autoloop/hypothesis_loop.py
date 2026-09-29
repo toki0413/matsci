@@ -155,8 +155,14 @@ _NON_SUBSTANTIVE_RE = re.compile(
 _WORD_CHAR_RE = re.compile(r"[0-9A-Za-z\u4e00-\u9fff]")
 
 
-def _is_substantive_statement(statement: str, min_chars: int = 4) -> bool:
-    """去掉 markdown / [DIM: ...] 标签 / 标点后, 是否仍有足够的实质字符."""
+def _is_substantive_statement(statement: str, min_chars: int = 1) -> bool:
+    """去掉 markdown / [DIM: ...] 标签 / 标点后, 是否仍有实质字符.
+
+    目标空壳是 **0 实质字符** 的形态 ("**" / 仅 [DIM: x] 标签 / 纯标点) —— 它们
+    去掉标签和标点后长度归零. 故门限取 1 即可全覆盖, 不再误伤 "H1"/"假设 A" 这类
+    短陈述 (旧值 4 属过度收紧: run37 的空壳全是 0 字符, 不需要 4; 却把短标签
+    测试与真实短命题如 "E=mc2" 一并拒掉 → add_hypothesis 返回 None).
+    """
     if not statement:
         return False
     _t = _DIM_TAG_RE.sub(" ", statement)

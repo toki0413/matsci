@@ -111,9 +111,18 @@ _DIMENSION_KEYWORDS: dict[str, tuple[str, ...]] = {
                      "gradient", "minimi", "优化", "凸", "梯度", "极小"),
     "computation": ("complexity", "information", "entropy", "approximation",
                     "algorithm", "复杂度", "信息", "熵", "近似", "算法"),
+    # 材料/热力学维度: 与数学标签并存. 旧材料命题 (掺杂/带隙/温度) 曾靠这些关键词
+    # 命中; 数学锚定改造时整表替换, 漏同步 → dimension 恒空、聚类失效, 且违背本模块
+    # docstring "降级回关键词匹配, 行为向后兼容 (现有测试零改动)" 的承诺. 追加在末尾,
+    # 不改数学标签的命中优先级.
+    "composition": ("composition", "doping", "dopant", "band gap", "alloy",
+                    "掺杂", "带隙", "成分", "固溶", "合金"),
+    "temperature": ("temperature", "thermal", "annealing",
+                    "温度", "退火", "热力学"),
 }
 _DIMENSION_LABELS = (
     "structure", "geometry", "dynamics", "measure", "optimization", "computation",
+    "composition", "temperature",
 )
 
 
