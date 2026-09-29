@@ -7,44 +7,6 @@
       "Compute or estimate the first homology group H1 of the weight manifold using TDA or loop sampling",
       "Compare with the rigid affine manifold's contractibility (trivial H1)",
       "Establish a continuous interpolation path between training minima and held-out solutions to test feasibility under topological constraints",
-      "Ensure fat polynomial family is x-dependent and high-dimensional but partially learnable (not noise)"
-    ],
-    "mode": "explore",
-    "description": "[auto-routed: surprise=1.00] Implement the family function for linear (rigid) and fat polynomial families with proper normalization to O(1) scale, ensuring output shapes are (N,1) and held-out points "
-  },
-  {
-    "scene_tag": "other",
-    "reason": "The plan attempts to validate a topological hypothesis (non-vanishing first homology group H1 in weight manifolds) using only a capacity scan measuring generalization error. As explicitly noted in the '同场景历史失败', generalization error alone does not prove topological non-triviality. The plan misses the critical step of computing/estimating homology structures via persistent homology or loop sampling, and fails to compare the weight manifold geometry of the rigid vs. fat families. While the plan addresses some past failure modes (noise, scaling), it fundamentally misinterprets the hypothesis as a capacity problem rather than a topological obstruction problem.",
-    "missing_steps": [
-      "Define the weight manifold geometry and parameterization for the fat polynomial family",
-      "Compute or estimate the first homology group H1 of the weight manifold using TDA or loop sampling",
-      "Compare with the rigid affine manifold's contractibility (trivial H1)",
-      "Establish a continuous interpolation path between training minima and held-out solutions to test feasibility under topological constraints",
-      "Explicitly verify that the fat polynomial family is x-dependent and high-dimensional but partially learnable (not noise)"
-    ],
-    "mode": "explore",
-    "description": "[auto-routed: surprise=1.00] Implement the family(kind, w, seed) function for the rigid (linear) and fat (high-degree polynomial) function families. Ensure training and held-out points are disjoint, s"
-  },
-  {
-    "scene_tag": "other",
-    "reason": "The hypothesis concerns a topological obstruction (non-vanishing first homology group H1) in the weight manifold, which requires computing or estimating the homology structure via topological data analysis (TDA) or loop sampling. The plan only implements a capacity scan measuring generalization error, which is empirically insufficient to prove topological non-triviality as explicitly noted in the historical failures. The plan fundamentally misinterprets the hypothesis as a capacity problem rather than a topological obstruction problem.",
-    "missing_steps": [
-      "Define the weight manifold geometry and parameterization for the fat polynomial family",
-      "Compute or estimate the first homology group H1 of the weight manifold using TDA or loop sampling",
-      "Compare with the rigid affine manifold's contractibility (trivial H1)",
-      "Establish a continuous interpolation path between training minima and held-out solutions to test feasibility under topological constraints"
-    ],
-    "mode": "explore",
-    "description": "[auto-routed: surprise=1.00] Implement the family function for the rigid (linear) and fat (high-degree polynomial) families, ensuring y/yv are normalized to O(1) magnitude, shapes are (N,1), and held-"
-  },
-  {
-    "scene_tag": "other",
-    "reason": "The plan is invalid because it fundamentally misinterprets the hypothesis. The hypothesis concerns a topological obstruction (non-vanishing first homology group H1) in the weight manifold, but the plan only implements a capacity scan measuring held-out error. As noted in the historical failures, generalization error alone does not prove topological non-triviality; the plan misses the critical step of computing or estimating the homology structure (e.g., via persistent homology or loop sampling) of the weight manifolds for both rigid and fat families. Additionally, the plan repeats the failure mode where fat families were treated as noise (run28), and it lacks the required topological analysis to validate the PAC-Bayes bound claim regarding N_c(w) behavior.",
-    "missing_steps": [
-      "Define the weight manifold geometry and parameterization for the fat polynomial family",
-      "Compute or estimate the first homology group H1 of the weight manifold using TDA or loop sampling",
-      "Compare with the rigid affine manifold's contractibility (trivial H1)",
-      "Establish a continuous interpolation path between training minima and held-out solutions to test feasibility under topological constraints",
       "Explicitly verify that the fat polynomial family is x-dependent and high-dimensional but partially learnable (not noise)"
     ],
     "mode": "explore",
@@ -732,5 +694,47 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the family function for the rigid family (linear) and fat family (20th-degree polynomial) with proper normalization and shape constraints. Ensure X/y and Xv/yv h"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The hypothesis requires verifying sheaf cohomology properties (H¹ ≠ 0) of locally linear functions — an algebraic topology problem requiring symbolic computation of Čech complexes or derived category methods. The proposed plan uses 'explore' mode with capacity scans measuring N_c(w) and held-out error, which addresses neither topological structure nor sheaf cohomology requirements. This repeats the exact historical failures documented in the scene history where MODE=explore was inappropriate for a structural verification task. The plan lacks critical mathematical setup: defining the sheaf of locally linear functions, base manifold, transition functions, and cohomology computation framework.",
+    "missing_steps": [
+      "Switch MODE from explore to coder/workflow for concrete implementation",
+      "Define the mathematical structure: specify the base manifold, the sheaf of locally linear functions, and the cohomology computation framework (e.g., Čech cohomology or derived functor approach)",
+      "Clarify the relationship between the rigid linear family and the sheaf structure — how does the family induce or relate to the sheaf?",
+      "Implement appropriate sheaf cohomology tools (e.g., symbolic computation of Čech complexes, spectral sequences, or derived category methods)",
+      "Establish the contrast between rigid and fat families at the sheaf level, not just at the level of point cloud topology",
+      "Include mathematical validation steps: check exactness of sequences, compute explicit cohomology groups, verify non-triviality via obstruction theory"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function for the rigid linear family (f(x)=ax+b) and fat polynomial family (20th-order polynomial), ensuring proper normalization of y/yv to O(1), cor"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan fundamentally misaligns with the hypothesis. The hypothesis requires symbolic computation of Čech cohomology for sheaves — an algebraic topology problem requiring exact mathematical verification. The plan uses 'explore' mode with capacity scans measuring N_c(w) and held-out error, which addresses neither topological structure nor sheaf cohomology requirements. This repeats the exact historical failures documented in the scene history where MODE=explore was inappropriate for a structural verification task. The plan lacks critical mathematical setup: defining the sheaf of locally linear functions, base manifold, transition functions, and cohomology computation framework.",
+    "missing_steps": [
+      "Switch MODE from explore to coder/workflow for concrete implementation",
+      "Define the mathematical structure: specify the base manifold, the sheaf of locally linear functions, and the cohomology computation framework (e.g., Čech cohomology or derived functor approach)",
+      "Clarify the relationship between the rigid linear family and the sheaf structure — how does the family induce or relate to the sheaf?",
+      "Implement appropriate sheaf cohomology tools (e.g., symbolic computation of Čech complexes, spectral sequences, or derived category methods)",
+      "Establish the contrast between rigid and fat families at the sheaf level, not just at the level of point cloud topology",
+      "Include mathematical validation steps: check exactness of sequences, compute explicit cohomology groups, verify non-triviality via obstruction theory"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement symbolic computation of Čech cohomology for sheaves of locally linear functions on a 1D base manifold. Define the rigid linear family as a sheaf with transition "
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan fundamentally misaligns with the hypothesis. The hypothesis requires symbolic computation of Čech cohomology for sheaves of locally linear functions — an algebraic topology problem requiring exact mathematical verification via symbolic algebra tools (e.g., Lean, SageMath, or Mathematica). The proposed plan uses 'explore' mode with capacity scans measuring N_c(w) and held-out error, which addresses neither topological structure nor sheaf cohomology requirements. This repeats the exact historical failures documented in the scene history where MODE=explore was inappropriate for a structural verification task. The plan lacks critical mathematical setup: defining the sheaf, base manifold, transition functions, and cohomology computation framework.",
+    "missing_steps": [
+      "Switch MODE from explore to coder/workflow for concrete symbolic implementation",
+      "Define the mathematical structure: specify the base manifold (e.g., S¹ or ℝ), the sheaf of locally linear functions, and the cohomology computation framework (Čech complex or derived functor approach)",
+      "Clarify the relationship between the rigid linear family and the sheaf structure — how does the family induce or relate to the sheaf?",
+      "Implement appropriate sheaf cohomology tools (e.g., symbolic computation of Čech complexes, spectral sequences, or derived category methods)",
+      "Establish the contrast between rigid and fat families at the sheaf level, not just at the level of point cloud topology",
+      "Include mathematical validation steps: check exactness of sequences, compute explicit cohomology groups, verify non-triviality via obstruction theory"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement symbolic computation of Čech cohomology for sheaves of locally linear functions on a 1D base manifold (e.g., $S^1$ or $\\mathbb{R}$). Define the rigid linear fami"
   }
 ]

@@ -2579,6 +2579,70 @@
       "r_phys": 1.0,
       "iteration": 205,
       "id": "persona_use:reviewer_iter205"
+    },
+    {
+      "label": "[DIM: dynamics] The zero-violation condition for the rigid family corresponds to",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T04:21:14.815487",
+      "last_seen": "2026-09-29T04:21:14.815487",
+      "mentions": 1,
+      "iteration": 210,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For rigid family (linear): at h=2, w=5, seed=0, train_err ~ 1e-5 and val_err ≤ 1e-3 (zero violation achieved). For fat family (20th polynomial): all h≤64 show val_err > 1e-3 with trend='unreachable'.",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: dynamics] The zero-violation condition for the rigid family corresponds to"
+    },
+    {
+      "label": "plan_explore_iter210",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:21:14.815521",
+      "last_seen": "2026-09-29T04:21:14.815521",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter210"
+    },
+    {
+      "label": "pass_iter210",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:21:14.815530",
+      "last_seen": "2026-09-29T04:21:14.815530",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter210"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T04:21:14.815539",
+      "last_seen": "2026-09-29T04:21:14.815539",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: dynamics] The zero-violation condition for the rigid family corresponds to",
+        "Method:plan_explore_iter210",
+        "Fact:pass_iter210"
+      ],
+      "iteration": 210,
+      "id": "he_experiment_pipeline_b7132d25"
+    },
+    {
+      "label": "reviewer_iter210",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T04:21:14.815608",
+      "last_seen": "2026-09-29T04:21:14.815608",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "05d150f8ff4bf51e",
+      "r_phys": 1.0,
+      "iteration": 210,
+      "id": "persona_use:reviewer_iter210"
     }
   ],
   "links": [
@@ -3688,6 +3752,33 @@
       "last_seen": "2026-09-29T04:20:18.438002",
       "mentions": 1,
       "target": "he_experiment_pipeline_c867f162"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: dynamics] The zero-violation condition for the rigid family corresponds to",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:21:14.815539",
+      "last_seen": "2026-09-29T04:21:14.815539",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b7132d25"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter210",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:21:14.815539",
+      "last_seen": "2026-09-29T04:21:14.815539",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b7132d25"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter210",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:21:14.815539",
+      "last_seen": "2026-09-29T04:21:14.815539",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b7132d25"
     }
   ]
 }
