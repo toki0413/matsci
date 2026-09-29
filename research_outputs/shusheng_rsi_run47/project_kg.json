@@ -2724,6 +2724,70 @@
       "r_phys": 1.0,
       "iteration": 215,
       "id": "persona_use:reviewer_iter215"
+    },
+    {
+      "label": "[DIM: dynamics] The rigid family's zero-violation threshold is governed by a fir",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T08:11:04.694216",
+      "last_seen": "2026-09-29T08:11:04.694216",
+      "mentions": 1,
+      "iteration": 220,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Rigid family will show exponential decay in heldout error with increasing w, satisfying dε/dw ≤ -αε; fat family will exhibit stochastic growth or stagnation in heldout error, violating the differentia",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: dynamics] The rigid family's zero-violation threshold is governed by a fir"
+    },
+    {
+      "label": "plan_explore_iter220",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:11:04.694254",
+      "last_seen": "2026-09-29T08:11:04.694254",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter220"
+    },
+    {
+      "label": "pass_iter220",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:11:04.694264",
+      "last_seen": "2026-09-29T08:11:04.694264",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter220"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T08:11:04.694273",
+      "last_seen": "2026-09-29T08:11:04.694273",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: dynamics] The rigid family's zero-violation threshold is governed by a fir",
+        "Method:plan_explore_iter220",
+        "Fact:pass_iter220"
+      ],
+      "iteration": 220,
+      "id": "he_experiment_pipeline_b2e63cc"
+    },
+    {
+      "label": "reviewer_iter220",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T08:11:04.694342",
+      "last_seen": "2026-09-29T08:11:04.694342",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "e17d53eddd713309",
+      "r_phys": 1.0,
+      "iteration": 220,
+      "id": "persona_use:reviewer_iter220"
     }
   ],
   "links": [
@@ -3887,6 +3951,33 @@
       "last_seen": "2026-09-29T08:10:02.745634",
       "mentions": 1,
       "target": "he_experiment_pipeline_3a055358"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: dynamics] The rigid family's zero-violation threshold is governed by a fir",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:11:04.694273",
+      "last_seen": "2026-09-29T08:11:04.694273",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b2e63cc"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter220",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:11:04.694273",
+      "last_seen": "2026-09-29T08:11:04.694273",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b2e63cc"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter220",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:11:04.694273",
+      "last_seen": "2026-09-29T08:11:04.694273",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b2e63cc"
     }
   ]
 }

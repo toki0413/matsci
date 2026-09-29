@@ -373,5 +373,31 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the family function for the rigid and fat function families as specified in the hypothesis. The rigid family will be a low-dimensional polynomial (e.g., degree 3"
+  },
+  {
+    "scene_tag": "auto_family",
+    "hyp_key": "c8c149452bdf",
+    "reason": "The plan is fundamentally invalid because the hypothesis concerns a theoretical mathematical bound (O(log w) on capacity complexity N_c(w)), which cannot be verified by empirical numerical experiments alone. The proposed 'capacity_scan' only tests finite widths (up to 64) and cannot prove or disprove asymptotic complexity bounds or information-theoretic limits. Furthermore, the plan explicitly risks repeating the 'run29' failure by using cos(πx) with linear constraints without specifying if the constraint count w scales with width or if the family is truly 'rigid' in the theoretical sense (bounded VC dimension/Nu-growth). Without a symbolic or theoretical derivation linking the empirical results to the O(log w) claim, the hypothesis remains unaddressed.",
+    "missing_steps": [
+      "Define the rigid family mathematically with explicit constraints on w (e.g., w = number of parameters vs. width h)",
+      "Perform symbolic analysis or literature review to establish the theoretical compressibility of the chosen function family before simulation",
+      "Verify that the fat family has infinite capacity complexity (unbounded VC dimension) theoretically, not just empirically at h=64",
+      "Include a step to derive or cite the information-theoretic bound for compressing low-dimensional analytic functions, rather than relying solely on empirical error trends"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family` function for both rigid and fat function families, ensuring output normalization to O(1), proper (N,1) shape for labels, and non-overlapping held-ou"
+  },
+  {
+    "scene_tag": "auto_family",
+    "hyp_key": "c8c149452bdf",
+    "reason": "The plan is fundamentally invalid because the hypothesis concerns a theoretical mathematical bound (O(log w) on capacity complexity N_c(w)), which cannot be verified by empirical numerical experiments alone. The proposed 'capacity_scan' only tests finite widths (up to 64) and cannot prove or disprove asymptotic complexity bounds or information-theoretic limits. Furthermore, the plan explicitly risks repeating the 'run29' failure by using cos(πx) with linear constraints without specifying if the constraint count w scales with width or if the family is truly 'rigid' in the theoretical sense (bounded VC dimension/Nu-growth). Without a symbolic or theoretical derivation linking the empirical results to the O(log w) claim, the hypothesis remains unaddressed.",
+    "missing_steps": [
+      "Define the rigid family mathematically with explicit constraints on w (e.g., w = number of parameters vs. width h)",
+      "Perform symbolic analysis or literature review to establish the theoretical compressibility of the chosen function family before simulation",
+      "Verify that the fat family has infinite capacity complexity (unbounded VC dimension) theoretically, not just empirically at h=64",
+      "Include a step to derive or cite the information-theoretic bound for compressing low-dimensional analytic functions, rather than relying solely on empirical error trends"
+    ],
+    "mode": "explore",
+    "description": "Step 1: Define the rigid family mathematically as a low-dimensional analytic function family (e.g., sin(π w x) with w constraints) and the fat family as a high-dimensional VC-dimension-unbounded famil"
   }
 ]
