@@ -1651,6 +1651,70 @@
       "r_phys": 1.0,
       "iteration": 130,
       "id": "persona_use:reviewer_iter130"
+    },
+    {
+      "label": "[DIM: measure] The held-out error of the rigid family follows a U-shaped curve w",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T07:52:29.263193",
+      "last_seen": "2026-09-29T07:52:29.263193",
+      "mentions": 1,
+      "iteration": 135,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family, N_c(w) will be finite (h=2~8) with flat/decreasing trend; for the fat family, N_c will be unreachable (all h≤64 yield held-out error >1e-3). Training error ≤1e-4 and held-out err",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: measure] The held-out error of the rigid family follows a U-shaped curve w"
+    },
+    {
+      "label": "plan_explore_iter135",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:52:29.263231",
+      "last_seen": "2026-09-29T07:52:29.263231",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter135"
+    },
+    {
+      "label": "pass_iter135",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:52:29.263240",
+      "last_seen": "2026-09-29T07:52:29.263240",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter135"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T07:52:29.263249",
+      "last_seen": "2026-09-29T07:52:29.263249",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: measure] The held-out error of the rigid family follows a U-shaped curve w",
+        "Method:plan_explore_iter135",
+        "Fact:pass_iter135"
+      ],
+      "iteration": 135,
+      "id": "he_experiment_pipeline_7cf210b2"
+    },
+    {
+      "label": "reviewer_iter135",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T07:52:29.263319",
+      "last_seen": "2026-09-29T07:52:29.263319",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "82bccbf743a3f62d",
+      "r_phys": 1.0,
+      "iteration": 135,
+      "id": "persona_use:reviewer_iter135"
     }
   ],
   "links": [
@@ -2355,6 +2419,33 @@
       "last_seen": "2026-09-29T07:50:39.060337",
       "mentions": 1,
       "target": "he_experiment_pipeline_b31ccefa"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: measure] The held-out error of the rigid family follows a U-shaped curve w",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:52:29.263249",
+      "last_seen": "2026-09-29T07:52:29.263249",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_7cf210b2"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter135",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:52:29.263249",
+      "last_seen": "2026-09-29T07:52:29.263249",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_7cf210b2"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter135",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:52:29.263249",
+      "last_seen": "2026-09-29T07:52:29.263249",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_7cf210b2"
     }
   ]
 }

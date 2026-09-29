@@ -191,5 +191,33 @@
     ],
     "mode": "explore",
     "description": "Define explicit function families: rigid family as low-rank interpolation basis (e.g., Lagrange polynomials of degree w-1) and fat family as high-degree polynomial (degree D >> w) with bounded coeffic"
+  },
+  {
+    "scene_tag": "auto_family",
+    "hyp_key": "b61f0c723a01",
+    "reason": "The plan is invalid because it does not address the core hypothesis about the Hessian eigenvalue spectrum governing the generalization error dynamics. The hypothesis requires investigating the transient behavior of the error governed by the Hessian's spectral properties (slow modes vs. rapid decay, effective rank saturation), but the plan only focuses on implementing function families and achieving zero violation at specific widths. It lacks any mechanism to measure or analyze the Hessian spectrum, the two-phase transient, or the effective rank saturation. Additionally, the plan repeats the risk of using arbitrary function definitions without ensuring they properly exhibit the spectral properties needed to test the hypothesis.",
+    "missing_steps": [
+      "Define the learning dynamics explicitly (e.g., gradient flow or kernel regression) where the Hessian eigenvalue spectrum governs the error evolution",
+      "Implement computation of the Hessian spectrum at the initial condition during training",
+      "Measure the generalization error over time/width to identify the two-phase transient (early slow decay, late rapid decay)",
+      "Track the effective rank of the kernel matrix to verify saturation at w",
+      "Ensure the rigid and fat families are defined such that their spectral properties can be compared under the hypothesis's framework"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid and fat families with proper normalization (std ~ O(1)) and (N,1) shaped arrays. Ensure the rigid family uses a low-dimension"
+  },
+  {
+    "scene_tag": "auto_family",
+    "hyp_key": "b61f0c723a01",
+    "reason": "The plan correctly identifies the mathematical structure (Hessian spectrum, effective rank) and avoids the critical historical failure mode of using noise for the fat family. However, the plan lacks specific implementation details required to avoid previous failures: it does not explicitly define the function families to ensure they are x-dependent and high-dimensional (fat) vs low-rank (rigid), nor does it specify the normalization and shape constraints that were previously violated. The description is too vague to guarantee that the spectral dynamics will be properly captured or that the two-phase transient will be distinguishable from a smooth U-curve. Additionally, there is no mention of how to handle the 'sharp transition' hypothesis quantitatively, which is critical for validation.",
+    "missing_steps": [
+      "Define explicit functional forms for rigid and fat families that are x-dependent and satisfy the (N,1) shape constraint",
+      "Specify normalization procedures to prevent scale issues (like the ~1e9 scale problem in run29)",
+      "Detail how effective rank will be computed and tracked over training time",
+      "Include specific criteria for identifying the two-phase transient and sharp transition in held-out error",
+      "Verify that the Hessian spectrum at initialization is properly computed for both families"
+    ],
+    "mode": "explore",
+    "description": "Implement the rigid and fat function families with proper normalization and (N,1) shape, then compute the Hessian spectrum at initialization for both families. Track the generalization error evolution"
   }
 ]
