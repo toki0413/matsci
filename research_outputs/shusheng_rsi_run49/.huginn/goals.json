@@ -39,12 +39,14 @@
         "[Feynman known_unknown] Why did no tests get executed despite having enough time allocated? Is it due to configuration errors or resource limitations?",
         "[Feynman unknown_unknown] What specific factors contribute significantly to delays in initializing environments for running computational experiments involving neural networks?",
         "[Feynman known_unknown] I don’t understand why the generative verification gave a score of 0.0 and called the output “raw numerical data” — was it truly unstructured, or just missing labels?",
-        "[Feynman unknown_unknown] I never considered that the test runner might be silent by default until explicitly triggered — so “no tests ran” wasn’t a failure, but a feature I overlooked."
+        "[Feynman unknown_unknown] I never considered that the test runner might be silent by default until explicitly triggered — so “no tests ran” wasn’t a failure, but a feature I overlooked.",
+        "[Feynman known_unknown] I don’t fully understand how the exact saturation threshold $N_c(w)$ is computed for arbitrary constraint configurations — the formula or algorithm behind it isn’t clear yet.",
+        "[Feynman unknown_unknown] I never considered whether topological properties of the constraint hyperplane arrangement (like intersection patterns or dimensionality) might influence the saturation point independently of width."
       ],
-      "iteration": 88,
+      "iteration": 93,
       "status": "active",
       "created_at": "2026-09-29T08:46:00.615433+00:00",
-      "updated_at": "2026-09-29T09:11:29.024553+00:00",
+      "updated_at": "2026-09-29T09:12:28.486446+00:00",
       "session_id": "",
       "metadata": {},
       "unknowns": [
@@ -1055,9 +1057,65 @@
           "discovered_at": "2026-09-29T09:11:04.304447+00:00",
           "resolved_at": null,
           "iteration": 85
+        },
+        {
+          "id": "unk_2685a808",
+          "text": "The definition of \"rigid\" assumes that a small finite N_c implies structural rigidity, but this may conflate statistical generalization with true geometric rigidity of the solution space; a narrow network might fit well due to luck or overfitting rather than inherent constraint tightness.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-29T09:11:58.836473+00:00",
+          "resolved_at": null,
+          "iteration": 90
+        },
+        {
+          "id": "unk_32625e48",
+          "text": "The zero-violation threshold (≤1e-3) is numerically sensitive: gradient descent may stall near this value without truly reaching it, and floating-point precision limits in activation functions (e.g., sigmoid/tanh saturation) could falsely indicate violation or success.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-29T09:11:58.839290+00:00",
+          "resolved_at": null,
+          "iteration": 90
+        },
+        {
+          "id": "unk_f183754e",
+          "text": "For very small w (constraint count), the network may trivially interpolate all points even with minimal width, making N_c(w) appear artificially low and masking whether rigidity emerges only as w increases — thus misclassifying a \"fat\" space as \"rigid\".",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-29T09:11:58.841522+00:00",
+          "resolved_at": null,
+          "iteration": 90
+        },
+        {
+          "id": "unk_1ccb7730",
+          "text": "No ground-truth analytic form of the true solution space is provided; without knowing the actual dimensionality or structure of the function space satisfying the constraints, there is no way to validate whether observed N_c reflects true rigidity or merely empirical fitting behavior.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-29T09:11:58.843126+00:00",
+          "resolved_at": null,
+          "iteration": 90
+        },
+        {
+          "id": "unk_d37cc8f2",
+          "text": "The model assumes that hidden layer width alone captures network capacity, but depth, initialization scheme, activation function choice, and optimization dynamics also critically affect what functions can be reached — potentially leading to incorrect conclusions about intrinsic solution space properties.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-29T09:11:58.844654+00:00",
+          "resolved_at": null,
+          "iteration": 90
+        },
+        {
+          "id": "unk_8a997e7b",
+          "text": "I don’t fully understand how the exact saturation threshold $N_c(w)$ is computed for arbitrary constraint configurations — the formula or algorithm behind it isn’t clear yet.",
+          "type": "known_unknown",
+          "discovered_at": "2026-09-29T09:12:08.521764+00:00",
+          "resolved_at": null,
+          "iteration": 90
+        },
+        {
+          "id": "unk_e83c0657",
+          "text": "I never considered whether topological properties of the constraint hyperplane arrangement (like intersection patterns or dimensionality) might influence the saturation point independently of width.",
+          "type": "unknown_unknown",
+          "discovered_at": "2026-09-29T09:12:08.524830+00:00",
+          "resolved_at": null,
+          "iteration": 90
         }
       ],
-      "unknowns_discovered": 126,
+      "unknowns_discovered": 133,
       "unknowns_resolved": 0,
       "objective": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【唯一硬性口径（不可更改，其余全由你决定）】\n- 零违规 = 留出约束点上的最大绝对误差 ≤ 1e-3。\n- 刚性 = 扫描范围内存在较小的有限 N_c（且 N_c 不随 w 增长）；胖 = 扫描上限内任何宽度都达不到零违规（N_c 不可达）。判别是二值的。\n- 所有报告数值必须是有限数（禁止 inf/nan/None）。\n- 研究对象只能是小型前馈网络本身。严禁把本命题替换或“换名归约”为材料/化学/玻璃/合金/离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【实验的族、样本、扫描、脚本如何设计，以及如何证明“刚性可达”，由你自己决定并给出理由。】\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
       "success_criteria": [],

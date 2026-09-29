@@ -1030,6 +1030,70 @@
       "r_phys": 1.0,
       "iteration": 85,
       "id": "persona_use:reviewer_iter85"
+    },
+    {
+      "label": "** [DIM: structure] The constraint satisfaction problem for ReLU networks admits",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T09:12:04.045397",
+      "last_seen": "2026-09-29T09:12:04.045397",
+      "mentions": 1,
+      "iteration": 90,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Conduct a systematic computational investigation of the minimal network width N_c(h) for ReLU networks under constraint satisfaction. Define a synthetic constraint system (k general position hyperplan",
+      "persona": "reviewer",
+      "id": "experiment:** [DIM: structure] The constraint satisfaction problem for ReLU networks admits"
+    },
+    {
+      "label": "plan_explore_iter90",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:12:04.045434",
+      "last_seen": "2026-09-29T09:12:04.045434",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter90"
+    },
+    {
+      "label": "pass_iter90",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:12:04.045444",
+      "last_seen": "2026-09-29T09:12:04.045444",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter90"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T09:12:04.045453",
+      "last_seen": "2026-09-29T09:12:04.045453",
+      "mentions": 1,
+      "members": [
+        "experiment:** [DIM: structure] The constraint satisfaction problem for ReLU networks admits",
+        "Method:plan_explore_iter90",
+        "Fact:pass_iter90"
+      ],
+      "iteration": 90,
+      "id": "he_experiment_pipeline_5c846012"
+    },
+    {
+      "label": "reviewer_iter90",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T09:12:04.045522",
+      "last_seen": "2026-09-29T09:12:04.045522",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "10500b9354526f7e",
+      "r_phys": 1.0,
+      "iteration": 90,
+      "id": "persona_use:reviewer_iter90"
     }
   ],
   "links": [
@@ -1491,6 +1555,33 @@
       "last_seen": "2026-09-29T09:11:00.225441",
       "mentions": 1,
       "target": "he_experiment_pipeline_37c3a7af"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:** [DIM: structure] The constraint satisfaction problem for ReLU networks admits",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:12:04.045453",
+      "last_seen": "2026-09-29T09:12:04.045453",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5c846012"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter90",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:12:04.045453",
+      "last_seen": "2026-09-29T09:12:04.045453",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5c846012"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter90",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:12:04.045453",
+      "last_seen": "2026-09-29T09:12:04.045453",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5c846012"
     }
   ]
 }
