@@ -1265,6 +1265,70 @@
       "r_phys": 1.0,
       "iteration": 100,
       "id": "persona_use:reviewer_iter100"
+    },
+    {
+      "label": "[DIM: geometry] The solution space of the linear rigid family constitutes a 2-di",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:54:47.610155",
+      "last_seen": "2026-09-29T03:54:47.610155",
+      "mentions": 1,
+      "iteration": 105,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The linear rigid family will achieve val_err ≤ 1e-3 at h=2 with w≥5 (anchor point), showing flat/decreasing N_c(w) trend. The polynomial fat family will have val_err > 1e-3 for all h≤64, showing unrea",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: geometry] The solution space of the linear rigid family constitutes a 2-di"
+    },
+    {
+      "label": "plan_explore_iter105",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:54:47.610190",
+      "last_seen": "2026-09-29T03:54:47.610190",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter105"
+    },
+    {
+      "label": "pass_iter105",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:54:47.610203",
+      "last_seen": "2026-09-29T03:54:47.610203",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter105"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T03:54:47.610211",
+      "last_seen": "2026-09-29T03:54:47.610211",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: geometry] The solution space of the linear rigid family constitutes a 2-di",
+        "Method:plan_explore_iter105",
+        "Fact:pass_iter105"
+      ],
+      "iteration": 105,
+      "id": "he_experiment_pipeline_49c9004d"
+    },
+    {
+      "label": "reviewer_iter105",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:54:47.610284",
+      "last_seen": "2026-09-29T03:54:47.610284",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "9a375f06801e6f88",
+      "r_phys": 1.0,
+      "iteration": 105,
+      "id": "persona_use:reviewer_iter105"
     }
   ],
   "links": [
@@ -1807,6 +1871,33 @@
       "last_seen": "2026-09-29T03:53:47.134678",
       "mentions": 1,
       "target": "he_experiment_pipeline_a33665ad"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: geometry] The solution space of the linear rigid family constitutes a 2-di",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:54:47.610211",
+      "last_seen": "2026-09-29T03:54:47.610211",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_49c9004d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter105",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:54:47.610211",
+      "last_seen": "2026-09-29T03:54:47.610211",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_49c9004d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter105",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:54:47.610211",
+      "last_seen": "2026-09-29T03:54:47.610211",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_49c9004d"
     }
   ]
 }
