@@ -504,5 +504,34 @@
     ],
     "mode": "explore",
     "description": "Implement capacity_scan workflow with corrected methodology: (1) Define rigid family as f(x)=ax+b with constraint a^2+b^2=1 (2 parameters) and fat family as 20th-order polynomial with normalized basis"
+  },
+  {
+    "scene_tag": "workflow",
+    "reason": "The plan is invalid because it repeats critical methodological errors identified in historical failures. It uses w=5 training points for the rigid linear family which has only 2 parameters (affine dimension=2), resulting in degrees of freedom (dof) = 5-2=3. This is insufficient to establish a reliable chi-squared distribution test. The prediction claims held-out error ≤1e-3 which requires much larger w (typically w>>100 for variance 1/w to reach 1e-3 scale). The plan lacks explicit functional forms, normalization scheme details, and specific chi-squared validation steps (Q-Q plots, KS tests). It also contradicts itself by claiming w≥100 while using w=5.",
+    "missing_steps": [
+      "Define explicit functional forms for rigid linear family (e.g., f(x)=ax+b with constraint) and fat polynomial family",
+      "Increase training points w to sufficiently large values (w>>100) to achieve variance 1/w in statistical noise regime",
+      "Specify held-out set size matching degrees of freedom for chi-squared test",
+      "Verify normalization scheme preserves variance scaling with w",
+      "Add explicit chi-squared distribution validation (Q-Q plots, Kolmogorov-Smirnov test)"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Execute a capacity_scan workflow to test the hypothesis that the rigid linear family's held-out error follows a χ² distribution. This requires implementing the family func"
+  },
+  {
+    "scene_tag": "workflow",
+    "reason": "The plan fundamentally misaligns with the hypothesis. The hypothesis requires verifying geometric properties of solution spaces (H1 groups, affine manifold dimension, Gaussian curvature, Hessian spectral gap) through topological data analysis and function-space geometry. However, the plan only implements a capacity scan measuring N_c(w) and held-out error using χ² distribution testing — a statistical approach that ignores the core mathematical structure (topology/geometry of solution manifolds). This repeats the 'scene=other' historical failures where topological/geometric analysis was omitted in favor of simple error metrics. Additionally, MODE=explore is inappropriate for a structural verification task requiring concrete code implementation.",
+    "missing_steps": [
+      "Switch MODE from explore to coder/workflow for concrete implementation",
+      "Implement topological data analysis (persistent homology) to compute H1 groups of solution space manifolds",
+      "Define weight manifold geometry and parameterization in function space (not just parameter space)",
+      "Specify filtration method (e.g., Vietoris-Rips) for homology computation on function space geometry",
+      "Verify rigid family forms 2D affine manifold through geometric analysis in function space",
+      "Compute Hessian at initialization and analyze spectral gap in function space",
+      "Analyze Gaussian curvature of fat polynomial family manifold",
+      "Implement continuous interpolation path testing between training and held-out solutions in function space"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Generate synthetic linear data f(x)=ax+b+ε with ε∼N(0,σ²), define rigid linear family with affine dimension=2 and fat polynomial family (degree≥3), increase training point"
   }
 ]

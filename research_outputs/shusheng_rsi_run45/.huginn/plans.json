@@ -929,6 +929,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_be462fa6",
+      "objective": "[DIM: measure] The held-out error of the rigid linear family follows a **χ²-distribution** with degrees of freedom determined by the gap between the number of training points and the affine dimension (2), making the observed 0.373 error at w=5 statistically consistent with the null hypothesis of correct linear fitting under Gaussian noise. This hypothesis is the most testable because it can be directly validated by generating synthetic linear data, computing the distribution of held-out errors across multiple seeds, and comparing to the χ² null. It also provides a baseline for evaluating whether the fat family's failure is due to structural complexity (beyond statistical noise).",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Generate synthetic linear data f(x)=ax+b+ε with ε∼N(0,σ²), define rigid linear family with affine dimension=2 and fat polynomial family (degree≥3), increase training points to w=200 (dof=198) for reliable χ² testing, normalize inputs to zero-mean/unit-variance while preserving noise variance, compute held-out MSE across 1000 seeds, construct Q-Q plots and perform Kolmogorov-Smirnov test against χ²(dof=198) distribution, and compare fat polynomial family error to establish baseline for structural complexity analysis.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T04:08:18.194720+00:00",
+      "confirmed_at": "2026-09-29T04:08:18.197429+00:00",
+      "completed_at": "2026-09-29T04:08:40.305099+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
