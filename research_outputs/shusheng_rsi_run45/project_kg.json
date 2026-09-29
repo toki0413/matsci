@@ -1649,6 +1649,70 @@
       "r_phys": 1.0,
       "iteration": 130,
       "id": "persona_use:reviewer_iter130"
+    },
+    {
+      "label": "[DIM: measure] The heldout error for the rigid linear family follows a monotonic",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T04:03:04.625614",
+      "last_seen": "2026-09-29T04:03:04.625614",
+      "mentions": 1,
+      "iteration": 135,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The rigid linear family will achieve val_err ≤ 1e-3 at small h (e.g., h=2 or h=4) for w≥5, with N_c(w) flat or decreasing. The fat polynomial family will show val_err > 1e-3 for all h≤64 with trend='u",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: measure] The heldout error for the rigid linear family follows a monotonic"
+    },
+    {
+      "label": "plan_explore_iter135",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:03:04.625649",
+      "last_seen": "2026-09-29T04:03:04.625649",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter135"
+    },
+    {
+      "label": "pass_iter135",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:03:04.625658",
+      "last_seen": "2026-09-29T04:03:04.625658",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter135"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T04:03:04.625667",
+      "last_seen": "2026-09-29T04:03:04.625667",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: measure] The heldout error for the rigid linear family follows a monotonic",
+        "Method:plan_explore_iter135",
+        "Fact:pass_iter135"
+      ],
+      "iteration": 135,
+      "id": "he_experiment_pipeline_69fa005"
+    },
+    {
+      "label": "reviewer_iter135",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T04:03:04.625741",
+      "last_seen": "2026-09-29T04:03:04.625741",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "43bf9df842bbed84",
+      "r_phys": 1.0,
+      "iteration": 135,
+      "id": "persona_use:reviewer_iter135"
     }
   ],
   "links": [
@@ -2353,6 +2417,33 @@
       "last_seen": "2026-09-29T04:00:06.045110",
       "mentions": 1,
       "target": "he_experiment_pipeline_25cface4"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: measure] The heldout error for the rigid linear family follows a monotonic",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:03:04.625667",
+      "last_seen": "2026-09-29T04:03:04.625667",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_69fa005"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter135",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:03:04.625667",
+      "last_seen": "2026-09-29T04:03:04.625667",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_69fa005"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter135",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:03:04.625667",
+      "last_seen": "2026-09-29T04:03:04.625667",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_69fa005"
     }
   ]
 }
