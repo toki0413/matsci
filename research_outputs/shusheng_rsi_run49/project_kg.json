@@ -1576,6 +1576,70 @@
       "r_phys": 1.0,
       "iteration": 135,
       "id": "persona_use:reviewer_iter135"
+    },
+    {
+      "label": "[DIM: computation] The computational complexity of determining whether a width-$",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T09:23:40.694866",
+      "last_seen": "2026-09-29T09:23:40.694866",
+      "mentions": 1,
+      "iteration": 140,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The verification runtime will exhibit exponential scaling with $w$ for hard constraint sets (e.g., adversarial or high-density regions), indicating that the decision problem is likely not in P, or tha",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: computation] The computational complexity of determining whether a width-$"
+    },
+    {
+      "label": "plan_explore_iter140",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:23:40.694902",
+      "last_seen": "2026-09-29T09:23:40.694902",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter140"
+    },
+    {
+      "label": "pass_iter140",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:23:40.694911",
+      "last_seen": "2026-09-29T09:23:40.694911",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter140"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T09:23:40.694921",
+      "last_seen": "2026-09-29T09:23:40.694921",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: computation] The computational complexity of determining whether a width-$",
+        "Method:plan_explore_iter140",
+        "Fact:pass_iter140"
+      ],
+      "iteration": 140,
+      "id": "he_experiment_pipeline_1f93ece9"
+    },
+    {
+      "label": "reviewer_iter140",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T09:23:40.694992",
+      "last_seen": "2026-09-29T09:23:40.694992",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "656995dbc020d49f",
+      "r_phys": 1.0,
+      "iteration": 140,
+      "id": "persona_use:reviewer_iter140"
     }
   ],
   "links": [
@@ -2280,6 +2344,33 @@
       "last_seen": "2026-09-29T09:22:41.726340",
       "mentions": 1,
       "target": "he_experiment_pipeline_66bd2ea3"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: computation] The computational complexity of determining whether a width-$",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:23:40.694921",
+      "last_seen": "2026-09-29T09:23:40.694921",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_1f93ece9"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter140",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:23:40.694921",
+      "last_seen": "2026-09-29T09:23:40.694921",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_1f93ece9"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter140",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:23:40.694921",
+      "last_seen": "2026-09-29T09:23:40.694921",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_1f93ece9"
     }
   ]
 }

@@ -376,5 +376,50 @@
     ],
     "mode": "explore",
     "description": "We will empirically characterize the computational complexity of the ReLU constraint satisfaction decision problem by measuring the runtime of a formal verification algorithm (SMT-based) as a function"
+  },
+  {
+    "scene_tag": "workflow",
+    "hyp_key": "bc7515ee95c9",
+    "reason": "The plan's MODE is 'explore' which is appropriate for testing a hypothesis about computational complexity phase transitions. However, the DESCRIPTION contains a fundamental conceptual error: it proposes to scan network width H to find critical width N_c(w), but the hypothesis defines N_c(w) as the minimal network capacity needed to achieve zero violation on held-out constraints. The plan incorrectly treats N_c(w) as something to be found by scanning H rather than as a property to be measured. Additionally, the prediction mentions 'N_c(w) should show finite value for rigid regime that saturates with increasing w' which contradicts the hypothesis that there's a phase transition in computational complexity (P vs NP-hard) based on constraint count w, not network width. The plan also lacks specific implementation details for how to measure computational effort and detect the phase transition.",
+    "missing_steps": [
+      "Correct the definition of N_c(w) as the minimal network width achieving zero violation on held-out constraints, not something to be found by scanning H",
+      "Define explicit constraint satisfaction problem formulation with w constraints for ReLU networks",
+      "Specify how to distinguish P (LP solvable) vs NP-hard regimes based on computational complexity metrics",
+      "Add concrete methodology for measuring activation pattern enumeration and landscape ruggedness",
+      "Include specific LP formulation for active set verification with error tolerance 1e-3",
+      "Define proper benchmarking against known complexity results for ReLU network verification"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Design a systematic workflow to test the hypothesis about computational complexity phase transition in ReLU network verification. This involves: 1) Defining a concrete con"
+  },
+  {
+    "scene_tag": "workflow",
+    "hyp_key": "bc7515ee95c9",
+    "reason": "The plan contains fundamental conceptual errors that prevent it from testing the hypothesis. It confuses the independent variable (constraint count w vs network width H) - the hypothesis is about phase transition in computational complexity w.r.t constraint count w, but the plan incorrectly scans network width H to find N_c(w). The prediction also contradicts the hypothesis by suggesting N_c(w) saturates with w rather than showing a phase transition at critical w_c. The plan lacks concrete methodology for measuring computational effort, distinguishing P vs NP-hard regimes, and proper LP formulation with error tolerance 1e-3. It repeats the exact failure pattern identified in the historical failures section.",
+    "missing_steps": [
+      "Correct the definition of N_c(w) as minimal network width for zero violation on held-out constraints, not scanning H",
+      "Define explicit constraint satisfaction problem with w constraints for ReLU networks",
+      "Specify how to distinguish P (LP solvable) vs NP-hard regimes via computational complexity metrics",
+      "Add concrete methodology for measuring activation pattern enumeration and landscape ruggedness",
+      "Include specific LP formulation for active set verification with error tolerance 1e-3",
+      "Define proper benchmarking against known complexity results for ReLU network verification"
+    ],
+    "mode": "explore",
+    "description": "Design a systematic workflow to test the hypothesis about computational complexity phase transition in ReLU network verification. Steps: 1) Define explicit constraint satisfaction problem for ReLU net"
+  },
+  {
+    "scene_tag": "workflow",
+    "hyp_key": "bc7515ee95c9",
+    "reason": "The plan fundamentally misinterprets the hypothesis. The hypothesis concerns a phase transition in computational complexity of verification problems (P vs NP-hard) as a function of constraint count w, but the plan describes training networks and measuring generalization error (N_c for zero violation on held-out constraints). This confuses verification complexity with generalization capacity. The plan is about model capacity and generalization, not about the computational complexity of verifying ReLU networks. The prediction about 'exponential scaling beyond critical constraint count' is also not aligned with the actual hypothesis about phase transition in complexity classes.",
+    "missing_steps": [
+      "Clarify that hypothesis is about verification complexity (LP/MILP solving time, activation pattern enumeration), not about network training and generalization",
+      "Define proper verification problem formulation: given ReLU network with width H and w constraints, determine if all constraints are satisfied within 1e-3 error",
+      "Implement verification algorithm using MILP for activation pattern enumeration",
+      "Measure computational effort (LP solve time, node count) as function of w for fixed H",
+      "Analyze scaling of activation pattern count with w to identify phase transition",
+      "Compare against known complexity results for ReLU network verification"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Systematic computational verification of phase transition in ReLU network verification complexity as function of constraint count w. Steps: 1) Define explicit constraint s"
   }
 ]
