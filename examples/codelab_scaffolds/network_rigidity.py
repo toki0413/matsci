@@ -31,27 +31,20 @@ def family(kind, w, seed):
     # ===== 你只改这个函数: 定义"刚(rigid)/肥(fat)"各自对应的约束族 =====
     # kind: 族名('rigid' 或 'fat'); w: 训练约束点数; seed: 随机种子
     # 返回 dict {'X','y','Xv','yv'}: X/y 是 w 个训练约束点, Xv/yv 是留出约束点。
-    # 下面是**两个可跑通的示例**, 请按你的解析 ground truth 替换函数形式/系数。
+    #
+    # 这是本题的**科学决策部分**, 脚手架**不提供任何现成族** —— 你必须自己推导
+    # 两族的解析 ground truth, 再让 capacity_scan 的 N_c(w) 趋势去检验它:
+    #   rigid(刚): 低维、由该族唯一确定; 少量样本应能定死它, 从而泛化到留出集
+    #              (期望 N_c(w) 有限且小)。
+    #   fat(肥):   高维/连续族; 有限样本钉不死, 小网络应泛化失败
+    #              (期望 N_c(w) 在扫描宽度内不可达 = trend 'unreachable')。
+    # 下面这段占位实现返回**无方差**的退化数据(两族一样, 没有区分度), 脚手架会
+    # 直接判为无效族并回灌——**它不是示例答案, 必须整体替换**为你设计的真实族。
     rng = np.random.default_rng(seed)
-    if kind == 'rigid':
-        # 示例(刚性): 低维解析族, 由该族唯一确定 —— 这里 y = sin(pi x)
-        X = np.linspace(0.05, 0.95, w).reshape(-1, 1)
-        y = np.sin(np.pi * X)
-        Xv = np.linspace(0.02, 0.98, 200).reshape(-1, 1)
-        yv = np.sin(np.pi * Xv)
-    else:
-        # 示例(肥): 高维连续族 —— n 项随机多项式, 自由度 n 远大于 w, 且是 x 的函数
-        n = 20
-        coeffs = rng.standard_normal(n)          # (n,) 一维; 不要 reshape 成 (n,1)
-        X = rng.uniform(0.05, 0.95, (w, 1))      # (w,1)
-        y = (poly_basis(X, n) @ coeffs).reshape(-1, 1)      # (w,1); 用原语别手搓
-        Xv = rng.uniform(0.02, 0.98, (200, 1))
-        yv = (poly_basis(Xv, n) @ coeffs).reshape(-1, 1)    # (200,1)
-        # 用**固定稠密网格**定标(与 w 无关, 稳定), 让 y/yv 同尺度且 O(1)
-        grid = np.linspace(0.02, 0.98, 400).reshape(-1, 1)
-        s = float(np.std(poly_basis(grid, n) @ coeffs)) + 1e-9
-        y = y / s
-        yv = yv / s
+    X = np.linspace(0.05, 0.95, w).reshape(-1, 1)
+    Xv = np.linspace(0.02, 0.98, 200).reshape(-1, 1)
+    y = np.zeros((w, 1))                        # TODO: 换成你的 rigid/fat 约束值
+    yv = np.zeros((200, 1))                     # TODO: 留出集标签须由同一族生成
     return {'X': X, 'y': y, 'Xv': Xv, 'yv': yv}
 
 
@@ -290,6 +283,16 @@ def capacity_scan(family, kinds=("rigid", "fat"), ws=(5, 10, 20),
             raise ValueError("family 须返回 dict(X,y,Xv,yv) 或 (X,y[,Xv,yv])")
         X, y, Xv, yv = _as_2d(X), _as_2d(y), _as_2d(Xv), _as_2d(yv)
         _check_label_shapes(X, y, Xv, yv, kind, w)
+        # 退化族守卫: 标签近常数(无方差) = 该族不含任何约束信息, 拟合"零违规"是
+        # 平凡真, 会伪造出"刚性=可泛化"的假结论。占位实现(全 0 标签)正落在这里,
+        # 抬错回灌作者, 逼其写出真正的约束族, 而不是产出伪证据(不伪造红线)。
+        if float(np.std(y)) < 1e-9 and float(np.std(yv)) < 1e-9:
+            raise ValueError(
+                "%s w=%d: 标签无方差(近常数) —— 这不是有效约束族, 无法支撑"
+                "'刚性/胖'的容量判别. 请把你的 family 实现为真正的解析约束族"
+                "(rigid=低维唯一确定族, fat=高维连续族), 两族须有区分度."
+                % (kind, int(w))
+            )
         return X, y, Xv, yv
 
     summary = {"rows": {}, "Nc": {}, "trend": {}, "anchor": None,

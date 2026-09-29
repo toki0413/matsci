@@ -540,6 +540,25 @@ class EngineReflect:
             else:
                 self._repeat_exec_streak = 0
             self._prev_exec_fingerprint = _fp
+            # 收敛判定 (检测器→执行器的前半): 维护最近指纹窗口, 窗口填满且只
+            # 剩 <=2 种不同结果 → 循环在有限几种结果间打转, 已无新信息。置
+            # self._exec_converged 供 cognitive_loop 把"检测"接成"结题+停止"。
+            # 为何用"窗口去重后 <=2"而非"连续相同 streak": 实测里书生常在两种
+            # 等价 family 间来回换 (A,B,A,B...), 连续相同 streak 反复被重置,
+            # 永远到不了阈值; 但去重后只有 2 种结果, 同样是打转。窗口取 6/阈值
+            # 5+2 兼顾"够快触发"与"不误伤正常探索"(每轮结果都不同的正常探索
+            # 去重后近似等于窗口长度, 不会命中)。
+            if _fp:
+                _hist = getattr(self, "_exec_fp_history", None)
+                if _hist is None:
+                    from collections import deque as _deque
+
+                    _hist = _deque(maxlen=6)
+                    self._exec_fp_history = _hist
+                _hist.append(_fp)
+                self._exec_converged = len(_hist) >= 5 and len(set(_hist)) <= 2
+            else:
+                self._exec_converged = False
         except Exception:  # 防御: 重复实验检测失败不阻断主循环
             logger.debug("repeat-execution check failed", exc_info=True)
 

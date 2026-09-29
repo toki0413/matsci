@@ -182,6 +182,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_32a3ab5e",
+      "objective": "[DIM: optimization] The minimum width N_c(w) for zero violation is monotonic non-decreasing in w for the rigid family, reflecting the increasing dimension of the constraint manifold; specifically, N_c(w) ≈ ⌈log₂(w)⌉ for w up to the capacity limit. | pro: This is the most directly testable hypothesis with clear numerical predictions; it builds on the previous experiments' width scans and provides a concrete relationship to validate rigidity. con: It requires precise measurement of N_c(w) across w values, which may be sensitive to random seeds and training initialization. |",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "To test the hypothesis on minimal width $N_c(w)$ for zero violation, I will vary the constraint system structure rather than sample size from a single function. I will generate diverse constraint systems by varying the number of constraints $w$ and test the minimum network width $N$ required to satisfy all constraints (zero violation). The rigid family will be defined as a set of linear constraints on a low-dimensional manifold. Specifically: (1) Define the rigid family as linear constraints on a 2D manifold parameterized by $w$ constraints; (2) For each $w \\in \\{4, 8, 16, 32, 64\\}$, train feedforward networks with widths $N \\in \\{8, 16, 32, 64, 128\\}$; (3) Record the minimum $N$ achieving max absolute error $\\leq 10^{-3}$ on held-out constraints; (4) Verify monotonicity and log₂ scaling of $N_c(w)$, and compare against the rigid vs. fat binary criterion.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "executing",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T08:32:08.660720+00:00",
+      "confirmed_at": "2026-09-29T08:32:08.661758+00:00",
+      "completed_at": null,
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

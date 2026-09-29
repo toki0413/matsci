@@ -3361,6 +3361,37 @@ Respond JSON only:
                     except Exception:  # 防御: 意外早停失败忽略
                         logger.debug("v10 F4 surprise early-stop failed (non-fatal)", exc_info=True)
 
+                # v10-F5: 执行收敛 → 结题停止 (检测器→执行器的后半).
+                # engine_reflect 每轮为执行结果(objectives+summary)算指纹, 维护最近
+                # 6 个的窗口; 窗口填满且去重后 <=2 种 → 循环在有限几种等价实验间
+                # 打转, 已无新信息 (run47 的"无收敛出口"空转正是这种).
+                # 与 F4 surprise 的本质区别: surprise 是**启发式**收敛(可能只是噪声小),
+                # 故长程模式让位给挂钟; 而执行指纹收敛是**硬证据**(字面重复同一实验),
+                # 继续跑纯属浪费 —— 无论长程与否都应结题. audit 不阻断才算数,
+                # 防误伤"结果少但假设图仍在生长"的正常探索.
+                if not state.should_stop and getattr(self, "_exec_converged", False):
+                    try:
+                        _fp_hist = getattr(self, "_exec_fp_history", None)
+                        _uniq = len(set(_fp_hist)) if _fp_hist else 0
+                        _blk, _why = self._metacog_check_completion()
+                        if _blk:
+                            logger.info("v10 exec-convergence audit blocked: %s", _why)
+                            self._speculator_hint = (
+                                (self._speculator_hint + f"\n[completion audit] {_why}").strip()
+                            )
+                        else:
+                            logger.warning(
+                                "v10 exec convergence (unique fingerprints=%d over "
+                                "window, no new info) → conclude+stop",
+                                _uniq,
+                            )
+                            state.should_stop = True
+                    except Exception:  # 防御: 收敛结题失败忽略
+                        logger.debug(
+                            "v10 F5 exec-convergence stop failed (non-fatal)",
+                            exc_info=True,
+                        )
+
                 # v10-F3: darwin_ratchet — 对齐 run() L2003-2004.
                 # 内部判 stagnation >= 5 设 self._should_stop; 这里同步到 state.
                 # ponytail: _darwin_ratchet_check 也更新 heat_engine T_cold + health,

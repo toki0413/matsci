@@ -45,5 +45,31 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Design a reproducible numerical experiment to test the zero-violation probability convergence for rigid vs. fat families. The plan involves: (1) mathematically defining ri"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "eab4478ff305",
+    "reason": "The plan is fundamentally invalid because it fails to define the 'rigid family' of functions, which is the core object of the hypothesis. Without a concrete mathematical definition of the function family, constraint samples, or the specific constraints being tested, the numerical experiment cannot be executed. The plan describes a general methodology but lacks the specific instantiation required to test the hypothesis that N_c(w) ≈ ⌈log₂(w)⌉ for a rigid family.",
+    "missing_steps": [
+      "Define the specific rigid function family (e.g., a low-dimensional manifold of analytic functions) and its parameters.",
+      "Specify the constraint samples w (e.g., specific equations or inequalities the network must satisfy).",
+      "Define the training procedure, loss function, and convergence criteria in detail.",
+      "Specify the range of w values and the corresponding network widths to be tested."
+    ],
+    "mode": "explore",
+    "description": "Design and execute a systematic numerical experiment to test the hypothesis that the minimum width N_c(w) for zero violation is monotonic non-decreasing in w and follows N_c(w) ≈ ⌈log₂(w)⌉ for the rig"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "eab4478ff305",
+    "reason": "The plan is fundamentally invalid because it fails to define the 'rigid family' of functions, which is the core object of the hypothesis. Without a concrete mathematical definition of the function family, constraint samples, or the specific constraints being tested, the numerical experiment cannot be executed. The plan describes a general methodology but lacks the specific instantiation required to test the hypothesis that N_c(w) ≈ ⌈log₂(w)⌉ for a rigid family.",
+    "missing_steps": [
+      "Define the specific rigid function family (e.g., a low-dimensional manifold of analytic functions) and its parameters",
+      "Specify the constraint samples w (e.g., specific equations or inequalities the network must satisfy)",
+      "Define the training procedure, loss function, and convergence criteria in detail",
+      "Specify the range of w values and the corresponding network widths to be tested"
+    ],
+    "mode": "explore",
+    "description": "To test the hypothesis on minimal width $N_c(w)$ for zero violation, I will vary the constraint system structure rather than sample size from a single function. I will generate diverse constraint syst"
   }
 ]

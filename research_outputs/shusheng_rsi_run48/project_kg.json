@@ -322,6 +322,134 @@
       "r_phys": 1.0,
       "iteration": 25,
       "id": "persona_use:reviewer_iter25"
+    },
+    {
+      "label": "[dim: structure] The rigid family's parameter manifold admits a fixed-rank decom",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T08:31:42.490834",
+      "last_seen": "2026-09-29T08:31:42.490834",
+      "mentions": 1,
+      "iteration": 30,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "If rigidity holds, N_c(w) will be small (≤ 16) and approximately flat across w ∈ [5, 50]; Hessian rank at solution will be low (≤ subspace dimension) and not grow with w. If not, N_c(w) will increase",
+      "persona": "reviewer",
+      "id": "experiment:[dim: structure] The rigid family's parameter manifold admits a fixed-rank decom"
+    },
+    {
+      "label": "plan_explore_iter30",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:31:42.490870",
+      "last_seen": "2026-09-29T08:31:42.490870",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter30"
+    },
+    {
+      "label": "pass_iter30",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:31:42.490881",
+      "last_seen": "2026-09-29T08:31:42.490881",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter30"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T08:31:42.490890",
+      "last_seen": "2026-09-29T08:31:42.490890",
+      "mentions": 1,
+      "members": [
+        "experiment:[dim: structure] The rigid family's parameter manifold admits a fixed-rank decom",
+        "Method:plan_explore_iter30",
+        "Fact:pass_iter30"
+      ],
+      "iteration": 30,
+      "id": "he_experiment_pipeline_71bb7ab7"
+    },
+    {
+      "label": "reviewer_iter30",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T08:31:42.490958",
+      "last_seen": "2026-09-29T08:31:42.490958",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "9e095d5eefd18a83",
+      "r_phys": 1.0,
+      "iteration": 30,
+      "id": "persona_use:reviewer_iter30"
+    },
+    {
+      "label": "[DIM: optimization] The minimum width N_c(w) for zero violation is monotonic non",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T08:32:24.255329",
+      "last_seen": "2026-09-29T08:32:24.255329",
+      "mentions": 1,
+      "iteration": 35,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "$N_c(w)$ will be monotonic non-decreasing in $w$ and approximately follow $N_c(w) \\approx \\lceil \\log_2(w) \\rceil$ for the rigid family, with finite $N_c$ within the tested range.",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: optimization] The minimum width N_c(w) for zero violation is monotonic non"
+    },
+    {
+      "label": "plan_explore_iter35",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:32:24.255366",
+      "last_seen": "2026-09-29T08:32:24.255366",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter35"
+    },
+    {
+      "label": "pass_iter35",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:32:24.255376",
+      "last_seen": "2026-09-29T08:32:24.255376",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter35"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T08:32:24.255386",
+      "last_seen": "2026-09-29T08:32:24.255386",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: optimization] The minimum width N_c(w) for zero violation is monotonic non",
+        "Method:plan_explore_iter35",
+        "Fact:pass_iter35"
+      ],
+      "iteration": 35,
+      "id": "he_experiment_pipeline_182def39"
+    },
+    {
+      "label": "reviewer_iter35",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T08:32:24.255455",
+      "last_seen": "2026-09-29T08:32:24.255455",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "5fb5ddf32adb815f",
+      "r_phys": 1.0,
+      "iteration": 35,
+      "id": "persona_use:reviewer_iter35"
     }
   ],
   "links": [
@@ -459,6 +587,60 @@
       "last_seen": "2026-09-29T08:30:41.041845",
       "mentions": 1,
       "target": "he_experiment_pipeline_5d5b3e98"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[dim: structure] The rigid family's parameter manifold admits a fixed-rank decom",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:31:42.490890",
+      "last_seen": "2026-09-29T08:31:42.490890",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_71bb7ab7"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter30",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:31:42.490890",
+      "last_seen": "2026-09-29T08:31:42.490890",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_71bb7ab7"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter30",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:31:42.490890",
+      "last_seen": "2026-09-29T08:31:42.490890",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_71bb7ab7"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: optimization] The minimum width N_c(w) for zero violation is monotonic non",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:32:24.255386",
+      "last_seen": "2026-09-29T08:32:24.255386",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_182def39"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter35",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:32:24.255386",
+      "last_seen": "2026-09-29T08:32:24.255386",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_182def39"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter35",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:32:24.255386",
+      "last_seen": "2026-09-29T08:32:24.255386",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_182def39"
     }
   ]
 }
