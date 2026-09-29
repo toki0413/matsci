@@ -92,6 +92,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_d51203c5",
+      "objective": "[DIM: optimization] The zero-violation condition defines a non-convex feasibility problem in the weight space; $N_c(w)$ is the smallest width such that the loss landscape contains a basin of attraction intersecting the zero-violation manifold.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Design and execute a numerical experiment to probe solution space rigidity using small feedforward networks. Sweep constraint sample count w and hidden width N to find minimal N_c(w) achieving zero-violation (max abs error ≤ 1e-3 on held-out constraints). Use a structured grid search over widths [16, 32, 64, 128, 256] and constraint counts w = [10, 20, 50, 100]. Train each configuration with fixed random seeds, measure training and held-out errors, and compute N_c(w) as the smallest width where held-out max error ≤ 1e-3. Test on a synthetic constraint system (e.g., polynomial interpolation or ODE solution points) to ensure ground-truth feasibility. If N_c(w) remains bounded and small as w increases, conclude rigidity; if N_c(w) grows unbounded or stays infinite, conclude fatness.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T13:01:22.944437+00:00",
+      "confirmed_at": "2026-09-29T13:01:22.945316+00:00",
+      "completed_at": "2026-09-29T13:02:05.826669+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

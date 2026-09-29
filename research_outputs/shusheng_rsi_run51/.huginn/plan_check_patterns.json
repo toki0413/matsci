@@ -1,0 +1,23 @@
+[
+  {
+    "scene_tag": "other",
+    "hyp_key": "5db13e32bc6c",
+    "reason": "Plan contains a critical, unfixable error in the zero-violation definition: it specifies max abs error ≤ 1e3 (1000) in the description, but the mandatory hard constraint explicitly defines zero-violation as max abs error ≤ 1e-3 (0.001). This is a factor of 1,000,000 difference. Using 1e3 would trivially satisfy the condition for even very small networks, making the experiment meaningless for measuring the minimal width N_c(w). The hypothesis requires testing feasibility of zero-violation, but the experiment would incorrectly define 'zero-violation' as a massive error tolerance, completely failing to probe the actual mathematical structure described.",
+    "missing_steps": [
+      "Correct the zero-violation threshold from 1e3 to 1e-3 in the description to match the mandatory hard constraint."
+    ],
+    "mode": "explore",
+    "description": "Design and execute a numerical experiment to probe solution space rigidity using small feedforward networks. Sweep constraint sample count w and hidden width N to find minimal N_c(w) achieving zero-vi"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "5db13e32bc6c",
+    "reason": "The plan contains a critical, unfixable error in the zero-violation definition. It specifies max abs error ≤ 1e3 (1000) in the description, but the mandatory hard constraint explicitly defines zero-violation as max abs error ≤ 1e-3 (0.001). This is a factor of 1,000,000 difference. Using 1e3 would trivially satisfy the condition for even very small networks, making the experiment meaningless for measuring the minimal width N_c(w).",
+    "missing_steps": [
+      "Correct the zero-violation threshold from 1e3 to 1e-3 in the description to match the mandatory hard constraint",
+      "Ensure the experiment actually tests the feasibility of zero-violation with the correct tolerance"
+    ],
+    "mode": "explore",
+    "description": "Design and execute a numerical experiment to probe solution space rigidity using small feedforward networks. Sweep constraint sample count w and hidden width N to find minimal N_c(w) achieving zero-vi"
+  }
+]
