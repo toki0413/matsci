@@ -276,5 +276,34 @@
     ],
     "mode": "explore",
     "description": "Implement rigid (trigonometric polynomials, O(1) normalized, shape (N,1)) and fat (random high-degree polynomials) function families. Execute gradient descent with fixed step size η=0.01 and monitor l"
+  },
+  {
+    "scene_tag": "auto_family",
+    "hyp_key": "3c6eb3797bb1",
+    "reason": "The plan attempts to verify a dynamical systems hypothesis (gradient flow vs chaotic loss landscapes) using a static function family construction (polynomial spaces). This is a category error: hypothesis testing requires training dynamics (loss evolution, trajectory analysis, Lyapunov exponent calculation), not just function space definitions or validation error thresholds. The description lacks any mention of optimization algorithms, loss landscape visualization, or convergence monitoring, which are essential to distinguish gradient flow from chaotic behavior. Furthermore, the prediction focuses on validation error magnitude rather than the monotonicity of loss or local minima structure.",
+    "missing_steps": [
+      "Define the optimization algorithm (e.g., gradient descent) used for training both families",
+      "Specify how Lyapunov functional/gradient flow is measured (loss curves over iterations)",
+      "Include chaotic loss landscape characterization (e.g., Hessian analysis, basin visualization)",
+      "Ensure fat family is x-dependent with high degrees of freedom but learnable (per failure mode 2)",
+      "Normalize scales to avoid numerical instability (per failure mode 3)"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function for the rigid and fat families as specified in the hypothesis. The rigid family will be constructed as a low-dimensional polynomial solution "
+  },
+  {
+    "scene_tag": "auto_family",
+    "hyp_key": "3c6eb3797bb1",
+    "reason": "The plan fails to address the core dynamical systems requirements of the hypothesis. It focuses on static function space definitions (polynomial dimensions) and final validation errors, ignoring the required dynamic analysis: Lyapunov functional tracking, gradient flow verification, and chaotic landscape characterization (e.g., Lyapunov exponents, basin visualization). It also lacks specification of the optimization algorithm's dynamic behavior monitoring.",
+    "missing_steps": [
+      "Define optimization algorithm dynamics (gradient descent with step tracking)",
+      "Implement Lyapunov functional monitoring over training iterations",
+      "Calculate Lyapunov exponents to quantify chaos vs gradient flow",
+      "Visualize loss landscapes (Hessian spectrum, basin structure)",
+      "Track loss curve monotonicity per iteration (not just final values)",
+      "Specify how 'rigid' vs 'fat' dynamical behaviors are distinguished dynamically"
+    ],
+    "mode": "explore",
+    "description": "Implement rigid (low-dim polynomial, x-dependent) and fat (high-dim random polynomial, x-dependent) function families with O(1) normalization. Train both using gradient descent (lr=1e-3, 1000 steps) w"
   }
 ]
