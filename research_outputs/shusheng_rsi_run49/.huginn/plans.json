@@ -797,6 +797,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_ee7dfda3",
+      "objective": "[DIM: computation] The computational complexity of determining whether a width-$H$ ReLU network satisfies $w$ constraints with max error $\\leq 10^{-3}$ is bounded by a polynomial in $w$ and $H$, implying $N_c(w)$ is achievable in $O(\\text{poly}(w))$ time rather than exponential.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "We will empirically characterize the computational complexity of the ReLU constraint satisfaction decision problem by measuring the runtime of a formal verification algorithm (SMT-based) as a function of the number of constraints $w$ and network width $H$. This distinguishes representational capacity from algorithmic cost. We will generate synthetic ReLU networks and constraint sets, then use an SMT solver to verify satisfiability, recording whether the decision is solved in poly($w$) time. This tests the hypothesis directly against the definition of computational complexity, avoiding the category error of conflating width scaling with solving time.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T09:23:07.125815+00:00",
+      "confirmed_at": "2026-09-29T09:23:07.127480+00:00",
+      "completed_at": "2026-09-29T09:23:24.806680+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

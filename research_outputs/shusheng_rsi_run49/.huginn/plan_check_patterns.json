@@ -350,5 +350,31 @@
     ],
     "mode": "explore",
     "description": "Construct a numerical pipeline to compute $N_c(w)$ for ReLU networks across varying constraint counts $w$. Steps: (1) Define architecture: 2 hidden layers, ReLU activation, He initialization, fixed de"
+  },
+  {
+    "scene_tag": "auto_test",
+    "hyp_key": "972b9f1f197f",
+    "reason": "The plan is fundamentally flawed because it attempts to prove a complexity-theoretic hypothesis (polynomial-time computability of constraint satisfaction) via empirical network width scaling (N_c(w)). These are distinct mathematical concepts: N_c(w) measures representational capacity (how wide a network needs to be to satisfy constraints), while computational complexity measures the time/resources needed to *find* or *verify* such a network. Empirically observing N_c(w) grows polynomially does not imply the decision problem is solvable in poly(w) time, as the training process itself could be exponentially slow. The plan confuses architectural capacity with algorithmic complexity.",
+    "missing_steps": [
+      "Clarify the distinction between representational capacity (N_c) and computational complexity (time to find solution).",
+      "Define the specific algorithm being analyzed for complexity (e.g., gradient descent, SMT solver, linear programming).",
+      "If testing complexity, measure runtime vs. w and H, not just width scaling.",
+      "If testing capacity, define the constraint generation process (random? adversarial?) and optimization method."
+    ],
+    "mode": "explore",
+    "description": "We will perform an empirical scan to test the hypothesis that the minimal width $N_c(w)$ required for zero violation (max error $\\le 10^{-3}$ on held-out constraints) scales polynomially in $w$. We wi"
+  },
+  {
+    "scene_tag": "auto_test",
+    "hyp_key": "972b9f1f197f",
+    "reason": "The plan confuses representational capacity (N_c(w), the minimum width needed to satisfy constraints) with computational complexity (time to verify or find a solution). The hypothesis concerns the time complexity of a decision problem (whether a network satisfies constraints), while the plan empirically measures network width scaling, which addresses capacity, not time. This is exactly the category error identified in the historical failure. The plan does not measure runtime vs w/H, nor does it analyze the algorithmic complexity of the verification process.",
+    "missing_steps": [
+      "Define the specific algorithm for complexity analysis (e.g., SMT solver, LP solver, gradient-based method)",
+      "Measure runtime as a function of w and H (not just width scaling)",
+      "Distinguish between the time to find a solution and the time to verify a solution",
+      "Use formal complexity analysis tools or benchmark runtime scaling explicitly"
+    ],
+    "mode": "explore",
+    "description": "We will empirically characterize the computational complexity of the ReLU constraint satisfaction decision problem by measuring the runtime of a formal verification algorithm (SMT-based) as a function"
   }
 ]
