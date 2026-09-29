@@ -901,6 +901,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_ce4f961b",
+      "objective": "** [DIM: geometry]",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Implement capacity_scan workflow with corrected methodology: (1) Define rigid family as f(x)=ax+b with constraint a^2+b^2=1 (2 parameters) and fat family as 20th-order polynomial with normalized basis (21 parameters); (2) Set training constraints w >> 1 (w≥100) to achieve variance O(1/w) below 1e-3 threshold; (3) Generate held-out set with size matching degrees of freedom for chi-squared test; (4) Apply O(1) normalization via std scaling that preserves variance scaling with w; (5) Add chi-squared validation steps including Q-Q plots and Kolmogorov-Smirnov tests to verify error distribution follows theoretical prediction. This addresses all methodological issues from the feedback and enables proper testing of the rigidity hypothesis.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T04:06:12.052943+00:00",
+      "confirmed_at": "2026-09-29T04:06:12.054410+00:00",
+      "completed_at": "2026-09-29T04:06:24.418949+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
