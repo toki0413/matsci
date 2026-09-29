@@ -431,5 +431,20 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the rigid linear family and fat polynomial family functions in the code lab script. The rigid family will be a linear function f(x) = ax + b (2D affine manifold)"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "该计划严重偏离假设的核心数学结构。假设要求验证解空间的拓扑/几何结构（H1群、仿射流形维数、谱间隙），但当前计划仅执行容量扫描（N_c(w)和held-out error），属于典型的'同场景历史失败'中的错误方向（用误差指标替代拓扑/几何分析）。此外，MODE=explore不适合需要代码实现的结构性验证任务。",
+    "missing_steps": [
+      "定义刚性族和胖族在函数空间中的权重流形几何与参数化（而非仅参数空间）",
+      "实施拓扑数据分析（持久同调）计算解空间流形的H1群",
+      "指定过滤方法（如Vietoris-Rips）用于函数空间几何的同调计算",
+      "通过函数空间几何分析验证刚性族形成2D仿射流形",
+      "在函数空间分析Hessian初始化的谱间隙",
+      "分析胖多项式族流形的Gaussian曲率",
+      "在函数空间中实现训练与解之间的连续插值路径测试"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid linear family and fat polynomial family according to the strict protocol requirements. This includes: (1) generating training"
   }
 ]

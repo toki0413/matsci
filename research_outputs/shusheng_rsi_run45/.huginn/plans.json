@@ -799,6 +799,42 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_e99aba6a",
+      "objective": "[DIM: measure] The heldout error for the rigid linear family follows a monotonic decreasing trend as w increases, governed by a statistical learning bound of the form ε_h(w) ≤ C / √(w - d) where d=2 is the affine dimension, and the fat polynomial family exhibits a non-vanishing lower bound ε_h(w) ≥ δ > 0 for all w due to the high variance of its coefficient distribution under O(1) normalization.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid linear family and fat polynomial family according to the strict protocol requirements. This includes: (1) generating training/holdout points with no overlap, (2) normalizing y/yv to O(1) magnitude (std ≲ 10) to make the 1e-3 threshold meaningful, (3) ensuring output shapes are (N,1) to avoid silent broadcasting errors, and (4) providing analytical ground truth expressions. This is the foundational code change needed before any capacity_scan can produce valid results.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "/workspace/research_outputs/shusheng_rsi_run45/.huginn/hypothesis_graph_loop_3612fab2.json",
+            "(will",
+            "be",
+            "updated",
+            "with",
+            "family",
+            "implementation)"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T04:02:29.424553+00:00",
+      "confirmed_at": "2026-09-29T04:02:29.426440+00:00",
+      "completed_at": "2026-09-29T04:02:48.320958+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
