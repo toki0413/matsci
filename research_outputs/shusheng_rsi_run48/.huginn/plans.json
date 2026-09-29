@@ -60,6 +60,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_9eba0204",
+      "objective": "[DIM: computation] The minimal width $N_c(w)$ required to achieve zero violation on $w$ constraints is bounded by the VC dimension of the network class; specifically, for a ReLU network with one hidden layer of width $h$, the VC dimension is $O(d h \\log h)$ where $d$ is input dimension, so $N_c(w) \\geq \\Omega(w / \\log w)$ to ensure solvability of the constraint system.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "To test the hypothesis on minimal width $N_c(w)$ for zero violation, I will vary the constraint system structure rather than sample size from a single function. I will generate diverse constraint systems (e.g., linear inequalities, polynomial constraints, and piecewise constraints) with increasing count $w$. For each system, I will train one-hidden-layer ReLU networks of increasing width $h$ until zero violation is achieved across all constraints. I will measure $N_c(w)$ as the minimal width achieving zero violation for each $w$, and systematically vary input dimension $d$ to test the VC dimension scaling $O(d h \\log h)$. This approach directly tests the capacity bound by examining solvability across combinatorial constraint configurations, not generalization error on a single function.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T08:26:13.739474+00:00",
+      "confirmed_at": "2026-09-29T08:26:13.740698+00:00",
+      "completed_at": "2026-09-29T08:26:33.030065+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

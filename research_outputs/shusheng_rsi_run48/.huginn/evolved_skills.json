@@ -11,8 +11,8 @@
       "value",
       "label",
       "function",
-      "plan",
       "error",
+      "plan",
       "prediction"
     ],
     "workflow_steps": [
