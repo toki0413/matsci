@@ -1,31 +1,5 @@
 [
   {
-    "scene_tag": "other",
-    "reason": "The plan is invalid because it fundamentally misinterprets the hypothesis. The hypothesis concerns a topological obstruction (non-vanishing first homology group H1) in the weight manifold, but the plan only implements a capacity scan measuring held-out error. As noted in the historical failures, generalization error alone does not prove topological non-triviality; the plan misses the critical step of computing or estimating the homology structure (e.g., via persistent homology or loop sampling) of the weight manifolds for both rigid and fat families. Additionally, the plan repeats the failure mode where fat families were treated as noise (run28), and it lacks the required topological analysis to validate the PAC-Bayes bound claim regarding N_c(w) behavior.",
-    "missing_steps": [
-      "Define the weight manifold geometry and parameterization for the fat polynomial family",
-      "Compute or estimate the first homology group H1 of the weight manifold using TDA or loop sampling",
-      "Compare with the rigid affine manifold's contractibility (trivial H1)",
-      "Establish a continuous interpolation path between training minima and held-out solutions to test feasibility under topological constraints",
-      "Explicitly verify that the fat polynomial family is x-dependent and high-dimensional but partially learnable (not noise)"
-    ],
-    "mode": "explore",
-    "description": "Define the weight manifold parameterization for the fat polynomial family $P_w(x) = \\sum_{i=0}^w a_i x^i$ subject to $w$ interpolation constraints. Compute the first homology group $H_1$ of the result"
-  },
-  {
-    "scene_tag": "other",
-    "reason": "The plan fundamentally misinterprets the hypothesis as a capacity/generalization problem rather than a topological obstruction problem. The hypothesis concerns a topological property (vanishing first homology group H1) of the solution space manifold, which requires topological data analysis (TDA) or loop sampling to verify. The plan only implements a capacity scan measuring generalization error, which is empirically insufficient to prove topological non-triviality or contractibility as explicitly noted in the historical failures. The plan repeats the same critical error as previous failed runs by focusing on error metrics instead of computing/estimating homology structures.",
-    "missing_steps": [
-      "Define the weight manifold geometry and parameterization for both linear rigid family and fat polynomial family",
-      "Compute or estimate the first homology group H1 of the weight manifolds using persistent homology or loop sampling",
-      "Compare the topological structure (H1) between the rigid affine manifold (should be contractible, H1=0) and fat polynomial manifold (should have non-trivial H1)",
-      "Establish continuous interpolation paths between training minima and held-out solutions to test feasibility under topological constraints",
-      "Verify that the fat polynomial family is x-dependent and high-dimensional but partially learnable (not noise)"
-    ],
-    "mode": "explore",
-    "description": "[auto-routed: surprise=1.00] Implement the `family` function for the linear rigid family (affine functions f(x)=ax+b) and the fat polynomial family (20-term shifted basis), ensuring y/yv are (N,1) sha"
-  },
-  {
     "scene_tag": "workflow",
     "reason": "The plan is invalid due to a critical scaling violation that would invalidate the chi-squared hypothesis test. The hypothesis explicitly states that the held-out error variance is inversely proportional to the number of training constraints w. However, the plan explicitly sets w=2 (h=2~8 for rigid linear family implies 2 parameters), which leads to a variance of O(1/2) = O(0.5). Combined with the y/yv normalization to O(1) scale, the expected error magnitude will be ~0.5, which is orders of magnitude larger than the 1e3 threshold mentioned in the prediction. This contradicts the requirement that errors should be small (statistical noise) and will instead reflect large structural errors, making the chi-squared test meaningless. Additionally, the plan fails to specify the exact functional forms for the rigid linear and fat polynomial families, which is essential for reproducibility and avoiding the 'fat polynomial as noise' pitfall mentioned in historical failures.",
     "missing_steps": [
@@ -736,5 +710,31 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement symbolic computation of Čech cohomology for sheaves of locally linear functions on a 1D base manifold (e.g., $S^1$ or $\\mathbb{R}$). Define the rigid linear fami"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The hypothesis is a topological claim about sheaf cohomology ($H^1=0$) and affine manifold structure requiring symbolic algebraic computation (e.g., Čech complexes). The plan uses 'explore' mode with numerical capacity scans (N_c(w), validation error), which is a machine learning regression approach. This fundamentally misaligns with the hypothesis's mathematical structure (algebraic topology vs. approximation theory) and repeats the documented historical failures where ML metrics were incorrectly used to verify topological properties.",
+    "missing_steps": [
+      "Switch MODE from explore to coder/workflow for symbolic implementation",
+      "Define the mathematical structure: specify base manifold, sheaf of locally linear functions, transition functions",
+      "Implement Čech cohomology or derived functor computation tools",
+      "Verify exactness of sequences and compute explicit cohomology groups"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family` function for the two function families (linear/rigid and high-degree polynomial/fat) with proper normalization and shape constraints. The function m"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan fundamentally misaligns with the hypothesis. The hypothesis requires symbolic computation of Čech cohomology for sheaves of locally linear functions — an algebraic topology problem requiring exact mathematical verification via symbolic algebra tools (e.g., Lean, SageMath, or Mathematica). The proposed plan uses 'explore' mode with numerical capacity scans (N_c(w), validation error), which is a machine learning regression approach. This fundamentally misaligns with the hypothesis's mathematical structure (algebraic topology vs. approximation theory) and repeats the documented historical failures where ML metrics were incorrectly used to verify topological properties.",
+    "missing_steps": [
+      "Switch MODE from explore to coder/workflow for concrete symbolic implementation",
+      "Define the mathematical structure: specify base manifold (e.g., S¹ or ℝ), the sheaf of locally linear functions, and the cohomology computation framework (Čech complex or derived functor approach)",
+      "Clarify the relationship between the rigid linear family and the sheaf structure — how does the family induce or relate to the sheaf?",
+      "Implement appropriate sheaf cohomology tools (e.g., symbolic computation of Čech complexes, spectral sequences, or derived category methods)",
+      "Establish the contrast between rigid and fat families at the sheaf level, not just at the level of point cloud topology",
+      "Include mathematical validation steps: check exactness of sequences, compute explicit cohomology groups, verify non-triviality via obstruction theory"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement symbolic sheaf cohomology computation for the linear rigid family. Define the base manifold as an affine line, the sheaf of locally linear functions, and transit"
   }
 ]
