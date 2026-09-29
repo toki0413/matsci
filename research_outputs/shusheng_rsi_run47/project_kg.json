@@ -2950,6 +2950,70 @@
       "r_phys": 1.0,
       "iteration": 235,
       "id": "persona_use:reviewer_iter235"
+    },
+    {
+      "label": "[Hypothesis Index/Text]\" followed by the LUCID details.",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T08:15:46.448059",
+      "last_seen": "2026-09-29T08:15:46.448059",
+      "mentions": 1,
+      "iteration": 240,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Implement `family(kind, w, seed)` with explicit logic: (1) rigid: linear combination of 3 fixed basis functions (e.g., [1, x, x²]) evaluated at w points, normalized by std; (2) fat: 20-term random pol",
+      "persona": "reviewer",
+      "id": "experiment:[Hypothesis Index/Text]\" followed by the LUCID details."
+    },
+    {
+      "label": "plan_explore_iter240",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:15:46.448096",
+      "last_seen": "2026-09-29T08:15:46.448096",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter240"
+    },
+    {
+      "label": "pass_iter240",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:15:46.448105",
+      "last_seen": "2026-09-29T08:15:46.448105",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter240"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T08:15:46.448113",
+      "last_seen": "2026-09-29T08:15:46.448113",
+      "mentions": 1,
+      "members": [
+        "experiment:[Hypothesis Index/Text]\" followed by the LUCID details.",
+        "Method:plan_explore_iter240",
+        "Fact:pass_iter240"
+      ],
+      "iteration": 240,
+      "id": "he_experiment_pipeline_56d99652"
+    },
+    {
+      "label": "reviewer_iter240",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T08:15:46.448338",
+      "last_seen": "2026-09-29T08:15:46.448338",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "dd0e52a8f6e62fe0",
+      "r_phys": 1.0,
+      "iteration": 240,
+      "id": "persona_use:reviewer_iter240"
     }
   ],
   "links": [
@@ -4221,6 +4285,33 @@
       "last_seen": "2026-09-29T08:14:02.500420",
       "mentions": 1,
       "target": "he_experiment_pipeline_c9e785d3"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[Hypothesis Index/Text]\" followed by the LUCID details.",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:15:46.448113",
+      "last_seen": "2026-09-29T08:15:46.448113",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_56d99652"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter240",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:15:46.448113",
+      "last_seen": "2026-09-29T08:15:46.448113",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_56d99652"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter240",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:15:46.448113",
+      "last_seen": "2026-09-29T08:15:46.448113",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_56d99652"
     }
   ]
 }

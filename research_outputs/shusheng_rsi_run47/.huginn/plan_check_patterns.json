@@ -428,5 +428,52 @@
     ],
     "mode": "explore",
     "description": "Implement `family(kind, w, seed)` with explicit logic: (1) rigid: linear combination of 3 fixed basis functions (e.g., [1, x, x²]) evaluated at w points, normalized by std; (2) fat: 20-term random pol"
+  },
+  {
+    "scene_tag": "auto_family",
+    "hyp_key": "7d80cc4f0f5a",
+    "reason": "The plan is invalid because the MODE 'explore' is mismatched for a coding task; the DESCRIPTION does not cover the critical implementation details (e.g., defining the rigid/fat families, the 2-layer tanh network architecture, and the specific capacity_scan methodology). While the PREDICTION is technically verifiable in principle, it relies on unimplemented code. The plan also fails to explicitly address how to ensure the fat family is 'x-dependent' (avoiding the 'run28' failure mode) and does not specify the scaling discipline for 'run29'.",
+    "missing_steps": [
+      "Change MODE from 'explore' to 'coder' to correctly implement the function.",
+      "Define the rigid family as a low-dimensional subspace function (e.g., fixed basis functions) and the fat family as a high-dimensional random polynomial that depends on x.",
+      "Specify the 2-layer tanh network architecture and the capacity_scan method to compute N_c(w).",
+      "Ensure the fat family is x-dependent to avoid the 'run28' failure mode (pure noise vs. x-dependent function).",
+      "Apply scaling discipline to prevent the 'run29' failure mode (e.g., normalize targets and avoid high-scale polynomials).",
+      "Ensure training and held-out errors are measured independently and reported numerically."
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family(kind, w, seed)` function that returns the training and held-out constraints for the rigid (low-dimensional subspace) and fat (high-dimensional random"
+  },
+  {
+    "scene_tag": "auto_family",
+    "hyp_key": "7d80cc4f0f5a",
+    "reason": "The plan uses MODE 'explore' for a coding task, which is mismatched. The DESCRIPTION lacks critical implementation details (e.g., specific function definitions for rigid/fat families, network architecture specs, capacity_scan methodology). It fails to address the 'run28' and 'run29' failure modes explicitly in the plan description, and does not specify how scaling discipline will be applied to prevent failures.",
+    "missing_steps": [
+      "Change MODE from 'explore' to 'coder' for a coding task",
+      "Define the rigid family as a low-dimensional subspace function with fixed basis functions",
+      "Define the fat family as a high-dimensional random polynomial that depends on x (avoiding pure noise)",
+      "Specify the 2-layer tanh network architecture explicitly",
+      "Detail the capacity_scan methodology for computing N_c(w)",
+      "Specify scaling discipline to prevent run29 failure (normalize targets, avoid high-scale polynomials)",
+      "Ensure independent measurement of training and held-out errors"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement `family(kind, w, seed)` returning normalized training/held-out constraints for rigid (fixed-basis low-dimensional subspace) and fat (x-dependent high-dimensional"
+  },
+  {
+    "scene_tag": "auto_family",
+    "hyp_key": "7d80cc4f0f5a",
+    "reason": "The plan uses MODE 'explore' for a coding task which is mismatched; the DESCRIPTION lacks critical implementation details (rigid/fat family definitions, network architecture, capacity_scan methodology), and does not explicitly address scaling discipline or independent error measurement.",
+    "missing_steps": [
+      "Change MODE from 'explore' to 'coder' for a coding task",
+      "Define the rigid family as a low-dimensional subspace function with fixed basis functions",
+      "Define the fat family as a high-dimensional random polynomial that depends on x (avoiding pure noise)",
+      "Specify the 2-layer tanh network architecture explicitly",
+      "Detail the capacity_scan method for computing N_c(w)",
+      "Specify scaling discipline to prevent run29 failure (normalize targets, avoid high-scale polynomials)",
+      "Ensure independent measurement of training and held-out errors"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement `family(kind, w, seed)` returning normalized training/held-out constraints for rigid (fixed-basis low-dimensional subspace) and fat (x-dependent high-dimensional"
   }
 ]

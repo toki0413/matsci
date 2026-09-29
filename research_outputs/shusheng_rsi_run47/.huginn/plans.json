@@ -1484,6 +1484,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_b9cbfc4b",
+      "objective": "[DIM: computation] The rigid family's capacity complexity N_c(w) is bounded by O(w) due to the information-theoretic limit of interpolating w constraints with a 2-layer tanh network, where each hidden unit provides one effective degree of freedom for zero-error interpolation.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement `family(kind, w, seed)` returning normalized training/held-out constraints for rigid (fixed-basis low-dimensional subspace) and fat (x-dependent high-dimensional polynomial) families. Define a 2-layer tanh network architecture with width w and implement `capacity_scan` to compute N_c(w) by finding the minimum width achieving zero interpolation error on w constraints, ensuring independent error measurement on held-out data. Apply O(1) scaling to targets to prevent run29 failure and enforce x-dependence in fat family to avoid run28 failure.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T08:17:17.224625+00:00",
+      "confirmed_at": "2026-09-29T08:17:17.227016+00:00",
+      "completed_at": "2026-09-29T08:17:37.485229+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
