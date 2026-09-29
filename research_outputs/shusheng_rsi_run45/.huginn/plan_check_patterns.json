@@ -1,0 +1,14 @@
+[
+  {
+    "scene_tag": "other",
+    "reason": "The plan describes a numerical experiment (capacity scan) to observe generalization errors, but the hypothesis is about a topological obstruction (non-vanishing first homology group $H_1$) in the weight manifold. Generalization error alone does not prove topological non-triviality; one would need to explicitly compute or detect the homology structure (e.g., via persistent homology or loop detection in the weight space), which is absent from the plan. The plan confuses empirical generalization failure with topological obstruction.",
+    "missing_steps": [
+      "Define the weight manifold geometry and parameterization for the fat polynomial family",
+      "Compute or estimate the first homology group $H_1$ of the weight manifold (e.g., via TDA or loop sampling)",
+      "Compare with the rigid affine manifold's contractibility (trivial $H_1$)",
+      "Establish a continuous interpolation path between training minima and held-out solutions and test its feasibility under topological constraints"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family` function for both the rigid (affine) and fat (polynomial) families according to the strict protocol requirements: ensure y/yv are (N,1) shaped, non-"
+  }
+]
