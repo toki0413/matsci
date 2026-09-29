@@ -1779,6 +1779,70 @@
       "r_phys": 1.0,
       "iteration": 140,
       "id": "persona_use:reviewer_iter140"
+    },
+    {
+      "label": "[DIM: structure] The rigid family defines an affine subspace of dimension exactl",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T07:54:32.912344",
+      "last_seen": "2026-09-29T07:54:32.912344",
+      "mentions": 1,
+      "iteration": 145,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The rigid family will achieve zero violation (max absolute error ≤ 1e3) at finite widths h=2~8 with flat N_c(w) trend, while the fat family will show unreachable trend with all h≤64 yielding error > 1",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid family defines an affine subspace of dimension exactl"
+    },
+    {
+      "label": "plan_explore_iter145",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:54:32.912399",
+      "last_seen": "2026-09-29T07:54:32.912399",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter145"
+    },
+    {
+      "label": "pass_iter145",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:54:32.912410",
+      "last_seen": "2026-09-29T07:54:32.912410",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter145"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T07:54:32.912418",
+      "last_seen": "2026-09-29T07:54:32.912418",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid family defines an affine subspace of dimension exactl",
+        "Method:plan_explore_iter145",
+        "Fact:pass_iter145"
+      ],
+      "iteration": 145,
+      "id": "he_experiment_pipeline_f3a0427b"
+    },
+    {
+      "label": "reviewer_iter145",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T07:54:32.912486",
+      "last_seen": "2026-09-29T07:54:32.912486",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "497da00602d03e6a",
+      "r_phys": 1.0,
+      "iteration": 145,
+      "id": "persona_use:reviewer_iter145"
     }
   ],
   "links": [
@@ -2537,6 +2601,33 @@
       "last_seen": "2026-09-29T07:53:34.289271",
       "mentions": 1,
       "target": "he_experiment_pipeline_3611cd1c"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid family defines an affine subspace of dimension exactl",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:54:32.912418",
+      "last_seen": "2026-09-29T07:54:32.912418",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_f3a0427b"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter145",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:54:32.912418",
+      "last_seen": "2026-09-29T07:54:32.912418",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_f3a0427b"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter145",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:54:32.912418",
+      "last_seen": "2026-09-29T07:54:32.912418",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_f3a0427b"
     }
   ]
 }
