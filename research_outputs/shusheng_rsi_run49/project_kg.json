@@ -1896,6 +1896,70 @@
       "r_phys": 1.0,
       "iteration": 160,
       "id": "persona_use:reviewer_iter160"
+    },
+    {
+      "label": "[DIM: structure] The constraint satisfaction problem for ReLU networks admits a ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T09:29:02.876320",
+      "last_seen": "2026-09-29T09:29:02.876320",
+      "mentions": 1,
+      "iteration": 165,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will scale approximately linearly with w (slope ~1-2), confirming the piecewise-linear algebraic structure; deviations will occur only when constraints become redundant or conflicting, which ca",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The constraint satisfaction problem for ReLU networks admits a"
+    },
+    {
+      "label": "plan_explore_iter165",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:29:02.876361",
+      "last_seen": "2026-09-29T09:29:02.876361",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter165"
+    },
+    {
+      "label": "pass_iter165",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:29:02.876370",
+      "last_seen": "2026-09-29T09:29:02.876370",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter165"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T09:29:02.876396",
+      "last_seen": "2026-09-29T09:29:02.876396",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The constraint satisfaction problem for ReLU networks admits a",
+        "Method:plan_explore_iter165",
+        "Fact:pass_iter165"
+      ],
+      "iteration": 165,
+      "id": "he_experiment_pipeline_8397a7fd"
+    },
+    {
+      "label": "reviewer_iter165",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T09:29:02.876474",
+      "last_seen": "2026-09-29T09:29:02.876474",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "db7ff7e1f787019c",
+      "r_phys": 1.0,
+      "iteration": 165,
+      "id": "persona_use:reviewer_iter165"
     }
   ],
   "links": [
@@ -2735,6 +2799,33 @@
       "last_seen": "2026-09-29T09:28:02.767965",
       "mentions": 1,
       "target": "he_experiment_pipeline_fca93d21"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The constraint satisfaction problem for ReLU networks admits a",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:29:02.876396",
+      "last_seen": "2026-09-29T09:29:02.876396",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8397a7fd"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter165",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:29:02.876396",
+      "last_seen": "2026-09-29T09:29:02.876396",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8397a7fd"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter165",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:29:02.876396",
+      "last_seen": "2026-09-29T09:29:02.876396",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8397a7fd"
     }
   ]
 }

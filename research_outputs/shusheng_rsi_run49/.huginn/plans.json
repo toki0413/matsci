@@ -969,6 +969,37 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_e4aba07e",
+      "objective": "[DIM: computation] The decision problem \"Does a width-H network satisfy w constraints with error ≤ 1e-3?\" is NP-hard for ReLU networks, and the minimal width N_c(w) grows exponentially with w in the worst case due to combinatorial activation pattern proliferation.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Design and execute a controlled numerical experiment to test the hypothesis that the minimal width N_c(w) for ReLU networks to satisfy w constraints with error ≤ 1e-3 grows exponentially in w. Generate synthetic constraint functions (e.g., piecewise linear or low-degree polynomials) with varying constraint counts w, train width-swept ReLU networks (widths from 2 to 256), measure maximum absolute error on held-out constraints, and determine the minimal width N_c(w) achieving zero violation. Plot N_c(w) vs w to assess scaling (linear vs exponential). Use a single GPU node with early stopping and multiple random seeds per configuration to ensure reproducibility.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "experiments/neural_capacity_scan.py",
+            "experiments/neural_capacity_config.json"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T09:29:30.036692+00:00",
+      "confirmed_at": "2026-09-29T09:29:30.038874+00:00",
+      "completed_at": "2026-09-29T09:29:49.099209+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

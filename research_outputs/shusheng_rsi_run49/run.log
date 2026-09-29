@@ -359,3 +359,9 @@ metacog: 假设可能为换名归约 (trap=, target=将'解空间刚性'这一�
 [exec-route] mode='explore' desc[:80]='First, define the ReLU constraint satisfaction problem (CSP) mathematically: giv' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=True
 [code-lab-author] raw_len=863 extracted_len=848 prompt_len=3149
 [code-lab-run] res_none=False success=True nobj=36 reason=''
+[validate] mode='code_lab' success=True nobj=36 cf=False lab=True
+metacog: 假设可能为换名归约 (trap=, target=将'解空间刚性'的几何/函数逼近性质问题，重新表述为计算复杂度的判定问题（NP-hardness），但未建立两者之间的因果联系或提供新的物理/数学洞察。): [DIM: computation] The decision problem "Does a width-H network satisfy w constraints with error ≤ 1
+renamed-reduction 3× consecutive: trigger counterexample hunt
+[exec-route] mode='explore' desc[:80]='[auto-routed: surprise=1.00] Design and execute a controlled numerical experimen' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=727 extracted_len=712 prompt_len=3149
+[code-lab-run] res_none=False success=True nobj=36 reason=''
