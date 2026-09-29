@@ -80,8 +80,8 @@
       "label",
       "plan",
       "error",
-      "constraints",
-      "constraint"
+      "constraint",
+      "constraints"
     ],
     "workflow_steps": [
       {

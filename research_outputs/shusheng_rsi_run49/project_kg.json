@@ -796,8 +796,8 @@
       "source": "autoloop",
       "confidence": 0.99,
       "created_at": "2026-09-29T09:04:09.287862",
-      "last_seen": "2026-09-29T09:22:41.726284",
-      "mentions": 2,
+      "last_seen": "2026-09-29T09:32:19.562317",
+      "mentions": 3,
       "iteration": 70,
       "r_phys": 1.0,
       "surprise": 1.0,
@@ -2058,6 +2058,55 @@
       "r_phys": 1.0,
       "iteration": 175,
       "id": "persona_use:reviewer_iter175"
+    },
+    {
+      "label": "plan_explore_iter180",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:32:19.562343",
+      "last_seen": "2026-09-29T09:32:19.562343",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter180"
+    },
+    {
+      "label": "pass_iter180",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:32:19.562362",
+      "last_seen": "2026-09-29T09:32:19.562362",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter180"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T09:32:19.562372",
+      "last_seen": "2026-09-29T09:32:19.562372",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: measure] The minimal network width $N_c(w)$ required to achieve zero viola",
+        "Method:plan_explore_iter180",
+        "Fact:pass_iter180"
+      ],
+      "iteration": 180,
+      "id": "he_experiment_pipeline_2ffe5b4e"
+    },
+    {
+      "label": "reviewer_iter180",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T09:32:19.562444",
+      "last_seen": "2026-09-29T09:32:19.562444",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "7a8e3ec619280c03",
+      "r_phys": 1.0,
+      "iteration": 180,
+      "id": "persona_use:reviewer_iter180"
     }
   ],
   "links": [
@@ -2429,6 +2478,15 @@
       "last_seen": "2026-09-29T09:22:41.726340",
       "mentions": 1,
       "target": "he_experiment_pipeline_66bd2ea3"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: measure] The minimal network width $N_c(w)$ required to achieve zero viola",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:32:19.562372",
+      "last_seen": "2026-09-29T09:32:19.562372",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2ffe5b4e"
     },
     {
       "relation": "member_of",
@@ -2978,6 +3036,24 @@
       "last_seen": "2026-09-29T09:31:14.035543",
       "mentions": 1,
       "target": "he_experiment_pipeline_e1cb0fd7"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter180",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:32:19.562372",
+      "last_seen": "2026-09-29T09:32:19.562372",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2ffe5b4e"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter180",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:32:19.562372",
+      "last_seen": "2026-09-29T09:32:19.562372",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2ffe5b4e"
     }
   ]
 }
