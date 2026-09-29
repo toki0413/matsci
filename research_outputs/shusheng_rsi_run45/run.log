@@ -236,3 +236,10 @@ plan_check failed low-conf (tier=light, scene=other, conf=0.15): The plan is fun
 [exec-route] mode='explore' desc[:80]='[auto-routed: surprise=1.00] Implement the family function for the rigid linear ' obj_len=2462 is_exp_desc=True is_exp_obj=True is_det_desc=False
 [code-lab-author] raw_len=1368 extracted_len=1354 prompt_len=5379
 [code-lab-run] res_none=False success=True nobj=36 reason=''
+[validate] mode='code_lab' success=True nobj=36 cf=False lab=True
+metacog: 假设可能为换名归约 (trap=, target=刚性族（线性函数）的解空间维数低（2维），导致最小网络容量 N_c 小且与样本数 w 无关): [DIM: dynamics] The rigidity of the linear family manifests as a **flat loss landscape** along the s
+renamed-reduction 5× consecutive: escalate — block dominant family + force redirect
+plan_check failed low-conf (tier=light, scene=workflow, conf=0.10): The plan fails the dimensional pre-check and methodological validation. The hypothesis requires testing the relationship between held-out error variance and the number of training constraints w (scaling as 1/w). However, the plan uses w=2 (implied by h=2 parameters for the linear family), which yields an error variance of O(0.5). This is orders of magnitude larger than the 1e-3 threshold required for statistical significance, making the chi-squared test meaningless. Additionally, the plan lacks explicit functional forms for the families, does not specify the held-out set size matching degrees of freedom, and omits necessary chi-squared distribution checks (Q-Q plots, KS tests). These omissions replicate the exact failures documented in the 'historical failures' section.
+[exec-route] mode='explore' desc[:80]='[auto-routed: surprise=1.00] Implement the `family` function for the rigid linea' obj_len=2462 is_exp_desc=True is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=940 extracted_len=925 prompt_len=5379
+[code-lab-run] res_none=False success=True nobj=36 reason=''

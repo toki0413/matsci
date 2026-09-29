@@ -224,5 +224,18 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the family function for the rigid linear family and fat polynomial family to enable capacity testing. The rigid family should be a linear function f(x)=ax+b that"
+  },
+  {
+    "scene_tag": "workflow",
+    "reason": "The plan fails the dimensional pre-check and methodological validation. The hypothesis requires testing the relationship between held-out error variance and the number of training constraints w (scaling as 1/w). However, the plan uses w=2 (implied by h=2 parameters for the linear family), which yields an error variance of O(0.5). This is orders of magnitude larger than the 1e-3 threshold required for statistical significance, making the chi-squared test meaningless. Additionally, the plan lacks explicit functional forms for the families, does not specify the held-out set size matching degrees of freedom, and omits necessary chi-squared distribution checks (Q-Q plots, KS tests). These omissions replicate the exact failures documented in the 'historical failures' section.",
+    "missing_steps": [
+      "Define explicit functional forms for rigid linear family (e.g., f(x)=ax+b with constraint a^2+b^2=1) and fat polynomial family (e.g., 20th-order basis with specific normalization)",
+      "Ensure training constraints w is sufficiently large (e.g., w>>1) to achieve variance 1/w in statistical noise regime",
+      "Specify held-out set size matching degrees of freedom for chi-squared test",
+      "Verify normalization scheme preserves variance scaling with w",
+      "Add explicit chi-squared distribution fit checks (Q-Q plots, Kolmogorov-Smirnov test)"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid linear family (affine function f(x)=ax+b) and fat polynomial family (20th-degree random polynomial) with proper data normaliz"
   }
 ]
