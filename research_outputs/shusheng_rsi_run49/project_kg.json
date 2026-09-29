@@ -725,6 +725,70 @@
       "r_phys": 1.0,
       "iteration": 60,
       "id": "persona_use:reviewer_iter60"
+    },
+    {
+      "label": "[DIM: structure] The minimal network width $N_c(w)$ required to achieve zero vio",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T09:03:08.117246",
+      "last_seen": "2026-09-29T09:03:08.117246",
+      "mentions": 1,
+      "iteration": 65,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will be non-decreasing in w if and only if the rank of the constraint matrix A(w) increases with w. If constraints are linearly dependent, N_c(w) may plateau. The lower bound d - rank(A(w)) pro",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The minimal network width $N_c(w)$ required to achieve zero vio"
+    },
+    {
+      "label": "plan_explore_iter65",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:03:08.117284",
+      "last_seen": "2026-09-29T09:03:08.117284",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter65"
+    },
+    {
+      "label": "pass_iter65",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:03:08.117294",
+      "last_seen": "2026-09-29T09:03:08.117294",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter65"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T09:03:08.117303",
+      "last_seen": "2026-09-29T09:03:08.117303",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The minimal network width $N_c(w)$ required to achieve zero vio",
+        "Method:plan_explore_iter65",
+        "Fact:pass_iter65"
+      ],
+      "iteration": 65,
+      "id": "he_experiment_pipeline_49a70c34"
+    },
+    {
+      "label": "reviewer_iter65",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T09:03:08.117372",
+      "last_seen": "2026-09-29T09:03:08.117372",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "66bef353ad3eff21",
+      "r_phys": 1.0,
+      "iteration": 65,
+      "id": "persona_use:reviewer_iter65"
     }
   ],
   "links": [
@@ -1051,6 +1115,33 @@
       "last_seen": "2026-09-29T09:00:22.869081",
       "mentions": 1,
       "target": "he_experiment_pipeline_766c16be"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The minimal network width $N_c(w)$ required to achieve zero vio",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:03:08.117303",
+      "last_seen": "2026-09-29T09:03:08.117303",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_49a70c34"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter65",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:03:08.117303",
+      "last_seen": "2026-09-29T09:03:08.117303",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_49a70c34"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter65",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:03:08.117303",
+      "last_seen": "2026-09-29T09:03:08.117303",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_49a70c34"
     }
   ]
 }
