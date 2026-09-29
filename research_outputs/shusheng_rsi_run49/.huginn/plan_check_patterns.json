@@ -65,5 +65,34 @@
     ],
     "mode": "explore",
     "description": "Design a numerical experiment to test the hypothesis that the probability of a randomly initialized small network satisfying w analytical constraints decays as a power law in w. We will define the net"
+  },
+  {
+    "scene_tag": "auto_numerical",
+    "hyp_key": "4d56c351eda7",
+    "reason": "The plan is critically flawed in multiple ways: (1) It misidentifies the hypothesis type — this is a mathematical/structural claim about solution-space dimensionality, not a mere empirical trend to be tested via brute-force numerical sampling; (2) It uses 'explore' mode for a problem requiring symbolic analysis or rigorous functional-space reasoning, which is mismatched with the task’s theoretical nature; (3) The prediction assumes monotonic growth without proving the underlying structure (e.g., rank deficiency, constraint redundancy, or linear independence of constraint gradients); (4) It fails to address the core mathematical structure: whether the constraint set’s affine rank increases with w, which determines N_c(w), not just fitting error; (5) No mechanism to verify that 'zero violation' is achievable or that the minimal width is well-defined — e.g., if constraints are linearly dependent, N_c(w) may not increase; (6) The plan risks false positives by treating numerical tolerance as proof of structural property.",
+    "missing_steps": [
+      "Identify the mathematical structure: linear constraints define an affine subspace; N_c(w) relates to the dimension of the space of functions satisfying w constraints.",
+      "Formalize the constraint matrix A(w) ∈ ℝ^{w×d} where d is input dimension; analyze rank(A(w)) as w increases.",
+      "Use symbolic math (e.g., rank computation via SVD or Gaussian elimination) to determine if rank increases monotonically with w.",
+      "If rank increases, then minimal width must increase to represent higher-dimensional solution space — this is a structural argument, not empirical.",
+      "If rank does not increase, N_c(w) may stay constant — contradicting the hypothesis.",
+      "Only after structural analysis should numerical experiments be designed to validate the prediction — not as the primary method."
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Create a Python script to numerically test the hypothesis that the minimal network width N_c(w) required for zero violation on held-out constraints is non-decreasing in w."
+  },
+  {
+    "scene_tag": "auto_numerical",
+    "hyp_key": "4d56c351eda7",
+    "reason": "The plan is fundamentally mismatched to the task. The hypothesis concerns a structural property of linear constraints and solution-space dimensionality, which requires symbolic/analytical reasoning (e.g., rank analysis of A(w)) rather than empirical exploration. Using 'explore' mode with numerical simulation as the primary method is the exact failure mode documented in '同场景历史失败'. The plan incorrectly treats a mathematical structural claim as an empirical trend to be tested via brute-force fitting, without first establishing the rank behavior of the constraint matrix symbolically. This violates the core requirement to identify mathematical structure first.",
+    "missing_steps": [
+      "Identify mathematical structure: linear constraints define an affine subspace; N_c(w) relates to the dimension of the space of functions satisfying w constraints.",
+      "Formalize constraint matrix A(w) ∈ ℝ^{w×d} and analyze rank(A(w)) as w increases using symbolic methods.",
+      "Use symbolic math (SVD or Gaussian elimination) to determine if rank increases monotonically with w before any numerical training.",
+      "Derive theoretical lower bound on N_c(w) based on solution-space dimensionality d - rank(A(w)) before simulation.",
+      "Only after structural analysis, design numerical experiments to validate the prediction — not as the primary method."
+    ],
+    "mode": "explore",
+    "description": "Generate a controlled symbolic/numerical analysis to test the hypothesis that the minimal network width N_c(w) for zero violation on w linear constraints is non-decreasing. Steps: (1) Construct random"
   }
 ]
