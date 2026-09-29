@@ -167,5 +167,29 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the family function for the rigid and fat families according to the specified constraints. For the rigid family, define a low-dimensional analytic function (e.g."
+  },
+  {
+    "scene_tag": "auto_family",
+    "hyp_key": "8cddd60f72d0",
+    "reason": "The plan is invalid because it directly repeats the specific failure mode described in 'run28' (history). The plan asks to implement a 'fat family' but does not explicitly specify that it must be an x-dependent, high-dimensional function (e.g., a high-degree polynomial or high-dimensional sine sum) rather than i.i.d. noise. As per the 'Known Failure Modes', using i.i.d. noise renders the 'rigid vs. fat' comparison degenerate ('learnable vs. unlearnable') rather than testing the theoretical capacity complexity scaling. Without explicitly defining the function to satisfy the 'x-dependent' constraint, the plan is likely to fail the hypothesis test.",
+    "missing_steps": [
+      "Explicitly define the 'fat family' function as x-dependent (e.g., sum of sinusoids or high-degree polynomial) to ensure the solution space dimension is high relative to network width, avoiding the 'i.i.d. noise' degenerate case.",
+      "Verify that the 'rigid family' function (e.g., cos(pi*x)) is not underdetermined for the tested widths w, ensuring the training error can reach the required threshold (e.g., < 1e-3) to measure N_c(w) accurately."
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function for the rigid and fat families with proper normalization to O(1) scale, ensuring the output arrays have shape (N,1) and the held-out points d"
+  },
+  {
+    "scene_tag": "auto_family",
+    "hyp_key": "8cddd60f72d0",
+    "reason": "The plan describes an exploration of function families (rigid vs. fat) but does not explicitly define the specific mathematical forms (e.g., Lagrange polynomials, high-degree polynomials with bounded coefficients) required to avoid the 'i.i.d. noise' failure mode (run28). It also lacks explicit confirmation that the rigid family's width w is sufficient to avoid under-determination (run29) and does not specify how training/holding errors will be independently measured to support N_c(w) conclusions. Without these concrete definitions and measurement protocols, the plan risks repeating historical failures.",
+    "missing_steps": [
+      "Explicitly define the rigid family function (e.g., Lagrange polynomials of degree w-1) and verify w is sufficient to avoid under-determination.",
+      "Explicitly define the fat family function as x-dependent (e.g., high-degree polynomial or sum of sinusoids) with bounded coefficients to ensure high dimensionality relative to network width, avoiding i.i.d. noise.",
+      "Specify independent measurement protocols for training and holding errors to support N_c(w) conclusions.",
+      "Define the capacity_scan procedure and threshold criteria for N_c(w) extraction to ensure verifiable scaling behavior (logarithmic vs. exponential)."
+    ],
+    "mode": "explore",
+    "description": "Define explicit function families: rigid family as low-rank interpolation basis (e.g., Lagrange polynomials of degree w-1) and fat family as high-degree polynomial (degree D >> w) with bounded coeffic"
   }
 ]

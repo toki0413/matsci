@@ -276,3 +276,9 @@ metacog: 假设可能为换名归约 (trap=, target=刚性族 = 低维流形，�
 [exec-route] mode='explore' desc[:80]='Define explicit function families: rigid as low-rank interpolation basis (e.g., ' obj_len=2462 is_exp_desc=True is_exp_obj=True is_det_desc=True
 [code-lab-author] raw_len=945 extracted_len=930 prompt_len=5379
 [code-lab-run] res_none=False success=True nobj=36 reason=''
+[validate] mode='code_lab' success=True nobj=36 cf=False lab=True
+metacog: 假设可能为换名归约 (trap=, target=刚性/胖族的容量复杂度渐近行为（N_c(w) 的尺度律）): [DIM: computation] The rigid family's capacity complexity N_c(w) is bounded by O(log w) due to the i
+plan_check failed (tier=light, scene=auto_family, max_refines=1): The plan describes an exploration of function families (rigid vs. fat) but does not explicitly define the specific mathematical forms (e.g., Lagrange polynomials, high-degree polynomials with bounded coefficients) required to avoid the 'i.i.d. noise' failure mode (run28). It also lacks explicit confirmation that the rigid family's width w is sufficient to avoid under-determination (run29) and does not specify how training/holding errors will be independently measured to support N_c(w) conclusions. Without these concrete definitions and measurement protocols, the plan risks repeating historical failures.
+[exec-route] mode='explore' desc[:80]='Define explicit function families: rigid family as low-rank interpolation basis ' obj_len=2462 is_exp_desc=True is_exp_obj=True is_det_desc=True
+[code-lab-author] raw_len=1644 extracted_len=1629 prompt_len=5379
+[code-lab-run] res_none=False success=True nobj=36 reason=''
