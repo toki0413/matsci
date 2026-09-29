@@ -367,6 +367,36 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_7d0b9d62",
+      "objective": "[DIM: computation] The capacity complexity $N_c(w)$ for the rigid family satisfies the information-theoretic bound $N_c(w) \\leq \\lceil \\log_2 (w + 1) \\rceil$ because the solution space is a linear subspace of dimension $d \\ll w$, and a neural network with $h \\geq d$ parameters can exactly represent any function in the subspace via basis expansion; this yields a flat or decreasing $N_c(w)$ trend as $w$ increases beyond the minimal determining set. |",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid family (low-dimensional linear subspace) that returns properly normalized training and held-out constraints. The function must ensure: (1) y and yv are normalized to O(1) via std scaling, (2) held-out points Xv do not overlap with training points X, (3) all arrays are reshaped to (N,1) shape, (4) the solution space is a low-dimensional linear subspace (dim << w) as per the hypothesis. This enables the capacity_scan to verify if N_c(w) remains flat/decreasing and finite (rigid) versus unreachable (fat).",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "/workspace/research_outputs/shusheng_rsi_run47/.huginn/code/family.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T07:36:27.623416+00:00",
+      "confirmed_at": "2026-09-29T07:36:27.625687+00:00",
+      "completed_at": "2026-09-29T07:36:48.123435+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
