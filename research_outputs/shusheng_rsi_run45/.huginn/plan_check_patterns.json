@@ -581,5 +581,21 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the family function for the rigid linear family and fat polynomial family to generate training and validation sets with proper normalization and shape constraint"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan fundamentally misaligns with the hypothesis by focusing on empirical capacity scans (N_c(w) and validation error) rather than verifying the geometric/topological structure of the solution space (H1 groups, affine manifold dimension, Gaussian curvature, Hessian spectral gap) as required by the hypothesis. It also fails to address critical historical failures where topological analysis was omitted. The MODE=explore is inappropriate for a structural verification task requiring concrete code implementation; it should be switched to coder/workflow mode.",
+    "missing_steps": [
+      "Switch MODE from explore to coder/workflow for concrete implementation",
+      "Implement topological data analysis (persistent homology) to compute H1 groups of solution space manifolds",
+      "Define weight manifold geometry and parameterization in function space (not just parameter space)",
+      "Specify filtration method (e.g., Vietoris-Rips) for homology computation on function space geometry",
+      "Verify rigid family forms 2D affine manifold through geometric analysis in function space",
+      "Compute Hessian at initialization and analyze spectral gap in function space",
+      "Analyze Gaussian curvature of fat polynomial family manifold",
+      "Implement continuous interpolation path testing between training and held-out solutions in function space"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function for the rigid linear family and fat polynomial family following the specified protocol. The linear family should return f(x)=ax+b with parame"
   }
 ]
