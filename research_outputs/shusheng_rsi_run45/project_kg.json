@@ -2259,6 +2259,70 @@
       "r_phys": 1.0,
       "iteration": 180,
       "id": "persona_use:reviewer_iter180"
+    },
+    {
+      "label": "[DIM: measure] The held-out error of small networks on the rigid linear family f",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T04:15:47.620028",
+      "last_seen": "2026-09-29T04:15:47.620028",
+      "mentions": 1,
+      "iteration": 185,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The rigid linear family will exhibit trivial H1 (homologically simple) with constant Gaussian curvature ~0, producing a U-shaped error curve due to boundary effects in a compact manifold. The fat poly",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: measure] The held-out error of small networks on the rigid linear family f"
+    },
+    {
+      "label": "plan_explore_iter185",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:15:47.620069",
+      "last_seen": "2026-09-29T04:15:47.620069",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter185"
+    },
+    {
+      "label": "pass_iter185",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:15:47.620080",
+      "last_seen": "2026-09-29T04:15:47.620080",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter185"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T04:15:47.620089",
+      "last_seen": "2026-09-29T04:15:47.620089",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: measure] The held-out error of small networks on the rigid linear family f",
+        "Method:plan_explore_iter185",
+        "Fact:pass_iter185"
+      ],
+      "iteration": 185,
+      "id": "he_experiment_pipeline_232d8a83"
+    },
+    {
+      "label": "reviewer_iter185",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T04:15:47.620167",
+      "last_seen": "2026-09-29T04:15:47.620167",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "f1302de60b91844b",
+      "r_phys": 1.0,
+      "iteration": 185,
+      "id": "persona_use:reviewer_iter185"
     }
   ],
   "links": [
@@ -3233,6 +3297,33 @@
       "last_seen": "2026-09-29T04:14:40.622056",
       "mentions": 1,
       "target": "he_experiment_pipeline_1599f047"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: measure] The held-out error of small networks on the rigid linear family f",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:15:47.620089",
+      "last_seen": "2026-09-29T04:15:47.620089",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_232d8a83"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter185",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:15:47.620089",
+      "last_seen": "2026-09-29T04:15:47.620089",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_232d8a83"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter185",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:15:47.620089",
+      "last_seen": "2026-09-29T04:15:47.620089",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_232d8a83"
     }
   ]
 }

@@ -643,5 +643,21 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement topological verification of the hypothesis by computing H1 groups and Gaussian curvature of solution space manifolds for both families. Specifically: (1) Paramet"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan fundamentally misaligns with the hypothesis. The hypothesis requires verifying geometric/topological properties of solution spaces (H1 groups, affine manifold dimension, Gaussian curvature, Hessian spectral gap) in function space, but the plan only implements a capacity scan measuring N_c(w) and held-out error. This repeats the exact historical failures documented in the scene history where topological analysis was omitted and MODE=explore was inappropriate for a structural verification task. The plan does not implement topological data analysis, does not define weight manifold geometry, and does not compute Hessian spectral gap or Gaussian curvature as required by the hypothesis.",
+    "missing_steps": [
+      "Switch MODE from explore to coder/workflow for concrete implementation",
+      "Implement topological data analysis (persistent homology) to compute H1 groups of solution space manifolds",
+      "Define weight manifold geometry and parameterization in function space (not just parameter space)",
+      "Specify filtration method (e.g., Vietoris-Rips) for homology computation on function space geometry",
+      "Verify rigid family forms 2D affine manifold through geometric analysis in function space",
+      "Compute Hessian at initialization and analyze spectral gap in function space",
+      "Analyze Gaussian curvature of fat polynomial family manifold",
+      "Implement continuous interpolation path testing between training and held-out solutions in function space"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family` function to generate training and held-out constraint points for the rigid linear family (f(x)=ax+b) and the fat polynomial family (20-term basis), "
   }
 ]
