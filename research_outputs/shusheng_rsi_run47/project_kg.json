@@ -1715,6 +1715,70 @@
       "r_phys": 1.0,
       "iteration": 135,
       "id": "persona_use:reviewer_iter135"
+    },
+    {
+      "label": "[DIM: dynamics] The rigid family's generalization error follows a two-phase tran",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T07:53:34.289217",
+      "last_seen": "2026-09-29T07:53:34.289217",
+      "mentions": 1,
+      "iteration": 140,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The rigid family will show a two-phase transient where early error decay is constrained by slow kernel modes (h < w), followed by rapid decay when effective rank saturates at w (h > w). The fat family",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: dynamics] The rigid family's generalization error follows a two-phase tran"
+    },
+    {
+      "label": "plan_explore_iter140",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:53:34.289254",
+      "last_seen": "2026-09-29T07:53:34.289254",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter140"
+    },
+    {
+      "label": "pass_iter140",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:53:34.289263",
+      "last_seen": "2026-09-29T07:53:34.289263",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter140"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T07:53:34.289271",
+      "last_seen": "2026-09-29T07:53:34.289271",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: dynamics] The rigid family's generalization error follows a two-phase tran",
+        "Method:plan_explore_iter140",
+        "Fact:pass_iter140"
+      ],
+      "iteration": 140,
+      "id": "he_experiment_pipeline_3611cd1c"
+    },
+    {
+      "label": "reviewer_iter140",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T07:53:34.289339",
+      "last_seen": "2026-09-29T07:53:34.289339",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "40449a66f855277b",
+      "r_phys": 1.0,
+      "iteration": 140,
+      "id": "persona_use:reviewer_iter140"
     }
   ],
   "links": [
@@ -2446,6 +2510,33 @@
       "last_seen": "2026-09-29T07:52:29.263249",
       "mentions": 1,
       "target": "he_experiment_pipeline_7cf210b2"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: dynamics] The rigid family's generalization error follows a two-phase tran",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:53:34.289271",
+      "last_seen": "2026-09-29T07:53:34.289271",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_3611cd1c"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter140",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:53:34.289271",
+      "last_seen": "2026-09-29T07:53:34.289271",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_3611cd1c"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter140",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:53:34.289271",
+      "last_seen": "2026-09-29T07:53:34.289271",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_3611cd1c"
     }
   ]
 }
