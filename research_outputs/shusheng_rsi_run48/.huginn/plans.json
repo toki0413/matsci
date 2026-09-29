@@ -29,6 +29,37 @@
         "mode": "coder",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_f516c36f",
+      "objective": "[DIM: measure] The held-out error distribution for the rigid family converges to a degenerate point mass at zero as $w$ increases, with variance decaying as $O(w^{-1})$, whereas the fat family exhibits heavy-tailed error distributions with non-vanishing variance, making $N_c(w)$ statistically ill-defined for the fat case.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Design and execute a numerical experiment to test the hypothesis about rigid vs. fat families in small feedforward networks. Steps: (1) Define the rigid family as a linear subspace (e.g., polynomial of degree d with fixed basis) and the fat family as a higher-dimensional or non-parametric family (e.g., flexible neural network with many parameters). (2) Generate w constraint samples from each family, train small feedforward networks with varying hidden widths w_range, and compute held-out max absolute error. (3) Determine N_c(w) as the minimum width achieving error ≤ 1e-3 for each w. (4) Plot N_c(w) vs. w for both families and assess scaling: rigid should show N_c(w) ~ O(1) with variance O(w^-1), fat should show non-converging heavy-tailed errors. Use symbolic_math_tool to derive theoretical scaling if needed, but rely on numerical validation.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "experiments/rigid_fat_nw_scan.py",
+            "experiments/plot_nc_vs_w.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T08:24:18.086468+00:00",
+      "confirmed_at": "2026-09-29T08:24:18.087793+00:00",
+      "completed_at": "2026-09-29T08:24:37.431726+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
