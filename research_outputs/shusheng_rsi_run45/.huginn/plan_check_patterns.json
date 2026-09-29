@@ -253,5 +253,24 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the `family` function for the linear rigid family (f(x)=ax+b) and the fat family (20th-degree random polynomial), ensuring y/yv are (N,1) shaped and normalized t"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan is fundamentally misaligned with the hypothesis. The hypothesis concerns topological/structural properties of a rigid linear family forming a 2D affine manifold in function space, requiring mathematical analysis of the solution space geometry, invariance under E(1) action, and homology/toplegy characterization. The proposed plan implements a capacity scan measuring N_c(w) and held-out error for rigid vs. fat families, which addresses a different problem (likely about sampling artifacts or capacity bounds) and completely ignores the core mathematical structure required by the hypothesis. This repeats the exact historical failure pattern where TDA was omitted despite being explicitly required in all three scene=other failure entries.",
+    "missing_steps": [
+      "Define weight manifold geometry and parameterization for both rigid and fat families",
+      "Implement topological data analysis (persistent homology) to compute H1 groups",
+      "Specify filtration method (e.g., Vietoris-Rips) for homology computation",
+      "Add continuous interpolation path testing between training and held-out solutions",
+      "Verify that rigid family forms a 2D affine manifold through geometric analysis",
+      "Confirm solution space invariance under translation and scaling algebraically",
+      "Implement gradient flow dynamics for the linear family and fat polynomial family",
+      "Compute Hessian at initialization and analyze its spectral gap",
+      "Analyze the infinite width limit behavior of the rigid linear family",
+      "Verify the first-order linear transport equation ∂_x f = 0 in the infinite width limit",
+      "Measure exponential convergence rate of held-out error and relate to spectral gap"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function for the linear rigid family (f(x)=ax+b) and the fat family (20th-degree polynomial with random coefficients), ensuring proper normalization t"
   }
 ]

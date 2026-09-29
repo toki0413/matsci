@@ -391,10 +391,10 @@
       "label": "[DIM: structure] The solution space of the linear rigid family forms a 2-dimensi",
       "type": "experiment",
       "source": "autoloop",
-      "confidence": 1.0,
+      "confidence": 0.99,
       "created_at": "2026-09-29T03:39:12.155668",
-      "last_seen": "2026-09-29T03:39:12.155668",
-      "mentions": 1,
+      "last_seen": "2026-09-29T03:49:51.815730",
+      "mentions": 2,
       "iteration": 35,
       "r_phys": 1.0,
       "surprise": 1.0,
@@ -1024,6 +1024,55 @@
       "r_phys": 1.0,
       "iteration": 80,
       "id": "persona_use:reviewer_iter80"
+    },
+    {
+      "label": "plan_explore_iter85",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:49:51.815757",
+      "last_seen": "2026-09-29T03:49:51.815757",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter85"
+    },
+    {
+      "label": "pass_iter85",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:49:51.815775",
+      "last_seen": "2026-09-29T03:49:51.815775",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter85"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T03:49:51.815785",
+      "last_seen": "2026-09-29T03:49:51.815785",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The solution space of the linear rigid family forms a 2-dimensi",
+        "Method:plan_explore_iter85",
+        "Fact:pass_iter85"
+      ],
+      "iteration": 85,
+      "id": "he_experiment_pipeline_c7d47622"
+    },
+    {
+      "label": "reviewer_iter85",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:49:51.815855",
+      "last_seen": "2026-09-29T03:49:51.815855",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "88db0ce391ec0659",
+      "r_phys": 1.0,
+      "iteration": 85,
+      "id": "persona_use:reviewer_iter85"
     }
   ],
   "links": [
@@ -1197,6 +1246,15 @@
       "last_seen": "2026-09-29T03:39:12.155744",
       "mentions": 1,
       "target": "he_experiment_pipeline_2c265da"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The solution space of the linear rigid family forms a 2-dimensi",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:49:51.815785",
+      "last_seen": "2026-09-29T03:49:51.815785",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c7d47622"
     },
     {
       "relation": "member_of",
@@ -1458,6 +1516,24 @@
       "last_seen": "2026-09-29T03:48:41.739874",
       "mentions": 1,
       "target": "he_experiment_pipeline_b8ba7c95"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter85",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:49:51.815785",
+      "last_seen": "2026-09-29T03:49:51.815785",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c7d47622"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter85",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:49:51.815785",
+      "last_seen": "2026-09-29T03:49:51.815785",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c7d47622"
     }
   ]
 }
