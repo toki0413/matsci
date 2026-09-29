@@ -258,6 +258,70 @@
       "r_phys": 1.0,
       "iteration": 20,
       "id": "persona_use:reviewer_iter20"
+    },
+    {
+      "label": "[DIM: structure] The rigid family's solution space forms a linear subspace of di",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T07:14:13.213795",
+      "last_seen": "2026-09-29T07:14:13.213795",
+      "mentions": 1,
+      "iteration": 25,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family, N_c(w) should be finite and small (h=2~8) with flat or decreasing trend as w increases. For the fat family, N_c(w) should be unreachable (no h≤64 achieves zero violation) across",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid family's solution space forms a linear subspace of di"
+    },
+    {
+      "label": "plan_explore_iter25",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:14:13.213829",
+      "last_seen": "2026-09-29T07:14:13.213829",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter25"
+    },
+    {
+      "label": "pass_iter25",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:14:13.213840",
+      "last_seen": "2026-09-29T07:14:13.213840",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter25"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T07:14:13.213849",
+      "last_seen": "2026-09-29T07:14:13.213849",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid family's solution space forms a linear subspace of di",
+        "Method:plan_explore_iter25",
+        "Fact:pass_iter25"
+      ],
+      "iteration": 25,
+      "id": "he_experiment_pipeline_4d10dd24"
+    },
+    {
+      "label": "reviewer_iter25",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T07:14:13.213932",
+      "last_seen": "2026-09-29T07:14:13.213932",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "24f94740e2ec036f",
+      "r_phys": 1.0,
+      "iteration": 25,
+      "id": "persona_use:reviewer_iter25"
     }
   ],
   "links": [
@@ -368,6 +432,33 @@
       "last_seen": "2026-09-29T07:13:15.839153",
       "mentions": 1,
       "target": "he_experiment_pipeline_53151852"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid family's solution space forms a linear subspace of di",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:14:13.213849",
+      "last_seen": "2026-09-29T07:14:13.213849",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4d10dd24"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:14:13.213849",
+      "last_seen": "2026-09-29T07:14:13.213849",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4d10dd24"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:14:13.213849",
+      "last_seen": "2026-09-29T07:14:13.213849",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4d10dd24"
     }
   ]
 }
