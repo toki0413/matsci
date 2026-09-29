@@ -7,17 +7,25 @@
       "autoloop",
       "huginn",
       "family",
-      "value",
       "function",
+      "value",
       "label",
       "rigid",
       "plan",
       "prediction",
-      "normalized"
+      "small"
     ],
     "workflow_steps": [
       {
         "tool": "coder",
+        "input_keys": [
+          "hypothesis",
+          "plan"
+        ],
+        "reward": 1.0
+      },
+      {
+        "tool": "explore",
         "input_keys": [
           "hypothesis",
           "plan"
