@@ -1463,6 +1463,70 @@
       "r_phys": 1.0,
       "iteration": 125,
       "id": "persona_use:reviewer_iter125"
+    },
+    {
+      "label": "[DIM: structure] The constraint satisfaction problem for ReLU networks with $w$ ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T09:21:42.742444",
+      "last_seen": "2026-09-29T09:21:42.742444",
+      "mentions": 1,
+      "iteration": 130,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "$N_c(w)$ will exhibit logarithmic scaling $O(\\log w)$ for $w$ up to moderate values, consistent with the piecewise linear solution manifold dimension bound. For large $w$, the fat regime may emerge wh",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The constraint satisfaction problem for ReLU networks with $w$"
+    },
+    {
+      "label": "plan_explore_iter130",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:21:42.742481",
+      "last_seen": "2026-09-29T09:21:42.742481",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter130"
+    },
+    {
+      "label": "pass_iter130",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:21:42.742491",
+      "last_seen": "2026-09-29T09:21:42.742491",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter130"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T09:21:42.742499",
+      "last_seen": "2026-09-29T09:21:42.742499",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The constraint satisfaction problem for ReLU networks with $w$",
+        "Method:plan_explore_iter130",
+        "Fact:pass_iter130"
+      ],
+      "iteration": 130,
+      "id": "he_experiment_pipeline_8474cf82"
+    },
+    {
+      "label": "reviewer_iter130",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T09:21:42.742572",
+      "last_seen": "2026-09-29T09:21:42.742572",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "f5223b70b386ff8e",
+      "r_phys": 1.0,
+      "iteration": 130,
+      "id": "persona_use:reviewer_iter130"
     }
   ],
   "links": [
@@ -2113,6 +2177,33 @@
       "last_seen": "2026-09-29T09:20:37.709767",
       "mentions": 1,
       "target": "he_experiment_pipeline_3d4bab8b"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The constraint satisfaction problem for ReLU networks with $w$",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:21:42.742499",
+      "last_seen": "2026-09-29T09:21:42.742499",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8474cf82"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter130",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:21:42.742499",
+      "last_seen": "2026-09-29T09:21:42.742499",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8474cf82"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter130",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:21:42.742499",
+      "last_seen": "2026-09-29T09:21:42.742499",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8474cf82"
     }
   ]
 }

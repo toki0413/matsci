@@ -766,6 +766,37 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_dc0c6d6a",
+      "objective": "[DIM: measure] The minimal network width $N_c(w)$ required to achieve zero violation on held-out constraints follows a heavy-tailed distribution across random constraint sets, with the median scaling logarithmically in $w$ but the 95th percentile exhibiting polynomial growth, indicating that \"rigidity\" is probabilistically fragile rather than structurally guaranteed.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Design and execute a numerical experiment to test the hypothesis that the minimal network width N_c(w) follows a heavy-tailed distribution across random constraint sets. Specifically: (1) Generate random constraint sets with w samples (w from 10 to 1000); (2) Train small ReLU networks of varying hidden widths N to fit these constraints; (3) Define zero violation as max absolute error ≤ 1e-3 on held-out constraints; (4) For each w, find the minimum N_c(w) achieving zero violation; (5) Repeat multiple times per w to build a distribution; (6) Analyze scaling: median ~ log(w) vs 95th percentile ~ polynomial. This tests whether rigidity is probabilistically fragile rather than structurally guaranteed.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "experiments/n_width_scaling.py",
+            "tests/test_n_c_distribution.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T09:22:03.729437+00:00",
+      "confirmed_at": "2026-09-29T09:22:03.731143+00:00",
+      "completed_at": "2026-09-29T09:22:22.794348+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
