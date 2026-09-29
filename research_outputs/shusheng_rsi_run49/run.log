@@ -331,3 +331,8 @@ plan_check failed (tier=light, scene=dft, max_refines=1): The plan contains a cr
 [validate] mode='code_lab' success=True nobj=36 cf=False lab=True
 metacog: 假设可能为换名归约 (trap=, target=原始命题中的'刚性'（Rigidity）概念被替换为'激活矩阵的秩（Rank）'，本质上是用线性代数的术语重新表述了解空间维度的约束条件，未提供关于泛化行为与刚性之间因果机制的新洞察。): [DIM: structure] The constraint satisfaction problem for ReLU networks exhibits a rank-deficient lin
 renamed-reduction 5× consecutive: escalate — block dominant family + force redirect
+[exec-route] mode='explore' desc[:80]='[auto-routed: surprise=1.00] Execute a numerical experiment to test the rank-def' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=True
+[code-lab-author] raw_len=1241 extracted_len=1227 prompt_len=3149
+[code-lab-run] res_none=True success=None nobj=0 reason="执行异常: ValueError: rigid w=5: 标签无方差(近常数) —— 这不是有效约束族, 无法支撑'刚性/胖'的容量判别. 请把你的 family 实现为真正的解析约束族(rigid=低维唯一确定族, fat=高维连续族), 两族须有区分度."
+[code-lab-author] raw_len=832 extracted_len=817 prompt_len=4859
+[code-lab-run] res_none=False success=True nobj=36 reason=''
