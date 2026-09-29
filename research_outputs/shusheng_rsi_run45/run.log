@@ -416,3 +416,11 @@ plan_check failed low-conf (tier=light, scene=other, conf=0.10): The plan fundam
 [exec-route] mode='explore' desc[:80]='[auto-routed: surprise=1.00] Implement the `family` function to generate trainin' obj_len=2462 is_exp_desc=True is_exp_obj=True is_det_desc=False
 [code-lab-author] raw_len=867 extracted_len=853 prompt_len=5379
 [code-lab-run] res_none=False success=True nobj=36 reason=''
+[validate] mode='code_lab' success=True nobj=36 cf=False lab=True
+repeat execution detected (streak=1): inject pivot hint
+metacog: 假设可能为换名归约 (trap=, target=刚性族（Rigid Family）的解空间维数/自由度问题): [DIM: topology] The rigid linear family exhibits **non-zero first cohomology (H¹ ≠ 0)** in the sheaf
+renamed-reduction 3× consecutive: trigger counterexample hunt
+plan_check failed low-conf (tier=light, scene=other, conf=0.15): The plan fundamentally misaligns with the hypothesis. The hypothesis requires verifying algebraic topology properties (sheaf cohomology H¹ ≠ 0) of locally linear functions on a base manifold, which is a structural verification task requiring symbolic computation or rigorous geometric analysis. However, the plan proposes an 'explore' mode with a capacity scan measuring N_c(w) and held-out error, which addresses neither topological structure nor sheaf cohomology requirements. This repeats the exact historical failures documented in the scene history where topological analysis was omitted and MODE=explore was inappropriate for a structural verification task. Additionally, the plan lacks critical mathematical setup: defining the sheaf of locally linear functions, the base space, transition functions, and the cohomology computation framework. The prediction about H¹ ≠ 0 cannot be validated through capacity scans and held-out error measurements, as these metrics do not compute cohomology groups or detect gluing obstructions of local sections.
+[exec-route] mode='explore' desc[:80]='Verify non-zero first sheaf cohomology (H¹ ≠ 0) for the rigid linear family by c' obj_len=2462 is_exp_desc=False is_exp_obj=True is_det_desc=True
+[code-lab-author] raw_len=940 extracted_len=925 prompt_len=5379
+[code-lab-run] res_none=False success=True nobj=36 reason=''
