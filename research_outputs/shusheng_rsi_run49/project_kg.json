@@ -2107,6 +2107,70 @@
       "r_phys": 1.0,
       "iteration": 180,
       "id": "persona_use:reviewer_iter180"
+    },
+    {
+      "label": "[DIM: dynamics] The constraint satisfaction problem for ReLU networks exhibits a",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T09:34:21.352292",
+      "last_seen": "2026-09-29T09:34:21.352292",
+      "mentions": 1,
+      "iteration": 185,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will remain small and nearly constant for ρ < ρ_c (rigid regime), then increase sharply or become unattainable for ρ > ρ_c (floppy regime), indicating a phase transition at critical density ρ_c",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: dynamics] The constraint satisfaction problem for ReLU networks exhibits a"
+    },
+    {
+      "label": "plan_explore_iter185",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:34:21.352328",
+      "last_seen": "2026-09-29T09:34:21.352328",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter185"
+    },
+    {
+      "label": "pass_iter185",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:34:21.352338",
+      "last_seen": "2026-09-29T09:34:21.352338",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter185"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T09:34:21.352346",
+      "last_seen": "2026-09-29T09:34:21.352346",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: dynamics] The constraint satisfaction problem for ReLU networks exhibits a",
+        "Method:plan_explore_iter185",
+        "Fact:pass_iter185"
+      ],
+      "iteration": 185,
+      "id": "he_experiment_pipeline_e4a2c3ae"
+    },
+    {
+      "label": "reviewer_iter185",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T09:34:21.352440",
+      "last_seen": "2026-09-29T09:34:21.352440",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "db5c390bfc2b3af2",
+      "r_phys": 1.0,
+      "iteration": 185,
+      "id": "persona_use:reviewer_iter185"
     }
   ],
   "links": [
@@ -3054,6 +3118,33 @@
       "last_seen": "2026-09-29T09:32:19.562372",
       "mentions": 1,
       "target": "he_experiment_pipeline_2ffe5b4e"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: dynamics] The constraint satisfaction problem for ReLU networks exhibits a",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:34:21.352346",
+      "last_seen": "2026-09-29T09:34:21.352346",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e4a2c3ae"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter185",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:34:21.352346",
+      "last_seen": "2026-09-29T09:34:21.352346",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e4a2c3ae"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter185",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:34:21.352346",
+      "last_seen": "2026-09-29T09:34:21.352346",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e4a2c3ae"
     }
   ]
 }

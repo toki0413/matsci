@@ -466,5 +466,33 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Generate synthetic constraint data w (10-100 points) from a known function (e.g., sin(2πx)), train small ReLU networks with varying hidden widths N (5-50), and compute N_c"
+  },
+  {
+    "scene_tag": "auto_numerical",
+    "hyp_key": "80b1c52e05be",
+    "reason": "The plan proposes to test the geometric rigidity hypothesis by analyzing N_c(w) vs w (sample count vs minimal width). However, this approach confuses 'sample complexity' (how many samples needed to fit) with 'solution space geometry' (curvature of the weight manifold). The hypothesis concerns the curvature of the constraint manifold in weight space near zero-violation solutions, which requires computing Hessian/curvature matrices of the loss landscape with respect to weights — a geometric property independent of sample count. The proposed N_c(w) analysis measures generalization capacity or expressiveness, not the local curvature of the solution manifold. Additionally, the plan lacks a concrete method to compute or approximate Gaussian curvature in high-dimensional weight space, which is essential to testing the hypothesis.",
+    "missing_steps": [
+      "Define the constraint manifold explicitly: e.g., set of weights W such that max_{x_i} |f_W(x_i) - y_i| <= 1e-3 for a fixed dataset",
+      "Identify zero-violation solutions (points on the manifold)",
+      "Compute local curvature (e.g., Gaussian or sectional curvature) of the manifold near these points using differential geometry tools (e.g., via Hessian of constraint function, or sampling nearby points and fitting local geometry)",
+      "Correlate computed curvature with rigidity (isolated vs continuous solutions) by perturbing solutions and checking if they remain on the manifold",
+      "Ensure curvature computation is numerically stable and properly normalized in high dimensions"
+    ],
+    "mode": "explore",
+    "description": "I will design and execute a numerical experiment to test the geometric rigidity hypothesis for ReLU networks. The plan involves: (1) Generating synthetic constraint samples (w points) with varying den"
+  },
+  {
+    "scene_tag": "auto_numerical",
+    "hyp_key": "80b1c52e05be",
+    "reason": "The plan attempts to directly compute Gaussian/sectional curvature of the constraint manifold in high-dimensional weight space. This is computationally intractable for high-dimensional spaces (curse of dimensionality) and numerically unstable due to the need for Hessian computation or dense local sampling. The hypothesis requires testing rigidity via N_c(w) (minimum width for zero-violation), but the plan does not address this metric at all. It instead proposes an alternative geometric approach that doesn't align with the defined rigidity metric.",
+    "missing_steps": [
+      "Define the constraint manifold using the actual rigidity metric N_c(w) as specified in the hard constraints",
+      "Implement systematic scanning of width H and constraint count w to compute N_c(w)",
+      "Establish zero-violation validation on held-out constraints with max abs error <= 1e-3",
+      "Create binary classification of rigid vs fat based on whether N_c is finite and bounded as w grows",
+      "Include proper numerical stability checks for small network training"
+    ],
+    "mode": "explore",
+    "description": "I will design a numerical experiment to test the geometric rigidity hypothesis by directly analyzing the curvature of the constraint manifold in weight space. Steps: (1) Define the constraint manifold"
   }
 ]
