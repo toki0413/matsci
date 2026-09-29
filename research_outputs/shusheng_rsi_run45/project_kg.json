@@ -1393,6 +1393,70 @@
       "r_phys": 1.0,
       "iteration": 110,
       "id": "persona_use:reviewer_iter110"
+    },
+    {
+      "label": "[DIM: dynamics] The linear rigid family defines a solution space that evolves as",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:56:47.699940",
+      "last_seen": "2026-09-29T03:56:47.699940",
+      "mentions": 1,
+      "iteration": 115,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Linear family achieves val_err ≤ 1e-3 at h=2 (e.g., w=5, seed=0) with train_err ≤ 1e-4; polynomial family shows val_err > 1e-3 for all h≤64 with trend='unreachable', confirming fat signature.\nPLAN_SLO",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: dynamics] The linear rigid family defines a solution space that evolves as"
+    },
+    {
+      "label": "plan_explore_iter115",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:56:47.699980",
+      "last_seen": "2026-09-29T03:56:47.699980",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter115"
+    },
+    {
+      "label": "pass_iter115",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:56:47.700003",
+      "last_seen": "2026-09-29T03:56:47.700003",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter115"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T03:56:47.700015",
+      "last_seen": "2026-09-29T03:56:47.700015",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: dynamics] The linear rigid family defines a solution space that evolves as",
+        "Method:plan_explore_iter115",
+        "Fact:pass_iter115"
+      ],
+      "iteration": 115,
+      "id": "he_experiment_pipeline_e0901e8e"
+    },
+    {
+      "label": "reviewer_iter115",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:56:47.700094",
+      "last_seen": "2026-09-29T03:56:47.700094",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "0bf4599c3a6f1e89",
+      "r_phys": 1.0,
+      "iteration": 115,
+      "id": "persona_use:reviewer_iter115"
     }
   ],
   "links": [
@@ -1989,6 +2053,33 @@
       "last_seen": "2026-09-29T03:55:46.567257",
       "mentions": 1,
       "target": "he_experiment_pipeline_49f9fa3"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: dynamics] The linear rigid family defines a solution space that evolves as",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:56:47.700015",
+      "last_seen": "2026-09-29T03:56:47.700015",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e0901e8e"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter115",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:56:47.700015",
+      "last_seen": "2026-09-29T03:56:47.700015",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e0901e8e"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter115",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:56:47.700015",
+      "last_seen": "2026-09-29T03:56:47.700015",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e0901e8e"
     }
   ]
 }

@@ -373,5 +373,18 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the `family` function to generate training and held-out constraint points for linear rigid and polynomial fat families, ensuring y/yv are normalized to O(1) magn"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The hypothesis centers on identifying heavy-tailed heldout error distributions in the rigid family due to ill-conditioned design matrices at low w, requiring statistical verification (QQ-plot, KS test) and metric comparison (median vs max). However, the current plan focuses on implementing rigid/fat families and conducting a capacity scan (N_c(w)), which addresses a completely different problem (topological/structural properties in function space, homology groups, Hessian spectral gap) as noted in the 'scene=other' historical failures. The plan does not implement the statistical analysis needed to verify the heavy-tailed hypothesis, nor does it compute/compare median vs max errors. This is a fundamental misalignment between the hypothesis (statistical error distribution analysis) and the plan (capacity scan and function space geometry analysis).",
+    "missing_steps": [
+      "Implement heldout error collection across multiple seeds for rigid family at various w values",
+      "Perform statistical analysis (QQ-plot, Kolmogorov-Smirnov test) to verify heavy-tailed distribution",
+      "Compute both median and max heldout errors for comparison",
+      "Analyze condition number of design matrices at low w values",
+      "Verify the falsifiable test condition: median ≤ 1e3 while max > 1e3 in some cases"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the rigid family (linear function f(x)=ax+b) and fat family (20th-degree polynomial with random coefficients) in the family function, ensuring output normalizati"
   }
 ]
