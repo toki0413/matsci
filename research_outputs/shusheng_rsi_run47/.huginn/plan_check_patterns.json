@@ -1,0 +1,15 @@
+[
+  {
+    "scene_tag": "workflow",
+    "hyp_key": "ab916af2deed",
+    "reason": "The plan's MODE 'explore' is incorrect for this task which requires implementing a specific mathematical test (coder). More critically, the DESCRIPTION lacks the essential 'capacity_scan' workflow required to measure N_c(w). Without running capacity_scan with the specified h values, the hypothesis cannot be tested. The prediction only describes data generation, not the actual capacity measurement needed to verify N_c(w)=O(1). This omits the core verification step.",
+    "missing_steps": [
+      "Change MODE from 'explore' to 'coder' for implementation",
+      "Include capacity_scan workflow in DESCRIPTION to measure N_c(w)",
+      "Specify the test procedure for checking N_c(w) trend across different w values",
+      "Ensure the implementation includes both training and validation error measurement as per hypothesis requirements"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the rigid family using orthogonal polynomials (Legendre) with linear constraints, ensuring y/yv are normalized to O(1) and Xv/X are disjoint. This is the prerequ"
+  }
+]
