@@ -12,6 +12,8 @@
 
 用法:
     PYTHONPATH=/workspace/agent python -m huginn.autoloop.replay_audit <run_dir> [...]
+    # 加 --llm 启用**语义重放** (对假设图判, 抓同义改写; 需可用 model, 每节点一次调用)
+    PYTHONPATH=/workspace/agent python -m huginn.autoloop.replay_audit --llm <run_dir> [...]
 """
 from __future__ import annotations
 
@@ -191,7 +193,10 @@ def cluster_statements(stmts: list[str]) -> dict:
             "redundancy": (1.0 - len(reps) / max(1, len([s for s in stmts if (s or '').strip()])))}
 
 
-def replay_graph_based_audit(statements: list[str]) -> dict:
+def replay_graph_based_audit(
+    statements: list[str],
+    auditor: EquivalenceAuditor | None = None,
+) -> dict:
     """离线重放 v12"图基冗余审计": 冗余基线从 objective 换成**假设图**.
 
     旧码 audit(candidate, original_problem=objective) 把每条候选假设都拿去和"待解的
@@ -199,8 +204,12 @@ def replay_graph_based_audit(statements: list[str]) -> dict:
     → 过早终止, 误杀有效探索. 新码只和"已入图的旧假设"比 ⇒ 只有真换名重提才计入.
     本函数在**同一批**记录节点上按新判据重放, 输出被新判据判为换名的次数;
     与 run.log 记录 (旧判据) 的换名次数对照, 即可量化"有多少次本来有效的探索曾被误判".
+
+    参数 auditor: 传入带真实 model 的 EquivalenceAuditor (`--llm`) 可启用**语义判**
+    (抓同义改写); 默认无 model ⇒ 仅字面等价 (difflib), 结果是真 flag 数的**下界**.
     """
-    ea = EquivalenceAuditor()
+    ea = auditor if auditor is not None else EquivalenceAuditor()
+    semantic = bool(auditor is not None and getattr(auditor, "_model", None) is not None)
     prior: list[str] = []
     flags = 0
     for s in statements:
@@ -215,6 +224,7 @@ def replay_graph_based_audit(statements: list[str]) -> dict:
         "nodes": len(prior),
         "graph_based_rename_flags": flags,
         "flag_rate": (flags / len(prior)) if prior else 0.0,
+        "semantic_llm": semantic,
     }
 
 
@@ -264,7 +274,14 @@ def replay_rename_debt(recorded: list[tuple[int, str]]) -> dict:
 
 # ── 审计 ─────────────────────────────────────────────────────────────
 
-def audit(run_dir: str) -> dict:
+def _build_llm_auditor() -> EquivalenceAuditor:
+    """构造带真实 model 的审计器, 供 `--llm` 做**语义重放**. 无 config/依赖时抛错."""
+    from huginn.llm import get_model
+
+    return EquivalenceAuditor(model=get_model(temperature=0.0))
+
+
+def audit(run_dir: str, auditor: EquivalenceAuditor | None = None) -> dict:
     rows = load_episodic(run_dir)
     cycles = cycles_from_episodic(rows)
     nodes = load_graph_nodes(run_dir)
@@ -281,7 +298,7 @@ def audit(run_dir: str) -> dict:
     # 假设图等价聚类: 节点数 vs 真正不同的命题簇 (可复现的"膨胀无信息")
     graph_clusters = cluster_statements([s for _, s in nodes])
     # v12 判据验证: 同一批节点用"图基冗余审计"重放 (旧码对 objective 判)
-    graph_audit = replay_graph_based_audit([s for _, s in nodes])
+    graph_audit = replay_graph_based_audit([s for _, s in nodes], auditor=auditor)
     # 记录在案的换名事件 → 是否闭环振荡 (线上走 recall+LLM, 离线只能用记录值)
     osc = rename_oscillation(log["rename"])
     # v11 出口验证: 在新"换名债务"不变量下, 这条旧轨迹是否**必然终止**
@@ -374,12 +391,13 @@ def _verdict(a: dict) -> list[str]:
     if ga.get("nodes"):
         _old = dr.get("rename_occurrences", 0) or osc.get("events", 0)
         _delta = max(0, _old - ga["graph_based_rename_flags"])
+        _mode = "语义+字面" if ga.get("semantic_llm") else "仅字面(真值的下界)"
         out.append(
-            "v12 判据验证: 图基审计(对假设图判)在 %d 个节点上只标"
+            "v12 判据验证 [%s]: 图基审计(对假设图判)在 %d 个节点上标"
             " %d 个换名 (%.0f%%); 旧码(对 objective 判)记录 %d 次换名 ⇒ 差集 %d 次是"
             "**被误判的机制不同假设** (代数秩/流形维数/Rademacher 等), 正是被掐死的"
             "有效探索"
-            % (ga["nodes"], ga["graph_based_rename_flags"],
+            % (_mode, ga["nodes"], ga["graph_based_rename_flags"],
                100 * ga["flag_rate"], _old, _delta))
     if ex["terminal"] == 0 and ex["soft"] > 0:
         out.append(
@@ -408,9 +426,24 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="离线重放审计: 枚举无进展但未出口的空转路径")
     ap.add_argument("run_dirs", nargs="+")
     ap.add_argument("--json", action="store_true", help="额外输出原始审计 JSON")
+    ap.add_argument(
+        "--llm", action="store_true",
+        help="对每个假设节点启用 LLM 语义判 (与假设图比, 抓同义改写); 需可用 model."
+             " 不传时仅字面判, 结果是真 flag 数的下界. 注意: 每节点一次 LLM 调用.",
+    )
     args = ap.parse_args(argv)
+
+    auditor: EquivalenceAuditor | None = None
+    if args.llm:
+        try:
+            auditor = _build_llm_auditor()
+            print("--llm: 已加载 model, 启用语义重放")
+        except Exception as e:  # 无 config / 缺依赖 → 明确告知并退化
+            print(f"! --llm 不可用 ({type(e).__name__}: {e}); 退化为仅字面重放")
+            auditor = None
+
     for rd in args.run_dirs:
-        a = audit(rd)
+        a = audit(rd, auditor=auditor)
         print(f"\n===== {rd} =====")
         for line in _verdict(a):
             print("  •", line)
