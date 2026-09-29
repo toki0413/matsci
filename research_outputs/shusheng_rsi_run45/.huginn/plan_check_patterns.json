@@ -272,5 +272,38 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the family function for the linear rigid family (f(x)=ax+b) and the fat family (20th-degree polynomial with random coefficients), ensuring proper normalization t"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan is fundamentally misaligned with the hypothesis. The hypothesis concerns topological/structural properties (H1 groups, affine manifold geometry, spectral gap analysis of Hessian) in function space, but the plan only implements a capacity scan measuring N_c(w) and held-out error. This repeats the exact historical failure pattern where TDA was omitted despite being explicitly required in all three scene=other failure entries. The plan focuses on error metrics rather than computing homology groups, analyzing weight manifold geometry, or verifying the affine manifold structure as required by the hypothesis.",
+    "missing_steps": [
+      "Define weight manifold geometry and parameterization for both rigid and fat families",
+      "Implement topological data analysis (persistent homology) to compute H1 groups",
+      "Specify filtration method (e.g., Vietoris-Rips) for homology computation",
+      "Add continuous interpolation path testing between training and held-out solutions",
+      "Verify that rigid family forms a 2D affine manifold through geometric analysis",
+      "Confirm solution space invariance under translation and scaling algebraically",
+      "Compute Hessian at initialization and analyze its spectral gap",
+      "Analyze gradient flow dynamics for both families"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family` function for rigid (linear) and fat (high-degree polynomial) families with proper normalization to O(1) scale, ensure (N,1) output shapes, and verif"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan mentions topology (Vietoris-Rips, persistent homology) but it is applied to 'weight trajectories' rather than the function space geometry or solution space required by the hypothesis. The hypothesis specifically concerns the generalization gap arising from gradient explosion in the Hessian and the affine manifold structure of the rigid family in function space. The plan fails to address the core mathematical structure: it does not define the function space parameterization, verify the 2D affine manifold structure of the rigid family, analyze the Hessian spectral gap in function space, or compute homology groups of the solution set. Instead, it focuses on weight space trajectories which is a different mathematical object.",
+    "missing_steps": [
+      "Define weight manifold geometry for rigid and fat families in function space (not just parameter space)",
+      "Verify rigid family forms a 2D affine manifold in function space through geometric analysis",
+      "Confirm solution space invariance under translation and scaling algebraically",
+      "Compute Hessian at initialization and analyze its spectral gap in function space",
+      "Implement topological data analysis (persistent homology) on the solution space manifold, not weight trajectories",
+      "Specify filtration method for homology computation on the function space geometry",
+      "Add continuous interpolation path testing between training and held-out solutions in function space",
+      "Implement gradient flow dynamics for both families and analyze convergence properties",
+      "Analyze infinite width limit behavior of the rigid linear family and verify first-order linear transport equation"
+    ],
+    "mode": "explore",
+    "description": "Define the weight manifold geometry for rigid (linear) and fat (polynomial) families; implement Vietoris-Rips filtration on weight trajectories to compute persistent homology (H1 groups); analyze the "
   }
 ]

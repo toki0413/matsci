@@ -1073,6 +1073,70 @@
       "r_phys": 1.0,
       "iteration": 85,
       "id": "persona_use:reviewer_iter85"
+    },
+    {
+      "label": "[STRUCTURE] The solution space of the linear rigid family forms a 2-dimensional ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:50:51.734317",
+      "last_seen": "2026-09-29T03:50:51.734317",
+      "mentions": 1,
+      "iteration": 90,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the linear rigid family, will achieve val_err ≤1e-3 at small widths (h=2-8) with flat or decreasing N_c(w) trend; for the fat family, will show val_err >1e-3 across all widths h≤64 with trend='unr",
+      "persona": "reviewer",
+      "id": "experiment:[STRUCTURE] The solution space of the linear rigid family forms a 2-dimensional"
+    },
+    {
+      "label": "plan_explore_iter90",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:50:51.734354",
+      "last_seen": "2026-09-29T03:50:51.734354",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter90"
+    },
+    {
+      "label": "pass_iter90",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:50:51.734375",
+      "last_seen": "2026-09-29T03:50:51.734375",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter90"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T03:50:51.734384",
+      "last_seen": "2026-09-29T03:50:51.734384",
+      "mentions": 1,
+      "members": [
+        "experiment:[STRUCTURE] The solution space of the linear rigid family forms a 2-dimensional",
+        "Method:plan_explore_iter90",
+        "Fact:pass_iter90"
+      ],
+      "iteration": 90,
+      "id": "he_experiment_pipeline_2987a3ad"
+    },
+    {
+      "label": "reviewer_iter90",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:50:51.734450",
+      "last_seen": "2026-09-29T03:50:51.734450",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "7c99fa75e97e779e",
+      "r_phys": 1.0,
+      "iteration": 90,
+      "id": "persona_use:reviewer_iter90"
     }
   ],
   "links": [
@@ -1534,6 +1598,33 @@
       "last_seen": "2026-09-29T03:49:51.815785",
       "mentions": 1,
       "target": "he_experiment_pipeline_c7d47622"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[STRUCTURE] The solution space of the linear rigid family forms a 2-dimensional",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:50:51.734384",
+      "last_seen": "2026-09-29T03:50:51.734384",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2987a3ad"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter90",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:50:51.734384",
+      "last_seen": "2026-09-29T03:50:51.734384",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2987a3ad"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter90",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:50:51.734384",
+      "last_seen": "2026-09-29T03:50:51.734384",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2987a3ad"
     }
   ]
 }
