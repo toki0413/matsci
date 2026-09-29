@@ -1207,6 +1207,36 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_71fea145",
+      "objective": "[DIM: computation] The information-theoretic capacity of the rigid family satisfies N_c(w) = O(1) independent of w, because the solution space is a finite-dimensional affine subspace whose VC-dimension is bounded by the number of free parameters in the analytic representation (≤ w for polynomial/trigonometric bases), whereas the fat family has N_c(w) → ∞ as w increases due to unbounded Kolmogorov complexity in its high-degree random polynomial construction.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the `family` function to define the rigid and fat families with normalized outputs, ensuring the rigid family has a finite-dimensional affine subspace structure and the fat family uses high-degree random polynomials. The function will return training and validation sets with proper shapes (N,1) and normalized y/yv values (std ≲ 10). This enables the capacity_scan to compute N_c(w) and test the hypothesis that the rigid family has bounded capacity while the fat family has unbounded capacity.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "family.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T08:06:34.758550+00:00",
+      "confirmed_at": "2026-09-29T08:06:34.760711+00:00",
+      "completed_at": "2026-09-29T08:06:55.509739+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

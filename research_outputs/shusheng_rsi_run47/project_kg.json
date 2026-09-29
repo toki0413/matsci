@@ -2404,6 +2404,70 @@
       "r_phys": 1.0,
       "iteration": 190,
       "id": "persona_use:reviewer_iter190"
+    },
+    {
+      "label": "** [DIM: [NEW] algorithmic_information]",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T08:06:15.651472",
+      "last_seen": "2026-09-29T08:06:15.651472",
+      "mentions": 1,
+      "iteration": 195,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family, N_c(w) will be finite and small (h=2~8) with flat trend as w increases; for the fat family, N_c will be unreachable (all h≤64 yield max validation error > 1e3) with trend='unreac",
+      "persona": "reviewer",
+      "id": "experiment:** [DIM: [NEW] algorithmic_information]"
+    },
+    {
+      "label": "plan_explore_iter195",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:06:15.651512",
+      "last_seen": "2026-09-29T08:06:15.651512",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter195"
+    },
+    {
+      "label": "pass_iter195",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:06:15.651521",
+      "last_seen": "2026-09-29T08:06:15.651521",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter195"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T08:06:15.651530",
+      "last_seen": "2026-09-29T08:06:15.651530",
+      "mentions": 1,
+      "members": [
+        "experiment:** [DIM: [NEW] algorithmic_information]",
+        "Method:plan_explore_iter195",
+        "Fact:pass_iter195"
+      ],
+      "iteration": 195,
+      "id": "he_experiment_pipeline_a9942311"
+    },
+    {
+      "label": "reviewer_iter195",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T08:06:15.651606",
+      "last_seen": "2026-09-29T08:06:15.651606",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "27eab1216ee51886",
+      "r_phys": 1.0,
+      "iteration": 195,
+      "id": "persona_use:reviewer_iter195"
     }
   ],
   "links": [
@@ -3432,6 +3496,33 @@
       "last_seen": "2026-09-29T08:05:12.178633",
       "mentions": 1,
       "target": "he_experiment_pipeline_3721f333"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:** [DIM: [NEW] algorithmic_information]",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:06:15.651530",
+      "last_seen": "2026-09-29T08:06:15.651530",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a9942311"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter195",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:06:15.651530",
+      "last_seen": "2026-09-29T08:06:15.651530",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a9942311"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter195",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:06:15.651530",
+      "last_seen": "2026-09-29T08:06:15.651530",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a9942311"
     }
   ]
 }
