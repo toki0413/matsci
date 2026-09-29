@@ -1280,10 +1280,15 @@ class CognitiveRunner:
                 logger.debug("hypothesis statement lookup skipped", exc_info=True)
         _hint = (
             f"Stagnation classified as evidence_against. "
-            f"Current hypothesis may be wrong. Hunt for a counterexample.\n"
+            f"Current hypothesis may be wrong.\n"
             f"Hypothesis: {_stmt}\n"
-            f"Construct a specific scenario / parameter set where this hypothesis "
-            f"would fail. If found, refute and pivot to a corrected hypothesis."
+            f"Design a DISCRIMINATING experiment, not just a counterexample: pick the "
+            f"measured quantity (e.g. N_c as a function of w) and a scan over its "
+            f"parameter, then state which competing hypothesis's prediction that scan "
+            f"separates. If a rival predicts the quantity stays flat while the current "
+            f"one predicts it grows linearly, one scan over the shared parameter must "
+            f"tell them apart. Refute the prediction that loses and pivot to the "
+            f"hypothesis whose prediction survives."
         )
         # _speculator_hint 会被 _build_hypothesis_prompt 读取注入.
         # 注意: 该 directive 在本方法末尾才 append, 因为 prompt 侧只保留尾部

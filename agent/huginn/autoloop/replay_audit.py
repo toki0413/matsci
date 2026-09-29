@@ -191,6 +191,33 @@ def cluster_statements(stmts: list[str]) -> dict:
             "redundancy": (1.0 - len(reps) / max(1, len([s for s in stmts if (s or '').strip()])))}
 
 
+def replay_graph_based_audit(statements: list[str]) -> dict:
+    """离线重放 v12"图基冗余审计": 冗余基线从 objective 换成**假设图**.
+
+    旧码 audit(candidate, original_problem=objective) 把每条候选假设都拿去和"待解的
+    问题"比 ⇒ 机制不同 (代数秩 / 流形维数 / Rademacher 复杂度) 也被判换名, 债务虚高
+    → 过早终止, 误杀有效探索. 新码只和"已入图的旧假设"比 ⇒ 只有真换名重提才计入.
+    本函数在**同一批**记录节点上按新判据重放, 输出被新判据判为换名的次数;
+    与 run.log 记录 (旧判据) 的换名次数对照, 即可量化"有多少次本来有效的探索曾被误判".
+    """
+    ea = EquivalenceAuditor()
+    prior: list[str] = []
+    flags = 0
+    for s in statements:
+        s = (s or "").strip()
+        if not _is_substantive_statement(s):
+            continue
+        v = ea.audit_hypothesis_against_graph(s, prior)
+        if v.is_equivalent_renaming:
+            flags += 1
+        prior.append(s)
+    return {
+        "nodes": len(prior),
+        "graph_based_rename_flags": flags,
+        "flag_rate": (flags / len(prior)) if prior else 0.0,
+    }
+
+
 def rename_oscillation(recorded: list[tuple[int, str]]) -> dict:
     """用 run.log 记录的 rename 事件判定"闭环振荡".
 
@@ -253,6 +280,8 @@ def audit(run_dir: str) -> dict:
     rename = replay_rename_streak([c["statement"] for c in cycles])
     # 假设图等价聚类: 节点数 vs 真正不同的命题簇 (可复现的"膨胀无信息")
     graph_clusters = cluster_statements([s for _, s in nodes])
+    # v12 判据验证: 同一批节点用"图基冗余审计"重放 (旧码对 objective 判)
+    graph_audit = replay_graph_based_audit([s for _, s in nodes])
     # 记录在案的换名事件 → 是否闭环振荡 (线上走 recall+LLM, 离线只能用记录值)
     osc = rename_oscillation(log["rename"])
     # v11 出口验证: 在新"换名债务"不变量下, 这条旧轨迹是否**必然终止**
@@ -277,6 +306,7 @@ def audit(run_dir: str) -> dict:
         "new_nodes_per_cycle": new_nodes,
         "zero_progress_cycles": zero_progress_cycles,
         "graph_clusters": graph_clusters,
+        "graph_based_audit": graph_audit,
         "rename": rename,
         "rename_oscillation": osc,
         "rename_debt_replay": debt_replay,
@@ -340,6 +370,17 @@ def _verdict(a: dict) -> list[str]:
             "假设图 %d 节点, 字面等价聚类 %d 簇 (字面冗余率 %.0f%%): 换名是**语义级**的,"
             " 字面守卫抓不到 ⇒ 只有 recall+LLM 的等价审计能抓, 而它只重定向不终止"
             % (gc["nodes"], gc["clusters"], 100 * gc["redundancy"]))
+    ga = a.get("graph_based_audit") or {}
+    if ga.get("nodes"):
+        _old = dr.get("rename_occurrences", 0) or osc.get("events", 0)
+        _delta = max(0, _old - ga["graph_based_rename_flags"])
+        out.append(
+            "v12 判据验证: 图基审计(对假设图判)在 %d 个节点上只标"
+            " %d 个换名 (%.0f%%); 旧码(对 objective 判)记录 %d 次换名 ⇒ 差集 %d 次是"
+            "**被误判的机制不同假设** (代数秩/流形维数/Rademacher 等), 正是被掐死的"
+            "有效探索"
+            % (ga["nodes"], ga["graph_based_rename_flags"],
+               100 * ga["flag_rate"], _old, _delta))
     if ex["terminal"] == 0 and ex["soft"] > 0:
         out.append(
             "出口体检失败: 软动作 %d 次, **可终止出口 0 次** → 不变量"

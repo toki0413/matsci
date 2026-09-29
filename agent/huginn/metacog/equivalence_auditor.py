@@ -166,6 +166,62 @@ class EquivalenceAuditor:
 
         return rule_verdict
 
+    def audit_hypothesis_against_graph(
+        self,
+        candidate_hypothesis: str,
+        graph_statements: list[str],
+        reduction_chain: str = "",
+    ) -> EquivalenceVerdict:
+        """假设层冗余审计: 冗余基线是**假设图已有节点**, 不是 objective.
+
+        为何不能拿 objective 当基线: objective 是"待解的问题"本身 (如"刻画网络
+        刚性"), 任何针对它的假设在语义上都天然"像"它 —— 拿它做基线会把**机制不同**
+        的假设 (代数秩 / 流形维数 / Rademacher 复杂度) 全判成"换名归约", 债务虚高
+        → 过早终止, 反而掐死了真正想要的"LLM 自主有效探索". 冗余的正确定义是
+        "新假设 ≈ 某条**已入图的旧假设**": 只有这种才是真换名重提, 才算无进展.
+
+        判据: 与任一 (非自身的) 图节点字面等价 (`_is_equivalent`, difflib>0.8) 或
+        (有 model 时) 语义等价 → equivalent_renaming; 都不命中 → undetermined
+        (非换名 ⇒ 不累加债务 ⇒ 探索继续).
+        """
+        cand = (candidate_hypothesis or "").strip()
+        if not cand:
+            return EquivalenceVerdict(verdict="undetermined", missing_mechanism="空假设")
+
+        # 排除自身 + 同一假设的截断/超集 (SELECTED 行 vs 节点全文): 与自身比较必然
+        # "等价", 若不排除会把每一条新假设都误判成换名.
+        others: list[str] = []
+        for stmt in graph_statements or []:
+            s = (stmt or "").strip()
+            if not s or s == cand or cand in s or s in cand:
+                continue
+            others.append(s)
+
+        # 字面等价 (确定性, 先跑)
+        for s in others:
+            if self._is_equivalent(cand, s):
+                return EquivalenceVerdict(
+                    verdict="equivalent_renaming",
+                    reduction_target=f"graph:{s[:80]}",
+                    trap_category="graph_duplicate",
+                    evidence=[f"与假设图已有节点等价: {s[:120]}"],
+                    missing_mechanism="需提出与图中已有假设实质不同的新机制, 不是换名重提",
+                )
+
+        # LLM 语义增强: difflib 抓不住同义改写, 交给 LLM 对**图节点**判 (非对 objective).
+        if others and self._model is not None and self._is_real_model():
+            try:
+                llm_verdict = self._llm_audit_against_graph(cand, others)
+                if llm_verdict.is_equivalent_renaming:
+                    return llm_verdict
+            except Exception:
+                logger.debug("LLM graph audit failed, keeping undetermined", exc_info=True)
+
+        return EquivalenceVerdict(
+            verdict="undetermined",
+            missing_mechanism="与图中已有假设均不冗余 (未确认新颖, 但非换名)",
+        )
+
     def _is_equivalent(self, a: str, b: str) -> bool:
         """字符串相似度 > 0.8 视为等价.
 
@@ -269,6 +325,36 @@ class EquivalenceAuditor:
         except (json.JSONDecodeError, TypeError, AttributeError):
             return EquivalenceVerdict(verdict="undetermined", missing_mechanism="LLM 解析失败")
 
+    def _llm_audit_against_graph(
+        self, candidate: str, existing: list[str]
+    ) -> EquivalenceVerdict:
+        """LLM 语义审计: 候选假设是否只是**已有假设**的换名重提 (同义改写).
+
+        与 `_llm_audit` 的区别: 基线是图节点列表而非 objective. 换了数学维度/术语
+        但机制与可区分预测不同 → 不算冗余, 避免把有效探索误判成换名.
+        """
+        from langchain_core.messages import HumanMessage, SystemMessage
+
+        listing = "\n".join(f"- {s[:300]}" for s in existing[:20])
+        prompt = (
+            f"已有假设:\n{listing}\n\n"
+            f"新假设: {candidate}\n\n"
+            "新假设是否只是上述某条已有假设的**换名重提** (同一机制/同一可区分预测的"
+            "改述)? 换了数学维度或术语, 但机制与预测实质不同 → 不是换名.\n"
+            "输出 JSON: {\"verdict\": \"equivalent_renaming|undetermined\", "
+            "\"reduction_target\": \"若换名, 重复了哪条\", "
+            "\"evidence\": [\"为何是同一机制\"]}"
+        )
+        messages = [
+            SystemMessage(content=(
+                "你是假设层冗余审计员. 只判'新假设是否等价于已有假设', "
+                "不判它是否解决了原问题. 术语不同但机制/预测不同 → 不算冗余."
+            )),
+            HumanMessage(content=prompt),
+        ]
+        resp = self._model.invoke(messages)
+        return self._parse_llm_verdict(str(resp.content).strip())
+
     # ── 拓扑审计 (高阶网络视角) ──────────────────────────────────
 
     def audit_topology(
@@ -348,6 +434,21 @@ def _selfcheck() -> None:
     # 4. 空输入 → undetermined
     v4 = auditor.audit("", "", "")
     assert v4.verdict == "undetermined"
+
+    # 5. 图基审计: 机制不同 (代数秩 vs 流形维数) → **不判换名** (有效探索不被误杀)
+    v5 = auditor.audit_hypothesis_against_graph(
+        candidate_hypothesis="刚性由约束矩阵的代数秩决定 (秩亏 ⇒ 软模数发散)",
+        graph_statements=["刚性由构型流形的维数决定 (维数低于 DoF 阈值 ⇒ 软化)"],
+    )
+    assert not v5.is_equivalent_renaming, f"机制不同不应判换名, got {v5.verdict}"
+
+    # 6. 图基审计: 真换名重提 (仅参数不同) → 判换名
+    v6 = auditor.audit_hypothesis_against_graph(
+        candidate_hypothesis="刚性由平均配位数越过临界值 z_c=4 决定",
+        graph_statements=["刚性由平均配位数越过临界值 z_c=6 决定"],
+    )
+    assert v6.is_equivalent_renaming, f"真换名应判 equivalent_renaming, got {v6.verdict}"
+    assert v6.trap_category == "graph_duplicate"
 
     print("equivalence_auditor selfcheck OK")
 

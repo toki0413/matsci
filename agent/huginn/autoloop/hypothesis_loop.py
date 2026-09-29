@@ -2207,9 +2207,11 @@ class HypothesisLoop:
         """
         try:
             import re
-            # 匹配 [DIM: xxx] statement | pro: ... | con: ...
+            # 匹配 [DIM: xxx] statement | predict: ... | pro: ... | con: ...
+            # v12: 候选格式新增 predict: 字段 (可区分数值预测). 取到行尾前,
+            # 剥掉任意 `| <field>:` 后缀, 免得把 predict/pro/con 正文并进陈述.
             _pattern = re.compile(
-                r"\[DIM:\s*([^\]]+)\]\s*(.+?)(?:\s*\|\s*pro:.*?(?:\s*\|\s*con:.*?)?$|$)",
+                r"\[DIM:\s*([^\]]+)\]\s*(.+?)(?:\s*\|\s*(?:predict|pro|con):.*)?$",
                 re.MULTILINE,
             )
             _seen_dims: set[str] = set()
@@ -2260,12 +2262,24 @@ class HypothesisLoop:
             return
         try:
             auditor = self._get_metacog_auditor()
-            original_problem = str(context.get("summary", "")) or str(
-                self._objective or ""
-            )
-            verdict = auditor.audit(
-                candidate_finding=hypothesis,
-                original_problem=original_problem,
+            # v12: 假设层冗余只对**假设图**判, 不再对 objective 判.
+            # 旧写法 audit(candidate=hyp, original_problem=objective) 把"针对该问题的
+            # 任何假设"都拿去和问题本身比 → 机制不同 (代数秩/流形维数/Rademacher 复杂度)
+            # 也判换名 → 债务虚高 → 过早终止, 反而掐死了真正想要的"LLM 自主有效探索".
+            # 冗余的正确基线是"已入图的旧假设": 只有"新假设 ≈ 某条旧假设"才是真换名重提.
+            try:
+                _cand_key = _statement_key(hypothesis)
+                _existing_stmts = [
+                    n.statement
+                    for n in self.hypothesis_graph.all_nodes()
+                    if n.statement and _statement_key(n.statement) != _cand_key
+                ]
+            except Exception:  # 防御: 无图时退化为空基线 (空基线不误判换名)
+                logger.debug("graph statements unavailable for audit", exc_info=True)
+                _existing_stmts = []
+            verdict = auditor.audit_hypothesis_against_graph(
+                candidate_hypothesis=hypothesis,
+                graph_statements=_existing_stmts,
                 reduction_chain="",  # _hypothesize 阶段还没有归约链
             )
             self._metacog_last_audit = verdict
@@ -2343,6 +2357,13 @@ class HypothesisLoop:
                                 f"[强制重定向] 连续换名归约 {_rename_streak} 次: "
                                 f"放弃当前方法族, 换一个族重新出发"
                             )
+                        # 换族 ≠ 换名: 必须带**可区分的数值预测** + 能把它区分出来的
+                        # 扫描实验, 否则新假设只是旧假设的改述 (换透镜不换实验).
+                        _rd_hint += (
+                            "\n新假设必须给出与旧机制可区分的数值预测 (如同一被测量随"
+                            "参数 w 的定/线性/对数趋势), 并设计一次能把这些预测区分开的"
+                            "扫描实验; 仅换数学维度/术语而预测相同 = 换名, 不算进展."
+                        )
                         self._speculator_hint = (
                             (getattr(self, "_speculator_hint", "") or "")
                             + "\n" + _rd_hint

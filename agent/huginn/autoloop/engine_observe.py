@@ -1287,9 +1287,14 @@ hypothesis in mathematics first, whatever the subject matter.
 Perceived context:
 {json.dumps(context, indent=2, ensure_ascii=False)[:2000]}
 
-Generate 3 divergent candidate hypotheses. Each MUST be grounded in a
-DIFFERENT mathematical dimension. Pick dimensions from this list (or
-propose a new one tagged [NEW]):
+Generate 3 divergent candidate hypotheses. They must be MUTUALLY
+DISCRIMINABLE: each must make a different, checkable numerical prediction
+that a SINGLE experiment could tell apart (e.g. the same measured quantity
+growing linearly vs logarithmically vs staying flat as a parameter w
+varies, or different scaling exponents). Grounding each in a different
+mathematical dimension is welcome but NOT sufficient — a different
+dimension carrying the same prediction is just a rename. Dimensions
+(pick one, or propose new tagged [NEW]):
 - structure (algebraic structure, symmetry, invariants)
 - geometry (manifold, curvature, dimension, topology)
 - dynamics (differential equations, variational principles, conservation laws)
@@ -1298,11 +1303,13 @@ propose a new one tagged [NEW]):
 - computation (complexity, information, approximation bounds)
 
 Format each candidate as:
-[DIM: <dimension>] <statement> | pro: ... | con: ...
+[DIM: <dimension>] <statement> | predict: <the measured quantity as a
+function of a parameter, e.g. "rigid family: N_c constant in w; floppy
+family: N_c grows linearly in w"> | pro: ... | con: ...
 
 After listing 3, select the most testable+novel one after "SELECTED:".
-The 3 candidates must NOT be variations of each other — if two share the
-same dimension, the second is invalid and must be replaced.
+If two candidates would make the SAME numerical prediction, the second is
+a rename and MUST be replaced — do not merely relabel it.
 Ground it in the domain knowledge context above when relevant.
 State the mathematics explicitly — governing equations, invariants,
 variational principles, or complexity/approximation bounds — before
