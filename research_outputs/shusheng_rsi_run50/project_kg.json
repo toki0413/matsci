@@ -177,6 +177,70 @@
       "r_phys": 1.0,
       "iteration": 20,
       "id": "persona_use:reviewer_iter20"
+    },
+    {
+      "label": "[DIM: optimization] The minimal width $N_c(w)$ required for zero-violation gener",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T12:32:22.175973",
+      "last_seen": "2026-09-29T12:32:22.175973",
+      "mentions": 1,
+      "iteration": 25,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The experiment will reveal a sharp phase transition at $\\rho_c \\approx 0.5-0.8$ (typical for ReLU networks), below which all global minima lie in a connected basin (path length < 100 steps in weight s",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: optimization] The minimal width $N_c(w)$ required for zero-violation gener"
+    },
+    {
+      "label": "plan_explore_iter25",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T12:32:22.176008",
+      "last_seen": "2026-09-29T12:32:22.176008",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter25"
+    },
+    {
+      "label": "pass_iter25",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T12:32:22.176017",
+      "last_seen": "2026-09-29T12:32:22.176017",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter25"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T12:32:22.176025",
+      "last_seen": "2026-09-29T12:32:22.176025",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: optimization] The minimal width $N_c(w)$ required for zero-violation gener",
+        "Method:plan_explore_iter25",
+        "Fact:pass_iter25"
+      ],
+      "iteration": 25,
+      "id": "he_experiment_pipeline_ef70a765"
+    },
+    {
+      "label": "reviewer_iter25",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T12:32:22.176098",
+      "last_seen": "2026-09-29T12:32:22.176098",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "09dd299b9544ae8d",
+      "r_phys": 1.0,
+      "iteration": 25,
+      "id": "persona_use:reviewer_iter25"
     }
   ],
   "links": [
@@ -260,6 +324,33 @@
       "last_seen": "2026-09-29T12:31:16.386148",
       "mentions": 1,
       "target": "he_experiment_pipeline_87870cde"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: optimization] The minimal width $N_c(w)$ required for zero-violation gener",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T12:32:22.176025",
+      "last_seen": "2026-09-29T12:32:22.176025",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ef70a765"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T12:32:22.176025",
+      "last_seen": "2026-09-29T12:32:22.176025",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ef70a765"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T12:32:22.176025",
+      "last_seen": "2026-09-29T12:32:22.176025",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ef70a765"
     }
   ]
 }

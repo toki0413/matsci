@@ -28,5 +28,19 @@
     ],
     "mode": "explore",
     "description": "We will test the hypothesis that zero-violation capacity $N_c(w)$ exhibits a phase transition at critical constraint density $\\rho_c = w/N$ by designing a rigorous numerical experiment on small ReLU n"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "89f2725e801c",
+    "reason": "The plan uses MODE=explore, but the task requires a definitive yes/no judgment on whether the plan succeeds. A 'explore' mode indicates the plan is a proposal for an investigation, not a conclusive verification. Additionally, the plan lacks critical implementation details: it does not specify the basis functions φ, the constraint points x_i, or the network architecture (activation functions, depth), which are necessary to compute rank(A) and N_c(w) concretely. Without these, the prediction cannot be verified numerically as required by the hypothesis.",
+    "missing_steps": [
+      "Define the basis functions φ_j(x) used in the constraint matrix A_ij = φ_j(x_i)",
+      "Specify the method for selecting constraint points x_i (e.g., random, grid, adaptive)",
+      "Define the neural network architecture (activation functions, depth, initialization)",
+      "Specify the training procedure (optimizer, loss function, stopping criteria)",
+      "Define how 'zero violation' is measured (max error on held-out points as stated, but needs explicit implementation)"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement a Python script that performs a width-scan of small fully-connected neural networks to measure the minimal width $N_c(w)$ for zero-violation generalization. The "
   }
 ]
