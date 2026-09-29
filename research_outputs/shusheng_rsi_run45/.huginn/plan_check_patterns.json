@@ -305,5 +305,22 @@
     ],
     "mode": "explore",
     "description": "Define the weight manifold geometry for rigid (linear) and fat (polynomial) families; implement Vietoris-Rips filtration on weight trajectories to compute persistent homology (H1 groups); analyze the "
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan fundamentally misaligns with the hypothesis. The hypothesis requires analyzing topological/structural properties of rigid linear families forming a 2D affine manifold in function space, computing H1 homology groups, verifying affine manifold geometry, and analyzing Hessian spectral gaps. The proposed plan only implements a capacity scan measuring N_c(w) and held-out error, which addresses a different problem entirely. This repeats the exact historical failure patterns where TDA was omitted and the focus was on weight space trajectories rather than function space geometry. The plan fails to define weight manifold geometry in function space, verify the 2D affine manifold structure, compute homology groups of the solution set, or analyze the Hessian spectral gap.",
+    "missing_steps": [
+      "Define weight manifold geometry and parameterization for both rigid and fat families in function space (not just parameter space)",
+      "Implement topological data analysis (persistent homology) to compute H1 groups of the solution space manifold",
+      "Specify filtration method (e.g., Vietoris-Rips) for homology computation on function space geometry",
+      "Verify that rigid family forms a 2D affine manifold through geometric analysis in function space",
+      "Confirm solution space invariance under translation and scaling algebraically",
+      "Compute Hessian at initialization and analyze its spectral gap in function space",
+      "Add continuous interpolation path testing between training and held-out solutions in function space",
+      "Implement gradient flow dynamics for both families and analyze convergence properties",
+      "Analyze infinite width limit behavior of the rigid linear family and verify first-order linear transport equation"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function for rigid (linear) and fat (high-degree polynomial) function spaces, ensuring y/yv are (N,1) shaped, non-overlapping held-out sets, normalize"
   }
 ]
