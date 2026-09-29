@@ -320,5 +320,35 @@
     ],
     "mode": "workflow",
     "description": "Construct a numerical pipeline to compute N_c(w) for ReLU networks across varying constraint counts w. Steps: (1) Define hard constraints f(x_i)=y_i with y_i sampled from sin(2πx) plus structured nois"
+  },
+  {
+    "scene_tag": "workflow",
+    "hyp_key": "4f1ee71e60e7",
+    "reason": "The plan is invalid due to two critical violations of the hard constraints. First, the description defines zero-violation as 'max abs error ≤ 1e3', whereas the hard constraint explicitly requires ≤ 1e-3 (a factor of 1000 difference). Second, the hypothesis concerns the asymptotic scaling behavior of N_c(w) (the minimal width needed to satisfy w constraints), but the plan's prediction focuses on 'small w' and 'phase transition behavior' at a critical w_c, which does not directly address the O(log w) vs polynomial scaling question. Additionally, the plan lacks specification of the network architecture (depth, activation functions, initialization) and training methodology (loss function, optimizer, stopping criteria), which are crucial for reproducibility.",
+    "missing_steps": [
+      "Correct zero-violation threshold from 1e3 to 1e-3 as per hard constraint",
+      "Specify network architecture details (depth, initialization, activation functions)",
+      "Define training methodology (loss function, optimizer, stopping criteria)",
+      "Extend the w-range to observe asymptotic scaling behavior rather than just small w",
+      "Include baseline comparisons or theoretical bounds for validation",
+      "Address the 'rigid' vs 'fat' distinction more explicitly in the analysis plan"
+    ],
+    "mode": "explore",
+    "description": "Construct a numerical pipeline to compute N_c(w) for ReLU networks across varying constraint counts w. Generate w constraint points (input-output pairs), train ReLU networks of increasing hidden width"
+  },
+  {
+    "scene_tag": "workflow",
+    "hyp_key": "4f1ee71e60e7",
+    "reason": "The plan contains two critical violations of hard constraints that make it invalid. First, the hypothesis claims a logarithmic bound O(log w) for N_c(w), but the plan's description defines zero-violation as 'max abs error ≤ 10^-3' which is correct, but the prediction focuses on 'small w' and 'phase transition behavior' rather than addressing the asymptotic O(log w) vs polynomial scaling question. Second, the plan lacks specification of network architecture details (depth, activation functions, initialization) and training methodology (loss function, optimizer, stopping criteria), which are crucial for reproducibility. The plan also doesn't explicitly address the 'rigid' vs 'fat' distinction in the analysis plan as required by the hard constraints.",
+    "missing_steps": [
+      "Specify network architecture details (depth, activation functions, initialization)",
+      "Define training methodology (loss function, optimizer, stopping criteria)",
+      "Extend w-range to observe asymptotic scaling behavior rather than just small w",
+      "Include baseline comparisons or theoretical bounds for validation",
+      "Address the 'rigid' vs 'fat' distinction more explicitly in the analysis plan",
+      "Clarify the exact definition of N_c(w) and how it relates to the O(log w) bound"
+    ],
+    "mode": "explore",
+    "description": "Construct a numerical pipeline to compute $N_c(w)$ for ReLU networks across varying constraint counts $w$. Steps: (1) Define architecture: 2 hidden layers, ReLU activation, He initialization, fixed de"
   }
 ]
