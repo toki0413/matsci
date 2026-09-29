@@ -391,3 +391,9 @@ plan_check failed (tier=light, scene=auto_numerical, max_refines=1): The plan at
 [code-lab-run] res_none=True success=None nobj=0 reason="执行异常: AttributeError: module 'numpy' has no attribute 'poly_basis'"
 [code-lab-author] raw_len=926 extracted_len=911 prompt_len=5265
 [code-lab-run] res_none=False success=True nobj=36 reason=''
+[validate] mode='code_lab' success=True nobj=36 cf=False lab=True
+metacog: 假设可能为换名归约 (trap=, target=将'泛化行为作为解空间刚性探针'这一经验性问题，重新表述为'解空间具有低维线性/代数结构'这一理论假设，但未提供可验证的数值证据或机制说明): [DIM: structure] The solution space of the ReLU constraint system admits a low-dimensional linear or
+renamed-reduction 3× consecutive: trigger counterexample hunt
+[exec-route] mode='explore' desc[:80]='[auto-routed: surprise=1.00] The hypothesis asserts a specific algebraic structu' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=948 extracted_len=933 prompt_len=3149
+[code-lab-run] res_none=False success=True nobj=36 reason=''
