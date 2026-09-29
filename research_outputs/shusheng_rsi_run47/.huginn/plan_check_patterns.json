@@ -399,5 +399,34 @@
     ],
     "mode": "explore",
     "description": "Step 1: Define the rigid family mathematically as a low-dimensional analytic function family (e.g., sin(π w x) with w constraints) and the fat family as a high-dimensional VC-dimension-unbounded famil"
+  },
+  {
+    "scene_tag": "auto_family",
+    "hyp_key": "7e6e33f56e0c",
+    "reason": "计划存在严重缺陷：1) 缺少关键的代码实现步骤，仅描述了函数签名但未提供具体实现逻辑；2) 未指定容量扫描的具体设置（如w的取值范围、h的步长、验证集大小等）；3) 未定义N_c(w)的计算方法；4) 未说明如何确保rigid和fat族的非重叠性和归一化；5) 未包含验证实验的基准对比。这些缺失使得预测无法被真正验证。",
+    "missing_steps": [
+      "提供family函数的具体实现代码",
+      "定义容量扫描的具体参数设置（w范围、h范围、验证集比例等）",
+      "明确N_c(w)的计算方法和收敛判据",
+      "说明如何保证训练集和验证集的非重叠性",
+      "添加验证实验的基准对比方案"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family(kind, w, seed)` function to generate training and held-out constraint points for two function families: rigid (low-dimensional, e.g., linear combinat"
+  },
+  {
+    "scene_tag": "auto_family",
+    "hyp_key": "7e6e33f56e0c",
+    "reason": "Plan is incomplete and contains critical omissions compared to historical failures. Specifically, it lacks explicit code implementation details (only describes function signatures), does not specify w range for capacity_scan (only fixes w=100), and fails to define the exact method for calculating N_c(w) beyond a vague description. It also doesn't address how to ensure proper normalization or handle the scale issues mentioned in run29 (high-order polynomial scale ~1e9). The plan is described at an exploration level but doesn't provide concrete executable steps needed for verification.",
+    "missing_steps": [
+      "Provide explicit code implementation for family() function with rigid and fat variants",
+      "Define w range/scanning parameters (currently only fixes w=100)",
+      "Specify exact calculation method for N_c(w) including confidence interval procedure",
+      "Address scale normalization to avoid ~1e9 issues from run29",
+      "Define how to ensure non-overlapping X/Xv with deterministic split",
+      "Add benchmark comparison methodology against known capacity bounds"
+    ],
+    "mode": "explore",
+    "description": "Implement `family(kind, w, seed)` with explicit logic: (1) rigid: linear combination of 3 fixed basis functions (e.g., [1, x, x²]) evaluated at w points, normalized by std; (2) fat: 20-term random pol"
   }
 ]
