@@ -1,44 +1,5 @@
 [
   {
-    "scene_tag": "workflow",
-    "reason": "The plan is invalid due to a critical scaling violation that would invalidate the chi-squared hypothesis test. The hypothesis explicitly states that the held-out error variance is inversely proportional to the number of training constraints w. However, the plan explicitly sets w=2 (h=2~8 for rigid linear family implies 2 parameters), which leads to a variance of O(1/2) = O(0.5). Combined with the y/yv normalization to O(1) scale, the expected error magnitude will be ~0.5, which is orders of magnitude larger than the 1e3 threshold mentioned in the prediction. This contradicts the requirement that errors should be small (statistical noise) and will instead reflect large structural errors, making the chi-squared test meaningless. Additionally, the plan fails to specify the exact functional forms for the rigid linear and fat polynomial families, which is essential for reproducibility and avoiding the 'fat polynomial as noise' pitfall mentioned in historical failures.",
-    "missing_steps": [
-      "Define explicit functional forms for rigid linear family (e.g., f(x) = ax + b with constraint a^2+b^2=1) and fat polynomial family (e.g., high-degree polynomials with specific constraints)",
-      "Ensure training constraints w is sufficiently large (e.g., w >> 1) to make the variance 1/w small enough for errors to be in the statistical noise regime",
-      "Specify the held-out set size and ensure it matches the degrees of freedom for the chi-squared test",
-      "Verify that the normalization scheme preserves the variance scaling relationship with w",
-      "Add explicit checks for the chi-squared distribution fit (e.g., Q-Q plots, Kolmogorov-Smirnov test) rather than just checking error magnitudes"
-    ],
-    "mode": "explore",
-    "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid linear family and fat polynomial family, ensuring proper normalization, shape constraints, and non-overlapping held-out sets."
-  },
-  {
-    "scene_tag": "other",
-    "reason": "The plan fundamentally misinterprets the hypothesis. The hypothesis concerns a topological obstruction (non-vanishing first homology group H1) in the weight manifold, which requires topological data analysis (TDA) or loop sampling to verify. The plan only implements a capacity scan measuring generalization error, which is empirically insufficient to prove topological non-triviality or contractibility as explicitly noted in the historical failures. The plan repeats the same critical error as previous failed runs by focusing on error metrics instead of computing/estimating homology structures.",
-    "missing_steps": [
-      "Define the weight manifold geometry and parameterization for both linear rigid family and fat polynomial family",
-      "Compute or estimate the first homology group H1 of the weight manifolds using persistent homology or loop sampling",
-      "Compare the topological structure (H1) between the rigid affine manifold (should be contractible, H1=0) and fat polynomial manifold (should have non-trivial H1)",
-      "Establish continuous interpolation paths between training minima and held-out solutions to test feasibility under topological constraints",
-      "Verify that the fat polynomial family is x-dependent and high-dimensional but partially learnable (not noise)"
-    ],
-    "mode": "explore",
-    "description": "[auto-routed: surprise=1.00] Implement the family function to generate training/holdout data for the rigid linear family (f(x)=ax+b) and the fat high-degree polynomial family (20th order in (2x-1)), e"
-  },
-  {
-    "scene_tag": "other",
-    "reason": "The plan fundamentally misinterprets the hypothesis. The hypothesis concerns a topological obstruction (non-vanishing first homology group H1) in the weight manifold, which requires topological data analysis (TDA) or loop sampling to verify. The plan only implements a capacity scan measuring generalization error, which is empirically insufficient to prove topological non-triviality or contractibility as explicitly noted in the historical failures. The plan repeats the same critical error as previous failed runs by focusing on error metrics instead of computing/estimating homology structures.",
-    "missing_steps": [
-      "Define the weight manifold geometry and parameterization for both linear rigid family and fat polynomial family",
-      "Compute or estimate the first homology group H1 of the weight manifolds using persistent homology or loop sampling",
-      "Compare the topological structure (H1) between the rigid affine manifold (should be contractible, H1=0) and fat polynomial manifold (should have non-trivial H1)",
-      "Establish continuous interpolation paths between training minima and held-out solutions to test feasibility under topological constraints",
-      "Verify that the fat polynomial family is x-dependent and high-dimensional but partially learnable (not noise)"
-    ],
-    "mode": "explore",
-    "description": "[auto-routed: surprise=1.00] Implement the family function to generate the rigid linear family (f(x)=ax+b) and fat polynomial family (20th-degree shifted Legendre) with proper O(1) normalization, ensu"
-  },
-  {
     "scene_tag": "other",
     "reason": "The plan fundamentally misinterprets the hypothesis. The hypothesis concerns a topological obstruction (non-vanishing first homology group H1) in the weight manifold, which requires topological data analysis (TDA) or loop sampling to verify. The plan only implements a capacity scan measuring generalization error, which is empirically insufficient to prove topological non-triviality or contractibility as explicitly noted in the historical failures. The plan repeats the same critical error as previous failed runs by focusing on error metrics instead of computing/estimating homology structures.",
     "missing_steps": [
@@ -736,5 +697,46 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement symbolic sheaf cohomology computation for the linear rigid family. Define the base manifold as an affine line, the sheaf of locally linear functions, and transit"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The hypothesis requires symbolic computation of Čech cohomology for sheaves of locally linear functions (algebraic topology), but the plan uses 'explore' mode with numerical capacity scans (machine learning regression). This fundamentally misaligns the mathematical structure. The historical failures explicitly document this exact error: using ML metrics to verify topological properties. The plan does not define the base manifold, sheaf structure, or Čech complex computation framework, and it repeats the documented mode mismatch error.",
+    "missing_steps": [
+      "Switch MODE from explore to coder/workflow for symbolic implementation",
+      "Define the mathematical structure: specify base manifold (e.g., S¹ or ℝ), sheaf of locally linear functions, and cohomology computation framework",
+      "Clarify the relationship between rigid/fat families and the sheaf structure",
+      "Implement appropriate sheaf cohomology tools (Čech complex, spectral sequences, or derived category methods)",
+      "Include mathematical validation steps: check exactness of sequences, compute explicit cohomology groups, verify non-triviality via obstruction theory"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family` function to generate training and held-out constraint sets for the rigid linear family and fat polynomial family, ensuring shapes (N,1), no overlap,"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan uses 'explore' mode with numerical ML capacity scans (N_c(w), validation error), but the hypothesis requires symbolic algebraic topology computation (Čech cohomology of sheaves on S¹). This is a fundamental mismatch between mathematical structure (approximation theory vs. algebraic topology) and tooling (numerical simulation vs. symbolic computation). The historical failures explicitly document this exact error pattern—using ML metrics to verify topological properties—which the current plan repeats verbatim despite the warnings.",
+    "missing_steps": [
+      "Switch MODE from explore to coder/workflow for symbolic implementation",
+      "Define the base manifold (e.g., S¹) and sheaf of locally linear functions precisely",
+      "Specify transition functions and Čech complex construction framework",
+      "Implement symbolic cohomology computation (Lean/SageMath/Mathematica) rather than numerical regression",
+      "Establish exactness verification and obstruction theory steps",
+      "Remove all references to ML capacity metrics (N_c, VC dimension) as they are irrelevant to topological invariants"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] 切换至符号代数拓扑框架。定义基流形（如 $S^1$）、局部线性函数层 $\\mathcal{F}$ 及其与刚性/胖族的关系。使用符号工具实现 Čech 复形构造。显式计算上同调群。通过正合性验证和障碍理论验证非平凡性。排除数值 ML 指标。"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan fundamentally misaligns with the hypothesis by using 'explore' mode with numerical ML capacity scans (N_c(w), validation error) to verify a symbolic algebraic topology problem (Čech cohomology of sheaves on S¹). This repeats the documented historical failure of using ML metrics to verify topological invariants. The description mentions symbolic computation but the MODE and execution approach remain in ML exploration mode, creating a contradiction between the stated method and the actual execution strategy.",
+    "missing_steps": [
+      "Switch MODE from explore to coder/workflow for concrete symbolic implementation",
+      "Define the mathematical structure precisely: specify base manifold S¹, sheaf of locally linear functions, and Čech complex construction framework",
+      "Specify transition functions between the two overlapping charts on S¹",
+      "Implement symbolic cohomology computation using appropriate tools (Lean/SageMath/Mathematica) rather than numerical regression",
+      "Establish exactness verification steps and obstruction theory methodology",
+      "Remove all ML capacity metrics (N_c, VC dimension) as they are irrelevant to topological invariants"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement symbolic Čech cohomology computation for the sheaf of locally linear functions on the circle $S^1$. Define the base manifold $S^1$, cover by two overlapping char"
   }
 ]
