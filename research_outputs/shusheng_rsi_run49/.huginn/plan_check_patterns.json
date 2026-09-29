@@ -494,5 +494,50 @@
     ],
     "mode": "explore",
     "description": "I will design a numerical experiment to test the geometric rigidity hypothesis by directly analyzing the curvature of the constraint manifold in weight space. Steps: (1) Define the constraint manifold"
+  },
+  {
+    "scene_tag": "workflow",
+    "hyp_key": "0f82242a9b79",
+    "reason": "The plan incorrectly sets MODE as 'explore' which is for open-ended discovery tasks, while this is a hypothesis testing task requiring a 'coder' or 'workflow' mode to execute a fixed computational experiment. The DESCRIPTION lacks critical implementation details: it does not specify the functional form of the constraints (e.g., linear vs nonlinear), the network architecture (depth, activation specifics), the training procedure (optimizer, loss function, initialization), or the held-out constraint generation method. Without these, the experiment is not reproducible. The PREDICTION is vague about how 'critical point' will be identified (e.g., no fitting method or statistical test specified). Most importantly, the plan does not address the core mathematical structure—analytical constraints on network weights—by failing to define what 'w analytical constraints' actually means in practice (e.g., is it w equations? w inequality constraints?). This ambiguity makes the hypothesis untestable as stated.",
+    "missing_steps": [
+      "Define the exact mathematical form of the w analytical constraints (e.g., linear equations f_i(w)=0 or smooth functions)",
+      "Specify network architecture: depth, number of hidden layers, activation functions, weight initialization scheme",
+      "Define training procedure: loss function, optimizer, learning rate schedule, stopping criterion",
+      "Specify how held-out constraints are generated (independent sampling? adversarial?)",
+      "Define method to identify phase transition point (e.g., fitting power law, finite-size scaling, derivative of error vs width)",
+      "Set MODE to 'workflow' or 'coder' instead of 'explore' since this is a fixed experimental test"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Design and run a computational experiment to test the phase transition hypothesis. The workflow consists of three sequential stages: (1) generate a set of analytical const"
+  },
+  {
+    "scene_tag": "workflow",
+    "hyp_key": "0f82242a9b79",
+    "reason": "The plan is invalid because it retains the critical error identified in the historical failure: it sets MODE to 'explore' for a hypothesis testing task that requires a 'workflow' or 'coder' mode. Additionally, the DESCRIPTION lacks essential implementation details required for reproducibility and validation, such as the exact mathematical form of the analytical constraints (linear equations vs. smooth nonlinear functions), specific network architecture parameters beyond 'shallow ReLU', precise training procedure specifications, and a defined method for identifying the phase transition point. These omissions make the hypothesis untestable as stated.",
+    "missing_steps": [
+      "Change MODE from 'explore' to 'workflow' or 'coder' for hypothesis testing",
+      "Define exact mathematical form of the w analytical constraints (e.g., linear equations f_i(w)=0 or smooth functions)",
+      "Specify network architecture details (depth, number of hidden layers, activation functions, weight initialization scheme)",
+      "Define training procedure (loss function, optimizer, learning rate schedule, stopping criterion)",
+      "Specify held-out constraint generation method (independent sampling, adversarial, etc.)",
+      "Define method to identify phase transition point (fitting power law, finite-size scaling, derivative of error vs width)"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] This workflow tests the hypothesis through a structured computational experiment. Stage 1 defines $w$ analytical constraints as linear equations on network weights ($\\math"
+  },
+  {
+    "scene_tag": "workflow",
+    "hyp_key": "0f82242a9b79",
+    "reason": "The plan sets MODE to 'explore' which is incorrect for a hypothesis testing task that requires a fixed computational experiment (should be 'workflow' or 'coder'). The DESCRIPTION lacks critical implementation details: it does not specify the exact mathematical form of the w analytical constraints (linear equations vs. smooth nonlinear functions), specific network architecture parameters beyond 'shallow ReLU', precise training procedure specifications (loss function, optimizer, learning rate schedule, stopping criterion), or a defined method for identifying the phase transition point. These omissions make the hypothesis untestable as stated and repeat the exact same critical errors identified in the historical failures.",
+    "missing_steps": [
+      "Change MODE from 'explore' to 'workflow' or 'coder' for hypothesis testing",
+      "Define exact mathematical form of the w analytical constraints (e.g., linear equations f_i(w)=0 or smooth functions)",
+      "Specify network architecture details (depth, number of hidden layers, activation functions, weight initialization scheme)",
+      "Define training procedure (loss function, optimizer, learning rate schedule, stopping criterion)",
+      "Specify held-out constraint generation method (independent sampling, adversarial, etc.)",
+      "Define method to identify phase transition point (e.g., fitting power law, finite-size scaling, derivative of error vs width)"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] This workflow tests the hypothesis through a structured computational experiment. Stage 1 defines $w$ analytical constraints as linear equations on network weights ($\\math"
   }
 ]

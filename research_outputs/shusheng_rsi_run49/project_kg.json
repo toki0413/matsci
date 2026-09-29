@@ -2235,6 +2235,70 @@
       "r_phys": 1.0,
       "iteration": 190,
       "id": "persona_use:reviewer_iter190"
+    },
+    {
+      "label": "[DIM: structure] The solution space of the ReLU constraint system admits a low-d",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T09:36:24.698906",
+      "last_seen": "2026-09-29T09:36:24.698906",
+      "mentions": 1,
+      "iteration": 195,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The scan will show $N_c(w)$ reaching a finite plateau (e.g., $N_c \\approx 8-16$) as $w$ increases, indicating solution space rigidity. The affine subspace dimension will scale as $O(\\log w)$ rather th",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The solution space of the ReLU constraint system admits a low-d"
+    },
+    {
+      "label": "plan_explore_iter195",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:36:24.698941",
+      "last_seen": "2026-09-29T09:36:24.698941",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter195"
+    },
+    {
+      "label": "pass_iter195",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:36:24.698951",
+      "last_seen": "2026-09-29T09:36:24.698951",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter195"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T09:36:24.698960",
+      "last_seen": "2026-09-29T09:36:24.698960",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The solution space of the ReLU constraint system admits a low-d",
+        "Method:plan_explore_iter195",
+        "Fact:pass_iter195"
+      ],
+      "iteration": 195,
+      "id": "he_experiment_pipeline_11ca8df7"
+    },
+    {
+      "label": "reviewer_iter195",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T09:36:24.699067",
+      "last_seen": "2026-09-29T09:36:24.699067",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "991b59c546760fc1",
+      "r_phys": 1.0,
+      "iteration": 195,
+      "id": "persona_use:reviewer_iter195"
     }
   ],
   "links": [
@@ -3236,6 +3300,33 @@
       "last_seen": "2026-09-29T09:35:31.772228",
       "mentions": 1,
       "target": "he_experiment_pipeline_d9d76a74"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The solution space of the ReLU constraint system admits a low-d",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:36:24.698960",
+      "last_seen": "2026-09-29T09:36:24.698960",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_11ca8df7"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter195",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:36:24.698960",
+      "last_seen": "2026-09-29T09:36:24.698960",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_11ca8df7"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter195",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:36:24.698960",
+      "last_seen": "2026-09-29T09:36:24.698960",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_11ca8df7"
     }
   ]
 }

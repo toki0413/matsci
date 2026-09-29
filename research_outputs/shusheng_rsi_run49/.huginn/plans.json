@@ -1153,6 +1153,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_94ee7083",
+      "objective": "[DIM: measure] The probability that a randomly initialized small network satisfies $w$ analytical constraints decays exponentially with $w$, and the minimal width $N_c(w)$ required to achieve zero violation on held-out constraints exhibits a phase transition at a critical constraint density $\\rho_c = w/H$, beyond which the solution space becomes disconnected and unreachable by gradient descent.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] This workflow tests the hypothesis through a structured computational experiment. Stage 1 defines $w$ analytical constraints as linear equations on network weights ($\\mathbf{w} \\in \\mathbb{R}^{d}$) and smooth nonlinear activation constraints. Stage 2 trains shallow ReLU networks (2 hidden layers, varying width $N$) using L-BFGS-B with Xavier initialization to satisfy training constraints, then evaluates maximum absolute error on 1000 independently sampled held-out constraints. Stage 3 computes satisfiability probability $P_s(w)$ over 50 random seeds per $w$ and identifies critical width $N_c(w)$ via error thresholding ($10^{-3}$), applying finite-size scaling to locate the phase transition at $\\rho_c = w/H$.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T09:36:57.613786+00:00",
+      "confirmed_at": "2026-09-29T09:36:57.615758+00:00",
+      "completed_at": "2026-09-29T09:37:15.997930+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
