@@ -199,10 +199,10 @@
       "label": "[DIM: structure] The solution space of the constraint system admits a low-dimens",
       "type": "experiment",
       "source": "autoloop",
-      "confidence": 1.0,
+      "confidence": 0.99,
       "created_at": "2026-09-29T08:51:59.906683",
-      "last_seen": "2026-09-29T08:51:59.906683",
-      "mentions": 1,
+      "last_seen": "2026-09-29T08:56:13.998111",
+      "mentions": 3,
       "iteration": 20,
       "r_phys": 1.0,
       "surprise": 1.0,
@@ -322,6 +322,296 @@
       "r_phys": 1.0,
       "iteration": 25,
       "id": "persona_use:reviewer_iter25"
+    },
+    {
+      "label": "[DIM: dynamics] The solution space of the constraint system admits a low-dimensi",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T08:54:14.880110",
+      "last_seen": "2026-09-29T08:54:14.880110",
+      "mentions": 1,
+      "iteration": 30,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For low-dimensional analytic constraints (e.g., low-degree polynomials, trigonometric sums), N_c(w) will saturate to a small constant (e.g., 10-50) as w increases, indicating a rigid solution space. F",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: dynamics] The solution space of the constraint system admits a low-dimensi"
+    },
+    {
+      "label": "plan_explore_iter30",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:54:14.880152",
+      "last_seen": "2026-09-29T08:54:14.880152",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter30"
+    },
+    {
+      "label": "pass_iter30",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:54:14.880163",
+      "last_seen": "2026-09-29T08:54:14.880163",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter30"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T08:54:14.880174",
+      "last_seen": "2026-09-29T08:54:14.880174",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: dynamics] The solution space of the constraint system admits a low-dimensi",
+        "Method:plan_explore_iter30",
+        "Fact:pass_iter30"
+      ],
+      "iteration": 30,
+      "id": "he_experiment_pipeline_b6d3c50a"
+    },
+    {
+      "label": "reviewer_iter30",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T08:54:14.880254",
+      "last_seen": "2026-09-29T08:54:14.880254",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "8194b70266cb68b5",
+      "r_phys": 1.0,
+      "iteration": 30,
+      "id": "persona_use:reviewer_iter30"
+    },
+    {
+      "label": "plan_explore_iter35",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:54:54.567199",
+      "last_seen": "2026-09-29T08:54:54.567199",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter35"
+    },
+    {
+      "label": "pass_iter35",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:54:54.567221",
+      "last_seen": "2026-09-29T08:54:54.567221",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter35"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T08:54:54.567231",
+      "last_seen": "2026-09-29T08:54:54.567231",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The solution space of the constraint system admits a low-dimens",
+        "Method:plan_explore_iter35",
+        "Fact:pass_iter35"
+      ],
+      "iteration": 35,
+      "id": "he_experiment_pipeline_4a9f5d90"
+    },
+    {
+      "label": "reviewer_iter35",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T08:54:54.567312",
+      "last_seen": "2026-09-29T08:54:54.567312",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "a5a24ea65fcc7992",
+      "r_phys": 1.0,
+      "iteration": 35,
+      "id": "persona_use:reviewer_iter35"
+    },
+    {
+      "label": "[DIM: dynamics] The minimal width $N_c(w)$ for zero violation is governed by the",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T08:55:30.914708",
+      "last_seen": "2026-09-29T08:55:30.914708",
+      "mentions": 1,
+      "iteration": 40,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "$N_c(w)$ will show sub-exponential or constant growth (e.g., $N_c \\sim O(1)$ or $O(\\log w)$) if the solution space is rigid; otherwise, exponential growth if optimization stagnation dominates. Trainin",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: dynamics] The minimal width $N_c(w)$ for zero violation is governed by the"
+    },
+    {
+      "label": "plan_explore_iter40",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:55:30.914755",
+      "last_seen": "2026-09-29T08:55:30.914755",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter40"
+    },
+    {
+      "label": "pass_iter40",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:55:30.914765",
+      "last_seen": "2026-09-29T08:55:30.914765",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter40"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T08:55:30.914776",
+      "last_seen": "2026-09-29T08:55:30.914776",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: dynamics] The minimal width $N_c(w)$ for zero violation is governed by the",
+        "Method:plan_explore_iter40",
+        "Fact:pass_iter40"
+      ],
+      "iteration": 40,
+      "id": "he_experiment_pipeline_d5b8164d"
+    },
+    {
+      "label": "reviewer_iter40",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T08:55:30.914859",
+      "last_seen": "2026-09-29T08:55:30.914859",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "b800bbc9626aa500",
+      "r_phys": 1.0,
+      "iteration": 40,
+      "id": "persona_use:reviewer_iter40"
+    },
+    {
+      "label": "plan_explore_iter45",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:56:13.998215",
+      "last_seen": "2026-09-29T08:56:13.998215",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter45"
+    },
+    {
+      "label": "pass_iter45",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:56:13.998276",
+      "last_seen": "2026-09-29T08:56:13.998276",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter45"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T08:56:13.998295",
+      "last_seen": "2026-09-29T08:56:13.998295",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The solution space of the constraint system admits a low-dimens",
+        "Method:plan_explore_iter45",
+        "Fact:pass_iter45"
+      ],
+      "iteration": 45,
+      "id": "he_experiment_pipeline_90624eaf"
+    },
+    {
+      "label": "reviewer_iter45",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T08:56:13.998481",
+      "last_seen": "2026-09-29T08:56:13.998481",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "a4e2a3b0faa957b4",
+      "r_phys": 1.0,
+      "iteration": 45,
+      "id": "persona_use:reviewer_iter45"
+    },
+    {
+      "label": "[DIM: measure] The probability that a randomly initialized small network satisfi",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T08:57:10.955287",
+      "last_seen": "2026-09-29T08:57:10.955287",
+      "mentions": 1,
+      "iteration": 50,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will be finite and approximately constant (rigid) for small w, then increase sharply beyond a critical width N_c indicating a phase transition; or N_c(w) will grow unbounded (fat) across all te",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: measure] The probability that a randomly initialized small network satisfi"
+    },
+    {
+      "label": "plan_explore_iter50",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:57:10.955325",
+      "last_seen": "2026-09-29T08:57:10.955325",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter50"
+    },
+    {
+      "label": "pass_iter50",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:57:10.955334",
+      "last_seen": "2026-09-29T08:57:10.955334",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter50"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T08:57:10.955343",
+      "last_seen": "2026-09-29T08:57:10.955343",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: measure] The probability that a randomly initialized small network satisfi",
+        "Method:plan_explore_iter50",
+        "Fact:pass_iter50"
+      ],
+      "iteration": 50,
+      "id": "he_experiment_pipeline_f7511969"
+    },
+    {
+      "label": "reviewer_iter50",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T08:57:10.955414",
+      "last_seen": "2026-09-29T08:57:10.955414",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "3c8e069c736baa80",
+      "r_phys": 1.0,
+      "iteration": 50,
+      "id": "persona_use:reviewer_iter50"
     }
   ],
   "links": [
@@ -417,6 +707,24 @@
     },
     {
       "relation": "member_of",
+      "source": "experiment:[DIM: structure] The solution space of the constraint system admits a low-dimens",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:54:54.567231",
+      "last_seen": "2026-09-29T08:54:54.567231",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4a9f5d90"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The solution space of the constraint system admits a low-dimens",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:56:13.998295",
+      "last_seen": "2026-09-29T08:56:13.998295",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_90624eaf"
+    },
+    {
+      "relation": "member_of",
       "source": "Method:plan_explore_iter20",
       "confidence": 0.5,
       "created_at": "2026-09-29T08:51:59.906736",
@@ -459,6 +767,123 @@
       "last_seen": "2026-09-29T08:53:10.185640",
       "mentions": 1,
       "target": "he_experiment_pipeline_91a717c5"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: dynamics] The solution space of the constraint system admits a low-dimensi",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:54:14.880174",
+      "last_seen": "2026-09-29T08:54:14.880174",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b6d3c50a"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter30",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:54:14.880174",
+      "last_seen": "2026-09-29T08:54:14.880174",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b6d3c50a"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter30",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:54:14.880174",
+      "last_seen": "2026-09-29T08:54:14.880174",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b6d3c50a"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter35",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:54:54.567231",
+      "last_seen": "2026-09-29T08:54:54.567231",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4a9f5d90"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter35",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:54:54.567231",
+      "last_seen": "2026-09-29T08:54:54.567231",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4a9f5d90"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: dynamics] The minimal width $N_c(w)$ for zero violation is governed by the",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:55:30.914776",
+      "last_seen": "2026-09-29T08:55:30.914776",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d5b8164d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter40",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:55:30.914776",
+      "last_seen": "2026-09-29T08:55:30.914776",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d5b8164d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter40",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:55:30.914776",
+      "last_seen": "2026-09-29T08:55:30.914776",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d5b8164d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter45",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:56:13.998295",
+      "last_seen": "2026-09-29T08:56:13.998295",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_90624eaf"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter45",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:56:13.998295",
+      "last_seen": "2026-09-29T08:56:13.998295",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_90624eaf"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: measure] The probability that a randomly initialized small network satisfi",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:57:10.955343",
+      "last_seen": "2026-09-29T08:57:10.955343",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_f7511969"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter50",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:57:10.955343",
+      "last_seen": "2026-09-29T08:57:10.955343",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_f7511969"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter50",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:57:10.955343",
+      "last_seen": "2026-09-29T08:57:10.955343",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_f7511969"
     }
   ]
 }
