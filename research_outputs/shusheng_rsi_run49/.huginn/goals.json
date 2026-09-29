@@ -47,12 +47,14 @@
         "[Feynman known_unknown] I don’t understand why the test runner reported “no tests ran” despite `tests_passed: true` — does this indicate a logical contradiction in the validation framework?",
         "[Feynman unknown_unknown] I never considered that benchmark skipping might silently invalidate the entire validation pipeline until the generative verifier flagged it as insufficient reasoning.",
         "[Feynman known_unknown] I don't understand why the tests were not executed despite the plan indicating they should have been. There might be underlying issues with the setup or configuration that need further investigation.",
-        "[Feynman unknown_unknown] I never considered the possibility that the generative verification process might fail due to a lack of reasoning or interpretation in the output. This highlights a need for clearer guidelines on what constitutes a valid output for verification purposes."
+        "[Feynman unknown_unknown] I never considered the possibility that the generative verification process might fail due to a lack of reasoning or interpretation in the output. This highlights a need for clearer guidelines on what constitutes a valid output for verification purposes.",
+        "[Feynman known_unknown] I don’t understand why the NTK formulation fails to trigger test execution when the hypothesis is well-defined — is there a missing hook in the validation framework?",
+        "[Feynman unknown_unknown] I never considered that skipping test runs might be interpreted as a silent failure mode rather than a null result — this wasn’t anticipated in our risk assessment."
       ],
-      "iteration": 108,
+      "iteration": 113,
       "status": "active",
       "created_at": "2026-09-29T08:46:00.615433+00:00",
-      "updated_at": "2026-09-29T09:15:38.181897+00:00",
+      "updated_at": "2026-09-29T09:17:24.824081+00:00",
       "session_id": "",
       "metadata": {},
       "unknowns": [
@@ -1287,9 +1289,65 @@
           "discovered_at": "2026-09-29T09:15:05.058790+00:00",
           "resolved_at": null,
           "iteration": 105
+        },
+        {
+          "id": "unk_e601b54f",
+          "text": "The definition of \"zero violation\" (max absolute error ≤ 1e-3) may be too lenient or too strict depending on the scale of the target function; if the output range is large, 1e-3 might be negligible, but if it’s small, it could be overly restrictive — this affects the binary classification of rigidity without normalization.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-29T09:16:10.780113+00:00",
+          "resolved_at": null,
+          "iteration": 110
+        },
+        {
+          "id": "unk_3985c44f",
+          "text": "N_c(w) is defined as the *minimum* width achieving zero violation on held-out points, but training dynamics (local minima, optimizer choice, initialization) may prevent convergence even when a sufficient-width network theoretically exists — thus observed N_c may reflect optimization failure rather than representational insufficiency.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-29T09:16:10.782443+00:00",
+          "resolved_at": null,
+          "iteration": 110
+        },
+        {
+          "id": "unk_613819ab",
+          "text": "The distribution and density of the w constraint points matter critically: if they are poorly placed (e.g., clustered or aligned with activation boundaries), they may not probe the true solution space structure, leading to misleading N_c(w) trends that don’t reflect intrinsic rigidity.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-29T09:16:10.784094+00:00",
+          "resolved_at": null,
+          "iteration": 110
+        },
+        {
+          "id": "unk_07c21e46",
+          "text": "For very small w (e.g., w=1), almost any non-trivial network can interpolate with near-zero error — this may artificially suggest low N_c and false rigidity, while large w may saturate capacity before revealing whether the solution space is truly rigid or just hard to find.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-29T09:16:10.785691+00:00",
+          "resolved_at": null,
+          "iteration": 110
+        },
+        {
+          "id": "unk_0877e2c8",
+          "text": "The model assumes feedforward networks with standard activations (e.g., ReLU, tanh); if the true solution requires discontinuous, fractal, or infinite-dimensional representations, even arbitrarily wide networks may fail to achieve zero violation — making “fatness” a misclassification due to architectural mismatch rather than solution space properties.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-29T09:16:10.787235+00:00",
+          "resolved_at": null,
+          "iteration": 110
+        },
+        {
+          "id": "unk_923cab34",
+          "text": "I don’t understand why the NTK formulation fails to trigger test execution when the hypothesis is well-defined — is there a missing hook in the validation framework?",
+          "type": "known_unknown",
+          "discovered_at": "2026-09-29T09:16:26.640057+00:00",
+          "resolved_at": null,
+          "iteration": 110
+        },
+        {
+          "id": "unk_289df035",
+          "text": "I never considered that skipping test runs might be interpreted as a silent failure mode rather than a null result — this wasn’t anticipated in our risk assessment.",
+          "type": "unknown_unknown",
+          "discovered_at": "2026-09-29T09:16:26.643178+00:00",
+          "resolved_at": null,
+          "iteration": 110
         }
       ],
-      "unknowns_discovered": 154,
+      "unknowns_discovered": 161,
       "unknowns_resolved": 0,
       "objective": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【唯一硬性口径（不可更改，其余全由你决定）】\n- 零违规 = 留出约束点上的最大绝对误差 ≤ 1e-3。\n- 刚性 = 扫描范围内存在较小的有限 N_c（且 N_c 不随 w 增长）；胖 = 扫描上限内任何宽度都达不到零违规（N_c 不可达）。判别是二值的。\n- 所有报告数值必须是有限数（禁止 inf/nan/None）。\n- 研究对象只能是小型前馈网络本身。严禁把本命题替换或“换名归约”为材料/化学/玻璃/合金/离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【实验的族、样本、扫描、脚本如何设计，以及如何证明“刚性可达”，由你自己决定并给出理由。】\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
       "success_criteria": [],
