@@ -2746,10 +2746,10 @@
       "label": "**[DIM: dynamics]**",
       "type": "experiment",
       "source": "autoloop",
-      "confidence": 1.0,
+      "confidence": 0.99,
       "created_at": "2026-09-29T04:25:20.535306",
-      "last_seen": "2026-09-29T04:25:20.535306",
-      "mentions": 1,
+      "last_seen": "2026-09-29T04:27:19.187191",
+      "mentions": 2,
       "iteration": 225,
       "r_phys": 1.0,
       "surprise": 1.0,
@@ -2869,6 +2869,55 @@
       "r_phys": 1.0,
       "iteration": 230,
       "id": "persona_use:reviewer_iter230"
+    },
+    {
+      "label": "plan_explore_iter235",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:27:19.187214",
+      "last_seen": "2026-09-29T04:27:19.187214",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter235"
+    },
+    {
+      "label": "pass_iter235",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:27:19.187233",
+      "last_seen": "2026-09-29T04:27:19.187233",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter235"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T04:27:19.187243",
+      "last_seen": "2026-09-29T04:27:19.187243",
+      "mentions": 1,
+      "members": [
+        "experiment:**[DIM: dynamics]**",
+        "Method:plan_explore_iter235",
+        "Fact:pass_iter235"
+      ],
+      "iteration": 235,
+      "id": "he_experiment_pipeline_43b8ba2a"
+    },
+    {
+      "label": "reviewer_iter235",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T04:27:19.187312",
+      "last_seen": "2026-09-29T04:27:19.187312",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "1f27f9f9e61b40ac",
+      "r_phys": 1.0,
+      "iteration": 235,
+      "id": "persona_use:reviewer_iter235"
     }
   ],
   "links": [
@@ -4071,6 +4120,15 @@
     },
     {
       "relation": "member_of",
+      "source": "experiment:**[DIM: dynamics]**",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:27:19.187243",
+      "last_seen": "2026-09-29T04:27:19.187243",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_43b8ba2a"
+    },
+    {
+      "relation": "member_of",
       "source": "Method:plan_explore_iter225",
       "confidence": 0.5,
       "created_at": "2026-09-29T04:25:20.535363",
@@ -4113,6 +4171,24 @@
       "last_seen": "2026-09-29T04:26:20.174943",
       "mentions": 1,
       "target": "he_experiment_pipeline_b675fe7c"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter235",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:27:19.187243",
+      "last_seen": "2026-09-29T04:27:19.187243",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_43b8ba2a"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter235",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:27:19.187243",
+      "last_seen": "2026-09-29T04:27:19.187243",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_43b8ba2a"
     }
   ]
 }

@@ -1441,6 +1441,42 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_0c7d9d3a",
+      "objective": "[DIM: computation] The approximation complexity of the fat polynomial family scales super-linearly with degree $d$ such that the required network width $N_c$ for zero violation grows as $\\Omega(d^2)$, exceeding the scan limit $h=64$ for $d \\ge 10$; this explains the observed unreachable trend as a computational bottleneck rather than a topological obstruction.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the family function for the fat polynomial family (20-term binomial basis with random coefficients) and the linear rigidity family, ensuring y/yv are normalized to O(1) (std ≲ 10) and shaped as (N,1). This addresses the missing anchor data for the rigid family and the unreachable trend for the fat family as identified in the previous iteration's verification. The implementation will allow the capacity_scan to compute N_c(w) and validate the hypothesis that fat polynomials require super-linear width growth.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "family.py",
+            "(new",
+            "file",
+            "containing",
+            "the",
+            "family",
+            "implementation)"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T04:27:41.277393+00:00",
+      "confirmed_at": "2026-09-29T04:27:41.279606+00:00",
+      "completed_at": "2026-09-29T04:28:03.429849+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
