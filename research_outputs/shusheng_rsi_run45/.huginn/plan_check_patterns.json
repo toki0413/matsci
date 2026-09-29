@@ -36,5 +36,30 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the family(kind, w, seed) function for the rigid (linear) and fat (high-degree polynomial) function families. Ensure training and held-out points are disjoint, s"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The hypothesis concerns a topological obstruction (non-vanishing first homology group H1) in the weight manifold, which requires computing or estimating the homology structure via topological data analysis (TDA) or loop sampling. The plan only implements a capacity scan measuring generalization error, which is empirically insufficient to prove topological non-triviality as explicitly noted in the historical failures. The plan fundamentally misinterprets the hypothesis as a capacity problem rather than a topological obstruction problem.",
+    "missing_steps": [
+      "Define the weight manifold geometry and parameterization for the fat polynomial family",
+      "Compute or estimate the first homology group H1 of the weight manifold using TDA or loop sampling",
+      "Compare with the rigid affine manifold's contractibility (trivial H1)",
+      "Establish a continuous interpolation path between training minima and held-out solutions to test feasibility under topological constraints"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function for the rigid (linear) and fat (high-degree polynomial) families, ensuring y/yv are normalized to O(1) magnitude, shapes are (N,1), and held-"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan is invalid because it fundamentally misinterprets the hypothesis. The hypothesis concerns a topological obstruction (non-vanishing first homology group H1) in the weight manifold, but the plan only implements a capacity scan measuring held-out error. As noted in the historical failures, generalization error alone does not prove topological non-triviality; the plan misses the critical step of computing or estimating the homology structure (e.g., via persistent homology or loop sampling) of the weight manifolds for both rigid and fat families. Additionally, the plan repeats the failure mode where fat families were treated as noise (run28), and it lacks the required topological analysis to validate the PAC-Bayes bound claim regarding N_c(w) behavior.",
+    "missing_steps": [
+      "Define the weight manifold geometry and parameterization for the fat polynomial family",
+      "Compute or estimate the first homology group H1 of the weight manifold using TDA or loop sampling",
+      "Compare with the rigid affine manifold's contractibility (trivial H1)",
+      "Establish a continuous interpolation path between training minima and held-out solutions to test feasibility under topological constraints",
+      "Explicitly verify that the fat polynomial family is x-dependent and high-dimensional but partially learnable (not noise)"
+    ],
+    "mode": "explore",
+    "description": "Define the weight manifold parameterization for the fat polynomial family $P_w(x) = \\sum_{i=0}^w a_i x^i$ subject to $w$ interpolation constraints. Compute the first homology group $H_1$ of the result"
   }
 ]

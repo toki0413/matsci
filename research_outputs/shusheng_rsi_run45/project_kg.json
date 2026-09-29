@@ -258,6 +258,70 @@
       "r_phys": 1.0,
       "iteration": 20,
       "id": "persona_use:reviewer_iter20"
+    },
+    {
+      "label": "[DIM: computation] The approximation complexity of the fat polynomial family sca",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:36:04.534205",
+      "last_seen": "2026-09-29T03:36:04.534205",
+      "mentions": 1,
+      "iteration": 25,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The rigid family (linear) will achieve validation error ≤1e-3 at h=2 with flat/decreasing trend as w increases; the fat family (20th-degree polynomial) will show val_err >1e-3 for all h≤64, trend='unr",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: computation] The approximation complexity of the fat polynomial family sca"
+    },
+    {
+      "label": "plan_explore_iter25",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:36:04.534246",
+      "last_seen": "2026-09-29T03:36:04.534246",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter25"
+    },
+    {
+      "label": "pass_iter25",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:36:04.534267",
+      "last_seen": "2026-09-29T03:36:04.534267",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter25"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T03:36:04.534278",
+      "last_seen": "2026-09-29T03:36:04.534278",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: computation] The approximation complexity of the fat polynomial family sca",
+        "Method:plan_explore_iter25",
+        "Fact:pass_iter25"
+      ],
+      "iteration": 25,
+      "id": "he_experiment_pipeline_ae8c6ba7"
+    },
+    {
+      "label": "reviewer_iter25",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:36:04.534354",
+      "last_seen": "2026-09-29T03:36:04.534354",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "bbebc1a9bef7e331",
+      "r_phys": 1.0,
+      "iteration": 25,
+      "id": "persona_use:reviewer_iter25"
     }
   ],
   "links": [
@@ -368,6 +432,33 @@
       "last_seen": "2026-09-29T03:35:05.826763",
       "mentions": 1,
       "target": "he_experiment_pipeline_16f0f22c"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: computation] The approximation complexity of the fat polynomial family sca",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:36:04.534278",
+      "last_seen": "2026-09-29T03:36:04.534278",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ae8c6ba7"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:36:04.534278",
+      "last_seen": "2026-09-29T03:36:04.534278",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ae8c6ba7"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:36:04.534278",
+      "last_seen": "2026-09-29T03:36:04.534278",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ae8c6ba7"
     }
   ]
 }

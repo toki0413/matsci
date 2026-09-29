@@ -8,16 +8,24 @@
       "huginn",
       "family",
       "value",
-      "label",
       "rigid",
       "polynomial",
-      "function",
+      "label",
       "linear",
+      "function",
       "plan"
     ],
     "workflow_steps": [
       {
         "tool": "coder",
+        "input_keys": [
+          "hypothesis",
+          "plan"
+        ],
+        "reward": 1.0
+      },
+      {
+        "tool": "explore",
         "input_keys": [
           "hypothesis",
           "plan"
