@@ -79,3 +79,23 @@ phase_gate advisory: plan→execute 缺证据 ['description'], 已放行 (非 ch
 [exec-route] mode='explore' desc[:80]='' obj_len=509 is_exp_desc=False is_exp_obj=True is_det_desc=False
 [code-lab-author] raw_len=2136 extracted_len=2121 prompt_len=3978
 [code-lab-run] res_none=False success=True nobj=1 reason=''
+error in _parse_verify_score: JSON parse failed, falling back to regex
+Traceback (most recent call last):
+  File "/workspace/agent/huginn/autoloop/engine_reflect.py", line 2327, in _parse_verify_score
+    data = json.loads(resp.strip())
+  File "/root/.pyenv/versions/3.14.7/lib/python3.14/json/__init__.py", line 352, in loads
+    return _default_decoder.decode(s)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^
+  File "/root/.pyenv/versions/3.14.7/lib/python3.14/json/decoder.py", line 345, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+               ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.pyenv/versions/3.14.7/lib/python3.14/json/decoder.py", line 363, in raw_decode
+    raise JSONDecodeError("Expecting value", s, err.value) from None
+json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+[validate] mode='code_lab' success=True nobj=1 cf=False lab=True
+metacog: 假设可能为换名归约 (trap=, target=将'解空间刚性'这一几何/拓扑性质，通过'零违规'这一优化结果，等价地重定义为'雅可比矩阵的代数秩'。): [DIM: structure] The zero-violation capacity $N_c(w)$ is determined by the algebraic rank of the Jac
+phase_gate advisory: plan→execute 缺证据 ['description'], 已放行 (非 checkpoint)
+phase_gate advisory: plan→execute 缺证据 ['description'], 已放行 (非 checkpoint)
+[exec-route] mode='explore' desc[:80]='' obj_len=509 is_exp_desc=False is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=2503 extracted_len=2488 prompt_len=3992
+[code-lab-run] res_none=False success=True nobj=1 reason=''
