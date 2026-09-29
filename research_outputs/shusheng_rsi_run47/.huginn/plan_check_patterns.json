@@ -219,5 +219,33 @@
     ],
     "mode": "explore",
     "description": "Implement the rigid and fat function families with proper normalization and (N,1) shape, then compute the Hessian spectrum at initialization for both families. Track the generalization error evolution"
+  },
+  {
+    "scene_tag": "workflow",
+    "hyp_key": "1a2ef8932c83",
+    "reason": "The plan attempts to test a hypothesis about Kolmogorov complexity and neural network capacity through numerical experimentation. However, the hypothesis concerns a theoretical mathematical claim about information-theoretic bounds and representational capacity that cannot be verified by finite-width network training experiments alone. The plan confuses empirical approximation error with fundamental representational capacity limits. Additionally, the plan risks repeating past failures by potentially using inappropriate function definitions or scaling issues.",
+    "missing_steps": [
+      "Clarify whether the hypothesis requires theoretical proof or empirical verification",
+      "Define precise mathematical criteria for N_c(w) beyond empirical error thresholds",
+      "Establish proper theoretical framework for Kolmogorov complexity bounds in this context",
+      "Verify that the fat family truly has unbounded complexity within the specified constraints",
+      "Ensure the rigid family's complexity is provably bounded and not just empirically small"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function for the rigid and fat families that generates training and held-out constraint points. Ensure y and yv are normalized to O(1) scale, shapes a"
+  },
+  {
+    "scene_tag": "workflow",
+    "hyp_key": "1a2ef8932c83",
+    "reason": "The plan fails to address the critical dimensional mismatch identified in historical failures. Specifically, it does not explicitly define how the fat family is constructed to be a function of x (avoiding i.i.d. noise) or how to handle the scale discrepancy between rigid (cos(πx)) and fat (high-degree polynomials) families to avoid absolute criterion failure. The plan proposes a 'comparative capacity analysis' but lacks specific implementation details for the function definitions and scaling discipline required to avoid the exact pitfalls mentioned in the history (run28 and run29). Without defining the specific functional forms and scaling constraints, the numerical verification will likely fail or produce meaningless results.",
+    "missing_steps": [
+      "Explicitly define the rigid family function form as a function of x (not just a linear subspace dimension d)",
+      "Define the fat family as a function of x with increasing complexity, avoiding i.i.d. noise (fixing run28 issue)",
+      "Establish scaling discipline to prevent numerical overflow/underflow for high-degree polynomials (fixing run29 issue)",
+      "Specify the exact target approximation error metric and validation procedure for both families",
+      "Define the relationship between w (number of constraints) and the function complexity parameters"
+    ],
+    "mode": "explore",
+    "description": "Reframe the hypothesis test as a comparative capacity analysis between rigid and fat families, where N_c(w) is defined via the minimum width required to achieve a target approximation error (ε=1e-3) o"
   }
 ]

@@ -1907,6 +1907,70 @@
       "r_phys": 1.0,
       "iteration": 150,
       "id": "persona_use:reviewer_iter150"
+    },
+    {
+      "label": "[DIM: dynamics] The rigid family corresponds to a deterministic dynamical system",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T07:56:26.097137",
+      "last_seen": "2026-09-29T07:56:26.097137",
+      "mentions": 1,
+      "iteration": 155,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family, N_c(w) will be finite and small (h=2~8) with flat or decreasing trend as w increases, achieving zero violation (max absolute error ≤ 1e-3) on held-out points. For the fat family,",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: dynamics] The rigid family corresponds to a deterministic dynamical system"
+    },
+    {
+      "label": "plan_explore_iter155",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:56:26.097185",
+      "last_seen": "2026-09-29T07:56:26.097185",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter155"
+    },
+    {
+      "label": "pass_iter155",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:56:26.097194",
+      "last_seen": "2026-09-29T07:56:26.097194",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter155"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T07:56:26.097204",
+      "last_seen": "2026-09-29T07:56:26.097204",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: dynamics] The rigid family corresponds to a deterministic dynamical system",
+        "Method:plan_explore_iter155",
+        "Fact:pass_iter155"
+      ],
+      "iteration": 155,
+      "id": "he_experiment_pipeline_6851f12a"
+    },
+    {
+      "label": "reviewer_iter155",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T07:56:26.097283",
+      "last_seen": "2026-09-29T07:56:26.097283",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "2a579e0b9a7bea0e",
+      "r_phys": 1.0,
+      "iteration": 155,
+      "id": "persona_use:reviewer_iter155"
     }
   ],
   "links": [
@@ -2719,6 +2783,33 @@
       "last_seen": "2026-09-29T07:55:28.080991",
       "mentions": 1,
       "target": "he_experiment_pipeline_27ad3082"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: dynamics] The rigid family corresponds to a deterministic dynamical system",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:56:26.097204",
+      "last_seen": "2026-09-29T07:56:26.097204",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_6851f12a"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter155",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:56:26.097204",
+      "last_seen": "2026-09-29T07:56:26.097204",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_6851f12a"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter155",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:56:26.097204",
+      "last_seen": "2026-09-29T07:56:26.097204",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_6851f12a"
     }
   ]
 }
