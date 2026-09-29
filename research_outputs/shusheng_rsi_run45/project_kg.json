@@ -322,6 +322,326 @@
       "r_phys": 1.0,
       "iteration": 25,
       "id": "persona_use:reviewer_iter25"
+    },
+    {
+      "label": "[DIM: computation] The approximation capacity of the fat polynomial family scale",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:37:45.441172",
+      "last_seen": "2026-09-29T03:37:45.441172",
+      "mentions": 1,
+      "iteration": 30,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The fat polynomial manifold will exhibit non-trivial $H_1$ (cycles) for $w > 10$ that obstruct continuous paths to held-out solutions, while the rigid manifold remains simply connected ($H_1 = 0$). Th",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: computation] The approximation capacity of the fat polynomial family scale"
+    },
+    {
+      "label": "plan_explore_iter30",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:37:45.441212",
+      "last_seen": "2026-09-29T03:37:45.441212",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter30"
+    },
+    {
+      "label": "pass_iter30",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:37:45.441224",
+      "last_seen": "2026-09-29T03:37:45.441224",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter30"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T03:37:45.441234",
+      "last_seen": "2026-09-29T03:37:45.441234",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: computation] The approximation capacity of the fat polynomial family scale",
+        "Method:plan_explore_iter30",
+        "Fact:pass_iter30"
+      ],
+      "iteration": 30,
+      "id": "he_experiment_pipeline_345a00fc"
+    },
+    {
+      "label": "reviewer_iter30",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:37:45.441311",
+      "last_seen": "2026-09-29T03:37:45.441311",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "d56cdd3f46fb33a5",
+      "r_phys": 1.0,
+      "iteration": 30,
+      "id": "persona_use:reviewer_iter30"
+    },
+    {
+      "label": "[DIM: structure] The solution space of the linear rigid family forms a 2-dimensi",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:39:12.155668",
+      "last_seen": "2026-09-29T03:39:12.155668",
+      "mentions": 1,
+      "iteration": 35,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the linear rigid family: anchor point (w=5, h=2, seed=0) achieves val_err ≈ 1e-4 (≤1e-3) with train_err ≈ 1e-5 (≤1e-4), N_c(w) stays flat at h=2 across w=5,10,20,50. For the fat polynomial family:",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The solution space of the linear rigid family forms a 2-dimensi"
+    },
+    {
+      "label": "plan_explore_iter35",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:39:12.155724",
+      "last_seen": "2026-09-29T03:39:12.155724",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter35"
+    },
+    {
+      "label": "pass_iter35",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:39:12.155734",
+      "last_seen": "2026-09-29T03:39:12.155734",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter35"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T03:39:12.155744",
+      "last_seen": "2026-09-29T03:39:12.155744",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The solution space of the linear rigid family forms a 2-dimensi",
+        "Method:plan_explore_iter35",
+        "Fact:pass_iter35"
+      ],
+      "iteration": 35,
+      "id": "he_experiment_pipeline_2c265da"
+    },
+    {
+      "label": "reviewer_iter35",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:39:12.155813",
+      "last_seen": "2026-09-29T03:39:12.155813",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "f24717519bae4051",
+      "r_phys": 1.0,
+      "iteration": 35,
+      "id": "persona_use:reviewer_iter35"
+    },
+    {
+      "label": "[DIM: measure] The held-out error for the rigid linear family follows a chi-squa",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:39:56.914679",
+      "last_seen": "2026-09-29T03:39:56.914679",
+      "mentions": 1,
+      "iteration": 40,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid linear family, we expect to find an anchor point with h=2~8 where val_err ≤ 1e3 and train_err ≤ 1e4. For the fat polynomial family, we expect N_c = ∞ (unreachable) across all widths h ≤",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: measure] The held-out error for the rigid linear family follows a chi-squa"
+    },
+    {
+      "label": "plan_explore_iter40",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:39:56.914713",
+      "last_seen": "2026-09-29T03:39:56.914713",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter40"
+    },
+    {
+      "label": "pass_iter40",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:39:56.914723",
+      "last_seen": "2026-09-29T03:39:56.914723",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter40"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T03:39:56.914732",
+      "last_seen": "2026-09-29T03:39:56.914732",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: measure] The held-out error for the rigid linear family follows a chi-squa",
+        "Method:plan_explore_iter40",
+        "Fact:pass_iter40"
+      ],
+      "iteration": 40,
+      "id": "he_experiment_pipeline_b316a36e"
+    },
+    {
+      "label": "reviewer_iter40",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:39:56.914799",
+      "last_seen": "2026-09-29T03:39:56.914799",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "7436c42bee145cb0",
+      "r_phys": 1.0,
+      "iteration": 40,
+      "id": "persona_use:reviewer_iter40"
+    },
+    {
+      "label": "** [DIM: dynamics] The held-out error spikes in the rigid linear family are caus",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:40:38.129373",
+      "last_seen": "2026-09-29T03:40:38.129373",
+      "mentions": 1,
+      "iteration": 45,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The rigid linear family will achieve zero violation (val_err ≤ 1e-3) at small widths (h=2~8) for w≥5, while the fat polynomial family will remain unreachable (val_err > 1e-3) across all widths h≤64, c",
+      "persona": "reviewer",
+      "id": "experiment:** [DIM: dynamics] The held-out error spikes in the rigid linear family are caus"
+    },
+    {
+      "label": "plan_explore_iter45",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:40:38.129407",
+      "last_seen": "2026-09-29T03:40:38.129407",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter45"
+    },
+    {
+      "label": "pass_iter45",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:40:38.129417",
+      "last_seen": "2026-09-29T03:40:38.129417",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter45"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T03:40:38.129430",
+      "last_seen": "2026-09-29T03:40:38.129430",
+      "mentions": 1,
+      "members": [
+        "experiment:** [DIM: dynamics] The held-out error spikes in the rigid linear family are caus",
+        "Method:plan_explore_iter45",
+        "Fact:pass_iter45"
+      ],
+      "iteration": 45,
+      "id": "he_experiment_pipeline_4da29c08"
+    },
+    {
+      "label": "reviewer_iter45",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:40:38.129511",
+      "last_seen": "2026-09-29T03:40:38.129511",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "b49c1e289fbc86ab",
+      "r_phys": 1.0,
+      "iteration": 45,
+      "id": "persona_use:reviewer_iter45"
+    },
+    {
+      "label": "[DIM: measure] The generalization error of the rigid family is dominated by the ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:41:23.087569",
+      "last_seen": "2026-09-29T03:41:23.087569",
+      "mentions": 1,
+      "iteration": 50,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Rigid family will achieve zero violation (val_err ≤ 1e-3) at small widths (h=2-8) for w≥5, with flat N_c(w) trend; fat family will remain unreachable (val_err > 1e-3 for all h≤64) with trend='unreacha",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: measure] The generalization error of the rigid family is dominated by the"
+    },
+    {
+      "label": "plan_explore_iter50",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:41:23.087602",
+      "last_seen": "2026-09-29T03:41:23.087602",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter50"
+    },
+    {
+      "label": "pass_iter50",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:41:23.087611",
+      "last_seen": "2026-09-29T03:41:23.087611",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter50"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T03:41:23.087619",
+      "last_seen": "2026-09-29T03:41:23.087619",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: measure] The generalization error of the rigid family is dominated by the",
+        "Method:plan_explore_iter50",
+        "Fact:pass_iter50"
+      ],
+      "iteration": 50,
+      "id": "he_experiment_pipeline_efdf4ee9"
+    },
+    {
+      "label": "reviewer_iter50",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:41:23.087707",
+      "last_seen": "2026-09-29T03:41:23.087707",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "5c919562e9cf1e5d",
+      "r_phys": 1.0,
+      "iteration": 50,
+      "id": "persona_use:reviewer_iter50"
     }
   ],
   "links": [
@@ -459,6 +779,141 @@
       "last_seen": "2026-09-29T03:36:04.534278",
       "mentions": 1,
       "target": "he_experiment_pipeline_ae8c6ba7"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: computation] The approximation capacity of the fat polynomial family scale",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:37:45.441234",
+      "last_seen": "2026-09-29T03:37:45.441234",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_345a00fc"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter30",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:37:45.441234",
+      "last_seen": "2026-09-29T03:37:45.441234",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_345a00fc"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter30",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:37:45.441234",
+      "last_seen": "2026-09-29T03:37:45.441234",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_345a00fc"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The solution space of the linear rigid family forms a 2-dimensi",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:39:12.155744",
+      "last_seen": "2026-09-29T03:39:12.155744",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2c265da"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter35",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:39:12.155744",
+      "last_seen": "2026-09-29T03:39:12.155744",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2c265da"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter35",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:39:12.155744",
+      "last_seen": "2026-09-29T03:39:12.155744",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2c265da"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: measure] The held-out error for the rigid linear family follows a chi-squa",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:39:56.914732",
+      "last_seen": "2026-09-29T03:39:56.914732",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b316a36e"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter40",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:39:56.914732",
+      "last_seen": "2026-09-29T03:39:56.914732",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b316a36e"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter40",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:39:56.914732",
+      "last_seen": "2026-09-29T03:39:56.914732",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b316a36e"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:** [DIM: dynamics] The held-out error spikes in the rigid linear family are caus",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:40:38.129430",
+      "last_seen": "2026-09-29T03:40:38.129430",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4da29c08"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter45",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:40:38.129430",
+      "last_seen": "2026-09-29T03:40:38.129430",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4da29c08"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter45",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:40:38.129430",
+      "last_seen": "2026-09-29T03:40:38.129430",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4da29c08"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: measure] The generalization error of the rigid family is dominated by the",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:41:23.087619",
+      "last_seen": "2026-09-29T03:41:23.087619",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_efdf4ee9"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter50",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:41:23.087619",
+      "last_seen": "2026-09-29T03:41:23.087619",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_efdf4ee9"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter50",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:41:23.087619",
+      "last_seen": "2026-09-29T03:41:23.087619",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_efdf4ee9"
     }
   ]
 }

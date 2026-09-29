@@ -177,6 +177,166 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_7db97755",
+      "objective": "[DIM: structure] The solution space of the linear rigid family forms a 2-dimensional affine manifold in function space, characterized by the invariant that the second finite difference vanishes identically for any two training points; this structural constraint reduces the effective degrees of freedom to 2, making the solution space rigid and allowing zero-violation with minimal network capacity (N_c finite).",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the `family` function for the linear rigid family (affine functions f(x)=ax+b) and the fat polynomial family (20-term shifted basis), ensuring y/yv are (N,1) shaped, normalized to O(1), with non-overlapping train/holdout sets. This is the critical missing piece in the current hypothesis loop that prevents validating the rigidity claim.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "/workspace/research_outputs/shusheng_rsi_run45/.huginn/engine/linear_rigid_family.py",
+            "(new)",
+            "/workspace/research_outputs/shusheng_rsi_run45/.huginn/engine/fat_polynomial_family.py",
+            "(new)"
+          ]
+        }
+      ],
+      "status": "executing",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T03:38:56.392185+00:00",
+      "confirmed_at": "2026-09-29T03:38:56.393201+00:00",
+      "completed_at": null,
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
+    },
+    {
+      "id": "plan_daf27e43",
+      "objective": "[DIM: measure] The held-out error for the rigid linear family follows a chi-squared distribution with degrees of freedom equal to the number of held-out points, where the variance is inversely proportional to the number of training constraints $w$; thus, the observed non-zero errors in the log are statistical sampling noise rather than structural failure.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid linear family and fat polynomial family, ensuring proper normalization, shape constraints, and non-overlapping held-out sets. Then run the capacity_scan workflow to validate the hypothesis about chi-squared held-out error distribution. This requires writing the family function to generate training and validation points for both families, with y/yv normalized to O(1) scale and shaped as (N,1).",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "/workspace/research_outputs/shusheng_rsi_run45/.huginn/goals.json",
+            "(to",
+            "update",
+            "the",
+            "experiment",
+            "configuration",
+            "with",
+            "proper",
+            "family",
+            "implementation)"
+          ]
+        }
+      ],
+      "status": "executing",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T03:39:39.536572+00:00",
+      "confirmed_at": "2026-09-29T03:39:39.537574+00:00",
+      "completed_at": null,
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
+    },
+    {
+      "id": "plan_ea05c97e",
+      "objective": "** [DIM: dynamics] The held-out error spikes in the rigid linear family are caused by the optimization landscape of the two-layer tanh network developing **sharp local minima** near the solution manifold as width $h$ increases, trapping the L-BFGS-B solver in configurations that fit the training noise but violate the zero-violation threshold on held-out points.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the family function to generate training/holdout data for the rigid linear family (f(x)=ax+b) and the fat high-degree polynomial family (20th order in (2x-1)), ensuring y/yv are (N,1) shaped, normalized to O(1), with disjoint X/Xv sets. This enables testing the hypothesis about sharp local minima in the optimization landscape.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "/workspace/research_outputs/shusheng_rsi_run45/.huginn/family.py"
+          ]
+        }
+      ],
+      "status": "executing",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T03:40:23.195936+00:00",
+      "confirmed_at": "2026-09-29T03:40:23.197088+00:00",
+      "completed_at": null,
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
+    },
+    {
+      "id": "plan_724f18d8",
+      "objective": "[DIM: measure] The generalization error of the rigid family is dominated by the condition number of the Vandermonde-like constraint matrix induced by the placement of training points X and held-out points Xv; specifically, the leverage scores of the held-out points relative to the training set are high, causing the norm of the solution vector to explode on the held-out set even if training error is zero, violating the O(1) scale discipline.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the family function to generate the rigid linear family (f(x)=ax+b) and fat polynomial family (20th-degree shifted Legendre) with proper O(1) normalization, ensuring X/y and Xv/yv are shaped (N,1) with no overlap. This addresses the missing anchor data and unreachable trend for the fat family from the previous iteration, enabling the capacity_scan to compute N_c(w) and validate the hypothesis about condition number dominance.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "family_impl.py"
+          ]
+        }
+      ],
+      "status": "executing",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T03:41:06.477174+00:00",
+      "confirmed_at": "2026-09-29T03:41:06.478235+00:00",
+      "completed_at": null,
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
+    },
+    {
+      "id": "plan_2b883bef",
+      "objective": "[DIM: dynamics]",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T03:41:57.781499+00:00",
+      "confirmed_at": "2026-09-29T03:41:57.782592+00:00",
+      "completed_at": "2026-09-29T03:42:17.290757+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

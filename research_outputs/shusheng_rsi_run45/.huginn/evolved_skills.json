@@ -9,11 +9,11 @@
       "family",
       "value",
       "rigid",
-      "polynomial",
-      "label",
       "linear",
-      "function",
-      "plan"
+      "label",
+      "polynomial",
+      "plan",
+      "function"
     ],
     "workflow_steps": [
       {
