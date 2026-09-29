@@ -359,5 +359,19 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement a dimension measurement workflow for the hypothesis '[DIM: measure]'. First, clarify the target dimension (e.g., fractal, embedding, or Hausdorff) and the mathem"
+  },
+  {
+    "scene_tag": "auto_family",
+    "hyp_key": "59ed6538611d",
+    "reason": "The plan contains a critical structural error: it proposes using a 'low-degree (e.g., degree 3) rigid family' to demonstrate deterministic interpolation and exponential decay of heldout error. This contradicts the hypothesis and prior failures (run29). A fixed low-degree polynomial has finite capacity (e.g., 4 coefficients for degree 3); once constraints w exceed this capacity, the system becomes overdetermined, heldout error will not decay exponentially but will likely stagnate or increase, violating the core claim of the rigid family. The rigid family must have sufficient degrees of freedom to satisfy constraints w exactly (underdetermined or determined regime), not be underdetermined by design. The plan also lacks specification of the constraint mechanism (e.g., interpolation points vs. moment conditions) and validation protocol for the differential constraint.",
+    "missing_steps": [
+      "Define rigid family with capacity > w (e.g., high-degree polynomial or kernel-based with sufficient basis functions) to allow exact interpolation at w < capacity",
+      "Specify constraint generation method (e.g., random interpolation points, derivative conditions) and heldout set generation protocol",
+      "Define explicit metric for 'zero-violation threshold' and differential constraint validation (e.g., compute dε/dw numerically from scan data)",
+      "Add dimensional normalization and scaling checks to avoid magnitude issues (per run29 failure)",
+      "Include validation of heldout error independence from training error (per report discipline)"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function for the rigid and fat function families as specified in the hypothesis. The rigid family will be a low-dimensional polynomial (e.g., degree 3"
   }
 ]

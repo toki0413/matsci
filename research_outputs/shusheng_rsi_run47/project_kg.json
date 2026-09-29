@@ -2660,6 +2660,70 @@
       "r_phys": 1.0,
       "iteration": 210,
       "id": "persona_use:reviewer_iter210"
+    },
+    {
+      "label": "[DIM: measure]**",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T08:10:02.745575",
+      "last_seen": "2026-09-29T08:10:02.745575",
+      "mentions": 1,
+      "iteration": 215,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Successful implementation of dimension estimation with validated results on benchmark datasets, achieving expected dimension values within acceptable error margins (e.g., <5% deviation for known fract",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: measure]**"
+    },
+    {
+      "label": "plan_explore_iter215",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:10:02.745617",
+      "last_seen": "2026-09-29T08:10:02.745617",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter215"
+    },
+    {
+      "label": "pass_iter215",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:10:02.745625",
+      "last_seen": "2026-09-29T08:10:02.745625",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter215"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T08:10:02.745634",
+      "last_seen": "2026-09-29T08:10:02.745634",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: measure]**",
+        "Method:plan_explore_iter215",
+        "Fact:pass_iter215"
+      ],
+      "iteration": 215,
+      "id": "he_experiment_pipeline_3a055358"
+    },
+    {
+      "label": "reviewer_iter215",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T08:10:02.745711",
+      "last_seen": "2026-09-29T08:10:02.745711",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "e791674625497b57",
+      "r_phys": 1.0,
+      "iteration": 215,
+      "id": "persona_use:reviewer_iter215"
     }
   ],
   "links": [
@@ -3796,6 +3860,33 @@
       "last_seen": "2026-09-29T08:08:59.197572",
       "mentions": 1,
       "target": "he_experiment_pipeline_4b81648"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: measure]**",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:10:02.745634",
+      "last_seen": "2026-09-29T08:10:02.745634",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_3a055358"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter215",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:10:02.745634",
+      "last_seen": "2026-09-29T08:10:02.745634",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_3a055358"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter215",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:10:02.745634",
+      "last_seen": "2026-09-29T08:10:02.745634",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_3a055358"
     }
   ]
 }

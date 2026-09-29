@@ -1333,6 +1333,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_8edf79fd",
+      "objective": "[DIM: dynamics] The rigid family's zero-violation threshold is governed by a first-order differential constraint on the residual error: $d\\epsilon_{heldout}/dw \\le -\\alpha \\epsilon_{heldout}$ for $\\alpha > 0$, implying exponential decay of heldout error with increasing constraint count $w$ due to deterministic interpolation; the fat family violates this with $d\\epsilon_{heldout}/dw \\approx \\beta \\epsilon_{heldout}$ ($\\beta > 0$) due to stochastic noise propagation. |",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Implement the rigid family as a high-degree polynomial with sufficient degrees of freedom (e.g., degree 10 or higher) to satisfy w constraints exactly, and the fat family as a high-dimensional random polynomial with stochastic noise injection. Define constraint generation as random interpolation points and heldout set as independent samples. Compute heldout error ε_heldout(w) for varying w, numerically estimate dε/dw to validate the differential constraint (dε/dw ≤ -αε for rigid, dε/dw ≈ βε for fat), and ensure O(1) normalized outputs with proper dimensional scaling. Verify heldout error independence from training error to avoid overfitting artifacts.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T08:10:28.509248+00:00",
+      "confirmed_at": "2026-09-29T08:10:28.511925+00:00",
+      "completed_at": "2026-09-29T08:10:47.931479+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
