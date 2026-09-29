@@ -676,6 +676,70 @@
       "r_phys": 1.0,
       "iteration": 55,
       "id": "persona_use:reviewer_iter55"
+    },
+    {
+      "label": "[DIM: structure] The minimum network width $N_c(w)$ required for zero violation ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T07:20:46.137726",
+      "last_seen": "2026-09-29T07:20:46.137726",
+      "mentions": 1,
+      "iteration": 60,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The family function will return properly shaped and normalized data for both families. For the rigid family, a two-layer tanh network with width h=2~8 should achieve zero violation on held-out points",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The minimum network width $N_c(w)$ required for zero violation"
+    },
+    {
+      "label": "plan_explore_iter60",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:20:46.137761",
+      "last_seen": "2026-09-29T07:20:46.137761",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter60"
+    },
+    {
+      "label": "pass_iter60",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:20:46.137771",
+      "last_seen": "2026-09-29T07:20:46.137771",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter60"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T07:20:46.137780",
+      "last_seen": "2026-09-29T07:20:46.137780",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The minimum network width $N_c(w)$ required for zero violation",
+        "Method:plan_explore_iter60",
+        "Fact:pass_iter60"
+      ],
+      "iteration": 60,
+      "id": "he_experiment_pipeline_ea06f628"
+    },
+    {
+      "label": "reviewer_iter60",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T07:20:46.137848",
+      "last_seen": "2026-09-29T07:20:46.137848",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "cc3417bfccc05b4c",
+      "r_phys": 1.0,
+      "iteration": 60,
+      "id": "persona_use:reviewer_iter60"
     }
   ],
   "links": [
@@ -975,6 +1039,33 @@
       "last_seen": "2026-09-29T07:19:46.485172",
       "mentions": 1,
       "target": "he_experiment_pipeline_57ca89d8"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The minimum network width $N_c(w)$ required for zero violation",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:20:46.137780",
+      "last_seen": "2026-09-29T07:20:46.137780",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ea06f628"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter60",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:20:46.137780",
+      "last_seen": "2026-09-29T07:20:46.137780",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ea06f628"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter60",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:20:46.137780",
+      "last_seen": "2026-09-29T07:20:46.137780",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ea06f628"
     }
   ]
 }

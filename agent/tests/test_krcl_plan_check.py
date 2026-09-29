@@ -170,6 +170,38 @@ def test_invalid_plan_refines_once_then_gives_up():
     assert "[dft]" in eng._plan_check_warnings[-1]
 
 
+def test_failed_check_with_zero_refine_budget_still_rebuilds_once():
+    """自适应把 max_refines 压到 0 时, 失败也必须重建一次, 不得原样放行.
+
+    复现路径: bucket 多数通过 -> ewma_success>=0.8 -> baseline-1=0. 旧实现
+    `for attempt in range(0+1)` 只校验一次, 首败即 `return plan` → 明知达不成
+    hypothesis 的 plan 被执行 (run46 实测: max_refines=0, 零次 rebuild).
+    """
+    eng = _make_engine()
+    eng._plan_checker._plan_check_max_refines = MagicMock(return_value=0)
+    eng._plan_checker._plan_check = AsyncMock(
+        return_value={
+            "is_valid": False,
+            "confidence": 0.1,
+            "reason": "misaligned with hypothesis",
+            "missing_steps": [],
+            "risks": [],
+        }
+    )
+    eng._plan_checker._refine_plan = AsyncMock(
+        return_value={
+            "mode": "coder",
+            "description": "rebuilt plan serving the hypothesis",
+        }
+    )
+    eng._plan_checker._override_plan_mode = MagicMock(side_effect=lambda p: p)
+    plan = {"mode": "coder", "description": "run band calculation directly"}
+    asyncio.run(eng._plan_check_and_refine(plan, "h", {}))
+    # 首次失败强制给一次重建预算: refine 1 次, _plan_check 共 2 次
+    assert eng._plan_checker._refine_plan.call_count == 1
+    assert eng._plan_checker._plan_check.call_count == 2
+
+
 def test_llm_failure_returns_plan():
     """_plan_check 抛异常 -> 直接返回原 plan, 状态没更新."""
     eng = _make_engine()
@@ -196,7 +228,11 @@ def test_open_tier_skips_check():
 
 
 def test_medium_tier_light_check_no_refine():
-    """iter 20 (medium tier) 只校验不 refine, 失败直接记 warning."""
+    """iter 20 (medium tier) 失败时也强制重建一次 (不再只校验就放行).
+
+    medium baseline=0 + 新逻辑: 首次失败给一次重建预算 -> refine 1 次,
+    共 2 次 _plan_check, 之后放行.
+    """
     eng = _make_engine(iteration=20)
     eng._plan_checker._plan_check = AsyncMock(
         return_value={
@@ -206,11 +242,17 @@ def test_medium_tier_light_check_no_refine():
             "risks": [],
         }
     )
-    eng._plan_checker._refine_plan = AsyncMock()  # medium baseline=0, 不应该被调
+    eng._plan_checker._refine_plan = AsyncMock(
+        return_value={
+            "mode": "workflow",
+            "description": "SCF then band",
+        }
+    )
+    eng._plan_checker._override_plan_mode = MagicMock(side_effect=lambda p: p)
     plan = {"mode": "coder", "description": "run band calculation on Si"}
     asyncio.run(eng._plan_check_and_refine(plan, "h", {}))
-    assert eng._plan_checker._plan_check.call_count == 1
-    eng._plan_checker._refine_plan.assert_not_called()
+    assert eng._plan_checker._plan_check.call_count == 2
+    assert eng._plan_checker._refine_plan.call_count == 1
     assert eng._plan_check_last_result["is_valid"] is False
 
 
@@ -358,9 +400,10 @@ def test_scene_tag_workflow_skill_other():
 
 
 def test_adaptive_loosen_after_high_success():
-    """light tier + 最近 5 次同场景全成功 -> max_refines 放宽到 0, 不 refine.
+    """light tier + 最近 5 次同场景全成功 -> max_refines 放宽到 0.
 
-    baseline=1, success_rate=1.0>=0.8 -> max(0, 1-1)=0.
+    放宽到 0 后**首次失败**仍重建一次: 明知达不成 hypothesis 的 plan 不得
+    原样放行 (run46: max_refines=0 + 零次 rebuild 的复现场景).
     """
     eng = _make_engine(iteration=35)
     eng._plan_check_history = [{"is_valid": True, "scene_tag": "dft"} for _ in range(5)]
@@ -372,11 +415,18 @@ def test_adaptive_loosen_after_high_success():
             "risks": [],
         }
     )
-    eng._plan_checker._refine_plan = AsyncMock()  # 放宽后不应该被调
+    eng._plan_checker._refine_plan = AsyncMock(
+        return_value={
+            "mode": "workflow",
+            "description": "SCF then band",
+        }
+    )
+    eng._plan_checker._override_plan_mode = MagicMock(side_effect=lambda p: p)
     plan = {"mode": "coder", "description": "run band calculation on Si"}
     asyncio.run(eng._plan_check_and_refine(plan, "h", {}))
-    assert eng._plan_checker._plan_check.call_count == 1  # 只校验一次
-    eng._plan_checker._refine_plan.assert_not_called()
+    # 首次失败强制重建一次: _plan_check 2 次, refine 1 次
+    assert eng._plan_checker._plan_check.call_count == 2
+    assert eng._plan_checker._refine_plan.call_count == 1
 
 
 def test_adaptive_tighten_after_low_success():

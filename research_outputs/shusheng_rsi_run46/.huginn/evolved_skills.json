@@ -13,7 +13,7 @@
       "function",
       "prediction",
       "plan",
-      "linear"
+      "explore"
     ],
     "workflow_steps": [
       {
