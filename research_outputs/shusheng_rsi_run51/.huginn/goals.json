@@ -4,10 +4,10 @@
       "id": "goal_88710bea",
       "text": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【唯一硬性口径（不可更改，其余全由你决定）】\n- 零违规 = 留出约束点上的最大绝对误差 ≤ 1e-3。\n- 刚性 = 扫描范围内存在较小的有限 N_c（且 N_c 不随 w 增长）；胖 = 扫描上限内任何宽度都达不到零违规（N_c 不可达）。判别是二值的。\n- 所有报告数值必须是有限数（禁止 inf/nan/None）。\n- 研究对象只能是小型前馈网络本身。严禁把本命题替换或“换名归约”为材料/化学/玻璃/合金/离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【实验的族、样本、扫描、脚本如何设计，以及如何证明“刚性可达”，由你自己决定并给出理由。】\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
       "sub_goals": [],
-      "iteration": 3,
+      "iteration": 8,
       "status": "active",
       "created_at": "2026-09-29T12:55:26.711312+00:00",
-      "updated_at": "2026-09-29T12:57:53.147085+00:00",
+      "updated_at": "2026-09-29T12:59:17.042630+00:00",
       "session_id": "",
       "metadata": {},
       "unknowns": [
@@ -50,9 +50,49 @@
           "discovered_at": "2026-09-29T12:55:30.001707+00:00",
           "resolved_at": null,
           "iteration": 1
+        },
+        {
+          "id": "unk_fd9780ba",
+          "text": "The definition of \"zero violation\" relies on a fixed absolute error threshold (1e-3), but this may not scale appropriately with the range or magnitude of target functions; if outputs are large, 1e-3 is negligible, but if outputs are small, it’s overly strict — potentially misclassifying generalization quality.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-29T12:58:59.892717+00:00",
+          "resolved_at": null,
+          "iteration": 5
+        },
+        {
+          "id": "unk_69d69fb3",
+          "text": "Training dynamics of small feedforward networks are highly non-convex and sensitive to initialization; N_c(w) inferred from one run may not reflect the true minimum width due to local minima or optimization failure, leading to false conclusions about rigidity.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-29T12:58:59.893691+00:00",
+          "resolved_at": null,
+          "iteration": 5
+        },
+        {
+          "id": "unk_f35d4dfa",
+          "text": "Using hidden layer width as the sole measure of network capacity ignores other critical factors like depth, activation function, and initialization scheme — thus N_c(w) may not capture the intrinsic representational power needed to satisfy constraints.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-29T12:58:59.894341+00:00",
+          "resolved_at": null,
+          "iteration": 5
+        },
+        {
+          "id": "unk_5c0ded09",
+          "text": "The distribution of w constraint points is unspecified; if they are adversarially placed (e.g., near discontinuities or in high-curvature regions), even wide networks may fail to achieve zero violation, falsely implying “fat” solution spaces.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-29T12:58:59.894942+00:00",
+          "resolved_at": null,
+          "iteration": 5
+        },
+        {
+          "id": "unk_d74920c4",
+          "text": "In the limit of very large w, overfitting to training constraints may prevent zero violation on holdout points even for wide networks — but this could be misinterpreted as lack of rigidity rather than poor generalization due to sampling density.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-29T12:58:59.895526+00:00",
+          "resolved_at": null,
+          "iteration": 5
         }
       ],
-      "unknowns_discovered": 5,
+      "unknowns_discovered": 10,
       "unknowns_resolved": 0,
       "objective": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【唯一硬性口径（不可更改，其余全由你决定）】\n- 零违规 = 留出约束点上的最大绝对误差 ≤ 1e-3。\n- 刚性 = 扫描范围内存在较小的有限 N_c（且 N_c 不随 w 增长）；胖 = 扫描上限内任何宽度都达不到零违规（N_c 不可达）。判别是二值的。\n- 所有报告数值必须是有限数（禁止 inf/nan/None）。\n- 研究对象只能是小型前馈网络本身。严禁把本命题替换或“换名归约”为材料/化学/玻璃/合金/离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【实验的族、样本、扫描、脚本如何设计，以及如何证明“刚性可达”，由你自己决定并给出理由。】\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
       "success_criteria": [],
