@@ -1139,6 +1139,70 @@
       "r_phys": 1.0,
       "iteration": 90,
       "id": "persona_use:reviewer_iter90"
+    },
+    {
+      "label": "[DIM: measure] The held-out error for the rigid family follows a heavy-tailed di",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T07:43:18.979303",
+      "last_seen": "2026-09-29T07:43:18.979303",
+      "mentions": 1,
+      "iteration": 95,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The rigid family's held-out error distribution will exhibit heavy tails with finite mean but diverging variance as w decreases (w << N_c), while the fat family will show lighter tails. N_c(w) for the",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: measure] The held-out error for the rigid family follows a heavy-tailed di"
+    },
+    {
+      "label": "plan_explore_iter95",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:43:18.979340",
+      "last_seen": "2026-09-29T07:43:18.979340",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter95"
+    },
+    {
+      "label": "pass_iter95",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:43:18.979348",
+      "last_seen": "2026-09-29T07:43:18.979348",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter95"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T07:43:18.979357",
+      "last_seen": "2026-09-29T07:43:18.979357",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: measure] The held-out error for the rigid family follows a heavy-tailed di",
+        "Method:plan_explore_iter95",
+        "Fact:pass_iter95"
+      ],
+      "iteration": 95,
+      "id": "he_experiment_pipeline_6ee360f"
+    },
+    {
+      "label": "reviewer_iter95",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T07:43:18.979423",
+      "last_seen": "2026-09-29T07:43:18.979423",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "124926e79e92ffa6",
+      "r_phys": 1.0,
+      "iteration": 95,
+      "id": "persona_use:reviewer_iter95"
     }
   ],
   "links": [
@@ -1627,6 +1691,33 @@
       "last_seen": "2026-09-29T07:42:09.175658",
       "mentions": 1,
       "target": "he_experiment_pipeline_6cf20ba7"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: measure] The held-out error for the rigid family follows a heavy-tailed di",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:43:18.979357",
+      "last_seen": "2026-09-29T07:43:18.979357",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_6ee360f"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter95",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:43:18.979357",
+      "last_seen": "2026-09-29T07:43:18.979357",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_6ee360f"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter95",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:43:18.979357",
+      "last_seen": "2026-09-29T07:43:18.979357",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_6ee360f"
     }
   ]
 }
