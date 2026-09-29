@@ -435,7 +435,7 @@ def _generate_variants(
 
         messages = [
             SystemMessage(content=(
-                "You are a conjecture generator for materials science. "
+                "You are a conjecture generator. "
                 "Given a seed statement, generate variants verifiable with sympy. "
                 "Output a JSON array of objects with keys: "
                 "statement, sympy_expr, test_cases (list of {inputs, expected}), "

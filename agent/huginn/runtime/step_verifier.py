@@ -106,7 +106,7 @@ class StepScore:
 
 # === 评分 Prompt ===
 
-_SCORE_PROMPT_TEMPLATE = """You are a process reward model (PRM) for a materials science agent.
+_SCORE_PROMPT_TEMPLATE = """You are a process reward model (PRM) for a research agent.
 
 Score the following tool step on a scale of 0.0 to 1.0:
 - 1.0 = perfect step, definitely advances the goal correctly
@@ -123,15 +123,15 @@ Respond JSON only, no markdown fences:
 {{"score": 0.0, "concerns": ["..."], "action": "proceed|warn|pause|redo", "reasoning": "1 sentence why"}}
 
 Criteria for low score:
-- Wrong physics (wrong functional, wrong ensemble, wrong unit conversion)
-- Numerically unstable (k-spacing too sparse, time step too large, basis too small)
+- Wrong model or invalid math (wrong equation, wrong approximation, inconsistent units)
+- Numerically unstable (under-resolved discretization, step size too large, ill-conditioning)
 - Wastes compute (redundant calculation, should reuse prior result)
 - Mismatched with goal (tool is right but args don't serve stated goal)
 - Result itself reports failure or non-convergence
 
 Criteria for high score:
 - Args match best practice for the calculation type
-- Result looks physically reasonable (energy negative, band gap plausible)
+- Result looks mathematically reasonable (consistent with invariants, bounds, or limits)
 - Step directly serves the stated goal
 """
 

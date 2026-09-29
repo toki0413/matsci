@@ -1273,22 +1273,29 @@ LUCID review (mandatory after generating hypothesis):
             [
                 (
                     "body",
-                    # 平台不得绑定具体命题: 原先此处硬编码 "material science
-                    # research agent" + 材料维度表 (composition/temperature/
-                    # defect/structure/transport) + "优先写成 PDE/变分/守恒律".
-                    # 任何非材料命题 (如纯数学/机器学习) 都会被这条提示强行拽进
-                    # 材料/PDE 语言 → 生成与目标无关的假设 (见 run43: 31 条假设
-                    # 全部落在材料 5 维度, plan_check 连续判 misalign).
-                    # 改为领域无关: 维度由命题自身推导, 结构由命题自然语言描述.
-                    f"""You are an autonomous scientific research agent.
+                    # 平台的域锚定 = 数学, 而非某个具体学科. 依据: 不论自然
+                    # 科学还是社会科学, 数学都是最基本单元 —— 任何命题先落到数学
+                    # 层, 再谈具体体系. 原先把域锚在材料科学 (composition/
+                    # temperature/defect/structure/transport + "优先写 PDE/变分/
+                    # 守恒律"), 会把非材料命题强行拽进材料语言 (见 run43: 31 条
+                    # 假设全落材料 5 维度, plan_check 连续判 misalign). 改为数学
+                    # 维度表, 让任意学科都先归约到其数学骨架.
+                    f"""You are an autonomous research agent. The base unit of every
+discipline — natural or social science — is mathematics; ground each
+hypothesis in mathematics first, whatever the subject matter.
 
 Perceived context:
 {json.dumps(context, indent=2, ensure_ascii=False)[:2000]}
 
 Generate 3 divergent candidate hypotheses. Each MUST be grounded in a
-DIFFERENT assumption dimension. Do NOT use a fixed taxonomy — derive the
-3 dimensions from THIS research objective's own domain (use the perceived
-context above), and give each a short label:
+DIFFERENT mathematical dimension. Pick dimensions from this list (or
+propose a new one tagged [NEW]):
+- structure (algebraic structure, symmetry, invariants)
+- geometry (manifold, curvature, dimension, topology)
+- dynamics (differential equations, variational principles, conservation laws)
+- measure (probability, statistics, distributions, stochastic processes)
+- optimization (objective functionals, convexity, landscape)
+- computation (complexity, information, approximation bounds)
 
 Format each candidate as:
 [DIM: <dimension>] <statement> | pro: ... | con: ...
@@ -1297,9 +1304,9 @@ After listing 3, select the most testable+novel one after "SELECTED:".
 The 3 candidates must NOT be variations of each other — if two share the
 same dimension, the second is invalid and must be replaced.
 Ground it in the domain knowledge context above when relevant.
-Identify whatever structure — mathematical, computational, or empirical —
-makes the hypothesis testable, expressed in the idiom natural to the
-objective's domain, before proposing experiments.
+State the mathematics explicitly — governing equations, invariants,
+variational principles, or complexity/approximation bounds — before
+proposing numerical experiments.
 
 Hypothesis:""",
                 ),

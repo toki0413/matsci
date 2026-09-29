@@ -400,10 +400,10 @@ class ContextBuilder:
             # 那会和 core.py 的 _current_user_message 一样被并发覆盖.
             try:
                 from huginn.utils.session_context import get_user_message
-                query = get_user_message() or "materials science computation"
+                query = get_user_message() or "scientific computation"
             except Exception:
                 logger.debug("best-effort op failed", exc_info=True)
-                query = "materials science computation"
+                query = "scientific computation"
         parts: list[str] = []
         try:
             mem = self.memory.recall_for_prompt(query, max_entries=3)

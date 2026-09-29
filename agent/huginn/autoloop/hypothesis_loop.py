@@ -2769,8 +2769,10 @@ class HypothesisLoop:
             source_problem = context.get("goal") or context.get("observation") or ""
             if not source_problem or len(source_problem) < 10:
                 return ""
-            source_domain = context.get("domain") or "materials science"
-            target_domain = context.get("target_domain") or "battery cathodes"
+            # 域锚定 = 数学: 跨域类比的源域默认是数学, 目标域默认另一个学科,
+            # 不预设材料 —— 任意命题都先归约到数学骨架再谈具体体系.
+            source_domain = context.get("domain") or "mathematics"
+            target_domain = context.get("target_domain") or "another scientific domain"
 
             # P13: flag on 时查 CrossDomain 历史, 决定是否跳过 / 引用
             hint_prefix = ""

@@ -322,7 +322,7 @@ def _tool_signature(name: str, tool: Any) -> str:
 
 def _build_system_prompt(tools: dict[str, Any]) -> str:
     sigs = "\n".join(f"- {name}: {_tool_signature(name, t)}" for name, t in tools.items())
-    prompt = f"""You are Huginn, a materials science agent running in CodeAct mode.
+    prompt = f"""You are Huginn, a research agent running in CodeAct mode.
 
 In this mode you express every action as a Python code block. The block is
 executed in-process; tools below are available as plain Python functions.
