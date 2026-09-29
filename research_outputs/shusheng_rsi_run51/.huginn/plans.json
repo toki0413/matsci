@@ -1,0 +1,36 @@
+{
+  "plans": [
+    {
+      "id": "plan_2b7cbf16",
+      "objective": "[DIM: structure] The minimal width $N_c(w)$ is determined by the algebraic rank of the constraint matrix formed by the $w$ sample points in a sufficiently rich feature space (e.g., via Fourier or polynomial basis), such that $N_c(w) \\ge \\text{rank}(\\Phi)$, and rigidity is achieved when the feature map is injective on the constraint set.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Implement a numerical experiment to test the hypothesis that minimal width $N_c(w)$ is determined by the algebraic rank of the constraint matrix $\\Phi$ formed by $w$ sample points in a feature space. The workflow will: (1) generate synthetic constraints using a known function $f(x)$; (2) construct the feature matrix $\\Phi$ using Fourier/polynomial basis; (3) compute rank($\\Phi$); (4) train small feedforward networks of varying widths on $w$ points; (5) evaluate max absolute error on held-out points; (6) identify $N_c(w)$ as the smallest width achieving zero violation (error $\\le 10^{-3}$); and (7) compare $N_c(w)$ to rank($\\Phi$) to verify if rigidity is achieved when the feature map is injective. All results will be logged with convergence status and error metrics.",
+          "tool": "workflow",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "experiments/nc_width_scan.py",
+            "experiments/rank_constraint_matrix.py",
+            "experiments/validate_rigidity.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T12:56:53.110367+00:00",
+      "confirmed_at": "2026-09-29T12:57:53.144040+00:00",
+      "completed_at": "2026-09-29T12:58:47.715544+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "workflow",
+        "source": "autoloop"
+      }
+    }
+  ]
+}
