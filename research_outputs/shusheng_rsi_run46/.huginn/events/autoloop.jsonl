@@ -1,0 +1,6 @@
+{"seq": 0, "kind": "autoloop_phase_change", "id": "190d3429", "parent_id": null, "ts": 1790665757.5127428, "payload": {"phase": "hypothesize", "status": "running", "iteration": 1}}
+{"seq": 1, "kind": "autoloop_phase_change", "id": "66b33e54", "parent_id": "190d3429", "ts": 1790665773.2358851, "payload": {"phase": "hypothesize", "status": "completed", "iteration": 1}}
+{"seq": 2, "kind": "autoloop_phase_change", "id": "c6cff737", "parent_id": "66b33e54", "ts": 1790665773.2756627, "payload": {"phase": "plan", "status": "running", "iteration": 2}}
+{"seq": 3, "kind": "autoloop_phase_change", "id": "2f08fa00", "parent_id": "c6cff737", "ts": 1790665776.496224, "payload": {"phase": "plan", "status": "completed", "iteration": 2}}
+{"seq": 4, "kind": "autoloop_phase_change", "id": "b2936d8b", "parent_id": "2f08fa00", "ts": 1790665776.4983745, "payload": {"phase": "execute", "status": "running", "iteration": 3}}
+{"seq": 5, "kind": "autoloop_phase_change", "id": "dff29000", "parent_id": "b2936d8b", "ts": 1790665796.19698, "payload": {"phase": "execute", "status": "completed", "iteration": 3}}
