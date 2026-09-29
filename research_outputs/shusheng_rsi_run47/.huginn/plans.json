@@ -1237,6 +1237,36 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_086edc9d",
+      "objective": "[DIM: structure] The rigid family satisfies a linear interpolation constraint that defines an affine subspace of dimension exactly w in the function space, such that any network with capacity exceeding w can exactly satisfy all constraints with zero training error. | pro: This hypothesis is grounded in well-established interpolation theory and provides a clear, testable prediction: for the rigid family, N_c(w) should be approximately w or slightly larger, and the training error should drop to near-zero once the network capacity exceeds w. con: This may seem obvious, but it provides a concrete baseline against which to compare the fat family's behavior. |",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the rigid and fat family functions in the sandbox to enable the capacity_scan workflow. The rigid family will be a low-dimensional affine space (e.g., linear functions) with w=4 constraints that uniquely determine the function, ensuring N_c(w) is finite and small. The fat family will be a high-dimensional space (e.g., 20-term polynomial) where w=4 constraints are insufficient to uniquely determine the function, ensuring N_c(w) is unreachable. Both families will have normalized outputs with std ≲ 10 to ensure the 1e-3 zero-violation criterion is meaningful. The function will return the required dictionary with properly shaped arrays (N,1) for X, y, Xv, yv.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "family.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T08:07:31.815141+00:00",
+      "confirmed_at": "2026-09-29T08:07:31.817317+00:00",
+      "completed_at": "2026-09-29T08:07:50.937625+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

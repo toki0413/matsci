@@ -2468,6 +2468,70 @@
       "r_phys": 1.0,
       "iteration": 195,
       "id": "persona_use:reviewer_iter195"
+    },
+    {
+      "label": "[DIM: computation] The information-theoretic capacity of the rigid family satisf",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T08:07:11.417030",
+      "last_seen": "2026-09-29T08:07:11.417030",
+      "mentions": 1,
+      "iteration": 200,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The rigid family will show N_c(w) finite and small (h=2~8) with flat trend as w increases, while the fat family will show unreachable trend (all h≤64 fail to achieve zero violation with max error ≤1e-",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: computation] The information-theoretic capacity of the rigid family satisf"
+    },
+    {
+      "label": "plan_explore_iter200",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:07:11.417075",
+      "last_seen": "2026-09-29T08:07:11.417075",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter200"
+    },
+    {
+      "label": "pass_iter200",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:07:11.417084",
+      "last_seen": "2026-09-29T08:07:11.417084",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter200"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T08:07:11.417093",
+      "last_seen": "2026-09-29T08:07:11.417093",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: computation] The information-theoretic capacity of the rigid family satisf",
+        "Method:plan_explore_iter200",
+        "Fact:pass_iter200"
+      ],
+      "iteration": 200,
+      "id": "he_experiment_pipeline_56ff6827"
+    },
+    {
+      "label": "reviewer_iter200",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T08:07:11.417169",
+      "last_seen": "2026-09-29T08:07:11.417169",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "18a4b816c9022cd6",
+      "r_phys": 1.0,
+      "iteration": 200,
+      "id": "persona_use:reviewer_iter200"
     }
   ],
   "links": [
@@ -3523,6 +3587,33 @@
       "last_seen": "2026-09-29T08:06:15.651530",
       "mentions": 1,
       "target": "he_experiment_pipeline_a9942311"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: computation] The information-theoretic capacity of the rigid family satisf",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:07:11.417093",
+      "last_seen": "2026-09-29T08:07:11.417093",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_56ff6827"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter200",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:07:11.417093",
+      "last_seen": "2026-09-29T08:07:11.417093",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_56ff6827"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter200",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:07:11.417093",
+      "last_seen": "2026-09-29T08:07:11.417093",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_56ff6827"
     }
   ]
 }

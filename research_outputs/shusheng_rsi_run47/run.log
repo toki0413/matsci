@@ -424,3 +424,9 @@ metacog: 假设可能为换名归约 (trap=, target=刚性族解空间维数低�
 [exec-route] mode='explore' desc[:80]='[auto-routed: surprise=1.00] Implement the `family` function to define the rigid' obj_len=2462 is_exp_desc=True is_exp_obj=True is_det_desc=True
 [code-lab-author] raw_len=1399 extracted_len=1384 prompt_len=5379
 [code-lab-run] res_none=False success=True nobj=36 reason=''
+[validate] mode='code_lab' success=True nobj=36 cf=False lab=True
+metacog: 假设可能为换名归约 (trap=, target=刚性族 = 满足 w 个解析约束的函数集合，其解空间维数为 w（仿射子空间），当网络容量 N_c ≥ w 时可零违规拟合): [DIM: structure] The rigid family satisfies a linear interpolation constraint that defines an affine
+renamed-reduction 3× consecutive: trigger counterexample hunt
+[exec-route] mode='explore' desc[:80]='[auto-routed: surprise=1.00] Implement the rigid and fat family functions in the' obj_len=2462 is_exp_desc=True is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=866 extracted_len=851 prompt_len=5379
+[code-lab-run] res_none=False success=True nobj=36 reason=''
