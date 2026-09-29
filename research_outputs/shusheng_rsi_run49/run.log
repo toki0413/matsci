@@ -239,3 +239,55 @@ metacog: 假设可能为换名归约 (trap=, target=将'解空间刚性'这一�
 [exec-route] mode='explore' desc[:80]='Design and execute a numerical experiment to test whether small feedforward netw' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
 [code-lab-author] raw_len=1039 extracted_len=1024 prompt_len=3149
 [code-lab-run] res_none=False success=True nobj=36 reason=''
+[validate] mode='code_lab' success=True nobj=36 cf=False lab=True
+metacog: 假设可能为换名归约 (trap=, target=将'解空间刚性'这一抽象概念重新表述为'网络容量随约束数量变化的离散阶梯行为'，本质上是用'网络容量'（N_c）的数值行为替换了'解空间刚性'（函数集合维数）的几何/代数性质。): [DIM: structure] The minimal network width N_c(w) required to achieve zero violation on held-out con
+renamed-reduction 3× consecutive: trigger counterexample hunt
+phase_gate advisory: plan→execute 缺证据 ['description'], 已放行 (非 checkpoint)
+phase_gate advisory: plan→execute 缺证据 ['description'], 已放行 (非 checkpoint)
+[exec-route] mode='explore' desc[:80]='' obj_len=509 is_exp_desc=False is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=839 extracted_len=824 prompt_len=3149
+[code-lab-run] res_none=True success=None nobj=0 reason="执行异常: AttributeError: module 'numpy' has no attribute 'poly_basis'"
+[code-lab-author] raw_len=722 extracted_len=707 prompt_len=4393
+[code-lab-run] res_none=True success=None nobj=0 reason="执行异常: AttributeError: module 'numpy' has no attribute 'poly_basis'"
+[code-lab-author] raw_len=1226 extracted_len=1211 prompt_len=4276
+[code-lab-run] res_none=True success=None nobj=0 reason="执行异常: AttributeError: module 'numpy' has no attribute 'poly_basis'"
+[code-lab-author] raw_len=1076 extracted_len=1061 prompt_len=4780
+[code-lab-run] res_none=True success=None nobj=0 reason="执行异常: ImportError: import of 'mlp_fit' is not allowed in CodeAct mode; allowed: ['ase', 'collections', 'copy', 'dataclasses', 'decimal', 'fractions', 'functools', 'itertools', 'json', 'math', 'matplot"
+code_lab 沙箱执行经 4 轮修复仍未产出证据(不伪造): 执行异常: ImportError: import of 'mlp_fit' is not allowed in CodeAct mode; allowed: ['ase', 'collections', 'copy', 'dataclasses', 'decimal', 'fractions', 'functools', 'itertools', 'json', 'math', 'matplotlib', 'numpy', 'operator', 'pandas', 'pymatgen', 're', 'scipy', 'statistics', 'sympy', 'time', 'typing', 'typing_extensions']
+code_lab 最后一版书生代码:
+import numpy as np
+from mlp_fit import mlp_fit, mlp_predict
+from _as_2d import _as_2d
+from poly_basis import poly_basis
+from capacity_scan import capacity_scan
+
+def family(kind, w, seed):
+    rng = np.random.default_rng(seed)
+    X = np.linspace(0.05, 0.95, w).reshape(-1, 1)
+    Xv = np.linspace(0.02, 0.98, 200).reshape(-1, 1)
+    
+    if kind == 'rigid':
+        # 刚性族：唯一满足 y=x 的线性函数，低维解空间
+        coeffs = np.array([0.0, 1.0])
+    else:
+        # 肥性族：y = a*x + b，a,b 连续变化，高维解空间
+        coeffs = rng.standard_normal(2)
+    
+    X_basis = poly_basis(X, 2)
+    Xv_basis = poly_basis(Xv, 2)
+    y = (X_basis @ coeffs).reshape(-1, 1)
+    yv = (Xv_basis @ coeffs).reshape(-1, 1)
+    
+    X_dense = np.linspace(0, 1, 1000).reshape(-1, 1)
+    X_dense_basis = poly_basis(X_dense, 2)
+    scale = np.std((X_dense_basis @ coeffs).reshape(-1))
+    if scale < 1e-10:
+        scale = 1.0
+    y = y / scale
+    yv = yv / scale
+    
+    return {'X': X, 'y': y, 'Xv': Xv, 'yv': yv}
+
+def run(cfg):
+    seed = int(cfg.get('seed', 0))
+    return capacity_scan(family, seed=seed)
