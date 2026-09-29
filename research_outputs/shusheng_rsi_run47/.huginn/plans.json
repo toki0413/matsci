@@ -337,6 +337,36 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_caa280a5",
+      "objective": "[DIM: structure] The rigid family is defined by a linear algebraic constraint matrix $A$ such that the solution space is an affine subspace of dimension $d = w - \\text{rank}(A)$. If $\\text{rank}(A) < w-1$ due to linear dependence in the sampled basis functions (e.g., using Vandermonde-like bases with ill-conditioned samples), the \"rigid\" family becomes effectively \"fat\" (underdetermined), allowing the network to fit training points with high error on the held-out set without a unique interpolant.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the `family` function for rigid and fat families as specified. The rigid family will use a low-dimensional polynomial basis (e.g., cubic) with normalization to O(1) scale to ensure the 1e-3 criterion is meaningful. The fat family will use a high-dimensional random Vandermonde-like basis (20 terms) with similar normalization. The function returns normalized X, y, Xv, yv as (N,1) arrays with non-overlapping training and held-out sets. This satisfies the \"rigid family anchor\" requirement and enables the capacity_scan workflow to compute N_c(w) for both families.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "family.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T07:34:24.590024+00:00",
+      "confirmed_at": "2026-09-29T07:34:24.591583+00:00",
+      "completed_at": "2026-09-29T07:34:43.702366+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
