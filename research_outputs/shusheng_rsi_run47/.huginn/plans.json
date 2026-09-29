@@ -1389,6 +1389,36 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_253d8a33",
+      "objective": "[DIM: geometry] The rigid family defines a low-dimensional algebraic variety in function space whose tangent space dimension is bounded by w, ensuring that small-width networks can parameterize the solution manifold without overparameterization. This hypothesis is the most testable and novel because it directly links the geometric structure of the solution space to the observed capacity behavior, offering a clear path to validation through manifold dimension estimation and tangent space analysis. It also avoids the pitfalls of over-optimistic convexity assumptions or overly loose complexity bounds.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the family function for the rigid and fat families as specified in the hypothesis, ensuring proper normalization of outputs to O(1) scale, correct array shapes (N,1), and non-overlapping held-out sets. This will enable the capacity_scan workflow to test whether small-width networks can parameterize the solution manifold without overparameterization, directly validating the geometric hypothesis about tangent space dimension bounds.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "/workspace/research_outputs/shusheng_rsi_run47/family.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T08:12:27.572934+00:00",
+      "confirmed_at": "2026-09-29T08:12:27.575279+00:00",
+      "completed_at": "2026-09-29T08:12:46.714761+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

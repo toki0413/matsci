@@ -1528,10 +1528,10 @@
       "label": "[DIM: computation] The rigid family's capacity complexity N_c(w) is bounded by O",
       "type": "experiment",
       "source": "autoloop",
-      "confidence": 1.0,
+      "confidence": 0.99,
       "created_at": "2026-09-29T07:49:38.203929",
-      "last_seen": "2026-09-29T07:49:38.203929",
-      "mentions": 1,
+      "last_seen": "2026-09-29T08:12:09.464215",
+      "mentions": 2,
       "iteration": 125,
       "r_phys": 1.0,
       "surprise": 1.0,
@@ -2788,6 +2788,55 @@
       "r_phys": 1.0,
       "iteration": 220,
       "id": "persona_use:reviewer_iter220"
+    },
+    {
+      "label": "plan_explore_iter225",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:12:09.464238",
+      "last_seen": "2026-09-29T08:12:09.464238",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter225"
+    },
+    {
+      "label": "pass_iter225",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:12:09.464258",
+      "last_seen": "2026-09-29T08:12:09.464258",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter225"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T08:12:09.464268",
+      "last_seen": "2026-09-29T08:12:09.464268",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: computation] The rigid family's capacity complexity N_c(w) is bounded by O",
+        "Method:plan_explore_iter225",
+        "Fact:pass_iter225"
+      ],
+      "iteration": 225,
+      "id": "he_experiment_pipeline_8d31f8b5"
+    },
+    {
+      "label": "reviewer_iter225",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T08:12:09.464335",
+      "last_seen": "2026-09-29T08:12:09.464335",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "8aa335ff8dc88e84",
+      "r_phys": 1.0,
+      "iteration": 225,
+      "id": "persona_use:reviewer_iter225"
     }
   ],
   "links": [
@@ -3450,6 +3499,15 @@
     },
     {
       "relation": "member_of",
+      "source": "experiment:[DIM: computation] The rigid family's capacity complexity N_c(w) is bounded by O",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:12:09.464268",
+      "last_seen": "2026-09-29T08:12:09.464268",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8d31f8b5"
+    },
+    {
+      "relation": "member_of",
       "source": "Method:plan_explore_iter125",
       "confidence": 0.5,
       "created_at": "2026-09-29T07:49:38.203997",
@@ -3978,6 +4036,24 @@
       "last_seen": "2026-09-29T08:11:04.694273",
       "mentions": 1,
       "target": "he_experiment_pipeline_b2e63cc"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter225",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:12:09.464268",
+      "last_seen": "2026-09-29T08:12:09.464268",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8d31f8b5"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter225",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:12:09.464268",
+      "last_seen": "2026-09-29T08:12:09.464268",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8d31f8b5"
     }
   ]
 }
