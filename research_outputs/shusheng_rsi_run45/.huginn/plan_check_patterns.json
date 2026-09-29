@@ -416,5 +416,20 @@
     ],
     "mode": "explore",
     "description": "Implement topological and geometric analysis for both families: (1) parameterize the rigid family f(x)=ax+b as a 2D affine manifold in function space, verify invariance under weight translation algebr"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan fundamentally misaligns with the hypothesis. The hypothesis requires verifying geometric properties of solution spaces (2D affine manifold vs. non-flat Riemannian manifold, Gaussian curvature, Hessian spectral gap, persistent homology/H1 groups), but the plan only implements a capacity scan measuring N_c(w) and held-out error. This repeats historical failures where topological/geometric analysis was omitted in favor of simple error metrics. The plan fails to compute homology groups, analyze manifold geometry, verify affine structure, or compute Hessian spectral gaps as required by the hypothesis.",
+    "missing_steps": [
+      "Implement topological data analysis (persistent homology) to compute H1 groups of solution space manifolds",
+      "Define weight manifold geometry and parameterization in function space (not just parameter space)",
+      "Verify rigid family forms 2D affine manifold through geometric analysis in function space",
+      "Compute Hessian at initialization and analyze spectral gap in function space",
+      "Specify filtration method (e.g., Vietoris-Rips) for homology computation on function space geometry",
+      "Analyze Gaussian curvature of fat polynomial family manifold",
+      "Implement continuous interpolation path testing between training and held-out solutions in function space"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the rigid linear family and fat polynomial family functions in the code lab script. The rigid family will be a linear function f(x) = ax + b (2D affine manifold)"
   }
 ]
