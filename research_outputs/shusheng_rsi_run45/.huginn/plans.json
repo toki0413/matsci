@@ -1123,6 +1123,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_c6b5632d",
+      "objective": "[DIM: measure] The held-out error of small networks on the rigid linear family follows a **U-shaped curve** in the number of samples $w$ (underfitting at low $w$, overfitting at high $w$), whereas the fat polynomial family exhibits monotonic error decay without a peak due to high intrinsic variance.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement topological verification of the hypothesis by computing H1 groups and Gaussian curvature of solution space manifolds for both families. Specifically: (1) Parameterize the rigid linear family as a 2D affine manifold in function space and verify its trivial H1 (simply connected); (2) For the fat polynomial family, compute the Hessian spectral gap and Gaussian curvature using Vietoris-Rips filtration on function space trajectories; (3) Implement continuous interpolation between training and held-out solutions to test geometric continuity; (4) Correlate topological features (H1, curvature) with observed error curves to explain U-shaped vs. monotonic behavior. This shifts from empirical capacity measurement to structural verification of the underlying mathematical geometry claimed in the hypothesis.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T04:15:11.052888+00:00",
+      "confirmed_at": "2026-09-29T04:15:11.054720+00:00",
+      "completed_at": "2026-09-29T04:15:30.338238+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

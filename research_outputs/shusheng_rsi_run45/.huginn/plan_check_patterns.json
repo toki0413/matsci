@@ -613,5 +613,35 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the family function for the linear (rigid) and fat polynomial families. The linear family returns f(x)=ax+b with slope/intercept from the seed; the fat family re"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan fundamentally misaligns with the hypothesis. The hypothesis requires verifying geometric/topological properties of solution spaces (H1 groups, affine manifold dimension, Gaussian curvature, Hessian spectral gap) in function space, but the plan only implements a capacity scan measuring N_c(w) and held-out error. This repeats the exact historical failures documented in the scene history where topological analysis was omitted and MODE=explore was inappropriate for a structural verification task.",
+    "missing_steps": [
+      "Switch MODE from explore to coder/workflow for concrete implementation",
+      "Implement topological data analysis (persistent homology) to compute H1 groups of solution space manifolds",
+      "Define weight manifold geometry and parameterization in function space (not just parameter space)",
+      "Specify filtration method (e.g., Vietoris-Rips) for homology computation on function space geometry",
+      "Verify rigid family forms 2D affine manifold through geometric analysis in function space",
+      "Compute Hessian at initialization and analyze spectral gap in function space",
+      "Analyze Gaussian curvature of fat polynomial family manifold",
+      "Implement continuous interpolation path testing between training and held-out solutions in function space"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function for the rigid linear family (f(x)=ax+b) and fat polynomial family (20th-degree random polynomial), ensuring y/yv are normalized to O(1) scale"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan uses 'explore' mode and topological verification (H1 groups, Gaussian curvature) to explain error curves, but the hypothesis specifically requires empirical measurement of held-out error versus sample count w (U-shaped vs monotonic decay). Topological analysis does not directly produce the required error curves, training/hold-out error numerical tables, or N_c(w) trends. The plan skips the fundamental step of actually running the learning experiments to compute the error values. Additionally, it does not address the specific failures from run28 (fat family being x-independent noise) and run29 (rigid family being underdetermined or fat family having extreme scale issues).",
+    "missing_steps": [
+      "Implement the actual learning experiments: define the rigid linear family and fat polynomial family with appropriate x-dependence and scales (avoiding x-independent noise and extreme magnitudes)",
+      "Perform sample size w sweep with proper training and held-out error measurement (independent metrics)",
+      "Generate error vs w numerical tables and plots to directly observe U-shaped vs monotonic behavior",
+      "Calculate and report N_c(w) values and trends as required by the hypothesis",
+      "Address run28 failure: ensure fat polynomial family is x-dependent and high-dimensional but partially learnable",
+      "Address run29 failure: ensure rigid linear family is not underdetermined and scales are controlled"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement topological verification of the hypothesis by computing H1 groups and Gaussian curvature of solution space manifolds for both families. Specifically: (1) Paramet"
   }
 ]
