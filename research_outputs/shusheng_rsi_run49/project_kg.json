@@ -555,8 +555,8 @@
       "source": "autoloop",
       "confidence": 0.99,
       "created_at": "2026-09-29T08:57:10.955287",
-      "last_seen": "2026-09-29T09:00:22.869008",
-      "mentions": 2,
+      "last_seen": "2026-09-29T09:37:32.804122",
+      "mentions": 3,
       "iteration": 50,
       "r_phys": 1.0,
       "surprise": 1.0,
@@ -2299,6 +2299,55 @@
       "r_phys": 1.0,
       "iteration": 195,
       "id": "persona_use:reviewer_iter195"
+    },
+    {
+      "label": "plan_explore_iter200",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:37:32.804149",
+      "last_seen": "2026-09-29T09:37:32.804149",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter200"
+    },
+    {
+      "label": "pass_iter200",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:37:32.804167",
+      "last_seen": "2026-09-29T09:37:32.804167",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter200"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T09:37:32.804177",
+      "last_seen": "2026-09-29T09:37:32.804177",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: measure] The probability that a randomly initialized small network satisfi",
+        "Method:plan_explore_iter200",
+        "Fact:pass_iter200"
+      ],
+      "iteration": 200,
+      "id": "he_experiment_pipeline_ad2665c2"
+    },
+    {
+      "label": "reviewer_iter200",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T09:37:32.804250",
+      "last_seen": "2026-09-29T09:37:32.804250",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "6eaaacd9c13b9f97",
+      "r_phys": 1.0,
+      "iteration": 200,
+      "id": "persona_use:reviewer_iter200"
     }
   ],
   "links": [
@@ -2562,6 +2611,15 @@
       "last_seen": "2026-09-29T09:00:22.869081",
       "mentions": 1,
       "target": "he_experiment_pipeline_766c16be"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: measure] The probability that a randomly initialized small network satisfi",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:37:32.804177",
+      "last_seen": "2026-09-29T09:37:32.804177",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ad2665c2"
     },
     {
       "relation": "member_of",
@@ -3327,6 +3385,24 @@
       "last_seen": "2026-09-29T09:36:24.698960",
       "mentions": 1,
       "target": "he_experiment_pipeline_11ca8df7"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter200",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:37:32.804177",
+      "last_seen": "2026-09-29T09:37:32.804177",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ad2665c2"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter200",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:37:32.804177",
+      "last_seen": "2026-09-29T09:37:32.804177",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ad2665c2"
     }
   ]
 }

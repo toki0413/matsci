@@ -539,5 +539,32 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] This workflow tests the hypothesis through a structured computational experiment. Stage 1 defines $w$ analytical constraints as linear equations on network weights ($\\math"
+  },
+  {
+    "scene_tag": "auto_numerical",
+    "hyp_key": "aa039e9f1891",
+    "reason": "The plan is fundamentally invalid because it conflates two distinct problems: 1) the theoretical constraint satisfaction problem (CSP) of ReLU networks, which involves analyzing the geometry of the solution space to piecewise-linear inequalities; and 2) a supervised learning regression task (training on constraints to minimize error on held-out points). The hypothesis is about the intrinsic rigidity of the CSP solution space when the active graph is a spanning tree, which is a property of the constraints themselves, not about the network's ability to approximate or fit them. Defining N_c(w) as the minimal width achieving low error on held-out points measures generalization capacity/approximation ability, not the dimensionality/rigidity of the feasible set of the CSP. Furthermore, the plan lacks a method to construct or identify the 'active constraint graph' or verify it forms a 'spanning tree' for the generated networks, which is central to the hypothesis's condition.",
+    "missing_steps": [
+      "Clarify the mathematical definition of the 'constraint satisfaction problem' for ReLU networks in this context (e.g., is it finding weights that satisfy inequalities?)",
+      "Define how to generate networks where the 'active constraint graph' is explicitly known to be a spanning tree.",
+      "Define how to measure the dimensionality/rigidity of the solution space (e.g., counting degrees of freedom, rank of Jacobian, etc.) rather than training error.",
+      "Replace the supervised learning regression objective with a feasibility check (satisfiability) of the piecewise-linear inequalities."
+    ],
+    "mode": "explore",
+    "description": "Design a numerical experiment to test the hypothesis that ReLU constraint systems exhibit rigidity (low-dimensional solution space) when the active constraint graph forms a spanning tree, implying $N_"
+  },
+  {
+    "scene_tag": "auto_numerical",
+    "hyp_key": "aa039e9f1891",
+    "reason": "The plan fundamentally conflates a theoretical constraint satisfaction problem (CSP) with a supervised learning regression task. The hypothesis concerns the intrinsic geometry and dimensionality of the solution space to piecewise-linear inequalities when the active constraint graph is a spanning tree. However, the plan proposes measuring 'rigidity' via training error and held-out generalization error on a learning task, which measures approximation capacity, not solution space rigidity. It also lacks a method to explicitly construct or verify that the active constraint graph forms a spanning tree, which is central to the hypothesis.",
+    "missing_steps": [
+      "Define the ReLU constraint satisfaction problem precisely (e.g., finding weights that satisfy a system of piecewise-linear inequalities)",
+      "Develop a method to explicitly construct networks where the active constraint graph is known to be a spanning tree",
+      "Replace supervised learning with feasibility checking of piecewise-linear inequalities",
+      "Define a proper measure of solution space dimensionality/rigidity (e.g., rank of Jacobian, counting degrees of freedom, or dimension of feasible polytope)",
+      "Verify the active constraint graph structure before measuring solution space properties"
+    ],
+    "mode": "explore",
+    "description": "We will numerically test the hypothesis that the solution space of a ReLU constraint system is rigid (low-dimensional) when the active constraint graph forms a spanning tree. Steps: (1) Construct synt"
   }
 ]
