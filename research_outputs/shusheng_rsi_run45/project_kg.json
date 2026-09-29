@@ -2741,6 +2741,70 @@
       "r_phys": 1.0,
       "iteration": 220,
       "id": "persona_use:reviewer_iter220"
+    },
+    {
+      "label": "**[DIM: dynamics]**",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T04:25:20.535306",
+      "last_seen": "2026-09-29T04:25:20.535306",
+      "mentions": 1,
+      "iteration": 225,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "$H^0(S^1, \\mathcal{F}) \\cong \\mathbb{R}$ (global constant functions), $H^1(S^1, \\mathcal{F}) \\cong \\mathbb{R}$ (non-trivial topological obstruction), confirming the sheaf has non-vanishing first cohom",
+      "persona": "reviewer",
+      "id": "experiment:**[DIM: dynamics]**"
+    },
+    {
+      "label": "plan_explore_iter225",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:25:20.535344",
+      "last_seen": "2026-09-29T04:25:20.535344",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter225"
+    },
+    {
+      "label": "pass_iter225",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:25:20.535354",
+      "last_seen": "2026-09-29T04:25:20.535354",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter225"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T04:25:20.535363",
+      "last_seen": "2026-09-29T04:25:20.535363",
+      "mentions": 1,
+      "members": [
+        "experiment:**[DIM: dynamics]**",
+        "Method:plan_explore_iter225",
+        "Fact:pass_iter225"
+      ],
+      "iteration": 225,
+      "id": "he_experiment_pipeline_5c3e36aa"
+    },
+    {
+      "label": "reviewer_iter225",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T04:25:20.535429",
+      "last_seen": "2026-09-29T04:25:20.535429",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "5fbf92ddcb5d5462",
+      "r_phys": 1.0,
+      "iteration": 225,
+      "id": "persona_use:reviewer_iter225"
     }
   ],
   "links": [
@@ -3931,6 +3995,33 @@
       "last_seen": "2026-09-29T04:23:31.973595",
       "mentions": 1,
       "target": "he_experiment_pipeline_e23fa97a"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:**[DIM: dynamics]**",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:25:20.535363",
+      "last_seen": "2026-09-29T04:25:20.535363",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5c3e36aa"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter225",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:25:20.535363",
+      "last_seen": "2026-09-29T04:25:20.535363",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5c3e36aa"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter225",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:25:20.535363",
+      "last_seen": "2026-09-29T04:25:20.535363",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5c3e36aa"
     }
   ]
 }

@@ -1383,6 +1383,36 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_5a50ab0a",
+      "objective": "[DIM: computation] The fat family (high-degree polynomial) exhibits approximation complexity that scales super-linearly with the number of constraints $w$, such that the required hidden width $h$ to achieve zero violation grows faster than the available capacity ($h \\le 64$), resulting in $N_c(w) = \\infty$ (unreachable), whereas the linear rigid family satisfies a linear system with rank deficiency bounded by the affine dimension (2), yielding a finite $N_c(w)$ independent of $w$.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the family function for the two function families (rigid: linear function f(x)=ax+b; fat: 20th-degree polynomial f(x)=Σ c_i (2x-1)^i) with proper normalization (y/yv scaled by std to O(1)), ensuring X/y and Xv/yv are (N,1) shaped and non-overlapping. This enables the capacity_scan to correctly compute N_c(w) trends for both families.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "/workspace/research_outputs/shusheng_rsi_run45/family.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T04:25:43.807707+00:00",
+      "confirmed_at": "2026-09-29T04:25:43.809674+00:00",
+      "completed_at": "2026-09-29T04:26:03.117282+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
