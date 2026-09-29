@@ -66,6 +66,70 @@
       "r_phys": 1.0,
       "iteration": 5,
       "id": "persona_use:reviewer_iter5"
+    },
+    {
+      "label": "[DIM: structure] The constraint system defines a linear subspace of dimension d ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T08:49:45.605627",
+      "last_seen": "2026-09-29T08:49:45.605627",
+      "mentions": 1,
+      "iteration": 10,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will be observed to be finite and approximately equal to d = n - w across the scanned range of w values, with N_c(w) showing no significant growth as w increases, confirming the rigid solution",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The constraint system defines a linear subspace of dimension d"
+    },
+    {
+      "label": "plan_explore_iter10",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:49:45.605667",
+      "last_seen": "2026-09-29T08:49:45.605667",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter10"
+    },
+    {
+      "label": "pass_iter10",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:49:45.605676",
+      "last_seen": "2026-09-29T08:49:45.605676",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter10"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T08:49:45.605686",
+      "last_seen": "2026-09-29T08:49:45.605686",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The constraint system defines a linear subspace of dimension d",
+        "Method:plan_explore_iter10",
+        "Fact:pass_iter10"
+      ],
+      "iteration": 10,
+      "id": "he_experiment_pipeline_a0ed1f6d"
+    },
+    {
+      "label": "reviewer_iter10",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T08:49:45.605759",
+      "last_seen": "2026-09-29T08:49:45.605759",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "24f7da213d927d4b",
+      "r_phys": 1.0,
+      "iteration": 10,
+      "id": "persona_use:reviewer_iter10"
     }
   ],
   "links": [
@@ -95,6 +159,33 @@
       "last_seen": "2026-09-29T08:48:45.080591",
       "mentions": 1,
       "target": "he_experiment_pipeline_ba204893"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The constraint system defines a linear subspace of dimension d",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:49:45.605686",
+      "last_seen": "2026-09-29T08:49:45.605686",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a0ed1f6d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:49:45.605686",
+      "last_seen": "2026-09-29T08:49:45.605686",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a0ed1f6d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:49:45.605686",
+      "last_seen": "2026-09-29T08:49:45.605686",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a0ed1f6d"
     }
   ]
 }
