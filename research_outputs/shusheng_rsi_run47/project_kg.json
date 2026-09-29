@@ -2837,6 +2837,70 @@
       "r_phys": 1.0,
       "iteration": 225,
       "id": "persona_use:reviewer_iter225"
+    },
+    {
+      "label": "[DIM: geometry] The rigid family defines a low-dimensional algebraic variety in ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T08:13:02.899274",
+      "last_seen": "2026-09-29T08:13:02.899274",
+      "mentions": 1,
+      "iteration": 230,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The rigid family will achieve zero violation (≤1e³) at small widths (h=2~8) with flat or decreasing N_c(w) trend, while the fat family will show unreachable trend (all widths >1e³ error) up to h=64, c",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: geometry] The rigid family defines a low-dimensional algebraic variety in"
+    },
+    {
+      "label": "plan_explore_iter230",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:13:02.899311",
+      "last_seen": "2026-09-29T08:13:02.899311",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter230"
+    },
+    {
+      "label": "pass_iter230",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:13:02.899320",
+      "last_seen": "2026-09-29T08:13:02.899320",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter230"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T08:13:02.899329",
+      "last_seen": "2026-09-29T08:13:02.899329",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: geometry] The rigid family defines a low-dimensional algebraic variety in",
+        "Method:plan_explore_iter230",
+        "Fact:pass_iter230"
+      ],
+      "iteration": 230,
+      "id": "he_experiment_pipeline_c8cab372"
+    },
+    {
+      "label": "reviewer_iter230",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T08:13:02.899398",
+      "last_seen": "2026-09-29T08:13:02.899398",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "ab1dbfb0abcd6723",
+      "r_phys": 1.0,
+      "iteration": 230,
+      "id": "persona_use:reviewer_iter230"
     }
   ],
   "links": [
@@ -4054,6 +4118,33 @@
       "last_seen": "2026-09-29T08:12:09.464268",
       "mentions": 1,
       "target": "he_experiment_pipeline_8d31f8b5"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: geometry] The rigid family defines a low-dimensional algebraic variety in",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:13:02.899329",
+      "last_seen": "2026-09-29T08:13:02.899329",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c8cab372"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter230",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:13:02.899329",
+      "last_seen": "2026-09-29T08:13:02.899329",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c8cab372"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter230",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:13:02.899329",
+      "last_seen": "2026-09-29T08:13:02.899329",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c8cab372"
     }
   ]
 }
