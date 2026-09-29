@@ -201,6 +201,178 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_727e7ce8",
+      "objective": "[DIM: structure] The rigid family's solution space is a linear subspace of dimension (d-1) in the space of functions satisfying w linear constraints, and its isomorphism class under the constraint matrix determines N_c(w): when the constraint matrix has full row rank, the solution space is a (d-w)-dimensional affine subspace, and a two-layer tanh network can embed this subspace with h ≥ d-w, yielding N_c(w) ≈ max(2, d-w).",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the `family` function to generate two function families: (1) a **Rigid Family** (linear subspace, e.g., polynomials of degree < d) and (2) a **Fat Family** (high-complexity functions). Ensure `y` and `yv` are reshaped to `(N,1)` and normalized to O(1) variance. Run the capacity scan to compute `N_c(w)` and verify the \"rigid anchor\" exists (finite N_c <= 8).",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "/workspace/research_outputs/shusheng_rsi_run46/.huginn/code/family.py",
+            "(or",
+            "equivalent",
+            "script",
+            "implementing",
+            "the",
+            "family",
+            "logic)"
+          ]
+        }
+      ],
+      "status": "executing",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T07:15:46.766426+00:00",
+      "confirmed_at": "2026-09-29T07:15:46.767732+00:00",
+      "completed_at": null,
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
+    },
+    {
+      "id": "plan_83215bd8",
+      "objective": "[DIM: structure] The rigid family's solution space is a linear subspace of dimension (d-1) in the space of functions satisfying w constraints, and small two-layer tanh networks can bootstrap this subspace with N_c(w) ≈ constant due to weight sharing enforcing linear constraints.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid and fat families with proper output shape (N,1), non-overlapping holdout sets, and O(1) normalized outputs. Ensure the rigid family returns a linear subspace solution (e.g., linear functions) that can be approximated by small two-layer tanh networks, while the fat family returns a high-capacity function class that requires large networks. Implement the capacity scan logic to measure N_c(w) across widths h=2..64 and multiple seeds.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "/workspace/research_outputs/shusheng_rsi_run46/family.py"
+          ]
+        }
+      ],
+      "status": "executing",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T07:17:03.838480+00:00",
+      "confirmed_at": "2026-09-29T07:17:03.839738+00:00",
+      "completed_at": null,
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
+    },
+    {
+      "id": "plan_e26f5e5e",
+      "objective": "[DIM: structure] The rigid family's solution space, defined by w linear constraints on a function, is isomorphic to a linear subspace of dimension (d-1) in the space of functions satisfying all constraints; small two-layer tanh networks can bootstrap this subspace because the network's width h controls the rank of the constraint matrix, allowing N_c(w) to remain finite and flat as w increases when h ≥ d-1.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the family function for the rigid and fat function families as specified in the hypothesis. The rigid family should be a low-dimensional subspace (e.g., affine functions with dimension d-1) that can be captured by small-width networks, while the fat family should be high-dimensional (e.g., high-order polynomials) that cannot be captured even with h=64. Ensure y/yv are normalized to O(1) scale and shaped as (N,1), with X and Xv non-overlapping. This implements the core experimental design for testing the rigidity hypothesis via network capacity scanning.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "family_implementation.py",
+            "(new",
+            "file",
+            "to",
+            "be",
+            "created)"
+          ]
+        }
+      ],
+      "status": "executing",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T07:17:47.965293+00:00",
+      "confirmed_at": "2026-09-29T07:17:47.966725+00:00",
+      "completed_at": null,
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
+    },
+    {
+      "id": "plan_2d24f7de",
+      "objective": "[DIM: measure] The held-out error variance for the fat family exhibits heavy-tailed behavior (Pareto tail index α ≈ 2.5), indicating that rare but high-variance function instances dominate the generalization gap, whereas the rigid family's errors follow a Gaussian distribution with bounded variance.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the `family` function for two analytical families: (1) Rigid family: affine function y = x (1D, analytically determined by w≥2 points), and (2) Fat family: high-degree polynomial (e.g., 20-term random polynomial) with bounded support to ensure O(1) scaling after normalization. Ensure X/y and Xv/yv are (N,1) shaped, non-overlapping, and normalized to unit std. Implement capacity_scan driver to scan hidden widths h=2..64 with 3 seeds, record train_err/val_err, and determine N_c(w) or mark unreachable if no h≤64 satisfies zero-violation criteria (val_err ≤1e-3, train_err ≤1e-4).",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "family.py",
+            "capacity_scan.py",
+            "(or",
+            "inline",
+            "in",
+            "run.py",
+            "if",
+            "permitted)"
+          ]
+        }
+      ],
+      "status": "executing",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T07:18:26.591758+00:00",
+      "confirmed_at": "2026-09-29T07:18:26.592855+00:00",
+      "completed_at": null,
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
+    },
+    {
+      "id": "plan_6cea93e7",
+      "objective": "** [DIM: computation] The minimum network width $N_c(w)$ required for zero violation in the rigid family scales logarithmically with $w$ ($N_c(w) \\sim \\log w$) due to the VC-dimension of linear function classes, while for the fat family, $N_c(w)$ grows exponentially or becomes unreachable within the bounded capacity ($h \\le 64$) because the effective VC-dimension of the constraint manifold exceeds the representational capacity of the two-layer tanh network.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the `family` function for rigid and fat constraint families with proper normalization, shape constraints (N,1), and non-overlapping held-out sets. Ensure rigid family (linear function) achieves zero violation at small widths (h=2-8) and fat family (high-frequency polynomial) remains unreachable at h≤64. Then run capacity_scan to compute N_c(w) scaling.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "/workspace/research_outputs/shusheng_rsi_run46/capacity_scan.py",
+            "(family",
+            "function",
+            "implementation)"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T07:19:08.286595+00:00",
+      "confirmed_at": "2026-09-29T07:19:08.288041+00:00",
+      "completed_at": "2026-09-29T07:19:30.898792+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

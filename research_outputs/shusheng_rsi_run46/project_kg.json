@@ -263,10 +263,10 @@
       "label": "[DIM: structure] The rigid family's solution space forms a linear subspace of di",
       "type": "experiment",
       "source": "autoloop",
-      "confidence": 1.0,
+      "confidence": 0.99,
       "created_at": "2026-09-29T07:14:13.213795",
-      "last_seen": "2026-09-29T07:14:13.213795",
-      "mentions": 1,
+      "last_seen": "2026-09-29T07:15:23.835997",
+      "mentions": 2,
       "iteration": 25,
       "r_phys": 1.0,
       "surprise": 1.0,
@@ -322,6 +322,296 @@
       "r_phys": 1.0,
       "iteration": 25,
       "id": "persona_use:reviewer_iter25"
+    },
+    {
+      "label": "plan_explore_iter30",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:15:23.836022",
+      "last_seen": "2026-09-29T07:15:23.836022",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter30"
+    },
+    {
+      "label": "pass_iter30",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:15:23.836039",
+      "last_seen": "2026-09-29T07:15:23.836039",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter30"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T07:15:23.836050",
+      "last_seen": "2026-09-29T07:15:23.836050",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid family's solution space forms a linear subspace of di",
+        "Method:plan_explore_iter30",
+        "Fact:pass_iter30"
+      ],
+      "iteration": 30,
+      "id": "he_experiment_pipeline_8cac44e"
+    },
+    {
+      "label": "reviewer_iter30",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T07:15:23.836119",
+      "last_seen": "2026-09-29T07:15:23.836119",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "724b073e3e6fe860",
+      "r_phys": 1.0,
+      "iteration": 30,
+      "id": "persona_use:reviewer_iter30"
+    },
+    {
+      "label": "[DIM: structure] The rigid family's solution space is a linear subspace of dimen",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 0.99,
+      "created_at": "2026-09-29T07:15:57.509261",
+      "last_seen": "2026-09-29T07:17:26.180448",
+      "mentions": 2,
+      "iteration": 35,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Rigid family will show finite `N_c(w)` (e.g., h=2~4) that remains flat or decreasing as `w` increases, satisfying the zero-violation criterion (val_err <= 1e-3). Fat family will show `N_c(w)` = unreac",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid family's solution space is a linear subspace of dimen"
+    },
+    {
+      "label": "plan_explore_iter35",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:15:57.509301",
+      "last_seen": "2026-09-29T07:15:57.509301",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter35"
+    },
+    {
+      "label": "pass_iter35",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:15:57.509312",
+      "last_seen": "2026-09-29T07:15:57.509312",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter35"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T07:15:57.509321",
+      "last_seen": "2026-09-29T07:15:57.509321",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid family's solution space is a linear subspace of dimen",
+        "Method:plan_explore_iter35",
+        "Fact:pass_iter35"
+      ],
+      "iteration": 35,
+      "id": "he_experiment_pipeline_1834d7fb"
+    },
+    {
+      "label": "reviewer_iter35",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T07:15:57.509401",
+      "last_seen": "2026-09-29T07:15:57.509401",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "1190d5976039ba56",
+      "r_phys": 1.0,
+      "iteration": 35,
+      "id": "persona_use:reviewer_iter35"
+    },
+    {
+      "label": "plan_explore_iter40",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:17:26.180484",
+      "last_seen": "2026-09-29T07:17:26.180484",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter40"
+    },
+    {
+      "label": "pass_iter40",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:17:26.180508",
+      "last_seen": "2026-09-29T07:17:26.180508",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter40"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T07:17:26.180519",
+      "last_seen": "2026-09-29T07:17:26.180519",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid family's solution space is a linear subspace of dimen",
+        "Method:plan_explore_iter40",
+        "Fact:pass_iter40"
+      ],
+      "iteration": 40,
+      "id": "he_experiment_pipeline_35348b68"
+    },
+    {
+      "label": "reviewer_iter40",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T07:17:26.180598",
+      "last_seen": "2026-09-29T07:17:26.180598",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "d05fab0c1cc8f78c",
+      "r_phys": 1.0,
+      "iteration": 40,
+      "id": "persona_use:reviewer_iter40"
+    },
+    {
+      "label": "[DIM: structure] The rigid family's solution space, defined by w linear constrai",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T07:18:02.466168",
+      "last_seen": "2026-09-29T07:18:02.466168",
+      "mentions": 1,
+      "iteration": 45,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family (e.g., affine functions), N_c(w) will be a small finite number (h=2~8) that remains flat or decreases as w increases, with validation error ≤1e-3 and training error ≤1e-4. For the",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid family's solution space, defined by w linear constrai"
+    },
+    {
+      "label": "plan_explore_iter45",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:18:02.466205",
+      "last_seen": "2026-09-29T07:18:02.466205",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter45"
+    },
+    {
+      "label": "pass_iter45",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:18:02.466215",
+      "last_seen": "2026-09-29T07:18:02.466215",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter45"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T07:18:02.466223",
+      "last_seen": "2026-09-29T07:18:02.466223",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid family's solution space, defined by w linear constrai",
+        "Method:plan_explore_iter45",
+        "Fact:pass_iter45"
+      ],
+      "iteration": 45,
+      "id": "he_experiment_pipeline_95c1f179"
+    },
+    {
+      "label": "reviewer_iter45",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T07:18:02.466297",
+      "last_seen": "2026-09-29T07:18:02.466297",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "30c0ce4fdbb6d9dc",
+      "r_phys": 1.0,
+      "iteration": 45,
+      "id": "persona_use:reviewer_iter45"
+    },
+    {
+      "label": "[DIM: measure] The held-out error variance for the fat family exhibits heavy-tai",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T07:18:43.940521",
+      "last_seen": "2026-09-29T07:18:43.940521",
+      "mentions": 1,
+      "iteration": 50,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Rigid family will achieve zero-violation at small h (e.g., h=2-4) for w≥2, with N_c(w) flat or decreasing; Fat family will remain unreachable (val_err >>1e-3) across all h≤64 for all w, confirming hea",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: measure] The held-out error variance for the fat family exhibits heavy-tai"
+    },
+    {
+      "label": "plan_explore_iter50",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:18:43.940556",
+      "last_seen": "2026-09-29T07:18:43.940556",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter50"
+    },
+    {
+      "label": "pass_iter50",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:18:43.940565",
+      "last_seen": "2026-09-29T07:18:43.940565",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter50"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T07:18:43.940573",
+      "last_seen": "2026-09-29T07:18:43.940573",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: measure] The held-out error variance for the fat family exhibits heavy-tai",
+        "Method:plan_explore_iter50",
+        "Fact:pass_iter50"
+      ],
+      "iteration": 50,
+      "id": "he_experiment_pipeline_8f6be920"
+    },
+    {
+      "label": "reviewer_iter50",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T07:18:43.940665",
+      "last_seen": "2026-09-29T07:18:43.940665",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "3a415443bb285a18",
+      "r_phys": 1.0,
+      "iteration": 50,
+      "id": "persona_use:reviewer_iter50"
     }
   ],
   "links": [
@@ -444,6 +734,15 @@
     },
     {
       "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid family's solution space forms a linear subspace of di",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:15:23.836050",
+      "last_seen": "2026-09-29T07:15:23.836050",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8cac44e"
+    },
+    {
+      "relation": "member_of",
       "source": "Method:plan_explore_iter25",
       "confidence": 0.5,
       "created_at": "2026-09-29T07:14:13.213849",
@@ -459,6 +758,132 @@
       "last_seen": "2026-09-29T07:14:13.213849",
       "mentions": 1,
       "target": "he_experiment_pipeline_4d10dd24"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter30",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:15:23.836050",
+      "last_seen": "2026-09-29T07:15:23.836050",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8cac44e"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter30",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:15:23.836050",
+      "last_seen": "2026-09-29T07:15:23.836050",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8cac44e"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid family's solution space is a linear subspace of dimen",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:15:57.509321",
+      "last_seen": "2026-09-29T07:15:57.509321",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_1834d7fb"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid family's solution space is a linear subspace of dimen",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:17:26.180519",
+      "last_seen": "2026-09-29T07:17:26.180519",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_35348b68"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter35",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:15:57.509321",
+      "last_seen": "2026-09-29T07:15:57.509321",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_1834d7fb"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter35",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:15:57.509321",
+      "last_seen": "2026-09-29T07:15:57.509321",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_1834d7fb"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter40",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:17:26.180519",
+      "last_seen": "2026-09-29T07:17:26.180519",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_35348b68"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter40",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:17:26.180519",
+      "last_seen": "2026-09-29T07:17:26.180519",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_35348b68"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid family's solution space, defined by w linear constrai",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:18:02.466223",
+      "last_seen": "2026-09-29T07:18:02.466223",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_95c1f179"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter45",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:18:02.466223",
+      "last_seen": "2026-09-29T07:18:02.466223",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_95c1f179"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter45",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:18:02.466223",
+      "last_seen": "2026-09-29T07:18:02.466223",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_95c1f179"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: measure] The held-out error variance for the fat family exhibits heavy-tai",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:18:43.940573",
+      "last_seen": "2026-09-29T07:18:43.940573",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8f6be920"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter50",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:18:43.940573",
+      "last_seen": "2026-09-29T07:18:43.940573",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8f6be920"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter50",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:18:43.940573",
+      "last_seen": "2026-09-29T07:18:43.940573",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8f6be920"
     }
   ]
 }
