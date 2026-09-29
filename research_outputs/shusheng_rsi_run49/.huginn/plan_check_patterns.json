@@ -121,5 +121,33 @@
     ],
     "mode": "explore",
     "description": "Reframe the investigation as an empirical finite-size study of the scaling of minimal network width $N_c(w)$ versus constraint count $w$. Define 'width-H' as the number of hidden units in a two-layer "
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "6f9d0c922b9f",
+    "reason": "The plan is invalid because the hypothesis concerns the computational complexity (polynomial-time solvability via convex relaxation in the NTK regime) of a decision problem, which is a theoretical claim requiring mathematical proof or analytical derivation. The proposed plan uses a 'explore' mode focused on empirical capacity measurements (N_c(w)) of small networks, which investigates generalization/expressivity rather than computational complexity or convex relaxation feasibility. Empirical experiments on small networks cannot prove polynomial-time solvability of the decision problem for general cases.",
+    "missing_steps": [
+      "Clarify that the hypothesis is a theoretical complexity claim, not an empirical capacity measurement",
+      "Develop a theoretical analysis or proof strategy regarding convex relaxation in the Neural Tangent Kernel regime",
+      "If empirical validation is desired, design experiments to verify the convex relaxation property itself (e.g., checking if the NTK optimization landscape is convex), rather than just measuring zero-violation capacity",
+      "Define what constitutes a 'polynomial-time' test in the context of the hypothesis"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] "
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "6f9d0c922b9f",
+    "reason": "The hypothesis is a theoretical computational complexity claim (about polynomial-time solvability via convex relaxation). The plan uses MODE='explore' which is appropriate for theoretical analysis, but the description focuses on theoretical analysis rather than numerical experiments. However, the task explicitly requires '真实运行的可复现数值实验' (real running reproducible numerical experiments) to verify the claim. The plan does not include any experimental design, simulation, or code execution steps to empirically test the hypothesis. This mismatch means the plan cannot produce the required numerical evidence (N_c(w) values, training/leave-out errors, etc.) to validate the hypothesis.",
+    "missing_steps": [
+      "Design numerical experiments to test the convex relaxation claim in NTK regime",
+      "Implement ReLU network training with width H and w constraints",
+      "Measure constraint satisfaction error (≤1e-3) across different widths",
+      "Compute N_c(w) values and analyze their scaling with w",
+      "Compare convex relaxation (NTK) vs non-convex optimization performance",
+      "Validate polynomial-time solvability empirically through timing analysis"
+    ],
+    "mode": "explore",
+    "description": "I will develop a theoretical analysis to verify the computational complexity claim by formulating the constraint satisfaction problem as a convex optimization in the NTK regime, analyzing the Karush-K"
   }
 ]

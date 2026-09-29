@@ -12,8 +12,8 @@
       "label",
       "plan",
       "error",
-      "function",
-      "prediction"
+      "prediction",
+      "function"
     ],
     "workflow_steps": [
       {
