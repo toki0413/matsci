@@ -210,5 +210,19 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the family function to generate training and held-out constraint points for rigid (linear) and fat (high-degree polynomial) families. Ensure y/yv are normalized "
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan is fundamentally misaligned with the hypothesis. The hypothesis concerns topological/structural properties of a rigid linear family forming a 2D affine manifold (requiring homology computation, manifold geometry characterization), while the plan only implements a capacity scan measuring N_c(w) and held-out error. This repeats the exact historical failure pattern where TDA was omitted despite being explicitly required in all three scene=other failure entries. The plan focuses on error metrics rather than computing H1 groups, analyzing weight manifold geometry, or verifying the affine manifold structure.",
+    "missing_steps": [
+      "Define weight manifold geometry and parameterization for both rigid and fat families",
+      "Implement topological data analysis (persistent homology) to compute H1 groups",
+      "Specify filtration method (e.g., Vietoris-Rips) for homology computation",
+      "Add continuous interpolation path testing between training and held-out solutions",
+      "Verify that rigid family forms a 2D affine manifold through geometric analysis",
+      "Confirm solution space invariance under translation and scaling algebraically"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function for the rigid linear family and fat polynomial family to enable capacity testing. The rigid family should be a linear function f(x)=ax+b that"
   }
 ]

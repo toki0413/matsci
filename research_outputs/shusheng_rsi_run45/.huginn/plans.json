@@ -431,6 +431,38 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_f29d903d",
+      "objective": "[DIM: structure] The rigid linear family forms a 2-dimensional affine manifold; its solution space is invariant under translation and scaling, yielding a finite N_c(w) that remains flat as w increases. This hypothesis is the most testable and novel as it provides a clear, algebraic explanation for the rigid family's behavior and can be directly verified through numerical experiments.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the family function for the rigid linear family and fat polynomial family to enable capacity testing. The rigid family should be a linear function f(x)=ax+b that can be perfectly represented with minimal network capacity (h=2~8), while the fat family should be a high-degree polynomial (e.g., 20th order) that requires very large capacity to approximate. Ensure proper normalization of outputs to O(1) scale, correct tensor shapes (N,1), and non-overlapping train/holdout sets. This addresses the previous iteration's failure where rigid family anchor points were missing.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "family_function.py",
+            "(new",
+            "implementation)"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T03:47:07.185851+00:00",
+      "confirmed_at": "2026-09-29T03:47:07.187111+00:00",
+      "completed_at": "2026-09-29T03:47:28.188436+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
