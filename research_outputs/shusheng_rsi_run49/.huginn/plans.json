@@ -1240,6 +1240,36 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_8f5b1fa6",
+      "objective": "[DIM: structure] The constraint satisfaction problem for ReLU networks with w linear constraints admits a solution space that is an affine subspace of dimension at most w when the network width H exceeds w, implying N_c(w) ≤ w for all w. | This hypothesis is grounded in the algebraic structure of linear constraints and the representational capacity of ReLU networks to exactly satisfy linear equations when width is sufficient. It is testable via numerical experiments sweeping w and H, measuring held-out error, and verifying if N_c(w) remains bounded by w. A necessary condition is that constraints are linear and consistent; a hidden assumption is that optimization can find a solution in the affine subspace; a falsifiable test is if N_c(w) > w for any w in the scan range.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Execute a numerical sweep of ReLU network width H against constraint count w to measure N_c(w). For each w in {2,4,6,8,10}, generate w linear constraints and w training points, then train a single-hidden-layer ReLU network with varying width H (from 1 to 2w) until held-out error ≤ 1e-3 (zero violation). Record the minimal H achieving zero violation for each w, yielding N_c(w) values. Validate against the hypothesis that N_c(w) ≤ w for all w.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "experiments/relnu_constraint_sweep.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T09:40:06.628220+00:00",
+      "confirmed_at": "2026-09-29T09:40:06.630621+00:00",
+      "completed_at": "2026-09-29T09:40:25.210892+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
