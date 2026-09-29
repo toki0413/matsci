@@ -2387,6 +2387,70 @@
       "r_phys": 1.0,
       "iteration": 190,
       "id": "persona_use:reviewer_iter190"
+    },
+    {
+      "label": "[DIM: topology] The rigid linear family exhibits **non-zero first cohomology (H¹",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T04:18:03.036720",
+      "last_seen": "2026-09-29T04:18:03.036720",
+      "mentions": 1,
+      "iteration": 195,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The rigid linear family will exhibit non-trivial first Čech cohomology (H¹ ≠ 0) due to non-trivial gluing obstructions of locally linear sections, while the contractible fat family will have H¹ = 0.",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: topology] The rigid linear family exhibits **non-zero first cohomology (H¹"
+    },
+    {
+      "label": "plan_explore_iter195",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:18:03.036756",
+      "last_seen": "2026-09-29T04:18:03.036756",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter195"
+    },
+    {
+      "label": "pass_iter195",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:18:03.036765",
+      "last_seen": "2026-09-29T04:18:03.036765",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter195"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T04:18:03.036774",
+      "last_seen": "2026-09-29T04:18:03.036774",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: topology] The rigid linear family exhibits **non-zero first cohomology (H¹",
+        "Method:plan_explore_iter195",
+        "Fact:pass_iter195"
+      ],
+      "iteration": 195,
+      "id": "he_experiment_pipeline_36e46298"
+    },
+    {
+      "label": "reviewer_iter195",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T04:18:03.036844",
+      "last_seen": "2026-09-29T04:18:03.036844",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "b168c0d7d9dfa6ab",
+      "r_phys": 1.0,
+      "iteration": 195,
+      "id": "persona_use:reviewer_iter195"
     }
   ],
   "links": [
@@ -3415,6 +3479,33 @@
       "last_seen": "2026-09-29T04:16:47.419451",
       "mentions": 1,
       "target": "he_experiment_pipeline_e5ad6745"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: topology] The rigid linear family exhibits **non-zero first cohomology (H¹",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:18:03.036774",
+      "last_seen": "2026-09-29T04:18:03.036774",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_36e46298"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter195",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:18:03.036774",
+      "last_seen": "2026-09-29T04:18:03.036774",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_36e46298"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter195",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T04:18:03.036774",
+      "last_seen": "2026-09-29T04:18:03.036774",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_36e46298"
     }
   ]
 }
