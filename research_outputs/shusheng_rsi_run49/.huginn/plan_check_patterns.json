@@ -250,5 +250,48 @@
     ],
     "mode": "explore",
     "description": "We reframe the hypothesis as a computational geometry problem on the parameter space of width-H ReLU networks. To test the NP-hardness claim numerically, we will: (1) Construct a worst-case instance f"
+  },
+  {
+    "scene_tag": "auto_numerical",
+    "hyp_key": "56bf49638665",
+    "reason": "The plan is invalid because it mixes two incompatible approaches: 1) The hypothesis requires an SDP formulation using Neural Tangent Kernel (NTK) to prove rigidity theoretically, but the description only proposes training shallow ReLU networks and measuring empirical error. This is a numerical approximation approach, not an SDP verification. 2) The hypothesis states 'if NTK matrix is positive definite on constraint set, then width-H network with H ≥ w can always achieve zero violation' — this is a theoretical claim about NTK properties and SDP feasibility, not about training dynamics or generalization error of trained networks. 3) The plan lacks any SDP construction, NTK matrix computation, or positive definiteness check — these are essential to test the stated hypothesis. 4) The prediction about N_c(w) being small tests a different question (capacity scaling) than the hypothesis (rigidity via NTK/SDP).",
+    "missing_steps": [
+      "Construct the constraint satisfaction problem as an SDP using NTK formulation",
+      "Compute NTK matrix on constraint set and verify positive definiteness",
+      "Check if SDP is feasible for H ≥ w",
+      "Compare theoretical NTK/SDP results with empirical training results if needed",
+      "Define rigidity in terms of NTK/SDP properties, not just empirical error bounds"
+    ],
+    "mode": "explore",
+    "description": "Test the rigidity hypothesis by constructing a ReLU network constraint satisfaction problem with varying numbers of constraints (w) and widths (H), and compute the minimal width N_c(w) required to ach"
+  },
+  {
+    "scene_tag": "auto_numerical",
+    "hyp_key": "56bf49638665",
+    "reason": "The plan is fundamentally mismatched to the hypothesis. The hypothesis concerns a theoretical claim about the mathematical structure of ReLU networks and NTK, specifically about positive definiteness implying rigidity. However, the proposed plan describes an empirical numerical experiment (training networks, measuring error, scanning widths) which is a different approach entirely. The plan attempts to validate a theoretical property via empirical training, which does not directly address the NTK/SDP formulation or the positive definiteness condition on the constraint set. Moreover, the plan's prediction about N_c(w) being approximately w is an empirical expectation, not a verification of the theoretical NTK-based rigidity claim.",
+    "missing_steps": [
+      "The plan needs to explicitly formulate the constraint satisfaction problem as an SDP using NTK, not just train networks.",
+      "Need to compute the NTK matrix analytically or numerically on the constraint set and verify its positive definiteness, not rely on training error.",
+      "Must address the theoretical connection between NTK positive definiteness and zero violation (rigidity) rather than empirical width scanning.",
+      "Should include symbolic/analytical verification steps (e.g., computing NTK for ReLU networks) before empirical validation."
+    ],
+    "mode": "explore",
+    "description": "We will treat the constraint satisfaction problem for ReLU networks as a mathematical classification problem on the stratified manifold of width-H networks satisfying w linear constraints. Specificall"
+  },
+  {
+    "scene_tag": "auto_numerical",
+    "hyp_key": "56bf49638665",
+    "reason": "The plan is fundamentally mismatched with the hypothesis and the defined experimental framework. The hypothesis concerns theoretical properties of NTK and SDP formulation for ReLU networks (a mathematical/ML theory claim), while the 'known failure mode' and 'strict criteria' explicitly require a numerical experiment on small feedforward networks measuring N_c(w) via training error (empirical ML validation). The plan attempts a symbolic/analytical derivation which cannot produce the required numerical results (N_c(w), training/leave-out errors) or test the 'rigidity vs. fat' classification based on finite-width empirical behavior. It also fails to address the specific zero-violation metric (max absolute error ≤ 1e-3) and the width-scan procedure required to determine N_c(w).",
+    "missing_steps": [
+      "Define specific ReLU network architecture (layers, width range, activation functions)",
+      "Generate a set of w linear constraints (input-output pairs or inequality constraints)",
+      "Implement training procedure for finite-width ReLU networks with varying width H",
+      "Measure maximum absolute error on leave-out constraints (zero-violation criterion: ≤ 1e-3)",
+      "Perform width scan to find minimum H achieving zero violation for each w (compute N_c(w))",
+      "Analyze trend of N_c(w) as w increases to determine rigidity (finite N_c independent of w) vs. fat (no convergence)",
+      "Report numerical results: scan settings, training/leave-out errors, N_c(w) values and trend"
+    ],
+    "mode": "explore",
+    "description": "We will mathematically formulate the constraint satisfaction problem for ReLU networks as a semidefinite program (SDP) using the Neural Tangent Kernel (NTK) framework. First, we will analytically deri"
   }
 ]

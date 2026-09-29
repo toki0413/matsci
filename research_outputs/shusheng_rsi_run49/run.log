@@ -215,3 +215,9 @@ plan_check failed (tier=light, scene=auto_numerical, max_refines=1): The plan at
 [exec-route] mode='explore' desc[:80]='We reframe the hypothesis as a computational geometry problem on the parameter s' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
 [code-lab-author] raw_len=1084 extracted_len=1070 prompt_len=3149
 [code-lab-run] res_none=False success=True nobj=36 reason=''
+[validate] mode='code_lab' success=True nobj=36 cf=False lab=True
+metacog: 假设可能为换名归约 (trap=, target=将'泛化行为作为探针'的问题等价重述为'NTK矩阵的正定性判定问题'，未提供关于小型前馈网络在非极限宽度下的实际泛化能力或刚性边界的实证证据。): [DIM: structure] The constraint satisfaction decision problem for ReLU networks can be formulated as
+plan_check failed (tier=light, scene=auto_numerical, max_refines=2): The plan is fundamentally mismatched with the hypothesis and the defined experimental framework. The hypothesis concerns theoretical properties of NTK and SDP formulation for ReLU networks (a mathematical/ML theory claim), while the 'known failure mode' and 'strict criteria' explicitly require a numerical experiment on small feedforward networks measuring N_c(w) via training error (empirical ML validation). The plan attempts a symbolic/analytical derivation which cannot produce the required numerical results (N_c(w), training/leave-out errors) or test the 'rigidity vs. fat' classification based on finite-width empirical behavior. It also fails to address the specific zero-violation metric (max absolute error ≤ 1e-3) and the width-scan procedure required to determine N_c(w).
+[exec-route] mode='explore' desc[:80]='We will mathematically formulate the constraint satisfaction problem for ReLU ne' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=1033 extracted_len=1018 prompt_len=3149
+[code-lab-run] res_none=False success=True nobj=36 reason=''
