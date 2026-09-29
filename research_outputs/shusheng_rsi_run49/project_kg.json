@@ -1832,6 +1832,70 @@
       "r_phys": 1.0,
       "iteration": 155,
       "id": "persona_use:reviewer_iter155"
+    },
+    {
+      "label": "[DIM: geometry] The solution manifold of ReLU constraints is piecewise linear; t",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T09:28:02.767890",
+      "last_seen": "2026-09-29T09:28:02.767890",
+      "mentions": 1,
+      "iteration": 160,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will saturate at a value independent of w (e.g., N_c ≈ d or slightly larger) for w beyond a threshold, consistent with the hypothesis that the solution manifold's intrinsic dimension is O(d). I",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: geometry] The solution manifold of ReLU constraints is piecewise linear; t"
+    },
+    {
+      "label": "plan_explore_iter160",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:28:02.767936",
+      "last_seen": "2026-09-29T09:28:02.767936",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter160"
+    },
+    {
+      "label": "pass_iter160",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:28:02.767951",
+      "last_seen": "2026-09-29T09:28:02.767951",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter160"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T09:28:02.767965",
+      "last_seen": "2026-09-29T09:28:02.767965",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: geometry] The solution manifold of ReLU constraints is piecewise linear; t",
+        "Method:plan_explore_iter160",
+        "Fact:pass_iter160"
+      ],
+      "iteration": 160,
+      "id": "he_experiment_pipeline_fca93d21"
+    },
+    {
+      "label": "reviewer_iter160",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T09:28:02.768056",
+      "last_seen": "2026-09-29T09:28:02.768056",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "7df131251b805da3",
+      "r_phys": 1.0,
+      "iteration": 160,
+      "id": "persona_use:reviewer_iter160"
     }
   ],
   "links": [
@@ -2644,6 +2708,33 @@
       "last_seen": "2026-09-29T09:26:53.963416",
       "mentions": 1,
       "target": "he_experiment_pipeline_aafc4d9"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: geometry] The solution manifold of ReLU constraints is piecewise linear; t",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:28:02.767965",
+      "last_seen": "2026-09-29T09:28:02.767965",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_fca93d21"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter160",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:28:02.767965",
+      "last_seen": "2026-09-29T09:28:02.767965",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_fca93d21"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter160",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:28:02.767965",
+      "last_seen": "2026-09-29T09:28:02.767965",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_fca93d21"
     }
   ]
 }

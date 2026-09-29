@@ -452,5 +452,19 @@
     ],
     "mode": "explore",
     "description": "Systematic scan to test phase-transition hypothesis in constraint density ρ = w/d_in. Fix input dimension d_in = 10, vary constraint count w from 1 to 1000 to sweep ρ ∈ [0.01, 100]. For each w, scan h"
+  },
+  {
+    "scene_tag": "auto_test",
+    "hyp_key": "10facb47ee62",
+    "reason": "The plan is critically flawed in its design. The hypothesis concerns the relationship between the number of constraints (w) and the minimal network width (N_c) required to satisfy them. However, the plan incorrectly trains networks with varying hidden widths (N) while generating synthetic data from a fixed function (sin(2πx)). This setup tests the network's capacity to approximate a function, not the algebraic structure of the constraint satisfaction problem itself. The plan fails to systematically vary the number of constraints w as specified in the hypothesis, making it impossible to determine if N_c(w) scales linearly with w. Additionally, the prediction assumes a linear scaling without first establishing the fundamental mathematical structure of the ReLU constraint satisfaction problem.",
+    "missing_steps": [
+      "Define the constraint satisfaction problem mathematically for ReLU networks",
+      "Systematically vary the number of constraints w (10-100 points) while keeping the function fixed",
+      "For each w, find the minimal width N_c(w) that achieves zero violation on held-out test points",
+      "Analyze the scaling relationship between N_c(w) and w",
+      "Establish the piecewise-linear algebraic structure of the solution space"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Generate synthetic constraint data w (10-100 points) from a known function (e.g., sin(2πx)), train small ReLU networks with varying hidden widths N (5-50), and compute N_c"
   }
 ]

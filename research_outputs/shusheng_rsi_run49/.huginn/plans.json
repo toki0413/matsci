@@ -941,6 +941,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_b0a76e08",
+      "objective": "[DIM: structure] The constraint satisfaction problem for ReLU networks admits a piecewise-linear algebraic structure where the solution space dimension scales linearly with w, implying N_c(w) grows as O(w) rather than saturating.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "First, define the ReLU constraint satisfaction problem (CSP) mathematically: given w linear inequality constraints derived from ReLU activation patterns, construct the piecewise-linear feasible region in weight space. Systematically increase w (10 to 100) by sampling random constraint pairs from a fixed function domain (e.g., sin(2πx) on [0,1]). For each w, solve the CSP via linear programming to determine the minimal network width N_c(w) that satisfies all constraints with zero violation. Record N_c(w) across seeds and analyze scaling. Use symbolic math to verify the piecewise-linear structure of the solution space (e.g., via active-set methods tracking ReLU activation changes). Compare observed N_c(w) against O(w) prediction.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T09:28:26.824141+00:00",
+      "confirmed_at": "2026-09-29T09:28:26.826047+00:00",
+      "completed_at": "2026-09-29T09:28:45.102842+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
