@@ -1300,6 +1300,38 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_dcafa189",
+      "objective": "[DIM: geometry] The solution space of a ReLU network satisfying $w$ linear constraints is a polyhedral complex in weight space; its topological connectivity (measured by the number of connected components or Betti numbers) collapses to a single component (rigid) when width $H \\ge N_c(w)$, while remaining fragmented (fat) below threshold.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Execute a systematic numerical experiment to test the topological connectivity (rigidity vs. fatness) of the ReLU network solution space under linear constraints. Plan: (1) Generate synthetic linear constraints (w samples) in input space; (2) Build ReLU networks with varying hidden widths H; (3) Train to satisfy constraints with max abs error ≤ 1e-3 on held-out set (zero-violation criterion); (4) Measure minimal N_c(w) where zero-violation is achieved; (5) Repeat for multiple w values to check if N_c(w) remains bounded (rigid) or diverges (fat). Use lightweight training (small networks, few epochs) to stay within resource limits. Validate results by checking convergence and error thresholds.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "src/experiment_relu_rigidity.py",
+            "src/data/generate_constraints.py",
+            "src/model/relation_net.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T09:42:42.916294+00:00",
+      "confirmed_at": "2026-09-29T09:42:42.918652+00:00",
+      "completed_at": "2026-09-29T09:43:00.173286+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

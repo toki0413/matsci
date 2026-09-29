@@ -1468,10 +1468,10 @@
       "label": "[DIM: structure] The constraint satisfaction problem for ReLU networks with $w$ ",
       "type": "experiment",
       "source": "autoloop",
-      "confidence": 1.0,
+      "confidence": 0.99,
       "created_at": "2026-09-29T09:21:42.742444",
-      "last_seen": "2026-09-29T09:21:42.742444",
-      "mentions": 1,
+      "last_seen": "2026-09-29T09:42:22.068056",
+      "mentions": 2,
       "iteration": 130,
       "r_phys": 1.0,
       "surprise": 1.0,
@@ -2525,6 +2525,55 @@
       "r_phys": 1.0,
       "iteration": 215,
       "id": "persona_use:reviewer_iter215"
+    },
+    {
+      "label": "plan_explore_iter220",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:42:22.068082",
+      "last_seen": "2026-09-29T09:42:22.068082",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter220"
+    },
+    {
+      "label": "pass_iter220",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:42:22.068102",
+      "last_seen": "2026-09-29T09:42:22.068102",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter220"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T09:42:22.068111",
+      "last_seen": "2026-09-29T09:42:22.068111",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The constraint satisfaction problem for ReLU networks with $w$",
+        "Method:plan_explore_iter220",
+        "Fact:pass_iter220"
+      ],
+      "iteration": 220,
+      "id": "he_experiment_pipeline_c671fd8b"
+    },
+    {
+      "label": "reviewer_iter220",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T09:42:22.068184",
+      "last_seen": "2026-09-29T09:42:22.068184",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "011f663f828970d0",
+      "r_phys": 1.0,
+      "iteration": 220,
+      "id": "persona_use:reviewer_iter220"
     }
   ],
   "links": [
@@ -3232,6 +3281,15 @@
     },
     {
       "relation": "member_of",
+      "source": "experiment:[DIM: structure] The constraint satisfaction problem for ReLU networks with $w$",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:42:22.068111",
+      "last_seen": "2026-09-29T09:42:22.068111",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c671fd8b"
+    },
+    {
+      "relation": "member_of",
       "source": "Method:plan_explore_iter130",
       "confidence": 0.5,
       "created_at": "2026-09-29T09:21:42.742499",
@@ -3661,6 +3719,24 @@
       "last_seen": "2026-09-29T09:40:42.208951",
       "mentions": 1,
       "target": "he_experiment_pipeline_357b7b6d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter220",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:42:22.068111",
+      "last_seen": "2026-09-29T09:42:22.068111",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c671fd8b"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter220",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T09:42:22.068111",
+      "last_seen": "2026-09-29T09:42:22.068111",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c671fd8b"
     }
   ]
 }
