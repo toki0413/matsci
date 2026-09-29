@@ -11,5 +11,39 @@
     ],
     "mode": "explore",
     "description": "To address the hypothesis regarding the minimal width $N_c(w)$ required for zero violation, I will design and execute a numerical experiment. I will select a \"rigid\" analytical function family (e.g., "
+  },
+  {
+    "scene_tag": "workflow",
+    "hyp_key": "59dd72b0cc3e",
+    "reason": "The plan is invalid because it uses MODE: explore for a task that requires precise, reproducible numerical experimentation. According to the instructions, MODE should be 'coder' for writing code or 'workflow' for executing a pipeline. 'Explore' is for open-ended discovery, not for testing a specific hypothesis with defined metrics (like N_c(w)). The plan also lacks specific implementation details (e.g., network architecture, loss function, constraint generation method) needed to verify the prediction. Furthermore, it doesn't address the 'zero-violation' definition rigorously or specify how to handle the 'fat family' if N_c(w) exceeds bounds.",
+    "missing_steps": [
+      "Change MODE to 'coder' or 'workflow' instead of 'explore'",
+      "Specify exact network architecture (layers, activation functions, initialization)",
+      "Define constraint generation method (how rigid vs. fat families are constructed)",
+      "Define training procedure (optimizer, loss function, stopping criteria)",
+      "Specify validation protocol (how held-out constraints are generated)",
+      "Define N_c(w) search strategy (grid search, random search, etc.)",
+      "Handle edge cases where N_c(w) exceeds bounds (should be reported as finite numbers)",
+      "Include convergence checks for training and validation"
+    ],
+    "mode": "explore",
+    "description": "Design and execute a numerical experiment to test the hypothesis on zero-violation probability convergence for rigid vs. fat families. The plan involves: (1) defining rigid/fat families via constraint"
+  },
+  {
+    "scene_tag": "workflow",
+    "hyp_key": "59dd72b0cc3e",
+    "reason": "The plan uses MODE: 'explore' which is invalid for this task requiring precise numerical experimentation; it should be 'coder' or 'workflow'. The DESCRIPTION lacks critical implementation details: specific network architecture parameters (layer sizes, exact activation functions), constraint generation methodology for rigid/fat families, optimization algorithm details, and validation protocol. While the conceptual framework is sound, it would fail execution without these specifics. The plan also doesn't address how to handle cases where N_c(w) exceeds bounds (must report finite numbers per requirements).",
+    "missing_steps": [
+      "Change MODE from 'explore' to 'coder' or 'workflow'",
+      "Specify exact network architecture (hidden layer sizes, number of neurons per layer)",
+      "Define constraint generation method for rigid vs. fat families (matrix construction details)",
+      "Specify optimization algorithm (SGD/Adam), learning rate, and training epochs",
+      "Define validation constraint set generation procedure",
+      "Define N_c(w) search strategy (grid search parameters, width range)",
+      "Handle edge cases where N_c(w) exceeds bounds (must report finite values)",
+      "Include convergence checks for training and validation errors"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Design a reproducible numerical experiment to test the zero-violation probability convergence for rigid vs. fat families. The plan involves: (1) mathematically defining ri"
   }
 ]

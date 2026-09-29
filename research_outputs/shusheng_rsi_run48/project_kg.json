@@ -130,6 +130,70 @@
       "r_phys": 1.0,
       "iteration": 10,
       "id": "persona_use:reviewer_iter10"
+    },
+    {
+      "label": "[DIM: computation] The minimal width $N_c(w)$ required to achieve zero violation",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T08:26:49.787010",
+      "last_seen": "2026-09-29T08:26:49.787010",
+      "mentions": 1,
+      "iteration": 15,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The minimal width $N_c(w)$ will scale approximately as $\\Omega(w / \\log w)$ as predicted by VC dimension theory, with the scaling constant depending on input dimension $d$ and constraint complexity. F",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: computation] The minimal width $N_c(w)$ required to achieve zero violation"
+    },
+    {
+      "label": "plan_explore_iter15",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:26:49.787048",
+      "last_seen": "2026-09-29T08:26:49.787048",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter15"
+    },
+    {
+      "label": "pass_iter15",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:26:49.787059",
+      "last_seen": "2026-09-29T08:26:49.787059",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter15"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T08:26:49.787067",
+      "last_seen": "2026-09-29T08:26:49.787067",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: computation] The minimal width $N_c(w)$ required to achieve zero violation",
+        "Method:plan_explore_iter15",
+        "Fact:pass_iter15"
+      ],
+      "iteration": 15,
+      "id": "he_experiment_pipeline_597a4a47"
+    },
+    {
+      "label": "reviewer_iter15",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T08:26:49.787137",
+      "last_seen": "2026-09-29T08:26:49.787137",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "5335eb98f1f46bf4",
+      "r_phys": 1.0,
+      "iteration": 15,
+      "id": "persona_use:reviewer_iter15"
     }
   ],
   "links": [
@@ -186,6 +250,33 @@
       "last_seen": "2026-09-29T08:24:55.768198",
       "mentions": 1,
       "target": "he_experiment_pipeline_5ce5a0c0"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: computation] The minimal width $N_c(w)$ required to achieve zero violation",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:26:49.787067",
+      "last_seen": "2026-09-29T08:26:49.787067",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_597a4a47"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:26:49.787067",
+      "last_seen": "2026-09-29T08:26:49.787067",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_597a4a47"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:26:49.787067",
+      "last_seen": "2026-09-29T08:26:49.787067",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_597a4a47"
     }
   ]
 }
