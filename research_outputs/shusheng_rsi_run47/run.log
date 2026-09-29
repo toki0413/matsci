@@ -355,3 +355,9 @@ renamed-reduction 5× consecutive: escalate — block dominant family + force re
 [exec-route] mode='explore' desc[:80]='Implement the family function for rigid and fat families with proper O(1) normal' obj_len=2462 is_exp_desc=True is_exp_obj=True is_det_desc=False
 [code-lab-author] raw_len=940 extracted_len=925 prompt_len=5379
 [code-lab-run] res_none=False success=True nobj=36 reason=''
+[validate] mode='code_lab' success=True nobj=36 cf=False lab=True
+metacog: 假设可能为换名归约 (trap=, target=刚性/胖族的定义（基于 N_c(w) 的可达性）): [DIM: dynamics] The rigid family admits a gradient flow with a Lyapunov functional that decreases mo
+plan_check failed (tier=light, scene=auto_family, max_refines=1): The plan fails to define the critical 'rigid' function family concretely (only mentions trigonometric polynomials without defining the parameterization $w$), and it lacks the gradient flow algorithm specification (e.g., learning rate schedule, optimizer type) required to verify the Lyapunov functional claim. Additionally, the plan risks repeating historical failure #2 by using random high-degree polynomials for the 'fat' family which may not be $x$-dependent or learnable in a meaningful way, collapsing the comparison into 'learnable vs unlearnable' rather than 'rigid vs fat'. It also fails to address the scale issues noted in failure #3 (e.g., high-degree polynomials leading to $10^9$ scales).
+[exec-route] mode='explore' desc[:80]='Implement rigid (trigonometric polynomials, O(1) normalized, shape (N,1)) and fa' obj_len=2462 is_exp_desc=True is_exp_obj=True is_det_desc=True
+[code-lab-author] raw_len=1138 extracted_len=1123 prompt_len=5379
+[code-lab-run] res_none=False success=True nobj=36 reason=''

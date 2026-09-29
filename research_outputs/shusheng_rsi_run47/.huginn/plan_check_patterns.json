@@ -247,5 +247,34 @@
     ],
     "mode": "explore",
     "description": "Reframe the hypothesis test as a comparative capacity analysis between rigid and fat families, where N_c(w) is defined via the minimum width required to achieve a target approximation error (ε=1e-3) o"
+  },
+  {
+    "scene_tag": "auto_family",
+    "hyp_key": "c8a0ed83006d",
+    "reason": "The plan describes an 'explore' mode implementation of function families for testing gradient flow convergence, but it lacks critical methodological details required to validate the hypothesis about Lyapunov functionals and energy landscapes. Specifically: (1) It does not specify the optimization algorithm or gradient flow dynamics being tested; (2) It does not define how the Lyapunov functional will be computed or monitored; (3) It does not specify how 'non-convex energy landscapes' will be characterized or measured; (4) The prediction mentions N_c(w) but doesn't define what N_c represents in the context of the hypothesis. Without these methodological elements, the plan cannot produce evidence for the specific dynamical systems claims in the hypothesis.",
+    "missing_steps": [
+      "Specify the gradient flow optimization algorithm (e.g., gradient descent with specific step size schedule)",
+      "Define the Lyapunov functional formulation and its computation protocol",
+      "Detail the method for characterizing energy landscape non-convexity (e.g., Hessian analysis, basin mapping)",
+      "Clarify the definition and calculation of N_c(w) metric",
+      "Include convergence criteria and uniqueness verification methods"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function for two function classes (rigid and fat) with proper normalization to O(1), ensuring the output arrays have shape (N, 1) and the held-out set"
+  },
+  {
+    "scene_tag": "auto_family",
+    "hyp_key": "c8a0ed83006d",
+    "reason": "The plan fails to define the critical 'rigid' function family concretely (only mentions trigonometric polynomials without defining the parameterization $w$), and it lacks the gradient flow algorithm specification (e.g., learning rate schedule, optimizer type) required to verify the Lyapunov functional claim. Additionally, the plan risks repeating historical failure #2 by using random high-degree polynomials for the 'fat' family which may not be $x$-dependent or learnable in a meaningful way, collapsing the comparison into 'learnable vs unlearnable' rather than 'rigid vs fat'. It also fails to address the scale issues noted in failure #3 (e.g., high-degree polynomials leading to $10^9$ scales).",
+    "missing_steps": [
+      "Define the rigid family parameterization $w$ explicitly (e.g., $f(x; w) = \\sum_{k=1}^N w_k \\sin(kx)$ with $N$ fixed)",
+      "Specify the gradient flow optimization algorithm (e.g., SGD with momentum, Adam, step size schedule)",
+      "Define the Lyapunov functional $L(w)$ explicitly (e.g., empirical risk + regularization)",
+      "Clarify the 'fat' family to ensure it is $x$-dependent and partially learnable (not pure noise)",
+      "Address scale normalization to avoid numerical instability (e.g., normalize polynomial coefficients)",
+      "Define $N_c(w)$ precisely (e.g., number of distinct local minima via basin attraction mapping)"
+    ],
+    "mode": "explore",
+    "description": "Implement rigid (trigonometric polynomials, O(1) normalized, shape (N,1)) and fat (random high-degree polynomials) function families. Execute gradient descent with fixed step size η=0.01 and monitor l"
   }
 ]

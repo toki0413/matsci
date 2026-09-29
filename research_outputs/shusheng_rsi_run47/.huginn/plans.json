@@ -1026,6 +1026,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_f65f7739",
+      "objective": "[DIM: dynamics] The rigid family admits a gradient flow with a Lyapunov functional that decreases monotonically during training, ensuring convergence to a unique global solution; the fat family exhibits non-convex energy landscapes with multiple local minima, causing training instability and high held-out error even at large widths.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Implement rigid (trigonometric polynomials, O(1) normalized, shape (N,1)) and fat (random high-degree polynomials) function families. Execute gradient descent with fixed step size η=0.01 and monitor loss L(w) as Lyapunov functional. Run capacity_scan over h∈[2,4,8,16,32,64] with 3 seeds each. For each seed, compute: (1) monotonicity of L(w) via numerical derivative sign; (2) Hessian spectrum at final w to quantify non-convexity (ratio of largest to smallest eigenvalue); (3) N_c(w) = number of distinct local minima found via random restarts (10 restarts per h). Verify: rigid family shows monotonic L(w) decay, Hessian ratio < 2, N_c(w)=1; fat family shows non-monotonic L(w), Hessian ratio > 10, N_c(w) > 1. Hold-out error for fat family remains > 0.1 even at large h.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T07:59:09.224807+00:00",
+      "confirmed_at": "2026-09-29T07:59:09.226579+00:00",
+      "completed_at": "2026-09-29T07:59:29.515688+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

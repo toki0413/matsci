@@ -2035,6 +2035,70 @@
       "r_phys": 1.0,
       "iteration": 160,
       "id": "persona_use:reviewer_iter160"
+    },
+    {
+      "label": "[DIM: geometry] The rigid family corresponds to a low-dimensional linear subspac",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T07:58:38.626598",
+      "last_seen": "2026-09-29T07:58:38.626598",
+      "mentions": 1,
+      "iteration": 165,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family, N_c(w) will be a small constant (≤8) across w values with flat/decreasing trend; for the fat family, all h≤64 will yield test_err > 1e-3 with trend='unreachable'. Training errors",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: geometry] The rigid family corresponds to a low-dimensional linear subspac"
+    },
+    {
+      "label": "plan_explore_iter165",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:58:38.626636",
+      "last_seen": "2026-09-29T07:58:38.626636",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter165"
+    },
+    {
+      "label": "pass_iter165",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:58:38.626645",
+      "last_seen": "2026-09-29T07:58:38.626645",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter165"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T07:58:38.626654",
+      "last_seen": "2026-09-29T07:58:38.626654",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: geometry] The rigid family corresponds to a low-dimensional linear subspac",
+        "Method:plan_explore_iter165",
+        "Fact:pass_iter165"
+      ],
+      "iteration": 165,
+      "id": "he_experiment_pipeline_7f9e7774"
+    },
+    {
+      "label": "reviewer_iter165",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T07:58:38.626721",
+      "last_seen": "2026-09-29T07:58:38.626721",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "2c234f834e65082d",
+      "r_phys": 1.0,
+      "iteration": 165,
+      "id": "persona_use:reviewer_iter165"
     }
   ],
   "links": [
@@ -2901,6 +2965,33 @@
       "last_seen": "2026-09-29T07:57:33.457834",
       "mentions": 1,
       "target": "he_experiment_pipeline_46004248"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: geometry] The rigid family corresponds to a low-dimensional linear subspac",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:58:38.626654",
+      "last_seen": "2026-09-29T07:58:38.626654",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_7f9e7774"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter165",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:58:38.626654",
+      "last_seen": "2026-09-29T07:58:38.626654",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_7f9e7774"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter165",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:58:38.626654",
+      "last_seen": "2026-09-29T07:58:38.626654",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_7f9e7774"
     }
   ]
 }
