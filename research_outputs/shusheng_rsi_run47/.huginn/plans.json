@@ -654,6 +654,36 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_2c460458",
+      "objective": "[DIM: structure] The rigid family defines a linear subspace of dimension w-1 in C[0,1] spanned by Lagrange basis polynomials, such that the solution space to the w constraints is an affine manifold of dimension exactly w-1; thus N_c(w) remains constant (flat) because the network width needed to represent any function in this subspace scales with the subspace dimension, not with w. | pro: Directly addresses the algebraic structure of the rigid family as a linear subspace; explains why N_c(w) should be flat/decreasing as w increases (subspace dimension grows linearly). con: Requires the network to exactly represent the subspace; if the network lacks sufficient capacity to represent the subspace, N_c may not be flat. |",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the rigid and fat family functions with proper O(1) normalization and correct output shapes. The rigid family should be a linear subspace of dimension w-1 spanned by Lagrange basis polynomials that can be represented with small network width (h=2-8), while the fat family should be one where no width up to h=64 achieves zero violation. Ensure all outputs are (N,1) shaped arrays and y/yv are normalized to standard deviation ≲ 10. Then run the capacity scan to verify the rigid family has finite N_c(w) that is flat/decreasing, and the fat family has trend='unreachable'.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "family.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T07:45:40.411701+00:00",
+      "confirmed_at": "2026-09-29T07:45:40.413615+00:00",
+      "completed_at": "2026-09-29T07:46:00.105128+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
