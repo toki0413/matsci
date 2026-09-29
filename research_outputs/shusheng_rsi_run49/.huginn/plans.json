@@ -591,6 +591,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_511f5149",
+      "objective": "[DIM: computation] The decision problem \"Does a width-$H$ network satisfy $w$ constraints with error $\\leq 10^{-3}$?\" is NP-hard for ReLU networks, implying $N_c(w)$ cannot be bounded by a polynomial in $w$ unless P=NP.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "We reframe the hypothesis as a computational geometry problem on the parameter space of width-H ReLU networks. To test the NP-hardness claim numerically, we will: (1) Construct a worst-case instance family by reducing a known NP-complete problem (e.g., 3-SAT) to a ReLU constraint satisfaction problem using standard polynomial-time reductions, yielding a specific set of w linear constraints; (2) Train width-H networks on these adversarial constraints and measure the minimal H required to achieve error ≤ 1e-3 (or report infeasibility); (3) Compare against a baseline of random linear constraints (which are tractable via linear programming) to isolate structural hardness from optimization difficulty. If H grows super-polynomially with w for the SAT-derived constraints but remains polynomial for random ones, this supports the hardness claim for worst-case instances. We will explicitly state that this probes instance-specific behavior, not the general asymptotic complexity class.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T09:14:24.907243+00:00",
+      "confirmed_at": "2026-09-29T09:14:24.909067+00:00",
+      "completed_at": "2026-09-29T09:14:42.937096+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

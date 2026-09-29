@@ -224,5 +224,31 @@
     ],
     "mode": "explore",
     "description": "Conduct a systematic computational investigation of the minimal network width N_c(h) for ReLU networks under constraint satisfaction. Define a synthetic constraint system (k general position hyperplan"
+  },
+  {
+    "scene_tag": "auto_numerical",
+    "hyp_key": "416266a82d28",
+    "reason": "The plan is fundamentally invalid because it attempts to empirically test a theoretical computational complexity claim (NP-hardness) via numerical experiments. NP-hardness is a worst-case asymptotic property proven via polynomial-time reductions from known NP-complete problems (e.g., 3-SAT or SAT). A numerical experiment with finite $w$ and limited width $H$ can only observe behavior in a restricted parameter space; it cannot prove or disprove that no polynomial-time algorithm exists for the general case. Even if the experiment shows super-polynomial growth for tested $w$, this does not constitute a proof of NP-hardness (it could be exponential but still in P, or the specific random constraints used may not be the worst-case instances). Conversely, finding small $N_c(w)$ for tested $w$ does not disprove NP-hardness, as hardness manifests only for sufficiently large $w$. The plan conflates empirical observation with theoretical proof.",
+    "missing_steps": [
+      "Reframe the hypothesis to be testable numerically (e.g., test if a specific reduction from SAT to ReLU constraint satisfaction yields a specific width requirement for a fixed w), OR acknowledge that the hypothesis is a theoretical claim requiring a mathematical proof, not a numerical experiment.",
+      "If proceeding with numerical experiment, clearly state that it only explores a specific instance/family of constraints and does not address the general NP-hardness claim.",
+      "Include a baseline comparison with a known tractable problem (e.g., linear programming) to show that the observed difficulty is not just due to optimization challenges but potentially structural.",
+      "Define the specific class of constraints (random linear? adversarial?) and justify why they are relevant to the worst-case complexity claim."
+    ],
+    "mode": "explore",
+    "description": "The hypothesis makes a theoretical claim about computational complexity (NP-hardness of constraint satisfaction in ReLU networks), which is a topological/existence claim rather than a numeric scaling "
+  },
+  {
+    "scene_tag": "auto_numerical",
+    "hyp_key": "416266a82d28",
+    "reason": "The plan attempts to empirically test a theoretical computational complexity claim (NP-hardness) via numerical experiments with finite width H and finite constraint count w. NP-hardness is a worst-case asymptotic property that cannot be proven or disproven by numerical experiments on finite instances. The plan conflates empirical observation with theoretical proof, which is the exact failure pattern described in the history. While the baseline comparison is good, the fundamental approach cannot validate the hypothesis as stated.",
+    "missing_steps": [
+      "Reframe the hypothesis to be numerically testable (e.g., test specific instances from a known reduction rather than proving general NP-hardness)",
+      "Acknowledge that numerical experiments can only explore instance-specific behavior, not general complexity classes",
+      "Clearly define the specific class of constraints and justify relevance to worst-case complexity",
+      "If proceeding with numerical experiment, explicitly state limitations regarding asymptotic complexity claims"
+    ],
+    "mode": "explore",
+    "description": "We reframe the hypothesis as a computational geometry problem on the parameter space of width-H ReLU networks. To test the NP-hardness claim numerically, we will: (1) Construct a worst-case instance f"
   }
 ]
