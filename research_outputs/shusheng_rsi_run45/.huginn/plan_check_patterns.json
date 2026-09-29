@@ -1,18 +1,6 @@
 [
   {
     "scene_tag": "other",
-    "reason": "The plan describes a numerical experiment (capacity scan) to observe generalization errors, but the hypothesis is about a topological obstruction (non-vanishing first homology group $H_1$) in the weight manifold. Generalization error alone does not prove topological non-triviality; one would need to explicitly compute or detect the homology structure (e.g., via persistent homology or loop detection in the weight space), which is absent from the plan. The plan confuses empirical generalization failure with topological obstruction.",
-    "missing_steps": [
-      "Define the weight manifold geometry and parameterization for the fat polynomial family",
-      "Compute or estimate the first homology group $H_1$ of the weight manifold (e.g., via TDA or loop sampling)",
-      "Compare with the rigid affine manifold's contractibility (trivial $H_1$)",
-      "Establish a continuous interpolation path between training minima and held-out solutions and test its feasibility under topological constraints"
-    ],
-    "mode": "explore",
-    "description": "[auto-routed: surprise=1.00] Implement the `family` function for both the rigid (affine) and fat (polynomial) families according to the strict protocol requirements: ensure y/yv are (N,1) shaped, non-"
-  },
-  {
-    "scene_tag": "other",
     "reason": "The plan is invalid because it fundamentally misinterprets the hypothesis. The hypothesis concerns a topological obstruction (non-vanishing first homology group H1) in the weight manifold, but the plan only implements a capacity scan measuring held-out error. As noted in the historical failures, generalization error alone does not prove topological non-triviality; the plan misses the critical step of computing or estimating the homology structure (e.g., via persistent homology or loop sampling) of the weight manifolds for both rigid and fat families. Additionally, the plan repeats the failure mode where fat families were treated as noise (run28), and it lacks the required topological analysis to validate the PAC-Bayes bound claim regarding N_c(w) behavior.",
     "missing_steps": [
       "Define the weight manifold geometry and parameterization for the fat polynomial family",
@@ -730,5 +718,19 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the `family` function to generate training and held-out constraint sets for the rigid family (linear function) and fat family (20th-degree polynomial), ensuring "
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan fundamentally misaligns with the hypothesis. The hypothesis requires verifying sheaf cohomology properties (H¹ ≠ 0) of locally linear functions — an algebraic topology problem requiring symbolic computation of Čech complexes or derived category methods. The proposed plan uses 'explore' mode with capacity scans measuring N_c(w) and held-out error, which addresses neither topological structure nor sheaf cohomology requirements. This repeats the exact historical failures documented in the scene history where MODE=explore was inappropriate for a structural verification task.",
+    "missing_steps": [
+      "Switch MODE from explore to coder/workflow for concrete implementation",
+      "Define the mathematical structure: specify the base manifold, the sheaf of locally linear functions, and the cohomology computation framework (e.g., Čech cohomology or derived functor approach)",
+      "Clarify the relationship between the rigid linear family and the sheaf structure — how does the family induce or relate to the sheaf?",
+      "Implement appropriate sheaf cohomology tools (e.g., symbolic computation of Čech complexes, spectral sequences, or derived category methods)",
+      "Establish the contrast between rigid and fat families at the sheaf level, not just at the level of point cloud topology",
+      "Include mathematical validation steps: check exactness of sequences, compute explicit cohomology groups, verify non-triviality via obstruction theory"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function for the rigid family (linear) and fat family (20th-degree polynomial) with proper normalization and shape constraints. Ensure X/y and Xv/yv h"
   }
 ]
