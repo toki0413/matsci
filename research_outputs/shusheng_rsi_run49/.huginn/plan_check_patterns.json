@@ -149,5 +149,50 @@
     ],
     "mode": "explore",
     "description": "I will develop a theoretical analysis to verify the computational complexity claim by formulating the constraint satisfaction problem as a convex optimization in the NTK regime, analyzing the Karush-K"
+  },
+  {
+    "scene_tag": "auto_numerical",
+    "hyp_key": "3d1354e36c45",
+    "reason": "The plan is invalid due to a fundamental mismatch between the MODE and the task type. The task requires a 'coder' mode to write code that tests the hypothesis, but the plan uses 'explore' mode, which is intended for open-ended scientific investigation rather than implementing a computational experiment. Additionally, the plan lacks critical implementation details such as specific constraint generation methods, network architecture specifications, training procedures, and validation metrics that are necessary to empirically test the hypothesis about N_c(w) growth.",
+    "missing_steps": [
+      "Change MODE from 'explore' to 'coder' since this requires writing code to implement the numerical experiment",
+      "Specify the exact constraint system formulation (linear subspace structures)",
+      "Define the ReLU network architecture (number of layers, activation functions, initialization)",
+      "Detail the training procedure (optimizer, loss function, convergence criteria)",
+      "Specify how N_c(w) will be measured (width sweep range, step size)",
+      "Define the validation protocol for zero-violation criterion (error calculation method)"
+    ],
+    "mode": "explore",
+    "description": "To test the hypothesis regarding the exponential growth of minimal width N_c(w) for ReLU networks, I will design a numerical experiment to measure N_c(w) empirically. This involves generating random c"
+  },
+  {
+    "scene_tag": "auto_numerical",
+    "hyp_key": "3d1354e36c45",
+    "reason": "The plan uses 'explore' mode which is fundamentally mismatched with the task type. The task requires a 'coder' mode to write executable code that implements a numerical experiment to test the hypothesis about N_c(w) growth. The DESCRIPTION lacks critical implementation details including specific constraint generation methods, network architecture specifications, training procedures, and validation metrics. This matches the exact failure pattern documented in the historical failures for this scenario.",
+    "missing_steps": [
+      "Change MODE from 'explore' to 'coder' to enable code writing for the numerical experiment",
+      "Specify the exact constraint system formulation (linear subspace structures)",
+      "Define the ReLU network architecture (number of layers, activation functions, initialization)",
+      "Detail the training procedure (optimizer, loss function, convergence criteria)",
+      "Specify how N_c(w) will be measured (width sweep range, step size)",
+      "Define the validation protocol for zero-violation criterion (error calculation method)"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] This plan implements a numerical experiment to empirically test the hypothesis that the minimal width N_c(w) for ReLU networks to satisfy w constraints with error ≤ 1e-3 g"
+  },
+  {
+    "scene_tag": "auto_numerical",
+    "hyp_key": "3d1354e36c45",
+    "reason": "The plan uses 'explore' mode but the task requires a 'coder' mode to write executable code for a numerical experiment. The DESCRIPTION lacks critical implementation details such as specific constraint generation methods, network architecture specifications, training procedures, and validation metrics. This matches the exact historical failure pattern documented in the scenario.",
+    "missing_steps": [
+      "Change MODE from 'explore' to 'coder' to enable code writing for the numerical experiment",
+      "Specify the exact constraint system formulation (linear subspace structures)",
+      "Define the ReLU network architecture (number of layers, activation functions, initialization)",
+      "Detail the training procedure (optimizer, loss function, convergence criteria)",
+      "Specify how N_c(w) will be measured (width sweep range, step size)",
+      "Define the validation protocol for zero-violation criterion (error calculation method)"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] This plan implements a numerical experiment to test the hypothesis that the minimal width N_c(w) for ReLU networks to satisfy w constraints with error ≤ 1e-3 grows exponen"
   }
 ]
