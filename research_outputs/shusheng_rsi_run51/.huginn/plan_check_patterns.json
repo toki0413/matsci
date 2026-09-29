@@ -19,5 +19,33 @@
     ],
     "mode": "explore",
     "description": "Design and execute a numerical experiment to probe solution space rigidity using small feedforward networks. Sweep constraint sample count w and hidden width N to find minimal N_c(w) achieving zero-vi"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "9f5b3a9138df",
+    "reason": "The plan contains a critical flaw in the 'rigid' regime definition. It defines rigidity as 'a small finite N_c exists within the scan range', but this is logically circular and untestable without a prior theoretical bound on N_c. If the scan range is too small, N_c might be finite but unobserved (false rigidity); if too large, a reachable N_c might appear (false fatness). The plan lacks a mechanism to distinguish between a truly rigid system and a system where the scan simply didn't reach N_c. Furthermore, the prediction assumes 'rigid' means N_c is small and constant, but the hypothesis only concerns the *relationship* with condition number, not the absolute magnitude of N_c. The plan needs a controlled experiment (e.g., varying constraint geometry to tune condition number independently) to isolate the effect.",
+    "missing_steps": [
+      "Define a controlled parameter space for constraint functions f_i(x) where the Hessian condition number can be analytically or numerically tuned independently of w (e.g., by scaling constraint curvature).",
+      "Establish a theoretical or empirical baseline for the minimal N_c required for a well-conditioned system to define 'rigid' vs 'fat' relative to that baseline.",
+      "Include a convergence check for the 'zero-violation' status: ensure the training actually reaches a global minimum with near-zero loss before computing the Hessian, to avoid spurious condition numbers from local minima.",
+      "Specify the scan range for N and w with justification (e.g., based on Kolmogorov width or neural tangent kernel theory) to avoid arbitrary cutoffs."
+    ],
+    "mode": "explore",
+    "description": "Conduct a numerical exploration to test the hypothesis regarding the minimal width $N_c(w)$ and its relationship with the Hessian condition number. The plan involves: (1) Defining a set of analytical "
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "9f5b3a9138df",
+    "reason": "Plan is invalid because the MODE is set to 'explore' which is not a valid mode for this task (coder, workflow, explore, or skill). The plan lacks a concrete implementation plan (coder mode) or workflow execution details (workflow mode) required to actually run the numerical experiment. Additionally, the plan does not specify the network architecture details, optimization algorithm, or concrete sweep ranges which are necessary to verify the hypothesis.",
+    "missing_steps": [
+      "Specify network architecture details (number of layers, activation functions, initialization scheme)",
+      "Define optimization algorithm and hyperparameters (learning rate, batch size, epochs)",
+      "Specify concrete width sweep range and constraint function generation parameters",
+      "Implement the zero-violation verification metric (max absolute error ≤ 1e-3 on hold-out constraints)",
+      "Include training procedure with convergence criteria and loss landscape flatness checks",
+      "Add NTK prediction calculation for comparison"
+    ],
+    "mode": "explore",
+    "description": "We will conduct a controlled numerical experiment to test the hypothesis that the minimal network width $N_c(w)$ required for zero-violation convergence is dictated by the condition number of the Hess"
   }
 ]

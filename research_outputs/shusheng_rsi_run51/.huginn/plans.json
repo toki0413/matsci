@@ -151,6 +151,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_a901406e",
+      "objective": "[DIM: optimization] The minimal width $N_c(w)$ is determined by the condition number of the Hessian of the empirical loss at the global minimum; as $w$ increases, the optimization landscape becomes ill-conditioned, requiring larger width to maintain zero-violation convergence.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "We will conduct a controlled numerical experiment to test the hypothesis that the minimal network width $N_c(w)$ required for zero-violation convergence is dictated by the condition number of the Hessian at the global minimum. (1) Generate constraint functions $f_i(x)$ from a Gaussian process kernel $k(x, x') = \\exp(-\\|x-x'\\|^2 / \\gamma^2)$ where the bandwidth $\\gamma$ is independently tuned to control the Hessian condition number without altering the number of constraints $w$. (2) Train wide enough networks to ensure convergence to the global minimum (verified by loss landscape flatness checks), then compute the empirical Hessian condition number $\\kappa$. (3) Identify $N_c(w)$ via width-sweeping until zero-violation is achieved, and verify scaling laws $N_c \\propto \\kappa^\\alpha$. (4) Compare results against the Neural Tangent Kernel (NTK) prediction for function-space capacity to distinguish between over-parameterization and conditioning effects.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T13:03:51.859992+00:00",
+      "confirmed_at": "2026-09-29T13:03:51.861269+00:00",
+      "completed_at": "2026-09-29T13:04:04.382452+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
