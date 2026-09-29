@@ -1329,6 +1329,70 @@
       "r_phys": 1.0,
       "iteration": 105,
       "id": "persona_use:reviewer_iter105"
+    },
+    {
+      "label": "[DIM: structure] The linear rigid family forms an affine subspace of codimension",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:55:46.567203",
+      "last_seen": "2026-09-29T03:55:46.567203",
+      "mentions": 1,
+      "iteration": 110,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the linear rigid family with w=5, seed=0, h=2, train_err will be ~1e-5 and val_err ~5e-4 (zero violation achieved). For the fat family (20th-order polynomial), all widths h≤64 will yield val_err >",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The linear rigid family forms an affine subspace of codimension"
+    },
+    {
+      "label": "plan_explore_iter110",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:55:46.567238",
+      "last_seen": "2026-09-29T03:55:46.567238",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter110"
+    },
+    {
+      "label": "pass_iter110",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:55:46.567248",
+      "last_seen": "2026-09-29T03:55:46.567248",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter110"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T03:55:46.567257",
+      "last_seen": "2026-09-29T03:55:46.567257",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The linear rigid family forms an affine subspace of codimension",
+        "Method:plan_explore_iter110",
+        "Fact:pass_iter110"
+      ],
+      "iteration": 110,
+      "id": "he_experiment_pipeline_49f9fa3"
+    },
+    {
+      "label": "reviewer_iter110",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:55:46.567324",
+      "last_seen": "2026-09-29T03:55:46.567324",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "5d32fd8254a30344",
+      "r_phys": 1.0,
+      "iteration": 110,
+      "id": "persona_use:reviewer_iter110"
     }
   ],
   "links": [
@@ -1898,6 +1962,33 @@
       "last_seen": "2026-09-29T03:54:47.610211",
       "mentions": 1,
       "target": "he_experiment_pipeline_49c9004d"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The linear rigid family forms an affine subspace of codimension",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:55:46.567257",
+      "last_seen": "2026-09-29T03:55:46.567257",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_49f9fa3"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter110",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:55:46.567257",
+      "last_seen": "2026-09-29T03:55:46.567257",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_49f9fa3"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter110",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:55:46.567257",
+      "last_seen": "2026-09-29T03:55:46.567257",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_49f9fa3"
     }
   ]
 }
