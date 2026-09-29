@@ -768,6 +768,70 @@
       "r_phys": 1.0,
       "iteration": 60,
       "id": "persona_use:reviewer_iter60"
+    },
+    {
+      "label": "[DIM: structure] The rigid linear family corresponds to a 2-dimensional affine m",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:45:39.098990",
+      "last_seen": "2026-09-29T03:45:39.098990",
+      "mentions": 1,
+      "iteration": 65,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the rigid family with w≥5, N_c(w) will be finite (h=2~8) and flat/decreasing across w, with anchor point (w=5, h=2, seed=0) achieving val_err ≤1e-3 and train_err ≤1e-4. For the fat family, all h≤6",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The rigid linear family corresponds to a 2-dimensional affine m"
+    },
+    {
+      "label": "plan_explore_iter65",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:45:39.099023",
+      "last_seen": "2026-09-29T03:45:39.099023",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter65"
+    },
+    {
+      "label": "pass_iter65",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:45:39.099033",
+      "last_seen": "2026-09-29T03:45:39.099033",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter65"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T03:45:39.099042",
+      "last_seen": "2026-09-29T03:45:39.099042",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The rigid linear family corresponds to a 2-dimensional affine m",
+        "Method:plan_explore_iter65",
+        "Fact:pass_iter65"
+      ],
+      "iteration": 65,
+      "id": "he_experiment_pipeline_56540dc4"
+    },
+    {
+      "label": "reviewer_iter65",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:45:39.099109",
+      "last_seen": "2026-09-29T03:45:39.099109",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "ed3ad22b460ec5b0",
+      "r_phys": 1.0,
+      "iteration": 65,
+      "id": "persona_use:reviewer_iter65"
     }
   ],
   "links": [
@@ -1094,6 +1158,33 @@
       "last_seen": "2026-09-29T03:43:42.672331",
       "mentions": 1,
       "target": "he_experiment_pipeline_8ae8f6bc"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The rigid linear family corresponds to a 2-dimensional affine m",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:45:39.099042",
+      "last_seen": "2026-09-29T03:45:39.099042",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_56540dc4"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter65",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:45:39.099042",
+      "last_seen": "2026-09-29T03:45:39.099042",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_56540dc4"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter65",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:45:39.099042",
+      "last_seen": "2026-09-29T03:45:39.099042",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_56540dc4"
     }
   ]
 }

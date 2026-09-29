@@ -195,5 +195,20 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid linear family (affine functions f(x)=ax+b) and fat polynomial family (20th-order basis) with proper (N,1) reshaping, O(1) nor"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "The plan fundamentally misaligns with the hypothesis. The hypothesis concerns a first-order linear transport equation (∂_x f = 0) and exponential convergence rate related to Hessian spectral gap in the infinite width limit, which requires mathematical analysis of the optimization landscape and dynamics. However, the plan proposes a capacity scan measuring N_c(w) and held-out error for rigid vs. fat families, which addresses a different problem (likely about sampling artifacts or capacity bounds). The plan also fails to address the core mathematical structure: it doesn't implement gradient flow dynamics, doesn't compute Hessian spectral properties, and doesn't analyze the transport equation limit. Additionally, the plan repeats historical failure patterns by focusing on error metrics rather than the topological/structural analysis required for this hypothesis.",
+    "missing_steps": [
+      "Implement gradient flow dynamics for the linear family and fat polynomial family",
+      "Compute Hessian at initialization and analyze its spectral gap",
+      "Analyze the infinite width limit behavior of the rigid linear family",
+      "Verify the first-order linear transport equation ∂_x f = 0 in the infinite width limit",
+      "Measure exponential convergence rate of held-out error and relate to spectral gap",
+      "Implement proper topological analysis if structural obstructions are relevant",
+      "Ensure functional forms satisfy the x-dependence requirement for fat family"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the family function to generate training and held-out constraint points for rigid (linear) and fat (high-degree polynomial) families. Ensure y/yv are normalized "
   }
 ]

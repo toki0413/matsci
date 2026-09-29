@@ -401,6 +401,36 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_5051263a",
+      "objective": "[DIM: dynamics] The rigid linear family satisfies a first-order linear transport equation ∂_x f = 0 in the limit of infinite width, implying that its solution space is invariant under gradient flow; thus, the held-out error converges exponentially fast to zero as training progresses, with rate λ proportional to the spectral gap of the Hessian at initialization.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the family function to generate training and held-out constraint points for rigid (linear) and fat (high-degree polynomial) families. Ensure y/yv are normalized to O(1) magnitude, shapes are (N,1), and X and Xv do not overlap. This will allow the capacity_scan to compute N_c(w) and test the hypothesis about exponential convergence.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "family.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T03:46:05.209986+00:00",
+      "confirmed_at": "2026-09-29T03:46:05.211027+00:00",
+      "completed_at": "2026-09-29T03:46:26.334622+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
