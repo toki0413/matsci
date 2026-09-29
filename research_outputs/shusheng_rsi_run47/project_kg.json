@@ -755,6 +755,70 @@
       "r_phys": 1.0,
       "iteration": 60,
       "id": "persona_use:reviewer_iter60"
+    },
+    {
+      "label": "[DIM: computation] The capacity complexity $N_c(w)$ for the rigid family satisfi",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T07:37:04.081754",
+      "last_seen": "2026-09-29T07:37:04.081754",
+      "mentions": 1,
+      "iteration": 65,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The rigid family will achieve max held-out error ≤ 1e-3 at small widths (h=2~8) with a flat or decreasing N_c(w) trend as w increases, confirming the linear subspace structure hypothesis. The fat fami",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: computation] The capacity complexity $N_c(w)$ for the rigid family satisfi"
+    },
+    {
+      "label": "plan_explore_iter65",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:37:04.081790",
+      "last_seen": "2026-09-29T07:37:04.081790",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter65"
+    },
+    {
+      "label": "pass_iter65",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:37:04.081799",
+      "last_seen": "2026-09-29T07:37:04.081799",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter65"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T07:37:04.081808",
+      "last_seen": "2026-09-29T07:37:04.081808",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: computation] The capacity complexity $N_c(w)$ for the rigid family satisfi",
+        "Method:plan_explore_iter65",
+        "Fact:pass_iter65"
+      ],
+      "iteration": 65,
+      "id": "he_experiment_pipeline_b3f675a7"
+    },
+    {
+      "label": "reviewer_iter65",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T07:37:04.081875",
+      "last_seen": "2026-09-29T07:37:04.081875",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "ef798a3eb257e28e",
+      "r_phys": 1.0,
+      "iteration": 65,
+      "id": "persona_use:reviewer_iter65"
     }
   ],
   "links": [
@@ -1081,6 +1145,33 @@
       "last_seen": "2026-09-29T07:35:03.817816",
       "mentions": 1,
       "target": "he_experiment_pipeline_f4620140"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: computation] The capacity complexity $N_c(w)$ for the rigid family satisfi",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:37:04.081808",
+      "last_seen": "2026-09-29T07:37:04.081808",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b3f675a7"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter65",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:37:04.081808",
+      "last_seen": "2026-09-29T07:37:04.081808",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b3f675a7"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter65",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T07:37:04.081808",
+      "last_seen": "2026-09-29T07:37:04.081808",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b3f675a7"
     }
   ]
 }

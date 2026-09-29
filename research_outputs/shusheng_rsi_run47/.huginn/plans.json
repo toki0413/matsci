@@ -397,6 +397,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_95e2cfcd",
+      "objective": "[DIM: structure] The rigid family corresponds to a linear subspace of the function space spanned by a small set of basis functions (e.g., low-degree polynomials or trigonometric modes), such that w samples uniquely determine the coefficients via a Vandermonde-like system, yielding a finite N_c(w) independent of w.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Implement the rigid family as a linear subspace of polynomials of degree ≤ k (with k explicitly set to w-1 to ensure unique Vandermonde determination) using O(1) normalized basis functions x^j / j! for j=0,...,k. Implement the fat family as high-degree random polynomials (degree D >> w) with O(1) normalized coefficients (x^d / d! scaling) to avoid numerical overflow. Execute capacity_scan over a range of w values (from k+1 to 2k) with independent training/held-out error thresholds (e.g., 1e-6) to verify N_c(w) ≈ k+1 (independent of w) for the rigid family while the fat family shows N_c(w) growing with w.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T07:37:38.159664+00:00",
+      "confirmed_at": "2026-09-29T07:37:38.160916+00:00",
+      "completed_at": "2026-09-29T07:37:57.312735+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

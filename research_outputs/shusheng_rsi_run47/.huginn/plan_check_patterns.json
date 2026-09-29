@@ -81,5 +81,33 @@
     ],
     "mode": "explore",
     "description": ""
+  },
+  {
+    "scene_tag": "auto_family",
+    "hyp_key": "d79fa04ea5f2",
+    "reason": "The plan correctly identifies the mathematical structure (function space capacity) and uses appropriate tools (capacity_scan), but it violates the 'scale discipline' and 'fat family' requirements from the historical failures. Specifically, it does not specify the degree of the 'low-degree polynomial' rigid family (risk of being underdetermined like run29) and lacks details on the normalization and scaling of the high-degree random polynomial fat family (risk of numerical instability like run29). Without explicit scaling (e.g., x^d / d! or similar O(1) normalization) and explicit degree bounds, the experiment may fail to produce meaningful N_c(w) trends. Also, the plan does not specify the sample size w range or the dimensionality of the function space, which are critical for determining if N_c(w) is independent of w.",
+    "missing_steps": [
+      "Specify the exact form and degree bounds for the rigid family (e.g., polynomials of degree ≤ k, with k small enough to be uniquely determined by w samples)",
+      "Define the scaling/normalization for the fat family to avoid numerical overflow/underflow (e.g., use x^d / d! or similar O(1) scaling)",
+      "Specify the range of w values for the capacity scan",
+      "Define the held-out error threshold and training error tolerance for determining N_c(w)",
+      "Ensure the fat family is x-dependent and has degrees of freedom >> w to avoid trivial learnability"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the rigid family function (low-degree polynomials) and fat family function (high-degree random polynomials) with O(1) normalization, then execute capacity_scan t"
+  },
+  {
+    "scene_tag": "auto_family",
+    "hyp_key": "d79fa04ea5f2",
+    "reason": "The plan fails to address critical missing parameters identified in historical failures: (1) It does not specify the exact degree bound for the rigid family (k), risking underdetermination as in run29 where w=5 was insufficient; (2) It lacks explicit scaling details for the fat family despite claiming O(1) normalization, risking numerical overflow/underflow; (3) It does not define the exact range of w values for the capacity scan; (4) It doesn't specify how N_c(w) is actually computed from training/holdout errors. The plan is too vague to produce reproducible, valid numerical results that could support the hypothesis.",
+    "missing_steps": [
+      "Specify exact polynomial degree k for rigid family (must ensure w >= k+1 for unique Vandermonde determination)",
+      "Define exact w value range for capacity scan (must cover sufficient range to observe N_c(w) behavior)",
+      "Specify exact normalization/scaling for fat family coefficients and monomials to ensure O(1) magnitude",
+      "Define explicit method for computing N_c(w) from training and holdout errors",
+      "Define specific error thresholds for training vs holdout (must be independent)"
+    ],
+    "mode": "explore",
+    "description": "Implement the rigid family as a linear subspace of polynomials of degree ≤ k (with k explicitly set to w-1 to ensure unique Vandermonde determination) using O(1) normalized basis functions x^j / j! fo"
   }
 ]
