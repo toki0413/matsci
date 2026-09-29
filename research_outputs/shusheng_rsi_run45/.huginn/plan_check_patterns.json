@@ -237,5 +237,21 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement the `family` function for the rigid linear family (affine function f(x)=ax+b) and fat polynomial family (20th-degree random polynomial) with proper data normaliz"
+  },
+  {
+    "scene_tag": "other",
+    "reason": "该计划与假设存在根本性不匹配。假设关注的是线性刚体家族解空间在函数空间中形成2维仿射流形的拓扑/结构性质（需要同调群计算、流形几何分析），而计划仅执行了容量扫描(N_c(w))和泛化误差测量，这完全忽略了假设的核心数学结构。历史失败记录明确指出，该场景下必须执行拓扑数据分析(TDA)计算H1 Betti数、分析权重流形几何、验证仿射流形结构，而计划完全未包含这些关键步骤。此外，计划未能解决历史失败中提到的关键问题：没有实现w和保留网格分辨率的扫描以观察误差非单调性，没有明确定义函数形式，也没有测量训练误差与保留误差的独立值。",
+    "missing_steps": [
+      "定义刚性家族和脂肪家族的权重流形几何和参数化",
+      "实施拓扑数据分析(持久同调)以计算H1群",
+      "指定过滤方法(如Vietoris-Rips)用于同调计算",
+      "添加训练和保留解之间的连续插值路径测试",
+      "通过几何分析验证刚性家族形成2维仿射流形",
+      "通过代数确认解空间在平移和缩放下的不变性",
+      "实现w和保留网格分辨率的扫描以测试误差非单调性",
+      "独立测量并报告训练误差和保留误差"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement the `family` function for the linear rigid family (f(x)=ax+b) and the fat family (20th-degree random polynomial), ensuring y/yv are (N,1) shaped and normalized t"
   }
 ]

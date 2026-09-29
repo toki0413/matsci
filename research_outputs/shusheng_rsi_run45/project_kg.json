@@ -960,6 +960,70 @@
       "r_phys": 1.0,
       "iteration": 75,
       "id": "persona_use:reviewer_iter75"
+    },
+    {
+      "label": "[DIM: dynamics] The rigidity of the linear family manifests as a **flat loss lan",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:48:41.739799",
+      "last_seen": "2026-09-29T03:48:41.739799",
+      "mentions": 1,
+      "iteration": 80,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For the linear family, N_c(w) will be small (h=2~4) and flat or decreasing as w increases, with anchor point (w=5, h=2, seed=0) achieving val_err ≤1e-3 and train_err ≤1e-4. For the polynomial family,",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: dynamics] The rigidity of the linear family manifests as a **flat loss lan"
+    },
+    {
+      "label": "plan_explore_iter80",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:48:41.739854",
+      "last_seen": "2026-09-29T03:48:41.739854",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter80"
+    },
+    {
+      "label": "pass_iter80",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:48:41.739865",
+      "last_seen": "2026-09-29T03:48:41.739865",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter80"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T03:48:41.739874",
+      "last_seen": "2026-09-29T03:48:41.739874",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: dynamics] The rigidity of the linear family manifests as a **flat loss lan",
+        "Method:plan_explore_iter80",
+        "Fact:pass_iter80"
+      ],
+      "iteration": 80,
+      "id": "he_experiment_pipeline_b8ba7c95"
+    },
+    {
+      "label": "reviewer_iter80",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T03:48:41.739998",
+      "last_seen": "2026-09-29T03:48:41.739998",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "bf243d8a539384c0",
+      "r_phys": 1.0,
+      "iteration": 80,
+      "id": "persona_use:reviewer_iter80"
     }
   ],
   "links": [
@@ -1367,6 +1431,33 @@
       "last_seen": "2026-09-29T03:47:44.173874",
       "mentions": 1,
       "target": "he_experiment_pipeline_62e55067"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: dynamics] The rigidity of the linear family manifests as a **flat loss lan",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:48:41.739874",
+      "last_seen": "2026-09-29T03:48:41.739874",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b8ba7c95"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter80",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:48:41.739874",
+      "last_seen": "2026-09-29T03:48:41.739874",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b8ba7c95"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter80",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T03:48:41.739874",
+      "last_seen": "2026-09-29T03:48:41.739874",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b8ba7c95"
     }
   ]
 }

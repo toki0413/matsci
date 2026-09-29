@@ -243,3 +243,9 @@ plan_check failed low-conf (tier=light, scene=workflow, conf=0.10): The plan fai
 [exec-route] mode='explore' desc[:80]='[auto-routed: surprise=1.00] Implement the `family` function for the rigid linea' obj_len=2462 is_exp_desc=True is_exp_obj=True is_det_desc=False
 [code-lab-author] raw_len=940 extracted_len=925 prompt_len=5379
 [code-lab-run] res_none=False success=True nobj=36 reason=''
+[validate] mode='code_lab' success=True nobj=36 cf=False lab=True
+metacog: 假设可能为换名归约 (trap=, target=刚性族 = 线性约束系统秩为2的仿射流形，N_c(w)=2 是线性代数中自由度与约束秩的直接推论，未涉及机器学习容量扫描或 bootstrap 探针机制): [DIM: structure] The solution space of the linear rigid family forms a 2-dimensional affine manifold
+plan_check failed low-conf (tier=light, scene=other, conf=0.10): 该计划与假设存在根本性不匹配。假设关注的是线性刚体家族解空间在函数空间中形成2维仿射流形的拓扑/结构性质（需要同调群计算、流形几何分析），而计划仅执行了容量扫描(N_c(w))和泛化误差测量，这完全忽略了假设的核心数学结构。历史失败记录明确指出，该场景下必须执行拓扑数据分析(TDA)计算H1 Betti数、分析权重流形几何、验证仿射流形结构，而计划完全未包含这些关键步骤。此外，计划未能解决历史失败中提到的关键问题：没有实现w和保留网格分辨率的扫描以观察误差非单调性，没有明确定义函数形式，也没有测量训练误差与保留误差的独立值。
+[exec-route] mode='explore' desc[:80]='[auto-routed: surprise=1.00] Implement the `family` function for the linear rigi' obj_len=2462 is_exp_desc=False is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=1447 extracted_len=1432 prompt_len=5379
+[code-lab-run] res_none=False success=True nobj=36 reason=''

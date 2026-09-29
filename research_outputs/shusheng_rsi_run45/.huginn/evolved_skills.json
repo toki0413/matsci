@@ -13,7 +13,7 @@
       "label",
       "polynomial",
       "plan",
-      "held-out"
+      "function"
     ],
     "workflow_steps": [
       {
