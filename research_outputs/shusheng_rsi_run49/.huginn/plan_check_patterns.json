@@ -194,5 +194,35 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] This plan implements a numerical experiment to test the hypothesis that the minimal width N_c(w) for ReLU networks to satisfy w constraints with error ≤ 1e-3 grows exponen"
+  },
+  {
+    "scene_tag": "auto_test",
+    "hyp_key": "df68c08f627b",
+    "reason": "The plan contains a critical variable naming collision: it uses 'w' to denote both the network hidden width (in the sweep) AND the constraint sample count (10, 50, 100, 200), which directly violates the '唯一硬性口径' requiring N_c(w) to be measured against varying constraint counts while holding width as the independent variable. This ambiguity makes the experimental design uninterpretable and the results invalid. Additionally, the plan lacks specification of network depth, activation functions beyond ReLU, optimization method, and how 'zero-violation' is enforced during training (hard constraints vs soft penalty). Without these, the hypothesis about PL manifold structure cannot be tested.",
+    "missing_steps": [
+      "Clarify variable naming: use distinct symbols for network width (e.g., h) and constraint count (e.g., k)",
+      "Specify network architecture details: depth, initialization scheme, optimizer, loss function formulation for constraint satisfaction",
+      "Define how constraints are enforced during training (hard constraints via projection vs soft penalty terms)",
+      "Include multiple random seeds for statistical reliability",
+      "Add ablation studies on depth and constraint geometry to isolate the effect of width",
+      "Validate against known theoretical bounds for ReLU region counts"
+    ],
+    "mode": "explore",
+    "description": "Conduct a systematic computational investigation of the minimal network width N_c(w) for ReLU networks under constraint satisfaction. Define a synthetic constraint system (general position hyperplanes"
+  },
+  {
+    "scene_tag": "auto_test",
+    "hyp_key": "df68c08f627b",
+    "reason": "The plan contains a critical variable naming collision: it uses 'w' to denote both the network hidden width (in the sweep) AND the constraint sample count (10, 50, 100, 200), which directly violates the '唯一硬性口径' requiring N_c(w) to be measured against varying constraint counts while holding width as the independent variable. This ambiguity makes the experimental design uninterpretable and the results invalid. Additionally, the plan lacks specification of network depth, activation functions beyond ReLU, optimization method, and how 'zero-violation' is enforced during training (hard constraints vs soft penalty). Without these, the hypothesis about PL manifold structure cannot be tested.",
+    "missing_steps": [
+      "Clarify variable naming: use distinct symbols for network width (e.g., h) and constraint count (e.g., k)",
+      "Specify network architecture details: depth, initialization scheme, optimizer, loss function formulation for constraint satisfaction",
+      "Define how constraints are enforced during training (hard constraints via projection vs soft penalty terms)",
+      "Include multiple random seeds for statistical reliability",
+      "Add ablation studies on depth and constraint geometry to isolate the effect of width",
+      "Validate against known theoretical bounds for ReLU region counts"
+    ],
+    "mode": "explore",
+    "description": "Conduct a systematic computational investigation of the minimal network width N_c(h) for ReLU networks under constraint satisfaction. Define a synthetic constraint system (k general position hyperplan"
   }
 ]
