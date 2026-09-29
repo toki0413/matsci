@@ -1,0 +1,100 @@
+{
+  "directed": true,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "label": "[DIM: optimization] The minimal network width $N_c(w)$ required to achieve zero ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T08:48:45.080524",
+      "last_seen": "2026-09-29T08:48:45.080524",
+      "mentions": 1,
+      "iteration": 5,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For rigid families, $N_c(w)$ will be finite and non-decreasing in $w$, reflecting the rank of the constraint Jacobian. For fat families, $N_c(w)$ will diverge (or exceed the swept $N$ range) as $w$ in",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: optimization] The minimal network width $N_c(w)$ required to achieve zero"
+    },
+    {
+      "label": "plan_coder_iter5",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:48:45.080567",
+      "last_seen": "2026-09-29T08:48:45.080567",
+      "mentions": 1,
+      "id": "Method:plan_coder_iter5"
+    },
+    {
+      "label": "pass_iter5",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:48:45.080580",
+      "last_seen": "2026-09-29T08:48:45.080580",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter5"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-29T08:48:45.080591",
+      "last_seen": "2026-09-29T08:48:45.080591",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: optimization] The minimal network width $N_c(w)$ required to achieve zero",
+        "Method:plan_coder_iter5",
+        "Fact:pass_iter5"
+      ],
+      "iteration": 5,
+      "id": "he_experiment_pipeline_ba204893"
+    },
+    {
+      "label": "reviewer_iter5",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-29T08:48:45.080702",
+      "last_seen": "2026-09-29T08:48:45.080702",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "71c6bcf0521f25e5",
+      "r_phys": 1.0,
+      "iteration": 5,
+      "id": "persona_use:reviewer_iter5"
+    }
+  ],
+  "links": [
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: optimization] The minimal network width $N_c(w)$ required to achieve zero",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:48:45.080591",
+      "last_seen": "2026-09-29T08:48:45.080591",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ba204893"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_coder_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:48:45.080591",
+      "last_seen": "2026-09-29T08:48:45.080591",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ba204893"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-09-29T08:48:45.080591",
+      "last_seen": "2026-09-29T08:48:45.080591",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ba204893"
+    }
+  ]
+}

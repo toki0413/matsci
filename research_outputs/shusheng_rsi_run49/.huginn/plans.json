@@ -27,6 +27,36 @@
         "mode": "coder",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_341b0362",
+      "objective": "[DIM: structure] The constraint system defines a linear subspace of dimension d = n - w, and a two-layer ReLU network of width N_c(w) = d can exactly represent any solution if the hidden layer spans the solution subspace, implying N_c(w) is finite and independent of w (rigid).",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Create a Python script that implements the numerical experiment to test the hypothesis on solution space rigidity. The script will: (1) generate a linear constraint system with dimension d = n - w, (2) train two-layer ReLU networks of varying widths on w training samples, (3) evaluate on held-out constraint points, (4) determine N_c(w) as the minimum width achieving zero violation (max absolute error ≤ 1e-3), and (5) scan N_c(w) as a function of w to test if it remains finite and independent of w (rigid case) or grows unbounded (fat case). This directly tests the mathematical structure of the hypothesis using pure machine learning without physical analogy.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "rigidity_test.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T08:49:07.463993+00:00",
+      "confirmed_at": "2026-09-29T08:49:07.465083+00:00",
+      "completed_at": "2026-09-29T08:49:28.614594+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
