@@ -1512,6 +1512,36 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_02022bd2",
+      "objective": "[DIM: geometry] The rigid family's solution space constitutes a low-dimensional affine subspace in function space, where the manifold dimension is determined by the number of independent analytic constraints w, and the fat family spans a high-dimensional manifold with fractal dimension scaling exponentially with w.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the family function to generate rigid (low-dimensional, uniquely determined by constraints) and fat (high-dimensional, underdetermined) families with normalized outputs (std ≲ 10). Use linear constraints for rigid (e.g., w points uniquely determine a (w-1)-degree polynomial) and high-frequency random constraints for fat (e.g., 20-term random Fourier series). Ensure X/y/Xv/yv are (N,1), outputs are normalized by std, and held-out points do not overlap training points. This enables capacity_scan to compute N_c(w) and verify the hypothesis.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "/workspace/research_outputs/shusheng_rsi_run47/family.py"
+          ]
+        }
+      ],
+      "status": "executing",
+      "auto_confirm": false,
+      "created_at": "2026-09-29T08:18:42.639540+00:00",
+      "confirmed_at": "2026-09-29T08:18:42.641801+00:00",
+      "completed_at": null,
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
