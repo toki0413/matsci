@@ -182,6 +182,36 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_35490e7c",
+      "objective": "[DIM: Structure] Algebraic Rank Hypothesis**",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "We will test the Algebraic Rank Hypothesis by numerically measuring the solution space rigidity of small MLPs. We will: (1) generate a synthetic constraint set (e.g., a smooth target function with w evaluation points); (2) train small MLPs of increasing hidden width N_c on w constraints; (3) measure the maximum absolute error on a held-out set of constraints; (4) define N_c(w) as the smallest width achieving zero violation (max error ≤ 1e-3); (5) scan w to observe if N_c(w) remains bounded (rigid) or diverges (fat). This directly probes whether bootstrap solution space rigidity is detectable via MLP generalization.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "[None]"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-30T11:08:25.528372+00:00",
+      "confirmed_at": "2026-09-30T11:08:25.529565+00:00",
+      "completed_at": "2026-09-30T11:09:07.073695+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
