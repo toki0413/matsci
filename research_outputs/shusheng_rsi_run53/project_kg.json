@@ -898,6 +898,70 @@
       "r_phys": 1.0,
       "iteration": 105,
       "id": "persona_use:reviewer_iter105"
+    },
+    {
+      "label": "** Hypothesis 1 (**DYNAMICS**) is selected as the most testable and novel candid",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:45:35.607527",
+      "last_seen": "2026-09-30T11:45:35.607527",
+      "mentions": 1,
+      "iteration": 110,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The scan will produce a curve of N_c(w) vs w. If the solution space is rigid, N_c(w) will plateau at a small finite value (e.g., N_c ≈ 10-20) as w increases, with training error ≤ 1e-3 and hold-out er",
+      "persona": "reviewer",
+      "id": "experiment:** Hypothesis 1 (**DYNAMICS**) is selected as the most testable and novel candid"
+    },
+    {
+      "label": "plan_explore_iter110",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:45:35.607565",
+      "last_seen": "2026-09-30T11:45:35.607565",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter110"
+    },
+    {
+      "label": "pass_iter110",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:45:35.607575",
+      "last_seen": "2026-09-30T11:45:35.607575",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter110"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T11:45:35.607584",
+      "last_seen": "2026-09-30T11:45:35.607584",
+      "mentions": 1,
+      "members": [
+        "experiment:** Hypothesis 1 (**DYNAMICS**) is selected as the most testable and novel candid",
+        "Method:plan_explore_iter110",
+        "Fact:pass_iter110"
+      ],
+      "iteration": 110,
+      "id": "he_experiment_pipeline_6dde8135"
+    },
+    {
+      "label": "reviewer_iter110",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:45:35.607653",
+      "last_seen": "2026-09-30T11:45:35.607653",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "3ff124b97d8aacb4",
+      "r_phys": 1.0,
+      "iteration": 110,
+      "id": "persona_use:reviewer_iter110"
     }
   ],
   "links": [
@@ -1278,6 +1342,33 @@
       "last_seen": "2026-09-30T11:44:40.184094",
       "mentions": 1,
       "target": "he_experiment_pipeline_90e23374"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:** Hypothesis 1 (**DYNAMICS**) is selected as the most testable and novel candid",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:45:35.607584",
+      "last_seen": "2026-09-30T11:45:35.607584",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_6dde8135"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter110",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:45:35.607584",
+      "last_seen": "2026-09-30T11:45:35.607584",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_6dde8135"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter110",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:45:35.607584",
+      "last_seen": "2026-09-30T11:45:35.607584",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_6dde8135"
     }
   ]
 }

@@ -600,3 +600,12 @@ renamed-reduction 3× consecutive: trigger counterexample hunt
 [exec-route] mode='explore' desc[:80]='[auto-routed: surprise=1.00] Run the small feedforward network capacity scan to ' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=True
 [code-lab-author] raw_len=2581 extracted_len=2566 prompt_len=4468
 [code-lab-run] res_none=False success=True nobj=1 reason=''
+[validate] mode='code_lab' success=True nobj=1 cf=False lab=True
+plan_check failed (tier=light, scene=auto_constraint, max_refines=1): The plan explicitly violates the hypothesis requirement to 'State the mathematics explicitly ... before proposing numerical experiments'. The plan jumps straight into designing and executing numerical experiments without first formally defining the mathematical structure of the bootstrap solution space rigidity, the analytical constraints, or the theoretical framework connecting network capacity to solution space rigidity. This directly matches the documented historical failure for this scenario.
+[exec-route] mode='explore' desc[:80]='Explicitly define the mathematical structure of bootstrap solution space rigidit' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=True
+[code-lab-author] raw_len=2712 extracted_len=2697 prompt_len=4265
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: IndexError: too many indices for array: array is 1-dimensional, but 2 were indexed'
+[code-lab-author] raw_len=2296 extracted_len=2281 prompt_len=7193
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: IndexError: too many indices for array: array is 1-dimensional, but 2 were indexed'
+[code-lab-author] raw_len=2307 extracted_len=2292 prompt_len=6974
+[code-lab-run] res_none=False success=True nobj=2 reason=''

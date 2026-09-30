@@ -109,5 +109,33 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Design and execute a controlled numerical experiment to test the hypothesis that minimal network capacity $N_c(w)$ scales with the intrinsic dimension $d$ of a constraint "
+  },
+  {
+    "scene_tag": "auto_constraint",
+    "hyp_key": "c767c9688b49",
+    "reason": "The plan explicitly violates the hypothesis requirement to 'State the mathematics explicitly ... before proposing numerical experiments'. The plan jumps straight to designing and executing numerical experiments without first defining the mathematical structure of the bootstrap solution space rigidity, the analytical constraints, or the theoretical framework. This violates the core instruction to state mathematics first, then propose experiments.",
+    "missing_steps": [
+      "Explicitly define the mathematical structure of bootstrap solution space rigidity",
+      "Formally define the set of w analytical constraints (polynomial interpolation conditions)",
+      "Define the mathematical relationship between network capacity N_c and constraint violation",
+      "State the theoretical framework connecting small feedforward networks to solution space rigidity",
+      "Before proposing numerical experiments, provide the mathematical formulation that the experiments will test"
+    ],
+    "mode": "explore",
+    "description": "Design and execute a numerical experiment to test the hypothesis that small feedforward networks probe bootstrap solution space rigidity. Define the mathematical structure: a set of w analytical const"
+  },
+  {
+    "scene_tag": "auto_constraint",
+    "hyp_key": "c767c9688b49",
+    "reason": "The plan explicitly violates the hypothesis requirement to 'State the mathematics explicitly ... before proposing numerical experiments'. The plan jumps straight into designing and executing numerical experiments without first formally defining the mathematical structure of the bootstrap solution space rigidity, the analytical constraints, or the theoretical framework connecting network capacity to solution space rigidity. This directly matches the documented historical failure for this scenario.",
+    "missing_steps": [
+      "Explicitly define the mathematical structure of bootstrap solution space rigidity",
+      "Formally define the set of w analytical constraints (polynomial interpolation conditions)",
+      "Define the mathematical relationship between network capacity N_c and constraint violation",
+      "State the theoretical framework connecting small feedforward networks to solution space rigidity",
+      "Provide the mathematical formulation that the experiments will test before proposing numerical experiments"
+    ],
+    "mode": "explore",
+    "description": "Explicitly define the mathematical structure of bootstrap solution space rigidity: for a function class F, define the solution space S_w = {f ∈ F : |f(x_i) - y_i| ≤ ε, i=1..w} for w analytical constra"
   }
 ]

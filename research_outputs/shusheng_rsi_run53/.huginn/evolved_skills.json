@@ -55,8 +55,8 @@
       "constraint",
       "constraints",
       "small",
-      "error",
       "width",
+      "error",
       "plan"
     ],
     "workflow_steps": [
@@ -107,7 +107,7 @@
       "explore"
     ],
     "source_session": "loop_5",
-    "extraction_confidence": 0.8974358974358975,
+    "extraction_confidence": 0.8975,
     "usage_count": 0,
     "success_count": 0,
     "created_at": "2026-09-30T08:40:51.803981"
