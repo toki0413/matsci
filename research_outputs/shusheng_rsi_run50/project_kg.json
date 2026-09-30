@@ -20,20 +20,20 @@
       "label": "plan_explore_iter10",
       "type": "Method",
       "source": "autoloop",
-      "confidence": 0.5,
+      "confidence": 0.55,
       "created_at": "2026-09-29T12:29:33.672318",
-      "last_seen": "2026-09-29T12:29:33.672318",
-      "mentions": 1,
+      "last_seen": "2026-09-30T08:40:51.805777",
+      "mentions": 2,
       "id": "Method:plan_explore_iter10"
     },
     {
       "label": "pass_iter10",
       "type": "Fact",
       "source": "autoloop",
-      "confidence": 0.5,
+      "confidence": 0.55,
       "created_at": "2026-09-29T12:29:33.672332",
-      "last_seen": "2026-09-29T12:29:33.672332",
-      "mentions": 1,
+      "last_seen": "2026-09-30T08:40:51.805788",
+      "mentions": 2,
       "surprise": 0,
       "id": "Fact:pass_iter10"
     },
@@ -55,10 +55,10 @@
       "label": "reviewer_iter10",
       "type": "persona_use",
       "source": "autoloop",
-      "confidence": 1.0,
+      "confidence": 0.99,
       "created_at": "2026-09-29T12:29:33.672434",
-      "last_seen": "2026-09-29T12:29:33.672434",
-      "mentions": 1,
+      "last_seen": "2026-09-30T08:40:51.805873",
+      "mentions": 2,
       "persona": "reviewer",
       "context_hash": "5879e03e3f004f8e",
       "r_phys": 1.0,
@@ -585,6 +585,35 @@
       ],
       "iteration": 5,
       "id": "he_experiment_pipeline_97362121"
+    },
+    {
+      "label": "'.\" It also mentions \"LUCID review (mandatory after generating hypothesis)\". Usu",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T08:40:51.805744",
+      "last_seen": "2026-09-30T08:40:51.805744",
+      "mentions": 1,
+      "iteration": 10,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The experiment will find that for small w (e.g., w < 10), a finite N_c exists and remains bounded as w increases (rigid regime). For larger w, N_c will grow rapidly or become unreachable within the wi",
+      "persona": "reviewer",
+      "id": "experiment:'.\" It also mentions \"LUCID review (mandatory after generating hypothesis)\". Usu"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T08:40:51.805796",
+      "last_seen": "2026-09-30T08:40:51.805796",
+      "mentions": 1,
+      "members": [
+        "experiment:'.\" It also mentions \"LUCID review (mandatory after generating hypothesis)\". Usu",
+        "Method:plan_explore_iter10",
+        "Fact:pass_iter10"
+      ],
+      "iteration": 10,
+      "id": "he_experiment_pipeline_281aefaf"
     }
   ],
   "links": [
@@ -608,12 +637,30 @@
     },
     {
       "relation": "member_of",
+      "source": "Method:plan_explore_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T08:40:51.805796",
+      "last_seen": "2026-09-30T08:40:51.805796",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_281aefaf"
+    },
+    {
+      "relation": "member_of",
       "confidence": 0.5,
       "created_at": "2026-09-29T12:29:33.672342",
       "last_seen": "2026-09-29T12:29:33.672342",
       "mentions": 1,
       "source": "Fact:pass_iter10",
       "target": "he_experiment_pipeline_26298a41"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T08:40:51.805796",
+      "last_seen": "2026-09-30T08:40:51.805796",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_281aefaf"
     },
     {
       "relation": "member_of",
@@ -857,6 +904,15 @@
       "last_seen": "2026-09-30T08:39:05.820603",
       "mentions": 1,
       "target": "he_experiment_pipeline_97362121"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:'.\" It also mentions \"LUCID review (mandatory after generating hypothesis)\". Usu",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T08:40:51.805796",
+      "last_seen": "2026-09-30T08:40:51.805796",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_281aefaf"
     }
   ]
 }

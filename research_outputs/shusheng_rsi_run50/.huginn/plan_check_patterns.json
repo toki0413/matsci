@@ -140,5 +140,33 @@
     ],
     "mode": "explore",
     "description": "Redesign the experiment to explicitly characterize solution space geometry rather than just fitting capacity. Define analytic constraint functions (e.g., polynomial systems with controlled degree and "
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "adc66d288fd7",
+    "reason": "The plan is fundamentally flawed because it treats the hypothesis as a generic neural network regression problem, whereas the hypothesis is about the 'bootstrap solution space rigidity' (a theoretical property of the constraint manifold). The current plan measures standard generalization error on held-out points, not the existence of a zero-violation solution in the function space. It lacks the critical definition of 'rigid vs floppy' as a binary property of the solution space geometry, not just a trend in error values. Furthermore, the hypothesis concerns a phase transition in the *capacity* to satisfy constraints, not just approximation error.",
+    "missing_steps": [
+      "Define the precise mathematical structure of the constraint manifold and the 'zero-violation' condition in function space.",
+      "Distinguish between 'approximation error' and 'constraint satisfaction violation' — the hypothesis is about the latter.",
+      "Implement a method to detect the *existence* of a solution (rigid) vs *non-existence* (floppy), not just measure error magnitude.",
+      "Include a theoretical baseline or analytical bound for N_c(w) to validate the numerical phase transition.",
+      "Clarify the definition of 'critical constraint density w_c' and how it is detected from N_c(w) data."
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement a controlled numerical experiment to test the phase transition hypothesis for small feedforward networks. Steps: (1) Define a simple 1D constraint function (e.g."
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "adc66d288fd7",
+    "reason": "The plan fundamentally misinterprets the hypothesis by treating it as a standard neural network regression/generalization problem. The hypothesis concerns 'bootstrap solution space rigidity' — a theoretical property of constraint manifold geometry — but the plan measures approximation error on held-out points, not the existence/non-existence of zero-violation solutions in function space. It fails to distinguish between 'approximation error' and 'constraint satisfaction violation', and lacks any method to detect the binary rigidity/floppy transition of the solution space itself. It also omits theoretical baselines or analytical bounds for N_c(w), critical for validating a phase transition.",
+    "missing_steps": [
+      "Define the constraint manifold mathematically and formalize 'zero-violation' as existence of a function f in the hypothesis class such that |f(x_i) - y_i| ≤ 1e-3 for all w constraint points",
+      "Implement a solver that determines whether a solution exists (rigid) or not (floppy) for given (w, N), rather than just measuring error",
+      "Include theoretical analysis or bounds (e.g., from VC theory, Kolmogorov width, or SMT-based constraint counting) to establish expected N_c(w) behavior",
+      "Define w_c as the point where the binary status (rigid→floppy) changes, and use statistical tests or structural analysis to detect the phase transition",
+      "Use constraint satisfaction or feasibility optimization (e.g., SMT, constrained optimization) to directly test existence of zero-violation solutions, not just minimize error"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Implement a controlled numerical experiment to test the phase transition hypothesis for small feedforward networks. Steps: (1) Define a simple 1D constraint function (e.g."
   }
 ]
