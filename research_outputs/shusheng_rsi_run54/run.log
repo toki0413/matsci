@@ -161,3 +161,7 @@ plan_check failed (tier=light, scene=auto_numerical, max_refines=1): The hypothe
 [exec-route] mode='explore' desc[:80]='Define a hypothesis about solution space rigidity: "For polynomial identity cons' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
 [code-lab-author] raw_len=2787 extracted_len=2772 prompt_len=4007
 [code-lab-run] res_none=False success=True nobj=1 reason=''
+[validate] mode='code_lab' success=True nobj=1 cf=False lab=True
+[exec-route] mode='explore' desc[:80]='We will design a systematic numerical experiment to test the hypothesis that $N_' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=True
+[code-lab-author] raw_len=1873 extracted_len=1858 prompt_len=4763
+[code-lab-run] res_none=False success=True nobj=2 reason=''
