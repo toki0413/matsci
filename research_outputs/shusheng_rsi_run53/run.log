@@ -631,3 +631,9 @@ metacog: 假设可能为换名归约 (trap=, target=Algebraic Rank Hypothesis (H
 [exec-route] mode='explore' desc[:80]='[auto-routed: surprise=1.00] Implement the numerical experiment to test the hypo' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
 [code-lab-author] raw_len=3552 extracted_len=3537 prompt_len=4140
 [code-lab-run] res_none=False success=True nobj=1 reason=''
+[validate] mode='code_lab' success=True nobj=1 cf=False lab=True
+repeat execution detected (streak=1): inject pivot hint
+metacog: 假设可能为换名归约 (trap=, target=[DIM: STRUCTURE] The minimal network capacity N_c(w) is determined by the rank of the constraint matrix in the dual space; for algebraically dependent constraints, $N_c(w)$ remains constant as $w$ increases beyond a saturation point $w_s$, while for algebraically independent constraints, $N_c(w)$): [DIM: STRUCTURE] The minimal network capacity $N_c(w)$ is determined by the rank of the constraint m
+[exec-route] mode='explore' desc[:80]='[auto-routed: surprise=1.00] ' obj_len=509 is_exp_desc=False is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=2387 extracted_len=2372 prompt_len=4209
+[code-lab-run] res_none=False success=True nobj=2 reason=''
