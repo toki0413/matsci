@@ -84,20 +84,20 @@
       "label": "plan_explore_iter15",
       "type": "Method",
       "source": "autoloop",
-      "confidence": 0.5,
+      "confidence": 0.55,
       "created_at": "2026-09-29T12:30:20.782004",
-      "last_seen": "2026-09-29T12:30:20.782004",
-      "mentions": 1,
+      "last_seen": "2026-09-30T08:42:10.244630",
+      "mentions": 2,
       "id": "Method:plan_explore_iter15"
     },
     {
       "label": "pass_iter15",
       "type": "Fact",
       "source": "autoloop",
-      "confidence": 0.5,
+      "confidence": 0.55,
       "created_at": "2026-09-29T12:30:20.782014",
-      "last_seen": "2026-09-29T12:30:20.782014",
-      "mentions": 1,
+      "last_seen": "2026-09-30T08:42:10.244659",
+      "mentions": 2,
       "surprise": 1.0,
       "id": "Fact:pass_iter15"
     },
@@ -119,10 +119,10 @@
       "label": "reviewer_iter15",
       "type": "persona_use",
       "source": "autoloop",
-      "confidence": 1.0,
+      "confidence": 0.99,
       "created_at": "2026-09-29T12:30:20.782099",
-      "last_seen": "2026-09-29T12:30:20.782099",
-      "mentions": 1,
+      "last_seen": "2026-09-30T08:42:10.244741",
+      "mentions": 2,
       "persona": "reviewer",
       "context_hash": "3efd388e9f27649e",
       "r_phys": 1.0,
@@ -614,6 +614,35 @@
       ],
       "iteration": 10,
       "id": "he_experiment_pipeline_281aefaf"
+    },
+    {
+      "label": "[DIM: structure] The minimal width N_c(w) required for zero violation exhibits a",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T08:42:10.244594",
+      "last_seen": "2026-09-30T08:42:10.244594",
+      "mentions": 1,
+      "iteration": 15,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The minimal width N_c(w) required for zero violation exhibits a phase transition at a critical constraint density w_c, where below w_c the solution space is rigid (constant N_c) and above w_c it becom",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The minimal width N_c(w) required for zero violation exhibits a"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T08:42:10.244669",
+      "last_seen": "2026-09-30T08:42:10.244669",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The minimal width N_c(w) required for zero violation exhibits a",
+        "Method:plan_explore_iter15",
+        "Fact:pass_iter15"
+      ],
+      "iteration": 15,
+      "id": "he_experiment_pipeline_4f0db04"
     }
   ],
   "links": [
@@ -691,12 +720,30 @@
     },
     {
       "relation": "member_of",
+      "source": "Method:plan_explore_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T08:42:10.244669",
+      "last_seen": "2026-09-30T08:42:10.244669",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4f0db04"
+    },
+    {
+      "relation": "member_of",
       "confidence": 0.5,
       "created_at": "2026-09-29T12:30:20.782023",
       "last_seen": "2026-09-29T12:30:20.782023",
       "mentions": 1,
       "source": "Fact:pass_iter15",
       "target": "he_experiment_pipeline_ed9a6a9e"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter15",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T08:42:10.244669",
+      "last_seen": "2026-09-30T08:42:10.244669",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4f0db04"
     },
     {
       "relation": "member_of",
@@ -913,6 +960,15 @@
       "last_seen": "2026-09-30T08:40:51.805796",
       "mentions": 1,
       "target": "he_experiment_pipeline_281aefaf"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The minimal width N_c(w) required for zero violation exhibits a",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T08:42:10.244669",
+      "last_seen": "2026-09-30T08:42:10.244669",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4f0db04"
     }
   ]
 }

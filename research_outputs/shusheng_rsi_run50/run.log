@@ -91,3 +91,7 @@ plan_check failed (tier=medium, scene=other, max_refines=1): The plan fundamenta
 [exec-route] mode='explore' desc[:80]='[auto-routed: surprise=1.00] Implement a controlled numerical experiment to test' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
 [code-lab-author] raw_len=1838 extracted_len=1823 prompt_len=4436
 [code-lab-run] res_none=False success=True nobj=4 reason=''
+[validate] mode='code_lab' success=True nobj=4 cf=False lab=True
+[exec-route] mode='explore' desc[:80]='[auto-routed: surprise=1.00] Construct a synthetic constraint system using a hig' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=True
+[code-lab-author] raw_len=3480 extracted_len=3465 prompt_len=4600
+[code-lab-run] res_none=False success=True nobj=1 reason=''
