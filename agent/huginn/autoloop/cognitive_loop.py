@@ -2707,8 +2707,26 @@ Respond JSON only:
                             "在 plan 里落地并真实运行, 带回数值后再进 execute→validate。"
                             "不要用 DIM/换名式重述代替计算。\n"
                         )
-                    if not self._check_budget(state.iteration, _plan):
-                        # budget 拒: hint 已被 _check_budget 写, 这里不重复
+                    # 长程探索: 真实预算是挂钟, 而迭代档位(为短程设计)在 step 31-50
+                    # 只放 coder, 会把 explore 类计算实验整段禁掉 —— execute 连续被
+                    # 跳过 → 循环拿旧结果反复 validate → 执行指纹窗口填满同一指纹
+                    # → 假收敛提前结题 (run52 实测: 904s/3600s 就 conclude+stop,
+                    # 判别实验一次没跑). 挂钟已封顶总开销, 故让位给挂钟.
+                    _budget_ok = (
+                        True
+                        if self._long_horizon_keep_going()
+                        else self._check_budget(state.iteration, _plan)
+                    )
+                    if not _budget_ok:
+                        # budget 拒: hint 已被 _check_budget 写, 这里不重复.
+                        # warning 级: 默认 root logger 无 handler, info 会被静默吞掉 —
+                        # 而"execute 被跳过"必须可审计 (否则只会看到 validate 反复
+                        # 复用旧结果→假收敛, 定位不到真因, 见 run52).
+                        logger.warning(
+                            "execute skipped: budget rejected plan mode=%r at iter %d "
+                            "(tier restricts modes) → validate 将复用上一轮结果",
+                            _plan.get("mode"), state.iteration,
+                        )
                         return None
                     if not self._check_gate(
                         "plan", "execute",
@@ -2724,6 +2742,11 @@ Respond JSON only:
                             + "\n"
                         )
                         await self._wait_if_checkpoint_pending("plan", "execute")
+                        logger.warning(
+                            "execute skipped: plan→execute gate blocked at iter %d "
+                            "(mode=%r) → validate 将复用上一轮结果",
+                            state.iteration, _plan.get("mode"),
+                        )
                         return None
                     # Infra: execute 前快照 provenance 版本时钟, 供 on_execute_failure
                     # 回调回滚到执行前状态. 工具异常改坏文件时, rollback_to(version)
