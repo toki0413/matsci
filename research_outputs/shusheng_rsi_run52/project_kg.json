@@ -1,0 +1,100 @@
+{
+  "directed": true,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "label": "[DIM: Optimization] **The Landau Phase Transition Hypothesis**",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T10:19:56.106134",
+      "last_seen": "2026-09-30T10:19:56.106134",
+      "mentions": 1,
+      "iteration": 5,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "We expect to observe a sharp phase transition at a critical constraint density $\\rho_c \\approx 0.1-0.3$ where the required network width $N_c$ jumps from a small finite value to infinity (or the searc",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: Optimization] **The Landau Phase Transition Hypothesis**"
+    },
+    {
+      "label": "plan_coder_iter5",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:19:56.106176",
+      "last_seen": "2026-09-30T10:19:56.106176",
+      "mentions": 1,
+      "id": "Method:plan_coder_iter5"
+    },
+    {
+      "label": "pass_iter5",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:19:56.106189",
+      "last_seen": "2026-09-30T10:19:56.106189",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter5"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T10:19:56.106199",
+      "last_seen": "2026-09-30T10:19:56.106199",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: Optimization] **The Landau Phase Transition Hypothesis**",
+        "Method:plan_coder_iter5",
+        "Fact:pass_iter5"
+      ],
+      "iteration": 5,
+      "id": "he_experiment_pipeline_5f036a3c"
+    },
+    {
+      "label": "reviewer_iter5",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T10:19:56.106302",
+      "last_seen": "2026-09-30T10:19:56.106302",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "416f7fe60ee2417a",
+      "r_phys": 1.0,
+      "iteration": 5,
+      "id": "persona_use:reviewer_iter5"
+    }
+  ],
+  "links": [
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: Optimization] **The Landau Phase Transition Hypothesis**",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:19:56.106199",
+      "last_seen": "2026-09-30T10:19:56.106199",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5f036a3c"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_coder_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:19:56.106199",
+      "last_seen": "2026-09-30T10:19:56.106199",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5f036a3c"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:19:56.106199",
+      "last_seen": "2026-09-30T10:19:56.106199",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5f036a3c"
+    }
+  ]
+}

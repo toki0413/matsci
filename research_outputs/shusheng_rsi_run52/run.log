@@ -68,3 +68,80 @@ empty required_results for target_1 — fallback
 [exec-route] mode='coder' desc[:80]='Design and execute a numerical experiment to test the Landau Phase Transition Hy' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
 [code-lab-author] raw_len=1759 extracted_len=1744 prompt_len=4243
 [code-lab-run] res_none=False success=True nobj=1 reason=''
+[validate] mode='code_lab' success=True nobj=1 cf=False lab=True
+metacog: 假设可能为换名归约 (trap=, target=The Kolmogorov Complexity Hypothesis): I select **[DIM: Computation] The Kolmogorov Complexity Hypothesis** as the primary candidate for th
+[exec-route] mode='explore' desc[:80]='[auto-routed: surprise=1.00] Create a Python script to numerically test the Kolm' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=True
+[code-lab-author] raw_len=3259 extracted_len=3244 prompt_len=4706
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: IndexError: too many indices for array: array is 1-dimensional, but 2 were indexed'
+[code-lab-author] raw_len=3142 extracted_len=3127 prompt_len=7634
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: IndexError: too many indices for array: array is 1-dimensional, but 2 were indexed'
+[code-lab-author] raw_len=3132 extracted_len=3117 prompt_len=7634
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: IndexError: too many indices for array: array is 1-dimensional, but 2 were indexed'
+[code-lab-author] raw_len=3275 extracted_len=3260 prompt_len=7634
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: IndexError: too many indices for array: array is 1-dimensional, but 2 were indexed'
+code_lab 沙箱执行经 4 轮修复仍未产出证据(不伪造): 执行异常: IndexError: too many indices for array: array is 1-dimensional, but 2 were indexed
+code_lab 最后一版书生代码:
+import numpy as np
+
+def poly_basis(X, n):
+    X = np.asarray(X).flatten()
+    return np.array([X**i for i in range(n)]).T
+
+def _as_2d(x):
+    return x.reshape(-1, 1) if np.ndim(x) == 1 else x
+
+def mlp_fit(X, y, h, seeds=3):
+    from scipy.optimize import minimize
+    X = _as_2d(X)
+    y = _as_2d(y)
+    N, D = X.shape
+    best = None
+    for s in range(seeds):
+        rng = np.random.default_rng(s)
+        W1 = rng.randn(D, h) * np.sqrt(1.0/D)
+        b1 = np.zeros(h)
+        W2 = rng.randn(h, 1) * np.sqrt(1.0/h)
+        b2 = np.zeros(1)
+        def params(): return np.concatenate([W1.ravel(), b1, W2.ravel(), b2])
+        def inv(p):
+            W1 = p[:D*h].reshape(D, h)
+            b1 = p[D*h:D*h+h]
+            W2 = p[D*h+h:D*h+h*h].reshape(h, 1)
+            b2 = p[D*h+h*h:]
+            return W1, b1, W2, b2
+        def loss(p):
+            W1, b1, W2, b2 = inv(p)
+            h1 = np.tanh(X @ W1 + b1)
+            y_pred = h1 @ W2 + b2
+            return np.mean((y_pred - y)**2)
+        p0 = params()
+        p0 += rng.randn(len(p0)) * 1e-5
+        res = minimize(loss, p0, method='L-BFGS-B', options={'maxiter': 1000, 'ftol': 1e-12})
+        if best is None or res.fun < best[1]:
+            best = (res.x, res.fun)
+    W1, b1, W2, b2 = inv(best[0])
+    return (W1, b1, W2, b2)
+
+def mlp_predict(model, X):
+    X = _as_2d(X)
+    W1, b1, W2, b2 = model
+    h1 = np.tanh(X @ W1 + b1)
+    return h1 @ W2 + b2
+
+def family(kind, w, seed):
+    rng = np.random.default_rng(seed)
+    X = np.linspace(0.05, 0.95, w).reshape(-1, 1)
+    Xv = np.linspace(0.02, 0.98, 200).reshape(-1, 1)
+    if kind == 'rigid':
+        coeffs = rng.standard_normal(5)
+        y = poly_basis(X, 5) @ coeffs
+        yv = poly_basis(Xv, 5) @ coeffs
+    else:
+        w_dim = w + 10
+        coeffs = rng.standard_normal(w_dim)
+        X_full = np.vstack([X, Xv])
+        Phi = poly_basis(X_full, w_dim)
+        y_full = Phi @ coeffs
+        y = y_full[:w, :]
+        yv = y_full[w:, :]
+    scale = np.std(poly_basis(np
