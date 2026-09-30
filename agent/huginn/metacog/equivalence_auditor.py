@@ -333,9 +333,25 @@ class EquivalenceAuditor:
         与 `_llm_audit` 的区别: 基线是图节点列表而非 objective. 换了数学维度/术语
         但机制与可区分预测不同 → 不算冗余, 避免把有效探索误判成换名.
         """
+        import difflib
+
         from langchain_core.messages import HumanMessage, SystemMessage
 
-        listing = "\n".join(f"- {s[:300]}" for s in existing[:20])
+        # 只把**最可能重复**的 20 条喂给 LLM, 而不是最早的 20 条. 线上审计的
+        # existing 是整张假设图 (百级节点), 图按插入序排列, 取前 20 恒为**最早**的
+        # 节点; 而换名改写通常紧贴**最近**的同类节点 —— 于是 LLM 永远看到一组
+        # 不相干的旧命题, 判 undetermined, 线上换名告警恒为 0 (run50 实测: 线上 0
+        # 条, 离线按前序邻接重放却 30%). 按与候选的字面相似度排序取 top-20, 既消除
+        # 该盲区, 又让在线判定与离线重放同源可比.
+        _cand_l = (candidate or "").lower()
+        _ranked = sorted(
+            existing,
+            key=lambda s: difflib.SequenceMatcher(
+                None, _cand_l, (s or "").lower()
+            ).ratio(),
+            reverse=True,
+        )
+        listing = "\n".join(f"- {s[:300]}" for s in _ranked[:20])
         prompt = (
             f"已有假设:\n{listing}\n\n"
             f"新假设: {candidate}\n\n"
