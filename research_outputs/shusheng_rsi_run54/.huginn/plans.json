@@ -575,6 +575,36 @@
         "mode": "coder",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_7bb3236b",
+      "objective": "[DIM: structure] The constraints arise from a low-dimensional algebraic variety defined by a polynomial identity of degree d ≤ 5; the minimal network width N_c required to satisfy all w constraints saturates at a constant O(d) as w increases, reflecting the intrinsic algebraic dimension of the constraint set.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Design and execute a numerical experiment to test the algebraic rigidity hypothesis: (1) generate constraint sets from polynomial identities of degree d ≤ 2 (low-dimensional algebraic variety); (2) sweep hidden layer width N for increasing numbers of constraints w; (3) measure N_c(w) as the minimum width achieving zero violation (max abs error ≤ 1e-3) on held-out constraints; (4) verify N_c saturates at O(d) as w increases. This directly tests the claim that minimal network width reflects intrinsic algebraic dimension, not constraint count.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "src/algebraic_rigidity_experiment.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-30T13:26:37.118619+00:00",
+      "confirmed_at": "2026-09-30T13:26:37.120417+00:00",
+      "completed_at": "2026-09-30T13:27:00.503806+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

@@ -245,3 +245,62 @@ metacog: 假设可能为换名归约 (trap=, target=The approximation-theoretic 
 [code-lab-run] res_none=True success=None nobj=0 reason="执行异常: ImportError: import of 'mlp_fit' is not allowed in CodeAct mode; allowed: ['ase', 'collections', 'copy', 'dataclasses', 'decimal', 'fractions', 'functools', 'itertools', 'json', 'math', 'matplot"
 [code-lab-author] raw_len=3183 extracted_len=3168 prompt_len=7368
 [code-lab-run] res_none=False success=True nobj=1 reason=''
+[validate] mode='code_lab' success=True nobj=1 cf=False lab=True
+metacog: 假设可能为换名归约 (trap=, target=Hypothesis S1 (Algebraic Invariant)): [DIM: structure] The constraints arise from a low-dimensional algebraic variety defined by a polynom
+renamed-reduction 3× consecutive: trigger counterexample hunt
+[exec-route] mode='explore' desc[:80]='Design and execute a numerical experiment to test the algebraic rigidity hypothe' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=1854 extracted_len=1839 prompt_len=4437
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 10)'
+[code-lab-author] raw_len=1776 extracted_len=1761 prompt_len=6772
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 10)'
+[code-lab-author] raw_len=1776 extracted_len=1761 prompt_len=6694
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 10)'
+[code-lab-author] raw_len=1776 extracted_len=1761 prompt_len=6694
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 10)'
+code_lab 沙箱执行经 4 轮修复仍未产出证据(不伪造): 执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 10)
+code_lab 最后一版书生代码:
+import numpy as np
+
+def family(kind, w, seed):
+    rng = np.random.default_rng(seed)
+    X = np.linspace(0.05, 0.95, w).reshape(-1, 1)
+    Xv = np.linspace(0.02, 0.98, 200).reshape(-1, 1)
+    if kind == 'rigid':
+        coeffs = np.array([1.0, -2.0, 1.0])
+        y = poly_basis(X, 3) @ coeffs.reshape(-1, 1)
+        yv = poly_basis(Xv, 3) @ coeffs.reshape(-1, 1)
+    else:
+        coeffs = rng.standard_normal(10)
+        y = poly_basis(X, 10) @ coeffs.reshape(-1, 1)
+        yv = poly_basis(Xv, 10) @ coeffs.reshape(-1, 1)
+    scale = np.std(poly_basis(np.linspace(0, 1, 1000), 10) @ coeffs)
+    y = y / scale
+    yv = yv / scale
+    return {'X': X, 'y': y, 'Xv': Xv, 'yv': yv}
+
+def run(cfg):
+    seed = int(cfg.get('seed', 0))
+    ws = [4, 8, 16, 32]
+    hs = range(2, 11)
+    summary = {'rigid_Nc': [], 'fat_Nc': []}
+    objectives = {'score': 0.0, 'rigid_saturation': False}
+    for kind in ['rigid', 'fat']:
+        Nc_vals = []
+        for w in ws:
+            Nc = 999
+            for h in hs:
+                data = family(kind, w, seed + w * 100 + h)
+                X, y = data['X'], data['y']
+                Xv, yv = data['Xv'], data['yv']
+                model = mlp_fit(X, y, h, seeds=3)
+                pred = mlp_predict(model, Xv)
+                err = np.max(np.abs(pred - yv))
+                if err <= 1e-3 and Nc == 999:
+                    Nc = h
+            Nc_vals.append(Nc)
+        summary[f'{kind}_Nc'].append(Nc_vals)
+        if kind == 'rigid':
+            first, last = Nc_vals[0], Nc_vals[-1]
+            objectives['rigid_saturation'] = (last <= first + 2) and (last < 10)
+            objectives['score'] = 1.0 if objectives['rigid_saturation'] else 0.0
+    return {'success': True, 'summary': summary, 'objectives': objectives}
