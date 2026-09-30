@@ -21,6 +21,7 @@ import argparse
 import json
 import os
 import re
+import sys
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
@@ -196,6 +197,7 @@ def cluster_statements(stmts: list[str]) -> dict:
 def replay_graph_based_audit(
     statements: list[str],
     auditor: EquivalenceAuditor | None = None,
+    max_nodes: int | None = None,
 ) -> dict:
     """离线重放 v12"图基冗余审计": 冗余基线从 objective 换成**假设图**.
 
@@ -207,21 +209,29 @@ def replay_graph_based_audit(
 
     参数 auditor: 传入带真实 model 的 EquivalenceAuditor (`--llm`) 可启用**语义判**
     (抓同义改写); 默认无 model ⇒ 仅字面等价 (difflib), 结果是真 flag 数的**下界**.
+    参数 max_nodes: 只重放前 N 个节点 (`--llm` 每节点一次调用, 便于小范围试跑);
+    None ⇒ 全量. 结果含 nodes (采样数) / nodes_total (全量), 避免把采样当全量.
     """
     ea = auditor if auditor is not None else EquivalenceAuditor()
     semantic = bool(auditor is not None and getattr(auditor, "_model", None) is not None)
+    total = sum(1 for s in statements if _is_substantive_statement((s or "").strip()))
+    capped = statements[:max_nodes] if max_nodes else statements
     prior: list[str] = []
     flags = 0
-    for s in statements:
+    for i, s in enumerate(capped):
         s = (s or "").strip()
         if not _is_substantive_statement(s):
             continue
+        if semantic and i and i % 20 == 0:
+            print(f"  ... 语义重放 {i}/{len(capped)} 节点", file=sys.stderr, flush=True)
         v = ea.audit_hypothesis_against_graph(s, prior)
         if v.is_equivalent_renaming:
             flags += 1
         prior.append(s)
     return {
         "nodes": len(prior),
+        "nodes_total": total,
+        "max_nodes": max_nodes,
         "graph_based_rename_flags": flags,
         "flag_rate": (flags / len(prior)) if prior else 0.0,
         "semantic_llm": semantic,
@@ -281,7 +291,11 @@ def _build_llm_auditor() -> EquivalenceAuditor:
     return EquivalenceAuditor(model=get_model(temperature=0.0))
 
 
-def audit(run_dir: str, auditor: EquivalenceAuditor | None = None) -> dict:
+def audit(
+    run_dir: str,
+    auditor: EquivalenceAuditor | None = None,
+    max_nodes: int | None = None,
+) -> dict:
     rows = load_episodic(run_dir)
     cycles = cycles_from_episodic(rows)
     nodes = load_graph_nodes(run_dir)
@@ -298,7 +312,8 @@ def audit(run_dir: str, auditor: EquivalenceAuditor | None = None) -> dict:
     # 假设图等价聚类: 节点数 vs 真正不同的命题簇 (可复现的"膨胀无信息")
     graph_clusters = cluster_statements([s for _, s in nodes])
     # v12 判据验证: 同一批节点用"图基冗余审计"重放 (旧码对 objective 判)
-    graph_audit = replay_graph_based_audit([s for _, s in nodes], auditor=auditor)
+    graph_audit = replay_graph_based_audit(
+        [s for _, s in nodes], auditor=auditor, max_nodes=max_nodes)
     # 记录在案的换名事件 → 是否闭环振荡 (线上走 recall+LLM, 离线只能用记录值)
     osc = rename_oscillation(log["rename"])
     # v11 出口验证: 在新"换名债务"不变量下, 这条旧轨迹是否**必然终止**
@@ -389,16 +404,26 @@ def _verdict(a: dict) -> list[str]:
             % (gc["nodes"], gc["clusters"], 100 * gc["redundancy"]))
     ga = a.get("graph_based_audit") or {}
     if ga.get("nodes"):
-        _old = dr.get("rename_occurrences", 0) or osc.get("events", 0)
-        _delta = max(0, _old - ga["graph_based_rename_flags"])
         _mode = "语义+字面" if ga.get("semantic_llm") else "仅字面(真值的下界)"
-        out.append(
-            "v12 判据验证 [%s]: 图基审计(对假设图判)在 %d 个节点上标"
-            " %d 个换名 (%.0f%%); 旧码(对 objective 判)记录 %d 次换名 ⇒ 差集 %d 次是"
-            "**被误判的机制不同假设** (代数秩/流形维数/Rademacher 等), 正是被掐死的"
-            "有效探索"
-            % (_mode, ga["nodes"], ga["graph_based_rename_flags"],
-               100 * ga["flag_rate"], _old, _delta))
+        _sampled = bool(
+            ga.get("max_nodes") and ga["nodes"] < ga.get("nodes_total", ga["nodes"]))
+        if _sampled:
+            # 采样模式下不得拿"全量旧换名数"减"采样新 flag 数": 分母不一致, 差集无意义.
+            _mode += f", 采样 {ga['nodes']}/{ga['nodes_total']} 节点"
+            out.append(
+                "v12 判据验证 [%s]: 图基审计(对假设图判)标 %d 个换名 (%.0f%%); "
+                "采样模式 ⇒ 不做与旧码全量换名数的差集对比 (避免把采样当全量)"
+                % (_mode, ga["graph_based_rename_flags"], 100 * ga["flag_rate"]))
+        else:
+            _old = dr.get("rename_occurrences", 0) or osc.get("events", 0)
+            _delta = max(0, _old - ga["graph_based_rename_flags"])
+            out.append(
+                "v12 判据验证 [%s]: 图基审计(对假设图判)在 %d 个节点上标"
+                " %d 个换名 (%.0f%%); 旧码(对 objective 判)记录 %d 次换名 ⇒ 差集 %d 次是"
+                "**被误判的机制不同假设** (代数秩/流形维数/Rademacher 等), 正是被掐死的"
+                "有效探索"
+                % (_mode, ga["nodes"], ga["graph_based_rename_flags"],
+                   100 * ga["flag_rate"], _old, _delta))
     if ex["terminal"] == 0 and ex["soft"] > 0:
         out.append(
             "出口体检失败: 软动作 %d 次, **可终止出口 0 次** → 不变量"
@@ -431,7 +456,12 @@ def main(argv: list[str] | None = None) -> int:
         help="对每个假设节点启用 LLM 语义判 (与假设图比, 抓同义改写); 需可用 model."
              " 不传时仅字面判, 结果是真 flag 数的下界. 注意: 每节点一次 LLM 调用.",
     )
+    ap.add_argument(
+        "--max-nodes", type=int, default=0,
+        help="配合 --llm: 每个 run 只语义重放前 N 个节点 (0=全量), 便于小范围试跑.",
+    )
     args = ap.parse_args(argv)
+    max_nodes = args.max_nodes or None
 
     auditor: EquivalenceAuditor | None = None
     if args.llm:
@@ -443,7 +473,7 @@ def main(argv: list[str] | None = None) -> int:
             auditor = None
 
     for rd in args.run_dirs:
-        a = audit(rd, auditor=auditor)
+        a = audit(rd, auditor=auditor, max_nodes=max_nodes)
         print(f"\n===== {rd} =====")
         for line in _verdict(a):
             print("  •", line)
