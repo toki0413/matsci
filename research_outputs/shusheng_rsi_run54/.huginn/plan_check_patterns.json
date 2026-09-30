@@ -75,5 +75,36 @@
     ],
     "mode": "explore",
     "description": "Define a hypothesis about solution space rigidity: \"For polynomial identity constraints of degree ≤ 5, the minimal network width N_c(w) achieving zero violation (max abs error ≤ 1e-3) remains bounded "
+  },
+  {
+    "scene_tag": "md",
+    "hyp_key": "5731516fbe2e",
+    "reason": "The plan's MODE is 'explore' but the task requires rigorous numerical experimentation with specific validation criteria. The DESCRIPTION lacks critical implementation details (architecture, activation functions, optimizer, loss function, stopping criteria, etc.) making it impossible to verify or reproduce. The PREDICTION is speculative without actual experimental data. There are missing prerequisites like defining the exact piecewise-constant function, bootstrap constraint generation method, and validation protocol. The plan also doesn't address how to handle cases where N_c cannot be reached within the scan range.",
+    "missing_steps": [
+      "Specify neural network architecture details (number of layers, activation functions, initialization scheme)",
+      "Define the exact piecewise-constant function and bootstrap constraint generation procedure",
+      "Specify optimization algorithm, learning rate, and training parameters",
+      "Define the validation set construction and error calculation method",
+      "Implement and run the actual numerical experiments before drawing conclusions",
+      "Include convergence checks and reproducibility measures"
+    ],
+    "mode": "explore",
+    "description": "Design a numerical experiment to test the approximation-theoretic rigidity hypothesis by training small feedforward networks on bootstrap constraints. Step 1: Define the constraint set (e.g., a piecew"
+  },
+  {
+    "scene_tag": "md",
+    "hyp_key": "5731516fbe2e",
+    "reason": "The plan is an exploratory description lacking executable implementation details. It fails the 'coder' requirement by not providing the actual code needed to run the experiment. Specifically, it omits the exact definition of the piecewise-constant function, the method for generating bootstrap constraints, the specific loss function (though implied as max absolute error, it's not explicit), and the validation protocol construction. Without these, the experiment cannot be verified or reproduced, directly repeating the 'same scenario historical failure' noted in the prompt.",
+    "missing_steps": [
+      "Provide the exact mathematical definition of the piecewise-constant target function f(x) and its discontinuity points",
+      "Specify the algorithm for generating bootstrap constraint points w (e.g., uniform sampling, adaptive sampling)",
+      "Define the complete neural network architecture including exact number of neurons per layer, activation functions, and initialization scheme details",
+      "Specify the loss function formulation and optimization procedure details",
+      "Describe the validation set construction and error calculation method",
+      "Implement and provide the executable code for the numerical experiment",
+      "Define how to handle cases where N_c(w) is not reached within the scanned width range"
+    ],
+    "mode": "explore",
+    "description": "Implement a rigorous numerical experiment to test the approximation-theoretic rigidity hypothesis. Define the target function f(x) as a piecewise-constant function with discontinuities at specific poi"
   }
 ]

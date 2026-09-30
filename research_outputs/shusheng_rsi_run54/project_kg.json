@@ -770,6 +770,70 @@
       "r_phys": 1.0,
       "iteration": 75,
       "id": "persona_use:reviewer_iter75"
+    },
+    {
+      "label": "[DIM: structure] The bootstrap constraints induce a piecewise-constant partition",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T13:22:35.265677",
+      "last_seen": "2026-09-30T13:22:35.265677",
+      "mentions": 1,
+      "iteration": 80,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For algebraically dependent constraints, N_c(w) will plateau at a small finite value (e.g., N_c ≈ 4-8) as w increases, demonstrating rigidity. For independent constraints, N_c(w) will grow approximate",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] The bootstrap constraints induce a piecewise-constant partition"
+    },
+    {
+      "label": "plan_explore_iter80",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T13:22:35.265715",
+      "last_seen": "2026-09-30T13:22:35.265715",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter80"
+    },
+    {
+      "label": "pass_iter80",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T13:22:35.265724",
+      "last_seen": "2026-09-30T13:22:35.265724",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter80"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T13:22:35.265733",
+      "last_seen": "2026-09-30T13:22:35.265733",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] The bootstrap constraints induce a piecewise-constant partition",
+        "Method:plan_explore_iter80",
+        "Fact:pass_iter80"
+      ],
+      "iteration": 80,
+      "id": "he_experiment_pipeline_6962ef86"
+    },
+    {
+      "label": "reviewer_iter80",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T13:22:35.265804",
+      "last_seen": "2026-09-30T13:22:35.265804",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "5caccc8b8d588825",
+      "r_phys": 1.0,
+      "iteration": 80,
+      "id": "persona_use:reviewer_iter80"
     }
   ],
   "links": [
@@ -1096,6 +1160,33 @@
       "last_seen": "2026-09-30T13:21:01.598004",
       "mentions": 1,
       "target": "he_experiment_pipeline_517ea368"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] The bootstrap constraints induce a piecewise-constant partition",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T13:22:35.265733",
+      "last_seen": "2026-09-30T13:22:35.265733",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_6962ef86"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter80",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T13:22:35.265733",
+      "last_seen": "2026-09-30T13:22:35.265733",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_6962ef86"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter80",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T13:22:35.265733",
+      "last_seen": "2026-09-30T13:22:35.265733",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_6962ef86"
     }
   ]
 }

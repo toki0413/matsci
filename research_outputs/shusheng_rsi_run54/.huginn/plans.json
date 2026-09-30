@@ -485,6 +485,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_214cfa72",
+      "objective": "[DIM: computation] The approximation-theoretic rigidity hypothesis.**",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Implement a rigorous numerical experiment to test the approximation-theoretic rigidity hypothesis. Define the target function f(x) as a piecewise-constant function with discontinuities at specific points, consistent with the iter 80 partition. Generate bootstrap constraints by sampling w points from the domain. Train small feedforward networks with specified architecture (2 hidden layers, ReLU activation, Xavier initialization) using Adam optimizer (lr=1e-3) to minimize max absolute error on validation set. Determine N_c(w) as minimal width achieving max error ≤ 1e-3. Analyze N_c(w) trend across w ∈ [5, 50], N ∈ [4, 64] with early stopping (patience=50) and convergence monitoring. Include reproducibility measures (fixed seed=42, 5 independent runs per configuration).",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-30T13:23:14.089741+00:00",
+      "confirmed_at": "2026-09-30T13:23:14.091158+00:00",
+      "completed_at": "2026-09-30T13:23:28.763087+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
