@@ -413,6 +413,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_467fc139",
+      "objective": "Hypothesis 1 (DYNAMICS)]",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Conduct a bootstrap capacity scan to test the rigidity hypothesis. Define a fixed analytical constraint set (e.g., a smooth function with known analytic constraints). Systematically increase the number of constraints w (from small to large) and for each w, search the hidden layer width N_c (small to moderate) to find the minimum width that achieves \"zero violation\" (max absolute error ≤ 1e-3) on held-out constraints. Record N_c(w) values and analyze the trend: if N_c saturates at a small value as w increases, the hypothesis of \"rigidity\" is supported; if N_c grows or remains infeasible, the space is \"fat\". Use a lightweight neural network training loop with early stopping and clear convergence criteria.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-30T11:33:03.591079+00:00",
+      "confirmed_at": "2026-09-30T11:33:03.592766+00:00",
+      "completed_at": "2026-09-30T11:33:48.610709+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

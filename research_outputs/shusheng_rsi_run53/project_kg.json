@@ -514,6 +514,70 @@
       "r_phys": 1.0,
       "iteration": 65,
       "id": "persona_use:reviewer_iter65"
+    },
+    {
+      "label": "[DIM: GEOMETRY] The constraint set forms a low-dimensional manifold embedded in ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:19:14.386984",
+      "last_seen": "2026-09-30T11:19:14.386984",
+      "mentions": 1,
+      "iteration": 70,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "$N_c(w)$ will remain approximately constant (scaling with $d$) for $w \\lesssim \\text{covering number}$, then exhibit a sharp increase (jump to fat regime) when $w$ exceeds the covering number, confirm",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: GEOMETRY] The constraint set forms a low-dimensional manifold embedded in"
+    },
+    {
+      "label": "plan_explore_iter70",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:19:14.387022",
+      "last_seen": "2026-09-30T11:19:14.387022",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter70"
+    },
+    {
+      "label": "pass_iter70",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:19:14.387031",
+      "last_seen": "2026-09-30T11:19:14.387031",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter70"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T11:19:14.387045",
+      "last_seen": "2026-09-30T11:19:14.387045",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: GEOMETRY] The constraint set forms a low-dimensional manifold embedded in",
+        "Method:plan_explore_iter70",
+        "Fact:pass_iter70"
+      ],
+      "iteration": 70,
+      "id": "he_experiment_pipeline_ff9505cf"
+    },
+    {
+      "label": "reviewer_iter70",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:19:14.387117",
+      "last_seen": "2026-09-30T11:19:14.387117",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "4f5b1566f694eae4",
+      "r_phys": 1.0,
+      "iteration": 70,
+      "id": "persona_use:reviewer_iter70"
     }
   ],
   "links": [
@@ -732,6 +796,33 @@
       "last_seen": "2026-09-30T11:18:02.809412",
       "mentions": 1,
       "target": "he_experiment_pipeline_1e790923"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: GEOMETRY] The constraint set forms a low-dimensional manifold embedded in",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:19:14.387045",
+      "last_seen": "2026-09-30T11:19:14.387045",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ff9505cf"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter70",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:19:14.387045",
+      "last_seen": "2026-09-30T11:19:14.387045",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ff9505cf"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter70",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:19:14.387045",
+      "last_seen": "2026-09-30T11:19:14.387045",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ff9505cf"
     }
   ]
 }

@@ -406,3 +406,69 @@ metacog: 假设可能为换名归约 (trap=, target=Hypothesis 10 ([GEOMETRY])):
 [exec-route] mode='explore' desc[:80]='Redesign the experiment to correctly test the hypothesis: (1) fix the constraint' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=True
 [code-lab-author] raw_len=4166 extracted_len=4151 prompt_len=4509
 [code-lab-run] res_none=False success=True nobj=1 reason=''
+[validate] mode='code_lab' success=True nobj=1 cf=False lab=True
+[exec-route] mode='explore' desc[:80]='Conduct a bootstrap capacity scan to test the rigidity hypothesis. Define a fixe' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=4376 extracted_len=4361 prompt_len=4205
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: all the input array dimensions except for the concatenation axis must match exactly, but along dimension 1, the array at index 0 has size 4 and the array at index 1 has size 200'
+[code-lab-author] raw_len=3454 extracted_len=3439 prompt_len=7240
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: all the input array dimensions except for the concatenation axis must match exactly, but along dimension 1, the array at index 0 has size 4 and the array at index 1 has size 200'
+[code-lab-author] raw_len=3214 extracted_len=3199 prompt_len=7240
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: all the input array dimensions except for the concatenation axis must match exactly, but along dimension 1, the array at index 0 has size 4 and the array at index 1 has size 200'
+[code-lab-author] raw_len=3521 extracted_len=3506 prompt_len=7240
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: all the input array dimensions except for the concatenation axis must match exactly, but along dimension 1, the array at index 0 has size 4 and the array at index 1 has size 200'
+code_lab 沙箱执行经 4 轮修复仍未产出证据(不伪造): 执行异常: ValueError: all the input array dimensions except for the concatenation axis must match exactly, but along dimension 1, the array at index 0 has size 4 and the array at index 1 has size 200
+code_lab 最后一版书生代码:
+import numpy as np
+
+def family(kind, w, seed):
+    rng = np.random.default_rng(seed)
+    X = np.linspace(0.05, 0.95, w).reshape(-1, 1)
+    Xv = np.linspace(0.02, 0.98, 200).reshape(-1, 1)
+    if kind == 'rigid':
+        true_func = lambda x: np.sin(np.pi * x)
+        y = true_func(X)
+        yv = true_func(Xv)
+    else:
+        coeffs = rng.standard_normal(2)
+        poly_basis_X = poly_basis(X, 2)
+        poly_basis_Xv = poly_basis(Xv, 2)
+        y = (poly_basis_X @ coeffs).reshape(-1, 1)
+        yv = (poly_basis_Xv @ coeffs).reshape(-1, 1)
+    scale = np.std(np.vstack([X.flatten(), Xv.flatten()]))
+    if scale < 1e-10:
+        scale = 1.0
+    y = y / scale
+    yv = yv / scale
+    return {'X': X, 'y': y, 'Xv': Xv, 'yv': yv}
+
+def mlp_fit(X, y, h, seeds=3):
+    def forward(X, w1, b1, w2, b2):
+        return w2 @ np.tanh(w1 @ X + b1) + b2
+    def loss_func(params):
+        w1 = params[:h].reshape(-1, 1)
+        b1 = params[h:2*h].reshape(-1, 1)
+        w2 = params[2*h:2*h+h].reshape(1, -1)
+        b2 = params[2*h+h:].reshape(1, 1)
+        y_pred = forward(X, w1, b1, w2, b2)
+        return np.mean((y_pred - y) ** 2)
+    n = X.shape[0]
+    best_loss = np.inf
+    best_params = None
+    for seed in range(seeds):
+        rng = np.random.default_rng(seed)
+        w1 = rng.standard_normal((h, 1)) * np.sqrt(2 / h)
+        b1 = rng.standard_normal((h, 1)) * 0.1
+        w2 = rng.standard_normal((1, h)) * np.sqrt(2 / h)
+        b2 = rng.standard_normal((1, 1)) * 0.1
+        params = np.concatenate([w1.flatten(), b1.flatten(), w2.flatten(), b2.flatten()])
+        from scipy.optimize import minimize
+        res = minimize(loss_func, params, method='L-BFGS-B', options={'maxiter': 1000})
+        if res.fun < best_loss:
+            best_loss = res.fun
+            best_params = res.x
+    return {'params': best_params, 'h': h}
+
+def mlp_predict(model, X):
+    w1 = model['params'][:model['h']].reshape(-1, 1)
+    b1 = model['params'][model['h']:2*model['h']].reshape(-1, 1)
+    w2 = model[
