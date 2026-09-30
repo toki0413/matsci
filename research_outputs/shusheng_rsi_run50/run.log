@@ -81,3 +81,69 @@ plan_check failed (tier=medium, scene=other, max_refines=1): The plan describes 
 [exec-route] mode='explore' desc[:80]='Design a numerical experiment to test the rigidity of bootstrap solution spaces ' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
 [code-lab-author] raw_len=4090 extracted_len=4075 prompt_len=4211
 [code-lab-run] res_none=False success=True nobj=2 reason=''
+[validate] mode='code_lab' success=True nobj=2 cf=False lab=True
+plan_check failed (tier=medium, scene=other, max_refines=1): The plan is fundamentally invalid because it violates the 'Zero Intrusion' and 'Object Scope' rules. The hypothesis concerns the capacity of small feedforward networks to satisfy linear constraints. However, the plan proposes to use a 'test family based on linear constraints with a ground-truth solution space S = {x | Ax = b}' where 'd is fixed'. If the dimension 'd' (number of network parameters/inputs) is fixed while 'w' (constraint count) increases, the problem becomes increasingly overdetermined. For a fixed width N, increasing w typically makes the system harder to satisfy, but the plan's setup of a fixed 'd' combined with increasing 'w' without adjusting the network architecture (width N) to match the degrees of freedom creates a scenario where 'zero violation' (max error <= 1e-3) may become impossible for all N in the range [10, 100] as w grows, leading to 'fat' (unreachable N_c) behavior rather than the predicted logarithmic scaling. Furthermore, the plan uses 'held-out constraint set' which implies a generalization setup, but the hypothesis is about 'zero violation capacity' which usually refers to satisfying the constraints themselves (training error) in this context of solution space geometry. The most critical failure is that the plan does not specify how the network width N is varied relative to the fixed dimension d to isolate the geometric capacity effect described in the hypothesis.
+[exec-route] mode='explore' desc[:80]='[auto-routed: surprise=1.00] This workflow tests the logarithmic scaling hypothe' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=True
+[code-lab-author] raw_len=1986 extracted_len=1971 prompt_len=4763
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 2 is different from 50)'
+[code-lab-author] raw_len=1987 extracted_len=1972 prompt_len=7230
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 2 is different from 50)'
+[code-lab-author] raw_len=1987 extracted_len=1972 prompt_len=7231
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 2 is different from 50)'
+[code-lab-author] raw_len=2552 extracted_len=2537 prompt_len=7231
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 2 is different from 50)'
+code_lab 沙箱执行经 4 轮修复仍未产出证据(不伪造): 执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 2 is different from 50)
+code_lab 最后一版书生代码:
+import numpy as np
+
+def family(kind, w, seed):
+    rng = np.random.default_rng(seed)
+    X = np.linspace(0.05, 0.95, w).reshape(-1, 1)
+    Xv = np.linspace(0.02, 0.98, 200).reshape(-1, 1)
+    if kind == 'rigid':
+        # 刚性族：线性约束 + 唯一解析解 y = 2*x + 1 (2维，低维刚性)
+        true_coef = np.array([1.0, 2.0])  # [bias, slope]
+        y = poly_basis(X, 2) @ true_coef.reshape(-1, 1)
+        yv = poly_basis(Xv, 2) @ true_coef.reshape(-1, 1)
+    else:
+        # 肥族：高维多项式，系数随机，解空间连续 (50维，高维肥)
+        true_coef = rng.standard_normal(50)
+        y = poly_basis(X, 50) @ true_coef.reshape(-1, 1)
+        yv = poly_basis(Xv, 50) @ true_coef.reshape(-1, 1)
+    # 统一尺度：在稠密网格上计算 std，与 w 无关
+    scale = np.std(poly_basis(np.linspace(0, 1, 1000), 50) @ true_coef)
+    if scale == 0:
+        scale = 1.0
+    y /= scale
+    yv /= scale
+    return {'X': X, 'y': y, 'Xv': Xv, 'yv': yv}
+
+
+def run(cfg):
+    seed = int(cfg.get('seed', 0))
+    ws = [10, 20, 30, 50, 100, 200, 300, 500, 700, 1000]
+    # 隐藏层宽度扫描范围：覆盖预期 N_c(w) ~ 15 + 8*log10(w)
+    # log10(10)=1 -> 23; log10(1000)=3 -> 39，取 10 到 50 足够
+    hs = list(range(10, 51, 2))
+    summary = {'rigid_Nc': [], 'fat_Nc': []}
+    objectives = {'rigid_score': 0.0, 'fat_score': 0.0, 'rigid_fits': 0, 'fat_fits': 0}
+    for kind in ['rigid', 'fat']:
+        Nc_list = []
+        for w in ws:
+            Nc_found = None
+            for h in hs:
+                data = family(kind, w, seed + w * 1000 + h)
+                X, y = data['X'], data['y']
+                Xv, yv = data['Xv'], data['yv']
+                model = mlp_fit(X, y, h, seeds=3)
+                pred = mlp_predict(model, Xv)
+                err = np.max(np.abs(pred - yv))
+                if err <= 1e-3:
+                    Nc_found = h
+                    break
+            if Nc_found is None:
+                Nc_found = 51  # 扫描上限内未达零违规，记为 51 (超出 hs 最大值 50)
+            Nc_list.append(Nc_found)
+        summary[f'{kind}_Nc'].append(Nc_list)
+        fit_count = sum(1 for v in Nc_list if v < 51)
+        

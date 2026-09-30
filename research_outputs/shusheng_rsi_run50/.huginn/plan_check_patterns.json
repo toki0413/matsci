@@ -259,5 +259,33 @@
     ],
     "mode": "explore",
     "description": "Design a numerical experiment to test the rigidity of bootstrap solution spaces in small feedforward networks. We will define N_c(w) as the number of constraints w that can be satisfied before capacit"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "3e1ad69b983a",
+    "reason": "The plan's MODE 'explore' is inappropriate for a hypothesis testing task requiring rigorous numerical validation (should be 'coder' for implementation or 'workflow' for execution). The DESCRIPTION fails to specify the exact family of test functions with known solution-space rigidity, which is critical for validating the logarithmic scaling claim. Without a well-defined mathematical structure for the constraints, the experiment cannot isolate whether observed behavior stems from geometric capacity or optimization difficulty. Additionally, the plan lacks a clear methodology for distinguishing between training error and generalization error as required by the hypothesis.",
+    "missing_steps": [
+      "Define specific test function family with known solution-space rigidity properties",
+      "Specify constraint sampling methodology and held-out set construction",
+      "Detail gradient flow implementation (learning rate schedule, convergence criteria)",
+      "Include explicit procedure for identifying N_c(w) via error threshold crossing",
+      "Add statistical validation of logarithmic fit (R-squared, confidence intervals)"
+    ],
+    "mode": "explore",
+    "description": "We will conduct a numerical experiment to test the hypothesis that the minimal network width $N_c(w)$ for zero violation (max absolute error $\\le 10^{-3}$ on held-out constraints) grows logarithmicall"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "3e1ad69b983a",
+    "reason": "The plan is fundamentally invalid because it violates the 'Zero Intrusion' and 'Object Scope' rules. The hypothesis concerns the capacity of small feedforward networks to satisfy linear constraints. However, the plan proposes to use a 'test family based on linear constraints with a ground-truth solution space S = {x | Ax = b}' where 'd is fixed'. If the dimension 'd' (number of network parameters/inputs) is fixed while 'w' (constraint count) increases, the problem becomes increasingly overdetermined. For a fixed width N, increasing w typically makes the system harder to satisfy, but the plan's setup of a fixed 'd' combined with increasing 'w' without adjusting the network architecture (width N) to match the degrees of freedom creates a scenario where 'zero violation' (max error <= 1e-3) may become impossible for all N in the range [10, 100] as w grows, leading to 'fat' (unreachable N_c) behavior rather than the predicted logarithmic scaling. Furthermore, the plan uses 'held-out constraint set' which implies a generalization setup, but the hypothesis is about 'zero violation capacity' which usually refers to satisfying the constraints themselves (training error) in this context of solution space geometry. The most critical failure is that the plan does not specify how the network width N is varied relative to the fixed dimension d to isolate the geometric capacity effect described in the hypothesis.",
+    "missing_steps": [
+      "Define the relationship between network width N, input dimension d, and constraint count w clearly. The hypothesis implies N_c(w) depends on w, so the network parameters must be adjustable (N is the variable) while w varies.",
+      "Clarify if the 'zero violation' refers to training error (serving the constraints) or generalization error (serving new constraints). The hypothesis text 'solution space shrinks with constraint count' suggests training error on the constraint set, but the plan mentions 'held-out' set.",
+      "Ensure the test function family allows the solution space to shrink exponentially with w while maintaining a path to zero violation as N increases. A fixed 'd' with increasing 'w' without increasing N may not produce the desired scaling.",
+      "Specify the network architecture (activation functions, initialization) and gradient flow implementation details to ensure reproducibility and alignment with the theoretical model.",
+      "Include a baseline check to verify that for small w, N_c(w) is indeed small and finite, and that the system is not in the 'fat' regime for the tested w range."
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] This workflow tests the logarithmic scaling hypothesis $N_c(w) \\approx a \\log(w) + b$ for zero-violation capacity under gradient flow. It implements a controlled numerical"
   }
 ]

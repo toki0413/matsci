@@ -56,8 +56,8 @@
       "small",
       "constraints",
       "width",
-      "rigid",
-      "constant"
+      "plan",
+      "rigid"
     ],
     "workflow_steps": [
       {

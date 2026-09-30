@@ -738,6 +738,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_049dd887",
+      "objective": "[DIM: dynamics] Minimal network width $N_c(w)$ for zero violation grows logarithmically with $w$ under gradient flow: $N_c(w) \\approx a \\log(w) + b$ for $w > w_0$, where $a,b$ are constants independent of $w$, because the solution space shrinks exponentially with constraint count under continuous-time gradient descent, requiring only logarithmic width to maintain zero-violation capacity. | predict: N_c(w) = 15 + 8*log10(w) for w in [10, 1000] (values: ~15, 18, 21, 24, 27, 30, 33, 36, 39, 42 for w=10,20,30,...,1000) | pro: Grounded in dynamical systems theory (gradient flow trajectories, basin attraction), directly testable with standard training logs, consistent with observed phase transitions in prior iterations. | con: Requires careful separation of training vs. generalization error; may confuse optimization difficulty with solution space geometry.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] This workflow tests the logarithmic scaling hypothesis $N_c(w) \\approx a \\log(w) + b$ for zero-violation capacity under gradient flow. It implements a controlled numerical experiment using a mathematically rigorous test function family (analytical solutions with known rigidity) to isolate geometric capacity from optimization difficulty. The workflow consists of three phases: (1) **Setup**: Define a test family based on linear constraints with a ground-truth solution space $S = \\{x \\in \\mathbb{R}^d \\mid Ax = b\\}$ where $A \\in \\mathbb{R}^{w \\times d}$ and $d$ is fixed, ensuring solution-space rigidity is determined by $w$; (2) **Execution**: For each $w \\in \\{10, 20, \\dots, 1000\\}$, train networks of width $N \\in [10, 100]$ via continuous-time gradient flow (simulated via small-step gradient descent) on a held-out constraint set, identifying the minimal width $N_c(w)$ where max validation error $\\le 10^{-3}$; (3) **Analysis**: Fit $N_c(w)$ to the logarithmic model, compute $R^2$ and confidence intervals, and compare training vs. generalization error to confirm the scaling arises from solution-space geometry rather than optimization artifacts.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-30T09:23:31.097495+00:00",
+      "confirmed_at": "2026-09-30T09:23:31.098998+00:00",
+      "completed_at": "2026-09-30T09:24:06.159782+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
