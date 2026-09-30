@@ -561,3 +561,7 @@ renamed-reduction 3× consecutive: trigger counterexample hunt
 [exec-route] mode='explore' desc[:80]='Design a numerical experiment to test the hypothesis that the minimal width $N_c' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
 [code-lab-author] raw_len=2133 extracted_len=2118 prompt_len=4763
 [code-lab-run] res_none=False success=True nobj=1 reason=''
+[validate] mode='code_lab' success=True nobj=1 cf=False lab=True
+[exec-route] mode='explore' desc[:80]='[auto-routed: surprise=1.00] Conduct a numerical sweep to test the hypothesis $N' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=True
+[code-lab-author] raw_len=2109 extracted_len=2094 prompt_len=4763
+[code-lab-run] res_none=False success=True nobj=1 reason=''
