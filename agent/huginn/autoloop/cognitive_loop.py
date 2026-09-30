@@ -319,6 +319,13 @@ class CognitiveLoop:
                     logger.debug("output_writer.write_step failed: %s", e)
 
             if decision.action == "stop":
+                # WARNING 级 (非 INFO): CLI autoloop 路径 root logger 未配置, 只有
+                # WARNING+ 经 lastResort 落盘; INFO 级终止原因会被静默吞掉, 长程
+                # run 提前收口时无从审计 (run50 即此).
+                logger.warning(
+                    "CognitiveLoop: stop action at iter %d (rationale=%s)",
+                    state.iteration, (decision.rationale or "")[:160],
+                )
                 state.should_stop = True
                 break
 
@@ -917,7 +924,13 @@ class CognitiveRunner:
             from huginn.autoloop.goal_store import get_goal_store
 
             _gs = get_goal_store()
-            _ag = _gs.get_active()
+            # 优先本 run 自己的 goal (run_cognitive 入口记的 self._run_goal_id).
+            # 全局 get_active() 按插入序返回**第一个** active: 跨 run 残留的旧 goal
+            # 会被误选, 其挂钟早已耗尽 → 守卫恒 False. 取不到本 run goal 时才退回.
+            _run_gid = getattr(self, "_run_goal_id", None)
+            _ag = _gs.get_goal(_run_gid) if _run_gid else None
+            if _ag is None:
+                _ag = _gs.get_active()
             if _ag is None:
                 return False
             return not _gs.wall_clock_expired(_ag.id)
@@ -2219,6 +2232,12 @@ Respond JSON only:
 
         self._max_refines = max_refines
         self._refine_count = 0
+        # 长程探索: 记住本 run 自己的 goal id. 早停守卫 _long_horizon_keep_going
+        # 必须按本 run 的 goal 判挂钟, 不能用全局 get_active() —— 它按插入序返回
+        # **第一个** active, 跨 run 残留的旧 goal(其挂钟早已耗尽)会压过当日 goal,
+        # 使守卫恒返 False ⇒ 启发式早停全部失效、长程保护形同虚设
+        # (run50: 昨日 goal_78ca4085 压过当日 goal_763b186a).
+        self._run_goal_id = goal.id if goal is not None else None
         # 长程探索: 有挂钟预算时, 步数上限不再由 -i 决定(否则约 5 轮即撞顶),
         # 改为按预算反推的宽松上界; 真正的终止由目标达成 (F2/F17) 或 observe 每步
         # 查 wall_clock_expired 控制. -i 退化为"至少多少步"的下限.
@@ -2519,7 +2538,19 @@ Respond JSON only:
                 try:
                     llm_decision = await self._decide_next_action_llm(state, cog, obs)
                     if llm_decision is not None:
-                        return llm_decision
+                        # v12 长程: LLM 自主选 stop 与启发式早停同源, 挂钟预算未耗尽时
+                        # 一并让位 —— 否则 decider 一句 stop 就在 iterate 9/360、266s/3600s
+                        # 处静默收口, 绕过 _long_horizon_keep_going 的全部守卫 (run50 即此).
+                        # 丢弃 stop 决策走规则版顺序推进; 真终止交给目标达成或挂钟耗尽.
+                        if llm_decision.action == "stop" and self._long_horizon_keep_going():
+                            logger.warning(
+                                "decider chose stop at iter %d but long-horizon goal "
+                                "(wall_clock not expired) → continue (rationale=%s)",
+                                state.iteration,
+                                (llm_decision.rationale or "")[:120],
+                            )
+                        else:
+                            return llm_decision
                 except Exception as e:
                     logger.debug("LLM decider failed: %s, fallback to rule", e)
             # 规则版兜底: 默认 7-phase 顺序

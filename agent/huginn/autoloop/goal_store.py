@@ -172,12 +172,18 @@ class GoalStore:
             return self._goals.get(goal_id)
 
     def get_active(self) -> Goal | None:
-        """Return the current active goal, if any."""
+        """Return the current active goal, if any.
+
+        长程模式每次 run 都 create 一个新 goal, 旧 goal 若未收口会残留为 active.
+        按插入序取"第一个" active 会选中跨 run 的旧 goal (其挂钟早已耗尽),
+        使挂钟预算判定 (engine_reflect 验证预算 / 缺口归属) 全部错配到旧 goal.
+        这里改取 created_at 最新的 active —— 即本 run 的当前 goal.
+        """
         with self._lock:
-            for g in self._goals.values():
-                if g.status == "active":
-                    return g
-        return None
+            active = [g for g in self._goals.values() if g.status == "active"]
+        if not active:
+            return None
+        return max(active, key=lambda g: g.created_at or "")
 
     def list_goals(self, status: str | None = None) -> list[Goal]:
         with self._lock:

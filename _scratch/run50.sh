@@ -27,5 +27,5 @@ export PYTHONPATH=/workspace/agent
 export HUGINN_CODELAB_SCAFFOLD=/workspace/examples/codelab_scaffolds/network_rigidity.py
 
 cd /workspace/research_outputs/shusheng_rsi_run50
-exec python3 -m huginn.cli.main autoloop "$(cat objective.txt)" \
+exec /workspace/.venv/bin/python -m huginn.cli.main autoloop "$(cat objective.txt)" \
   -i 30 --wall-clock-budget 3600 > run.log 2>&1
