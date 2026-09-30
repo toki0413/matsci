@@ -1282,6 +1282,70 @@
       "r_phys": 1.0,
       "iteration": 150,
       "id": "persona_use:reviewer_iter150"
+    },
+    {
+      "label": "[DIM: dynamics]",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T13:53:38.205321",
+      "last_seen": "2026-09-30T13:53:38.205321",
+      "mentions": 1,
+      "iteration": 160,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) saturates at N ≈ 16–32 for w > 50, indicating rigidity; max test error ≤ 1e-3 at saturation point. Training error consistently < 1e-4 across all sweeps.\nPLAN_SLOTS: w_range=[10, 50, 100, 200, 5",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: dynamics]"
+    },
+    {
+      "label": "plan_explore_iter160",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T13:53:38.205360",
+      "last_seen": "2026-09-30T13:53:38.205360",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter160"
+    },
+    {
+      "label": "pass_iter160",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T13:53:38.205370",
+      "last_seen": "2026-09-30T13:53:38.205370",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter160"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T13:53:38.205379",
+      "last_seen": "2026-09-30T13:53:38.205379",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: dynamics]",
+        "Method:plan_explore_iter160",
+        "Fact:pass_iter160"
+      ],
+      "iteration": 160,
+      "id": "he_experiment_pipeline_5418409f"
+    },
+    {
+      "label": "reviewer_iter160",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T13:53:38.205450",
+      "last_seen": "2026-09-30T13:53:38.205450",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "1dca0da2ca2bf14b",
+      "r_phys": 1.0,
+      "iteration": 160,
+      "id": "persona_use:reviewer_iter160"
     }
   ],
   "links": [
@@ -1824,6 +1888,33 @@
       "last_seen": "2026-09-30T13:51:01.165392",
       "mentions": 1,
       "target": "he_experiment_pipeline_f50029e4"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: dynamics]",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T13:53:38.205379",
+      "last_seen": "2026-09-30T13:53:38.205379",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5418409f"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter160",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T13:53:38.205379",
+      "last_seen": "2026-09-30T13:53:38.205379",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5418409f"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter160",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T13:53:38.205379",
+      "last_seen": "2026-09-30T13:53:38.205379",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_5418409f"
     }
   ]
 }

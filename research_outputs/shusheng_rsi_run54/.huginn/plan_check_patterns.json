@@ -215,5 +215,19 @@
     ],
     "mode": "workflow",
     "description": "Implement a numerical experiment to test the phase transition hypothesis in network capacity. Define the hypothesis variables clearly: let $w$ be the fixed hidden layer width and $n$ be the number of "
+  },
+  {
+    "scene_tag": "auto_numerical",
+    "hyp_key": "c1f703260c35",
+    "reason": "The plan's MODE is 'explore' which is appropriate for hypothesis testing. However, the DESCRIPTION contains a critical mathematical error: the ODE dy/dx = π cos(π x) has the analytical solution y = sin(π x) + C, which is a smooth sinusoidal function with NO exponential phase space compression or positive Lyapunov exponent (λ ≈ 0.69). This ODE is linear and integrable, exhibiting zero chaos—contradicting the hypothesis's core claim about exponential compression. The prediction assumes logarithmic growth from a flawed dynamical system premise, making the entire experimental design testing a false premise. Additionally, the plan lacks explicit methodology for computing N_c(w) (how constraints are sampled, what constitutes 'zero violation' across w points, network training protocol), and fails to address how the Lyapunov exponent would be measured for this specific ODE.",
+    "missing_steps": [
+      "Correct the dynamical system: the given ODE is non-chaotic with λ=0; need to use a genuinely chaotic ODE if testing Lyapunov-dependent compression",
+      "Define precise constraint sampling strategy for w (e.g., w points on domain, distribution, how they form 'held-out' set)",
+      "Specify N_c(w) measurement protocol: how to systematically find minimum width achieving max error ≤ 1e-3 on w constraints",
+      "Define network architecture details (activation functions, initialization, optimizer, training procedure) for the scan",
+      "Include validation that the target function's true solution is used as ground truth for error computation"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] We will first derive the analytical ODE solution symbolically, then design a systematic scan of small feedforward networks (widths N=4 to 64) to compute N_c(w) — the minim"
   }
 ]
