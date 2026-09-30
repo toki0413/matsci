@@ -718,12 +718,15 @@
         "[Feynman known_unknown] I don’t fully understand why the generative verification scored 0.0 despite correct physics — whether it’s due to formatting, missing citations, or lack of symbolic derivation.",
         "[Feynman unknown_unknown] I never considered that the lack of test execution might stem from environment initialization issues rather than logical flaws in the hypothesis.",
         "[Feynman known_unknown] I don’t understand why the fat_Nc values returned as [inf, inf, inf, inf, inf] — was this due to numerical instability in evaluating high-degree polynomials with discontinuities, or a flaw in how the solution manifold dimension was estimated?",
-        "[Feynman unknown_unknown] I never considered that the generative verification tool might interpret infinite outputs as evidence of undefined computational states rather than valid physical behavior — so I didn’t design safeguards against such edge cases before running the experiment."
+        "[Feynman unknown_unknown] I never considered that the generative verification tool might interpret infinite outputs as evidence of undefined computational states rather than valid physical behavior — so I didn’t design safeguards against such edge cases before running the experiment.",
+        "[Feynman known_unknown] I don’t understand why the test execution returned zero runtime and no output — was there a silent failure in the pipeline, or was this intentionally skipped?",
+        "[Feynman known_unknown] I’m unclear on what “R_phys = 1.0” and “Surprise = 1.00” signify in this context — are these defaults, placeholders, or indicators of a specific state?",
+        "[Feynman unknown_unknown] I never considered whether the lack of test runs was due to missing dependencies, configuration errors, or intentional design until the validation summary flagged it."
       ],
-      "iteration": 23,
+      "iteration": 28,
       "status": "active",
       "created_at": "2026-09-30T08:36:02.414426+00:00",
-      "updated_at": "2026-09-30T08:44:38.549851+00:00",
+      "updated_at": "2026-09-30T08:47:33.884969+00:00",
       "session_id": "",
       "metadata": {},
       "unknowns": [
@@ -998,9 +1001,73 @@
           "discovered_at": "2026-09-30T08:43:15.163771+00:00",
           "resolved_at": null,
           "iteration": 20
+        },
+        {
+          "id": "unk_c936b931",
+          "text": "The definition of \"zero violation\" as max absolute error ≤ 1e-3 on held-out points may be too strict or too loose depending on the scale of target function outputs; if the target function has large magnitude, this threshold might allow significant relative errors, while for small-magnitude targets it could be unnecessarily restrictive. This affects the validity of the rigidity classification.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-30T08:45:08.566565+00:00",
+          "resolved_at": null,
+          "iteration": 25
+        },
+        {
+          "id": "unk_8b7d27ee",
+          "text": "The minimization of network width N_c(w) required to achieve zero violation is non-convex and likely suffers from local minima; gradient-based optimization may fail to find even a feasible solution for a given width, leading to false conclusions that no solution exists (i.e., misclassifying a rigid system as \"fat\").",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-30T08:45:08.568565+00:00",
+          "resolved_at": null,
+          "iteration": 25
+        },
+        {
+          "id": "unk_8308b1f5",
+          "text": "The analytical constraints used to define the solution space are assumed to be fully specified and consistent, but if they are over-constrained or contain hidden contradictions, the true solution space may be empty — making N_c(w) undefined or infinite regardless of network capacity, which would invalidate the entire probe methodology.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-30T08:45:08.570131+00:00",
+          "resolved_at": null,
+          "iteration": 25
+        },
+        {
+          "id": "unk_a0168ce9",
+          "text": "In the limit of very small w (few constraints), the network may easily fit due to underdetermination, but as w increases, phase transitions in solvability may occur abruptly; scanning without adaptive resolution near critical w values could miss sharp thresholds, leading to incorrect assessment of whether N_c(w) grows with w.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-30T08:45:08.571626+00:00",
+          "resolved_at": null,
+          "iteration": 25
+        },
+        {
+          "id": "unk_e9ef1fe8",
+          "text": "The use of hidden layer width as the sole measure of network capacity ignores depth, activation function type, and initialization scheme — all of which can dramatically affect representational power and trainability; thus, N_c(w) may not isolate the true geometric rigidity of the solution space but instead reflect architectural biases.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-30T08:45:08.573136+00:00",
+          "resolved_at": null,
+          "iteration": 25
+        },
+        {
+          "id": "unk_91479d68",
+          "text": "I don’t understand why the test execution returned zero runtime and no output — was there a silent failure in the pipeline, or was this intentionally skipped?",
+          "type": "known_unknown",
+          "discovered_at": "2026-09-30T08:45:18.622862+00:00",
+          "resolved_at": null,
+          "iteration": 25
+        },
+        {
+          "id": "unk_8f0b7da6",
+          "text": "I’m unclear on what “R_phys = 1.0” and “Surprise = 1.00” signify in this context — are these defaults, placeholders, or indicators of a specific state?",
+          "type": "known_unknown",
+          "discovered_at": "2026-09-30T08:45:18.625874+00:00",
+          "resolved_at": null,
+          "iteration": 25
+        },
+        {
+          "id": "unk_fd50ecb1",
+          "text": "I never considered whether the lack of test runs was due to missing dependencies, configuration errors, or intentional design until the validation summary flagged it.",
+          "type": "unknown_unknown",
+          "discovered_at": "2026-09-30T08:45:18.628795+00:00",
+          "resolved_at": null,
+          "iteration": 25
         }
       ],
-      "unknowns_discovered": 34,
+      "unknowns_discovered": 42,
       "unknowns_resolved": 0,
       "objective": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【唯一硬性口径（不可更改，其余全由你决定）】\n- 零违规 = 留出约束点上的最大绝对误差 ≤ 1e-3。\n- 刚性 = 扫描范围内存在较小的有限 N_c（且 N_c 不随 w 增长）；胖 = 扫描上限内任何宽度都达不到零违规（N_c 不可达）。判别是二值的。\n- 所有报告数值必须是有限数（禁止 inf/nan/None）。\n- 研究对象只能是小型前馈网络本身。严禁把本命题替换或“换名归约”为材料/化学/玻璃/合金/离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【实验的族、样本、扫描、脚本如何设计，以及如何证明“刚性可达”，由你自己决定并给出理由。】\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
       "success_criteria": [],
