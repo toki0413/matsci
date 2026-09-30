@@ -302,6 +302,38 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_33529666",
+      "objective": "[DIM: measure] Stochastic Concentration Hypothesis**",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Design a systematic scan of small feedforward networks to probe the rigidity of the bootstrap solution space. Define a family of analytic constraints (e.g., polynomial or trigonometric functions) with increasing sample size w. For each w, train networks of increasing hidden width N until the maximum absolute error on held-out constraints ≤ 1e-3 (zero-violation). Record N_c(w) as the minimal width achieving this. Test rigidity: if N_c(w) remains bounded and small as w increases, the space is rigid; if N_c(w) grows or diverges, it is fat. Use this to validate the hypothesis that network generalization can probe solution-space geometry.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "src/constraint_scan.py",
+            "src/network_train.py",
+            "src/evaluate_rigidity.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-30T13:15:04.236923+00:00",
+      "confirmed_at": "2026-09-30T13:15:04.238353+00:00",
+      "completed_at": "2026-09-30T13:15:20.789936+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
