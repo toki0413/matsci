@@ -1,0 +1,32 @@
+[
+  {
+    "scene_tag": "other",
+    "hyp_key": "514faf5a71b4",
+    "reason": "The plan is invalid because the hypothesis/target is completely missing (the `# 目标 (hypothesis)` section in the prompt is empty/blank). Without a defined hypothesis or target function family, the experiment cannot be designed or validated. The description mentions a 'target function family' but does not specify what it is, making the prediction and experimental setup ungrounded. Additionally, the plan mentions using symbolic regression to identify the functional form of the solution space, but without knowing the target function, this step is impossible to execute.",
+    "missing_steps": [
+      "Define the specific target function family (e.g., polynomial, trigonometric, or other mathematical form) with varying constraint density w.",
+      "Specify the exact mathematical definition of 'constraint density' w (e.g., number of constraints per input dimension, ratio of constraints to parameters, etc.).",
+      "Define the metric for 'zero violation' more precisely (currently it's 'max absolute error ≤ 1e-3' but need to confirm this is the correct metric for the hypothesis).",
+      "Specify the range of w values to scan and the range of hidden widths N to test.",
+      "Define what constitutes 'rigid' vs 'fat' in quantitative terms (currently the definitions are given but need to be operationalized in the experiment).",
+      "Specify the training procedure (optimization algorithm, loss function, initialization, stopping criteria, etc.)."
+    ],
+    "mode": "explore",
+    "description": "Design and execute a bootstrap experiment to test if small feedforward networks act as probes of solution space rigidity. Define a target function family with varying constraint density w, train small"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "514faf5a71b4",
+    "reason": "The plan is invalid because the hypothesis/target is completely missing (the `# 目标 (hypothesis)` section in the prompt is empty/blank). Without a defined hypothesis or target function family, the experiment cannot be designed or validated. The description mentions a 'target function family' but does not specify what it is, making the prediction and experimental setup ungrounded. Additionally, the plan mentions using symbolic regression to identify the functional form of the solution space, but without knowing the target function, this step is impossible to execute.",
+    "missing_steps": [
+      "Define the specific target function family (e.g., polynomial, trigonometric, or other mathematical form) with varying constraint density w.",
+      "Specify the exact mathematical definition of 'constraint density' w (e.g., number of constraints per input dimension, ratio of constraints to parameters, etc.).",
+      "Define the metric for 'zero violation' more precisely (currently it's 'max absolute error ≤ 1e-3' but need to confirm this is the correct metric for the hypothesis).",
+      "Specify the range of w values to scan and the range of hidden widths N to test.",
+      "Define what constitutes 'rigid' vs 'fat' in quantitative terms (currently the definitions are given but need to be operationalized in the experiment).",
+      "Specify the training procedure (optimization algorithm, loss function, initialization, stopping criteria, etc.)"
+    ],
+    "mode": "explore",
+    "description": "Design and execute a bootstrap experiment to test if small feedforward networks act as probes of solution space rigidity. Define a target function family of 2D polynomial constraints $f(x,y) = \\sum_{i"
+  }
+]

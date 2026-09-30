@@ -130,6 +130,70 @@
       "r_phys": 1.0,
       "iteration": 20,
       "id": "persona_use:reviewer_iter20"
+    },
+    {
+      "label": "[DIM: Optimization] The learning dynamics induce a phase transition in solution ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:05:39.567200",
+      "last_seen": "2026-09-30T11:05:39.567200",
+      "mentions": 1,
+      "iteration": 25,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For w < w_c, N_c(w) will saturate at a finite value (e.g., N_c ≈ 16-32) independent of w, indicating a rigid solution phase. For w > w_c, N_c(w) will increase sharply or remain unbounded, indicating a",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: Optimization] The learning dynamics induce a phase transition in solution"
+    },
+    {
+      "label": "plan_explore_iter25",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:05:39.567241",
+      "last_seen": "2026-09-30T11:05:39.567241",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter25"
+    },
+    {
+      "label": "pass_iter25",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:05:39.567250",
+      "last_seen": "2026-09-30T11:05:39.567250",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter25"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T11:05:39.567258",
+      "last_seen": "2026-09-30T11:05:39.567258",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: Optimization] The learning dynamics induce a phase transition in solution",
+        "Method:plan_explore_iter25",
+        "Fact:pass_iter25"
+      ],
+      "iteration": 25,
+      "id": "he_experiment_pipeline_4527cb0f"
+    },
+    {
+      "label": "reviewer_iter25",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:05:39.567329",
+      "last_seen": "2026-09-30T11:05:39.567329",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "52b85e39dce6ed50",
+      "r_phys": 1.0,
+      "iteration": 25,
+      "id": "persona_use:reviewer_iter25"
     }
   ],
   "links": [
@@ -186,6 +250,33 @@
       "last_seen": "2026-09-30T11:03:41.346131",
       "mentions": 1,
       "target": "he_experiment_pipeline_ff2c1c"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: Optimization] The learning dynamics induce a phase transition in solution",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:05:39.567258",
+      "last_seen": "2026-09-30T11:05:39.567258",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4527cb0f"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:05:39.567258",
+      "last_seen": "2026-09-30T11:05:39.567258",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4527cb0f"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:05:39.567258",
+      "last_seen": "2026-09-30T11:05:39.567258",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4527cb0f"
     }
   ]
 }

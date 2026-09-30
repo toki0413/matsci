@@ -154,6 +154,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_c3129b95",
+      "objective": "**",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Design and execute a bootstrap experiment to test if small feedforward networks act as probes of solution space rigidity. Define a target function family of 2D polynomial constraints $f(x,y) = \\sum_{i=0}^d \\sum_{j=0}^d c_{ij} x^i y^j$ with degree $d=4$ and constraint density $w$ defined as the ratio of constraint points to input dimensions ($w = N_{pts}/2$). Train small feedforward networks with hidden width $N \\in [8, 256]$ and measure $N_c(w)$ — the minimum width achieving max absolute error $\\le 10^{-3}$ on held-out constraints. Scan $w \\in [10, 200]$ to observe if $N_c$ remains bounded (rigid) or diverges (fat). Use symbolic regression on the recovered solution to identify functional form, validating against the ground-truth polynomial.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-30T11:06:10.364466+00:00",
+      "confirmed_at": "2026-09-30T11:06:10.365666+00:00",
+      "completed_at": "2026-09-30T11:07:36.177069+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
