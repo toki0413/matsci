@@ -133,20 +133,20 @@
       "label": "plan_explore_iter20",
       "type": "Method",
       "source": "autoloop",
-      "confidence": 0.55,
+      "confidence": 0.6000000000000001,
       "created_at": "2026-09-29T12:31:16.386109",
-      "last_seen": "2026-09-30T08:43:10.864399",
-      "mentions": 2,
+      "last_seen": "2026-09-30T09:24:18.064293",
+      "mentions": 3,
       "id": "Method:plan_explore_iter20"
     },
     {
       "label": "pass_iter20",
       "type": "Fact",
       "source": "autoloop",
-      "confidence": 0.55,
+      "confidence": 0.6000000000000001,
       "created_at": "2026-09-29T12:31:16.386135",
-      "last_seen": "2026-09-30T08:43:10.864410",
-      "mentions": 2,
+      "last_seen": "2026-09-30T09:24:18.064304",
+      "mentions": 3,
       "surprise": 1.0,
       "id": "Fact:pass_iter20"
     },
@@ -170,8 +170,8 @@
       "source": "autoloop",
       "confidence": 0.99,
       "created_at": "2026-09-29T12:31:16.386248",
-      "last_seen": "2026-09-30T08:43:10.864491",
-      "mentions": 2,
+      "last_seen": "2026-09-30T09:24:18.064484",
+      "mentions": 3,
       "persona": "reviewer",
       "context_hash": "2052ea7e8ccc4fda",
       "r_phys": 1.0,
@@ -875,6 +875,35 @@
       ],
       "iteration": 15,
       "id": "he_experiment_pipeline_f9eda81e"
+    },
+    {
+      "label": "[DIM: dynamics] Minimal network width $N_c(w)$ for zero violation grows logarith",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 0.75,
+      "created_at": "2026-09-30T09:24:18.064251",
+      "last_seen": "2026-09-30T09:24:18.064251",
+      "mentions": 1,
+      "iteration": 20,
+      "r_phys": 0.75,
+      "surprise": 1.0,
+      "predicted": "The minimal width $N_c(w)$ will exhibit a linear relationship with $\\log_{10}(w)$ with $R^2 > 0.95$, with coefficients $a \\approx 8$ and $b \\approx 15$, and the generalization error will remain bounde",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: dynamics] Minimal network width $N_c(w)$ for zero violation grows logarith"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T09:24:18.064311",
+      "last_seen": "2026-09-30T09:24:18.064311",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: dynamics] Minimal network width $N_c(w)$ for zero violation grows logarith",
+        "Method:plan_explore_iter20",
+        "Fact:pass_iter20"
+      ],
+      "iteration": 20,
+      "id": "he_experiment_pipeline_708b9db7"
     }
   ],
   "links": [
@@ -1033,6 +1062,15 @@
     },
     {
       "relation": "member_of",
+      "source": "Method:plan_explore_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T09:24:18.064311",
+      "last_seen": "2026-09-30T09:24:18.064311",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_708b9db7"
+    },
+    {
+      "relation": "member_of",
       "confidence": 0.5,
       "created_at": "2026-09-29T12:31:16.386148",
       "last_seen": "2026-09-29T12:31:16.386148",
@@ -1048,6 +1086,15 @@
       "mentions": 1,
       "source": "Fact:pass_iter20",
       "target": "he_experiment_pipeline_dc431708"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T09:24:18.064311",
+      "last_seen": "2026-09-30T09:24:18.064311",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_708b9db7"
     },
     {
       "relation": "member_of",
@@ -1417,6 +1464,15 @@
       "last_seen": "2026-09-30T09:22:54.900764",
       "mentions": 1,
       "target": "he_experiment_pipeline_f9eda81e"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: dynamics] Minimal network width $N_c(w)$ for zero violation grows logarith",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T09:24:18.064311",
+      "last_seen": "2026-09-30T09:24:18.064311",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_708b9db7"
     }
   ]
 }
