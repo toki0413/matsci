@@ -287,5 +287,33 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] This workflow tests the logarithmic scaling hypothesis $N_c(w) \\approx a \\log(w) + b$ for zero-violation capacity under gradient flow. It implements a controlled numerical"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "954fb584893d",
+    "reason": "The plan fails to test the hypothesis correctly. The hypothesis claims N_c(w) scales linearly as ⌈w/2⌉ due to algebraic rank constraints, but the plan's prediction explicitly expects logarithmic scaling (≈⌈log₂ w⌉), which contradicts the hypothesis it aims to verify. Additionally, the plan does not properly define how 'w' relates to the constraint matrix rank or feature evaluations, making the experimental design ambiguous. The prediction essentially assumes the hypothesis is false before testing, which violates scientific method.",
+    "missing_steps": [
+      "Clearly define w as the number of independent constraints or the rank of the constraint matrix",
+      "Ensure the experiment is designed to test whether N_c(w) ≈ ⌈w/2⌉, not to disprove it",
+      "Include theoretical baseline: compute the algebraic rank of constraint matrices for each w and compare against empirical N_c(w)",
+      "Verify that the network architecture and training procedure can actually achieve zero violation if sufficient capacity exists",
+      "Define what constitutes 'generic constraints' and ensure they are properly sampled"
+    ],
+    "mode": "explore",
+    "description": "Design a numerical experiment to test the hypothesis that the minimal network width $N_c(w)$ for zero violation scales as $\\lceil w/2 \\rceil$. Generate synthetic linear constraint systems (random feat"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "954fb584893d",
+    "reason": "The plan fundamentally fails the hypothesis test because its PREDICTION explicitly assumes the hypothesis is false by predicting logarithmic scaling (⌈log₂ w⌉) while the hypothesis claims linear scaling (⌈w/2⌉). This violates scientific method by assuming the conclusion before testing. Additionally, the plan does not properly define w as the rank of the constraint matrix, lacks theoretical baseline computation of algebraic rank, and does not verify that networks can achieve zero violation with sufficient capacity. The prediction contradicts the hypothesis it aims to verify.",
+    "missing_steps": [
+      "Clearly define w as the number of independent constraints or rank of constraint matrix",
+      "Compute theoretical algebraic rank of constraint matrices for each w as baseline",
+      "Verify network architecture and training procedure can achieve zero violation with sufficient capacity",
+      "Define what constitutes 'generic constraints' and ensure proper sampling",
+      "Align prediction with hypothesis (expect linear scaling ⌈w/2⌉, not logarithmic)"
+    ],
+    "mode": "explore",
+    "description": "Design a numerical experiment to test the hypothesis that the minimal network width $N_c(w)$ for zero violation scales linearly as $\\lceil w/2 \\rceil$ due to algebraic rank constraints. Define $w$ as "
   }
 ]

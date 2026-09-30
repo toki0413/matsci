@@ -796,6 +796,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_1de9d146",
+      "objective": "[DIM: STRUCTURE] The minimal width $N_c(w)$ required for zero violation is bounded by the algebraic rank of the constraint matrix formed by the network's feature evaluations, so $N_c(w) = \\lceil w/2 \\rceil$ for generic constraints, reflecting a linear scaling due to the need for sufficient degrees of freedom to satisfy independent linear constraints.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Design a numerical experiment to test the hypothesis that the minimal network width $N_c(w)$ for zero violation scales linearly as $\\lceil w/2 \\rceil$ due to algebraic rank constraints. Define $w$ as the number of independent linear constraints (or rank of constraint matrix). For each $w \\in \\{4, 8, 16, 32, 64\\}$, generate random feature matrices with generic constraints, sweep hidden widths $N$ from 1 to $w$, train MLPs to satisfy constraints with max error $\\le 1e-3$, and record minimum $N_c(w)$ achieving zero violation. Compare empirical $N_c(w)$ against linear bound $\\lceil w/2 \\rceil$ and theoretical rank. Include baseline check: verify networks can achieve zero violation when $N \\ge \\lceil w/2 \\rceil$ using sufficient training steps and proper initialization. Use multiple seeds for statistical significance.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-30T09:27:28.074297+00:00",
+      "confirmed_at": "2026-09-30T09:27:28.075898+00:00",
+      "completed_at": "2026-09-30T09:32:45.293898+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

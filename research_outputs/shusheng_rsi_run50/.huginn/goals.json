@@ -1338,12 +1338,14 @@
         "[Feynman known_unknown] What triggers the \"33 33 33 33 33\" output pattern? Is this a memory dump artifact, a default uninitialized value, or a deliberate placeholder for failed computations?",
         "[Feynman unknown_unknown] I never considered that the toolchain might lack critical dependencies (e.g., physics libraries or compiler flags) needed to even start the calculation—this could explain the silent failure.",
         "[Feynman known_unknown] I don’t understand why the constants $ a $ and $ b $ are independent of $ w $ — is this proven theoretically, or just observed empirically? What determines their values?",
-        "[Feynman unknown_unknown] I never considered how the specific architecture (e.g., activation functions, initialization) might affect the logarithmic fit — could this be an artifact of the setup rather than a general principle?"
+        "[Feynman unknown_unknown] I never considered how the specific architecture (e.g., activation functions, initialization) might affect the logarithmic fit — could this be an artifact of the setup rather than a general principle?",
+        "[Feynman known_unknown] I don’t understand why the surprise value is high despite passing all tests — does this mean the model fits well statistically but fails intuitively?",
+        "[Feynman unknown_unknown] I never considered whether the skipped benchmarks relate directly to the logarithmic scaling assumption until now — maybe those would have exposed hidden flaws."
       ],
-      "iteration": 23,
+      "iteration": 28,
       "status": "active",
       "created_at": "2026-09-30T09:14:52.256640+00:00",
-      "updated_at": "2026-09-30T09:24:44.103433+00:00",
+      "updated_at": "2026-09-30T09:27:28.080623+00:00",
       "session_id": "",
       "metadata": {},
       "unknowns": [
@@ -1602,9 +1604,65 @@
           "discovered_at": "2026-09-30T09:24:22.290699+00:00",
           "resolved_at": null,
           "iteration": 20
+        },
+        {
+          "id": "unk_9b699068",
+          "text": "The definition of \"zero violation\" (max absolute error ≤ 1e-3) may not capture structural rigidity if the network approximates constraints with high local error but low global norm, leading to false classification of \"fat\" spaces as \"rigid\".",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-30T09:26:13.977282+00:00",
+          "resolved_at": null,
+          "iteration": 25
+        },
+        {
+          "id": "unk_19a9c3a7",
+          "text": "N_c(w) estimation via discrete width scans suffers from coarse discretization; a true minimum might exist between tested widths, causing misclassification of rigidity due to insufficient resolution.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-30T09:26:13.979773+00:00",
+          "resolved_at": null,
+          "iteration": 25
+        },
+        {
+          "id": "unk_6a49639f",
+          "text": "For very large w, the constraint set may become over-specified even for infinite-width networks (inconsistent system), making N_c undefined — this degenerate regime is unaddressed in the binary rigidity判别.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-30T09:26:13.981838+00:00",
+          "resolved_at": null,
+          "iteration": 25
+        },
+        {
+          "id": "unk_a0fb452c",
+          "text": "No ground-truth analytical solutions for constraint manifolds are provided to validate whether observed N_c reflects true solution space dimension or merely optimization artifacts (e.g., local minima).",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-30T09:26:13.983869+00:00",
+          "resolved_at": null,
+          "iteration": 25
+        },
+        {
+          "id": "unk_6cb8674c",
+          "text": "The assumption that hidden width alone measures capacity ignores depth and weight initialization effects; two networks with same width but different depths/initializations may exhibit vastly different N_c, confounding the rigidity probe.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-30T09:26:13.985880+00:00",
+          "resolved_at": null,
+          "iteration": 25
+        },
+        {
+          "id": "unk_c00b1fe3",
+          "text": "I don’t understand why the surprise value is high despite passing all tests — does this mean the model fits well statistically but fails intuitively?",
+          "type": "known_unknown",
+          "discovered_at": "2026-09-30T09:26:24.634335+00:00",
+          "resolved_at": null,
+          "iteration": 25
+        },
+        {
+          "id": "unk_ecd229ee",
+          "text": "I never considered whether the skipped benchmarks relate directly to the logarithmic scaling assumption until now — maybe those would have exposed hidden flaws.",
+          "type": "unknown_unknown",
+          "discovered_at": "2026-09-30T09:26:24.638179+00:00",
+          "resolved_at": null,
+          "iteration": 25
         }
       ],
-      "unknowns_discovered": 32,
+      "unknowns_discovered": 39,
       "unknowns_resolved": 0,
       "objective": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【唯一硬性口径（不可更改，其余全由你决定）】\n- 零违规 = 留出约束点上的最大绝对误差 ≤ 1e-3。\n- 刚性 = 扫描范围内存在较小的有限 N_c（且 N_c 不随 w 增长）；胖 = 扫描上限内任何宽度都达不到零违规（N_c 不可达）。判别是二值的。\n- 所有报告数值必须是有限数（禁止 inf/nan/None）。\n- 研究对象只能是小型前馈网络本身。严禁把本命题替换或“换名归约”为材料/化学/玻璃/合金/离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【实验的族、样本、扫描、脚本如何设计，以及如何证明“刚性可达”，由你自己决定并给出理由。】\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
       "success_criteria": [],

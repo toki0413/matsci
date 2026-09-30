@@ -197,20 +197,20 @@
       "label": "plan_explore_iter25",
       "type": "Method",
       "source": "autoloop",
-      "confidence": 0.55,
+      "confidence": 0.6000000000000001,
       "created_at": "2026-09-29T12:32:22.176008",
-      "last_seen": "2026-09-30T08:45:13.747849",
-      "mentions": 2,
+      "last_seen": "2026-09-30T09:26:20.638502",
+      "mentions": 3,
       "id": "Method:plan_explore_iter25"
     },
     {
       "label": "pass_iter25",
       "type": "Fact",
       "source": "autoloop",
-      "confidence": 0.55,
+      "confidence": 0.6000000000000001,
       "created_at": "2026-09-29T12:32:22.176017",
-      "last_seen": "2026-09-30T08:45:13.747861",
-      "mentions": 2,
+      "last_seen": "2026-09-30T09:26:20.638513",
+      "mentions": 3,
       "surprise": 1.0,
       "id": "Fact:pass_iter25"
     },
@@ -234,8 +234,8 @@
       "source": "autoloop",
       "confidence": 0.99,
       "created_at": "2026-09-29T12:32:22.176098",
-      "last_seen": "2026-09-30T08:45:13.747935",
-      "mentions": 2,
+      "last_seen": "2026-09-30T09:26:20.638589",
+      "mentions": 3,
       "persona": "reviewer",
       "context_hash": "09dd299b9544ae8d",
       "r_phys": 1.0,
@@ -904,6 +904,35 @@
       ],
       "iteration": 20,
       "id": "he_experiment_pipeline_708b9db7"
+    },
+    {
+      "label": "** [DIM: STRUCTURE] $N_c(w) \\approx \\lceil \\log_2 w \\rceil$",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T09:26:20.638464",
+      "last_seen": "2026-09-30T09:26:20.638464",
+      "mentions": 1,
+      "iteration": 25,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For w in [1, 2, 4, 8, 16], N_c(w) will follow a logarithmic scaling: N_c(1)≈1, N_c(2)≈2, N_c(4)≈3, N_c(8)≈4, N_c(16)≈5 (matching ⌈log₂ w⌉). The maximum validation error at N_c(w) will be ≤1e-3, while",
+      "persona": "reviewer",
+      "id": "experiment:** [DIM: STRUCTURE] $N_c(w) \\approx \\lceil \\log_2 w \\rceil$"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T09:26:20.638520",
+      "last_seen": "2026-09-30T09:26:20.638520",
+      "mentions": 1,
+      "members": [
+        "experiment:** [DIM: STRUCTURE] $N_c(w) \\approx \\lceil \\log_2 w \\rceil$",
+        "Method:plan_explore_iter25",
+        "Fact:pass_iter25"
+      ],
+      "iteration": 25,
+      "id": "he_experiment_pipeline_69ff5c7"
     }
   ],
   "links": [
@@ -1125,6 +1154,15 @@
     },
     {
       "relation": "member_of",
+      "source": "Method:plan_explore_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T09:26:20.638520",
+      "last_seen": "2026-09-30T09:26:20.638520",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_69ff5c7"
+    },
+    {
+      "relation": "member_of",
       "confidence": 0.5,
       "created_at": "2026-09-29T12:32:22.176025",
       "last_seen": "2026-09-29T12:32:22.176025",
@@ -1140,6 +1178,15 @@
       "mentions": 1,
       "source": "Fact:pass_iter25",
       "target": "he_experiment_pipeline_cb4e78c1"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T09:26:20.638520",
+      "last_seen": "2026-09-30T09:26:20.638520",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_69ff5c7"
     },
     {
       "relation": "member_of",
@@ -1473,6 +1520,15 @@
       "last_seen": "2026-09-30T09:24:18.064311",
       "mentions": 1,
       "target": "he_experiment_pipeline_708b9db7"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:** [DIM: STRUCTURE] $N_c(w) \\approx \\lceil \\log_2 w \\rceil$",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T09:26:20.638520",
+      "last_seen": "2026-09-30T09:26:20.638520",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_69ff5c7"
     }
   ]
 }
