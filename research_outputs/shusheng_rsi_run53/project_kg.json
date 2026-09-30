@@ -1154,6 +1154,70 @@
       "r_phys": 1.0,
       "iteration": 125,
       "id": "persona_use:reviewer_iter125"
+    },
+    {
+      "label": "[DIM: COMPUTATION] The minimal network capacity $N_c(w)$ is governed by the VC-d",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:53:24.024382",
+      "last_seen": "2026-09-30T11:53:24.024382",
+      "mentions": 1,
+      "iteration": 130,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For linear constraints, $N_c$ will remain constant (rigid behavior). For the algebraic variety (circle), $N_c$ will increase with width $w$, exhibiting a trend consistent with $w / \\log(w)$ rather tha",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: COMPUTATION] The minimal network capacity $N_c(w)$ is governed by the VC-d"
+    },
+    {
+      "label": "plan_explore_iter130",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:53:24.024421",
+      "last_seen": "2026-09-30T11:53:24.024421",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter130"
+    },
+    {
+      "label": "pass_iter130",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:53:24.024430",
+      "last_seen": "2026-09-30T11:53:24.024430",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter130"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T11:53:24.024438",
+      "last_seen": "2026-09-30T11:53:24.024438",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: COMPUTATION] The minimal network capacity $N_c(w)$ is governed by the VC-d",
+        "Method:plan_explore_iter130",
+        "Fact:pass_iter130"
+      ],
+      "iteration": 130,
+      "id": "he_experiment_pipeline_703d4c8d"
+    },
+    {
+      "label": "reviewer_iter130",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:53:24.024510",
+      "last_seen": "2026-09-30T11:53:24.024510",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "773136ed825804b3",
+      "r_phys": 1.0,
+      "iteration": 130,
+      "id": "persona_use:reviewer_iter130"
     }
   ],
   "links": [
@@ -1642,6 +1706,33 @@
       "last_seen": "2026-09-30T11:52:17.714629",
       "mentions": 1,
       "target": "he_experiment_pipeline_8e7434c8"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: COMPUTATION] The minimal network capacity $N_c(w)$ is governed by the VC-d",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:53:24.024438",
+      "last_seen": "2026-09-30T11:53:24.024438",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_703d4c8d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter130",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:53:24.024438",
+      "last_seen": "2026-09-30T11:53:24.024438",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_703d4c8d"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter130",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:53:24.024438",
+      "last_seen": "2026-09-30T11:53:24.024438",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_703d4c8d"
     }
   ]
 }
