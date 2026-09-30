@@ -606,82 +606,9 @@ class EngineReflect:
         # 这里只比较执行结果的**代码结构指纹**(无代码时退回内容指纹), 不解读语义,
         # 因此对任何命题通用.
         # 命中即注入强纠偏提示 (取尾部 [-500:], 保证进下一轮 prompt).
-        try:
-            # execute 未在本轮刷新 (= 复用上一轮同一个 execution_result 对象) 时,
-            # 语义上不是"重复实验", 而是"这轮压根没跑实验" (如 budget/gate 跳过了
-            # execute). 若照旧记账, 同一份旧结果的指纹会被反复压进窗口 → 假收敛
-            # → 提前结题 (run52: 迭代档位禁掉 explore → execute 连跳 4 次, 6 窗口
-            #  填满同一指纹, 904s/3600s 就 conclude+stop, 判别实验一次没跑).
-            # 故只在 execute 真产出**新对象**时做重复/收敛记账.
-            _fresh = execution_result is not getattr(self, "_fp_result_ref", None)
-            if not _fresh:
-                logger.debug(
-                    "exec fingerprint skipped: execute 未刷新本轮结果 (复用旧对象)"
-                )
-            if _fresh:
-                self._fp_result_ref = execution_result
-                # 指纹口径见 _exec_fingerprint: 有实验代码用代码结构, 否则用结果内容.
-                _fp, _fp_src = _exec_fingerprint(execution_result)
-                _prev_fp = getattr(self, "_prev_exec_fingerprint", "")
-                if _fp and _fp == _prev_fp:
-                    self._repeat_exec_streak = (
-                        getattr(self, "_repeat_exec_streak", 0) + 1
-                    )
-                    _streak = self._repeat_exec_streak
-                    results["repeat_execution"] = True
-                    _rep_hint = (
-                        f"[重复实验] 本轮真实执行的结果指纹与上轮完全相同 "
-                        f"(streak={_streak}): 你在重复同一个实验, "
-                        "本轮并未推进研究. 下一轮必须改变 family/约束族/扫描设置, "
-                        "或直接据此给出最终数值结论, 不要再重跑同一配置."
-                    )
-                    self._speculator_hint = (
-                        (self._speculator_hint + "\n" + _rep_hint).strip()
-                        if self._speculator_hint
-                        else _rep_hint
-                    )
-                    # 硬约束升级: 上面的软提示进的是**假设生成**提示, 而真正写实验的是
-                    # code_lab 作者提示(build_author_prompt) —— 它不读 _speculator_hint,
-                    # 于是"改变 family"永远到不了写实验的人, 指纹照旧 (run50 实测:
-                    # repeat streak 1-4 指纹恒同, 提示零效果, 撞 6 窗口收敛提前离场).
-                    # 故 streak 越过硬阈值即置标志, 由 _build_codelab_focus 把强制变异令
-                    # 直接注入作者提示, 并附上一轮真实结果, 逼出不同的实验族/参数.
-                    if _streak >= _REPEAT_HARD_STREAK:
-                        self._force_exec_variation = True
-                        self._repeat_exec_last_result = _fp_src[:600]
-                    logger.warning(
-                        "repeat execution detected (streak=%d): %s",
-                        _streak,
-                        "force experiment variation (hard directive→code_lab author)"
-                        if getattr(self, "_force_exec_variation", False)
-                        else "inject pivot hint",
-                    )
-                else:
-                    self._repeat_exec_streak = 0
-                    self._force_exec_variation = False
-                    self._repeat_exec_last_result = ""
-                self._prev_exec_fingerprint = _fp
-                # 收敛判定 (检测器→执行器的前半): 维护最近指纹窗口, 窗口填满且只
-                # 剩 <=2 种不同结果 → 循环在有限几种结果间打转, 已无新信息。置
-                # self._exec_converged 供 cognitive_loop 把"检测"接成"结题+停止"。
-                # 为何用"窗口去重后 <=2"而非"连续相同 streak": 实测里书生常在两种
-                # 等价 family 间来回换 (A,B,A,B...), 连续相同 streak 反复被重置,
-                # 永远到不了阈值; 但去重后只有 2 种结果, 同样是打转。窗口取 6/阈值
-                # 5+2 兼顾"够快触发"与"不误伤正常探索"(每轮结果都不同的正常探索
-                # 去重后近似等于窗口长度, 不会命中)。
-                if _fp:
-                    _hist = getattr(self, "_exec_fp_history", None)
-                    if _hist is None:
-                        from collections import deque as _deque
-
-                        _hist = _deque(maxlen=6)
-                        self._exec_fp_history = _hist
-                    _hist.append(_fp)
-                    self._exec_converged = len(_hist) >= 5 and len(set(_hist)) <= 2
-                else:
-                    self._exec_converged = False
-        except Exception:  # 防御: 重复实验检测失败不阻断主循环
-            logger.debug("repeat-execution check failed", exc_info=True)
+        # 逻辑抽到 _detect_repeat_execution, 便于对"检测→软提示→硬指令→收敛判定"
+        # 这条链做定点验证 (埋在 _validate 里就只能靠整轮 LLM 长跑间接观察).
+        self._detect_repeat_execution(execution_result, results)
 
         # H2: bandit 记录 variant outcome (r_phys + efficiency + novelty 都算出后)
         # 只对 dynamic_workflow bandit 路径生效 (execution_result 带 _variant_id)
@@ -1343,6 +1270,93 @@ class EngineReflect:
         if not snippet:
             return False
         return bool(self._run_snippet_to_output(snippet))
+
+    def _detect_repeat_execution(
+        self, execution_result: Any, results: dict[str, Any]
+    ) -> None:
+        """通用防停滞: 重复实验检测 → 软提示 + 硬约束标志 + 收敛判定 (命题无关).
+
+        现象: 沙箱对每次 code_lab 都用固定 seed (sandbox_run 传 {"seed": 0}), 且
+        作者提示里 goal 恒定 —— 僵持时 LLM 极易反复产出同一段 family 代码, 输出
+        逐轮一致; 而 _is_code_lab_solved 只要求 objectives 非空且全有限, 每轮照样
+        判"已解决", 循环拿不到"没进展"的反馈 → 空转 (书生自觉在推进, 实际原地重跑).
+
+        三件事都只看本轮执行指纹 (口径见 _exec_fingerprint):
+          ① 与上轮指纹相同 → 记 repeat streak + 注入软纠偏提示 (_speculator_hint);
+          ② streak 越过 _REPEAT_HARD_STREAK → 置 `_force_exec_variation`, 由
+             engine_act._build_codelab_focus 把强制变异令注入**实验作者**提示
+             (软提示进不了作者提示, run50 实测提示零效果);
+          ③ 最近 6 轮指纹去重后 ≤2 种 → `_exec_converged` (供 cognitive_loop 结题).
+
+        只在 execute **真产出新对象**时记账: 复用上一轮同一个 execution_result
+        (= 本轮压根没跑实验, 如 budget/gate 跳过 execute) 时若照旧压指纹, 同一
+        指纹会反复塞满窗口 → 假收敛 → 提前结题 (run52 实测 904s/3600s 就 conclude+stop).
+        """
+        try:
+            # 身份判据: engine 每轮 execute 会新建 result dict; 同一个对象 = 没跑新一轮.
+            if execution_result is getattr(self, "_fp_result_ref", None):
+                logger.debug(
+                    "exec fingerprint skipped: execute 未刷新本轮结果 (复用旧对象)"
+                )
+                return
+            self._fp_result_ref = execution_result
+            _fp, _fp_src = _exec_fingerprint(execution_result)
+            _prev_fp = getattr(self, "_prev_exec_fingerprint", "")
+            if _fp and _fp == _prev_fp:
+                self._repeat_exec_streak = getattr(self, "_repeat_exec_streak", 0) + 1
+                _streak = self._repeat_exec_streak
+                results["repeat_execution"] = True
+                _rep_hint = (
+                    f"[重复实验] 本轮真实执行的结果指纹与上轮完全相同 "
+                    f"(streak={_streak}): 你在重复同一个实验, "
+                    "本轮并未推进研究. 下一轮必须改变 family/约束族/扫描设置, "
+                    "或直接据此给出最终数值结论, 不要再重跑同一配置."
+                )
+                self._speculator_hint = (
+                    (self._speculator_hint + "\n" + _rep_hint).strip()
+                    if self._speculator_hint
+                    else _rep_hint
+                )
+                # 硬约束升级: 上面的软提示只进**假设生成**提示, 而真正写实验的是
+                # code_lab 作者提示(build_author_prompt) —— 它不读 _speculator_hint,
+                # 于是"改变 family"永远到不了写实验的人, 指纹照旧 (run50 实测:
+                # repeat streak 1-4 指纹恒同, 提示零效果, 撞 6 窗口收敛提前离场).
+                # 故 streak 越过硬阈值即置标志, 由 _build_codelab_focus 把强制变异令
+                # 直接注入作者提示, 并附上一轮真实结果, 逼出不同的实验族/参数.
+                if _streak >= _REPEAT_HARD_STREAK:
+                    self._force_exec_variation = True
+                    self._repeat_exec_last_result = _fp_src[:600]
+                logger.warning(
+                    "repeat execution detected (streak=%d): %s",
+                    _streak,
+                    "force experiment variation (hard directive→code_lab author)"
+                    if getattr(self, "_force_exec_variation", False)
+                    else "inject pivot hint",
+                )
+            else:
+                self._repeat_exec_streak = 0
+                self._force_exec_variation = False
+                self._repeat_exec_last_result = ""
+            self._prev_exec_fingerprint = _fp
+            # 收敛判定: 维护最近指纹窗口, 窗口填满且只剩 <=2 种不同结果 → 循环在
+            # 有限几种结果间打转, 已无新信息. 为何用"窗口去重后 <=2"而非"连续相同
+            # streak": 实测书生常在两种等价 family 间来回换 (A,B,A,B...), 连续相同
+            # streak 反复被重置, 永远到不了阈值; 但去重后只有 2 种结果, 同样是打转.
+            # 窗口取 6/阈值 5+2 兼顾"够快触发"与"不误伤正常探索"(每轮结果都不同的
+            # 正常探索去重后近似等于窗口长度, 不会命中).
+            if _fp:
+                _hist = getattr(self, "_exec_fp_history", None)
+                if _hist is None:
+                    from collections import deque as _deque
+
+                    _hist = _deque(maxlen=6)
+                    self._exec_fp_history = _hist
+                _hist.append(_fp)
+                self._exec_converged = len(_hist) >= 5 and len(set(_hist)) <= 2
+            else:
+                self._exec_converged = False
+        except Exception:  # 防御: 重复实验检测失败不阻断主循环
+            logger.debug("repeat-execution check failed", exc_info=True)
 
     def _is_code_lab_solved(self, execution_result: Any) -> bool:
         """方案2·接 Code Lab → validate: 书生亲写实验是否已在沙箱真跑通并产出数值目标.

@@ -416,6 +416,200 @@ def test_is_code_lab_solved_rejects_non_finite_objectives() -> None:
     ) is False
 
 
+# ===== 定点验证: 检测 → 软提示 → 硬指令 全链 (v13) =====
+
+
+def _repeat_stub() -> object:
+    """带真实字段的引擎替身: EngineReflect/EngineAct 都按转发取属性."""
+    class _StubEngine:
+        _objective = "恒定研究目标"
+        _last_hypothesis = "H1: N_c 随 w 饱和"
+        _speculator_hint = ""
+
+    return _StubEngine()
+
+
+def _lab_result(script: str, nc: float = 4.0) -> dict:
+    return {
+        "mode": "code_lab", "success": True, "script": script,
+        "objectives": {"Nc": nc}, "summary": {"note": "trace"},
+    }
+
+
+def test_repeat_chain_lights_hard_directive_after_threshold() -> None:
+    """定点验证: 同代码重跑 → streak 累积 → 越阈值置硬标志 → 作者提示带强制变异令.
+
+    这是 pivot 硬约束的端到端(harness 内)证据: 不经 LLM, 直接驱动真实代码路径,
+    补上 run53/run54 都没能自然触发的那一环.
+    """
+    from huginn.autoloop.engine_act import EngineAct
+    from huginn.autoloop.engine_reflect import EngineReflect, _REPEAT_HARD_STREAK
+
+    eng = _repeat_stub()
+    ref = EngineReflect(eng)
+    act = EngineAct(eng)
+    script = "W = [2, 4, 6]\nres = {}\n"
+
+    # 第 1 轮: 新实验 → 不记重复
+    r1: dict = {}
+    ref._detect_repeat_execution(_lab_result(script), r1)
+    assert not r1.get("repeat_execution")
+    assert getattr(eng, "_repeat_exec_streak", 0) == 0
+
+    # 第 2..N 轮: 同代码 → streak 递增
+    for _ in range(_REPEAT_HARD_STREAK):
+        rn: dict = {}
+        ref._detect_repeat_execution(_lab_result(script), rn)
+        assert rn["repeat_execution"] is True
+
+    assert eng._repeat_exec_streak == _REPEAT_HARD_STREAK
+    assert eng._force_exec_variation is True
+    # 硬指令真的进得了**实验作者**提示 (run50 的病根是软提示进不去)
+    focus = act._build_codelab_focus("扫描 w=10")
+    assert "强制变异" in focus
+    assert "Nc" in focus  # 上一轮真实结果回灌
+
+
+def test_repeat_chain_varied_script_resets_and_frees_directive() -> None:
+    """改参数 = 新实验: streak 归零, 硬标志撤销 (不误伤正常扫描)."""
+    from huginn.autoloop.engine_act import EngineAct
+    from huginn.autoloop.engine_reflect import EngineReflect, _REPEAT_HARD_STREAK
+
+    eng = _repeat_stub()
+    ref = EngineReflect(eng)
+    act = EngineAct(eng)
+    for _ in range(_REPEAT_HARD_STREAK + 1):
+        ref._detect_repeat_execution(_lab_result("W = [2, 4, 6]\n"), {})
+    assert eng._force_exec_variation is True
+
+    changed: dict = {}
+    ref._detect_repeat_execution(_lab_result("W = [2, 4, 8]\n"), changed)
+    assert not changed.get("repeat_execution")
+    assert eng._repeat_exec_streak == 0
+    assert eng._force_exec_variation is False
+    assert "强制变异" not in act._build_codelab_focus("扫描 w=10")
+
+
+def test_repeat_chain_ignores_reused_result_object() -> None:
+    """run52 回归: 同一个 result 对象再喂一遍 (= 本轮没跑实验) 不得记重复/收敛.
+
+    否则假收敛会把长程 run 提前结题.
+    """
+    from huginn.autoloop.engine_reflect import EngineReflect
+
+    eng = _repeat_stub()
+    ref = EngineReflect(eng)
+    res = _lab_result("W = [2, 4, 6]\n")
+    for _ in range(8):  # 同一对象反复投喂
+        ref._detect_repeat_execution(res, {})
+    assert getattr(eng, "_repeat_exec_streak", 0) == 0
+    assert getattr(eng, "_exec_converged", False) is False
+
+
+def test_repeat_chain_converges_only_on_two_distinct_results() -> None:
+    """收敛判定: 5+ 轮里去重后 ≤2 种指纹 → 结题; 每轮都不同 → 不结题."""
+    from huginn.autoloop.engine_reflect import EngineReflect
+
+    eng = _repeat_stub()
+    ref = EngineReflect(eng)
+    for i in range(6):  # A,B,A,B... 两种等价 family 来回换
+        ref._detect_repeat_execution(_lab_result(f"W = [2, 4, {6 if i % 2 else 7}]\n"), {})
+    assert eng._exec_converged is True
+
+    eng2 = _repeat_stub()
+    ref2 = EngineReflect(eng2)
+    for i in range(6):  # 每轮都不同 → 正常探索, 不结题
+        ref2._detect_repeat_execution(_lab_result(f"W = [2, 4, {i + 10}]\n"), {})
+    assert eng2._exec_converged is False
+
+
+class _FakeReply:
+    def __init__(self, content: str) -> None:
+        self.content = content
+        self.usage_metadata = None
+
+
+class _FakeAuthorLLM:
+    """假模型: 记录每次作者提示(build_author_prompt 的真实产物), 回放固定脚本."""
+
+    def __init__(self, script: str) -> None:
+        self._script = script
+        self.prompts: list[str] = []
+
+    async def ainvoke(self, messages):  # noqa: ANN001
+        self.prompts.append(str(messages[-1].content))
+        return _FakeReply("```python\n" + self._script + "\n```")
+
+
+def _author_stub(script: str) -> object:
+    """引擎替身: 作者提示走真实 ``build_author_prompt`` 组装后才被假模型接住.
+
+    注入点在 ``model``: ``EngineAct._llm_chat`` 用 ``model or self.model`` 真调模型,
+    ``_request_code_lab_experiment`` 传的正是 ``self.verification_model``.
+    """
+
+    class _StubEngine:
+        _objective = "恒定研究目标"
+        _last_hypothesis = "H1: N_c 随 w 饱和"
+        _speculator_hint = ""
+        _current_phase = None
+
+        def __init__(self) -> None:
+            self.verification_model = _FakeAuthorLLM(script)
+            self.prompts = self.verification_model.prompts
+
+        async def _track_llm_usage(self, usage):  # noqa: ANN001
+            return None
+
+    return _StubEngine()
+
+
+async def test_hard_directive_reaches_real_author_prompt() -> None:
+    """集成: 同代码重跑越阈值后, 真实 build_author_prompt 组装出的提示里带强制变异令.
+
+    与上面定点验证的区别: 这里**不经手搓 focus**, 而是走 ``EngineAct._execute_code_lab``
+    的真实链路 —— 真实作者提示组装(build_author_prompt) + 真实沙箱执行(_run_code_lab)
+    产出的真实 execution_result. 补上 run53/54/55 都没能自然触发的那一环.
+    """
+    from huginn.autoloop.engine_act import EngineAct
+    from huginn.autoloop.engine_reflect import EngineReflect, _REPEAT_HARD_STREAK
+
+    script = (
+        "import numpy as np\n\n\n"
+        "def run(cfg):\n"
+        "    ws = [2, 4, 6]\n"
+        "    out = [float(w) ** 2 for w in ws]\n"
+        "    return {'success': True, 'summary': {'out': out},\n"
+        "            'objectives': {'score': float(np.mean(out))}}\n"
+    )
+    eng = _author_stub(script)
+    act = EngineAct(eng)
+    ref = EngineReflect(eng)
+
+    # 1) 真实作者路径: 提示由 build_author_prompt 组装; 未越阈值 → 不带硬指令
+    code = await act._request_code_lab_experiment("恒定研究目标")
+    assert "def run(" in code
+    assert "强制变异" not in eng.prompts[-1]
+
+    # 2) 真实沙箱跑两次同代码 → 指纹相同 → streak 累积越阈值
+    first: dict = {}
+    for i in range(_REPEAT_HARD_STREAK + 1):
+        res, reason = act._run_code_lab(code)
+        assert res is not None, reason
+        out: dict = {}
+        ref._detect_repeat_execution(res, out)
+        first = out
+    assert first.get("repeat_execution") is True
+    assert getattr(eng, "_repeat_exec_streak", 0) >= _REPEAT_HARD_STREAK
+    assert eng._force_exec_variation is True
+
+    # 3) 下一轮作者提示: 真实 build_author_prompt 里必须带硬指令 + 上轮真实结果
+    focus = act._build_codelab_focus("扫描 w")
+    await act._request_code_lab_experiment("恒定研究目标", focus=focus)
+    assert "强制变异" in eng.prompts[-1]
+    assert "上一轮真实结果" in eng.prompts[-1]
+
+
 # ===== 阶段5: EngineControl =====
 
 def test_no_control_mixin_in_bases() -> None:
