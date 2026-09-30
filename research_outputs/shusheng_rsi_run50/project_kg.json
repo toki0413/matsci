@@ -512,10 +512,10 @@
       "label": "pass_iter5",
       "type": "Fact",
       "source": "autoloop",
-      "confidence": 0.5,
+      "confidence": 0.55,
       "created_at": "2026-09-30T07:48:50.690437",
-      "last_seen": "2026-09-30T07:48:50.690437",
-      "mentions": 1,
+      "last_seen": "2026-09-30T08:39:05.820587",
+      "mentions": 2,
       "surprise": 1.0,
       "id": "Fact:pass_iter5"
     },
@@ -537,15 +537,54 @@
       "label": "reviewer_iter5",
       "type": "persona_use",
       "source": "autoloop",
-      "confidence": 1.0,
+      "confidence": 0.99,
       "created_at": "2026-09-30T07:48:50.690551",
-      "last_seen": "2026-09-30T07:48:50.690551",
-      "mentions": 1,
+      "last_seen": "2026-09-30T08:39:05.820722",
+      "mentions": 2,
       "persona": "reviewer",
       "context_hash": "1681fa1716f8c110",
       "r_phys": 1.0,
       "iteration": 5,
       "id": "persona_use:reviewer_iter5"
+    },
+    {
+      "label": "` one.",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T08:39:05.820533",
+      "last_seen": "2026-09-30T08:39:05.820533",
+      "mentions": 1,
+      "iteration": 5,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "We expect to find that for a small number of constraints (e.g., $w < 10$), a very small network (e.g., $N_c \\approx 2-4$) achieves zero violation. As $w$ increases, $N_c(w)$ will likely increase or sa",
+      "persona": "reviewer",
+      "id": "experiment:` one."
+    },
+    {
+      "label": "plan_coder_iter5",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T08:39:05.820576",
+      "last_seen": "2026-09-30T08:39:05.820576",
+      "mentions": 1,
+      "id": "Method:plan_coder_iter5"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T08:39:05.820603",
+      "last_seen": "2026-09-30T08:39:05.820603",
+      "mentions": 1,
+      "members": [
+        "experiment:` one.",
+        "Method:plan_coder_iter5",
+        "Fact:pass_iter5"
+      ],
+      "iteration": 5,
+      "id": "he_experiment_pipeline_97362121"
     }
   ],
   "links": [
@@ -767,30 +806,57 @@
     },
     {
       "relation": "member_of",
-      "source": "experiment:[DIM: STRUCTURE] The minimal width $N_c(w)$ required for zero violation exhibits",
       "confidence": 0.5,
       "created_at": "2026-09-30T07:48:50.690449",
       "last_seen": "2026-09-30T07:48:50.690449",
       "mentions": 1,
+      "source": "experiment:[DIM: STRUCTURE] The minimal width $N_c(w)$ required for zero violation exhibits",
       "target": "he_experiment_pipeline_8b264a58"
     },
     {
       "relation": "member_of",
-      "source": "Method:plan_workflow_iter5",
       "confidence": 0.5,
       "created_at": "2026-09-30T07:48:50.690449",
       "last_seen": "2026-09-30T07:48:50.690449",
       "mentions": 1,
+      "source": "Method:plan_workflow_iter5",
+      "target": "he_experiment_pipeline_8b264a58"
+    },
+    {
+      "relation": "member_of",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T07:48:50.690449",
+      "last_seen": "2026-09-30T07:48:50.690449",
+      "mentions": 1,
+      "source": "Fact:pass_iter5",
       "target": "he_experiment_pipeline_8b264a58"
     },
     {
       "relation": "member_of",
       "source": "Fact:pass_iter5",
       "confidence": 0.5,
-      "created_at": "2026-09-30T07:48:50.690449",
-      "last_seen": "2026-09-30T07:48:50.690449",
+      "created_at": "2026-09-30T08:39:05.820603",
+      "last_seen": "2026-09-30T08:39:05.820603",
       "mentions": 1,
-      "target": "he_experiment_pipeline_8b264a58"
+      "target": "he_experiment_pipeline_97362121"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:` one.",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T08:39:05.820603",
+      "last_seen": "2026-09-30T08:39:05.820603",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_97362121"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_coder_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T08:39:05.820603",
+      "last_seen": "2026-09-30T08:39:05.820603",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_97362121"
     }
   ]
 }
