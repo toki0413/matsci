@@ -642,6 +642,70 @@
       "r_phys": 1.0,
       "iteration": 80,
       "id": "persona_use:reviewer_iter80"
+    },
+    {
+      "label": "[DIM: STRUCTURE] The minimal network capacity N_c(w) is determined by the rank o",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:40:27.784547",
+      "last_seen": "2026-09-30T11:40:27.784547",
+      "mentions": 1,
+      "iteration": 90,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will initially grow approximately linearly with w (slope ~0.5) for small w, then saturate at some N_max (e.g., ~64–128) as network capacity becomes sufficient to represent the constraint manifo",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: STRUCTURE] The minimal network capacity N_c(w) is determined by the rank o"
+    },
+    {
+      "label": "plan_workflow_iter90",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:40:27.784585",
+      "last_seen": "2026-09-30T11:40:27.784585",
+      "mentions": 1,
+      "id": "Method:plan_workflow_iter90"
+    },
+    {
+      "label": "pass_iter90",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:40:27.784595",
+      "last_seen": "2026-09-30T11:40:27.784595",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter90"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T11:40:27.784603",
+      "last_seen": "2026-09-30T11:40:27.784603",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: STRUCTURE] The minimal network capacity N_c(w) is determined by the rank o",
+        "Method:plan_workflow_iter90",
+        "Fact:pass_iter90"
+      ],
+      "iteration": 90,
+      "id": "he_experiment_pipeline_558497b0"
+    },
+    {
+      "label": "reviewer_iter90",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:40:27.784693",
+      "last_seen": "2026-09-30T11:40:27.784693",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "b3168672fec80694",
+      "r_phys": 1.0,
+      "iteration": 90,
+      "id": "persona_use:reviewer_iter90"
     }
   ],
   "links": [
@@ -914,6 +978,33 @@
       "last_seen": "2026-09-30T11:35:41.675750",
       "mentions": 1,
       "target": "he_experiment_pipeline_301d38df"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: STRUCTURE] The minimal network capacity N_c(w) is determined by the rank o",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:40:27.784603",
+      "last_seen": "2026-09-30T11:40:27.784603",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_558497b0"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_workflow_iter90",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:40:27.784603",
+      "last_seen": "2026-09-30T11:40:27.784603",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_558497b0"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter90",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:40:27.784603",
+      "last_seen": "2026-09-30T11:40:27.784603",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_558497b0"
     }
   ]
 }
