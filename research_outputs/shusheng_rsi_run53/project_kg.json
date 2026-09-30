@@ -322,6 +322,70 @@
       "r_phys": 1.0,
       "iteration": 45,
       "id": "persona_use:reviewer_iter45"
+    },
+    {
+      "label": "[STRUCTURE] Algebraic Rank Saturation. The minimal network capacity $N_c(w)$ rem",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:14:06.016572",
+      "last_seen": "2026-09-30T11:14:06.016572",
+      "mentions": 1,
+      "iteration": 50,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For constraints drawn from a d-dimensional subspace (e.g., polynomials of degree d), N_c(w) will remain approximately constant (saturation plateau) for w ≤ d, then exhibit a sharp step increase when w",
+      "persona": "reviewer",
+      "id": "experiment:[STRUCTURE] Algebraic Rank Saturation. The minimal network capacity $N_c(w)$ rem"
+    },
+    {
+      "label": "plan_explore_iter50",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:14:06.016609",
+      "last_seen": "2026-09-30T11:14:06.016609",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter50"
+    },
+    {
+      "label": "pass_iter50",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:14:06.016618",
+      "last_seen": "2026-09-30T11:14:06.016618",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter50"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T11:14:06.016628",
+      "last_seen": "2026-09-30T11:14:06.016628",
+      "mentions": 1,
+      "members": [
+        "experiment:[STRUCTURE] Algebraic Rank Saturation. The minimal network capacity $N_c(w)$ rem",
+        "Method:plan_explore_iter50",
+        "Fact:pass_iter50"
+      ],
+      "iteration": 50,
+      "id": "he_experiment_pipeline_7ac9c6cc"
+    },
+    {
+      "label": "reviewer_iter50",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:14:06.016724",
+      "last_seen": "2026-09-30T11:14:06.016724",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "7a3c9555481cf2de",
+      "r_phys": 1.0,
+      "iteration": 50,
+      "id": "persona_use:reviewer_iter50"
     }
   ],
   "links": [
@@ -459,6 +523,33 @@
       "last_seen": "2026-09-30T11:12:51.029791",
       "mentions": 1,
       "target": "he_experiment_pipeline_cb0aee0e"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[STRUCTURE] Algebraic Rank Saturation. The minimal network capacity $N_c(w)$ rem",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:14:06.016628",
+      "last_seen": "2026-09-30T11:14:06.016628",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_7ac9c6cc"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter50",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:14:06.016628",
+      "last_seen": "2026-09-30T11:14:06.016628",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_7ac9c6cc"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter50",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:14:06.016628",
+      "last_seen": "2026-09-30T11:14:06.016628",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_7ac9c6cc"
     }
   ]
 }
