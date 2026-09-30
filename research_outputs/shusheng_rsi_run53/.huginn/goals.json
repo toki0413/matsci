@@ -32,10 +32,10 @@
         "[Feynman known_unknown] The constraint matrix rank $r$ is central to the hypothesis, but I cannot confidently explain how it was computed or what its structure looks like in this specific case — was it symbolic, numerical, or derived from a physical model?",
         "[Feynman unknown_unknown] I didn’t consider that the testing framework might require explicit test cases or assertions to register “passed” status — the fact that 2 tests were skipped but none failed suggests a silent failure mode in the test runner or harness."
       ],
-      "iteration": 83,
+      "iteration": 88,
       "status": "active",
       "created_at": "2026-09-30T10:55:01.825668+00:00",
-      "updated_at": "2026-09-30T11:37:17.724859+00:00",
+      "updated_at": "2026-09-30T11:39:30.472737+00:00",
       "session_id": "",
       "metadata": {},
       "unknowns": [
@@ -934,9 +934,49 @@
           "discovered_at": "2026-09-30T11:35:46.689802+00:00",
           "resolved_at": null,
           "iteration": 80
+        },
+        {
+          "id": "unk_526fde7f",
+          "text": "The assumption that \"zero violation\" (max absolute error ≤ 1e-3) on validation points is a sufficient proxy for structural rigidity may be invalid — high capacity networks can overfit training data while still failing to satisfy global constraints, leading to false positives in rigidity assessment.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-30T11:38:13.381428+00:00",
+          "resolved_at": null,
+          "iteration": 85
+        },
+        {
+          "id": "unk_3cd0796f",
+          "text": "Gradient-based optimization may converge to local minima that appear to satisfy zero-violation locally but are not part of the true solution manifold, especially in non-convex loss landscapes typical of neural networks.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-30T11:38:13.383275+00:00",
+          "resolved_at": null,
+          "iteration": 85
+        },
+        {
+          "id": "unk_d34bf3d5",
+          "text": "No ground-truth analytical solution or benchmark system with known N_c(w) behavior is provided; without such reference, empirical determination of rigidity vs. fatness lacks calibration and interpretability.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-30T11:38:13.384744+00:00",
+          "resolved_at": null,
+          "iteration": 85
+        },
+        {
+          "id": "unk_94e0a885",
+          "text": "As w → ∞ or when constraints become geometrically conflicting (e.g., overdetermined systems), even infinite-width networks may fail to achieve zero violation — this regime could mislead classification if not explicitly tested.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-30T11:38:13.386088+00:00",
+          "resolved_at": null,
+          "iteration": 85
+        },
+        {
+          "id": "unk_66441c4a",
+          "text": "The definition of rigidity via minimal width N_c(w) assumes monotonicity and stability in capacity scaling; however, width-to-function-space mapping in deep nets is highly non-monotonic due to architectural symmetries and redundancy, potentially distorting the perceived dimensionality of the solution space.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-30T11:38:13.387418+00:00",
+          "resolved_at": null,
+          "iteration": 85
         }
       ],
-      "unknowns_discovered": 112,
+      "unknowns_discovered": 117,
       "unknowns_resolved": 0,
       "objective": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【唯一硬性口径（不可更改，其余全由你决定）】\n- 零违规 = 留出约束点上的最大绝对误差 ≤ 1e-3。\n- 刚性 = 扫描范围内存在较小的有限 N_c（且 N_c 不随 w 增长）；胖 = 扫描上限内任何宽度都达不到零违规（N_c 不可达）。判别是二值的。\n- 所有报告数值必须是有限数（禁止 inf/nan/None）。\n- 研究对象只能是小型前馈网络本身。严禁把本命题替换或“换名归约”为材料/化学/玻璃/合金/离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【实验的族、样本、扫描、脚本如何设计，以及如何证明“刚性可达”，由你自己决定并给出理由。】\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
       "success_criteria": [],
