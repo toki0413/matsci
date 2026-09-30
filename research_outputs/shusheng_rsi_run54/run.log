@@ -393,3 +393,69 @@ plan_check failed (tier=light, scene=auto_numerical, max_refines=1): The plan fa
 [exec-route] mode='explore' desc[:80]='Design and execute a numerical experiment to test the hypothesis that small ReLU' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
 [code-lab-author] raw_len=2001 extracted_len=1986 prompt_len=4352
 [code-lab-run] res_none=False success=True nobj=1 reason=''
+[validate] mode='code_lab' success=True nobj=1 cf=False lab=True
+plan_check failed (tier=light, scene=auto_numerical, max_refines=1): The plan describes a generic capacity test but fails to implement the specific dynamical systems hypothesis. Key issues: 1) It mentions generating constraints from an ODE but doesn't specify the exact constraint generation method from dy/dx = -y (e.g., initial conditions, discretization scheme, sample points). 2) The hypothesis explicitly requires comparing logarithmic vs linear vs constant scaling of N_c(w), but the plan doesn't specify how the functional form comparison will be performed beyond AIC/BIC fitting. 3) The previous failure indicates this same issue - the plan doesn't match the specific dynamical systems claim.
+[exec-route] mode='explore' desc[:80]='Design a numerical experiment to test the hypothesis that small feedforward netw' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=True
+[code-lab-author] raw_len=2507 extracted_len=2494 prompt_len=4706
+[code-lab-run] res_none=True success=None nobj=0 reason="执行异常: ImportError: import of 'mlp_fit' is not allowed in CodeAct mode; allowed: ['ase', 'collections', 'copy', 'dataclasses', 'decimal', 'fractions', 'functools', 'itertools', 'json', 'math', 'matplot"
+[code-lab-author] raw_len=2402 extracted_len=2387 prompt_len=7865
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: all the input array dimensions except for the concatenation axis must match exactly, but along dimension 1, the array at index 0 has size 10 and the array at index 1 has size 200'
+[code-lab-author] raw_len=2402 extracted_len=2387 prompt_len=7629
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: all the input array dimensions except for the concatenation axis must match exactly, but along dimension 1, the array at index 0 has size 10 and the array at index 1 has size 200'
+[code-lab-author] raw_len=2361 extracted_len=2346 prompt_len=7629
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: all the input array dimensions except for the concatenation axis must match exactly, but along dimension 1, the array at index 0 has size 10 and the array at index 1 has size 200'
+code_lab 沙箱执行经 4 轮修复仍未产出证据(不伪造): 执行异常: ValueError: all the input array dimensions except for the concatenation axis must match exactly, but along dimension 1, the array at index 0 has size 10 and the array at index 1 has size 200
+code_lab 最后一版书生代码:
+import numpy as np
+
+def family(kind, w, seed):
+    rng = np.random.default_rng(seed)
+    X = np.linspace(0.05, 0.95, w).reshape(-1, 1)
+    Xv = np.linspace(0.02, 0.98, 200).reshape(-1, 1)
+    if kind == 'rigid':
+        y_exact = np.exp(-X.flatten())
+        y = y_exact.reshape(-1, 1)
+        yv = np.exp(-Xv.flatten()).reshape(-1, 1)
+    elif kind == 'fat':
+        coeffs = rng.standard_normal(10)
+        y = poly_basis(X, 10) @ coeffs.reshape(-1, 1)
+        yv = poly_basis(Xv, 10) @ coeffs.reshape(-1, 1)
+    else:
+        y = np.zeros((w, 1))
+        yv = np.zeros((200, 1))
+    scale = np.std(np.vstack([y.flatten(), yv.flatten()]))
+    if scale == 0: scale = 1.0
+    y /= scale
+    yv /= scale
+    return {'X': X, 'y': y, 'Xv': Xv, 'yv': yv}
+
+def run(cfg):
+    seed = int(cfg.get('seed', 0))
+    ws = [10, 20, 50, 100, 200, 500, 1000]
+    h_range = list(range(2, 21))
+    summary = {'rigid_Nc': [], 'fat_Nc': [], 'rigid_errors': [], 'fat_errors': []}
+    objectives = {'score': 0.0}
+    for kind in ['rigid', 'fat']:
+        Nc_list = []
+        err_list = []
+        for w in ws:
+            Nc_found = None
+            best_err = np.inf
+            for h in h_range:
+                data = family(kind, w, seed + w * 1000 + h)
+                X, y = data['X'], data['y']
+                Xv, yv = data['Xv'], data['yv']
+                model = mlp_fit(X, y, h, seeds=3)
+                pred = mlp_predict(model, Xv)
+                err = np.max(np.abs(pred - yv))
+                if err <= 1e-3 and Nc_found is None:
+                    Nc_found = h
+                if err < best_err: best_err = err
+            Nc_list.append(Nc_found if Nc_found is not None else -1)
+            err_list.append(best_err)
+            summary[f'{kind}_Nc'].append(Nc_found)
+            summary[f'{kind}_errors'].append(best_err)
+        summary[f'{kind}_Nc_list'] = Nc_list
+        summary[f'{kind}_err_list'] = err_list
+    avg_Nc_rigid = np.mean([v for v in summary['rigid_Nc'] if v > 0])
+    avg_err_rig
