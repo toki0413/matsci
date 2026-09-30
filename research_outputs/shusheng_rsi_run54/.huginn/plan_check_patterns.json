@@ -229,5 +229,32 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] We will first derive the analytical ODE solution symbolically, then design a systematic scan of small feedforward networks (widths N=4 to 64) to compute N_c(w) — the minim"
+  },
+  {
+    "scene_tag": "auto_small",
+    "hyp_key": "97a9a7df1c29",
+    "reason": "The plan correctly identifies the previous hypothesis as refuted and proposes an exploratory parameter sweep to find the true scaling law, which matches the 'explore' MODE. However, it fails to address the core requirement of the original hypothesis: testing the 'piecewise-constant partition of the input domain with O(w) cells' geometry. The plan focuses solely on fitting capacity (N_c) vs. constraint count (w) but does not analyze the geometric structure of the ReLU activation regions or the cell boundaries as required by the hypothesis. It tests 'rigidity' but not the 'geometry' aspect, making it insufficient to validate or refute the specific geometric claim.",
+    "missing_steps": [
+      "Define and extract the piecewise-constant partition geometry from the ReLU network's activation regions",
+      "Count the actual number of cells in the partition as a function of w",
+      "Analyze the cell boundary resolution scaling (N_c vs. sqrt(w)) directly rather than just fitting N_c(w)",
+      "Verify that the sinusoidal target's smoothness affects the effective cell count as hypothesized"
+    ],
+    "mode": "explore",
+    "description": "The previous iteration (iter 165) predicted $N_c(w) \\propto \\sqrt{w}$ but observed logarithmic growth ($N_c(w) \\propto \\log w$), yielding a surprise of 1.0 (maximum deviation). This suggests the hypot"
+  },
+  {
+    "scene_tag": "auto_small",
+    "hyp_key": "97a9a7df1c29",
+    "reason": "The plan describes a 'Geometry' experiment (analyzing activation regions and piecewise-constant partitions) but the hypothesis to be tested is about 'Rigidity' (specifically the scaling of N_c(w) for zero-violation constraints). The plan explicitly states it will test 'piecewise-constant baselines' and 'ReLU activation region partition', which is a completely different geometric hypothesis than the required 'rigidity' scaling N_c(w) ~ c*sqrt(w) for sinusoidal targets. The plan does not address the 'zero-violation' metric or the constraint-count w scaling required by the task.",
+    "missing_steps": [
+      "Define the constraint generation mechanism for w samples",
+      "Define the zero-violation metric (max abs error <= 1e-3 on held-out constraints)",
+      "Implement training loop to measure N_c(w) required for zero-violation",
+      "Run experiments on sinusoidal targets specifically",
+      "Measure the scaling relationship between N_c and w"
+    ],
+    "mode": "explore",
+    "description": "To test the geometric hypothesis regarding piecewise-constant partitions, we will implement a ReLU network that explicitly extracts and visualizes the activation region partition of the input domain. "
   }
 ]
