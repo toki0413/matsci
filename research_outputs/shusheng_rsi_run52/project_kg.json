@@ -130,6 +130,70 @@
       "r_phys": 1.0,
       "iteration": 20,
       "id": "persona_use:reviewer_iter20"
+    },
+    {
+      "label": "** [DIM: Structure] The Algebraic Independence Hypothesis.",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T10:27:59.554382",
+      "last_seen": "2026-09-30T10:27:59.554382",
+      "mentions": 1,
+      "iteration": 25,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For small w (e.g., w=5-10), we expect N_c to be small and finite (rigid regime). As w increases, if the system remains rigid, N_c will plateau; if fat, N_c will grow or become unreachable (inf). Given",
+      "persona": "reviewer",
+      "id": "experiment:** [DIM: Structure] The Algebraic Independence Hypothesis."
+    },
+    {
+      "label": "plan_explore_iter25",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:27:59.554426",
+      "last_seen": "2026-09-30T10:27:59.554426",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter25"
+    },
+    {
+      "label": "pass_iter25",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:27:59.554435",
+      "last_seen": "2026-09-30T10:27:59.554435",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter25"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T10:27:59.554444",
+      "last_seen": "2026-09-30T10:27:59.554444",
+      "mentions": 1,
+      "members": [
+        "experiment:** [DIM: Structure] The Algebraic Independence Hypothesis.",
+        "Method:plan_explore_iter25",
+        "Fact:pass_iter25"
+      ],
+      "iteration": 25,
+      "id": "he_experiment_pipeline_f410df6f"
+    },
+    {
+      "label": "reviewer_iter25",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T10:27:59.554515",
+      "last_seen": "2026-09-30T10:27:59.554515",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "d911ac83fc7d1e0d",
+      "r_phys": 1.0,
+      "iteration": 25,
+      "id": "persona_use:reviewer_iter25"
     }
   ],
   "links": [
@@ -186,6 +250,33 @@
       "last_seen": "2026-09-30T10:25:58.083383",
       "mentions": 1,
       "target": "he_experiment_pipeline_c00fa122"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:** [DIM: Structure] The Algebraic Independence Hypothesis.",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:27:59.554444",
+      "last_seen": "2026-09-30T10:27:59.554444",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_f410df6f"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:27:59.554444",
+      "last_seen": "2026-09-30T10:27:59.554444",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_f410df6f"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:27:59.554444",
+      "last_seen": "2026-09-30T10:27:59.554444",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_f410df6f"
     }
   ]
 }
