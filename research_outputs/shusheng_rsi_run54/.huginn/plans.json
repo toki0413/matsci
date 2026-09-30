@@ -545,6 +545,36 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_bc063d3d",
+      "objective": "[DIM: computation] The constraints are defined by a piecewise-constant function over a partition of the input domain induced by w points (step function), and the minimal width N_c grows logarithmically with w due to the VC-dimension barrier for step functions; predict: N_c(w) ≈ C log(w) for some constant C, with saturation at small N_c for w up to a threshold; pro: grounded in computational learning theory and VC-dimension bounds for piecewise-constant functions; con: may not capture the specific bootstrap rigidity if constraints are not purely step-like.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Implement a numerical experiment to test the hypothesis that the minimal network width N_c(w) required for zero-violation (max absolute error ≤ 1e-3 on held-out constraint points) scales logarithmically with w for piecewise-constant bootstrap constraints. The plan includes: (1) generating piecewise-constant functions with w breakpoints as constraints; (2) training small feedforward networks of varying hidden widths; (3) measuring validation violation on held-out points; (4) extracting N_c(w) as the minimal width achieving zero violation; (5) fitting N_c(w) ≈ C log(w) and testing for saturation at small w. Files to modify: create a new script `bootstrap_rigidity_test.py` to execute the experiment.",
+          "tool": "coder",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "bootstrap_rigidity_test.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-30T13:25:21.521696+00:00",
+      "confirmed_at": "2026-09-30T13:25:21.523419+00:00",
+      "completed_at": "2026-09-30T13:26:01.461159+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "coder",
+        "source": "autoloop"
+      }
     }
   ]
 }
