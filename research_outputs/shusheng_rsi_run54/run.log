@@ -156,3 +156,8 @@ renamed-reduction 3× consecutive: trigger counterexample hunt
 [exec-route] mode='explore' desc[:80]='[auto-routed: surprise=1.00] Execute a bootstrap rigidity experiment for small f' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
 [code-lab-author] raw_len=3421 extracted_len=3406 prompt_len=4763
 [code-lab-run] res_none=False success=True nobj=4 reason=''
+[validate] mode='code_lab' success=True nobj=4 cf=False lab=True
+plan_check failed (tier=light, scene=auto_numerical, max_refines=1): The hypothesis string in the target field is empty ('.'), making the goal undefined. As noted in the historical failures, without a clear non-empty hypothesis, the experiment cannot be designed to validate against a specific claim. While the DESCRIPTION and PREDICTION are well-structured, they target no actual hypothesis. The plan repeats the same failure as before by not defining a concrete hypothesis to test.
+[exec-route] mode='explore' desc[:80]='Define a hypothesis about solution space rigidity: "For polynomial identity cons' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=2787 extracted_len=2772 prompt_len=4007
+[code-lab-run] res_none=False success=True nobj=1 reason=''
