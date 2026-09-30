@@ -48,6 +48,83 @@ logger = logging.getLogger(__name__)
 _REPEAT_HARD_STREAK = int(os.environ.get("HUGINN_REPEAT_EXEC_HARD_STREAK", "2"))
 
 
+def _normalize_script_for_fp(script: str) -> str:
+    """把实验代码归一成**结构指纹**源 (忽略注释/格式/空行, 保留标识符与常量).
+
+    为何不用执行结果 (objectives/summary) 的**内容**做重复判据: 那要求两轮数值逐字节
+    相同才算"重复". 沙箱虽固定 seed=0, 但浮点归约序/线程调度仍可能抖动 —— 同一段代码
+    两次跑出末位不同的数, 内容哈希就不同, "换了注释/改个函数名重跑同一实验"这种最典型
+    的无效重跑反而漏判 (run53 实测: 55 次真实执行, 内容哈希零次命中).
+    改用 AST 结构: 与浮点无关, 且**保留数字常量** —— 本命题核心就是扫描 w/h, 若把数字
+    抹掉会让每轮正常扫描都被误判为重复、被迫强制变异, 反而破坏探索. 注释/格式/缩进差异
+    不进结构, 同一实验换个写法仍被认出.
+    解析失败(残缺代码)时退化为"去空行原文", 仍比内容哈希稳.
+    """
+    try:
+        import ast as _ast
+
+        return _ast.dump(_ast.parse(script))
+    except Exception:
+        return "\n".join(l.strip() for l in script.splitlines() if l.strip())
+
+
+def _non_finite_objective_keys(execution_result: Any) -> list[str]:
+    """列出 objectives 中非有限数 (inf/nan) 的键; 全有限或非 code_lab 结果返回空.
+
+    命题无关的数值卫生: 非有限数不是"测量到的数值", 不能充当真实执行证据 —— 许多
+    命题口径明确要求"所有报告数值必须是有限数 (禁止 inf/nan/None)"(如 run44/46/53),
+    而 code_lab schema 只校验"值是数值", float('inf') 照收. 于是书生拿 ∞ 当"未达标"
+    哨兵, validate 又据 objectives 非空判 solved → ∞ 直接进最终报告 (run53 实测).
+    达不到阈值的行应如实报**有限的**回退数值, 用布尔/计数目标表达"未达标".
+    """
+    if not isinstance(execution_result, dict):
+        return []
+    objs = execution_result.get("objectives")
+    if not isinstance(objs, dict):
+        return []
+    import math
+
+    bad: list[str] = []
+    for k, v in objs.items():
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            continue  # 非数值键交由 schema 校验处理, 这里只管有限性
+        if not math.isfinite(f):
+            bad.append(str(k))
+    return bad
+
+
+def _exec_fingerprint(execution_result: Any) -> tuple[str, str]:
+    """算本轮执行指纹, 返回 ``(指纹, 人读结果摘要)``.
+
+    指纹口径: 执行结果带 ``script`` (code_lab 亲写实验) 时用**代码结构**指纹 ——
+    同代码重跑恒同, 与浮点抖动无关; 扫描参数改动会改常量→结构变→指纹变, 不误判.
+    无代码时退回 ``objectives/summary`` 内容哈希 (旧口径, 行为不变).
+    第二项 ``_fp_src`` 是人读摘要, 供强制变异提示回灌"上一轮真实结果".
+    """
+    _fp_src = ""
+    if isinstance(execution_result, dict):
+        _objs = execution_result.get("objectives")
+        _sum = execution_result.get("summary")
+        if _objs is not None or _sum is not None:
+            _fp_src = json.dumps(
+                {"o": _objs, "s": _sum}, sort_keys=True, default=str,
+            )
+    _script = (
+        execution_result.get("script") if isinstance(execution_result, dict) else None
+    )
+    _key = (
+        "S:" + _normalize_script_for_fp(_script)
+        if isinstance(_script, str) and _script.strip()
+        else _fp_src
+    )
+    _fp = (
+        hashlib.sha1(_key.encode("utf-8", "ignore")).hexdigest() if _key else ""
+    )
+    return _fp, _fp_src
+
+
 class EngineReflect:
     """validate / learn / report 阶段方法族协作对象.
 
@@ -450,6 +527,25 @@ class EngineReflect:
         try:
             _cf_solved = self._is_closed_form_solved(execution_result)
             _lab_solved = self._is_code_lab_solved(execution_result)
+            # 非有限数值 (inf/nan 哨兵) → 不算证据, 且必须**明说原因**: 否则 execute
+            # 报 success、validate 默默判未解, 书生只看到"没通过"却不知为何 —
+            # 与 run52 "execute 被跳过却只看到 validate 复用旧结果" 同类的静默失败.
+            _bad_num = _non_finite_objective_keys(execution_result)
+            if _bad_num and not (_cf_solved or _lab_solved):
+                results["non_finite_objectives"] = _bad_num
+                _nan_hint = (
+                    f"[非有限数值] objectives 里 {_bad_num} 是 inf/nan, 不是测到的数, "
+                    "不算真实执行证据. 达不到阈值的行须如实报**有限的**回退数值"
+                    "(如扫描上限处的最小留出误差), 用布尔/计数目标表达'未达标', "
+                    "禁止用 inf/nan/None 当哨兵."
+                )
+                self._speculator_hint = (
+                    (self._speculator_hint + "\n" + _nan_hint).strip()
+                    if self._speculator_hint else _nan_hint
+                )
+                logger.warning(
+                    "validate: 非有限 objectives 不计为证据 (keys=%s)", _bad_num,
+                )
             import os as _osv
             if _osv.environ.get("HUGINN_EXEC_ROUTE_DEBUG"):
                 _mode = execution_result.get("mode") if isinstance(execution_result, dict) else type(execution_result).__name__
@@ -505,9 +601,10 @@ class EngineReflect:
         # 现象: 沙箱对每次 code_lab 都用固定 seed (sandbox_run 传 {"seed": 0}),
         # 且"实验作者"提示恒为研究目标全文 —— 当局势僵持时 LLM 极易反复产出
         # 同一段 family 代码, 于是 code_lab 的输出 (objectives/summary) 逐轮完全一致.
-        # 但 _is_code_lab_solved 只要求 objectives 非空, 每轮都被判 "已解决",
+        # 但 _is_code_lab_solved 只要求 objectives 非空且全有限, 每轮都被判 "已解决",
         # 循环因而拿不到任何"没进展"的反馈 → 空转 (书生自觉在推进, 实际原地重跑).
-        # 这里只比较执行结果的**内容指纹**, 不解读语义, 因此对任何命题通用.
+        # 这里只比较执行结果的**代码结构指纹**(无代码时退回内容指纹), 不解读语义,
+        # 因此对任何命题通用.
         # 命中即注入强纠偏提示 (取尾部 [-500:], 保证进下一轮 prompt).
         try:
             # execute 未在本轮刷新 (= 复用上一轮同一个 execution_result 对象) 时,
@@ -523,19 +620,8 @@ class EngineReflect:
                 )
             if _fresh:
                 self._fp_result_ref = execution_result
-                _fp_src = ""
-                if isinstance(execution_result, dict):
-                    _objs = execution_result.get("objectives")
-                    _sum = execution_result.get("summary")
-                    if _objs is not None or _sum is not None:
-                        _fp_src = json.dumps(
-                            {"o": _objs, "s": _sum}, sort_keys=True, default=str,
-                        )
-                _fp = (
-                    hashlib.sha1(_fp_src.encode("utf-8", "ignore")).hexdigest()
-                    if _fp_src
-                    else ""
-                )
+                # 指纹口径见 _exec_fingerprint: 有实验代码用代码结构, 否则用结果内容.
+                _fp, _fp_src = _exec_fingerprint(execution_result)
                 _prev_fp = getattr(self, "_prev_exec_fingerprint", "")
                 if _fp and _fp == _prev_fp:
                     self._repeat_exec_streak = (
@@ -1261,11 +1347,14 @@ class EngineReflect:
     def _is_code_lab_solved(self, execution_result: Any) -> bool:
         """方案2·接 Code Lab → validate: 书生亲写实验是否已在沙箱真跑通并产出数值目标.
 
-        判定 = execution_result 来自 code_lab 且 success=True 且 objectives 非空.
-        与闭式 probe 同源: 都是"可执行→已执行→产出数值"的真实证据, 只是执行面在
-        Code Lab 内存沙箱内, 不由 workspace 的 pytest 收集, 故 pytest 空跑(exit 5)
-        会误判 tests_passed=False. 这里把 Code Lab 的 objectives 明确接成 test 面证据,
-        放行 validate→learn, 让 RSI 得以触发。
+        判定 = execution_result 来自 code_lab 且 success=True 且 objectives 非空
+        且**全为有限数**. 与闭式 probe 同源: 都是"可执行→已执行→产出数值"的真实
+        证据, 只是执行面在 Code Lab 内存沙箱内, 不由 workspace 的 pytest 收集, 故
+        pytest 空跑(exit 5)会误判 tests_passed=False. 这里把 Code Lab 的 objectives
+        明确接成 test 面证据, 放行 validate→learn, 让 RSI 得以触发。
+
+        有限性为何算证据硬条件: inf/nan 不是"测到的数", 当哨兵用会让报告违反命题
+        口径 (见 _non_finite_objective_keys). 达不到阈值的行须如实报有限回退值。
         """
         if not isinstance(execution_result, dict):
             return False
@@ -1273,7 +1362,9 @@ class EngineReflect:
             return False
         if not execution_result.get("success"):
             return False
-        return bool(execution_result.get("objectives"))
+        if not execution_result.get("objectives"):
+            return False
+        return not _non_finite_objective_keys(execution_result)
 
     async def _run_pytest(self) -> dict[str, Any]:
         """Run pytest in workspace, return results dict."""

@@ -1,0 +1,18 @@
+[
+  {
+    "scene_tag": "workflow",
+    "hyp_key": "19410ae0bd54",
+    "reason": "The plan is fundamentally invalid because the MODE is set to 'workflow' (implying a pipeline of existing tools), but this task requires writing custom code to build, train, and evaluate neural networks. According to the ToolCallRouter's 'Least-effort path' rule, a heavy tool (like a neural network training pipeline) without a recorded light path is blocked, and the correct first step is to use the 'coder' mode to generate the implementation script before attempting execution. Without this coding step, the plan cannot be executed.",
+    "missing_steps": [
+      "Switch MODE from 'workflow' to 'coder' to write the neural network implementation script.",
+      "Specify the exact constraint families (polynomials/trigonometric functions) with their dimensions.",
+      "Define the range of sample sizes w and hidden widths N_c to scan.",
+      "Implement the training loop with ReLU activation, normalization, and early stopping.",
+      "Implement the validation procedure to compute max absolute error on held-out constraints.",
+      "Implement the logic to find the minimum N_c achieving zero violation for each w.",
+      "Plot N_c(w) and analyze rigidity vs. fatness based on the defined criteria."
+    ],
+    "mode": "workflow",
+    "description": "Design a bootstrap experiment to probe solution space rigidity using small feedforward networks. Define a class of analytic constraints (e.g., polynomial or trigonometric functions) with known solutio"
+  }
+]

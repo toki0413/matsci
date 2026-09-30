@@ -310,6 +310,112 @@ def test_codelab_focus_injects_hard_variation_directive() -> None:
     assert "Nc" in focus  # 上一轮真实结果回灌, 逼产出不同数值
 
 
+# ===== 重复执行指纹口径 (v13) =====
+
+
+def test_exec_fingerprint_same_code_is_repeat_despite_value_jitter() -> None:
+    """同代码重跑 = 重复, 即使两轮 objectives 数值不同 (浮点抖动) 也要认出.
+
+    旧口径对 objectives/summary 做内容哈希: 沙箱虽固定 seed=0, 但浮点归约序/线程
+    调度可抖动 → 同一段代码两次跑出末位不同的数 → 漏判 (run53 实测 55 次执行零命中).
+    新口径对**代码结构**做指纹, 与数值无关.
+    """
+    from huginn.autoloop.engine_reflect import _exec_fingerprint
+
+    code = "def run(cfg):\n    return {'Nc': 3}\n"
+    # 注释/格式/空行差异不进结构
+    code_reformatted = "# 换个注释\ndef run(cfg):\n\n    return {'Nc': 3}  # 尾注\n"
+    a = {"mode": "code_lab", "script": code, "objectives": {"Nc_rigid": [3, 3]}}
+    b = {"mode": "code_lab", "script": code_reformatted,
+         "objectives": {"Nc_rigid": [3.0000001, 2.9999998]}}  # 数值抖动
+    fa, _ = _exec_fingerprint(a)
+    fb, _ = _exec_fingerprint(b)
+    assert fa and fa == fb, "同代码重跑(仅注释/格式/末位数值不同)应判为重复"
+
+
+def test_exec_fingerprint_scan_param_change_is_not_repeat() -> None:
+    """正常参数扫描必须被认作**新实验**, 否则每轮扫描都被强制变异, 破坏探索."""
+    from huginn.autoloop.engine_reflect import _exec_fingerprint
+
+    a = {"mode": "code_lab", "script": "W = [2, 4, 6]\n", "objectives": {"n": 1}}
+    b = {"mode": "code_lab", "script": "W = [2, 4, 8]\n", "objectives": {"n": 2}}
+    fa, _ = _exec_fingerprint(a)
+    fb, _ = _exec_fingerprint(b)
+    assert fa and fb and fa != fb, "扫描参数改变 → 指纹必须变 (数字常量保留)"
+
+
+def test_exec_fingerprint_falls_back_to_content_without_script() -> None:
+    """无 script (explore/probe 等) 时退回旧口径: 内容哈希, 行为不变."""
+    from huginn.autoloop.engine_reflect import _exec_fingerprint
+
+    same1 = {"mode": "explore", "objectives": {"x": 1}, "summary": {"y": 2}}
+    same2 = {"mode": "explore", "objectives": {"x": 1}, "summary": {"y": 2}}
+    diff = {"mode": "explore", "objectives": {"x": 9}, "summary": {"y": 2}}
+    f1, src1 = _exec_fingerprint(same1)
+    f2, _ = _exec_fingerprint(same2)
+    f3, _ = _exec_fingerprint(diff)
+    assert f1 == f2 and f1 != f3
+    assert '"x": 1' in src1  # 人读摘要仍来自 objectives/summary
+
+
+def test_normalize_script_for_fp_survives_syntax_error() -> None:
+    """残缺代码不能抛异常 (指纹失败会中止重复检测), 退化为去空行原文."""
+    from huginn.autoloop.engine_reflect import _normalize_script_for_fp
+
+    broken = "def run(cfg:\n    return 1\n"
+    out = _normalize_script_for_fp(broken)
+    assert out and "return 1" in out
+
+
+def test_exec_fingerprint_empty_when_no_evidence() -> None:
+    """既无代码也无 objectives/summary → 空指纹 (不参与重复/收敛记账)."""
+    from huginn.autoloop.engine_reflect import _exec_fingerprint
+
+    assert _exec_fingerprint({"mode": "explore"})[0] == ""
+    assert _exec_fingerprint(None)[0] == ""
+
+
+# ===== 非有限数值 (inf/nan) 不计为证据 (v13) =====
+
+
+def test_non_finite_objective_keys_flags_inf_nan() -> None:
+    """inf/nan 键被点名; 全有限/无 objectives 返回空."""
+    from huginn.autoloop.engine_reflect import _non_finite_objective_keys
+
+    res = {"mode": "code_lab", "objectives": {"a": 1.0, "b": float("inf"),
+                                              "c": float("nan")}}
+    assert _non_finite_objective_keys(res) == ["b", "c"]
+    assert _non_finite_objective_keys(
+        {"mode": "code_lab", "objectives": {"a": 1.0}}
+    ) == []
+    assert _non_finite_objective_keys({"mode": "code_lab"}) == []
+    assert _non_finite_objective_keys(None) == []
+
+
+def test_is_code_lab_solved_rejects_non_finite_objectives() -> None:
+    """run53 根因: objectives 非空但含 ∞ 时曾判 solved → ∞ 进报告.
+
+    命题口径要求"所有报告数值必须是有限数"; inf/nan 不是测到的数, 不能当证据.
+    """
+    from huginn.autoloop.engine_reflect import EngineReflect
+
+    class _StubEngine:
+        pass
+
+    ref = EngineReflect(_StubEngine())
+    ok = {"mode": "code_lab", "success": True, "objectives": {"Nc": 3.0}}
+    bad = {"mode": "code_lab", "success": True, "objectives": {"Nc": float("inf")}}
+    assert ref._is_code_lab_solved(ok) is True
+    assert ref._is_code_lab_solved(bad) is False
+    # 失败/空 objectives 仍按旧口径拒绝
+    assert ref._is_code_lab_solved(
+        {"mode": "code_lab", "success": False, "objectives": {"Nc": 3.0}}
+    ) is False
+    assert ref._is_code_lab_solved(
+        {"mode": "code_lab", "success": True, "objectives": {}}
+    ) is False
+
+
 # ===== 阶段5: EngineControl =====
 
 def test_no_control_mixin_in_bases() -> None:
