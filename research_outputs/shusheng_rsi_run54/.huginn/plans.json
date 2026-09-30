@@ -334,6 +334,36 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_53d67798",
+      "objective": "[DIM: structure] Algebraic Invariant Hypothesis**",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Create the numerical experiment to test the Algebraic Invariant Hypothesis (DIM: structure) by implementing a small MLP that scans hidden layer width against constraint count to measure solution space rigidity. The script will generate synthetic constraint samples, train small feedforward networks, and compute N_c(w) (minimum width achieving zero violation on held-out constraints) to determine if the space is rigid (low, constant N_c) or fat (N_c grows or is unattainable).",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "/workspace/research_outputs/shusheng_rsi_run54/algebraic_invariant_hypothesis.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-30T13:16:06.442192+00:00",
+      "confirmed_at": "2026-09-30T13:16:06.443824+00:00",
+      "completed_at": "2026-09-30T13:16:39.698709+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
