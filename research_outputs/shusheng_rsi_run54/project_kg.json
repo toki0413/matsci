@@ -258,6 +258,70 @@
       "r_phys": 1.0,
       "iteration": 25,
       "id": "persona_use:reviewer_iter25"
+    },
+    {
+      "label": "** [MEASURE] Statistical Learning / VC-Dimension Hypothesis",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T13:07:38.442435",
+      "last_seen": "2026-09-30T13:07:38.442435",
+      "mentions": 1,
+      "iteration": 35,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will be small (e.g., ≤ 32) and approximately constant or slowly increasing with w up to a threshold, indicating solution space rigidity; beyond that, N_c may rise sharply or become unattainable",
+      "persona": "reviewer",
+      "id": "experiment:** [MEASURE] Statistical Learning / VC-Dimension Hypothesis"
+    },
+    {
+      "label": "plan_explore_iter35",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T13:07:38.442479",
+      "last_seen": "2026-09-30T13:07:38.442479",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter35"
+    },
+    {
+      "label": "pass_iter35",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T13:07:38.442491",
+      "last_seen": "2026-09-30T13:07:38.442491",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter35"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T13:07:38.442500",
+      "last_seen": "2026-09-30T13:07:38.442500",
+      "mentions": 1,
+      "members": [
+        "experiment:** [MEASURE] Statistical Learning / VC-Dimension Hypothesis",
+        "Method:plan_explore_iter35",
+        "Fact:pass_iter35"
+      ],
+      "iteration": 35,
+      "id": "he_experiment_pipeline_a956fb68"
+    },
+    {
+      "label": "reviewer_iter35",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T13:07:38.442576",
+      "last_seen": "2026-09-30T13:07:38.442576",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "344ead004041cc12",
+      "r_phys": 1.0,
+      "iteration": 35,
+      "id": "persona_use:reviewer_iter35"
     }
   ],
   "links": [
@@ -368,6 +432,33 @@
       "last_seen": "2026-09-30T13:04:14.799100",
       "mentions": 1,
       "target": "he_experiment_pipeline_8d7a1d66"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:** [MEASURE] Statistical Learning / VC-Dimension Hypothesis",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T13:07:38.442500",
+      "last_seen": "2026-09-30T13:07:38.442500",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a956fb68"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter35",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T13:07:38.442500",
+      "last_seen": "2026-09-30T13:07:38.442500",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a956fb68"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter35",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T13:07:38.442500",
+      "last_seen": "2026-09-30T13:07:38.442500",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a956fb68"
     }
   ]
 }
