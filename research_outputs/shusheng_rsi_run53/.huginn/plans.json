@@ -592,6 +592,36 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_dd52871b",
+      "objective": "[DIM: COMPUTATION] The minimal width N_c(w) scales with the VC dimension of the constraint set; for generic smooth constraints, N_c(w) ∝ w (linear growth) because each new constraint requires an additional degree of freedom to satisfy independently, as shown by the rank of the Jacobian matrix increasing with w. | predict: N_c(w) = O(w) | pro: Linear growth is unambiguous and easily distinguishable from constant or logarithmic scaling; directly testable via capacity scan. | con: May not hold for structured constraints that share symmetries; could be confounded by optimization landscape effects.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Implement the core experiment to test the scaling hypothesis $N_c(w) \\propto w$. We will create a Python script that generates a system of smooth polynomial constraints (determining the solution space rigidity), trains small feedforward networks of varying widths $N$ to satisfy them, and scans $N$ to find the minimal width $N_c(w)$ achieving zero violation (max error $\\le 10^{-3}$) on a held-out set. This will produce the data needed to distinguish linear growth from constant scaling.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "/workspace/research_outputs/shusheng_rsi_run53/scalability_experiment.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-30T11:44:11.493754+00:00",
+      "confirmed_at": "2026-09-30T11:44:11.495577+00:00",
+      "completed_at": "2026-09-30T11:44:23.474909+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
