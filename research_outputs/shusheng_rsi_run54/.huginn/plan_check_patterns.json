@@ -14,5 +14,31 @@
     ],
     "mode": "workflow",
     "description": "Design a bootstrap experiment to probe solution space rigidity using small feedforward networks. Define a class of analytic constraints (e.g., polynomial or trigonometric functions) with known solutio"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "4017bd80f091",
+    "reason": "The plan fails to address the core hypothesis: measure concentration of the *network output* under random initialization. It instead focuses on the capacity N_c(w) to satisfy deterministic constraints, which is a different problem (approximation capacity vs. output variance concentration). The hypothesis is about the statistical behavior of outputs (variance decay O(1/w)), but the plan measures training error on constraints, not output variance concentration. This misalignment means the experiment cannot validate the hypothesis.",
+    "missing_steps": [
+      "Define the random initialization scheme and compute the empirical variance of network outputs on held-out points as a function of width w.",
+      "Verify that output variance decays as O(1/w) under random initialization (with proper scaling).",
+      "Relate the concentration of output measure to N_c(w) via empirical process theory (e.g., covering numbers or Rademacher complexity).",
+      "Ensure constraints are not adversarially chosen to break concentration; use random or structured constraints consistent with the hypothesis."
+    ],
+    "mode": "explore",
+    "description": "This is a pure mathematics / ML theory investigation (function space geometry / empirical process). The hypothesis asserts that output-variance concentration under random initialization yields N_c(w) "
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "4017bd80f091",
+    "reason": "The plan fundamentally misaligns with the hypothesis. The hypothesis concerns 'measure concentration on the output space' (statistical variance decay under random initialization), but the plan describes measuring 'N_c(w)' as the network capacity to satisfy deterministic constraints (training error on held-out points). This is a different problem (approximation capacity vs. output variance concentration). The plan fails to compute or verify the key quantity: output variance decay as O(1/w) under random initialization, which is the core of the hypothesis.",
+    "missing_steps": [
+      "Define random initialization scheme (Xavier/He scaling) and compute empirical variance of network outputs on held-out points as a function of width w",
+      "Verify output variance decays as O(1/w) under random initialization (with proper scaling)",
+      "Relate concentration of output measure to N_c(w) via empirical process theory (covering numbers or Rademacher complexity)",
+      "Ensure constraints are not adversarially chosen; use random or structured constraints consistent with the hypothesis"
+    ],
+    "mode": "explore",
+    "description": "This is a pure mathematics / ML theory investigation (function space geometry / empirical process). The hypothesis asserts that output-variance concentration under random initialization yields N_c(w) "
   }
 ]
