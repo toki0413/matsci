@@ -834,6 +834,70 @@
       "r_phys": 1.0,
       "iteration": 80,
       "id": "persona_use:reviewer_iter80"
+    },
+    {
+      "label": "[DIM: computation] The approximation-theoretic rigidity hypothesis.**",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T13:23:50.191898",
+      "last_seen": "2026-09-30T13:23:50.191898",
+      "mentions": 1,
+      "iteration": 85,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "If approximation-theoretic rigidity holds, N_c(w) will plateau at a small finite width (e.g., N_c ≤ 16) as w increases beyond a threshold. If the hypothesis fails (fat regime), N_c(w) will grow unboun",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: computation] The approximation-theoretic rigidity hypothesis.**"
+    },
+    {
+      "label": "plan_explore_iter85",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T13:23:50.191936",
+      "last_seen": "2026-09-30T13:23:50.191936",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter85"
+    },
+    {
+      "label": "pass_iter85",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T13:23:50.191945",
+      "last_seen": "2026-09-30T13:23:50.191945",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter85"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T13:23:50.191954",
+      "last_seen": "2026-09-30T13:23:50.191954",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: computation] The approximation-theoretic rigidity hypothesis.**",
+        "Method:plan_explore_iter85",
+        "Fact:pass_iter85"
+      ],
+      "iteration": 85,
+      "id": "he_experiment_pipeline_67ab08a7"
+    },
+    {
+      "label": "reviewer_iter85",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T13:23:50.192040",
+      "last_seen": "2026-09-30T13:23:50.192040",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "8a759c999ba78486",
+      "r_phys": 1.0,
+      "iteration": 85,
+      "id": "persona_use:reviewer_iter85"
     }
   ],
   "links": [
@@ -1187,6 +1251,33 @@
       "last_seen": "2026-09-30T13:22:35.265733",
       "mentions": 1,
       "target": "he_experiment_pipeline_6962ef86"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: computation] The approximation-theoretic rigidity hypothesis.**",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T13:23:50.191954",
+      "last_seen": "2026-09-30T13:23:50.191954",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_67ab08a7"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter85",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T13:23:50.191954",
+      "last_seen": "2026-09-30T13:23:50.191954",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_67ab08a7"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter85",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T13:23:50.191954",
+      "last_seen": "2026-09-30T13:23:50.191954",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_67ab08a7"
     }
   ]
 }
