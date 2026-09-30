@@ -1090,6 +1090,70 @@
       "r_phys": 1.0,
       "iteration": 120,
       "id": "persona_use:reviewer_iter120"
+    },
+    {
+      "label": "[DIM: STRUCTURE] The constraint set defines a low-rank algebraic variety in func",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:52:17.714563",
+      "last_seen": "2026-09-30T11:52:17.714563",
+      "mentions": 1,
+      "iteration": 125,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will plateau at a finite value (N_c ≈ 2 for circle constraints) independent of w, demonstrating the algebraic variety rank saturation effect. The Jacobian rank will be computed numerically and",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: STRUCTURE] The constraint set defines a low-rank algebraic variety in func"
+    },
+    {
+      "label": "plan_explore_iter125",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:52:17.714610",
+      "last_seen": "2026-09-30T11:52:17.714610",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter125"
+    },
+    {
+      "label": "pass_iter125",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:52:17.714620",
+      "last_seen": "2026-09-30T11:52:17.714620",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter125"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T11:52:17.714629",
+      "last_seen": "2026-09-30T11:52:17.714629",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: STRUCTURE] The constraint set defines a low-rank algebraic variety in func",
+        "Method:plan_explore_iter125",
+        "Fact:pass_iter125"
+      ],
+      "iteration": 125,
+      "id": "he_experiment_pipeline_8e7434c8"
+    },
+    {
+      "label": "reviewer_iter125",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:52:17.714707",
+      "last_seen": "2026-09-30T11:52:17.714707",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "ff1148db341abd0f",
+      "r_phys": 1.0,
+      "iteration": 125,
+      "id": "persona_use:reviewer_iter125"
     }
   ],
   "links": [
@@ -1551,6 +1615,33 @@
       "last_seen": "2026-09-30T11:50:31.823600",
       "mentions": 1,
       "target": "he_experiment_pipeline_b44e0c73"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: STRUCTURE] The constraint set defines a low-rank algebraic variety in func",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:52:17.714629",
+      "last_seen": "2026-09-30T11:52:17.714629",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8e7434c8"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter125",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:52:17.714629",
+      "last_seen": "2026-09-30T11:52:17.714629",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8e7434c8"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter125",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:52:17.714629",
+      "last_seen": "2026-09-30T11:52:17.714629",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8e7434c8"
     }
   ]
 }

@@ -742,6 +742,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_161a00c8",
+      "objective": "[DIM: COMPUTATION] The minimal network capacity $N_c(w)$ is governed by the VC-dimension (or Rademacher complexity) of the constraint set relative to the network architecture, scaling as $N_c(w) \\propto w / \\log(w)$ rather than remaining constant.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Design a corrected numerical experiment to test the hypothesis that minimal network capacity $N_c(w)$ scales as $w / \\log(w)$. Define 'w' strictly as the network hidden width (not sample count). Define a constraint set geometry using an algebraic variety (e.g., the unit circle $x^2 + y^2 = 1$) to enable VC-dimension estimation. Measure the maximum absolute error on constraint points (not holdout generalization error) to determine the threshold width where violation becomes zero. Establish a control experiment with a linear constraint set to verify the 'rigid' (constant $N_c$) baseline before testing the non-linear scaling.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-30T11:52:51.213037+00:00",
+      "confirmed_at": "2026-09-30T11:52:51.214527+00:00",
+      "completed_at": "2026-09-30T11:53:03.194848+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

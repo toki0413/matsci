@@ -137,5 +137,33 @@
     ],
     "mode": "explore",
     "description": "Explicitly define the mathematical structure of bootstrap solution space rigidity: for a function class F, define the solution space S_w = {f ∈ F : |f(x_i) - y_i| ≤ ε, i=1..w} for w analytical constra"
+  },
+  {
+    "scene_tag": "auto_constraint",
+    "hyp_key": "9cbcae3979e9",
+    "reason": "The plan is fundamentally flawed due to a critical definition error in the experimental setup. It defines 'w' as the 'constraint sample count' (number of data points), whereas the hypothesis explicitly states that 'w' represents the network hidden width. Consequently, the proposed experiment measures N_c(m) (capacity vs. sample size) rather than N_c(w) (capacity vs. width), rendering the results irrelevant to the hypothesis. Furthermore, the plan incorrectly conflates 'generalization error' on holdout data with 'constraint violation' on the specific training constraints, and fails to specify the constraint set geometry (e.g., high-dimensional manifold vs. linear constraints), which is essential for determining VC-dimension scaling.",
+    "missing_steps": [
+      "Correct the definition of 'w' to represent network hidden width, not sample count.",
+      "Explicitly define the constraint set geometry (e.g., specific analytical functions or manifolds) to enable VC-dimension analysis.",
+      "Replace holdout generalization error with direct constraint violation measurement (max absolute error on constraint points).",
+      "Establish a baseline or control experiment to verify the 'rigid' (constant N_c) vs. 'fat' (increasing N_c) behavior before testing the specific w/log(w) scaling."
+    ],
+    "mode": "explore",
+    "description": "Design and execute a numerical experiment to test the hypothesis that minimal network capacity $N_c(w)$ scales as $w / \\log(w)$ rather than remaining constant. Define the constraint set (analytical fu"
+  },
+  {
+    "scene_tag": "auto_constraint",
+    "hyp_key": "9cbcae3979e9",
+    "reason": "The plan correctly identifies 'w' as network hidden width (fixing the previous critical error), but it lacks concrete experimental details required for reproducibility: no specific network architecture (activation functions, layers), no optimization protocol (loss function, training steps, convergence criteria), no specified constraint set geometry beyond 'unit circle' (needs explicit parameterization), and no defined scan range for widths. Without these, the prediction cannot be verified numerically. Additionally, the plan does not address how to measure 'constraint violation' precisely (e.g., via residual minimization or adversarial sampling), nor how to ensure the 'zero violation' threshold (1e-3) is consistently met during training.",
+    "missing_steps": [
+      "Define exact network architecture (e.g., 1-hidden-layer ReLU net with width w)",
+      "Specify loss function and training procedure (optimizer, epochs, batch size)",
+      "Define constraint set geometry precisely (e.g., sampled points on unit circle with noise tolerance)",
+      "Establish clear criterion for 'zero violation' (max absolute error ≤ 1e-3 on holdout constraint points)",
+      "Define width scan range (e.g., w ∈ [10, 500]) and step size",
+      "Include control experiment with linear constraints (e.g., y = x) to validate constant N_c baseline"
+    ],
+    "mode": "explore",
+    "description": "Design a corrected numerical experiment to test the hypothesis that minimal network capacity $N_c(w)$ scales as $w / \\log(w)$. Define 'w' strictly as the network hidden width (not sample count). Defin"
   }
 ]
