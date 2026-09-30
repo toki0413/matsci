@@ -179,6 +179,36 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_629e1cf4",
+      "objective": "** [MEASURE] Statistical Learning / VC-Dimension Hypothesis",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Design and execute a numerical experiment to test if small feedforward networks exhibit solution space rigidity as a function of constraint count w. Generate a family of analytic constraints (e.g., polynomial equalities or trigonometric identities), train small networks with varying hidden widths, measure maximum absolute error on held-out constraint points, and determine N_c(w) — the minimum width achieving zero violation (≤1e-3) for each w. Evaluate whether N_c(w) remains small and bounded (rigid) or grows unbounded (fat). Use symbolic constraints to ensure analytical ground truth.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "/workspace/research_outputs/shusheng_rsi_run54/rigidity_experiment.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-30T13:06:50.816478+00:00",
+      "confirmed_at": "2026-09-30T13:06:50.817747+00:00",
+      "completed_at": "2026-09-30T13:07:21.849680+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
