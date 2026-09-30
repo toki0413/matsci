@@ -52,12 +52,12 @@
       "huginn",
       "value",
       "label",
-      "small",
       "constraint",
+      "small",
       "constraints",
-      "rigid",
       "width",
-      "error"
+      "rigid",
+      "constant"
     ],
     "workflow_steps": [
       {
@@ -102,9 +102,9 @@
       }
     ],
     "required_tools": [
+      "workflow",
       "coder",
-      "explore",
-      "workflow"
+      "explore"
     ],
     "source_session": "loop_5",
     "extraction_confidence": 0.9,

@@ -20,20 +20,20 @@
       "label": "plan_explore_iter10",
       "type": "Method",
       "source": "autoloop",
-      "confidence": 0.55,
+      "confidence": 0.6000000000000001,
       "created_at": "2026-09-29T12:29:33.672318",
-      "last_seen": "2026-09-30T08:40:51.805777",
-      "mentions": 2,
+      "last_seen": "2026-09-30T09:20:39.732831",
+      "mentions": 3,
       "id": "Method:plan_explore_iter10"
     },
     {
       "label": "pass_iter10",
       "type": "Fact",
       "source": "autoloop",
-      "confidence": 0.55,
+      "confidence": 0.6000000000000001,
       "created_at": "2026-09-29T12:29:33.672332",
-      "last_seen": "2026-09-30T08:40:51.805788",
-      "mentions": 2,
+      "last_seen": "2026-09-30T09:20:39.732848",
+      "mentions": 3,
       "surprise": 0,
       "id": "Fact:pass_iter10"
     },
@@ -57,8 +57,8 @@
       "source": "autoloop",
       "confidence": 0.99,
       "created_at": "2026-09-29T12:29:33.672434",
-      "last_seen": "2026-09-30T08:40:51.805873",
-      "mentions": 2,
+      "last_seen": "2026-09-30T09:20:39.732933",
+      "mentions": 3,
       "persona": "reviewer",
       "context_hash": "5879e03e3f004f8e",
       "r_phys": 1.0,
@@ -817,6 +817,35 @@
       ],
       "iteration": 45,
       "id": "he_experiment_pipeline_4441fceb"
+    },
+    {
+      "label": "[DIM: optimization] The solution space of the constraints exhibits a sharp phase",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T09:20:39.732784",
+      "last_seen": "2026-09-30T09:20:39.732784",
+      "mentions": 1,
+      "iteration": 10,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "We expect to observe a sharp transition at ρ_c ≈ 0.1-0.3 where N_c(w) jumps from a small constant value (e.g., N_c ~ 8-16) to values exceeding our search limit (e.g., N_c > 128), indicating the rigid-",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: optimization] The solution space of the constraints exhibits a sharp phase"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T09:20:39.732859",
+      "last_seen": "2026-09-30T09:20:39.732859",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: optimization] The solution space of the constraints exhibits a sharp phase",
+        "Method:plan_explore_iter10",
+        "Fact:pass_iter10"
+      ],
+      "iteration": 10,
+      "id": "he_experiment_pipeline_973f7df3"
     }
   ],
   "links": [
@@ -840,12 +869,21 @@
     },
     {
       "relation": "member_of",
-      "source": "Method:plan_explore_iter10",
       "confidence": 0.5,
       "created_at": "2026-09-30T08:40:51.805796",
       "last_seen": "2026-09-30T08:40:51.805796",
       "mentions": 1,
+      "source": "Method:plan_explore_iter10",
       "target": "he_experiment_pipeline_281aefaf"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T09:20:39.732859",
+      "last_seen": "2026-09-30T09:20:39.732859",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_973f7df3"
     },
     {
       "relation": "member_of",
@@ -858,15 +896,24 @@
     },
     {
       "relation": "member_of",
-      "source": "Fact:pass_iter10",
       "confidence": 0.5,
       "created_at": "2026-09-30T08:40:51.805796",
       "last_seen": "2026-09-30T08:40:51.805796",
       "mentions": 1,
+      "source": "Fact:pass_iter10",
       "target": "he_experiment_pipeline_281aefaf"
     },
     {
       "relation": "member_of",
+      "source": "Fact:pass_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T09:20:39.732859",
+      "last_seen": "2026-09-30T09:20:39.732859",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_973f7df3"
+    },
+    {
+      "relation": "member_of",
       "confidence": 0.5,
       "created_at": "2026-09-29T12:30:20.782023",
       "last_seen": "2026-09-29T12:30:20.782023",
@@ -894,11 +941,11 @@
     },
     {
       "relation": "member_of",
-      "source": "Method:plan_explore_iter15",
       "confidence": 0.5,
       "created_at": "2026-09-30T08:42:10.244669",
       "last_seen": "2026-09-30T08:42:10.244669",
       "mentions": 1,
+      "source": "Method:plan_explore_iter15",
       "target": "he_experiment_pipeline_4f0db04"
     },
     {
@@ -912,11 +959,11 @@
     },
     {
       "relation": "member_of",
-      "source": "Fact:pass_iter15",
       "confidence": 0.5,
       "created_at": "2026-09-30T08:42:10.244669",
       "last_seen": "2026-09-30T08:42:10.244669",
       "mentions": 1,
+      "source": "Fact:pass_iter15",
       "target": "he_experiment_pipeline_4f0db04"
     },
     {
@@ -930,11 +977,11 @@
     },
     {
       "relation": "member_of",
-      "source": "Method:plan_explore_iter20",
       "confidence": 0.5,
       "created_at": "2026-09-30T08:43:10.864417",
       "last_seen": "2026-09-30T08:43:10.864417",
       "mentions": 1,
+      "source": "Method:plan_explore_iter20",
       "target": "he_experiment_pipeline_dc431708"
     },
     {
@@ -948,11 +995,11 @@
     },
     {
       "relation": "member_of",
-      "source": "Fact:pass_iter20",
       "confidence": 0.5,
       "created_at": "2026-09-30T08:43:10.864417",
       "last_seen": "2026-09-30T08:43:10.864417",
       "mentions": 1,
+      "source": "Fact:pass_iter20",
       "target": "he_experiment_pipeline_dc431708"
     },
     {
@@ -975,11 +1022,11 @@
     },
     {
       "relation": "member_of",
-      "source": "Method:plan_explore_iter25",
       "confidence": 0.5,
       "created_at": "2026-09-30T08:45:13.747867",
       "last_seen": "2026-09-30T08:45:13.747867",
       "mentions": 1,
+      "source": "Method:plan_explore_iter25",
       "target": "he_experiment_pipeline_cb4e78c1"
     },
     {
@@ -993,11 +1040,11 @@
     },
     {
       "relation": "member_of",
-      "source": "Fact:pass_iter25",
       "confidence": 0.5,
       "created_at": "2026-09-30T08:45:13.747867",
       "last_seen": "2026-09-30T08:45:13.747867",
       "mentions": 1,
+      "source": "Fact:pass_iter25",
       "target": "he_experiment_pipeline_cb4e78c1"
     },
     {
@@ -1020,11 +1067,11 @@
     },
     {
       "relation": "member_of",
-      "source": "Method:plan_explore_iter30",
       "confidence": 0.5,
       "created_at": "2026-09-30T08:48:20.036668",
       "last_seen": "2026-09-30T08:48:20.036668",
       "mentions": 1,
+      "source": "Method:plan_explore_iter30",
       "target": "he_experiment_pipeline_7cd63bd2"
     },
     {
@@ -1038,11 +1085,11 @@
     },
     {
       "relation": "member_of",
-      "source": "Fact:pass_iter30",
       "confidence": 0.5,
       "created_at": "2026-09-30T08:48:20.036668",
       "last_seen": "2026-09-30T08:48:20.036668",
       "mentions": 1,
+      "source": "Fact:pass_iter30",
       "target": "he_experiment_pipeline_7cd63bd2"
     },
     {
@@ -1065,11 +1112,11 @@
     },
     {
       "relation": "member_of",
-      "source": "Method:plan_explore_iter35",
       "confidence": 0.5,
       "created_at": "2026-09-30T08:49:05.164301",
       "last_seen": "2026-09-30T08:49:05.164301",
       "mentions": 1,
+      "source": "Method:plan_explore_iter35",
       "target": "he_experiment_pipeline_dc08dd07"
     },
     {
@@ -1083,11 +1130,11 @@
     },
     {
       "relation": "member_of",
-      "source": "Fact:pass_iter35",
       "confidence": 0.5,
       "created_at": "2026-09-30T08:49:05.164301",
       "last_seen": "2026-09-30T08:49:05.164301",
       "mentions": 1,
+      "source": "Fact:pass_iter35",
       "target": "he_experiment_pipeline_dc08dd07"
     },
     {
@@ -1119,11 +1166,11 @@
     },
     {
       "relation": "member_of",
-      "source": "Method:plan_explore_iter40",
       "confidence": 0.5,
       "created_at": "2026-09-30T08:49:44.835524",
       "last_seen": "2026-09-30T08:49:44.835524",
       "mentions": 1,
+      "source": "Method:plan_explore_iter40",
       "target": "he_experiment_pipeline_e43cfe17"
     },
     {
@@ -1137,11 +1184,11 @@
     },
     {
       "relation": "member_of",
-      "source": "Fact:pass_iter40",
       "confidence": 0.5,
       "created_at": "2026-09-30T08:49:44.835524",
       "last_seen": "2026-09-30T08:49:44.835524",
       "mentions": 1,
+      "source": "Fact:pass_iter40",
       "target": "he_experiment_pipeline_e43cfe17"
     },
     {
@@ -1155,11 +1202,11 @@
     },
     {
       "relation": "member_of",
-      "source": "Method:plan_explore_iter45",
       "confidence": 0.5,
       "created_at": "2026-09-30T08:50:30.965721",
       "last_seen": "2026-09-30T08:50:30.965721",
       "mentions": 1,
+      "source": "Method:plan_explore_iter45",
       "target": "he_experiment_pipeline_4441fceb"
     },
     {
@@ -1173,11 +1220,11 @@
     },
     {
       "relation": "member_of",
-      "source": "Fact:pass_iter45",
       "confidence": 0.5,
       "created_at": "2026-09-30T08:50:30.965721",
       "last_seen": "2026-09-30T08:50:30.965721",
       "mentions": 1,
+      "source": "Fact:pass_iter45",
       "target": "he_experiment_pipeline_4441fceb"
     },
     {
@@ -1209,102 +1256,111 @@
     },
     {
       "relation": "member_of",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T08:39:05.820603",
+      "last_seen": "2026-09-30T08:39:05.820603",
+      "mentions": 1,
       "source": "Fact:pass_iter5",
-      "confidence": 0.5,
-      "created_at": "2026-09-30T08:39:05.820603",
-      "last_seen": "2026-09-30T08:39:05.820603",
-      "mentions": 1,
       "target": "he_experiment_pipeline_97362121"
     },
     {
       "relation": "member_of",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T08:39:05.820603",
+      "last_seen": "2026-09-30T08:39:05.820603",
+      "mentions": 1,
       "source": "experiment:` one.",
-      "confidence": 0.5,
-      "created_at": "2026-09-30T08:39:05.820603",
-      "last_seen": "2026-09-30T08:39:05.820603",
-      "mentions": 1,
       "target": "he_experiment_pipeline_97362121"
     },
     {
       "relation": "member_of",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T08:39:05.820603",
+      "last_seen": "2026-09-30T08:39:05.820603",
+      "mentions": 1,
       "source": "Method:plan_coder_iter5",
-      "confidence": 0.5,
-      "created_at": "2026-09-30T08:39:05.820603",
-      "last_seen": "2026-09-30T08:39:05.820603",
-      "mentions": 1,
       "target": "he_experiment_pipeline_97362121"
     },
     {
       "relation": "member_of",
-      "source": "experiment:'.\" It also mentions \"LUCID review (mandatory after generating hypothesis)\". Usu",
       "confidence": 0.5,
       "created_at": "2026-09-30T08:40:51.805796",
       "last_seen": "2026-09-30T08:40:51.805796",
       "mentions": 1,
+      "source": "experiment:'.\" It also mentions \"LUCID review (mandatory after generating hypothesis)\". Usu",
       "target": "he_experiment_pipeline_281aefaf"
     },
     {
       "relation": "member_of",
-      "source": "experiment:[DIM: structure] The minimal width N_c(w) required for zero violation exhibits a",
       "confidence": 0.5,
       "created_at": "2026-09-30T08:42:10.244669",
       "last_seen": "2026-09-30T08:42:10.244669",
       "mentions": 1,
+      "source": "experiment:[DIM: structure] The minimal width N_c(w) required for zero violation exhibits a",
       "target": "he_experiment_pipeline_4f0db04"
     },
     {
       "relation": "member_of",
-      "source": "experiment:[DIM: structure] The constraint system is constructed from a high-degree polynom",
       "confidence": 0.5,
       "created_at": "2026-09-30T08:43:10.864417",
       "last_seen": "2026-09-30T08:43:10.864417",
       "mentions": 1,
+      "source": "experiment:[DIM: structure] The constraint system is constructed from a high-degree polynom",
       "target": "he_experiment_pipeline_dc431708"
     },
     {
       "relation": "member_of",
-      "source": "experiment:'\". I will choose the one that offers a clear, non-trivial scaling law to test a",
       "confidence": 0.5,
       "created_at": "2026-09-30T08:45:13.747867",
       "last_seen": "2026-09-30T08:45:13.747867",
       "mentions": 1,
+      "source": "experiment:'\". I will choose the one that offers a clear, non-trivial scaling law to test a",
       "target": "he_experiment_pipeline_cb4e78c1"
     },
     {
       "relation": "member_of",
-      "source": "experiment:'.\"",
       "confidence": 0.5,
       "created_at": "2026-09-30T08:48:20.036668",
       "last_seen": "2026-09-30T08:48:20.036668",
       "mentions": 1,
+      "source": "experiment:'.\"",
       "target": "he_experiment_pipeline_7cd63bd2"
     },
     {
       "relation": "member_of",
-      "source": "experiment:** [OPT: optimization]",
       "confidence": 0.5,
       "created_at": "2026-09-30T08:49:05.164301",
       "last_seen": "2026-09-30T08:49:05.164301",
       "mentions": 1,
+      "source": "experiment:** [OPT: optimization]",
       "target": "he_experiment_pipeline_dc08dd07"
     },
     {
       "relation": "member_of",
-      "source": "experiment:[DIM: geometry] The solution space of the bootstrap constraints forms a low-dime",
       "confidence": 0.5,
       "created_at": "2026-09-30T08:49:44.835524",
       "last_seen": "2026-09-30T08:49:44.835524",
       "mentions": 1,
+      "source": "experiment:[DIM: geometry] The solution space of the bootstrap constraints forms a low-dime",
       "target": "he_experiment_pipeline_e43cfe17"
     },
     {
       "relation": "member_of",
-      "source": "experiment:** [DIM: computation] The minimal width $N_c(w)$ required for zero violation sca",
       "confidence": 0.5,
       "created_at": "2026-09-30T08:50:30.965721",
       "last_seen": "2026-09-30T08:50:30.965721",
       "mentions": 1,
+      "source": "experiment:** [DIM: computation] The minimal width $N_c(w)$ required for zero violation sca",
       "target": "he_experiment_pipeline_4441fceb"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: optimization] The solution space of the constraints exhibits a sharp phase",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T09:20:39.732859",
+      "last_seen": "2026-09-30T09:20:39.732859",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_973f7df3"
     }
   ]
 }

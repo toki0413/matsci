@@ -710,6 +710,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_70f73c5b",
+      "objective": "\" the most testable+novel one.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Design a numerical experiment to test the rigidity of bootstrap solution spaces in small feedforward networks. We will define N_c(w) as the number of constraints w that can be satisfied before capacity collapse, sweep w from 1 to N_param, and measure the transition point via zero-violation rate on held-out samples. The experiment will use ReLU networks with 2 hidden layers (width=32), trained on synthetic constraint sets (linear and quadratic), and quantify N_c(w) via binary search per sample. We will run 50 independent trials per w and report mean ± std for the critical density ρ_c = N_c/N_param.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-30T09:22:21.394651+00:00",
+      "confirmed_at": "2026-09-30T09:22:21.396167+00:00",
+      "completed_at": "2026-09-30T09:22:35.058067+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

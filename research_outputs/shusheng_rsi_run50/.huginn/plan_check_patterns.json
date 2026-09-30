@@ -230,5 +230,34 @@
     ],
     "mode": "explore",
     "description": "Design a numerical experiment to test the hypothesis that small feedforward networks exhibit \"rigid\" solution space behavior—where N_c(w) (minimum hidden width achieving zero violation on w held-out c"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "999dc69d9c92",
+    "reason": "该 plan 仅停留在理论构思层面（生成假设、数学形式化、LUCID review），未包含任何可执行的代码实现、数值实验或数据生成步骤。根据任务要求‘所有结论必须来自真实运行的可复现数值实验’，当前计划缺乏验证 hypothesis 的核心环节——实际训练小前馈网络并测量 N_c(w)。此外，未说明如何设计实验族、样本、扫描策略或脚本，导致无法产出数值结果。这违反了‘必须通过真实运行得出结论’的硬性验收标准。",
+    "missing_steps": [
+      "设计具体的前馈网络架构与训练流程",
+      "定义约束函数与留出样本集 w",
+      "实现 N_c(w) 的扫描算法（宽度搜索 + 零违规判定）",
+      "执行数值实验并记录误差与容量数据",
+      "分析 N_c(w) 趋势以判断刚性/胖性"
+    ],
+    "mode": "explore",
+    "description": "Generate three divergent candidate hypotheses testing whether small feedforward networks can probe bootstrap solution-space rigidity (N_c(w) vs. w). Select the most testable+novel one, state its mathe"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "999dc69d9c92",
+    "reason": "The plan describes a high-level experimental design but lacks executable code, concrete implementation details, and specific values for critical parameters (e.g., hidden layer width range, constraint definitions, training hyperparameters). It fails to address the 'historical failure' of being purely theoretical/conceptual without actual numerical experiments or data generation steps. The plan states what to do ('Design a numerical experiment') but does not provide the actual code or methodology to execute it.",
+    "missing_steps": [
+      "Provide executable Python code defining the neural network architecture (specific width range, optimizer, loss function)",
+      "Define exact constraint generation functions (linear/quadratic forms) and held-out sample set creation",
+      "Implement the binary search algorithm for N_c(w) with zero-violation metric (max absolute error ≤ 1e-3)",
+      "Specify training hyperparameters (epochs, batch size, learning rate) and convergence criteria",
+      "Include actual numerical results or a script that produces them (currently only describes expected outcomes)",
+      "Address how to handle cases where N_c is unreachable (fat regime) per the binary rigid/fat classification rule"
+    ],
+    "mode": "explore",
+    "description": "Design a numerical experiment to test the rigidity of bootstrap solution spaces in small feedforward networks. We will define N_c(w) as the number of constraints w that can be satisfied before capacit"
   }
 ]
