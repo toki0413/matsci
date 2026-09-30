@@ -3522,55 +3522,74 @@ Respond JSON only:
                     except Exception:  # 防御: 意外早停失败忽略
                         logger.debug("v10 F4 surprise early-stop failed (non-fatal)", exc_info=True)
 
-                # v10-F5: 执行收敛 → 结题停止 (检测器→执行器的后半).
+                # v10-F5: 执行收敛 — 检测器→执行器的后半. **已降级为提示 + trace**
+                # (控制面审计 A1), 不再自动终止 run.
                 # engine_reflect 每轮为执行结果(objectives+summary)算指纹, 维护最近
-                # 6 个的窗口; 窗口填满且去重后 <=2 种 → 循环在有限几种等价实验间
-                # 打转, 已无新信息 (run47 的"无收敛出口"空转正是这种).
-                # 与 F4 surprise 的本质区别: surprise 是**启发式**收敛(可能只是噪声小),
-                # 故长程模式让位给挂钟; 而执行指纹收敛是**硬证据**(字面重复同一实验),
-                # 继续跑纯属浪费 —— 无论长程与否都应结题.
-                # v11 修正: 原用 _metacog_check_completion 做否决是错的 —— 该审计在
-                #   equivalence_traps_remaining 非空/努力下限未过/无 UNEXPLORED 自白时
-                #   必然 is_complete=False → 返回"阻断(别停)". 而"字面重复同一实验"的
-                #   空转恰是这些条件高发场景, 于是出口**永不触发** (run47/49 的
-                #   可终止出口=0). 执行指纹收敛是硬证据, 故改为**硬终止**, 完成审计
-                #   仅作 advisory 记录, 不再能否决.
+                # 6 个的窗口; 窗口填满且去重后 <=2 种 → 循环可能在有限几种等价实验间
+                # 打转 (run47 的空转正是这种).
+                # 为何降级: 该出口在 run50/52 两次**误杀整轮实验** (903s/905s of 3600s),
+                #   根因不是"书生没进展", 而是 A6 预算门跳过 execute → 循环复用旧结果
+                #   → 假收敛. 且"有没有进展/该不该收结"属**科学判断**, 应下沉给书生,
+                #   框架只提示. 硬终止只保留挂钟耗尽与目标达成两个出口 (见
+                #   docs/architecture.md「控制面预算」). 步数上限仍是兜底.
                 if not state.should_stop and getattr(self, "_exec_converged", False):
                     _fp_hist = getattr(self, "_exec_fp_history", None)
                     _uniq = len(set(_fp_hist)) if _fp_hist else 0
                     _blk, _why = self._metacog_check_completion()
-                    if _blk:
-                        logger.info("v10 exec-convergence stop (advisory audit: %s)", _why)
                     logger.warning(
                         "v10 exec convergence (unique fingerprints=%d over window, "
-                        "no new info) → conclude+stop",
+                        "no new info) → advisory only (hint, no stop)",
                         _uniq,
                     )
-                    state.should_stop = True
+                    self._speculator_hint = (
+                        (getattr(self, "_speculator_hint", "") or "")
+                        + f"\n[执行收敛·提示] 最近 6 轮执行指纹只出现 {_uniq} 种结果: "
+                        "你在有限几种等价实验间打转, 已无新信息. 请改变实验族/参数, "
+                        "或直接据此给出最终数值结论."
+                    )
+                    self._emit_campaign(
+                        "campaign.control_trace",
+                        {
+                            "name": "exec_convergence",
+                            "iteration": state.iteration,
+                            "evidence": f"unique_fingerprints={_uniq}",
+                            "action": "advisory_hint",
+                            "advisory": _why if _blk else "",
+                        },
+                    )
 
-                # v11: 进展不变量 → 唯一终止出口 (假设层).
-                # 把散装守卫收敛成"无进展 ⇒ 必须终止"的单一控制流: 换名 soft 阶梯
-                # (streak 3/5 → hunt/重定向) 会自复位形成闭环 (run47/49), 但
-                # _rename_debt 是**单调**的, 只在真进展时归零, 且唯一消费者是本出口.
-                # 关键: **不**用 _metacog_check_completion 做否决. 该审计在
-                #   equivalence_traps_remaining 非空时必然 is_complete=False → 返回
-                #   "阻断"(别停). 而换名债务正是"存在等价性陷阱"的同义证据 —— 用它
-                #   否决本出口在逻辑上自相矛盾, 出口永不触发. 无进展是**硬证据**,
-                #   继续跑纯属浪费, 故这里只把审计理由记为 advisory, 仍硬性终止.
+                # v11: 进展不变量 (假设层). **已降级为提示 + trace**
+                # (控制面审计 A2), 不再自动终止 run.
+                # _rename_debt 单调, 只在真进展时归零 —— 连续换名归约 = 方法层停滞.
+                # 为何降级: 该出口在 run51 (607s of 3600s) 误杀整轮; 且换名判定本身
+                #   是 LLM 语义审计的**下界估计**, 用它硬性结题违背"证据门才该硬"
+                #   的边界. 停滞是科学判断, 交给书生; 框架只提示 (软阶梯 streak 3/5
+                #   已在 hypothesis_loop 里做重定向, 这里补一条显式提示).
                 if not state.should_stop:
                     _debt = int(getattr(self, "_rename_debt", 0) or 0)
                     if _debt >= _RENAME_DEBT_LIMIT:
                         _blk, _why = self._metacog_check_completion()
-                        if _blk:
-                            logger.info(
-                                "v11 rename-debt stop (advisory audit: %s)", _why,
-                            )
                         logger.warning(
                             "v11 rename debt=%d (monotone, reset-proof) over limit=%d "
-                            "→ conclude+stop",
+                            "→ advisory only (hint, no stop)",
                             _debt, _RENAME_DEBT_LIMIT,
                         )
-                        state.should_stop = True
+                        self._speculator_hint = (
+                            (getattr(self, "_speculator_hint", "") or "")
+                            + f"\n[换名债务·提示] 已连续 {_debt} 轮被判为换名归约"
+                            "(无实质进展): 必须换方法族, 并给出**可与旧机制区分的"
+                            "数值预测** (如同一被测量随参数的趋势), 仅换术语不算进展."
+                        )
+                        self._emit_campaign(
+                            "campaign.control_trace",
+                            {
+                                "name": "rename_debt",
+                                "iteration": state.iteration,
+                                "evidence": f"debt={_debt} limit={_RENAME_DEBT_LIMIT}",
+                                "action": "advisory_hint",
+                                "advisory": _why if _blk else "",
+                            },
+                        )
 
                 # v10-F3: darwin_ratchet — 对齐 run() L2003-2004.
                 # 内部判 stagnation >= 5 设 self._should_stop; 这里同步到 state.

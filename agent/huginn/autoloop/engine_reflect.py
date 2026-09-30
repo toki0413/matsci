@@ -1286,11 +1286,13 @@ class EngineReflect:
           ② streak 越过 _REPEAT_HARD_STREAK → 置 `_force_exec_variation`, 由
              engine_act._build_codelab_focus 把强制变异令注入**实验作者**提示
              (软提示进不了作者提示, run50 实测提示零效果);
-          ③ 最近 6 轮指纹去重后 ≤2 种 → `_exec_converged` (供 cognitive_loop 结题).
+          ③ 最近 6 轮指纹去重后 ≤2 种 → `_exec_converged` (供 cognitive_loop
+             写提示 + trace; **不**终止 run —— 控制面审计 A1 已降级).
 
         只在 execute **真产出新对象**时记账: 复用上一轮同一个 execution_result
         (= 本轮压根没跑实验, 如 budget/gate 跳过 execute) 时若照旧压指纹, 同一
-        指纹会反复塞满窗口 → 假收敛 → 提前结题 (run52 实测 904s/3600s 就 conclude+stop).
+        指纹会反复塞满窗口 → 假收敛 (run52 实测 904s/3600s 就据此 conclude+stop;
+        该终止出口现已按控制面审计 A1 降级为提示, 但窗口仍须诚实, 故本检查保留).
         """
         try:
             # 身份判据: engine 每轮 execute 会新建 result dict; 同一个对象 = 没跑新一轮.
