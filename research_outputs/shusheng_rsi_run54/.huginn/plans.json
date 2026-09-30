@@ -605,6 +605,37 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_92721f74",
+      "objective": "** **[STRUCTURE]** <statement> The analytical constraints are generated from a latent low-dimensional manifold $\\mathcal{M} \\subset \\mathbb{R}^d$ with intrinsic dimension $k$. The minimal network width $N_c(w)$ required to achieve zero-violation ($\\le 10^{-3}$) on out-of-sample constraints saturates at a finite value once $w$ exceeds the covering number of $\\mathcal{M}$, demonstrating solution space rigidity. | predict: $N_c(w)$ remains constant (flat) for $w > w_{crit}$ (e.g., $w \\in [10, 100]$) | pro: Directly tests the core \"rigidity vs. fatness\" dichotomy defined in the prompt; most novel compared to standard linear scaling expectations. con: Requires careful selection of constraint generation to ensure low-dimensionality; if constraints are high-dimensional, this hypothesis is trivially false.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "We will design a numerical experiment to test the hypothesis that solution space rigidity causes the minimal network width N_c(w) to saturate for w > w_crit. We will generate low-dimensional analytic constraints (polynomial evaluations on a latent manifold), train small feedforward networks of varying widths, and measure the zero-violation threshold on out-of-sample constraints. The code will implement the constraint generator, network trainer, and N_c(w) scorer, producing a plot of N_c vs. w and the final saturation value. This will directly test the rigidity vs. fatness dichotomy as defined in the hypothesis.",
+          "tool": "coder",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "experiments/rigidity_scan.py",
+            "experiments/rigidity_analysis.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-30T13:28:30.009196+00:00",
+      "confirmed_at": "2026-09-30T13:28:30.010899+00:00",
+      "completed_at": "2026-09-30T13:33:26.180900+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "coder",
+        "source": "autoloop"
+      }
     }
   ]
 }
