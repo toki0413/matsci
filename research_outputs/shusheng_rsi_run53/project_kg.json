@@ -962,6 +962,70 @@
       "r_phys": 1.0,
       "iteration": 110,
       "id": "persona_use:reviewer_iter110"
+    },
+    {
+      "label": "'. ... State the mathematics explicitly ... before proposing numerical experimen",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:47:50.432793",
+      "last_seen": "2026-09-30T11:47:50.432793",
+      "mentions": 1,
+      "iteration": 115,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Explicitly define the mathematical structure of bootstrap solution space rigidity: for a function class F, define the solution space S_w = {f ∈ F : |f(x_i) - y_i| ≤ ε, i=1..w} for w analytical constra",
+      "persona": "reviewer",
+      "id": "experiment:'. ... State the mathematics explicitly ... before proposing numerical experimen"
+    },
+    {
+      "label": "plan_explore_iter115",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:47:50.432834",
+      "last_seen": "2026-09-30T11:47:50.432834",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter115"
+    },
+    {
+      "label": "pass_iter115",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:47:50.432844",
+      "last_seen": "2026-09-30T11:47:50.432844",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter115"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T11:47:50.432853",
+      "last_seen": "2026-09-30T11:47:50.432853",
+      "mentions": 1,
+      "members": [
+        "experiment:'. ... State the mathematics explicitly ... before proposing numerical experimen",
+        "Method:plan_explore_iter115",
+        "Fact:pass_iter115"
+      ],
+      "iteration": 115,
+      "id": "he_experiment_pipeline_f5de3357"
+    },
+    {
+      "label": "reviewer_iter115",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:47:50.432933",
+      "last_seen": "2026-09-30T11:47:50.432933",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "0ba67ae47221921a",
+      "r_phys": 1.0,
+      "iteration": 115,
+      "id": "persona_use:reviewer_iter115"
     }
   ],
   "links": [
@@ -1369,6 +1433,33 @@
       "last_seen": "2026-09-30T11:45:35.607584",
       "mentions": 1,
       "target": "he_experiment_pipeline_6dde8135"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:'. ... State the mathematics explicitly ... before proposing numerical experimen",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:47:50.432853",
+      "last_seen": "2026-09-30T11:47:50.432853",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_f5de3357"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter115",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:47:50.432853",
+      "last_seen": "2026-09-30T11:47:50.432853",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_f5de3357"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter115",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:47:50.432853",
+      "last_seen": "2026-09-30T11:47:50.432853",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_f5de3357"
     }
   ]
 }

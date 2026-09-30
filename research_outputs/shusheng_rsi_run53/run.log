@@ -609,3 +609,8 @@ plan_check failed (tier=light, scene=auto_constraint, max_refines=1): The plan e
 [code-lab-run] res_none=True success=None nobj=0 reason='执行异常: IndexError: too many indices for array: array is 1-dimensional, but 2 were indexed'
 [code-lab-author] raw_len=2307 extracted_len=2292 prompt_len=6974
 [code-lab-run] res_none=False success=True nobj=2 reason=''
+[validate] mode='code_lab' success=True nobj=2 cf=False lab=True
+metacog: 假设可能为换名归约 (trap=, target=已有假设: ` Statement: Minimal width is determined by the covering number of the constraint manifold. `predict: N_c(w) = C (constant) for rigid; N_c(w) = beta * w^(1/d) for fat.`): **[GEOMETRY: Manifold Constraint]** - This hypothesis is the most novel because it connects differen
+[exec-route] mode='explore' desc[:80]='[auto-routed: surprise=1.00] Design and execute a numerical experiment to test t' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=True
+[code-lab-author] raw_len=1838 extracted_len=1823 prompt_len=4725
+[code-lab-run] res_none=False success=True nobj=3 reason=''

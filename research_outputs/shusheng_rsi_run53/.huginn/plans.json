@@ -681,6 +681,37 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_af66968f",
+      "objective": "**[GEOMETRY: Manifold Constraint]** - This hypothesis is the most novel because it connects differential geometry concepts (manifolds, intrinsic dimension) to neural network capacity, which is not commonly explored in the context of bootstrap solution space rigidity. It's also highly testable because we can generate constraints that lie on a known manifold (e.g., points on a circle or sphere in input space) and measure N_c(w). The prediction (constant N_c = d) is clear and would provide strong evidence for geometric rigidity if confirmed.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Design and execute a numerical experiment to test the geometric manifold constraint hypothesis on neural network capacity rigidity. Generate synthetic constraints lying on a known manifold (e.g., points on a circle or sphere in input space), then systematically scan network hidden layer widths to measure N_c(w) — the minimum capacity achieving zero violation (max abs error ≤ 1e³) on held-out constraint points. Compare N_c against theoretical prediction N_c = d (intrinsic dimension). Use small feedforward networks only; no physical system analogies. Include convergence checks on training error, validation error plateau, and width scan resolution. Ensure all reported N_c values are finite numbers.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "src/manifold_capacity_scan.py",
+            "tests/test_manifold_capacity.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-30T11:49:07.375254+00:00",
+      "confirmed_at": "2026-09-30T11:49:07.376940+00:00",
+      "completed_at": "2026-09-30T11:50:14.849206+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

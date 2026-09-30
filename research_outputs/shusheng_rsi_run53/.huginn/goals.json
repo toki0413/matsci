@@ -41,12 +41,15 @@
         "[Feynman known_unknown] I don’t fully grasp how “generic smooth constraints” are defined mathematically — what properties must they have to guarantee linear scaling? Is there a precise condition on the Jacobian beyond rank increase?",
         "[Feynman unknown_unknown] I never considered whether non-smooth or degenerate constraints (e.g., sharp corners, redundant conditions) would break the linear scaling — the current validation only covers smooth cases, so I haven’t thought about edge cases where constraints interact unexpectedly.",
         "[Feynman known_unknown] I don’t understand why the generative verification score was 0.0 despite the test passing—was it a bug in the evaluation tool, or does it reflect a deeper issue with how we’re validating hypotheses?",
-        "[Feynman unknown_unknown] I never considered that “no tests ran” might be a sign of a misconfigured pipeline rather than an intentional design choice until now."
+        "[Feynman unknown_unknown] I never considered that “no tests ran” might be a sign of a misconfigured pipeline rather than an intentional design choice until now.",
+        "[Feynman known_unknown] Why did the model choose “64” so repeatedly — was it sampling from a training bias, or is there a hidden structural reason tied to the problem space?",
+        "[Feynman unknown_unknown] I didn’t consider that the system might interpret “state the mathematics explicitly” as merely generating numeric patterns rather than symbolic expressions or equations.",
+        "[Feynman known_unknown] What does the trailing float sequence represent? Is it random initialization, gradient noise, or corrupted output from a failed computation step?"
       ],
-      "iteration": 113,
+      "iteration": 118,
       "status": "active",
       "created_at": "2026-09-30T10:55:01.825668+00:00",
-      "updated_at": "2026-09-30T11:47:06.673564+00:00",
+      "updated_at": "2026-09-30T11:49:07.380595+00:00",
       "session_id": "",
       "metadata": {},
       "unknowns": [
@@ -1273,9 +1276,73 @@
           "discovered_at": "2026-09-30T11:45:38.918347+00:00",
           "resolved_at": null,
           "iteration": 110
+        },
+        {
+          "id": "unk_95c87d56",
+          "text": "Defining \"generalization behavior\" as a probe for solution space rigidity may conflate interpolation capability with geometric rigidity; a network might achieve zero violation on holdout points due to overfitting or lucky initialization rather than reflecting an intrinsically rigid solution manifold.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-30T11:47:44.606859+00:00",
+          "resolved_at": null,
+          "iteration": 115
+        },
+        {
+          "id": "unk_959159c5",
+          "text": "The optimization landscape of small feedforward networks is highly non-convent and sensitive to initialization, weight scaling, and learning rate schedules; achieving “zero violation” may depend more on solver success than on the intrinsic capacity N_c(w), leading to false negatives in rigidity assessment.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-30T11:47:44.609444+00:00",
+          "resolved_at": null,
+          "iteration": 115
+        },
+        {
+          "id": "unk_df6f9097",
+          "text": "For very small w (e.g., w ≤ 2), even narrow networks can trivially interpolate, making N_c(w) artificially low and potentially misclassifying a fat solution space as rigid—this violates the assumption that N_c(w) reflects structural constraints rather than underdetermined fitting.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-30T11:47:44.611298+00:00",
+          "resolved_at": null,
+          "iteration": 115
+        },
+        {
+          "id": "unk_4d9b6750",
+          "text": "No ground-truth analytical solution or benchmark dataset is specified for the \"analytic constraints\"; without a known target function or constraint system, it’s impossible to validate whether observed N_c(w) values reflect true rigidity or artifacts of constraint construction.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-30T11:47:44.613247+00:00",
+          "resolved_at": null,
+          "iteration": 115
+        },
+        {
+          "id": "unk_1094cddc",
+          "text": "The definition of N_c(w) as minimal hidden width achieving zero error ignores depth, activation function, and weight initialization—all of which affect representational power independently of width; thus, N_c(w) may not isolate width-driven capacity effects needed to probe rigidity.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-30T11:47:44.614985+00:00",
+          "resolved_at": null,
+          "iteration": 115
+        },
+        {
+          "id": "unk_6d20e330",
+          "text": "Why did the model choose “64” so repeatedly — was it sampling from a training bias, or is there a hidden structural reason tied to the problem space?",
+          "type": "known_unknown",
+          "discovered_at": "2026-09-30T11:47:54.625136+00:00",
+          "resolved_at": null,
+          "iteration": 115
+        },
+        {
+          "id": "unk_68162929",
+          "text": "I didn’t consider that the system might interpret “state the mathematics explicitly” as merely generating numeric patterns rather than symbolic expressions or equations.",
+          "type": "unknown_unknown",
+          "discovered_at": "2026-09-30T11:47:54.629433+00:00",
+          "resolved_at": null,
+          "iteration": 115
+        },
+        {
+          "id": "unk_fd46c724",
+          "text": "What does the trailing float sequence represent? Is it random initialization, gradient noise, or corrupted output from a failed computation step?",
+          "type": "known_unknown",
+          "discovered_at": "2026-09-30T11:47:54.633363+00:00",
+          "resolved_at": null,
+          "iteration": 115
         }
       ],
-      "unknowns_discovered": 153,
+      "unknowns_discovered": 161,
       "unknowns_resolved": 0,
       "objective": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【唯一硬性口径（不可更改，其余全由你决定）】\n- 零违规 = 留出约束点上的最大绝对误差 ≤ 1e-3。\n- 刚性 = 扫描范围内存在较小的有限 N_c（且 N_c 不随 w 增长）；胖 = 扫描上限内任何宽度都达不到零违规（N_c 不可达）。判别是二值的。\n- 所有报告数值必须是有限数（禁止 inf/nan/None）。\n- 研究对象只能是小型前馈网络本身。严禁把本命题替换或“换名归约”为材料/化学/玻璃/合金/离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【实验的族、样本、扫描、脚本如何设计，以及如何证明“刚性可达”，由你自己决定并给出理由。】\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
       "success_criteria": [],
