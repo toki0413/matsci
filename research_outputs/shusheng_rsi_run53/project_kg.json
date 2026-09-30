@@ -66,6 +66,70 @@
       "r_phys": 1.0,
       "iteration": 10,
       "id": "persona_use:reviewer_iter10"
+    },
+    {
+      "label": "[DIM: optimization] The minimal network capacity N_c(w) follows a phase-transiti",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:03:41.346071",
+      "last_seen": "2026-09-30T11:03:41.346071",
+      "mentions": 1,
+      "iteration": 20,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The experiment will reveal a critical constraint density w_c below which N_c(w) remains constant (rigid regime, e.g., N_c ≈ 8-16) and above which N_c(w) grows rapidly (fat regime). The transition will",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: optimization] The minimal network capacity N_c(w) follows a phase-transiti"
+    },
+    {
+      "label": "plan_coder_iter20",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:03:41.346112",
+      "last_seen": "2026-09-30T11:03:41.346112",
+      "mentions": 1,
+      "id": "Method:plan_coder_iter20"
+    },
+    {
+      "label": "pass_iter20",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:03:41.346121",
+      "last_seen": "2026-09-30T11:03:41.346121",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter20"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T11:03:41.346131",
+      "last_seen": "2026-09-30T11:03:41.346131",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: optimization] The minimal network capacity N_c(w) follows a phase-transiti",
+        "Method:plan_coder_iter20",
+        "Fact:pass_iter20"
+      ],
+      "iteration": 20,
+      "id": "he_experiment_pipeline_ff2c1c"
+    },
+    {
+      "label": "reviewer_iter20",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:03:41.346203",
+      "last_seen": "2026-09-30T11:03:41.346203",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "ef8f7d30045a7ffb",
+      "r_phys": 1.0,
+      "iteration": 20,
+      "id": "persona_use:reviewer_iter20"
     }
   ],
   "links": [
@@ -95,6 +159,33 @@
       "last_seen": "2026-09-30T10:59:10.243153",
       "mentions": 1,
       "target": "he_experiment_pipeline_4b6228cf"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: optimization] The minimal network capacity N_c(w) follows a phase-transiti",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:03:41.346131",
+      "last_seen": "2026-09-30T11:03:41.346131",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ff2c1c"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_coder_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:03:41.346131",
+      "last_seen": "2026-09-30T11:03:41.346131",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ff2c1c"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:03:41.346131",
+      "last_seen": "2026-09-30T11:03:41.346131",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_ff2c1c"
     }
   ]
 }
