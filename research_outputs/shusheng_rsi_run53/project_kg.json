@@ -706,6 +706,70 @@
       "r_phys": 1.0,
       "iteration": 90,
       "id": "persona_use:reviewer_iter90"
+    },
+    {
+      "label": "[DIM: OPTIMIZATION]",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:42:33.670180",
+      "last_seen": "2026-09-30T11:42:33.670180",
+      "mentions": 1,
+      "iteration": 95,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "We expect to observe a sharp phase transition at a critical constraint density $w_c$: for $w < w_c$, $N_c(w)$ remains small and finite (rigid regime); for $w > w_c$, $N_c(w)$ grows rapidly or becomes",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: OPTIMIZATION]"
+    },
+    {
+      "label": "plan_explore_iter95",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:42:33.670216",
+      "last_seen": "2026-09-30T11:42:33.670216",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter95"
+    },
+    {
+      "label": "pass_iter95",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:42:33.670225",
+      "last_seen": "2026-09-30T11:42:33.670225",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter95"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T11:42:33.670234",
+      "last_seen": "2026-09-30T11:42:33.670234",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: OPTIMIZATION]",
+        "Method:plan_explore_iter95",
+        "Fact:pass_iter95"
+      ],
+      "iteration": 95,
+      "id": "he_experiment_pipeline_a87e0233"
+    },
+    {
+      "label": "reviewer_iter95",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:42:33.670307",
+      "last_seen": "2026-09-30T11:42:33.670307",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "c134bf1ff6f491a5",
+      "r_phys": 1.0,
+      "iteration": 95,
+      "id": "persona_use:reviewer_iter95"
     }
   ],
   "links": [
@@ -1005,6 +1069,33 @@
       "last_seen": "2026-09-30T11:40:27.784603",
       "mentions": 1,
       "target": "he_experiment_pipeline_558497b0"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: OPTIMIZATION]",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:42:33.670234",
+      "last_seen": "2026-09-30T11:42:33.670234",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a87e0233"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter95",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:42:33.670234",
+      "last_seen": "2026-09-30T11:42:33.670234",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a87e0233"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter95",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:42:33.670234",
+      "last_seen": "2026-09-30T11:42:33.670234",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_a87e0233"
     }
   ]
 }
