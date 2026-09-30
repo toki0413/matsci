@@ -68,3 +68,9 @@ empty required_results for target_1 — fallback
 [exec-route] mode='coder' desc[:80]='Implement a controlled numerical experiment to test the geometric hypothesis on ' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
 [code-lab-author] raw_len=4130 extracted_len=4115 prompt_len=4206
 [code-lab-run] res_none=False success=True nobj=2 reason=''
+[validate] mode='code_lab' success=True nobj=2 cf=False lab=True
+[exec-route] mode='explore' desc[:80]='Design and execute a numerical experiment to test the "geometry" hypothesis rega' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=True
+[code-lab-author] raw_len=3650 extracted_len=3635 prompt_len=4191
+[code-lab-run] res_none=True success=None nobj=0 reason="执行异常: TypeError: poly_basis() got an unexpected keyword argument 'axis'"
+[code-lab-author] raw_len=3593 extracted_len=3578 prompt_len=7102
+[code-lab-run] res_none=False success=True nobj=4 reason=''
