@@ -811,6 +811,36 @@
         "mode": "workflow",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_16a12d73",
+      "objective": "[DIM: structure] The constraint system defines a finite-dimensional algebraic variety of fixed dimension d independent of w; the minimal width N_c saturates at a constant O(1) once w exceeds a threshold (rigid regime). | predict: N_c(w) = N0 for all w ≥ w0, where N0 and w0 are constants (e.g., N0=4, w0=10) | pro: Aligns with algebraic geometry intuition: polynomial constraints of fixed degree yield varieties whose complexity does not scale with sample size; testable via saturation of N_c | con: Requires constraints to be algebraically dependent; if constraints are independent, N_c may grow with w.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "We will design a pure mathematical/ML experiment to test the hypothesis that the constraint system defines a finite-dimensional algebraic variety of fixed dimension d. Specifically, we will (1) generate algebraic polynomial constraints (e.g., quadratic forms) in a high-dimensional parameter space, (2) vary the number of constraints w, (3) train small feedforward networks to satisfy these constraints, and (4) measure N_c(w) = minimum hidden width achieving zero violation (max abs error ≤ 1e-3) on held-out constraint points. We will scan w over a range (e.g., 5 to 50) and N_c up to a threshold (e.g., 20), and check for saturation at a constant N_c = N0 for w ≥ w0. This directly tests the \"rigid regime\" prediction.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "explore_n_c_saturation.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-30T13:46:17.007563+00:00",
+      "confirmed_at": "2026-09-30T13:46:17.009429+00:00",
+      "completed_at": "2026-09-30T13:46:49.275127+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
