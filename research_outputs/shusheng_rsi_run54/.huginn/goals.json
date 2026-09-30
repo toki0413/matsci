@@ -52,10 +52,10 @@
         "[Feynman known_unknown] Why did the generative model produce repeated numeric tokens instead of coherent reasoning? Was this a tokenization issue, attention collapse, or reward misalignment?",
         "[Feynman unknown_unknown] I never considered that the constraint formulation itself might be ill-posed or incompatible with the architecture’s implicit geometry — perhaps the hyperplanes can’t actually satisfy the stated combinatorial arrangement under ReLU dynamics."
       ],
-      "iteration": 153,
+      "iteration": 158,
       "status": "active",
       "created_at": "2026-09-30T12:56:45.151665+00:00",
-      "updated_at": "2026-09-30T13:51:25.137030+00:00",
+      "updated_at": "2026-09-30T13:53:07.181274+00:00",
       "session_id": "",
       "metadata": {},
       "unknowns": [
@@ -1674,9 +1674,49 @@
           "discovered_at": "2026-09-30T13:51:03.842339+00:00",
           "resolved_at": null,
           "iteration": 150
+        },
+        {
+          "id": "unk_747faee1",
+          "text": "The definition of \"rigid\" as existence of small finite N_c not growing with w assumes that scaling laws are monotonic and smooth — but phase transitions or abrupt jumps in solvability may exist, making the binary classification sensitive to scanning granularity.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-30T13:51:50.658536+00:00",
+          "resolved_at": null,
+          "iteration": 155
+        },
+        {
+          "id": "unk_30670559",
+          "text": "Achieving “zero violation” ≤1e-3 may be numerically unstable due to gradient vanishing/exploration in wide networks; optimization might converge to local minima that appear to satisfy constraints but are not globally valid solutions.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-30T13:51:50.661343+00:00",
+          "resolved_at": null,
+          "iteration": 155
+        },
+        {
+          "id": "unk_6b3f5c67",
+          "text": "For very small w (e.g., w=1), overfitting can trivially yield zero violation even with minimal capacity, falsely suggesting rigidity where none exists — the probe may be biased toward under-constrained regimes.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-30T13:51:50.663411+00:00",
+          "resolved_at": null,
+          "iteration": 155
+        },
+        {
+          "id": "unk_b9125298",
+          "text": "No ground-truth analytical solution space dimension is provided for validation; without known reference functions, we cannot verify whether observed N_c reflects true rigidity or merely memorization of samples.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-30T13:51:50.665485+00:00",
+          "resolved_at": null,
+          "iteration": 155
+        },
+        {
+          "id": "unk_0714aedd",
+          "text": "The assumption that hidden layer width alone governs expressive power ignores architectural choices (activation functions, depth, skip connections) that could alter solution space topology independently of width.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-30T13:51:50.667287+00:00",
+          "resolved_at": null,
+          "iteration": 155
         }
       ],
-      "unknowns_discovered": 202,
+      "unknowns_discovered": 207,
       "unknowns_resolved": 0,
       "objective": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【唯一硬性口径（不可更改，其余全由你决定）】\n- 零违规 = 留出约束点上的最大绝对误差 ≤ 1e-3。\n- 刚性 = 扫描范围内存在较小的有限 N_c（且 N_c 不随 w 增长）；胖 = 扫描上限内任何宽度都达不到零违规（N_c 不可达）。判别是二值的。\n- 所有报告数值必须是有限数（禁止 inf/nan/None）。\n- 研究对象只能是小型前馈网络本身。严禁把本命题替换或“换名归约”为材料/化学/玻璃/合金/离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【实验的族、样本、扫描、脚本如何设计，以及如何证明“刚性可达”，由你自己决定并给出理由。】\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
       "success_criteria": [],

@@ -569,3 +569,7 @@ renamed-reduction 3× consecutive: trigger counterexample hunt
 [exec-route] mode='explore' desc[:80]='[auto-routed: surprise=1.00] Implement a systematic numerical experiment to test' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=True
 [code-lab-author] raw_len=3600 extracted_len=3585 prompt_len=4763
 [code-lab-run] res_none=False success=True nobj=1 reason=''
+[validate] mode='code_lab' success=True nobj=1 cf=False lab=True
+[exec-route] mode='explore' desc[:80]='Investigate whether small feedforward networks exhibit bootstrap solution-space ' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=True
+[code-lab-author] raw_len=2098 extracted_len=2083 prompt_len=4196
+[code-lab-run] res_none=False success=True nobj=2 reason=''
