@@ -96,5 +96,18 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Design and implement a numerical experiment to test the hypothesis about minimal network capacity N_c(w). Create a Python script that: (1) generates two types of constrain"
+  },
+  {
+    "scene_tag": "auto_constraint",
+    "hyp_key": "9c5eccf867c5",
+    "reason": "The plan confuses the variable definitions. The hypothesis states $N_c(w)$ is the minimal network capacity (width) required to fit $w$ constraints. The plan incorrectly describes $N_c(w)$ as 'measuring the minimal width required' while simultaneously stating 'vary $w$ (constraint count)' as the independent variable for the scan. This creates a circular definition: if you vary constraint count $w$, $N_c$ becomes a function of $w$ only if the minimal width also changes with $w$, but the hypothesis claims $N_c$ is a threshold function of width $w$ for a fixed constraint set. Furthermore, the plan lacks a clear definition of 'manifold covering number' and how to compute it to identify the transition point.",
+    "missing_steps": [
+      "Clarify the definition of $N_c(w)$: Is it the minimal width needed to fit $w$ constraints, or is it the capacity threshold for a fixed set of constraints as width varies?",
+      "Define the manifold covering number explicitly and specify how to compute or estimate it in the experiment.",
+      "Specify whether the constraint set size is fixed (testing capacity vs width) or varying (testing capacity vs constraint count).",
+      "Include a step to generate the synthetic low-dimensional manifold with known intrinsic dimension $d$ and covering number."
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Design and execute a controlled numerical experiment to test the hypothesis that minimal network capacity $N_c(w)$ scales with the intrinsic dimension $d$ of a constraint "
   }
 ]

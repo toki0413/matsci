@@ -385,6 +385,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_521e9998",
+      "objective": "[DIM: GEOMETRY] The constraint set forms a low-dimensional manifold embedded in the input space; minimal capacity $N_c(w)$ scales with the intrinsic dimension $d$ of this manifold, remaining constant ($N_c \\approx O(d)$) as $w$ increases until $w$ exceeds the manifold's covering number, at which point it jumps to a fat regime.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Redesign the experiment to correctly test the hypothesis: (1) fix the constraint set size to $w$ samples drawn from a known low-dimensional manifold of intrinsic dimension $d$ (e.g., a $d$-sphere or torus embedded in $\\mathbb{R}^D$); (2) define $N_c(w)$ as the minimal network width required to achieve zero violation (max abs error $\\le 10^{-3}$) on the held-out manifold points; (3) systematically vary $w$ (constraint count) and measure $N_c(w)$; (4) estimate the manifold covering number via the minimum number of balls of radius $\\epsilon$ needed to cover the manifold (computed via greedy covering or clustering); (5) verify that $N_c(w) \\approx O(d)$ remains constant until $w$ exceeds the covering number, at which point $N_c(w)$ jumps to a fat regime. Use synthetic manifolds with known geometry (e.g., Swiss roll, sine curve) to ground the intrinsic dimension $d$ and covering number estimation.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-30T11:18:36.663450+00:00",
+      "confirmed_at": "2026-09-30T11:18:36.664893+00:00",
+      "completed_at": "2026-09-30T11:18:55.994652+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
