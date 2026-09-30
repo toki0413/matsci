@@ -53,5 +53,34 @@
     ],
     "mode": "explore",
     "description": "Reformulate the hypothesis to test the rigidity of the solution space rather than interpolation capacity. We will generate polynomial identity constraints with a known dual constraint matrix rank $r$,"
+  },
+  {
+    "scene_tag": "auto_constraint",
+    "hyp_key": "554345bf8d09",
+    "reason": "The plan is fundamentally invalid because it misunderstands the hypothesis and the nature of the task. The hypothesis concerns the 'solution space of constraints' being locally rigid, which implies a geometry of the set of points satisfying the constraints. The proposed experiment trains a neural network to satisfy constraints, which is a function approximation problem, not a geometry analysis problem. The minimal network width $N_c(w)$ measures the capacity of the network to fit data, not the intrinsic dimension of the solution manifold. A network can easily fit a low-dimensional manifold with a small width, but this does not prove the manifold's solution space is rigid or that its effective dimension is bounded. The experiment tests network capacity, not manifold rigidity. Furthermore, the plan lacks any definition of what constitutes a 'constraint' on a manifold or how the 'solution space' is defined or sampled, making it impossible to verify the hypothesis.",
+    "missing_steps": [
+      "Define the mathematical structure of the constraint set on the manifold (e.g., as the zero set of a function or as a set of points satisfying specific equations).",
+      "Define 'solution space rigidity' in measurable geometric terms (e.g., using intrinsic dimension estimates like correlation dimension, or measuring the width of the solution set under perturbations).",
+      "Design an experiment that directly measures the geometric properties of the solution space (e.g., sampling points from the solution space and estimating its dimension), not the capacity of a network to fit them.",
+      "Clarify the relationship between the network width and the solution space geometry; the current plan conflates function approximation with geometric dimensionality."
+    ],
+    "mode": "explore",
+    "description": "Design a numerical experiment to test the hypothesis that minimal network capacity $N_c(w)$ remains bounded as constraint sample count $w$ increases, due to the low intrinsic dimension $d$ of the solu"
+  },
+  {
+    "scene_tag": "auto_constraint",
+    "hyp_key": "554345bf8d09",
+    "reason": "The plan misunderstands the hypothesis and the task requirements. The hypothesis concerns network capacity (N_c(w)) required to satisfy constraints on a manifold, but the proposed experiment focuses purely on manifold geometry analysis (PCA, Jacobian, correlation dimension) without any network training or evaluation of constraint satisfaction. It fails to measure N_c(w) or test for 'zero violation' at all, which is the core metric defined in the hard requirements. This is exactly the same failure mode as identified in the historical failures: conflating function approximation with geometric dimensionality.",
+    "missing_steps": [
+      "Define the constraint set explicitly (e.g., as zero set of f: R^w -> R^(w-d))",
+      "Implement small feedforward networks of varying widths N_c",
+      "Train networks on sampled constraint points from the manifold",
+      "Measure maximum absolute error on held-out constraint points (threshold: 1e-3)",
+      "Determine minimal N_c achieving zero violation for each w",
+      "Plot N_c(w) trend vs w to check if it saturates at d",
+      "Verify rigidity condition: finite N_c exists that does not grow with w"
+    ],
+    "mode": "explore",
+    "description": "Redesign the experiment to directly analyze the geometric structure of the solution space rather than network capacity. (1) Define the solution manifold $M$ as the zero set of a smooth function $f: \\m"
   }
 ]
