@@ -66,6 +66,70 @@
       "r_phys": 1.0,
       "iteration": 5,
       "id": "persona_use:reviewer_iter5"
+    },
+    {
+      "label": "[DIM: Structure] The constraints are defined by algebraic invariants of a discre",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T13:00:31.068911",
+      "last_seen": "2026-09-30T13:00:31.068911",
+      "mentions": 1,
+      "iteration": 10,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will remain small (≤4) and constant across w ∈ [1, 10], confirming rigidity. If N_c grows or exceeds scan limit, hypothesis is falsified (fat solution space).\nPLAN_SLOTS: w_values=[1,2,3,4,5,6,",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: Structure] The constraints are defined by algebraic invariants of a discre"
+    },
+    {
+      "label": "plan_explore_iter10",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T13:00:31.068953",
+      "last_seen": "2026-09-30T13:00:31.068953",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter10"
+    },
+    {
+      "label": "pass_iter10",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T13:00:31.068962",
+      "last_seen": "2026-09-30T13:00:31.068962",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter10"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T13:00:31.068972",
+      "last_seen": "2026-09-30T13:00:31.068972",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: Structure] The constraints are defined by algebraic invariants of a discre",
+        "Method:plan_explore_iter10",
+        "Fact:pass_iter10"
+      ],
+      "iteration": 10,
+      "id": "he_experiment_pipeline_e1b0b776"
+    },
+    {
+      "label": "reviewer_iter10",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T13:00:31.069049",
+      "last_seen": "2026-09-30T13:00:31.069049",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "787dc00f27575c5c",
+      "r_phys": 1.0,
+      "iteration": 10,
+      "id": "persona_use:reviewer_iter10"
     }
   ],
   "links": [
@@ -95,6 +159,33 @@
       "last_seen": "2026-09-30T12:59:41.403248",
       "mentions": 1,
       "target": "he_experiment_pipeline_6bd7b949"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: Structure] The constraints are defined by algebraic invariants of a discre",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T13:00:31.068972",
+      "last_seen": "2026-09-30T13:00:31.068972",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e1b0b776"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T13:00:31.068972",
+      "last_seen": "2026-09-30T13:00:31.068972",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e1b0b776"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T13:00:31.068972",
+      "last_seen": "2026-09-30T13:00:31.068972",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e1b0b776"
     }
   ]
 }
