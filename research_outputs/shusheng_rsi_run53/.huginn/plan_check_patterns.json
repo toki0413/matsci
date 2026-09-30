@@ -28,5 +28,30 @@
     ],
     "mode": "explore",
     "description": "Design and execute a bootstrap experiment to test if small feedforward networks act as probes of solution space rigidity. Define a target function family of 2D polynomial constraints $f(x,y) = \\sum_{i"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "8afac5a2bca8",
+    "reason": "The plan is invalid due to a fundamental mathematical inconsistency in the hypothesis formulation. The hypothesis states that for w > r, N_c(w) should plateau at r (the rank). However, the plan asks to find the minimum width N_c(w) such that error <= 1e-3. By the universal approximation theorem, a single-hidden-layer network with width N can exactly interpolate N points (zero error). Therefore, for w > r, the minimum width required to achieve zero error on w constraints would be N_c(w) = w, not r. This contradicts the predicted plateau behavior. The plan tests an impossible condition (N_c(w) = r for w > r) rather than a plausible one.",
+    "missing_steps": [
+      "Reformulate hypothesis: N_c(w) should likely scale as min(w, r) for w <= r, but for w > r, N_c(w) should likely be w (since you need at least w neurons to fit w points), OR the hypothesis should predict a different functional form.",
+      "Clarify the definition of 'rank of constraint matrix' in the dual space for polynomial identities - this needs precise mathematical definition.",
+      "Define what 'zero violation' means precisely in the context of polynomial identity constraints - is it exact satisfaction or tolerance-based?"
+    ],
+    "mode": "coder",
+    "description": "Create a Python script that implements the numerical experiment for the hypothesis: (1) generate polynomial identity constraints (e.g., Vandermonde-style polynomial evaluations) to define a constraine"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "8afac5a2bca8",
+    "reason": "The plan suffers from the same fundamental mathematical inconsistency as the previous failure mode. The hypothesis claims N_c(w) plateaus at r (constraint rank) when w >= r, but the plan tests 'zero violation' on w constraints. By universal approximation principles, to satisfy w independent constraints exactly, you need at least w parameters (width w), not r. The plan conflates 'solution space dimension' (which might plateau) with 'minimum width to achieve zero error' (which should scale with w). The prediction that solution space dimension plateaus is mathematically plausible, but it doesn't test the hypothesis about N_c(w) = min(r,w). The plan needs to clearly distinguish between these two concepts and test the correct one.",
+    "missing_steps": [
+      "Clarify whether testing 'solution space dimension saturation' or 'minimum width for zero error' - these are different quantities",
+      "Reformulate the hypothesis to be mathematically consistent: if testing solution space dimension, the prediction should be about dimension, not N_c(w); if testing N_c(w), the prediction should scale with w, not r, for w > r",
+      "Define precisely what 'rank of constraint matrix in dual space' means for polynomial identities in this context",
+      "Define 'zero violation' tolerance consistently (currently 1e-3 is specified but may not align with exact polynomial identity requirements)"
+    ],
+    "mode": "explore",
+    "description": "Reformulate the hypothesis to test the rigidity of the solution space rather than interpolation capacity. We will generate polynomial identity constraints with a known dual constraint matrix rank $r$,"
   }
 ]

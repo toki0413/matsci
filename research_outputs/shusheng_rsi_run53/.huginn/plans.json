@@ -212,6 +212,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_219f88bb",
+      "objective": "[DIM: STRUCTURE] The minimal network capacity $N_c(w)$ is determined by the rank of the constraint matrix in the dual space; for algebraically structured constraints (e.g., polynomial identities), $N_c(w)$ scales linearly with the rank $r$ of the constraint matrix, independent of $w$ beyond a saturation point. | predict: $N_c(w) = \\min(r, w)$ where $r$ is the rank of the dual constraint matrix; for $w \\geq r$, $N_c(w)$ plateaus at $r$. | pro: Directly links network capacity to algebraic structure of constraints, testable via rank analysis. con: Requires explicit constraint matrix construction, may not capture nonlinear interactions in neural networks.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Reformulate the hypothesis to test the rigidity of the solution space rather than interpolation capacity. We will generate polynomial identity constraints with a known dual constraint matrix rank $r$, train a network with width $w$, and measure the dimension of the solution space (number of free parameters after constraints) as a function of $w$. The prediction is that for $w \\geq r$, the solution space dimension saturates, indicating algebraic rigidity independent of further width increase. This avoids the interpolation contradiction by measuring structural capacity rather than fitting error.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-30T11:09:47.573800+00:00",
+      "confirmed_at": "2026-09-30T11:09:47.574820+00:00",
+      "completed_at": "2026-09-30T11:10:45.467179+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
