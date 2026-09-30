@@ -106,5 +106,32 @@
     ],
     "mode": "explore",
     "description": "Implement a rigorous numerical experiment to test the approximation-theoretic rigidity hypothesis. Define the target function f(x) as a piecewise-constant function with discontinuities at specific poi"
+  },
+  {
+    "scene_tag": "auto_numerical",
+    "hyp_key": "cde259034292",
+    "reason": "The plan lacks a concrete hypothesis to test (the target string is empty). Without a specific hypothesis, the experiment's purpose and validation criteria are undefined, making it impossible to determine success or failure.",
+    "missing_steps": [
+      "Define a specific hypothesis to test",
+      "Clarify the bootstrap constraint system details",
+      "Specify the exact network architecture and training procedure"
+    ],
+    "mode": "explore",
+    "description": "Design and execute a numerical experiment to probe the rigidity of the solution space for a bootstrap constraint system using small feedforward networks. We will define a family of analytic constraint"
+  },
+  {
+    "scene_tag": "auto_numerical",
+    "hyp_key": "cde259034292",
+    "reason": "The plan uses MODE: explore, but this task requires a coder workflow (implementing the experiment and running it), not just an exploration description. The plan describes a hypothesis and prediction but lacks concrete implementation details, code, or a workflow to execute the numerical experiment. Without actual execution, no validation of the hypothesis can occur.",
+    "missing_steps": [
+      "Define specific constraint functions (e.g., P(x) = sin(x) at w points) and implementation details",
+      "Specify the exact network architecture (2-layer MLP with ReLU) including activation functions and initialization",
+      "Define the training procedure (optimizer, loss function, stopping criteria) in detail",
+      "Specify how 'zero violation' will be measured on held-out constraint points",
+      "Provide code or workflow to actually run the experiment and collect data",
+      "Include error analysis and statistical significance measures for the saturation claim"
+    ],
+    "mode": "explore",
+    "description": "We will test the hypothesis that bootstrap constraint systems exhibit solution space rigidity: the minimal network width $N_c(w)$ required to satisfy $w$ analytic constraints (e.g., $P(x) = \\sin(x)$ a"
   }
 ]

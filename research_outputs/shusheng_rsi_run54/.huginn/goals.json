@@ -39,10 +39,10 @@
         "[Feynman unknown_unknown] I never considered that generating even a minimal explanatory response might require explicit structural scaffolding (e.g., step-by-step logic templates) when dealing with highly abstract theoretical concepts — especially under time or resource constraints.",
         "[Feynman unknown_unknown] I didn’t anticipate that the validation metrics (like surprise score or generative_verify) could flag such outputs as failed without providing actionable feedback on *how* to improve them — leaving the cycle open-ended and unresolved."
       ],
-      "iteration": 103,
+      "iteration": 108,
       "status": "active",
       "created_at": "2026-09-30T12:56:45.151665+00:00",
-      "updated_at": "2026-09-30T13:28:30.014432+00:00",
+      "updated_at": "2026-09-30T13:34:51.375797+00:00",
       "session_id": "",
       "metadata": {},
       "unknowns": [
@@ -1157,9 +1157,49 @@
           "discovered_at": "2026-09-30T13:27:10.951724+00:00",
           "resolved_at": null,
           "iteration": 100
+        },
+        {
+          "id": "unk_f557b708",
+          "text": "The assumption that zero validation error (≤1e-3) uniquely identifies a rigid solution space may be flawed; narrow networks can achieve low error via overfitting or pathological minima without reflecting true structural rigidity, leading to false \"rigid\" classifications.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-30T13:33:39.509941+00:00",
+          "resolved_at": null,
+          "iteration": 105
+        },
+        {
+          "id": "unk_967399d4",
+          "text": "Optimization convergence in non-convex loss landscapes is highly sensitive to initialization and local minima; reported N_c(w) values might reflect optimization failure rather than intrinsic capacity limits, causing inconsistent or biased measurements across runs.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-30T13:33:39.512520+00:00",
+          "resolved_at": null,
+          "iteration": 105
+        },
+        {
+          "id": "unk_b7308184",
+          "text": "The definition of \"zero违规\" uses a fixed absolute tolerance (1e-3), which may be inappropriate for functions with varying scales or dynamic ranges — small errors on large-magnitude outputs could dominate while large relative errors on small outputs go undetected, distorting rigidity assessment.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-30T13:33:39.514308+00:00",
+          "resolved_at": null,
+          "iteration": 105
+        },
+        {
+          "id": "unk_5d9fc7e7",
+          "text": "No ground-truth analytical solutions are provided for validation; without known target functions with provable rigidity properties, it's impossible to calibrate whether observed N_c(w) trends reflect reality or artifacts of the experimental setup.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-30T13:33:39.515911+00:00",
+          "resolved_at": null,
+          "iteration": 105
+        },
+        {
+          "id": "unk_2bc9860b",
+          "text": "The model class (small feedforward networks) may lack sufficient expressivity to represent even simple rigid solution spaces, especially if constraints involve high-frequency components or discontinuities — this could falsely suggest \"fatness\" due to model mismatch rather than inherent underconstrainedness.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-30T13:33:39.517566+00:00",
+          "resolved_at": null,
+          "iteration": 105
         }
       ],
-      "unknowns_discovered": 139,
+      "unknowns_discovered": 144,
       "unknowns_resolved": 0,
       "objective": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【唯一硬性口径（不可更改，其余全由你决定）】\n- 零违规 = 留出约束点上的最大绝对误差 ≤ 1e-3。\n- 刚性 = 扫描范围内存在较小的有限 N_c（且 N_c 不随 w 增长）；胖 = 扫描上限内任何宽度都达不到零违规（N_c 不可达）。判别是二值的。\n- 所有报告数值必须是有限数（禁止 inf/nan/None）。\n- 研究对象只能是小型前馈网络本身。严禁把本命题替换或“换名归约”为材料/化学/玻璃/合金/离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【实验的族、样本、扫描、脚本如何设计，以及如何证明“刚性可达”，由你自己决定并给出理由。】\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
       "success_criteria": [],
