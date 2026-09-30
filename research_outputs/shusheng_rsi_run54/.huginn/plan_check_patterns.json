@@ -40,5 +40,20 @@
     ],
     "mode": "explore",
     "description": "This is a pure mathematics / ML theory investigation (function space geometry / empirical process). The hypothesis asserts that output-variance concentration under random initialization yields N_c(w) "
+  },
+  {
+    "scene_tag": "workflow",
+    "hyp_key": "5ec5c65afbb5",
+    "reason": "The plan correctly identifies the hypothesis as ML/math and proposes an exploration mode, but it fails to address the critical 'surprise=1.0' from iteration 45. Without diagnosing why the previous prediction was wrong, the proposed experiment is likely to fail again. The plan lacks concrete experimental design details (manifold dimension estimation method, bootstrap procedure specifics, network architecture), making it impossible to verify or reproduce. It also doesn't specify how to distinguish between 'rigidity' and 'fatness' with statistical confidence.",
+    "missing_steps": [
+      "Investigate the root cause of surprise=1.0 in iteration 45 (analyze what went wrong)",
+      "Define the bootstrap constraint generation mechanism mathematically",
+      "Specify the manifold dimension estimation method (e.g., PCA, autoencoder, MLE)",
+      "Detail the network architecture and training protocol",
+      "Define the scanning procedure for N_c(w) with proper stopping criteria",
+      "Establish statistical validation for the rigidity/fatness classification"
+    ],
+    "mode": "explore",
+    "description": "This is a pure ML/math hypothesis testing problem. The previous iteration (45) had a surprise of 1.0, indicating the prediction was significantly wrong. I need to re-examine the hypothesis design and "
   }
 ]

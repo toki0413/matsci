@@ -386,6 +386,70 @@
       "r_phys": 1.0,
       "iteration": 40,
       "id": "persona_use:reviewer_iter40"
+    },
+    {
+      "label": "[DIM: measure] The constraints induce a measure concentration on the output spac",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T13:12:43.278615",
+      "last_seen": "2026-09-30T13:12:43.278615",
+      "mentions": 1,
+      "iteration": 45,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Output variance decays as O(1/w) under proper scaling; N_c(w) remains ≤ 8 for w ≥ 50, supporting the concentration-of-measure hypothesis.",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: measure] The constraints induce a measure concentration on the output spac"
+    },
+    {
+      "label": "plan_explore_iter45",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T13:12:43.278657",
+      "last_seen": "2026-09-30T13:12:43.278657",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter45"
+    },
+    {
+      "label": "pass_iter45",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T13:12:43.278666",
+      "last_seen": "2026-09-30T13:12:43.278666",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter45"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T13:12:43.278678",
+      "last_seen": "2026-09-30T13:12:43.278678",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: measure] The constraints induce a measure concentration on the output spac",
+        "Method:plan_explore_iter45",
+        "Fact:pass_iter45"
+      ],
+      "iteration": 45,
+      "id": "he_experiment_pipeline_e87d9a12"
+    },
+    {
+      "label": "reviewer_iter45",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T13:12:43.278756",
+      "last_seen": "2026-09-30T13:12:43.278756",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "fdf262d97b7bfeb1",
+      "r_phys": 1.0,
+      "iteration": 45,
+      "id": "persona_use:reviewer_iter45"
     }
   ],
   "links": [
@@ -550,6 +614,33 @@
       "last_seen": "2026-09-30T13:10:29.189399",
       "mentions": 1,
       "target": "he_experiment_pipeline_7d270015"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: measure] The constraints induce a measure concentration on the output spac",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T13:12:43.278678",
+      "last_seen": "2026-09-30T13:12:43.278678",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e87d9a12"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter45",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T13:12:43.278678",
+      "last_seen": "2026-09-30T13:12:43.278678",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e87d9a12"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter45",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T13:12:43.278678",
+      "last_seen": "2026-09-30T13:12:43.278678",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_e87d9a12"
     }
   ]
 }
