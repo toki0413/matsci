@@ -110,5 +110,35 @@
     ],
     "mode": "explore",
     "description": "We will test the hypothesis that zero-violation capacity $N_c(w)$ is determined by the algebraic rank of the feature matrix $\\Phi_{ij} = \\phi(w \\cdot x_j + b_i)$ using direct linear algebra, bypassing"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "dc6e8863ceb9",
+    "reason": "The plan is fundamentally invalid due to a critical missing step: the hypothesis is about 'solution space rigidity' which is a property of the solution space geometry, but the proposed experiment only measures fitting capacity (can the network fit the constraints?) without actually characterizing the solution space structure itself. The experiment as described would only show whether networks can fit constraints, not whether the solution space has rigid geometry (constant N_c(w)). Additionally, the plan lacks specification of the analytic constraint functions family, network architecture details, training methodology, and how 'solution space rigidity' will be measured beyond simple error thresholds.",
+    "missing_steps": [
+      "Define the family of analytic constraint functions explicitly (mathematical form, domain, properties)",
+      "Specify network architecture details (activation functions, initialization, depth beyond hidden width)",
+      "Define how solution space rigidity will be measured beyond just fitting error (e.g., solution space volume, connectivity, curvature analysis)",
+      "Include optimization landscape analysis (critical points, saddle structure, basin geometry) to characterize rigidity",
+      "Specify training methodology (optimizer, learning rate schedule, convergence criteria)",
+      "Include multiple random initializations to sample different solution regions"
+    ],
+    "mode": "explore",
+    "description": "Design and execute a numerical experiment to test the hypothesis that small feedforward networks exhibit solution space rigidity (constant N_c(w) as constraint count w increases). Define a family of a"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "dc6e8863ceb9",
+    "reason": "The plan is fundamentally invalid because it fails to address the core hypothesis: testing whether 'solution space rigidity' (constant N_c(w) across w) can be probed by generalization behavior. The proposed experiment only measures fitting capacity (zero-violation on training/holdout points) without characterizing solution space geometry (volume, curvature, connectivity, basin structure) as required by the definition of rigidity. This exactly replicates the 'historical failure' where the experiment only checked if networks could fit constraints, not whether the solution space has rigid geometry. Additionally, the plan lacks specification of analytic constraint functions, precise network architecture details beyond width, and clear metrics for solution space rigidity beyond simple error thresholds.",
+    "missing_steps": [
+      "Define explicit family of analytic constraint functions (mathematical form, domain, properties)",
+      "Specify exact network architecture (depth, activation functions, initialization scheme, width sweep range)",
+      "Define solution space rigidity metrics beyond zero-violation (solution set volume via Monte Carlo, Hessian spectrum at critical points, basin connectivity distances, critical point distribution)",
+      "Include optimization landscape analysis (critical point identification, saddle structure, basin geometry characterization)",
+      "Specify training methodology details (optimizer, learning rate schedule, convergence criteria, stopping conditions)",
+      "Implement multi-start optimization with sufficient initializations to sample solution space connectivity"
+    ],
+    "mode": "explore",
+    "description": "Redesign the experiment to explicitly characterize solution space geometry rather than just fitting capacity. Define analytic constraint functions (e.g., polynomial systems with controlled degree and "
   }
 ]
