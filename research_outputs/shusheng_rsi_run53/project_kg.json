@@ -1,0 +1,100 @@
+{
+  "directed": true,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "label": "[GEOMETRY]",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T10:59:10.243085",
+      "last_seen": "2026-09-30T10:59:10.243085",
+      "mentions": 1,
+      "iteration": 10,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will remain small (≤16) and roughly constant or sublinear in w across tested range, indicating solution space rigidity; if N_c grows rapidly or saturates at high width, hypothesis may be falsif",
+      "persona": "reviewer",
+      "id": "experiment:[GEOMETRY]"
+    },
+    {
+      "label": "plan_explore_iter10",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:59:10.243129",
+      "last_seen": "2026-09-30T10:59:10.243129",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter10"
+    },
+    {
+      "label": "pass_iter10",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:59:10.243143",
+      "last_seen": "2026-09-30T10:59:10.243143",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter10"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T10:59:10.243153",
+      "last_seen": "2026-09-30T10:59:10.243153",
+      "mentions": 1,
+      "members": [
+        "experiment:[GEOMETRY]",
+        "Method:plan_explore_iter10",
+        "Fact:pass_iter10"
+      ],
+      "iteration": 10,
+      "id": "he_experiment_pipeline_4b6228cf"
+    },
+    {
+      "label": "reviewer_iter10",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T10:59:10.243227",
+      "last_seen": "2026-09-30T10:59:10.243227",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "6862bc8d085063e7",
+      "r_phys": 1.0,
+      "iteration": 10,
+      "id": "persona_use:reviewer_iter10"
+    }
+  ],
+  "links": [
+    {
+      "relation": "member_of",
+      "source": "experiment:[GEOMETRY]",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:59:10.243153",
+      "last_seen": "2026-09-30T10:59:10.243153",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4b6228cf"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:59:10.243153",
+      "last_seen": "2026-09-30T10:59:10.243153",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4b6228cf"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter10",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:59:10.243153",
+      "last_seen": "2026-09-30T10:59:10.243153",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_4b6228cf"
+    }
+  ]
+}

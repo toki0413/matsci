@@ -102,12 +102,12 @@
       }
     ],
     "required_tools": [
+      "coder",
       "workflow",
-      "explore",
-      "coder"
+      "explore"
     ],
     "source_session": "loop_5",
-    "extraction_confidence": 0.896,
+    "extraction_confidence": 0.8961538461538462,
     "usage_count": 0,
     "success_count": 0,
     "created_at": "2026-09-30T08:40:51.803981"
