@@ -284,6 +284,32 @@ def test_build_author_prompt_focus_changes_prompt() -> None:
     assert p_a != p_plain and p_a != p_b
 
 
+def test_codelab_focus_injects_hard_variation_directive() -> None:
+    """v12: 重复执行越阈值后, 强制变异令必须进**实验作者**提示(而非只进假设提示).
+
+    run50 实测: 软 pivot hint 只进 _speculator_hint(假设生成提示), 写实验的
+    build_author_prompt 不读它 → streak 1-4 指纹恒同, 循环撞收敛提前离场.
+    这里验证 _force_exec_variation 置位后, focus 带上硬指令与上一轮真实结果.
+    """
+    from huginn.autoloop.engine_act import EngineAct
+
+    class _StubEngine:
+        _objective = "恒定研究目标"
+        _last_hypothesis = "H1: N_c 随 w 饱和"
+
+    eng = _StubEngine()
+    act = EngineAct(eng)
+    # 未置位 → 无硬指令 (不误伤正常探索)
+    assert "强制变异" not in act._build_codelab_focus("扫描 w=10")
+    # 置位 → 硬指令 + 上一轮真实结果一并注入
+    eng._force_exec_variation = True
+    eng._repeat_exec_last_result = '{"o": {"Nc": [2, 36, 65]}}'
+    focus = act._build_codelab_focus("扫描 w=10")
+    assert "强制变异" in focus
+    assert "family" in focus
+    assert "Nc" in focus  # 上一轮真实结果回灌, 逼产出不同数值
+
+
 # ===== 阶段5: EngineControl =====
 
 def test_no_control_mixin_in_bases() -> None:

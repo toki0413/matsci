@@ -40,6 +40,13 @@ from huginn.utils.runtime import HUGINN_DIR_NAME
 
 logger = logging.getLogger(__name__)
 
+# 重复执行硬约束阈值. 重复命中的软提示只进**假设生成**提示(_speculator_hint),
+# 而真正写实验的是 code_lab 作者提示(build_author_prompt) —— 它不读该提示, 于是
+# "改变 family"永远到不了写实验的人, 指纹照旧 (run50 实测: repeat streak 1-4 指纹
+# 恒同, 提示零效果, 撞 6 窗口收敛提前离场). 故 streak 越过本阈值即置硬标志, 由
+# engine_act._build_codelab_focus 把"强制变异"令直接注入作者提示.
+_REPEAT_HARD_STREAK = int(os.environ.get("HUGINN_REPEAT_EXEC_HARD_STREAK", "2"))
+
 
 class EngineReflect:
     """validate / learn / report 阶段方法族协作对象.
@@ -521,10 +528,11 @@ class EngineReflect:
                 self._repeat_exec_streak = (
                     getattr(self, "_repeat_exec_streak", 0) + 1
                 )
+                _streak = self._repeat_exec_streak
                 results["repeat_execution"] = True
                 _rep_hint = (
                     f"[重复实验] 本轮真实执行的结果指纹与上轮完全相同 "
-                    f"(streak={self._repeat_exec_streak}): 你在重复同一个实验, "
+                    f"(streak={_streak}): 你在重复同一个实验, "
                     "本轮并未推进研究. 下一轮必须改变 family/约束族/扫描设置, "
                     "或直接据此给出最终数值结论, 不要再重跑同一配置."
                 )
@@ -533,12 +541,26 @@ class EngineReflect:
                     if self._speculator_hint
                     else _rep_hint
                 )
+                # 硬约束升级: 上面的软提示进的是**假设生成**提示, 而真正写实验的是
+                # code_lab 作者提示(build_author_prompt) —— 它不读 _speculator_hint,
+                # 于是"改变 family"永远到不了写实验的人, 指纹照旧 (run50 实测:
+                # repeat streak 1-4 指纹恒同, 提示零效果, 撞 6 窗口收敛提前离场).
+                # 故 streak 越过硬阈值即置标志, 由 _build_codelab_focus 把强制变异令
+                # 直接注入作者提示, 并附上一轮真实结果, 逼出不同的实验族/参数.
+                if _streak >= _REPEAT_HARD_STREAK:
+                    self._force_exec_variation = True
+                    self._repeat_exec_last_result = _fp_src[:600]
                 logger.warning(
-                    "repeat execution detected (streak=%d): inject pivot hint",
-                    self._repeat_exec_streak,
+                    "repeat execution detected (streak=%d): %s",
+                    _streak,
+                    "force experiment variation (hard directive→code_lab author)"
+                    if getattr(self, "_force_exec_variation", False)
+                    else "inject pivot hint",
                 )
             else:
                 self._repeat_exec_streak = 0
+                self._force_exec_variation = False
+                self._repeat_exec_last_result = ""
             self._prev_exec_fingerprint = _fp
             # 收敛判定 (检测器→执行器的前半): 维护最近指纹窗口, 窗口填满且只
             # 剩 <=2 种不同结果 → 循环在有限几种结果间打转, 已无新信息。置

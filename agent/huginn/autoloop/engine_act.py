@@ -355,6 +355,21 @@ class EngineAct:
         退回旧路径(向后兼容).
         """
         parts: list[str] = []
+        # v12 硬约束: engine_reflect 检测到"本轮执行指纹与上一轮完全一致"(无效重跑)
+        # 且 streak 越过阈值时置 _force_exec_variation. 该软提示原本只进假设生成
+        # 提示, 到不了**真正写实验**的作者提示 → 指纹照旧、循环撞收敛提前离场
+        # (run50 实测 streak 1-4 指纹恒同). 这里把强制变异令直接注入作者提示, 并附
+        # 上一轮真实结果, 逼书生改实验族/参数而非原样重跑.
+        if getattr(self, "_force_exec_variation", False):
+            _prev = str(getattr(self, "_repeat_exec_last_result", "") or "")
+            parts.append(
+                "【强制变异·硬约束】上一轮真实执行结果与更早一轮指纹完全一致"
+                "(=无效重跑, 未推进研究). 本轮实验**必须**至少改动一项结构: "
+                "更换 family/约束族、改扫描范围或步长、改网络架构/宽度集合、"
+                "改优化器或 seeds. 禁止原样重跑上一配置."
+                + (("上一轮真实结果(你必须产出与它不同的数值):" + _prev[:500])
+                   if _prev else "")
+            )
         _hyp = str(getattr(self, "_last_hypothesis", "") or "").strip()
         if _hyp:
             parts.append(f"当前待检验假设: {_hyp[:600]}")

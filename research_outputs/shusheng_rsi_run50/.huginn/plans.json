@@ -824,6 +824,122 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_2aa88c6a",
+      "objective": "I'll choose the GEOMETRY hypothesis as the most testable + novel because:",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Design a numerical experiment to test the \"geometry hypothesis\" for small feedforward networks. Specifically, vary the number of constraints w (e.g., w = 5, 10, 20, 50) and the hidden layer width N_c (e.g., from 1 to 50), train small MLPs on w constraints, and measure the maximum absolute error on held-out constraints. Determine N_c(w) as the minimum width achieving zero violation (error ≤ 1e-3). If N_c(w) remains small and bounded as w grows, this supports rigidity; if N_c(w) diverges or fails to reach zero violation, the solution space is fat. Use a symbolic constraint function (e.g., polynomial interpolation or a known algebraic system) to generate constraints.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "src/experiment_geometry_hypothesis.py"
+          ]
+        }
+      ],
+      "status": "executing",
+      "auto_confirm": false,
+      "created_at": "2026-09-30T09:33:59.296600+00:00",
+      "confirmed_at": "2026-09-30T09:33:59.298394+00:00",
+      "completed_at": null,
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
+    },
+    {
+      "id": "plan_476822fd",
+      "objective": "[DIM: structure] The minimal width $N_c(w)$ required to achieve zero violation is determined by the rank deficiency of the implicit feature matrix induced by the activation functions. For a specific class of analytical constraints (e.g., polynomial or trigonometric), the network must satisfy a linear algebraic condition where the number of independent parameters must exceed the number of constraints by a constant margin (related to the nullity of the Hessian at the solution). This predicts a step-wise or piecewise linear growth where $N_c(w) \\approx w + C$ (with $C$ small) only when the basis functions span the constraint space, otherwise $N_c$ jumps to a higher regime.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] The hypothesis is about neural network capacity (N_c(w)) for satisfying analytical constraints, which requires implementing a numerical experiment to train small feedforward networks on polynomial/trigonometric constraints and measure the minimum width achieving zero violation (<1e-3 max error on held-out points). I will create a Python script that: (1) generates constraint functions (polynomial/trig), (2) samples w constraint points, (3) trains MLPs with varying hidden widths N, (4) measures max absolute error on held-out points, (5) identifies N_c(w) as the smallest N where error ≤1e-3, and (6) plots N_c(w) vs w to test for linear growth N_c ≈ w + C. This directly tests the algebraic rank deficiency claim.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "experiments/neural_capacity_scan.py"
+          ]
+        }
+      ],
+      "status": "executing",
+      "auto_confirm": false,
+      "created_at": "2026-09-30T09:34:44.968261+00:00",
+      "confirmed_at": "2026-09-30T09:34:44.970390+00:00",
+      "completed_at": null,
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
+    },
+    {
+      "id": "plan_3f3f8133",
+      "objective": "[DIM: dynamics] Stability-Induced Rigidity",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Design and execute a bootstrap scan to test stability-induced rigidity in small feedforward networks. Generate synthetic functions with controlled smoothness (Sobolev norms) and increasing constraint counts $w$ (training samples). For each $w$, sweep hidden layer width $N_c$ from 1 to 100, train a single-hidden-layer network, and compute maximum absolute error on a held-out validation set. Track the minimum $N_c$ achieving error $\\le 1e-3$. Rigidity is supported if $N_c(w)$ remains bounded/saturated as $w$ increases; a fat solution space is indicated if $N_c(w)$ grows unbounded. Include control experiments with high-frequency oscillatory functions to calibrate behavior. Define convergence criteria (max iterations, gradient norm) to ensure reliable $N_c(w)$ measurements.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "executing",
+      "auto_confirm": false,
+      "created_at": "2026-09-30T09:36:13.355625+00:00",
+      "confirmed_at": "2026-09-30T09:36:13.357269+00:00",
+      "completed_at": null,
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
+    },
+    {
+      "id": "plan_a341e173",
+      "objective": "** Hypothesis 3 (Measure: VC-Dimension/Information Theory) is the most testable and novel in this context. While linear scaling is intuitive (interpolation), logarithmic scaling is a sharper prediction that distinguishes between \"memorization capacity\" and \"algebraic rank.\" It is easily testable by plotting $\\log N_c$ vs $\\log w$ (slope should be near 0 for log growth) or $N_c$ vs $\\ln w$ (linear relationship). It avoids the optimization confounds of the dynamics hypothesis and the specific functional form assumptions of the structure hypothesis.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Conduct a systematic capacity scan to test the logarithmic scaling hypothesis for $N_c(w)$ (minimum width for zero violation). Generate synthetic constraint data using smooth functions (e.g., low-degree polynomials or trigonometric sums) with varying sample sizes $w \\in [10^2, 10^4]$, train small MLPs of increasing hidden width $N \\in [10, 500]$, and measure the max absolute error on held-out constraints. Determine $N_c(w)$ as the smallest width achieving max error $\\leq 10^{-3}$. Plot $\\log N_c$ vs $\\log w$ to verify slope near 0 (logarithmic growth) and $N_c$ vs $\\ln w$ for linearity. Include bootstrapped confidence intervals for slope estimation and statistical significance testing.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "executing",
+      "auto_confirm": false,
+      "created_at": "2026-09-30T09:38:10.312915+00:00",
+      "confirmed_at": "2026-09-30T09:38:10.314877+00:00",
+      "completed_at": null,
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

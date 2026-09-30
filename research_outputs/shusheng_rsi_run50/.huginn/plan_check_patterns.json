@@ -315,5 +315,54 @@
     ],
     "mode": "explore",
     "description": "Design a numerical experiment to test the hypothesis that the minimal network width $N_c(w)$ for zero violation scales linearly as $\\lceil w/2 \\rceil$ due to algebraic rank constraints. Define $w$ as "
+  },
+  {
+    "scene_tag": "auto_constraint",
+    "hyp_key": "5bf890d7448d",
+    "reason": "The plan contains a critical logical contradiction regarding the definition of rigidity. The description states 'If N_c(w) remains bounded and small as w increases, the hypothesis... is supported,' but the rigid definition provided in the constraints states 'Rigidity = exists small finite N_c (and N_c does not grow with w)'. The plan's prediction explicitly expects 'piecewise linear growth with slope approximately 1', which directly contradicts the required 'does not grow' condition for rigidity. The prediction describes a 'fat' solution space (N_c growing with w), yet the plan claims this would support 'rigidity'. This makes the experiment unable to correctly validate the hypothesis as defined.",
+    "missing_steps": [
+      "Correct the prediction logic: rigidity requires N_c to remain bounded/saturation as w increases, not grow linearly",
+      "Add a control experiment with a known fat solution space (e.g., high-frequency oscillatory functions) to calibrate the N_c(w) behavior",
+      "Define specific function classes (e.g., Sobolev norms) to generate synthetic functions with controlled smoothness/complexity",
+      "Add convergence criteria for training (e.g., max iterations, gradient norm) to ensure N_c values are reliable"
+    ],
+    "mode": "explore",
+    "description": "Design and execute a bootstrap scan to test if small feedforward networks exhibit solution space rigidity. Generate synthetic functions (e.g., $f(x) = \\sin(2\\pi x) + \\cos(4\\pi x)$) with increasing con"
+  },
+  {
+    "scene_tag": "auto_constraint",
+    "hyp_key": "5bf890d7448d",
+    "reason": "The plan contains a critical logical contradiction in the PREDICTION field. The DESCRIPTION correctly defines rigidity as N_c(w) remaining bounded/saturated as w increases, but the PREDICTION explicitly states 'Rigidity hypothesis predicts N_c(w) saturates' while the plan's own prediction describes 'piecewise linear growth with slope approximately 1', which directly contradicts the rigidity definition. This makes the experiment unable to correctly validate the hypothesis as defined, matching the exact failure pattern identified in the historical failures.",
+    "missing_steps": [
+      "Correct the prediction logic: rigidity requires N_c to remain bounded/saturation as w increases, not grow linearly",
+      "Ensure the prediction matches the definition: if N_c grows, this indicates a 'fat' solution space (not rigidity)"
+    ],
+    "mode": "explore",
+    "description": "Design and execute a bootstrap scan to test stability-induced rigidity in small feedforward networks. Generate synthetic functions with controlled smoothness (Sobolev norms) and increasing constraint "
+  },
+  {
+    "scene_tag": "auto_constraint",
+    "hyp_key": "fd4531f5b6c3",
+    "reason": "The plan contains a fundamental mathematical contradiction in its prediction versus the hypothesis it aims to test. The hypothesis claims logarithmic scaling (slope ≈ 0 in log-log plot), but the prediction explicitly states slope ≈ 0.1-0.3 (which represents power-law growth $N_c \\sim w^\\alpha$, not logarithmic). This creates a self-defeating design: if the experiment yields slope=0.2, it would validate the prediction but reject the hypothesis, whereas the hypothesis claims slope≈0. The description also fails to specify the constraint generation mechanism (synthetic data is too vague without functional form specification), risking the 'functional form assumption' confound the hypothesis explicitly seeks to avoid.",
+    "missing_steps": [
+      "Correct the prediction to match the hypothesis: slope should be near 0 (not 0.1-0.3) for logarithmic scaling",
+      "Specify the functional form of synthetic constraints (e.g., polynomial degree, smoothness) to ensure test validity",
+      "Define the range of w and N values to ensure sufficient resolution for log-log slope estimation",
+      "Include statistical validation (confidence intervals) for slope determination"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Conduct a systematic capacity scan to test the logarithmic scaling hypothesis for $N_c(w)$ (minimum width for zero violation). Generate synthetic constraint data with vary"
+  },
+  {
+    "scene_tag": "auto_constraint",
+    "hyp_key": "fd4531f5b6c3",
+    "reason": "The plan contains a fundamental mathematical contradiction in its prediction versus the hypothesis it aims to test. The hypothesis claims logarithmic scaling (slope ≈ 0 in log-log plot), but the prediction explicitly states slope ≈ 0.1–0.3 (which represents power-law growth, not logarithmic). This creates a self-defeating design: if the experiment yields slope=0.2, it would validate the prediction but reject the hypothesis. Additionally, the plan fails to specify the functional form of synthetic constraints (polynomial degree, smoothness, etc.), risking the very 'functional form assumption' the hypothesis seeks to avoid.",
+    "missing_steps": [
+      "Correct the prediction to match the hypothesis: log-log slope should be near 0 for logarithmic growth, not 0.1–0.3",
+      "Specify the functional form of synthetic constraints (e.g., low-degree polynomials with known smoothness, trigonometric sums with bounded frequency) to ensure test validity and avoid functional form confounds",
+      "Define precise ranges for w and N with sufficient resolution for log-log slope estimation (e.g., logarithmic spacing for w, linear spacing for N)"
+    ],
+    "mode": "explore",
+    "description": "Conduct a systematic capacity scan to test the logarithmic scaling hypothesis for $N_c(w)$ (minimum width for zero violation). Generate synthetic constraint data using smooth functions (e.g., low-degr"
   }
 ]
