@@ -148,6 +148,37 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_49e24e71",
+      "objective": "** [DIM: Computation] Hypothesis 1",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Design and execute a numerical scan to test the hypothesis that small feedforward networks exhibit solution-space rigidity (finite, non-growing N_c(w)). Steps: (1) Define a class of analytic constraints (e.g., polynomial identity or ODE residual) that admit a known low-dimensional solution manifold; (2) Generate w constraint samples via bootstrapping (w ∈ {10, 20, 50, 100}); (3) For each w, sweep hidden layer width N ∈ [16, 32, 64, 128, 256] to find the minimal N_c(w) achieving zero violation (max absolute error ≤ 1e-3 on held-out points); (4) Record N_c(w) and training/holdout losses. Rigidity is confirmed if N_c(w) stays small (≤64) and flat across w; fatness if no width achieves zero violation. Use a simple MLP with ReLU, Adam, and early stopping; run multiple seeds per w for robustness.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "experiments/rgn_scan_mlp.py",
+            "experiments/rgn_scan_mlp.ipynb"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-30T13:05:28.531560+00:00",
+      "confirmed_at": "2026-09-30T13:05:28.532862+00:00",
+      "completed_at": "2026-09-30T13:06:11.883461+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

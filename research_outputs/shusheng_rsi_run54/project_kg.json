@@ -194,6 +194,70 @@
       "r_phys": 1.0,
       "iteration": 15,
       "id": "persona_use:reviewer_iter15"
+    },
+    {
+      "label": "** Hypothesis [DIM: structure] is the most testable and novel in this context. T",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T13:04:14.799040",
+      "last_seen": "2026-09-30T13:04:14.799040",
+      "mentions": 1,
+      "iteration": 25,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "$N_c(w)$ will show sub-linear or constant scaling (rigidity) for low-degree analytic constraints, with max validation error dropping sharply at a critical width threshold; for high-degree constraints,",
+      "persona": "reviewer",
+      "id": "experiment:** Hypothesis [DIM: structure] is the most testable and novel in this context. T"
+    },
+    {
+      "label": "plan_explore_iter25",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T13:04:14.799081",
+      "last_seen": "2026-09-30T13:04:14.799081",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter25"
+    },
+    {
+      "label": "pass_iter25",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T13:04:14.799090",
+      "last_seen": "2026-09-30T13:04:14.799090",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter25"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T13:04:14.799100",
+      "last_seen": "2026-09-30T13:04:14.799100",
+      "mentions": 1,
+      "members": [
+        "experiment:** Hypothesis [DIM: structure] is the most testable and novel in this context. T",
+        "Method:plan_explore_iter25",
+        "Fact:pass_iter25"
+      ],
+      "iteration": 25,
+      "id": "he_experiment_pipeline_8d7a1d66"
+    },
+    {
+      "label": "reviewer_iter25",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T13:04:14.799176",
+      "last_seen": "2026-09-30T13:04:14.799176",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "673540196252e2df",
+      "r_phys": 1.0,
+      "iteration": 25,
+      "id": "persona_use:reviewer_iter25"
     }
   ],
   "links": [
@@ -277,6 +341,33 @@
       "last_seen": "2026-09-30T13:02:25.873893",
       "mentions": 1,
       "target": "he_experiment_pipeline_d83ebb60"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:** Hypothesis [DIM: structure] is the most testable and novel in this context. T",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T13:04:14.799100",
+      "last_seen": "2026-09-30T13:04:14.799100",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8d7a1d66"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T13:04:14.799100",
+      "last_seen": "2026-09-30T13:04:14.799100",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8d7a1d66"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter25",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T13:04:14.799100",
+      "last_seen": "2026-09-30T13:04:14.799100",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_8d7a1d66"
     }
   ]
 }
