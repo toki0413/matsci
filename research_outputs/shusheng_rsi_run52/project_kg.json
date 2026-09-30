@@ -66,6 +66,70 @@
       "r_phys": 1.0,
       "iteration": 5,
       "id": "persona_use:reviewer_iter5"
+    },
+    {
+      "label": "** [DIM: Optimization] The Loss Landscape Geometry Hypothesis.",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T10:25:58.083325",
+      "last_seen": "2026-09-30T10:25:58.083325",
+      "mentions": 1,
+      "iteration": 20,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "We expect to observe that for a sufficiently constrained analytic function (e.g., low-degree polynomial or trigonometric sum), the minimum width $N_c(w)$ required to satisfy constraints on unseen poin",
+      "persona": "reviewer",
+      "id": "experiment:** [DIM: Optimization] The Loss Landscape Geometry Hypothesis."
+    },
+    {
+      "label": "plan_explore_iter20",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:25:58.083364",
+      "last_seen": "2026-09-30T10:25:58.083364",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter20"
+    },
+    {
+      "label": "pass_iter20",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:25:58.083373",
+      "last_seen": "2026-09-30T10:25:58.083373",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter20"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T10:25:58.083383",
+      "last_seen": "2026-09-30T10:25:58.083383",
+      "mentions": 1,
+      "members": [
+        "experiment:** [DIM: Optimization] The Loss Landscape Geometry Hypothesis.",
+        "Method:plan_explore_iter20",
+        "Fact:pass_iter20"
+      ],
+      "iteration": 20,
+      "id": "he_experiment_pipeline_c00fa122"
+    },
+    {
+      "label": "reviewer_iter20",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T10:25:58.083457",
+      "last_seen": "2026-09-30T10:25:58.083457",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "275871f21155948c",
+      "r_phys": 1.0,
+      "iteration": 20,
+      "id": "persona_use:reviewer_iter20"
     }
   ],
   "links": [
@@ -95,6 +159,33 @@
       "last_seen": "2026-09-30T10:19:56.106199",
       "mentions": 1,
       "target": "he_experiment_pipeline_5f036a3c"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:** [DIM: Optimization] The Loss Landscape Geometry Hypothesis.",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:25:58.083383",
+      "last_seen": "2026-09-30T10:25:58.083383",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c00fa122"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:25:58.083383",
+      "last_seen": "2026-09-30T10:25:58.083383",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c00fa122"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter20",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T10:25:58.083383",
+      "last_seen": "2026-09-30T10:25:58.083383",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_c00fa122"
     }
   ]
 }
