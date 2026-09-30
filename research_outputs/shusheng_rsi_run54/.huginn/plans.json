@@ -364,6 +364,39 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_b70e655c",
+      "objective": "** I will pick the one that seems most novel/robust. The Geometry (Manifold) hypothesis is often the most subtle and interesting in ML (manifold hypothesis), distinguishing it from the brute-force Structure (VC) view. However, the Structure hypothesis is the most standard \"worst-case\" bound. Let's select the Geometry one as it offers a specific alternative to the linear scaling, which is often the null hypothesis in capacity arguments. Actually, the prompt asks me to select the \"most testable+novel\". The Manifold hypothesis is quite standard in ML theory. The \"Dynamics\" (Optimization Landscape) one is less commonly tested via width scaling specifically for *zero-violation* on hold-out points. Let's go with the **Dynamics/Optimization** one because it connects the *training process* (finding the zero-violation solution) to the *capacity*, which is a deeper probe of \"rigidity\" of the solution space than just counting constraints. Wait, the \"Measure\" one (Statistical) is also strong. Let's stick to the three distinct mathematical scalings. I will select the **Geometry (Manifold)** one as the selected hypothesis because it provides a clear contrast to the linear \"brute force\" algebraic view and is a central theme in modern ML theory (the \"manifold hypothesis\").",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Execute a bootstrap rigidity experiment for small feedforward networks. Generate synthetic function constraints (w points sampled from a low-dimensional manifold), train networks of varying hidden width (N) to minimize training error, and measure the maximum absolute error on held-out (w_hold) points. N_c(w) is the smallest N achieving max_err ≤ 1e-3 on hold-out points. Repeat for increasing w to test if N_c stays constant (rigid) or grows (fat). Use a simple MLP with ReLU activations, Adam optimizer, and early stopping. Ensure zero-violation is strictly enforced (max absolute error ≤ 1e-3). Report N_c(w) trend and final conclusion on rigidity.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "src/ml_rigidity_experiment.py",
+            "(new",
+            "script)",
+            "configs/rigidity_scan.yaml"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-30T13:17:45.667770+00:00",
+      "confirmed_at": "2026-09-30T13:17:45.669457+00:00",
+      "completed_at": "2026-09-30T13:18:08.873014+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

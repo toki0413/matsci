@@ -578,6 +578,70 @@
       "r_phys": 1.0,
       "iteration": 55,
       "id": "persona_use:reviewer_iter55"
+    },
+    {
+      "label": "[DIM: structure] Algebraic Invariant Hypothesis**",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T13:16:56.247819",
+      "last_seen": "2026-09-30T13:16:56.247819",
+      "mentions": 1,
+      "iteration": 60,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The scan will show N_c(w) remaining small (e.g., ≤ 20) and roughly constant as w increases from 1 to the scan limit, indicating a rigid solution space (low-dimensional), with zero-violation achieved a",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] Algebraic Invariant Hypothesis**"
+    },
+    {
+      "label": "plan_explore_iter60",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T13:16:56.247862",
+      "last_seen": "2026-09-30T13:16:56.247862",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter60"
+    },
+    {
+      "label": "pass_iter60",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T13:16:56.247870",
+      "last_seen": "2026-09-30T13:16:56.247870",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter60"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T13:16:56.247879",
+      "last_seen": "2026-09-30T13:16:56.247879",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] Algebraic Invariant Hypothesis**",
+        "Method:plan_explore_iter60",
+        "Fact:pass_iter60"
+      ],
+      "iteration": 60,
+      "id": "he_experiment_pipeline_f9064162"
+    },
+    {
+      "label": "reviewer_iter60",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T13:16:56.247952",
+      "last_seen": "2026-09-30T13:16:56.247952",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "f39ae0310b6a731a",
+      "r_phys": 1.0,
+      "iteration": 60,
+      "id": "persona_use:reviewer_iter60"
     }
   ],
   "links": [
@@ -823,6 +887,33 @@
       "last_seen": "2026-09-30T13:15:37.259913",
       "mentions": 1,
       "target": "he_experiment_pipeline_a346ac21"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] Algebraic Invariant Hypothesis**",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T13:16:56.247879",
+      "last_seen": "2026-09-30T13:16:56.247879",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_f9064162"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter60",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T13:16:56.247879",
+      "last_seen": "2026-09-30T13:16:56.247879",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_f9064162"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter60",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T13:16:56.247879",
+      "last_seen": "2026-09-30T13:16:56.247879",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_f9064162"
     }
   ]
 }
