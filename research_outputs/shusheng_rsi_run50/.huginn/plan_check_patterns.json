@@ -168,5 +168,35 @@
     ],
     "mode": "explore",
     "description": "[auto-routed: surprise=1.00] Implement a controlled numerical experiment to test the phase transition hypothesis for small feedforward networks. Steps: (1) Define a simple 1D constraint function (e.g."
+  },
+  {
+    "scene_tag": "auto_small",
+    "hyp_key": "305c09e7413e",
+    "reason": "The plan fails to properly address the hypothesis because the experimental design lacks rigor in defining the constraint function and evaluation criteria. Specifically, the description does not specify the analytic constraint function (e.g., the specific high-degree polynomial with sharp discontinuities), which is critical for reproducibility. Additionally, the hypothesis mentions testing a 'clear, non-trivial scaling law' but the plan only tests discrete width values without proposing a specific scaling relationship to verify. The prediction is vague about what constitutes 'rigid' vs 'fat' in quantitative terms beyond the binary classification. There's also no mention of how to handle the 'sharp discontinuities' which could cause training instability or convergence issues not accounted for in the early stopping mechanism.",
+    "missing_steps": [
+      "Define the specific analytic constraint function with high-degree polynomial and sharp discontinuities",
+      "Specify the exact scaling law to be tested (e.g., N_c ∝ w^α)",
+      "Include error bars or confidence intervals for N_c(w) measurements",
+      "Define how to handle cases where no width achieves zero violation within the scan range",
+      "Add validation against theoretical Kolmogorov width predictions for the chosen function",
+      "Specify training hyperparameters (learning rate, optimizer, epochs, batch size)"
+    ],
+    "mode": "explore",
+    "description": "Design a bootstrap experiment to test solution space rigidity of small MLPs on an analytic constraint function (e.g., high-degree polynomial with sharp discontinuities). Sweep w (constraint sample cou"
+  },
+  {
+    "scene_tag": "auto_small",
+    "hyp_key": "305c09e7413e",
+    "reason": "The plan fails to define the specific analytic constraint function, which is critical for reproducibility and testing the scaling law. The hypothesis requires testing a 'clear, non-trivial scaling law', but the plan only tests discrete width values without proposing a specific functional relationship to verify. The prediction is vague about quantitative criteria for 'rigid' vs 'fat' beyond binary classification. The plan also doesn't address how to handle sharp discontinuities that could cause training instability.",
+    "missing_steps": [
+      "Define the specific analytic constraint function with high-degree polynomial and sharp discontinuities",
+      "Specify the exact scaling law to be tested (e.g., N_c ∝ w^α with explicit α value)",
+      "Include error bars or confidence intervals for N_c(w) measurements",
+      "Define how to handle cases where no width achieves zero violation within the scan range",
+      "Add validation against theoretical Kolmogorov width predictions for the chosen function",
+      "Specify exact training hyperparameters including learning rate schedule, batch size, and early stopping criteria"
+    ],
+    "mode": "explore",
+    "description": "We will conduct a systematic bootstrap experiment to test solution space rigidity of small MLPs on an analytic constraint function designed with high-degree polynomial and sharp discontinuities (e.g.,"
   }
 ]

@@ -716,12 +716,14 @@
         "[Feynman known_unknown] I don’t understand why the agent produced only raw numbers instead of linking them to the hypothesis or providing interpretive reasoning — was this a failure of instruction following, model capability, or reward signal design?",
         "[Feynman unknown_unknown] I never considered that the validation framework might completely bypass test execution if the output lacks semantic content — I assumed tests would still run on the numbers themselves, even if meaningless.",
         "[Feynman known_unknown] I don’t fully understand why the generative verification scored 0.0 despite correct physics — whether it’s due to formatting, missing citations, or lack of symbolic derivation.",
-        "[Feynman unknown_unknown] I never considered that the lack of test execution might stem from environment initialization issues rather than logical flaws in the hypothesis."
+        "[Feynman unknown_unknown] I never considered that the lack of test execution might stem from environment initialization issues rather than logical flaws in the hypothesis.",
+        "[Feynman known_unknown] I don’t understand why the fat_Nc values returned as [inf, inf, inf, inf, inf] — was this due to numerical instability in evaluating high-degree polynomials with discontinuities, or a flaw in how the solution manifold dimension was estimated?",
+        "[Feynman unknown_unknown] I never considered that the generative verification tool might interpret infinite outputs as evidence of undefined computational states rather than valid physical behavior — so I didn’t design safeguards against such edge cases before running the experiment."
       ],
-      "iteration": 18,
+      "iteration": 23,
       "status": "active",
       "created_at": "2026-09-30T08:36:02.414426+00:00",
-      "updated_at": "2026-09-30T08:42:32.124682+00:00",
+      "updated_at": "2026-09-30T08:44:38.549851+00:00",
       "session_id": "",
       "metadata": {},
       "unknowns": [
@@ -940,9 +942,65 @@
           "discovered_at": "2026-09-30T08:42:14.419294+00:00",
           "resolved_at": null,
           "iteration": 15
+        },
+        {
+          "id": "unk_1bff60b2",
+          "text": "The proposed metric \"minimum network capacity for zero violation\" assumes that capacity (width) is the primary determinant of generalization, ignoring depth, initialization, and optimization path effects which may dominate behavior in practice.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-30T08:43:03.776814+00:00",
+          "resolved_at": null,
+          "iteration": 20
+        },
+        {
+          "id": "unk_2a359610",
+          "text": "Achieving absolute error ≤ 1e-3 on out-of-sample points may be numerically unstable due to floating-point precision limits or ill-conditioned loss landscapes, especially near decision boundaries.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-30T08:43:03.778975+00:00",
+          "resolved_at": null,
+          "iteration": 20
+        },
+        {
+          "id": "unk_6d894946",
+          "text": "The distribution and geometry of \"held-out constraint points\" are unspecified; if they lie in regions with poor coverage or high curvature, N_c(w) may not reflect true solution space rigidity.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-30T08:43:03.780527+00:00",
+          "resolved_at": null,
+          "iteration": 20
+        },
+        {
+          "id": "unk_6d88ee18",
+          "text": "For very small w, overfitting to noise could yield artificially low N_c(w), while for large w, saturation effects might mask true scaling behavior — neither reliably indicating rigidity.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-30T08:43:03.782014+00:00",
+          "resolved_at": null,
+          "iteration": 20
+        },
+        {
+          "id": "unk_4607bddf",
+          "text": "The definition equates “rigid” with low-dimensional solution space, but doesn’t account for topological features (e.g., disconnected components, fractal structure) that could persist even when dimension appears high.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-30T08:43:03.783468+00:00",
+          "resolved_at": null,
+          "iteration": 20
+        },
+        {
+          "id": "unk_fd1219af",
+          "text": "I don’t understand why the fat_Nc values returned as [inf, inf, inf, inf, inf] — was this due to numerical instability in evaluating high-degree polynomials with discontinuities, or a flaw in how the solution manifold dimension was estimated?",
+          "type": "known_unknown",
+          "discovered_at": "2026-09-30T08:43:15.160780+00:00",
+          "resolved_at": null,
+          "iteration": 20
+        },
+        {
+          "id": "unk_a35d6466",
+          "text": "I never considered that the generative verification tool might interpret infinite outputs as evidence of undefined computational states rather than valid physical behavior — so I didn’t design safeguards against such edge cases before running the experiment.",
+          "type": "unknown_unknown",
+          "discovered_at": "2026-09-30T08:43:15.163771+00:00",
+          "resolved_at": null,
+          "iteration": 20
         }
       ],
-      "unknowns_discovered": 27,
+      "unknowns_discovered": 34,
       "unknowns_resolved": 0,
       "objective": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【唯一硬性口径（不可更改，其余全由你决定）】\n- 零违规 = 留出约束点上的最大绝对误差 ≤ 1e-3。\n- 刚性 = 扫描范围内存在较小的有限 N_c（且 N_c 不随 w 增长）；胖 = 扫描上限内任何宽度都达不到零违规（N_c 不可达）。判别是二值的。\n- 所有报告数值必须是有限数（禁止 inf/nan/None）。\n- 研究对象只能是小型前馈网络本身。严禁把本命题替换或“换名归约”为材料/化学/玻璃/合金/离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【实验的族、样本、扫描、脚本如何设计，以及如何证明“刚性可达”，由你自己决定并给出理由。】\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
       "success_criteria": [],
