@@ -471,6 +471,37 @@
         "mode": "coder",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_076c8763",
+      "objective": "** [DIM: COMPUTATION] **Neural Tangent Kernel (NTK) Rank Hypothesis**.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "We will design a numerical experiment to test the \"NTK Rank Hypothesis\" — specifically, whether small feedforward networks exhibit solution-space rigidity (i.e., finite N_c(w) that does not grow with w) on a set of analytic constraints. We will: (1) define a family of analytic target functions (e.g., polynomials, trigonometric combinations); (2) sample w constraint points; (3) train small MLPs with varying hidden widths N; (4) measure max absolute error on held-out constraints; (5) determine N_c(w) as the smallest N achieving ≤1e-3 error; (6) repeat for increasing w to observe scaling. We will use symbolic_math_tool to generate constraint functions and codelab_tool to run the training loop. We will validate results against the hypothesis’s binary rigidity/fatness criterion.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "src/ntk_rank_hypothesis.py",
+            "experiments/ntk_scan.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-30T11:37:17.719904+00:00",
+      "confirmed_at": "2026-09-30T11:37:17.721409+00:00",
+      "completed_at": "2026-09-30T11:38:04.193002+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

@@ -478,3 +478,66 @@ def mlp_predict(model, X):
 [code-lab-run] res_none=True success=None nobj=0 reason="执行异常: KeyError: 'objectives'"
 [code-lab-author] raw_len=2904 extracted_len=2889 prompt_len=7305
 [code-lab-run] res_none=False success=True nobj=3 reason=''
+[validate] mode='code_lab' success=True nobj=3 cf=False lab=True
+[exec-route] mode='explore' desc[:80]='We will design a numerical experiment to test the "NTK Rank Hypothesis" — specif' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=2223 extracted_len=2208 prompt_len=4251
+[code-lab-run] res_none=True success=None nobj=0 reason="执行异常: ImportError: import of 'mlp_fit' is not allowed in CodeAct mode; allowed: ['ase', 'collections', 'copy', 'dataclasses', 'decimal', 'fractions', 'functools', 'itertools', 'json', 'math', 'matplot"
+[code-lab-author] raw_len=2099 extracted_len=2084 prompt_len=7124
+[code-lab-run] res_none=True success=None nobj=0 reason='objectives 值须为数值: [-1, -1, 4, 4]'
+[code-lab-author] raw_len=1973 extracted_len=1958 prompt_len=6707
+[code-lab-run] res_none=True success=None nobj=0 reason='objectives 值须为数值: [-1, -1, 4, 4]'
+[code-lab-author] raw_len=2054 extracted_len=2039 prompt_len=6581
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: SyntaxError: invalid syntax (<code_act>, line 2)'
+code_lab 沙箱执行经 4 轮修复仍未产出证据(不伪造): 执行异常: SyntaxError: invalid syntax (<code_act>, line 2)
+code_lab 最后一版书生代码:
+import numpy as np
+from mlp_fit, mlp_predict, poly_basis, _as_2d  # 沙箱内置工具
+
+def family(kind, w, seed):
+    rng = np.random.default_rng(seed)
+    X = np.linspace(0.05, 0.95, w).reshape(-1, 1)
+    Xv = np.linspace(0.02, 0.98, 200).reshape(-1, 1)
+    if kind == 'rigid':
+        coeffs = np.array([1.0, -2.0, 1.0])
+        y = poly_basis(X, 3) @ coeffs.reshape(-1, 1)
+        yv = poly_basis(Xv, 3) @ coeffs.reshape(-1, 1)
+    else:
+        coeffs = rng.standard_normal(10)
+        y = poly_basis(X, 10) @ coeffs.reshape(-1, 1)
+        yv = poly_basis(Xv, 10) @ coeffs.reshape(-1, 1)
+    scale = np.std(np.concatenate([y.flatten(), yv.flatten()]))
+    if scale < 1e-10: scale = 1.0
+    y = y / scale
+    yv = yv / scale
+    return {'X': X, 'y': y, 'Xv': Xv, 'yv': yv}
+
+def run(cfg):
+    seed = int(cfg.get('seed', 0))
+    ws = [4, 8, 16, 32]
+    hs = [2, 4, 8, 16, 32, 64]
+    summary = {'rigid': {}, 'fat': {}}
+    objectives = {}
+    for kind in ['rigid', 'fat']:
+        summary[kind] = {}
+        Nc_list = []
+        for w in ws:
+            Nc_for_w = -1
+            for h in hs:
+                data = family(kind, w, seed + w * 100 + h)
+                X, y = data['X'], data['y']
+                Xv, yv = data['Xv'], data['yv']
+                model = mlp_fit(X, y, h, seeds=3)
+                pred = mlp_predict(model, Xv)
+                err = np.max(np.abs(pred - yv))
+                if err <= 1e-3:
+                    Nc_for_w = h
+                    break
+            Nc_list.append(Nc_for_w)
+            idx = hs.index(Nc_for_w) if Nc_for_w > 0 else len(hs)
+            summary[kind][w] = {'Nc': Nc_for_w, 'hs': hs[:idx+1] if Nc_for_w > 0 else hs}
+        objectives[f'Nc_{kind}_trend'] = Nc_list
+        rigid_ok = all(n > 0 and n <= 16 for n in summary['rigid'].values())
+        fat_ok = all(n < 0 for n in summary['fat'].values())
+        objectives['rigid_rigid'] = 1.0 if rigid_ok else 0.0
+        objectives['fat_fat'] = 1.0 if fat_ok else 0.0
+    return {'success': True, 'summa
