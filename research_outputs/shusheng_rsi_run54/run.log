@@ -555,3 +555,9 @@ metacog: 假设可能为换名归约 (trap=, target=已有假设: The constraint
 [code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 10)'
 [code-lab-author] raw_len=2053 extracted_len=2038 prompt_len=7228
 [code-lab-run] res_none=False success=True nobj=2 reason=''
+[validate] mode='code_lab' success=True nobj=2 cf=False lab=True
+metacog: 假设可能为换名归约 (trap=, target=The constraints form a satisfiability problem in the space of piecewise-linear functions; rigidity emerges because the number of linear regions in the network's output grows polynomially with width $N_c$, and once this exceeds the number of constraints $w$, the solution space becomes underdetermined): [DIM: structure] The constraint system admits a piecewise-linear solution space due to ReLU activati
+renamed-reduction 3× consecutive: trigger counterexample hunt
+[exec-route] mode='explore' desc[:80]='Design a numerical experiment to test the hypothesis that the minimal width $N_c' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=2133 extracted_len=2118 prompt_len=4763
+[code-lab-run] res_none=False success=True nobj=1 reason=''

@@ -48,10 +48,10 @@
         "[Feynman known_unknown] I don’t understand how to generate divergent hypotheses that are both physically grounded and numerically distinct when no domain context (e.g., material system, observable quantity) is provided upfront.",
         "[Feynman unknown_unknown] I never considered that the lack of concrete experimental or simulation data might cause the entire hypothesis-validation loop to collapse into placeholder outputs — making validation meaningless even if syntax is correct."
       ],
-      "iteration": 138,
+      "iteration": 143,
       "status": "active",
       "created_at": "2026-09-30T12:56:45.151665+00:00",
-      "updated_at": "2026-09-30T13:46:17.013312+00:00",
+      "updated_at": "2026-09-30T13:48:56.920090+00:00",
       "session_id": "",
       "metadata": {},
       "unknowns": [
@@ -1518,9 +1518,49 @@
           "discovered_at": "2026-09-30T13:46:00.269048+00:00",
           "resolved_at": null,
           "iteration": 135
+        },
+        {
+          "id": "unk_3e5fa78e",
+          "text": "The optimization landscape of small networks may contain many local minima, making it difficult to reliably identify the minimum width N_c(w) that achieves zero violation; convergence to a suboptimal solution could lead to overestimation of N_c(w).",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-30T13:47:04.279811+00:00",
+          "resolved_at": null,
+          "iteration": 140
+        },
+        {
+          "id": "unk_dfb66a3e",
+          "text": "Using maximum absolute error ≤ 1e-3 as the sole criterion for \"zero violation\" may not capture all aspects of constraint satisfaction, especially if the constraints involve derivatives or higher-order properties not reflected in pointwise function values.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-30T13:47:04.282297+00:00",
+          "resolved_at": null,
+          "iteration": 140
+        },
+        {
+          "id": "unk_358800a9",
+          "text": "The distribution and density of the \"held-out constraint points\" are critical; if they are sparse or clustered, the measured N_c(w) may not reflect true generalization behavior or rigidity of the solution space.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-30T13:47:04.284191+00:00",
+          "resolved_at": null,
+          "iteration": 140
+        },
+        {
+          "id": "unk_29f68750",
+          "text": "For very small w (e.g., w=1 or 2), even trivial functions might satisfy the error bound, leading to artificially low N_c(w) and misleading conclusions about rigidity; the scaling behavior of N_c(w) with w may only emerge in a specific range.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-30T13:47:04.286011+00:00",
+          "resolved_at": null,
+          "iteration": 140
+        },
+        {
+          "id": "unk_8ed52f88",
+          "text": "The assumption that network width is the sole relevant capacity measure ignores other architectural choices (depth, activation functions, initialization schemes) that could significantly affect solvability and thus N_c(w), potentially confounding the interpretation of rigidity.",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-30T13:47:04.287764+00:00",
+          "resolved_at": null,
+          "iteration": 140
         }
       ],
-      "unknowns_discovered": 183,
+      "unknowns_discovered": 188,
       "unknowns_resolved": 0,
       "objective": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【唯一硬性口径（不可更改，其余全由你决定）】\n- 零违规 = 留出约束点上的最大绝对误差 ≤ 1e-3。\n- 刚性 = 扫描范围内存在较小的有限 N_c（且 N_c 不随 w 增长）；胖 = 扫描上限内任何宽度都达不到零违规（N_c 不可达）。判别是二值的。\n- 所有报告数值必须是有限数（禁止 inf/nan/None）。\n- 研究对象只能是小型前馈网络本身。严禁把本命题替换或“换名归约”为材料/化学/玻璃/合金/离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【实验的族、样本、扫描、脚本如何设计，以及如何证明“刚性可达”，由你自己决定并给出理由。】\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
       "success_criteria": [],

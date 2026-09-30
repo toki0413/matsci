@@ -841,6 +841,37 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_66a6c8d6",
+      "objective": "[DIM: structure] The constraint system admits a piecewise-linear solution space due to ReLU activation; the minimal width $N_c(w)$ is constant ($N_c = \\text{degree of interpolating polynomial}$) because ReLU networks can represent piecewise linear functions with fixed width regardless of $w$, as long as width exceeds the number of linear segments needed. | predict: $N_c(w)$ is constant (e.g., $N_c=4$) for all $w$ up to 100, provided width is sufficient to encode segment boundaries. | pro: Directly leverages ReLU expressivity theory; simplest prediction to test (flat line); aligns with prior success in polynomial interpolation (iteration 5). | con: May fail if constraints induce non-piecewise-linear behavior (e.g., smooth functions); requires careful choice of constraint family.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Design a numerical experiment to test the hypothesis that the minimal width $N_c(w)$ for zero-violation on bootstrap constraints is constant (rigid) as a function of constraint count $w$. This involves: (1) selecting a family of piecewise-linear analytical constraints (to match ReLU expressivity), (2) implementing a small feedforward network with ReLU activations, (3) scanning widths $N$ for increasing $w$ (constraint counts) to find minimal $N$ achieving max absolute error $\\le 10^{-3}$ on held-out points, (4) plotting $N_c(w)$ to verify constancy vs. growth. This directly tests the \"rigid\" vs. \"fat\" dichotomy specified in the target chain.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "src/experiment_relu_capacity.py",
+            "tests/test_rigid_hypothesis.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-30T13:48:56.914338+00:00",
+      "confirmed_at": "2026-09-30T13:48:56.916240+00:00",
+      "completed_at": "2026-09-30T13:49:17.437462+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
