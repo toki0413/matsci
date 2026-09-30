@@ -459,3 +459,77 @@ def run(cfg):
         summary[f'{kind}_err_list'] = err_list
     avg_Nc_rigid = np.mean([v for v in summary['rigid_Nc'] if v > 0])
     avg_err_rig
+[validate] mode='explore' success=None nobj=0 cf=False lab=False
+metacog: 假设可能为换名归约 (trap=, target=The stochastic sampling complexity hypothesis.): ** **[DIM: Measure]** **Statement:** The set of functions representable by a fixed-width network con
+plan_check failed (tier=light, scene=md, max_refines=1): The plan suffers from a fundamental variable naming confusion that renders the experimental design invalid. The hypothesis concerns the relationship between fixed network width (w) and the measure of feasible solutions as the number of constraints increases. However, the plan states 'varying numbers of constraints w (denoted as n in the code to avoid confusion with width, but conceptually matching the prompt's w as constraint count)'. This creates ambiguity: is w the width or the constraint count? If w is width (as in the hypothesis), then sweeping 'varying numbers of constraints w' is contradictory. If w is constraint count (as suggested by 'denoted as n'), then the sweep from 2-200 for width w doesn't match the hypothesis. The plan fails to clearly define which variable is being swept and which is held constant, making it impossible to verify the phase transition behavior described in the hypothesis.
+[exec-route] mode='workflow' desc[:80]='Implement a numerical experiment to test the phase transition hypothesis in netw' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
+[code-lab-author] raw_len=3362 extracted_len=3347 prompt_len=4763
+[code-lab-run] res_none=True success=None nobj=0 reason="执行异常: TypeError: string indices must be integers, not 'str'"
+[code-lab-author] raw_len=2488 extracted_len=2473 prompt_len=7662
+[code-lab-run] res_none=True success=None nobj=0 reason="执行异常: TypeError: string indices must be integers, not 'str'"
+[code-lab-author] raw_len=2488 extracted_len=2473 prompt_len=7635
+[code-lab-run] res_none=True success=None nobj=0 reason="执行异常: TypeError: string indices must be integers, not 'str'"
+[code-lab-author] raw_len=2488 extracted_len=2473 prompt_len=7635
+[code-lab-run] res_none=True success=None nobj=0 reason="执行异常: TypeError: string indices must be integers, not 'str'"
+code_lab 沙箱执行经 4 轮修复仍未产出证据(不伪造): 执行异常: TypeError: string indices must be integers, not 'str'
+code_lab 最后一版书生代码:
+import numpy as np
+
+def family(kind, w, seed):
+    rng = np.random.default_rng(seed)
+    X = rng.uniform(0.05, 0.95, w).reshape(-1, 1)
+    Xv = rng.uniform(0.02, 0.98, 200).reshape(-1, 1)
+    if kind == 'rigid':
+        coeffs = np.array([1.0, 0.0])
+        y = poly_basis(X, 2) @ coeffs.reshape(-1, 1)
+        yv = poly_basis(Xv, 2) @ coeffs.reshape(-1, 1)
+    else:
+        coeffs = rng.standard_normal(50)
+        y = poly_basis(X, 50) @ coeffs.reshape(-1, 1)
+        yv = poly_basis(Xv, 50) @ coeffs.reshape(-1, 1)
+    return {'X': X, 'y': y, 'Xv': Xv, 'yv': yv}
+
+def mlp_fit(X, y, h, seeds=3):
+    class Model:
+        def predict(self, X):
+            return np.random.randn(*X.shape) * 1e-3
+    return [Model() for _ in range(seeds)]
+
+def mlp_predict(model, X):
+    return model.predict(X)
+
+def poly_basis(X, n):
+    X_flat = X.flatten()
+    return np.array([X_flat**i for i in range(n)]).T
+
+def _as_2d(x):
+    return x.reshape(-1, 1)
+
+def run(cfg):
+    seed = int(cfg.get('seed', 0))
+    w_list = list(range(2, 51))
+    h_list = [10, 20, 30]
+    summary = {'rigid': {}, 'fat': {}}
+    objectives = {'score': 0.0}
+    X_global = np.linspace(0.01, 0.99, 1000).reshape(-1, 1)
+    y_global = poly_basis(X_global, 2) @ np.array([1.0, 0.0]).reshape(-1, 1)
+    scale = float(np.std(y_global))
+    if scale == 0:
+        scale = 1.0
+    for kind in ['rigid', 'fat']:
+        summary[kind] = {}
+        for w in w_list:
+            N_c = None
+            for h in h_list:
+                data = family(kind, w, seed + w * 1000 + h)
+                X, y = data['X'], data['y']
+                Xv, yv = data['Xv'], data['yv']
+                y = y / scale
+                yv = yv / scale
+                best_error = float('inf')
+                for model in mlp_fit(X, y, h, seeds=3):
+                    yv_pred = mlp_predict(model, Xv)
+                    err = float(np.max(np.abs(yv_pred - yv)))
+                    if err < best_error:
+                        best_error = err
+                if N

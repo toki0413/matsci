@@ -187,5 +187,33 @@
     ],
     "mode": "explore",
     "description": "Design a numerical experiment to test the hypothesis that small feedforward networks exhibit logarithmic scaling of hidden width N_c(w) against constraint sample size w. The plan will: (1) generate co"
+  },
+  {
+    "scene_tag": "md",
+    "hyp_key": "2062030b208a",
+    "reason": "The plan suffers from a fundamental variable naming confusion that renders the experimental design invalid. The hypothesis concerns the relationship between fixed network width (w) and the measure of feasible solutions as the number of constraints increases. However, the plan states 'varying numbers of constraints w (denoted as n in the code to avoid confusion with width, but conceptually matching the prompt's w as constraint count)'. This creates ambiguity: is w the width or the constraint count? If w is width (as in the hypothesis), then sweeping 'varying numbers of constraints w' is contradictory. If w is constraint count (as suggested by 'denoted as n'), then the sweep from 2-200 for width w doesn't match the hypothesis. The plan fails to clearly define which variable is being swept and which is held constant, making it impossible to verify the phase transition behavior described in the hypothesis.",
+    "missing_steps": [
+      "Clarify variable naming: distinguish between network width (w) and constraint count (n) clearly throughout the plan",
+      "Define the sweep strategy: should we fix n and sweep w (to find N_c(n)), or fix w and sweep n (to find the measure of feasible solutions)?",
+      "Specify the function class and constraint distribution (the hypothesis mentions 'smooth distribution' but doesn't specify which)",
+      "Define the scan range for width w (what is the 'scan limit' mentioned in the prediction?)",
+      "Establish a clear criterion for 'zero violation' beyond just max absolute error <= 1e-3 (e.g., convergence criteria, training duration)"
+    ],
+    "mode": "workflow",
+    "description": "Implement a numerical experiment to test the phase transition hypothesis in network capacity. Design a synthetic function approximation task where constraints are fixed points (evaluation constraints)"
+  },
+  {
+    "scene_tag": "md",
+    "hyp_key": "2062030b208a",
+    "reason": "The plan suffers from a fundamental variable naming confusion that renders the experimental design invalid. The hypothesis concerns the relationship between fixed network width (w) and the measure of feasible solutions as the number of constraints increases. However, the plan states 'varying numbers of constraints w (denoted as n in the code to avoid confusion with width, but conceptually matching the prompt's w as constraint count)'. This creates ambiguity: is w the width or the constraint count? If w is width (as in the hypothesis), then sweeping 'varying numbers of constraints w' is contradictory. If w is constraint count (as suggested by 'denoted as n'), then the sweep from 2-200 for width w doesn't match the hypothesis. The plan fails to clearly define which variable is being swept and which is held constant, making it impossible to verify the phase transition behavior described in the hypothesis.",
+    "missing_steps": [
+      "Clarify variable naming: distinguish between network width (w) and constraint count (n) clearly throughout the plan",
+      "Define the sweep strategy: should we fix n and sweep w (to find N_c(n)), or fix w and sweep n (to find the measure of feasible solutions)?",
+      "Specify the function class and constraint distribution (the hypothesis mentions 'smooth distribution' but doesn't specify which)",
+      "Define the scan range for width w (what is the 'scan limit' mentioned in the prediction)?",
+      "Establish a clear criterion for 'zero violation' beyond just max absolute error <= 1e-3 (e.g., convergence criteria, training duration)"
+    ],
+    "mode": "workflow",
+    "description": "Implement a numerical experiment to test the phase transition hypothesis in network capacity. Define the hypothesis variables clearly: let $w$ be the fixed hidden layer width and $n$ be the number of "
   }
 ]

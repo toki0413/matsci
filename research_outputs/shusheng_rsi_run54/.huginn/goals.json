@@ -48,10 +48,10 @@
         "[Feynman known_unknown] I don’t understand how to generate divergent hypotheses that are both physically grounded and numerically distinct when no domain context (e.g., material system, observable quantity) is provided upfront.",
         "[Feynman unknown_unknown] I never considered that the lack of concrete experimental or simulation data might cause the entire hypothesis-validation loop to collapse into placeholder outputs — making validation meaningless even if syntax is correct."
       ],
-      "iteration": 128,
+      "iteration": 133,
       "status": "active",
       "created_at": "2026-09-30T12:56:45.151665+00:00",
-      "updated_at": "2026-09-30T13:42:37.631792+00:00",
+      "updated_at": "2026-09-30T13:45:08.628085+00:00",
       "session_id": "",
       "metadata": {},
       "unknowns": [
@@ -1438,9 +1438,49 @@
           "discovered_at": "2026-09-30T13:41:10.431523+00:00",
           "resolved_at": null,
           "iteration": 125
+        },
+        {
+          "id": "unk_76df6c7f",
+          "text": "将泛化行为直接作为解空间刚性探针可能不成立，因为高泛化能力可能源于优化良好的局部极小值而非解空间的刚性；胖解空间也可能通过正则化实现良好泛化。",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-30T13:43:28.581975+00:00",
+          "resolved_at": null,
+          "iteration": 130
+        },
+        {
+          "id": "unk_2b6bb58b",
+          "text": "“零违规”阈值 (1e-3) 对网络宽度的离散扫描过于敏感，微小的数值噪声可能导致 N_c(w) 的误判（例如从不可达突变为可达），影响刚性/胖的二值判别。",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-30T13:43:28.584407+00:00",
+          "resolved_at": null,
+          "iteration": 130
+        },
+        {
+          "id": "unk_e53a4234",
+          "text": "当 w 增加时，若约束点分布出现病态（如共线或高度相关），即使解空间是刚性的，也可能需要极高的 N_c 才能拟合，导致误判为“胖”。",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-30T13:43:28.586158+00:00",
+          "resolved_at": null,
+          "iteration": 130
+        },
+        {
+          "id": "unk_22da2ce4",
+          "text": "假设隐藏层宽度是唯一决定容量的变量忽略了深度、激活函数和初始化策略的影响，这些同样显著影响解空间的几何结构，可能导致 N_c(w) 的度量偏差。",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-30T13:43:28.587778+00:00",
+          "resolved_at": null,
+          "iteration": 130
+        },
+        {
+          "id": "unk_0ccbc39e",
+          "text": "缺乏针对该命题的基准数据集或理论解（如已知刚性/胖的解析约束系统），使得无法验证 N_c(w) 扫描结果是否真实反映了解空间性质而非算法特定行为。",
+          "type": "blind_spot",
+          "discovered_at": "2026-09-30T13:43:28.589447+00:00",
+          "resolved_at": null,
+          "iteration": 130
         }
       ],
-      "unknowns_discovered": 173,
+      "unknowns_discovered": 178,
       "unknowns_resolved": 0,
       "objective": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【唯一硬性口径（不可更改，其余全由你决定）】\n- 零违规 = 留出约束点上的最大绝对误差 ≤ 1e-3。\n- 刚性 = 扫描范围内存在较小的有限 N_c（且 N_c 不随 w 增长）；胖 = 扫描上限内任何宽度都达不到零违规（N_c 不可达）。判别是二值的。\n- 所有报告数值必须是有限数（禁止 inf/nan/None）。\n- 研究对象只能是小型前馈网络本身。严禁把本命题替换或“换名归约”为材料/化学/玻璃/合金/离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【实验的族、样本、扫描、脚本如何设计，以及如何证明“刚性可达”，由你自己决定并给出理由。】\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
       "success_criteria": [],
