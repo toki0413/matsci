@@ -27,6 +27,36 @@
         "mode": "coder",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_b007b3e2",
+      "objective": "[DIM: Structure] The constraints are defined by algebraic invariants of a discrete group action (e.g., permutation symmetry on input coordinates). The solution space is a finite set of discrete functions. Prediction: N_c(w) remains constant (rigid) and small (e.g., N_c ≈ 2) for all w, as the network can memorize the discrete invariant mapping without needing to approximate a continuous manifold.",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "[auto-routed: surprise=1.00] Create a standalone Python script to test the hypothesis about solution space rigidity in small feedforward networks. The script will: (1) Define a discrete invariant function (e.g., permutation-symmetric Boolean function), (2) Sweep constraint sample count w and hidden layer width N, (3) Train small MLPs on w samples, (4) Evaluate zero-violation condition (max absolute error ≤ 1e-3) on held-out points, (5) Compute N_c(w) as the minimal width achieving zero violation. The script will output N_c(w) values and trend analysis.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "src/rigidity_test.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-30T13:00:04.436273+00:00",
+      "confirmed_at": "2026-09-30T13:00:04.437835+00:00",
+      "completed_at": "2026-09-30T13:00:16.965349+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

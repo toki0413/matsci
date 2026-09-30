@@ -68,3 +68,7 @@ empty required_results for target_1 — fallback
 [exec-route] mode='coder' desc[:80]='Design a bootstrap experiment to probe solution space rigidity using small feedf' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=True
 [code-lab-author] raw_len=2179 extracted_len=2164 prompt_len=4235
 [code-lab-run] res_none=False success=True nobj=2 reason=''
+[validate] mode='code_lab' success=True nobj=2 cf=False lab=True
+[exec-route] mode='explore' desc[:80]='[auto-routed: surprise=1.00] Create a standalone Python script to test the hypot' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=True
+[code-lab-author] raw_len=2526 extracted_len=2511 prompt_len=4537
+[code-lab-run] res_none=False success=True nobj=1 reason=''

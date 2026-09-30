@@ -1,0 +1,100 @@
+{
+  "directed": true,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "label": "'\". I will provide the list first, then the selection.",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T12:59:41.403179",
+      "last_seen": "2026-09-30T12:59:41.403179",
+      "mentions": 1,
+      "iteration": 5,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "For low-dimensional analytic constraints (e.g., polynomials of degree ≤ 5), N_c(w) will plateau at a small constant value (rigidity). For high-frequency or high-dimensional constraints, N_c(w) will gr",
+      "persona": "reviewer",
+      "id": "experiment:'\". I will provide the list first, then the selection."
+    },
+    {
+      "label": "plan_coder_iter5",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T12:59:41.403224",
+      "last_seen": "2026-09-30T12:59:41.403224",
+      "mentions": 1,
+      "id": "Method:plan_coder_iter5"
+    },
+    {
+      "label": "pass_iter5",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T12:59:41.403237",
+      "last_seen": "2026-09-30T12:59:41.403237",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter5"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T12:59:41.403248",
+      "last_seen": "2026-09-30T12:59:41.403248",
+      "mentions": 1,
+      "members": [
+        "experiment:'\". I will provide the list first, then the selection.",
+        "Method:plan_coder_iter5",
+        "Fact:pass_iter5"
+      ],
+      "iteration": 5,
+      "id": "he_experiment_pipeline_6bd7b949"
+    },
+    {
+      "label": "reviewer_iter5",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T12:59:41.403346",
+      "last_seen": "2026-09-30T12:59:41.403346",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "50f7d0dd37d80d8f",
+      "r_phys": 1.0,
+      "iteration": 5,
+      "id": "persona_use:reviewer_iter5"
+    }
+  ],
+  "links": [
+    {
+      "relation": "member_of",
+      "source": "experiment:'\". I will provide the list first, then the selection.",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T12:59:41.403248",
+      "last_seen": "2026-09-30T12:59:41.403248",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_6bd7b949"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_coder_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T12:59:41.403248",
+      "last_seen": "2026-09-30T12:59:41.403248",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_6bd7b949"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter5",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T12:59:41.403248",
+      "last_seen": "2026-09-30T12:59:41.403248",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_6bd7b949"
+    }
+  ]
+}
