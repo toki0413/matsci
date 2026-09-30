@@ -382,3 +382,22 @@ plan_check failed (tier=light, scene=auto_constraint, max_refines=1): The plan m
 [code-lab-run] res_none=True success=None nobj=0 reason='执行异常: IndexError: index 3 is out of bounds for axis 1 with size 3'
 [code-lab-author] raw_len=1961 extracted_len=1946 prompt_len=7018
 [code-lab-run] res_none=False success=True nobj=1 reason=''
+error in _parse_verify_score: JSON parse failed, falling back to regex
+Traceback (most recent call last):
+  File "/workspace/agent/huginn/autoloop/engine_reflect.py", line 2362, in _parse_verify_score
+    data = json.loads(resp.strip())
+  File "/root/.pyenv/versions/3.14.7/lib/python3.14/json/__init__.py", line 352, in loads
+    return _default_decoder.decode(s)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^
+  File "/root/.pyenv/versions/3.14.7/lib/python3.14/json/decoder.py", line 345, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+               ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.pyenv/versions/3.14.7/lib/python3.14/json/decoder.py", line 363, in raw_decode
+    raise JSONDecodeError("Expecting value", s, err.value) from None
+json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+[validate] mode='code_lab' success=True nobj=1 cf=False lab=True
+metacog: 假设可能为换名归约 (trap=, target=The minimal network capacity N_c(w) is determined by the rank of the constraint matrix in the dual space; for algebraically structured constraints (e.g., polynomial or linear), N_c(w) saturates to a constant equal to the rank, while for unstructured constraints, N_c(w) grows linearly with w.): [DIM: structure] The minimal network capacity $N_c(w)$ is determined by the rank of the constraint m
+renamed-reduction 5× consecutive: escalate — block dominant family + force redirect
+[exec-route] mode='explore' desc[:80]='Redesign the numerical experiment to correctly test the hypothesis: (1) define w' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=True
+[code-lab-author] raw_len=4749 extracted_len=4734 prompt_len=4763
+[code-lab-run] res_none=False success=True nobj=1 reason=''

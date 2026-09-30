@@ -82,5 +82,19 @@
     ],
     "mode": "explore",
     "description": "Redesign the experiment to directly analyze the geometric structure of the solution space rather than network capacity. (1) Define the solution manifold $M$ as the zero set of a smooth function $f: \\m"
+  },
+  {
+    "scene_tag": "auto_constraint",
+    "hyp_key": "7c48f6aecd29",
+    "reason": "The plan fundamentally misdefines the hypothesis. The hypothesis states N_c(w) is determined by the rank of the constraint matrix in the dual space, but the plan incorrectly defines w as the number of constraint samples and N_c(w) as the minimum hidden width needed to achieve zero violation. This is a critical conceptual error: w should represent the constraint parameter (not sample count), and N_c(w) should be a property of the constraint matrix rank, not a network training threshold. The plan confuses the independent variable (constraint parameter w) with the dependent variable (network capacity N_c). Additionally, the 'rigid' vs 'fat' classification is incorrectly framed as a binary reachability issue rather than a saturation vs linear growth behavior.",
+    "missing_steps": [
+      "Correctly define w as the constraint parameter (not sample count)",
+      "Define N_c(w) as the rank of the constraint matrix in dual space, not minimum hidden width for zero violation",
+      "Implement proper algebraic dependency testing for constraint sets",
+      "Establish clear mathematical definition of saturation point w_s",
+      "Define linear growth criteria for fat family with proper scaling"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Design and implement a numerical experiment to test the hypothesis about minimal network capacity N_c(w). Create a Python script that: (1) generates two types of constrain"
   }
 ]

@@ -357,6 +357,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_7f792dc8",
+      "objective": "[DIM: structure] The minimal network capacity $N_c(w)$ is determined by the rank of the constraint matrix in the dual space; for algebraically dependent constraints, $N_c(w)$ remains constant as $w$ increases beyond a saturation point $w_s$, while for algebraically independent constraints, $N_c(w)$ grows linearly with $w$. | predict: rigid family: N_c constant in w for w > w_s; fat family: N_c grows linearly in w. | pro: Directly tests the algebraic structure of the constraint set and distinguishes between dependent/independent constraint scenarios, which is a fundamental mathematical property. con: Requires careful construction of constraint sets with known algebraic properties, which may be complex to implement. |",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Redesign the numerical experiment to correctly test the hypothesis: (1) define w as the constraint parameter (dimension of constraint space), (2) define N_c(w) as the rank of the constraint matrix in dual space (not network width), (3) construct two families of constraints: algebraically dependent (rigid, rank saturates at w_s) and algebraically independent (fat, rank grows linearly), (4) compute rank(w) for w=1..W using symbolic algebra (e.g., Groebner basis rank or Jacobian rank), (5) verify saturation point w_s for rigid family and linear slope for fat family. Use sympy or similar to compute constraint ranks directly, avoiding neural networks entirely. This isolates the algebraic structure from optimization noise.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-09-30T11:17:22.941004+00:00",
+      "confirmed_at": "2026-09-30T11:17:22.942492+00:00",
+      "completed_at": "2026-09-30T11:17:46.141560+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
