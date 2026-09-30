@@ -834,6 +834,70 @@
       "r_phys": 1.0,
       "iteration": 100,
       "id": "persona_use:reviewer_iter100"
+    },
+    {
+      "label": "[DIM: COMPUTATION] The minimal width N_c(w) scales with the VC dimension of the ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:44:40.184037",
+      "last_seen": "2026-09-30T11:44:40.184037",
+      "mentions": 1,
+      "iteration": 105,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The script will generate a plot of $N_c(w)$ vs $w$. If the solution space is rigid (as suggested by the previous high surprise on constant scaling), we expect $N_c(w)$ to plateau at a small finite val",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: COMPUTATION] The minimal width N_c(w) scales with the VC dimension of the"
+    },
+    {
+      "label": "plan_explore_iter105",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:44:40.184076",
+      "last_seen": "2026-09-30T11:44:40.184076",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter105"
+    },
+    {
+      "label": "pass_iter105",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:44:40.184085",
+      "last_seen": "2026-09-30T11:44:40.184085",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter105"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-09-30T11:44:40.184094",
+      "last_seen": "2026-09-30T11:44:40.184094",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: COMPUTATION] The minimal width N_c(w) scales with the VC dimension of the",
+        "Method:plan_explore_iter105",
+        "Fact:pass_iter105"
+      ],
+      "iteration": 105,
+      "id": "he_experiment_pipeline_90e23374"
+    },
+    {
+      "label": "reviewer_iter105",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-09-30T11:44:40.184166",
+      "last_seen": "2026-09-30T11:44:40.184166",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "e54ffbaf3831c42e",
+      "r_phys": 1.0,
+      "iteration": 105,
+      "id": "persona_use:reviewer_iter105"
     }
   ],
   "links": [
@@ -1187,6 +1251,33 @@
       "last_seen": "2026-09-30T11:43:40.667707",
       "mentions": 1,
       "target": "he_experiment_pipeline_5c0dd8c1"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: COMPUTATION] The minimal width N_c(w) scales with the VC dimension of the",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:44:40.184094",
+      "last_seen": "2026-09-30T11:44:40.184094",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_90e23374"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter105",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:44:40.184094",
+      "last_seen": "2026-09-30T11:44:40.184094",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_90e23374"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter105",
+      "confidence": 0.5,
+      "created_at": "2026-09-30T11:44:40.184094",
+      "last_seen": "2026-09-30T11:44:40.184094",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_90e23374"
     }
   ]
 }
