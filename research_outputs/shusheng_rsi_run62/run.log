@@ -158,3 +158,7 @@ control_trace name=goal_judge iteration=14 evidence=achieved=False score=0.25 ll
 metacog: 假设可能为换名归约 (trap=, target=Algebraic Independence Hypothesis): [DIM: Structure] Algebraic Independence Hypothesis
 [exec-route] mode='workflow' desc[:80]='Implement a numerical experiment to test the Algebraic Independence Hypothesis b' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=True
 [code-lab-author] raw_len=2184 extracted_len=2169 prompt_len=4231
+/workspace/.venv/lib/python3.11/site-packages/numpy/_core/fromnumeric.py:3824: RuntimeWarning: Mean of empty slice
+  return _methods._mean(a, axis=axis, dtype=dtype,
+/workspace/.venv/lib/python3.11/site-packages/numpy/_core/_methods.py:142: RuntimeWarning: invalid value encountered in scalar divide
+  ret = ret.dtype.type(ret / rcount)

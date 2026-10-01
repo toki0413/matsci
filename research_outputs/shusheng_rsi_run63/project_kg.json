@@ -258,6 +258,70 @@
       "r_phys": 1.0,
       "iteration": 25,
       "id": "persona_use:reviewer_iter25"
+    },
+    {
+      "label": "\".",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T13:12:17.405548",
+      "last_seen": "2026-10-01T13:12:17.405548",
+      "mentions": 1,
+      "iteration": 30,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(c) will remain bounded as c increases, indicating rigidity in the function class, with N_c(c) ≈ O(c) or sublinear growth, consistent with theoretical bounds on neural network capacity for constrai",
+      "persona": "reviewer",
+      "id": "experiment:\"."
+    },
+    {
+      "label": "plan_explore_iter30",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:12:17.405589",
+      "last_seen": "2026-10-01T13:12:17.405589",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter30"
+    },
+    {
+      "label": "pass_iter30",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:12:17.405600",
+      "last_seen": "2026-10-01T13:12:17.405600",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter30"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T13:12:17.405610",
+      "last_seen": "2026-10-01T13:12:17.405610",
+      "mentions": 1,
+      "members": [
+        "experiment:\".",
+        "Method:plan_explore_iter30",
+        "Fact:pass_iter30"
+      ],
+      "iteration": 30,
+      "id": "he_experiment_pipeline_2d7b8a50"
+    },
+    {
+      "label": "reviewer_iter30",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T13:12:17.405685",
+      "last_seen": "2026-10-01T13:12:17.405685",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "0b1094288ac2f698",
+      "r_phys": 1.0,
+      "iteration": 30,
+      "id": "persona_use:reviewer_iter30"
     }
   ],
   "links": [
@@ -368,6 +432,33 @@
       "last_seen": "2026-10-01T13:08:27.766328",
       "mentions": 1,
       "target": "he_experiment_pipeline_dc8c14c8"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:\".",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:12:17.405610",
+      "last_seen": "2026-10-01T13:12:17.405610",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2d7b8a50"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter30",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:12:17.405610",
+      "last_seen": "2026-10-01T13:12:17.405610",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2d7b8a50"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter30",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T13:12:17.405610",
+      "last_seen": "2026-10-01T13:12:17.405610",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_2d7b8a50"
     }
   ]
 }

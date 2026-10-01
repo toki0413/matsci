@@ -149,3 +149,11 @@ plan_check failed (tier=medium, scene=other, max_refines=1): The plan contains c
 [exec-route] mode='explore' desc[:80]='Conduct a grid search to measure N_c(w) — the minimum hidden width achieving zer' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=False
 [code-lab-author] raw_len=2278 extracted_len=2263 prompt_len=4183
 [code-lab-run] res_none=False success=True nobj=1 reason=''
+[validate] mode='code_lab' success=True nobj=1 cf=False lab=True
+control_trace name=goal_judge iteration=29 evidence=achieved=False score=0.0 llm=1 action=advisory_hint
+darwin ratchet: stagnation 5 rounds (Δ<0.5), best=2.50 → advisory only (hint, no stop)
+control_trace name=darwin_stagnation iteration=29 evidence=stagnation=5 best=2.50 action=advisory_hint
+metacog: 假设可能为换名归约 (trap=, target=Algebraic Redundancy): [DIM: structure] Algebraic Redundancy Hypothesis
+[exec-route] mode='explore' desc[:80]='[auto-routed: surprise=1.00] Run a numerical experiment to test the Algebraic Re' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=True
+[code-lab-author] raw_len=3221 extracted_len=3206 prompt_len=4229
+[code-lab-run] res_none=False success=True nobj=1 reason=''
