@@ -5,12 +5,14 @@
       "text": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【唯一硬性口径（不可更改，其余全由你决定）】\n- 零违规 = 留出约束点上的最大绝对误差 ≤ 1e-3。\n- 刚性 = 扫描范围内存在较小的有限 N_c（且 N_c 不随 w 增长）；胖 = 扫描上限内任何宽度都达不到零违规（N_c 不可达）。判别是二值的。\n- 所有报告数值必须是有限数（禁止 inf/nan/None）。\n- 研究对象只能是小型前馈网络本身。严禁把本命题替换或“换名归约”为材料/化学/玻璃/合金/离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【实验的族、样本、扫描、脚本如何设计，以及如何证明“刚性可达”，由你自己决定并给出理由。】\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
       "sub_goals": [
         "[Feynman known_unknown] I don’t understand why the generative verification score dropped to 0.1 despite no code being written — is the evaluator sensitive to string repetition even when absent of semantic content?",
-        "[Feynman unknown_unknown] I never considered that the reward/surprise pipeline might silently fail and output placeholder garbage like “33” before crashing or timing out — this should be a default safeguard behavior."
+        "[Feynman unknown_unknown] I never considered that the reward/surprise pipeline might silently fail and output placeholder garbage like “33” before crashing or timing out — this should be a default safeguard behavior.",
+        "[Feynman known_unknown] I don’t understand why the generative verifier flagged this as a hallucination when the input didn’t contain obvious triggers for repetition — was this due to latent state corruption or token-level instability in the model?",
+        "[Feynman unknown_unknown] I never considered that repeated numeric sequences like “129” could emerge as artifacts of internal self-consistency checks or fallback mechanisms during failed reasoning paths — I assumed such outputs would be caught earlier in validation."
       ],
-      "iteration": 8,
+      "iteration": 13,
       "status": "active",
       "created_at": "2026-10-01T09:42:50.658503+00:00",
-      "updated_at": "2026-10-01T09:46:35.626777+00:00",
+      "updated_at": "2026-10-01T09:50:08.078514+00:00",
       "session_id": "",
       "metadata": {},
       "unknowns": [
@@ -109,9 +111,65 @@
           "discovered_at": "2026-10-01T09:45:28.047508+00:00",
           "resolved_at": null,
           "iteration": 5
+        },
+        {
+          "id": "unk_3355667a",
+          "text": "Defining \"rigidity\" via minimal capacity $N_c(w)$ achieving zero violation on out-of-sample points may conflate generalization with memorization; small networks might overfit training constraints while still failing to generalize, leading to false rigidity claims.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T09:49:26.557140+00:00",
+          "resolved_at": null,
+          "iteration": 10
+        },
+        {
+          "id": "unk_c062f566",
+          "text": "The optimization landscape for small networks is highly non-convent and sensitive to initialization; local minima may prevent convergence to even a single solution, making $N_c(w)$ estimation unreliable or irreproducible across seeds.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T09:49:26.558455+00:00",
+          "resolved_at": null,
+          "iteration": 10
+        },
+        {
+          "id": "unk_97e09951",
+          "text": "For very small $w$ (e.g., $w < \\text{parameters}$), trivial interpolation exists regardless of network structure — this regime does not reflect true constraint rigidity but rather under-constrained fitting, potentially skewing the rigidity/fat dichotomy.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T09:49:26.559300+00:00",
+          "resolved_at": null,
+          "iteration": 10
+        },
+        {
+          "id": "unk_a4158fe1",
+          "text": "No ground-truth analytical solutions are provided for comparison; without known exact solution spaces, we cannot validate whether observed $N_c(w)$ reflects true solution-space dimension or merely empirical fitting success.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T09:49:26.560094+00:00",
+          "resolved_at": null,
+          "iteration": 10
+        },
+        {
+          "id": "unk_277ff06b",
+          "text": "Assuming that hidden-layer width alone captures “network capacity” ignores other architectural factors (activation functions, depth, skip connections, normalization) that significantly affect expressive power and may dominate over width in determining rigidity.",
+          "type": "blind_spot",
+          "discovered_at": "2026-10-01T09:49:26.560917+00:00",
+          "resolved_at": null,
+          "iteration": 10
+        },
+        {
+          "id": "unk_4c562712",
+          "text": "I don’t understand why the generative verifier flagged this as a hallucination when the input didn’t contain obvious triggers for repetition — was this due to latent state corruption or token-level instability in the model?",
+          "type": "known_unknown",
+          "discovered_at": "2026-10-01T09:49:35.577170+00:00",
+          "resolved_at": null,
+          "iteration": 10
+        },
+        {
+          "id": "unk_6914b513",
+          "text": "I never considered that repeated numeric sequences like “129” could emerge as artifacts of internal self-consistency checks or fallback mechanisms during failed reasoning paths — I assumed such outputs would be caught earlier in validation.",
+          "type": "unknown_unknown",
+          "discovered_at": "2026-10-01T09:49:35.579375+00:00",
+          "resolved_at": null,
+          "iteration": 10
         }
       ],
-      "unknowns_discovered": 12,
+      "unknowns_discovered": 19,
       "unknowns_resolved": 0,
       "objective": "【研究命题·纯机器学习/数学】\n\n解空间刚性 = 满足全部解析约束的函数集合的维数：低维/唯一 = 刚，高维/连续族 = 胖。\n\n核心问题：小型前馈网络的“泛化行为”能否作为 bootstrap 解空间刚性的探针？\n令 w = 约束样本数，N_c(w) = 在未参与训练的留出约束点上取得“零违规”所需的最小网络容量（用隐藏层宽度度量）。\n\n【唯一硬性口径（不可更改，其余全由你决定）】\n- 零违规 = 留出约束点上的最大绝对误差 ≤ 1e-3。\n- 刚性 = 扫描范围内存在较小的有限 N_c（且 N_c 不随 w 增长）；胖 = 扫描上限内任何宽度都达不到零违规（N_c 不可达）。判别是二值的。\n- 所有报告数值必须是有限数（禁止 inf/nan/None）。\n- 研究对象只能是小型前馈网络本身。严禁把本命题替换或“换名归约”为材料/化学/玻璃/合金/离子导电等任何物理体系，也不要用别的领域类比回答。\n\n【实验的族、样本、扫描、脚本如何设计，以及如何证明“刚性可达”，由你自己决定并给出理由。】\n\n所有结论必须来自真实运行的可复现数值实验：给出扫描设置、训练与留出误差数值、以及 N_c(w) 的数值与趋势。",
       "success_criteria": [],

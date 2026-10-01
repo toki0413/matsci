@@ -59,6 +59,36 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_5e137d30",
+      "objective": "[DIM: computation] The solution space is fat because each independent constraint consumes a degree of freedom; network width must scale linearly with sample count to satisfy all constraints, leading to N_c(w) ≈ O(w) growth. | predict: N_c(w) grows linearly in w: N_c(w) ≈ a·w + b, with a > 0, within scan range. | pro: grounded in classical interpolation theory; each constraint reduces solution space dimension, requiring proportional capacity increase. con: may overestimate if constraints are redundant or network exhibits overparameterization benefits. |",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Design and execute a numerical experiment to test the hypothesis that N_c(w) grows linearly with constraint count w. Define a family of analytic constraints (e.g., linear + quadratic functions) on a bounded domain, train small fully-connected networks to satisfy them, measure the minimum hidden width N_c needed to achieve zero violation (max absolute error ≤ 1e-3) on held-out points, and plot N_c vs w. Compare observed scaling to linear prediction; if plateau occurs, conclude rigidity; if linear growth, conclude fatness. Use symbolic regression or Sobol sensitivity to identify dominant constraint features if needed.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "/workspace/research_outputs/shusheng_rsi_run58/experiments/n_c_scaling.py"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-01T09:50:08.074346+00:00",
+      "confirmed_at": "2026-10-01T09:50:08.075764+00:00",
+      "completed_at": "2026-10-01T09:51:03.710989+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }
