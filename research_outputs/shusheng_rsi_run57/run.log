@@ -681,3 +681,68 @@ metacog: 假设可能为换名归约 (trap=, target=已有假设: Concentration 
 [code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 10)'
 [code-lab-author] raw_len=3453 extracted_len=3438 prompt_len=7759
 [code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 10)'
+[code-lab-author] raw_len=4376 extracted_len=4361 prompt_len=7759
+[code-lab-run] res_none=True success=None nobj=0 reason='执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 10)'
+code_lab 沙箱执行经 4 轮修复仍未产出证据(不伪造): 执行异常: ValueError: matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size 3 is different from 10)
+code_lab 最后一版书生代码:
+import numpy as np
+
+def family(kind, w, seed):
+    rng = np.random.default_rng(seed)
+    X = np.linspace(0.05, 0.95, w).reshape(-1, 1)
+    Xv = np.linspace(0.02, 0.98, 200).reshape(-1, 1)
+    if kind == 'rigid':
+        coeffs = np.array([1.0, -2.0, 1.0])
+        X_poly = poly_basis(X, 3)
+        y = (X_poly @ coeffs).reshape(-1, 1)
+        Xv_poly = poly_basis(Xv, 3)
+        yv = (Xv_poly @ coeffs).reshape(-1, 1)
+    else:
+        coeffs = rng.standard_normal(10)
+        X_poly = poly_basis(X, 10)
+        y = (X_poly @ coeffs).reshape(-1, 1)
+        Xv_poly = poly_basis(Xv, 10)
+        yv = (Xv_poly @ coeffs).reshape(-1, 1)
+    scale = np.std(poly_basis(np.linspace(0, 1, 1000), 10) @ coeffs)
+    if scale > 1e-10:
+        y = y / scale
+        yv = yv / scale
+    return {'X': X, 'y': y, 'Xv': Xv, 'yv': yv}
+
+def poly_basis(X, n):
+    X = X.flatten()
+    return np.array([X**i for i in range(n)]).T
+
+def _as_2d(x):
+    return x.reshape(-1, 1)
+
+def mlp_fit(X, y, h, seeds=3):
+    X = X.flatten()
+    y = y.flatten()
+    n = X.shape[0]
+    best = None
+    best_loss = np.inf
+    for s in range(seeds):
+        rng = np.random.default_rng(s)
+        w1 = rng.standard_normal((X.shape[0], h)) / np.sqrt(X.shape[0])
+        b1 = rng.standard_normal(h)
+        w2 = rng.standard_normal((h, 1)) / np.sqrt(h)
+        b2 = rng.standard_normal()
+        params = {'w1': w1, 'b1': b1, 'w2': w2, 'b2': b2}
+        def forward(p, x):
+            z = p['w1'] @ x + p['b1']
+            a = np.tanh(z)
+            return p['w2'] @ a + p['b2']
+        def loss_func(p):
+            pred = forward(p, X)
+            return np.mean((pred - y) ** 2)
+        p0 = [w1.flatten(), b1, w2.flatten(), b2]
+        p0 = np.concatenate(p0)
+        def loss_wrap(p):
+            w1 = p[:h].reshape(-1, 1)
+            b1 = p[h:2*h]
+            w2 = p[2*h:2*h+h].reshape(-1, 1)
+            b2 = p[2*h+h]
+            params = {'w1': w1, 'b1': b1, 'w2': w2, 'b2': b2}
+            return loss_func(params)
+        from scipy
