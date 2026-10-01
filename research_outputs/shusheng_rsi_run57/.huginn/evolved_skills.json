@@ -78,9 +78,9 @@
       "label",
       "error",
       "plan",
-      "rigidity",
       "prediction",
-      "experiment",
+      "rigidity",
+      "constraint",
       "rigid"
     ],
     "workflow_steps": [

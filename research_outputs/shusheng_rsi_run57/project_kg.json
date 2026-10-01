@@ -371,6 +371,70 @@
       "r_phys": 1.0,
       "iteration": 75,
       "id": "persona_use:reviewer_iter75"
+    },
+    {
+      "label": "[DIM: geometry] The solution space is rigid because the neural network manifold ",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T07:57:05.395932",
+      "last_seen": "2026-10-01T07:57:05.395932",
+      "mentions": 1,
+      "iteration": 80,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The null-space dimension of the solution manifold remains constant (rigid) as w increases up to the network's degrees of freedom, then drops abruptly to zero (fat) when w exceeds the manifold dimensio",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: geometry] The solution space is rigid because the neural network manifold"
+    },
+    {
+      "label": "plan_explore_iter80",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:57:05.395976",
+      "last_seen": "2026-10-01T07:57:05.395976",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter80"
+    },
+    {
+      "label": "pass_iter80",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:57:05.395984",
+      "last_seen": "2026-10-01T07:57:05.395984",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter80"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T07:57:05.395993",
+      "last_seen": "2026-10-01T07:57:05.395993",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: geometry] The solution space is rigid because the neural network manifold",
+        "Method:plan_explore_iter80",
+        "Fact:pass_iter80"
+      ],
+      "iteration": 80,
+      "id": "he_experiment_pipeline_b379df57"
+    },
+    {
+      "label": "reviewer_iter80",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T07:57:05.396058",
+      "last_seen": "2026-10-01T07:57:05.396058",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "1be5f75de41877f4",
+      "r_phys": 1.0,
+      "iteration": 80,
+      "id": "persona_use:reviewer_iter80"
     }
   ],
   "links": [
@@ -535,6 +599,33 @@
       "last_seen": "2026-10-01T07:55:42.149709",
       "mentions": 1,
       "target": "he_experiment_pipeline_3955d833"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: geometry] The solution space is rigid because the neural network manifold",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:57:05.395993",
+      "last_seen": "2026-10-01T07:57:05.395993",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b379df57"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter80",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:57:05.395993",
+      "last_seen": "2026-10-01T07:57:05.395993",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b379df57"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter80",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T07:57:05.395993",
+      "last_seen": "2026-10-01T07:57:05.395993",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_b379df57"
     }
   ]
 }
