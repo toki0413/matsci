@@ -572,6 +572,34 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_16829b02",
+      "objective": "** [DIM: measure] Stochastic Resonance Hypothesis",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Design a numerical experiment to test the stochastic resonance hypothesis regarding solution space rigidity in small feedforward networks: (1) Define a target function with a hidden signal (e.g., low-frequency sinusoid) corrupted by noise; (2) Add controlled Gaussian noise to training inputs/labels with amplitude σ ∈ {0.01, 0.1, 0.5, 1.0, 2.0}; (3) Bootstrap sample w ∈ {10, 20, 50, 100} training points; (4) Train small networks (N_h ∈ {4, 8, 16, 32}) with stochastic SGD (fixed seed per replicate, 50 bootstrap replicates per condition); (5) Measure signal-to-noise ratio (SNR) gain and coherence of recovered signal on clean test set; (6) Compute solution space rigidity via Hessian spectrum condition number and connected component analysis of loss landscape via basin-hopping; (7) Test for non-monotonic SNR vs. noise (stochastic resonance signature) and whether rigidity threshold N_c(w) stabilizes under optimal noise.",
+          "tool": "explore",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": []
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-01T08:03:05.114807+00:00",
+      "confirmed_at": "2026-10-01T08:03:05.117018+00:00",
+      "completed_at": "2026-10-01T08:05:52.353758+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "explore",
+        "source": "autoloop"
+      }
     }
   ]
 }

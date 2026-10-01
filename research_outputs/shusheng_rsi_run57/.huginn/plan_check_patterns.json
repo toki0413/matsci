@@ -102,5 +102,30 @@
     ],
     "mode": "explore",
     "description": "Construct a target function with analytic constraints, train small feedforward networks (tanh activation, 1 hidden layer) with fixed width N_h, and for each constraint count w, compute the rank of the"
+  },
+  {
+    "scene_tag": "auto_test",
+    "hyp_key": "80be3ea40720",
+    "reason": "The plan proposes to test the Stochastic Resonance Hypothesis but fundamentally misaligns the mathematical structure with the hypothesis. The plan describes a function approximation task (MSE minimization on polynomials/trig functions), while the hypothesis explicitly requires analyzing 'solution space rigidity' in the context of 'bootstrap sampling' and 'stochastic resonance' (signal-to-noise ratio optimization). The described experiment measures generalization error bounds, not the non-monotonic noise-enhanced signal detection or the topological rigidity of the solution space that defines the hypothesis. Furthermore, the hypothesis requires a specific comparison between 'rigid' and 'fat' regimes based on bootstrap constraints, but the plan's prediction focuses solely on N_c(w) scaling without addressing the stochastic resonance mechanism (optimal noise level) or the topological structure of the solution space.",
+    "missing_steps": [
+      "Reformulate the experiment to measure signal-to-noise ratio (SNR) or coherence gain as a function of noise amplitude, which is the core signature of stochastic resonance.",
+      "Define the 'solution space rigidity' in terms of topological properties (e.g., connected components of the loss landscape) or sensitivity to perturbations, not just MSE thresholds.",
+      "Incorporate bootstrap sampling analysis: compare N_c(w) across different bootstrap replicates to assess variance and stability of the rigidity threshold.",
+      "Define the 'stochastic' component explicitly (e.g., additive Gaussian noise in target or gradients) and test for non-monotonic performance vs. noise level."
+    ],
+    "mode": "explore",
+    "description": "Design a numerical experiment to test the \"stochastic resonance hypothesis\" regarding solution space rigidity in small feedforward networks. Construct a well-defined analytical target function (e.g., "
+  },
+  {
+    "scene_tag": "auto_test",
+    "hyp_key": "80be3ea40720",
+    "reason": "Plan fails to map the hypothesis to the defined mathematical structures (Variational principle / energy functional, Optimization landscape / convexity) or the specific constraints (N_c(w)). The plan focuses on SNR and Hessian condition number but does not explicitly define how to compute N_c(w) (the minimal network width for zero-violation on held-out constraints) as required by the 'Hard Constraint'. Without defining the target function's constraints and the method to find N_c(w), the core claim about 'solution space rigidity' cannot be validated according to the provided definitions.",
+    "missing_steps": [
+      "Define the specific target function and the set of held-out constraints used to evaluate N_c(w).",
+      "Implement the algorithm to scan N_h (hidden width) to find the minimal N_c(w) such that max absolute error on held-out points ≤ 1e-3 for each w.",
+      "Explicitly link the SNR/stochastic resonance measurement to the N_c(w) stabilization metric as per the hypothesis."
+    ],
+    "mode": "explore",
+    "description": "Design a numerical experiment to test the stochastic resonance hypothesis regarding solution space rigidity in small feedforward networks: (1) Define a target function with a hidden signal (e.g., low-"
   }
 ]

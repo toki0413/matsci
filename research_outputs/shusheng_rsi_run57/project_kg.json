@@ -548,6 +548,70 @@
       "r_phys": 1.0,
       "iteration": 90,
       "id": "persona_use:reviewer_iter90"
+    },
+    {
+      "label": "[DIM: dynamics] The solution space evolves as a gradient flow on a non-convex lo",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T08:02:27.184152",
+      "last_seen": "2026-10-01T08:02:27.184152",
+      "mentions": 1,
+      "iteration": 95,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "N_c(w) will remain bounded (≤ 2×N_c(10)) across w ∈ {10,...,100}, indicating rigidity; validation error will show sub-linear scaling with width; training error will converge to near-zero while validat",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: dynamics] The solution space evolves as a gradient flow on a non-convex lo"
+    },
+    {
+      "label": "plan_explore_iter95",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:02:27.184186",
+      "last_seen": "2026-10-01T08:02:27.184186",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter95"
+    },
+    {
+      "label": "pass_iter95",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:02:27.184193",
+      "last_seen": "2026-10-01T08:02:27.184193",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter95"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T08:02:27.184200",
+      "last_seen": "2026-10-01T08:02:27.184200",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: dynamics] The solution space evolves as a gradient flow on a non-convex lo",
+        "Method:plan_explore_iter95",
+        "Fact:pass_iter95"
+      ],
+      "iteration": 95,
+      "id": "he_experiment_pipeline_d2c161c0"
+    },
+    {
+      "label": "reviewer_iter95",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T08:02:27.184262",
+      "last_seen": "2026-10-01T08:02:27.184262",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "edc06be37b1a8165",
+      "r_phys": 1.0,
+      "iteration": 95,
+      "id": "persona_use:reviewer_iter95"
     }
   ],
   "links": [
@@ -793,6 +857,33 @@
       "last_seen": "2026-10-01T08:01:12.091353",
       "mentions": 1,
       "target": "he_experiment_pipeline_4041eeaf"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: dynamics] The solution space evolves as a gradient flow on a non-convex lo",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:02:27.184200",
+      "last_seen": "2026-10-01T08:02:27.184200",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d2c161c0"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter95",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:02:27.184200",
+      "last_seen": "2026-10-01T08:02:27.184200",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d2c161c0"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter95",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T08:02:27.184200",
+      "last_seen": "2026-10-01T08:02:27.184200",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_d2c161c0"
     }
   ]
 }

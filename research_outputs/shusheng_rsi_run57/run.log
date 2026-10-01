@@ -528,3 +528,12 @@ metacog: 假设可能为换名归约 (trap=, target=The non-convex optimization 
 [exec-route] mode='explore' desc[:80]='Design a numerical experiment to test the rigidity hypothesis: (1) define a targ' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=True
 [code-lab-author] raw_len=1908 extracted_len=1893 prompt_len=4763
 [code-lab-run] res_none=False success=True nobj=3 reason=''
+[validate] mode='code_lab' success=True nobj=3 cf=False lab=True
+darwin ratchet: stagnation 18 rounds (Δ<0.5), best=2.50 → advisory only (hint, no stop)
+control_trace name=darwin_stagnation iteration=94 evidence=stagnation=18 best=2.50 action=advisory_hint
+darwin ratchet: belief converged σ²=0.0526 μ=2.50 → advisory only (hint, no stop)
+control_trace name=belief_convergence iteration=94 evidence=sigma2=0.0526 mu=2.50 action=advisory_hint
+plan_check failed (tier=light, scene=auto_test, max_refines=1): Plan fails to map the hypothesis to the defined mathematical structures (Variational principle / energy functional, Optimization landscape / convexity) or the specific constraints (N_c(w)). The plan focuses on SNR and Hessian condition number but does not explicitly define how to compute N_c(w) (the minimal network width for zero-violation on held-out constraints) as required by the 'Hard Constraint'. Without defining the target function's constraints and the method to find N_c(w), the core claim about 'solution space rigidity' cannot be validated according to the provided definitions.
+[exec-route] mode='explore' desc[:80]='Design a numerical experiment to test the stochastic resonance hypothesis regard' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=True
+[code-lab-author] raw_len=4452 extracted_len=4437 prompt_len=4230
+[code-lab-run] res_none=False success=True nobj=2 reason=''
