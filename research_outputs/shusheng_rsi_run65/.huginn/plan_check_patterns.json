@@ -191,5 +191,37 @@
     ],
     "mode": "explore",
     "description": "Execute the stochastic constraint fatness hypothesis by scanning hidden layer widths h ∈ {4, 8, 12, 16, 20, 24, 28, 32} for constraint sample counts w ∈ {10, 20, 30, 40, 50}. For each (w, h) pair, tra"
+  },
+  {
+    "scene_tag": "auto_hypothesis",
+    "hyp_key": "f87dc197f300",
+    "reason": "Plan is invalid due to a critical hyperparameter error: Adam optimizer learning rate lr=1e3 is astronomically high (should be ~1e-3), which will cause immediate divergence and NaN errors. This makes the experiment impossible to run successfully. Additionally, the plan lacks essential code implementation steps—no actual training script or function definition is provided, only a high-level description. Without executable code, the numerical experiment cannot be performed, violating the requirement for real, reproducible numerical results.",
+    "missing_steps": [
+      "Define and implement the actual training script with correct hyperparameters (lr=1e-3, not 1e3)",
+      "Implement the constraint function f(x) and network architecture",
+      "Add proper initialization, training loop, and evaluation logic",
+      "Include random seed handling for reproducibility",
+      "Add convergence monitoring and early stopping if needed",
+      "Implement the N_c(w) calculation logic across widths and sample sizes",
+      "Generate the trend plot as specified"
+    ],
+    "mode": "explore",
+    "description": "[auto-routed: surprise=1.00] Execute the Algebraic Rank Hypothesis experiment: define the constraint function f(x) = sin(2πx) + 0.5cos(4πx), scan hidden layer widths h ∈ {4, 8, 12, 16, 20, 24, 28, 32}"
+  },
+  {
+    "scene_tag": "auto_hypothesis",
+    "hyp_key": "f87dc197f300",
+    "reason": "The plan correctly identifies the hypothesis (Algebraic Rank) and the target metric (N_c), but it fails to provide the necessary executable implementation details. As noted in the 'Known Failure Modes', previous failures were due to missing code implementation steps and critical hyperparameter errors (lr=1e3 vs lr=1e-3). While this plan textually corrects the learning rate to 1e-3, it remains a high-level description without the actual training script, constraint function definition, or evaluation logic required to produce the 'real, reproducible numerical results' mandated by the task. Without the code, the experiment cannot be run to verify the prediction.",
+    "missing_steps": [
+      "Implement executable training script with Adam optimizer (lr=1e-3)",
+      "Define constraint function f(x) = sin(2πx) + 0.5cos(4πx)",
+      "Define tanh network architecture with variable hidden widths h",
+      "Implement training loop with random seeds 0,1,2",
+      "Implement evaluation logic for max abs error on holdout points",
+      "Implement N_c(w) calculation logic (minimal width for error ≤ 1e-3)",
+      "Include convergence monitoring and error handling"
+    ],
+    "mode": "explore",
+    "description": "Algebraic Rank Hypothesis: implement executable training script with corrected hyperparameters (Adam lr=1e-3), define constraint function f(x)=sin(2πx)+0.5cos(4πx), scan hidden layer widths h∈{4,8,..."
   }
 ]

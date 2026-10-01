@@ -1267,6 +1267,70 @@
       "r_phys": 1.0,
       "iteration": 135,
       "id": "persona_use:reviewer_iter135"
+    },
+    {
+      "label": "[DIM: structure] Algebraic Rigidity via Low-Degree Polynomial Structure.",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T15:59:37.942654",
+      "last_seen": "2026-10-01T15:59:37.942654",
+      "mentions": 1,
+      "iteration": 140,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "The re-run will either confirm the original N_c(w) values (8 for w≤30, 12 for w≥40) with tighter error bounds (<5e-4), or reveal that N_c(w) grows larger due to insufficient training, indicating the n",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: structure] Algebraic Rigidity via Low-Degree Polynomial Structure."
+    },
+    {
+      "label": "plan_explore_iter140",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:59:37.942694",
+      "last_seen": "2026-10-01T15:59:37.942694",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter140"
+    },
+    {
+      "label": "pass_iter140",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:59:37.942703",
+      "last_seen": "2026-10-01T15:59:37.942703",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter140"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T15:59:37.942712",
+      "last_seen": "2026-10-01T15:59:37.942712",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: structure] Algebraic Rigidity via Low-Degree Polynomial Structure.",
+        "Method:plan_explore_iter140",
+        "Fact:pass_iter140"
+      ],
+      "iteration": 140,
+      "id": "he_experiment_pipeline_262d20d0"
+    },
+    {
+      "label": "reviewer_iter140",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T15:59:37.942784",
+      "last_seen": "2026-10-01T15:59:37.942784",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "bd0b7524abac5afb",
+      "r_phys": 1.0,
+      "iteration": 140,
+      "id": "persona_use:reviewer_iter140"
     }
   ],
   "links": [
@@ -1809,6 +1873,33 @@
       "last_seen": "2026-10-01T15:58:36.103053",
       "mentions": 1,
       "target": "he_experiment_pipeline_44695f90"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: structure] Algebraic Rigidity via Low-Degree Polynomial Structure.",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:59:37.942712",
+      "last_seen": "2026-10-01T15:59:37.942712",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_262d20d0"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter140",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:59:37.942712",
+      "last_seen": "2026-10-01T15:59:37.942712",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_262d20d0"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter140",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:59:37.942712",
+      "last_seen": "2026-10-01T15:59:37.942712",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_262d20d0"
     }
   ]
 }
