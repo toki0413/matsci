@@ -146,3 +146,56 @@ plan_check failed (tier=medium, scene=other, max_refines=1): The plan correctly 
 [code-lab-author] raw_len=2006 extracted_len=1991 prompt_len=6265
 [code-lab-run] res_none=True success=None nobj=0 reason='code_lab 执行超时 (> 900.0s)'
 [code-lab-author] raw_len=2006 extracted_len=1991 prompt_len=6265
+[code-lab-run] res_none=True success=None nobj=0 reason='code_lab 执行超时 (> 900.0s)'
+code_lab 沙箱执行经 4 轮修复仍未产出证据(不伪造): code_lab 执行超时 (> 900.0s)
+code_lab 最后一版书生代码:
+import numpy as np
+
+def family(kind, w, seed):
+    rng = np.random.default_rng(seed)
+    X = rng.uniform(0.05, 0.95, w).reshape(-1, 1)
+    Xv = np.linspace(0.02, 0.98, 200).reshape(-1, 1)
+    y = np.sin(2 * np.pi * X) + 0.5 * np.cos(4 * np.pi * X)
+    yv = np.sin(2 * np.pi * Xv) + 0.5 * np.cos(4 * np.pi * Xv)
+    return {'X': X, 'y': y, 'Xv': Xv, 'yv': yv}
+
+def run(cfg):
+    seed = int(cfg.get('seed', 0))
+    w_list = [20, 100, 500, 1000]
+    N_list = list(range(10, 201, 10))
+    scale = None
+    summary = {'rigid_Nc': [], 'fat_Nc': [], 'note': 'Concentration of Measure experiment'}
+    objectives = {'score': 0.0, 'rigid_avg_Nc': 0.0, 'fat_avg_Nc': 0.0}
+    for kind in ['rigid', 'fat']:
+        Nc_list = []
+        for w in w_list:
+            Nc_found = None
+            for N in N_list:
+                data = family(kind, w, seed + w * 1000 + N)
+                X, y = data['X'], data['y']
+                Xv, yv = data['Xv'], data['yv']
+                if scale is None:
+                    scale = np.std(np.vstack([y, yv]))
+                y /= scale
+                yv /= scale
+                X = X.reshape(-1, 1)
+                Xv = Xv.reshape(-1, 1)
+                model = mlp_fit(X, y, h=N, seeds=3)
+                yp = mlp_predict(model, Xv)
+                err = np.max(np.abs(yp - yv))
+                if err <= 1e-3:
+                    Nc_found = N
+                    break
+            if Nc_found is None:
+                Nc_found = 999
+            Nc_list.append(Nc_found)
+            summary[f'{kind}_Nc_w{w}'] = Nc_found
+        avg_Nc = np.mean(Nc_list)
+        if kind == 'rigid':
+            objectives['rigid_avg_Nc'] = float(avg_Nc)
+            summary['rigid_Nc'] = Nc_list
+        else:
+            objectives['fat_avg_Nc'] = float(avg_Nc)
+            summary['fat_Nc'] = Nc_list
+    objectives['score'] = float(objectives['rigid_avg_Nc'] / (objectives['fat_avg_Nc'] + 1e-9))
+    return {'success': True, 'summary': summary, 'objectives': objectives}

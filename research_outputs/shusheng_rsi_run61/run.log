@@ -160,3 +160,4 @@ control_trace name=goal_judge iteration=14 evidence=achieved=False score=0.0 llm
 metacog: 假设可能为换名归约 (trap=, target=If the solution space is fat but information concentrates in a lower-dimensional subspace (concentration of measure), then logarithmic scaling suffices for zero violation; predict: N_c(w) grows logarithmically with w (N_c(w) ≈ α·log(w) + β) in the scanned regime): [DIM: dynamics] If the solution space is governed by a gradient flow with a sharp energy landscape, 
 [exec-route] mode='explore' desc[:80]='I will design a computational experiment to test the hypothesis that minimal net' obj_len=509 is_exp_desc=True is_exp_obj=True is_det_desc=True
 [code-lab-author] raw_len=1751 extracted_len=1736 prompt_len=4541
+[code-lab-run] res_none=True success=None nobj=0 reason='code_lab 执行超时 (> 900.0s)'

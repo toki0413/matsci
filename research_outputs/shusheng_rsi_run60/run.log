@@ -162,3 +162,63 @@ branch incubator returned None, fallback to main+hot_model
 [code-lab-author] raw_len=2896 extracted_len=2881 prompt_len=7057
 [code-lab-run] res_none=True success=None nobj=0 reason='code_lab 执行超时 (> 900.0s)'
 [code-lab-author] raw_len=2957 extracted_len=2942 prompt_len=7057
+[code-lab-run] res_none=True success=None nobj=0 reason='code_lab 执行超时 (> 900.0s)'
+code_lab 沙箱执行经 4 轮修复仍未产出证据(不伪造): code_lab 执行超时 (> 900.0s)
+code_lab 最后一版书生代码:
+import numpy as np
+
+def family(kind, w, seed):
+    rng = np.random.default_rng(seed)
+    X = np.linspace(0.05, 0.95, w).reshape(-1, 1)
+    Xv = np.linspace(0.02, 0.98, 200).reshape(-1, 1)
+    if kind == 'rigid':
+        coeffs = np.array([1.0, 2.0, 0.5])
+        y = poly_basis(X, 3) @ coeffs.reshape(-1, 1) + 0.01 * rng.standard_normal((w, 1))
+        yv = poly_basis(Xv, 3) @ coeffs.reshape(-1, 1) + 0.01 * rng.standard_normal((200, 1))
+    else:
+        coeffs = rng.standard_normal(10)
+        y = poly_basis(X, 10) @ coeffs.reshape(-1, 1) + 0.01 * rng.standard_normal((w, 1))
+        yv = poly_basis(Xv, 10) @ coeffs.reshape(-1, 1) + 0.01 * rng.standard_normal((200, 1))
+    scale = np.std(np.concatenate([y, yv]))
+    y = y / scale
+    yv = yv / scale
+    return {'X': X, 'y': y, 'Xv': Xv, 'yv': yv}
+
+def poly_basis(X, n):
+    X = X.flatten()
+    return np.array([X**i for i in range(n)]).T
+
+def _as_2d(x):
+    return x.reshape(-1, 1) if x.ndim == 1 else x
+
+def mlp_fit(X, y, h, seeds=3):
+    import torch
+    import torch.nn as nn
+    import torch.optim as optim
+    X_t = torch.tensor(X, dtype=torch.float32)
+    y_t = torch.tensor(y, dtype=torch.float32)
+    models = []
+    for seed in range(seeds):
+        torch.manual_seed(seed)
+        model = nn.Sequential(nn.Linear(1, h), nn.Tanh(), nn.Linear(h, 1))
+        optimizer = optim.LBFGS(model.parameters(), lr=1)
+        for _ in range(100):
+            def closure():
+                optimizer.zero_grad()
+                out = model(X_t)
+                loss = nn.MSELoss()(out, y_t)
+                loss.backward()
+                optimizer.step()
+                return loss
+            optimizer.step(closure)
+        models.append(model)
+    best_model = min(models, key=lambda m: torch.mean((m(X_t) - y_t) ** 2).item())
+    return best_model
+
+def mlp_predict(model, Xv):
+    with torch.no_grad():
+        return model(torch.tensor(Xv, dtype=torch.float32)).numpy()
+
+def run(cfg):
+    seed = int(cfg.get('seed', 0))
+    ws = [5, 10,
