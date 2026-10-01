@@ -244,3 +244,10 @@ def run(cfg):
                 summary['rigid_errors'].append(err_list[-1])
             else:
         
+[validate] mode='explore' success=None nobj=0 cf=False lab=False
+control_trace name=effort_floor iteration=29 evidence=努力下限未达标: families_explored=1 < min_method_families=3 | 未排除等价性陷阱: [" -> 将'解空间刚性'这一数学/几何概念替换为'损失景观中的相变'这一动力学/优化概念，本质上是用优化过程的动态行为（是否陷入局部极小）来重新定义或解释解空间的静态几何属性（维数/唯一性），未提供独立的数值证据或新的物理机制。"] | 缺少显式不完整性自白 action=advisory_hint
+[FINALLY-REFLECT] tool_results_this_turn=0
+control_trace name=collab_blind_reconstruct iteration=29 evidence=skip: dispatch returned nothing success=True summary_len=0 action=skip
+control_trace name=goal_judge iteration=29 evidence=achieved=False score=0.2 llm=1 action=advisory_hint
+darwin ratchet: stagnation 5 rounds (Δ<0.5), best=2.50 → advisory only (hint, no stop)
+control_trace name=darwin_stagnation iteration=29 evidence=stagnation=5 best=2.50 action=advisory_hint
