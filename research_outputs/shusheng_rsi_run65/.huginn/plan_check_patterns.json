@@ -105,5 +105,34 @@
     ],
     "mode": "explore",
     "description": "The hypothesis posits a phase transition in solution-space rigidity: as constraint count w increases, the minimum network capacity N_c(w) required for zero violation (max abs error ≤ 1e-3 on held-out "
+  },
+  {
+    "scene_tag": "auto_hypothesis",
+    "hyp_key": "caa9e463368f",
+    "reason": "The plan is too vague and lacks critical operational details required to validate the hypothesis. Specifically, it fails to specify: (1) the exact function families and their parameters for the sweep, (2) the network architecture constraints (layers, activation functions), (3) the training protocol (optimizer, epochs, loss function), and (4) the specific sweep range for w (sample count) and network width. Without these, the 'surprise=1.0' cannot be reproduced, and the resulting N_c(w) values would be uninterpretable against the rigid/fat criteria. The plan also risks repeating the 'unbounded N_c' failure if the width sweep is insufficient.",
+    "missing_steps": [
+      "Define specific function classes (e.g., polynomials degree d, piecewise smooth functions) and their parameter ranges",
+      "Specify network architecture (hidden layers, activation functions, weight initialization)",
+      "Define training protocol (optimizer, learning rate, max epochs, convergence criteria)",
+      "Set sweep ranges for w (sample count) and width (hidden neurons) with concrete bounds",
+      "Implement zero-violation checking with exact tolerance 1e-3",
+      "Define N_c(w) extraction logic from training results"
+    ],
+    "mode": "explore",
+    "description": "The previous experiment showed a surprise=1.0, indicating the model's predictions were significantly off. This suggests the hypothesis might need refinement or the methodology requires adjustment. I w"
+  },
+  {
+    "scene_tag": "auto_hypothesis",
+    "hyp_key": "caa9e463368f",
+    "reason": "The plan is flawed in two critical ways: (1) It conflates two distinct metrics—training generalization (N_c(w) defined as successful initializations on held-out points) with the intended bootstrap rigidity probe (N_c defined as minimum network width to achieve zero violation). The hypothesis requires measuring N_c as a function of network width (w_net) for fixed sample counts w, not as a function of sample count w for fixed widths. (2) The plan lacks concrete implementation details for the 'fat' function class, missing specific definitions of discontinuity locations and function forms, making the experiment non-reproducible and the 'rigid/fat dichotomy' untestable against the hard criteria.",
+    "missing_steps": [
+      "Reformulate N_c(w) to be defined as the minimum network width (w_net) required to achieve zero violation (max absolute error <= 1e-3) on held-out constraints for a fixed sample count w, rather than counting successful initializations",
+      "Define the piecewise smooth function class with explicit discontinuity locations and functional forms (e.g., step functions, splines with specific k values)",
+      "Clarify whether the sweep should vary w_net (width) for fixed w, or vary w for fixed w_net, to properly test the rigidity/fat dichotomy",
+      "Specify weight initialization schemes and ensure they are consistent across all experiments to isolate the effect of sample size and network capacity",
+      "Define the exact held-out constraint set and how the zero-violation metric is computed (pointwise L_inf vs L2)"
+    ],
+    "mode": "explore",
+    "description": "Execute a controlled sweep experiment to test Stochastic Initialization Boundedness against the Algebraic Rigidity hypothesis. Define two function classes: (1) Polynomials f_d(x) of degree d ∈ {2,4,6,"
   }
 ]
