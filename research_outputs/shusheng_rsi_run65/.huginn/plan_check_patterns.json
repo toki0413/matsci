@@ -79,5 +79,19 @@
     ],
     "mode": "explore",
     "description": "We will test the geometric rigidity hypothesis by training two-layer neural networks on 1D analytic function families (polynomials of degree d∈{2,4,6}, trigonometric sums, and exponentials) with incre"
+  },
+  {
+    "scene_tag": "other",
+    "hyp_key": "4e170579c7e2",
+    "reason": "Critical parameter mismatch: the plan uses w as 'network width' (hidden layer neurons) but the hypothesis explicitly defines w as 'constraint sample count'. The plan claims to expand width to {4..128} while also increasing w to {10..200}, creating ambiguity about which variable is being swept. The hypothesis requires N_c(w) where w is the number of constraint samples, but the plan appears to be sweeping network width while treating w as an independent variable rather than the constraint count. This fundamental misalignment means the experiment will not test the stated hypothesis about rigidity vs. fatness with respect to constraint sample count.",
+    "missing_steps": [
+      "Clarify whether w represents constraint sample count or network width per the hypothesis definition",
+      "Fix the variable naming to match hypothesis: w must be constraint sample count, N_c must be network width capacity",
+      "Define the constraint function properly as a piecewise linear function with sharp transitions as stated",
+      "Establish the relationship between constraint samples (w) and the network width (N_c) that achieves zero violation",
+      "Ensure the scan properly varies w (constraint count) and measures required N_c (width), not the reverse"
+    ],
+    "mode": "explore",
+    "description": "Re-run the neural network capacity scan with a more challenging analytic constraint function to test the robustness of the \"rigidity\" claim. The original function (sin(2πx)+0.5cos(4πx)) may have been "
   }
 ]

@@ -840,6 +840,12 @@ class EngineReflect:
             return
         _statement = _node.statement
         if not _statement or len(_statement) < 10:
+            # 观测: 陈述过短此前是**静默 return** → 野外分不清"没跑"还是"跑了但陈述太短".
+            self._emit_control_trace(
+                "collab_blind_reconstruct",
+                f"skip: statement too short len={len(_statement or '')}",
+                action="skip",
+            )
             return
         # P0 Task 3: per-hyp budget 检查 — toggle off 时不检查 (向后兼容)
         if os.environ.get("HUGINN_PER_HYP_BUDGET", "0") == "1":
@@ -971,6 +977,16 @@ class EngineReflect:
             except Exception:  # 防御: 不一致记录失败忽略
                 logger.debug("verification_mismatch record failed", exc_info=True)
             logger.info("P1 blind reconstruct: mismatch → refute %s", _hyp_id)
+            # 观测: 成功派发的结论此前**只落 logger.info**, control_trace 只记 skip →
+            # 野外看 run.log 只见到 "skip: node status=refuted", 会误判机制空转
+            # (run65 实测 3 次成功反证全靠 FAILED.md 才看出). 成功也落 trace, 让
+            # "派发→结论" 全在控制面上可见.
+            self._emit_control_trace(
+                "collab_blind_reconstruct",
+                f"refute: blind_holds={_blind_holds} vs orig_holds={_orig_holds} "
+                f"summary_len={len(_res.summary or '')}",
+                action="refute",
+            )
             return
         # holds match — 按 derivation 一致性分档
         if _derivation_consistent is None:
@@ -979,6 +995,12 @@ class EngineReflect:
             self.hypothesis_graph.support(_hyp_id, _evidence)
             results["blind_reconstruction"] = {"match": True, **_evidence}
             logger.info("P1 blind reconstruct: legacy match → support %s", _hyp_id)
+            self._emit_control_trace(
+                "collab_blind_reconstruct",
+                f"support(legacy): blind_holds={_blind_holds} "
+                f"summary_len={len(_res.summary or '')}",
+                action="support",
+            )
         elif _derivation_consistent:
             # holds match + derivation 一致 → strong support
             _evidence["verification"] = "blind_strong"
@@ -986,12 +1008,24 @@ class EngineReflect:
             self.hypothesis_graph.support(_hyp_id, _evidence)
             results["blind_reconstruction"] = {"match": True, **_evidence}
             logger.info("P1 blind reconstruct: strong match → support %s", _hyp_id)
+            self._emit_control_trace(
+                "collab_blind_reconstruct",
+                f"support(strong): blind_holds={_blind_holds} "
+                f"summary_len={len(_res.summary or '')}",
+                action="support",
+            )
         else:
             # holds match + derivation 冲突 → weak, 不调 support, 不写 PROVED.md
             _evidence["verification_level"] = "weak"
             _evidence["further_verification_needed"] = True
             results["blind_reconstruction"] = {"match": True, **_evidence}
             logger.info("P1 blind reconstruct: weak (derivation 冲突) %s", _hyp_id)
+            self._emit_control_trace(
+                "collab_blind_reconstruct",
+                f"weak: derivation 冲突 blind_holds={_blind_holds} "
+                f"summary_len={len(_res.summary or '')}",
+                action="weak",
+            )
 
 
 

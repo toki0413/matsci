@@ -258,6 +258,70 @@
       "r_phys": 1.0,
       "iteration": 30,
       "id": "persona_use:reviewer_iter30"
+    },
+    {
+      "label": "[DIM: geometry] Geometric Codimension Hypothesis",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T15:16:55.217349",
+      "last_seen": "2026-10-01T15:16:55.217349",
+      "mentions": 1,
+      "iteration": 35,
+      "r_phys": 1.0,
+      "surprise": 1.0,
+      "predicted": "Either N_c(w) remains bounded (≤16) across w ∈ {10,...,50} for the new function class (supporting a modified rigidity claim), or N_c(w) grows linearly with w (supporting a \"fat\" hypothesis). The activ",
+      "persona": "reviewer",
+      "id": "experiment:[DIM: geometry] Geometric Codimension Hypothesis"
+    },
+    {
+      "label": "plan_explore_iter35",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:16:55.217387",
+      "last_seen": "2026-10-01T15:16:55.217387",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter35"
+    },
+    {
+      "label": "pass_iter35",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:16:55.217396",
+      "last_seen": "2026-10-01T15:16:55.217396",
+      "mentions": 1,
+      "surprise": 1.0,
+      "id": "Fact:pass_iter35"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T15:16:55.217404",
+      "last_seen": "2026-10-01T15:16:55.217404",
+      "mentions": 1,
+      "members": [
+        "experiment:[DIM: geometry] Geometric Codimension Hypothesis",
+        "Method:plan_explore_iter35",
+        "Fact:pass_iter35"
+      ],
+      "iteration": 35,
+      "id": "he_experiment_pipeline_3a3188b4"
+    },
+    {
+      "label": "reviewer_iter35",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T15:16:55.217474",
+      "last_seen": "2026-10-01T15:16:55.217474",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "66a4b3f0d5751ebc",
+      "r_phys": 1.0,
+      "iteration": 35,
+      "id": "persona_use:reviewer_iter35"
     }
   ],
   "links": [
@@ -368,6 +432,33 @@
       "last_seen": "2026-10-01T15:14:42.185382",
       "mentions": 1,
       "target": "he_experiment_pipeline_60194075"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:[DIM: geometry] Geometric Codimension Hypothesis",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:16:55.217404",
+      "last_seen": "2026-10-01T15:16:55.217404",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_3a3188b4"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter35",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:16:55.217404",
+      "last_seen": "2026-10-01T15:16:55.217404",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_3a3188b4"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter35",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:16:55.217404",
+      "last_seen": "2026-10-01T15:16:55.217404",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_3a3188b4"
     }
   ]
 }

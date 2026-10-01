@@ -540,3 +540,42 @@ yield 一批**控制事件**（`_token` / `_reasoning` / `_compacted` / `_auto_c
 
 > 下一步：起 run65（同 run62 参数、含 v28）——预期 `summary_len=0` 消失，
 > `collab_blind_reconstruct` 出现真产出（holds/derivation）或至少进入解析分支。
+
+### 8.7 run65 复验：v28 生效，`summary_len=0` 归零，但成功路径漏观测（v29）
+
+run65（collab ON + 盲重建，含 v28）实测：`collab_blind_reconstruct` 的
+`summary_len=0` **彻底消失**。但 run65 的 4 条 trace（iter 9/14/24/34）**全是**
+`skip: node status=refuted` —— 这是 §8.5 的 `_current_hyp_id_for_plan` 修复**生效后**
+的正常结果：当前假设已经被盲重建自己反证过，所以后续轮次在 node-status 闸门就跳过。
+
+**真正证据在 FAILED.md**（成功路径不落 trace，只能从 durable state 反查）：
+
+| run | 盲重建反证条数（FAILED.md `Modality: blind_reconstruction`） |
+|-----|------|
+| run62（改前） | 0（无 FAILED.md） |
+| run64（v27） | 0（无 FAILED.md） |
+| run65（v28） | **3** |
+
+三条均为 `blind_holds=False vs orig_holds=True mismatch`，时间戳 15:05 / 15:11 / 15:14；
+`hypothesis_graph_loop_*.json` 同步显示 24 节点中 **3 个 refuted**，且每条 refuted 节点的
+`evidence` 都带齐 `blind_holds / blind_confidence / blind_derivation / orig_holds /
+orig_reasoning_excerpt / derivation_consistent` —— 说明 `dispatch` 确实拿到了**非空**
+子 agent 产出并走完了 JSON 解析 + 三档判定。**即 v28 修复经端到端验证成立**：
+`summary_len=0` 从 run64 的 3/3 次派发，降到 run65 的 0 次，且产出真结论。
+
+**副作用暴露的观测缺口**：`_blind_reconstruct_verify` 只在 **skip 路径**落
+control_trace，成功路径仅 `logger.info`（run.log 只收 WARNING，看不到）。于是
+控制面上 run65 只有"全 skip"，若不去翻 FAILED.md / 假设图，会**误判机制空转**。
+这正是 §8 要解决的"开没开、跑没跑"看不清的问题。
+
+**修法（v29，纯观测，按 §3 过闸：只观不判）**：
+- 反证分支落 `action="refute"` trace（含 `blind_holds` vs `orig_holds` / `summary_len`）；
+- 支持分支落 `action="support"`（legacy / strong 两档）；
+- derivation 冲突档落 `action="weak"`；
+- `statement` 过短（原**静默 return**）也补一条 `skip: statement too short` trace。
+
+至此 `collab_blind_reconstruct` 在控制面上覆盖 **skip / refute / support / weak** 全分支，
+触发率统计不再系统性低估。
+
+> 下一步：起 run66（同参数、含 v29）——预期 run.log 直接出现
+> `control_trace ... action=refute`，不必再翻 FAILED.md。

@@ -12,8 +12,8 @@
       "constraint",
       "plan",
       "prediction",
-      "error",
-      "rigidity"
+      "rigidity",
+      "error"
     ],
     "workflow_steps": [
       {
