@@ -176,6 +176,37 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_92d50dd5",
+      "objective": "** [DIM: Dynamics] Gradient Flow Rigidity Hypothesis",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Implement gradient flow rigidity hypothesis test: construct 5 distinct analytic constraint functions (polynomial, trigonometric, piecewise smooth) generating w ∈ {10, 20, 50, 100} sample points in [0,1]. Train single-hidden-layer tanh networks with widths N ∈ {1,2,...,50} using gradient descent (10k steps, learning rate decay). Record maximum absolute error on held-out constraint points. Determine N_c(w) as minimal width achieving error ≤ 1e-3 for each w. Repeat 5 times per (w,N) with random seeds; verify N_c(w) stability. Compare trend against prediction that N_c(w) remains bounded (≤20) as w increases.",
+          "tool": "workflow",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "experiments/rigidity_scan.py",
+            "experiments/analyze_rigidity.py"
+          ]
+        }
+      ],
+      "status": "executing",
+      "auto_confirm": false,
+      "created_at": "2026-10-01T13:44:24.494503+00:00",
+      "confirmed_at": "2026-10-01T13:44:24.585860+00:00",
+      "completed_at": null,
+      "reject_reason": null,
+      "metadata": {
+        "mode": "workflow",
+        "source": "autoloop"
+      }
     }
   ]
 }

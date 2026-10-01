@@ -51,12 +51,12 @@
       "huginn",
       "value",
       "label",
-      "width",
       "constraints",
+      "width",
       "function",
+      "small",
       "target",
-      "error",
-      "small"
+      "algebraic"
     ],
     "workflow_steps": [
       {
