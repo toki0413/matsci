@@ -1011,6 +1011,70 @@
       "r_phys": 1.0,
       "iteration": 100,
       "id": "persona_use:reviewer_iter100"
+    },
+    {
+      "label": "**[DIM: geometry] Transversal Fatness**",
+      "type": "experiment",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T15:48:17.235089",
+      "last_seen": "2026-10-01T15:48:17.235089",
+      "mentions": 1,
+      "iteration": 105,
+      "r_phys": 1.0,
+      "surprise": 0.0,
+      "predicted": "N_c(w) will be 8 for w ∈ {10, 20, 30} and jump to 12 for w ∈ {40, 50}, with all validation errors ≤ 1e-3 and training errors < 3e-4, indicating bounded capacity (rigidity). No inf/nan values will appe",
+      "persona": "reviewer",
+      "id": "experiment:**[DIM: geometry] Transversal Fatness**"
+    },
+    {
+      "label": "plan_explore_iter105",
+      "type": "Method",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:48:17.235128",
+      "last_seen": "2026-10-01T15:48:17.235128",
+      "mentions": 1,
+      "id": "Method:plan_explore_iter105"
+    },
+    {
+      "label": "pass_iter105",
+      "type": "Fact",
+      "source": "autoloop",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:48:17.235136",
+      "last_seen": "2026-10-01T15:48:17.235136",
+      "mentions": 1,
+      "surprise": 0.0,
+      "id": "Fact:pass_iter105"
+    },
+    {
+      "type": "hyperedge",
+      "relation": "experiment_pipeline",
+      "created_at": "2026-10-01T15:48:17.235146",
+      "last_seen": "2026-10-01T15:48:17.235146",
+      "mentions": 1,
+      "members": [
+        "experiment:**[DIM: geometry] Transversal Fatness**",
+        "Method:plan_explore_iter105",
+        "Fact:pass_iter105"
+      ],
+      "iteration": 105,
+      "id": "he_experiment_pipeline_acf76674"
+    },
+    {
+      "label": "reviewer_iter105",
+      "type": "persona_use",
+      "source": "autoloop",
+      "confidence": 1.0,
+      "created_at": "2026-10-01T15:48:17.235223",
+      "last_seen": "2026-10-01T15:48:17.235223",
+      "mentions": 1,
+      "persona": "reviewer",
+      "context_hash": "981f5e2f978de65c",
+      "r_phys": 1.0,
+      "iteration": 105,
+      "id": "persona_use:reviewer_iter105"
     }
   ],
   "links": [
@@ -1445,6 +1509,33 @@
       "last_seen": "2026-10-01T15:45:59.698558",
       "mentions": 1,
       "target": "he_experiment_pipeline_ea64532a"
+    },
+    {
+      "relation": "member_of",
+      "source": "experiment:**[DIM: geometry] Transversal Fatness**",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:48:17.235146",
+      "last_seen": "2026-10-01T15:48:17.235146",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_acf76674"
+    },
+    {
+      "relation": "member_of",
+      "source": "Method:plan_explore_iter105",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:48:17.235146",
+      "last_seen": "2026-10-01T15:48:17.235146",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_acf76674"
+    },
+    {
+      "relation": "member_of",
+      "source": "Fact:pass_iter105",
+      "confidence": 0.5,
+      "created_at": "2026-10-01T15:48:17.235146",
+      "last_seen": "2026-10-01T15:48:17.235146",
+      "mentions": 1,
+      "target": "he_experiment_pipeline_acf76674"
     }
   ]
 }

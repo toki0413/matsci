@@ -626,6 +626,37 @@
         "mode": "explore",
         "source": "autoloop"
       }
+    },
+    {
+      "id": "plan_27db296a",
+      "objective": "[DIM: structure] Algebraic Rigidity Hypothesis**",
+      "steps": [
+        {
+          "id": "step_0",
+          "description": "Run an algebraic rigidity scan on a small feedforward network. Define an analytic constraint function f(x) = sin(2πx) + 0.5 cos(4πx) on [0,1]; for each constraint sample count w ∈ {10,20,30,40,50}, sample w training points and a held-out validation set of 100 points. For each w, scan hidden widths h ∈ {4,8,12,16,20,24,28,32} with tanh activations; train with Adam (lr=1e-3, batch=16, max 10k epochs, early stopping on validation error). Record the minimal h that yields zero violation (max absolute error on validation ≤ 1e-3); define N_c(w) as that h (or 32 if none). Repeat for 3 random seeds (0,1,2) to verify stability. Produce a table of N_c(w) and validation errors, and a plot of N_c(w) vs w. Determine rigidity (bounded N_c) vs fatness (unbounded).",
+          "tool": "workflow",
+          "parameters": {},
+          "dependencies": [],
+          "agent_id": "lead",
+          "status": "pending",
+          "result": "",
+          "error": null,
+          "target_files": [
+            "rigidity_scan.py",
+            "rigidity_analysis.ipynb"
+          ]
+        }
+      ],
+      "status": "completed",
+      "auto_confirm": false,
+      "created_at": "2026-10-01T15:48:43.769734+00:00",
+      "confirmed_at": "2026-10-01T15:48:43.771849+00:00",
+      "completed_at": "2026-10-01T15:49:07.661333+00:00",
+      "reject_reason": null,
+      "metadata": {
+        "mode": "workflow",
+        "source": "autoloop"
+      }
     }
   ]
 }
